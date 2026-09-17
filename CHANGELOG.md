@@ -5,6 +5,45 @@
 
 ## [Unreleased]
 
+### 目标侧由依赖图供给时,编译侧关掉对应的隐式搜索:#662(2026.9.17.3)
+
+链接侧早在 #511 就已经按 `plan.targetSide.cAbi.prebuilt()` 撤掉 `-nostdlib`,编译侧一直
+缺对应的一半:图供给 C 库的目标(openkal 各目标)上,clang driver 自己的头文件搜索仍然打开,
+宿主机装了什么就可能补进构建里。宿主没有对应头文件时报一个不知所云的类型冲突;宿主有的
+话,产物混用两个 C 库的声明却仍然链接成功。C++ 层有同形的孪生缺陷:C 库和 C++ 运行时两层都
+来自图时(openkal 的实际形状),旧的 `-nostdinc++` 追加条件恰好把这一种排除在外,issue 的最小
+复现(只 `import std`)没有文本包含头文件,所以没暴露。
+分析:`.agents/docs/2026-09-17-issue-662-graph-target-header-isolation-plan.md`。
+
+- **编译侧按层来源关闭隐式搜索,读与链接侧相同的值。** `c-abi` 来自图时追加 `-nostdlibinc`
+  (保留编译器自带头文件,只去掉系统与 C 库目录);`c++-abi` 来自图时追加 `-nostdinc++`,
+  条件改为只看这一层自己的来源,不再看 `c-abi` 是否也来自图。两个 token 出现在 `cflags`/
+  `cxxflags`/`asmflags` 这组全局 flags 里,C、C++、汇编、依赖扫描、std 模块预编译同时受益。
+  (`src/toolchain/hostflags.cppm`,单测 `test_hostflags.cpp`)
+- **GCC 家族没有等价的单一 flag。** 穷举现有目标行后没有「图供给 C 库 + GCC」的组合,模型
+  给出 `can_isolate_graph_c_library`(只对 Clang 家族为真),`prepare.cppm` 在这一组合出现时
+  据此拒绝并给出原因,而不是静默地不隔离。(`modules/toolchain-model/src/model.cppm`)
+- **隔离后原本靠宿主补齐的包会确定地失败,失败信息现在可读。** 构建失败、目标侧 `c-abi`
+  来自图、且编译器输出含 `file not found` 时,追加一条说明,点名 C 库(名字与
+  `包名@版本`)并给出两条路:按 `cfg(c-abi = "...")` 适配,或把平台依赖以私有可见性带进
+  依赖图。复用既有的构建失败提示通道(与 `link_failure_advice` 同类),不改写编译器自己的
+  输出。(`mcpp::build::graph_c_library_isolation_advice`)
+- **M5:平台依赖保持私有,这个能力已经存在,补了测试和文档。** `[feature-deps.<feature>]`
+  下的依赖项本就可以写 `visibility = "private"`,让其头文件只到达声明它的包自己的翻译单元、
+  不广播给消费方——这条路径此前完全没有被测过、也没有被文档提到。e2e 739 用「私有时消费方
+  找不到头文件、公开时能找到」两个方向锁定这个行为;`docs/06`(及 zh)记录这个模式,`docs/24`
+  (及 zh)新增"边界"一节陈述 kernel-abi/c-abi 各自的保证范围、平台依赖必须私有、一个镜像一个
+  C/C++ 运行时(R1)、头文件差异按 `c-abi` 适配、设施差异优先用包自己的 feature(R3)。
+- **升级影响。** 只影响目标侧由图供给的构建(openkal 各目标、图供给 libc++ 的 iOS 行);原生
+  构建与载荷提供 C 库的构建命令行逐字节不变(单测守卫)。这类构建的 flags 指纹变化,升级后
+  会重建一次。原先只因为宿主头文件补上缺口才能编译的包,现在会确定地失败——这类构建此前只在
+  装了对应宿主包的机器上成功,产物还混用了两个 C 库的声明;新增的说明使这类失败可以诊断。
+- 单测:`test_hostflags.cpp`(选项矩阵 `cAbiPrebuilt × cxxFromGraph × {clang, gcc}`,以及
+  载荷提供两层时命令行不变的回归守卫)、`test_ninja_backend.cpp`。e2e:738(openkal
+  `x86_64-windows-gnu` 构建,逐单元核对 clang 自己报告的头文件搜索列表,门在
+  `mingw-host-headers` capability 上,`openkal-cross.yml` 的 `ecosystem-e2e` job 安装
+  `mingw-w64` 使其在 CI 上成立)、739(私有 feature-dep 的双向锁定)。
+
 ### 声明的 C 运行时由 mcpp 安装,查找只做精确匹配:#660(2026.9.17.2)
 
 xim-pkgindex#852 发布 glibc 2.44.3 之后,CI 缓存只恢复 `registry/data/xpkgs` 的环境报

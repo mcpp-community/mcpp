@@ -744,3 +744,136 @@ TEST(HostFlags, AppleFloatMacrosAreStatedForClangOnAppleTargetsOnly) {
     EXPECT_TRUE(mcpp::toolchain::apple_float_macro_words(tc(CompilerId::GCC, "x86_64-linux-gnu")).empty());
     EXPECT_TRUE(mcpp::toolchain::apple_float_macro_words(tc(CompilerId::MSVC, "x86_64-pc-windows-msvc")).empty());
 }
+
+// ── #662: the C library's own host locations, and its C++ twin ─────────────
+//
+// Same fixture as the two suites above — a sibling `<driver>.cfg` beside two
+// empty files is a complete driver model for `resolve_clang_driver`, and the
+// tests below need only that `bypassCfg` is true.
+namespace {
+
+struct ClangCfgFixture {
+    std::filesystem::path root;
+    ClangCfgFixture(std::string_view name) {
+        namespace fs = std::filesystem;
+        root = fs::temp_directory_path() / name;
+        fs::remove_all(root);
+        fs::create_directories(root / "bin");
+        fs::create_directories(root / "include" / "c++" / "v1");
+        { std::ofstream(root / "bin" / "clang++"); }
+        { std::ofstream(root / "bin" / "clang++.cfg"); }
+    }
+    ~ClangCfgFixture() { std::error_code ec; std::filesystem::remove_all(root, ec); }
+
+    mcpp::toolchain::Toolchain toolchain() const {
+        mcpp::toolchain::Toolchain tc;
+        tc.compiler     = CompilerId::Clang;
+        tc.targetTriple = "x86_64-windows-gnu";
+        tc.binaryPath   = root / "bin" / "clang++";
+        return tc;
+    }
+};
+
+bool contains(const std::vector<std::string>& v, std::string_view f) {
+    return std::ranges::find(v, f) != v.end();
+}
+
+std::size_t count_of(const std::vector<std::string>& v, std::string_view f) {
+    return std::ranges::count(v, f);
+}
+
+} // namespace
+
+// A graph-supplied C library closes the driver's own C-library search —
+// the compile-side half of the `-nostdlib` the link side has read since
+// #511. Measured absent before this fix: the openkal windows-gnu row's
+// C units kept finding `/usr/x86_64-w64-mingw32/include` (the host's mingw)
+// ahead of musl's own headers.
+TEST(HostFlags, GraphSuppliedCLibraryGetsNostdlibinc) {
+    ClangCfgFixture fx("mcpp_hostflags_662_clib_fixture");
+    auto tc = fx.toolchain();
+    ASSERT_TRUE(mcpp::toolchain::resolve_clang_driver(tc).hasCfg);
+
+    HostFlagOptions payload;
+    payload.cfgBypass    = HostFlagOptions::CfgBypass::Always;
+    payload.cAbiPrebuilt = true;
+    EXPECT_FALSE(contains(mcpp::toolchain::host_compile_tokens(
+        tc, payload, mcpp::toolchain::no_escape), "-nostdlibinc"));
+
+    HostFlagOptions graph = payload;
+    graph.cAbiPrebuilt = false;
+    EXPECT_TRUE(contains(mcpp::toolchain::host_compile_tokens(
+        tc, graph, mcpp::toolchain::no_escape), "-nostdlibinc"));
+}
+
+// THE OPENKAL SHAPE ITSELF (#662): both layers come from the graph at once.
+// Before this fix `-nostdinc++` was conditioned on `!graphSuppliesTarget`,
+// which is false exactly here, so it never fired — clang kept searching
+// beside itself for the payload's libc++, found the HOST's libstdc++
+// instead, and any unit reaching it transitively (not just `import std`)
+// carried two C++ standard libraries.
+TEST(HostFlags, BothLayersFromGraphGetBothIsolationTokens) {
+    ClangCfgFixture fx("mcpp_hostflags_662_both_fixture");
+    auto tc = fx.toolchain();
+    ASSERT_TRUE(mcpp::toolchain::resolve_clang_driver(tc).hasCfg);
+
+    HostFlagOptions opt;
+    opt.cfgBypass    = HostFlagOptions::CfgBypass::Always;
+    opt.cAbiPrebuilt  = false;  // c-abi:  musl, from the graph
+    opt.cxxFromGraph  = true;   // c++-abi: libc++, from the graph
+    const auto toks = mcpp::toolchain::host_compile_tokens(
+        tc, opt, mcpp::toolchain::no_escape);
+
+    EXPECT_TRUE(contains(toks, "-nostdlibinc"));
+    EXPECT_TRUE(contains(toks, "-nostdinc++"));
+    // Exactly once each — the two branches that can add `-nostdinc++`
+    // (graph C++, SDK C++) must not both fire for the same build.
+    EXPECT_EQ(count_of(toks, "-nostdinc++"), 1u);
+    EXPECT_EQ(count_of(toks, "-nostdlibinc"), 1u);
+}
+
+// THE REGRESSION GUARD: a build where both layers stay the payload's — every
+// native build, and every build over a prebuilt/payload C library — emits
+// the identical token sequence this fix touched nothing for. Compared as a
+// whole vector rather than by presence, so an accidental REORDERING (which
+// would still change the rendered command line) fails this test too.
+TEST(HostFlags, PayloadServedCommandLineIsUnchanged) {
+    ClangCfgFixture fx("mcpp_hostflags_662_guard_fixture");
+    auto tc = fx.toolchain();
+    ASSERT_TRUE(mcpp::toolchain::resolve_clang_driver(tc).hasCfg);
+
+    HostFlagOptions opt;
+    opt.cfgBypass    = HostFlagOptions::CfgBypass::Always;
+    opt.cAbiPrebuilt = true;   // default in every caller with no graph target
+    opt.cxxFromGraph = false;
+
+    const auto toks = mcpp::toolchain::host_compile_tokens(
+        tc, opt, mcpp::toolchain::no_escape);
+    const std::vector<std::string> expected{
+        "--no-default-config", "-nostdinc++",
+        "-isystem" + (fx.root / "include" / "c++" / "v1").string(),
+    };
+    EXPECT_EQ(toks, expected);
+    EXPECT_FALSE(contains(toks, "-nostdlibinc"));
+}
+
+// GCC's fixture carries no `<driver>.cfg` (resolve_clang_driver only looks
+// for one beside a Clang binary), so `bypassCfg` is false and neither
+// isolation branch runs — GCC's own equivalent is not implemented (see
+// `mcpp::toolchain::can_isolate_graph_c_library`), and a target row that
+// needs it is refused before reaching here (prepare.cppm), not silently
+// left unisolated.
+TEST(HostFlags, GccEmitsNeitherIsolationTokenAndCannotIsolate) {
+    auto tc = tc_for(CompilerId::GCC);
+    EXPECT_FALSE(mcpp::toolchain::can_isolate_graph_c_library(tc));
+    EXPECT_TRUE(mcpp::toolchain::can_isolate_graph_c_library(tc_for(CompilerId::Clang)));
+
+    HostFlagOptions opt;
+    opt.cfgBypass    = HostFlagOptions::CfgBypass::Always;
+    opt.cAbiPrebuilt = false;
+    opt.cxxFromGraph = true;
+    const auto toks = mcpp::toolchain::host_compile_tokens(
+        tc, opt, mcpp::toolchain::no_escape);
+    EXPECT_FALSE(contains(toks, "-nostdlibinc"));
+    EXPECT_FALSE(contains(toks, "-nostdinc++"));
+}

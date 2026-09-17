@@ -1251,6 +1251,13 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         // silently remove the advice along with them.
         if (auto advice = mcpp::build::link_failure_advice(out); !advice.empty())
             std::fputs(advice.c_str(), stderr);
+        // mcpp#662, the fast-path form: no `BuildPlan` here to name the C
+        // library from (the whole point of this path is skipping `prepare`),
+        // so both name arguments are empty — the note still fires (it reads
+        // the isolation token in `out` itself) but names no package.
+        if (auto advice = mcpp::build::graph_c_library_isolation_advice(out);
+            !advice.empty())
+            std::fputs(advice.c_str(), stderr);
         return 1;
     }
     if (verbose && !out.empty())

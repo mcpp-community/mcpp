@@ -1633,6 +1633,75 @@ TEST(LinkFailureAdvice, CarriesNoVersionLiteral) {
     EXPECT_EQ(advice.find("0."), std::string::npos) << advice;
 }
 
+// ── graph_c_library_isolation_advice (mcpp#662) ─────────────────────────────
+//
+// A graph-supplied C library closes the compiler's own search of the host's
+// copy (`-nostdlibinc`); a package that only compiled before because a host
+// header filled a gap the graph did not now fails naming a header the reader
+// has never asked for. The advice fires on the SAME EVIDENCE a human would
+// use to diagnose it: the isolating token on the command line, together with
+// the compiler's own "file not found".
+
+TEST(GraphCLibraryIsolationAdvice, FiresOnlyWhenBothTheTokenAndTheErrorAreThere) {
+    // Neither alone is enough.
+    EXPECT_TRUE(mcpp::build::graph_c_library_isolation_advice(
+        "clang: error: something else entirely\n").empty());
+    EXPECT_TRUE(mcpp::build::graph_c_library_isolation_advice(
+        "-nostdlibinc -std=c11 -c probe.c\n"
+        "probe.c:1:1: error: unknown type name 'nonsense'\n").empty());
+    EXPECT_TRUE(mcpp::build::graph_c_library_isolation_advice(
+        "clang -xc -std=c11 -c probe.c\n"
+        "probe.c:1:10: fatal error: 'io.h' file not found\n").empty());
+    // Both together: an ordinary compile failure the fix's own token is on.
+    const std::string out =
+        "FAILED: obj/probe.c.o\n"
+        "clang -std=c11 --target=x86_64-w64-windows-gnu -nostdlibinc "
+        "-nostdinc++ -c probe.c -o obj/probe.c.o\n"
+        "probe.c:1:10: fatal error: 'io.h' file not found\n"
+        "    1 | #include <io.h>\n";
+    EXPECT_FALSE(mcpp::build::graph_c_library_isolation_advice(out).empty());
+}
+
+TEST(GraphCLibraryIsolationAdvice, NamesTheLibraryWhenGiven) {
+    const std::string out =
+        "clang -nostdlibinc -c probe.c\n"
+        "probe.c:1:10: fatal error: 'io.h' file not found\n";
+    auto advice = mcpp::build::graph_c_library_isolation_advice(
+        out, "musl", "openkal-musl@0.3.5");
+    ASSERT_FALSE(advice.empty());
+    EXPECT_NE(advice.find("musl"), std::string::npos);
+    EXPECT_NE(advice.find("openkal-musl@0.3.5"), std::string::npos);
+    // Both remedies from the plan: adapting to the C library, and bringing
+    // the platform dependency into the graph privately.
+    EXPECT_NE(advice.find("cfg(c-abi = \"musl\")"), std::string::npos);
+    EXPECT_NE(advice.find("private"), std::string::npos);
+}
+
+TEST(GraphCLibraryIsolationAdvice, DegradesWithoutNamingAnyPackage) {
+    // The fast path (execute.cppm) has no BuildPlan to read a name from. The
+    // note still fires — it does not stay silent just because the caller
+    // could not name the library — and it does not fabricate a name either.
+    const std::string out =
+        "clang -nostdlibinc -c probe.c\n"
+        "probe.c:1:10: fatal error: 'io.h' file not found\n";
+    auto advice = mcpp::build::graph_c_library_isolation_advice(out);
+    EXPECT_FALSE(advice.empty());
+    EXPECT_NE(advice.find("this target's C library"), std::string::npos);
+}
+
+TEST(GraphCLibraryIsolationAdvice, DoesNotRewriteTheCompilersOwnLine) {
+    // "Reuse the channel, don't rewrite compiler output": the advice is
+    // APPENDED text, and the original diagnostic line survives byte for byte
+    // wherever a caller concatenates it (as both call sites do).
+    const std::string compilerLine =
+        "probe.c:1:10: fatal error: 'io.h' file not found\n";
+    const std::string out = "clang -nostdlibinc -c probe.c\n" + compilerLine;
+    auto advice = mcpp::build::graph_c_library_isolation_advice(out);
+    ASSERT_FALSE(advice.empty());
+    std::string combined = out + advice;
+    EXPECT_NE(combined.find(compilerLine), std::string::npos);
+}
+
 // ═══ mcpp#533 / mcpp#534: emitter self-checks ══════════════════════════════
 
 // ── A rule's command must begin with a program (mcpp#533) ──────────────────

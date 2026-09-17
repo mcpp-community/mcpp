@@ -417,6 +417,36 @@ std-freestanding-alloc-kal = "0.1.x"
 而非替换 —— 让 C++ 标准库能提供可替换 `operator new` 的那套归档语义,对包依赖并不适用。
 把实现放在开关之后,意味着两者**从不共存**。
 
+### 平台 SDK 依赖保持私有
+
+一个绑定到某个平台的包 —— 它需要那个平台的头文件才能实现某个功能,而不是
+为了陈述自己的接口 —— 在 `[feature-deps.<feature>]` 下用 `visibility = "private"`
+依赖该 SDK:
+
+```toml
+[features]
+windows-crt = {}
+
+# 仅在激活该行时解析,其头文件只到达本包自己的翻译单元。
+[feature-deps.windows-crt]
+some.windows-headers = { version = "1.0", visibility = "private" }
+```
+
+`visibility` 是任意依赖项 spec 的一个字段(默认 `public`,还可以是 `private`
+或 `interface` —— 见[05 — 依赖](05-dependencies.md))。让 SDK 不跨越包边界的正是
+`private`:该依赖的头文件目录、宏定义与 flag 只并入本包自己的构建,到此为止,
+正如 `privateIncludeDirs` 让一个包**自己的**内部头文件不到达它的消费方。
+一个依赖该平台绑定包并激活 `windows-crt` 的消费方,会得到这个功能;它不会在
+自己的 `-I` 列表里得到 `some.windows-headers` 的目录,甚至无法按名字
+`#include` 它的头文件。
+
+这正是[24 —— openkal 与由依赖图供给的目标](24-openkal-cross.md)所指向的模式:
+一个包若需要它声明的层(`kernel-abi`、`c-abi`、`c++-abi`)之外的平台头文件,
+这个依赖是合法的,但不能变成每一个消费方的问题。把它写成 `public`
+(或者不写 `visibility`,二者等价)正是本节要指出的错误 —— 对声明它的包而言这样
+可以工作,却会把 SDK 的头文件不由分说地交给消费方,而消费方构建的目标上很可能
+根本不该出现这个 SDK。
+
 ## 当前边界
 
 **默认 feature 在 manifest 里关掉,不在命令行上关掉。** 没有 `--no-default-features`。

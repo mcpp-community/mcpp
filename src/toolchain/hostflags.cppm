@@ -427,7 +427,53 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
         // Nothing that used to be emitted moves; this path emitted nothing.
         out.push_back("--no-default-config");
     }
-    if (bypassCfg && !graphSuppliesTarget && !cxxFromPayload) {
+
+    // THE C LIBRARY'S OWN HOST LOCATIONS, WHEN A GRAPH PACKAGE SUPPLIES THE
+    // TARGET'S C LIBRARY. The link side has read this exact value since
+    // #511 (`plan.targetSide.cAbi.prebuilt()`, by way of `graphSuppliesTarget`
+    // above) and dropped `-nostdlib` accordingly; this was the missing
+    // compile-side half (#662).
+    //
+    // `-nostdlibinc` rather than `-nostdinc`: the latter also drops the
+    // COMPILER's OWN bundled headers (stddef.h, stdarg.h, the builtin
+    // intrinsics), which are the compiler's layer and not the C library's —
+    // a graph-supplied musl still expects them ahead of its own copies on
+    // the search path. A package that needs the stronger form states
+    // `-nostdinc` itself; openkal-musl already does, in its own unit flags.
+    //
+    // Measured (x86_64-windows-gnu, openkal-musl over openkal-windows,
+    // clang 22.1.8, `-xc -v -fsyntax-only`): without this token the driver's
+    // header search list still ends in `/usr/x86_64-w64-mingw32/include` —
+    // the HOST's mingw, which happened to satisfy every text `#include` the
+    // graph's own headers did not, until one of its declarations disagreed
+    // with musl's (`typedef redefinition`, `conflicting types for 'chmod'`).
+    // With it, the list ends at the compiler's own resource directory.
+    //
+    // GCC has no equivalent single flag — see
+    // `mcpp::toolchain::can_isolate_graph_c_library`. The combination is
+    // refused at resolution (prepare.cppm) rather than reaching here with
+    // nothing to emit; `dm.hasCfg` is false for GCC in any case, so
+    // `bypassCfg` already withholds this block from that family today.
+    if (bypassCfg && graphSuppliesTarget) out.push_back("-nostdlibinc");
+
+    // THE CONDITION USED TO BE `!graphSuppliesTarget && !cxxFromPayload`,
+    // WHICH IS RIGHT ABOUT `cxxFromPayload` AND WRONG TO ASK ABOUT THE C
+    // LIBRARY AT ALL — this token is the C++ LAYER's question, exactly as
+    // the comment on `cxxFromPayload` above already says. Asking about the
+    // C library too meant the one case where BOTH layers come from the graph
+    // (openkal: `graphSuppliesTarget` true, `cxxFromGraph` true) answered
+    // `!graphSuppliesTarget` false and never got here — so clang kept
+    // searching beside itself for the payload's libc++, found the HOST's
+    // libstdc++ instead (`/usr/lib/gcc/x86_64-w64-mingw32/…/include/c++`),
+    // and every unit that `#include`s a header transitively reaching it saw
+    // two C++ standard libraries at once (#662, the C++ twin of the C defect
+    // above — unreached by the issue's own repro, which only `import std`s).
+    //
+    // `!cxxFromPayload` is exactly "the payload is not the one supplying
+    // these headers", which is true for both `cxxFromGraph` (a package does)
+    // and `appleSdkCxxHeaders` (the SDK does) — the two cases this branch
+    // already told apart below by whether `opt.cxxFromGraph` is set.
+    if (bypassCfg && !cxxFromPayload) {
         // The driver's own C++ search contributes nothing: beside the compiler
         // it finds the payload's libc++, and clang's Darwin driver prefers that
         // copy to the SDK's whenever it exists. What replaces it is either the

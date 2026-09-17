@@ -386,7 +386,7 @@ jobs:
       # the shim on PATH dispatches against whichever home owns it, so an
       # emulator installed only in the ambient one answers "not installed" when
       # mcpp asks.
-      - name: Install the emulators the last two scripts need
+      - name: Install the emulators, and this host's mingw-w64 (#662)
         run: |
           set -euo pipefail
           # The runner image carries third-party apt lists (Google Chrome
@@ -402,7 +402,16 @@ jobs:
           # name was a guess and the guess was wrong.
           sudo grep -rlE 'dl[.]google[.]com|packages[.]microsoft[.]com' \
                /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -f
-          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user
+          # `mingw-w64` (the distro package, NOT `mingw-cross-gcc`) is what
+          # 738's `mingw-host-headers` capability probes for
+          # (`/usr/x86_64-w64-mingw32/include`). The assertion it gates --
+          # clang's own driver no longer searches the host once a graph
+          # package supplies the target's C library -- has no discriminating
+          # power without a host copy to have leaked in in the first place;
+          # this is the one runner in the fleet that installs it for that
+          # reason (run_all.sh's capability probe, and the design doc's note
+          # on `# requires:` gates CI never satisfies on its own).
+          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user mingw-w64
           "$XLINGS_BIN" install xim:qemu-riscv -y
           XLINGS_HOME="${MCPP_HOME:-$HOME/.mcpp}/registry" \
             "$XLINGS_BIN" install xim:qemu-riscv -y
@@ -423,7 +432,8 @@ jobs:
           fail=0
           for t in tests/e2e/285_*.sh tests/e2e/286_*.sh tests/e2e/287_*.sh \
                    tests/e2e/288_*.sh tests/e2e/289_*.sh tests/e2e/291_*.sh \
-                   tests/e2e/292_*.sh tests/e2e/293_*.sh tests/e2e/294_*.sh; do
+                   tests/e2e/292_*.sh tests/e2e/293_*.sh tests/e2e/294_*.sh \
+                   tests/e2e/738_*.sh; do
             echo "=== $t ==="
             bash "$t" 2>&1 | tee "$(basename "$t").log" || true
             rc=${PIPESTATUS[0]}
@@ -475,4 +485,6 @@ jobs:
             "OK: the requested target and the resolved one name one operating system" || fail=1
           check 294_the_list_answers_what_can_be_built_not_what_has_a_payload.sh \
             "OK: the list answers what can be built, not what has a payload" || fail=1
+          check 738_a_graph_supplied_target_closes_the_hosts_own_search.sh \
+            "PASS: 738 a graph-supplied target closes the host's own search" || fail=1
           [ "$fail" = 0 ] || exit 1

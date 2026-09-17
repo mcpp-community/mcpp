@@ -10902,6 +10902,35 @@ prepare_build(bool print_fingerprint,
             refusal::record(refusal::Code::LayerOrdering);
             return std::unexpected(*why);
         }
+        // THE COMPILER MUST BE ABLE TO STOP ITS OWN DRIVER SEARCHING THE
+        // HOST'S C LIBRARY WHEN A PACKAGE SUPPLIES THE TARGET'S INSTEAD
+        // (#662). `mcpp.toolchain.hostflags` emits `-nostdlibinc` for that —
+        // a Clang-only flag — and GCC has no one-token equivalent
+        // (`mcpp::toolchain::can_isolate_graph_c_library`). No target row
+        // needs the GCC form today (every graph-supplied C library resolves
+        // a Clang-family compiler in the ecosystem this checks against), so
+        // the combination is refused here rather than built unisolated: the
+        // alternative is the exact defect #662 reports, one layer later and
+        // reported as a package's header conflict rather than as what it is.
+        if (tc && !tc->cAbiPrebuilt
+            && !mcpp::toolchain::can_isolate_graph_c_library(*tc)) {
+            refusal::record(refusal::Code::LayerRequirement);
+            return std::unexpected(std::format(
+                "the target's C library ('{}') comes from the dependency "
+                "graph, and the resolved compiler ('{}') has no way to stop "
+                "its own driver searching the host's C library headers "
+                "alongside it.\n"
+                "       Every target row this engine isolates today resolves "
+                "a Clang-family ('llvm') compiler; add\n"
+                "           [toolchain]\n"
+                "           default = \"llvm@<version>\"\n"
+                "       or, for one target only:\n"
+                "           [target.{}]\n"
+                "           toolchain = \"llvm@<version>\"",
+                resolvedTargetSide.cAbi.interfaceName, tc->compiler_family(),
+                overrides.target_triple.empty() ? std::string("<triple>")
+                                                : overrides.target_triple));
+        }
         // REQUIREMENTS ARE CHECKED BEFORE ANYTHING IS COMPILED, WHICH IS THE
         // WHOLE POINT OF DECLARING THEM. The combination this rejects — a C++
         // runtime configured for one compiler family being handed to another —

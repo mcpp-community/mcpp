@@ -97,6 +97,42 @@ std::optional<std::string> check_rule_commands_name_a_program(
 // referenced from `__libcpp_allocate` in `__new/allocate.h`.
 std::string link_failure_advice(std::string_view output);
 
+// mcpp#662: the compile-side sibling of `link_failure_advice`, same shape —
+// text-matched against RAW ninja output (command lines included; the caller
+// must not pass the filtered form), returning advice to APPEND, never
+// rewriting what the compiler said.
+//
+// The case this exists for: a graph-supplied C library closes the compiler's
+// own search of the host's copy (`-nostdlibinc`, mcpp.toolchain.hostflags),
+// and a package that only ever compiled because a host header filled a gap
+// the graph did not now fails determinstically, naming a header the reader
+// has never asked for and no decision mcpp made:
+//
+//     fatal error: 'io.h' file not found
+//
+// Read on its own this looks like a broken build — the header used to be
+// found. The advice names WHY it no longer is and what changed, without
+// touching the compiler's own line.
+//
+// Two conditions, both read from `output` so this needs no BuildPlan: the
+// compile command mcpp itself assembled carries `-nostdlibinc` (the token
+// that says THIS unit's C library came from the graph — see hostflags.cppm),
+// and the compiler's own report contains `file not found`. Neither alone is
+// enough: `-nostdlibinc` with no such error is an unrelated failure, and
+// `file not found` with no `-nostdlibinc` is an ordinary missing header that
+// has nothing to do with the target side.
+//
+// `cAbiName` / `cAbiCoordinate` (interfaceName / impl of `TargetSide::cAbi`,
+// e.g. "musl" / "openkal-musl@0.3.5") name the library precisely when the
+// caller has resolved a `BuildPlan` to read them from (the ordinary build
+// path). Both empty is a degraded but still correct note — the fast
+// re-ninja path (execute.cppm's `run_ninja_fast`) skips `prepare` entirely
+// and has no `TargetSide` to read; the two conditions above still hold, so
+// it still knows it IS this shape, only not the library's name.
+std::string graph_c_library_isolation_advice(std::string_view output,
+                                             std::string_view cAbiName = {},
+                                             std::string_view cAbiCoordinate = {});
+
 }  // namespace mcpp::build
 
 namespace mcpp::build {
@@ -634,6 +670,39 @@ std::string link_failure_advice(std::string_view output) {
         "      To supply an allocator instead, define the twelve `operator new`\n"
         "      and `operator delete` overloads — including the four taking\n"
         "      `std::align_val_t`, which are the ones most often forgotten.\n";
+}
+
+std::string graph_c_library_isolation_advice(std::string_view output,
+                                             std::string_view cAbiName,
+                                             std::string_view cAbiCoordinate) {
+    if (output.find("-nostdlibinc") == std::string_view::npos) return {};
+    if (output.find("file not found") == std::string_view::npos) return {};
+
+    std::string library = !cAbiName.empty()
+        ? (!cAbiCoordinate.empty() ? std::format("{} ({})", cAbiName, cAbiCoordinate)
+                                    : std::string(cAbiName))
+        : std::string("this target's C library");
+    std::string predicateAbi = cAbiName.empty() ? std::string("<c-abi>")
+                                                : std::string(cAbiName);
+
+    return std::format(
+        "\n"
+        "note: {} comes from the dependency graph, and the host's own C "
+        "library\n"
+        "      headers are not searched (docs/22 'Adaptation To The Resolved "
+        "Target Side').\n"
+        "      A package that needs the header above has to adapt, either:\n"
+        "\n"
+        "        (a) to this C library, in the package's own descriptor:\n"
+        "                [target.'cfg(c-abi = \"{}\")'.build]\n"
+        "        (b) by bringing the platform headers it needs into the "
+        "dependency graph as\n"
+        "            its OWN dependency, private to itself (docs/06 'A "
+        "platform SDK\n"
+        "            dependency stays private') — rather than relying on a "
+        "header this\n"
+        "            machine happens to have installed.\n",
+        library, predicateAbi);
 }
 
 std::string filter_ninja_output(std::string_view output,
@@ -3324,6 +3393,11 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         // build.ninja happened to be up to date — which is exactly the kind of
         // "same decision in two places" this codebase keeps paying for.
         diagnostics += link_failure_advice(out);
+        // mcpp#662: named precisely here, where `plan.targetSide` is resolved
+        // — the fast path (execute.cppm) calls the same function with no name
+        // and gets the degraded-but-still-correct form.
+        diagnostics += graph_c_library_isolation_advice(
+            out, plan.targetSide.cAbi.interfaceName, plan.targetSide.cAbi.impl);
         return std::unexpected(BuildError{"build failed", plan.outputDir / "build.ninja",
                                           std::move(diagnostics)});
     }

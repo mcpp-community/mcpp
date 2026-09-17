@@ -320,6 +320,18 @@ Requiring a feature selection for this would oblige a project to restate what
 the target triple or its dependency graph has already established, and permit
 the two statements to disagree.
 
+**When a layer is supplied by the graph, the compiler no longer searches that
+layer's host locations.** `mcpp.toolchain.hostflags` reads each layer's origin
+and closes the corresponding driver search: a graph-supplied `c-abi` drops the
+compiler's own C-library search path (`-nostdlibinc`), and a graph-supplied
+`c++-abi` drops its C++ search path (`-nostdinc++`) — both independently of
+whether the *other* layer is also the graph's. Before this, a package that
+happened to compile only because a host header filled a gap the graph did not
+would build on one machine and fail, differently, on another; the two
+determined outcomes now are "found in the graph" and "not found", never "found
+on this machine's copy of the SDK". A package adapts to this by the layer
+predicate below, never by relying on what a host happens to have installed.
+
 The predicate keys are the five layer names, and their values are the interface
 names in the table at the top of this chapter — the same strings the `Target`
 report prints. They combine with the triple keys under `all`/`any`/`not`:

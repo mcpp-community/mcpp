@@ -447,9 +447,71 @@ does not.
 structure prevents the combination on the default path, and a diagnostic covers
 the paths where a project overrides the contract explicitly.
 
+## The Boundary
+
+Each of the five layers guarantees only itself, and the boundary between them
+is where a package's own adaptation belongs.
+
+**`kernel-abi = openkal` guarantees behaviour that crosses `kal_*` and nothing
+past it.** The specification's own interface is platform-independent; a
+missing capability is exposed at link time, and a missing property is
+answered through the props query. It says nothing about which C library sits
+above it, whether a platform SDK is reachable, or whether the rest of a
+package's own source is portable.
+
+**`c-abi = musl` is a separate layer with a separate guarantee.** A build over
+openkal's `kernel-abi` is not thereby a build over any particular C library —
+musl is one implementation of that layer, resolved by the same dependency
+graph as `kernel-abi`, and a header or CRT difference (`<io.h>`, `_WIN32`'s
+Windows-CRT assumptions, `TargetConditionals.h`) is the `c-abi` layer's
+question, never the `kernel-abi` layer's. A package that adapts to "openkal"
+when the actual disagreement is with musl has adapted to the wrong axis —
+openkal's own headers `#include` nothing and conflict with no platform SDK;
+musl's headers are what a host SDK's declarations collide with (#662).
+
+**Platform dependencies are legal, and they must come from the graph and stay
+private to the package that declares them.** A package bound to one platform
+— it needs that platform's headers or import libraries to implement a
+facility — depends on the platform SDK under `[feature-deps.<feature>]` with
+`visibility = "private"`, so the dependency reaches only its own translation
+units and never a consumer's. [06 — Features and Capabilities](06-features-and-capabilities.md#a-platform-sdk-dependency-stays-private)
+states the pattern and the manifest form. What is not legal is reaching for
+the HOST's copy instead of a graph one: that is exactly the header isolation
+gap #662 closed, and the isolation exists so a platform dependency's absence
+from the graph is a build failure, not a silent substitution.
+
+**One C runtime and one C++ runtime per image.** "Platform-bound" names the
+platform's OS API surface, not its C library. A platform-bound package may
+call Win32, WinSock or Cocoa — system libraries with a C interface — provided
+only handles and plain values cross the boundary. It may not link a static
+library compiled against ucrt, msvcrt, libSystem or glibc, and it may not let
+an object the CRT owns cross the boundary: a `FILE*`, a `malloc` freed on the
+other side, `errno`, locale state. A vendor SDK distributed only as a static
+library against a platform CRT is `n/a` on an openkal target by design, not
+by omission.
+
+**Adapt on the layer that actually differs.** musl running under Linux and
+musl running over openkal share headers and CRT shape, so a header or CRT
+difference is a `c-abi` question: `cfg(c-abi = "musl")`. The two do NOT share
+the same *facilities* — openkal has no epoll, no signal handlers, and `chmod`
+can only change the execute bit — so a facility difference is answered first
+by the package's OWN feature switch where one exists (an event-loop backend
+selection, say), and only falls back to a combined predicate,
+`cfg(all(kernel-abi = "openkal", c-abi = "musl"))`, when a descriptor needs to
+choose automatically. Neither form reaches the package's source: a `cfg`
+predicate is a dependency-resolution-time choice among descriptor entries, not
+a macro a translation unit can test.
+
+**Source code must not detect which implementation is present.** A `kal_*`
+call site does not ask whether it is running over `openkal-linux` or
+`openkal-macos`; a musl call site does not ask whether the platform beneath it
+is real Linux or openkal. The implementation is chosen once, by dependency
+resolution, and everything above that choice reads one interface.
+
 ## Reference
 
 [docs/22 — The Target Side](22-target-side.md) for the five layers, the four
-origins and the rules. [SPEC-002](specs/target-side.md) for the normative
-statement of the capability grammar.
+origins and the rules. [docs/06 — Features and Capabilities](06-features-and-capabilities.md)
+for `[feature-deps.<name>]` and private dependency visibility. [SPEC-002](specs/target-side.md)
+for the normative statement of the capability grammar.
 

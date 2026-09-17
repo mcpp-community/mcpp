@@ -79,6 +79,16 @@ case "$OS" in
            || [[ -x "${MCPP_HOME}/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++" ]]; then
             CAPS+=(mingw-cross)
         fi
+        # mingw-host-headers: this Linux HOST's own mingw-w64 headers
+        # (`apt install mingw-w64`, distro package). Distinct from both
+        # `mingw-cross` above (an xim-managed cross GCC) and `mingw` below (a
+        # Windows-hosted payload) — this is a plain probe for
+        # `/usr/x86_64-w64-mingw32/include`, the exact directory #662's
+        # isolation criterion has to prove clang no longer searches once a
+        # graph package supplies the target's C library. The criterion has NO
+        # discriminating power without it: a host that never had these headers
+        # would pass the same assertion before the fix and after it.
+        [[ -d /usr/x86_64-w64-mingw32/include ]] && CAPS+=(mingw-host-headers)
         # wine: run cross-built Windows PE artifacts on the Linux host.
         command -v wine &>/dev/null && CAPS+=(wine)
         # qemu-riscv: the emulator a bare-metal riscv artifact runs in
@@ -251,7 +261,7 @@ echo "Detected capabilities: ${CAPS[*]:-<none>}"
 # CAPS+=() calls above by tests/e2e/README or by reading them -- keep it in
 # sync when adding a capability.
 KNOWN_CAPS=(android-device android-ndk elf fresh-sandbox gcc import-std-libcxx jq llvm macos
-            mingw mingw-cross msvc musl nasm no-msvc pack patchelf python3
+            mingw mingw-cross mingw-host-headers msvc musl nasm no-msvc pack patchelf python3
             qemu-arm qemu-riscv scan-deps symlink unix-shell windows wine
             xlings-msvc)
 

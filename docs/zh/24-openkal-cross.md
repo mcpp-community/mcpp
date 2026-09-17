@@ -378,8 +378,57 @@ g++: error: unrecognized command-line option '-fuse-ld=…/ld.lld'
 它被构建时的配置。解析器的结构在默认路径上阻止该组合,
 而一条诊断覆盖工程显式覆写该契约的那些路径。
 
+## 边界
+
+五个层各自只保证自己那一层,层与层之间的边界正是包自身适配工作的所在。
+
+**`kernel-abi = openkal` 只保证经过 `kal_*` 的行为,不保证再远的事。** 规范本身的
+接口与平台无关;缺失的能力在链接期暴露,缺失的属性由 props 查询回答。它不说明
+上面架着哪个 C 库、平台 SDK 是否可达,也不说明包其余源码是否可移植。
+
+**`c-abi = musl` 是独立的一层,有独立的保证。** 建在 openkal 的 `kernel-abi` 之上
+不等于建在某个特定的 C 库之上 —— musl 只是这一层的一种实现,由与 `kernel-abi`
+相同的依赖图解析得到;头文件或 CRT 差异(`<io.h>`、`_WIN32` 所假定的 Windows
+CRT、`TargetConditionals.h`)永远是 `c-abi` 这一层的问题,从来不是 `kernel-abi`
+的问题。一个把实际分歧记到「openkal」头上、而分歧其实出在 musl 上的包,是适配错了
+轴 —— openkal 自己的头文件什么都不 `#include`,与任何平台 SDK 都不冲突;
+会和宿主 SDK 的声明冲突的是 musl 的头文件(#662)。
+
+**平台依赖是合法的,而且必须来自依赖图,并且只对声明它的包私有。** 一个绑定到
+某个平台的包 —— 它需要该平台的头文件或导入库才能实现某个功能 —— 在
+`[feature-deps.<feature>]` 下用 `visibility = "private"` 依赖该平台 SDK,
+使这个依赖只到达它自己的翻译单元,永远不会到达消费方。
+[06 —— Feature 与能力](06-features-and-capabilities.md#平台-sdk-依赖保持私有)
+陈述了这个模式与清单写法。不合法的是转而依赖**宿主**恰好装着的那一份 —— 这正是
+#662 关掉的头文件隔离缺口所要堵上的:平台依赖不在图中就应当是构建失败,
+而不是被静默地换了一份。
+
+**一个镜像只有一个 C 运行时和一个 C++ 运行时。** "platform-bound" 指的是平台的
+操作系统 API 表面,不是它的 C 库。一个 platform-bound 的包可以调用 Win32、
+WinSock 或 Cocoa —— 这些是带有 C 接口的系统库 —— 前提是跨越边界的只有句柄和
+普通值。它不能链接按 ucrt、msvcrt、libSystem 或 glibc 编译的静态库,也不能让
+CRT 拥有的对象跨越边界:`FILE*`、在一侧 `malloc` 在另一侧 `free`、`errno`、
+locale 状态。一个只以对着平台 CRT 编译的静态库形式分发的厂商 SDK,在 openkal
+目标上按设计就是 `n/a`,而不是遗漏。
+
+**在真正有差异的那一层上适配。** 跑在 Linux 上的 musl 和跑在 openkal 上的 musl
+共享头文件与 CRT 形状,所以头文件或 CRT 差异是 `c-abi` 的问题:
+`cfg(c-abi = "musl")`。但二者**不**共享同一套设施 —— openkal 上没有 epoll、
+没有信号处理器,`chmod` 只能改动可执行位 —— 所以设施差异首先由包**自己的**
+feature 开关回答(比如事件循环后端的选择),只有在描述文件需要自动选择时,
+才退回到组合谓词 `cfg(all(kernel-abi = "openkal", c-abi = "musl"))`。两种形式
+都不会进入包的源码:`cfg` 谓词是依赖解析时在描述文件条目之间做的选择,不是翻译
+单元能测试的宏。
+
+**源码不得识别具体是哪一个实现。** 一处 `kal_*` 调用点不会去问自己跑在
+`openkal-linux` 还是 `openkal-macos` 之上;一处 musl 调用点不会去问自己下面是
+真正的 Linux 还是 openkal。实现只在依赖解析时选择一次,这一选择之上的一切都只
+读一个接口。
+
 ## 参考
 
 [docs/22 — 目标侧](22-target-side.md) 给出五个层、四种来源与规则。
+[docs/06 — Feature 与能力](06-features-and-capabilities.md) 给出
+`[feature-deps.<name>]` 与依赖私有可见性。
 [SPEC-002](../specs/target-side.md) 给出能力语法的规范性陈述。
 

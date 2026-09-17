@@ -488,6 +488,41 @@ that let a C++ standard library offer a replaceable `operator new` do not apply
 to a package dependency. Keeping the implementation behind a switch means the
 two never coexist.
 
+### A platform SDK dependency stays private
+
+A package bound to one platform — it needs that platform's headers to
+implement a facility, not to state its own interface — depends on the SDK
+under `[feature-deps.<feature>]` with `visibility = "private"`:
+
+```toml
+[features]
+windows-crt = {}
+
+# Resolved only on the row that activates it, and its headers reach ONLY
+# this package's own translation units.
+[feature-deps.windows-crt]
+some.windows-headers = { version = "1.0", visibility = "private" }
+```
+
+`visibility` is a field of any dependency spec (`public` by default,
+`private`, or `interface` — see [05 — Dependencies](05-dependencies.md)).
+`private` is what keeps the SDK from crossing the package boundary: the
+dependency's include directories, defines and flags fold into this package's
+own build and stop there, exactly as `privateIncludeDirs` keeps a package's
+*own* internal headers from reaching its consumers. A consumer that depends on
+the platform-bound package and activates `windows-crt` gets the facility; it
+does not get `some.windows-headers`'s directory on its own `-I` list, and
+cannot `#include` its headers even by name.
+
+This is the pattern [24 — openkal and the Graph-Supplied Target](24-openkal-cross.md)
+points to for a package that needs platform headers beyond what its declared
+layers (`kernel-abi`, `c-abi`, `c++-abi`) supply: the dependency is legal, and
+it must not become every consumer's problem. Declaring it `public` (or leaving
+`visibility` unstated, which is the same thing) is the mistake this section
+exists to name — it works for the declaring package and then hands the SDK's
+headers, unasked, to a consumer that may be built for a target where that SDK
+does not belong at all.
+
 ## Current limitations
 
 **A default feature is turned off in the manifest, not on the command line.**
