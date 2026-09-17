@@ -128,12 +128,24 @@ def joined(argv_iter):
 
 # The ordinary consumer (main.cpp, package "cabi-probe") is target-side and
 # does NOT declare c-environment: it must carry the Cygwin-flavoured tokens.
+#
+# `__CYGWIN__`/`__CYGWIN32__` are NOT undefined (design revision from the
+# openkal-musl spike: third-party portable code that needs to know the
+# object format -- not the C environment, not the platform API -- has no
+# other name for "PE format, POSIX-presenting environment", and such code
+# cannot be patched the way this ecosystem's own packages can; a trade-off
+# for the 30-member measurement to settle, not a settled fact) -- so this
+# asserts `-U__CYGWIN__` is ABSENT from the command line, the opposite of an
+# earlier version of this test.
 consumer = joined(args_for("main.cpp"))
-missing = [tok for tok in ("--target=x86_64-pc-cygwin", "-U__CYGWIN__", "-U__CYGWIN32__",
-                            "-fno-short-wchar")
+missing = [tok for tok in ("--target=x86_64-pc-cygwin", "-fno-short-wchar")
            if tok not in consumer]
 if missing:
     print(f"FAIL: ordinary package is missing realised tokens {missing}\n  args: {consumer}")
+    sys.exit(1)
+present = [tok for tok in ("-U__CYGWIN__", "-U__CYGWIN32__") if tok in consumer]
+if present:
+    print(f"FAIL: __CYGWIN__/__CYGWIN32__ must stay defined, but found {present}\n  args: {consumer}")
     sys.exit(1)
 
 # fakemusl's OWN units get them too -- the environment applies to the C

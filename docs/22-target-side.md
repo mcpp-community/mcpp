@@ -351,7 +351,7 @@ flags, generic knowledge that names no C library:
 |---|---|---|
 | Linux | `posix` / `arch-default` | the default triple already satisfies it |
 | macOS | `posix` / `arch-default` | the default triple already satisfies it |
-| Windows | `posix` / `arch-default` | Cygwin-flavoured: `--target=x86_64-pc-cygwin` on the compile line only, `-U__CYGWIN__ -U__CYGWIN32__` (those interfaces are not in this graph); `data-model` becomes LP64 as a consequence of the triple, not a separate flag |
+| Windows | `posix` / `arch-default` | Cygwin-flavoured: `--target=x86_64-pc-cygwin` on the compile line only; `__CYGWIN__`/`__CYGWIN32__` are left defined (see the note below); `data-model` becomes LP64 as a consequence of the triple, not a separate flag |
 | any | `builtins = "iso"` | turns off code-generation idioms that assume a platform C library — `-fno-builtin-memset_pattern16` on Apple targets is the one this survey measured; see `src/toolchain/cenv.cppm` for what else was checked and found not to apply |
 | anything else | | refused, naming the target, the request and what is missing — never a silent downgrade |
 
@@ -361,6 +361,21 @@ Win64 calling convention, same SEH — and differ only in what the
 preprocessor sees and how wide `long` is. Realisation therefore touches only
 the **compile** line; the **link** line keeps the triple the graph resolved,
 because nothing about the object format changed.
+
+**`__CYGWIN__`/`__CYGWIN32__` are left defined — a revision from the
+openkal-musl spike, not the design's original claim.** Undefining them was
+tried first, on the reasoning that a real Cygwin userland is not in the
+graph. Portable third-party code that needs to know the **object format** —
+not the C environment, not the platform API — has no name for "PE format
+with a POSIX-presenting C environment" other than `__CYGWIN__`, and such code
+cannot be patched the way this ecosystem's own packages can. `presents =
+"posix"` answers one question, which environment-identity macros source
+sees; it does not get to answer a different one, what object format this is,
+by deleting the only macro that names it. This is a **trade-off for the
+30-member measurement to settle, not a settled fact**: a library reaching for
+`__CYGWIN__` may also reach for a real Cygwin interface (`sys/cygwin.h`,
+`cygwin_conv_path`) that does not exist here, and if defining it produces
+more new failures than it fixes, the answer flips.
 
 **A package's own units can opt out.** A package that provides
 `mcpp:kernel-abi=openkal` (openkal-windows, say) has to see the platform's

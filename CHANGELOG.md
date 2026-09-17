@@ -22,11 +22,18 @@
   (`modules/manifest/src/{targetside_model,toml,types}.cppm`,单测 `test_manifest.cpp`)
 - **实现(realisation)**:新模块 `mcpp.toolchain.cenv` 保存「请求 → 三元组与开关」的映射
   ——通用知识,不含包名。Windows 上 `presents = "posix", data-model = "arch-default"`
-  采用 Cygwin 式语义,仅在编译行把 `--target=` 换成 `x86_64-pc-cygwin` 并去掉
-  `__CYGWIN__`/`__CYGWIN32__`;链接行保持图解析出的三元组不变,因为两个三元组生成的机器码
-  实测完全一致(PE、Win64 调用约定、SEH)。无法满足的请求明确拒绝,点名目标、请求与缺什么。
-  `[package] c-environment = "platform"` 让一个包(如 openkal-windows)的自身单元退出这项
-  实现,继续按三元组自身的默认环境编译。(`src/toolchain/cenv.cppm`,单测 `test_cenv.cpp`)
+  采用 Cygwin 式语义,仅在编译行把 `--target=` 换成 `x86_64-pc-cygwin`;链接行保持图解析出
+  的三元组不变,因为两个三元组生成的机器码实测完全一致(PE、Win64 调用约定、SEH)。
+  无法满足的请求明确拒绝,点名目标、请求与缺什么。`[package] c-environment = "platform"`
+  让一个包(如 openkal-windows)的自身单元退出这项实现,继续按三元组自身的默认环境编译。
+  (`src/toolchain/cenv.cppm`,单测 `test_cenv.cpp`)
+- **`__CYGWIN__`/`__CYGWIN32__` 保持定义,经 openkal-musl 尖峰实验修订。** 最初的实现
+  取消定义它们(理由是图里没有真正的 Cygwin 用户态)。第三方可移植代码里需要知道**目标文件
+  格式**——不是 C 环境,也不是平台 API——的那部分,没有别的名字能指代「PE 格式 + 呈现
+  POSIX 的 C 环境」这一组合,只有 `__CYGWIN__`;这样的代码不像本生态自己的包那样可以打
+  补丁。这是一项留给 30 个成员那轮实测去判定的权衡,不是已经定论的事实:一个库伸手去够
+  `__CYGWIN__`,也可能伸手去够一个这里并不存在的真正 Cygwin 接口——如果定义它带来的新
+  失败比修好的还多,结论就会翻过来。(`src/toolchain/cenv.cppm`)
 - **声明被校验,不被信任**:新模块 `mcpp.toolchain.cenv_probe` 用最终参数编译一次纯预处理
   探针(`-E -dM`,不执行、不需要目标可在本机运行),核对 `__SIZEOF_LONG__`、
   `__SIZEOF_WCHAR_T__` 与环境身份宏是否与声明相符,不符即失败并同时打印声明值与实测值;

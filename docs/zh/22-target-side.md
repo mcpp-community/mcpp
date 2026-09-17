@@ -292,13 +292,23 @@ builtins   = "iso"           # iso | platform(默认 platform)
 |---|---|---|
 | Linux | `posix` / `arch-default` | 默认三元组已经满足 |
 | macOS | `posix` / `arch-default` | 默认三元组已经满足 |
-| Windows | `posix` / `arch-default` | 采用 Cygwin 式语义:仅在编译行加 `--target=x86_64-pc-cygwin`,加 `-U__CYGWIN__ -U__CYGWIN32__`(这些接口不在本图里);`data-model` 变为 LP64 是三元组切换的结果,不是另一个开关 |
+| Windows | `posix` / `arch-default` | 采用 Cygwin 式语义:仅在编译行加 `--target=x86_64-pc-cygwin`;`__CYGWIN__`/`__CYGWIN32__` 保持定义(见下方说明);`data-model` 变为 LP64 是三元组切换的结果,不是另一个开关 |
 | 任意目标 | `builtins = "iso"` | 关闭代码生成阶段假定平台 C 库在场的惯用法识别——本轮实测到的唯一一例是 Apple 目标上的 `-fno-builtin-memset_pattern16`;`src/toolchain/cenv.cppm` 记录了还核实过哪些、结论是不适用 |
 | 其余情况 | | 明确拒绝,点名目标、请求与缺什么——不静默降级 |
 
 Windows 一行是旗舰情形:`x86_64-w64-windows-gnu` 与 `x86_64-pc-cygwin` 生成的机器码完全一致——
 同样的 PE 格式、同样的 Win64 调用约定、同样的 SEH——差别只在预处理器看到什么、`long` 有多宽。
 因此实现只触及**编译**行;**链接**行保持图解析出的三元组,因为目标文件格式没有变化。
+
+**`__CYGWIN__`/`__CYGWIN32__` 保持定义——这是 openkal-musl 尖峰实验带来的修订,不是设计
+最初的陈述。** 最初试过取消定义它们,理由是图里没有真正的 Cygwin 用户态。第三方可移植
+代码里,需要知道**目标文件格式**——不是 C 环境,也不是平台 API——的那部分,没有别的名字
+能指代「PE 格式加呈现 POSIX 的 C 环境」这个组合,只有 `__CYGWIN__`;这样的代码不像本生态
+自己的包那样可以打补丁。`presents = "posix"` 回答的是一个问题——源码看到哪些环境身份宏;
+它不能顺带删掉唯一能回答另一个问题——这是什么目标文件格式——的宏。这是一项**留给 30 个
+成员那轮实测去判定的权衡,不是已经定论的事实**:一个库伸手去够 `__CYGWIN__`,也可能伸手
+去够一个这里并不存在的真正 Cygwin 接口(`sys/cygwin.h`、`cygwin_conv_path`)——如果定义它
+带来的新失败比修好的还多,结论就会翻过来。
 
 **包可以让自己的单元退出。** 提供 `mcpp:kernel-abi=openkal` 的包(比如 openkal-windows)必须
 看到平台自身的环境——它要 include 平台声明,`_WIN32` 对它必须为真。这样的包,或者一个平台

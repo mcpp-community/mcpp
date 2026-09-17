@@ -53,20 +53,30 @@ TEST(CEnv, MacosPosixArchDefaultIsANoOp) {
 }
 
 // The flagship case: Cygwin-flavoured Windows.
+//
+// `__CYGWIN__`/`__CYGWIN32__` STAY DEFINED — a design revision from the
+// openkal-musl spike, not the original §3.3 text. Third-party portable code
+// that needs to know the OBJECT FORMAT (as opposed to the C environment or
+// the platform API) has no name for "PE format, POSIX-presenting
+// environment" other than `__CYGWIN__`, and such code cannot be patched the
+// way this ecosystem's own packages can. This is a trade-off for the
+// 30-member measurement to settle, not a settled fact: the cost is that a
+// library reaching for `__CYGWIN__` may also reach for a real Cygwin
+// interface that does not exist here.
 TEST(CEnv, WindowsPosixArchDefaultSubstitutesTheCygwinTriple) {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32);
     auto r = cenv::realise(d, "windows", "x86_64", false);
     ASSERT_TRUE(r.has_value()) << r.error();
     EXPECT_TRUE(has(r->tokens, "--target=x86_64-pc-cygwin"));
-    EXPECT_TRUE(has(r->tokens, "-U__CYGWIN__"));
-    EXPECT_TRUE(has(r->tokens, "-U__CYGWIN32__"));
+    EXPECT_FALSE(has(r->tokens, "-U__CYGWIN__"));
+    EXPECT_FALSE(has(r->tokens, "-U__CYGWIN32__"));
     // wchar 32 differs from Cygwin's own default (16) — the flag is added.
     EXPECT_TRUE(has(r->tokens, "-fno-short-wchar"));
     EXPECT_EQ(r->expectLongBytes, 8);
     EXPECT_EQ(r->expectWcharBits, 32);
     ASSERT_TRUE(has(r->expectDefined, "__unix__"));
+    ASSERT_TRUE(has(r->expectDefined, "__CYGWIN__"));
     ASSERT_TRUE(has(r->expectUndefined, "_WIN32"));
-    ASSERT_TRUE(has(r->expectUndefined, "__CYGWIN__"));
 }
 
 // wchar = 16 on the Cygwin substitution matches Cygwin's own default, so no

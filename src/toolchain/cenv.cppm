@@ -19,8 +19,9 @@
 //   Linux     posix / arch-default       the default triple already satisfies it
 //   macOS     posix / arch-default       the default triple already satisfies it
 //   Windows   posix / arch-default       Cygwin-flavoured: `--target=x86_64-pc-cygwin`,
-//                                        `-U__CYGWIN__ -U__CYGWIN32__` (those interfaces
-//                                        are not in the graph)
+//                                        `__CYGWIN__`/`__CYGWIN32__` STAY DEFINED (see
+//                                        the note below the table — this is a design
+//                                        revision, not the original §3.3 text)
 //   *         builtins = iso             turn off the platform-C-library idioms the
 //                                        code generator assumes (§3.2.1) — Apple's
 //                                        `memset_pattern16` is the one measured case
@@ -43,6 +44,25 @@
 // same Win64 argument placement — so an object compiled under the Cygwin
 // identity links exactly like one compiled under the MinGW one. Only the
 // preprocessor saw a different environment; the linker never has to know.
+//
+// `__CYGWIN__`/`__CYGWIN32__` ARE NOT REMOVED, AND THE FIRST VERSION OF THIS
+// MODULE GOT THAT WRONG. §3.3's original text called for `-U__CYGWIN__
+// -U__CYGWIN32__` on the reasoning that a real Cygwin userland is not in the
+// graph. A first reading of the openkal-musl spike's libunwind build failure
+// blamed a missing `__CYGWIN__` branch in libunwind itself; reading the
+// vendored source shows that is wrong — upstream libunwind has no such
+// branch, so defining it there would have changed nothing (the actual break
+// was a downstream package selecting on `_WIN32` and is being fixed there).
+// The reason to keep them defined is narrower and still real: third-party
+// portable code that has to know the OBJECT FORMAT — as opposed to which C
+// environment or which platform API — has no name for "PE format with a
+// POSIX-presenting C environment" other than `__CYGWIN__`, and such code
+// cannot be patched the way this ecosystem's own packages can. The cost is
+// symmetric: a library that reaches for `__CYGWIN__` may also reach for a
+// real Cygwin interface (`sys/cygwin.h`, `cygwin_conv_path`) that does not
+// exist here. This is a TRADE-OFF for the 30-member measurement to settle —
+// if defining it produces more new failures than it fixes, the answer flips
+// — not a fact this module is asserting as closed.
 export module mcpp.toolchain.cenv;
 
 import std;
@@ -203,18 +223,16 @@ inline std::expected<Realisation, std::string> realise(
                               "on x86_64 only; this arch has no verified "
                               "substitute triple");
             // `--target=x86_64-pc-cygwin`, on the COMPILE line only (module
-            // header above). `-U__CYGWIN__`/`-U__CYGWIN32__`: the Cygwin
-            // triple predefines them, and they are not withheld by the
-            // identity switch itself — they name a real Cygwin userland
-            // (`sys/cygwin.h`, `cygwin_conv_path`) that is not in this
-            // graph, so a library probing for them would be steered toward
-            // an interface openkal-musl does not implement (design §3.3).
+            // header above). `__CYGWIN__`/`__CYGWIN32__` are LEFT AS THE
+            // TRIPLE SUBSTITUTION DEFINES THEM — not undefined (see the
+            // module header's note: portable third-party code that needs to
+            // know the object format has no other name for "PE format,
+            // POSIX-presenting environment", and this is a trade-off for the
+            // 30-member measurement, not a settled fact).
             r.tokens.push_back("--target=x86_64-pc-cygwin");
-            r.tokens.push_back("-U__CYGWIN__");
-            r.tokens.push_back("-U__CYGWIN32__");
             r.expectDefined.push_back("__unix__");
+            r.expectDefined.push_back("__CYGWIN__");
             r.expectUndefined.push_back("_WIN32");
-            r.expectUndefined.push_back("__CYGWIN__");
             cygwinIdentity = true;
         } else if (decl.presents == CAbiPresents::Windows) {
             // Already the base triple's own identity — nothing to add.
