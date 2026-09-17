@@ -20,9 +20,15 @@
   条件改为只看这一层自己的来源,不再看 `c-abi` 是否也来自图。两个 token 出现在 `cflags`/
   `cxxflags`/`asmflags` 这组全局 flags 里,C、C++、汇编、依赖扫描、std 模块预编译同时受益。
   (`src/toolchain/hostflags.cppm`,单测 `test_hostflags.cpp`)
-- **GCC 家族没有等价的单一 flag。** 穷举现有目标行后没有「图供给 C 库 + GCC」的组合,模型
-  给出 `can_isolate_graph_c_library`(只对 Clang 家族为真),`prepare.cppm` 在这一组合出现时
-  据此拒绝并给出原因,而不是静默地不隔离。(`modules/toolchain-model/src/model.cppm`)
+- **GCC 家族没有等价的单一 flag,保持原样不隔离。** `-nostdinc` 加 `-isystem <gcc
+  -print-file-name=include>`、`<…/include-fixed>` 才能拼出等价物,且 GCC 本就没有
+  `<driver>.cfg` 可供 `bypassCfg` 打开这整块——`hostflags.cppm` 因此对 GCC 不做任何改动。
+  最初的草案在 `prepare.cppm` 里加了一条「图供给 C 库 + GCC」的硬拒绝,想着比静默不隔离更
+  诚实;实测(268、282、303 三个既有 e2e)显示这个组合是这几个文件的常规夹具——它们用一个
+  只声明 `provides = ["mcpp:c-abi=..."]`、不含真实头文件的假包在**原生**目标上验证与隔离
+  完全无关的其它事实,且都依赖 268 自己注释所陈述的设计:目标侧的解析报告先于编译打印,
+  失败与否不影响这条报告——而这条硬拒绝恰好抢在报告打印之前退出,三个文件全部转红。撤回
+  该拒绝;GCC 在这一组合上的行为与 #662 之前逐字节相同。
 - **隔离后原本靠宿主补齐的包会确定地失败,失败信息现在可读。** 构建失败、目标侧 `c-abi`
   来自图、且编译器输出含 `file not found` 时,追加一条说明,点名 C 库(名字与
   `包名@版本`)并给出两条路:按 `cfg(c-abi = "...")` 适配,或把平台依赖以私有可见性带进

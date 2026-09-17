@@ -859,14 +859,15 @@ TEST(HostFlags, PayloadServedCommandLineIsUnchanged) {
 
 // GCC's fixture carries no `<driver>.cfg` (resolve_clang_driver only looks
 // for one beside a Clang binary), so `bypassCfg` is false and neither
-// isolation branch runs — GCC's own equivalent is not implemented (see
-// `mcpp::toolchain::can_isolate_graph_c_library`), and a target row that
-// needs it is refused before reaching here (prepare.cppm), not silently
-// left unisolated.
-TEST(HostFlags, GccEmitsNeitherIsolationTokenAndCannotIsolate) {
+// isolation branch runs. `-nostdlibinc` is Clang's own flag; GCC has no
+// single-token equivalent (the shape would be `-nostdinc` plus `-isystem
+// <gcc -print-file-name=include>` and `<…/include-fixed>`, re-adding
+// exactly the two directories GCC's own C-library search already
+// contributes beside the sysroot) — so GCC stays exactly as it was before
+// #662: unisolated. No target row in this codebase's own target table pairs
+// a graph-supplied C library with GCC today, so nothing currently needs it.
+TEST(HostFlags, GccEmitsNeitherIsolationTokenRegardlessOfGraphOrigin) {
     auto tc = tc_for(CompilerId::GCC);
-    EXPECT_FALSE(mcpp::toolchain::can_isolate_graph_c_library(tc));
-    EXPECT_TRUE(mcpp::toolchain::can_isolate_graph_c_library(tc_for(CompilerId::Clang)));
 
     HostFlagOptions opt;
     opt.cfgBypass    = HostFlagOptions::CfgBypass::Always;

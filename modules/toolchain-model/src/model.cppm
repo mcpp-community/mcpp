@@ -293,27 +293,6 @@ bool is_musl_target(const Toolchain& tc);
 bool is_msvc_target(const Toolchain& tc);
 bool is_mingw_target(const Toolchain& tc);
 
-// CAN THIS COMPILER FAMILY STOP ITS OWN DRIVER SEARCHING THE HOST'S C
-// LIBRARY WHEN A PACKAGE SUPPLIES THE TARGET'S INSTEAD? (mcpp#662)
-//
-// Clang answers yes, with `-nostdlibinc` (mcpp.toolchain.hostflags). GCC has
-// no single equivalent flag — the shape would be `-nostdinc` plus `-isystem
-// <gcc -print-file-name=include>` and `<…/include-fixed>`, re-adding exactly
-// the two directories GCC's own C-library search contributes beside the
-// sysroot.
-//
-// NOT IMPLEMENTED, BECAUSE NO TARGET ROW NEEDS IT YET. Enumerated at #662:
-// every existing combination where a package supplies the target's C
-// library resolves a Clang-family compiler — the one openkal package that
-// requires nothing of the compiler layer (openkal-musl) is still only ever
-// built under the toolchain its `provides` siblings (openkal-llvm-runtime,
-// which DOES `require mcpp:compiler=llvm`) pull in. `prepare.cppm` refuses a
-// row that pairs GCC with a graph-supplied C library, reading this
-// predicate, rather than silently leaving it unisolated — the defect this
-// module exists to fix was exactly a silent gap between what the link side
-// assumed and what the compile side did.
-bool can_isolate_graph_c_library(const Toolchain& tc);
-
 // THE FLAGS A WHOLE GRAPH HAS TO AGREE ON WHEN THE RUNTIME COMES FROM IT.
 //
 // An ordinary flag is a package's business. These two are not: they change what
@@ -495,10 +474,6 @@ bool is_gcc(const Toolchain& tc) {
 
 bool is_clang(const Toolchain& tc) {
     return tc.compiler == CompilerId::Clang;
-}
-
-bool can_isolate_graph_c_library(const Toolchain& tc) {
-    return is_clang(tc);
 }
 
 // Target-shape predicates read the parsed canonical Triple (triple.cppm is

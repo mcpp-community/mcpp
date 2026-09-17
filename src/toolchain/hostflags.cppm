@@ -449,11 +449,16 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // with musl's (`typedef redefinition`, `conflicting types for 'chmod'`).
     // With it, the list ends at the compiler's own resource directory.
     //
-    // GCC has no equivalent single flag — see
-    // `mcpp::toolchain::can_isolate_graph_c_library`. The combination is
-    // refused at resolution (prepare.cppm) rather than reaching here with
-    // nothing to emit; `dm.hasCfg` is false for GCC in any case, so
-    // `bypassCfg` already withholds this block from that family today.
+    // GCC has no equivalent single flag — the shape would be `-nostdinc`
+    // plus `-isystem <gcc -print-file-name=include>` and `<…/include-fixed>`,
+    // re-adding exactly the two directories GCC's own C-library search
+    // already contributes beside the sysroot. Not implemented: `dm.hasCfg`
+    // is false for GCC (resolve_clang_driver only looks for a `<driver>.cfg`
+    // beside a Clang binary), so `bypassCfg` already withholds this whole
+    // block from that family — GCC stays exactly as it was before #662,
+    // unisolated, on every target row this codebase's own table pairs it
+    // with today (test_hostflags.cpp,
+    // GccEmitsNeitherIsolationTokenRegardlessOfGraphOrigin).
     if (bypassCfg && graphSuppliesTarget) out.push_back("-nostdlibinc");
 
     // THE CONDITION USED TO BE `!graphSuppliesTarget && !cxxFromPayload`,
