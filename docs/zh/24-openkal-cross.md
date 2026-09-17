@@ -33,7 +33,7 @@ C++ 运行时 —— 成为一组由依赖图解析、并由当前运行的编�
 回答了其中两个——这正是每一次 openkal-Windows 失败的根因,其诊断都指向一份缺失的平台
 头文件:代码本想问「这是不是 openkal」,却用了一个实际意味着「Windows CRT 是否在场」的宏。
 
-| 宏族 | 陈述 | 由谁定义 | 例子 |
+| 宏族 | 陈述 | 定义者 | 例子 |
 |---|---|---|---|
 | 内核 ABI | `kal_*` 可调用,且在每个平台上行为一致 | 提供 `mcpp:kernel-abi=openkal` 的层 | `__openkal__` |
 | C 环境 | 源码看到的 C 环境形状 | 提供 `mcpp:c-abi=<impl>` 的层,通过 [`[c-abi]`](22-target-side.md#c-abi-包陈述它呈现的-c-环境mcpp-2026918) | `__unix__`、`_WIN32`、`__MINGW32__` |
@@ -49,7 +49,7 @@ C++ 运行时 —— 成为一组由依赖图解析、并由当前运行的编�
 *禁止:* 用它选择头文件、推断 `_WIN32` 是否为真、绕开缺失的 SDK,或者区分
 `linux`/`windows`/`macos`。那些是 C 环境层或平台层的问题——在清单里写
 `cfg(c-abi = "…")` 或 `cfg(kernel-abi = "…")`(谓词语法见
-[22 —— 适配已解析出的目标侧](22-target-side.md#adaptation-to-the-resolved-target-side))。
+[22 —— 对已解析目标侧的适配](22-target-side.md#对已解析目标侧的适配))。
 
 **平台单元。** 自己需要平台原生环境的包——openkal-windows,或者
 [06 的私有依赖模式](06-features-and-capabilities.md#平台-sdk-依赖保持私有)下的平台 shim——

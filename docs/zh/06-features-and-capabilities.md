@@ -450,7 +450,7 @@ some.windows-headers = { version = "1.0", visibility = "private" }
 #### 让闭包也能看见它,而不只是私有(mcpp 2026.9.18+)
 
 `visibility = "private"` 回答的是「这个依赖会不会泄漏到消费方的 `-I` 列表」,不回答
-「这个依赖到底在不在图里」——后者是[22 —— 目标侧](22-target-side.md#closure-visibility)
+「这个依赖到底在不在图里」——后者是[22 —— 目标侧](22-target-side.md#闭包可见性)
 要为**整个构建**回答的问题。由 SDK 包自己陈述报告或拒绝开关需要的事实:
 
 ```toml
