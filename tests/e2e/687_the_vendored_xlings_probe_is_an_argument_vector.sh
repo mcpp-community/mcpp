@@ -18,7 +18,13 @@
 #      any dated xlings. Not `subos/default/bin/ninja`: that is an xlings shim, one
 #      multicall binary that answers as xlings once it is named `xlings`, and for
 #      the same reason the real xlings is kept under its own name.
-# A and B discriminate on Windows; elsewhere they are the control legs.
+#   C. Without MCPP_VENDORED_XLINGS, an mcpp running from its release layout
+#      (`<prefix>/bin/mcpp` beside `<prefix>/registry/bin/xlings`) replaces an
+#      older vendored binary with the released one (mcpp#660). Before, the only
+#      sources were the override variable and the PATH, so a home outside the
+#      release directory kept whatever older xlings the PATH offered.
+# A and B discriminate on Windows; elsewhere they are the control legs. C
+# discriminates everywhere.
 set -e
 
 TMP=$(mktemp -d)
@@ -76,3 +82,25 @@ grep -q "vendored xlings $older -> " third.err \
 "$VENDORED" --version 2>/dev/null | grep -q '^xlings ' \
     || fail "B: after the replacement the vendored binary is not xlings" third.err
 echo "ok: B, a vendored binary older than the pin was replaced"
+
+# ── C ──────────────────────────────────────────────────────────────────────
+rm -f "$VENDORED"
+cp "$NINJA" "$VENDORED"
+chmod +x "$VENDORED" 2>/dev/null || true
+mkdir -p "$TMP/release/bin" "$TMP/release/registry/bin"
+cp "$MCPP" "$TMP/release/bin/mcpp$EXE"
+cp "$TMP/real/xlings$EXE" "$TMP/release/registry/bin/xlings$EXE"
+chmod +x "$TMP/release/bin/mcpp$EXE" "$TMP/release/registry/bin/xlings$EXE" 2>/dev/null || true
+
+# The PATH is reduced to the system directories, so an xlings on the PATH
+# cannot be the source that makes C pass.
+C_PATH="/usr/bin:/bin"
+if PATH="$C_PATH" command -v xlings > /dev/null 2>&1; then
+    fail "C: an xlings is reachable on $C_PATH, so the criterion cannot tell its sources apart"
+fi
+env -u MCPP_VENDORED_XLINGS PATH="$C_PATH" "$TMP/release/bin/mcpp$EXE" self env > fourth.out 2> fourth.err || true
+grep -q "vendored xlings $older -> " fourth.err \
+    || fail "C: the released xlings did not replace a vendored xlings answering $older" fourth.out fourth.err
+"$VENDORED" --version 2>/dev/null | grep -q '^xlings ' \
+    || fail "C: after the replacement the vendored binary is not xlings" fourth.err
+echo "ok: C, the xlings released with this mcpp replaced an older vendored one"

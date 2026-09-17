@@ -5,6 +5,32 @@
 
 ## [Unreleased]
 
+### 声明的 C 运行时由 mcpp 安装,查找只做精确匹配:#660(2026.9.17.2)
+
+xim-pkgindex#852 发布 glibc 2.44.3 之后,CI 缓存只恢复 `registry/data/xpkgs` 的环境报
+`toolchain post-install fixup: selected RuntimeBinding glibc@... requires payload ...`。根因在 mcpp:
+默认 SubOS 按精确版本声明 glibc,工具链 fixup 按该版本的 payload 目录打补丁,但没有任何步骤安装
+这个 payload。`lifecycle` 与首次运行中本应安装它的两个循环传入不带版本的 `xim:glibc`,
+`resolve_xpkg_path` 拒绝了这种目标,而错误只写入 debug 日志。payload 因此只在 xlings 把它作为
+工具链依赖安装时才存在;从缓存恢复的工具链不会重新安装,于是缓存中若是另一个修订版,声明的
+payload 就不存在。按版本线接受 `2.44.x` 的目录扫描掩盖了这一点,直到同时出现两个修订版。
+分析与方案:`.agents/docs/2026-09-17-issue-660-glibc-line-binding-analysis.md`、
+`.agents/docs/2026-09-17-runtime-binding-multi-repo-plan.md`。
+
+- **声明的运行时在第一次需要它的 fixup 之前安装。** `ensure_declared_runtime` 通过 xlings 安装
+  `xim:glibc@<声明版本>` 并重新解析 binding。它只在 binding 找不到 payload、宿主为 Linux、提供者为
+  `glibc`、且工具链是 `gcc` 或 `llvm` payload 时执行;常态下不启动任何进程,使用系统、musl 或 PE
+  工具链的构建不下载任何东西。(单测 `DeclaredRuntime.*`,e2e 737)
+- **查找只做精确匹配。** `glibc@<v>` 只对应 `xim-x-glibc/<v>`;删除 `payload_dir_for_version` 的
+  版本线细化,相邻修订版不再作为替代。缺失时报错写出需要提供的坐标 `xim:glibc@<v>`,
+  与「目录存在但没有 loader」的报错区分。(单测 `GlibcPayload.*`)
+- **随 mcpp 发布的 xlings 是获取来源。** 以 xlings 包形式安装的 mcpp 使用 `~/.mcpp`,
+  此前只从 `MCPP_VENDORED_XLINGS` 与 PATH 获取 xlings,PATH 上的 xlings 低于 pin 时保留旧版本
+  并打印一条 Note。现在 `<prefix>/registry/bin/xlings` 排在 PATH 之前。(e2e 687 C)
+- 删除 `needs_linux_sysroot_payloads`:它的两个调用点就是上述从未生效的循环。
+- **升级影响。** 声明的 payload 已安装的 home 没有变化。缺少该 payload 的 home 在下一次需要它
+  的构建中下载一次(约 40 MB);离线时报错并给出坐标。
+
 ### 编译 flag 列表元素的一种读法,以及与构建一致的编译数据库:#655(2026.9.17.1)
 
 `mcpp emit build-database` 与 `compile_commands.json` 的 `arguments` 此前把 flag 文本经一种

@@ -2,8 +2,9 @@
 //
 // Tries multiple strategies to obtain the xlings binary:
 //   1. MCPP_VENDORED_XLINGS env var (explicit override)
-//   2. system `which xlings`
-//   3. Fail with user-facing instructions
+//   2. the xlings released with this mcpp, `<prefix>/registry/bin/xlings`
+//   3. system `which xlings`
+//   4. Fail with user-facing instructions
 
 module;
 #include <cstdio>
@@ -22,10 +23,23 @@ export namespace mcpp::fallback {
 // The version already vendored at destBin, or empty when it cannot be read.
 std::string vendored_xlings_version(const std::filesystem::path& bin);
 
+// The xlings that was released together with the running mcpp, when this mcpp
+// runs from its release layout `<prefix>/bin/mcpp` and the file exists. Empty
+// otherwise, and empty when it is `destBin` itself (a self-contained home is
+// that layout, so its vendored binary is already the released one).
+//
+// WHY IT IS A SOURCE (mcpp#660). A release pins an xlings version and ships
+// that binary beside the mcpp executable. A home that is not the release
+// directory (an mcpp installed as an xlings package uses `~/.mcpp`) consulted
+// only the override variable and the PATH, so on a machine whose system
+// xlings was older than the pin it kept the older one and printed a note. The
+// released binary is the one that satisfies the pin by construction.
+std::filesystem::path released_xlings_source(const std::filesystem::path& destBin);
+
 // The version the acquisition chain WOULD install, without installing it.
 // Empty when nothing is available. Replacing a vendored binary is only an
 // improvement when this is newer than what is already there.
-std::string candidate_source_version();
+std::string candidate_source_version(const std::filesystem::path& destBin = {});
 
 // True when `have` is strictly older than `want`, comparing dot-separated
 // numeric components. Anything unparseable answers false -- a version this
@@ -67,7 +81,7 @@ acquire_xlings_binary(const std::filesystem::path& destBin, bool quiet = false,
         // re-acquired, which replaced 2026.8.2.1 with the system's 0.4.51 --
         // older still, and equally missing the feature the check exists to
         // restore. Look before leaping.
-        auto candidate = candidate_source_version();
+        auto candidate = candidate_source_version(destBin);
         if (candidate.empty() || !version_is_older(have, candidate)) {
             // stderr, not stdout. This is a remark about the environment,
             // not output of the command that happens to be running -- and
@@ -122,7 +136,25 @@ acquire_xlings_binary(const std::filesystem::path& destBin, bool quiet = false,
         }
     }
 
-    // 2. Copy from system (`which xlings`)
+    // 2. The xlings released with this mcpp. Ahead of the system copy, which
+    // may be any version (see released_xlings_source).
+    if (auto released = released_xlings_source(destBin); !released.empty()) {
+        std::filesystem::copy_file(released, destBin,
+            std::filesystem::copy_options::overwrite_existing, ec);
+        if (!ec) {
+            std::filesystem::permissions(destBin,
+                std::filesystem::perms::owner_exec
+              | std::filesystem::perms::group_exec
+              | std::filesystem::perms::others_exec,
+              std::filesystem::perm_options::add, ec);
+            if (!quiet) print_status("Bundled",
+                std::format("xlings (released with this mcpp: {})", released.string()));
+            return destBin;
+        }
+        ec.clear();
+    }
+
+    // 3. Copy from system (`which xlings`)
     auto xlings_name = std::string("xlings") + std::string(mcpp::platform::exe_suffix);
     auto sysXlings = mcpp::platform::fs::which(xlings_name);
     if (sysXlings) {
@@ -215,12 +247,26 @@ bool version_is_older(std::string_view have, std::string_view want) {
 }
 
 
-std::string candidate_source_version() {
+std::filesystem::path released_xlings_source(const std::filesystem::path& destBin) {
+    auto exe = mcpp::platform::fs::self_exe_path();
+    if (exe.empty() || exe.parent_path().filename() != "bin") return {};
+    auto released = exe.parent_path().parent_path() / "registry" / "bin"
+        / (std::string("xlings") + std::string(mcpp::platform::exe_suffix));
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(released, ec)) return {};
+    if (!destBin.empty() && std::filesystem::equivalent(released, destBin, ec))
+        return {};
+    return released;
+}
+
+std::string candidate_source_version(const std::filesystem::path& destBin) {
     if (const char* e = std::getenv("MCPP_VENDORED_XLINGS"); e && *e) {
         std::error_code ec;
         if (std::filesystem::exists(std::filesystem::path(e), ec))
             return vendored_xlings_version(std::filesystem::path(e));
     }
+    if (auto released = released_xlings_source(destBin); !released.empty())
+        return vendored_xlings_version(released);
     if (auto sys = mcpp::platform::fs::which(
             std::string("xlings") + std::string(mcpp::platform::exe_suffix)))
         return vendored_xlings_version(*sys);

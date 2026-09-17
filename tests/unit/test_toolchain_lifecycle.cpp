@@ -1,7 +1,12 @@
 #include <gtest/gtest.h>
 
 import std;
+import mcpp.config;
+import mcpp.platform;
+import mcpp.runtime.binding;
 import mcpp.toolchain.lifecycle;
+import mcpp.toolchain.post_install;
+import mcpp.toolchain.registry;
 
 using namespace mcpp::toolchain;
 
@@ -136,4 +141,75 @@ TEST(ToolchainRemove, TheSweepAlsoClearsAFileLessSkeleton) {
 
     std::error_code ec;
     std::filesystem::remove_all(pkgRoot, ec);
+}
+
+// ─── The declared C runtime payload (mcpp#660) ─────────────────────────────
+//
+// `ensure_declared_runtime` installs the payload a SubOS declares. The install
+// itself needs xlings and the network and is covered end to end (e2e 700);
+// what is pinned here is when it must NOT act, because each of these cases
+// runs on every build and must start no process and change nothing.
+
+namespace {
+
+mcpp::config::GlobalConfig unreachable_cfg() {
+    // A registry that does not exist. None of the cases below may consult it.
+    mcpp::config::GlobalConfig cfg;
+    cfg.registryDir = std::filesystem::temp_directory_path()
+        / "mcpp-declared-runtime-unreachable-registry";
+    return cfg;
+}
+
+} // namespace
+
+TEST(DeclaredRuntime, ABindingThatLocatesItsPayloadIsLeftAlone) {
+    auto cfg = unreachable_cfg();
+    mcpp::platform::runtime::RuntimeBinding binding;
+    binding.runtimeId = "glibc@2.44.3";
+    binding.libraryDirs = {"/store/xim-x-glibc/2.44.3/lib64"};
+    const auto before = binding.libraryDirs;
+    EXPECT_FALSE(ensure_declared_runtime(cfg, binding));
+    EXPECT_EQ(binding.libraryDirs, before);
+    EXPECT_EQ(binding.runtimeId, "glibc@2.44.3");
+}
+
+// A provider that binds no payload (`ucrt` is an OS component) and an absent
+// identity are not requests to install anything.
+TEST(DeclaredRuntime, OnlyAGlibcPayloadIsInstalled) {
+    auto cfg = unreachable_cfg();
+    for (auto id : {"", "ucrt@10.0.26100.0", "macos_sdk@15.0", "glibc"}) {
+        mcpp::platform::runtime::RuntimeBinding binding;
+        binding.runtimeId = id;
+        EXPECT_FALSE(ensure_declared_runtime(cfg, binding)) << id;
+        EXPECT_TRUE(binding.libraryDirs.empty()) << id;
+    }
+}
+
+// Off Linux there is no glibc payload to provide, whatever the identity says.
+TEST(DeclaredRuntime, NothingIsInstalledOffLinux) {
+    if constexpr (mcpp::platform::is_linux)
+        GTEST_SKIP() << "the Linux path is exercised by e2e 700";
+    auto cfg = unreachable_cfg();
+    mcpp::platform::runtime::RuntimeBinding binding;
+    binding.runtimeId = "glibc@2.44.3";
+    EXPECT_FALSE(ensure_declared_runtime(cfg, binding));
+}
+
+// The dispatch that decides whether a toolchain needs the payload at all. A
+// toolchain whose fixup does not patch against a C runtime must not cause a
+// download.
+TEST(DeclaredRuntime, OnlyToolchainsTheFixupPatchesNeedThePayload) {
+    XimToolchainPackage gcc;   gcc.ximName = "gcc";   gcc.needsGccPostInstallFixup = true;
+    XimToolchainPackage llvm;  llvm.ximName = "llvm";
+    XimToolchainPackage musl;  musl.ximName = "musl-gcc";
+    XimToolchainPackage msvc;  msvc.ximName = "msvc";
+    if constexpr (mcpp::platform::is_windows) {
+        for (auto const* p : {&gcc, &llvm, &musl, &msvc})
+            EXPECT_TRUE(post_install_fixup_kind(*p).empty()) << p->ximName;
+    } else {
+        EXPECT_EQ(post_install_fixup_kind(gcc), "gcc");
+        EXPECT_EQ(post_install_fixup_kind(llvm), "llvm");
+        EXPECT_TRUE(post_install_fixup_kind(musl).empty());
+        EXPECT_TRUE(post_install_fixup_kind(msvc).empty());
+    }
 }

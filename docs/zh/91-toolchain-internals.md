@@ -387,6 +387,14 @@ verdict 以 `.mcpp-runtime-verdicts.json` 存在 `build.ninja` 旁,键包含产�
 `<xpkgs>/xim-x-glibc/2.44/{lib64,lib}`。精确 payload 缺失/陈旧就是错误,其他已安装版本
 永远不是回退项。
 
+精确 payload 由 mcpp 在第一次需要它的 fixup 之前安装(`ensure_declared_runtime`,
+mcpp#660)。这一步只在 binding 找不到 payload、宿主为 Linux、提供者为 `glibc`,且工具链的
+fixup 需要 C 运行时(`gcc` 与 `llvm` payload)时执行;因此使用系统、musl 或 PE 工具链的构建
+不会下载任何东西。它通过 xlings 安装 `xim:glibc@<声明的版本>`,然后重新解析 binding。
+在这一步出现之前,payload 只有在 xlings 把它作为某个工具链的依赖安装时才存在;从 CI 缓存
+恢复的工具链不会重新安装,于是缓存中若是另一个 glibc 修订版,声明的 payload 就不存在。
+无法安装时(例如离线),fixup 的报错会写出需要预先提供的坐标 `xim:glibc@<版本>`。
+
 ### 6.2 运行时搜索路径的允许位置(`runtime_env_contract.cppm`)
 
 告诉 loader「去哪找」有两条通道,差别不在便利性,而在**波及范围**:

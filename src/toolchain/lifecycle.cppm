@@ -840,6 +840,57 @@ int attach_target_arg(mcpp::toolchain::ToolchainSpec& spec,
     return 0;
 }
 
+// THE RUNTIME A SUBOS DECLARES IS INSTALLED BY THE READER OF THE DECLARATION
+// (mcpp#660).
+//
+// A SubOS declares its C runtime by exact version (`glibc@2.44.3`), and the
+// toolchain fixup patches against the payload directory of that version. The
+// declaration was read; the payload was never installed on purpose. The two
+// install loops meant to do it passed `xim:glibc` without a version, which
+// `Fetcher::resolve_xpkg_path` rejects, and the rejection was logged at debug
+// level and discarded. The payload therefore arrived only as a side effect of
+// xlings installing a toolchain whose recipe depends on glibc. A toolchain
+// restored from a cache is not installed again, so the side effect did not
+// happen and the fixup found no payload for the declared version. A directory
+// scan that accepted any `2.44.x` for `2.44` concealed this until two
+// revisions were present at once.
+//
+// This function installs the declared payload by its exact coordinate and
+// re-resolves `binding` in place. It chooses nothing: the version is the
+// SubOS's, and xlings performs the install. It does nothing when the binding
+// already locates a payload, off Linux, and for a provider other than glibc,
+// so a home in its normal state starts no process.
+//
+// A failed install is reported at verbose level and is not an error here. The
+// consumer that needs the payload, the fixup, reports its absence with the
+// exact coordinate, and a caller whose toolchain needs no C runtime payload
+// is unaffected. Returns whether `binding` changed.
+export bool ensure_declared_runtime(const mcpp::config::GlobalConfig& cfg,
+                                    mcpp::platform::runtime::RuntimeBinding& binding) {
+    namespace rt = mcpp::platform::runtime;
+    if constexpr (!mcpp::platform::is_linux) return false;
+    if (!binding.libraryDirs.empty()) return false;
+    if (rt::runtime_provider(binding.runtimeId) != "glibc") return false;
+
+    const auto target = "xim:" + binding.runtimeId;
+    mcpp::log::verbose("toolchain", std::format(
+        "declared runtime {} has no installed payload; installing {}",
+        binding.runtimeId, target));
+    mcpp::fetcher::Fetcher fetcher(cfg);
+    mcpp::fetcher::InstallProgressHandler progress;
+    if (auto installed = fetcher.resolve_xpkg_path(target, /*autoInstall=*/true, &progress);
+        !installed) {
+        mcpp::log::verbose("toolchain", std::format(
+            "installing the declared runtime {} failed: {}",
+            target, installed.error().message));
+        return false;
+    }
+    auto again = rt::resolve_runtime_binding(binding.selection, {}, cfg.xlingsHome());
+    if (!again) return false;
+    binding = std::move(*again);
+    return true;
+}
+
 // `mcpp toolchain install <spec> [--target <triple>]` — install + fixups.
 export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
                              const std::string& pos0, const std::string& pos1,
@@ -927,20 +978,6 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
             pkg.ximName, pkg.needsGccPostInstallFixup, cfg.xlingsBinary.string()));
         mcpp::fetcher::Fetcher fetcher(cfg);
         mcpp::fetcher::InstallProgressHandler progress;
-
-        // Ensure sysroot dependencies (glibc, linux-headers) are installed:
-        // the C library and kernel headers a glibc-targeting compile needs.
-        // The rule itself lives in registry.cppm — prepare's first-run
-        // install asks the same question and used to answer it in its own
-        // words, with one term missing.
-        if (mcpp::toolchain::needs_linux_sysroot_payloads(spec->target)) {
-            for (auto dep : {"xim:glibc", "xim:linux-headers"}) {
-                mcpp::log::verbose("toolchain", std::format("installing dep: {}", dep));
-                auto depPayload = fetcher.resolve_xpkg_path(dep, /*autoInstall=*/true, &progress);
-                mcpp::log::debug("toolchain", std::format("dep {} result: {}",
-                    dep, depPayload ? "ok" : depPayload.error().message));
-            }
-        }
 
         mcpp::log::verbose("toolchain", std::format("installing main: {}", pkg.target()));
         // A previous `remove` may have parked a held payload beside this one;
@@ -1037,6 +1074,8 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         std::filesystem::path runtimeLibDir;
         if (auto rb = mcpp::platform::runtime::resolve_runtime_binding(
                 mcpp::xlings::runtime::RuntimeSelection{}, {}, cfg.xlingsHome())) {
+            if (!mcpp::toolchain::post_install_fixup_kind(pkg).empty())
+                ensure_declared_runtime(cfg, *rb);
             runtimeId = rb->runtimeId;
             if (!rb->libraryDirs.empty()) runtimeLibDir = rb->libraryDirs.front();
         }   // a binding that cannot be resolved degrades below, it does not stop

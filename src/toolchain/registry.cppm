@@ -381,26 +381,6 @@ resolve_managed_msvc(const mcpp::xlings::Env& env,
                      const XimToolchainPackage& pkg,
                      bool identifyVersion = true);
 
-// Does installing a toolchain FOR THIS TARGET additionally need the Linux
-// sysroot payloads (`xim:glibc` + `xim:linux-headers`)?
-//
-// THE SINGLE DERIVATION. It was two, and they were not equivalent while a
-// comment on one of them said "mirrors the guard on the other":
-//
-//   lifecycle   !musl && !pe && !windows-host && !macos-host
-//   prepare     !macos-host && !windows-host && !musl
-//
-// The PE term was missing from the second. It happens to be unreachable today
-// (first-run never selects a PE target on Linux), which is what let the
-// divergence sit there — a latent difference between two spellings of one
-// rule is exactly the state that becomes a bug the moment either side moves.
-//
-// Decided by the TARGET, not the payload name: musl targets are
-// self-contained, PE targets (native MinGW and the Linux-hosted cross alike)
-// bring their own CRT, and a non-Linux host never needs a Linux sysroot at
-// all.
-bool needs_linux_sysroot_payloads(const triple::Triple& target);
-
 // Can THIS host serve that target — is there an installable payload for the
 // (host, target) pair? Empty target = host target, always serviceable.
 //
@@ -1218,11 +1198,6 @@ bool is_system_toolchain(const ToolchainSpec& spec) {
     // which is the defect this whole file's msvc handling exists to close.
     return spec.family == Family::Msvc
         && (spec.version.empty() || spec.version == "system");
-}
-
-bool needs_linux_sysroot_payloads(const triple::Triple& target) {
-    if constexpr (!mcpp::platform::is_linux) return false;
-    return !target.is_musl() && !target.is_pe();
 }
 
 bool host_can_serve(const triple::Triple& target) {

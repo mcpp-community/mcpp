@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-293 records.
+295 records.
 
 ## By subject
 
@@ -62,6 +62,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### triage
 
+- [运行时绑定方案 v3:让 mcpp 真正安装它所声明的运行时](2026-09-17-runtime-binding-multi-repo-plan.md) — landed
+- [Issue #660 分析:`glibc@2.44` 绑定在 2.44.3 发布后解析失败](2026-09-17-issue-660-glibc-line-binding-analysis.md) — landed
 - [#655 implemented: one reading of a compile-flag element, the plan, and the ledger](2026-09-17-655-implementation-plan.md) — landed
 - [#655: the `arguments` array is not the command the build runs](2026-09-17-655-arguments-are-not-the-command-the-build-runs.md) — landed
 - [#646 to #649 implemented: the plan, its review from eight angles, and the ledger](2026-09-16-646-649-implementation-plan.md) — landed
@@ -78,6 +80,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-09
 
+- [运行时绑定方案 v3:让 mcpp 真正安装它所声明的运行时](2026-09-17-runtime-binding-multi-repo-plan.md) — landed
+- [Issue #660 分析:`glibc@2.44` 绑定在 2.44.3 发布后解析失败](2026-09-17-issue-660-glibc-line-binding-analysis.md) — landed
 - [#655 implemented: one reading of a compile-flag element, the plan, and the ledger](2026-09-17-655-implementation-plan.md) — landed
 - [#655: the `arguments` array is not the command the build runs](2026-09-17-655-arguments-are-not-the-command-the-build-runs.md) — landed
 - [#646 to #649 implemented: the plan, its review from eight angles, and the ledger](2026-09-16-646-649-implementation-plan.md) — landed

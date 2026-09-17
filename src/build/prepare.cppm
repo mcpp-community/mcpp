@@ -2507,9 +2507,30 @@ prepare_build(bool print_fingerprint,
         return bin.string();
     }();
 
-    const auto runtimePayload = runtimeBindingSnapshot.libc.value_or("");
-    const auto runtimeLibDir = runtimeBindingSnapshot.libraryDirs.empty()
+    auto runtimePayload = runtimeBindingSnapshot.libc.value_or("");
+    auto runtimeLibDir = runtimeBindingSnapshot.libraryDirs.empty()
         ? std::filesystem::path{} : runtimeBindingSnapshot.libraryDirs.front();
+
+    // THE DECLARED RUNTIME PAYLOAD IS PROVIDED BEFORE THE FIRST FIXUP THAT
+    // CONSUMES IT (mcpp#660), and not earlier: a build whose toolchain needs
+    // no C runtime payload must not download one. At most once per build. An
+    // inherited binding is not exempt, because the parent build may have used
+    // a toolchain that needed no payload. The two values derived above are
+    // refreshed with the binding, because detection and the fingerprint read
+    // them after the fixups.
+    bool runtimePayloadProvided = false;
+    auto provide_runtime_payload = [&](const mcpp::toolchain::XimToolchainPackage& pkg) {
+        if (runtimePayloadProvided) return;
+        if (mcpp::toolchain::post_install_fixup_kind(pkg).empty()) return;
+        runtimePayloadProvided = true;
+        auto cfgP = get_cfg();
+        if (!cfgP) return;
+        if (!mcpp::toolchain::ensure_declared_runtime(**cfgP, runtimeBindingSnapshot))
+            return;
+        runtimePayload = runtimeBindingSnapshot.libc.value_or("");
+        runtimeLibDir = runtimeBindingSnapshot.libraryDirs.empty()
+            ? std::filesystem::path{} : runtimeBindingSnapshot.libraryDirs.front();
+    };
 
     // mcpp#427: a toolchain fixup that could not run is a DEGRADATION, not a
     // failure — the build continues without it. But it has to be said, or the
@@ -3520,6 +3541,7 @@ prepare_build(bool print_fingerprint,
             // manifest [toolchain] path previously ran none, so a freshly
             // auto-installed payload kept its stale install-time cfg /
             // unpatched runtime libs.
+            provide_runtime_payload(pkg);
             if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
                     **cfg, payload->root, pkg,
                     runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
@@ -3713,14 +3735,6 @@ prepare_build(bool print_fingerprint,
         mcpp::fetcher::Fetcher fetcher(**cfg);
 
         mcpp::fetcher::InstallProgressHandler progress;
-        // The glibc default toolchain needs the sysroot payloads (C library +
-        // kernel headers). One derivation, shared with `toolchain install` —
-        // see registry.cppm for what the two spellings used to disagree about.
-        if (mcpp::toolchain::needs_linux_sysroot_payloads(defaultParsed->target)) {
-            for (auto dep : {"xim:glibc", "xim:linux-headers"}) {
-                (void)fetcher.resolve_xpkg_path(dep, /*autoInstall=*/true, &progress);
-            }
-        }
         auto payload = fetcher.resolve_xpkg_path(defaultPkg.target(),
                             /*autoInstall=*/true, &progress);
         if (!payload) {
@@ -3746,6 +3760,7 @@ prepare_build(bool print_fingerprint,
         // `mcpp toolchain install` performs — without it a fresh sandbox
         // gcc cannot find the C library (stdlib.h: No such file or
         // directory) and a fresh llvm keeps its stale install-time cfg.
+        provide_runtime_payload(defaultPkg);
         if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
                 **cfg, payload->root, defaultPkg,
                 runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
@@ -4317,6 +4332,7 @@ prepare_build(bool print_fingerprint,
                   gnuPkg.target(),
                   mcpp::toolchain::payload_frontend_dir(payloadR->root, gnuPkg).string()));
           }
+          provide_runtime_payload(gnuPkg);
           if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
                   **cfgR, payloadR->root, gnuPkg,
                   runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
@@ -4539,6 +4555,7 @@ prepare_build(bool print_fingerprint,
                 pkg.target(),
                     mcpp::toolchain::payload_frontend_dir(payload->root, pkg).string()));
         }
+        provide_runtime_payload(pkg);
         if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
                 **cfgH, payload->root, pkg,
                 runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)

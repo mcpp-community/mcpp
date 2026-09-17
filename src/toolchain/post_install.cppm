@@ -376,10 +376,18 @@ export void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
     }
 }
 
-// Resolve one glibc payload from the RuntimeBinding identity.  This is a
-// semantic exact lookup, never a directory-order choice: glibc@2.44 means the
-// `2.44` directory and no other.  Exported so the #392 regression stays pinned
-// by a pure unit test without installing a toolchain.
+// Resolve one glibc payload from the RuntimeBinding identity. The lookup is
+// exact: `glibc@2.44.3` means the `2.44.3` directory and no other, which is
+// the name xlings gives the payload of that version. Exported so the rule is
+// pinned by a pure unit test without installing a toolchain.
+//
+// THERE IS NO FALLBACK TO A NEIGHBOURING VERSION. A scan that accepted any
+// `2.44.x` for `2.44` existed to tolerate a payload installed as a side effect
+// of some other install; it concealed that the declared payload itself was
+// never installed, and it refused as soon as two revisions were present
+// (mcpp#660). The declared payload is now installed by
+// `ensure_declared_runtime` before any fixup, so an absent directory is a
+// fact to report, with the coordinate that provides it.
 export std::expected<std::filesystem::path, std::string>
 select_glibc_payload_lib(const std::filesystem::path& glibcRoot,
                          std::string_view runtimeId) {
@@ -410,30 +418,21 @@ select_glibc_payload_lib(const std::filesystem::path& glibcRoot,
             runtimeId));
     }
 
-    // ONE RESOLVER, TWO CALLERS. `payload_dir_for_version` also answers
-    // `probe`'s compile-side discovery; see its own header for why a request
-    // and a resolution are two vocabularies, and why a unique component-wise
-    // refinement is an answer while a directory-order pick is not.
-    //
-    // THE FIRST VERSION OF THIS FIX SPELLED IT HERE, and that left the other
-    // caller: the toolchain then installed and the compile line came out
-    // without the glibc include directory, which reads as
-    // `features.h: No such file` from inside libstdc++'s own headers.
-    auto payload = mcpp::xlings::paths::payload_dir_for_version(
-        glibcRoot, version);
-    if (!payload) {
+    const auto payload = glibcRoot / std::string(version);
+    std::error_code ec;
+    if (!std::filesystem::is_directory(payload, ec)) {
         return std::unexpected(std::format(
-            "selected RuntimeBinding {} requires payload '{}', but no installed "
-            "payload is its resolution; mcpp will not fall back to another "
-            "directory entry",
-            runtimeId, (glibcRoot / std::string(version)).string()));
+            "the declared runtime {} is not installed: '{}' does not exist. "
+            "It is installed on first use when the network is available; for an "
+            "offline build, provide `xim:{}` in the xlings store beforehand",
+            runtimeId, payload.string(), runtimeId));
     }
-    auto lib = payload_lib_dir_with_loader(*payload);
+    auto lib = payload_lib_dir_with_loader(payload);
     if (lib.empty()) {
         return std::unexpected(std::format(
             "selected RuntimeBinding {} payload '{}' is stale/incomplete: no "
             "dynamic loader was found under lib64/ or lib/",
-            runtimeId, payload->string()));
+            runtimeId, payload.string()));
     }
     return lib;
 }
@@ -545,18 +544,28 @@ export struct FixupOutcome {
     std::string skippedReason;     // non-empty ⇒ degraded, and why
 };
 
+// WHICH TOOLCHAIN PAYLOADS THE FIXUP PATCHES AGAINST A C RUNTIME, stated once.
+//
+// Empty for every payload the fixup leaves alone. On Windows it is always
+// empty: a PE toolchain has nothing to patch. Callers that must provide the
+// runtime payload before a fixup ask this rather than repeating the dispatch,
+// so a toolchain that needs no C runtime payload never causes one to be
+// installed.
+export std::string_view post_install_fixup_kind(const XimToolchainPackage& pkg) {
+    if constexpr (mcpp::platform::is_windows) return {};
+    if (pkg.needsGccPostInstallFixup) return "gcc";
+    if (pkg.ximName == "llvm")        return "llvm";
+    return {};
+}
+
 export std::expected<FixupOutcome, std::string>
 ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
                           const std::filesystem::path& payloadRoot,
                           const XimToolchainPackage& pkg,
                           std::string_view runtimeId = {},
                           const std::filesystem::path& selectedRuntimeLibDir = {}) {
-    std::string kind;
-    if (pkg.needsGccPostInstallFixup) kind = "gcc";
-    else if (pkg.ximName == "llvm")   kind = "llvm";
-    else return FixupOutcome{};
-    if constexpr (mcpp::platform::is_windows)
-        return FixupOutcome{};  // PE world: no fixups
+    const std::string kind{post_install_fixup_kind(pkg)};
+    if (kind.empty()) return FixupOutcome{};
 
     // Ownership guard: payloads inherited via symlink from another MCPP_HOME
     // are not ours to patch — their owner already ran the fixup, and patching

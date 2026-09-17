@@ -193,20 +193,23 @@ TEST(PostInstallFixup, APackageWithNoFixupReportsNothingToReport) {
         << result->skippedReason;
 }
 
-// THE VERSION THAT WAS ASKED FOR AND THE VERSION THAT WAS INSTALLED ARE
-// TWO VOCABULARIES FOR ONE FACT.
+// THE DECLARED VERSION NAMES ITS PAYLOAD DIRECTORY EXACTLY (mcpp#660).
 //
-// A RuntimeBinding carries the DECLARED identity; xlings names the payload
-// directory after what the request RESOLVED to. The two come apart the moment
-// the index moves a package within a series — `xim:glibc@2.44` resolving to
-// `2.44.2`.
+// The lookup used to accept a unique `2.44.x` for a binding of `2.44` and to
+// refuse two of them. That tolerance existed because the declared payload was
+// never installed on purpose; it arrived as a side effect of another install,
+// under whatever version that install resolved. It concealed the missing
+// install, and it failed as soon as a cache held one revision and an install
+// added the next:
 //
-// Measured 2026-08-27 on every CI machine with a cold cache, on `main` as
-// readily as on any branch:
+//     error: toolchain post-install fixup: selected RuntimeBinding glibc@2.44
+//            requires payload '.../xim-x-glibc/2.44', but no installed payload
+//            is its resolution; mcpp will not fall back to another directory
+//            entry
+//     $ ls .../xim-x-glibc/   ->   2.44.2 2.44.3
 //
-//     error: selected RuntimeBinding glibc@2.44 requires payload
-//            '…/xim-x-glibc/2.44', but it is not installed
-//     $ ls …/xim-x-glibc/   →   2.44.2
+// `ensure_declared_runtime` now installs the declared version, so the lookup
+// is exact and a neighbouring version is never a substitute.
 namespace {
 
 // A payload is "installed" for this purpose when it has a lib dir with a
@@ -235,83 +238,31 @@ struct GlibcRootFixture {
 
 } // namespace
 
-TEST(GlibcPayload, TheExactVersionIsPreferred) {
+TEST(GlibcPayload, TheExactVersionIsSelected) {
     GlibcRootFixture fx{"mcpp_glibc_exact"};
-    auto want = make_glibc_payload(fx.root, "2.44");
+    auto want = make_glibc_payload(fx.root, "2.44.3");
     make_glibc_payload(fx.root, "2.44.2");
-    auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.44");
+    auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.44.3");
     ASSERT_TRUE(got.has_value()) << got.error();
     EXPECT_EQ(*got, want);
 }
 
-TEST(GlibcPayload, ARequestResolvesToItsOneRefinement) {
-    GlibcRootFixture fx{"mcpp_glibc_refine"};
-    auto only = make_glibc_payload(fx.root, "2.44.2");
-    auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.44");
-    ASSERT_TRUE(got.has_value()) << got.error();
-    EXPECT_EQ(*got, only);
-}
-
-// PER COMPONENT, NOT PER CHARACTER. `2.4` is not a request that `2.44`
-// answers — a prefix match on the string would say it is, and would then hand
-// a build the wrong C library without saying anything.
-TEST(GlibcPayload, AStringPrefixIsNotARefinement) {
-    GlibcRootFixture fx{"mcpp_glibc_strprefix"};
-    make_glibc_payload(fx.root, "2.44");
-    auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.4");
-    EXPECT_FALSE(got.has_value());
-}
-
-// AND THE REFUSAL STILL STANDS WHEN THERE IS NO ONE ANSWER. "The resolution
-// of this request" has to be a single payload to be an answer at all; two
-// refinements are not a menu to pick from.
-TEST(GlibcPayload, TwoRefinementsAreRefusedRatherThanChosenBetween) {
-    GlibcRootFixture fx{"mcpp_glibc_ambiguous"};
-    make_glibc_payload(fx.root, "2.44.1");
+// THE CASE OF mcpp#660. Two revisions of the line are present and the declared
+// version is neither; the answer is "not installed", naming the coordinate
+// that provides it, and never one of the two.
+TEST(GlibcPayload, ANeighbouringRevisionIsNotASubstitute) {
+    GlibcRootFixture fx{"mcpp_glibc_neighbour"};
     make_glibc_payload(fx.root, "2.44.2");
+    make_glibc_payload(fx.root, "2.44.3");
     auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.44");
-    EXPECT_FALSE(got.has_value());
-}
+    ASSERT_FALSE(got.has_value());
+    EXPECT_NE(got.error().find("xim:glibc@2.44"), std::string::npos) << got.error();
+    EXPECT_NE(got.error().find("not installed"), std::string::npos) << got.error();
 
-// THE RESOLVER ITSELF, because it has TWO callers and they failed
-// separately. The first version of this fix lived inside the toolchain fixup;
-// `probe`'s compile-side payload discovery spelled the same lookup its own way
-// and kept missing — and ITS failure names no version at all:
-//
-//     bits/os_defines.h:39: fatal error: features.h: No such file
-//
-// because the glibc include directory is simply never added. Asserting on the
-// shared function is what makes both call sites covered by one test.
-TEST(PayloadDirForVersion, ExactWinsOverRefinement) {
-    GlibcRootFixture fx{"mcpp_pdfv_exact"};
-    std::filesystem::create_directories(fx.root / "2.44");
-    std::filesystem::create_directories(fx.root / "2.44.2");
-    auto got = mcpp::xlings::paths::payload_dir_for_version(fx.root, "2.44");
-    ASSERT_TRUE(got.has_value());
-    EXPECT_EQ(got->filename(), "2.44");
-}
-
-TEST(PayloadDirForVersion, OneRefinementIsTheAnswer) {
-    GlibcRootFixture fx{"mcpp_pdfv_one"};
-    std::filesystem::create_directories(fx.root / "2.44.2");
-    auto got = mcpp::xlings::paths::payload_dir_for_version(fx.root, "2.44");
-    ASSERT_TRUE(got.has_value());
-    EXPECT_EQ(got->filename(), "2.44.2");
-}
-
-TEST(PayloadDirForVersion, TwoRefinementsAreNotAnAnswer) {
-    GlibcRootFixture fx{"mcpp_pdfv_two"};
-    std::filesystem::create_directories(fx.root / "2.44.1");
-    std::filesystem::create_directories(fx.root / "2.44.2");
-    EXPECT_FALSE(mcpp::xlings::paths::payload_dir_for_version(fx.root, "2.44"));
-}
-
-// PER COMPONENT, NOT PER CHARACTER — a string prefix would hand a build the
-// wrong C library and say nothing.
-TEST(PayloadDirForVersion, AStringPrefixIsNotARefinement) {
-    GlibcRootFixture fx{"mcpp_pdfv_strprefix"};
-    std::filesystem::create_directories(fx.root / "2.44");
-    EXPECT_FALSE(mcpp::xlings::paths::payload_dir_for_version(fx.root, "2.4"));
+    // One neighbour is not a substitute either: the old tolerance accepted it.
+    GlibcRootFixture one{"mcpp_glibc_one_neighbour"};
+    make_glibc_payload(one.root, "2.44.2");
+    EXPECT_FALSE(mcpp::toolchain::select_glibc_payload_lib(one.root, "glibc@2.44"));
 }
 
 TEST(GlibcPayload, NothingInstalledIsStillRefused) {
@@ -320,22 +271,12 @@ TEST(GlibcPayload, NothingInstalledIsStillRefused) {
     EXPECT_FALSE(got.has_value());
 }
 
-// AN EMPTY REQUEST IS NOT A REQUEST FOR EVERYTHING.
-//
-// `packageRoot / ""` is `packageRoot`, and that IS a directory — so the
-// exact-match branch would hand the CONTAINER back and every caller would
-// treat it as a payload. Both callers reject an empty version before arriving,
-// which is exactly why nothing would have caught it here.
-TEST(PayloadDirForVersion, AnEmptyRequestIsNotTheContainer) {
-    auto root = std::filesystem::temp_directory_path()
-              / "mcpp_payload_empty_request";
-    std::filesystem::remove_all(root);
-    std::filesystem::create_directories(root / "2.44.2");
-
-    EXPECT_FALSE(mcpp::xlings::paths::payload_dir_for_version(root, ""));
-    // The denominator: a real request against the same tree still resolves,
-    // so an empty result above is the guard and not an unreadable directory.
-    EXPECT_TRUE(mcpp::xlings::paths::payload_dir_for_version(root, "2.44"));
-
-    std::filesystem::remove_all(root);
+// A DIRECTORY WITHOUT A LOADER IS REPORTED AS INCOMPLETE, NOT AS ABSENT. The
+// two call for different repairs, so the messages must not coincide.
+TEST(GlibcPayload, APayloadWithoutALoaderIsIncomplete) {
+    GlibcRootFixture fx{"mcpp_glibc_husk"};
+    std::filesystem::create_directories(fx.root / "2.44.3");
+    auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.44.3");
+    ASSERT_FALSE(got.has_value());
+    EXPECT_NE(got.error().find("stale/incomplete"), std::string::npos) << got.error();
 }

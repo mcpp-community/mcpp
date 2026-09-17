@@ -400,28 +400,29 @@ payload_root_for_binding(const std::filesystem::path& compilerBin,
     const auto name    = binding.substr(0, at);
     const auto version = std::string(binding.substr(at + 1));
 
-    // THE DIRECTORY IS NAMED AFTER WHAT THE REQUEST RESOLVED TO, NOT AFTER
-    // THE REQUEST. `payload_dir_for_version` is the one answer to that, shared
-    // with the toolchain post-install fixup — see its header.
+    // THE DIRECTORY IS NAMED BY THE EXACT VERSION. The binding carries the
+    // version whose payload `ensure_declared_runtime` installed, so no nearby
+    // version is accepted in its place (mcpp#660).
     //
-    // THIS SITE'S FAILURE DOES NOT NAME A VERSION. The fixup at least says
-    // which payload it wanted; here the include directory is simply never
-    // added, and what the user reads comes from inside libstdc++:
+    // THIS SITE'S FAILURE DOES NOT NAME A VERSION. The fixup says which
+    // payload it wanted; here the include directory is simply never added,
+    // and what the user reads comes from inside libstdc++:
     //
     //     bits/os_defines.h:39: fatal error: features.h: No such file
-    //
-    // Measured 2026-08-27 on openkal-musl's CI after the fixup alone was fixed.
+    const auto exact = [&](const std::filesystem::path& xpkgs)
+        -> std::optional<std::filesystem::path> {
+        auto root = xpkgs / std::format("xim-x-{}", name) / version;
+        std::error_code ec;
+        if (std::filesystem::is_directory(root, ec)) return root;
+        return std::nullopt;
+    };
     // Compiler siblings: <...>/xpkgs/xim-x-<name>/<version>
     if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(compilerBin)) {
-        if (auto root = mcpp::xlings::paths::payload_dir_for_version(
-                *xpkgs / std::format("xim-x-{}", name), version))
-            return *root;
+        if (auto root = exact(*xpkgs)) return *root;
     }
     // Active home.
     if (auto xpkgs = mcpp::xlings::paths::active_home_xpkgs()) {
-        if (auto root = mcpp::xlings::paths::payload_dir_for_version(
-                *xpkgs / std::format("xim-x-{}", name), version))
-            return *root;
+        if (auto root = exact(*xpkgs)) return *root;
     }
     return std::nullopt;
 }

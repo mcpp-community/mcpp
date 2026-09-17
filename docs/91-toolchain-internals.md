@@ -476,6 +476,18 @@ Post-install alignment follows the same identity rule: `glibc@2.44` resolves
 only `<xpkgs>/xim-x-glibc/2.44/{lib64,lib}`. A missing/stale exact payload is an
 error; another installed version is never a fallback.
 
+The exact payload is installed by mcpp before the first fixup that patches
+against it (`ensure_declared_runtime`, mcpp#660). The step runs only when the
+binding locates no payload, only on Linux, only for the `glibc` provider, and
+only for a toolchain whose fixup consumes a C runtime (`gcc` and `llvm`
+payloads), so a build with a system, musl or PE toolchain downloads nothing. It
+installs `xim:glibc@<declared version>` through xlings and re-resolves the
+binding. Before this step existed, the payload was present only when xlings had
+installed it as a dependency of a toolchain; a toolchain restored from a CI
+cache is not reinstalled, so a cache holding another glibc revision left the
+declared payload absent. When the install is impossible, for example offline,
+the fixup error names the coordinate `xim:glibc@<version>` to provide.
+
 ### 6.2 The permitted locations of a runtime search path (`runtime_env_contract.cppm`)
 
 There are two ways to tell a loader where to look, and they differ by blast

@@ -336,29 +336,6 @@ TEST(ToolchainOrigin, NonMsvcSystemIsRejectedWhereItIsReadAndOffersTheAlternativ
     }
 }
 
-// The Linux sysroot payloads (`xim:glibc` + `xim:linux-headers`) had two
-// derivations, and a comment on one claimed it mirrored the other. It did
-// not: the PE term was missing from the second.
-TEST(ToolchainSysrootDeps, OneDerivationForTheGlibcSysrootPayloads) {
-    mcpp::toolchain::triple::Triple host{};                 // empty = host
-    mcpp::toolchain::triple::Triple musl{std::string(mcpp::platform::host_arch), "linux", "musl"};
-    mcpp::toolchain::triple::Triple mingw{"x86_64", "windows", "gnu"};
-
-    if constexpr (mcpp::platform::is_linux) {
-        EXPECT_TRUE(needs_linux_sysroot_payloads(host));
-        // Self-contained: a musl payload carries its own C library.
-        EXPECT_FALSE(needs_linux_sysroot_payloads(musl));
-        // THE TERM THAT WAS MISSING. A PE target brings its own CRT, whether
-        // it is a native MinGW or the Linux-hosted cross, so a Linux sysroot
-        // is not part of installing one.
-        EXPECT_FALSE(needs_linux_sysroot_payloads(mingw));
-    } else {
-        // No Linux sysroot exists to want.
-        for (auto const& t : {host, musl, mingw})
-            EXPECT_FALSE(needs_linux_sysroot_payloads(t));
-    }
-}
-
 // ─── An SDK payload is chosen by the TARGET, and knows its own layout ──────
 //
 // `to_xim_package` returned the generic llvm payload for every `Family::Llvm`
