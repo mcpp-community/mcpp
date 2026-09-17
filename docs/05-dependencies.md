@@ -112,6 +112,40 @@ baz = "=1.2.3"      # Exact match
 qux = ">=1.0, <2.0" # Range combination
 ```
 
+### `visibility` — whether a dependency's usage crosses this package's own boundary
+
+```toml
+[dependencies]
+sdk = { version = "1.0", visibility = "private" }
+```
+
+Every dependency edge carries a `visibility`, defaulting to `public`. It
+decides whether the dependency's include directories, defines and flags —
+what the dependency asks of a consumer, `provides`/`requires` aside — reach
+only this package's own translation units, or reach this package's
+*consumers* as well.
+
+| Value | This package's own units | This package's consumers |
+|---|---|---|
+| `public` (default) | yes | yes |
+| `private` | yes | **no** |
+| `interface` | no | yes |
+
+`private` is the ordinary case for an implementation detail: a vendored
+library, a platform SDK a package needs to implement a facility but does not
+expose in its own interface. `interface` is the rarer, opposite case — a
+header-only dependency this package's own headers `#include` but whose
+objects it never compiles against. `public` is what most dependencies want:
+a type from the dependency appears in this package's own public headers, so
+a consumer needs the same include path to use them.
+
+Getting this wrong in one direction is silent (an unused `public` broadcasts
+headers nobody asked for) and in the other is a build failure at the first
+consumer that needed what `private` withheld — which is the safer failure
+mode, and why `[feature-deps.<feature>]` (§06, "A platform SDK dependency
+stays private") states `private` explicitly rather than relying on a default
+that happens to work until a consumer is added.
+
 ### When two declarations of one dependency disagree
 
 Two edges in the dependency graph can name the same identity — the same
