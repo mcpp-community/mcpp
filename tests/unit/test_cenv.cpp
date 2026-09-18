@@ -166,7 +166,22 @@ TEST(CEnv, FreestandingAcceptsNone) {
     auto ok = decl(ts::CAbiPresents::None, ts::CAbiDataModel::ArchDefault, 32);
     auto r1 = cenv::realise(ok, "none", "riscv64", true);
     ASSERT_TRUE(r1.has_value()) << r1.error();
-    EXPECT_TRUE(r1->tokens.empty());
+    // The wchar branch ALWAYS emits on a freestanding target now (wave
+    // 2026-09-18, openkal-llvm-runtime#24, Windows-host × riscv64-none-elf
+    // measurement): the toolchain's host-contaminated default is not
+    // something the engine can trust, so `wchar = 32` produces
+    // `-fno-short-wchar` regardless of what `presents` says. Identity
+    // macros stay absent (the `none` presents value's whole point),
+    // but the wchar realisation still applies — and so does the
+    // expectation, which the probe then measures.
+    EXPECT_TRUE(has(r1->tokens, "-fno-short-wchar"));
+    EXPECT_TRUE(r1->expectUndefined.empty())
+        << "presents = none declares NO environment-identity macros, "
+           "neither defined nor undefined";
+    EXPECT_TRUE(r1->expectDefined.empty());
+    // Data-model is not checked on freestanding (no C library runtime to
+    // present it), so `expectLongBytes` stays at 0.
+    EXPECT_EQ(r1->expectLongBytes, 0);
 }
 
 // A freestanding target ALSO realises `presents = "posix"` (design §3.3,

@@ -85,14 +85,20 @@ struct Result {
 // DIFFERENT failure from the declaration disagreeing with what compiled: the
 // caller reports it as a build error naming the command, not as a §3.2
 // verification mismatch.
+//
+// `hostStripMacros` is placed AFTER `cacheRoot` (the latter being the test
+// suite's frequent override) to keep the existing call sites — which pass
+// neither — source-compatible. New callers that DO need the strip supply
+// both arguments; tests that pin a temp cache directory pass the strip
+// empty by default.
 std::expected<Result, std::string> verify(
     const std::filesystem::path& compilerBin,
     const std::vector<std::string>& argv,
     int expectWcharBits, int expectLongBytes,
     const std::vector<std::string>& expectDefined,
     const std::vector<std::string>& expectUndefined,
-    const std::vector<std::string>& hostStripMacros = {},
-    const std::filesystem::path& cacheRoot = mcpp::home::cache_root());
+    const std::filesystem::path& cacheRoot = mcpp::home::cache_root(),
+    const std::vector<std::string>& hostStripMacros = {});
 
 } // namespace mcpp::toolchain::cenv_probe
 
@@ -141,8 +147,8 @@ std::expected<Result, std::string> verify(
     int expectWcharBits, int expectLongBytes,
     const std::vector<std::string>& expectDefined,
     const std::vector<std::string>& expectUndefined,
-    const std::vector<std::string>& hostStripMacros,
-    const std::filesystem::path& cacheRoot) {
+    const std::filesystem::path& cacheRoot,
+    const std::vector<std::string>& hostStripMacros) {
 
     // The cache key is the compiler binary's own identity plus every argv
     // token, in order — exactly the inputs that can change what `-dM`
