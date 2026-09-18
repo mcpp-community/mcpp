@@ -484,6 +484,26 @@ the build and prints both the declared and the measured values. The result
 is cached per configuration (compiler binary identity + exact flags), so a
 build that resolves the same configuration twice pays for the probe once.
 
+**Host contamination (mcpp 2026.9.18.3+).** The probe runs on the BUILD
+host's clang, not a target-native one, and on a Windows host the driver's
+predefines (`_WIN32`, `_WIN64`, `__MINGW32__`, `__MINGW64__`) leak through
+`--target=` substitution for a freestanding target the same way the
+Cygwin-substituted Windows row's `__CYGWIN__` does NOT — a structural
+difference between the hosted and freestanding substitutions that the
+verification step's measurement has to compensate for. The probe accepts
+a `hostStripMacros` list of `-U<name>` tokens it prepends to its `-dM`
+command, and the caller (this layer's `prepare`) supplies exactly the four
+Windows-host names on Windows, nothing on Linux or macOS. The matching
+defect on `__SIZEOF_WCHAR_T__` (Windows host × freestanding measures 2
+where a `wchar = 32` declaration asks for 4) is closed on the realisation
+side, not the probe side: `cenv::realise` now ALWAYS emits
+`-fno-short-wchar` for `decl.wcharBits = 32`, regardless of what the
+host's toolchain would default to, so the probe measures the state the
+engine actually produced (32 bits, with the flag) rather than the host's
+leak. The "freestanding skips the wchar flag" rule the wave's earlier
+versions carried was an unverified assumption about the toolchain default,
+and the wave's measurement is what verified it wrong.
+
 **Fingerprint.** The realised environment participates in the build's
 fingerprint (`compileFlags`, §92's field 7): two builds whose C library
 declares `lp64` and `llp64` compile the same source into objects whose

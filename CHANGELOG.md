@@ -5,6 +5,56 @@
 
 ## [Unreleased]
 
+## [2026.9.18.3] - 2026-09-18
+
+### Windows 主机 × freestanding 目标的 c-abi 校验探针两处真实缺陷被关掉
+
+2026.9.18.1 发布的几小时内,openkal-llvm-runtime#24 的 CI 在 Windows 主机 × `riscv64-none-elf`
+(freestanding) 一行红——探针报两条不匹配,都是真实存在的结构性缺陷,根因都在测量一侧而
+不在声明一侧:
+
+- `_WIN32` 声明 undefined,实测 defined。Windows 主机的 clang 即使带上 `--target=
+  riscv64-none-elf` 仍把 `_WIN32`(及 `__MINGW*__` 一族)注入预处理器的输出——hosted
+  三元组的 `--target=` 替换会改写主机宏,freestanding 不会。
+- `__SIZEOF_WCHAR_T__` 声明 32,实测 16。`cenv::realise` 之前对 freestanding 的 wchar
+  默认值做了一个未经实测的假设:工具链默认就是 32 位,因此 `wchar = 32` 的声明在
+  freestanding 上不补 `-fno-short-wchar`。Linux/macOS 主机下这个假设恰好成立,Windows
+  主机下不成立——clang 用 MinGW 的 `<winnt.h>` 默认,即使 `--target=riscv64-none-elf`
+  也给出 16 位。
+
+两条都是测量侧缺陷:探针应当读到的是「引擎根据声明生成的编译命令实际产生什么」,而不是
+「引擎的编译命令加上主机泄漏之后产生什么」。这一版分别从两个角度修:
+
+1. **引擎补 `-fno-short-wchar`(即实现逻辑的修正,不是 workaround)。** 既然「freestanding
+   默认 32 位」的假设是错的,那么正确的策略就是不论宿主是什么、freestanding 与否,
+   `wchar = 32` 一律加 `-fno-short-wchar`——这样编译产物确实就是 32 位 `wchar_t`,
+   探针再去量也是 32 位,声明成立。在 Linux/macOS 主机下加这个令牌是冗余的(它们本来就
+   是 32),但对的结果不变;在 Windows 主机下是必要的。原先的「freestanding 跳过 wchar
+   令牌」规则由此被取消,在 `mcpp.toolchain.cenv::realise` 中注释清楚。
+2. **探针允许调用方剥离主机宏。** `cenv_probe::verify` 增加一个 `hostStripMacros`
+   参数——一组 `-U<name>` 令牌,在 `-E -dM` 之前前置。Windows 主机下,调用方把这四个
+   名(`_WIN32`、`_WIN64`、`__MINGW32__`、`__MINGW64__`)传给探针;Linux/macOS 主机下
+   传空集合。缓存键把这些令牌一起折进去,所以同编译器、同 argv、不同剥离集合不会共享
+   缓存槽。
+
+新增 `test_cenv_probe.cpp` 中三个测试,分别钉住:剥离后宏不再出现在 dump 里、不同剥
+离集合不共享缓存槽、Windows 主机的剥离集合恰好是那四个实测到的名字。
+`test_cenv.cpp` 中新增两个测试,分别钉住:`wchar = 32` 在 freestanding 上也产出
+`-fno-short-wchar`,`wchar = 16` 在 freestanding 上产出 `-fshort-wchar`——把「
+freestanding 跳 wchar 令牌」这条曾经存在过的规则永久挡在回归测试之外。
+
+包侧四处尝试均失败:CI 跳过(workaround,用户拒)、去掉 freestanding 上的 musl 依赖(破坏
+libcxx 的 `<__mbstate_t.h>`)、per-target `[c-abi]` override(被解析但未生效——`[target.'cfg(..)'.build]`
+的合法键集合是 BuildInputs 的成员,不接受 `c-abi` 块)。这一版把这两条结构性缺陷收进了
+引擎里,而不是把它们推到包层。
+
+(`src/toolchain/cenv.cppm`、`src/toolchain/cenv_probe.cppm`、`src/build/prepare.cppm`,
+测试 `test_cenv.cpp`(`FreestandingWchar32AlwaysEmitsNoShortWchar`、
+`FreestandingWchar16AlwaysEmitsShortWchar`)与 `test_cenv_probe.cpp`(
+`AHostStrippedMacroIsAbsentFromTheDump`、
+`AStripListDoesNotShareACacheSlotWithAnEmptyStrip`、
+`TheWindowsHostStripListNamesExactlyTheFourMeasuredLeaks`)、`modules/versioning/src/version.cppm`、`mcpp.toml`)
+
 ## [2026.9.18.2] - 2026-09-18
 
 ### 2026.9.18.1 发布几小时内,三个下游仓库的 CI 揭出的三处同形缺陷:声明满足与做不到被当成了一回事

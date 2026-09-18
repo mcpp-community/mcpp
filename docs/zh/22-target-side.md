@@ -388,6 +388,19 @@ c-environment = "platform"
 同时打印声明值与实测值。结果按配置(编译器二进制身份 + 最终参数)缓存,同一配置解析两次只
 编译一次探针。
 
+**主机污染(mcpp 2026.9.18.3+)。** 探针跑在**构建主机**的 clang 上,而不是目标本地的;
+Windows 主机的驱动会预先定义 `_WIN32`、`_WIN64`、`__MINGW32__`、`__MINGW64__`,这些定义会
+穿透 `--target=` 替换到达 freestanding 目标——而 hosted 三元组的 `--target=` 替换是不会
+让 `_WIN32`/`_WIN64` 漏出来的(那是 Cygwin 那一行已经处理过的事情)。这是 hosted 与
+freestanding 替换之间一个结构性差异,核对步骤的测量必须为此做补偿。探针接受一个
+`hostStripMacros` 参数,即一组 `-U<name>` 令牌,它在 `-dM` 之前前置;调用方(本层的
+`prepare`)在 Windows 主机上恰好传那四个名字,Linux/macOS 主机上传空集合。`__SIZEOF_WCHAR_T__`
+那一半(Windows 主机 × freestanding 测出 2,而 `wchar = 32` 的声明要求 4)是在实现侧关的,
+不是探针侧:`cenv::realise` 现在对 `decl.wcharBits = 32` **一律**发 `-fno-short-wchar`——
+不论宿主工具链的默认值是什么——这样探针测量到的就是引擎实际产出的状态(32 位、令牌在),
+而不是主机的泄漏。早先版本里「freestanding 跳过 wchar 令牌」那条规则是一个未实测的关于
+工具链默认值的假设,本轮的测量把它证伪了。
+
 **指纹。** 解析出的环境参与构建指纹(`compileFlags`,§92 的第 7 项):C 库声明 `lp64` 与
 `llp64` 的两次构建,从同一份源码编译出 `long` 宽度不同的目标文件,因此二者绝不共享输出目录,
 也不会复用对方产出的目标文件缓存。
