@@ -245,7 +245,7 @@ TEST(CenvProbe, AHostStrippedMacroIsAbsentFromTheDump) {
     // First confirm the host's compiler would NOT define the macro absent
     // any help — a baseline so the strip's effect is unambiguous.
     auto baseline = cp::verify(cxx(), {}, 0, 0, {}, {kProbeStripUndefined},
-                               {}, cache.dir);
+                               cache.dir);
     ASSERT_TRUE(baseline.has_value()) << baseline.error();
     EXPECT_TRUE(baseline->mismatches.empty())
         << "test-only macro " << kProbeStripUndefined
@@ -258,8 +258,9 @@ TEST(CenvProbe, AHostStrippedMacroIsAbsentFromTheDump) {
         {std::format("-D{}=", kProbeStripDefined)},
         0, 0,
         {}, {kProbeStripDefined},                 // expected: undefined
-        {std::format("-U{}", kProbeStripDefined)}, // host strip
-        cache.dir);
+        cache.dir,
+        {std::format("-U{}", kProbeStripDefined)} // host strip
+    );
     ASSERT_TRUE(stripped.has_value()) << stripped.error();
     EXPECT_TRUE(stripped->mismatches.empty())
         << "a `-D…` followed by `-U…` must yield no mismatch: "
@@ -269,11 +270,10 @@ TEST(CenvProbe, AHostStrippedMacroIsAbsentFromTheDump) {
 TEST(CenvProbe, AStripListDoesNotShareACacheSlotWithAnEmptyStrip) {
     if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
     TmpCache cache;
-    auto noStrip = cp::verify(cxx(), {}, 0, 0, {}, {}, {}, cache.dir);
+    auto noStrip = cp::verify(cxx(), {}, 0, 0, {}, {}, cache.dir);
     ASSERT_TRUE(noStrip.has_value()) << noStrip.error();
-    auto withStrip = cp::verify(cxx(), {}, 0, 0, {}, {},
-                                {"-U_MCPP_PROBE_TEST_NO_SUCH_MACRO"},
-                                cache.dir);
+    auto withStrip = cp::verify(cxx(), {}, 0, 0, {}, {}, cache.dir,
+                                {"-U_MCPP_PROBE_TEST_NO_SUCH_MACRO"});
     ASSERT_TRUE(withStrip.has_value()) << withStrip.error();
     EXPECT_TRUE(noStrip->ran);
     EXPECT_TRUE(withStrip->ran)

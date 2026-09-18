@@ -10927,6 +10927,7 @@ prepare_build(bool print_fingerprint,
                     tc->binaryPath, probeArgv,
                     tc->cEnvExpectWcharBits, tc->cEnvExpectLongBytes,
                     tc->cEnvExpectDefined, tc->cEnvExpectUndefined,
+                    mcpp::home::cache_root(),
                     hostStripMacros);
                 if (!probe) {
                     refusal::record(refusal::Code::CEnvUnrealisable);
