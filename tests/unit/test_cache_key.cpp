@@ -428,6 +428,76 @@ TEST(CacheKey, TwoDifferentRealisedCEnvironmentsDoNotShareASlot) {
     EXPECT_NE(lp64Key, llp64Key);
 }
 
+// A DURABLE GUARD FOR THE WHOLE CLASS THE PREVIOUS TEST FOUND ONE INSTANCE
+// OF — this predates the c-abi wave (`targetSideUsage`'s own broadcast, and
+// `-D__openkal__`, had the identical exposure before [c-abi] existed) and
+// will recur: `PackageRoot::privateBuild` (`mcpp.modgraph.scanner
+// ::UsageRequirements`) is the engine's OWN channel for "this reaches a
+// package's compile command line even though the package wrote nothing" —
+// today's members are `includeDirs`, `includeDirsAfter`, `cflags`,
+// `cxxflags`, `asmflags`, `ldflags`, `modules` — and every one of them has
+// to move `fill_package_config`'s output, because the cache key's only job
+// is to describe what actually reaches the compiler.
+//
+// C++ has no reflection this side of the standard that could enumerate
+// `UsageRequirements`'s members and fail this test automatically the day a
+// new one is added without a matching line below — so this is the nearest
+// substitute the language allows: one assertion per CURRENT member, so the
+// list itself is the checklist. Adding a member to `UsageRequirements`
+// without adding its case here and its read in `fill_package_config` is
+// exactly the shape of the defect `TwoDifferentRealisedCEnvironmentsDoNotSh
+// areASlot` above caught — if you are adding one, add it in both places in
+// the SAME change.
+//
+// `ldflags` and `modules` are asserted UNCOVERED, on purpose: nothing
+// broadcasts into `privateBuild.ldflags` or `.modules` today (checked by
+// grep across `src/` and `modules/` when this test was written), so there
+// is nothing yet for `fill_package_config` to be missing on those two — the
+// day something does broadcast into either, this pair of assertions must
+// flip (start reading it) at the same time the broadcast is added, not
+// after.
+TEST(CacheKey, EveryPrivateBuildBroadcastFieldReachesTheKey) {
+    std::filesystem::path store = "/home/u/.mcpp/registry/data/xpkgs";
+    auto keyFor = [&](auto mutate) {
+        auto pkgRoot = rootAt(store / "p" / "1");
+        pkgRoot.usageResolved = true;
+        mutate(pkgRoot);
+        ck::PackageAxes p;
+        p.indexName = "p"; p.packageName = "p"; p.version = "1";
+        ck::fill_package_config(p, pkgRoot, store);
+        return ck::key_hex(axes(), p);
+    };
+    const auto baseline = keyFor([](auto&) {});
+
+    EXPECT_NE(baseline, keyFor([](auto& r) {
+        r.privateBuild.includeDirs = {"/somewhere/broadcast-only-include"};
+    })) << "privateBuild.includeDirs";
+    EXPECT_NE(baseline, keyFor([](auto& r) {
+        r.privateBuild.includeDirsAfter = {"/somewhere/broadcast-only-after"};
+    })) << "privateBuild.includeDirsAfter";
+    EXPECT_NE(baseline, keyFor([](auto& r) {
+        r.privateBuild.cflags = {"-Dbroadcast_only_c"};
+    })) << "privateBuild.cflags";
+    EXPECT_NE(baseline, keyFor([](auto& r) {
+        r.privateBuild.cxxflags = {"-Dbroadcast_only_cxx"};
+    })) << "privateBuild.cxxflags";
+    EXPECT_NE(baseline, keyFor([](auto& r) {
+        r.privateBuild.asmflags = {"-Dbroadcast_only_asm"};
+    })) << "privateBuild.asmflags";
+
+    // Documented gap, not an oversight — see the comment above.
+    EXPECT_EQ(baseline, keyFor([](auto& r) {
+        r.privateBuild.ldflags = {"-Wl,--broadcast-only"};
+    })) << "privateBuild.ldflags is not yet a live broadcast channel; if "
+           "this starts failing, something now writes it, and "
+           "fill_package_config must be taught to read it in the SAME change "
+           "that flips this expectation";
+    EXPECT_EQ(baseline, keyFor([](auto& r) {
+        r.privateBuild.modules = {"broadcast.only.module"};
+    })) << "privateBuild.modules is not yet a live broadcast channel; see "
+           "the ldflags case above for what to do when it becomes one";
+}
+
 // THE HEADER SET THE DRIVER IS POINTED AT IS PART OF THE IDENTITY.
 //
 // Everything else on axis A describes the COMPILER. Nothing described the

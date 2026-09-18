@@ -47,8 +47,18 @@
   环境构建的镜像,一个镜像混两种 C 环境且没有任何诊断,这正是本设计要防止的那个不变量本身。
   现在 `fill_package_config` 把 `privateBuild.cflags`/`cxxflags`/新增的 `asmflags`(广播后的
   值)与包自身声明的标志一起折进键里,和它原本处理 include 目录的方式一致。
+  **升级到这个版本后,第一次构建会是一次冷构建**:`kCacheEpoch` 从 2 提到了 3,已有的
+  `~/.mcpp/build-cache/v1` 条目会被整体作废,而不是逐条判断哪些还能信。这不是求稳的富余
+  动作——键改对了以后,恰恰是那些*不再*触发替换的包最危险:比如同一个 PR 里被推导进
+  `c-environment = "platform"` 的 kernel-abi 包,它 broadcast 前后 `privateBuild.cflags`
+  都是空的,新键和旧键因此照样相同,而旧键当初对应的目标文件,正是带着替换令牌编译出来
+  的那一份——键从一开始就没描述对它,普通的输入变化检测看不出来,只有作废整个缓存才够。
   (`src/build/cache_key.cppm`,单测 `test_cache_key.cpp` 的
-  `TwoDifferentRealisedCEnvironmentsDoNotShareASlot`)
+  `TwoDifferentRealisedCEnvironmentsDoNotShareASlot` 与
+  `EveryPrivateBuildBroadcastFieldReachesTheKey`——后者是给这一类缺陷立的长期防线:
+  `privateBuild`(`UsageRequirements`)每加一个新的广播字段,都要在这个测试和
+  `fill_package_config` 里同时补上一行,否则历史会重演,`-D__openkal__` 和
+  `targetSideUsage` 自己的广播在这次修订之前就已经有过同样的缺口)
 - **`__CYGWIN__`/`__CYGWIN32__` 保持定义,经 openkal-musl 尖峰实验修订。** 最初的实现
   取消定义它们(理由是图里没有真正的 Cygwin 用户态)。第三方可移植代码里需要知道**目标文件
   格式**——不是 C 环境,也不是平台 API——的那部分,没有别的名字能指代「PE 格式 + 呈现

@@ -73,7 +73,26 @@ export namespace mcpp::build::cache_key {
 // not ask for. They would all miss anyway (probe_cached compares the REQUESTED
 // artifacts), but sharing a directory between two layouts makes `cache gc`'s
 // size accounting and `cache verify`'s output meaningless.
-inline constexpr int kCacheEpoch = 2;
+// 3 (design 2026-09-18, coordinator review): `fill_package_config` used to
+// read only a package's OWN declared cflags/cxxflags, never the engine
+// broadcast channel (`privateBuild`) the realised [c-abi] environment and
+// `-D__openkal__` actually travel through — so an entry written before this
+// fix can be WRONG in a way probe_cached's normal "did the inputs change"
+// check cannot see: the compiled object and the recorded key silently
+// disagreed about what was compiled from the moment they were written, not
+// from a change since. This is the one case in this axis's whole design
+// (see the header comment above `struct BuildAxes`) where a narrower fix
+// is not enough — the poisoned entries are not the ones whose inputs
+// changed, they are ENTRIES WHOSE KEY NEVER DESCRIBED THEM, and the package
+// most likely to still show the identical (wrong) key after the fix is
+// exactly the one whose `privateBuild.cflags` just emptied out from under
+// it (a `kernel-abi` provider inferred into `c-environment = "platform"` in
+// this same PR): its new key is computed from nothing, matching its old
+// key, which was ALSO computed from nothing, while the STORED OBJECT was
+// compiled WITH the substitution. Bumping this orphans the entire cache —
+// one cold rebuild — rather than trust a key equality that cannot tell a
+// pre-fix entry from a post-fix one.
+inline constexpr int kCacheEpoch = 3;
 
 // Axes A/B/C — identical for every package in one build, computed once.
 struct BuildAxes {

@@ -479,6 +479,21 @@ declared flags, exactly as it already did for include directories.
 `--cache=off`, or clearing the cache directory, was never a sign the key
 was RIGHT; both routes bypass it entirely.
 
+**This release also bumps the cache's epoch, orphaning every existing
+entry — the first build after upgrading is cold.** A corrected key does not
+by itself make an entry written under the old, wrong derivation safe to
+keep: an entry is poisoned exactly when its recorded key and its actual
+compiled inputs already disagreed, and the package MOST likely to still
+show an unchanged key after the fix is the one this same revision newly
+exempts from the realisation (a `kernel-abi` provider inferred into
+`c-environment = "platform"`, above) — its `privateBuild.cflags` is now
+empty, so the new key is computed from nothing, matching the OLD key, which
+was also computed from nothing, while the object on disk was compiled WITH
+the substitution. No cheaper check tells a pre-fix entry from a post-fix
+one, so `mcpp.build.cache_key::kCacheEpoch` moves (2 → 3), which orphans
+the whole cache unconditionally rather than trust a key equality that
+cannot be trusted for exactly the entries that matter most.
+
 **Store key — not yet closed.** A package whose *install hook* compiles a
 static library from source into the shared store is keyed by package and
 version, not by which environment it was built against — the same gap
