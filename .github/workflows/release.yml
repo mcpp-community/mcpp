@@ -239,8 +239,20 @@ jobs:
             }
             in_section { print }
           ' CHANGELOG.md > dist/RELEASE_NOTES.md || true
+          # A RELEASE IS OUTWARD-FACING AND PERMANENT: publishing one whose
+          # notes silently came out empty is not a lesser failure than any
+          # other defect this workflow guards against, and until now it
+          # produced none — v2026.9.18.1 went out with its notes body reading
+          # literally "(no CHANGELOG entry found for 2026.9.18.1)", because
+          # CHANGELOG.md had no matching `## [<version>]` heading and this
+          # step wrote a placeholder and moved on rather than stopping. Stop
+          # instead: no matching section is an authoring mistake (the
+          # section is missing, or its version string does not match what is
+          # being tagged), and the fix belongs in CHANGELOG.md before the
+          # release is retried, not in a release whose notes nobody reads.
           if [ ! -s dist/RELEASE_NOTES.md ]; then
-            echo "(no CHANGELOG entry found for $VERSION)" > dist/RELEASE_NOTES.md
+            echo "::error::CHANGELOG.md has no '## [$VERSION]' section — refusing to publish a release with empty notes. Add that section (docs/92-release.md) and re-run, rather than let this placeholder ship: (no CHANGELOG entry found for $VERSION)"
+            exit 1
           fi
           echo "--- RELEASE_NOTES.md ---"
           cat dist/RELEASE_NOTES.md
