@@ -153,6 +153,31 @@ TEST(CenvProbe, AMacroDeclaredUndefinedButPresentIsAMismatch) {
     EXPECT_EQ(r->mismatches[0].measured, "defined");
 }
 
+// THE EXACT TOKEN `cenv::realise` NOW PRODUCES FOR macOS AND A FREESTANDING
+// TARGET (design §3.3, coordinator revision) — `-D__unix__` — PASSED TO A
+// REAL COMPILER, PROVING THE PROBE AGREES WITH IT. `test_cenv.cpp`'s
+// `MacosPosixArchDefaultDefinesUnix`/`FreestandingPosixDefinesUnix` assert
+// `cenv::realise` PRODUCES this token and this expectation pair, as a pure
+// function; this asserts the SAME token and expectation pair, handed to an
+// ACTUAL compiler, produce no mismatch — the half `cenv::realise` cannot
+// check on its own. `-D__unix__` is an ordinary preprocessor define with no
+// compiler-family or platform dependence, so this needs no real macOS or
+// freestanding target to prove the mechanism holds: this test's own host
+// (whatever it is — a Linux CI runner's compiler already defines `__unix__`
+// on its own, unlike macOS or a freestanding target, but `-D__unix__` is
+// harmlessly redundant there rather than wrong, and the assertion is exactly
+// the same declared/measured pair regardless) still ends up matching what
+// was declared.
+TEST(CenvProbe, TheDUnixTokenCenvRealiseProducesForMacosAndFreestandingSatisfiesItsOwnExpectation) {
+    if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
+    TmpCache cache;
+    auto r = cp::verify(cxx(), {"-D__unix__"}, 0, 0, {"__unix__"}, {"_WIN32"},
+                        cache.dir);
+    ASSERT_TRUE(r.has_value()) << r.error();
+    EXPECT_TRUE(r->mismatches.empty())
+        << (r->mismatches.empty() ? "" : r->mismatches[0].fact);
+}
+
 // CACHED PER CONFIGURATION (module header) — a second call with the
 // identical compiler + argv must not recompile. Distinguished from the
 // first call via `ran`, exactly as `Result::ran`'s own doc comment says: a

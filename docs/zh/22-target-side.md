@@ -298,10 +298,31 @@ libunwind 的 `assembly.h`,正是按这个宏来选寄存器保存集的)。mcpp
 | 目标 | 请求 | 实现 |
 |---|---|---|
 | Linux | `posix` / `arch-default` | 默认三元组已经满足 |
-| macOS | `posix` / `arch-default` | 默认三元组已经满足 |
+| macOS | `posix` / `arch-default` | 一个令牌,`-D__unix__`——Apple 的 clang 默认三元组预定义的是 `__APPLE__`/`__MACH__`,从来不是 `__unix__` |
+| 裸机(freestanding) | `posix` / `arch-default` | 同样一个令牌,`-D__unix__`,原因相同:这里同样没有任何东西定义它 |
 | Windows | `posix` / `arch-default` | 采用 Cygwin 式语义:仅在编译行加 `--target=x86_64-pc-cygwin`;`__CYGWIN__`/`__CYGWIN32__` 保持定义(见下方说明);`data-model` 变为 LP64 是三元组切换的结果,不是另一个开关 |
 | 任意目标 | `builtins = "iso"` | 关闭代码生成阶段假定平台 C 库在场的惯用法识别——本轮实测到的唯一一例是 Apple 目标上的 `-fno-builtin-memset_pattern16`;`src/toolchain/cenv.cppm` 记录了还核实过哪些、结论是不适用 |
 | 其余情况 | | 明确拒绝,点名目标、请求与缺什么——不静默降级 |
+
+**macOS 与裸机这两行是一次修正,不是设计原文(协调者修订,2026.9.18.1 发布不到一天就被真实
+构建抓到)。** 实现 `presents = "posix"` 遵循的规则是:在每一个目标上陈述的是同一件可观察的
+事实——`__unix__` 已定义,`_WIN32` 未定义——目标之间的差别只在于实现它要花多大代价。原文
+假设 macOS 的默认三元组已经像 Linux 一样呈现了它;真实构建上的校验探针把这个假设当场
+抓包为假——声明已定义,实测未定义——这正是那个探针存在的意义所在,不是它的漏洞。原文还
+把裸机目标对 `presents = "posix"` 的任何请求一律拒绝,这挡住了整整一个目标
+(`riscv64-none-elf`,openkal-llvm-runtime),而不是去实现这个引擎其实能给出的事实:裸机
+目标一开始两个宏都没有定义,和 macOS 默认三元组一模一样,所以这处修复付出的是同一个令牌
+的代价。已知的成本,留给 mcpp-index 30 个成员的实测去权衡:写成
+`#ifdef __unix__ ... #elif defined(__APPLE__)` 的可移植代码,现在在 macOS 上也会走 Unix
+分支,只有那条分支本身在 macOS 上也写对了才是对的。
+
+**编译器只在实现真的需要一个它拿不出来的令牌时才被拒绝——不是仅仅因为声明了
+`[c-abi]`。** `cenv::realise`(上文)先跑,是声明与目标的纯函数;只有 Clang 才行的要求
+第二个才检查,且只在结果令牌非空时才触发。openkal-musl 自己在 Linux 上的声明——
+`presents = "posix", data-model = "arch-default", wchar = 32`——实现出来什么都没有(上表
+第一行),所以 GCC 在那里被接受,校验探针照常核实,和任何其他空实现一样。Windows 那一情形
+没有变:Cygwin 式替换是非空的,所以一个非 Clang 编译器在那里仍然被拒绝,并点名它做不到
+什么。
 
 Windows 一行是旗舰情形:`x86_64-w64-windows-gnu` 与 `x86_64-pc-cygwin` 生成的机器码完全一致——
 同样的 PE 格式、同样的 Win64 调用约定、同样的 SEH——差别只在预处理器看到什么、`long` 有多宽。

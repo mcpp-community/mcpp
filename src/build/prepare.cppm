@@ -10788,21 +10788,29 @@ prepare_build(bool print_fingerprint,
         // below is therefore skipped, and every command line unchanged, for
         // the graph this engine has always built.
         if (tc && resolvedTargetSide.cAbiDecl) {
-            if (!mcpp::toolchain::is_clang(*tc)) {
-                refusal::record(refusal::Code::CEnvUnrealisable);
-                return std::unexpected(std::format(
-                    "the C library ('{}', {}) declares [c-abi], and this "
-                    "build's compiler ('{}') is not one mcpp can realise it "
-                    "through.\n"
-                    "       [c-abi] is realised with Clang-specific "
-                    "mechanisms — a `--target=` substitution and "
-                    "`-f[no-]short-wchar` — so a Clang toolchain is required "
-                    "for this target while a [c-abi] block is in the graph.\n"
-                    "       Select one: [toolchain] default = \"llvm@<version>\", "
-                    "or [target.<triple>] toolchain = \"llvm@<version>\".",
-                    resolvedTargetSide.cAbi.interfaceName,
-                    resolvedTargetSide.cAbi.impl, tc->compiler_family()));
-            }
+            // `cenv::realise` FIRST, THE COMPILER-FAMILY GATE SECOND — not
+            // the other way around (coordinator report, openkal-musl 0.15.0
+            // regression: GCC on Linux refused for a declaration
+            // `presents = "posix", data-model = "arch-default", wchar = 32,
+            // builtins = "iso"` that Linux/x86_64's own default ALREADY
+            // satisfies, needing no substitution at all — a gratuitous
+            // refusal that lost the package for every GCC user on Linux).
+            // `cenv::realise` is a pure function of the declaration and the
+            // TARGET, not of the compiler (`mcpp.toolchain.cenv`'s own
+            // module header) — computing it before asking anything about the
+            // compiler is what lets an EMPTY realisation answer "does this
+            // compiler need to be Clang" correctly: no. The Clang-specific
+            // mechanisms (`--target=` substitution, `-f[no-]short-wchar`,
+            // the `builtins = "iso"` flags) are only needed when realisation
+            // actually produces tokens; when it produces none, the target's
+            // own default already IS the declaration, and any compiler that
+            // can run the verification probe below (`-E -dM`, not a
+            // Clang-specific flag) can be trusted to have gotten there —
+            // which is exactly what that probe then confirms rather than
+            // assumes. The Windows/GCC case is UNCHANGED by this: there the
+            // realisation is non-empty (the Cygwin-flavoured substitution),
+            // and MinGW's `long` is 32-bit regardless of flags (openkal-musl
+            // measured), so the gate below still refuses it.
             auto tt = mcpp::toolchain::triple::parse(tc->targetTriple);
             auto realised = mcpp::toolchain::cenv::realise(
                 *resolvedTargetSide.cAbiDecl, tt ? tt->os : std::string{},
@@ -10810,6 +10818,24 @@ prepare_build(bool print_fingerprint,
             if (!realised) {
                 refusal::record(refusal::Code::CEnvUnrealisable);
                 return std::unexpected(realised.error());
+            }
+            if ((!realised->tokens.empty() || !realised->builtinsTokens.empty())
+                && !mcpp::toolchain::is_clang(*tc)) {
+                refusal::record(refusal::Code::CEnvUnrealisable);
+                return std::unexpected(std::format(
+                    "the C library ('{}', {}) declares [c-abi] whose "
+                    "realisation for this target requires Clang-specific "
+                    "substitution, and this build's compiler ('{}') cannot "
+                    "carry it out.\n"
+                    "       [c-abi] is realised, for targets that need "
+                    "anything at all, with Clang-specific mechanisms — a "
+                    "`--target=` substitution and `-f[no-]short-wchar` — so "
+                    "a Clang toolchain is required for this target while "
+                    "this declaration is in the graph.\n"
+                    "       Select one: [toolchain] default = \"llvm@<version>\", "
+                    "or [target.<triple>] toolchain = \"llvm@<version>\".",
+                    resolvedTargetSide.cAbi.interfaceName,
+                    resolvedTargetSide.cAbi.impl, tc->compiler_family()));
             }
             tc->cEnvTokens          = realised->tokens;
             tc->cEnvBuiltinsTokens  = realised->builtinsTokens;

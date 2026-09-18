@@ -361,10 +361,41 @@ that names no C library:
 | Target | Request | Realisation |
 |---|---|---|
 | Linux | `posix` / `arch-default` | the default triple already satisfies it |
-| macOS | `posix` / `arch-default` | the default triple already satisfies it |
+| macOS | `posix` / `arch-default` | one token, `-D__unix__` — Apple's clang predefines `__APPLE__`/`__MACH__` on its default triple, never `__unix__` |
+| freestanding | `posix` / `arch-default` | the same one token, `-D__unix__`, for the same reason: nothing here defines it either |
 | Windows | `posix` / `arch-default` | Cygwin-flavoured: `--target=x86_64-pc-cygwin` on the compile line only; `__CYGWIN__`/`__CYGWIN32__` are left defined (see the note below); `data-model` becomes LP64 as a consequence of the triple, not a separate flag |
 | any | `builtins = "iso"` | turns off code-generation idioms that assume a platform C library — `-fno-builtin-memset_pattern16` on Apple targets is the one this survey measured; see `src/toolchain/cenv.cppm` for what else was checked and found not to apply |
 | anything else | | refused, naming the target, the request and what is missing — never a silent downgrade |
+
+**The macOS and freestanding rows are a correction, not the design's original
+text (coordinator revision, caught by real builds within a day of
+2026.9.18.1 shipping).** The rule realising `presents = "posix"` follows is:
+the SAME observable fact on every target — `__unix__` defined, `_WIN32`
+not — and targets differ only in what realising it COSTS. The original text
+assumed macOS's default triple already presented it, the way Linux's does;
+the verification probe (below) caught that assumption as false on a real
+build — declared defined, measured undefined — which is precisely the class
+of error that probe exists to catch. The original text also refused a
+freestanding target outright for asking `presents = "posix"` at all, which
+blocked a whole target (`riscv64-none-elf`, openkal-llvm-runtime) rather
+than realising a fact this engine can in fact deliver: a freestanding target
+starts with neither macro defined, exactly like macOS's default triple, so
+the fix costs it the identical token. Known cost, left to the mcpp-index
+30-member measurement to weigh: portable code written
+`#ifdef __unix__ ... #elif defined(__APPLE__)` now takes the Unix branch on
+macOS too, correct only if that branch is written to also be correct there.
+
+**A compiler is refused only when the realisation actually needs a token it
+cannot take — not merely because `[c-abi]` is declared.** `cenv::realise`
+(above) runs first, as a pure function of the declaration and the target;
+the Clang-only requirement is checked second, and only fires when the
+resulting tokens are non-empty. openkal-musl's own declaration on Linux —
+`presents = "posix", data-model = "arch-default", wchar = 32` — realises to
+nothing at all (the first row of the table above), so GCC is accepted there
+and the verification probe confirms it, exactly as it would for any other
+empty realisation. The Windows case is unchanged: the Cygwin-flavoured
+substitution is non-empty, so a non-Clang compiler is still refused there,
+naming what it cannot do.
 
 The Windows row is the flagship case: `x86_64-w64-windows-gnu` and
 `x86_64-pc-cygwin` produce IDENTICAL machine code — same PE format, same

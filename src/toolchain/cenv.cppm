@@ -13,20 +13,45 @@
 // is nowhere in this file; a second POSIX C library on Windows would realise
 // through the same table.
 //
-// ONE MAPPING TABLE, THE ONE §3.3 PUBLISHES:
+// ONE MAPPING TABLE, THE ONE §3.3 PUBLISHES (coordinator-revised: realising
+// `presents = "posix"` means the SAME observable fact everywhere — `__unix__`
+// defined, `_WIN32` not — and targets differ only in what it COSTS to get
+// there; the original text's "macOS: already satisfied" and "freestanding:
+// refused" were both wrong in that specific sense, caught by real builds —
+// see the note below the table):
 //
-//   target    request                    realisation
-//   Linux     posix / arch-default       the default triple already satisfies it
-//   macOS     posix / arch-default       the default triple already satisfies it
-//   Windows   posix / arch-default       Cygwin-flavoured: `--target=x86_64-pc-cygwin`,
+//   target        request                realisation
+//   Linux         posix / arch-default   the default triple already satisfies it
+//   macOS         posix / arch-default   one token, `-D__unix__` — Apple's clang
+//                                        predefines `__APPLE__`/`__MACH__`, never
+//                                        `__unix__`, on its default triple
+//   freestanding  posix / arch-default   the same one token, `-D__unix__`, for the
+//                                        same reason: nothing here defines it either
+//   Windows       posix / arch-default   Cygwin-flavoured: `--target=x86_64-pc-cygwin`,
 //                                        `__CYGWIN__`/`__CYGWIN32__` STAY DEFINED (see
 //                                        the note below the table — this is a design
 //                                        revision, not the original §3.3 text)
-//   *         builtins = iso             turn off the platform-C-library idioms the
+//   *             builtins = iso         turn off the platform-C-library idioms the
 //                                        code generator assumes (§3.2.1) — Apple's
 //                                        `memset_pattern16` is the one measured case
 //   anything else                        refused, naming the target, the request and
 //                                        what is missing — never a silent downgrade
+//
+// THE macOS/freestanding CORRECTION, AND WHY IT MATTERS BEYOND THOSE TWO
+// TARGETS. Assuming a target's default already presents an identity, when it
+// does not, is not a smaller mistake than refusing a target that could have
+// realised one — both hand a package a declaration that does not deliver a
+// uniform answer, which is the one thing this whole feature exists to give
+// it. macOS's case was caught by the VERIFICATION PROBE on a real build
+// (declared `__unix__` defined, measured undefined — precisely the class of
+// error §3.2's probe exists to catch, not a hole in it); freestanding's was a
+// refusal that blocked a whole target (openkal-llvm-runtime on
+// riscv64-none-elf) rather than delivering a fact this engine can in fact
+// produce. The known cost, named in the design and left to the mcpp-index
+// 30-member measurement to weigh rather than assumed away: portable code
+// written as `#ifdef __unix__ ... #elif defined(__APPLE__)` now takes the
+// Unix branch on macOS too, which is correct only if that branch is written
+// to also be correct there.
 //
 // `wchar` is realised the same way on every target through one clang pair,
 // `-fshort-wchar` / `-fno-short-wchar`, relative to the triple's OWN default
@@ -208,14 +233,40 @@ inline std::expected<Realisation, std::string> realise(
     bool cygwinIdentity = false;
 
     // ── `presents`: the environment-identity macros ─────────────────────────
+    //
+    // THE RULE (design 2026-09-18 §3.3, coordinator revision from the
+    // openkal-musl/openkal-llvm-runtime spikes, superseding the original
+    // per-OS table): realising `presents = "posix"` means the SAME
+    // observable thing on every target — `__unix__` defined, `_WIN32` not —
+    // and targets differ only in what it COSTS to get there. Linux: nothing,
+    // the default triple already presents it. macOS and a freestanding
+    // target: the cost is one token, `-D__unix__` — Apple's clang predefines
+    // `__APPLE__`/`__MACH__`, never `__unix__` (measured; the ORIGINAL design
+    // text assumed macOS's default already satisfied `presents = "posix"`,
+    // which the verification probe itself caught as false — declared
+    // defined, measured undefined — which is exactly what that probe exists
+    // to catch), and a freestanding target starts with neither macro defined
+    // at all for the identical reason. Windows: the Cygwin-flavoured
+    // substitution (below). This is the point of the whole feature: a
+    // package that reads `presents = "posix"` gets ONE fact to check, not a
+    // target-shaped one it may as well have kept detecting for itself
+    // (`#ifdef __unix__ ... #elif defined(__APPLE__)` still branches WRONG
+    // on a `-D__unix__` macOS build if it does not also treat `__unix__` as
+    // authoritative — a real cost, not a hidden one, and a measurement
+    // question for the 30-member wave rather than a reason to withhold the
+    // define).
     if (freestanding) {
-        // A freestanding target defines none of `_WIN32`/`__unix__` to begin
-        // with, so only `none` — the value the (deferred) reduced-ISO-C form
-        // uses — is already satisfied; the other two ask for an identity that
-        // does not exist here.
-        if (decl.presents != CAbiPresents::None)
+        if (decl.presents == CAbiPresents::Posix) {
+            r.tokens.push_back("-D__unix__");
+            r.expectDefined.push_back("__unix__");
+            r.expectUndefined.push_back("_WIN32");
+        } else if (decl.presents != CAbiPresents::None) {
+            // `none` is the value the (deferred) reduced-ISO-C form uses and
+            // needs no realisation; `windows` asks for an identity that
+            // cannot exist without an operating system under it.
             return refuse("a freestanding target has no platform identity "
-                          "macros to become `posix` or `windows`");
+                          "macros to become `windows`");
+        }
     } else if (os == "windows") {
         if (decl.presents == CAbiPresents::Posix) {
             if (arch != "x86_64")
@@ -241,9 +292,26 @@ inline std::expected<Realisation, std::string> realise(
             return refuse("no known way to suppress every environment-"
                           "identity macro on a hosted Windows triple");
         }
-    } else if (os == "linux" || os == "macos") {
+    } else if (os == "linux") {
         if (decl.presents == CAbiPresents::Posix) {
-            // The default triple already presents POSIX.
+            // The default triple already presents POSIX — nothing to add.
+            r.expectDefined.push_back("__unix__");
+            r.expectUndefined.push_back("_WIN32");
+        } else {
+            return refuse(std::format(
+                "no known way to make a {} target present `{}` — that "
+                "identity belongs to a different object format",
+                os, mcpp::targetside::c_abi_presents_name(decl.presents)));
+        }
+    } else if (os == "macos") {
+        if (decl.presents == CAbiPresents::Posix) {
+            // UNLIKE LINUX: Apple's clang predefines `__APPLE__`/`__MACH__`
+            // on its default triple, never `__unix__` (measured — this is
+            // the correction, not the original design text: the identity
+            // was assumed to be free here the same way it is on Linux, and
+            // the verification probe below caught that assumption as false
+            // on a real build). One token closes it.
+            r.tokens.push_back("-D__unix__");
             r.expectDefined.push_back("__unix__");
             r.expectUndefined.push_back("_WIN32");
         } else {

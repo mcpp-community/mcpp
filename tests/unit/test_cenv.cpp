@@ -45,11 +45,21 @@ TEST(CEnv, LinuxPosixArchDefaultIsANoOp) {
     EXPECT_EQ(r->expectWcharBits, 32);
 }
 
-TEST(CEnv, MacosPosixArchDefaultIsANoOp) {
+// NOT a no-op — a correction from the design's original text, caught by the
+// verification probe on a real build (coordinator report): Apple's clang
+// predefines `__APPLE__`/`__MACH__` on its default triple, never `__unix__`.
+// The rule (design §3.3, revised): realising `presents = "posix"` means the
+// SAME observable fact everywhere — `__unix__` defined, `_WIN32` not — and
+// macOS's cost for that fact is one token, `-D__unix__`, same as a
+// freestanding target's (`FreestandingPosixDefinesUnix` below) and for the
+// identical reason: neither already has it.
+TEST(CEnv, MacosPosixArchDefaultDefinesUnix) {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32);
     auto r = cenv::realise(d, "macos", "aarch64", false);
     ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_TRUE(r->tokens.empty());
+    ASSERT_TRUE(has(r->tokens, "-D__unix__"));
+    ASSERT_TRUE(has(r->expectDefined, "__unix__"));
+    ASSERT_TRUE(has(r->expectUndefined, "_WIN32"));
 }
 
 // The flagship case: Cygwin-flavoured Windows.
@@ -152,14 +162,35 @@ TEST(CEnv, LlP64RequestedOnLinuxIsRefused) {
     EXPECT_NE(r.error().find("data-model"), std::string::npos) << r.error();
 }
 
-TEST(CEnv, FreestandingAcceptsOnlyNone) {
+TEST(CEnv, FreestandingAcceptsNone) {
     auto ok = decl(ts::CAbiPresents::None, ts::CAbiDataModel::ArchDefault, 32);
     auto r1 = cenv::realise(ok, "none", "riscv64", true);
-    EXPECT_TRUE(r1.has_value()) << (r1 ? "" : r1.error());
+    ASSERT_TRUE(r1.has_value()) << r1.error();
+    EXPECT_TRUE(r1->tokens.empty());
+}
 
-    auto bad = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32);
-    auto r2 = cenv::realise(bad, "none", "riscv64", true);
-    ASSERT_FALSE(r2.has_value());
+// A freestanding target ALSO realises `presents = "posix"` (design §3.3,
+// coordinator revision — this used to be an unconditional refusal, which is
+// exactly the bug openkal-llvm-runtime's CI hit: refused on riscv64-none-elf
+// before reaching any other target, for a fact this engine can in fact
+// deliver). Bare metal starts with neither `_WIN32` nor `__unix__` defined,
+// same as macOS's default triple, so it costs the identical one token.
+TEST(CEnv, FreestandingPosixDefinesUnix) {
+    auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32);
+    auto r = cenv::realise(d, "none", "riscv64", true);
+    ASSERT_TRUE(r.has_value()) << r.error();
+    ASSERT_TRUE(has(r->tokens, "-D__unix__"));
+    ASSERT_TRUE(has(r->expectDefined, "__unix__"));
+    ASSERT_TRUE(has(r->expectUndefined, "_WIN32"));
+}
+
+// `windows` still has no realisation on a freestanding target — there is no
+// operating system under it for that identity to belong to. Unaffected by
+// the `posix` fix above; pinned so it stays that way.
+TEST(CEnv, FreestandingWindowsIsStillRefused) {
+    auto d = decl(ts::CAbiPresents::Windows, ts::CAbiDataModel::ArchDefault, 16);
+    auto r = cenv::realise(d, "none", "riscv64", true);
+    ASSERT_FALSE(r.has_value());
 }
 
 // A 32-bit architecture's own native data model is ILP32 — the Cygwin

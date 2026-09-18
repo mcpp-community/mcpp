@@ -5,6 +5,39 @@
 
 ## [Unreleased]
 
+## [2026.9.18.2] - 2026-09-18
+
+### 2026.9.18.1 发布几小时内,三个下游仓库的 CI 揭出的三处同形缺陷:声明满足与做不到被当成了一回事
+
+三处缺陷,同一个形状:引擎把「目标默认已经满足这条声明」和「这条声明做不到」当成了同一种
+情况来处理,结果要么拒绝了一个根本不需要拒绝的编译器,要么拒绝了一个其实能实现的目标。
+
+- **GCC 在 Linux 上被拒绝,仅仅因为声明了 `[c-abi]`,即便实现出来的东西是空的。**
+  openkal-musl 0.15.0 在 Linux 上的声明——`presents = "posix", data-model =
+  "arch-default", wchar = 32`——正是 x86_64 Linux 的默认三元组本来就是的样子,实现出来
+  不需要任何令牌。旧的检查顺序是先问「这是不是 Clang」,再算实现——所以只要图里出现
+  `[c-abi]` 就先把非 Clang 编译器拒了,不管实现到底需不需要它做什么。每一个用 GCC 在
+  Linux 上构建 openkal-musl 的用户,因此白白丢了这个包。现在 `cenv::realise` 先跑(它是
+  声明与目标的纯函数,与编译器无关),只有在结果令牌非空时才检查编译器族——Windows 上的
+  Cygwin 式替换仍然是非空的,所以那条路径的拒绝没有变。
+- **macOS 默认并不满足 `presents = "posix"`,校验探针当场抓到了这一点——这正是它存在的
+  意义。** 探针报告:声明 `__unix__` 已定义,实测未定义。Apple 的 clang 默认预定义的是
+  `__APPLE__`/`__MACH__`,从来不是 `__unix__`;最初设计文本假设 macOS 的默认三元组像
+  Linux 一样已经满足,这个假设是错的。
+- **裸机(freestanding)目标对 `presents = "posix"` 一律拒绝,openkal-llvm-runtime 因此
+  在 `riscv64-none-elf` 上还没碰到别的目标就先被挡下来了。**
+
+三处修成一条规则,也是比它取代的那条更简单的表述:实现 `presents = "posix"` 在每个目标上
+陈述的是同一件可观察的事实——`__unix__` 已定义,`_WIN32` 未定义——目标之间的差别只在于
+实现它要花多大代价。Linux:不花代价。macOS 与裸机:定义 `__unix__`,一个令牌。Windows:
+Cygwin 式替换。已知的权衡,留给 mcpp-index 30 个成员的实测去称量:写成
+`#ifdef __unix__ ... #elif defined(__APPLE__)` 的可移植代码,现在在 macOS 上也会走 Unix
+分支。
+(`src/toolchain/cenv.cppm`、`src/build/prepare.cppm`,单测 `test_cenv.cpp`(
+`MacosPosixArchDefaultDefinesUnix`、`FreestandingPosixDefinesUnix`、
+`FreestandingWindowsIsStillRefused`)与 `test_cenv_probe.cpp`(令牌与探针互相印证的一例),
+e2e `tests/e2e/742_gcc_accepted_when_the_realisation_is_empty.sh`,docs/22 及其 zh 镜像)
+
 ## [2026.9.18.1] - 2026-09-18
 
 ### C 库层可以声明它呈现的 C 环境,引擎实现并校验:设计 2026-09-18(2026.9.18.1)
