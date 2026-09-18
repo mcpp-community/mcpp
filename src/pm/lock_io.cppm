@@ -16,6 +16,7 @@ export module mcpp.pm.lock_io;
 
 import std;
 import mcpp.libs.toml;
+import mcpp.toolchain.fingerprint;   // hash_string — the cross-platform FNV-1a
 
 export namespace mcpp::pm {
 
@@ -66,6 +67,19 @@ std::expected<void, LockError>     write(const Lockfile& lock, const std::filesy
 
 std::string serialize(const Lockfile& lock);
 std::string compute_hash(const Lockfile& lock);
+
+// The `hash` field recorded for an index-resolved dependency, as
+// `fnv1a:<16 hex>` over "<indexNamespace>:<name>@<version>".
+//
+// It MUST be computed with a hash whose output is the same on every host.
+// `std::hash<std::string>` is not: MSVC implements it as FNV-1a while
+// libstdc++/libc++ use MurmurHash, so the very same dependency landed in
+// `mcpp.lock` with a different hash on Windows and on Linux — a diff on every
+// checkout, and a `fnv1a:` label that was only true on MSVC. The deterministic
+// FNV-1a in `mcpp.toolchain.fingerprint` is the project's one hash.
+std::string index_package_digest(std::string_view indexNamespace,
+                                 std::string_view name,
+                                 std::string_view version);
 
 } // namespace mcpp::pm
 
@@ -191,6 +205,13 @@ std::string compute_hash(const Lockfile& lock) {
         h *= 0x100000001b3ull;
     }
     return std::format("{:016x}", h);
+}
+
+std::string index_package_digest(std::string_view indexNamespace,
+                                 std::string_view name,
+                                 std::string_view version) {
+    return "fnv1a:" + mcpp::toolchain::hash_string(
+        std::format("{}:{}@{}", indexNamespace, name, version));
 }
 
 std::optional<LockedGitSource> parse_git_source(std::string_view source) {

@@ -105,3 +105,17 @@ TEST(PmLockIo, ParseNonGitSourceReturnsNullopt) {
     EXPECT_FALSE(
         mcpp::pm::parse_git_source("git+https://host/repo#bad").has_value());
 }
+
+// The lock digest MUST be the same on every host. It used `std::hash<std::string>`,
+// whose output is implementation-defined — MSVC implements it as FNV-1a, while
+// libstdc++/libc++ use MurmurHash. The same `compat.catch2` therefore landed in
+// mcpp.lock as 50719400df192025 on Windows and f492c0206481c69a on Linux, so a
+// clean checkout showed a lock diff after every command, and the `fnv1a:` prefix
+// was only true on MSVC. These vectors are the cross-platform contract: a
+// host-dependent hash turns them red on one of the two platforms.
+TEST(PmLockIo, IndexPackageDigestIsFnv1aOnEveryHost) {
+    EXPECT_EQ(mcpp::pm::index_package_digest("compat", "compat.catch2", "2.13.10"),
+              "fnv1a:50719400df192025");
+    EXPECT_EQ(mcpp::pm::index_package_digest("acme", "acme.gadget", "2.1.0"),
+              "fnv1a:2adea846f70078bc");
+}

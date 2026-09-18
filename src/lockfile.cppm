@@ -33,4 +33,10 @@ write(const Lockfile& lock, const std::filesystem::path& path) {
 inline std::string serialize(const Lockfile& lock)    { return mcpp::pm::serialize(lock); }
 inline std::string compute_hash(const Lockfile& lock) { return mcpp::pm::compute_hash(lock); }
 
+inline std::string index_package_digest(std::string_view indexNamespace,
+                                        std::string_view name,
+                                        std::string_view version) {
+    return mcpp::pm::index_package_digest(indexNamespace, name, version);
+}
+
 } // namespace mcpp::lockfile
