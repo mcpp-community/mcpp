@@ -12554,9 +12554,27 @@ prepare_build(bool print_fingerprint,
     // did not opt out — so the opt-out is folded in too, named by the
     // package rather than by its flags, since the flags it now keeps are
     // simply the ones already covered above.
-    for (auto& pkg : packages)
-        if (pkg.manifest.cEnvironment == "platform")
-            fpi.compileFlags += " cenv-platform:" + pkg.manifest.package.name;
+    //
+    // GATED ON THE REALISATION ACTUALLY BEING ACTIVE (`cEnvTokens` or
+    // `cEnvBuiltinsTokens` non-empty) — NOT unconditional. `cEnvironment ==
+    // "platform"` is true for every `mcpp:kernel-abi=<impl>` provider now
+    // (it is INFERRED, this same revision), in every graph that uses one,
+    // whether or not that graph's C library declares `[c-abi]` at all. An
+    // unconditional loop here folded `cenv-platform:<name>` into the
+    // fingerprint of EVERY project using openkal-windows (say) even when
+    // nothing about the realised environment was active — moving every
+    // such project's output directory on upgrade for a string that
+    // describes an opt-out from a realisation that never ran. There is
+    // nothing to opt OUT of when there is nothing being realised, so the
+    // opt-out changes nothing about that package's own objects and must
+    // not move the fingerprint either — the same "declares nothing, byte
+    // identical" guarantee the rest of this block already gives, which this
+    // loop had broken on its own.
+    if (!tc->cEnvTokens.empty() || !tc->cEnvBuiltinsTokens.empty()) {
+        for (auto& pkg : packages)
+            if (pkg.manifest.cEnvironment == "platform")
+                fpi.compileFlags += " cenv-platform:" + pkg.manifest.package.name;
+    }
     // The module-edge schedule changes the SHAPE of build.ninja, and the fast
     // path replays that file without a plan to compare against. Folding the
     // switch into the fingerprint puts a differently-scheduled build in a

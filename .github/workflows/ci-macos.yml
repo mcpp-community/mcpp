@@ -81,15 +81,15 @@ jobs:
       - name: The floating macros mcpp states for an Apple target
         run: echo 'APPLE_FLOAT_MACROS=-DINFINITY=HUGE_VALF -DNAN=__builtin_nanf("0x7fc00000")' >> "$GITHUB_ENV"
 
-      # THE SDK mcpp SELECTS, NOT THE ONE THE PACKAGE'S clang++.cfg NAMES. The
-      # xlings LLVM package writes `--sysroot=/Library/Developer/CommandLineTools/
-      # SDKs/MacOSX.sdk` into its configuration; mcpp passes --no-default-config
-      # and uses `xcrun --show-sdk-path` (modules/platform/src/macos/macos.cppm).
-      # On xcode-27-arm64 20260912 the Command Line Tools SDK lists `arm64e.x1`
-      # in its .tbd stubs, which ld64.lld 22.1.8 does not parse (support landed
-      # upstream in llvm-project#222721, after 22.1.8), while the SDK xcrun
-      # selects links. These raw compiles state the SDK the way mcpp does, so the
-      # job measures what mcpp builds rather than the package's default.
+      # THE SDK mcpp'S OWN RESOLUTION NAMES: `xcrun --show-sdk-path`
+      # (modules/platform/src/macos/macos.cppm). These raw compiles state the
+      # SDK the same way, on purpose.
+      #
+      # KNOWN RED on the xcode-27 image, this job and "e2e suite (macOS ARM64,
+      # self-host, xcode-27)" both: the Command Line Tools SDK there ships an
+      # `arm64e.x1` .tbd stub ld64.lld 22.1.8 cannot parse — fixed upstream
+      # (llvm-project#222721) after 22.1.8 was tagged, not yet in any release.
+      # See mcpp-community/mcpp#669 for the evidence and status.
       - name: The SDK mcpp selects for an Apple target
         run: echo "APPLE_SYSROOT=-isysroot $(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
 

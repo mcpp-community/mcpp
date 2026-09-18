@@ -39,20 +39,20 @@
   `mcpp.toml` 两条清单解析路径都实现了同一条推导。(`modules/manifest/src/{toml,xpkg}.cppm`,
   单测 `test_manifest.cpp` 的 `CEnvironmentIsInferredForAKernelAbiProvider`(两条解析路径各一
   个),e2e `tests/e2e/741_...sh`)
-- **全局构建缓存(`~/.mcpp/build-cache/v1`)的键补上了解析出的环境,经 openkal-musl
-  尖峰实验发现并修订。** `mcpp.build.cache_key::fill_package_config` 原先只读包自己清单里
-  声明的 `cflags`/`cxxflags`(`manifest.buildConfig`),而解析出的 [c-abi] 环境是引擎的
-  广播,只写入 `PackageRoot::privateBuild`,从不写回前者——两次解析出不同环境的构建因此
-  拿到同一把键,原地升级 `mcpp` 时缓存目录若未清理,会把按旧环境编译的目标文件喂给按新
-  环境构建的镜像,一个镜像混两种 C 环境且没有任何诊断,这正是本设计要防止的那个不变量本身。
-  现在 `fill_package_config` 把 `privateBuild.cflags`/`cxxflags`/新增的 `asmflags`(广播后的
+- **升级到这个版本后,第一次构建会是一次冷构建——这是故意的,原因如下。** 全局构建缓存
+  (`~/.mcpp/build-cache/v1`)的键原先没有覆盖解析出的 [c-abi] 环境(经 openkal-musl 尖峰
+  实验发现):`mcpp.build.cache_key::fill_package_config` 只读包自己清单里声明的
+  `cflags`/`cxxflags`,而解析出的环境是引擎的广播,只写进 `PackageRoot::privateBuild`,
+  从不写回前者——两次解析出不同环境的构建因此拿到同一把键。原地升级 `mcpp` 而不清理缓存
+  目录,会把按**旧**环境编译的目标文件喂给按**新**环境构建的镜像,一个镜像混两种 C 环境且
+  没有任何诊断,这正是本设计要防止的那个不变量本身。键的推导已经修好(见下),但已经写下的
+  条目没法用它来判断自己还能不能信——所以 `kCacheEpoch` 从 2 提到了 3,`~/.mcpp/
+  build-cache/v1` 下已有的条目整体作废,不再逐条判断。这不是求稳的富余动作:键改对了以后,
+  恰恰是那些*不再*触发替换的包最危险——比如同一个 PR 里被推导进 `c-environment =
+  "platform"` 的 kernel-abi 包,它广播前后 `privateBuild.cflags` 都是空的,新键和旧键因此
+  照样相同,而旧键当初对应的目标文件,正是带着替换令牌编译出来的那一份。
+  `fill_package_config` 现在把 `privateBuild.cflags`/`cxxflags`/新增的 `asmflags`(广播后的
   值)与包自身声明的标志一起折进键里,和它原本处理 include 目录的方式一致。
-  **升级到这个版本后,第一次构建会是一次冷构建**:`kCacheEpoch` 从 2 提到了 3,已有的
-  `~/.mcpp/build-cache/v1` 条目会被整体作废,而不是逐条判断哪些还能信。这不是求稳的富余
-  动作——键改对了以后,恰恰是那些*不再*触发替换的包最危险:比如同一个 PR 里被推导进
-  `c-environment = "platform"` 的 kernel-abi 包,它 broadcast 前后 `privateBuild.cflags`
-  都是空的,新键和旧键因此照样相同,而旧键当初对应的目标文件,正是带着替换令牌编译出来
-  的那一份——键从一开始就没描述对它,普通的输入变化检测看不出来,只有作废整个缓存才够。
   (`src/build/cache_key.cppm`,单测 `test_cache_key.cpp` 的
   `TwoDifferentRealisedCEnvironmentsDoNotShareASlot` 与
   `EveryPrivateBuildBroadcastFieldReachesTheKey`——后者是给这一类缺陷立的长期防线:

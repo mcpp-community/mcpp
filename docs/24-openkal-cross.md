@@ -48,6 +48,20 @@ meant "is the Windows CRT present."
 | C environment | the shape of the C environment source sees | the layer providing `mcpp:c-abi=<impl>`, via [`[c-abi]`](22-target-side.md#the-c-environment-a-c-abi-package-presents-mcpp-2026918) | `__unix__`, `_WIN32`, `__MINGW32__` |
 | system & architecture | the underlying OS and processor | the target triple | `__linux__`, `__APPLE__`, `__x86_64__` |
 
+A FOURTH fact rides along with the C-environment row without being the same
+question: the **object format** the linker produces — PE, ELF, Mach-O — is
+a property of the *target triple*, not of the C environment `presents`
+selects, and the two can disagree. `presents = "posix"` on Windows still
+links PE; the only name portable third-party code has for that specific
+combination, "PE format with a POSIX-presenting C environment," is
+`__CYGWIN__`/`__CYGWIN32__`, which the Cygwin-flavoured realisation
+therefore leaves DEFINED rather than folding into the three rows above —
+see [22's own note](22-target-side.md#the-c-environment-a-c-abi-package-presents-mcpp-2026918)
+for the full trade-off (it is not a settled fact, and may flip). Reading it
+as a fourth C-environment macro, rather than as what it actually is — an
+object-format fact `__CYGWIN__` happens to be the only name for — is
+exactly the shape of confusion this whole section exists to head off.
+
 **`__openkal__` — the rule.** The engine defines it, for every target-side
 unit, whenever the resolved `kernel-abi` layer's interface name is
 `openkal` — read from the LAYER's value, never from a package name, so a
@@ -66,12 +80,27 @@ write `cfg(c-abi = "…")` or `cfg(kernel-abi = "…")` in the manifest instead
 for the predicate grammar).
 
 **Platform units.** A package that itself needs the platform's own
-environment — openkal-windows, or a platform shim under [06's private
-dependency pattern](06-features-and-capabilities.md#a-platform-sdk-dependency-stays-private)
-— states `[package] c-environment = "platform"` (docs/22) rather than
-reading `__openkal__` or any other macro to work it out: the boundary is
-declared, not inferred, and everything crossing it is still fixed-width
-(SPEC §5.4).
+environment never reads `__openkal__` or any other macro to work that out —
+the boundary is stated in the manifest, not inferred from source, and
+everything crossing it is still fixed-width (SPEC §5.4). Two different
+packages reach `[package] c-environment = "platform"` (docs/22) by two
+different routes:
+
+- A `mcpp:kernel-abi=<impl>` provider (openkal-windows, say) gets it
+  **inferred**, from `provides` alone — such a package IS the platform
+  boundary by definition, so it never has to write the key itself, and
+  every already-released implementation is covered with no version bump.
+- An ordinary package that is not a kernel-abi provider but still has
+  platform-bound units of its own — a shim under [06's private dependency
+  pattern](06-features-and-capabilities.md#a-platform-sdk-dependency-stays-private),
+  say — states the key EXPLICITLY, because the engine has no `provides`
+  entry to infer it from (design §5.3).
+
+An explicit key always wins over the inference where both could apply
+(docs/22's own precedence note) — but there is no way today to write "not
+platform" back, so a kernel-abi provider that, unusually, needs the graph's
+presented C environment after all is the only case where this matters in
+practice.
 
 ## What A Project Writes
 

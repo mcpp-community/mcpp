@@ -24,6 +24,10 @@ jobs:
   e2e:
     name: e2e suite (macOS ARM64, self-host, ${{ matrix.image }})
     # The same two images as ci-macos.yml; `xcode-27` is macOS 27 (see there).
+    # KNOWN RED on xcode-27, along with ci-macos.yml's own job: the image's
+    # Command Line Tools SDK ships an `arm64e.x1` .tbd stub ld64.lld 22.1.8
+    # cannot parse (fixed upstream, llvm-project#222721, not yet in a
+    # release). See mcpp-community/mcpp#669.
     strategy:
       fail-fast: false
       matrix:
