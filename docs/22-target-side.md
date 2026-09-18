@@ -494,15 +494,48 @@ one, so `mcpp.build.cache_key::kCacheEpoch` moves (2 → 3), which orphans
 the whole cache unconditionally rather than trust a key equality that
 cannot be trusted for exactly the entries that matter most.
 
-**Store key — not yet closed.** A package whose *install hook* compiles a
-static library from source into the shared store is keyed by package and
-version, not by which environment it was built against — the same gap
-[requires](#requires) already documents for a C++ runtime selection. Closing
-it the same way (a `requires`-shaped statement of the environment, checked
-at resolution and refused on mismatch) is designed but not yet implemented;
-until it is, such a package's install hook must not build more than one
-environment's variant into one store directory, exactly as the C++-runtime
-case already requires.
+**Store key — not yet closed, and here is exactly what that means (checked
+against the code path that populates it, mcpp 2026.9.18+).** A package's
+*install hook* CAN and does compile target-side code — object code, a
+static library — and the shared store it installs into is keyed by package
+and version only, the same gap [requires](#requires) already documents for
+a C++ runtime selection. What makes this different from the build-cache key
+above, and NOT something this PR could close the same way: an install hook
+runs BEFORE the toolchain resolves, by a real ordering constraint, not an
+oversight. `install_hook_env`'s toolchain fields are unconditionally empty
+on the ordinary path — `prepare.cppm` resolves `tc` only *after* the
+dependency graph installs, because resolving the target side can itself
+depend on which package the graph turns out to supply a layer from (the
+`c-abi` provider is a member of that same graph). A hook has no realised
+environment to consult because, at the moment it runs, none has been
+computed yet — there is nothing to pass it, not merely something mcpp
+forgot to pass.
+
+**The failure mode, plainly, not as a line in a gap table:** a hook that
+compiles environment-sensitive C code (anything whose correctness depends
+on `wchar_t` width, the data model, or which environment-identity macros
+are defined) has no way to ask what this build realised, so it can only
+compile against ONE assumption and hope every consumer shares it. A project
+whose graph declares a `[c-abi]` that disagrees produces objects sized for
+one `wchar_t` linked against headers sized for another, with **nothing
+checking it** — the store records no environment for what it holds, so
+there is no mismatch to detect, only a silently wrong link. This is the
+identical shape the C++-runtime `requires` check above already accepts as a
+documented limit, not a new one this PR introduces; `[c-abi]` inherits it
+because it inherits the same store.
+
+**What closing it for real would take:** either (a) a two-phase install —
+defer any target-side compilation an install hook performs until after
+target-side resolution, re-invoking the hook (or a second, later hook) once
+an environment is known, which changes the install/resolve ordering this
+whole codebase currently treats as fixed; or (b) extend the `c++-abi`
+`requires`-shaped check's pattern to `c-abi`/`c-environment` — a package
+states the environment its store artifact was built for, checked once the
+toolchain resolves, refused on mismatch — which is designed (this section)
+but not implemented in this PR. Until one of them lands, the interim
+discipline is the same the C++-runtime case already requires: such a
+package's install hook must not build more than one environment's variant
+into one store directory.
 
 ### Standard Library Module Sources
 
