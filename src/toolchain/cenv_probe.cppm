@@ -53,6 +53,33 @@ struct Result {
 // `expectUndefined` lists name macros the probe's `-dM` dump must and must
 // not contain.
 //
+// `hostStripMacros` — PRECOMPILE `-U<name>` TOKENS THE CALLER INSERTS INTO THE
+// PROBE COMMAND BEFORE `-E -dM`. This is the only mechanism by which the
+// probe is allowed to compensate for a HOST contamination that the target's
+// own `--target=` does not neutralise; the four Windows-host names
+// (`_WIN32`, `_WIN64`, `__MINGW32__`, `__MINGW64__`) are the case this was
+// added for and the only set the build's own measurements have surfaced, but
+// the parameter is a list because the design does not commit to this set
+// being the final one — a future host whose compiler leaks a different macro
+// can be handled the same way without further changes to this module.
+//
+// Why this is in the probe and not in `mcpp.toolchain.cenv::realise`: the
+// probe's job is to MEASURE what the compiler ACTUALLY does for the target,
+// not to ask the compiler what it would do for the target if it were a
+// clean cross compile. Host contamination is a defect of the measurement, not
+// of the measurement's contract — design 2026-09-18 §3.2 names a declaration
+// as "checked, not trusted", and the check has to read the macro state the
+// compile would actually deliver to a real translation unit, not the state
+// the compile would deliver to one already stripped of every fact the host
+// carried. The strip happens before `-E -dM` so the dump reflects the
+// stripped state; without it, a `present = "posix"` declaration would always
+// "fail" on a Windows host because `_WIN32` is in the dump regardless of
+// `--target=`.
+//
+// The cache key (below) folds `hostStripMacros` in alongside the rest of the
+// argv, so two callers with the same compiler and argv but different strip
+// sets do not share a slot.
+//
 // A refusal here (as opposed to a non-empty `mismatches`) means the probe
 // itself could not run — the compiler rejected the command line, which is a
 // DIFFERENT failure from the declaration disagreeing with what compiled: the
@@ -64,6 +91,7 @@ std::expected<Result, std::string> verify(
     int expectWcharBits, int expectLongBytes,
     const std::vector<std::string>& expectDefined,
     const std::vector<std::string>& expectUndefined,
+    const std::vector<std::string>& hostStripMacros = {},
     const std::filesystem::path& cacheRoot = mcpp::home::cache_root());
 
 } // namespace mcpp::toolchain::cenv_probe
@@ -113,6 +141,7 @@ std::expected<Result, std::string> verify(
     int expectWcharBits, int expectLongBytes,
     const std::vector<std::string>& expectDefined,
     const std::vector<std::string>& expectUndefined,
+    const std::vector<std::string>& hostStripMacros,
     const std::filesystem::path& cacheRoot) {
 
     // The cache key is the compiler binary's own identity plus every argv
@@ -120,7 +149,10 @@ std::expected<Result, std::string> verify(
     // prints. mcpp's own content hash (`hash_file`) would need to re-read
     // the binary on every build; the path plus its last-write time is the
     // same shortcut the toolchain probe elsewhere in this codebase already
-    // takes for "has this compiler changed".
+    // takes for "has this compiler changed". `hostStripMacros` is folded in
+    // for the same reason `argv` is: two callers that probe the same
+    // compiler + argv with different strip lists must not share a cache
+    // slot, because the dumps WILL differ.
     std::error_code ec;
     auto mtime = std::filesystem::last_write_time(compilerBin, ec);
     std::string keyInput = compilerBin.string();
@@ -128,6 +160,7 @@ std::expected<Result, std::string> verify(
     keyInput += std::to_string(
         static_cast<long long>(mtime.time_since_epoch().count()));
     for (auto& a : argv) { keyInput += '\x1f'; keyInput += a; }
+    for (auto& s : hostStripMacros) { keyInput += '\x1f'; keyInput += s; }
     const std::string key = mcpp::toolchain::hash_string(keyInput);
 
     const auto cacheDir = cacheRoot / "cenv-probe";
@@ -147,7 +180,15 @@ std::expected<Result, std::string> verify(
         // superset for the macros this checks). `-`: read the (empty) source
         // from standard input — `capture_stdout` gives the child an empty
         // one, argv-form, so no shell and no temp file are needed.
+        //
+        // `hostStripMacros` go BEFORE `argv` so they strip host predefines
+        // before `--target=` (or any other token in argv) takes effect; an
+        // `-U` placed after `--target=` still strips the macro (clang
+        // processes `-U` in order), but keeping them in front makes the
+        // intent obvious in the recorded command and keeps the strip
+        // orthogonal to whatever the target-side configuration produces.
         std::vector<std::string> cmd{ compilerBin.string() };
+        cmd.insert(cmd.end(), hostStripMacros.begin(), hostStripMacros.end());
         cmd.insert(cmd.end(), argv.begin(), argv.end());
         cmd.insert(cmd.end(), { "-x", "c++", "-E", "-dM", "-" });
         auto r = mcpp::platform::process::capture_stdout(cmd);

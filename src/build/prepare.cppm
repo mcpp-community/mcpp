@@ -10852,6 +10852,68 @@ prepare_build(bool print_fingerprint,
             // paths and library search flags do not, and leaving them out
             // is what makes this probe cheap AND cacheable across every
             // package that shares this build's target side.
+            //
+            // `hostStripMacros` — Windows-host leak through `--target=`
+            // substitution. A freestanding cross compile (`--target=
+            // riscv64-none-elf`) on a Windows host still sees `_WIN32` (and
+            // the `__MINGW*__` family) in the preprocessor output: those
+            // are the HOST driver's predefines, and unlike the `__APPLE__` /
+            // `__linux__` family on Linux/macOS, the `--target=` substitution
+            // does NOT strip them for the freestanding target. Without the
+            // strip, the probe's `-dM` dump records `_WIN32` defined
+            // regardless of what the realised `[c-abi] presents = "posix"`
+            // asked for, and the probe fails with a mismatch that is a
+            // property of the host's driver, not of the declaration being
+            // checked. The strip is added ONLY when the host is Windows;
+            // Linux and macOS drivers' defaults do not contaminate
+            // `--target=` substitutions in the same way, and adding `-U`
+            // tokens there would have to be defended as harmless rather
+            // than measured (the wave's measurement caught exactly four
+            // host-side leaks — listed below — and adding to that set is
+            // the right way to extend the strip; speculatively unstripping
+            // everywhere is not).
+            //
+            // `hostStripFlags` — host-side wchar leakage on Windows ×
+            // freestanding. The probe runs `-E -dM -x c++` with no source
+            // unit and no include path; the `__SIZEOF_WCHAR_T__` it reads
+            // comes from the toolchain's own defaults, which clang on a
+            // Windows host sets from `<winnt.h>` (16 bits) even with
+            // `--target=riscv64-none-elf`. The realisation closes this by
+            // ALWAYS emitting `-fno-short-wchar` for `decl.wcharBits = 32`
+            // (`mcpp.toolchain.cenv`'s wchar branch, just rewritten — the
+            // old "freestanding skips the flag" rule was an unverified
+            // assumption that the wave's measurement caught as false). So
+            // when the host is Windows AND the target is freestanding, the
+            // host-strip set above AND `-ffreestanding` are both needed —
+            // the former for the preprocessor predefines, the latter so the
+            // driver does not pick up the Windows CRT's `<wchar.h>` even
+            // when the build's own include path doesn't carry one. Outside
+            // that combination the strip is unnecessary: Linux/macOS hosts
+            // do not leak `_WIN32` through `--target=`, and the wchar fix
+            // lives in the realisation, not the probe.
+            std::vector<std::string> hostStripMacros;
+            std::vector<std::string> hostStripFlags;
+            if (mcpp::platform::is_windows) {
+                // The four names measured as leaking through `--target=` on
+                // a Windows host (2026-09-18, openkal-llvm-runtime#24,
+                // windows-host × riscv64-none-elf). Adding to this set is
+                // a measurement-driven change, not a guess; pin new entries
+                // here with the failing build that named them.
+                hostStripMacros = {
+                    "-U_WIN32",
+                    "-U_WIN64",
+                    "-U__MINGW32__",
+                    "-U__MINGW64__",
+                };
+                if (tt && tt->is_freestanding())
+                    // Windows host's driver would otherwise pull in
+                    // MinGW's `<wchar.h>` even with no source unit, so the
+                    // wchar probe sees 2 instead of the declared 32.
+                    // `-ffreestanding` is what every real compile on a
+                    // freestanding target already adds (`openkal-musl`'s
+                    // `cflags`, mcpp's own freestanding handling).
+                    hostStripFlags.push_back("-ffreestanding");
+            }
             if (tc->cEnvExpectWcharBits != 0 || tc->cEnvExpectLongBytes != 0
                 || !tc->cEnvExpectDefined.empty()
                 || !tc->cEnvExpectUndefined.empty()) {
@@ -10860,10 +10922,12 @@ prepare_build(bool print_fingerprint,
                     probeArgv.push_back(tc->crossTargetFlag);
                 for (auto& t : tc->cEnvTokens) probeArgv.push_back(t);
                 for (auto& t : tc->cEnvBuiltinsTokens) probeArgv.push_back(t);
+                for (auto& t : hostStripFlags) probeArgv.push_back(t);
                 auto probe = mcpp::toolchain::cenv_probe::verify(
                     tc->binaryPath, probeArgv,
                     tc->cEnvExpectWcharBits, tc->cEnvExpectLongBytes,
-                    tc->cEnvExpectDefined, tc->cEnvExpectUndefined);
+                    tc->cEnvExpectDefined, tc->cEnvExpectUndefined,
+                    hostStripMacros);
                 if (!probe) {
                     refusal::record(refusal::Code::CEnvUnrealisable);
                     return std::unexpected(probe.error());

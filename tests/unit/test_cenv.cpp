@@ -184,6 +184,41 @@ TEST(CEnv, FreestandingPosixDefinesUnix) {
     ASSERT_TRUE(has(r->expectUndefined, "_WIN32"));
 }
 
+// A freestanding target with `wchar = 32` USED TO skip the
+// `-fno-short-wchar` token on the reasoning that the toolchain default was
+// already 32 bits on every freestanding target. The wave's
+// Windows-host × riscv64-none-elf measurement (openkal-llvm-runtime#24,
+// 2026-09-18) caught that assumption as wrong: clang on a Windows host uses
+// MinGW's `<winnt.h>` defaults even with `--target=riscv64-none-elf`, and
+// `__SIZEOF_WCHAR_T__` is 2 there. The realisation now ALWAYS emits
+// `-fno-short-wchar` for `decl.wcharBits = 32`, regardless of what the
+// host's toolchain would default to — so the probe then measures the state
+// the engine actually produced (32 bits, with the flag), not the host's
+// leak. Pinned here so a future "freestanding skips the flag" optimisation
+// cannot return without a regression test.
+TEST(CEnv, FreestandingWchar32AlwaysEmitsNoShortWchar) {
+    auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32);
+    auto r = cenv::realise(d, "none", "riscv64", true);
+    ASSERT_TRUE(r.has_value()) << r.error();
+    EXPECT_TRUE(has(r->tokens, "-fno-short-wchar"))
+        << "freestanding host leakage on Windows would compile a 16-bit "
+           "wchar_t otherwise; the wave's measurement is the source for "
+           "this assertion.";
+    EXPECT_EQ(r->expectWcharBits, 32);
+}
+
+// The matching case for `wchar = 16`: `-fshort-wchar` always emitted on
+// freestanding when the declaration asks for 16, so a Linux/macOS host
+// (which defaults to 32 bits on a freestanding target) is brought down to
+// the declaration. Mirrors the wave's measurement in the other direction.
+TEST(CEnv, FreestandingWchar16AlwaysEmitsShortWchar) {
+    auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 16);
+    auto r = cenv::realise(d, "none", "riscv64", true);
+    ASSERT_TRUE(r.has_value()) << r.error();
+    EXPECT_TRUE(has(r->tokens, "-fshort-wchar"));
+    EXPECT_EQ(r->expectWcharBits, 16);
+}
+
 // `windows` still has no realisation on a freestanding target — there is no
 // operating system under it for that identity to belong to. Unaffected by
 // the `posix` fix above; pinned so it stays that way.

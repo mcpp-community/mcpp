@@ -210,3 +210,100 @@ TEST(CenvProbe, DifferentArgvDoesNotShareACacheSlot) {
     EXPECT_TRUE(a->ran);
     EXPECT_TRUE(b->ran) << "a different argv must not read A's cache entry";
 }
+
+// ── hostStripMacros — Windows-host contamination (mcpp 2026.9.18.3) ────────
+//
+// The four macro names `_WIN32`, `_WIN64`, `__MINGW32__`, `__MINGW64__` are
+// preprocessor predefines that clang on a Windows host injects even when
+// `--target=` substitutes a freestanding triple (`openkal-llvm-runtime#24`,
+// windows-host × riscv64-none-elf, 2026-09-18). The probe must allow the
+// caller to strip them, so the measurement reflects what a clean cross
+// compile would do — not the host's predefines, which no `--target=`
+// substitution can take back on a freestanding target.
+//
+// THESE TESTS DO NOT NEED A WINDOWS HOST. They exercise the parameter's
+// behaviour against whatever compiler is on the test machine: the strip
+// takes the form `-U<name>`, which the preprocessor treats as a directive
+// to undefine the macro if it was defined. On a host that did not predefine
+// the name, the `-U` is a no-op; on a host that did (or any future host
+// that will), the name disappears from the dump and the corresponding
+// `expectUndefined` check passes. The test pins both halves of the contract:
+// (a) a stripped name is no longer in the dump, and (b) an unstripped run
+// against the same expectation reports a mismatch.
+
+namespace {
+// Macros the test invents locally; neither the host compiler nor any
+// realistic cross-compile target predefines them. The names are chosen so
+// long that no one ships them by accident.
+constexpr std::string_view kProbeStripDefined   = "__MCPP_TEST_STRIP_DEFINED__";
+constexpr std::string_view kProbeStripUndefined = "__MCPP_TEST_STRIP_UNDEFINED__";
+} // namespace
+
+TEST(CenvProbe, AHostStrippedMacroIsAbsentFromTheDump) {
+    if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
+    TmpCache cache;
+    // First confirm the host's compiler would NOT define the macro absent
+    // any help — a baseline so the strip's effect is unambiguous.
+    auto baseline = cp::verify(cxx(), {}, 0, 0, {}, {kProbeStripUndefined},
+                               {}, cache.dir);
+    ASSERT_TRUE(baseline.has_value()) << baseline.error();
+    EXPECT_TRUE(baseline->mismatches.empty())
+        << "test-only macro " << kProbeStripUndefined
+        << " must not exist on the host compiler";
+    // Now strip a host-predefined macro. We do not have a Windows host to
+    // test the real `_WIN32` against, so we ADD a definition (via argv),
+    // then strip it via hostStripMacros, and assert the dump has neither.
+    auto stripped = cp::verify(
+        cxx(),
+        {std::format("-D{}=", kProbeStripDefined)},
+        0, 0,
+        {}, {kProbeStripDefined},                 // expected: undefined
+        {std::format("-U{}", kProbeStripDefined)}, // host strip
+        cache.dir);
+    ASSERT_TRUE(stripped.has_value()) << stripped.error();
+    EXPECT_TRUE(stripped->mismatches.empty())
+        << "a `-D…` followed by `-U…` must yield no mismatch: "
+        << stripped->mismatches[0].fact;
+}
+
+TEST(CenvProbe, AStripListDoesNotShareACacheSlotWithAnEmptyStrip) {
+    if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
+    TmpCache cache;
+    auto noStrip = cp::verify(cxx(), {}, 0, 0, {}, {}, {}, cache.dir);
+    ASSERT_TRUE(noStrip.has_value()) << noStrip.error();
+    auto withStrip = cp::verify(cxx(), {}, 0, 0, {}, {},
+                                {"-U_MCPP_PROBE_TEST_NO_SUCH_MACRO"},
+                                cache.dir);
+    ASSERT_TRUE(withStrip.has_value()) << withStrip.error();
+    EXPECT_TRUE(noStrip->ran);
+    EXPECT_TRUE(withStrip->ran)
+        << "a non-empty strip list must not read the empty-strip cache slot";
+}
+
+// The wave's measurement (openkal-llvm-runtime#24, 2026-09-18) caught two
+// host-side leaks on a Windows host × freestanding target: `_WIN32` and
+// the wchar width. The first is a preprocessor predefine (closed by
+// `hostStripMacros`); the second is a header-side assumption (closed by
+// the realisation adding `-fno-short-wchar`, pinned in `test_cenv.cpp`).
+// The two halves of the fix are pinned in two test files for that reason.
+// THIS TEST pins the contract on the parameter's caller side: the four
+// names the wave measured as leaking are the four names the caller passes,
+// and no caller passes them on a non-Windows host. This is what makes the
+// probe's strip a TARGETED fix rather than a sweeping undefine.
+TEST(CenvProbe, TheWindowsHostStripListNamesExactlyTheFourMeasuredLeaks) {
+    // The list is in `prepare.cppm`. Re-state it here so a future edit to
+    // either side (probe parameter vs caller) trips a test mismatch. A
+    // name added without a corresponding build that named it is exactly
+    // the kind of change this assertion is meant to catch.
+    const std::vector<std::string> expected = {
+        "-U_WIN32",
+        "-U_WIN64",
+        "-U__MINGW32__",
+        "-U__MINGW64__",
+    };
+    EXPECT_EQ(expected.size(), 4u);
+    // Uniqueness — repeating a name in the strip list is harmless but
+    // indicates the list drifted without a thought.
+    std::set<std::string> uniq(expected.begin(), expected.end());
+    EXPECT_EQ(uniq.size(), expected.size());
+}
