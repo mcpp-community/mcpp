@@ -9,6 +9,7 @@ import mcpp.pm.dep_spec;
 import mcpp.pm.dependency_selector;
 import mcpp.platform;
 import mcpp.platform.axis;
+import mcpp.targetside;
 import mcpp.version_req;
 
 export namespace mcpp::manifest {
@@ -2342,6 +2343,24 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
     m.cppStandard = *stdCfg;
     m.package.standard = m.cppStandard.canonical;
     m.language.standard = m.cppStandard.canonical;
+
+    // `c-environment = "platform"` is INFERRED for a `mcpp:kernel-abi=<impl>`
+    // provider — see the identical block, and its full reasoning, in
+    // `toml.cppm`'s `[package] c-environment` handling. Repeated here rather
+    // than only there because this is a SEPARATE parser (an xpkg descriptor
+    // never touches toml.cppm), and this function does not parse an explicit
+    // `c-environment` key at all yet (`docs/22`, known gap) — so `m
+    // .cEnvironment` is always empty on entry here, and the inference is
+    // unconditional rather than "if empty". An already-released
+    // implementation (openkal-windows, -macos, -linux, …), installed from
+    // the index as an xpkg descriptor, is exactly the case this exists to
+    // cover without a new release.
+    if (std::ranges::any_of(m.provides, [](auto const& e) {
+            auto cap = mcpp::targetside::parse_capability(e);
+            return cap && *cap
+                && (*cap)->layer == mcpp::targetside::CapLayer::KernelAbi;
+        }))
+        m.cEnvironment = "platform";
 
     return m;
 }

@@ -5991,3 +5991,74 @@ c-environment = "native"
         "c-environment = \"native\" names no known override"),
         std::string::npos) << m2.error().message;
 }
+
+// `c-environment = "platform"` is INFERRED for a `mcpp:kernel-abi=<impl>`
+// provider (coordinator revision, openkal-musl spike: openkal-windows called
+// Win32 with a POSIX-substituted `wchar_t` width and misread its own UTF-16
+// results). A kernel-abi provider IS the platform boundary by definition, so
+// it must never receive the presented [c-abi] environment even when its own
+// manifest says nothing about it — this pins the default, not merely the
+// explicit key `CEnvironmentAcceptsOnlyPlatform` above already covers. An
+// ordinary package, providing nothing kernel-abi-shaped, gets no such
+// inference: `cEnvironment` stays empty and the realisation reaches it.
+TEST(Manifest, CEnvironmentIsInferredForAKernelAbiProvider) {
+    constexpr auto kernelAbiPkg = R"(
+[package]
+name = "openkal-windows"
+version = "0.8.0"
+provides = ["mcpp:kernel-abi=openkal"]
+)";
+    auto m = mcpp::manifest::parse_string(kernelAbiPkg);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->cEnvironment, "platform")
+        << "a kernel-abi provider must default to the platform boundary "
+           "without having to declare c-environment itself";
+
+    constexpr auto ordinaryPkg = R"(
+[package]
+name = "some-library"
+version = "1.0.0"
+)";
+    auto m2 = mcpp::manifest::parse_string(ordinaryPkg);
+    ASSERT_TRUE(m2.has_value()) << m2.error().format();
+    EXPECT_TRUE(m2->cEnvironment.empty())
+        << "an ordinary package must NOT be inferred into the platform "
+           "boundary -- only a kernel-abi provider is";
+
+    // A package that provides c-abi (not kernel-abi) is not the boundary
+    // either, and must not be inferred.
+    constexpr auto cAbiPkg = R"(
+[package]
+name = "openkal-musl"
+version = "0.15.0"
+provides = ["mcpp:c-abi=musl"]
+)";
+    auto m3 = mcpp::manifest::parse_string(cAbiPkg);
+    ASSERT_TRUE(m3.has_value()) << m3.error().format();
+    EXPECT_TRUE(m3->cEnvironment.empty());
+}
+
+// The same inference, through the OTHER manifest parser: an xpkg descriptor
+// (index packages -- exactly how a released kernel-abi implementation like
+// openkal-windows is actually consumed) has no explicit `c-environment` key
+// at all (docs/22's own documented gap), so the inference here is
+// unconditional rather than "if empty" -- and this is the test that pins
+// that it still runs.
+TEST(SynthesizeFromXpkgLua, CEnvironmentIsInferredForAKernelAbiProvider) {
+    constexpr auto lua = R"(
+package = {
+    spec = "1",
+    name = "openkal-windows",
+    xpm  = { windows = { ["0.8.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources  = { "*/anchor.c" },
+        provides = { "mcpp:kernel-abi=openkal" },
+        targets  = { ["openkal-windows"] = { kind = "lib" } },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(
+        lua, "openkal-windows", "0.8.0", mcpp::platform::HostPlatform::current());
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->cEnvironment, "platform");
+}

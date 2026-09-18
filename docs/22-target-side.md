@@ -388,17 +388,54 @@ by deleting the only macro that names it. This is a **trade-off for the
 `cygwin_conv_path`) that does not exist here, and if defining it produces
 more new failures than it fixes, the answer flips.
 
-**A package's own units can opt out.** A package that provides
-`mcpp:kernel-abi=openkal` (openkal-windows, say) has to see the platform's
-own environment — it includes platform declarations and `_WIN32` must be
-true for it. Such a package, or a platform shim, states:
+**A `kernel-abi` provider's own units are INFERRED onto the platform boundary
+— it never has to say so (mcpp 2026.9.18+, a mid-PR revision from the
+openkal-musl spike).** A package that provides `mcpp:kernel-abi=<impl>`
+(openkal-windows, say) has to see the platform's own environment — it
+includes platform declarations and `_WIN32` must be true for it — and it
+always will, by definition: such a package's whole job is to speak the
+platform's ABI, so it can never be the package that wants the graph's
+*presented* `[c-abi]` environment instead of the triple's own. mcpp does not
+wait to be told this. Any package whose `provides` names
+`mcpp:kernel-abi=<impl>` gets `c-environment = "platform"` as its default,
+with no key of its own:
 
 ```toml
 [package]
 provides = ["mcpp:kernel-abi=openkal"]
-c-environment = "platform"   # this package's own units compile in the
-                              # triple's own default environment, whatever
-                              # the graph's c-abi declares
+# no [package] c-environment line — the boundary is inferred from `provides`
+```
+
+**Why inference and not just the flag.** The flag alone works; what it
+cannot do is retroactively fix a package that has already shipped without
+it. openkal-windows 0.8.0, openkal-macos 0.10.0, openkal-linux 0.13.0, and
+every future kernel-abi implementation, get the boundary right — with no new
+release and no coordinated version bump across repositories — because
+`provides = ["mcpp:kernel-abi=<impl>"]` is the one fact they already state.
+The failure this closes was measured, not hypothetical: openkal-windows,
+compiled under the POSIX substitution like everything else in its graph,
+got a 32-bit `wchar_t` from `-fno-short-wchar` while the Win32 calls it
+makes hand back genuine 16-bit UTF-16 — a `wchar_t*` loop then read two
+UTF-16 units as one code point. Making the boundary a default rather than a
+manifest key a package must remember turns that failure class
+unrepresentable rather than merely documented.
+
+**Precedence: an explicit `c-environment` in the package's own manifest
+always wins over the inference.** The inference only fills `cEnvironment`
+when the package wrote nothing — a package that, after all, needs the
+presented environment can still say so explicitly (there is no way today to
+write "not platform" back, because `"platform"` remains the only value this
+key accepts). The explicit key also stays the ONLY mechanism for §5.3's
+other category — an ordinary package that is not the kernel-abi boundary but
+still has platform-bound units of its own — where the author really is
+making a choice mcpp cannot infer:
+
+```toml
+[package]
+# an ORDINARY package, not a kernel-abi provider — the engine cannot infer
+# this one; the author states it because platform-bound units are a real
+# minority of what this package builds (design §5.3)
+c-environment = "platform"
 ```
 
 This is a boundary rule, documented rather than enforced by the engine
@@ -421,6 +458,26 @@ fingerprint (`compileFlags`, §92's field 7): two builds whose C library
 declares `lp64` and `llp64` compile the same source into objects whose
 `long` disagrees in width, so they never share an output directory, and
 neither can reuse a cached object the other produced.
+
+**The global build cache's key also covers it (mcpp 2026.9.18+, a mid-PR
+fix, not the design's original text).** `~/.mcpp/build-cache/v1` — the
+cache an ordinary dependency compile reuses across projects and across an
+`mcpp` upgrade — is a SEPARATE mechanism from the build fingerprint above,
+keyed per package from exactly the axes that reach that package's own
+compile command line (`mcpp.build.cache_key`). The realised environment
+reaches a package's command line entirely through an engine BROADCAST (the
+same channel `targetSideUsage` and `-D__openkal__` use, never the package's
+own declared `[build] cflags`/`cxxflags`), so the key's own derivation had
+to be told to read the broadcast, not only the declaration — found exactly
+that way (coordinator report, openkal-musl spike): upgrading `mcpp` in
+place, with the cache directory left in place, served objects compiled
+under the OLD realised environment into an image built under the new one,
+two C environments in one image, with no diagnosis at all. `fill_package_
+config` now folds in `PackageRoot::privateBuild.cflags`/`cxxflags`/
+`asmflags` — the post-broadcast values — alongside the package's own
+declared flags, exactly as it already did for include directories.
+`--cache=off`, or clearing the cache directory, was never a sign the key
+was RIGHT; both routes bypass it entirely.
 
 **Store key — not yet closed.** A package whose *install hook* compiles a
 static library from source into the shared store is keyed by package and

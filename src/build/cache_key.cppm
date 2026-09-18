@@ -185,6 +185,11 @@ struct PackageAxes {
     std::vector<std::string> features;
     std::vector<std::string> cflags;
     std::vector<std::string> cxxflags;
+    // Whole-package assembler flags reaching a GAS unit's command line
+    // (`UsageRequirements::asmflags` — see its own comment). Only ever
+    // non-empty once `usageResolved`: there is no manifest key for it, only
+    // an engine broadcast, so an unresolved package has none to report.
+    std::vector<std::string> asmflags;
     std::vector<std::string> ldflags;
     std::vector<std::string> defines;
     std::vector<std::string> globFlags;     // pre-serialized, ordered
@@ -302,6 +307,7 @@ nlohmann::json to_json(const BuildAxes& b, const PackageAxes& p) {
         {"features", p.features},
         {"cflags", p.cflags},
         {"cxxflags", p.cxxflags},
+        {"asmflags", p.asmflags},
         {"ldflags", p.ldflags},
         {"defines", p.defines},
         {"glob_flags", p.globFlags},
@@ -347,6 +353,7 @@ std::string key_hex(const BuildAxes& b, const PackageAxes& p) {
     put_list(s, "features",  p.features);
     put_list(s, "cflags",    p.cflags);
     put_list(s, "cxxflags",  p.cxxflags);
+    put_list(s, "asmflags",  p.asmflags);
     put_list(s, "ldflags",   p.ldflags);
     put_list(s, "defines",   p.defines);
     put_list(s, "globflags", p.globFlags);
@@ -500,6 +507,35 @@ void fill_package_config(PackageAxes&                        out,
     out.defines     = bc.defines;
     out.sourceGlobs = bc.sources;
     out.moduleExtensions = bc.moduleExtensions;
+
+    // THE RESOLVED, POST-BROADCAST flags — not only what THIS package wrote
+    // in its own manifest. `bc.cflags`/`cxxflags` above are what the package
+    // declared; `pkg.privateBuild.cflags`/`cxxflags` (once `usageResolved`)
+    // are what its compile command line actually carries, because several
+    // engine broadcasts append to `privateBuild` and never touch `bc` —
+    // `targetSideUsage` (the resolved target side's own include dirs/flags),
+    // `-D__openkal__`, and the realised [c-abi] environment (design
+    // 2026-09-18) chief among them. A cache key built from `bc` alone cannot
+    // tell two builds of the SAME package apart when only one of them
+    // realised, say, LP64 instead of LLP64 — found exactly that way
+    // (coordinator report, openkal-musl spike): upgrading mcpp in place hit
+    // stale global-cache entries compiled under the OLD realised
+    // environment, linked into an image built under the new one, with
+    // nothing diagnosing it. `pkg.privateBuild.cflags` already CONTAINS
+    // `bc.cflags` (prepare.cppm seeds it from the manifest before any
+    // broadcast appends), so this widens the axis rather than duplicating a
+    // disjoint one — the same shape `includeDirs` below already uses for the
+    // identical reason, just appended into the SAME list here (a
+    // package that received no broadcast folds in an exact duplicate of
+    // `bc.cflags`, which changes nothing about the hash's ability to tell
+    // two DIFFERENT inputs apart).
+    if (pkg.usageResolved) {
+        out.cflags.insert(out.cflags.end(), pkg.privateBuild.cflags.begin(),
+                          pkg.privateBuild.cflags.end());
+        out.cxxflags.insert(out.cxxflags.end(), pkg.privateBuild.cxxflags.begin(),
+                            pkg.privateBuild.cxxflags.end());
+        out.asmflags = pkg.privateBuild.asmflags;
+    }
 
     if (!bc.cStandard.empty()) {
         // A package may pin its own C standard; it reaches its own C units.

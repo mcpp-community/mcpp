@@ -1157,6 +1157,35 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 "what the graph's C library declares.", *v)));
         m.cEnvironment = *v;
     }
+    // `c-environment = "platform"` is INFERRED, not merely allowed, for any
+    // package that PROVIDES `mcpp:kernel-abi=<impl>` — design revision from
+    // the openkal-musl spike (openkal-windows called Win32 with a
+    // POSIX-substituted `wchar_t` width and silently misread its own UTF-16
+    // return values). A `kernel-abi` provider is BY DEFINITION the boundary
+    // where the platform's own interfaces are called; its whole job is to
+    // speak the platform's ABI, so it can never be the package that wants
+    // the graph's presented [c-abi] environment instead of the triple's own.
+    // Making this the DEFAULT rather than a manifest key every kernel-abi
+    // package must remember means every already-released implementation
+    // (openkal-windows, -macos, -linux, and whatever comes next) gets the
+    // boundary right with no new release and no coordinated version bump,
+    // and the failure class becomes unrepresentable rather than merely
+    // documented.
+    //
+    // The explicit key above still wins: this only fills `cEnvironment` when
+    // nothing was written, so a kernel-abi package that, after all, needs
+    // the presented environment can still say so — there is just no way to
+    // say "not platform" today, because `"platform"` is the only value this
+    // key accepts (see the parse error above). Precedence is written down
+    // here and in docs/22 so it is discovered by reading, not by surprise.
+    if (m.cEnvironment.empty()) {
+        bool providesKernelAbi = std::ranges::any_of(m.provides, [](auto const& e) {
+            auto cap = mcpp::targetside::parse_capability(e);
+            return cap && *cap
+                && (*cap)->layer == mcpp::targetside::CapLayer::KernelAbi;
+        });
+        if (providesKernelAbi) m.cEnvironment = "platform";
+    }
     // [package] exclusive — capabilities this package claims sole provision of.
     //
     // Not validated against the reserved prefix: exclusivity is a property of

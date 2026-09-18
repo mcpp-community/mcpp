@@ -25,8 +25,30 @@
   采用 Cygwin 式语义,仅在编译行把 `--target=` 换成 `x86_64-pc-cygwin`;链接行保持图解析出
   的三元组不变,因为两个三元组生成的机器码实测完全一致(PE、Win64 调用约定、SEH)。
   无法满足的请求明确拒绝,点名目标、请求与缺什么。`[package] c-environment = "platform"`
-  让一个包(如 openkal-windows)的自身单元退出这项实现,继续按三元组自身的默认环境编译。
+  让一个包的自身单元退出这项实现,继续按三元组自身的默认环境编译。
   (`src/toolchain/cenv.cppm`,单测 `test_cenv.cpp`)
+- **`c-environment = "platform"` 对 `mcpp:kernel-abi=<impl>` 提供者是推导出来的,不需要
+  自己声明,经 PR 进行中 openkal-musl 尖峰实验的修订。** 这样的包定义上就是说平台自身 ABI
+  的边界,绝不会是想要图里呈现的 `[c-abi]` 环境的那个包——openkal-windows 在 POSIX 替换下
+  编译,`-fno-short-wchar` 给了它 32 位 `wchar_t`,而它调的 Win32 接口回传真正的 16 位
+  UTF-16,`wchar_t*` 循环于是把两个 UTF-16 码元读成一个码点,这是实测出来的失败,不是假设。
+  推导让 openkal-windows 0.8.0、openkal-macos 0.10.0、openkal-linux 0.13.0 等每一个已发布
+  实现都不需要新发版本、不需要跨仓库协调版本号就能把边界做对,这一类失败因此**无法被表达**。
+  包自身清单里显式写的 `c-environment` 仍然优先于推导——该键仍是设计 §5.3 另一类情形(不是
+  kernel-abi 边界、但自身确有平台绑定单元的普通包)唯一的表达手段。`mcpp.manifest.xpkg` 与
+  `mcpp.toml` 两条清单解析路径都实现了同一条推导。(`modules/manifest/src/{toml,xpkg}.cppm`,
+  单测 `test_manifest.cpp` 的 `CEnvironmentIsInferredForAKernelAbiProvider`(两条解析路径各一
+  个),e2e `tests/e2e/741_...sh`)
+- **全局构建缓存(`~/.mcpp/build-cache/v1`)的键补上了解析出的环境,经 openkal-musl
+  尖峰实验发现并修订。** `mcpp.build.cache_key::fill_package_config` 原先只读包自己清单里
+  声明的 `cflags`/`cxxflags`(`manifest.buildConfig`),而解析出的 [c-abi] 环境是引擎的
+  广播,只写入 `PackageRoot::privateBuild`,从不写回前者——两次解析出不同环境的构建因此
+  拿到同一把键,原地升级 `mcpp` 时缓存目录若未清理,会把按旧环境编译的目标文件喂给按新
+  环境构建的镜像,一个镜像混两种 C 环境且没有任何诊断,这正是本设计要防止的那个不变量本身。
+  现在 `fill_package_config` 把 `privateBuild.cflags`/`cxxflags`/新增的 `asmflags`(广播后的
+  值)与包自身声明的标志一起折进键里,和它原本处理 include 目录的方式一致。
+  (`src/build/cache_key.cppm`,单测 `test_cache_key.cpp` 的
+  `TwoDifferentRealisedCEnvironmentsDoNotShareASlot`)
 - **`__CYGWIN__`/`__CYGWIN32__` 保持定义,经 openkal-musl 尖峰实验修订。** 最初的实现
   取消定义它们(理由是图里没有真正的 Cygwin 用户态)。第三方可移植代码里需要知道**目标文件
   格式**——不是 C 环境,也不是平台 API——的那部分,没有别的名字能指代「PE 格式 + 呈现

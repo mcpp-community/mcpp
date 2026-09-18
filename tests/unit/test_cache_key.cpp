@@ -381,6 +381,53 @@ TEST(CacheKey, AHostedTargetHasNoTargetImpliedFlagsEitherWay) {
     EXPECT_EQ(a.targetImpliedFlags, b.targetImpliedFlags);
 }
 
+// THE SAME CLASS OF DEFECT AS THE FREESTANDING ONE ABOVE, FOUND THE SAME WAY
+// — A CONFIG BIT THAT REACHES THE COMPILE BUT NOT THE KEY.
+//
+// The realised [c-abi] environment (design 2026-09-18) does not reach a
+// package's compile command line through its own declared
+// `manifest.buildConfig.cflags`/`cxxflags` at all — it is an ENGINE
+// BROADCAST, appended into `PackageRoot::privateBuild.cflags`/`cxxflags`/
+// `asmflags` by `prepare.cppm` once the target side resolves (the same
+// channel `targetSideUsage` and `-D__openkal__` use). `fill_package_config`
+// used to read only `manifest.buildConfig.cflags`/`cxxflags` — the
+// package's OWN declaration — so two builds of the identical package,
+// realising two DIFFERENT C environments (LP64 vs LLP64, say), produced the
+// identical cache key.
+//
+// MEASURED, NOT HYPOTHETICAL (coordinator report): upgrading mcpp in place,
+// with the global build cache (`~/.mcpp/build-cache/v1`) left in place,
+// served an object compiled under the PREVIOUS realised environment into an
+// image built under the new one — two C environments in one image, with
+// nothing diagnosing it, which is the exact invariant this whole design
+// exists to protect. `--cache=off`, or clearing the cache directory,
+// produced the correct numbers reproducibly — because both routes bypass
+// this key entirely, not because the key was telling the two apart.
+TEST(CacheKey, TwoDifferentRealisedCEnvironmentsDoNotShareASlot) {
+    std::filesystem::path store = "/home/u/.mcpp/registry/data/xpkgs";
+    auto build = [&](std::vector<std::string> cEnvTokens) {
+        auto pkgRoot = rootAt(store / "musl-x-openkal-musl" / "1.0.0");
+        pkgRoot.usageResolved = true;
+        // What `prepare.cppm`'s broadcast actually does: seed from the
+        // declared flags, then append the realised tokens — exactly the
+        // shape `fill_package_config`'s own comment documents.
+        pkgRoot.privateBuild.cflags   = pkgRoot.manifest.buildConfig.cflags;
+        pkgRoot.privateBuild.cxxflags = pkgRoot.manifest.buildConfig.cxxflags;
+        pkgRoot.privateBuild.asmflags = cEnvTokens;
+        for (auto& t : cEnvTokens) {
+            pkgRoot.privateBuild.cflags.push_back(t);
+            pkgRoot.privateBuild.cxxflags.push_back(t);
+        }
+        ck::PackageAxes p;
+        p.indexName = "musl"; p.packageName = "openkal-musl"; p.version = "1.0.0";
+        ck::fill_package_config(p, pkgRoot, store);
+        return ck::key_hex(axes(), p);
+    };
+    auto lp64Key  = build({"--target=x86_64-pc-cygwin", "-fno-short-wchar"});
+    auto llp64Key = build({});
+    EXPECT_NE(lp64Key, llp64Key);
+}
+
 // THE HEADER SET THE DRIVER IS POINTED AT IS PART OF THE IDENTITY.
 //
 // Everything else on axis A describes the COMPILER. Nothing described the

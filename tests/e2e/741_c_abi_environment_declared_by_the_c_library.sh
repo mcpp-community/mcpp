@@ -3,17 +3,18 @@
 # 741 -- the `[c-abi]` block a `mcpp:c-abi=<impl>` provider declares (design
 # 2026-09-18, "C environment declared by the C library layer") reaches the
 # target-side report, realises into the tokens `docs/22` documents, reaches
-# `mcpp emit build-database`, exempts a `c-environment = "platform"` package,
-# and its verification step refuses an unrealisable request rather than
-# silently approximating it.
+# `mcpp emit build-database`, is inferred off for a `mcpp:kernel-abi=<impl>`
+# provider with no manifest change of its own, and its verification step
+# refuses an unrealisable request rather than silently approximating it.
 #
 # WHAT THIS COVERS THAT THE UNIT TESTS CANNOT. `mcpp.toolchain.cenv::realise`
 # is a pure function and its mapping table is asserted directly in
-# tests/unit/test_cenv.cpp; `[c-abi]` parsing and validation is asserted in
-# tests/unit/test_manifest.cpp. What only a build can show is the WIRING: that
-# a provider's block actually reaches the resolved target side, that the
-# realised tokens reach the compile database of an ordinary package, that a
-# package opting out with `c-environment = "platform"` does not receive them,
+# tests/unit/test_cenv.cpp; `[c-abi]`/`c-environment` parsing, validation and
+# the kernel-abi inference are asserted in tests/unit/test_manifest.cpp. What
+# only a build can show is the WIRING: that a provider's block actually
+# reaches the resolved target side, that the realised tokens reach the
+# compile database of an ordinary package, that a kernel-abi provider is
+# excluded from them WITHOUT declaring `c-environment` itself,
 # that a GAS (.S) unit gets the SAME tokens a .c/.cpp unit in the same package
 # does (a defect found by the openkal-musl spike after this test's first
 # version: the substitution reached `f.cc`/`f.cxx` but not `f.as`, so a .c unit
@@ -98,12 +99,20 @@ EOF
     rm -rf target
 }
 
+# NO explicit `c-environment` here -- that is the point of this leg
+# (coordinator revision, openkal-musl spike): a `mcpp:kernel-abi=<impl>`
+# provider is inferred into the platform boundary from `provides` alone,
+# because it is BY DEFINITION the package that speaks the platform's own
+# ABI and can never want the graph's presented [c-abi] environment. Before
+# this revision this manifest carried an explicit `c-environment =
+# "platform"` line; it is gone on purpose, to prove the DEFAULT, not the
+# opt-out key (`tests/unit/test_manifest.cpp`'s
+# `CEnvironmentAcceptsOnlyPlatform` already covers the explicit key).
 cat > openkalwin/mcpp.toml <<'EOF'
 [package]
 name          = "openkalwin"
 version       = "1.0.0"
 provides      = ["mcpp:kernel-abi=openkal"]
-c-environment = "platform"
 
 [targets.openkalwin]
 kind    = "lib"
@@ -204,15 +213,19 @@ if present:
           f"but found {present}\n  args: {asm_joined}")
     sys.exit(1)
 
-# openkalwin declared c-environment = "platform" and must NOT see the
-# substituted triple: it needs the real Windows identity to include platform
-# declarations.
+# openkalwin provides `mcpp:kernel-abi=openkal` and declares NO
+# `c-environment` of its own -- the platform boundary is INFERRED from that
+# alone (coordinator revision), so it must NOT see the substituted triple:
+# it needs the real Windows identity to include platform declarations, the
+# same as if it had written `c-environment = "platform"` by hand.
 shim = joined(args_for("shim.c"))
 if not shim:
     print("FAIL: could not find openkalwin's compiled unit at all")
     sys.exit(1)
 if "--target=x86_64-pc-cygwin" in shim:
-    print(f"FAIL: a c-environment=\"platform\" package must not receive the realised triple\n  args: {shim}")
+    print(f"FAIL: a kernel-abi provider must be INFERRED into the platform "
+          f"boundary and must not receive the realised triple, even though "
+          f"it declares no c-environment itself\n  args: {shim}")
     sys.exit(1)
 
 print("OK: A")
