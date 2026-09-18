@@ -383,22 +383,36 @@ inline std::expected<Realisation, std::string> realise(
     // `wchar_t` is 16 bits there — and a `decl.wcharBits = 32` (musl's
     // declaration) would compile to a 16-bit `wchar_t` because no token
     // was added. The probe caught this; the right fix is here, not in the
-    // probe: always emit `-fno-short-wchar` when the declaration asks for
-    // 32, so the compiler produces 32-bit `wchar_t` regardless of what its
-    // host-contaminated default would have been. Same for `wchar=16` on
-    // a target that would otherwise default to 32: `-fshort-wchar` keeps
-    // the compile honest.
+    // probe: a freestanding target ALWAYS gets `-fno-short-wchar` for
+    // `wchar=32`, so the compiler produces 32-bit `wchar_t` regardless of
+    // what its host-contaminated default would have been. Symmetric for
+    // `wchar=16`: a freestanding target's toolchain default on Linux/macOS
+    // is 32, so `-fshort-wchar` is always needed too. The hosted cases
+    // are unchanged — `native_wchar_bits(os)` is correct for every hosted
+    // target, because the host's toolchain default is what the real
+    // compile actually sees (Windows host has `-fshort-wchar` baked in
+    // via MinGW headers; Linux/macOS hosts have 32 bits).
     //
     // The probe below then measures what this engine actually produced
-    // (32 bits, with the flag) — not the host's leak — and the declaration
-    // holds. There is no measurement-side workaround here: the previous
-    // version had a "freestanding target skips the wchar flag" rule that
-    // was wrong on Windows hosts, and removing it costs nothing on
-    // Linux/macOS hosts (they default to 32, so adding the flag there is
-    // redundant but harmless).
+    // (32 bits on a freestanding target, with the flag) — not the host's
+    // leak — and the declaration holds. There is no measurement-side
+    // workaround here: the previous version had a "freestanding target
+    // skips the wchar flag" rule that was wrong on Windows hosts, and
+    // adding it costs nothing on Linux/macOS hosts (they default to 32,
+    // so the flag is redundant but harmless on the hosted freestanding
+    // builds that don't exist; for hosted Linux/macOS, no flag is added).
     if (decl.hasWchar) {
-        const int native = native_wchar_bits(os);
-        if (decl.wcharBits != native) {
+        if (freestanding) {
+            // Freestanding: the toolchain's host-contaminated default is
+            // not something this engine can trust. Always emit the
+            // token that makes the compile match the declaration.
+            r.tokens.push_back(decl.wcharBits == 32 ? "-fno-short-wchar"
+                                                     : "-fshort-wchar");
+        } else if (decl.wcharBits != native_wchar_bits(os)) {
+            // Hosted: the target's own default is what the compile sees,
+            // and `native_wchar_bits(os)` correctly captures it
+            // (16 on Windows because MinGW headers bake in
+            // `-fshort-wchar`; 32 on Linux and macOS).
             r.tokens.push_back(decl.wcharBits == 32 ? "-fno-short-wchar"
                                                      : "-fshort-wchar");
         }
