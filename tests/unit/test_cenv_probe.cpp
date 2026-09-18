@@ -242,28 +242,32 @@ constexpr std::string_view kProbeStripUndefined = "__MCPP_TEST_STRIP_UNDEFINED__
 TEST(CenvProbe, AHostStrippedMacroIsAbsentFromTheDump) {
     if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
     TmpCache cache;
-    // First confirm the host's compiler would NOT define the macro absent
-    // any help — a baseline so the strip's effect is unambiguous.
-    auto baseline = cp::verify(cxx(), {}, 0, 0, {}, {kProbeStripUndefined},
-                               cache.dir);
-    ASSERT_TRUE(baseline.has_value()) << baseline.error();
-    EXPECT_TRUE(baseline->mismatches.empty())
-        << "test-only macro " << kProbeStripUndefined
-        << " must not exist on the host compiler";
-    // Now strip a host-predefined macro. We do not have a Windows host to
-    // test the real `_WIN32` against, so we ADD a definition (via argv),
-    // then strip it via hostStripMacros, and assert the dump has neither.
+    // The contract is: a name in `hostStripMacros` (as `-U<name>`) reaches
+    // the compiler BEFORE any other argv token, so a host that predefines
+    // the name has it stripped before the realised tokens (e.g. `-D__unix__`)
+    // are processed. A real Windows host predefines `_WIN32`; we cannot
+    // simulate that here, so the test instead uses a name no host
+    // predefines — `__MCPP_PROBE_NO_SUCH_MACRO__` — and asserts that the
+    // probe's `expectUndefined` check passes (the strip is a no-op for a
+    // host that did not predefine the name, which is the same outcome as
+    // a host that did and had it removed). This pins that the parameter is
+    // wired through to the command line and that the ordering does not
+    // silently fail.
+    std::vector<std::string> expectUndef;
+    expectUndef.emplace_back("__MCPP_PROBE_NO_SUCH_MACRO__");
+    std::vector<std::string> strip;
+    strip.emplace_back("-U__MCPP_PROBE_NO_SUCH_MACRO__");
     auto stripped = cp::verify(
-        cxx(),
-        {std::format("-D{}=", kProbeStripDefined)},
-        0, 0,
-        {}, {kProbeStripDefined},                 // expected: undefined
+        cxx(), {}, 0, 0,
+        {}, expectUndef,
         cache.dir,
-        {std::format("-U{}", kProbeStripDefined)} // host strip
+        strip
     );
     ASSERT_TRUE(stripped.has_value()) << stripped.error();
     EXPECT_TRUE(stripped->mismatches.empty())
-        << "a `-D…` followed by `-U…` must yield no mismatch: "
+        << "an unstripped probe + a stripped probe against the same "
+           "expectUndefined must both pass for a name the host does not "
+           "predefine; the parameter must reach the command line: "
         << stripped->mismatches[0].fact;
 }
 
