@@ -139,6 +139,16 @@ grep -q 'version = "2.1.0"' mcpp.lock || {
     echo "FAIL: the lock must record the resolved version, not the constraint"
     exit 1
 }
+# The digest is FNV-1a on EVERY host. It used `std::hash<std::string>`, whose
+# output is implementation-defined (MSVC FNV-1a vs libstdc++/libc++ MurmurHash),
+# so the same dependency produced a different mcpp.lock on Windows and Linux.
+# `acme:acme.gadget@2.1.0` is pinned here; a host-dependent hash fails on one of
+# the two platforms rather than silently drifting.
+grep -q 'hash    = "fnv1a:2adea846f70078bc"' mcpp.lock || {
+    cat mcpp.lock
+    echo "FAIL: acme.gadget 2.1.0 lock hash is not the host-independent FNV-1a"
+    exit 1
+}
 
 "$MCPP" run > run.log 2>&1 || { cat run.log; echo "FAIL: run failed"; exit 1; }
 
@@ -155,5 +165,11 @@ rm -f mcpp.lock
     exit 1
 }
 grep -q '2\.0\.0' mcpp.lock || { cat mcpp.lock; echo "FAIL: expected 2.0.0 pin"; exit 1; }
+# Same host-independent digest contract for the exact-version form.
+grep -q 'hash    = "fnv1a:34544b46fc9621c3"' mcpp.lock || {
+    cat mcpp.lock
+    echo "FAIL: acme.gadget 2.0.0 lock hash is not the host-independent FNV-1a"
+    exit 1
+}
 
 echo "OK"

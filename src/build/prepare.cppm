@@ -7840,10 +7840,15 @@ prepare_build(bool print_fingerprint,
             // ── 2. is it on disk ──
             // Cache key: hash(url + refkind + declared ref + resolved commit).
             // For fixed rev/tag deps the declared ref is also the resolved ref.
-            std::hash<std::string> H;
-            auto gitRoot = mcppHome / "git" / std::format("{:016x}",
-                H(spec.git + "|" + spec.gitRefKind + "|" + spec.gitRev
-                  + "|" + resolvedGitRev));
+            // Deterministic across hosts: `std::hash` is not (see the note on
+            // mcpp::pm::index_package_digest). This key names the git cache
+            // directory AND the lock hash below, so a host-dependent hash made
+            // both the cache directory and mcpp.lock differ by platform.
+            auto H = [](std::string_view s) -> std::string {
+                return mcpp::toolchain::hash_string(s);
+            };
+            auto gitRoot = mcppHome / "git" / H(spec.git + "|" + spec.gitRefKind
+                  + "|" + spec.gitRev + "|" + resolvedGitRev);
             std::error_code ec;
             std::filesystem::create_directories(gitRoot.parent_path(), ec);
 
@@ -7917,9 +7922,9 @@ prepare_build(bool print_fingerprint,
                 if (spec.gitRefKind == "branch") source += "@" + resolvedGitRev;
                 root_git_lock_identities[name] = GitLockIdentity{
                     .source = std::move(source),
-                    .hash = std::format("fnv1a:{:016x}", H(spec.git + "|"
+                    .hash = "fnv1a:" + H(spec.git + "|"
                         + spec.gitRefKind + "|" + spec.gitRev + "|"
-                        + resolvedGitRev)),
+                        + resolvedGitRev),
                 };
             }
             sourceCommit = resolvedGitRev;
@@ -14430,8 +14435,7 @@ prepare_build(bool print_fingerprint,
             if (gitIt == root_git_lock_identities.end()) {
                 lp.source = std::format("git+{}#{}={}",
                     spec.git, spec.gitRefKind, spec.gitRev);
-                std::hash<std::string> hasher;
-                lp.hash = std::format("fnv1a:{:016x}", hasher(lp.source));
+                lp.hash = "fnv1a:" + mcpp::toolchain::hash_string(lp.source);
             } else {
                 lp.source = gitIt->second.source;
                 lp.hash = gitIt->second.hash;
@@ -14461,9 +14465,13 @@ prepare_build(bool print_fingerprint,
             // Use a deterministic hash based on namespace + name + version.
             // A future PR can replace this with a real content hash from the
             // xpkg.lua's declared sha256 or from the install plan.
-            std::hash<std::string> hasher;
-            auto hashInput = std::format("{}:{}@{}", sourceIndex, lp.name, lp.version);
-            lp.hash = std::format("fnv1a:{:016x}", hasher(hashInput));
+            //
+            // NOT `std::hash<std::string>`: its output is implementation-defined
+            // (MSVC FNV-1a, libstdc++/libc++ MurmurHash), so the same dependency
+            // used to hash differently on Windows and Linux while the `fnv1a:`
+            // prefix claimed otherwise. `index_package_digest` is FNV-1a on
+            // every host.
+            lp.hash = mcpp::pm::index_package_digest(sourceIndex, lp.name, lp.version);
             lock.packages.push_back(std::move(lp));
         }
         if (!lock.packages.empty() || !lock.indices.empty()) {
