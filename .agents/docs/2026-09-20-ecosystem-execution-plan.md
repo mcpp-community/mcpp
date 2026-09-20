@@ -144,3 +144,17 @@ libpng、re2、lua(经 capi-lua)。全部是按 `_WIN32` / `__MINGW32__` 选分�
 需要 `openkal.space` 的消费者在 Windows 上被**解析期**拒绝,在 Linux 上构建。
 一个给环境类别起的名字会让这两个实现看起来一样——这正是 SPEC §3.3 撤回 `hosted`
 的理由,而这里是它的第一个实例。
+
+### 4.6 探针修复的产物级读数
+
+判据不取自日志而取自探针自己的缓存。在本机用新引擎为 `riscv64-none-elf` 构建一个声明了
+`[c-abi]` 的图之后,`~/.mcpp/build-cache/v1/cenv-probe/` 里最新的那份 `-dM` dump:
+
+```
+d9d24a49fc6f76c2.dm   __riscv=1   __linux__=0   __SIZEOF_WCHAR_T__=4
+```
+
+同目录下更早的几份是 hosted Linux 目标的,读数为 `__riscv=0 __linux__=1` —— 那是
+**正确的**,因为那里宿主就是目标。区分两者的是第一行:freestanding 的探针此前也长这样。
+
+这条读数是「探针量的是它要核对的那个目标」这句话的产物级证据,不是日志级的。
