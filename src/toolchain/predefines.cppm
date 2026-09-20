@@ -30,18 +30,25 @@
 //
 // ── NAMING ─────────────────────────────────────────────────────────────────
 //
-// `__mcpp_`-prefixed, `__`-suffixed, lowercase, words separated by `_`.
+// UPPER CASE, `__`-wrapped, words separated by `_`; the names mcpp owns carry
+// `__MCPP_`.
 //
-// Lowercase rather than upper, and the reason is consistency rather than
-// taste. Two conventions exist in the wild: VENDOR AND PRODUCT names are
-// upper (`__APPLE__`, `_WIN32`, `__MINGW32__`), KIND-OF-SYSTEM names are
-// lower (`__linux__`, `__unix__`, `__gnu_linux__`). These name kinds of
-// target, they sit beside that second family in real guards --- `#if
-// defined(__linux__) || defined(__mcpp_target_windows__)` --- and this
-// project already published `__openkal__` in that spelling. One rule, stated
-// and checked, is worth more than either convention argued in isolation.
+// The convention in the wild splits by WHAT A NAME IS, not by who writes it.
+// A vendor or product name is upper --- `__APPLE__`, `_WIN32`, `__MINGW32__`,
+// `__GNUC__`. A kind-of-system name is lower --- `__linux__`, `__unix__`,
+// `__gnu_linux__`. Every row this table OWNS is of the first kind: it names
+// mcpp, or it names openkal. The kind-of-system question is answered by
+// `__linux__` and its family, which mcpp SUPPLIES rather than owns and which
+// therefore keep their lower-case spelling, for that exact reason.
 //
-// THE `__mcpp_` PREFIX IS LOAD-BEARING. A name mcpp owns means what mcpp says
+// The lower-case spelling shipped first, and the reasoning that produced it
+// is worth keeping because the mistake is easy to repeat: these names sit
+// beside `__linux__` in real guards, so matching it looked like consistency.
+// THAT CONFUSES ADJACENCY WITH KIND. `__APPLE__` sits in those same guards
+// and is upper, because it belongs to somebody; so does every other name in
+// them that belongs to somebody. Adjacency is not a naming rule.
+//
+// THE `__MCPP_` PREFIX IS LOAD-BEARING. A name mcpp owns means what mcpp says
 // it means. The alternative was tried: `__CYGWIN__` was left defined so that
 // code needing "PE object format, POSIX C environment" would have a name, and
 // a 30-member measurement found four members reading it as "Win32 is
@@ -52,12 +59,33 @@
 //
 // ── STABILITY ──────────────────────────────────────────────────────────────
 //
-// An entry here is a published interface. Removing one, or narrowing when it
-// is defined, is a breaking change for source this project does not control,
-// and the failure is usually SILENT --- a `#if` selects the other branch and
-// compiles. Withdrawal is therefore a sequence, never an edit: add the
-// replacement, let consumers move onto it while still accepting the old name,
-// and only then stop defining it.
+// An entry here is a published interface, and withdrawing one is SILENT: a
+// `#if` selects the other branch and compiles, on a machine nobody is
+// watching. No mechanism available to a build tool makes that loud --- a
+// preprocessor cannot be told to complain about a name it does not find.
+//
+// So a withdrawal is never decided by reading. It is decided by A MEASUREMENT
+// THAT ENUMERATES READERS, and what the measurement finds sets how many steps
+// the withdrawal takes. Both withdrawals this project has performed are on
+// the record, and they came out differently:
+//
+//   `__CYGWIN__` (2026.9.21.1). The enumeration found four third-party
+//   members reading it, and --- the half a first, sloppier count missed ---
+//   six sites in the two headers this ecosystem INSTALLS. Readers exist, so
+//   the withdrawal was a sequence: publish the replacement, move the
+//   consumers onto it while the old name is still defined, stop last.
+//
+//   `__mcpp_target_<os>__` and `__openkal__` (2026.9.21.2). The enumeration
+//   found NONE. Across every repository of this ecosystem, not one source
+//   file and not one manifest read either name; the only occurrences were
+//   this engine's own emitter, its tests, and prose. Exposure was three days
+//   for `__openkal__` and a single release for the target macro, and both are
+//   names invented here, so no upstream code can be holding one. Zero readers
+//   collapses the sequence to one step.
+//
+// The rule did not change between those two; the count did. A withdrawal
+// argued from anything other than a count is an argument this project has
+// already got wrong once.
 export module mcpp.toolchain.predefines;
 
 import std;
@@ -73,7 +101,7 @@ enum class When {
 };
 
 struct Entry {
-    std::string_view spelling; // `<os>` stands for the triple's `os` field
+    std::string_view spelling; // `<OS>` stands for the triple's `os` field
     When             when;
     bool             owned;    // false: a standard name mcpp SUPPLIES, not owns
     std::string_view allowed;
@@ -85,7 +113,7 @@ struct Entry {
 // wait for forever. `test_predefines.cpp` compares the two directions.
 inline constexpr std::array<Entry, 3> kContract {{
     {
-        "__mcpp_target_<os>__", When::TargetOs, /*owned=*/true,
+        "__MCPP_TARGET_<OS>__", When::TargetOs, /*owned=*/true,
         "learning the target's operating system when the C environment "
         "presented above it has suppressed the platform's own macros, and "
         "sizing a record by the target's ABI",
@@ -93,7 +121,7 @@ inline constexpr std::array<Entry, 3> kContract {{
         "for `cfg(os = ...)` in a package this project controls",
     },
     {
-        "__openkal__", When::ResolvedLayer, /*owned=*/true,
+        "__OPENKAL__", When::ResolvedLayer, /*owned=*/true,
         "gating whether a call site invokes `kal_*` at all; its meaning is "
         "identical on every target",
         "selecting a header, inferring whether `_WIN32` is real, working "
@@ -108,6 +136,19 @@ inline constexpr std::array<Entry, 3> kContract {{
         "standard name, and mcpp neither owns it nor may change its meaning",
     },
 }};
+
+// ASCII upper case. The triple's `os` field is a closed vocabulary of
+// lower-case identifier tokens --- `linux`, `windows`, `macos`, `ios`,
+// `emscripten`, `none` --- every one of them assigned from a literal in the
+// parser, so this always yields a valid identifier. That is a property of
+// another module, so `test_predefines.cpp` asserts it over the TARGET
+// REGISTRY rather than over this sentence.
+inline std::string upper(std::string_view s) {
+    std::string out(s);
+    for (char& c : out)
+        if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+    return out;
+}
 
 // THE TOKENS FOR ONE BUILD, for the entries this module emits.
 //
@@ -124,9 +165,9 @@ inline std::vector<std::string> define_tokens(std::string_view targetOs,
                                               bool kernelAbiIsOpenkal) {
     std::vector<std::string> out;
     if (!targetOs.empty())
-        out.push_back(std::format("-D__mcpp_target_{}__=1", targetOs));
+        out.push_back(std::format("-D__MCPP_TARGET_{}__=1", upper(targetOs)));
     if (kernelAbiIsOpenkal)
-        out.push_back("-D__openkal__");
+        out.push_back("-D__OPENKAL__");
     return out;
 }
 
@@ -134,8 +175,8 @@ inline std::vector<std::string> define_tokens(std::string_view targetOs,
 // can compare the table against `define_tokens` without knowing either.
 inline std::string spelling_for(const Entry& e, std::string_view targetOs) {
     std::string s(e.spelling);
-    if (const auto at = s.find("<os>"); at != std::string::npos)
-        s.replace(at, 4, targetOs);
+    if (const auto at = s.find("<OS>"); at != std::string::npos)
+        s.replace(at, 4, upper(targetOs));
     return s;
 }
 

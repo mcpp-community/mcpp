@@ -309,7 +309,7 @@ libunwind 的 `assembly.h`,正是按这个宏来选寄存器保存集的)。mcpp
 | Linux | `posix` / `arch-default` | 默认三元组已经满足 |
 | macOS | `posix` / `arch-default` | 一个令牌,`-D__unix__`——Apple 的 clang 默认三元组预定义的是 `__APPLE__`/`__MACH__`,从来不是 `__unix__` |
 | 裸机(freestanding) | `posix` / `arch-default` | 同样一个令牌,`-D__unix__`,原因相同:这里同样没有任何东西定义它 |
-| Windows | `posix` / `arch-default` | 采用 Cygwin 式语义:仅在编译行加 `--target=x86_64-pc-cygwin`;并加 `-D__mcpp_target_windows__`(见下方说明);`data-model` 变为 LP64 是三元组切换的结果,不是另一个开关 |
+| Windows | `posix` / `arch-default` | 采用 Cygwin 式语义:仅在编译行加 `--target=x86_64-pc-cygwin`;并加 `-D__MCPP_TARGET_WINDOWS__`(见下方说明);`data-model` 变为 LP64 是三元组切换的结果,不是另一个开关 |
 | 任意目标 | `builtins = "iso"` | 关闭代码生成阶段假定平台 C 库在场的惯用法识别——本轮实测到的唯一一例是 Apple 目标上的 `-fno-builtin-memset_pattern16`;`src/toolchain/cenv.cppm` 记录了还核实过哪些、结论是不适用 |
 | 其余情况 | | 明确拒绝,点名目标、请求与缺什么——不静默降级 |
 
@@ -337,7 +337,8 @@ Windows 一行是旗舰情形:`x86_64-w64-windows-gnu` 与 `x86_64-pc-cygwin` �
 同样的 PE 格式、同样的 Win64 调用约定、同样的 SEH——差别只在预处理器看到什么、`long` 有多宽。
 因此实现只触及**编译**行;**链接**行保持图解析出的三元组,因为目标文件格式没有变化。
 
-**这里定义 `__mcpp_target_windows__`,而 `__CYGWIN__` 仍然定义着(2026.9.21.1)。**
+**这里定义 `__MCPP_TARGET_WINDOWS__`,而 `__CYGWIN__` 仍然定义着(2026.9.21.1;这个名字在
+那一版是小写拼法,2026.9.21.2 在它还没有消费者时改成了大写)。**
 
 这次替换有意压掉 `_WIN32`——那正是「呈现 POSIX」的含义。但**ABI 并没有跟着环境一起变**:
 调用约定仍是 Win64,寄存器保存区仍按它的大小。生态里有两个**已安装的**头按这个事实定尺寸:
@@ -348,7 +349,7 @@ Windows 一行是旗舰情形:`x86_64-w64-windows-gnu` 与 `x86_64-pc-cygwin` �
 | openkal-llvm-runtime | `__libunwind_config.h` | `unw_context_t`、`unw_cursor_t` |
 
 已安装的头会被**应用程序自己的编译**读到,所以两者都用不了包私有的 define。
-`__mcpp_target_windows__` 是 mcpp 为它们所问的那个问题给出的**自己的**名字——这个目标是不是
+`__MCPP_TARGET_WINDOWS__` 是 mcpp 为它们所问的那个问题给出的**自己的**名字——这个目标是不是
 Windows,无论上面呈现的是什么 C 环境——既然是自己的名字,它的语义就不由别人的历史决定。
 它只在这次替换下发出;普通的 Windows 构建仍然有 `_WIN64`。
 
@@ -362,7 +363,7 @@ Windows,无论上面呈现的是什么 C 环境——既然是自己的名字,�
 libunwind 的 `static_assert` 响亮地红了;`setjmp.h` 那一处不会——它自己的注释写着
 「a mismatch nothing reports until the record overruns」。所以撤销分三步,每个中间状态都能构建:
 
-1. 本版**增加** `__mcpp_target_windows__`——纯增量;
+1. 2026.9.21.1 **增加** `__MCPP_TARGET_WINDOWS__`——纯增量;
 2. 那两个包改读新名字,保留 `|| defined(__CYGWIN__)` 以便在两种引擎上都能构建;
 3. 之后的版本再停止定义借来的那个。
 
@@ -517,7 +518,7 @@ tcsetattr = { form = "accepted-no-effect", note = "openkal 不命名的那些字
 `~/.mcpp/build-cache/v1`——一次普通依赖编译跨项目、也跨 `mcpp` 升级复用的缓存——是与上面
 构建指纹分开的另一套机制,按包逐一取键,只取真正到达该包自身编译命令行的那些轴
 (`mcpp.build.cache_key`)。解析出的环境到达一个包的命令行,完全是通过引擎的**广播**
-(与 `targetSideUsage`、`-D__openkal__` 同一条通道),从来不经过包自己声明的
+(与 `targetSideUsage`、`-D__OPENKAL__` 同一条通道),从来不经过包自己声明的
 `[build] cflags`/`cxxflags`——所以键的推导本身也得被告知去读广播后的值,而不只是声明的值。
 这个缺口正是这样被发现的(协调者反馈,openkal-musl 尖峰实验):原地升级 `mcpp`、缓存目录
 未清理时,给按新环境构建的镜像喂了按**旧**解析环境编译出的目标文件——一个镜像里混了两种

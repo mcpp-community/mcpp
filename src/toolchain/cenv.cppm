@@ -28,9 +28,11 @@
 //   freestanding  posix / arch-default   the same one token, `-D__unix__`, for the
 //                                        same reason: nothing here defines it either
 //   Windows       posix / arch-default   Cygwin-flavoured: `--target=x86_64-pc-cygwin`,
-//                                        plus `-D__mcpp_target_windows__`;
-//                                        `__CYGWIN__` stays defined for now (see
-//                                        the note below the table — a sequence)
+//                                        plus `-U__CYGWIN__`/`-U__CYGWIN32__`
+//                                        (see the note below the table — the last
+//                                        step of a three-repository sequence);
+//                                        `__MCPP_TARGET_WINDOWS__` is the name that
+//                                        replaces them, broadcast by `mcpp.build.prepare`
 //   *             builtins = iso         turn off the platform-C-library idioms the
 //                                        code generator assumes (§3.2.1) — Apple's
 //                                        `memset_pattern16` is the one measured case
@@ -70,37 +72,48 @@
 // identity links exactly like one compiled under the MinGW one. Only the
 // preprocessor saw a different environment; the linker never has to know.
 //
-// `__CYGWIN__`/`__CYGWIN32__` ARE STILL DEFINED, AND `__mcpp_target_windows__`
-// IS DEFINED BESIDE THEM. This module has held both answers about the
-// borrowed name, and the sequence between them is the point.
+// `__CYGWIN__`/`__CYGWIN32__` ARE WITHDRAWN, AND `__MCPP_TARGET_WINDOWS__`
+// STANDS IN THEIR PLACE. This module has held both answers about the borrowed
+// name, and the sequence between them is the point.
 //
 // A middle revision kept `__CYGWIN__` defined so that code needing to know
 // the object format would have a name, and wrote its own condition for
-// reversal: a trade-off "for the 30-member measurement to settle — if
+// reversal: a trade-off "for the 30-member measurement to settle --- if
 // defining it produces more new failures than it fixes, the answer flips".
 //
 // The measurement settled the THIRD-PARTY half (2026-09-20, 60 member-target
 // combinations): keeping it costs four members, each stopping at
 // `#include <windows.h>` reached through `#if defined(_WIN32) ||
-// defined(__CYGWIN__)`. Upstream means "Win32 is available" by the name —
+// defined(__CYGWIN__)`. Upstream means "Win32 is available" by the name ---
 // mimalloc says so in the guard's own comment, sqlite3 lists it under
 // `SQLITE_OS_WIN`. A BORROWED NAME MEANS WHAT THE LENDER'S HISTORY MADE IT
 // MEAN, not what the borrower intended by it.
 //
-// WITHDRAWING IT WAS TRIED IN THIS BRANCH AND BROKE THIS ECOSYSTEM'S OWN
+// WITHDRAWING IT WAS TRIED TOO EARLY ONCE, AND BROKE THIS ECOSYSTEM'S OWN
 // INSTALLED HEADERS. `openkal-musl`'s `bits/setjmp.h` and
 // `openkal-llvm-runtime`'s `__libunwind_config.h` both read `__CYGWIN__` to
 // size a Win64 register save area, deliberately: they are INSTALLED, an
 // application's own compile reads them, and a package-private define cannot
 // reach that compile. libunwind's `static_assert` failed loudly under
-// cross-verification; setjmp.h's equivalent would not have — its own comment
-// says "a mismatch nothing reports until the record overruns".
+// cross-verification; setjmp.h's equivalent would not have --- its own
+// comment says "a mismatch nothing reports until the record overruns".
 //
 // The measurement had counted third-party readers of the macro and not ours.
-// So the withdrawal is a sequence: this release adds `__mcpp_target_windows__`
-// (mcpp's own name, meaning what mcpp says it means), the two packages move
-// onto it while still accepting `__CYGWIN__`, and only then does a release
-// stop defining the borrowed one. Each intermediate state builds.
+// So the withdrawal became a sequence, and it ran to completion across three
+// repositories:
+//
+//   1. 2026.9.21.1 defined mcpp's own name beside the borrowed one, and
+//      2026.9.21.2 re-spelt it `__MCPP_TARGET_WINDOWS__` while it still had
+//      no consumer. Purely additive at every point.
+//   2. `openkal-musl@0.19.0` and `openkal-llvm-runtime@0.14.0` read the new
+//      name and keep `|| defined(__CYGWIN__)`, so they build on an engine
+//      from either side of this change. Published BEFORE step three.
+//   3. this release stops defining the borrowed name.
+//
+// Each intermediate state builds, and the ordering between repositories ---
+// packages first, engine last --- is the safety argument; see the withdrawal
+// note at the emission site for the residual window it does not close.
+
 export module mcpp.toolchain.cenv;
 
 import std;
@@ -305,35 +318,59 @@ inline std::expected<Realisation, std::string> realise(
             // what says it anyway is NOT emitted here. `_WIN32`/`_WIN64` are
             // suppressed on purpose --- that is what presenting POSIX means
             // --- while the ABI is unchanged, and source that sizes a Win64
-            // record still has to know. `__mcpp_target_<os>__` answers that,
+            // record still has to know. `__MCPP_TARGET_<OS>__` answers that,
             // for every target and not only this one, and it is broadcast in
             // `mcpp.build.prepare` rather than realised here: it is a fact
             // about the TARGET, true whether or not any `[c-abi]` block
             // exists, so deriving it from a declaration would make its
             // absence ambiguous. See docs/21, "The macros mcpp defines".
             //
-            // `__CYGWIN__` IS STILL DEFINED, AND THAT IS A SEQUENCE, NOT A
-            // DECISION TO KEEP IT. The 30-member measurement settled that the
-            // borrowed name costs four members (archive, sqlite3, mimalloc,
-            // c-ares stop at `#include <windows.h>` through
-            // `#if defined(_WIN32) || defined(__CYGWIN__)`; upstream means
-            // "Win32 is available" by it, as mimalloc's own guard comment
-            // says). Withdrawing it is right and is step three of three:
+            // `__CYGWIN__` IS WITHDRAWN HERE, AND THAT IS THE LAST STEP OF
+            // A SEQUENCE RATHER THAN A DECISION TAKEN ON ITS OWN. The
+            // 30-member measurement settled that the borrowed name costs four
+            // members (archive, sqlite3, mimalloc, c-ares stop at
+            // `#include <windows.h>` through `#if defined(_WIN32) ||
+            // defined(__CYGWIN__)`; upstream means "Win32 is available" by
+            // it, as mimalloc's own guard comment says). The three steps, in
+            // the order they were taken:
             //
-            //   1. this release: define `__mcpp_target_windows__` as well.
-            //      Purely additive; every published package keeps working.
-            //   2. the two packages above read the new name, keeping
-            //      `|| defined(__CYGWIN__)` so they build on both engines.
-            //   3. a later release stops defining `__CYGWIN__`.
+            //   1. 2026.9.21.1 defined mcpp's own name beside the borrowed
+            //      one; 2026.9.21.2 re-spelt it `__MCPP_TARGET_WINDOWS__`.
+            //      Purely additive: every published package kept working.
+            //   2. `openkal-musl@0.19.0` and `openkal-llvm-runtime@0.14.0`
+            //      read the new name, keeping `|| defined(__CYGWIN__)` so
+            //      they build on either engine. PUBLISHED BEFORE THIS STEP.
+            //   3. this release stops defining it.
             //
-            // Step three taken first would leave every PUBLISHED copy of
-            // those headers falling to its `#else` --- the wrong record size,
-            // reported by nothing. A loud failure in four third-party members
-            // is the better state to hold for one release.
+            // STEP TWO SHIPPING FIRST IS THE WHOLE SAFETY ARGUMENT, and it is
+            // an ordering between REPOSITORIES that no test in this one can
+            // check. Taking step three first --- which an earlier revision of
+            // this branch did --- leaves every published copy of those two
+            // installed headers falling to its `#else`: the wrong record
+            // size. libunwind's `static_assert` catches its half loudly;
+            // `setjmp.h` says in its own comment that nothing reports the
+            // other until the record overruns.
+            //
+            // THE RESIDUAL WINDOW IS NAMED RATHER THAN CLAIMED AWAY. A
+            // project pinning `openkal-musl` at 0.18.0 or earlier EXACTLY,
+            // and upgrading the engine past this release, gets that silent
+            // `#else`. Moving the index's `latest` onto 0.19.0 before this
+            // release is what keeps the window to exact pins; no mechanism
+            // available here closes it, because the engine cannot know which
+            // macros a package's installed headers read.
+            //
+            // `-U` RATHER THAN A DIFFERENT TRIPLE. The Cygwin identity is
+            // what supplies `__unix__` and suppresses `_WIN32`, which is the
+            // whole point of `presents = "posix"`; only the borrowed NAME is
+            // unwanted. Undefining it on the compile line keeps every other
+            // property of the substitution intact.
             r.tokens.push_back("--target=x86_64-pc-cygwin");
+            r.tokens.push_back("-U__CYGWIN__");
+            r.tokens.push_back("-U__CYGWIN32__");
             r.expectDefined.push_back("__unix__");
-            r.expectDefined.push_back("__CYGWIN__");
             r.expectUndefined.push_back("_WIN32");
+            r.expectUndefined.push_back("__CYGWIN__");
+            r.expectUndefined.push_back("__CYGWIN32__");
             cygwinIdentity = true;
         } else if (decl.presents == CAbiPresents::Windows) {
             // Already the base triple's own identity — nothing to add.

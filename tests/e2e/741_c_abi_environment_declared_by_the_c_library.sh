@@ -167,7 +167,7 @@ def joined(argv_iter):
 # made it mean. The object-format question keeps no macro at all.
 consumer = joined(args_for("main.cpp"))
 missing = [tok for tok in ("--target=x86_64-pc-cygwin", "-fno-short-wchar",
-                           "-D__mcpp_target_windows__=1")
+                           "-D__MCPP_TARGET_WINDOWS__=1")
            if tok not in consumer]
 # The last of those comes from `mcpp.toolchain.predefines`, not from the
 # `[c-abi]` realisation -- a fact about the TARGET rather than about the
@@ -206,7 +206,7 @@ if not asm_args:
     sys.exit(1)
 asm_joined = joined(iter(asm_args))
 missing = [tok for tok in ("--target=x86_64-pc-cygwin", "-fno-short-wchar",
-                           "-D__mcpp_target_windows__=1")
+                           "-D__MCPP_TARGET_WINDOWS__=1")
            if tok not in asm_joined]
 if missing:
     print(f"FAIL: the assembly unit is missing realised tokens {missing} "

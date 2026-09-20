@@ -76,7 +76,7 @@ export namespace mcpp::build::cache_key {
 // 3 (design 2026-09-18, coordinator review): `fill_package_config` used to
 // read only a package's OWN declared cflags/cxxflags, never the engine
 // broadcast channel (`privateBuild`) the realised [c-abi] environment and
-// `-D__openkal__` actually travel through — so an entry written before this
+// `-D__OPENKAL__` actually travel through — so an entry written before this
 // fix can be WRONG in a way probe_cached's normal "did the inputs change"
 // check cannot see: the compiled object and the recorded key silently
 // disagreed about what was compiled from the moment they were written, not
@@ -533,7 +533,7 @@ void fill_package_config(PackageAxes&                        out,
     // are what its compile command line actually carries, because several
     // engine broadcasts append to `privateBuild` and never touch `bc` —
     // `targetSideUsage` (the resolved target side's own include dirs/flags),
-    // `-D__openkal__`, and the realised [c-abi] environment (design
+    // `-D__OPENKAL__`, and the realised [c-abi] environment (design
     // 2026-09-18) chief among them. A cache key built from `bc` alone cannot
     // tell two builds of the SAME package apart when only one of them
     // realised, say, LP64 instead of LLP64 — found exactly that way
