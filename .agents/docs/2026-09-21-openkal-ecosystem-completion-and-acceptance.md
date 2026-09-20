@@ -173,6 +173,19 @@ static assertion failed: UnwindCursor<> does not fit in unw_cursor_t
 由另一个仓库的 CI 代为验证，是[[a-passing-criterion-that-measured-nothing]] 的邻居——
 它今天对，是因为恰好有人在别处建了那个目标。
 
+**为什么补这个格子不是顺手的事，是实测出来的。** 想写一个最小判据——一个 `setjmp` /
+`longjmp` 程序，带 `_Static_assert(sizeof(jmp_buf) >= 32 * sizeof(unsigned long long))`
+——只声明 `openkal-musl = "0.19.0"` 一个依赖，为 `x86_64-windows-gnu` 构建：
+
+- **编译过了**，而那正是判据要抓的那一层：短 `jmp_buf` 是静默的，编译期断言是唯一能让它
+  变响的地方。
+- **链接不过**：`cpow.o` 等一批目标文件的引用无人解析。openkal-musl 单独不是一条完整的
+  链接——openkal 实现与 compiler-rt 由 `openkal-llvm-runtime` 组装。
+
+所以 musl 侧的 Windows 格子要么只做**编译期**断言（能抓这个缺陷，且便宜），要么把 runtime
+当 path dep 拉进来（就是 runtime 的 CI 反过来做的那件事）。**两种都是新增工作量，不是
+把矩阵加一行。** 记在这里，下一个接手的人不必再量一遍。
+
 **唯一建那个目标的是 mcpp 自己的 `openkal-cross`**（3 宿主 × 3 目标）。而它把要验的
 生态分支写死成 `OPENKAL_BRANCH: main`——于是一个**需要生态协同提交**的引擎改动，在那个
 提交落地之前既无法验证、也无法合入（因为正是这个 job 会红）。
