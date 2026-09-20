@@ -11237,15 +11237,26 @@ prepare_build(bool print_fingerprint,
                 providerId = pkg.manifest.package.name;
                 break;
             }
+            // A REQUIREMENT NOBODY ANSWERED IS SAID SO, because otherwise
+            // "yes" and "never asked" are the same reading.
+            //
+            // Three situations exist and two of them build: the provider
+            // states a list and it contains the requirement (build); it
+            // states a list and does not (refuse, below); it states nothing
+            // at all (build, and until this note, in silence). The third is
+            // deliberate --- `provides-interfaces` is younger than the
+            // implementations that exist, and a graph that has not adopted it
+            // must keep building --- but a consumer reading a green build
+            // cannot tell it from the first. One line closes that, and it
+            // costs nothing to a graph where the provider does declare.
+            std::size_t uncheckedRequirements = 0;
             for (auto& pkg : packages) {
                 const auto& need = pkg.manifest.kernelAbiRequiresInterfaces;
                 if (need.empty()) continue;
-                // A consumer that names interfaces while no package in the
-                // graph states what it provides is not refused: the provider
-                // predates this key, and a graph that has not yet adopted it
-                // must keep building. The link still reports the absence, in
-                // the vocabulary it always did.
-                if (providerId.empty()) continue;
+                if (providerId.empty()) {
+                    uncheckedRequirements += need.size();
+                    continue;
+                }
                 auto missing = mcpp::targetside::interfaces_not_provided(
                     need, providedInterfaces);
                 if (missing.empty()) continue;
@@ -11287,6 +11298,20 @@ prepare_build(bool print_fingerprint,
                     providedInterfaces.size(),
                     providedInterfaces.size() == 1 ? "" : "s",
                     pkg.manifest.package.name));
+            }
+
+            if (uncheckedRequirements > 0) {
+                // THE IMPLEMENTATION IS NAMED FROM THE RESOLVED LAYER, not
+                // from whichever package happened to be first: the note has
+                // to say WHOSE silence this is, or a reader cannot act on it.
+                const auto& impl = resolvedTargetSide.kernelAbi.impl;
+                mcpp::ui::info("note", std::format(
+                    "kernel-abi interfaces: {} states none, {} requirement{} "
+                    "unchecked",
+                    impl.empty() ? std::string("the resolved implementation")
+                                 : impl,
+                    uncheckedRequirements,
+                    uncheckedRequirements == 1 ? "" : "s"));
             }
         }
 

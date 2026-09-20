@@ -608,6 +608,23 @@ A graph whose implementation carries no `provides-interfaces` builds
 unchanged; the key postdates the packages, and the link still reports an
 absence in the vocabulary it always did.
 
+**It says so, though (mcpp 2026.9.21.2).** Three situations exist and two of
+them build — the provider states a list containing the requirement, states a
+list without it (refused), or states nothing at all — and until this note the
+first and the third produced identical output:
+
+```
+        note kernel-abi interfaces: fakekernel@0.1.0 states none, 2 requirements unchecked
+```
+
+**A requirement nobody answered reads exactly like a confirmed one**, which is
+the failure this closes: a consumer inspecting a green build could not tell
+"checked and agreed" from "never asked". The note names the resolved
+implementation, because a reader told only that something went unchecked
+cannot act on it. It is absent whenever the provider does state its list, and
+`tests/e2e/743` asserts both directions — without the second leg the first
+would pass against an engine that printed the line unconditionally.
+
 **What a C library does not supply (`[c-abi-absent]`, mcpp 2026.9.20.1).**
 The set of names a C library supplies is not enumerable in a manifest — POSIX
 has about twelve hundred — and enumerating it is the mistake §3.3 records

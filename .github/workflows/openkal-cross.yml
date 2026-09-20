@@ -57,6 +57,11 @@ name: openkal cross-build (3 hosts × 3 targets)
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      openkal_ref:
+        description: "Branch of the openkal packages to build against (empty = main)"
+        required: false
+        default: ""
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -77,7 +82,22 @@ env:
   # engine against a tree the ecosystem had left behind — and the two
   # regressions found today both hid behind exactly this shape, a pin that
   # keeps a check green by keeping it out of date.
-  OPENKAL_BRANCH: main
+  #
+  # IT IS OVERRIDABLE FOR ONE RUN, AND THAT IS THE OTHER HALF OF A PROTOCOL
+  # THIS REPOSITORY ALREADY HAS ONE HALF OF. The ecosystem repositories build
+  # against an mcpp PR branch through `MCPP_SOURCE_REF`, so an engine change
+  # is measured against them before it merges. The reverse was hard-coded to
+  # `main`, which makes a change that REQUIRES a coordinated ecosystem commit
+  # unverifiable until after that commit lands --- and unmergeable until then,
+  # since this job is the one that fails.
+  #
+  # `__CYGWIN__`'s withdrawal is the case that showed it: this job builds
+  # `openkal-llvm-runtime@main`, whose installed header read only the borrowed
+  # name, so the engine's own CI reproduced the ordering constraint as a red
+  # cell. The constraint is real and the cell is correct --- the packages must
+  # publish first --- but verifying the engine BEFORE that publish needs this
+  # input. Left empty, nothing changes.
+  OPENKAL_BRANCH: ${{ github.event.inputs.openkal_ref || 'main' }}
 
 jobs:
   build:
