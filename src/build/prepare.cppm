@@ -11194,10 +11194,17 @@ prepare_build(bool print_fingerprint,
             std::string providerId;
             for (auto& pkg : packages) {
                 if (pkg.manifest.kernelAbiProvidesInterfaces.empty()) continue;
-                if (!resolvedTargetSide.kernelAbi.impl.empty()
-                    && resolvedTargetSide.kernelAbi.impl.find(
-                           pkg.manifest.package.name) == std::string::npos)
-                    continue;
+                // `impl` is `name@version`; the name is what precedes the
+                // separator. A substring test would match `openkal` against
+                // `openkal-linux@0.15.0` and read one implementation's list
+                // as another's.
+                if (!resolvedTargetSide.kernelAbi.impl.empty()) {
+                    auto const& impl = resolvedTargetSide.kernelAbi.impl;
+                    const auto at = impl.find('@');
+                    const auto implName = at == std::string::npos
+                        ? impl : impl.substr(0, at);
+                    if (implName != pkg.manifest.package.name) continue;
+                }
                 providedInterfaces = pkg.manifest.kernelAbiProvidesInterfaces;
                 providerId = pkg.manifest.package.name;
                 break;
