@@ -134,6 +134,16 @@ echo "$out" | grep -q "fakekernel" || {
     echo "$out" >&2
     exit 1
 }
+# AND THE CODE, BECAUSE SOMETHING READS THIS. mcpp-index's compatibility
+# measurement tells "this graph does not supply what the member asked for"
+# from "the member did not build" on this token; without it that consumer has
+# to match prose, and the distinction decides whether a member counts against
+# a compatibility figure.
+echo "$out" | grep -q "\[interface-not-provided\]" || {
+    echo "FAIL: the refusal must carry its code the way E0006 does" >&2
+    echo "$out" >&2
+    exit 1
+}
 # Nothing compiled: the answer exists before the compiler is reached, and a
 # refusal that arrives after an object file has been written has answered at
 # the wrong time even when it answers correctly.

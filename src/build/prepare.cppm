@@ -11227,9 +11227,18 @@ prepare_build(bool print_fingerprint,
                     names += "\n         ";
                     names += mI;
                 }
+                // THE CODE IS PRINTED, THE WAY E0006 IS, BECAUSE SOMETHING
+                // READS THIS. A refusal that only a person can recognise
+                // forces every machine consumer to match prose --- and prose
+                // that a package's own compile error could coincidentally
+                // contain. The mcpp-index compatibility measurement
+                // distinguishes "this graph does not supply what the member
+                // asked for" from "the member did not build" on exactly this
+                // token, and that distinction decides whether a member counts
+                // against a compatibility figure.
                 return std::unexpected(std::format(
                     "'{}' requires interfaces the resolved implementation does "
-                    "not provide.{}\n"
+                    "not provide. [interface-not-provided]{}\n"
                     "       provided by  {} ({} interface{})\n"
                     "       This is refused before anything is compiled "
                     "because dependency resolution is the earliest time the "
