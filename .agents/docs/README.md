@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-300 records.
+301 records.
 
 ## By subject
 
@@ -60,6 +60,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### review
 
+- [本轮生态级自审](2026-09-20-wave-self-review.md) — active
 - [#674 设计方案评审：`-include unistd.h` 在 Windows + `presents = "posix"` 上的可行性](2026-09-20-issue-674-design-review.md) — active
 
 ### targets
@@ -91,6 +92,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-09
 
+- [本轮生态级自审](2026-09-20-wave-self-review.md) — active
 - [openkal 生态：能力的时刻模型，以及 C 环境方案空间的划分](2026-09-20-openkal-c-environment-ecosystem-design.md) — active
 - [#674 设计方案评审：`-include unistd.h` 在 Windows + `presents = "posix"` 上的可行性](2026-09-20-issue-674-design-review.md) — active
 - [C 环境生态方案：执行计划](2026-09-20-ecosystem-execution-plan.md) — active
