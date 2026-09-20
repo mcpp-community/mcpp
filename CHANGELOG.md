@@ -3,7 +3,7 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [Unreleased]
+## [2026.9.21.3] - 2026-09-21
 
 ### `mcpp test --no-run`:为一个跑不了的目标构建测试,并把这当成答案
 
