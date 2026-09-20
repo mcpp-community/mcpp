@@ -61,7 +61,7 @@ void print_usage() {
     std::println("  mcpp new <name>                      Create a new package skeleton");
     std::println("  mcpp build [options]                 Build the current package");
     std::println("  mcpp run [target] [-- args...]       Build + run a binary target");
-    std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --timeout, --build-timeout, --message-format json, --no-runner)");
+    std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --no-run, --timeout, --build-timeout, --message-format json, --no-runner)");
     std::println("  mcpp clean [--stale] [--bmi-cache]   Remove target/ (or, with --stale, only its non-current fingerprint dirs)");
     std::println("  mcpp add [ns.]pkg@ver                Add an exact dependency to mcpp.toml");
     std::println("  mcpp remove [ns.]pkg                 Remove an exact dependency from mcpp.toml");
@@ -502,6 +502,8 @@ int run(int argc, char** argv) {
                 .help("List (filtered) tests without building or running them"))
             .option(cl::Option("no-runner")
                 .help("Run test binaries directly, ignoring any [target.<triple>].runner (a host that runs them natively)"))
+            .option(cl::Option("no-run")
+                .help("Build the tests for --target and stop; a build that succeeds is the result (for a target this host cannot execute)"))
             .option(cl::Option("timeout").takes_value().value_name("SECS")
                 .help("Kill a test still RUNNING after SECS seconds (default 300; 0 = no limit)"))
             .option(cl::Option("build-timeout").takes_value().value_name("SECS")

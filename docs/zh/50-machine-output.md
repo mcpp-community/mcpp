@@ -455,8 +455,8 @@ mcpp test [pattern] [--workspace] --message-format json
 |---|---|
 | `member` | workspace 成员;workspace 之外为 `""` |
 | `test` | 按路径命名的测试名(`tests/00-a/0.cpp` → `00-a/0`) |
-| `status` | `pass`、`compile_fail`、`run_fail` 或 `not_run` |
-| `exit_code` | 测试的退出状态;`not_run` 时为 `0` |
+| `status` | `pass`、`compile_fail`、`run_fail`、`not_run` 或 `built` |
+| `exit_code` | 测试的退出状态;`not_run` 与 `built` 时为 `0` |
 | `signal` | 状态编码了信号时是信号号,否则 `null` |
 | `duration_ms` | 这个测试构建+运行的墙钟时间 |
 | `timed_out` | 被 `--timeout` 杀掉时为 `true`(`run_fail`) |
@@ -470,7 +470,13 @@ mcpp test [pattern] [--workspace] --message-format json
 | `member`、`passed`、`failed` | 计数 |
 | `not_run` | 已构建但没有执行的测试数 |
 | `not_run_reason` | 它们共同的原因,或 `""` |
+| `built` | 在 `--no-run` 下构建、本就不打算执行的测试数 |
 | `elapsed_ms`、`build_ms`、`run_ms` | 墙钟时间,分段 |
+
+**`built` 与 `not_run` 是两个不同的答案,分开计数。** 两者描述的都是「编译了但没有
+执行」的测试,相似之处到此为止:`not_run` 意味着 mcpp 试过而做不到,因此问题仍然悬着,
+退出码是 2;`built` 意味着 `--no-run` 要求不要执行,因此构建就是问题的全部,退出码是 0。
+把两者相加的消费方,会把一次它从未要求过的运行,报成一次无法完成的运行。
 
 **`not_run` 既不是 `pass` 也不是 `run_fail`,退出码也这么说(2026.9.2.1)。**
 本机无法加载测试产物(交叉目标未声明 runner 时的 `Exec format error`),或声明的

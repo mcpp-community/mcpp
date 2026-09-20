@@ -105,6 +105,7 @@ mcpp performs with the test binary appended.
 ```bash
 mcpp test --target thumbv7em-none-eabihf     # built for the board, run through its runner
 mcpp test --no-runner                        # ignore the runner and execute directly
+mcpp test --target aarch64-macos --no-run    # build the tests for the target and stop
 ```
 
 Nothing about the test changes. The same `tests/**/*.cpp` compiles for the
@@ -113,6 +114,23 @@ or a QEMU exit code is what a bare-metal runner is chosen to produce.
 
 `--no-runner` exists for a host that can execute the binaries natively and
 should not pay for an emulator.
+
+`--no-run` makes the narrower claim, and it has to be asked for. Without it, a
+target this host can neither execute nor reach through a runner leaves every
+test not run and the command exits 2: mcpp did not establish whether the tests
+pass, and reporting that as success is the false reading this repository has
+recorded most often. But 2 is also what a broken runner returns, so a caller
+that wanted only the build could not tell the two apart. Under `--no-run` every
+selected test is compiled and linked for the target, none is executed, and the
+result says so:
+
+```
+test result ok. 0 passed; 0 failed; 2 built, not run
+```
+
+A test that does not compile is still a failure, and `--no-run` with
+`--no-runner` is refused rather than resolved: one says to run the binaries
+without the declared runner, the other says not to run them.
 
 A test program carries the files it reads beside it: the runner receives
 `MCPP_RUNTIME_FILES`, the list of its deployed files and the shared libraries it

@@ -523,8 +523,8 @@ Per test:
 |---|---|
 | `member` | the workspace member, or `""` outside a workspace |
 | `test` | the path-based test name (`tests/00-a/0.cpp` → `00-a/0`) |
-| `status` | `pass`, `compile_fail`, `run_fail`, or `not_run` |
-| `exit_code` | the test's exit status; `0` for `not_run` |
+| `status` | `pass`, `compile_fail`, `run_fail`, `not_run`, or `built` |
+| `exit_code` | the test's exit status; `0` for `not_run` and `built` |
 | `signal` | the signal number when the status encodes one, else `null` |
 | `duration_ms` | build+run wall time of this test |
 | `timed_out` | `true` when `--timeout` killed it (`run_fail`) |
@@ -538,7 +538,16 @@ Summary record, `{"summary": {...}}`:
 | `member`, `passed`, `failed` | counts |
 | `not_run` | tests that were built and not executed |
 | `not_run_reason` | the reason shared by all of them, or `""` |
+| `built` | tests built under `--no-run`, which were not to be executed |
 | `elapsed_ms`, `build_ms`, `run_ms` | wall time, split |
+
+**`built` and `not_run` are different answers and are counted apart.** Both
+describe a test that was compiled and not executed, and that is where the
+resemblance ends: `not_run` means mcpp tried and could not, so the question
+is open and the exit code is 2; `built` means `--no-run` said not to, so the
+build was the whole question and the exit code is 0. A consumer that added
+the two together would report a run it never asked for as one that could not
+be performed.
 
 **`not_run` is neither `pass` nor `run_fail`, and the exit code says so
 (2026.9.2.1).** A test is `not_run` when this host cannot load its artifact

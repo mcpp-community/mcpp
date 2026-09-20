@@ -2179,6 +2179,22 @@ export struct TestOptions {
     // runner — the operator on this host stating that the triple is native
     // here, a fact the manifest has no axis for (#544, D3).
     bool               noRunner = false;
+    // `--no-run`: build the tests for `--target` and stop. THE CLAIM IT MAKES
+    // IS NARROWER THAN A PASS, AND IT IS STATED RATHER THAN INFERRED.
+    //
+    // Without it, a target this host cannot execute leaves every test `NotRun`
+    // and the command exits 2, which is correct: mcpp did not establish
+    // whether the tests pass, and a zero there is the false reading #544
+    // records. But `2` is also what a broken runner returns, so a caller that
+    // wanted only the build --- a compatibility sweep measuring a target no
+    // runner exists for --- cannot tell "the tests built" from "the tests
+    // built and the runner is missing" and must settle for `mcpp build`, which
+    // builds the package and, for a package whose only sources are under
+    // `tests/`, compiles NOTHING of it at all.
+    //
+    // `--no-run` makes the narrower claim available as its own answer: every
+    // selected test compiled and linked for the target, and none was executed.
+    bool               noRun = false;
     // Per-test RUN deadline. The default is deliberately non-zero: `mcpp test`
     // is something CI runs unattended, and an unbounded default makes a single
     // hung test able to consume the whole job with nothing to show for it.
@@ -2211,6 +2227,10 @@ export struct TestRunSummary {
     // test did not run — and not a pass either: the exit code is 2.
     int         notRun  = 0;
     std::string notRunReason;
+    // Built and deliberately not executed (`--no-run`). Counted apart from
+    // `notRun` so the workspace total cannot add a stated build-only result to
+    // a run that mcpp could not perform.
+    int         built   = 0;
     long long buildMs   = 0;   // Phase A + bulk pass + per-test drives
     long long runMs     = 0;   // the test binaries' own execution
     long long elapsedMs = 0;   // wall clock for the whole member
@@ -2404,7 +2424,10 @@ export int run_tests(std::span<const std::string> passthrough,
         // Reporting that as `RunFail (exit 127)` states that the test ran and
         // returned 127, which is false and indistinguishable from a missing
         // program; reporting it as a pass would be read as one.
-        enum class St { Pass, CompileFail, RunFail, NotRun } status;
+        // `Built` (`--no-run`): compiled and linked, and deliberately not
+        // executed. Distinct from `NotRun`, which means mcpp tried and could
+        // not --- the difference is whether anything was left unanswered.
+        enum class St { Pass, CompileFail, RunFail, NotRun, Built } status;
         int         exitCode = 0;
         std::string compileOutput;
         std::string runOutput;
@@ -2422,6 +2445,7 @@ export int run_tests(std::span<const std::string> passthrough,
         const char* st = r.status == TestResult::St::Pass ? "pass"
                        : r.status == TestResult::St::CompileFail ? "compile_fail"
                        : r.status == TestResult::St::NotRun ? "not_run"
+                       : r.status == TestResult::St::Built ? "built"
                                                             : "run_fail";
         std::string signal = (r.exitCode > 128 && r.exitCode < 128 + 65)
             ? std::to_string(r.exitCode - 128) : "null";
@@ -2891,7 +2915,18 @@ export int run_tests(std::span<const std::string> passthrough,
 
     // Pass 2: run them. Concurrently unless there is exactly one — see
     // `runJobs` for why the single-test case is deliberately different.
-    run_tests_now(runnable);
+    //
+    // UNDER `--no-run` THE LIST IS THE ANSWER. Everything that reaches
+    // `runnable` compiled and linked; a test that did not is already a
+    // `CompileFail` in `results` and keeps that status, so this path reports
+    // what was built without also reporting anything about what it does.
+    if (testOpts.noRun) {
+        for (auto& r : runnable)
+            results.push_back({r.name, TestResult::St::Built, 0, {}, {}, 0,
+                               false, {}});
+    } else {
+        run_tests_now(runnable);
+    }
     summary.elapsedMs = member_ms();
 
     // 7. Summary.
@@ -2900,8 +2935,10 @@ export int run_tests(std::span<const std::string> passthrough,
     int notRun = 0;
     std::string notRunReason;
     std::vector<std::string> failures;
+    int built = 0;
     for (auto& r : results) {
         if (r.status == TestResult::St::Pass) ++passed;
+        else if (r.status == TestResult::St::Built) ++built;
         else if (r.status == TestResult::St::NotRun) {
             ++notRun;
             if (notRunReason.empty()) notRunReason = r.reason;
@@ -2913,6 +2950,7 @@ export int run_tests(std::span<const std::string> passthrough,
     summary.failed = failed;
     summary.notRun = notRun;
     summary.notRunReason = notRunReason;
+    summary.built  = built;
 
     // "build X + run Y" rather than one merged number: on a member whose tests
     // are cheap but whose link is not, those two are three orders of magnitude
@@ -2932,9 +2970,10 @@ export int run_tests(std::span<const std::string> passthrough,
     if (json) {
         std::println("{{\"summary\":{{\"member\":\"{}\",\"passed\":{},\"failed\":{},"
                      "\"not_run\":{},\"not_run_reason\":\"{}\","
+                     "\"built\":{},"
                      "\"elapsed_ms\":{},\"build_ms\":{},\"run_ms\":{}}}}}",
                      test_json_escape(memberName), passed, failed,
-                     notRun, test_json_escape(notRunReason),
+                     notRun, test_json_escape(notRunReason), built,
                      summary.elapsedMs, summary.buildMs, summary.runMs);
         std::fflush(stdout);
         return rc;
@@ -2944,6 +2983,7 @@ export int run_tests(std::span<const std::string> passthrough,
     // its reason: a quiet skip is read as a pass. First line of the reason
     // only — the full text was printed when it was established.
     auto counts = std::format("{} passed; {} failed", passed, failed);
+    if (built) counts += std::format("; {} built, not run", built);
     if (notRun) {
         auto firstLine = notRunReason.substr(0, notRunReason.find('\n'));
         counts += std::format("; {} not run ({})", notRun, firstLine);

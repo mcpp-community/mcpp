@@ -5,6 +5,41 @@
 
 ## [Unreleased]
 
+### `mcpp test --no-run`:为一个跑不了的目标构建测试,并把这当成答案
+
+一个本机既不能执行、也没有 runner 可达的目标,会让每个测试停在 `not run`,命令退出 2。
+这是对「这些测试通过吗」的正确回答——mcpp 没有查明。但 **2 同样是 runner 坏掉时的
+退出码**,于是一个只想要「构建」的调用方无法区分这两者,只能退回去用 `mcpp build`。
+
+而 `mcpp build` 构建的是**包**。对一个源码只在 `tests/` 下的包,它一行都不编译。
+实测 mcpp-index 的 `archive` 成员(源码是 `tests/` 下两个文件):
+
+```
+$ mcpp build --target aarch64-macos      # 退出 0
+   Compiling compat.lz4 / compat.xz / compat.zlib / compat.zstd ...
+$ find target -name '*compression*' -o -name '*versions*'
+   (只有 musl 的 versionsort.o)
+```
+
+退出 0,编译了这个成员的**依赖**,而**该成员自己的代码一行都没有编过**。一个读这个
+退出码的兼容性测量,会把它记成「这个成员在 macOS 上构建通过」。
+
+`--no-run` 让那个更窄的断言有了自己的答案:被选中的每个测试都为该目标编译并链接,
+没有任何一个被执行,结果也这么写:
+
+```
+test result ok. 0 passed; 0 failed; 2 built, not run
+```
+
+`built` 与 `not_run` 分开计数,机器接口也一样(`docs/50`):`not_run` 是「试过而做不到,
+问题悬着,退出 2」,`built` 是「被要求不要执行,构建就是问题的全部,退出 0」。编译不过
+的测试仍然是失败。`--no-run` 与 `--no-runner` 同时给出会被拒绝——两个名字只差一个字符
+而含义相反,不存在应当优先的那一个读法。
+
+判据是 `tests/e2e/745_no_run_builds_the_tests_and_says_so.sh`,四条腿。其中 runner 用的是
+一个**不存在的程序名**:用一个执行不了的目标会让这个测试需要交叉工具链和特定宿主,而
+一个找不到的 runner 在每台宿主上、对本机目标、不装任何东西,就能造出同一个局面。
+
 ### `builtins = "iso"` 发的那个 token 是静默空操作,已换成 `-fno-builtin`
 
 `[c-abi] builtins = "iso"` 声明 C 库只提供 ISO 函数、没有厂商扩展。Apple 目标上

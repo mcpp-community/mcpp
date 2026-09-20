@@ -539,6 +539,16 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     if (parsed.positional_count() > 0) to.filter = parsed.positional(0);
     to.list = parsed.is_flag_set("list");
     to.noRunner = parsed.is_flag_set("no-runner");   // see cmd_run
+    to.noRun    = parsed.is_flag_set("no-run");
+    // The two read alike and mean opposite things: `--no-runner` says to run
+    // the binaries WITHOUT the declared runner, `--no-run` says not to run
+    // them at all. Asking for both is not a preference to resolve.
+    if (to.noRun && to.noRunner) {
+        mcpp::ui::error("--no-run and --no-runner cannot be combined: "
+                        "--no-runner runs the test binaries directly, "
+                        "--no-run does not run them.");
+        return 2;
+    }
     // The three deadlines share one parser: they differ only in what they
     // bound, not in how they are spelled. 0 always means "no limit" — for
     // --timeout that now has to be asked for rather than being the default.
@@ -630,9 +640,15 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
                     std::format("member '{}' ({}/{}) FAILED — {} passed, {} failed in {:.2f}s",
                                 mp, idx, members->size(), sum.passed, sum.failed, secs));
             } else {
+                // Under `--no-run` nothing passed and nothing was meant to:
+                // reporting "0 passed" for a member whose tests all built is
+                // the same sentence a member with no tests would produce.
                 mcpp::ui::status("Workspace",
-                    std::format("member '{}' ({}/{}) ok — {} passed in {:.2f}s",
-                                mp, idx, members->size(), sum.passed, secs));
+                    sum.built
+                        ? std::format("member '{}' ({}/{}) ok — {} built, not run in {:.2f}s",
+                                      mp, idx, members->size(), sum.built, secs)
+                        : std::format("member '{}' ({}/{}) ok — {} passed in {:.2f}s",
+                                      mp, idx, members->size(), sum.passed, secs));
             }
         }
 

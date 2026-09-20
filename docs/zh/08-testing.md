@@ -96,12 +96,26 @@ runner 是板级支持包提供的一串 argv,mcpp 把测试二进制附加在�
 ```bash
 mcpp test --target thumbv7em-none-eabihf     # 为板子构建,经它的 runner 运行
 mcpp test --no-runner                        # 忽略 runner,直接执行
+mcpp test --target aarch64-macos --no-run    # 只为目标构建测试,不执行
 ```
 
 测试本身一个字都不用改。同样的 `tests/**/*.cpp` 为设备编译,判据仍然是退出码 ——
 这正是裸机 runner 被选成「能产生 semihosting 退出码或 QEMU 退出码」的原因。
 
 `--no-runner` 是给「本机就能原生执行这些二进制、不该为模拟器付代价」的宿主准备的。
+
+`--no-run` 做的是更窄的那个断言,而它必须被显式要求。没有它时,一个本机既不能执行、
+也没有 runner 可达的目标,会让每个测试都停在 not run,命令退出 2:mcpp 没有查明这些
+测试是否通过,而把它报成成功是本仓记录得最多的一种假读数。但 2 同样是 runner 坏掉时
+的退出码,于是一个只想要「构建」的调用方无法区分这两者。在 `--no-run` 下,每个被选中
+的测试都为该目标编译并链接,没有任何一个被执行,结果也这么写:
+
+```
+test result ok. 0 passed; 0 failed; 2 built, not run
+```
+
+编译不过的测试仍然是失败;`--no-run` 与 `--no-runner` 同时给出会被拒绝,而不是在两者
+之间挑一个:一个说的是「不经声明的 runner 直接执行」,另一个说的是「不要执行」。
 
 测试程序把它读取的文件带在身边:runner 收到 `MCPP_RUNTIME_FILES`,即它部署的文件与
 它加载的共享库的清单,把程序移到设备上的 runner 连同这些文件一起复制。测试按相对于
