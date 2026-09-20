@@ -105,6 +105,13 @@ tcsetattr = { form = "accepted-no-effect", note = "openkal 不命名的那些字
 的东西。链接点到 `link` 形状里的某一项时,mcpp 把清单读回来:`undefined reference to
 'fork'` 因此带着那句说明它是缺陷还是环境限制的话一起到达。
 
+**这条说明此前少一个右括号,而九个单测都没看见。** 渲染出来是
+`the C library in this graph (musl declares that it does not supply ...`——C 库的名字由
+**两个各自独立的条件**插进去:一个左括号,然后是名字,右括号从来没有被发出过。单测断言的
+是 `find("musl")`,那句话里同样有 "musl"。**判据瞄准一句话的子串,就看不见这句话。**
+修法是整个括号部分只做一次替换;新增的 e2e 744 真跑一次链接失败并断言整句,把右括号去掉
+它就红。
+
 **它是顶层表,而这是量出来的。** 先写成 `[c-abi].absent`——更顺——之后拿**真正发布的
 2026.9.18.3 归档**(当时的索引 floor)跑 openkal-musl 0.17.0 将要发布的那份清单:嵌套
 写法让每个旧 mcpp **在每个目标上拒绝整份清单**,报 `[c-abi] has no member 'absent'`。

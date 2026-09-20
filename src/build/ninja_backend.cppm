@@ -785,16 +785,22 @@ std::string c_abi_absent_facility_advice(
     }
     if (named.empty()) return {};
 
+    // ONE SUBSTITUTION FOR THE WHOLE PARENTHETICAL, not an opening paren and
+    // a name from two separate conditionals. Written that way, the closing
+    // paren was simply absent and every reader saw `(musl declares that it
+    // does not supply ...`. The unit tests asserted `find("musl")`, which is
+    // true of both spellings; it took running a real link to see it.
+    const std::string who =
+        cAbiName.empty() ? std::string{} : std::format(" ({})", cAbiName);
     return std::format(
         "\n"
-        "note: the C library in this graph{}{} declares that it does not "
+        "note: the C library in this graph{} declares that it does not "
         "supply the following, and the link has just asked for it:{}\n"
         "      An absence stated in the manifest is a property of the "
         "environment this program was built for, not a defect in the build. "
         "A program that needs one of these needs a different C environment "
         "for this target.\n",
-        cAbiName.empty() ? "" : " (", cAbiName.empty() ? "" : cAbiName,
-        named);
+        who, named);
 }
 
 std::string graph_c_library_isolation_advice(std::string_view output,

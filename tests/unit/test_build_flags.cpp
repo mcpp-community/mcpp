@@ -228,7 +228,27 @@ TEST(CAbiAbsentAdvice, ALinkAbsenceNamedInTheManifestIsExplained) {
     ASSERT_FALSE(a.empty());
     EXPECT_NE(a.find("fork"), std::string::npos);
     EXPECT_NE(a.find("no process image duplication"), std::string::npos);
-    EXPECT_NE(a.find("musl"), std::string::npos);
+    // THE WHOLE CLAUSE, NOT `find("musl")`. The name was interpolated from
+    // two conditionals -- an opening paren and the name -- and the closing
+    // one was never emitted, so every reader saw `(musl declares that it
+    // does not supply ...`. `find("musl")` is true of that sentence too,
+    // which is why it took a real link to notice. Assert the rendering.
+    EXPECT_NE(a.find("the C library in this graph (musl) declares"),
+              std::string::npos) << a;
+}
+
+TEST(CAbiAbsentAdvice, AnUnnamedCLibraryLeavesNoEmptyParentheses) {
+    // The other side of the same substitution: with no name there must be no
+    // parenthetical at all, rather than `graph () declares`.
+    std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
+        {"fork", mcpp::targetside::CAbiAbsentForm::Link, ""},
+    };
+    auto a = mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: fork\n", "", absent);
+    ASSERT_FALSE(a.empty());
+    EXPECT_NE(a.find("the C library in this graph declares"),
+              std::string::npos) << a;
+    EXPECT_EQ(a.find("()"), std::string::npos) << a;
 }
 
 TEST(CAbiAbsentAdvice, TheGnuSpellingIsMatchedToo) {
