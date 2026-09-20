@@ -915,13 +915,38 @@ openkal-musl 0.18.0，而 0.18.0 当时还没进索引，消费者自己的 CI �
 | C2' | curl | 配方缺陷，不是不可移植 | **已定位未修**：两个目标两个不同真因，见 `docs/openkal-compat.md` |
 | C3 | `arc4random_buf` | 「应当有的符号」CI 断言 | 已通过 |
 | C4 | `aarch64-macos --profile release` | 本机实测 | **更正**：不是「不复现」，是被某个 runtime 版本修掉了——旧钉上仍在，见下 |
-| I1 | 写死的节点集合 | conformance 逐条断言 | 未实现（第五批） |
+| C5 | `builtins = "iso"` 发的 token | 目标文件里零引用,**且不带 flag 时必须有引用** | **已通过**:`openkal-cross.yml` 三条腿跑在三台宿主,1/1/0 + engine 0 |
+| C6 | 跑不了的目标上 `builds` 的含义 | 编的是成员自己的测试,不是它的依赖 | **已通过**:`mcpp test --no-run`(e2e 745 四条腿)+ `compat.py` 的 `command_for` 三条 selftest |
+| I1 | 写死的节点集合 | conformance 逐条断言 | 未实现(第五批) |
 | I2 | `presents = "windows"` 的 C 库 | 引擎改动数为 0 | 未实现（第五批） |
 | **A1** | 三目标 `mcpp build` | 全绿 | **待跑**（须用已发布钉，见 §8 第二条） |
 | **A2** | 三目标 `mcpp test` + 真跑 | 全绿 | 待跑 |
 | **A3** | 三份 `os.cppm` | **除六行外逐字节相同** | **已机械化并进 CI**；四种失败形态逐个量红过 |
 
 ---
+
+### 7.1 本轮收尾时新发现的两条,以及它们各自的判据
+
+**C5 —— `builtins = "iso"` 发的那个 token 是静默空操作。** `-fno-builtin-memset_pattern16`
+从这套机制第一版起就在发,而 `-fno-builtin-<fn>` 按 clang 的 builtin 表校验,
+`memset_pattern16` 是 LLVM TargetLibraryInfo 的 libfunc、不在那张表里。A/B:不带 flag 1 次
+引用,带这个 flag 仍是 1 次,`-fno-builtin` 是 0。**它能活下来是因为它没有判据**——`cenv`
+用 `-dM` dump 校验自己发的 token,而代码生成阶段的性质在 dump 里不可见。
+
+判据写完之后,**第一条腿就在 macOS 宿主上红了**:三个读数全是 0。原因不在编译器在读数器——
+`grep -ac` 在 GNU grep 上读 1/0 正确,macOS 的 BSD grep 对二进制输入的 `-a` 语义不同。
+换成载荷里的 `llvm-nm -u` 之后三台宿主一致。**这正是第一条腿存在的理由:它报的是
+「后面两条什么都没测」。**
+
+**C6 —— 跑不了的目标上,`builds` 说的是它的依赖。** 本套件每个成员的源码都只在 `tests/` 下,
+而没有 runner 的目标用 `mcpp build` 测量,`mcpp build` 构建的是**包**——对这种形状的包
+它一行都不编译。实测 `archive` 的 aarch64-macos:1990 个目标文件,没有一个来自
+`tests/compression.cpp` 或 `tests/versions.cpp`,退出 0,记成 `builds`。
+
+CI 里这个读数从未错过,因为两个钉住的目标都能跑(linux 原生、windows 经 Wine)。**它在
+考虑第三个目标的那一刻才错**,而那正是本轮要做的事。引擎侧补 `mcpp test --no-run`,
+测量侧把命令选择提到 `command_for` 并给它三条 selftest ——其中要紧的那条断言的是
+`--no-run` 而不是 `build`。
 
 ## 8. 本方案自身的失败模式
 
