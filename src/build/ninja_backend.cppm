@@ -21,6 +21,7 @@ import std;
 import mcpp.freestanding.linkline;
 import mcpp.build.backend;
 import mcpp.manifest;
+import mcpp.targetside;
 import mcpp.source_kind;
 import mcpp.build.distribution;
 import mcpp.build.graph_shape;
@@ -96,6 +97,19 @@ std::optional<std::string> check_rule_commands_name_a_program(
 // manifest line. Measured: `undefined symbol: operator new(unsigned long)`
 // referenced from `__libcpp_allocate` in `__new/allocate.h`.
 std::string link_failure_advice(std::string_view output);
+
+// The C library said in its manifest which facilities it does not supply, and
+// the link has just named one of them (design 2026-09-20 §5.7.5). Both
+// linkers' spellings, as `link_failure_advice` above.
+//
+// WHY THIS IS WORTH A NOTE RATHER THAN LEFT TO THE LINKER. `undefined
+// reference to 'fork'` is a true statement and a useless one: it says a symbol
+// is missing without saying whether that is a defect, a missing dependency or
+// a deliberate limit of the environment this program was built for. The
+// manifest already distinguishes those; this reads it back.
+std::string c_abi_absent_facility_advice(
+    std::string_view output, std::string_view cAbiName,
+    const std::vector<mcpp::targetside::CAbiAbsentEntry>& absent);
 
 // mcpp#662: the compile-side sibling of `link_failure_advice`, same shape —
 // text-matched against RAW ninja output (command lines included; the caller
@@ -670,6 +684,38 @@ std::string link_failure_advice(std::string_view output) {
         "      To supply an allocator instead, define the twelve `operator new`\n"
         "      and `operator delete` overloads — including the four taking\n"
         "      `std::align_val_t`, which are the ones most often forgotten.\n";
+}
+
+std::string c_abi_absent_facility_advice(
+    std::string_view output, std::string_view cAbiName,
+    const std::vector<mcpp::targetside::CAbiAbsentEntry>& absent) {
+    if (absent.empty()) return {};
+
+    std::string named;
+    for (auto const& e : absent) {
+        // Only the `link` shape can appear here at all: the other two reach a
+        // program at run time by construction, so matching them against a
+        // link diagnostic would report a coincidence of spelling.
+        if (e.form != mcpp::targetside::CAbiAbsentForm::Link) continue;
+        const std::string lld = std::format("undefined symbol: {}", e.name);
+        const std::string gnu = std::format("undefined reference to `{}'", e.name);
+        if (output.find(lld) == std::string_view::npos
+            && output.find(gnu) == std::string_view::npos) continue;
+        named += std::format("\n        {:<20} {}", e.name,
+                             e.note.empty() ? "declared absent" : e.note);
+    }
+    if (named.empty()) return {};
+
+    return std::format(
+        "\n"
+        "note: the C library in this graph{}{} declares that it does not "
+        "supply the following, and the link has just asked for it:{}\n"
+        "      An absence stated in the manifest is a property of the "
+        "environment this program was built for, not a defect in the build. "
+        "A program that needs one of these needs a different C environment "
+        "for this target.\n",
+        cAbiName.empty() ? "" : " (", cAbiName.empty() ? "" : cAbiName,
+        named);
 }
 
 std::string graph_c_library_isolation_advice(std::string_view output,
@@ -3398,6 +3444,10 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         // and gets the degraded-but-still-correct form.
         diagnostics += graph_c_library_isolation_advice(
             out, plan.targetSide.cAbi.interfaceName, plan.targetSide.cAbi.impl);
+        if (plan.targetSide.cAbiDecl)
+            diagnostics += c_abi_absent_facility_advice(
+                out, plan.targetSide.cAbi.interfaceName,
+                plan.targetSide.cAbiDecl->absent);
         return std::unexpected(BuildError{"build failed", plan.outputDir / "build.ninja",
                                           std::move(diagnostics)});
     }

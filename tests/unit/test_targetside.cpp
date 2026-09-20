@@ -765,3 +765,57 @@ TEST(TargetSideCLibrary, TheKernelInterfaceDoesNotDecideIt) {
         EXPECT_FALSE(side_with(Origin::Graph,  k).cAbi.prebuilt());
     }
 }
+
+// ── interfaces_not_provided — the whole of the engine's participation ───────
+//
+// openkal SPEC 0.14 §3.3 withdrew `hosted`, the one name it had given to a set
+// of interfaces, and replaced it with enumeration by the consumer. This engine
+// implements that as a set difference over opaque strings and learns no
+// member of either set; these tests use openkal's real names in one place and
+// an invented one in another, and the function behaves identically.
+
+TEST(TargetSideInterfaces, EveryRequiredInterfaceProvidedYieldsNoGap) {
+    std::vector<std::string> required{"openkal.fs", "openkal.stream"};
+    std::vector<std::string> provided{"openkal.abort", "openkal.stream",
+                                      "openkal.memory", "openkal.fs"};
+    EXPECT_TRUE(mcpp::targetside::interfaces_not_provided(required, provided)
+                    .empty());
+}
+
+TEST(TargetSideInterfaces, AMissingInterfaceIsReportedByName) {
+    std::vector<std::string> required{"openkal.fs", "openkal.net"};
+    std::vector<std::string> provided{"openkal.fs"};
+    auto gap = mcpp::targetside::interfaces_not_provided(required, provided);
+    ASSERT_EQ(gap.size(), 1u);
+    EXPECT_EQ(gap[0], "openkal.net");
+}
+
+TEST(TargetSideInterfaces, ANameThisEngineHasNeverHeardOfBehavesTheSame) {
+    // The point of the opaque strings: a specification may add an interface
+    // without a release of this engine, and a name that does not exist is
+    // missing for the same reason a name that does exist and is not provided
+    // is missing. Neither is a special case here.
+    std::vector<std::string> required{"openkal.event", "some.other.spec/iface"};
+    std::vector<std::string> provided{"openkal.fs"};
+    auto gap = mcpp::targetside::interfaces_not_provided(required, provided);
+    ASSERT_EQ(gap.size(), 2u);
+    EXPECT_EQ(gap[0], "openkal.event");
+    EXPECT_EQ(gap[1], "some.other.spec/iface");
+}
+
+TEST(TargetSideInterfaces, RequiringNothingIsNeverAGap) {
+    EXPECT_TRUE(mcpp::targetside::interfaces_not_provided({}, {}).empty());
+    EXPECT_TRUE(
+        mcpp::targetside::interfaces_not_provided({}, {"openkal.fs"}).empty());
+}
+
+TEST(TargetSideInterfaces, ProvidingNothingMakesEveryRequirementAGap) {
+    // The shape a graph takes when the provider predates the key. The caller
+    // (mcpp.build.prepare) does not reach this function in that case — a
+    // provider that states nothing is not a provider that provides nothing —
+    // and this test pins the function's own answer so that distinction stays
+    // the caller's and does not migrate here by accident.
+    std::vector<std::string> required{"openkal.fs"};
+    auto gap = mcpp::targetside::interfaces_not_provided(required, {});
+    ASSERT_EQ(gap.size(), 1u);
+}

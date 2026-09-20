@@ -4,6 +4,8 @@ import std;
 import mcpp.build.flags;
 import mcpp.build.distribution;
 import mcpp.modgraph.scanner;
+import mcpp.build.ninja;
+import mcpp.targetside;
 
 namespace {
 
@@ -207,4 +209,61 @@ TEST(LinkShape, WindowsHostSeparatesPeFromTargetsNamedByFlag) {
     // The canadian GCC cross to x86_64-linux-musl names its target by prefix
     // and keeps the line its CI job verifies.
     EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Elf, false, false), LinkShape::PeLld);
+}
+
+// ── c_abi_absent_facility_advice — the manifest reads back at the link ──────
+//
+// `undefined reference to 'fork'` is true and useless: it says a symbol is
+// missing without saying whether that is a defect, a missing dependency, or a
+// deliberate limit of the environment. The manifest already distinguishes
+// those (design 2026-09-20 §5.7.5); these pin that it is read back.
+
+TEST(CAbiAbsentAdvice, ALinkAbsenceNamedInTheManifestIsExplained) {
+    std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
+        {"fork", mcpp::targetside::CAbiAbsentForm::Link,
+         "openkal has no process image duplication"},
+    };
+    auto a = mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: fork\n", "musl", absent);
+    ASSERT_FALSE(a.empty());
+    EXPECT_NE(a.find("fork"), std::string::npos);
+    EXPECT_NE(a.find("no process image duplication"), std::string::npos);
+    EXPECT_NE(a.find("musl"), std::string::npos);
+}
+
+TEST(CAbiAbsentAdvice, TheGnuSpellingIsMatchedToo) {
+    std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
+        {"fork", mcpp::targetside::CAbiAbsentForm::Link, ""},
+    };
+    auto a = mcpp::build::c_abi_absent_facility_advice(
+        "main.o: undefined reference to `fork'\n", "musl", absent);
+    EXPECT_FALSE(a.empty());
+}
+
+TEST(CAbiAbsentAdvice, AnAbsenceThatReachesTheProgramAtRunTimeIsNotMatched) {
+    // `enosys` and `accepted-no-effect` reach a program by construction while
+    // it runs; matching them against a link diagnostic would report a
+    // coincidence of spelling as an explanation.
+    std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
+        {"mprotect", mcpp::targetside::CAbiAbsentForm::Enosys, "no protection op"},
+        {"tcsetattr", mcpp::targetside::CAbiAbsentForm::AcceptedNoEffect, ""},
+    };
+    EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: mprotect\n", "musl", absent).empty());
+    EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
+        "undefined reference to `tcsetattr'\n", "musl", absent).empty());
+}
+
+TEST(CAbiAbsentAdvice, ALinkFailureNamingSomethingElseGetsNoNote) {
+    std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
+        {"fork", mcpp::targetside::CAbiAbsentForm::Link, ""},
+    };
+    EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: my_own_function\n", "musl", absent)
+                    .empty());
+}
+
+TEST(CAbiAbsentAdvice, ALibraryThatEnumeratedNothingProducesNoNote) {
+    EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: fork\n", "musl", {}).empty());
 }

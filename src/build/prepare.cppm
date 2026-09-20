@@ -10853,82 +10853,67 @@ prepare_build(bool print_fingerprint,
             // is what makes this probe cheap AND cacheable across every
             // package that shares this build's target side.
             //
-            // `hostStripMacros` — Windows-host leak through `--target=`
-            // substitution. A freestanding cross compile (`--target=
-            // riscv64-none-elf`) on a Windows host still sees `_WIN32` (and
-            // the `__MINGW*__` family) in the preprocessor output: those
-            // are the HOST driver's predefines, and unlike the `__APPLE__` /
-            // `__linux__` family on Linux/macOS, the `--target=` substitution
-            // does NOT strip them for the freestanding target. Without the
-            // strip, the probe's `-dM` dump records `_WIN32` defined
-            // regardless of what the realised `[c-abi] presents = "posix"`
-            // asked for, and the probe fails with a mismatch that is a
-            // property of the host's driver, not of the declaration being
-            // checked. The strip is added ONLY when the host is Windows;
-            // Linux and macOS drivers' defaults do not contaminate
-            // `--target=` substitutions in the same way, and adding `-U`
-            // tokens there would have to be defended as harmless rather
-            // than measured (the wave's measurement caught exactly four
-            // host-side leaks — listed below — and adding to that set is
-            // the right way to extend the strip; speculatively unstripping
-            // everywhere is not).
-            //
-            // `hostStripFlags` — host-side wchar leakage on Windows ×
-            // freestanding. The probe runs `-E -dM -x c++` with no source
-            // unit and no include path; the `__SIZEOF_WCHAR_T__` it reads
-            // comes from the toolchain's own defaults, which clang on a
-            // Windows host sets from `<winnt.h>` (16 bits) even with
-            // `--target=riscv64-none-elf`. The realisation closes this by
-            // ALWAYS emitting `-fno-short-wchar` for `decl.wcharBits = 32`
-            // (`mcpp.toolchain.cenv`'s wchar branch, just rewritten — the
-            // old "freestanding skips the flag" rule was an unverified
-            // assumption that the wave's measurement caught as false). So
-            // when the host is Windows AND the target is freestanding, the
-            // host-strip set above AND `-ffreestanding` are both needed —
-            // the former for the preprocessor predefines, the latter so the
-            // driver does not pick up the Windows CRT's `<wchar.h>` even
-            // when the build's own include path doesn't carry one. Outside
-            // that combination the strip is unnecessary: Linux/macOS hosts
-            // do not leak `_WIN32` through `--target=`, and the wchar fix
-            // lives in the realisation, not the probe.
-            std::vector<std::string> hostStripMacros;
-            std::vector<std::string> hostStripFlags;
-            if (mcpp::platform::is_windows) {
-                // The four names measured as leaking through `--target=` on
-                // a Windows host (2026-09-18, openkal-llvm-runtime#24,
-                // windows-host × riscv64-none-elf). Adding to this set is
-                // a measurement-driven change, not a guess; pin new entries
-                // here with the failing build that named them.
-                hostStripMacros = {
-                    "-U_WIN32",
-                    "-U_WIN64",
-                    "-U__MINGW32__",
-                    "-U__MINGW64__",
-                };
-                if (tt && tt->is_freestanding())
-                    // Windows host's driver would otherwise pull in
-                    // MinGW's `<wchar.h>` even with no source unit, so the
-                    // wchar probe sees 2 instead of the declared 32.
-                    // `-ffreestanding` is what every real compile on a
-                    // freestanding target already adds (`openkal-musl`'s
-                    // `cflags`, mcpp's own freestanding handling).
-                    hostStripFlags.push_back("-ffreestanding");
-            }
             if (tc->cEnvExpectWcharBits != 0 || tc->cEnvExpectLongBytes != 0
                 || !tc->cEnvExpectDefined.empty()
                 || !tc->cEnvExpectUndefined.empty()) {
-                std::vector<std::string> probeArgv;
-                if (!tc->crossTargetFlag.empty())
-                    probeArgv.push_back(tc->crossTargetFlag);
-                for (auto& t : tc->cEnvTokens) probeArgv.push_back(t);
-                for (auto& t : tc->cEnvBuiltinsTokens) probeArgv.push_back(t);
-                for (auto& t : hostStripFlags) probeArgv.push_back(t);
+                // THE FREESTANDING TARGET HAD NEVER REACHED THE PROBE, AND
+                // THAT IS WHY 2026.9.18.3 MEASURED THE HOST (mcpp#674
+                // review, 2026-09-20). `Toolchain::crossTargetFlag` is set
+                // for a HOSTED target only — the assignment above states the
+                // reason: a freestanding target carries its own `--target`
+                // together with the ISA flags that must accompany it, and a
+                // second one there would be the same decision in two places.
+                // That other place is `mcpp.freestanding.linkline`, which the
+                // real compile goes through and this probe did not.
+                // `cenv::realise` adds no `--target` for a freestanding
+                // target either, so the probe ran with NO target selection at
+                // all and clang answered for the machine it was running on.
+                //
+                // Measured: the probe's own argv shape on a Linux host
+                // (`-D__unix__ -fno-short-wchar -ffreestanding -x c++ -E -dM
+                // -`) reports `__linux__`; with `--target=riscv64-none-elf`
+                // it reports `__riscv`, no `__linux__`, and
+                // `__SIZEOF_WCHAR_T__` 4. A Windows host answered `_WIN32`
+                // and 2 for the same reason, and 2026.9.18.3 read that as the
+                // `--target=` substitution failing to strip host predefines.
+                // Clang's predefines follow the target; there was no
+                // substitution to fail.
+                //
+                // `hostStripMacros` is therefore GONE, and its removal is the
+                // point rather than a tidy-up: `-U_WIN32 -U_WIN64
+                // -U__MINGW32__ -U__MINGW64__` deleted the one piece of
+                // evidence that said the probe was measuring the wrong
+                // machine. A future host leak, if one exists, must reach the
+                // mismatch report rather than be undefined before it can.
+                //
+                // THE ASSEMBLY REFUSES THE OMISSION rather than this site
+                // remembering not to make it — `cenv_probe::assemble_argv`
+                // holds the invariant, and the unit tests reach it without a
+                // cross toolchain.
+                std::vector<std::string> freestandingFlags;
+                if (tt && tt->is_freestanding()) {
+                    auto spec = mcpp::freestanding::resolve(*tt);
+                    if (spec) {
+                        freestandingFlags.push_back(
+                            "--target=" + std::string(spec->triple));
+                        for (auto const& f : mcpp::freestanding::compile_flags(*spec))
+                            freestandingFlags.push_back(f);
+                    }
+                }
+                auto assembled = mcpp::toolchain::cenv_probe::assemble_argv(
+                    tc->crossTargetFlag, freestandingFlags,
+                    tc->cEnvTokens, tc->cEnvBuiltinsTokens,
+                    tt && tt->is_freestanding(), tc->targetTriple);
+                if (!assembled) {
+                    refusal::record(refusal::Code::CEnvUnrealisable);
+                    return std::unexpected(assembled.error());
+                }
+                const auto& probeArgv = *assembled;
                 auto probe = mcpp::toolchain::cenv_probe::verify(
                     tc->binaryPath, probeArgv,
                     tc->cEnvExpectWcharBits, tc->cEnvExpectLongBytes,
                     tc->cEnvExpectDefined, tc->cEnvExpectUndefined,
-                    mcpp::home::cache_root(),
-                    hostStripMacros);
+                    mcpp::home::cache_root());
                 if (!probe) {
                     refusal::record(refusal::Code::CEnvUnrealisable);
                     return std::unexpected(probe.error());
@@ -11166,6 +11151,70 @@ prepare_build(bool print_fingerprint,
                 appendUniqueFlags(p.privateBuild.cflags, tc->cEnvBuiltinsTokens);
                 appendUniqueFlags(p.privateBuild.cxxflags, tc->cEnvBuiltinsTokens);
                 appendUniqueFlags(p.privateBuild.asmflags, tc->cEnvBuiltinsTokens);
+            }
+        }
+
+        // INTERFACE ENUMERATION — THE RESOLUTION-TIME HALF OF THE CAPABILITY
+        // MODEL (design 2026-09-20 §5.5; openkal SPEC 0.14 §3.3, §6.2).
+        //
+        // A package states which interfaces of the `kernel-abi` layer it uses;
+        // the package that supplies the layer states which it provides. This
+        // engine compares the two sets and knows no member of either: the
+        // names belong to the specification that owns the layer, and one may
+        // be added to it without a release of this engine.
+        //
+        // THE QUESTION IS ANSWERED HERE BECAUSE HERE IS WHERE THE ANSWER FIRST
+        // EXISTS. §6.2 tabulates three times and states that each is the
+        // earliest at which its information exists; "may this program be built
+        // against this implementation" is the first of them. Source asking the
+        // same question with `#ifdef` asks it during preprocessing, earlier
+        // than any answer, which is why each macro-shaped answer to it has had
+        // to be replaced by the next one.
+        //
+        // SILENT WHEN NOTHING DECLARES ANYTHING. A graph in which no package
+        // writes `[kernel-abi]` reaches neither loop below, so this addition
+        // changes no command line and no diagnostic for every project built
+        // before it.
+        {
+            std::vector<std::string> providedInterfaces;
+            std::string providerId;
+            for (auto& pkg : packages) {
+                if (pkg.manifest.kernelAbiProvidesInterfaces.empty()) continue;
+                providedInterfaces = pkg.manifest.kernelAbiProvidesInterfaces;
+                providerId = pkg.manifest.package.name;
+                break;
+            }
+            for (auto& pkg : packages) {
+                const auto& need = pkg.manifest.kernelAbiRequiresInterfaces;
+                if (need.empty()) continue;
+                // A consumer that names interfaces while no package in the
+                // graph states what it provides is not refused: the provider
+                // predates this key, and a graph that has not yet adopted it
+                // must keep building. The link still reports the absence, in
+                // the vocabulary it always did.
+                if (providerId.empty()) continue;
+                auto missing = mcpp::targetside::interfaces_not_provided(
+                    need, providedInterfaces);
+                if (missing.empty()) continue;
+                refusal::record(refusal::Code::InterfaceNotProvided);
+                std::string names;
+                for (auto const& mI : missing) {
+                    names += "\n         ";
+                    names += mI;
+                }
+                return std::unexpected(std::format(
+                    "'{}' requires interfaces the resolved implementation does "
+                    "not provide.{}\n"
+                    "       provided by  {} ({} interface{})\n"
+                    "       This is refused before anything is compiled "
+                    "because dependency resolution is the earliest time the "
+                    "question can be answered. Select an implementation that "
+                    "provides them, or remove them from [kernel-abi] "
+                    "requires-interfaces in '{}'.",
+                    pkg.manifest.package.name, names, providerId,
+                    providedInterfaces.size(),
+                    providedInterfaces.size() == 1 ? "" : "s",
+                    pkg.manifest.package.name));
             }
         }
 

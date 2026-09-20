@@ -334,6 +334,20 @@ ignored. **A package that declares no `[c-abi]` block changes nothing**: the
 resolved target side, every compile command and every cache key are
 byte-identical to a build before this feature existed.
 
+**`presents` IS FROZEN AT THREE VALUES, AND IT ANSWERS NO QUESTION ABOUT
+CAPABILITY.** It states which environment-identity macros source sees. It does
+not state that any interface, any header or any path is available, and a
+package that infers one from it has read a fact it was not given: a
+POSIX-presenting environment on a Windows target has no `fork`, no `/proc` and
+no `epoll`, and says so by the ordinary means — the definition is absent at the
+link. The value set does not grow, for the reason openkal's own specification
+gives for closing its core set (SPEC 0.14 §3.2): a name that describes a CLASS
+of environment is falsified by an environment nobody had in mind, and openkal
+withdrew the one such name it had shipped (`hosted`) within a release of
+naming it. A fourth value here would be that name again. What a package needs
+in order to know whether a capability is present is answered where the answer
+first exists, at dependency resolution, by the interface enumeration below.
+
 Three facts, kept separate, because none of them implies another: `presents`
 picks the source branch, `data-model`/`wchar` pick the ABI. POSIX does not
 imply LP64 (it is ILP32 on a 32-bit architecture), and LP64 does not imply
@@ -484,25 +498,106 @@ the build and prints both the declared and the measured values. The result
 is cached per configuration (compiler binary identity + exact flags), so a
 build that resolves the same configuration twice pays for the probe once.
 
-**Host contamination (mcpp 2026.9.18.3+).** The probe runs on the BUILD
-host's clang, not a target-native one, and on a Windows host the driver's
-predefines (`_WIN32`, `_WIN64`, `__MINGW32__`, `__MINGW64__`) leak through
-`--target=` substitution for a freestanding target the same way the
-Cygwin-substituted Windows row's `__CYGWIN__` does NOT — a structural
-difference between the hosted and freestanding substitutions that the
-verification step's measurement has to compensate for. The probe accepts
-a `hostStripMacros` list of `-U<name>` tokens it prepends to its `-dM`
-command, and the caller (this layer's `prepare`) supplies exactly the four
-Windows-host names on Windows, nothing on Linux or macOS. The matching
-defect on `__SIZEOF_WCHAR_T__` (Windows host × freestanding measures 2
-where a `wchar = 32` declaration asks for 4) is closed on the realisation
-side, not the probe side: `cenv::realise` now ALWAYS emits
-`-fno-short-wchar` for `decl.wcharBits = 32`, regardless of what the
-host's toolchain would default to, so the probe measures the state the
-engine actually produced (32 bits, with the flag) rather than the host's
-leak. The "freestanding skips the wchar flag" rule the wave's earlier
-versions carried was an unverified assumption about the toolchain default,
-and the wave's measurement is what verified it wrong.
+**The probe's command line selects the target, and for a freestanding target
+it once did not (mcpp 2026.9.20.1).** Clang is one binary that emits every
+target it was built with, so a command line naming no target answers for the
+machine it runs on. A hosted cross target reaches the probe through
+`--target=`; a freestanding target's selection travels with the ISA flags that
+must accompany it, in the freestanding compile prefix, and the probe was never
+given it. Every freestanding build therefore verified its declaration against
+the build host: on a Linux host that host happens to satisfy `__unix__`
+defined, `_WIN32` undefined and a 32-bit `wchar_t`, so the check passed for
+the wrong reason; on a Windows host it reported `_WIN32` defined and a 16-bit
+`wchar_t` and the build failed.
+
+2026.9.18.3 read that Windows failure as the `--target=` substitution failing
+to strip host predefines, and added a `hostStripMacros` list of `-U<name>`
+tokens the caller prepended to the `-dM` command. Clang's predefines follow
+the target rather than the host — `--target=riscv64-none-elf` reports
+`__riscv`, no `__linux__`, and `__SIZEOF_WCHAR_T__` 4 on a Linux host — so
+there was no substitution to fail. That list is removed, and its removal is
+the point rather than a tidy-up: it deleted the one piece of evidence that
+said the probe was measuring the wrong machine.
+
+The assembly refuses the omission instead of each call site remembering not to
+make it. `cenv_probe::assemble_argv` returns a refusal when a freestanding
+target's argv selects no target, and accepts an argv with none for a native
+hosted build, where the host IS the target and the absence is the decision
+rather than its omission.
+
+The matching defect on `__SIZEOF_WCHAR_T__` remains closed on the realisation
+side, and independently of the above: `cenv::realise` always emits
+`-fno-short-wchar` for `decl.wcharBits = 32` regardless of what a toolchain
+would default to, so the compile produces the width the declaration states
+rather than inheriting one.
+
+**Which interfaces of a layer a package provides, and which it requires
+(mcpp 2026.9.20.1).** A capability is present or absent, and a package needs to
+be able to state what it needs before it is built. openkal's own specification
+(0.14 §3.3) withdrew the one name it had given to a SET of interfaces
+(`hosted`) on the grounds that a name describing a class of environment is
+falsified by an environment nobody had in mind, and replaced it with
+enumeration by the consumer, in the consumer's own package. mcpp carries that
+enumeration for the `kernel-abi` layer:
+
+```toml
+# the implementation
+[package]
+provides = ["mcpp:kernel-abi=openkal"]
+
+[kernel-abi]
+provides-interfaces = ["openkal.abort", "openkal.stream", "openkal.memory",
+                       "openkal.env", "openkal.time", "openkal.fs"]
+
+# a consumer
+[kernel-abi]
+requires-interfaces = ["openkal.fs", "openkal.net"]
+```
+
+`provides-interfaces` may be stated only by a package that provides the layer,
+the rule `[c-abi]` follows and for the same reason. `requires-interfaces` has
+no such restriction: it is a statement about the package making it.
+
+**The engine knows no member of either set.** The only operation performed on
+them is a set difference, so a specification may add an interface without a
+release of mcpp, and a misspelling produces a refusal naming the string rather
+than a silently disabled check — a name that is not provided is missing
+whether or not it exists.
+
+**The question is answered at dependency resolution because that is the
+earliest time it can be answered.** openkal SPEC 0.14 §6.2 tabulates three
+times at which information about a capability becomes available and states
+that each is the earliest at which it exists: resolution answers "may this
+program be built against this implementation", the link answers "was an
+interface used that the implementation does not provide", a property word
+answers "how does it behave within an interface it provides". Source asking
+the same question with `#ifdef` asks it during preprocessing, which is earlier
+than any answer exists.
+
+**A provider that states nothing is not a provider that provides nothing.**
+A graph whose implementation carries no `provides-interfaces` builds
+unchanged; the key postdates the packages, and the link still reports an
+absence in the vocabulary it always did.
+
+**What a C library does not supply (`[c-abi.absent]`, mcpp 2026.9.20.1).**
+The set of names a C library supplies is not enumerable in a manifest — POSIX
+has about twelve hundred — and enumerating it is the mistake §3.3 records
+withdrawing. The exceptions are enumerable:
+
+```toml
+[c-abi.absent]
+fork      = { form = "link" }
+mprotect  = { form = "enosys", note = "openkal has no operation upon a mapping's protection" }
+tcsetattr = { form = "accepted-no-effect", note = "the fields openkal does not name are not applied" }
+```
+
+`form` is required and closed. `link` is the shape openkal's own capability
+model requires of an implementation (§6.1 calls a run-time report of
+unsupportedness a defect); the other two are departures from it, and they are
+named so that a departure is something that can be counted. mcpp reads the
+list back when a link names one of the `link`-shaped entries, so
+`undefined reference to 'fork'` arrives with the sentence that says whether it
+is a defect or a limit of the environment this program was built for.
 
 **Fingerprint.** The realised environment participates in the build's
 fingerprint (`compileFlags`, §92's field 7): two builds whose C library

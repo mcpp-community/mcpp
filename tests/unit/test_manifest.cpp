@@ -6001,6 +6001,224 @@ c-environment = "native"
 // explicit key `CEnvironmentAcceptsOnlyPlatform` above already covers. An
 // ordinary package, providing nothing kernel-abi-shaped, gets no such
 // inference: `cEnvironment` stays empty and the realisation reaches it.
+// ── [c-abi.absent] — enumerate the exception, not the rule ─────────────────
+//
+// The set of POSIX names a C library supplies is not enumerable in a manifest;
+// the set it does not supply is. openkal-musl's README lists six in prose, and
+// that prose has no executor — it was contradicted once already (0.16.0: a
+// disposition accepted for every signal and installed for none).
+
+TEST(Manifest, ACLibraryMayEnumerateWhatItDoesNotSupply) {
+    constexpr auto src = R"(
+[package]
+name     = "openkal-musl"
+version  = "0.17.0"
+provides = ["mcpp:c-abi=musl"]
+
+[c-abi]
+presents   = "posix"
+data-model = "arch-default"
+wchar      = 32
+builtins   = "iso"
+
+[c-abi.absent]
+fork     = { form = "link" }
+mprotect = { form = "enosys", note = "openkal has no operation upon a mapping's protection" }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_TRUE(m->cAbiDecl.has_value());
+    ASSERT_EQ(m->cAbiDecl->absent.size(), 2u);
+    // Sorted by name, so a diagnostic built from this list reads the same way
+    // on every run and a test may index it.
+    EXPECT_EQ(m->cAbiDecl->absent[0].name, "fork");
+    EXPECT_EQ(m->cAbiDecl->absent[0].form,
+              mcpp::targetside::CAbiAbsentForm::Link);
+    EXPECT_EQ(m->cAbiDecl->absent[1].name, "mprotect");
+    EXPECT_EQ(m->cAbiDecl->absent[1].form,
+              mcpp::targetside::CAbiAbsentForm::Enosys);
+    EXPECT_FALSE(m->cAbiDecl->absent[1].note.empty());
+}
+
+TEST(Manifest, AnAbsenceWithNoNamedShapeIsRefused) {
+    // A facility absent in an unnamed shape is one nothing can assert
+    // against, which is the whole reason for writing it down.
+    constexpr auto src = R"(
+[package]
+name     = "openkal-musl"
+version  = "0.17.0"
+provides = ["mcpp:c-abi=musl"]
+
+[c-abi]
+presents   = "posix"
+data-model = "arch-default"
+wchar      = 32
+
+[c-abi.absent]
+fork = { note = "no process image duplication" }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    auto msg = m.error().format();
+    EXPECT_NE(msg.find("form"), std::string::npos) << msg;
+}
+
+TEST(Manifest, AnUnknownAbsentShapeNamesTheThreeThatExist) {
+    constexpr auto src = R"(
+[package]
+name     = "openkal-musl"
+version  = "0.17.0"
+provides = ["mcpp:c-abi=musl"]
+
+[c-abi]
+presents   = "posix"
+data-model = "arch-default"
+wchar      = 32
+
+[c-abi.absent]
+fork = { form = "sometimes" }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    auto msg = m.error().format();
+    EXPECT_NE(msg.find("accepted-no-effect"), std::string::npos) << msg;
+}
+
+TEST(Manifest, TheAcceptedNoEffectShapeHasAName) {
+    // It is the shape of the defect openkal-musl 0.16.0 repaired: a call that
+    // succeeds and does not do part of what it was asked. Naming it is what
+    // makes "how many of these are there" a question with an answer.
+    constexpr auto src = R"(
+[package]
+name     = "openkal-musl"
+version  = "0.17.0"
+provides = ["mcpp:c-abi=musl"]
+
+[c-abi]
+presents   = "posix"
+data-model = "arch-default"
+wchar      = 32
+
+[c-abi.absent]
+tcsetattr = { form = "accepted-no-effect", note = "the fields openkal does not name are not applied" }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->cAbiDecl->absent.size(), 1u);
+    EXPECT_EQ(m->cAbiDecl->absent[0].form,
+              mcpp::targetside::CAbiAbsentForm::AcceptedNoEffect);
+}
+
+TEST(Manifest, ACLibraryThatEnumeratesNothingHasClaimedNothing) {
+    constexpr auto src = R"(
+[package]
+name     = "openkal-musl"
+version  = "0.17.0"
+provides = ["mcpp:c-abi=musl"]
+
+[c-abi]
+presents   = "posix"
+data-model = "arch-default"
+wchar      = 32
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_TRUE(m->cAbiDecl.has_value());
+    EXPECT_TRUE(m->cAbiDecl->absent.empty());
+}
+
+// ── [kernel-abi] provides-interfaces / requires-interfaces ─────────────────
+//
+// The resolution-time half of the capability model (design 2026-09-20 §5.5).
+// The engine knows no interface name; these tests therefore use openkal's
+// real names in one direction and an invented one in the other, and neither
+// changes what the parser does.
+
+TEST(Manifest, AKernelAbiProviderMayStateWhichInterfacesItProvides) {
+    constexpr auto src = R"(
+[package]
+name = "openkal-windows"
+version = "0.9.0"
+provides = ["mcpp:kernel-abi=openkal"]
+
+[kernel-abi]
+provides-interfaces = ["openkal.abort", "openkal.stream", "openkal.memory"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->kernelAbiProvidesInterfaces.size(), 3u);
+    EXPECT_EQ(m->kernelAbiProvidesInterfaces[0], "openkal.abort");
+    EXPECT_TRUE(m->kernelAbiRequiresInterfaces.empty());
+}
+
+TEST(Manifest, APackageThatDoesNotSupplyTheLayerMayNotStateWhatItProvides) {
+    // The same rule `[c-abi]` follows, and for the same reason: a package
+    // without the layer is stating a fact about something it does not have.
+    constexpr auto src = R"(
+[package]
+name = "some-library"
+version = "1.0.0"
+
+[kernel-abi]
+provides-interfaces = ["openkal.fs"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value())
+        << "a package with no `mcpp:kernel-abi=<impl>` in provides must be "
+           "refused when it states provides-interfaces";
+    auto msg = m.error().format();
+    EXPECT_NE(msg.find("mcpp:kernel-abi"), std::string::npos) << msg;
+}
+
+TEST(Manifest, AnyConsumerMayStateWhichInterfacesItRequires) {
+    // `requires-interfaces` is a statement about the package making it, so it
+    // carries no such restriction. openkal SPEC 0.14 §3.3: "a consumer states
+    // its required set per target, in its own package, which is where a
+    // convention among consumers belongs".
+    constexpr auto src = R"(
+[package]
+name = "some-library"
+version = "1.0.0"
+
+[kernel-abi]
+requires-interfaces = ["openkal.fs", "openkal.net"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->kernelAbiRequiresInterfaces.size(), 2u);
+    EXPECT_TRUE(m->kernelAbiProvidesInterfaces.empty());
+}
+
+TEST(Manifest, AnUnknownKernelAbiMemberIsAParseErrorNamingTheKey) {
+    constexpr auto src = R"(
+[package]
+name = "openkal-linux"
+version = "0.14.0"
+provides = ["mcpp:kernel-abi=openkal"]
+
+[kernel-abi]
+provides-interface = ["openkal.fs"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value()) << "a misspelled member must not be ignored";
+    auto msg = m.error().format();
+    EXPECT_NE(msg.find("provides-interface"), std::string::npos) << msg;
+}
+
+TEST(Manifest, APackageWithNoKernelAbiTableStatesNothing) {
+    // The guarantee every addition to this parser owes the graph that predates
+    // it: a manifest that writes nothing here is byte-identical in effect.
+    constexpr auto src = R"(
+[package]
+name = "some-library"
+version = "1.0.0"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_TRUE(m->kernelAbiProvidesInterfaces.empty());
+    EXPECT_TRUE(m->kernelAbiRequiresInterfaces.empty());
+}
+
 TEST(Manifest, CEnvironmentIsInferredForAKernelAbiProvider) {
     constexpr auto kernelAbiPkg = R"(
 [package]

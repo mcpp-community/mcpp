@@ -5,6 +5,114 @@
 
 ## [Unreleased]
 
+## [2026.9.20.1] - 2026-09-20
+
+### 校验探针量的是构建宿主,而不是它要核对的那个目标
+
+2026.9.18.3 的 c-abi 校验探针在**每一次 freestanding 构建上都没有选中目标**。
+`Toolchain::crossTargetFlag` 只为 hosted 目标设置(它自己的注释写明了原因:freestanding
+目标的 `--target` 必须与随行的 ISA 标志一起给出,放两处就是同一个决定写两遍),而那另一处
+是 `mcpp.freestanding.linkline` 的编译前缀,探针从不问它;`cenv::realise` 对 freestanding
+也不产 `--target`。于是探针的命令行是 `-D__unix__ -fno-short-wchar -ffreestanding -x c++
+-E -dM -`——没有任何目标选择,clang 回答的是它自己所在的那台机器。
+
+在 Linux 宿主上这台机器恰好满足 `__unix__` 已定义、`_WIN32` 未定义、`wchar_t` 32 位,
+于是检查**以错误的理由通过**;在 Windows 宿主上它报 `_WIN32` 已定义、`wchar_t` 16 位,
+两条不匹配同时出现。2026.9.18.3 把这两条读成"Windows 宿主的 clang 即使带上 `--target=`
+仍注入宿主预定义",并据此加了 `hostStripMacros`。该归因不成立:clang 的预定义跟随目标
+而不是宿主。本机实测——`clang --target=riscv64-none-elf -dM` 在 Linux 上 `__linux__` 计数
+为 0、`__SIZEOF_WCHAR_T__` 为 4,而 `--target=x86_64-w64-windows-gnu` 在同一台 Linux 上
+定义 `_WIN32`——如果那个 `--target` 真在命令行上,clang 会答 4 而不是 2。观察到 2,说明
+它不在。
+
+这一版从根因修:
+
+1. **探针拿到目标。** freestanding 目标的 `--target` 与 ISA 标志由
+   `mcpp.freestanding.linkline` 的编译前缀提供,现在进入探针 argv。
+2. **`hostStripMacros` 删除,而删除本身是要点。** `-U_WIN32 -U_WIN64 -U__MINGW32__
+   -U__MINGW64__` 抹掉的正是"探针量错了机器"这件事的唯一证据。将来若真有宿主泄漏,它必须
+   到达不匹配报告,而不是在能被看见之前就被 undefine 掉。
+3. **装配处拒绝这次遗漏,而不是调用点记得不要犯。** 新增
+   `cenv_probe::assemble_argv`:各个部件在某些配置下都合法地为空,所以没有任何单独一个
+   能承载这条不变量。freestanding 目标的 argv 没有选中目标即拒绝并点名目标;宿主本地
+   构建接受没有目标选择的 argv——那里宿主就是目标,缺席是那个决定本身。
+
+单测 `test_cenv_probe.cpp` 的三个 strip 测试被替换:它们测的是"`-U` 有没有到达命令行"
+这个机制,而不是"探针量的是不是正确的机器"这条性质。新的五个 `CenvProbeArgv` 测试**不需要
+交叉工具链**,直接对装配函数断言;另加两个带 clang 的端到端探针测试,在没有 clang 的宿主
+上跳过而不谎报。
+
+### `builtins` 的 Windows 行:结论不变,写在旁边的机制是错的
+
+`cenv.cppm` 称 clang 自带 `intrin.h` / `mm_malloc.h` 的问题"已由既有的 `-nostdlibinc`
+隔离关闭"。实测不成立:`-nostdlibinc` 移除的是标准**系统**头目录,clang 自己的 resource
+目录仍在(那是 `-nobuiltininc` 移除的),带着该标志仍复现 `intrin.h:12:15`——与 mcpp-index
+为 fmtlib.fmt 记录的诊断逐字符相同。真正关掉这两者的是 Cygwin 式实现:`mm_malloc.h:42`
+在 `__MINGW32__` 上选 `__mingw_aligned_malloc`,没有它则落到 `posix_memalign`;而去取
+`<intrin.h>` 的源码是在 `_WIN32` 之后才这么做的。调查结论不变(Windows 上没有可关的循环
+惯用法内建),改的是写在它旁边的那句机制。
+
+### 一个包可以陈述它需要该层的哪些接口,解析期回答
+
+能力的"在不在"过去无处可问,于是全被挤到预处理期,而那比答案存在得更早——mcpp#674 的
+全部压力来自这一格空着。openkal SPEC 0.14 §6.2 列出三个时刻并规定每个都是该信息**最早
+能存在**的时刻;§3.3 撤回了它给接口集合起过的唯一一个名字(`hosted`),理由是"一个描述
+环境类别的名字会被没有人想到过的那个环境证伪",替代做法是由消费者逐条列举。
+
+新增 `[kernel-abi]` 表:
+
+```toml
+# 实现方(只有提供该层的包可以写 provides-interfaces)
+[kernel-abi]
+provides-interfaces = ["openkal.abort", "openkal.stream", "openkal.memory"]
+
+# 消费方(任何包都可以写 requires-interfaces)
+[kernel-abi]
+requires-interfaces = ["openkal.fs", "openkal.net"]
+```
+
+**引擎不认识这两个集合的任何一个成员**:对它们做的唯一操作是集合差
+(`targetside::interfaces_not_provided`),因此某个规范新增一个接口不需要 mcpp 发版。
+不满足即在**编译任何东西之前**拒绝,并同时点名缺的接口、要它的包、以及没提供它的实现——
+只报"缺"会让读者自己去猜该改哪一边。
+
+**一个什么都没陈述的提供者,不是一个什么都不提供的提供者**:实现方没有写
+`provides-interfaces` 的图照常构建,链接仍以它一贯的词汇报告缺席。什么都不写的清单,
+产出的命令行与这项能力存在之前逐字节相同。
+
+### `[c-abi.absent]`:枚举例外,不枚举规则
+
+一个 C 库供给的名字集合在清单里不可枚举(POSIX 约一千二百个),枚举它正是 §3.3 记录下
+撤回的那个错误。例外是可枚举的——openkal-musl 的 README 列了六项,而那段散文没有任何
+东西在执行它,并且已经被推翻过一次(0.16.0 之前 `SIG_IGN` 对每个信号都被接受却一个都没
+安装)。
+
+```toml
+[c-abi.absent]
+fork      = { form = "link" }
+mprotect  = { form = "enosys", note = "openkal 没有作用于映射保护属性的操作" }
+tcsetattr = { form = "accepted-no-effect", note = "openkal 不命名的那些字段不被施加" }
+```
+
+`form` 必填且封闭。`link` 是 openkal 自己的能力模型对实现所要求的形状(§6.1 把运行期
+报告不支持称为缺陷);另外两个是对它的偏离,给它们命名是为了让一次偏离成为可以被数出来
+的东西。链接点到 `link` 形状里的某一项时,mcpp 把清单读回来:`undefined reference to
+'fork'` 因此带着那句说明它是缺陷还是环境限制的话一起到达。
+
+### `presents` 的取值集冻结
+
+docs/22 写明:`presents` 回答的是源码看到哪些环境身份宏,**不回答任何能力是否存在**。
+一个包不得由它推断某个接口、某个头或某个路径是否可用。取值集不增长,理由与 openkal 为
+自己的核心集封闭所给的相同——一个描述环境**类别**的名字会被没有人想到过的那个环境证伪,
+而 openkal 把自己发过的唯一一个这样的名字在一个发布周期之内撤回了。
+
+(`src/toolchain/cenv.cppm`、`src/toolchain/cenv_probe.cppm`、`src/build/prepare.cppm`、
+`src/build/ninja_backend.cppm`、`src/build/refusal.cppm`、
+`modules/manifest/src/{targetside_model,toml,types}.cppm`,
+单测 `test_cenv_probe.cpp`、`test_manifest.cpp`、`test_targetside.cpp`、
+`test_build_flags.cpp`,e2e `tests/e2e/743_kernel_abi_interfaces_are_resolved_not_preprocessed.sh`,
+docs/22 及其 zh 镜像,`modules/versioning/src/version.cppm`、`mcpp.toml`)
+
 ## [2026.9.18.3] - 2026-09-18
 
 ### Windows 主机 × freestanding 目标的 c-abi 校验探针两处真实缺陷被关掉

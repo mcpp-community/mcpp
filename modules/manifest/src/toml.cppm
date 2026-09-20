@@ -1077,13 +1077,73 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         mcpp::targetside::CAbiDecl decl;
         decl.declared = true;
         static constexpr std::string_view kKnownCAbiKeys[] = {
-            "builtins", "data-model", "presents", "wchar",
+            "absent", "builtins", "data-model", "presents", "wchar",
         };
         for (auto& [key, _] : *ct) {
             if (std::ranges::find(kKnownCAbiKeys, key) == std::end(kKnownCAbiKeys))
                 return std::unexpected(error(origin, std::format(
-                    "[c-abi] has no member '{}'; the members are: builtins, "
-                    "data-model, presents, wchar", key)));
+                    "[c-abi] has no member '{}'; the members are: absent, "
+                    "builtins, data-model, presents, wchar", key)));
+        }
+        // [c-abi.absent] — the facilities this C library does not supply
+        // (design 2026-09-20 §5.7.5). The set of names it DOES supply is not
+        // enumerable in a manifest; the exceptions are, and enumerating an
+        // exception is what lets a CI run contradict it.
+        //
+        //   [c-abi.absent]
+        //   fork     = { form = "link" }
+        //   mprotect = { form = "enosys", note = "openkal has no operation
+        //                upon a mapping's protection" }
+        //
+        // `form` is required and closed: a facility that is absent in an
+        // unnamed shape is one nobody can assert against. `link` is the shape
+        // openkal's own model requires (SPEC 0.14 §6.1, which calls a
+        // run-time report of unsupportedness a defect); the other two are
+        // departures from it, and they are named so that a departure is
+        // something somebody can count.
+        if (auto ait = ct->find("absent"); ait != ct->end()) {
+            if (!ait->second.is_table())
+                return std::unexpected(error(origin,
+                    "[c-abi.absent] must be a table of facility names, each "
+                    "with a `form`: fork = { form = \"link\" }"));
+            for (auto const& [name, entry] : ait->second.as_table()) {
+                if (!entry.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[c-abi.absent].{} must be a table with a `form`: "
+                        "{} = {{ form = \"link\" }}", name, name)));
+                mcpp::targetside::CAbiAbsentEntry e;
+                e.name = name;
+                auto const& et = entry.as_table();
+                for (auto const& [k, _] : et)
+                    if (k != "form" && k != "note")
+                        return std::unexpected(error(origin, std::format(
+                            "[c-abi.absent].{} has no member '{}'; the "
+                            "members are: form, note", name, k)));
+                auto fit = et.find("form");
+                if (fit == et.end() || !fit->second.is_string())
+                    return std::unexpected(error(origin, std::format(
+                        "[c-abi.absent].{} is missing `form`. An absence "
+                        "with no named shape is one nothing can assert "
+                        "against; the shapes are \"link\" (the definition is "
+                        "absent), \"enosys\" (it exists and reports that it "
+                        "cannot act) and \"accepted-no-effect\" (the call "
+                        "succeeds and part of what it asked for is not "
+                        "done).", name)));
+                auto form = mcpp::targetside::parse_c_abi_absent_form(
+                    fit->second.as_string());
+                if (!form)
+                    return std::unexpected(error(origin, std::format(
+                        "[c-abi.absent].{}.form = \"{}\" names no known "
+                        "shape. The shapes are \"link\", \"enosys\" and "
+                        "\"accepted-no-effect\".",
+                        name, fit->second.as_string())));
+                e.form = *form;
+                if (auto nit = et.find("note");
+                    nit != et.end() && nit->second.is_string())
+                    e.note = nit->second.as_string();
+                decl.absent.push_back(std::move(e));
+            }
+            std::ranges::sort(decl.absent, {}, &mcpp::targetside::CAbiAbsentEntry::name);
         }
         if (auto pit = ct->find("presents"); pit != ct->end()) {
             if (!pit->second.is_string())
@@ -1147,6 +1207,56 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         }
         m.cAbiDecl = decl;
     }
+    // [kernel-abi] — which interfaces of that layer a package provides or
+    // requires (design 2026-09-20 §5.5). A TOP-LEVEL table for the same
+    // reason `[c-abi]` is one.
+    //
+    // THE ENGINE LEARNS NO INTERFACE NAME HERE. Both lists are opaque
+    // strings; the only operation performed on them is a set difference at
+    // dependency resolution, so a specification may add an interface without
+    // a release of this engine. That is the same discipline
+    // `mcpp.toolchain.cenv` follows for the request-to-flags table: generic
+    // knowledge, no product names.
+    //
+    // `provides-interfaces` may be stated only by a package that provides the
+    // layer — a package that does not supply it is stating a fact about
+    // something it does not have, exactly as with `[c-abi]`.
+    // `requires-interfaces` has no such restriction: it is a statement about
+    // the package making it, and every consumer is entitled to make it.
+    if (auto* kt = doc->get_table("kernel-abi")) {
+        static constexpr std::string_view kKnownKernelAbiKeys[] = {
+            "provides-interfaces", "requires-interfaces",
+        };
+        for (auto& [key, _] : *kt) {
+            if (std::ranges::find(kKnownKernelAbiKeys, key)
+                == std::end(kKnownKernelAbiKeys))
+                return std::unexpected(error(origin, std::format(
+                    "[kernel-abi] has no member '{}'; the members are: "
+                    "provides-interfaces, requires-interfaces", key)));
+        }
+        if (auto v = doc->get_string_array("kernel-abi.provides-interfaces")) {
+            bool providesKernelAbi = std::ranges::any_of(m.provides, [](auto const& e) {
+                auto cap = mcpp::targetside::parse_capability(e);
+                return cap && *cap
+                    && (*cap)->layer == mcpp::targetside::CapLayer::KernelAbi;
+            });
+            if (!providesKernelAbi)
+                return std::unexpected(error(origin,
+                    "[kernel-abi] provides-interfaces is declared, and "
+                    "[package] provides does not list "
+                    "`mcpp:kernel-abi=<impl>`.\n"
+                    "       Only the package that supplies the layer may state "
+                    "which of its interfaces are present — this package is "
+                    "stating a fact about a layer it does not provide.\n"
+                    "       Add `mcpp:kernel-abi=<name>` to [package] provides, "
+                    "or state `requires-interfaces` instead, which is what a "
+                    "consumer says."));
+            m.kernelAbiProvidesInterfaces = *v;
+        }
+        if (auto v = doc->get_string_array("kernel-abi.requires-interfaces"))
+            m.kernelAbiRequiresInterfaces = *v;
+    }
+
     // [package] c-environment = "platform" — see Manifest::cEnvironment.
     if (auto v = doc->get_string("package.c-environment")) {
         if (*v != "platform")

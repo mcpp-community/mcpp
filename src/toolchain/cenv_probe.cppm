@@ -53,32 +53,24 @@ struct Result {
 // `expectUndefined` lists name macros the probe's `-dM` dump must and must
 // not contain.
 //
-// `hostStripMacros` — PRECOMPILE `-U<name>` TOKENS THE CALLER INSERTS INTO THE
-// PROBE COMMAND BEFORE `-E -dM`. This is the only mechanism by which the
-// probe is allowed to compensate for a HOST contamination that the target's
-// own `--target=` does not neutralise; the four Windows-host names
-// (`_WIN32`, `_WIN64`, `__MINGW32__`, `__MINGW64__`) are the case this was
-// added for and the only set the build's own measurements have surfaced, but
-// the parameter is a list because the design does not commit to this set
-// being the final one — a future host whose compiler leaks a different macro
-// can be handled the same way without further changes to this module.
+// THE ARGV MUST SELECT THE TARGET, AND FOR A FREESTANDING TARGET IT ONCE DID
+// NOT (mcpp#674 review, 2026-09-20). Clang is one binary that emits every
+// target it was built with, so a command line without a `--target` answers for
+// the machine it is running on — `mcpp.freestanding.linkline::compile_prefix`
+// states the same fact for the real compile. A probe measuring the host
+// reports the host's `_WIN32`, the host's `wchar_t` width and the host's
+// `__linux__`, and a declaration checked against the host is not checked at
+// all. The caller assembles the target selection; this module does not
+// second-guess it, and it does not undefine anything the compiler reported.
 //
-// Why this is in the probe and not in `mcpp.toolchain.cenv::realise`: the
-// probe's job is to MEASURE what the compiler ACTUALLY does for the target,
-// not to ask the compiler what it would do for the target if it were a
-// clean cross compile. Host contamination is a defect of the measurement, not
-// of the measurement's contract — design 2026-09-18 §3.2 names a declaration
-// as "checked, not trusted", and the check has to read the macro state the
-// compile would actually deliver to a real translation unit, not the state
-// the compile would deliver to one already stripped of every fact the host
-// carried. The strip happens before `-E -dM` so the dump reflects the
-// stripped state; without it, a `present = "posix"` declaration would always
-// "fail" on a Windows host because `_WIN32` is in the dump regardless of
-// `--target=`.
-//
-// The cache key (below) folds `hostStripMacros` in alongside the rest of the
-// argv, so two callers with the same compiler and argv but different strip
-// sets do not share a slot.
+// AN EARLIER REVISION TOOK A `hostStripMacros` PARAMETER AND IT HAS BEEN
+// REMOVED. It prefixed `-U_WIN32 -U_WIN64 -U__MINGW32__ -U__MINGW64__` on a
+// Windows host, to compensate for what was read as a `--target=` substitution
+// failing to strip host predefines. The substitution had not failed; on a
+// freestanding target there was no substitution in the argv at all. The strip
+// deleted the one piece of evidence that would have said so, which is why it
+// is gone rather than merely unused: a measurement that removes its own
+// disagreement reports agreement it did not establish.
 //
 // A refusal here (as opposed to a non-empty `mismatches`) means the probe
 // itself could not run — the compiler rejected the command line, which is a
@@ -86,19 +78,48 @@ struct Result {
 // caller reports it as a build error naming the command, not as a §3.2
 // verification mismatch.
 //
-// `hostStripMacros` is placed AFTER `cacheRoot` (the latter being the test
-// suite's frequent override) to keep the existing call sites — which pass
-// neither — source-compatible. New callers that DO need the strip supply
-// both arguments; tests that pin a temp cache directory pass the strip
-// empty by default.
+// THE PROBE'S ARGV, ASSEMBLED IN ONE PLACE THAT REFUSES TO OMIT THE TARGET.
+//
+// This function exists because the omission it forbids actually happened and
+// shipped: 2026.9.18.3's probe ran with no target selection on every
+// freestanding build, and clang answered for the machine it was running on.
+// The pieces are all the caller's, and each of them is legitimately empty in
+// some configuration, so no single one of them could carry the invariant —
+// which is exactly why the invariant belongs here rather than at the call
+// site, where "a vector that happened to be empty" is indistinguishable from
+// "a decision that was made".
+//
+//   crossTargetFlag       `--target=<triple>` for a HOSTED cross target;
+//                         empty for a native build, and empty for every
+//                         freestanding target (mcpp.build.prepare sets it for
+//                         hosted targets only, because a freestanding target's
+//                         `--target` comes with ISA flags that must accompany
+//                         it and belongs in one place).
+//   freestandingFlags     that other place, `mcpp.freestanding.linkline`'s
+//                         compile prefix, tokenised. Empty for a hosted build.
+//   cEnvTokens            what `cenv::realise` produced. May itself carry a
+//                         `--target=` (the Cygwin-flavoured substitution).
+//   cEnvBuiltinsTokens    `builtins = "iso"`.
+//   freestanding          whether the build's target is freestanding.
+//
+// THE RULE. A freestanding target is never the host, so its argv must select
+// a target; a hosted build whose target IS the host legitimately selects
+// none, and there the absence is the decision rather than its omission.
+std::expected<std::vector<std::string>, std::string> assemble_argv(
+    std::string_view crossTargetFlag,
+    const std::vector<std::string>& freestandingFlags,
+    const std::vector<std::string>& cEnvTokens,
+    const std::vector<std::string>& cEnvBuiltinsTokens,
+    bool freestanding,
+    std::string_view targetTriple);
+
 std::expected<Result, std::string> verify(
     const std::filesystem::path& compilerBin,
     const std::vector<std::string>& argv,
     int expectWcharBits, int expectLongBytes,
     const std::vector<std::string>& expectDefined,
     const std::vector<std::string>& expectUndefined,
-    const std::filesystem::path& cacheRoot = mcpp::home::cache_root(),
-    const std::vector<std::string>& hostStripMacros = {});
+    const std::filesystem::path& cacheRoot = mcpp::home::cache_root());
 
 } // namespace mcpp::toolchain::cenv_probe
 
@@ -141,24 +162,52 @@ MacroDump parse_dm(std::string_view out) {
 
 } // namespace
 
+std::expected<std::vector<std::string>, std::string> assemble_argv(
+    std::string_view crossTargetFlag,
+    const std::vector<std::string>& freestandingFlags,
+    const std::vector<std::string>& cEnvTokens,
+    const std::vector<std::string>& cEnvBuiltinsTokens,
+    bool freestanding,
+    std::string_view targetTriple) {
+
+    std::vector<std::string> argv;
+    if (!crossTargetFlag.empty()) argv.emplace_back(crossTargetFlag);
+    for (auto const& f : freestandingFlags)     argv.push_back(f);
+    for (auto const& t : cEnvTokens)            argv.push_back(t);
+    for (auto const& t : cEnvBuiltinsTokens)    argv.push_back(t);
+
+    if (freestanding) {
+        const bool selects = std::any_of(argv.begin(), argv.end(),
+            [](std::string const& a) { return a.starts_with("--target="); });
+        if (!selects)
+            return std::unexpected(std::format(
+                "the [c-abi] verification probe for '{}' would have run with "
+                "no target selection.\n"
+                "       A freestanding target is never the build host, so a "
+                "command line that names no target answers for the host and "
+                "the declaration is compared against the wrong machine. The "
+                "target selection for a freestanding build comes from "
+                "mcpp.freestanding.linkline's compile prefix; this probe was "
+                "handed none.",
+                targetTriple));
+    }
+    return argv;
+}
+
 std::expected<Result, std::string> verify(
     const std::filesystem::path& compilerBin,
     const std::vector<std::string>& argv,
     int expectWcharBits, int expectLongBytes,
     const std::vector<std::string>& expectDefined,
     const std::vector<std::string>& expectUndefined,
-    const std::filesystem::path& cacheRoot,
-    const std::vector<std::string>& hostStripMacros) {
+    const std::filesystem::path& cacheRoot) {
 
     // The cache key is the compiler binary's own identity plus every argv
     // token, in order — exactly the inputs that can change what `-dM`
     // prints. mcpp's own content hash (`hash_file`) would need to re-read
     // the binary on every build; the path plus its last-write time is the
     // same shortcut the toolchain probe elsewhere in this codebase already
-    // takes for "has this compiler changed". `hostStripMacros` is folded in
-    // for the same reason `argv` is: two callers that probe the same
-    // compiler + argv with different strip lists must not share a cache
-    // slot, because the dumps WILL differ.
+    // takes for "has this compiler changed".
     std::error_code ec;
     auto mtime = std::filesystem::last_write_time(compilerBin, ec);
     std::string keyInput = compilerBin.string();
@@ -166,7 +215,6 @@ std::expected<Result, std::string> verify(
     keyInput += std::to_string(
         static_cast<long long>(mtime.time_since_epoch().count()));
     for (auto& a : argv) { keyInput += '\x1f'; keyInput += a; }
-    for (auto& s : hostStripMacros) { keyInput += '\x1f'; keyInput += s; }
     const std::string key = mcpp::toolchain::hash_string(keyInput);
 
     const auto cacheDir = cacheRoot / "cenv-probe";
@@ -187,14 +235,7 @@ std::expected<Result, std::string> verify(
         // from standard input — `capture_stdout` gives the child an empty
         // one, argv-form, so no shell and no temp file are needed.
         //
-        // `hostStripMacros` go BEFORE `argv` so they strip host predefines
-        // before `--target=` (or any other token in argv) takes effect; an
-        // `-U` placed after `--target=` still strips the macro (clang
-        // processes `-U` in order), but keeping them in front makes the
-        // intent obvious in the recorded command and keeps the strip
-        // orthogonal to whatever the target-side configuration produces.
         std::vector<std::string> cmd{ compilerBin.string() };
-        cmd.insert(cmd.end(), hostStripMacros.begin(), hostStripMacros.end());
         cmd.insert(cmd.end(), argv.begin(), argv.end());
         cmd.insert(cmd.end(), { "-x", "c++", "-E", "-dM", "-" });
         auto r = mcpp::platform::process::capture_stdout(cmd);

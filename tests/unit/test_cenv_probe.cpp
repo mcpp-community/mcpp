@@ -211,103 +211,132 @@ TEST(CenvProbe, DifferentArgvDoesNotShareACacheSlot) {
     EXPECT_TRUE(b->ran) << "a different argv must not read A's cache entry";
 }
 
-// ── hostStripMacros — Windows-host contamination (mcpp 2026.9.18.3) ────────
+// ── assemble_argv — the invariant, reachable without a cross toolchain ────
 //
-// The four macro names `_WIN32`, `_WIN64`, `__MINGW32__`, `__MINGW64__` are
-// preprocessor predefines that clang on a Windows host injects even when
-// `--target=` substitutes a freestanding triple (`openkal-llvm-runtime#24`,
-// windows-host × riscv64-none-elf, 2026-09-18). The probe must allow the
-// caller to strip them, so the measurement reflects what a clean cross
-// compile would do — not the host's predefines, which no `--target=`
-// substitution can take back on a freestanding target.
+// The defect these pin shipped in 2026.9.18.3: the probe ran with no target
+// selection on every freestanding build and clang answered for the host. The
+// pieces are all legitimately empty in some configuration, so the invariant
+// cannot live at the call site; it lives in the assembly, and these tests
+// reach it with no compiler at all.
+
+TEST(CenvProbeArgv, AFreestandingTargetWithoutASelectionIsRefused) {
+    // Exactly the 2026.9.18.3 shape: `crossTargetFlag` empty (it is set for
+    // hosted targets only), no freestanding flags supplied, and `realise`'s
+    // freestanding output, which carries no `--target`.
+    auto r = cp::assemble_argv("", {}, {"-D__unix__", "-fno-short-wchar"}, {},
+                               /*freestanding=*/true, "riscv64-none-elf");
+    ASSERT_FALSE(r.has_value())
+        << "an argv with no target selection must be refused for a "
+           "freestanding target; it measures the build host";
+    EXPECT_NE(r.error().find("riscv64-none-elf"), std::string::npos)
+        << "the refusal must name the target it was for: " << r.error();
+}
+
+TEST(CenvProbeArgv, AFreestandingTargetWithItsCompilePrefixIsAccepted) {
+    std::vector<std::string> fs{"--target=riscv64-none-elf", "-march=rv64gc",
+                                "-mabi=lp64d", "-ffreestanding"};
+    auto r = cp::assemble_argv("", fs, {"-D__unix__", "-fno-short-wchar"}, {},
+                               true, "riscv64-none-elf");
+    ASSERT_TRUE(r.has_value()) << r.error();
+    EXPECT_NE(std::find(r->begin(), r->end(), "--target=riscv64-none-elf"),
+              r->end());
+    // The ISA flags travel with the target: they change what the compiler
+    // predefines (`__riscv_xlen`, the float ABI), so an argv that took the
+    // triple and left them behind would measure a different machine again.
+    EXPECT_NE(std::find(r->begin(), r->end(), "-mabi=lp64d"), r->end());
+}
+
+TEST(CenvProbeArgv, ANativeHostedBuildNeedsNoSelection) {
+    // The host IS the target; the absence is the decision rather than its
+    // omission, and the probe must not be refused for it. openkal-musl on
+    // Linux/x86_64 is this case: `realise` produces no tokens at all.
+    auto r = cp::assemble_argv("", {}, {}, {}, false, "x86_64-linux-gnu");
+    ASSERT_TRUE(r.has_value()) << r.error();
+    EXPECT_TRUE(r->empty());
+}
+
+TEST(CenvProbeArgv, AHostedCrossTargetCarriesItsCrossFlag) {
+    auto r = cp::assemble_argv("--target=x86_64-w64-windows-gnu", {},
+                               {"--target=x86_64-pc-cygwin", "-fno-short-wchar"},
+                               {}, false, "x86_64-windows-gnu");
+    ASSERT_TRUE(r.has_value()) << r.error();
+    // Both are present and in this order: clang takes the LAST `--target`,
+    // which is how the Cygwin-flavoured substitution overrides the base
+    // triple without the producer of the base one knowing this module exists.
+    ASSERT_GE(r->size(), 2u);
+    EXPECT_EQ((*r)[0], "--target=x86_64-w64-windows-gnu");
+    EXPECT_EQ((*r)[1], "--target=x86_64-pc-cygwin");
+}
+
+TEST(CenvProbeArgv, BuiltinsTokensAreCarriedLast) {
+    auto r = cp::assemble_argv("", {}, {"-D__unix__"},
+                               {"-fno-builtin-memset_pattern16"},
+                               false, "x86_64-apple-macos");
+    ASSERT_TRUE(r.has_value()) << r.error();
+    ASSERT_EQ(r->size(), 2u);
+    EXPECT_EQ((*r)[1], "-fno-builtin-memset_pattern16");
+}
+
+// ── The argv must select the target (mcpp#674 review, 2026-09-20) ──────────
 //
-// THESE TESTS DO NOT NEED A WINDOWS HOST. They exercise the parameter's
-// behaviour against whatever compiler is on the test machine: the strip
-// takes the form `-U<name>`, which the preprocessor treats as a directive
-// to undefine the macro if it was defined. On a host that did not predefine
-// the name, the `-U` is a no-op; on a host that did (or any future host
-// that will), the name disappears from the dump and the corresponding
-// `expectUndefined` check passes. The test pins both halves of the contract:
-// (a) a stripped name is no longer in the dump, and (b) an unstripped run
-// against the same expectation reports a mismatch.
+// Clang is one binary that emits every target it was built with, so a probe
+// command with no `--target` answers for the machine it runs on. 2026.9.18.3
+// read that as a Windows host leaking `_WIN32` through a `--target=`
+// substitution and added a `hostStripMacros` parameter to undefine it; there
+// was no substitution in the freestanding argv to leak through, and the strip
+// removed the evidence rather than the cause. The parameter is gone and these
+// tests pin what replaced it.
+//
+// THEY DO NOT NEED A CROSS TOOLCHAIN. Every clang emits every target it was
+// built with, so `--target=riscv64-none-elf` needs no payload to answer `-dM`.
+// A compiler that cannot is skipped rather than reported.
 
 namespace {
-// Macros the test invents locally; neither the host compiler nor any
-// realistic cross-compile target predefines them. The names are chosen so
-// long that no one ships them by accident.
-constexpr std::string_view kProbeStripDefined   = "__MCPP_TEST_STRIP_DEFINED__";
-constexpr std::string_view kProbeStripUndefined = "__MCPP_TEST_STRIP_UNDEFINED__";
+// Whether this compiler answers for a target it is not hosted on. A GCC
+// driver does not take `--target`, and a clang built without the RISC-V
+// backend answers nothing useful; both skip.
+bool answers_for_riscv() {
+    TmpCache probe;
+    auto r = cp::verify(cxx(), {"--target=riscv64-none-elf"}, 0, 0,
+                        {"__riscv"}, {}, probe.dir);
+    return r.has_value() && r->mismatches.empty();
+}
 } // namespace
 
-TEST(CenvProbe, AHostStrippedMacroIsAbsentFromTheDump) {
+TEST(CenvProbe, AnArgvWithATargetMeasuresThatTargetAndNotTheHost) {
     if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
+    if (!answers_for_riscv()) GTEST_SKIP() << "this compiler does not answer for riscv64-none-elf";
     TmpCache cache;
-    // The contract is: a name in `hostStripMacros` (as `-U<name>`) reaches
-    // the compiler BEFORE any other argv token, so a host that predefines
-    // the name has it stripped before the realised tokens (e.g. `-D__unix__`)
-    // are processed. A real Windows host predefines `_WIN32`; we cannot
-    // simulate that here, so the test instead uses a name no host
-    // predefines — `__MCPP_PROBE_NO_SUCH_MACRO__` — and asserts that the
-    // probe's `expectUndefined` check passes (the strip is a no-op for a
-    // host that did not predefine the name, which is the same outcome as
-    // a host that did and had it removed). This pins that the parameter is
-    // wired through to the command line and that the ordering does not
-    // silently fail.
-    std::vector<std::string> expectUndef;
-    expectUndef.emplace_back("__MCPP_PROBE_NO_SUCH_MACRO__");
-    std::vector<std::string> strip;
-    strip.emplace_back("-U__MCPP_PROBE_NO_SUCH_MACRO__");
-    auto stripped = cp::verify(
-        cxx(), {}, 0, 0,
-        {}, expectUndef,
-        cache.dir,
-        strip
-    );
-    ASSERT_TRUE(stripped.has_value()) << stripped.error();
-    EXPECT_TRUE(stripped->mismatches.empty())
-        << "an unstripped probe + a stripped probe against the same "
-           "expectUndefined must both pass for a name the host does not "
-           "predefine; the parameter must reach the command line: "
-        << stripped->mismatches[0].fact;
-}
-
-TEST(CenvProbe, AStripListDoesNotShareACacheSlotWithAnEmptyStrip) {
-    if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
-    TmpCache cache;
-    auto noStrip = cp::verify(cxx(), {}, 0, 0, {}, {}, cache.dir);
-    ASSERT_TRUE(noStrip.has_value()) << noStrip.error();
-    auto withStrip = cp::verify(cxx(), {}, 0, 0, {}, {}, cache.dir,
-                                {"-U_MCPP_PROBE_TEST_NO_SUCH_MACRO"});
-    ASSERT_TRUE(withStrip.has_value()) << withStrip.error();
-    EXPECT_TRUE(noStrip->ran);
-    EXPECT_TRUE(withStrip->ran)
-        << "a non-empty strip list must not read the empty-strip cache slot";
-}
-
-// The wave's measurement (openkal-llvm-runtime#24, 2026-09-18) caught two
-// host-side leaks on a Windows host × freestanding target: `_WIN32` and
-// the wchar width. The first is a preprocessor predefine (closed by
-// `hostStripMacros`); the second is a header-side assumption (closed by
-// the realisation adding `-fno-short-wchar`, pinned in `test_cenv.cpp`).
-// The two halves of the fix are pinned in two test files for that reason.
-// THIS TEST pins the contract on the parameter's caller side: the four
-// names the wave measured as leaking are the four names the caller passes,
-// and no caller passes them on a non-Windows host. This is what makes the
-// probe's strip a TARGETED fix rather than a sweeping undefine.
-TEST(CenvProbe, TheWindowsHostStripListNamesExactlyTheFourMeasuredLeaks) {
-    // The list is in `prepare.cppm`. Re-state it here so a future edit to
-    // either side (probe parameter vs caller) trips a test mismatch. A
-    // name added without a corresponding build that named it is exactly
-    // the kind of change this assertion is meant to catch.
-    const std::vector<std::string> expected = {
-        "-U_WIN32",
-        "-U_WIN64",
-        "-U__MINGW32__",
-        "-U__MINGW64__",
+    // The freestanding probe's own shape, with the target selection the
+    // caller (`mcpp.build.prepare`) now supplies. `__linux__` must be absent
+    // on every host: it is the host's own predefine, and a probe that still
+    // reports it is measuring the host.
+    std::vector<std::string> argv{
+        "--target=riscv64-none-elf", "-ffreestanding",
+        "-D__unix__", "-fno-short-wchar",
     };
-    EXPECT_EQ(expected.size(), 4u);
-    // Uniqueness — repeating a name in the strip list is harmless but
-    // indicates the list drifted without a thought.
-    std::set<std::string> uniq(expected.begin(), expected.end());
-    EXPECT_EQ(uniq.size(), expected.size());
+    std::vector<std::string> defined{"__unix__", "__riscv"};
+    std::vector<std::string> undefined{"__linux__", "_WIN32"};
+    auto r = cp::verify(cxx(), argv, 32, 0, defined, undefined, cache.dir);
+    ASSERT_TRUE(r.has_value()) << r.error();
+    for (auto const& mm : r->mismatches)
+        ADD_FAILURE() << mm.fact << ": declared " << mm.declared
+                      << ", measured " << mm.measured;
+}
+
+TEST(CenvProbe, TheSameArgvWithoutATargetMeasuresTheHost) {
+    if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
+    if (!answers_for_riscv()) GTEST_SKIP() << "this compiler does not answer for riscv64-none-elf";
+    TmpCache cache;
+    // The mirror of the test above, and the one that makes it mean
+    // something: with the target removed, the expectation that held for the
+    // target must now FAIL. A test that only asserts the fixed shape passes
+    // identically against a probe that ignores its argv.
+    std::vector<std::string> argv{"-ffreestanding", "-D__unix__", "-fno-short-wchar"};
+    auto r = cp::verify(cxx(), argv, 0, 0, {"__riscv"}, {}, cache.dir);
+    ASSERT_TRUE(r.has_value()) << r.error();
+    EXPECT_FALSE(r->mismatches.empty())
+        << "a probe with no target selection must not report the target's "
+           "own predefines; if this passes, the argv is not reaching the "
+           "compiler and the test above proves nothing";
 }
