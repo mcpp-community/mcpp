@@ -558,9 +558,51 @@ inline std::expected<Realisation, std::string> realise(
     // So `iso` realises to one flag, on Apple targets only, and does nothing
     // measurable elsewhere today. That is reported rather than silently
     // accepted: a caller that wants to know what changed reads `builtinsTokens`.
+    // `-fno-builtin`, NOT `-fno-builtin-memset_pattern16`, AND THE NARROWER
+    // SPELLING WAS A SILENT NO-OP.
+    //
+    // The per-function form was emitted here from this mechanism's first
+    // revision, because `memset_pattern16` is the one platform idiom measured
+    // to matter and a targeted flag looks like the smaller instrument. A/B on
+    // the real compile command from a build.ninja, varying only this flag,
+    // says it does nothing:
+    //
+    //     as built (flag present)              1 reference to memset_pattern16
+    //     flag REMOVED                         1 reference
+    //     -fno-builtin                         0
+    //     -mllvm -disable-loop-idiom-memset    0
+    //
+    // AND IT CANNOT REPORT THAT IT DOES NOTHING. clang accepts
+    // `-fno-builtin-totally_not_a_function` in silence: the `-fno-builtin-X`
+    // family is checked against clang's builtin table, and
+    // `memset_pattern16` is an LLVM TargetLibraryInfo libfunc rather than a
+    // clang builtin. The call is produced by LoopIdiomRecognize, which
+    // consults TLI, and the per-function attribute does not reach it.
+    //
+    // WHY THE BLUNT ONE AND NOT `-mllvm`. `-mllvm` passes an internal LLVM
+    // option; it is not a supported interface and can be renamed or removed
+    // between releases, and when it is, this mechanism goes back to failing
+    // silently --- which is exactly the defect being repaired.
+    //
+    // THE COST IS MEASURED RATHER THAN ARGUED: on the translation unit that
+    // surfaced this (libarchive's 7zip reader, `-O2`, aarch64-macos) the
+    // object grows 38200 to 38888 bytes, 1.8 per cent, because `-fno-builtin`
+    // also withdraws the ISO functions the C library does supply. That is
+    // broader than `builtins = "iso"` declares, and it errs in the safe
+    // direction: a call the generator does not synthesise is never a link
+    // error.
+    //
+    // NOTHING HERE IS VERIFIED BY THE PROBE, WHICH IS HOW THE NO-OP SURVIVED.
+    // `expectDefined`/`expectUndefined` are compared against the probe's `-dM`
+    // dump, under this module's own rule that a `-D` which did not take effect
+    // is a verification failure rather than a silent one. A code-generation
+    // property is not visible in a preprocessor dump, so the criterion for
+    // this token lives in `openkal-cross.yml`, which compiles an
+    // idiom-triggering unit for `aarch64-macos` over the openkal stack and
+    // asserts the symbol is absent from the object.
     if (decl.builtins == mcpp::targetside::CAbiBuiltins::Iso) {
         if (!freestanding && (os == "macos" || os == "ios"))
-            r.builtinsTokens.push_back("-fno-builtin-memset_pattern16");
+            r.builtinsTokens.push_back("-fno-builtin");
     }
 
     return r;

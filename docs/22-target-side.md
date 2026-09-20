@@ -378,7 +378,7 @@ that names no C library:
 | macOS | `posix` / `arch-default` | one token, `-D__unix__` — Apple's clang predefines `__APPLE__`/`__MACH__` on its default triple, never `__unix__` |
 | freestanding | `posix` / `arch-default` | the same one token, `-D__unix__`, for the same reason: nothing here defines it either |
 | Windows | `posix` / `arch-default` | Cygwin-flavoured: `--target=x86_64-pc-cygwin` on the compile line only; plus `-D__MCPP_TARGET_WINDOWS__` (see the note below); `data-model` becomes LP64 as a consequence of the triple, not a separate flag |
-| any | `builtins = "iso"` | turns off code-generation idioms that assume a platform C library — `-fno-builtin-memset_pattern16` on Apple targets is the one this survey measured; see `src/toolchain/cenv.cppm` for what else was checked and found not to apply |
+| any | `builtins = "iso"` | turns off code-generation idioms that assume a platform C library — `-fno-builtin` on Apple targets, because the per-function spelling was measured to be a silent no-op for the one idiom that matters (`memset_pattern16` is an LLVM TargetLibraryInfo libfunc, not a clang builtin); see `src/toolchain/cenv.cppm` for the A/B and the measured cost |
 | anything else | | refused, naming the target, the request and what is missing — never a silent downgrade |
 
 **The macOS and freestanding rows are a correction, not the design's original

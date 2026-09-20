@@ -5,6 +5,45 @@
 
 ## [Unreleased]
 
+### `builtins = "iso"` 发的那个 token 是静默空操作,已换成 `-fno-builtin`
+
+`[c-abi] builtins = "iso"` 声明 C 库只提供 ISO 函数、没有厂商扩展。Apple 目标上
+clang 的循环惯用法识别会把常量模式填充改写成 `memset_pattern16` 调用——那是一个
+Apple libc 扩展,这样的库没有它。此前这里发的是 `-fno-builtin-memset_pattern16`。
+在一份真实的 `build.ninja` 编译命令上做 A/B,只改这一个 flag:
+
+| flag | `memset_pattern16` 引用数 |
+|---|---|
+| 照原样(flag 在) | 1 |
+| flag **删掉** | 1 |
+| `-fno-builtin` | 0 |
+| `-mllvm -disable-loop-idiom-memset` | 0 |
+
+**而它报不出自己什么都没做。** clang 静默接受 `-fno-builtin-totally_not_a_function`:
+`-fno-builtin-X` 这一族按 clang 的 builtin 表校验,而 `memset_pattern16` 是 LLVM
+TargetLibraryInfo 的 libfunc,不在那张表里;发出调用的是 LoopIdiomRecognize,它查
+TLI,按函数名的属性到不了它。
+
+不选 `-mllvm` 的理由是它传的是 LLVM 内部选项,不是受支持的接口,改名或删除之后这套
+机制会再次静默失效——那正是这次要修的缺陷本身。代价是量出来的:在暴露此事的那个翻译
+单元(libarchive 的 7zip reader,`-O2`,aarch64-macos)上,目标文件从 38200 涨到
+38888 字节,1.8%,因为 `-fno-builtin` 同时撤走了 C 库确实提供的那些 ISO 函数。这比
+`builtins = "iso"` 声明的范围宽,而它宽在安全的方向:代码生成器不合成的调用不会变成
+链接错误。
+
+**这个空操作能活下来,是因为它没有判据。** `cenv` 的探针用 `-dM` dump 校验自己发的
+token,而代码生成阶段的性质在预处理器 dump 里不可见。判据现在在
+`.github/workflows/openkal-cross.yml`,三条腿,跑在三台宿主上:
+
+| 腿 | 内容 | 判据 |
+|---|---|---|
+| 1 | 不带任何 flag 编译探针 | 符号**必须出现**——否则探针已经触发不了惯用法,腿 2、3 什么都没测 |
+| 2 | `-fno-builtin-memset_pattern16` | 符号**仍必须出现**(钉住这个缺陷;若哪天红了,说明 clang 认了窄拼法,`cenv` 可以改回去把这 1.8% 拿回来) |
+| 3 | mcpp 为 `aarch64-macos` 走 openkal 栈构建同一份源码 | 目标文件里**零引用** |
+
+腿 3 的对照:换回旧 token,同一个工程链接失败于
+`ld64.lld: error: undefined symbol: memset_pattern16`。
+
 ### 更正:那个「四个成员」是二,而分组用错了依据
 
 2026.9.21.2 的条目、`cenv.cppm` 与 `predefines.cppm` 的注释、`docs/21` 与 `docs/22`
