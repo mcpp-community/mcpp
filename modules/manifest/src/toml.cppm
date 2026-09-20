@@ -1163,6 +1163,9 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // for presence separately so a declaration that forgets one names that
     // key rather than silently taking a value nobody wrote. `builtins`
     // alone defaults to `platform` — see `CAbiDecl`.
+    // Hoisted out of the block below because BOTH `[c-abi]` and
+    // `[c-abi-absent]` gate on it, and two copies of one predicate is one
+    // edit away from two different rules.
     const bool providesCAbi = std::ranges::any_of(m.provides, [](auto const& e) {
         auto cap = mcpp::targetside::parse_capability(e);
         return cap && *cap && (*cap)->layer == mcpp::targetside::CapLayer::CAbi;
