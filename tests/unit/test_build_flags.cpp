@@ -281,3 +281,47 @@ TEST(CAbiAbsentAdvice, ALongerSymbolWithTheSamePrefixIsNotExplained) {
     EXPECT_FALSE(mcpp::build::c_abi_absent_facility_advice(
         "ld.lld: error: undefined symbol: open\n", "musl", absent).empty());
 }
+
+TEST(CAbiAbsentAdvice, TheListSurvivesAWriteAndReadBesideBuildNinja) {
+    // The two paths that report a failed build --- the one with a plan and the
+    // fast path, which has none by construction --- must give the same advice,
+    // or it appears depending on whether build.ninja happened to be up to
+    // date. The list travels between them in a file.
+    Tmp dir;
+    std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
+        {"fork", mcpp::targetside::CAbiAbsentForm::Link, "no image duplication"},
+        {"mprotect", mcpp::targetside::CAbiAbsentForm::Enosys, ""},
+    };
+    mcpp::build::write_c_abi_absent_sidecar(dir.path, "musl", absent);
+    auto [name, back] = mcpp::build::read_c_abi_absent_sidecar(dir.path);
+    EXPECT_EQ(name, "musl");
+    ASSERT_EQ(back.size(), 2u);
+    EXPECT_EQ(back[0].name, "fork");
+    EXPECT_EQ(back[0].form, mcpp::targetside::CAbiAbsentForm::Link);
+    EXPECT_EQ(back[0].note, "no image duplication");
+    EXPECT_EQ(back[1].form, mcpp::targetside::CAbiAbsentForm::Enosys);
+    EXPECT_TRUE(back[1].note.empty());
+    // And the advice built from the read-back list is the advice the plan
+    // path would have given.
+    EXPECT_FALSE(mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: fork\n", name, back).empty());
+}
+
+TEST(CAbiAbsentAdvice, ADirectoryNoBuildWroteToYieldsNothing) {
+    Tmp dir;
+    auto [name, back] = mcpp::build::read_c_abi_absent_sidecar(dir.path);
+    EXPECT_TRUE(name.empty());
+    EXPECT_TRUE(back.empty());
+}
+
+TEST(CAbiAbsentAdvice, AGraphThatDeclaresNoAbsenceLeavesNoSidecar) {
+    // A build whose C library states nothing must not leave a file behind for
+    // the next build to read: the fast path would then explain a failure with
+    // a list the current graph never declared.
+    Tmp dir;
+    mcpp::build::write_c_abi_absent_sidecar(dir.path, "musl",
+        {{"fork", mcpp::targetside::CAbiAbsentForm::Link, ""}});
+    mcpp::build::write_c_abi_absent_sidecar(dir.path, "", {});
+    auto [name, back] = mcpp::build::read_c_abi_absent_sidecar(dir.path);
+    EXPECT_TRUE(back.empty());
+}

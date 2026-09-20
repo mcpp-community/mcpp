@@ -1258,6 +1258,19 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         if (auto advice = mcpp::build::graph_c_library_isolation_advice(out);
             !advice.empty())
             std::fputs(advice.c_str(), stderr);
+        // THE SAME ADVICE THE PLAN PATH GIVES, FROM THE LIST THE PLAN WROTE
+        // DOWN. This path has no `BuildPlan` by construction, so the C
+        // library's `[c-abi.absent]` table reaches it through a file beside
+        // build.ninja rather than through a resolution it exists to skip.
+        // Advice attached to one path only appears or not depending on
+        // whether build.ninja happened to be up to date.
+        {
+            auto [cAbiName, absent] = mcpp::build::read_c_abi_absent_sidecar(
+                ninjaPath.parent_path());
+            if (auto advice = mcpp::build::c_abi_absent_facility_advice(
+                    out, cAbiName, absent); !advice.empty())
+                std::fputs(advice.c_str(), stderr);
+        }
         return 1;
     }
     if (verbose && !out.empty())

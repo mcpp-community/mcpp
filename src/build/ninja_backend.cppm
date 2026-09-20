@@ -111,6 +111,26 @@ std::string c_abi_absent_facility_advice(
     std::string_view output, std::string_view cAbiName,
     const std::vector<mcpp::targetside::CAbiAbsentEntry>& absent);
 
+// THE SAME ADVICE ON BOTH PATHS, WHICH IS WHY THE LIST IS WRITTEN DOWN.
+//
+// A build reports failure through two channels: this one, which has a plan,
+// and the fast path (`mcpp.build.execute`), which deliberately has none. An
+// advice attached to only one of them appears or not depending on whether
+// build.ninja happened to be up to date, which is the same decision in two
+// places wearing a different hat. The plan writes the list beside build.ninja;
+// the fast path reads it back and calls the same function.
+//
+// It is a plain file rather than a field in an existing record because the
+// fast path's whole purpose is to read as little as possible: this one is
+// opened only after a build has already failed.
+void write_c_abi_absent_sidecar(
+    const std::filesystem::path& outputDir, std::string_view cAbiName,
+    const std::vector<mcpp::targetside::CAbiAbsentEntry>& absent);
+
+// `{name, absent}` read back, or an empty pair when no build wrote one.
+std::pair<std::string, std::vector<mcpp::targetside::CAbiAbsentEntry>>
+read_c_abi_absent_sidecar(const std::filesystem::path& outputDir);
+
 // mcpp#662: the compile-side sibling of `link_failure_advice`, same shape —
 // text-matched against RAW ninja output (command lines included; the caller
 // must not pass the filtered form), returning advice to APPEND, never
@@ -684,6 +704,48 @@ std::string link_failure_advice(std::string_view output) {
         "      To supply an allocator instead, define the twelve `operator new`\n"
         "      and `operator delete` overloads — including the four taking\n"
         "      `std::align_val_t`, which are the ones most often forgotten.\n";
+}
+
+namespace {
+constexpr std::string_view kCAbiAbsentSidecar = ".mcpp-c-abi-absent";
+}
+
+void write_c_abi_absent_sidecar(
+    const std::filesystem::path& outputDir, std::string_view cAbiName,
+    const std::vector<mcpp::targetside::CAbiAbsentEntry>& absent) {
+    const auto path = outputDir / kCAbiAbsentSidecar;
+    std::error_code ec;
+    if (absent.empty()) { std::filesystem::remove(path, ec); return; }
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) return;
+    f << cAbiName << '\n';
+    for (auto const& e : absent)
+        f << mcpp::targetside::c_abi_absent_form_name(e.form) << '\t'
+          << e.name << '\t' << e.note << '\n';
+}
+
+std::pair<std::string, std::vector<mcpp::targetside::CAbiAbsentEntry>>
+read_c_abi_absent_sidecar(const std::filesystem::path& outputDir) {
+    std::pair<std::string, std::vector<mcpp::targetside::CAbiAbsentEntry>> out;
+    std::ifstream f(outputDir / kCAbiAbsentSidecar, std::ios::binary);
+    if (!f) return out;
+    std::getline(f, out.first);
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.empty()) continue;
+        const auto a = line.find('\t');
+        if (a == std::string::npos) continue;
+        const auto b = line.find('\t', a + 1);
+        if (b == std::string::npos) continue;
+        auto form = mcpp::targetside::parse_c_abi_absent_form(line.substr(0, a));
+        if (!form) continue;
+        mcpp::targetside::CAbiAbsentEntry e;
+        e.form = *form;
+        e.name = line.substr(a + 1, b - a - 1);
+        e.note = line.substr(b + 1);
+        out.second.push_back(std::move(e));
+    }
+    return out;
 }
 
 std::string c_abi_absent_facility_advice(
@@ -3097,6 +3159,14 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                                           plan.outputDir});
 
     auto ninja_path = plan.outputDir / "build.ninja";
+    // Written beside build.ninja and not into it: the fast path replays the
+    // ninja file without a plan, and the advice a failed link needs has to
+    // reach both channels or it appears depending on whether build.ninja
+    // happened to be up to date.
+    write_c_abi_absent_sidecar(
+        plan.outputDir, plan.targetSide.cAbi.interfaceName,
+        plan.targetSide.cAbiDecl ? plan.targetSide.cAbiDecl->absent
+                                 : std::vector<mcpp::targetside::CAbiAbsentEntry>{});
     auto manifest = emit_ninja_string(plan);
     stage("emit-ninja");
 
@@ -3465,6 +3535,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             diagnostics += c_abi_absent_facility_advice(
                 out, plan.targetSide.cAbi.interfaceName,
                 plan.targetSide.cAbiDecl->absent);
+        // (the fast path reads the same list from the sidecar this build
+        // wrote beside build.ninja — see `write_c_abi_absent_sidecar`)
         return std::unexpected(BuildError{"build failed", plan.outputDir / "build.ninja",
                                           std::move(diagnostics)});
     }
