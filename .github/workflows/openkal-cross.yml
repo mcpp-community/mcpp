@@ -311,11 +311,16 @@ jobs:
           BIN="${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-llvm/22.1.8/bin"
           # Not `ls ... | head -1`: with `pipefail` the absent candidate's
           # exit status ends the step before the guard below is reached.
-          CLANG=""
-          for c in "$BIN/clang" "$BIN/clang.exe"; do
-            if [ -x "$c" ]; then CLANG="$c"; break; fi
-          done
-          [ -n "$CLANG" ] || { echo "::error::no clang under $BIN"; exit 1; }
+          pick() {  # $1..$n = candidate paths; prints the first executable one
+            for c in "$@"; do
+              if [ -x "$c" ]; then printf '%s' "$c"; return 0; fi
+            done
+            return 1
+          }
+          CLANG="$(pick "$BIN/clang" "$BIN/clang.exe")" \
+            || { echo "::error::no clang under $BIN"; exit 1; }
+          NM="$(pick "$BIN/llvm-nm" "$BIN/llvm-nm.exe")" \
+            || { echo "::error::no llvm-nm under $BIN"; exit 1; }
 
           # Inside the clone, so the dependency is named by a relative path.
           # `$RUNNER_TEMP` is a backslash path on the Windows host and a TOML
@@ -353,9 +358,16 @@ jobs:
           default = "llvm@22.1.8"
           PROJECT
 
-          # The symbol name is in the object's string table, so a byte match
-          # reads it without naming an `llvm-nm` whose path differs per host.
-          refs() { grep -ac memset_pattern16 "$1" 2>/dev/null || true; }
+          # THE READER ASKS FOR UNDEFINED SYMBOLS, NOT FOR BYTES.
+          #
+          # This was `grep -ac memset_pattern16`, on the reasoning that the name
+          # is in the object's string table and a byte match needs no tool. It
+          # reads 1/0 correctly with GNU grep and read 0 for all three legs on
+          # the macOS host, where grep is BSD: the object is binary, and what
+          # `-a` promises about that differs between the two. Leg 1 is what
+          # reported it. `llvm-nm` is in the payload beside the clang already
+          # being used, and answers the question this step is actually asking.
+          refs() { "$NM" -u "$1" 2>/dev/null | grep -c memset_pattern16 || true; }
           T=--target=arm64-apple-macos14.0
 
           "$CLANG" $T -O2                                -c "$W/src/main.cpp" -o "$W/bare.o"
