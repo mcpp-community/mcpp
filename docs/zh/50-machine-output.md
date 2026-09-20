@@ -361,7 +361,21 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 | `package-cycle` | 依赖图中存在包的环;消息列出环上的边 *(2026.9.16.1+)* |
 | `program-cxx-runtime-split` | 声明了自含 C++ 运行时的程序或测试,加载了本次构建中耦合到共享运行时的 C++ 共享库 *(2026.9.16.1+)* |
 | `static-package-in-two-images` | 一个静态包被本次构建的多个映像到达,而在该目标上一个映像不能使用另一个映像里的副本 *(2026.9.16.1+)* |
+| `c-env-unrealisable` | 解析出的 C 库的 `[c-abi]` 声明在这个目标上没有已知的实现,或解析出的编译器做不到 *(2026.9.18.1+)* |
+| `c-env-verification-mismatch` | 用实现出来的 `[c-abi]` 配置编译的探针,与声明不符 *(2026.9.18.1+)* |
+| `platform-dependency` | `[build] platform-dependencies = "refuse"`,而图里有包带进了平台 SDK *(2026.9.18.1+)* |
+| `interface-not-provided` | 某个包的 `[kernel-abi] requires-interfaces` 点名了解析出的实现不提供的接口 *(2026.9.20.1+)* |
+| `apple-sdk-absent` | 目标需要本机没有的 Apple SDK;它不可再分发,所以 mcpp 定位它而不安装它 |
+| `lld-required-absent` | 目标直接经 lld 链接,而解析出的工具链载荷不带 lld |
+| `host-tool-toolchain` | 交叉 `--target` 下的 `build.mcpp` 需要一个可解析的**宿主**工具链,而一个都没设 |
+| `std-module-precompile` | 标准库的模块在这个配置下无法预编译 |
 | `other` | 一处还没有被命名的拒绝分支 |
+
+**其中一个令牌也由 `mcpp build` 自己打印。** `interface-not-provided` 出现在拒绝消息里,
+用方括号包着,与 `E0006` 同一个约定。一条只有人能认出的拒绝,会逼迫每一个机器消费者去匹配
+散文——而那种散文,一个包自己的编译错误有可能恰好包含;mcpp-index 的兼容性测量正是靠这个
+令牌把「这个图不供给这个成员所要的」与「这个成员没能构建」分开,而这个区分决定了一个成员
+算不算进兼容率。
 
 **只要问题被回答了就退 0,包括答案是「拒绝」。** 「它能不能构建,不能的话
 为什么」被「不能,因为这一行的 pin 是能力陈述」完整地回答了。非零退出的含义是

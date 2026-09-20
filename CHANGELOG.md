@@ -5,6 +5,183 @@
 
 ## [Unreleased]
 
+## [2026.9.20.1] - 2026-09-20
+
+### 校验探针量的是构建宿主,而不是它要核对的那个目标
+
+2026.9.18.3 的 c-abi 校验探针在**每一次 freestanding 构建上都没有选中目标**。
+`Toolchain::crossTargetFlag` 只为 hosted 目标设置(它自己的注释写明了原因:freestanding
+目标的 `--target` 必须与随行的 ISA 标志一起给出,放两处就是同一个决定写两遍),而那另一处
+是 `mcpp.freestanding.linkline` 的编译前缀,探针从不问它;`cenv::realise` 对 freestanding
+也不产 `--target`。于是探针的命令行是 `-D__unix__ -fno-short-wchar -ffreestanding -x c++
+-E -dM -`——没有任何目标选择,clang 回答的是它自己所在的那台机器。
+
+在 Linux 宿主上这台机器恰好满足 `__unix__` 已定义、`_WIN32` 未定义、`wchar_t` 32 位,
+于是检查**以错误的理由通过**;在 Windows 宿主上它报 `_WIN32` 已定义、`wchar_t` 16 位,
+两条不匹配同时出现。2026.9.18.3 把这两条读成"Windows 宿主的 clang 即使带上 `--target=`
+仍注入宿主预定义",并据此加了 `hostStripMacros`。该归因不成立:clang 的预定义跟随目标
+而不是宿主。本机实测——`clang --target=riscv64-none-elf -dM` 在 Linux 上 `__linux__` 计数
+为 0、`__SIZEOF_WCHAR_T__` 为 4,而 `--target=x86_64-w64-windows-gnu` 在同一台 Linux 上
+定义 `_WIN32`——如果那个 `--target` 真在命令行上,clang 会答 4 而不是 2。观察到 2,说明
+它不在。
+
+这一版从根因修:
+
+1. **探针拿到目标。** freestanding 目标的 `--target` 与 ISA 标志由
+   `mcpp.freestanding.linkline` 的编译前缀提供,现在进入探针 argv。
+2. **`hostStripMacros` 删除,而删除本身是要点。** `-U_WIN32 -U_WIN64 -U__MINGW32__
+   -U__MINGW64__` 抹掉的正是"探针量错了机器"这件事的唯一证据。将来若真有宿主泄漏,它必须
+   到达不匹配报告,而不是在能被看见之前就被 undefine 掉。
+3. **装配处拒绝这次遗漏,而不是调用点记得不要犯。** 新增
+   `cenv_probe::assemble_argv`:各个部件在某些配置下都合法地为空,所以没有任何单独一个
+   能承载这条不变量。freestanding 目标的 argv 没有选中目标即拒绝并点名目标;宿主本地
+   构建接受没有目标选择的 argv——那里宿主就是目标,缺席是那个决定本身。
+
+单测 `test_cenv_probe.cpp` 的三个 strip 测试被替换:它们测的是"`-U` 有没有到达命令行"
+这个机制,而不是"探针量的是不是正确的机器"这条性质。新的五个 `CenvProbeArgv` 测试**不需要
+交叉工具链**,直接对装配函数断言;另加两个带 clang 的端到端探针测试,在没有 clang 的宿主
+上跳过而不谎报。
+
+### `builtins` 的 Windows 行:结论不变,写在旁边的机制是错的
+
+`cenv.cppm` 称 clang 自带 `intrin.h` / `mm_malloc.h` 的问题"已由既有的 `-nostdlibinc`
+隔离关闭"。实测不成立:`-nostdlibinc` 移除的是标准**系统**头目录,clang 自己的 resource
+目录仍在(那是 `-nobuiltininc` 移除的),带着该标志仍复现 `intrin.h:12:15`——与 mcpp-index
+为 fmtlib.fmt 记录的诊断逐字符相同。真正关掉这两者的是 Cygwin 式实现:`mm_malloc.h:42`
+在 `__MINGW32__` 上选 `__mingw_aligned_malloc`,没有它则落到 `posix_memalign`;而去取
+`<intrin.h>` 的源码是在 `_WIN32` 之后才这么做的。调查结论不变(Windows 上没有可关的循环
+惯用法内建),改的是写在它旁边的那句机制。
+
+### 一个包可以陈述它需要该层的哪些接口,解析期回答
+
+能力的"在不在"过去无处可问,于是全被挤到预处理期,而那比答案存在得更早——mcpp#674 的
+全部压力来自这一格空着。openkal SPEC 0.14 §6.2 列出三个时刻并规定每个都是该信息**最早
+能存在**的时刻;§3.3 撤回了它给接口集合起过的唯一一个名字(`hosted`),理由是"一个描述
+环境类别的名字会被没有人想到过的那个环境证伪",替代做法是由消费者逐条列举。
+
+新增 `[kernel-abi]` 表:
+
+```toml
+# 实现方(只有提供该层的包可以写 provides-interfaces)
+[kernel-abi]
+provides-interfaces = ["openkal.abort", "openkal.stream", "openkal.memory"]
+
+# 消费方(任何包都可以写 requires-interfaces)
+[kernel-abi]
+requires-interfaces = ["openkal.fs", "openkal.net"]
+```
+
+**引擎不认识这两个集合的任何一个成员**:对它们做的唯一操作是集合差
+(`targetside::interfaces_not_provided`),因此某个规范新增一个接口不需要 mcpp 发版。
+不满足即在**编译任何东西之前**拒绝,并同时点名缺的接口、要它的包、以及没提供它的实现——
+只报"缺"会让读者自己去猜该改哪一边。
+
+**一个什么都没陈述的提供者,不是一个什么都不提供的提供者**:实现方没有写
+`provides-interfaces` 的图照常构建,链接仍以它一贯的词汇报告缺席。什么都不写的清单,
+产出的命令行与这项能力存在之前逐字节相同。
+
+拒绝记录的 reason 为 `interface-not-provided`,并且**这个令牌也印在拒绝消息里**,用方括号
+包着,与 `E0006` 同一个约定——mcpp-index 的兼容性测量靠它把「这个图不供给这个成员所要的」
+与「这个成员没能构建」分开,而一条只有人能认出的拒绝会逼迫那个消费者去匹配散文。
+`docs/50` 的 reason 令牌表同时补上了 2026.9.18.1 起一直在发却从未列出的三个:
+`c-env-unrealisable`、`c-env-verification-mismatch`、`platform-dependency`。
+
+### 理由令牌表与引擎不再靠人读对齐
+
+`docs/50` 的 reason 令牌表是**机器接口**:mcpp-index 的兼容性测量就是从拒绝里读一个
+令牌,来区分「这个图没有提供该成员要的东西」与「该成员没构建成功」,而这条区分决定一个
+会被发布的数字。引擎能发而表里没有的令牌,是一条没有人能依赖的承诺。
+
+2026.9.18.1 那轮往这张表里补过「缺的那四个」;本轮枚举发现**另外四个**一直缺着——
+`apple-sdk-absent`、`lld-required-absent`、`host-tool-toolchain`、`std-module-precompile`。
+**靠读来比较的集合,比较的是样本。**
+
+四条补齐,并新增 `.github/tools/check_reason_tokens.sh`:它双向比对
+`refusal.cppm` 能发出的令牌与表里的行,并要求简体中文镜像携带同一个集合。
+两个方向各去掉一条都会红。
+
+⚠️ 这张表的**列头**是 `| \`reason\` | |`——第一格里一个反引号名字,形状与下面每一行
+完全相同。按「行首反引号名字」匹配会把 `reason` 当成一个令牌。行与列头的区别在**第二格
+非空**,所以判据按性质挑对象,不按语法挑。
+
+### `[c-abi-absent]`:枚举例外,不枚举规则
+
+一个 C 库供给的名字集合在清单里不可枚举(POSIX 约一千二百个),枚举它正是 §3.3 记录下
+撤回的那个错误。例外是可枚举的——openkal-musl 的 README 列了六项,而那段散文没有任何
+东西在执行它,并且已经被推翻过一次(0.16.0 之前 `SIG_IGN` 对每个信号都被接受却一个都没
+安装)。
+
+```toml
+[c-abi-absent]
+fork      = { form = "link" }
+mprotect  = { form = "enosys", note = "openkal 没有作用于映射保护属性的操作" }
+tcsetattr = { form = "accepted-no-effect", note = "openkal 不命名的那些字段不被施加" }
+```
+
+`form` 必填且封闭。`link` 是 openkal 自己的能力模型对实现所要求的形状(§6.1 把运行期
+报告不支持称为缺陷);另外两个是对它的偏离,给它们命名是为了让一次偏离成为可以被数出来
+的东西。链接点到 `link` 形状里的某一项时,mcpp 把清单读回来:`undefined reference to
+'fork'` 因此带着那句说明它是缺陷还是环境限制的话一起到达。
+
+**同一形状的第二处:拒绝消息里那行标签可以被读成它所否认的那句话。** 缺失的接口列在
+上面,紧接着一行 `provided by  fakekernel (2 interfaces)`——读起来正是
+「openkal.space 由 fakekernel 提供」,而这条拒绝存在的理由恰恰是它**没有**提供。改成
+「the resolved implementation is fakekernel (2 interfaces), and none of those listed
+above is among them」。e2e 743 此前的每一条断言都只匹配**标识符**,而标识符在两种措辞下
+都在正确的位置;现在它断言整句,并显式拒绝旧措辞。
+
+**这条说明此前少一个右括号,而九个单测都没看见。** 渲染出来是
+`the C library in this graph (musl declares that it does not supply ...`——C 库的名字由
+**两个各自独立的条件**插进去:一个左括号,然后是名字,右括号从来没有被发出过。单测断言的
+是 `find("musl")`,那句话里同样有 "musl"。**判据瞄准一句话的子串,就看不见这句话。**
+修法是整个括号部分只做一次替换;新增的 e2e 744 真跑一次链接失败并断言整句,把右括号去掉
+它就红。
+
+**它是顶层表,而这是量出来的。** 先写成 `[c-abi].absent`——更顺——之后拿**真正发布的
+2026.9.18.3 归档**(当时的索引 floor)跑 openkal-musl 0.17.0 将要发布的那份清单:嵌套
+写法让每个旧 mcpp **在每个目标上拒绝整份清单**,报 `[c-abi] has no member 'absent'`。
+`[c-abi]` 枚举自己的成员并拒绝其余,而这条严格性是对的——拼错的 `presents` 不该静默
+关掉一条声明。同一次测量里,未知的**顶层**表被忽略,构建照常完成。
+
+这张表做的每件事都是诊断性的:给一次**已经失败**的链接加一句话,没有任何 flag、链接行
+或产物依赖它。于是忽略它的引擎产出的正是它今天产出的那条链接错误;而拒绝它的引擎会把
+索引 floor 逼到本版本——为了一句他们无非是收不到的说明,夺走停在其下的每个客户端手里的
+**整个索引**。改成顶层表后,openkal-musl 0.17.0 不要求任何 floor 变动。
+
+把 `absent` 写在 `[c-abi]` 里面会被拒绝,拒绝消息点名顶层的那个拼法。
+
+### 汇编器先问 PATH 再看沙箱,而其余每一个工具都反过来
+
+`find_usable_nasm` 先 `which("nasm")`,沙箱里那份钉住的只作兜底。于是装了汇编器的
+机器用它自己的那一份,没装的下载钉住的那一份——**三台机器可以从同一棵源码树产出三份
+不同的目标文件,而两次构建里都没有一行说它用的是哪一个**。引擎里其余每一个工具都不是
+这个方向:编译器与链接器是载荷,C 库与 C++ 运行时是包,`ninja` 与 `patchelf` 走 xlings,
+`ar` / `strip` / `objcopy` 由解析出的工具链自己的目录派生且从不是裸名。
+
+顺序反过来:先沙箱,后宿主。宿主那一份**保留**,因为一台离线而本来就装了可用汇编器的
+机器仍然应当能构建——但被用到时构建会点名它:
+
+```
+degraded: the assembler for this build is the host's ('/usr/bin/nasm'), not the one this engine pins
+```
+
+`docs/20` 新增一节列全 mcpp 在宿主上取的每一项与各自的理由。**一个宿主工具到达构建
+本身不是缺陷,静默地到达才是**——所以那是一张表而不是一条禁令。
+
+### `presents` 的取值集冻结
+
+docs/22 写明:`presents` 回答的是源码看到哪些环境身份宏,**不回答任何能力是否存在**。
+一个包不得由它推断某个接口、某个头或某个路径是否可用。取值集不增长,理由与 openkal 为
+自己的核心集封闭所给的相同——一个描述环境**类别**的名字会被没有人想到过的那个环境证伪,
+而 openkal 把自己发过的唯一一个这样的名字在一个发布周期之内撤回了。
+
+(`src/toolchain/cenv.cppm`、`src/toolchain/cenv_probe.cppm`、`src/build/prepare.cppm`、
+`src/build/ninja_backend.cppm`、`src/build/refusal.cppm`、
+`modules/manifest/src/{targetside_model,toml,types}.cppm`,
+单测 `test_cenv_probe.cpp`、`test_manifest.cpp`、`test_targetside.cpp`、
+`test_build_flags.cpp`,e2e `tests/e2e/743_kernel_abi_interfaces_are_resolved_not_preprocessed.sh`,
+docs/22 及其 zh 镜像,`modules/versioning/src/version.cppm`、`mcpp.toml`)
+
 ## [2026.9.18.3] - 2026-09-18
 
 ### Windows 主机 × freestanding 目标的 c-abi 校验探针两处真实缺陷被关掉

@@ -21,6 +21,7 @@ import std;
 import mcpp.freestanding.linkline;
 import mcpp.build.backend;
 import mcpp.manifest;
+import mcpp.targetside;
 import mcpp.source_kind;
 import mcpp.build.distribution;
 import mcpp.build.graph_shape;
@@ -96,6 +97,39 @@ std::optional<std::string> check_rule_commands_name_a_program(
 // manifest line. Measured: `undefined symbol: operator new(unsigned long)`
 // referenced from `__libcpp_allocate` in `__new/allocate.h`.
 std::string link_failure_advice(std::string_view output);
+
+// The C library said in its manifest which facilities it does not supply, and
+// the link has just named one of them (design 2026-09-20 §5.7.5). Both
+// linkers' spellings, as `link_failure_advice` above.
+//
+// WHY THIS IS WORTH A NOTE RATHER THAN LEFT TO THE LINKER. `undefined
+// reference to 'fork'` is a true statement and a useless one: it says a symbol
+// is missing without saying whether that is a defect, a missing dependency or
+// a deliberate limit of the environment this program was built for. The
+// manifest already distinguishes those; this reads it back.
+std::string c_abi_absent_facility_advice(
+    std::string_view output, std::string_view cAbiName,
+    const std::vector<mcpp::targetside::CAbiAbsentEntry>& absent);
+
+// THE SAME ADVICE ON BOTH PATHS, WHICH IS WHY THE LIST IS WRITTEN DOWN.
+//
+// A build reports failure through two channels: this one, which has a plan,
+// and the fast path (`mcpp.build.execute`), which deliberately has none. An
+// advice attached to only one of them appears or not depending on whether
+// build.ninja happened to be up to date, which is the same decision in two
+// places wearing a different hat. The plan writes the list beside build.ninja;
+// the fast path reads it back and calls the same function.
+//
+// It is a plain file rather than a field in an existing record because the
+// fast path's whole purpose is to read as little as possible: this one is
+// opened only after a build has already failed.
+void write_c_abi_absent_sidecar(
+    const std::filesystem::path& outputDir, std::string_view cAbiName,
+    const std::vector<mcpp::targetside::CAbiAbsentEntry>& absent);
+
+// `{name, absent}` read back, or an empty pair when no build wrote one.
+std::pair<std::string, std::vector<mcpp::targetside::CAbiAbsentEntry>>
+read_c_abi_absent_sidecar(const std::filesystem::path& outputDir);
 
 // mcpp#662: the compile-side sibling of `link_failure_advice`, same shape —
 // text-matched against RAW ninja output (command lines included; the caller
@@ -670,6 +704,103 @@ std::string link_failure_advice(std::string_view output) {
         "      To supply an allocator instead, define the twelve `operator new`\n"
         "      and `operator delete` overloads — including the four taking\n"
         "      `std::align_val_t`, which are the ones most often forgotten.\n";
+}
+
+namespace {
+constexpr std::string_view kCAbiAbsentSidecar = ".mcpp-c-abi-absent";
+}
+
+void write_c_abi_absent_sidecar(
+    const std::filesystem::path& outputDir, std::string_view cAbiName,
+    const std::vector<mcpp::targetside::CAbiAbsentEntry>& absent) {
+    const auto path = outputDir / kCAbiAbsentSidecar;
+    std::error_code ec;
+    if (absent.empty()) { std::filesystem::remove(path, ec); return; }
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) return;
+    f << cAbiName << '\n';
+    for (auto const& e : absent)
+        f << mcpp::targetside::c_abi_absent_form_name(e.form) << '\t'
+          << e.name << '\t' << e.note << '\n';
+}
+
+std::pair<std::string, std::vector<mcpp::targetside::CAbiAbsentEntry>>
+read_c_abi_absent_sidecar(const std::filesystem::path& outputDir) {
+    std::pair<std::string, std::vector<mcpp::targetside::CAbiAbsentEntry>> out;
+    std::ifstream f(outputDir / kCAbiAbsentSidecar, std::ios::binary);
+    if (!f) return out;
+    std::getline(f, out.first);
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.empty()) continue;
+        const auto a = line.find('\t');
+        if (a == std::string::npos) continue;
+        const auto b = line.find('\t', a + 1);
+        if (b == std::string::npos) continue;
+        auto form = mcpp::targetside::parse_c_abi_absent_form(line.substr(0, a));
+        if (!form) continue;
+        mcpp::targetside::CAbiAbsentEntry e;
+        e.form = *form;
+        e.name = line.substr(a + 1, b - a - 1);
+        e.note = line.substr(b + 1);
+        out.second.push_back(std::move(e));
+    }
+    return out;
+}
+
+std::string c_abi_absent_facility_advice(
+    std::string_view output, std::string_view cAbiName,
+    const std::vector<mcpp::targetside::CAbiAbsentEntry>& absent) {
+    if (absent.empty()) return {};
+
+    std::string named;
+    for (auto const& e : absent) {
+        // Only the `link` shape can appear here at all: the other two reach a
+        // program at run time by construction, so matching them against a
+        // link diagnostic would report a coincidence of spelling.
+        if (e.form != mcpp::targetside::CAbiAbsentForm::Link) continue;
+        // THE NAME MUST END WHERE THE DIAGNOSTIC'S NAME ENDS. `undefined
+        // symbol: open` is a prefix of `undefined symbol: opendir`, so a
+        // plain substring search explains a link failure with a row that has
+        // nothing to do with it — and an explanation that is confidently
+        // wrong is worse than the linker's own message. lld ends the name at
+        // the line; GNU ld closes it with a quote.
+        const std::string gnu = std::format("undefined reference to `{}'", e.name);
+        bool matched = output.find(gnu) != std::string_view::npos;
+        if (!matched) {
+            const std::string lld = std::format("undefined symbol: {}", e.name);
+            for (std::size_t at = output.find(lld); at != std::string_view::npos;
+                 at = output.find(lld, at + 1)) {
+                const auto after = at + lld.size();
+                if (after >= output.size() || output[after] == '\n'
+                    || output[after] == '\r' || output[after] == ' ') {
+                    matched = true;
+                    break;
+                }
+            }
+        }
+        if (!matched) continue;
+        named += std::format("\n        {:<20} {}", e.name,
+                             e.note.empty() ? "declared absent" : e.note);
+    }
+    if (named.empty()) return {};
+
+    // ONE SUBSTITUTION FOR THE WHOLE PARENTHETICAL, not an opening paren and
+    // a name from two separate conditionals. Written that way, the closing
+    // paren was simply absent and every reader saw `(musl declares that it
+    // does not supply ...`. The unit tests asserted `find("musl")`, which is
+    // true of both spellings; it took running a real link to see it.
+    const std::string who =
+        cAbiName.empty() ? std::string{} : std::format(" ({})", cAbiName);
+    return std::format(
+        "\n"
+        "note: the C library in this graph{} declares that it does not "
+        "supply the following, and the link has just asked for it:{}\n"
+        "      An absence stated in the manifest is a property of the "
+        "environment this program was built for, not a defect in the build. "
+        "A program that needs one of these needs a different C environment "
+        "for this target.\n",
+        who, named);
 }
 
 std::string graph_c_library_isolation_advice(std::string_view output,
@@ -3034,6 +3165,14 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                                           plan.outputDir});
 
     auto ninja_path = plan.outputDir / "build.ninja";
+    // Written beside build.ninja and not into it: the fast path replays the
+    // ninja file without a plan, and the advice a failed link needs has to
+    // reach both channels or it appears depending on whether build.ninja
+    // happened to be up to date.
+    write_c_abi_absent_sidecar(
+        plan.outputDir, plan.targetSide.cAbi.interfaceName,
+        plan.targetSide.cAbiDecl ? plan.targetSide.cAbiDecl->absent
+                                 : std::vector<mcpp::targetside::CAbiAbsentEntry>{});
     auto manifest = emit_ninja_string(plan);
     stage("emit-ninja");
 
@@ -3398,6 +3537,12 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         // and gets the degraded-but-still-correct form.
         diagnostics += graph_c_library_isolation_advice(
             out, plan.targetSide.cAbi.interfaceName, plan.targetSide.cAbi.impl);
+        if (plan.targetSide.cAbiDecl)
+            diagnostics += c_abi_absent_facility_advice(
+                out, plan.targetSide.cAbi.interfaceName,
+                plan.targetSide.cAbiDecl->absent);
+        // (the fast path reads the same list from the sidecar this build
+        // wrote beside build.ninja — see `write_c_abi_absent_sidecar`)
         return std::unexpected(BuildError{"build failed", plan.outputDir / "build.ninja",
                                           std::move(diagnostics)});
     }

@@ -432,12 +432,25 @@ inline std::expected<Realisation, std::string> realise(
     //   Windows targets   NO ANALOGOUS CODE-GENERATION IDIOM FOUND. The
     //                     design's own Windows row (§3.2.1) is a PREPROCESSOR
     //                     assumption instead — clang's bundled `intrin.h` /
-    //                     `mm_malloc.h` expecting `__mingw_aligned_malloc` —
-    //                     and that is already closed by the EXISTING
-    //                     `-nostdlibinc` isolation (`mcpp.toolchain.hostflags`,
-    //                     #662/#664) whenever the graph supplies the C
-    //                     library, independently of `builtins`. This survey
-    //                     found no Windows loop-idiom builtin to disable.
+    //                     `mm_malloc.h` expecting `__mingw_aligned_malloc`.
+    //                     WHAT CLOSES IT IS THE IDENTITY SWITCH, NOT
+    //                     `-nostdlibinc`, AND AN EARLIER REVISION OF THIS
+    //                     NOTE SAID OTHERWISE. `-nostdlibinc` removes the
+    //                     standard SYSTEM include directories and leaves
+    //                     clang's own resource directory in place — that is
+    //                     what `-nobuiltininc` removes — so `<intrin.h>`
+    //                     still resolves to clang's copy and still reaches
+    //                     its `#include_next <intrin.h>`, measured with the
+    //                     flag present (`intrin.h:12:15`, character for
+    //                     character the diagnostic mcpp-index recorded for
+    //                     fmtlib.fmt). What closes both is the Cygwin-
+    //                     flavoured realisation instead: `mm_malloc.h:42`
+    //                     selects `__mingw_aligned_malloc` on `__MINGW32__`
+    //                     and falls to `posix_memalign` without it, and
+    //                     source reaching for `<intrin.h>` does so behind
+    //                     `_WIN32`. The survey's conclusion is unchanged —
+    //                     no Windows loop-idiom builtin to disable — only
+    //                     the mechanism named beside it was wrong.
     //   Linux targets     NONE FOUND. glibc's own loop-idiom builtins
     //                     (`__memset_chk` and relatives) are FORTIFY_SOURCE
     //                     machinery that is off by default and unrelated to

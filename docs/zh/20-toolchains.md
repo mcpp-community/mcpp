@@ -584,6 +584,59 @@ mcpp build --target aarch64-ios        # 解析 llvm@22.1.8 + iPhoneOS SDK
 mcpp build --target aarch64-ios-sim    # 解析 llvm@22.1.8 + 模拟器 SDK
 ```
 
+## mcpp 保留的宿主面,以及每一项的理由
+
+这个引擎围绕的规矩:**一次构建可复现,当且仅当造它的工具来自下一台机器也能拿到的
+地方。** 所以每一个参与构建的工具都来自依赖图或 xlings,而下面这张表是**不来自**
+那里的全部——每一条都带着它为什么不能。
+
+| 项 | 到达方式 | 不在生态里的理由 |
+|---|---|---|
+| **xlings 自己** | 随 mcpp 的载荷捆绑(`[xlings] binary = "bundled"`,默认)。`"system"` 才去查 PATH。 | 自举:总得有东西去取第一个包。默认是捆绑的那份,所以走宿主是用户做的一个选择,不是一次兜底。 |
+| **Apple SDK** | 经 `xcrun` **定位**,从不安装 | 不可再分发。没有东西可打包,而拒绝在解析任何载荷之前就点名它。 |
+| **iOS 模拟器运行时** | `simctl`,经 `xim:apple-simulator-tools` | 同上。 |
+| **汇编器(`nasm`)** | 先取钉住的 `xim:nasm`;只有那条路服务不了时才取宿主的,**且被用到时在构建报告里点名** | 一台离线而本来就装了可用汇编器的机器仍然能构建。它此前是反着的——见下。 |
+| **PATH 上的 C++ 编译器(`$CXX`,否则 `g++`)** | 只有 `mcpp doctor` | 那个命令的职责就是报告宿主。构建那条路在每一个到得了这个探针的分支上都从解析出的载荷设定编译器,载荷解析不了时**拒绝**,而不是落到 PATH。 |
+| **命令解释器(`/bin/sh`,Windows 上 `cmd.exe`)** | `[hooks]` 走 `run_shell_deadline`,xlings CLI 走 `run_streaming_bounded`,另有分离式 codegen 命令 | 一条 hook 是**用户自己**用 shell 语法写下的那一行。自带一个 shell 会改变那一行被解读所用的语言,所以这里依赖的不是一个它能打包的工具,而是宿主对那一行含义的约定。 |
+| **MSVC 工具集与 Windows SDK** | 用户点名 `msvc@system`;或一个受管工具集旁边没有 SDK 载荷 | 不可再分发,与 Apple SDK 同类。受管工具集**绑定**自己的 SDK,即使 `WindowsSdkDir` 被设置也不理会——一个环境能覆盖的钉不是钉;回落到机器自己那份能用、不可复现,因此带一句说明(`SdkChoice::note`,调用方必须把它呈现出来)。 |
+
+这张表意在穷举,而它是**推导出来的**,不是回忆出来的。四次扫描就能重新得到它。每一处
+`fs::which` 调用——**恰好五处**,每一处都对应上面的一行:`toolchain/probe` 取 `$CXX`、
+`config` 与 `fallback/xlings_binary` 两处取 xlings、`xlings/xlings` 取汇编器。每一个以
+`/usr`、`/bin`、`/opt`、`/etc` 为根的字符串字面量。每一处 `cmd.exe` 与 `COMSPEC`。
+以及每一个读取宿主工具链所设变量的 `getenv`——`CXX`、`SDKROOT`、`WindowsSdkDir`、
+`WindowsSdkVersion`、`VSINSTALLDIR`、`MACOSX_DEPLOYMENT_TARGET`(其余 `getenv` 读的是
+mcpp 自己的 `MCPP_*` 旋钮与 `HOME`,不指向任何宿主工具)。
+这张表的第一版只做了第一次扫描,因此缺了最后两行;把扫描方式写在这里,是为了让下一个
+读者去**核**这张表而不是**信**它。
+
+其中两条扫描结果值得点名,因为它们指向相反的方向。`mcpp.toolchain.registry` **拒绝**
+一个 `frontend` 写着 `/usr/bin/g++` 或用 `../` 爬出去的载荷描述符——并且是按**字符串**
+校验而不是经 `std::filesystem::path`,因为 `path("/usr/bin/g++").is_absolute()` 在
+Windows 上为假,那道闸恰恰在那台宿主上没有看(2026-09-11 实测)。而 `src/runtime/elf`
+里写下 `/usr/lib` 与 `/usr/lib64`,只是为了**建模**运行期加载器将要搜索的地方,mcpp
+不从那里读任何东西。
+
+其余全部来自图或 xlings,包括最常被当成宿主的那几个:编译器与链接器(载荷)、
+C 库与 C++ 运行时(包)、`ninja` 与 `patchelf`(xlings),以及 `ar` / `strip` /
+`objcopy`(由解析出的工具链自己的目录派生,**从不是一个裸名**——
+`mcpp.toolchain.registry::binutils_tool` 要么返回一个存在的绝对路径,要么什么都不返回)。
+
+**汇编器是唯一指错方向的那一个,值得记下来而不是悄悄掉个头(2026.9.20.1)。**
+`find_usable_nasm` 先问 PATH 再看沙箱。装了汇编器的机器用它的那一份,没装的机器下载
+钉住的那一份。三台机器可以从同一棵源码树产出三份不同的目标文件,而两次构建里都没有
+一行说它用的是哪一个。现在顺序反过来了;当服务的是宿主那一份时,构建会说出来:
+
+```
+warning: the assembler for this build is the host's ('/usr/bin/nasm'), not the one this engine pins
+  impact: two machines can assemble the same source with different assemblers, and the build records only this line
+  hint: run `xlings install nasm` so the pinned copy is used
+```
+
+**一个宿主工具到达构建,本身不是缺陷;一个宿主工具**静默地**到达构建才是。**
+这就是上面是一张表而不是一条禁令的原因:每一条都到得了,每一条都有理由,而每一条都
+在它被用到的地方说出来。
+
 ### 这条路新增的宿主面,具名且有界
 
 两项,都只在 macOS 上,都落在「一个只存在于它自己那个操作系统上的专有运行时」这一类:

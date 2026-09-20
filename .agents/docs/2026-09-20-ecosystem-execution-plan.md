@@ -1,0 +1,210 @@
+---
+subject: plan
+status: active
+---
+
+# C 环境生态方案：执行计划
+
+- 依据：`.agents/docs/2026-09-20-openkal-c-environment-ecosystem-design.md`
+- 日期：2026-09-20
+- 原则：每个仓库一个 PR；测量先行，数据不通过就停在测量。
+
+## 0. 起点状态（2026-09-20 实测）
+
+| 仓库 | 版本 | 状态 |
+| --- | --- | --- |
+| mcpp | 2026.9.18.3 | main 干净 |
+| openkal | 0.14.0 | 已发布并登记 |
+| openkal-musl | 0.16.0 | 已发布并登记 |
+| openkal-llvm-runtime | 0.12.0 | 已发布并登记 |
+| mcpp-index `pins.toml` | `runtime = "0.10.0"` | **未抬**，测量图里没有任何包声明 `[c-abi]` |
+
+窗口仍开着：包侧 `_WIN32` 适配已撤（#439），引擎侧实现未在测量中生效。
+
+## 1. 轨道与依赖
+
+```
+E1 抬 pins + 重测 ──────────────────────┐  （独立，最高价值，先跑）
+                                        │
+A  mcpp 引擎（P0/P1/P5-L2/P7-L3/absent）─┼─→ E2 refused + 新引擎 pin
+                                        │
+B  openkal tools + 文档（SURFACE→接口集）─┼─→ D 各实现填 provides-interfaces
+                                        │
+C  openkal-musl（absent + requires）─────┘
+                                        │
+                                        └─→ F 发布 + 沙箱验证
+```
+
+| 轨 | 仓库 | 内容 | 依赖 |
+| --- | --- | --- | --- |
+| **E1** | mcpp-index | `pins.toml` runtime 0.10.0 → 0.12.0，重测 30 成员 | 无 |
+| **A** | mcpp | P0.1 探针 `--target`、P0.2 注释、P1 冻结语义、P5-L2 解析期集合包含、P7-L3 链接期集合差、`[c-abi-absent]` 解析与诊断 | 无 |
+| **B** | openkal | `tools/interfaces-from-surface.sh`、README 记述四级阶梯 | 无 |
+| **C** | openkal-musl | `[c-abi-absent]` 声明 + CI 断言、`requires-interfaces` | A（字段语义）、B |
+| **D** | openkal-linux / -windows / -macos | `provides-interfaces` 由产物生成 + CI 断言 | B |
+| **E2** | mcpp-index | `refused` status、新引擎 pin、重测 | A、E1 |
+| **F** | 全部 | 发布、gtc 镜像、沙箱验证 | 全部 |
+
+## 2. 判据
+
+| 轨 | 判据 |
+| --- | --- |
+| E1 | 重测后 Windows 腿：第一类（`_WIN32` 选错分支）应自愈；逐条记录未自愈的与原因 |
+| A | 单测覆盖新字段的解析与拒绝；`riscv64-none-elf` 探针 dump 含 `__riscv` 不含 `__linux__`；未声明的包命令行逐字节不变 |
+| B | 脚本对 `SURFACE.txt` 产出 16 个接口名；删掉一个组，产出少一个 |
+| C | 把 `fork` 的 `form` 从 `link` 改成 `enosys`，CI 必须红 |
+| D | 删掉某实现的一个接口定义，CI 必须红并指名该接口 |
+| E2 | `refused` 与 `fails` 分开计；`cfg(c-abi = ...)` 的出现次数记录在案 |
+| F | 沙箱中只写版本号即可解析并构建 |
+
+## 3. 不做
+
+- P3（撤 `__CYGWIN__`）：需要 E1 的重测数据才能判断代价，本轮只记录证据，不落地。
+- P4（合成节点层）：openkal-musl 的移植工作量独立，另轮。
+- P6（openkal-win-ucrt）：需要 c++-abi 侧配套，另轮。
+
+---
+
+## 4. 执行记录(2026-09-20)
+
+### 4.1 E1 测量:声明第一次生效
+
+`tests/openkal/pins.toml` 的 `runtime` 从 0.10.0 抬到 0.12.0,重测 30 个成员
+(mcpp-index run `35503820978`,mcpp 2026.9.18.3,llvm@22.1.8)。
+
+| target | 之前 | 之后 |
+| --- | --- | --- |
+| `x86_64-linux-gnu` | 27 runs / 3 fails | 27 runs / 3 fails |
+| `x86_64-windows-gnu` | 15 runs / 15 fails | **23 runs / 7 fails** |
+
+**八个成员零适配转绿**:asio(经 cmp-module)、catch2、cli11、eigen、fmtlib.fmt、
+libpng、re2、lua(经 capi-lua)。全部是按 `_WIN32` / `__MINGW32__` 选分支的那一类。
+
+**剩余七个分三组**,与评审文档的预测逐条对上:
+
+| member | 诊断 | 预测 | 结果 |
+| --- | --- | --- | --- |
+| mimalloc | `atomic.h:16 'windows.h'` | `__CYGWIN__` 挡住 | 确认 |
+| sqlite3 | `sqlite3.c:29506 'windows.h'` | `__CYGWIN__` 挡住 | 确认 |
+| archive(xz) | `tuklib_physmem.c:21 'windows.h'` | 本来就要 configure | 确认 |
+| c-ares | `ares_setup.h:81 'windows.h'` | 同上 | 确认 |
+| curl | `"too small curl_off_t"` | 同上 | 确认 |
+| doctest | `undefined symbol: __cxa_thread_atexit` | **未预测** | 新发现 |
+| spdlog | 同上 | **未预测** | 新发现 |
+
+### 4.2 本轮新发现
+
+1. **`__CYGWIN__` 的 trade-off 已可结算。** mimalloc 的守卫注释写着
+   "we use windows locks on cygwin, but otherwise treat it at unix",sqlite3 的
+   `SQLITE_OS_WIN` 检测列表含 `__CYGWIN__`。**上游用这个名字回答的是"Win32 可用",
+   不是"对象格式是 PE"。** 这是 P3 的直接判据,可在下一轮落地。
+
+2. **`__cxa_thread_atexit` 缺口。** doctest 与 spdlog 此前停在缺头文件,现在编译
+   过去、停在链接。这是 openkal 之上 C++ 运行时的缺口(libc++abi 用来登记
+   `thread_local` 析构的钩子),在环境正确之前到不了。属 openkal-llvm-runtime /
+   openkal-musl,另轮。
+
+3. **clang 20.1.7 在 Windows 上对三种写法都崩。** `[c-abi-absent]` 的解析块写成
+   `parse_string` 内的语句块、写成模块导出 purview 里返回
+   `expected<vector<struct-with-strings>, string>` 的自由函数、以及用成员指针作
+   sort 投影,在 Windows 上各崩一次,其他宿主全过。最终形态是匿名命名空间里的内部
+   helper + 出参 + `optional<string>` + 比较器。
+
+4. **两个新键都必须是顶层表,而这条要求是量出来的,不是选出来的。** 旧引擎忽略未知
+   **顶层表**、拒绝已知表里的未知成员。`[kernel-abi]` 一开始就是顶层表(实测
+   2026.9.17.1 与 2026.9.18.3 都静默接受);`[c-abi-absent]` 起初写成 `[c-abi].absent`,
+   于是**每个旧 mcpp 在每个目标上拒绝整份清单**(实测:真正发布的 2026.9.18.3 归档,
+   跑 openkal-musl 0.17.0 将要发布的那份清单)。挪到顶层后两者都被忽略,**都不要求抬
+   floor**,openkal-musl 0.17.0 也不再需要等 mcpp 发版。
+
+### 4.3 PR
+
+| 仓库 | PR | 内容 |
+| --- | --- | --- |
+| mcpp | #678 | 探针带目标、撤 hostStripMacros、`[kernel-abi]`、`[c-abi-absent]`、冻结 `presents` |
+| openkal | #42 | `check-surface.sh --interfaces/--toml`,接口集由产物派生 |
+| openkal-musl | #39 | 0.17.0 `[c-abi-absent]` + CI 断言 |
+| openkal-linux | #29 | 0.15.0 `provides-interfaces`,CI 重新生成并 diff |
+| mcpp-index | #444 | 抬 pins、重测、`refused` |
+
+### 4.4 本轮未做,以及为什么
+
+| 项 | 状态 | 理由 |
+| --- | --- | --- |
+| openkal-macos 的 `provides-interfaces` | 未做 | 该实现无法在 Linux 宿主交叉构建(`aarch64-macos` 没有本机载荷),而这份清单的纪律是**由产物派生**。手写它就是这套机制存在的理由所反对的那件事。留给一次能在 macOS runner 上生成它的改动 |
+| P3 撤 `__CYGWIN__` | 未做 | 判据已具备(mimalloc 与 sqlite3 的守卫),但它会改变 libarchive 生成配置头里的 `#if defined(_WIN32) && !defined(__CYGWIN__)` 分支,代价需要一次重测才能称量。本轮把证据记入 mcpp-index 的 `docs/openkal-compat.md` |
+| P4 合成节点层 | 未做 | openkal-musl 的移植工作量独立于本轮 |
+| P6 `openkal-win-ucrt` | 未做 | 需要 c++-abi 一侧配套 |
+| `__cxa_thread_atexit` | 未做 | 本轮测量新发现;属 openkal-llvm-runtime / openkal-musl |
+
+### 4.5 两个实现的清单不同,这是这套机制存在的理由
+
+| 实现 | 接口数 | 差异 |
+| --- | --- | --- |
+| openkal-linux 0.15.0 | 15 | 全部 |
+| openkal-windows 0.10.0 | 14 | 缺 `openkal.space` |
+
+需要 `openkal.space` 的消费者在 Windows 上被**解析期**拒绝,在 Linux 上构建。
+一个给环境类别起的名字会让这两个实现看起来一样——这正是 SPEC §3.3 撤回 `hosted`
+的理由,而这里是它的第一个实例。
+
+### 4.6 探针修复的产物级读数
+
+判据不取自日志而取自探针自己的缓存。在本机用新引擎为 `riscv64-none-elf` 构建一个声明了
+`[c-abi]` 的图之后,`~/.mcpp/build-cache/v1/cenv-probe/` 里最新的那份 `-dM` dump:
+
+```
+d9d24a49fc6f76c2.dm   __riscv=1   __linux__=0   __SIZEOF_WCHAR_T__=4
+```
+
+同目录下更早的几份是 hosted Linux 目标的,读数为 `__riscv=0 __linux__=1` —— 那是
+**正确的**,因为那里宿主就是目标。区分两者的是第一行:freestanding 的探针此前也长这样。
+
+这条读数是「探针量的是它要核对的那个目标」这句话的产物级证据,不是日志级的。
+
+### 4.7 端到端:同一条需求在两个实现上给出不同答案
+
+登记发布之后,对**已发布的**实现实测一次。工程只写一条需求,按目标解析不同的实现:
+
+```toml
+[target.'cfg(linux)'.dependencies]
+openkal-linux = { version = "0.15.0", features = ["standalone"] }
+[target.'cfg(windows)'.dependencies]
+openkal-windows = { version = "0.10.0", features = ["standalone"] }
+
+[kernel-abi]
+requires-interfaces = ["openkal.space"]
+```
+
+读数:
+
+```
+=== Linux ===
+      Cached openkal-linux v0.15.0 (17 units)
+    Finished dev [unoptimized + debuginfo]
+
+=== Windows ===
+error: 'idx-probe' requires interfaces the resolved implementation does not
+       provide. [interface-not-provided]
+         openkal.space
+       provided by  openkal-windows (14 interfaces)
+```
+
+**同一个包、同一条需求,在一个目标上构建、在另一个目标上于编译任何东西之前被拒绝**,
+而拒绝点名了缺的接口、要它的包、没提供它的实现和它提供的个数。
+
+这是整轮最强的一条证据,也是 SPEC §3.3 撤回 `hosted` 的理由的第一个实例:
+**一个给环境类别起的名字,会把这两个实现藏成一样。**
+
+链条的每一环都在这条读数里:清单由产物生成(openkal CI 的 diff)、登记进索引
+(mcpp-index#445)、在解析期被读(mcpp#678)、拒绝带着可被机器读的码
+(`[interface-not-provided]`,mcpp-index 的测量按它区分 `refused` 与 `fails`)。
+
+### 4.8 索引陈旧的又一层
+
+`mcpp index update` 报 `index updated`,而 `~/.mcpp/registry/data/mcpplibs/.xlings-index-version`
+仍停在旧 artifact。删掉 `.xlings-index-cache.json` 与 `.mcpp-index-updated` 都不够;
+删掉整个 `mcpplibs/` 目录重取才拿到新的 `cf36e1e`。
+
+判据只能是那个文件里的 artifact sha,不能是命令的退出码,也不能是它打印的那句
+`index updated`。

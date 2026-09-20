@@ -647,6 +647,73 @@ mcpp build --target aarch64-ios        # resolves llvm@22.1.8 + the iPhoneOS SDK
 mcpp build --target aarch64-ios-sim    # resolves llvm@22.1.8 + the Simulator SDK
 ```
 
+## The host surface mcpp keeps, and the reason for each
+
+The rule this engine is arranged around: **a build is reproducible only if the
+tools that made it came from somewhere the next machine can get them from.**
+Every tool a build uses therefore comes from the dependency graph or from
+xlings, and the list below is the whole of what does not -- each entry with the
+reason it cannot.
+
+| item | route | the reason it is not the ecosystem's |
+|---|---|---|
+| **xlings itself** | bundled in mcpp's own payload (`[xlings] binary = "bundled"`, the default). `"system"` opts into a PATH lookup. | Bootstrap: something has to fetch the first package. The default is the bundled copy, so the host route is a choice a user makes rather than a fallthrough. |
+| **an Apple SDK** | located through `xcrun`, never installed | Not redistributable. There is nothing to package, and the refusal says so before any payload is resolved. |
+| **the iOS simulator runtime** | `simctl`, through `xim:apple-simulator-tools` | The same. |
+| **an assembler (`nasm`)** | the pinned `xim:nasm` first; the host's only when that route could not serve, and **named in the build report** when it is used | An offline machine that already has a usable assembler can still build. It used to be the other way round -- see below. |
+| **a C++ compiler on PATH (`$CXX`, else `g++`)** | `mcpp doctor` only | That command's job is to report on the host. The build path sets the compiler from a resolved payload at every branch that reaches the probe, and refuses when the payload cannot be resolved rather than falling through to PATH. |
+| **a command interpreter (`/bin/sh`, `cmd.exe` on Windows)** | `run_shell_deadline` for `[hooks]`, `run_streaming_bounded` for the xlings CLI, and the detached codegen command | A hook is a line the USER wrote in shell syntax. Shipping a shell would change the language that line is read in, so the thing mcpp depends on here is not a tool it could package -- it is the host's agreement about what that line means. |
+| **the MSVC toolset and the Windows SDK** | `msvc@system`, which a user names; or a managed toolset that has no SDK payload beside it | Not redistributable, the same category as the Apple SDK. A managed toolset BINDS its SDK and ignores `WindowsSdkDir` even when set, because a pin the environment can overwrite is not a pin; the fallback to the machine's SDK works, is not reproducible, and carries a note saying so (`SdkChoice::note`, which the caller must surface). |
+
+That list is meant to be exhaustive, and it is derived rather than remembered.
+Four sweeps over `src/` and `modules/` reach it. Every `fs::which` call --
+there are exactly five, and each is a row above: `toolchain/probe` for `$CXX`,
+`config` and two in `fallback/xlings_binary` for xlings, and `xlings/xlings`
+for the assembler. Every string literal rooted at `/usr`, `/bin`, `/opt` or
+`/etc`. Every `cmd.exe` and `COMSPEC` use. And every `getenv` naming something
+a host toolchain sets -- `CXX`, `SDKROOT`, `WindowsSdkDir`,
+`WindowsSdkVersion`, `VSINSTALLDIR`, `MACOSX_DEPLOYMENT_TARGET` (the other
+`getenv` reads are mcpp's own `MCPP_*` knobs and `HOME`, which name no host
+tool). The first version of this table
+was written from the first sweep alone and was missing the last two rows; the
+sweeps are written down here so that the next reader checks the list rather
+than trusting it.
+
+Two results of those sweeps are worth naming because they point the other way.
+`mcpp.toolchain.registry` REFUSES a payload descriptor whose `frontend` names
+`/usr/bin/g++` or climbs out with `../` -- and validates it as a string rather
+than through `std::filesystem::path`, because `path("/usr/bin/g++")
+.is_absolute()` is false on Windows, where the guard therefore did not look
+(measured 2026-09-11). And `src/runtime/elf` writes `/usr/lib` and `/usr/lib64`
+only to MODEL what a loader will search at run time; mcpp reads nothing there.
+
+Everything else comes from the graph or from xlings, including the ones most
+often assumed to be the host's: the compiler and the linker (a payload), the
+C library and the C++ runtime (packages), `ninja` and `patchelf` (xlings), and
+`ar` / `strip` / `objcopy` (derived from the resolved toolchain's own
+directory, never a bare name -- `mcpp.toolchain.registry::binutils_tool`
+returns an existing absolute path or nothing).
+
+**The assembler was the one that pointed the wrong way, and it is worth
+recording rather than quietly turning around (2026.9.20.1).**
+`find_usable_nasm` asked PATH before it looked in the sandbox. A machine with
+an assembler installed assembled with that one; a machine without downloaded
+the pinned copy. Three machines could produce three different objects from one
+source tree, and no line of either build said which assembler it used. The
+order is now the other way, and when the host copy is the one that served, the
+build says so:
+
+```
+warning: the assembler for this build is the host's ('/usr/bin/nasm'), not the one this engine pins
+  impact: two machines can assemble the same source with different assemblers, and the build records only this line
+  hint: run `xlings install nasm` so the pinned copy is used
+```
+
+**A host tool that reaches a build is not by itself the defect. A host tool
+that reaches a build silently is.** That is why the entries above are a table
+rather than a prohibition: each is reachable, each has a reason, and each says
+so where it is used.
+
 ### The host surface this adds, named and bounded
 
 Two items, both macOS-only, both in the category a proprietary runtime that

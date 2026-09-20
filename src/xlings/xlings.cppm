@@ -484,6 +484,10 @@ void ensure_ninja(const Env& env, bool quiet,
 // the index refresh and downgraded install failure to a warning).
 std::optional<std::filesystem::path> find_usable_nasm(const Env& env);
 
+// Whether `find_usable_nasm` answered with the host's assembler rather than
+// the sandbox's. A host tool that reaches a build is named in the report.
+bool nasm_is_from_host(const Env& env, const std::filesystem::path& bin);
+
 // Locate an already-installed nasm inside the mcpp sandbox
 // ($XLINGS_HOME/data/xpkgs/xim-x-nasm/<version>/...). Pure lookup: no PATH
 // probe, no install. Called lazily — only when a build plan actually
@@ -1834,13 +1838,44 @@ std::optional<std::filesystem::path> find_sandbox_nasm(const Env& env) {
     return std::nullopt;
 }
 
+// THE ECOSYSTEM COPY IS TRIED FIRST, AND IT USED TO BE TRIED SECOND.
+//
+// This function answered `which("nasm")` before looking in the sandbox, so a
+// machine with an assembler on PATH assembled with that one and a machine
+// without downloaded the pinned `xim:nasm`. Three machines could produce three
+// different objects from one source tree with nothing in the build saying so,
+// which is the property every other tool in this engine is arranged to avoid:
+// the compiler, the linker, ninja and patchelf all come from the graph or the
+// sandbox, and none of them asks PATH first.
+//
+// The host copy is kept, and only as a last resort: a machine that is offline
+// and already has a usable assembler can still build, which is the one case
+// the sandbox route cannot serve. When it is the one used, the caller says so
+// in the build report rather than leaving it silent --- `nasm_is_from_host`
+// below is how the caller tells the two apart.
 std::optional<std::filesystem::path> find_usable_nasm(const Env& env) {
+    if (auto sandboxed = find_sandbox_nasm(env)) return sandboxed;
     auto nasm_name = std::string("nasm") + std::string(mcpp::platform::exe_suffix);
     if (auto sys = mcpp::platform::fs::which(nasm_name);
         sys && nasm_version_ok(*sys)) {
         return sys;
     }
-    return find_sandbox_nasm(env);
+    return std::nullopt;
+}
+
+// Whether a path `find_usable_nasm` returned is the host's rather than the
+// sandbox's. Asked by the caller so that a host tool reaching a build is
+// NAMED there; a host tool that reaches a build silently is the defect, not
+// the host tool.
+bool nasm_is_from_host(const Env& env, const std::filesystem::path& bin) {
+    auto root = paths::xim_tool_root(env, "nasm");
+    std::error_code ec;
+    auto canonRoot = std::filesystem::weakly_canonical(root, ec);
+    auto canonBin  = std::filesystem::weakly_canonical(bin, ec);
+    if (canonRoot.empty() || canonBin.empty()) return true;
+    auto r = canonRoot.string();
+    auto b = canonBin.string();
+    return b.rfind(r, 0) != 0;
 }
 
 // ─── Index freshness ────────────────────────────────────────────────

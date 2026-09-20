@@ -1839,6 +1839,30 @@ struct Manifest {
     // manifest carrying a value here is one this engine has already confirmed
     // the right to state it.
     std::optional<mcpp::targetside::CAbiDecl>       cAbiDecl;
+    // [kernel-abi] — the interfaces a package PROVIDES or REQUIRES, named in
+    // the vocabulary of the specification that owns the layer and never in
+    // this engine's (design 2026-09-20 §5.5). Both lists are opaque strings
+    // here: the only operation performed on them is a set difference, so a
+    // specification may add an interface without this engine learning its
+    // name.
+    //
+    // WHY THE ANSWER BELONGS AT RESOLUTION AND NOT IN THE PREPROCESSOR.
+    // openkal SPEC 0.14 §6.2 tabulates three times at which information about
+    // a capability becomes available and states that each is the EARLIEST at
+    // which it exists: dependency resolution answers "may this program be
+    // built against this implementation", the link answers "was an interface
+    // used that the implementation does not provide", and a property word
+    // answers "how does it behave within an interface it provides". A source
+    // file asking `#ifdef` asks the first question during preprocessing,
+    // which is earlier than the answer exists; that is why every macro-shaped
+    // answer to it has had to be replaced by the next one.
+    //
+    // `provides-interfaces` may be stated only by a package that provides the
+    // layer, the same rule `[c-abi]` follows and for the same reason.
+    // `requires-interfaces` may be stated by anyone: it is a statement about
+    // the package making it.
+    std::vector<std::string>                        kernelAbiProvidesInterfaces;
+    std::vector<std::string>                        kernelAbiRequiresInterfaces;
     // [package] c-environment = "platform" — this package's own translation
     // units compile in the triple's OWN default environment even when the
     // graph's `c-abi` declares another (design §3.4). Empty = no override, the

@@ -139,6 +139,13 @@ enum class Code {
     // 而不是被信任"): `sizeof(long)`, `__SIZEOF_WCHAR_T__`, or the presence of
     // an environment-identity macro did not match what was declared.
     CEnvVerificationMismatch,
+    // A package's `[kernel-abi] requires-interfaces` names an interface the
+    // resolved provider's `provides-interfaces` does not list (design
+    // 2026-09-20 §5.5). Refused at dependency resolution because that is the
+    // earliest time the question can be answered (openkal SPEC 0.14 §6.2);
+    // the same build would otherwise reach the answer at the link, naming an
+    // undefined symbol rather than the interface and the package.
+    InterfaceNotProvided,
     // `[build] platform-dependencies = "refuse"` and a package in the graph
     // brings a platform SDK dependency (design §6).
     PlatformDependency,
@@ -184,6 +191,7 @@ constexpr std::string_view name(Code c) {
         case Code::CEnvUnrealisable:     return "c-env-unrealisable";
         case Code::CEnvVerificationMismatch:
                                          return "c-env-verification-mismatch";
+        case Code::InterfaceNotProvided: return "interface-not-provided";
         case Code::PlatformDependency:   return "platform-dependency";
         case Code::Other:                return "other";
     }

@@ -4,6 +4,8 @@ import std;
 import mcpp.build.flags;
 import mcpp.build.distribution;
 import mcpp.modgraph.scanner;
+import mcpp.build.ninja;
+import mcpp.targetside;
 
 namespace {
 
@@ -207,4 +209,139 @@ TEST(LinkShape, WindowsHostSeparatesPeFromTargetsNamedByFlag) {
     // The canadian GCC cross to x86_64-linux-musl names its target by prefix
     // and keeps the line its CI job verifies.
     EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Elf, false, false), LinkShape::PeLld);
+}
+
+// ── c_abi_absent_facility_advice — the manifest reads back at the link ──────
+//
+// `undefined reference to 'fork'` is true and useless: it says a symbol is
+// missing without saying whether that is a defect, a missing dependency, or a
+// deliberate limit of the environment. The manifest already distinguishes
+// those (design 2026-09-20 §5.7.5); these pin that it is read back.
+
+TEST(CAbiAbsentAdvice, ALinkAbsenceNamedInTheManifestIsExplained) {
+    std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
+        {"fork", mcpp::targetside::CAbiAbsentForm::Link,
+         "openkal has no process image duplication"},
+    };
+    auto a = mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: fork\n", "musl", absent);
+    ASSERT_FALSE(a.empty());
+    EXPECT_NE(a.find("fork"), std::string::npos);
+    EXPECT_NE(a.find("no process image duplication"), std::string::npos);
+    // THE WHOLE CLAUSE, NOT `find("musl")`. The name was interpolated from
+    // two conditionals -- an opening paren and the name -- and the closing
+    // one was never emitted, so every reader saw `(musl declares that it
+    // does not supply ...`. `find("musl")` is true of that sentence too,
+    // which is why it took a real link to notice. Assert the rendering.
+    EXPECT_NE(a.find("the C library in this graph (musl) declares"),
+              std::string::npos) << a;
+}
+
+TEST(CAbiAbsentAdvice, AnUnnamedCLibraryLeavesNoEmptyParentheses) {
+    // The other side of the same substitution: with no name there must be no
+    // parenthetical at all, rather than `graph () declares`.
+    std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
+        {"fork", mcpp::targetside::CAbiAbsentForm::Link, ""},
+    };
+    auto a = mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: fork\n", "", absent);
+    ASSERT_FALSE(a.empty());
+    EXPECT_NE(a.find("the C library in this graph declares"),
+              std::string::npos) << a;
+    EXPECT_EQ(a.find("()"), std::string::npos) << a;
+}
+
+TEST(CAbiAbsentAdvice, TheGnuSpellingIsMatchedToo) {
+    std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
+        {"fork", mcpp::targetside::CAbiAbsentForm::Link, ""},
+    };
+    auto a = mcpp::build::c_abi_absent_facility_advice(
+        "main.o: undefined reference to `fork'\n", "musl", absent);
+    EXPECT_FALSE(a.empty());
+}
+
+TEST(CAbiAbsentAdvice, AnAbsenceThatReachesTheProgramAtRunTimeIsNotMatched) {
+    // `enosys` and `accepted-no-effect` reach a program by construction while
+    // it runs; matching them against a link diagnostic would report a
+    // coincidence of spelling as an explanation.
+    std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
+        {"mprotect", mcpp::targetside::CAbiAbsentForm::Enosys, "no protection op"},
+        {"tcsetattr", mcpp::targetside::CAbiAbsentForm::AcceptedNoEffect, ""},
+    };
+    EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: mprotect\n", "musl", absent).empty());
+    EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
+        "undefined reference to `tcsetattr'\n", "musl", absent).empty());
+}
+
+TEST(CAbiAbsentAdvice, ALinkFailureNamingSomethingElseGetsNoNote) {
+    std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
+        {"fork", mcpp::targetside::CAbiAbsentForm::Link, ""},
+    };
+    EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: my_own_function\n", "musl", absent)
+                    .empty());
+}
+
+TEST(CAbiAbsentAdvice, ALibraryThatEnumeratedNothingProducesNoNote) {
+    EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: fork\n", "musl", {}).empty());
+}
+
+TEST(CAbiAbsentAdvice, ALongerSymbolWithTheSamePrefixIsNotExplained) {
+    // `undefined symbol: open` is a prefix of `undefined symbol: opendir`.
+    // A substring search would answer a link failure with a row that has
+    // nothing to do with it, and an explanation that is confidently wrong is
+    // worse than the linker's own message.
+    std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
+        {"open", mcpp::targetside::CAbiAbsentForm::Link, "not supplied"},
+    };
+    EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: opendir\n", "musl", absent).empty());
+    EXPECT_FALSE(mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: open\n", "musl", absent).empty());
+}
+
+TEST(CAbiAbsentAdvice, TheListSurvivesAWriteAndReadBesideBuildNinja) {
+    // The two paths that report a failed build --- the one with a plan and the
+    // fast path, which has none by construction --- must give the same advice,
+    // or it appears depending on whether build.ninja happened to be up to
+    // date. The list travels between them in a file.
+    Tmp dir;
+    std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
+        {"fork", mcpp::targetside::CAbiAbsentForm::Link, "no image duplication"},
+        {"mprotect", mcpp::targetside::CAbiAbsentForm::Enosys, ""},
+    };
+    mcpp::build::write_c_abi_absent_sidecar(dir.path, "musl", absent);
+    auto [name, back] = mcpp::build::read_c_abi_absent_sidecar(dir.path);
+    EXPECT_EQ(name, "musl");
+    ASSERT_EQ(back.size(), 2u);
+    EXPECT_EQ(back[0].name, "fork");
+    EXPECT_EQ(back[0].form, mcpp::targetside::CAbiAbsentForm::Link);
+    EXPECT_EQ(back[0].note, "no image duplication");
+    EXPECT_EQ(back[1].form, mcpp::targetside::CAbiAbsentForm::Enosys);
+    EXPECT_TRUE(back[1].note.empty());
+    // And the advice built from the read-back list is the advice the plan
+    // path would have given.
+    EXPECT_FALSE(mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: fork\n", name, back).empty());
+}
+
+TEST(CAbiAbsentAdvice, ADirectoryNoBuildWroteToYieldsNothing) {
+    Tmp dir;
+    auto [name, back] = mcpp::build::read_c_abi_absent_sidecar(dir.path);
+    EXPECT_TRUE(name.empty());
+    EXPECT_TRUE(back.empty());
+}
+
+TEST(CAbiAbsentAdvice, AGraphThatDeclaresNoAbsenceLeavesNoSidecar) {
+    // A build whose C library states nothing must not leave a file behind for
+    // the next build to read: the fast path would then explain a failure with
+    // a list the current graph never declared.
+    Tmp dir;
+    mcpp::build::write_c_abi_absent_sidecar(dir.path, "musl",
+        {{"fork", mcpp::targetside::CAbiAbsentForm::Link, ""}});
+    mcpp::build::write_c_abi_absent_sidecar(dir.path, "", {});
+    auto [name, back] = mcpp::build::read_c_abi_absent_sidecar(dir.path);
+    EXPECT_TRUE(back.empty());
 }

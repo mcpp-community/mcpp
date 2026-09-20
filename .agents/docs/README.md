@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-296 records.
+302 records.
 
 ## By subject
 
@@ -30,6 +30,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### design
 
+- [openkal 生态：能力的时刻模型，以及 C 环境方案空间的划分](2026-09-20-openkal-c-environment-ecosystem-design.md) — active
+- [#674:`presents = "posix"` 在 Windows 上兑现契约的下半段](2026-09-19-issue-674-cenv-posix-preinclude-design.md) — superseded
 - [The build database of #636, and two defects on the way to the latest xlings](2026-09-14-636-build-database-and-the-latest-xlings.md) — active
 
 ### docs
@@ -48,9 +50,19 @@ Records that declare one. Everything else is listed by date below.
 
 - [Two answers and two silences: the scanner's second grammar, and the manifest keys nothing reads](2026-09-09-two-answers-and-two-silences.md) — active
 
+### plan
+
+- [C 环境生态方案：执行计划](2026-09-20-ecosystem-execution-plan.md) — active
+
 ### plugins
 
 - [The category the plugin taxonomy does not name, and what a platform actually decomposes into](2026-09-11-distribution-plugins-and-platform-decomposition.md) — active
+
+### review
+
+- [本轮生态级自审](2026-09-20-wave-self-review.md) — active
+- [#674 设计方案评审：`-include unistd.h` 在 Windows + `presents = "posix"` 上的可行性](2026-09-20-issue-674-design-review.md) — active
+- [`__cxa_thread_atexit` 在 openkal-Windows 上:定位到一层,第二层未定位](2026-09-20-cxa-thread-atexit-finding.md) — active
 
 ### targets
 
@@ -81,6 +93,12 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-09
 
+- [本轮生态级自审](2026-09-20-wave-self-review.md) — active
+- [openkal 生态：能力的时刻模型，以及 C 环境方案空间的划分](2026-09-20-openkal-c-environment-ecosystem-design.md) — active
+- [#674 设计方案评审：`-include unistd.h` 在 Windows + `presents = "posix"` 上的可行性](2026-09-20-issue-674-design-review.md) — active
+- [C 环境生态方案：执行计划](2026-09-20-ecosystem-execution-plan.md) — active
+- [`__cxa_thread_atexit` 在 openkal-Windows 上:定位到一层,第二层未定位](2026-09-20-cxa-thread-atexit-finding.md) — active
+- [#674:`presents = "posix"` 在 Windows 上兑现契约的下半段](2026-09-19-issue-674-cenv-posix-preinclude-design.md) — superseded
 - [运行时绑定方案 v3:让 mcpp 真正安装它所声明的运行时](2026-09-17-runtime-binding-multi-repo-plan.md) — landed
 - [#662:目标侧由依赖图提供时，编译器的隐式头文件搜索仍指向宿主](2026-09-17-issue-662-graph-target-header-isolation-plan.md) — active
 - [Issue #660 分析:`glibc@2.44` 绑定在 2.44.3 发布后解析失败](2026-09-17-issue-660-glibc-line-binding-analysis.md) — landed

@@ -412,7 +412,24 @@ a program classifying the outcome reads `reason`:
 | `package-cycle` | the dependency graph contains a cycle of packages; the message names its edges *(2026.9.16.1+)* |
 | `program-cxx-runtime-split` | a program or test that states a self-contained C++ runtime loads a C++ shared library of the build that couples to a shared one *(2026.9.16.1+)* |
 | `static-package-in-two-images` | a static package several images of the build reach, on a target where an image cannot use another image's copy *(2026.9.16.1+)* |
+| `c-env-unrealisable` | the resolved C library's `[c-abi]` declaration has no known realisation for this target, or the resolved compiler cannot carry one out *(2026.9.18.1+)* |
+| `c-env-verification-mismatch` | the probe compiled with the realised `[c-abi]` configuration disagrees with what was declared *(2026.9.18.1+)* |
+| `platform-dependency` | `[build] platform-dependencies = "refuse"` and a package in the graph brings a platform SDK *(2026.9.18.1+)* |
+| `interface-not-provided` | a package's `[kernel-abi] requires-interfaces` names an interface the resolved implementation does not provide *(2026.9.20.1+)* |
+| `apple-sdk-absent` | the target needs an Apple SDK this machine does not provide; it is located rather than installed, because it is not redistributable |
+| `lld-required-absent` | the target links through lld directly and the resolved toolchain payload ships none |
+| `host-tool-toolchain` | `build.mcpp` under a cross `--target` needs a resolvable HOST toolchain and none is set |
+| `std-module-precompile` | the standard library's module could not be precompiled for this configuration |
 | `other` | a refusal whose branch has not been given a token yet |
+
+**One token is also printed by `mcpp build` itself.**
+`interface-not-provided` appears in the refusal's own message, in brackets, the
+way `E0006` does. A refusal that only a person can recognise forces every
+machine consumer to match prose, and prose a package's own compile error could
+coincidentally contain; the mcpp-index compatibility measurement tells "this
+graph does not supply what the member asked for" from "the member did not
+build" on exactly this token, and that distinction decides whether a member
+counts against a compatibility figure.
 
 **Exit 0 whenever the question was answered, including "refused".** "Would
 this build, and if not why" is answered successfully by "no, because the row's

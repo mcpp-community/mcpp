@@ -180,6 +180,49 @@ inline std::optional<CAbiBuiltins> parse_c_abi_builtins(std::string_view v) {
 // omits one has said nothing about it, and "nothing" is not the same value as
 // any of the three closed sets could name; `builtins` alone defaults to
 // `platform` (today's behaviour), per §3.2.1.
+// HOW A FACILITY THIS C LIBRARY DOES NOT SUPPLY REACHES THE PROGRAM THAT
+// ASKS FOR IT (design 2026-09-20 §5.7.5).
+//
+// The set of POSIX names is not enumerable in a manifest — there are about
+// twelve hundred — and enumerating it is the mistake openkal SPEC 0.14 §3.3
+// records withdrawing. The EXCEPTIONS are enumerable: openkal-musl's own
+// README lists six. Stating them is what turns a paragraph of prose into
+// something a CI run can contradict.
+//
+// `link` is the shape openkal's own capability model requires of an
+// implementation (§6.1: "a conforming implementation shall not provide an
+// interface whose operations report a lack of support at run time; the
+// specification treats run-time refusal as a defect"). The other two are
+// departures from it, and naming them is the point: a departure that has a
+// name is a departure somebody can count.
+enum class CAbiAbsentForm {
+    Link,             // the definition is absent; the program fails to link
+    Enosys,           // the definition exists and reports that it cannot act
+    AcceptedNoEffect, // the call succeeds and part of what it asked for is not done
+};
+
+inline std::string_view c_abi_absent_form_name(CAbiAbsentForm f) {
+    switch (f) {
+        case CAbiAbsentForm::Link:             return "link";
+        case CAbiAbsentForm::Enosys:           return "enosys";
+        case CAbiAbsentForm::AcceptedNoEffect: return "accepted-no-effect";
+    }
+    return "link";
+}
+
+inline std::optional<CAbiAbsentForm> parse_c_abi_absent_form(std::string_view v) {
+    if (v == "link")               return CAbiAbsentForm::Link;
+    if (v == "enosys")             return CAbiAbsentForm::Enosys;
+    if (v == "accepted-no-effect") return CAbiAbsentForm::AcceptedNoEffect;
+    return std::nullopt;
+}
+
+struct CAbiAbsentEntry {
+    std::string    name;   // the facility, spelled as the program spells it
+    CAbiAbsentForm form = CAbiAbsentForm::Link;
+    std::string    note;  // why, in one sentence; carried into the diagnostic
+};
+
 struct CAbiDecl {
     bool          declared   = false;   // was `[c-abi]` present at all
     bool          hasPresents = false;
@@ -189,6 +232,11 @@ struct CAbiDecl {
     CAbiDataModel dataModel  = CAbiDataModel::ArchDefault;
     int           wcharBits  = 0;       // 16 or 32
     CAbiBuiltins  builtins   = CAbiBuiltins::Platform;
+    // `[c-abi-absent]` — the facilities this C library does not supply, and
+    // the shape in which each absence reaches a program. Empty is the
+    // ordinary case and says nothing: a library that lists none has not
+    // claimed to supply everything, it has declined to enumerate.
+    std::vector<CAbiAbsentEntry> absent;
 };
 
 
@@ -434,6 +482,38 @@ struct Requirement {
     CapLayer    layer;
     std::string interfaceName;   // what that layer must resolve to
 };
+
+// ── Interface enumeration: the resolution-time half of the capability model ──
+//
+// openkal SPEC 0.14 §3.3 withdrew the one name it had given to a SET of
+// interfaces (`hosted`) and recorded why: "a name that describes a class of
+// environment is falsified by an environment nobody had in mind", and that one
+// was falsified inside its own ecosystem within a release. What replaced it is
+// enumeration — "a consumer that needs five names five ... in its own package,
+// which is where a convention among consumers belongs".
+//
+// This function is the whole of the engine's participation in that: a set
+// difference over opaque strings. The names belong to whichever specification
+// owns the layer; adding one to that specification requires no release of this
+// engine, and misspelling one here produces a refusal naming the string rather
+// than a silently disabled check, because a name that is not provided is
+// missing whether or not it exists.
+//
+// WHY A REFUSAL AND NOT A WARNING. §6.2 places this question at dependency
+// resolution because that is the earliest time it can be answered. A build
+// allowed to proceed would reach the same answer at the link, in a diagnostic
+// naming an undefined symbol rather than the interface and the package that
+// asked for it — later, and in a vocabulary the package author did not write.
+inline std::vector<std::string> interfaces_not_provided(
+    const std::vector<std::string>& required,
+    const std::vector<std::string>& provided) {
+    std::vector<std::string> missing;
+    for (auto const& r : required)
+        if (std::ranges::find(provided, r) == provided.end())
+            missing.push_back(r);
+    return missing;
+}
+
 
 // ── Resolver input ───────────────────────────────────────────────────────────
 //
