@@ -16,21 +16,27 @@
 # its own directory. A section that cannot run says so and is listed again at
 # the end, because a run that reports only failures cannot be told from one that
 # examined nothing.
-# TWO RUNS, AND THE READING FROM EACH (host dry run, 2026-09-20):
+# TWO RUNS, AND THE READING FROM EACH (host dry run, 2026-09-20, against the
+# genuine published archive of the older release rather than a local build):
 #
-#   mcpp 2026.9.17.1 (published)   fails=3
+#   mcpp 2026.9.18.3 (published)   fails=2
 #     B  a requirement the implementation does not provide must be refused
-#     C  a declared absence with a known shape must be accepted
-#     C  the refusal does not name the shapes -- "[c-abi] has no member 'absent'"
+#     C  an absence with an unknown shape must be refused
 #   mcpp 2026.9.20.1               fails=0
 #
-# B's FIRST leg passes on both, and that is the documented behaviour rather
-# than a hole: `[kernel-abi]` is an unknown top-level table to an older engine
-# and is ignored, so a graph that satisfies its requirements builds either way.
-# The leg that distinguishes the releases is the refusal. C fails outright on
-# the older engine because `[c-abi-absent]` is a new key inside a table it
-# knows, where an unrecognised key is a parse error -- the asymmetry docs/22
-# records.
+# ONE PASSING LEG IN EACH CHANGE SECTION IS THE EVIDENCE, NOT A HOLE. Both new
+# tables are top-level, and an older engine IGNORES an unknown top-level table:
+# so B's first leg (a graph that satisfies its requirements) and C's first leg
+# (an absence with a known shape) build on both releases, and that is exactly
+# the backward compatibility this wave claims. What distinguishes the releases
+# is the REFUSAL in each: an older engine cannot refuse what it never read.
+#
+# An earlier revision of this file recorded three failures against 2026.9.17.1,
+# one of them `[c-abi] has no member 'absent'`. That reading was taken while
+# the absence table was nested inside `[c-abi]`, where an unrecognised member
+# is a parse error and the whole manifest was refused. Moving the table to the
+# top level is what turned that failure into the passing first leg above --
+# see docs/22 and the design's §5.7.5.
 set -u
 
 VER="${MCPP_VERIFY_VERSION:?set MCPP_VERIFY_VERSION}"

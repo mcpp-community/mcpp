@@ -59,7 +59,7 @@ status: active
 | `[c-abi-absent]` 与产物一致 | 是 | openkal-musl CI 翻转一行并要求脚本拒绝 |
 | `provides-interfaces` 与产物一致 | 是 | openkal-linux / -windows CI 重新生成并 diff |
 | 接口清单不是"打印 SURFACE.txt 的每一组" | 是 | openkal CI 的半组腿：`openkal.fs` 只导出两个名字，必须不被列出 |
-| 沙箱 CHANGE 段确实区分两个版本 | 是 | 对 2026.9.17.1 跑出 fails=3，对 2026.9.20.1 跑出 fails=0 |
+| 沙箱 CHANGE 段确实区分两个版本 | 是 | 对**真正发布的 2026.9.18.3 归档**跑出 fails=2，对 2026.9.20.1 跑出 fails=0。每个 CHANGE 段里各有一条腿两版都过——那不是洞，正是本轮主张的向后兼容：旧引擎忽略未知顶层表，所以**读不到就拒不了**，区分两版的是各自的那条拒绝腿 |
 
 **一条判据曾经不可证伪并已更正**：`CenvProbe` 的两个端到端探针测试在 gcc 宿主上 skip。
 跳过的判据等于没有判据，所以不变量被提升为 `assemble_argv` 这个纯函数，五个新测试不需要
