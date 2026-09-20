@@ -595,6 +595,10 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
         std::vector<std::string> unrunnable;    // tests built, none executed (#544)
         std::vector<std::pair<std::string, long long>> memberTimes;
         int totalPassed = 0, totalFailed = 0, totalNotRun = 0;
+        // Carried for the same reason `totalNotRun` is: without it a
+        // `--no-run` workspace reports "0 passed; 0 failed", which is
+        // what a workspace with no tests at all reports.
+        int totalBuilt = 0;
         auto tWs = std::chrono::steady_clock::now();
         auto ws_ms = [&tWs] {
             return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -622,6 +626,7 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
             totalPassed += sum.passed;
             totalFailed += sum.failed;
             totalNotRun += sum.notRun;
+            totalBuilt  += sum.built;
             memberTimes.emplace_back(mp, sum.elapsedMs);
             auto secs = static_cast<double>(sum.elapsedMs) / 1000.0;
             if (r == 2 && sum.failed == 0 && sum.notRun > 0) {
@@ -677,10 +682,11 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
             // `unrunnable_members` are #544's — tests that were built and not
             // executed, and the members all of whose tests were.
             std::println("{{\"workspace_summary\":{{\"members\":{},\"passed\":{},\"failed\":{},"
-                         "\"tests_not_run\":{},"
+                         "\"tests_not_run\":{},\"tests_built\":{},"
                          "\"failed_members\":[{}],\"unrunnable_members\":[{}],"
                          "\"not_run\":[{}],\"elapsed_ms\":{}}}}}",
                          members->size(), totalPassed, totalFailed, totalNotRun,
+                         totalBuilt,
                          join(failed), join(unrunnable), join(notRun), wsElapsed);
             std::fflush(stdout);
             return rc;
@@ -709,6 +715,8 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
         // built and not executed must not read as a passing member.
         std::string notRunCounts = totalNotRun
             ? std::format("; {} not run", totalNotRun) : std::string{};
+        if (totalBuilt)
+            notRunCounts += std::format("; {} built, not run", totalBuilt);
         if (failed.empty() && notRun.empty() && unrunnable.empty())
             mcpp::ui::status("workspace result",
                 std::format("ok. {} member(s); {} passed; 0 failed{}; finished in {:.2f}s",

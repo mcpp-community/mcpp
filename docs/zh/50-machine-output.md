@@ -485,9 +485,11 @@ mcpp test [pattern] [--workspace] --message-format json
 含义不变 —— 有测试运行并失败;0 表示每个测试都运行并通过。只读退出码判 pass/fail 的
 客户端必须处理 2;由 `failed == 0` 推断「全部通过」的客户端还必须读 `not_run`。
 
-`workspace_summary` 增加 `tests_not_run`(各成员之和)与 `unrunnable_members`(所有
-测试都 `not_run` 的成员),与既有的 `not_run` 列表并列;后者仍然指
-`--workspace-timeout` 到达时尚未开始的成员。
+`workspace_summary` 增加 `tests_not_run`(各成员之和)、`tests_built`(`--no-run` 下
+构建的测试数之和)与 `unrunnable_members`(所有测试都 `not_run` 的成员),与既有的
+`not_run` 列表并列;后者仍然指 `--workspace-timeout` 到达时尚未开始的成员。
+`tests_built` 与 `tests_not_run` 分开,理由和逐成员的那两个字段一样:一个是被悬着的
+问题,另一个是压根没问的问题。
 
 ### 暂存清单
 

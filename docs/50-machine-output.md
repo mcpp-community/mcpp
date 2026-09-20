@@ -560,10 +560,13 @@ test ran and passed. A client that read the exit code alone as pass/fail must
 handle 2, and a client that inferred "everything passed" from `failed == 0`
 must also read `not_run`.
 
-`workspace_summary` adds `tests_not_run` (the sum over members) and
+`workspace_summary` adds `tests_not_run` (the sum over members),
+`tests_built` (the sum of tests built under `--no-run`) and
 `unrunnable_members` (members all of whose tests were `not_run`), alongside the
 existing `not_run` list, which continues to name members the
-`--workspace-timeout` stopped before they started.
+`--workspace-timeout` stopped before they started. `tests_built` is separate
+from `tests_not_run` for the reason the per-member fields are: one is a
+question left open, the other is a question that was not asked.
 
 ### The stage manifest
 

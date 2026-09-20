@@ -22,7 +22,7 @@
 # same situation -- tests built, nothing run -- on every host, for the native
 # target, with nothing installed.
 #
-# Four legs:
+# Five legs:
 #   A  without `--no-run`: exit 2, and the tests are reported `not run`.
 #   B  with `--no-run`: exit 0, and the count is reported as built.
 #   C  a test that does not COMPILE is still a failure under `--no-run`.
@@ -31,6 +31,8 @@
 #   D  `--no-run` with `--no-runner` is refused. The two names differ by one
 #      character and mean opposite things, and neither is a weaker form of the
 #      other, so there is no reading of the pair to prefer.
+#   E  `--workspace` totals the built count. A count that stops at the member
+#      level leaves the same false reading one level up.
 set -e
 
 MCPP="${MCPP:-mcpp}"
@@ -139,6 +141,44 @@ fi
 case "$out_d" in
     *"cannot be combined"*) ;;
     *) echo "FAIL: D did not explain why the pair is refused"; printf '%s\n' "$out_d" | tail -3; exit 1 ;;
+esac
+
+# --- E: the workspace total says it too ----------------------------------
+# A count that stops at the member level is the same defect one level up: a
+# workspace summary reading "0 passed; 0 failed" is what a workspace with no
+# tests reports.
+rm -f tests/gamma.cpp
+mkdir -p members/one/tests members/two/tests
+cat > mcpp.toml <<EOF
+[workspace]
+members = ["members/one", "members/two"]
+EOF
+for m in one two; do
+    cat > "members/$m/mcpp.toml" <<EOF
+[package]
+name    = "$m"
+version = "0.1.0"
+
+[target.$host]
+runner = ["mcpp-no-such-runner-exists"]
+EOF
+    cat > "members/$m/tests/t.cpp" <<'EOF'
+int main() { return 0; }
+EOF
+done
+set +e
+out_e="$("$MCPP" test --workspace --target "$host" --no-run 2>&1)"
+rc_e=$?
+set -e
+printf '%s
+' "$out_e" | tail -3
+if [ "$rc_e" != 0 ]; then
+    echo "FAIL: E expected exit 0 from a --workspace --no-run run, got $rc_e"
+    exit 1
+fi
+case "$out_e" in
+    *"2 built, not run"*) ;;
+    *) echo "FAIL: E the workspace total did not report the built tests"; exit 1 ;;
 esac
 
 echo "PASS: --no-run builds the tests and says so, and says nothing else"
