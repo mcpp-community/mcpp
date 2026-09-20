@@ -57,10 +57,15 @@ combination, "PE format with a POSIX-presenting C environment," is
 `__CYGWIN__`/`__CYGWIN32__`, which the Cygwin-flavoured realisation
 therefore leaves DEFINED rather than folding into the three rows above —
 see [22's own note](22-target-side.md#the-c-environment-a-c-abi-package-presents-mcpp-2026918)
-for the full trade-off (it is not a settled fact, and may flip). Reading it
-as a fourth C-environment macro, rather than as what it actually is — an
-object-format fact `__CYGWIN__` happens to be the only name for — is
-exactly the shape of confusion this whole section exists to head off.
+for the full trade-off. Since 2026.9.21.1 `__CYGWIN__` is no longer the only
+name for that fact: mcpp defines `__mcpp_target_<os>__` for every target
+(`docs/21`, "The macros mcpp defines"), so source needing to know the target
+under a presented environment has a name mcpp owns. `__CYGWIN__` remains
+defined while the ecosystem's installed headers move onto the new name, and
+is then withdrawn. Reading either as a fourth C-environment macro, rather
+than as what they are — a fact about the TARGET, not about the environment
+presented above it — is exactly the shape of confusion this whole section
+exists to head off.
 
 **`__openkal__` — the rule.** The engine defines it, for every target-side
 unit, whenever the resolved `kernel-abi` layer's interface name is

@@ -7,6 +7,26 @@
 
 ## [2026.9.21.1] - 2026-09-21
 
+### 引擎定义的宏成为一份规范,而规范就是那个模块
+
+`src/toolchain/predefines.cppm` 同时是契约与实现:契约是模块里的数据(`kContract`),
+发出是它旁边的函数(`define_tokens`),`tests/unit/test_predefines.cpp` **双向**断言两者
+一致——发出去却不在表里、或在表里却没人发,都让构建变红。规范与实现分处两地就会漂移,
+这一点本轮已经在理由令牌表上付过一次学费。
+
+**`__mcpp_target_<os>__`,覆盖所有平台而不只是 Windows。** 拼法取自三元组自己的 `os`
+字段,**引擎不认识任何操作系统名**——三元组解析器新增一个目标,它的宏随之存在。实测:
+`x86_64-linux-gnu` → `__mcpp_target_linux__`;`x86_64-windows-gnu` →
+`__mcpp_target_windows__`;`riscv64-none-elf` → `__mcpp_target_none__`。
+
+**总是定义,不只在有东西被压掉时。** 条件式发出会让缺席含义不唯一:「不是 Windows」与
+「是 Windows 但没有东西压掉它的宏」会读成同一件事。
+
+**命名:小写,`__mcpp_` 前缀。** 业界并存两套约定——厂商与产品名大写(`__APPLE__`、
+`_WIN32`),系统种类名小写(`__linux__`、`__unix__`)——这些命名的是目标种类,在真实守卫里
+与第二族并排。`__mcpp_` 前缀承重:**一个 mcpp 拥有的名字,语义由 mcpp 自己定。**
+`__openkal__` 收进同一份契约;`__unix__` 列在表里但标注「供给而非拥有」,保持标准拼法。
+
 ### mcpp 为「这个目标是 Windows」给出自己的名字
 
 `presents = "posix"` 在 Windows 上实现成 Cygwin 形状的目标,有意压掉 `_WIN32`——那正是

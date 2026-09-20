@@ -299,35 +299,18 @@ inline std::expected<Realisation, std::string> realise(
                               "on x86_64 only; this arch has no verified "
                               "substitute triple");
             // `--target=x86_64-pc-cygwin`, on the COMPILE line only (module
-            // header above), PLUS `-D__mcpp_target_windows__`.
+            // header above).
             //
-            // THE SUBSTITUTION HIDES THE TARGET FROM THE PREPROCESSOR, AND
-            // SOMETHING HAS TO SAY IT ANYWAY. `_WIN32`/`_WIN64` are what
-            // ordinary code reads to learn that the calling convention is
-            // Win64 and the object format PE, and this realisation suppresses
-            // them on purpose --- that is the whole point of presenting
-            // POSIX. But the ABI did not change with the environment: the
-            // register save areas are still Win64's.
-            //
-            // Two INSTALLED headers in this ecosystem size records by that
-            // fact and cannot read a package-private define, because an
-            // application's own compile reads them:
-            //
-            //   openkal-musl        `port/include/bits/setjmp.h`  -> jmp_buf
-            //   openkal-llvm-runtime `__libunwind_config.h`       -> unw_context_t
-            //
-            // Both currently read `__CYGWIN__`, for want of any other name
-            // mcpp keeps defined target-wide. Getting it wrong is silent:
-            // setjmp.h's own comment says "a mismatch nothing reports until
-            // the record overruns", and libunwind's case was a write through
-            // a register read from the wrong save slot on the first `throw`.
-            //
-            // So mcpp states it itself. `__mcpp_target_windows__` answers the
-            // question those headers actually ask --- is this target Windows,
-            // whatever C environment is presented on top --- and it is mcpp's
-            // own name, so its meaning is not decided by anyone else's
-            // history. It is emitted only here, where the target's own macros
-            // are suppressed; an ordinary Windows build still has `_WIN64`.
+            // THE SUBSTITUTION HIDES THE TARGET FROM THE PREPROCESSOR, and
+            // what says it anyway is NOT emitted here. `_WIN32`/`_WIN64` are
+            // suppressed on purpose --- that is what presenting POSIX means
+            // --- while the ABI is unchanged, and source that sizes a Win64
+            // record still has to know. `__mcpp_target_<os>__` answers that,
+            // for every target and not only this one, and it is broadcast in
+            // `mcpp.build.prepare` rather than realised here: it is a fact
+            // about the TARGET, true whether or not any `[c-abi]` block
+            // exists, so deriving it from a declaration would make its
+            // absence ambiguous. See docs/21, "The macros mcpp defines".
             //
             // `__CYGWIN__` IS STILL DEFINED, AND THAT IS A SEQUENCE, NOT A
             // DECISION TO KEEP IT. The 30-member measurement settled that the
@@ -348,10 +331,8 @@ inline std::expected<Realisation, std::string> realise(
             // reported by nothing. A loud failure in four third-party members
             // is the better state to hold for one release.
             r.tokens.push_back("--target=x86_64-pc-cygwin");
-            r.tokens.push_back("-D__mcpp_target_windows__=1");
             r.expectDefined.push_back("__unix__");
             r.expectDefined.push_back("__CYGWIN__");
-            r.expectDefined.push_back("__mcpp_target_windows__");
             r.expectUndefined.push_back("_WIN32");
             cygwinIdentity = true;
         } else if (decl.presents == CAbiPresents::Windows) {

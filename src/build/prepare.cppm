@@ -35,6 +35,7 @@ import mcpp.toolchain.clang;
 import mcpp.toolchain.hostflags;   // the compile-token producer the package std module reuses
 import mcpp.toolchain.cenv;        // [c-abi] declaration → compiler configuration (design 2026-09-18)
 import mcpp.toolchain.cenv_probe;  // [c-abi] declaration is checked, not trusted (design §3.2)
+import mcpp.toolchain.predefines;  // the macros this engine defines: contract and emission in one module
 import mcpp.toolchain.cppfly;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
@@ -11146,14 +11147,36 @@ prepare_build(bool print_fingerprint,
         // `-fno-builtin-memset_pattern16`) and none is rejected — so nothing
         // here is filtered a second time; if a future token IS GAS-hostile,
         // `cenv::realise` is where to split it, not this broadcast.
+        // THE MACROS THIS ENGINE DEFINES --- the contract, the rules for
+        // reading them and the reason each one exists rather than a manifest
+        // key, are `mcpp.toolchain.predefines`. That module is the
+        // specification and the implementation of the same thing, so this
+        // site decides only WHERE the tokens go, never WHICH they are.
+        if (tc) {
+            std::string targetOs;
+            if (auto ttOs = mcpp::toolchain::triple::parse(tc->targetTriple))
+                targetOs = ttOs->os;
+            const auto engineDefines =
+                mcpp::toolchain::predefines::define_tokens(
+                    targetOs, tc->kernelAbiIsOpenkal);
+            // Into `cflags`/`cxxflags` only: these are all `-D`, and the
+            // channel that builds an assembly unit's flags keeps the -D/-U/-I
+            // words of those two (`compile_commands::unit_asm_flags`), so a
+            // second copy here would put each one on a `.S` line twice.
+            for (auto& p : packages) {
+                appendUniqueFlags(p.privateBuild.cflags,   engineDefines);
+                appendUniqueFlags(p.privateBuild.cxxflags, engineDefines);
+            }
+        }
+
         if (tc && (tc->kernelAbiIsOpenkal || !tc->cEnvTokens.empty()
                    || !tc->cEnvBuiltinsTokens.empty())) {
-            static const std::vector<std::string> kOpenkalDefine = {"-D__openkal__"};
             for (auto& p : packages) {
-                if (tc->kernelAbiIsOpenkal) {
-                    appendUniqueFlags(p.privateBuild.cflags, kOpenkalDefine);
-                    appendUniqueFlags(p.privateBuild.cxxflags, kOpenkalDefine);
-                }
+                // `__openkal__` is emitted above, with the rest of the
+                // engine's own defines; it is NOT subject to the
+                // `c-environment = "platform"` exception below, because that
+                // exception is about which C environment a package's headers
+                // see, not about whether its code may call `kal_*`.
                 if (p.manifest.cEnvironment == "platform") continue;
                 appendUniqueFlags(p.privateBuild.cflags, tc->cEnvTokens);
                 appendUniqueFlags(p.privateBuild.cxxflags, tc->cEnvTokens);

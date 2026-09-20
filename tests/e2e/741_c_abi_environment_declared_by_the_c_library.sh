@@ -169,6 +169,11 @@ consumer = joined(args_for("main.cpp"))
 missing = [tok for tok in ("--target=x86_64-pc-cygwin", "-fno-short-wchar",
                            "-D__mcpp_target_windows__=1")
            if tok not in consumer]
+# The last of those comes from `mcpp.toolchain.predefines`, not from the
+# `[c-abi]` realisation -- a fact about the TARGET rather than about the
+# environment presented above it. It is asserted HERE, on a real compile
+# line, because that is where the two channels meet and where a reader of
+# this graph actually encounters it.
 if missing:
     print(f"FAIL: ordinary package is missing realised tokens {missing}\n  args: {consumer}")
     sys.exit(1)

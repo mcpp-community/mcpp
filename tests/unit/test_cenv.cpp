@@ -64,15 +64,16 @@ TEST(CEnv, MacosPosixArchDefaultDefinesUnix) {
 
 // The flagship case: Cygwin-flavoured Windows.
 //
-// THE SUBSTITUTION HIDES THE TARGET, SO mcpp STATES IT. Suppressing `_WIN32`
-// is the point of presenting POSIX, but the ABI did not change with the
-// environment --- the register save areas are still Win64's, and two
-// INSTALLED headers in this ecosystem size records by that fact
-// (`openkal-musl`'s `bits/setjmp.h` for `jmp_buf`,
-// `openkal-llvm-runtime`'s `__libunwind_config.h` for `unw_context_t`).
-// Installed headers are read by an application's own compile, so a
-// package-private define cannot reach them. `__mcpp_target_windows__` is
-// mcpp's own name for the question they ask.
+// THE SUBSTITUTION HIDES THE TARGET, AND WHAT STATES IT ANYWAY IS NOT HERE.
+// Suppressing `_WIN32` is the point of presenting POSIX, but the ABI did not
+// change with the environment --- the register save areas are still Win64's,
+// and two INSTALLED headers in this ecosystem size records by that fact.
+// `__mcpp_target_<os>__` answers it, for every target rather than only this
+// one, and it belongs to `mcpp.toolchain.predefines`: a fact about the
+// TARGET is true whether or not any `[c-abi]` block exists, so realising it
+// from a declaration would make its absence ambiguous. This test therefore
+// asserts that the realisation does NOT carry it --- the separation is the
+// property, and a token appearing in both places would mean two owners.
 //
 // `__CYGWIN__` IS STILL DEFINED, AND THAT IS A SEQUENCE. Withdrawing it is
 // right --- the 30-member measurement settled that it costs four members,
@@ -87,9 +88,11 @@ TEST(CEnv, WindowsPosixArchDefaultSubstitutesTheCygwinTriple) {
     auto r = cenv::realise(d, "windows", "x86_64", false);
     ASSERT_TRUE(r.has_value()) << r.error();
     EXPECT_TRUE(has(r->tokens, "--target=x86_64-pc-cygwin"));
-    EXPECT_TRUE(has(r->tokens, "-D__mcpp_target_windows__=1"));
-    // Not withdrawn yet, and asserted so, because the step that withdraws it
-    // must be a deliberate edit to this line rather than a silent drift.
+    // The target's identity is not this module's to state: see above.
+    EXPECT_FALSE(has(r->tokens, "-D__mcpp_target_windows__=1"));
+    // `__CYGWIN__` is not withdrawn yet, and that is asserted, because the
+    // step that withdraws it must be a deliberate edit to this line rather
+    // than a silent drift.
     EXPECT_FALSE(has(r->tokens, "-U__CYGWIN__"));
     // wchar 32 differs from Cygwin's own default (16) — the flag is added.
     EXPECT_TRUE(has(r->tokens, "-fno-short-wchar"));
@@ -103,7 +106,6 @@ TEST(CEnv, WindowsPosixArchDefaultSubstitutesTheCygwinTriple) {
     // mismatch. A `-D` that did not take effect is a verification failure,
     // not a silent one.
     ASSERT_TRUE(has(r->expectDefined, "__CYGWIN__"));
-    ASSERT_TRUE(has(r->expectDefined, "__mcpp_target_windows__"));
 }
 
 // wchar = 16 on the Cygwin substitution matches Cygwin's own default, so no
