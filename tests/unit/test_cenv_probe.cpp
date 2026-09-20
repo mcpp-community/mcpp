@@ -37,6 +37,7 @@
 
 import std;
 import mcpp.toolchain.cenv_probe;
+import mcpp.platform;
 
 namespace cp = mcpp::toolchain::cenv_probe;
 
@@ -61,6 +62,77 @@ std::filesystem::path find_a_cxx_compiler() {
 
 std::filesystem::path cxx() {
     static const std::filesystem::path p = find_a_cxx_compiler();
+    return p;
+}
+
+// A CLANG, FOR THE TWO TESTS THAT NEED ONE, AND FOUND ON PATH RATHER THAN AT A
+// FIXED LOCATION.
+//
+// `find_a_cxx_compiler` answers `/usr/bin/c++` first, which is GCC on every
+// host this suite runs on --- and GCC takes no `--target`. The two tests below
+// therefore skipped on EVERY host, including the CI shards that have an LLVM
+// toolchain, which is the shape of coverage that looks like coverage and is
+// not. Searching PATH makes them run wherever a clang is reachable; where none
+// is, they skip and say so, and `CenvProbeArgv` still pins the invariant with
+// no compiler at all.
+// Whether this compiler both takes `--target` and has the back end the two
+// tests below name. A clang that answers for neither is not a smaller version
+// of one that does; it is a different tool for this purpose.
+bool answers_for_a_cross_target(const std::filesystem::path& bin) {
+    auto r = mcpp::platform::process::capture_stdout(
+        {bin.string(), "--target=riscv64-none-elf", "-x", "c++", "-E", "-dM", "-"});
+    return r.exit_code == 0
+        && r.output.find("#define __riscv ") != std::string::npos;
+}
+
+std::filesystem::path find_a_clang() {
+    if (const char* env = std::getenv("MCPP_TEST_CLANGXX"); env && *env)
+        return env;
+    const char* path = std::getenv("PATH");
+    if (!path) return {};
+    std::string_view rest{path};
+#ifdef _WIN32
+    constexpr char kSep = ';';
+    constexpr std::string_view kName = "clang++.exe";
+#else
+    constexpr char kSep = ':';
+    constexpr std::string_view kName = "clang++";
+#endif
+    while (!rest.empty()) {
+        auto at = rest.find(kSep);
+        auto dir = rest.substr(0, at);
+        rest = (at == std::string_view::npos) ? std::string_view{}
+                                               : rest.substr(at + 1);
+        if (dir.empty()) continue;
+        std::error_code ec;
+        auto candidate = std::filesystem::path(dir) / kName;
+        if (std::filesystem::exists(candidate, ec) && answers_for_a_cross_target(candidate))
+            return candidate;
+    }
+    // AND THE PAYLOAD mcpp ITSELF INSTALLS. A clang on PATH is not
+    // necessarily one built with the back end this test names --- the host
+    // this was written on carries a vendor clang with neither RISC-V nor
+    // AArch64, so a PATH-only search skipped for a reason that has nothing to
+    // do with what is being tested. mcpp's own LLVM payload has them, and
+    // every CI shard that resolves an `llvm@` toolchain has downloaded it.
+    std::error_code ec;
+    auto home = std::getenv("MCPP_HOME")
+              ? std::filesystem::path(std::getenv("MCPP_HOME"))
+              : std::filesystem::path(
+                    std::getenv("HOME") ? std::getenv("HOME") : ".") / ".mcpp";
+    auto payloads = home / "registry" / "data" / "xpkgs" / "xim-x-llvm";
+    if (std::filesystem::is_directory(payloads, ec))
+        for (auto const& ver : std::filesystem::directory_iterator(payloads, ec)) {
+            auto candidate = ver.path() / "bin" / kName;
+            if (std::filesystem::exists(candidate, ec)
+                && answers_for_a_cross_target(candidate))
+                return candidate;
+        }
+    return {};
+}
+
+std::filesystem::path clangxx() {
+    static const std::filesystem::path p = find_a_clang();
     return p;
 }
 
@@ -295,17 +367,12 @@ namespace {
 // Whether this compiler answers for a target it is not hosted on. A GCC
 // driver does not take `--target`, and a clang built without the RISC-V
 // backend answers nothing useful; both skip.
-bool answers_for_riscv() {
-    TmpCache probe;
-    auto r = cp::verify(cxx(), {"--target=riscv64-none-elf"}, 0, 0,
-                        {"__riscv"}, {}, probe.dir);
-    return r.has_value() && r->mismatches.empty();
-}
+bool answers_for_riscv() { return !clangxx().empty(); }
 } // namespace
 
 TEST(CenvProbe, AnArgvWithATargetMeasuresThatTargetAndNotTheHost) {
-    if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
-    if (!answers_for_riscv()) GTEST_SKIP() << "this compiler does not answer for riscv64-none-elf";
+    if (clangxx().empty()) GTEST_SKIP() << "no clang++ on PATH";
+    if (!answers_for_riscv()) GTEST_SKIP() << "this clang does not answer for riscv64-none-elf";
     TmpCache cache;
     // The freestanding probe's own shape, with the target selection the
     // caller (`mcpp.build.prepare`) now supplies. `__linux__` must be absent
@@ -317,7 +384,7 @@ TEST(CenvProbe, AnArgvWithATargetMeasuresThatTargetAndNotTheHost) {
     };
     std::vector<std::string> defined{"__unix__", "__riscv"};
     std::vector<std::string> undefined{"__linux__", "_WIN32"};
-    auto r = cp::verify(cxx(), argv, 32, 0, defined, undefined, cache.dir);
+    auto r = cp::verify(clangxx(), argv, 32, 0, defined, undefined, cache.dir);
     ASSERT_TRUE(r.has_value()) << r.error();
     for (auto const& mm : r->mismatches)
         ADD_FAILURE() << mm.fact << ": declared " << mm.declared
@@ -325,15 +392,15 @@ TEST(CenvProbe, AnArgvWithATargetMeasuresThatTargetAndNotTheHost) {
 }
 
 TEST(CenvProbe, TheSameArgvWithoutATargetMeasuresTheHost) {
-    if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
-    if (!answers_for_riscv()) GTEST_SKIP() << "this compiler does not answer for riscv64-none-elf";
+    if (clangxx().empty()) GTEST_SKIP() << "no clang++ on PATH";
+    if (!answers_for_riscv()) GTEST_SKIP() << "this clang does not answer for riscv64-none-elf";
     TmpCache cache;
     // The mirror of the test above, and the one that makes it mean
     // something: with the target removed, the expectation that held for the
     // target must now FAIL. A test that only asserts the fixed shape passes
     // identically against a probe that ignores its argv.
     std::vector<std::string> argv{"-ffreestanding", "-D__unix__", "-fno-short-wchar"};
-    auto r = cp::verify(cxx(), argv, 0, 0, {"__riscv"}, {}, cache.dir);
+    auto r = cp::verify(clangxx(), argv, 0, 0, {"__riscv"}, {}, cache.dir);
     ASSERT_TRUE(r.has_value()) << r.error();
     EXPECT_FALSE(r->mismatches.empty())
         << "a probe with no target selection must not report the target's "
