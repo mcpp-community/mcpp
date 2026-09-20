@@ -205,15 +205,33 @@ openkal-musl 0.18.0 / openkal-llvm-runtime 0.13.0）构建，expat 2.7.1 编译�
 
 **归属**：mcpp-index 配方，不是 C 库。
 
-#### C4 — `memset_pattern16`（macOS release）
+#### C4 — `memset_pattern16`（macOS release）——**前提待重测，不要先动手**
 
-Darwin libc 扩展。`-O2` 下编译器把填充循环换成它，openkal-musl 没有。
+Darwin libc 扩展。`-O2` 下编译器把填充循环换成它，openkal-musl 没有这个符号。这不是
+「程序调用了它」，是**编译器合成的调用**。
 
-**注意**：这不是「程序调用了它」，是**编译器合成的调用**。所以它必须由 C 库提供，
-程序侧无法规避。
+**本文初稿据此把它列为 openkal-musl 的缺口，并当成 macOS 验收的硬阻塞。查下来前提
+站不住。**
 
-**判据**：`aarch64-macos` 的 release 构建链接通过。这条是 `lsp-mcpp-private` macOS
-验收的**硬阻塞**。
+引擎**已经**在做本该阻止它的事：`cenv.cppm` 对 `builtins = "iso"` 且目标为
+macOS/iOS 时发 `-fno-builtin-memset_pattern16`，而 openkal-musl 正是
+`builtins = "iso"`。并且这个 flag **确实到达了那些包**——用 2026.9.21.1 对
+`aarch64-macos` 发 build-database，`zstd` 的 29 个翻译单元（含报告点名的那条链上的
+`zstd_decompress_block.c`）命令行上都带着它。
+
+于是报告里「新栈照样失败」只剩三种可能，**没有一种在本机可判**（Linux 宿主编不了
+macOS，缺 SDK）：
+
+1. 那次测量跑在**加入该 flag 之前**的引擎上；
+2. 合成出的是 `memset_pattern4`/`8`——引擎只发 `16` 那一个 flag，而 clang 的
+   `-fno-builtin-` 家族是一个 idiom 一个 flag；但报告点名的确实是 `16`；
+3. `-fno-builtin-memset_pattern16` 不足以关掉 LLVM 的 loop-idiom pass。
+
+**下一步不是实现符号，是取一次当前栈上的读数。** `lsp-mcpp-private` 的
+`aarch64-macos --profile release` 会直接给出答案；若仍红，第 2、3 种可能各有明确的
+后续动作（补发另外两个 flag / 由 C 库提供该符号）。
+
+**归属**：待定。**在读数出来之前给 openkal-musl 加符号，是在修一个可能不存在的缺口。**
 
 ### 2.3 实现侧（openkal-*）
 
@@ -331,8 +349,8 @@ E1 (P3, 撤 __CYGWIN__)
   ├─ 解锁 30 成员测量的 4 个失败
   └─ 解锁 lsp-mcpp-private 的 Windows 目标（经 xz）
        │
-C4 (memset_pattern16)
-  └─ 解锁 lsp-mcpp-private 的 macOS release
+C4 (memset_pattern16) —— 前提待重测；引擎已发 -fno-builtin-memset_pattern16
+  └─ 可能根本不是阻塞。读数由 A1 的 macOS 腿给出
        │
        └──> A1/A2/A3 三目标验收   <── 本方案的终点
                  │
@@ -434,7 +452,7 @@ openkal-musl 0.18.0，而 0.18.0 当时还没进索引，消费者自己的 CI �
 | C1 | 五行最小复现 | 链接通过**且析构真的执行** | **第二层未定位** |
 | C2 | curl / cmp-module | 记为 `refused` 而非 `fails` | 无 |
 | C3 | `arc4random_buf` | 「应当有的符号」CI 断言 | 无 |
-| C4 | `aarch64-macos --profile release` | 链接通过 | 无 |
+| C4 | `aarch64-macos --profile release` | 链接通过 | **前提待重测**（引擎已发抑制 flag，且实测到达了 zstd 的 29 个单元） |
 | I1 | 写死的节点集合 | conformance 逐条断言 | 无 |
 | I2 | `presents = "windows"` 的 C 库 | 引擎改动数为 0 | 无 |
 | **A1** | 三目标 `mcpp build` | 全绿 | E1, C4 |
