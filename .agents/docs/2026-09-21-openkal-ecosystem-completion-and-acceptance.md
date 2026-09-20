@@ -255,6 +255,33 @@ static assertion failed: UnwindCursor<> does not fit in unw_cursor_t
 
 #### C2 — `linux/` uapi 头（curl, cmp-module）
 
+**2026-09-21 更正：这是两件不同的事，本文初稿把它们并成了一类。** 逐条读了实测诊断与
+配方之后：
+
+| 成员 | 诊断 | 真正的归属 |
+|---|---|---|
+| `curl` | `lib/setopt.c:31: 'linux/tcp.h' file not found` | **配方缺陷**，与 C3/expat 同形状 |
+| `cmp-module` | `asio/detail/config.hpp:899: 'linux/version.h' file not found` | **真的 C2** |
+
+**curl 是配方缺陷。** `pkgs/c/compat.curl.lua` 生成的 `curl_config.h` 里有
+`#define HAVE_LINUX_TCP_H 1`，位于 `#if defined(__linux__)` 之内。openkal 跑在 Linux
+内核上，`__linux__` **是对的**；错的是配方把它读成了「glibc 的整套 Linux userspace 头
+都装好了」。同一个块里还有 `HAVE_GLIBC_STRERROR_R`（openkal-musl 是 musl，不是 glibc，
+这一条**主动是错的**）、`HAVE_SYS_EVENTFD_H`、`HAVE_FSETXATTR`、以及一条写死的宿主路径
+`CURL_CA_BUNDLE "/etc/ssl/certs/..."`。**诚实的判据是 `__has_include(<linux/tcp.h>)`**
+——它是 C 标准的、问的正是要问的那件事，而不是从「哪个内核」推断「哪些头存在」。
+
+**cmp-module 才是 C2。** asio 的 `detail/config.hpp` 写的是：
+
+```c
+#if defined(__linux__)
+# include <linux/version.h>        /* 在所有 ASIO_DISABLE_* 守卫之外 */
+```
+
+那个 `#include` **不受任何配置宏控制**——`-DASIO_DISABLE_EPOLL` 挡不住它。**源码不归
+我们改，而没有任何清单键伸得进第三方的 `.c`/`.hpp` 里**（这正是 `predefines.cppm` 记的
+第一条理由）。所以这个成员在面向 Linux 的 openkal 图里按构造建不起来。
+
 **形态**：程序 `#include <linux/tcp.h>` 一类。openkal 不是 Linux，没有 uapi 头，
 **这是正确的**。
 
@@ -268,6 +295,13 @@ static assertion failed: UnwindCursor<> does not fit in unw_cursor_t
 **分母**里移除，且移除理由可追溯到那条声明。
 
 **归属**：mcpp-index（测量的成员表），不是 C 库。
+
+**已有机制比初稿以为的多一半。** `members.toml` 里已经有 `[excluded]` 表，它的语义正是
+「在任何 openkal 图里都建不起来」——`cmp-module` 恰好符合。缺的不是表，是**第二个理由
+类别**：现有六条都是「宿主程序 / 厂商二进制」，而 asio 这条是「上游源码无条件包含平台
+头」。判据不变：声明存在时该成员从分母里移除，且理由可追溯到那条声明。
+
+**curl 不进这张表**，它要修配方。两者分开之后，九条失败里这一类只剩一条。
 
 #### C3 — `arc4random_buf`（expat）——**已修复，且归属与初稿不同**
 
