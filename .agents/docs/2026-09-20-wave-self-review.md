@@ -107,5 +107,10 @@ status: active
    最大的偏差。
 2. **P3 撤 `__CYGWIN__`。** 判据已由 mimalloc 与 sqlite3 给出，代价需一次重测。
 3. **`__cxa_thread_atexit`。** 本轮测量新发现的 C++ 运行时缺口。
-4. **openkal-macos 的 `provides-interfaces`。** 无法在 Linux 宿主派生，需 macOS runner。
+4. **openkal-macos 的 `provides-interfaces`。** 已在 0.12.0 关闭。
+   **「无法在 Linux 宿主派生，需 macOS runner」这句判断是错的**——openkal 的前提就是通用
+   交叉构建，Linux 宿主经 openkal 栈可以构建 `aarch64-macos`（实测：`kernel-abi`
+   openkal-macos、`c-abi` musl、`c++-abi` libc++ 全部解析，产出 Mach-O arm64）。需要
+   Apple SDK 的是**平台路径**，不是 openkal 路径。这条错误认知一度把 C4 也挡在"本机不可测"
+   之外。
 5. **P4 / P6。** 独立工作量。

@@ -611,6 +611,81 @@ produced rows* and *every row the expected table names was reached*, rather than
 a total: a cell that vanishes because a payload was not restored is otherwise
 indistinguishable from a cell that passed.
 
+## The macros mcpp defines
+
+`src/toolchain/predefines.cppm` is the specification and the implementation of
+this table at once: the contract is data in that module, the emission is a
+function beside it, and `tests/unit/test_predefines.cpp` asserts the two agree
+in both directions. A macro emitted and unlisted, or listed and never emitted,
+fails a build rather than drifting into a release.
+
+| macro | when | owned |
+|---|---|---|
+| `__mcpp_target_<os>__` | one per build, spelt from the triple's `os` field | yes |
+| `__openkal__` | the resolved `kernel-abi` layer's interface name is `openkal` | yes |
+| `__unix__` | the `[c-abi]` realisation supplies it where the toolchain would not | no |
+
+**An engine should not define macros, and each row has to justify itself.** A
+package states what it needs in its manifest and the engine answers by
+RESOLUTION — `cfg(os = "windows")`, `cfg(c-abi = "musl")`, a capability, a
+feature. That path is testable, reportable, and visible to a reader of the
+manifest; a macro is none of those. Two justifications have survived:
+
+1. **The source is not ours to edit** and asks in the preprocessor. Upstream C
+   selects platform behaviour with `#if`, and no manifest key reaches inside a
+   third-party `.c`.
+2. **The reader is an installed header.** A package's own build defines can be
+   spelled in its manifest, but a header it INSTALLS is read by an
+   application's own compile, which those defines never reach.
+
+**`__mcpp_target_<os>__` — the rule.** Defined for every target-side
+translation unit, always, one per build. The spelling is the triple's own `os`
+field, so `x86_64-linux-gnu` gives `__mcpp_target_linux__`, `x86_64-windows-gnu`
+gives `__mcpp_target_windows__`, and `riscv64-none-elf` gives
+`__mcpp_target_none__`. The engine learns no operating-system name: a target
+added to the triple parser gets its macro with no engine change.
+
+*Allowed:* learning the target's operating system where the C environment
+presented above it has suppressed the platform's own macros, and sizing a
+record by the target's ABI. A Windows target presenting POSIX has no `_WIN32`
+on purpose — while the calling convention is still Win64, which is what
+`openkal-musl`'s `bits/setjmp.h` and `openkal-llvm-runtime`'s
+`__libunwind_config.h` each size a record by.
+
+*Forbidden:* selecting a header the manifest could select, or standing in for
+`cfg(os = …)` in a package this project controls.
+
+**It is defined always, not only where something is suppressed.** Conditional
+emission would make its absence ambiguous: "not Windows" and "Windows, but
+nothing hid its macros" would read the same. A macro whose absence means one
+thing is worth one `-D`.
+
+**Naming.** `__mcpp_`-prefixed, `__`-suffixed, lowercase, words separated by
+`_`. Two conventions exist in the wild — vendor and product names are upper
+(`__APPLE__`, `_WIN32`, `__MINGW32__`), kind-of-system names are lower
+(`__linux__`, `__unix__`) — and these name kinds of target, sitting beside
+that second family in real guards: `#if defined(__linux__) ||
+defined(__mcpp_target_windows__)`.
+
+The `__mcpp_` prefix is load-bearing. A name mcpp owns means what mcpp says it
+means. The alternative was tried: `__CYGWIN__` was left defined so that code
+needing "PE object format, POSIX C environment" would have a name, and a
+30-member measurement found four members reading it as *Win32 is available*
+and reaching `#include <windows.h>` — which is what upstream means by it. **A
+borrowed name means what the lender's history made it mean**, not what the
+borrower intended.
+
+`__unix__` is the exception that proves the rule: mcpp SUPPLIES it rather than
+owning it, so it keeps the standard spelling and mcpp may not change its
+meaning. Read it exactly as on any other POSIX system.
+
+**Stability.** An entry here is a published interface. Removing one, or
+narrowing when it is defined, is a breaking change for source this project
+does not control, and the failure is usually SILENT — a `#if` selects the
+other branch and compiles. Withdrawal is therefore a sequence, never an edit:
+add the replacement, let consumers move onto it while still accepting the old
+name, and only then stop defining it.
+
 ## Custom Targets
 
 

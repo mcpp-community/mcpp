@@ -5,6 +5,53 @@
 
 ## [Unreleased]
 
+## [2026.9.21.1] - 2026-09-21
+
+### 引擎定义的宏成为一份规范,而规范就是那个模块
+
+`src/toolchain/predefines.cppm` 同时是契约与实现:契约是模块里的数据(`kContract`),
+发出是它旁边的函数(`define_tokens`),`tests/unit/test_predefines.cpp` **双向**断言两者
+一致——发出去却不在表里、或在表里却没人发,都让构建变红。规范与实现分处两地就会漂移,
+这一点本轮已经在理由令牌表上付过一次学费。
+
+**`__mcpp_target_<os>__`,覆盖所有平台而不只是 Windows。** 拼法取自三元组自己的 `os`
+字段,**引擎不认识任何操作系统名**——三元组解析器新增一个目标,它的宏随之存在。实测:
+`x86_64-linux-gnu` → `__mcpp_target_linux__`;`x86_64-windows-gnu` →
+`__mcpp_target_windows__`;`riscv64-none-elf` → `__mcpp_target_none__`。
+
+**总是定义,不只在有东西被压掉时。** 条件式发出会让缺席含义不唯一:「不是 Windows」与
+「是 Windows 但没有东西压掉它的宏」会读成同一件事。
+
+**命名:小写,`__mcpp_` 前缀。** 业界并存两套约定——厂商与产品名大写(`__APPLE__`、
+`_WIN32`),系统种类名小写(`__linux__`、`__unix__`)——这些命名的是目标种类,在真实守卫里
+与第二族并排。`__mcpp_` 前缀承重:**一个 mcpp 拥有的名字,语义由 mcpp 自己定。**
+`__openkal__` 收进同一份契约;`__unix__` 列在表里但标注「供给而非拥有」,保持标准拼法。
+
+### mcpp 为「这个目标是 Windows」给出自己的名字
+
+`presents = "posix"` 在 Windows 上实现成 Cygwin 形状的目标,有意压掉 `_WIN32`——那正是
+「呈现 POSIX」的含义。但 **ABI 并没有跟着环境一起变**:调用约定仍是 Win64,寄存器保存区
+仍按它的大小。生态里有两个**已安装的**头按这个事实定尺寸——openkal-musl 的
+`bits/setjmp.h` 定 `jmp_buf`,openkal-llvm-runtime 的 `__libunwind_config.h` 定
+`unw_context_t`。已安装的头会被**应用程序自己的编译**读到,所以两者都用不了包私有的 define。
+
+本版发 `-D__mcpp_target_windows__`。它是 mcpp 自己的名字,语义由 mcpp 自己定;只在这次
+替换下发出,普通 Windows 构建仍有 `_WIN64`。
+
+**`__CYGWIN__` 仍然定义着,这是次序不是结论。** 30 成员测量已判定这个借来的名字代价是
+四个成员(`archive`、`sqlite3`、`mimalloc`、`c-ares` 各自停在 `#include <windows.h>`,
+经由 `#if defined(_WIN32) || defined(__CYGWIN__)`);上游用它表达「Win32 可用」,
+mimalloc 把这句话写在守卫自己的注释里。**一个借来的名字,语义由借出方的历史决定。**
+
+**撤掉它试过了,被跨仓库交叉验证挡下。** 上面那两个头正是因为没有别的 target-wide 名字
+才读它;撤掉后 libunwind 的 `static_assert` 响亮地红了,而 `setjmp.h` 那一处**不会**响——
+它自己的注释写着「a mismatch nothing reports until the record overruns」。那次测量数的是
+**第三方**读者,没数我们自己的。
+
+于是撤销分三步,每个中间状态都能构建:本版**增加**新名字;两个包改读新名字并保留
+`|| defined(__CYGWIN__)`;之后的版本再停止定义借来的那个。先做第三步会让**已发布**的那
+两个头全部落进 `#else`——错误的记录尺寸,没有任何东西报告。
+
 ## [2026.9.20.1] - 2026-09-20
 
 ### 校验探针量的是构建宿主,而不是它要核对的那个目标
@@ -100,7 +147,7 @@ requires-interfaces = ["openkal.fs", "openkal.net"]
 `refusal.cppm` 能发出的令牌与表里的行,并要求简体中文镜像携带同一个集合。
 两个方向各去掉一条都会红。
 
-⚠️ 这张表的**列头**是 `| \`reason\` | |`——第一格里一个反引号名字,形状与下面每一行
+这张表的**列头**是 `| \`reason\` | |`——第一格里一个反引号名字,形状与下面每一行
 完全相同。按「行首反引号名字」匹配会把 `reason` 当成一个令牌。行与列头的区别在**第二格
 非空**,所以判据按性质挑对象,不按语法挑。
 

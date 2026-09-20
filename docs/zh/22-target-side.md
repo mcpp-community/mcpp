@@ -309,7 +309,7 @@ libunwind 的 `assembly.h`,正是按这个宏来选寄存器保存集的)。mcpp
 | Linux | `posix` / `arch-default` | 默认三元组已经满足 |
 | macOS | `posix` / `arch-default` | 一个令牌,`-D__unix__`——Apple 的 clang 默认三元组预定义的是 `__APPLE__`/`__MACH__`,从来不是 `__unix__` |
 | 裸机(freestanding) | `posix` / `arch-default` | 同样一个令牌,`-D__unix__`,原因相同:这里同样没有任何东西定义它 |
-| Windows | `posix` / `arch-default` | 采用 Cygwin 式语义:仅在编译行加 `--target=x86_64-pc-cygwin`;`__CYGWIN__`/`__CYGWIN32__` 保持定义(见下方说明);`data-model` 变为 LP64 是三元组切换的结果,不是另一个开关 |
+| Windows | `posix` / `arch-default` | 采用 Cygwin 式语义:仅在编译行加 `--target=x86_64-pc-cygwin`;并加 `-D__mcpp_target_windows__`(见下方说明);`data-model` 变为 LP64 是三元组切换的结果,不是另一个开关 |
 | 任意目标 | `builtins = "iso"` | 关闭代码生成阶段假定平台 C 库在场的惯用法识别——本轮实测到的唯一一例是 Apple 目标上的 `-fno-builtin-memset_pattern16`;`src/toolchain/cenv.cppm` 记录了还核实过哪些、结论是不适用 |
 | 其余情况 | | 明确拒绝,点名目标、请求与缺什么——不静默降级 |
 
@@ -337,15 +337,37 @@ Windows 一行是旗舰情形:`x86_64-w64-windows-gnu` 与 `x86_64-pc-cygwin` �
 同样的 PE 格式、同样的 Win64 调用约定、同样的 SEH——差别只在预处理器看到什么、`long` 有多宽。
 因此实现只触及**编译**行;**链接**行保持图解析出的三元组,因为目标文件格式没有变化。
 
-**`__CYGWIN__`/`__CYGWIN32__` 保持定义——这是 openkal-musl 尖峰实验带来的修订,不是设计
-最初的陈述。** 最初试过取消定义它们,理由是图里没有真正的 Cygwin 用户态。第三方可移植
-代码里,需要知道**目标文件格式**——不是 C 环境,也不是平台 API——的那部分,没有别的名字
-能指代「PE 格式加呈现 POSIX 的 C 环境」这个组合,只有 `__CYGWIN__`;这样的代码不像本生态
-自己的包那样可以打补丁。`presents = "posix"` 回答的是一个问题——源码看到哪些环境身份宏;
-它不能顺带删掉唯一能回答另一个问题——这是什么目标文件格式——的宏。这是一项**留给 30 个
-成员那轮实测去判定的权衡,不是已经定论的事实**:一个库伸手去够 `__CYGWIN__`,也可能伸手
-去够一个这里并不存在的真正 Cygwin 接口(`sys/cygwin.h`、`cygwin_conv_path`)——如果定义它
-带来的新失败比修好的还多,结论就会翻过来。
+**这里定义 `__mcpp_target_windows__`,而 `__CYGWIN__` 仍然定义着(2026.9.21.1)。**
+
+这次替换有意压掉 `_WIN32`——那正是「呈现 POSIX」的含义。但**ABI 并没有跟着环境一起变**:
+调用约定仍是 Win64,寄存器保存区仍按它的大小。生态里有两个**已安装的**头按这个事实定尺寸:
+
+| 包 | 头文件 | 它定尺寸的记录 |
+|---|---|---|
+| openkal-musl | `port/include/bits/setjmp.h` | `jmp_buf` |
+| openkal-llvm-runtime | `__libunwind_config.h` | `unw_context_t`、`unw_cursor_t` |
+
+已安装的头会被**应用程序自己的编译**读到,所以两者都用不了包私有的 define。
+`__mcpp_target_windows__` 是 mcpp 为它们所问的那个问题给出的**自己的**名字——这个目标是不是
+Windows,无论上面呈现的是什么 C 环境——既然是自己的名字,它的语义就不由别人的历史决定。
+它只在这次替换下发出;普通的 Windows 构建仍然有 `_WIN64`。
+
+**`__CYGWIN__` 仍然定义着,这是一个次序问题,不是决定留下它。** 30 成员测量已经判定这个
+借来的名字代价是四个成员:`archive`、`sqlite3`、`mimalloc`、`c-ares` 各自停在
+`#include <windows.h>`,经由 `#if defined(_WIN32) || defined(__CYGWIN__)` 到达。上游用它
+表达的是「**Win32 可用**」——mimalloc 把话写在守卫自己的注释里,sqlite3 把它列进
+`SQLITE_OS_WIN`。**一个借来的名字,语义由借出方的历史决定**,不由借用方的意图决定。
+
+撤掉它试过了,结果打断了上面那两个头——它们读它,正是因为没有别的 target-wide 名字可用。
+libunwind 的 `static_assert` 响亮地红了;`setjmp.h` 那一处不会——它自己的注释写着
+「a mismatch nothing reports until the record overruns」。所以撤销分三步,每个中间状态都能构建:
+
+1. 本版**增加** `__mcpp_target_windows__`——纯增量;
+2. 那两个包改读新名字,保留 `|| defined(__CYGWIN__)` 以便在两种引擎上都能构建;
+3. 之后的版本再停止定义借来的那个。
+
+先做第三步,会让**已发布**的那两个头全部落进各自的 `#else`:错误的记录尺寸,而没有任何
+东西报告。
 
 **`kernel-abi` 提供者的自身单元被推导落到平台边界上——它不必自己说出来**
 (mcpp 2026.9.18+,PR 进行中根据 openkal-musl 尖峰实验做的修订)。提供

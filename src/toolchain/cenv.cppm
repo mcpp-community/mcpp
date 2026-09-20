@@ -28,9 +28,9 @@
 //   freestanding  posix / arch-default   the same one token, `-D__unix__`, for the
 //                                        same reason: nothing here defines it either
 //   Windows       posix / arch-default   Cygwin-flavoured: `--target=x86_64-pc-cygwin`,
-//                                        `__CYGWIN__`/`__CYGWIN32__` STAY DEFINED (see
-//                                        the note below the table — this is a design
-//                                        revision, not the original §3.3 text)
+//                                        plus `-D__mcpp_target_windows__`;
+//                                        `__CYGWIN__` stays defined for now (see
+//                                        the note below the table — a sequence)
 //   *             builtins = iso         turn off the platform-C-library idioms the
 //                                        code generator assumes (§3.2.1) — Apple's
 //                                        `memset_pattern16` is the one measured case
@@ -70,24 +70,37 @@
 // identity links exactly like one compiled under the MinGW one. Only the
 // preprocessor saw a different environment; the linker never has to know.
 //
-// `__CYGWIN__`/`__CYGWIN32__` ARE NOT REMOVED, AND THE FIRST VERSION OF THIS
-// MODULE GOT THAT WRONG. §3.3's original text called for `-U__CYGWIN__
-// -U__CYGWIN32__` on the reasoning that a real Cygwin userland is not in the
-// graph. A first reading of the openkal-musl spike's libunwind build failure
-// blamed a missing `__CYGWIN__` branch in libunwind itself; reading the
-// vendored source shows that is wrong — upstream libunwind has no such
-// branch, so defining it there would have changed nothing (the actual break
-// was a downstream package selecting on `_WIN32` and is being fixed there).
-// The reason to keep them defined is narrower and still real: third-party
-// portable code that has to know the OBJECT FORMAT — as opposed to which C
-// environment or which platform API — has no name for "PE format with a
-// POSIX-presenting C environment" other than `__CYGWIN__`, and such code
-// cannot be patched the way this ecosystem's own packages can. The cost is
-// symmetric: a library that reaches for `__CYGWIN__` may also reach for a
-// real Cygwin interface (`sys/cygwin.h`, `cygwin_conv_path`) that does not
-// exist here. This is a TRADE-OFF for the 30-member measurement to settle —
-// if defining it produces more new failures than it fixes, the answer flips
-// — not a fact this module is asserting as closed.
+// `__CYGWIN__`/`__CYGWIN32__` ARE STILL DEFINED, AND `__mcpp_target_windows__`
+// IS DEFINED BESIDE THEM. This module has held both answers about the
+// borrowed name, and the sequence between them is the point.
+//
+// A middle revision kept `__CYGWIN__` defined so that code needing to know
+// the object format would have a name, and wrote its own condition for
+// reversal: a trade-off "for the 30-member measurement to settle — if
+// defining it produces more new failures than it fixes, the answer flips".
+//
+// The measurement settled the THIRD-PARTY half (2026-09-20, 60 member-target
+// combinations): keeping it costs four members, each stopping at
+// `#include <windows.h>` reached through `#if defined(_WIN32) ||
+// defined(__CYGWIN__)`. Upstream means "Win32 is available" by the name —
+// mimalloc says so in the guard's own comment, sqlite3 lists it under
+// `SQLITE_OS_WIN`. A BORROWED NAME MEANS WHAT THE LENDER'S HISTORY MADE IT
+// MEAN, not what the borrower intended by it.
+//
+// WITHDRAWING IT WAS TRIED IN THIS BRANCH AND BROKE THIS ECOSYSTEM'S OWN
+// INSTALLED HEADERS. `openkal-musl`'s `bits/setjmp.h` and
+// `openkal-llvm-runtime`'s `__libunwind_config.h` both read `__CYGWIN__` to
+// size a Win64 register save area, deliberately: they are INSTALLED, an
+// application's own compile reads them, and a package-private define cannot
+// reach that compile. libunwind's `static_assert` failed loudly under
+// cross-verification; setjmp.h's equivalent would not have — its own comment
+// says "a mismatch nothing reports until the record overruns".
+//
+// The measurement had counted third-party readers of the macro and not ours.
+// So the withdrawal is a sequence: this release adds `__mcpp_target_windows__`
+// (mcpp's own name, meaning what mcpp says it means), the two packages move
+// onto it while still accepting `__CYGWIN__`, and only then does a release
+// stop defining the borrowed one. Each intermediate state builds.
 export module mcpp.toolchain.cenv;
 
 import std;
@@ -286,12 +299,37 @@ inline std::expected<Realisation, std::string> realise(
                               "on x86_64 only; this arch has no verified "
                               "substitute triple");
             // `--target=x86_64-pc-cygwin`, on the COMPILE line only (module
-            // header above). `__CYGWIN__`/`__CYGWIN32__` are LEFT AS THE
-            // TRIPLE SUBSTITUTION DEFINES THEM — not undefined (see the
-            // module header's note: portable third-party code that needs to
-            // know the object format has no other name for "PE format,
-            // POSIX-presenting environment", and this is a trade-off for the
-            // 30-member measurement, not a settled fact).
+            // header above).
+            //
+            // THE SUBSTITUTION HIDES THE TARGET FROM THE PREPROCESSOR, and
+            // what says it anyway is NOT emitted here. `_WIN32`/`_WIN64` are
+            // suppressed on purpose --- that is what presenting POSIX means
+            // --- while the ABI is unchanged, and source that sizes a Win64
+            // record still has to know. `__mcpp_target_<os>__` answers that,
+            // for every target and not only this one, and it is broadcast in
+            // `mcpp.build.prepare` rather than realised here: it is a fact
+            // about the TARGET, true whether or not any `[c-abi]` block
+            // exists, so deriving it from a declaration would make its
+            // absence ambiguous. See docs/21, "The macros mcpp defines".
+            //
+            // `__CYGWIN__` IS STILL DEFINED, AND THAT IS A SEQUENCE, NOT A
+            // DECISION TO KEEP IT. The 30-member measurement settled that the
+            // borrowed name costs four members (archive, sqlite3, mimalloc,
+            // c-ares stop at `#include <windows.h>` through
+            // `#if defined(_WIN32) || defined(__CYGWIN__)`; upstream means
+            // "Win32 is available" by it, as mimalloc's own guard comment
+            // says). Withdrawing it is right and is step three of three:
+            //
+            //   1. this release: define `__mcpp_target_windows__` as well.
+            //      Purely additive; every published package keeps working.
+            //   2. the two packages above read the new name, keeping
+            //      `|| defined(__CYGWIN__)` so they build on both engines.
+            //   3. a later release stops defining `__CYGWIN__`.
+            //
+            // Step three taken first would leave every PUBLISHED copy of
+            // those headers falling to its `#else` --- the wrong record size,
+            // reported by nothing. A loud failure in four third-party members
+            // is the better state to hold for one release.
             r.tokens.push_back("--target=x86_64-pc-cygwin");
             r.expectDefined.push_back("__unix__");
             r.expectDefined.push_back("__CYGWIN__");
