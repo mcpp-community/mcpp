@@ -21,6 +21,27 @@
 # THE SYMBOL IS DELIBERATELY ONE NOTHING DEFINES. `fork` is the real row in
 # openkal-musl's manifest and is defined by every C library on a Linux host,
 # so a test written with it would link and assert nothing.
+#
+# AND THE LINK IS FREESTANDING, WHICH IS NOT A STYLISTIC CHOICE. Written as an
+# ordinary hosted program this test passed here and failed on the shard, where
+# the link died before it ever reached the symbol:
+#
+#     /usr/bin/ld: cannot find crt1.o: No such file or directory
+#
+# The graph's C library is a marker package that supplies no C library at all,
+# so the startup files came from the host --- present on a developer's machine,
+# absent in the container the shard runs in. A test whose subject is a link
+# diagnostic must not depend on anything else about the link succeeding up to
+# that point. `-nostdlib -nostartfiles -static` and an entry point of its own
+# leave exactly one undefined symbol, which is the one under examination.
+#
+# THE FLAGS GO IN `[build]`, NOT IN THE TARGET, AND LEG E ASSERTS THAT THEY
+# ARRIVED. Written as `[targets.<name>] ldflags` they are not a key mcpp has:
+# the manifest reports `unsupported key 'ldflags' (ignored)` and carries on.
+# The link then still failed, still named the symbol, and still carried the
+# note --- so all four legs below passed while the thing they were arranged
+# around had not happened. Leg E is there because a warning printed into a
+# passing test is invisible.
 set -e
 
 MCPP="${MCPP:-mcpp}"
@@ -34,7 +55,9 @@ int fake_c_library_marker(void) { return 0; }
 EOF
 cat > src/main.c <<'EOF'
 extern int mcpp_absent_probe_fn(void);
-int main(void) { return mcpp_absent_probe_fn(); }
+/* `_start`, not `main`: this links without startup files, so there is no C
+   runtime to call main. Nothing runs it -- the subject is the link. */
+void _start(void) { mcpp_absent_probe_fn(); }
 EOF
 cat > mcpp.toml <<'EOF'
 [package]
@@ -50,6 +73,7 @@ fakelibc = { path = "libc" }
 
 [build]
 allow_host_libs = true
+ldflags = ["-nostdlib", "-nostartfiles", "-static"]
 EOF
 cat > libc/mcpp.toml <<'EOF'
 [package]
@@ -106,5 +130,25 @@ echo "$out" | grep -q "not a defect in the build" || {
     exit 1
 }
 echo "OK: D (the note distinguishes an absence from a defect)"
+
+# ── E. the arrangement this test rests on actually happened ────────────────
+# An unsupported manifest key is a warning and not an error, so a misplaced
+# `ldflags` leaves every assertion above passing for the wrong reason: the
+# link succeeded as far as the host's startup files allowed, which is a
+# property of the machine rather than of this graph.
+echo "$out" | grep -q "unsupported key" && {
+    echo "FAIL: the manifest this test builds has a key mcpp ignored, so the" \
+         "link above was not the one this test describes" >&2
+    echo "$out" | grep "unsupported key" >&2
+    exit 1
+}
+echo "$out" | grep -qiE "crt1|crti|multiple definition" && {
+    echo "FAIL: the link reached the host's C runtime. The flags that keep it" \
+         "freestanding did not take effect, and what failed is the machine" \
+         "this ran on rather than the absence under examination." >&2
+    echo "$out" >&2
+    exit 1
+}
+echo "OK: E (the link was freestanding, as this test requires)"
 
 echo "OK"
