@@ -487,6 +487,59 @@ macOS，缺 SDK）：
 **留下的方法论**：一条"某平台本机测不了"的判断，要用**走 openkal 栈**的探针去验，不能用
 走平台路径的。两者对 SDK 的要求完全不同。
 
+#### C4' — 「关闭」是错的，而上面列出的第三种可能才是对的（2026-09-21 重测）
+
+上面的关闭依据是 **zstd 与 xz** 链接通过、`memset_pattern` 引用为 0。**那两个是从旧报告
+里抄来的对象，不是当前失败的那个。** `lsp-mcpp-private` 的 `test_archive` 在
+`aarch64-macos` 上链接失败：
+
+```
+ld64.lld: error: undefined symbol: memset_pattern16
+```
+
+引用它的是 **libarchive 自己**：`archive_read_support_format_7zip.o`。zstd 与 xz 恰好
+不触发那个 idiom，所以"量它们"回答的是另一个问题——
+[[a-check-that-picks-its-object-by-convention]]。
+
+**三种可能里，第 3 种是对的，而它当时被排除了。** A/B，用 build.ninja 里那条**真实的
+编译命令**，只改 flag 这一维：
+
+| flag | `memset_pattern16` 引用 | 目标文件 |
+|---|---|---|
+| 如实际构建（带 `-fno-builtin-memset_pattern16`） | **1** | 38200 |
+| **把那个 flag 去掉** | **1** | — |
+| `-fno-builtin` | 0 | 38888（+1.8%） |
+| `-ffreestanding` | 0 | — |
+| `-mllvm -disable-loop-idiom-memset` | 0 | 38152 |
+
+**加与不加，引用数都是 1——那个 flag 什么都没做。**
+
+**而且它不会报。** clang 对 `-fno-builtin-<name>` 不给任何反馈：
+
+```
+-fno-builtin-totally_not_a_function        accepted silently
+```
+
+`memset_pattern16` 是 LLVM TLI 的 libfunc 而不是 clang 的 builtin，所以这个 token
+**看起来在做事，实际是个静默的空操作**。预处理后的源码里该符号出现 **0 次**，确认它确实
+是优化器生成的。
+
+**缺口是引擎侧的，而且是成对的：**
+
+1. `builtins = "iso"` 发的 token 在它唯一点名的那个 case 上无效；
+2. **那个 token 没有任何核对。** 同一个文件里 `-D`/`-U` 有探针核对
+   `expectDefined` / `expectUndefined`，注释明写「一个没生效的 `-D` 是校验失败，不是
+   沉默」——而 `builtinsTokens` 走的是另一条路，没有对应的 `expect*`。
+
+**判据**：`builtinsTokens` 要像 `-D` 一样被探针核对。没有这一条，换成任何一个新 token
+都可能重复这次静默——**一个只在「它起作用」这一假设下成立的机制，需要一条断言它起作用的
+判据。**
+
+**三个候选修法的代价已量**（表见上）：`-fno-builtin` 正确但连 ISO 函数的优化一起关掉，
+在这个翻译单元上 +1.8%；`-mllvm` 更省但不是稳定的用户面；第三条是给 openkal-macos 提供
+`memset_pattern16` 本身，那与 `builtins = "iso"` 的意图相反。**先量再选，不在这里替人
+拍板。**
+
 ### 2.3 实现侧（openkal-*）
 
 #### C4' — 「不复现」是在另一个版本上量的（2026-09-21 更正）
