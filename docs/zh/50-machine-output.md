@@ -365,6 +365,10 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 | `c-env-verification-mismatch` | 用实现出来的 `[c-abi]` 配置编译的探针,与声明不符 *(2026.9.18.1+)* |
 | `platform-dependency` | `[build] platform-dependencies = "refuse"`,而图里有包带进了平台 SDK *(2026.9.18.1+)* |
 | `interface-not-provided` | 某个包的 `[kernel-abi] requires-interfaces` 点名了解析出的实现不提供的接口 *(2026.9.20.1+)* |
+| `apple-sdk-absent` | 目标需要本机没有的 Apple SDK;它不可再分发,所以 mcpp 定位它而不安装它 |
+| `lld-required-absent` | 目标直接经 lld 链接,而解析出的工具链载荷不带 lld |
+| `host-tool-toolchain` | 交叉 `--target` 下的 `build.mcpp` 需要一个可解析的**宿主**工具链,而一个都没设 |
+| `std-module-precompile` | 标准库的模块在这个配置下无法预编译 |
 | `other` | 一处还没有被命名的拒绝分支 |
 
 **其中一个令牌也由 `mcpp build` 自己打印。** `interface-not-provided` 出现在拒绝消息里,

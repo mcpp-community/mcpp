@@ -86,6 +86,24 @@ requires-interfaces = ["openkal.fs", "openkal.net"]
 `docs/50` 的 reason 令牌表同时补上了 2026.9.18.1 起一直在发却从未列出的三个:
 `c-env-unrealisable`、`c-env-verification-mismatch`、`platform-dependency`。
 
+### 理由令牌表与引擎不再靠人读对齐
+
+`docs/50` 的 reason 令牌表是**机器接口**:mcpp-index 的兼容性测量就是从拒绝里读一个
+令牌,来区分「这个图没有提供该成员要的东西」与「该成员没构建成功」,而这条区分决定一个
+会被发布的数字。引擎能发而表里没有的令牌,是一条没有人能依赖的承诺。
+
+2026.9.18.1 那轮往这张表里补过「缺的那四个」;本轮枚举发现**另外四个**一直缺着——
+`apple-sdk-absent`、`lld-required-absent`、`host-tool-toolchain`、`std-module-precompile`。
+**靠读来比较的集合,比较的是样本。**
+
+四条补齐,并新增 `.github/tools/check_reason_tokens.sh`:它双向比对
+`refusal.cppm` 能发出的令牌与表里的行,并要求简体中文镜像携带同一个集合。
+两个方向各去掉一条都会红。
+
+⚠️ 这张表的**列头**是 `| \`reason\` | |`——第一格里一个反引号名字,形状与下面每一行
+完全相同。按「行首反引号名字」匹配会把 `reason` 当成一个令牌。行与列头的区别在**第二格
+非空**,所以判据按性质挑对象,不按语法挑。
+
 ### `[c-abi-absent]`:枚举例外,不枚举规则
 
 一个 C 库供给的名字集合在清单里不可枚举(POSIX 约一千二百个),枚举它正是 §3.3 记录下

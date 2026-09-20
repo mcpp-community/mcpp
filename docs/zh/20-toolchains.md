@@ -628,9 +628,9 @@ C 库与 C++ 运行时(包)、`ninja` 与 `patchelf`(xlings),以及 `ar` / `stri
 一行说它用的是哪一个。现在顺序反过来了;当服务的是宿主那一份时,构建会说出来:
 
 ```
-degraded: the assembler for this build is the host's ('/usr/bin/nasm'), not the one this engine pins
-          two machines can assemble the same source with different assemblers, and the build records only this line
-          run `xlings install nasm` so the pinned copy is used
+warning: the assembler for this build is the host's ('/usr/bin/nasm'), not the one this engine pins
+  impact: two machines can assemble the same source with different assemblers, and the build records only this line
+  hint: run `xlings install nasm` so the pinned copy is used
 ```
 
 **一个宿主工具到达构建,本身不是缺陷;一个宿主工具**静默地**到达构建才是。**

@@ -120,6 +120,18 @@ jobs:
       - name: Documented target tiers agree with the table
         run: python3 .github/tools/check_target_tiers.py
 
+      # The reason-token table in docs/50 is a MACHINE INTERFACE: mcpp-index's
+      # compatibility measurement reads a token out of a refusal to tell "this
+      # graph does not supply what the member asked for" from "the member did
+      # not build", and that distinction decides a published figure. A token
+      # the engine emits and the table omits is a promise nobody can rely on.
+      #
+      # Four tokens were added to that table by hand as "the ones it was
+      # missing"; a later enumeration found four more that had been absent the
+      # whole time. A set compared by reading is a set compared by sampling.
+      - name: Reason tokens agree with the engine, and with the mirror
+        run: bash .github/tools/check_reason_tokens.sh
+
       - uses: ./.github/actions/bootstrap-mcpp
 
       - name: Configure mirror + Build mcpp from source (self-host)

@@ -704,9 +704,9 @@ order is now the other way, and when the host copy is the one that served, the
 build says so:
 
 ```
-degraded: the assembler for this build is the host's ('/usr/bin/nasm'), not the one this engine pins
-          two machines can assemble the same source with different assemblers, and the build records only this line
-          run `xlings install nasm` so the pinned copy is used
+warning: the assembler for this build is the host's ('/usr/bin/nasm'), not the one this engine pins
+  impact: two machines can assemble the same source with different assemblers, and the build records only this line
+  hint: run `xlings install nasm` so the pinned copy is used
 ```
 
 **A host tool that reaches a build is not by itself the defect. A host tool

@@ -416,6 +416,10 @@ a program classifying the outcome reads `reason`:
 | `c-env-verification-mismatch` | the probe compiled with the realised `[c-abi]` configuration disagrees with what was declared *(2026.9.18.1+)* |
 | `platform-dependency` | `[build] platform-dependencies = "refuse"` and a package in the graph brings a platform SDK *(2026.9.18.1+)* |
 | `interface-not-provided` | a package's `[kernel-abi] requires-interfaces` names an interface the resolved implementation does not provide *(2026.9.20.1+)* |
+| `apple-sdk-absent` | the target needs an Apple SDK this machine does not provide; it is located rather than installed, because it is not redistributable |
+| `lld-required-absent` | the target links through lld directly and the resolved toolchain payload ships none |
+| `host-tool-toolchain` | `build.mcpp` under a cross `--target` needs a resolvable HOST toolchain and none is set |
+| `std-module-precompile` | the standard library's module could not be precompiled for this configuration |
 | `other` | a refusal whose branch has not been given a token yet |
 
 **One token is also printed by `mcpp build` itself.**
