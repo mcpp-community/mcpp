@@ -6001,7 +6001,7 @@ c-environment = "native"
 // explicit key `CEnvironmentAcceptsOnlyPlatform` above already covers. An
 // ordinary package, providing nothing kernel-abi-shaped, gets no such
 // inference: `cEnvironment` stays empty and the realisation reaches it.
-// ── [c-abi.absent] — enumerate the exception, not the rule ─────────────────
+// ── [c-abi-absent] — enumerate the exception, not the rule ─────────────────
 //
 // The set of POSIX names a C library supplies is not enumerable in a manifest;
 // the set it does not supply is. openkal-musl's README lists six in prose, and
@@ -6021,7 +6021,7 @@ data-model = "arch-default"
 wchar      = 32
 builtins   = "iso"
 
-[c-abi.absent]
+[c-abi-absent]
 fork     = { form = "link" }
 mprotect = { form = "enosys", note = "openkal has no operation upon a mapping's protection" }
 )";
@@ -6054,7 +6054,7 @@ presents   = "posix"
 data-model = "arch-default"
 wchar      = 32
 
-[c-abi.absent]
+[c-abi-absent]
 fork = { note = "no process image duplication" }
 )";
     auto m = mcpp::manifest::parse_string(src);
@@ -6075,7 +6075,7 @@ presents   = "posix"
 data-model = "arch-default"
 wchar      = 32
 
-[c-abi.absent]
+[c-abi-absent]
 fork = { form = "sometimes" }
 )";
     auto m = mcpp::manifest::parse_string(src);
@@ -6099,7 +6099,7 @@ presents   = "posix"
 data-model = "arch-default"
 wchar      = 32
 
-[c-abi.absent]
+[c-abi-absent]
 tcsetattr = { form = "accepted-no-effect", note = "the fields openkal does not name are not applied" }
 )";
     auto m = mcpp::manifest::parse_string(src);
@@ -6107,6 +6107,81 @@ tcsetattr = { form = "accepted-no-effect", note = "the fields openkal does not n
     ASSERT_EQ(m->cAbiDecl->absent.size(), 1u);
     EXPECT_EQ(m->cAbiDecl->absent[0].form,
               mcpp::targetside::CAbiAbsentForm::AcceptedNoEffect);
+}
+
+TEST(Manifest, TheAbsenceTableIsTopLevelSoOlderEnginesIgnoreIt) {
+    // WHY THIS TABLE IS NOT `[c-abi].absent`, WHICH READS BETTER. Measured
+    // against the genuine published 2026.9.18.3 archive -- the index floor
+    // when this shipped -- on the exact manifest openkal-musl 0.17.0
+    // publishes: nested, every older engine refuses THE WHOLE MANIFEST on
+    // every target ("[c-abi] has no member 'absent'"), because the [c-abi]
+    // parser enumerates its members. An unknown top-level table is ignored
+    // and the build completes.
+    //
+    // That difference decides whether the table can ship without taking the
+    // index away from every client below this release, and nothing else in
+    // the engine records it: the two spellings are indistinguishable to every
+    // test that only reads the parsed result. So this test asserts the shape
+    // directly -- `absent` is NOT a member of [c-abi] -- and the hint that
+    // catches the natural mistake.
+    constexpr auto src = R"(
+[package]
+name     = "openkal-musl"
+version  = "0.17.0"
+provides = ["mcpp:c-abi=musl"]
+
+[c-abi]
+presents   = "posix"
+data-model = "arch-default"
+wchar      = 32
+absent     = { fork = { form = "link" } }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    auto msg = m.error().format();
+    EXPECT_NE(msg.find("has no member 'absent'"), std::string::npos) << msg;
+    EXPECT_NE(msg.find("[c-abi-absent]"), std::string::npos) << msg;
+}
+
+TEST(Manifest, AbsencesMayBeStatedWithoutAnEnvironmentDeclaration) {
+    // The two tables are independent. A C library whose environment identity
+    // is already its target's default has nothing to put in [c-abi], and is
+    // still entitled to say what it does not supply. `declared` stays false,
+    // which is what keeps `cenv::realise` away from fields nobody wrote.
+    constexpr auto src = R"(
+[package]
+name     = "openkal-musl"
+version  = "0.17.0"
+provides = ["mcpp:c-abi=musl"]
+
+[c-abi-absent]
+fork = { form = "link" }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_TRUE(m->cAbiDecl.has_value());
+    EXPECT_FALSE(m->cAbiDecl->declared);
+    ASSERT_EQ(m->cAbiDecl->absent.size(), 1u);
+    EXPECT_EQ(m->cAbiDecl->absent[0].name, "fork");
+}
+
+TEST(Manifest, OnlyTheCLibraryMayStateWhatIsAbsent) {
+    // The gate [c-abi] applies, for the reason it applies it. Moving the
+    // table to the top level moved it out from behind that gate, so the gate
+    // is restated here rather than inherited -- and this is the test that
+    // would notice if a later edit dropped it.
+    constexpr auto src = R"(
+[package]
+name    = "an-ordinary-program"
+version = "0.1.0"
+
+[c-abi-absent]
+fork = { form = "link" }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    auto msg = m.error().format();
+    EXPECT_NE(msg.find("mcpp:c-abi="), std::string::npos) << msg;
 }
 
 TEST(Manifest, ACLibraryThatEnumeratesNothingHasClaimedNothing) {

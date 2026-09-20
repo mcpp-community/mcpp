@@ -104,7 +104,7 @@ Windows : __cxa_thread_atexit_impl = 0   -> fallback branch
 | 失败在哪 | **链接期** | 运行期 |
 | 调用方能否看见 | **能,链接器点名符号** | **不能,注册成功而析构不发生** |
 
-第二种正是 openkal-musl 的 `[c-abi.absent]` 里叫作 `accepted-no-effect` 的那个形状,
+第二种正是 openkal-musl 的 `[c-abi-absent]` 里叫作 `accepted-no-effect` 的那个形状,
 也是 SPEC §6.1 把「运行期报告不支持」称为缺陷的理由。**一个响亮的构建期失败,
 比一个静默的运行期失败好。**
 

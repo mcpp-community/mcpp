@@ -86,7 +86,7 @@ requires-interfaces = ["openkal.fs", "openkal.net"]
 `docs/50` 的 reason 令牌表同时补上了 2026.9.18.1 起一直在发却从未列出的三个:
 `c-env-unrealisable`、`c-env-verification-mismatch`、`platform-dependency`。
 
-### `[c-abi.absent]`:枚举例外,不枚举规则
+### `[c-abi-absent]`:枚举例外,不枚举规则
 
 一个 C 库供给的名字集合在清单里不可枚举(POSIX 约一千二百个),枚举它正是 §3.3 记录下
 撤回的那个错误。例外是可枚举的——openkal-musl 的 README 列了六项,而那段散文没有任何
@@ -94,7 +94,7 @@ requires-interfaces = ["openkal.fs", "openkal.net"]
 安装)。
 
 ```toml
-[c-abi.absent]
+[c-abi-absent]
 fork      = { form = "link" }
 mprotect  = { form = "enosys", note = "openkal 没有作用于映射保护属性的操作" }
 tcsetattr = { form = "accepted-no-effect", note = "openkal 不命名的那些字段不被施加" }
@@ -104,6 +104,19 @@ tcsetattr = { form = "accepted-no-effect", note = "openkal 不命名的那些字
 报告不支持称为缺陷);另外两个是对它的偏离,给它们命名是为了让一次偏离成为可以被数出来
 的东西。链接点到 `link` 形状里的某一项时,mcpp 把清单读回来:`undefined reference to
 'fork'` 因此带着那句说明它是缺陷还是环境限制的话一起到达。
+
+**它是顶层表,而这是量出来的。** 先写成 `[c-abi].absent`——更顺——之后拿**真正发布的
+2026.9.18.3 归档**(当时的索引 floor)跑 openkal-musl 0.17.0 将要发布的那份清单:嵌套
+写法让每个旧 mcpp **在每个目标上拒绝整份清单**,报 `[c-abi] has no member 'absent'`。
+`[c-abi]` 枚举自己的成员并拒绝其余,而这条严格性是对的——拼错的 `presents` 不该静默
+关掉一条声明。同一次测量里,未知的**顶层**表被忽略,构建照常完成。
+
+这张表做的每件事都是诊断性的:给一次**已经失败**的链接加一句话,没有任何 flag、链接行
+或产物依赖它。于是忽略它的引擎产出的正是它今天产出的那条链接错误;而拒绝它的引擎会把
+索引 floor 逼到本版本——为了一句他们无非是收不到的说明,夺走停在其下的每个客户端手里的
+**整个索引**。改成顶层表后,openkal-musl 0.17.0 不要求任何 floor 变动。
+
+把 `absent` 写在 `[c-abi]` 里面会被拒绝,拒绝消息点名顶层的那个拼法。
 
 ### 汇编器先问 PATH 再看沙箱,而其余每一个工具都反过来
 

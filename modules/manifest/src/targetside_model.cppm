@@ -232,7 +232,7 @@ struct CAbiDecl {
     CAbiDataModel dataModel  = CAbiDataModel::ArchDefault;
     int           wcharBits  = 0;       // 16 or 32
     CAbiBuiltins  builtins   = CAbiBuiltins::Platform;
-    // `[c-abi.absent]` — the facilities this C library does not supply, and
+    // `[c-abi-absent]` — the facilities this C library does not supply, and
     // the shape in which each absence reaches a program. Empty is the
     // ordinary case and says nothing: a library that lists none has not
     // claimed to supply everything, it has declined to enumerate.

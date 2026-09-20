@@ -559,12 +559,29 @@ std::optional<std::string> find_disallowed_array_of_tables(
     return std::nullopt;
 }
 
-// [c-abi.absent] — the facilities a C library does not supply (design
+// [c-abi-absent] — the facilities a C library does not supply (design
 // 2026-09-20 §5.7.5). The set of names it DOES supply is not enumerable in a
 // manifest; the exceptions are, and enumerating an exception is what lets a CI
 // run contradict it.
 //
-//   [c-abi.absent]
+// A TOP-LEVEL TABLE, AND MEASURED TO BE ONE RATHER THAN CHOSEN. Written as
+// `[c-abi].absent` — which reads better, and is where the first draft put it
+// — every mcpp older than this one REFUSES THE WHOLE MANIFEST, on every
+// target, with `[c-abi] has no member 'absent'`: the `[c-abi]` parser
+// enumerates its members and rejects anything else. Measured against the
+// genuine published 2026.9.18.3 archive (the index floor at the time) on the
+// exact manifest openkal-musl 0.17.0 would publish. An unknown TOP-LEVEL
+// table, by the same measurement, is ignored and the build completes.
+//
+// The difference decides whether this table can ship at all. Everything here
+// is PURELY DIAGNOSTIC — `c_abi_absent_facility_advice` appends a note to a
+// link that has ALREADY failed, and no flag, link line or artifact depends on
+// it — so an engine that ignores the table produces exactly the raw linker
+// error it produces today. Nested, the table would instead have forced the
+// index floor up to this release, taking the whole index away from clients
+// stopped below it for a note they merely would not have received.
+//
+//   [c-abi-absent]
 //   fork     = { form = "link" }
 //   mprotect = { form = "enosys", note = "openkal has no operation upon a
 //                mapping's protection" }
@@ -594,25 +611,25 @@ parse_c_abi_absent(const t::Value& v,
                    std::vector<mcpp::targetside::CAbiAbsentEntry>& out) {
     if (!v.is_table())
         return std::optional<std::string>(std::string(
-            "[c-abi.absent] must be a table of facility names, each with a "
+            "[c-abi-absent] must be a table of facility names, each with a "
             "`form`: fork = { form = \"link\" }"));
     for (auto const& kv : v.as_table()) {
         const std::string& name = kv.first;
         const t::Value&    ent  = kv.second;
         if (!ent.is_table())
             return std::optional<std::string>(std::format(
-                "[c-abi.absent].{} must be a table with a `form`: "
+                "[c-abi-absent].{} must be a table with a `form`: "
                 "{} = {{ form = \"link\" }}", name, name));
         const auto& et = ent.as_table();
         for (auto const& m : et)
             if (m.first != "form" && m.first != "note")
                 return std::optional<std::string>(std::format(
-                    "[c-abi.absent].{} has no member '{}'; the members are: "
+                    "[c-abi-absent].{} has no member '{}'; the members are: "
                     "form, note", name, m.first));
         auto fit = et.find("form");
         if (fit == et.end() || !fit->second.is_string())
             return std::optional<std::string>(std::format(
-                "[c-abi.absent].{} is missing `form`. An absence with no "
+                "[c-abi-absent].{} is missing `form`. An absence with no "
                 "named shape is one nothing can assert against; the shapes "
                 "are \"link\" (the definition is absent), \"enosys\" (it "
                 "exists and reports that it cannot act) and "
@@ -621,7 +638,7 @@ parse_c_abi_absent(const t::Value& v,
         auto form = mcpp::targetside::parse_c_abi_absent_form(fit->second.as_string());
         if (!form)
             return std::optional<std::string>(std::format(
-                "[c-abi.absent].{}.form = \"{}\" names no known shape. The "
+                "[c-abi-absent].{}.form = \"{}\" names no known shape. The "
                 "shapes are \"link\", \"enosys\" and \"accepted-no-effect\".",
                 name, fit->second.as_string()));
         mcpp::targetside::CAbiAbsentEntry e;
@@ -1146,11 +1163,11 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // for presence separately so a declaration that forgets one names that
     // key rather than silently taking a value nobody wrote. `builtins`
     // alone defaults to `platform` — see `CAbiDecl`.
+    const bool providesCAbi = std::ranges::any_of(m.provides, [](auto const& e) {
+        auto cap = mcpp::targetside::parse_capability(e);
+        return cap && *cap && (*cap)->layer == mcpp::targetside::CapLayer::CAbi;
+    });
     if (auto* ct = doc->get_table("c-abi")) {
-        bool providesCAbi = std::ranges::any_of(m.provides, [](auto const& e) {
-            auto cap = mcpp::targetside::parse_capability(e);
-            return cap && *cap && (*cap)->layer == mcpp::targetside::CapLayer::CAbi;
-        });
         if (!providesCAbi)
             return std::unexpected(error(origin,
                 "[c-abi] is declared, and [package] provides does not list "
@@ -1164,17 +1181,18 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         mcpp::targetside::CAbiDecl decl;
         decl.declared = true;
         static constexpr std::string_view kKnownCAbiKeys[] = {
-            "absent", "builtins", "data-model", "presents", "wchar",
+            "builtins", "data-model", "presents", "wchar",
         };
         for (auto& [key, _] : *ct) {
             if (std::ranges::find(kKnownCAbiKeys, key) == std::end(kKnownCAbiKeys))
                 return std::unexpected(error(origin, std::format(
-                    "[c-abi] has no member '{}'; the members are: absent, "
-                    "builtins, data-model, presents, wchar", key)));
-        }
-        if (auto ait = ct->find("absent"); ait != ct->end()) {
-            if (auto why = parse_c_abi_absent(ait->second, decl.absent))
-                return std::unexpected(error(origin, *why));
+                    "[c-abi] has no member '{}'; the members are: builtins, "
+                    "data-model, presents, wchar{}", key,
+                    key == "absent"
+                        ? "\n       The facilities a C library does not supply "
+                          "are written in a top-level [c-abi-absent] table, "
+                          "not inside this one."
+                        : "")));
         }
         if (auto pit = ct->find("presents"); pit != ct->end()) {
             if (!pit->second.is_string())
@@ -1236,6 +1254,36 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     "values are: iso, platform", bit->second.as_string())));
             decl.builtins = *parsed;
         }
+        m.cAbiDecl = decl;
+    }
+    // [c-abi-absent] — read AFTER [c-abi] so that a manifest carrying both
+    // lands its absences on the same declaration, and INDEPENDENTLY of it so
+    // that a C library may state what it does not supply without also
+    // restating an environment identity that is already its target's default.
+    // In the second case the `CAbiDecl` this creates has `declared = false`:
+    // there is nothing here for `cenv::realise` to realise, and the guard in
+    // `prepare` that calls it tests that flag rather than the optional.
+    //
+    // The provider gate is the one [c-abi] applies, for the reason [c-abi]
+    // applies it: a package that does not supply the C library is stating a
+    // fact about a layer it does not have.
+    // `get` rather than `get_table`: a non-table `c-abi-absent = "x"` must
+    // reach `parse_c_abi_absent` and be refused by name, and `get_table`
+    // answers nullptr for it — indistinguishable from not writing it at all.
+    if (auto* av = doc->get("c-abi-absent")) {
+        if (!providesCAbi)
+            return std::unexpected(error(origin,
+                "[c-abi-absent] is declared, and [package] provides does not "
+                "list `mcpp:c-abi=<impl>`.\n"
+                "       Only the package that supplies the C library may state "
+                "which facilities it does not supply — this package is stating "
+                "a fact about a layer it does not provide.\n"
+                "       Add `mcpp:c-abi=<name>` to [package] provides, or "
+                "remove [c-abi-absent]."));
+        mcpp::targetside::CAbiDecl decl = m.cAbiDecl.value_or(
+            mcpp::targetside::CAbiDecl{});
+        if (auto why = parse_c_abi_absent(*av, decl.absent))
+            return std::unexpected(error(origin, *why));
         m.cAbiDecl = decl;
     }
     // [kernel-abi] — which interfaces of that layer a package provides or

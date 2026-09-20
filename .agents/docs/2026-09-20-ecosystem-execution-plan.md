@@ -38,9 +38,9 @@ C  openkal-musl（absent + requires）─────┘
 | 轨 | 仓库 | 内容 | 依赖 |
 | --- | --- | --- | --- |
 | **E1** | mcpp-index | `pins.toml` runtime 0.10.0 → 0.12.0，重测 30 成员 | 无 |
-| **A** | mcpp | P0.1 探针 `--target`、P0.2 注释、P1 冻结语义、P5-L2 解析期集合包含、P7-L3 链接期集合差、`[c-abi.absent]` 解析与诊断 | 无 |
+| **A** | mcpp | P0.1 探针 `--target`、P0.2 注释、P1 冻结语义、P5-L2 解析期集合包含、P7-L3 链接期集合差、`[c-abi-absent]` 解析与诊断 | 无 |
 | **B** | openkal | `tools/interfaces-from-surface.sh`、README 记述四级阶梯 | 无 |
-| **C** | openkal-musl | `[c-abi.absent]` 声明 + CI 断言、`requires-interfaces` | A（字段语义）、B |
+| **C** | openkal-musl | `[c-abi-absent]` 声明 + CI 断言、`requires-interfaces` | A（字段语义）、B |
 | **D** | openkal-linux / -windows / -macos | `provides-interfaces` 由产物生成 + CI 断言 | B |
 | **E2** | mcpp-index | `refused` status、新引擎 pin、重测 | A、E1 |
 | **F** | 全部 | 发布、gtc 镜像、沙箱验证 | 全部 |
@@ -104,23 +104,23 @@ libpng、re2、lua(经 capi-lua)。全部是按 `_WIN32` / `__MINGW32__` 选分�
    `thread_local` 析构的钩子),在环境正确之前到不了。属 openkal-llvm-runtime /
    openkal-musl,另轮。
 
-3. **clang 20.1.7 在 Windows 上对三种写法都崩。** `[c-abi.absent]` 的解析块写成
+3. **clang 20.1.7 在 Windows 上对三种写法都崩。** `[c-abi-absent]` 的解析块写成
    `parse_string` 内的语句块、写成模块导出 purview 里返回
    `expected<vector<struct-with-strings>, string>` 的自由函数、以及用成员指针作
    sort 投影,在 Windows 上各崩一次,其他宿主全过。最终形态是匿名命名空间里的内部
    helper + 出参 + `optional<string>` + 比较器。
 
 4. **两个新键的向后兼容性不同,且这条差别要写进文档。** `[kernel-abi]` 是未知
-   **顶层表**,旧引擎忽略(实测 2026.9.17.1 静默接受);`[c-abi.absent]` 是已知表里的
+   **顶层表**,旧引擎忽略(实测 2026.9.17.1 静默接受);`[c-abi-absent]` 是已知表里的
    新键,旧引擎拒绝整份清单。因此前者不需要抬 floor,后者需要。
 
 ### 4.3 PR
 
 | 仓库 | PR | 内容 |
 | --- | --- | --- |
-| mcpp | #678 | 探针带目标、撤 hostStripMacros、`[kernel-abi]`、`[c-abi.absent]`、冻结 `presents` |
+| mcpp | #678 | 探针带目标、撤 hostStripMacros、`[kernel-abi]`、`[c-abi-absent]`、冻结 `presents` |
 | openkal | #42 | `check-surface.sh --interfaces/--toml`,接口集由产物派生 |
-| openkal-musl | #39 | 0.17.0 `[c-abi.absent]` + CI 断言 |
+| openkal-musl | #39 | 0.17.0 `[c-abi-absent]` + CI 断言 |
 | openkal-linux | #29 | 0.15.0 `provides-interfaces`,CI 重新生成并 diff |
 | mcpp-index | #444 | 抬 pins、重测、`refused` |
 

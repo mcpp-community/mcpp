@@ -10787,12 +10787,17 @@ prepare_build(bool print_fingerprint,
         if (tc) tc->kernelAbiIsOpenkal =
             resolvedTargetSide.kernelAbi.interfaceName == "openkal";
 
-        // [c-abi] REALISATION — design §3.2-§3.4. `TargetSide::cAbiDecl` is
-        // set only when the resolved `c-abi` provider's manifest carried a
-        // `[c-abi]` block (validated at parse time, toml.cppm); everything
-        // below is therefore skipped, and every command line unchanged, for
-        // the graph this engine has always built.
-        if (tc && resolvedTargetSide.cAbiDecl) {
+        // [c-abi] REALISATION — design §3.2-§3.4. Everything below is
+        // skipped, and every command line unchanged, for the graph this
+        // engine has always built.
+        //
+        // THE TEST IS `declared`, NOT THE OPTIONAL. `TargetSide::cAbiDecl` is
+        // also set by a `[c-abi-absent]` table on a provider that wrote no
+        // `[c-abi]` block, and those absences are diagnostic data with
+        // nothing in them to realise — `cenv::realise` requires `declared`
+        // (cenv.cppm) and would be reading fields nobody wrote.
+        if (tc && resolvedTargetSide.cAbiDecl
+            && resolvedTargetSide.cAbiDecl->declared) {
             // `cenv::realise` FIRST, THE COMPILER-FAMILY GATE SECOND — not
             // the other way around (coordinator report, openkal-musl 0.15.0
             // regression: GCC on Linux refused for a declaration

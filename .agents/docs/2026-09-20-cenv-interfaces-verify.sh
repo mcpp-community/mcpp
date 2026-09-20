@@ -28,7 +28,7 @@
 # than a hole: `[kernel-abi]` is an unknown top-level table to an older engine
 # and is ignored, so a graph that satisfies its requirements builds either way.
 # The leg that distinguishes the releases is the refusal. C fails outright on
-# the older engine because `[c-abi.absent]` is a new key inside a table it
+# the older engine because `[c-abi-absent]` is a new key inside a table it
 # knows, where an unrecognised key is a parse error -- the asymmetry docs/22
 # records.
 set -u
@@ -127,7 +127,7 @@ else
 fi
 
 # ── CHANGE 2. A C library states what it does not supply ────────────────────
-section "C. [c-abi.absent] is read, and a bad shape is refused (CHANGE)"
+section "C. [c-abi-absent] is read, and a bad shape is refused (CHANGE)"
 c="$root/c"; rm -rf "$c"; mkdir -p "$c/libc/src" "$c/src"
 printf 'int fake_libc_marker(void){return 0;}\n' > "$c/libc/src/lib.c"
 printf 'int main(void){return 0;}\n'             > "$c/src/main.c"
@@ -158,7 +158,7 @@ presents   = "posix"
 data-model = "arch-default"
 wchar      = 32
 
-[c-abi.absent]
+[c-abi-absent]
 fork = { form = "$1", note = "no process image duplication" }
 EOF
 }

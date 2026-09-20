@@ -579,13 +579,13 @@ A graph whose implementation carries no `provides-interfaces` builds
 unchanged; the key postdates the packages, and the link still reports an
 absence in the vocabulary it always did.
 
-**What a C library does not supply (`[c-abi.absent]`, mcpp 2026.9.20.1).**
+**What a C library does not supply (`[c-abi-absent]`, mcpp 2026.9.20.1).**
 The set of names a C library supplies is not enumerable in a manifest — POSIX
 has about twelve hundred — and enumerating it is the mistake §3.3 records
 withdrawing. The exceptions are enumerable:
 
 ```toml
-[c-abi.absent]
+[c-abi-absent]
 fork      = { form = "link" }
 mprotect  = { form = "enosys", note = "openkal has no operation upon a mapping's protection" }
 tcsetattr = { form = "accepted-no-effect", note = "the fields openkal does not name are not applied" }
@@ -599,15 +599,29 @@ list back when a link names one of the `link`-shaped entries, so
 `undefined reference to 'fork'` arrives with the sentence that says whether it
 is a defect or a limit of the environment this program was built for.
 
-**An engine that predates these keys.** `[kernel-abi]` is a top-level table an
-older mcpp does not know, and an unknown top-level table is ignored: a manifest
-carrying it loads unchanged everywhere it loaded before, and the absence of the
-resolution-time check is the behaviour that release already had. `[c-abi.absent]`
-is not the same case --- it is a new key inside a table mcpp does know, and an
-unrecognised key there is a parse error naming the key, which is what keeps a
-misspelling from silently disabling a declaration. A package adopting the second
-therefore requires an index floor at 2026.9.20.1; a package adopting the first
-does not.
+**An engine that predates these keys, and why both tables are top-level.**
+An older mcpp ignores an unknown TOP-LEVEL table and refuses an unknown MEMBER
+of a table it knows --- the second is what keeps a misspelled `presents` from
+silently disabling a declaration. Both new tables are therefore top-level, and
+for `[c-abi-absent]` that placement is a measurement rather than a preference.
+
+Written as `[c-abi].absent`, which reads better, every mcpp older than
+2026.9.20.1 refuses the whole manifest on every target with `[c-abi] has no
+member 'absent'`. Measured against the genuine published 2026.9.18.3 archive
+--- the index floor at the time --- on the exact manifest openkal-musl 0.17.0
+publishes. Everything this table does is diagnostic: it annotates a link that
+has already failed, and no flag, link line or artifact depends on it. So an
+engine that ignores it produces exactly the linker error it produces today,
+while an engine that refuses it takes the package away entirely, and would
+have forced the index floor up to this release --- taking the whole index
+away from every client stopped below it, for a note they merely would not
+have received.
+
+The consequence for a package: adopting either table requires nothing of the
+index floor, and a graph resolved by an older engine keeps building. What it
+loses is the check and the note, which is the behaviour that release already
+had. Writing `absent` inside `[c-abi]` is refused with a message naming the
+top-level spelling.
 
 **Fingerprint.** The realised environment participates in the build's
 fingerprint (`compileFlags`, §92's field 7): two builds whose C library

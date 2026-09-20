@@ -24,7 +24,7 @@
 > reason and on a Windows host failed for one. The `hostStripMacros`
 > compensation 2026.9.18.3 added is removed with it. This release also adds
 > `[kernel-abi] provides-interfaces` / `requires-interfaces`, answered at
-> dependency resolution, and `[c-abi.absent]`, which states what a C library
+> dependency resolution, and `[c-abi-absent]`, which states what a C library
 > does not supply and in what shape. See CHANGELOG and docs/22.
 
 ## Highlights

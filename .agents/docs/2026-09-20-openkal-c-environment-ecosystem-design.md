@@ -574,7 +574,7 @@ wchar      = 32
 builtins   = "iso"
 
 # 枚举例外，不枚举规则。form 是该缺席以何种形状到达调用方。
-[c-abi.absent]
+[c-abi-absent]
 fork     = { targets = ["*"], form = "link"   }  # 符号不定义，链接期报
 mprotect = { targets = ["*"], form = "enosys" }  # 定义存在，报 ENOSYS
 sigaction-handler = { targets = ["*"], form = "enosys",
@@ -586,8 +586,26 @@ sigaction-handler = { targets = ["*"], form = "enosys",
 1. **CI 可断言。** `form = "link"` 的名字必须**不在**产物的定义里；`form = "enosys"`
    的必须**在**。这把一份从来没有执行者的散文变成一条会红的断言。
 2. **mcpp 的诊断可以接话。** 链接报 `undefined reference to 'fork'` 时，mcpp 读到
-   C 库的 `[c-abi.absent]`，补一句「`openkal-musl` 声明 `fork` 在 `x86_64-windows-gnu`
+   C 库的 `[c-abi-absent]`，补一句「`openkal-musl` 声明 `fork` 在 `x86_64-windows-gnu`
    上不可用（link 形式）」，而不是让用户自己去查一份 README。
+
+**这张表是顶层表，而这是量出来的。** 实现时先写成 `[c-abi].absent`——更顺，也更像
+它所描述的东西。判据取自**真正发布的 2026.9.18.3 归档**（当时的索引 floor），跑在
+openkal-musl 0.17.0 将要发布的那份清单上：嵌套写法让**每个旧 mcpp 在每个目标上拒绝
+整份清单**，报 `[c-abi] has no member 'absent'`——`[c-abi]` 的解析器枚举自己的成员并
+拒绝其余，而这条严格性本身是对的（拼错的 `presents` 不该静默关掉一条声明）。同一次
+测量里，**未知的顶层表被忽略，构建照常完成**。
+
+这个差别决定这张表能不能发。它做的每件事都是诊断性的：给一次**已经失败**的链接加一句
+话，没有任何 flag、链接行或产物依赖它。于是忽略它的引擎产出的正是它今天产出的那条链接
+错误；而拒绝它的引擎会把索引 floor 逼到 2026.9.20.1——为了一句他们无非是收不到的说明，
+夺走停在其下的每个客户端手里的**整个索引**（[[index-floor-must-degrade]] 的失败形态）。
+改成顶层表后，openkal-musl 0.17.0 **不再要求抬 floor**。
+
+⚠️ 这条差别在解析结果上**看不见**：两种拼法解析出的 `CAbiDecl` 完全相同，任何只读结果
+的测试都区分不了。所以判据只能是「拿索引 latest 指向的那个二进制去跑」
+（[[new-capability-key-floor-measured]]），并且在单测里**直接断言形状**——
+`absent` 不是 `[c-abi]` 的成员。
 
 **`form` 这个字段本身承重。** `link` 是 §6.1 要的形状；`enosys` 是需要辩护的例外，
 README 今天为每一条都写了辩护（`mprotect`：「musl asks for a guard page ... and
@@ -604,8 +622,8 @@ prepared for」）。把辩护变成一个字段，**"有多少例外"就成为�
 | L2 集合包含 | mcpp 解析期 | 一条规则，引擎不认识任何接口名 |
 | L3 未定义符号比对 | mcpp 链接期 | 取对象的未定义符号、求交、映射、比较 |
 | L4 | 已有 | — |
-| `[c-abi.absent]` 断言 | openkal-musl 的 CI | 一个脚本 |
-| `[c-abi.absent]` 诊断接话 | mcpp 链接失败路径 | 一处 |
+| `[c-abi-absent]` 断言 | openkal-musl 的 CI | 一个脚本 |
+| `[c-abi-absent]` 诊断接话 | mcpp 链接失败路径 | 一处 |
 
 **引擎侧新增两处**（L2 解析、L3 链接），且**都不认识任何具体名字**：L2 做集合包含，
 L3 做集合差。名字的含义全部来自 `SURFACE.txt`，而那是 openkal 的 normative 文件，
@@ -618,7 +636,7 @@ L3 做集合差。名字的含义全部来自 `SURFACE.txt`，而那是 openkal 
 - L3：消费者调用一个**没有声明**的接口，链接期必须报错并指名符号与它所属的接口；
   **且在提供该接口的实现上同样报错**——否则这条判据只是重复了 §6.1。
 - L4：已由 openkal conformance 覆盖。
-- `[c-abi.absent]`：把 `fork` 的 `form` 从 `link` 改成 `enosys`，CI 必须红。
+- `[c-abi-absent]`：把 `fork` 的 `form` 从 `link` 改成 `enosys`，CI 必须红。
 
 最后一条与 L3 的第二句是同一个形状：**一条判据必须在"机制本身会通过"的那一侧
 也成立，否则它测的是机制不是声明。**
@@ -725,7 +743,7 @@ libarchive，且都在问"平台 SDK / 内核头在不在图里"——正是 P5 
 | --- | --- |
 | 借来的 `__CYGWIN__` | P3 关闭（需重测确认） |
 | 空着的解析期格子 | P5 关闭 |
-| 探针只铺到宏、没铺到接口 | **P7 关闭**。四级阶梯（L1 发布 / L2 解析 / L3 链接 / L4 运行），材料全部已在仓库里（`SURFACE.txt`、SPEC §9.2、`kal_interfaces()`），引擎侧新增两处且都不认识任何具体名字。C 库一级枚举例外而不枚举规则（`[c-abi.absent]`） |
+| 探针只铺到宏、没铺到接口 | **P7 关闭**。四级阶梯（L1 发布 / L2 解析 / L3 链接 / L4 运行），材料全部已在仓库里（`SURFACE.txt`、SPEC §9.2、`kal_interfaces()`），引擎侧新增两处且都不认识任何具体名字。C 库一级枚举例外而不枚举规则（`[c-abi-absent]`） |
 
 **P7 同时改变了"可验证性"这一维的整体评级**：在它之前，`[c-abi]` 只有宏一级被校验，
 接口一级完全是信任；在它之后，四个时刻各有一条会红的断言，且 `provides-interfaces`
@@ -739,9 +757,9 @@ libarchive，且都在问"平台 SDK / 内核头在不在图里"——正是 P5 
 | --- | --- | --- |
 | openkal 规范 | 零。不新增也不修改任何 `kal_*` | — |
 | openkal 各实现 | P5/P7 要求填 `provides-interfaces`，且**由产物生成而非手写**；CI 增加 L1 断言 | 一次性，完全机械化 |
-| openkal-musl | P4 在 `port/` 新增合成表与 conformance 断言；P7 把 README 的"absent"散文表变成 `[c-abi.absent]` 并加 CI 断言 | 新增能力，向后兼容 |
+| openkal-musl | P4 在 `port/` 新增合成表与 conformance 断言；P7 把 README 的"absent"散文表变成 `[c-abi-absent]` 并加 CI 断言 | 新增能力，向后兼容 |
 | openkal-llvm-runtime | 零 | — |
-| mcpp 引擎 | P0 两处修复；P5 新增字段与解析规则；**P7 新增链接期集合差与 `[c-abi.absent]` 诊断接话**；P3 改两个令牌；P1 改文档 | 新增能力，向后兼容 |
+| mcpp 引擎 | P0 两处修复；P5 新增字段与解析规则；**P7 新增链接期集合差与 `[c-abi-absent]` 诊断接话**；P3 改两个令牌；P1 改文档 | 新增能力，向后兼容 |
 | mcpp-index | P2 拆 `status`；libarchive 那 2 处身份判断改成 P5 声明 | 跟随 |
 | 终端用户（用 openkal） | P3 改变 `__CYGWIN__`，该目标上的包重建一次 | 一次破坏性 |
 | **不用 openkal 的用户** | **零。命令行逐字节不变** | 已由现有"未声明者不变"保证 |
@@ -751,7 +769,7 @@ libarchive，且都在问"平台 SDK / 内核头在不在图里"——正是 P5 
 ## 9. 顺序
 
 **落地记录见 `2026-09-20-ecosystem-execution-plan.md` §4,自审见
-`2026-09-20-wave-self-review.md`。** 本轮落地 P0、P1、P2、P5、P7(L1/L2/`[c-abi.absent]`),
+`2026-09-20-wave-self-review.md`。** 本轮落地 P0、P1、P2、P5、P7(L1/L2/`[c-abi-absent]`),
 未落地 P3、P4、P6 与 P7 的 L3;每一项未落地的理由与它缺席的后果都写在那两份记录里。
 
 
@@ -771,7 +789,7 @@ P6 win-ucrt ──── 需要 c++-abi 侧配套，最后
 
 **P7 的 L1 可以独立先行**：把 `SURFACE.txt` → 接口集的反推脚本与 CI 断言做出来，
 不依赖任何引擎改动，而且它产出的正是 P5 需要的那份 `provides-interfaces`。
-`[c-abi.absent]` 的 CI 断言同样可以独立先行。
+`[c-abi-absent]` 的 CI 断言同样可以独立先行。
 
 P3 **不得**先于重测落地：libarchive 的生成配置头含
 `#if defined(_WIN32) && !defined(__CYGWIN__)`，撤销会改变它的分支。
@@ -798,7 +816,7 @@ P3 **不得**先于重测落地：libarchive 的生成配置头含
 - **D7 L3（链接期集合差）是否纳入本轮。** 它是 `requires-interfaces` 唯一的校验者，
   没有它 P5 的消费者一侧是纯被信任的。代价是 mcpp 链接期多一次符号读取。
   **建议：纳入，但可以先做成 warning，一个发布周期后转 error。**
-- **D8 `[c-abi.absent]` 的 `form` 取值集。** 本文用 `link` / `enosys` 两个值。
+- **D8 `[c-abi-absent]` 的 `form` 取值集。** 本文用 `link` / `enosys` 两个值。
   是否需要第三个（例如"接受但无效"——README 记录的 `tcsetattr` 部分字段即是）？
   **建议：需要，命名为 `accepted-no-effect`，因为它正是 0.16.0 之前那个真实缺陷的
   形状，给它一个名字才能被盯住。**

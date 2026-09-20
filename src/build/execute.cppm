@@ -1260,7 +1260,7 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
             std::fputs(advice.c_str(), stderr);
         // THE SAME ADVICE THE PLAN PATH GIVES, FROM THE LIST THE PLAN WROTE
         // DOWN. This path has no `BuildPlan` by construction, so the C
-        // library's `[c-abi.absent]` table reaches it through a file beside
+        // library's `[c-abi-absent]` table reaches it through a file beside
         // build.ninja rather than through a resolution it exists to skip.
         // Advice attached to one path only appears or not depending on
         // whether build.ninja happened to be up to date.
