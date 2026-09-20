@@ -454,13 +454,87 @@ macOS，缺 SDK）：
 **它不是新层**：`openkal-musl` 的 `port/src/okm_fd.c` 已经造了两样同源的东西（描述符表、
 单一全局根的名字解析）。合成节点是第三样。
 
-**判据**：节点集合**写死**，不迭代扩张；conformance 逐条断言；集合外的路径行为不变。
+**前提已实测（2026-09-21）**，而且比本文初稿写的更锋利——不是「会坏」，是三条全坏。
+探针声明 `openkal-llvm-runtime = "0.14.0"`，同一份源码两个目标：
+
+| 判据 | `x86_64-linux-gnu` | `x86_64-windows-gnu`（wine） |
+|---|---|---|
+| `open("/dev/urandom", O_RDONLY)` + 读 8 字节 | ok | **FAIL** |
+| `fopen("/dev/null", "w")` | ok | **FAIL** |
+| `fopen("/tmp/…", "w")` | ok | **FAIL** |
+| 合计 | `failures: 0` | `failures: 3` |
+
+**插入点是唯一的，而且不在 open 里。** `port/src/okm_fd.c:414` 的 `okm_resolve()` 是
+**所有**路径型 syscall 的收口（`okm_syscall.c` 里六个以上调用点经过它）。只在 open 里认
+合成节点，`stat("/dev/null")` 仍然会失败，而 POSIX 程序确实会 stat 它。
+
+**`/tmp` 与前四个不是一回事。** 前四个是字符设备，`/tmp` 是目录映射；它更可能属于已有的
+预打开目录那一套（`okm_preopen`）。混进同一张表会让这张表同时承担两种语义。
+
+**判据**：节点集合**写死**，不迭代扩张；conformance 逐条断言；集合外的路径行为不变——
+这一条要有**反向腿**：`/dev/sda`、`/dev/fd/999`、`/proc/self/maps` 必须仍然按原样失败，
+否则这张表就成了吞掉所有 `/dev` 的黑洞。另：`openkal.random` 是可选接口（`kal_random_fill`
+在 `okm_syscall.c` 里是弱引用），所以 `/dev/urandom` 在不提供它的实现上必须**仍然失败**。
 
 #### I2 — P6：`openkal-win-ucrt` 形态
 
 **状态**：未实现。设计 §5.6。已验证**引擎侧改动数为 0**。
 
-**判据**：一个 `presents = "windows"` 的 C 库在同一引擎下构建，引擎不认识任何新名字。
+**判据（已通过，2026-09-21 实测）**：一个最小的 `presents = "windows"` C 库
+（`data-model = "llp64"`、`wchar = 16`）加一个消费者，为 `x86_64-windows-gnu` 构建，
+**引擎零改动**：
+
+```
+c-abi             ucrt           (fake-win-ucrt@0.1.0, graph)
+Finished dev
+```
+
+消费者的一个翻译单元里三条断言全过：`_WIN32` **在**（呈现 windows 就是保留平台自己的
+宏）、`__unix__` **不在**、`__MCPP_TARGET_WINDOWS__` **在**（它答的是目标，不是环境）。
+
+**所以 I2 剩下的全部是包本身**（一个真的基于 UCRT 的 C 库），不是引擎。顺带一条读数：
+gcc 路线会 warn「宿主 C 库头仍会被搜索」并给出 `llvm@<version>` 的 hint，这正是
+host 依赖规则在这里的表现。
+
+#### I3 — 生态改用 `x86_64-windows-musl`（新增，2026-09-21）
+
+**不是新增一个目标——它已经存在**（`triple.cppm`，tier `preview`，PE，pin
+`llvm@22.1.8`）。缺的是两件已经到期的事。
+
+**一、tier 可以晋级，而判据由那一行自己写下：**
+
+> `verified` 在这张表里意味着产物**被构建并被运行**过。在 Linux 宿主上跑 PE 需要 wine，
+> 而 openkal 的 CI 有那一步——所以这是可测的，tier 在**被测量之后**移动。
+
+本机 + wine 实测（`openkal-llvm-runtime@0.14.0`，mcpp 2026.9.21.2）：
+
+```
+PE32+ executable (console) x86-64, for MS Windows, 18 sections
+ok windows-musl, long=8, wchar=4          exit=0
+```
+
+`_WIN32` 不在、`long=8` 即 **LP64**（不是 Windows 的 LLP64）、`wchar=4`、输出目录
+`target/x86_64-windows-musl/`。**但晋级要由 CI 给读数**，那一行说的是「openkal 的 CI
+有那一步」——所以次序是：先把生态 CI 改到这个目标，读数由 CI 产出，再动那一行。
+
+**二、生态还在用 `-gnu`，而那正是这一行要修的毛病：**
+
+| | mcpp 的身份 | 交给 clang 的 | 真实 c-abi |
+|---|---|---|---|
+| 今天 | `x86_64-windows-gnu` | `x86_64-w64-windows-gnu` | **musl** |
+| 应该 | `x86_64-windows-musl` | `x86_64-w64-windows-gnu` | musl |
+
+两行交给 clang 的字符串**相同**，mcpp 的身份**不同**。用 `-gnu` 把「这个 C 库偏偏不是的
+那个东西」写进了身份、输出目录、`cfg(env = …)` 与打包的 ABI 标签。
+
+**描述符侧的风险面实测为零**：`grep -rn 'env = "gnu"' pkgs/` 命中 0 处；提到
+`x86_64-windows-gnu` 的三个描述符全是注释。其中 `openkal-uefi.lua` 那条是要点——UEFI
+消费方是 PE 目标的**另一种**用法，它继续用 `-gnu` 是对的。**retarget 的范围是
+openkal-musl 那一栈，不是所有 PE 用户。**
+
+**单独一轮，不并进 2026.9.21.2**：改测量的目标会改 30 成员测量的**分母**。本轮自己的
+判据：同一个成员集合在两个目标上各测一次，逐格比对，任何一格从 `runs`/`builds` 退到
+`fails` 都要点名。
 
 ### 2.4 生态数据侧
 
