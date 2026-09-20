@@ -80,6 +80,12 @@ requires-interfaces = ["openkal.fs", "openkal.net"]
 `provides-interfaces` 的图照常构建,链接仍以它一贯的词汇报告缺席。什么都不写的清单,
 产出的命令行与这项能力存在之前逐字节相同。
 
+拒绝记录的 reason 为 `interface-not-provided`,并且**这个令牌也印在拒绝消息里**,用方括号
+包着,与 `E0006` 同一个约定——mcpp-index 的兼容性测量靠它把「这个图不供给这个成员所要的」
+与「这个成员没能构建」分开,而一条只有人能认出的拒绝会逼迫那个消费者去匹配散文。
+`docs/50` 的 reason 令牌表同时补上了 2026.9.18.1 起一直在发却从未列出的三个:
+`c-env-unrealisable`、`c-env-verification-mismatch`、`platform-dependency`。
+
 ### `[c-abi.absent]`:枚举例外,不枚举规则
 
 一个 C 库供给的名字集合在清单里不可枚举(POSIX 约一千二百个),枚举它正是 §3.3 记录下
