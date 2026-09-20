@@ -11181,10 +11181,23 @@ prepare_build(bool print_fingerprint,
         // changes no command line and no diagnostic for every project built
         // before it.
         {
+            // THE LIST COMES FROM THE PACKAGE THAT RESOLVED AS THE LAYER, NOT
+            // FROM THE FIRST ONE IN THE GRAPH THAT STATED ONE. A graph may
+            // carry more than one candidate for a layer — a workspace member
+            // beside a dependency, a second implementation reached through a
+            // feature that did not activate — and only one of them is the
+            // provider this build resolved. Reading whichever came first in
+            // `packages` would compare a consumer's requirements against an
+            // implementation the build is not using, which is a wrong answer
+            // rather than a missing one.
             std::vector<std::string> providedInterfaces;
             std::string providerId;
             for (auto& pkg : packages) {
                 if (pkg.manifest.kernelAbiProvidesInterfaces.empty()) continue;
+                if (!resolvedTargetSide.kernelAbi.impl.empty()
+                    && resolvedTargetSide.kernelAbi.impl.find(
+                           pkg.manifest.package.name) == std::string::npos)
+                    continue;
                 providedInterfaces = pkg.manifest.kernelAbiProvidesInterfaces;
                 providerId = pkg.manifest.package.name;
                 break;

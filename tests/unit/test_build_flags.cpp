@@ -267,3 +267,17 @@ TEST(CAbiAbsentAdvice, ALibraryThatEnumeratedNothingProducesNoNote) {
     EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
         "ld.lld: error: undefined symbol: fork\n", "musl", {}).empty());
 }
+
+TEST(CAbiAbsentAdvice, ALongerSymbolWithTheSamePrefixIsNotExplained) {
+    // `undefined symbol: open` is a prefix of `undefined symbol: opendir`.
+    // A substring search would answer a link failure with a row that has
+    // nothing to do with it, and an explanation that is confidently wrong is
+    // worse than the linker's own message.
+    std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
+        {"open", mcpp::targetside::CAbiAbsentForm::Link, "not supplied"},
+    };
+    EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: opendir\n", "musl", absent).empty());
+    EXPECT_FALSE(mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: open\n", "musl", absent).empty());
+}

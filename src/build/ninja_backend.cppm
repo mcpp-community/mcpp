@@ -697,10 +697,27 @@ std::string c_abi_absent_facility_advice(
         // program at run time by construction, so matching them against a
         // link diagnostic would report a coincidence of spelling.
         if (e.form != mcpp::targetside::CAbiAbsentForm::Link) continue;
-        const std::string lld = std::format("undefined symbol: {}", e.name);
+        // THE NAME MUST END WHERE THE DIAGNOSTIC'S NAME ENDS. `undefined
+        // symbol: open` is a prefix of `undefined symbol: opendir`, so a
+        // plain substring search explains a link failure with a row that has
+        // nothing to do with it — and an explanation that is confidently
+        // wrong is worse than the linker's own message. lld ends the name at
+        // the line; GNU ld closes it with a quote.
         const std::string gnu = std::format("undefined reference to `{}'", e.name);
-        if (output.find(lld) == std::string_view::npos
-            && output.find(gnu) == std::string_view::npos) continue;
+        bool matched = output.find(gnu) != std::string_view::npos;
+        if (!matched) {
+            const std::string lld = std::format("undefined symbol: {}", e.name);
+            for (std::size_t at = output.find(lld); at != std::string_view::npos;
+                 at = output.find(lld, at + 1)) {
+                const auto after = at + lld.size();
+                if (after >= output.size() || output[after] == '\n'
+                    || output[after] == '\r' || output[after] == ' ') {
+                    matched = true;
+                    break;
+                }
+            }
+        }
+        if (!matched) continue;
         named += std::format("\n        {:<20} {}", e.name,
                              e.note.empty() ? "declared absent" : e.note);
     }
