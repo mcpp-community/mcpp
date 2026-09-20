@@ -123,3 +123,24 @@ libpng、re2、lua(经 capi-lua)。全部是按 `_WIN32` / `__MINGW32__` 选分�
 | openkal-musl | #39 | 0.17.0 `[c-abi.absent]` + CI 断言 |
 | openkal-linux | #29 | 0.15.0 `provides-interfaces`,CI 重新生成并 diff |
 | mcpp-index | #444 | 抬 pins、重测、`refused` |
+
+### 4.4 本轮未做,以及为什么
+
+| 项 | 状态 | 理由 |
+| --- | --- | --- |
+| openkal-macos 的 `provides-interfaces` | 未做 | 该实现无法在 Linux 宿主交叉构建(`aarch64-macos` 没有本机载荷),而这份清单的纪律是**由产物派生**。手写它就是这套机制存在的理由所反对的那件事。留给一次能在 macOS runner 上生成它的改动 |
+| P3 撤 `__CYGWIN__` | 未做 | 判据已具备(mimalloc 与 sqlite3 的守卫),但它会改变 libarchive 生成配置头里的 `#if defined(_WIN32) && !defined(__CYGWIN__)` 分支,代价需要一次重测才能称量。本轮把证据记入 mcpp-index 的 `docs/openkal-compat.md` |
+| P4 合成节点层 | 未做 | openkal-musl 的移植工作量独立于本轮 |
+| P6 `openkal-win-ucrt` | 未做 | 需要 c++-abi 一侧配套 |
+| `__cxa_thread_atexit` | 未做 | 本轮测量新发现;属 openkal-llvm-runtime / openkal-musl |
+
+### 4.5 两个实现的清单不同,这是这套机制存在的理由
+
+| 实现 | 接口数 | 差异 |
+| --- | --- | --- |
+| openkal-linux 0.15.0 | 15 | 全部 |
+| openkal-windows 0.10.0 | 14 | 缺 `openkal.space` |
+
+需要 `openkal.space` 的消费者在 Windows 上被**解析期**拒绝,在 Linux 上构建。
+一个给环境类别起的名字会让这两个实现看起来一样——这正是 SPEC §3.3 撤回 `hosted`
+的理由,而这里是它的第一个实例。
