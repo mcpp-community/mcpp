@@ -600,6 +600,14 @@ inline std::expected<Realisation, std::string> realise(
     // this token lives in `openkal-cross.yml`, which compiles an
     // idiom-triggering unit for `aarch64-macos` over the openkal stack and
     // asserts the symbol is absent from the object.
+    //
+    // `os == "macos" || os == "ios"` IS `Triple::is_apple()`, SPELLED OUT.
+    // This module takes `os` as a string rather than a `Triple` on purpose ---
+    // it is pure, and importing `mcpp.toolchain-model` to reach one predicate
+    // would couple what that choice decoupled. The canonical list is
+    // `modules/toolchain-model/src/triple.cppm`; `ninja_backend.cppm` spells
+    // it out twice for the same reason. A new Apple OS in the vocabulary has
+    // to visit all three, and this comment is the grep target that says so.
     if (decl.builtins == mcpp::targetside::CAbiBuiltins::Iso) {
         if (!freestanding && (os == "macos" || os == "ios"))
             r.builtinsTokens.push_back("-fno-builtin");
