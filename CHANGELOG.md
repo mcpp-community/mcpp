@@ -105,6 +105,24 @@ tcsetattr = { form = "accepted-no-effect", note = "openkal 不命名的那些字
 的东西。链接点到 `link` 形状里的某一项时,mcpp 把清单读回来:`undefined reference to
 'fork'` 因此带着那句说明它是缺陷还是环境限制的话一起到达。
 
+### 汇编器先问 PATH 再看沙箱,而其余每一个工具都反过来
+
+`find_usable_nasm` 先 `which("nasm")`,沙箱里那份钉住的只作兜底。于是装了汇编器的
+机器用它自己的那一份,没装的下载钉住的那一份——**三台机器可以从同一棵源码树产出三份
+不同的目标文件,而两次构建里都没有一行说它用的是哪一个**。引擎里其余每一个工具都不是
+这个方向:编译器与链接器是载荷,C 库与 C++ 运行时是包,`ninja` 与 `patchelf` 走 xlings,
+`ar` / `strip` / `objcopy` 由解析出的工具链自己的目录派生且从不是裸名。
+
+顺序反过来:先沙箱,后宿主。宿主那一份**保留**,因为一台离线而本来就装了可用汇编器的
+机器仍然应当能构建——但被用到时构建会点名它:
+
+```
+degraded: the assembler for this build is the host's ('/usr/bin/nasm'), not the one this engine pins
+```
+
+`docs/20` 新增一节列全 mcpp 在宿主上取的每一项与各自的理由。**一个宿主工具到达构建
+本身不是缺陷,静默地到达才是**——所以那是一张表而不是一条禁令。
+
 ### `presents` 的取值集冻结
 
 docs/22 写明:`presents` 回答的是源码看到哪些环境身份宏,**不回答任何能力是否存在**。

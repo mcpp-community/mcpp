@@ -584,6 +584,40 @@ mcpp build --target aarch64-ios        # 解析 llvm@22.1.8 + iPhoneOS SDK
 mcpp build --target aarch64-ios-sim    # 解析 llvm@22.1.8 + 模拟器 SDK
 ```
 
+## mcpp 保留的宿主面,以及每一项的理由
+
+这个引擎围绕的规矩:**一次构建可复现,当且仅当造它的工具来自下一台机器也能拿到的
+地方。** 所以每一个参与构建的工具都来自依赖图或 xlings,而下面这张表是**不来自**
+那里的全部——每一条都带着它为什么不能。
+
+| 项 | 到达方式 | 不在生态里的理由 |
+|---|---|---|
+| **xlings 自己** | 随 mcpp 的载荷捆绑(`[xlings] binary = "bundled"`,默认)。`"system"` 才去查 PATH。 | 自举:总得有东西去取第一个包。默认是捆绑的那份,所以走宿主是用户做的一个选择,不是一次兜底。 |
+| **Apple SDK** | 经 `xcrun` **定位**,从不安装 | 不可再分发。没有东西可打包,而拒绝在解析任何载荷之前就点名它。 |
+| **iOS 模拟器运行时** | `simctl`,经 `xim:apple-simulator-tools` | 同上。 |
+| **汇编器(`nasm`)** | 先取钉住的 `xim:nasm`;只有那条路服务不了时才取宿主的,**且被用到时在构建报告里点名** | 一台离线而本来就装了可用汇编器的机器仍然能构建。它此前是反着的——见下。 |
+| **PATH 上的 C++ 编译器(`$CXX`,否则 `g++`)** | 只有 `mcpp doctor` | 那个命令的职责就是报告宿主。构建那条路在每一个到得了这个探针的分支上都从解析出的载荷设定编译器,载荷解析不了时**拒绝**,而不是落到 PATH。 |
+
+其余全部来自图或 xlings,包括最常被当成宿主的那几个:编译器与链接器(载荷)、
+C 库与 C++ 运行时(包)、`ninja` 与 `patchelf`(xlings),以及 `ar` / `strip` /
+`objcopy`(由解析出的工具链自己的目录派生,**从不是一个裸名**——
+`mcpp.toolchain.registry::binutils_tool` 要么返回一个存在的绝对路径,要么什么都不返回)。
+
+**汇编器是唯一指错方向的那一个,值得记下来而不是悄悄掉个头(2026.9.20.1)。**
+`find_usable_nasm` 先问 PATH 再看沙箱。装了汇编器的机器用它的那一份,没装的机器下载
+钉住的那一份。三台机器可以从同一棵源码树产出三份不同的目标文件,而两次构建里都没有
+一行说它用的是哪一个。现在顺序反过来了;当服务的是宿主那一份时,构建会说出来:
+
+```
+degraded: the assembler for this build is the host's ('/usr/bin/nasm'), not the one this engine pins
+          two machines can assemble the same source with different assemblers, and the build records only this line
+          run `xlings install nasm` so the pinned copy is used
+```
+
+**一个宿主工具到达构建,本身不是缺陷;一个宿主工具**静默地**到达构建才是。**
+这就是上面是一张表而不是一条禁令的原因:每一条都到得了,每一条都有理由,而每一条都
+在它被用到的地方说出来。
+
 ### 这条路新增的宿主面,具名且有界
 
 两项,都只在 macOS 上,都落在「一个只存在于它自己那个操作系统上的专有运行时」这一类:

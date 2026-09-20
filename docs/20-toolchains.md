@@ -647,6 +647,49 @@ mcpp build --target aarch64-ios        # resolves llvm@22.1.8 + the iPhoneOS SDK
 mcpp build --target aarch64-ios-sim    # resolves llvm@22.1.8 + the Simulator SDK
 ```
 
+## The host surface mcpp keeps, and the reason for each
+
+The rule this engine is arranged around: **a build is reproducible only if the
+tools that made it came from somewhere the next machine can get them from.**
+Every tool a build uses therefore comes from the dependency graph or from
+xlings, and the list below is the whole of what does not -- each entry with the
+reason it cannot.
+
+| item | route | the reason it is not the ecosystem's |
+|---|---|---|
+| **xlings itself** | bundled in mcpp's own payload (`[xlings] binary = "bundled"`, the default). `"system"` opts into a PATH lookup. | Bootstrap: something has to fetch the first package. The default is the bundled copy, so the host route is a choice a user makes rather than a fallthrough. |
+| **an Apple SDK** | located through `xcrun`, never installed | Not redistributable. There is nothing to package, and the refusal says so before any payload is resolved. |
+| **the iOS simulator runtime** | `simctl`, through `xim:apple-simulator-tools` | The same. |
+| **an assembler (`nasm`)** | the pinned `xim:nasm` first; the host's only when that route could not serve, and **named in the build report** when it is used | An offline machine that already has a usable assembler can still build. It used to be the other way round -- see below. |
+| **a C++ compiler on PATH (`$CXX`, else `g++`)** | `mcpp doctor` only | That command's job is to report on the host. The build path sets the compiler from a resolved payload at every branch that reaches the probe, and refuses when the payload cannot be resolved rather than falling through to PATH. |
+
+Everything else comes from the graph or from xlings, including the ones most
+often assumed to be the host's: the compiler and the linker (a payload), the
+C library and the C++ runtime (packages), `ninja` and `patchelf` (xlings), and
+`ar` / `strip` / `objcopy` (derived from the resolved toolchain's own
+directory, never a bare name -- `mcpp.toolchain.registry::binutils_tool`
+returns an existing absolute path or nothing).
+
+**The assembler was the one that pointed the wrong way, and it is worth
+recording rather than quietly turning around (2026.9.20.1).**
+`find_usable_nasm` asked PATH before it looked in the sandbox. A machine with
+an assembler installed assembled with that one; a machine without downloaded
+the pinned copy. Three machines could produce three different objects from one
+source tree, and no line of either build said which assembler it used. The
+order is now the other way, and when the host copy is the one that served, the
+build says so:
+
+```
+degraded: the assembler for this build is the host's ('/usr/bin/nasm'), not the one this engine pins
+          two machines can assemble the same source with different assemblers, and the build records only this line
+          run `xlings install nasm` so the pinned copy is used
+```
+
+**A host tool that reaches a build is not by itself the defect. A host tool
+that reaches a build silently is.** That is why the entries above are a table
+rather than a prohibition: each is reachable, each has a reason, and each says
+so where it is used.
+
 ### The host surface this adds, named and bounded
 
 Two items, both macOS-only, both in the category a proprietary runtime that

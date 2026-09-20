@@ -13863,6 +13863,21 @@ prepare_build(bool print_fingerprint,
                     "was found or installable; install one via `xlings install "
                     "nasm` or your system package manager"));
             }
+            // A HOST TOOL THAT REACHES A BUILD IS NAMED THERE. The sandbox
+            // copy is tried first (mcpp.xlings::find_usable_nasm), so this
+            // fires only where that route could not serve: an offline machine
+            // that already has an assembler. Saying nothing would leave two
+            // machines assembling the same source with different tools and
+            // no line in either build recording which.
+            if (mcpp::xlings::nasm_is_from_host(
+                    mcpp::config::make_xlings_env(**cfgNasm), *nasmBin)) {
+                mcpp::diag::degraded("build/nasm-from-host", std::format(
+                    "the assembler for this build is the host's ('{}'), not "
+                    "the one this engine pins", nasmBin->string()),
+                    "two machines can assemble the same source with different "
+                    "assemblers, and the build records only this line",
+                    "run `xlings install nasm` so the pinned copy is used");
+            }
             ctx.plan.nasmPath = *nasmBin;
         }
     }
