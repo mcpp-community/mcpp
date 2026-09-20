@@ -692,6 +692,31 @@ PATH_LIST_SEPARATOR / VSCODE_TARGET / CASE_INSENSITIVE_PATHS
 
 **两者都绿才叫生态闭环。** 任一单独绿都不足以下结论。
 
+### 4.4 两者的**目标集合**也不重叠，而这一条本文原先没写（2026-09-21 补）
+
+分工写成了「30 成员测 C 表面、lsp 测整合」，**没有写它们问的目标不同**：
+
+| | 目标 |
+|---|---|
+| 30 成员测量（`pins.toml`） | `x86_64-linux-gnu`、`x86_64-windows-gnu` —— **没有 macOS** |
+| `lsp-mcpp-private` | 三个目标，**含 `aarch64-macos`** |
+
+**后果是这一轮实测到的**：`archive` 在 30 成员测量里两列都是 `runs (posix)`，而同一个 libarchive
+在 `lsp-mcpp-private` 的 macOS 上链接失败于 `memset_pattern16`。两个读数都是真的——
+`memset_pattern16` 是 Apple 的 libc 函数，clang 只在 Apple 目标上生成它，linux 与
+windows-gnu 上**按构造不会出现**。
+
+**所以「openkal 生态里按 30 个成员规模扫 macOS 的东西，不存在」。** macOS 只被
+`lsp-mcpp-private` 一个程序、以及各实现包自己的 CI 覆盖。
+
+**这也限定了 E1 判据的适用范围**：「总失败 10→5、新增为零」是**在那两列上**成立的；
+macOS 那一列从来没进过这个统计，所以这一类缺陷在那个数字里按构造不可见。
+
+**要补这一列，先有一个决定要拍：** Linux 宿主能为 `aarch64-macos` **交叉构建**但**跑不了**，
+所以那一列最多到 `builds`，不是 `runs`。而 `RANK` 里 `builds` 低于 `runs`——
+**一个只能到 `builds` 的目标列，会让「有没有退步」这个判据在那一列上永远比另外两列松。**
+是接受这个不对称、还是给那一列配 runner，是拍板项，不是实现项。
+
 ---
 
 ## 5. 执行顺序
