@@ -1,6 +1,6 @@
 ---
 subject: design
-status: draft-for-review
+status: active
 ---
 
 # openkal 生态：能力的时刻模型，以及 C 环境方案空间的划分

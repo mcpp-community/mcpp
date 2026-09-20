@@ -561,6 +561,75 @@ std::optional<std::string> find_disallowed_array_of_tables(
 
 } // namespace
 
+// [c-abi.absent] — the facilities a C library does not supply (design
+// 2026-09-20 §5.7.5). The set of names it DOES supply is not enumerable in a
+// manifest; the exceptions are, and enumerating an exception is what lets a CI
+// run contradict it.
+//
+//   [c-abi.absent]
+//   fork     = { form = "link" }
+//   mprotect = { form = "enosys", note = "openkal has no operation upon a
+//                mapping's protection" }
+//
+// `form` is required and closed: a facility absent in an unnamed shape is one
+// nobody can assert against. `link` is the shape openkal's own model requires
+// (SPEC 0.14 §6.1, which calls a run-time report of unsupportedness a defect);
+// the other two are departures from it, named so that a departure is something
+// that can be counted.
+//
+// A FREE FUNCTION AND NOT A BLOCK INSIDE `parse_string`, FOR A MEASURED
+// REASON. Written inline it crashed clang 20.1.7 on Windows during LLVM IR
+// generation of `parse_string` (exception 0xC0000005, the frame naming this
+// block's compound statement); every other host compiled it. This codebase has
+// met the shape before — a construct that is fine in a function and not in a
+// large one inside a module interface unit — and the answer is the same: give
+// it its own function.
+inline std::expected<std::vector<mcpp::targetside::CAbiAbsentEntry>, std::string>
+parse_c_abi_absent(const t::Value& v) {
+    std::vector<mcpp::targetside::CAbiAbsentEntry> out;
+    if (!v.is_table())
+        return std::unexpected(std::string(
+            "[c-abi.absent] must be a table of facility names, each with a "
+            "`form`: fork = { form = \"link\" }"));
+    for (auto const& kv : v.as_table()) {
+        const std::string& name = kv.first;
+        const t::Value&    ent  = kv.second;
+        if (!ent.is_table())
+            return std::unexpected(std::format(
+                "[c-abi.absent].{} must be a table with a `form`: "
+                "{} = {{ form = \"link\" }}", name, name));
+        const auto& et = ent.as_table();
+        for (auto const& m : et)
+            if (m.first != "form" && m.first != "note")
+                return std::unexpected(std::format(
+                    "[c-abi.absent].{} has no member '{}'; the members are: "
+                    "form, note", name, m.first));
+        auto fit = et.find("form");
+        if (fit == et.end() || !fit->second.is_string())
+            return std::unexpected(std::format(
+                "[c-abi.absent].{} is missing `form`. An absence with no "
+                "named shape is one nothing can assert against; the shapes "
+                "are \"link\" (the definition is absent), \"enosys\" (it "
+                "exists and reports that it cannot act) and "
+                "\"accepted-no-effect\" (the call succeeds and part of what "
+                "it asked for is not done).", name));
+        auto form = mcpp::targetside::parse_c_abi_absent_form(fit->second.as_string());
+        if (!form)
+            return std::unexpected(std::format(
+                "[c-abi.absent].{}.form = \"{}\" names no known shape. The "
+                "shapes are \"link\", \"enosys\" and \"accepted-no-effect\".",
+                name, fit->second.as_string()));
+        mcpp::targetside::CAbiAbsentEntry e;
+        e.name = name;
+        e.form = *form;
+        if (auto nit = et.find("note"); nit != et.end() && nit->second.is_string())
+            e.note = nit->second.as_string();
+        out.push_back(std::move(e));
+    }
+    std::ranges::sort(out, {}, &mcpp::targetside::CAbiAbsentEntry::name);
+    return out;
+}
+
 std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                                                     const std::filesystem::path& origin,
                                                     LoadContext ctx) {
@@ -1085,65 +1154,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     "[c-abi] has no member '{}'; the members are: absent, "
                     "builtins, data-model, presents, wchar", key)));
         }
-        // [c-abi.absent] — the facilities this C library does not supply
-        // (design 2026-09-20 §5.7.5). The set of names it DOES supply is not
-        // enumerable in a manifest; the exceptions are, and enumerating an
-        // exception is what lets a CI run contradict it.
-        //
-        //   [c-abi.absent]
-        //   fork     = { form = "link" }
-        //   mprotect = { form = "enosys", note = "openkal has no operation
-        //                upon a mapping's protection" }
-        //
-        // `form` is required and closed: a facility that is absent in an
-        // unnamed shape is one nobody can assert against. `link` is the shape
-        // openkal's own model requires (SPEC 0.14 §6.1, which calls a
-        // run-time report of unsupportedness a defect); the other two are
-        // departures from it, and they are named so that a departure is
-        // something somebody can count.
         if (auto ait = ct->find("absent"); ait != ct->end()) {
-            if (!ait->second.is_table())
-                return std::unexpected(error(origin,
-                    "[c-abi.absent] must be a table of facility names, each "
-                    "with a `form`: fork = { form = \"link\" }"));
-            for (auto const& [name, entry] : ait->second.as_table()) {
-                if (!entry.is_table())
-                    return std::unexpected(error(origin, std::format(
-                        "[c-abi.absent].{} must be a table with a `form`: "
-                        "{} = {{ form = \"link\" }}", name, name)));
-                mcpp::targetside::CAbiAbsentEntry e;
-                e.name = name;
-                auto const& et = entry.as_table();
-                for (auto const& [k, _] : et)
-                    if (k != "form" && k != "note")
-                        return std::unexpected(error(origin, std::format(
-                            "[c-abi.absent].{} has no member '{}'; the "
-                            "members are: form, note", name, k)));
-                auto fit = et.find("form");
-                if (fit == et.end() || !fit->second.is_string())
-                    return std::unexpected(error(origin, std::format(
-                        "[c-abi.absent].{} is missing `form`. An absence "
-                        "with no named shape is one nothing can assert "
-                        "against; the shapes are \"link\" (the definition is "
-                        "absent), \"enosys\" (it exists and reports that it "
-                        "cannot act) and \"accepted-no-effect\" (the call "
-                        "succeeds and part of what it asked for is not "
-                        "done).", name)));
-                auto form = mcpp::targetside::parse_c_abi_absent_form(
-                    fit->second.as_string());
-                if (!form)
-                    return std::unexpected(error(origin, std::format(
-                        "[c-abi.absent].{}.form = \"{}\" names no known "
-                        "shape. The shapes are \"link\", \"enosys\" and "
-                        "\"accepted-no-effect\".",
-                        name, fit->second.as_string())));
-                e.form = *form;
-                if (auto nit = et.find("note");
-                    nit != et.end() && nit->second.is_string())
-                    e.note = nit->second.as_string();
-                decl.absent.push_back(std::move(e));
-            }
-            std::ranges::sort(decl.absent, {}, &mcpp::targetside::CAbiAbsentEntry::name);
+            auto absent = parse_c_abi_absent(ait->second);
+            if (!absent) return std::unexpected(error(origin, absent.error()));
+            decl.absent = std::move(*absent);
         }
         if (auto pit = ct->find("presents"); pit != ct->end()) {
             if (!pit->second.is_string())
