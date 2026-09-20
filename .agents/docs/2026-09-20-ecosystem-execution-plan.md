@@ -158,3 +158,50 @@ d9d24a49fc6f76c2.dm   __riscv=1   __linux__=0   __SIZEOF_WCHAR_T__=4
 **正确的**,因为那里宿主就是目标。区分两者的是第一行:freestanding 的探针此前也长这样。
 
 这条读数是「探针量的是它要核对的那个目标」这句话的产物级证据,不是日志级的。
+
+### 4.7 端到端:同一条需求在两个实现上给出不同答案
+
+登记发布之后,对**已发布的**实现实测一次。工程只写一条需求,按目标解析不同的实现:
+
+```toml
+[target.'cfg(linux)'.dependencies]
+openkal-linux = { version = "0.15.0", features = ["standalone"] }
+[target.'cfg(windows)'.dependencies]
+openkal-windows = { version = "0.10.0", features = ["standalone"] }
+
+[kernel-abi]
+requires-interfaces = ["openkal.space"]
+```
+
+读数:
+
+```
+=== Linux ===
+      Cached openkal-linux v0.15.0 (17 units)
+    Finished dev [unoptimized + debuginfo]
+
+=== Windows ===
+error: 'idx-probe' requires interfaces the resolved implementation does not
+       provide. [interface-not-provided]
+         openkal.space
+       provided by  openkal-windows (14 interfaces)
+```
+
+**同一个包、同一条需求,在一个目标上构建、在另一个目标上于编译任何东西之前被拒绝**,
+而拒绝点名了缺的接口、要它的包、没提供它的实现和它提供的个数。
+
+这是整轮最强的一条证据,也是 SPEC §3.3 撤回 `hosted` 的理由的第一个实例:
+**一个给环境类别起的名字,会把这两个实现藏成一样。**
+
+链条的每一环都在这条读数里:清单由产物生成(openkal CI 的 diff)、登记进索引
+(mcpp-index#445)、在解析期被读(mcpp#678)、拒绝带着可被机器读的码
+(`[interface-not-provided]`,mcpp-index 的测量按它区分 `refused` 与 `fails`)。
+
+### 4.8 索引陈旧的又一层
+
+`mcpp index update` 报 `index updated`,而 `~/.mcpp/registry/data/mcpplibs/.xlings-index-version`
+仍停在旧 artifact。删掉 `.xlings-index-cache.json` 与 `.mcpp-index-updated` 都不够;
+删掉整个 `mcpplibs/` 目录重取才拿到新的 `cf36e1e`。
+
+判据只能是那个文件里的 artifact sha,不能是命令的退出码,也不能是它打印的那句
+`index updated`。
