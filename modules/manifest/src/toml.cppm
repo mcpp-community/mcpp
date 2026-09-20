@@ -559,8 +559,6 @@ std::optional<std::string> find_disallowed_array_of_tables(
     return std::nullopt;
 }
 
-} // namespace
-
 // [c-abi.absent] — the facilities a C library does not supply (design
 // 2026-09-20 §5.7.5). The set of names it DOES supply is not enumerable in a
 // manifest; the exceptions are, and enumerating an exception is what lets a CI
@@ -577,36 +575,43 @@ std::optional<std::string> find_disallowed_array_of_tables(
 // the other two are departures from it, named so that a departure is something
 // that can be counted.
 //
-// A FREE FUNCTION AND NOT A BLOCK INSIDE `parse_string`, FOR A MEASURED
-// REASON. Written inline it crashed clang 20.1.7 on Windows during LLVM IR
-// generation of `parse_string` (exception 0xC0000005, the frame naming this
-// block's compound statement); every other host compiled it. This codebase has
-// met the shape before — a construct that is fine in a function and not in a
-// large one inside a module interface unit — and the answer is the same: give
-// it its own function.
-inline std::expected<std::vector<mcpp::targetside::CAbiAbsentEntry>, std::string>
-parse_c_abi_absent(const t::Value& v) {
-    std::vector<mcpp::targetside::CAbiAbsentEntry> out;
+// THE SHAPE OF THIS FUNCTION IS MEASURED RATHER THAN STYLISTIC. Written as a
+// block inside `parse_string` it crashed clang 20.1.7 on Windows during LLVM
+// IR generation (exception 0xC0000005); moved out to a free function returning
+// `std::expected<std::vector<CAbiAbsentEntry>, std::string>` the crash moved
+// with it, now naming this function. Every other host and every other compiler
+// compiled all three spellings. What it takes is the plainest form available:
+// an out parameter and an optional error, with no `expected` over a vector of
+// structs carrying strings. The note is here so that a later tidy-up does not
+// restore a shorter spelling and rediscover this on a Windows runner.
+//
+// It also belongs in this anonymous namespace and not in the module's exported
+// purview, where the first two spellings were written. An inline function in
+// the purview is emitted into every importer of the module; this one is an
+// implementation detail of `parse_string` and has no reader outside it.
+inline std::optional<std::string>
+parse_c_abi_absent(const t::Value& v,
+                   std::vector<mcpp::targetside::CAbiAbsentEntry>& out) {
     if (!v.is_table())
-        return std::unexpected(std::string(
+        return std::optional<std::string>(std::string(
             "[c-abi.absent] must be a table of facility names, each with a "
             "`form`: fork = { form = \"link\" }"));
     for (auto const& kv : v.as_table()) {
         const std::string& name = kv.first;
         const t::Value&    ent  = kv.second;
         if (!ent.is_table())
-            return std::unexpected(std::format(
+            return std::optional<std::string>(std::format(
                 "[c-abi.absent].{} must be a table with a `form`: "
                 "{} = {{ form = \"link\" }}", name, name));
         const auto& et = ent.as_table();
         for (auto const& m : et)
             if (m.first != "form" && m.first != "note")
-                return std::unexpected(std::format(
+                return std::optional<std::string>(std::format(
                     "[c-abi.absent].{} has no member '{}'; the members are: "
                     "form, note", name, m.first));
         auto fit = et.find("form");
         if (fit == et.end() || !fit->second.is_string())
-            return std::unexpected(std::format(
+            return std::optional<std::string>(std::format(
                 "[c-abi.absent].{} is missing `form`. An absence with no "
                 "named shape is one nothing can assert against; the shapes "
                 "are \"link\" (the definition is absent), \"enosys\" (it "
@@ -615,7 +620,7 @@ parse_c_abi_absent(const t::Value& v) {
                 "it asked for is not done).", name));
         auto form = mcpp::targetside::parse_c_abi_absent_form(fit->second.as_string());
         if (!form)
-            return std::unexpected(std::format(
+            return std::optional<std::string>(std::format(
                 "[c-abi.absent].{}.form = \"{}\" names no known shape. The "
                 "shapes are \"link\", \"enosys\" and \"accepted-no-effect\".",
                 name, fit->second.as_string()));
@@ -626,9 +631,22 @@ parse_c_abi_absent(const t::Value& v) {
             e.note = nit->second.as_string();
         out.push_back(std::move(e));
     }
-    std::ranges::sort(out, {}, &mcpp::targetside::CAbiAbsentEntry::name);
-    return out;
+    // A PLAIN COMPARATOR AND NOT A PROJECTION. `std::ranges::sort(out, {},
+    // &CAbiAbsentEntry::name)` says the same thing and crashed clang 20.1.7 on
+    // Windows while generating code for this function (0xC0000005). A
+    // pointer-to-member used as a projection is a shape this codebase has met
+    // before on that front end; the note is here so the shorter spelling is
+    // not restored as a tidy-up.
+    std::sort(out.begin(), out.end(),
+              [](const mcpp::targetside::CAbiAbsentEntry& a,
+                 const mcpp::targetside::CAbiAbsentEntry& b) {
+                  return a.name < b.name;
+              });
+    return std::nullopt;
 }
+
+} // namespace
+
 
 std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                                                     const std::filesystem::path& origin,
@@ -1155,9 +1173,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     "builtins, data-model, presents, wchar", key)));
         }
         if (auto ait = ct->find("absent"); ait != ct->end()) {
-            auto absent = parse_c_abi_absent(ait->second);
-            if (!absent) return std::unexpected(error(origin, absent.error()));
-            decl.absent = std::move(*absent);
+            if (auto why = parse_c_abi_absent(ait->second, decl.absent))
+                return std::unexpected(error(origin, *why));
         }
         if (auto pit = ct->find("presents"); pit != ct->end()) {
             if (!pit->second.is_string())
