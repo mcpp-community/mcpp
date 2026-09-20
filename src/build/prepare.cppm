@@ -11241,10 +11241,20 @@ prepare_build(bool print_fingerprint,
                 // asked for" from "the member did not build" on exactly this
                 // token, and that distinction decides whether a member counts
                 // against a compatibility figure.
+                // THE LABEL SAYS WHICH IMPLEMENTATION WAS RESOLVED, NOT
+                // "provided by". The missing names are listed immediately
+                // above it, and `provided by fakekernel` under `openkal.space`
+                // reads as the statement that fakekernel provides it --- the
+                // exact opposite of what this refusal is about. Read once,
+                // rendered, which is the only way that kind of defect is
+                // visible: every assertion on this message matches an
+                // identifier inside it, and an identifier is in the right
+                // place under either wording.
                 return std::unexpected(std::format(
                     "'{}' requires interfaces the resolved implementation does "
                     "not provide. [interface-not-provided]{}\n"
-                    "       provided by  {} ({} interface{})\n"
+                    "       the resolved implementation is {} ({} interface{}), "
+                    "and none of those listed above is among them.\n"
                     "       This is refused before anything is compiled "
                     "because dependency resolution is the earliest time the "
                     "question can be answered. Select an implementation that "

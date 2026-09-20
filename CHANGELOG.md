@@ -105,6 +105,13 @@ tcsetattr = { form = "accepted-no-effect", note = "openkal 不命名的那些字
 的东西。链接点到 `link` 形状里的某一项时,mcpp 把清单读回来:`undefined reference to
 'fork'` 因此带着那句说明它是缺陷还是环境限制的话一起到达。
 
+**同一形状的第二处:拒绝消息里那行标签可以被读成它所否认的那句话。** 缺失的接口列在
+上面,紧接着一行 `provided by  fakekernel (2 interfaces)`——读起来正是
+「openkal.space 由 fakekernel 提供」,而这条拒绝存在的理由恰恰是它**没有**提供。改成
+「the resolved implementation is fakekernel (2 interfaces), and none of those listed
+above is among them」。e2e 743 此前的每一条断言都只匹配**标识符**,而标识符在两种措辞下
+都在正确的位置;现在它断言整句,并显式拒绝旧措辞。
+
 **这条说明此前少一个右括号,而九个单测都没看见。** 渲染出来是
 `the C library in this graph (musl declares that it does not supply ...`——C 库的名字由
 **两个各自独立的条件**插进去:一个左括号,然后是名字,右括号从来没有被发出过。单测断言的

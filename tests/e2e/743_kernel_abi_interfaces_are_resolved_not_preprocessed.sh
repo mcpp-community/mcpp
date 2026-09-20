@@ -134,6 +134,29 @@ echo "$out" | grep -q "fakekernel" || {
     echo "$out" >&2
     exit 1
 }
+# AND THE SENTENCE AROUND THOSE NAMES, NOT ONLY THE NAMES. Every assertion
+# above matches an identifier, and an identifier sits in the right place under
+# a wording that says the opposite. This message used to read
+#
+#     openkal.net
+#     provided by  fakekernel (2 interfaces)
+#
+# --- the missing name, and directly beneath it a line that parses as
+# "openkal.net is provided by fakekernel", which is what the refusal exists to
+# deny. Nothing caught it because `grep -q fakekernel` is true either way.
+echo "$out" | grep -q "the resolved implementation is fakekernel" || {
+    echo "FAIL: the line naming the implementation must say that it is the" \
+         "one that was RESOLVED. Placed under the missing interface with a" \
+         "'provided by' label, it reads as the statement this refusal denies." >&2
+    echo "     got: $(echo "$out" | grep -m1 'fakekernel')" >&2
+    exit 1
+}
+echo "$out" | grep -qi "provided by *fakekernel" && {
+    echo "FAIL: 'provided by fakekernel' directly under the missing interface" \
+         "states the opposite of this refusal" >&2
+    echo "$out" >&2
+    exit 1
+}
 # AND THE CODE, BECAUSE SOMETHING READS THIS. mcpp-index's compatibility
 # measurement tells "this graph does not supply what the member asked for"
 # from "the member did not build" on this token; without it that consumer has
