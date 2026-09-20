@@ -184,7 +184,7 @@ struct Toolchain {
     std::vector<std::string>            cEnvExpectDefined;
     std::vector<std::string>            cEnvExpectUndefined;
     // The resolved `kernel-abi` is `openkal` — the engine defines
-    // `__openkal__` for every target-side unit (design §2.1, §3.4). Read from
+    // `__OPENKAL__` for every target-side unit (design §2.1, §3.4). Read from
     // the LAYER's value, never from a package name, so a second `openkal`
     // implementation needs no engine change.
     bool                                 kernelAbiIsOpenkal = false;

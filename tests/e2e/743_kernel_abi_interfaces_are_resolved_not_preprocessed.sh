@@ -15,13 +15,17 @@
 # that is why every macro-shaped answer to it has had to be replaced by the
 # next one.
 #
-# Three legs:
+# Four legs:
 #   A  a requirement the implementation provides: builds.
 #   B  a requirement it does not: refused, naming the interface and both
 #      packages, with nothing compiled.
-#   C  a graph whose implementation states nothing: builds. The key postdates
-#      the provider, and a graph that has not adopted it must keep building --
-#      the link still reports the absence in the vocabulary it always did.
+#   C  a graph whose implementation states nothing: builds, AND SAYS SO. The
+#      key postdates the provider, and a graph that has not adopted it must
+#      keep building -- but a green build in which nobody checked reads
+#      exactly like one in which everybody agreed, so the note names it.
+#   D  the mirror of C: when the provider does state a list, that note is
+#      ABSENT. Without this leg C would pass against an engine that printed
+#      the note unconditionally, which measures nothing.
 set -e
 
 MCPP="${MCPP:-mcpp}"
@@ -188,6 +192,50 @@ out=$("$MCPP" build 2>&1) || {
     echo "$out" >&2
     exit 1
 }
-echo "OK: C (a provider that states nothing is not refused)"
+# AND THE SILENCE IS NAMED. Three situations exist and two build: the
+# provider lists the interface (A), it lists others (B, refused), it lists
+# nothing (here). Without this line the first and the third produce the same
+# output, so a reader cannot tell "checked and agreed" from "never asked".
+echo "$out" | grep -q "kernel-abi interfaces" || {
+    echo "FAIL: a build in which no provider stated a list must say so --" \
+         "otherwise an unanswered requirement reads as a confirmed one" >&2
+    echo "$out" >&2
+    exit 1
+}
+echo "$out" | grep -q "fakekernel" || {
+    echo "FAIL: the note must name WHOSE silence this is; a reader told only" \
+         "that something went unchecked cannot act on it" >&2
+    echo "$out" | grep -m1 "kernel-abi interfaces" >&2
+    exit 1
+}
+# THE COUNT, BECAUSE IT IS THE ONE PART THE FIXTURE DETERMINES. The root
+# declares two requirements; a note that said "1" or "0" would still match
+# every assertion above while reporting something other than what was asked.
+echo "$out" | grep -q "2 requirements unchecked" || {
+    echo "FAIL: the note must report how many requirements went unchecked;" \
+         "this graph asked for two" >&2
+    echo "$out" | grep -m1 "kernel-abi interfaces" >&2
+    exit 1
+}
+echo "OK: C (a provider that states nothing is not refused, and is named)"
+
+# ── D. the mirror: a provider that states a list produces no such note ────
+rm -rf target
+write_impl '"openkal.abort", "openkal.stream", "openkal.memory", "openkal.fs"'
+write_root '"openkal.fs", "openkal.stream"'
+out=$("$MCPP" build 2>&1) || {
+    echo "FAIL: leg D's graph is leg A's and must build" >&2
+    echo "$out" >&2
+    exit 1
+}
+echo "$out" | grep -q "kernel-abi interfaces" && {
+    echo "FAIL: the note belongs to the case where nothing was checked. A" \
+         "graph whose provider DID state its list was checked, and printing" \
+         "it here would make leg C pass against an engine that always" \
+         "printed it" >&2
+    echo "$out" | grep -m1 "kernel-abi interfaces" >&2
+    exit 1
+}
+echo "OK: D (a provider that states its list draws no note)"
 
 echo "OK"

@@ -10778,7 +10778,7 @@ prepare_build(bool print_fingerprint,
         resolvedTargetSide = tsd::resolve(in);
         targetSideResolved = true;
 
-        // `__openkal__` — design 2026-09-18 §2.1, §3.4. Read from the
+        // `__OPENKAL__` — design 2026-09-18 §2.1, §3.4. Read from the
         // resolved LAYER's interface name, never from a package name, so a
         // second implementation of `mcpp:kernel-abi=openkal` needs no engine
         // change. Applies to every target-side unit unconditionally — even
@@ -11111,7 +11111,7 @@ prepare_build(bool print_fingerprint,
             }
         }
 
-        // `__openkal__` AND THE REALISED [c-abi] ENVIRONMENT — design
+        // `__OPENKAL__` AND THE REALISED [c-abi] ENVIRONMENT — design
         // 2026-09-18 §2.1, §3.2-§3.4. Broadcast into every package's OWN
         // `privateBuild`, the same channel `targetSideUsage` just used above:
         // it reaches that package's C/C++ compiles AND its dependency scan
@@ -11120,7 +11120,7 @@ prepare_build(bool print_fingerprint,
         // itself and the driver's own defaults still come last.
         //
         // `c-environment = "platform"` (§3.4) opts a package OUT of the
-        // [c-abi] REALISATION ONLY — `__openkal__` still reaches it, because
+        // [c-abi] REALISATION ONLY — `__OPENKAL__` still reaches it, because
         // the exception is about the C environment a package's headers see,
         // not about whether its own code may call `kal_*`. The base command
         // line these tokens are appended to is untouched either way, which is
@@ -11137,7 +11137,7 @@ prepare_build(bool print_fingerprint,
         // only their -D/-U/-I words, on purpose — a -std= or -O token meant
         // for the C compiler has no meaning for GAS), so the object-format
         // and wchar-width tokens have to be named again here, into the
-        // channel `unit_asm_flags` passes through UNFILTERED. `__openkal__`
+        // channel `unit_asm_flags` passes through UNFILTERED. `__OPENKAL__`
         // needs no second copy: it is a -D, and the -D/-U/-I filter already
         // carries it from `cflags` into every assembly unit.
         //
@@ -11172,7 +11172,7 @@ prepare_build(bool print_fingerprint,
         if (tc && (tc->kernelAbiIsOpenkal || !tc->cEnvTokens.empty()
                    || !tc->cEnvBuiltinsTokens.empty())) {
             for (auto& p : packages) {
-                // `__openkal__` is emitted above, with the rest of the
+                // `__OPENKAL__` is emitted above, with the rest of the
                 // engine's own defines; it is NOT subject to the
                 // `c-environment = "platform"` exception below, because that
                 // exception is about which C environment a package's headers
@@ -11237,15 +11237,26 @@ prepare_build(bool print_fingerprint,
                 providerId = pkg.manifest.package.name;
                 break;
             }
+            // A REQUIREMENT NOBODY ANSWERED IS SAID SO, because otherwise
+            // "yes" and "never asked" are the same reading.
+            //
+            // Three situations exist and two of them build: the provider
+            // states a list and it contains the requirement (build); it
+            // states a list and does not (refuse, below); it states nothing
+            // at all (build, and until this note, in silence). The third is
+            // deliberate --- `provides-interfaces` is younger than the
+            // implementations that exist, and a graph that has not adopted it
+            // must keep building --- but a consumer reading a green build
+            // cannot tell it from the first. One line closes that, and it
+            // costs nothing to a graph where the provider does declare.
+            std::size_t uncheckedRequirements = 0;
             for (auto& pkg : packages) {
                 const auto& need = pkg.manifest.kernelAbiRequiresInterfaces;
                 if (need.empty()) continue;
-                // A consumer that names interfaces while no package in the
-                // graph states what it provides is not refused: the provider
-                // predates this key, and a graph that has not yet adopted it
-                // must keep building. The link still reports the absence, in
-                // the vocabulary it always did.
-                if (providerId.empty()) continue;
+                if (providerId.empty()) {
+                    uncheckedRequirements += need.size();
+                    continue;
+                }
                 auto missing = mcpp::targetside::interfaces_not_provided(
                     need, providedInterfaces);
                 if (missing.empty()) continue;
@@ -11287,6 +11298,20 @@ prepare_build(bool print_fingerprint,
                     providedInterfaces.size(),
                     providedInterfaces.size() == 1 ? "" : "s",
                     pkg.manifest.package.name));
+            }
+
+            if (uncheckedRequirements > 0) {
+                // THE IMPLEMENTATION IS NAMED FROM THE RESOLVED LAYER, not
+                // from whichever package happened to be first: the note has
+                // to say WHOSE silence this is, or a reader cannot act on it.
+                const auto& impl = resolvedTargetSide.kernelAbi.impl;
+                mcpp::ui::info("note", std::format(
+                    "kernel-abi interfaces: {} states none, {} requirement{} "
+                    "unchecked",
+                    impl.empty() ? std::string("the resolved implementation")
+                                 : impl,
+                    uncheckedRequirements,
+                    uncheckedRequirements == 1 ? "" : "s"));
             }
         }
 
@@ -12489,14 +12514,14 @@ prepare_build(bool print_fingerprint,
             for (auto& f : mcpp::toolchain::graph_runtime_compile_flags(*tc))
                 flags += " " + f;
         }
-        // `__openkal__` AND THE REALISED [c-abi] ENVIRONMENT REACH THE STD
+        // `__OPENKAL__` AND THE REALISED [c-abi] ENVIRONMENT REACH THE STD
         // MODULE TOO (design §3.4: "环境作用于目标侧的全部编译单元... 以及图中
         // 所有普通包"). The std module's own command is assembled here rather
         // than through `mcpp.toolchain.hostflags`'s shared string (see the
         // comment above), so it needs the same broadcast the ordinary
         // per-package loop gives every other unit — this is that same rule,
         // stated once more at the one site it cannot reach on its own.
-        if (tc->kernelAbiIsOpenkal) flags += " -D__openkal__";
+        if (tc->kernelAbiIsOpenkal) flags += " -D__OPENKAL__";
         if (pkg.manifest.cEnvironment != "platform") {
             for (auto& t : tc->cEnvTokens)         flags += " " + t;
             for (auto& t : tc->cEnvBuiltinsTokens)  flags += " " + t;
@@ -12749,7 +12774,7 @@ prepare_build(bool print_fingerprint,
     fpi.cppStandard         = m->package.standard;
     fpi.compileFlags        = canonical_compile_flags(*m)
                               + canonical_package_build_metadata(packages);
-    // [c-abi] REALISATION AND `__openkal__` PARTICIPATE IN THE FINGERPRINT
+    // [c-abi] REALISATION AND `__OPENKAL__` PARTICIPATE IN THE FINGERPRINT
     // (design 2026-09-18 §3.4, gap #4 of the design's own self-review). Two
     // builds whose C library declares `data-model = "lp64"` and `"llp64"`
     // compile the SAME source, against the SAME manifest, into objects whose

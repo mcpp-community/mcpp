@@ -63,7 +63,7 @@ Records that declare one. Everything else is listed by date below.
 
 - [本轮生态级自审](2026-09-20-wave-self-review.md) — active
 - [#674 设计方案评审：`-include unistd.h` 在 Windows + `presents = "posix"` 上的可行性](2026-09-20-issue-674-design-review.md) — active
-- [`__cxa_thread_atexit` 在 openkal-Windows 上:定位到一层,第二层未定位](2026-09-20-cxa-thread-atexit-finding.md) — active
+- [`__cxa_thread_atexit` 在 openkal-Windows 上:两层都已定位并修复](2026-09-20-cxa-thread-atexit-finding.md) — landed
 
 ### targets
 
@@ -99,7 +99,7 @@ Records that declare one. Everything else is listed by date below.
 - [openkal 生态：能力的时刻模型，以及 C 环境方案空间的划分](2026-09-20-openkal-c-environment-ecosystem-design.md) — active
 - [#674 设计方案评审：`-include unistd.h` 在 Windows + `presents = "posix"` 上的可行性](2026-09-20-issue-674-design-review.md) — active
 - [C 环境生态方案：执行计划](2026-09-20-ecosystem-execution-plan.md) — active
-- [`__cxa_thread_atexit` 在 openkal-Windows 上:定位到一层,第二层未定位](2026-09-20-cxa-thread-atexit-finding.md) — active
+- [`__cxa_thread_atexit` 在 openkal-Windows 上:两层都已定位并修复](2026-09-20-cxa-thread-atexit-finding.md) — landed
 - [#674:`presents = "posix"` 在 Windows 上兑现契约的下半段](2026-09-19-issue-674-cenv-posix-preinclude-design.md) — superseded
 - [运行时绑定方案 v3:让 mcpp 真正安装它所声明的运行时](2026-09-17-runtime-binding-multi-repo-plan.md) — landed
 - [#662:目标侧由依赖图提供时，编译器的隐式头文件搜索仍指向宿主](2026-09-17-issue-662-graph-target-header-isolation-plan.md) — active

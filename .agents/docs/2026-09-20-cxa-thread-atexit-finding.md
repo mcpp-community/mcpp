@@ -1,9 +1,14 @@
 ---
 subject: review
-status: active
+status: landed
 ---
 
-# `__cxa_thread_atexit` 在 openkal-Windows 上:定位到一层,第二层未定位
+# `__cxa_thread_atexit` 在 openkal-Windows 上:两层都已定位并修复
+
+> **2026-09-21 收尾。** 第二层已定位,修法已实测,发在
+> `openkal-llvm-runtime@0.15.0`。下文 §1–§5 保留当时的记录(包括两个被否掉的假设),
+> §7 是结论。**§4 的第一个假设当时被判为「否」,而它其实是对的——错的是那次探针的
+> 构造,见 §7。**
 
 - 日期：2026-09-20
 - 来源：mcpp-index 的 30-member 重测,doctest 与 spdlog 两个成员停在
@@ -117,3 +122,60 @@ Windows : __cxa_thread_atexit_impl = 0   -> fallback branch
    - 被调用而链表为空 ⇒ 注册那一侧的问题
    - 没被调用 ⇒ `__libcpp_tls_create` / key 注册那一侧的问题
 2. 无论结论如何,修法必须让「析构会跑」与「链接会过」同时成立,或者两者都不成立。
+
+
+---
+
+## 7. 第二层:已定位(2026-09-21)
+
+### 读数
+
+按 §6 写下的第一条判据做——在 fallback 的 `run_dtors` 里打一行,并同时打印
+`&dtors`:
+
+```
+[probe] DtorsManager ctor: creating key
+[probe] registered dtor, dtors=0x7ffffe994680, key=0x2, &dtors=0x7ffffe9946a8
+[prog]  in thread, v=7
+[probe] run_dtors called, dtors=0, alive=0, &dtors=0x7ffffe9946c8
+[prog]  after join, ran=0 (expect 7)
+[probe] run_dtors called, dtors=0, alive=0, &dtors=0x7ffffe994708
+```
+
+`run_dtors` **被调用了**——§6 的第二支排除。而 **`&dtors` 三次都不同**,在同一个线程里。
+
+### 真因
+
+`__thread DtorList* dtors` 在本包为 PE 采用的 `-femulated-tls` 下由 emutls 提供。emutls
+把每线程的块挂在它**自己的**一个 pthread key 后面,而那个 key 的析构已经先释放了本线程
+的块;之后每次读都新分配一个**清零**的块,所以地址每次都不一样。`run_dtors` 走的是空链表。
+
+### §4 假设一其实是对的,错的是那次探针的构造
+
+当时写的是:「PE 上 `thread_local` 走 emutls,它自己的 pthread key 先于 libc++abi 的 key
+被析构,于是 `run_dtors` 读到的链表已经空了」——**这就是真因**。
+
+那次探针之所以读到 42,是因为 musl **按 key 的创建顺序**逐个调析构,而探针自己
+`pthread_key_create` 在第一次访问 `thread_local` **之前**,于是 emutls 的 key 排在它后面、
+析构也在它之后。真实情形里 libc++abi 的 `dtors_key`(实测 `key=0x2`)排在 emutls 之后。
+
+**一个探针报不出它被构造成不会发生的那个顺序。** 判据落在了一个正确的谓词上,而对象的
+构造恰好排除了被测的那个条件——这与 [[a-check-that-picks-its-object-by-convention]] 同族。
+
+### 修法
+
+链表存进 **key 自己的值**。key 的析构函数本来就被交给这个值,而任何别的 key 的拆除都碰
+不到它。`dtors_alive` 随之不需要:值非空就是「链表在」。零新机制。
+
+### 判据(两条,缺一不可)
+
+`examples/cxx`,两个目标:
+
+```
+ok: a thread_local is constructed in a spawned thread
+ok: and its destructor runs when that thread ends
+```
+
+`x86_64-linux-gnu` 与 `x86_64-windows-gnu`(wine)均 `failures: 0`。只断言「链接通过」
+或只断言「构造发生」的判据会同时放过两层——这正是 §5 决定不发第一层补丁的那个理由,
+现在它变成了判据本身的形状。

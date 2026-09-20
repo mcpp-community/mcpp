@@ -61,8 +61,9 @@ status: active
 
 #### E1 — P3：撤掉 `__CYGWIN__` 借用
 
-**状态**：**分三步，本版落地第一步**（mcpp 2026.9.21.1）。下文保留论证；落地形态与
-被交叉验证挡下的那一版见本节末。
+**状态**：**三步全部落地**。第一步 mcpp 2026.9.21.1（加名字）+ 2026.9.21.2（改大写）；
+第二步 `openkal-musl@0.19.0` 与 `openkal-llvm-runtime@0.14.0`；第三步 mcpp 2026.9.21.2
+停止定义借来的名字。下文保留论证；落地形态与被交叉验证挡下的那一版见本节末。
 
 保留 `__CYGWIN__` 的本意是给「PE 格式 + POSIX C 环境」一个名字。实证否定了这个用法：
 
@@ -121,17 +122,106 @@ status: active
 **静默**的——`setjmp.h` 自己的注释写着「a mismatch nothing reports until the record
 overruns」。libunwind 那处有 `static_assert` 才响，属于运气。
 
-**落地形态（第一步）**：`cenv.cppm` 的 Windows+Posix 分支加 `-D__mcpp_target_windows__=1`，
-`expectDefined` 加该项与 `__CYGWIN__`——探针核对，一个没生效的 `-D` 是校验失败不是沉默。
-实测：三个通道（`.c`/`.cpp`/`.S`）全部到达；预定义为 `__unix__` + `__CYGWIN__` +
-`__mcpp_target_windows__`，`_WIN32` 仍不存在。
+**落地形态（第一步）**：`cenv.cppm` 的 Windows+Posix 分支加 `-D__MCPP_TARGET_WINDOWS__=1`
+（2026.9.21.1 发的是小写拼法，2026.9.21.2 在它还没有消费者时改成大写——命名约定见
+`src/toolchain/predefines.cppm` 与 `docs/21`），`expectDefined` 加该项——探针核对，一个
+没生效的 `-D` 是校验失败不是沉默。实测：三个通道（`.c`/`.cpp`/`.S`）全部到达；预定义为
+`__unix__` + `__MCPP_TARGET_WINDOWS__`，`_WIN32` 仍不存在。
 
-**为什么名字是 `__mcpp_target_windows__` 而不是设计里写的 `__mcpp_format_pe__`**：两个
+**为什么名字是 `__MCPP_TARGET_WINDOWS__` 而不是设计里写的 `__mcpp_format_pe__`**：两个
 消费者要的不是「目标文件格式」，是**调用约定**（Win64 的寄存器保存区大小）。在这个目标上
 两者同变，但按消费者实际问的那个问题命名更诚实。
 
-**第二、三步**：两个包改读新名字并保留 `|| defined(__CYGWIN__)`（在两种引擎上都能构建）；
-之后的版本再停止定义借来的那个。**先做第三步会让已发布的那两个头静默落进 `#else`。**
+**第二、三步（已落地）**：两个包改读新名字并保留 `|| defined(__CYGWIN__)`，于是在本次改动
+两侧的引擎上都能构建；2026.9.21.2 的 `cenv.cppm` 在编译行加 `-U__CYGWIN__` /
+`-U__CYGWIN32__`，`expectUndefined` 同步。
+
+**次序是被测出来的，不是被断言的。** 它成立于**仓库之间**，所以任何一个仓库里的测试都
+检查不到它。在 2026.9.21.2 的引擎上，拿**已发布的** `openkal-llvm-runtime@0.13.0` 为
+`x86_64-windows-gnu` 构建一个 openkal 程序：
+
+```
+static assertion failed: x86_64 registers do not fit into unw_context_t
+static assertion failed: UnwindCursor<> does not fit in unw_cursor_t
+```
+
+那就是「先做第三步」的读数，也就是第二步必须先发布的理由。`setjmp.h` 是沉默的那一半——
+它自己的注释写着「a mismatch nothing reports until the record overruns」。
+
+**残余窗口被点名而不是被说没有**：把 `openkal-musl` **精确**钉在 0.18.0 或更早、同时把
+引擎升过 2026.9.21.2 的工程，会拿到那个静默的 `#else`。在引擎发布之前把索引的 `latest`
+移到 0.19.0，是把窗口压到「精确钉」的办法；这里没有任何机制能把它关掉，因为引擎无从知道
+一个包安装出去的头读了哪些宏。
+
+#### E1c — 交叉验证协议的一个结构性漏洞：没有人建 Windows-over-openkal
+
+**2026-09-21 实测发现，在用协议验 E1 的过程中。** 逐 job 核对两个包的交叉验证运行：
+
+| 仓库 | 它的 CI 建的目标 | 有没有 Windows 目标 |
+|---|---|---|
+| `openkal-llvm-runtime` | `runtime`(linux + riscv 裸机)、`host-dimension` 矩阵(macOS 宿主、**Windows 宿主 → 每个目标**)、两个「产物在那个系统上跑」 | **有** |
+| `openkal-musl` | linux/gcc、linux/llvm、macos/llvm、cross-link(Linux↔macOS)、「跨建的产物在那边启动」 | **没有** |
+
+**先写下更正，因为我第一次读错了。** 只看 runtime 运行里的第一个 job，我下过结论说
+「整个生态没有一个包建 Windows-over-openkal」。那是错的：`host-dimension` 的 Windows
+行实测建了 `x86_64-windows-gnu`，并解析到 `openkal-musl@0.19.0`。**E1 的 Windows 那条腿
+确实被验到了**，结论成立。
+
+**真正的缺口比那小，但仍然是缺口：`openkal-musl` 自己没有任何 Windows 格子。** 而本轮
+它改的恰恰是 `bits/setjmp.h`——一个**只在 Windows 目标上有分支**的已安装头。它今天被验到
+是**传递的**：runtime 的 CI 把 musl 当 path dep 拉进去，顺带编了它。一个包的关键改动
+由另一个仓库的 CI 代为验证，是[[a-passing-criterion-that-measured-nothing]] 的邻居——
+它今天对，是因为恰好有人在别处建了那个目标。
+
+**为什么补这个格子不是顺手的事，是实测出来的。** 想写一个最小判据——一个 `setjmp` /
+`longjmp` 程序，带 `_Static_assert(sizeof(jmp_buf) >= 32 * sizeof(unsigned long long))`
+——只声明 `openkal-musl = "0.19.0"` 一个依赖，为 `x86_64-windows-gnu` 构建：
+
+- **编译过了**，而那正是判据要抓的那一层：短 `jmp_buf` 是静默的，编译期断言是唯一能让它
+  变响的地方。
+- **链接不过**：`cpow.o` 等一批目标文件的引用无人解析。openkal-musl 单独不是一条完整的
+  链接——openkal 实现与 compiler-rt 由 `openkal-llvm-runtime` 组装。
+
+所以 musl 侧的 Windows 格子要么只做**编译期**断言（能抓这个缺陷，且便宜），要么把 runtime
+当 path dep 拉进来（就是 runtime 的 CI 反过来做的那件事）。**两种都是新增工作量，不是
+把矩阵加一行。** 记在这里，下一个接手的人不必再量一遍。
+
+**唯一建那个目标的是 mcpp 自己的 `openkal-cross`**（3 宿主 × 3 目标）。而它把要验的
+生态分支写死成 `OPENKAL_BRANCH: main`——于是一个**需要生态协同提交**的引擎改动，在那个
+提交落地之前既无法验证、也无法合入（因为正是这个 job 会红）。
+
+**修法**：`openkal-cross.yml` 增加 `workflow_dispatch` 输入 `openkal_ref`，留空时行为
+不变。这是协议的另一半：生态仓库早就能用 `MCPP_SOURCE_REF` 指到 mcpp 的 PR 分支，反向
+一直没有。
+
+**次序上的后果**：`openkal-cross` 里那个示例通过 `path = "../.."` 依赖 runtime，而
+runtime 的清单从**索引**钉 `openkal-musl = "0.19.0"`。所以用 `openkal_ref` 验之前，
+musl 0.19.0 必须先登记进索引。
+
+#### E1b — 引擎拥有的宏改为全大写（2026.9.21.2）
+
+**状态**：已落地，与 E1 第三步同一个 PR（用户要求：不分开，免得发布周期太长）。
+
+`__mcpp_target_<os>__` → `__MCPP_TARGET_<OS>__`，`__openkal__` → `__OPENKAL__`。
+
+**约定按「名字是什么」分，不按谁写的分。** 厂商名与产品名大写（`__APPLE__`、`_WIN32`、
+`__MINGW32__`、`__GNUC__`），系统种类名小写（`__linux__`、`__unix__`）。mcpp **拥有**的
+每一行都属于第一类。小写那一版的推理是「它们在守卫里与 `__linux__` 并排，所以跟它一致」
+——**那是把「相邻」当成了「同类」**，而 `__APPLE__` 在同样那些守卫里却是大写。
+
+**撤销小写拼法的代价是量出来的。** 分母是全生态每一个仓库，逐文件类型扫过：
+
+| 撤销的名字 | 安装头里的读者 | 包源码/清单里的读者 | 第三方读者 | 暴露 | 步数 |
+|---|---|---|---|---|---|
+| `__CYGWIN__` | **6 处**（两个头） | — | **4 个成员** | 上游二十年 | 3 |
+| `__mcpp_target_<os>__` | 0 | 0 | 0（按构造） | 1 个发布 | 1 |
+| `__openkal__` | 0 | 0 | 0（按构造） | 3 天 | 1 |
+
+「按构造」是指：两个名字都是在这里发明的，不可能有上游代码握着它们。**两次撤销之间规则
+没变，变的是数目**——而一次不由数目支撑的撤销，正是本项目已经犯错过一次的那种论证
+（E1 的第一个形态）。
+
+用户先要求「两个拼法并存、文档推荐大写」，在看到代价读数后改为「代价不大就取消」。取消。
 
 #### E2 — P7-L3：链接期集合差
 
@@ -144,12 +234,41 @@ overruns」。libunwind 那处有 `static_assert` 才响，属于运气。
 **判据**：一个程序引用了实现未提供的接口里的符号，链接期被点名拒绝，且**声明正确时
 零额外链接开销**。
 
-**阻塞**：需要把 `SURFACE.txt` 的「接口 → 符号」映射带到链接期。材料齐（`SURFACE.txt`、
-`kal_interfaces()`），是工作量不是未知数。
+**阻塞（2026-09-21 更正）**：**不是工作量，是一个设计决定。** 原文写「材料齐，是工作量
+不是未知数」，实查否掉了这个前提：
+
+1. **`SURFACE.txt` 不被安装。** `mcpplibs/openkal/mcpp.toml` 里没有任何一条把它装出去，
+   所以链接期的引擎拿不到它。
+2. **`docs/22` 有一条明写的原则挡在前面**：「**引擎不认识两个集合里的任何一个成员**。对
+   它们做的唯一操作是集合差，所以规范可以新增一个接口而不需要发布 mcpp。」要在链接期
+   点名**接口**，引擎就必须持有「接口 → 符号」的映射；映射放进引擎会直接违反这条。
+
+所以真正要先回答的是：**映射住在哪，而引擎能不能读它却不学会这个生态的词汇。** 两条候选：
+
+| 形态 | 代价 |
+|---|---|
+| 规范包安装 `SURFACE.txt`，清单新增一个键指向它 | 引擎要学会一种文件格式；新键 → 索引 floor 一轮 |
+| 只报「解析出的实现声明了这 N 个接口，缺的符号不在它的导出里」 | 零新键、零新格式；**但点不出接口名**，弱于本项判据 |
+
+第二条是今天就能做的，第一条才满足判据。**在做出这个决定之前，把 E2 排进任何一个 PR 都是
+在实现一个还没选定的形状**——这正是「凭印象写下的『为什么不行』会否掉正确修法」的镜像:
+凭印象写下的「为什么可以」同样会带来一个错的实现。
+
+**后果**：E2 退出本轮（2026.9.21.2）。它不阻塞验收（A1/A2/A3 不依赖它），批次表已把它放在
+第四批。
 
 #### E3 — 未被回答的 requirement 没有提示
 
-**状态**：未实现。记录：记忆 `an-unanswered-requirement-looks-like-a-confirmed-one`。
+**状态**：**已落地**（mcpp 2026.9.21.2，与 E1/E1b 同一个 PR）。实际输出：
+
+```
+        note kernel-abi interfaces: fakekernel@0.1.0 states none, 2 requirements unchecked
+```
+
+判据落在 `tests/e2e/743` 的第三、四条腿上。**第四条腿是必需的**：没有它，第三条腿在一个
+无条件打印这行的引擎上同样会绿——两条腿互为对照，这正是「判据通过了但什么都没测到」
+那一类缺陷的形状。断言里包含**数目**（该夹具声明两条），因为数目是夹具唯一决定的那部分，
+一个报「1」或「0」的提示仍会匹配所有只认标识符的断言。
 
 三种情形两种绿：提供方声明且包含 → 构建（**已确认**）；声明但不包含 → 拒绝；
 **什么都没声明 → 构建（从没被检查过）**。第三种是有意的（`provides-interfaces` 晚于
@@ -167,19 +286,68 @@ overruns」。libunwind 那处有 `static_assert` 才响，属于运气。
 
 #### C1 — `__cxa_thread_atexit`
 
-**状态**：第一层可修但**不能只修第一层**；第二层未定位。记录：
-`.agents/docs/2026-09-20-cxa-thread-atexit-finding.md`。
+**状态**：**两层都已定位并修复**，发在 `openkal-llvm-runtime@0.15.0`。记录：
+`.agents/docs/2026-09-20-cxa-thread-atexit-finding.md` §7。
+
+**第二层的真因**：`__thread DtorList* dtors` 在 `-femulated-tls` 下由 emutls 提供，而
+emutls 把每线程的块挂在它自己的一个 pthread key 后面；那个 key 的析构先释放了本线程的块，
+之后每次读都新分配一个**清零**的块。判据是同一线程里 `&dtors` 三次不同
+（`...6a8` / `...6c8` / `...708`）。
+
+**本清单里「唯一的未知数」是被它自己写下的判据关掉的**——发现文档 §6 写的第一步就是
+「在 fallback 里打一行，看 `run_dtors` 到底有没有被调用」。它被调用了，而链表是空的。
+
+**并且：§4 那条被判为「否」的假设其实是对的。** 那次探针的 `pthread_key_create` 排在第一次
+访问 `thread_local` **之前**，而 musl 按创建顺序调 key 析构，于是 emutls 反而活得更久，
+读到了期望值。真实情形顺序相反。**一个探针报不出它被构造成不会发生的那个顺序**——谓词是
+对的，对象的构造把被测条件排除掉了。
+
+**修法**：链表存进 key 自己的值（析构函数本来就被交给它），零新机制。
 
 只补符号会把一个**构建期的响亮失败**换成一个**运行期的静默失败**：链接过了，
 `thread_local` 的析构不跑。补丁试过并**主动回退**，因为验证显示析构确实没执行。
 
-**判据**：最小复现（五行，文档里有）在 `x86_64-windows-gnu` 上**链接通过且析构函数
-真的执行**——两个条件缺一不可。只断言链接通过是错的判据。
+**判据（已通过）**：`examples/cxx` 两条断言，两个目标：
 
-**阻塞**：第二层未定位（emutls 在 PE 上的注册路径）。这是本清单里**唯一一个真正的
-未知数**。
+```
+ok: a thread_local is constructed in a spawned thread
+ok: and its destructor runs when that thread ends
+```
+
+`x86_64-linux-gnu` 与 `x86_64-windows-gnu`（wine）均 `failures: 0`。只断言链接通过、
+或只断言构造发生，都会同时放过两层——这正是当初决定不发第一层补丁的理由，现在它变成了
+判据本身的形状。
+
+**阻塞**：无。本清单里唯一那个真正的未知数已关闭。
 
 #### C2 — `linux/` uapi 头（curl, cmp-module）
+
+**2026-09-21 更正：这是两件不同的事，本文初稿把它们并成了一类。** 逐条读了实测诊断与
+配方之后：
+
+| 成员 | 诊断 | 真正的归属 |
+|---|---|---|
+| `curl` | `lib/setopt.c:31: 'linux/tcp.h' file not found` | **配方缺陷**，与 C3/expat 同形状 |
+| `cmp-module` | `asio/detail/config.hpp:899: 'linux/version.h' file not found` | **真的 C2** |
+
+**curl 是配方缺陷。** `pkgs/c/compat.curl.lua` 生成的 `curl_config.h` 里有
+`#define HAVE_LINUX_TCP_H 1`，位于 `#if defined(__linux__)` 之内。openkal 跑在 Linux
+内核上，`__linux__` **是对的**；错的是配方把它读成了「glibc 的整套 Linux userspace 头
+都装好了」。同一个块里还有 `HAVE_GLIBC_STRERROR_R`（openkal-musl 是 musl，不是 glibc，
+这一条**主动是错的**）、`HAVE_SYS_EVENTFD_H`、`HAVE_FSETXATTR`、以及一条写死的宿主路径
+`CURL_CA_BUNDLE "/etc/ssl/certs/..."`。**诚实的判据是 `__has_include(<linux/tcp.h>)`**
+——它是 C 标准的、问的正是要问的那件事，而不是从「哪个内核」推断「哪些头存在」。
+
+**cmp-module 才是 C2。** asio 的 `detail/config.hpp` 写的是：
+
+```c
+#if defined(__linux__)
+# include <linux/version.h>        /* 在所有 ASIO_DISABLE_* 守卫之外 */
+```
+
+那个 `#include` **不受任何配置宏控制**——`-DASIO_DISABLE_EPOLL` 挡不住它。**源码不归
+我们改，而没有任何清单键伸得进第三方的 `.c`/`.hpp` 里**（这正是 `predefines.cppm` 记的
+第一条理由）。所以这个成员在面向 Linux 的 openkal 图里按构造建不起来。
 
 **形态**：程序 `#include <linux/tcp.h>` 一类。openkal 不是 Linux，没有 uapi 头，
 **这是正确的**。
@@ -194,6 +362,13 @@ overruns」。libunwind 那处有 `static_assert` 才响，属于运气。
 **分母**里移除，且移除理由可追溯到那条声明。
 
 **归属**：mcpp-index（测量的成员表），不是 C 库。
+
+**已有机制比初稿以为的多一半。** `members.toml` 里已经有 `[excluded]` 表，它的语义正是
+「在任何 openkal 图里都建不起来」——`cmp-module` 恰好符合。缺的不是表，是**第二个理由
+类别**：现有六条都是「宿主程序 / 厂商二进制」，而 asio 这条是「上游源码无条件包含平台
+头」。判据不变：声明存在时该成员从分母里移除，且理由可追溯到那条声明。
+
+**curl 不进这张表**，它要修配方。两者分开之后，九条失败里这一类只剩一条。
 
 #### C3 — `arc4random_buf`（expat）——**已修复，且归属与初稿不同**
 
@@ -477,20 +652,25 @@ openkal-musl 0.18.0，而 0.18.0 当时还没进索引，消费者自己的 CI �
 
 ## 7. 判据总表
 
-| 编号 | 判据 | 怎么算通过 | 阻塞 |
+状态截至 2026-09-21 收尾。
+
+| 编号 | 判据 | 怎么算通过 | 状态 |
 | --- | --- | --- | --- |
-| E1 | 30 成员重测 | `windows.h` 组 4→0 且总失败不增 | 无 |
-| E2 | 引用未提供接口的符号 | 链接期被点名拒绝；声明正确时零开销 | 工作量 |
-| E3 | 提供方什么都不声明 | 构建成功**且**报告里有 unchecked 一行 | 无 |
-| C1 | 五行最小复现 | 链接通过**且析构真的执行** | **第二层未定位** |
-| C2 | curl / cmp-module | 记为 `refused` 而非 `fails` | 无 |
-| C3 | `arc4random_buf` | 「应当有的符号」CI 断言 | 无 |
-| C4 | `aarch64-macos --profile release` | **已通过，本机实测** | 关闭；不复现 |
-| I1 | 写死的节点集合 | conformance 逐条断言 | 无 |
-| I2 | `presents = "windows"` 的 C 库 | 引擎改动数为 0 | 无 |
-| **A1** | 三目标 `mcpp build` | 全绿 | E1, C4 |
-| **A2** | 三目标 `mcpp test` + 真跑 | 全绿 | A1 |
-| **A3** | 三份 `os.cppm` | **除六行外逐字节相同** | A1 |
+| E1 | 30 成员重测 | `windows.h` 组 4→0 且总失败不增 | **待测**（由移 `pins.toml` 的那个 PR 触发）；`openkal-cross` 九格已全绿 |
+| E1b | 大写重命名 | 上一版红、本版绿 | **已通过**：验证脚本 B 段，`2026.9.21.1` fails=2 → `2026.9.21.2` fails=0 |
+| E1c | 交叉验证协议的反向 | `openkal_ref` 留空时行为不变 | **已落地** |
+| E2 | 引用未提供接口的符号 | 链接期被点名拒绝；声明正确时零开销 | **退出本轮**：阻塞是设计决定不是工作量，见 §2.1 |
+| E3 | 提供方什么都不声明 | 构建成功**且**报告里有 unchecked 一行 | **已通过**：e2e 743 四条腿 + 验证脚本 C 段双向 |
+| C1 | 最小复现 | 链接通过**且析构真的执行** | **已通过**：三层全部定位并修复，`openkal-llvm-runtime@0.15.0` |
+| C2 | cmp-module | 从分母移除，理由可追溯，**且声明可被证伪** | **已通过**：`[not-portable]` + `compat.py check`，红/绿两向实测 |
+| C2' | curl | 配方缺陷，不是不可移植 | **已定位未修**：两个目标两个不同真因，见 `docs/openkal-compat.md` |
+| C3 | `arc4random_buf` | 「应当有的符号」CI 断言 | 已通过 |
+| C4 | `aarch64-macos --profile release` | 本机实测 | 关闭；不复现 |
+| I1 | 写死的节点集合 | conformance 逐条断言 | 未实现（第五批） |
+| I2 | `presents = "windows"` 的 C 库 | 引擎改动数为 0 | 未实现（第五批） |
+| **A1** | 三目标 `mcpp build` | 全绿 | **待跑**（须用已发布钉，见 §8 第二条） |
+| **A2** | 三目标 `mcpp test` + 真跑 | 全绿 | 待跑 |
+| **A3** | 三份 `os.cppm` | **除六行外逐字节相同** | **已机械化并进 CI**；四种失败形态逐个量红过 |
 
 ---
 

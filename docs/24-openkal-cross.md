@@ -44,7 +44,7 @@ meant "is the Windows CRT present."
 
 | Family | States | Defined by | Example |
 |---|---|---|---|
-| kernel ABI | `kal_*` is callable, and behaves the same on every platform | the layer providing `mcpp:kernel-abi=openkal` | `__openkal__` |
+| kernel ABI | `kal_*` is callable, and behaves the same on every platform | the layer providing `mcpp:kernel-abi=openkal` | `__OPENKAL__` |
 | C environment | the shape of the C environment source sees | the layer providing `mcpp:c-abi=<impl>`, via [`[c-abi]`](22-target-side.md#the-c-environment-a-c-abi-package-presents-mcpp-2026918) | `__unix__`, `_WIN32`, `__MINGW32__` |
 | system & architecture | the underlying OS and processor | the target triple | `__linux__`, `__APPLE__`, `__x86_64__` |
 
@@ -58,7 +58,7 @@ combination, "PE format with a POSIX-presenting C environment," is
 therefore leaves DEFINED rather than folding into the three rows above —
 see [22's own note](22-target-side.md#the-c-environment-a-c-abi-package-presents-mcpp-2026918)
 for the full trade-off. Since 2026.9.21.1 `__CYGWIN__` is no longer the only
-name for that fact: mcpp defines `__mcpp_target_<os>__` for every target
+name for that fact: mcpp defines `__MCPP_TARGET_<OS>__` for every target
 (`docs/21`, "The macros mcpp defines"), so source needing to know the target
 under a presented environment has a name mcpp owns. `__CYGWIN__` remains
 defined while the ecosystem's installed headers move onto the new name, and
@@ -67,7 +67,7 @@ than as what they are — a fact about the TARGET, not about the environment
 presented above it — is exactly the shape of confusion this whole section
 exists to head off.
 
-**`__openkal__` — the rule.** The engine defines it, for every target-side
+**`__OPENKAL__` — the rule.** The engine defines it, for every target-side
 unit, whenever the resolved `kernel-abi` layer's interface name is
 `openkal` — read from the LAYER's value, never from a package name, so a
 second implementation (`openkal-macos`, `openkal-opensbi`, …) needs no
@@ -85,7 +85,7 @@ write `cfg(c-abi = "…")` or `cfg(kernel-abi = "…")` in the manifest instead
 for the predicate grammar).
 
 **Platform units.** A package that itself needs the platform's own
-environment never reads `__openkal__` or any other macro to work that out —
+environment never reads `__OPENKAL__` or any other macro to work that out —
 the boundary is stated in the manifest, not inferred from source, and
 everything crossing it is still fixed-width (SPEC §5.4). Two different
 packages reach `[package] c-environment = "platform"` (docs/22) by two

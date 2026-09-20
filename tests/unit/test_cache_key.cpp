@@ -389,7 +389,7 @@ TEST(CacheKey, AHostedTargetHasNoTargetImpliedFlagsEitherWay) {
 // `manifest.buildConfig.cflags`/`cxxflags` at all — it is an ENGINE
 // BROADCAST, appended into `PackageRoot::privateBuild.cflags`/`cxxflags`/
 // `asmflags` by `prepare.cppm` once the target side resolves (the same
-// channel `targetSideUsage` and `-D__openkal__` use). `fill_package_config`
+// channel `targetSideUsage` and `-D__OPENKAL__` use). `fill_package_config`
 // used to read only `manifest.buildConfig.cflags`/`cxxflags` — the
 // package's OWN declaration — so two builds of the identical package,
 // realising two DIFFERENT C environments (LP64 vs LLP64, say), produced the
@@ -430,7 +430,7 @@ TEST(CacheKey, TwoDifferentRealisedCEnvironmentsDoNotShareASlot) {
 
 // A DURABLE GUARD FOR THE WHOLE CLASS THE PREVIOUS TEST FOUND ONE INSTANCE
 // OF — this predates the c-abi wave (`targetSideUsage`'s own broadcast, and
-// `-D__openkal__`, had the identical exposure before [c-abi] existed) and
+// `-D__OPENKAL__`, had the identical exposure before [c-abi] existed) and
 // will recur: `PackageRoot::privateBuild` (`mcpp.modgraph.scanner
 // ::UsageRequirements`) is the engine's OWN channel for "this reaches a
 // package's compile command line even though the package wrote nothing" —

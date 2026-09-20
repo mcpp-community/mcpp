@@ -377,7 +377,7 @@ that names no C library:
 | Linux | `posix` / `arch-default` | the default triple already satisfies it |
 | macOS | `posix` / `arch-default` | one token, `-D__unix__` — Apple's clang predefines `__APPLE__`/`__MACH__` on its default triple, never `__unix__` |
 | freestanding | `posix` / `arch-default` | the same one token, `-D__unix__`, for the same reason: nothing here defines it either |
-| Windows | `posix` / `arch-default` | Cygwin-flavoured: `--target=x86_64-pc-cygwin` on the compile line only; plus `-D__mcpp_target_windows__` (see the note below); `data-model` becomes LP64 as a consequence of the triple, not a separate flag |
+| Windows | `posix` / `arch-default` | Cygwin-flavoured: `--target=x86_64-pc-cygwin` on the compile line only; plus `-D__MCPP_TARGET_WINDOWS__` (see the note below); `data-model` becomes LP64 as a consequence of the triple, not a separate flag |
 | any | `builtins = "iso"` | turns off code-generation idioms that assume a platform C library — `-fno-builtin-memset_pattern16` on Apple targets is the one this survey measured; see `src/toolchain/cenv.cppm` for what else was checked and found not to apply |
 | anything else | | refused, naming the target, the request and what is missing — never a silent downgrade |
 
@@ -418,8 +418,9 @@ preprocessor sees and how wide `long` is. Realisation therefore touches only
 the **compile** line; the **link** line keeps the triple the graph resolved,
 because nothing about the object format changed.
 
-**`__mcpp_target_windows__` is defined here, and `__CYGWIN__` still is too
-(2026.9.21.1).**
+**`__MCPP_TARGET_WINDOWS__` is defined here, and `__CYGWIN__` still is too
+(2026.9.21.1; the name was spelt in lower case in that one release and
+re-spelt in 2026.9.21.2, before it had a consumer).**
 
 The substitution suppresses `_WIN32` on purpose — that is what presenting
 POSIX means. But the **ABI did not change with the environment**: the calling
@@ -432,7 +433,7 @@ INSTALLED headers in this ecosystem size records by that fact:
 | openkal-llvm-runtime | `__libunwind_config.h` | `unw_context_t`, `unw_cursor_t` |
 
 An installed header is read by an **application's own compile**, so neither
-can use a package-private define. `__mcpp_target_windows__` is mcpp's own
+can use a package-private define. `__MCPP_TARGET_WINDOWS__` is mcpp's own
 name for the question they ask — is this target Windows, whatever C
 environment is presented above it — and being mcpp's own, its meaning is not
 decided by anyone else's history. It is emitted only under this substitution;
@@ -453,7 +454,7 @@ loudly; `setjmp.h`'s equivalent would not have — its own comment says *a
 mismatch nothing reports until the record overruns*. So the withdrawal is
 three steps, and each intermediate state builds:
 
-1. this release defines `__mcpp_target_windows__` as well — purely additive;
+1. 2026.9.21.1 defines `__MCPP_TARGET_WINDOWS__` as well — purely additive;
 2. those packages read the new name, keeping `|| defined(__CYGWIN__)` so they
    build on both engines;
 3. a later release stops defining the borrowed one.
@@ -607,6 +608,23 @@ A graph whose implementation carries no `provides-interfaces` builds
 unchanged; the key postdates the packages, and the link still reports an
 absence in the vocabulary it always did.
 
+**It says so, though (mcpp 2026.9.21.2).** Three situations exist and two of
+them build — the provider states a list containing the requirement, states a
+list without it (refused), or states nothing at all — and until this note the
+first and the third produced identical output:
+
+```
+        note kernel-abi interfaces: fakekernel@0.1.0 states none, 2 requirements unchecked
+```
+
+**A requirement nobody answered reads exactly like a confirmed one**, which is
+the failure this closes: a consumer inspecting a green build could not tell
+"checked and agreed" from "never asked". The note names the resolved
+implementation, because a reader told only that something went unchecked
+cannot act on it. It is absent whenever the provider does state its list, and
+`tests/e2e/743` asserts both directions — without the second leg the first
+would pass against an engine that printed the line unconditionally.
+
 **What a C library does not supply (`[c-abi-absent]`, mcpp 2026.9.20.1).**
 The set of names a C library supplies is not enumerable in a manifest — POSIX
 has about twelve hundred — and enumerating it is the mistake §3.3 records
@@ -664,7 +682,7 @@ cache an ordinary dependency compile reuses across projects and across an
 keyed per package from exactly the axes that reach that package's own
 compile command line (`mcpp.build.cache_key`). The realised environment
 reaches a package's command line entirely through an engine BROADCAST (the
-same channel `targetSideUsage` and `-D__openkal__` use, never the package's
+same channel `targetSideUsage` and `-D__OPENKAL__` use, never the package's
 own declared `[build] cflags`/`cxxflags`), so the key's own derivation had
 to be told to read the broadcast, not only the declaration — found exactly
 that way (coordinator report, openkal-musl spike): upgrading `mcpp` in

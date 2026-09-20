@@ -621,8 +621,8 @@ fails a build rather than drifting into a release.
 
 | macro | when | owned |
 |---|---|---|
-| `__mcpp_target_<os>__` | one per build, spelt from the triple's `os` field | yes |
-| `__openkal__` | the resolved `kernel-abi` layer's interface name is `openkal` | yes |
+| `__MCPP_TARGET_<OS>__` | one per build, spelt from the triple's `os` field | yes |
+| `__OPENKAL__` | the resolved `kernel-abi` layer's interface name is `openkal` | yes |
 | `__unix__` | the `[c-abi]` realisation supplies it where the toolchain would not | no |
 
 **An engine should not define macros, and each row has to justify itself.** A
@@ -638,12 +638,12 @@ manifest; a macro is none of those. Two justifications have survived:
    spelled in its manifest, but a header it INSTALLS is read by an
    application's own compile, which those defines never reach.
 
-**`__mcpp_target_<os>__` — the rule.** Defined for every target-side
+**`__MCPP_TARGET_<OS>__` — the rule.** Defined for every target-side
 translation unit, always, one per build. The spelling is the triple's own `os`
-field, so `x86_64-linux-gnu` gives `__mcpp_target_linux__`, `x86_64-windows-gnu`
-gives `__mcpp_target_windows__`, and `riscv64-none-elf` gives
-`__mcpp_target_none__`. The engine learns no operating-system name: a target
-added to the triple parser gets its macro with no engine change.
+field, upper-cased, so `x86_64-linux-gnu` gives `__MCPP_TARGET_LINUX__`,
+`x86_64-windows-gnu` gives `__MCPP_TARGET_WINDOWS__`, and `riscv64-none-elf`
+gives `__MCPP_TARGET_NONE__`. The engine learns no operating-system name: a
+target added to the triple parser gets its macro with no engine change.
 
 *Allowed:* learning the target's operating system where the C environment
 presented above it has suppressed the platform's own macros, and sizing a
@@ -660,31 +660,58 @@ emission would make its absence ambiguous: "not Windows" and "Windows, but
 nothing hid its macros" would read the same. A macro whose absence means one
 thing is worth one `-D`.
 
-**Naming.** `__mcpp_`-prefixed, `__`-suffixed, lowercase, words separated by
-`_`. Two conventions exist in the wild — vendor and product names are upper
-(`__APPLE__`, `_WIN32`, `__MINGW32__`), kind-of-system names are lower
-(`__linux__`, `__unix__`) — and these name kinds of target, sitting beside
-that second family in real guards: `#if defined(__linux__) ||
-defined(__mcpp_target_windows__)`.
+**Naming.** UPPER CASE, `__`-wrapped, words separated by `_`; the names mcpp
+owns carry `__MCPP_`.
 
-The `__mcpp_` prefix is load-bearing. A name mcpp owns means what mcpp says it
-means. The alternative was tried: `__CYGWIN__` was left defined so that code
-needing "PE object format, POSIX C environment" would have a name, and a
-30-member measurement found four members reading it as *Win32 is available*
-and reaching `#include <windows.h>` — which is what upstream means by it. **A
-borrowed name means what the lender's history made it mean**, not what the
-borrower intended.
+The convention in the wild splits by **what a name is**, not by who writes it.
+A vendor or product name is upper — `__APPLE__`, `_WIN32`, `__MINGW32__`,
+`__GNUC__`. A kind-of-system name is lower — `__linux__`, `__unix__`,
+`__gnu_linux__`. Every row mcpp OWNS is of the first kind: it names mcpp, or
+it names openkal. The kind-of-system question is answered by `__linux__` and
+its family, which mcpp SUPPLIES rather than owns and which therefore keep
+their lower-case spelling, for that exact reason.
+
+The lower-case spelling shipped first, and the reasoning that produced it is
+worth keeping because the mistake is easy to repeat: these names sit beside
+`__linux__` in real guards, so matching it looked like consistency. **That
+confuses adjacency with kind.** `__APPLE__` sits in those same guards and is
+upper, because it belongs to somebody — as does every other name in them that
+belongs to somebody.
+
+The `__MCPP_` prefix is load-bearing, and it is a prefix rather than the whole
+rule: a name mcpp owns means what mcpp says it means, while `__OPENKAL__` is
+owned and names *openkal* rather than mcpp. The alternative — borrowing —
+was tried. `__CYGWIN__` was left defined so that code needing "PE object
+format, POSIX C environment" would have a name, and a 30-member measurement
+found four members reading it as *Win32 is available* and reaching `#include
+<windows.h>`, which is what upstream means by it. **A borrowed name means what
+the lender's history made it mean**, not what the borrower intended.
 
 `__unix__` is the exception that proves the rule: mcpp SUPPLIES it rather than
 owning it, so it keeps the standard spelling and mcpp may not change its
 meaning. Read it exactly as on any other POSIX system.
 
-**Stability.** An entry here is a published interface. Removing one, or
-narrowing when it is defined, is a breaking change for source this project
-does not control, and the failure is usually SILENT — a `#if` selects the
-other branch and compiles. Withdrawal is therefore a sequence, never an edit:
-add the replacement, let consumers move onto it while still accepting the old
-name, and only then stop defining it.
+**Stability.** An entry here is a published interface, and withdrawing one is
+SILENT: a `#if` selects the other branch and compiles, on a machine nobody is
+watching. No mechanism available to a build tool makes that loud — a
+preprocessor cannot be told to complain about a name it does not find.
+
+So a withdrawal is never decided by reading. It is decided by **a measurement
+that enumerates readers**, and what the measurement finds sets how many steps
+the withdrawal takes. Both withdrawals this project has performed are on the
+record, and they came out differently:
+
+| withdrawn | readers found | steps |
+|---|---|---|
+| `__CYGWIN__` (2026.9.21.1) | four third-party members, plus six sites in the two headers this ecosystem installs | three: publish the replacement, move consumers, stop defining |
+| `__mcpp_target_<os>__`, `__openkal__` (2026.9.21.2) | none — no source file and no manifest in any repository of this ecosystem | one |
+
+The rule did not change between those two; the count did. The second row is
+cheap for a reason worth stating: both names were invented here, so no
+upstream code can be holding one, and the exposure was three days for
+`__openkal__` and a single release for the target macro. A withdrawal argued
+from anything other than a count is an argument this project has already got
+wrong once.
 
 ## Custom Targets
 
