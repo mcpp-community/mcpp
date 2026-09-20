@@ -153,6 +153,33 @@ static assertion failed: UnwindCursor<> does not fit in unw_cursor_t
 移到 0.19.0，是把窗口压到「精确钉」的办法；这里没有任何机制能把它关掉，因为引擎无从知道
 一个包安装出去的头读了哪些宏。
 
+#### E1c — 交叉验证协议的一个结构性漏洞：没有人建 Windows-over-openkal
+
+**2026-09-21 实测发现，在用协议验 E1 的过程中。** 两个生态包对着 mcpp 的 PR 分支跑的
+交叉验证都绿了，而**那两个绿与 `__MCPP_TARGET_WINDOWS__` 无关**：
+
+| 仓库 | 它的 CI 实际建的目标 |
+|---|---|
+| `openkal-musl` | 矩阵三行:linux/gcc、linux/llvm、macos/llvm;cross-link 那条是 Linux↔macOS |
+| `openkal-llvm-runtime` | `x86_64-linux-gnu` + `riscv64-none-elf`(裸机,qemu) |
+
+**整个生态里没有一个包的 CI 建 `x86_64-windows-gnu`。** 而这次改动的全部主题，是一个
+**只在 Windows 目标上存在**的宏。所以两个包的绿是真的，只是它测的不是这件事——
+[[a-passing-criterion-that-measured-nothing]] 的又一个形态：判据跑了、通过了、而它的
+对象根本不在场。
+
+**唯一建那个目标的是 mcpp 自己的 `openkal-cross`**（3 宿主 × 3 目标）。而它把要验的
+生态分支写死成 `OPENKAL_BRANCH: main`——于是一个**需要生态协同提交**的引擎改动，在那个
+提交落地之前既无法验证、也无法合入（因为正是这个 job 会红）。
+
+**修法**：`openkal-cross.yml` 增加 `workflow_dispatch` 输入 `openkal_ref`，留空时行为
+不变。这是协议的另一半：生态仓库早就能用 `MCPP_SOURCE_REF` 指到 mcpp 的 PR 分支，反向
+一直没有。
+
+**次序上的后果**：`openkal-cross` 里那个示例通过 `path = "../.."` 依赖 runtime，而
+runtime 的清单从**索引**钉 `openkal-musl = "0.19.0"`。所以用 `openkal_ref` 验之前，
+musl 0.19.0 必须先登记进索引。
+
 #### E1b — 引擎拥有的宏改为全大写（2026.9.21.2）
 
 **状态**：已落地，与 E1 第三步同一个 PR（用户要求：不分开，免得发布周期太长）。
