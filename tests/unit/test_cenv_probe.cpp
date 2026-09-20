@@ -300,6 +300,16 @@ TEST(CenvProbeArgv, AFreestandingTargetWithoutASelectionIsRefused) {
     ASSERT_FALSE(r.has_value())
         << "an argv with no target selection must be refused for a "
            "freestanding target; it measures the build host";
+    // THE CLAUSE, NOT ONLY THE TRIPLE. Two other refusals this wave added were
+    // found malformed by rendering them: one lost a closing parenthesis, and
+    // one read as the claim it denies. Both had tests asserting an identifier
+    // inside the sentence, and an identifier sits in the right place in a
+    // sentence that is wrong. This message has one substitution and no paired
+    // delimiters, so it has no such failure mode -- the assertion is widened
+    // anyway, because that is a property of today's wording rather than of
+    // the check.
+    EXPECT_NE(r.error().find("would have run with no target selection"),
+              std::string::npos) << r.error();
     EXPECT_NE(r.error().find("riscv64-none-elf"), std::string::npos)
         << "the refusal must name the target it was for: " << r.error();
 }
