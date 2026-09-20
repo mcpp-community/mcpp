@@ -28,9 +28,9 @@
 //   freestanding  posix / arch-default   the same one token, `-D__unix__`, for the
 //                                        same reason: nothing here defines it either
 //   Windows       posix / arch-default   Cygwin-flavoured: `--target=x86_64-pc-cygwin`,
-//                                        `__CYGWIN__`/`__CYGWIN32__` STAY DEFINED (see
-//                                        the note below the table — this is a design
-//                                        revision, not the original §3.3 text)
+//                                        plus `-U__CYGWIN__ -U__CYGWIN32__` (see
+//                                        the note below the table — measurement
+//                                        returned this to the original §3.3 text)
 //   *             builtins = iso         turn off the platform-C-library idioms the
 //                                        code generator assumes (§3.2.1) — Apple's
 //                                        `memset_pattern16` is the one measured case
@@ -70,24 +70,27 @@
 // identity links exactly like one compiled under the MinGW one. Only the
 // preprocessor saw a different environment; the linker never has to know.
 //
-// `__CYGWIN__`/`__CYGWIN32__` ARE NOT REMOVED, AND THE FIRST VERSION OF THIS
-// MODULE GOT THAT WRONG. §3.3's original text called for `-U__CYGWIN__
-// -U__CYGWIN32__` on the reasoning that a real Cygwin userland is not in the
-// graph. A first reading of the openkal-musl spike's libunwind build failure
-// blamed a missing `__CYGWIN__` branch in libunwind itself; reading the
-// vendored source shows that is wrong — upstream libunwind has no such
-// branch, so defining it there would have changed nothing (the actual break
-// was a downstream package selecting on `_WIN32` and is being fixed there).
-// The reason to keep them defined is narrower and still real: third-party
-// portable code that has to know the OBJECT FORMAT — as opposed to which C
-// environment or which platform API — has no name for "PE format with a
-// POSIX-presenting C environment" other than `__CYGWIN__`, and such code
-// cannot be patched the way this ecosystem's own packages can. The cost is
-// symmetric: a library that reaches for `__CYGWIN__` may also reach for a
-// real Cygwin interface (`sys/cygwin.h`, `cygwin_conv_path`) that does not
-// exist here. This is a TRADE-OFF for the 30-member measurement to settle —
-// if defining it produces more new failures than it fixes, the answer flips
-// — not a fact this module is asserting as closed.
+// `__CYGWIN__`/`__CYGWIN32__` ARE REMOVED, AND THIS MODULE HAS HELD BOTH
+// ANSWERS. The first version removed them; a second kept them, on the
+// argument that third-party code needing to know the OBJECT FORMAT has no
+// other name for "PE format with a POSIX-presenting C environment". That
+// version wrote the condition for changing its mind: a trade-off "for the
+// 30-member measurement to settle — if defining it produces more new
+// failures than it fixes, the answer flips".
+//
+// The measurement settled it (2026-09-20, 60 member-target combinations).
+// Keeping them cost four members, each stopping at `#include <windows.h>`
+// reached through `#if defined(_WIN32) || defined(__CYGWIN__)`; none failed
+// for want of the macro. Four against zero, so the answer flipped.
+//
+// What the second version got wrong is worth keeping, because it is not
+// specific to this macro. The name was borrowed to mean "the object format
+// is PE". Upstream uses it to mean "Win32 is available" — mimalloc says so in
+// the guard itself, and sqlite3 puts it in the `SQLITE_OS_WIN` detection set.
+// A BORROWED NAME MEANS WHAT THE LENDER'S HISTORY MADE IT MEAN, not what the
+// borrower intended. The object-format question therefore keeps no macro at
+// all: a package asks `cfg(os = "windows")`. If some day a third party can
+// only ask it in the preprocessor, mcpp defines a name of its own.
 export module mcpp.toolchain.cenv;
 
 import std;
@@ -286,16 +289,38 @@ inline std::expected<Realisation, std::string> realise(
                               "on x86_64 only; this arch has no verified "
                               "substitute triple");
             // `--target=x86_64-pc-cygwin`, on the COMPILE line only (module
-            // header above). `__CYGWIN__`/`__CYGWIN32__` are LEFT AS THE
-            // TRIPLE SUBSTITUTION DEFINES THEM — not undefined (see the
-            // module header's note: portable third-party code that needs to
-            // know the object format has no other name for "PE format,
-            // POSIX-presenting environment", and this is a trade-off for the
-            // 30-member measurement, not a settled fact).
+            // header above), AND `__CYGWIN__`/`__CYGWIN32__` UNDEFINED ON TOP
+            // OF IT. The triple is what suppresses `_WIN32`, gives `__unix__`
+            // and gives LP64; the two `-U` tokens remove the one thing the
+            // triple carries that this environment cannot honour.
+            //
+            // THE MEASUREMENT THIS WAS LEFT TO HAS SETTLED IT (2026-09-20, 60
+            // member-target combinations on the published graph). Defining
+            // them cost four members --- archive, sqlite3, mimalloc, c-ares
+            // --- each stopping at `#include <windows.h>` reached through a
+            // guard of the shape `#if defined(_WIN32) || defined(__CYGWIN__)`.
+            // Nothing in the same run failed for want of the macro. The
+            // module header's condition was "if defining it produces more new
+            // failures than it fixes, the answer flips": four against zero.
+            //
+            // Upstream says plainly what it means by the name. mimalloc:
+            // `// we use windows locks on cygwin, but otherwise treat it at
+            // unix`. sqlite3 lists it in the `SQLITE_OS_WIN` detection set and
+            // then includes `windows.h`. The name asserts WIN32 IS AVAILABLE,
+            // not "the object format is PE" --- a borrowed name means what the
+            // lender's history made it mean, whatever we intended by it.
+            //
+            // The object-format question keeps no macro. A package asks
+            // `cfg(os = "windows")`, which needs none. Should measurement ever
+            // show third-party code that can only ask it in the preprocessor,
+            // the answer is a name mcpp defines itself, not one it borrows.
             r.tokens.push_back("--target=x86_64-pc-cygwin");
+            r.tokens.push_back("-U__CYGWIN__");
+            r.tokens.push_back("-U__CYGWIN32__");
             r.expectDefined.push_back("__unix__");
-            r.expectDefined.push_back("__CYGWIN__");
             r.expectUndefined.push_back("_WIN32");
+            r.expectUndefined.push_back("__CYGWIN__");
+            r.expectUndefined.push_back("__CYGWIN32__");
             cygwinIdentity = true;
         } else if (decl.presents == CAbiPresents::Windows) {
             // Already the base triple's own identity — nothing to add.

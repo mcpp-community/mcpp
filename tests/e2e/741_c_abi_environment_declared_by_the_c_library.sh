@@ -154,23 +154,23 @@ def joined(argv_iter):
 # The ordinary consumer (main.cpp, package "cabi-probe") is target-side and
 # does NOT declare c-environment: it must carry the Cygwin-flavoured tokens.
 #
-# `__CYGWIN__`/`__CYGWIN32__` are NOT undefined (design revision from the
-# openkal-musl spike: third-party portable code that needs to know the
-# object format -- not the C environment, not the platform API -- has no
-# other name for "PE format, POSIX-presenting environment", and such code
-# cannot be patched the way this ecosystem's own packages can; a trade-off
-# for the 30-member measurement to settle, not a settled fact) -- so this
-# asserts `-U__CYGWIN__` is ABSENT from the command line, the opposite of an
-# earlier version of this test.
+# `__CYGWIN__`/`__CYGWIN32__` ARE undefined, and this assertion has held both
+# answers. A middle revision kept them defined so third-party code needing to
+# know the OBJECT FORMAT would have a name for "PE format, POSIX-presenting
+# environment", and wrote its own condition for reversal: a trade-off for the
+# 30-member measurement to settle. The measurement settled it (2026-09-20, 60
+# member-target combinations): keeping them cost four members -- archive,
+# sqlite3, mimalloc, c-ares -- each stopping at `#include <windows.h>` reached
+# through `#if defined(_WIN32) || defined(__CYGWIN__)`, and nothing failed for
+# want of the macro. Upstream uses the name to mean "Win32 is available", not
+# "the object format is PE"; a borrowed name means what the lender's history
+# made it mean. The object-format question keeps no macro at all.
 consumer = joined(args_for("main.cpp"))
-missing = [tok for tok in ("--target=x86_64-pc-cygwin", "-fno-short-wchar")
+missing = [tok for tok in ("--target=x86_64-pc-cygwin", "-fno-short-wchar",
+                           "-U__CYGWIN__", "-U__CYGWIN32__")
            if tok not in consumer]
 if missing:
     print(f"FAIL: ordinary package is missing realised tokens {missing}\n  args: {consumer}")
-    sys.exit(1)
-present = [tok for tok in ("-U__CYGWIN__", "-U__CYGWIN32__") if tok in consumer]
-if present:
-    print(f"FAIL: __CYGWIN__/__CYGWIN32__ must stay defined, but found {present}\n  args: {consumer}")
     sys.exit(1)
 
 # fakemusl's OWN units get them too -- the environment applies to the C
@@ -200,18 +200,28 @@ if not asm_args:
     print("FAIL: could not find the .S unit's compile command at all")
     sys.exit(1)
 asm_joined = joined(iter(asm_args))
-missing = [tok for tok in ("--target=x86_64-pc-cygwin", "-fno-short-wchar")
+missing = [tok for tok in ("--target=x86_64-pc-cygwin", "-fno-short-wchar",
+                           "-U__CYGWIN__", "-U__CYGWIN32__")
            if tok not in asm_joined]
 if missing:
     print(f"FAIL: the assembly unit is missing realised tokens {missing} "
           f"-- the [c-abi] substitution must reach .S the same as .c/.cpp\n"
           f"  args: {asm_joined}")
     sys.exit(1)
-present = [tok for tok in ("-U__CYGWIN__", "-U__CYGWIN32__") if tok in asm_joined]
-if present:
-    print(f"FAIL: __CYGWIN__/__CYGWIN32__ must stay defined on assembly too, "
-          f"but found {present}\n  args: {asm_joined}")
-    sys.exit(1)
+
+# THE `-U` PAIR APPEARS TWICE ON THIS LINE, AND THAT IS NOT ASSERTED AGAINST.
+# `cEnvTokens` is appended to a package's asmflags, and the tokens shaped like
+# `-D`/`-U`/`-I` also reach assembly through the channel that carries defines
+# there; `--target=` and `-fno-short-wchar` are not that shape and so appear
+# once. Measured with the pinned clang, in the order mcpp emits them:
+#
+#   echo | clang -dM -E -x c - -U__CYGWIN__ -U__CYGWIN32__ \
+#            --target=x86_64-pc-cygwin -U__CYGWIN__ -U__CYGWIN32__
+#     -> __unix__ defined, __CYGWIN__ absent, _WIN32 absent
+#
+# `-U X` twice is `-U X`, and the probe (`expectUndefined`) is what actually
+# judges the result, so a count assertion here would pin an implementation
+# detail of the flag plumbing rather than the property under test.
 
 # openkalwin provides `mcpp:kernel-abi=openkal` and declares NO
 # `c-environment` of its own -- the platform boundary is INFERRED from that
