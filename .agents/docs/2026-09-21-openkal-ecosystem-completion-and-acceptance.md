@@ -155,18 +155,23 @@ static assertion failed: UnwindCursor<> does not fit in unw_cursor_t
 
 #### E1c — 交叉验证协议的一个结构性漏洞：没有人建 Windows-over-openkal
 
-**2026-09-21 实测发现，在用协议验 E1 的过程中。** 两个生态包对着 mcpp 的 PR 分支跑的
-交叉验证都绿了，而**那两个绿与 `__MCPP_TARGET_WINDOWS__` 无关**：
+**2026-09-21 实测发现，在用协议验 E1 的过程中。** 逐 job 核对两个包的交叉验证运行：
 
-| 仓库 | 它的 CI 实际建的目标 |
-|---|---|
-| `openkal-musl` | 矩阵三行:linux/gcc、linux/llvm、macos/llvm;cross-link 那条是 Linux↔macOS |
-| `openkal-llvm-runtime` | `x86_64-linux-gnu` + `riscv64-none-elf`(裸机,qemu) |
+| 仓库 | 它的 CI 建的目标 | 有没有 Windows 目标 |
+|---|---|---|
+| `openkal-llvm-runtime` | `runtime`(linux + riscv 裸机)、`host-dimension` 矩阵(macOS 宿主、**Windows 宿主 → 每个目标**)、两个「产物在那个系统上跑」 | **有** |
+| `openkal-musl` | linux/gcc、linux/llvm、macos/llvm、cross-link(Linux↔macOS)、「跨建的产物在那边启动」 | **没有** |
 
-**整个生态里没有一个包的 CI 建 `x86_64-windows-gnu`。** 而这次改动的全部主题，是一个
-**只在 Windows 目标上存在**的宏。所以两个包的绿是真的，只是它测的不是这件事——
-[[a-passing-criterion-that-measured-nothing]] 的又一个形态：判据跑了、通过了、而它的
-对象根本不在场。
+**先写下更正，因为我第一次读错了。** 只看 runtime 运行里的第一个 job，我下过结论说
+「整个生态没有一个包建 Windows-over-openkal」。那是错的：`host-dimension` 的 Windows
+行实测建了 `x86_64-windows-gnu`，并解析到 `openkal-musl@0.19.0`。**E1 的 Windows 那条腿
+确实被验到了**，结论成立。
+
+**真正的缺口比那小，但仍然是缺口：`openkal-musl` 自己没有任何 Windows 格子。** 而本轮
+它改的恰恰是 `bits/setjmp.h`——一个**只在 Windows 目标上有分支**的已安装头。它今天被验到
+是**传递的**：runtime 的 CI 把 musl 当 path dep 拉进去，顺带编了它。一个包的关键改动
+由另一个仓库的 CI 代为验证，是[[a-passing-criterion-that-measured-nothing]] 的邻居——
+它今天对，是因为恰好有人在别处建了那个目标。
 
 **唯一建那个目标的是 mcpp 自己的 `openkal-cross`**（3 宿主 × 3 目标）。而它把要验的
 生态分支写死成 `OPENKAL_BRANCH: main`——于是一个**需要生态协同提交**的引擎改动，在那个
