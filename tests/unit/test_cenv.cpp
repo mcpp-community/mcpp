@@ -64,45 +64,46 @@ TEST(CEnv, MacosPosixArchDefaultDefinesUnix) {
 
 // The flagship case: Cygwin-flavoured Windows.
 //
-// `__CYGWIN__`/`__CYGWIN32__` ARE UNDEFINED, and this test has asserted both
-// answers. The triple is what suppresses `_WIN32`, supplies `__unix__` and
-// supplies LP64; the two `-U` tokens remove the one thing it carries that
-// this environment cannot honour.
+// THE SUBSTITUTION HIDES THE TARGET, SO mcpp STATES IT. Suppressing `_WIN32`
+// is the point of presenting POSIX, but the ABI did not change with the
+// environment --- the register save areas are still Win64's, and two
+// INSTALLED headers in this ecosystem size records by that fact
+// (`openkal-musl`'s `bits/setjmp.h` for `jmp_buf`,
+// `openkal-llvm-runtime`'s `__libunwind_config.h` for `unw_context_t`).
+// Installed headers are read by an application's own compile, so a
+// package-private define cannot reach them. `__mcpp_target_windows__` is
+// mcpp's own name for the question they ask.
 //
-// A middle revision kept them defined, so that third-party code needing to
-// know the OBJECT FORMAT would have a name for "PE format, POSIX-presenting
-// environment", and wrote its own condition for reversal: a trade-off for the
-// 30-member measurement to settle. The measurement settled it on 2026-09-20
-// across 60 member-target combinations. Keeping them cost four members ---
-// archive, sqlite3, mimalloc, c-ares --- each stopping at
-// `#include <windows.h>` reached through `#if defined(_WIN32) ||
-// defined(__CYGWIN__)`. Nothing failed for want of the macro. Four to zero.
-//
-// The general lesson, which outlives this macro: upstream uses the name to
-// mean "Win32 is available" (mimalloc says so in the guard; sqlite3 lists it
-// under `SQLITE_OS_WIN`), not "the object format is PE". A BORROWED NAME
-// MEANS WHAT THE LENDER'S HISTORY MADE IT MEAN. The object-format question
-// keeps no macro: a package asks `cfg(os = "windows")`.
+// `__CYGWIN__` IS STILL DEFINED, AND THAT IS A SEQUENCE. Withdrawing it is
+// right --- the 30-member measurement settled that it costs four members,
+// which read it as "Win32 is available" and reach `#include <windows.h>` ---
+// and withdrawing it FIRST was tried in this branch and broke the two headers
+// above, because they read it too and nothing else names the target for them.
+// libunwind's `static_assert` failed loudly; setjmp.h's equivalent would not
+// have. So: add the name here, move those packages onto it, and only then
+// stop defining the borrowed one. This test pins the first step.
 TEST(CEnv, WindowsPosixArchDefaultSubstitutesTheCygwinTriple) {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32);
     auto r = cenv::realise(d, "windows", "x86_64", false);
     ASSERT_TRUE(r.has_value()) << r.error();
     EXPECT_TRUE(has(r->tokens, "--target=x86_64-pc-cygwin"));
-    EXPECT_TRUE(has(r->tokens, "-U__CYGWIN__"));
-    EXPECT_TRUE(has(r->tokens, "-U__CYGWIN32__"));
+    EXPECT_TRUE(has(r->tokens, "-D__mcpp_target_windows__=1"));
+    // Not withdrawn yet, and asserted so, because the step that withdraws it
+    // must be a deliberate edit to this line rather than a silent drift.
+    EXPECT_FALSE(has(r->tokens, "-U__CYGWIN__"));
     // wchar 32 differs from Cygwin's own default (16) — the flag is added.
     EXPECT_TRUE(has(r->tokens, "-fno-short-wchar"));
     EXPECT_EQ(r->expectLongBytes, 8);
     EXPECT_EQ(r->expectWcharBits, 32);
     ASSERT_TRUE(has(r->expectDefined, "__unix__"));
     ASSERT_TRUE(has(r->expectUndefined, "_WIN32"));
-    // THE PROBE CHECKS THEM, which is what keeps this from being a token the
-    // compiler could ignore: `cenv_probe::verify` compares the realised
+    // THE PROBE CHECKS THESE, which is what keeps the tokens from being ones
+    // the compiler could ignore: `cenv_probe::verify` compares the realised
     // configuration's predefines against these lists and refuses on a
-    // mismatch. A `-U` that did not take effect is a verification failure,
+    // mismatch. A `-D` that did not take effect is a verification failure,
     // not a silent one.
-    ASSERT_TRUE(has(r->expectUndefined, "__CYGWIN__"));
-    ASSERT_TRUE(has(r->expectUndefined, "__CYGWIN32__"));
+    ASSERT_TRUE(has(r->expectDefined, "__CYGWIN__"));
+    ASSERT_TRUE(has(r->expectDefined, "__mcpp_target_windows__"));
 }
 
 // wchar = 16 on the Cygwin substitution matches Cygwin's own default, so no

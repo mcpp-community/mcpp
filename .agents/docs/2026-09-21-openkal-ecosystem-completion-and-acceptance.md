@@ -61,7 +61,8 @@ status: active
 
 #### E1 — P3：撤掉 `__CYGWIN__` 借用
 
-**状态**：**已实现**（mcpp 2026.9.21.1）。下文保留论证；落地形态见本节末。
+**状态**：**分三步，本版落地第一步**（mcpp 2026.9.21.1）。下文保留论证；落地形态与
+被交叉验证挡下的那一版见本节末。
 
 保留 `__CYGWIN__` 的本意是给「PE 格式 + POSIX C 环境」一个名字。实证否定了这个用法：
 
@@ -99,23 +100,38 @@ status: active
 `#if defined(_WIN32) && !defined(__CYGWIN__)`，撤销会**翻转**它的分支。基线已有，重测
 即可读出净值。
 
-**落地形态（2026.9.21.1）**：`cenv.cppm` 的 Windows+Posix 分支加两个 `-U` token，
-`expectUndefined` 加两项——**后者才是承重的**：探针会把实现出的配置的预定义与这两张表
-比对，一个没生效的 `-U` 是一次校验失败，不是一次沉默。
+**先做的那一版被跨仓库交叉验证挡下了，这条记录比结论更值钱。**
 
-直接量过一次，用钉住的 clang、按 mcpp 实际发出的 token 顺序：
+第一次实现就是直接撤：加 `-U__CYGWIN__ -U__CYGWIN32__`，`expectUndefined` 加两项。本机
+全绿，五个生态仓库里四个也绿——**openkal-llvm-runtime 红了**，libunwind 的
+`static_assert` 失败：`Registers_x86_64` 装不进 `unw_context_t`。
 
-```
-echo | clang -dM -E -x c - -U__CYGWIN__ -U__CYGWIN32__ \
-         --target=x86_64-pc-cygwin -U__CYGWIN__ -U__CYGWIN32__
-  -> __unix__ 定义；__CYGWIN__ 消失；_WIN32 仍不存在
-```
+根因是生态里有**两个已安装的公开头**有意读 `__CYGWIN__`，理由写在各自源码里：
 
-**`.S` 行上这对 token 出现两次**，`.c`/`.cpp` 各一次。`cEnvTokens` 会被加进包的
-asmflags，而形如 `-D`/`-U`/`-I` 的 token 同时经由「把 define 带进汇编」的通道到达；
-`--target=` 与 `-fno-short-wchar` 不是那个形状，所以只出现一次。`-U X` 两次等于一次，
-且真正的判据是探针，所以 e2e 不对次数作断言——那会把 flag 管线的实现细节钉死，而不是
-钉住被测性质。
+| 包 | 头文件 | 它定尺寸的记录 |
+| --- | --- | --- |
+| openkal-musl | `port/include/bits/setjmp.h` | `jmp_buf` |
+| openkal-llvm-runtime | `__libunwind_config.h` | `unw_context_t`、`unw_cursor_t` |
+
+两者都写明：这是**已安装**的头，会被**应用程序自己的编译**读到，所以用不了包私有的
+`OKM_TARGET_WINDOWS` / `OPENKAL_TARGET_WINDOWS`；而 `__CYGWIN__` 是 mcpp **target-wide**
+保持定义的唯一名字。
+
+**那个「四比零」数的是第三方读者，没数我们自己的。** 而自己这两个是承重的，且错了是
+**静默**的——`setjmp.h` 自己的注释写着「a mismatch nothing reports until the record
+overruns」。libunwind 那处有 `static_assert` 才响，属于运气。
+
+**落地形态（第一步）**：`cenv.cppm` 的 Windows+Posix 分支加 `-D__mcpp_target_windows__=1`，
+`expectDefined` 加该项与 `__CYGWIN__`——探针核对，一个没生效的 `-D` 是校验失败不是沉默。
+实测：三个通道（`.c`/`.cpp`/`.S`）全部到达；预定义为 `__unix__` + `__CYGWIN__` +
+`__mcpp_target_windows__`，`_WIN32` 仍不存在。
+
+**为什么名字是 `__mcpp_target_windows__` 而不是设计里写的 `__mcpp_format_pe__`**：两个
+消费者要的不是「目标文件格式」，是**调用约定**（Win64 的寄存器保存区大小）。在这个目标上
+两者同变，但按消费者实际问的那个问题命名更诚实。
+
+**第二、三步**：两个包改读新名字并保留 `|| defined(__CYGWIN__)`（在两种引擎上都能构建）；
+之后的版本再停止定义借来的那个。**先做第三步会让已发布的那两个头静默落进 `#else`。**
 
 #### E2 — P7-L3：链接期集合差
 

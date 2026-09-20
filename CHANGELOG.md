@@ -7,40 +7,30 @@
 
 ## [2026.9.21.1] - 2026-09-21
 
-### 撤掉借来的 `__CYGWIN__`,由一次测量裁决
+### mcpp 为「这个目标是 Windows」给出自己的名字
 
-`presents = "posix"` 在 Windows 上实现成 Cygwin 形状的目标。上一版**保留**
-`__CYGWIN__`/`__CYGWIN32__` 定义,理由是:需要知道**目标文件格式**的第三方可移植代码,
-没有别的名字能指代「PE 格式 + 呈现 POSIX 的 C 环境」。那一版同时写下了自己的翻转条件
-——**留给 30 成员测量裁决;若定义它带来的失败比修好的多,结论就翻过来。**
+`presents = "posix"` 在 Windows 上实现成 Cygwin 形状的目标,有意压掉 `_WIN32`——那正是
+「呈现 POSIX」的含义。但 **ABI 并没有跟着环境一起变**:调用约定仍是 Win64,寄存器保存区
+仍按它的大小。生态里有两个**已安装的**头按这个事实定尺寸——openkal-musl 的
+`bits/setjmp.h` 定 `jmp_buf`,openkal-llvm-runtime 的 `__libunwind_config.h` 定
+`unw_context_t`。已安装的头会被**应用程序自己的编译**读到,所以两者都用不了包私有的 define。
 
-测量在 2026-09-20 给出读数,60 个「成员 × 目标」组合:**保留它代价是四个成员**——
-`archive`、`sqlite3`、`mimalloc`、`c-ares`,各自停在 `#include <windows.h>`,都经由形如
-`#if defined(_WIN32) || defined(__CYGWIN__)` 的守卫到达。**同一轮里没有任何一项因为缺少
-这个宏而失败。** 四比零。
+本版发 `-D__mcpp_target_windows__`。它是 mcpp 自己的名字,语义由 mcpp 自己定;只在这次
+替换下发出,普通 Windows 构建仍有 `_WIN64`。
 
-上游自己说明了这个名字的含义。mimalloc 把话写在守卫的注释里:
-`we use windows locks on cygwin, but otherwise treat it at unix`;sqlite3 把它列进
-`SQLITE_OS_WIN` 的检测集合,随后 `#include "windows.h"`。**它们用这个名字表达的是
-「Win32 可用」,不是「目标文件格式是 PE」。一个借来的名字,语义由借出方的历史决定,
-不由借用方的意图决定。**
+**`__CYGWIN__` 仍然定义着,这是次序不是结论。** 30 成员测量已判定这个借来的名字代价是
+四个成员(`archive`、`sqlite3`、`mimalloc`、`c-ares` 各自停在 `#include <windows.h>`,
+经由 `#if defined(_WIN32) || defined(__CYGWIN__)`);上游用它表达「Win32 可用」,
+mimalloc 把这句话写在守卫自己的注释里。**一个借来的名字,语义由借出方的历史决定。**
 
-于是「目标文件格式」这一维**不保留任何宏**:包问 `cfg(os = "windows")`,那不需要宏。
-若某天确实发现只能在预处理期问这件事的第三方代码,答案是 mcpp 定义一个自己的名字。
+**撤掉它试过了,被跨仓库交叉验证挡下。** 上面那两个头正是因为没有别的 target-wide 名字
+才读它;撤掉后 libunwind 的 `static_assert` 响亮地红了,而 `setjmp.h` 那一处**不会**响——
+它自己的注释写着「a mismatch nothing reports until the record overruns」。那次测量数的是
+**第三方**读者,没数我们自己的。
 
-承重的不是那两个 `-U` token,是 `expectUndefined` 里新增的两项:探针把实现出的配置的
-预定义与它比对,**一个没生效的 `-U` 是一次校验失败,不是一次沉默**。
-
-实测(钉住的 clang,按 mcpp 实际发出的 token 顺序):
-
-```
-echo | clang -dM -E -x c - -U__CYGWIN__ -U__CYGWIN32__ \
-         --target=x86_64-pc-cygwin -U__CYGWIN__ -U__CYGWIN32__
-  -> __unix__ 定义;__CYGWIN__ 消失;_WIN32 仍不存在
-```
-
-单测与 e2e 741 都改成断言相反的一侧,注释里记着这个模块两种答案都持有过、以及是什么
-把它翻过来的。
+于是撤销分三步,每个中间状态都能构建:本版**增加**新名字;两个包改读新名字并保留
+`|| defined(__CYGWIN__)`;之后的版本再停止定义借来的那个。先做第三步会让**已发布**的那
+两个头全部落进 `#else`——错误的记录尺寸,没有任何东西报告。
 
 ## [2026.9.20.1] - 2026-09-20
 
