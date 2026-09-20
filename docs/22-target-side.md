@@ -599,6 +599,16 @@ list back when a link names one of the `link`-shaped entries, so
 `undefined reference to 'fork'` arrives with the sentence that says whether it
 is a defect or a limit of the environment this program was built for.
 
+**An engine that predates these keys.** `[kernel-abi]` is a top-level table an
+older mcpp does not know, and an unknown top-level table is ignored: a manifest
+carrying it loads unchanged everywhere it loaded before, and the absence of the
+resolution-time check is the behaviour that release already had. `[c-abi.absent]`
+is not the same case --- it is a new key inside a table mcpp does know, and an
+unrecognised key there is a parse error naming the key, which is what keeps a
+misspelling from silently disabling a declaration. A package adopting the second
+therefore requires an index floor at 2026.9.20.1; a package adopting the first
+does not.
+
 **Fingerprint.** The realised environment participates in the build's
 fingerprint (`compileFlags`, §92's field 7): two builds whose C library
 declares `lp64` and `llp64` compile the same source into objects whose
