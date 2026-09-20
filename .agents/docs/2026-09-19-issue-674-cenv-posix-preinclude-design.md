@@ -1,6 +1,6 @@
 ---
 subject: design
-status: active
+status: superseded
 ---
 
 <!-- Recorded as written on 2026-09-19; the list markers were spelled with

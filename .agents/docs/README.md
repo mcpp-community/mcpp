@@ -31,7 +31,7 @@ Records that declare one. Everything else is listed by date below.
 ### design
 
 - [openkal 生态：能力的时刻模型，以及 C 环境方案空间的划分](2026-09-20-openkal-c-environment-ecosystem-design.md) — active
-- [#674:`presents = "posix"` 在 Windows 上兑现契约的下半段](2026-09-19-issue-674-cenv-posix-preinclude-design.md) — active
+- [#674:`presents = "posix"` 在 Windows 上兑现契约的下半段](2026-09-19-issue-674-cenv-posix-preinclude-design.md) — superseded
 - [The build database of #636, and two defects on the way to the latest xlings](2026-09-14-636-build-database-and-the-latest-xlings.md) — active
 
 ### docs
@@ -96,7 +96,7 @@ Records that declare one. Everything else is listed by date below.
 - [openkal 生态：能力的时刻模型，以及 C 环境方案空间的划分](2026-09-20-openkal-c-environment-ecosystem-design.md) — active
 - [#674 设计方案评审：`-include unistd.h` 在 Windows + `presents = "posix"` 上的可行性](2026-09-20-issue-674-design-review.md) — active
 - [C 环境生态方案：执行计划](2026-09-20-ecosystem-execution-plan.md) — active
-- [#674:`presents = "posix"` 在 Windows 上兑现契约的下半段](2026-09-19-issue-674-cenv-posix-preinclude-design.md) — active
+- [#674:`presents = "posix"` 在 Windows 上兑现契约的下半段](2026-09-19-issue-674-cenv-posix-preinclude-design.md) — superseded
 - [运行时绑定方案 v3:让 mcpp 真正安装它所声明的运行时](2026-09-17-runtime-binding-multi-repo-plan.md) — landed
 - [#662:目标侧由依赖图提供时，编译器的隐式头文件搜索仍指向宿主](2026-09-17-issue-662-graph-target-header-isolation-plan.md) — active
 - [Issue #660 分析:`glibc@2.44` 绑定在 2.44.3 发布后解析失败](2026-09-17-issue-660-glibc-line-binding-analysis.md) — landed
