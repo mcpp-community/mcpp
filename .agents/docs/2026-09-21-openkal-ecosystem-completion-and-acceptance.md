@@ -273,17 +273,39 @@ musl 0.19.0 必须先登记进索引。
 
 #### C1 — `__cxa_thread_atexit`
 
-**状态**：第一层可修但**不能只修第一层**；第二层未定位。记录：
-`.agents/docs/2026-09-20-cxa-thread-atexit-finding.md`。
+**状态**：**两层都已定位并修复**，发在 `openkal-llvm-runtime@0.15.0`。记录：
+`.agents/docs/2026-09-20-cxa-thread-atexit-finding.md` §7。
+
+**第二层的真因**：`__thread DtorList* dtors` 在 `-femulated-tls` 下由 emutls 提供，而
+emutls 把每线程的块挂在它自己的一个 pthread key 后面；那个 key 的析构先释放了本线程的块，
+之后每次读都新分配一个**清零**的块。判据是同一线程里 `&dtors` 三次不同
+（`...6a8` / `...6c8` / `...708`）。
+
+**本清单里「唯一的未知数」是被它自己写下的判据关掉的**——发现文档 §6 写的第一步就是
+「在 fallback 里打一行，看 `run_dtors` 到底有没有被调用」。它被调用了，而链表是空的。
+
+**并且：§4 那条被判为「否」的假设其实是对的。** 那次探针的 `pthread_key_create` 排在第一次
+访问 `thread_local` **之前**，而 musl 按创建顺序调 key 析构，于是 emutls 反而活得更久，
+读到了期望值。真实情形顺序相反。**一个探针报不出它被构造成不会发生的那个顺序**——谓词是
+对的，对象的构造把被测条件排除掉了。
+
+**修法**：链表存进 key 自己的值（析构函数本来就被交给它），零新机制。
 
 只补符号会把一个**构建期的响亮失败**换成一个**运行期的静默失败**：链接过了，
 `thread_local` 的析构不跑。补丁试过并**主动回退**，因为验证显示析构确实没执行。
 
-**判据**：最小复现（五行，文档里有）在 `x86_64-windows-gnu` 上**链接通过且析构函数
-真的执行**——两个条件缺一不可。只断言链接通过是错的判据。
+**判据（已通过）**：`examples/cxx` 两条断言，两个目标：
 
-**阻塞**：第二层未定位（emutls 在 PE 上的注册路径）。这是本清单里**唯一一个真正的
-未知数**。
+```
+ok: a thread_local is constructed in a spawned thread
+ok: and its destructor runs when that thread ends
+```
+
+`x86_64-linux-gnu` 与 `x86_64-windows-gnu`（wine）均 `failures: 0`。只断言链接通过、
+或只断言构造发生，都会同时放过两层——这正是当初决定不发第一层补丁的理由，现在它变成了
+判据本身的形状。
+
+**阻塞**：无。本清单里唯一那个真正的未知数已关闭。
 
 #### C2 — `linux/` uapi 头（curl, cmp-module）
 
