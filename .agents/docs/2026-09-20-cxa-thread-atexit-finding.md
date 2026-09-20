@@ -1,6 +1,6 @@
 ---
 subject: review
-status: resolved
+status: landed
 ---
 
 # `__cxa_thread_atexit` 在 openkal-Windows 上:两层都已定位并修复
