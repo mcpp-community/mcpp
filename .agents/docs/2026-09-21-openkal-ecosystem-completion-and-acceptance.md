@@ -243,11 +243,28 @@ macOS，缺 SDK）：
    `-fno-builtin-` 家族是一个 idiom 一个 flag；但报告点名的确实是 `16`；
 3. `-fno-builtin-memset_pattern16` 不足以关掉 LLVM 的 loop-idiom pass。
 
-**下一步不是实现符号，是取一次当前栈上的读数。** `lsp-mcpp-private` 的
-`aarch64-macos --profile release` 会直接给出答案；若仍红，第 2、3 种可能各有明确的
-后续动作（补发另外两个 flag / 由 C 库提供该符号）。
+**读数已取到，C4 关闭：在当前栈上不复现。**
 
-**归属**：待定。**在读数出来之前给 openkal-musl 加符号，是在修一个可能不存在的缺口。**
+而且**是在本机取到的**——这推翻了本文另一处判断。openkal 的前提就是通用交叉构建，Linux
+宿主经 openkal 栈可以构建 `aarch64-macos`：需要 Apple SDK 的是**平台路径**，不是 openkal
+路径。我先前那个失败的探针没有依赖 openkal，于是走了平台路径，我把它读成了"macOS 本机
+测不了"。
+
+实测（mcpp 2026.9.21.1、llvm@22.1.8、`--profile release`、`--target aarch64-macos`，
+经 openkal-macos 0.12.0 / openkal-musl 0.18.0 / openkal-llvm-runtime 0.13.0）：
+
+| 成员 | 读数 |
+| --- | --- |
+| zstd 1.5.7 | 编译、链接通过；产物 `Mach-O 64-bit arm64, NOUNDEFS`；`memset_pattern` 引用 **0** |
+| xz 5.8.3 | 编译、链接通过 |
+
+两个都是报告点名的那条链上的。所以那份报告测的是**加入 `-fno-builtin-memset_pattern16`
+之前**的引擎——三种可能里的第一种。
+
+**归属**：无。不需要给 openkal-musl 加任何符号。
+
+**留下的方法论**：一条"某平台本机测不了"的判断，要用**走 openkal 栈**的探针去验，不能用
+走平台路径的。两者对 SDK 的要求完全不同。
 
 ### 2.3 实现侧（openkal-*）
 
@@ -365,8 +382,8 @@ E1 (P3, 撤 __CYGWIN__)
   ├─ 解锁 30 成员测量的 4 个失败
   └─ 解锁 lsp-mcpp-private 的 Windows 目标（经 xz）
        │
-C4 (memset_pattern16) —— 前提待重测；引擎已发 -fno-builtin-memset_pattern16
-  └─ 可能根本不是阻塞。读数由 A1 的 macOS 腿给出
+C4 (memset_pattern16) —— 已关闭，本机实测不复现
+  └─ 不是阻塞
        │
        └──> A1/A2/A3 三目标验收   <── 本方案的终点
                  │
@@ -468,7 +485,7 @@ openkal-musl 0.18.0，而 0.18.0 当时还没进索引，消费者自己的 CI �
 | C1 | 五行最小复现 | 链接通过**且析构真的执行** | **第二层未定位** |
 | C2 | curl / cmp-module | 记为 `refused` 而非 `fails` | 无 |
 | C3 | `arc4random_buf` | 「应当有的符号」CI 断言 | 无 |
-| C4 | `aarch64-macos --profile release` | 链接通过 | **前提待重测**（引擎已发抑制 flag，且实测到达了 zstd 的 29 个单元） |
+| C4 | `aarch64-macos --profile release` | **已通过，本机实测** | 关闭；不复现 |
 | I1 | 写死的节点集合 | conformance 逐条断言 | 无 |
 | I2 | `presents = "windows"` 的 C 库 | 引擎改动数为 0 | 无 |
 | **A1** | 三目标 `mcpp build` | 全绿 | E1, C4 |
