@@ -683,9 +683,20 @@ rule: a name mcpp owns means what mcpp says it means, while `__OPENKAL__` is
 owned and names *openkal* rather than mcpp. The alternative — borrowing —
 was tried. `__CYGWIN__` was left defined so that code needing "PE object
 format, POSIX C environment" would have a name, and a 30-member measurement
-found four members reading it as *Win32 is available* and reaching `#include
+found members reading it as *Win32 is available* and reaching `#include
 <windows.h>`, which is what upstream means by it. **A borrowed name means what
 the lender's history made it mean**, not what the borrower intended.
+
+**That count was four and it is two** (corrected 2026-09-21 against the
+re-measurement on the release that withdrew the name). `archive` (through xz)
+and `sqlite3` read it; both cleared. The other two were grouped with them
+because all four stopped at `windows.h`, and their guards differ: `c-ares`
+reaches the header through `#ifdef HAVE_WINDOWS_H`, which this ecosystem's own
+recipe defines in its Windows branch, and `mimalloc` no longer reaches a
+header at all — it fails in the code generator on a builtin LLVM does not
+implement for the substitute triple's OS. **Grouping by diagnostic is not
+grouping by cause**, and a count collected that way overstates what a
+withdrawal can fix.
 
 `__unix__` is the exception that proves the rule: mcpp SUPPLIES it rather than
 owning it, so it keeps the standard spelling and mcpp may not change its

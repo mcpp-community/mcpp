@@ -82,12 +82,17 @@
 // defining it produces more new failures than it fixes, the answer flips".
 //
 // The measurement settled the THIRD-PARTY half (2026-09-20, 60 member-target
-// combinations): keeping it costs four members, each stopping at
+// combinations): keeping it costs members that stop at
 // `#include <windows.h>` reached through `#if defined(_WIN32) ||
 // defined(__CYGWIN__)`. Upstream means "Win32 is available" by the name ---
-// mimalloc says so in the guard's own comment, sqlite3 lists it under
-// `SQLITE_OS_WIN`. A BORROWED NAME MEANS WHAT THE LENDER'S HISTORY MADE IT
-// MEAN, not what the borrower intended by it.
+// sqlite3 lists it under `SQLITE_OS_WIN`. A BORROWED NAME MEANS WHAT THE
+// LENDER'S HISTORY MADE IT MEAN, not what the borrower intended by it.
+//
+// THE COUNT SAID FOUR AND IT WAS TWO. Corrected against the re-measurement on
+// 2026.9.21.2: `archive` and `sqlite3` read the name and both cleared.
+// `c-ares` and `mimalloc` were grouped with them because all four stopped at
+// `windows.h`, and a shared diagnostic is not a shared cause --- see the
+// emission site below.
 //
 // WITHDRAWING IT WAS TRIED TOO EARLY ONCE, AND BROKE THIS ECOSYSTEM'S OWN
 // INSTALLED HEADERS. `openkal-musl`'s `bits/setjmp.h` and
@@ -328,11 +333,30 @@ inline std::expected<Realisation, std::string> realise(
             // `__CYGWIN__` IS WITHDRAWN HERE, AND THAT IS THE LAST STEP OF
             // A SEQUENCE RATHER THAN A DECISION TAKEN ON ITS OWN. The
             // 30-member measurement settled that the borrowed name costs four
-            // members (archive, sqlite3, mimalloc, c-ares stop at
-            // `#include <windows.h>` through `#if defined(_WIN32) ||
-            // defined(__CYGWIN__)`; upstream means "Win32 is available" by
-            // it, as mimalloc's own guard comment says). The three steps, in
-            // the order they were taken:
+            // members that stop at `#include <windows.h>` through
+            // `#if defined(_WIN32) || defined(__CYGWIN__)`; upstream means
+            // "Win32 is available" by it. The three steps, in the order they
+            // were taken:
+            //
+            // THE COUNT WAS FOUR AND IT IS TWO, and recording the correction
+            // matters more than the number. The re-measurement on this
+            // release cleared `archive` and `sqlite3`; `c-ares` and
+            // `mimalloc` remain, and neither was ever this name's doing:
+            //
+            //   c-ares    `#ifdef HAVE_WINDOWS_H`, and that macro is defined
+            //             by mcpp-index's own recipe in its Windows branch.
+            //             A recipe defect, the same shape as curl's
+            //             `HAVE_LINUX_TCP_H`.
+            //   mimalloc  no longer reaches a header at all. It fails in the
+            //             code generator: "Target OS doesn't support
+            //             __builtin_thread_pointer() yet" --- LLVM does not
+            //             implement that builtin for the substitute triple's
+            //             OS. THE SUBSTITUTION HAS A COST BEYOND MACRO NAMES,
+            //             and this is the first measurement of one.
+            //
+            // All four were grouped by their DIAGNOSTIC. Grouping by
+            // diagnostic is not grouping by cause, and a count collected that
+            // way overstates what withdrawing the name can fix.
             //
             //   1. 2026.9.21.1 defined mcpp's own name beside the borrowed
             //      one; 2026.9.21.2 re-spelt it `__MCPP_TARGET_WINDOWS__`.

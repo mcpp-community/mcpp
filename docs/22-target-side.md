@@ -441,12 +441,22 @@ an ordinary Windows build still has `_WIN64`.
 
 **`__CYGWIN__` is still defined, and that is a sequence rather than a
 decision to keep it.** The 30-member measurement settled that the borrowed
-name costs four members: `archive`, `sqlite3`, `mimalloc` and `c-ares` each
-stop at `#include <windows.h>`, reached through
+name costs members that stop at `#include <windows.h>`, reached through
 `#if defined(_WIN32) || defined(__CYGWIN__)`. Upstream means *Win32 is
-available* by it — mimalloc states so in the guard itself, sqlite3 lists it
-under `SQLITE_OS_WIN`. **A borrowed name means what the lender's history made
-it mean**, not what the borrower intended.
+available* by it — sqlite3 lists it under `SQLITE_OS_WIN`. **A borrowed name
+means what the lender's history made it mean**, not what the borrower
+intended.
+
+**The count was four and it is two** (corrected 2026-09-21). `archive`
+(through xz) and `sqlite3` read the name; both cleared on the release that
+withdrew it. `c-ares` and `mimalloc` were grouped with them because all four
+stopped at `windows.h`, and neither was this name's doing: `c-ares` reaches
+the header through `#ifdef HAVE_WINDOWS_H`, a macro mcpp-index's own recipe
+defines in its Windows branch, and `mimalloc` no longer reaches a header —
+it fails in the code generator with *Target OS doesn't support
+`__builtin_thread_pointer()` yet*, which is a property of the substitute
+triple rather than of any macro. **Grouping by diagnostic is not grouping by
+cause.**
 
 Withdrawing it was tried and broke the two headers above, which read it for
 want of any other target-wide name. libunwind's `static_assert` failed

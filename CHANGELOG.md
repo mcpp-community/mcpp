@@ -5,6 +5,38 @@
 
 ## [Unreleased]
 
+### 更正:那个「四个成员」是二,而分组用错了依据
+
+2026.9.21.2 的条目、`cenv.cppm` 与 `predefines.cppm` 的注释、`docs/21` 与 `docs/22`
+都写着「借来的 `__CYGWIN__` 代价是四个成员:archive、sqlite3、mimalloc、c-ares」。
+**撤销之后的重测把这个数目否掉了。**
+
+| 成员 | 记的真因 | 实测真因 | 撤销后 |
+|---|---|---|---|
+| `archive`(经 xz) | `__CYGWIN__` | **对** | **清了** |
+| `sqlite3` | `__CYGWIN__` | **对** | **清了** |
+| `c-ares` | `__CYGWIN__` | **错**:`#ifdef HAVE_WINDOWS_H`,而那个宏由 mcpp-index 自己的配方在 windows 分支 `#define` | 仍红 |
+| `mimalloc` | `__CYGWIN__` | **错**:已经不走到任何头文件——`error in backend: Target OS doesn't support __builtin_thread_pointer() yet` | 仍红 |
+
+**四个是按「诊断」分的组,不是按「真因」。** 四个都停在 `windows.h`(mimalloc 当时如此),
+于是被记成同一类。**按诊断分组不是按真因分组**,这样数出来的数目会高估一次撤销能修掉多少。
+
+这条更正本身来自判据:重测把总失败从 10 降到 5、**新增失败为零**,而「`windows.h` 组 4→0」
+这半条没有达成——是 4→2。**一个达成了一半的判据,比一个没写的判据更有价值:它指出了
+分母是错的。**
+
+### `mimalloc` 暴露出替身三元组的一个代价,与宏无关
+
+```
+fatal error: error in backend: Target OS doesn't support __builtin_thread_pointer() yet.
+```
+
+`presents = "posix"` 在 Windows 上实现成 `--target=x86_64-pc-cygwin`。LLVM 没有为那个
+OS 实现 `__builtin_thread_pointer()`,而 mimalloc 用它取线程局部堆指针。**这是替身
+三元组的第一个被测量到的、超出宏名之外的代价**;先前关于这次替换的记录只讨论了预处理器
+看到什么。
+
+
 ## [2026.9.21.2] - 2026-09-21
 
 ### 引擎拥有的宏改为全大写
