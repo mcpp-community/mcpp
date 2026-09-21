@@ -246,22 +246,76 @@ mirror_host() { # kind(gh|gtc) base_url deadline_seconds
 
 # ── Both hosts IN PARALLEL: they are fully independent, and the gitcode
 # leg is cross-border-slow — serializing them doubled wall time for nothing.
+# ── WHICH HOSTS THIS RUN MUST COMPLETE, STATED BEFORE ANYTHING IS PROBED ──
+#
+# The verify gate below iterates the hosts that turned out to be ENABLED, so
+# until this variable existed its denominator came from the same enumeration
+# as its numerator and could not tell "both hosts serve every asset" from
+# "one host was skipped and the other serves every asset". Measured, 2026-09-21:
+# a local top-up run exited 0 and printed `all assets mirrored + verified on
+# 1 host(s)` with `no GITCODE_TOKEN/gtc; skipping gitcode mirror` one line
+# above it, and nothing had reached GitCode at all.
+#
+# `both` is the default because that is what this script is for: the two hosts
+# serve the GLOBAL and CN install paths, and an incomplete mirror surfaces as
+# a 404 in the first user's install. Wanting one leg is legitimate --- topping
+# GitCode up by hand from a CN host is the reason this runs locally at all ---
+# but it has to be asked for.
+: "${MIRROR_HOSTS:=both}"
+case "$MIRROR_HOSTS" in
+  both|gh|gtc) ;;
+  *) echo "[mirror] MIRROR_HOSTS must be both|gh|gtc, not '$MIRROR_HOSTS'" >&2; exit 2 ;;
+esac
+WANT_GH=0; WANT_GTC=0
+[[ "$MIRROR_HOSTS" == both || "$MIRROR_HOSTS" == gh  ]] && WANT_GH=1
+[[ "$MIRROR_HOSTS" == both || "$MIRROR_HOSTS" == gtc ]] && WANT_GTC=1
+
+# CAN `gtc` AUTHENTICATE, NOT IS THE VARIABLE SET.
+#
+# gtc resolves its own credentials -- `GITCODE_TOKEN` first, then the config
+# file its `--help` documents -- exactly as `gh` does, and the github leg below
+# has always accepted either. This leg demanded the variable, so a machine with
+# a working, configured gtc was told it had none. That is the machine this
+# script is run on by hand.
+gtc_can_auth() {
+  command -v gtc >/dev/null 2>&1 || return 1
+  [[ -n "${GITCODE_TOKEN:-}" ]] && return 0
+  local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/gitcode-tool/config.json"
+  [[ -s "$cfg" ]] && grep -q '"token"[[:space:]]*:[[:space:]]*"[^"]\+"' "$cfg"
+}
+
 GH_ENABLED=0
-if [[ -n "${XLINGS_RES_TOKEN:-}" ]] || gh auth status >/dev/null 2>&1; then
-  GH_ENABLED=1
-  info "GitHub $GH_DST tag $VER"
-  GH_TOKEN="${XLINGS_RES_TOKEN:-}" gh release view "$VER" -R "$GH_DST" >/dev/null 2>&1 \
-    || GH_TOKEN="${XLINGS_RES_TOKEN:-}" gh release create "$VER" -R "$GH_DST" --title "$VER" --notes "$PROJ $VER (mirror of $SRC_REPO)"
+if [[ "$WANT_GH" == 1 ]]; then
+  if [[ -n "${XLINGS_RES_TOKEN:-}" ]] || gh auth status >/dev/null 2>&1; then
+    GH_ENABLED=1
+    info "GitHub $GH_DST tag $VER"
+    GH_TOKEN="${XLINGS_RES_TOKEN:-}" gh release view "$VER" -R "$GH_DST" >/dev/null 2>&1 \
+      || GH_TOKEN="${XLINGS_RES_TOKEN:-}" gh release create "$VER" -R "$GH_DST" --title "$VER" --notes "$PROJ $VER (mirror of $SRC_REPO)"
+  else
+    echo "[mirror] FAIL: this run must mirror to GitHub and there is no auth for it." >&2
+    echo "[mirror]   set XLINGS_RES_TOKEN, or run \`gh auth login\`," >&2
+    echo "[mirror]   or pass MIRROR_HOSTS=gtc to mirror only GitCode." >&2
+    exit 2
+  fi
 else
-  info "no github auth; skipping github mirror"
+  info "MIRROR_HOSTS=$MIRROR_HOSTS: not mirroring to GitHub"
 fi
+
 GTC_ENABLED=0
-if [[ -n "${GITCODE_TOKEN:-}" ]] && command -v gtc >/dev/null 2>&1; then
-  GTC_ENABLED=1
-  info "GitCode $GTC_DST tag $VER"
-  gtc release create "$GTC_DST" --tag "$VER" --name "$VER" 2>/dev/null || true
+if [[ "$WANT_GTC" == 1 ]]; then
+  if gtc_can_auth; then
+    GTC_ENABLED=1
+    info "GitCode $GTC_DST tag $VER"
+    gtc release create "$GTC_DST" --tag "$VER" --name "$VER" 2>/dev/null || true
+  else
+    echo "[mirror] FAIL: this run must mirror to GitCode and gtc cannot authenticate." >&2
+    echo "[mirror]   put gtc on PATH and give it a token -- GITCODE_TOKEN, or" >&2
+    echo "[mirror]   \"token\" in ${XDG_CONFIG_HOME:-$HOME/.config}/gitcode-tool/config.json --" >&2
+    echo "[mirror]   or pass MIRROR_HOSTS=gh to mirror only GitHub." >&2
+    exit 2
+  fi
 else
-  info "no GITCODE_TOKEN/gtc; skipping gitcode mirror"
+  info "MIRROR_HOSTS=$MIRROR_HOSTS: not mirroring to GitCode"
 fi
 
 GH_PID=""; GTC_PID=""
@@ -313,5 +367,5 @@ if [[ $rc != 0 ]]; then
   echo "[mirror] hint: if the asset above was WARNed at a leg deadline, raise MIRROR_LEG_DEADLINE_GH/GTC for this run, or push it by hand:" >&2
   echo "[mirror]       gh release download v$VER -R $SRC_REPO -p '<asset>' && gtc release upload $GTC_DST '<asset>' --tag $VER" >&2
 fi
-[[ $rc == 0 ]] && info "all assets mirrored + verified on ${#hosts[@]} host(s) in ${SECONDS}s"
+[[ $rc == 0 ]] && info "all assets mirrored + verified on ${#hosts[@]} host(s) (${hosts[*]}) in ${SECONDS}s"
 exit $rc
