@@ -986,6 +986,35 @@ __APPLE__  __MACH__  __MCPP_TARGET_MACOS__  __OPENKAL__  __unix__
 直接适用),要么由生态数据回答(每个配方按 `__has_include` 逐条问)。十个红格子的修法是
 **一个**问题,不是十个,而这条记录的作用是让那个问题带着数字被提出。
 
+### 7.3 发布与沙箱验收(2026.9.21.3)
+
+发布物走完整条链:合入(squash 后的树与 PR head **逐字节相同**,39 条绿因此可转移)→
+release.yml 六个 job 全绿 → 本地 `gtc` 补 GitCode(8 个资产全部 200,大小与上游一致;
+linux x86_64 6.1MB 上传耗时 **5 秒**)→ 从 CN 镜像下载四个归档**独立重算 sha256**,与
+各自的 sidecar 以及 bump PR 里的四个值**全部相同** → 合入 xim-pkgindex #868 → 索引
+artifact 发布 → `xlings install mcpp@2026.9.21.3` 成功。
+
+**沙箱验收在 SubOS `v920` 里跑,配 CN mirror,两条腿都用已发布物:**
+
+| 段 | 2026.9.21.2(已发布) | 2026.9.21.3(已发布) |
+| --- | --- | --- |
+| A 身份与镜像 | ok | ok |
+| B/C/D(上一批的 CHANGE) | ok | ok |
+| E/F(GUARD) | ok | ok |
+| **G** `builtins = "iso"` | **FAIL** | ok |
+| **H** `mcpp test --no-run` | **FAIL** | ok |
+| | `fails=2` | **`fails=0`,无 not run** |
+
+⭐ B/C/D 在两条腿上都绿是**对的**:它们是上一批的 CHANGE,发布之后就转为 guard。
+本批只有 G 和 H 是 CHANGE,**而它们在旧版上都红**——这正是 CHANGE 段必须具备的性质。
+
+**一个只有实测才能发现的空转。** 第一次本地补 GitCode 退出码为 0 并打印
+「all assets mirrored + verified on 1 host(s)」,而上一行写着
+`no GITCODE_TOKEN/gtc; skipping gitcode mirror`:`mirror_res.sh` 的闸要求
+**环境变量** `GITCODE_TOKEN` 非空,而 `gtc` 把 token 放在自己的配置文件里,于是
+**唯一要做的那条腿被跳过,包在一条成功消息后面**。是我按判据去 GET
+`gitcode.com` 读到 404 才发现的——**退出码不是判据,资产能不能被取回才是**。
+
 ## 8. 本方案自身的失败模式
 
 写下来，因为它们在本轮各出现过一次。

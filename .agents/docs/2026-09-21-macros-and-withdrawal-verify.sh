@@ -30,6 +30,20 @@
 #
 # D and F needed `openkal-llvm-runtime@0.14.0`, registered after that dry run,
 # and both reported NOT RUN rather than passing.
+#
+# THE 2026.9.21.3 WAVE, MEASURED IN SubOS `v920` WITH THE CN MIRROR, AGAINST
+# THE PUBLISHED ARTEFACTS ON BOTH LEGS:
+#
+#   mcpp 2026.9.21.2 (published)   fails=2
+#     G  the aarch64-macos build does not complete --- `-fno-builtin-
+#        memset_pattern16` is accepted and ignored, so the link stops at
+#        `undefined symbol: memset_pattern16`
+#     H  `--no-run` does not exist
+#   mcpp 2026.9.21.3 (published)   fails=0, nothing skipped
+#
+# B, C and D pass on BOTH, and that is correct rather than a hole: they are the
+# previous wave's changes, and this file keeps them as guards once their own
+# release has shipped. Only G and H are CHANGE sections for this one.
 set -u
 
 VER="${MCPP_VERIFY_VERSION:?set MCPP_VERIFY_VERSION}"
