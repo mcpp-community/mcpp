@@ -1008,12 +1008,25 @@ artifact 发布 → `xlings install mcpp@2026.9.21.3` 成功。
 ⭐ B/C/D 在两条腿上都绿是**对的**:它们是上一批的 CHANGE,发布之后就转为 guard。
 本批只有 G 和 H 是 CHANGE,**而它们在旧版上都红**——这正是 CHANGE 段必须具备的性质。
 
-**一个只有实测才能发现的空转。** 第一次本地补 GitCode 退出码为 0 并打印
-「all assets mirrored + verified on 1 host(s)」,而上一行写着
-`no GITCODE_TOKEN/gtc; skipping gitcode mirror`:`mirror_res.sh` 的闸要求
-**环境变量** `GITCODE_TOKEN` 非空,而 `gtc` 把 token 放在自己的配置文件里,于是
-**唯一要做的那条腿被跳过,包在一条成功消息后面**。是我按判据去 GET
-`gitcode.com` 读到 404 才发现的——**退出码不是判据,资产能不能被取回才是**。
+**一个只有实测才能发现的空转,以及它已经被修掉。** 第一次本地补 GitCode 退出码为 0
+并打印「all assets mirrored + verified on 1 host(s)」,而上一行写着
+`no GITCODE_TOKEN/gtc; skipping gitcode mirror`:`mirror_res.sh` 的闸要求**环境变量**
+`GITCODE_TOKEN` 非空,而 `gtc` 与 `gh` 一样自己解析凭据(先环境变量、再它 `--help`
+写明的配置文件),于是**一台 gtc 完全可用的机器被判定为没有 gtc**——而那正是这个脚本
+被手动运行的那台机器。是我按判据去 GET `gitcode.com` 读到 404 才发现的。
+
+⭐⭐ **更深的一层在验收环节:`verify` 只遍历「实际启用了的」host。** 分母与分子取自
+同一次枚举,于是它分不出「两个 host 都齐」和「一个 host 被跳过、另一个齐」。
+修法是把「这次必须完成哪些 host」在探测之前就声明出来(`MIRROR_HOSTS`,默认 `both`):
+想只补一条腿是合法的——从 CN 宿主手动补 GitCode 正是本地运行的理由——**但它必须被要求,
+不能是意外的结果**。凭据缺失现在硬退 2 并指出 token 可以放的两个位置。
+
+| 情形 | 修之前 | 修之后 |
+| --- | --- | --- |
+| 本地,gtc 已配置、无环境变量 | **静默跳过,退 0** | 两个 host 都镜像并核验 |
+| `MIRROR_HOSTS=gtc` | 无 | 明确排除 GitHub,退 0 |
+| gtc 在但没有 token | **静默跳过,退 0** | **退 2**,指出两个可放 token 的位置 |
+| CI(两个 token 都在环境里) | 两个 host | 不变,两个 host |
 
 ## 8. 本方案自身的失败模式
 
