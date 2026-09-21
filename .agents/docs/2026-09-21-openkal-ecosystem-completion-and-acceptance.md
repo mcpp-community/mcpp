@@ -948,6 +948,44 @@ CI 里这个读数从未错过,因为两个钉住的目标都能跑(linux 原生
 测量侧把命令选择提到 `command_for` 并给它三条 selftest ——其中要紧的那条断言的是
 `--no-run` 而不是 `build`。
 
+### 7.2 下一批最该做的一条:`__APPLE__` 回答的是平台,不是 C 环境
+
+`mcpp test --no-run` 让「宿主跑不了的目标」第一次可以被真正测量,于是 aarch64-macos
+第一次被测了(2026-09-21,mcpp 2026.9.21.3 + runtime 0.15.0,30 个成员):
+**20 个构建通过,10 个不通过。**
+
+十个里有九个是同一个原因:
+
+| 诊断 | 成员 |
+| --- | --- |
+| 找不到 `TargetConditionals.h` | catch2、curl、mimalloc、re2、sqlite3 |
+| 经 Apple 的 `dnsinfo.h` 找不到 `sys/cdefs.h` | c-ares |
+| 找不到 `sys/event.h`(kqueue) | cmp-module |
+| 找不到 `xlocale.h` | fmtlib.fmt |
+| `pthread_threadid_np` 未声明 | spdlog |
+| `library not found for -lm` | brotli |
+
+每一条都走在 `#ifdef __APPLE__` 下面,而在这个目标上 **`__APPLE__` 是对的**——它确实是
+Apple 平台:Mach-O、arm64、macOS。**它没有说的是底下是哪个 C 库**,而上游用它同时表达
+这两件事,因为在真正的 macOS 上两者重合。
+
+**这是 Windows 那个问题的 macOS 镜像,差别只有一处:那边引擎有杠杆。** 一个在 Windows 上
+presents POSIX 的 C 库被实现成 `--target=…-pc-cygwin`,`_WIN32` 因此消失,`#ifdef _WIN32`
+不再选中 Win32 分支。macOS 上的实现只加了 `-D__unix__`,`__APPLE__` 与 `__MACH__` 原样留着
+——因为它们是真的。实测,源码在那里看到的整个身份是
+
+```
+__APPLE__  __MACH__  __MCPP_TARGET_MACOS__  __OPENKAL__  __unix__
+```
+
+**没有一个回答「哪个 C 库」**。musl 按其自身设计不提供任何标识宏,所以也没有一个可移植的
+问题可问。
+
+⭐ 这一条的形状与 §2.1 的 E2 一样:**阻塞是一个设计决定,不是工作量**。要么引擎给出一个
+命名已解析 c-abi 的宏(那是往宏契约里加成员,`a-new-key-inside-a-known-table` 那条教训
+直接适用),要么由生态数据回答(每个配方按 `__has_include` 逐条问)。十个红格子的修法是
+**一个**问题,不是十个,而这条记录的作用是让那个问题带着数字被提出。
+
 ## 8. 本方案自身的失败模式
 
 写下来，因为它们在本轮各出现过一次。
