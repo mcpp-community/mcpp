@@ -41,6 +41,15 @@
 #     H  `--no-run` does not exist
 #   mcpp 2026.9.21.3 (published)   fails=0, nothing skipped
 #
+# AND AGAIN WITH SECTION I, after the four-package Windows chain published
+# (openkal-llvm-runtime 0.15.1 -> openkal-musl 0.19.1 -> openkal-windows
+# 0.10.1), same SubOS, same CN mirror:
+#
+#   mcpp 2026.9.21.3 (published)   fails=0, nothing skipped, nine sections
+#     I  a program on 0.15.1 builds and runs, and the build names
+#        openkal-musl@0.19.1 -- a resolution that drew an older musl would
+#        satisfy the first half and carry none of the fix
+#
 # B, C and D pass on BOTH, and that is correct rather than a hole: they are the
 # previous wave's changes, and this file keeps them as guards once their own
 # release has shipped. Only G and H are CHANGE sections for this one.
@@ -401,6 +410,62 @@ EOF
             fi ;;
         *) fail "--no-run did not report two tests as built" ;;
     esac
+fi
+
+
+# ── CHANGE. The four-package Windows chain reaches a consumer ───────────────
+section "I. openkal-llvm-runtime 0.15.1 resolves its whole chain (GRAPH)"
+# ONE FIX, FOUR PACKAGES, AND THIS SECTION IS WHERE IT ARRIVES.
+#
+# openkal-windows 0.10.1 requests FILE_READ_ATTRIBUTES when opening a file, so
+# a write-only handle can answer `kal_fs_file_info`; before it, `fstat` on a
+# descriptor opened a line earlier returned EACCES on Windows, which is the
+# pair libarchive performs when opening an archive for output. Reaching a
+# consumer took openkal-musl 0.19.1 and openkal-llvm-runtime 0.15.1, because
+# every pin in this ecosystem is exact.
+#
+# WHAT THIS SECTION CAN AND CANNOT SEE. It runs on Linux, so it cannot
+# exercise the Windows call; the criterion for that is in openkal-windows,
+# where three real-Windows conformance jobs answer 0 with the fix and 6
+# without. What a sandbox answers is the other half, and it is the half a
+# four-package chain gets wrong: whether the versions are published, whether
+# they resolve from the PUBLISHED index, and whether each one draws the next.
+#
+# NEITHER CHANGE NOR GUARD ON THIS FILE'S USUAL AXIS, WHICH IS WHY IT IS
+# LABELLED SEPARATELY. A CHANGE section here must fail on the PREVIOUS mcpp
+# release; this one would pass on it, because which graph an index publishes
+# has nothing to do with which engine resolves it. Its axis is the GRAPH: it
+# fails before openkal-llvm-runtime 0.15.1 is published, and against a
+# manifest naming 0.15.0 the `grep` below fails on the musl version. Calling
+# it CHANGE would have made the control reading against 2026.9.21.2 look like
+# a hole when it is the correct answer.
+i="$root/i"; rm -rf "$i"; mkdir -p "$i/src"
+printf '#include <cstdio>\nint main(){std::puts("chain ok");return 0;}\n' > "$i/src/main.cpp"
+cat > "$i/mcpp.toml" <<'EOF'
+[package]
+name    = "openkal-chain"
+version = "0.1.0"
+
+[dependencies]
+openkal-llvm-runtime = "0.15.1"
+EOF
+if (cd "$i" && "$STORE" build > "$i/out.txt" 2>&1); then
+    if "$i"/target/*/*/bin/openkal-chain 2>/dev/null | grep -q "chain ok"; then
+        ok "a program on openkal-llvm-runtime 0.15.1 builds and runs"
+    else
+        fail "I: the program built on 0.15.1 and did not run"
+    fi
+    # AND IT DREW THE WHOLE CHAIN. A build that resolved 0.15.1 and an older
+    # musl would satisfy the line above and carry none of the fix.
+    if grep -q "openkal-musl@0.19.1" "$i/out.txt"; then
+        ok "0.15.1 resolves openkal-musl 0.19.1"
+    else
+        fail "I: 0.15.1 did not draw openkal-musl 0.19.1"
+        grep -E "c-abi|kernel-abi|c\+\+-abi" "$i/out.txt" | head -4
+    fi
+else
+    fail "I: openkal-llvm-runtime 0.15.1 did not resolve from the published index"
+    tail -3 "$i/out.txt" 2>/dev/null
 fi
 
 
