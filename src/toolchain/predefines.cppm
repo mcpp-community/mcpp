@@ -51,11 +51,21 @@
 // THE `__MCPP_` PREFIX IS LOAD-BEARING. A name mcpp owns means what mcpp says
 // it means. The alternative was tried: `__CYGWIN__` was left defined so that
 // code needing "PE object format, POSIX C environment" would have a name, and
-// a 30-member measurement found four members reading it as "Win32 is
-// available" and reaching `#include <windows.h>` --- which is what upstream
-// means by it (mimalloc says so in the guard's own comment; sqlite3 lists it
-// under `SQLITE_OS_WIN`). A BORROWED NAME MEANS WHAT THE LENDER'S HISTORY
-// MADE IT MEAN, not what the borrower intended.
+// a 30-member measurement found members reading it as "Win32 is available"
+// and reaching `#include <windows.h>` --- which is what upstream means by it
+// (sqlite3 lists it under `SQLITE_OS_WIN`). A BORROWED NAME MEANS WHAT THE
+// LENDER'S HISTORY MADE IT MEAN, not what the borrower intended.
+//
+// THE COUNT WAS FOUR AND IT IS TWO, corrected 2026-09-21 against the
+// re-measurement on the release that withdrew the name. `archive` (through
+// xz) and `sqlite3` read it and both cleared. The other two were grouped by
+// their diagnostic --- all four stopped at `windows.h` --- rather than by
+// their guard, and the guards differ: `c-ares` reaches it through
+// `#ifdef HAVE_WINDOWS_H`, a macro this ecosystem's own recipe defines in its
+// Windows branch, and `mimalloc` does not reach it at all any more; it fails
+// in the code generator on `__builtin_thread_pointer()`, which LLVM does not
+// implement for the substitute triple's OS. GROUPING BY DIAGNOSTIC IS NOT
+// GROUPING BY CAUSE.
 //
 // ── STABILITY ──────────────────────────────────────────────────────────────
 //

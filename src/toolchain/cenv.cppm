@@ -82,12 +82,17 @@
 // defining it produces more new failures than it fixes, the answer flips".
 //
 // The measurement settled the THIRD-PARTY half (2026-09-20, 60 member-target
-// combinations): keeping it costs four members, each stopping at
+// combinations): keeping it costs members that stop at
 // `#include <windows.h>` reached through `#if defined(_WIN32) ||
 // defined(__CYGWIN__)`. Upstream means "Win32 is available" by the name ---
-// mimalloc says so in the guard's own comment, sqlite3 lists it under
-// `SQLITE_OS_WIN`. A BORROWED NAME MEANS WHAT THE LENDER'S HISTORY MADE IT
-// MEAN, not what the borrower intended by it.
+// sqlite3 lists it under `SQLITE_OS_WIN`. A BORROWED NAME MEANS WHAT THE
+// LENDER'S HISTORY MADE IT MEAN, not what the borrower intended by it.
+//
+// THE COUNT SAID FOUR AND IT WAS TWO. Corrected against the re-measurement on
+// 2026.9.21.2: `archive` and `sqlite3` read the name and both cleared.
+// `c-ares` and `mimalloc` were grouped with them because all four stopped at
+// `windows.h`, and a shared diagnostic is not a shared cause --- see the
+// emission site below.
 //
 // WITHDRAWING IT WAS TRIED TOO EARLY ONCE, AND BROKE THIS ECOSYSTEM'S OWN
 // INSTALLED HEADERS. `openkal-musl`'s `bits/setjmp.h` and
@@ -328,11 +333,30 @@ inline std::expected<Realisation, std::string> realise(
             // `__CYGWIN__` IS WITHDRAWN HERE, AND THAT IS THE LAST STEP OF
             // A SEQUENCE RATHER THAN A DECISION TAKEN ON ITS OWN. The
             // 30-member measurement settled that the borrowed name costs four
-            // members (archive, sqlite3, mimalloc, c-ares stop at
-            // `#include <windows.h>` through `#if defined(_WIN32) ||
-            // defined(__CYGWIN__)`; upstream means "Win32 is available" by
-            // it, as mimalloc's own guard comment says). The three steps, in
-            // the order they were taken:
+            // members that stop at `#include <windows.h>` through
+            // `#if defined(_WIN32) || defined(__CYGWIN__)`; upstream means
+            // "Win32 is available" by it. The three steps, in the order they
+            // were taken:
+            //
+            // THE COUNT WAS FOUR AND IT IS TWO, and recording the correction
+            // matters more than the number. The re-measurement on this
+            // release cleared `archive` and `sqlite3`; `c-ares` and
+            // `mimalloc` remain, and neither was ever this name's doing:
+            //
+            //   c-ares    `#ifdef HAVE_WINDOWS_H`, and that macro is defined
+            //             by mcpp-index's own recipe in its Windows branch.
+            //             A recipe defect, the same shape as curl's
+            //             `HAVE_LINUX_TCP_H`.
+            //   mimalloc  no longer reaches a header at all. It fails in the
+            //             code generator: "Target OS doesn't support
+            //             __builtin_thread_pointer() yet" --- LLVM does not
+            //             implement that builtin for the substitute triple's
+            //             OS. THE SUBSTITUTION HAS A COST BEYOND MACRO NAMES,
+            //             and this is the first measurement of one.
+            //
+            // All four were grouped by their DIAGNOSTIC. Grouping by
+            // diagnostic is not grouping by cause, and a count collected that
+            // way overstates what withdrawing the name can fix.
             //
             //   1. 2026.9.21.1 defined mcpp's own name beside the borrowed
             //      one; 2026.9.21.2 re-spelt it `__MCPP_TARGET_WINDOWS__`.
@@ -534,9 +558,59 @@ inline std::expected<Realisation, std::string> realise(
     // So `iso` realises to one flag, on Apple targets only, and does nothing
     // measurable elsewhere today. That is reported rather than silently
     // accepted: a caller that wants to know what changed reads `builtinsTokens`.
+    // `-fno-builtin`, NOT `-fno-builtin-memset_pattern16`, AND THE NARROWER
+    // SPELLING WAS A SILENT NO-OP.
+    //
+    // The per-function form was emitted here from this mechanism's first
+    // revision, because `memset_pattern16` is the one platform idiom measured
+    // to matter and a targeted flag looks like the smaller instrument. A/B on
+    // the real compile command from a build.ninja, varying only this flag,
+    // says it does nothing:
+    //
+    //     as built (flag present)              1 reference to memset_pattern16
+    //     flag REMOVED                         1 reference
+    //     -fno-builtin                         0
+    //     -mllvm -disable-loop-idiom-memset    0
+    //
+    // AND IT CANNOT REPORT THAT IT DOES NOTHING. clang accepts
+    // `-fno-builtin-totally_not_a_function` in silence: the `-fno-builtin-X`
+    // family is checked against clang's builtin table, and
+    // `memset_pattern16` is an LLVM TargetLibraryInfo libfunc rather than a
+    // clang builtin. The call is produced by LoopIdiomRecognize, which
+    // consults TLI, and the per-function attribute does not reach it.
+    //
+    // WHY THE BLUNT ONE AND NOT `-mllvm`. `-mllvm` passes an internal LLVM
+    // option; it is not a supported interface and can be renamed or removed
+    // between releases, and when it is, this mechanism goes back to failing
+    // silently --- which is exactly the defect being repaired.
+    //
+    // THE COST IS MEASURED RATHER THAN ARGUED: on the translation unit that
+    // surfaced this (libarchive's 7zip reader, `-O2`, aarch64-macos) the
+    // object grows 38200 to 38888 bytes, 1.8 per cent, because `-fno-builtin`
+    // also withdraws the ISO functions the C library does supply. That is
+    // broader than `builtins = "iso"` declares, and it errs in the safe
+    // direction: a call the generator does not synthesise is never a link
+    // error.
+    //
+    // NOTHING HERE IS VERIFIED BY THE PROBE, WHICH IS HOW THE NO-OP SURVIVED.
+    // `expectDefined`/`expectUndefined` are compared against the probe's `-dM`
+    // dump, under this module's own rule that a `-D` which did not take effect
+    // is a verification failure rather than a silent one. A code-generation
+    // property is not visible in a preprocessor dump, so the criterion for
+    // this token lives in `openkal-cross.yml`, which compiles an
+    // idiom-triggering unit for `aarch64-macos` over the openkal stack and
+    // asserts the symbol is absent from the object.
+    //
+    // `os == "macos" || os == "ios"` IS `Triple::is_apple()`, SPELLED OUT.
+    // This module takes `os` as a string rather than a `Triple` on purpose ---
+    // it is pure, and importing `mcpp.toolchain-model` to reach one predicate
+    // would couple what that choice decoupled. The canonical list is
+    // `modules/toolchain-model/src/triple.cppm`; `ninja_backend.cppm` spells
+    // it out twice for the same reason. A new Apple OS in the vocabulary has
+    // to visit all three, and this comment is the grep target that says so.
     if (decl.builtins == mcpp::targetside::CAbiBuiltins::Iso) {
         if (!freestanding && (os == "macos" || os == "ios"))
-            r.builtinsTokens.push_back("-fno-builtin-memset_pattern16");
+            r.builtinsTokens.push_back("-fno-builtin");
     }
 
     return r;

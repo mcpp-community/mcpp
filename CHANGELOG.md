@@ -3,7 +3,113 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [Unreleased]
+## [2026.9.21.3] - 2026-09-21
+
+### `mcpp test --no-run`:为一个跑不了的目标构建测试,并把这当成答案
+
+一个本机既不能执行、也没有 runner 可达的目标,会让每个测试停在 `not run`,命令退出 2。
+这是对「这些测试通过吗」的正确回答——mcpp 没有查明。但 **2 同样是 runner 坏掉时的
+退出码**,于是一个只想要「构建」的调用方无法区分这两者,只能退回去用 `mcpp build`。
+
+而 `mcpp build` 构建的是**包**。对一个源码只在 `tests/` 下的包,它一行都不编译。
+实测 mcpp-index 的 `archive` 成员(源码是 `tests/` 下两个文件):
+
+```
+$ mcpp build --target aarch64-macos      # 退出 0
+   Compiling compat.lz4 / compat.xz / compat.zlib / compat.zstd ...
+$ find target -name '*compression*' -o -name '*versions*'
+   (只有 musl 的 versionsort.o)
+```
+
+退出 0,编译了这个成员的**依赖**,而**该成员自己的代码一行都没有编过**。一个读这个
+退出码的兼容性测量,会把它记成「这个成员在 macOS 上构建通过」。
+
+`--no-run` 让那个更窄的断言有了自己的答案:被选中的每个测试都为该目标编译并链接,
+没有任何一个被执行,结果也这么写:
+
+```
+test result ok. 0 passed; 0 failed; 2 built, not run
+```
+
+`built` 与 `not_run` 分开计数,机器接口也一样(`docs/50`):`not_run` 是「试过而做不到,
+问题悬着,退出 2」,`built` 是「被要求不要执行,构建就是问题的全部,退出 0」。编译不过
+的测试仍然是失败。`--no-run` 与 `--no-runner` 同时给出会被拒绝——两个名字只差一个字符
+而含义相反,不存在应当优先的那一个读法。
+
+判据是 `tests/e2e/745_no_run_builds_the_tests_and_says_so.sh`,四条腿。其中 runner 用的是
+一个**不存在的程序名**:用一个执行不了的目标会让这个测试需要交叉工具链和特定宿主,而
+一个找不到的 runner 在每台宿主上、对本机目标、不装任何东西,就能造出同一个局面。
+
+### `builtins = "iso"` 发的那个 token 是静默空操作,已换成 `-fno-builtin`
+
+`[c-abi] builtins = "iso"` 声明 C 库只提供 ISO 函数、没有厂商扩展。Apple 目标上
+clang 的循环惯用法识别会把常量模式填充改写成 `memset_pattern16` 调用——那是一个
+Apple libc 扩展,这样的库没有它。此前这里发的是 `-fno-builtin-memset_pattern16`。
+在一份真实的 `build.ninja` 编译命令上做 A/B,只改这一个 flag:
+
+| flag | `memset_pattern16` 引用数 |
+|---|---|
+| 照原样(flag 在) | 1 |
+| flag **删掉** | 1 |
+| `-fno-builtin` | 0 |
+| `-mllvm -disable-loop-idiom-memset` | 0 |
+
+**而它报不出自己什么都没做。** clang 静默接受 `-fno-builtin-totally_not_a_function`:
+`-fno-builtin-X` 这一族按 clang 的 builtin 表校验,而 `memset_pattern16` 是 LLVM
+TargetLibraryInfo 的 libfunc,不在那张表里;发出调用的是 LoopIdiomRecognize,它查
+TLI,按函数名的属性到不了它。
+
+不选 `-mllvm` 的理由是它传的是 LLVM 内部选项,不是受支持的接口,改名或删除之后这套
+机制会再次静默失效——那正是这次要修的缺陷本身。代价是量出来的:在暴露此事的那个翻译
+单元(libarchive 的 7zip reader,`-O2`,aarch64-macos)上,目标文件从 38200 涨到
+38888 字节,1.8%,因为 `-fno-builtin` 同时撤走了 C 库确实提供的那些 ISO 函数。这比
+`builtins = "iso"` 声明的范围宽,而它宽在安全的方向:代码生成器不合成的调用不会变成
+链接错误。
+
+**这个空操作能活下来,是因为它没有判据。** `cenv` 的探针用 `-dM` dump 校验自己发的
+token,而代码生成阶段的性质在预处理器 dump 里不可见。判据现在在
+`.github/workflows/openkal-cross.yml`,三条腿,跑在三台宿主上:
+
+| 腿 | 内容 | 判据 |
+|---|---|---|
+| 1 | 不带任何 flag 编译探针 | 符号**必须出现**——否则探针已经触发不了惯用法,腿 2、3 什么都没测 |
+| 2 | `-fno-builtin-memset_pattern16` | 符号**仍必须出现**(钉住这个缺陷;若哪天红了,说明 clang 认了窄拼法,`cenv` 可以改回去把这 1.8% 拿回来) |
+| 3 | mcpp 为 `aarch64-macos` 走 openkal 栈构建同一份源码 | 目标文件里**零引用** |
+
+腿 3 的对照:换回旧 token,同一个工程链接失败于
+`ld64.lld: error: undefined symbol: memset_pattern16`。
+
+### 更正:那个「四个成员」是二,而分组用错了依据
+
+2026.9.21.2 的条目、`cenv.cppm` 与 `predefines.cppm` 的注释、`docs/21` 与 `docs/22`
+都写着「借来的 `__CYGWIN__` 代价是四个成员:archive、sqlite3、mimalloc、c-ares」。
+**撤销之后的重测把这个数目否掉了。**
+
+| 成员 | 记的真因 | 实测真因 | 撤销后 |
+|---|---|---|---|
+| `archive`(经 xz) | `__CYGWIN__` | **对** | **清了** |
+| `sqlite3` | `__CYGWIN__` | **对** | **清了** |
+| `c-ares` | `__CYGWIN__` | **错**:`#ifdef HAVE_WINDOWS_H`,而那个宏由 mcpp-index 自己的配方在 windows 分支 `#define` | 仍红 |
+| `mimalloc` | `__CYGWIN__` | **错**:已经不走到任何头文件——`error in backend: Target OS doesn't support __builtin_thread_pointer() yet` | 仍红 |
+
+**四个是按「诊断」分的组,不是按「真因」。** 四个都停在 `windows.h`(mimalloc 当时如此),
+于是被记成同一类。**按诊断分组不是按真因分组**,这样数出来的数目会高估一次撤销能修掉多少。
+
+这条更正本身来自判据:重测把总失败从 10 降到 5、**新增失败为零**,而「`windows.h` 组 4→0」
+这半条没有达成——是 4→2。**一个达成了一半的判据,比一个没写的判据更有价值:它指出了
+分母是错的。**
+
+### `mimalloc` 暴露出替身三元组的一个代价,与宏无关
+
+```
+fatal error: error in backend: Target OS doesn't support __builtin_thread_pointer() yet.
+```
+
+`presents = "posix"` 在 Windows 上实现成 `--target=x86_64-pc-cygwin`。LLVM 没有为那个
+OS 实现 `__builtin_thread_pointer()`,而 mimalloc 用它取线程局部堆指针。**这是替身
+三元组的第一个被测量到的、超出宏名之外的代价**;先前关于这次替换的记录只讨论了预处理器
+看到什么。
+
 
 ## [2026.9.21.2] - 2026-09-21
 

@@ -147,7 +147,14 @@ TEST(CEnv, BuiltinsIsoOnMacosDisablesMemsetPattern16) {
                   ts::CAbiBuiltins::Iso);
     auto r = cenv::realise(d, "macos", "x86_64", false);
     ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_TRUE(has(r->builtinsTokens, "-fno-builtin-memset_pattern16"));
+    // `-fno-builtin`, NOT the per-function spelling. The narrower form was
+    // emitted here and measured to do nothing: clang checks `-fno-builtin-X`
+    // against its builtin table, `memset_pattern16` is an LLVM TLI libfunc,
+    // and the call is produced by a pass that consults TLI. clang accepts an
+    // unknown name in that family in silence, so the flag looked right and
+    // was not.
+    EXPECT_TRUE(has(r->builtinsTokens, "-fno-builtin"));
+    EXPECT_FALSE(has(r->builtinsTokens, "-fno-builtin-memset_pattern16"));
 }
 
 TEST(CEnv, BuiltinsIsoOnLinuxAddsNothingMeasurable) {

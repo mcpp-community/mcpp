@@ -297,6 +297,99 @@ else
     skip "openkal-llvm-runtime 0.14.0 did not resolve from the index"
 fi
 
+# ── CHANGE. `builtins = "iso"` withdraws the Apple pattern fill ─────────────
+section "G. builtins = \"iso\" emits -fno-builtin (CHANGE)"
+# A CODE-GENERATION PROPERTY, so the reading is an object file rather than a
+# `-dM` dump — which is exactly why the token this asserts was a silent no-op
+# for the whole of its first life. `2026.9.21.2` and earlier emit
+# `-fno-builtin-memset_pattern16`; clang matches `-fno-builtin-<fn>` against
+# its builtin table, `memset_pattern16` is an LLVM TargetLibraryInfo libfunc
+# and not in it, so the flag is accepted in silence and the call survives. On
+# those versions the aarch64-macos link fails with
+#
+#     ld64.lld: error: undefined symbol: memset_pattern16
+#
+# so a failed build here IS the negative reading rather than an absent one.
+g="$root/g"; rm -rf "$g"; mkdir -p "$g/src"
+cat > "$g/src/main.cpp" <<'EOF'
+extern "C" void fill(int* a, long n) {
+    for (long i = 0; i < n; ++i) a[i] = 0x01020304;
+}
+int main() { static int buf[64]; fill(buf, 64); return buf[0] == 0x01020304 ? 0 : 1; }
+EOF
+# `-O2` per package rather than --release: the idiom pass does not run at the
+# dev profile's -O0, and a release build would compile the runtime a second
+# time in a second profile for no reading.
+cat > "$g/mcpp.toml" <<'EOF'
+[package]
+name    = "builtins-probe"
+version = "0.1.0"
+
+[build]
+cxxflags = ["-O2"]
+
+[dependencies]
+openkal-llvm-runtime = "0.15.0"
+
+[toolchain]
+default = "llvm@22.1.8"
+EOF
+gnm=$(ls "$HOME"/.xlings/data/xpkgs/xim-x-llvm/22.1.8/bin/llvm-nm 2>/dev/null | head -1)
+if [ -z "$gnm" ]; then
+    skip "G: no llvm-nm in the payload to read the object with"
+elif (cd "$g" && "$STORE" build --target aarch64-macos >/dev/null 2>&1); then
+    gobj=$(find "$g/target" -name 'main.o' 2>/dev/null | head -1)
+    if [ -z "$gobj" ]; then
+        fail "G: the build reported success and produced no object"
+    elif [ "$("$gnm" -u "$gobj" 2>/dev/null | grep -c memset_pattern16)" = 0 ]; then
+        ok "builtins = \"iso\" leaves no memset_pattern16 in the object"
+    else
+        fail "builtins = \"iso\" did not withdraw memset_pattern16"
+    fi
+else
+    fail "G: the aarch64-macos build did not complete (the old token's signature)"
+fi
+
+# ── CHANGE. `mcpp test --no-run` ────────────────────────────────────────────
+section "H. mcpp test --no-run builds the tests and says so (CHANGE)"
+# Before this release the flag does not exist and the command exits non-zero
+# with "unknown option: --no-run". The runner named here is a program that
+# does not exist, which produces "tests built, nothing run" on every host for
+# the native target with nothing installed.
+h="$root/h"; rm -rf "$h"; mkdir -p "$h/tests"
+printf 'int main() { return 0; }\n' > "$h/tests/alpha.cpp"
+printf 'int main() { return 0; }\n' > "$h/tests/beta.cpp"
+printf '[package]\nname = "norun"\nversion = "0.1.0"\n' > "$h/mcpp.toml"
+hhost=$("$STORE" --print-target 2>/dev/null || true)
+if [ -z "$hhost" ]; then
+    (cd "$h" && "$STORE" build >/dev/null 2>&1) || true
+    hhost=$(ls "$h/target" 2>/dev/null | grep -v '^\.' | head -1)
+fi
+if [ -z "$hhost" ]; then
+    skip "H: could not determine the host triple"
+else
+    cat > "$h/mcpp.toml" <<EOF
+[package]
+name    = "norun"
+version = "0.1.0"
+
+[target.$hhost]
+runner = ["mcpp-no-such-runner-exists"]
+EOF
+    hout=$( (cd "$h" && "$STORE" test --target "$hhost" --no-run 2>&1) )
+    hrc=$?
+    case "$hout" in
+        *"2 built, not run"*)
+            if [ "$hrc" = 0 ]; then
+                ok "--no-run builds the tests and exits 0"
+            else
+                fail "--no-run reported the built tests and exited $hrc"
+            fi ;;
+        *) fail "--no-run did not report two tests as built" ;;
+    esac
+fi
+
+
 printf '\n-- summary --\nfails=%d\nnot run:%s\n' "$fails" "${skipped:-
   (none)}"
 [ "$fails" -eq 0 ]

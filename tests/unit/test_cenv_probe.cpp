@@ -352,11 +352,11 @@ TEST(CenvProbeArgv, AHostedCrossTargetCarriesItsCrossFlag) {
 
 TEST(CenvProbeArgv, BuiltinsTokensAreCarriedLast) {
     auto r = cp::assemble_argv("", {}, {"-D__unix__"},
-                               {"-fno-builtin-memset_pattern16"},
+                               {"-fno-builtin"},
                                false, "x86_64-apple-macos");
     ASSERT_TRUE(r.has_value()) << r.error();
     ASSERT_EQ(r->size(), 2u);
-    EXPECT_EQ((*r)[1], "-fno-builtin-memset_pattern16");
+    EXPECT_EQ((*r)[1], "-fno-builtin");
 }
 
 // ── The argv must select the target (mcpp#674 review, 2026-09-20) ──────────

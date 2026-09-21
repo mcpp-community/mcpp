@@ -198,6 +198,52 @@ static assertion failed: UnwindCursor<> does not fit in unw_cursor_t
 runtime 的清单从**索引**钉 `openkal-musl = "0.19.0"`。所以用 `openkal_ref` 验之前，
 musl 0.19.0 必须先登记进索引。
 
+#### E1d — 「四个成员」是二，而那个分组按诊断而不是按真因（2026-09-21 重测）
+
+撤销之后的 30 成员重测：**总失败 10→5，新增失败零**。但判据的另一半「`windows.h` 组
+4→0」没有达成——是 **4→2**，而未达成的原因不是撤销无效，是**这个组从一开始就数错了**。
+
+| 成员 | 记的真因 | 实测真因 | 撤销后 |
+|---|---|---|---|
+| `archive`（经 xz） | `__CYGWIN__` | **对** | **清了** |
+| `sqlite3` | `__CYGWIN__` | **对** | **清了** |
+| `c-ares` | `__CYGWIN__` | **错**：`ares_setup.h:81` 是 `#ifdef HAVE_WINDOWS_H`，而那个宏由 `mcpp-index` 自己的配方在 `windows = {` 块里 `#define`（`compat.c-ares.lua:1283`） | 仍红 |
+| `mimalloc` | `__CYGWIN__` | **错**：已经不走到任何头文件 | 仍红 |
+
+**四个是按「诊断」分的组。** 四个当时都停在 `windows.h`，于是被记成同一类。
+**按诊断分组不是按真因分组**，这样数出来的数目会高估一次撤销能修掉多少。
+
+这条是[[reasons-written-from-memory-kill-good-fixes]] 的镜像：结论（「撤销是对的」）被
+复查并成立，而**理由里的那个数目从未被复查**，它被从上一份记录继承了三次——写进引擎注释、
+CHANGELOG 和 PR 正文，直到重测把它否掉。
+
+**判据达成一半比没写判据更有价值**：没达成的那一半正是它指出分母错了的地方。
+
+#### E1e — `mimalloc` 暴露替身三元组的一个代价，与宏无关
+
+```
+fatal error: error in backend: Target OS doesn't support __builtin_thread_pointer() yet.
+```
+
+`presents = "posix"` 在 Windows 上实现成 `--target=x86_64-pc-cygwin`。LLVM 没有为那个 OS
+实现 `__builtin_thread_pointer()`，而 mimalloc 用它取线程局部堆指针。
+
+**这是这次替换的第一个被测量到的、超出宏名之外的代价。** 此前 `cenv.cppm` 关于替身三元组
+的全部记录都只讨论「预处理器看到什么」——ABI 不变、链接不变、只有宏可见性变。这条说明
+**代码生成器也看得见那个 OS**。
+
+**可能的修法（都未验证）**：mimalloc 的配方关掉那条路径（它有 `MI_*` 配置）；或替身三元组
+换一个 LLVM 实现了该 builtin 的 OS。**先量再选**——这条记在这里正是为了下一个人不必
+从三十个成员的诊断里重新走一遍。
+
+#### 一条测量工具的缺陷：`mimalloc` 的真诊断被兜底吃掉了
+
+重测里 `mimalloc` 记的是 `fails: error: build failed`——`compat.py` 的 `first_diagnostic`
+三条模式都没匹配（后端错误不带 `file:line:` 也不含 `FAIL`），于是兜底取了**最后一行**，
+而最后一行是 mcpp 自己的总结。真因要本机复现才拿得到。
+
+**判据的兜底不能是「最后一行」**：它在匹配失败时给出一个看起来像诊断的东西，比留空更坏。
+
 #### E1b — 引擎拥有的宏改为全大写（2026.9.21.2）
 
 **状态**：已落地，与 E1 第三步同一个 PR（用户要求：不分开，免得发布周期太长）。
@@ -441,6 +487,84 @@ macOS，缺 SDK）：
 **留下的方法论**：一条"某平台本机测不了"的判断，要用**走 openkal 栈**的探针去验，不能用
 走平台路径的。两者对 SDK 的要求完全不同。
 
+#### C4' — 「关闭」是错的，而上面列出的第三种可能才是对的（2026-09-21 重测）
+
+上面的关闭依据是 **zstd 与 xz** 链接通过、`memset_pattern` 引用为 0。**那两个是从旧报告
+里抄来的对象，不是当前失败的那个。** `lsp-mcpp-private` 的 `test_archive` 在
+`aarch64-macos` 上链接失败：
+
+```
+ld64.lld: error: undefined symbol: memset_pattern16
+```
+
+引用它的是 **libarchive 自己**：`archive_read_support_format_7zip.o`。zstd 与 xz 恰好
+不触发那个 idiom，所以"量它们"回答的是另一个问题——
+[[a-check-that-picks-its-object-by-convention]]。
+
+**三种可能里，第 3 种是对的，而它当时被排除了。** A/B，用 build.ninja 里那条**真实的
+编译命令**，只改 flag 这一维：
+
+| flag | `memset_pattern16` 引用 | 目标文件 |
+|---|---|---|
+| 如实际构建（带 `-fno-builtin-memset_pattern16`） | **1** | 38200 |
+| **把那个 flag 去掉** | **1** | — |
+| `-fno-builtin` | 0 | 38888（+1.8%） |
+| `-ffreestanding` | 0 | — |
+| `-mllvm -disable-loop-idiom-memset` | 0 | 38152 |
+
+**加与不加，引用数都是 1——那个 flag 什么都没做。**
+
+**而且它不会报。** clang 对 `-fno-builtin-<name>` 不给任何反馈：
+
+```
+-fno-builtin-totally_not_a_function        accepted silently
+```
+
+`memset_pattern16` 是 LLVM TLI 的 libfunc 而不是 clang 的 builtin，所以这个 token
+**看起来在做事，实际是个静默的空操作**。预处理后的源码里该符号出现 **0 次**，确认它确实
+是优化器生成的。
+
+**缺口是引擎侧的，而且是成对的：**
+
+1. `builtins = "iso"` 发的 token 在它唯一点名的那个 case 上无效；
+2. **那个 token 没有任何核对。** 同一个文件里 `-D`/`-U` 有探针核对
+   `expectDefined` / `expectUndefined`，注释明写「一个没生效的 `-D` 是校验失败，不是
+   沉默」——而 `builtinsTokens` 走的是另一条路，没有对应的 `expect*`。
+
+**判据**：`builtinsTokens` 要像 `-D` 一样被探针核对。没有这一条，换成任何一个新 token
+都可能重复这次静默——**一个只在「它起作用」这一假设下成立的机制，需要一条断言它起作用的
+判据。**
+
+**这个符号属于哪一层，查过了，而答案把问题从「bug 修法」变成「架构选择」。**
+
+它不是程序调用的函数，是**编译器发出的辅助调用**——和 `memcpy`、`__udivti3` 同类。那一
+类归**编译器运行时**。但实测：
+
+```
+grep -rln memset_pattern16  openkal-llvm-runtime/llvm/   →  0 处
+```
+
+**整个 LLVM 树里没有它的实现，compiler-rt 不带兜底。** 上游 LLVM 发出的是一个只有
+Apple 的 libSystem 提供的调用。
+
+于是 `builtins = "iso"` 遇到一个它**声明得了、强制不了**的情形：能强制它的那个 flag 不
+工作，而 LLVM 没有提供第二个。四个候选，代价都已量：
+
+| 候选 | 有效 | 代价 | 性质 |
+|---|---|---|---|
+| `-fno-builtin` | 是 | +1.8%（本翻译单元）；**连 ISO 函数的优化一起关掉** | 标准用户面，正确但过宽 |
+| `-mllvm -disable-loop-idiom-memset` | 是 | −0.1% | **不是稳定接口**，LLVM 升级可能失效 |
+| 在 openkal-musl 的 Apple 端口提供该符号 | 未验 | 约六行（`port/src/mach/` 已存在） | **与 `builtins = "iso"` 的字面意图相反** |
+| 不动，把该成员声明为按构造失败 | — | 丢掉一个真实可用的组合 | 最弱 |
+
+**第三个候选值得认真看**，因为它把问题问对了：`builtins = "iso"` 说的是「这个 C 库呈现
+什么」，而编译器发出的辅助调用**不是程序请求的接口**，它更接近 ABI。一个声明自己只呈现
+ISO C 的 C 库，仍然可能需要供给代码生成器为那个目标假定的辅助函数——正如它供给
+`memcpy` 一样。
+
+**这是拍板项，不是实现项。** 它决定 `builtins = "iso"` 到底是「关掉生成器的假定」还是
+「声明程序可见的接口面」——两者在别的情形下也会分叉。
+
 ### 2.3 实现侧（openkal-*）
 
 #### C4' — 「不复现」是在另一个版本上量的（2026-09-21 更正）
@@ -646,6 +770,31 @@ PATH_LIST_SEPARATOR / VSCODE_TARGET / CASE_INSENSITIVE_PATHS
 
 **两者都绿才叫生态闭环。** 任一单独绿都不足以下结论。
 
+### 4.4 两者的**目标集合**也不重叠，而这一条本文原先没写（2026-09-21 补）
+
+分工写成了「30 成员测 C 表面、lsp 测整合」，**没有写它们问的目标不同**：
+
+| | 目标 |
+|---|---|
+| 30 成员测量（`pins.toml`） | `x86_64-linux-gnu`、`x86_64-windows-gnu` —— **没有 macOS** |
+| `lsp-mcpp-private` | 三个目标，**含 `aarch64-macos`** |
+
+**后果是这一轮实测到的**：`archive` 在 30 成员测量里两列都是 `runs (posix)`，而同一个 libarchive
+在 `lsp-mcpp-private` 的 macOS 上链接失败于 `memset_pattern16`。两个读数都是真的——
+`memset_pattern16` 是 Apple 的 libc 函数，clang 只在 Apple 目标上生成它，linux 与
+windows-gnu 上**按构造不会出现**。
+
+**所以「openkal 生态里按 30 个成员规模扫 macOS 的东西，不存在」。** macOS 只被
+`lsp-mcpp-private` 一个程序、以及各实现包自己的 CI 覆盖。
+
+**这也限定了 E1 判据的适用范围**：「总失败 10→5、新增为零」是**在那两列上**成立的；
+macOS 那一列从来没进过这个统计，所以这一类缺陷在那个数字里按构造不可见。
+
+**要补这一列，先有一个决定要拍：** Linux 宿主能为 `aarch64-macos` **交叉构建**但**跑不了**，
+所以那一列最多到 `builds`，不是 `runs`。而 `RANK` 里 `builds` 低于 `runs`——
+**一个只能到 `builds` 的目标列，会让「有没有退步」这个判据在那一列上永远比另外两列松。**
+是接受这个不对称、还是给那一列配 runner，是拍板项，不是实现项。
+
 ---
 
 ## 5. 执行顺序
@@ -756,7 +905,7 @@ openkal-musl 0.18.0，而 0.18.0 当时还没进索引，消费者自己的 CI �
 
 | 编号 | 判据 | 怎么算通过 | 状态 |
 | --- | --- | --- | --- |
-| E1 | 30 成员重测 | `windows.h` 组 4→0 且总失败不增 | **待测**（由移 `pins.toml` 的那个 PR 触发）；`openkal-cross` 九格已全绿 |
+| E1 | 30 成员重测 | `windows.h` 组 4→0 且总失败不增 | **一半达成，而未达成的那半否掉了判据自己的分母**：总失败 10→5、新增失败为零；但该组实际只有两个成员读 `__CYGWIN__`，见 §2.1 E1d |
 | E1b | 大写重命名 | 上一版红、本版绿 | **已通过**：验证脚本 B 段，`2026.9.21.1` fails=2 → `2026.9.21.2` fails=0 |
 | E1c | 交叉验证协议的反向 | `openkal_ref` 留空时行为不变 | **已落地** |
 | E2 | 引用未提供接口的符号 | 链接期被点名拒绝；声明正确时零开销 | **退出本轮**：阻塞是设计决定不是工作量，见 §2.1 |
@@ -766,13 +915,76 @@ openkal-musl 0.18.0，而 0.18.0 当时还没进索引，消费者自己的 CI �
 | C2' | curl | 配方缺陷，不是不可移植 | **已定位未修**：两个目标两个不同真因，见 `docs/openkal-compat.md` |
 | C3 | `arc4random_buf` | 「应当有的符号」CI 断言 | 已通过 |
 | C4 | `aarch64-macos --profile release` | 本机实测 | **更正**：不是「不复现」，是被某个 runtime 版本修掉了——旧钉上仍在，见下 |
-| I1 | 写死的节点集合 | conformance 逐条断言 | 未实现（第五批） |
+| C5 | `builtins = "iso"` 发的 token | 目标文件里零引用,**且不带 flag 时必须有引用** | **已通过**:`openkal-cross.yml` 三条腿跑在三台宿主,1/1/0 + engine 0 |
+| C6 | 跑不了的目标上 `builds` 的含义 | 编的是成员自己的测试,不是它的依赖 | **已通过**:`mcpp test --no-run`(e2e 745 四条腿)+ `compat.py` 的 `command_for` 三条 selftest |
+| I1 | 写死的节点集合 | conformance 逐条断言 | 未实现(第五批) |
 | I2 | `presents = "windows"` 的 C 库 | 引擎改动数为 0 | 未实现（第五批） |
 | **A1** | 三目标 `mcpp build` | 全绿 | **待跑**（须用已发布钉，见 §8 第二条） |
 | **A2** | 三目标 `mcpp test` + 真跑 | 全绿 | 待跑 |
 | **A3** | 三份 `os.cppm` | **除六行外逐字节相同** | **已机械化并进 CI**；四种失败形态逐个量红过 |
 
 ---
+
+### 7.1 本轮收尾时新发现的两条,以及它们各自的判据
+
+**C5 —— `builtins = "iso"` 发的那个 token 是静默空操作。** `-fno-builtin-memset_pattern16`
+从这套机制第一版起就在发,而 `-fno-builtin-<fn>` 按 clang 的 builtin 表校验,
+`memset_pattern16` 是 LLVM TargetLibraryInfo 的 libfunc、不在那张表里。A/B:不带 flag 1 次
+引用,带这个 flag 仍是 1 次,`-fno-builtin` 是 0。**它能活下来是因为它没有判据**——`cenv`
+用 `-dM` dump 校验自己发的 token,而代码生成阶段的性质在 dump 里不可见。
+
+判据写完之后,**第一条腿就在 macOS 宿主上红了**:三个读数全是 0。原因不在编译器在读数器——
+`grep -ac` 在 GNU grep 上读 1/0 正确,macOS 的 BSD grep 对二进制输入的 `-a` 语义不同。
+换成载荷里的 `llvm-nm -u` 之后三台宿主一致。**这正是第一条腿存在的理由:它报的是
+「后面两条什么都没测」。**
+
+**C6 —— 跑不了的目标上,`builds` 说的是它的依赖。** 本套件每个成员的源码都只在 `tests/` 下,
+而没有 runner 的目标用 `mcpp build` 测量,`mcpp build` 构建的是**包**——对这种形状的包
+它一行都不编译。实测 `archive` 的 aarch64-macos:1990 个目标文件,没有一个来自
+`tests/compression.cpp` 或 `tests/versions.cpp`,退出 0,记成 `builds`。
+
+CI 里这个读数从未错过,因为两个钉住的目标都能跑(linux 原生、windows 经 Wine)。**它在
+考虑第三个目标的那一刻才错**,而那正是本轮要做的事。引擎侧补 `mcpp test --no-run`,
+测量侧把命令选择提到 `command_for` 并给它三条 selftest ——其中要紧的那条断言的是
+`--no-run` 而不是 `build`。
+
+### 7.2 下一批最该做的一条:`__APPLE__` 回答的是平台,不是 C 环境
+
+`mcpp test --no-run` 让「宿主跑不了的目标」第一次可以被真正测量,于是 aarch64-macos
+第一次被测了(2026-09-21,mcpp 2026.9.21.3 + runtime 0.15.0,30 个成员):
+**20 个构建通过,10 个不通过。**
+
+十个里有九个是同一个原因:
+
+| 诊断 | 成员 |
+| --- | --- |
+| 找不到 `TargetConditionals.h` | catch2、curl、mimalloc、re2、sqlite3 |
+| 经 Apple 的 `dnsinfo.h` 找不到 `sys/cdefs.h` | c-ares |
+| 找不到 `sys/event.h`(kqueue) | cmp-module |
+| 找不到 `xlocale.h` | fmtlib.fmt |
+| `pthread_threadid_np` 未声明 | spdlog |
+| `library not found for -lm` | brotli |
+
+每一条都走在 `#ifdef __APPLE__` 下面,而在这个目标上 **`__APPLE__` 是对的**——它确实是
+Apple 平台:Mach-O、arm64、macOS。**它没有说的是底下是哪个 C 库**,而上游用它同时表达
+这两件事,因为在真正的 macOS 上两者重合。
+
+**这是 Windows 那个问题的 macOS 镜像,差别只有一处:那边引擎有杠杆。** 一个在 Windows 上
+presents POSIX 的 C 库被实现成 `--target=…-pc-cygwin`,`_WIN32` 因此消失,`#ifdef _WIN32`
+不再选中 Win32 分支。macOS 上的实现只加了 `-D__unix__`,`__APPLE__` 与 `__MACH__` 原样留着
+——因为它们是真的。实测,源码在那里看到的整个身份是
+
+```
+__APPLE__  __MACH__  __MCPP_TARGET_MACOS__  __OPENKAL__  __unix__
+```
+
+**没有一个回答「哪个 C 库」**。musl 按其自身设计不提供任何标识宏,所以也没有一个可移植的
+问题可问。
+
+⭐ 这一条的形状与 §2.1 的 E2 一样:**阻塞是一个设计决定,不是工作量**。要么引擎给出一个
+命名已解析 c-abi 的宏(那是往宏契约里加成员,`a-new-key-inside-a-known-table` 那条教训
+直接适用),要么由生态数据回答(每个配方按 `__has_include` 逐条问)。十个红格子的修法是
+**一个**问题,不是十个,而这条记录的作用是让那个问题带着数字被提出。
 
 ## 8. 本方案自身的失败模式
 

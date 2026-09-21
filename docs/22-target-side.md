@@ -378,7 +378,7 @@ that names no C library:
 | macOS | `posix` / `arch-default` | one token, `-D__unix__` — Apple's clang predefines `__APPLE__`/`__MACH__` on its default triple, never `__unix__` |
 | freestanding | `posix` / `arch-default` | the same one token, `-D__unix__`, for the same reason: nothing here defines it either |
 | Windows | `posix` / `arch-default` | Cygwin-flavoured: `--target=x86_64-pc-cygwin` on the compile line only; plus `-D__MCPP_TARGET_WINDOWS__` (see the note below); `data-model` becomes LP64 as a consequence of the triple, not a separate flag |
-| any | `builtins = "iso"` | turns off code-generation idioms that assume a platform C library — `-fno-builtin-memset_pattern16` on Apple targets is the one this survey measured; see `src/toolchain/cenv.cppm` for what else was checked and found not to apply |
+| any | `builtins = "iso"` | turns off code-generation idioms that assume a platform C library — `-fno-builtin` on Apple targets, because the per-function spelling was measured to be a silent no-op for the one idiom that matters (`memset_pattern16` is an LLVM TargetLibraryInfo libfunc, not a clang builtin); see `src/toolchain/cenv.cppm` for the A/B and the measured cost |
 | anything else | | refused, naming the target, the request and what is missing — never a silent downgrade |
 
 **The macOS and freestanding rows are a correction, not the design's original
@@ -441,12 +441,22 @@ an ordinary Windows build still has `_WIN64`.
 
 **`__CYGWIN__` is still defined, and that is a sequence rather than a
 decision to keep it.** The 30-member measurement settled that the borrowed
-name costs four members: `archive`, `sqlite3`, `mimalloc` and `c-ares` each
-stop at `#include <windows.h>`, reached through
+name costs members that stop at `#include <windows.h>`, reached through
 `#if defined(_WIN32) || defined(__CYGWIN__)`. Upstream means *Win32 is
-available* by it — mimalloc states so in the guard itself, sqlite3 lists it
-under `SQLITE_OS_WIN`. **A borrowed name means what the lender's history made
-it mean**, not what the borrower intended.
+available* by it — sqlite3 lists it under `SQLITE_OS_WIN`. **A borrowed name
+means what the lender's history made it mean**, not what the borrower
+intended.
+
+**The count was four and it is two** (corrected 2026-09-21). `archive`
+(through xz) and `sqlite3` read the name; both cleared on the release that
+withdrew it. `c-ares` and `mimalloc` were grouped with them because all four
+stopped at `windows.h`, and neither was this name's doing: `c-ares` reaches
+the header through `#ifdef HAVE_WINDOWS_H`, a macro mcpp-index's own recipe
+defines in its Windows branch, and `mimalloc` no longer reaches a header —
+it fails in the code generator with *Target OS doesn't support
+`__builtin_thread_pointer()` yet*, which is a property of the substitute
+triple rather than of any macro. **Grouping by diagnostic is not grouping by
+cause.**
 
 Withdrawing it was tried and broke the two headers above, which read it for
 want of any other target-wide name. libunwind's `static_assert` failed

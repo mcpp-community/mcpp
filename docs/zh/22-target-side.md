@@ -310,7 +310,7 @@ libunwind 的 `assembly.h`,正是按这个宏来选寄存器保存集的)。mcpp
 | macOS | `posix` / `arch-default` | 一个令牌,`-D__unix__`——Apple 的 clang 默认三元组预定义的是 `__APPLE__`/`__MACH__`,从来不是 `__unix__` |
 | 裸机(freestanding) | `posix` / `arch-default` | 同样一个令牌,`-D__unix__`,原因相同:这里同样没有任何东西定义它 |
 | Windows | `posix` / `arch-default` | 采用 Cygwin 式语义:仅在编译行加 `--target=x86_64-pc-cygwin`;并加 `-D__MCPP_TARGET_WINDOWS__`(见下方说明);`data-model` 变为 LP64 是三元组切换的结果,不是另一个开关 |
-| 任意目标 | `builtins = "iso"` | 关闭代码生成阶段假定平台 C 库在场的惯用法识别——本轮实测到的唯一一例是 Apple 目标上的 `-fno-builtin-memset_pattern16`;`src/toolchain/cenv.cppm` 记录了还核实过哪些、结论是不适用 |
+| 任意目标 | `builtins = "iso"` | 关闭代码生成阶段假定平台 C 库在场的惯用法识别——Apple 目标上发 `-fno-builtin`,因为按函数名的那个拼法对唯一重要的那个惯用法实测是**静默空操作**(`memset_pattern16` 是 LLVM TargetLibraryInfo 的 libfunc,不是 clang 的 builtin);A/B 与实测代价见 `src/toolchain/cenv.cppm` |
 | 其余情况 | | 明确拒绝,点名目标、请求与缺什么——不静默降级 |
 
 **macOS 与裸机这两行是一次修正,不是设计原文(协调者修订,2026.9.18.1 发布不到一天就被真实
