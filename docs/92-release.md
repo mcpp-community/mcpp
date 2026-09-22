@@ -89,7 +89,7 @@ The workflow then downloads the public release again, regenerates the manifest,
 and requires a byte-for-byte match. A workflow rerun accepts an existing
 manifest only when it is already byte-identical; it never overwrites different
 bytes for the same tag. Downstream release consumers (notably the `mcpp-bin`
-AUR reconciler) must consume this manifest instead of guessing completeness
+AUR reconciler and the `mcpp-bin` PyPI wheel builder in `scripts/pypi/`) must consume this manifest instead of guessing completeness
 from a moving workspace or from a subset of release assets.
 
 Two steps are **not** automated:

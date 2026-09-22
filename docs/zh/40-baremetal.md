@@ -1,165 +1,168 @@
 # 40 —— 裸机与 freestanding 目标
 
-**读者:**面向没有操作系统的机器的嵌入式开发者。
+**读者：**面向没有操作系统的机器的嵌入式开发者。
 
-**本章回答的那一个问题:**一个工程怎样为 freestanding 目标构建、谁供给这个目标的
-整个世界,以及标准库还剩下什么。
+**本章回答的那一个问题：**一个工程怎样为 freestanding 目标构建、谁供给这个目标的
+整个世界，以及标准库还剩下什么。
 
-**不在这里:**运行与测试这个镜像,那是 [41 —— 抵达一台设备](41-devices.md);以及
-hosted 的交叉构建,那是 [24 —— 基于 openkal 的交叉构建](24-openkal-cross.md)。
+**不在这里：**运行与测试这个镜像，那是 [41 —— 抵达一台设备](41-devices.md)；hosted
+的交叉构建，那是 [24 —— 基于 openkal 的交叉构建](24-openkal-cross.md)。
 
-本文说明 mcpp 如何为没有操作系统的目标构建、运行与测试软件,以及板级支持包如何
-提供引擎刻意不去掌握的那部分目标事实。
+本章说明 mcpp 如何为没有操作系统的目标构建、运行与测试软件，以及板级支持包如何
+供给引擎刻意不掌握的那部分目标事实。
 
-相关文档:[04 — mcpp.toml 清单指南](04-mcpp-toml.md) §2.7.2 是本文使用的
-`[target.<triple>]` 各键的参考;[30 — build.mcpp 构建程序](30-build-mcpp.md)
-是板级支持包所用指令协议的参考;[91 — 工具链内部机制](91-toolchain-internals.md)
-描述了本文所偏离的宿主链接模型。
+相关文档：[04 —— mcpp.toml 工程文件指南](04-mcpp-toml.md) §2.7.2 是本章用到的
+`[target.<triple>]` 各键的参考；[30 —— build.mcpp 构建程序](30-build-mcpp.md)是
+板级支持包所用指令协议的参考；[91 —— 工具链内部机制](91-toolchain-internals.md)
+描述了本章所偏离的那套 hosted 链接模型。
 
 ## 概述
 
 freestanding 目标是 `os` 字段为 `none` 的目标。`modules/toolchain-model/src/triple.cppm`
-的目标表中有十三个:
+的目标表里有十三行：
 
 | Triple | 档位 | C 库 |
 |---|---|---|
 | `riscv64-none-elf` | verified | `xim:picolibc-riscv` |
 | `riscv32-none-elf` | verified | `xim:picolibc-riscv` |
-| `aarch64-none-elf` | preview | 默认无 —— 零 libc 层;`xim:picolibc-aarch64` 可声明 |
-| `x86_64-none-elf` | preview | 默认无 —— 零 libc 层;`xim:picolibc-x86` 可声明 |
-| `thumbv6m-none-eabi` | verified | 默认无 —— Cortex-M0/M0+/M1 |
-| `thumbv7m-none-eabi` | verified | 默认无 —— Cortex-M3 |
-| `thumbv7em-none-eabi` | preview | 默认无 —— Cortex-M4/M7,软浮点 |
-| `thumbv7em-none-eabihf` | verified | 默认无 —— Cortex-M4F/M7F,硬浮点 |
-| `thumbv8m.base-none-eabi` | preview | 默认无 —— Cortex-M23 |
-| `thumbv8m.main-none-eabi` | verified | 默认无 —— Cortex-M33/M55,软浮点 |
-| `thumbv8m.main-none-eabihf` | preview | 默认无 —— Cortex-M33F/M55F,硬浮点 |
-| `armv7a-none-eabi` | verified | 默认无 —— Cortex-A 32 位,软浮点 |
-| `armv7a-none-eabihf` | verified | 默认无 —— Cortex-A 32 位,硬浮点 |
+| `aarch64-none-elf` | preview | 默认无——零 libc 档；`xim:picolibc-aarch64` 可声明 |
+| `x86_64-none-elf` | preview | 默认无——零 libc 档；`xim:picolibc-x86` 可声明 |
+| `thumbv6m-none-eabi` | verified | 默认无——Cortex-M0/M0+/M1 |
+| `thumbv7m-none-eabi` | verified | 默认无——Cortex-M3 |
+| `thumbv7em-none-eabi` | preview | 默认无——Cortex-M4/M7，软浮点 |
+| `thumbv7em-none-eabihf` | verified | 默认无——Cortex-M4F/M7F，硬浮点 |
+| `thumbv8m.base-none-eabi` | preview | 默认无——Cortex-M23 |
+| `thumbv8m.main-none-eabi` | verified | 默认无——Cortex-M33/M55，软浮点 |
+| `thumbv8m.main-none-eabihf` | preview | 默认无——Cortex-M33F/M55F，硬浮点 |
+| `armv7a-none-eabi` | verified | 默认无——Cortex-A 32 位，软浮点 |
+| `armv7a-none-eabihf` | verified | 默认无——Cortex-A 32 位，硬浮点 |
 
-`verified` 意味着该行的镜像被构建**并被运行**过。`preview` 意味着它构建并链接得出,
-尚无模拟器运行记录。
+`verified` 表示该行的镜像已被构建**并被运行**过；`preview` 表示它构建、链接得出，
+但尚无模拟器运行记录。
 
 ### ARMv7-A 是第一个带内存管理单元的 32 位行
 
-上表其余每一个 32 位行都是 M-profile:MPU 按基址与上限描述区域,根本没有页表项。
-A-profile 有真正的 MMU 与页表走查器,所以它是第一个能被问「**32 位**机器的页表项长
-什么样」的目标 —— 短描述符 32 位宽,长描述符(LPAE)64 位。这个问题无法向一台没有
-页表项的机器提出,这正是 `openarch` 的 Cortex-M 后端不声明该能力的原因。
+上表其余每个 32 位行都是 M-profile：MPU 按基址和上限描述区域，没有任何页表项。
+A-profile 有真正的 MMU 和页表走查器，因此它是第一个可以被问「一台**32 位**机器的
+页表项长什么样」的目标——短描述符宽 32 位，长描述符（LPAE）宽 64 位。这个问题问
+不到一台没有页表项的机器，这正是 `openarch` 的 Cortex-M 后端不声明该能力的原因。
 
-**半主机的退出调用有两种拼法,只有一种带得走状态。** `SYS_EXIT`(`0x18`)把原因码
-**直接**放在 `r1`;`{reason, code}` 块是 `SYS_EXIT_EXTENDED`(`0x20`),它存在的理由
-正是 32 位的 `r1` 装不下「原因」与「状态」两者。把块传给 `0x18`,一切打印都正确,而
-**退出状态是错的**。
+**半主机的退出调用有两种拼法，只有一种带得走状态。**`SYS_EXIT`（`0x18`）把原因码
+**直接**放进 `r1`；`{reason, code}` 块是 `SYS_EXIT_EXTENDED`（`0x20`），它存在的
+理由正是 32 位的 `r1` 装不下「原因」和「状态」两者。把那个块传给 `0x18`，打印全部
+正确，而**退出状态是错的**。
 
-这是 **AArch32** 的事实,对 M-profile 与 A-profile 同样成立。实测两次:一个
-ARMv7-A 程序退 0 而报回 1;`openarch` 的一个 Cortex-M 示例打印了
-`both tasks observed preemption` 然后退 1 —— 对**输出**的每一条断言都通过了。只看
-自己打印了什么的板子看不出这个差别,所以 `tests/e2e/332` 与 `336` 都读 `$?`,而且都
-从模拟器本身取,不从管道末端取。
+这是 **AArch32** 层面的事实，对 M-profile 和 A-profile 同样成立。实测过两次：一个
+ARMv7-A 镜像退出码本应是 0，报回的却是 1；`openarch` 的一个 Cortex-M 示例打印了
+`both tasks observed preemption`，退出码却是 1——对**输出**的每一条断言都通过了。
+只检查自己打印了什么的板子看不出这个差别，这正是 `tests/e2e/332` 与 `336` 都读取
+`$?`、并且都从模拟器本身取值而不是从管道末端取值的原因。
 
 ### M-profile 是七行而不是一行
 
-上面每一个裸机族都是一个架构一行。Cortex-M 不是:为 `thumbv7em` 构建的目标文件
-使用 Cortex-M0 没有的指令,两种拼写产出的是互不兼容的目标文件,而不是一种偏好。
-这张表存在,是为了让 `--target <triple>` 单独就足以产出正确的目标文件;若只写一行
-`arm-none-eabi` 再让每个工程各自记住一个 `-mcpu`,就把一个正确性决定从表里搬进了
-每一份清单。
+上面其余每个裸机族都是一个架构一行，Cortex-M 不是。为 `thumbv7em` 构建出的目标
+文件用到 Cortex-M0 没有的指令，两种拼法产出的是互不兼容的目标文件，而不是一种
+偏好。这张表存在的意义，是让 `--target <triple>` 单独就足以产出正确的目标文件；
+若只写一行 `arm-none-eabi`，再让每个工程各自记住一个 `-mcpu`，就会把一个正确性
+决定从表里搬进每一份清单。
 
-`eabi`/`eabihf` 后缀即浮点 ABI,clang 直接从 triple 读出它:实测 llvm 22.1.8,
-`thumbv7em-none-eabi` 得到 `-mfloat-abi soft`,`thumbv7em-none-eabihf` 得到 `hard`。
+`eabi`/`eabihf` 后缀就是浮点 ABI，clang 无需额外提示就能从 triple 读出它：实测
+llvm 22.1.8，`thumbv7em-none-eabi` 得到 `-mfloat-abi soft`，`thumbv7em-none-eabihf`
+得到 `hard`。
 
-**浮点 ABI 并不决定 FPU 是否被使用。** 它约束浮点值如何跨越函数边界,不约束
-编译器在函数内部可以发什么指令,而 `thumbv7em` 架构蕴含 FPv4-SP。实测:在软浮点
-ABI 下,clang 对一次 float 乘法仍然发出 `vmul.f32`。在没有 FPU 的 Cortex-M4 上,
-这条指令在运行期触发异常 —— 而编译与链接都是干净的。因此每一个软浮点行都携带
-`-mfpu=none`,**包括那些架构本来就没有 FPU 的行**:一行应当陈述它所保证的性质,
-而不是从一个随时可以改变的默认值继承它。
+**浮点 ABI 并不决定 FPU 是否被使用。**它约束的是浮点值如何跨越函数边界，而不是
+编译器在函数内部可以发出什么指令，而 `thumbv7em` 架构本身蕴含 FPv4-SP。实测：在
+软浮点 ABI 下，clang 对一次 float 乘法仍然发出 `vmul.f32`。在没有 FPU 的
+Cortex-M4 上，这条指令在运行期触发异常——编译和链接都是干净的。因此每个软浮点行
+都携带 `-mfpu=none`，**包括那些架构本来就没有 FPU 的行**：一行应当陈述它所保证的
+性质，而不是从一个随时可能改变的默认值继承它。
 
-Cortex-M 不需要 `lldEmulation` 列:clang 有面向 arm 的 *BareMetal* 工具链,这些
-triple 与 RISC-V、aarch64 各行一样经驱动到达 `ld.lld`。32 位 ARM 没有 `-mcmodel`
-这个轴,所以该列同样为空。
+Cortex-M 不需要 `lldEmulation` 列：clang 备有面向 arm 的 *BareMetal* 工具链，这些
+triple 和 RISC-V、aarch64 各行一样经驱动到达 `ld.lld`。32 位 ARM 没有 `-mcmodel`
+这根轴，所以那一列同样为空。
 
 ### 死代码段消除
 
-freestanding 构建以 `-ffunction-sections -fdata-sections` 编译,以 `--gc-sections`
-链接。两半都属于引擎而不属于工程,因为依赖的翻译单元也必须带上它们,而工程够不到
-那些单元。
+freestanding 构建以 `-ffunction-sections -fdata-sections` 编译，以 `--gc-sections`
+链接。两者都属于引擎而不属于工程，因为依赖的翻译单元同样必须带上它们，而工程
+够不到那些单元。
 
-这两个标志从「划算」变成「必需」,发生在 C 库开始由依赖图提供的时候。依赖的目标
-文件是**无条件**进入链接的,不像归档成员那样只在符号仍未定义时才被拉入。当 C 库是
-预编译归档、目标又有若干兆字节时,这不花什么代价;而 Cortex-M 器件只有几十 KB,
-没有死代码段消除,每个镜像都会装进整份 C 库。
+这两个标志从「划算」变成「必需」，发生在 C 库开始由依赖图提供的那一刻。依赖的
+目标文件是**无条件**进入链接的，不像归档成员那样只在符号仍未定义时才被拉入。当
+C 库是预编译归档、目标又有几兆字节容量时，这不花什么代价；而 Cortex-M 器件只有
+几十 KB，没有死代码段消除，每个镜像都会装进整份 C 库。
 
-**链接脚本因此以一种新的方式承重。** 中断向量表不被任何东西引用 —— 硬件按地址
-读取它 —— 所以 `--gc-sections` 会把它回收。板级脚本必须写 `KEEP(*(.vectors))`。
-实测:有这条 `KEEP` 时,无人调用的函数被丢弃、向量表被保留、镜像能够启动。
+**链接脚本因此以一种新的方式承重。**中断向量表不被任何东西引用——硬件按地址读取
+它——所以 `--gc-sections` 会把它回收掉。板级脚本必须写 `KEEP(*(.vectors))`。实测：
+有这条 `KEEP` 时，没人调用的函数被丢弃，向量表被保留，镜像能够启动。
 
-后两行**默认**没有 C 库,这是声明而非遗漏:这两行的第一个消费者 —— 机器机制层
-`openarch` —— 一个 C 库符号都不引用,而**如果四行里没有一行默认在这一层,就没有
-任何东西在证明这一层可用**。空列在这里的含义与清单里
-`[target.<triple>].sysroot = ""` 完全一致。
-
-**这两行的 C 库是可声明的,不是不存在的**(mcpp 2026.8.21.3+)。
-`xim:picolibc-aarch64` 与 `xim:picolibc-x86` 已在索引里;想要它的工程自行声明,
-而那与它换用另一份 C 库是同一个动作:
+后两行**默认**没有 C 库，这是一句声明，不是一处遗漏：这两行的第一个消费者——机器
+机制层 `openarch`——一个 C 库符号都不引用，而如果十三行里没有一行默认落在这一档，
+就没有任何东西证明这一档能用。**这两行的 C 库是可声明的，不是不存在的**
+（mcpp 2026.8.21.3+）。`xim:picolibc-aarch64` 与 `xim:picolibc-x86` 已在索引里，
+想要它的工程自行声明，方式与换用另一份 C 库完全相同：
 
 ```toml
 [target.aarch64-none-elf]
 sysroot = "xim:picolibc-aarch64@1.8.12"
 ```
 
-这类目标不需要逐宿主的交叉工具链。clang 与 lld 在构造上就是交叉编译器 ——
-一个二进制发射它构建时支持的全部目标 —— 因此目标表在每个宿主上都钉
-`llvm@22.1.8`,任何能安装 LLVM 载荷的机器都能为这四个中的任何一个产出镜像。
+空列在这里的含义，与清单里 `[target.<triple>].sysroot = ""` 完全一致，因此面向
+这两行的工程，不问自取就落在零 libc 档上。想在这两个目标上使用 C 库的工程自行
+声明一份，方式与它换用另一份 C 库完全相同。
 
-### x86_64 这一行不止是四个字符串
+这类目标不需要逐宿主的交叉工具链。clang 与 lld 在构造上就是交叉编译器——一个
+二进制发射它构建时支持的每一个目标——因此目标表在每个宿主上都钉住
+`llvm@22.1.8`，任何能安装这份 LLVM 载荷的机器，都能为这四个目标中的任意一个产出
+镜像。
 
-**一个目标行通常就是两张表里的两条记录,不含引擎代码。这一行需要引擎代码,
-而原因是 clang 的属性而非指令集的属性。**
+### x86_64 这一行不只是四个字符串
 
-clang 由 triple 选择工具链。它为 arm、aarch64、riscv 备有 *BareMetal* 工具链,
-直接以 `ld.lld` 链接;它没有 x86_64 的,于是裸 x86_64 triple 的每一种写法都落到
-通用 GCC 工具链上 —— 而后者的链接器是**宿主的 `g++`**:
+**一个目标行通常只是两张表里的两条记录，不含任何引擎代码。这一行需要引擎代码，
+而原因是 clang 的属性，不是指令集的属性。**
+
+clang 按 triple 选择工具链。它为 arm、aarch64、riscv 备有 *BareMetal* 工具链，
+直接以 `ld.lld` 链接；它没有 x86_64 的，于是裸 x86_64 triple 的每一种写法都落到
+通用 GCC 工具链上——而那个工具链的链接器是**宿主的 `g++`**：
 
 ```
 g++: error: unrecognized command-line option '-fuse-ld=/…/llvm/22.1.8/bin/ld.lld'
 ```
 
 对 `x86_64-none-elf`、`x86_64-unknown-none-elf`、`x86_64-unknown-none`、
-`x86_64-elf`、`x86_64-none-none`、`x86_64-unknown-unknown` 逐一实测,结果一致;
-`-fuse-ld=lld`、`--ld-path=`、`--gcc-toolchain=`、`-B` 逐一实测,均不改变结果。
-唯一能改变它的是把 `linux` 放进 OS 位,而那会给一次裸机链接带来八条宿主 `-L`。
+`x86_64-elf`、`x86_64-none-none`、`x86_64-unknown-unknown` 逐一实测，结果一致；
+`-fuse-ld=lld`、`--ld-path=`、`--gcc-toolchain=`、`-B` 逐一实测，均不改变结果。
+唯一能改变它的是把 `linux` 放进 OS 位，而那会给一次裸机链接带来八条宿主 `-L`。
 
-两种结果都不可接受:经宿主 `g++` 会让这一行只在 Linux 宿主上成立;宿主搜索路径
-出现在 freestanding 链接上,正是本引擎存在的意义所要守住的封闭性。因此该行带了
-第五列 `lldEmulation`,置位时引擎直接用 `ld.lld` 驱动链接。标志的词汇随工具一同
-改变 —— `-Map=` 而非 `-Wl,-Map=`,`-m elf_x86_64` 而非 `--target=` —— 而仅属于
-驱动的标志(`-nostdlib++`、加载器标签)是被丢弃而不是被翻译。
+两种结果都不可接受：经宿主 `g++` 会让这一行只在 Linux 宿主上成立；宿主搜索路径
+出现在一次 freestanding 链接上，正是本引擎存在的意义所要守住的那份封闭性。因此
+这一行带了第五列 `lldEmulation`，置位时引擎直接用 `ld.lld` 驱动链接。标志的词汇
+随工具一同改变——`-Map=` 而非 `-Wl,-Map=`，`-m elf_x86_64` 而非 `--target=`——
+仅属于驱动本身的标志（`-nostdlib++`、加载器标签）则被丢弃，而不是被翻译。
 
-riscv 与 aarch64 两行的该列为空。它们的驱动本就到得了 lld,为了让三行看起来一致
-而改动一条可用的链接,正是引入回归的方式。
+riscv 和 aarch64 两行的这一列为空。它们的驱动本就到得了 lld，为了让三行看起来
+一致而去改动一条本已可用的链接，正是引入回归的方式。
 
-### `-mno-red-zone` 是目标的属性,不是偏好
+### `-mno-red-zone` 是目标的属性，不是偏好
 
-System V x86-64 ABI 在 `rsp` 之下保留 128 字节,叶函数可以不调整栈指针直接使用,
-因为在有操作系统的机器上没有别的东西会写那里。裸机上不存在做这件事的一方:处理器
-在 `rsp` 处压入中断帧 —— 正压进红区 —— 被中断的叶函数恢复后发现自己的局部变量已被
-覆盖。既不触发异常也没有诊断,而且只在中断恰好落在叶函数内部时发生。
+System V x86-64 ABI 在 `rsp` 之下保留 128 字节，叶函数可以不调整栈指针直接使用，
+因为在有操作系统的机器上没有别的东西会写那里。裸机上不是这样：处理器在 `rsp`
+处压入中断帧——正压进红区——被中断的叶函数恢复后，发现自己的局部变量已被覆盖。
+既不触发异常，也没有诊断，而且只在中断恰好落在叶函数内部时发生。
 
-不存在红区安全的裸机 x86_64 程序,所以这个标志是行的属性,而不是工程需要记住的
-事情。它经 ISA 档表新增的 `extra` 列到达命令行 —— 该列之所以存在,是因为
-`-march`/`-mabi`/`-mcmodel` 表达不了它。RISC-V 与 aarch64 没有对应物,这也正是
+不存在红区安全的裸机 x86_64 程序，所以这个标志是行的属性，不是工程需要记住的
+事情。它经 ISA 档表新增的 `extra` 列到达命令行——该列之所以存在，是因为
+`-march`/`-mabi`/`-mcmodel` 表达不了它。RISC-V 与 aarch64 没有对应物，这也正是
 此前不需要这一列的原因。
 
-裸机构建需要的三样东西并不是 ISA 的属性,mcpp 也不试图推导它们:选哪个启动对象
-与哪些库、哪份链接脚本描述这台机器的内存、以及如何执行产出的镜像。这三样随
-**板级支持包**一起提供,而板级支持包是一个普通依赖。由此得到的结果是:换板子是
-一次依赖变更,而不是一次构建系统变更。
+裸机构建需要的三样东西并不是 ISA 的属性，mcpp 也不试图推导它们：选哪个启动对象
+和哪些库、哪份链接脚本描述这台机器的内存、以及如何执行产出的镜像。这三样随
+**板级支持包**一起提供，板级支持包本身是一个普通依赖。由此得到的结果是：换板子
+是一次依赖变更，而不是一次构建系统变更。
 
 ## 从零到一个可运行的镜像
 
-两条命令即可产出一个会启动的镜像,其中链接脚本、加载地址与模拟器命令行都不必手写:
+两条命令即可产出一个会启动的镜像，链接脚本、加载地址与模拟器命令行都不必手写：
 
 ```bash
 mcpp new blinky --template riscv-virt-rt
@@ -167,7 +170,7 @@ cd blinky
 mcpp run
 ```
 
-实测输出:
+实测输出：
 
 ```
    Resolving toolchain
@@ -188,13 +191,14 @@ float 3.1416
 heap ok
 ```
 
-`Size` 行在每次 freestanding 链接后打印。容量是裸机目标上的支配性约束,而链接完成
-的那一刻引擎已经知道这个数;不打印就意味着每个工程都要另跑一次 `size`。在宿主目标
-上以及工具缺失时它保持静默 —— 一行信息性输出没有让构建失败的资格。
+`Size` 这一行在每次 freestanding 链接后都会打印。容量是裸机目标上的支配性约束，
+而链接一结束引擎就已经知道这个数；不打印它，就要求每个工程另外跑一次 `size`。
+在 hosted 目标上、以及工具缺失时它保持静默——一行信息性输出没有让构建失败的
+资格。
 
 ### 生成的工程
 
-整份清单只有四处声明:
+整份清单只有四处声明：
 
 ```toml
 [package]
@@ -208,11 +212,11 @@ target = "riscv64-none-elf"
 riscv-virt-rt = "0.3.0"
 ```
 
-其中没有 `[target.*]` 段,没有链接脚本路径,没有加载地址,没有 `-nostdlib`,
-没有 `-march`/`-mabi`/`-mcmodel`,没有 crt0,没有 C 库名字,也没有模拟器命令行。
-ISA 参数来自引擎的目标表;其余来自 `[dependencies]` 中列出的板级支持包。
+其中没有 `[target.*]` 段，没有链接脚本路径，没有加载地址，没有 `-nostdlib`，
+没有 `-march`/`-mabi`/`-mcmodel`，没有 crt0，没有 C 库的名字，也没有模拟器命令行。
+ISA 参数来自引擎的目标表；其余部分来自 `[dependencies]` 里列出的板级支持包。
 
-生成的 `src/main.cpp` 是一个普通的 `main`:
+生成的 `src/main.cpp` 是一个普通的 `main`：
 
 ```cpp
 import mcpplibs.riscv_virt_rt;
@@ -227,52 +231,54 @@ extern "C" int main() {
 }
 ```
 
-不需要 `_start`,也不需要汇编入口,因为板级支持包选取了 picolibc 的 semihosting
-`crt0` —— C 运行时在 `main` 之前就已就绪,返回值经 semihosting 回到宿主。只有完全
-没有 C 库的板子才需要显式入口,做法是让 `main` 指向携带 `_start` 的那份源文件。
+不需要 `_start`，也不需要汇编入口，因为板级支持包选取了 picolibc 的 semihosting
+`crt0`——C 运行时在 `main` 运行之前就已初始化好，返回值经 semihosting 传回宿主。
+只有完全没有 C 库的板子才需要显式入口点，做法是让 `main` 指向携带 `_start` 的
+那份源文件。
 
 ## freestanding 目标带来的变化
 
 | 方面 | 在 freestanding 目标上的行为 |
 |---|---|
-| 链接行 | 从零构造而非在原有基础上追加:`-nostdlib -nostartfiles -static`,没有 crt 文件,没有动态链接器,没有 C++ 运行时。在宿主链接行后追加 `-nostdlib` 将依赖驱动以正确顺序丢弃先前的 flag。 |
-| 链接器选择 | `ld.lld` 按**绝对路径**寻址,由驱动自身所在目录推导。`-fuse-ld=lld` 按名字解析,在任何 binutils 位于 `PATH` 更靠前位置的机器上都会找到 GNU ld,随后以 `unrecognised emulation mode: elf64lriscv` 失败。 |
-| ISA 参数 | `-march`、`-mabi` 与 `-mcmodel` 来自 `src/freestanding/target.cppm` 中每个目标一行的表,因此仅凭 `--target <triple>` 就足以产出正确的目标文件。 |
-| C 库 | 属于**目标**,由 mcpp 从目标自己的表行解析,与解析编译器的方式完全一致。裸机工程不声明 libc,正如宿主工程不声明 glibc。引擎把 sysroot 的库目录放入链接搜索路径,板级支持包因此可以按裸名从中选取(`-lc`、`-lcrt0-semihost`)。 |
-| 异常与 RTTI | 在图中每个翻译单元上都关闭,包括依赖的翻译单元,**除非有包提供为该目标构建的 C++ 运行时**。否则既没有 unwinder 也没有 `libc++abi`,任何东西都无法抛出;仅 `std::optional::value()` 一处就会引用 `__cxa_throw` 以及另外三个未定义符号。该设定属于目标而非工程的 `cxxflags`,因为 BMI 会记录它,而带异常编出的依赖无法被不带异常的单元导入。声明 `provides = ["hosted-standard-library"]` 的包会翻转这个默认:异常与 RTTI 开启,`-ffreestanding` 被去掉,并加上 `-fasynchronous-unwind-tables`。 |
-| `import std` | 当图中有包提供 `hosted-standard-library` 并指明自己的 `std` 模块源码时可用;否则在配置期以诊断拒绝,而不是在链接期失败。 |
-| 入口点 | 只要有东西提供 `crt0`,`int main()` 就可用。板级支持包通常提供它。 |
-| 默认链接方式 | 静态,而且这不是偏好:没有加载器,因此没有别的选项。 |
+| 链接行 | 从零构造，而不是在原有基础上追加：`-nostdlib -nostartfiles -static`，没有 crt 文件、没有动态链接器、没有 C++ 运行时。在 hosted 链接行后追加 `-nostdlib`，要依赖驱动按正确顺序丢弃先前的 flag 才行得通。 |
+| 链接器选择 | `ld.lld` 按**绝对路径**寻址，由驱动自身所在目录推导。`-fuse-ld=lld` 按名字解析，在任何 binutils 位于 `PATH` 更靠前位置的机器上都会找到 GNU ld，随后以 `unrecognised emulation mode: elf64lriscv` 失败。 |
+| ISA 参数 | `-march`、`-mabi`、`-mcmodel` 来自 `src/freestanding/target.cppm` 中每个目标一行的表，因此仅凭 `--target <triple>` 就足以产出正确的目标文件。 |
+| C 库 | 属于**目标**，由 mcpp 从目标自己的表行解析，方式与解析编译器完全一致。裸机工程不声明 libc，正如 hosted 工程不声明 glibc。引擎把 sysroot 的库目录放进链接搜索路径，板级支持包因此可以按裸名从中选取（`-lc`、`-lcrt0-semihost`）。 |
+| 异常与 RTTI | 在图中每个翻译单元上都关闭，包括依赖的翻译单元，**除非有包提供为该目标构建的 C++ 运行时**。否则既没有 unwinder，也没有 `libc++abi`，任何东西都无法抛出；仅 `std::optional::value()` 一处，就会引用 `__cxa_throw` 以及另外三个未定义符号。该设定属于目标，而不是工程的 `cxxflags`，因为 BMI 会记录它，而带异常编出的依赖无法被不带异常的单元导入。声明了 `provides = ["hosted-standard-library"]` 的包会翻转这个默认：异常和 RTTI 开启，`-ffreestanding` 被去掉，并加上 `-fasynchronous-unwind-tables`。 |
+| `import std` | 当图中有包提供 `hosted-standard-library` 且指明了自己的 `std` 模块源码时可用；否则在配置期以诊断拒绝，而不是在链接期才失败。 |
+| 入口点 | 只要有东西提供 `crt0`，`int main()` 就可用。板级支持包通常会提供它。 |
+| 默认链接方式 | 静态，而且这不是偏好：没有加载器，因此没有别的选项。 |
 
-一个完全没有依赖的工程仍然构建得出来,这正是「仅凭 ISA 表行就已足够」的证据:
+一个完全没有依赖的工程仍然构建得出来，这正是「单凭 ISA 表行已经足够」的证据：
 
 ```
         Size norunner  text 12  data 0  bss 0  total 12
 ```
 
-## 分层:引擎、目标与板级支持包
+## 分层：引擎、目标与板级支持包
 
-职责划分只有一句话:**位置是目标的事实,选择是板级的事实。**
+职责划分只有一句话：**位置是目标的事实，选择是板级的事实。**
 
 | 层 | 拥有的内容 | 例子 |
 |---|---|---|
-| 引擎 | ISA 档位、freestanding 链接行、产物集、以及「产物如何执行」的单一读取点 | `-march=rv64gc -mabi=lp64d -mcmodel=medany -ffreestanding` |
-| 目标 | 用哪个编译器与哪份 C 库,两者都从目标的表行解析并按需安装 | `pin = llvm@22.1.8`、`sysroot = xim:picolibc-riscv@1.8.12` |
-| 板级支持包 | 选哪个启动对象与哪些库、哪份链接脚本、哪条模拟器命令行 | `-lcrt0-semihost`、`picolibcpp.ld`、`qemu-system-riscv64 -machine virt …` |
+| 引擎 | ISA 档位、freestanding 链接行、产物集，以及「产物如何执行」的单一读取点 | `-march=rv64gc -mabi=lp64d -mcmodel=medany -ffreestanding` |
+| 目标 | 用哪个编译器、用哪份 C 库，两者都从目标的表行解析并按需安装 | `pin = llvm@22.1.8`、`sysroot = xim:picolibc-riscv@1.8.12` |
+| 板级支持包 | 选哪个启动对象和哪些库、哪份链接脚本、哪条模拟器命令行 | `-lcrt0-semihost`、`picolibcpp.ld`、`qemu-system-riscv64 -machine virt …` |
 
-中间那一行正是让包不必指名 C 库的原因。两个生态包早先都在环境表里直接指名过一份
-libc 包,这把包绑死在一份 libc、一种架构与一种编译器实现上。该声明已不再需要,目标的 sysroot 列取代了它。
+中间那一行正是让包不必指名 C 库的原因。两个生态包更早的版本都在环境表里直接
+指名过一份 libc 包，这把包绑死在一份 libc、一种架构与一种编译器实现上。这条
+声明已不再需要，目标的 sysroot 列取代了它。
 
-同一 ISA 上的第二块板子,是把最后一行里的三个取值换掉。它不需要引擎作任何改动。
+同一 ISA 上的第二块板子，只是把最后一行里的三个取值换掉，不需要引擎做任何改动。
 
 ## 示例
 
-本节每一段实录都在 `x86_64-linux-gnu` 上用 mcpp 2026.8.20.1 实测得到,
-参见[验证范围](#验证范围)。
+本节每一段实录，都是在 `x86_64-linux-gnu` 上用 mcpp 2026.8.20.1 实测得到的，参见
+[验证范围](#验证范围)。
 
 ### 切换 ISA 宽度
 
-同一份源码与同一个板级支持包同时服务两种宽度:
+同一份源码、同一个板级支持包，同时服务两种宽度：
 
 ```bash
 mcpp run --target riscv32-none-elf
@@ -285,13 +291,14 @@ float 3.1416
 heap ok
 ```
 
-工程的源码与板级支持包都未改动。板级支持包从 `MCPP_TARGET_ARCH` 选取档位,而 ISA
-参数来自引擎的表 —— 那是数据而不是代码,再支持一种宽度是加一行。
+工程的源码和板级支持包都未改动。板级支持包从 `MCPP_TARGET_ARCH` 选取档位，ISA
+参数来自引擎的表——那是数据而不是代码，再支持一种宽度只是加一行。
 
 ### freestanding 标准库子集
 
-`import std` 是覆盖整个库的一个模块,线程、文件系统与 iostreams 全在其中,因此在
-没有操作系统的前提下不存在它的子集可编。承载其中不需要 OS 的那部分的是一个普通依赖:
+`import std` 是覆盖整个标准库的一个模块，线程、文件系统与 iostreams 全在其中，
+因此在没有操作系统的前提下，不存在它的一个可编子集。承载其中不需要操作系统那
+部分的，是一个普通依赖：
 
 ```toml
 [dependencies]
@@ -323,7 +330,7 @@ extern "C" int main() {
 }
 ```
 
-实测输出与体积:
+实测输出与体积：
 
 ```
         Size blinky  text 19564  data 72  bss 5632  total 25268
@@ -333,14 +340,14 @@ atomic 42
 span 4 ok
 ```
 
-该子集覆盖 LLVM 22.1.8 载荷所带 110 个 `std/*.inc` 头中的 103 个 —— 2026-08-20 在
-两侧目录分别计数得到 —— 且它由机械挑选生成,而不是手写的导出表。被略去的 7 个,
-按包一侧的说明在宿主 `x86_64` 上同样失败;该说明未在此重新实测。可用的实体包括
-`array`、`span`、`optional`、
-`expected`、`atomic`、`string_view`、`ranges`、`algorithm`、`bit`、`charconv`、
-`concepts`、`type_traits`、`tuple`、`utility` 以及协程。
+该子集覆盖 LLVM 22.1.8 载荷所带 110 个 `std/*.inc` 头文件中的 103 个——2026-08-20
+在两侧目录分别计数得到——而它是由机械挑选生成的，不是手写的导出表。被略去的
+7 个，按包一侧的说明，在 hosted `x86_64` 上同样会失败；那份说明没有在这里重新
+实测。可用的实体包括 `array`、`span`、`optional`、`expected`、`atomic`、
+`string_view`、`ranges`、`algorithm`、`bit`、`charconv`、`concepts`、
+`type_traits`、`tuple`、`utility`，以及协程。
 
-子集排除掉的部分在编译期被排除,而不是运行期:
+子集排除掉的部分，是在编译期被排除的，而不是运行期：
 
 ```cpp
 std::mutex m;
@@ -350,11 +357,11 @@ std::mutex m;
 error: no type named 'mutex' in namespace 'std'
 ```
 
-### 子集中会分配的那半边
+### 子集里会分配内存的那一半
 
-子集不改变什么能编。它的全部头文件都是无条件包含的,`std::vector` 今天就编得过;
-失败发生在**链接**,因为 freestanding 目标没有编译版 `libc++`,也就没有
-`operator new`:
+子集本身不改变什么能编。它的全部头文件都是无条件包含的，`std::vector` 今天就
+编得过；失败发生在**链接**，因为一个 freestanding 目标没有编译版的 `libc++`，
+也就没有 `operator new`：
 
 ```
 ld.lld: error: undefined symbol: operator new(unsigned long)
@@ -363,9 +370,9 @@ ld.lld: error: undefined symbol: operator new(unsigned long)
 
 | 不需要分配器 | 需要分配器 |
 |---|---|
-| `array` `span` `optional` `expected` `atomic` `string_view` `ranges` `algorithm` `bit` `charconv` `tuple` | `vector` `string` `deque` `list` `map` `set` `unordered_*` `function` `any` `make_unique`,以及默认的协程帧 |
+| `array` `span` `optional` `expected` `atomic` `string_view` `ranges` `algorithm` `bit` `charconv` `tuple` | `vector` `string` `deque` `list` `map` `set` `unordered_*` `function` `any` `make_unique`，以及默认的协程帧 |
 
-分配器随一个 feature 到来:
+分配器随一个 feature 到来：
 
 ```toml
 [dependencies]
@@ -379,18 +386,18 @@ std-freestanding = { version = "0.3.0", features = ["alloc-libc"] }
 vector 5 last=16
 ```
 
-`alloc-libc` 转发到目标的 C 库,目标有 C 库时它是更短的路径。`alloc-kal` 转发到
-openkal,适用于同一份源码还要为「环境不是 C 库」的目标构建的工程;裸机上 openkal
-后端由板级支持包提供,因为控制台与堆区都是板级事实:
+`alloc-libc` 转发到目标的 C 库，目标有 C 库时，这是更短的路径。`alloc-kal` 转发到
+openkal，适用于同一份源码还要为「环境不是 C 库」的目标构建的工程；在裸机上，
+openkal 后端由板级支持包提供，因为控制台在哪、堆区在哪都是板级事实：
 
 ```toml
 riscv-virt-rt    = { version = "0.4.0", features = ["openkal"] }
 std-freestanding = { version = "0.3.0", features = ["alloc-kal"] }
 ```
 
-`operator new` 是全程序单例,因此实现是独立的包,而选择属于程序。feature 以能力的
-形式声明这条要求,实现方提供该能力,解析器绑定恰好一个。两种失败因此都在图解析时
-报告,点名的是包而不是 mangled 符号:
+`operator new` 是全程序单例，因此实现方是一个独立的包，选择权属于程序。feature
+把这条要求表述为一种能力，实现方提供该能力，解析器绑定恰好一个。两种失败因此都
+在图解析时报告，点名的是包，不是被 mangle 过的符号：
 
 ```
 error: no package provides capability 'freestanding-allocator' required by 'std-freestanding'
@@ -401,61 +408,63 @@ error: capability 'freestanding-allocator' has multiple providers in the graph:
 
 ### 没有 C 库的目标
 
-`[target.<triple>].sysroot` 覆盖目标表所绑定的 C 库,与 `toolchain` 覆盖编译器 pin
-同轴。空字符串表示完全不要 C 库:
+`[target.<triple>].sysroot` 覆盖目标表所绑定的 C 库，与 `toolchain` 覆盖编译器
+pin 处在同一根轴上。空字符串表示完全不要 C 库：
 
 ```toml
 [target.riscv64-none-elf]
 sysroot = ""
 ```
 
-有了这一行,C 头文件离开编译行,C 库离开链接行。`#include <stdio.h>` 不再解析,
-镜像里只剩工程与其依赖放进去的内容。实测:一个自带入口点与链接脚本的自包含镜像
-链接后为 **108 字节**,并能启动。
+有了这一行，C 头文件离开编译行，C 库离开链接行。`#include <stdio.h>` 不再能
+解析，镜像里只剩工程与其依赖放进去的内容。实测：一个自带入口点和链接脚本的
+自包含镜像，链接后只有 **108 字节**，并且能启动。
 
-键缺席与键为空是两个不同的答案。缺席继承目标表的 C 库,存在且为空则拒绝它。内核与
-bootloader 要的是后者,而
+键缺席和键为空是两个不同的答案。缺席继承目标表的 C 库；存在且为空则拒绝它。
+内核或 bootloader 要的是后者，而
 
 ```bash
 mcpp new mykernel --template riscv-virt-rt:nolibc
 ```
 
-生成的工程已处于该安排 —— 一个入口点、一份内存映射、一个设备,实测 369 字节。
+生成的工程已经处在这种安排里——一个入口点、一份内存映射、一个设备，实测
+369 字节。
 
-freestanding 翻译单元仍会用到的 C 函数中,有四个是义务而非便利:`memcpy`、
-`memmove`、`memset` 与 `memcmp` 必须存在,因为编译器把结构体赋值与数组初始化下降到
-它们之上。`std-freestanding-nolibc` 提供这四个与 `strlen`。
+freestanding 翻译单元仍会用到的 C 函数里，有四个是义务而非便利：`memcpy`、
+`memmove`、`memset`、`memcmp` 必须存在，因为编译器把结构体赋值与数组初始化
+下降到它们之上。`std-freestanding-nolibc` 提供这四个，以及 `strlen`。
 
-子集与这一档是**组合**关系而非互斥。`std-freestanding` 带 `features = ["nolibc"]`
-时在完全没有 C 库的情况下编译,实测其 **103 个头中的 94 个**可用。障碍从来不是子集
-需要一个 C 库:libc++ 为 C 头文件提供了包装头 —— `string.h` 及其同类 —— 它们通过
-`#include_next` 续到真正的头去取 `size_t`、`mbstate_t`、`time_t` 与 `EOF`。没有
-C 库时这条链无处可续,包装头死在缺**类型**而不是缺头文件上,这正是从报错看不出成因的
-原因。四个很小的头把链续上,而该 feature 负责把它们引进来。
+子集与这一档是**组合**关系，不是互斥。`std-freestanding` 带
+`features = ["nolibc"]` 时，在完全没有 C 库的情况下编译，实测其
+**103 个头文件里有 94 个**可用。障碍从来不是「子集需要一个 C 库」：libc++ 为
+C 头文件提供了包装头——`string.h` 及其同类——它们经 `#include_next` 续到真正
+的头文件，去取 `size_t`、`mbstate_t`、`time_t`、`EOF`。没有 C 库时这条链无处
+可续，包装头败在缺**类型**，不是缺头文件，这正是报错本身看不出成因的原因。四个
+很小的头把这条链续上，而该 feature 负责把它们引进来。
 
-板级支持包同样可以服务这一档,理由与"为什么要有板级包"是同一条:一台机器的 UART 在哪、
-RAM 从哪开始、哪个模拟器启动它,没有一条是 C 库事实:
+板级支持包同样可以服务这一档，理由与「为什么要有板级支持包」是同一条：一台机器
+的 UART 在哪、RAM 从哪开始、哪个模拟器启动它，没有一条是 C 库事实：
 
 ```toml
 [dependencies]
 riscv-virt-rt = { version = "0.5.0", features = ["nolibc"] }
 ```
 
-`std-freestanding-nolibc` 正是该 feature 解析到的包,而**直接**把它与 C 库并用时
-是**静默**失败而非响亮失败。C 库以归档形式
-发布,归档成员只在符号仍未定义时才被拉入;而依赖包的目标文件无条件进入链接。于是该包
-先定义了 `memcpy`,C 库的成员从不被拉入,构建**成功** —— 程序拿到的是逐字节实现而不是
-C 库经过优化的那份,且没有任何提示。实测(picolibc 在场):冷构建链接通过,`nm` 只找到
-一处定义。
+`std-freestanding-nolibc` 正是该 feature 解析到的包，而把它**直接**和一份 C 库
+并用，是**静默**失败，不是响亮失败。C 库以归档形式发布，归档成员只在符号仍未
+定义时才被拉入；而依赖包的目标文件无条件进入链接。于是该包先定义了 `memcpy`，
+C 库那个成员从不被拉入，构建**成功**——程序拿到的是逐字节实现，不是 C 库那份
+经过优化的实现，而且没有任何提示。实测（picolibc 在场）：冷构建链接通过，`nm`
+只找到一处定义。
 
 ### 在目标上运行测试
 
-测试在这里的运作方式与 [08 —— 测试](08-testing.md) 所述完全一致,本节只补充板子
-特有的部分:每个 `tests/*.cpp` 成为它自己的一个镜像,由板级支持包提供的 runner
-执行它。
+测试在这里的运作方式，与 [08 —— 测试](08-testing.md) 所述完全一致，本节只补充
+板子特有的部分：每个 `tests/*.cpp` 成为它自己的一个镜像，由板级支持包提供的
+runner 执行它。
 
-让判据成立的是 semihosting —— 它把固件 `main` 的返回值传递到模拟器的退出码。这正是
-这个模型与宿主上的运行**完全一致**而不只是相似的原因。
+让判据成立的是 semihosting——它把固件 `main` 的返回值传递到模拟器的退出码。这
+正是这个模型与 hosted 上的运行**完全一致**，而不只是相似的原因。
 
 ```bash
 mcpp test
@@ -470,7 +479,7 @@ boots ... ok (0.02s)
  test result ok. 1 passed; 0 failed; finished in 0.58s (build 0.05s + run 0.02s)
 ```
 
-失败的用例会被点名,命令的退出状态非零:
+失败的用例会被点名，命令的退出状态非零：
 
 ```
 deliberate_fail ... FAIL (exit 1, 0.02s)
@@ -486,7 +495,7 @@ failures:
 
 ### 烧录所需的产物集
 
-freestanding 链接产出三个文件而不是一个:
+一次 freestanding 链接产出三个文件，不是一个：
 
 ```
 target/riscv64-none-elf/<fingerprint>/bin/blinky        91640 bytes   ELF, for a debugger or `qemu -kernel`
@@ -494,14 +503,15 @@ target/riscv64-none-elf/<fingerprint>/bin/blinky.bin     8664 bytes   flat image
 target/riscv64-none-elf/<fingerprint>/bin/blinky.map    253369 bytes  link map
 ```
 
-裸二进制由一条 `objcopy -O binary` 边产出,该工具与驱动取自同一份载荷。映射文件是
-链接边的隐式输出而非一个孤立的 `-Wl,-Map=` flag,因此删掉它会被重新生成;它是唯一
-能回答「某个段为何在此处」以及「某段内容为何被或未被从归档中拉入」的产物。
+裸二进制由一条 `objcopy -O binary` 边产出，它使用的载荷与驱动本身相同。映射文件
+是链接边的隐式输出，不是一个孤立的 `-Wl,-Map=` flag，因此删掉它会被重新生成；它
+是唯一能回答「某个段为什么在此处」以及「某段内容为什么被或没被从归档里拉入」的
+产物。
 
 ### 覆盖板级支持包提供的 runner
 
-板级支持包通常提供 runner。工程可以覆盖它,这是通常的优先级 —— 工程作者写下的
-胜过依赖提供的:
+板级支持包通常提供 runner。工程可以覆盖它，这是通常的优先级——工程作者写下的
+胜过依赖提供的：
 
 ```toml
 [target.riscv64-none-elf]
@@ -511,19 +521,19 @@ runner = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
           "-kernel"]
 ```
 
-覆盖生效时会被报告,而不是静默应用:
+覆盖生效时会被报告，不是静默应用：
 
 ```
         note [target.riscv64-none-elf].runner overrides the runner a dependency supplied
 ```
 
-产物路径追加在模板末尾,或者在模板包含 `{}` 时替换该记号。追加是常见形态,因为
-`-kernel <image>` 处在命令行末尾。
+产物路径追加在模板末尾，或者在模板包含 `{}` 时替换该记号。追加是常见形态，因为
+`-kernel <image>` 正处在命令行末尾。
 
-mcpp 不附带任何默认 runner。用哪个模拟器、哪种机器模型、哪种固件模式都是板级事实
-—— 同一 ISA 上的两块板子需要不同的 argv,OpenSBI 启动用 `-bios default`,picolibc
-镜像用 `-bios none -semihosting` —— 因此一个猜中其中之一的引擎,会被另一块板子反复
-对抗。
+mcpp 不附带任何默认 runner。用哪个模拟器、哪种机器模型、哪种固件模式都是板级
+事实——同一 ISA 上的两块板子需要不同的 argv，OpenSBI 启动用 `-bios default`，
+picolibc 镜像用 `-bios none -semihosting`——因此一个替其中之一猜好了默认值的
+引擎，会被另一块板子反过来拖累。
 
 ## 诊断
 
@@ -545,14 +555,14 @@ error: `import std;` is not available on 'riscv64-none-elf' — a freestanding t
        exports `mcpplibs.riscv_virt_rt`).
 ```
 
-该消息在配置期发出。若改为报告缺少 `std` 模块源,会把读者引向排查一个损坏的载荷,
-而工具链其实什么都不缺。
+该消息在配置期发出。若改为报告缺少一份 `std` 模块源码，会把读者引去排查一个
+损坏的载荷，而工具链并不缺任何东西。
 
 ### 缺少 runner
 
-freestanding 产物无法在构建机器上执行:ISA 不对,没有加载器,而且它预期独占整个
-地址空间。当没有配置 runner 时,`mcpp run` 会报告「构建成功」与「无法执行」之间的
-这段落差:
+一个 freestanding 产物无法在构建机器上执行：ISA 不对，没有加载器，而且它预期
+独占整个地址空间。没有配置 runner 时，`mcpp run` 会报告「构建成功」与「无法
+执行」之间的这段落差：
 
 ```
 error: no runner is configured for 'riscv64-none-elf' — a freestanding artifact cannot execute on this machine.
@@ -566,62 +576,62 @@ error: no runner is configured for 'riscv64-none-elf' — a freestanding artifac
        A board-support package normally supplies this so you do not have to.
 ```
 
-这个键不限于裸机。hosted 交叉目标 —— x86_64 宿主上的 `aarch64-linux-musl` 产物 ——
-使用同一个 `[target.<triple>].runner`,以 `qemu-aarch64-static` 这类用户态模拟器代替
-系统模拟器;在这类目标上,缺少 runner 在内核拒绝产物之前不是错误。hosted 目标的规则、
-`--no-runner` 出口与 `mcpp test` 的未运行报告见 [04 —— mcpp.toml](04-mcpp-toml.md)
-§2.7.3。
+这个键并不限于裸机。一个 hosted 交叉目标——x86_64 宿主上的 `aarch64-linux-musl`
+产物——使用的是同一个 `[target.<triple>].runner`，只是以 `qemu-aarch64-static`
+这类用户态模拟器代替系统模拟器；在这类目标上，缺少 runner 在内核拒绝该产物之前
+都不算错误。hosted 目标的规则、`--no-runner` 出口，以及 `mcpp test` 对「未运行」
+的报告方式，都在 [04 —— mcpp.toml](04-mcpp-toml.md) §2.7.3。
 
 ## 编写板级支持包
 
-板级支持包是一个普通的 mcpp 包。它在 `[xlings.workspace]` 下声明所需的模拟器,为消费者
-导出一个 C++ 模块,并从 `build.mcpp` 发出它的板级事实。
+板级支持包是一个普通的 mcpp 包。它在 `[xlings.workspace]` 下声明自己需要的
+模拟器，为消费者导出一个 C++ 模块，并从 `build.mcpp` 发出它的板级事实。
 
-**那里的声明会在首次构建时供给该包**(2026.8.29 起;这张表是
-`[xlings.workspace]`)。它同时让
-`mcpp::xpkg_dir` 能回答「那个包落在哪」。两半都要紧:同一条声明既装上模拟器,也告诉
-构建程序它装到了哪。
+**那里的声明会在首次构建时供给这个包**（自 2026.8.29 起；该表是
+`[xlings.workspace]`）。它同时也是 `mcpp::xpkg_dir` 能够回答「那个包落在哪」的
+前提。两半都要紧：同一条声明既装上模拟器，也告诉构建程序它装到了哪里。
 
-这次供给用的正是 `[toolchain]` 一直以来的契约 —— 声明它,mcpp 在首次使用时装上 ——
-并且遵守同样两个开关:在 `--offline` / `MCPP_OFFLINE` 或 `MCPP_NO_AUTO_INSTALL` 下
-mcpp 转为拒绝,并列出包名以便手动安装。
+这次供给用的正是 `[toolchain]` 一直以来的契约——声明它，mcpp 在首次使用时装
+上——并且遵守同样两个开关：在 `--offline` / `MCPP_OFFLINE` 或
+`MCPP_NO_AUTO_INSTALL` 下，mcpp 转为拒绝，并点名那些包，以便脱离该流程单独
+安装。
 
-**构建程序仍然不得假定目录存在。** 供给发生在**声明**了这些 deps 的那个包上;
-构建程序可以从没有发生过供给的路径被走到 —— 一个自己什么都没声明的工程的依赖、
-上面两个开关拒绝掉的环境 —— 所以 `xpkg_dir` 仍可能返回空,此时必须说出来,而不是
-发出一个坏掉的 runner:
+**构建程序仍然不得假定这个目录存在。**供给只发生在**声明**了这些 deps 的那个
+包上；构建程序可能经由从未发生过供给的路径被走到——某个自己什么都没声明的
+工程的依赖、被上面两个开关拒绝掉的环境——因此 `xpkg_dir` 仍可能返回空，此时
+程序必须把这一点说出来，而不是发出一个坏掉的 runner：
 
 ```cpp
 if (const char* dir = mcpp::xpkg_dir("xim", "qemu-riscv"); dir && *dir) {
     mcpp::runner(std::format("{}/bin/qemu-system-riscv64", dir).c_str());
-    // …… 其余 argv ……
+    // … the rest of the argv …
 } else {
-    mcpp::warning("qemu-riscv 未安装,于是 `mcpp run` 没有 runner。"
-                  "装一次即可:  xlings install qemu-riscv -y");
+    mcpp::warning("qemu-riscv is not installed, so `mcpp run` has no runner. "
+                  "Install it once:  xlings install qemu-riscv -y");
 }
 ```
 
-没有那一行,构建会成功、不配置 runner,而 `mcpp run` 报告缺少 runner 并建议写一个
-`runner` 键 —— 这句话一般情况下对,在这里不对。见 [30 —— build.mcpp](30-build-mcpp.md)
-的 `mcpp:warning=`。
+没有这一行，构建会成功、不配置任何 runner，而 `mcpp run` 会报告缺少 runner，
+并建议写一个 `runner` 键——这句话一般情况下是对的，在这里不是。参见
+[30 —— build.mcpp](30-build-mcpp.md) 里的 `mcpp:warning=`。
 
 ### 板级支持包发出的指令
 
 | 指令 | 作用 |
 |---|---|
-| `mcpp:link-lib=<name>` | 向消费者的链接行加入 `-l<name>`。裸名即可:目标 sysroot 的库目录已在搜索路径上。 |
-| `mcpp:link-search=<dir>` | 加入 `-L<dir>`,用于包自身携带的库。 |
-| `mcpp:link-script=<abs path>` | 加入 `-T <path>`。相对路径按包根解析,因此属于目标 C 库的脚本必须按绝对路径指名。 |
-| `mcpp:runner=<token>` | 向运行模板追加一个 argv 记号。argv 是有序列表,模板由重复构建 —— 一个记号一行指令。 |
-| `mcpp:include-dir=<dir>` | 加入一个**仅对本包生效**的头文件目录。 |
+| `mcpp:link-lib=<name>` | 向消费者的链接行加入 `-l<name>`。裸名即可：目标 sysroot 的库目录已经在搜索路径上。 |
+| `mcpp:link-search=<dir>` | 加入 `-L<dir>`，用于包自己携带的库。 |
+| `mcpp:link-script=<abs path>` | 加入 `-T <path>`。相对路径按包根解析，因此属于目标 C 库的脚本必须用绝对路径指名。 |
+| `mcpp:runner=<token>` | 向运行模板追加一个 argv 记号。argv 是有序的，模板因此由重复构建——一个记号一行指令。 |
+| `mcpp:include-dir=<dir>` | 加入一个**仅对本包生效**的头文件搜索目录。 |
 
-两个「向引擎提问」的接口提供了板级支持包不应硬编码的路径:`mcpp::sysroot_dir()`
-返回目标 C 库的根,`mcpp::xpkg_dir(ns, name)` 返回一个已安装载荷的目录。
-`mcpp::target_arch()` 报告正在构建的架构。
+两个向引擎发问的接口，提供了板级支持包不应硬编码的那些路径：
+`mcpp::sysroot_dir()` 返回目标 C 库的根目录，`mcpp::xpkg_dir(ns, name)` 返回一个
+已安装载荷的目录。`mcpp::target_arch()` 报告正在构建的架构。
 
-### 指令作用域与到达消费者的内容
+### 指令作用域，以及到达消费者的内容
 
-作用域是刻意不对称的,而这份不对称正是指令层完全不需要 sysroot 概念的原因:
+作用域是刻意不对称的，这份不对称正是指令层完全不需要一个 sysroot 概念的原因：
 
 | 作用域 | 指令 | 到达消费者 |
 |---|---|---|
@@ -629,13 +639,13 @@ if (const char* dir = mcpp::xpkg_dir("xim", "qemu-riscv"); dir && *dir) {
 | `RunGlobal` | `runner` | 是 |
 | `PackagePrivate` | `include-dir`、`include-dir-after` | 否 |
 
-因此板级支持包以私有方式包含目标的 C 头文件,并把希望被看见的部分导出为一个 C++
-模块。消费者导入该模块,而不继承一条头文件搜索路径。
+因此板级支持包以私有方式包含目标的 C 头文件，把希望被看见的部分导出为一个
+C++ 模块。消费者导入那个模块，不会继承一条头文件搜索路径。
 
 ### 一份完整的 build.mcpp
 
-下面是 QEMU RISC-V `virt` 机器的板级支持包,去掉注释后的全文。这就是该板子构建
-逻辑的全部:
+下面是 QEMU RISC-V `virt` 机器的板级支持包，去掉注释后的全文。这就是该板子
+构建逻辑的全部：
 
 ```cpp
 import mcpp;
@@ -673,30 +683,30 @@ int main() {
 }
 ```
 
-该包的清单只声明模拟器,别无其他:
+该包的清单只声明模拟器，别无其他：
 
 ```toml
 [xlings.workspace]
 "xim:qemu-riscv" = "9.2.4-1"
 ```
 
-在这块板子上链接 `clang_rt.builtins` 不是可选项。picolibc 通过 ryu 格式化浮点值,
-而 ryu 需要 128 位移位,rv64 没有对应指令;缺少 builtins 时链接会在 `__ashlti3`
-与 `__lshrti3` 上失败。一个「64 位除法是否可用」的检查到不了这条判据,因为 rv64gc
-有硬件 `divu`。
+在这块板子上链接 `clang_rt.builtins` 不是可选项。picolibc 经 ryu 格式化浮点值，
+而 ryu 要做 128 位移位，rv64 没有对应的指令；缺了 builtins，链接会在
+`__ashlti3` 和 `__lshrti3` 上失败。一个「64 位除法是否可用」的检查够不到这个
+情形，因为 rv64gc 本身有硬件 `divu`。
 
-包一侧无法探测出当前 mcpp 是否比它所面向的版本更旧:
-`if constexpr (requires { mcpp::runner("x"); })` 作用在未知的限定名上是硬错误而不是
-`false`,语言在此不提供特性探测。引擎为此作了补偿:当 `build.mcpp` 编译失败且错误
-指出某个名字不是 `mcpp` 的成员时,追加一条升级提示。
+包这一侧无法探测出当前的 mcpp 是否比它所面向的版本更旧：
+`if constexpr (requires { mcpp::runner("x"); })` 作用在一个未知限定名上是硬错误，
+不是 `false`，语言在这里不提供特性探测。引擎为此做了补偿：当 `build.mcpp`
+编译失败、且错误指出某个名字不是 `mcpp` 的成员时，追加一条升级提示。
 
 ## 验证范围
 
-本文的命令与输出于 2026-08-20 实测,环境如下:
+本章的命令与输出于 2026-08-20 实测，环境如下：
 
 | 组件 | 版本 |
 |---|---|
-| mcpp | 2026.8.20.1,由本仓库构建 |
+| mcpp | 2026.8.20.1，由本仓库构建 |
 | 宿主 | `x86_64-linux-gnu` |
 | 工具链 | `xim:llvm` 22.1.8 |
 | 目标 C 库 | `xim:picolibc-riscv` 1.8.12 |
@@ -704,22 +714,22 @@ int main() {
 | 板级支持包 | `mcpplibs:riscv-virt-rt` 0.3.0 |
 | 标准库子集 | `mcpplibs:std-freestanding` 0.2.0 |
 
-体积随 mcpp 版本变化:同一个工程在 2026.8.19.4 下实测为 `text 8844`,在 2026.8.20.1
-下为 `text 8572`。因此上文的数字表示量级,而不是固定值。
+体积随 mcpp 版本变化：同一个工程在 2026.8.19.4 下实测为 `text 8844`，在
+2026.8.20.1 下为 `text 8572`。因此上面的数字表示的是量级，不是固定值。
 
-裸机链路只在 Linux 上有持续验证。引擎侧 CI 有一个 `baremetal` job,覆盖四个端到端
-脚本;两个生态包在各自仓库中以 QEMU 真跑 RISC-V 64 与 32 —— 全部在 `ubuntu-24.04`
-上。macOS 与 Windows 宿主预期可用,依据是载荷为交叉编译器且 `xim:qemu-riscv` 发布了
-五个宿主目标的资产,但该预期**没有**测试覆盖。
+裸机链路只在 Linux 上有持续验证。引擎侧 CI 有一个 `baremetal` job，覆盖四个
+端到端脚本；两个生态包各自在自己的仓库里，用 QEMU 真跑 RISC-V 64 位和 32 位——
+全部跑在 `ubuntu-24.04` 上。macOS 与 Windows 宿主预期可用，依据是这份载荷是
+交叉编译器，且 `xim:qemu-riscv` 为五个宿主目标发布了资产，但这份预期**没有**
+测试覆盖。
 
 ## 当前边界
 
 | 边界 | 观察到的行为 |
 |---|---|
-| `std::format`、内建标量类型上的 `std::sort`、以及完整的 `std::string` | 在**链接**期失败并点名未定义符号。libc++ 把这些实体放在编译版库中 —— 标量 `__sort` 的实例化是 `extern template`,没有可用于关闭它们的宏 —— 因此需要为目标编出的 `libc++.a`。该载荷尚未发布。 |
-| 异常与 RTTI | 在整张图上关闭,**除非有包提供 `hosted-standard-library`** —— `mcpplibs/openkal-llvm-runtime` 就通过携带为该目标配置过的 `libc++`、`libc++abi` 与 `libunwind` 做到了这一点。没有这样的包时,`try`/`catch` 在编译期仍不可用。 |
-| 板子覆盖面 | 只有一个板级家族。`riscv32-none-elf` 证明的是 ISA 表为数据,而不是已移植第二台机器。ARM Cortex-M 尚未尝试。 |
-| 替换 C 库 | 自 2026.8.20.2 起可经 `[target.<triple>].sysroot` 表达,而**仅空值一侧经过验证**(零 libc 档)。指向另一份 C 库同样被接受并经同一通道安装,但生态中没有第二份裸机 C 库,该路径未经测试。 |
-| `win32-arm64` 上的 `qemu-riscv` | 上游包未为该宿主发布资产,因此在其上安装会失败。该失败是正确的而非静默的,但该宿主无法运行裸机镜像。 |
-| 生态侧 CI 广度 | 两个生态包各自的 CI 只跑 `ubuntu-24.04`。mcpp-index 的 `tests/examples/` workspace 成员在三个平台上无条件运行且没有能力门,因此需要模拟器与目标 sysroot 的包无法加入其中。这是一个已知的覆盖缺口。 |
-
+| `std::format`、内建标量类型上的 `std::sort`，以及完整的 `std::string` | 在**链接**期失败，点名未定义符号。libc++ 把这些实体放在编译版库里——标量的 `__sort` 实例化是 `extern template`，没有可以关闭它们的宏——因此需要一份为目标编出的 `libc++.a`。这样的载荷尚未发布。 |
+| 异常与 RTTI | 在整张图上关闭，**除非有包提供 `hosted-standard-library`**——`mcpplibs/openkal-llvm-runtime` 携带了为该目标配置过的 `libc++`、`libc++abi` 与 `libunwind`，就是这样做到的。没有这样的包时，`try`/`catch` 在编译期仍不可用。 |
+| 板子覆盖面 | 只有一个板级家族。`riscv32-none-elf` 证明的是 ISA 表为数据，不是「第二台机器已经移植」。ARM Cortex-M 尚未尝试。 |
+| 替换 C 库 | 自 2026.8.20.2 起可经 `[target.<triple>].sysroot` 表达，而**只有空值这一侧**经过验证（零 libc 档）。指向另一份 C 库同样被接受，并经同一通道安装，但生态里没有第二份裸机 C 库，这条路径因此未经测试。 |
+| `win32-arm64` 上的 `qemu-riscv` | 上游包没有为该宿主发布资产，因此在其上安装会失败。这个失败是正确的，不是静默的，但该宿主无法运行裸机镜像。 |
+| 生态侧 CI 广度 | 两个生态包各自的 CI 只跑 `ubuntu-24.04`。mcpp-index 的 `tests/examples/` workspace 成员在三个平台上无条件运行，没有能力门，因此需要模拟器和目标 sysroot 的包无法加入其中。这是一个已知的覆盖缺口。 |

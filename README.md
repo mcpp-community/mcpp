@@ -13,19 +13,11 @@
 |:---:|
 | [Package index mcpp-index](https://mcpplibs.github.io/mcpp-index/) · [Module libraries mcpplibs](https://github.com/mcpplibs) · [Community Forum](https://forum.d2learn.org/category/20) · [Issues](https://github.com/mcpp-community/mcpp/issues) · [Releases](https://github.com/mcpp-community/mcpp/releases) |
 | [![ci-linux](https://github.com/mcpp-community/mcpp/actions/workflows/ci-linux.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-linux.yml) [![ci-macos](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml) [![ci-windows](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml) |
+| Plugins · [mcpp-language-server (mcppls)](https://github.com/Sunrisepeak/mcpp-language-server) — a C++20/23 modules language server for VS Code, Zed, CLion, Neovim, AI agents (MCP) and CI |
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/6c85896e-9a37-4f62-acfb-d37a4eae2363" alt="mcpp demo" width="720">
 </p>
-
-> **Note (2026.9.20.1):** the `[c-abi]` verification probe now selects the
-> target it is verifying. On a freestanding target it selected none and
-> answered for the build host, which on a Linux host passed for the wrong
-> reason and on a Windows host failed for one. The `hostStripMacros`
-> compensation 2026.9.18.3 added is removed with it. This release also adds
-> `[kernel-abi] provides-interfaces` / `requires-interfaces`, answered at
-> dependency resolution, and `[c-abi-absent]`, which states what a C library
-> does not supply and in what shape. See CHANGELOG and docs/22.
 
 ## Highlights
 
@@ -174,7 +166,23 @@ remain manually maintained and may intentionally lag.
 </details>
 
 <details>
-<summary><b>Option 4</b> — let an AI assistant install it for you</summary>
+<summary><b>Option 4</b> — pip (PyPI)</summary>
+
+```bash
+pip install mcpp-bin
+```
+
+Installs the `mcpp` command into the active Python environment; `pipx install
+mcpp-bin` gives it an environment of its own. The wheels carry the same
+prebuilt release binary for Linux x86_64 / aarch64, macOS 14+ on Apple silicon
+and Windows x86_64. Per-user data still lives in `~/.mcpp/`, outside the Python
+environment. On PyPI the name `mcpp` belongs to an unrelated project, hence
+`mcpp-bin` (see [`scripts/pypi/`](scripts/pypi/)).
+
+</details>
+
+<details>
+<summary><b>Option 5</b> — let an AI assistant install it for you</summary>
 
 Copy the following prompt to your AI coding assistant (Claude Code / Cursor / Copilot, etc.):
 
