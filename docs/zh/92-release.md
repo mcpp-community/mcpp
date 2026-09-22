@@ -84,7 +84,7 @@ Linux aarch64、macOS ARM64、Windows x86_64 四项是硬性要求。无版本�
 workflow 随后会再次下载公开 release、重新生成 manifest，并要求逐字节
 一致。重跑 workflow 时，已有 manifest 只在字节完全相同时才会被接受；同一
 tag 下绝不以不同内容覆盖。下游发布消费者（尤其 `mcpp-bin` AUR
-reconciler）必须消费该 manifest，不能从会变化的工作区或部分 release
+reconciler 与 `scripts/pypi/` 中的 `mcpp-bin` PyPI wheel 构建脚本）必须消费该 manifest，不能从会变化的工作区或部分 release
 资产猜测发布是否完整。
 
 两步**没有**自动化：

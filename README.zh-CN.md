@@ -151,7 +151,18 @@ yay -S mcpp-m        # 或源码构建（用 mcpp-bin 自举）
 </details>
 
 <details>
-<summary><b>方式 4</b>：由 AI 助手安装</summary>
+<summary><b>方式 4</b>：pip（PyPI）</summary>
+
+```bash
+pip install mcpp-bin
+```
+
+`mcpp` 命令安装到当前的 Python 环境中；使用 `pipx install mcpp-bin` 则为它单独创建一个环境。wheel 中是同一份预编译 release 二进制，支持 Linux x86_64 / aarch64、Apple 芯片上的 macOS 14+ 与 Windows x86_64。每个用户的数据仍在各自的 `~/.mcpp/` 中，不在 Python 环境内。PyPI 上 `mcpp` 这个名字属于一个无关的项目，因此包名为 `mcpp-bin`（见 [`scripts/pypi/`](scripts/pypi/)）。
+
+</details>
+
+<details>
+<summary><b>方式 5</b>：由 AI 助手安装</summary>
 
 将以下提示词发给 AI 编码助手（Claude Code、Cursor、Copilot 等）：
 

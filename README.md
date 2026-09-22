@@ -166,7 +166,23 @@ remain manually maintained and may intentionally lag.
 </details>
 
 <details>
-<summary><b>Option 4</b> — let an AI assistant install it for you</summary>
+<summary><b>Option 4</b> — pip (PyPI)</summary>
+
+```bash
+pip install mcpp-bin
+```
+
+Installs the `mcpp` command into the active Python environment; `pipx install
+mcpp-bin` gives it an environment of its own. The wheels carry the same
+prebuilt release binary for Linux x86_64 / aarch64, macOS 14+ on Apple silicon
+and Windows x86_64. Per-user data still lives in `~/.mcpp/`, outside the Python
+environment. On PyPI the name `mcpp` belongs to an unrelated project, hence
+`mcpp-bin` (see [`scripts/pypi/`](scripts/pypi/)).
+
+</details>
+
+<details>
+<summary><b>Option 5</b> — let an AI assistant install it for you</summary>
 
 Copy the following prompt to your AI coding assistant (Claude Code / Cursor / Copilot, etc.):
 
