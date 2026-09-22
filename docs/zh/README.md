@@ -3,20 +3,20 @@
 [English](../README.md) | **简体中文**
 
 这棵树是 **mcpp 已实现功能的使用手册**。每一章陈述一个能力做什么、怎么写、
-当前边界在哪里。设计理由、被否掉的替代方案、以及尚未发布的规划,**不写在这里**
-—— 它们属于设计记录,而设计记录不是用户文档。
+当前边界在哪里。设计理由、被否掉的替代方案，以及尚未发布的规划，刻意不写
+在这里——它们属于设计记录，而设计记录不是用户文档。
 
 ## 文档的归属
 
 | 树 | 读者 | 内容 |
 |---|---|---|
 | `docs/**` | 手上有任务的人 | mcpp 已实现的东西怎么用 |
-| [`docs/specs/**`](../specs/README.md) | 对着机制做实现的人:索引作者、下游工具、贡献者 | 语义、约束与匹配规则,每条标注实现状态 |
-| `.agents/docs/**` | 做过某次改动的人,以及以后问「为什么是这样」的人 | 推理、实测,以及什么被推翻了 |
+| [`docs/specs/**`](../specs/README.md) | 对着机制做实现的人：索引作者、下游工具、贡献者 | 语义、约束与匹配规则，每条标注实现状态 |
+| `.agents/docs/**` | 做过某次改动的人，以及以后问「为什么是这样」的人 | 推理、实测，以及什么被推翻了 |
 | `.agents/skills/**` | 照流程执行的贡献者或 agent | 带判据的步骤 |
 
-章节引用规范以取得精确语义,但**不引用设计记录**:记录描述的是一个时刻,不带
-稳定性承诺,因此读者需要的东西一律写在本树或规范里。
+章节引用规范以取得精确语义，但不引用设计记录：设计记录描述的是一个时刻，
+不带稳定性承诺，因此读者需要的东西一律写在本树或规范里。
 
 ## 从这里开始
 
@@ -26,19 +26,19 @@
 | 写一个供他人 import 的库 | [11](11-publishing-a-library.md)、[06](06-features-and-capabilities.md)、[04](04-mcpp-toml.md) §2.4 | [`04-workspace`](../../examples/04-workspace/)、[`11-features`](../../examples/11-features/) |
 | 发布它 | [10](10-pack-and-release.md)、[11](11-publishing-a-library.md)、[12](12-binary-distribution.md) | [`03-pack-static`](../../examples/03-pack-static/)、[`05-lib-distribution`](../../examples/05-lib-distribution/) |
 | 为另一台机器构建 | [21](21-the-target-triple.md)、[24](24-openkal-cross.md)、[40](40-baremetal.md) | [`06-openkal-cross`](../../examples/06-openkal-cross/)、`mcpp new … --template riscv-virt-rt` |
-| 使用 GPU 或加速器 | [42](42-heterogeneous-builds.md)、[41](41-devices.md) | [`09-heterogeneous`](../../examples/09-heterogeneous/),从 [`boundary/`](../../examples/09-heterogeneous/boundary/) 开始 |
+| 使用 GPU 或加速器 | [42](42-heterogeneous-builds.md)、[41](41-devices.md) | [`09-heterogeneous`](../../examples/09-heterogeneous/)，从 [`boundary/`](../../examples/09-heterogeneous/boundary/) 开始 |
 | 增加一条规则、一种语言或一个生成器 | [31](31-authoring-a-rule-package.md)、[30](30-build-mcpp.md) | [`08-build-rules`](../../examples/08-build-rules/)、[`12-a-new-device-language`](../../examples/12-a-new-device-language/) |
-| 向索引添加一个包 | [11](11-publishing-a-library.md)、[SPEC-001](../specs/package-identity.md) | [09](09-commands-by-scenario.md) —— 发布相关场景 |
+| 向索引添加一个包 | [11](11-publishing-a-library.md)、[SPEC-001](../specs/package-identity.md) | [09](09-commands-by-scenario.md)——发布相关场景 |
 | 为别人打包一个工具、一个驱动或一块板子 | [32](32-authoring-a-payload.md)、[33](33-authoring-an-adapter.md)、[34](34-authoring-a-bsp.md) | `xim-pkgindex` 与 `mcpp-index` 里的描述符 |
 | 修改 mcpp 本身 | [90](90-build-from-source.md)、[92](92-release.md)、[51](51-supported-versions.md) | — |
 
-课程也可以以**项目模板**的形式到达:模板由包提供,`mcpp new --template` 实例化
-它。今天有文档的两个是 `riscv-virt-rt`(裸机)与 `ocornut.imgui`(图形应用),
-用到它的章节会点名。
+课程也可以以**项目模板**的形式到达：模板由包提供，`mcpp new --template`
+实例化它。今天有文档的两个是 `riscv-virt-rt`（裸机）与 `ocornut.imgui`
+（图形应用），用到它的章节会点名。
 
 ## 章节
 
-首位数字就是部分,所以编号本身说明一章属于哪里:
+首位数字就是部分，所以编号本身说明一章属于哪里：
 
 | | |
 |---|---|
@@ -50,20 +50,20 @@
 | `5x` | 程序可以解析的契约 |
 | `9x` | mcpp 自身 |
 
-同一部分内部的排列是阅读顺序,不是字母序。
+同一部分内部的排列是阅读顺序，不是字母序。
 
 ### 0x —— 基础
 
-- [00 —— mcpp 是什么](00-what-mcpp-is.md) —— 它是什么、它做什么,以及一段真的跑过的会话
-- [01 —— 快速开始](01-getting-started.md) —— 安装、创建、构建、运行
-- [02 —— 场景](02-scenarios.md) —— mcpp 被用来做什么,以及每一类工作会用到它的哪些功能
-- [03 —— 示例项目](03-examples.md) —— 哪个示例教什么
-- [04 —— mcpp.toml 工程文件指南](04-mcpp-toml.md) —— manifest 可以说什么
-- [05 —— 依赖与解析](05-dependencies.md) —— 依赖从哪里来,以及哪个版本胜出
-- [06 —— Feature 与能力](06-features-and-capabilities.md) —— 让包的一部分成为可选
-- [07 —— 工作空间](07-workspace.md) —— 多个包,一次构建
-- [08 —— 测试](08-testing.md) —— 包括在本机跑不了的那些
-- [09 —— 按场景选命令](09-commands-by-scenario.md) —— 认识名词之后的查阅入口
+- [00 —— mcpp 是什么](00-what-mcpp-is.md)——它是什么、它做什么，以及一段真的跑过的会话
+- [01 —— 快速开始](01-getting-started.md)——安装、创建、构建、运行
+- [02 —— 场景](02-scenarios.md)——mcpp 被用来做什么，以及每一类工作会用到它的哪些功能
+- [03 —— 示例项目](03-examples.md)——哪个示例教什么
+- [04 —— mcpp.toml 工程文件指南](04-mcpp-toml.md)——manifest 可以说什么
+- [05 —— 依赖与解析](05-dependencies.md)——依赖从哪里来，以及哪个版本胜出
+- [06 —— Feature 与能力](06-features-and-capabilities.md)——让包的一部分成为可选
+- [07 —— 工作空间](07-workspace.md)——多个包，一次构建
+- [08 —— 测试](08-testing.md)——包括在本机跑不了的那些
+- [09 —— 按场景选命令](09-commands-by-scenario.md)——认识名词之后的查阅入口
 
 ### 1x —— 发布
 
@@ -81,16 +81,16 @@
 
 ### 3x —— 扩展 mcpp 与它的生态
 
-- [30 —— 构建程序:`build.mcpp`](30-build-mcpp.md) —— 工程需要一步 mcpp 没有规则的工作
-- [31 —— 编写规则包](31-authoring-a-rule-package.md) —— 把那一步打包给别的工程用
-- [32 —— 编写一个载荷](32-authoring-a-payload.md) —— 由 mcpp 安装的工具或预编译库
-- [33 —— 编写运行时适配包](33-authoring-an-adapter.md) —— 够到宿主提供的库
-- [34 —— 编写板级支持包](34-authoring-a-bsp.md) —— 一块板子,以及抵达它的方式
+- [30 —— 构建程序：`build.mcpp`](30-build-mcpp.md)——工程需要一步 mcpp 没有规则的工作
+- [31 —— 编写规则包](31-authoring-a-rule-package.md)——把那一步打包给别的工程用
+- [32 —— 编写一个载荷](32-authoring-a-payload.md)——由 mcpp 安装的工具或预编译库
+- [33 —— 编写运行时适配包](33-authoring-an-adapter.md)——够到宿主提供的库
+- [34 —— 编写板级支持包](34-authoring-a-bsp.md)——一块板子，以及抵达它的方式
 
 ### 4x —— 设备与加速器
 
 - [40 —— 裸机与 freestanding 目标](40-baremetal.md)
-- [41 —— 抵达一台设备](41-devices.md)
+- [41 —— 在设备上运行](41-devices.md)
 - [42 —— 异构硬件构建](42-heterogeneous-builds.md)
 
 ### 5x —— 面向程序的契约
@@ -106,8 +106,8 @@
 
 ## 反查
 
-上面的章节表是**阅读顺序**。这里是另一种索引:从读者眼前的一个记号,查到拥有它的
-那一章。
+上面的章节表是**阅读顺序**。这里是另一种索引：从读者眼前的一个记号，查到
+拥有它的那一章。
 
 **manifest 的表与键**
 
@@ -123,7 +123,7 @@
 | `runner`、`[target.<t>.runners]` | [41](41-devices.md) | `rule_module` | [31](31-authoring-a-rule-package.md) |
 | `min_api_level` | [04](04-mcpp-toml.md) | `macos_deployment_target` | [04](04-mcpp-toml.md) |
 | `[target.<sel>.targets.<n>] kind` | [22](22-target-side.md) | `config.toml` 中的 `[index.repos.<name>]` | [32](32-authoring-a-payload.md) |
-| `[test] discover` | [04](04-mcpp-toml.md), [08](08-testing.md) | `MCPP_RUNTIME_FILES` | [41](41-devices.md) |
+| `[test] discover` | [04](04-mcpp-toml.md)、[08](08-testing.md) | `MCPP_RUNTIME_FILES` | [41](41-devices.md) |
 
 **命令**
 
@@ -138,7 +138,7 @@
 
 | | 章节 | | 章节 |
 |---|---|---|---|
-| mcpp 是什么,以及那条保证 | [00](00-what-mcpp-is.md) | `import std`、模块接口、BMI | [20](20-toolchains.md)、[30](30-build-mcpp.md) |
+| mcpp 是什么，以及那条保证 | [00](00-what-mcpp-is.md) | `import std`、模块接口、BMI | [20](20-toolchains.md)、[30](30-build-mcpp.md) |
 | `mcpp::action`、构建程序 | [30](30-build-mcpp.md) | 规则包 | [31](31-authoring-a-rule-package.md) |
 | 目标三元组、支持矩阵 | [21](21-the-target-triple.md) | runner、具名 runner | [41](41-devices.md) |
 | 岛、接缝、`accel`、`MCPP_EXPORT_C` | [42](42-heterogeneous-builds.md) | 描述符、索引 | [11](11-publishing-a-library.md) |
@@ -147,12 +147,12 @@
 
 ## 规范文档
 
-规范性文档 —— 语义、约束与匹配规则,每条规则标注其实现状态。
-面向索引作者、贡献者与下游工具。
+规范性文档——语义、约束与匹配规则，每条规则标注其实现状态。面向索引作者、
+贡献者与下游工具。
 
-- [specs/](../specs/README.md) —— 全部规范的索引
+- [specs/](../specs/README.md)——全部规范的索引
   - [SPEC-001 —— 包身份、`[dependencies]` 选择器与匹配](../specs/package-identity.md)
-  - [SPEC-002 —— 目标侧模型:保留命名空间、五层、三条规则](../specs/target-side.md)
+  - [SPEC-002 —— 目标侧模型：保留命名空间、五层、三条规则](../specs/target-side.md)
   - [SPEC-003 —— 退出码契约](../specs/exit-codes.md)
   - [SPEC-004 —— `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约](../specs/manifest-semantics.md)
   - [SPEC-005 —— `mcpp emit build-database` 输出的构建数据库](../specs/build-database.md)

@@ -1,19 +1,22 @@
 # 04 —— mcpp.toml 工程文件指南
 
-**读者:**正在写或正在读一份 manifest 的作者。
+**读者：**编写或阅读一份 manifest 的作者。
 
-**本章回答的那一个问题:**一份 `mcpp.toml` 可以说什么,逐字段地。
+**本章回答的那一个问题：**一份 `mcpp.toml` 可以逐字段写下什么。
 
-**不在这里:**四个主题的表虽然写在这个文件里,但本章不拥有它们 —— 依赖是
-[05](05-dependencies.md),feature 是 [06](06-features-and-capabilities.md),
-以目标为条件是 [22](22-target-side.md),工程的环境是
-[23](23-the-project-environment.md)。每一处都在它的表本该出现的位置点名。
+**不在这里：**本文件里的这些表分属四个主题，但都不归本章拥有——依赖属于
+[05](05-dependencies.md)，feature 属于
+[06](06-features-and-capabilities.md)，对目标的条件化属于
+[22](22-target-side.md)，工程的环境属于
+[23](23-the-project-environment.md)。每个主题都在它对应的表所在处点名。
 
-`mcpp.toml` 是 mcpp 构建工具的项目配置文件,类似 Cargo 的 `Cargo.toml` 或 Node 的 `package.json`。放在项目根目录下,`mcpp build` 会自动发现并读取它。
+`mcpp.toml` 是 mcpp 构建工具的工程配置文件，类似于 Cargo 的 `Cargo.toml` 或
+Node 的 `package.json`。把它放在工程根目录；`mcpp build` 会自动发现并读取它。
 
 ## 1. 最小化示例
 
-mcpp 的设计原则是 **约定优于配置** —— 大多数字段都有合理默认值,最简单的 `mcpp.toml` 只需几行:
+mcpp 按**约定优于配置**设计——大多数字段都有合理的默认值，因此最简单的
+`mcpp.toml` 只需要几行：
 
 ### 1.1 可执行程序（最简）
 
@@ -23,11 +26,11 @@ name    = "hello"
 version = "0.1.0"
 ```
 
-mcpp 自动推断:
-- 源文件: `src/**/*.{cppm,cpp,cc,c,S,s,asm}`
-- 入口: `src/main.cpp` → 生成 `hello` 二进制
-- 标准: C++23
-- 模块: 扫描 `export module ...` 声明自动建立依赖图
+mcpp 自动推断：
+- 源文件：`src/**/*.{cppm,cpp,cc,c,S,s,asm}`
+- 入口点：`src/main.cpp` → 产出 `hello` 二进制
+- 标准：C++23
+- 模块：扫描 `export module ...` 声明并自动构建依赖图
 
 ### 1.2 库项目（最简）
 
@@ -40,55 +43,72 @@ version = "0.1.0"
 kind = "lib"
 ```
 
-lib-root 约定:主模块接口默认在 `src/mylib.cppm`(包名的最后一段)。
+库根约定：主模块接口默认是 `src/mylib.cppm`（包名的最后一段）。
 
 ## 2. 完整字段参考
 
-### 2.1 `[package]` — 包元数据
+### 2.1 `[package]` —— 包元数据
 
 ```toml
 [package]
-name        = "myapp"              # 包名(必填)
-version     = "0.1.0"              # 语义化版本(必填)
-standard    = "c++23"              # C++ 标准(默认 c++23; 可设 c++20 / c++26)
-description = "My awesome app"     # 简介(可选)
-license     = "MIT"                # 许可证(可选)
-authors     = ["Alice", "Bob"]     # 作者列表(可选)
-repo        = "https://github.com/user/myapp"  # 仓库地址(可选)
+name        = "myapp"              # Package name (required)
+version     = "0.1.0"              # Semantic version (required)
+standard    = "c++23"              # C++ standard (default c++23; can be set to c++20 / c++26)
+description = "My awesome app"     # Description (optional)
+license     = "MIT"                # License (optional)
+authors     = ["Alice", "Bob"]     # Author list (optional)
+repo        = "https://github.com/user/myapp"  # Repository URL (optional)
 ```
 
-`standard` 是 C++ 语言标准的一等配置。推荐值:
+`standard` 是 C++ 语言标准的一等设置。推荐取值：
 
-- `c++23`：默认值，适合当前模块化默认模板。
-- `c++20`：mcpp 接受的最低档位——命名模块本身是 C++20 特性，再往下这套构建模型就不存在了。当外部约束(公司内规、只到 C++20 的第三方 API)必须压低档位时使用。**`import std;` 在这一档依然可用**：它虽然是 C++23 的*库*特性，但 GCC(≥ 15)、Clang + libc++(≥ 17)与 MSVC STL(VS 2022 17.8 起)都在 C++20 模式下提供 `std` 模块。代价是 C++23 库设施(`std::print`、`std::expected` 等)不可用——包括 `mcpp new` 生成的模板代码。
-- `c++26`：需要 C++26 语言特性时使用。
-- `c++2a` / `c++2c`：兼容别名，解析后分别归一为 `c++20` / `c++26`。
-- `gnu++20` / `gnu++23` / `gnu++26`：需要 GNU dialect 时使用，会进入 fingerprint 和 std BMI cache key。
-- `c++latest`：跟随当前 mcpp 支持的最新标准，适合本地试验，不推荐要求可复现的发布包使用。
-- `c++fly`：`c++latest` **再加上该工具链能开启的全部实验性标准特性**(语言 + 标准库)。GCC ≥ 16 上会打开 C++26 反射(`-freflection`)与契约；Clang/libc++ 上追加 `-fexperimental-library`；不支持的门会跳过并打印 summary。刻意是工具链相关的——最前沿的试验场模式，永远不要用于发布包。
+- `c++23`：默认值，与当前以模块为基础的默认模板相配。
+- `c++20`：mcpp 接受的最低档位——具名模块是 C++20 的特性，所以在这套构建
+  模型里，低于它就没有意义可言。当外部约束（较旧的内部规定、只支持到
+  C++20 的第三方 API）迫使档位下降时使用它。`import std;` 在这一档同样
+  可用：它本是 C++23 的**库**特性，但 GCC（≥ 15）、Clang + libc++（≥ 17）
+  与 MSVC STL（VS 2022 17.8 起）在 C++20 模式下都同样提供 `std` 模块。
+  注意 C++23 的库设施（`std::print`、`std::expected` 等）在这一档不可用，
+  `mcpp new` 生成的代码也不例外。
+- `c++26`：用于 C++26 的语言特性。
+- `c++2a` / `c++2c`：兼容别名，解析后归一化为 `c++20` / `c++26`。
+- `gnu++20` / `gnu++23` / `gnu++26`：GNU 方言；这个选择会进入指纹与 std
+  BMI 的缓存键。
+- `c++latest`：解析为所用工具链支持的最新标准档位。适合本地实验，但不
+  推荐用在要求可复现的发布包上。
+- `c++fly`：`c++latest` **加上所用工具链能启用的每一项实验性标准特性**
+  （语言特性加标准库）。在 GCC ≥ 16 上会打开 C++26 反射（`-freflection`）
+  与 contracts；在 Clang/libc++ 上会加上 `-fexperimental-library`；工具链
+  不支持的开关会被跳过并打印一份摘要。它刻意依赖具体工具链——这是最
+  前沿的试验场模式，绝不用于已发布的包。
 
-两条需要知道的性质：
+两条值得了解的性质：
 
-- **标准是模块图全局的。** 根包的 `standard` 作用于本次构建的每一个 TU，依赖也不例外——
-  依赖自己 manifest 里的 `standard` 在它作为依赖被构建时不生效。这不是简化：BMI 跨档位
-  不兼容(GCC 直接报 `language dialect differs`)，同一张图物理上不可能存在两个档位。
-- **档位之间从不共用缓存。** 标准同时进入 fingerprint、`import std` 的 BMI 身份和依赖构建
-  缓存键，所以在 `c++20` 与 `c++23` 之间切换只会各自拿到独立的产物目录和独立的 std BMI，
-  不会出现错误命中。
+- **标准是模块图全局的。** 根包的 `standard` 适用于构建中的每一个翻译
+  单元，包括依赖——依赖自身的 `standard`，在它作为依赖被构建时不会被
+  使用。这不是一种简化：BMI 在不同档位之间不兼容（GCC 会报
+  `language dialect differs` 拒绝它），所以一张图在物理上无法同时容纳
+  两个档位。
+- **档位之间从不共享缓存。** 标准是指纹、`import std` BMI 身份与依赖
+  构建缓存键的一部分，所以在 `c++20` 与 `c++23` 之间切换，会让每个档位
+  拿到自己独立的 target 目录与自己独立的 std BMI，而不是一次损坏的命中。
 
-如果源码在某个档位上 `import std;` 而解析出的工具链在该档位不提供 `std` 模块，
-mcpp 会在编译前失败，并同时报出工具链与工程档位。
+若源码在所用工具链未提供 `std` 模块的档位上写了 `import std;`，mcpp 会
+在编译之前失败，并同时点出工具链与工程档位两者。
 
-值的两种拼法都接受:`standard = "c++26"` 与 `standard = 26`。
+字段值的两种写法都被接受：`standard = "c++26"` 与 `standard = 26`。
 
-当**依赖声明的档位高于当前图**时,mcpp 会在编译前说出来,而不是让它在那个依赖的源码里
-某处失败。见 [workspace §4.2](07-workspace.md)。
+当**某个依赖声明的档位高于全图的档位**时，mcpp 会在编译之前说明这一点，
+而不是任由构建在那个依赖的源码内部某处失败。见
+[workspace §4.2](07-workspace.md)。
 
-`[package.metadata.<tool>]`(mcpp 2026.9.16.1+)是引擎保留但不解释的表。它是包对自身的
-陈述,供读取它的工具使用,例如收集每个库贡献内容的框架;它通过 `mcpp::graph_file()` 到达根包
-的构建程序([30 —— build.mcpp](30-build-mcpp.md))。其中的路径由读取方相对于该包的清单目录
-解析。`[package]` 中 mcpp 不读取的其他键会被报告,与 `[build]` 一致:给出警告,在 `--strict`
-下报错(2026.9.16.1+)。
+`[package.metadata.<tool>]`（mcpp 2026.9.16.1+）是一张引擎保留、但不解读
+的表。它是这个包对自身的陈述，供读取它的工具使用——例如某个框架收集
+每个库贡献了什么——并通过 `mcpp::graph_file()` 到达根包的构建程序
+（[30 —— build.mcpp](30-build-mcpp.md)）。表中的路径由那个读取者相对包的
+manifest 目录解析。`[package]` 中 mcpp 不读取的任何其它键都会被报告，与
+`[build]` 中的处理一致：一条警告，在 `--strict` 下则是错误
+（2026.9.16.1+）。
 
 ```toml
 [package.metadata.demo]
@@ -97,22 +117,23 @@ resources = "res"
 
 #### 方言标志与 `import std` BMI
 
-有些标志会改变标准库头文件**声明出什么**,因此预编译的 `import std` BMI 也必须带着它们一起
-构建。这就是 `[build] dialect_cxxflags` 的用途:它会被施加到 std BMI 预编译、模块扫描
-**以及**图中每一个 TU(依赖也包括在内)。
+有些标志会改变标准库头文件的声明内容，所以预编译的 `import std` BMI 也
+必须用它们一起构建。这正是 `[build] dialect_cxxflags` 的用途：它会应用
+于 std BMI 的预构建、模块扫描，**以及**图中的每一个翻译单元，包括依赖。
 
 ```toml
 [build]
 dialect_cxxflags = ["-fno-exceptions"]
 ```
 
-其中少数几个标志,mcpp 在 `cxxflags` 里发现时会自动提升进这条通道
-(`-freflection`、`-fchar8_t`、`-D_GLIBCXX_USE_CXX11_ABI=…`)—— 混用这些标志的图本来就是
-病态的,任何依赖都不可能对它们持有另一种自洽的意见。
+当 mcpp 在 `cxxflags` 中发现某些标志时（`-freflection`、`-fchar8_t`、
+`-D_GLIBCXX_USE_CXX11_ABI=…`），会自动把它们提升进那个通道——一张混用
+了这些标志的图本来就是病态的，所以没有哪个依赖能对它们持不同意见。
 
-`-fno-exceptions` 与 `-fno-rtti` **不会**被自动提升,因为依赖可以合法地不同意:它们移除的是
-依赖可能正在使用的语言设施,而消费者无权替它做这个决定。留在 `cxxflags` 里,它们会到达每一个
-TU 却到不了预编译,于是构建不可能成功 —— mcpp 在编译前就拒绝,并指出该用哪个键:
+`-fno-exceptions` 与 `-fno-rtti` **不会**被提升，因为依赖可以合理地持
+不同意见：它们移除了依赖可能要用到的语言设施，而消费者无权替依赖做这个
+选择。若留在 `cxxflags` 里，它们会到达每一个 TU 却到不了预构建，导致
+构建无法成功——mcpp 会在编译之前拒绝，并点名这个键：
 
 ```
 error: `-fno-exceptions` changes the language dialect, but the `import std` BMI is
@@ -124,43 +145,46 @@ error: `-fno-exceptions` changes the language dialect, but the `import std` BMI 
          dialect_cxxflags = ["-fno-exceptions"]
 ```
 
-这项检查读的是**生效后的**标志集合,所以同一个标志写在 `[profile.<name>] cxxflags` 或
-`[target.…]` 块里同样会被抓到。而当图中根本没有 `import std` 时它不触发 —— 那里它就是一个
-正常工作的按 TU 选项。
+这项检查读取的是**生效**标志，所以同一个标志写在
+`[profile.<name>] cxxflags` 或某个 `[target.…]` 块里也会触发。当图里
+没有任何单元 import `std` 时不会触发，此时该标志只是一个正常生效的按
+单元选项。
 
-### 2.2 `[targets.<name>]` — 构建目标
+### 2.2 `[targets.<name>]` —— 构建目标
 
 ```toml
-# 可执行程序(默认,有 src/main.cpp 时自动推断)
+# Executable (default; inferred automatically when src/main.cpp exists)
 [targets.myapp]
 kind = "bin"
-main = "src/main.cpp"       # 可选,默认 src/main.cpp
+main = "src/main.cpp"       # Optional, defaults to src/main.cpp
 
-# 静态库
+# Static library
 [targets.mylib]
 kind = "lib"
 
-# 共享库
+# Shared library
 [targets.mylib]
 kind = "shared"
-soname = "libmylib.so.1"  # 可选: Linux/ELF ABI 名称,运行时会生成同名 alias
+soname = "libmylib.so.1"  # Optional: Linux/ELF ABI name; an alias of the same name is generated at runtime
 ```
 
-`soname` 用于共享库的 ABI 名称,类似 Autotools/CMake 中的
-`SOVERSION`/`SONAME`。在 Linux 上,mcpp 会向链接器传递
-`-Wl,-soname,<name>`,并在输出目录生成 `<name> -> lib<target>.so` alias,
-让下游程序可通过标准 ABI 名称 `DT_NEEDED` 或 `dlopen()` 加载该库。
-该字段只对 `kind = "shared"` 有效,值必须是文件名 basename。未声明 `soname`
-的 ELF 共享库以输出文件名作为 SONAME(2026.9.14.2+),这正是消费者已经记录在
-`DT_NEEDED` 中的名字;bionic 自 API level 23 起要求共享库带有 SONAME。
+`soname` 是共享库的 ABI 名，相当于 Autotools/CMake 里的
+`SOVERSION`/`SONAME`。在 Linux 上，mcpp 会向链接器传入
+`-Wl,-soname,<name>`，并在输出目录生成一个 `<name> -> lib<target>.so`
+的别名，使下游程序能通过 `DT_NEEDED` 或 `dlopen()`，按其标准 ABI 名加载
+这个库。这个字段只对 `kind = "shared"` 生效，取值必须是一个文件名
+（不含路径）。一个未声明 `soname` 的 ELF 共享库，会把自己的输出文件名
+记为自己的 SONAME（2026.9.14.2+）——这正是它的消费者已经记录在
+`DT_NEEDED` 里的那个名字；bionic 从 API level 23 起要求必须有这个名字。
 
-共享库目标在三种二进制格式上都可用。ELF 产出带 `soname` 的 `.so` 与 `$ORIGIN`
-搜索路径;Mach-O 产出 install name 为 `@rpath/<file>` 的 `.dylib`,因此移动后
-仍能被找到;PE 同时产出加载器打开的 `.dll` 和链接器消费的 import library,并在
-MSVC ABI 上从对象生成导出表(该 ABI 没有 `__declspec(dllexport)` 或 `.def` 时
-不导出任何符号)。参见 `tests/e2e/08`、`257`、`259`。
+共享库目标在全部三种二进制格式上都能工作。ELF 得到一个带 `soname` 和
+`$ORIGIN` 搜索路径的 `.so`；Mach-O 得到一个 install name 为
+`@rpath/<file>` 的 `.dylib`，因此即使被移动位置也仍然有效；PE 同时得到
+loader 打开的 `.dll` 与链接器消费的导入库，导出列表从对象文件按 MSVC
+ABI 生成（不带 `__declspec(dllexport)` 或 `.def` 时什么都不导出）。见
+`tests/e2e/08`、`257` 与 `259`。
 
-#### `kind = "app"` —— 用户启动的那个东西(mcpp 2026.9.12.3+)
+#### `kind = "app"` —— 用户启动的那个东西（mcpp 2026.9.12.3+）
 
 ```toml
 [targets.myapp]
@@ -168,92 +192,102 @@ kind = "app"
 main = "src/main.cpp"
 ```
 
-`app` 在每一行上表达同一件事——用户启动的程序——而每一行为它提供各自的文件:
+`app` 在每一行上命名的是同一个事实——用户启动的那个程序——而每一行
+为它提供自己的文件形式：
 
-| 行 | `app` 的形态 | 文件 |
+| 行 | `app` 的形式 | 文件 |
 |---|---|---|
-| ELF、PE、Mach-O 各行,`wasm32-emscripten` | 与 `bin` 相同 | `myapp`、`myapp.exe`、`myapp.js` |
+| ELF、PE、Mach-O 各行，`wasm32-emscripten` | 与 `bin` 相同 | `myapp`、`myapp.exe`、`myapp.js` |
 | `*-linux-android` | 与 `shared` 相同 | `libmyapp.so` |
 
-在 `*-linux-android` 上,平台把应用程序作为共享库加载进一个 Java 进程
-(`System.loadLibrary("myapp")`、manifest 里的 `android:name`);这一行上不存在
-应用程序的可执行形态。在其余每一行上,`app` 的链接方式与 `bin` 完全相同,产物
-与 `bin` 目标逐字节相同。
+在 `*-linux-android` 上，平台把一个应用当作共享库加载进一个 Java 进程
+（`System.loadLibrary("myapp")`，manifest 里的 `android:name`）；这一行上
+没有可执行文件形式的应用。在其余每一行上，`app` 的链接方式与 `bin`
+完全相同，产出的文件与 `bin` 目标的产物逐字节相同。
 
-`main` 在每一行上保持同一含义:它指出定义入口点的翻译单元。在 `app` 是可执行文件
-的那些行上,该入口就是 `main` 本身。在 `*-linux-android` 上,这个文件被编译为共享库
-的一个翻译单元,平台自己的入口(`ANativeActivity_onCreate`,或它声明的 JNI 导出)
-是平台的契约,不是 mcpp 指定的名字。`exports`(见上)对 `app` 目标的适用方式与对
-`shared` 完全相同;`windows_subsystem` / `windows_entry`(见下)接受 `app` 的方式
-与接受 `bin` 完全相同。
+`main` 在每一行上都保持同一个含义：它命名定义入口点的翻译单元。当
+`app` 是一个可执行文件时，那个入口就是 `main` 本身。在 `*-linux-android`
+上，这个文件被编译为共享库的一个翻译单元，平台自己的入口
+（`ANativeActivity_onCreate`，或它声明的 JNI 导出）是平台自己的契约，
+不是 mcpp 分配的名字。`exports`（见上）对 `app` 目标的适用方式与对
+`shared` 目标完全相同，`windows_subsystem` / `windows_entry`（见下）
+接受 `app` 的方式也与接受 `bin` 完全相同。
 
-在 `app` 的形态是共享库的那一行上,不带 `--format` 运行 `mcpp run` 会被拒绝,拒绝信息
-指出该旗标以及已解析图提供的格式集合。`mcpp pack --format apk` 把这个库放到闭包已经
-安放共享对象的位置。参见 [10 — 打包与发布](10-pack-and-release.md)里的 `mcpp run
---format`。
+在其形式为共享库的那一行上，`mcpp run` 一个 `app` 目标，若不带
+`--format` 会拒绝执行，并点名这个旗标与所解析出的图提供的那些格式。
+`mcpp pack --format apk` 会把这个库放到闭包已经放置共享对象的位置。见
+[10 —— 打包与发布](10-pack-and-release.md)中的 `mcpp run --format`。
 
-早于 2026.9.12.3 的引擎不认识这个取值,按名字拒绝,并列出它认识的三种:
+早于 2026.9.12.3 的引擎不认识这个取值，会拒绝并点名它认识的三种：
 
 ```
 targets.myapp.kind must be 'bin', 'lib' or 'shared'; got 'app'
 ```
 
-#### `exports` —— 产物发布的符号集合(mcpp 2026.9.6.5+)
+#### `exports` —— 产物发布的符号集合（mcpp 2026.9.6.5+）
 
 ```toml
 [targets.mydriver]
 kind    = "shared"
 soname  = "libmydriver.so.1"
-exports = "abi/mydriver.exports"     # 或内联:exports = ["vk_icd*"]
+exports = "abi/mydriver.exports"     # or inline: exports = ["vk_icd*"]
 ```
 
-**不写这个键就发布全部,而那正是两个平台今天的默认**——ELF 给符号默认可见性,PE 会
-自动生成列出全部符号的 `.def`。`exports` 把它收窄。
+**省略这个键会发布一切，而这恰好是两个平台本来就在做的事**——ELF 给
+符号默认可见性，PE 自动生成一份列出每个符号的 `.def`。`exports` 收窄
+这个范围。
 
-两类工程需要收窄。**有稳定 ABI 的运行时**只发布一份经过评审的集合,不在集合里的东西
-才保持可改。**与同类并存的插件**不能撞名:Vulkan loader 按名字找
-`vk_icdGetInstanceProcAddr`,一个把内部符号也导出的 ICD 会与 loader 以及同进程内另一个
-ICD 相撞。
+两类工程需要这种收窄。**带稳定 ABI 的运行时**只发布一份经过审查的
+集合，其余一概不发布，让不在集合里的东西保留自由变化的空间。**与同类
+插件并存加载的插件**不能相撞：一个 Vulkan ICD 是按名字被找到
+`vk_icdGetInstanceProcAddr` 的，若它同时导出自己的内部符号，就会与
+loader 以及进程中的其它 ICD 相撞。
 
-文件一行一条符号模式,`#` 起注释,`*` 是唯一的通配符。内联数组说的是同一件事,用于
-只有两三个入口、单开一个文件反而是仪式的场合。
+这个文件每行列一个符号模式，`#` 起一行注释，`*` 是唯一的通配符。内联
+数组说的是同一件事，用于只有两三个入口点、单独开一个文件显得多余的场合。
 
-一句话,三种渲染:
+一句陈述，三种渲染：
 
 | 平台 | 渲染为 |
 |---|---|
-| ELF | version script,`-Wl,--version-script=` |
-| Mach-O | `-Wl,-exported_symbols_list`(前导下划线由引擎补) |
-| PE | `.def`,取代自动生成的全导出版本 |
+| ELF | 一份 version script，`-Wl,--version-script=` |
+| Mach-O | `-Wl,-exported_symbols_list`（前导下划线由引擎补上） |
+| PE | 那份 `.def`，替换自动生成的、导出一切的那一份 |
 
-**它不改变编译期可见性,这是有意的。** 三种格式上收窄都是链接期属性,所以一个键只有
-一个效果。`-fvisibility=hidden` 仍可经 `[build] cxxflags` 使用以取得代码生成上的收益,
-而它是一个**单独**的决定,因为它同时改变本库各翻译单元之间如何看见彼此。
+**它不改变编译期可见性，这是刻意的。** 这种收窄在全部三种格式上都是
+链接期属性，所以一个键只有一种效果。`-fvisibility=hidden` 仍可通过
+`[build] cxxflags` 使用，以获取它带来的代码生成收益，它是一个独立的
+决定，因为它同时改变这个库自己的翻译单元之间彼此可见的方式。
 
-**符号版本化不是这个键。** `foo@@LIB_1.0` 与 `foo@LIB_0.9` 并存是 ELF 独有的能力,
-无法中立表达;需要它的包自己写 version script 经 `[build] ldflags` 传入,或者算出来后
-用 `mcpp:link-flag=` 发出(docs/07)。
+**符号版本化不是这个键管的事。** `foo@@LIB_1.0` 与 `foo@LIB_0.9` 并存，
+是一种只有 ELF 才有、无法中立表达的能力；需要它的包自己写 version
+script 并通过 `[build] ldflags` 传入，或者自行计算并发出
+`mcpp:link-flag=`（docs/07）。
 
-`soname` 对 `kind = "lib"` 同样有意义 —— 见下文的 `dependency_linkage`,
-库以何种形态出现是**消费者**的决定。
+`soname` 在 `kind = "lib"` 上同样有意义——见下文的
+[`dependency_linkage`](#dependency_linkage--静态还是动态由消费者决定)，
+在那里，一个库采取的形式变成消费者的决定。
 
-#### `windows_subsystem` 与 `windows_entry` —— Windows GUI 可执行文件(mcpp 2026.9.12.2+)
+#### `windows_subsystem` 与 `windows_entry` —— Windows GUI 可执行文件（mcpp 2026.9.12.2+）
 
 ```toml
 [targets.myapp]
 kind              = "bin"
 main              = "src/main.cpp"
-windows_subsystem = "windows"   # "console"(默认)| "windows"
-windows_entry     = "main"      # "main"(默认)| "wmain" | "WinMain" | "wWinMain"
+windows_subsystem = "windows"   # "console" (default) | "windows"
+windows_entry     = "main"      # "main" (default) | "wmain" | "WinMain" | "wWinMain"
 ```
 
-PE 可执行文件记录一个子系统。`"console"` 为程序附加控制台,`"windows"` 产生启动时不带控制台的
-GUI 程序。`windows_entry` 指程序定义的函数,而不是调用该函数的启动符号;它与子系统相互独立:控制台
-程序可以定义 `wmain`,GUI 程序也可以保留可移植的 `int main()`。
+一个 PE 可执行文件记录一个 subsystem。`"console"` 附带一个控制台，
+`"windows"` 产出一个启动时没有控制台的 GUI 程序。`windows_entry` 命名
+的是程序自己定义的函数，不是调用它的启动符号，它独立于 subsystem 之外：
+一个控制台程序可以定义 `wmain`，一个 GUI 程序也可以保留可移植的
+`int main()`。
 
-这两个键是字段而不是链接标志,原因是正确的标志取决于 ABI,而一条标志无法说明自己面向哪个 ABI:
+这两个键之所以是字段而不是链接旗标，是因为正确的旗标取决于 ABI，而一个
+旗标说不出它面向哪个 ABI：
 
-| `windows_subsystem` / `windows_entry` | MSVC ABI(cl、clang-cl、面向 `*-windows-msvc` 的 clang) | GNU ABI(MinGW gcc、面向 `*-windows-gnu` 的 clang) |
+| `windows_subsystem` / `windows_entry` | MSVC ABI（cl、clang-cl、目标为 `*-windows-msvc` 的 clang） | GNU ABI（MinGW gcc、目标为 `*-windows-gnu` 的 clang） |
 |---|---|---|
 | `"console"` / `"main"` | 无 | 无 |
 | `"windows"` / `"main"` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `-mwindows` |
@@ -261,121 +295,137 @@ GUI 程序。`windows_entry` 指程序定义的函数,而不是调用该函数�
 | `"windows"` / `"wWinMain"` | `/SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup` | `-mwindows -municode` |
 | `"console"` / `"wmain"` | `/SUBSYSTEM:CONSOLE /ENTRY:wmainCRTStartup` | `-municode` |
 
-在 MSVC ABI 上,只要任一键偏离默认值,两条标志就都写出。原因是链接器在缺少其中一条时由另一条推断:
-单独的 GUI 子系统会选择 `WinMainCRTStartup`,而可移植的 `int main()` 无法满足它;`/ENTRY:main`
-则会跳过 CRT 初始化,静态构造也随之被跳过。GNU 风格的驱动收到的 MSVC ABI 标志形如
-`-Wl,/SUBSYSTEM:...`。
+在 MSVC ABI 上，只要两个键中任意一个偏离其默认值，两个旗标就都会被
+写出，因为链接器在其中一个缺席时会从另一个推断：单独的 GUI subsystem
+会选中 `WinMainCRTStartup`，而一个可移植的 `int main()` 满足不了它；
+`/ENTRY:main` 会跳过 CRT 初始化，包括静态构造函数。GNU 风格的驱动程序
+以 `-Wl,/SUBSYSTEM:...` 的形式接收 MSVC-ABI 旗标。
 
-这两个键只到达声明它们的目标的链接。同一包的其他可执行文件、`mcpp test` 的测试二进制以及该包的消费者
-都保持控制台子系统;这也是这些标志不应写进 `[build] ldflags` 的原因:该通道到达图中的每一次链接。
-在 ELF、Mach-O 与 WebAssembly 上,这两个键不产生任何标志,产物与未声明它们时逐字节相同,因此跨平台的
-manifest 不需要 `cfg` 块。库目标声明任一键会被拒绝,拒绝信息指出目标与键名。
+这两个键只到达声明它们的目标的链接，不会传播出去。第二个可执行文件、
+`mcpp test` 的二进制，以及这个包的消费者，都保持控制台 subsystem——这
+正是为什么这些旗标不应放进 `[build] ldflags`：那条通道会到达图中的每
+一次链接。在 ELF、Mach-O 与 WebAssembly 上，这两个键不渲染出任何东西，
+产物与未写它们时逐字节相同，所以一份跨平台 manifest 不需要 `cfg` 块。
+一个库目标若声明这两个键中的任意一个都会被拒绝，拒绝信息点名该目标与
+该键。
 
-构建程序通过 `mcpp::windows_subsystem("<target>", "windows")` 与
-`mcpp::windows_entry("<target>", "wmain")` 为本包的可执行文件设置同样的字段
-([build.mcpp](30-build-mcpp.md))。
+一个构建程序可以为自己包里的某个可执行文件设置同样的字段，用
+`mcpp::windows_subsystem("<target>", "windows")` 与
+`mcpp::windows_entry("<target>", "wmain")`（[build.mcpp](30-build-mcpp.md)）。
 
-应用程序包、应用程序清单与 DPI 感知不属于这两个键,它们归属于打包格式与 `[resources]`。
+应用程序包（bundle）、应用程序 manifest 与 DPI 感知不属于这两个键管的
+范围；它们属于打包格式与 `[resources]`。
 
-#### 按目标的键(per-target keys)
+#### 按目标的键（per-target keys）
 
 ```toml
 [targets.server]
 kind     = "bin"
 main     = "src/server.cpp"
-defines  = ["BUILD_SERVER=1", "PORT=8080"]   # -D 宏,只作用于该目标的入口
-cxxflags = ["-Wno-deprecated-declarations"]  # 该目标入口的额外 C++ 标志(不要放 -std=...)
-cflags   = ["-DPURE_C"]                       # 该目标入口的额外 C 标志
+defines  = ["BUILD_SERVER=1", "PORT=8080"]   # -D macros, applied to this target's entry only
+cxxflags = ["-Wno-deprecated-declarations"]  # extra C++ flags for this target's entry (no -std=...)
+cflags   = ["-DPURE_C"]                       # extra C flags for this target's entry
 
 [targets.gui]
 kind = "bin"
 main = "src/gui.cpp"
-required_features = ["gui"]                   # 仅当 feature `gui` 激活时才构建
+required_features = ["gui"]                   # only built when feature `gui` is active
 ```
 
 | 键 | 含义 |
 |---|---|
-| `defines` | 预处理宏(`name` 或 `name=value`),脱糖为 `-D<x>`,作用于该目标入口的 C 与 C++ 编译。 |
-| `cxxflags` / `cflags` | 该目标的额外编译标志。**不要**放 `-std=...`——用 `[package].standard`。 |
-| `required_features` | 仅当列出的 feature **全部**激活时才生成该目标,否则静默跳过。只是门禁——不激活 feature(用 `--features` / `[features].default`)。 |
-| `windows_subsystem` *(2026.9.12.2+)* | 可执行文件的 PE 子系统:`"console"`(默认)或 `"windows"`(启动时不带控制台的 GUI 程序)。只到达该目标的链接,在非 PE 目标上不产生任何标志。见上一节。 |
-| `windows_entry` *(2026.9.12.2+)* | 程序定义的入口函数:`"main"`(默认)、`"wmain"`、`"WinMain"` 或 `"wWinMain"`。见上一节。 |
-| `linkage` *(2026.9.15.2+)* | 库目标的**默认**链接形态,`"static"` 或 `"shared"`:不写 `linkage` 的消费者得到的形态。它不同于 `kind = "shared"`,不是约束,因此消费者的显式陈述会被遵从。与 `kind = "shared"` 同写或写在程序目标上会被拒绝。见 [`dependency_linkage`](#dependency_linkage--静态还是动态由消费者决定)。 |
+| `defines` | 预处理宏（`name` 或 `name=value`）；在 C 与 C++ 两种入口编译上都脱糖为 `-D<x>`。 |
+| `cxxflags` / `cflags` | 这个目标专用的额外编译旗标。**不要**把 `-std=...` 写在这里——用 `[package].standard`。 |
+| `required_features` | 只有当构建中**每一个**列出的 feature 都被激活时，这个目标才会被产出；否则被静默跳过。它只是一道闸——不会激活 feature（用 `--features` / `[features].default`）。**一个例外，但它不是第二条规则：** 当这个目标作为 host 工具被请求时（`tools = [...]`，§2.14），这个目标就是被**请求**的那一个，于是它的 `required_features` 变成子构建的**输入**。同一个字段、同一个含义——只是解析的方向反过来了。 |
+| `windows_subsystem` *（2026.9.12.2+）* | 可执行文件的 PE subsystem：`"console"`（默认）或 `"windows"`，一个启动时没有控制台的 GUI 程序。只到达这个目标的链接，别处不受影响，在非 PE 的目标上不渲染任何东西。见上一节。 |
+| `windows_entry` *（2026.9.12.2+）* | 程序定义的入口函数：`"main"`（默认）、`"wmain"`、`"WinMain"` 或 `"wWinMain"`。见上一节。 |
+| `linkage` *（2026.9.15.2+）* | 一个库目标的**默认**链接形态，`"static"` 或 `"shared"`：不写 `linkage` 的消费者得到的形态。与 `kind = "shared"` 不同，它不是约束，因此消费者的显式陈述会被遵从。与 `kind = "shared"` 同写，或写在程序目标上，都会被拒绝。见[`dependency_linkage`](#dependency_linkage--静态还是动态由消费者决定)。 |
 
-> **作用域(重要):** 目标上的 `defines` / `cxxflags` / `cflags` **只作用于该目标独占的入口源**
-> (它的 `main`)——**绝不**作用于共享的模块/实现对象(那些只编译一次、被每个目标链接,即 mcpp 的
-> compile-once 模型)。当标志只需影响某个二进制(或测试)**自己的入口**时,这正是合适的工具 ——
-> 例如某个测试的 `main` 里触发契约违规、需要按测试设置契约求值语义
-> (`-fcontract-evaluation-semantic=observe`),或入口独享的 feature 宏、局部告警抑制。
-> 若标志必须穿透**共享**代码,就不该放在这里 —— 改用 [workspace](07-workspace.md) member 或
-> `[features]`;若是整次构建的模式,用 `[profile.*]`(`mcpp test --profile <name>` 会让包括被测
-> 代码在内的整个测试镜像都在该 profile 下编译)。
+> **范围（重要）：** 目标上的 `defines` / `cxxflags` / `cflags` **只**
+> 应用于该目标专属的入口源文件（它的 `main`）——绝不应用于共享的
+> 模块/实现对象，后者只编译一次，并链接进每一个目标（mcpp 的一次编译
+> 模型）。当一个旗标只需要影响单个二进制（或测试）自己的入口时，这两个
+> 键是正确的工具——例如某个测试的 `main` 专门触发违规，需要按测试设置
+> contract 求值语义（`-fcontract-evaluation-semantic=observe`）；或者
+> 只有入口会读到的一个 feature 宏；或者一次局部的警告抑制。如果一个
+> 旗标必须到达**共享**代码，就不属于这里——要么拆成一个
+> [workspace](07-workspace.md) 成员，要么用 `[features]`；若是整个构建
+> 范围的模式，用 `[profile.*]`（`mcpp test --profile <name>` 会在那个
+> profile 下构建整份测试镜像，包括被测代码）。
 >
-> `[targets.<name>]` 下的不支持键会产生 warning(`--strict` 下为 error)。
+> `[targets.<name>]` 下不受支持的键会被报告为警告（`--strict` 下为
+> 错误）。
 
-**构建配置该放哪** —— 当多个二进制需要不同配置时:
+**构建配置该放在哪里**——当不止一个二进制必须有所不同时：
 
-| 目标 | 使用 |
+| 目的 | 做法 |
 |---|---|
-| 某二进制**自己入口**上的不同宏/标志 | per-target `defines` / `cxxflags`(见上) |
-| 两个产品差异在它们**共享**的代码里 | 拆成 [workspace](07-workspace.md) member,各自 `[build]` 标志,共享一个 `lib` |
-| **选择**某共享库的变体(如某后端) | 在该库上用 `[features]`(§2.8)——additive,作用到库自己的编译 |
-| **整次构建的模式**(sanitizer、契约语义、优化档) | `[profile.<name>]`(§2.9)+ `--profile`;`mcpp test --profile <name>` 同样支持 |
+| 二进制**自己入口**上不同的宏/旗标 | 按目标的 `defines` / `cxxflags`（见上） |
+| 两个产物在**共享**代码上有差异 | 拆成 [workspace](07-workspace.md) 成员，各自在共享的 `lib` 之上有自己的 `[build]` 旗标 |
+| **选择一个变体**的共享库（例如某个后端） | 用该库上的 `[features]`（§2.8）——是增量的，到达库自己的编译 |
+| **整个构建范围**的模式（sanitizer、contract 语义、优化档位） | `[profile.<name>]`（§2.9） + `--profile`；`mcpp test --profile <name>` 同样尊重它 |
 
-mcpp 刻意不在一次构建里把同一个共享源编译成两份:一个源对应一个对象(模块还对应一个 BMI),
-所以"必须穿透共享代码"的差异应放在包/feature 边界,而非单个目标上。
+mcpp 刻意不在一次构建里用两种方式编译同一份共享源码：一个源文件对应
+一个对象（模块对应一个 BMI），所以凡是必须到达共享代码的分歧，都属于
+包/feature 的边界，不属于单个目标。
 
-### 2.3 `[build]` — 构建配置
+### 2.3 `[build]` —— 构建配置
 
-> **`sources` 匹配到的每一项都必须产出一个会被链接的对象。** mcpp 放不下的文件 ——
-> 扩展名既不在内建表也不在 `module_extensions` 里 —— 会被拒绝,并点名文件、
-> 扩展名与该写的键。**不是忽略**:催生这条规则的失败不是「多编了一个文件」,
-> 而是**编了却没人链** —— 扫描器读到 `export module` 就给那条边挂了 BMI,
-> 而分类器说这个文件没有角色,作者看到的是一条模块修饰过的 `undefined reference`。
-> 头文件应放进 `include_dirs`,Windows 资源脚本放进 `[resources]`。
+> **每一条 `sources` 匹配到的文件都必须产出一个会被链接的对象。** 一个
+> mcpp 无法归类的文件——扩展名既不在内置集合里，也不在
+> `module_extensions` 里——会被拒绝，拒绝信息点名文件、扩展名与这个键。
+> 它不会被忽略，因为催生这条规则的失败不是「多出一个文件」，而是**被
+> 编译了却没有人链接它**：扫描器读到 `export module` 并给这条边一个
+> BMI，而分类器却说这个文件没有角色，作者看到的是对一个模块修饰符号的
+> `undefined reference`。头文件属于 `include_dirs`；Windows 资源脚本
+> 属于 `[resources]`。
 
-> **`sources = []` 与不写 `sources` 不是一回事。** 不写这条键选择默认 glob;
-> 显式的空列表意味着**什么都不编** —— 那正是一个纯头文件的分发包需要表达的。
-> 在 mcpp 2026.8.18.1 之前两者逐字节等价,于是「什么都不编」无从表达,
-> `src/` 下剩下的任何文件都会被扫进来。
+> **`sources = []` 与省略 `sources` 不是一回事。** 缺失这个键会选中
+> 默认 glob；显式的空列表意味着**什么都不编译**，这正是一个纯头文件
+> 分发包需要表达的意思。在 mcpp 2026.8.18.1 之前两者逐字节相同，所以
+> 没有拼法能表达「什么都没有」，`src/` 下留下的任何文件都会被卷进来。
 
-
-> **`sources` 的条目可以带上它所面向的加速器**(2026.9.5.2+):
-> `{ glob = "src/kernels/**/*.cu", accel = "cuda12.9+{sm_89}" }`。glob 与其它条目一样
-> 进入列表;约束决定它是否适用于某一次构建。它必须至少匹配一个文件(空匹配会被拒绝:
-> 那会让这个设备无东西可编,而只在链接时才说话)。`--no-accel` 下该 glob 被排除,
-> 一个工程由此产出它的 CPU-only 变体。`--accel` 未覆盖该约束时构建被拒并给出两侧
-> (`accel-mismatch`)。有效集合匹配到的设备类源文件 —— CUDA 与 HIP、GLSL 各 stage、
-> HLSL、OpenCL C 与 Metal,完整清单见 [42 — 异构硬件构建](42-heterogeneous-builds.md) —— 引擎
-> 从不编译;它们以 `MCPP_DEVICE_SOURCES` 到达构建程序,由工程引入的规则包把每一个
-> 变成一条 `mcpp::action`。
+> **一条 `sources` 条目可以携带它所面向的加速器**（2026.9.5.2+）：
+> `{ glob = "src/kernels/**/*.cu", accel = "cuda12.9+{sm_89}" }`。glob
+> 像其它条目一样加入这份列表；约束决定它是否适用于某次给定的构建。它
+> 必须至少匹配一个文件（空匹配会被拒绝：那会让这个设备没有东西可编译，
+> 却要等到链接阶段才说出来）。在 `--no-accel` 下这条 glob 会被排除，
+> 这正是一个工程产出自己 CPU-only 变体的方式。在一个不覆盖该约束的
+> `--accel` 下，构建会被拒绝并点名两者（`accel-mismatch`）。生效集合
+> 匹配到的设备类文件——CUDA 与 HIP、GLSL 各阶段、HLSL、OpenCL C 与
+> Metal，完整列表见[42 —— 异构构建](42-heterogeneous-builds.md)——从不
+> 由引擎编译；它们以 `MCPP_DEVICE_SOURCES` 的形式到达构建程序，工程
+> import 的规则包把每一个都变成一个 `mcpp::action`。
 
 ```toml
 [build]
-sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # 源文件 glob(默认: src/**/*.{cppm,cpp,cc,c,S,s,asm})
-module_extensions = [".ixx"]      # 模块**接口**额外使用的扩展名(见下节)
-build_program_timeout = 1800      # build.mcpp 的运行上限(秒);0 = 不限(见下节)
-include_dirs = ["include", "third_party/include"]  # 头文件搜索路径
-include_dirs_after = ["*"]         # 排在系统目录之后搜索的头文件目录(-idirafter)
-private_include_dirs = ["vendor/src/include"]  # `include_dirs` 中不发布给消费者的那些
-c_standard   = "c11"              # C 源文件的标准(默认 c11)
-cflags       = ["-DFOO=1"]        # 额外 C 编译参数
-cxxflags     = ["-DBAR=2"]        # 额外 C++ 编译参数(不要放 -std=...)
-ldflags      = ["-lfoo"]          # 额外链接参数
-defines      = ["BIZ=1", "QUX"]   # 作用于每个 TU 的预处理宏(脱糖为 -D;会进入模块扫描)
-cxx_runtime  = "self-contained"   # C++ 运行时契约(见下节);static_stdlib 是旧拼写
-macos_deployment_target = "14.0"   # macOS 产物的最低支持系统版本(仅 macOS 生效)
-dependency_linkage = "static"     # 依赖以何种形态进入:static(默认)| shared(见下文)
-cache        = "global"           # 依赖的全局构建缓存:global(默认)| local | off(见 §2.10)
-jobs         = "auto"             # 并发编译数:正整数,或 "auto"(见下节)
-bmi_schedule = "auto"             # 模块边调度:auto(= 关)| on | off(见下节)
+sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # Source globs (default: src/**/*.{cppm,cpp,cc,c,S,s,asm})
+module_extensions = [".ixx"]      # Extra extensions used by module INTERFACES (§ below)
+build_program_timeout = 1800      # Seconds a build.mcpp may run; 0 = no limit (§ below)
+include_dirs = ["include", "third_party/include"]  # Header search paths
+include_dirs_after = ["*"]         # Header dirs searched AFTER system dirs (-idirafter)
+private_include_dirs = ["vendor/src/include"]  # Of `include_dirs`, the ones a consumer must NOT get
+c_standard   = "c11"              # Standard for C source files (default c11)
+cflags       = ["-DFOO=1"]        # Extra C compile flags
+cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
+ldflags      = ["-lfoo"]          # Extra link flags
+defines      = ["BIZ=1", "QUX"]   # Preprocessor macros for every TU (desugars to -D; reaches module scans)
+cxx_runtime  = "self-contained"   # C++ runtime contract (§ below); static_stdlib is the old spelling
+target       = "x86_64-linux-musl" # Default build target when no --target is passed
+                                   # (≙ cargo build.target; e.g. "ship fully-static")
+macos_deployment_target = "14.0"   # Minimum supported OS version for macOS artifacts (macOS only)
+dependency_linkage = "static"     # How dependencies arrive: static (default) | shared (§ below)
+cache        = "global"           # Global dependency cache: global (default) | local | off (§2.10)
+jobs         = "auto"             # Concurrent compiles: a positive number, or "auto" (§ below)
+bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | off (§ below)
 ```
 
 #### 编译 flag 的写法 *(mcpp 2026.9.17.1+)*
 
-`cflags`、`cxxflags` 与 `asmflags` 的一个元素代表一个或多个编译器参数(下称「词」)。
-写法在每个宿主上相同,也不论列表写在哪里:`[build]`、`[targets.<name>]`、`flags` 的
-glob 条目、feature、`[target.<selector>.build]`、xpkg 描述符,以及构建程序的
+`cflags`、`cxxflags` 或 `asmflags` 里的一个元素代表一个或多个编译器
+参数（「词」）。这套语法在每个宿主上都相同，无论写在哪张表里：
+`[build]`、`[targets.<name>]`、`flags` glob 条目、feature、
+`[target.<selector>.build]` 小节、xpkg 描述符，以及构建程序的
 `mcpp:cflag=` / `mcpp:cxxflag=` 指令。
 
 | 写法 | 编译器收到的词 |
@@ -383,361 +433,411 @@ glob 条目、feature、`[target.<selector>.build]`、xpkg 描述符,以及构�
 | `"-O2 -g"` | `-O2`、`-g` |
 | `"-include config.h"` | `-include`、`config.h` |
 | `"'-DNAME=a b'"` 或 `"-I\"my dir\""` | `-DNAME=a b`、`-Imy dir` |
-| `"-DNAME=long long"` | `-DNAME=long long`(见下) |
-| `"-DNAME=\\\"text\\\""` | `-DNAME="text"`(字符串字面量) |
+| `"-DNAME=long long"` | `-DNAME=long long`（见下） |
+| `"-DNAME=\\\"text\\\""` | `-DNAME="text"`（一个字符串字面量） |
 | `"-I/opt/my\\ dir/include"` | `-I/opt/my dir/include` |
 | `"-IC:\\sdk\\include"` | `-IC:\sdk\include` |
 | `"-DNAME=a$b"` | `-DNAME=a$b` |
 
-规则陈述在元素的文本上(TOML 或 Lua 先去掉它们自己的转义):
+以下规则施加于元素的文本上（TOML 或 Lua 已经去掉了它自己的转义之后）：
 
-- 未加引号的空格与制表符分隔词;
-- `'...'` 按字面取到下一个 `'`;
-- `"..."` 按字面取,只有 `\"` 与 `\\` 分别代表 `"` 与 `\`;
-- 引号之外,反斜杠后跟空格、制表符、`"`、`'` 或 `\` 时代表该字符,其余反斜杠按字面;
-- 相邻的带引号与不带引号的片段组成一个词;
-- `$`、`*`、`;`、`|` 等 shell 运算符没有特殊含义;
-- 以 `-D` 或 `/D` 开头且含空格的元素是一个词,按原样取,与此前各版本相同。
+- 不带引号的空格与制表符分隔词；
+- `'...'` 是字面量，直到下一个 `'`；
+- `"..."` 是字面量，只有 `\"` 与 `\\` 分别代表 `"` 与 `\`；
+- 在引号之外，反斜杠之后紧跟空格、制表符、`"`、`'` 或 `\`，代表那个
+  字符本身；其它反斜杠都是字面量；
+- 相邻接触的带引号与不带引号的片段合并成一个词；
+- `$`、`*`、`;`、`|` 以及其它 shell 操作符没有特殊含义；
+- 一个以 `-D` 或 `/D` 开头并含有空格的元素，视为一个词，按字面接受，
+  与以往每一个版本相同。
 
-`defines` 的一个条目是一个值,不按此写法读取:`defines = ["NAME=\"text\""]` 传入的是
-一个词 `-DNAME="text"`。`ldflags`、`dialect_cxxflags` 与 `std-module-flags` 不在本节范围内。
+一条 `defines` 条目是一个值，不受这套语法解析：`defines =
+["NAME=\"text\""]` 传出单独一个词 `-DNAME="text"`。`ldflags`、
+`dialect_cxxflags` 与 `std-module-flags` 不受本节约束。
 
-`compile_commands.json` 与 `mcpp emit build-database` 在 `arguments` 中列出同样的词,
-不经 shell 即可执行。
+`compile_commands.json` 与 `mcpp emit build-database` 在 `arguments`
+里列出同样的词，可以不经 shell 直接执行。
 
-一个工程的首次规划中,若某个元素的词与 2026.9.17.1 之前的版本在同一宿主上传入的参数不同,
-mcpp 以 `build/flag-words` 警告并给出两者。重复同一规划的构建不再重复该警告。
+在一个工程的首次 plan 时，若某个元素的词与 2026.9.17.1 之前的版本在
+同一宿主上传出的参数不同，mcpp 会在 `build/flag-words` 下发出警告，并
+点名两者。重复同一份 plan 的构建不会重复这条警告。
 
 #### `dependency_linkage` —— 静态还是动态由消费者决定
 
 ```toml
 [build]
-dependency_linkage = "shared"        # 全图默认;缺省即 "static"
+dependency_linkage = "shared"        # whole-graph default; "static" is the default default
 
 [profile.dev]
-dependency_linkage = "shared"        # 按 profile 覆盖
+dependency_linkage = "shared"        # per profile
 
 [dependencies]
-"compat.zlib" = { version = "1.3.2", linkage = "shared" }   # 单个包
+"compat.zlib" = { version = "1.3.2", linkage = "shared" }   # one package
 ```
 
-在 mcpp 2026.8.28.2 之前,一个依赖只有一种形态,而且由**包作者**定死:
-`kind = "lib"` 把它的对象并进每个消费者的链接,`kind = "shared"` 产出真正的
-共享库。这个决定放错了位置。一个库在运行期该不该是独立文件,是**被构建的那个
-程序**的性质 —— 它怎么分发、多久重链一次、进程里是不是已经有人提供了这个库。
+在 mcpp 2026.8.28.2 之前，一个依赖恰好只有一种形态，并且由**包作者**
+选择：`kind = "lib"` 把它的对象合并进每个消费者的链接，`kind = "shared"`
+产出一个真正的共享库。这个决定的归属者选错了。一个库在运行时是否应该
+是一个独立文件，是**正在被构建的那个程序**的属性——它怎样被发布、多久
+被重新链接一次、进程里是否已经有别的东西提供了这个库。
 
-- **`static`**(默认)—— 依赖的对象并进使用它的映像。与 mcpp 一直以来的行为
-  逐字节相同;不写这个键的工程构建结果不变。
-- **`shared`** —— mcpp 把依赖构建成产物旁边的共享库并链接它,由 `$ORIGIN`
-  (ELF)/ `@loader_path`(Mach-O)/ 可执行文件自身目录(PE)保证构建目录
-  移动后仍能找到它。
+- **`static`**（默认）——依赖的对象被合并进使用它的镜像。逐字节等同于
+  mcpp 一直以来的做法；不写这个键的工程，构建方式与以前完全一样。
+- **`shared`**——mcpp 把这个依赖构建成产物旁边的一个共享库并链接到它，
+  通过 `$ORIGIN`（ELF）/ `@loader_path`（Mach-O）/ 可执行文件自己所在
+  的目录（PE）在构建目录被移动之后仍能重新找到它。
 
-**这不是 `[target.<triple>].linkage`**(§2.7.1)。那个键回答的是听起来相同、
-实则关于 **C 库**的问题(musl 的 `-static`、MSVC 的 `/MT`)。两者并不独立,而且
-方向很重要:整链静态的映像没有解释器,根本装不下任何共享对象。因此在 C 库静态
-链接的目标上 —— 这是 **musl 的默认** —— `dependency_linkage = "shared"` 会被
-拒绝,并说明原因。
+**这不是 `[target.<triple>].linkage`**（§2.7.1）。那个键回答的是一个
+听起来相似、但关于 **C 库**的问题（musl 的 `-static` 链接、MSVC
+的 `/MT`）。这两者不是独立的，而且方向很重要：一个完全静态的镜像没有
+解释器，因此根本无法加载共享对象。在一个 C 库以静态方式链接的目标
+上——这是**musl 的默认行为**——`dependency_linkage = "shared"` 会被
+拒绝，并说明原因。
 
-**包可以声明它必须是某一种形态**,而且只在确有理由时:
+**一个包可以声明它必须是某一种形态**，但只能出于真实的理由：
 
-| 包写了 | mcpp 读作 |
+| 包写的内容 | mcpp 的解读 |
 |---|---|
-| `[targets.<n>] kind = "shared"` | *必须* shared —— 进程里会有别人 `dlopen` 它,因此只能有一份(X11、Vulkan loader) |
-| `[target.<sel>.targets.<n>] kind = "shared"` *(2026.9.14.2+)* | 在选择器命中的行上*必须* shared,其余行两种形态都可以([22 —— 目标侧](22-target-side.md)) |
-| `ldflags` 里含 `-L` | *必须* static —— 包携带了 mcpp 没有编译的预构建归档,放不进 mcpp 自己构建的共享对象 |
-| 分发包(`mcpp pack`) | 它实际随包的那些腿,取自 `[[runtime.artifacts]] role` |
-| 其他 | 两种形态都可以 |
+| `[targets.<n>] kind = "shared"` | **必须**是共享的——进程里另有别的东西会 `dlopen` 它，所以只能有一份拷贝（X11、Vulkan loader） |
+| `[target.<sel>.targets.<n>] kind = "shared"` *（2026.9.14.2+）* | 在选择器匹配的那些行上**必须**是共享的，在别处两种形态都可以（[22 —— 目标侧](22-target-side.md)） |
+| `ldflags` 中含 `-L` | **必须**是静态的——包发布了 mcpp 没有编译、也无法放进自己构建的共享对象里的预构建归档文件 |
+| 一个已打包的库（`mcpp pack`） | 它实际发布的那几条腿，来自 `[[runtime.artifacts]] role` |
+| 其它任何情况 | 两种形态都可以 |
 
-`kind = "lib"` **不是**约束:它是默认值,大多数包写下它并没有做任何选择。
-**没有陈述不等于一条陈述。**
+`kind = "lib"` **不是**一种约束：它是默认值，大多数包写它时并没有在做
+选择。没有陈述不等于一种陈述。
 
-**包还可以陈述一个默认值** *(2026.9.15.2+)*,它不是约束:
+**一个包也可以声明一个默认值**（2026.9.15.2+），这不是约束：
 
 ```toml
 [targets.fw]
 kind    = "lib"
-linkage = "shared"                   # 不写 linkage 的消费者得到的形态
+linkage = "shared"                   # the form a silent consumer receives
 
 [target.'cfg(env = "android")'.targets.fw]
-linkage = "shared"                   # 同上,只在选择器命中的行上
+linkage = "shared"                   # the same, on the rows the selector matches
 ```
 
-- 形态按陈述从具体到一般的顺序决定:根工程在该依赖边上的 `linkage`,根工程
-  写下的 `dependency_linkage`(`[build]` 或当前 profile),包的 `linkage`,
-  最后是 `static`。
-- 与包的默认值不同的显式陈述会被遵从。它不是降级,`--strict` 接受它,并由一条
-  信息行(`Linkage`)同时点名两条陈述。
-- 同一张表里同时写 `kind = "shared"` 与 `linkage` 会被拒绝,因为约束没有默认值可言;
-  一行只陈述 `kind` 与 `linkage` 之一,后命中的陈述替换先前的陈述,因此某行的
-  `linkage = "static"` 会把无条件表约束为 `shared` 的包恢复为由消费者选择的形态。
-- 目标无法遵从的默认值(完全静态的映像、freestanding 目标)静默回落,因为没有人
-  要求它。
-- 2026.9.15.2 之前的引擎把 `[targets.<n>] linkage` 报为不支持的键(对依赖静默)
-  并静态链接该包;2026.9.14.2 起的引擎拒绝不含 `kind` 的行表。依赖此键的包应陈述
-  这一引擎下限。
+- 形态的决定按以下顺序、以最具体的陈述优先：根包在这条依赖边上写的
+  `linkage`，根包写出的 `dependency_linkage`（在 `[build]` 或当前生效
+  的 profile 里），包自己的 `linkage`，以及 `static`。
+- 一处与包默认值不同的显式陈述会被遵从。这不算一种降级，所以
+  `--strict` 接受它，并有一行信息（`Linkage`）点名两处陈述。
+- 在同一张表里同时写 `kind = "shared"` 与 `linkage` 会被拒绝，因为一个
+  约束不会留下默认值可陈述；一行只陈述 `kind` 与 `linkage` 二者之一，
+  后一条匹配的陈述会替换前一条，所以一行上的 `linkage = "static"`，
+  能把某张无条件的表约束为 `shared` 的包，交还给它的消费者去选择形态。
+- 一个目标无法满足的默认值（一个完全静态的镜像、一个 freestanding
+  目标）会无声地回落，因为根本没有人要求过它。
+- 早于 2026.9.15.2 的引擎会把 `[targets.<n>] linkage` 报告为不受支持
+  的键（对依赖是静默的），并把包按静态链接；从 2026.9.14.2 起的引擎会
+  拒绝一张没有 `kind` 的行表。依赖这个键的包应声明这个引擎下限。
 
-根工程的构建程序通过 `mcpp::dep_linkage("name")` 读取每个依赖在本次构建中的形态
-([30 —— build.mcpp](30-build-mcpp.md)),生成的加载入口或导入声明因此跟随同一个决定。
+根工程的构建程序可以通过 `mcpp::dep_linkage("name")`
+（[30 —— build.mcpp](30-build-mcpp.md)）读到每个依赖在这次构建中采取的
+形态，使生成的 loader 条目或 import 声明遵循同一个决定。
 
-约束拒绝的请求按包允许的形态链接,并给出一条点名包的陈述的警告
-(`its manifest states [targets.fw] kind = "shared", ...`);`--strict` 下该警告
-成为错误。`mcpp why deps` 报告每个依赖的形态及其原因:`default`、
-`package-default`(2026.9.15.2+)、`requested`、`package-kind`、`row-kind`、
-`packaged`、`no-sources`、`prebuilt-inputs`、`no-loader` 或 `static-libc`(2026.9.14.2+)。
+被约束拒绝的一个请求，会按包允许的形态链接，并给出一条点名包的陈述的
+警告（`its manifest states [targets.fw] kind = "shared", ...`）；
+`--strict` 把这条警告变成错误。`mcpp why deps` 报告每个依赖的形态及其
+原因：`default`、`package-default`（2026.9.15.2+）、`requested`、
+`package-kind`、`row-kind`、`packaged`、`no-sources`、
+`prebuilt-inputs`、`no-loader` 或 `static-libc`（2026.9.14.2+）。
 
-依赖边上的 `linkage` 只在**根工程**的 `[dependencies]` 里生效。依赖图深处的包
-无权决定最终程序的布局;真正必须只有一份共享副本的包,应当在自己的 target 上
-声明。
+按依赖设置的 `linkage`，**只**在根工程自己的 `[dependencies]` 里被
+遵从。图深处的某个包无权决定最终程序如何布局；真正必须是单一共享拷贝
+的包，应该在自己的目标上这样声明。
 
 #### 共享库之下的静态包 *(mcpp 2026.9.16.1+)*
 
-共享库与它到达的静态包链接在一起。一次构建中的每个共享映像都有一个**静态闭包**:
-从它的包出发、不穿过另一个共享包所能到达的静态包。一个静态包若恰好只在一个闭包里,
-而根工程自己并不到达它,它就链接进那个映像,而不进程序。
+一个共享库与它所触达的静态包一起被链接。一次构建里，每一份共享镜像都
+有一个**静态闭包**：从它的包出发、不跨越另一个共享包所能到达的所有
+静态包。一个只处在**一个**闭包里、根工程自己又碰不到的静态包，会被
+链接进那份镜像，而不是进程序本身。
 
-2026.9.16.1 之前,这样的包进的是程序,共享库在运行期绑定到程序里的那份。这只在
-ELF 上、且只对那个程序成立:该库通不过 `-Wl,-z,defs`,没有链接这个包的宿主加载不了它
-(`undefined symbol`),Mach-O 与 PE 在链接期就解析每一个引用,Android 则先于任何能
-提供这个包的东西加载应用的共享库。
+在 2026.9.16.1 之前，这样的包会被链接进程序，库在运行时绑定的是程序里
+的那份拷贝。这只在 ELF 上有效，而且只对那一个程序有效：这个库会拒绝
+`-Wl,-z,defs`，一个没有链接该包的宿主无法加载它（`undefined symbol`），
+Mach-O 与 PE 在链接期就解析每一处引用，而 Android 会在任何能提供该包
+的东西之前先加载应用的共享库。
 
-被**多个**映像到达的静态包(两个共享库,或一个共享库加程序)没有唯一可放的映像:
+一个被**多份**镜像触达的静态包（两个共享库，或一个共享库加程序）没有
+单一的镜像可以栖身：
 
-- 在 Mach-O、PE 与 Android 应用行上,构建在编译之前被拒绝,原因为
-  `static-package-in-two-images`([50](50-machine-output.md));
-- 在其他 ELF 行上,这个包照旧留在程序里,构建会报告它(`build/static-placement`),
-  `--strict` 下为错误。
+- 在 Mach-O、PE 与 Android 应用这一行上，构建会在编译之前被拒绝，理由
+  是 `static-package-in-two-images`（[50](50-machine-output.md)）；
+- 在其它 ELF 行上，包仍像以前一样留在程序里，构建会报告这一点
+  （`build/static-placement`），`--strict` 把它变成错误。
 
-消息会写出这个包、到达它的映像,以及出路:让这个包取共享形态,使每个映像加载同一份。
+这条消息点名这个包、触达它的那些镜像，以及补救办法：给这个包共享的
+形态，让每份镜像各加载一份拷贝。
 
 ```toml
 [dependencies]
-x = { path = "../x", linkage = "shared" }   # 写在根工程的依赖边上
+x = { path = "../x", linkage = "shared" }   # on the root's edge
 
-# 或作为这个包自己的默认值,写在它的 manifest 里
+# or as the package's own default, in its manifest
 [targets.x]
 linkage = "shared"
 ```
 
-提供目标层的包(`provides = ["mcpp:..."]`,C 库或 C++ 运行时)不在这条规则之内:
-它的对象放在哪里由运行时契约决定([20](20-toolchains.md))。
+一个提供目标层（`provides = ["mcpp:..."]`、一个 C 库或一个 C++ 运行时）
+的包不受这条规则约束：它的对象去往何处，由运行时契约决定
+（[20](20-toolchains.md)）。
 
 #### library 目标上的 `soname`
 
-`soname`(§2.2)在 `kind = "lib"` 上同样可以声明。它是一个库被**找到**时用的
-名字,也是 mcpp 构建的那份与第三方携带的同一个库能解析到**同一个文件**的唯一
-途径 —— 而如果声明它就意味着这个包不能再作为静态库被消费,包就无法陈述这件事。
+`soname`（§2.2）也可以声明在 `kind = "lib"` 上，不只是
+`kind = "shared"`。它是一个库被**查找**时使用的名字，也是 mcpp 构建出
+的某个包与第三方的同一份库能解析到**同一个文件**而不是两个文件的
+唯一途径——如果声明它就意味着这个包不能再作为静态库被消费，包就没法
+陈述这一点。
 
-在非 shared 目标上写 `soname` 的描述符,**无法被 2026.8.28.2 之前的 mcpp 读取**
-—— 失败的是整份 manifest,不只是这个键。因此把它发布进索引要等下限抬上去。
+一份在非共享目标上写了 `soname` 的描述符，无法被 2026.8.28.2 之前的
+mcpp 发布版读取——整份 manifest 都会加载失败，而不只是这个键。因此把
+这样一份描述符发布到索引，要等到那个引擎下限被移动之后。
 
 #### 符号提供者检查
 
-链接之后,mcpp 会问:映像里的每个符号是不是**恰好有一个**提供者。在 ELF 上
-可执行文件排在最前,因此被静态并进程序的库,会在它与旁边加载的共享库共有的
-每个符号上获胜 —— 共享的那份永远不会被调用,而那个库里的代码跑在一份它并非
-针对其链接的构建上。链接器和加载器都不会为此报任何一句话。
+链接之后，mcpp 会检查镜像里的每一个符号是否恰好只有**一个**提供者。
+在 ELF 上，可执行文件先被搜索，所以一个静态合并进程序的库，会在它与
+旁边加载的共享库共有的每一个符号上获胜——那份共享拷贝从未被真正
+调用，那个库内部的代码运行时面对的是一份它没有链接过的构建。对此，
+链接器与加载器都没有任何诊断。
 
-这项检查是**测量**而不是声明:读产物的动态符号表,去掉 copy relocation,只报告
-产物自身闭包里**也**有定义的那些。进程里只有一份副本的安排保持静默。有三类共同定义
-只计数、不报告 *(后两类自 2026.9.16.1 起)*:加载器按设计统一的 vague linkage
-(`STB_WEAK`,以及 GCC 用于内联实体静态数据的 `STB_GNU_UNIQUE`);构建从**同一个
-目标文件**链接进两个映像的定义,例如每个导入 `std` 的 C++ 映像里的 `std` 模块初始化
-函数;以及同一个初始化函数与工具链自身 C++ 运行时之间的重复,GCC 16 起该运行时也导出
-它。形状相同、定义在其他地方的名字仍然会被报告。判定记录在
-`target/<triple>/<fp>/resolution.json` 的 `runtime.symbol_provision` 下,带计数
-与分母,CI 不需要 `readelf` 就能读。
+这项检查是一次测量，不是一条声明：它读取产出镜像的动态符号表，去掉
+属于拷贝重定位的条目，只报告产物自身闭包里**另有**某个库同样定义的
+那些符号。一份进程中只有一处拷贝的安排是无声的。三类共享定义会被计入
+但不报告（最后两类为 2026.9.16.1+）：vague linkage，加载器按设计统一
+处理这类符号（`STB_WEAK`，以及 GCC 用于内联实体静态数据的
+`STB_GNU_UNIQUE`）；构建从**一个对象**同时链接进两份镜像的定义，例如
+每一个 import `std` 的 C++ 镜像里 `std` 模块的初始化器；以及那同一个
+初始化器相对工具链自身 C++ 运行时的情形，GCC 16 起会导出它。任何其它
+地方定义的同名同形符号，仍算一处发现。判定结果被记录在
+`target/<triple>/<fp>/resolution.json` 的 `runtime.symbol_provision`
+下，带计数与分母，CI 无需 `readelf` 即可读取。
 
-默认是警告,`--strict` 下升级为错误。三条出路**有次序**,而次序是要紧的:
+它默认是警告，在 `--strict` 下是错误。解决办法按顺序排列，顺序很重要：
 
-1. **让其中一方不再提供这个库** —— 通常是那个携带了依赖图已经在构建的库的副本
-   的包。永远正确。
-2. **让两者解析到同一个文件**:在库的 target 上声明它真正的 `soname`。
-3. **`dependency_linkage`** 改变 mcpp 构建的形态。它会消掉**这一条**报告,但单
-   独用可能把一份变成**两份**:实测在一个暂存了 glib(其 `libgio` 需要
-   `libz.so.1`)、同时静态构建 `compat.zlib` 的图上,切换形态让可执行文件的 88
-   个导出符号归零,然后 `libzlib.so` 与 `libz.so.1` **两个都被加载**。只有在
-   (2) 同时成立时它才真的把两个提供者合成一个。
+1. **让其中一方停止提供它**——通常是某个包自带了图里已经在构建的某个
+   库的拷贝。总是正确的做法。
+2. **让两者解析到同一个文件**，做法是在那个库的目标上声明它真实的
+   `soname`。
+3. **`dependency_linkage`** 改变 mcpp 构建的是哪种形态。它会移除
+   **这一条**发现，但单独使用它可能留下**两份**已加载的拷贝而不是
+   一份：在一张同时摆放 glib（其 `libgio` 需要 `libz.so.1`）与一个
+   静态构建的 `compat.zlib` 的图上实测，切换形态后可执行文件的 88 个
+   导出符号消失，随后同时加载了 `libzlib.so` 与 `libz.so.1`。只有当
+   第（2）条也成立时，它才会把两个提供者统一成一个。
 
-`private_include_dirs` 指出 **`include_dirs` 中**在本包边界处停住的那些条目:
-本包用它们编译,消费者永远收不到。
+`private_include_dirs` 命名的是 `include_dirs` 里那些止步于本包自身
+边界的条目：本包用它们编译，但消费者永远不会得到它们。
 
-绝大多数包发布的就是它编译时用的那一套,所以长期以来只有 `include_dirs` 就够了。
-两者不同的形状只有一种 —— 一个包**内嵌了带内部头覆盖层的库**。musl 通过
-`src/include` 到达它自己的声明,而那些头定义了 `hidden`、`weak`、`weak_alias`,
-这些名字只对 musl 自己的源码有意义。把那个目录发布出去,等于把这些宏交给每一个
-消费者;而一个把 `hidden` 当普通标识符用的消费者会编不过,且看不出原因。
+几乎每个包发布的都恰好是它自己构建所用的那一整套，这正是为什么很长
+一段时间里单靠 `include_dirs` 就够用。二者出现分歧的情形，是一个包
+内嵌了带**内部头文件覆盖层**的库。musl 通过 `src/include` 到达自己的
+声明，那里的头文件定义了 `hidden`、`weak` 与 `weak_alias`——这些名字
+只对 musl 自己的源码有意义。发布那个目录会把这些宏交给每一个消费者，
+而一个把 `hidden` 当作普通标识符使用的消费者，会因为一个它无从看见的
+原因而无法编译。
 
 ```toml
 [build]
-# 两类目录的**相对顺序**是承重的:本包自己构建时,内部覆盖层必须排在公共头之前。
-# 这正是它被设计成 `include_dirs` 的**子集**而不是第二个列表的原因 ——
-# 两个数组表达不了一个顺序。
+# The relative ORDER of the two kinds is load-bearing: the internal overlay
+# must precede the public headers for this package's own build. That is why
+# this is a SUBSET of `include_dirs` rather than a second list — two arrays
+# cannot express one order.
 include_dirs         = ["port/include", "musl/src/include", "musl/include"]
 private_include_dirs = ["musl/src/include"]
 ```
 
-条目支持与 `include_dirs` 相同的 `*` glob 约定,并在**展开之后**比对 ——
-所以一个 glob 可以恰好指名它展开出的那些目录。若某条目不在本包的 `include_dirs`
-里,它什么也没扣下,mcpp 会把这件事说出来而不是让它悄悄通过。
+条目遵循与 `include_dirs` 相同的 `*` glob 约定，并且是在展开**之后**
+匹配的——所以一条 glob 可以正好命中它展开出的那些目录。一个不在这个
+包的 `include_dirs` 里的条目不会隐藏任何东西，并且会被如实报告，而
+不是悄悄放过。
 
-**旧引擎会忽略这个键,而不会因此失败。** 在 2026.8.26.2 上实测:出现在依赖的清单里
-时被静默接受;出现在根清单里时给一条警告 —— `[build] has unsupported key
-'private_include_dirs' (ignored)` —— 构建照常继续。所以一个包可以先用上这个键,
-不必等消费者升级;还在旧引擎上的消费者只是像以前一样继续收到那个目录。**唯一不成立
-的地方**是已发布的 `xim` 描述符的 `target_cfg` 块:那里不认识的子键是硬错误,会让
-整份清单加载失败 —— 在索引下限指向认识它的引擎之前,不要把这个键写进那里。
+**在较旧的引擎上，这个键会被忽略，而不会致命。** 在 2026.8.26.2 上
+实测：在一个依赖的 manifest 里，它被静默接受；在一份根 manifest 里，
+它会警告——
+`[build] has unsupported key 'private_include_dirs' (ignored)`——
+而构建继续进行。所以一个包可以先采用这个键，不必等待
+它的消费者升级；那些还在旧引擎上的消费者，只会继续像以前一样拿到那个
+目录。唯一的例外，是一份已发布的 `xim` 描述符的 `target_cfg` 块——
+那里，一个无法识别的子键是硬错误，会让整份 manifest 加载失败——在
+索引下限点名一个认识这个键的引擎之前，不要把这个键放进那里。
 
-`include_dirs_after`(#249)列出**排在工具链系统目录之后**搜索的头文件目录
-(GCC/Clang 发射为 `-idirafter`;MSVC 方言退化为排在末尾的 `/I`,NASM 汇编
-单元退化为普通 `-I`——两者都没有对应 flag,也都没有需要保护的系统头搜索链)。当目录是解压后的源码 tarball 根目录、且其中的文件名会与标准头冲突时,
-用它代替 `include_dirs` —— 例如 ffmpeg 根目录的 `VERSION` 文件在大小写不敏感
-的 macOS 文件系统上会把 libc++ 的 `<version>` 遮蔽(若该根目录挂在 `-I` 上)。
-使用 `include_dirs_after` 时系统头永远优先,而包自己的真实头文件
-(`<libavutil/frame.h>`)仍能找到。条目支持与 `include_dirs` 相同的 `*` glob
-约定,并沿相同的依赖边传播给消费者 —— 消费者收到的仍是 after 目录,
-永远不会被升级为 `-I`。
+`include_dirs_after`（#249）列出在工具链的系统目录**之后**才被搜索的
+头文件目录（在 GCC/Clang 上渲染为 `-idirafter`，在 MSVC 方言下渲染为
+追加在末尾的 `/I`，在 NASM 汇编单元上渲染为普通的 `-I`——后两者都没有
+对应机制，也都没有需要保护的系统头文件链）。当某个目录是一个解出来的
+源码压缩包根目录、其中的文件名与标准头文件相撞时，用它代替
+`include_dirs`——例如，在大小写不敏感的 macOS 文件系统上，如果把
+ffmpeg 的压缩包根目录放上 `-I`，它顶层的 `VERSION` 文件会遮蔽 libc++
+的 `<version>`。用 `include_dirs_after`，系统头文件总是获胜，同时这个
+包真正的头文件（`<libavutil/frame.h>`）仍然可以被找到。条目支持与
+`include_dirs` 相同的 `*` glob 约定，并沿着相同的边向依赖它的包
+传播——消费者收到的是「之后」目录，永远不会被升级为 `-I`。
 
-`macos_deployment_target` 设定产物 Mach-O 头里的最低系统版本
-(`LC_BUILD_VERSION minos`),即二进制能运行的最老 macOS。优先级与各生态
-惯例一致:环境变量 `MACOSX_DEPLOYMENT_TARGET`(单次调用的显式覆盖,
-cargo/rustc、cc 等同样尊重该变量)> 本字段(项目默认,类似 SwiftPM 的
-`platforms:`)> **内建默认 `14.0`**(rustc 风格——每个 target 都有基线,
-14.0 即 LLVM 官方静态库自身的下限)。该值会进入 BMI 指纹——切换 target
-会自动重建模块缓存。
+`macos_deployment_target` 设定产物的 Mach-O 头（`LC_BUILD_VERSION
+minos`）里记录的最低系统版本，也就是这个二进制能运行的最旧 macOS
+版本。优先级遵循生态惯例：`MACOSX_DEPLOYMENT_TARGET` 环境变量（一次
+调用的显式覆盖，cargo/rustc、cc 等同样这样处理）> 这个字段（工程默认
+值，类似 SwiftPM 的 `platforms:`）> **内置默认值 `14.0`**（rustc
+风格——每个目标都有一个基线，而 14.0 正是 LLVM 官方静态库自身的下限）。
+这个值进入 BMI 指纹，所以切换目标会自动重建模块缓存。
 
-### 构建并发(`jobs`)与模块调度(`bmi_schedule`)
+### 构建并发（`jobs`）与模块调度（`bmi_schedule`）
 
 ```toml
 [build]
-jobs         = "auto"    # 或正整数;--jobs / MCPP_JOBS 覆盖它
-bmi_schedule = "off"     # auto(默认,= 关)| on | off
+jobs         = "auto"    # or a positive number; --jobs / MCPP_JOBS override it
+bmi_schedule = "off"     # auto (default, = off) | on | off
 ```
 
-`jobs` 是同时跑几个编译。`"auto"` **在构建这台机器上现算**,绝不冻进 manifest:
-异构 CPU 上取物理核数(13900K 是 8 P-core + 16 E-core,它的 32 个线程不是 32 个
-等价的工人),再按可用内存夹一次 —— 单个模块接口编译峰值 0.5–1.0 GB。
-写错的值会被
-**明确报出来,绝不静默当成默认值** —— 一个悄悄退回默认的拼写错误,表现是
-「构建莫名其妙比我要求的慢」。
+`jobs` 是同时运行多少个编译。`"auto"` 是**相对正在执行构建的这台机器**
+解析的，绝不会被冻结进 manifest：它取一颗异构 CPU 的物理核心数（一颗
+13900K 是 8 个 P-core + 16 个 E-core，所以它的 32 个线程不是 32 个
+等价的工作者），并按空闲内存夹紧这个数字，因为单次模块接口编译峰值
+占用 0.5–1.0 GB。一个畸形的取值会**被报告，绝不会被静默当作默认值
+处理**——一个悄悄恢复默认值的拼写错误，会让构建比要求的更慢，却没有
+任何迹象说明原因。
 
-优先级,每一级描述的是不同的东西:
+优先级如下，每一层描述的是不同的东西：
 
-| 级别 | 作用域 |
+| 层级 | 作用域 |
 |---|---|
-| `--jobs` / `MCPP_JOBS` | 这一次调用 |
-| `[build] jobs`(这个键) | 这个工程 |
-| `~/.mcpp/config.toml` 里的 `[build] default_jobs` | **这台机器** |
-| 缺省,或 `0` | 什么都不说,交给后端自己的默认值 |
+| `--jobs` / `MCPP_JOBS` | 本次调用 |
+| `[build] jobs`（这个键） | 本工程 |
+| `~/.mcpp/config.toml` 里的 `[build] default_jobs` | **本机** |
+| 缺失，或 `0` | 什么都不说，交给后端自己的默认值 |
 
-三者里只有按机器的那个键能承载机器事实。`--jobs` 每次调用都要重说一遍;这个键
-是按包的,而 `[workspace.build]` 不继承它,所以一个七成员的 workspace 会把同一个
-数字写七遍,并把某位开发者的内存上限提交进仓库。`default_jobs = 0` 是 mcpp 写进
-新配置的值,含义是缺省。
+三者之中，只有按机器设置的那个键能承载一个机器事实。`--jobs` 必须在
+每次调用时重复传入；这个键是按包的，`[workspace.build]` 不会继承它，
+所以一个七个成员的 workspace 会把这个数字重复七遍，并把某个开发者
+自己的内存上限提交进仓库。`default_jobs = 0` 是 mcpp 写进一份全新
+配置文件时的取值，含义是「未设置」。
 
-`default_jobs` **同时约束 `mcpp test` 的并发**,而在那里缺省时的回落是整台机器
-而不是某个后端的默认值。十个并发测试进程与十个并发编译的内存形状一样,所以按机器
-设的数字对两者都生效。这句话写出来是因为:一个键有两种行为,必须明说。
+`default_jobs` **也约束 `mcpp test` 的并发度**，它缺失时的回落值是
+整台机器，而不是某个后端的默认值。一次十个并发进程的测试运行，与一次
+十个并发的编译，内存形状相同，所以一个按机器设置的数字对两者都适用。
+之所以写出这一点，是因为一个键有两种行为，就必须写清楚。
 
-`bmi_schedule` 决定**导入方什么时候被解锁**。
+`bmi_schedule` 决定 importer 何时被解除阻塞。
 
-| 值 | |
+| 取值 | |
 |---|---|
-| `"auto"` | **默认值,而它目前等于「关」** |
-| `"on"` | 拆开模块边:BMI 一发布导入方就能开始,而不是等编译器退出 |
-| `"off"` | 每个模块一条边 |
+| `"auto"` | **默认值，目前意味着关闭** |
+| `"on"` | 拆分这条模块边：importer 在 BMI 发布时就开始，而不是等编译器退出 |
+| `"off"` | 一个模块对应一条边 |
 
-只认这三种拼写。`"ON"`、`"true"`、`"yes"` 会被**拒绝并给出诊断**,而不是悄悄
-当成关 —— 而且它们不是无害的笔误:这个值会进构建指纹,所以一个被拒的拼写
-以前会选到**另一个构建目录**(即一次全量重建),同时对调度没有任何影响。
+只接受这三种拼法。`"ON"`、`"true"` 与 `"yes"` 会**带诊断信息被
+拒绝**，而不是被悄悄当作关闭——它们也不是无害的笔误：这个值会进入
+构建指纹，所以一个被拒绝的拼法，过去会选中一个不同的构建目录（一次
+完整重建），而调度本身却什么都没变。
 
-**`auto` 为何等于关闭。** 模块接口编译中约 86% 是任何导入方都不会读取的代码生成,
-因此提前发布 BMI 收益显著 —— 在 mcpp 自身上实测:`cold` 86.7s → 35.7s、
-`edit-body` 80.9s → 29.8s。但调度错误的表现是静默失效:缺少一条依赖不会使构建
-报错,只会使某个目标不再重建。因此在所有平台完成 CI 验证前,该键保持 opt-in。
+**为什么 `auto` 是关闭的。** 一次模块接口编译里，86% 的时间花在没有
+任何 importer 会读取的代码生成上，所以提前发布 BMI 很值——在 mcpp
+自身上实测，`cold` 从 86.7s 降到 35.7s，`edit-body` 从 80.9s 降到
+29.8s。但一次调度上的错误是**无声地**错的：一条被漏掉的依赖不会让
+构建失败，只会让某样东西不再被重建。它保持默认关闭，直到在每个平台的
+CI 上都跑通过。
 
-**该键无效的场景。** mcpp 本来就跳过级联的地方(`touch-hub`、`edit-comment`)
-没有可以移出关键路径的必需工作,该键不产生收益。见
-[性能对比](../../README.zh-CN.md#性能对比)。
+**它帮不上忙的地方。** 在 mcpp 已经跳过级联的地方——`touch-hub`、
+`edit-comment`——没有欠下的工作需要移出关键路径，这个键什么都买不到。
+见[基准测试](../../README.md#benchmark)。
 
-**实现方式**按编译器确定,无需用户选择:gcc 用 `rename()` 发布 BMI,所以代码
-生成被分离出去、边在发布时就返回;clang 换成两条普通边 —— 它把 BMI 直接
-`O_TRUNC` 写到最终路径,读的人可能看到写了一半的文件。MSVC 不动:`/ifcOnly`
-的代价和 `.ifc` 是否原子发布都没测过,而这两件事猜错都是无声的。
+**机制**因编译器而异，并自动选择：gcc 用 `rename()` 发布它的 BMI，
+所以代码生成与之分离，这条边在发布时就返回；clang 得到的是两条普通的
+边，因为它以 `O_TRUNC` 把 BMI 写到最终路径，读者可能会看到一个写了
+一半的文件。MSVC 被留在一边不动——`/ifcOnly` 的开销与 `.ifc` 的
+原子性都未经测量，两者任何一个猜错都是无声的。
 
-### 模块接口扩展名(`module_extensions`)
+### 模块接口扩展名（`module_extensions`）
 
-mcpp 把 `.cppm` 视为模块接口单元。C++ 生态并没有收敛到一种拼法 —— Clang 还认
-`.ccm` 和 `.cxxm`,MSVC 用 `.ixx` —— 所以接口用别的扩展名的工程自己声明:
+mcpp 把 `.cppm` 当作一个模块接口单元。C++ 生态还没有在这件事上收敛到
+一种拼法——Clang 还认得 `.ccm` 与 `.cxxm`，MSVC 用 `.ixx`——所以一个
+接口用了别的扩展名的工程需要声明它：
 
 ```toml
 [build]
 module_extensions = [".ixx", ".ccm"]
 ```
 
-这个列表是**追加**的:`.cppm` 永远是模块接口,不能删。要让某个文件不参与构建,
-用 `sources` 的 `!` 前缀 —— 那才是 `sources` 的职责。
+这份列表是**只增**的：`.cppm` 永远是模块接口，无法被移除。要阻止某个
+具体文件被构建，在 `sources` 里用 `!` 排除它；这正是 `sources` 的用途。
 
-声明一个扩展名会同时做三件事,这正是「一个键而不是几个键」的理由:
+声明一个扩展名会同时做三件事，这也是设一个键而不是设几个键的意义
+所在：
 
-1. `sources` 的约定默认值跟着变宽,文件才**能被找到**(`src/**/*.ixx` 自动进入默认 glob);
-2. 这些单元用**模块**规则编译 —— 产出 BMI,其 `.o` 无条件进入链接;
-3. 新鲜度快路径会扫描它们,所以给其中一个加 `import` 会让构建图作废,
-   而不是静默复用一张过期的图。
+1. `sources` 的约定默认值随之扩大，使这些文件能被**找到**
+   （`src/**/*.ixx` 加入默认 glob）；
+2. 这些单元按**模块**规则编译——它们发出 BMI，它们的对象无条件被
+   链接；
+3. 新鲜度快路径会盯住它们，所以给某个文件加一条 `import` 会让构建图
+   失效，而不是静默复用一份陈旧的图。
 
-**任何扩展名都接受**,唯独拒绝那些已经代表其他角色的
-(`.cpp` `.cc` `.cxx` `.c` `.m` `.mm` `.h` `.hpp` `.hh` `.hxx` `.S` `.s` `.asm`)——
-这是 manifest **错误**而不是警告,因为它会把(比如)C 文件送进 C++ 模块规则,
-最终失败在一个既不提文件也不提这个键的地方。
+除了那些已经命名了某种非模块角色的扩展名（`.cpp` `.cc` `.cxx` `.c`
+`.m` `.mm` `.h` `.hpp` `.hh` `.hxx` `.S` `.s` `.asm`）之外，任何扩展名
+都会被接受；声明其中之一是 manifest 错误而不是警告，因为那会把（比如
+说）C 文件路由进 C++ 模块规则，并在一个既不点名文件也不点名这个键的
+地方失败。
 
-扩展名**按字面匹配,不做大小写折叠** —— 在这个领域里 `.S` 和 `.s` 是两种不同的语言,
-所以大小写从不被忽略。
+扩展名是**按字面匹配、不做大小写折叠**的——`.S` 与 `.s` 在这个领域
+是两种不同的语言，大小写永远不会被忽略。
 
-mcpp 每次都会**显式告诉编译器**这个单元是模块接口(Clang 用 `-x c++-module`,
-GCC 用 `-x c++`,MSVC 用 `/interface /TP`),所以即使编译器驱动从没听说过这个扩展名
-也能工作。这也是为什么任何扩展名都被允许:mcpp 不需要编译器认识它。
+mcpp 总是明确告诉编译器某个模块接口单元就是模块接口单元（Clang 上是
+`-x c++-module`，GCC 上是 `-x c++`，MSVC 上是 `/interface /TP`），所以
+编译器驱动程序从未听说过的扩展名照样能工作。这正是任何扩展名都被
+允许的原因：mcpp 不需要编译器认识它。
 
-> **发布须知**:旧版 mcpp 不认识这个键 —— 它会警告、忽略,然后把那些文件当作普通
-> 翻译单元编译,得到一个**错误的构建**而不是一次干净的失败。发布一个用了
-> `module_extensions` 的包,请在它的索引描述符里声明 mcpp 版本下限。
+> **发布注意事项。** 较旧的 mcpp 不认识这个键：它会警告、忽略它，
+> 然后把那些文件当作普通翻译单元编译——这是一次错误的构建，而不是
+> 一次干净的失败。一个使用了 `module_extensions` 的已发布包，应在其
+> 索引描述符里声明一个 mcpp 版本下限。
 
-### 构建程序超时(`build_program_timeout`)
+### 构建程序超时（`build_program_timeout`）
 
-`build.mcpp` 默认有 **600 秒**,超时后 mcpp 杀掉它并让构建失败、点名是哪个包。
-构建程序确实需要跑更久的工程(大规模代码生成)自己抬高上限:
+一个 `build.mcpp` 默认获得 **600 秒**，超时后 mcpp 会杀掉它并使构建
+失败，同时点名这个包。一个构建程序确实需要更长时间运行的工程（比如
+一个大型的代码生成步骤），可以抬高自己的上限：
 
 ```toml
 [build]
-build_program_timeout = 1800   # 秒;0 = 不限
+build_program_timeout = 1800   # seconds; 0 = no limit
 ```
 
-这个值读的是**拥有该 `build.mcpp` 的那个包**的 manifest —— 依赖的生成器由依赖自己的
-声明来限制,因为只有它的作者知道要跑多久。优先级与 `macos_deployment_target` 同构:
+这个值取自**拥有这个 `build.mcpp` 的那个包自己的 manifest**——一个
+依赖的生成器，由依赖自己的声明约束，因为知道它要跑多久的是它的作者。
+优先级与 `macos_deployment_target` 遵循相同的形状：
 
 ```
-MCPP_BUILD_PROGRAM_TIMEOUT=<秒>   本次调用(最高)
-  > [build] build_program_timeout  该包自己的 manifest
-  > 600                            内置默认
+MCPP_BUILD_PROGRAM_TIMEOUT=<seconds>   (this invocation; highest)
+  > [build] build_program_timeout      (that package's manifest)
+  > 600                                (built-in default)
 ```
 
-**不写这个键**与**写 `0`** 不是一回事:不写表示「用默认上限」,`0` 表示「完全不设上限」。
+省略这个键与把它设为 `0` 不是一回事：不设置意味着「用默认上限」，`0`
+意味着「完全没有上限」。
 
-这个值刻意**不进构建指纹** —— 它不改变图里的任何一条边,而把它折进指纹会让
-「抬高超时」触发全量重建,这恰好与抬高超时的人想要的相反。
+这个值刻意**不是**构建指纹的一部分——它不改变图里的任何一条边，把它
+折进指纹会意味着抬高超时会重建整个工程，这与抬高超时的人想要的正好
+相反。
 
-只有构建**程序**受限,**编译**不受限。原因见
-[30-build-mcpp.md](30-build-mcpp.md)。
-### C++ 运行时契约(`cxx_runtime`)
+**编译**阶段不受这个上限约束，只有构建**程序**受约束。这种不对称是
+刻意为之，原因见 [30-build-mcpp.md](30-build-mcpp.md)。
 
-已移入 [20 —— 工具链管理](20-toolchains.md)。
+### C++ 运行时契约（`cxx_runtime`）
 
+已移至 [20 —— 工具链管理](20-toolchains.md)。
 
 ### 宿主代码页之外的文件名
 
-glob 是窄字符串,编译命令和 `build.ninja` 也是。在 Windows 上这些字符串由进程的
-**ANSI 代码页**产生,因此一个名字在该代码页里无法拼写的文件,既匹配不了 glob,也
-写不进编译命令或构建文件。
+glob 是窄字符串，编译命令与 `build.ninja` 也是。在 Windows 上，这些
+字符串以进程的 **ANSI 代码页**产生，所以一个文件名在那个代码页里没有
+拼法的文件，无法被 glob 匹配，无法出现在编译命令里，也无法写进构建
+文件。
 
-这类条目会被跳过,并按目录报告一次:
+这样的条目会被跳过，跳过信息按目录汇报一次：
 
 ```text
 warning: 'C:/.../pkg/test/www' contains names this system's active code page cannot represent
@@ -745,41 +845,48 @@ warning: 'C:/.../pkg/test/www' contains names this system's active code page can
   hint: Windows only: this is the process ANSI code page, which `chcp` does not change. ...
 ```
 
-报告里给的是**最近一个代码页拼得出的祖先目录**,用通用(`/`)写法。拼不出的那个名字本身
-永远不会被打印:渲染它会抛出这条消息正在报告的同一个异常。
+报出的路径是最近的、其名字**能**被该代码页拼出的祖先目录，采用通用
+（`/`）拼法。出问题的名字本身永远不会被打印：渲染它会抛出与这条消息
+正在报告的同一个异常。
 
-`chcp` 改的是**控制台**代码页,对此无效。若这些名字只是测试数据或文档,跳过是无害
-的——上游 tarball 里带一个日文夹具目录,在 en-US 宿主上照样构建。源文件则不然:需要
-改名,或换一台代码页覆盖得了的机器。
+`chcp` 设置的是**控制台**代码页，在这里没有作用。只是测试数据或文档
+的文件名是无害的——一个携带日语命名测试夹具目录的上游压缩包，在
+en-US 宿主上照常能构建。源文件则不然：它们需要改名，或者需要一个
+代码页能覆盖它们的宿主。
 
-Linux 与 macOS 不做这种转换,因此那里不会跳过任何名字。一个包在一边能构建、在另一
-边报 `internal: unhandled exception` 并指向代码页,就是 mcpp#516。
+Linux 与 macOS 不做这种转换，所以那里没有任何东西被跳过。一个能在
+其中一个上构建、在另一个上不能、并报出一条来自代码页消息的
+`internal: unhandled exception` 的包，就是 mcpp#516。
 
-### 2.3.1 `[build] accel` — 本次构建面向的加速器
+### 2.3.1 `[build] accel` —— 本次构建面向的加速器
 
 ```toml
 [build]
 accel = "cuda12.8+{sm_80,sm_90f} ptx>=90"
 ```
 
-本次构建为哪些设备后端与架构编译。单次构建可用 `--accel` 覆盖 ——
-这与 `--target` 对 `[toolchain]` 的关系相同;`--no-accel` 是显式请求「不要加速器」,
-也就是在一个同时发布了设备构建的包中选中 CPU-only 变体的方式。
+这次构建面向哪些设备后端与体系结构。可被 `--accel` 为单次构建覆盖，
+它与 `[toolchain]` 的关系和 `--target` 相同；`--no-accel` 显式请求不
+要任何加速器，这正是从一个同时发布设备构建的包中选出纯 CPU 变体的
+方式。
 
-该取值会与构建所消费的任何预建产物的 `accel` 字段比较,而请求为空的构建被任何产物满足。
-见 [42 — 异构硬件构建](42-heterogeneous-builds.md)。
+这个值会与所消费的任何预构建产物的 `accel` 字段比较，一次不要求任何
+加速器的构建，会被任何产物满足。见
+[42 —— 异构构建](42-heterogeneous-builds.md)。
 
-### 2.4 `[lib]` — 库根模块约定
+### 2.4 `[lib]` —— 库根模块约定
 
 ```toml
 [lib]
-path = "src/capi/lua.cppm"    # 覆盖默认的 lib-root 位置
+path = "src/capi/lua.cppm"    # Override the default lib-root location
 ```
 
-默认约定:`src/<包名最后一段>.cppm`(如包名 `mcpplibs.cmdline` → `src/cmdline.cppm`）。
+默认约定：`src/<包名的最后一段>.cppm`（例如包名 `mcpplibs.cmdline` →
+`src/cmdline.cppm`）。
+
 ### 2.5 `[dependencies]`、`[dev-dependencies]`、`[build-dependencies]`
 
-已移入 [05 —— 依赖与解析](05-dependencies.md)。
+已移至 [05 —— 依赖与解析](05-dependencies.md)。
 
 ### 2.7 `[toolchain]` —— 工具链配置
 
@@ -787,15 +894,15 @@ path = "src/capi/lua.cppm"    # 覆盖默认的 lib-root 位置
 [toolchain]
 default = "gcc@16.1.0"
 
-# 交叉编译目标覆盖
+# Cross-compilation target override
 [target.x86_64-linux-musl]
 toolchain = "gcc@16.1.0"
 linkage   = "static"
 ```
+
 ### 2.7.1 `[target.*]` —— 平台条件依赖与 flag
 
-已移入 [22 —— 目标侧](22-target-side.md)。
-
+已移至 [22 —— 目标侧](22-target-side.md)。
 
 ### 2.7.3 `min_api_level` —— 产物必须能跑在多老的 OS 上
 
@@ -804,74 +911,74 @@ linkage   = "static"
 min_api_level = 24
 ```
 
-Android 自己的用词是 **API level**,而这里要的是它的**最小值** —— NDK 的 CMake
-toolchain 把 `ANDROID_PLATFORM` 记载为「the minimum API level supported by the
-application or library」,并说明它对应 Gradle 的 `minSdk`。
+Android 自己的术语是 **API level**，这里指的是其中的最小值——NDK 的
+CMake 工具链文档里把 `ANDROID_PLATFORM` 记录为承载的那个量（「应用或
+库支持的最低 API level」），对应 Gradle 的 `minSdk`。
 
-**这是工程的决定,不是工具链的属性。** 一个 NDK 服务一个级别区间,所以写
-`android-ndk@<version>` 并不钉住某一个级别。
+**这是一个工程决定，不是工具链的属性。** 一个 NDK 服务于一段范围内的
+level，所以命名 `android-ndk@<version>` 并不能钉住其中一个。
 
-**它到达编译器,不进入身份。** 规范 triple 仍然是 `aarch64-linux-android` ——
-输出目录、`cfg(env = "android")` 和打包的 ABI tag 都由它命名;级别只拼进交给
-编译器的那个 triple:
+**它到达的是编译器，而不是身份。** 规范三元组始终是
+`aarch64-linux-android`，它命名输出目录、`cfg(env = "android")` 与
+打包后的 ABI 标签；level 被融合进传给编译器的那个三元组：
 
 | | |
 |---|---|
-| 规范 triple | `aarch64-linux-android` |
-| clang 实际收到 | `aarch64-unknown-linux-android24` |
-| 构建指纹 | 含级别 |
+| 规范三元组 | `aarch64-linux-android` |
+| clang 收到的 | `aarch64-unknown-linux-android24` |
+| 构建指纹 | 携带这个 level |
 
-指纹不是可选项:级别决定哪些 bionic 符号可见,所以两个级别就是两个 ABI,绝不可
-共用一个构建目录。
+指纹里带上它不是可选的：level 决定哪些 bionic 符号可见，所以两个
+level 是两种 ABI，绝不能共享一个构建目录。
 
-不设也合法,含义是 NDK 自己的默认级别 —— 那正是
-`clang -target aarch64-linux-android` 规范化出的形式。
+不设置是合法的，意味着使用 NDK 自己的默认值，也就是 `clang -target
+aarch64-linux-android` 归一化后得到的那个值。
 
-这与 `macos_deployment_target`(见上文)是同一套机制,而两者都用各自平台的词汇
-命名,而不是一个共享抽象。它们回答同一个问题:产物必须能跑在多老的 OS 发布版上。
+这与 `macos_deployment_target`（见上文）用的是同一套机制，两者各自用
+自己平台的说法命名，而不是共用一个抽象。两者回答的是同一个问题：产物
+必须能运行的最旧 OS 版本是哪个。
 
+### 2.7.2 裸机（`os = none`）—— freestanding 目标
 
-### 2.7.2 裸机(`os = none`)—— freestanding target
+`riscv64-none-elf` 与 `riscv32-none-elf` 是底下没有操作系统的目标。
+它们不需要按宿主区分的交叉工具链：clang 与 lld 本就是交叉编译器，所以
+任何能安装 llvm 载荷的宿主都能产出它们。
 
-`riscv64-none-elf` 与 `riscv32-none-elf` 是底下没有操作系统的 target。它们不需要
-逐宿主的交叉工具链:clang 与 lld 天生是交叉编译器,任何能装 llvm 载荷的宿主都能
-产出它们。
-
-本节是清单参考。示例部分 —— 生成工程、运行、在目标上测试、freestanding 标准库
-子集,以及编写板级支持包 —— 在
-[40 — 裸机与 freestanding 目标](40-baremetal.md)。
+本节是 manifest 参考。实战示例——脚手架搭建、运行、在目标上测试、
+freestanding 标准库子集，以及编写一个板级支持包——都在
+[40 —— 裸机与 freestanding 目标](40-baremetal.md)里。
 
 ```bash
 mcpp build --target riscv64-none-elf
-mcpp run   --target riscv64-none-elf     # 经 [target.<triple>].runner
+mcpp run   --target riscv64-none-elf     # via [target.<triple>].runner
 ```
 
-**从板级支持包起步**
+**从一个板子包开始**
 
-下面这些几乎都不需要手写。板级支持包(BSP)自带 C 库、启动代码、内存布局和模拟器,
-所以跑起一个镜像的最短路径是:
+下面这些内容几乎不需要手写。一个板级支持包携带了 C 库、启动代码、
+内存布局与模拟器，所以到达一个能启动的镜像的最短路径是：
 
 ```bash
 mcpp new blinky --template riscv-virt-rt
 cd blinky && mcpp run
 ```
 
-生成的 manifest 里没有链接脚本、没有加载地址、没有 libc、没有模拟器 —— 连
-`[target.*]` 段都没有。本节余下的内容讲的是**这样一个包提供了什么**,也就是要给
-一块还没有 BSP 的板子写一个时该照着做什么。
+生成的 manifest 不命名任何链接脚本、加载地址、libc 或模拟器——它完全
+没有 `[target.*]` 小节。本节剩下的部分描述这样一个包供给了什么，这
+正是在为一块没有这些的板子编写包时应当参照的内容。
 
-**freestanding target 上有什么不同**
+**freestanding 目标上有哪些不同**
 
 | | |
 |---|---|
-| 链接线 | `-nostdlib -nostartfiles -static`,且不带任何 hosted 的东西 —— 没有 crt 文件、没有动态链接器、没有 C++ 运行时。链接器用**绝对路径**寻址(`-fuse-ld=<载荷>/bin/ld.lld`),因为 `-fuse-ld=lld` 走 `PATH` 解析,在任何 binutils 排前面的机器上都会找到 GNU ld。 |
-| ISA flag | `-march` / `-mabi` / `-mcmodel` 来自 target 表,所以只写 `--target <triple>` 就足以产出正确的目标文件。 |
-| C 库 | **属于 target**,由 mcpp 从目标自己那一行解析,和解析编译器同理 —— 裸机工程不声明 libc,正如宿主工程不声明 glibc。它的头进入每一个翻译单元,它的目录进入链接搜索路径,所以板级包用**裸名**选库(`-lc`、`-lcrt0-semihost`)。**选哪个**启动对象、**用哪份**链接脚本仍然是板级决定。 |
-| 异常与 RTTI | **关闭**,作用于每一个翻译单元,依赖的也不例外。没有 unwinder、没有 `libc++abi`,谁都抛不了;否则光是 `std::optional::value()` 就会拉进 `__cxa_throw` 等四个未定义符号。它属于 **target** 而不是工程的 `cxxflags`,因为 **BMI 会记录这个配置** —— 带异常编出来的依赖,不带异常的单元 import 不进来。 |
-| `import std` | **不可用。** `std` 是覆盖整个库的一个模块 —— 线程、文件系统、iostreams 全在内 —— 没有 OS 就没有它的子集可编。取代它的是两个普通依赖:**板级包**包住目标的 C 库,**`std-freestanding`** 提供标准库里不需要 OS 的那部分(实测 libc++ 110 个头里的 103 个)。 |
-| 入口点 | **只要有人提供 `crt0`,`int main()` 就能用** —— 板级支持包通常就提供它,于是固件的入口就是普通的 `main`,它的返回值经 semihosting 传回宿主。**只有零 libc 的板子**才需要显式声明 target 并把 `main` 指向携带 `_start` 的那个文件。 |
+| 链接行 | `-nostdlib -nostartfiles -static`，不含任何 hosted 的东西——没有 crt 文件、没有动态链接器、没有 C++ 运行时。链接器以**绝对路径**寻址（`-fuse-ld=<payload>/bin/ld.lld`），因为 `-fuse-ld=lld` 经 `PATH` 解析，在任何前面装了 binutils 的机器上都会找到 GNU ld。 |
+| ISA 旗标 | `-march` / `-mabi` / `-mcmodel` 取自目标表，所以仅凭 `--target <triple>` 就足以产出正确的对象文件。 |
+| C 库 | **目标自己的那一份**，由 mcpp 从目标自己的行解析，方式与解析编译器完全相同——一个裸机工程不声明任何 libc，正如一个 hosted 工程不声明 glibc。它的头文件到达每一个翻译单元，它的目录在链接搜索路径上，所以一个板子包用裸名字（`-lc`、`-lcrt0-semihost`）从中选取。**哪些**对象、**哪份**链接脚本，仍是板子自己的决定。 |
+| 异常与 RTTI | **关闭**，在包括依赖在内的每一个翻译单元上。这里没有展开器，也没有 `libc++abi`，所以没有任何东西能抛出；否则单是 `std::optional::value()` 就会拉进 `__cxa_throw` 以及另外三个未定义符号。它属于目标而不是工程的 `cxxflags`，因为 BMI 会记录它——一个带异常编译的依赖，无法被一个不带异常的单元 import。 |
+| `import std` | **不可用。** `std` 是覆盖整个标准库的一个模块——包括线程、文件系统与 iostreams——所以没有一个子集能在没有操作系统的情况下构建出来。两个普通依赖取代了它：**板子包**包装目标的 C 库，**`std-freestanding`** 携带标准库里不需要操作系统的那些部分（实测为 libc++ 110 个头文件中的 103 个）。 |
+| 入口点 | 只要有东西提供了 `crt0`，`int main()` 就能工作——一个板子包通常提供，这样固件的入口点就是一个普通的 `main`，它的返回值经由 semihosting 到达宿主。只有零 libc 的板子才需要一个显式目标，其 `main` 指向携带 `_start` 的文件。 |
 
-**一个最小固件**
+**一份最小固件**
 
 ```toml
 [package]
@@ -883,70 +990,79 @@ ldflags = ["-T", "/abs/path/to/link.ld"]
 
 [targets.firmware]
 kind = "bin"
-main = "src/start.S"          # 入口在汇编里,不在 main()
+main = "src/start.S"          # the entry lives in assembly, not in main()
 
 [target.riscv64-none-elf]
 runner = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
           "-no-reboot", "-bios", "default", "-kernel"]
 ```
 
-**`runner` —— `mcpp run` 如何执行本机跑不了的东西**
+**`runner`——`mcpp run` 如何执行一个这台机器本身跑不了的东西**
 
-裸机镜像的 ISA 不对、没有 loader、且期望独占整个地址空间;直接 exec 它得到的是
-"Exec format error"。`runner` 就是挡在它前面的 argv 模板。产物路径会被**追加**,
-或者在模板含 `{}` 时替换进去。
+一个裸机镜像的 ISA 不对，没有加载器，并期望独占整个地址空间；直接
+执行它会得到「Exec format error」。`runner` 是站在它前面的那份 argv
+模板。产物路径会被**追加**在后面，或者在模板包含 `{}` 时替换掉它。
 
-mcpp **刻意不提供默认 runner**。用哪个模拟器、哪个机器型号、哪种固件模式都是板级
-事实 —— 同一 ISA 的两块板需要不同 argv(OpenSBI 启动用 `-bios default`,picolibc
-镜像用 `-bios none -semihosting`)—— 引擎一旦猜一个,另一块板就得跟它打架。板级
-支持包通常会提供它。
+mcpp 刻意**不附带任何默认 runner**。用哪个模拟器、哪个机器型号、哪种
+固件模式，都是板子自己的事实——同一 ISA 上的两块板子可能需要不同的
+argv（OpenSBI 启动用 `-bios default`，picolibc 镜像用 `-bios none
+-semihosting`）——一个替某一块板子猜一个值的引擎，就是另一块板子必须
+与之对抗的引擎。一个板级支持包通常会提供它。
 
-### 2.7.3 hosted 目标上的 `runner`(2026.9.2.1+)
+### 2.7.3 hosted 目标上的 `runner`（2026.9.2.1+）
 
-`[target.<triple>].runner` 对每一个精确三元组生效,不限于裸机。一个 hosted 交叉产物
-—— 在 x86_64 机器上构建的 `aarch64-linux-musl` —— 有的宿主能直接执行(binfmt_misc
-注册了 qemu-user),有的宿主以 `Exec format error` 拒绝;属于哪一种是机器的性质,不是
-三元组的性质。mcpp 不预测它:要么通过工程声明的 runner 执行产物,要么尝试直接执行并
-报告内核的回答。
+`[target.<triple>].runner` 适用于每一个精确三元组，不只是裸机。一个
+hosted 的交叉产物——在 x86_64 机器上构建的 `aarch64-linux-musl`——在
+一些宿主上可执行（注册了 qemu-user 的 binfmt_misc），在另一些宿主上会
+被拒绝并报 `Exec format error`，这两者哪个成立是机器的属性，不是
+三元组的属性。mcpp 不预测它。它要么通过工程声明的 runner 执行产物，
+要么尝试直接执行，并报告内核给出的答案。
 
 ```toml
 [target.aarch64-linux-musl]
 runner = ["qemu-aarch64-static"]
 ```
 
-规则对 `mcpp run` 与 `mcpp test` 相同:
+对 `mcpp run` 与 `mcpp test` 都适用的规则：
 
-- **声明了 runner 就使用它。** 其第一个元素由 mcpp 定位:先在 `[xlings.workspace]`(§2.13)
-  声明的每个载荷的 `bin/` 目录里找,再找 `PATH`。`PATH` 上的裸名会命中 xvm shim,而
-  shim 按当前 SubOS 而非按包作答;先查载荷,runner 才能直接写工程声明过的程序名。
-- **声明的 runner 找不到或启动不了是错误**,错误里带程序名、搜索过的目录和 errno。
-  不回落到直接执行:让产物在另一个解释器下带着另一组参数运行,正是这个键要防止的
-  失败。
-- **没有 runner 且内核拒绝产物:** `mcpp run` 报告拒绝原因与应当写的键,退出码 2。
-  `mcpp test` 把每个测试报告为未运行,原因只打印一次,退出码 2(§2.7.3.1)。
-- **`--no-runner`** 直接执行产物并忽略声明的 runner。它陈述的是关于本机的事实 ——
-  这个三元组在本机是原生的 —— 清单没有承载它的轴;为 x86_64 开发者写的 runner 在
-  aarch64 机器上仍可用。
+- **一个已声明的 runner 会被使用。** 它的第一个元素由 mcpp 定位：先在
+  `[xlings.workspace]`（§2.13）下每个已声明载荷的 `bin/` 目录里找，再
+  到 `PATH` 上找。`PATH` 上的一个裸名字会解析到一个 xvm shim，它回答
+  的是当前 SubOS，而不是这个包；正是载荷查找，让一个 runner 能够命名
+  工程自己声明的程序。
+- **一个已声明但找不到或启动不了的 runner 是一个错误**，报告程序、
+  搜索过的目录与 errno。这里没有回落到直接执行：用不同的解释器、不同
+  的参数去运行这个产物，正是这个键存在要防止的那种失败。
+- **没有 runner，内核拒绝这个产物：** `mcpp run` 报告这次拒绝与需要
+  写的那个键，退出码 2。`mcpp test` 把每个测试都报告为未运行，理由
+  只报一次，退出码 2（§2.7.3.1）。
+- **`--no-runner`** 直接执行产物，忽略已声明的 runner。它陈述的是
+  关于这台宿主的一个事实——这个三元组在这里是原生的——而 manifest
+  没有轴可以承载这一点；一个 runner 为 x86_64 开发者写的工程，在
+  aarch64 机器上依然可读。
 
-通过 `[xlings.workspace]` 装模拟器是 CI 任务或单一宿主类别工程的形态。索引里的
-`qemu-user-aarch64` 只为 x86_64 Linux 构建,而这张表在每台构建本工程的宿主上都会
-provisioning,所以条目按平台写(§2.13):
+通过 `[xlings.workspace]` 配置模拟器，是给 CI 作业、或构建在单一宿主
+类别上的工程用的形式。索引里的 `qemu-user-aarch64` 只为 x86_64
+Linux 构建，而这张表会在每个构建这个工程的宿主上配置，所以这个条目
+要按平台分别写（§2.13）：
 
 ```toml
 [xlings.workspace]
-"xim:qemu-user-aarch64" = { linux = "" }   # Linux 上存在即可,版本不限
+"xim:qemu-user-aarch64" = { linux = "" }   # present on Linux, any version
 
 [target.aarch64-linux-musl]
 runner = ["qemu-aarch64-static"]
 ```
 
-宿主装不了的包是硬构建错误,所以不带平台形式的条目会让工程在 macOS 与 Windows 上
-无法构建。同样没有这个包的 Linux/aarch64 宿主传 `--no-runner`。
+一个宿主装不上的包是一个硬构建错误，所以一个没有按平台区分的条目，
+会让这个工程在 macOS 与 Windows 上完全无法构建。而在这个包同样不
+存在的 Linux/aarch64 宿主上，要传 `--no-runner`。
 
 #### 2.7.3.1 `mcpp test` 与未运行的测试
 
-产物在本机无法执行的测试既没有通过也没有失败。`mcpp test` 把它报告为**未运行**,
-在确立原因时打印一次,在汇总里重复原因的第一行,退出码 2:
+一个这台宿主无法执行其产物的测试，既没有通过，也没有失败。`mcpp
+test` 把它报告为**未运行**，在原因确定时打印一次，在摘要里重复原因
+的第一行，退出码 2：
 
 ```
 warning: this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); declare [target.aarch64-linux-musl].runner, or pass --no-runner on a host that can
@@ -954,37 +1070,39 @@ smoke ... not run
 error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); ...); finished in 0.41s (build 0.39s + run 0.00s)
 ```
 
-退出码 1 含义不变 —— 有测试运行并失败;0 表示每个测试都运行并通过。
-`--message-format json` 在每条记录上带 `"status":"not_run"` 与 `reason`,在汇总记录上
-带 `not_run` / `not_run_reason`(见 [50 —— 机器可读输出](50-machine-output.md))。
+退出码 1 保留原有含义——一个测试运行过并失败；0 意味着每个测试都
+运行过并通过。`--message-format json` 在每条记录上携带
+`"status":"not_run"` 与一个 `reason`，摘要记录上则是 `not_run` /
+`not_run_reason`（见[50 —— 机器可读输出](50-machine-output.md)）。
+
 ### 2.8 `[features]` —— Feature
 
-已移入 [06 —— Feature 与能力](06-features-and-capabilities.md),
-连同 `provides` / `requires` 与 `[feature-deps.<name>]`。
-
+已移至 [06 —— Feature 与能力](06-features-and-capabilities.md)，连同
+`provides` / `requires` 与 `[feature-deps.<name>]`。
 
 ### 2.8.3 `[scan_overrides."<glob>"]` —— 作者断言的扫描结果
 
-默认的模块扫描器是文本级的一遍扫描,它(刻意地)拒绝条件预处理块内部的 `import`
-语句。有些合法的模块单元带着这种写法 —— 例如 fmt 官方的 `src/fmt.cc` 把
-`import std;` 收在 `#ifdef FMT_IMPORT_STD` 之后。当该文件的 import 集合已知且稳定时,
-用声明取代扫描:
+默认的模块扫描器是一趟文本层面的处理，它（刻意）拒绝条件预处理块内的
+`import` 语句。有些合法的模块单元里确实有这种写法——例如 fmt 官方的
+`src/fmt.cc` 把 `import std;` 保护在 `#ifdef FMT_IMPORT_STD` 之内。
+当一个文件的 import 集合已知且稳定时，声明它，而不是去扫描它：
 
 ```toml
 [modules]
 sources = ["src/**/*.cppm", "vendor/fmt.cc"]
 
 [scan_overrides."vendor/fmt.cc"]
-provides = ["fmt"]      # 每个单元至多提供一个模块
+provides = ["fmt"]      # at most one provided module per unit
 imports  = ["std"]
 ```
 
-被 glob 命中的文件跳过文本扫描,声明的单元直接进入模块图。该声明**每次构建都被审计**:
-编译器自己对该文件的 P1689 扫描结果(`.ddi` dyndep 输入)会与之比对,任何分歧都会让
-那条编译边失败并打印双方 —— 陈旧的声明无法静默污染模块图。未命中任何源文件的
-override glob 是错误。
+被这条 glob 匹配到的文件会跳过文本扫描；声明的单元直接进入模块图。
+这条声明会在**每次构建时被审计**：编译器自己对这个文件做的 P1689
+扫描（`.ddi` dyndep 输入）会与它比对，任何分歧都会让那条编译边失败，
+并同时打印双方的结果——一条陈旧的声明无法悄悄污染这张图。一条不匹配
+任何源文件的 override glob 是一个错误。
 
-同一个键在 xpkg 描述符(索引包)中同样存在:
+xpkg 描述符（索引包）里也有同一个键：
 
 ```lua
 mcpp = {
@@ -996,119 +1114,135 @@ mcpp = {
 }
 ```
 
-要把 plan 与 ddi 的比对审计扩展到**每一个**模块单元(而不只是 override),
-在生成构建时设置 `MCPP_VERIFY_MODGRAPH=1`。
+要把这套「plan 与 ddi 对照」的审计扩展到**每一个**模块单元（不只是
+override），在生成构建时设置 `MCPP_VERIFY_MODGRAPH=1`。
 
 ### 2.8.4 默认扫描器读到的东西
 
-扫描器对每个文件只回答两个问题 —— 这个单元提供什么、需要什么 —— 并且没有别的
-东西决定它们。
+扫描器为每个文件回答两个问题——这个单元提供什么、这个单元需要
+什么——没有别的东西决定这两个答案。
 
-**三种模块声明,它们是不同的产生式。**
+**三种模块声明，它们是不同的产生式。**
 
 ```cpp
-module M;          // 实现单元:    需要 M,不提供任何东西
-module M:part;     // 实现分区:    提供 M:part
-module : private;  // 私有模块片段:两者都不声明
+module M;          // implementation unit:      requires M, provides nothing
+module M:part;     // implementation partition: provides M:part
+module : private;  // private module fragment:  declares neither
 ```
 
-第三种不是一个名字以冒号开头的分区。它在两个方向上都不产生边,其后的内容仍属于
-同一个单元。编译器是否实现它由编译器回答:GCC 16.1 报
-`sorry, unimplemented: private module fragment`,mcpp 不在其上追加任何说法。
+第三种不是一个名字以冒号开头的分区。它在任何方向上都不贡献边，它之后
+的内容仍然属于同一个单元。编译器是否实现了它，答案由编译器给出：
+GCC 16.1 报告 `sorry, unimplemented: private module fragment`，mcpp
+对此不做任何额外处理。
 
-**模块扩展名的文件不必提供模块。** 实现单元是 `.cppm` 的合法居民,而
-`module_extensions` 说的是**扫描**哪些文件,不是每个文件**是**什么。编译方式跟随
-扫描结果:提供模块的单元按接口编译并获得写 BMI 的位置;不提供的按普通翻译单元
-编译。因此两个编译器对同一个文件收到相同的指令 —— 在 mcpp 2026.9.9.1 之前并非
-如此:Clang 从扩展名推断出 `c++-module` 并拒绝该文件,而 GCC 能构建它。
+**一个模块扩展名文件不必提供一个模块。** 一个实现单元是 `.cppm` 里
+合法的居民，`module_extensions` 说的是要**扫描**哪些文件，而不是每个
+文件**是**什么。编译模式跟随扫描结果：一个提供模块的单元被当作接口
+编译，并给它一个写出 BMI 的地方；一个不提供模块的单元被当作普通翻译
+单元编译。因此两个编译器对同一个文件收到的是同一条指令——这在 mcpp
+2026.9.9.1 之前并非如此：Clang 会从扩展名推断出 `c++-module` 并拒绝
+这个文件，而 GCC 则会构建它。
 
-**源码按 UTF-8 读取。** UTF-8 字节序标记会被消耗,不属于正文 —— 这正是每个编译器
-对它的处理,也是 MSVC 默认写出的东西。UTF-16 或 UTF-32 标记会被具名拒绝,而不是
-被误读。同一规则适用于 `mcpp.toml`。
+**源码按 UTF-8 读取。** 一个 UTF-8 字节顺序标记会被消费掉，不算作
+正文的一部分，这与每个编译器的处理方式相同，也是 MSVC 默认写出的
+形式。一个 UTF-16 或 UTF-32 标记会被点名拒绝，而不是被误读。同一条
+规则也适用于 `mcpp.toml`。
 
-**任何源码都不可能声明出来的名字会被拒绝。** 模块身份是以点分隔的标识符序列,
-其后可选地跟一个 `:` 和另一个这样的序列。此外的形式在扫描阶段失败,而不是进入
-构建图 —— 在那里它会变成一条没有任何东西会报告的 BMI 路径。
+**一个源码不可能声明出来的名字会被拒绝。** 一个模块身份是一串由点
+分隔的标识符，后面可以再跟一个 `:` 与另一串这样的序列。任何其它形式
+都会在扫描阶段失败，而不会进入构建图——否则它会变成一个没有任何
+东西会报告的 BMI 路径。
 
-### 2.9 `[profile.<name>]` — 构建档案
+### 2.9 `[profile.<name>]` —— 构建档案
 
 ```toml
 [profile.dist]
-opt      = 3              # -O 级别(数字或 "s"/"z" 字符串)
+opt      = 3              # -O level (a number, or the string "s"/"z")
 debug    = false          # -g
-lto      = true           # -flto(注意:部分打包 gcc 未启用 LTO 插件)
-strip    = true           # 链接期 -s
-# passthrough 逃生口(固定键、开放值):
+lto      = true           # -flto (note: some packaged gcc builds ship without the LTO plugin)
+strip    = true           # -s at link time
+# passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
 ldflags  = []
 ```
 
-- 选择与默认:裸 `mcpp build` 走 **`dev`** 档(`-O0 -g`)——主流惯例(参照
-  Cargo/Meson/CMake/Zig/Bazel)。**release 为 opt-in:** `mcpp build --release`(短写)或
-  `--profile release`;`--dev` 是 dev 的显式短写。`mcpp test --profile <name>` 同理
-  (被测代码与测试二进制都在该 profile 下编译)。
-- **项目级默认** —— `[build].default-profile = "<name>"`(别名 `profile`)设置该项目在不带
-  flag 时的默认。典型用途是"以发布优化为常态"的工具/库:`[build] default-profile = "release"`。
-  优先级:`--profile`/`--release`/`--dev` flag **>** `[build].default-profile` **>** 全局 `dev`。
-  (默认 dev 的项目在产出可分发物时应显式 `--release`。)
-- 内置档案:`release`(-O2)/ `dev`、`debug`(-O0 -g)/ `dist`(-O3 + strip;
-  **不默认开 lto**)。`[profile.<内置名>]` 可整体覆盖内置定义。
-- **每个 profile 各占一个构建目录。** 解析后的 profile 开关参与指纹,所以
-  `target/<triple>/` 下每个 profile 一个哈希目录,来回切换是增量而不是全量重编;
-  代价是磁盘占用随实际使用的 profile 数量增长。
+- 选择与默认值：一条裸的 `mcpp build` 使用 **`dev`** profile
+  （`-O0 -g`）——这是主流约定（参见 Cargo/Meson/CMake/Zig/Bazel）。
+  **Release 需要显式选择：**`mcpp build --release`（简写）或
+  `--profile release`。`--dev` 是 dev 的显式简写。`mcpp test
+  --profile <name>` 同样适用（在该 profile 下构建被测代码及测试
+  二进制）。
+- **按工程的默认值**——`[build].default-profile = "<name>"`（别名：
+  `profile`）在没有传入旗标时设置这个工程自己的默认值。典型用法是一个
+  默认就该优化构建的工具或库：`[build] default-profile = "release"`。
+  优先级：`--profile`/`--release`/`--dev` 旗标 **>**
+  `[build].default-profile` **>** 全局默认 `dev`。（一个默认走 dev
+  的工程，在产出可分发物时应传 `--release`。）
+- 内置 profile：`release`（-O2）/ `dev`、`debug`（-O0 -g）/ `dist`
+  （-O3 + strip；**默认不启用 LTO**）。`[profile.<内置名>]` 可以整体
+  覆盖一个内置定义。
+- **每个 profile 拥有自己的构建目录。** 解析出的 profile 旋钮参与
+  指纹，所以 `target/<triple>/` 下每个 profile 各有一个哈希目录，在
+  它们之间切换是增量的，不是一次完整重建。这也意味着磁盘开销随实际
+  用到的 profile 数量而增长。
 
-### 2.10 `[build] cache` — 依赖的全局构建缓存
+### 2.10 `[build] cache` —— 依赖的全局构建缓存
 
-从索引获取的依赖,其编译产物按包缓存在 `$MCPP_HOME/build-cache/v1/` 下,跨工程共享。
-依赖的产物与"谁在消费它"无关,所以工具链、profile、依赖版本相同的两个工程复用同一条目。
+从索引取得的依赖，其编译产物会跨工程缓存在
+`$MCPP_HOME/build-cache/v1/` 下。一个依赖的产物不依赖于谁在消费它，
+所以两个工具链、profile 与依赖版本都相同的工程会复用同一个条目。
 
 ```toml
 [build]
-cache = "global"   # "global"(默认)| "local" | "off"
+cache = "global"   # "global" (default) | "local" | "off"
 ```
 
-| 模式 | 读缓存 | 写缓存 | 先清构建目录 |
+| 模式 | 读缓存 | 写缓存 | 先清空构建目录 |
 |---|---|---|---|
-| `global`(默认) | 是 | 是 | 否 |
+| `global`（默认） | 是 | 是 | 否 |
 | `local` | 否 | 否 | 否 |
 | `off` | 否 | 否 | 是 |
 
-`local` 把所有依赖都编在本工程 `target/` 内 —— 排障时一次性排除"是不是缓存的问题",
-也给 CI 一个无共享的可复现基线。`off` 额外清掉本次的 `target/<triple>/<fp>/` 做冷构建;
-`--no-cache` 是它的兼容别名。
+`local` 让每个依赖都在这个工程自己的 `target/` 里构建——用于在排查
+某个问题时排除缓存因素，也用于给 CI 一条不共享的基线。`off` 还会额外
+清空这次构建的 `target/<triple>/<fp>/` 以获得一次冷构建；
+`--no-cache` 是它的一个已废弃别名。
 
-优先级:`--cache <mode>` **>** `MCPP_BUILD_CACHE` **>** `[build] cache` **>** `global`。
-无法识别的值会被报出来(`--strict` 下为错误),而不是静默回落到 `global`。
+优先级：`--cache <mode>` **>** `MCPP_BUILD_CACHE` **>**
+`[build] cache` **>** `global`。一个无法识别的取值会被报告（`--strict`
+下是错误），而不是静默回落到 `global`。
 
-**不进缓存的**:`path` 与 `git` 依赖(任意深度)以及 workspace 成员。它们的源码可以在
-`name@version` 不变的情况下改变,任何基于该身份的键都看不见这种变化。
+**不会**被缓存的：`path` 与 `git` 依赖，不论层级多深，以及
+workspace 成员。它们的源码可以在 `name@version` 不变的情况下改变，
+所以没有任何基于那个身份的键能察觉到变化。
 
-查看与回收:
+查看与回收：
 
 ```
-mcpp cache dir                      # 缓存在哪
-mcpp cache list [--json]            # 条目、体积、最后使用时间
-mcpp cache info <pkg>@<ver>         # 单条目详情,含它是用什么键输入编出来的
-mcpp cache verify                   # 逐条目校验清单与磁盘
-mcpp cache gc --max-size 5GiB       # 按 LRU 收到容量预算内
-mcpp cache gc --older-than 30d      # 或按"多久没用过"回收
+mcpp cache dir                      # where the cache lives
+mcpp cache list [--json]            # entries, sizes, last use
+mcpp cache info <pkg>@<ver>         # one entry, including the key inputs it was built with
+mcpp cache verify                   # every entry's file list against the disk
+mcpp cache gc --max-size 5GiB       # LRU-collect package entries to a budget
+mcpp cache gc --older-than 30d      # ...or by how long since they were last used
 mcpp cache clean [--deps|--std|--all|--legacy]
 ```
 
-条目的磁盘布局是带版本的。改动布局的 mcpp 版本会**一次性作废全部旧条目**,
-所以升级后的第一次构建会重编依赖并重新填充 —— 不需要手工清理。
-2026.8.3.4 就是这样一次:条目里对象的地址现在相对**包**自身,
-而不再相对"最先填充这个条目的那个工程"的构建目录。
-`mcpp cache verify` 另外会报告任何逃出条目的记录地址,
-使这条不变量可以离线审计。
+磁盘上的条目布局是版本化的。一个改变了它的 mcpp 发布版，会一次性
+淘汰每一个旧条目，所以这样一次升级之后的第一次构建，会重建它的依赖
+并重新填充缓存——不需要手动清理任何东西。2026.8.3.4 做的正是这件事：
+一个条目的对象路径现在相对**包**寻址，而不再相对最先填充这个条目的
+那个工程的构建目录。`mcpp cache verify` 还会额外报告任何记录的地址
+逃出了自身范围的条目，使这类复发情况可以离线审计。
 
-### 2.11 `[runtime]` — provider-neutral 运行时契约
+### 2.11 `[runtime]` —— provider-neutral 运行时契约
 
 ```toml
 [runtime]
 requirements = [
-  { kind = "capability", value = "display.present", phase = "run", required = true },
+  { kind = "capability", value = "display.present", phase = "run", required = true,
+    discovery = "rpath-of-dispatch" },
   { kind = "soname", value = "libwidget.so.1", phase = "link", required = false },
 ]
 provides = ["display.present"]
@@ -1116,7 +1250,7 @@ artifacts = [
   { role = "library", path = "runtime/libwidget.so.1", provenance = "payload", abi = "elf-x86_64", digest = "sha256:...", host_fingerprint = "host-1" },
 ]
 
-# 平台无关 LinkIntent;路径相对本包根目录。
+# Platform-neutral LinkIntent. Paths are relative to this package root.
 libraries                = ["widget"]
 link_library_dirs        = ["lib"]
 transitive_needed_dirs   = ["runtime/closure"]
@@ -1125,19 +1259,19 @@ frameworks               = ["WindowKit"]
 deploy_files             = ["bin/widget.dll"]
 deploy                   = [ { from = "share/vulkan/icd.d/widget_icd.json", to = "vulkan/icd.d" } ]
 
-# 多 provider 时使用精确 canonical identity。
+# Use an exact canonical identity when multiple providers exist.
 [runtime."display.present"]
 provider = "acme.widget-runtime@2.0.0"
 ```
 
-本表中不受支持的键会被**报出并忽略**,消息里列出它比对用的那份键表。
-`[runtime.<capability>]` 子表是 provider 覆盖而不是键,因此不在清扫范围内。
-同一规则适用于 `[target.<predicate>.runtime]`,其词汇表是 `libraries`、
-`link_library_dirs` 与 `frameworks`(mcpp 2026.9.12.3+)
-(见[22 —— 目标侧](22-target-side.md))。该表上的 `frameworks` 追加在顶层列表
-之后,只在 Mach-O 各行渲染为 `-framework <name>`,其余各行不产生任何标志——
-当某个 framework 存在于 iOS 而不存在于 macOS(或相反)时,manifest 用这个键
-表达:
+这张表里一个不受支持的键会**被报告并被忽略**，消息会列出它核对过的
+那些键。一个 `[runtime.<capability>]` 子表是一处提供者覆盖，不是一个
+键，所以不会被扫入。同样的规则适用于 `[target.<predicate>.runtime]`，
+它的词汇是 `libraries`、`link_library_dirs` 与 `frameworks`
+（mcpp 2026.9.12.3+）（[22 —— 目标侧](22-target-side.md)）。那张表上的
+`frameworks` 会追加在顶层列表之后，只在 Mach-O 各行上渲染
+`-framework <name>`，在其它行上什么都不渲染——这是一份 manifest 在
+某个 framework 只存在于 iOS 而不存在于 macOS（或反过来）时要用的键：
 
 ```toml
 [runtime]
@@ -1150,158 +1284,187 @@ frameworks = ["AppKit"]
 frameworks = ["UIKit"]
 ```
 
-`requirements` 记录非空 `kind`/`value`、`link` 或 `run` 阶段,以及是否强制
-(`required` 默认 `true`)。`artifacts` 必须含 `role`、`path`、`provenance`;
-可选 requirement 仍保留为 provenance,但不会进入硬 ABI/doctor 输入。
-`libraries` 中显式的相对文件路径按声明包根目录解析;裸逻辑名仍按目标平台拼成库名。
-`abi`、`digest`、`host_fingerprint` 是可选证据。requester/provider 身份不由描述符
-填写:resolver 会用含 namespace、version、source/index provenance 的精确 PackageId
-给 requirement 和 artifact 盖章。因此描述符不能冒充别的包,
-`alpha.backend` 也不会与 `beta.backend` 混同。
+`requirements` 记录一个非空的 `kind`/`value`，一个 `link` 或 `run`
+阶段，以及这条要求是否强制（`required` 默认 `true`）。
 
-只有 `provides` 会创建描述符侧 provider fact;需要某能力绝不会让 requester 自动
-成为 provider。显式 `[runtime.<capability>] provider=` 接受 canonical
-`namespace.name@version`(或唯一无歧义的兼容拼写);不存在或同短名歧义都会 hard error。
-xlings SubOS 已选择的 provider/artifact fact 排在描述符 fallback 前。图形栈、driver、
-ICD、WSL 与 host provenance 选择由 xlings/xim 负责;mcpp 只记录、消费通用结果,
-不探测 GPU 硬件。
+`discovery` 是可选的，说明**加载器如何找到**满足这条要求的东西——
+例如 `rpath-of-dispatch`、`json-dir`、`glvnd-dispatch`。它是**被
+声明的，从不被推断**：一个能力用哪种机制是提供者的属性，会在 mcpp
+不知情的情况下改变，所以 mcpp 只是携带这个值，把一个未声明的情形
+报告为 `unknown`，而不是去猜。之所以专门设一个字段，是因为这些机制
+彼此不可互换——一种可能是烘焙进某个 dispatch 库里的搜索路径，另一种
+可能是一个持有*绝对*路径的 JSON 文件，「把这个目录整体拷过去」能
+满足一种，满足不了另一种。`mcpp pack` 把它写进 bundle 的
+`HOST-REQUIREMENTS`，`mcpp publish` 把它投影进描述符，两者出自同一份
+推导。可选要求仍然保留可见的来历信息，但不会成为硬性的 ABI 或 doctor
+输入。一条显式写成相对文件路径的 `libraries` 条目，相对声明它的包根
+目录解析；一个裸的逻辑名字仍然是一个按平台拼写的库名。`artifacts`
+要求 `role`、`path` 与 `provenance`；`abi`、`digest` 与
+`host_fingerprint` 是可选的佐证。是解析器而不是描述符，给每一条要求
+打上确切的请求方 PackageId，给每一个产物打上确切的声明提供方
+PackageId，包括命名空间、版本与来源/索引出处。因此一份描述符无法
+冒充另一个包，`alpha.backend` 永远不会被折叠进 `beta.backend`。
 
-LinkIntent 把不同发现阶段分开:
+只有 `provides` 会创建一个由描述符拥有的提供者事实。仅仅要求一项
+能力，永远不会让请求方成为它自己的提供者。一个显式的
+`[runtime.<capability>] provider=` 覆盖接受一个规范的
+`namespace.name@version`（或一个无歧义的兼容拼法）；缺失、或短名字
+有歧义的提供者是硬错误。已被 xlings SubOS 选定的提供者/产物事实，
+优先于描述符的回落值。xlings/xim 拥有图形栈、驱动、ICD、WSL 与宿主
+出处的选择权；mcpp 只记录并消费那个通用结果，从不探测 GPU 硬件。
+
+Link intent 把各个发现阶段分开处理：
 
 | 字段 | ELF | Mach-O | PE/Windows |
 |---|---|---|---|
 | `link_library_dirs` | `-L` | `-L` | `-L` 或 `/LIBPATH:` |
-| `transitive_needed_dirs` | `-Wl,-rpath-link` | 无 flag | 无 flag |
-| `runtime_search_dirs` | 只进 RUNPATH/rpath,绝不进 `-L` | 只进 rpath | 无 flag |
-| `frameworks` | 无 flag | `-framework` | 无 flag |
-| `deploy_files` | copy edge | copy edge | 复制到产物旁,绝不成为 linker flag |
-| `deploy` *(2026.9.12.2+)* | copy edge,复制到 `bin/<to>/` | copy edge,复制到 `bin/<to>/` | copy edge,复制到 `bin/<to>/`;绝不成为 linker flag |
+| `transitive_needed_dirs` | `-Wl,-rpath-link` | 无旗标 | 无旗标 |
+| `runtime_search_dirs` | 仅 RUNPATH/rpath，从不是 `-L` | 仅 rpath | 无旗标 |
+| `frameworks` | 无旗标 | `-framework` | 无旗标 |
+| `deploy_files` | 拷贝边 | 拷贝边 | 拷贝到输出旁边；从不是链接器旗标 |
+| `deploy` *（2026.9.12.2+）* | 拷贝边，进 `bin/<to>/` | 拷贝边，进 `bin/<to>/` | 拷贝边，进 `bin/<to>/`；从不是链接器旗标 |
 
-`deploy` 把文件放进相对可执行文件的目录;`deploy_files` 表达不了这一点,因为它把每一项都放在可执行
-文件旁。读取固定子目录的加载器需要它:macOS 上的 Vulkan loader 从 `<可执行文件目录>/vulkan/icd.d`
-读取驱动清单。每一项是恰好含两个字符串的表:`from` 相对声明它的包的根目录,`to` 相对可执行文件所在
-目录,`"."` 表示该目录本身。两者在所有宿主上都以 `/` 分隔,不得是绝对路径、不得指定盘符,也不得含
-空分量、`.` 或 `..` 分量;违反的项被拒绝,拒绝信息指出该项的序号。同一目标位置的两个来源被拒绝并指出
-目标位置,同名文件放进两个不同目录则不构成冲突。`deploy` 是独立的键而不是 `deploy_files` 的表形式:
-早于它的描述文件读取器在 `deploy_files` 中遇到 `{` 时不会终止,而对不认识的 `runtime` 键会跳过。`mcpp pack`
-把两个键的文件放到打包后可执行文件旁的同一相对位置。
+`deploy` 把一个文件放进相对可执行文件的某个目录，而 `deploy_files`
+表达不了这一点，因为它把每一条都放在可执行文件旁边。一个读取固定
+子目录的加载器需要它：macOS 上的 Vulkan loader 从
+`<可执行文件目录>/vulkan/icd.d` 读取驱动 manifest。每一条都是恰好
+两个字符串组成的表。`from` 相对声明它的包根目录，`to` 相对可执行
+文件所在目录，`"."` 意味着那个目录本身。两者在每个宿主上都以 `/`
+分隔，都不能是绝对路径、不能命名一个驱动器、不能含有空、`.` 或 `..`
+组成部分；不满足的条目会被拒绝，拒绝信息点名它的索引。两个来源指向
+同一个目的地会被拒绝并点名那个目的地，而一个文件名出现在两个不同
+目录下不算冲突。`deploy` 是一个独立的键，而不是 `deploy_files` 的
+表格形式，因为一个早于它出现的描述符读取器，遇到 `deploy_files` 里的
+`{` 会无法终止，而它会跳过一个不认识的 `runtime` 键。`mcpp pack` 把
+这两个键指向的文件，以打包出的可执行文件为参照，拷贝到同样的相对
+路径。
 
-一个兼容发布周期内仍读取旧字段:`library_dirs` 只映射到运行期搜索;
-`dlopen_libs` 映射为必需的 run-phase soname requirement;`capabilities` 映射为必需的
-run-phase capability requirement。这些旧字段都不会创建 provider。
+对于一批兼容性字段，`library_dirs` 只映射到运行时搜索，`dlopen_libs`
+映射到必需的运行期 soname 要求，`capabilities` 映射到必需的运行期
+能力要求。这些遗留字段都不创建提供者。
 
-`target/<triple>/<fp>/resolution.json` schema 2 持久化 RuntimeBinding、canonical
-requirements/providers/artifacts、LinkIntent、平台搜索机制与链接后 verdict。
-`mcpp why runtime` 只是最新存储文件的纯解释器:不重新解析 manifest,也不启动图形/
-硬件 probe。需要重新诊断所选 host provider 时使用 `xlings doctor`。
+`target/<triple>/<fp>/resolution.json` schema 2 存储 RuntimeBinding、
+规范化后的要求/提供者/产物、LinkIntent、平台发现机制与链接后判定。
+`mcpp why runtime` 是对最新存储文件的一个纯粹解读器：它既不会重新
+解析 manifest，也不会启动一次图形/硬件探测。当被选中的宿主提供者
+自身需要重新诊断时，用 `xlings doctor`。
 
-每个 artifact 还带一个仅由路径算出的 `identity` 判定:
+每个产物还携带一个仅从路径计算出的 `identity` 判定：
 
 | `identity` | 含义 |
 |---|---|
-| `ok` | 声明的路径(穿过符号链接后)落在声明的那个版本里 |
-| `mismatch` | 它解析到了别处 —— **该 binding 已陈旧**,后来的某次安装把它重新指向了别的地方 |
-| `missing` | 声明了,但那个路径上什么都没有 |
-| `unverified` | 声明时没有可供比对的版本 |
+| `ok` | 声明的路径（经符号链接）解析到声明的版本 |
+| `mismatch` | 它解析到了别处——**绑定已过期**，某次更晚的安装重新指向了它 |
+| `missing` | 已声明，但那个路径上什么都没有 |
+| `unverified` | 声明时没有给出可供核对的版本 |
 
-这就是 mcpp 早已施加于私有 libc 的那条规则的推广(`glibc@2.44` 解析到那一份载荷;
-陈旧或缺失是错误,而绝不是「已安装版本里哪个看起来能用就用哪个」)。它不需要知道
-该 artifact 做什么。`unverified` **有意**不等于 `ok`:一个解析到了却没有 artifact
-在其背后的 provider 并未被核验过,因此 `mcpp why runtime` 打印
-`(not declared by the environment — nothing to verify)` 而不是 `(none)`。
+这正是 mcpp 已经在对私有 libc 应用的那条规则（`glibc@2.44` 解析到
+那一份载荷；过期或缺失是错误，绝不是「随便一个装着的、看起来能用的
+版本」）的推广。它不需要知道这个产物是做什么的。`unverified` 刻意
+不等于 `ok`：一个已解析、背后却没有产物的提供者尚未被核对过，
+`mcpp why runtime` 会说
+`(not declared by the environment — nothing to verify)`，
+而不是 `(none)`。
 
-能力名使用分层小写 `domain.sub.role`(如 `display.present`)和前缀类
-`abi:<name>`(如 `abi:glibc`,参与工具链 ABI 强制)。
+能力名使用分层的小写 `domain.sub.role`（例如 `display.present`）与
+前缀式的 `abi:<name>`（例如参与工具链 ABI 强制检查的 `abi:glibc`）。
 
-### 2.12 `[package] platforms` — 平台声明
+### 2.12 `[package] platforms` —— 平台声明
 
 ```toml
 [package]
 platforms = ["linux", "macos", "windows", "ios", "android", "emscripten"]
 ```
 
-声明包支持的平台(CI 矩阵提示,经 `mcpp why` 展示)。词表由 mcpp 固定
-(它拥有 target/triple 体系):`linux | macos | windows | ios | android |
-emscripten`(mcpp 2026.9.12.3+;`ios`、`android`、`emscripten` 是新加入的——
-此前的词表是 `linux | macos | windows`);未知值 warning,`--strict` 下报错。
+声明这个包支持的平台（一条 CI 矩阵提示，经 `mcpp why` 展示）。词汇由
+mcpp（拥有 target/triple 体系的一方）固定：
+`linux | macos | windows | ios | android | emscripten`
+（mcpp 2026.9.12.3+；`ios`、`android` 与 `emscripten` 是这套此前只有
+`linux | macos | windows` 的词汇新增的成员）；未知取值会产生警告，
+`--strict` 下是错误。
 
-一个平台名就是目标三元组的 `os`,除非某个 `env` 自己命名了一个平台。Android
-各行的 `os = "linux"`、`env = "android"`,所以这份列表里的 `linux` 不覆盖
-它们——服务 Android 的包要另写 `android`。Web 行保留自己的 `os` 单词
-`emscripten`,与 `cfg(...)` 选择器语法用的是同一个词;不存在 `web` 这种拼法。
+一个平台名就是目标三元组的 `os`，除非一个自己命名了平台的 `env`
+优先。Android 各行的 `os = "linux"`、`env = "android"`，所以这份
+列表里的 `linux` 不覆盖它们——一个服务 Android 的包要额外写出
+`android`。Web 这一行保留自己的 `os` 单词 `emscripten`，与
+`cfg(...)` 选择器语法用的是同一个词；没有 `web` 这种拼法。
 
-对库目标执行 `mcpp pack` 时,会拿这条声明与**实际产出的腿**核对 —— 那是第一个
-有证据可核的时刻:
+`mcpp pack` 在一个库目标上，会拿这条声明与它实际产出的那些腿核对，
+因为这是第一个有证据可供核对的时刻：
 
-| 情况 | 结果 |
+| 情形 | 结果 |
 |---|---|
-| 某条腿的平台不在此列 | warning —— manifest 否认了一个包明明能服务的平台 |
-| 声明了某平台却没有对应的腿,**且本宿主本来就能构建它** | warning —— 该平台的消费者会解析到这个包却找不到产物 |
-| 声明了某平台却没有对应的腿,而本宿主根本构建不了它 | **不说话** |
+| 某条腿为一个这里没列出的平台打了包 | 警告——manifest 否认了一个这个包明显在服务的平台 |
+| 一个列出的平台没有对应的腿，**并且这台宿主本可以构建出一份** | 警告——那里的消费者会解析到这个包，却找不到产物 |
+| 一个列出的平台没有对应的腿，但这台宿主构建不出那个平台的产物 | **无声** |
 
-第三行才是这个检查可用的原因。正常的发布流程是 CI 上每平台各跑一次
-`mcpp pack`,于是 Linux runner 永远不会产出 macOS 腿 —— 为此告警会在每个跨平台
-包的每一次运行中触发,而**永远触发的告警会把真正该看的那条盖掉**。「本宿主能不能
-构建」与 `--target` 回答的是同一个问题(docs/08 §7.4)。
+第三行正是这项检查之所以可用的原因。正常的发布流程是在 CI 里为每个
+平台各跑一次 `mcpp pack`，所以一台 Linux runner 从不会产出一条
+macOS 的腿——如果对此发出警告，会在每个跨平台包的每一次运行上触发，
+而一条总是触发的警告会掩盖真正要紧的那一条。「这台宿主本可以构建」
+指的是与 `--target` 回答的同一个问题（docs/08 §7.4）。
 
-两者都只是 warning,绝不报错:覆盖度属于发布纪律,而能作判断的人看的是发布,
-不是这一次构建。
+两者都只是警告，从不是错误：覆盖度是发布纪律的一部分，能判断它的人
+是在看发布本身，而不是在看这一次构建。
 
-### 2.12b `[package] accelerators` — 加速器声明
+### 2.12b `[package] accelerators` —— 加速器声明
 
 ```toml
 [package]
 accelerators = ["cuda", "rocm"]
 ```
 
-声明该包支持的加速器后端。与 `platforms` 同形:一个意图声明与 CI 矩阵提示,
-由 `mcpp why` 展示,**不是门**。
+声明这个包支持的加速器后端。与 `platforms` 对称：一条意图陈述与一条
+CI 矩阵提示，经 `mcpp why` 展示，从不是一道闸。
 
-与产物的 `accel` 字段刻意不同。声明由人手写、可以是期望值;`accel` 是从产生该二进制的
-那次构建测量出来的,并且是消费者被拒绝时所依据的东西。见
-[42 — 异构硬件构建](42-heterogeneous-builds.md)。
+它与产物的 `accel` 字段刻意区分开。声明是手写的，可以是愿景；`accel`
+是从产出某个二进制的那次构建里实测得到的，也是消费者被拒绝时所对照
+的那个值。见[42 —— 异构构建](42-heterogeneous-builds.md)。
+
 ### 2.13 `[xlings]` —— 工程的环境
 
-已移入 [23 —— 项目环境](23-the-project-environment.md)。
+已移至 [23 —— 工程的环境](23-the-project-environment.md)。
 
 ### 2.14 依赖产出的 host 工具
 
-已移入 [30 —— build.mcpp](30-build-mcpp.md)。
+已移至 [30 —— build.mcpp](30-build-mcpp.md)。
 
+### 2.15 `[resources]` —— 编译进产物的元数据与资产（2026.8.7.1+）
 
-### 2.15 `[resources]` —— 编译进产物的元数据与资产(2026.8.7.1+)
-
-exe 图标,以及 Windows 在文件「属性」里显示的版本信息,就是 `mcpp.toml` 里的一个路径:
+一个 exe 图标，以及 Windows 在文件属性对话框里展示的版本元数据，在
+`mcpp.toml` 里不过是一条路径，别无其它：
 
 ```toml
 [resources]
 icon = "assets/app.ico"
 ```
 
-常见场景到此为止。`FILEVERSION`、`ProductName`、`FileDescription`、`CompanyName`、
-`LegalCopyright` 全部从 `[package]` 取默认值,资源脚本由 mcpp 生成。
+这就是常见情形的全部。`FILEVERSION`、`ProductName`、
+`FileDescription`、`CompanyName` 与 `LegalCopyright` 全都从
+`[package]` 取默认值，资源脚本由 mcpp 自动生成。
 
 | 键 | 类型 | 含义 |
 |---|---|---|
-| `icon` | 路径 | 作为应用图标嵌入(资源序号 1) |
-| `files` | 路径列表 | 工程自带的 `.rc` 脚本,mcpp 编译并**跟踪**为构建输入 |
-| `extra-inputs` | 路径列表 | `.rc` 扫描器看不见的输入(见下) |
-| `version-info` | 布尔 | `false` 表示不要生成版本资源 |
+| `icon` | 路径 | 作为应用图标嵌入（资源序号 1） |
+| `files` | 路径列表 | 自行编写的 `.rc` 脚本，会被编译并**追踪**为构建输入 |
+| `extra-inputs` | 路径列表 | `.rc` 扫描器看不见的输入（见下） |
+| `version-info` | 布尔值 | `false` 退出自动生成版本资源 |
 | `[resources.version-info]` | 表 | `company`、`product`、`description`、`copyright`、`original-filename`、`internal-name` |
 
-**只有 PE 目标会*编译*这一节。** 在 Linux/macOS 上它**不适用**:不产资源单元、
-不出诊断、构建逐字节不变。**无需**(也不能)加 `cfg(windows)` 谓词 ——
-无条件写一次即可。
+**只有 PE 目标会*编译*它。** 在 Linux 与 macOS 上，这一节*不适用*：
+没有资源单元、没有诊断、构建逐字节相同。**不需要**（也不能用）一个
+`cfg(windows)` 谓词——写一次，无条件生效即可。
 
-**声明了却不存在的文件会让构建失败 —— 在每个目标上都是。** 资源和源码一样是
-构建输入;mcpp 不会悄悄产出一个缺了它的二进制。校验刻意**不**按 PE 设门:
-路径是否存在是关于工作树的事实,不是关于目标的事实,所以 `icon = "assets/app.ico"`
-里的拼写错误由 Linux/macOS 构建(以及对应的 CI job)当场抓住,而不是等
-Windows 那条。不想要图标,把那一行删掉。
+**一个声明了却不存在的文件会让构建失败——在每一个目标上都一样。**
+一份资源和一个源文件一样是构建输入；mcpp 不会悄悄发布一个缺了它的
+二进制。校验刻意**不**只针对 PE：一个路径是否存在，是工作树的一个
+事实，与目标无关，所以 `icon = "assets/app.ico"` 里的一个笔误，会被
+Linux 或 macOS 的构建（以及它们的 CI 作业）捕获，而不必等到 Windows
+那一份。要省略图标，删掉这一行即可。
 
-**版本字段。** `FILEVERSION` 取 `[package].version` 的四段数值,每段必须放得进
-16 位;字符串字段保留版本原文,所以数值字段装不下的形态(`1.0.0-rc1`)在属性
-对话框里照样看得到。
+**版本字段。** `FILEVERSION` 取 `[package].version` 的四个数字段，
+每一段都必须落在 16 位以内；字符串字段按原样保留版本号，所以一个
+数字字段容纳不了的形式（`1.0.0-rc1`），仍然会原样出现在属性对话框里。
 
 #### 自写 `.rc`
 
@@ -1310,37 +1473,41 @@ Windows 那条。不想要图标,把那一行删掉。
 files = ["res/app.rc"]
 ```
 
-写了 `files`,mcpp 就不再生成版本资源 —— 资源 ID 空间由工程自行支配。两者都需要时同时写
-`version-info = true`(注意冲突:序号 1 的 `RT_VERSION` 只能有一个)。
+设置了 `files` 之后，mcpp 停止生成版本资源，资源 ID 空间归工程所有。
+若两者都要，连同它一起设 `version-info = true`（注意会相撞：序号 1
+上只能有一个 `RT_VERSION`）。
 
-想从生成的脚本起步而不是从空文件起步:把它从构建目录里拷出来
-(`target/<triple>/<fp>/res/<target>.mcpp.rc`)填进 `files`。结果**字节相同**,
-所以从「生成」走到「手写」不会改变产物。
+要从生成的脚本出发，而不是从一个空文件开始，把它从构建目录里拷出来
+（`target/<triple>/<fp>/res/<target>.mcpp.rc`）并列进 `files`。结果
+逐字节相同，所以从生成切换到手写，不会改变实际发布的内容。
 
-> **`VS_VERSION_INFO` 需要 `<windows.h>`。** 手写脚本里如果写
-> `VS_VERSION_INFO VERSIONINFO` 而没有 `#include <windows.h>`,版本资源会被存成
-> **字符串名**而不是序号 1。所有工具依然报告 `Type: VERSIONINFO`,但
-> `GetFileVersionInfo` 查的是序号,于是 PowerShell 的 `FileVersionInfo` 里每个字段
-> 都是空的。要么 include `<windows.h>`,要么直接写 `1 VERSIONINFO`。mcpp 见到这个
-> 形状会警告;它自己生成的脚本用的是字面 `1`。
+> **`VS_VERSION_INFO` 需要 `<windows.h>`。** 在一份手写脚本里，
+> `VS_VERSION_INFO VERSIONINFO` 若没有 `#include <windows.h>`，会把
+> 版本资源归档到一个*字符串*名字下，而不是序号 1。每个工具仍会报告
+> `Type: VERSIONINFO`，但 `GetFileVersionInfo` 查的是序号，所以
+> PowerShell 的 `FileVersionInfo` 会显示每个字段都是空的。要么包含
+> `<windows.h>`，要么写 `1 VERSIONINFO`。mcpp 看到这种写法时会警告；
+> 它自己生成的脚本用的是字面量 `1`。
 
 #### 被跟踪的输入
 
-mcpp 会读 `.rc`,把引号形式的 `#include` 和资源语句(`ICON`、`RCDATA`、
-`MANIFEST` …)点名的文件都变成构建输入,所以改图标会重链。尖括号形式
-(`<windows.h>`)属于工具链,由工具链 fingerprint 覆盖。
+mcpp 读取 `.rc` 里带引号的 `#include`，以及资源语句（`ICON`、
+`RCDATA`、`MANIFEST` 等）命名的文件，并把它们变成构建输入，所以修改
+图标会触发重新链接。尖括号 include（`<windows.h>`）属于工具链，由
+工具链指纹覆盖，而不是这项扫描。
 
-通过宏间接引用的文件名(`1 ICON APP_ICON`)扫描看不见。mcpp 会**指名**它没能解析
-的东西,并要求显式声明:
+一个经由宏到达的文件名（`1 ICON APP_ICON`）对这项扫描是不可见的。
+mcpp 会点名它无法解析的部分，并要求显式声明：
 
 ```toml
 extra-inputs = ["assets/app.ico"]
 ```
 
-#### 其余一切:`role = "object"`
+#### 其余一切：`role = "object"`
 
-不是资源脚本的输入 —— `objcopy` 嵌入的 blob、生成的 `.def`、预编译对象 ——
-可以由构建程序声明一个产出接到链接的图节点:
+对于不是资源脚本的输入——一段用 `objcopy` 嵌入的二进制数据、一份
+生成的 `.def`、一个预构建的对象文件——构建程序可以声明一个构建图
+节点，把它的输出并入链接：
 
 ```cpp
 mcpp::action o;
@@ -1348,46 +1515,49 @@ o.id = "blob"; o.role = "object";
 o.arg("./mkblob.sh").arg("blob.bin").arg("${mcpp.out_dir}/blob.o")
  .input("blob.bin")
  .output("${mcpp.out_dir}/blob.o")
- .target("myapp")        // 省略:接到每个镜像,含测试二进制
+ .target("myapp")        // omit: every image, test binaries included
  .submit();
 ```
 
-见 [30 — build.mcpp](30-build-mcpp.md)。把这类文件写进 `[build].ldflags` 也「能用」,
-但 ldflags 是链接命令里的一串字符:没有任何东西跟踪它,改了它得到的是
+见 [30 —— build.mcpp](30-build-mcpp.md)。把这样一个文件名写进
+`[build].ldflags` 也「能用」，但 ldflags 在链接命令里是一段扁平
+字符串：没有任何东西追踪它，修改这个文件会得到
 `ninja: no work to do`。
+
 ### 2.16 `[hooks]` —— 项目构建生命周期命令
 
-已移入 [09 —— 按场景选命令](09-commands-by-scenario.md)。
+已移至 [09 —— 按场景选命令](09-commands-by-scenario.md)。
 
 ### 2.17 `[test]` —— 测试程序的位置
 
 ```toml
 [test]
-discover = ["tests/**/*.cpp"]    # 默认值
+discover = ["tests/**/*.cpp"]    # the default
 ```
 
 | 键 | 类型 | 含义 |
 |---|---|---|
-| `discover` | glob 数组 | glob 匹配到的每个文件都是一个测试程序;以 `!` 开头的 glob 去掉它匹配到的文件;`[]` 不发现任何测试 |
+| `discover` | glob 数组 | 每个被某条 glob 匹配到的文件都是一个测试程序；以 `!` 开头的 glob 会移除它匹配到的文件；`[]` 不发现任何测试 |
 
-glob 使用 `[build] sources` 的词汇。测试的名字是它相对于第一个匹配它的 glob 的固定
-目录的路径,去掉扩展名。同名的两个文件会被拒绝,并点名两者。值不是非空字符串数组时
-报错;`[test]` 中的其他键给出警告,在 `--strict` 下为错误。测试模型见
-[08 —— 测试](08-testing.md)。
-
+这些 glob 使用与 `[build] sources` 相同的词汇。一个测试的名字，是它
+相对第一条匹配到它的 glob 所在的固定目录的路径，去掉扩展名。两个
+同名文件会被拒绝，并点名两者。一个不是「非空字符串数组」的取值是
+一个错误；`[test]` 里的其它任何键都是警告，`--strict` 下是错误。
+测试模型见[08 —— 测试](08-testing.md)。
 
 ## 3. 实战示例
 
-其中四个是**可运行的工程**而不是片段,而工程是更好的答案:它能构建,而且由 CI 检查。
+其中四个是可运行的工程，而不是片段，工程是更好的答案：它能构建，并且
+由 CI 检查。
 
 | 形态 | 运行 |
 |---|---|
 | 一个 hello world | [`examples/01-hello`](../../examples/01-hello/) |
-| 带测试的模块化库 | [`examples/11-features`](../../examples/11-features/) |
-| 带依赖的应用 | [`examples/02-with-deps`](../../examples/02-with-deps/) |
-| 交叉编译的静态发布 | [`examples/03-pack-static`](../../examples/03-pack-static/) |
+| 一个带测试的模块库 | [`examples/11-features`](../../examples/11-features/) |
+| 一个带依赖的应用 | [`examples/02-with-deps`](../../examples/02-with-deps/) |
+| 一次交叉编译的静态发布 | [`examples/03-pack-static`](../../examples/03-pack-static/) |
 
-还有两种形态暂时没有对应示例,以 manifest 的形式留在这里。
+有两种形态目前还没有示例，以 manifest 的形式留在这里。
 
 ### 3.4 纯 C 库
 
@@ -1405,7 +1575,7 @@ sources      = ["src/**/*.c"]
 kind = "lib"
 ```
 
-### 3.5 混合 C / C++23 模块项目
+### 3.5 混合 C / C++23 模块工程
 
 ```toml
 [package]
@@ -1417,34 +1587,34 @@ include_dirs = ["include"]
 c_standard   = "c11"
 
 [dependencies]
-lua = "5.4.7"     # 纯 C 库,mcpp 自动用 C 编译器编译 .c 文件
+lua = "5.4.7"     # Pure C library; mcpp compiles .c files with the C compiler automatically
 
 [targets.hybrid]
 kind = "bin"
 ```
 
-
 ## 4. 约定与默认值速查
 
-| 项目 | 默认值 | 说明 |
+| 项 | 默认值 | 说明 |
 |---|---|---|
 | 源文件 | `src/**/*.{cppm,cpp,cc,c,S,s,asm}` | 自动递归扫描 |
-| 入口 | `src/main.cpp` | 有这个文件就推断为 `bin` 目标 |
-| 库根 | `src/<pkg-tail>.cppm` | 可用 `[lib].path` 覆盖 |
-| C++ 标准 | `c++23` | 用 `[package].standard` 配置; 支持 `c++20` / `c++26` / `c++2a` / `c++2c` / `gnu++NN` / `c++latest` / `c++fly`(实验试验场) |
-| C 标准 | `c11` | `.c` 文件自动走 C 编译器 |
-| 静态 stdlib | `true` | 便携二进制 |
-| 头文件 | `include/`(如果存在） | 自动加到 `-I` |
-| 测试 | `tests/**/*.cpp` | `mcpp test` 自动发现;`[test] discover` 替换这个集合 |
-| 依赖命名空间 | `mcpplibs`(默认) | 裸 selector 只表示该精确 ns |
+| 入口点 | `src/main.cpp` | 这个文件存在时，会推断出一个 `bin` 目标 |
+| 库根 | `src/<包名的最后一段>.cppm` | 用 `[lib].path` 覆盖 |
+| C++ 标准 | `c++23` | 用 `[package].standard` 配置；支持 `c++20` / `c++26` / `c++2a` / `c++2c` / `gnu++NN` / `c++latest` / `c++fly`（实验性试验场） |
+| C 标准 | `c11` | `.c` 文件自动经由 C 编译器处理 |
+| 静态 stdlib | `true` | 可移植二进制 |
+| 头文件 | `include/`（若存在） | 自动加入 `-I` |
+| 测试 | `tests/**/*.cpp` | 由 `mcpp test` 自动发现；`[test] discover` 替换这个集合 |
+| 依赖命名空间 | `mcpplibs`（默认） | 一个裸选择器只匹配这一个精确命名空间 |
 
 ### 4.1 旧 `[language]` 兼容层
 
-旧配置仍可读取:
+旧的配置仍然可以被读取：
 
 ```toml
 [language]
 standard = "c++26"
 ```
 
-新项目请使用 `[package].standard`。如果两个位置都出现，`[package].standard` 是权威配置。
+新工程应使用 `[package].standard`。若两处都写了，以
+`[package].standard` 为准。
