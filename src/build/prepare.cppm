@@ -1503,21 +1503,25 @@ bind_msvc_sysroot(mcpp::toolchain::Toolchain& tc,
     // The STL is this toolset's, so its version is the standard library's.
     tc.stdlibVersion = choice->version;
 
-    // THE STD MODULE OF THIS TOOLSET, replacing whatever detection found by
-    // its own search. A toolset without one leaves `import std` unavailable
+    // THE STD MODULE OF THIS TOOLSET, replacing the `std.ixx` detection found
+    // by its own search. A toolset without one leaves `import std` unavailable
     // rather than borrowing another toolset's.
+    //
+    // Only `std` is rebound. Detection never gave this row a `std.compat`
+    // source, and the clang builder for it passes the file without
+    // `-x c++-module`: given `std.compat.ixx`, clang takes it for linker
+    // input, `--precompile` writes nothing and exits 0, and the next command
+    // fails on the missing BMI (measured on the Windows runners).
     std::error_code ec;
     const auto ixx = choice->toolsDir / "modules" / "std.ixx";
-    if (std::filesystem::exists(ixx, ec)) {
+    const bool msvcStl = tc.stdModuleSource.empty()
+                      || tc.stdModuleSource.filename() == "std.ixx";
+    if (msvcStl && std::filesystem::exists(ixx, ec)) {
         tc.stdModuleSource   = ixx;
         tc.hasImportStd      = true;
         tc.importStdMinLevel = msvc::std_module_min_level_for_stl(ixx);
-        const auto compat = choice->toolsDir / "modules" / "std.compat.ixx";
-        tc.stdCompatSource = std::filesystem::exists(compat, ec)
-            ? compat : std::filesystem::path{};
-    } else if (tc.stdModuleSource.filename() == "std.ixx") {
+    } else if (msvcStl && !tc.stdModuleSource.empty()) {
         tc.stdModuleSource.clear();
-        tc.stdCompatSource.clear();
         tc.hasImportStd = false;
     }
 
