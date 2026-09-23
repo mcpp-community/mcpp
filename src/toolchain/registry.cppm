@@ -95,11 +95,20 @@ struct ToolchainSpec {
     // is every row but these two, so nothing else's output moves.
     std::string payloadName;
 
+    // `xim:` WAS WRITTEN: the ecosystem package and nothing else.
+    //
+    // Every family but msvc has no other origin, so for them the prefix is a
+    // synonym and the canonical spelling drops it. For msvc it is the one way
+    // to say "not the toolset this machine may already have": a bare
+    // `msvc@<version>` takes an installed toolset of that version first.
+    bool ecosystemOnly = false;
+
     std::string spec_str() const {
-        return std::format("{}@{}",
-                           payloadName.empty() ? family_name(family)
-                                               : std::string_view(payloadName),
-                           version);
+        auto base = std::format("{}@{}",
+                                payloadName.empty() ? family_name(family)
+                                                    : std::string_view(payloadName),
+                                version);
+        return ecosystemOnly && family == Family::Msvc ? "xim:" + base : base;
     }
 
     // "gcc@16.1.0" or "gcc@16.1.0 → x86_64-windows-gnu" — user-facing.
@@ -523,6 +532,22 @@ parse_toolchain_spec(std::string compilerArg,
         if (versionArg.empty()) versionArg = compilerArg.substr(at + 1);
         compilerArg = compilerArg.substr(0, at);
     }
+    // `xim:` IS THE NAMESPACE EVERY PAYLOAD ADDRESS ALREADY CARRIES
+    // (`to_xim_package` produces `xim:gcc@16.1.0`), so it is the spelling for
+    // "the ecosystem package". No other namespace names a toolchain, and one
+    // written by mistake is refused here rather than read as a family name.
+    bool ecosystemOnly = false;
+    if (auto colon = compilerArg.find(':'); colon != std::string::npos) {
+        const auto ns = compilerArg.substr(0, colon);
+        if (ns != "xim") {
+            return std::unexpected(std::format(
+                "'{}:' is not a toolchain namespace; the one namespace a "
+                "toolchain spelling accepts is `xim:`, which names the "
+                "ecosystem package (e.g. `xim:msvc@14.44.35207`)", ns));
+        }
+        compilerArg   = compilerArg.substr(colon + 1);
+        ecosystemOnly = true;
+    }
     if (compilerArg.empty() && requireCompiler) {
         return std::unexpected("missing compiler name");
     }
@@ -539,9 +564,21 @@ parse_toolchain_spec(std::string compilerArg,
     if      (norm->family == "llvm") spec.family = Family::Llvm;
     else if (norm->family == "msvc") spec.family = Family::Msvc;
     else                             spec.family = Family::Gcc;
-    spec.version     = std::move(norm->version);
-    spec.target      = std::move(norm->target);
-    spec.payloadName = std::move(norm->payload);
+    spec.version       = std::move(norm->version);
+    spec.target        = std::move(norm->target);
+    spec.payloadName   = std::move(norm->payload);
+    spec.ecosystemOnly = ecosystemOnly;
+
+    // A package and the machine's installation at once is not a spelling of
+    // anything, and reading it as either would silently drop the other half.
+    if (ecosystemOnly && spec.version == "system") {
+        return std::unexpected(std::format(
+            "'xim:{0}@system' names the ecosystem package and this machine's "
+            "installation at once.\n"
+            "    {0}@system          the machine's installation\n"
+            "    xim:{0}@<version>   an ecosystem package",
+            family_name(spec.family)));
+    }
 
     // `@system` IS NOT A GENERAL SPELLING, and refusing it here is the point.
     //

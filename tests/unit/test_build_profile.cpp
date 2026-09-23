@@ -12,6 +12,7 @@
 // 0.00s and left the release artifacts in place.
 
 #include <gtest/gtest.h>
+#include <cstdlib>
 
 import std;
 import mcpp.build.prepare;
@@ -27,6 +28,30 @@ mcpp::manifest::Manifest base() {
     m.buildConfig.optLevel = "2";
     return m;
 }
+
+// Save/restore MACOSX_DEPLOYMENT_TARGET, so a value this test sets (or one
+// already in the environment) cannot leak into a sibling test in this binary.
+class ScopedDeploymentTargetEnv {
+public:
+    explicit ScopedDeploymentTargetEnv(const char* value) {
+        if (const char* old = std::getenv(kName); old) { had_ = true; old_ = old; }
+        apply(value);
+    }
+    ~ScopedDeploymentTargetEnv() { apply(had_ ? old_.c_str() : nullptr); }
+    ScopedDeploymentTargetEnv(const ScopedDeploymentTargetEnv&) = delete;
+    ScopedDeploymentTargetEnv& operator=(const ScopedDeploymentTargetEnv&) = delete;
+private:
+    static constexpr const char* kName = "MACOSX_DEPLOYMENT_TARGET";
+    void apply(const char* v) {
+#if defined(_WIN32)
+        ::_putenv_s(kName, v ? v : "");
+#else
+        if (v) ::setenv(kName, v, 1); else ::unsetenv(kName);
+#endif
+    }
+    bool had_ = false;
+    std::string old_;
+};
 
 } // namespace
 
@@ -109,6 +134,52 @@ TEST(BuildProfile, CanonicalFlagsStillCoverTheNonProfileKnobs) {
       EXPECT_NE(mcpp::build::canonical_compile_flags(m), ref); }
     { auto m = base(); m.buildConfig.cStandard = "c17";
       EXPECT_NE(mcpp::build::canonical_compile_flags(m), ref); }
+}
+
+// ── macos_deployment_target: TARGET-keyed, not HOST-keyed (mcpp#685) ────────
+//
+// `canonical_compile_flags` used to fold this value in only
+// `if constexpr (mcpp::platform::is_macos)` -- the platform mcpp ITSELF was
+// built for -- so `mcpp build --target aarch64-macos` on a Linux host kept
+// the exact same fingerprint (hence the exact same `target/<triple>/<fp>/`
+// directory) no matter what `[build] macos_deployment_target` was edited to,
+// and a std.pcm built for one deployment target could be replayed for
+// another. `targetIsMacos` is now an explicit parameter, answered by the
+// caller from the TARGET triple, so these assertions hold on whatever host
+// runs this suite -- reverting to the old `if constexpr` would fail
+// `TargetIsMacosFoldsDeploymentTargetIntoTheFingerprint` on any non-Apple CI
+// runner.
+
+TEST(BuildProfile, NonMacosTargetIgnoresDeploymentTargetInTheFingerprint) {
+    ScopedDeploymentTargetEnv noEnv(nullptr);
+    auto ref = base();
+    auto changed = base(); changed.buildConfig.macosDeploymentTarget = "11.0";
+    // `targetIsMacos` defaults to false: a caller with no target in hand (or
+    // one building for something other than macOS) must not see the
+    // fingerprint move just because the manifest names a macOS floor it will
+    // never apply.
+    EXPECT_EQ(mcpp::build::canonical_compile_flags(ref),
+              mcpp::build::canonical_compile_flags(changed));
+    EXPECT_EQ(mcpp::build::canonical_compile_flags(ref, /*targetIsMacos=*/false),
+              mcpp::build::canonical_compile_flags(changed, /*targetIsMacos=*/false));
+}
+
+TEST(BuildProfile, TargetIsMacosFoldsDeploymentTargetIntoTheFingerprint) {
+    ScopedDeploymentTargetEnv noEnv(nullptr);
+    auto ref = base();
+    auto changed = base(); changed.buildConfig.macosDeploymentTarget = "11.0";
+    EXPECT_NE(mcpp::build::canonical_compile_flags(ref, /*targetIsMacos=*/true),
+              mcpp::build::canonical_compile_flags(changed, /*targetIsMacos=*/true));
+
+    // AND THE ENV OVERRIDE, folded the same way `deployment_target` resolves
+    // it: with MACOSX_DEPLOYMENT_TARGET set, the manifest value stops
+    // mattering to the fingerprint too, because it stops mattering to what
+    // actually gets compiled.
+    ScopedDeploymentTargetEnv env("12.3");
+    auto manifestA = base(); manifestA.buildConfig.macosDeploymentTarget = "11.0";
+    auto manifestB = base(); manifestB.buildConfig.macosDeploymentTarget = "13.0";
+    EXPECT_EQ(mcpp::build::canonical_compile_flags(manifestA, /*targetIsMacos=*/true),
+              mcpp::build::canonical_compile_flags(manifestB, /*targetIsMacos=*/true));
 }
 
 // ── cache-mode parsing ──────────────────────────────────────────────────────

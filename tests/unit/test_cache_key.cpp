@@ -645,3 +645,37 @@ TEST(CacheKey, ACxxLayerProvidersStatedStandardChangesTheKey) {
     EXPECT_NE(key_for(layer, "c++23"), none);
     EXPECT_NE(key_for(layer, "c++23"), key_for(layer, "c++26"));
 }
+
+// THE MSVC TOOLSET OF THE CLANG ROW IS IN THE KEY. Before it reached the
+// command line the driver found the STL by itself and `stdlibVersion` held
+// clang's version, so a Visual Studio update that changed the STL left the key
+// unchanged. The toolset directory carries its version, so two toolsets are
+// two keys.
+TEST(CacheKey, TheMsvcToolsetOfTheClangRowChangesTheKey) {
+    mcpp::toolchain::Toolchain tc;
+    tc.compiler          = mcpp::toolchain::CompilerId::Clang;
+    tc.version           = "20.1.7";
+    tc.driverIdent       = "clang-20.1.7";
+    tc.targetTriple      = "x86_64-pc-windows-msvc";
+    tc.msvcToolsDir      = "C:/VS/VC/Tools/MSVC/14.44.35207";
+    tc.windowsSdkRoot    = "C:/Kits/10";
+    tc.windowsSdkVersion = "10.0.26100.0";
+
+    mcpp::manifest::Manifest m;
+    m.package.standard = "c++23";
+    const auto a = ck::build_axes(tc, m, "-std=c++23", {}, "");
+    bool present = false;
+    for (auto const& t : a.targetHeaderSet)
+        present = present || t.find("14.44.35207") != std::string::npos;
+    EXPECT_TRUE(present) << "the toolset directory is part of the header set";
+
+    auto tc2 = tc;
+    tc2.msvcToolsDir = "C:/VS/VC/Tools/MSVC/14.51.36014";
+    EXPECT_NE(ck::key_hex(a, pkg()),
+              ck::key_hex(ck::build_axes(tc2, m, "-std=c++23", {}, ""), pkg()));
+
+    auto tc3 = tc;
+    tc3.windowsSdkVersion = "10.0.22621.0";
+    EXPECT_NE(ck::key_hex(a, pkg()),
+              ck::key_hex(ck::build_axes(tc3, m, "-std=c++23", {}, ""), pkg()));
+}

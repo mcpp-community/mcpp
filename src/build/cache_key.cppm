@@ -499,6 +499,14 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
         for (auto& t : mcpp::toolchain::resolve_link_model(tc)
                            .compile_tokens(relativize))
             b.targetHeaderSet.push_back(t);
+        // THE MSVC TOOLSET AND SDK OF THE CLANG ROW. Their directories carry
+        // the versions (`.../MSVC/14.44.35207`, `-Xmicrosoft-windows-sdk-version
+        // 10.0.26100.0`), so two toolsets are two keys. Before these were on
+        // the command line the key could not see the STL at all: the driver
+        // found it, and `stdlibVersion` held clang's own version.
+        for (auto& t : mcpp::toolchain::resolve_link_model(tc)
+                           .msvc_driver_tokens(relativize))
+            b.targetHeaderSet.push_back(t);
     }
 
     b.cppStandard     = rootManifest.package.standard;

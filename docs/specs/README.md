@@ -35,6 +35,7 @@
 | [SPEC-003](exit-codes.md) | 退出码契约(分类、语义、稳定性承诺) | 评审中 v1.0 | 2026-09-01 | mcpp >= 2026.9.1.1 |
 | [SPEC-004](manifest-semantics.md) | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 | 草案 v1.4 | 2026-09-15 | 条件化形状 mcpp >= 2026.8.29.1;目标轴 mcpp >= 2026.9.6.4;`linkage` 默认值 mcpp >= 2026.9.15.2 |
 | [SPEC-005](build-database.md) | 构建数据库:`mcpp emit build-database` 的内容、取值规则与不写工程目录的保证 | 评审中 v1.0 | 2026-09-15 | mcpp >= 2026.9.15.1 |
+| [SPEC-006](toolchain-management.md) | 工具链管理:身份、来源、选择与载荷契约 | 草案 v0.2 | 2026-09-24 | 逐条标注;已实现条款 mcpp >= 2026.9.24.1 |
 
 ## 文档约定
 

@@ -450,7 +450,7 @@ Rendered render(std::span<const Member> members,
             auto& set = set_for(member.setPrefix + package + (isTest ? ":test" : ""),
                                 package, kind);
             nlohmann::json provides = nlohmann::json::object();
-            if (cu.providesModule) provides[*cu.providesModule] = "";
+            if (!cu.providesModule.empty()) provides[cu.providesModule] = "";
             nlohmann::json requires_ = nlohmann::json::array();
             for (auto const& name : cu.imports) requires_.push_back(name);
             r.compileCommands.push_back(nlohmann::json{

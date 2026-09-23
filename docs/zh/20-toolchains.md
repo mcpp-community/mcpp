@@ -287,8 +287,9 @@ target，Targets 一栏里没有的，就是这台机器确实服务不了（实
 
 | Spec | 来源 | 解析出的编译器 |
 |---|---|---|
-| `msvc@system`（或裸 `msvc`） | 这台机器自己的 Visual Studio | 这里装了什么就是什么 |
-| `msvc@<toolset>`（如 `msvc@14.44.35207`） | mcpp 安装的 xlings 载荷 | 指名的那一个，在每台机器上一致 |
+| `msvc@system`（或裸 `msvc`） | 这台机器自己的 Visual Studio | 这台机器的默认 toolset（顺序见下文） |
+| `msvc@<toolset>`（如 `msvc@14.44.35207`） | 已安装的同版本 toolset，没有时为 mcpp 安装的 xlings 载荷（2026.9.24.1+） | 指名的那一个 |
+| `xim:msvc@<toolset>` | mcpp 安装的 xlings 载荷（2026.9.24.1+） | 指名的那一个，连同随它安装的 SDK |
 
 它们不是二选一，而是回答不同的问题。`msvc@system` 问的是「用这位开发者已经
 有的东西」；`msvc@14.44.35207` 问的是「用恰好这个编译器构建本工程」。pinned
@@ -356,13 +357,21 @@ mcpp 只负责定位并识别已安装的 Visual Studio / Build Tools，**从不
 mcpp toolchain default msvc
 ```
 
-mcpp 按下面这个顺序自动定位：
+mcpp 按下面的顺序取第一个完整的 toolset（2026.9.24.1+）：
 
-1. **`VSINSTALLDIR`**——由开发者命令提示符，或跑过 `vcvarsall` 的 CI 步骤
-   设置。这是一个**声明**而不是一次探测，所以排在下面几种探测之前。
-2. `vswhere.exe`（含 prerelease / Insiders 实例）
-3. `VS*COMNTOOLS`
-4. 标准的 `Program Files\Microsoft Visual Studio\<year>\<edition>` 路径
+1. **`VCToolsInstallDir`** 指向的 toolset——由开发者命令提示符设置，包括用
+   `vcvarsall … -vcvars_ver=<toolset>` 打开的那种；
+2. **`VSINSTALLDIR`**（或 `VCINSTALLDIR`）指向的实例的默认 toolset；
+3. `PATH` 上第一个 `cl.exe` 所在的 toolset；
+4. `vswhere.exe` 报告的、装有 C++ 工具的最新 Visual Studio 实例的默认
+   toolset（含 prerelease / Insiders 实例）；
+5. 没有 `vswhere.exe` 时，标准的
+   `Program Files\Microsoft Visual Studio\<year>\<edition>` 路径。
+
+实例的默认 toolset 是它的
+`VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt` 所指的那一个。
+一个 toolset 具备 `include\`、`lib\x64\`，对 cl.exe 构建还要具备 `cl.exe`，
+才算完整。
 
 随后识别涉及的各个版本，并持久化为稳定的 spec `msvc@system`：
 
@@ -392,14 +401,26 @@ mcpp toolchain list --available msvc     # what can be pinned
 mcpp toolchain install msvc 14.44.35207
 ```
 
-这在每个方面都和 `gcc@16.1.0` 一样：载荷下载进 mcpp 自己的 store，多个
-toolset 可以共存，`mcpp toolchain remove msvc@<toolset>` 卸载其中一个，
-manifest 里点名的那个会在首次构建时自动安装。
+pin 的 toolset 如果这台机器已经装有，就直接使用已安装的那一份（2026.9.24.1+）：
+mcpp 在所有 Visual Studio 实例中查找该版本的完整 toolset，只有都没有时才安装
+载荷。部分版本（`msvc@14.44`）取匹配的最高版本。环境变量（`VCToolsInstallDir`、
+`VSINSTALLDIR`）不参与 pin 的选择；如果某个变量本来会选出别的 toolset，会打印
+一行 `note:`。`mcpp toolchain list` 在 `installed toolsets` 下列出这台机器的
+toolset。
+
+`xim:msvc@<toolset>` 只要载荷，不看机器上有什么。载荷下载进 mcpp 自己的
+store，多个 toolset 可以共存，`mcpp toolchain remove msvc@<toolset>` 卸载其中
+一个，manifest 里点名的那个会在首次构建时自动安装。
 
 ```toml
 [toolchain]
-windows = "msvc@14.44.35207"
+windows = "msvc@14.44.35207"       # an installed 14.44.35207 first, else the payload
+# windows = "xim:msvc@14.44.35207" # the payload only
 ```
+
+所有工具链族都接受 `xim:`；gcc 与 llvm 的工具链总是来自载荷，所以
+`xim:gcc@16.1.0` 与 `gcc@16.1.0` 是同一个工具链。它是工具链写法唯一接受的
+命名空间：早先的版本会静默剥掉任何 `<ns>:` 前缀，现在其他命名空间被拒绝。
 
 **这里的版本是 toolset 目录名**（`14.44.35207`——即 `VC\Tools\MSVC\` 下的
 目录名，也是 `-vcvars_ver` 接受的值），**不是** cl banner 的版本
@@ -425,8 +446,8 @@ staging 成 `.ifc` BMI，用 `/interface /TP /ifcOutput` 编译 `.cppm` 模块
 
 | 来源 | SDK 的选定方式 |
 |---|---|
-| `msvc@<toolset>` | **随该 toolset 一起装进 mcpp store 的** `xim:windows-sdk` 载荷。环境里的 `WindowsSdkDir` / `WindowsSdkVersion` 会被**忽略**，mcpp 会打印一行 `note:` 说明这一点。 |
-| `msvc@system` | 先看 **`WindowsSdkDir`**（与 `WindowsSdkVersion`），没有声明时再看 `C:\Program Files (x86)\Windows Kits\10`。 |
+| 载荷 toolset | **随该 toolset 一起装进 mcpp store 的** `xim:windows-sdk` 载荷。环境里的 `WindowsSdkDir` / `WindowsSdkVersion` 会被**忽略**，mcpp 会打印一行 `note:` 说明这一点。 |
+| 已安装的 toolset（`msvc@system`，或在机器上找到的 `msvc@<toolset>`） | 先看 **`WindowsSdkDir`**（与 `WindowsSdkVersion`），没有声明时再看 `C:\Program Files (x86)\Windows Kits\10`。 |
 
 这种不对称正是要点所在。pin 一个 toolset，是在承诺「两台机器用同一套头文件
 编译同一份源码」；一个能被环境悄悄改写的变量，会把这条承诺降格成一种偏好。
@@ -467,6 +488,40 @@ cxx_runtime = "self-contained"   # the C++ runtime axis
 `_MSVC_MT`/`_MSVC_MD` 烘进这份模块，所以一个按角色给出的覆盖
 （`cxx_runtime = { tests = … }`）会被拒绝，并给出一条说明，而不是在 ucrt
 头文件内部产生一次模块不匹配。
+
+### MSVC ABI 上的 clang：toolset 就是 sysroot
+
+编译器是 clang 时（`windows = "llvm@<version>"`，装有 Visual Studio 的机器上的
+默认值），MSVC toolset 是 clang 编译时所针对的东西：它的 STL、CRT，以及随它
+而来的 Windows SDK。目标行用 `sysroot` 指定它，写法相同（2026.9.24.1+）：
+
+```toml
+[toolchain]
+windows = "llvm@22.1.8"
+
+[target.x86_64-windows-msvc]
+sysroot = "msvc@14.44.35207"     # or "msvc@system" (the default), or "xim:msvc@14.44.35207"
+```
+
+mcpp 按上面的规则解析一次 toolset 与它的 SDK，并在每一次编译、链接和 `std`
+模块预编译中以 `-Xmicrosoft-visualc-tools-root`、`-Xmicrosoft-windows-sdk-root`
+与 `-Xmicrosoft-windows-sdk-version` 传给 clang；`std.ixx` 也取自同一个 toolset。
+构建会打印这次选择：
+
+```
+    Resolved sysroot msvc@system → MSVC 14.44.35207 (system: Visual Studio Community 2022) · Windows SDK 10.0.26100.0
+```
+
+并记录在 `resolution.json` 里（`msvc_toolset`、`windows_sdk`）。toolset 目录与
+SDK 版本都进入构建缓存键，SDK 版本也是这一行的运行时身份（`ucrt@<version>`），
+与 cl.exe 行相同。在 cl.exe 行上，指向与编译器不同 toolset 的 `sysroot` 会被
+拒绝。
+
+**更早的引擎**（在 Windows runner 上用 2026.9.21.3 实测）对 `msvc@system` 与
+`msvc@<toolset>` 拒绝整份清单，报「is not an xpkg reference」。它们接受
+`xim:msvc@<toolset>`，但不按它行事：什么都不安装，clang 针对机器上的 toolset
+编译，构建输出却把这个值列为 c-abi 层。依赖所写 toolset 的项目应把 mcpp 固定在
+2026.9.24.1 或更高，例如写在 `.xlings.json` 的 workspace pin 里。
 
 ## SDK 工具链（`emsdk`、`android-ndk`）
 
@@ -624,7 +679,7 @@ mcpp build --target aarch64-ios-sim    # resolves llvm@22.1.8 + the Simulator SD
 | **一个汇编器（`nasm`）** | 先取被钉住的 `xim:nasm`；只有那条路服务不了时才取宿主的，且**在构建报告里点名**用到的是哪一个 | 一台离线、但本来就装了可用汇编器的机器仍然能构建。它此前是反过来的——见下文。 |
 | **PATH 上的 C++ 编译器（`$CXX`，否则 `g++`）** | 只有 `mcpp doctor` | 那个命令的职责就是报告宿主的状况。构建这条路上，在每一个到得了这个探针的分支上都从解析出的载荷设定编译器，载荷解析不了时**拒绝**，而不是落到 PATH。 |
 | **一个命令解释器（`/bin/sh`，Windows 上是 `cmd.exe`）** | `[hooks]` 走 `run_shell_deadline`，xlings CLI 走 `run_streaming_bounded`，还有一个分离式的代码生成命令 | 一条 hook 是**用户自己**用 shell 语法写下的那一行。自带一个 shell 会改变那一行被解读所用的语言，所以这里依赖的不是一个能打包的工具，而是宿主对那一行含义的约定。 |
-| **MSVC 工具集与 Windows SDK** | 用户点名的 `msvc@system`；或者一个受管工具集旁边没有 SDK 载荷时 | 不可再分发，与 Apple SDK 同一类。受管工具集**绑定**自己的 SDK，即使 `WindowsSdkDir` 被设置也不理会——一个环境能覆盖的 pin 就不是 pin；回落到机器自己那份能用，但不可复现，因此会带一句说明（`SdkChoice::note`，调用方必须把它呈现出来）。 |
+| **MSVC 工具集与 Windows SDK** | 用户点名的 `msvc@system`；在机器上找到的 pin 版本 `msvc@<toolset>`；或者一个受管工具集旁边没有 SDK 载荷时 | 不可再分发，与 Apple SDK 同一类。受管工具集**绑定**自己的 SDK，即使 `WindowsSdkDir` 被设置也不理会——一个环境能覆盖的 pin 就不是 pin；回落到机器自己那份能用，但不可复现，因此会带一句说明（`SdkChoice::note`，调用方必须把它呈现出来）。 |
 
 这张表意在穷举，而它是**推导出来的**，不是靠记忆写出来的。四次扫描 `src/`
 与 `modules/` 就能重新得到它。每一处 `fs::which` 调用——恰好五处，每一处都

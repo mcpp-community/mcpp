@@ -892,3 +892,287 @@ TEST(MsvcSdkOrigin, ASystemToolsetKeepsTheDeclaredSearchChain) {
     EXPECT_TRUE(choice.note.empty())
         << "nothing was ignored, so there is nothing to report: " << choice.note;
 }
+
+// ─── Toolset selection: one rule for the cl.exe row and the clang row ─────
+//
+// `select_system_toolset` reads only the directories it is handed, so these
+// run on any host against a synthetic machine: two Visual Studio instances,
+// side-by-side toolsets, `Microsoft.VCToolsVersion.default.txt`, and the
+// environment a developer prompt exports.
+
+namespace {
+
+// One Visual Studio instance on disk: <root>/VC/Tools/MSVC/<v>/{include,
+// lib/x64, bin/Hostx64/x64/cl.exe} per toolset, and the default-toolset file.
+struct FakeInstance {
+    FakeToolset dir;
+    msvc::VsInstance inst;
+
+    FakeInstance(std::string_view tag, std::string_view product,
+                 std::string_view installVersion) : dir(tag) {
+        inst.root = dir.root;
+        inst.product = std::string(product);
+        inst.installVersion = std::string(installVersion);
+    }
+    // complete=false leaves out lib/x64, the state of a half-installed toolset.
+    void toolset(std::string_view v, bool complete = true, bool withCl = true) {
+        auto tools = dir.root / "VC" / "Tools" / "MSVC" / std::string(v);
+        std::filesystem::create_directories(tools / "include");
+        if (complete) std::filesystem::create_directories(tools / "lib" / "x64");
+        if (withCl) {
+            std::filesystem::create_directories(tools / "bin" / "Hostx64" / "x64");
+            std::ofstream{tools / "bin" / "Hostx64" / "x64" / "cl.exe"} << "x";
+        }
+    }
+    void default_is(std::string_view v) {
+        auto b = dir.root / "VC" / "Auxiliary" / "Build";
+        std::filesystem::create_directories(b);
+        std::ofstream{b / "Microsoft.VCToolsVersion.default.txt"} << v << "\r\n";
+    }
+    std::filesystem::path tools(std::string_view v) const {
+        return dir.root / "VC" / "Tools" / "MSVC" / std::string(v);
+    }
+};
+
+// VS 2022 (older installation) with a side-by-side 14.38, and an Insiders VS
+// 18 (newer installation). The shape of a machine that has used Visual Studio
+// for a few years.
+struct TwoInstances {
+    FakeInstance vs2022{"sel-2022", "Visual Studio Community 2022", "17.14.36301.6"};
+    FakeInstance vs18{"sel-18", "Visual Studio Community 18 Insiders", "18.0.11010.1"};
+    TwoInstances() {
+        vs2022.toolset("14.44.35207");
+        vs2022.toolset("14.38.33130");
+        vs2022.default_is("14.44.35207");
+        vs18.toolset("14.51.36014");
+        vs18.default_is("14.51.36014");
+    }
+    std::vector<msvc::VsInstance> all() const { return {vs2022.inst, vs18.inst}; }
+};
+
+} // namespace
+
+TEST(MsvcToolsetVersion, ComparedAsNumbersNotStrings) {
+    EXPECT_LT(msvc::compare_toolset_versions("14.9", "14.10"), 0);
+    EXPECT_GT(msvc::compare_toolset_versions("14.44.35207", "14.38.33130"), 0);
+    EXPECT_EQ(msvc::compare_toolset_versions("14.44", "14.44.0"), 0);
+    EXPECT_EQ(msvc::compare_toolset_versions("17.14.36301.6", "17.14.36301.6"), 0);
+}
+
+TEST(MsvcToolsetVersion, APrefixMatchesWholeComponents) {
+    EXPECT_TRUE(msvc::toolset_version_matches("14.44", "14.44.35207"));
+    EXPECT_TRUE(msvc::toolset_version_matches("14.44.35207", "14.44.35207"));
+    EXPECT_TRUE(msvc::toolset_version_matches("14", "14.51.36014"));
+    // `14.4` is the 14.4 line, not a text prefix of 14.44.
+    EXPECT_FALSE(msvc::toolset_version_matches("14.4", "14.44.35207"));
+    EXPECT_FALSE(msvc::toolset_version_matches("14.44.35207.1", "14.44.35207"));
+    EXPECT_FALSE(msvc::toolset_version_matches("", "14.44.35207"));
+}
+
+TEST(MsvcToolsetSelect, APinnedVersionIsFoundInWhicheverInstanceHasIt) {
+    TwoInstances m;
+    msvc::ToolsetNeeds needs;
+    auto a = msvc::select_system_toolset(m.all(), {}, "14.38", needs);
+    ASSERT_TRUE(a.has_value());
+    EXPECT_EQ(a->version, "14.38.33130");
+    EXPECT_EQ(a->toolsDir, m.vs2022.tools("14.38.33130"));
+    EXPECT_EQ(a->via, "pinned");
+
+    auto b = msvc::select_system_toolset(m.all(), {}, "14.51.36014", needs);
+    ASSERT_TRUE(b.has_value());
+    EXPECT_EQ(b->vsRoot, m.vs18.dir.root);
+    EXPECT_EQ(b->product, "Visual Studio Community 18 Insiders");
+
+    // The highest match across every instance, by number.
+    auto c = msvc::select_system_toolset(m.all(), {}, "14", needs);
+    ASSERT_TRUE(c.has_value());
+    EXPECT_EQ(c->version, "14.51.36014");
+}
+
+TEST(MsvcToolsetSelect, APinWithNoInstalledMatchIsNulloptSoThePackageIsUsed) {
+    TwoInstances m;
+    EXPECT_FALSE(msvc::select_system_toolset(m.all(), {}, "14.29",
+                                             msvc::ToolsetNeeds{}).has_value());
+    // `14.4` does not reach 14.44 by text.
+    EXPECT_FALSE(msvc::select_system_toolset(m.all(), {}, "14.4",
+                                             msvc::ToolsetNeeds{}).has_value());
+}
+
+TEST(MsvcToolsetSelect, APinIgnoresTheEnvironmentAndSaysSo) {
+    // A developer prompt opened with `-vcvars_ver=14.38` exports this, and a
+    // pinned manifest must not follow it.
+    TwoInstances m;
+    msvc::MsvcEnvSnapshot env;
+    env.vcToolsInstallDir = m.vs2022.tools("14.38.33130").string() + "/";
+    env.vsInstallDir = m.vs2022.dir.root;
+    auto c = msvc::select_system_toolset(m.all(), env, "14.44.35207",
+                                         msvc::ToolsetNeeds{});
+    ASSERT_TRUE(c.has_value());
+    EXPECT_EQ(c->version, "14.44.35207");
+    bool noted = false;
+    for (auto const& n : c->notes)
+        noted = noted || (n.find("VCToolsInstallDir") != std::string::npos
+                          && n.find("14.38.33130") != std::string::npos);
+    EXPECT_TRUE(noted) << "an ignored declaration has to be reported";
+}
+
+TEST(MsvcToolsetSelect, AnIncompleteMatchIsSkippedAndReported) {
+    TwoInstances m;
+    m.vs18.toolset("14.44.35210", /*complete=*/false);   // newer, but no lib/x64
+    auto c = msvc::select_system_toolset(m.all(), {}, "14.44", msvc::ToolsetNeeds{});
+    ASSERT_TRUE(c.has_value());
+    EXPECT_EQ(c->version, "14.44.35207");
+    ASSERT_FALSE(c->notes.empty());
+    EXPECT_NE(c->notes.front().find("14.44.35210"), std::string::npos);
+}
+
+TEST(MsvcToolsetSelect, SystemFollowsTheDeclarationsInOrder) {
+    TwoInstances m;
+    msvc::ToolsetNeeds needs;
+
+    msvc::MsvcEnvSnapshot byTools;
+    byTools.vcToolsInstallDir = m.vs2022.tools("14.38.33130");
+    auto a = msvc::select_system_toolset(m.all(), byTools, "system", needs);
+    ASSERT_TRUE(a.has_value());
+    EXPECT_EQ(a->version, "14.38.33130");
+    EXPECT_EQ(a->via, "VCToolsInstallDir");
+
+    msvc::MsvcEnvSnapshot byInstance;
+    byInstance.vsInstallDir = m.vs2022.dir.root;
+    auto b = msvc::select_system_toolset(m.all(), byInstance, "system", needs);
+    ASSERT_TRUE(b.has_value());
+    EXPECT_EQ(b->version, "14.44.35207") << "the instance's default, not its highest";
+    EXPECT_EQ(b->via, "VSINSTALLDIR");
+
+    msvc::MsvcEnvSnapshot byPath;
+    byPath.clOnPath = m.vs2022.tools("14.38.33130") / "bin" / "Hostx64" / "x64" / "cl.exe";
+    auto c = msvc::select_system_toolset(m.all(), byPath, "system", needs);
+    ASSERT_TRUE(c.has_value());
+    EXPECT_EQ(c->version, "14.38.33130");
+    EXPECT_EQ(c->via, "PATH");
+
+    auto d = msvc::select_system_toolset(m.all(), {}, "system", needs);
+    ASSERT_TRUE(d.has_value());
+    EXPECT_EQ(d->version, "14.51.36014") << "the newest installation's default";
+    EXPECT_EQ(d->via, "newest instance");
+}
+
+TEST(MsvcToolsetSelect, TheDefaultFileOutranksTheHighestDirectory) {
+    // A side-by-side toolset newer than the instance's default is what VS's
+    // own vcvars would NOT pick; neither does this.
+    FakeInstance vs{"sel-default", "Visual Studio Community 2022", "17.14.1"};
+    vs.toolset("14.44.35207");
+    vs.toolset("14.50.35717");
+    vs.default_is("14.44.35207");
+    auto c = msvc::select_system_toolset({vs.inst}, {}, "system", msvc::ToolsetNeeds{});
+    ASSERT_TRUE(c.has_value());
+    EXPECT_EQ(c->version, "14.44.35207");
+}
+
+TEST(MsvcToolsetSelect, TheNewestInstanceWithoutAToolsetIsPassedOver) {
+    // Visual Studio installed without the C++ workload: newest by installation
+    // version, and nothing a build can use.
+    TwoInstances m;
+    FakeInstance bare{"sel-bare", "Visual Studio Community 2026", "19.0.1.1"};
+    auto all = m.all();
+    all.insert(all.begin(), bare.inst);
+    auto c = msvc::select_system_toolset(all, {}, "system", msvc::ToolsetNeeds{});
+    ASSERT_TRUE(c.has_value());
+    EXPECT_EQ(c->version, "14.51.36014");
+}
+
+TEST(MsvcToolsetSelect, TheClangRowDoesNotNeedClExe) {
+    FakeInstance vs{"sel-nocl", "Visual Studio Build Tools 2022", "17.14.1"};
+    vs.toolset("14.44.35207", /*complete=*/true, /*withCl=*/false);
+    msvc::ToolsetNeeds clRow;
+    msvc::ToolsetNeeds clangRow;
+    clangRow.cl = false;
+    EXPECT_FALSE(msvc::select_system_toolset({vs.inst}, {}, "system", clRow).has_value());
+    auto c = msvc::select_system_toolset({vs.inst}, {}, "system", clangRow);
+    ASSERT_TRUE(c.has_value());
+    EXPECT_EQ(c->version, "14.44.35207");
+}
+
+TEST(MsvcToolsetSelect, TheRefusalListsWhatIsInstalled) {
+    TwoInstances m;
+    auto lines = msvc::describe_system_toolsets(m.all(), msvc::ToolsetNeeds{});
+    ASSERT_EQ(lines.size(), 3u);
+    bool defaultMarked = false;
+    for (auto const& l : lines)
+        defaultMarked = defaultMarked || (l.find("14.44.35207") != std::string::npos
+                                          && l.find("(default)") != std::string::npos);
+    EXPECT_TRUE(defaultMarked);
+}
+
+// ─── `xim:` names the ecosystem package ──────────────────────────────────
+
+TEST(ToolchainSpelling, XimMsvcIsThePackageOnly) {
+    auto spec = parse_toolchain_spec("xim:msvc@14.44.35207");
+    ASSERT_TRUE(spec.has_value()) << spec.error();
+    EXPECT_EQ(spec->family, Family::Msvc);
+    EXPECT_EQ(spec->version, "14.44.35207");
+    EXPECT_TRUE(spec->ecosystemOnly);
+    EXPECT_FALSE(is_system_toolchain(*spec));
+    // The prefix changes the meaning for msvc, so it survives persistence.
+    EXPECT_EQ(spec->spec_str(), "xim:msvc@14.44.35207");
+    EXPECT_EQ(to_xim_package(*spec).target(), "xim:msvc@14.44.35207");
+
+    auto bare = parse_toolchain_spec("msvc@14.44.35207");
+    ASSERT_TRUE(bare.has_value());
+    EXPECT_FALSE(bare->ecosystemOnly);
+    EXPECT_EQ(bare->spec_str(), "msvc@14.44.35207");
+}
+
+TEST(ToolchainSpelling, XimIsASynonymWhereThereIsNoSystemOrigin) {
+    for (auto [prefixed, bare] : {std::pair{"xim:gcc@16.1.0", "gcc@16.1.0"},
+                                  std::pair{"xim:llvm@22.1.8", "llvm@22.1.8"}}) {
+        auto a = parse_toolchain_spec(prefixed);
+        auto b = parse_toolchain_spec(bare);
+        ASSERT_TRUE(a.has_value()) << prefixed;
+        ASSERT_TRUE(b.has_value()) << bare;
+        EXPECT_EQ(a->spec_str(), b->spec_str()) << "one canonical spelling";
+        EXPECT_EQ(to_xim_package(*a).target(), to_xim_package(*b).target());
+    }
+}
+
+TEST(ToolchainSpelling, XimWithSystemIsRefusedNamingBothSpellings) {
+    auto spec = parse_toolchain_spec("xim:msvc@system");
+    ASSERT_FALSE(spec.has_value());
+    EXPECT_NE(spec.error().find("msvc@system"), std::string::npos) << spec.error();
+    EXPECT_NE(spec.error().find("xim:msvc@<version>"), std::string::npos) << spec.error();
+}
+
+TEST(ToolchainSpelling, AnotherNamespaceIsRefused) {
+    auto spec = parse_toolchain_spec("foo:gcc@16.1.0");
+    ASSERT_FALSE(spec.has_value());
+    EXPECT_NE(spec.error().find("xim:"), std::string::npos) << spec.error();
+}
+
+// vswhere `-format text`: one instance per `instanceId:` line, CRLF endings,
+// `displayName` and not `catalog_productDisplayVersion`, and an instance with
+// no installation path dropped.
+TEST(MsvcVswhereText, OneInstancePerInstanceId) {
+    const std::string text =
+        "instanceId: 1a2b\r\n"
+        "installationName: VisualStudio/17.14.8+36301.6\r\n"
+        "installationPath: C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\r\n"
+        "installationVersion: 17.14.36301.6\r\n"
+        "displayName: Visual Studio Enterprise 2022\r\n"
+        "catalog_productDisplayVersion: 17.14.8\r\n"
+        "properties_nickname: \r\n"
+        "\r\n"
+        "instanceId: 3c4d\r\n"
+        "installationPath: D:\\VS\\Preview\r\n"
+        "installationVersion: 18.0.11010.1\r\n"
+        "displayName: Visual Studio Community 2026 Insiders\r\n"
+        "instanceId: 5e6f\r\n"
+        "displayName: incomplete\r\n";
+    auto v = mcpp::toolchain::msvc::parse_vswhere_text(text);
+    ASSERT_EQ(v.size(), 2u);
+    EXPECT_EQ(v[0].root.string(), "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise");
+    EXPECT_EQ(v[0].installVersion, "17.14.36301.6");
+    EXPECT_EQ(v[0].product, "Visual Studio Enterprise 2022");
+    EXPECT_EQ(v[1].root.string(), "D:\\VS\\Preview");
+    EXPECT_EQ(v[1].product, "Visual Studio Community 2026 Insiders");
+    EXPECT_TRUE(mcpp::toolchain::msvc::parse_vswhere_text("").empty());
+}

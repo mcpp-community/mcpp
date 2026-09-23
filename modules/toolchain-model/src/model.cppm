@@ -270,6 +270,18 @@ struct Toolchain {
     // the runtime contract hash). Deriving the second from a second search is
     // how the SDK came to have no identity in the first place.
     std::string                         windowsSdkVersion;
+
+    // THE MSVC TOOLSET A CLANG `*-windows-msvc` BUILD COMPILES AGAINST, and the
+    // SDK that follows it: the row's sysroot. Chosen once by prepare from
+    // `[target.<triple>].sysroot` (default `msvc@system`) and handed to the
+    // driver explicitly by the link model, so clang does not search the
+    // machine a second time. Empty on every other row, where nothing changes;
+    // the cl.exe row carries the same answer in its own path and envOverrides.
+    std::filesystem::path               msvcToolsDir;       // <vs>/VC/Tools/MSVC/<v>
+    std::string                         msvcToolsVersion;   // "14.44.35207"
+    std::string                         msvcOrigin;         // "system" | "managed"
+    std::string                         msvcProduct;        // for the one printed line
+    std::filesystem::path               windowsSdkRoot;     // <kits>/10 or the payload
     // Something about HOW this toolchain was resolved that the user has to be
     // told, but which is not a failure. Non-empty ⇒ the caller MUST surface it.
     //

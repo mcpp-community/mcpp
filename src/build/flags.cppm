@@ -538,8 +538,19 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // override, the convention cargo/rustc/cc honor) > the manifest's
     // [build] macos_deployment_target (project default, SwiftPM-style) >
     // empty (toolchain/SDK default).
+    //
+    // TARGET-KEYED, NOT HOST-KEYED (#685). `targetIsMacos` asks
+    // `plan.toolchain.targetTriple` -- the target THIS compile is for --
+    // rather than the machine mcpp runs on, so `mcpp build --target
+    // aarch64-macos` from a Linux host honours the manifest key instead of
+    // the empty answer the old host-gated resolver gave unconditionally on
+    // any non-Apple host. Same discriminator `peTarget` below uses.
+    const bool targetIsMacos = [&] {
+        auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+        return t && t->os == "macos";
+    }();
     std::string macosDeploymentTarget = mcpp::platform::macos::deployment_target(
-        plan.manifest.buildConfig.macosDeploymentTarget);
+        targetIsMacos, plan.manifest.buildConfig.macosDeploymentTarget);
 
     f.cxxBinary = plan.toolchain.binaryPath;
     f.ccBinary = mcpp::toolchain::derive_c_compiler(plan.toolchain);
@@ -626,8 +637,17 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // --no-default-config and provide everything explicitly.
     const auto dm = mcpp::toolchain::resolve_clang_driver(plan.toolchain);
     const auto lm = mcpp::toolchain::resolve_link_model(plan.toolchain);
+    // ONE WORD PER PATH, QUOTED WHEN IT HAS TO BE. `escape_path` escapes for
+    // ninja and does not quote, so a path with a space reached the command as
+    // two words. No path this line carries on Linux or macOS had one; the MSVC
+    // toolset on the clang row always has one (`C:\Program Files\...`). A
+    // path without whitespace keeps its old spelling byte for byte.
     const mcpp::toolchain::PathEscape ninjaEsc =
-        [](const std::filesystem::path& p) { return escape_path(p); };
+        [](const std::filesystem::path& p) {
+            const auto s = p.string();
+            return s.find_first_of(" \t") == std::string::npos
+                ? escape_path(p) : ninja_command_word(s);
+        };
 
     std::string compile_toolchain_flags;
     std::string link_toolchain_flags;
@@ -853,7 +873,6 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         link_toolchain_flags_c = crossTarget;
         f.sysroot = link_toolchain_flags;
     }
-
     // Binutils -B flag — a GCC/libstdc++ payload concern (musl and MinGW-w64
     // cross both bundle their own as/ld; Clang and MSVC never take an external
     // binutils). MinGW must not get the Linux binutils -B — its PE/SEH output
@@ -1744,8 +1763,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // where every other host produces a static one. ⇒ Whole-program static
         // linkage is a property of the TARGET (`target_supports_full_static`
         // plus the manifest's `linkage`), so it belongs on every host's line.
-        f.ld = std::format("{} -fuse-ld=lld{}{}{}", full_static, link_intent_ld,
-                           user_ldflags, link_extra);
+        // CLANG ON THE MSVC ABI: the link half of what the compile line says.
+        // The driver derives the toolset's and the SDK's library directories
+        // from these rather than from the machine; empty without a toolset.
+        const auto msvcSysroot =
+            mcpp::toolchain::render_tokens(lm.msvc_driver_tokens(ninjaEsc));
+        f.ld = std::format("{} -fuse-ld=lld{}{}{}{}", full_static, msvcSysroot,
+                           link_intent_ld, user_ldflags, link_extra);
         f.ldC = f.ld;   // no C++ runtime token on this line
     } else if (linkShape == LinkShape::AppleSdk) {
         // macOS. The C++ runtime itself is decided by the contract table above

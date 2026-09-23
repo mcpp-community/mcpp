@@ -207,8 +207,9 @@ $ mcpp xpkg parse mcpp.plugins.lua --json
 
 ## 环境诊断
 
-`mcpp self doctor` 检查工具链、`std` 模块、registry、缓存健康与最近一次
-运行期闭包判定，并报告它查到了什么，而不只报告失败的部分：
+`mcpp self doctor` 检查工具链、`std` 模块、registry、缓存健康、最近一次
+运行期闭包判定，以及已安装的 GCC 载荷里是否留有构建它的那台机器自己的
+fixincludes 冻结头文件，并报告它查到了什么，而不只报告失败的部分：
 
 ```
 $ mcpp self doctor

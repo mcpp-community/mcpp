@@ -49,7 +49,13 @@ struct CompileUnit {
     std::vector<std::string>        packageCflags;
     std::vector<std::string>        packageCxxflags;
     std::vector<std::string>        packageAsmflags;   // per-glob asmflags (G4)
-    std::optional<std::string>      providesModule;   // logical name, if .cppm export
+    // The logical module name, when this unit is a module interface; empty
+    // otherwise (a module name is never empty). A plain string and not an
+    // `std::optional<std::string>`: that member type does not copy under
+    // clang with the MSVC STL once the module interface around it changes
+    // (`_SMF_control` has no matching constructor), and the error names this
+    // struct from whichever unit copies a CompileUnit first.
+    std::string                     providesModule;
     std::vector<std::string>        imports;           // logical names imported
     // Unit came from a scan_overrides declaration — plan-vs-ddi
     // verification is mandatory for it (ninja_backend emits --expect-*).
@@ -1757,7 +1763,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // unit that reads and writes no BMI.
         if (auto it = implementationStandardFlag.find(cu.packageName);
             it != implementationStandardFlag.end()
-            && cu.kind == mcpp::SourceKind::Cxx && !cu.providesModule
+            && cu.kind == mcpp::SourceKind::Cxx && cu.providesModule.empty()
             && cu.imports.empty()
             && cu.declaration == mcpp::modgraph::ModuleDeclaration::None) {
             cu.packageCxxflags.push_back(it->second);
@@ -1796,8 +1802,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // 2. Build map of module-name → compile unit (for inter-unit dep resolution)
     std::map<std::string, std::size_t> producerOf;
     for (std::size_t i = 0; i < plan.compileUnits.size(); ++i) {
-        if (plan.compileUnits[i].providesModule) {
-            producerOf[*plan.compileUnits[i].providesModule] = i;
+        if (!plan.compileUnits[i].providesModule.empty()) {
+            producerOf[plan.compileUnits[i].providesModule] = i;
         }
     }
 

@@ -59,18 +59,18 @@ stage_configure_prerequisites(const BuildPlan& plan) {
 
     const auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
     for (const auto& unit : plan.compileUnits) {
-        if (!unit.servedFromCache || !unit.providesModule
+        if (!unit.servedFromCache || unit.providesModule.empty()
             || unit.cachedBmi.empty()) continue;
 
         std::string fileName;
-        fileName.reserve(unit.providesModule->size() + traits.bmiExt.size());
-        for (char ch : *unit.providesModule)
+        fileName.reserve(unit.providesModule.size() + traits.bmiExt.size());
+        for (char ch : unit.providesModule)
             fileName.push_back(ch == ':' ? '-' : ch);
         fileName += traits.bmiExt;
 
         auto result = stage_one(
             unit.cachedBmi, plan.outputDir / traits.bmiDir / fileName,
-            *unit.providesModule);
+            unit.providesModule);
         if (!result) return std::unexpected(result.error());
     }
 

@@ -49,8 +49,11 @@ struct RuntimeBinding {
     std::string runtimeId;
     std::string contractHash;
     std::optional<std::filesystem::path> loader;
-    std::optional<std::string> libc;
-    std::optional<std::string> hostLibc;
+    // Empty means absent. Plain strings rather than `std::optional<std::string>`:
+    // that member type does not copy under clang with the MSVC STL once the
+    // importers' module graph changes (see `TargetEntry::sysroot`).
+    std::string libc;
+    std::string hostLibc;
     // IMMUTABLE payload directories (`<store>/xim-x-glibc/2.39/lib64`).
     std::vector<std::filesystem::path> libraryDirs;
     // The SubOS symlink farm (`<subos>/lib`) — a union view of everything
@@ -171,8 +174,8 @@ std::string canonical_contract(const RuntimeBinding& binding) {
     append_field(out, binding.selection.subosName);
     append_field(out, binding.provenance);
     append_field(out, binding.loader ? binding.loader->generic_string() : "");
-    append_field(out, binding.libc.value_or(""));
-    append_field(out, binding.hostLibc.value_or(""));
+    append_field(out, binding.libc);
+    append_field(out, binding.hostLibc);
     for (auto const& p : binding.libraryDirs)
         append_field(out, p.generic_string());
     // The farm participates in the hash because it participates in the
@@ -480,8 +483,8 @@ std::string serialize_runtime_binding(const RuntimeBinding& binding) {
     j["runtime_id"] = binding.runtimeId;
     j["contract_hash"] = binding.contractHash;
     j["loader"] = binding.loader ? binding.loader->generic_string() : "";
-    j["libc"] = binding.libc.value_or("");
-    j["host_libc"] = binding.hostLibc.value_or("");
+    j["libc"] = binding.libc;
+    j["host_libc"] = binding.hostLibc;
     j["library_dirs"] = nlohmann::json::array();
     for (auto const& path : binding.libraryDirs)
         j["library_dirs"].push_back(path.generic_string());

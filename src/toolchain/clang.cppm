@@ -201,7 +201,11 @@ void enrich_toolchain(Toolchain& tc, const std::string& envPrefix) {
 
 #if defined(_WIN32)
     // Fallback: if libc++ std.cppm not found, look for MSVC STL's std.ixx.
-    // Uses msvc.cppm which searches via vswhere, env vars, and known paths.
+    // This is the machine's default toolset by the one selection both rows
+    // use (msvc::select_system_toolset, selector `system`). A build replaces it
+    // with the toolset its row names (`[target.<triple>].sysroot`, see
+    // prepare's bind_msvc_sysroot); this answer serves what only detects, such
+    // as `mcpp toolchain list`.
     if (!tc.hasImportStd && msvTarget) {
         if (auto p = mcpp::toolchain::msvc::find_std_module_source()) {
             tc.stdModuleSource = *p;
