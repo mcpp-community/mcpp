@@ -94,25 +94,41 @@ inline constexpr std::string_view default_deployment_target = "14.0";
 // MACOSX_DEPLOYMENT_TARGET env var (explicit per-invocation override,
 // the convention cargo/rustc/cc honor) wins over `manifestValue` (the
 // [build] macos_deployment_target project default), which wins over
-// the built-in default floor — the result is never empty on macOS.
-// THE single source of truth — flags.cppm, the BMI fingerprint rule
-// and the std-module prebuild must all consume this same resolution,
-// or cached std.pcm modules drift from the TUs (config-mismatch /
-// unstaged-module failures observed on macos CI).
-std::string deployment_target(std::string_view manifestValue);
+// the built-in default floor.
+//
+// WHETHER IT APPLIES IS A TARGET QUESTION, NOT A HOST QUESTION, so
+// `targetIsMacos` is a parameter rather than a `#if defined(__APPLE__)`
+// read inside this function. Every reader that folds this value into a
+// compiler flag, a triple or the build fingerprint builds for a
+// particular target (native or `--target`-crossed), and that target's
+// OS -- not the machine running mcpp -- decides whether a macOS floor
+// makes sense. The resolution itself (env > manifest > 14.0) never
+// consults the host either, which is what makes `mcpp build --target
+// aarch64-macos` on Linux honour `macos_deployment_target` at all: the
+// old `#if defined(__APPLE__)` guard answered empty on every non-Apple
+// host regardless of what the target was.
+//
+// `modules/platform` does not import `mcpp.toolchain.triple` (layering:
+// the triple model is built on top of platform, not the reverse), so
+// each caller answers the "is the target macOS" question itself --
+// typically `parsedTriple.os == "macos"` -- and passes the bool rather
+// than a triple this module cannot name.
+//
+// Result is never empty when `targetIsMacos` is true; always empty
+// when it is false. THE single source of truth — flags.cppm, the BMI
+// fingerprint rule and the std-module prebuild must all consume this
+// same resolution, or cached std.pcm modules drift from the TUs
+// (config-mismatch / unstaged-module failures observed on macos CI).
+std::string deployment_target(bool targetIsMacos, std::string_view manifestValue);
 
 // Return macOS-specific runtime library directories for LLVM toolchains.
-std::string deployment_target(std::string_view manifestValue) {
-#if defined(__APPLE__)
+std::string deployment_target(bool targetIsMacos, std::string_view manifestValue) {
+    if (!targetIsMacos) return {};
     if (const char* dt = std::getenv("MACOSX_DEPLOYMENT_TARGET"); dt && *dt)
         return dt;
     if (!manifestValue.empty())
         return std::string(manifestValue);
     return std::string(default_deployment_target);
-#else
-    (void)manifestValue;
-    return {};
-#endif
 }
 
 std::vector<std::filesystem::path>

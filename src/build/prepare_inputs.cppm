@@ -517,7 +517,8 @@ std::filesystem::path target_dir(const mcpp::toolchain::Toolchain& tc,
 // Exported so the "every build-variant knob is in here" invariant is machine-
 // checkable: the profile knobs were absent for a long time precisely because
 // nothing could assert on this string.
-std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
+std::string canonical_compile_flags(const mcpp::manifest::Manifest& m,
+                                    bool targetIsMacos = false) {
     std::string s;
     s += "-std="; s += m.package.standard;
     s += " -fmodules";
@@ -528,18 +529,27 @@ std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
     // into the fingerprint so switching targets rebuilds the BMI cache
     // instead of dying with a module config mismatch.
     //
+    // TARGET-KEYED, NOT HOST-KEYED (#685). This used to read
+    // `if constexpr (mcpp::platform::is_macos)`, i.e. the platform mcpp
+    // itself was BUILT for, which left the fingerprint blind to
+    // `macos_deployment_target` whenever the BUILD ran on a non-Apple host —
+    // so `mcpp build --target aarch64-macos` on Linux kept the same output
+    // directory no matter what the manifest key was edited to. The caller
+    // answers whether THIS build's target is macOS (the same discriminator
+    // `min_platform_version` uses); it defaults to false so a caller that
+    // has no target in hand (a manifest-only unit test) gets today's
+    // non-macOS behaviour rather than silently guessing.
+    //
     // The built-in default floor (rustc-style) lives in the single
     // resolver (platform::macos::deployment_target), so this rule, the
     // flags and the std-module prebuild always agree — the 0.0.50-era
     // attempt to inject a default here alone left the test build's
     // std.pcm unstaged (import std failed wholesale on macos CI).
-    if constexpr (mcpp::platform::is_macos) {
-        auto dtv = mcpp::platform::macos::deployment_target(
-            m.buildConfig.macosDeploymentTarget);
-        if (!dtv.empty()) {
-            s += " macos_deployment_target=";
-            s += dtv;
-        }
+    if (auto dtv = mcpp::platform::macos::deployment_target(
+            targetIsMacos, m.buildConfig.macosDeploymentTarget);
+        !dtv.empty()) {
+        s += " macos_deployment_target=";
+        s += dtv;
     }
     if (!m.buildConfig.cStandard.empty()) {
         s += " c_standard=";
@@ -615,7 +625,8 @@ std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
 }
 
 std::string canonical_package_build_metadata(
-    const std::vector<mcpp::modgraph::PackageRoot>& packages)
+    const std::vector<mcpp::modgraph::PackageRoot>& packages,
+    bool targetIsMacos = false)
 {
     std::string s;
     for (auto const& pkg : packages) {
@@ -653,7 +664,7 @@ std::string canonical_package_build_metadata(
         // already folds; serialising it twice is harmless and keeps this loop
         // one rule rather than one rule and an exception.
         s += ' ';
-        s += canonical_compile_flags(pkg.manifest);
+        s += canonical_compile_flags(pkg.manifest, targetIsMacos);
         // The level a C++-layer provider compiles its implementation units at
         // (`make_plan`). Appended only when there is one, so every other
         // output directory keeps its identity.

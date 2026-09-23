@@ -336,16 +336,35 @@ TEST(HostFlags, OnlyTheSpelledOutExitNamesTheToolchainRuntimeDirs) {
     EXPECT_FALSE(names_dir(off, (payload.root / "lib").string()));
 }
 
-TEST(HostFlags, DeploymentTargetOnlyOnMacos) {
-    auto tc = tc_for(CompilerId::GCC);
+// TARGET-KEYED, NOT HOST-KEYED (mcpp#685). This used to read
+// `EXPECT_EQ(found, mcpp::platform::is_macos)` — the flag's presence
+// followed the machine RUNNING this test rather than the `Toolchain`'s own
+// `targetTriple`, so it could not distinguish "building for macOS" from
+// "building on macOS" and stayed green while `--target aarch64-macos` from a
+// non-Apple host silently dropped the flag (and the iOS mirror: a macOS host
+// building `x86_64-linux-musl` wrongly kept it). Both targets are asked here
+// so the assertion holds independent of whichever host runs this suite.
+TEST(HostFlags, DeploymentTargetOnlyOnAMacosTarget) {
     HostFlagOptions opt;
     opt.macosDeploymentTarget = "14.0";
-    auto tokens = mcpp::toolchain::host_compile_tokens(
-        tc, opt, mcpp::toolchain::no_escape);
-    bool found = std::ranges::any_of(tokens, [](auto const& t) {
+
+    auto macTc = tc_for(CompilerId::GCC);
+    macTc.targetTriple = "aarch64-macos";
+    auto macTokens = mcpp::toolchain::host_compile_tokens(
+        macTc, opt, mcpp::toolchain::no_escape);
+    EXPECT_TRUE(std::ranges::any_of(macTokens, [](auto const& t) {
+        return t == "-mmacosx-version-min=14.0";
+    })) << "a macOS target must carry the resolved deployment target "
+           "regardless of the host running the build";
+
+    auto linuxTc = tc_for(CompilerId::GCC);
+    linuxTc.targetTriple = "x86_64-linux-musl";
+    auto linuxTokens = mcpp::toolchain::host_compile_tokens(
+        linuxTc, opt, mcpp::toolchain::no_escape);
+    EXPECT_FALSE(std::ranges::any_of(linuxTokens, [](auto const& t) {
         return t.starts_with("-mmacosx-version-min=");
-    });
-    EXPECT_EQ(found, mcpp::platform::is_macos);
+    })) << "a non-macOS target must never see a macOS deployment flag, even "
+           "when built on a macOS host (the mirror defect #685 also fixes)";
 }
 
 // ── graph_runtime_compile_flags: what a `throw` and a `thread_local` compile

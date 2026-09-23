@@ -538,8 +538,19 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // override, the convention cargo/rustc/cc honor) > the manifest's
     // [build] macos_deployment_target (project default, SwiftPM-style) >
     // empty (toolchain/SDK default).
+    //
+    // TARGET-KEYED, NOT HOST-KEYED (#685). `targetIsMacos` asks
+    // `plan.toolchain.targetTriple` -- the target THIS compile is for --
+    // rather than the machine mcpp runs on, so `mcpp build --target
+    // aarch64-macos` from a Linux host honours the manifest key instead of
+    // the empty answer the old host-gated resolver gave unconditionally on
+    // any non-Apple host. Same discriminator `peTarget` below uses.
+    const bool targetIsMacos = [&] {
+        auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+        return t && t->os == "macos";
+    }();
     std::string macosDeploymentTarget = mcpp::platform::macos::deployment_target(
-        plan.manifest.buildConfig.macosDeploymentTarget);
+        targetIsMacos, plan.manifest.buildConfig.macosDeploymentTarget);
 
     f.cxxBinary = plan.toolchain.binaryPath;
     f.ccBinary = mcpp::toolchain::derive_c_compiler(plan.toolchain);

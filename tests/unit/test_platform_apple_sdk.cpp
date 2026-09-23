@@ -1,10 +1,41 @@
 #include <gtest/gtest.h>
+#include <cstdlib>
 
 import std;
 import mcpp.platform;
 import mcpp.platform.macos;
 
 namespace mac = mcpp::platform::macos;
+
+namespace {
+
+// Save/restore MACOSX_DEPLOYMENT_TARGET around a test so its own opinion
+// cannot leak into a sibling test in this binary (gtest runs them in one
+// process) and so a value set in the CI environment cannot leak into this
+// one.
+class ScopedDeploymentTargetEnv {
+public:
+    explicit ScopedDeploymentTargetEnv(const char* value) {
+        if (const char* old = std::getenv(kName); old) { had_ = true; old_ = old; }
+        apply(value);
+    }
+    ~ScopedDeploymentTargetEnv() { apply(had_ ? old_.c_str() : nullptr); }
+    ScopedDeploymentTargetEnv(const ScopedDeploymentTargetEnv&) = delete;
+    ScopedDeploymentTargetEnv& operator=(const ScopedDeploymentTargetEnv&) = delete;
+private:
+    static constexpr const char* kName = "MACOSX_DEPLOYMENT_TARGET";
+    void apply(const char* v) {
+#if defined(_WIN32)
+        ::_putenv_s(kName, v ? v : "");
+#else
+        if (v) ::setenv(kName, v, 1); else ::unsetenv(kName);
+#endif
+    }
+    bool had_ = false;
+    std::string old_;
+};
+
+}  // namespace
 
 // ─── The three Apple SDKs are a table, not three code paths (C1) ───────────
 //
@@ -113,5 +144,58 @@ TEST(AppleSdk, TheDefaultRequestIsTheMacosSdk) {
             << "an Apple SDK on a host that has none is a located path that "
                "does not exist";
         EXPECT_FALSE(mac::sdk_path(mac::sdk_iphoneos).has_value());
+    }
+}
+
+// ─── deployment_target: a TARGET decision, not a HOST one (mcpp#685) ────────
+//
+// `deployment_target` used to read `#if defined(__APPLE__)` and answer empty
+// on every non-Apple host, no matter what `targetIsMacos` would have said —
+// so `mcpp build --target aarch64-macos` from Linux ignored
+// `macos_deployment_target` entirely. These run on whatever host is building
+// mcpp itself (this repository's CI includes non-Apple runners), which is
+// exactly the property under test: nothing here branches on
+// `mcpp::platform::is_macos`, and a reintroduced `#if defined(__APPLE__)`
+// guard would make `TargetIsMacosEnvBeatsManifestBeatsDefault` fail on any
+// non-Apple host.
+
+TEST(AppleSdk, DeploymentTargetIsEmptyForANonMacosTarget) {
+    // No env, no manifest value, and no env with a manifest value: a
+    // non-macOS target gets no floor regardless of what either input says,
+    // because applying one would be an answer to a question this target
+    // never asked (see min_platform_version's Apple-only branch).
+    ScopedDeploymentTargetEnv noEnv(nullptr);
+    EXPECT_EQ(mac::deployment_target(false, ""), "");
+    EXPECT_EQ(mac::deployment_target(false, "11.0"), "");
+    ScopedDeploymentTargetEnv env("12.3");
+    EXPECT_EQ(mac::deployment_target(false, "11.0"), "");
+}
+
+TEST(AppleSdk, TargetIsMacosEnvBeatsManifestBeatsDefault) {
+    {
+        // Neither input set: the built-in floor.
+        ScopedDeploymentTargetEnv noEnv(nullptr);
+        EXPECT_EQ(mac::deployment_target(true, ""), mac::default_deployment_target);
+    }
+    {
+        // Manifest only: the project's stated default.
+        ScopedDeploymentTargetEnv noEnv(nullptr);
+        EXPECT_EQ(mac::deployment_target(true, "11.0"), "11.0");
+    }
+    {
+        // Env only: the per-invocation override, same convention cargo/cc use.
+        ScopedDeploymentTargetEnv env("12.3");
+        EXPECT_EQ(mac::deployment_target(true, ""), "12.3");
+    }
+    {
+        // Both set: env wins.
+        ScopedDeploymentTargetEnv env("12.3");
+        EXPECT_EQ(mac::deployment_target(true, "11.0"), "12.3");
+    }
+    {
+        // An env var present but empty is the same as absent (the convention
+        // every other MACOSX_DEPLOYMENT_TARGET reader in this tree follows).
+        ScopedDeploymentTargetEnv env("");
+        EXPECT_EQ(mac::deployment_target(true, "11.0"), "11.0");
     }
 }

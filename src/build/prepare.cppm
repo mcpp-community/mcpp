@@ -1931,8 +1931,15 @@ std::string min_platform_version(const mcpp::manifest::Manifest& m,
     // default is not the SDK's. Bionic rejects the unversioned triple
     // outright, which is the other half of the asymmetry.
     if (t.is_ios()) return m.buildConfig.iosDeploymentTarget;
-    return mcpp::platform::macos::deployment_target(
-        m.buildConfig.macosDeploymentTarget);
+    // AND ONLY FOR A macOS TARGET. `deployment_target` itself no longer
+    // consults the host (#685); the discriminator is `t.os`, which is this
+    // function's own target parameter and is available regardless of what
+    // machine mcpp runs on. A non-Apple target (Linux, Windows, wasm,
+    // freestanding) answers empty here, same as it always has.
+    if (t.os == "macos")
+        return mcpp::platform::macos::deployment_target(
+            /*targetIsMacos=*/true, m.buildConfig.macosDeploymentTarget);
+    return {};
 }
 
 std::string with_index_cause(std::string msg) {
@@ -12608,8 +12615,13 @@ prepare_build(bool print_fingerprint,
             hopt.cAbiPrebuilt          = true;
             hopt.cxxFromGraph          = true;
             hopt.appleSdkRoot          = tc->appleSdkRoot;
+            // Target-keyed, not host-keyed (#685) — see `min_platform_version`.
+            const bool cAbiTargetIsMacos = [&] {
+                auto cAbiTt = mcpp::toolchain::triple::parse(tc->targetTriple);
+                return cAbiTt && cAbiTt->os == "macos";
+            }();
             hopt.macosDeploymentTarget = mcpp::platform::macos::deployment_target(
-                m->buildConfig.macosDeploymentTarget);
+                cAbiTargetIsMacos, m->buildConfig.macosDeploymentTarget);
             for (auto& t : mcpp::toolchain::host_compile_tokens(
                      *tc, hopt, mcpp::toolchain::no_escape)) {
                 const auto q = " " + mcpp::xlings::shq(t);
@@ -12772,8 +12784,17 @@ prepare_build(bool print_fingerprint,
     mcpp::toolchain::FingerprintInputs fpi;
     fpi.toolchain            = *tc;
     fpi.cppStandard         = m->package.standard;
-    fpi.compileFlags        = canonical_compile_flags(*m)
-                              + canonical_package_build_metadata(packages);
+    // Target-keyed, not host-keyed (#685): the fingerprint must fold
+    // `macos_deployment_target` whenever THIS BUILD's resolved toolchain
+    // targets macOS, whether mcpp itself is running on Linux, Windows or
+    // macOS — see the discriminator comment on `min_platform_version` and
+    // on `canonical_compile_flags`.
+    const bool fpTargetIsMacos = [&] {
+        auto fpTt = mcpp::toolchain::triple::parse(tc->targetTriple);
+        return fpTt && fpTt->os == "macos";
+    }();
+    fpi.compileFlags        = canonical_compile_flags(*m, fpTargetIsMacos)
+                              + canonical_package_build_metadata(packages, fpTargetIsMacos);
     // [c-abi] REALISATION AND `__OPENKAL__` PARTICIPATE IN THE FINGERPRINT
     // (design 2026-09-18 §3.4, gap #4 of the design's own self-review). Two
     // builds whose C library declares `data-model = "lp64"` and `"llp64"`
@@ -12865,13 +12886,21 @@ prepare_build(bool print_fingerprint,
         const auto stdCrt = mcpp::toolchain::msvc_crt_flag(
             stdDialect, mcpp::toolchain::msvc_wants_static_crt(
                             m->buildConfig.linkage, m->buildConfig.cxxRuntime));
+        // Whether THIS build's resolved toolchain targets macOS — the same
+        // target-not-host discriminator `min_platform_version` uses, parsed
+        // locally because `tc` (not a `triple::Triple`) is what is in scope
+        // here (#685).
+        const bool stdTargetIsMacos = [&] {
+            auto stdTt = mcpp::toolchain::triple::parse(tc->targetTriple);
+            return stdTt && stdTt->os == "macos";
+        }();
         if (overrides.plan_only) {
             // Described, not compiled: the paths and commands are the ones
             // ensure_built would use, from the one derivation in stdmod.cppm.
             auto described = mcpp::toolchain::describe_std_module(
                 *tc, m->package.standard, stdFlagAndDialect,
                 mcpp::platform::macos::deployment_target(
-                    m->buildConfig.macosDeploymentTarget),
+                    stdTargetIsMacos, m->buildConfig.macosDeploymentTarget),
                 mcpp::toolchain::default_cache_root(), stdCrt);
             if (!described) {
                 refusal::record(refusal::Code::StdModulePrecompile);
@@ -12886,7 +12915,7 @@ prepare_build(bool print_fingerprint,
             auto sm = mcpp::toolchain::ensure_built(
                 *tc, m->package.standard, stdFlagAndDialect,
                 mcpp::platform::macos::deployment_target(
-                    m->buildConfig.macosDeploymentTarget),
+                    stdTargetIsMacos, m->buildConfig.macosDeploymentTarget),
                 mcpp::toolchain::default_cache_root(), stdCrt);
             if (!sm) {
                 // THE ONE CODE IN THE TAXONOMY THAT NOTHING WROTE.

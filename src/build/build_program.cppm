@@ -1202,9 +1202,23 @@ std::expected<void, std::string> run_build_program(
     // One resolution of the deployment target, used by every compile below
     // and by the std module it asks stdmod to build — they must agree or
     // clang rejects the BMI.
+    //
+    // LEGITIMATELY HOST-KEYED, unlike the main build's readers (#685). `tc`
+    // here is always the HOST toolchain (see this function's own doc above
+    // `run_build_program` / `host_base_flags`'s header) -- build.mcpp is
+    // compiled AND run on the machine doing the build, so "the target" this
+    // one compile is for IS the host, and `tc.targetTriple` already names
+    // it. Asking `tc`'s own resolved target keeps this correct without
+    // reading a compile-time `__APPLE__`/`is_macos` constant, which would
+    // silently disagree with `tc` the day build.mcpp gains a host toolchain
+    // resolved for something other than the machine mcpp itself runs on.
+    const bool buildProgramTargetIsMacos = [&] {
+        auto bpTt = mcpp::toolchain::triple::parse(tc.targetTriple);
+        return bpTt && bpTt->os == "macos";
+    }();
     const std::string macosDeploymentTarget =
         mcpp::platform::macos::deployment_target(
-            m.buildConfig.macosDeploymentTarget);
+            buildProgramTargetIsMacos, m.buildConfig.macosDeploymentTarget);
     auto base = host_base_flags(tc, macosDeploymentTarget);
 
     // The host compile has always been spelled in GNU driver syntax with no
