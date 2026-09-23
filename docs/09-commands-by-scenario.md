@@ -224,8 +224,9 @@ $ mcpp xpkg parse mcpp.plugins.lua --json
 ## Environment diagnosis
 
 `mcpp self doctor` checks the toolchain, the `std` module, the registry, cache
-health and the last runtime-closure verdict, and reports what it found rather
-than only what failed:
+health, the last runtime-closure verdict, and installed GCC payloads for
+fixincludes-frozen headers left over from the build machine that produced
+them, and reports what it found rather than only what failed:
 
 ```
 $ mcpp self doctor

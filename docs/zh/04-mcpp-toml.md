@@ -684,7 +684,10 @@ minos`）里记录的最低系统版本，也就是这个二进制能运行的�
 调用的显式覆盖，cargo/rustc、cc 等同样这样处理）> 这个字段（工程默认
 值，类似 SwiftPM 的 `platforms:`）> **内置默认值 `14.0`**（rustc
 风格——每个目标都有一个基线，而 14.0 正是 LLVM 官方静态库自身的下限）。
-这个值进入 BMI 指纹，所以切换目标会自动重建模块缓存。
+这个值进入 BMI 指纹，所以切换目标会自动重建模块缓存。解析与应用都
+按 TARGET 判定，不按运行 mcpp 的那台机器判定：`mcpp build --target
+aarch64-macos` 在 Linux 或 Windows 上和在 Mac 上一样遵从这个字段
+（以及环境变量），非 macOS 目标则永远不会看到它。
 
 ### 构建并发（`jobs`）与模块调度（`bmi_schedule`）
 

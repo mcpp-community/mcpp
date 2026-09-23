@@ -708,7 +708,10 @@ cargo/rustc, cc, etc.) > this field (the project default, similar to SwiftPM's
 `platforms:`) > the **built-in default `14.0`** (rustc-style — every target has a
 baseline, and 14.0 is the floor of LLVM's official static libraries themselves).
 This value enters the BMI fingerprint, so switching targets automatically rebuilds
-the module cache.
+the module cache. Resolution and application both follow the TARGET, not the
+machine running mcpp: `mcpp build --target aarch64-macos` honors this field
+(and the environment variable) the same way on Linux or Windows as it does on
+a Mac, and a non-macOS target never sees it.
 
 ### Build concurrency (`jobs`) and module scheduling (`bmi_schedule`)
 

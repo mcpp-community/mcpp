@@ -79,8 +79,10 @@ struct HostFlagOptions {
     // and states the stdlib selection explicitly.
     bool clangStdlibSelect = false;
 
-    // Resolved value from platform::macos::deployment_target(); empty = omit.
-    // Must agree across the std BMI and everything that imports it — clang
+    // Resolved value from platform::macos::deployment_target(), which the
+    // caller asks with `targetIsMacos` set for THIS toolchain's target
+    // (#685) -- not for the host mcpp itself runs on; empty = omit. Must
+    // agree across the std BMI and everything that imports it — clang
     // rejects a module built for a different deployment target outright.
     //
     // A macOS VERSION, so it is emitted only for a macOS target. An iOS
@@ -504,19 +506,33 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // path is exactly the mismatch e2e 181 catches: the std BMI is built for
     // 14.0 while the TU importing it is not.
     //
-    // AND ONLY FOR A macOS TARGET. This asked whether the HOST is macOS, which
-    // was the same question while macOS was the only Apple target mcpp could
-    // build for. The iOS rows are built ON a macOS host and FOR another
-    // platform, and clang refuses the combination outright:
+    // AND ONLY FOR A macOS TARGET. This asked whether the HOST is macOS,
+    // which was the same question while macOS was the only Apple target
+    // mcpp could build for AND the only way to reach it was to build ON one.
+    // Cross-compiling `aarch64-macos` from Linux (#685) is a macOS TARGET on
+    // a non-Apple HOST, and the old `mcpp::platform::is_macos` (a
+    // compile-time constant naming the machine mcpp itself was built for)
+    // answered false there — so the flag, and the deployment target it
+    // carries, were silently dropped on every non-Apple host. The
+    // discriminator is `tc`'s own resolved target, parsed the same way
+    // `apple_float_macro_words` above already does.
+    //
+    // The iOS rows are built ON a macOS host and FOR another platform (or,
+    // once iOS cross-compiling exists, on any host), and clang refuses the
+    // combination outright:
     //
     //   error: invalid argument '-mmacosx-version-min=14.0' not allowed with
     //          'arm64-apple-ios18.0'
     //
-    // so the flag would not merely be useless there, it would stop the build.
-    // The iOS deployment target travels in the effective triple instead --
-    // `arm64-apple-ios18.0` -- which is one place rather than two for the same
-    // value.
-    if (mcpp::platform::is_macos && !opt.macosDeploymentTarget.empty()
+    // so the flag would not merely be useless there, it would stop the
+    // build. The iOS deployment target travels in the effective triple
+    // instead -- `arm64-apple-ios18.0` -- which is one place rather than two
+    // for the same value. `appleSdkRoot` already discriminates that case
+    // (non-empty only for the iOS rows; see its own comment above), so it
+    // remains the second half of the gate rather than an `is_ios()` check
+    // that would say the same thing a second way.
+    if (auto tt = triple::parse(tc.targetTriple);
+        tt && tt->os == "macos" && !opt.macosDeploymentTarget.empty()
         && opt.appleSdkRoot.empty())
         out.push_back("-mmacosx-version-min=" + opt.macosDeploymentTarget);
 

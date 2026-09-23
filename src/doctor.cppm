@@ -80,6 +80,89 @@ export std::vector<std::string> parse_readelf_runpath(std::string_view dump) {
     return out;
 }
 
+// A frozen copy of the BUILD MACHINE's own libc header, found in a GCC
+// payload's `include-fixed`.
+//
+// GCC's `fixincludes` step runs once, at BUILD time, against whatever glibc
+// happened to be on the machine that produced the payload, and writes the
+// edited copy into `lib/gcc/<triple>/<version>/include-fixed` — which
+// `-idirafter` (mcpp's own C-library search order) puts AHEAD of the
+// realised glibc every project actually builds against. A header the
+// payload should never have needed to fix (glibc moved on since) is a
+// stale, frozen snapshot sitting in front of the one mcpp resolved, and
+// mcpp#687 was `<mutex>`/`<memory>` breaking against it.
+export struct FixincludesFinding {
+    std::filesystem::path file;     // relative to `payloadRoot`
+    std::string           source;   // the banner's own path, or empty if unparsed
+};
+
+// Scan one installed toolchain payload for fixincludes-frozen headers.
+//
+// PURE AND PAYLOAD-ROOT SCOPED, so a unit test can point it at a synthetic
+// directory tree instead of the real registry (`tests/unit/
+// test_doctor_fixincludes.cpp`), and `doctor_report` below is its one real
+// caller. `payloadRoot` is a version directory (e.g. `<registry>/data/xpkgs/
+// xim-x-gcc/13.3.0`) — not the whole payload store — so the same function
+// scans a native, a musl-gcc, or a cross-gcc payload alike; the directory
+// SHAPE (`lib/gcc/<triple>/<version>/include-fixed`) is a GCC-family
+// constant this does not need to be told.
+//
+// THE FIRST ~2 KiB IS ENOUGH. fixincludes writes its banner as the file's
+// very first comment, before the copyright notice it also carries — reading
+// a bounded prefix instead of the whole file keeps this cheap to run over
+// an entire registry, and a header that legitimately mentions the phrase
+// past that point (none does; it is fixincludes' own wording) is not this
+// function's concern.
+export std::vector<FixincludesFinding>
+find_fixincludes_banners(const std::filesystem::path& payloadRoot) {
+    constexpr std::string_view kBanner = "auto-edited by fixincludes";
+    constexpr std::size_t      kHeadBytes = 2048;
+
+    std::vector<FixincludesFinding> out;
+    std::error_code ec;
+    for (auto it = std::filesystem::recursive_directory_iterator(
+             payloadRoot, std::filesystem::directory_options::skip_permission_denied, ec);
+         !ec && it != std::filesystem::recursive_directory_iterator{};
+         it.increment(ec)) {
+        std::error_code isDirEc;
+        if (!it->is_directory(isDirEc) || isDirEc) continue;
+        if (it->path().filename() != "include-fixed") continue;
+
+        std::error_code innerEc;
+        for (auto& fe : std::filesystem::directory_iterator(it->path(), innerEc)) {
+            std::error_code isFileEc;
+            if (innerEc || !fe.is_regular_file(isFileEc) || isFileEc) continue;
+
+            std::ifstream in(fe.path(), std::ios::binary);
+            if (!in) continue;
+            std::string head(kHeadBytes, '\0');
+            in.read(head.data(), static_cast<std::streamsize>(head.size()));
+            head.resize(static_cast<std::size_t>(std::max<std::streamoff>(in.gcount(), 0)));
+
+            auto pos = head.find(kBanner);
+            if (pos == std::string::npos) continue;
+
+            FixincludesFinding f;
+            std::error_code relEc;
+            f.file = std::filesystem::relative(fe.path(), payloadRoot, relEc);
+            if (relEc || f.file.empty()) f.file = fe.path();
+
+            // The banner's shape (see the fixture in the unit test and the
+            // real payloads under xim-x-gcc):
+            //     It has been auto-edited by fixincludes from:
+            //         "/quoted/source/path"
+            // The source is the first double-quoted span after the banner.
+            if (auto q1 = head.find('"', pos); q1 != std::string::npos)
+                if (auto q2 = head.find('"', q1 + 1); q2 != std::string::npos)
+                    f.source = head.substr(q1 + 1, q2 - q1 - 1);
+
+            out.push_back(std::move(f));
+        }
+    }
+    std::ranges::sort(out, {}, [](auto const& f) { return f.file.string(); });
+    return out;
+}
+
 // `mcpp self env`.
 export int env_report() {
     auto cfg = mcpp::config::load_or_init(/*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
@@ -531,6 +614,81 @@ export int doctor_report() {
         }
     }
 #endif
+
+    // ─── Fixincludes-frozen headers in installed GCC payloads (mcpp#687) ────
+    //
+    // NOT GATED ON HOST OS, unlike the RUNPATH block above: this reads no
+    // ELF and spawns no `readelf`, so it runs the same way on every host
+    // that has a GCC-family payload installed, including a cross gcc/
+    // musl-gcc payload on a Linux, macOS or Windows mcpp.
+    mcpp::ui::status("Checking", "gcc include-fixed headers");
+    if (cfg) {
+        auto pkgsDir = (*cfg).xlingsHome() / "data" / "xpkgs";
+        std::error_code ec;
+        bool sawAnyGcc = false;
+        bool anyFrozen = false;
+
+        if (std::filesystem::exists(pkgsDir, ec)) {
+            // Same enumeration as the RUNPATH block: every `xim-x-<name>`
+            // directory `identify_xim_payload` recognises, filtered to the
+            // GCC family (native, musl-gcc, mingw-(cross-)gcc, and any
+            // `<triple>-gcc` cross payload all answer Family::Gcc).
+            for (auto& entry : std::filesystem::directory_iterator(pkgsDir, ec)) {
+                auto name = entry.path().filename().string();
+                if (name.rfind("xim-x-", 0) != 0) continue;
+                auto id = mcpp::toolchain::identify_xim_payload(
+                    name.substr(std::string("xim-x-").size()));
+                if (!id || id->family != mcpp::toolchain::Family::Gcc) continue;
+
+                for (auto& vEntry : std::filesystem::directory_iterator(entry.path(), ec)) {
+                    if (!vEntry.is_directory(ec)) continue;
+                    sawAnyGcc = true;
+                    auto findings = find_fixincludes_banners(vEntry.path());
+                    if (findings.empty()) continue;
+                    anyFrozen = true;
+
+                    mcpp::toolchain::ToolchainSpec s;
+                    s.family  = id->family;
+                    s.version = vEntry.path().filename().string();
+                    s.target  = id->target;
+                    auto specStr = s.spec_str();
+                    auto targetFlag = id->target.empty()
+                        ? std::string{}
+                        : std::format(" --target {}", id->target.str());
+
+                    std::string files;
+                    std::string sources;
+                    for (auto& f : findings) {
+                        if (!files.empty()) files += ", ";
+                        files += f.file.string();
+                        if (!f.source.empty()
+                            && sources.find(f.source) == std::string::npos) {
+                            if (!sources.empty()) sources += ", ";
+                            sources += f.source;
+                        }
+                    }
+                    warn(std::format(
+                        "{}: {} carries a fixincludes copy of the BUILD "
+                        "MACHINE's own header ({}), frozen from {}. mcpp's "
+                        "`-idirafter` puts this ahead of the C library the "
+                        "project actually resolves, so a header this frozen "
+                        "can disagree with it (observed: a frozen "
+                        "`pthread.h` breaking `<mutex>`/`<memory>`, "
+                        "mcpp#687). Remedy: `mcpp index update`, then "
+                        "`mcpp toolchain remove {}{}` and "
+                        "`mcpp toolchain install {}{}`.",
+                        s.display(), findings.size() == 1 ? "a file" :
+                            std::format("{} files", findings.size()),
+                        files, sources.empty() ? "an unrecorded source" : sources,
+                        specStr, targetFlag, specStr, targetFlag));
+                }
+            }
+        }
+        if (sawAnyGcc && !anyFrozen)
+            ok("no fixincludes-frozen headers in installed gcc payloads");
+        else if (!sawAnyGcc)
+            ok("no installed gcc-family payloads to check");
+    }
 
     // ── Build-policy knobs that are otherwise invisible ────────────────────
     //
