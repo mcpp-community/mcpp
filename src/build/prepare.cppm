@@ -14712,9 +14712,9 @@ prepare_build(bool print_fingerprint,
                 // one extra compile.
                 if (cu.packageObjectRel.empty()) { addressable = false; break; }
 
-                if (cu.providesModule) {
+                if (!cu.providesModule.empty()) {
                     std::string bmi;
-                    for (char c : *cu.providesModule)
+                    for (char c : cu.providesModule)
                         bmi.push_back(c == ':' ? '-' : c);
                     bmi += std::string(bmiT.bmiExt);
                     arts.bmiFiles.push_back(std::move(bmi));
@@ -14742,9 +14742,9 @@ prepare_build(bool print_fingerprint,
                     cu.servedFromCache = true;
                     cu.cachedObject = mcpp::bmi_cache::cached_obj_path(
                         key, cu.packageObjectRel.generic_string());
-                    if (cu.providesModule) {
+                    if (!cu.providesModule.empty()) {
                         std::string bmi;
-                        for (char c : *cu.providesModule)
+                        for (char c : cu.providesModule)
                             bmi.push_back(c == ':' ? '-' : c);
                         bmi += std::string(bmiT.bmiExt);
                         cu.cachedBmi = mcpp::bmi_cache::cached_bmi_path(key, bmi);

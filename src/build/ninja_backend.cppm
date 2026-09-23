@@ -1754,7 +1754,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // silent miscompile.
     std::unordered_map<std::string, const CompileUnit*> byModule;
     for (auto& cu : plan.compileUnits)
-        if (cu.providesModule) byModule.emplace(*cu.providesModule, &cu);
+        if (!cu.providesModule.empty()) byModule.emplace(cu.providesModule, &cu);
 
     auto reaches_std = [&](const CompileUnit& start) {
         std::vector<const CompileUnit*> stack{&start};
@@ -1864,13 +1864,13 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // answered here, once, from `cu.providesModule` — the same field `bmi_out`
     // is bound from, so the flag and the binding can no longer disagree.
     auto module_edge_vars = [&](const mcpp::build::CompileUnit& cu) -> std::string {
-        if (!cu.providesModule)
+        if (cu.providesModule.empty())
             return std::format("  module_lang ={}\n", traits.moduleImplLangFlag);
         std::string v = std::format("  module_lang ={}\n",
                                     traits.moduleInterfaceLangFlag);
         if (traits.needsExplicitModuleOutput)
             v += std::format("  module_output ={}{}\n", traits.moduleOutputPrefix,
-                             bmi_path(*cu.providesModule));
+                             bmi_path(cu.providesModule));
         return v;
     };
 
@@ -1936,8 +1936,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                                escape_ninja_path(cu.cachedObject)));
             append("  verify = --verify size\n");
             staged.push_back(obj);
-            if (cu.providesModule && !cu.cachedBmi.empty()) {
-                auto bmi = bmi_path(*cu.providesModule);
+            if (!cu.providesModule.empty() && !cu.cachedBmi.empty()) {
+                auto bmi = bmi_path(cu.providesModule);
                 append(std::format("build {} : stage_file {}\n", bmi,
                                    escape_ninja_path(cu.cachedBmi)));
                 append("  verify = --verify size\n");
@@ -2056,8 +2056,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // existed there from an earlier build — a fresh project failed.
             append(std::format("  compile_target = {}\n", escape_ninja_path(cu.object)));
             append(std::format("  deps_target = {}\n",
-                               splitBmi && cu.providesModule
-                                   ? bmi_path(*cu.providesModule)
+                               splitBmi && !cu.providesModule.empty()
+                                   ? bmi_path(cu.providesModule)
                                    : escape_ninja_path(cu.object)));
             if (auto includes = local_include_flags(cu, dial); !includes.empty())
                 append(std::format("  local_includes ={}\n", includes));
@@ -2109,8 +2109,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             if (!cu.scanOverridden && !verifyAll) continue;
             auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
             std::string exp;
-            if (cu.providesModule)
-                exp += std::format("--expect-provides {}", *cu.providesModule);
+            if (!cu.providesModule.empty())
+                exp += std::format("--expect-provides {}", cu.providesModule);
             if (!cu.imports.empty()) {
                 std::string csv;
                 for (auto& m : cu.imports) {
@@ -2132,7 +2132,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             for (auto& cu : plan.compileUnits) {
                 if (cu.servedFromCache) continue;
                 if (is_scan_exempt(cu)) continue;
-                if (!cu.providesModule) continue;
+                if (cu.providesModule.empty()) continue;
                 if (cu.kind != mcpp::SourceKind::ModuleInterface) continue;
                 two_phase_ddi.insert(
                     (cu.object.parent_path() / cu.source.filename()).string() + ".ddi");
@@ -2156,9 +2156,9 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             if (cu.servedFromCache) continue;   // a stage_file edge owns these outputs
             std::string rule = pick_rule(cu);
 
-            if (splitBmi && cu.providesModule &&
+            if (splitBmi && !cu.providesModule.empty() &&
                 cu.kind == mcpp::SourceKind::ModuleInterface) {
-                const auto bmi  = bmi_path(*cu.providesModule);
+                const auto bmi  = bmi_path(cu.providesModule);
                 const auto obj  = escape_ninja_path(cu.object);
                 const auto slot = obj + ".sched";
                 const auto ddi  = (cu.object.parent_path() / cu.source.filename())
@@ -2221,9 +2221,9 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 // shape rather than emitting a BMI edge nothing can order.
             }
 
-            if (twoPhase && cu.providesModule &&
+            if (twoPhase && !cu.providesModule.empty() &&
                 cu.kind == mcpp::SourceKind::ModuleInterface) {
-                const auto bmi = bmi_path(*cu.providesModule);
+                const auto bmi = bmi_path(cu.providesModule);
                 const auto obj = escape_ninja_path(cu.object);
                 const auto ddi = (cu.object.parent_path() / cu.source.filename())
                                      .string() + ".ddi";
@@ -2254,8 +2254,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             }
 
             std::string out_line = "build " + escape_ninja_path(cu.object);
-            if (cu.providesModule) {
-                out_line += " | " + bmi_path(*cu.providesModule);
+            if (!cu.providesModule.empty()) {
+                out_line += " | " + bmi_path(cu.providesModule);
             }
             out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
             if (!is_scan_exempt(cu)) {
@@ -2266,8 +2266,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                     out_line += order_only_for(cu);
                     out_line += "\n  dyndep = " + it->second;
                     // P2: set bmi_out for the copy_if_different logic in cxx_module.
-                    if (cu.providesModule) {
-                        out_line += "\n  bmi_out = " + bmi_path(*cu.providesModule);
+                    if (!cu.providesModule.empty()) {
+                        out_line += "\n  bmi_out = " + bmi_path(cu.providesModule);
                     }
                     out_line += "\n";
                     if (rule == "cxx_module") out_line += module_edge_vars(cu);
@@ -2319,10 +2319,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             }
 
             std::string out_line = "build " + escape_ninja_path(cu.object);
-            if (cu.providesModule) {
+            if (!cu.providesModule.empty()) {
                 // Use implicit output (|) so $out only contains the .o file.
                 // GCC writes BMI implicitly; Clang uses -fmodule-output=$bmi_out.
-                out_line += " | " + bmi_path(*cu.providesModule);
+                out_line += " | " + bmi_path(cu.providesModule);
             }
             out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
             if (!implicit.empty())
@@ -2342,8 +2342,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                     out_line += "  unit_cxxflags =" + flags + "\n";
             }
             // Clang needs $bmi_out to emit -fmodule-output=$bmi_out
-            if (cu.providesModule) {
-                out_line += "  bmi_out = " + bmi_path(*cu.providesModule) + "\n";
+            if (!cu.providesModule.empty()) {
+                out_line += "  bmi_out = " + bmi_path(cu.providesModule) + "\n";
             }
             if (rule == "cxx_module") out_line += module_edge_vars(cu);
             append(std::move(out_line));
