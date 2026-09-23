@@ -1147,3 +1147,32 @@ TEST(ToolchainSpelling, AnotherNamespaceIsRefused) {
     ASSERT_FALSE(spec.has_value());
     EXPECT_NE(spec.error().find("xim:"), std::string::npos) << spec.error();
 }
+
+// vswhere `-format text`: one instance per `instanceId:` line, CRLF endings,
+// `displayName` and not `catalog_productDisplayVersion`, and an instance with
+// no installation path dropped.
+TEST(MsvcVswhereText, OneInstancePerInstanceId) {
+    const std::string text =
+        "instanceId: 1a2b\r\n"
+        "installationName: VisualStudio/17.14.8+36301.6\r\n"
+        "installationPath: C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\r\n"
+        "installationVersion: 17.14.36301.6\r\n"
+        "displayName: Visual Studio Enterprise 2022\r\n"
+        "catalog_productDisplayVersion: 17.14.8\r\n"
+        "properties_nickname: \r\n"
+        "\r\n"
+        "instanceId: 3c4d\r\n"
+        "installationPath: D:\\VS\\Preview\r\n"
+        "installationVersion: 18.0.11010.1\r\n"
+        "displayName: Visual Studio Community 2026 Insiders\r\n"
+        "instanceId: 5e6f\r\n"
+        "displayName: incomplete\r\n";
+    auto v = mcpp::toolchain::msvc::parse_vswhere_text(text);
+    ASSERT_EQ(v.size(), 2u);
+    EXPECT_EQ(v[0].root.string(), "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise");
+    EXPECT_EQ(v[0].installVersion, "17.14.36301.6");
+    EXPECT_EQ(v[0].product, "Visual Studio Enterprise 2022");
+    EXPECT_EQ(v[1].root.string(), "D:\\VS\\Preview");
+    EXPECT_EQ(v[1].product, "Visual Studio Community 2026 Insiders");
+    EXPECT_TRUE(mcpp::toolchain::msvc::parse_vswhere_text("").empty());
+}

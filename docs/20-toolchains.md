@@ -445,6 +445,8 @@ windows = "msvc@14.44.35207"       # an installed 14.44.35207 first, else the pa
 
 `xim:` is accepted on every family; for gcc and llvm, whose toolchains always
 come from payloads, `xim:gcc@16.1.0` and `gcc@16.1.0` are the same toolchain.
+It is the only namespace a toolchain spelling accepts: earlier releases
+stripped any `<ns>:` prefix silently, and another namespace is now refused.
 
 **The version is the toolset directory name** (`14.44.35207` — what
 `VC\Tools\MSVC\` is named and what `-vcvars_ver` takes), *not* the cl banner

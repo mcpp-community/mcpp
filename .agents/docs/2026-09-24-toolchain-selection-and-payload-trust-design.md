@@ -104,7 +104,7 @@ windows = "msvc@14.44.35207"       # 编译器与 sysroot 是同一个 toolset
 
 **系统候选。** 取以下来源的每个实例：
 
-- `vswhere -all -prerelease -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json -utf8`；
+- `vswhere -all -prerelease -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format text -utf8`（文本格式，理由见 §11）；
 - `VSINSTALLDIR` / `VCINSTALLDIR` 指向的实例；
 - 没有 vswhere 时，扫描固定路径。
 
@@ -346,7 +346,7 @@ spec 也写明了现有的准入门为什么没能拦住 #687：
 |---|---|
 | 系统优先让不同机器用到不同的 SDK | 打印并记录 `ucrt@<ver>`；需要固定时用 `xim:` |
 | 旧引擎对 `sysroot = "xim:msvc@…"` 的行为未知 | 发布前用上一版引擎实测（§3.10） |
-| vswhere 的 JSON 输出有变化 | 解析失败时回落到 `-latest` 链并打印说明 |
+| vswhere 的文本输出有变化 | 解析器只读 `instanceId`、`installationPath`、`installationVersion`、`displayName` 四个键，单测覆盖 CRLF 与缺路径的实例；vswhere 失败时回落到固定路径 |
 | 系统 toolset 与生态包内容相同这一点未逐字节验证 | e2e 第 2 条核对 |
 | `linkmodel` 的 PE 分支变成非空，影响 MinGW | MinGW 继续返回空模型，单测断言 |
 
@@ -393,6 +393,7 @@ spec 也写明了现有的准入门为什么没能拦住 #687：
 | 新增 | — | cl.exe 行不再从别的 toolset 借用 `std.ixx` | 同一个「两个选择器」问题在 cl.exe 行上的另一处 |
 | e2e 239 | — | 改用 `xim:msvc@<toolset>` | 裸写法现在会先选 runner 上的同版本 toolset，测试就不再测载荷 |
 | 新增 | — | `CompileUnit::providesModule` 从 `std::optional<std::string>` 改为 `std::string`（空串表示不是模块接口） | 第一轮 Windows CI 在 clang + MSVC STL 下报 `_SMF_control` 无匹配构造函数，报在 `plan.cppm` 的 `CompileUnit` 上；这是已知的那类问题：模块接口一有扰动就可能触发，删掉这个成员类型才能根除 |
+| §3.4 系统候选 | vswhere `-format json` | vswhere `-format text`，由 `parse_vswhere_text` 解析 | 第二轮 Windows CI 同一错误换了位置，报在 `RuntimeBinding` 的隐式复制上（`prepare.cppm` 的 `make_shared<const RuntimeBinding>`）。这个结构体与这次复制在 main 上都存在且能编译，本分支对导入图的唯一改动是 `msvc.cppm` 新增 `import mcpp.libs.json`；逐个替换成员只会让错误继续换位置，所以去掉的是触发者 |
 
 Linux 上的零差异检查：用已发布的 2026.9.21.3 与本分支的二进制，在同一目录分别构建 `examples/01-hello` 与 `examples/04-workspace`，四份 `build.ninja` 除 mcpp 自身路径那一行外逐字节相同，指纹也相同。
 

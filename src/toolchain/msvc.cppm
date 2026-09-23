@@ -29,7 +29,6 @@ module;
 export module mcpp.toolchain.msvc;
 
 import std;
-import mcpp.libs.json;
 import mcpp.platform;
 import mcpp.toolchain.model;
 import mcpp.toolchain.probe;
@@ -223,6 +222,12 @@ select_system_toolset(const std::vector<VsInstance>& instances,
 // One line per complete toolset on the machine, for a refusal to list.
 std::vector<std::string> describe_system_toolsets(const std::vector<VsInstance>& instances,
                                                   const ToolsetNeeds& needs);
+
+// vswhere's `-format text` output, one instance per `instanceId:` line. Text
+// rather than JSON because this module must not import the JSON library: on
+// clang with the MSVC STL, that import changes which `std::optional<std::string>`
+// the importers of this module see and breaks their implicit copies.
+std::vector<VsInstance> parse_vswhere_text(std::string_view text);
 
 // The Windows half: every instance vswhere reports (prerelease included), plus
 // the one VSINSTALLDIR names, plus the conventional paths when vswhere is
@@ -979,6 +984,36 @@ std::vector<std::string> describe_system_toolsets(const std::vector<VsInstance>&
     return out;
 }
 
+std::vector<VsInstance> parse_vswhere_text(std::string_view text) {
+    std::vector<VsInstance> out;
+    bool open = false;
+    while (!text.empty()) {
+        auto nl   = text.find('\n');
+        auto line = text.substr(0, nl);
+        text = nl == std::string_view::npos ? std::string_view{} : text.substr(nl + 1);
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+        auto colon = line.find(": ");
+        if (colon == std::string_view::npos) continue;
+        auto key   = line.substr(0, colon);
+        auto value = std::string(line.substr(colon + 2));
+        if (key == "instanceId") {
+            out.emplace_back();
+            open = true;
+        } else if (!open) {
+            continue;
+        } else if (key == "installationPath") {
+            out.back().root = std::filesystem::path(
+                std::u8string(reinterpret_cast<const char8_t*>(value.c_str())));
+        } else if (key == "installationVersion") {
+            out.back().installVersion = std::move(value);
+        } else if (key == "displayName") {
+            out.back().product = std::move(value);
+        }
+    }
+    std::erase_if(out, [](const VsInstance& i) { return i.root.empty(); });
+    return out;
+}
+
 std::vector<VsInstance> enumerate_vs_instances() {
     std::vector<VsInstance> out;
 #if defined(_WIN32)
@@ -997,22 +1032,12 @@ std::vector<VsInstance> enumerate_vs_instances() {
         auto r = mcpp::platform::process::capture(
             "\"" + vswhere.string() + "\" -all -prerelease -products * "
             "-requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 "
-            "-format json -utf8 2>nul");
-        auto j = nlohmann::json::parse(r.output, nullptr, /*allow_exceptions=*/false);
-        if (j.is_array()) {
+            "-format text -utf8 2>nul");
+        // vswhere ran: an empty list is an answer (no instance has the C++
+        // tools), so the conventional paths are not consulted behind it.
+        if (r.exit_code == 0) {
             listed = true;
-            for (auto const& e : j) {
-                if (!e.is_object() || !e.contains("installationPath")) continue;
-                VsInstance inst;
-                inst.root = std::filesystem::path(
-                    std::u8string(reinterpret_cast<const char8_t*>(
-                        e["installationPath"].get<std::string>().c_str())));
-                if (e.contains("installationVersion") && e["installationVersion"].is_string())
-                    inst.installVersion = e["installationVersion"].get<std::string>();
-                if (e.contains("displayName") && e["displayName"].is_string())
-                    inst.product = e["displayName"].get<std::string>();
-                add(std::move(inst));
-            }
+            for (auto& inst : parse_vswhere_text(r.output)) add(std::move(inst));
         }
     }
     if (auto p = find_vs_via_vsinstalldir()) add(VsInstance{*p, {}, {}});

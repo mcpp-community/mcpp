@@ -1453,6 +1453,14 @@ bind_msvc_sysroot(mcpp::toolchain::Toolchain& tc,
         auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true,
                                                  &progress);
         if (!payload) {
+            // `xim:` never looked at the machine, so the refusal does not
+            // report on it.
+            if (spec->ecosystemOnly)
+                return std::unexpected(std::format(
+                    "[target.{}].sysroot = '{}': the package could not be "
+                    "provided: {}\n"
+                    "  packages: `mcpp toolchain list --available msvc`",
+                    tt->str(), text, payload.error().message));
             std::string onMachine;
             for (auto const& line : msvc::describe_system_toolsets(instances, needs))
                 onMachine += "\n    " + line;

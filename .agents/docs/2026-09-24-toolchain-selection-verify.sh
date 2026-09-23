@@ -126,18 +126,28 @@ else
     fail "configure for aarch64-macos"; tail -8 cfg.log
 fi
 
-section "F. CHANGE: xim: names the ecosystem package on every family"
+section "F. CHANGE: xim: is the one toolchain namespace, and xim:msvc@system is not a spelling"
+# Earlier releases stripped ANY `<ns>:` prefix, so `xim:gcc@16.1.0` already built
+# and is a GUARD here; what changed is that another namespace is refused where it
+# is read, and that `xim:msvc@system` is refused as a spelling (before, it failed
+# later, on Linux as "only available on Windows hosts").
 cd "$root/b/hello"
 if timeout 1800 "$STORE" build --toolchain "xim:gcc@16.1.0" > xim.log 2>&1; then
-    ok "--toolchain xim:gcc@16.1.0 builds"
+    ok "GUARD: --toolchain xim:gcc@16.1.0 builds"
 else
     fail "--toolchain xim:gcc@16.1.0"; tail -5 xim.log
+fi
+if "$STORE" build --toolchain "foo:gcc@16.1.0" > ximfoo.log 2>&1; then
+    fail "foo:gcc@16.1.0 was accepted (the namespace was stripped)"
+else
+    grep -q 'is not a toolchain namespace' ximfoo.log && ok "foo:gcc@16.1.0 is refused as a namespace" \
+                                                     || { fail "foo:gcc@16.1.0 refused for another reason"; head -3 ximfoo.log; }
 fi
 if "$STORE" build --toolchain "xim:msvc@system" > ximsys.log 2>&1; then
     fail "xim:msvc@system was accepted"
 else
-    grep -q 'msvc@system' ximsys.log && ok "xim:msvc@system is refused naming both spellings" \
-                                     || fail "xim:msvc@system refused without the spellings"
+    grep -q 'xim:msvc@<version>' ximsys.log && ok "xim:msvc@system is refused as a spelling, naming both meanings" \
+                                           || { fail "xim:msvc@system refused for another reason"; head -3 ximsys.log; }
 fi
 
 section "G. GUARD (mcpp-index): consumers of published packages build and pass their tests"
