@@ -442,7 +442,7 @@ TEST(RuntimeIdentity, UcrtIsAFloorDeclarationNotAPrivatePayload) {
     rt::RuntimeBinding b;
     b.platform = "windows";
     rt::bind_windows_ucrt(b, "10.0.26100.0");
-    EXPECT_FALSE(b.libc.has_value())
+    EXPECT_TRUE(b.libc.empty())
         << "ucrt was projected into the private-libc field";
     EXPECT_FALSE(b.loader.has_value());
     EXPECT_TRUE(b.libraryDirs.empty());

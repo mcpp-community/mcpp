@@ -157,9 +157,9 @@ TEST(RuntimeBinding, DefaultAlwaysUsesConfiguredMcppHomeDefault) {
     EXPECT_EQ(binding->subosDir, expected);
     EXPECT_EQ(binding->runtimeId, "glibc@2.39");
     if constexpr (mcpp::platform::is_linux)
-        EXPECT_EQ(binding->libc, std::optional<std::string>("glibc@2.39"));
+        EXPECT_EQ(binding->libc, "glibc@2.39");
     else
-        EXPECT_FALSE(binding->libc.has_value());
+        EXPECT_TRUE(binding->libc.empty());
     EXPECT_EQ(binding->provenance, "mcpp_default");
     EXPECT_FALSE(binding->contractHash.empty());
     ASSERT_EQ(binding->runtimeProviders.size(), 1u);
@@ -201,7 +201,7 @@ TEST(RuntimeBinding, PhysicalSubosViewReconcilesAStaleDeclaredGlibcIdentity) {
     ASSERT_TRUE(binding.has_value()) << binding.error();
 
     EXPECT_EQ(binding->runtimeId, "glibc@2.44");
-    EXPECT_EQ(binding->libc, std::optional<std::string>("glibc@2.44"));
+    EXPECT_EQ(binding->libc, "glibc@2.44");
     ASSERT_EQ(binding->libraryDirs.size(), 1u);
     EXPECT_EQ(binding->libraryDirs.front(),
               h.cfg.xlingsHome() / "data" / "xpkgs"
@@ -282,10 +282,10 @@ TEST(RuntimeBinding, NamedEnvironmentsHaveDistinctContractsAndRoundTrip) {
     ASSERT_TRUE(decoded.has_value()) << decoded.error();
     EXPECT_EQ(decoded->contractHash, el8->contractHash);
     if constexpr (mcpp::platform::is_linux) {
-        ASSERT_TRUE(decoded->hostLibc.has_value());
-        EXPECT_EQ(*decoded->hostLibc, "2.43");
+        ASSERT_FALSE(decoded->hostLibc.empty());
+        EXPECT_EQ(decoded->hostLibc, "2.43");
     } else {
-        EXPECT_FALSE(decoded->hostLibc.has_value());
+        EXPECT_TRUE(decoded->hostLibc.empty());
     }
     EXPECT_EQ(decoded->subosDir, el8->subosDir);
     ASSERT_EQ(decoded->environment.size(), 1u);

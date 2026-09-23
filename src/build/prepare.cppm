@@ -2685,7 +2685,7 @@ prepare_build(bool print_fingerprint,
         return bin.string();
     }();
 
-    auto runtimePayload = runtimeBindingSnapshot.libc.value_or("");
+    auto runtimePayload = runtimeBindingSnapshot.libc;
     auto runtimeLibDir = runtimeBindingSnapshot.libraryDirs.empty()
         ? std::filesystem::path{} : runtimeBindingSnapshot.libraryDirs.front();
 
@@ -2705,7 +2705,7 @@ prepare_build(bool print_fingerprint,
         if (!cfgP) return;
         if (!mcpp::toolchain::ensure_declared_runtime(**cfgP, runtimeBindingSnapshot))
             return;
-        runtimePayload = runtimeBindingSnapshot.libc.value_or("");
+        runtimePayload = runtimeBindingSnapshot.libc;
         runtimeLibDir = runtimeBindingSnapshot.libraryDirs.empty()
             ? std::filesystem::path{} : runtimeBindingSnapshot.libraryDirs.front();
     };

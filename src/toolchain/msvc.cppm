@@ -223,10 +223,9 @@ select_system_toolset(const std::vector<VsInstance>& instances,
 std::vector<std::string> describe_system_toolsets(const std::vector<VsInstance>& instances,
                                                   const ToolsetNeeds& needs);
 
-// vswhere's `-format text` output, one instance per `instanceId:` line. Text
-// rather than JSON because this module must not import the JSON library: on
-// clang with the MSVC STL, that import changes which `std::optional<std::string>`
-// the importers of this module see and breaks their implicit copies.
+// vswhere's `-format text` output, one instance per `instanceId:` line. Four
+// keys are read, so the listing needs no JSON parser and this module keeps the
+// imports it had.
 std::vector<VsInstance> parse_vswhere_text(std::string_view text);
 
 // The Windows half: every instance vswhere reports (prerelease included), plus

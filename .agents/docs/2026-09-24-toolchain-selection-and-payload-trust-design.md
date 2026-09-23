@@ -393,7 +393,8 @@ spec 也写明了现有的准入门为什么没能拦住 #687：
 | 新增 | — | cl.exe 行不再从别的 toolset 借用 `std.ixx` | 同一个「两个选择器」问题在 cl.exe 行上的另一处 |
 | e2e 239 | — | 改用 `xim:msvc@<toolset>` | 裸写法现在会先选 runner 上的同版本 toolset，测试就不再测载荷 |
 | 新增 | — | `CompileUnit::providesModule` 从 `std::optional<std::string>` 改为 `std::string`（空串表示不是模块接口） | 第一轮 Windows CI 在 clang + MSVC STL 下报 `_SMF_control` 无匹配构造函数，报在 `plan.cppm` 的 `CompileUnit` 上；这是已知的那类问题：模块接口一有扰动就可能触发，删掉这个成员类型才能根除 |
-| §3.4 系统候选 | vswhere `-format json` | vswhere `-format text`，由 `parse_vswhere_text` 解析 | 第二轮 Windows CI 同一错误换了位置，报在 `RuntimeBinding` 的隐式复制上（`prepare.cppm` 的 `make_shared<const RuntimeBinding>`）。这个结构体与这次复制在 main 上都存在且能编译，本分支对导入图的唯一改动是 `msvc.cppm` 新增 `import mcpp.libs.json`；逐个替换成员只会让错误继续换位置，所以去掉的是触发者 |
+| §3.4 系统候选 | vswhere `-format json` | vswhere `-format text`，由 `parse_vswhere_text` 解析 | 只读四个键，不需要 JSON 解析器，`msvc.cppm` 保持原有的导入。这一改动最初是作为第二轮 Windows 失败的修法提出的（假设：新增的 `import mcpp.libs.json` 是触发者），第三轮 CI 把这个假设否掉了，见下一行 |
+| 新增 | — | `RuntimeBinding::libc`、`hostLibc` 从 `std::optional<std::string>` 改为 `std::string`（空串表示没有） | 第二、三轮 Windows CI 报在 `RuntimeBinding` 的隐式复制上（`prepare.cppm` 的 `make_shared<const RuntimeBinding>`），而这个结构体与这次复制在 main 上都能编译。用两个只含 Windows 编译步骤的临时分支并行测量：只改这两个成员的分支编译通过，只把 `toml.cppm` 新增的 `optional<std::string>` 返回值改掉的分支仍报同一错误。所有读者都把「没有」与空串等同处理（`value_or("")`、非空才赋值、JSON 解码时空串即没有），语义不变 |
 
 Linux 上的零差异检查：用已发布的 2026.9.21.3 与本分支的二进制，在同一目录分别构建 `examples/01-hello` 与 `examples/04-workspace`，四份 `build.ninja` 除 mcpp 自身路径那一行外逐字节相同，指纹也相同。
 
