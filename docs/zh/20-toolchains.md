@@ -517,6 +517,12 @@ SDK 版本都进入构建缓存键，SDK 版本也是这一行的运行时身份
 与 cl.exe 行相同。在 cl.exe 行上，指向与编译器不同 toolset 的 `sysroot` 会被
 拒绝。
 
+**更早的引擎**（在 Windows runner 上用 2026.9.21.3 实测）对 `msvc@system` 与
+`msvc@<toolset>` 拒绝整份清单，报「is not an xpkg reference」。它们接受
+`xim:msvc@<toolset>`，但不按它行事：什么都不安装，clang 针对机器上的 toolset
+编译，构建输出却把这个值列为 c-abi 层。依赖所写 toolset 的项目应把 mcpp 固定在
+2026.9.24.1 或更高，例如写在 `.xlings.json` 的 workspace pin 里。
+
 ## SDK 工具链（`emsdk`、`android-ndk`）
 
 五种工具链拼法里，有两种命名的是一个 **SDK** 而不是一个裸编译器：`emsdk`

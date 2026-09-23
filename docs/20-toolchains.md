@@ -550,6 +550,14 @@ SDK version is the row's runtime identity (`ucrt@<version>`), as on the cl.exe
 row. On a cl.exe row a `sysroot` that names a different toolset than the
 compiler is refused.
 
+**Earlier engines** (measured with 2026.9.21.3 on a Windows runner) refuse the
+whole manifest for `msvc@system` and `msvc@<toolset>`, with "is not an xpkg
+reference". They accept `xim:msvc@<toolset>` but do not act on it: nothing is
+installed, clang builds against the machine's toolset, and the build output
+names the value as the c-abi layer. A project that depends on the toolset it
+names pins mcpp 2026.9.24.1 or later, for example in the `.xlings.json`
+workspace pin.
+
 ## SDK Toolchains (`emsdk`, `android-ndk`)
 
 Two of the five toolchain spellings name an **SDK** rather than a bare

@@ -198,7 +198,8 @@ note: sysroot msvc@14.44.35207 is pinned; VCToolsInstallDir (14.38.33130) is ign
 
 - **旧引擎读到 `sysroot = "msvc@…"`**（不带命名空间）时，按现有解析规则会整份清单报 `is not an xpkg reference`（`modules/manifest/src/toml.cppm:3229-3237`）。失败是响亮的，但报错文字会把人引向 xpkg 语法。
 - **旧引擎读到 `sysroot = "xim:msvc@…"`** 时会接受。它接下来做什么没有测过，必须用已发布的上一版引擎实测：是忽略，还是把它当成 C 库去安装。
-  - 实现时的代码阅读结论（2026.9.21.3 起这段代码没有变过）：旧引擎把这个值当作 xpkg 引用，经 `targetSysroot` 放进项目环境的依赖里安装（`src/build/prepare.cppm` 中 `materializeRootRuntime` 那一段），并把它报告为 xpkg 来源的 c-abi 层；编译仍由 clang 自行探测，不使用它。也就是说，旧引擎会多下载一份 toolset，结果与不写这个键相同，不会报错。这一点只能在 Windows 上实测，没有做。
+  - 实现时的代码阅读结论是：旧引擎会把它当作 xpkg 引用去安装，多下载一份 toolset。
+  - 实测（2026-09-24，临时分支 `probe/old-engine-msvc-sysroot`，windows-latest，已发布的 2026.9.21.3，同一个 `mcpp new` 工程写四种清单）推翻了其中一半：`xim:msvc@14.44.35207` 被接受，构建与运行都成功，**什么都没有安装**（registry 前后无新增），编译用的是机器上的 toolset，而构建输出把它列为 `c-abi msvc (xim:msvc@14.44.35207, prebuilt)`。也就是说，旧引擎静默地报告了一个它没有使用的 sysroot。`msvc@system` 与 `msvc@14.44.35207` 两种写法按预期让整份清单被拒（`is not an xpkg reference`，退出码 2）。不写 `sysroot` 的对照构建成功。这些写进了 CHANGELOG 与 `docs/20` 的「更早的引擎」一段，补救是把 mcpp 固定在 2026.9.24.1 或更高。
 - **最低版本只能写在文档里。** 项目清单里没有「最低引擎版本」这个键（未找到），所以在 `docs/20` 里写明新写法需要的 mcpp 版本。
 - **行为变化。** `msvc@system` 除 §3.9 的边界情形外结果不变。`msvc@<版本>` 在装有同版本 VS 的机器上改用系统的那一份，这一条写进 `docs/20-toolchains.md` 和 CHANGELOG。
 
@@ -345,7 +346,7 @@ spec 也写明了现有的准入门为什么没能拦住 #687：
 | 风险 | 缓解 |
 |---|---|
 | 系统优先让不同机器用到不同的 SDK | 打印并记录 `ucrt@<ver>`；需要固定时用 `xim:` |
-| 旧引擎对 `sysroot = "xim:msvc@…"` 的行为未知 | 发布前用上一版引擎实测（§3.10） |
+| 旧引擎对 `sysroot = "xim:msvc@…"` 的行为未知 | 已实测（§3.8）：接受而不生效，静默报告一个没有使用的 sysroot；文档写明并建议固定 mcpp 版本 |
 | vswhere 的文本输出有变化 | 解析器只读 `instanceId`、`installationPath`、`installationVersion`、`displayName` 四个键，单测覆盖 CRLF 与缺路径的实例；vswhere 失败时回落到固定路径 |
 | 系统 toolset 与生态包内容相同这一点未逐字节验证 | e2e 第 2 条核对 |
 | `linkmodel` 的 PE 分支变成非空，影响 MinGW | MinGW 继续返回空模型，单测断言 |

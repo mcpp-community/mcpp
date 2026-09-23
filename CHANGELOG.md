@@ -49,6 +49,11 @@ SDK 版本也成为这一行的运行时身份 `ucrt@<版本>`。
 cl.exe 行上指向另一个 toolset 的 `sysroot` 被拒绝。`mcpp toolchain list` 在 Windows 上列出
 本机已装的 toolset。
 
+**旧引擎读新写法。** 在 Windows runner 上用 2026.9.21.3 实测:MSVC 行上的 `sysroot = "msvc@system"`
+与 `"msvc@<toolset>"` 让整份清单被拒(「is not an xpkg reference」);`"xim:msvc@<toolset>"` 被接受
+而不生效:不安装任何东西,clang 针对机器上的 toolset 编译,构建输出却把这个值列为 c-abi 层。
+依赖所写 toolset 的项目应把 mcpp 固定在 2026.9.24.1 或更高。
+
 ### `macos_deployment_target` 按目标生效,不再按宿主(#685)
 
 在 Linux 或 Windows 宿主上 `mcpp build --target aarch64-macos`,产物的 `LC_BUILD_VERSION minos` 恒为
