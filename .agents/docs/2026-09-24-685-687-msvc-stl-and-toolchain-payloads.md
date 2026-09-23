@@ -1,6 +1,6 @@
 ---
 subject: triage
-status: active
+status: landed
 ---
 
 # #685、#687 与 Windows clang 的 MSVC STL：三个问题的归属，以及工具链载荷的规范化

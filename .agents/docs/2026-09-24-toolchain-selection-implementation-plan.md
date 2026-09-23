@@ -1,6 +1,6 @@
 ---
 subject: plan
-status: active
+status: landed
 ---
 
 # 工具链选择与载荷可信度：实施计划
@@ -65,3 +65,20 @@ status: active
 | T7 | Windows e2e 的五条 | — |
 | T9 | 安装后 `include-fixed` 里没有带横幅的文件 | 撤回修正后断言变红 |
 | T12 | 沙箱里所有检查通过，并把没有运行的检查单独列出 | — |
+
+## 4. 执行记录
+
+| 编号 | 结果 |
+|---|---|
+| T1、T2 | 子代理在 `mcpp-685` 完成，合入主线分支；e2e `746` 与 `test_doctor_fixincludes` 在撤回修复后变红 |
+| T3 到 T8 | 主线在 `mcpp-tcsel` 完成，mcpp#688 |
+| T9 | openxlings/xim-pkgindex#870 已合入 |
+| T10 | mcpp#688 以 b4824697 合入。Windows 上前三轮编译失败（`optional<std::string>` 成员），第四轮编译通过后 `import std` 失败（`std.compat`），原因与修法见设计文档 §11；最终 40 项通过、1 项跳过，失败的两项是 macOS xcode-27，与 main 上同因（mcpp#669）。合入后 main 上同一提交的结果相同 |
+| T11 | release run 35924420072 全绿。四个归档与 `.sha256` 在各自出现后由本地 gtc 传到 GitCode，GET 读回 200 且大小一致；与 GitHub release 逐字节比较 8/8 相同，四个归档与 sidecar 哈希一致。索引 bump openxlings/xim-pkgindex#871 的四个哈希与下载的归档逐个对应到平台槽位，CI 17 项通过后以 4440c503 合入；`latest` 恰为三行且都指向 2026.9.24.1；索引指针的 `index_version` 为 4440c50。AUR（`2026.9.24.1-1`）、Homebrew（`version "2026.9.24.1"`）、PyPI（`mcpp-bin 2026.9.24.1`）均已跟上 |
+| T12 | SubOS `v924`，`--sandbox`，xlings 与 mcpp 都配 CN 镜像。沙箱里 `xlings update` 第一次即得到 `latest -> 2026.9.24.1`，`xlings install mcpp@2026.9.24.1` 从 CN 镜像安装。同一份脚本（`2026-09-24-toolchain-selection-verify.sh`）对 2026.9.24.1 为 fails=0（21 项通过）；对 2026.9.21.3 为 fails=6，恰为六条 CHANGE 断言（D 一条、E 三条、F 两条），GUARD 在两个版本上都通过。旧版本上的读数：三元组为 `arm64-apple-macos14.0`，改值后构建目录数不变，`foo:gcc@16.1.0` 被接受，`xim:msvc@system` 报「only available on Windows hosts」。MSVC toolset 的选择只能在 Windows 上测，列为 NOT RUN，由 Windows CI 的 e2e 760（VS 2026，MSVC 14.51.36231）与 239 覆盖 |
+
+发布前补做的两次测量：
+
+- **旧引擎读新写法**（设计 §3.8）。用已发布的 2026.9.21.3 在 Windows runner 上构建四份清单：`msvc@system`、`msvc@<toolset>` 让整份清单被拒；`xim:msvc@<toolset>` 被接受而不生效，构建输出却把它列为 c-abi 层。写入 CHANGELOG 与 `docs/20`。
+- **沙箱判据的基线**。验证脚本先对 2026.9.21.3 运行：F 段原先断言 `xim:gcc@16.1.0` 能构建，在旧版本上同样通过，因为旧引擎会剥掉任何 `<ns>:` 前缀。F 段改为断言真正变化的两点（其他命名空间被拒；`xim:msvc@system` 作为写法被拒），CHANGELOG 与文档里「`xim:` 对所有族都接受」的表述也改为说明这一点早已成立、变化的是只接受 `xim:`。
+- **E 段的判据读错了文件**。它在 `target/` 下找 `compile_commands.json`，而 mcpp 把它写在工程根目录，于是在两个版本上都找不到文件而失败；旧版本上的这个失败曾被读成「CHANGE 段按预期失败」。新版本的运行暴露了它（构建输出自己写着 `→ arm64-apple-macos11.0`）。E 段改为每次 configure 之后立即读工程根目录的文件，并以构建目录数检查指纹；上表 T12 的两组读数都来自修正后的脚本。
