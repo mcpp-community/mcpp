@@ -3,6 +3,84 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.9.24.1] - 2026-09-24
+
+### MSVC ABI 上的 toolset:只选一次,可以指定,记录在案
+
+clang 以 `*-windows-msvc` 为目标时,编译所针对的 MSVC 环境(STL、CRT、Windows SDK)由两个互不相关的
+选择器决定:clang 驱动自己探测头文件与库(`VCToolsInstallDir`、`PATH`、最新实例的默认 toolset,
+`%INCLUDE%` 存在时整体采用它),mcpp 另行按 `VSINSTALLDIR`、`vswhere -latest`、目录名最大者定位
+`std.ixx`。机器上装有多个 toolset 时,两者可能指向不同的 toolset;项目无法指定用哪一个;选择结果
+既不进缓存键,也不出现在任何记录里。
+
+现在 MSVC toolset 是这一行的 sysroot,由 `[target.<triple>].sysroot` 指定,prepare 解析一次:
+
+```toml
+[toolchain]
+windows = "llvm@22.1.8"
+
+[target.x86_64-windows-msvc]
+sysroot = "msvc@14.44.35207"     # 或 "msvc@system"(默认),或 "xim:msvc@14.44.35207"
+```
+
+结果以 `-Xmicrosoft-visualc-tools-root`、`-Xmicrosoft-windows-sdk-root`、
+`-Xmicrosoft-windows-sdk-version` 传给编译、链接与 `std` 模块预编译(这几个是 clang-cl
+`/vctoolsdir` 等选项的别名;带上它们后,clang 不再读 `VCToolsInstallDir` 与 `%INCLUDE%`),
+`std.ixx` 取自同一个 toolset。构建打印一行 `Resolved sysroot msvc@system → MSVC <版本> (...)`,
+`resolution.json` 新增 `msvc_toolset` 与 `windows_sdk`,toolset 目录与 SDK 版本进入缓存键,
+SDK 版本也成为这一行的运行时身份 `ucrt@<版本>`。
+
+写法在 cl.exe 行与 clang 行上相同:
+
+| 写法 | 含义 |
+|---|---|
+| `msvc@system` | 本机默认:`VCToolsInstallDir` → `VSINSTALLDIR` 实例的默认 toolset → `PATH` 上的 `cl.exe` → 带 C++ 组件的最新实例的默认 toolset |
+| `msvc@<toolset>` | 本机已装的同版本 toolset 优先(所有实例中查找),没有时安装载荷;环境变量不参与,被忽略时打印说明 |
+| `xim:msvc@<toolset>` | 只用载荷,SDK 随载荷固定 |
+
+`xim:` 对所有工具链族都接受;gcc、llvm 的工具链总来自载荷,`xim:gcc@16.1.0` 与 `gcc@16.1.0` 等价。
+`xim:msvc@system` 与其他命名空间被拒绝。
+
+**行为变化。** `msvc@<toolset>` 过去一律使用载荷;现在机器上有同版本时直接用机器的那一份,SDK
+随之取机器上的。需要载荷(连同它的 SDK)的项目改写为 `xim:msvc@<toolset>`。cl.exe 行的
+`msvc@system` 改为取实例的默认 toolset(`Microsoft.VCToolsVersion.default.txt`)而不是目录名最大者,
+并开始读取 `VCToolsInstallDir`;某个 toolset 缺少 `std.ixx` 时,不再借用另一个 toolset 的。
+cl.exe 行上指向另一个 toolset 的 `sysroot` 被拒绝。`mcpp toolchain list` 在 Windows 上列出
+本机已装的 toolset。
+
+### `macos_deployment_target` 按目标生效,不再按宿主(#685)
+
+在 Linux 或 Windows 宿主上 `mcpp build --target aarch64-macos`,产物的 `LC_BUILD_VERSION minos` 恒为
+14.0:`[build] macos_deployment_target` 与 `MACOSX_DEPLOYMENT_TARGET` 都被忽略,改了值也不重建。
+解析函数只在 `#if defined(__APPLE__)` 下读这两个输入,其他宿主上返回空,三元组于是回落到内置的
+`14.0`;指纹也只在宿主是 macOS 时折入这个值;平台事实 `macos.deployment-target` 同样为空,包里
+针对它的版本要求在这种构建里不被检查。反方向同理:macOS 宿主交叉到非 Apple 目标时,编译命令里
+仍带 `-mmacosx-version-min`。
+
+现在解析(env > manifest > 14.0)与宿主无关,是否适用由构建的目标决定:三元组、指纹、平台事实、
+`-mmacosx-version-min` 与 std 模块预编译都按目标判定;build.mcpp 的宿主编译按它自己的目标(即宿主)
+判定。macOS 宿主构建 macOS 目标时输出不变。判据是 `tests/e2e/746_…`:在 Linux 宿主上用
+`[target.aarch64-macos] toolchain = "llvm@…"` 走 `--configure-only`,不需要 macOS SDK,断言
+`--target=arm64-apple-macos11.0`、改值后指纹变化、env 优先于 manifest;把修复撤回,三条全红。
+
+### `mcpp self doctor` 报告 gcc 载荷里冻结的 fixincludes 头(#687)
+
+gcc 13.3.0、15.1.0(以及 11.5.0)的 x86_64-linux-gnu 载荷在 `include-fixed/` 里带着构建机上 glibc
+头的 fixincludes 副本(`pthread.h` 等)。它们在搜索顺序上排在构建所用的 glibc 2.44 之前,于是
+`<mutex>`、`<memory>` 编译失败。索引里本有一段安装时删除它们的清理代码,但单引号嵌套让 grep 搜索的是
+当前目录而不是载荷,从未生效;配方的修正在 openxlings/xim-pkgindex#870,新安装会被清理。
+
+已安装的载荷不会因为索引更新而重新清理。doctor 新增一项检查:列出每个 gcc 载荷里带
+`auto-edited by fixincludes` 横幅的文件、横幅里的源路径,以及重装命令
+(`mcpp index update`,然后 `mcpp toolchain remove gcc@<v>` 与 `mcpp toolchain install gcc@<v>`)。
+这是警告,不是失败。
+
+### SPEC-006:工具链管理(草案)
+
+`docs/specs/toolchain-management.md`:身份与写法、来源与选择、载荷契约、构建、验收与发布顺序,
+每条标注实现状态。载荷契约与验收(载荷 lint、编译器 × C 库兼容矩阵、准入门进 CI)计划与下一批
+LLVM 工具链一同实现。
+
 ## [2026.9.21.3] - 2026-09-21
 
 ### `mcpp test --no-run`:为一个跑不了的目标构建测试,并把这当成答案

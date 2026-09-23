@@ -392,6 +392,7 @@ spec 也写明了现有的准入门为什么没能拦住 #687：
 | 新增 | — | std 模块命令的路径转义：Windows 用平台引号，POSIX 保持单引号 | Windows 经 cmd.exe 执行这条命令，cmd.exe 不认单引号 |
 | 新增 | — | cl.exe 行不再从别的 toolset 借用 `std.ixx` | 同一个「两个选择器」问题在 cl.exe 行上的另一处 |
 | e2e 239 | — | 改用 `xim:msvc@<toolset>` | 裸写法现在会先选 runner 上的同版本 toolset，测试就不再测载荷 |
+| 新增 | — | `CompileUnit::providesModule` 从 `std::optional<std::string>` 改为 `std::string`（空串表示不是模块接口） | 第一轮 Windows CI 在 clang + MSVC STL 下报 `_SMF_control` 无匹配构造函数，报在 `plan.cppm` 的 `CompileUnit` 上；这是已知的那类问题：模块接口一有扰动就可能触发，删掉这个成员类型才能根除 |
 
 Linux 上的零差异检查：用已发布的 2026.9.21.3 与本分支的二进制，在同一目录分别构建 `examples/01-hello` 与 `examples/04-workspace`，四份 `build.ninja` 除 mcpp 自身路径那一行外逐字节相同，指纹也相同。
 
