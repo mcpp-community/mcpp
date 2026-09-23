@@ -588,6 +588,16 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
                 isDefault ? "*" : "",
                 std::format("msvc {}", inst->display_version()),
                 inst->clPath.string());
+            // EVERY INSTALLED TOOLSET, by the version a manifest pins it with.
+            // `msvc@<toolset>` (the cl.exe row) and `sysroot = "msvc@<toolset>"`
+            // (the clang row) take one of these before they download anything.
+            auto toolsets = mcpp::toolchain::msvc::describe_system_toolsets(
+                mcpp::toolchain::msvc::enumerate_vs_instances(),
+                mcpp::toolchain::msvc::ToolsetNeeds{});
+            if (!toolsets.empty()) {
+                std::println("     installed toolsets (pin one as msvc@<toolset>):");
+                for (auto const& line : toolsets) std::println("       {}", line);
+            }
         } else {
             std::println("");
             std::println("  (msvc: not detected — run `mcpp toolchain default msvc` "
@@ -1162,6 +1172,31 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
                 cfg.defaultToolchain.empty() ? "<none>" : cfg.defaultToolchain));
 
             return 0;
+        }
+
+        // A PINNED TOOLSET THIS MACHINE HAS NEEDS NO PACKAGE, which is what the
+        // same spelling means to a build (`msvc@<toolset>` takes an installed
+        // toolset first). `xim:` asks for the package and skips this.
+        if (mcpp::platform::is_windows
+            && spec->family == mcpp::toolchain::Family::Msvc
+            && !spec->ecosystemOnly) {
+            if (auto inst = mcpp::toolchain::msvc::system_installation_matching(
+                    spec->version, mcpp::toolchain::msvc::ToolsetNeeds{})) {
+                auto wr = mcpp::config::write_default_toolchain(cfg, spec->spec_str());
+                if (!wr) {
+                    mcpp::ui::error(wr.error().message);
+                    return 1;
+                }
+                if (auto wt = mcpp::config::write_default_target(cfg, ""); !wt) {
+                    mcpp::ui::error(wt.error().message);
+                    return 1;
+                }
+                mcpp::ui::status("Default", std::format(
+                    "set to {} (installed: {}; was: {})", spec->spec_str(),
+                    inst->clPath.string(),
+                    cfg.defaultToolchain.empty() ? "<none>" : cfg.defaultToolchain));
+                return 0;
+            }
         }
 
         auto pkg = mcpp::toolchain::to_xim_package(*spec);

@@ -15,8 +15,10 @@
 // it — which is what keeps a managed toolset from being a second code path
 // with its own bugs.
 //
-// Discovery order for the SYSTEM origin is deliberate and is documented at
-// find_vs_install_path(): a declared answer outranks a probe.
+// Which installed toolset the SYSTEM origin means, and which one a pinned
+// `msvc@<version>` finds before it reaches for a payload, is one function,
+// `select_system_toolset()`: a declared answer outranks a probe, and the cl.exe
+// row and the clang row read the same answer.
 //
 // Also used by clang.cppm to find MSVC STL's std.ixx when Clang targets
 // x86_64-pc-windows-msvc.
@@ -27,6 +29,7 @@ module;
 export module mcpp.toolchain.msvc;
 
 import std;
+import mcpp.libs.json;
 import mcpp.platform;
 import mcpp.toolchain.model;
 import mcpp.toolchain.probe;
@@ -131,6 +134,108 @@ std::optional<MsvcInstallation> detect_installation();
 std::optional<MsvcInstallation> installation_at(const std::filesystem::path& vsRoot,
                                                 std::string_view toolsVersion,
                                                 bool identifyVersion = true);
+
+// ─── Toolset selection: one rule for both rows ────────────────────────────
+//
+// A toolset is chosen for two different rows. `cl.exe` compiles with it, and
+// clang targeting `*-windows-msvc` compiles AGAINST it (its STL, CRT and the
+// SDK that follows it). Both rows used to reach an answer on their own: the
+// clang driver probed the machine for headers and libraries while this module
+// probed it again for `std.ixx`, by a different order, so the two could name
+// different toolsets. The selection below is the one answer both rows read.
+//
+// It is a function of its inputs. The machine enters only through
+// `enumerate_vs_instances()` and `msvc_env_snapshot()`, which are the Windows
+// half; everything else reads the directories it is handed, so it is tested
+// on any host against a synthetic tree.
+
+// One Visual Studio instance, as the installer reports it.
+struct VsInstance {
+    std::filesystem::path root;            // ...\Microsoft Visual Studio\2022\Community
+    std::string           product;         // "Visual Studio Community 2022"
+    std::string           installVersion;  // "17.14.36301.6"; empty when unknown
+};
+
+// The environment variables that DECLARE an installation. A developer command
+// prompt sets all three; a plain shell sets none.
+struct MsvcEnvSnapshot {
+    std::filesystem::path vcToolsInstallDir;  // VCToolsInstallDir
+    std::filesystem::path vsInstallDir;       // VSINSTALLDIR, else VCINSTALLDIR's parent
+    std::filesystem::path clOnPath;           // the first cl.exe on PATH
+};
+
+// What the build needs from a toolset for it to count as installed.
+struct ToolsetNeeds {
+    bool        cl      = true;    // the cl.exe row; clang does not need it
+    std::string libArch = "x64";   // lib/<arch> must exist
+};
+
+struct ToolsetChoice {
+    std::filesystem::path    vsRoot;
+    std::filesystem::path    toolsDir;   // <vsRoot>/VC/Tools/MSVC/<version>
+    std::string              version;    // "14.44.35207"
+    std::string              product;    // for the one line a build prints
+    std::string              via;        // the input that decided it
+    std::vector<std::string> notes;      // candidates skipped, variables ignored
+};
+
+// Dotted versions compared component by component as numbers, so that
+// `14.9` < `14.10`. A missing component counts as zero.
+int compare_toolset_versions(std::string_view a, std::string_view b);
+
+// `request` matches `version` when every component of `request` equals the
+// component at the same position: `14.4` matches `14.4.1` and not `14.44`.
+bool toolset_version_matches(std::string_view request, std::string_view version);
+
+// The toolset directory names under `<vsRoot>/VC/Tools/MSVC`, highest first.
+std::vector<std::string> toolsets_under(const std::filesystem::path& vsRoot);
+
+// `<vsRoot>/VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt`, trimmed;
+// empty when the instance does not have one.
+std::string default_toolset_of(const std::filesystem::path& vsRoot);
+
+// Does `toolsDir` hold what a build needs: `include/`, `lib/<arch>/`, and
+// for the cl.exe row a `cl.exe` under `bin/Host*/<arch>/`.
+bool toolset_complete(const std::filesystem::path& toolsDir, const ToolsetNeeds& needs);
+
+// Choose a toolset among the machine's installations.
+//
+// `selector` is `system` or a toolset version, full or partial.
+//
+//   system    the first complete candidate of: the toolset VCToolsInstallDir
+//             names; the default toolset of the instance VSINSTALLDIR names;
+//             the toolset of the first cl.exe on PATH; the default toolset of
+//             the instance with the highest installation version. This is the
+//             order clang's driver and this module used to apply separately,
+//             merged, so that where the two agreed the answer is unchanged.
+//   version   the highest complete toolset whose version matches, across every
+//             instance. The environment takes no part, and a variable that
+//             would have chosen differently is reported in `notes`.
+//
+// nullopt when no installed toolset qualifies; the caller decides whether that
+// is a refusal or a reason to use an ecosystem package.
+std::optional<ToolsetChoice>
+select_system_toolset(const std::vector<VsInstance>& instances,
+                      const MsvcEnvSnapshot&         env,
+                      std::string_view               selector,
+                      const ToolsetNeeds&            needs);
+
+// One line per complete toolset on the machine, for a refusal to list.
+std::vector<std::string> describe_system_toolsets(const std::vector<VsInstance>& instances,
+                                                  const ToolsetNeeds& needs);
+
+// The Windows half: every instance vswhere reports (prerelease included), plus
+// the one VSINSTALLDIR names, plus the conventional paths when vswhere is
+// absent. Empty off Windows.
+std::vector<VsInstance> enumerate_vs_instances();
+MsvcEnvSnapshot msvc_env_snapshot();
+
+// The machine's installation of a pinned toolset, or nullopt. This is what
+// makes `msvc@<version>` take an installed toolset before an ecosystem package.
+// `notes`, when given, receives what the selection skipped or ignored.
+std::optional<MsvcInstallation>
+system_installation_matching(std::string_view version, const ToolsetNeeds& needs,
+                             std::vector<std::string>* notes = nullptr);
 
 // Parse a cl.exe banner into (version, arch). Token-based so localized
 // banners work: first "d.d.d[.d]" run is the version, arch is the arm64/x64/
@@ -314,19 +419,6 @@ namespace {
 
 #if defined(_WIN32)
 
-// Run a command and capture stdout (first line, trimmed).
-std::string run_capture_line(const std::string& cmd) {
-    auto r = mcpp::platform::process::capture(cmd);
-    auto& out = r.output;
-    // Trim trailing whitespace/newlines
-    while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' '))
-        out.pop_back();
-    // Take first line only
-    auto nl = out.find('\n');
-    if (nl != std::string::npos) out.resize(nl);
-    return out;
-}
-
 // Strategy 1: VSINSTALLDIR — someone SAID which install to use.
 //
 // Set by a developer command prompt, by a CI step that ran vcvarsall, or by
@@ -338,26 +430,6 @@ std::optional<std::filesystem::path> find_vs_via_vsinstalldir() {
         if (std::filesystem::exists(p / "VC" / "Tools" / "MSVC"))
             return p;
     }
-    return std::nullopt;
-}
-
-// Strategy 2: vswhere.exe — Microsoft's locator, i.e. a ranked guess.
-std::optional<std::filesystem::path> find_vs_via_vswhere() {
-    // vswhere.exe ships with the VS Installer at a well-known path
-    std::filesystem::path vswhere =
-        "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe";
-    if (!std::filesystem::exists(vswhere)) return std::nullopt;
-
-    // `-prerelease` or an Insiders instance is invisible here. Without it a
-    // machine with only an Insiders VS reports "MSVC was not found" while a
-    // perfectly good cl.exe sits on disk.
-    auto result = run_capture_line(
-        "\"" + vswhere.string() + "\" -latest -prerelease -products * "
-        "-requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 "
-        "-property installationPath 2>nul");
-
-    if (!result.empty() && std::filesystem::exists(result))
-        return std::filesystem::path(result);
     return std::nullopt;
 }
 
@@ -405,54 +477,38 @@ std::optional<std::filesystem::path> find_vs_via_paths() {
     return std::nullopt;
 }
 
-// From a VS install path, find the latest MSVC tools version directory.
-std::optional<std::filesystem::path> find_latest_msvc_tools(const std::filesystem::path& vsRoot) {
-    auto vcTools = vsRoot / "VC" / "Tools" / "MSVC";
-    std::error_code ec;
-    if (!std::filesystem::exists(vcTools, ec)) return std::nullopt;
-
-    std::filesystem::path latest;
-    std::string latestVer;
-    for (auto& entry : std::filesystem::directory_iterator(vcTools, ec)) {
-        if (!entry.is_directory()) continue;
-        auto ver = entry.path().filename().string();
-        if (ver > latestVer) {
-            latestVer = ver;
-            latest = entry.path();
-        }
-    }
-    return latest.empty() ? std::nullopt : std::optional{latest};
-}
-
 #endif // _WIN32
 
 } // namespace
 
+// The three below answer from the same selection every row uses
+// (`select_system_toolset`, selector `system`), so the instance, the toolset
+// directory and the `std.ixx` they report are one toolset rather than the
+// results of three searches. `cl` is not required: the clang row reads them
+// too, and a toolset is complete for it without `cl.exe`.
+#if defined(_WIN32)
+namespace {
+std::optional<ToolsetChoice> default_system_choice() {
+    ToolsetNeeds needs;
+    needs.cl = false;
+    return select_system_toolset(enumerate_vs_instances(), msvc_env_snapshot(),
+                                 "system", needs);
+}
+} // namespace
+#endif
+
 std::optional<std::filesystem::path> find_vs_install_path() {
 #if defined(_WIN32)
-    // Declared before probed. vswhere used to run first, and because it
-    // returns something on almost every developer machine, VSINSTALLDIR was
-    // effectively unreachable — a build that had exported a complete vcvars
-    // environment still compiled with whatever vswhere ranked highest
-    // (measured on xrgui#3: vcvars said 14.52, the build used 14.51, and the
-    // only way out was to hide vswhere.exe). A guess must not silently
-    // override an answer.
-    if (auto p = find_vs_via_vsinstalldir()) return p;
-    if (auto p = find_vs_via_vswhere())      return p;
-    if (auto p = find_vs_via_comntools())    return p;
-    if (auto p = find_vs_via_paths())        return p;
+    if (auto c = default_system_choice()) return c->vsRoot;
 #endif
     return std::nullopt;
 }
 
 std::optional<std::filesystem::path> find_msvc_tools_dir() {
 #if defined(_WIN32)
-    auto vs = find_vs_install_path();
-    if (!vs) return std::nullopt;
-    return find_latest_msvc_tools(*vs);
-#else
-    return std::nullopt;
+    if (auto c = default_system_choice()) return c->toolsDir;
 #endif
+    return std::nullopt;
 }
 
 std::optional<std::filesystem::path> find_std_module_source() {
@@ -655,13 +711,362 @@ std::optional<MsvcInstallation> installation_at(const std::filesystem::path& vsR
     return installation_from_tools_dir(vsRoot, tools, identifyVersion);
 }
 
+// ─── Toolset selection ───────────────────────────────────────────────────
+
+namespace {
+
+// The helpers below each have one caller and live here rather than in the
+// exported purview on purpose: an inline helper in the purview is emitted by
+// every importer, and that shape has crashed clang 20.1.7 on Windows before
+// (see the note beside `toml.cppm`'s `[c-abi-absent]` parser).
+
+void version_components(std::string_view v, std::vector<std::uint64_t>& out) {
+    out.clear();
+    std::uint64_t n = 0;
+    bool any = false;
+    for (char c : v) {
+        if (c == '.') { out.push_back(n); n = 0; any = false; continue; }
+        if (c < '0' || c > '9') break;
+        n = n * 10 + static_cast<std::uint64_t>(c - '0');
+        any = true;
+    }
+    if (any || out.empty() || (!v.empty() && v.back() == '.')) out.push_back(n);
+}
+
+// `VC/Tools/MSVC/<version>` → the instance root four levels up.
+std::filesystem::path vs_root_of_tools(const std::filesystem::path& toolsDir) {
+    return toolsDir.parent_path().parent_path().parent_path().parent_path();
+}
+
+// A path from the environment may end in a separator
+// (`VCToolsInstallDir=...\14.44.35207\`), which leaves `filename()` empty.
+std::filesystem::path without_trailing_separator(std::filesystem::path p) {
+    if (!p.empty() && p.filename().empty()) p = p.parent_path();
+    return p;
+}
+
+std::string product_of(const VsInstance& inst) {
+    if (!inst.product.empty()) return inst.product;
+    auto derived = product_from_vs_root(inst.root);
+    return derived.empty() ? inst.root.string() : "Visual Studio " + derived;
+}
+
+// The choice an instance offers on its own: its default toolset when that is
+// complete, else its highest complete one. Empty version when it has none.
+void instance_choice(const VsInstance& inst, const ToolsetNeeds& needs,
+                     ToolsetChoice& out) {
+    out = ToolsetChoice{};
+    const auto base = inst.root / "VC" / "Tools" / "MSVC";
+    const auto def  = default_toolset_of(inst.root);
+    if (!def.empty() && toolset_complete(base / def, needs)) {
+        out.version = def;
+    } else {
+        for (auto const& v : toolsets_under(inst.root)) {
+            if (toolset_complete(base / v, needs)) { out.version = v; break; }
+        }
+    }
+    if (out.version.empty()) return;
+    out.vsRoot   = inst.root;
+    out.toolsDir = base / out.version;
+    out.product  = product_of(inst);
+}
+
+bool same_root(const std::filesystem::path& a, const std::filesystem::path& b) {
+    std::error_code ec;
+    if (std::filesystem::equivalent(a, b, ec)) return true;
+    return without_trailing_separator(a).lexically_normal()
+        == without_trailing_separator(b).lexically_normal();
+}
+
+} // namespace
+
+int compare_toolset_versions(std::string_view a, std::string_view b) {
+    std::vector<std::uint64_t> x, y;
+    version_components(a, x);
+    version_components(b, y);
+    const auto n = std::max(x.size(), y.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::uint64_t l = i < x.size() ? x[i] : 0;
+        const std::uint64_t r = i < y.size() ? y[i] : 0;
+        if (l != r) return l < r ? -1 : 1;
+    }
+    return 0;
+}
+
+bool toolset_version_matches(std::string_view request, std::string_view version) {
+    if (request.empty()) return false;
+    std::size_t i = 0, j = 0;
+    while (true) {
+        auto re = request.find('.', i);
+        auto ve = version.find('.', j);
+        auto rc = request.substr(i, re == std::string_view::npos ? std::string_view::npos : re - i);
+        auto vc = j <= version.size()
+            ? version.substr(j, ve == std::string_view::npos ? std::string_view::npos : ve - j)
+            : std::string_view{};
+        if (rc != vc) return false;
+        if (re == std::string_view::npos) return true;
+        if (ve == std::string_view::npos) return false;
+        i = re + 1;
+        j = ve + 1;
+    }
+}
+
+std::vector<std::string> toolsets_under(const std::filesystem::path& vsRoot) {
+    std::vector<std::string> out;
+    std::error_code ec;
+    const auto base = vsRoot / "VC" / "Tools" / "MSVC";
+    for (auto& e : std::filesystem::directory_iterator(base, ec)) {
+        if (e.is_directory(ec)) out.push_back(e.path().filename().string());
+    }
+    std::sort(out.begin(), out.end(), [](const std::string& a, const std::string& b) {
+        return compare_toolset_versions(a, b) > 0;
+    });
+    return out;
+}
+
+std::string default_toolset_of(const std::filesystem::path& vsRoot) {
+    std::ifstream in(vsRoot / "VC" / "Auxiliary" / "Build"
+                     / "Microsoft.VCToolsVersion.default.txt");
+    std::string line;
+    if (!in || !std::getline(in, line)) return {};
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n'
+                             || line.back() == ' ' || line.back() == '\t'))
+        line.pop_back();
+    return line;
+}
+
+bool toolset_complete(const std::filesystem::path& toolsDir, const ToolsetNeeds& needs) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(toolsDir / "include", ec)) return false;
+    if (!std::filesystem::is_directory(toolsDir / "lib" / needs.libArch, ec)) return false;
+    if (!needs.cl) return true;
+    for (auto host : {"Hostx64", "Hostarm64", "Hostx86"}) {
+        if (std::filesystem::exists(toolsDir / "bin" / host / needs.libArch / "cl.exe", ec))
+            return true;
+    }
+    return false;
+}
+
+std::optional<ToolsetChoice>
+select_system_toolset(const std::vector<VsInstance>& instances,
+                      const MsvcEnvSnapshot&         env,
+                      std::string_view               selector,
+                      const ToolsetNeeds&            needs) {
+    std::vector<std::string> notes;
+
+    // The instances in the order "newest installation first"; an instance
+    // whose installer did not report a version sorts last.
+    std::vector<const VsInstance*> ranked;
+    for (auto const& i : instances) ranked.push_back(&i);
+    std::stable_sort(ranked.begin(), ranked.end(),
+        [](const VsInstance* a, const VsInstance* b) {
+            if (a->installVersion.empty() != b->installVersion.empty())
+                return b->installVersion.empty();
+            return compare_toolset_versions(a->installVersion, b->installVersion) > 0;
+        });
+
+    auto product_for_root = [&](const std::filesystem::path& root) {
+        for (auto const* i : ranked)
+            if (same_root(i->root, root)) return product_of(*i);
+        VsInstance bare;
+        bare.root = root;
+        return product_of(bare);
+    };
+
+    const auto vcTools = without_trailing_separator(env.vcToolsInstallDir);
+
+    if (selector != "system") {
+        // PINNED. Every instance is a candidate and the environment is not.
+        ToolsetChoice best;
+        for (auto const* inst : ranked) {
+            for (auto const& v : toolsets_under(inst->root)) {
+                if (!toolset_version_matches(selector, v)) continue;
+                const auto dir = inst->root / "VC" / "Tools" / "MSVC" / v;
+                if (!toolset_complete(dir, needs)) {
+                    notes.push_back(std::format(
+                        "{} under {} is incomplete for this build and was skipped",
+                        v, product_of(*inst)));
+                    continue;
+                }
+                // Strictly greater: on a tie the newer instance, seen first, stays.
+                if (best.version.empty() || compare_toolset_versions(v, best.version) > 0) {
+                    best.vsRoot   = inst->root;
+                    best.toolsDir = dir;
+                    best.version  = v;
+                    best.product  = product_of(*inst);
+                }
+            }
+        }
+        if (best.version.empty()) return std::nullopt;
+        best.via = "pinned";
+        if (!vcTools.empty() && vcTools.filename().string() != best.version) {
+            notes.push_back(std::format(
+                "VCToolsInstallDir ({}) is ignored: the toolset is pinned to {}",
+                vcTools.filename().string(), selector));
+        }
+        best.notes = std::move(notes);
+        return best;
+    }
+
+    // SYSTEM. The declarations first, then the installer's newest instance.
+    if (!vcTools.empty()) {
+        if (toolset_complete(vcTools, needs)) {
+            ToolsetChoice c;
+            c.toolsDir = vcTools;
+            c.vsRoot   = vs_root_of_tools(vcTools);
+            c.version  = vcTools.filename().string();
+            c.product  = product_for_root(c.vsRoot);
+            c.via      = "VCToolsInstallDir";
+            c.notes    = std::move(notes);
+            return c;
+        }
+        notes.push_back(std::format(
+            "VCToolsInstallDir ({}) names an incomplete toolset and was skipped",
+            vcTools.string()));
+    }
+    if (!env.vsInstallDir.empty()) {
+        VsInstance declared;
+        declared.root    = without_trailing_separator(env.vsInstallDir);
+        declared.product = product_for_root(declared.root);
+        ToolsetChoice c;
+        instance_choice(declared, needs, c);
+        if (!c.version.empty()) {
+            c.via   = "VSINSTALLDIR";
+            c.notes = std::move(notes);
+            return c;
+        }
+        notes.push_back(std::format(
+            "VSINSTALLDIR ({}) has no complete toolset and was skipped",
+            declared.root.string()));
+    }
+    if (!env.clOnPath.empty()) {
+        // <tools>/bin/Host<h>/<t>/cl.exe
+        const auto tools = env.clOnPath.parent_path().parent_path()
+                               .parent_path().parent_path();
+        if (toolset_complete(tools, needs)) {
+            ToolsetChoice c;
+            c.toolsDir = tools;
+            c.vsRoot   = vs_root_of_tools(tools);
+            c.version  = tools.filename().string();
+            c.product  = product_for_root(c.vsRoot);
+            c.via      = "PATH";
+            c.notes    = std::move(notes);
+            return c;
+        }
+    }
+    for (auto const* inst : ranked) {
+        ToolsetChoice c;
+        instance_choice(*inst, needs, c);
+        if (c.version.empty()) continue;
+        c.via   = "newest instance";
+        c.notes = std::move(notes);
+        return c;
+    }
+    return std::nullopt;
+}
+
+std::vector<std::string> describe_system_toolsets(const std::vector<VsInstance>& instances,
+                                                  const ToolsetNeeds& needs) {
+    std::vector<std::string> out;
+    for (auto const& inst : instances) {
+        const auto def = default_toolset_of(inst.root);
+        for (auto const& v : toolsets_under(inst.root)) {
+            if (!toolset_complete(inst.root / "VC" / "Tools" / "MSVC" / v, needs)) continue;
+            out.push_back(std::format("{:<14}{}{}", v, product_of(inst),
+                                      v == def ? " (default)" : ""));
+        }
+    }
+    return out;
+}
+
+std::vector<VsInstance> enumerate_vs_instances() {
+    std::vector<VsInstance> out;
+#if defined(_WIN32)
+    auto add = [&](VsInstance inst) {
+        for (auto const& e : out)
+            if (same_root(e.root, inst.root)) return;
+        out.push_back(std::move(inst));
+    };
+    const std::filesystem::path vswhere =
+        "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe";
+    bool listed = false;
+    if (std::filesystem::exists(vswhere)) {
+        // `-all -prerelease`: every instance, Insiders included, complete or
+        // not; completeness is judged per toolset below. `-utf8` because an
+        // installation path may carry characters the console code page cannot.
+        auto r = mcpp::platform::process::capture(
+            "\"" + vswhere.string() + "\" -all -prerelease -products * "
+            "-requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 "
+            "-format json -utf8 2>nul");
+        auto j = nlohmann::json::parse(r.output, nullptr, /*allow_exceptions=*/false);
+        if (j.is_array()) {
+            listed = true;
+            for (auto const& e : j) {
+                if (!e.is_object() || !e.contains("installationPath")) continue;
+                VsInstance inst;
+                inst.root = std::filesystem::path(
+                    std::u8string(reinterpret_cast<const char8_t*>(
+                        e["installationPath"].get<std::string>().c_str())));
+                if (e.contains("installationVersion") && e["installationVersion"].is_string())
+                    inst.installVersion = e["installationVersion"].get<std::string>();
+                if (e.contains("displayName") && e["displayName"].is_string())
+                    inst.product = e["displayName"].get<std::string>();
+                add(std::move(inst));
+            }
+        }
+    }
+    if (auto p = find_vs_via_vsinstalldir()) add(VsInstance{*p, {}, {}});
+    if (!listed) {
+        if (auto p = find_vs_via_comntools()) add(VsInstance{*p, {}, {}});
+        if (auto p = find_vs_via_paths())     add(VsInstance{*p, {}, {}});
+    }
+#endif
+    return out;
+}
+
+MsvcEnvSnapshot msvc_env_snapshot() {
+    MsvcEnvSnapshot env;
+#if defined(_WIN32)
+    if (auto* v = std::getenv("VCToolsInstallDir"); v && *v) env.vcToolsInstallDir = v;
+    if (auto* v = std::getenv("VSINSTALLDIR"); v && *v) {
+        env.vsInstallDir = v;
+    } else if (auto* v2 = std::getenv("VCINSTALLDIR"); v2 && *v2) {
+        env.vsInstallDir = without_trailing_separator(v2).parent_path();
+    }
+    if (auto* path = std::getenv("PATH"); path && *path) {
+        std::string_view rest = path;
+        while (!rest.empty()) {
+            auto semi = rest.find(';');
+            auto dir  = rest.substr(0, semi);
+            if (!dir.empty()) {
+                std::filesystem::path cl = std::filesystem::path(std::string(dir)) / "cl.exe";
+                std::error_code ec;
+                if (std::filesystem::exists(cl, ec)) { env.clOnPath = cl; break; }
+            }
+            if (semi == std::string_view::npos) break;
+            rest.remove_prefix(semi + 1);
+        }
+    }
+#endif
+    return env;
+}
+
+std::optional<MsvcInstallation>
+system_installation_matching(std::string_view version, const ToolsetNeeds& needs,
+                             std::vector<std::string>* notes) {
+    auto choice = select_system_toolset(enumerate_vs_instances(), msvc_env_snapshot(),
+                                        version, needs);
+    if (!choice) return std::nullopt;
+    if (notes) *notes = choice->notes;
+    return installation_from_tools_dir(choice->vsRoot, choice->toolsDir);
+}
+
 std::optional<MsvcInstallation> detect_installation() {
 #if defined(_WIN32)
-    auto vs = find_vs_install_path();
-    if (!vs) return std::nullopt;
-    auto tools = find_latest_msvc_tools(*vs);
-    if (!tools) return std::nullopt;
-    return installation_from_tools_dir(*vs, *tools);
+    auto choice = select_system_toolset(enumerate_vs_instances(), msvc_env_snapshot(),
+                                        "system", ToolsetNeeds{});
+    if (!choice) return std::nullopt;
+    return installation_from_tools_dir(choice->vsRoot, choice->toolsDir);
 #else
     return std::nullopt;
 #endif
@@ -1084,13 +1489,15 @@ std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {
                         .parent_path()            // Hostx64
                         .parent_path()            // bin
                         .parent_path();           // <tools>
+    // THE STD MODULE OF THIS TOOLSET, OR NONE. A toolset without
+    // `modules/std.ixx` used to borrow the one the machine-wide search found,
+    // which on a machine with two installations compiled one toolset's
+    // `std.ixx` against another toolset's headers. Absent means no `import std`
+    // for this toolset, and the caller says so.
     std::error_code ec;
     if (auto ixx = toolsDir / "modules" / "std.ixx";
         std::filesystem::exists(ixx, ec)) {
         tc.stdModuleSource = ixx;
-        tc.hasImportStd    = true;
-    } else if (auto found = find_std_module_source()) {
-        tc.stdModuleSource = *found;
         tc.hasImportStd    = true;
     }
     if (tc.hasImportStd) {

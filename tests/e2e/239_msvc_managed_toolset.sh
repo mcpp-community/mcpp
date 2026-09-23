@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# requires: msvc xlings-msvc
-# 239_msvc_managed_toolset.sh — `msvc@<toolset>`: the toolset the manifest
+# requires: msvc xlings-msvc python3
+# 239_msvc_managed_toolset.sh — `xim:msvc@<toolset>`: the package the manifest
 # names is the one that compiles, regardless of what this machine has.
+#
+# `xim:` IS THE SPELLING FOR "THE PACKAGE". A bare `msvc@<toolset>` takes an
+# installed toolset of that version first (760 covers that half), and this
+# runner's Visual Studio may well carry 14.44.35207 -- so the bare spelling
+# could legitimately resolve to the machine here and this test would stop
+# testing the package.
 #
 # WHY THIS TEST CANNOT BE SATISFIED BY THE MACHINE'S COMPILER, which is the
 # only reason it is worth running: the runner has its own Visual Studio, and
@@ -108,7 +114,7 @@ cd hello_pinned
 cat >> mcpp.toml <<EOF
 
 [toolchain]
-windows = "msvc@$TOOLSET"
+windows = "xim:msvc@$TOOLSET"
 EOF
 
 out=$("$MCPP" build --verbose 2>&1) || { echo "FAIL: pinned build: $out"; exit 1; }
@@ -135,7 +141,7 @@ out=$("$MCPP" run 2>&1) || { echo "FAIL: pinned run: $out"; exit 1; }
 #    msvc@system: it must resolve to the SYSTEM cl again. Without this, a
 #    "managed works" result is equally consistent with "managed replaced
 #    everything", and the system origin would be quietly gone.
-sed -i "s|windows = \"msvc@$TOOLSET\"|windows = \"msvc@system\"|" mcpp.toml
+sed -i "s|windows = \"xim:msvc@$TOOLSET\"|windows = \"msvc@system\"|" mcpp.toml
 out=$("$MCPP" build --verbose 2>&1) || { echo "FAIL: system build: $out"; exit 1; }
 resolved=$(echo "$out" | grep -iE "Resolved .*msvc" | head -1)
 [[ -n "$resolved" ]] || { echo "FAIL: no Resolved line (system): $out"; exit 1; }
@@ -144,6 +150,35 @@ case "$resolved" in
         echo "FAIL: msvc@system resolved to the PAYLOAD — the origins leak: $resolved"
         exit 1 ;;
 esac
+
+# 3b) THE CLANG ROW AGAINST THE SAME PACKAGE. On the MSVC ABI the compiler is
+#     the toolchain and the toolset is the sysroot, so a clang build names the
+#     package through `[target.<triple>].sysroot`. The record must say the
+#     package answered, from mcpp's store, at the named version.
+cd "$TMP"
+"$MCPP" new clang_pinned >/dev/null 2>&1
+cd clang_pinned
+cat >> mcpp.toml <<EOF
+
+[target.x86_64-windows-msvc]
+sysroot = "xim:msvc@$TOOLSET"
+EOF
+out=$("$MCPP" build 2>&1) || { echo "FAIL: clang build against the package: $out"; exit 1; }
+res=$(find target -name resolution.json | head -1)
+python3 - "$res" "$TOOLSET" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+t = d.get("msvc_toolset")
+assert t, "no msvc_toolset recorded: is the default toolchain on this runner clang?"
+assert t["origin"] == "managed", t
+assert t["version"] == sys.argv[2], t
+assert "xim-x-msvc" in t["root"], t
+sdk = d.get("windows_sdk", {})
+assert "xim-x-windows-sdk" in sdk.get("root", ""), ("the package's own SDK", sdk)
+print("OK: clang row compiled against", t["root"])
+PYEOF
+out=$("$MCPP" run 2>&1) || { echo "FAIL: clang run: $out"; exit 1; }
+[[ "$out" == *"Hello"* || "$out" == *"hello"* ]] || { echo "FAIL: clang run output: $out"; exit 1; }
 
 # 4) a toolset mcpp installed is removable — the other half of the message
 #    `toolchain remove msvc` prints.

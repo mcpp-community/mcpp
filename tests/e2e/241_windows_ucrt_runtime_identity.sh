@@ -15,12 +15,11 @@
 # "the code path ran and produced nothing" — an empty string flows through
 # every one of those jobs without a complaint. So this asserts the VALUE.
 #
-# WHY IT PINS msvc@system EXPLICITLY. The identity is produced where mcpp
-# RESOLVES the SDK itself, which is the native cl.exe path. Windows' default
-# toolchain is clang targeting the MSVC ABI, and there clang finds its own SDK
-# — mcpp does not know which one, so there is honestly nothing to declare. A
-# test that took the default would therefore assert an empty identity and pass
-# for the wrong reason.
+# WHY IT PINS msvc@system EXPLICITLY. This is the cl.exe row's half. Windows'
+# default toolchain is clang targeting the MSVC ABI, and that row now resolves
+# its toolset and SDK in mcpp as well (the row's sysroot), so it carries the
+# same identity; 760 asserts it there. Pinning keeps this test about the row
+# it was written for.
 set -e
 
 TMP=$(mktemp -d)

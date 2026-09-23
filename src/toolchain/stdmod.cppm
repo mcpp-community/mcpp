@@ -271,8 +271,16 @@ std::expected<StdDerivation, StdModError> derive_std_module(
     // identical flags also keep the std_build_commands cache key honest).
     // Std module precompilation only needs compile flags (no linker flags),
     // so --no-default-config is safe here on all platforms.
+    // Quoted for the shell that runs this command. POSIX keeps the single
+    // quotes it always had, byte for byte (the std BMI's cache key includes the
+    // command). Windows runs it through cmd.exe, which does not read single
+    // quotes: a path with a space -- the MSVC toolset of the clang row, always
+    // under `C:\Program Files` -- has to arrive in double quotes.
     const PathEscape shellEsc = [](const std::filesystem::path& p) {
-        return std::format("'{}'", p.string());
+        if constexpr (mcpp::platform::is_windows)
+            return mcpp::platform::shell::quote(p.string());
+        else
+            return std::format("'{}'", p.string());
     };
     // The shared producer (mcpp.toolchain.hostflags) — the same assembly
     // flags.cppm and the build.mcpp host compile use. This block used to

@@ -4273,6 +4273,58 @@ sysroot = ""
         EXPECT_EQ(w.find("sysroot"), std::string::npos) << w;
 }
 
+// ── On an MSVC-ABI row the sysroot is an MSVC toolset ─────────────────────────
+//
+// The compiler is the toolchain (cl.exe or clang) and the toolset -- its STL,
+// its CRT and the SDK that follows it -- is what the compiler builds against.
+// The row takes the msvc family's own spellings and nothing else.
+
+namespace {
+std::expected<mcpp::manifest::Manifest, mcpp::manifest::ManifestError>
+msvc_row(std::string_view triple, std::string_view sysroot) {
+    return mcpp::manifest::parse_string(std::format(R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.{}]
+sysroot = "{}"
+)", triple, sysroot));
+}
+} // namespace
+
+TEST(Manifest, MsvcRowSysrootTakesTheMsvcSpellings) {
+    for (auto triple : {"x86_64-windows-msvc", "x86_64-pc-windows-msvc"}) {
+        for (auto value : {"msvc@system", "msvc@14.44.35207", "msvc@14.44",
+                           "xim:msvc@14.44.35207"}) {
+            auto m = msvc_row(triple, value);
+            ASSERT_TRUE(m.has_value()) << triple << " " << value << ": "
+                                       << m.error().format();
+            auto it = m->targetOverrides.find(triple);
+            ASSERT_NE(it, m->targetOverrides.end());
+            ASSERT_TRUE(it->second.sysrootDeclared);
+            EXPECT_EQ(it->second.sysroot, value);
+        }
+    }
+}
+
+TEST(Manifest, MsvcRowSysrootRefusesWhatIsNotAnMsvcToolset) {
+    // A C library package, the zero-libc tier, a package asked for the
+    // machine's toolset, and a bare family name are all refused by name.
+    for (auto value : {"xim:glibc@2.39", "", "xim:msvc@system", "msvc", "gcc@16.1.0"}) {
+        auto m = msvc_row("x86_64-windows-msvc", value);
+        ASSERT_FALSE(m.has_value()) << "'" << value << "' was accepted";
+        EXPECT_NE(m.error().format().find("MSVC toolset"), std::string::npos)
+            << m.error().format();
+    }
+}
+
+TEST(Manifest, TheMsvcSpellingIsNotASysrootElsewhere) {
+    // On every other row the key keeps its xpkg-reference grammar.
+    auto m = msvc_row("x86_64-windows-gnu", "msvc@14.44.35207");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().format().find("xpkg reference"), std::string::npos);
+}
+
 // ── Dependency version requirements are checked where they are written ───────
 //
 // The parser that decides which published version satisfies a requirement

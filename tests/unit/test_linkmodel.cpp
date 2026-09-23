@@ -265,3 +265,57 @@ TEST(LinkModel, AnSdkTargetDescribesNoCLibrary) {
             return p.string(); }).empty()) << target;
     }
 }
+
+// ─── Clang on the MSVC ABI: the toolset and SDK, said to the driver ───────
+
+namespace {
+tc::Toolchain clang_msvc() {
+    tc::Toolchain t;
+    t.compiler          = tc::CompilerId::Clang;
+    t.targetTriple      = "x86_64-pc-windows-msvc";
+    t.msvcToolsDir      = "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207";
+    t.windowsSdkRoot    = "C:/Program Files (x86)/Windows Kits/10";
+    t.windowsSdkVersion = "10.0.26100.0";
+    return t;
+}
+} // namespace
+
+TEST(LinkModel, ClangOnTheMsvcAbiNamesItsToolsetAndSdk) {
+    auto t = clang_msvc();
+    auto words = tc::resolve_link_model(t).msvc_driver_tokens(ident);
+    const std::vector<std::string> expected = {
+        "-Xmicrosoft-visualc-tools-root", t.msvcToolsDir.string(),
+        "-Xmicrosoft-windows-sdk-root",   t.windowsSdkRoot.string(),
+        "-Xmicrosoft-windows-sdk-version", "10.0.26100.0",
+    };
+    EXPECT_EQ(words, expected) << "separate words: the driver rejects the `=` form";
+    // Not a C-library mode: the other token sets stay empty.
+    auto lm = tc::resolve_link_model(t);
+    EXPECT_EQ(lm.mode, tc::CLibMode::None);
+    EXPECT_TRUE(lm.compile_tokens(ident).empty());
+}
+
+TEST(LinkModel, TheToolsetWithoutAnSdkOmitsTheSdkWords) {
+    auto t = clang_msvc();
+    t.windowsSdkRoot.clear();
+    t.windowsSdkVersion.clear();
+    auto words = tc::resolve_link_model(t).msvc_driver_tokens(ident);
+    ASSERT_EQ(words.size(), 2u);
+    EXPECT_EQ(words[0], "-Xmicrosoft-visualc-tools-root");
+}
+
+TEST(LinkModel, NoOtherRowReceivesMsvcDriverWords) {
+    // cl.exe carries the toolset in its own path and envOverrides; MinGW is
+    // not MSVC at all; a row with no toolset recorded says nothing.
+    auto cl = clang_msvc();
+    cl.compiler = tc::CompilerId::MSVC;
+    EXPECT_TRUE(tc::resolve_link_model(cl).msvc_driver_tokens(ident).empty());
+
+    auto mingw = clang_msvc();
+    mingw.targetTriple = "x86_64-w64-mingw32";
+    EXPECT_TRUE(tc::resolve_link_model(mingw).msvc_driver_tokens(ident).empty());
+
+    auto unbound = clang_msvc();
+    unbound.msvcToolsDir.clear();
+    EXPECT_TRUE(tc::resolve_link_model(unbound).msvc_driver_tokens(ident).empty());
+}

@@ -336,6 +336,12 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // reads it.
     if (!tc.crossTargetFlag.empty()) out.push_back(tc.crossTargetFlag);
 
+    // THE MSVC TOOLSET AND SDK, SAID TO THE DRIVER (clang on `*-windows-msvc`
+    // only; empty everywhere else). This producer serves the compile line, the
+    // std module precompile and the build.mcpp host compile, so all three
+    // compile against the one toolset prepare chose.
+    for (auto& t : lm.msvc_driver_tokens(esc)) out.push_back(t);
+
     // AND WHAT A `throw` AND A `thread_local` COMPILE INTO, WHICH IS A
     // PROPERTY OF THE GRAPH AND NOT OF ANY ONE PACKAGE — see
     // `graph_runtime_compile_flags` for what and why.
@@ -586,6 +592,10 @@ std::vector<std::string> host_link_tokens(const Toolchain& tc,
 
     const auto dm = resolve_clang_driver(tc);
     const auto lm = resolve_link_model(tc);
+
+    // The link half of the same statement: the driver derives the toolset's
+    // and the SDK's library directories from these, not from the machine.
+    for (auto& t : lm.msvc_driver_tokens(esc)) out.push_back(t);
 
     const bool bypassCfg =
         dm.hasCfg && (opt.cfgBypass == HostFlagOptions::CfgBypass::Always

@@ -1390,6 +1390,166 @@ sysroot_override(const mcpp::manifest::Manifest& m,
     return (e && e->sysrootDeclared) ? &e->sysroot : nullptr;
 }
 
+// THE MSVC TOOLSET A CLANG `*-windows-msvc` BUILD COMPILES AGAINST.
+//
+// On an MSVC-ABI row the compiler is the toolchain and the MSVC toolset -- its
+// STL and CRT, and the Windows SDK that follows it -- is the sysroot, named by
+// `[target.<triple>].sysroot` (default `msvc@system`). Until this existed the
+// clang driver searched the machine for headers and libraries while mcpp
+// searched it again for `std.ixx`, by a different order, so a machine with two
+// installations could compile one toolset's `std.ixx` against another's
+// headers, and the choice reached neither the cache key nor any report. The
+// choice is made here once, recorded on the toolchain, and handed to the
+// driver by the link model.
+//
+// `msvc@system` that finds nothing returns without binding, so the build
+// reaches the "targeting the MSVC ABI without a usable MSVC" diagnosis that
+// already names the alternatives.
+std::expected<void, std::string>
+bind_msvc_sysroot(mcpp::toolchain::Toolchain& tc,
+                  const mcpp::manifest::Manifest& m,
+                  const std::function<std::expected<mcpp::config::GlobalConfig*,
+                                                    std::string>()>& cfgOf)
+{
+    namespace msvc = mcpp::toolchain::msvc;
+    auto tt = mcpp::toolchain::triple::parse(tc.targetTriple);
+    if (!tt) return {};
+    const std::string* declared = sysroot_override(m, *tt);
+    const std::string text = declared ? *declared : std::string("msvc@system");
+    auto spec = mcpp::toolchain::parse_toolchain_spec(text);
+    if (!spec)
+        return std::unexpected(std::format(
+            "[target.{}].sysroot = '{}': {}", tt->str(), text, spec.error()));
+    if (spec->family != mcpp::toolchain::Family::Msvc)
+        return std::unexpected(std::format(
+            "[target.{}].sysroot = '{}': on an MSVC-ABI row the sysroot is an "
+            "MSVC toolset (msvc@system, msvc@<toolset> or xim:msvc@<toolset>)",
+            tt->str(), text));
+
+    msvc::ToolsetNeeds needs;
+    needs.cl = false;   // clang compiles against the toolset; it does not run cl.exe
+    const bool systemSel = spec->version.empty() || spec->version == "system";
+    std::vector<msvc::VsInstance> instances;
+    std::optional<msvc::ToolsetChoice> choice;
+    if (!spec->ecosystemOnly) {
+        instances = msvc::enumerate_vs_instances();
+        choice = msvc::select_system_toolset(
+            instances, msvc::msvc_env_snapshot(),
+            systemSel ? std::string_view("system") : std::string_view(spec->version),
+            needs);
+        if (!choice && systemSel) return {};
+    }
+
+    std::string origin = "system";
+    if (!choice) {
+        // THE PACKAGE: `xim:` asked for it, or no installed toolset matched.
+        auto cfg = cfgOf();
+        if (!cfg) return std::unexpected(cfg.error());
+        mcpp::toolchain::ToolchainSpec pkgSpec = *spec;
+        pkgSpec.target = {};
+        auto pkg = mcpp::toolchain::to_xim_package(pkgSpec);
+        mcpp::fetcher::Fetcher fetcher(**cfg);
+        mcpp::fetcher::InstallProgressHandler progress;
+        auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true,
+                                                 &progress);
+        if (!payload) {
+            std::string onMachine;
+            for (auto const& line : msvc::describe_system_toolsets(instances, needs))
+                onMachine += "\n    " + line;
+            return std::unexpected(std::format(
+                "[target.{}].sysroot = '{}' matches no toolset on this machine, "
+                "and the package could not be provided: {}\n"
+                "  installed on this machine:{}\n"
+                "  packages: `mcpp toolchain list --available msvc`",
+                tt->str(), text, payload.error().message,
+                onMachine.empty() ? std::string(" none") : onMachine));
+        }
+        auto inst = mcpp::toolchain::resolve_managed_msvc(
+            mcpp::config::make_xlings_env(**cfg), pkg, /*identifyVersion=*/false);
+        if (!inst) return std::unexpected(inst.error());
+        choice.emplace();
+        choice->vsRoot   = inst->vsRoot;
+        choice->version  = inst->toolsVersion;
+        choice->toolsDir = inst->vsRoot / "VC" / "Tools" / "MSVC" / inst->toolsVersion;
+        choice->product  = "xim:msvc@" + inst->toolsVersion;
+        choice->via      = "package";
+        origin = "managed";
+    }
+    for (auto const& n : choice->notes) mcpp::ui::info("note", n);
+
+    // THE SDK FOLLOWS THE TOOLSET'S ORIGIN: a package binds the windows-sdk
+    // installed with it, a machine's toolset takes the machine's SDK by the
+    // search `msvc@system` has always used. The same function the cl.exe row
+    // uses, asked about the toolset directory rather than a cl.exe.
+    auto sdk = msvc::resolve_sdk_for(choice->toolsDir / "bin");
+    if (!sdk.note.empty()) mcpp::ui::info("note", sdk.note);
+
+    tc.msvcToolsDir     = choice->toolsDir;
+    tc.msvcToolsVersion = choice->version;
+    tc.msvcOrigin       = origin;
+    tc.msvcProduct      = choice->product;
+    if (sdk.sdk) {
+        tc.windowsSdkRoot    = sdk.sdk->root;
+        tc.windowsSdkVersion = sdk.sdk->version;
+    }
+    // The STL is this toolset's, so its version is the standard library's.
+    tc.stdlibVersion = choice->version;
+
+    // THE STD MODULE OF THIS TOOLSET, replacing whatever detection found by
+    // its own search. A toolset without one leaves `import std` unavailable
+    // rather than borrowing another toolset's.
+    std::error_code ec;
+    const auto ixx = choice->toolsDir / "modules" / "std.ixx";
+    if (std::filesystem::exists(ixx, ec)) {
+        tc.stdModuleSource   = ixx;
+        tc.hasImportStd      = true;
+        tc.importStdMinLevel = msvc::std_module_min_level_for_stl(ixx);
+        const auto compat = choice->toolsDir / "modules" / "std.compat.ixx";
+        tc.stdCompatSource = std::filesystem::exists(compat, ec)
+            ? compat : std::filesystem::path{};
+    } else if (tc.stdModuleSource.filename() == "std.ixx") {
+        tc.stdModuleSource.clear();
+        tc.stdCompatSource.clear();
+        tc.hasImportStd = false;
+    }
+
+    mcpp::ui::info("Resolved", std::format(
+        "sysroot {} → MSVC {} ({}: {}){}", spec->spec_str(), choice->version,
+        origin, choice->product,
+        tc.windowsSdkVersion.empty()
+            ? std::string{}
+            : std::format(" · Windows SDK {}", tc.windowsSdkVersion)));
+    return {};
+}
+
+// ON THE CL.EXE ROW THE COMPILER IS ITS OWN SYSROOT: cl.exe cannot compile
+// against another toolset's STL. A declared sysroot is therefore a second
+// statement of the compiler's toolset, and one that names a different
+// toolset is refused rather than silently ignored.
+std::expected<void, std::string>
+check_cl_row_sysroot(const mcpp::toolchain::Toolchain& tc,
+                     const mcpp::manifest::Manifest& m)
+{
+    auto tt = mcpp::toolchain::triple::parse(tc.targetTriple);
+    if (!tt) return {};
+    const std::string* declared = sysroot_override(m, *tt);
+    if (!declared) return {};
+    auto spec = mcpp::toolchain::parse_toolchain_spec(*declared);
+    if (!spec || spec->version.empty() || spec->version == "system") return {};
+    // <tools>/bin/Host<h>/<t>/cl.exe → <tools> is named by the toolset.
+    const auto toolset = tc.binaryPath.parent_path().parent_path()
+                             .parent_path().parent_path().filename().string();
+    if (mcpp::toolchain::msvc::toolset_version_matches(spec->version, toolset))
+        return {};
+    return std::unexpected(std::format(
+        "[target.{}].sysroot = '{}' names a different toolset than the "
+        "compiler ({}, toolset {}). With cl.exe the compiler is its own "
+        "sysroot: pin the toolset in the toolchain (`msvc@<toolset>`) and "
+        "drop `sysroot`, or build with clang to compile against another "
+        "toolset.",
+        tt->str(), *declared, tc.binaryPath.string(), toolset));
+}
+
 // The target-facing answers a `build.mcpp` may ask the engine for.
 //
 // ONE function because there are TWO call sites — the root project and each
@@ -3425,7 +3585,30 @@ prepare_build(bool print_fingerprint,
       tcSpecIsMsvc =
         parsedSpec && tcOriginAxis == mcpp::toolchain::Origin::SystemMsvc;
 
-      if (tcSpecIsMsvc) {
+      // A PINNED TOOLSET THIS MACHINE ALREADY HAS IS USED WHERE IT IS.
+      //
+      // `msvc@14.44.35207` names one Microsoft build, and the ecosystem package
+      // of that version unpacks the same installer payloads Visual Studio does,
+      // so an installed copy is the same toolset without a download. `xim:`
+      // opts out: it asks for the package, whose SDK is pinned with it.
+      std::optional<mcpp::toolchain::msvc::MsvcInstallation> installedPin;
+      std::vector<std::string> installedPinNotes;
+      if constexpr (mcpp::platform::is_windows) {
+          if (parsedSpec && !tcSpecIsMsvc
+              && parsedSpec->family == mcpp::toolchain::Family::Msvc
+              && !parsedSpec->ecosystemOnly && !parsedSpec->version.empty())
+              installedPin = mcpp::toolchain::msvc::system_installation_matching(
+                  parsedSpec->version, mcpp::toolchain::msvc::ToolsetNeeds{},
+                  &installedPinNotes);
+      }
+
+      if (installedPin) {
+        for (auto const& n : installedPinNotes) mcpp::ui::info("note", n);
+        explicit_compiler = installedPin->clPath;
+        mcpp::ui::info("Resolved", std::format(
+            "{} → msvc {} (installed: {})", parsedSpec->display(),
+            installedPin->display_version(), installedPin->clPath.string()));
+      } else if (tcSpecIsMsvc) {
         if (!mcpp::platform::is_windows) {
             return std::unexpected(std::format(
                 "toolchain '{}' is only available on Windows hosts", *tcSpec));
@@ -4224,6 +4407,17 @@ prepare_build(bool print_fingerprint,
           }
       }
 
+      // THE MSVC TOOLSET OF THE CLANG ROW, chosen once and recorded before the
+      // runtime identity below reads its SDK version. See bind_msvc_sysroot.
+      if (tc->compiler == mcpp::toolchain::CompilerId::Clang
+          && mcpp::toolchain::is_msvc_target(*tc)) {
+          auto bound = bind_msvc_sysroot(*tc, *m, [&] { return get_cfg(); });
+          if (!bound) return std::unexpected(bound.error());
+      } else if (tc->compiler == mcpp::toolchain::CompilerId::MSVC) {
+          if (auto ok = check_cl_row_sysroot(*tc, *m); !ok)
+              return std::unexpected(ok.error());
+      }
+
       // The Windows runtime identity, flowing BACK into the contract.
       //
       // Everything else about the runtime is known before a toolchain is
@@ -4688,7 +4882,11 @@ prepare_build(bool print_fingerprint,
         auto tt = overrides.target_triple.empty()
             ? std::optional{mcpp::toolchain::triple::host_triple()}
             : mcpp::toolchain::triple::parse(overrides.target_triple);
-        if (tt)
+        // Not on an MSVC-ABI row: there the key names an MSVC toolset, which
+        // `bind_msvc_sysroot` locates or installs itself -- an installed
+        // toolset of the pinned version must win over a download, and
+        // `msvc@system` is not a package at all.
+        if (tt && !tt->is_msvc_env())
             targetSysroot = mcpp::toolchain::triple::effective_sysroot(
                 *tt, sysroot_override(*m, *tt));
     }
@@ -10680,7 +10878,12 @@ prepare_build(bool print_fingerprint,
                 // `sysroot = ""` and "no sysroot key" are different answers and
                 // must not be collapsed: the first says this project wants no
                 // prebuilt C library, the second says it did not say.
-                if (auto const* ovr = sysroot_override(*m, *tt); ovr && ovr->empty())
+                // On an MSVC-ABI row the key names the MSVC toolset, which the
+                // toolchain binding consumes (`bind_msvc_sysroot`); it is not a
+                // C library package for this model to report as one.
+                if (tt->is_msvc_env())
+                    ;
+                else if (auto const* ovr = sysroot_override(*m, *tt); ovr && ovr->empty())
                     in.sysrootDeclaredEmpty = true;
                 else
                     in.sysrootXpkg = mcpp::toolchain::triple::effective_sysroot(
@@ -14962,6 +15165,22 @@ prepare_build(bool print_fingerprint,
                 {"artifacts", nlohmann::json::array()},
             }},
         };
+        // THE MSVC SYSROOT OF THE CLANG ROW: which toolset and SDK the build
+        // compiled against, and where each came from. Absent on every other
+        // row, so a reader can tell "not this row" from "not recorded".
+        if (!ctx.plan.toolchain.msvcToolsDir.empty()) {
+            const auto& tcr = ctx.plan.toolchain;
+            j["msvc_toolset"] = {
+                {"version", tcr.msvcToolsVersion},
+                {"origin",  tcr.msvcOrigin},
+                {"product", tcr.msvcProduct},
+                {"root",    tcr.msvcToolsDir.generic_string()},
+            };
+            j["windows_sdk"] = {
+                {"version", tcr.windowsSdkVersion},
+                {"root",    tcr.windowsSdkRoot.generic_string()},
+            };
+        }
         std::error_code ec;
         std::filesystem::create_directories(ctx.plan.outputDir, ec);
         auto path = ctx.plan.outputDir / "resolution.json";

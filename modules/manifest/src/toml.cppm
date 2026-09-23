@@ -662,6 +662,44 @@ parse_c_abi_absent(const t::Value& v,
     return std::nullopt;
 }
 
+// `[target.<triple>].sysroot`: the refusal for a value the row cannot take, or
+// nullopt. Kept out of `parse_string` for the reason the helper above states.
+//
+// ON AN MSVC-ABI ROW THE SYSROOT IS AN MSVC TOOLSET. The compiler is the
+// toolchain (`cl.exe` or clang) and the toolset -- its STL, its CRT and the
+// Windows SDK that follows it -- is what the compiler builds against, which is
+// what this key names on every other row too. The spellings are the msvc
+// family's own: `msvc@system`, `msvc@<toolset>` (an installed toolset first,
+// then the package) and `xim:msvc@<toolset>` (the package only). The row is
+// recognised by its spelling because this module does not parse triples;
+// `x86_64-windows-msvc` and `x86_64-pc-windows-msvc` both end in `-msvc`.
+std::optional<std::string> sysroot_refusal(std::string_view triple, std::string_view value) {
+    const bool msvcRow = triple.find("windows") != std::string_view::npos
+                      && triple.ends_with("-msvc");
+    if (msvcRow) {
+        const bool pkg = value.starts_with("xim:");
+        const std::string_view spec = pkg ? value.substr(4) : value;
+        const bool ok = spec.starts_with("msvc@") && spec.size() > 5
+                     && !(pkg && spec == "msvc@system");
+        if (ok) return std::nullopt;
+        return std::format(
+            "[target.{}].sysroot = '{}': on an MSVC-ABI row the sysroot is an "
+            "MSVC toolset, written \"msvc@system\", \"msvc@<toolset>\" (an "
+            "installed toolset first, then the package) or "
+            "\"xim:msvc@<toolset>\" (the package only).",
+            triple, value);
+    }
+    if (!value.empty() && value.find(':') == std::string_view::npos) {
+        return std::format(
+            "[target.{}].sysroot = '{}' is not an xpkg reference; "
+            "expected `<namespace>:<name>[@<version>]` (e.g. "
+            "\"xim:picolibc-riscv@1.8.12\"), or \"\" for a target "
+            "that takes no prebuilt C library directory.",
+            triple, value);
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 
@@ -3228,14 +3266,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // get picolibc back.
             if (auto it = body.find("sysroot"); it != body.end() && it->second.is_string()) {
                 std::string s = it->second.as_string();
-                if (!s.empty() && s.find(':') == std::string::npos) {
-                    return std::unexpected(error(origin, std::format(
-                        "[target.{}].sysroot = '{}' is not an xpkg reference; "
-                        "expected `<namespace>:<name>[@<version>]` (e.g. "
-                        "\"xim:picolibc-riscv@1.8.12\"), or \"\" for a target "
-                        "that takes no prebuilt C library directory.",
-                        triple, s)));
-                }
+                if (auto why = sysroot_refusal(triple, s))
+                    return std::unexpected(error(origin, *why));
                 e.sysroot = std::move(s);
                 e.sysrootDeclared = true;
             }

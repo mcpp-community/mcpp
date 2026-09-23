@@ -300,8 +300,9 @@ spec** says which:
 
 | Spec | Origin | Compiler resolved |
 |---|---|---|
-| `msvc@system` (or bare `msvc`) | the machine's own Visual Studio | whatever is installed here |
-| `msvc@<toolset>` (e.g. `msvc@14.44.35207`) | an xlings payload mcpp installs | the named toolset, identically on every machine |
+| `msvc@system` (or bare `msvc`) | the machine's own Visual Studio | the machine's default toolset (order below) |
+| `msvc@<toolset>` (e.g. `msvc@14.44.35207`) | an installed toolset of that version, else an xlings payload mcpp installs (2026.9.24.1+) | the named toolset |
+| `xim:msvc@<toolset>` | an xlings payload mcpp installs (2026.9.24.1+) | the named toolset, with the SDK installed beside it |
 
 They are not alternatives to pick between once — they answer different
 questions. `msvc@system` asks *"use what this developer already has"*;
@@ -377,13 +378,21 @@ installs, updates, or removes one.
 mcpp toolchain default msvc
 ```
 
-mcpp auto-locates it in this order:
+mcpp takes the first complete toolset in this order (2026.9.24.1+):
 
-1. **`VSINSTALLDIR`** — set by a developer command prompt or by a CI step that
-   ran `vcvarsall`. A declared answer, so it outranks the probes below.
-2. `vswhere.exe` (including prerelease/Insiders instances)
-3. `VS*COMNTOOLS`
-4. the standard `Program Files\Microsoft Visual Studio\<year>\<edition>` paths
+1. the toolset **`VCToolsInstallDir`** names — set by a developer command
+   prompt, including one opened with `vcvarsall … -vcvars_ver=<toolset>`;
+2. the default toolset of the instance **`VSINSTALLDIR`** (or `VCINSTALLDIR`)
+   names;
+3. the toolset of the first `cl.exe` on `PATH`;
+4. the default toolset of the newest Visual Studio instance that has the C++
+   tools, as `vswhere.exe` reports them (prerelease/Insiders included);
+5. without `vswhere.exe`, the standard
+   `Program Files\Microsoft Visual Studio\<year>\<edition>` paths.
+
+An instance's default toolset is the one its
+`VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt` names. A toolset is
+complete when it has `include\`, `lib\x64\` and, for cl.exe builds, `cl.exe`.
 
 It then identifies the versions involved and persists the stable spec
 `msvc@system`:
@@ -414,15 +423,28 @@ mcpp toolchain list --available msvc     # what can be pinned
 mcpp toolchain install msvc 14.44.35207
 ```
 
-This works like `gcc@16.1.0` in every respect: the payload is downloaded into
-mcpp's own store, several toolsets coexist, `mcpp toolchain remove
-msvc@<toolset>` uninstalls one, and a manifest that names one gets it
-installed automatically on first build.
+A pinned toolset that this machine already has is used where it is installed
+(2026.9.24.1+): mcpp looks through every Visual Studio instance for a complete
+toolset of that version, and only when none has it does it install the
+payload. A partial version (`msvc@14.44`) takes the highest match. The
+environment (`VCToolsInstallDir`, `VSINSTALLDIR`) takes no part in a pinned
+choice, and a variable that would have chosen a different toolset is reported
+in a `note:`. `mcpp toolchain list` shows the machine's toolsets under
+`installed toolsets`.
+
+`xim:msvc@<toolset>` asks for the payload only, whatever the machine has.
+The payload is downloaded into mcpp's own store, several toolsets coexist,
+`mcpp toolchain remove msvc@<toolset>` uninstalls one, and a manifest that
+names one gets it installed automatically on first build.
 
 ```toml
 [toolchain]
-windows = "msvc@14.44.35207"
+windows = "msvc@14.44.35207"       # an installed 14.44.35207 first, else the payload
+# windows = "xim:msvc@14.44.35207" # the payload only
 ```
+
+`xim:` is accepted on every family; for gcc and llvm, whose toolchains always
+come from payloads, `xim:gcc@16.1.0` and `gcc@16.1.0` are the same toolchain.
 
 **The version is the toolset directory name** (`14.44.35207` — what
 `VC\Tools\MSVC\` is named and what `-vcvars_ver` takes), *not* the cl banner
@@ -449,8 +471,8 @@ different questions and so must the SDK:
 
 | origin | SDK selection |
 |---|---|
-| `msvc@<toolset>` | the `xim:windows-sdk` payload installed **with that toolset**, in mcpp's own store. `WindowsSdkDir` / `WindowsSdkVersion` in the environment are **ignored**, and mcpp prints a `note:` saying so. |
-| `msvc@system` | **`WindowsSdkDir`** (+ `WindowsSdkVersion`) if declared, then `C:\Program Files (x86)\Windows Kits\10`. |
+| a payload toolset | the `xim:windows-sdk` payload installed **with that toolset**, in mcpp's own store. `WindowsSdkDir` / `WindowsSdkVersion` in the environment are **ignored**, and mcpp prints a `note:` saying so. |
+| an installed toolset (`msvc@system`, or `msvc@<toolset>` found on the machine) | **`WindowsSdkDir`** (+ `WindowsSdkVersion`) if declared, then `C:\Program Files (x86)\Windows Kits\10`. |
 
 The asymmetry is the point. A pinned toolset is a promise that two machines
 compile the same source against the same headers; an environment variable that
@@ -494,6 +516,37 @@ and mean the same thing. It is a **whole-project** property: one `std` module
 is built per project and cl bakes `_MSVC_MT`/`_MSVC_MD` into it, so a
 per-role override (`cxx_runtime = { tests = … }`) is refused with a message
 saying so rather than producing a module mismatch inside the ucrt headers.
+
+### Clang on the MSVC ABI: the toolset is the sysroot
+
+When the compiler is clang (`windows = "llvm@<version>"`, the default on a
+machine with Visual Studio), the MSVC toolset is what clang compiles against:
+its STL, its CRT and the Windows SDK that follows it. The target row names it
+with `sysroot`, using the same spellings (2026.9.24.1+):
+
+```toml
+[toolchain]
+windows = "llvm@22.1.8"
+
+[target.x86_64-windows-msvc]
+sysroot = "msvc@14.44.35207"     # or "msvc@system" (the default), or "xim:msvc@14.44.35207"
+```
+
+mcpp resolves the toolset and its SDK once, by the rules above, and passes
+them to clang as `-Xmicrosoft-visualc-tools-root`,
+`-Xmicrosoft-windows-sdk-root` and `-Xmicrosoft-windows-sdk-version` on every
+compile, link and `std` module precompile; `std.ixx` comes from the same
+toolset. The build prints the choice:
+
+```
+    Resolved sysroot msvc@system → MSVC 14.44.35207 (system: Visual Studio Community 2022) · Windows SDK 10.0.26100.0
+```
+
+and records it in `resolution.json` (`msvc_toolset`, `windows_sdk`). The
+toolset directory and the SDK version are part of the build cache key, and the
+SDK version is the row's runtime identity (`ucrt@<version>`), as on the cl.exe
+row. On a cl.exe row a `sysroot` that names a different toolset than the
+compiler is refused.
 
 ## SDK Toolchains (`emsdk`, `android-ndk`)
 
@@ -663,7 +716,7 @@ reason it cannot.
 | **an assembler (`nasm`)** | the pinned `xim:nasm` first; the host's only when that route could not serve, and **named in the build report** when it is used | An offline machine that already has a usable assembler can still build. It used to be the other way round -- see below. |
 | **a C++ compiler on PATH (`$CXX`, else `g++`)** | `mcpp doctor` only | That command's job is to report on the host. The build path sets the compiler from a resolved payload at every branch that reaches the probe, and refuses when the payload cannot be resolved rather than falling through to PATH. |
 | **a command interpreter (`/bin/sh`, `cmd.exe` on Windows)** | `run_shell_deadline` for `[hooks]`, `run_streaming_bounded` for the xlings CLI, and the detached codegen command | A hook is a line the USER wrote in shell syntax. Shipping a shell would change the language that line is read in, so the thing mcpp depends on here is not a tool it could package -- it is the host's agreement about what that line means. |
-| **the MSVC toolset and the Windows SDK** | `msvc@system`, which a user names; or a managed toolset that has no SDK payload beside it | Not redistributable, the same category as the Apple SDK. A managed toolset BINDS its SDK and ignores `WindowsSdkDir` even when set, because a pin the environment can overwrite is not a pin; the fallback to the machine's SDK works, is not reproducible, and carries a note saying so (`SdkChoice::note`, which the caller must surface). |
+| **the MSVC toolset and the Windows SDK** | `msvc@system`, which a user names; a pinned `msvc@<toolset>` found installed on the machine; or a managed toolset that has no SDK payload beside it | Not redistributable, the same category as the Apple SDK. A managed toolset BINDS its SDK and ignores `WindowsSdkDir` even when set, because a pin the environment can overwrite is not a pin; the fallback to the machine's SDK works, is not reproducible, and carries a note saying so (`SdkChoice::note`, which the caller must surface). |
 
 That list is meant to be exhaustive, and it is derived rather than remembered.
 Four sweeps over `src/` and `modules/` reach it. Every `fs::which` call --

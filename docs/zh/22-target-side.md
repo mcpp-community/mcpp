@@ -931,6 +931,12 @@ sysroot = ""                          # no C library at all
 取值是一个 xpkg 引用或空字符串；裸名在解析清单时即被拒绝，因为接受它会
 导致什么都不安装，然后在很晚的时候以「缺少 libc」失败。
 
+在 MSVC ABI 行（`*-windows-msvc`）上，sysroot 是 MSVC toolset，取值是 msvc 的
+写法（2026.9.24.1+）：`msvc@system`（键缺席时的默认）、`msvc@<toolset>`（已安装的
+同版本 toolset，没有时为载荷）或 `xim:msvc@<toolset>`（只要载荷）。这类行上的
+其他取值在解析清单时即被拒绝。见 [20 —— 工具链管理](20-toolchains.md) 中
+「MSVC ABI 上的 clang：toolset 就是 sysroot」一节。
+
 构建程序可以询问供给 sysroot 的是哪个 C 库**载荷**：`mcpp::target_libc()`
 返回该包的名字，`mcpp::target_libc_profile()` 返回目标 ISA 档位对应的
 子目录。零 libc 档上两者均为空。见

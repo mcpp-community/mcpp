@@ -73,6 +73,14 @@ struct ToolchainLinkModel {
     std::vector<std::filesystem::path> systemIncludes;
 
     // Rendering knobs derived from the toolchain at resolve time.
+    // CLANG ON THE MSVC ABI: the toolset and SDK the build compiles against,
+    // copied from the toolchain. Rendered by `msvc_driver_tokens`, not by
+    // `compile_tokens`/`link_tokens`: those describe a C library located in a
+    // prebuilt directory, and none of their modes applies to this row.
+    std::filesystem::path msvcToolsDir;
+    std::filesystem::path winSdkRoot;
+    std::string           winSdkVersion;
+
     bool clangDriver   = false;  // clang: -isystem headers; gcc: -idirafter
                                  // gcc:   -idirafter (…#include_next), -B/-L only
     bool clangWithCfg  = false;  // sibling <driver>.cfg exists (bundled LLVM)
@@ -99,6 +107,28 @@ struct ToolchainLinkModel {
     // flags.cppm/stdmod.cppm byte for byte).
     std::string compile_flags(const PathEscape& esc) const {
         return render_tokens(compile_tokens(esc));
+    }
+
+    // `-Xmicrosoft-*` as separate words: clang's GNU driver accepts only the
+    // separated form, and each is an alias of the clang-cl option that names
+    // the directory (`/vctoolsdir`, `/winsdkdir`, `/winsdkversion`). With them
+    // on the command line the driver neither reads VCToolsInstallDir or
+    // %INCLUDE% nor asks the installer for the newest instance. The toolset
+    // and the SDK always travel together: given only the toolset, the driver
+    // stops reading %INCLUDE% and takes the registry's newest SDK instead.
+    // Read by the compile line, the link line and the cache key alike.
+    std::vector<std::string> msvc_driver_tokens(const PathEscape& esc) const {
+        std::vector<std::string> out;
+        if (msvcToolsDir.empty()) return out;
+        out.push_back("-Xmicrosoft-visualc-tools-root");
+        out.push_back(esc(msvcToolsDir));
+        if (!winSdkRoot.empty() && !winSdkVersion.empty()) {
+            out.push_back("-Xmicrosoft-windows-sdk-root");
+            out.push_back(esc(winSdkRoot));
+            out.push_back("-Xmicrosoft-windows-sdk-version");
+            out.push_back(winSdkVersion);
+        }
+        return out;
     }
 
     // Link-side flags as argv tokens. `-B` is the CRT-discovery fix for #195:
@@ -370,7 +400,14 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
     // both want CLibMode::None. Keyed on the TARGET (not the host) so the
     // ELF resolution below stays testable anywhere and a future
     // cross-compile resolves by what it builds FOR.
-    if (is_msvc_target(tc) || is_mingw_target(tc)) return lm;
+    if (is_msvc_target(tc) || is_mingw_target(tc)) {
+        if (is_msvc_target(tc) && tc.compiler == CompilerId::Clang) {
+            lm.msvcToolsDir  = tc.msvcToolsDir;
+            lm.winSdkRoot    = tc.windowsSdkRoot;
+            lm.winSdkVersion = tc.windowsSdkVersion;
+        }
+        return lm;
+    }
 
     // AND A TARGET WHOSE TOOLCHAIN SHIPS ITS OWN SYSROOT, for the same reason
     // one sentence further up: nothing here describes its C library.

@@ -1105,6 +1105,13 @@ The value is an xpkg reference or the empty string; a bare name is rejected when
 the manifest is parsed, because accepting it would install nothing and then fail
 much later naming a missing libc.
 
+On an MSVC-ABI row (`*-windows-msvc`) the sysroot is the MSVC toolset, and the
+value is an msvc spelling (2026.9.24.1+): `msvc@system` (the default when the
+key is absent), `msvc@<toolset>` (an installed toolset of that version, else
+the payload), or `xim:msvc@<toolset>` (the payload only). Any other value on
+such a row is rejected when the manifest is parsed. See
+[20 — Clang on the MSVC ABI](20-toolchains.md#clang-on-the-msvc-abi-the-toolset-is-the-sysroot).
+
 A build program can ask which C library **payload** supplies the sysroot:
 `mcpp::target_libc()` returns that package's name and
 `mcpp::target_libc_profile()` the sub-directory for the target's ISA profile.

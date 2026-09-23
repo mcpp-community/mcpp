@@ -878,3 +878,38 @@ TEST(HostFlags, GccEmitsNeitherIsolationTokenRegardlessOfGraphOrigin) {
     EXPECT_FALSE(contains(toks, "-nostdlibinc"));
     EXPECT_FALSE(contains(toks, "-nostdinc++"));
 }
+
+// ─── Clang on the MSVC ABI: one toolset for the compile, std module and link
+//
+// `host_compile_tokens` is read by the compile line, the std module precompile
+// and the build.mcpp host compile, so the toolset words appearing here is what
+// makes all three compile against the toolset prepare chose.
+TEST(HostFlags, ClangOnTheMsvcAbiCompilesAndLinksAgainstTheChosenToolset) {
+    mcpp::toolchain::Toolchain t;
+    t.compiler          = CompilerId::Clang;
+    t.targetTriple      = "x86_64-pc-windows-msvc";
+    t.msvcToolsDir      = "C:/VS/VC/Tools/MSVC/14.44.35207";
+    t.windowsSdkRoot    = "C:/Kits/10";
+    t.windowsSdkVersion = "10.0.26100.0";
+    HostFlagOptions opt;
+    auto find_pair = [](const std::vector<std::string>& v, std::string_view flag,
+                        std::string_view value) {
+        for (std::size_t i = 0; i + 1 < v.size(); ++i)
+            if (v[i] == flag && v[i + 1] == value) return true;
+        return false;
+    };
+    auto compile = mcpp::toolchain::host_compile_tokens(t, opt, mcpp::toolchain::no_escape);
+    auto link    = mcpp::toolchain::host_link_tokens(t, opt, mcpp::toolchain::no_escape);
+    for (auto const* v : {&compile, &link}) {
+        EXPECT_TRUE(find_pair(*v, "-Xmicrosoft-visualc-tools-root",
+                              "C:/VS/VC/Tools/MSVC/14.44.35207"));
+        EXPECT_TRUE(find_pair(*v, "-Xmicrosoft-windows-sdk-root", "C:/Kits/10"));
+        EXPECT_TRUE(find_pair(*v, "-Xmicrosoft-windows-sdk-version", "10.0.26100.0"));
+    }
+
+    // Without a recorded toolset nothing is said, which is the behaviour of
+    // every build before a toolset is bound.
+    t.msvcToolsDir.clear();
+    for (auto const& w : mcpp::toolchain::host_compile_tokens(t, opt, mcpp::toolchain::no_escape))
+        EXPECT_EQ(w.find("-Xmicrosoft"), std::string::npos) << w;
+}
