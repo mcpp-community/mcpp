@@ -111,17 +111,26 @@ macos_deployment_target = "11.0"
 [target.aarch64-macos]
 toolchain = "llvm@$LLVM"
 EOF
+# `compile_commands.json` is written at the project root and rewritten by every
+# configure, so each reading is taken right after its own configure. The build
+# directory is named by the fingerprint, so a value that enters the fingerprint
+# shows up as a second directory.
 if timeout 2400 "$STORE" build --target aarch64-macos --configure-only > cfg.log 2>&1; then
-    cdb=$(find target -name compile_commands.json | head -1)
-    if [ -n "$cdb" ] && grep -q 'arm64-apple-macos11.0' "$cdb"; then
+    if grep -q 'arm64-apple-macos11.0' compile_commands.json 2>/dev/null; then
         ok "the manifest value reaches the triple (arm64-apple-macos11.0)"
     else
-        fail "the triple does not carry 11.0"; grep -o -- '--target=[^ "]*' "$cdb" 2>/dev/null | sort -u
+        fail "the triple does not carry 11.0"; grep -o -- '--target=[^ "]*' compile_commands.json 2>/dev/null | sort -u
     fi
+    dirs1=$(ls -d target/aarch64-macos/*/ 2>/dev/null | wc -l)
     MACOSX_DEPLOYMENT_TARGET=12.0 timeout 900 "$STORE" build --target aarch64-macos --configure-only > cfg2.log 2>&1
-    cdb=$(ls -t $(find target -name compile_commands.json) | head -1)
-    grep -q 'arm64-apple-macos12.0' "$cdb" && ok "MACOSX_DEPLOYMENT_TARGET overrides the manifest" \
-                                           || fail "MACOSX_DEPLOYMENT_TARGET did not reach the triple"
+    if grep -q 'arm64-apple-macos12.0' compile_commands.json 2>/dev/null; then
+        ok "MACOSX_DEPLOYMENT_TARGET overrides the manifest"
+    else
+        fail "MACOSX_DEPLOYMENT_TARGET did not reach the triple"; grep -o -- '--target=[^ "]*' compile_commands.json 2>/dev/null | sort -u
+    fi
+    dirs2=$(ls -d target/aarch64-macos/*/ 2>/dev/null | wc -l)
+    [ "$dirs2" -gt "$dirs1" ] && ok "the value enters the fingerprint ($dirs1 -> $dirs2 build directories)" \
+                              || fail "the value did not change the fingerprint ($dirs1 -> $dirs2 build directories)"
 else
     fail "configure for aarch64-macos"; tail -8 cfg.log
 fi
