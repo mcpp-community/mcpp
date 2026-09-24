@@ -198,7 +198,8 @@ name = "core"
 | 种类 | 规则 |
 |---|---|
 | 标量（`standard`、`version`、`license`、`c_standard`、`linkage` 等） | 成员**声明了该键**时成员胜出；否则取工作空间的值 |
-| 向量（`cxxflags`、`ldflags`、`defines`、`dialect_cxxflags`、`include_dirs` 等） | 追加，**工作空间在前**——因而成员自己的标志排在命令行更后面，后者胜出 |
+| 向量（`cxxflags`、`cflags`、`ldflags`、`dialect_cxxflags`、`include_dirs` 等） | 追加，**工作空间在前** |
+| `defines` | 按宏名构成的集合：成员对某个继承来的宏名写出的条目替换它，`!NAME` 移除它（2026.9.25.1+） |
 | `[workspace.dependencies]` | 逐依赖显式选择加入，`x.workspace = true`（§3） |
 
 "声明了"指的是这个键被写过，而不是它的值与默认值不同。成员在
@@ -210,6 +211,31 @@ c++23；什么都不写的成员得到 c++26。这两种情况值相同而意图
 忘了选择加入"这种漂移，所以继承是默认行为，覆盖才是需要主动写出的动作。依赖保留
 显式选择加入，因为依赖是解析图上的一条边：隐式继承一条边，会在成员自己的
 manifest 只字未提的情况下改变它解析到什么。
+
+**追加的向量能覆盖什么。** 成员的词在命令行上排在工作空间的词之后。编译器按
+"后者胜出"处理的标志因此可以通过重写来覆盖：`-fno-exceptions` 之后的
+`-fexceptions`、`-Wx` 之后的 `-Wno-x`、`-O0` 之后的 `-O2`。头文件目录按顺序搜索，
+所以工作空间 `include_dirs` 目录中的头文件，先于成员目录中的同名头文件被找到。
+宏通过 `defines` 覆盖，每个宏名只产生一个 `-DNAME` 词：
+
+```toml
+# 工作空间根
+[workspace.build]
+defines = ["LOG_LEVEL=1", "TRACE"]
+
+# 成员
+[build]
+defines = ["LOG_LEVEL=3", "!TRACE"]   # 以 -DLOG_LEVEL=3 编译，且不定义 TRACE
+```
+
+`defines` 条目同样替换同一个包的 `cflags` 或 `cxxflags` 中同名的 `-DNAME` 词。
+`!NAME` 要求 mcpp 2026.9.25.1 或更新版本；更早的 mcpp 会把它作为 `-D!NAME` 交给
+编译器，那是一个错误。
+
+**每个成员在每种位置上都恰好接收一次继承值**（2026.9.25.1+）：作为命令所构建的包
+（`-p <member>`，或在成员目录内执行的命令）、作为另一个成员的 `path` 依赖，以及作为
+通过 `git` 引用的、托管在 git 上的工作空间的成员（§6）。作为依赖出现的成员同样会解析
+它自己的 `x.workspace = true` 条目。
 
 **成员可以省略 `version`**，只要 `[workspace.package]` 提供了它。这个字段整体上
 仍是必需的——两边都没有时会被拒绝，同时指出成员文件和本该提供它的那个
@@ -363,6 +389,11 @@ myproject/
 `myproject.http = { git = "...", rev = "..." }` 会在根 manifest 的 `members`
 中选中 `libs/http`，取同一个提交，而该成员会像在工作空间内部一样继承
 `[workspace.package]`（mcpp 2026.9.16.1+；见 [05 —— 依赖](05-dependencies.md)）。
+它还继承所在仓库的 `[workspace.build]`，并按该仓库的 `[workspace.dependencies]`
+解析自己的 `x.workspace = true` 条目（2026.9.25.1+），因此同一个提交在它自己的
+检出中与在使用方的依赖图中以相同方式编译。索引描述符指向 tag tarball 内的成员时，
+该成员以同样方式取得 tarball 中的工作空间。用 `mcpp publish` 发布成员时，继承来的值
+被写入发布的清单（[11 —— 发布库](11-publishing-a-library.md)）。
 
 ## 7. 与 C++ 模块的关系
 

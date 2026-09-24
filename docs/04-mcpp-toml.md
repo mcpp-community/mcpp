@@ -400,14 +400,14 @@ the package/feature boundary, not on an individual target.
 sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # Source globs (default: src/**/*.{cppm,cpp,cc,c,S,s,asm})
 module_extensions = [".ixx"]      # Extra extensions used by module INTERFACES (§ below)
 build_program_timeout = 1800      # Seconds a build.mcpp may run; 0 = no limit (§ below)
-include_dirs = ["include", "third_party/include"]  # Header search paths
+include_dirs = ["include", "third_party/include"]  # Header search paths of this package (§ below)
 include_dirs_after = ["*"]         # Header dirs searched AFTER system dirs (-idirafter)
 private_include_dirs = ["vendor/src/include"]  # Of `include_dirs`, the ones a consumer must NOT get
 c_standard   = "c11"              # Standard for C source files (default c11)
 cflags       = ["-DFOO=1"]        # Extra C compile flags
 cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
 ldflags      = ["-lfoo"]          # Extra link flags
-defines      = ["BIZ=1", "QUX"]   # Preprocessor macros for every TU (desugars to -D; reaches module scans)
+defines      = ["BIZ=1", "QUX"]   # Preprocessor macros for every TU of this package; keyed by name (§ below)
 cxx_runtime  = "self-contained"   # C++ runtime contract (§ below); static_stdlib is the old spelling
 target       = "x86_64-linux-musl" # Default build target when no --target is passed
                                    # (≙ cargo build.target; e.g. "ship fully-static")
@@ -461,6 +461,38 @@ On the first plan of a project, mcpp warns under `build/flag-words` about an
 element whose words differ from the arguments a release before 2026.9.17.1
 passed on the same host, and names both. A build that repeats the plan does not
 repeat the warning.
+
+#### The scope of `defines` and include directories *(mcpp 2026.9.25.1+)*
+
+`defines` is a set keyed by macro name. Its entries are read in the order the
+package receives them: `[workspace.build]` (for a workspace member), the
+package's own `[build]`, then each matching `[target.<selector>.build]`. A later
+entry for a name replaces the earlier one, and an entry `!NAME` removes the name.
+Each name reaches the compiler as one `-DNAME` word, on the C and the C++ units
+alike:
+
+```toml
+[build]
+defines = ["LEVEL=1", "TRACE"]
+
+[target.'cfg(os = "windows")'.build]
+defines = ["LEVEL=2", "!TRACE"]       # on Windows: -DLEVEL=2, and no TRACE
+```
+
+A `defines` entry also replaces a `-DNAME` word for the same name that the
+package writes in `cflags` or `cxxflags`. An older mcpp passes `!NAME` to the
+compiler as `-D!NAME`, which is an error, so a package that uses it needs mcpp
+2026.9.25.1 or later.
+
+`include_dirs` and `include_dirs_after` are searched by this package's own
+units. A package's consumers also receive them, except the entries named in
+`private_include_dirs`. Its dependencies never receive them: a dependency is
+compiled against its own include directories and the ones its own dependencies
+publish, whichever project builds it. A dependency that includes a header must
+reach it through its own `include_dirs` or through one of its dependencies.
+When a dependency's compile reports a missing header that exists in the
+consumer's include directories, mcpp names that directory after the compiler's
+message.
 
 #### `dependency_linkage` — static or shared is the consumer's decision
 

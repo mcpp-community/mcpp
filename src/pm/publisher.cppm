@@ -65,6 +65,26 @@ std::string make_release_tarball(const std::filesystem::path& root,
                                  std::string_view version,
                                  const std::filesystem::path& output);
 
+// A file whose archived content differs from the committed one, or that the
+// commit does not contain. `path` is relative to the package root.
+struct ArchiveOverlay {
+    std::filesystem::path path;
+    std::string           content;
+};
+
+// The same archive with `overlays` applied, built from git objects so that it
+// stays a function of the commit: the overlays are written as blobs into a
+// temporary index read from HEAD, the index becomes a commit whose author,
+// committer and dates are HEAD's, and that commit is archived exactly as
+// `HEAD` is by the overload above. Two runs on one commit produce identical
+// bytes, on every host, with no archiver other than git. With no overlays
+// this is the overload above.
+std::string make_release_tarball(const std::filesystem::path& root,
+                                 std::string_view name,
+                                 std::string_view version,
+                                 const std::filesystem::path& output,
+                                 const std::vector<ArchiveOverlay>& overlays);
+
 // Convenience: build a real ReleaseInfo for v0.0.3-style local publish
 // where all three platforms point at the same source tarball. Caller has
 // already produced the tarball + sha256 by other means.
@@ -395,6 +415,111 @@ std::string make_release_tarball(const std::filesystem::path& root,
         return std::format("git archive exited 0 but no tarball at '{}'",
                            output.string());
     }
+    return {};
+}
+
+std::string make_release_tarball(const std::filesystem::path& root,
+                                 std::string_view name,
+                                 std::string_view version,
+                                 const std::filesystem::path& output,
+                                 const std::vector<ArchiveOverlay>& overlays)
+{
+    if (overlays.empty()) return make_release_tarball(root, name, version, output);
+    namespace proc = mcpp::platform::process;
+    using Env = std::vector<std::pair<std::string, std::string>>;
+    const std::string dir = root.string();
+    auto trim = [](std::string s) {
+        while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+        return s;
+    };
+    auto git_value = [&](std::vector<std::string> args, const Env& env = {})
+        -> std::expected<std::string, std::string> {
+        std::vector<std::string> argv{ "git", "-C", dir };
+        argv.insert(argv.end(), args.begin(), args.end());
+        // Standard output only: a warning on standard error must not become
+        // part of an object name. A failure is rerun below with both streams
+        // so the message can say why.
+        auto r = proc::capture_stdout(argv, env);
+        if (r.exit_code != 0) {
+            r = proc::capture_exec(argv, env);
+            std::string shown;
+            for (auto const& a : args) shown += " " + a;
+            return std::unexpected(std::format("git{} failed (rc={}): {}",
+                                               shown, r.exit_code, trim(r.output)));
+        }
+        return trim(r.output);
+    };
+
+    std::error_code ec;
+    std::filesystem::create_directories(output.parent_path(), ec);
+    auto prefixInRepo = git_value({ "rev-parse", "--show-prefix" });
+    if (!prefixInRepo) return prefixInRepo.error();
+    // HEAD's identity and dates, so that the commit made below is the same
+    // object on every run.
+    auto who = git_value({ "log", "-1", "--date=raw",
+                           "--format=%an%n%ae%n%ad%n%cn%n%ce%n%cd", "HEAD" });
+    if (!who) return who.error();
+    std::vector<std::string> fields;
+    {
+        std::istringstream in(*who);
+        std::string line;
+        while (std::getline(in, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            fields.push_back(line);
+        }
+    }
+    if (fields.size() != 6)
+        return std::format("git log -1 HEAD returned {} fields, expected 6", fields.size());
+
+    const auto scratch = output.parent_path()
+        / std::format(".mcpp-publish-{}", std::hash<std::string>{}(output.string()));
+    std::filesystem::remove_all(scratch, ec);
+    std::filesystem::create_directories(scratch, ec);
+    struct Cleanup {
+        std::filesystem::path p;
+        ~Cleanup() { std::error_code e; std::filesystem::remove_all(p, e); }
+    } cleanup{ scratch };
+    const Env indexEnv{ { "GIT_INDEX_FILE", (scratch / "index").string() } };
+
+    if (auto r = git_value({ "read-tree", "HEAD" }, indexEnv); !r) return r.error();
+    std::size_t n = 0;
+    for (auto const& o : overlays) {
+        auto file = scratch / std::format("blob-{}", n++);
+        {
+            std::ofstream os(file, std::ios::binary);
+            os << o.content;
+            if (!os) return std::format("cannot write '{}'", file.string());
+        }
+        // `--no-filters`: the scratch file lies inside the repository, and a
+        // `.gitattributes` rule for its path must not rewrite the manifest.
+        auto blob = git_value({ "hash-object", "-w", "--no-filters", file.string() });
+        if (!blob) return blob.error();
+        auto entry = *prefixInRepo + o.path.generic_string();
+        if (auto r = git_value({ "update-index", "--add", "--cacheinfo",
+                                 std::format("100644,{},{}", *blob, entry) }, indexEnv); !r)
+            return r.error();
+    }
+    auto tree = git_value({ "write-tree" }, indexEnv);
+    if (!tree) return tree.error();
+    const Env commitEnv{
+        { "GIT_AUTHOR_NAME",     fields[0] }, { "GIT_AUTHOR_EMAIL",    fields[1] },
+        { "GIT_AUTHOR_DATE",     fields[2] }, { "GIT_COMMITTER_NAME",  fields[3] },
+        { "GIT_COMMITTER_EMAIL", fields[4] }, { "GIT_COMMITTER_DATE",  fields[5] },
+    };
+    // `--no-gpg-sign`: a signature carries its own timestamp, and a
+    // `commit.gpgSign = true` configuration would make the object, and so the
+    // archive, differ between runs, or fail where no key is available.
+    auto commit = git_value({ "commit-tree", "--no-gpg-sign", *tree, "-p", "HEAD",
+                              "-m", "mcpp publish: normalized manifest" }, commitEnv);
+    if (!commit) return commit.error();
+    // Run from the package directory: `git archive` then archives that
+    // subtree only, as it does for HEAD in the overload above.
+    auto archived = git_value({ "archive", "--format=tar.gz",
+                                std::format("--prefix={}-{}/", name, version),
+                                "-o", output.string(), *commit });
+    if (!archived) return archived.error();
+    if (!std::filesystem::exists(output))
+        return std::format("git archive exited 0 but no tarball at '{}'", output.string());
     return {};
 }
 

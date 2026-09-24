@@ -87,6 +87,15 @@ public:
     bool                                  has_explicit_table(std::string_view path) const {
         return explicitTables_.contains(path);
     }
+    // The dotted paths written as `[header]` or `[[header]]`. `serialize`
+    // reads this set so that a table written as a header is written back as
+    // one, and a table created by a dotted key or an inline table is not.
+    const std::set<std::string, std::less<>>& explicit_tables() const {
+        return explicitTables_;
+    }
+    std::set<std::string, std::less<>>&       explicit_tables() {
+        return explicitTables_;
+    }
 
 private:
     Table root_;
@@ -98,6 +107,19 @@ std::expected<Document, ParseError> parse_file(const std::filesystem::path& p);
 
 // Serialization helpers (for emitting mcpp.lock and xpkg generation)
 std::string escape_string(std::string_view raw);
+
+// Write a document back as TOML text that `parse` reads into the same tree and
+// the same set of explicit tables.
+//
+// THE EXPLICIT SET IS PART OF THE DOCUMENT'S MEANING, NOT ITS FORMATTING. The
+// manifest reader asks `has_explicit_table` to decide whether a dependency
+// subtable is a namespace (`[dependencies.acme]`) or a dotted selector, so a
+// writer that turned an inline table into a header, or the reverse, would
+// change what a re-read manifest declares. A table is therefore written as a
+// `[header]` exactly when its path is explicit, as `[[header]]` elements when
+// an array's path is explicit, and otherwise inline or through dotted keys.
+// Comments and key order are not preserved: the tree carries neither.
+std::string serialize(const Document& doc);
 
 } // namespace mcpp::libs::toml
 
@@ -590,6 +612,170 @@ std::expected<Document, ParseError> parse_file(const std::filesystem::path& p) {
     std::stringstream ss;
     ss << is.rdbuf();
     return parse(ss.str());
+}
+
+namespace detail {
+
+inline bool is_bare_key(std::string_view k) {
+    if (k.empty()) return false;
+    for (char c : k)
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-'))
+            return false;
+    return true;
+}
+
+inline std::string render_key(std::string_view k) {
+    return is_bare_key(k) ? std::string(k) : escape_string(k);
+}
+
+inline std::string render_value(const Value& v);
+
+inline std::string render_inline_table(const Table& t) {
+    std::string out = "{";
+    bool first = true;
+    for (auto const& [k, v] : t) {
+        out += first ? " " : ", ";
+        first = false;
+        out += render_key(k) + " = " + render_value(v);
+    }
+    out += first ? "}" : " }";
+    return out;
+}
+
+inline std::string render_value(const Value& v) {
+    switch (v.kind()) {
+        case Value::Kind::String: return escape_string(v.as_string());
+        case Value::Kind::Int:    return std::to_string(v.as_int());
+        case Value::Kind::Bool:   return v.as_bool() ? "true" : "false";
+        case Value::Kind::Table:  return render_inline_table(v.as_table());
+        case Value::Kind::Array: {
+            std::string out = "[";
+            bool first = true;
+            for (auto const& e : v.as_array()) {
+                if (!first) out += ", ";
+                first = false;
+                out += render_value(e);
+            }
+            return out + "]";
+        }
+        case Value::Kind::Null:   break;
+    }
+    return "\"\"";
+}
+
+inline std::string child_path(std::string_view parent, std::string_view key) {
+    return parent.empty() ? std::string(key) : std::format("{}.{}", parent, key);
+}
+
+// The dotted path a header line spells, each segment rendered as a key.
+inline std::string render_header(const std::vector<std::string>& segs) {
+    std::string out;
+    for (auto const& s : segs) {
+        if (!out.empty()) out += '.';
+        out += render_key(s);
+    }
+    return out;
+}
+
+// Whether any table below `path` (inclusive) must be written as a header.
+inline bool needs_header(const std::set<std::string, std::less<>>& ex,
+                         const std::string& path, const Value& v) {
+    if (ex.contains(path)) return true;
+    if (!v.is_table()) return false;
+    for (auto const& [k, c] : v.as_table())
+        if (needs_header(ex, child_path(path, k), c)) return true;
+    return false;
+}
+
+struct Writer {
+    const std::set<std::string, std::less<>>& ex;
+    std::string out;
+
+    struct Deferred { std::vector<std::string> segs; const Value* v; bool aot; };
+
+    static std::string dotted(const std::vector<std::string>& segs) {
+        std::string p;
+        for (auto const& s : segs) p = p.empty() ? s : p + "." + s;
+        return p;
+    }
+
+    // Emit the body of the section whose table is `t` at dotted `path`
+    // (segments `segs`): its values, then dotted keys for implicit
+    // containers, then the headers of its explicit descendants.
+    void section(const Table& t, const std::string& path,
+                 const std::vector<std::string>& segs) {
+        std::vector<Deferred> later;
+        body(t, path, segs, {}, later);
+        flush(later);
+    }
+
+    void flush(const std::vector<Deferred>& later) {
+        for (auto const& d : later) {
+            if (d.aot) {
+                for (auto const& e : d.v->as_array()) {
+                    out += std::format("\n[[{}]]\n", render_header(d.segs));
+                    std::vector<Deferred> nested;
+                    body(e.as_table(), dotted(d.segs), d.segs, {}, nested);
+                    flush(nested);
+                }
+            } else {
+                out += std::format("\n[{}]\n", render_header(d.segs));
+                section(d.v->as_table(), dotted(d.segs), d.segs);
+            }
+        }
+    }
+
+    void body(const Table& t, const std::string& path,
+              const std::vector<std::string>& segs,
+              const std::vector<std::string>& dottedPrefix,
+              std::vector<Deferred>& later) {
+        auto prefix = [&](std::string_view k) {
+            std::string p;
+            for (auto const& s : dottedPrefix) p += render_key(s) + ".";
+            return p + render_key(k);
+        };
+        // `package` first at the root: a manifest opens with the package it
+        // declares. Key order carries no meaning in TOML, so this is only
+        // the order a reader expects.
+        std::vector<const std::pair<const std::string, Value>*> order;
+        for (auto const& e : t) order.push_back(&e);
+        if (path.empty())
+            std::ranges::stable_partition(order,
+                [](auto const* e) { return e->first == "package"; });
+        for (auto const* e : order) {
+            auto const& k = e->first;
+            auto const& v = e->second;
+            const auto cp = child_path(path, k);
+            auto childSegs = segs;
+            childSegs.push_back(k);
+            if (v.is_array() && ex.contains(cp)) {
+                later.push_back(Deferred{ childSegs, &v, true });
+                continue;
+            }
+            if (!v.is_table() || !needs_header(ex, cp, v)) {
+                out += prefix(k) + " = " + render_value(v) + "\n";
+                continue;
+            }
+            if (ex.contains(cp)) {
+                later.push_back(Deferred{ childSegs, &v, false });
+                continue;
+            }
+            // An implicit container with an explicit descendant: its own
+            // values are written as dotted keys from this section, which
+            // keeps the container implicit.
+            auto nextPrefix = dottedPrefix;
+            nextPrefix.push_back(k);
+            body(v.as_table(), cp, childSegs, nextPrefix, later);
+        }
+    }
+};
+
+} // namespace detail
+
+std::string serialize(const Document& doc) {
+    detail::Writer w{ doc.explicit_tables(), {} };
+    w.section(doc.root(), "", {});
+    return w.out;
 }
 
 std::string escape_string(std::string_view raw) {

@@ -3998,41 +3998,34 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             }
         }
 
-        // [workspace.build] — the inheritable subset of [build].
+        // [workspace.build] — the inheritable subset of [build], read through
+        // the one table that states it (`kWorkspaceBuildKeys`). The known-key
+        // check and the list in the error message come from the same table,
+        // so a key cannot be parsed by one and refused by the other.
         if (auto* wbuild = doc->get_table("workspace.build")) {
             auto& b = m.workspace.inherited.build;
             m.workspace.inherited.buildPresent = true;
-            if (auto v = doc->get_string_array("workspace.build.cflags"))   b.cflags = *v;
-            if (auto v = doc->get_string_array("workspace.build.cxxflags")) b.cxxflags = *v;
-            if (auto v = doc->get_string_array("workspace.build.ldflags"))  b.ldflags = *v;
-            if (auto v = doc->get_string_array("workspace.build.defines"))  b.defines = *v;
-            if (auto v = doc->get_string_array("workspace.build.dialect_cxxflags"))
-                b.dialectCxxflags = *v;
-            if (auto v = doc->get_string_array("workspace.build.include_dirs"))
-                for (auto& d : *v) b.includeDirs.emplace_back(d);
-            if (auto v = doc->get_string_array("workspace.build.include_dirs_after"))
-                for (auto& d : *v) b.includeDirsAfter.emplace_back(d);
-            if (auto v = doc->get_string_array("workspace.build.private_include_dirs"))
-                for (auto& d : *v) b.privateIncludeDirs.emplace_back(d);
-            if (auto v = doc->get_string("workspace.build.c_standard"))  b.cStandard = *v;
-            if (auto v = doc->get_string("workspace.build.linkage"))      b.linkage = *v;
-            if (auto v = doc->get_string("workspace.build.target"))       b.target = *v;
-            if (auto v = doc->get_string("workspace.build.cxx_runtime"))  b.cxxRuntime = *v;
-            if (auto v = doc->get_string("workspace.build.dependency_linkage"))
-                b.dependencyLinkage = *v;
-            if (auto v = doc->get_string("workspace.build.macos_deployment_target"))
-                b.macosDeploymentTarget = *v;
-            if (auto v = doc->get_string("workspace.build.ios_deployment_target"))
-                b.iosDeploymentTarget = *v;
-            static constexpr std::string_view kKnown[] = {
-                "cflags", "cxxflags", "ldflags", "defines", "dialect_cxxflags",
-                "include_dirs", "include_dirs_after", "private_include_dirs",
-                "c_standard", "linkage", "target", "cxx_runtime",
-                "dependency_linkage", "macos_deployment_target",
+            for (auto const& row : kWorkspaceBuildKeys) {
+                const auto path = std::format("workspace.build.{}", row.key);
+                if (auto const* strings = std::get_if<
+                        std::vector<std::string> BuildConfig::*>(&row.field)) {
+                    if (auto v = doc->get_string_array(path)) b.**strings = *v;
+                } else if (auto const* paths = std::get_if<
+                        std::vector<std::filesystem::path> BuildConfig::*>(&row.field)) {
+                    if (auto v = doc->get_string_array(path))
+                        for (auto& d : *v) (b.**paths).emplace_back(d);
+                } else if (auto const* scalar = std::get_if<
+                        std::string BuildConfig::*>(&row.field)) {
+                    if (auto v = doc->get_string(path)) b.**scalar = *v;
+                }
+            }
+            auto known = [](std::string_view key) {
+                return std::ranges::any_of(kWorkspaceBuildKeys,
+                    [&](const WorkspaceBuildKey& row) { return row.key == key; });
             };
             for (auto& [key, ignored] : *wbuild) {
                 (void)ignored;
-                if (std::ranges::find(kKnown, key) != std::end(kKnown)) continue;
+                if (known(key)) continue;
                 // `allow_host_libs` is named explicitly because refusing it is
                 // a decision and not an omission: it turns a correctness gate
                 // off, and a workspace root that could set it once would
@@ -4046,13 +4039,13 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         "It disables the hermetic-link check for a specific "
                         "artifact, so it belongs in that package's own [build] "
                         "table where the person turning it off owns the result."));
+                std::string supported;
+                for (auto const& row : kWorkspaceBuildKeys)
+                    supported += std::format("{}{}", supported.empty() ? "" : ", ",
+                                             row.key);
                 return std::unexpected(error(origin, std::format(
                     "[workspace.build] has no key '{}' (or it is not "
-                    "inheritable). Supported: cflags, cxxflags, ldflags, "
-                    "defines, dialect_cxxflags, include_dirs, "
-                    "include_dirs_after, private_include_dirs, c_standard, "
-                    "linkage, target, cxx_runtime, dependency_linkage, "
-                    "macos_deployment_target.", key)));
+                    "inheritable). Supported: {}.", key, supported)));
             }
         }
 

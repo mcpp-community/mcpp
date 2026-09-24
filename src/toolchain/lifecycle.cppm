@@ -15,6 +15,7 @@ import mcpp.fetcher.progress;
 import mcpp.manifest;
 import mcpp.platform;
 import mcpp.platform.axis;
+import mcpp.project;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
@@ -413,7 +414,11 @@ EffectiveDefault effective_default_toolchain(const mcpp::config::GlobalConfig& c
     std::error_code ec;
     auto mpath = std::filesystem::current_path(ec) / "mcpp.toml";
     if (!ec && std::filesystem::exists(mpath, ec)) {
-        if (auto m = mcpp::manifest::load(mpath)) {
+        // The effective manifest (#690): a workspace member without its own
+        // `[toolchain]` builds with the workspace's, and the listing must name
+        // the toolchain the build resolves rather than the global default.
+        if (auto e = mcpp::project::load_effective_manifest(mpath.parent_path())) {
+            auto const* m = &e->manifest;
             if (auto t = m->toolchain.for_platform(mcpp::platform::name);
                 t && !t->empty())
                 return { *t, true };

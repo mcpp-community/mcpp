@@ -95,7 +95,11 @@ export int index_list() {
     // Show project-level custom indices from mcpp.toml [indices].
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (root) {
-        auto m = mcpp::manifest::load(*root / "mcpp.toml");
+        // The effective manifest: a member inherits the workspace's
+        // `[indices]` (#690, W4).
+        std::optional<mcpp::manifest::Manifest> m;
+        if (auto effective = mcpp::project::load_effective_manifest(*root))
+            m = std::move(effective->manifest);
         if (m && !m->indices.empty()) {
             std::println("");
             std::println("Project indices (mcpp.toml):");
@@ -171,7 +175,11 @@ export int index_update(const std::string& filterName) {
     // Also update project-level custom indices if present.
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (root) {
-        auto m = mcpp::manifest::load(*root / "mcpp.toml");
+        // The effective manifest: a member inherits the workspace's
+        // `[indices]` (#690, W4).
+        std::optional<mcpp::manifest::Manifest> m;
+        if (auto effective = mcpp::project::load_effective_manifest(*root))
+            m = std::move(effective->manifest);
         if (m && !m->indices.empty()) {
             // filterName: optional single-index filter (parameter).
             for (auto& [idxName, spec] : m->indices) {

@@ -180,48 +180,46 @@ TEST(NinjaBackend, CompileCommandsUsesSameCppStandard) {
         << cdb;
 }
 
-TEST(NinjaBackend, CxxFlagsIncludeBuildIncludeDirs) {
-    auto plan = minimal_plan();
-    plan.manifest.buildConfig.includeDirs = {"include", "third_party/imgui"};
-
-    auto flags = compute_flags(plan);
-
-    EXPECT_NE(flags.cxx.find(escaped_include_flag(plan.projectRoot / "include")),
-              std::string::npos)
-        << flags.cxx;
-    // #390: a multi-segment entry is normalized to NATIVE separators before
-    // the -I token is built (a mixed `...\third_party/imgui` used to reach
-    // the CDB through f.cxx). Build the expected path natively too.
-    auto imgui = plan.projectRoot / "third_party" / "imgui";
-    EXPECT_NE(flags.cxx.find(escaped_include_flag(imgui)),
-              std::string::npos)
-        << flags.cxx;
-}
-
-// #390: the NASM include list is built from the SAME `[build] include_dirs`
-// key as the C/C++ one, so it must absolutize and spell entries identically —
-// it used to re-derive the join on its own (and with a different "already
-// rooted?" predicate). Nothing here is nasm-specific except the channel: the
-// point is that one manifest key cannot produce two different paths.
-TEST(NinjaBackend, NasmIncludeDirsMatchTheCxxChannelSpelling) {
+// #690 (design record F7): the root's `[build] include_dirs` and
+// `include_dirs_after` are its PRIVATE build requirement. They reach the root's
+// units through their per-unit `$local_includes` and must not appear in the
+// FILE-LEVEL flag strings, which every unit in the graph reads (every
+// dependency's units and the std module included). Before the fix both keys
+// were appended to all four strings, so a root header named like a system or
+// dependency header shadowed it inside the dependency, and a dependency cache
+// entry could be compiled against another project's root headers.
+TEST(NinjaBackend, FileLevelFlagsCarryNoRootIncludeDirectory) {
     auto plan = minimal_plan();
     plan.nasmPath = "/usr/bin/nasm";
-    plan.manifest.buildConfig.includeDirs      = {"third_party/imgui"};
+    plan.manifest.buildConfig.includeDirs      = {"include", "third_party/imgui"};
     plan.manifest.buildConfig.includeDirsAfter = {"generated/inc"};
 
     auto flags = compute_flags(plan);
 
-    auto native = [](std::filesystem::path p) { p.make_preferred(); return p; };
-    auto imgui = native(plan.projectRoot / "third_party" / "imgui");
-    auto gen   = native(plan.projectRoot / "generated" / "inc");
+    for (auto const* channel : {&flags.cxx, &flags.cc, &flags.as, &flags.nasm}) {
+        for (auto const* dir : {"include", "imgui", "generated"}) {
+            EXPECT_EQ(channel->find(dir), std::string::npos)
+                << "root include directory '" << dir
+                << "' reached a file-level flag string: " << *channel;
+        }
+    }
+}
 
-    // Absolutized against projectRoot, natively spelt, and -I for BOTH keys
-    // (nasm has no system-header chain to defer to, so after-dirs degrade).
-    EXPECT_NE(flags.nasm.find(escaped_include_flag(imgui)), std::string::npos)
-        << flags.nasm;
-    EXPECT_NE(flags.nasm.find(escaped_include_flag(gen)), std::string::npos)
-        << flags.nasm;
-    EXPECT_EQ(flags.nasm.find("-idirafter"), std::string::npos) << flags.nasm;
+// What the file-level channel used to guarantee now holds on the per-unit
+// one: a relative `[build] include_dirs` entry is absolutised against the
+// project root and natively spelt before it becomes a unit's include
+// directory (#390; the Cluster A review fix of #226/#234, whose failure shape
+// was a relative `/Iinclude` under the MSVC dialect that stopped resolving
+// once ninja ran from the output directory).
+TEST(NinjaBackend, RootIncludeEntriesAreAbsolutisedForTheUnitChannel) {
+    auto plan = minimal_plan();
+    auto dirs = mcpp::build::expand_manifest_include_entry(
+        plan.projectRoot, "third_party/imgui");
+    ASSERT_EQ(dirs.size(), 1u);
+    auto expected = plan.projectRoot / "third_party" / "imgui";
+    expected.make_preferred();
+    EXPECT_EQ(dirs.front(), expected);
+    EXPECT_TRUE(dirs.front().has_root_path()) << dirs.front();
 }
 
 // #249: a compile unit's localIncludeDirsAfter emit as -idirafter into the
@@ -395,41 +393,6 @@ TEST(NinjaBackend, NasmUnitEmitsIncludeDirsAfterAsPlainDashI) {
     EXPECT_NE(line.find("-I/dep/x86"), std::string::npos) << line;
     EXPECT_NE(line.find("-I/dep/tarball-root"), std::string::npos) << line;
     EXPECT_EQ(line.find("-idirafter"), std::string::npos) << line;
-}
-
-// Cluster A review fix (#226/#234 follow-up): `[build] include_dirs` is a
-// TYPED PATH channel — bare paths from the manifest, dialect prefix applied
-// at emission (-I under GNU, /I under MSVC) — not the FLAG-STRING channel
-// that normalize_include_flags serves (cflags/cxxflags, where the prefix is
-// already embedded in the string by the scanner). Routing dialect-prefixed
-// include tokens through normalize_include_flags (whose prefix table only
-// knows GNU spellings: -I/-iquote/-isystem/-idirafter/-iprefix/-L) silently
-// no-ops under MSVC: "/Iinclude" matches no table entry and is never
-// rewritten against plan.projectRoot, so it survives as a *relative* path —
-// but ninja runs with cwd = the output dir, so the include stops resolving.
-// The fix absolutizes the path directly (dialect-agnostic) before
-// prepending the dialect prefix. This test would FAIL before the fix
-// (emitting the literal, unrewritten "/Iinclude") and passes after.
-TEST(NinjaBackend, MsvcIncludeDirsAreAbsolutizedNotGnuNormalized) {
-    // The MSVC-dialect logic under test is host-independent; run it on POSIX
-    // where the test's temp projectRoot has no drive letter. On Windows the
-    // runner's `C:\...` temp path gets its `:` ninja-escaped (`C$:`), which
-    // would need escape-aware matching unrelated to what this test verifies.
-    if constexpr (mcpp::platform::is_windows)
-        GTEST_SKIP() << "MSVC-dialect path check runs on POSIX (avoids Windows drive-colon ninja escaping)";
-
-    auto plan = minimal_plan();
-    plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
-    plan.toolchain.binaryPath = "cl.exe";
-    plan.toolchain.targetTriple = "x86_64-pc-windows-msvc";
-    plan.manifest.buildConfig.includeDirs = {"include"};
-
-    auto flags = compute_flags(plan);
-
-    auto expected = "/I" + (plan.projectRoot / "include").string();
-    EXPECT_NE(flags.cxx.find(expected), std::string::npos) << flags.cxx;
-    // The un-rewritten, still-relative token must never appear.
-    EXPECT_EQ(flags.cxx.find("/Iinclude"), std::string::npos) << flags.cxx;
 }
 
 // ── assembly sources (.S/.s → asm_object via $cc, .asm → nasm_object) ────────
@@ -1687,6 +1650,71 @@ TEST(GraphCLibraryIsolationAdvice, DegradesWithoutNamingAnyPackage) {
     auto advice = mcpp::build::graph_c_library_isolation_advice(out);
     EXPECT_FALSE(advice.empty());
     EXPECT_NE(advice.find("this target's C library"), std::string::npos);
+}
+
+// ── consumer_include_scope_advice (#690, design record F7) ──────────────────
+//
+// A dependency that compiled only because its consumer's include directories
+// used to be broadcast to it now fails with an ordinary missing header. The
+// note fires on the compiler's report AND a file of that name in one of the
+// root's include directories; either alone is not this shape.
+
+namespace {
+std::filesystem::path consumer_include_fixture() {
+    auto root = std::filesystem::temp_directory_path()
+              / std::format("mcpp-consumer-include-{}",
+                   std::chrono::steady_clock::now().time_since_epoch().count());
+    std::filesystem::create_directories(root / "appinc" / "cfg");
+    std::ofstream(root / "appinc" / "cfg7.h") << "#define WHO 1\n";
+    std::ofstream(root / "appinc" / "cfg" / "nested.h") << "#define N 1\n";
+    return root;
+}
+}  // namespace
+
+TEST(ConsumerIncludeScopeAdvice, NamesTheConsumerDirectoryForEachDriverSpelling) {
+    const auto root = consumer_include_fixture();
+    const std::vector<std::filesystem::path> dirs{root / "absent", root / "appinc"};
+    const std::string gcc =
+        "FAILED: obj/dep/src/dep.c.o\n"
+        "../dep/src/dep.c:1:10: fatal error: cfg7.h: No such file or directory\n";
+    const std::string clang =
+        "../dep/src/dep.cpp:1:10: fatal error: 'cfg/nested.h' file not found\n";
+    const std::string cl =
+        "dep.cpp(1): fatal error C1083: Cannot open include file: 'cfg7.h': "
+        "No such file or directory\n";
+    for (auto const& out : {gcc, clang, cl}) {
+        auto advice = mcpp::build::consumer_include_scope_advice(out, dirs);
+        ASSERT_FALSE(advice.empty()) << out;
+        EXPECT_NE(advice.find((root / "appinc").string()), std::string::npos) << advice;
+        EXPECT_NE(advice.find("no longer"), std::string::npos) << advice;
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(ConsumerIncludeScopeAdvice, SilentWhenTheHeaderIsNotTheConsumersOrNoHeaderIsMissing) {
+    const auto root = consumer_include_fixture();
+    const std::vector<std::filesystem::path> dirs{root / "appinc"};
+    // A missing header the consumer does not have either: an ordinary error.
+    EXPECT_TRUE(mcpp::build::consumer_include_scope_advice(
+        "dep.c:1:10: fatal error: other.h: No such file or directory\n", dirs).empty());
+    // A failure that is not a missing header, although cfg7.h is the consumer's.
+    EXPECT_TRUE(mcpp::build::consumer_include_scope_advice(
+        "dep.c:3:1: error: unknown type name 'cfg7'\n", dirs).empty());
+    // No root include directories at all (the fast path before any plan wrote
+    // the sidecar).
+    EXPECT_TRUE(mcpp::build::consumer_include_scope_advice(
+        "dep.c:1:10: fatal error: cfg7.h: No such file or directory\n", {}).empty());
+    std::filesystem::remove_all(root);
+}
+
+TEST(ConsumerIncludeScopeAdvice, SidecarRoundTrips) {
+    const auto root = consumer_include_fixture();
+    const std::vector<std::filesystem::path> dirs{root / "appinc", root / "with space"};
+    mcpp::build::write_consumer_include_sidecar(root, dirs);
+    EXPECT_EQ(mcpp::build::read_consumer_include_sidecar(root), dirs);
+    mcpp::build::write_consumer_include_sidecar(root, {});
+    EXPECT_TRUE(mcpp::build::read_consumer_include_sidecar(root).empty());
+    std::filesystem::remove_all(root);
 }
 
 TEST(GraphCLibraryIsolationAdvice, DoesNotRewriteTheCompilersOwnLine) {

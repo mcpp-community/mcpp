@@ -402,6 +402,9 @@ void replace_dependencies(
 export void merge_conditional_config(mcpp::manifest::Manifest& m,
                                     const cfgpred::Ctx& ctx)
 {
+    // Recorded before the first merge; see Manifest::beforeConditionalMerge.
+    if (!m.beforeConditionalMerge)
+        m.beforeConditionalMerge = std::make_shared<const mcpp::manifest::Manifest>(m);
     // A DISTRIBUTION package may carry a leg's link line twice: as `ldflags`
     // (GNU spelling, which is all an older mcpp reads) and as the neutral
     // `[target.<pred>.runtime]` pair, which mcpp renders per dialect. Applying
@@ -638,29 +641,148 @@ void report_flag_words_changes(const mcpp::manifest::Manifest& m) {
     }
 }
 
+// The macro name a `defines` entry or a `-D` word defines: the text before
+// the first `=`, or the whole text when there is no value.
+std::string_view define_name(std::string_view entry) {
+    return entry.substr(0, entry.find('='));
+}
+
 // Desugar `[build].defines` into `-D<x>` on both C and C++ flag channels.
 //
-// ORDER (both halves are load-bearing): this must run AFTER
-// merge_conditional_config — `defines` is a BuildInputs member, so a
-// matching `[target.'cfg(...)'.build] defines` has been appended by then and
-// folds in the same pass, landing after the unconditional entries so GNU
-// last-wins gives the conditional rule precedence — and BEFORE the manifest is
+// ORDER (both halves are load-bearing): this must run AFTER every merge that
+// contributes `defines` (workspace inheritance, then the package's own table,
+// then a matching `[target.'cfg(...)'.build]`), and BEFORE the manifest is
 // snapshotted into packages[] / fingerprinted, because that snapshot (not the
 // manifest) is what the P1689 scan, the compile edges and compute_fingerprint
-// actually read.
+// actually read. `makePackageRoot` refuses a manifest whose `defines` are
+// still unfolded.
+//
+// `defines` IS A SET KEYED BY MACRO NAME (SPEC-004 §8). A later entry for a
+// name replaces the earlier one in place, so a member that restates an
+// inherited `NAME=value` produces one `-DNAME=value` word instead of two
+// words and a redefinition diagnostic; an entry `!NAME` removes the name.
+// A list is not enough for this, because the compiler resolves a repeated
+// `-D` by warning (an error under `-Werror`) and a `-U` written in `cxxflags`
+// precedes every folded `-D` and so cannot remove one.
+//
+// The key covers every `-D<NAME>` word already in the flag lists as well:
+// those written in `cflags`/`cxxflags` of the same tables, and those folded
+// by an earlier call (the layer-conditional pass calls this again with only
+// its own entries). A name this call defines or removes supersedes them, so
+// the package's compile lines carry at most one definition per name.
 //
 // Idempotent: clearing the vector after folding makes repeated calls harmless.
 // Both `cflags` and `cxxflags` get the macro; assembly units pick it up for
 // free via the -D/-U/-I subset the ninja backend filters out of packageCflags.
 // A define is a value, so it enters the flag list as one word
 // (`flag_element`): `N="x"` reaches the compiler as `-DN="x"` on every host.
-void fold_build_defines_into_flags(mcpp::manifest::BuildConfig& bc) {
+export void fold_build_defines_into_flags(mcpp::manifest::BuildConfig& bc) {
+    if (bc.defines.empty()) return;
+
+    std::vector<std::string> resolved;          // entries, first-seen order
+    std::vector<std::string> named;             // every name this call touches
+    auto touch = [&](std::string_view name) {
+        if (std::ranges::find(named, name) == named.end())
+            named.emplace_back(name);
+    };
     for (auto const& d : bc.defines) {
+        if (d.starts_with('!')) {
+            const auto name = std::string_view(d).substr(1);
+            std::erase_if(resolved, [&](const std::string& e) {
+                return define_name(e) == name;
+            });
+            touch(name);
+            continue;
+        }
+        const auto name = define_name(d);
+        touch(name);
+        auto it = std::ranges::find_if(resolved, [&](const std::string& e) {
+            return define_name(e) == name;
+        });
+        if (it != resolved.end()) *it = d;
+        else resolved.push_back(d);
+    }
+
+    auto superseded = [&](const std::string& element) {
+        auto words = mcpp::manifest::flag_words(element);
+        if (words.size() != 1 || !words.front().starts_with("-D")) return false;
+        const auto name = define_name(std::string_view(words.front()).substr(2));
+        return std::ranges::find(named, name) != named.end();
+    };
+    std::erase_if(bc.cflags, superseded);
+    std::erase_if(bc.cxxflags, superseded);
+
+    for (auto const& d : resolved) {
         const auto element = mcpp::manifest::flag_element("-D" + d);
         bc.cflags.push_back(element);
         bc.cxxflags.push_back(element);
     }
     bc.defines.clear();
+}
+
+// The post-condition of the normalisation pipeline, as the snapshot checks it:
+// every `defines` entry has been folded into the flag lists. A non-empty list
+// here means a merge ran after the fold, and the entries would otherwise be
+// dropped without a diagnostic (#690). Returns the internal-error text, or
+// nothing when the manifest may be captured.
+export std::optional<std::string>
+unfolded_defines_error(const mcpp::manifest::Manifest& m) {
+    auto const& d = m.buildConfig.defines;
+    if (d.empty()) return std::nullopt;
+    return std::format(
+        "internal error: [build].defines of package '{}' reached the build "
+        "graph unfolded ({} entr{}, first '{}'); a merge ran after "
+        "fold_build_defines_into_flags (please report)",
+        m.package.name.empty() ? std::string("(root)") : m.package.name,
+        d.size(), d.size() == 1 ? "y" : "ies", d.front());
+}
+
+// WHAT A MEMBER RECEIVES FROM ITS WORKSPACE WHEN IT IS REACHED AS A DEPENDENCY.
+//
+// Three parts of the inheritance matter to a dependency: `[workspace.package]`
+// (a member may omit `version`), `x.workspace = true` dependency entries
+// (without the merge the entry reaches resolution with neither version nor
+// path), and `[workspace.build]`. They are applied at the dependency's LOAD
+// site, before the conditional merge and the `defines` fold, which is the
+// order the root follows; `makePackageRoot` only captures the result (#690).
+// `[toolchain]`, `[target.<triple>]` and `[indices]` are decided by the root
+// for the whole graph and are not applied to a dependency.
+//
+// One function for every way a member is reached: a sibling `path`
+// dependency, a member of a git-hosted workspace, and a member inside an
+// index package's archive. The same commit then compiles the same way in its
+// own checkout and in every consumer's graph.
+std::optional<std::string>
+inherit_as_workspace_member(mcpp::manifest::Manifest& member,
+                            const mcpp::manifest::Manifest& workspace,
+                            const std::filesystem::path& workspaceRoot,
+                            const std::filesystem::path& memberDir) {
+    mcpp::project::inherit_workspace_package(member, workspace);
+    mcpp::project::merge_workspace_deps(member, workspace, workspaceRoot);
+    mcpp::project::inherit_workspace_build(member, workspace, workspaceRoot);
+    return mcpp::project::workspace_inheritance_error(member, memberDir);
+}
+
+// The workspace whose `members` list `memberDir`, searched upward from its
+// parent and never above `bound` (an index package's install root: the
+// archive is the only tree the package's author wrote).
+std::optional<std::pair<mcpp::manifest::Manifest, std::filesystem::path>>
+workspace_listing(const std::filesystem::path& memberDir,
+                  const std::filesystem::path& bound) {
+    auto inside = [&](const std::filesystem::path& p) {
+        auto rel = p.lexically_normal().lexically_relative(bound.lexically_normal());
+        return !rel.empty() && *rel.begin() != "..";
+    };
+    for (auto p = memberDir.parent_path(); inside(p); p = p.parent_path()) {
+        if (std::filesystem::exists(p / "mcpp.toml")) {
+            if (auto ws = mcpp::manifest::load(p / "mcpp.toml");
+                ws && ws->workspace.present
+                && mcpp::project::is_workspace_member(*ws, p, memberDir))
+                return std::pair{std::move(*ws), p};
+        }
+        if (p == p.parent_path()) break;
+    }
+    return std::nullopt;
 }
 
 // ── The SECOND conditional pass: predicates that name a target-side layer ────
@@ -2246,22 +2368,30 @@ prepare_build(bool print_fingerprint,
     // two: re-deriving could produce a DIFFERENT manifest than the one the
     // parent resolved against (the L1 cfg merge and feature-activated deps
     // have already been folded in by then).
-    auto m = overrides.preloaded_manifest
-        ? std::expected<mcpp::manifest::Manifest, mcpp::manifest::ManifestError>(
-              *overrides.preloaded_manifest)
-        : mcpp::manifest::load(*root / "mcpp.toml");
-    // A COMMAND ISSUED INSIDE A MEMBER DIRECTORY loads that member's manifest
-    // here, before anything knows a workspace is above it — so a member relying
-    // on `[workspace.package]` for a required field would be refused by the
-    // parser before inheritance could supply it. Retried, not reordered: the
-    // workspace lookup walks the tree reading manifests, and paying that on
-    // every build to serve the error path would be the wrong trade. The
-    // requirement still holds; it is enforced after inheritance, where "still
-    // missing" is knowable.
-    if (!m && !overrides.preloaded_manifest
-           && !mcpp::project::find_workspace_root(*root).empty())
-        m = mcpp::manifest::load(*root / "mcpp.toml", {.insideWorkspace = true});
-    if (!m) return std::unexpected(m.error().format());
+    // THE EFFECTIVE MANIFEST, FROM THE ONE LOADER EVERY COMMAND USES.
+    //
+    // A command issued inside a member directory receives the member's
+    // manifest after workspace inheritance, exactly as `publish`, `pack`,
+    // `emit xpkg` and `toolchain list` do (#690, W4). A command at the
+    // workspace root receives the root manifest as written; the `-p <member>`
+    // switch below loads and inherits the member it names.
+    //
+    // A PRELOADED manifest (a host-tool sub-build) is already effective: the
+    // resolver loaded it at the dependency's load site, where a member
+    // inherits (see `inherit_as_workspace_member`). It is not inherited a second time; the
+    // workspace it belongs to is still recorded below, so that its own sibling
+    // dependencies inherit as members.
+    std::optional<mcpp::project::EffectiveManifest> effective;
+    std::expected<mcpp::manifest::Manifest, std::string> m =
+        std::unexpected(std::string{});
+    if (overrides.preloaded_manifest) {
+        m = *overrides.preloaded_manifest;
+    } else {
+        auto loaded = mcpp::project::load_effective_manifest(*root);
+        if (!loaded) return std::unexpected(loaded.error());
+        m = loaded->manifest;
+        effective = std::move(*loaded);
+    }
 
     // AND ONLY FOR THE ROOT. A layer name this engine does not know is a
     // typo in the manifest the author is looking at, and a version gap in a
@@ -2353,10 +2483,12 @@ prepare_build(bool print_fingerprint,
             }
             runtimeWorkspaceRoot = *root;
             wsManifest = std::move(*m);  // preserve workspace manifest
-            m = mcpp::manifest::load(memberDir / "mcpp.toml",
-                                     {.insideWorkspace = true});
-            if (!m) return std::unexpected(std::format(
-                "workspace member '{}': {}", targetMember, m.error().format()));
+            auto memberManifest = mcpp::manifest::load(memberDir / "mcpp.toml",
+                                                       {.insideWorkspace = true});
+            if (!memberManifest) return std::unexpected(std::format(
+                "workspace member '{}': {}", targetMember,
+                memberManifest.error().format()));
+            m = std::move(*memberManifest);
 
             // ONE call, not a hand-copied list. `*root` is still the WORKSPACE
             // root here (the `root = memberDir` reassignment below has not
@@ -2370,20 +2502,21 @@ prepare_build(bool print_fingerprint,
             root = memberDir;
         }
     } else {
-        // Not at workspace root — check if we're inside a workspace
-        auto wsRoot = mcpp::project::find_workspace_root(*root);
-        if (!wsRoot.empty()) {
-            auto wsm = mcpp::manifest::load(wsRoot / "mcpp.toml");
-            if (wsm && wsm->workspace.present) {
-                runtimeWorkspaceRoot = wsRoot;
-                wsManifest = std::move(*wsm);
-                // The SECOND inheritance site, and it calls the same function
-                // as the first for that reason. #224: relative `path` and
-                // `[indices].path` anchor to the workspace root, not to this
-                // member's own directory.
-                mcpp::project::inherit_workspace_config(*m, *wsManifest, wsRoot);
-                if (auto bad = mcpp::project::workspace_inheritance_error(*m, *root))
-                    return std::unexpected(*bad);
+        // Not at workspace root: inside a member, the loader above has
+        // already inherited (#224 anchoring included). Only the workspace is
+        // recorded here, for the membership test of this member's own `path`
+        // dependencies.
+        if (effective && effective->member) {
+            runtimeWorkspaceRoot = effective->workspaceRoot;
+            wsManifest = std::move(*effective->workspace);
+        } else if (overrides.preloaded_manifest) {
+            auto wsRoot = mcpp::project::find_workspace_root(*root);
+            if (!wsRoot.empty()) {
+                if (auto wsm = mcpp::manifest::load(wsRoot / "mcpp.toml");
+                    wsm && wsm->workspace.present) {
+                    runtimeWorkspaceRoot = wsRoot;
+                    wsManifest = std::move(*wsm);
+                }
             }
         }
     }
@@ -6117,10 +6250,22 @@ prepare_build(bool print_fingerprint,
         auto loadFrom = [&](const std::filesystem::path& mcppToml)
             -> std::expected<void, std::string>
         {
-            auto dm = mcpp::manifest::load(mcppToml);
+            // A manifest that is a member of a workspace inside the archive
+            // receives that workspace's inheritance, as it does from a git
+            // clone of the same commit (#690).
+            auto repoWorkspace = workspace_listing(mcppToml.parent_path(), verRoot);
+            auto dm = mcpp::manifest::load(
+                mcppToml, {.insideWorkspace = repoWorkspace.has_value()});
             if (!dm) return std::unexpected(std::format(
                 "dependency '{}' (at '{}'): {}",
                 depName, mcppToml.string(), dm.error().format()));
+            if (repoWorkspace) {
+                if (auto bad = inherit_as_workspace_member(
+                        *dm, repoWorkspace->first, repoWorkspace->second,
+                        mcppToml.parent_path()))
+                    return std::unexpected(std::format(
+                        "dependency '{}': {}", depName, *bad));
+            }
             manifest = std::move(*dm);
             effRoot  = mcppToml.parent_path();
             return {};
@@ -6678,37 +6823,29 @@ prepare_build(bool print_fingerprint,
 
     auto makePackageRoot =
         [&](const std::filesystem::path& packageRoot,
-            const mcpp::manifest::Manifest& manifestIn)
+            const mcpp::manifest::Manifest& manifest)
+        -> std::expected<mcpp::modgraph::PackageRoot, std::string>
     {
-        // `[workspace.build]` APPLIES TO EVERY MEMBER, INCLUDING ONE REACHED AS
-        // ANOTHER MEMBER'S `path` DEPENDENCY — WHICH IS THE ORDINARY SHAPE.
+        // THE SNAPSHOT READS A NORMALISED MANIFEST; IT DOES NOT NORMALISE ONE.
         //
-        // Inheritance runs where the command's own manifest is loaded, so
-        // `mcpp build -p appb` gave `appb` the workspace flags and gave `liba`
-        // none, even though `liba` is a member of the same workspace and is
-        // being compiled by the same command. Measured before this: `-DWS_FLAG`
-        // on the consumer's TUs and not on the sibling's.
+        // Every merge that feeds a package's build inputs (workspace
+        // inheritance, the conditional `[target.<sel>.build]` sections) runs
+        // at the package's LOAD site, and `fold_build_defines_into_flags` runs
+        // after all of them. This lambda only captures the result.
         //
-        // `[workspace.package] standard` did not have the problem, because the
-        // standard is imposed graph-wide from the root for BMI-compatibility
-        // reasons — which is exactly why the gap was invisible until a
-        // `[build]` flag was inheritable too.
+        // `[workspace.build]` inheritance used to run here (#539). The root
+        // had already inherited at load time, so it received the workspace
+        // entries twice; a member reached as a sibling's `path` dependency
+        // inherited after its `defines` had been folded, so the workspace
+        // `defines` never reached its compile lines (#690). Both follow from
+        // performing a merge at the snapshot, and both are removed by
+        // performing it at the load site, where the root already did.
         //
-        // Applied HERE because this is the one funnel both dependency-assembly
-        // sites go through, and because the include directories a few lines
-        // below are captured from the manifest at this moment: a later mutation
-        // would reach the flags and silently not the include dirs.
-        //
-        // Only for MEMBERS. An index or git dependency is not part of the
-        // workspace and must not acquire its flags.
-        mcpp::manifest::Manifest manifest = manifestIn;
-        if (wsManifest && !runtimeWorkspaceRoot.empty()
-            && mcpp::project::is_workspace_member(*wsManifest,
-                                                  runtimeWorkspaceRoot,
-                                                  packageRoot)) {
-            mcpp::project::inherit_workspace_build(manifest, *wsManifest,
-                                                   runtimeWorkspaceRoot);
-        }
+        // The post-condition below is what keeps it removed: a merge placed
+        // after the fold leaves `defines` non-empty here, and the build stops
+        // with an internal error instead of dropping the macros in silence.
+        if (auto unfolded = unfolded_defines_error(manifest))
+            return std::unexpected(*unfolded);
 
         mcpp::modgraph::PackageRoot pkg;
         pkg.root = packageRoot;
@@ -6771,7 +6908,11 @@ prepare_build(bool print_fingerprint,
         return pkg;
     };
 
-    packages[0] = makePackageRoot(*root, *m);
+    {
+        auto rootPackage = makePackageRoot(*root, *m);
+        if (!rootPackage) return std::unexpected(rootPackage.error());
+        packages[0] = std::move(*rootPackage);
+    }
 
     auto recordDependencyEdge =
         [&](std::size_t consumerDepIndex,
@@ -7783,7 +7924,9 @@ prepare_build(bool print_fingerprint,
                         .sourceKind  = "version",
                     });
                     const auto depPackageIndex = packages.size();
-                    packages.push_back(makePackageRoot(secStage, *dep_manifests.back()));
+                    auto secPackage = makePackageRoot(secStage, *dep_manifests.back());
+                    if (!secPackage) return std::unexpected(secPackage.error());
+                    packages.push_back(std::move(*secPackage));
                     recordDependencyEdge(item.consumerDepIndex, depPackageIndex,
                                          spec, item.buildOnly, name);
                     auto linkFlagsAdded = propagateLinkFlags(secStage, *dep_manifests.back());
@@ -7882,8 +8025,10 @@ prepare_build(bool print_fingerprint,
                 // in dep_manifests; packages = [main, dep_0, dep_1, …], so
                 // packages[depIndex+1] is the same dep.
                 *dep_manifests[it->second.depIndex] = std::move(newManifest);
-                packages[it->second.depIndex + 1] =
+                auto mergedPackage =
                     makePackageRoot(newRoot, *dep_manifests[it->second.depIndex]);
+                if (!mergedPackage) return std::unexpected(mergedPackage.error());
+                packages[it->second.depIndex + 1] = std::move(*mergedPackage);
                 recordDependencyEdge(item.consumerDepIndex,
                                      it->second.depIndex + 1,
                                      spec, item.buildOnly, name);
@@ -8197,24 +8342,20 @@ prepare_build(bool print_fingerprint,
                     name, dep_root.string(), dm.error().format()));
             }
             dep_manifest = std::move(*dm);
-            // The metadata half of the inheritance. The `[build]` half runs in
-            // `makePackageRoot`, where the include directories are captured;
-            // splitting them is what keeps each one at the point its consumer
-            // reads it.
+            // A member reached as a dependency inherits here, at its load
+            // site; see `inherit_as_workspace_member`. A member of a
+            // git-hosted workspace inherits from ITS repository, anchored at
+            // the clone.
+            auto inheritAsMember = [&](const mcpp::manifest::Manifest& ws,
+                                       const std::filesystem::path& wsRoot) {
+                return inherit_as_workspace_member(*dep_manifest, ws, wsRoot, dep_root);
+            };
             if (depIsMember) {
-                mcpp::project::inherit_workspace_package(
-                    *dep_manifest, *wsManifest);
-                if (auto bad = mcpp::project::workspace_inheritance_error(
-                        *dep_manifest, dep_root))
+                if (auto bad = inheritAsMember(*wsManifest, runtimeWorkspaceRoot))
                     return std::unexpected(*bad);
             } else if (!gitMember.empty()) {
-                // A repository member inherits its repository's
-                // `[workspace.package]`, as it does when the repository is
-                // built from its own checkout.
                 if (auto rm = mcpp::manifest::load(gitMemberCloneRoot / "mcpp.toml")) {
-                    mcpp::project::inherit_workspace_package(*dep_manifest, *rm);
-                    if (auto bad = mcpp::project::workspace_inheritance_error(
-                            *dep_manifest, dep_root))
+                    if (auto bad = inheritAsMember(*rm, gitMemberCloneRoot))
                         return std::unexpected(*bad);
                 }
             }
@@ -8358,7 +8499,9 @@ prepare_build(bool print_fingerprint,
                          : std::string{},
         });
         const auto depPackageIndex = packages.size();
-        packages.push_back(makePackageRoot(dep_root, *dep_manifests.back()));
+        auto depPackage = makePackageRoot(dep_root, *dep_manifests.back());
+        if (!depPackage) return std::unexpected(depPackage.error());
+        packages.push_back(std::move(*depPackage));
         recordDependencyEdge(item.consumerDepIndex, depPackageIndex, spec,
                              item.buildOnly, name);
 
@@ -10234,11 +10377,18 @@ prepare_build(bool print_fingerprint,
                     // twice. A `compat` (Form B) package has no mcpp.toml on
                     // disk at all, so without this the sub-build could not read
                     // a manifest for it in the first place.
+                    //
+                    // UNMERGED, because the sub-build targets the HOST: the
+                    // resolver merged this manifest's conditional sections for
+                    // the consumer's target, and the sub-build merges them for
+                    // its own (#690, F12).
                     if (depIdx >= 1 && depIdx - 1 < dep_manifests.size()
-                        && dep_manifests[depIdx - 1])
-                        sub.preloaded_manifest =
-                            std::make_shared<const mcpp::manifest::Manifest>(
-                                *dep_manifests[depIdx - 1]);
+                        && dep_manifests[depIdx - 1]) {
+                        auto const& dep = *dep_manifests[depIdx - 1];
+                        sub.preloaded_manifest = dep.beforeConditionalMerge
+                            ? dep.beforeConditionalMerge
+                            : std::make_shared<const mcpp::manifest::Manifest>(dep);
+                    }
                     sub.inherited_runtime_selection = std::make_shared<
                         const mcpp::xlings::runtime::RuntimeSelection>(
                             runtimeSelection);

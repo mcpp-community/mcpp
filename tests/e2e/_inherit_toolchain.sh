@@ -19,16 +19,38 @@ if [[ ! -d "$USER_MCPP" && -n "${USERPROFILE:-}" ]]; then
     USER_MCPP="$USERPROFILE/.mcpp"
 fi
 
+# Links the developer's payloads into the test's home ONE VERSION AT A TIME.
+#
+# The package directory (`xpkgs/xim-x-glibc`) is created as a real directory in
+# the test's home and only its version directories are links. Linking the
+# package directory itself made every version a test INSTALLED land in the
+# developer's registry: the install wrote `xim-x-glibc/2.44.3` through the link,
+# with linker scripts naming the test's temporary home, which was deleted when
+# the test ended. Measured 2026-09-25: `31_transitive_deps.sh` recreated
+# `~/.mcpp/registry/data/xpkgs/xim-x-glibc/2.44.3/lib/libc.so` pointing at
+# `/tmp/tmp.*/mcpp-home/...` (mcpp#293, second shape). A version that exists in
+# the developer's registry is still shared by link, so an in-place rewrite of an
+# existing payload remains the first shape of #293.
 link_xpkg_payloads() {
     local source_dir="$1"
     local target_dir="$MCPP_HOME/registry/data/xpkgs"
     [[ -d "$source_dir" ]] || return 0
     mkdir -p "$target_dir"
 
-    local entry base
+    local entry base version vbase
     shopt -s nullglob
     for entry in "$source_dir"/*; do
         base="$(basename "$entry")"
+        if [[ -d "$entry" && ! -L "$target_dir/$base" ]]; then
+            mkdir -p "$target_dir/$base"
+            for version in "$entry"/*; do
+                vbase="$(basename "$version")"
+                [[ -e "$target_dir/$base/$vbase" ]] && continue
+                ln -sf "$version" "$target_dir/$base/$vbase" 2>/dev/null \
+                    || cp -r "$version" "$target_dir/$base/$vbase"
+            done
+            continue
+        fi
         [[ -e "$target_dir/$base" ]] && continue
         ln -sf "$entry" "$target_dir/$base" 2>/dev/null \
             || cp -r "$entry" "$target_dir/$base"
