@@ -490,7 +490,9 @@ std::string make_release_tarball(const std::filesystem::path& root,
             os << o.content;
             if (!os) return std::format("cannot write '{}'", file.string());
         }
-        auto blob = git_value({ "hash-object", "-w", file.string() });
+        // `--no-filters`: the scratch file lies inside the repository, and a
+        // `.gitattributes` rule for its path must not rewrite the manifest.
+        auto blob = git_value({ "hash-object", "-w", "--no-filters", file.string() });
         if (!blob) return blob.error();
         auto entry = *prefixInRepo + o.path.generic_string();
         if (auto r = git_value({ "update-index", "--add", "--cacheinfo",
@@ -504,8 +506,11 @@ std::string make_release_tarball(const std::filesystem::path& root,
         { "GIT_AUTHOR_DATE",     fields[2] }, { "GIT_COMMITTER_NAME",  fields[3] },
         { "GIT_COMMITTER_EMAIL", fields[4] }, { "GIT_COMMITTER_DATE",  fields[5] },
     };
-    auto commit = git_value({ "commit-tree", *tree, "-p", "HEAD", "-m",
-                              "mcpp publish: normalized manifest" }, commitEnv);
+    // `--no-gpg-sign`: a signature carries its own timestamp, and a
+    // `commit.gpgSign = true` configuration would make the object, and so the
+    // archive, differ between runs, or fail where no key is available.
+    auto commit = git_value({ "commit-tree", "--no-gpg-sign", *tree, "-p", "HEAD",
+                              "-m", "mcpp publish: normalized manifest" }, commitEnv);
     if (!commit) return commit.error();
     // Run from the package directory: `git archive` then archives that
     // subtree only, as it does for HEAD in the overload above.
