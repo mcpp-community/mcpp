@@ -1,6 +1,7 @@
 // mcpp.publish.pipeline — the publish pipeline (tarball + sha256 + xpkg.lua +
 // next-step instructions) and xpkg emission to file/stdout.
-// Bodies moved verbatim from the CLI layer. Zero behavior change.
+// Both read the effective manifest of the project and emit from the
+// normalised one (#690, mcpp.publish.normalize).
 
 module;
 #include <cstdio>
@@ -13,10 +14,31 @@ import mcpp.manifest;
 import mcpp.modgraph.scanner;
 import mcpp.platform;
 import mcpp.project;
+import mcpp.publish.normalize;
 import mcpp.publish.xpkg_emit;
 import mcpp.ui;
 
 namespace mcpp::publish {
+
+namespace {
+
+// The manifest a descriptor is generated from: the effective manifest (what
+// the package is), with the dependency maps of the normalised manifest (what a
+// consumer of the published archive resolves). A sibling reached by
+// `path` plus `version` is a version dependency there, so the descriptor lists
+// it instead of dropping it with every other path edge.
+mcpp::manifest::Manifest descriptor_manifest(const mcpp::project::EffectiveManifest& eff,
+                                             const NormalizedManifest& normalized) {
+    auto m = eff.manifest;
+    if (normalized.changed) {
+        m.dependencies      = normalized.manifest.dependencies;
+        m.buildDependencies = normalized.manifest.buildDependencies;
+        m.devDependencies   = normalized.manifest.devDependencies;
+    }
+    return m;
+}
+
+} // namespace
 
 // `mcpp emit xpkg [-V version] [-o output] [--namespace NS]`.
 export int emit_xpkg_to(std::string version, const std::filesystem::path& output,
@@ -26,8 +48,12 @@ export int emit_xpkg_to(std::string version, const std::filesystem::path& output
         std::println(stderr, "error: no mcpp.toml found");
         return 2;
     }
-    auto m = mcpp::manifest::load(*root / "mcpp.toml");
-    if (!m) { std::println(stderr, "error: {}", m.error().format()); return 2; }
+    // The effective manifest (#690): a workspace member reads as it builds.
+    auto eff = mcpp::project::load_effective_manifest(*root);
+    if (!eff) { std::println(stderr, "error: {}", eff.error()); return 2; }
+    auto normalized = normalize_for_publish(*root, *eff);
+    if (!normalized) { std::println(stderr, "error: {}", normalized.error()); return 2; }
+    auto m = std::optional<mcpp::manifest::Manifest>(descriptor_manifest(*eff, *normalized));
     auto scan = mcpp::modgraph::scan_package(*root, *m);
     if (!scan.errors.empty()) {
         for (auto& e : scan.errors) std::println(stderr, "error: {}", e.format());
@@ -83,11 +109,20 @@ export int publish_package(bool dry_run, bool allow_dirty) {
         }
     }
 
-    auto m = mcpp::manifest::load(*root / "mcpp.toml");
-    if (!m) {
-        mcpp::ui::error(std::format("manifest parse: {}", m.error().format()));
+    // The effective manifest (#690), and the normalised form the archive
+    // carries: a workspace member's own file is valid only inside its
+    // workspace, and the archive contains the member alone.
+    auto eff = mcpp::project::load_effective_manifest(*root);
+    if (!eff) {
+        mcpp::ui::error(std::format("manifest parse: {}", eff.error()));
         return 2;
     }
+    auto normalized = normalize_for_publish(*root, *eff);
+    if (!normalized) {
+        mcpp::ui::error(normalized.error());
+        return 2;
+    }
+    auto m = std::optional<mcpp::manifest::Manifest>(descriptor_manifest(*eff, *normalized));
     auto scan = mcpp::modgraph::scan_package(*root, *m);
     if (!scan.errors.empty()) {
         for (auto& e : scan.errors) mcpp::ui::error(e.format());
@@ -105,9 +140,27 @@ export int publish_package(bool dry_run, bool allow_dirty) {
     auto tarball = distDir / std::format("{}-{}.tar.gz", pkg.name, pkg.version);
     auto xpkgPath = distDir / std::format("{}.lua", pkg.name);
 
-    // 1. Pack source via `git archive` (respects .gitignore).
+    // 1. Pack source via `git archive` (respects .gitignore). A normalised
+    //    manifest replaces `mcpp.toml` and the file as written is kept beside
+    //    it as `mcpp.toml.orig`; an unchanged one leaves the archive exactly as
+    //    `git archive HEAD` produces it.
+    std::vector<mcpp::pm::ArchiveOverlay> overlays;
+    if (normalized->changed) {
+        overlays.push_back({ "mcpp.toml",      normalized->text });
+        overlays.push_back({ "mcpp.toml.orig", normalized->original });
+        auto manifestCopy = distDir / std::format("{}-{}.mcpp.toml", pkg.name, pkg.version);
+        std::ofstream os(manifestCopy, std::ios::binary);
+        os << normalized->text;
+        if (!os) {
+            mcpp::ui::error(std::format("cannot write '{}'", manifestCopy.string()));
+            return 1;
+        }
+        mcpp::ui::status("Manifest",
+            std::format("{} (normalised; the archive carries it as mcpp.toml)",
+                        manifestCopy.string()));
+    }
     if (auto err = mcpp::publish::make_release_tarball(
-            *root, pkg.name, pkg.version, tarball);
+            *root, pkg.name, pkg.version, tarball, overlays);
         !err.empty())
     {
         mcpp::ui::error(std::format("tarball: {}", err));

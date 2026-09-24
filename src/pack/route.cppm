@@ -61,8 +61,12 @@ namespace mcpp::pack {
 std::expected<PackRoute, std::string> route_pack_target(std::string_view requested) {
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) return std::unexpected("no mcpp.toml in current dir or parents");
-    auto m = mcpp::manifest::load(*root / "mcpp.toml");
-    if (!m) return std::unexpected(m.error().format());
+    // The effective manifest (#690): a workspace member that leaves `version`
+    // to `[workspace.package]` is refused by a raw load before any routing
+    // question is asked.
+    auto eff = mcpp::project::load_effective_manifest(*root);
+    if (!eff) return std::unexpected(eff.error());
+    auto m = std::optional<mcpp::manifest::Manifest>(std::move(eff->manifest));
 
     auto is_library = [](const mcpp::manifest::Target& t) {
         return t.kind == mcpp::manifest::Target::Library

@@ -315,6 +315,49 @@ export std::optional<std::string> workspace_inheritance_error(
     return std::nullopt;
 }
 
+// THE EFFECTIVE MANIFEST OF A PROJECT DIRECTORY, FOR EVERY READER OUTSIDE
+// `prepare_build`.
+//
+// `prepare_build` applies workspace inheritance where it loads the manifest a
+// command names. Every other command that reads a project manifest (publish,
+// pack routing, `emit xpkg`, `toolchain list`) used to call `manifest::load`
+// directly and therefore saw the raw file: a member that omits `version`
+// because `[workspace.package]` supplies it was refused, and a member without
+// `[toolchain]` was reported against the global default while `mcpp build` in
+// the same directory resolved the workspace's toolchain (#690, F5a and F6).
+//
+// The rule is the one `prepare_build` follows: a directory that its workspace
+// lists as a member is loaded with `insideWorkspace` and receives
+// `inherit_workspace_config` anchored at the workspace root, and the
+// required-field check runs after inheritance. A directory that is not a
+// member, including a workspace root that carries its own `[package]`, is
+// loaded as written.
+export struct EffectiveManifest {
+    mcpp::manifest::Manifest                manifest;       // after inheritance
+    std::optional<mcpp::manifest::Manifest> workspace;      // set when `member`
+    std::filesystem::path                   workspaceRoot;  // empty unless `member`
+    bool                                    member = false;
+};
+
+export std::expected<EffectiveManifest, std::string>
+load_effective_manifest(const std::filesystem::path& dir) {
+    const auto manifestPath = dir / "mcpp.toml";
+    const auto wsRoot = find_workspace_root(std::filesystem::absolute(dir));
+    if (wsRoot.empty()) {
+        auto m = mcpp::manifest::load(manifestPath);
+        if (!m) return std::unexpected(m.error().format());
+        return EffectiveManifest{ std::move(*m), std::nullopt, {}, false };
+    }
+    auto m = mcpp::manifest::load(manifestPath, {.insideWorkspace = true});
+    if (!m) return std::unexpected(m.error().format());
+    auto ws = mcpp::manifest::load(wsRoot / "mcpp.toml");
+    if (!ws) return std::unexpected(ws.error().format());
+    inherit_workspace_config(*m, *ws, wsRoot);
+    if (auto bad = workspace_inheritance_error(*m, dir))
+        return std::unexpected(*bad);
+    return EffectiveManifest{ std::move(*m), std::move(*ws), wsRoot, true };
+}
+
 // Resolve which member directory a workspace command acts on, for the
 // single-member case. Shares the match rule (basename OR member path) with
 // prepare_build's member switch, so `build -p X` and `test -p X` agree.
