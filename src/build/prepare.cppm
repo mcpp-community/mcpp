@@ -638,29 +638,100 @@ void report_flag_words_changes(const mcpp::manifest::Manifest& m) {
     }
 }
 
+// The macro name a `defines` entry or a `-D` word defines: the text before
+// the first `=`, or the whole text when there is no value.
+std::string_view define_name(std::string_view entry) {
+    return entry.substr(0, entry.find('='));
+}
+
 // Desugar `[build].defines` into `-D<x>` on both C and C++ flag channels.
 //
-// ORDER (both halves are load-bearing): this must run AFTER
-// merge_conditional_config — `defines` is a BuildInputs member, so a
-// matching `[target.'cfg(...)'.build] defines` has been appended by then and
-// folds in the same pass, landing after the unconditional entries so GNU
-// last-wins gives the conditional rule precedence — and BEFORE the manifest is
+// ORDER (both halves are load-bearing): this must run AFTER every merge that
+// contributes `defines` (workspace inheritance, then the package's own table,
+// then a matching `[target.'cfg(...)'.build]`), and BEFORE the manifest is
 // snapshotted into packages[] / fingerprinted, because that snapshot (not the
 // manifest) is what the P1689 scan, the compile edges and compute_fingerprint
-// actually read.
+// actually read. `makePackageRoot` refuses a manifest whose `defines` are
+// still unfolded.
+//
+// `defines` IS A SET KEYED BY MACRO NAME (SPEC-004 §8). A later entry for a
+// name replaces the earlier one in place, so a member that restates an
+// inherited `NAME=value` produces one `-DNAME=value` word instead of two
+// words and a redefinition diagnostic; an entry `!NAME` removes the name.
+// A list is not enough for this, because the compiler resolves a repeated
+// `-D` by warning (an error under `-Werror`) and a `-U` written in `cxxflags`
+// precedes every folded `-D` and so cannot remove one.
+//
+// The key covers every `-D<NAME>` word already in the flag lists as well:
+// those written in `cflags`/`cxxflags` of the same tables, and those folded
+// by an earlier call (the layer-conditional pass calls this again with only
+// its own entries). A name this call defines or removes supersedes them, so
+// the package's compile lines carry at most one definition per name.
 //
 // Idempotent: clearing the vector after folding makes repeated calls harmless.
 // Both `cflags` and `cxxflags` get the macro; assembly units pick it up for
 // free via the -D/-U/-I subset the ninja backend filters out of packageCflags.
 // A define is a value, so it enters the flag list as one word
 // (`flag_element`): `N="x"` reaches the compiler as `-DN="x"` on every host.
-void fold_build_defines_into_flags(mcpp::manifest::BuildConfig& bc) {
+export void fold_build_defines_into_flags(mcpp::manifest::BuildConfig& bc) {
+    if (bc.defines.empty()) return;
+
+    std::vector<std::string> resolved;          // entries, first-seen order
+    std::vector<std::string> named;             // every name this call touches
+    auto touch = [&](std::string_view name) {
+        if (std::ranges::find(named, name) == named.end())
+            named.emplace_back(name);
+    };
     for (auto const& d : bc.defines) {
+        if (d.starts_with('!')) {
+            const auto name = std::string_view(d).substr(1);
+            std::erase_if(resolved, [&](const std::string& e) {
+                return define_name(e) == name;
+            });
+            touch(name);
+            continue;
+        }
+        const auto name = define_name(d);
+        touch(name);
+        auto it = std::ranges::find_if(resolved, [&](const std::string& e) {
+            return define_name(e) == name;
+        });
+        if (it != resolved.end()) *it = d;
+        else resolved.push_back(d);
+    }
+
+    auto superseded = [&](const std::string& element) {
+        auto words = mcpp::manifest::flag_words(element);
+        if (words.size() != 1 || !words.front().starts_with("-D")) return false;
+        const auto name = define_name(std::string_view(words.front()).substr(2));
+        return std::ranges::find(named, name) != named.end();
+    };
+    std::erase_if(bc.cflags, superseded);
+    std::erase_if(bc.cxxflags, superseded);
+
+    for (auto const& d : resolved) {
         const auto element = mcpp::manifest::flag_element("-D" + d);
         bc.cflags.push_back(element);
         bc.cxxflags.push_back(element);
     }
     bc.defines.clear();
+}
+
+// The post-condition of the normalisation pipeline, as the snapshot checks it:
+// every `defines` entry has been folded into the flag lists. A non-empty list
+// here means a merge ran after the fold, and the entries would otherwise be
+// dropped without a diagnostic (#690). Returns the internal-error text, or
+// nothing when the manifest may be captured.
+export std::optional<std::string>
+unfolded_defines_error(const mcpp::manifest::Manifest& m) {
+    auto const& d = m.buildConfig.defines;
+    if (d.empty()) return std::nullopt;
+    return std::format(
+        "internal error: [build].defines of package '{}' reached the build "
+        "graph unfolded ({} entr{}, first '{}'); a merge ran after "
+        "fold_build_defines_into_flags (please report)",
+        m.package.name.empty() ? std::string("(root)") : m.package.name,
+        d.size(), d.size() == 1 ? "y" : "ies", d.front());
 }
 
 // ── The SECOND conditional pass: predicates that name a target-side layer ────
@@ -6678,37 +6749,29 @@ prepare_build(bool print_fingerprint,
 
     auto makePackageRoot =
         [&](const std::filesystem::path& packageRoot,
-            const mcpp::manifest::Manifest& manifestIn)
+            const mcpp::manifest::Manifest& manifest)
+        -> std::expected<mcpp::modgraph::PackageRoot, std::string>
     {
-        // `[workspace.build]` APPLIES TO EVERY MEMBER, INCLUDING ONE REACHED AS
-        // ANOTHER MEMBER'S `path` DEPENDENCY — WHICH IS THE ORDINARY SHAPE.
+        // THE SNAPSHOT READS A NORMALISED MANIFEST; IT DOES NOT NORMALISE ONE.
         //
-        // Inheritance runs where the command's own manifest is loaded, so
-        // `mcpp build -p appb` gave `appb` the workspace flags and gave `liba`
-        // none, even though `liba` is a member of the same workspace and is
-        // being compiled by the same command. Measured before this: `-DWS_FLAG`
-        // on the consumer's TUs and not on the sibling's.
+        // Every merge that feeds a package's build inputs (workspace
+        // inheritance, the conditional `[target.<sel>.build]` sections) runs
+        // at the package's LOAD site, and `fold_build_defines_into_flags` runs
+        // after all of them. This lambda only captures the result.
         //
-        // `[workspace.package] standard` did not have the problem, because the
-        // standard is imposed graph-wide from the root for BMI-compatibility
-        // reasons — which is exactly why the gap was invisible until a
-        // `[build]` flag was inheritable too.
+        // `[workspace.build]` inheritance used to run here (#539). The root
+        // had already inherited at load time, so it received the workspace
+        // entries twice; a member reached as a sibling's `path` dependency
+        // inherited after its `defines` had been folded, so the workspace
+        // `defines` never reached its compile lines (#690). Both follow from
+        // performing a merge at the snapshot, and both are removed by
+        // performing it at the load site, where the root already did.
         //
-        // Applied HERE because this is the one funnel both dependency-assembly
-        // sites go through, and because the include directories a few lines
-        // below are captured from the manifest at this moment: a later mutation
-        // would reach the flags and silently not the include dirs.
-        //
-        // Only for MEMBERS. An index or git dependency is not part of the
-        // workspace and must not acquire its flags.
-        mcpp::manifest::Manifest manifest = manifestIn;
-        if (wsManifest && !runtimeWorkspaceRoot.empty()
-            && mcpp::project::is_workspace_member(*wsManifest,
-                                                  runtimeWorkspaceRoot,
-                                                  packageRoot)) {
-            mcpp::project::inherit_workspace_build(manifest, *wsManifest,
-                                                   runtimeWorkspaceRoot);
-        }
+        // The post-condition below is what keeps it removed: a merge placed
+        // after the fold leaves `defines` non-empty here, and the build stops
+        // with an internal error instead of dropping the macros in silence.
+        if (auto unfolded = unfolded_defines_error(manifest))
+            return std::unexpected(*unfolded);
 
         mcpp::modgraph::PackageRoot pkg;
         pkg.root = packageRoot;
@@ -6771,7 +6834,11 @@ prepare_build(bool print_fingerprint,
         return pkg;
     };
 
-    packages[0] = makePackageRoot(*root, *m);
+    {
+        auto rootPackage = makePackageRoot(*root, *m);
+        if (!rootPackage) return std::unexpected(rootPackage.error());
+        packages[0] = std::move(*rootPackage);
+    }
 
     auto recordDependencyEdge =
         [&](std::size_t consumerDepIndex,
@@ -7783,7 +7850,9 @@ prepare_build(bool print_fingerprint,
                         .sourceKind  = "version",
                     });
                     const auto depPackageIndex = packages.size();
-                    packages.push_back(makePackageRoot(secStage, *dep_manifests.back()));
+                    auto secPackage = makePackageRoot(secStage, *dep_manifests.back());
+                    if (!secPackage) return std::unexpected(secPackage.error());
+                    packages.push_back(std::move(*secPackage));
                     recordDependencyEdge(item.consumerDepIndex, depPackageIndex,
                                          spec, item.buildOnly, name);
                     auto linkFlagsAdded = propagateLinkFlags(secStage, *dep_manifests.back());
@@ -7882,8 +7951,10 @@ prepare_build(bool print_fingerprint,
                 // in dep_manifests; packages = [main, dep_0, dep_1, …], so
                 // packages[depIndex+1] is the same dep.
                 *dep_manifests[it->second.depIndex] = std::move(newManifest);
-                packages[it->second.depIndex + 1] =
+                auto mergedPackage =
                     makePackageRoot(newRoot, *dep_manifests[it->second.depIndex]);
+                if (!mergedPackage) return std::unexpected(mergedPackage.error());
+                packages[it->second.depIndex + 1] = std::move(*mergedPackage);
                 recordDependencyEdge(item.consumerDepIndex,
                                      it->second.depIndex + 1,
                                      spec, item.buildOnly, name);
@@ -8197,24 +8268,39 @@ prepare_build(bool print_fingerprint,
                     name, dep_root.string(), dm.error().format()));
             }
             dep_manifest = std::move(*dm);
-            // The metadata half of the inheritance. The `[build]` half runs in
-            // `makePackageRoot`, where the include directories are captured;
-            // splitting them is what keeps each one at the point its consumer
-            // reads it.
+            // A MEMBER REACHED AS A DEPENDENCY INHERITS HERE, AT ITS LOAD SITE,
+            // EXACTLY AS THE ROOT INHERITS AT ITS OWN.
+            //
+            // Three parts of what a member receives from its workspace matter
+            // to a dependency: `[workspace.package]` (a member may omit
+            // `version`), `x.workspace = true` dependency entries (without the
+            // merge the entry reaches resolution with no version and no path,
+            // and is reported as an unreadable index entry), and
+            // `[workspace.build]`. All three run before the conditional merge
+            // and the `defines` fold below, which is the order the root
+            // follows; the snapshot in `makePackageRoot` only captures the
+            // result (#690). The remaining parts of `inherit_workspace_config`
+            // (`[toolchain]`, `[target.<triple>]`, `[indices]`) are decided by
+            // the root for the whole graph and are not applied to a dependency.
+            //
+            // A member of a git-hosted workspace inherits from ITS repository,
+            // anchored at the clone, so that the same commit compiles the same
+            // way in its own checkout and in a consumer's graph.
+            auto inheritAsMember = [&](const mcpp::manifest::Manifest& ws,
+                                       const std::filesystem::path& wsRoot)
+                -> std::optional<std::string> {
+                mcpp::project::inherit_workspace_package(*dep_manifest, ws);
+                mcpp::project::merge_workspace_deps(*dep_manifest, ws, wsRoot);
+                mcpp::project::inherit_workspace_build(*dep_manifest, ws, wsRoot);
+                return mcpp::project::workspace_inheritance_error(
+                    *dep_manifest, dep_root);
+            };
             if (depIsMember) {
-                mcpp::project::inherit_workspace_package(
-                    *dep_manifest, *wsManifest);
-                if (auto bad = mcpp::project::workspace_inheritance_error(
-                        *dep_manifest, dep_root))
+                if (auto bad = inheritAsMember(*wsManifest, runtimeWorkspaceRoot))
                     return std::unexpected(*bad);
             } else if (!gitMember.empty()) {
-                // A repository member inherits its repository's
-                // `[workspace.package]`, as it does when the repository is
-                // built from its own checkout.
                 if (auto rm = mcpp::manifest::load(gitMemberCloneRoot / "mcpp.toml")) {
-                    mcpp::project::inherit_workspace_package(*dep_manifest, *rm);
-                    if (auto bad = mcpp::project::workspace_inheritance_error(
-                            *dep_manifest, dep_root))
+                    if (auto bad = inheritAsMember(*rm, gitMemberCloneRoot))
                         return std::unexpected(*bad);
                 }
             }
@@ -8358,7 +8444,9 @@ prepare_build(bool print_fingerprint,
                          : std::string{},
         });
         const auto depPackageIndex = packages.size();
-        packages.push_back(makePackageRoot(dep_root, *dep_manifests.back()));
+        auto depPackage = makePackageRoot(dep_root, *dep_manifests.back());
+        if (!depPackage) return std::unexpected(depPackage.error());
+        packages.push_back(std::move(*depPackage));
         recordDependencyEdge(item.consumerDepIndex, depPackageIndex, spec,
                              item.buildOnly, name);
 

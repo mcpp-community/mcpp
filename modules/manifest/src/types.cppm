@@ -1599,6 +1599,41 @@ struct WorkspaceInherited {
     // rather than implemented here.
 };
 
+// THE INHERITABLE SUBSET OF `[build]`, STATED ONCE.
+//
+// The parser reads `[workspace.build]` by iterating this table, derives its
+// known-key check and its error text from it, and `mcpp publish` writes the
+// inherited values back under the same keys. The set used to be written four
+// times (the assignments, the known-key list, the error message and the
+// usage chapter), and a key added to one of them was refused by another:
+// `ios_deployment_target` was parsed and inherited but not known (#690, F3).
+// A row pairs the TOML key, which is the same under `[build]` and
+// `[workspace.build]`, with the `BuildConfig` member it fills.
+struct WorkspaceBuildKey {
+    std::string_view key;
+    std::variant<std::vector<std::string> BuildConfig::*,
+                 std::vector<std::filesystem::path> BuildConfig::*,
+                 std::string BuildConfig::*> field;
+};
+
+inline constexpr std::array<WorkspaceBuildKey, 15> kWorkspaceBuildKeys{{
+    {"cflags",                  &BuildConfig::cflags},
+    {"cxxflags",                &BuildConfig::cxxflags},
+    {"ldflags",                 &BuildConfig::ldflags},
+    {"defines",                 &BuildConfig::defines},
+    {"dialect_cxxflags",        &BuildConfig::dialectCxxflags},
+    {"include_dirs",            &BuildConfig::includeDirs},
+    {"include_dirs_after",      &BuildConfig::includeDirsAfter},
+    {"private_include_dirs",    &BuildConfig::privateIncludeDirs},
+    {"c_standard",              &BuildConfig::cStandard},
+    {"linkage",                 &BuildConfig::linkage},
+    {"target",                  &BuildConfig::target},
+    {"cxx_runtime",             &BuildConfig::cxxRuntime},
+    {"dependency_linkage",      &BuildConfig::dependencyLinkage},
+    {"macos_deployment_target", &BuildConfig::macosDeploymentTarget},
+    {"ios_deployment_target",   &BuildConfig::iosDeploymentTarget},
+}};
+
 struct WorkspaceConfig {
     std::vector<std::string>                            members;       // relative paths to member dirs
     std::vector<std::string>                            exclude;       // paths to exclude
