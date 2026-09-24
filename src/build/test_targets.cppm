@@ -35,8 +35,10 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
         if (!member) return std::unexpected(member.error());
         // workspace member root is the only root accepted by prepare_build.
         if (!member->empty()) packageRoot = *member;
-        if (auto manifest = mcpp::manifest::load(packageRoot / "mcpp.toml"))
-            packageManifest = std::move(*manifest);
+        // The effective manifest: a member that omits `version` still loads
+        // instead of falling back to the default discovery (#690, W4).
+        if (auto manifest = mcpp::project::load_effective_manifest(packageRoot))
+            packageManifest = std::move(manifest->manifest);
     }
 
     std::vector<mcpp::manifest::GlobFlags> globFlags;

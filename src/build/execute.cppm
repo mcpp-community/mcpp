@@ -1328,8 +1328,11 @@ std::optional<FastPathIdentity>
 fast_path_identity(const std::filesystem::path& projectRoot,
                    std::string_view profileOverride = "",
                    std::string_view featuresRequested = "") {
-    auto m = mcpp::manifest::load(projectRoot / "mcpp.toml");
-    if (!m) return std::nullopt;
+    // The effective manifest: `target` is inheritable from `[workspace.build]`
+    // (#690, W4).
+    auto effective = mcpp::project::load_effective_manifest(projectRoot);
+    if (!effective) return std::nullopt;
+    const auto* m = &effective->manifest;
     return FastPathIdentity{
         mcpp::build::resolve_profile_name(*m, profileOverride),
         std::string(mcpp::build::cache_mode_name(

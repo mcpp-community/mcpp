@@ -569,7 +569,11 @@ inline int cmd_update(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // the exact behaviour #315 is about.
     if (auto cfg = mcpp::config::load_or_init(
             /*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback())) {
-        auto m = mcpp::manifest::load(*root / "mcpp.toml");
+        // The effective manifest: `x.workspace = true` entries are resolved,
+        // and a member that omits `version` still loads (#690, W4).
+        std::optional<mcpp::manifest::Manifest> m;
+        if (auto effective = mcpp::project::load_effective_manifest(*root))
+            m = std::move(effective->manifest);
         bool registryInvolved = false;
         if (m) {
             auto indices = mcpp::pm::effective_indices(*root);

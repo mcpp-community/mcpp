@@ -2317,22 +2317,30 @@ prepare_build(bool print_fingerprint,
     // two: re-deriving could produce a DIFFERENT manifest than the one the
     // parent resolved against (the L1 cfg merge and feature-activated deps
     // have already been folded in by then).
-    auto m = overrides.preloaded_manifest
-        ? std::expected<mcpp::manifest::Manifest, mcpp::manifest::ManifestError>(
-              *overrides.preloaded_manifest)
-        : mcpp::manifest::load(*root / "mcpp.toml");
-    // A COMMAND ISSUED INSIDE A MEMBER DIRECTORY loads that member's manifest
-    // here, before anything knows a workspace is above it — so a member relying
-    // on `[workspace.package]` for a required field would be refused by the
-    // parser before inheritance could supply it. Retried, not reordered: the
-    // workspace lookup walks the tree reading manifests, and paying that on
-    // every build to serve the error path would be the wrong trade. The
-    // requirement still holds; it is enforced after inheritance, where "still
-    // missing" is knowable.
-    if (!m && !overrides.preloaded_manifest
-           && !mcpp::project::find_workspace_root(*root).empty())
-        m = mcpp::manifest::load(*root / "mcpp.toml", {.insideWorkspace = true});
-    if (!m) return std::unexpected(m.error().format());
+    // THE EFFECTIVE MANIFEST, FROM THE ONE LOADER EVERY COMMAND USES.
+    //
+    // A command issued inside a member directory receives the member's
+    // manifest after workspace inheritance, exactly as `publish`, `pack`,
+    // `emit xpkg` and `toolchain list` do (#690, W4). A command at the
+    // workspace root receives the root manifest as written; the `-p <member>`
+    // switch below loads and inherits the member it names.
+    //
+    // A PRELOADED manifest (a host-tool sub-build) is already effective: the
+    // resolver loaded it at the dependency's load site, where a member
+    // inherits (see `inheritAsMember`). It is not inherited a second time; the
+    // workspace it belongs to is still recorded below, so that its own sibling
+    // dependencies inherit as members.
+    std::optional<mcpp::project::EffectiveManifest> effective;
+    std::expected<mcpp::manifest::Manifest, std::string> m =
+        std::unexpected(std::string{});
+    if (overrides.preloaded_manifest) {
+        m = *overrides.preloaded_manifest;
+    } else {
+        auto loaded = mcpp::project::load_effective_manifest(*root);
+        if (!loaded) return std::unexpected(loaded.error());
+        m = loaded->manifest;
+        effective = std::move(*loaded);
+    }
 
     // AND ONLY FOR THE ROOT. A layer name this engine does not know is a
     // typo in the manifest the author is looking at, and a version gap in a
@@ -2424,10 +2432,12 @@ prepare_build(bool print_fingerprint,
             }
             runtimeWorkspaceRoot = *root;
             wsManifest = std::move(*m);  // preserve workspace manifest
-            m = mcpp::manifest::load(memberDir / "mcpp.toml",
-                                     {.insideWorkspace = true});
-            if (!m) return std::unexpected(std::format(
-                "workspace member '{}': {}", targetMember, m.error().format()));
+            auto memberManifest = mcpp::manifest::load(memberDir / "mcpp.toml",
+                                                       {.insideWorkspace = true});
+            if (!memberManifest) return std::unexpected(std::format(
+                "workspace member '{}': {}", targetMember,
+                memberManifest.error().format()));
+            m = std::move(*memberManifest);
 
             // ONE call, not a hand-copied list. `*root` is still the WORKSPACE
             // root here (the `root = memberDir` reassignment below has not
@@ -2441,20 +2451,21 @@ prepare_build(bool print_fingerprint,
             root = memberDir;
         }
     } else {
-        // Not at workspace root — check if we're inside a workspace
-        auto wsRoot = mcpp::project::find_workspace_root(*root);
-        if (!wsRoot.empty()) {
-            auto wsm = mcpp::manifest::load(wsRoot / "mcpp.toml");
-            if (wsm && wsm->workspace.present) {
-                runtimeWorkspaceRoot = wsRoot;
-                wsManifest = std::move(*wsm);
-                // The SECOND inheritance site, and it calls the same function
-                // as the first for that reason. #224: relative `path` and
-                // `[indices].path` anchor to the workspace root, not to this
-                // member's own directory.
-                mcpp::project::inherit_workspace_config(*m, *wsManifest, wsRoot);
-                if (auto bad = mcpp::project::workspace_inheritance_error(*m, *root))
-                    return std::unexpected(*bad);
+        // Not at workspace root: inside a member, the loader above has
+        // already inherited (#224 anchoring included). Only the workspace is
+        // recorded here, for the membership test of this member's own `path`
+        // dependencies.
+        if (effective && effective->member) {
+            runtimeWorkspaceRoot = effective->workspaceRoot;
+            wsManifest = std::move(*effective->workspace);
+        } else if (overrides.preloaded_manifest) {
+            auto wsRoot = mcpp::project::find_workspace_root(*root);
+            if (!wsRoot.empty()) {
+                if (auto wsm = mcpp::manifest::load(wsRoot / "mcpp.toml");
+                    wsm && wsm->workspace.present) {
+                    runtimeWorkspaceRoot = wsRoot;
+                    wsManifest = std::move(*wsm);
+                }
             }
         }
     }

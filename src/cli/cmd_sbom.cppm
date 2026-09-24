@@ -91,11 +91,14 @@ int cmd_sbom(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return 2;
     }
 
-    auto man = mcpp::manifest::load(*root / "mcpp.toml");
-    if (!man) {
-        mcpp::ui::error(man.error().message);
+    // The effective manifest: a workspace member's `[package]` fields may come
+    // from `[workspace.package]` (#690, W4).
+    auto effective = mcpp::project::load_effective_manifest(*root);
+    if (!effective) {
+        mcpp::ui::error(effective.error());
         return 2;
     }
+    std::optional<mcpp::manifest::Manifest> man = std::move(effective->manifest);
 
     const auto lockPath = *root / "mcpp.lock";
     std::vector<mcpp::lockfile::LockedPackage> pkgs;
