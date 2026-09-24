@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # requires: gcc
-# 771_commands_outside_the_build_read_the_effective_manifest.sh — #690, F5a/F6.
+# 773_commands_outside_the_build_read_the_effective_manifest.sh — #690, F5a/F6.
 #
 # `prepare_build` applies workspace inheritance to the manifest a command
 # names. `toolchain list` and `pack` read the project manifest on their own,
@@ -87,4 +87,4 @@ if grep -q "missing required field 'package.version'" "$TMP/pack.log"; then
 fi
 echo "ok: pack in a member reads the inherited version"
 
-echo "PASS: 771_commands_outside_the_build_read_the_effective_manifest"
+echo "PASS: 773_commands_outside_the_build_read_the_effective_manifest"

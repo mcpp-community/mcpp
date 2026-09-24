@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # requires: gcc
-# 770_a_published_member_is_self_contained.sh — the published form of a
+# 772_a_published_member_is_self_contained.sh — the published form of a
 # workspace member (#690, design 2026-09-25 sections 3.6 and 5.5).
 #
 # A member's own mcpp.toml is valid only inside its workspace: it omits the
@@ -218,4 +218,4 @@ cmp -s "$TMP/direct.tar.gz" "$SOLO/target/dist/solo-1.0.0.tar.gz" \
 if grep -q 'Manifest' "$TMP/pub5.log"; then cat "$TMP/pub5.log"; fail "an unchanged manifest was reported as normalised"; fi
 echo "ok G: an unchanged package is archived byte for byte as before"
 
-echo "PASS: 770_a_published_member_is_self_contained"
+echo "PASS: 772_a_published_member_is_self_contained"
