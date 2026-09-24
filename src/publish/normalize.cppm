@@ -58,45 +58,11 @@ namespace {
 
 namespace t = mcpp::libs::toml;
 
-// `[workspace.build]` keys, each paired with the field of `BuildConfig` that
-// carries it. Vectors of flags, vectors of directories and scalars are written
-// back by three different rules, so the table records which rule applies.
-struct StringVectorKey {
-    std::string_view key;
-    std::vector<std::string> mcpp::manifest::BuildConfig::* field;
-};
-struct PathVectorKey {
-    std::string_view key;
-    std::vector<std::filesystem::path> mcpp::manifest::BuildConfig::* field;
-};
-struct ScalarKey {
-    std::string_view key;
-    std::string mcpp::manifest::BuildConfig::* field;
-};
-
+// The `[workspace.build]` keys are read from `mcpp::manifest::kWorkspaceBuildKeys`,
+// the one statement of the inheritable subset that the parser also reads.
+// Vectors of flags, vectors of directories and scalars are written back by
+// three different rules, selected by the type of the row's field.
 using BC = mcpp::manifest::BuildConfig;
-
-const StringVectorKey kStringVectors[] = {
-    {"cflags",           &BC::cflags},
-    {"cxxflags",         &BC::cxxflags},
-    {"ldflags",          &BC::ldflags},
-    {"defines",          &BC::defines},
-    {"dialect_cxxflags", &BC::dialectCxxflags},
-};
-const PathVectorKey kPathVectors[] = {
-    {"include_dirs",         &BC::includeDirs},
-    {"include_dirs_after",   &BC::includeDirsAfter},
-    {"private_include_dirs", &BC::privateIncludeDirs},
-};
-const ScalarKey kScalars[] = {
-    {"c_standard",              &BC::cStandard},
-    {"linkage",                 &BC::linkage},
-    {"target",                  &BC::target},
-    {"cxx_runtime",             &BC::cxxRuntime},
-    {"dependency_linkage",      &BC::dependencyLinkage},
-    {"macos_deployment_target", &BC::macosDeploymentTarget},
-    {"ios_deployment_target",   &BC::iosDeploymentTarget},
-};
 
 t::Value string_array(const std::vector<std::string>& v) {
     t::Array a;
@@ -380,47 +346,49 @@ normalize_for_publish(const std::filesystem::path&           packageDir,
                 if (!build) build = table_at(root, "build", "build", explicitTables);
                 return build;
             };
-            for (auto const& k : kStringVectors) {
-                if ((w.*k.field).empty()) continue;
-                auto* bt = build_table();
-                if (!bt) return std::unexpected(std::format(
-                    "{}: `build` is not a table", manifestPath.string()));
-                (*bt)[std::string(k.key)] = string_array(b.*k.field);
-                changed = true;
-            }
-            for (auto const& k : kPathVectors) {
-                const auto n = (w.*k.field).size();
-                if (n == 0) continue;
-                std::vector<std::string> dirs;
-                const auto& all = b.*k.field;
-                for (std::size_t i = 0; i < all.size(); ++i) {
-                    if (i >= n) { dirs.push_back(all[i].string()); continue; }
-                    if (!inside(packageDir, all[i]))
-                        return std::unexpected(std::format(
-                            "{}: [workspace.build] {} entry '{}' resolves to '{}', "
-                            "outside this package's directory, and the published "
-                            "archive contains only that directory. Move the headers "
-                            "into the package, or declare the directory in the "
-                            "package's own [build] for its own build only.",
-                            manifestPath.string(), k.key, (w.*k.field)[i].string(),
-                            all[i].lexically_normal().string()));
-                    dirs.push_back(all[i].lexically_normal()
-                        .lexically_relative(packageDir.lexically_normal()).generic_string());
+            for (auto const& row : mcpp::manifest::kWorkspaceBuildKeys) {
+                const std::string key(row.key);
+                if (auto const* f = std::get_if<std::vector<std::string> BC::*>(&row.field)) {
+                    if ((w.**f).empty()) continue;
+                    auto* bt = build_table();
+                    if (!bt) return std::unexpected(std::format(
+                        "{}: `build` is not a table", manifestPath.string()));
+                    (*bt)[key] = string_array(b.**f);
+                    changed = true;
+                } else if (auto const* f = std::get_if<
+                               std::vector<std::filesystem::path> BC::*>(&row.field)) {
+                    const auto n = (w.**f).size();
+                    if (n == 0) continue;
+                    std::vector<std::string> dirs;
+                    const auto& all = b.**f;
+                    for (std::size_t i = 0; i < all.size(); ++i) {
+                        if (i >= n) { dirs.push_back(all[i].string()); continue; }
+                        if (!inside(packageDir, all[i]))
+                            return std::unexpected(std::format(
+                                "{}: [workspace.build] {} entry '{}' resolves to '{}', "
+                                "outside this package's directory, and the published "
+                                "archive contains only that directory. Move the headers "
+                                "into the package, or declare the directory in the "
+                                "package's own [build] for its own build only.",
+                                manifestPath.string(), key, (w.**f)[i].string(),
+                                all[i].lexically_normal().string()));
+                        dirs.push_back(all[i].lexically_normal()
+                            .lexically_relative(packageDir.lexically_normal()).generic_string());
+                    }
+                    auto* bt = build_table();
+                    if (!bt) return std::unexpected(std::format(
+                        "{}: `build` is not a table", manifestPath.string()));
+                    (*bt)[key] = string_array(dirs);
+                    changed = true;
+                } else if (auto const* f = std::get_if<std::string BC::*>(&row.field)) {
+                    if ((w.**f).empty()) continue;
+                    auto* bt = build_table();
+                    if (!bt) return std::unexpected(std::format(
+                        "{}: `build` is not a table", manifestPath.string()));
+                    if (bt->contains(key)) continue;
+                    (*bt)[key] = t::Value{b.**f};
+                    changed = true;
                 }
-                auto* bt = build_table();
-                if (!bt) return std::unexpected(std::format(
-                    "{}: `build` is not a table", manifestPath.string()));
-                (*bt)[std::string(k.key)] = string_array(dirs);
-                changed = true;
-            }
-            for (auto const& k : kScalars) {
-                if ((w.*k.field).empty()) continue;
-                auto* bt = build_table();
-                if (!bt) return std::unexpected(std::format(
-                    "{}: `build` is not a table", manifestPath.string()));
-                if (bt->contains(k.key)) continue;
-                (*bt)[std::string(k.key)] = t::Value{b.*k.field};
-                changed = true;
             }
         }
     }

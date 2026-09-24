@@ -734,6 +734,54 @@ unfolded_defines_error(const mcpp::manifest::Manifest& m) {
         d.size(), d.size() == 1 ? "y" : "ies", d.front());
 }
 
+// WHAT A MEMBER RECEIVES FROM ITS WORKSPACE WHEN IT IS REACHED AS A DEPENDENCY.
+//
+// Three parts of the inheritance matter to a dependency: `[workspace.package]`
+// (a member may omit `version`), `x.workspace = true` dependency entries
+// (without the merge the entry reaches resolution with neither version nor
+// path), and `[workspace.build]`. They are applied at the dependency's LOAD
+// site, before the conditional merge and the `defines` fold, which is the
+// order the root follows; `makePackageRoot` only captures the result (#690).
+// `[toolchain]`, `[target.<triple>]` and `[indices]` are decided by the root
+// for the whole graph and are not applied to a dependency.
+//
+// One function for every way a member is reached: a sibling `path`
+// dependency, a member of a git-hosted workspace, and a member inside an
+// index package's archive. The same commit then compiles the same way in its
+// own checkout and in every consumer's graph.
+std::optional<std::string>
+inherit_as_workspace_member(mcpp::manifest::Manifest& member,
+                            const mcpp::manifest::Manifest& workspace,
+                            const std::filesystem::path& workspaceRoot,
+                            const std::filesystem::path& memberDir) {
+    mcpp::project::inherit_workspace_package(member, workspace);
+    mcpp::project::merge_workspace_deps(member, workspace, workspaceRoot);
+    mcpp::project::inherit_workspace_build(member, workspace, workspaceRoot);
+    return mcpp::project::workspace_inheritance_error(member, memberDir);
+}
+
+// The workspace whose `members` list `memberDir`, searched upward from its
+// parent and never above `bound` (an index package's install root: the
+// archive is the only tree the package's author wrote).
+std::optional<std::pair<mcpp::manifest::Manifest, std::filesystem::path>>
+workspace_listing(const std::filesystem::path& memberDir,
+                  const std::filesystem::path& bound) {
+    auto inside = [&](const std::filesystem::path& p) {
+        auto rel = p.lexically_normal().lexically_relative(bound.lexically_normal());
+        return !rel.empty() && *rel.begin() != "..";
+    };
+    for (auto p = memberDir.parent_path(); inside(p); p = p.parent_path()) {
+        if (std::filesystem::exists(p / "mcpp.toml")) {
+            if (auto ws = mcpp::manifest::load(p / "mcpp.toml");
+                ws && ws->workspace.present
+                && mcpp::project::is_workspace_member(*ws, p, memberDir))
+                return std::pair{std::move(*ws), p};
+        }
+        if (p == p.parent_path()) break;
+    }
+    return std::nullopt;
+}
+
 // ── The SECOND conditional pass: predicates that name a target-side layer ────
 //
 // #540/#494. `docs/14` documents a package adapting to the C library it was
@@ -2327,7 +2375,7 @@ prepare_build(bool print_fingerprint,
     //
     // A PRELOADED manifest (a host-tool sub-build) is already effective: the
     // resolver loaded it at the dependency's load site, where a member
-    // inherits (see `inheritAsMember`). It is not inherited a second time; the
+    // inherits (see `inherit_as_workspace_member`). It is not inherited a second time; the
     // workspace it belongs to is still recorded below, so that its own sibling
     // dependencies inherit as members.
     std::optional<mcpp::project::EffectiveManifest> effective;
@@ -6199,10 +6247,22 @@ prepare_build(bool print_fingerprint,
         auto loadFrom = [&](const std::filesystem::path& mcppToml)
             -> std::expected<void, std::string>
         {
-            auto dm = mcpp::manifest::load(mcppToml);
+            // A manifest that is a member of a workspace inside the archive
+            // receives that workspace's inheritance, as it does from a git
+            // clone of the same commit (#690).
+            auto repoWorkspace = workspace_listing(mcppToml.parent_path(), verRoot);
+            auto dm = mcpp::manifest::load(
+                mcppToml, {.insideWorkspace = repoWorkspace.has_value()});
             if (!dm) return std::unexpected(std::format(
                 "dependency '{}' (at '{}'): {}",
                 depName, mcppToml.string(), dm.error().format()));
+            if (repoWorkspace) {
+                if (auto bad = inherit_as_workspace_member(
+                        *dm, repoWorkspace->first, repoWorkspace->second,
+                        mcppToml.parent_path()))
+                    return std::unexpected(std::format(
+                        "dependency '{}': {}", depName, *bad));
+            }
             manifest = std::move(*dm);
             effRoot  = mcppToml.parent_path();
             return {};
@@ -8279,32 +8339,13 @@ prepare_build(bool print_fingerprint,
                     name, dep_root.string(), dm.error().format()));
             }
             dep_manifest = std::move(*dm);
-            // A MEMBER REACHED AS A DEPENDENCY INHERITS HERE, AT ITS LOAD SITE,
-            // EXACTLY AS THE ROOT INHERITS AT ITS OWN.
-            //
-            // Three parts of what a member receives from its workspace matter
-            // to a dependency: `[workspace.package]` (a member may omit
-            // `version`), `x.workspace = true` dependency entries (without the
-            // merge the entry reaches resolution with no version and no path,
-            // and is reported as an unreadable index entry), and
-            // `[workspace.build]`. All three run before the conditional merge
-            // and the `defines` fold below, which is the order the root
-            // follows; the snapshot in `makePackageRoot` only captures the
-            // result (#690). The remaining parts of `inherit_workspace_config`
-            // (`[toolchain]`, `[target.<triple>]`, `[indices]`) are decided by
-            // the root for the whole graph and are not applied to a dependency.
-            //
-            // A member of a git-hosted workspace inherits from ITS repository,
-            // anchored at the clone, so that the same commit compiles the same
-            // way in its own checkout and in a consumer's graph.
+            // A member reached as a dependency inherits here, at its load
+            // site; see `inherit_as_workspace_member`. A member of a
+            // git-hosted workspace inherits from ITS repository, anchored at
+            // the clone.
             auto inheritAsMember = [&](const mcpp::manifest::Manifest& ws,
-                                       const std::filesystem::path& wsRoot)
-                -> std::optional<std::string> {
-                mcpp::project::inherit_workspace_package(*dep_manifest, ws);
-                mcpp::project::merge_workspace_deps(*dep_manifest, ws, wsRoot);
-                mcpp::project::inherit_workspace_build(*dep_manifest, ws, wsRoot);
-                return mcpp::project::workspace_inheritance_error(
-                    *dep_manifest, dep_root);
+                                       const std::filesystem::path& wsRoot) {
+                return inherit_as_workspace_member(*dep_manifest, ws, wsRoot, dep_root);
             };
             if (depIsMember) {
                 if (auto bad = inheritAsMember(*wsManifest, runtimeWorkspaceRoot))
