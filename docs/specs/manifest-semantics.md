@@ -344,6 +344,15 @@ feature-deps          feature-xlings         ← 限定词是门
     的编译命令在两个仅 include 设置不同的根包下相同;根包自己的编译单元中每个根包目录
     恰好出现一次;依赖因此找不到头文件时,报错之后指出消费者目录
     (`tests/e2e/765_a_consumer_include_directory_stays_in_the_consumer.sh`)。
+13. §9 第 1 条索引归档一种情况的判据:描述符指向归档内一个省略 `version` 的成员时,该成员
+    取得归档工作空间的版本与 `defines`(`tests/e2e/774_an_index_member_inherits_its_archive_workspace.sh`)。
+    第 5 条的判据:成员目录内的 `emit xpkg`、`publish --dry-run`、`toolchain list` 读取继承后的
+    清单(`tests/e2e/773_commands_outside_the_build_read_the_effective_manifest.sh`)。
+14. §9 第 7 条的判据:发布归档中的清单写出继承来的 `version`、`license` 与 `cxxflags`,兄弟边
+    以版本边出现且描述符的 `deps` 列出它,原清单以 `mcpp.toml.orig` 保留;归档的使用方在新旧两个
+    客户端上都能构建;两次发布的归档逐字节相同;缺少 `version` 的兄弟 `path` 边被拒绝且报错给出
+    应写的一行;无需修改的包的归档与此前逐字节相同
+    (`tests/e2e/772_a_published_member_is_self_contained.sh`)。
 
 ## 8. 编译 flag 列表的元素
 
@@ -385,9 +394,10 @@ feature、`[profile.<n>]`、`[target.<selector>.build]`、xpkg 描述符,以及�
 ## 9. 工作空间继承与构建需求的作用域
 
 1. 工作空间成员**必须**恰好接收一次 `[workspace.package]`、`[workspace.build]` 与
-   `x.workspace = true` 条目的继承,无论它是命令构建的包、另一个成员的 `path` 依赖,
-   还是通过 `git` 引用的、托管在 git 上的工作空间的成员。后一种情况按该成员所在仓库的
-   工作空间根继承,相对路径以该仓库的根为锚点。
+   `x.workspace = true` 条目的继承,无论它是命令构建的包、另一个成员的 `path` 依赖、
+   通过 `git` 引用的托管在 git 上的工作空间的成员,还是索引包归档内的成员(描述符的
+   `mcpp` 字段指向该成员的清单)。后两种情况按该成员所在仓库或归档的工作空间根继承,
+   相对路径以该根为锚点;在归档内查找工作空间根时**禁止**越出该版本的安装根。
 2. 向量按工作空间、成员、命中的 `[target.<selector>.build]` 的顺序追加;`defines` 按
    §8 的集合语义合并。标量仅在成员未**声明**该键时取工作空间的值。
 3. 继承**必须**在 `defines` 展开之前、在清单被固定进构建图之前完成。实现**必须**拒绝
@@ -414,4 +424,4 @@ feature、`[profile.<n>]`、`[target.<selector>.build]`、xpkg 描述符,以及�
 | 1.3 | 2026-09-14 | 条件依赖声明替换同一身份的无条件声明,`targets.<name>` 成为可条件化的 section,不读取的 section 必须报出(mcpp 2026.9.14.2):新增 §3.1.1 与 §7 第 8 条判据。 |
 | 1.4 | 2026-09-15 | 库目标的默认链接形态 `linkage`(mcpp 2026.9.15.2):§3.1.1 补默认值的语义、优先顺序与拒绝条件;§7 补第 9 条判据。 |
 | 1.5 | 2026-09-17 | 编译 flag 列表元素的读法(mcpp 2026.9.17.1,#655):新增 §8 与 §7 第 10 条判据。 |
-| 1.6 | 2026-09-25 | 工作空间继承与构建需求的作用域(mcpp 2026.9.25.1,#690):§8 补 `defines` 的集合语义;新增 §9 与 §7 第 11、12 条判据。 |
+| 1.6 | 2026-09-25 | 工作空间继承与构建需求的作用域(mcpp 2026.9.25.1,#690):§8 补 `defines` 的集合语义;新增 §9 与 §7 第 11 至 14 条判据。 |

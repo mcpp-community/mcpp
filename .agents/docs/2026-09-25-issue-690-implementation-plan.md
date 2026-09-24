@@ -73,10 +73,10 @@ Each angle names the property it requires and the evidence that shows it.
 
 ## 5. Release chain
 
-1. PR in `mcpp-community/mcpp` with the version 2026.9.25.1 in `mcpp.toml` and `modules/versioning/src/version.cppm`. All required checks green. Squash merge.
+1. PR in `mcpp-community/mcpp` with the version 2026.9.25.1 in `mcpp.toml` and `modules/versioning/src/version.cppm`, and the internal xlings pin at the latest xlings release (2026.9.20.1). All required checks green. Squash merge.
 2. `origin/main` HEAD run green.
 3. `release.yml` dispatched. Each archive is uploaded to GitCode with the local tools the moment it appears (`tools/mirror_res.sh` from xlings, GitCode leg only). GET 200 and byte comparison on both mirrors.
 4. `openxlings/xim-pkgindex` bump pull request merged. The published index artifact is read to confirm `latest`.
-5. Bootstrap pin pull request in `mcpp-community/mcpp` (`.xlings.json`). The open #689 is resolved first.
-6. `mcpp-community/mcpp-index`: CI run against the release. No package change is expected (the design's search found no package that relies on the root include broadcast). If a package fails, it is fixed in one pull request.
-7. Sandbox verification: `xlings subos use <n> --sandbox --cmd ...` with the CN mirror set for both xlings and mcpp inside the sandbox. It covers the #690 fixture, the git-member fixture, the F7 shadow fixture, a publish dry run of a workspace member, and a build of two representative index packages.
+5. `.xlings.json` (the mcpp that builds mcpp) is not moved: review of 2026-09-25 asked for no separate bootstrap pull request unless a build needs it.
+6. `mcpp-community/mcpp-index`: one pull request that moves its CI pins to 2026.9.25.1, which runs every member on every platform against the release. Before the release, 16 members were run locally with the candidate binary (all passed), and no member declares `include_dirs`, so the W6 change has no consumer-side reliance to break there.
+7. Sandbox verification: `.agents/docs/2026-09-25-issue-690-verify.sh` in `xlings subos use <n> --sandbox --cmd ...`, with the CN mirror set for both xlings and mcpp inside the sandbox, and the same script against 2026.9.24.1 as the control.

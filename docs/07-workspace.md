@@ -408,7 +408,11 @@ member inherits `[workspace.package]` as it does here (mcpp 2026.9.16.1+; see
 [05 — Dependencies](05-dependencies.md)). It also inherits its repository's
 `[workspace.build]` and resolves its `x.workspace = true` entries against that
 repository's `[workspace.dependencies]` (2026.9.25.1+), so the same commit
-compiles the same way in its own checkout and in a consumer's graph.
+compiles the same way in its own checkout and in a consumer's graph. A member
+that an index descriptor points at inside a tag tarball receives the tarball's
+workspace in the same way. Publishing a member with `mcpp publish` writes the
+inherited values into the published manifest
+([11 — Publishing a Library](11-publishing-a-library.md)).
 
 ## 7. Relationship to C++ Modules
 

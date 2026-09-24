@@ -142,6 +142,38 @@ mcpp's build sandbox is network-isolated, so `file://` and
 seeded one is the copy that will still be there when the publish silently
 failed.
 
+## Publishing a workspace member *(mcpp 2026.9.25.1+)*
+
+A member's manifest may leave `version`, `[build]` flags and `x.workspace = true`
+entries to its workspace ([07](07-workspace.md) §4.1). Both publishing routes
+keep that working.
+
+- **The descriptor points into the repository's tag tarball**
+  (`mcpp = "*/libs/http/mcpp.toml"`). The consumer reads the member's manifest
+  from the tarball and applies the workspace root the tarball contains, as a
+  `git` consumer does. The manifest is published as written.
+- **`mcpp publish` or `mcpp emit xpkg` inside the member.** The archive contains
+  only the member's directory, so its `mcpp.toml` is normalised: the values the
+  member inherits are written out, `x.workspace = true` entries receive their
+  resolved source, and a dependency on a sibling member is published as a
+  version dependency. The manifest as written is kept beside it as
+  `mcpp.toml.orig`, and the normalised file is also written to
+  `target/dist/<name>-<version>.mcpp.toml` for review. The archive is built from
+  git objects with the commit's dates, so two runs produce the same bytes. A
+  package that is not a workspace member is archived exactly as before.
+
+A sibling dependency states the version it is published under:
+
+```toml
+[dependencies]
+"acme.util" = { path = "../util", version = "0.3.0" }   # path for development, version for consumers
+```
+
+`mcpp publish` refuses a sibling dependency without `version` and names the
+member's version and the line to write. It refuses a `path` dependency outside
+the package that is not a workspace member, and an inherited include directory
+outside the member's directory, because the archive contains neither.
+
 ## Manifest keys that need a version floor
 
 Most `[build]` keys degrade cleanly on an older mcpp: it warns that the key is
@@ -169,4 +201,5 @@ re-refreshing the index looking for it.
 - [ ] `publish-artifact.yml` succeeded
 - [ ] cold resolve (seeded copy deleted) downloads and compiles it
 - [ ] consumers bumped
+- [ ] a workspace member: the normalised `target/dist/<name>-<version>.mcpp.toml` reviewed
 

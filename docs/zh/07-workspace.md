@@ -391,7 +391,9 @@ myproject/
 `[workspace.package]`（mcpp 2026.9.16.1+；见 [05 —— 依赖](05-dependencies.md)）。
 它还继承所在仓库的 `[workspace.build]`，并按该仓库的 `[workspace.dependencies]`
 解析自己的 `x.workspace = true` 条目（2026.9.25.1+），因此同一个提交在它自己的
-检出中与在使用方的依赖图中以相同方式编译。
+检出中与在使用方的依赖图中以相同方式编译。索引描述符指向 tag tarball 内的成员时，
+该成员以同样方式取得 tarball 中的工作空间。用 `mcpp publish` 发布成员时，继承来的值
+被写入发布的清单（[11 —— 发布库](11-publishing-a-library.md)）。
 
 ## 7. 与 C++ 模块的关系
 

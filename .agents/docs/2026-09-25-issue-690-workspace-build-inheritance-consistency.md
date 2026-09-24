@@ -75,6 +75,8 @@ The decisions below are derived from these rules. Each rule names its source in 
 
 **F10 (measured during implementation): a member reached as a dependency does not resolve its own `x.workspace = true` entries.** A sibling `lib` whose manifest says `util.workspace = true` builds under `-p lib`. Under `-p app` it fails with `dependency 'util' has SemVer constraint '' but no readable index entry for it`. The dependency load site applied only `inherit_workspace_package`, so the entry reached resolution with neither version nor path. This is the same placement defect as F1, for the third part of what a member inherits.
 
+**F11 (measured during implementation): a member inside an index package's archive does not inherit its archive's workspace.** A descriptor may point at a member manifest (`mcpp = "*/mcpp/cairo/mcpp.toml"`; 22 installed index packages on the measuring machine have a workspace root in their archive). The resolver loaded that manifest as a stand-alone file, so a member that omits `version` was refused and `[workspace.build]` was ignored, while the same commit consumed through `git` inherits (D1). None of the 22 installed archives declares `[workspace.package]`, `[workspace.build]` or `[workspace.dependencies]`, so applying the inheritance changes no existing package. It is applied through the same function as the sibling and git cases, searching no higher than the install root (e2e 774).
+
 **F8 (reasoned): the F1 dependency's cache key records a define its compile does not carry.** `cache_key.cppm:534` reads `pkg.manifest.buildConfig.defines`, which retains the unfolded entries.
 
 Root cause: the build half of inheritance runs inside the snapshot, after the fold.
