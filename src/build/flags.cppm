@@ -580,53 +580,31 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     std::string pic_flag =
         (plan.needsPic && !isMsvcDialect && !peTarget) ? " -fPIC" : "";
 
-    // Include dirs — this is the TYPED PATH channel (bare paths from the
-    // manifest; the dialect prefix is applied here at emission), not the
-    // FLAG-STRING channel that `normalize_include_flags` serves (cflags/
-    // cxxflags, where the -I/-iquote/... prefix is already embedded in the
-    // string by the scanner). `normalize_include_flags`'s prefix table only
-    // knows GNU spellings, so routing dialect-prefixed tokens through it
-    // silently no-ops under MSVC (`/Iinclude` matches nothing and is never
-    // rewritten against plan.projectRoot — but ninja runs with cwd = output
-    // dir, so a relative include dir stops resolving). Absolutize the path
-    // directly instead (dialect-agnostic), then prepend the prefix, then
-    // ninja-$-escape and shell-quote per token (#234) so an include dir
-    // whose name contains a space can't silently split into two shell words
-    // once ninja hands the resolved command line to the shell.
-    // The one place this file turns a manifest include entry into a path.
-    // make_preferred: a multi-segment TOML entry like `generated/inc` keeps
-    // its `/` on MSVC, and the bare `projectRoot / inc` join would be MIXED —
-    // reaching both the ninja command line and the CDB's arguments (via
-    // f.cxx → split_flags). Same rule as every other manifest-path ingestion
-    // point (#390); no-op on POSIX. ONE lambda because the same join is needed
-    // four times in this function — {include_dirs, include_dirs_after} × {the
-    // C/C++ token list, the NASM one} — and re-deriving it per site is how the
-    // two channels drifted apart in the first place.
-    auto abs_native = [&](const std::filesystem::path& inc) {
-        auto p = inc.has_root_path() ? inc : (plan.projectRoot / inc);
-        p.make_preferred();
-        return p;
-    };
-
-    std::vector<std::string> includeTokens;
-    for (auto& inc : plan.manifest.buildConfig.includeDirs) {
-        includeTokens.push_back(include_token(d, abs_native(inc)));
-    }
-    // #249: `[build] include_dirs_after` — searched AFTER the toolchain's
-    // system dirs via -idirafter (gcc+clang), so entries can't shadow
-    // standard headers. cl.exe has no -idirafter; under the msvc dialect
-    // they degrade to regular /I appended at the END of the include list
-    // (documented degradation; clang-MSVC uses the gnu dialect).
-    const bool msvcInclude = d.includePrefix == std::string_view("/I");
-    for (auto& inc : plan.manifest.buildConfig.includeDirsAfter) {
-        includeTokens.push_back(
-            include_token(d, abs_native(inc), msvcInclude ? "/I" : "-idirafter"));
-    }
-    std::string include_flags;
-    for (auto& t : includeTokens) {
-        include_flags += ' ';
-        include_flags += t;   // already prefixed, escaped and quoted
-    }
+    // NO INCLUDE DIRECTORY IS BROADCAST FROM HERE.
+    //
+    // The strings assembled in this function are the FILE-LEVEL `$cxxflags`,
+    // `$cflags`, `$asmflags` and `$nasmflags` of build.ninja, and every edge in
+    // the graph reads them: the root's units, every dependency's units and the
+    // std module alike. The root's `[build] include_dirs` and
+    // `include_dirs_after` used to be appended here, a leftover from v0.0.1
+    // that the usage-requirements model (#101) never removed. Under that model
+    // a package's include directories are its PRIVATE build requirement, and
+    // each unit already receives its own package's directories through its
+    // per-unit `$local_includes` (`CompileUnit::localIncludeDirs`, filled from
+    // `privateBuild`). The broadcast therefore had one effect of its own:
+    // it put the root's directories, `private_include_dirs` included, on the
+    // compile line of every dependency.
+    //
+    // Measured before this change (#690, design record F7): a root header
+    // named `limits.h` stopped `compat.cjson`'s `cJSON.c` from compiling, and
+    // because the dependency cache key never contained the broadcast, an
+    // object compiled against one project's root headers was served to an
+    // unrelated project (`cJSON_Compare(1.0, 1.2)` answered 1). The root's own
+    // units carried each directory twice. The rule now holds in both
+    // directions: a package's private build requirements reach only its own
+    // units, and usage requirements travel from a dependency to its consumers,
+    // never from a consumer into a dependency. See `kCacheEpoch` 4 in
+    // cache_key.cppm for the entries written while the broadcast existed.
 
     // Sysroot / payload paths — resolved ONCE by the toolchain link model
     // (mcpp.toolchain.linkmodel, the single source of truth shared with
@@ -1091,52 +1069,40 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // plan.dialectFlags rides right behind -std= (issue #210): module-graph-
     // global dialect flags reach every TU (deps included) via this global
     // cxxflags string, exactly like the standard flag itself.
-    f.cxx = std::format("{}{}{}{}{}{}{}{}{}{}{}{}", cxx_std_flag, plan.dialectFlags,
+    f.cxx = std::format("{}{}{}{}{}{}{}{}{}{}{}", cxx_std_flag, plan.dialectFlags,
                         msvc_base, module_flag, std_module_flag,
                         std_compat_module_flag, prebuilt_module_flag,
-                        opt_flag, pic_flag, compile_toolchain_flags, b_flag, include_flags);
+                        opt_flag, pic_flag, compile_toolchain_flags, b_flag);
     // MSVC compiles C with cl.exe too; /std: for C uses cN spellings — skip
     // the C standard flag there (cl defaults are fine for the C entry TUs).
     f.cc = isMsvcDialect
-        ? std::format("{}{}{}{}{}", msvc_base, opt_flag, compile_toolchain_flags,
-                      b_flag, include_flags)
-        : std::format("{}{}{}{}{}{}{}", d.stdPrefix, c_std, opt_flag, pic_flag,
-                      compile_toolchain_flags, b_flag, include_flags);
+        ? std::format("{}{}{}{}", msvc_base, opt_flag, compile_toolchain_flags,
+                      b_flag)
+        : std::format("{}{}{}{}{}{}", d.stdPrefix, c_std, opt_flag, pic_flag,
+                      compile_toolchain_flags, b_flag);
 
     // GAS assembly (.S/.s via the C driver): the asm-safe subset — no -std
     // (C-only) and no -O (meaningless), but PIC stays (.S sources gate on
     // __PIC__), -g is fine, and the toolchain-location flags must come along
     // (hermetic link model: never fall back to a host `as`). MSVC dialect has
     // no GAS path — prepare hard-errors before these flags are consumed.
-    f.as = std::format("{}{}{}{}{}",
+    f.as = std::format("{}{}{}{}",
                        prof.debug ? " -g" : "", pic_flag,
-                       compile_toolchain_flags, b_flag, include_flags);
+                       compile_toolchain_flags, b_flag);
 
     // NASM (.asm): fixed GNU-ish spelling of its own — include dirs are
     // re-spelt with -I regardless of dialect (nasm ≥2.14 inserts a missing
     // path separator itself); DWARF debug info exists on ELF only.
     if (!plan.nasmPath.empty()) {
-        // Same abs_native join as the C/C++ channel above — one decision, one
-        // implementation. Two knock-on effects, both wanted: the entry is now
-        // spelt with native separators (#390), and the "already rooted?" test
-        // becomes has_root_path() instead of is_absolute(), so a root-relative
-        // `/x` entry is left alone here exactly as it is for the C/C++ include
-        // list. The two predicates only differ on Windows, and only for that
-        // spelling — where NASM disagreeing with the compiler about the SAME
-        // `include_dirs` key was the bug, not the feature.
-        std::string nasm_includes;
-        for (auto& inc : plan.manifest.buildConfig.includeDirs) {
-            nasm_includes += " -I" + escape_path(abs_native(inc));
-        }
-        // #249: nasm has no system header dirs to defer to — after-dirs
-        // degrade to plain -I appended at the end.
-        for (auto& inc : plan.manifest.buildConfig.includeDirsAfter) {
-            nasm_includes += " -I" + escape_path(abs_native(inc));
-        }
+        // Include directories reach a NASM unit through its per-unit
+        // `$local_includes`, spelt `-I` for every entry (see
+        // `local_include_flags` in ninja_backend.cppm), for the same reason
+        // the C/C++ channel above carries none: a file-level list would reach
+        // every package's `.asm` units.
         std::string nasm_debug;
         if (prof.debug && plan.nasmFormat.starts_with("elf"))
             nasm_debug = " -g -F dwarf";
-        f.nasm = nasm_debug + nasm_includes;
+        f.nasm = nasm_debug;
     }
 
     // Link flags

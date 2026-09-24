@@ -167,6 +167,37 @@ std::string graph_c_library_isolation_advice(std::string_view output,
                                              std::string_view cAbiName = {},
                                              std::string_view cAbiCoordinate = {});
 
+// #690 (design record F7): the note for a dependency that compiled only because
+// its consumer's include directories used to reach it.
+//
+// The root's `[build] include_dirs` were broadcast to every unit in the graph
+// until mcpp 2026.9.25.1; a dependency that included a header it never declared
+// compiled as long as the consumer happened to provide one. That dependency now
+// fails with an ordinary missing-header error, which on its own reads as a
+// broken package. The note names the directory in which the header does exist
+// and the rule that changed.
+//
+// Same shape as the advice above: text-matched against RAW ninja output and
+// appended, never rewriting what the compiler said. It fires only when both
+// hold: the compiler reported a missing header (gcc `fatal error: X: No such
+// file or directory`, clang `fatal error: 'X' file not found`, cl.exe `C1083:
+// Cannot open include file: 'X'`), and a regular file named X exists under one
+// of `rootIncludeDirs` (absolute paths: the root's `include_dirs` and
+// `include_dirs_after`; `private_include_dirs` is a subset of the former).
+std::string consumer_include_scope_advice(
+    std::string_view output,
+    const std::vector<std::filesystem::path>& rootIncludeDirs);
+
+// The root's include directories as the advice above needs them: expanded and
+// absolute. Written beside build.ninja so the fast path, which has no plan,
+// gives the same note (see `write_c_abi_absent_sidecar` for why both channels
+// must).
+std::vector<std::filesystem::path> root_include_dirs_of(const BuildPlan& plan);
+void write_consumer_include_sidecar(const std::filesystem::path& outputDir,
+                                    const std::vector<std::filesystem::path>& dirs);
+std::vector<std::filesystem::path>
+read_consumer_include_sidecar(const std::filesystem::path& outputDir);
+
 }  // namespace mcpp::build
 
 namespace mcpp::build {
@@ -746,6 +777,116 @@ read_c_abi_absent_sidecar(const std::filesystem::path& outputDir) {
         out.second.push_back(std::move(e));
     }
     return out;
+}
+
+namespace {
+constexpr std::string_view kConsumerIncludeSidecar = ".mcpp-consumer-include-dirs";
+
+// The header named by one compiler diagnostic line, or empty. Three spellings,
+// one per driver family; anything else is not a missing-header report.
+std::string missing_header_in(std::string_view line) {
+    if (auto at = line.find("' file not found");
+        at != std::string_view::npos && at > 0) {
+        auto open = line.rfind('\'', at - 1);
+        if (open != std::string_view::npos && open < at)
+            return std::string(line.substr(open + 1, at - open - 1));
+        return {};
+    }
+    constexpr std::string_view kCl = "Cannot open include file: '";
+    if (auto at = line.find(kCl); at != std::string_view::npos) {
+        auto from = at + kCl.size();
+        auto close = line.find('\'', from);
+        if (close != std::string_view::npos)
+            return std::string(line.substr(from, close - from));
+        return {};
+    }
+    constexpr std::string_view kGcc = "fatal error: ";
+    constexpr std::string_view kEnoent = ": No such file or directory";
+    auto at = line.find(kGcc);
+    auto end = line.rfind(kEnoent);
+    if (at != std::string_view::npos && end != std::string_view::npos
+        && end > at + kGcc.size())
+        return std::string(line.substr(at + kGcc.size(),
+                                       end - at - kGcc.size()));
+    return {};
+}
+}  // namespace
+
+std::string consumer_include_scope_advice(
+    std::string_view output,
+    const std::vector<std::filesystem::path>& rootIncludeDirs) {
+    if (rootIncludeDirs.empty()) return {};
+    std::vector<std::pair<std::string, std::filesystem::path>> found;
+    std::size_t pos = 0;
+    while (pos <= output.size()) {
+        auto nl = output.find('\n', pos);
+        auto line = output.substr(pos, nl == std::string_view::npos
+                                            ? std::string_view::npos : nl - pos);
+        pos = nl == std::string_view::npos ? output.size() + 1 : nl + 1;
+        auto header = missing_header_in(line);
+        if (header.empty()) continue;
+        if (std::ranges::any_of(found, [&](auto const& f) { return f.first == header; }))
+            continue;
+        for (auto const& dir : rootIncludeDirs) {
+            std::error_code ec;
+            if (std::filesystem::is_regular_file(dir / header, ec)) {
+                found.emplace_back(header, dir);
+                break;
+            }
+        }
+    }
+    if (found.empty()) return {};
+    std::string named;
+    for (auto const& [header, dir] : found)
+        named += std::format("\n        '{}' in {}", header, dir.string());
+    return std::format(
+        "\n"
+        "note: a header reported missing above exists in this project's own "
+        "include directories:{}\n"
+        "      Since mcpp 2026.9.25.1 a consumer's include directories no longer "
+        "reach the\n"
+        "      units of its dependencies: a package's `include_dirs` are its own "
+        "private build\n"
+        "      requirement. The dependency has to reach the header itself, "
+        "through its own\n"
+        "      `[build] include_dirs` or through a dependency that provides "
+        "it.\n",
+        named);
+}
+
+std::vector<std::filesystem::path> root_include_dirs_of(const BuildPlan& plan) {
+    std::vector<std::filesystem::path> dirs;
+    auto add = [&](const std::vector<std::filesystem::path>& entries) {
+        for (auto const& inc : entries)
+            for (auto& d : expand_manifest_include_entry(plan.projectRoot, inc))
+                dirs.push_back(std::move(d));
+    };
+    add(plan.manifest.buildConfig.includeDirs);
+    add(plan.manifest.buildConfig.includeDirsAfter);
+    return dirs;
+}
+
+void write_consumer_include_sidecar(const std::filesystem::path& outputDir,
+                                    const std::vector<std::filesystem::path>& dirs) {
+    const auto path = outputDir / kConsumerIncludeSidecar;
+    std::error_code ec;
+    if (dirs.empty()) { std::filesystem::remove(path, ec); return; }
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) return;
+    for (auto const& d : dirs) f << d.string() << '\n';
+}
+
+std::vector<std::filesystem::path>
+read_consumer_include_sidecar(const std::filesystem::path& outputDir) {
+    std::vector<std::filesystem::path> dirs;
+    std::ifstream f(outputDir / kConsumerIncludeSidecar, std::ios::binary);
+    if (!f) return dirs;
+    std::string line;
+    while (std::getline(f, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!line.empty()) dirs.emplace_back(line);
+    }
+    return dirs;
 }
 
 std::string c_abi_absent_facility_advice(
@@ -3173,6 +3314,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         plan.outputDir, plan.targetSide.cAbi.interfaceName,
         plan.targetSide.cAbiDecl ? plan.targetSide.cAbiDecl->absent
                                  : std::vector<mcpp::targetside::CAbiAbsentEntry>{});
+    write_consumer_include_sidecar(plan.outputDir, root_include_dirs_of(plan));
     auto manifest = emit_ninja_string(plan);
     stage("emit-ninja");
 
@@ -3537,6 +3679,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         // and gets the degraded-but-still-correct form.
         diagnostics += graph_c_library_isolation_advice(
             out, plan.targetSide.cAbi.interfaceName, plan.targetSide.cAbi.impl);
+        // #690: read from the plan here and from the sidecar on the fast path.
+        diagnostics += consumer_include_scope_advice(out, root_include_dirs_of(plan));
         if (plan.targetSide.cAbiDecl)
             diagnostics += c_abi_absent_facility_advice(
                 out, plan.targetSide.cAbi.interfaceName,

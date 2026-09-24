@@ -92,7 +92,21 @@ export namespace mcpp::build::cache_key {
 // compiled WITH the substitution. Bumping this orphans the entire cache —
 // one cold rebuild — rather than trust a key equality that cannot tell a
 // pre-fix entry from a post-fix one.
-inline constexpr int kCacheEpoch = 3;
+// 4 (#690, design record F7): the root's `[build] include_dirs` and
+// `include_dirs_after`, `private_include_dirs` included, used to be written
+// into the file-level compile flags of build.ninja, which every dependency
+// unit reads, while no axis of this key contained them. A cached dependency
+// object could therefore have been compiled against ANOTHER project's root
+// headers, and the key could not say so. Measured: with the entry for
+// `compat.cjson` 1.7.19 moved aside, a project whose root carried a private
+// `float.h` redefining `DBL_EPSILON` populated the entry, and an unrelated
+// project with no include directories then received that object and printed
+// `cJSON_Compare(1.0, 1.2) = 1`. The broadcast is gone (flags.cppm), so a
+// dependency's compile line no longer depends on its consumer; the entries
+// written while it existed are the epoch-3 shape again: entries whose key
+// never described them. Bumping orphans the cache once, one cold rebuild,
+// rather than trust any entry written before the fix.
+inline constexpr int kCacheEpoch = 4;
 
 // Axes A/B/C — identical for every package in one build, computed once.
 struct BuildAxes {

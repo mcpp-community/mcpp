@@ -1258,6 +1258,12 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         if (auto advice = mcpp::build::graph_c_library_isolation_advice(out);
             !advice.empty())
             std::fputs(advice.c_str(), stderr);
+        // #690: the consumer-include note, from the list the plan wrote beside
+        // build.ninja (`write_consumer_include_sidecar`).
+        if (auto advice = mcpp::build::consumer_include_scope_advice(
+                out, mcpp::build::read_consumer_include_sidecar(ninjaPath.parent_path()));
+            !advice.empty())
+            std::fputs(advice.c_str(), stderr);
         // THE SAME ADVICE THE PLAN PATH GIVES, FROM THE LIST THE PLAN WROTE
         // DOWN. This path has no `BuildPlan` by construction, so the C
         // library's `[c-abi-absent]` table reaches it through a file beside
