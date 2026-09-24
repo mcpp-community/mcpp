@@ -48,6 +48,13 @@
 之后指出该头文件所在的使用方目录。依赖需要通过自己的 `include_dirs` 或它的某个依赖找到头文件。
 依赖缓存的 epoch 由 3 升为 4,升级后首次构建重建一次依赖缓存,不需要任何操作。
 
+### 作为 host tool 构建的依赖只合并一次条件节
+
+依赖的 `[target.<selector>.build]` 条件节先按使用方的目标合并,host tool 子构建此前拿到的正是合并后的
+清单,又按宿主合并一次,同时命中两者的条目因此到达工具两次。实测:条件节中的 `-include once.h`
+(无 include guard)让单独构建正常的包作为工具时报重定义错误,2026.9.24.1 同样如此。清单现在记录
+第一次合并之前的状态,子构建从该状态按宿主合并。
+
 ### 成员清单只有一种读法
 
 `mcpp publish`、`mcpp pack`、`mcpp emit xpkg`、`mcpp toolchain list`、`mcpp sbom`、`mcpp index list`/`update`、

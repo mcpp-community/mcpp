@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-308 records.
+309 records.
 
 ## By subject
 
@@ -65,6 +65,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### review
 
+- [#690: self-review before release, engine and ecosystem](2026-09-25-issue-690-self-review.md) — active
 - [本轮生态级自审](2026-09-20-wave-self-review.md) — active
 - [#674 设计方案评审：`-include unistd.h` 在 Windows + `presents = "posix"` 上的可行性](2026-09-20-issue-674-design-review.md) — active
 - [`__cxa_thread_atexit` 在 openkal-Windows 上:两层都已定位并修复](2026-09-20-cxa-thread-atexit-finding.md) — landed
@@ -100,6 +101,7 @@ Records that declare one. Everything else is listed by date below.
 ### 2026-09
 
 - [Workspace inheritance, flag scoping and the published form: a unified repair plan (#690)](2026-09-25-issue-690-workspace-build-inheritance-consistency.md) — active
+- [#690: self-review before release, engine and ecosystem](2026-09-25-issue-690-self-review.md) — active
 - [#690: implementation plan](2026-09-25-issue-690-implementation-plan.md) — active
 - [工具链选择与载荷可信度：实施计划](2026-09-24-toolchain-selection-implementation-plan.md) — landed
 - [MSVC toolset 的选择、#685、#687 与工具链管理规范：总体设计](2026-09-24-toolchain-selection-and-payload-trust-design.md) — active

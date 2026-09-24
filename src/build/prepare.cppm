@@ -402,6 +402,9 @@ void replace_dependencies(
 export void merge_conditional_config(mcpp::manifest::Manifest& m,
                                     const cfgpred::Ctx& ctx)
 {
+    // Recorded before the first merge; see Manifest::beforeConditionalMerge.
+    if (!m.beforeConditionalMerge)
+        m.beforeConditionalMerge = std::make_shared<const mcpp::manifest::Manifest>(m);
     // A DISTRIBUTION package may carry a leg's link line twice: as `ldflags`
     // (GNU spelling, which is all an older mcpp reads) and as the neutral
     // `[target.<pred>.runtime]` pair, which mcpp renders per dialect. Applying
@@ -10374,11 +10377,18 @@ prepare_build(bool print_fingerprint,
                     // twice. A `compat` (Form B) package has no mcpp.toml on
                     // disk at all, so without this the sub-build could not read
                     // a manifest for it in the first place.
+                    //
+                    // UNMERGED, because the sub-build targets the HOST: the
+                    // resolver merged this manifest's conditional sections for
+                    // the consumer's target, and the sub-build merges them for
+                    // its own (#690, F12).
                     if (depIdx >= 1 && depIdx - 1 < dep_manifests.size()
-                        && dep_manifests[depIdx - 1])
-                        sub.preloaded_manifest =
-                            std::make_shared<const mcpp::manifest::Manifest>(
-                                *dep_manifests[depIdx - 1]);
+                        && dep_manifests[depIdx - 1]) {
+                        auto const& dep = *dep_manifests[depIdx - 1];
+                        sub.preloaded_manifest = dep.beforeConditionalMerge
+                            ? dep.beforeConditionalMerge
+                            : std::make_shared<const mcpp::manifest::Manifest>(dep);
+                    }
                     sub.inherited_runtime_selection = std::make_shared<
                         const mcpp::xlings::runtime::RuntimeSelection>(
                             runtimeSelection);

@@ -2083,6 +2083,14 @@ struct Manifest {
     // values are paths. Kept as text so this module's interface names no JSON
     // type.
     std::string                 packageMetadataJson;
+    // The manifest as it was before its first conditional merge, recorded by
+    // `merge_conditional_config`. The merge evaluates `[target.<selector>]`
+    // sections for ONE target, and a package's manifest can be needed for a
+    // second one: a host-tool sub-build compiles a dependency for the host,
+    // and merging the already merged manifest again applied the consumer's
+    // entries and then the host's, so a flag in a matching section reached
+    // the tool twice (#690, F12). Null when no merge has run.
+    std::shared_ptr<const Manifest> beforeConditionalMerge;
 };
 
 struct ManifestError {
