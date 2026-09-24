@@ -73,6 +73,8 @@ The decisions below are derived from these rules. Each rule names its source in 
 
 **F2 (measured): the selected root member inherits twice.** The root inherits at load (`prepare.cppm:2365`/`2384`). `packages[0] = makePackageRoot(*root, *m)` (`prepare.cppm:6774`) finds it is a member and inherits again. The measured compile line is `-DFLAGLEVEL=1 -fno-exceptions -DFLAGLEVEL=1 -fno-exceptions -DFLAGLEVEL=2 -fexceptions`, which is the workspace entries twice followed by the member's once. The second copy is prepended as well, so the outcome of any override is unchanged. The cost falls on flags that are not idempotent, such as `-include x.h` without a guard, or options that accumulate.
 
+**F10 (measured during implementation): a member reached as a dependency does not resolve its own `x.workspace = true` entries.** A sibling `lib` whose manifest says `util.workspace = true` builds under `-p lib`. Under `-p app` it fails with `dependency 'util' has SemVer constraint '' but no readable index entry for it`. The dependency load site applied only `inherit_workspace_package`, so the entry reached resolution with neither version nor path. This is the same placement defect as F1, for the third part of what a member inherits.
+
 **F8 (reasoned): the F1 dependency's cache key records a define its compile does not carry.** `cache_key.cppm:534` reads `pkg.manifest.buildConfig.defines`, which retains the unfolded entries.
 
 Root cause: the build half of inheritance runs inside the snapshot, after the fold.
@@ -152,7 +154,7 @@ Measured on a git repository whose workspace declares `version`, `license` and `
 | **D1** | Should a git-hosted workspace's `[workspace.build]` reach its git-consumed members? | **Yes.** Accepted in review. | P1. The flags are the member's statement about its own compilation, factored into its repository root. A member's own `[build]` already applies through git, and #650 adopted the package half for the same reason. The behaviour change is recorded in the CHANGELOG. |
 | **D2** | What is the published form of a member? | **A normalised, self-contained manifest** (section 5.5). Publishing is refused only where normalisation cannot preserve meaning. | P6. The development form is valid only inside its workspace. Refusing every member whose effective manifest differs from its file would refuse every member that inherits anything, which is the purpose of a workspace. |
 | **Q3** | Is the snapshot post-condition an internal error in release builds? | **Yes**, following `plan.cppm:1797`: `std::unexpected("internal error: ... (please report)")`. | P7. The defect it catches is silent, and the check costs one comparison per package. |
-| **D3** | How does a member override inherited vectors? | **(a)** document the actual rule now; **(b)** make `defines` a keyed set as a follow-up. Include ordering and opt-out wait for evidence. | Section 5.7. |
+| **D3** | How does a member override inherited vectors? | **(a)** document the actual rule; **(b)** make `defines` a keyed set. Both are delivered in the #690 pull request (review of 2026-09-25 asked for one pull request per repository). Include ordering and opt-out wait for evidence. | Section 5.7. |
 | **D4** | What replaces the root include broadcast? | **Nothing implicit.** The root's include directories become private to the root, as #101 intended. A dependency that needs a consumer-supplied header receives it through an explicit, keyed mechanism, designed only when a package needs it. | P4, P5, and the measured absence of reliance. |
 
 ---
@@ -241,6 +243,8 @@ Each criterion fails when its fix is removed.
 ---
 
 ## 7. Delivery
+
+Superseded in review (2026-09-25): every row below is delivered in one pull request, and each workstream keeps its own criterion inside it. The order and dependencies are in [the implementation plan](2026-09-25-issue-690-implementation-plan.md).
 
 | PR | Content | Depends on |
 |---|---|---|

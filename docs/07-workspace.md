@@ -195,7 +195,8 @@ name = "core"
 | kind | rule |
 |---|---|
 | scalars (`standard`, `version`, `license`, `c_standard`, `linkage`, …) | the member wins **when it declared the key**; otherwise the workspace value applies |
-| vectors (`cxxflags`, `ldflags`, `defines`, `dialect_cxxflags`, `include_dirs`, …) | append, **workspace first** — so a member's own flag comes later on the command line, where it wins |
+| vectors (`cxxflags`, `cflags`, `ldflags`, `dialect_cxxflags`, `include_dirs`, …) | append, **workspace first** |
+| `defines` | a set keyed by macro name: a member entry for an inherited name replaces it, and `!NAME` removes it (2026.9.25.1+) |
 | `[workspace.dependencies]` | explicit opt-in per dependency, `x.workspace = true` (§3) |
 
 "Declared" means the key was written, not that its value differs from the
@@ -210,6 +211,34 @@ inheritance is the default and overriding is what has to be stated.
 Dependencies keep their explicit opt-in because a dependency is an edge in the
 resolution graph: inheriting one implicitly would change what a member resolves
 without its own manifest naming it.
+
+**What an appended vector overrides.** The member's words follow the
+workspace's on the command line. A flag the compiler resolves last-wins is
+therefore overridden by restating it: `-fexceptions` after `-fno-exceptions`,
+`-Wno-x` after `-Wx`, `-O2` after `-O0`. Include directories are searched in
+order, so a header in a workspace `include_dirs` directory is found before a
+header of the same name in the member's. A macro is overridden through
+`defines`, which emits one `-DNAME` word per name:
+
+```toml
+# workspace root
+[workspace.build]
+defines = ["LOG_LEVEL=1", "TRACE"]
+
+# member
+[build]
+defines = ["LOG_LEVEL=3", "!TRACE"]   # compiles with -DLOG_LEVEL=3 and no TRACE
+```
+
+A `defines` entry also replaces a `-DNAME` word for the same name written in
+`cflags` or `cxxflags` of the same package. `!NAME` requires mcpp 2026.9.25.1 or
+later; an older mcpp passes it to the compiler as `-D!NAME`, which is an error.
+
+**Every member receives the inherited values exactly once, in every position**
+(2026.9.25.1+): as the package a command builds (`-p <member>`, or a command run
+inside the member), as another member's `path` dependency, and as a member of a
+git-hosted workspace consumed through `git` (§6). A member reached as a dependency
+also resolves its own `x.workspace = true` entries.
 
 **`version` may be omitted by a member** when `[workspace.package]` supplies it.
 It remains required overall — a member with neither is refused, naming both the
@@ -376,7 +405,10 @@ A project outside the workspace reaches a member of a git-hosted workspace by
 the member's identity: `myproject.http = { git = "...", rev = "..." }` selects
 `libs/http` among the root manifest's `members`, at the same commit, and the
 member inherits `[workspace.package]` as it does here (mcpp 2026.9.16.1+; see
-[05 — Dependencies](05-dependencies.md)).
+[05 — Dependencies](05-dependencies.md)). It also inherits its repository's
+`[workspace.build]` and resolves its `x.workspace = true` entries against that
+repository's `[workspace.dependencies]` (2026.9.25.1+), so the same commit
+compiles the same way in its own checkout and in a consumer's graph.
 
 ## 7. Relationship to C++ Modules
 

@@ -5,11 +5,11 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.5 |
-| **最后修改** | 2026-09-17 |
+| **版本** | 1.6 |
+| **最后修改** | 2026-09-25 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
-| **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md` |
+| **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md` |
 | **相关使用文档** | [docs/04 —— mcpp.toml 字段参考](../04-mcpp-toml.md) |
 
 ## 规范用语
@@ -33,7 +33,7 @@
 一个条目按什么解析、键怎么命名。它不列举字段——字段在 docs/05。
 
 它回答的是一个新字段或新 section 该长什么样,以及一份 manifest 为什么这样组织。
-§8 另陈述编译 flag 列表中一个元素代表哪些参数。
+§8 另陈述编译 flag 列表中一个元素代表哪些参数，§9 陈述工作空间继承与构建需求的作用域。
 
 **边界。** 本规范不覆盖字段的准入条件,那由 docs/05 附录 A(Schema Ownership
 Principle)规定,本规范不重复它,只在 §6 引用并补充一条。
@@ -334,6 +334,16 @@ feature-deps          feature-xlings         ← 限定词是门
     规则本身由读回性质陈述:任意词经实现的拼写读回为它自身,经宿主引号读回也为它自身,
     且 POSIX 宿主上由 `/bin/sh` 实测(`modules/manifest/tests/test_flag_words.cpp`、
     `tests/unit/test_compile_commands.cpp`)。
+11. §8 `defines` 集合语义与 §9 第 1 至 3 条的判据:同一成员分别作为命令构建的包与作为兄弟
+    成员的 `path` 依赖时,每个工作空间词在 C 与 C++ 编译单元中各恰好出现一次且先于成员
+    自己的词;成员重写的宏名只出现成员的值,`!NAME` 移除的宏名不出现;作为依赖的成员
+    解析自己的 `x.workspace = true` 条目;通过 `git` 引用的仓库成员收到其仓库的
+    `[workspace.build]`(`tests/e2e/770_workspace_member_as_dependency.sh`)。第 3 条的
+    内部错误与第 4 条的键表由单元测试陈述(`tests/unit/test_workspace_inheritance.cpp`)。
+12. §9 第 6 条的判据:根包私有目录中的 `limits.h` 不到达依赖的 C 与 C++ 编译单元;依赖
+    的编译命令在两个仅 include 设置不同的根包下相同;根包自己的编译单元中每个根包目录
+    恰好出现一次;依赖因此找不到头文件时,报错之后指出消费者目录
+    (`tests/e2e/765_a_consumer_include_directory_stays_in_the_consumer.sh`)。
 
 ## 8. 编译 flag 列表的元素
 
@@ -356,14 +366,43 @@ feature、`[profile.<n>]`、`[target.<selector>.build]`、xpkg 描述符,以及�
    不适用。自 mcpp#234 起,每个版本在宿主读取之前都把这样的元素整体加引号,该例外保持其含义不变。
 
 `defines` 的一个条目 `X` 是一个值:它代表一个词 `-D` 与 `X` 的拼接,**禁止**按上述规则
-读取。实现向这三个列表插入一个词 `w` 时,**必须**使用一个按上述规则读回恰为 `w` 的拼写。
+读取。
+
+`defines` 是按宏名构成的集合(mcpp 2026.9.25.1 起)。条目的宏名是 `=` 之前的文本,
+无 `=` 时为整个条目。条目按包接收它们的顺序读取:`[workspace.build]`、包自己的
+`[build]`、各个命中的 `[target.<selector>.build]`。实现**必须**满足:同一宏名的后一个
+条目在原位替换前一个;条目 `!NAME` 移除宏名 `NAME`;一个包的每个编译单元对每个宏名
+至多收到一个 `-D` 词;`defines` 条目取代同一个包的 `cflags`、`cxxflags` 中读作单个词
+且宏名相同的 `-D` 词。实现向这三个列表插入一个词 `w` 时,**必须**使用一个按上述规则读回恰为 `w` 的拼写。
 
 实现**必须**把每个词原样交给编译器,与宿主的命令行读取规则(POSIX `sh`、MSVCRT)无关;
 `compile_commands.json` 与构建数据库(SPEC-005 R3.7)列出的参数**必须**是这些词。
 
 `ldflags`、`dialect_cxxflags` 与 `std-module-flags` 不在本节范围内。
 
-**状态:已实现(mcpp 2026.9.17.1)。**
+**状态:已实现(mcpp 2026.9.17.1;`defines` 的集合语义 mcpp 2026.9.25.1)。**
+
+## 9. 工作空间继承与构建需求的作用域
+
+1. 工作空间成员**必须**恰好接收一次 `[workspace.package]`、`[workspace.build]` 与
+   `x.workspace = true` 条目的继承,无论它是命令构建的包、另一个成员的 `path` 依赖,
+   还是通过 `git` 引用的、托管在 git 上的工作空间的成员。后一种情况按该成员所在仓库的
+   工作空间根继承,相对路径以该仓库的根为锚点。
+2. 向量按工作空间、成员、命中的 `[target.<selector>.build]` 的顺序追加;`defines` 按
+   §8 的集合语义合并。标量仅在成员未**声明**该键时取工作空间的值。
+3. 继承**必须**在 `defines` 展开之前、在清单被固定进构建图之前完成。实现**必须**拒绝
+   把含有未展开 `defines` 的清单固定进构建图,并报告内部错误。
+4. 可继承的 `[build]` 键集合只陈述一次。解析、已知键检查与报错文本**必须**取自同一
+   陈述。
+5. 读取成员清单的每一条命令**必须**读取继承后的有效清单。
+6. 一个包的私有构建需求,包括它的 `include_dirs` 与 `include_dirs_after`,**禁止**到达
+   另一个包的编译单元。使用需求只从依赖流向它的消费者,**禁止**从消费者流入依赖。
+   一个依赖的编译命令**必须**与构建它的工程无关;依赖缓存键**必须**包含到达该命令的
+   全部输入。
+7. 工作空间成员的发布形态**必须**自包含:发布的清单写出继承来的值,兄弟成员之间的
+   `path` 边以版本边发布,无法以版本表达的 `path` 边**必须**被拒绝发布。
+
+**状态:已实现(mcpp 2026.9.25.1)。**
 
 ## 变更记录
 
@@ -375,3 +414,4 @@ feature、`[profile.<n>]`、`[target.<selector>.build]`、xpkg 描述符,以及�
 | 1.3 | 2026-09-14 | 条件依赖声明替换同一身份的无条件声明,`targets.<name>` 成为可条件化的 section,不读取的 section 必须报出(mcpp 2026.9.14.2):新增 §3.1.1 与 §7 第 8 条判据。 |
 | 1.4 | 2026-09-15 | 库目标的默认链接形态 `linkage`(mcpp 2026.9.15.2):§3.1.1 补默认值的语义、优先顺序与拒绝条件;§7 补第 9 条判据。 |
 | 1.5 | 2026-09-17 | 编译 flag 列表元素的读法(mcpp 2026.9.17.1,#655):新增 §8 与 §7 第 10 条判据。 |
+| 1.6 | 2026-09-25 | 工作空间继承与构建需求的作用域(mcpp 2026.9.25.1,#690):§8 补 `defines` 的集合语义;新增 §9 与 §7 第 11、12 条判据。 |

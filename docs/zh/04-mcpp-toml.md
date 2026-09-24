@@ -402,14 +402,14 @@ mcpp 刻意不在一次构建里用两种方式编译同一份共享源码：一
 sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # Source globs (default: src/**/*.{cppm,cpp,cc,c,S,s,asm})
 module_extensions = [".ixx"]      # Extra extensions used by module INTERFACES (§ below)
 build_program_timeout = 1800      # Seconds a build.mcpp may run; 0 = no limit (§ below)
-include_dirs = ["include", "third_party/include"]  # Header search paths
+include_dirs = ["include", "third_party/include"]  # 本包的头文件搜索路径（见下文）
 include_dirs_after = ["*"]         # Header dirs searched AFTER system dirs (-idirafter)
 private_include_dirs = ["vendor/src/include"]  # Of `include_dirs`, the ones a consumer must NOT get
 c_standard   = "c11"              # Standard for C source files (default c11)
 cflags       = ["-DFOO=1"]        # Extra C compile flags
 cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
 ldflags      = ["-lfoo"]          # Extra link flags
-defines      = ["BIZ=1", "QUX"]   # Preprocessor macros for every TU (desugars to -D; reaches module scans)
+defines      = ["BIZ=1", "QUX"]   # 本包每个编译单元的预处理宏；按宏名构成集合（见下文）
 cxx_runtime  = "self-contained"   # C++ runtime contract (§ below); static_stdlib is the old spelling
 target       = "x86_64-linux-musl" # Default build target when no --target is passed
                                    # (≙ cargo build.target; e.g. "ship fully-static")
@@ -461,6 +461,32 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
 在一个工程的首次 plan 时，若某个元素的词与 2026.9.17.1 之前的版本在
 同一宿主上传出的参数不同，mcpp 会在 `build/flag-words` 下发出警告，并
 点名两者。重复同一份 plan 的构建不会重复这条警告。
+
+#### 什么到达哪个编译单元：`defines` 与头文件目录 *(mcpp 2026.9.25.1+)*
+
+`defines` 是按宏名构成的集合。条目按包接收它们的顺序读取：`[workspace.build]`
+（对工作空间成员而言）、包自己的 `[build]`，然后是每个命中的
+`[target.<selector>.build]`。同一宏名的后一个条目替换前一个，条目 `!NAME` 移除该
+宏名。每个宏名以一个 `-DNAME` 词到达编译器，C 与 C++ 编译单元相同：
+
+```toml
+[build]
+defines = ["LEVEL=1", "TRACE"]
+
+[target.'cfg(os = "windows")'.build]
+defines = ["LEVEL=2", "!TRACE"]       # Windows 上：-DLEVEL=2，且不定义 TRACE
+```
+
+`defines` 条目同样替换本包在 `cflags` 或 `cxxflags` 中写下的同名 `-DNAME` 词。
+更早的 mcpp 会把 `!NAME` 作为 `-D!NAME` 交给编译器，那是一个错误，因此使用它的包
+需要 mcpp 2026.9.25.1 或更新版本。
+
+`include_dirs` 与 `include_dirs_after` 由本包自己的编译单元搜索。本包的消费者也会
+收到它们，`private_include_dirs` 中列出的条目除外。本包的依赖永远收不到它们：无论
+由哪个工程构建，依赖都只对照自己的头文件目录以及它自己的依赖所公开的目录编译。
+依赖若包含某个头文件，必须通过自己的 `include_dirs` 或它的某个依赖找到它。当依赖的
+编译报告缺少某个头文件、而该文件存在于消费者的头文件目录中时，mcpp 会在编译器的
+报错之后指出那个目录。
 
 #### `dependency_linkage` —— 静态还是动态由消费者决定
 

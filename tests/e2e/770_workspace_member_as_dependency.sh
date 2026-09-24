@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires: gcc python3
+# requires: python3
 # 770 -- a workspace member is compiled the same way whichever position it
 # holds in the graph, and however it was fetched (#690).
 #
