@@ -462,7 +462,7 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
 同一宿主上传出的参数不同，mcpp 会在 `build/flag-words` 下发出警告，并
 点名两者。重复同一份 plan 的构建不会重复这条警告。
 
-#### 什么到达哪个编译单元：`defines` 与头文件目录 *(mcpp 2026.9.25.1+)*
+#### `defines` 与头文件目录的作用范围 *(mcpp 2026.9.25.1+)*
 
 `defines` 是按宏名构成的集合。条目按包接收它们的顺序读取：`[workspace.build]`
 （对工作空间成员而言）、包自己的 `[build]`，然后是每个命中的

@@ -462,7 +462,7 @@ element whose words differ from the arguments a release before 2026.9.17.1
 passed on the same host, and names both. A build that repeats the plan does not
 repeat the warning.
 
-#### What reaches which unit: `defines` and include directories *(mcpp 2026.9.25.1+)*
+#### The scope of `defines` and include directories *(mcpp 2026.9.25.1+)*
 
 `defines` is a set keyed by macro name. Its entries are read in the order the
 package receives them: `[workspace.build]` (for a workspace member), the
