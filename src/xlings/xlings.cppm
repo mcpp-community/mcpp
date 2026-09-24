@@ -96,7 +96,14 @@ namespace pinned {
     // GitCode fell back to a git clone from GitHub instead of trying GLOBAL;
     // and an index refresh had no bound on a connection that went silent
     // after its handshake.
-    inline constexpr std::string_view kXlingsVersion   = "2026.9.16.1";
+    //
+    // Fifth, at 2026.9.20.1 (openxlings/xlings#610). Below it, the global
+    // workspace could be read out of a project's subos, and the derived shim
+    // table then removed every global entry a project did not declare; an
+    // install that failed to download could still print `installed`. mcpp
+    // drives xlings from inside project and sandbox subos, which is the
+    // position where the first misread applied.
+    inline constexpr std::string_view kXlingsVersion   = "2026.9.20.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 
