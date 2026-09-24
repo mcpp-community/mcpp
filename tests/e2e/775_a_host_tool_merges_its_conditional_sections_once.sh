@@ -65,6 +65,11 @@ int main() {
     if (!tool || !*tool) return 1;
     std::string out = std::string(mcpp::out_dir()) + "/gen.cpp";
     std::string cmd = std::string("\"") + tool + "\" \"" + out + "\"";
+#ifdef _WIN32
+    // cmd.exe removes the first and the last quote of a command that starts
+    // with one; the outer pair keeps both inner pairs intact.
+    cmd = "\"" + cmd + "\"";
+#endif
     if (std::system(cmd.c_str()) != 0) return 1;
     mcpp::generated(out.c_str());
 }
@@ -73,7 +78,11 @@ EOF
 ( cd "$TMP/toolpkg" && "$MCPP" build > "$TMP/direct.log" 2>&1 ) \
     || fail "control: the tool package does not build on its own" "$TMP/direct.log"
 cd "$TMP/app"
-"$MCPP" build > build.log 2>&1 || fail "the host tool received a conditional entry twice" build.log
+"$MCPP" build > build.log 2>&1 || {
+    grep -q "redefinition" build.log \
+        && fail "the host tool received a conditional entry twice" build.log
+    fail "the consumer did not build" build.log
+}
 "$MCPP" run > run.log 2>&1 || fail "the program did not run" run.log
 grep -q '^ANSWER=41' run.log || fail "wrong answer" run.log
 echo "PASS: 775_a_host_tool_merges_its_conditional_sections_once"

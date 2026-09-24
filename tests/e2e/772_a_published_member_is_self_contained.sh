@@ -30,6 +30,8 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
+source "$(dirname "$0")/_host_path.sh"
+TMP_HOST="$(host_path "$TMP")"
 
 fail() { echo "FAIL: $*"; exit 1; }
 
@@ -132,7 +134,7 @@ name    = "app"
 version = "0.1.0"
 
 [dependencies]
-"probe.util" = { path = "$TMP/unpacked/util-0.3.0" }
+"probe.util" = { path = "$TMP_HOST/unpacked/util-0.3.0" }
 
 [targets.app]
 kind = "bin"

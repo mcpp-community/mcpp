@@ -159,8 +159,14 @@ def words(root):
     for e in entries(root):
         f = norm(e["file"]).split("/")[-1]
         if f not in ("dep.cpp", "dep_c.c"): continue
+        # A word naming the root's own build directory (clang's
+        # `-fprebuilt-module-path=`, MSVC's `/ifcSearchDir`) is where that
+        # project keeps its BMIs, not an input the dependency is compiled
+        # against, and it differs between two projects by construction.
+        own = f"/{root}/target/"
         out[f] = sorted(norm(x) for x in args(e)
-                        if x.startswith(("-I", "-D", "-f", "-idirafter", "/I", "/D")))
+                        if x.startswith(("-I", "-D", "-f", "-idirafter", "/I", "/D"))
+                        and own not in norm(x))
     return out
 w1, w2 = words("app"), words("app2")
 if not w1 or w1 != w2:
