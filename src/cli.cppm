@@ -989,9 +989,19 @@ int run(int argc, char** argv) {
     // platform mcpp runs on, so this needs no shell, no `touch`, and no
     // per-platform spelling.
     //
-    // A command that already creates its stamp is unaffected: existing files
-    // are left alone, so the pre-2026.8.29.1 wrapper scripts keep working
-    // byte-for-byte.
+    // A command that writes its own stamp is unaffected: a stamp the command
+    // created or rewrote is left as the command left it, so the
+    // pre-2026.8.29.1 wrapper scripts keep working byte-for-byte.
+    //
+    // A STAMP THE COMMAND DID NOT WRITE IS TOUCHED, NOT ONLY CREATED. The
+    // stamp is what ninja compares with the inputs, so after an input changes
+    // and the command passes again, its time has to move past that input.
+    // Until 2026.9.27.1 an existing stamp was left alone whatever the command
+    // did, and every check whose command writes nothing -- clang-tidy, an
+    // installer run through `mcpp-deps` -- re-ran on every build after its
+    // first input change, because its output stayed older than the input
+    // forever. The comparison is by the stamp's own time before and after the
+    // command, so a command that did write it is still left alone.
     if (std::string_view(argv[1]) == "__action-stamp") {
         std::vector<std::string> stamps;
         int i = 2;
@@ -1011,19 +1021,39 @@ int run(int argc, char** argv) {
         // `run_exec`: no shell, stdio inherited. The analyser's own output has
         // to reach the terminal unchanged — a check that fails is read by a
         // human, and capturing would either swallow it or reprint it wrapped.
+        // Each stamp's time before the command runs; empty when it is absent.
+        std::vector<std::optional<std::filesystem::file_time_type>> before;
+        for (auto const& s : stamps) {
+            std::error_code ec;
+            const auto p = mcpp::platform::fs::extended_length(std::filesystem::path{s});
+            const auto t = std::filesystem::last_write_time(p, ec);
+            before.push_back(ec ? std::nullopt : std::optional{t});
+        }
         const int r = mcpp::platform::process::run_exec(cmd);
         // The stamps are written ONLY on success. Writing them anyway would
         // make ninja consider the edge satisfied, so the next build would skip
         // a check that had never passed.
         if (r != 0) return r;
-        for (auto const& s : stamps) {
+        for (std::size_t k = 0; k < stamps.size(); ++k) {
+            auto const& s = stamps[k];
             std::error_code ec;
             // Relative to the build directory, which can be deep enough to
             // take the stamp past the Windows path limit (mcpp#641, item 3).
             const auto p = mcpp::platform::fs::extended_length(std::filesystem::path{s});
             if (!p.parent_path().empty())
                 std::filesystem::create_directories(p.parent_path(), ec);
-            if (std::filesystem::exists(p, ec)) continue;
+            if (std::filesystem::exists(p, ec)) {
+                const auto now = std::filesystem::last_write_time(p, ec);
+                // Written by the command during this run: left as it is.
+                if (!ec && (!before[k] || now != *before[k])) continue;
+                std::filesystem::last_write_time(
+                    p, std::filesystem::file_time_type::clock::now(), ec);
+                if (ec) {
+                    std::println(stderr, "error: cannot update check stamp '{}': {}", s, ec.message());
+                    return 1;
+                }
+                continue;
+            }
             std::ofstream out(p, std::ios::trunc);
             if (!out) {
                 std::println(stderr, "error: cannot write check stamp '{}'", s);

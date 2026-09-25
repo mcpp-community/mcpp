@@ -549,7 +549,11 @@ The verdict is the exit code; the stamp is bookkeeping the graph needs, and
 mcpp creates it when the command succeeds. Before this, every check needed a
 wrapper script to touch the file — and a command is an argv with no shell
 assumed, so that wrapper could not be written portably at all. A command that
-already writes its own stamp is unaffected: an existing file is left alone.
+writes its own stamp is unaffected: a stamp the command created or rewrote is
+left as it is. A stamp the command did not write is created on the first pass
+and has its modification time moved to the present on every later pass
+(2026.9.27.1+), so after an input changes and the check passes again the stamp
+is newer than that input and the check does not run on the next build.
 
 > A missing stamp does **not** fail the build. ninja leaves the declared output
 > absent and re-runs that edge on every build afterwards, which looks like a
