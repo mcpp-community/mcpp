@@ -30,7 +30,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### design
 
-- [Workspace inheritance, flag scoping and the published form: a unified repair plan (#690)](2026-09-25-issue-690-workspace-build-inheritance-consistency.md) — active
+- [Workspace inheritance, flag scoping and the published form: a unified repair plan (#690)](2026-09-25-issue-690-workspace-build-inheritance-consistency.md) — landed
 - [MSVC toolset 的选择、#685、#687 与工具链管理规范：总体设计](2026-09-24-toolchain-selection-and-payload-trust-design.md) — active
 - [openkal 生态：能力的时刻模型，以及 C 环境方案空间的划分](2026-09-20-openkal-c-environment-ecosystem-design.md) — active
 - [#674:`presents = "posix"` 在 Windows 上兑现契约的下半段](2026-09-19-issue-674-cenv-posix-preinclude-design.md) — superseded
@@ -54,7 +54,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### plan
 
-- [#690: implementation plan](2026-09-25-issue-690-implementation-plan.md) — active
+- [#690: implementation plan](2026-09-25-issue-690-implementation-plan.md) — landed
 - [工具链选择与载荷可信度：实施计划](2026-09-24-toolchain-selection-implementation-plan.md) — landed
 - [openkal 生态：完整性收尾与验收方案](2026-09-21-openkal-ecosystem-completion-and-acceptance.md) — active
 - [C 环境生态方案：执行计划](2026-09-20-ecosystem-execution-plan.md) — active
@@ -65,7 +65,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### review
 
-- [#690: self-review before release, engine and ecosystem](2026-09-25-issue-690-self-review.md) — active
+- [#690: self-review before release, engine and ecosystem](2026-09-25-issue-690-self-review.md) — landed
 - [本轮生态级自审](2026-09-20-wave-self-review.md) — active
 - [#674 设计方案评审：`-include unistd.h` 在 Windows + `presents = "posix"` 上的可行性](2026-09-20-issue-674-design-review.md) — active
 - [`__cxa_thread_atexit` 在 openkal-Windows 上:两层都已定位并修复](2026-09-20-cxa-thread-atexit-finding.md) — landed
@@ -100,9 +100,9 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-09
 
-- [Workspace inheritance, flag scoping and the published form: a unified repair plan (#690)](2026-09-25-issue-690-workspace-build-inheritance-consistency.md) — active
-- [#690: self-review before release, engine and ecosystem](2026-09-25-issue-690-self-review.md) — active
-- [#690: implementation plan](2026-09-25-issue-690-implementation-plan.md) — active
+- [Workspace inheritance, flag scoping and the published form: a unified repair plan (#690)](2026-09-25-issue-690-workspace-build-inheritance-consistency.md) — landed
+- [#690: self-review before release, engine and ecosystem](2026-09-25-issue-690-self-review.md) — landed
+- [#690: implementation plan](2026-09-25-issue-690-implementation-plan.md) — landed
 - [工具链选择与载荷可信度：实施计划](2026-09-24-toolchain-selection-implementation-plan.md) — landed
 - [MSVC toolset 的选择、#685、#687 与工具链管理规范：总体设计](2026-09-24-toolchain-selection-and-payload-trust-design.md) — active
 - [#685、#687 与 Windows clang 的 MSVC STL：三个问题的归属，以及工具链载荷的规范化](2026-09-24-685-687-msvc-stl-and-toolchain-payloads.md) — landed

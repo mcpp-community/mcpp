@@ -1,6 +1,6 @@
 ---
 subject: review
-status: active
+status: landed
 ---
 
 # #690: self-review before release, engine and ecosystem
@@ -48,3 +48,17 @@ status: active
 ## 4. Open items outside #690
 
 - **The e2e harness still shares existing payload versions by link.** An in-place rewrite of an existing payload by a test still reaches the developer's registry (#293, first shape).
+
+---
+
+## 5. Landed (2026-09-25)
+
+- mcpp#691 squash-merged as f176abdc; release 2026.9.25.1 (run 36072031458): all four builds, the sealed manifest and publish-ecosystem succeeded.
+- GitCode `xlings-res/mcpp` 2026.9.25.1 was filled by a local top-up as each archive appeared. GET 200 at the upstream size for every archive and sidecar, and the four archives are byte-identical to the GitHub release (sha256 compared).
+- openxlings/xim-pkgindex#873 merged (89645f8f). Its four sha256 values equal those of the downloaded archives. The published index artifact `xim-index-89645f8` (sha256 matching its pointer) names `latest = 2026.9.25.1` in all three platform blocks.
+- mcpplibs/mcpp-index#465 merged (93781cf4): validate.yml pins 2026.9.25.1, and `latest_mcpp = 2026.9.25.1`. The full workspace sweep (`workflow_dispatch`, run 36075006806) passed 27 of 27 jobs on attempt 2. Attempt 1 had two shards cancelled at the 90-minute limit on the cold cache, with every member they reached passing, and one transient GitCode reachability failure whose asset was re-read and matched its sha256. The published artifact `mcpp-index-93781cf` carries the new `latest_mcpp`.
+- CI on f176abdc: every workflow is green except the xcode-27 legs of ci-macos, ci-macos-e2e and ci-fresh-install. All three fail at `ld64.lld: could not load TAPI file ... unknown architecture` (mcpp#669, known red on main before this change).
+- Sandbox, `.agents/docs/2026-09-25-issue-690-verify.sh`, each version in a fresh subos with the CN mirror set for xlings and mcpp, installed from the index:
+  - 2026.9.25.1: passes 11, fails 0, skips 0.
+  - 2026.9.24.1 (control): passes 4, fails 7. The seven failures are exactly the CHANGE sections, including 5b, where the fresh home reproduced the cross-project cache poisoning (`compare=1`).
+- The measuring machine's `~/.mcpp` glibc 2.44.3 payload, corrupted by the harness defect, was removed and is reinstalled on demand. With the harness fix, test runs no longer write into the developer registry.

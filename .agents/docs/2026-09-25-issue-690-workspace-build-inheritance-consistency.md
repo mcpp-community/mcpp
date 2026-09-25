@@ -1,6 +1,6 @@
 ---
 subject: design
-status: active
+status: landed
 ---
 
 # Workspace inheritance, flag scoping and the published form: a unified repair plan (#690)
