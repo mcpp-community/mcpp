@@ -107,6 +107,29 @@ Moving a layer from a prebuilt payload into the dependency graph therefore
 removes engine work rather than adding it. This is the mechanism by which one
 source reaches several platforms without an engine change.
 
+### A Link Over A Graph-Supplied C Library Searches No Host Directory (mcpp 2026.9.26.1+)
+
+When the `c-abi` layer comes from the graph, the library search of the link is
+the graph's as well. On an ELF target linked by clang, the link receives
+`--sysroot` naming an empty directory inside the build directory, which removes
+every library directory the driver would otherwise derive from the host
+(`/usr/lib`, `/lib` and their multiarch forms). The hermetic check then refuses
+a `-L` that names a directory outside the toolchain store, the build directory
+and the packages of the graph; `[build] allow_host_libs = true` lifts the
+refusal.
+
+A `-l` that nothing in the graph answers therefore fails with the linker's own
+message, and mcpp adds a note naming the libraries. musl answers `m`, `rt`,
+`pthread`, `crypt`, `util`, `xnet`, `resolv` and `dl` from `libc.a` itself and
+installs an empty archive under each of those names; openkal-musl 0.19.2 ships
+the eight archives, and the note names that release when every missing name is
+one of them.
+
+Before mcpp 2026.9.26.1 such a link searched the host's directories after the
+graph's, so a `-lm` on `x86_64-linux-musl` linked the host's glibc objects into a
+musl image without a diagnostic, and failed on other targets with an unrelated
+message (mcpp#696).
+
 ### Layer Names Are Fixed, Implementations Are Not
 
 The five layer names are a closed set compiled into the engine. The

@@ -10,6 +10,7 @@ import mcpp.libs.json;
 import mcpp.manifest;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.model;
+import mcpp.toolchain.triple;
 import mcpp.platform;
 import mcpp.platform.runtime_search;
 import mcpp.targetside;
@@ -853,8 +854,9 @@ TEST(NinjaBackend, CompileAndScanRulesRouteFlagsThroughRspfileUnderMsvcDialect) 
         // only paths this file forward-slashes itself. $cxxflags carries
         // native-separated paths from flags.cppm and must stay inline —
         // routing it through the rsp ate the separators of the std.pcm path
-        // and broke every `import std;` on Windows.
-        EXPECT_NE(body.find("rspfile_content = $local_includes\n"),
+        // and broke every `import std;` on Windows. The byte order mark in
+        // front is how cl.exe learns the file is UTF-8 (#693).
+        EXPECT_NE(body.find("rspfile_content = \xEF\xBB\xBF $local_includes\n"),
                   std::string::npos) << body;
         // The payload must not ALSO remain inline, or the ceiling stands.
         auto cmdStart = body.find("command = ");
@@ -2273,4 +2275,280 @@ TEST(NinjaBackend, WindowsSubsystemReachesOnlyTheDeclaringExecutable) {
     const auto flag = ninja.find("-mwindows");
     EXPECT_GT(flag, guiEdge) << ninja;
     EXPECT_LT(flag, nextEdge) << ninja;
+}
+
+// #694 (W1d): THE LEVEL A PROFILE DECLARES IS THE LEVEL EVERY ROW REALISES.
+//
+// A branch keyed on the target triple once replaced every non-zero level with
+// `-Og` on `*-linux-musl`, for GCC and clang alike, while the `Finished` line
+// still said `[optimized]`; it set the level of mcpp's own Linux release
+// binaries. The walk covers every row of the target table with both GNU-dialect
+// compilers, so a later branch that overrides a declared level fails here and
+// not in a published binary. `realised_opt_level` is the answer both the flags
+// and the `Finished` line read, so it is asserted against the same rows.
+TEST(NinjaBackendOptimization, EveryTargetRowRealisesTheDeclaredLevel) {
+    using mcpp::toolchain::CompilerId;
+    for (auto const& row : mcpp::toolchain::triple::kKnownTargets) {
+        for (auto compiler : {CompilerId::GCC, CompilerId::Clang}) {
+            for (std::string level : {"0", "1", "2", "3", "s"}) {
+                auto plan = minimal_plan();
+                plan.toolchain.targetTriple = std::string(row.canonical);
+                plan.toolchain.compiler = compiler;
+                plan.toolchain.binaryPath = compiler == CompilerId::Clang
+                    ? "/usr/bin/clang++" : "/usr/bin/g++";
+                plan.manifest.buildConfig.optLevel = level;
+
+                auto f = compute_flags(plan);
+                const std::string want = " -O" + level;
+                const std::string where = std::format(
+                    "target={} compiler={} opt={}", row.canonical,
+                    static_cast<int>(compiler), level);
+                EXPECT_NE(f.cxx.find(want), std::string::npos) << where << "\n" << f.cxx;
+                EXPECT_NE(f.cc.find(want), std::string::npos) << where << "\n" << f.cc;
+                EXPECT_EQ(f.cxx.find(" -Og"), std::string::npos) << where << "\n" << f.cxx;
+                EXPECT_EQ(f.cc.find(" -Og"), std::string::npos) << where << "\n" << f.cc;
+                EXPECT_EQ(realised_opt_level(plan.manifest.buildConfig), level) << where;
+                EXPECT_EQ(realises_optimization(plan.manifest.buildConfig), level != "0")
+                    << where;
+            }
+        }
+    }
+}
+
+// The MSVC dialect spells the same levels its own way: `/Od` for zero (there is
+// no `/O0`) and `/O<n>` otherwise.
+TEST(NinjaBackendOptimization, MsvcDialectRealisesTheDeclaredLevel) {
+    for (std::string level : {"0", "1", "2"}) {
+        auto plan = minimal_plan();
+        plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
+        plan.toolchain.binaryPath = "cl.exe";
+        plan.toolchain.targetTriple = "x86_64-pc-windows-msvc";
+        plan.manifest.buildConfig.optLevel = level;
+        auto f = compute_flags(plan);
+        const std::string want = level == "0" ? " /Od" : " /O" + level;
+        EXPECT_NE(f.cxx.find(want), std::string::npos) << level << "\n" << f.cxx;
+        EXPECT_NE(f.cc.find(want), std::string::npos) << level << "\n" << f.cc;
+    }
+}
+
+// An empty level is zero, for the flags and for the `Finished` line alike. The
+// old spelling rendered it as a bare `-O`, which GCC reads as `-O1`, while the
+// line called the build unoptimized.
+TEST(NinjaBackendOptimization, AnEmptyLevelIsZeroForFlagsAndDescriptor) {
+    auto plan = minimal_plan();
+    plan.manifest.buildConfig.optLevel.clear();
+    auto f = compute_flags(plan);
+    EXPECT_NE(f.cxx.find(" -O0"), std::string::npos) << f.cxx;
+    EXPECT_EQ(f.cxx.find(" -O "), std::string::npos) << f.cxx;
+    EXPECT_EQ(realised_opt_level(plan.manifest.buildConfig), "0");
+    EXPECT_FALSE(realises_optimization(plan.manifest.buildConfig));
+}
+
+// #695 and #690 (C2): THE FILE-LEVEL FLAGS CARRY NOTHING A PACKAGE DECLARES FOR
+// ITSELF.
+//
+// Every unit of every package reads `$cflags` and `$cxxflags`, so a value placed
+// there is broadcast to the whole graph. The root's include directories rode
+// that channel until #691, and the root's C standard until #695. The root here
+// declares every package-private key; none of those values may appear in the
+// file-level flags. The C standard there is the engine's constant.
+TEST(NinjaBackendScope, TheFileLevelFlagsCarryNoPackagePrivateValue) {
+    auto plan = minimal_plan();
+    auto& bc = plan.manifest.buildConfig;
+    bc.cStandard = "gnu11";
+    bc.includeDirs = {"/root-private/include"};
+    bc.privateIncludeDirs = {"/root-private/include"};
+    bc.cflags = {"-DROOT_ONLY_CFLAG=1"};
+    bc.cxxflags = {"-DROOT_ONLY_CXXFLAG=1"};
+    bc.defines = {"ROOT_ONLY_DEFINE=1"};
+
+    auto f = compute_flags(plan);
+    for (auto const* line : {&f.cc, &f.cxx}) {
+        EXPECT_EQ(line->find("gnu11"), std::string::npos) << *line;
+        EXPECT_EQ(line->find("/root-private/include"), std::string::npos) << *line;
+        EXPECT_EQ(line->find("ROOT_ONLY"), std::string::npos) << *line;
+    }
+    EXPECT_NE(f.cc.find("-std=c11"), std::string::npos) << f.cc;
+}
+
+// #696 (W2b): AN ELF LINK OVER A GRAPH-SUPPLIED C LIBRARY SEARCHES NOTHING OF
+// THE HOST'S. With no sysroot, clang derived its library search from `/` and,
+// on x86_64, from the host's GCC; the link now names an empty directory inside
+// the build as its sysroot.
+namespace {
+BuildPlan graph_c_library_plan(std::string_view triple,
+                               mcpp::toolchain::CompilerId compiler) {
+    auto plan = minimal_plan();
+    plan.toolchain.targetTriple = std::string(triple);
+    plan.toolchain.compiler = compiler;
+    plan.toolchain.binaryPath = compiler == mcpp::toolchain::CompilerId::Clang
+        ? "/usr/bin/clang++" : "/usr/bin/g++";
+    plan.targetSide.kernelAbi = { mcpp::targetside::Origin::Graph, "openkal",
+                                  "openkal-linux@0.15.0", false };
+    plan.targetSide.cAbi = { mcpp::targetside::Origin::Graph, "musl",
+                             "openkal-musl@0.19.2", false };
+    plan.targetSide.cxx = { mcpp::targetside::Origin::Graph, "libc++",
+                            "openkal-llvm-runtime@0.15.2", false };
+    return plan;
+}
+}  // namespace
+
+TEST(NinjaBackendGraphLink, AnElfGraphLinkByClangCarriesTheEmptySysroot) {
+    for (auto triple : {"x86_64-linux-musl", "aarch64-linux-musl"}) {
+        auto plan = graph_c_library_plan(triple, mcpp::toolchain::CompilerId::Clang);
+        auto f = compute_flags(plan);
+        EXPECT_TRUE(f.graphLinkIsolated) << triple;
+        EXPECT_NE(f.ld.find("--sysroot="), std::string::npos) << triple << "\n" << f.ld;
+        EXPECT_NE(f.ld.find(std::string(kGraphLinkSysrootDir)), std::string::npos)
+            << triple << "\n" << f.ld;
+    }
+}
+
+// The measured case is clang on ELF; GCC over the graph and PE links keep their
+// line until they are measured, and a payload C library keeps its own sysroot.
+TEST(NinjaBackendGraphLink, OtherLinksDoNotCarryTheEmptySysroot) {
+    {
+        auto plan = graph_c_library_plan("x86_64-linux-musl", mcpp::toolchain::CompilerId::GCC);
+        auto f = compute_flags(plan);
+        EXPECT_FALSE(f.graphLinkIsolated);
+        EXPECT_EQ(f.ld.find(std::string(kGraphLinkSysrootDir)), std::string::npos) << f.ld;
+    }
+    {
+        auto plan = graph_c_library_plan("x86_64-windows-musl", mcpp::toolchain::CompilerId::Clang);
+        auto f = compute_flags(plan);
+        EXPECT_FALSE(f.graphLinkIsolated);
+        EXPECT_EQ(f.ld.find(std::string(kGraphLinkSysrootDir)), std::string::npos) << f.ld;
+    }
+    {
+        auto plan = minimal_plan();
+        auto f = compute_flags(plan);
+        EXPECT_FALSE(f.graphLinkIsolated);
+        EXPECT_EQ(f.ld.find(std::string(kGraphLinkSysrootDir)), std::string::npos) << f.ld;
+    }
+}
+
+// #696: the note for an unanswered `-l` on an isolated graph link.
+TEST(GraphLinkLibraryAdvice, NamesTheLibraryAndTheMuslRelease) {
+    const std::string out =
+        "FAILED: bin/app\n"
+        "clang++ @bin/app.rsp -o bin/app --sysroot=/p/target/x/graph-sysroot -lm -lpthread\n"
+        "ld.lld: error: unable to find library -lm\n"
+        "ld.lld: error: unable to find library -lpthread\n"
+        "ld.lld: error: unable to find library -lm\n";
+    auto advice = graph_link_library_advice(out, "musl", "openkal-musl@0.19.1");
+    EXPECT_NE(advice.find("musl (openkal-musl@0.19.1)"), std::string::npos) << advice;
+    EXPECT_NE(advice.find("-lm, -lpthread"), std::string::npos) << advice;
+    EXPECT_NE(advice.find("openkal-musl 0.19.2"), std::string::npos) << advice;
+    EXPECT_NE(advice.find("mcpp#696"), std::string::npos) << advice;
+}
+
+TEST(GraphLinkLibraryAdvice, AnotherLibraryGetsNoMuslParagraph) {
+    const std::string out =
+        "clang++ -o bin/app --sysroot=/p/target/x/graph-sysroot -lz\n"
+        "ld.lld: error: unable to find library -lz\n";
+    auto advice = graph_link_library_advice(out, "musl", "openkal-musl@0.19.2");
+    EXPECT_NE(advice.find("-lz"), std::string::npos) << advice;
+    EXPECT_EQ(advice.find("openkal-musl 0.19.2 and later"), std::string::npos) << advice;
+}
+
+TEST(GraphLinkLibraryAdvice, StaysSilentWithoutTheGraphSysroot) {
+    const std::string out =
+        "clang++ -o bin/app -lm\n"
+        "ld.lld: error: unable to find library -lm\n";
+    EXPECT_TRUE(graph_link_library_advice(out, "musl", "openkal-musl@0.19.1").empty());
+    EXPECT_TRUE(graph_link_library_advice(
+        "clang++ --sysroot=/p/graph-sysroot\nld.lld: error: undefined symbol: foo\n").empty());
+}
+
+// ─── #693 (W4d): the encodings the tools read ───────────────────────────────
+//
+// cl.exe, link.exe and lib.exe read a response file as UTF-8 only when it
+// begins with a byte order mark, and in the ANSI code page otherwise (measured
+// on windows-latest; see the emitter). Every response file of the msvc dialect
+// begins with one; a GNU driver would read the mark as part of its first
+// argument, so no response file of the gnu dialect has one.
+
+namespace {
+
+// The `rspfile_content` line of `rule`, or empty when the rule has none.
+std::string rsp_line(const std::string& ninja, std::string_view rule) {
+    auto start = ninja.find(rule);
+    if (start == std::string::npos) return {};
+    auto end = ninja.find("\n\n", start);
+    auto body = ninja.substr(start, end - start);
+    auto at = body.find("rspfile_content =");
+    if (at == std::string::npos) return {};
+    return body.substr(at, body.find('\n', at) - at);
+}
+
+}  // namespace
+
+TEST(NinjaBackendEncoding, MsvcResponseFilesBeginWithTheByteOrderMark) {
+    auto plan = minimal_plan();
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
+    plan.toolchain.binaryPath = "cl.exe";
+    plan.toolchain.targetTriple = "x86_64-pc-windows-msvc";
+    plan.compileUnits.push_back({
+        .source = "src/m.cppm",
+        .kind = mcpp::SourceKind::ModuleInterface,
+        .object = "obj/m.o",
+        .packageName = "objc_rule_test",
+        .providesModule = "m",
+    });
+    plan.compileUnits.push_back({
+        .source = "src/a.c",
+        .kind = mcpp::SourceKind::C,
+        .object = "obj/a.o",
+        .packageName = "objc_rule_test",
+    });
+    auto ninja = emit_ninja_string(plan);
+    for (std::string_view rule : {"rule c_object\n", "rule cxx_scan\n",
+                                  "rule cxx_link\n", "rule cxx_archive\n",
+                                  "rule cxx_shared\n"}) {
+        auto line = rsp_line(ninja, rule);
+        ASSERT_FALSE(line.empty()) << rule << ninja;
+        EXPECT_NE(line.find("= \xEF\xBB\xBF"), std::string::npos) << rule << line;
+    }
+}
+
+TEST(NinjaBackendEncoding, GnuResponseFilesCarryNoByteOrderMark) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/a.c",
+        .kind = mcpp::SourceKind::C,
+        .object = "obj/a.o",
+        .packageName = "objc_rule_test",
+    });
+    auto ninja = emit_ninja_string(plan);
+    EXPECT_FALSE(rsp_line(ninja, "rule cxx_link\n").empty()) << ninja;
+    EXPECT_EQ(ninja.find("\xEF\xBB\xBF"), std::string::npos) << ninja;
+}
+
+// Ninja reports the encoding it reads build.ninja in; mcpp writes UTF-8.
+TEST(NinjaBackendEncoding, ANinjaThatReadsUtf8Passes) {
+    EXPECT_FALSE(ninja_encoding_mismatch("Build file encoding: UTF-8\r\n", 65001,
+                                         "ninja.exe").has_value());
+    EXPECT_FALSE(ninja_encoding_mismatch("Build file encoding: UTF-8\n", 1252,
+                                         "ninja.exe").has_value());
+}
+
+TEST(NinjaBackendEncoding, ANinjaThatReadsAnsiIsRefusedByName) {
+    auto modern = ninja_encoding_mismatch("Build file encoding: ANSI\r\n", 65001,
+                                          "C:/tools/ninja.exe");
+    ASSERT_TRUE(modern.has_value());
+    EXPECT_NE(modern->find("C:/tools/ninja.exe"), std::string::npos) << *modern;
+    EXPECT_NE(modern->find("ANSI"), std::string::npos) << *modern;
+    EXPECT_NE(modern->find("1.11"), std::string::npos) << *modern;
+
+    // On a host that ignores the declaration the advice names the code page.
+    auto legacy = ninja_encoding_mismatch("Build file encoding: ANSI\n", 936,
+                                          "ninja.exe");
+    ASSERT_TRUE(legacy.has_value());
+    EXPECT_NE(legacy->find("936"), std::string::npos) << *legacy;
+}
+
+TEST(NinjaBackendEncoding, OutputThatNamesNoEncodingDecidesNothing) {
+    EXPECT_FALSE(ninja_encoding_mismatch("", 65001, "ninja").has_value());
+    EXPECT_FALSE(ninja_encoding_mismatch("ninja: error: unknown tool 'wincodepage'",
+                                         65001, "ninja").has_value());
 }

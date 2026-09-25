@@ -9,6 +9,8 @@
 export module mcpp.modgraph.glob;
 
 import std;
+import mcpp.platform.common;    // is_windows
+import mcpp.platform.windows;   // active_code_page
 
 export namespace mcpp::modgraph {
 
@@ -31,6 +33,20 @@ std::filesystem::path native_path_from_generic(std::string_view s) {
     p.make_preferred();
     return p;
 }
+
+// Whether `s` is well-formed UTF-8: no stray continuation byte, no truncated or
+// overlong sequence, no surrogate, nothing above U+10FFFF.
+bool is_valid_utf8(std::string_view s);
+
+// A printable spelling of a path that has no UTF-8 spelling, for a diagnostic
+// that must name it. Well-formed UTF-8 (POSIX) and well-formed UTF-16
+// (Windows) pass through; any other byte appears as `\xNN` and an unpaired
+// surrogate as `\u{NNNN}`. The result is UTF-8 whatever the input.
+std::string escaped_spelling(const std::filesystem::path& p);
+
+// Why a path can have no UTF-8 spelling on this host, as one sentence. The
+// three places that refuse or skip such a path give the same reason.
+std::string no_utf8_spelling_reason();
 
 // ─── narrowing a walk-derived path ────────────────────────────────────────
 //
@@ -66,9 +82,21 @@ std::filesystem::path native_path_from_generic(std::string_view s) {
 // nullopt means: this path cannot be named in any string we hand to a
 // compiler, a build file, or a glob. Skip it — and record it, because
 // "silently not built" is exactly where this class of bug hides.
+//
+// A NAME THAT IS NOT UTF-8 CANNOT BE NAMED EITHER (#693). mcpp's strings are
+// UTF-8 on every platform, and the documents it writes are UTF-8 by definition
+// (JSON) or by declaration (Ninja on Windows). Two inputs used to pass the
+// narrowing and fail later, inside a JSON writer, as `internal: unhandled
+// exception: [json.exception.type_error.316]`: a POSIX file name made of bytes
+// that are not UTF-8 (measured on Linux), and, on a Windows host that ignores
+// the UTF-8 code page mcpp declares, any non-ASCII name the ANSI code page can
+// spell (measured on cp1252 before the manifest). Both are now skipped and
+// reported here, at the point of entry.
 std::optional<std::string> try_narrow(const std::filesystem::path& p) {
     try {
-        return p.generic_string();
+        auto s = p.generic_string();
+        if (!is_valid_utf8(s)) return std::nullopt;
+        return s;
     } catch (const std::exception&) {
         return std::nullopt;
     }
@@ -173,6 +201,84 @@ namespace {
 std::mutex             g_unnarrowableMu;
 std::set<std::string>  g_unnarrowable;
 
+// The length of the well-formed UTF-8 sequence starting at `s[i]`, or 0 when
+// the bytes there are not one.
+std::size_t utf8_sequence_length(std::string_view s, std::size_t i) {
+    const auto c = static_cast<unsigned char>(s[i]);
+    if (c < 0x80) return 1;
+    std::size_t len = 0;
+    std::uint32_t cp = 0;
+    if      ((c & 0xE0) == 0xC0) { len = 2; cp = c & 0x1Fu; }
+    else if ((c & 0xF0) == 0xE0) { len = 3; cp = c & 0x0Fu; }
+    else if ((c & 0xF8) == 0xF0) { len = 4; cp = c & 0x07u; }
+    else return 0;
+    if (i + len > s.size()) return 0;
+    for (std::size_t k = 1; k < len; ++k) {
+        const auto cc = static_cast<unsigned char>(s[i + k]);
+        if ((cc & 0xC0) != 0x80) return 0;
+        cp = (cp << 6) | (cc & 0x3Fu);
+    }
+    if ((len == 2 && cp < 0x80) || (len == 3 && cp < 0x800)
+        || (len == 4 && cp < 0x10000) || cp > 0x10FFFF
+        || (cp >= 0xD800 && cp <= 0xDFFF))
+        return 0;
+    return len;
+}
+
+void append_utf8(std::string& out, std::uint32_t cp) {
+    if (cp < 0x80) {
+        out += static_cast<char>(cp);
+    } else if (cp < 0x800) {
+        out += static_cast<char>(0xC0 | (cp >> 6));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += static_cast<char>(0xE0 | (cp >> 12));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+        out += static_cast<char>(0xF0 | (cp >> 18));
+        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+}
+
+// POSIX: a path is bytes. Well-formed sequences are kept, other bytes escaped.
+[[maybe_unused]] std::string escape_native(const std::string& s) {
+    std::string out;
+    std::size_t i = 0;
+    while (i < s.size()) {
+        if (const std::size_t len = utf8_sequence_length(s, i)) {
+            out.append(s, i, len);
+            i += len;
+        } else {
+            out += std::format("\\x{:02X}", static_cast<unsigned char>(s[i]));
+            ++i;
+        }
+    }
+    return out;
+}
+
+// Windows: a path is UTF-16 code units. Pairs are combined, and a surrogate
+// without its partner is escaped.
+[[maybe_unused]] std::string escape_native(const std::wstring& s) {
+    std::string out;
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        std::uint32_t u = static_cast<std::uint16_t>(s[i]);
+        if (u >= 0xD800 && u <= 0xDBFF && i + 1 < s.size()) {
+            const std::uint32_t v = static_cast<std::uint16_t>(s[i + 1]);
+            if (v >= 0xDC00 && v <= 0xDFFF) {
+                append_utf8(out, 0x10000 + ((u - 0xD800) << 10) + (v - 0xDC00));
+                ++i;
+                continue;
+            }
+        }
+        if (u >= 0xD800 && u <= 0xDFFF) out += std::format("\\u{{{:04X}}}", u);
+        else append_utf8(out, u);
+    }
+    return out;
+}
+
 }  // namespace
 
 void note_unnarrowable_path(const std::filesystem::path& p) {
@@ -190,6 +296,36 @@ void note_unnarrowable_path(const std::filesystem::path& p) {
 
     std::lock_guard lk(g_unnarrowableMu);
     g_unnarrowable.insert(std::move(anchor));
+}
+
+bool is_valid_utf8(std::string_view s) {
+    std::size_t i = 0;
+    while (i < s.size()) {
+        const std::size_t len = utf8_sequence_length(s, i);
+        if (len == 0) return false;
+        i += len;
+    }
+    return true;
+}
+
+std::string escaped_spelling(const std::filesystem::path& p) {
+    return escape_native(p.native());
+}
+
+std::string no_utf8_spelling_reason() {
+    if constexpr (mcpp::platform::is_windows) {
+        const unsigned acp = mcpp::platform::windows::active_code_page();
+        if (acp != 65001)
+            return std::format(
+                "This process runs in the ANSI code page {} rather than UTF-8: "
+                "mcpp.exe declares UTF-8, which Windows 10 version 1903 and "
+                "later honour, and `chcp` changes neither.", acp);
+        return "On Windows only a name that is not valid Unicode (an unpaired "
+               "surrogate) has none.";
+    } else {
+        return "The name's bytes are not UTF-8, and build.ninja and "
+               "compile_commands.json hold UTF-8 text.";
+    }
 }
 
 std::vector<std::string> take_unnarrowable_paths() {

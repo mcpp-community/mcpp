@@ -430,6 +430,14 @@ cached per flag-set (`.mcpp-hermetic-ok`); escape hatches:
 `[build] allow_host_libs = true` or `MCPP_ALLOW_HOST_LIBS=1`. System/PATH
 compilers are exempt — using the host world explicitly is the user's choice.
 
+A link over a graph-supplied C library is held to one more rule (mcpp#696,
+2026.9.26.1+). Such a link carries `--sysroot=<build dir>/graph-sysroot`, an
+empty directory, so the driver derives no library directory from the host, and
+the check also reads the `-L` directories of the dry run: each one must lie in
+the toolchain store, the build directory or a package of the graph. The
+verdict's cache key records whether the link is of this kind and which package
+roots it allows.
+
 CI keeps this honest with a job that has **no host toolchain at all**
 (`debian:stable-slim`, no gcc, no host `Scrt1.o`) — the only environment
 class that faithfully reproduces the clean-machine failure mode, plus e2e

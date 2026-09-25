@@ -273,7 +273,7 @@ TEST(CacheKey, FillPackageConfigCarriesFlagsAndGeneratedFiles) {
     pkgRoot.manifest.buildConfig.cflags   = {"-D_GNU_SOURCE"};
     pkgRoot.manifest.buildConfig.cxxflags = {"-fno-exceptions"};
     pkgRoot.manifest.buildConfig.defines  = {"ZLIB_CONST"};
-    pkgRoot.manifest.buildConfig.cStandard = "c11";
+    pkgRoot.manifest.buildConfig.cStandard = "gnu11";
     pkgRoot.manifest.buildConfig.generatedFiles = {{"cfg.h", "#define A 1"}};
 
     ck::PackageAxes p;
@@ -284,10 +284,26 @@ TEST(CacheKey, FillPackageConfigCarriesFlagsAndGeneratedFiles) {
     ASSERT_EQ(p.generatedFiles.size(), 1u);
     EXPECT_EQ(p.generatedFiles.front(), "cfg.h=#define A 1");
     // A package's own C standard reaches its own C units, so it must be in the
-    // key even though the whole-graph C standard is on the B axis.
+    // key; the B axis carries only the engine default (#695).
     bool sawCStd = false;
-    for (auto& f : p.cflags) if (f.find("c_standard=c11") != std::string::npos) sawCStd = true;
+    for (auto& f : p.cflags) if (f.find("c_standard=gnu11") != std::string::npos) sawCStd = true;
     EXPECT_TRUE(sawCStd);
+}
+
+// Declaring the default is declaring nothing: the unit's command is the same,
+// so the key is the same, and a package that spells `c11` shares its cached
+// objects with one that leaves the key out (#695).
+TEST(CacheKey, DeclaringTheDefaultCStandardKeysNothing) {
+    std::filesystem::path store = "/home/u/.mcpp/registry/data/xpkgs";
+    auto declared = rootAt(store / "compat-x-compat.zlib" / "1.3.2");
+    declared.manifest.buildConfig.cStandard = "c11";
+    auto silent = rootAt(store / "compat-x-compat.zlib" / "1.3.2");
+
+    ck::PackageAxes a, b;
+    ck::fill_package_config(a, declared, store);
+    ck::fill_package_config(b, silent, store);
+    EXPECT_EQ(a.cflags, b.cflags);
+    for (auto& f : a.cflags) EXPECT_EQ(f.find("c_standard="), std::string::npos) << f;
 }
 
 // Generated files are a map; iteration order must not leak into the key.

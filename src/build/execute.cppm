@@ -28,6 +28,7 @@ import mcpp.freestanding.linkline;
 import mcpp.build.graph_shape;    // #407: which mode wrote this build.ninja
 import mcpp.build.backend;
 import mcpp.build.ninja;
+import mcpp.build.flags;       // realises_optimization — one answer for the level (#694)
 import mcpp.build.runtime_validation;
 import mcpp.bmi_cache;
 import mcpp.bmi_cache.maintenance;  // dir_size + human_bytes, for `clean --stale`
@@ -1031,13 +1032,13 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     // exact failure mode it exists to prevent.
     if (!mcpp::diag::flush(ctx.strict)) return 1;
 
-    // The descriptor comes from the knobs this build actually resolved, so it
-    // cannot disagree with the compiler flags the way the old hardcoded
-    // "release [optimized]" did.
+    // The descriptor reads the level the compile realised, from the one
+    // function `compute_flags` spells it from (#694). It once read the declared
+    // level while the compile used another, and said `[optimized]` over `-Og`.
     {
         const auto& bc = ctx.manifest.buildConfig;
         std::string descriptor =
-            (bc.optLevel.empty() || bc.optLevel == "0") ? "unoptimized" : "optimized";
+            mcpp::build::realises_optimization(bc) ? "optimized" : "unoptimized";
         if (bc.debug) descriptor += " + debuginfo";
         if (bc.lto)   descriptor += " + lto";
         mcpp::ui::finished(ctx.profile, r->elapsed, descriptor);
@@ -1257,6 +1258,9 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         // the isolation token in `out` itself) but names no package.
         if (auto advice = mcpp::build::graph_c_library_isolation_advice(out);
             !advice.empty())
+            std::fputs(advice.c_str(), stderr);
+        // #696, the fast-path form of the same unnamed shape.
+        if (auto advice = mcpp::build::graph_link_library_advice(out); !advice.empty())
             std::fputs(advice.c_str(), stderr);
         // #690: the consumer-include note, from the list the plan wrote beside
         // build.ninja (`write_consumer_include_sidecar`).

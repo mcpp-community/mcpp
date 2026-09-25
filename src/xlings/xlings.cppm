@@ -103,7 +103,14 @@ namespace pinned {
     // install that failed to download could still print `installed`. mcpp
     // drives xlings from inside project and sandbox subos, which is the
     // position where the first misread applied.
-    inline constexpr std::string_view kXlingsVersion   = "2026.9.20.1";
+    //
+    // Sixth, at 2026.9.26.2 (openxlings/xlings#613). Below it, xlings.exe ran
+    // in the system's ANSI code page and its `main` had no exception boundary:
+    // a working directory outside that code page ended it with 0xC0000409 and
+    // no output (mcpp#693), and under an MCPP_HOME outside it the xlings mcpp
+    // vendors could not initialise its sandbox. It now declares the UTF-8 code
+    // page, as mcpp.exe does.
+    inline constexpr std::string_view kXlingsVersion   = "2026.9.26.2";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 

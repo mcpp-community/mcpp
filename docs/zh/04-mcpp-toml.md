@@ -339,6 +339,7 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `required_features` | 只有当构建中**每一个**列出的 feature 都被激活时，这个目标才会被产出；否则被静默跳过。它只是一道闸——不会激活 feature（用 `--features` / `[features].default`）。**一个例外，但它不是第二条规则：** 当这个目标作为 host 工具被请求时（`tools = [...]`，§2.14），这个目标就是被**请求**的那一个，于是它的 `required_features` 变成子构建的**输入**。同一个字段、同一个含义——只是解析的方向反过来了。 |
 | `windows_subsystem` *（2026.9.12.2+）* | 可执行文件的 PE subsystem：`"console"`（默认）或 `"windows"`，一个启动时没有控制台的 GUI 程序。只到达这个目标的链接，别处不受影响，在非 PE 的目标上不渲染任何东西。见上一节。 |
 | `windows_entry` *（2026.9.12.2+）* | 程序定义的入口函数：`"main"`（默认）、`"wmain"`、`"WinMain"` 或 `"wWinMain"`。见上一节。 |
+| `windows_code_page` *（2026.9.26.1+）* | 可执行文件在 Windows 上的 ANSI 代码页：`"utf-8"`，以 Windows 10 1903 及以后版本会遵从的应用程序清单嵌入；或 `"legacy"`，即系统代码页。两者都不写的程序目标运行在系统代码页里，作为 host 工具构建的程序（§2.14）除外，它默认为 `"utf-8"`。写在库目标上会被拒绝；在非 PE 目标上不产生任何东西。见 §2.3 的*路径与文本编码*。 |
 | `linkage` *（2026.9.15.2+）* | 一个库目标的**默认**链接形态，`"static"` 或 `"shared"`：不写 `linkage` 的消费者得到的形态。与 `kind = "shared"` 不同，它不是约束，因此消费者的显式陈述会被遵从。与 `kind = "shared"` 同写，或写在程序目标上，都会被拒绝。见[`dependency_linkage`](#dependency_linkage--静态还是动态由消费者决定)。 |
 
 > **范围（重要）：** 目标上的 `defines` / `cxxflags` / `cflags` **只**
@@ -405,7 +406,7 @@ build_program_timeout = 1800      # Seconds a build.mcpp may run; 0 = no limit (
 include_dirs = ["include", "third_party/include"]  # 本包的头文件搜索路径（见下文）
 include_dirs_after = ["*"]         # Header dirs searched AFTER system dirs (-idirafter)
 private_include_dirs = ["vendor/src/include"]  # Of `include_dirs`, the ones a consumer must NOT get
-c_standard   = "c11"              # Standard for C source files (default c11)
+c_standard   = "c11"              # Standard for this package's C sources (default c11; § below)
 cflags       = ["-DFOO=1"]        # Extra C compile flags
 cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
 ldflags      = ["-lfoo"]          # Extra link flags
@@ -487,6 +488,20 @@ defines = ["LEVEL=2", "!TRACE"]       # Windows 上：-DLEVEL=2，且不定义 T
 依赖若包含某个头文件，必须通过自己的 `include_dirs` 或它的某个依赖找到它。当依赖的
 编译报告缺少某个头文件、而该文件存在于消费者的头文件目录中时，mcpp 会在编译器的
 报错之后指出那个目录。
+
+#### `c_standard` 作用于声明它的包 *(mcpp 2026.9.26.1+)*
+
+`c_standard` 设定声明它的那个包自己的 C 编译单元所用的 C 标准。没有声明的包
+以 `c11` 编译其 C 单元，消费者的值永远不会到达依赖：声明了 `gnu11` 的依赖在
+一个声明 `c99` 的工程里仍以 `gnu11` 编译，什么都没声明的依赖在那里以 `c11`
+编译。C++ 单元不接收 C 标准。这个值是包构建键的一部分，所以依赖的缓存对象
+服务于每一个消费者。
+
+`cl.exe` 以其默认模式编译 C，不从 mcpp 接收 C 标准。当构建中有包声明了 C 标准
+时，构建会用一行汇报每个声明未被施加的包。
+
+在 mcpp 2026.9.26.1 之前，根包的值会到达图中每一个 C 单元，而依赖自己的声明
+被读取、被哈希进它的缓存键，却没有被施加（mcpp#695）。
 
 #### `dependency_linkage` —— 静态还是动态由消费者决定
 
@@ -859,33 +874,51 @@ MCPP_BUILD_PROGRAM_TIMEOUT=<seconds>   (this invocation; highest)
 
 已移至 [20 —— 工具链管理](20-toolchains.md)。
 
-### 宿主代码页之外的文件名
+### 路径与文本编码 *(mcpp 2026.9.26.1+)*
 
-glob 是窄字符串，编译命令与 `build.ninja` 也是。在 Windows 上，这些
-字符串以进程的 **ANSI 代码页**产生，所以一个文件名在那个代码页里没有
-拼法的文件，无法被 glob 匹配，无法出现在编译命令里，也无法写进构建
-文件。
+mcpp 在所有平台上都以 UTF-8 文本持有每一个路径、参数与文件内容。它为其他
+工具写出的每个文件都是 UTF-8：`build.ninja`、`compile_commands.json`，以及
+编译边与链接边的响应文件。一个路径只能以它的 UTF-8 拼法进入这些文本。
 
-这样的条目会被跳过，跳过信息按目录汇报一次：
+**Windows。** `mcpp.exe` 在应用程序清单里声明 UTF-8 代码页。因此在
+Windows 10 1903 及以后的版本上，无论系统的 ANSI 代码页是什么，它的窄字符串
+以及它与 Windows 交换的每个路径都是 UTF-8。mcpp 在构建中运行的程序共用这个
+代码页：`build.mcpp` 链接时带同一份清单；作为 host 工具构建的程序（§2.14）
+也会得到它，除非其目标写了 `windows_code_page = "legacy"`，或者该包自己嵌入
+了清单。工程为自己构建的程序保持系统代码页，除非其目标写了
+`windows_code_page = "utf-8"`。
 
-```text
-warning: 'C:/.../pkg/test/www' contains names this system's active code page cannot represent
-  impact: those files take no part in the build
-  hint: Windows only: this is the process ANSI code page, which `chcp` does not change. ...
-```
+Ninja 1.11 及以后的版本在同样的声明下以 UTF-8 读取 `build.ninja`。当文件中
+含有非 ASCII 字节时，mcpp 会询问 Ninja 以哪种编码读取（`ninja -t wincodepage`），
+若回答不是 UTF-8，就拒绝这次构建并点名那个 Ninja。`cl.exe`、`link.exe` 与
+`lib.exe` 只有在响应文件以字节顺序标记开头时才按 UTF-8 读取它，所以 msvc
+方言的响应文件以字节顺序标记开头。
 
-报出的路径是最近的、其名字**能**被该代码页拼出的祖先目录，采用通用
-（`/`）拼法。出问题的名字本身永远不会被打印：渲染它会抛出与这条消息
-正在报告的同一个异常。
+**没有 UTF-8 拼法的路径。** 在 Linux 上，文件名是一串字节，不必是 UTF-8
+（macOS 的文件系统以 UTF-8 存储名字）。在早于 1903 的 Windows 宿主上，清单会被忽略，进程运行在系统的 ANSI
+代码页里，而它只能拼出 Unicode 的一部分。在这两种情况下，有些路径没有 UTF-8
+拼法：
 
-`chcp` 设置的是**控制台**代码页，在这里没有作用。只是测试数据或文档
-的文件名是无害的——一个携带日语命名测试夹具目录的上游压缩包，在
-en-US 宿主上照常能构建。源文件则不然：它们需要改名，或者需要一个
-代码页能覆盖它们的宿主。
+- 路径没有 UTF-8 拼法的工程目录或 mcpp 主目录（`MCPP_HOME`）在构建任何东西
+  之前就被拒绝。消息用转义拼出该路径（不是 UTF-8 的字节写作 `\xE9`），并给出
+  这台宿主上的原因。
+- 工程内部名字没有 UTF-8 拼法的文件或目录会被跳过，跳过信息按目录汇报一次：
 
-Linux 与 macOS 不做这种转换，所以那里没有任何东西被跳过。一个能在
-其中一个上构建、在另一个上不能、并报出一条来自代码页消息的
-`internal: unhandled exception` 的包，就是 mcpp#516。
+  ```text
+  warning: '/home/user/pkg/test/data' contains names that have no UTF-8 spelling
+    impact: those files take no part in the build
+    hint: The name's bytes are not UTF-8, and build.ninja and compile_commands.json hold UTF-8 text. ...
+  ```
+
+  报出的路径是最近的、有 UTF-8 拼法的祖先目录。测试数据或文档的名字是无害的；
+  源文件需要改名。
+- 文本不是 UTF-8 的 `build.mcpp` 指令按其键名被拒绝
+  （[30-build-mcpp.md](30-build-mcpp.md)）。
+
+在 mcpp 2026.9.26.1 之前，这样的路径会让构建以 `internal: unhandled
+exception: [json.exception.type_error.316]` 失败；在 Windows 上，每个非 ASCII
+的工程路径或主目录都会这样失败，包括系统代码页能拼出的名字（mcpp#693）。
+跳过 Windows ANSI 代码页之外的名字始于 mcpp#516。
 
 ### 2.3.1 `[build] accel` —— 本次构建面向的加速器
 
@@ -1510,6 +1543,12 @@ files = ["res/app.rc"]
 （`target/<triple>/<fp>/res/<target>.mcpp.rc`）并列进 `files`。结果
 逐字节相同，所以从生成切换到手写，不会改变实际发布的内容。
 
+脚本可以嵌入应用程序清单（`1 24 "app.manifest"`，类型 24 即
+`RT_MANIFEST`）。`windows_code_page = "utf-8"` 会在同一个序号上嵌入另一份，
+所以同时声明两者的包会被拒绝，并给出保留其一的两种做法：把 `activeCodePage`
+元素加进脚本的清单并设 `windows_code_page = "legacy"`，或者从脚本里去掉清单。
+作为 host 工具构建、默认得到 `utf-8` 的程序则保留它自己的清单。
+
 > **`VS_VERSION_INFO` 需要 `<windows.h>`。** 在一份手写脚本里，
 > `VS_VERSION_INFO VERSIONINFO` 若没有 `#include <windows.h>`，会把
 > 版本资源归档到一个*字符串*名字下，而不是序号 1。每个工具仍会报告
@@ -1521,8 +1560,9 @@ files = ["res/app.rc"]
 #### 被跟踪的输入
 
 mcpp 读取 `.rc` 里带引号的 `#include`，以及资源语句（`ICON`、
-`RCDATA`、`MANIFEST` 等）命名的文件，并把它们变成构建输入，所以修改
-图标会触发重新链接。尖括号 include（`<windows.h>`）属于工具链，由
+`RCDATA`、`MANIFEST`、数字类型 `24` 等）命名的文件，并把它们变成构建输入，
+所以修改图标会触发重新链接。相对文件名按脚本自己所在的目录解析，rc.exe、
+llvm-rc 与 windres 也在那里查找它。尖括号 include（`<windows.h>`）属于工具链，由
 工具链指纹覆盖，而不是这项扫描。
 
 一个经由宏到达的文件名（`1 ICON APP_ICON`）对这项扫描是不可见的。

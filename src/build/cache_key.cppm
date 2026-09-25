@@ -526,7 +526,11 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
     b.cppStandard     = rootManifest.package.standard;
     b.cppStandardFlag = std::string(cppStandardFlag);
     b.dialectFlags    = dialectFlags;
-    b.cStandard       = rootManifest.buildConfig.cStandard;
+    // The file-level C standard, which is the engine's constant and not the
+    // root's value: a consumer's `c_standard` no longer reaches a dependency's
+    // commands (#695), so it is no longer part of a dependency's key. A
+    // package's own standard is keyed in its PackageAxes (`__c_standard`).
+    b.cStandard       = std::string(mcpp::manifest::kDefaultCStandard);
     b.minPlatformVersion = std::string(minPlatformVersion);
 
     b.optLevel        = rootManifest.buildConfig.optLevel;
@@ -578,9 +582,12 @@ void fill_package_config(PackageAxes&                        out,
         out.asmflags = pkg.privateBuild.asmflags;
     }
 
-    if (!bc.cStandard.empty()) {
-        // A package may pin its own C standard; it reaches its own C units.
-        out.cflags.push_back("__c_standard=" + bc.cStandard);
+    // A package's own C standard reaches its own C units as a per-unit flag
+    // when it differs from the default (`make_plan`, #695). Keyed only then, so
+    // two packages whose C commands are identical share one key.
+    if (auto own = mcpp::manifest::effective_c_standard(bc.cStandard);
+        own != mcpp::manifest::kDefaultCStandard) {
+        out.cflags.push_back("__c_standard=" + own);
     }
     // A C++-layer provider's own C++ level reaches its implementation units
     // (`make_plan`), and the graph's level alone does not say which level

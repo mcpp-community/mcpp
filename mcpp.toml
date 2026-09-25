@@ -1,6 +1,6 @@
 [package]
 name        = "mcpp"
-version = "2026.9.25.1"
+version = "2026.9.26.1"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
@@ -35,6 +35,11 @@ default-profile = "release"
 # Revert is this one line if anything here is ever unexplained.
 bmi_schedule = "on"
 
+# mcpp.exe declares the UTF-8 code page (mcpp#693); see res/mcpp.rc. Only a PE
+# target compiles a resource script, so this changes nothing elsewhere.
+[resources]
+files = ["res/mcpp.rc"]
+
 [toolchain]
 default = "gcc@16.1.0"
 macos   = "llvm@22.1.8"
@@ -49,11 +54,13 @@ windows = "llvm@20.1.7"
 toolchain = "gcc@16.1.0-musl"
 linkage   = "static"
 
-# aarch64 (ARM64) static target. No explicit toolchain: mcpp's host-aware
-# convention picks it — on an aarch64 host this is a NATIVE build (xim:musl-gcc),
-# on an x86_64 host a CROSS build (xim:aarch64-linux-musl-gcc, gcc 15.1.0 from
-# musl-cross-make). linkage=static is also implied by the -musl suffix; kept
-# explicit for clarity. See .agents/docs/2026-06-22-aarch64-android-mvp-design.md.
+# aarch64 (ARM64) static target. No explicit toolchain: the target table pins
+# gcc@16.1.0 for this row, and mcpp's host-aware convention picks the payload —
+# on an aarch64 host a NATIVE build (xim:musl-gcc), on an x86_64 host a CROSS
+# build (xim:aarch64-linux-musl-gcc 16.1.0; measured for #694, which found this
+# comment still naming 15.1.0). linkage=static is also implied by the -musl
+# suffix; kept explicit for clarity. See
+# .agents/docs/2026-06-22-aarch64-android-mvp-design.md.
 [target.aarch64-linux-musl]
 linkage = "static"
 

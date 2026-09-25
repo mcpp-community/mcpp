@@ -22,6 +22,7 @@ export module mcpp.config;
 
 import std;
 import mcpp.home;
+import mcpp.modgraph.glob;   // try_narrow: the one UTF-8 spelling of a path
 import mcpp.libs.toml;
 import mcpp.libs.json;
 import mcpp.pm.index_spec;
@@ -658,6 +659,21 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     cfg.metaCacheDir  = cfg.mcppHome / "cache";
     cfg.logDir        = cfg.mcppHome / "log";
     cfg.configFile    = cfg.mcppHome / "config.toml";
+
+    // 1b. The home is part of every toolchain path a build writes into
+    // build.ninja and compile_commands.json, which are UTF-8 text. A home with
+    // no UTF-8 spelling -- a Windows account name the ANSI code page of an
+    // older host renders in its own bytes, or a POSIX name that is not UTF-8 --
+    // let toolchains install and then failed every build with an internal JSON
+    // exception (#693, F-693f). It is refused before anything is written there.
+    if (!mcpp::modgraph::try_narrow(cfg.mcppHome)) {
+        return std::unexpected(ConfigError{std::format(
+            "the mcpp home '{}' has no UTF-8 spelling.\n"
+            "       {}\n"
+            "       Set MCPP_HOME to a directory whose path has one.",
+            mcpp::modgraph::escaped_spelling(cfg.mcppHome),
+            mcpp::modgraph::no_utf8_spelling_reason())});
+    }
 
     // 2. Create directory tree
     std::error_code ec;

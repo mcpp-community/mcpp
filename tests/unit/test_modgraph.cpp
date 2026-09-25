@@ -1143,6 +1143,71 @@ TEST(Scanner, GlobWalkSurvivesNamesTheCodePageCannotSpell) {
 #endif
 }
 
+// ─── #693: the UTF-8 spelling a path must have ─────────────────────────────
+//
+// build.ninja and compile_commands.json are UTF-8 text, so a path enters them
+// only through a UTF-8 spelling (`try_narrow`). These state the check itself,
+// and the POSIX half of the walk: a name whose bytes are not UTF-8 is skipped
+// and recorded, exactly as the Windows test above states for a name the code
+// page cannot spell.
+
+TEST(Glob, Utf8ValidityIsDecidedByteByByte) {
+    EXPECT_TRUE(is_valid_utf8(""));
+    EXPECT_TRUE(is_valid_utf8("plain/ascii"));
+    EXPECT_TRUE(is_valid_utf8("caf\xC3\xA9"));                  // U+00E9
+    EXPECT_TRUE(is_valid_utf8("\xE6\xB5\x8B\xE8\xAF\x95"));     // U+6D4B U+8BD5
+    EXPECT_TRUE(is_valid_utf8("\xF0\x9F\x98\x80"));             // U+1F600
+    EXPECT_FALSE(is_valid_utf8("caf\xE9"));                     // Latin-1
+    EXPECT_FALSE(is_valid_utf8("\xB2\xE2\xCA\xD4"));            // GBK for U+6D4B U+8BD5
+    EXPECT_FALSE(is_valid_utf8("\xC0\xAF"));                    // an overlong '/'
+    EXPECT_FALSE(is_valid_utf8("\xED\xA0\x80"));                // a surrogate
+    EXPECT_FALSE(is_valid_utf8("\xF4\x90\x80\x80"));            // above U+10FFFF
+    EXPECT_FALSE(is_valid_utf8("\xE6\xB5"));                    // truncated
+    EXPECT_FALSE(is_valid_utf8("\x80"));                        // a stray continuation
+}
+
+// A diagnostic names a path that has no UTF-8 spelling through an escaped one.
+TEST(Glob, EscapedSpellingIsUtf8WhateverTheName) {
+#ifdef _WIN32
+    const std::wstring lone{L'a', wchar_t(0xD800), L'b'};
+    EXPECT_EQ(escaped_spelling(std::filesystem::path(lone)), "a\\u{D800}b");
+    const std::wstring cafe{L'c', L'a', L'f', wchar_t(0x00E9)};
+    EXPECT_EQ(escaped_spelling(std::filesystem::path(cafe)), "caf\xC3\xA9");
+#else
+    EXPECT_EQ(escaped_spelling("/x/caf\xE9"), "/x/caf\\xE9");
+    EXPECT_EQ(escaped_spelling("/x/caf\xC3\xA9"), "/x/caf\xC3\xA9");
+#endif
+    EXPECT_TRUE(is_valid_utf8(escaped_spelling(std::filesystem::path("caf\xE9"))));
+}
+
+TEST(Scanner, GlobWalkSkipsNamesThatAreNotUtf8) {
+#ifdef _WIN32
+    GTEST_SKIP() << "a Windows name is UTF-16; the test above states the Windows case";
+#else
+    auto dir = make_tempdir("mcpp-scanner-latin1");
+    std::error_code ec;
+    std::filesystem::create_directories(dir / "caf\xE9", ec);   // Latin-1
+    if (ec) {
+        std::filesystem::remove_all(dir);
+        GTEST_SKIP() << "this file system refuses a name that is not UTF-8: "
+                     << ec.message();
+    }
+    write(dir / "caf\xE9" / "x.h", "#pragma once\n");
+    write(dir / "zzz_ascii" / "x.h", "#pragma once\n");
+    (void)take_unnarrowable_paths();
+
+    std::vector<std::filesystem::path> files;
+    ASSERT_NO_THROW({ files = expand_glob(dir, "**/*.h"); });
+    EXPECT_EQ(files, (std::vector<std::filesystem::path>{dir / "zzz_ascii" / "x.h"}));
+
+    auto notes = take_unnarrowable_paths();
+    ASSERT_EQ(notes.size(), 1u);
+    EXPECT_EQ(notes[0], dir.generic_string());
+
+    std::filesystem::remove_all(dir);
+#endif
+}
+
 // `module : private;` is a THIRD production, not a spelling of the two the
 // scanner already knew ([module.private.frag]). It declares nothing: the unit
 // still provides what its `export module` line said, and requires nothing new.

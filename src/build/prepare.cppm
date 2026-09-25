@@ -2353,6 +2353,21 @@ prepare_build(bool print_fingerprint,
     if (!root) {
         return std::unexpected("no mcpp.toml found in current directory or any parent");
     }
+    // THE PROJECT'S PATH IS PART OF EVERY DOCUMENT A BUILD WRITES, and those
+    // documents are UTF-8 text (build.ninja, compile_commands.json). A
+    // directory whose path has no UTF-8 spelling used to fail the first build
+    // with `internal: unhandled exception: [json.exception.type_error.316]`
+    // (#693, measured on Linux with a Latin-1 name and on a Windows code page
+    // 1252 host with a name that page can spell). It is refused here, by name.
+    if (!mcpp::modgraph::try_narrow(*root)) {
+        return std::unexpected(std::format(
+            "the project directory '{}' has no UTF-8 spelling.\n"
+            "       {}\n"
+            "       Every file a build writes names this directory in UTF-8; "
+            "rename or move it.",
+            mcpp::modgraph::escaped_spelling(*root),
+            mcpp::modgraph::no_utf8_spelling_reason()));
+    }
     // NOTE: `workRoot` is deliberately NOT derived here. `root` is not final
     // yet — the workspace block below reassigns it to the selected member
     // (`root = memberDir`), and anchoring the write root to the pre-switch
@@ -14356,7 +14371,32 @@ prepare_build(bool print_fingerprint,
     //      (and it could not be used anyway: the conditional channel carries
     //      BuildInputs only).
     //   4. Nothing to embed into (an archive-only package) → say so and stop.
-    if (m->resources.declared()) {
+    //
+    // The same pipeline carries the application manifest of `windows_code_page`
+    // (#693). A PE executable embeds one that makes its process ANSI code page
+    // UTF-8 when its target says `windows_code_page = "utf-8"`, or, with nothing
+    // said, when it is built as a host tool (D6): such a tool receives mcpp's
+    // UTF-8 paths on its command line. `legacy` opts out, and an ordinary target
+    // that says nothing embeds nothing (M6: the program's encoding is its own).
+    //
+    // The host-tool default yields to a manifest the package embeds itself
+    // through `[resources] files`: both would sit at ordinal 1, the package
+    // said nothing about code pages, and its own manifest is the one it ships.
+    // A DECLARED `utf-8` beside such a manifest is refused below instead.
+    const bool hostToolBuild = overrides.tool_depth > 0;
+    const bool ownManifest = hostToolBuild
+        && std::ranges::any_of(m->resources.files, [&](const auto& f) {
+               const auto abs = (f.is_absolute() ? f : (*root / f)).lexically_normal();
+               return mcpp::build::resources::scan_rc(abs).declaresManifest;
+           });
+    auto codePageOf = [&](const mcpp::manifest::Target& t) -> std::string_view {
+        if (!t.windowsCodePage.empty()) return t.windowsCodePage;
+        return (hostToolBuild && t.is_program() && !ownManifest) ? "utf-8" : "legacy";
+    };
+    const bool anyUtf8Image = std::ranges::any_of(m->targets, [&](const auto& t) {
+        return t.is_program() && codePageOf(t) == "utf-8";
+    });
+    if (m->resources.declared() || anyUtf8Image) {
         namespace rsrc = mcpp::build::resources;
         const auto& R = m->resources;
 
@@ -14500,6 +14540,15 @@ prepare_build(bool print_fingerprint,
                         "editing that file will not trigger a rebuild",
                         "list it in [resources] extra-inputs = [...]");
                 }
+                if (scan.declaresManifest && anyUtf8Image)
+                    return std::unexpected(std::format(
+                        "[resources] {} embeds an application manifest, and "
+                        "`windows_code_page = \"utf-8\"` embeds another at the same "
+                        "ordinal (1).\n  Keep one: add `<activeCodePage "
+                        "xmlns=\"http://schemas.microsoft.com/SMI/2019/WindowsSettings\">"
+                        "UTF-8</activeCodePage>` to your manifest and set "
+                        "`windows_code_page = \"legacy\"`, or drop your manifest.",
+                        rcSrc.filename().generic_string()));
                 auto inputs = std::move(scan.inputs);
                 inputs.insert(inputs.end(), extraInputs.begin(), extraInputs.end());
                 if (auto a = add_unit(rcSrc, rcSrc.stem().string(),
@@ -14509,14 +14558,23 @@ prepare_build(bool print_fingerprint,
             }
 
             // The synthesised script: per image, because OriginalFilename and
-            // the version block belong to a specific artifact.
-            if (!iconAbs.empty() || R.synthesize_version_info()) {
+            // the version block belong to a specific artifact, and the
+            // manifest to a specific executable.
+            const bool synthVersion = R.declared() && R.synthesize_version_info();
+            auto wantsUtf8 = [&](const mcpp::build::LinkUnit& lu) {
+                if (lu.kind != mcpp::build::LinkUnit::Binary) return false;
+                for (auto const& t : m->targets)
+                    if (t.name == lu.targetName)
+                        return t.is_program() && codePageOf(t) == "utf-8";
+                return false;
+            };
+            if (!iconAbs.empty() || synthVersion || anyUtf8Image) {
                 // A version key mcpp cannot order (an upstream build number)
                 // leaves FILEVERSION's four numeric fields at zero while the
                 // string fields keep the real text. Say so — the properties
                 // dialog will disagree with `[package].version` and nothing
                 // else would explain why.
-                if (R.synthesize_version_info() && !m->package.version.empty()
+                if (synthVersion && !m->package.version.empty()
                     && !mcpp::version_req::parse_version(m->package.version)) {
                     mcpp::diag::degraded("resources/version",
                         std::format("[package].version = \"{}\" has no numeric "
@@ -14528,8 +14586,31 @@ prepare_build(bool print_fingerprint,
                 }
                 for (auto i : peUnits) {
                     const auto& lu = ctx.plan.linkUnits[i];
+                    const bool utf8 = wantsUtf8(lu);
+                    if (iconAbs.empty() && !synthVersion && !utf8) continue;
+                    std::filesystem::path manifestAbs;
+                    if (utf8) {
+                        manifestAbs = resDir / (lu.targetName + ".mcpp.manifest");
+                        const auto manifestText = rsrc::utf8_code_page_manifest();
+                        std::string had;
+                        if (std::ifstream in(manifestAbs, std::ios::binary); in)
+                            had.assign(std::istreambuf_iterator<char>(in), {});
+                        if (had != manifestText) {
+                            std::ofstream os(manifestAbs, std::ios::binary);
+                            if (!os) return std::unexpected(std::format(
+                                "cannot write the application manifest '{}'",
+                                manifestAbs.string()));
+                            os << manifestText;
+                        }
+                    }
+                    // A script synthesised for the manifest alone carries
+                    // nothing else: a package that declares no [resources]
+                    // asked for no version resource.
+                    mcpp::manifest::Resources forScript = R;
+                    if (!synthVersion) forScript.versionInfo = false;
                     auto text = rsrc::synthesize_rc(
-                        m->package, R, lu.output.filename().string(), iconAbs);
+                        m->package, forScript, lu.output.filename().string(),
+                        iconAbs, manifestAbs);
                     if (!text) return std::unexpected(text.error());
                     // A stable path, so `cp` + `files = [...]` reproduces the
                     // same resource byte for byte (the L0→L1 escape hatch).
@@ -14548,6 +14629,7 @@ prepare_build(bool print_fingerprint,
                     }
                     std::vector<std::filesystem::path> inputs;
                     if (!iconAbs.empty()) inputs.push_back(iconAbs);
+                    if (!manifestAbs.empty()) inputs.push_back(manifestAbs);
                     inputs.insert(inputs.end(), extraInputs.begin(), extraInputs.end());
                     if (auto a = add_unit(rcPath, lu.targetName + ".mcpp",
                                           std::move(inputs), i); !a)

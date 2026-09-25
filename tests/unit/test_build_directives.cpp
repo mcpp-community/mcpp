@@ -195,6 +195,31 @@ TEST(BuildDirectives, UnknownKeysAreDeduplicated) {
     EXPECT_EQ(d.unknownKeys, (std::vector<std::string>{"zzz", "yyy"}));
 }
 
+// #693: a directive whose text is not UTF-8 names a different file once it is
+// in build.ninja, so it is refused by key, whatever protocol the program
+// speaks, and nothing of it is applied.
+TEST(BuildDirectives, ADirectiveThatIsNotUtf8IsRefusedByKey) {
+    // "caf" + 0xE9: Latin-1, the shape a narrow program in a code page 1252
+    // process prints.
+    auto d = parse("mcpp:include-dir=inc/caf\xE9\nmcpp:cxxflag=-Wall\n");
+    EXPECT_TRUE(d.at(dirs::Slot::IncludeDirs).empty());
+    EXPECT_EQ(d.at(dirs::Slot::CxxFlags), (std::vector<std::string>{"-Wall"}));
+    EXPECT_EQ(d.nonUtf8Keys, (std::vector<std::string>{"mcpp:include-dir"}));
+    auto err = dirs::encoding_error(d);
+    ASSERT_TRUE(err.has_value());
+    EXPECT_NE(err->find("mcpp:include-dir"), std::string::npos) << *err;
+    EXPECT_NE(err->find("UTF-8"), std::string::npos) << *err;
+}
+
+TEST(BuildDirectives, UtfEightDirectivesAndOtherChatterPass) {
+    // U+00E9 in UTF-8 is accepted; a line that is not a directive is not
+    // examined at all.
+    auto d = parse("mcpp:include-dir=inc/caf\xC3\xA9\nnoise \xE9\n");
+    EXPECT_EQ(d.at(dirs::Slot::IncludeDirs).size(), 1u);
+    EXPECT_TRUE(d.nonUtf8Keys.empty());
+    EXPECT_FALSE(dirs::encoding_error(d).has_value());
+}
+
 // ── Cache round-trip ───────────────────────────────────────────────────────
 
 TEST(BuildDirectives, SerializeDeserializeRoundTrip) {

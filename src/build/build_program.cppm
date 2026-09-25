@@ -23,6 +23,7 @@ import mcpp.toolchain.fingerprint;   // hash_file / hash_string (FNV-1a, 16 hex)
 import mcpp.build.directives;        // the directive definition table (own module: see its header)
 import mcpp.build.refusal;           // the machine-readable identity of a refusal
 import mcpp.build.hostprogram;       // bundled `mcpp` module compile (own module: see its header)
+import mcpp.build.resources;         // compile_utf8_manifest — the build program speaks UTF-8 (#693)
 import mcpp.toolchain.hostflags;     // the shared host-compile flag producer
 import mcpp.toolchain.linkmodel;     // shared C-library / clang-cfg-bypass model
 import mcpp.toolchain.model;         // Toolchain, PayloadPaths, is_clang/is_musl_target/is_mingw_target
@@ -1463,6 +1464,30 @@ std::expected<void, std::string> run_build_program(
         for (auto& hmo : hostModuleObjects) compileArgv.push_back(hmo.string());
         for (auto& so : stdObjects) compileArgv.push_back(so);
     }
+    // THE BUILD PROGRAM SPEAKS THE ENCODING mcpp SPEAKS (#693, D4).
+    //
+    // mcpp hands a build program its paths through the environment and reads
+    // its directives from stdout, and on Windows mcpp runs with a UTF-8 process
+    // code page. A build program without the same application manifest reads
+    // the environment through the machine's ANSI code page instead. Measured on
+    // a cp1252 runner: a narrow build.mcpp in `C:\w\caf<U+00E9>` printed its
+    // path in cp1252 bytes that mcpp could not decode, and in a directory
+    // outside the code page it received `??` in place of the name. So the
+    // program carries the manifest; where no resource compiler stands beside
+    // the compiler, it is built without one and the build says so.
+    if constexpr (mcpp::platform::is_windows) {
+        auto manifestRes = mcpp::build::resources::compile_utf8_manifest(
+            tc, dial.id, bdir, "build.mcpp.utf8");
+        if (manifestRes) {
+            if (!msvcHost) { compileArgv.push_back("-x"); compileArgv.push_back("none"); }
+            compileArgv.push_back(manifestRes->string());
+        } else {
+            mcpp::ui::warning(std::format(
+                "build.mcpp: built without the UTF-8 code page ({}); a path outside "
+                "this machine's ANSI code page will not reach it intact",
+                manifestRes.error()));
+        }
+    }
     // Self-contained helper link — see the staticHostHelper doctrine above.
     // Deliberately NOT in `base`: that also feeds the bundled module's
     // compile/precompile commands, where a link flag has no business (and for
@@ -1589,6 +1614,11 @@ std::expected<void, std::string> run_build_program(
     // the historical warn-and-ignore behaviour.
     if (auto perr = dirs::protocol_error(d)) {
         return std::unexpected(*perr);
+    }
+    // A directive in another encoding names a different file (#693). Refused
+    // before anything is applied, for the same reason as the checks below.
+    if (auto eerr = dirs::encoding_error(d)) {
+        return std::unexpected(*eerr);
     }
     // Refuse a malformed action BEFORE applying anything: a half-applied
     // action set is worse than none, and an action that silently does not

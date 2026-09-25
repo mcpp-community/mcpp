@@ -167,6 +167,21 @@ std::string graph_c_library_isolation_advice(std::string_view output,
                                              std::string_view cAbiName = {},
                                              std::string_view cAbiCoordinate = {});
 
+// #696: the note for a link over a graph-supplied C library that asked for a
+// library the graph does not supply.
+//
+// Such a link carries an empty sysroot (`kGraphLinkSysrootDir`), so the host's
+// library directories no longer answer a `-l`: a build that used to link
+// because `/usr/lib` held a `libm.a` now fails with the linker's own
+// `unable to find library -lm`, which read on its own names neither the graph
+// nor the change. Two conditions, both read from `output`: the failing command
+// carries the graph sysroot, and the linker reported an unanswered `-l`. For
+// the names musl answers from libc itself, the note names the openkal-musl
+// release that ships musl's empty archives for them.
+std::string graph_link_library_advice(std::string_view output,
+                                      std::string_view cAbiName = {},
+                                      std::string_view cAbiCoordinate = {});
+
 // #690 (design record F7): the note for a dependency that compiled only because
 // its consumer's include directories used to reach it.
 //
@@ -198,11 +213,27 @@ void write_consumer_include_sidecar(const std::filesystem::path& outputDir,
 std::vector<std::filesystem::path>
 read_consumer_include_sidecar(const std::filesystem::path& outputDir);
 
+// #693 (M4): whether a Ninja reads build.ninja in the encoding mcpp writes it.
+//
+// mcpp writes the file in UTF-8: every path in it has a UTF-8 spelling
+// (`try_narrow`), and every other string is UTF-8 by construction. Ninja 1.11
+// and later read it in their process code page and report which with
+// `-t wincodepage` (`Build file encoding: UTF-8` or `ANSI`). `reported` is that
+// output; `processCodePage` is mcpp's own (65001 for UTF-8), which decides the
+// advice. Empty when Ninja reads UTF-8 or when `reported` names no encoding;
+// otherwise the refusal, naming the Ninja.
+std::optional<std::string> ninja_encoding_mismatch(std::string_view reported,
+                                                   unsigned processCodePage,
+                                                   std::string_view ninjaProgram);
+
 }  // namespace mcpp::build
 
 namespace mcpp::build {
 
 namespace {
+
+// U+FEFF in UTF-8. The response files of the MSVC tools begin with it (#693).
+constexpr std::string_view kUtf8ByteOrderMark = "\xEF\xBB\xBF";
 
 std::string escape_ninja_path(const std::filesystem::path& p) {
     // Ninja escapes: $ → $$, : → $:, space → $ (with leading space).
@@ -977,6 +1008,62 @@ std::string graph_c_library_isolation_advice(std::string_view output,
         library, predicateAbi);
 }
 
+std::string graph_link_library_advice(std::string_view output,
+                                      std::string_view cAbiName,
+                                      std::string_view cAbiCoordinate) {
+    if (output.find(kGraphLinkSysrootDir) == std::string_view::npos) return {};
+    constexpr std::string_view kUnfound = "unable to find library -l";
+    std::vector<std::string> names;
+    for (std::size_t at = output.find(kUnfound); at != std::string_view::npos;
+         at = output.find(kUnfound, at + kUnfound.size())) {
+        auto begin = at + kUnfound.size();
+        auto end = begin;
+        while (end < output.size() && !std::isspace(static_cast<unsigned char>(output[end])))
+            ++end;
+        std::string name(output.substr(begin, end - begin));
+        if (!name.empty() && std::ranges::find(names, name) == names.end())
+            names.push_back(std::move(name));
+    }
+    if (names.empty()) return {};
+
+    std::string library = !cAbiName.empty()
+        ? (!cAbiCoordinate.empty() ? std::format("{} ({})", cAbiName, cAbiCoordinate)
+                                    : std::string(cAbiName))
+        : std::string("this target's C library");
+    std::string listed;
+    for (auto const& n : names) {
+        if (!listed.empty()) listed += ", ";
+        listed += "-l" + n;
+    }
+    // The names musl's own `make install` answers with empty archives, because
+    // libc holds everything they would hold.
+    static constexpr std::array<std::string_view, 8> kMuslSubsumed = {
+        "m", "rt", "pthread", "crypt", "util", "xnet", "resolv", "dl"};
+    const bool allMusl = std::ranges::all_of(names, [](const std::string& n) {
+        return std::ranges::find(kMuslSubsumed, n) != kMuslSubsumed.end();
+    });
+    const bool muslOrUnknown = cAbiName.empty() || cAbiName == "musl";
+
+    std::string out = std::format(
+        "\n"
+        "note: {} comes from the dependency graph, and this link searches none of "
+        "the host's\n"
+        "      library directories (mcpp#696). The graph supplies no library for: "
+        "{}\n"
+        "      A library a package links has to reach the link through the graph, "
+        "as a dependency\n"
+        "      of the package that names it.\n",
+        library, listed);
+    if (allMusl && muslOrUnknown)
+        out += "      These are names musl answers from libc itself: openkal-musl "
+               "0.19.2 and later ship\n"
+               "      the empty archives musl installs for them, so a graph with an "
+               "older openkal-musl\n"
+               "      needs its pin moved (openkal-llvm-runtime 0.15.2 and later carry "
+               "it).\n";
+    return out;
+}
+
 std::string filter_ninja_output(std::string_view output,
                                 std::span<const std::string> commandPrefixes) {
     std::string filtered;
@@ -1396,6 +1483,17 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // the same over-approximation the link rules use (`separateLinker ||
     // is_windows`).
     const bool useCompileRsp = mcpp::platform::is_windows || msvcDeps;
+    // THE BYTE ORDER MARK, FOR THE TOOLS THAT NEED ONE TO READ UTF-8 (#693).
+    //
+    // build.ninja is UTF-8, and Ninja copies `rspfile_content` into the
+    // response file byte for byte. cl.exe, link.exe and lib.exe read a response
+    // file as UTF-8 only when it begins with a byte order mark, and in the ANSI
+    // code page otherwise. Measured on windows-latest (code page 1252, MSVC
+    // 14.51): a UTF-8 file without the mark failed every non-ASCII case, with
+    // it every case passed, including the same file written by Ninja, and ASCII
+    // content passed both ways. The GNU drivers would read the mark as part of
+    // the first argument, so it is written for the msvc dialect only; the link
+    // rules below do the same for link.exe and lib.exe.
     // Both take the payload with its leading space, so callers read as
     // `command = $cxx{payload} ...` exactly like the inline form did.
     auto rsp_ref = [&](const std::string& payload) {
@@ -1404,7 +1502,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     auto append_rspfile = [&](const std::string& payload) {
         if (!useCompileRsp) return;
         append("  rspfile = $out.rsp\n");
-        append(std::format("  rspfile_content ={}\n", payload));
+        append(std::format("  rspfile_content ={}{}\n",
+                           msvcDeps ? " " + std::string(kUtf8ByteOrderMark) : "", payload));
     };
 
     // Tell the driver, every time, that this TU is a module interface.
@@ -1713,7 +1812,11 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 // LLVM response-file parsing treat any whitespace as a
                 // separator, newline included, and link.exe/lib.exe want
                 // exactly this form.
-                append("  rspfile_content = $in_newline\n");
+                //
+                // link.exe and lib.exe take the byte order mark that cl.exe
+                // takes above (#693), and for the same reason.
+                append(std::format("  rspfile_content = {}$in_newline\n",
+                                   separateLinker ? kUtf8ByteOrderMark : ""));
             } else {
                 append(std::format("  command = {}\n", cmd));
             }
@@ -3276,6 +3379,29 @@ std::optional<std::string> check_inline_command_lengths(const std::string& manif
     return std::nullopt;
 }
 
+std::optional<std::string> ninja_encoding_mismatch(std::string_view reported,
+                                                   unsigned processCodePage,
+                                                   std::string_view ninjaProgram) {
+    constexpr std::string_view kKey = "Build file encoding: ";
+    const auto at = reported.find(kKey);
+    if (at == std::string_view::npos) return std::nullopt;
+    auto theirs = reported.substr(at + kKey.size());
+    theirs = theirs.substr(0, theirs.find_first_of("\r\n"));
+    if (theirs == "UTF-8") return std::nullopt;
+    return std::format(
+        "'{}' reads build.ninja as {} text, and mcpp writes it in UTF-8: a "
+        "non-ASCII path or argument in it would reach the tools as different "
+        "characters.\n       {}",
+        ninjaProgram, theirs,
+        processCodePage == 65001
+            ? "Use a Ninja 1.11 or later that declares the UTF-8 code page, as "
+              "the one mcpp installs does."
+            : std::format("This process runs in the ANSI code page {}: this "
+                          "Windows ignores the UTF-8 code page that mcpp.exe and "
+                          "Ninja declare (Windows 10 version 1903 and later honour "
+                          "it), so a build here must be ASCII.", processCodePage));
+}
+
 std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan,
                                                            const BuildOptions& opts) {
     auto t0 = std::chrono::steady_clock::now();
@@ -3394,6 +3520,27 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     for (auto const& d : flags.diagnostics)
         mcpp::ui::warning(std::format("cxx_runtime: {}", d));
 
+    // A declared C standard the compiler does not apply is said once, never
+    // dropped without a word (#695, W3b): cl.exe compiles C in its default
+    // mode, and mapping `c_standard` onto `/std:` waits for a measurement.
+    if (!plan.cStandardsNotApplied.empty()) {
+        std::string list;
+        const std::size_t shown = std::min<std::size_t>(plan.cStandardsNotApplied.size(), 4);
+        for (std::size_t i = 0; i < shown; ++i) {
+            if (i) list += ", ";
+            list += plan.cStandardsNotApplied[i];
+        }
+        if (plan.cStandardsNotApplied.size() > shown)
+            list += std::format(" and {} more", plan.cStandardsNotApplied.size() - shown);
+        mcpp::ui::warning(std::format(
+            "c_standard: cl.exe compiles C in its default mode and does not apply "
+            "the C standard {} package{} declare{}: {}",
+            plan.cStandardsNotApplied.size(),
+            plan.cStandardsNotApplied.size() == 1 ? "" : "s",
+            plan.cStandardsNotApplied.size() == 1 ? "s" : "",
+            list));
+    }
+
     // #336: the generated initializer-ordering TU. Written before ninja runs,
     // since the link edge lists its object as an input.
     if (flags.needsStreamInitShim) {
@@ -3416,8 +3563,15 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // objects + dynamic linker inside the sandbox BEFORE running the build —
     // catches both the bare-CRT link failure (#195) and silent host-library
     // contamination, cached per flag-set.
+    // The empty graph sysroot is created here, where the build writes its
+    // files, because `compute_flags` runs twice per build and stays pure (#696).
+    if (flags.graphLinkIsolated) {
+        std::error_code sec;
+        std::filesystem::create_directories(graph_link_sysroot(plan.outputDir), sec);
+    }
     if (auto h = verify_hermetic_link(plan.toolchain, flags.ld, plan.outputDir,
-                                      plan.manifest.buildConfig.allowHostLibs); !h) {
+                                      plan.manifest.buildConfig.allowHostLibs,
+                                      flags.graphLinkIsolated, plan.packageRoots); !h) {
         return std::unexpected(BuildError{h.error(), {}});
     }
     stage("hermetic-check");
@@ -3441,6 +3595,27 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // string). Shell-using call sites must quote it locally.
     std::string ninjaProgram = ninjaBin.empty() ? std::string("ninja")
                                                  : ninjaBin.string();
+
+    // THE BUILD FILE IN THE ENCODING NINJA READS IT IN (#693, M4). Ninja reads
+    // UTF-8 when it declares the UTF-8 code page and the host honours it, and
+    // the ANSI code page otherwise: a ninja.exe that declares none, or a host
+    // older than Windows 10 version 1903. Asked only when the file holds a
+    // non-ASCII byte, because ASCII is the same text in both encodings; a
+    // refusal here comes before the fast-path record is written, so the next
+    // run asks again.
+    if constexpr (mcpp::platform::is_windows) {
+        const bool nonAscii = std::ranges::any_of(manifest, [](char c) {
+            return static_cast<unsigned char>(c) >= 0x80;
+        });
+        if (nonAscii) {
+            auto probe = mcpp::platform::process::capture_stdout(
+                {ninjaProgram, "-t", "wincodepage"});
+            if (auto bad = ninja_encoding_mismatch(
+                    probe.output, mcpp::platform::windows::active_code_page(),
+                    ninjaProgram))
+                return std::unexpected(BuildError{*bad, ninja_path});
+        }
+    }
 
     // Record ninja binary for P0 fast-path cache.
     BuildResult r;
@@ -3678,6 +3853,9 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         // — the fast path (execute.cppm) calls the same function with no name
         // and gets the degraded-but-still-correct form.
         diagnostics += graph_c_library_isolation_advice(
+            out, plan.targetSide.cAbi.interfaceName, plan.targetSide.cAbi.impl);
+        // #696: an unanswered `-l` on a link with the empty graph sysroot.
+        diagnostics += graph_link_library_advice(
             out, plan.targetSide.cAbi.interfaceName, plan.targetSide.cAbi.impl);
         // #690: read from the plan here and from the sidecar on the fast path.
         diagnostics += consumer_include_scope_advice(out, root_include_dirs_of(plan));

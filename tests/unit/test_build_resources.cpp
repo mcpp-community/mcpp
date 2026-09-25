@@ -170,11 +170,46 @@ END
     EXPECT_TRUE(has("ids.h"));
     EXPECT_TRUE(has("app.ico"));
     EXPECT_TRUE(has("blob.bin"));
+    // An application manifest is a file like the icon (#693): type 24 at the
+    // TYPE position, spelt numerically, which no keyword names.
+    EXPECT_TRUE(has("app.manifest"));
+    EXPECT_TRUE(s.declaresManifest);
     // Angled includes belong to the toolchain: immutable for the life of a
     // build directory and already folded into the fingerprint.
     EXPECT_FALSE(has("windows.h"));
     // STRINGTABLE carries its data inline — nothing to track.
-    EXPECT_EQ(s.inputs.size(), 3u);
+    EXPECT_EQ(s.inputs.size(), 4u);
+}
+
+// The numbers of a VERSIONINFO block contain 24 as well; only the TYPE
+// position of a statement declares a manifest.
+TEST(BuildResources, ATwentyFourOutsideTheTypePositionIsNotAManifest) {
+    TempDir d;
+    auto rc = d.write("app.rc", R"(1 VERSIONINFO
+ FILEVERSION 24,1,0,0
+ PRODUCTVERSION 1,24,0,0
+BEGIN
+END
+)");
+    auto s = res::scan_rc(rc);
+    EXPECT_FALSE(s.declaresManifest);
+    EXPECT_TRUE(s.inputs.empty());
+}
+
+// The manifest `windows_code_page = "utf-8"` embeds sits at ordinal 1 of type
+// 24, and nothing else is added to a script synthesised for it alone.
+TEST(BuildResources, AManifestOnlyScriptCarriesTheManifestAndNothingElse) {
+    mcpp::manifest::Resources r;
+    r.versionInfo = false;
+    auto rc = res::synthesize_rc(sample_package(), r, "tool.exe", {},
+                                 fs::path("/b/res/tool.mcpp.manifest"));
+    ASSERT_TRUE(rc) << rc.error();
+    EXPECT_NE(rc->find("1 24 \"/b/res/tool.mcpp.manifest\""), std::string::npos) << *rc;
+    EXPECT_EQ(rc->find("VERSIONINFO"), std::string::npos) << *rc;
+    EXPECT_EQ(rc->find("ICON"), std::string::npos) << *rc;
+    EXPECT_NE(res::utf8_code_page_manifest().find(
+                  "<activeCodePage xmlns=\"http://schemas.microsoft.com/SMI/2019/WindowsSettings\">UTF-8</activeCodePage>"),
+              std::string::npos);
 }
 
 TEST(BuildResources, ScanNamesWhatItCouldNotResolve) {

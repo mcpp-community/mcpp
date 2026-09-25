@@ -1742,6 +1742,18 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             return std::unexpected(r.error());
         if (auto r = read_choice("windows_entry", t.windowsEntry, false); !r)
             return std::unexpected(r.error());
+        // `windows_code_page` (#693): the same closed-set treatment.
+        if (auto it = tt.find("windows_code_page"); it != tt.end()) {
+            if (!it->second.is_string())
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.windows_code_page must be a string", tname)));
+            const std::string v = it->second.as_string();
+            if (auto list = windows_code_page_problem(v); !list.empty())
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.windows_code_page = \"{}\" is not one of {}",
+                    tname, v, list)));
+            t.windowsCodePage = v;
+        }
         // An executable's property. A library has no subsystem, and a GUI
         // subsystem on anything a test runner executes is the defect #618
         // describes, so both are refused naming the key. `app` is accepted
@@ -1749,12 +1761,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         // never meets `application_form`'s SharedObject form in practice) --
         // `is_program()` is "is this the program", which is what the PE
         // subsystem attaches to; `TestBinary` stays refused on purpose.
-        if ((!t.windowsSubsystem.empty() || !t.windowsEntry.empty())
+        if ((!t.windowsSubsystem.empty() || !t.windowsEntry.empty()
+             || !t.windowsCodePage.empty())
             && !t.is_program())
             return std::unexpected(error(origin, std::format(
                 "targets.{}.{} applies to an executable (`kind = \"bin\"` or "
                 "`\"app\"`), and this target is not one", tname,
-                t.windowsSubsystem.empty() ? "windows_entry" : "windows_subsystem")));
+                !t.windowsSubsystem.empty() ? "windows_subsystem"
+                : !t.windowsEntry.empty()   ? "windows_entry"
+                                            : "windows_code_page")));
         // Guard: -std=... belongs to [package].standard, not per-target flags
         // (same rule as [build].cxxflags). Reject early with a clear message.
         for (auto const& flag : t.cxxflags) {
@@ -1773,7 +1788,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         static constexpr std::string_view kKnownTargetKeys[] = {
             "kind", "linkage", "main", "soname", "exports",
             "cflags", "cxxflags", "defines", "required_features",
-            "windows_entry", "windows_subsystem",
+            "windows_entry", "windows_subsystem", "windows_code_page",
         };
         for (auto& [key, _] : tt) {
             bool known = false;

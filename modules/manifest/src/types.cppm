@@ -133,6 +133,17 @@ inline std::string windows_choice_problem(bool subsystem, std::string_view value
     return accepted ? std::string{} : list;
 }
 
+// The accepted values of `windows_code_page` (#693), which are the vocabulary of
+// the `activeCodePage` element of a Windows application manifest. `utf-8` embeds
+// a manifest that makes the process ANSI code page UTF-8 on Windows 10 1903 and
+// later, so the narrow C and Win32 APIs take and return UTF-8; `legacy` embeds
+// none. Returns an empty string when `value` is accepted, and otherwise the
+// accepted values, quoted and comma-separated, for the refusal.
+inline std::string windows_code_page_problem(std::string_view value) {
+    if (value == "utf-8" || value == "legacy") return {};
+    return "\"utf-8\", \"legacy\"";
+}
+
 struct Target {
     std::string                 name;
     // `Application` (#622 A3, `kind = "app"`) is "the thing a user launches",
@@ -194,6 +205,13 @@ struct Target {
     // inert on every object format that is not PE.
     std::string                 windowsSubsystem;
     std::string                 windowsEntry;
+    // `windows_code_page` (#693): "utf-8" embeds an application manifest that
+    // makes this PE executable's process ANSI code page UTF-8; "legacy" embeds
+    // none. Empty = the default of the build role: `legacy` for an ordinary
+    // target, `utf-8` for a target built as a host tool (the tool receives
+    // mcpp's UTF-8 paths on its command line). Inert on every object format
+    // that is not PE.
+    std::string                 windowsCodePage;
     // Where `kind` was stated, as the manifest line that states it:
     // `[targets.fw] kind = "shared"`, or, when a row states it,
     // `[target.'cfg(os = "android")'.targets.fw] kind = "shared"`. Read by
@@ -639,6 +657,22 @@ struct NamedRunner {
     bool                     longLived = false;
 };
 
+// THE C STANDARD OF A PACKAGE THAT DECLARES NONE (#695).
+//
+// It is the only C standard the file-level `$cflags` carries, and so it is a
+// graph-wide constant rather than the root's value. A package's own
+// `[build] c_standard` reaches that package's C units as a per-unit flag, and a
+// consumer's value never reaches a dependency: C translation units produce no
+// BMI, so nothing requires one standard across a graph, and a program that
+// links C objects compiled under different standards is ordinary.
+inline constexpr std::string_view kDefaultCStandard = "c11";
+
+// The C standard a package's own C units compile at: its declared value, or
+// `kDefaultCStandard`.
+inline std::string effective_c_standard(std::string_view declared) {
+    return declared.empty() ? std::string(kDefaultCStandard) : std::string(declared);
+}
+
 struct BuildConfig : BuildInputs {
     // How `mcpp run` / `mcpp test` execute an artifact this host cannot run,
     // as an argv template (the artifact path is appended, or substituted for
@@ -854,8 +888,9 @@ struct BuildConfig : BuildInputs {
     // "default to fully-static musl" belongs here, not in a toolchain name
     // (static output is a product property, not a compiler-family property).
     std::string                         target;
-    // M5.x C-language support: `cStandard` controls -std= for the C compile
-    // rule (.c files); empty → backend default ("c11" today). The cflags /
+    // `cStandard` is this package's own C standard (`[build] c_standard`):
+    // empty means `kDefaultCStandard`, and the value reaches this package's C
+    // units only, never a consumer's or a dependency's (#695). The cflags /
     // cxxflags / ldflags vectors themselves live in BuildInputs above.
     // Dialect-class C++ flags: flags that change what the standard library's
     // headers DECLARE or participate in module dialect checks (issue #210's
