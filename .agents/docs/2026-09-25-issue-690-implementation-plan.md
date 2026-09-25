@@ -1,6 +1,6 @@
 ---
 subject: plan
-status: active
+status: landed
 ---
 
 # #690: implementation plan
