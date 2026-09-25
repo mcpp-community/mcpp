@@ -401,5 +401,40 @@ if ($Patched) {
     }
 }
 
+# ---------------------------------------------------------------------------
+# 5. Round 4: a non-ASCII MCPP_HOME in an ASCII project, which is the shape of
+#    a Windows account whose user name is not ASCII (%USERPROFILE%\.mcpp).
+#    Real directories, not junctions: a canonicalising reader would resolve a
+#    junction back to the ASCII target and measure nothing.
+# ---------------------------------------------------------------------------
+$Homes = [ordered]@{ latin1 = "C:\mh-caf$e"; nonacp = "C:\mh-$cjk" }
+foreach ($hk in $Homes.Keys) {
+    New-Item -ItemType Directory -Force -Path $Homes[$hk] | Out-Null
+    foreach ($bk in 'release', 'patched') {
+        if ($bk -eq 'patched' -and -not $Patched) { continue }
+        $bin = if ($bk -eq 'release') { $Rel } else { $Patched }
+        $proj = Join-Path 'C:\w\ascii' "home-$hk-$bk"
+        Copy-Item -LiteralPath (Join-Path $FixturesDir 'plain') -Destination $proj -Recurse -Force
+        $toml = "[package]`nname    = `"probe`"`nversion = `"0.1.0`"`n`n[toolchain]`ndefault = `"llvm@20.1.7`"`n"
+        Set-Content -LiteralPath (Join-Path $proj 'mcpp.toml') -Value $toml -Encoding ascii -NoNewline
+        $envx = @{ MCPP_HOME = $Homes[$hk]; MCPP_VENDORED_XLINGS = $VendXl }
+        $cfgr = Run $bin @('self', 'config', '--mirror', 'GLOBAL') $proj 300 $envx
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $r = Run $bin @('build') $proj 2400 $envx
+        $secs = [int]$sw.Elapsed.TotalSeconds
+        $id = "q5.home-$hk.$bk"
+        if ($r.startError) { Reading $id "PROBE DEFECT: did not start: $($r.startError)"; continue }
+        $exeOut = ''
+        $exe = Get-ChildItem -LiteralPath (Join-Path $proj 'target') -Recurse -Filter probe.exe -ErrorAction SilentlyContinue |
+               Where-Object { $_.FullName -match '\\bin\\' } | Select-Object -First 1
+        if ($exe) {
+            $x = Run $exe.FullName @() $proj 60
+            $exeOut = " run: exit=$(Hex32 $x.code) $(OneLine ($x.out + $x.err))"
+        }
+        Reading $id "config exit=$(Hex32 $cfgr.code); build exit=$(Hex32 $r.code) time=${secs}s$exeOut"
+        if ($r.code -ne 0 -or $r.timedOut) { Reading "$id.tail" (Tail ($r.out + $r.err) 12) }
+    }
+}
+
 Write-Host 'measurement complete'
 exit 0
