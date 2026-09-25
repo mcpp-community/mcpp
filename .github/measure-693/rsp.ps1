@@ -145,3 +145,26 @@ foreach ($k in $Dirs.Keys) {
         Reading "R1n.$k.$bom" "exit=$($r.code) output=$(Test-Path -LiteralPath (Join-Path $b 't.obj'))$note"
     }
 }
+
+# ---------------------------------------------------------------------------
+# R2: where rc.exe and windres look for a file named by a resource statement.
+# The script sits in res/, the file beside it, and the tool runs from another
+# directory with /I (or -I) naming the project root, as mcpp runs it.
+
+$P = Join-Path $Root 'rcproj'
+New-Item -ItemType Directory -Force -Path (Join-Path $P 'res'), (Join-Path $P 'out') | Out-Null
+[System.IO.File]::WriteAllText((Join-Path $P 'res\m.manifest'), "<?xml version=`"1.0`"?><assembly xmlns=`"urn:schemas-microsoft-com:asm.v1`" manifestVersion=`"1.0`"/>`n")
+[System.IO.File]::WriteAllText((Join-Path $P 'res\beside.rc'), "1 24 `"m.manifest`"`n")
+[System.IO.File]::WriteAllText((Join-Path $P 'res\rooted.rc'), "1 24 `"res/m.manifest`"`n")
+$O = Join-Path $P 'out'
+foreach ($f in @('beside', 'rooted')) {
+    $r = Run 'rc.exe' @('/nologo', '/C', '65001', "/I$P", '/fo', "$O\$f.res", "$P\res\$f.rc") $O
+    Reading "R2.rc.$f" "exit=$($r.code)$(if ($r.code -ne 0) { ' | ' + (FirstLine $r.out) })"
+}
+$windres = Get-Command windres.exe -ErrorAction SilentlyContinue
+if ($windres) {
+    foreach ($f in @('beside', 'rooted')) {
+        $r = Run $windres.Source @('-O', 'coff', '--codepage=65001', "-I$P", '-o', "$O\$f.o", "$P\res\$f.rc") $O
+        Reading "R2.windres.$f" "exit=$($r.code)$(if ($r.code -ne 0) { ' | ' + (FirstLine $r.out) })"
+    }
+} else { Reading 'R2.windres' 'absent' }
