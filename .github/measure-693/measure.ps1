@@ -337,5 +337,69 @@ if ($nj) {
     $vv = Run $nj.FullName @('--version') 'C:\w\ascii' 60
     Reading 'ninja' "$($nj.FullName.Replace('C:\mh\', '')) version=$(OneLine $vv.out) wincodepage=$(OneLine ($wc.out + $wc.err))"
 }
+# ---------------------------------------------------------------------------
+# 4. Round 3: the MSVC (cl.exe) and MinGW (gcc) rows, built by the UTF-8 copy
+# ---------------------------------------------------------------------------
+function RspReport([string]$file) {
+    $b = [System.IO.File]::ReadAllBytes($file)
+    $bom = 'no-bom'
+    if ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF) { $bom = 'utf8-bom' }
+    elseif ($b.Length -ge 2 -and $b[0] -eq 0xFF -and $b[1] -eq 0xFE) { $bom = 'utf16le-bom' }
+    $hi = 0; foreach ($x in $b) { if ($x -ge 0x80) { $hi++ } }
+    return "$([IO.Path]::GetFileName($file)) $($b.Length)B $bom bytes>=0x80:$hi"
+}
+if ($Patched) {
+    $Rows = [ordered]@{
+        msvc = @{ toml = "[toolchain]`nwindows = `"msvc@system`"`n"; argv = @('build') }
+        gnu  = @{ toml = "[toolchain]`ndefault = `"gcc@16.1.0`"`n"; argv = @('build', '--target', 'x86_64-windows-gnu') }
+    }
+    $rowSeen = @{}
+    foreach ($row in $Rows.Keys) {
+        foreach ($dk in $Dirs.Keys) {
+            foreach ($fixture in 'plain', 'hello') {
+                $proj = Join-Path $Dirs[$dk] "r3-$row-$fixture"
+                Copy-Item -LiteralPath (Join-Path $FixturesDir $fixture) -Destination $proj -Recurse -Force
+                if (-not (Test-Path -LiteralPath (Join-Path $proj 'src'))) { Reading "probe.copy.r3.$row.$dk.$fixture" 'PROBE DEFECT: the fixture was not copied'; continue }
+                $toml = "[package]`nname    = `"probe`"`nversion = `"0.1.0`"`n`n" + $Rows[$row].toml
+                Set-Content -LiteralPath (Join-Path $proj 'mcpp.toml') -Value $toml -Encoding ascii -NoNewline
+                $t = if ($rowSeen[$row]) { 900 } else { 2400 }
+                $rowSeen[$row] = $true
+                $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                $r = Run $Patched $Rows[$row].argv $proj $t
+                $secs = [int]$sw.Elapsed.TotalSeconds
+                $id = "q4.$row.$dk.$fixture"
+                if ($r.startError) { Reading $id "PROBE DEFECT: did not start: $($r.startError)"; continue }
+                $exeOut = ''
+                $exe = Get-ChildItem -LiteralPath (Join-Path $proj 'target') -Recurse -Filter probe.exe -ErrorAction SilentlyContinue |
+                       Where-Object { $_.FullName -match '\\bin\\' } | Select-Object -First 1
+                if ($exe) {
+                    $x = Run $exe.FullName @() $proj 60
+                    $exeOut = " run: exit=$(Hex32 $x.code) $(OneLine ($x.out + $x.err))"
+                }
+                Reading $id "exit=$(Hex32 $r.code) time=${secs}s timedOut=$($r.timedOut)$exeOut"
+                if ($r.code -ne 0 -or $r.timedOut) { Reading "$id.tail" (Tail ($r.out + $r.err) 14) }
+                $rsps = Get-ChildItem -LiteralPath (Join-Path $proj 'target') -Recurse -Filter *.rsp -ErrorAction SilentlyContinue | Select-Object -First 3
+                if ($rsps) { Reading "$id.rsp" (($rsps | ForEach-Object { RspReport $_.FullName }) -join '; ') }
+                $ninja = Get-ChildItem -LiteralPath (Join-Path $proj 'target') -Recurse -Filter build.ninja -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($ninja -and $dk -eq 'latin1') { Reading "$id.build-ninja" (EncodingReport $ninja.FullName 'caf' $NeedleLatin1) }
+                if ($ninja -and $dk -eq 'nonacp') { Reading "$id.build-ninja" (EncodingReport $ninja.FullName 'repro-' $NeedleNonAcp) }
+            }
+        }
+    }
+    # Which executables of the MinGW payload declare a UTF-8 activeCodePage.
+    if ($mt) {
+        $mg = Get-ChildItem 'C:\mh\registry\data\xpkgs' -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'mingw' }
+        foreach ($name in 'gcc.exe', 'g++.exe', 'cc1.exe', 'cc1plus.exe', 'collect2.exe', 'as.exe', 'ld.exe', 'ar.exe') {
+            $f = $mg | ForEach-Object { Get-ChildItem $_.FullName -Recurse -Filter $name -ErrorAction SilentlyContinue } | Select-Object -First 1
+            if (-not $f) { Reading "q4.gnu-manifest.$name" 'not found in the mingw payload'; continue }
+            $outm = "C:\p\mg-$name.manifest"
+            Remove-Item -LiteralPath $outm -ErrorAction SilentlyContinue
+            $q = Run $mt.FullName @('-nologo', "-inputresource:$($f.FullName);#1", "-out:$outm") 'C:\p'
+            $acp = if (Test-Path -LiteralPath $outm) { if ((Get-Content -Raw -LiteralPath $outm) -match 'activeCodePage[^<]*>([^<]+)<') { $Matches[1] } else { 'manifest without activeCodePage' } } else { 'no embedded manifest' }
+            Reading "q4.gnu-manifest.$name" "$acp ($($f.FullName.Replace('C:\mh\registry\data\xpkgs\', '')))"
+        }
+    }
+}
+
 Write-Host 'measurement complete'
 exit 0
