@@ -953,8 +953,8 @@ directive the program prints as UTF-8. On Windows the program is linked with the
 application manifest that `mcpp.exe` itself carries, which sets its ANSI code page
 to UTF-8 on Windows 10 version 1903 and later: its environment, its arguments and
 the narrow strings it prints are UTF-8 there without any conversion in the
-program. On Linux and macOS a file name is bytes, and a program that lists a
-directory prints whatever bytes it finds.
+program. On Linux a file name is bytes, and a program that lists a directory
+prints whatever bytes it finds.
 
 A directive line whose text is not UTF-8 is refused, whatever protocol the
 program announces, and the refusal names the directive's key. Its value would

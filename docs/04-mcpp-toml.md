@@ -937,8 +937,9 @@ is not UTF-8. `cl.exe`, `link.exe` and `lib.exe` read a response file as UTF-8
 only when it begins with a byte order mark, so the response files of the msvc
 dialect begin with one.
 
-**Paths with no UTF-8 spelling.** On Linux and macOS a file name is a sequence of
-bytes, which need not be UTF-8. On a Windows host older than version 1903 the
+**Paths with no UTF-8 spelling.** On Linux a file name is a sequence of bytes,
+which need not be UTF-8 (macOS file systems store names in UTF-8). On a Windows
+host older than version 1903 the
 manifest is ignored, and the process runs in the system's ANSI code page, which
 spells only part of Unicode. On either, some paths have no UTF-8 spelling:
 

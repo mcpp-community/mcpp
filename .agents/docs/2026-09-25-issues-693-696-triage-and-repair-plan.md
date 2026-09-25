@@ -1049,8 +1049,11 @@ Three items are split out, each for a stated reason.
 |---|---|---|
 | 1 | openxlings/xlings#613 | open, CI running; released as 2026.9.26.2, because 2026.9.26.1 had been released separately earlier the same day |
 | 2 | mcpplibs/openkal-musl#43 | merged as `20b92683`; tag `0.19.2`; the GitHub archive (1157319 bytes, sha256 `e8043bcd...c82238`) and the GitCode copy compared byte for byte; the archive carries `port/lib/lib*.a`, eight files of eight bytes |
-| 3 | mcpplibs/mcpp-index#467 | open, CI running |
-| 4 to 7 | | follow in the order of §12.1 |
+| 3 | mcpplibs/mcpp-index#467 | merged as `1529f5f3`; the index artifact `1529f5f` is served by both hosts with the pointer's digest |
+| 4 | mcpplibs/openkal-llvm-runtime#30 | merged as `79671f6b`; tag `0.15.2`; archive 15631743 bytes, sha256 `c2219ad8...c0d0d9`, GitCode copy byte-identical; its mcpp.toml reads openkal-musl `0.19.2` |
+| 5 | mcpplibs/mcpp-index#468 | registration of runtime 0.15.2, CI running |
+| 6 | mcpp-community/mcpp#698 | CI run 1: every Windows row of the regression job passes (below); follow-up commit pending the xlings release |
+| 7 | | after the mcpp release |
 
 **Where the implementation departs from §12.2, and why.**
 
@@ -1081,6 +1084,18 @@ Three items are split out, each for a stated reason.
   there when run from another directory; mcpp resolves it there as a build input.
 - **The rc scanner** tracks a manifest named by the numeric type `24` and treats a statement as
   a manifest only when a file name follows the type, so `FILEVERSION 24,1,0,0` is not one.
+- **A target's entry `main` written in C takes its package's standard.** The entry is
+  synthesized after `make_plan`'s unit loop, so a flag added only inside the loop missed it;
+  found in self-review, one helper now serves both sites (unit test
+  `ACEntryMainTakesItsPackagesStandard`).
+- **The cache key records a package's C standard only when it differs from `c11`.** A package
+  that spells the default and one that says nothing compile identically, so they share a key.
+  The first CI run failed the unit test that encoded the old rule; the test now states the new
+  one (`DeclaringTheDefaultCStandardKeysNothing`).
+- **openkal-llvm-runtime pins openkal-musl exactly.** A root that pins openkal-musl 0.19.2
+  beside runtime 0.15.1 is refused as irreconcilable (measured with e2e 778), so a consumer
+  receives the archives by moving the runtime pin, which is what the #696 note says; the
+  fixture pairs musl 0.19.2 with runtime 0.15.2.
 
 **Test results on Linux** (the worktree at `fix/693-696`):
 
@@ -1090,11 +1105,22 @@ Three items are split out, each for a stated reason.
 | e2e 776, a path with no UTF-8 spelling is named (new) | passes; released 2026.9.25.1 fails at its first criterion with the JSON exception |
 | e2e 777, `c_standard` applies to the package that declares it (new) | passes; 2026.9.25.1 compiles `cdep` and `plain` at the consumer's `c99` |
 | e2e 778, a graph link searches no host directory (new), leg B | passes; 2026.9.25.1 links leg B from the host's `libm` |
-| e2e 778, leg A | runs once openkal-musl 0.19.2 is in the index |
+| e2e 778, legs A, C (aarch64 under qemu) and D (`-L/usr/lib` refused) | run once openkal-llvm-runtime 0.15.2 is in the index |
+| CI run 1 of #698 | the two xcode-27 legs fail as on main (#669, lld 22 rejects `arm64e.x1` in the SDK stubs); `test_cache_key` failed on the old key rule (fixed) |
 | e2e 190 | accepts the byte order mark before `$in_newline` |
 
 The Windows rows run in CI through `.github/tools/check_unicode_paths.sh` (W4f): llvm, MSVC and
 MinGW in an ASCII directory, `caf` + U+00E9 and U+6D4B U+8BD5, plus a path through `build.mcpp`.
+CI run 1 of #698 (windows-latest, code page 1252; `mcpp.exe` self-hosted by the bootstrap
+2026.9.24.1 with `res/mcpp.rc`):
+
+```
+  ok    llvm in 'ascii'        ok    msvc in 'ascii'        ok    mingw in 'ascii'
+  ok    llvm in 'café'         ok    msvc in 'café'         ok    mingw in 'café'
+  ok    llvm in '测试'          ok    msvc in '测试'          ok    mingw in '测试'
+  ok    a path through build.mcpp in '测试'
+OK: every row builds in every directory
+```
 
 ---
 
