@@ -1,0 +1,6 @@
+[package]
+name    = "probe"
+version = "0.1.0"
+
+[toolchain]
+default = "llvm@20.1.7"

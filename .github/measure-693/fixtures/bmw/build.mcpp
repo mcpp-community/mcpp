@@ -1,0 +1,28 @@
+// A build program that speaks UTF-8 whatever the process code page is: the
+// wide environment, a wide path into std::ofstream, UTF-8 bytes back to mcpp.
+// It stands in for a build program that carries a UTF-8 activeCodePage.
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <string>
+
+int main() {
+#ifdef _WIN32
+    const wchar_t* w = _wgetenv(L"MCPP_OUT_DIR");
+    if (!w) { std::fputs("no MCPP_OUT_DIR\n", stderr); return 1; }
+    std::filesystem::path out(w);
+#else
+    const char* n = std::getenv("MCPP_OUT_DIR");
+    if (!n) { std::fputs("no MCPP_OUT_DIR\n", stderr); return 1; }
+    std::filesystem::path out(n);
+#endif
+    auto p = out / "gen.cpp";
+    std::ofstream f(p);
+    if (!f) { std::fputs("build.mcpp: cannot open the generated file\n", stderr); return 2; }
+    f << "int gen_value() { return 42; }\n";
+    f.close();
+    auto u8 = p.generic_u8string();
+    std::printf("mcpp:generated=%s\n", reinterpret_cast<const char*>(u8.c_str()));
+    return 0;
+}

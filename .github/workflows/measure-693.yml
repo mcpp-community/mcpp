@@ -1,0 +1,22 @@
+name: measure-693
+
+# TEMPORARY. Readings for mcpp#693 (Windows, a working directory outside the
+# ANSI code page). This branch is never merged; every other workflow is removed
+# on it so that only these readings run. No artifacts are uploaded: every
+# reading is a `READING <id>:` line in the log and in the job summary.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows-acp:
+    name: "#693 readings (windows-latest)"
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Readings
+        shell: pwsh
+        timeout-minutes: 85
+        run: ./.github/measure-693/measure.ps1
