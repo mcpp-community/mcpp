@@ -450,8 +450,22 @@ write_compile_commands(const BuildPlan& plan, const CompileFlags& flags) {
     auto path = plan.compileDbPath.empty()
         ? plan.projectRoot / "compile_commands.json"
         : plan.compileDbPath;
+    // A JSON document holds UTF-8 text only, and the serialiser throws on any
+    // other byte (`type_error.316`). The entry points refuse or skip a path
+    // with no UTF-8 spelling (#693), so a string reaching this point in another
+    // encoding entered some other way. It fails this document, which the
+    // caller reports as a warning or, when the database is required, as an
+    // error, and never as an internal exception.
+    std::string fresh;
+    try {
+        fresh = emit_compile_commands(plan, flags);
+    } catch (const nlohmann::json::exception& e) {
+        return std::unexpected(write_error(std::format(
+            "it cannot be written as JSON, which holds UTF-8 text only ({})",
+            e.what())));
+    }
     return publish_compile_commands(
-        path, emit_compile_commands(plan, flags),
+        path, fresh,
         [](const std::filesystem::path& candidate) {
             return std::filesystem::exists(candidate);
         });

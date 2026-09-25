@@ -41,6 +41,11 @@ struct CompileFlags {
     std::string as;                   // asm-safe subset for .S/.s via the C driver
     std::string nasm;                 // NASM global flags (.asm; own spelling)
     std::string ld;                   // ldflags string
+    // True when the link line carries the empty graph sysroot (#696): an ELF
+    // link over a graph-supplied C library, by clang. The backend creates the
+    // directory, and the hermetic check then holds every `-L` on that link to
+    // the store, the build directory and the graph's own package roots.
+    bool        graphLinkIsolated = false;
     // The same link line for a unit with NO C++ in it (mcpp#426). Linking a
     // pure-C library with the C++ driver gave it `NEEDED libstdc++.so.6`,
     // `libm.so.6` and `libgcc_s.so.1` with not one symbol referencing them —
@@ -139,6 +144,31 @@ std::string render_link_intent_flags(
     LinkIntentFlavor flavor);
 
 CompileFlags compute_flags(const BuildPlan& plan);
+
+// THE OPTIMIZATION LEVEL A BUILD REALISES, STATED ONCE (#694).
+//
+// `compute_flags` spells it and the `Finished` line names it. There used to be
+// two answerers: the line read the declared level, while the compile took a
+// branch keyed on the target triple that replaced every non-zero level with
+// `-Og` on `*-linux-musl`. That branch was a workaround for one musl-gcc 15.1.0
+// internal compiler error, it reached clang as well, and it set the level of
+// mcpp's own Linux release binaries; its trigger no longer reproduces on any
+// available input (.agents/docs/2026-09-25-issues-693-696-triage-and-repair-plan.md
+// §3.2). A defect of one toolchain version is answered by the version pin or
+// by a project's own per-file flags, never by the engine replacing a declared
+// value. An empty level is `0`: the old spelling rendered it as a bare `-O`,
+// which GCC reads as `-O1`, while the line called it unoptimized.
+std::string realised_opt_level(const mcpp::manifest::BuildConfig& bc);
+
+// Whether `realised_opt_level` names an optimizing level.
+bool realises_optimization(const mcpp::manifest::BuildConfig& bc);
+
+// The sysroot of an ELF link over a graph-supplied C library: an empty
+// directory inside the build directory, so the driver derives no library
+// search from the host (#696). `compute_flags` names it and the backend creates
+// it; the link-failure advice recognises it by `kGraphLinkSysrootDir`.
+inline constexpr std::string_view kGraphLinkSysrootDir = "graph-sysroot";
+std::filesystem::path graph_link_sysroot(const std::filesystem::path& outputDir);
 
 // ── Which link line a (host, target) pair takes (#647 E3) ─────────────────
 //
@@ -520,6 +550,18 @@ LinkShape link_shape(LinkHost host, mcpp::build::dist::Format targetFormat,
             return LinkShape::Generic;
     }
     return LinkShape::Generic;
+}
+
+std::string realised_opt_level(const mcpp::manifest::BuildConfig& bc) {
+    return bc.optLevel.empty() ? std::string("0") : bc.optLevel;
+}
+
+bool realises_optimization(const mcpp::manifest::BuildConfig& bc) {
+    return realised_opt_level(bc) != "0";
+}
+
+std::filesystem::path graph_link_sysroot(const std::filesystem::path& outputDir) {
+    return outputDir / kGraphLinkSysrootDir;
 }
 
 CompileFlags compute_flags(const BuildPlan& plan) {
@@ -978,14 +1020,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     f.arBinary = mcpp::toolchain::archive_tool(plan.toolchain);
 
     // Opt level + debug come from the resolved build profile
-    // ([profile.<name>] → buildConfig). musl keeps -Og as an ICE workaround
-    // unless the profile pins -O0.
+    // ([profile.<name>] → buildConfig). The level is the one the profile
+    // declares, on every target and with every compiler; see
+    // `realised_opt_level` for why nothing here may replace it.
     auto& prof = plan.manifest.buildConfig;
-    std::string opt_flag = isMuslTc && prof.optLevel != "0"
-        ? " -Og"
-        : (isMsvcDialect && prof.optLevel == "0")
+    const std::string optLevel = realised_opt_level(prof);
+    std::string opt_flag = (isMsvcDialect && optLevel == "0")
         ? " /Od"    // MSVC's no-opt spelling (there is no /O0)
-        : std::format(" {}{}", d.optPrefix, prof.optLevel);
+        : std::format(" {}{}", d.optPrefix, optLevel);
     if (prof.debug) opt_flag += std::format(" {}", d.debugFlags);
     if (prof.lto && !isMsvcDialect) opt_flag += " -flto";
 
@@ -1011,9 +1053,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         user_ldflags += normalize_ldflag(plan.projectRoot, flag);
     }
 
-    // C standard
-    std::string c_std =
-        plan.manifest.buildConfig.cStandard.empty() ? "c11" : plan.manifest.buildConfig.cStandard;
+    // C standard. The file-level `$cflags` carries the engine default, a
+    // graph-wide constant, and never the root's own value: a package's
+    // `[build] c_standard` reaches its own C units as a per-unit flag
+    // (`make_plan`), the root's included. When this line carried the root's
+    // value, every dependency's C units compiled at the consumer's standard and
+    // their own declarations were parsed, hashed and never applied (#695).
+    std::string c_std(mcpp::manifest::kDefaultCStandard);
 
     // Assemble
     // Module-flag spellings come from BmiTraits: GCC needs -fmodules on every
@@ -1999,6 +2045,30 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // linker rather than about the choice made here.
         if (plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang)
             graphLd += " -fuse-ld=lld";
+
+        // AND NO SYSROOT IS THE HOST'S ROOT (#696).
+        //
+        // The payload link above passes `--sysroot=<subos>`; this replacement
+        // passes none, and a clang with no sysroot derives its library search
+        // from `/` and, on x86_64, from the host's GCC installation. `-nostdlib`
+        // removes the startup files and default libraries but not those
+        // directories, so a `-l` the graph did not answer was looked up on the
+        // build machine. Measured with clang 22.1.8: `-lm` linked glibc's
+        // `s_fmaximum.o` into an x86_64-linux-musl static image on Ubuntu 24.04,
+        // and failed on aarch64-linux-musl because glibc's `libm.a` is an x86_64
+        // linker script. An empty directory owned by the build is the sysroot
+        // that holds nothing of the host's; the C library package answers the
+        // names musl answers from libc with its own empty archives.
+        //
+        // ELF only, and clang only: that is the measured case. PE links through
+        // the MinGW driver have the same shape and wait for an inventory of the
+        // import libraries they resolve from a host MinGW today; Mach-O keeps
+        // the SDK as its declared platform anchor.
+        if (plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang
+            && targetObjectFormat == mcpp::build::dist::Format::Elf) {
+            graphLd += " --sysroot=" + escape_path(graph_link_sysroot(plan.outputDir));
+            f.graphLinkIsolated = true;
+        }
 
         // AND THE TARGET'S OWN ANCHOR SURVIVES THE REPLACEMENT.
         //

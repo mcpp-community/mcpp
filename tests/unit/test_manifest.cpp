@@ -2435,9 +2435,47 @@ windows_entry     = "wWinMain"
     EXPECT_TRUE(m->schemaWarnings.empty());
 }
 
+// #693: `windows_code_page` states the process code page of an executable, in
+// the vocabulary of the manifest's `activeCodePage` element.
+TEST(Manifest, ParsesWindowsCodePageOnABinaryTarget) {
+    for (std::string_view value : {"utf-8", "legacy"}) {
+        const auto src = std::format(R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[targets.app]
+kind              = "bin"
+main              = "src/main.cpp"
+windows_code_page = "{}"
+)", value);
+        auto m = mcpp::manifest::parse_string(src);
+        ASSERT_TRUE(m.has_value()) << m.error().format();
+        ASSERT_EQ(m->targets.size(), 1u);
+        EXPECT_EQ(m->targets[0].windowsCodePage, value);
+        EXPECT_TRUE(m->schemaWarnings.empty());
+    }
+}
+
+TEST(Manifest, RefusesAnUnknownWindowsCodePageNamingTheAcceptedOnes) {
+    constexpr auto src = R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[targets.app]
+kind              = "bin"
+main              = "src/main.cpp"
+windows_code_page = "65001"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("\"65001\" is not one of \"utf-8\", \"legacy\""),
+              std::string::npos) << m.error().message;
+}
+
 TEST(Manifest, RefusesWindowsKeysOnALibraryNamingTheTargetAndTheKey) {
     const std::pair<std::string_view, std::string_view> keys[] = {
-        {"windows_subsystem", "windows"}, {"windows_entry", "wmain"}};
+        {"windows_subsystem", "windows"}, {"windows_entry", "wmain"},
+        {"windows_code_page", "utf-8"}};
     for (std::string_view kind : {"lib", "shared"}) {
         for (auto [key, value] : keys) {
             const auto src = std::format(R"(

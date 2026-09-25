@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# requires: llvm elf unix-shell
+# mcpp#696: a link whose C library comes from the dependency graph searches no
+# library directory of the host.
+#
+# Before the fix clang derived `/usr/lib/x86_64-linux-gnu` and its siblings for
+# a `x86_64-linux-musl` link over openkal-musl, so `-lm` was answered by the
+# HOST's glibc archive and its objects were linked into a musl image, with no
+# diagnostic. The graph link now carries `--sysroot` naming an empty directory
+# in the build directory, which removes every such directory.
+#
+# Two legs, and the second is the one that separates the engines:
+#
+#   A. openkal-musl 0.19.2 ships musl's eight empty archives (`libm.a` among
+#      them). `-lm` is answered by the graph, the link carries the empty
+#      sysroot, and the program runs.
+#   B. openkal-musl 0.19.1 has no `libm.a`. With the host's directories gone,
+#      `-lm` is unanswered: the build fails with the linker's own message and
+#      mcpp's note naming the release that answers it. The released engine
+#      links this leg successfully, from the host's libm.
+set -e
+
+MCPP="${MCPP:-mcpp}"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+TARGET=x86_64-linux-musl
+
+fail() { [ -n "$2" ] && cat "$2"; echo "FAIL: $1"; exit 1; }
+
+make_project() {
+    local dir="$1" musl="$2"
+    mkdir -p "$dir/src"
+    cat > "$dir/mcpp.toml" <<TOML
+[package]
+name    = "lmprobe"
+version = "0.1.0"
+
+[toolchain]
+default = "llvm@22.1.8"
+
+[build]
+ldflags = ["-lm"]
+
+[targets.lmprobe]
+kind = "bin"
+main = "src/main.c"
+
+[dependencies]
+openkal-musl         = "$musl"
+openkal-llvm-runtime = "0.15.1"
+TOML
+    cat > "$dir/src/main.c" <<'C'
+#include <math.h>
+#include <stdio.h>
+int main(void) {
+    volatile double a = 1.0, b = 2.0;
+    printf("%g\n", fmax(a, b));
+    return fmax(a, b) == 2.0 ? 0 : 1;
+}
+C
+}
+
+skip_if_unreachable() {
+    if grep -qE 'not found in the synced index|install_packages failed' "$1"; then
+        echo "SKIP: the openkal packages are not reachable from here"
+        exit 0
+    fi
+}
+
+# ── A. the graph answers -lm ────────────────────────────────────────────────
+make_project "$work/a" "0.19.2"
+cd "$work/a"
+if ! "$MCPP" build --target "$TARGET" --verbose > a.log 2>&1; then
+    skip_if_unreachable a.log
+    fail "with openkal-musl 0.19.2, -lm must be answered by the graph" a.log
+fi
+grep -q -- '--sysroot=[^ ]*graph-sysroot' a.log \
+    || fail "the graph link does not carry the empty sysroot" a.log
+out=$("$MCPP" run --target "$TARGET" 2>&1) || fail "the program did not run: $out"
+printf '%s\n' "$out" | grep -qx '2' || fail "unexpected output: $out"
+echo "  ok: -lm is answered by openkal-musl's own archive, and the program runs"
+
+# ── B. nothing in the graph answers -lm ─────────────────────────────────────
+make_project "$work/b" "0.19.1"
+cd "$work/b"
+if "$MCPP" build --target "$TARGET" > b.log 2>&1; then
+    fail "-lm was answered although nothing in the graph provides it: the host's library directories are still searched" b.log
+fi
+skip_if_unreachable b.log
+grep -q 'unable to find library -lm' b.log \
+    || fail "the failure is not the unanswered -lm" b.log
+grep -q 'openkal-musl 0.19.2' b.log \
+    || fail "the note does not name the release that answers -lm" b.log
+echo "  ok: an unanswered -lm fails, and the note names openkal-musl 0.19.2"
+
+echo "PASS: a graph link searches no host directory"

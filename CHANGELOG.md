@@ -3,6 +3,57 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.9.26.1] - 2026-09-26
+
+### 路径与文本统一为 UTF-8(#693)
+
+mcpp 此前在 Windows 上以进程 ANSI 代码页持有路径,而它写出的 `compile_commands.json` 只能容纳
+UTF-8。于是工程目录或 mcpp 主目录只要含非 ASCII 字符,每次构建都以
+`internal: unhandled exception: [json.exception.type_error.316]` 失败,系统代码页能拼出的名字也
+不例外(代码页 936 上的中文目录名、代码页 1252 上的 `café`);代码页拼不出的名字则以窄化异常失败。
+Linux 上名字不是 UTF-8 的目录以同样的 JSON 异常失败。现在 mcpp 在所有平台上以 UTF-8 持有文本:
+
+- `mcpp.exe` 以应用程序清单声明 UTF-8 代码页(`res/mcpp.rc`),在 Windows 10 1903 及以后的版本上
+  它与 Windows 交换的窄字符串都是 UTF-8。`build.mcpp` 链接同一份清单;作为 host tool 构建的程序
+  默认也带它,除非其目标写 `windows_code_page = "legacy"` 或包自己嵌入了清单。
+- 新的目标键 `windows_code_page`(`"utf-8"` 或 `"legacy"`)为工程自己的可执行文件声明代码页;
+  不写时保持系统代码页。
+- 路径没有 UTF-8 拼法的工程目录与 `MCPP_HOME` 在构建之前被拒绝,消息以转义拼出该路径并给出
+  本机的原因;工程内部这样的文件名被跳过并按目录汇报一次;文本不是 UTF-8 的 `build.mcpp` 指令
+  按键名被拒绝。`compile_commands.json` 的序列化失败报告为该文件的失败,不再成为内部异常。
+- `build.ninja` 含非 ASCII 字节时,mcpp 以 `ninja -t wincodepage` 核对 Ninja 读取它的编码,
+  不是 UTF-8 就拒绝并点名该 Ninja。`cl.exe`、`link.exe`、`lib.exe` 只在响应文件以字节顺序标记开头时
+  按 UTF-8 读取它(在 windows-latest 上实测),msvc 方言的响应文件因此以字节顺序标记开头。
+- 在忽略清单的 Windows(早于 1903)上,受影响路径的诊断会写出进程所在的 ANSI 代码页。
+- Windows CI 新增回归任务:llvm、MSVC、MinGW 三行分别在 ASCII、`café` 与中文目录中构建并运行,
+  并核对 `build.ninja` 与 `compile_commands.json` 中该目录名的 UTF-8 字节。
+
+报告中的静默 `0xC0000409` 来自 xlings 的 shim:它在代码页之外的工作目录中启动时抛出未捕获的异常。
+xlings 2026.9.26.2 声明同样的 UTF-8 代码页并在 `main` 中设异常边界,mcpp 内置的 xlings 版本随之更新。
+
+### `c_standard` 作用于声明它的包(#695)
+
+`[build] c_standard` 此前写在文件级 `$cflags` 上,图中每个 C 编译单元都读它:根包的值到达每个依赖,
+依赖自己的声明被解析、被哈希进缓存键,却没有被施加。现在每个包的 C 单元以该包自己的标准编译,
+未声明的包以 `c11` 编译,C++ 单元不接收 C 标准。`cl.exe` 以其默认模式编译 C,构建会用一行列出
+声明未被施加的包。`#690` 设计记录 §3.1 中把 `c_standard` 列为「只读根包」的一行已附更正说明。
+
+### 链接图提供的 C 库时不搜索宿主目录(#696)
+
+C 库来自依赖图的链接此前没有 `--sysroot`,clang 会从宿主推导 `/usr/lib` 等库目录:
+`x86_64-linux-musl` 上的 `-lm` 把宿主 glibc 的目标文件静默链接进 musl 镜像,`aarch64-linux-musl`
+上则以一条不相干的报错失败。现在由 clang 链接的 ELF 目标带上指向构建目录内空目录的 `--sysroot`;
+密封检查拒绝指向工具链存储、构建目录与图中各包之外目录的 `-L`(`[build] allow_host_libs = true`
+取消这一拒绝)。图中无人应答的 `-l` 以链接器自己的消息失败,mcpp 另附说明;缺失的名字全属于 musl 以
+`libc.a` 应答的八个名字时,说明会点名带有这八个空归档的 openkal-musl 0.19.2。
+
+### musl 目标按声明的优化级别编译(#694)
+
+引擎此前在 `*-linux-musl` 上把每个非零优化级别替换为 `-Og`(一个 musl-gcc 15.1.0 内部编译器错误的
+变通,也作用于 clang 与 mcpp 自己的 Linux 发布二进制),而 `Finished` 一行按声明的级别报告
+`optimized`。该分支已删除:编译与报告读取同一个值(`realised_opt_level`),空级别即 `0`。
+原先的触发条件在任何可得的输入上都不再复现。
+
 ## [2026.9.25.1] - 2026-09-25
 
 ### 工作空间成员在每种位置上以相同方式编译(#690)

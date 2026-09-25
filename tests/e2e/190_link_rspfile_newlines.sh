@@ -49,13 +49,16 @@ cd multi
 ninja_file=$(find target -name build.ninja | head -1)
 [ -n "$ninja_file" ] || { echo "FAIL: no build.ninja"; exit 1; }
 
-# 1. Structural: no link rule may write its response file on one line.
-if grep -qE '^[[:space:]]*rspfile_content = \$in[[:space:]]*$' "$ninja_file"; then
+# 1. Structural: no link rule may write its response file on one line. Under
+# the msvc dialect the content begins with a UTF-8 byte order mark, which
+# link.exe and lib.exe need to read the file as UTF-8 (#693).
+BOM=$'\xef\xbb\xbf'
+if grep -qE "^[[:space:]]*rspfile_content = (${BOM})?\\\$in[[:space:]]*\$" "$ninja_file"; then
     grep -nE '^[[:space:]]*rspfile_content' "$ninja_file"
     echo "FAIL: a link rule still writes its response file on ONE line (\$in)"
     exit 1
 fi
-grep -qE '^[[:space:]]*rspfile_content = \$in_newline[[:space:]]*$' "$ninja_file" || {
+grep -qE "^[[:space:]]*rspfile_content = (${BOM})?\\\$in_newline[[:space:]]*\$" "$ninja_file" || {
     grep -nE '^[[:space:]]*rspfile_content' "$ninja_file"
     echo "FAIL: no link rule uses \$in_newline"; exit 1; }
 echo "  ok: link rules declare rspfile_content = \$in_newline"

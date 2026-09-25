@@ -335,6 +335,7 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `required_features` | The target is emitted only when **every** listed feature is active in the build; otherwise it is silently skipped. A gate only — it does not activate features (use `--features` / `[features].default`). **One exception, and it is not a second rule:** when this target is requested as a host tool (`tools = [...]`, §2.14), the target is what was *asked for*, so its `required_features` become the sub-build's *inputs*. Same field, one meaning — the resolution just runs in the opposite direction. |
 | `windows_subsystem` *(2026.9.12.2+)* | The PE subsystem of an executable: `"console"` (the default) or `"windows"`, a GUI program that starts without a console. Reaches this target's link and no other, and renders nothing on a target that is not PE. See the section above. |
 | `windows_entry` *(2026.9.12.2+)* | The entry function the program defines: `"main"` (the default), `"wmain"`, `"WinMain"` or `"wWinMain"`. See the section above. |
+| `windows_code_page` *(2026.9.26.1+)* | The ANSI code page of an executable on Windows: `"utf-8"`, embedded as an application manifest that Windows 10 version 1903 and later honour, or `"legacy"`, the system's code page. A program target that writes neither runs in the system's code page, except a program built as a host tool (§2.14), which defaults to `"utf-8"`. Refused on a library target; renders nothing on a target that is not PE. See *Paths and text encoding* in §2.3. |
 | `linkage` *(2026.9.15.2+)* | A library target's **default** link form, `"static"` or `"shared"`: the form a consumer that writes no `linkage` receives. Unlike `kind = "shared"` it is not a constraint, so a consumer's explicit statement is honoured. Refused beside `kind = "shared"` and on a program target. See [`dependency_linkage`](#dependency_linkage--static-or-shared-is-the-consumers-decision). |
 
 > **Scope (important):** `defines` / `cxxflags` / `cflags` on a target apply **only to that
@@ -403,7 +404,7 @@ build_program_timeout = 1800      # Seconds a build.mcpp may run; 0 = no limit (
 include_dirs = ["include", "third_party/include"]  # Header search paths of this package (§ below)
 include_dirs_after = ["*"]         # Header dirs searched AFTER system dirs (-idirafter)
 private_include_dirs = ["vendor/src/include"]  # Of `include_dirs`, the ones a consumer must NOT get
-c_standard   = "c11"              # Standard for C source files (default c11)
+c_standard   = "c11"              # Standard for this package's C sources (default c11; § below)
 cflags       = ["-DFOO=1"]        # Extra C compile flags
 cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
 ldflags      = ["-lfoo"]          # Extra link flags
@@ -493,6 +494,23 @@ reach it through its own `include_dirs` or through one of its dependencies.
 When a dependency's compile reports a missing header that exists in the
 consumer's include directories, mcpp names that directory after the compiler's
 message.
+
+#### `c_standard` applies to the package that declares it *(mcpp 2026.9.26.1+)*
+
+`c_standard` sets the C standard of the declaring package's own C units. A
+package that declares none compiles its C units at `c11`, and a consumer's value
+never reaches a dependency: a dependency that declares `gnu11` compiles at
+`gnu11` inside a project that declares `c99`, and one that declares nothing
+compiles at `c11` there. C++ units receive no C standard. The value is part of
+the package's build key, so the dependency's cached objects serve every consumer.
+
+`cl.exe` compiles C in its default mode and receives no C standard from mcpp.
+When a package in the build declares one, the build reports in one line each
+package whose declared standard was not applied.
+
+Before mcpp 2026.9.26.1 the root package's value reached every C unit in the
+graph, and a dependency's own declaration was read, hashed into its cache key
+and not applied (mcpp#695).
 
 #### `dependency_linkage` — static or shared is the consumer's decision
 
@@ -896,33 +914,56 @@ The **compile** phase is not bounded, only the build *program*. See
 Moved to [20 — Toolchain Management](20-toolchains.md).
 
 
-### File names outside the host code page
+### Paths and text encoding *(mcpp 2026.9.26.1+)*
 
-Globs are narrow strings, and so are compile commands and `build.ninja`. On
-Windows those strings are produced in the process's **ANSI code page**, so a
-file whose name has no spelling in that code page cannot be matched by a glob,
-named on a compile command, or written into a build file.
+mcpp holds every path, argument and file content as UTF-8 text, on every
+platform. Every file it writes for another tool is UTF-8: `build.ninja`,
+`compile_commands.json`, and the response files of the compile and link edges.
+A path enters that text only through its UTF-8 spelling.
 
-Such entries are skipped, and the skip is reported once per directory:
+**Windows.** `mcpp.exe` declares the UTF-8 code page in an application manifest.
+On Windows 10 version 1903 and later its narrow strings, and every path it
+exchanges with Windows, are therefore UTF-8, whatever the system's ANSI code page
+is. The programs mcpp runs as part of a build share that code page: `build.mcpp`
+is linked with the same manifest, and a program built as a host tool (§2.14)
+receives it unless its target says `windows_code_page = "legacy"` or the package
+embeds a manifest of its own. The programs a project builds for itself keep the
+system's code page unless their target says `windows_code_page = "utf-8"`.
 
-```text
-warning: 'C:/.../pkg/test/www' contains names this system's active code page cannot represent
-  impact: those files take no part in the build
-  hint: Windows only: this is the process ANSI code page, which `chcp` does not change. ...
-```
+Ninja 1.11 and later read `build.ninja` as UTF-8 under the same declaration.
+When the file holds a non-ASCII byte, mcpp asks Ninja which encoding it reads
+(`ninja -t wincodepage`) and refuses the build, naming that Ninja, if the answer
+is not UTF-8. `cl.exe`, `link.exe` and `lib.exe` read a response file as UTF-8
+only when it begins with a byte order mark, so the response files of the msvc
+dialect begin with one.
 
-The reported path is the nearest ancestor whose name the code page *can* spell,
-in generic (`/`) spelling. The offending name itself is never printed: rendering
-it would throw the same exception the message is reporting.
+**Paths with no UTF-8 spelling.** On Linux and macOS a file name is a sequence of
+bytes, which need not be UTF-8. On a Windows host older than version 1903 the
+manifest is ignored, and the process runs in the system's ANSI code page, which
+spells only part of Unicode. On either, some paths have no UTF-8 spelling:
 
-`chcp` sets the *console* code page and has no effect here. Names that are only
-test data or documentation are harmless — an upstream tarball carrying a
-Japanese-named fixture directory builds fine on an en-US host. Sources are not:
-they need renaming, or a host whose code page covers them.
+- A project directory or an mcpp home (`MCPP_HOME`) whose path has none is
+  refused before anything is built. The message spells the path with escapes
+  (`\xE9` for a byte that is not UTF-8) and gives the reason for this host.
+- A file or directory inside a project whose name has none is skipped, and the
+  skip is reported once per directory:
 
-Linux and macOS perform no such conversion, so nothing is skipped there. A
-package that builds on one and not the other, with an
-`internal: unhandled exception` from a code-page message, was mcpp#516.
+  ```text
+  warning: '/home/user/pkg/test/data' contains names that have no UTF-8 spelling
+    impact: those files take no part in the build
+    hint: The name's bytes are not UTF-8, and build.ninja and compile_commands.json hold UTF-8 text. ...
+  ```
+
+  The reported path is the nearest ancestor that has a UTF-8 spelling. Names of
+  test data or documentation are harmless; sources need renaming.
+- A `build.mcpp` directive whose text is not UTF-8 is refused by its key
+  ([30-build-mcpp.md](30-build-mcpp.md)).
+
+Before mcpp 2026.9.26.1 such a path failed the build with `internal: unhandled
+exception: [json.exception.type_error.316]`, and on Windows every non-ASCII
+project path or home failed that way, including names the system's code page
+could spell (mcpp#693). The skip of names outside the Windows ANSI code page
+dates from mcpp#516.
 
 ### 2.3.1 `[build] accel` — the accelerator this build targets
 
@@ -1576,6 +1617,14 @@ build directory (`target/<triple>/<fp>/res/<target>.mcpp.rc`) and list it in
 `files`. The result is byte-identical, so moving from generated to hand-written
 never changes what ships.
 
+A script may embed an application manifest (`1 24 "app.manifest"`, type 24 being
+`RT_MANIFEST`). `windows_code_page = "utf-8"` embeds one at the same ordinal, so a
+package that declares both is refused, with the two ways to keep one: add the
+`activeCodePage` element to the script's manifest and set
+`windows_code_page = "legacy"`, or remove the manifest from the script. A program
+built as a host tool, which receives `utf-8` by default, keeps its own manifest
+instead.
+
 > **`VS_VERSION_INFO` needs `<windows.h>`.** In a hand-written script,
 > `VS_VERSION_INFO VERSIONINFO` without `#include <windows.h>` files the version
 > resource under a *string* name instead of ordinal 1. Every tool still reports
@@ -1587,8 +1636,10 @@ never changes what ships.
 #### Tracked inputs
 
 mcpp reads the `.rc` for quoted `#include`s and for the files named by resource
-statements (`ICON`, `RCDATA`, `MANIFEST`, …), and makes them build inputs, so
-editing the icon relinks. Angled includes (`<windows.h>`) are the toolchain's
+statements (`ICON`, `RCDATA`, `MANIFEST`, the numeric type `24`, …), and makes
+them build inputs, so editing the icon relinks. A relative file name is resolved
+against the script's own directory, which is also where rc.exe, llvm-rc and
+windres look for it. Angled includes (`<windows.h>`) are the toolchain's
 and are covered by the toolchain fingerprint instead.
 
 A file name reached through a macro (`1 ICON APP_ICON`) is invisible to that

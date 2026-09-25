@@ -425,6 +425,11 @@ struct Directives {
     // `mcpp:` keys this engine does not know. Whether that is fatal depends on
     // `protocol` — see unknown_directive_error().
     std::vector<std::string> unknownKeys;
+    // Directive lines whose text is not UTF-8, as the `mcpp:<key>` each one
+    // began with (#693). Every path and flag mcpp holds is UTF-8, and the
+    // value of such a line would reach build.ninja as bytes Ninja reads in
+    // another encoding, naming a different file.
+    std::vector<std::string> nonUtf8Keys;
 
     std::vector<std::string>&       at(Slot s)       { return slots[static_cast<std::size_t>(s)]; }
     const std::vector<std::string>& at(Slot s) const { return slots[static_cast<std::size_t>(s)]; }
@@ -446,6 +451,7 @@ enum class LineResult {
     Accepted,
     Protocol,       // `mcpp:protocol=<N>`
     Unknown,        // a `mcpp:` key this engine does not know
+    NotUtf8,        // a directive whose text is not UTF-8
 };
 
 // Parse ONE stdout line into `d`. `root` resolves relative paths for the
@@ -465,6 +471,11 @@ void accept_output(Directives& d, const mcpp::toolchain::CommandDialect& dial,
 // warn-and-ignore behaviour: it is a hand-written printf program, frozen at
 // protocol 1, and its unknown keys are typos rather than future syntax.
 std::optional<std::string> protocol_error(const Directives& d);
+
+// Non-empty when the program printed a directive whose text is not UTF-8.
+// Always an error: a value in another encoding is a different path, whatever
+// protocol the program speaks.
+std::optional<std::string> encoding_error(const Directives& d);
 
 // ── Advisories ─────────────────────────────────────────────────────────────
 //
@@ -707,6 +718,17 @@ LineResult accept_line(Directives& d, const mcpp::toolchain::CommandDialect& dia
     std::string_view body = std::string_view(line).substr(kPfx.size());
     auto eq = body.find('=');
     std::string key = std::string(body.substr(0, eq));
+
+    // Before the key is looked up: a line in another encoding is refused as
+    // such, whether or not its key is known.
+    if (!mcpp::modgraph::is_valid_utf8(line)) {
+        auto shown = "mcpp:" + key;
+        if (!mcpp::modgraph::is_valid_utf8(shown)) shown = "mcpp:<a key that is not UTF-8>";
+        if (std::find(d.nonUtf8Keys.begin(), d.nonUtf8Keys.end(), shown)
+            == d.nonUtf8Keys.end())
+            d.nonUtf8Keys.push_back(std::move(shown));
+        return LineResult::NotUtf8;
+    }
     std::string val = eq == std::string_view::npos ? std::string()
                                                    : std::string(body.substr(eq + 1));
 
@@ -780,6 +802,21 @@ std::optional<std::string> protocol_error(const Directives& d) {
             list, kProtocolVersion);
     }
     return std::nullopt;
+}
+
+std::optional<std::string> encoding_error(const Directives& d) {
+    if (d.nonUtf8Keys.empty()) return std::nullopt;
+    std::string list;
+    for (auto const& k : d.nonUtf8Keys) list += (list.empty() ? "" : ", ") + k;
+    return std::format(
+        "build.mcpp printed directive(s) whose text is not UTF-8: {}.\n"
+        "       mcpp reads a build program's output as UTF-8, and a path in "
+        "another encoding names a different file\n"
+        "       in build.ninja and compile_commands.json. Print UTF-8: on "
+        "Windows, the program mcpp compiles runs in\n"
+        "       the UTF-8 code page on Windows 10 version 1903 and later; on "
+        "POSIX, convert the name before printing it.",
+        list);
 }
 
 void serialize(std::ostream& os, const Directives& d) {

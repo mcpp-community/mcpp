@@ -226,6 +226,16 @@ StaticPlacement place_static_packages(
 
 struct BuildPlan {
     mcpp::manifest::Manifest        manifest;
+    // Packages whose declared `[build] c_standard` the compiler does not apply,
+    // spelt `<package> (<standard>)`, in the order their first C unit appears.
+    // Filled only for cl.exe (W3b of the #693-#696 record) and reported once by
+    // the backend, so a declared value is never dropped without a word.
+    std::vector<std::string>        cStandardsNotApplied;
+    // Every package root of the graph, the root's first. The hermetic check
+    // reads it on an isolated graph link: a package may add a package-relative
+    // `-L` (openkal-musl's empty archives), and a path dependency's root can
+    // be anywhere on the machine, not only under the store.
+    std::vector<std::filesystem::path> packageRoots;
     mcpp::toolchain::Toolchain      toolchain;
     mcpp::toolchain::Fingerprint    fingerprint;
     // Where the target's platform interface, C library and C++ runtime come
@@ -1238,6 +1248,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     plan.manifest         = manifest;
     plan.toolchain        = tc;
     plan.fingerprint      = fp;
+    for (auto const& p : packages) plan.packageRoots.push_back(p.root);
 
     // The ROOT package's extension table. Only the synthesized entry main
     // needs it — every scanned unit arrives with its kind already set by the
@@ -1735,6 +1746,53 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         }
     }
 
+    // EVERY PACKAGE'S C UNITS COMPILE AT THAT PACKAGE'S OWN C STANDARD (#695).
+    //
+    // The file-level `$cflags` carries `kDefaultCStandard`. A package whose
+    // effective standard differs gets the dialect's spelling appended to its C
+    // units' own flags, which the `c_object` rule reads after `$cflags`, so the
+    // later `-std=` is the one the driver takes. The root is one of `packages`,
+    // so its value reaches its own units and no one else's. This is the
+    // mechanism the C++ layer's implementation standard uses just above.
+    //
+    // cl.exe is left as it is. `/std:c11` and `/std:c17` also switch on the
+    // conforming preprocessor, and no CI row builds the index with cl, so the
+    // mapping waits for a measurement (W3b in the #693-#696 record). What cl
+    // does not apply is recorded here and reported once by the backend, rather
+    // than dropped in silence.
+    std::map<std::string, std::string, std::less<>> cStandardFlag;
+    std::map<std::string, std::string, std::less<>> cStandardNotApplied;
+    {
+        const auto& cd = mcpp::toolchain::dialect_for(tc);
+        const bool clDialect = cd.id == "msvc";
+        for (auto const& p : packages) {
+            const auto& declared = p.manifest.buildConfig.cStandard;
+            if (clDialect) {
+                if (!declared.empty())
+                    cStandardNotApplied[qualified_package_name(p.manifest)] = declared;
+                continue;
+            }
+            const auto own = mcpp::manifest::effective_c_standard(declared);
+            if (own == mcpp::manifest::kDefaultCStandard) continue;
+            cStandardFlag[qualified_package_name(p.manifest)] =
+                std::format("{}{}", cd.stdPrefix, own);
+        }
+    }
+    std::set<std::string, std::less<>> cStandardNotAppliedSeen;
+    // One application for every C unit, the scanned ones below and the entry
+    // `main` a target synthesizes further down: a C entry is a unit of its
+    // package like any other.
+    auto apply_c_standard = [&](CompileUnit& cu) {
+        if (cu.kind != mcpp::SourceKind::C) return;
+        if (auto it = cStandardFlag.find(cu.packageName); it != cStandardFlag.end())
+            cu.packageCflags.push_back(it->second);
+        if (auto it = cStandardNotApplied.find(cu.packageName);
+            it != cStandardNotApplied.end()
+            && cStandardNotAppliedSeen.insert(it->first).second)
+            plan.cStandardsNotApplied.push_back(
+                std::format("{} ({})", it->first, it->second));
+    };
+
     // 1. Compile units in topological order
     for (auto idx : topoOrder) {
         auto& u = graph.units[idx];
@@ -1768,6 +1826,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             && cu.declaration == mcpp::modgraph::ModuleDeclaration::None) {
             cu.packageCxxflags.push_back(it->second);
         }
+        apply_c_standard(cu);
         plan.compileUnits.push_back(std::move(cu));
     }
 
@@ -2238,6 +2297,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             // treatment of every scanned unit.
             mcpp::modgraph::normalize_include_flags(projectRoot, main_cu.packageCflags);
             mcpp::modgraph::normalize_include_flags(projectRoot, main_cu.packageCxxflags);
+            apply_c_standard(main_cu);
 
             // The entry is in the package scan only when a `sources` glob
             // matched it; otherwise it is scanned here. The unit is built as one

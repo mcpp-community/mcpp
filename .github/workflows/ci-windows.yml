@@ -405,6 +405,17 @@ jobs:
           # restore the LLVM default for the remaining steps
           "$MCPP_SELF" toolchain default llvm@20.1.7
 
+      # mcpp#693: a project in a directory whose name is not ASCII, inside the
+      # runner's code page 1252 and outside it, on the llvm, MSVC and MinGW rows,
+      # plus a path carried through build.mcpp. Each row reaches a different
+      # consumer of mcpp's text: Ninja's build file, the MSVC response files,
+      # and the MinGW driver.
+      - name: "Paths: non-ASCII project directories on every toolchain row (mcpp#693)"
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          MCPP="$MCPP_SELF" bash .github/tools/check_unicode_paths.sh
+
 
       # GRAPHICS ON THIS HOST, BUILD ONLY, AND THAT IS THE WHOLE CLAIM.
       #

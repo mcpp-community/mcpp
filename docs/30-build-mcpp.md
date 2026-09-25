@@ -946,6 +946,21 @@ These values are folded into the re-run key **unconditionally** — changing the
 target, profile, or feature set re-runs the program without any
 `rerun-if-env-changed` declaration.
 
+### Text is UTF-8 in both directions (mcpp 2026.9.26.1+)
+
+Every path and value mcpp passes to the program is UTF-8, and mcpp reads every
+directive the program prints as UTF-8. On Windows the program is linked with the
+application manifest that `mcpp.exe` itself carries, which sets its ANSI code page
+to UTF-8 on Windows 10 version 1903 and later: its environment, its arguments and
+the narrow strings it prints are UTF-8 there without any conversion in the
+program. On Linux and macOS a file name is bytes, and a program that lists a
+directory prints whatever bytes it finds.
+
+A directive line whose text is not UTF-8 is refused, whatever protocol the
+program announces, and the refusal names the directive's key. Its value would
+reach `build.ninja` as bytes that name a different file, so nothing of it is
+applied. Lines that are not directives are not examined.
+
 ### `PATH` — the environment the project declared (mcpp 2026.8.25.1+)
 
 A project that declares `[xlings].subos` runs its build programs with that

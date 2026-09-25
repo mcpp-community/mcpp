@@ -49,6 +49,7 @@ import mcpp.manifest;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.triple;
 import mcpp.version_req;
+import mcpp.platform.process;   // capture_exec: the build program's manifest resource
 
 export namespace mcpp::build::resources {
 
@@ -110,6 +111,10 @@ struct ScanResult {
     // nothing that could. See the module header.
     bool                               versionInfoNamedByString = false;
     std::string                        versionInfoName;
+    // The script embeds an application manifest of its own: a statement whose
+    // type is `24`, `RT_MANIFEST` or `MANIFEST`. A second one from
+    // `windows_code_page` would collide with it at ordinal 1 (#693).
+    bool                               declaresManifest = false;
 };
 
 ScanResult scan_rc(const std::filesystem::path& rc);
@@ -124,11 +129,34 @@ ScanResult scan_rc(const std::filesystem::path& rc);
 // package version cannot be expressed as FILEVERSION's four 16-bit fields —
 // clamping silently would put a version in the binary that is not the version
 // that was built.
+//
+// `manifestAbs`, when not empty, is an application manifest embedded as
+// `RT_MANIFEST` at ordinal 1 (#693). A VERSIONINFO is synthesized when
+// `res.synthesize_version_info()`; a caller writing a script for the manifest
+// alone passes `versionInfo = false`, so that script carries nothing else.
 std::expected<std::string, std::string>
 synthesize_rc(const mcpp::manifest::Package&   pkg,
               const mcpp::manifest::Resources& res,
               std::string_view                 outputFileName,
-              const std::filesystem::path&     iconAbs);
+              const std::filesystem::path&     iconAbs,
+              const std::filesystem::path&     manifestAbs = {});
+
+// The application manifest that makes a process's ANSI code page UTF-8 on
+// Windows 10 1903 and later (#693), as Microsoft documents it. ASCII text; the
+// same bytes for every image that carries it.
+std::string utf8_code_page_manifest();
+
+// A compiled resource holding `utf8_code_page_manifest()`, for an executable
+// the engine links outside the ninja graph: the build program (#693, D4).
+// Written into `dir` as `<stem>.manifest`, `<stem>.rc` and `<stem>.res`
+// (rc.exe, llvm-rc) or `<stem>.o` (windres), reused while the script is
+// unchanged, and returned for the link. Fails, naming the reason, when `tc` has
+// no resource compiler beside it or the compiler refuses the script.
+std::expected<std::filesystem::path, std::string>
+compile_utf8_manifest(const mcpp::toolchain::Toolchain& tc,
+                      std::string_view                  dialectId,
+                      const std::filesystem::path&      dir,
+                      std::string_view                  stem);
 
 } // namespace mcpp::build::resources
 
@@ -244,6 +272,69 @@ std::optional<RcTool> find_rc_tool(const mcpp::toolchain::Toolchain& tc,
     return std::nullopt;
 }
 
+std::string utf8_code_page_manifest() {
+    return
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<assembly manifestVersion=\"1.0\" xmlns=\"urn:schemas-microsoft-com:asm.v1\">\n"
+        "  <application xmlns=\"urn:schemas-microsoft-com:asm.v3\">\n"
+        "    <windowsSettings>\n"
+        "      <activeCodePage xmlns=\"http://schemas.microsoft.com/SMI/2019/WindowsSettings\">"
+        "UTF-8</activeCodePage>\n"
+        "    </windowsSettings>\n"
+        "  </application>\n"
+        "</assembly>\n";
+}
+
+std::expected<std::filesystem::path, std::string>
+compile_utf8_manifest(const mcpp::toolchain::Toolchain& tc,
+                      std::string_view                  dialectId,
+                      const std::filesystem::path&      dir,
+                      std::string_view                  stem) {
+    auto tool = find_rc_tool(tc, dialectId);
+    if (!tool)
+        return std::unexpected(std::format(
+            "no Windows resource compiler beside {}", tc.binaryPath.string()));
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const bool msvcStyle = tool->style == "msvc";
+    const auto manifest = dir / (std::string(stem) + ".manifest");
+    const auto script   = dir / (std::string(stem) + ".rc");
+    const auto out      = dir / (std::string(stem) + (msvcStyle ? ".res" : ".o"));
+
+    auto write_if_changed = [](const std::filesystem::path& p, const std::string& text) {
+        std::string had;
+        if (std::ifstream in(p, std::ios::binary); in)
+            had.assign(std::istreambuf_iterator<char>(in), {});
+        if (had == text) return false;
+        std::ofstream os(p, std::ios::binary);
+        os << text;
+        return true;
+    };
+    bool changed = write_if_changed(manifest, utf8_code_page_manifest());
+    changed = write_if_changed(script, std::format(
+        "1 24 \"{}\"\n", escape_rc_string(manifest.generic_string()))) || changed;
+    if (!changed && std::filesystem::is_regular_file(out, ec)) return out;
+
+    // The same spelling as the `rc_object` rule of the ninja backend.
+    std::vector<std::string> argv = {tool->path.string()};
+    if (msvcStyle)
+        for (auto a : {"/nologo", "/C", "65001", "/fo"}) argv.emplace_back(a);
+    else
+        for (auto a : {"-O", "coff", "--codepage=65001", "-o"}) argv.emplace_back(a);
+    argv.push_back(out.string());
+    argv.push_back(script.string());
+    // rc.exe resolves through the SDK PATH the toolchain states for itself.
+    std::vector<std::pair<std::string, std::string>> env;
+    for (auto const& ev : tc.envOverrides) env.emplace_back(ev.key, ev.value);
+    auto r = mcpp::platform::process::capture_exec(argv, env, dir.string());
+    if (r.exit_code != 0) {
+        std::filesystem::remove(out, ec);
+        return std::unexpected(std::format("{} failed (exit {}): {}",
+                                           tool->name(), r.exit_code, r.output));
+    }
+    return out;
+}
+
 ScanResult scan_rc(const std::filesystem::path& rc) {
     ScanResult out;
     std::ifstream is(rc, std::ios::binary);
@@ -303,11 +394,29 @@ ScanResult scan_rc(const std::filesystem::path& rc) {
 
         // `<name> <TYPE> <operand>` — find the type keyword by scanning words.
         std::size_t i = 0;
+        std::size_t wordIndex = 0;
         std::string_view prevWord;
         while (i < line.size()) {
             if (!(std::isalnum(static_cast<unsigned char>(line[i])) || line[i] == '_')) { ++i; continue; }
             auto w = word_at(line, i);
             if (w.empty()) { ++i; continue; }
+
+            // An application manifest: `<id> 24 "<file>"`, the TYPE position of
+            // a statement holding `24` (RT_MANIFEST) or its name, followed by a
+            // file name. Both conditions count: the numbers of a VERSIONINFO
+            // block contain `24` as well (`FILEVERSION 24,1,0,0` puts it at the
+            // same position), and no file name follows them. The numeric form
+            // is no keyword, so its file is tracked here.
+            if (wordIndex == 1 && (w == "24" || w == "RT_MANIFEST" || w == "MANIFEST")) {
+                auto rest = line.substr(i + w.size());
+                while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t'))
+                    rest.remove_prefix(1);
+                if (rest.starts_with('"')) {
+                    out.declaresManifest = true;
+                    auto e = rest.find('"', 1);
+                    if (e != std::string_view::npos) add_input(rest.substr(1, e - 1));
+                }
+            }
 
             if (w == "VERSIONINFO" && !prevWord.empty()) {
                 // The mcpp#365 shape: an identifier name that is not `1`.
@@ -335,6 +444,7 @@ ScanResult scan_rc(const std::filesystem::path& rc) {
             }
             prevWord = w;
             i += w.size();
+            ++wordIndex;
         }
     }
     return out;
@@ -344,7 +454,8 @@ std::expected<std::string, std::string>
 synthesize_rc(const mcpp::manifest::Package&   pkg,
               const mcpp::manifest::Resources& res,
               std::string_view                 outputFileName,
-              const std::filesystem::path&     iconAbs) {
+              const std::filesystem::path&     iconAbs,
+              const std::filesystem::path&     manifestAbs) {
     std::string out;
     // ASCII throughout, including this banner: see the LegalCopyright note
     // below for why generated text must not lean on the codepage flag.
@@ -352,6 +463,13 @@ synthesize_rc(const mcpp::manifest::Package&   pkg,
     out += "// Copy this file into your project and list it in\n";
     out += "// [resources] files = [...] to take it over; the result is\n";
     out += "// byte-identical.\n\n";
+
+    if (!manifestAbs.empty()) {
+        // CREATEPROCESS_MANIFEST_RESOURCE_ID (1) of type RT_MANIFEST (24),
+        // spelt numerically so the script needs no <windows.h>.
+        out += std::format("1 24 \"{}\"\n\n",
+                           escape_rc_string(manifestAbs.generic_string()));
+    }
 
     if (!iconAbs.empty()) {
         // Ordinal 1: Explorer and the shell show the LOWEST-numbered icon group.

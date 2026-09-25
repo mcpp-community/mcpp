@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-309 records.
+310 records.
 
 ## By subject
 
@@ -30,6 +30,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### design
 
+- [Issues #693 to #696: triage against mcpp's contracts, and one repair plan](2026-09-25-issues-693-696-triage-and-repair-plan.md) — active
 - [Workspace inheritance, flag scoping and the published form: a unified repair plan (#690)](2026-09-25-issue-690-workspace-build-inheritance-consistency.md) — landed
 - [MSVC toolset 的选择、#685、#687 与工具链管理规范：总体设计](2026-09-24-toolchain-selection-and-payload-trust-design.md) — active
 - [openkal 生态：能力的时刻模型，以及 C 环境方案空间的划分](2026-09-20-openkal-c-environment-ecosystem-design.md) — active
@@ -100,6 +101,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-09
 
+- [Issues #693 to #696: triage against mcpp's contracts, and one repair plan](2026-09-25-issues-693-696-triage-and-repair-plan.md) — active
 - [Workspace inheritance, flag scoping and the published form: a unified repair plan (#690)](2026-09-25-issue-690-workspace-build-inheritance-consistency.md) — landed
 - [#690: self-review before release, engine and ecosystem](2026-09-25-issue-690-self-review.md) — landed
 - [#690: implementation plan](2026-09-25-issue-690-implementation-plan.md) — landed

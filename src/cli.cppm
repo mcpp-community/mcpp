@@ -101,8 +101,9 @@ void print_usage() {
     std::println("Docs: https://github.com/mcpp-community/mcpp/tree/main/docs");
 }
 
-// The ONE place this run's "could not be named in the active code page"
-// records are reported.
+// The ONE place this run's "has no UTF-8 spelling" records are reported: a
+// name that is not UTF-8 on POSIX, or one the process code page cannot spell
+// on a Windows host that ignores the UTF-8 code page mcpp.exe declares (#693).
 //
 // `src/modgraph/` and `src/manifest/` are leaf layers — not one module in
 // either imports `mcpp.ui` or `mcpp.diag` — so the glob walk RECORDS
@@ -130,13 +131,12 @@ struct ReportUnnarrowablePaths {
         for (auto const& anchor : mcpp::modgraph::take_unnarrowable_paths()) {
             mcpp::diag::degraded(
                 "path/codepage",
-                std::format("'{}' contains names this system's active code "
-                            "page cannot represent", anchor),
+                std::format("'{}' contains names that have no UTF-8 spelling",
+                            anchor),
                 "those files take no part in the build",
-                "Windows only: this is the process ANSI code page, which "
-                "`chcp` does not change. Harmless when the names are test "
-                "data or docs; if they are sources, rename them or build on a "
-                "system whose code page covers them.");
+                std::format("{} Harmless when the names are test data or "
+                            "documentation; sources need renaming.",
+                            mcpp::modgraph::no_utf8_spelling_reason()));
         }
     } catch (...) {
         // Losing the report is bad; terminating instead of it is worse.

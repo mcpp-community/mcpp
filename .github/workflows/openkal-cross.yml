@@ -576,7 +576,7 @@ jobs:
           for t in tests/e2e/285_*.sh tests/e2e/286_*.sh tests/e2e/287_*.sh \
                    tests/e2e/288_*.sh tests/e2e/289_*.sh tests/e2e/291_*.sh \
                    tests/e2e/292_*.sh tests/e2e/293_*.sh tests/e2e/294_*.sh \
-                   tests/e2e/738_*.sh; do
+                   tests/e2e/738_*.sh tests/e2e/778_*.sh; do
             echo "=== $t ==="
             bash "$t" 2>&1 | tee "$(basename "$t").log" || true
             rc=${PIPESTATUS[0]}
@@ -630,4 +630,11 @@ jobs:
             "OK: the list answers what can be built, not what has a payload" || fail=1
           check 738_a_graph_supplied_target_closes_the_hosts_own_search.sh \
             "PASS: 738 a graph-supplied target closes the host's own search" || fail=1
+          # mcpp#696, the link-side twin of 738: both legs, because the one
+          # that separates the engines is the refusal, and a skip of either
+          # prints the final line all the same.
+          check 778_a_graph_link_searches_no_host_directory.sh \
+            "ok: -lm is answered by openkal-musl's own archive, and the program runs" || fail=1
+          check 778_a_graph_link_searches_no_host_directory.sh \
+            "ok: an unanswered -lm fails, and the note names openkal-musl 0.19.2" || fail=1
           [ "$fail" = 0 ] || exit 1

@@ -1,0 +1,12 @@
+// mcpp.exe runs in the UTF-8 code page (mcpp#693).
+//
+// Every string mcpp holds is UTF-8, and a Windows process exchanges narrow
+// strings with the system in its ANSI code page. The manifest beside this
+// script sets that code page to UTF-8 on Windows 10 version 1903 and later.
+//
+// It is declared here, through `[resources] files`, and not with the
+// `windows_code_page` target key: a release is built by the previous release,
+// and an engine that does not know the key ignores it. The file is named
+// relative to this script, which is where rc.exe, llvm-rc and windres all look
+// for it (measured) and where mcpp resolves it as a build input.
+1 24 "mcpp.exe.manifest"

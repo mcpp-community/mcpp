@@ -36,11 +36,20 @@ export namespace mcpp::build {
 // string from flags.cppm (un-escaped internally). Returns an error message
 // naming the leaked/bare paths, or empty success. `outputDir` caches the
 // verdict per flag-set so unchanged builds don't re-spawn the driver.
+//
+// `isolatedGraphLink` marks an ELF link over a graph-supplied C library that
+// carries the empty graph sysroot (#696). On such a link every `-L` directory
+// must lie in the store, in the build directory, or in one of `graphRoots` (a
+// package may add a package-relative `-L`, and a path dependency's root can be
+// anywhere): the C library comes from the graph, so a host library directory
+// would answer a `-l` the graph does not.
 std::expected<void, std::string> verify_hermetic_link(
     const mcpp::toolchain::Toolchain& tc,
     const std::string& ldflagsNinja,
     const std::filesystem::path& outputDir,
-    bool allowHostLibs);
+    bool allowHostLibs,
+    bool isolatedGraphLink = false,
+    const std::vector<std::filesystem::path>& graphRoots = {});
 
 } // namespace mcpp::build
 
@@ -105,7 +114,9 @@ std::expected<void, std::string> verify_hermetic_link(
     const mcpp::toolchain::Toolchain& tc,
     const std::string& ldflagsNinja,
     const std::filesystem::path& outputDir,
-    bool allowHostLibs)
+    bool allowHostLibs,
+    bool isolatedGraphLink,
+    const std::vector<std::filesystem::path>& graphRoots)
 {
     if constexpr (!mcpp::platform::is_linux) return {};
 
@@ -137,9 +148,13 @@ std::expected<void, std::string> verify_hermetic_link(
 
     // Verdict cache: same driver + flags ⇒ same resolution; skip the spawn.
     auto marker = outputDir / ".mcpp-hermetic-ok";
+    std::string rootsKey;
+    if (isolatedGraphLink)
+        for (auto const& r : graphRoots) rootsKey += "\x1e" + r.generic_string();
     auto key = mcpp::toolchain::hash_string(
         tc.binaryPath.string() + "\x1f" + ldflags
-        + "\x1f" + (allowHostLibs ? "1" : "0"));
+        + "\x1f" + (allowHostLibs ? "1" : "0")
+        + "\x1f" + (isolatedGraphLink ? "graph" : "payload") + rootsKey);
     {
         std::ifstream is(marker);
         std::string prev;
@@ -211,6 +226,47 @@ std::expected<void, std::string> verify_hermetic_link(
             tc.targetTriple, effectiveLoader));
     } else if (!effectiveLoader.empty()) {
         check(effectiveLoader);
+    }
+
+    // AN ISOLATED GRAPH LINK SEARCHES NO HOST DIRECTORY (#696).
+    //
+    // The CRT objects and the loader above are what the driver adds for a C
+    // library it believes the host provides; on a graph link there are none,
+    // and until the empty graph sysroot the library search directories were
+    // the host's all the same. Every `-L` of the linker invocation is held to
+    // the store, the build directory and the graph's own package roots, so a
+    // later change to the link line that brings a host directory back fails
+    // here instead of linking the host's objects in silence.
+    std::vector<std::string> searchLeaks;
+    if (isolatedGraphLink) {
+        std::vector<std::filesystem::path> graphAllowed = allowed;
+        graphAllowed.push_back(outputDir);
+        for (auto const& r : graphRoots) graphAllowed.push_back(r);
+        auto checkDir = [&](std::string_view dir) {
+            std::filesystem::path p{std::string(dir)};
+            if (p.is_absolute() && !under_any(p, graphAllowed))
+                searchLeaks.push_back(std::string(dir));
+        };
+        for (std::size_t i = 0; i < toks.size(); ++i) {
+            std::string_view t = toks[i];
+            if (t == "-L" && i + 1 < toks.size()) { checkDir(toks[++i]); continue; }
+            if (t.starts_with("-L") && t.size() > 2) checkDir(t.substr(2));
+        }
+    }
+    if (!searchLeaks.empty()) {
+        std::string list;
+        for (auto& l : searchLeaks) list += "\n         " + l;
+        auto msg = std::format(
+            "hermetic link check failed — this link takes its C library from the "
+            "dependency graph, and its linker would search directories outside "
+            "the store, the build directory and the graph's packages:{}\n"
+            "       A library found there would answer a `-l` the graph does not "
+            "supply (mcpp#696).\n"
+            "       To deliberately link against host libraries set "
+            "[build] allow_host_libs = true (or MCPP_ALLOW_HOST_LIBS=1).",
+            list);
+        if (!allowHostLibs) return std::unexpected(msg);
+        mcpp::log::verbose("hermetic", "allow_host_libs set — " + msg);
     }
 
     if (!leaks.empty()) {
