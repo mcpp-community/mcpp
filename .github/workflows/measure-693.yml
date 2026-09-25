@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - name: Readings
+      - name: Readings (round 5, response-file encodings)
         shell: pwsh
-        timeout-minutes: 85
-        run: ./.github/measure-693/measure.ps1
+        timeout-minutes: 30
+        run: ./.github/measure-693/rsp.ps1
