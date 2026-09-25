@@ -81,7 +81,14 @@ export namespace mcpp::build::program_protocol {
 // at a path relative to the executable. Same cost as v5's: a package calling
 // `mcpp::deploy()` fails on an older engine at the build.mcpp COMPILE, because
 // that engine's bundled module has no such function.
-inline constexpr int kProtocolVersion = 11;
+// v12: adds `runtime-library-dir` -- the build-program form of `[runtime]
+// library_dirs`: a launch-time search directory for a dependency (a vcpkg
+// prefix's `bin/`, a Qt SDK's `bin/`) whose location a build.mcpp learns
+// rather than one an author can write into TOML. Same cost as v5's: a
+// package calling `mcpp::runtime_library_dir()` fails on an older engine at
+// the build.mcpp COMPILE, because that engine's bundled module has no such
+// function.
+inline constexpr int kProtocolVersion = 12;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //

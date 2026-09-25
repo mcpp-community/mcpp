@@ -67,6 +67,7 @@ is ignored, so diagnostics may be logged freely.
 | `mcpp:windows-subsystem=<target>:<value>` *(2026.9.12.2+)* | set the PE subsystem (`console` or `windows`) of the executable `<target>` of **this** package, the same field as `[targets.<target>] windows_subsystem` (docs/04). Reaches that target's link and no other, never a consumer, and renders nothing on a target that is not PE. A target the package does not declare with `kind = "bin"`, a value outside the set, and a value that contradicts mcpp.toml are each refused before any directive is applied |
 | `mcpp:windows-entry=<target>:<value>` *(2026.9.12.2+)* | set the entry function (`main`, `wmain`, `WinMain` or `wWinMain`) of the executable `<target>`, the same field as `windows_entry`; the scope and the refusals are those of `windows-subsystem` |
 | `mcpp:deploy=<from>\t<to>` *(2026.9.12.3+, protocol 11)* | place a file this program produced or selected beside the artifact, at `<to>`, relative to the executable's directory — the build-program form of `[runtime] deploy` (docs/04 §2.11). `<from>` may be absolute (an action's own declared output) or resolved against the package root; TAB-separated, because an absolute Windows `<from>` contains a colon. **Reaches the consumer**, joining the same `LinkIntent` `link-lib`/`link-search`/`link-flag` feed — see below |
+| `mcpp:runtime-library-dir=<dir>` *(2026.9.27.1+, protocol 12)* | add `<dir>` to the launch-time search path — the build-program form of `[runtime] library_dirs` (docs/04 §2.11). Relative resolves against the package root. **Reaches the consumer**, joining the same `LinkIntent` field the manifest key populates: RUNPATH/rpath on ELF and Mach-O, never `-L`, and `mcpp pack`'s closure search — see below |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | link with this **linker script** (`-T`; relative resolves against the package root, and the emitted path is absolute because the link runs in the build directory). Reaches the **consumer**, unlike `include-dir` — a board's memory layout is the one thing a consumer cannot write for itself |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | say something to the user and **keep going**. The one directive that changes no compile line, no link line and no source set. Survives the build cache — see below |
 | `mcpp:fact=<name>=<version>` *(2026.9.5.2+)* | state something the program **established about the machine** (`cuda.driver=12.4`). Compared against floors before anything is compiled; see below |
@@ -134,6 +135,7 @@ int main() {
 | `mcpp::link_flag(s)` *(2026.9.6.5+)* | `mcpp:link-flag=` |
 | `mcpp::windows_subsystem(target, value)` / `mcpp::windows_entry(target, value)` *(2026.9.12.2+)* | `mcpp:windows-subsystem=` / `mcpp:windows-entry=` |
 | `mcpp::deploy(from, to)` *(2026.9.12.3+, protocol 11)* | `mcpp:deploy=<from>\t<to>` — see below |
+| `mcpp::runtime_library_dir(dir)` *(2026.9.27.1+, protocol 12)* | `mcpp:runtime-library-dir=<dir>` — see below |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` — see below |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | the payload directory of a package declared in `[xlings.workspace]` — by this manifest, or by a dependency compiled into this build program *(2026.9.6.6+)*; `""` when it was not declared or is not installed (see below) |
@@ -655,6 +657,38 @@ int main() {
   | `.app` (macOS, iOS) | the bundle's executable directory |
   | `.apk` | `assets/myapp.resources/` |
   | web | the same relative path in the static directory, served beside `<name>.js`. A project that wants the files inside the `.data` preload instead links with `--preload-file <dir>@/<to>`, an ordinary link flag |
+
+### A launch-time search directory: `runtime_library_dir` (2026.9.27.1+, protocol 12)
+
+`[runtime] library_dirs` (docs/04 §2.11) names a directory to search when the
+artifact runs. It is a fixed TOML array, so it cannot name a directory a
+build.mcpp only discovers — a vcpkg prefix's `bin/`, a Qt SDK's `bin/`, or any
+other prebuilt-dependency layout a build-time probe locates. `mcpp::runtime_library_dir`
+is that same declaration, reached from a build program:
+
+```cpp
+import mcpp;
+#include <string>
+
+int main() {
+    const std::string qtBin = locate_qt_prefix() + "/bin";   // however this
+                                                              // package finds it
+    mcpp::link_search(qtBin.c_str());
+    mcpp::runtime_library_dir(qtBin.c_str());
+}
+```
+
+- **Joins the same field the manifest key populates.** A directive-declared
+  directory reaches every consumer of `[runtime] library_dirs` exactly as one
+  written in `mcpp.toml` would: `mcpp run`'s loader path, `mcpp pack`'s closure
+  search, and RUNPATH/rpath on ELF and Mach-O (never `-L` — a launch-time
+  search directory is not a link-library search path).
+- **`dir` may be absolute or package-relative.** A relative value resolves
+  against the package root, like every other `AbsPath` directive
+  (`include-dir`, `deploy`'s `from`).
+- **Replayed on a cache hit.** A `runtime-library-dir` directive is persisted
+  in the build cache like `deploy` and `warning`; a cached run restores it
+  exactly as a fresh run would.
 
 ### Producing a distributable: `pack_format` / `stage_dir` (2026.9.11.1+)
 

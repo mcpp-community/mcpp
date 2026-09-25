@@ -183,6 +183,17 @@ inline void windows_entry(const char* target, const char* value) {
 inline void deploy(const char* from, const char* to) {
     std::printf("mcpp:deploy=%s\t%s\n", from, to);
 }
+// The build-program form of `[runtime] library_dirs` (docs/04 §2.11): a
+// directory to search at LAUNCH time, for a dependency (a vcpkg prefix's
+// `bin/`, a Qt SDK's `bin/`) whose location this program learns rather than
+// one an author can write into `mcpp.toml`. Reaches the consumer, joining the
+// same `LinkIntent` `link_lib`/`link_search`/`deploy` feed, and gets the same
+// treatment the manifest key does: RUNPATH/rpath on ELF and Mach-O, never
+// `-L`, and `mcpp pack`'s closure search. Relative paths resolve against this
+// package's root, like every other AbsPath directive.
+inline void runtime_library_dir(const char* dir) {
+    std::printf("mcpp:runtime-library-dir=%s\n", dir);
+}
 // ── Build-graph nodes (mcpp 2026.8.5.1+) ────────────────────────────────
 // Declare WORK instead of doing it. A build program is a good place to decide
 // what the build looks like and a bad place to perform it: work done here is

@@ -1405,6 +1405,11 @@ Link intent 把各个发现阶段分开处理：
 映射到必需的运行期 soname 要求，`capabilities` 映射到必需的运行期
 能力要求。这些遗留字段都不创建提供者。
 
+`library_dirs` 有一个构建程序形态，用于一个只有 build.mcpp 才能定位的目录
+（一个 vcpkg 前缀的 `bin/`、一个 Qt SDK 的 `bin/`）：`mcpp::runtime_library_dir(dir)`
+（2026.9.27.1+，protocol 12；[30 —— 构建程序](30-build-mcpp.md)），并入的是
+同一个字段。
+
 `target/<triple>/<fp>/resolution.json` schema 2 存储 RuntimeBinding、
 规范化后的要求/提供者/产物、LinkIntent、平台发现机制与链接后判定。
 `mcpp why runtime` 是对最新存储文件的一个纯粹解读器：它既不会重新

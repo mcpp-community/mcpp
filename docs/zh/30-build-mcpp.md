@@ -64,6 +64,7 @@ mcpp build      # compiles + runs build.mcpp, then builds the project
 | `mcpp:windows-subsystem=<target>:<value>` *(2026.9.12.2+)* | 设置**本包**可执行目标 `<target>` 的 PE 子系统（`console` 或 `windows`），与 `[targets.<target>] windows_subsystem`（docs/04）是同一字段。只到达该目标的链接，不到达其他目标或消费者，在非 PE 目标上不产生任何标志。本包未以 `kind = "bin"` 声明该目标、取值不在集合内、取值与 mcpp.toml 的声明矛盾，这三种情形都在应用任何指令之前被拒绝 |
 | `mcpp:windows-entry=<target>:<value>` *(2026.9.12.2+)* | 设置可执行目标 `<target>` 的入口函数（`main`、`wmain`、`WinMain` 或 `wWinMain`），与 `windows_entry` 是同一字段；作用域与拒绝条件同 `windows-subsystem` |
 | `mcpp:deploy=<from>\t<to>` *(2026.9.12.3+,protocol 11)* | 把本程序生成或选中的一个文件放到产物旁边的 `<to>`（相对可执行文件所在目录）——`[runtime] deploy`（docs/04 §2.11）的构建程序形态。`<from>` 可以是绝对路径（某个 action 自己声明的输出），也可以按包根解析；用 TAB 分隔，因为一个绝对的 Windows `<from>` 本身含冒号。**到达消费者**，并入同一个被 `link-lib`/`link-search`/`link-flag` 喂入的 `LinkIntent`——见下 |
+| `mcpp:runtime-library-dir=<dir>` *(2026.9.27.1+,protocol 12)* | 把 `<dir>` 加入启动期搜索路径——`[runtime] library_dirs`（docs/04 §2.11）的构建程序形态。相对路径按包根解析。**到达消费者**，并入清单键所填的同一个 `LinkIntent` 字段：在 ELF 与 Mach-O 上是 RUNPATH/rpath，绝不是 `-L`，并进入 `mcpp pack` 的闭包搜索——见下 |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | 用这个**链接脚本**链接（`-T`；相对路径按包根解析，发出的是绝对路径，因为链接是在构建目录里跑的）。与 `include-dir` 不同，它**到达消费者** —— 板子的内存布局恰恰是消费者写不出来的那一项 |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | 对用户说一句话并**继续**。唯一一条不改变编译行、链接行与源码集的指令。它**穿过构建缓存** —— 见下 |
 | `mcpp:fact=<name>=<version>` *(2026.9.5.2+)* | 陈述程序**测得的机器事实**(`cuda.driver=12.4`)。在编译任何东西之前与 floor 比较；见下 |
@@ -123,6 +124,7 @@ int main() {
 | `mcpp::link_flag(s)` *(2026.9.6.5+)* | `mcpp:link-flag=` |
 | `mcpp::windows_subsystem(target, value)` / `mcpp::windows_entry(target, value)` *(2026.9.12.2+)* | `mcpp:windows-subsystem=` / `mcpp:windows-entry=` |
 | `mcpp::deploy(from, to)` *(2026.9.12.3+,protocol 11)* | `mcpp:deploy=<from>\t<to>` —— 见下 |
+| `mcpp::runtime_library_dir(dir)` *(2026.9.27.1+,protocol 12)* | `mcpp:runtime-library-dir=<dir>` —— 见下 |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` —— 见下 |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | `[xlings.workspace]` 里声明的包的载荷目录 —— 本 manifest 声明的，或编进本构建程序的某个依赖声明的（2026.9.6.6+）；没声明或没安装时返回 `""`（见下） |
@@ -558,6 +560,35 @@ int main() {
   | `.app`（macOS、iOS） | bundle 的可执行文件目录 |
   | `.apk` | `assets/myapp.resources/` |
   | web | 静态目录里同一个相对路径，与 `<name>.js` 放在一起。想把文件放进 `.data` 预加载的项目改用链接标志 `--preload-file <dir>@/<to>`，那是一条普通的链接标志 |
+
+### 一个启动期搜索目录：`runtime_library_dir`（2026.9.27.1+,protocol 12）
+
+`[runtime] library_dirs`（docs/04 §2.11）声明产物运行时要搜索的一个目录。
+它是一个固定的 TOML 数组，因此点不了一个只有 build.mcpp 才能发现的目录——
+一个 vcpkg 前缀的 `bin/`、一个 Qt SDK 的 `bin/`，或任何其它由构建期探测
+才能定位的预编译依赖布局。`mcpp::runtime_library_dir` 就是同一次声明，从
+构建程序里发出：
+
+```cpp
+import mcpp;
+#include <string>
+
+int main() {
+    const std::string qtBin = locate_qt_prefix() + "/bin";   // 本包自己
+                                                              // 怎么找到它
+    mcpp::link_search(qtBin.c_str());
+    mcpp::runtime_library_dir(qtBin.c_str());
+}
+```
+
+- **并入清单键所填的同一个字段。** 一个由指令声明的目录，到达
+  `[runtime] library_dirs` 的每一个消费者，与写在 `mcpp.toml` 里的完全一样：
+  `mcpp run` 的加载器路径、`mcpp pack` 的闭包搜索，以及 ELF 与 Mach-O 上的
+  RUNPATH/rpath（绝不是 `-L`——一个启动期搜索目录不是一个链接库搜索路径）。
+- **`dir` 可以是绝对路径或按包根解析的相对路径。** 相对路径按包根解析，
+  与其它每一个 `AbsPath` 指令（`include-dir`、`deploy` 的 `from`）一样。
+- **在缓存命中时被重放。** `runtime-library-dir` 指令与 `deploy`、`warning`
+  一样进入构建缓存；一次缓存命中的重跑会像真正跑过一样把它恢复回来。
 
 ### 产出可分发物：`pack_format` 与 `stage_dir`（2026.9.11.1+）
 

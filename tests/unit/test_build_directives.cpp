@@ -895,13 +895,13 @@ TEST(BuildDirectives, DeployRowIsProtocolElevenWithLinkGlobalScopeAndATag) {
     EXPECT_EQ(def->scope, dirs::Scope::LinkGlobal);
     EXPECT_EQ(def->sinceProtocol, 11);
     EXPECT_FALSE(def->tag.empty());
-    EXPECT_EQ(dirs::kProtocolVersion, 11);
+    EXPECT_EQ(dirs::kProtocolVersion, 12);
 }
 
-TEST(BuildDirectives, ProtocolElevenIsAcceptedAndTwelveIsNot) {
-    auto ok = parse("mcpp:protocol=11\n");
+TEST(BuildDirectives, ProtocolTwelveIsAcceptedAndThirteenIsNot) {
+    auto ok = parse("mcpp:protocol=12\n");
     EXPECT_FALSE(dirs::protocol_error(ok).has_value());
-    auto no = parse("mcpp:protocol=12\n");
+    auto no = parse("mcpp:protocol=13\n");
     EXPECT_TRUE(dirs::protocol_error(no).has_value());
 }
 
@@ -976,4 +976,97 @@ TEST(BuildDirectives, DeployReachesOnlyTheRuntimeDeployListNotAnyFlagChannel) {
     EXPECT_EQ(m.runtimeConfig.linkIntent.deploy[0].to, ".");
     EXPECT_TRUE(m.buildConfig.ldflags.empty());
     EXPECT_TRUE(m.buildConfig.cxxflags.empty());
+}
+
+// ── v12: `mcpp::runtime_library_dir(dir)` ───────────────────────────────────
+//
+// The build-program form of `[runtime] library_dirs` (docs/04 §2.11): a
+// launch-time search directory reached from a build.mcpp instead of TOML.
+// What is asserted: it lands on the SAME manifest field the manifest key
+// populates (`RuntimeConfig::libraryDirs`), which is what makes every existing
+// consumer of that field (the plan merge, the RUNPATH rendering, `mcpp pack`'s
+// closure search) see a directive-declared entry without any of them changing.
+
+TEST(BuildDirectives, RuntimeLibraryDirRowIsProtocolTwelveWithLinkGlobalScopeAndATag) {
+    auto def = dirs::find_by_wire("runtime-library-dir");
+    ASSERT_NE(def, nullptr);
+    EXPECT_EQ(def->scope, dirs::Scope::LinkGlobal);
+    EXPECT_EQ(def->sinceProtocol, 12);
+    EXPECT_FALSE(def->tag.empty());
+    EXPECT_EQ(def->transform, dirs::Transform::AbsPath);
+}
+
+// The manifest key's own field, not a new one -- this is the whole point of
+// the design: no downstream consumer has to learn a second field exists.
+TEST(BuildDirectives, RuntimeLibraryDirJoinsTheSameFieldTheManifestKeyPopulates) {
+    auto d = parse("mcpp:runtime-library-dir=rtlib\n");
+    mcpp::manifest::Manifest m;
+    dirs::apply(m, d);
+    ASSERT_EQ(m.runtimeConfig.libraryDirs.size(), 1u);
+    EXPECT_EQ(m.runtimeConfig.libraryDirs[0].string(), under_root("rtlib"));
+}
+
+// Relative resolves against the package root, exactly as `include-dir`'s
+// AbsPath case and `deploy`'s `from` do -- the directive never leaves a
+// relative path for a later stage to guess the base of.
+TEST(BuildDirectives, RuntimeLibraryDirRelativeToTheRootIsMadeAbsolute) {
+    auto d = parse("mcpp:runtime-library-dir=vendor/qt/bin\n");
+    mcpp::manifest::Manifest m;
+    dirs::apply(m, d);
+    ASSERT_EQ(m.runtimeConfig.libraryDirs.size(), 1u);
+    EXPECT_EQ(m.runtimeConfig.libraryDirs[0].string(), under_root("vendor/qt/bin"));
+}
+
+TEST(BuildDirectives, RuntimeLibraryDirAcceptsAnAlreadyAbsoluteValue) {
+    const std::string abs = under_root("prefix/lib");
+    auto d = parse(std::format("mcpp:runtime-library-dir={}\n", abs));
+    mcpp::manifest::Manifest m;
+    dirs::apply(m, d);
+    ASSERT_EQ(m.runtimeConfig.libraryDirs.size(), 1u);
+    EXPECT_EQ(m.runtimeConfig.libraryDirs[0].string(), abs);
+}
+
+// Reaches only the run-time search field -- no compile or link flag channel
+// gains anything, unlike `link-search`, which shares the manifest's -L/-L
+// distinction (docs/04 §2.11's own table: `library_dirs` maps ONLY to
+// runtime search).
+TEST(BuildDirectives, RuntimeLibraryDirReachesNoFlagChannel) {
+    auto d = parse("mcpp:runtime-library-dir=rtlib\n");
+    mcpp::manifest::Manifest m;
+    dirs::apply(m, d);
+    EXPECT_TRUE(m.buildConfig.ldflags.empty());
+    EXPECT_TRUE(m.buildConfig.cxxflags.empty());
+    EXPECT_TRUE(m.runtimeConfig.linkIntent.runtimeSearchDirs.empty());
+    EXPECT_TRUE(m.runtimeConfig.linkIntent.linkLibraryDirs.empty());
+}
+
+// Multiple directives accumulate, in emission order, the same as every other
+// repeated directive in this table.
+TEST(BuildDirectives, RuntimeLibraryDirDirectivesAccumulate) {
+    auto d = parse("mcpp:runtime-library-dir=a\n"
+                   "mcpp:runtime-library-dir=b\n");
+    mcpp::manifest::Manifest m;
+    dirs::apply(m, d);
+    ASSERT_EQ(m.runtimeConfig.libraryDirs.size(), 2u);
+    EXPECT_EQ(m.runtimeConfig.libraryDirs[0].string(), under_root("a"));
+    EXPECT_EQ(m.runtimeConfig.libraryDirs[1].string(), under_root("b"));
+}
+
+// Persisted like `deploy`, `warning` and `pack-format`: the cache tag is
+// non-empty and round-trips through the same table-driven serialize/
+// accept_cache_record pair, so a build.mcpp CACHE HIT replays the directive
+// rather than losing it on every build after the first.
+TEST(BuildDirectives, RuntimeLibraryDirIsPersistedAndRoundTrips) {
+    auto d = parse("mcpp:runtime-library-dir=rtlib\n");
+    std::ostringstream os;
+    dirs::serialize(os, d);
+    EXPECT_NE(os.str().find("d runtime-library-dir "), std::string::npos) << os.str();
+
+    dirs::Directives replayed;
+    ASSERT_TRUE(dirs::accept_cache_record(replayed, "runtime-library-dir",
+                                          under_root("rtlib")));
+    mcpp::manifest::Manifest m;
+    dirs::apply(m, replayed);
+    ASSERT_EQ(m.runtimeConfig.libraryDirs.size(), 1u);
+    EXPECT_EQ(m.runtimeConfig.libraryDirs[0].string(), under_root("rtlib"));
 }

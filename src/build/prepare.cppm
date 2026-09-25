@@ -12389,6 +12389,10 @@ prepare_build(bool print_fingerprint,
         // snapshot. Anything past this index is a `mcpp::deploy()` residue
         // that needs the same mirror the flag/source tails get below.
         const auto rdeployN = m->runtimeConfig.linkIntent.deploy.size();
+        // Same reason, one field wide: `mcpp::runtime_library_dir()` residue
+        // needs the same mirror `deploy` does, or `resolve_runtime_contract`
+        // (which reads `packages[0]`'s snapshot, not `*m`) never sees it.
+        const auto rlibDirN = m->runtimeConfig.libraryDirs.size();
         // What the dependencies supplied as runners, before the root's program
         // speaks. The root's emissions are appended to the same slots, so a
         // name both supply becomes one argv joining the two (#634, §9 item 8,
@@ -12503,6 +12507,14 @@ prepare_build(bool print_fingerprint,
             pkg0.manifest.runtimeConfig.linkIntent.deploy.end(),
             m->runtimeConfig.linkIntent.deploy.begin() + static_cast<std::ptrdiff_t>(rdeployN),
             m->runtimeConfig.linkIntent.deploy.end());
+        // `mcpp::runtime_library_dir()` residue → `packages[0].manifest`, the
+        // same object and the same reason as the `deploy` mirror above: without
+        // it a directive-sourced entry lands in `*m` and `resolve_runtime_contract`
+        // never looks there.
+        pkg0.manifest.runtimeConfig.libraryDirs.insert(
+            pkg0.manifest.runtimeConfig.libraryDirs.end(),
+            m->runtimeConfig.libraryDirs.begin() + static_cast<std::ptrdiff_t>(rlibDirN),
+            m->runtimeConfig.libraryDirs.end());
     }
 
     // ── Every device source must reach some action ─────────────────────────

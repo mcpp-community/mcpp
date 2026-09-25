@@ -164,6 +164,18 @@ enum class Slot : std::size_t {
     // splitting it into two slots would let a build with N deploy directives
     // pair them up wrong the moment N > 1.
     Deploy,
+    // A LAUNCH-TIME SEARCH DIRECTORY, THE BUILD-PROGRAM FORM OF `[runtime]
+    // library_dirs` (docs/04 §2.11). A dependency that brings a prebuilt
+    // shared library (a vcpkg prefix's `bin/`, a Qt SDK's `bin/`) knows where
+    // it lives only at build-program time, and the manifest key cannot be
+    // computed -- it is a fixed TOML array. `Transform::AbsPath`, not a new
+    // path shape: this is the SAME field the manifest key feeds
+    // (`RuntimeConfig::libraryDirs`), so every consumer of it -- `mcpp run`'s
+    // loader path, `mcpp pack`'s closure search, and the ELF/Mach-O
+    // `-Wl,-rpath` rendering -- sees a directive-declared entry exactly as it
+    // sees a TOML one, through the one merge in `plan.cppm` that already
+    // exists for the manifest key. No new downstream code path.
+    RuntimeLibraryDir,
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
@@ -262,7 +274,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 26> kTable{{
+inline constexpr std::array<Def, 27> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -413,6 +425,29 @@ inline constexpr std::array<Def, 26> kTable{{
     // before `apply` on both the run path and the cache-hit path, so a cached
     // replay refuses exactly what a fresh run would.
     {"deploy",              "deploy",            Slot::Deploy,           Scope::LinkGlobal,     Transform::Deploy,        false, "",                           "",                                              11},
+    // v12. The build-program form of `[runtime] library_dirs` (docs/04
+    // §2.11): a launch-time search directory, for a dependency (a vcpkg
+    // prefix's `bin/`, a Qt SDK's `bin/`) whose location a build.mcpp learns
+    // rather than one an author can write into TOML. Scope::LinkGlobal,
+    // exactly as `deploy` above, because `apply` folds it into
+    // `RuntimeConfig::libraryDirs` -- the SAME field the manifest key
+    // populates -- so `resolve_runtime_contract`'s per-package merge
+    // (plan.cppm) carries it into a consumer's `linkIntent.runtimeSearchDirs`
+    // through the one path that already exists for the manifest key, rather
+    // than a second one this table would have to keep in sync. `mustExistAfterRun`
+    // is FALSE: a directory is not the declared-output contract's shape
+    // (`generated=`/`source=` name a file), and the directory need not even
+    // exist yet -- a payload not installed on this machine is the manifest
+    // key's own behaviour (`xpkg_dir()` returning empty configures no runner,
+    // silently and correctly).
+    //
+    // kCacheEpoch is NOT bumped, the same reasoning `warning`/`pack-format`
+    // state explicitly: an entry written before this row carries no
+    // `d runtime-library-dir` line, and the program that wrote it could not
+    // emit one -- so replaying it yields exactly what that program said, and
+    // the entry is still correct. An older engine reading a newer entry
+    // already discards the whole record through the unknown-tag path.
+    {"runtime-library-dir", "runtime-library-dir", Slot::RuntimeLibraryDir, Scope::LinkGlobal, Transform::AbsPath,       false, "",                           "",                                              12},
 }};
 
 // ── Collected output of one run ────────────────────────────────────────────
@@ -944,6 +979,14 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
         bc.includeDirs.emplace_back(p);
     for (auto const& p : d.at(Slot::IncludeDirsAfter))
         bc.includeDirsAfter.emplace_back(p);
+
+    // `runtime-library-dir`: already absolute from the AbsPath
+    // transform, like IncludeDirs above. Joins `RuntimeConfig::libraryDirs`,
+    // the exact field `[runtime] library_dirs` populates from TOML -- so a
+    // consumer sees it exactly as it sees the manifest key, folded in by the
+    // SAME merge (plan.cppm's `resolve_runtime_contract`), never a second one.
+    for (auto const& p : d.at(Slot::RuntimeLibraryDir))
+        m.runtimeConfig.libraryDirs.emplace_back(p);
 
     // Claims join the runtime declarations the manifest could have carried
     // itself, so the version-floor check in prepare reads ONE list and never
