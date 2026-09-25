@@ -22,7 +22,7 @@ $ProgressPreference = 'SilentlyContinue'
 $Ver     = '2026.9.25.1'
 $XlVer   = '2026.9.20.1'
 $Here    = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Fx      = Join-Path $Here 'fixtures'
+$FixturesDir = Join-Path $Here 'fixtures'   # NOT $Fx: PowerShell names are case-insensitive
 
 function Reading([string]$id, [string]$text) {
     $line = "READING ${id}: $text"
@@ -40,7 +40,7 @@ function Hex32([int]$code) {
 # Run a program with an explicit working directory (CreateProcessW underneath,
 # so the directory reaches the child intact). Returns exit code and output
 # decoded as UTF-8 plus the raw bytes.
-function Run([string]$exe, [string[]]$argv, [string]$cwd, [int]$timeoutSec = 600, [hashtable]$envx = @{}) {
+function Run([string]$exe, [string[]]$argv, [string]$cwd, [int]$timeoutSec = 600, [hashtable]$envx = @{}, [string]$stdin = $null) {
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = $exe
     foreach ($a in $argv) { [void]$psi.ArgumentList.Add($a) }
@@ -48,6 +48,7 @@ function Run([string]$exe, [string[]]$argv, [string]$cwd, [int]$timeoutSec = 600
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
+    if ($stdin) { $psi.RedirectStandardInput = $true }   # [string] turns $null into ''
     foreach ($k in $envx.Keys) { $psi.Environment[$k] = $envx[$k] }
     $r = [ordered]@{ code = $null; out = ''; err = ''; outBytes = [byte[]]@(); timedOut = $false; startError = '' }
     try {
@@ -56,6 +57,7 @@ function Run([string]$exe, [string[]]$argv, [string]$cwd, [int]$timeoutSec = 600
         $r.startError = $_.Exception.Message
         return $r
     }
+    if ($stdin) { $p.StandardInput.Write($stdin); $p.StandardInput.Close() }
     $o = [System.IO.MemoryStream]::new(); $e = [System.IO.MemoryStream]::new()
     $t1 = $p.StandardOutput.BaseStream.CopyToAsync($o)
     $t2 = $p.StandardError.BaseStream.CopyToAsync($e)
@@ -159,12 +161,17 @@ $Bat    = Join-Path $Root 'mcpp.bat'
 $VendXl = Join-Path $Root 'registry\bin\xlings.exe'
 Reading 'zip.layout' ((Get-ChildItem -LiteralPath $Root -Recurse -File | ForEach-Object { $_.FullName.Substring($Root.Length + 1) }) -join ', ')
 
-# WER local dumps, so a fast-fail leaves its code and module behind.
+# WER local dumps, so a fast-fail leaves its code and module behind. WER is
+# switched on first: the first round found it produced neither events nor dumps.
+try { Enable-WindowsErrorReporting -ErrorAction Stop | Out-Null } catch { Write-Host "Enable-WindowsErrorReporting: $($_.Exception.Message)" }
+try { Set-Service WerSvc -StartupType Manual -ErrorAction Stop; Start-Service WerSvc -ErrorAction Stop } catch { Write-Host "WerSvc: $($_.Exception.Message)" }
+New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting' -Name Disabled -Value 0 -PropertyType DWord -Force | Out-Null
+New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting' -Name DontShowUI -Value 1 -PropertyType DWord -Force | Out-Null
 foreach ($img in 'mcpp.exe', 'xlings.exe', 'cmd.exe') {
     $k = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\$img"
     New-Item -Path $k -Force | Out-Null
     New-ItemProperty -Path $k -Name DumpFolder -Value 'C:\dumps' -PropertyType ExpandString -Force | Out-Null
-    New-ItemProperty -Path $k -Name DumpType -Value 1 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -Path $k -Name DumpType -Value 2 -PropertyType DWord -Force | Out-Null
 }
 
 # The UTF-8 activeCodePage copy, embedded with the SDK's mt.exe.
@@ -223,10 +230,18 @@ foreach ($dk in $Dirs.Keys) {
     $d = $Dirs[$dk]
     foreach ($ek in $Entry.Keys) {
         $r = Run $Entry[$ek] @('--version') $d 120
+        if ($r.startError) { Reading "q1.$dk.$ek" "PROBE DEFECT: did not start: $($r.startError)"; continue }
         Reading "q1.$dk.$ek" "exit=$(Hex32 $r.code) out=$(OneLine ($r.out + $r.err))"
     }
     $b = Run "$env:SystemRoot\System32\cmd.exe" @('/d', '/c', $Bat, '--version') $d 120
     Reading "q1.$dk.release-bat" "exit=$(Hex32 $b.code) out=$(OneLine ($b.out + $b.err))"
+    if ($Shim) {
+        # Inside the workspace whose .xlings.json pins mcpp, so the shim resolves it.
+        $wd = Join-Path 'C:\pin' (Split-Path -Leaf $d)
+        New-Item -ItemType Directory -Force -Path $wd | Out-Null
+        $s2 = Run $Shim @('--version') $wd 120
+        Reading "q1.$dk.xlings-shim-in-workspace" "exit=$(Hex32 $s2.code) out=$(OneLine ($s2.out + $s2.err))"
+    }
 }
 Start-Sleep -Seconds 5
 $ev = Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000 } -ErrorAction SilentlyContinue |
@@ -243,6 +258,18 @@ foreach ($x in $ev2) {
 $dumps = Get-ChildItem C:\dumps -File -ErrorAction SilentlyContinue
 Reading 'q1.dumps' (($dumps | ForEach-Object { "$($_.Name) ($($_.Length) B)" }) -join ', ')
 $cdb = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64\cdb.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+Reading 'q1.cdb-present' "$(if ($cdb) { $cdb.FullName } else { 'no cdb.exe under Windows Kits\10\Debuggers\x64' })"
+if ($cdb -and $XlExe) {
+    # Break on every C++ throw (print the record, the what() of an MSVC-STL
+    # std::exception at +8, and the stack) and on the fast fail.
+    $cmds = 'sxe -c ".echo EH-THROWN;.exr -1;da poi(@$exr_param1+8);kc 25;gc" eh; sxe -c ".echo FASTFAIL;.exr -1;kc 40;q" c0000409; g'
+    $symp = 'srv*C:\sym*https://msdl.microsoft.com/download/symbols'
+    $live = Run $cdb.FullName @('-G', '-lines', '-y', $symp, '-c', $cmds, $XlExe, '--version') $Dirs['nonacp'] 300
+    Write-Host '----- cdb: xlings --version in the non-ACP directory -----'
+    Write-Host $live.out
+    $keep = ($live.out -replace "`r", '' -split "`n" | Where-Object { $_ -match 'EH-THROWN|FASTFAIL|ExceptionCode|ExceptionAddress|NumberParameters|Parameter\[|xlings|ucrtbase|KERNELBASE|vcruntime|msvcp' } | Select-Object -First 45) -join ' || '
+    Reading 'q1.cdb-live' $keep
+}
 if ($cdb -and $dumps) {
     $dmp = $dumps | Select-Object -First 1
     $a = Run $cdb.FullName @('-z', $dmp.FullName, '-c', '.exr -1; kc 30; q') 'C:\dumps' 600
@@ -264,15 +291,16 @@ if ($Patched) { $Builders['patched'] = $Patched }
 $first = $true
 foreach ($dk in $Dirs.Keys) {
     foreach ($bk in $Builders.Keys) {
-        foreach ($fx in 'hello', 'bmn', 'bmw') {
-            $proj = Join-Path $Dirs[$dk] "$bk-$fx"
-            Copy-Item -LiteralPath (Join-Path $Fx $fx) -Destination $proj -Recurse -Force
+        foreach ($fixture in 'hello', 'bmn', 'bmw') {
+            $proj = Join-Path $Dirs[$dk] "$bk-$fixture"
+            Copy-Item -LiteralPath (Join-Path $FixturesDir $fixture) -Destination $proj -Recurse -Force
+            if (-not (Test-Path -LiteralPath (Join-Path $proj 'mcpp.toml'))) { Reading "probe.copy.$dk.$bk.$fixture" 'PROBE DEFECT: the fixture was not copied'; continue }
             $t = if ($first) { 2400 } else { 900 }
             $first = $false
             $sw = [System.Diagnostics.Stopwatch]::StartNew()
             $r = Run $Builders[$bk] @('build') $proj $t
             $secs = [int]$sw.Elapsed.TotalSeconds
-            $id = "q2.$dk.$bk.$fx"
+            $id = "q2.$dk.$bk.$fixture"
             $exeOut = ''
             $exe = Get-ChildItem -LiteralPath (Join-Path $proj 'target') -Recurse -Filter probe.exe -ErrorAction SilentlyContinue |
                    Where-Object { $_.FullName -match '\\bin\\' } | Select-Object -First 1
@@ -280,6 +308,7 @@ foreach ($dk in $Dirs.Keys) {
                 $x = Run $exe.FullName @() $proj 60
                 $exeOut = " run: exit=$(Hex32 $x.code) $(OneLine ($x.out + $x.err))"
             }
+            if ($r.startError) { Reading $id "PROBE DEFECT: did not start: $($r.startError)"; continue }
             Reading $id "exit=$(Hex32 $r.code) time=${secs}s timedOut=$($r.timedOut)$exeOut"
             if ($r.code -ne 0 -or $r.timedOut) {
                 Reading "$id.tail" (Tail ($r.out + $r.err) 14)
@@ -293,7 +322,7 @@ foreach ($dk in $Dirs.Keys) {
                 if ($ninja) { Reading "$id.build-ninja" (EncodingReport $ninja.FullName 'repro-' $NeedleNonAcp) }
                 Reading "$id.cdb" (EncodingReport $cdbj 'repro-' $NeedleNonAcp)
             }
-            if ($fx -ne 'hello') {
+            if ($fixture -ne 'hello') {
                 $gen = Get-ChildItem -LiteralPath (Join-Path $proj 'target') -Recurse -Filter gen.cpp -ErrorAction SilentlyContinue | Select-Object -First 1
                 Reading "$id.generated" ("gen.cpp " + $(if ($gen) { 'written under target' } else { 'absent under target' }))
             }
