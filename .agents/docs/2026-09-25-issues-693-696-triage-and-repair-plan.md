@@ -1,6 +1,6 @@
 ---
 subject: design
-status: active
+status: landed
 ---
 
 # Issues #693 to #696: triage against mcpp's contracts, and one repair plan
@@ -1047,13 +1047,13 @@ Three items are split out, each for a stated reason.
 
 | # | Pull request | State |
 |---|---|---|
-| 1 | openxlings/xlings#613 | open, CI running; released as 2026.9.26.2, because 2026.9.26.1 had been released separately earlier the same day |
+| 1 | openxlings/xlings#613 | merged as `2e3df6dd`; released as 2026.9.26.2 (2026.9.26.1 had been released separately earlier the same day); the four GitCode archives match the GitHub sha256 sidecars; xim-pkgindex#876 (the bot's +22/-3) merged with its hashes checked against the sidecars |
 | 2 | mcpplibs/openkal-musl#43 | merged as `20b92683`; tag `0.19.2`; the GitHub archive (1157319 bytes, sha256 `e8043bcd...c82238`) and the GitCode copy compared byte for byte; the archive carries `port/lib/lib*.a`, eight files of eight bytes |
 | 3 | mcpplibs/mcpp-index#467 | merged as `1529f5f3`; the index artifact `1529f5f` is served by both hosts with the pointer's digest |
 | 4 | mcpplibs/openkal-llvm-runtime#30 | merged as `79671f6b`; tag `0.15.2`; archive 15631743 bytes, sha256 `c2219ad8...c0d0d9`, GitCode copy byte-identical; its mcpp.toml reads openkal-musl `0.19.2` |
-| 5 | mcpplibs/mcpp-index#468 | registration of runtime 0.15.2, CI running |
-| 6 | mcpp-community/mcpp#698 | CI run 1: every Windows row of the regression job passes (below); follow-up commit pending the xlings release |
-| 7 | | after the mcpp release |
+| 5 | mcpplibs/mcpp-index#468 | merged as `d7872cc3`; the index artifact `d7872cc` is served by both hosts with the pointer's digest |
+| 6 | mcpp-community/mcpp#698 | merged as `f61b4663`, whose tree equals the tested head `15317aab`; released as 2026.9.26.1 (§12.5) |
+| 7 | mcpplibs/mcpp-index#469 | merged as `2af34182`: validate.yml, openkal-compat.yml and `latest_mcpp` name 2026.9.26.1, the openkal measurement uses runtime 0.15.2 and gains the two linux-musl rows, and the three `gnu11` comments are corrected; the full sweep is green on every platform (§12.5) |
 
 **Where the implementation departs from §12.2, and why.**
 
@@ -1121,6 +1121,76 @@ CI run 1 of #698 (windows-latest, code page 1252; `mcpp.exe` self-hosted by the 
   ok    a path through build.mcpp in '测试'
 OK: every row builds in every directory
 ```
+
+### 12.5 Release and ecosystem readings (2026-09-26)
+
+- **CI.** Run 3 of #698 (`15317aab`): 40 checks pass; the two that fail are the xcode-27 legs,
+  which fail the same way on `main` (#669: `ld64.lld` 22.1.8 rejects `arm64e.x1` in that image's
+  SDK stubs). The push run on `main` (`f61b4663`) reads the same: every workflow passes except
+  those two legs.
+- **The Windows artefact.** `mcpp-2026.9.26.1-windows-x86_64.zip` carries `RT_MANIFEST` ID 1
+  with `activeCodePage` UTF-8 in `bin/mcpp.exe`, and the bundled `registry/bin/xlings.exe`
+  (2026.9.26.2) carries the same; read with `llvm-readobj --coff-resources` from the CI artefact.
+- **Release.** Run 36184397880, every job successful (four platform builds, the sealed manifest,
+  `publish-ecosystem`). The Linux x86_64 archive was uploaded to GitCode from a CN host the
+  moment it appeared; the other three by `publish-ecosystem`. All four GitCode archives match the
+  GitHub sha256 sidecars, their sidecars answer 200, and the GitHub `xlings-res/mcpp` copies
+  answer 200. xim-pkgindex#877 (+22/-3) was merged after its six hashes were compared with the
+  sidecars; AUR, Homebrew and PyPI publishing succeeded on the merge commit.
+- **Sandbox, the published artefacts only.** `xlings subos use v693 --sandbox`, CN mirror for
+  both xlings and mcpp (read back from `~/.mcpp/registry/.xlings.json`); mcpp and xlings installed
+  by `xlings install` from the published index and addressed by store path:
+
+  ```
+  ok  mcpp 2026.9.26.1; xlings 2026.9.26.2; xlings runs in a directory named in CJK
+  ok  mirror = CN in /home/speak/.mcpp/registry/.xlings.json
+  ok  #695: app at c99, cdep at gnu11, plain at c11; the program runs
+  ok  #693: a project directory with no UTF-8 spelling is refused by name
+  ok  #693: a file with no UTF-8 spelling is skipped and reported; the rest builds and runs
+  ok  #696: the link carries the empty graph sysroot
+  ok  #696: -lm answered by openkal-musl 0.19.2; the program prints 2
+  ok  #696: an unanswered -lm fails and the note names openkal-musl 0.19.2
+  ok  #694: Finished release [optimized]; the compile carries -O2, not -Og
+  summary: 12 ok, 0 failed, 0 skipped
+  ```
+
+- **The index, with the release.** #469's sweep builds every member with 2026.9.26.1 on macOS,
+  Linux (default and four llvm shards) and Windows, all green. The openkal measurement, now over
+  four targets, reads:
+
+  | target | runs | fails | the fails |
+  |---|---|---|---|
+  | `x86_64-linux-gnu` | 30 | 2 | curl (`__memcpy_chk`), cmp-module (asio); as published before |
+  | `x86_64-windows-musl` | 30 (+1 builds) | 1 | curl; as published before |
+  | `x86_64-linux-musl` (new) | 29 | 3 | curl (`__memset_chk`), cmp-module, mimalloc (`-latomic`) |
+  | `aarch64-linux-musl` (new) | 29 | 3 | curl, cmp-module, mimalloc (`-latomic`) |
+
+  No published label went lower. mimalloc's `-latomic` is the one cell #696 makes visible:
+  `-lpthread` and `-lrt` are answered by openkal-musl's archives, and `-latomic`, the compiler
+  runtime's library, is answered by nothing where the host's used to answer it silently. Its
+  owner is the graph's compiler runtime (mcpplibs/openkal-llvm-runtime#31), and the right answer
+  depends on whether the runtime's builtins carry the `__atomic_*` fallbacks, which is measured
+  there rather than assumed here.
+
+### 12.6 Self-review, engine and ecosystem
+
+- **Each criterion was run against the previous release.** e2e 776, 777 and 778 (leg B) fail on
+  2026.9.25.1 at the criterion they name, and pass on 2026.9.26.1; the sandbox script was run
+  against both releases (§12.5 and Appendix A.15).
+- **Found by the review, fixed before release.** A C entry `main` bypassed the per-unit C
+  standard; the cache-key rule and the test that stated the old one; the exact runtime pin that
+  makes openkal-musl and openkal-llvm-runtime move as a pair; a documentation claim that macOS
+  file names need not be UTF-8; the `allow_host_libs` wording (it lifts the refusal).
+- **Every consumer of a changed contract.** The C standard: the three index descriptors that
+  worked around the defect keep their `-D` spellings, which work under every engine the index
+  admits (#469). The graph link: every openkal e2e (285 to 294, 738, 778) passes on the new
+  engine, and the index measurement gains the two linux-musl rows. The xlings pin: every
+  workflow moves together (`check_version_pins.sh`), and the release bundles the new xlings.
+- **Still open, each for a stated reason.** `-latomic` in the openkal graph
+  (openkal-llvm-runtime#31, above); W3b (cl.exe's `/std:` for a declared C standard)
+  waits for a CI row that builds the index with cl.exe; W2b for PE links through the MinGW
+  driver waits for the C4 inventory; W4e (wide APIs, independent of the OS version) is all or
+  nothing; the xcode-27 legs wait for an LLVM whose `ld64.lld` reads `arm64e.x1` (#669).
 
 ---
 
@@ -1306,3 +1376,21 @@ READING R2.windres.beside: exit=0
 READING R2.windres.rooted: exit=0
 llvm-rc 20.1.7 (Linux): beside exit=0; rooted through /I exit=0; rooted without /I exit=1
 ```
+
+**A.15 The sandbox script against the previous release** (`xlings subos use v693c --sandbox`,
+mcpp 2026.9.25.1 installed from the index, same script as §12.5). Every criterion the release
+changes fails, and the ones the previous engine already met pass:
+
+```
+ok      mcpp 2026.9.25.1; xlings 2026.9.26.2; mirror = CN
+FAILED  #695 per-package C standard
+FAILED  #693 project directory (the build reaches the JSON writer)
+FAILED  #693 a file inside a project
+FAILED  #696 no graph sysroot on the link line
+ok      #696 -lm answered by openkal-musl 0.19.2 (its own -L precedes the host's)
+FAILED  #696 unanswered -lm: the build succeeds, from the host's libm
+ok      #694 Finished release [optimized]
+FAILED  #694 -Og in compile_commands.json, under that label
+summary: 6 ok, 6 failed, 0 skipped
+```
+
