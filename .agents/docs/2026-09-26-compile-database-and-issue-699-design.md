@@ -1,6 +1,6 @@
 ---
 subject: design
-status: active
+status: landed
 ---
 
 # The compile database, `emit build-database`, and #701/#702: triage against the specifications, and one design
@@ -33,7 +33,7 @@ status: active
   store path; toolchains llvm@22.1.8, llvm@20.1.7, gcc@16.1.0; clangd and clang-tidy 22.1.8; CMake
   4.4.2. Every project is a copy or a fixture in a scratch directory. Appendix A holds the
   readings.
-- Status: accepted; implemented in #702 (§11).
+- Status: landed in mcpp 2026.9.26.2 through #702 (§11, §12).
   - Revision 1 (2026-09-26): the triage and the first design.
   - Revision 2 (2026-09-26): D1 and D3 accepted; mcppls named as the primary consumer; C3
     measured against the specification and three build systems; C5 rewritten around its four
@@ -45,6 +45,8 @@ status: active
     reused as the single pull request (§7).
   - Revision 4 (2026-09-26): D9 to D12 accepted; the implementation plan, its task
     dependencies and the cross-repository sequence (§11).
+  - Revision 5 (2026-09-26): implemented in #702 as mcpp 2026.9.26.2; what the implementation
+    changed or added to the design, and the tests (§12).
 
 ---
 
@@ -838,6 +840,48 @@ open measurements. F1 is POSIX-only. E1 to E3 do not depend on the platform.
 | Cross-platform | C3 in native spelling; the root file copied, never linked; R1' with a Windows leg; W on Windows CI; C4 and C5 measured on MSVC before their MSVC form is emitted |
 | Consistency | SPEC-004, SPEC-005, SPEC-007, docs/01, docs/04, docs/30, docs/31, docs/50 and their zh pairs change in the same pull request as the code |
 | Test coverage | each item has a criterion that fails on 2026.9.26.1 or states a new property; the full e2e suite runs on the integration branch before the pull request is pushed |
+
+## 12. Implementation record
+
+The version is 2026.9.26.2, the next date version on the day of the release; #702 was opened as
+2026.9.27.1. Four worktrees implemented T1 to T5 in parallel from #702's head and merged into it.
+
+### 12.1 Where the implementation departs from or adds to the design
+
+| Item | Design | Implementation | Reason |
+|---|---|---|---|
+| C5 (W3) | the plan carries the standard-library description | `recover_invocation` moved from `build_database.cppm` to `plan.cppm`, re-exported under its old name | `compile_commands.cppm` must render the units for the build's own database and cannot import `build_database.cppm`, which imports it |
+| C4 (W2) | the flag for every dialect, MSVC after a measurement | GCC and Clang dialects; MSVC omitted, stated in SPEC-005 R3.7 | the measurement of clang-cl-mode clangd remains open (§9) |
+| §3.2 item 4 | the fast path restores the root file | one function publishes the root file on both paths, comparing bytes; one function words the warning | a record of size and time would be a second definition of "identical" |
+| P, post-condition | the directory exists | the directory holds at least one file other than the action's stamps | ninja creates a declared output's parent before the command runs, so a stamp inside the directory made "exists" true for a command that wrote nothing (e2e 791 checks both placements) |
+| P, ordering | the declaring package's compile and link edges | the declaring package's compile edges and every link edge of the plan except static archives | the link-global directives of every package merge into one `LinkIntent`, which every link line reads |
+| P, refusal | unknown roles refused | also a `prepare` action without `output_dir` | the post-condition has nothing to check without it |
+| W, inputs | the program and the `prepare` stamps; depfile | the same, and the stamp records the names placed, which the next run resolves outside the program's directory (`ClosureReadInput::notInFirstDir`) | without the stamps a DLL a `prepare` action replaced was placed one build late; without the record, the copy beside the program shadowed the newer DLL (both found by e2e 797) |
+| W, deploy edges | nothing else changes | a deployed DLL is an order-only input of the link, not an implicit one | the linker reads the import library; the plan-time listing of runtime search directories, kept for one train, otherwise relinked the program on the second build |
+| F1 | SPEC-004 §8 for link flags | also: dependency flags propagate word by word; the link directives spell paths as one word; the first plan names an element whose words changed | the renderer, the propagation and the directives are three writers of one list |
+| Cache | none stated | build-program cache epoch 3 | a cached `ldflag` value and a cached unknown role both change meaning |
+| S2 | one sentence in §3.4 | S2 0.3.0: `data` with `error` diagnostics, optional `path`, S2-3.4-12 and S2-3.4-13 | Sunrisepeak/mcpp-language-server#25 |
+
+### 12.2 Tests
+
+| Item | e2e | Fails on 2026.9.26.1 | CI |
+|---|---|---|---|
+| C1 | 781 | yes | shards |
+| C2 | 782, 783 | yes | shards; 783 in the llvm job |
+| C3 | 784, 211 | yes (gcc row) | llvm job |
+| C4 | 785 | yes | llvm job |
+| C5, D5b | 786, 688 | yes | llvm job; shards |
+| E1, E2, E3 | 787, 788, 789 | yes | shards |
+| R1' | 779 (Linux), 794 (Windows), 796 (mingw-cross, wine) | new surface | shards; Windows shards; mingw-cross job |
+| R2 | 780 | yes | shards |
+| P | 790, 791, 792, 793 | new surface | shards |
+| F1 | 795 | yes | shards |
+| W | 797 | new surface | mingw-cross job |
+
+Unit tests: `test_compile_commands` (the merge key, `directory`, the flag position),
+`test_build_directives` (the directive, the roles, `output_dir`, the cache round trip),
+`test_ninja_backend` (the placement edge, its absence off PE and without directories, the
+order-only deployed DLLs).
 
 ## Appendix A. Measurement record
 

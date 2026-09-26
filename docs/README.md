@@ -162,3 +162,4 @@ downstream tooling.
   - [SPEC-004 — `mcpp.toml` planes, conditioning shape, resolution axes and naming](specs/manifest-semantics.md)
   - [SPEC-005 — The build database `mcpp emit build-database` prints](specs/build-database.md)
   - [SPEC-006 — Toolchain management: identity, origin, selection and the payload contract](specs/toolchain-management.md)
+  - [SPEC-007 — Build plugins: configuration, construction and verification, and the runtime and planning obligations](specs/build-plugins.md)

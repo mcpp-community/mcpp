@@ -157,3 +157,4 @@
   - [SPEC-004 —— `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约](../specs/manifest-semantics.md)
   - [SPEC-005 —— `mcpp emit build-database` 输出的构建数据库](../specs/build-database.md)
   - [SPEC-006 —— 工具链管理：身份、来源、选择与载荷契约](../specs/toolchain-management.md)
+  - [SPEC-007 —— 构建插件：配置、施工与校验的分工，运行时与规划期的义务](../specs/build-plugins.md)
