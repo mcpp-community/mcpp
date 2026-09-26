@@ -4,7 +4,7 @@
 # §5.4 R1' on native Windows (SPEC-007 R4.1, R4.3): PE has no run path, so
 # `mcpp::runtime_search_dir(dir)` reaches the program two ways — `mcpp run`
 # through `PATH`, and `mcpp pack` by placing the DLL beside the packed
-# executable. 795 carries the same three checks on this host through
+# executable. 796 carries the same three checks on this host through
 # mingw-cross + wine and is the one that gives this round a passing reading
 # before release; this script is the native leg the design and SPEC-007 R8.1
 # both ask for (a criterion on every platform a feature claims), run on
