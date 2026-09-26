@@ -1430,10 +1430,7 @@ void restore_root_compile_commands(const std::filesystem::path& projectRoot,
         mcpp::ui::warning(std::format(
             "compile_commands.json was not updated: {}", result.error().message));
     } else if (result->foreignEntries > 0) {
-        mcpp::ui::warning(std::format(
-            "compile_commands.json held {} entr{} mcpp did not write; "
-            "the file now holds mcpp's configuration",
-            result->foreignEntries, result->foreignEntries == 1 ? "y" : "ies"));
+        mcpp::ui::warning(mcpp::build::foreign_entries_warning(result->foreignEntries));
     }
 }
 

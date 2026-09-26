@@ -174,6 +174,11 @@ publish_root_compile_commands(
 std::expected<CompileCommandsWriteResult, CompileCommandsWriteError>
 write_compile_commands(const BuildPlan& plan, const CompileFlags& flags);
 
+// The one sentence both publishers of the root file (the full build and the
+// fast path) print when the file they replaced held `n` entries mcpp did not
+// write. One function, so the two paths cannot word it differently.
+std::string foreign_entries_warning(std::size_t n);
+
 }  // namespace mcpp::build
 
 namespace mcpp::build {
@@ -712,6 +717,12 @@ write_compile_commands(const BuildPlan& plan, const CompileFlags& flags) {
 
     return CompileCommandsWriteResult{
         rootResult->changed, configResult->commandCount, rootResult->foreignEntries};
+}
+
+std::string foreign_entries_warning(std::size_t n) {
+    return std::format(
+        "compile_commands.json held {} entr{} mcpp did not write; "
+        "the file now holds mcpp's configuration", n, n == 1 ? "y" : "ies");
 }
 
 }  // namespace mcpp::build

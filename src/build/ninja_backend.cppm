@@ -3530,10 +3530,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         // §3.2 item 3: the root file is replaced whole, never merged; when it
         // held another writer's entries, say so once rather than silently
         // discard them.
-        mcpp::ui::warning(std::format(
-            "compile_commands.json held {} entr{} mcpp did not write; "
-            "the file now holds mcpp's configuration",
-            cdb->foreignEntries, cdb->foreignEntries == 1 ? "y" : "ies"));
+        mcpp::ui::warning(mcpp::build::foreign_entries_warning(cdb->foreignEntries));
     }
 
     // A SHARED LIBRARY ON A TARGET WHOSE LINK IS DRIVEN BY THE LINKER, SAID
