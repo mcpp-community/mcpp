@@ -47,6 +47,8 @@ status: landed
     dependencies and the cross-repository sequence (§11).
   - Revision 5 (2026-09-26): implemented in #702 as mcpp 2026.9.26.2; what the implementation
     changed or added to the design, and the tests (§12).
+  - Revision 6 (2026-09-26): released; the release and ecosystem readings, and what remains
+    open (§12.3, §12.4).
 
 ---
 
@@ -882,6 +884,75 @@ Unit tests: `test_compile_commands` (the merge key, `directory`, the flag positi
 `test_build_directives` (the directive, the roles, `output_dir`, the cache round trip),
 `test_ninja_backend` (the placement edge, its absence off PE and without directories, the
 order-only deployed DLLs).
+
+### 12.3 Release and ecosystem readings (2026-09-26)
+
+- **CI.** The last run of #702 (`117cb8dc`): 39 checks pass. The two that fail are the xcode-27
+  legs, which fail the same way on `main` (#669). The push run on `main` (`c109fdd6`, whose tree
+  equals `117cb8dc`) reads the same. Before the last run, CI found five test defects that no
+  Linux host shows:
+  - two unit tests compared a native Windows spelling as a string;
+  - e2e 781 and 782 pinned gcc on macOS;
+  - 781 asked for no plan where the fast path does not exist (ELF only, #400);
+  - 211 compared an MSYS and an 8.3 spelling of one Windows directory;
+  - the hermetic container had no python3 for 783 to 786.
+- **Local.** The full e2e suite on the integrated binary: 429 passed, 0 failed, 56 skipped (the
+  capabilities this host lacks); 129 unit test binaries pass.
+- **Release.** Run 36212122557 on `c109fdd6`: every job successful.
+  - Each of the four archives was uploaded to GitCode from a CN host the moment it and its
+    sidecar appeared on the GitHub release. Each GitCode copy equals the GitHub bytes, and the
+    GitHub `xlings-res/mcpp` copies answer 200 with the same sizes.
+  - xim-pkgindex#880 (+22/-3, four hashes equal to the sidecars) was merged as `96d71ade`, and
+    its index artifact was published (run 36213874711).
+- **Fresh installs.** `ci-fresh-install` on `c109fdd6` succeeds on:
+  - Linux;
+  - six distributions (Arch, Debian 12, Debian testing, Fedora, Tumbleweed, Ubuntu 20.04);
+  - Windows 2022, Windows 2025, and Windows without Visual Studio;
+  - macOS 14, directly and through Homebrew.
+
+  Its two xcode-27 legs fail as they did for 2026.9.26.1.
+- **Sandbox, the published artefacts only.** `xlings subos use v702 --sandbox` with the CN mirror
+  for both xlings and mcpp; mcpp 2026.9.26.2 installed by `xlings install` from the published index
+  and addressed by store path; the release's own e2e scripts passed in as a tarball:
+
+  ```
+  ok  mcpp 2026.9.26.2; mirror = CN in /home/speak/.mcpp/registry/.xlings.json
+  ok  mcpp new + build; .gitignore lists compile_commands.json
+  ok  the configuration's database under target/<triple>/<fp>/
+  ok  directory is the output directory; the std unit is listed; the root file is a copy
+  ok  a deleted root database is restored by the next build
+  ok  e2e 779, 780, 781, 782, 787, 788, 789, 790, 791, 792, 793, 795
+  ok  an index package (mcpplibs.cmdline) resolves, builds and runs
+  summary: 20 ok, 0 failed, 0 skipped
+  ```
+
+  The same script in a fresh subos against 2026.9.26.1 reads 4 ok and 16 failed. The four that
+  pass are the version, the mirror, a plain build and the index package; the sixteen that fail
+  are exactly the checks this release changes.
+- **The index, with the release.**
+  - mcpplibs/mcpp-index#470 raised `validate.yml`'s `MCPP_VERSION` to 2026.9.26.2 and was merged
+    as `f84c57ba`. A pin change selects no member on its own pull request, so the full sweep was
+    dispatched on `main` (run 36214011426).
+  - Every workspace shard passes with 2026.9.26.2: Linux default (6), Linux llvm (9), Windows (5)
+    and macOS (2).
+  - The one failing job, `mirror-cn-reachable`, found three GitCode resource URLs unreachable from
+    the runner. All three answer 200 from a CN host (asio 1.38.1, compiler-rt-builtins 22.1.8.3,
+    glx-runtime 2026.06.03).
+- **mcppls.** S2 0.3.0 landed in Sunrisepeak/mcpp-language-server#26 (mcppls 0.0.5). #25 was
+  folded into it, together with the consumer side: a partial answer is used, and each part the
+  producer could not describe is reported as `producer-partial`.
+- **Issues.** #699, #701 and #703 were closed by #702 and carry the release readings; item C-1 of
+  #397 and item B1 of #677 carry the same.
+
+### 12.4 Open
+
+- **mcpp-plugins.** Its `deps-*` and `rules-qt` work was written against SPEC-007 and pins
+  "2026.9.27.1", the version #702 was opened with. It moves to 2026.9.26.2.
+- **MSVC (§9).** C4's `/interface` and C5's `std.ixx` unit still wait for a measurement of
+  clang-cl-mode clangd; SPEC-005 R3.7 states the omission.
+- **The plan-time listing.** The listing of runtime search directories that deploys every DLL
+  present at plan time remains for one compatibility train. W places what a program imports;
+  the listing still serves DLLs a program loads at run time.
 
 ## Appendix A. Measurement record
 
