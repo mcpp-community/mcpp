@@ -78,15 +78,19 @@ normal = lambda p: p.replace("\\", "/").rstrip("/")
 test = next(e for e in entries if normal(e["file"]).endswith("/tests/test_smoke.cpp"))
 main = next(e for e in entries if normal(e["file"]).endswith("/src/main.cpp"))
 args = test["arguments"]
+# Compared by the fixture directory's own name: Windows may spell the same
+# temporary directory with its 8.3 short form in one field and its long form in
+# another (`RUNNER~1` against `runneradmin`), and the name below it is the same
+# in both.
 project = normal(test["file"])[: -len("/tests/test_smoke.cpp")]
-fixture = project.rsplit("/", 1)[0]
-expected_include = f"{fixture}/devkit/include".casefold()
-include_args = {
+fixture_name = project.rsplit("/", 2)[-2]
+expected_tail = f"/{fixture_name}/devkit/include".casefold()
+include_args = [
     normal(a[2:]).casefold()
     for a in args
     if a[:2].casefold() == "-i"
-}
-assert expected_include in include_args, (expected_include, args)
+]
+assert any(i.endswith(expected_tail) for i in include_args), (expected_tail, args)
 assert any("MCPP_CONFIGURE_ONLY_TEST_FLAG=1" in a for a in args), args
 assert not any("MCPP_CONFIGURE_ONLY_TEST_FLAG=1" in a for a in main["arguments"]), main
 PY
