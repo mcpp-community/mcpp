@@ -14,11 +14,7 @@ trap 'rm -rf "$TMP"' EXIT
 cd "$TMP"
 "$MCPP" new app > /dev/null
 cd app
-# Pinned rather than left to the machine's default: the property under test
-# does not depend on which toolchain is used, and pinning keeps the test's
-# reading independent of shared state outside this tree.
-TCFLAG=(--toolchain gcc@16.1.0)
-"$MCPP" build "${TCFLAG[@]}" > /dev/null 2>&1
+"$MCPP" build > /dev/null 2>&1
 
 # Another writer's database: two entries with no `output` field at all -- the
 # shape a hand-written or xmake-style database uses, and never mcpp's own
@@ -34,7 +30,7 @@ EOF
 
 # Force a real prepare pass (not the fast path), so the replace actually runs.
 touch src/main.cpp
-out=$("$MCPP" build "${TCFLAG[@]}" 2>&1) || { echo "$out"; echo "FAIL: build failed"; exit 1; }
+out=$("$MCPP" build 2>&1) || { echo "$out"; echo "FAIL: build failed"; exit 1; }
 
 warn_count=$(printf '%s\n' "$out" | grep -c 'held 2 entries mcpp did not write')
 [[ "$warn_count" -eq 1 ]] || {
@@ -66,7 +62,7 @@ grep -q "main.cpp" compile_commands.json || {
 
 # A second build over the now-mcpp-owned file warns no further: nothing
 # foreign is left to replace.
-out2=$("$MCPP" build "${TCFLAG[@]}" --no-cache 2>&1) || { echo "$out2"; echo "FAIL: second build failed"; exit 1; }
+out2=$("$MCPP" build --no-cache 2>&1) || { echo "$out2"; echo "FAIL: second build failed"; exit 1; }
 if printf '%s\n' "$out2" | grep -q "did not write"; then
     echo "FAIL: warned again on a file that already held only mcpp's configuration"
     echo "$out2"

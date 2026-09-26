@@ -635,8 +635,10 @@ TEST(CompileCommandsEmit, AProjectUnitsDirectoryIsTheOutputDirectory) {
 
     auto invs = unit_invocations(plan, flags);
     ASSERT_EQ(invs.size(), 1u);
-    EXPECT_EQ(invs[0].directory, plan.outputDir.string());
-    EXPECT_NE(invs[0].directory, plan.projectRoot.string());
+    // Compared as paths: the field is written in the native spelling, which
+    // on Windows turns this fixture's `/` into `\`.
+    EXPECT_EQ(std::filesystem::path(invs[0].directory), plan.outputDir);
+    EXPECT_NE(std::filesystem::path(invs[0].directory), plan.projectRoot);
 }
 
 // ── C4: the module interface language flag ──────────────────────────────────

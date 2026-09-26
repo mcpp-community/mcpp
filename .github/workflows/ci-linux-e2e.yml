@@ -457,6 +457,15 @@ jobs:
       - name: "Compile database e2e that needs llvm (783, 784, 785, 786)"
         run: |
           set -o pipefail
+          # The scripts read the database with python3, which this container
+          # lacks. It is not a toolchain: the job's property (no host compiler,
+          # no host C runtime) was asserted before the checkout and still holds.
+          if ! command -v python3 >/dev/null 2>&1; then
+            apt-get install -y -qq python3 >/dev/null
+            if command -v gcc >/dev/null 2>&1; then
+              echo "::error::installing python3 brought a host compiler"; exit 1
+            fi
+          fi
           export PATH="$HOME/.xlings/subos/current/bin:$PATH"
           export MCPP
           run_and_assert() {   # $1 = script; the remaining arguments are lines it must print

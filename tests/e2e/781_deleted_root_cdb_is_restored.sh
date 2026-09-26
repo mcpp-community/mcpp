@@ -15,12 +15,8 @@ trap 'rm -rf "$TMP"' EXIT
 cd "$TMP"
 "$MCPP" new app > /dev/null
 cd app
-# Pinned rather than left to the machine's default: the property under test
-# does not depend on which toolchain is used, and pinning keeps the test's
-# reading independent of shared state outside this tree.
-TCFLAG=(--toolchain gcc@16.1.0)
 
-"$MCPP" build "${TCFLAG[@]}" > build1.log 2>&1 || { cat build1.log; echo "FAIL: the first build failed"; exit 1; }
+"$MCPP" build > build1.log 2>&1 || { cat build1.log; echo "FAIL: the first build failed"; exit 1; }
 [[ -s compile_commands.json ]] || { echo "FAIL: no compile_commands.json after the first build"; exit 1; }
 
 config_cdb=$(find target -name compile_commands.json | head -1)
@@ -29,7 +25,7 @@ before=$(cat "$config_cdb")
 
 rm compile_commands.json
 
-"$MCPP" build "${TCFLAG[@]}" > build2.log 2>&1 || {
+"$MCPP" build > build2.log 2>&1 || {
     cat build2.log
     echo "FAIL: the build after deleting the root database failed"
     exit 1
@@ -45,7 +41,9 @@ rm compile_commands.json
 # real prepare pass has nothing to compile -- the restore must not trigger
 # one. A plan prints a "Compiling <pkg>" line; the fast path prints only
 # "Finished ... in <time>".
-if grep -q "Compiling" build2.log; then
+# The fast path replays ELF builds only (#400); on macOS and Windows the
+# second build plans again, and the full path's writer restores the file.
+if [[ "$(uname -s)" == Linux ]] && grep -q "Compiling" build2.log; then
     echo "FAIL: restoring the root database ran a full plan"
     cat build2.log
     exit 1
@@ -61,7 +59,7 @@ after=$(cat compile_commands.json)
 # The restore survives a SECOND round-trip too (not a one-shot fluke of the
 # cache entry the first build happened to leave behind).
 rm compile_commands.json
-"$MCPP" build "${TCFLAG[@]}" > build3.log 2>&1 || { cat build3.log; echo "FAIL: the third build failed"; exit 1; }
+"$MCPP" build > build3.log 2>&1 || { cat build3.log; echo "FAIL: the third build failed"; exit 1; }
 [[ -f compile_commands.json ]] || { echo "FAIL: the second delete was not restored"; exit 1; }
 
 echo "OK"

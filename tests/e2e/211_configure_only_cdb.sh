@@ -66,19 +66,21 @@ grep -q 'tests[\/][\/]*test_smoke.cpp' compile_commands.json || {
     exit 1
 }
 if command -v python3 >/dev/null 2>&1; then
-    # The devkit path is passed in directly rather than derived from the CDB's
-    # `directory`: since C3 (design 2026-09-26 §3.3), `directory` is the
-    # OUTPUT directory the compiler runs in, not the project root, so a
-    # sibling fixture's path can no longer be recovered from it.
-    python3 - compile_commands.json "$TMP/devkit/include" <<'PY'
+    # The devkit path is derived from the entry's own `file`, in the spelling
+    # mcpp wrote: the shell's `$TMP` is not it on Windows (an MSYS root) or on
+    # macOS (`/var` against the resolved `/private/var`). `directory` no longer
+    # serves, because since C3 (design 2026-09-26 §3.3) it is the output
+    # directory the compiler runs in, not the project root.
+    python3 - compile_commands.json <<'PY'
 import json, sys
 entries = json.load(open(sys.argv[1], encoding="utf-8"))
-devkit_include = sys.argv[2]
 normal = lambda p: p.replace("\\", "/").rstrip("/")
 test = next(e for e in entries if normal(e["file"]).endswith("/tests/test_smoke.cpp"))
 main = next(e for e in entries if normal(e["file"]).endswith("/src/main.cpp"))
 args = test["arguments"]
-expected_include = normal(devkit_include).casefold()
+project = normal(test["file"])[: -len("/tests/test_smoke.cpp")]
+fixture = project.rsplit("/", 1)[0]
+expected_include = f"{fixture}/devkit/include".casefold()
 include_args = {
     normal(a[2:]).casefold()
     for a in args

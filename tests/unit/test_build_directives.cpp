@@ -869,12 +869,22 @@ TEST(BuildDirectives, PrepareActionWithNoOutputDirIsRefused) {
 // replayed `prepare` payload decodes to the same role and output_dir a fresh
 // run would -- the cache hit must replay both exactly.
 TEST(BuildDirectives, PrepareActionSurvivesTheCacheRoundTrip) {
+    // The paths are JSON strings: a Windows path's backslashes are escaped,
+    // as the bundled module's serializer escapes them.
+    auto json_string = [](std::string_view v) {
+        std::string out;
+        for (char c : v) {
+            if (c == '\\' || c == '"') out.push_back('\\');
+            out.push_back(c);
+        }
+        return out;
+    };
     const std::string payload = std::format(
         "{{\"id\":\"prep\",\"role\":\"prepare\","
         "\"description\":\"\",\"blocking\":false,\"output_dir\":\"{}\","
         "\"inputs\":[],\"outputs\":[\"{}\"],"
         "\"command\":[\"install.sh\"],\"provides\":[],\"imports\":[],\"targets\":[]}}",
-        under_root("prefix"), under_root("prep.stamp"));
+        json_string(under_root("prefix")), json_string(under_root("prep.stamp")));
     dirs::Directives replayed;
     ASSERT_TRUE(dirs::accept_cache_record(replayed, "action", payload));
     auto a = dirs::decode_action(replayed.at(dirs::Slot::Actions).front());
