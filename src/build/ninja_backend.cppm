@@ -1887,6 +1887,33 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("  command = $mcpp coff-def --output $out --name $def_name $in\n");
     append("  description = DEF $out\n\n");
 
+    // A WINDOWS PROGRAM'S RUNTIME DLLS, PLACED AFTER ITS LINK (SPEC-007 R4.3).
+    // A PE image has no run path, so a DLL in a runtime search directory
+    // serves `mcpp run` (through `PATH`) and `mcpp pack`, and not a program
+    // started by hand from the build directory. `mcpp place-dlls` reads the
+    // program's import closure as `mcpp pack` does and publishes each DLL it
+    // resolves in those directories beside the program. The names are not
+    // known when this graph is written, because an action may populate the
+    // directory, so the edge's output is a stamp and its depfile names the
+    // DLLs it placed: a DLL replaced in its directory is placed again on the
+    // next build. ELF and Mach-O keep their run paths, and a plan without
+    // runtime search directories has no such edge.
+    const bool placeRuntimeDlls = [&] {
+        if (plan.linkIntent.runtimeSearchDirs.empty()) return false;
+        const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+        return t ? t->is_pe() : bool(mcpp::platform::is_windows);
+    }();
+    if (placeRuntimeDlls) {
+        std::string dirs;
+        for (auto const& d : plan.linkIntent.runtimeSearchDirs)
+            dirs += " " + ninja_command_word(d.string());
+        append("rule place_dlls\n");
+        append("  command = $mcpp place-dlls --output $out --depfile $out.d $in" + dirs + "\n");
+        append("  depfile = $out.d\n");
+        append("  deps = gcc\n");
+        append("  description = DLLS $in\n\n");
+    }
+
     append("rule runtime_alias\n");
     if constexpr (mcpp::platform::is_windows) {
         // PE has no soname symlink, so the alias is a copy — and a copy of a
@@ -2681,13 +2708,19 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         for (auto& input : lu.implicitInputs) {
             implicit += " " + escape_ninja_path(input);
         }
-        // Windows runtime-DLL deployment: an executable takes an implicit
+        // Windows runtime-DLL deployment: an executable takes an ORDER-ONLY
         // dependency on each staged dep DLL (bin/<dll>), so ninja copies them
-        // beside the .exe before the build is considered done. Empty on RPATH
-        // platforms (no *.dll deps), so other targets are unaffected.
+        // beside the .exe whenever the .exe is built. Order-only rather than
+        // implicit, because the linker never reads a deployed DLL: it links
+        // the import library. As an implicit input, a DLL that changed, or a
+        // deploy entry that a later plan added (a runtime search directory an
+        // action populated after the first plan), relinked a program whose
+        // link inputs had not changed. Empty on RPATH platforms (no *.dll
+        // deps), so other targets are unaffected.
+        std::string orderOnly;
         if (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary) {
             for (auto const& d : deployFiles)
-                implicit += " " + escape_ninja_path(d.dest);
+                orderOnly += " " + escape_ninja_path(d.dest);
         }
 
         // The import library is a SECOND output of this edge, declared as an
@@ -2740,9 +2773,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
         if (!lu.defFile.empty()) implicit += " " + escape_ninja_path(lu.defFile);
 
-        std::string out_line = std::format("build {}{} : {}{}{}\n",
+        std::string out_line = std::format("build {}{} : {}{}{}{}\n",
             escape_ninja_path(lu.output), implicitOut, rule, ins,
-            implicit.empty() ? std::string{} : " |" + implicit);
+            implicit.empty() ? std::string{} : " |" + implicit,
+            orderOnly.empty() ? std::string{} : " ||" + orderOnly);
         if (auto flag = shared_soname_flag(lu, plan); !flag.empty())
             out_line += "  soname_flag = " + flag + "\n";
         if (auto flag = shared_soname_default(lu, plan); !flag.empty())
@@ -2861,6 +2895,14 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             const auto elf = escape_ninja_path(lu.output);
             append("build " + elf + ".bin: objcopy_bin " + elf + "\n");
             append("default " + elf + ".bin\n\n");
+        }
+
+        // The placement edge (see `place_dlls` above), after the link it reads.
+        if (placeRuntimeDlls
+            && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary)) {
+            const auto exe = escape_ninja_path(lu.output);
+            append("build " + exe + ".dlls: place_dlls " + exe + "\n");
+            append("default " + exe + ".dlls\n\n");
         }
 
         for (auto const& alias : lu.runtimeAliases) {

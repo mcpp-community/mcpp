@@ -370,6 +370,26 @@ jobs:
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           bash tests/e2e/248_pack_library_fat_pe_leg.sh
 
+      # SPEC-007 R4.3: the engine places a Windows program's runtime DLLs
+      # beside it after its link, so a program started by hand finds them.
+      # Named here for the reason the steps above are: the Linux shards skip
+      # `# requires: mingw-cross wine`. Each property is held to the line the
+      # script prints only when that property was checked.
+      - name: "e2e: a Windows program finds its runtime DLLs beside it"
+        run: |
+          set -o pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          log="$RUNNER_TEMP/797.log"
+          bash tests/e2e/797_a_windows_program_finds_its_dlls_beside_it.sh 2>&1 | tee "$log"
+          for line in \
+            "  ok: after the first build the program started by hand finds its DLL" \
+            "  ok: a build with nothing changed neither relinks nor places again" \
+            "  ok: a DLL replaced in its directory replaces the copy" \
+            "  ok: no system DLL is copied" \
+            "PASS: a Windows program finds its runtime DLLs beside it"; do
+            grep -qxF "$line" "$log" || { echo "::error::797 did not print: $line"; exit 1; }
+          done
+
   # ── windows → linux ───────────────────────────────────────────────────────
   # The mirror of mingw-cross-wine. Two jobs because a Windows runner cannot
   # execute the ELF it produces; the artefact is handed to a Linux job and

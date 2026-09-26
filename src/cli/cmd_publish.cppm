@@ -36,6 +36,66 @@ export int cmd_publish(const mcpplibs::cmdline::ParsedArgs& parsed) {
         parsed.is_flag_set("dry-run"), parsed.is_flag_set("allow-dirty"));
 }
 
+// `mcpp place-dlls --output <stamp> --depfile <d> <program> <dir>...` -- the
+// edge that follows a Windows program's link when its plan has runtime search
+// directories (mcpp.pack's `place_runtime_dlls`, SPEC-007 R4.3). Internal:
+// only a generated build.ninja names it, and it runs on whatever host builds,
+// because it reads the program's import table rather than asking a loader.
+//
+// The depfile names every DLL placed, so ninja runs the edge again when one of
+// them changes in its directory; the stamp is the edge's only declared output,
+// because the DLL names are not known when the graph is written.
+export int cmd_place_dlls(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    const std::filesystem::path stamp{parsed.option_or_empty("output").value()};
+    const std::filesystem::path depfile{parsed.option_or_empty("depfile").value()};
+    if (stamp.empty() || depfile.empty() || parsed.positional_count() < 1) {
+        std::println(stderr, "error: place-dlls requires --output, --depfile and a program");
+        return 2;
+    }
+    const std::filesystem::path program{parsed.positional(0)};
+    std::vector<std::filesystem::path> dirs;
+    for (std::size_t i = 1; i < parsed.positional_count(); ++i)
+        dirs.emplace_back(parsed.positional(i));
+
+    auto placed = mcpp::pack::place_runtime_dlls(program, dirs);
+    if (!placed) {
+        std::println(stderr, "error: {}", placed.error().message);
+        return 1;
+    }
+    for (auto const& n : placed->notes) std::println("note: {}", n);
+
+    // The depfile syntax ninja reads (`deps = gcc`): a space and `#` are
+    // escaped with a backslash, and `$` is doubled.
+    auto dep_word = [](const std::filesystem::path& p) {
+        std::string out;
+        for (char c : p.generic_string()) {
+            if (c == ' ' || c == '#') out.push_back('\\');
+            if (c == '$') out.push_back('$');
+            out.push_back(c);
+        }
+        return out;
+    };
+    std::error_code ec;
+    if (depfile.has_parent_path())
+        std::filesystem::create_directories(depfile.parent_path(), ec);
+    {
+        std::ofstream d(depfile, std::ios::trunc);
+        d << dep_word(stamp) << ':';
+        for (auto const& src : placed->sources) d << " \\\n  " << dep_word(src);
+        d << '\n';
+        if (!d) {
+            std::println(stderr, "error: cannot write '{}'", depfile.string());
+            return 1;
+        }
+    }
+    std::ofstream st(stamp, std::ios::trunc);
+    if (!st) {
+        std::println(stderr, "error: cannot write '{}'", stamp.string());
+        return 1;
+    }
+    return 0;
+}
+
 namespace {
 
 int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,

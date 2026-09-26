@@ -717,9 +717,15 @@ std::string transformed(const Def& def, std::string_view raw,
                         const fs::path& root) {
     switch (def.transform) {
         case Transform::Verbatim:      return std::string(raw);
-        case Transform::LibFlag:       return mcpp::toolchain::lib_flag_for(dial, raw);
-        case Transform::LibSearchPath: return std::string(dial.libSearchPrefix)
-                                            + abs_against(root, raw);
+        // A link-flag element is read into words (SPEC-004 §8, #703), so a
+        // value the engine builds from a name or a path is spelled to read
+        // back as one word: a library or a directory with a space in its path
+        // stays one argument.
+        case Transform::LibFlag:
+            return mcpp::manifest::flag_element(mcpp::toolchain::lib_flag_for(dial, raw));
+        case Transform::LibSearchPath:
+            return mcpp::manifest::flag_element(std::string(dial.libSearchPrefix)
+                                                + abs_against(root, raw));
         // A define is one word of a compile-flag list, whatever it contains.
         case Transform::DefinePrefix:
             return mcpp::manifest::flag_element(std::string(dial.definePrefix) + std::string(raw));
@@ -727,7 +733,9 @@ std::string transformed(const Def& def, std::string_view raw,
         // Absolute on purpose: the link runs in the build directory, so a
         // relative script path resolves against the wrong root and lld
         // answers "cannot find linker script link.ld" — measured.
-        case Transform::LinkerScript:  return "-T " + abs_against(root, raw);
+        // Two words, `-T` and the path, the second spelled as one word.
+        case Transform::LinkerScript:
+            return "-T " + mcpp::manifest::flag_element(abs_against(root, raw));
         // Resolve `from` NOW, while `root` (this build.mcpp's package root) is
         // still in hand -- `apply` is never given it. `to` is left untouched:
         // it is a destination relative to an executable this package has not

@@ -5,8 +5,8 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.6 |
-| **最后修改** | 2026-09-25 |
+| **版本** | 1.7 |
+| **最后修改** | 2026-09-26 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md` |
@@ -353,14 +353,18 @@ feature-deps          feature-xlings         ← 限定词是门
     客户端上都能构建;两次发布的归档逐字节相同;缺少 `version` 的兄弟 `path` 边被拒绝且报错给出
     应写的一行;无需修改的包的归档与此前逐字节相同
     (`tests/e2e/772_a_published_member_is_self_contained.sh`)。
+15. §8 对链接 flag 的判据:`[build] ldflags` 与构建程序的 `mcpp::link_flag` 中写出的
+    `-Wl,-rpath,$ORIGIN/../lib` 原样到达程序的运行路径,不出现 `/../lib`;依赖传播的同一
+    元素同样原样到达;含空格的 `link_search` 目录是一个参数
+    (`tests/e2e/795_a_link_flag_reaches_the_linker_as_written.sh`)。
 
-## 8. 编译 flag 列表的元素
+## 8. flag 列表的元素
 
-`cflags`、`cxxflags` 与 `asmflags` 的一个元素是一段文本,代表零个或多个词;编译器收到的
-参数就是这些词,按列表顺序排列。本节在元素的文本上陈述(TOML 或 Lua 先去掉自己的转义)。
-该读法对这三个键的每一个出现位置相同:`[build]`、`[targets.<n>]`、`flags` 的 glob 条目、
-feature、`[profile.<n>]`、`[target.<selector>.build]`、xpkg 描述符,以及构建程序的
-`mcpp:cflag=` 与 `mcpp:cxxflag=` 指令。
+`cflags`、`cxxflags`、`asmflags` 与 `ldflags` 的一个元素是一段文本,代表零个或多个词;
+编译器或链接器收到的参数就是这些词,按列表顺序排列。本节在元素的文本上陈述(TOML 或 Lua
+先去掉自己的转义)。该读法对这四个键的每一个出现位置相同:`[build]`、`[targets.<n>]`、
+`flags` 的 glob 条目、feature、`[profile.<n>]`、`[target.<selector>.build]`、xpkg 描述符,
+以及构建程序的 `mcpp:cflag=`、`mcpp:cxxflag=` 与 `mcpp:link-flag=` 指令。
 
 1. 未加引号的空格与制表符分隔词,连续的分隔符等同于一个。
 2. `'` 开启一段单引号区域,区域内的字符按字面取到下一个 `'` 为止。
@@ -382,14 +386,20 @@ feature、`[profile.<n>]`、`[target.<selector>.build]`、xpkg 描述符,以及�
 `[build]`、各个命中的 `[target.<selector>.build]`。实现**必须**满足:同一宏名的后一个
 条目在原位替换前一个;条目 `!NAME` 移除宏名 `NAME`;一个包的每个编译单元对每个宏名
 至多收到一个 `-D` 词;`defines` 条目取代同一个包的 `cflags`、`cxxflags` 中读作单个词
-且宏名相同的 `-D` 词。实现向这三个列表插入一个词 `w` 时,**必须**使用一个按上述规则读回恰为 `w` 的拼写。
+且宏名相同的 `-D` 词。实现向这四个列表插入一个词 `w` 时,**必须**使用一个按上述规则读回恰为 `w` 的拼写;
+构建程序的 `mcpp:link-lib=`、`mcpp:link-search=` 与 `mcpp:link-script=` 指令由名字或路径构成的
+值属于这种插入。
 
-实现**必须**把每个词原样交给编译器,与宿主的命令行读取规则(POSIX `sh`、MSVCRT)无关;
-`compile_commands.json` 与构建数据库(SPEC-005 R3.7)列出的参数**必须**是这些词。
+实现**必须**把每个词原样交给编译器或链接器,与宿主的命令行读取规则(POSIX `sh`、MSVCRT)
+无关;`compile_commands.json` 与构建数据库(SPEC-005 R3.7)列出的参数**必须**是这些词。
+依赖的 `ldflags` 传播给消费者时按词传播,包内相对的搜索路径按词解析为绝对路径。
+规则 7 对链接 flag 的一个推论:`$ORIGIN` 等加载器记号原样到达链接器。为 shell 或 ninja
+手工转义的写法(`\$ORIGIN`、`'$$ORIGIN'`)按上述规则读取,不再是转义。
 
-`ldflags`、`dialect_cxxflags` 与 `std-module-flags` 不在本节范围内。
+`dialect_cxxflags` 与 `std-module-flags` 不在本节范围内。
 
-**状态:已实现(mcpp 2026.9.17.1;`defines` 的集合语义 mcpp 2026.9.25.1)。**
+**状态:已实现(mcpp 2026.9.17.1;`defines` 的集合语义 mcpp 2026.9.25.1;`ldflags` 与链接指令
+mcpp 2026.9.27.1,#703)。**
 
 ## 9. 工作空间继承与构建需求的作用域
 
@@ -425,3 +435,4 @@ feature、`[profile.<n>]`、`[target.<selector>.build]`、xpkg 描述符,以及�
 | 1.4 | 2026-09-15 | 库目标的默认链接形态 `linkage`(mcpp 2026.9.15.2):§3.1.1 补默认值的语义、优先顺序与拒绝条件;§7 补第 9 条判据。 |
 | 1.5 | 2026-09-17 | 编译 flag 列表元素的读法(mcpp 2026.9.17.1,#655):新增 §8 与 §7 第 10 条判据。 |
 | 1.6 | 2026-09-25 | 工作空间继承与构建需求的作用域(mcpp 2026.9.25.1,#690):§8 补 `defines` 的集合语义;新增 §9 与 §7 第 11 至 14 条判据。 |
+| 1.7 | 2026-09-26 | §8 的读法扩展到 `ldflags` 与构建程序的链接指令(mcpp 2026.9.27.1,#703):`$ORIGIN` 原样到达链接器;§7 补第 15 条判据。 |
