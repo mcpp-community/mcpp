@@ -364,24 +364,30 @@ std::string escape_path(const std::filesystem::path& p) {
     return escape_ninja_chars(p.string());
 }
 
-std::string normalize_ldflag(const std::filesystem::path& root, const std::string& flag) {
+// One WORD of the link-flag list, with a package-relative search path made
+// absolute against the package root. The result is the word the linker
+// receives, not ninja text: the caller quotes it for the host and escapes it
+// for ninja (`ninja_command_word`). Until #703 this function escaped the
+// element for ninja only, so the `sh` that runs a POSIX link expanded a
+// `$ORIGIN` the author wrote, and the program's run path held `/../lib`.
+std::string normalize_ldflag(const std::filesystem::path& root, const std::string& word) {
     auto absolute_path = [&](std::string_view raw) {
         std::filesystem::path p{std::string(raw)};
         if (p.is_absolute() || is_loader_relative_search_path(raw)) return p;
         return root / p;
     };
 
-    if (flag.starts_with("-L") && flag.size() > 2) {
-        return "-L" + escape_path(absolute_path(std::string_view(flag).substr(2)));
+    if (word.starts_with("-L") && word.size() > 2) {
+        return "-L" + absolute_path(std::string_view(word).substr(2)).string();
     }
 
     constexpr std::string_view rpathPrefix = "-Wl,-rpath,";
-    if (flag.starts_with(rpathPrefix) && flag.size() > rpathPrefix.size()) {
+    if (word.starts_with(rpathPrefix) && word.size() > rpathPrefix.size()) {
         return std::string(rpathPrefix)
-             + escape_path(absolute_path(std::string_view(flag).substr(rpathPrefix.size())));
+             + absolute_path(std::string_view(word).substr(rpathPrefix.size())).string();
     }
 
-    return flag;
+    return word;
 }
 
 }  // namespace
@@ -1046,11 +1052,17 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                    plan.manifest.buildConfig.cxxRuntime)));
     }
 
-    // User link flags
+    // User link flags: `[build] ldflags`, the `link_flag` and `link_lib`
+    // directives, and what the dependencies propagate. SPEC-004 §8's reading
+    // applies to them as to the compile flags (#703): each element is read
+    // into words, and each word reaches the linker verbatim, quoted for the
+    // host and then escaped for ninja. A `$ORIGIN` therefore reaches the
+    // linker as written, and an element that packs several tokens is several
+    // words on every host.
     std::string user_ldflags;
-    for (auto const& flag : plan.manifest.buildConfig.ldflags) {
+    for (auto const& word : mcpp::manifest::flag_words(plan.manifest.buildConfig.ldflags)) {
         user_ldflags += ' ';
-        user_ldflags += normalize_ldflag(plan.projectRoot, flag);
+        user_ldflags += ninja_command_word(normalize_ldflag(plan.projectRoot, word));
     }
 
     // C standard. The file-level `$cflags` carries the engine default, a

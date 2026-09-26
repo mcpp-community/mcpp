@@ -587,6 +587,18 @@ std::vector<std::string> previous_release_words(std::string element, bool define
 }
 
 void report_flag_words_changes(const mcpp::manifest::Manifest& m) {
+    auto show = [](const std::vector<std::string>& words) {
+        std::string out = "[";
+        for (auto const& w : words)
+            out += std::format("{}'{}'", out.size() > 1 ? ", " : "", w);
+        return out + "]";
+    };
+    auto note_change = [&](std::string what, std::string hint) {
+        auto note = std::pair{std::move(what), std::move(hint)};
+        auto& notes = pending_flag_words_notes();
+        if (std::ranges::find(notes, note) == notes.end()) notes.push_back(std::move(note));
+    };
+    auto const who = m.package.name.empty() ? std::string("(root)") : m.package.name;
     auto check = [&](std::string_view where, const std::vector<std::string>& list,
                      bool define) {
         for (auto const& e : list) {
@@ -594,27 +606,45 @@ void report_flag_words_changes(const mcpp::manifest::Manifest& m) {
                               : mcpp::manifest::flag_words(e);
             auto before = previous_release_words(e, define);
             if (now == before) continue;
-            auto show = [](const std::vector<std::string>& words) {
-                std::string out = "[";
-                for (auto const& w : words)
-                    out += std::format("{}'{}'", out.size() > 1 ? ", " : "", w);
-                return out + "]";
-            };
-            auto note = std::pair{std::format(
+            note_change(std::format(
                 "{}: {} element '{}' reaches the compiler as {}; mcpp before "
                 "2026.9.17.1 passed {} on this host",
-                m.package.name.empty() ? std::string("(root)") : m.package.name,
-                where, e, show(now), show(before)),
+                who, where, e, show(now), show(before)),
                 std::string(
                 "a compile-flag element is read by one syntax on every host, and a "
                 "`defines` entry is one value (docs/04-mcpp-toml.md, "
                 "\"Compile-flag syntax\"); spell the element so that it reads as the "
-                "words meant")};
-            auto& notes = pending_flag_words_notes();
-            if (std::ranges::find(notes, note) == notes.end()) notes.push_back(std::move(note));
+                "words meant"));
+        }
+    };
+    // THE SAME QUESTION FOR THE LINK FLAGS, which take the reading from
+    // 2026.9.27.1 (#703). Before, a `-L` or `-Wl,-rpath,` element was escaped
+    // for ninja, so its text reached the host's reader as written, and any
+    // other element was pasted into the ninja rule, so ninja replaced its `$`
+    // sequences first. `$ORIGIN` written plainly reads the same under both
+    // models, because neither reproduces the shell's expansion that lost it;
+    // an element escaped for ninja or for the shell by hand is what differs.
+    auto check_link = [&](std::string_view where, const std::vector<std::string>& list) {
+        for (auto const& e : list) {
+            auto now = mcpp::manifest::flag_words(e);
+            auto before = e.starts_with("-L") || e.starts_with("-Wl,-rpath,")
+                ? mcpp::manifest::host_command_words(e, mcpp::platform::is_windows)
+                : previous_release_words(e, false);
+            if (now == before) continue;
+            note_change(std::format(
+                "{}: {} element '{}' reaches the linker as {}; mcpp before "
+                "2026.9.27.1 passed {} on this host",
+                who, where, e, show(now), show(before)),
+                std::string(
+                "a link-flag element is read by the compile-flag syntax, so `$ORIGIN` "
+                "reaches the linker as written and an element escaped for ninja or the "
+                "shell by hand is no longer unescaped (docs/04-mcpp-toml.md, "
+                "\"Compile-flag syntax\"); spell the element so that it reads as the "
+                "words meant"));
         }
     };
     auto const& bc = m.buildConfig;
+    check_link("[build] ldflags", bc.ldflags);
     check("[build] cflags", bc.cflags, false);
     check("[build] cxxflags", bc.cxxflags, false);
     check("[build] defines", bc.defines, true);
@@ -7103,9 +7133,14 @@ prepare_build(bool print_fingerprint,
                                   const mcpp::manifest::Manifest& depManifest)
         -> std::vector<std::string>
     {
+        // Word by word (SPEC-004 §8, #703): a search path is made absolute
+        // per word, and each word is written back as an element that reads as
+        // exactly that word, so the consumer's renderer reads the dependency's
+        // flags with the same reading its own flags receive, and an element
+        // that packs several tokens is several words on both sides.
         std::vector<std::string> added;
-        for (auto const& flag : depManifest.buildConfig.ldflags) {
-            auto normalized = normalizeDepLdflag(depRoot, flag);
+        for (auto const& word : mcpp::manifest::flag_words(depManifest.buildConfig.ldflags)) {
+            auto normalized = mcpp::manifest::flag_element(normalizeDepLdflag(depRoot, word));
             m->buildConfig.ldflags.push_back(normalized);
             added.push_back(std::move(normalized));
         }
@@ -12111,7 +12146,8 @@ prepare_build(bool print_fingerprint,
             facts.hasSources = !mcpp::modgraph::package_source_files(
                 packages[i].root, pkg).empty();
             facts.carriesForeignLinkInputs =
-                lf::carries_foreign_link_inputs(pkg.buildConfig.ldflags);
+                lf::carries_foreign_link_inputs(
+                    mcpp::manifest::flag_words(pkg.buildConfig.ldflags));
             facts.isDistribution = mcpp::pack::is_distribution_package(pkg);
             for (auto const& artifact : pkg.runtimeConfig.artifacts) {
                 if (artifact.role == "static-library") facts.shipsStatic = true;

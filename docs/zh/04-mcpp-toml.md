@@ -424,10 +424,11 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
 #### 编译 flag 的写法 *(mcpp 2026.9.17.1+)*
 
 `cflags`、`cxxflags` 或 `asmflags` 里的一个元素代表一个或多个编译器
-参数（「词」）。这套语法在每个宿主上都相同，无论写在哪张表里：
+参数（「词」），`ldflags` 里的一个元素代表一个或多个链接器参数
+（mcpp 2026.9.27.1+）。这套语法在每个宿主上都相同，无论写在哪张表里：
 `[build]`、`[targets.<name>]`、`flags` glob 条目、feature、
 `[target.<selector>.build]` 小节、xpkg 描述符，以及构建程序的
-`mcpp:cflag=` / `mcpp:cxxflag=` 指令。
+`mcpp:cflag=` / `mcpp:cxxflag=` / `mcpp:link-flag=` 指令。
 
 | 写法 | 编译器收到的词 |
 |---|---|
@@ -439,6 +440,7 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
 | `"-I/opt/my\\ dir/include"` | `-I/opt/my dir/include` |
 | `"-IC:\\sdk\\include"` | `-IC:\sdk\include` |
 | `"-DNAME=a$b"` | `-DNAME=a$b` |
+| `"-Wl,-rpath,$ORIGIN/../lib"`（在 `ldflags` 中） | `-Wl,-rpath,$ORIGIN/../lib` |
 
 以下规则施加于元素的文本上（TOML 或 Lua 已经去掉了它自己的转义之后）：
 
@@ -453,8 +455,14 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
   与以往每一个版本相同。
 
 一条 `defines` 条目是一个值，不受这套语法解析：`defines =
-["NAME=\"text\""]` 传出单独一个词 `-DNAME="text"`。`ldflags`、
-`dialect_cxxflags` 与 `std-module-flags` 不受本节约束。
+["NAME=\"text\""]` 传出单独一个词 `-DNAME="text"`。`dialect_cxxflags` 与
+`std-module-flags` 不受本节约束。
+
+`ldflags` 自 mcpp 2026.9.27.1 起遵循这套语法（#703）。此前链接 flag 的元素只为
+ninja 转义、没有为 shell 加引号，所以在 Linux 与 macOS 上 `$ORIGIN` 以 `/../lib`
+进入程序的运行路径。带包内相对路径的 `-L` 或 `-Wl,-rpath,` 词相对包根解析，依赖的
+`ldflags` 按词传给消费者。为 ninja 或 shell 手工转义的元素（`\$ORIGIN`、
+`'$$ORIGIN'`）现在按写法读取；首次 plan 会在 `build/flag-words` 下点名这样的元素。
 
 `compile_commands.json` 与 `mcpp emit build-database` 在 `arguments`
 里列出同样的词，可以不经 shell 直接执行。

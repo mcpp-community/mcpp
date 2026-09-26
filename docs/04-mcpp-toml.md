@@ -422,10 +422,12 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
 #### Compile-flag syntax *(mcpp 2026.9.17.1+)*
 
 An element of `cflags`, `cxxflags` or `asmflags` stands for one or more compiler
-arguments ("words"). The syntax is the same on every host, wherever the list is
-written: `[build]`, `[targets.<name>]`, a `flags` glob entry, a feature, a
-`[target.<selector>.build]` section, an xpkg descriptor, and the `mcpp:cflag=` /
-`mcpp:cxxflag=` directives of a build program.
+arguments ("words"), and an element of `ldflags` for one or more linker
+arguments (mcpp 2026.9.27.1+). The syntax is the same on every host, wherever
+the list is written: `[build]`, `[targets.<name>]`, a `flags` glob entry, a
+feature, a `[target.<selector>.build]` section, an xpkg descriptor, and the
+`mcpp:cflag=` / `mcpp:cxxflag=` / `mcpp:link-flag=` directives of a build
+program.
 
 | Written | Words the compiler receives |
 |---|---|
@@ -437,6 +439,7 @@ written: `[build]`, `[targets.<name>]`, a `flags` glob entry, a feature, a
 | `"-I/opt/my\\ dir/include"` | `-I/opt/my dir/include` |
 | `"-IC:\\sdk\\include"` | `-IC:\sdk\include` |
 | `"-DNAME=a$b"` | `-DNAME=a$b` |
+| `"-Wl,-rpath,$ORIGIN/../lib"` (in `ldflags`) | `-Wl,-rpath,$ORIGIN/../lib` |
 
 The rules, stated on the element's text (after TOML or Lua has removed its own
 escapes):
@@ -452,8 +455,16 @@ escapes):
   taken verbatim, as in every earlier release.
 
 A `defines` entry is one value and is not read by this syntax: `defines =
-["NAME=\"text\""]` passes the single word `-DNAME="text"`. `ldflags`,
-`dialect_cxxflags` and `std-module-flags` are not covered by this section.
+["NAME=\"text\""]` passes the single word `-DNAME="text"`. `dialect_cxxflags`
+and `std-module-flags` are not covered by this section.
+
+`ldflags` follows the syntax from mcpp 2026.9.27.1 (#703). Before, a link-flag
+element was escaped for ninja and not quoted for the shell, so on Linux and
+macOS a `$ORIGIN` reached the program's run path as `/../lib`. A `-L` or
+`-Wl,-rpath,` word with a package-relative path resolves against the package
+root, and a dependency's `ldflags` reach its consumer word by word. An element
+escaped for ninja or the shell by hand (`\$ORIGIN`, `'$$ORIGIN'`) now reads as
+written; the first plan names such an element under `build/flag-words`.
 
 `compile_commands.json` and `mcpp emit build-database` list the same words in
 `arguments`, ready to execute without a shell.

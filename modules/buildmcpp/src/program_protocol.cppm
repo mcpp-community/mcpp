@@ -101,7 +101,10 @@ inline constexpr int kProtocolVersion = 12;
 // Epoch 2 (#359): entries gained `glob` records. An engine that does not know
 // them would replay a strict subset of the declared inputs and call a stale
 // build fresh, which is exactly the silent-wrong-answer this guard exists for.
-inline constexpr int kCacheEpoch = 2;
+// Epoch 3 (#703): an `ldflag` value is read into words (SPEC-004 §8), and the
+// link directives spell a path as one word. A value an earlier engine cached,
+// `-L/opt/my sdk/lib` for instance, would now read as two words.
+inline constexpr int kCacheEpoch = 3;
 
 // ── Run bound ──────────────────────────────────────────────────────────────
 //
