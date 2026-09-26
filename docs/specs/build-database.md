@@ -53,7 +53,10 @@ Database 定义,本规范不重复它们的字段定义,只规定 mcpp 作为生
   每个输出一条警告 `MCPP_GENERATED_FILE_NOT_MATERIALIZED`。**已实现**
 - **R2.5** 构建程序照常运行,工作目录为包根,与 `mcpp build` 相同;构建程序在
   `MCPP_OUT_DIR` 之外写入的内容不在本保证之内。依赖提供的宿主工具照常构建到全局
-  工具库。**已实现**
+  工具库,它声明的 `check` 动作照常运行。构建失败的宿主工具在本命令下降级为
+  警告 `MCPP_BUILD_DATABASE_HOST_TOOL_UNBUILT`,消息点名工具、其所属包与失败信息
+  的第一行;规划继续,请求该工具的构建程序收到的是该工具本应发布到的路径。
+  `mcpp build` 不受影响,宿主工具构建失败在其中仍使目标失败。**已实现**
 - **R2.6** `mcpp --protocol-version` 为这条命令声明 `init-mcpp-home`、`read-project`、
   `network`、`write-global-cache` 与 `exec-build-script`,不声明 `write-project`。
   **已实现**
@@ -145,11 +148,19 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 - **R5.1** `kind` 为 `mcpp.build-database`,`kindVersion` 为 1。`data` 含 `spec`
   (`{"name": "s1", "version": "0.2.0"}` 或 `{"name": "compile-commands"}`)、
   `database`、`watch` 与 `inputs-fingerprint`。**已实现**
-- **R5.2** 失败时信封不含 `data`,`diagnostics` 至少含一条 `error`,退出码为 1:不在
-  工程中为 `MCPP_BUILD_DATABASE_NO_PROJECT`;离线运行而规划需要下载时为
+- **R5.2** 命令独立规划每一个被选中的成员:一个成员规划失败只影响它自己,不影响
+  其余成员的集合(#699 第 1 项)。规划失败的成员不贡献任何集合,只贡献一条 `error`
+  诊断,`path` 为该成员的 `mcpp.toml`,相对工作区根目录;诊断码为:不在工程中时
+  `MCPP_BUILD_DATABASE_NO_PROJECT`;该成员的规划因离线而需要下载时
   `MCPP_OFFLINE_DOWNLOAD_REQUIRED`,消息指出需要下载的第一项;其他规划失败为
-  `MCPP_BUILD_DATABASE_PLAN_FAILED`。工作区中消息指出成员;任一成员规划失败,整次命令
-  失败。**已实现**(离线诊断码:mcpp >= 2026.9.16.1)
+  `MCPP_BUILD_DATABASE_PLAN_FAILED`。`data` 在至少一个被选中的成员规划成功时出现,
+  并描述每一个规划成功的成员;被选中的成员全部规划失败时,信封不含 `data`。规划成功
+  的成员中,构建程序失败的包被描述为不含该程序产生的指令(清单自身的配置、工具链、
+  模块图与标准库单元仍照常描述),`diagnostics` 另有一条 `error`,
+  `MCPP_BUILD_DATABASE_PROGRAM_FAILED`,`path` 为该包的 `build.mcpp`;后续失败若是
+  由缺失的指令引起,则按前一条规则使整个成员失败。只要 `diagnostics` 中有一条
+  `error`,退出码就是 1,无论 `data` 是否出现。**已实现**(离线诊断码:
+  mcpp >= 2026.9.16.1;成员独立规划、`path` 与构建程序失败的描述:mcpp >= 2026.9.27.1)
 - **R5.3** 信封的 `effects` 为 `read-project` 与 `write-global-cache`,运行了构建程序时
   另有 `exec-build-script`,本次运行启动过网络子进程(索引刷新、安装、git 远程操作,
   失败或超时的也算)时另有 `network`。**已实现**(`network`:mcpp >= 2026.9.16.1)

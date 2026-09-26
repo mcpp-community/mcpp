@@ -303,10 +303,14 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
         }
         return 0;
     };
-    // A failure is one envelope with diagnostics and no `data` (S2 0.2.0 §3.4:
-    // a command without data has failed), and exit 1.
-    auto failed = [&](std::string code, std::string message) -> int {
-        diagnostics.push_back({std::move(code), Severity::Error, std::move(message)});
+    // A failure with nothing to describe is one envelope with diagnostics and
+    // no `data` (S2 0.2.0 §3.4: a command without data has failed), and exit
+    // 1. `fail_no_data` finishes with whatever `diagnostics` already holds —
+    // used once a single diagnostic is pushed onto it (`failed`, below, for a
+    // usage error decided before any member is tried) and once every
+    // selected member's own planning has failed in turn (#699 item 1, E1: a
+    // workspace where nothing planned still names each member's own reason).
+    auto fail_no_data = [&]() -> int {
         if (!envelope) {
             for (auto const& d : diagnostics)
                 std::println(stderr, "{}: {}",
@@ -321,6 +325,10 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
         }).dump(2) + "\n";
         (void)publish(text);
         return 1;
+    };
+    auto failed = [&](std::string code, std::string message) -> int {
+        diagnostics.push_back({std::move(code), Severity::Error, std::move(message)});
+        return fail_no_data();
     };
 
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
@@ -340,21 +348,46 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
         requests.emplace_back(std::string{}, ov);
     }
 
+    // An offline plan that needs a download is not a defect of the project, and
+    // a client that plans offline by default (an editor) has to tell the two
+    // apart without reading the message (#648 A1). The code is taken right
+    // where a member's planning ends: `take()` clears the sink, so a refusal
+    // recorded by a member that failed cannot relabel a later member's own
+    // reason (the per-member analogue of the rule this used to apply once).
+    auto plan_failure_code = [&] {
+        const bool offline = mcpp::platform::env::offline_mode()
+                          || mcpp::platform::env::no_auto_install();
+        const bool wasOfflineDownload = mcpp::build::refusal::take()
+            == mcpp::build::refusal::Code::OfflineDownloadRequired;
+        return std::string(wasOfflineDownload && offline
+            ? "MCPP_OFFLINE_DOWNLOAD_REQUIRED" : "MCPP_BUILD_DATABASE_PLAN_FAILED");
+    };
+
     std::vector<mcpp::build::BuildContext> contexts;
     std::vector<std::filesystem::path>     workDirs;
     std::vector<std::string>               prefixes;
     std::vector<std::pair<std::filesystem::path, std::vector<std::string>>> testDiscovery;
-    std::optional<std::string>             planError;
+    // The root of every member whose planning failed: `mcpp.toml` and
+    // `build.mcpp` (when it exists) join `watch` exactly as a planned
+    // member's do (render(), below), so an edit that might fix the failure is
+    // what wakes a consumer to ask again.
+    std::vector<std::filesystem::path>     failedMemberRoots;
     {
         // Planning narrates on stdout and may start programs that inherit it;
         // the document is printed after this scope, alone.
         mcpp::platform::terminal::StdoutToStderr narration;
         for (auto& [member, mo] : requests) {
+            const auto memberRoot = member.empty() ? *root : *root / member;
+            const auto memberPath = member.empty() ? std::string("mcpp.toml")
+                                                   : member + "/mcpp.toml";
             auto discovered = mcpp::build::discover_test_targets(*root, mo.package_filter);
             if (!discovered) {
-                planError = member.empty() ? discovered.error()
-                                           : std::format("{}: {}", member, discovered.error());
-                break;
+                diagnostics.push_back({plan_failure_code(), Severity::Error,
+                    member.empty() ? discovered.error()
+                                   : std::format("{}: {}", member, discovered.error()),
+                    memberPath});
+                failedMemberRoots.push_back(memberRoot);
+                continue;
             }
             // As `--configure-only`: tests and dev-dependencies are part of the
             // surface an editor needs.
@@ -368,9 +401,12 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
                                                   includeDevDeps,
                                                   std::move(discovered->targets), mo);
             if (!ctx) {
-                planError = member.empty() ? ctx.error()
-                                           : std::format("{}: {}", member, ctx.error());
-                break;
+                diagnostics.push_back({plan_failure_code(), Severity::Error,
+                    member.empty() ? ctx.error()
+                                   : std::format("{}: {}", member, ctx.error()),
+                    memberPath});
+                failedMemberRoots.push_back(memberRoot);
+                continue;
             }
             contexts.push_back(std::move(*ctx));
             workDirs.push_back(mo.work_dir);
@@ -378,20 +414,12 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
             testDiscovery.push_back(std::move(discovery));
         }
     }
-    // An offline plan that needs a download is not a defect of the project, and
-    // a client that plans offline by default (an editor) has to tell the two
-    // apart without reading the message (#648 A1). The code is taken only while
-    // the run is offline, so a refusal recorded on a path that recovered cannot
-    // relabel an unrelated failure.
-    if (planError) {
-        const bool offline = mcpp::platform::env::offline_mode()
-                          || mcpp::platform::env::no_auto_install();
-        if (mcpp::build::refusal::take()
-                == mcpp::build::refusal::Code::OfflineDownloadRequired
-            && offline)
-            return failed("MCPP_OFFLINE_DOWNLOAD_REQUIRED", *planError);
-        return failed("MCPP_BUILD_DATABASE_PLAN_FAILED", *planError);
-    }
+    // Every selected member was planned independently (#699 item 1, E1): one
+    // that failed contributed its own diagnostic above and nothing else.
+    // Only when none of them planned is there nothing left to describe — S2
+    // has no partial outcome, so `data` is present or it is not.
+    if (contexts.empty())
+        return fail_no_data();
 
     // The lock this planning produced, against the project's. The project's is
     // never written; a difference is reported.
@@ -430,35 +458,47 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
         spec, ov.target_triple, mcpp::platform::env::get("MCPP_TOOLCHAIN").value_or(""),
         ov.profile, ov.features, ov.capabilities, ov.accel, ov.force_static,
         ov.package_filter, parsed.is_flag_set("workspace"));
-    auto rendered = mcpp::build::database::render(members, *root, selector);
+    auto rendered = mcpp::build::database::render(members, failedMemberRoots,
+                                                  *root, selector);
+    // A note's severity is its own (E3's program-failure note is an error;
+    // every other note today is a warning) and its `path`, when set, already
+    // names the file relative to the workspace root — render() rewrote it.
     for (auto& note : rendered.notes)
-        diagnostics.push_back({std::move(note.code), Severity::Warning,
-                               std::move(note.message)});
+        diagnostics.push_back({std::move(note.code), note.severity,
+                               std::move(note.message), std::move(note.path)});
 
     auto document = spec == "s1" ? std::move(rendered.database)
                                  : std::move(rendered.compileCommands);
+    // The exit status is 1 whenever an error is present (#699 item 1, E1;
+    // item 2, E3) even though `data` is: a workspace member's own failure, or
+    // a build program's, is still a failure this command reports through its
+    // exit code, only not by withholding the sets that DID plan.
+    const bool hasError = std::ranges::any_of(diagnostics,
+        [](const Diagnostic& d) { return d.severity == Severity::Error; });
     if (!envelope) {
         for (auto const& d : diagnostics)
             std::println(stderr, "{}: {}", mcpp::wire::severity_name(d.severity),
                          d.message);
-        return publish(document.dump(2) + "\n");
+        if (const auto rc = publish(document.dump(2) + "\n"); rc != 0) return rc;
+        return hasError ? 1 : 0;
     }
     std::vector<Effect> effects{Effect::ReadProject, Effect::WriteGlobalCache};
     if (ranBuildPrograms) effects.push_back(Effect::ExecBuildScript);
     nlohmann::json specJson{{"name", spec}};
     if (spec == "s1")
         specJson["version"] = std::string(mcpp::build::database::kProfileVersion);
-    return publish(mcpp::wire::to_json(mcpp::wire::Envelope{
-        .kind = "mcpp.build-database",
-        .effects = std::move(effects),
-        .data = nlohmann::json{
-            {"spec",               std::move(specJson)},
-            {"database",           std::move(document)},
-            {"watch",              std::move(rendered.watch)},
-            {"inputs-fingerprint", std::move(rendered.inputsFingerprint)},
-        },
-        .diagnostics = diagnostics,
-    }).dump(2) + "\n");
+    if (const auto rc = publish(mcpp::wire::to_json(mcpp::wire::Envelope{
+            .kind = "mcpp.build-database",
+            .effects = std::move(effects),
+            .data = nlohmann::json{
+                {"spec",               std::move(specJson)},
+                {"database",           std::move(document)},
+                {"watch",              std::move(rendered.watch)},
+                {"inputs-fingerprint", std::move(rendered.inputsFingerprint)},
+            },
+            .diagnostics = diagnostics,
+        }).dump(2) + "\n"); rc != 0) return rc;
+    return hasError ? 1 : 0;
 }
 
 export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,

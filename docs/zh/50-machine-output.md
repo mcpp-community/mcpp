@@ -432,18 +432,39 @@ mcpp emit build-database [--spec s1|compile-commands] --format json
 写入 `<file>`。文档的内容、不写入项目目录这条保证，以及 `watch` 的规则，见
 [SPEC-005](../specs/build-database.md)。
 
-失败时省略 `data` 并以 1 退出，诊断码为：不在项目中时是
+`emit` 独立规划每一个被选中的成员（#699 第 1 项）：一个成员的规划失败不会
+连累它的兄弟成员。不在项目中，或者被选中的成员全部规划失败时，信封省略
+`data` 并以 1 退出，每个失败的成员各带一条诊断：不在项目中是
 `MCPP_BUILD_DATABASE_NO_PROJECT`；离线规划（`--offline`、`MCPP_OFFLINE`、
 `MCPP_NO_AUTO_INSTALL`）需要下载某样东西（工具链、包、git 修订，或包索引，
 消息会指出第一个）时是 `MCPP_OFFLINE_DOWNLOAD_REQUIRED`；因其他原因规划失败
-时是 `MCPP_BUILD_DATABASE_PLAN_FAILED`。三者中的第一种不是项目的缺陷：不带
-`--offline` 再运行一次即可消除它。警告不影响文档本身：
+时是 `MCPP_BUILD_DATABASE_PLAN_FAILED`。离线这一种不是项目的缺陷：不带
+`--offline` 再运行一次即可消除它。每个成员的诊断都带 `path`，即该成员的
+`mcpp.toml`，相对工作区根目录。
 
-| 诊断码 | |
-|---|---|
-| `MCPP_LOCK_WOULD_CHANGE` | 解析结果与项目的 `mcpp.lock` 不一致，命令不写这个文件 |
-| `MCPP_GENERATED_FILE_NOT_MATERIALIZED` | 根包 `[build] generated_files` 中的某个文件缺失或内容已过期，命令不写这个文件 |
-| `MCPP_BUILD_DATABASE_STD_UNIT_UNDESCRIBED` | 没有任何标准库构建命令点名它的模块源文件，该单元因此不被列出 |
+只要有一个被选中的成员规划成功，`data` 就会出现，并描述每一个规划成功的
+成员：规划失败的成员不贡献任何集合，只贡献上面那样一条 `error` 诊断，它的
+`mcpp.toml` 与存在时的 `build.mcpp` 一并加入 `watch`。只要诊断里有一条是
+`error`，退出码依然是 1——因此消费方靠结构就能读出三种结果：没有 `data`；
+`data` 伴随若干 `error` 诊断，描述了诊断所指之外的一切；`data` 且没有
+`error`，不需要解析消息文本。
+
+构建程序失败的包（#699 第 2 项）会被描述为不含该程序产生的指令：清单自身
+的那部分配置、工具链、模块图与标准库单元仍照常描述，另附一条 `error` 诊断
+`MCPP_BUILD_DATABASE_PROGRAM_FAILED` 点名它，`path` 为它的 `build.mcpp`。若
+后续失败是由缺失的指令引起的，则按上面的规则使整个成员失败。包请求的宿主
+工具构建失败则降级为警告 `MCPP_BUILD_DATABASE_HOST_TOOL_UNBUILT`，点名工具、
+所属包与失败信息的第一行；规划继续进行，只点名该工具而不运行它的构建程序
+会像该工具构建成功时一样完成配置。这两者都不影响 `mcpp build`：构建程序或
+宿主工具在其中失败仍然会使构建失败。
+
+| 诊断码 | 严重级别 | |
+|---|---|---|
+| `MCPP_LOCK_WOULD_CHANGE` | 警告 | 解析结果与项目的 `mcpp.lock` 不一致，命令不写这个文件 |
+| `MCPP_GENERATED_FILE_NOT_MATERIALIZED` | 警告 | 根包 `[build] generated_files` 中的某个文件缺失或内容已过期，命令不写这个文件 |
+| `MCPP_BUILD_DATABASE_STD_UNIT_UNDESCRIBED` | 警告 | 没有任何标准库构建命令点名它的模块源文件，该单元因此不被列出 |
+| `MCPP_BUILD_DATABASE_HOST_TOOL_UNBUILT` | 警告 | 被请求的宿主工具构建失败；该工具仍会被构建，它的 `check` 动作仍会运行 |
+| `MCPP_BUILD_DATABASE_PROGRAM_FAILED` | 错误 | 构建程序失败；它所属的包被描述为不含它产生的指令 |
 
 `--protocol-version` 为这条命令声明 `init-mcpp-home`、`read-project`、
 `network`、`write-global-cache` 与 `exec-build-script`，从不声明
