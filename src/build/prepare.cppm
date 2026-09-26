@@ -13331,6 +13331,22 @@ prepare_build(bool print_fingerprint,
             stdObjectPath = sm->objectPath;
             stdCompatBmiPath = sm->compatBmiPath;
             stdCompatObjectPath = sm->compatObjectPath;
+            // C5 / D5a (design 2026-09-26 §3.5): compile_commands.json and the
+            // S1 document list the standard-library units too, so the plan
+            // needs the commands mcpp ran to build them (§13396 below), not
+            // only their output paths. `describe_std_module` is the pure
+            // derivation `ensure_built` itself reads before running anything
+            // (mcpp.toolchain.stdmod's header); calling it again here starts
+            // no process and cannot name a different command or directory.
+            // A failure here is not this build's failure -- `ensure_built`
+            // above already succeeded with the same inputs -- so it only
+            // means the description is unavailable for the plan, silently.
+            auto described = mcpp::toolchain::describe_std_module(
+                *tc, m->package.standard, stdFlagAndDialect,
+                mcpp::platform::macos::deployment_target(
+                    stdTargetIsMacos, m->buildConfig.macosDeploymentTarget),
+                mcpp::toolchain::default_cache_root(), stdCrt);
+            if (described) describedStdModule = std::move(*described);
         }
     }
 
@@ -13367,7 +13383,12 @@ prepare_build(bool print_fingerprint,
     }
     ctx.stdBmi     = stdBmiPath;
     ctx.stdObject  = stdObjectPath;
-    ctx.stdModule  = std::move(describedStdModule);
+    // Copied, not moved: `describedStdModule` is read again once `ctx.plan`
+    // exists (below), to recover the standard-library units' commands onto
+    // it (StdModuleUnit, C5 / D5a-b). A `std::optional` move leaves the
+    // source engaged with a moved-from value, so a plain move here would
+    // hand build_database.cppm's render() a value and the plan an empty one.
+    ctx.stdModule  = describedStdModule;
     // Every directory a package payload may legitimately have been INSTALLED
     // into. There is more than one: the global registry, plus the two
     // project-local data roots a custom git index installs into
@@ -13622,6 +13643,48 @@ prepare_build(bool print_fingerprint,
     // that function does depends on it: the flag assembly that does reads the
     // plan, and every reader of `compute_flags` runs after this line.
     ctx.plan.targetSide = resolvedTargetSide;
+
+    // C5 / D5a-b (design 2026-09-26 §3.5): the standard-library units this
+    // configuration's build compiles, when it imports `std`. Recovered here,
+    // once, from the SAME command derivation `ensure_built` and
+    // `describe_std_module` both read (mcpp.toolchain.stdmod), and carried on
+    // the plan (BuildPlan::stdModuleUnits) so compile_commands.json,
+    // `emit --spec compile-commands` and the S1 document render the exact
+    // same record and cannot disagree (P1, mcpp.build.compile_commands).
+    if (describedStdModule) {
+        const auto& sm = *describedStdModule;
+        auto add_std_unit = [&](const std::filesystem::path& source,
+                                const std::vector<std::string>& commands,
+                                const std::filesystem::path& object,
+                                const std::filesystem::path& bmi,
+                                std::string_view module,
+                                std::vector<std::string> requiresModules) {
+            if (source.empty() || commands.empty()) return;
+            auto inv = mcpp::build::recover_invocation(
+                commands, source, tc->binaryPath, sm.cacheDir,
+                mcpp::platform::is_windows);
+            if (!inv) {
+                planNotes.push_back({"MCPP_BUILD_DATABASE_STD_UNIT_UNDESCRIBED",
+                    std::format("no command that builds the {} module names its "
+                                "source '{}'; the unit is not listed",
+                                module, source.string())});
+                return;
+            }
+            ctx.plan.stdModuleUnits.push_back(mcpp::build::StdModuleUnit{
+                .source = source,
+                .workDirectory = std::move(inv->workDirectory),
+                .arguments = std::move(inv->arguments),
+                .object = object,
+                .bmi = bmi,
+                .module = std::string(module),
+                .requiresModules = std::move(requiresModules),
+            });
+        };
+        add_std_unit(tc->stdModuleSource, sm.stdCommands, sm.objectPath,
+                    sm.bmiPath, "std", {});
+        add_std_unit(tc->stdCompatSource, sm.compatCommands, sm.compatObjectPath,
+                    sm.compatBmiPath, "std.compat", {"std"});
+    }
 
     // A DEPENDENCY'S C++ SHARED LIBRARY OVER A C++ RUNTIME THAT IS A PACKAGE
     // (#641, item 5).

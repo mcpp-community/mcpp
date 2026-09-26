@@ -8,6 +8,7 @@ import mcpp.build.plan;
 import mcpp.libs.json;
 import mcpp.manifest.flag_words;
 import mcpp.platform;
+import mcpp.toolchain.model;
 
 using namespace mcpp::build;
 
@@ -117,6 +118,29 @@ TEST(CompileCommandsMerge, FreshEntryWinsAndNoDuplicatePerFile) {
         fresh, existing, [](const std::filesystem::path&) { return true; });
 
     EXPECT_EQ(count(merged, "/p/a.cpp"), 1u) << merged;
+    EXPECT_NE(merged.find("-FRESH"), std::string::npos) << merged;
+    EXPECT_EQ(merged.find("-STALE"), std::string::npos) << merged;
+}
+
+// §3.2 item 1: the within-configuration merge's identity is `file` resolved
+// against `directory`, not `file` alone. A prior entry with a RELATIVE `file`
+// (the shape a unit whose `directory` is not the process's own can write —
+// the standard-library units always have one, §3.3) must still be recognized
+// as the SAME file the fresh plan already covers, so it is dropped rather
+// than kept as a spurious duplicate.
+TEST(CompileCommandsMerge, ResolvesFileAgainstDirectoryForTheDedupKey) {
+    auto fresh = cdb({ entry("/p/src/main.cpp", "-FRESH") });
+    nlohmann::json e;
+    e["directory"] = "/p";
+    e["file"]      = "src/main.cpp";
+    e["arguments"] = nlohmann::json::array({ "g++", "-STALE", "-c", "src/main.cpp" });
+    e["output"]    = "o";
+    auto existing = cdb({ e.dump() });
+
+    auto merged = merge_compile_commands(
+        fresh, existing, [](const std::filesystem::path&) { return true; });
+
+    EXPECT_EQ(count(merged, "main.cpp"), 1u) << merged;
     EXPECT_NE(merged.find("-FRESH"), std::string::npos) << merged;
     EXPECT_EQ(merged.find("-STALE"), std::string::npos) << merged;
 }
@@ -481,14 +505,17 @@ TEST(CompileCommandsEmit, EmittedPathsUseNativeSeparators) {
     const auto inc      = arg_with("-I");
     const auto incAfter = arg_with("-idirafter");
 
+    // C3 (design 2026-09-26 §3.3): `directory` is the OUTPUT directory the
+    // compiler runs in, not `plan.projectRoot` — here `/p/target`.
     if constexpr (std::filesystem::path::preferred_separator == '\\') {
         EXPECT_EQ(e["file"].get<std::string>(), "C:\\Users\\x\\src\\main.cpp");
-        EXPECT_EQ(e["directory"].get<std::string>(), "\\p");
+        EXPECT_EQ(e["directory"].get<std::string>(), "\\p\\target");
         EXPECT_EQ(e["output"].get<std::string>(), "\\p\\target\\obj\\main.o");
         EXPECT_EQ(inc,      "-IC:\\proj\\generated\\inc");
         EXPECT_EQ(incAfter, "-idirafterC:\\proj\\third_party\\inc");
     } else {
         EXPECT_EQ(e["file"].get<std::string>(), "C:/Users/x/src/main.cpp");
+        EXPECT_EQ(e["directory"].get<std::string>(), "/p/target");
         EXPECT_EQ(inc,      "-IC:/proj/generated/inc");
         EXPECT_EQ(incAfter, "-idirafterC:/proj/third_party/inc");
     }
@@ -586,4 +613,94 @@ TEST(CompileCommandsEmit, UnitInvocationsAreTheCompileDatabaseArguments) {
     other.cxx = "-std=c++26";
     EXPECT_NE(j[0]["arguments"].get<std::vector<std::string>>(),
               unit_invocations(plan, other)[0].arguments);
+}
+
+// ── C3: `directory` is the output directory ─────────────────────────────────
+//
+// The JSON format and S1-8-2 define the field as the directory the compiler
+// runs in; ninja runs every compile in `plan.outputDir`, never the project
+// root (design 2026-09-26 §3.3).
+TEST(CompileCommandsEmit, AProjectUnitsDirectoryIsTheOutputDirectory) {
+    BuildPlan plan;
+    plan.projectRoot = "/p";
+    plan.outputDir = "/p/target/x86_64-linux-gnu/deadbeef";
+    plan.compileUnits.push_back({
+        .source = std::filesystem::path("/p/src/main.cpp"),
+        .kind = mcpp::SourceKind::Cxx,
+        .object = std::filesystem::path("obj") / "main.o",
+        .packageName = "demo",
+    });
+    CompileFlags flags;
+    flags.cxxBinary = "/usr/bin/g++";
+
+    auto invs = unit_invocations(plan, flags);
+    ASSERT_EQ(invs.size(), 1u);
+    EXPECT_EQ(invs[0].directory, plan.outputDir.string());
+    EXPECT_NE(invs[0].directory, plan.projectRoot.string());
+}
+
+// ── C4: the module interface language flag ──────────────────────────────────
+//
+// BmiTraits::moduleInterfaceLangFlag is stated at the position the build uses
+// (immediately before `-c`) for every unit that actually provides a module;
+// a unit that does not (an ordinary source, here) carries no such flag at
+// all (design 2026-09-26 §3.4).
+TEST(CompileCommandsEmit, InterfaceUnitCarriesTheLanguageFlagBeforeDashCAndImplementationDoesNot) {
+    BuildPlan plan;
+    plan.projectRoot = "/p";
+    plan.outputDir = "/p/target";
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::Clang;
+    plan.compileUnits.push_back({
+        .source = std::filesystem::path("/p/src/greet.cppm"),
+        .kind = mcpp::SourceKind::ModuleInterface,
+        .object = std::filesystem::path("obj") / "greet.o",
+        .packageName = "demo",
+        .providesModule = "demo.greet",
+    });
+    plan.compileUnits.push_back({
+        .source = std::filesystem::path("/p/src/main.cpp"),
+        .kind = mcpp::SourceKind::Cxx,
+        .object = std::filesystem::path("obj") / "main.o",
+        .packageName = "demo",
+    });
+    CompileFlags flags;
+    flags.cxxBinary = "/usr/bin/clang++";
+
+    auto invs = unit_invocations(plan, flags);
+    ASSERT_EQ(invs.size(), 2u);
+
+    auto& iface = invs[0].arguments;
+    auto ifaceC = std::ranges::find(iface, std::string("-c"));
+    ASSERT_NE(ifaceC, iface.end());
+    ASSERT_GE(std::distance(iface.begin(), ifaceC), 2);
+    EXPECT_EQ(*(ifaceC - 2), "-x");
+    EXPECT_EQ(*(ifaceC - 1), "c++-module");
+
+    auto& impl = invs[1].arguments;
+    EXPECT_EQ(std::ranges::find(impl, std::string("-x")), impl.end());
+}
+
+// MSVC's form (`/interface /TP`) stays out of the record until a Windows
+// measurement of clang-cl-mode clangd answers whether it accepts `/interface`
+// (design §3.4, "Open"); until then an MSVC plan carries no language flag at
+// all, matching the implementation-unit case above rather than guessing.
+TEST(CompileCommandsEmit, MsvcCarriesNoLanguageFlagYet) {
+    BuildPlan plan;
+    plan.projectRoot = "/p";
+    plan.outputDir = "/p/target";
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
+    plan.compileUnits.push_back({
+        .source = std::filesystem::path("/p/src/greet.cppm"),
+        .kind = mcpp::SourceKind::ModuleInterface,
+        .object = std::filesystem::path("obj") / "greet.o",
+        .packageName = "demo",
+        .providesModule = "demo.greet",
+    });
+    CompileFlags flags;
+    flags.cxxBinary = "/vs/cl.exe";
+
+    auto invs = unit_invocations(plan, flags);
+    ASSERT_EQ(invs.size(), 1u);
+    EXPECT_EQ(std::ranges::find(invs[0].arguments, std::string("/interface")),
+              invs[0].arguments.end());
 }
