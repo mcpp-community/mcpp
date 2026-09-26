@@ -4,13 +4,13 @@
 |---|---|
 | 规范编号 | SPEC-005 |
 | 标题 | mcpp 输出的构建数据库:内容、取值规则与不写工程目录的保证 |
-| 状态 | 评审中 v1.2 |
-| 版本 | 1.2 |
-| 最后修改 | 2026-09-17 |
-| 对应实现 | mcpp >= 2026.9.15.1 |
-| 相关设计文档 | `.agents/docs/2026-09-14-636-build-database-and-the-latest-xlings.md` |
-| 相关 issue | #636, #648, #655 |
-| 依据的外部规范 | S1「C++ Build Database: IDE Profile」profile 0.2.0 与 S2 0.2.0 §3.4,取自 https://github.com/Sunrisepeak/lsp-mcpp-private 提交 `b82859d`(schema 自提交 `28ecd6e` 起未变);JSON Compilation Database |
+| 状态 | 评审中 v1.3 |
+| 版本 | 1.3 |
+| 最后修改 | 2026-09-26 |
+| 对应实现 | mcpp >= 2026.9.15.1;v1.3 修改的 R2.5、R3.7、R3.8、R4.1、R5.2 为 mcpp >= 2026.9.27.1 |
+| 相关设计文档 | `.agents/docs/2026-09-14-636-build-database-and-the-latest-xlings.md`<br>`.agents/docs/2026-09-26-compile-database-and-issue-699-design.md` |
+| 相关 issue | #636, #648, #655, #699, #702 |
+| 依据的外部规范 | S1「C++ Build Database: IDE Profile」profile 0.2.0 与 S2 0.2.0 §3.4,取自 https://github.com/Sunrisepeak/lsp-mcpp-private 提交 `b82859d`(schema 自提交 `28ecd6e` 起未变);S2 0.3.0 §3.4 的部分回答(S2-3.4-12、S2-3.4-13,Sunrisepeak/mcpp-language-server#25);JSON Compilation Database |
 
 ## 0. 适用范围
 
@@ -199,3 +199,4 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 | 1.0 | 2026-09-14 | 首版(#636)。 |
 | 1.1 | 2026-09-16 | R5.2 增加离线诊断码 `MCPP_OFFLINE_DOWNLOAD_REQUIRED`;R5.3 的 `network` 按观测列出;新增 R5.4(子进程不继承调用方描述符,xlings 子进程有期限并随 mcpp 结束)(#648)。 |
 | 1.2 | 2026-09-17 | R3.7 陈述 `arguments` 的每一项是编译器收到的参数,单元 flag 按 SPEC-004 §8 的词列出(#655)。 |
+| 1.3 | 2026-09-26 | R2.5:`emit` 下构建失败的宿主工具是警告。R3.7:`work-directory` 是输出目录,模块接口单元的 `arguments` 带语言 flag。R3.8:标准库单元的 `provides` 指向 std 缓存中的 BMI,工具链带 `build-id`。R4.1:compile-commands 文档包含标准库单元(S1-12-1)。R5.2:成员各自规划,构建程序失败的包不带其指令地被描述(#699,#702)。 |
