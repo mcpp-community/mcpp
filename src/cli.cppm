@@ -929,6 +929,11 @@ int run(int argc, char** argv) {
             .option(cl::Option("verify").takes_value().value_name("MODE")
                 .help("How an existing destination is judged up to date: content (default) | size"))
             .action(wrap_rc(cmd_stage)))
+        .subcommand(cl::App("place-dlls")
+            .description("(internal: invoked by ninja) Place beside a Windows program the DLLs it imports from its runtime search directories")
+            .option(cl::Option("output").takes_value().value_name("PATH").help("the stamp to write"))
+            .option(cl::Option("depfile").takes_value().value_name("PATH").help("the depfile naming every DLL placed"))
+            .action(wrap_rc(cmd_place_dlls)))
         .subcommand(cl::App("coff-def")
             .description("(internal: invoked by ninja) Write a .def of every exportable symbol in the given COFF objects")
             .option(cl::Option("output").takes_value().value_name("PATH").help("the .def to write"))
@@ -974,8 +979,9 @@ int run(int argc, char** argv) {
         return 0;
     }
 
-    // `mcpp __action-stamp <stamp>... -- <argv>...` — internal, and absent
-    // from the usage text on purpose: nobody types it, ninja does.
+    // `mcpp __action-stamp [--require-dir <dir>] <stamp>... -- <argv>...` —
+    // internal, and absent from the usage text on purpose: nobody types it,
+    // ninja does.
     //
     // WHY IT EXISTS. A `role = "check"` action's output is a stamp file, and
     // until now the COMMAND had to create it. Analysers do not: clang-tidy's
@@ -984,17 +990,45 @@ int run(int argc, char** argv) {
     // no shell assumed, which is right for Windows and is exactly what made
     // the wrapper unwritable there. The role with no ecosystem consumer also
     // had no portable way to acquire one, and that was not a coincidence.
+    // `role = "prepare"` (mcpp#702) shares the same stamp -- its command
+    // populates a directory rather than writing the stamp itself either.
     //
     // The engine is the portable wrapper. It is already on disk on every
     // platform mcpp runs on, so this needs no shell, no `touch`, and no
     // per-platform spelling.
     //
-    // A command that already creates its stamp is unaffected: existing files
-    // are left alone, so the pre-2026.8.29.1 wrapper scripts keep working
-    // byte-for-byte.
+    // A command that writes its own stamp is unaffected: a stamp the command
+    // created or rewrote is left as the command left it, so the
+    // pre-2026.8.29.1 wrapper scripts keep working byte-for-byte.
+    //
+    // EVERY STAMP IS NEWER THAN EVERY INPUT AFTER SUCCESS (R2, design §5.4),
+    // in its simple form: the engine creates each stamp that is missing and
+    // sets the modification time of each EXISTING one to the present,
+    // whether or not the command wrote it. No record of a stamp's time
+    // before the run is needed — a stamp feeds no compile or link edge (a
+    // blocking `check` or a `prepare` action orders edges through an
+    // order-only edge instead), so unconditionally touching a stamp the
+    // command already wrote changes no build. Until 2026.9.26.2 an existing
+    // stamp was left alone whatever the command did, and every check whose
+    // command writes nothing -- clang-tidy, an installer run through
+    // `mcpp-deps` -- re-ran on every build after its first input change,
+    // because its output stayed older than that input forever.
     if (std::string_view(argv[1]) == "__action-stamp") {
-        std::vector<std::string> stamps;
         int i = 2;
+        // `prepare` only: the directory its command populates
+        // (`mcpp::action::output_dir`). Parsed before the stamp list, which
+        // is otherwise everything up to `--`, so this flag cannot be mistaken
+        // for a stamp path.
+        std::string requireDir;
+        if (i < argc && std::string_view(argv[i]) == "--require-dir") {
+            if (i + 1 >= argc) {
+                std::println(stderr, "error: --require-dir requires a directory");
+                return 2;
+            }
+            requireDir = argv[i + 1];
+            i += 2;
+        }
+        std::vector<std::string> stamps;
         for (; i < argc && std::string_view(argv[i]) != "--"; ++i)
             stamps.emplace_back(argv[i]);
         if (i >= argc || stamps.empty()) {
@@ -1014,8 +1048,53 @@ int run(int argc, char** argv) {
         const int r = mcpp::platform::process::run_exec(cmd);
         // The stamps are written ONLY on success. Writing them anyway would
         // make ninja consider the edge satisfied, so the next build would skip
-        // a check that had never passed.
+        // a check (or a `prepare`) that had never passed.
         if (r != 0) return r;
+        // `prepare`'s post-condition (design §5.4 P, SPEC-007 R3.2/R3.3): the
+        // declared directory must exist once the command has succeeded,
+        // whether or not the command itself created it — a Qt `lupdate`
+        // action's directory, for instance, is an existing source tree it
+        // rewrites, never a fresh one. Checked BEFORE any stamp is written,
+        // so a missing directory fails the edge exactly as a failing command
+        // does: no stamp, and the next build tries again.
+        //
+        // POPULATED, NOT MERELY PRESENT. ninja creates the parent directory of
+        // every declared output before it runs the command, so a stamp declared
+        // inside the directory makes the directory exist whatever the command
+        // did. The directory therefore has to hold at least one file that is
+        // not one of this action's stamps; directories alone do not count.
+        // The walk stops at the first such file, so an installed prefix of
+        // thousands of files costs one lookup.
+        if (!requireDir.empty()) {
+            std::error_code ec;
+            const auto dir =
+                mcpp::platform::fs::extended_length(std::filesystem::path{requireDir});
+            std::vector<std::filesystem::path> stampPaths;
+            for (auto const& s : stamps)
+                stampPaths.push_back(std::filesystem::absolute(
+                    mcpp::platform::fs::extended_length(std::filesystem::path{s}), ec)
+                    .lexically_normal());
+            bool populated = false;
+            if (std::filesystem::is_directory(dir, ec)) {
+                for (auto it = std::filesystem::recursive_directory_iterator(
+                         dir, std::filesystem::directory_options::skip_permission_denied, ec);
+                     !ec && it != std::filesystem::recursive_directory_iterator();
+                     it.increment(ec)) {
+                    std::error_code tec;
+                    if (it->is_directory(tec)) continue;
+                    const auto entry = std::filesystem::absolute(it->path(), tec).lexically_normal();
+                    if (std::ranges::find(stampPaths, entry) != stampPaths.end()) continue;
+                    populated = true;
+                    break;
+                }
+            }
+            if (!populated) {
+                std::println(stderr,
+                    "error: prepare action succeeded, but its declared "
+                    "directory '{}' does not exist or holds no file", requireDir);
+                return 1;
+            }
+        }
         for (auto const& s : stamps) {
             std::error_code ec;
             // Relative to the build directory, which can be deep enough to
@@ -1023,7 +1102,15 @@ int run(int argc, char** argv) {
             const auto p = mcpp::platform::fs::extended_length(std::filesystem::path{s});
             if (!p.parent_path().empty())
                 std::filesystem::create_directories(p.parent_path(), ec);
-            if (std::filesystem::exists(p, ec)) continue;
+            if (std::filesystem::exists(p, ec)) {
+                std::filesystem::last_write_time(
+                    p, std::filesystem::file_time_type::clock::now(), ec);
+                if (ec) {
+                    std::println(stderr, "error: cannot update check stamp '{}': {}", s, ec.message());
+                    return 1;
+                }
+                continue;
+            }
             std::ofstream out(p, std::ios::trunc);
             if (!out) {
                 std::println(stderr, "error: cannot write check stamp '{}'", s);
@@ -1122,6 +1209,7 @@ int run(int argc, char** argv) {
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
                 "version", "dyndep", "why", "resolve", "stage", "bmi-equal", "coff-def",
+                "place-dlls",
                 "bmi-compile", "bmi-supervise", "bmi-await",
             });
             bool ok = false;

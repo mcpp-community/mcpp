@@ -11,6 +11,7 @@ export module mcpp.build.execute;
 
 import std;
 import mcpp.build.build_program;   // #359 glob inputs the mtime sweep cannot see
+import mcpp.build.compile_commands; // C1: the fast path restores a deleted root CDB
 import mcpp.build.prepare;
 import mcpp.pack;                  // #622 A10: mcpp::pack::Options / Format
 import mcpp.pack.pipeline;         // #622 A10: build_and_pack, for `run --format`
@@ -1405,6 +1406,34 @@ export int list_runners(const std::string& package_filter,
     return 0;
 }
 
+// C1: a deleted root compile_commands.json used to stay deleted forever on
+// the fast path, because nothing on it ever reached a writer (the fast path
+// is defined as "skip preparation" — see the hooksActive check below, and
+// design .agents/docs/2026-09-26-compile-database-and-issue-699-design.md
+// §3.2 item 4). This restores it from the configuration's own database,
+// already on disk at `outputDir` — no plan is built, so P3 (the fast path
+// replays a build) holds: the root file is a copy, never a fresh plan.
+// Errors are reported as warnings and never fail the fast build itself: a
+// permission problem here is exactly what a normal build would already warn
+// about (`write_compile_commands`), not a reason to fall back to the full
+// path.
+void restore_root_compile_commands(const std::filesystem::path& projectRoot,
+                                   const std::filesystem::path& outputDir) {
+    auto configPath = outputDir / "compile_commands.json";
+    std::error_code ec;
+    if (!std::filesystem::exists(configPath, ec) || ec) return;
+    auto rootPath = projectRoot / "compile_commands.json";
+    auto targetRoot = outputDir.parent_path().parent_path();
+    auto result = mcpp::build::publish_root_compile_commands(
+        configPath, rootPath, targetRoot, mcpp::home::root());
+    if (!result) {
+        mcpp::ui::warning(std::format(
+            "compile_commands.json was not updated: {}", result.error().message));
+    } else if (result->foreignEntries > 0) {
+        mcpp::ui::warning(mcpp::build::foreign_entries_warning(result->foreignEntries));
+    }
+}
+
 export std::optional<int> try_fast_build(const std::filesystem::path& projectRoot,
                                   bool verbose, bool no_cache,
                                   std::string_view currentTarget = "") {
@@ -1519,6 +1548,11 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     if (!validatedBefore) return std::nullopt;
 
     // All inputs are older than build.ninja → fast-path: just run ninja.
+    // C1: this configuration is confirmed current, so the root database is
+    // restored here rather than left to whatever a NEXT full build happens to
+    // do — a project that never edits a source again would otherwise never
+    // see it back.
+    restore_root_compile_commands(projectRoot, outputDir);
     std::chrono::milliseconds elapsed{};
     auto rc = run_ninja_fast(ninjaProgram, outputDir, ninjaPath, verbose,
                              runtimeEnvKey, runtimeEnvValue, &elapsed);
@@ -1667,7 +1701,8 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     if (!validatedBefore) return std::nullopt;
 
     // Fresh → run ninja (picks up any incremental object/link work) then
-    // exec the cached exe path directly.
+    // exec the cached exe path directly. C1, same reason as try_fast_build's.
+    restore_root_compile_commands(projectRoot, outputDir);
     auto rc = run_ninja_fast(ninjaProgram, outputDir, ninjaPath, /*verbose=*/false,
                              match->runtimeEnvKey, match->runtimeEnvValue);
     if (!rc) return std::nullopt;

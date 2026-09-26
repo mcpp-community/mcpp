@@ -449,3 +449,49 @@ jobs:
             "ok: a program over a C++ shared library runs on one C++ runtime" \
             "ok: a stated self-contained program over a coupled C++ shared library is refused" \
             "PASS: 700 a program over a C++ shared library has one C++ runtime"
+
+      # The compile database (#699 report, design 2026-09-26 §3): the scripts
+      # whose rows need llvm declare `# requires: llvm`, which no shard has, so
+      # they run here and each is held to the lines it prints only when the
+      # property it names was checked.
+      - name: "Compile database e2e that needs llvm (783, 784, 785, 786)"
+        run: |
+          set -o pipefail
+          # The scripts read the database with python3, which this container
+          # lacks. It is not a toolchain: the job's property (no host compiler,
+          # no host C runtime) was asserted before the checkout and still holds.
+          if ! command -v python3 >/dev/null 2>&1; then
+            apt-get install -y -qq python3 >/dev/null
+            if command -v gcc >/dev/null 2>&1; then
+              echo "::error::installing python3 brought a host compiler"; exit 1
+            fi
+          fi
+          export PATH="$HOME/.xlings/subos/current/bin:$PATH"
+          export MCPP
+          run_and_assert() {   # $1 = script; the remaining arguments are lines it must print
+            local script="$1"; shift
+            local log="$RUNNER_TEMP/$(basename "$script").log"
+            bash "$script" 2>&1 | tee "$log"
+            for line in "$@"; do
+              grep -qxF "$line" "$log" || { echo "::error::$script did not print: $line"; exit 1; }
+            done
+          }
+          run_and_assert tests/e2e/783_cdb_switches_whole_with_the_configuration.sh \
+            "ok: mcpp test then mcpp build keep the test entry in one configuration" \
+            "ok: switching toolchain switches the whole root file" \
+            "ok: switching back restores that configuration's entries, test units included" \
+            "PASS: 783 one compile database per configuration"
+          run_and_assert tests/e2e/784_cdb_replays_from_its_directory.sh \
+            "ok: gcc row replays every entry from its directory, no gcm.cache/ in the project root" \
+            "ok: llvm row replays every entry from its directory" \
+            "PASS: 784 the compile database replays from its own directory"
+          run_and_assert tests/e2e/785_cdb_interface_flag_module_extensions.sh \
+            "ok: the interface entry carries -x c++-module immediately before -c, and replays" \
+            "ok: the non-module unit carries no language flag" \
+            "PASS: 785 the compile database states a module interface's language explicitly"
+          run_and_assert tests/e2e/786_std_unit_in_the_database_and_build_id.sh \
+            "ok: the std unit's directory is the shared std cache, not the project's output directory" \
+            "ok: emit --spec compile-commands renders the same std entry as the build's database" \
+            "ok: provides['std'] names the std-cache BMI" \
+            "ok: build-id is present and stable across two runs" \
+            "PASS: 786 the std unit in the database, emit/build agreement, provides and build-id"

@@ -38,6 +38,7 @@ export module mcpp.pack;
 
 import std;
 import mcpp.build.loader_contract;
+import mcpp.build.stage;      // place_runtime_dlls publishes through the staging primitive
 import mcpp.config;
 import mcpp.pack.binfmt;
 import mcpp.pack.host_requirements;
@@ -332,6 +333,11 @@ struct ClosureReadInput {
     std::vector<std::filesystem::path> platformDirs;  // Android
     std::vector<std::string>           forceBundle;   // Pe: overrides the system list
     std::string                        arch;          // MachO: the slice of a fat file
+    // Pe: names never resolved in `searchDirs.front()`. `place_runtime_dlls`
+    // passes the copies an earlier placement put beside the program, so that
+    // each resolves again where it came from instead of shadowing a newer
+    // version there. `mcpp pack` leaves it empty.
+    std::vector<std::string>           notInFirstDir;
 };
 
 // A name that resolved to a file, and where that file is staged: `dest` is
@@ -357,6 +363,40 @@ struct ClosureRead {
 // only file-system access is reading the objects and asking whether a file
 // exists.
 ClosureRead read_closure(const ClosureReadInput& in);
+
+// WHAT A WINDOWS PROGRAM NEEDS BESIDE IT AFTER ITS LINK (SPEC-007 R4.3).
+//
+// A PE image has no run path: the loader searches the program's directory,
+// the system directories and `PATH`, and nothing the program carries. A DLL in
+// a runtime search directory therefore serves `mcpp run`, which puts those
+// directories on `PATH`, and `mcpp pack`, which stages the closure; a program
+// started by hand from the build directory does not find it. The platform's
+// own answer is placement: vcpkg's integration copies a program's imported
+// DLLs beside it after the link, and CMake names the same set
+// `$<TARGET_RUNTIME_DLLS>`.
+//
+// This is that placement, as one engine mechanism that names no tool. The
+// closure is `mcpp pack`'s (`read_closure` under `ClosureRule::Pe`, with its
+// system rule), searched in the program's own directory first and then in the
+// runtime search directories, in their order. Every resolved DLL outside the
+// program's directory is published beside the program through the staging
+// primitive, which writes only when the bytes differ. `sources` lists what was
+// resolved, for the edge's depfile, so that a DLL replaced in its directory is
+// placed again on the next build; `names` lists the DLLs placed, which the
+// caller records and passes back as `placedBefore` on the next run, so that a
+// copy this function put beside the program is resolved again from its
+// directory rather than taken for a file of the program's own; `notes` names
+// each DLL that more than one directory offers, with the one the search order
+// chose.
+struct RuntimeDllPlacement {
+    std::vector<std::filesystem::path> sources;
+    std::vector<std::string>           names;
+    std::vector<std::string>           notes;
+};
+std::expected<RuntimeDllPlacement, Error>
+place_runtime_dlls(const std::filesystem::path& program,
+                   const std::vector<std::filesystem::path>& searchDirs,
+                   const std::vector<std::string>& placedBefore = {});
 
 // Build a Plan from already-resolved inputs. Caller is expected to have
 // already run `mcpp build` (or equivalent) and pass the resulting
@@ -1320,6 +1360,66 @@ make_tarball(const std::filesystem::path& stagingRoot,
 
 } // namespace detail
 
+std::expected<RuntimeDllPlacement, Error>
+place_runtime_dlls(const std::filesystem::path& program,
+                   const std::vector<std::filesystem::path>& searchDirs,
+                   const std::vector<std::string>& placedBefore)
+{
+    const auto programDir = program.parent_path();
+    auto same_dir = [](const std::filesystem::path& a, const std::filesystem::path& b) {
+        std::error_code ec;
+        if (std::filesystem::equivalent(a, b, ec)) return true;
+        return a.lexically_normal() == b.lexically_normal();
+    };
+
+    ClosureReadInput in;
+    in.object = program;
+    in.rule   = ClosureRule::Pe;
+    in.searchDirs.push_back(programDir.empty() ? std::filesystem::path(".") : programDir);
+    for (auto const& d : searchDirs)
+        if (!same_dir(d, in.searchDirs.front())) in.searchDirs.push_back(d);
+    in.notInFirstDir = placedBefore;
+    const auto read = read_closure(in);
+
+    // The program itself is the one object the caller chose, so a program that
+    // cannot be read is an error; `read_closure` reports it as unresolved
+    // under the program's own name.
+    for (auto const& u : read.unresolved)
+        if (u.name == program.filename().string())
+            return std::unexpected(Error{std::format(
+                "cannot read the imports of '{}': {}", program.string(), u.why)});
+
+    RuntimeDllPlacement out;
+    for (auto const& m : read.members) {
+        if (same_dir(m.source.parent_path(), in.searchDirs.front())) continue;
+        auto staged = mcpp::build::stage::stage_file(m.source, programDir / m.name);
+        if (!staged)
+            return std::unexpected(Error{std::format(
+                "cannot place '{}' beside '{}': {}", m.source.string(),
+                program.filename().string(), staged.error().message)});
+        out.sources.push_back(m.source);
+        out.names.push_back(m.name);
+        // Search order decides between two directories that offer one name,
+        // and the decision is stated, because the other copy may be the one
+        // the author meant.
+        std::vector<std::filesystem::path> offering;
+        for (std::size_t i = 1; i < in.searchDirs.size(); ++i) {
+            std::error_code ec;
+            if (std::filesystem::is_regular_file(in.searchDirs[i] / m.name, ec))
+                offering.push_back(in.searchDirs[i]);
+        }
+        if (offering.size() > 1) {
+            std::string others;
+            for (std::size_t i = 1; i < offering.size(); ++i)
+                others += (others.empty() ? "" : ", ") + offering[i].string();
+            out.notes.push_back(std::format(
+                "'{}' is offered by {} and by {}; the program receives the first, in "
+                "runtime search order", m.name, offering.front().string(), others));
+        }
+    }
+    return out;
+}
+
 ClosureRead read_closure(const ClosureReadInput& in)
 {
     namespace bf = mcpp::pack::binfmt;
@@ -1381,8 +1481,12 @@ ClosureRead read_closure(const ClosureReadInput& in)
                     continue;
                 }
                 std::optional<std::filesystem::path> hit;
-                for (auto const& dir : in.searchDirs)
-                    if (is_file(dir / name)) { hit = dir / name; break; }
+                const bool skipFirst = std::ranges::any_of(in.notInFirstDir,
+                    [&](const std::string& n) { return lower(n) == lower(name); });
+                for (std::size_t d = 0; d < in.searchDirs.size(); ++d) {
+                    if (d == 0 && skipFirst) continue;
+                    if (is_file(in.searchDirs[d] / name)) { hit = in.searchDirs[d] / name; break; }
+                }
                 if (hit) {
                     out.members.push_back({name, *hit, std::filesystem::path(name)});
                     // Transitive: a staged library brings its own needs, and a

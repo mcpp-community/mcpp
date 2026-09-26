@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-310 records.
+311 records.
 
 ## By subject
 
@@ -30,6 +30,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### design
 
+- [The compile database, `emit build-database`, and #701/#702: triage against the specifications, and one design](2026-09-26-compile-database-and-issue-699-design.md) — landed
 - [Issues #693 to #696: triage against mcpp's contracts, and one repair plan](2026-09-25-issues-693-696-triage-and-repair-plan.md) — landed
 - [Workspace inheritance, flag scoping and the published form: a unified repair plan (#690)](2026-09-25-issue-690-workspace-build-inheritance-consistency.md) — landed
 - [MSVC toolset 的选择、#685、#687 与工具链管理规范：总体设计](2026-09-24-toolchain-selection-and-payload-trust-design.md) — active
@@ -101,6 +102,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-09
 
+- [The compile database, `emit build-database`, and #701/#702: triage against the specifications, and one design](2026-09-26-compile-database-and-issue-699-design.md) — landed
 - [Issues #693 to #696: triage against mcpp's contracts, and one repair plan](2026-09-25-issues-693-696-triage-and-repair-plan.md) — landed
 - [Workspace inheritance, flag scoping and the published form: a unified repair plan (#690)](2026-09-25-issue-690-workspace-build-inheritance-consistency.md) — landed
 - [#690: self-review before release, engine and ecosystem](2026-09-25-issue-690-self-review.md) — landed

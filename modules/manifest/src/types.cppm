@@ -485,7 +485,17 @@ inline bool is_empty(const BuildInputs& b) {
 // prepare, and all of them need to know which files exist. Content may arrive
 // later; names may not.
 struct BuildAction {
-    enum class Role { Source, Check, Object, Artifact };
+    // `Prepare` (mcpp#702): construction whose file names are not known when
+    // the build program runs -- installing a vcpkg manifest or a CMake
+    // subproject into a prefix, unpacking an SDK. Its outputs are stamps (the
+    // engine writes them exactly as for `Check`) and one declared directory,
+    // `outputDir` below, which the command populates and which the build
+    // reads BY DIRECTORY through `include_dir`/`link_search`/
+    // `runtime_search_dir` rather than by naming files. A role of its own,
+    // not `Check` with `blocking = true`: a role is read by engine decisions
+    // (the ordering below, and any future one) that must not also catch every
+    // verification action just because it blocks compilation.
+    enum class Role { Source, Check, Object, Artifact, Prepare };
 
     std::string                        id;        // diagnostics + edge naming
     // Which package's `build.mcpp` declared this. Filled by the engine when
@@ -546,6 +556,14 @@ struct BuildAction {
     std::vector<std::string>           imports;
     // Check only: make compilation wait for this to pass. Off by default.
     bool                               blocking = false;
+    // Prepare only: the directory the command populates (mcpp#702). Absolute
+    // once `prepare_actions` has run, exactly as `outputs`/`depfile` are.
+    // Empty for every other role. The post-condition it carries -- the
+    // directory must exist after the command succeeds, whether or not the
+    // command created it -- is checked by the engine's stamp wrapper
+    // (`__action-stamp`, src/cli.cppm), the same one `Check`'s stamp goes
+    // through, not by anything in this struct.
+    std::string                        outputDir;
     // A Make-style dependency file the action's COMMAND writes as a side
     // effect — ninja reads it once the command exits and folds it into its
     // own dependency log, the same `deps = gcc` mechanism a `cxx_object` edge

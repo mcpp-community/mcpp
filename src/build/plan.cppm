@@ -224,6 +224,49 @@ StaticPlacement place_static_packages(
     const std::map<std::size_t, std::size_t>&              sharedImages,
     const std::set<std::size_t>&                           boundaries);
 
+// The standard-library units this configuration's build compiles, when it
+// imports `std` (design 2026-09-26 §3.5, D5a/D5b). Populated once, in
+// prepare.cppm, by recovering the invocation from the command mcpp actually
+// ran to build the module into the shared std cache
+// (mcpp.toolchain.stdmod::StdModuleDescription) — recovered here, on the
+// plan, rather than separately by each renderer, so compile_commands.json,
+// `emit --spec compile-commands` and the S1 document cannot list different
+// arguments for the same unit (P1, mcpp.build.compile_commands's header).
+// Zero, one (`std`) or two (`std`, `std.compat`) entries.
+struct StdModuleUnit {
+    std::filesystem::path    source;
+    std::filesystem::path    workDirectory;    // the shared std cache, not outputDir
+    std::vector<std::string> arguments;        // driver first, as recovered
+    std::filesystem::path    object;
+    std::filesystem::path    bmi;              // the BMI the build writes (S1 `provides`)
+    std::string              module;           // "std" | "std.compat"
+    std::vector<std::string> requiresModules;  // {} for std, {"std"} for std.compat
+};
+
+// Splits a command string mcpp rendered for the host shell into words,
+// undoing its quoting: POSIX `sh` rules, or the Microsoft C runtime's rules
+// on Windows. The reader is mcpp::manifest::host_command_words; this name is
+// kept for the standard-library units' recovery below.
+std::vector<std::string> split_command_words(std::string_view command, bool windows);
+
+// The working directory and argument vector of the command in `commands`
+// whose words name `source`, recovered from the rendering: a leading `cd`, an
+// `env` word and environment assignments, and redirections are removed. A
+// driver path that the rendering left unquoted despite a space is rejoined.
+// Empty when no command names the source. Used to populate
+// StdModuleUnit::workDirectory/arguments (prepare.cppm) from
+// mcpp.toolchain.stdmod::StdModuleDescription's recorded commands.
+struct RecoveredInvocation {
+    std::filesystem::path    workDirectory;
+    std::vector<std::string> arguments;
+};
+std::optional<RecoveredInvocation> recover_invocation(
+    const std::vector<std::string>& commands,
+    const std::filesystem::path& source,
+    const std::filesystem::path& driver,
+    const std::filesystem::path& defaultDirectory,
+    bool windows);
+
 struct BuildPlan {
     mcpp::manifest::Manifest        manifest;
     // Packages whose declared `[build] c_standard` the compiler does not apply,
@@ -307,6 +350,8 @@ struct BuildPlan {
     // (possibly read-only) registry directory, and deriving the path would put
     // an IDE database there. Empty → projectRoot, the historical default.
     std::filesystem::path           compileDbPath;
+    // See StdModuleUnit above. Empty when the build does not import `std`.
+    std::vector<StdModuleUnit>      stdModuleUnits;
     // GCC only: a specs file that replaces the pristine `*link:`, so the
     // payload's own (patched by every home that ever installed against it)
     // cannot inject rpath entries into this build's artifacts. Empty for
@@ -2408,6 +2453,110 @@ package_link_objects(const BuildPlan& plan, std::string_view packageName) {
         if (cu.packageName == packageName && is_implementation_source(cu.kind))
             objects.push_back(cu.object);
     return objects;
+}
+
+namespace {
+
+// `V=x`: an environment assignment word, the shape mcpp's own `env` prefix
+// renders before a driver's argv. Recognized so it can be skipped rather
+// than mistaken for the driver or an input path.
+bool std_command_is_assignment(std::string_view w) {
+    auto eq = w.find('=');
+    if (eq == std::string_view::npos || eq == 0) return false;
+    if (!(std::isalpha(static_cast<unsigned char>(w[0])) || w[0] == '_')) return false;
+    for (std::size_t i = 1; i < eq; ++i) {
+        const unsigned char c = static_cast<unsigned char>(w[i]);
+        if (!(std::isalnum(c) || c == '_')) return false;
+    }
+    return true;
+}
+
+// `2>&1`, `>file`, `<NUL`, `2>nul`, `</dev/null`: one word. `>`, `2>`, `<`,
+// `>>`: the target is the next word.
+enum class StdCommandRedirect { None, Attached, Detached };
+StdCommandRedirect std_command_redirect_kind(std::string_view w) {
+    std::size_t i = 0;
+    while (i < w.size() && std::isdigit(static_cast<unsigned char>(w[i]))) ++i;
+    if (i >= w.size() || (w[i] != '>' && w[i] != '<')) return StdCommandRedirect::None;
+    std::size_t j = i + 1;
+    if (j < w.size() && w[j] == w[i]) ++j;          // `>>`
+    return j == w.size() ? StdCommandRedirect::Detached : StdCommandRedirect::Attached;
+}
+
+bool std_command_names_path(std::string_view word, const std::filesystem::path& path,
+                            const std::filesystem::path& cwd) {
+    std::filesystem::path w{std::string(word)};
+    const auto want = path.lexically_normal();
+    if (w.lexically_normal() == want) return true;
+    if (!w.is_absolute() && !cwd.empty() && (cwd / w).lexically_normal() == want)
+        return true;
+    return false;
+}
+
+} // namespace
+
+std::vector<std::string> split_command_words(std::string_view s, bool windows) {
+    return mcpp::manifest::host_command_words(s, windows);
+}
+
+std::optional<RecoveredInvocation> recover_invocation(
+    const std::vector<std::string>& commands,
+    const std::filesystem::path& source,
+    const std::filesystem::path& driver,
+    const std::filesystem::path& defaultDirectory,
+    bool windows) {
+    const std::string driverText = driver.string();
+    for (auto const& command : commands) {
+        auto words = split_command_words(command, windows);
+        std::vector<std::vector<std::string>> segments(1);
+        for (auto& w : words) {
+            if (w == "&&") segments.emplace_back();
+            else segments.back().push_back(std::move(w));
+        }
+        std::filesystem::path cwd;
+        for (auto& seg : segments) {
+            if (seg.empty()) continue;
+            if (seg.front() == "cd") {
+                std::size_t k = 1;
+                if (k < seg.size() && (seg[k] == "/d" || seg[k] == "/D")) ++k;
+                if (k < seg.size()) cwd = std::filesystem::path{seg[k]};
+                continue;
+            }
+            std::size_t b = 0;
+            if (b < seg.size() && seg[b] == "env") ++b;
+            while (b < seg.size() && std_command_is_assignment(seg[b])) ++b;
+            std::vector<std::string> argv;
+            for (std::size_t k = b; k < seg.size(); ++k) {
+                switch (std_command_redirect_kind(seg[k])) {
+                    case StdCommandRedirect::Attached: continue;
+                    case StdCommandRedirect::Detached: ++k; continue;
+                    case StdCommandRedirect::None:     argv.push_back(seg[k]);
+                }
+            }
+            if (argv.empty()) continue;
+            // A driver path rendered without quotes splits at its spaces.
+            if (argv.front() != driverText
+                && driverText.find(' ') != std::string::npos) {
+                std::string joined = argv.front();
+                std::size_t k = 1;
+                while (k < argv.size() && joined.size() < driverText.size()) {
+                    joined += ' ';
+                    joined += argv[k];
+                    ++k;
+                }
+                if (joined == driverText) {
+                    argv.erase(argv.begin() + 1, argv.begin() + static_cast<std::ptrdiff_t>(k));
+                    argv.front() = driverText;
+                }
+            }
+            const bool named = std::ranges::any_of(argv, [&](const std::string& w) {
+                return std_command_names_path(w, source, cwd.empty() ? defaultDirectory : cwd);
+            });
+            if (!named) continue;
+            return RecoveredInvocation{cwd.empty() ? defaultDirectory : cwd, std::move(argv)};
+        }
+    }
+    return std::nullopt;
 }
 
 } // namespace mcpp::build

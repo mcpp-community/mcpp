@@ -152,6 +152,31 @@ Run it only in a trusted workspace. The process exit code and the resulting
 `compile_commands.json` are the stable integration contract; stdout remains
 human-readable.
 
+`compile_commands.json` at the project root is a copy of the current
+configuration's own database, written at
+`target/<triple>/<fingerprint>/compile_commands.json` — the directory the
+toolchain, target, profile and features together name, and the directory the
+compiler actually runs in. Every command that plans in that configuration
+(`build`, `test`, `run`, `--configure-only`) merges its fresh plan into that
+one file, so a unit `mcpp test` added stays listed after a plain `mcpp
+build`. The root copy is never merged: it is replaced whole with the
+configuration's file, and left untouched when the two already agree, so
+switching `--toolchain` or `--profile` switches the whole root file and
+switching back restores that configuration's entries, test units included. A
+symlink at the project root is followed, and the copy lands at its target.
+When the replaced root file held entries mcpp did not write, one warning
+states how many; the file then holds this project's own configuration.
+Deleting the root file is not a way to reset it: the next build (even one
+that finds nothing to recompile) restores it from the configuration's
+database.
+
+A project that imports `std` also finds an entry for the toolchain's
+standard-library units, in both `compile_commands.json` and the S1 document
+`emit build-database` prints — see below. Because a BMI is readable only by
+the compiler that built it, listing the unit lets a reader whose toolchain
+differs from the one mcpp built with compile its own copy of `std` instead of
+failing on a version mismatch.
+
 An editor that must not write into the project asks for the same plan on stdout
 *(mcpp 2026.9.15.1+)*:
 

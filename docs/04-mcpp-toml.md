@@ -422,10 +422,12 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
 #### Compile-flag syntax *(mcpp 2026.9.17.1+)*
 
 An element of `cflags`, `cxxflags` or `asmflags` stands for one or more compiler
-arguments ("words"). The syntax is the same on every host, wherever the list is
-written: `[build]`, `[targets.<name>]`, a `flags` glob entry, a feature, a
-`[target.<selector>.build]` section, an xpkg descriptor, and the `mcpp:cflag=` /
-`mcpp:cxxflag=` directives of a build program.
+arguments ("words"), and an element of `ldflags` for one or more linker
+arguments (mcpp 2026.9.26.2+). The syntax is the same on every host, wherever
+the list is written: `[build]`, `[targets.<name>]`, a `flags` glob entry, a
+feature, a `[target.<selector>.build]` section, an xpkg descriptor, and the
+`mcpp:cflag=` / `mcpp:cxxflag=` / `mcpp:link-flag=` directives of a build
+program.
 
 | Written | Words the compiler receives |
 |---|---|
@@ -437,6 +439,7 @@ written: `[build]`, `[targets.<name>]`, a `flags` glob entry, a feature, a
 | `"-I/opt/my\\ dir/include"` | `-I/opt/my dir/include` |
 | `"-IC:\\sdk\\include"` | `-IC:\sdk\include` |
 | `"-DNAME=a$b"` | `-DNAME=a$b` |
+| `"-Wl,-rpath,$ORIGIN/../lib"` (in `ldflags`) | `-Wl,-rpath,$ORIGIN/../lib` |
 
 The rules, stated on the element's text (after TOML or Lua has removed its own
 escapes):
@@ -452,8 +455,16 @@ escapes):
   taken verbatim, as in every earlier release.
 
 A `defines` entry is one value and is not read by this syntax: `defines =
-["NAME=\"text\""]` passes the single word `-DNAME="text"`. `ldflags`,
-`dialect_cxxflags` and `std-module-flags` are not covered by this section.
+["NAME=\"text\""]` passes the single word `-DNAME="text"`. `dialect_cxxflags`
+and `std-module-flags` are not covered by this section.
+
+`ldflags` follows the syntax from mcpp 2026.9.26.2 (#703). Before, a link-flag
+element was escaped for ninja and not quoted for the shell, so on Linux and
+macOS a `$ORIGIN` reached the program's run path as `/../lib`. A `-L` or
+`-Wl,-rpath,` word with a package-relative path resolves against the package
+root, and a dependency's `ldflags` reach its consumer word by word. An element
+escaped for ninja or the shell by hand (`\$ORIGIN`, `'$$ORIGIN'`) now reads as
+written; the first plan names such an element under `build/flag-words`.
 
 `compile_commands.json` and `mcpp emit build-database` list the same words in
 `arguments`, ready to execute without a shell.
@@ -1447,7 +1458,7 @@ Link intent keeps discovery stages separate:
 |---|---|---|---|
 | `link_library_dirs` | `-L` | `-L` | `-L` or `/LIBPATH:` |
 | `transitive_needed_dirs` | `-Wl,-rpath-link` | no flag | no flag |
-| `runtime_search_dirs` | RUNPATH/rpath only, never `-L` | rpath only | no flag |
+| `runtime_search_dirs` | RUNPATH/rpath only, never `-L` | rpath only | no flag; after the link, the DLLs the program imports from these directories are placed beside it *(2026.9.26.2+)* |
 | `frameworks` | no flag | `-framework` | no flag |
 | `deploy_files` | copy edge | copy edge | copy beside the output; never a linker flag |
 | `deploy` *(2026.9.12.2+)* | copy edge into `bin/<to>/` | copy edge into `bin/<to>/` | copy edge into `bin/<to>/`; never a linker flag |
@@ -1472,6 +1483,27 @@ For one compatibility train, `library_dirs` maps only to runtime search,
 `dlopen_libs` maps to required run-phase soname requirements, and
 `capabilities` maps to required run-phase capability requirements. None of
 these legacy fields creates a provider.
+
+`runtime_search_dirs` has a build-program form for a directory only a
+build.mcpp can locate (a vcpkg prefix's `bin/`, a Qt SDK's `bin/`, a directory
+a `prepare` action populates): `mcpp::runtime_search_dir(dir)` (protocol 12;
+[30 — Build Programs](30-build-mcpp.md)), which joins this same field
+directly — not the legacy `library_dirs` above, which gains no directive of
+its own. The directory need not exist when the program runs; a `prepare`
+action may populate it later, at build time.
+
+A PE image has no run path, so on Windows a runtime search directory serves
+`mcpp run`, which puts it on `PATH`, and `mcpp pack`, which stages the closure.
+From 2026.9.26.2 the link of a PE program whose plan has runtime search
+directories is followed by one more edge, `mcpp place-dlls`, which reads the
+program's import closure as `mcpp pack` does and places beside the program
+every DLL it imports, directly or through another DLL, that resolves in one of
+those directories. System DLLs and API sets are never copied, a copy is written
+only when its bytes differ, and a DLL replaced in its directory is placed again
+on the next build. A program started by hand from the build directory therefore
+finds them, as it does after vcpkg's applocal step or CMake's
+`$<TARGET_RUNTIME_DLLS>`. When two directories offer one name, the first in
+search order is placed and a note names both.
 
 `target/<triple>/<fp>/resolution.json` schema 2 stores the RuntimeBinding,
 canonical requirements/providers/artifacts, LinkIntent, platform search

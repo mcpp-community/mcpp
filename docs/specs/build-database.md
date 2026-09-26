@@ -4,13 +4,13 @@
 |---|---|
 | 规范编号 | SPEC-005 |
 | 标题 | mcpp 输出的构建数据库:内容、取值规则与不写工程目录的保证 |
-| 状态 | 评审中 v1.2 |
-| 版本 | 1.2 |
-| 最后修改 | 2026-09-17 |
-| 对应实现 | mcpp >= 2026.9.15.1 |
-| 相关设计文档 | `.agents/docs/2026-09-14-636-build-database-and-the-latest-xlings.md` |
-| 相关 issue | #636, #648, #655 |
-| 依据的外部规范 | S1「C++ Build Database: IDE Profile」profile 0.2.0 与 S2 0.2.0 §3.4,取自 https://github.com/Sunrisepeak/lsp-mcpp-private 提交 `b82859d`(schema 自提交 `28ecd6e` 起未变);JSON Compilation Database |
+| 状态 | 评审中 v1.3 |
+| 版本 | 1.3 |
+| 最后修改 | 2026-09-26 |
+| 对应实现 | mcpp >= 2026.9.15.1;v1.3 修改的 R2.5、R3.7、R3.8、R4.1、R5.2 为 mcpp >= 2026.9.26.2 |
+| 相关设计文档 | `.agents/docs/2026-09-14-636-build-database-and-the-latest-xlings.md`<br>`.agents/docs/2026-09-26-compile-database-and-issue-699-design.md` |
+| 相关 issue | #636, #648, #655, #699, #702 |
+| 依据的外部规范 | S1「C++ Build Database: IDE Profile」profile 0.2.0 与 S2 0.2.0 §3.4,取自 https://github.com/Sunrisepeak/lsp-mcpp-private 提交 `b82859d`(schema 自提交 `28ecd6e` 起未变);S2 0.3.0 §3.4 的部分回答(S2-3.4-12、S2-3.4-13,Sunrisepeak/mcpp-language-server#25);JSON Compilation Database |
 
 ## 0. 适用范围
 
@@ -53,7 +53,10 @@ Database 定义,本规范不重复它们的字段定义,只规定 mcpp 作为生
   每个输出一条警告 `MCPP_GENERATED_FILE_NOT_MATERIALIZED`。**已实现**
 - **R2.5** 构建程序照常运行,工作目录为包根,与 `mcpp build` 相同;构建程序在
   `MCPP_OUT_DIR` 之外写入的内容不在本保证之内。依赖提供的宿主工具照常构建到全局
-  工具库。**已实现**
+  工具库,它声明的 `check` 动作照常运行。构建失败的宿主工具在本命令下降级为
+  警告 `MCPP_BUILD_DATABASE_HOST_TOOL_UNBUILT`,消息点名工具、其所属包与失败信息
+  的第一行;规划继续,请求该工具的构建程序收到的是该工具本应发布到的路径。
+  `mcpp build` 不受影响,宿主工具构建失败在其中仍使目标失败。**已实现**
 - **R2.6** `mcpp --protocol-version` 为这条命令声明 `init-mcpp-home`、`read-project`、
   `network`、`write-global-cache` 与 `exec-build-script`,不声明 `write-project`。
   **已实现**
@@ -98,12 +101,21 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 - **R3.7** 除 NASM 单元外,构建计划中的每个编译单元是一个翻译单元。`source`、
   `work-directory`、`arguments`、`object` 与 `compile_commands.json` 中对应条目的
   `file`、`directory`、`arguments`、`output` 取自同一条记录,因而逐字相同。
-  `arguments` 中的每一项是编译器收到的一个参数,不带任何宿主的引号或转义,不经 shell
-  即可执行:单元自己的 flag 列表按 SPEC-004 §8 读成的词列出,引擎为宿主渲染的文本
-  按该宿主的读取规则(POSIX `sh` 或 MSVCRT)还原。**已实现**
-- **R3.8** `provides` 把单元提供的模块名映射到空字符串,命令不执行构建(S1-8-6);
-  `requires` 为单元导入的模块名,分区写全名 `M:P`。`private` 为 `false`,理由同 R3.4。
-  **已实现**
+  `work-directory` 是编译器实际运行的目录——即输出目录
+  `target/<triple>/<fingerprint>`——对每个工程单元与每种工具链皆然;标准库单元
+  保留它们本来所在的共享 std 缓存目录(§3.4)。`arguments` 中的每一项是编译器收到
+  的一个参数,不带任何宿主的引号或转义,不经 shell 即可执行:单元自己的 flag 列表
+  按 SPEC-004 §8 读成的词列出,引擎为宿主渲染的文本按该宿主的读取规则(POSIX `sh`
+  或 MSVCRT)还原。提供某个模块的单元,`arguments` 在 `-c <source>` 之前带有该
+  单元的模块接口语言标记(GCC、Clang 方言);MSVC 方言在 Windows 上量出 clang-cl
+  模式的 clangd 是否接受 `/interface` 之前留空。**已实现**
+- **R3.8** 工程单元的 `provides` 把单元提供的模块名映射到空字符串,因为这条命令
+  不执行构建(S1-8-6);`requires` 为单元导入的模块名,分区写全名 `M:P`。`private`
+  为 `false`,理由同 R3.4。标准库单元的 `provides` 例外:把 `std`、`std.compat`
+  映射到构建会写出的 BMI 在共享 std 缓存中的路径——这条路径由缓存键决定,不需要
+  真的编译就能得到(§3.4)。`ide.toolchains.<id>.build-id` 给出编译器的构建标识,
+  取自 mcpp 已经算出的驱动身份(工具链指纹的同一个字段),同一工具链的两次运行
+  之间保持稳定。**已实现**
 - **R3.9** `ide.role` 取自扫描器读到的模块声明形式:
 
   | 声明 | `ide.role` |
@@ -137,19 +149,28 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 ## 4. `--spec compile-commands`
 
 - **R4.1** 文档为 `mcpp build --configure-only` 在同一组选择器下写入
-  `compile_commands.json` 的条目,差别只在输出路径位于 §2 的工作目录之下。标准库模块
-  的单元不在其中。**已实现**
+  `compile_commands.json` 的条目,差别只在输出路径位于 §2 的工作目录之下。标准库
+  模块的单元也在其中,遵循 S1-12-1 的导出规则:S1 文档里 `mcpp:std` 集合的每个
+  单元同样导出为一条 `compile_commands.json` 条目。**已实现**
 
 ## 5. 信封
 
 - **R5.1** `kind` 为 `mcpp.build-database`,`kindVersion` 为 1。`data` 含 `spec`
   (`{"name": "s1", "version": "0.2.0"}` 或 `{"name": "compile-commands"}`)、
   `database`、`watch` 与 `inputs-fingerprint`。**已实现**
-- **R5.2** 失败时信封不含 `data`,`diagnostics` 至少含一条 `error`,退出码为 1:不在
-  工程中为 `MCPP_BUILD_DATABASE_NO_PROJECT`;离线运行而规划需要下载时为
+- **R5.2** 命令独立规划每一个被选中的成员:一个成员规划失败只影响它自己,不影响
+  其余成员的集合(#699 第 1 项)。规划失败的成员不贡献任何集合,只贡献一条 `error`
+  诊断,`path` 为该成员的 `mcpp.toml`,相对工作区根目录;诊断码为:不在工程中时
+  `MCPP_BUILD_DATABASE_NO_PROJECT`;该成员的规划因离线而需要下载时
   `MCPP_OFFLINE_DOWNLOAD_REQUIRED`,消息指出需要下载的第一项;其他规划失败为
-  `MCPP_BUILD_DATABASE_PLAN_FAILED`。工作区中消息指出成员;任一成员规划失败,整次命令
-  失败。**已实现**(离线诊断码:mcpp >= 2026.9.16.1)
+  `MCPP_BUILD_DATABASE_PLAN_FAILED`。`data` 在至少一个被选中的成员规划成功时出现,
+  并描述每一个规划成功的成员;被选中的成员全部规划失败时,信封不含 `data`。规划成功
+  的成员中,构建程序失败的包被描述为不含该程序产生的指令(清单自身的配置、工具链、
+  模块图与标准库单元仍照常描述),`diagnostics` 另有一条 `error`,
+  `MCPP_BUILD_DATABASE_PROGRAM_FAILED`,`path` 为该包的 `build.mcpp`;后续失败若是
+  由缺失的指令引起,则按前一条规则使整个成员失败。只要 `diagnostics` 中有一条
+  `error`,退出码就是 1,无论 `data` 是否出现。**已实现**(离线诊断码:
+  mcpp >= 2026.9.16.1;成员独立规划、`path` 与构建程序失败的描述:mcpp >= 2026.9.26.2)
 - **R5.3** 信封的 `effects` 为 `read-project` 与 `write-global-cache`,运行了构建程序时
   另有 `exec-build-script`,本次运行启动过网络子进程(索引刷新、安装、git 远程操作,
   失败或超时的也算)时另有 `network`。**已实现**(`network`:mcpp >= 2026.9.16.1)
@@ -178,3 +199,4 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 | 1.0 | 2026-09-14 | 首版(#636)。 |
 | 1.1 | 2026-09-16 | R5.2 增加离线诊断码 `MCPP_OFFLINE_DOWNLOAD_REQUIRED`;R5.3 的 `network` 按观测列出;新增 R5.4(子进程不继承调用方描述符,xlings 子进程有期限并随 mcpp 结束)(#648)。 |
 | 1.2 | 2026-09-17 | R3.7 陈述 `arguments` 的每一项是编译器收到的参数,单元 flag 按 SPEC-004 §8 的词列出(#655)。 |
+| 1.3 | 2026-09-26 | R2.5:`emit` 下构建失败的宿主工具是警告。R3.7:`work-directory` 是输出目录,模块接口单元的 `arguments` 带语言 flag。R3.8:标准库单元的 `provides` 指向 std 缓存中的 BMI,工具链带 `build-id`。R4.1:compile-commands 文档包含标准库单元(S1-12-1)。R5.2:成员各自规划,构建程序失败的包不带其指令地被描述(#699,#702)。 |

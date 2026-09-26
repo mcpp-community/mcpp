@@ -43,6 +43,39 @@ int main() {
 mcpp build      # compiles + runs build.mcpp, then builds the project
 ```
 
+## 三类工作
+
+一个 `build.mcpp`，或者它导入的规则包，所做的每一件事都且只属于下面三类之一
+（SPEC-007 第 1 节，`docs/specs/build-plugins.md`），每一类都只有一种机制：
+
+| 类 | 决定的内容 | 发生在 | 机制 |
+|---|---|---|---|
+| 配置 | 构建的形状：编译哪些源、用哪些选项、链接什么、运行时在哪里找库 | `build.mcpp` 运行期间——**规划** | 一条指令（本章下面的表） |
+| 施工 | 构建要读取的文件：生成源码、编译设备代码、安装一个依赖前缀、打包 | **构建**期 | `mcpp::action` |
+| 校验 | 环境或产物是否满足某个要求，不产生构建要读取的文件 | **构建**期 | `role = check` 的一个 action |
+
+**配置只取决于声明过的输入。** 一个 `build.mcpp` 读它自己包的清单、它声明过的
+载荷（`xpkg_dir`），以及它用 `rerun_if_changed`/`rerun_if_changed_glob`/
+`rerun_if_env_changed` 点过名的东西——绝不读一个 action 产生的文件，因为规划
+（`mcpp emit build-database`）与第一次构建都发生在任何 action 运行**之前**，
+读了施工结果的程序会在第一次构建与第二次构建给出不同的配置。这一点在下文
+[`prepare` role](#施工时文件名未知的构造prepare-roleprotocol-12) 那节会得到
+一条警告。
+
+**施工绝不在 `build.mcpp` 运行期间完成。** 直接在 `main()` 里写文件，是每次
+规划都跑一遍、全量、串行的，失败还只报「build.mcpp exited 1」，离真正的原因
+隔着三条边。**声明**它（见下文 `mcpp::action`），它就成为一条边：增量、并行、
+可归因。
+
+**一个不完整的环境是警告，绝不是配置失败。** 一个找不到某个 SDK 模块或某个库
+的程序，用 `mcpp::warning`（见下）说出来，并把它还能配出来的部分照常发出；
+编译或链接会在真正缺东西的地方失败，如果非失败不可的话。在这里以非零状态
+退出，会让不需要那个缺失物的构建也失败。
+
+**规划与构建下行为相同。** `mcpp emit build-database` 算出的计划，与
+`mcpp build --configure-only` 算出的是同一个，所以一个遵守上面这条规则的
+构建程序不需要任何信号告诉它这次是被谁问的。
+
 ## 指令
 
 把这些打印到 stdout（每行一条）。任何不以 `mcpp:` 开头的行都会被忽略，因此可以
@@ -64,6 +97,7 @@ mcpp build      # compiles + runs build.mcpp, then builds the project
 | `mcpp:windows-subsystem=<target>:<value>` *(2026.9.12.2+)* | 设置**本包**可执行目标 `<target>` 的 PE 子系统（`console` 或 `windows`），与 `[targets.<target>] windows_subsystem`（docs/04）是同一字段。只到达该目标的链接，不到达其他目标或消费者，在非 PE 目标上不产生任何标志。本包未以 `kind = "bin"` 声明该目标、取值不在集合内、取值与 mcpp.toml 的声明矛盾，这三种情形都在应用任何指令之前被拒绝 |
 | `mcpp:windows-entry=<target>:<value>` *(2026.9.12.2+)* | 设置可执行目标 `<target>` 的入口函数（`main`、`wmain`、`WinMain` 或 `wWinMain`），与 `windows_entry` 是同一字段；作用域与拒绝条件同 `windows-subsystem` |
 | `mcpp:deploy=<from>\t<to>` *(2026.9.12.3+,protocol 11)* | 把本程序生成或选中的一个文件放到产物旁边的 `<to>`（相对可执行文件所在目录）——`[runtime] deploy`（docs/04 §2.11）的构建程序形态。`<from>` 可以是绝对路径（某个 action 自己声明的输出），也可以按包根解析；用 TAB 分隔，因为一个绝对的 Windows `<from>` 本身含冒号。**到达消费者**，并入同一个被 `link-lib`/`link-search`/`link-flag` 喂入的 `LinkIntent`——见下 |
+| `mcpp:runtime-search-dir=<dir>` *(protocol 12)* | 把 `<dir>` 加入启动期搜索路径——`runtime_search_dirs`（docs/04 §2.11）的构建程序形态。相对路径按包根解析；该目录在此程序运行时不必存在(一个 `prepare` action 可能之后才把它填充起来)。**到达消费者**，直接并入 `LinkIntent::runtimeSearchDirs`：在 ELF 与 Mach-O 上是 RUNPATH/rpath，绝不是 `-L`，并进入 `mcpp pack` 的闭包搜索——见下 |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | 用这个**链接脚本**链接（`-T`；相对路径按包根解析，发出的是绝对路径，因为链接是在构建目录里跑的）。与 `include-dir` 不同，它**到达消费者** —— 板子的内存布局恰恰是消费者写不出来的那一项 |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | 对用户说一句话并**继续**。唯一一条不改变编译行、链接行与源码集的指令。它**穿过构建缓存** —— 见下 |
 | `mcpp:fact=<name>=<version>` *(2026.9.5.2+)* | 陈述程序**测得的机器事实**(`cuda.driver=12.4`)。在编译任何东西之前与 floor 比较；见下 |
@@ -123,6 +157,7 @@ int main() {
 | `mcpp::link_flag(s)` *(2026.9.6.5+)* | `mcpp:link-flag=` |
 | `mcpp::windows_subsystem(target, value)` / `mcpp::windows_entry(target, value)` *(2026.9.12.2+)* | `mcpp:windows-subsystem=` / `mcpp:windows-entry=` |
 | `mcpp::deploy(from, to)` *(2026.9.12.3+,protocol 11)* | `mcpp:deploy=<from>\t<to>` —— 见下 |
+| `mcpp::runtime_search_dir(dir)` *(protocol 12)* | `mcpp:runtime-search-dir=<dir>` —— 见下 |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` —— 见下 |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | `[xlings.workspace]` 里声明的包的载荷目录 —— 本 manifest 声明的，或编进本构建程序的某个依赖声明的（2026.9.6.6+）；没声明或没安装时返回 `""`（见下） |
@@ -366,6 +401,18 @@ mcpp 会**为构建机器**构建那个 `kind = "bin"` target（即使在 `--tar
 完整契约（含 `[tools.overrides]` 与 `reexport = true` —— 库据此把整条工具链交给
 调用方，因此只需写**一条**依赖而不是四条）见本章*依赖产出的 host 工具*。
 
+**在 `mcpp emit build-database` 下，一个构建失败的 host 工具是一条警告，不是
+丢掉的计划。** 规划对每个成员继续进行，`dep_bin` 答的是那个工具**将会**被发布
+到的路径——与一次成功构建会占据的同一个路径，在构建真正跑之前就已经定死。
+仅仅**指名**这个工具，配置结果与成功构建之后完全一样。而**调用**它——在配置期
+就把它跑起来，上一段的写法止步的地方——会失败，因为那个路径什么都不指向；
+这次失败只算在这个包自己的指令头上（它构建程序那部分的描述），绝不会连累
+整条命令。这个工具在一次真正的 `mcpp build` 里仍然会被构建：程序在那里可能
+会运行它，它的 blocking check 也仍然会跑，因为把一个未经校验的工具放进
+store、用的还是校验通过才用的那把键，比不构建它更糟。优先从一个 `action` 的
+命令里（施工）运行 host 工具，而不是在 `main()` 里（配置），这样这个工具当下
+能不能构建，就不会决定规划是否还能看见这个包。
+
 ### 用通配符声明输入：`rerun_if_changed_glob`（2026.8.6.2+）
 
 重跑键由**声明过的**输入构成。声明具体文件是可行的；而 glob 一个目录不可行 ——
@@ -411,7 +458,7 @@ int main() {
     const std::string out = std::string(mcpp::out_dir()) + "/foo.pb.cc";
     mcpp::action a;
     a.id = "protoc:foo";
-    a.role = "source";              // "source" | "check" | "object" | "artifact"
+    a.role = mcpp::roles::source;   // source | check | object | artifact | prepare
     a.arg(mcpp::dep_bin("protobuf", "protoc"))
      .arg("--cpp_out=...").arg("proto/foo.proto")
      .input("proto/foo.proto")
@@ -420,7 +467,7 @@ int main() {
 }
 ```
 
-四种 role，一个原语 —— `role` 只决定这条边的输出接到哪：
+五种 role，一个原语 —— `role` 只决定这条边的输出接到哪：
 
 | `role` | 输出 | 顺序 | 典型 |
 |---|---|---|---|
@@ -428,11 +475,19 @@ int main() {
 | `check` | 一个 stamp 文件，由 mcpp 写入 | 与编译并行；`blocking = true` 让该包的编译边等它 | clang-tidy、格式/ABI 检查 |
 | `object` | 进**链接**集 | 链接边消费它们 | 资源编译器、`objcopy` 嵌 blob、生成的 `.def`、预编译 `.o` |
 | `artifact` | 一个新文件 | 它的**输入**是链接产物，所以在链接之后跑 | 签名、打包、size budget |
+| `prepare` *(protocol 12)* | 一个由 mcpp 写入的 stamp，加上一个声明的目录(`output_dir`)，由命令去填充 | **该包每一条编译边、以及整个构建计划里每一条链接边都等它** —— 见下 | 把一份 vcpkg manifest 或一个 CMake 子工程安装进某个前缀、解开一个 SDK |
 
 `artifact` 也是唯一允许写 `${mcpp.stage_dir}` 的 role —— 见下文
-[产出可分发物](#产出可分发物pack_format-与-stage_dir20269111)。另外三个跑在链接之前
-或与链接并行，没有任何已暂存的东西可读，所以 mcpp 会拒绝这个占位符，而不是把它展开成
+[产出可分发物](#产出可分发物pack_format-与-stage_dir20269111)。其余几个 role 跑在链接
+之前或与链接并行，没有任何已暂存的东西可读，所以 mcpp 会拒绝这个占位符，而不是把它展开成
 一个恰好存在的路径。
+
+**用 `mcpp::roles` 常量拼写 role**(protocol 12)，而不是裸字符串。一个写下
+`a.role = mcpp::roles::prepare;` 的 build.mcpp 在旧引擎上会直接**编译失败**，并指出
+缺失的那个常量——与 `mcpp::deploy`、`mcpp::runtime_search_dir` 给出的是同一种编译期
+信号。自 protocol 12 起，一个哪个都不是的 role 字符串会被引擎拒绝并列出这五个；在此之前，
+一个未识别的字符串会被静默读成 `source`，这就在无声之间改变了一个 action 的含义。
+手写的冻结表面(一个手写 `printf("mcpp:action=...")` 的程序)仍然可以直接写字符串。
 
 全程不涉及任何 phase 机制。`object` 与 `artifact` 由 ninja 自己的文件依赖定序 ——
 这也是为什么 `artifact` 不会像朴素的「post 构建钩子」那样把自己重复施加一遍。
@@ -464,9 +519,16 @@ mcpp 为那条边写出 `depfile =` 与 `deps = gcc`，ninja 读取该文件并�
 > 承诺了该输出的边会永远是脏的。
 
 **check 的命令不必自己写 stamp**(mcpp 2026.8.29.1+)。判定是退出码，stamp 是**构建图**
-需要的记账；命令成功时由 mcpp 创建它。在此之前每个 check 都需要一个包装脚本去 touch
-那个文件 —— 而 command 是 argv、不假设有 shell，所以那个包装器**根本没法可移植地写出来**。
-已经自己写 stamp 的命令不受影响：已存在的文件不会被动。
+需要的记账。在此之前每个 check 都需要一个包装脚本去 touch 那个文件 —— 而 command 是
+argv、不假设有 shell，所以那个包装器**根本没法可移植地写出来**。
+
+**一个 `check` 或 `prepare` 命令成功之后，每个声明的 stamp 都比每个输入新，无论命令自己
+有没有写它**(protocol 12)。mcpp 会创建每一个缺失的 stamp，并把每一个**已存在**的 stamp
+的修改时间设为当前时刻——无条件地，不只是在某个输入变化之后——这样一个什么都不写的
+check(clang-tidy、经由某个规则包运行的一次安装)就不会仅仅因为自己的 stamp 比它已经
+反应过的某个输入更旧而重新运行。自己写 stamp 的命令不受影响：这次运行中命令自己创建或
+改写过的文件本来就和命令留下的一样新，再 touch 一遍不改变任何构建会读到的东西——一个
+stamp 不会喂给任何编译或链接边，只喂给下文说的那条 order-only 边。命令失败时什么都不写。
 
 > stamp 缺失**不会**让构建失败。ninja 只是留着那个声明的输出不存在，并在之后**每次构建
 > 都重跑**那条边 —— 看起来像一个通过了的检查，实际上它从未被满足。
@@ -558,6 +620,100 @@ int main() {
   | `.app`（macOS、iOS） | bundle 的可执行文件目录 |
   | `.apk` | `assets/myapp.resources/` |
   | web | 静态目录里同一个相对路径，与 `<name>.js` 放在一起。想把文件放进 `.data` 预加载的项目改用链接标志 `--preload-file <dir>@/<to>`，那是一条普通的链接标志 |
+
+### 一个启动期搜索目录：`runtime_search_dir`（protocol 12）
+
+`runtime_search_dirs`（docs/04 §2.11）声明产物运行时要搜索的一个目录。
+它是一个固定的 TOML 数组，因此点不了一个只有 build.mcpp 才能发现的目录——
+一个 vcpkg 前缀的 `bin/`(Windows)或 `lib/`(其它平台)、一个 Qt SDK 的
+`bin/`，或一个由 `prepare` action(见下)填充的目录。`mcpp::runtime_search_dir`
+就是同一次声明，从构建程序里发出：
+
+```cpp
+import mcpp;
+#include <string>
+
+int main() {
+    const std::string qtPrefix = locate_qt_prefix();   // 本包自己怎么找到它
+    // 导入库在 lib/ 下；mcpp run 与 mcpp pack 在启动时要找的那些 DLL
+    // 在 Windows 上是在 bin/ 下。
+    mcpp::link_search((qtPrefix + "/lib").c_str());
+    mcpp::runtime_search_dir((qtPrefix + "/bin").c_str());
+}
+```
+
+- **直接并入 `LinkIntent::runtimeSearchDirs`**，与 `runtime_search_dirs` 从
+  TOML 填的是同一个字段——不是那个不再获得新指令的遗留字段
+  `[runtime] library_dirs`（docs/04 §2.11）。一个由指令声明的目录，到达该字段
+  的每一个读者，与写在 `mcpp.toml` 里的完全一样：`mcpp run` 的加载器路径、
+  `mcpp pack` 的闭包搜索，以及 ELF 与 Mach-O 上的 RUNPATH/rpath（绝不是
+  `-L`——一个启动期搜索目录不是一个链接库搜索路径）。
+- **`dir` 可以是绝对路径或按包根解析的相对路径。** 相对路径按包根解析，
+  与其它每一个 `AbsPath` 指令（`include-dir`、`deploy` 的 `from`）一样。
+- **该目录在此程序运行时不必存在。** 一个 `prepare` action 可能在构建期之后
+  才把它填充起来——见下。
+- **到达消费者。** 一个依赖声明的目录，经由清单键所走的同一个合并
+  （`resolve_runtime_contract`，`plan.cppm`），并入它的消费者的可执行文件。
+- **在缓存命中时被重放。** `runtime-search-dir` 指令与 `deploy`、`warning`
+  一样进入构建缓存；一次缓存命中的重跑会像真正跑过一样把它恢复回来。
+
+### 施工时文件名未知的构造：`prepare` role（protocol 12）
+
+`source`、`check`、`object`、`artifact` 都在提交时就命名了自己的输出，
+因为 mcpp 在 prepare 阶段就定死了源集合、指纹与模块图。把一份 vcpkg
+manifest 或一个 CMake 子工程安装进某个前缀、或者解开一个 SDK，都不是这个
+形状：施工写出的文件在命令运行之前是不知道的——往往连名字都不知道，只知道
+**目录**。`prepare` 就是为此而设的 role：
+
+```cpp
+import mcpp;
+#include <string>
+
+int main() {
+    const std::string prefix = std::string(mcpp::out_dir()) + "/vcpkg-install";
+    mcpp::action a;
+    a.id   = "vcpkg:install";
+    a.role = mcpp::roles::prepare;
+    a.arg("vcpkg").arg("install").arg("--x-install-root").arg(prefix.c_str())
+     .input("vcpkg.json")
+     .output((prefix + ".stamp").c_str())
+     .output_dir(prefix.c_str())
+     .submit();
+
+    mcpp::link_search((prefix + "/lib").c_str());
+    mcpp::runtime_search_dir((prefix + "/lib").c_str());
+}
+```
+
+- **输出。** 一个或多个 stamp，由引擎按 `check` 的方式写入（见上文的 stamp
+  规则），以及一个声明的目录，`output_dir(dir)`，由**命令**去填充。**如果
+  命令成功而那个目录不存在，或者除该 action 的 stamp 之外不含任何文件，引擎
+  不写 stamp，并以指出该目录的消息使这条边失败**——无论命令有没有创建过它：
+  例如一个 Qt `lupdate` action 的目录，是它要改写的一棵既有源码树，从来不是
+  一个全新的目录。stamp 可以位于该目录之内，也可以在它旁边。
+- **顺序。** 声明它的那个包的每条编译边都等它，走的是 blocking `check` 用的
+  同一条 order-only 边；整个构建计划里的每一条**链接**边也都等它，因为任意
+  一个包声明的 `runtime_search_dir`（或任何其它 link-global 指令）都被并入
+  整个计划共用的**同一个** `LinkIntent`——一个 `prepare` 填充的目录，必须在
+  任何可能读它的链接之前就存在，不只是声明它的那个包自己的链接。
+- **对它产物的引用是配置时就定死的名字。** 一旦目录存在，构建就按**目录**
+  去读它：目录本身用 `include_dir`/`link_search`/`runtime_search_dir`，
+  目录里某个文件的完整路径用 `link_flag`。`prepare` 不改变这些指令原有的
+  行为。
+- **为什么是一个 role，而不是 `check` 加 `blocking = true`。** role 会被
+  引擎的决策读取，这是单靠 `blocking` 做不到的：把施工标成校验，会让它在
+  未来某条只针对 check 的策略出现的那一刻，与真正的校验混同。
+- **进度行**里，一个 `prepare` action 标为 `PREPARE`，与 `CHECK`、`OBJECT`、
+  `ARTIFACT`、`GENERATE` 并列。
+
+> **不要在配置期读一个 `prepare` 目录的内容。** 一个 `rerun_if_changed` /
+> `rerun_if_changed_glob` 如果命中另一个包（或本包自己）声明的 `prepare`
+> 目录内部的某个路径，就是在这个程序**配置**的同时读取一个**施工结果**：
+> 第二次构建是对的（上一次构建已经把目录填好了），第一次是错的。mcpp 会
+> 警告，点名两条路径，而不是拒绝——这个程序今天仍然能正确地完成配置。这正是
+> 「监视一个安装前缀，把第一次安装的库放到下一次规划里」这种做法的形状；
+> 应改为给这个前缀声明 `runtime_search_dir`，让一个 `prepare` action 去做
+> 安装本身。
 
 ### 产出可分发物：`pack_format` 与 `stage_dir`（2026.9.11.1+）
 

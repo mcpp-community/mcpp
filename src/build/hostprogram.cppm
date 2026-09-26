@@ -183,6 +183,41 @@ inline void windows_entry(const char* target, const char* value) {
 inline void deploy(const char* from, const char* to) {
     std::printf("mcpp:deploy=%s\t%s\n", from, to);
 }
+// The build-program form of `runtime_search_dirs` (docs/04 §2.11): a
+// directory to search at LAUNCH time, for a dependency (a vcpkg prefix's
+// `bin/`, a Qt SDK's `bin/`, a directory a `prepare` action populates) whose
+// location this program learns rather than one an author can write into
+// `mcpp.toml`. Reaches the consumer, joining the SAME `LinkIntent` field the
+// manifest key populates directly -- not the retiring `[runtime]
+// library_dirs` -- and gets the same treatment: RUNPATH/rpath on ELF and
+// Mach-O, never `-L`, and `mcpp pack`'s closure search. Relative paths
+// resolve against this package's root, like every other AbsPath directive.
+// The directory need not exist when this program runs: a `prepare` action
+// (below) may populate it later, at build time.
+inline void runtime_search_dir(const char* dir) {
+    std::printf("mcpp:runtime-search-dir=%s\n", dir);
+}
+// The five action roles (mcpp#702), as CONSTANTS rather than bare string
+// literals: `a.role = mcpp::roles::prepare` fails to COMPILE on an engine
+// whose bundled module has no such name, instead of reaching that engine's
+// decoder as the plain string "prepare", which an engine older than protocol
+// 12 reads as Source (see `decode_action`, modules/buildmcpp/src/
+// directives.cppm). Spelled inside THIS module, not the engine's own headers,
+// because these names have to be visible from a build.mcpp translation unit,
+// which imports this module and nothing else of the engine's. SPEC-007 R3.6
+// makes writing the constant the author's obligation; the engine still
+// accepts the bare string from a hand-written frozen-surface program (protocol
+// 0), and refuses one that names none of the five (`action_error`).
+namespace roles {
+    inline constexpr const char* source   = "source";
+    inline constexpr const char* check    = "check";
+    inline constexpr const char* object   = "object";
+    inline constexpr const char* artifact = "artifact";
+    // Construction whose file names are not known when this program runs:
+    // installing a vcpkg manifest or a CMake subproject into a prefix,
+    // unpacking an SDK. See `action::output_dir` below for its contract.
+    inline constexpr const char* prepare  = "prepare";
+}
 // ── Build-graph nodes (mcpp 2026.8.5.1+) ────────────────────────────────
 // Declare WORK instead of doing it. A build program is a good place to decide
 // what the build looks like and a bad place to perform it: work done here is
@@ -194,7 +229,7 @@ inline void deploy(const char* from, const char* to) {
 // cannot be built. Content may arrive later; names may not.
 struct action {
     const char* id          = "";
-    const char* role        = "source";   // "source" | "check" | "object" | "artifact"
+    const char* role        = roles::source; // one of `roles::{source, check, object, artifact, prepare}`
     const char* description = "";
     bool        blocking    = false;      // check only: gate compilation on it
     // A Make-style dependency file the COMMAND writes as a side effect (gcc/
@@ -219,6 +254,15 @@ struct action {
     // its target out of ${mcpp.target_file:NAME}; an Object runs before the link
     // and has no such handle, so it has to say the name.
     action& target(const char* n)   { add(targets_,  n); return *this; }
+    // `prepare` only: the directory the COMMAND populates, which the build
+    // reads BY DIRECTORY (`include_dir`, `link_search`, `runtime_search_dir`)
+    // rather than by naming files -- the whole reason this role exists (O1,
+    // mcpp#702). One directory, not a list like `output()`: the post-condition
+    // the engine checks after the command succeeds (does this directory now
+    // exist, whether or not the command created it) is a single answer, and a
+    // `prepare` action with no `output_dir` is refused (`action_error`) as a
+    // `check` that forgot to declare what it built.
+    action& output_dir(const char* p) { outputDir_ = p; return *this; }
     void submit() const {
         std::printf("mcpp:action={\"id\":");        esc(id);
         std::printf(",\"role\":");                  esc(role);
@@ -232,6 +276,10 @@ struct action {
         // has nothing to do with depfiles. The decoder's default (empty
         // string) is identical either way, so omission costs nothing on read.
         if (depfile[0]) { std::printf(",\"depfile\":"); esc(depfile); }
+        // Same omission rule as `depfile`, for the same reason: an action
+        // that never calls `output_dir()` serialises to the same bytes it did
+        // before the method existed.
+        if (outputDir_[0]) { std::printf(",\"output_dir\":"); esc(outputDir_); }
         // Set only when the process could not allocate memory for a list.
         // A declaration cut short would otherwise be INVALID rather than
         // obviously wrong -- the engine turns this marker into a diagnostic
@@ -295,6 +343,9 @@ private:
         }
     };
     list inputs_, outputs_, command_, provides_, imports_, targets_;
+    // `prepare` only: see `output_dir()` above. A plain `const char*`, not a
+    // `list`: it is one directory, never a JSON array.
+    const char* outputDir_ = "";
     mutable bool overflow_ = false;
     static void esc(const char* s) {
         std::putchar('"');

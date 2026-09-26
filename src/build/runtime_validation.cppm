@@ -916,7 +916,10 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
     // The flags this build hands the linker, as ONE vector, because the
     // question is whether ANY of them took the export decision away from
     // mcpp. Per-unit flags join below; these are the whole-build ones.
-    std::vector<std::string> globalFlags = plan.manifest.buildConfig.ldflags;
+    // Read as words (SPEC-004 §8, #703), which is what the linker receives:
+    // an element that packs `-Wl,-E` with another token is still a request.
+    std::vector<std::string> globalFlags =
+        mcpp::manifest::flag_words(plan.manifest.buildConfig.ldflags);
 
     auto searchDirs = runtime_search_dirs(plan);
 

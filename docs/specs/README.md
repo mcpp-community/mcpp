@@ -33,9 +33,10 @@
 | [SPEC-001](package-identity.md) | 包身份(`package.namespace` / `package.name`)、`[dependencies]` 选择器与匹配机制 | 评审中 v1.1 | 2026-08-03 | mcpp >= 0.0.106 |
 | [SPEC-002](target-side.md) | 目标侧模型与能力声明(`mcpp:` 保留命名空间、五层、三条规则) | 评审中 v1.0 | 2026-08-24 | mcpp >= 2026.8.24.2 |
 | [SPEC-003](exit-codes.md) | 退出码契约(分类、语义、稳定性承诺) | 评审中 v1.0 | 2026-09-01 | mcpp >= 2026.9.1.1 |
-| [SPEC-004](manifest-semantics.md) | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 | 草案 v1.4 | 2026-09-15 | 条件化形状 mcpp >= 2026.8.29.1;目标轴 mcpp >= 2026.9.6.4;`linkage` 默认值 mcpp >= 2026.9.15.2 |
-| [SPEC-005](build-database.md) | 构建数据库:`mcpp emit build-database` 的内容、取值规则与不写工程目录的保证 | 评审中 v1.0 | 2026-09-15 | mcpp >= 2026.9.15.1 |
+| [SPEC-004](manifest-semantics.md) | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 | 草案 v1.7 | 2026-09-26 | 条件化形状 mcpp >= 2026.8.29.1;目标轴 mcpp >= 2026.9.6.4;`linkage` 默认值 mcpp >= 2026.9.15.2;链接 flag 的词读法 mcpp >= 2026.9.26.2 |
+| [SPEC-005](build-database.md) | 构建数据库:`mcpp emit build-database` 的内容、取值规则与不写工程目录的保证 | 评审中 v1.3 | 2026-09-26 | mcpp >= 2026.9.15.1;v1.3 条款 mcpp >= 2026.9.26.2 |
 | [SPEC-006](toolchain-management.md) | 工具链管理:身份、来源、选择与载荷契约 | 草案 v0.2 | 2026-09-24 | 逐条标注;已实现条款 mcpp >= 2026.9.24.1 |
+| [SPEC-007](build-plugins.md) | 构建插件:配置、施工与校验的分工,运行时与规划期的义务 | 草案 v0.2 | 2026-09-26 | 逐条标注;mcpp >= 2026.9.26.2 |
 
 ## 文档约定
 

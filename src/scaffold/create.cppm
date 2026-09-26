@@ -403,8 +403,14 @@ int main() {
     {
         // `.mcpp/` is the per-project xlings sandbox (and, when no MCPP_HOME
         // can be resolved, the local BMI cache) — build state, never sources.
+        // `compile_commands.json` at the root names absolute paths of one
+        // machine's build (design 2026-09-26 §3.2): it is a copy of the
+        // current configuration's own database under `target/`, replaced
+        // whole on the next build, so a checkout gains nothing from shipping
+        // it and loses a warning the first time another machine's copy
+        // disagrees with this one.
         if (auto written = mcpp::scaffold::write_text_file(
-                root / ".gitignore", "target/\n.mcpp/\n"); !written) {
+                root / ".gitignore", "target/\n.mcpp/\ncompile_commands.json\n"); !written) {
             mcpp::ui::error(written.error());
             return 1;
         }

@@ -3,12 +3,14 @@
 # 47_cdb_prebuilt_module_path_abs.sh — `-fprebuilt-module-path` in
 # compile_commands.json must be an ABSOLUTE path, NOT a bare `pcm.cache`,
 # AND must not carry ninja-escape artefacts like `C$:` on Windows.
-# Reason: CDB `directory` is the project root and clangd does `cd
-# directory` before running the args, so a bare relative path points at
-# `<projectRoot>/pcm.cache` (missing) and a `C$:` prefix is treated as a
-# literal string, not a Windows drive letter. Both modes silently break
-# clangd's module resolution while `mcpp build` itself keeps working
-# (ninja runs from outputDir AND unescapes its own escape sequences).
+# Reason: since design 2026-09-26 §3.3 (C3), CDB `directory` IS the output
+# directory the compiler runs in, so a bare relative `pcm.cache` would in
+# fact resolve there too — but the flag is still rendered from the same
+# absolute path the build's own command line uses (flags.cppm), and a
+# `C$:` prefix would still be treated as a literal string, not a Windows
+# drive letter, wherever `directory` points. Both modes would silently
+# break clangd's module resolution while `mcpp build` itself keeps working
+# (ninja unescapes its own escape sequences).
 set -e
 
 TMP=$(mktemp -d)
@@ -89,9 +91,9 @@ while IFS= read -r v; do
         :
     else
         echo "FAIL: value is relative: '$v'"
-        echo "      CDB 'directory' is the project root, but the BMI cache"
-        echo "      lives under target/<triple>/<fp>/ — clangd resolves to"
-        echo "      the wrong location and module imports fail."
+        echo "      the flag must carry the same absolute BMI cache path"
+        echo "      the build's own command line uses, whatever 'directory'"
+        echo "      resolves to."
         fail=1
     fi
 

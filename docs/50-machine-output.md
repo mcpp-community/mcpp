@@ -463,21 +463,47 @@ whatever it would print to `<file>` instead. The content of the document, the
 no-write guarantee and the `watch` rules are
 [SPEC-005](specs/build-database.md).
 
-A failure omits `data` and exits 1, with the diagnostic code
-`MCPP_BUILD_DATABASE_NO_PROJECT` outside a project,
-`MCPP_OFFLINE_DOWNLOAD_REQUIRED` when an offline plan (`--offline`,
-`MCPP_OFFLINE`, `MCPP_NO_AUTO_INSTALL`) needs something that has to be
-downloaded (a toolchain, a package, a git revision or the package index; the
-message names the first one), or `MCPP_BUILD_DATABASE_PLAN_FAILED` when planning
-fails for any other reason. The first of the three is not a defect of the
-project: one run without `--offline` removes it. Warnings leave the
-document in place:
+`emit` plans every selected member on its own (#699 item 1): one member's
+planning failure does not cost its siblings'. Outside a project, or when
+every selected member fails to plan, the envelope omits `data` and exits 1,
+with one diagnostic per failed member: `MCPP_BUILD_DATABASE_NO_PROJECT`
+outside a project; `MCPP_OFFLINE_DOWNLOAD_REQUIRED` when an offline plan
+(`--offline`, `MCPP_OFFLINE`, `MCPP_NO_AUTO_INSTALL`) needs something that has
+to be downloaded (a toolchain, a package, a git revision or the package
+index; the message names the first one); or `MCPP_BUILD_DATABASE_PLAN_FAILED`
+when planning fails for any other reason. The offline code is not a defect
+of the project: one run without `--offline` removes it. Each member's
+diagnostic carries `path`, that member's `mcpp.toml` relative to the
+workspace root.
 
-| code | |
-|---|---|
-| `MCPP_LOCK_WOULD_CHANGE` | the resolution differs from the project's `mcpp.lock`, which the command does not write |
-| `MCPP_GENERATED_FILE_NOT_MATERIALIZED` | a root `[build] generated_files` entry is missing or stale on disk, and the command does not write it |
-| `MCPP_BUILD_DATABASE_STD_UNIT_UNDESCRIBED` | no standard-library build command names its module source, so that unit is not listed |
+When at least one selected member planned, `data` is present and describes
+every member that did: a member that failed contributes no set, one `error`
+diagnostic as above, and its `mcpp.toml` and `build.mcpp` (when present) join
+`watch`. The exit status is still 1 whenever any diagnostic is an error, so a
+consumer reads three outcomes structurally — no `data`; `data` with `error`
+diagnostics, describing everything except what they name; `data` with none —
+without parsing a message.
+
+A package whose build program fails (#699 item 2) is described without that
+program's directives: the manifest's own configuration, the toolchain, the
+module graph and the standard-library units are described as usual, and one
+`error` diagnostic, `MCPP_BUILD_DATABASE_PROGRAM_FAILED`, names it, with
+`path` naming its `build.mcpp`. A later failure that follows from the missing
+directives fails the whole member instead, under the rule above. A host tool
+a package requested that fails to build is a warning instead,
+`MCPP_BUILD_DATABASE_HOST_TOOL_UNBUILT`, naming the tool, its package and the
+first line of the failure; planning continues, and a build program that only
+names the tool configures as it would after a successful build. `mcpp build`
+is unaffected by either: a build program or a host tool that fails there
+still fails the build.
+
+| code | severity | |
+|---|---|---|
+| `MCPP_LOCK_WOULD_CHANGE` | warning | the resolution differs from the project's `mcpp.lock`, which the command does not write |
+| `MCPP_GENERATED_FILE_NOT_MATERIALIZED` | warning | a root `[build] generated_files` entry is missing or stale on disk, and the command does not write it |
+| `MCPP_BUILD_DATABASE_STD_UNIT_UNDESCRIBED` | warning | no standard-library build command names its module source, so that unit is not listed |
+| `MCPP_BUILD_DATABASE_HOST_TOOL_UNBUILT` | warning | a requested host tool failed to build; the tool is still built and its `check` actions still run |
+| `MCPP_BUILD_DATABASE_PROGRAM_FAILED` | error | a build program failed; its package is described without its directives |
 
 `--protocol-version` declares `init-mcpp-home`, `read-project`, `network`,
 `write-global-cache` and `exec-build-script` for the command, and never

@@ -164,6 +164,23 @@ enum class Slot : std::size_t {
     // splitting it into two slots would let a build with N deploy directives
     // pair them up wrong the moment N > 1.
     Deploy,
+    // A LAUNCH-TIME SEARCH DIRECTORY, THE BUILD-PROGRAM FORM OF
+    // `runtime_search_dirs` (docs/04 §2.11). A dependency that brings a
+    // prebuilt shared library (a vcpkg prefix's `bin/`, a Qt SDK's `bin/`, a
+    // directory a `prepare` action populates) knows where it lives only at
+    // build-program time, and the manifest key is a fixed TOML array.
+    // `Transform::AbsPath`: relative resolves against the package root, like
+    // `include-dir`. Feeds `LinkIntent::runtimeSearchDirs` DIRECTLY --
+    // `runtime_search_dirs`' own field, not the retiring `[runtime]
+    // library_dirs` / `RuntimeConfig::libraryDirs` (docs/04 §2.11 keeps that
+    // one "for one compatibility train" and gains no directive of its own) --
+    // so every reader of `runtimeSearchDirs` (the plan merge, RUNPATH/rpath on
+    // ELF and Mach-O, `mcpp run`'s loader path, `mcpp pack`'s closure search)
+    // sees a directive-declared directory through the one merge that already
+    // exists for the manifest key (`resolve_runtime_contract`, plan.cppm), no
+    // second path to keep in sync. The directory need not exist when the
+    // program runs: a `prepare` action may populate it later, at build time.
+    RuntimeSearchDir,
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
@@ -262,7 +279,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 26> kTable{{
+inline constexpr std::array<Def, 27> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -413,6 +430,32 @@ inline constexpr std::array<Def, 26> kTable{{
     // before `apply` on both the run path and the cache-hit path, so a cached
     // replay refuses exactly what a fresh run would.
     {"deploy",              "deploy",            Slot::Deploy,           Scope::LinkGlobal,     Transform::Deploy,        false, "",                           "",                                              11},
+    // v12 (mcpp#701/#702, design §5.4 R1'). The build-program form of
+    // `runtime_search_dirs` (docs/04 §2.11): a launch-time search directory,
+    // for a dependency (a vcpkg prefix's `bin/`, a Qt SDK's `bin/`, a
+    // directory a `prepare` action populates) whose location a build.mcpp
+    // learns rather than one an author can write into TOML. Scope::LinkGlobal,
+    // exactly as `deploy` above, because `apply` folds it DIRECTLY into
+    // `LinkIntent::runtimeSearchDirs` -- NOT `RuntimeConfig::libraryDirs`,
+    // which docs/04 §2.11 keeps readable "for one compatibility train" and
+    // which gains no directive -- so `resolve_runtime_contract`'s per-package
+    // merge (plan.cppm) carries it into a consumer's `linkIntent
+    // .runtimeSearchDirs` through the one path that already exists for the
+    // manifest key, rather than a second one this table would have to keep in
+    // sync. `mustExistAfterRun` is FALSE: a directory is not the
+    // declared-output contract's shape (`generated=`/`source=` name a file),
+    // and the directory need not even exist when this program runs -- a
+    // `prepare` action (§3) may populate it later, at build time, which is
+    // the reason this directive exists at all rather than a plain manifest
+    // array.
+    //
+    // kCacheEpoch is NOT bumped, the same reasoning `warning`/`pack-format`
+    // state explicitly: an entry written before this row carries no
+    // `d runtime-search-dir` line, and the program that wrote it could not
+    // emit one -- so replaying it yields exactly what that program said, and
+    // the entry is still correct. An older engine reading a newer entry
+    // already discards the whole record through the unknown-tag path.
+    {"runtime-search-dir",  "runtime-search-dir", Slot::RuntimeSearchDir, Scope::LinkGlobal, Transform::AbsPath,       false, "",                           "",                                              12},
 }};
 
 // ── Collected output of one run ────────────────────────────────────────────
@@ -682,9 +725,15 @@ std::string transformed(const Def& def, std::string_view raw,
                         const fs::path& root) {
     switch (def.transform) {
         case Transform::Verbatim:      return std::string(raw);
-        case Transform::LibFlag:       return mcpp::toolchain::lib_flag_for(dial, raw);
-        case Transform::LibSearchPath: return std::string(dial.libSearchPrefix)
-                                            + abs_against(root, raw);
+        // A link-flag element is read into words (SPEC-004 §8, #703), so a
+        // value the engine builds from a name or a path is spelled to read
+        // back as one word: a library or a directory with a space in its path
+        // stays one argument.
+        case Transform::LibFlag:
+            return mcpp::manifest::flag_element(mcpp::toolchain::lib_flag_for(dial, raw));
+        case Transform::LibSearchPath:
+            return mcpp::manifest::flag_element(std::string(dial.libSearchPrefix)
+                                                + abs_against(root, raw));
         // A define is one word of a compile-flag list, whatever it contains.
         case Transform::DefinePrefix:
             return mcpp::manifest::flag_element(std::string(dial.definePrefix) + std::string(raw));
@@ -692,7 +741,9 @@ std::string transformed(const Def& def, std::string_view raw,
         // Absolute on purpose: the link runs in the build directory, so a
         // relative script path resolves against the wrong root and lld
         // answers "cannot find linker script link.ld" — measured.
-        case Transform::LinkerScript:  return "-T " + abs_against(root, raw);
+        // Two words, `-T` and the path, the second spelled as one word.
+        case Transform::LinkerScript:
+            return "-T " + mcpp::manifest::flag_element(abs_against(root, raw));
         // Resolve `from` NOW, while `root` (this build.mcpp's package root) is
         // still in hand -- `apply` is never given it. `to` is left untouched:
         // it is a destination relative to an executable this package has not
@@ -945,6 +996,15 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     for (auto const& p : d.at(Slot::IncludeDirsAfter))
         bc.includeDirsAfter.emplace_back(p);
 
+    // `runtime-search-dir`: already absolute from the AbsPath transform, like
+    // IncludeDirs above. Joins `LinkIntent::runtimeSearchDirs` DIRECTLY, the
+    // exact field `[runtime] runtime_search_dirs` populates from TOML -- not
+    // the retiring `RuntimeConfig::libraryDirs` -- so a consumer sees it
+    // exactly as it sees the manifest key, folded in by the SAME merge
+    // (plan.cppm's `resolve_runtime_contract`), never a second one.
+    for (auto const& p : d.at(Slot::RuntimeSearchDir))
+        m.runtimeConfig.linkIntent.runtimeSearchDirs.emplace_back(p);
+
     // Claims join the runtime declarations the manifest could have carried
     // itself, so the version-floor check in prepare reads ONE list and never
     // learns which spelling a claim arrived in.
@@ -1006,15 +1066,55 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     }
 }
 
+// The five roles `mcpp::action::role` may name, in the order
+// `mcpp::manifest::BuildAction::Role` declares them (mcpp#702). A build.mcpp
+// SHOULD spell one of `mcpp::roles::{source, check, object, artifact,
+// prepare}` (SPEC-007 R3.6): those constants exist only from protocol 12, so
+// a program that misspells the role fails to COMPILE on an older engine and
+// names the missing constant, instead of reaching this decoder as an
+// unrecognised string. A hand-written `printf("mcpp:action=...")` program
+// (the frozen surface, protocol 0) has no such guard, which is the case this
+// list is for.
+constexpr std::array<std::string_view, 5> kActionRoles{
+    "source", "check", "object", "artifact", "prepare"};
+
+bool is_known_action_role(std::string_view role) {
+    return std::ranges::find(kActionRoles, role) != kActionRoles.end();
+}
+
+// The bare `role` an `mcpp:action=` payload named, or "source" when the key
+// is absent (the same default `decode_action` uses) -- independent of
+// whether the REST of the payload is well-formed, so `action_error` can name
+// an unrecognised role even when the action is otherwise malformed, instead
+// of folding both failures into one generic message.
+std::optional<std::string> action_role_of(std::string_view payload) {
+    try {
+        auto j = nlohmann::json::parse(payload);
+        return j.value("role", std::string{"source"});
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
 std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payload) {
     try {
         auto j = nlohmann::json::parse(payload);
         mcpp::manifest::BuildAction a;
         a.id = j.value("id", std::string{});
         auto role = j.value("role", std::string{"source"});
+        // An unrecognised role is refused here, not read as Source: before
+        // mcpp#702 this fell through to Source silently, changing an action's
+        // meaning without a word (SPEC-007 R3.6). `action_error` names the
+        // offending value before anything is applied; this path is also the
+        // one a cache-hit replay runs through `apply` (which calls no
+        // validator), so it has to refuse on its own rather than assume
+        // `action_error` already ran -- `epoch` 3 (program_protocol.cppm)
+        // makes sure no such entry survives from before this row existed.
+        if (!is_known_action_role(role)) return std::nullopt;
         a.role = role == "check"    ? mcpp::manifest::BuildAction::Role::Check
                : role == "artifact" ? mcpp::manifest::BuildAction::Role::Artifact
                : role == "object"   ? mcpp::manifest::BuildAction::Role::Object
+               : role == "prepare"  ? mcpp::manifest::BuildAction::Role::Prepare
                                     : mcpp::manifest::BuildAction::Role::Source;
         auto arr = [&](const char* k, std::vector<std::string>& dst) {
             if (auto it = j.find(k); it != j.end() && it->is_array())
@@ -1030,7 +1130,18 @@ std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payloa
         a.blocking    = j.value("blocking", false);
         a.depfile     = j.value("depfile", std::string{});
         a.description = j.value("description", std::string{});
+        // Omitted by every role but Prepare, exactly as `depfile` is omitted
+        // by an action that declares none -- the decoder's default (empty)
+        // is identical either way, so a cache entry written before this field
+        // existed replays as one that never set it.
+        a.outputDir   = j.value("output_dir", std::string{});
         if (a.command.empty() || a.outputs.empty()) return std::nullopt;
+        // Prepare only: `output_dir` is the whole point of the role (R3.2,
+        // R3.3) -- a `prepare` action with none declared would have a stamp
+        // and nothing else, indistinguishable from a `check` that merely
+        // forgot `blocking = true`.
+        if (a.role == mcpp::manifest::BuildAction::Role::Prepare && a.outputDir.empty())
+            return std::nullopt;
         if (a.id.empty()) a.id = a.outputs.front();
         return a;
     } catch (...) {
@@ -1144,6 +1255,18 @@ std::string action_error(const Directives& d) {
                 "and cannot be used.\n"
                 "       payload: {}", payload);
         }
+        // Named BEFORE the general decode below, so the message identifies
+        // the unrecognised VALUE and lists the five roles the engine knows,
+        // rather than folding it into "malformed action" -- which is what an
+        // unknown role used to become (silently read as Source) until
+        // mcpp#702 (SPEC-007 R3.6).
+        if (auto role = action_role_of(payload); role && !is_known_action_role(*role)) {
+            return std::format(
+                "build.mcpp declared an action with role \"{}\", which is not "
+                "one of the five mcpp knows: source, check, object, artifact, "
+                "prepare.\n"
+                "       payload: {}", *role, payload);
+        }
         if (decode_action(payload)) continue;
         // A malformed action is a hard error, never a skip: an action that
         // silently does not exist produces a build missing generated sources,
@@ -1152,7 +1275,10 @@ std::string action_error(const Directives& d) {
             "build.mcpp declared a malformed action.\n"
             "       Every action needs a non-empty `command` and at least one\n"
             "       declared `output` — mcpp fixes the source set during prepare,\n"
-            "       so an output whose NAME is unknown cannot be built.\n"
+            "       so an output whose NAME is unknown cannot be built. A\n"
+            "       `prepare` action also needs a non-empty `output_dir`\n"
+            "       (mcpp::action::output_dir), the directory its command\n"
+            "       populates.\n"
             "       payload: {}", payload);
     }
     return {};
@@ -1192,6 +1318,14 @@ void prepare_actions(std::vector<mcpp::manifest::BuildAction>& actions,
         // simply never match the file the command actually wrote.
         if (!a.depfile.empty() && a.depfile.find("${mcpp.") == std::string::npos)
             a.depfile = abs_against(pkgRoot, a.depfile);
+        // Prepare only: the same anchoring, for the same reason -- the
+        // directory the command populates and the post-condition the engine
+        // checks after that command succeeds (`__action-stamp`, src/cli.cppm)
+        // both need it absolute, or a package-relative spelling would be
+        // interpreted relative to the ninja build directory instead of the
+        // package root it was written against.
+        if (!a.outputDir.empty() && a.outputDir.find("${mcpp.") == std::string::npos)
+            a.outputDir = abs_against(pkgRoot, a.outputDir);
         if (a.role != mcpp::manifest::BuildAction::Role::Source) continue;
         for (auto const& o : a.outputs) {
             if (o.find("${mcpp.") != std::string::npos) continue;

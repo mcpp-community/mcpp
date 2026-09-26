@@ -424,10 +424,11 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
 #### 编译 flag 的写法 *(mcpp 2026.9.17.1+)*
 
 `cflags`、`cxxflags` 或 `asmflags` 里的一个元素代表一个或多个编译器
-参数（「词」）。这套语法在每个宿主上都相同，无论写在哪张表里：
+参数（「词」），`ldflags` 里的一个元素代表一个或多个链接器参数
+（mcpp 2026.9.26.2+）。这套语法在每个宿主上都相同，无论写在哪张表里：
 `[build]`、`[targets.<name>]`、`flags` glob 条目、feature、
 `[target.<selector>.build]` 小节、xpkg 描述符，以及构建程序的
-`mcpp:cflag=` / `mcpp:cxxflag=` 指令。
+`mcpp:cflag=` / `mcpp:cxxflag=` / `mcpp:link-flag=` 指令。
 
 | 写法 | 编译器收到的词 |
 |---|---|
@@ -439,6 +440,7 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
 | `"-I/opt/my\\ dir/include"` | `-I/opt/my dir/include` |
 | `"-IC:\\sdk\\include"` | `-IC:\sdk\include` |
 | `"-DNAME=a$b"` | `-DNAME=a$b` |
+| `"-Wl,-rpath,$ORIGIN/../lib"`（在 `ldflags` 中） | `-Wl,-rpath,$ORIGIN/../lib` |
 
 以下规则施加于元素的文本上（TOML 或 Lua 已经去掉了它自己的转义之后）：
 
@@ -453,8 +455,14 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
   与以往每一个版本相同。
 
 一条 `defines` 条目是一个值，不受这套语法解析：`defines =
-["NAME=\"text\""]` 传出单独一个词 `-DNAME="text"`。`ldflags`、
-`dialect_cxxflags` 与 `std-module-flags` 不受本节约束。
+["NAME=\"text\""]` 传出单独一个词 `-DNAME="text"`。`dialect_cxxflags` 与
+`std-module-flags` 不受本节约束。
+
+`ldflags` 自 mcpp 2026.9.26.2 起遵循这套语法（#703）。此前链接 flag 的元素只为
+ninja 转义、没有为 shell 加引号，所以在 Linux 与 macOS 上 `$ORIGIN` 以 `/../lib`
+进入程序的运行路径。带包内相对路径的 `-L` 或 `-Wl,-rpath,` 词相对包根解析，依赖的
+`ldflags` 按词传给消费者。为 ninja 或 shell 手工转义的元素（`\$ORIGIN`、
+`'$$ORIGIN'`）现在按写法读取；首次 plan 会在 `build/flag-words` 下点名这样的元素。
 
 `compile_commands.json` 与 `mcpp emit build-database` 在 `arguments`
 里列出同样的词，可以不经 shell 直接执行。
@@ -1381,7 +1389,7 @@ Link intent 把各个发现阶段分开处理：
 |---|---|---|---|
 | `link_library_dirs` | `-L` | `-L` | `-L` 或 `/LIBPATH:` |
 | `transitive_needed_dirs` | `-Wl,-rpath-link` | 无旗标 | 无旗标 |
-| `runtime_search_dirs` | 仅 RUNPATH/rpath，从不是 `-L` | 仅 rpath | 无旗标 |
+| `runtime_search_dirs` | 仅 RUNPATH/rpath，从不是 `-L` | 仅 rpath | 无旗标；链接之后，程序从这些目录导入的 DLL 被放到程序旁 *(2026.9.26.2+)* |
 | `frameworks` | 无旗标 | `-framework` | 无旗标 |
 | `deploy_files` | 拷贝边 | 拷贝边 | 拷贝到输出旁边；从不是链接器旗标 |
 | `deploy` *（2026.9.12.2+）* | 拷贝边，进 `bin/<to>/` | 拷贝边，进 `bin/<to>/` | 拷贝边，进 `bin/<to>/`；从不是链接器旗标 |
@@ -1404,6 +1412,22 @@ Link intent 把各个发现阶段分开处理：
 对于一批兼容性字段，`library_dirs` 只映射到运行时搜索，`dlopen_libs`
 映射到必需的运行期 soname 要求，`capabilities` 映射到必需的运行期
 能力要求。这些遗留字段都不创建提供者。
+
+`runtime_search_dirs` 有一个构建程序形态，用于一个只有 build.mcpp 才能定位的
+目录（一个 vcpkg 前缀的 `bin/`、一个 Qt SDK 的 `bin/`、一个 `prepare` action
+填充的目录）：`mcpp::runtime_search_dir(dir)`（protocol 12；
+[30 —— 构建程序](30-build-mcpp.md)），直接并入的就是这一个字段——不是上面
+那个不再获得新指令的遗留字段 `library_dirs`。这个目录在该程序运行时不必
+存在；一个 `prepare` action 可能在构建期之后才把它填充起来。
+
+PE 映像没有运行路径，所以在 Windows 上运行时搜索目录服务于 `mcpp run`（把它放进
+`PATH`）与 `mcpp pack`（暂存闭包）。自 2026.9.26.2 起，计划中带运行时搜索目录的
+PE 程序在链接之后多一条边 `mcpp place-dlls`：它按 `mcpp pack` 的方式读取程序的
+导入闭包，把程序直接或经另一个 DLL 间接导入、且在这些目录之一中解析到的每个 DLL
+放到程序旁。系统 DLL 与 API set 从不复制，副本只在字节不同时写入，某个 DLL 在
+其目录中被替换后，下一次构建会再次放置它。于是从构建目录直接启动的程序能找到
+它们，与 vcpkg 的 applocal 步骤或 CMake 的 `$<TARGET_RUNTIME_DLLS>` 之后相同。两个
+目录提供同一个名字时，放置按搜索顺序的第一个，并以一条说明指出两者。
 
 `target/<triple>/<fp>/resolution.json` schema 2 存储 RuntimeBinding、
 规范化后的要求/提供者/产物、LinkIntent、平台发现机制与链接后判定。

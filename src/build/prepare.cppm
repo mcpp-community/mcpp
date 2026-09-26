@@ -100,6 +100,7 @@ import mcpp.pm.lock_io;
 import mcpp.version_req;
 import mcpp.ui;
 import mcpp.log;
+import mcpp.wire;               // Severity, for PlanNote (#699 item 2, E3)
 import mcpp.fallback.install_integrity;
 import mcpp.bmi_cache;
 import mcpp.project;
@@ -587,6 +588,18 @@ std::vector<std::string> previous_release_words(std::string element, bool define
 }
 
 void report_flag_words_changes(const mcpp::manifest::Manifest& m) {
+    auto show = [](const std::vector<std::string>& words) {
+        std::string out = "[";
+        for (auto const& w : words)
+            out += std::format("{}'{}'", out.size() > 1 ? ", " : "", w);
+        return out + "]";
+    };
+    auto note_change = [&](std::string what, std::string hint) {
+        auto note = std::pair{std::move(what), std::move(hint)};
+        auto& notes = pending_flag_words_notes();
+        if (std::ranges::find(notes, note) == notes.end()) notes.push_back(std::move(note));
+    };
+    auto const who = m.package.name.empty() ? std::string("(root)") : m.package.name;
     auto check = [&](std::string_view where, const std::vector<std::string>& list,
                      bool define) {
         for (auto const& e : list) {
@@ -594,27 +607,45 @@ void report_flag_words_changes(const mcpp::manifest::Manifest& m) {
                               : mcpp::manifest::flag_words(e);
             auto before = previous_release_words(e, define);
             if (now == before) continue;
-            auto show = [](const std::vector<std::string>& words) {
-                std::string out = "[";
-                for (auto const& w : words)
-                    out += std::format("{}'{}'", out.size() > 1 ? ", " : "", w);
-                return out + "]";
-            };
-            auto note = std::pair{std::format(
+            note_change(std::format(
                 "{}: {} element '{}' reaches the compiler as {}; mcpp before "
                 "2026.9.17.1 passed {} on this host",
-                m.package.name.empty() ? std::string("(root)") : m.package.name,
-                where, e, show(now), show(before)),
+                who, where, e, show(now), show(before)),
                 std::string(
                 "a compile-flag element is read by one syntax on every host, and a "
                 "`defines` entry is one value (docs/04-mcpp-toml.md, "
                 "\"Compile-flag syntax\"); spell the element so that it reads as the "
-                "words meant")};
-            auto& notes = pending_flag_words_notes();
-            if (std::ranges::find(notes, note) == notes.end()) notes.push_back(std::move(note));
+                "words meant"));
+        }
+    };
+    // THE SAME QUESTION FOR THE LINK FLAGS, which take the reading from
+    // 2026.9.26.2 (#703). Before, a `-L` or `-Wl,-rpath,` element was escaped
+    // for ninja, so its text reached the host's reader as written, and any
+    // other element was pasted into the ninja rule, so ninja replaced its `$`
+    // sequences first. `$ORIGIN` written plainly reads the same under both
+    // models, because neither reproduces the shell's expansion that lost it;
+    // an element escaped for ninja or for the shell by hand is what differs.
+    auto check_link = [&](std::string_view where, const std::vector<std::string>& list) {
+        for (auto const& e : list) {
+            auto now = mcpp::manifest::flag_words(e);
+            auto before = e.starts_with("-L") || e.starts_with("-Wl,-rpath,")
+                ? mcpp::manifest::host_command_words(e, mcpp::platform::is_windows)
+                : previous_release_words(e, false);
+            if (now == before) continue;
+            note_change(std::format(
+                "{}: {} element '{}' reaches the linker as {}; mcpp before "
+                "2026.9.26.2 passed {} on this host",
+                who, where, e, show(now), show(before)),
+                std::string(
+                "a link-flag element is read by the compile-flag syntax, so `$ORIGIN` "
+                "reaches the linker as written and an element escaped for ninja or the "
+                "shell by hand is no longer unescaped (docs/04-mcpp-toml.md, "
+                "\"Compile-flag syntax\"); spell the element so that it reads as the "
+                "words meant"));
         }
     };
     auto const& bc = m.buildConfig;
+    check_link("[build] ldflags", bc.ldflags);
     check("[build] cflags", bc.cflags, false);
     check("[build] cxxflags", bc.cxxflags, false);
     check("[build] defines", bc.defines, true);
@@ -1089,11 +1120,21 @@ export std::string_view cache_mode_name(CacheMode m) {
 }
 
 // A condition a planning pass reports instead of acting on (plan_only): the
-// code is stable and the message is for people. Emitted as warning diagnostics
-// by the command that asked for the plan.
+// code is stable and the message is for people. Emitted as diagnostics by the
+// command that asked for the plan, at the severity carried here — most notes
+// are warnings the document is still complete despite (a lock that would
+// change, a generated file left unmaterialized); a build program whose run
+// failed under `plan_only` (#699 item 2, E3) is an error, because the sets it
+// would have shaped are described without its directives.
 export struct PlanNote {
     std::string code;
     std::string message;
+    mcpp::wire::Severity severity = mcpp::wire::Severity::Warning;
+    // The absolute, native path of the file the condition is about (a
+    // package's `build.mcpp`), empty when the note names no file.
+    // `mcpp.build.build_database::render` rewrites it to the workspace-
+    // relative form every other `path` in the document uses.
+    std::string path;
 };
 
 export struct BuildContext {
@@ -7103,9 +7144,14 @@ prepare_build(bool print_fingerprint,
                                   const mcpp::manifest::Manifest& depManifest)
         -> std::vector<std::string>
     {
+        // Word by word (SPEC-004 §8, #703): a search path is made absolute
+        // per word, and each word is written back as an element that reads as
+        // exactly that word, so the consumer's renderer reads the dependency's
+        // flags with the same reading its own flags receive, and an element
+        // that packs several tokens is several words on both sides.
         std::vector<std::string> added;
-        for (auto const& flag : depManifest.buildConfig.ldflags) {
-            auto normalized = normalizeDepLdflag(depRoot, flag);
+        for (auto const& word : mcpp::manifest::flag_words(depManifest.buildConfig.ldflags)) {
+            auto normalized = mcpp::manifest::flag_element(normalizeDepLdflag(depRoot, word));
             m->buildConfig.ldflags.push_back(normalized);
             added.push_back(std::move(normalized));
         }
@@ -10351,6 +10397,26 @@ prepare_build(bool print_fingerprint,
                         continue;
                     }
 
+                    // #699 item 2 (E2): under `emit build-database`
+                    // (`plan_only`), a host tool that fails to build is a
+                    // warning, not a refusal that costs the whole plan — the
+                    // requesting member is still worth describing, and its
+                    // build program receives the path the tool would have
+                    // been published at (`binOut`, fixed above before any of
+                    // this runs). `mcpp build` is unchanged below: it still
+                    // returns `std::unexpected` and the target fails.
+                    auto host_tool_unbuilt = [&](std::string_view failure) {
+                        // The first line only: a nested build's message can
+                        // run to several, and the warning names the tool and
+                        // its package, not the whole log.
+                        const auto first = failure.substr(0, failure.find('\n'));
+                        planNotes.push_back({"MCPP_BUILD_DATABASE_HOST_TOOL_UNBUILT",
+                            std::format("host tool '{}' of package '{}' did not "
+                                        "build: {}", toolName, depName, first),
+                            mcpp::wire::Severity::Warning});
+                        record(binOut);
+                    };
+
                     mcpp::ui::status("Building", std::format(
                         "host tool {}:{} from {} v{} (once per package source and "
                         "host toolchain)", depName, toolName, depName,
@@ -10440,6 +10506,10 @@ prepare_build(bool print_fingerprint,
                                                 /*includeDevDeps=*/false,
                                                 /*extraTargets=*/{}, sub);
                     if (!subCtx) {
+                        if (overrides.plan_only) {
+                            host_tool_unbuilt(subCtx.error());
+                            continue;
+                        }
                         return std::unexpected(std::format(
                             "building host tool '{}:{}' failed: {}{}",
                             depName, toolName, subCtx.error(), subContext()));
@@ -10453,6 +10523,12 @@ prepare_build(bool print_fingerprint,
                         if (lu.targetName == toolName) { goal = lu.output; break; }
                     }
                     if (goal.empty()) {
+                        if (overrides.plan_only) {
+                            host_tool_unbuilt("produced no link unit — its "
+                                "required_features may not be satisfiable on "
+                                "this platform");
+                            continue;
+                        }
                         return std::unexpected(std::format(
                             "host tool '{}:{}' produced no link unit — its "
                             "required_features may not be satisfiable on this "
@@ -10471,6 +10547,10 @@ prepare_build(bool print_fingerprint,
                         bopt.verbose = true;
                     auto br = be->build(subCtx->plan, bopt);
                     if (!br) {
+                        if (overrides.plan_only) {
+                            host_tool_unbuilt(br.error().message);
+                            continue;
+                        }
                         auto diag = br.error().diagnosticOutput;
                         if (diag.empty())
                             diag = "(the inner build produced no diagnostic "
@@ -10481,6 +10561,11 @@ prepare_build(bool print_fingerprint,
                             subContext(), diag));
                     }
                     if (br->exitCode != 0) {
+                        if (overrides.plan_only) {
+                            host_tool_unbuilt(std::format(
+                                "build exited with {}", br->exitCode));
+                            continue;
+                        }
                         return std::unexpected(std::format(
                             "building host tool '{}:{}' failed (exit {}){}",
                             depName, toolName, br->exitCode, subContext()));
@@ -10492,6 +10577,11 @@ prepare_build(bool print_fingerprint,
                     std::error_code cpEc;
                     auto produced = subCtx->plan.outputDir / goal;
                     if (!std::filesystem::exists(produced, cpEc)) {
+                        if (overrides.plan_only) {
+                            host_tool_unbuilt(std::format(
+                                "built but '{}' is missing", produced.string()));
+                            continue;
+                        }
                         return std::unexpected(std::format(
                             "host tool '{}:{}' built but '{}' is missing",
                             depName, toolName, produced.string()));
@@ -10503,6 +10593,11 @@ prepare_build(bool print_fingerprint,
                     std::filesystem::copy_file(produced, tmp,
                         std::filesystem::copy_options::overwrite_existing, cpEc);
                     if (cpEc) {
+                        if (overrides.plan_only) {
+                            host_tool_unbuilt(std::format(
+                                "staging failed: {}", cpEc.message()));
+                            continue;
+                        }
                         return std::unexpected(std::format(
                             "staging host tool '{}:{}' failed: {}",
                             depName, toolName, cpEc.message()));
@@ -10514,6 +10609,11 @@ prepare_build(bool print_fingerprint,
                         std::filesystem::perm_options::add, cpEc);
                     std::filesystem::rename(tmp, binOut, cpEc);
                     if (cpEc) {
+                        if (overrides.plan_only) {
+                            host_tool_unbuilt(std::format(
+                                "publishing failed: {}", cpEc.message()));
+                            continue;
+                        }
                         return std::unexpected(std::format(
                             "publishing host tool '{}:{}' failed: {}",
                             depName, toolName, cpEc.message()));
@@ -10610,6 +10710,24 @@ prepare_build(bool print_fingerprint,
                     pkg.manifest, pkg.root, host->first, host->second,
                     pkg.manifest.cppStandard, bpEnv);
                 !r) {
+                // #699 item 2 (E3): under `emit build-database` (`plan_only`),
+                // a failing build program describes its package without that
+                // program's directives, instead of costing the whole plan —
+                // the manifest's own configuration, the toolchain and the
+                // module graph are still worth describing. Nothing is applied
+                // either way: `run_build_program` returns before
+                // `Directives::apply` on every failure path. A later failure
+                // that follows from the missing directives (a source the
+                // program would have added, say) fails the member under the
+                // ordinary rule (E1).
+                if (overrides.plan_only) {
+                    planNotes.push_back({"MCPP_BUILD_DATABASE_PROGRAM_FAILED",
+                        std::format("dependency '{}': {}",
+                                    pkg.manifest.package.name, r.error()),
+                        mcpp::wire::Severity::Error,
+                        (pkg.root / "build.mcpp").string()});
+                    continue;
+                }
                 return std::unexpected(std::format(
                     "dependency '{}': {}", pkg.manifest.package.name, r.error()));
             }
@@ -12111,7 +12229,8 @@ prepare_build(bool print_fingerprint,
             facts.hasSources = !mcpp::modgraph::package_source_files(
                 packages[i].root, pkg).empty();
             facts.carriesForeignLinkInputs =
-                lf::carries_foreign_link_inputs(pkg.buildConfig.ldflags);
+                lf::carries_foreign_link_inputs(
+                    mcpp::manifest::flag_words(pkg.buildConfig.ldflags));
             facts.isDistribution = mcpp::pack::is_distribution_package(pkg);
             for (auto const& artifact : pkg.runtimeConfig.artifacts) {
                 if (artifact.role == "static-library") facts.shipsStatic = true;
@@ -12389,120 +12508,147 @@ prepare_build(bool print_fingerprint,
         // snapshot. Anything past this index is a `mcpp::deploy()` residue
         // that needs the same mirror the flag/source tails get below.
         const auto rdeployN = m->runtimeConfig.linkIntent.deploy.size();
+        // Same reason, one field wide: `mcpp::runtime_search_dir()` residue
+        // needs the same mirror `deploy` does, or `resolve_runtime_contract`
+        // (which reads `packages[0]`'s snapshot, not `*m`) never sees it.
+        const auto rsearchDirN = m->runtimeConfig.linkIntent.runtimeSearchDirs.size();
         // What the dependencies supplied as runners, before the root's program
         // speaks. The root's emissions are appended to the same slots, so a
         // name both supply becomes one argv joining the two (#634, §9 item 8,
         // measured: `run-A.sh run-B.sh <artifact>`).
         const auto runnerBeforeRoot = bcRoot.runner;
         const auto namedBeforeRoot  = bcRoot.namedRunners;
-        if (auto bp = mcpp::build::run_build_program(
-                *m, *root, host->first, host->second,
-                m->cppStandard, bpEnv);
-            !bp) {
+        auto bp = mcpp::build::run_build_program(
+            *m, *root, host->first, host->second,
+            m->cppStandard, bpEnv);
+        if (!bp && !overrides.plan_only) {
             return std::unexpected(bp.error());
         }
-        // THE SAME RULE THE DEPENDENCIES ARE HELD TO, WITH THE ROOT AS A PARTY.
-        // Two suppliers of one runner are refused naming both, and the
-        // manifest is the way to choose: a `[target.<triple>]` runner the
-        // project writes outranks every supplied one where the runner is
-        // looked up, so a name the manifest declares is not refused here.
-        {
-            const auto rowKey = [&]() -> std::string {
-                if (!tc) return {};
-                auto t = mcpp::toolchain::triple::parse(tc->targetTriple);
-                return t ? t->str() : tc->targetTriple;
-            }();
-            const auto row = m->targetOverrides.find(rowKey);
-            const auto manifestNames = [&](std::string_view name) {
-                if (row == m->targetOverrides.end()) return false;
-                if (name.empty()) return !row->second.runner.empty();
-                return row->second.namedRunners.contains(std::string(name));
-            };
-            if (!runnerProvider.empty() && !runnerBeforeRoot.empty()
-                && bcRoot.runner.size() > runnerBeforeRoot.size()
-                && !manifestNames({})) {
-                return std::unexpected(std::format(
-                    "the dependency '{}' and this project's build program both "
-                    "supply the runner for this target, and the two would be "
-                    "joined into one argv.\n"
-                    "       Drop one of them, or state the runner in "
-                    "[target.{}].runner.",
-                    runnerProvider, rowKey));
-            }
-            for (auto const& [name, nr] : bcRoot.namedRunners) {
-                auto before = namedBeforeRoot.find(name);
-                auto who = namedRunnerProvider.find(name);
-                if (before == namedBeforeRoot.end() || before->second.argv.empty()
-                    || who == namedRunnerProvider.end() || who->second.empty())
-                    continue;
-                if (nr.argv.size() <= before->second.argv.size()) continue;
-                if (manifestNames(name)) continue;
-                return std::unexpected(std::format(
-                    "the dependency '{}' and this project's build program both "
-                    "supply a runner named '{}' for this target, and the two "
-                    "would be joined into one argv.\n"
-                    "       Drop one of them, or state it in "
-                    "[target.{}.runners].{}.",
-                    who->second, name, rowKey, name));
-            }
+        // #699 item 2 (E3): under `emit build-database` (`plan_only`), a
+        // failing root build program describes the package without its
+        // directives rather than costing the whole plan. Every mirror below
+        // reads what the program would have added to `*m`, so skipping
+        // straight past it (nothing runs on this path) is what "without its
+        // directives" means; a later failure that follows from the gap
+        // fails the member under the ordinary rule (E1).
+        if (!bp) {
+            planNotes.push_back({"MCPP_BUILD_DATABASE_PROGRAM_FAILED",
+                bp.error(), mcpp::wire::Severity::Error,
+                (*root / "build.mcpp").string()});
         }
-        auto& pkg0 = packages[0];
-        // Compile-visible tail → privateBuild: the shared fold (same owner
-        // as the dep loop; the root's TUs read privateBuild).
-        foldDirectiveTailIntoPrivateBuild(pkg0, *m, mark);
-        // Before the source residues are mirrored below: adopting an action's
-        // outputs APPENDS to bcRoot.sources, and those appends must be inside
-        // the tail that gets copied into the packages[0] snapshot the scan reads.
-        adoptActionOutputs(*m, *root, ractN);
-        // The root's build program has spoken; a floor it stated is checked
-        // now, with the facts every package (it included) established.
-        if (auto err = checkVersionFloors(); err) return std::unexpected(*err);
-        // Root residues — apply() mutated *m, but packages[0].manifest is a
-        // value-copy snapshot taken at makePackageRoot, so everything the
-        // scan/fingerprint read from the snapshot needs the tail mirrored:
-        // sources → the scan walks packages[0].manifest, not *m.
-        pkg0.manifest.buildConfig.sources.insert(
-            pkg0.manifest.buildConfig.sources.end(),
-            bcRoot.sources.begin() + rsrcN, bcRoot.sources.end());
-        pkg0.manifest.modules.sources.insert(
-            pkg0.manifest.modules.sources.end(),
-            m->modules.sources.begin() + rmodN, m->modules.sources.end());
-        // Fingerprint metadata (canonical_package_build_metadata folds
-        // packages[].manifest.buildConfig) — mirror the flag/include tails,
-        // as the old pre-snapshot ordering implicitly did.
-        pkg0.manifest.buildConfig.cflags.insert(
-            pkg0.manifest.buildConfig.cflags.end(),
-            bcRoot.cflags.begin() + static_cast<std::ptrdiff_t>(mark.cflags),
-            bcRoot.cflags.end());
-        pkg0.manifest.buildConfig.cxxflags.insert(
-            pkg0.manifest.buildConfig.cxxflags.end(),
-            bcRoot.cxxflags.begin() + static_cast<std::ptrdiff_t>(mark.cxxflags),
-            bcRoot.cxxflags.end());
-        pkg0.manifest.buildConfig.includeDirs.insert(
-            pkg0.manifest.buildConfig.includeDirs.end(),
-            bcRoot.includeDirs.begin() + static_cast<std::ptrdiff_t>(mark.includeDirs),
-            bcRoot.includeDirs.end());
-        pkg0.manifest.buildConfig.includeDirsAfter.insert(
-            pkg0.manifest.buildConfig.includeDirsAfter.end(),
-            bcRoot.includeDirsAfter.begin()
-                + static_cast<std::ptrdiff_t>(mark.includeDirsAfter),
-            bcRoot.includeDirsAfter.end());
-        // Link flags → the final link reads *m (already applied); keep the
-        // linkUsage snapshot and fingerprint metadata equivalent too.
-        pkg0.linkUsage.ldflags.insert(pkg0.linkUsage.ldflags.end(),
-            bcRoot.ldflags.begin() + rldN, bcRoot.ldflags.end());
-        pkg0.manifest.buildConfig.ldflags.insert(
-            pkg0.manifest.buildConfig.ldflags.end(),
-            bcRoot.ldflags.begin() + rldN, bcRoot.ldflags.end());
-        // #622 A4: `mcpp::deploy()` residue → `packages[0].manifest`, the
-        // object `resolve_runtime_contract` (plan.cppm) actually reads.
-        // Without this mirror a directive-sourced deploy entry lands in `*m`
-        // and nowhere the planner looks — the same gap this block already
-        // closes for sources/flags, one more field wide.
-        pkg0.manifest.runtimeConfig.linkIntent.deploy.insert(
-            pkg0.manifest.runtimeConfig.linkIntent.deploy.end(),
-            m->runtimeConfig.linkIntent.deploy.begin() + static_cast<std::ptrdiff_t>(rdeployN),
-            m->runtimeConfig.linkIntent.deploy.end());
+        if (bp) {
+            // THE SAME RULE THE DEPENDENCIES ARE HELD TO, WITH THE ROOT AS A PARTY.
+            // Two suppliers of one runner are refused naming both, and the
+            // manifest is the way to choose: a `[target.<triple>]` runner the
+            // project writes outranks every supplied one where the runner is
+            // looked up, so a name the manifest declares is not refused here.
+            {
+                const auto rowKey = [&]() -> std::string {
+                    if (!tc) return {};
+                    auto t = mcpp::toolchain::triple::parse(tc->targetTriple);
+                    return t ? t->str() : tc->targetTriple;
+                }();
+                const auto row = m->targetOverrides.find(rowKey);
+                const auto manifestNames = [&](std::string_view name) {
+                    if (row == m->targetOverrides.end()) return false;
+                    if (name.empty()) return !row->second.runner.empty();
+                    return row->second.namedRunners.contains(std::string(name));
+                };
+                if (!runnerProvider.empty() && !runnerBeforeRoot.empty()
+                    && bcRoot.runner.size() > runnerBeforeRoot.size()
+                    && !manifestNames({})) {
+                    return std::unexpected(std::format(
+                        "the dependency '{}' and this project's build program both "
+                        "supply the runner for this target, and the two would be "
+                        "joined into one argv.\n"
+                        "       Drop one of them, or state the runner in "
+                        "[target.{}].runner.",
+                        runnerProvider, rowKey));
+                }
+                for (auto const& [name, nr] : bcRoot.namedRunners) {
+                    auto before = namedBeforeRoot.find(name);
+                    auto who = namedRunnerProvider.find(name);
+                    if (before == namedBeforeRoot.end() || before->second.argv.empty()
+                        || who == namedRunnerProvider.end() || who->second.empty())
+                        continue;
+                    if (nr.argv.size() <= before->second.argv.size()) continue;
+                    if (manifestNames(name)) continue;
+                    return std::unexpected(std::format(
+                        "the dependency '{}' and this project's build program both "
+                        "supply a runner named '{}' for this target, and the two "
+                        "would be joined into one argv.\n"
+                        "       Drop one of them, or state it in "
+                        "[target.{}.runners].{}.",
+                        who->second, name, rowKey, name));
+                }
+            }
+            auto& pkg0 = packages[0];
+            // Compile-visible tail → privateBuild: the shared fold (same owner
+            // as the dep loop; the root's TUs read privateBuild).
+            foldDirectiveTailIntoPrivateBuild(pkg0, *m, mark);
+            // Before the source residues are mirrored below: adopting an action's
+            // outputs APPENDS to bcRoot.sources, and those appends must be inside
+            // the tail that gets copied into the packages[0] snapshot the scan reads.
+            adoptActionOutputs(*m, *root, ractN);
+            // The root's build program has spoken; a floor it stated is checked
+            // now, with the facts every package (it included) established.
+            if (auto err = checkVersionFloors(); err) return std::unexpected(*err);
+            // Root residues — apply() mutated *m, but packages[0].manifest is a
+            // value-copy snapshot taken at makePackageRoot, so everything the
+            // scan/fingerprint read from the snapshot needs the tail mirrored:
+            // sources → the scan walks packages[0].manifest, not *m.
+            pkg0.manifest.buildConfig.sources.insert(
+                pkg0.manifest.buildConfig.sources.end(),
+                bcRoot.sources.begin() + rsrcN, bcRoot.sources.end());
+            pkg0.manifest.modules.sources.insert(
+                pkg0.manifest.modules.sources.end(),
+                m->modules.sources.begin() + rmodN, m->modules.sources.end());
+            // Fingerprint metadata (canonical_package_build_metadata folds
+            // packages[].manifest.buildConfig) — mirror the flag/include tails,
+            // as the old pre-snapshot ordering implicitly did.
+            pkg0.manifest.buildConfig.cflags.insert(
+                pkg0.manifest.buildConfig.cflags.end(),
+                bcRoot.cflags.begin() + static_cast<std::ptrdiff_t>(mark.cflags),
+                bcRoot.cflags.end());
+            pkg0.manifest.buildConfig.cxxflags.insert(
+                pkg0.manifest.buildConfig.cxxflags.end(),
+                bcRoot.cxxflags.begin() + static_cast<std::ptrdiff_t>(mark.cxxflags),
+                bcRoot.cxxflags.end());
+            pkg0.manifest.buildConfig.includeDirs.insert(
+                pkg0.manifest.buildConfig.includeDirs.end(),
+                bcRoot.includeDirs.begin() + static_cast<std::ptrdiff_t>(mark.includeDirs),
+                bcRoot.includeDirs.end());
+            pkg0.manifest.buildConfig.includeDirsAfter.insert(
+                pkg0.manifest.buildConfig.includeDirsAfter.end(),
+                bcRoot.includeDirsAfter.begin()
+                    + static_cast<std::ptrdiff_t>(mark.includeDirsAfter),
+                bcRoot.includeDirsAfter.end());
+            // Link flags → the final link reads *m (already applied); keep the
+            // linkUsage snapshot and fingerprint metadata equivalent too.
+            pkg0.linkUsage.ldflags.insert(pkg0.linkUsage.ldflags.end(),
+                bcRoot.ldflags.begin() + rldN, bcRoot.ldflags.end());
+            pkg0.manifest.buildConfig.ldflags.insert(
+                pkg0.manifest.buildConfig.ldflags.end(),
+                bcRoot.ldflags.begin() + rldN, bcRoot.ldflags.end());
+            // #622 A4: `mcpp::deploy()` residue → `packages[0].manifest`, the
+            // object `resolve_runtime_contract` (plan.cppm) actually reads.
+            // Without this mirror a directive-sourced deploy entry lands in `*m`
+            // and nowhere the planner looks — the same gap this block already
+            // closes for sources/flags, one more field wide.
+            pkg0.manifest.runtimeConfig.linkIntent.deploy.insert(
+                pkg0.manifest.runtimeConfig.linkIntent.deploy.end(),
+                m->runtimeConfig.linkIntent.deploy.begin() + static_cast<std::ptrdiff_t>(rdeployN),
+                m->runtimeConfig.linkIntent.deploy.end());
+            // `mcpp::runtime_search_dir()` residue → `packages[0].manifest`, the
+            // same object and the same reason as the `deploy` mirror above: without
+            // it a directive-sourced entry lands in `*m` and `resolve_runtime_contract`
+            // never looks there.
+            pkg0.manifest.runtimeConfig.linkIntent.runtimeSearchDirs.insert(
+                pkg0.manifest.runtimeConfig.linkIntent.runtimeSearchDirs.end(),
+                m->runtimeConfig.linkIntent.runtimeSearchDirs.begin()
+                    + static_cast<std::ptrdiff_t>(rsearchDirN),
+                m->runtimeConfig.linkIntent.runtimeSearchDirs.end());
+        }
     }
 
     // ── Every device source must reach some action ─────────────────────────
@@ -12569,6 +12715,87 @@ prepare_build(bool print_fingerprint,
                   "       fix: add a `build.mcpp` importing the rule for these files (e.g.\n"
                   "       `mcpp.rules.cuda` for `.cu`, `mcpp.rules.spirv` for shaders), or\n"
                   "       drop them from `[build] sources`."));
+    }
+
+    // ── R1.3: a re-run input inside a `prepare` directory (SPEC-007 §3) ─────
+    //
+    // A build program's re-run set is declared BEFORE anything is built
+    // (`rerun_if_changed`/`rerun_if_changed_glob`), and a `prepare` action's
+    // directory is filled AFTER a build program has already run once for
+    // this build — it is a ninja edge, scheduled after `mcpp build`'s
+    // configure step ends. A program that also names a file or a glob inside
+    // such a directory as its own re-run input reads a CONSTRUCTION RESULT
+    // while it configures: correct on the SECOND build, once a previous
+    // build's `prepare` action has populated the directory, and wrong on the
+    // first — the exact pattern of a plugin placing a first installation's
+    // libraries on the NEXT plan (design §5.2's route on 2026.9.26.1, which
+    // this directive and role exist to remove).
+    //
+    // WARNED, NOT REFUSED: the program still configures correctly today (its
+    // FIRST run sees what the tree already held), and R1.2 already asks a
+    // program to say what it could not find with `mcpp::warning`. This is the
+    // engine naming an author obligation SPEC-007 states (R1.3), not a build
+    // it can complete no differently.
+    //
+    // `declared_program_inputs` reads back what every package's build.mcpp
+    // just declared (or, on a cache hit, declared on its last run) from the
+    // caches under `<workRoot>/target/.build-mcpp`, so no extra plumbing is
+    // needed to carry the re-run set out of `run_build_program`.
+    {
+        std::map<std::filesystem::path, std::string> ownerName;
+        std::vector<std::pair<std::string, std::filesystem::path>> prepareDirs;
+        for (std::size_t i = 0; i < packages.size(); ++i) {
+            auto const& mm = (i == 0) ? *m : packages[i].manifest;
+            ownerName.emplace(packages[i].root.lexically_normal(), mm.package.name);
+            for (auto const& a : mm.buildConfig.actions) {
+                if (a.role != mcpp::manifest::BuildAction::Role::Prepare) continue;
+                if (a.outputDir.empty()) continue;
+                prepareDirs.emplace_back(mm.package.name,
+                    std::filesystem::path(a.outputDir).lexically_normal());
+            }
+        }
+        if (!prepareDirs.empty()) {
+            // `p` reaches strictly inside `dir`: equal paths and a sibling
+            // that merely shares a prefix (`lexically_relative` starting with
+            // `..`) both do not count.
+            auto isUnder = [](const std::filesystem::path& p,
+                              const std::filesystem::path& dir) {
+                auto rel = p.lexically_relative(dir);
+                if (rel.empty()) return false;
+                auto s = rel.generic_string();
+                return s != "." && s.compare(0, 2, "..") != 0;
+            };
+            for (auto const& decl : mcpp::build::declared_program_inputs(workRoot)) {
+                std::vector<std::filesystem::path> watched(decl.files);
+                for (auto const& pattern : decl.globs) {
+                    // The glob's fixed prefix — everything before its first
+                    // wildcard character — is enough to answer whether the
+                    // PATTERN reaches into a `prepare` directory; resolving it
+                    // into the file set it matches is not needed for that.
+                    auto wildcard = pattern.find_first_of("*?[");
+                    auto fixed = wildcard == std::string::npos
+                               ? pattern : pattern.substr(0, wildcard);
+                    watched.push_back((decl.root / fixed).lexically_normal());
+                }
+                auto ownerIt = ownerName.find(decl.root.lexically_normal());
+                const std::string declName =
+                    ownerIt != ownerName.end() ? ownerIt->second : decl.root.string();
+                for (auto const& w : watched) {
+                    for (auto const& [pkgName, dir] : prepareDirs) {
+                        if (!isUnder(w, dir)) continue;
+                        mcpp::ui::warning(std::format(
+                            "{}'s build.mcpp re-runs on '{}', which is inside "
+                            "'{}', the directory package '{}' declared with a "
+                            "`prepare` action's output_dir. That directory is "
+                            "populated at BUILD time, after build.mcpp has "
+                            "already configured, so this program sees the "
+                            "PREVIOUS build's contents, never the current "
+                            "one's (SPEC-007 R1.3).",
+                            declName, w.string(), dir.string(), pkgName));
+                    }
+                }
+            }
+        }
     }
 
     // [targets.*] required_features gate: a target is emitted only when ALL its
@@ -13319,6 +13546,22 @@ prepare_build(bool print_fingerprint,
             stdObjectPath = sm->objectPath;
             stdCompatBmiPath = sm->compatBmiPath;
             stdCompatObjectPath = sm->compatObjectPath;
+            // C5 / D5a (design 2026-09-26 §3.5): compile_commands.json and the
+            // S1 document list the standard-library units too, so the plan
+            // needs the commands mcpp ran to build them (§13396 below), not
+            // only their output paths. `describe_std_module` is the pure
+            // derivation `ensure_built` itself reads before running anything
+            // (mcpp.toolchain.stdmod's header); calling it again here starts
+            // no process and cannot name a different command or directory.
+            // A failure here is not this build's failure -- `ensure_built`
+            // above already succeeded with the same inputs -- so it only
+            // means the description is unavailable for the plan, silently.
+            auto described = mcpp::toolchain::describe_std_module(
+                *tc, m->package.standard, stdFlagAndDialect,
+                mcpp::platform::macos::deployment_target(
+                    stdTargetIsMacos, m->buildConfig.macosDeploymentTarget),
+                mcpp::toolchain::default_cache_root(), stdCrt);
+            if (described) describedStdModule = std::move(*described);
         }
     }
 
@@ -13355,7 +13598,12 @@ prepare_build(bool print_fingerprint,
     }
     ctx.stdBmi     = stdBmiPath;
     ctx.stdObject  = stdObjectPath;
-    ctx.stdModule  = std::move(describedStdModule);
+    // Copied, not moved: `describedStdModule` is read again once `ctx.plan`
+    // exists (below), to recover the standard-library units' commands onto
+    // it (StdModuleUnit, C5 / D5a-b). A `std::optional` move leaves the
+    // source engaged with a moved-from value, so a plain move here would
+    // hand build_database.cppm's render() a value and the plan an empty one.
+    ctx.stdModule  = describedStdModule;
     // Every directory a package payload may legitimately have been INSTALLED
     // into. There is more than one: the global registry, plus the two
     // project-local data roots a custom git index installs into
@@ -13610,6 +13858,48 @@ prepare_build(bool print_fingerprint,
     // that function does depends on it: the flag assembly that does reads the
     // plan, and every reader of `compute_flags` runs after this line.
     ctx.plan.targetSide = resolvedTargetSide;
+
+    // C5 / D5a-b (design 2026-09-26 §3.5): the standard-library units this
+    // configuration's build compiles, when it imports `std`. Recovered here,
+    // once, from the SAME command derivation `ensure_built` and
+    // `describe_std_module` both read (mcpp.toolchain.stdmod), and carried on
+    // the plan (BuildPlan::stdModuleUnits) so compile_commands.json,
+    // `emit --spec compile-commands` and the S1 document render the exact
+    // same record and cannot disagree (P1, mcpp.build.compile_commands).
+    if (describedStdModule) {
+        const auto& sm = *describedStdModule;
+        auto add_std_unit = [&](const std::filesystem::path& source,
+                                const std::vector<std::string>& commands,
+                                const std::filesystem::path& object,
+                                const std::filesystem::path& bmi,
+                                std::string_view module,
+                                std::vector<std::string> requiresModules) {
+            if (source.empty() || commands.empty()) return;
+            auto inv = mcpp::build::recover_invocation(
+                commands, source, tc->binaryPath, sm.cacheDir,
+                mcpp::platform::is_windows);
+            if (!inv) {
+                planNotes.push_back({"MCPP_BUILD_DATABASE_STD_UNIT_UNDESCRIBED",
+                    std::format("no command that builds the {} module names its "
+                                "source '{}'; the unit is not listed",
+                                module, source.string())});
+                return;
+            }
+            ctx.plan.stdModuleUnits.push_back(mcpp::build::StdModuleUnit{
+                .source = source,
+                .workDirectory = std::move(inv->workDirectory),
+                .arguments = std::move(inv->arguments),
+                .object = object,
+                .bmi = bmi,
+                .module = std::string(module),
+                .requiresModules = std::move(requiresModules),
+            });
+        };
+        add_std_unit(tc->stdModuleSource, sm.stdCommands, sm.objectPath,
+                    sm.bmiPath, "std", {});
+        add_std_unit(tc->stdCompatSource, sm.compatCommands, sm.compatObjectPath,
+                    sm.compatBmiPath, "std.compat", {"std"});
+    }
 
     // A DEPENDENCY'S C++ SHARED LIBRARY OVER A C++ RUNTIME THAT IS A PACKAGE
     // (#641, item 5).
