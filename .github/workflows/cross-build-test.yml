@@ -375,6 +375,18 @@ jobs:
       # Named here for the reason the steps above are: the Linux shards skip
       # `# requires: mingw-cross wine`. Each property is held to the line the
       # script prints only when that property was checked.
+      # The runtime_search_dir directive on PE (#701): `mcpp run` finds a DLL
+      # through PATH and `mcpp pack` places it. The native leg is e2e 794 on
+      # the Windows shards; this is its Linux-hosted counterpart.
+      - name: "e2e: runtime_search_dir on PE under wine"
+        run: |
+          set -o pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          log="$RUNNER_TEMP/796.log"
+          bash tests/e2e/796_runtime_search_dir_on_pe_under_wine.sh 2>&1 | tee "$log"
+          grep -qxF "PASS: 796_runtime_search_dir_on_pe_under_wine" "$log" \
+            || { echo "::error::796 did not print its PASS line"; exit 1; }
+
       - name: "e2e: a Windows program finds its runtime DLLs beside it"
         run: |
           set -o pipefail
