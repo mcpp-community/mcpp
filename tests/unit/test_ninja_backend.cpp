@@ -1118,6 +1118,68 @@ TEST(NinjaBackend, StdArtifactsAndRuntimeDllsUseTheStageRule) {
     EXPECT_EQ(afterDll.find("verify"), std::string::npos) << afterDll;
 }
 
+// ── SPEC-007 R4.3: a Windows program's runtime DLLs are placed after its link ──
+
+namespace {
+
+BuildPlan program_plan(std::string_view triple, bool withRuntimeDirs) {
+    auto plan = minimal_plan();
+    plan.toolchain.targetTriple = std::string(triple);
+    plan.linkUnits.push_back({
+        .targetName = "app",
+        .kind = mcpp::build::LinkUnit::Binary,
+        .objects = {"obj/main.o"},
+        .output = "bin/app.exe",
+        .entryMain = "src/main.cpp",
+    });
+    if (withRuntimeDirs)
+        plan.linkIntent.runtimeSearchDirs.push_back("/sdk/my bin");
+    return plan;
+}
+
+}  // namespace
+
+TEST(NinjaBackend, PeProgramWithRuntimeSearchDirsGetsAPlacementEdge) {
+    auto ninja = emit_ninja_string(program_plan("x86_64-w64-windows-gnu", true));
+    // One rule, carrying the directories in search order, each one word.
+    EXPECT_NE(ninja.find("rule place_dlls\n"), std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("place-dlls --output $out --depfile $out.d $in "),
+              std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("my bin"), std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("  deps = gcc\n"), std::string::npos) << ninja;
+    // One edge per program, after the link it reads, and built by default.
+    EXPECT_NE(ninja.find("build bin/app.exe.dlls: place_dlls bin/app.exe\n"),
+              std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("default bin/app.exe.dlls\n"), std::string::npos) << ninja;
+}
+
+TEST(NinjaBackend, NoPlacementEdgeWithoutRuntimeSearchDirsOrOffPe) {
+    // A PE program with no runtime search directory has nothing to place.
+    auto pe = emit_ninja_string(program_plan("x86_64-w64-windows-gnu", false));
+    EXPECT_EQ(pe.find("place_dlls"), std::string::npos) << pe;
+    // ELF keeps its run path: the directories are RUNPATH entries, not copies.
+    auto elf = emit_ninja_string(program_plan("x86_64-linux-gnu", true));
+    EXPECT_EQ(elf.find("place_dlls"), std::string::npos) << elf;
+}
+
+TEST(NinjaBackend, DeployedDllsAreOrderOnlyInputsOfTheLink) {
+    // The linker reads the import library, never the deployed DLL, so a DLL
+    // that changes (or a deploy entry a later plan adds) must not relink.
+    auto plan = program_plan("x86_64-w64-windows-gnu", false);
+    plan.runtimeDeployFiles.push_back({"/pkg/lib/libfoo.dll", "bin/libfoo.dll"});
+    auto ninja = emit_ninja_string(plan);
+    auto link = ninja.find("build bin/app.exe");
+    ASSERT_NE(link, std::string::npos) << ninja;
+    auto line = ninja.substr(link, ninja.find('\n', link) - link);
+    auto oo = line.find(" || ");
+    ASSERT_NE(oo, std::string::npos) << line;
+    EXPECT_NE(line.find("bin/libfoo.dll", oo), std::string::npos) << line;
+    auto implicitBar = line.find(" | ");
+    EXPECT_TRUE(implicitBar == std::string::npos || implicitBar >= oo
+                || line.substr(implicitBar, oo - implicitBar).find("libfoo.dll")
+                       == std::string::npos) << line;
+}
+
 // ── #311: staging failures must stay readable through the output filter ──
 
 TEST(NinjaBackend, FilterKeepsStagingDiagnosticsAndFailedTarget) {

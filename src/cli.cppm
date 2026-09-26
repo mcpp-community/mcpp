@@ -929,6 +929,11 @@ int run(int argc, char** argv) {
             .option(cl::Option("verify").takes_value().value_name("MODE")
                 .help("How an existing destination is judged up to date: content (default) | size"))
             .action(wrap_rc(cmd_stage)))
+        .subcommand(cl::App("place-dlls")
+            .description("(internal: invoked by ninja) Place beside a Windows program the DLLs it imports from its runtime search directories")
+            .option(cl::Option("output").takes_value().value_name("PATH").help("the stamp to write"))
+            .option(cl::Option("depfile").takes_value().value_name("PATH").help("the depfile naming every DLL placed"))
+            .action(wrap_rc(cmd_place_dlls)))
         .subcommand(cl::App("coff-def")
             .description("(internal: invoked by ninja) Write a .def of every exportable symbol in the given COFF objects")
             .option(cl::Option("output").takes_value().value_name("PATH").help("the .def to write"))
@@ -1152,6 +1157,7 @@ int run(int argc, char** argv) {
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
                 "version", "dyndep", "why", "resolve", "stage", "bmi-equal", "coff-def",
+                "place-dlls",
                 "bmi-compile", "bmi-supervise", "bmi-await",
             });
             bool ok = false;
