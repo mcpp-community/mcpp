@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # requires: pack gcc
-# 779_a_build_program_declares_a_runtime_library_dir.sh --
-# `mcpp::runtime_library_dir(dir)`: the build-program form of `[runtime]
-# library_dirs` (docs/04 §2.11). A dependency that brings a prebuilt shared
-# library (a vcpkg prefix's `bin/`, a Qt SDK's `bin/`) knows where it lives
-# only at build-program time, and the manifest key cannot be computed -- it is
-# a fixed TOML array. This is the directive that closes that gap.
+# 779_a_build_program_declares_a_runtime_search_dir.sh --
+# `mcpp::runtime_search_dir(dir)`: the build-program form of
+# `runtime_search_dirs` (docs/04 §2.11). A dependency that brings a prebuilt
+# shared library (a vcpkg prefix's `bin/`, a Qt SDK's `bin/`) knows where it
+# lives only at build-program time, and the manifest key cannot be computed --
+# it is a fixed TOML array. This is the directive that closes that gap
+# (design §5.4 R1', mcpp#701/#702).
 #
 # What this holds, each with the wrong answer it excludes:
 #
@@ -22,10 +23,24 @@
 #      `mcpp run` working -- the same replay criterion `mcpp:deploy=` is held
 #      to in 651_a_build_program_deploys_what_it_generated.sh.
 #   4. `mcpp pack --format dir` STAGES IT into the bundle's `lib/` -- the
-#      same closure search `[runtime] library_dirs` already feeds. Checked
+#      same closure search `runtime_search_dirs` already feeds. Checked
 #      LAST: `mcpp pack` builds under a different profile and would otherwise
 #      invalidate the `dev`-profile build.mcpp cache the replay check (3)
 #      depends on.
+#   5. A DEPENDENCY'S DECLARATION REACHES THE CONSUMER'S EXECUTABLE: the
+#      directive is `Scope::LinkGlobal`, folded into `LinkIntent
+#      .runtimeSearchDirs` by the SAME per-package merge (`resolve_runtime_
+#      contract`, plan.cppm) the manifest key goes through, so a path
+#      dependency that calls `runtime_search_dir` in its OWN build.mcpp makes
+#      its consumer's binary run without the consumer naming the directory at
+#      all.
+#
+# It lands DIRECTLY on `LinkIntent::runtimeSearchDirs`, not the retiring
+# `RuntimeConfig::libraryDirs` (docs/04 §2.11) -- #702 as first written joined
+# the wrong field (design §5.3 point 1); nothing here would tell them apart
+# if it had not been fixed, since every reader below is fed FROM
+# `runtimeSearchDirs` either way once the manifest key itself is also routed
+# there.
 set -e
 
 TMP=$(mktemp -d)
@@ -66,7 +81,7 @@ EOF
 
 # The directive under test. `link_lib`/`link_search` also come from the
 # program, on purpose: the point is a dependency the build.mcpp DISCOVERS,
-# not one written into mcpp.toml by hand -- the case `[runtime] library_dirs`
+# not one written into mcpp.toml by hand -- the case `runtime_search_dirs`
 # cannot cover.
 cat > app/build.mcpp <<'EOF'
 import mcpp;
@@ -75,7 +90,7 @@ int main() {
     const std::string root = mcpp::manifest_dir();
     mcpp::link_lib("runtime_plugin");
     mcpp::link_search((root + "/rtlib").c_str());
-    mcpp::runtime_library_dir((root + "/rtlib").c_str());
+    mcpp::runtime_search_dir((root + "/rtlib").c_str());
     return 0;
 }
 EOF
@@ -90,7 +105,7 @@ G=$(find_graph)
 [ -n "$G" ] || fail "no build.ninja" b1.log
 RTDIR=$(realpath rtlib)
 grep -F -- "-Wl,-rpath,$RTDIR" "$G" >/dev/null \
-  || fail "runtime-library-dir directive missing from RUNPATH intent" "$G"
+  || fail "runtime-search-dir directive missing from RUNPATH intent" "$G"
 
 # ── 2. mcpp run finds the library only through that RUNPATH ────────────────
 "$MCPP" run > run1.log 2>&1 \
@@ -116,10 +131,87 @@ grep -F -- "-Wl,-rpath,$RTDIR" "$G2" >/dev/null \
 # ── 4. mcpp pack --format dir stages it into the bundle's lib/ ─────────────
 "$MCPP" pack --format dir > pack1.log 2>&1 || fail "pack --format dir failed" pack1.log
 STAGED=$(find target/dist -name 'libruntime_plugin.so' | head -1)
-[ -n "$STAGED" ] || fail "the runtime-library-dir closure was not staged by mcpp pack" pack1.log
+[ -n "$STAGED" ] || fail "the runtime-search-dir closure was not staged by mcpp pack" pack1.log
 case "$STAGED" in
   */lib/libruntime_plugin.so) : ;;
   *) fail "the staged library is not under the packed bundle's lib/" pack1.log ;;
 esac
 
-echo "PASS: 779_a_build_program_declares_a_runtime_library_dir"
+cd "$TMP"
+
+# ── 5. a dependency's declaration reaches the consumer's executable ────────
+# `libdep` is a path dependency whose OWN build.mcpp declares the plugin's
+# directory; `consumer` names none of this -- no `link_search`, no
+# `runtime_search_dir`, not even `link_lib` in its own manifest or program --
+# and still runs, because the directive is LinkGlobal and the merge that
+# folds a dependency's LinkIntent into its consumer's is the SAME one the
+# manifest key goes through (plan.cppm ~:911-948).
+mkdir -p libdep/src libdep/plugin
+
+cat > libdep/plugin/dep_plugin.c <<'EOF'
+int dep_plugin_answer(void) { return 7; }
+EOF
+gcc -shared -fPIC libdep/plugin/dep_plugin.c -o libdep/plugin/libdep_plugin.so
+
+cat > libdep/src/lib.cpp <<'EOF'
+extern "C" int dep_plugin_answer();
+int libdep_touch() { return dep_plugin_answer(); }
+EOF
+
+cat > libdep/mcpp.toml <<'EOF'
+[package]
+name    = "libdep"
+version = "0.1.0"
+
+[modules]
+sources = ["src/**/*.cpp"]
+
+[targets.libdep]
+kind = "lib"
+EOF
+
+cat > libdep/build.mcpp <<'EOF'
+import mcpp;
+#include <string>
+int main() {
+    const std::string root = mcpp::manifest_dir();
+    mcpp::link_lib("dep_plugin");
+    mcpp::link_search((root + "/plugin").c_str());
+    mcpp::runtime_search_dir((root + "/plugin").c_str());
+    return 0;
+}
+EOF
+
+mkdir -p consumer/src
+cat > consumer/src/main.cpp <<'EOF'
+extern "C" int dep_plugin_answer();
+int main() { return dep_plugin_answer() == 7 ? 0 : 1; }
+EOF
+
+cat > consumer/mcpp.toml <<'EOF'
+[package]
+name    = "consumer"
+version = "0.1.0"
+
+[toolchain]
+linux = "gcc@16.1.0"
+
+[dependencies]
+libdep = { path = "../libdep" }
+
+[targets.consumer]
+kind = "bin"
+main = "src/main.cpp"
+EOF
+
+cd consumer
+DEPDIR=$(realpath ../libdep/plugin)
+"$MCPP" build > b3.log 2>&1 || fail "consumer build failed" b3.log
+G3=$(find_graph)
+[ -n "$G3" ] || fail "no build.ninja for consumer" b3.log
+grep -F -- "-Wl,-rpath,$DEPDIR" "$G3" >/dev/null \
+  || fail "the dependency's runtime-search-dir did not reach the consumer's link" "$G3"
+"$MCPP" run > run3.log 2>&1 \
+  || fail "consumer run failed to find the dependency's plugin" run3.log b3.log
+
+echo "PASS: 779_a_build_program_declares_a_runtime_search_dir"
