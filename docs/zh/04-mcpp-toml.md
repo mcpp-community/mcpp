@@ -1389,7 +1389,7 @@ Link intent 把各个发现阶段分开处理：
 |---|---|---|---|
 | `link_library_dirs` | `-L` | `-L` | `-L` 或 `/LIBPATH:` |
 | `transitive_needed_dirs` | `-Wl,-rpath-link` | 无旗标 | 无旗标 |
-| `runtime_search_dirs` | 仅 RUNPATH/rpath，从不是 `-L` | 仅 rpath | 无旗标 |
+| `runtime_search_dirs` | 仅 RUNPATH/rpath，从不是 `-L` | 仅 rpath | 无旗标；链接之后，程序从这些目录导入的 DLL 被放到程序旁 *(2026.9.27.1+)* |
 | `frameworks` | 无旗标 | `-framework` | 无旗标 |
 | `deploy_files` | 拷贝边 | 拷贝边 | 拷贝到输出旁边；从不是链接器旗标 |
 | `deploy` *（2026.9.12.2+）* | 拷贝边，进 `bin/<to>/` | 拷贝边，进 `bin/<to>/` | 拷贝边，进 `bin/<to>/`；从不是链接器旗标 |
@@ -1419,6 +1419,15 @@ Link intent 把各个发现阶段分开处理：
 [30 —— 构建程序](30-build-mcpp.md)），直接并入的就是这一个字段——不是上面
 那个不再获得新指令的遗留字段 `library_dirs`。这个目录在该程序运行时不必
 存在；一个 `prepare` action 可能在构建期之后才把它填充起来。
+
+PE 映像没有运行路径，所以在 Windows 上运行时搜索目录服务于 `mcpp run`（把它放进
+`PATH`）与 `mcpp pack`（暂存闭包）。自 2026.9.27.1 起，计划中带运行时搜索目录的
+PE 程序在链接之后多一条边 `mcpp place-dlls`：它按 `mcpp pack` 的方式读取程序的
+导入闭包，把程序直接或经另一个 DLL 间接导入、且在这些目录之一中解析到的每个 DLL
+放到程序旁。系统 DLL 与 API set 从不复制，副本只在字节不同时写入，某个 DLL 在
+其目录中被替换后，下一次构建会再次放置它。于是从构建目录直接启动的程序能找到
+它们，与 vcpkg 的 applocal 步骤或 CMake 的 `$<TARGET_RUNTIME_DLLS>` 之后相同。两个
+目录提供同一个名字时，放置按搜索顺序的第一个，并以一条说明指出两者。
 
 `target/<triple>/<fp>/resolution.json` schema 2 存储 RuntimeBinding、
 规范化后的要求/提供者/产物、LinkIntent、平台发现机制与链接后判定。

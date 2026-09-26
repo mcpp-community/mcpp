@@ -1458,7 +1458,7 @@ Link intent keeps discovery stages separate:
 |---|---|---|---|
 | `link_library_dirs` | `-L` | `-L` | `-L` or `/LIBPATH:` |
 | `transitive_needed_dirs` | `-Wl,-rpath-link` | no flag | no flag |
-| `runtime_search_dirs` | RUNPATH/rpath only, never `-L` | rpath only | no flag |
+| `runtime_search_dirs` | RUNPATH/rpath only, never `-L` | rpath only | no flag; after the link, the DLLs the program imports from these directories are placed beside it *(2026.9.27.1+)* |
 | `frameworks` | no flag | `-framework` | no flag |
 | `deploy_files` | copy edge | copy edge | copy beside the output; never a linker flag |
 | `deploy` *(2026.9.12.2+)* | copy edge into `bin/<to>/` | copy edge into `bin/<to>/` | copy edge into `bin/<to>/`; never a linker flag |
@@ -1491,6 +1491,19 @@ a `prepare` action populates): `mcpp::runtime_search_dir(dir)` (protocol 12;
 directly — not the legacy `library_dirs` above, which gains no directive of
 its own. The directory need not exist when the program runs; a `prepare`
 action may populate it later, at build time.
+
+A PE image has no run path, so on Windows a runtime search directory serves
+`mcpp run`, which puts it on `PATH`, and `mcpp pack`, which stages the closure.
+From 2026.9.27.1 the link of a PE program whose plan has runtime search
+directories is followed by one more edge, `mcpp place-dlls`, which reads the
+program's import closure as `mcpp pack` does and places beside the program
+every DLL it imports, directly or through another DLL, that resolves in one of
+those directories. System DLLs and API sets are never copied, a copy is written
+only when its bytes differ, and a DLL replaced in its directory is placed again
+on the next build. A program started by hand from the build directory therefore
+finds them, as it does after vcpkg's applocal step or CMake's
+`$<TARGET_RUNTIME_DLLS>`. When two directories offer one name, the first in
+search order is placed and a note names both.
 
 `target/<triple>/<fp>/resolution.json` schema 2 stores the RuntimeBinding,
 canonical requirements/providers/artifacts, LinkIntent, platform search
