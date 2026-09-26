@@ -979,8 +979,9 @@ int run(int argc, char** argv) {
         return 0;
     }
 
-    // `mcpp __action-stamp <stamp>... -- <argv>...` — internal, and absent
-    // from the usage text on purpose: nobody types it, ninja does.
+    // `mcpp __action-stamp [--require-dir <dir>] <stamp>... -- <argv>...` —
+    // internal, and absent from the usage text on purpose: nobody types it,
+    // ninja does.
     //
     // WHY IT EXISTS. A `role = "check"` action's output is a stamp file, and
     // until now the COMMAND had to create it. Analysers do not: clang-tidy's
@@ -989,6 +990,8 @@ int run(int argc, char** argv) {
     // no shell assumed, which is right for Windows and is exactly what made
     // the wrapper unwritable there. The role with no ecosystem consumer also
     // had no portable way to acquire one, and that was not a coincidence.
+    // `role = "prepare"` (mcpp#702) shares the same stamp -- its command
+    // populates a directory rather than writing the stamp itself either.
     //
     // The engine is the portable wrapper. It is already on disk on every
     // platform mcpp runs on, so this needs no shell, no `touch`, and no
@@ -998,18 +1001,34 @@ int run(int argc, char** argv) {
     // created or rewrote is left as the command left it, so the
     // pre-2026.8.29.1 wrapper scripts keep working byte-for-byte.
     //
-    // A STAMP THE COMMAND DID NOT WRITE IS TOUCHED, NOT ONLY CREATED. The
-    // stamp is what ninja compares with the inputs, so after an input changes
-    // and the command passes again, its time has to move past that input.
-    // Until 2026.9.27.1 an existing stamp was left alone whatever the command
-    // did, and every check whose command writes nothing -- clang-tidy, an
-    // installer run through `mcpp-deps` -- re-ran on every build after its
-    // first input change, because its output stayed older than the input
-    // forever. The comparison is by the stamp's own time before and after the
-    // command, so a command that did write it is still left alone.
+    // EVERY STAMP IS NEWER THAN EVERY INPUT AFTER SUCCESS (R2, design §5.4),
+    // in its simple form: the engine creates each stamp that is missing and
+    // sets the modification time of each EXISTING one to the present,
+    // whether or not the command wrote it. No record of a stamp's time
+    // before the run is needed — a stamp feeds no compile or link edge (a
+    // blocking `check` or a `prepare` action orders edges through an
+    // order-only edge instead), so unconditionally touching a stamp the
+    // command already wrote changes no build. Until 2026.9.27.1 an existing
+    // stamp was left alone whatever the command did, and every check whose
+    // command writes nothing -- clang-tidy, an installer run through
+    // `mcpp-deps` -- re-ran on every build after its first input change,
+    // because its output stayed older than that input forever.
     if (std::string_view(argv[1]) == "__action-stamp") {
-        std::vector<std::string> stamps;
         int i = 2;
+        // `prepare` only: the directory its command populates
+        // (`mcpp::action::output_dir`). Parsed before the stamp list, which
+        // is otherwise everything up to `--`, so this flag cannot be mistaken
+        // for a stamp path.
+        std::string requireDir;
+        if (i < argc && std::string_view(argv[i]) == "--require-dir") {
+            if (i + 1 >= argc) {
+                std::println(stderr, "error: --require-dir requires a directory");
+                return 2;
+            }
+            requireDir = argv[i + 1];
+            i += 2;
+        }
+        std::vector<std::string> stamps;
         for (; i < argc && std::string_view(argv[i]) != "--"; ++i)
             stamps.emplace_back(argv[i]);
         if (i >= argc || stamps.empty()) {
@@ -1026,21 +1045,57 @@ int run(int argc, char** argv) {
         // `run_exec`: no shell, stdio inherited. The analyser's own output has
         // to reach the terminal unchanged — a check that fails is read by a
         // human, and capturing would either swallow it or reprint it wrapped.
-        // Each stamp's time before the command runs; empty when it is absent.
-        std::vector<std::optional<std::filesystem::file_time_type>> before;
-        for (auto const& s : stamps) {
-            std::error_code ec;
-            const auto p = mcpp::platform::fs::extended_length(std::filesystem::path{s});
-            const auto t = std::filesystem::last_write_time(p, ec);
-            before.push_back(ec ? std::nullopt : std::optional{t});
-        }
         const int r = mcpp::platform::process::run_exec(cmd);
         // The stamps are written ONLY on success. Writing them anyway would
         // make ninja consider the edge satisfied, so the next build would skip
-        // a check that had never passed.
+        // a check (or a `prepare`) that had never passed.
         if (r != 0) return r;
-        for (std::size_t k = 0; k < stamps.size(); ++k) {
-            auto const& s = stamps[k];
+        // `prepare`'s post-condition (design §5.4 P, SPEC-007 R3.2/R3.3): the
+        // declared directory must exist once the command has succeeded,
+        // whether or not the command itself created it — a Qt `lupdate`
+        // action's directory, for instance, is an existing source tree it
+        // rewrites, never a fresh one. Checked BEFORE any stamp is written,
+        // so a missing directory fails the edge exactly as a failing command
+        // does: no stamp, and the next build tries again.
+        //
+        // POPULATED, NOT MERELY PRESENT. ninja creates the parent directory of
+        // every declared output before it runs the command, so a stamp declared
+        // inside the directory makes the directory exist whatever the command
+        // did. The directory therefore has to hold at least one file that is
+        // not one of this action's stamps; directories alone do not count.
+        // The walk stops at the first such file, so an installed prefix of
+        // thousands of files costs one lookup.
+        if (!requireDir.empty()) {
+            std::error_code ec;
+            const auto dir =
+                mcpp::platform::fs::extended_length(std::filesystem::path{requireDir});
+            std::vector<std::filesystem::path> stampPaths;
+            for (auto const& s : stamps)
+                stampPaths.push_back(std::filesystem::absolute(
+                    mcpp::platform::fs::extended_length(std::filesystem::path{s}), ec)
+                    .lexically_normal());
+            bool populated = false;
+            if (std::filesystem::is_directory(dir, ec)) {
+                for (auto it = std::filesystem::recursive_directory_iterator(
+                         dir, std::filesystem::directory_options::skip_permission_denied, ec);
+                     !ec && it != std::filesystem::recursive_directory_iterator();
+                     it.increment(ec)) {
+                    std::error_code tec;
+                    if (it->is_directory(tec)) continue;
+                    const auto entry = std::filesystem::absolute(it->path(), tec).lexically_normal();
+                    if (std::ranges::find(stampPaths, entry) != stampPaths.end()) continue;
+                    populated = true;
+                    break;
+                }
+            }
+            if (!populated) {
+                std::println(stderr,
+                    "error: prepare action succeeded, but its declared "
+                    "directory '{}' does not exist or holds no file", requireDir);
+                return 1;
+            }
+        }
+        for (auto const& s : stamps) {
             std::error_code ec;
             // Relative to the build directory, which can be deep enough to
             // take the stamp past the Windows path limit (mcpp#641, item 3).
@@ -1048,9 +1103,6 @@ int run(int argc, char** argv) {
             if (!p.parent_path().empty())
                 std::filesystem::create_directories(p.parent_path(), ec);
             if (std::filesystem::exists(p, ec)) {
-                const auto now = std::filesystem::last_write_time(p, ec);
-                // Written by the command during this run: left as it is.
-                if (!ec && (!before[k] || now != *before[k])) continue;
                 std::filesystem::last_write_time(
                     p, std::filesystem::file_time_type::clock::now(), ec);
                 if (ec) {

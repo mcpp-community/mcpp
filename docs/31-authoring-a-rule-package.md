@@ -186,9 +186,13 @@ a.submit();
 The strings must outlive the action. `a.id = ("toy:" + stem).c_str()` hands it a
 pointer into a temporary that is gone by `submit()`.
 
-### The four roles
+### The five roles
 
-`role` decides where the edge's outputs go and when the edge runs.
+`role` decides where the edge's outputs go and when the edge runs. Spell it
+with the `mcpp::roles` constants (`mcpp::roles::source`, `::check`,
+`::object`, `::artifact`, `::prepare`), not a bare string: an engine that does
+not know a constant refuses to compile the rule package, naming it, instead
+of reading a misspelt string as `source` (SPEC-007 R3.6).
 
 | `role` | outputs | ordering |
 |---|---|---|
@@ -196,6 +200,14 @@ pointer into a temporary that is gone by `submit()`.
 | `check` | a stamp file | runs alongside compilation; `blocking = true` makes compiles wait |
 | `object` | join the **link** set | the link edge consumes them |
 | `artifact` | a new file | its inputs are link outputs, so it runs after the link |
+| `prepare` | a stamp file, plus one declared directory (`output_dir`) the command populates | every compile edge *and* every link edge in the plan wait for it |
+
+`prepare` is for construction whose file names are not known when the rule
+runs — installing a package-manager prefix, unpacking an SDK — and is what
+SPEC-007 (`docs/specs/build-plugins.md`) asks a dependency-adapter rule to use
+instead of a blocking `check`; see docs/30's own section on the role for the
+full contract (the post-condition on `output_dir`, and the R1.3 warning a
+rerun input inside it earns).
 
 ### Declared inputs, and the compiler among them
 

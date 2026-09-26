@@ -1413,10 +1413,12 @@ Link intent 把各个发现阶段分开处理：
 映射到必需的运行期 soname 要求，`capabilities` 映射到必需的运行期
 能力要求。这些遗留字段都不创建提供者。
 
-`library_dirs` 有一个构建程序形态，用于一个只有 build.mcpp 才能定位的目录
-（一个 vcpkg 前缀的 `bin/`、一个 Qt SDK 的 `bin/`）：`mcpp::runtime_library_dir(dir)`
-（2026.9.27.1+，protocol 12；[30 —— 构建程序](30-build-mcpp.md)），并入的是
-同一个字段。
+`runtime_search_dirs` 有一个构建程序形态，用于一个只有 build.mcpp 才能定位的
+目录（一个 vcpkg 前缀的 `bin/`、一个 Qt SDK 的 `bin/`、一个 `prepare` action
+填充的目录）：`mcpp::runtime_search_dir(dir)`（protocol 12；
+[30 —— 构建程序](30-build-mcpp.md)），直接并入的就是这一个字段——不是上面
+那个不再获得新指令的遗留字段 `library_dirs`。这个目录在该程序运行时不必
+存在；一个 `prepare` action 可能在构建期之后才把它填充起来。
 
 `target/<triple>/<fp>/resolution.json` schema 2 存储 RuntimeBinding、
 规范化后的要求/提供者/产物、LinkIntent、平台发现机制与链接后判定。

@@ -46,6 +46,44 @@ int main() {
 mcpp build      # compiles + runs build.mcpp, then builds the project
 ```
 
+## Three kinds of work
+
+Everything a `build.mcpp` or a rule package it imports does is exactly one of
+three kinds (SPEC-007 §1, `docs/specs/build-plugins.md`), and each has one
+mechanism:
+
+| Kind | Decides | Happens | Mechanism |
+|---|---|---|---|
+| Configuration | the shape of the build: which sources, which flags, what to link, where to find a library at launch | while `build.mcpp` runs — **planning** | a directive (this chapter's tables) |
+| Construction | files the build reads: generating a source, compiling device code, installing a dependency prefix, packaging | **build** time | `mcpp::action` |
+| Verification | whether the environment or the product satisfies a requirement, producing no file the build reads | **build** time | an action with `role = check` |
+
+**Configuration depends only on declared inputs.** A `build.mcpp` reads its
+package's manifest, its declared payloads (`xpkg_dir`), and whatever it named
+with `rerun_if_changed`/`rerun_if_changed_glob`/`rerun_if_env_changed` — never
+a file an action produces, because planning (`mcpp emit build-database`) and
+the first build both happen *before* any action runs, and a program that read
+one would configure differently the first time and the second. See
+[the `prepare` role](#construction-whose-file-names-are-not-known-yet-the-prepare-role-protocol-12)
+below for the warning this earns.
+
+**Construction is never done while `build.mcpp` runs.** Writing a file
+directly in `main()` happens once per plan, serially, for the whole set, and a
+failure is reported as "build.mcpp exited 1" three edges away from its cause.
+Declare it instead (`mcpp::action`, below) and it becomes an edge: incremental,
+parallel, and attributable.
+
+**An incomplete environment is a warning, never a failed configure.** A
+program that cannot find an SDK module or a library says so with
+`mcpp::warning` (below) and emits whatever it could still configure;
+compilation or linking fails, if it must, at the place that is actually
+missing the thing. Exiting non-zero here would fail builds that do not need
+what is missing.
+
+**One behaviour under planning and building.** `mcpp emit build-database`
+computes the same plan `mcpp build --configure-only` does, so a build program
+that follows the rule above needs no signal telling it which one is asking.
+
 ## Directives
 
 Print these to stdout (one per line). Any line that does not start with `mcpp:`
@@ -67,7 +105,7 @@ is ignored, so diagnostics may be logged freely.
 | `mcpp:windows-subsystem=<target>:<value>` *(2026.9.12.2+)* | set the PE subsystem (`console` or `windows`) of the executable `<target>` of **this** package, the same field as `[targets.<target>] windows_subsystem` (docs/04). Reaches that target's link and no other, never a consumer, and renders nothing on a target that is not PE. A target the package does not declare with `kind = "bin"`, a value outside the set, and a value that contradicts mcpp.toml are each refused before any directive is applied |
 | `mcpp:windows-entry=<target>:<value>` *(2026.9.12.2+)* | set the entry function (`main`, `wmain`, `WinMain` or `wWinMain`) of the executable `<target>`, the same field as `windows_entry`; the scope and the refusals are those of `windows-subsystem` |
 | `mcpp:deploy=<from>\t<to>` *(2026.9.12.3+, protocol 11)* | place a file this program produced or selected beside the artifact, at `<to>`, relative to the executable's directory — the build-program form of `[runtime] deploy` (docs/04 §2.11). `<from>` may be absolute (an action's own declared output) or resolved against the package root; TAB-separated, because an absolute Windows `<from>` contains a colon. **Reaches the consumer**, joining the same `LinkIntent` `link-lib`/`link-search`/`link-flag` feed — see below |
-| `mcpp:runtime-library-dir=<dir>` *(2026.9.27.1+, protocol 12)* | add `<dir>` to the launch-time search path — the build-program form of `[runtime] library_dirs` (docs/04 §2.11). Relative resolves against the package root. **Reaches the consumer**, joining the same `LinkIntent` field the manifest key populates: RUNPATH/rpath on ELF and Mach-O, never `-L`, and `mcpp pack`'s closure search — see below |
+| `mcpp:runtime-search-dir=<dir>` *(protocol 12)* | add `<dir>` to the launch-time search path — the build-program form of `runtime_search_dirs` (docs/04 §2.11). Relative resolves against the package root; the directory need not exist yet (a `prepare` action may populate it later). **Reaches the consumer**, joining `LinkIntent::runtimeSearchDirs` directly: RUNPATH/rpath on ELF and Mach-O, never `-L`, and `mcpp pack`'s closure search — see below |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | link with this **linker script** (`-T`; relative resolves against the package root, and the emitted path is absolute because the link runs in the build directory). Reaches the **consumer**, unlike `include-dir` — a board's memory layout is the one thing a consumer cannot write for itself |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | say something to the user and **keep going**. The one directive that changes no compile line, no link line and no source set. Survives the build cache — see below |
 | `mcpp:fact=<name>=<version>` *(2026.9.5.2+)* | state something the program **established about the machine** (`cuda.driver=12.4`). Compared against floors before anything is compiled; see below |
@@ -135,7 +173,7 @@ int main() {
 | `mcpp::link_flag(s)` *(2026.9.6.5+)* | `mcpp:link-flag=` |
 | `mcpp::windows_subsystem(target, value)` / `mcpp::windows_entry(target, value)` *(2026.9.12.2+)* | `mcpp:windows-subsystem=` / `mcpp:windows-entry=` |
 | `mcpp::deploy(from, to)` *(2026.9.12.3+, protocol 11)* | `mcpp:deploy=<from>\t<to>` — see below |
-| `mcpp::runtime_library_dir(dir)` *(2026.9.27.1+, protocol 12)* | `mcpp:runtime-library-dir=<dir>` — see below |
+| `mcpp::runtime_search_dir(dir)` *(protocol 12)* | `mcpp:runtime-search-dir=<dir>` — see below |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` — see below |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | the payload directory of a package declared in `[xlings.workspace]` — by this manifest, or by a dependency compiled into this build program *(2026.9.6.6+)*; `""` when it was not declared or is not installed (see below) |
@@ -428,6 +466,21 @@ including `[tools.overrides]` and `reexport = true` (which is how a library
 provides the whole toolchain, so a project declares **one** dependency instead of
 four).
 
+**Under `mcpp emit build-database`, a host tool that fails to build is a
+warning, not a lost plan.** Planning continues for every member, and
+`dep_bin` answers with the path the tool *would* be published at — the same
+path a successful build would occupy, fixed before the build ever runs.
+Naming the tool this way configures exactly as it would after a successful
+build. **Calling it** — running it while configuring, the pattern above stops
+short of — fails, because the path names nothing that exists; that failure
+costs this package's own directives (its build program's part of the
+description), never the whole command. The tool is still built during an
+actual `mcpp build`: a program may run it there, and its blocking checks still
+run, because building it unverified into the store would be worse than not
+building it. Prefer running a host tool from inside an `action`'s command
+(construction), not from `main()` (configuration), so that whether the tool
+happens to build does not decide whether planning sees this package at all.
+
 ### Globbing inputs: `rerun_if_changed_glob` (2026.8.6.2+)
 
 The re-run key is built from *declared* inputs. Declare files and it works;
@@ -481,7 +534,7 @@ int main() {
     const std::string out = std::string(mcpp::out_dir()) + "/foo.pb.cc";
     mcpp::action a;
     a.id = "protoc:foo";
-    a.role = "source";              // "source" | "check" | "object" | "artifact"
+    a.role = mcpp::roles::source;   // source | check | object | artifact | prepare
     a.arg(mcpp::dep_bin("protobuf", "protoc"))
      .arg("--cpp_out=...").arg("proto/foo.proto")
      .input("proto/foo.proto")
@@ -490,7 +543,7 @@ int main() {
 }
 ```
 
-Four roles, one primitive — `role` only decides where the edge's outputs
+Five roles, one primitive — `role` only decides where the edge's outputs
 attach:
 
 | `role` | Outputs | Ordering | Typical |
@@ -499,12 +552,23 @@ attach:
 | `check` | a stamp file, written by mcpp | runs **alongside** compilation; `blocking = true` makes the package's compile edges wait for it | clang-tidy, a format or ABI check |
 | `object` | join the **link** set | the link edge consumes them | a resource compiler, `objcopy` embedding a blob, a generated `.def`, a pre-built `.o` |
 | `artifact` | a new file | its *inputs* are link outputs, so it runs after the link | codesign, packaging, size budgets |
+| `prepare` *(protocol 12)* | a stamp file, written by mcpp, plus one declared directory (`output_dir`) the command populates | **every compile edge and every link edge in the plan wait for it** — see below | installing a vcpkg manifest or a CMake subproject into a prefix, unpacking an SDK |
 
 `artifact` is also the only role that may name `${mcpp.stage_dir}` — see
 [Producing a distributable](#producing-a-distributable-pack_format--stage_dir-20269111)
-below. The other three run before or alongside the link, so there is nothing
+below. The other roles run before or alongside the link, so there is nothing
 staged for them to read, and mcpp refuses the placeholder rather than expanding
 it to a path that happens to exist.
+
+**Spell the role with the `mcpp::roles` constants** (protocol 12), not a bare
+string. A build.mcpp that writes `a.role = mcpp::roles::prepare;` fails to
+*compile* on an older engine, naming the missing constant — the same
+compile-time signal `mcpp::deploy` and `mcpp::runtime_search_dir` give. An
+engine from protocol 12 on refuses a role string that names none of the five,
+listing them; before this, an unrecognised string was silently read as
+`source`, which changed an action's meaning without a word. The frozen
+surface (a hand-written `printf("mcpp:action=...")` program) may still spell
+the string directly.
 
 No phase machinery is involved. `object` and `artifact` are sequenced by
 ninja's own file dependencies — which is also why an `artifact` action cannot
@@ -545,15 +609,22 @@ matters for already emits one: `glslangValidator --depfile`, `glslc -MD -MF`,
 > would be permanently dirty.
 
 **A check's command does not have to write its stamp** (mcpp 2026.8.29.1+).
-The verdict is the exit code; the stamp is bookkeeping the graph needs, and
-mcpp creates it when the command succeeds. Before this, every check needed a
-wrapper script to touch the file — and a command is an argv with no shell
-assumed, so that wrapper could not be written portably at all. A command that
-writes its own stamp is unaffected: a stamp the command created or rewrote is
-left as it is. A stamp the command did not write is created on the first pass
-and has its modification time moved to the present on every later pass
-(2026.9.27.1+), so after an input changes and the check passes again the stamp
-is newer than that input and the check does not run on the next build.
+The verdict is the exit code; the stamp is bookkeeping the graph needs.
+Before this, every check needed a wrapper script to touch the file — and a
+command is an argv with no shell assumed, so that wrapper could not be
+written portably at all.
+
+**After a `check` or `prepare` command succeeds, every declared stamp is
+newer than every input, whether or not the command wrote it** (protocol 12).
+mcpp creates each stamp that is missing and sets the modification time of
+each *existing* one to the present — unconditionally, not only when an input
+changed — so a check whose command writes nothing (clang-tidy, an installer
+run through a rule package) never re-runs merely because its own stamp
+stayed older than an input it had already reacted to. A command that writes
+its own stamp is unaffected: a file the command itself created or rewrote
+during this run is exactly as new as the command left it, and touching it
+again changes nothing a build reads — a stamp feeds no compile or link edge,
+only the order-only edge described below. On failure nothing is written.
 
 > A missing stamp does **not** fail the build. ninja leaves the declared output
 > absent and re-runs that edge on every build afterwards, which looks like a
@@ -662,37 +733,115 @@ int main() {
   | `.apk` | `assets/myapp.resources/` |
   | web | the same relative path in the static directory, served beside `<name>.js`. A project that wants the files inside the `.data` preload instead links with `--preload-file <dir>@/<to>`, an ordinary link flag |
 
-### A launch-time search directory: `runtime_library_dir` (2026.9.27.1+, protocol 12)
+### A launch-time search directory: `runtime_search_dir` (protocol 12)
 
-`[runtime] library_dirs` (docs/04 §2.11) names a directory to search when the
+`runtime_search_dirs` (docs/04 §2.11) names a directory to search when the
 artifact runs. It is a fixed TOML array, so it cannot name a directory a
-build.mcpp only discovers — a vcpkg prefix's `bin/`, a Qt SDK's `bin/`, or any
-other prebuilt-dependency layout a build-time probe locates. `mcpp::runtime_library_dir`
-is that same declaration, reached from a build program:
+build.mcpp only discovers — a vcpkg prefix's `bin/` (Windows) or `lib/`
+(everywhere else), a Qt SDK's `bin/`, or a directory a `prepare` action
+populates (below). `mcpp::runtime_search_dir` is that same declaration,
+reached from a build program:
 
 ```cpp
 import mcpp;
 #include <string>
 
 int main() {
-    const std::string qtBin = locate_qt_prefix() + "/bin";   // however this
-                                                              // package finds it
-    mcpp::link_search(qtBin.c_str());
-    mcpp::runtime_library_dir(qtBin.c_str());
+    const std::string qtPrefix = locate_qt_prefix();   // however this
+                                                        // package finds it
+    // Import libraries live in `lib/`; the DLLs `mcpp run` and `mcpp pack`
+    // need to find at launch time live in `bin/` on Windows.
+    mcpp::link_search((qtPrefix + "/lib").c_str());
+    mcpp::runtime_search_dir((qtPrefix + "/bin").c_str());
 }
 ```
 
-- **Joins the same field the manifest key populates.** A directive-declared
-  directory reaches every consumer of `[runtime] library_dirs` exactly as one
-  written in `mcpp.toml` would: `mcpp run`'s loader path, `mcpp pack`'s closure
-  search, and RUNPATH/rpath on ELF and Mach-O (never `-L` — a launch-time
-  search directory is not a link-library search path).
+- **Joins `LinkIntent::runtimeSearchDirs` directly**, the same field
+  `runtime_search_dirs` populates from TOML — not the retiring `[runtime]
+  library_dirs`, which gains no directive of its own (docs/04 §2.11). A
+  directive-declared directory reaches every reader of that field exactly as
+  one written in `mcpp.toml` would: `mcpp run`'s loader path, `mcpp pack`'s
+  closure search, and RUNPATH/rpath on ELF and Mach-O (never `-L` — a
+  launch-time search directory is not a link-library search path).
 - **`dir` may be absolute or package-relative.** A relative value resolves
   against the package root, like every other `AbsPath` directive
   (`include-dir`, `deploy`'s `from`).
-- **Replayed on a cache hit.** A `runtime-library-dir` directive is persisted
+- **The directory need not exist when this program runs.** A `prepare`
+  action may populate it later, at build time — see below.
+- **Reaches a consumer.** A dependency's declared directory joins its
+  consumer's executable through the same merge the manifest key uses
+  (`resolve_runtime_contract`, `plan.cppm`).
+- **Replayed on a cache hit.** A `runtime-search-dir` directive is persisted
   in the build cache like `deploy` and `warning`; a cached run restores it
   exactly as a fresh run would.
+
+### Construction whose file names are not known yet: the `prepare` role (protocol 12)
+
+`source`, `check`, `object` and `artifact` all name their outputs at
+submission, because mcpp fixes the source set, the fingerprint and the
+module graph during prepare (`action`, above). Installing a vcpkg manifest
+or a CMake subproject into a prefix, or unpacking an SDK, does not fit that
+shape: the files construction writes are not known until the command runs —
+often not even by name, only by *directory*. `prepare` is the role for
+exactly this:
+
+```cpp
+import mcpp;
+#include <string>
+
+int main() {
+    const std::string prefix = std::string(mcpp::out_dir()) + "/vcpkg-install";
+    mcpp::action a;
+    a.id   = "vcpkg:install";
+    a.role = mcpp::roles::prepare;
+    a.arg("vcpkg").arg("install").arg("--x-install-root").arg(prefix.c_str())
+     .input("vcpkg.json")
+     .output((prefix + ".stamp").c_str())
+     .output_dir(prefix.c_str())
+     .submit();
+
+    mcpp::link_search((prefix + "/lib").c_str());
+    mcpp::runtime_search_dir((prefix + "/lib").c_str());
+}
+```
+
+- **Outputs.** One or more stamps, written by the engine exactly as for
+  `check` (see the stamp rule above), and one declared directory,
+  `output_dir(dir)`, which the *command* populates. **If the command
+  succeeds and that directory does not exist or holds no file other than the
+  action's stamps, the engine writes no stamp and fails the edge, naming the
+  directory** — whether or not the command created it: a Qt `lupdate`
+  action's directory, for instance, is an existing source tree it rewrites,
+  not a fresh one. A stamp may lie inside the directory or beside it.
+- **Ordering.** Every compile edge of the declaring package waits for it,
+  through the same order-only edge a blocking `check` uses; so does every
+  *link* edge in the plan, because a `runtime_search_dir` (or any other
+  link-global directive) any package declares is merged into the one
+  `LinkIntent` the whole plan's link lines share — a directory `prepare`
+  populates has to exist before any link that might read it, not only the
+  declaring package's own.
+- **References to its products are names fixed at configuration time.** Once
+  the directory exists, the build reads it *by directory*:
+  `include_dir`/`link_search`/`runtime_search_dir` for the directory itself,
+  `link_flag` for one file's full path inside it. Nothing about `prepare`
+  changes what those directives already do.
+- **Why a role, and not `check` with `blocking = true`.** A role is read by
+  engine decisions the way `blocking` alone is not: labelling construction as
+  verification would make it indistinguishable from a check the moment a
+  future policy treats checks specially (SPEC-007 §3).
+- **Progress lines** for a `prepare` action are labelled `PREPARE`, next to
+  `CHECK`, `OBJECT`, `ARTIFACT` and `GENERATE`.
+
+> **Do not read a `prepare` directory's contents while configuring.** A
+> `rerun_if_changed`/`rerun_if_changed_glob` naming a path inside another
+> package's (or this package's own) `prepare` directory reads a construction
+> result while this program *configures*: correct on the second build, once a
+> previous build has populated the directory, and wrong on the first. mcpp
+> warns, naming both paths, rather than refusing — the program still
+> configures correctly today. This is the pattern of watching an install
+> prefix to place a first installation's libraries on the *next* plan;
+> declare `runtime_search_dir` for the prefix instead, and let a `prepare`
+> action do the installing.
 
 ### Producing a distributable: `pack_format` / `stage_dir` (2026.9.11.1+)
 

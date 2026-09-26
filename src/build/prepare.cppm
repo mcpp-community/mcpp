@@ -12508,10 +12508,10 @@ prepare_build(bool print_fingerprint,
         // snapshot. Anything past this index is a `mcpp::deploy()` residue
         // that needs the same mirror the flag/source tails get below.
         const auto rdeployN = m->runtimeConfig.linkIntent.deploy.size();
-        // Same reason, one field wide: `mcpp::runtime_library_dir()` residue
+        // Same reason, one field wide: `mcpp::runtime_search_dir()` residue
         // needs the same mirror `deploy` does, or `resolve_runtime_contract`
         // (which reads `packages[0]`'s snapshot, not `*m`) never sees it.
-        const auto rlibDirN = m->runtimeConfig.libraryDirs.size();
+        const auto rsearchDirN = m->runtimeConfig.linkIntent.runtimeSearchDirs.size();
         // What the dependencies supplied as runners, before the root's program
         // speaks. The root's emissions are appended to the same slots, so a
         // name both supply becomes one argv joining the two (#634, §9 item 8,
@@ -12639,14 +12639,15 @@ prepare_build(bool print_fingerprint,
                 pkg0.manifest.runtimeConfig.linkIntent.deploy.end(),
                 m->runtimeConfig.linkIntent.deploy.begin() + static_cast<std::ptrdiff_t>(rdeployN),
                 m->runtimeConfig.linkIntent.deploy.end());
-            // `mcpp::runtime_library_dir()` residue → `packages[0].manifest`, the
+            // `mcpp::runtime_search_dir()` residue → `packages[0].manifest`, the
             // same object and the same reason as the `deploy` mirror above: without
             // it a directive-sourced entry lands in `*m` and `resolve_runtime_contract`
             // never looks there.
-            pkg0.manifest.runtimeConfig.libraryDirs.insert(
-                pkg0.manifest.runtimeConfig.libraryDirs.end(),
-                m->runtimeConfig.libraryDirs.begin() + static_cast<std::ptrdiff_t>(rlibDirN),
-                m->runtimeConfig.libraryDirs.end());
+            pkg0.manifest.runtimeConfig.linkIntent.runtimeSearchDirs.insert(
+                pkg0.manifest.runtimeConfig.linkIntent.runtimeSearchDirs.end(),
+                m->runtimeConfig.linkIntent.runtimeSearchDirs.begin()
+                    + static_cast<std::ptrdiff_t>(rsearchDirN),
+                m->runtimeConfig.linkIntent.runtimeSearchDirs.end());
         }
     }
 
@@ -12714,6 +12715,87 @@ prepare_build(bool print_fingerprint,
                   "       fix: add a `build.mcpp` importing the rule for these files (e.g.\n"
                   "       `mcpp.rules.cuda` for `.cu`, `mcpp.rules.spirv` for shaders), or\n"
                   "       drop them from `[build] sources`."));
+    }
+
+    // ── R1.3: a re-run input inside a `prepare` directory (SPEC-007 §3) ─────
+    //
+    // A build program's re-run set is declared BEFORE anything is built
+    // (`rerun_if_changed`/`rerun_if_changed_glob`), and a `prepare` action's
+    // directory is filled AFTER a build program has already run once for
+    // this build — it is a ninja edge, scheduled after `mcpp build`'s
+    // configure step ends. A program that also names a file or a glob inside
+    // such a directory as its own re-run input reads a CONSTRUCTION RESULT
+    // while it configures: correct on the SECOND build, once a previous
+    // build's `prepare` action has populated the directory, and wrong on the
+    // first — the exact pattern of a plugin placing a first installation's
+    // libraries on the NEXT plan (design §5.2's route on 2026.9.26.1, which
+    // this directive and role exist to remove).
+    //
+    // WARNED, NOT REFUSED: the program still configures correctly today (its
+    // FIRST run sees what the tree already held), and R1.2 already asks a
+    // program to say what it could not find with `mcpp::warning`. This is the
+    // engine naming an author obligation SPEC-007 states (R1.3), not a build
+    // it can complete no differently.
+    //
+    // `declared_program_inputs` reads back what every package's build.mcpp
+    // just declared (or, on a cache hit, declared on its last run) from the
+    // caches under `<workRoot>/target/.build-mcpp`, so no extra plumbing is
+    // needed to carry the re-run set out of `run_build_program`.
+    {
+        std::map<std::filesystem::path, std::string> ownerName;
+        std::vector<std::pair<std::string, std::filesystem::path>> prepareDirs;
+        for (std::size_t i = 0; i < packages.size(); ++i) {
+            auto const& mm = (i == 0) ? *m : packages[i].manifest;
+            ownerName.emplace(packages[i].root.lexically_normal(), mm.package.name);
+            for (auto const& a : mm.buildConfig.actions) {
+                if (a.role != mcpp::manifest::BuildAction::Role::Prepare) continue;
+                if (a.outputDir.empty()) continue;
+                prepareDirs.emplace_back(mm.package.name,
+                    std::filesystem::path(a.outputDir).lexically_normal());
+            }
+        }
+        if (!prepareDirs.empty()) {
+            // `p` reaches strictly inside `dir`: equal paths and a sibling
+            // that merely shares a prefix (`lexically_relative` starting with
+            // `..`) both do not count.
+            auto isUnder = [](const std::filesystem::path& p,
+                              const std::filesystem::path& dir) {
+                auto rel = p.lexically_relative(dir);
+                if (rel.empty()) return false;
+                auto s = rel.generic_string();
+                return s != "." && s.compare(0, 2, "..") != 0;
+            };
+            for (auto const& decl : mcpp::build::declared_program_inputs(workRoot)) {
+                std::vector<std::filesystem::path> watched(decl.files);
+                for (auto const& pattern : decl.globs) {
+                    // The glob's fixed prefix — everything before its first
+                    // wildcard character — is enough to answer whether the
+                    // PATTERN reaches into a `prepare` directory; resolving it
+                    // into the file set it matches is not needed for that.
+                    auto wildcard = pattern.find_first_of("*?[");
+                    auto fixed = wildcard == std::string::npos
+                               ? pattern : pattern.substr(0, wildcard);
+                    watched.push_back((decl.root / fixed).lexically_normal());
+                }
+                auto ownerIt = ownerName.find(decl.root.lexically_normal());
+                const std::string declName =
+                    ownerIt != ownerName.end() ? ownerIt->second : decl.root.string();
+                for (auto const& w : watched) {
+                    for (auto const& [pkgName, dir] : prepareDirs) {
+                        if (!isUnder(w, dir)) continue;
+                        mcpp::ui::warning(std::format(
+                            "{}'s build.mcpp re-runs on '{}', which is inside "
+                            "'{}', the directory package '{}' declared with a "
+                            "`prepare` action's output_dir. That directory is "
+                            "populated at BUILD time, after build.mcpp has "
+                            "already configured, so this program sees the "
+                            "PREVIOUS build's contents, never the current "
+                            "one's (SPEC-007 R1.3).",
+                            declName, w.string(), dir.string(), pkgName));
+                    }
+                }
+            }
+        }
     }
 
     // [targets.*] required_features gate: a target is emitted only when ALL its
