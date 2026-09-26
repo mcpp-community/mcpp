@@ -333,6 +333,11 @@ struct ClosureReadInput {
     std::vector<std::filesystem::path> platformDirs;  // Android
     std::vector<std::string>           forceBundle;   // Pe: overrides the system list
     std::string                        arch;          // MachO: the slice of a fat file
+    // Pe: names never resolved in `searchDirs.front()`. `place_runtime_dlls`
+    // passes the copies an earlier placement put beside the program, so that
+    // each resolves again where it came from instead of shadowing a newer
+    // version there. `mcpp pack` leaves it empty.
+    std::vector<std::string>           notInFirstDir;
 };
 
 // A name that resolved to a file, and where that file is staged: `dest` is
@@ -377,15 +382,21 @@ ClosureRead read_closure(const ClosureReadInput& in);
 // program's directory is published beside the program through the staging
 // primitive, which writes only when the bytes differ. `sources` lists what was
 // resolved, for the edge's depfile, so that a DLL replaced in its directory is
-// placed again on the next build; `notes` names each DLL that more than one
-// directory offers, with the one the search order chose.
+// placed again on the next build; `names` lists the DLLs placed, which the
+// caller records and passes back as `placedBefore` on the next run, so that a
+// copy this function put beside the program is resolved again from its
+// directory rather than taken for a file of the program's own; `notes` names
+// each DLL that more than one directory offers, with the one the search order
+// chose.
 struct RuntimeDllPlacement {
     std::vector<std::filesystem::path> sources;
+    std::vector<std::string>           names;
     std::vector<std::string>           notes;
 };
 std::expected<RuntimeDllPlacement, Error>
 place_runtime_dlls(const std::filesystem::path& program,
-                   const std::vector<std::filesystem::path>& searchDirs);
+                   const std::vector<std::filesystem::path>& searchDirs,
+                   const std::vector<std::string>& placedBefore = {});
 
 // Build a Plan from already-resolved inputs. Caller is expected to have
 // already run `mcpp build` (or equivalent) and pass the resulting
@@ -1351,7 +1362,8 @@ make_tarball(const std::filesystem::path& stagingRoot,
 
 std::expected<RuntimeDllPlacement, Error>
 place_runtime_dlls(const std::filesystem::path& program,
-                   const std::vector<std::filesystem::path>& searchDirs)
+                   const std::vector<std::filesystem::path>& searchDirs,
+                   const std::vector<std::string>& placedBefore)
 {
     const auto programDir = program.parent_path();
     auto same_dir = [](const std::filesystem::path& a, const std::filesystem::path& b) {
@@ -1366,6 +1378,7 @@ place_runtime_dlls(const std::filesystem::path& program,
     in.searchDirs.push_back(programDir.empty() ? std::filesystem::path(".") : programDir);
     for (auto const& d : searchDirs)
         if (!same_dir(d, in.searchDirs.front())) in.searchDirs.push_back(d);
+    in.notInFirstDir = placedBefore;
     const auto read = read_closure(in);
 
     // The program itself is the one object the caller chose, so a program that
@@ -1385,6 +1398,7 @@ place_runtime_dlls(const std::filesystem::path& program,
                 "cannot place '{}' beside '{}': {}", m.source.string(),
                 program.filename().string(), staged.error().message)});
         out.sources.push_back(m.source);
+        out.names.push_back(m.name);
         // Search order decides between two directories that offer one name,
         // and the decision is stated, because the other copy may be the one
         // the author meant.
@@ -1467,8 +1481,12 @@ ClosureRead read_closure(const ClosureReadInput& in)
                     continue;
                 }
                 std::optional<std::filesystem::path> hit;
-                for (auto const& dir : in.searchDirs)
-                    if (is_file(dir / name)) { hit = dir / name; break; }
+                const bool skipFirst = std::ranges::any_of(in.notInFirstDir,
+                    [&](const std::string& n) { return lower(n) == lower(name); });
+                for (std::size_t d = 0; d < in.searchDirs.size(); ++d) {
+                    if (d == 0 && skipFirst) continue;
+                    if (is_file(in.searchDirs[d] / name)) { hit = in.searchDirs[d] / name; break; }
+                }
                 if (hit) {
                     out.members.push_back({name, *hit, std::filesystem::path(name)});
                     // Transitive: a staged library brings its own needs, and a

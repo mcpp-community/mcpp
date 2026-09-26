@@ -44,7 +44,8 @@ export int cmd_publish(const mcpplibs::cmdline::ParsedArgs& parsed) {
 //
 // The depfile names every DLL placed, so ninja runs the edge again when one of
 // them changes in its directory; the stamp is the edge's only declared output,
-// because the DLL names are not known when the graph is written.
+// because the DLL names are not known when the graph is written, and it holds
+// the names placed, one per line, for the next run.
 export int cmd_place_dlls(const mcpplibs::cmdline::ParsedArgs& parsed) {
     const std::filesystem::path stamp{parsed.option_or_empty("output").value()};
     const std::filesystem::path depfile{parsed.option_or_empty("depfile").value()};
@@ -57,7 +58,16 @@ export int cmd_place_dlls(const mcpplibs::cmdline::ParsedArgs& parsed) {
     for (std::size_t i = 1; i < parsed.positional_count(); ++i)
         dirs.emplace_back(parsed.positional(i));
 
-    auto placed = mcpp::pack::place_runtime_dlls(program, dirs);
+    // What the previous run placed, recorded in the stamp itself: those copies
+    // are this edge's, not the program's, and resolve again from their
+    // directories (see `place_runtime_dlls`).
+    std::vector<std::string> placedBefore;
+    {
+        std::ifstream prev(stamp);
+        for (std::string line; std::getline(prev, line);)
+            if (!line.empty()) placedBefore.push_back(line);
+    }
+    auto placed = mcpp::pack::place_runtime_dlls(program, dirs, placedBefore);
     if (!placed) {
         std::println(stderr, "error: {}", placed.error().message);
         return 1;
@@ -89,6 +99,7 @@ export int cmd_place_dlls(const mcpplibs::cmdline::ParsedArgs& parsed) {
         }
     }
     std::ofstream st(stamp, std::ios::trunc);
+    for (auto const& n : placed->names) st << n << '\n';
     if (!st) {
         std::println(stderr, "error: cannot write '{}'", stamp.string());
         return 1;

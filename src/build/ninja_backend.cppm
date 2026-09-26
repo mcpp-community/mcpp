@@ -2939,10 +2939,25 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         }
 
         // The placement edge (see `place_dlls` above), after the link it reads.
+        //
+        // The stamps of the graph's `prepare` actions are implicit inputs.
+        // A `prepare` command rewrites files ninja does not know as outputs,
+        // so a DLL it replaces in a runtime search directory is newer than
+        // the depfile's record only after ninja has already decided what is
+        // dirty; without the stamps, the new DLL would be placed one build
+        // late. With them, the edge runs again in the build that ran the
+        // action, after it.
         if (placeRuntimeDlls
             && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary)) {
             const auto exe = escape_ninja_path(lu.output);
-            append("build " + exe + ".dlls: place_dlls " + exe + "\n");
+            std::string prepareStamps;
+            for (auto const& a : plan.actions)
+                if (a.role == mcpp::manifest::BuildAction::Role::Prepare)
+                    for (auto const& o : a.outputs)
+                        prepareStamps += " " + escape_ninja_path(o);
+            append("build " + exe + ".dlls: place_dlls " + exe
+                   + (prepareStamps.empty() ? std::string{} : " |" + prepareStamps)
+                   + "\n");
             append("default " + exe + ".dlls\n\n");
         }
 
