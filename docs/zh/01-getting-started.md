@@ -147,6 +147,24 @@ toolchain、lock/resolution 元数据以及构建目录元数据都可能被更�
 可信的 workspace 中运行。进程退出码与生成的 `compile_commands.json` 是
 稳定的集成契约；标准输出仍是面向人的文本。
 
+工程根目录下的 `compile_commands.json` 是当前配置自己那份数据库的副本，
+后者写在 `target/<triple>/<fingerprint>/compile_commands.json`——这个目录
+由 toolchain、target、profile 与 feature 共同命名，也正是编译器实际运行
+所在的目录。每条在这个配置下做规划的命令(`build`、`test`、`run`、
+`--configure-only`)都把新鲜的计划合并进这一份文件，因此 `mcpp test` 加入
+的条目在之后一次普通 `mcpp build` 后仍然留在里面。根目录的这份副本从不
+合并：它整体替换为配置数据库的内容，两者已经一致时保持不变；因此切换
+`--toolchain` 或 `--profile` 会整体切换根文件，切回去也会恢复那个配置的
+条目，包括它的测试单元。根目录若是一个符号链接，写入会跟随到链接指向的
+位置。被替换掉的根文件如果持有 mcpp 未写入的条目，会输出一条警告说明
+条目数；之后该文件只持有本工程自己的配置。删除根文件不是重置它的办法：
+下一次构建(即使没有任何东西需要重新编译)也会把它从配置数据库中恢复。
+
+工程只要 `import std`，`compile_commands.json`与 `emit build-database`
+打印的 S1 文档中都会各有一条编译器标准库单元的记录(见下文)。因为 BMI
+只能被写出它的那个编译器读取，列出这个单元让工具链与 mcpp 不同的读取方
+可以自己编译一份 `std`，而不是在版本不匹配时直接失败。
+
 不允许写入工程目录的编辑器，在标准输出上取得同一份计划
 *(mcpp 2026.9.15.1+)*：
 

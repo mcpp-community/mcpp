@@ -3526,6 +3526,14 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         }
         mcpp::ui::warning(std::format(
             "compile_commands.json was not updated: {}", cdb.error().message));
+    } else if (cdb->foreignEntries > 0) {
+        // §3.2 item 3: the root file is replaced whole, never merged; when it
+        // held another writer's entries, say so once rather than silently
+        // discard them.
+        mcpp::ui::warning(std::format(
+            "compile_commands.json held {} entr{} mcpp did not write; "
+            "the file now holds mcpp's configuration",
+            cdb->foreignEntries, cdb->foreignEntries == 1 ? "y" : "ies"));
     }
 
     // A SHARED LIBRARY ON A TARGET WHOSE LINK IS DRIVEN BY THE LINKER, SAID

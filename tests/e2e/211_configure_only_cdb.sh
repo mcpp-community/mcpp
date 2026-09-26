@@ -66,23 +66,25 @@ grep -q 'tests[\/][\/]*test_smoke.cpp' compile_commands.json || {
     exit 1
 }
 if command -v python3 >/dev/null 2>&1; then
-    python3 - compile_commands.json <<'PY'
+    # The devkit path is passed in directly rather than derived from the CDB's
+    # `directory`: since C3 (design 2026-09-26 §3.3), `directory` is the
+    # OUTPUT directory the compiler runs in, not the project root, so a
+    # sibling fixture's path can no longer be recovered from it.
+    python3 - compile_commands.json "$TMP/devkit/include" <<'PY'
 import json, sys
 entries = json.load(open(sys.argv[1], encoding="utf-8"))
+devkit_include = sys.argv[2]
 normal = lambda p: p.replace("\\", "/").rstrip("/")
 test = next(e for e in entries if normal(e["file"]).endswith("/tests/test_smoke.cpp"))
 main = next(e for e in entries if normal(e["file"]).endswith("/src/main.cpp"))
 args = test["arguments"]
-# Windows 原生进程与 MSYS 可能用不同根路径表示同一临时目录，
-# 因此从 CDB 的 directory 字段推导相邻 devkit 路径。
-fixture = normal(test["directory"]).rsplit("/", 1)[0]
-expected_include = f"{fixture}/devkit/include".casefold()
+expected_include = normal(devkit_include).casefold()
 include_args = {
     normal(a[2:]).casefold()
     for a in args
     if a[:2].casefold() == "-i"
 }
-assert expected_include in include_args, args
+assert expected_include in include_args, (expected_include, args)
 assert any("MCPP_CONFIGURE_ONLY_TEST_FLAG=1" in a for a in args), args
 assert not any("MCPP_CONFIGURE_ONLY_TEST_FLAG=1" in a for a in main["arguments"]), main
 PY

@@ -101,12 +101,21 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 - **R3.7** 除 NASM 单元外,构建计划中的每个编译单元是一个翻译单元。`source`、
   `work-directory`、`arguments`、`object` 与 `compile_commands.json` 中对应条目的
   `file`、`directory`、`arguments`、`output` 取自同一条记录,因而逐字相同。
-  `arguments` 中的每一项是编译器收到的一个参数,不带任何宿主的引号或转义,不经 shell
-  即可执行:单元自己的 flag 列表按 SPEC-004 §8 读成的词列出,引擎为宿主渲染的文本
-  按该宿主的读取规则(POSIX `sh` 或 MSVCRT)还原。**已实现**
-- **R3.8** `provides` 把单元提供的模块名映射到空字符串,命令不执行构建(S1-8-6);
-  `requires` 为单元导入的模块名,分区写全名 `M:P`。`private` 为 `false`,理由同 R3.4。
-  **已实现**
+  `work-directory` 是编译器实际运行的目录——即输出目录
+  `target/<triple>/<fingerprint>`——对每个工程单元与每种工具链皆然;标准库单元
+  保留它们本来所在的共享 std 缓存目录(§3.4)。`arguments` 中的每一项是编译器收到
+  的一个参数,不带任何宿主的引号或转义,不经 shell 即可执行:单元自己的 flag 列表
+  按 SPEC-004 §8 读成的词列出,引擎为宿主渲染的文本按该宿主的读取规则(POSIX `sh`
+  或 MSVCRT)还原。提供某个模块的单元,`arguments` 在 `-c <source>` 之前带有该
+  单元的模块接口语言标记(GCC、Clang 方言);MSVC 方言在 Windows 上量出 clang-cl
+  模式的 clangd 是否接受 `/interface` 之前留空。**已实现**
+- **R3.8** 工程单元的 `provides` 把单元提供的模块名映射到空字符串,因为这条命令
+  不执行构建(S1-8-6);`requires` 为单元导入的模块名,分区写全名 `M:P`。`private`
+  为 `false`,理由同 R3.4。标准库单元的 `provides` 例外:把 `std`、`std.compat`
+  映射到构建会写出的 BMI 在共享 std 缓存中的路径——这条路径由缓存键决定,不需要
+  真的编译就能得到(§3.4)。`ide.toolchains.<id>.build-id` 给出编译器的构建标识,
+  取自 mcpp 已经算出的驱动身份(工具链指纹的同一个字段),同一工具链的两次运行
+  之间保持稳定。**已实现**
 - **R3.9** `ide.role` 取自扫描器读到的模块声明形式:
 
   | 声明 | `ide.role` |
@@ -140,8 +149,9 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 ## 4. `--spec compile-commands`
 
 - **R4.1** 文档为 `mcpp build --configure-only` 在同一组选择器下写入
-  `compile_commands.json` 的条目,差别只在输出路径位于 §2 的工作目录之下。标准库模块
-  的单元不在其中。**已实现**
+  `compile_commands.json` 的条目,差别只在输出路径位于 §2 的工作目录之下。标准库
+  模块的单元也在其中,遵循 S1-12-1 的导出规则:S1 文档里 `mcpp:std` 集合的每个
+  单元同样导出为一条 `compile_commands.json` 条目。**已实现**
 
 ## 5. 信封
 

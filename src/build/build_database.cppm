@@ -100,26 +100,15 @@ std::string_view stdlib_name(std::string_view stdlibId);
 std::string toolchain_id(const mcpp::toolchain::Toolchain& tc,
                          std::string_view compilerTriple);
 
-// Splits a command string mcpp rendered for the host shell into words, undoing
-// its quoting: POSIX `sh` rules, or the Microsoft C runtime's rules on Windows.
-// The reader is mcpp::manifest::host_command_words; this name is kept for the
-// standard library units' recovery below.
-std::vector<std::string> split_command_words(std::string_view command, bool windows);
-
-// The working directory and argument vector of the command in `commands` whose
-// words name `source`, recovered from the rendering: a leading `cd`, an `env`
-// word and environment assignments, and redirections are removed. A driver
-// path that the rendering left unquoted despite a space is rejoined. Empty when
-// no command names the source.
-struct Invocation {
-    std::filesystem::path    workDirectory;
-    std::vector<std::string> arguments;
-};
-std::optional<Invocation> recover_invocation(const std::vector<std::string>& commands,
-                                             const std::filesystem::path& source,
-                                             const std::filesystem::path& driver,
-                                             const std::filesystem::path& defaultDirectory,
-                                             bool windows);
+// The standard-library units' recovery (mcpp.build.plan::recover_invocation)
+// now runs once, in prepare.cppm, onto BuildPlan::stdModuleUnits (design
+// 2026-09-26 §3.5, D5a/D5b: the plan carries the standard-library
+// description, so this document and compile_commands.json render the exact
+// same record and cannot disagree, P1). Re-exported here under the names
+// this file's tests use.
+using Invocation = mcpp::build::RecoveredInvocation;
+using mcpp::build::recover_invocation;
+using mcpp::build::split_command_words;
 
 } // namespace mcpp::build::database
 
@@ -137,29 +126,6 @@ std::string qualified_name(const mcpp::manifest::Manifest& m) {
     return m.package.namespace_.empty()
         ? m.package.name
         : m.package.namespace_ + "." + m.package.name;
-}
-
-bool is_assignment(std::string_view w) {
-    auto eq = w.find('=');
-    if (eq == std::string_view::npos || eq == 0) return false;
-    if (!(std::isalpha(static_cast<unsigned char>(w[0])) || w[0] == '_')) return false;
-    for (std::size_t i = 1; i < eq; ++i) {
-        const unsigned char c = static_cast<unsigned char>(w[i]);
-        if (!(std::isalnum(c) || c == '_')) return false;
-    }
-    return true;
-}
-
-// `2>&1`, `>file`, `<NUL`, `2>nul`, `</dev/null`: one word. `>`, `2>`, `<`,
-// `>>`: the target is the next word.
-enum class Redirect { None, Attached, Detached };
-Redirect redirect_kind(std::string_view w) {
-    std::size_t i = 0;
-    while (i < w.size() && std::isdigit(static_cast<unsigned char>(w[i]))) ++i;
-    if (i >= w.size() || (w[i] != '>' && w[i] != '<')) return Redirect::None;
-    std::size_t j = i + 1;
-    if (j < w.size() && w[j] == w[i]) ++j;          // `>>`
-    return j == w.size() ? Redirect::Detached : Redirect::Attached;
 }
 
 bool names_path(std::string_view word, const std::filesystem::path& path,
@@ -242,6 +208,23 @@ void split_baseline(nlohmann::json& set) {
     set["baseline-arguments"] = std::move(baseline);
 }
 
+// D5b, S1 §6: "the compiler's build revision ... equal versions do not imply
+// compatible BMIs" (S1-11.2-3 gates the authoritative reuse of a build BMI on
+// this value matching exactly). mcpp already computes it, as one field of the
+// toolchain fingerprint (mcpp.toolchain.fingerprint::compute_fingerprint,
+// field 3): the compiler's normalized `--version` banner when the toolchain
+// probe recorded one (`Toolchain::driverIdent`), which changes with a build
+// commit even when the reported version string does not, and a hash of the
+// driver binary otherwise. Deriving build-id from the SAME computation,
+// rather than a second one, is what keeps the two stable together and each
+// stable across two runs of one toolchain.
+std::string build_id(const mcpp::toolchain::Toolchain& tc) {
+    return !tc.driverIdent.empty()
+        ? mcpp::toolchain::hash_string(tc.driverIdent)
+        : (tc.binaryPath.empty() ? std::string{}
+                                 : mcpp::toolchain::hash_file(tc.binaryPath));
+}
+
 nlohmann::json toolchain_json(const mcpp::toolchain::Toolchain& tc,
                               std::string_view compilerTriple,
                               const std::vector<mcpp::build::UnitInvocation>& invocations) {
@@ -258,6 +241,7 @@ nlohmann::json toolchain_json(const mcpp::toolchain::Toolchain& tc,
         if (!tc.stdlibVersion.empty()) stdlib["version"] = tc.stdlibVersion;
         j["stdlib"] = std::move(stdlib);
     }
+    if (auto id = build_id(tc); !id.empty()) j["build-id"] = id;
     return j;
 }
 
@@ -316,75 +300,11 @@ std::string toolchain_id(const mcpp::toolchain::Toolchain& tc,
     return std::format("{}-{}-{}", tc.compiler_family(), tc.version, compilerTriple);
 }
 
-std::vector<std::string> split_command_words(std::string_view s, bool windows) {
-    return mcpp::manifest::host_command_words(s, windows);
-}
-
-std::optional<Invocation> recover_invocation(const std::vector<std::string>& commands,
-                                             const std::filesystem::path& source,
-                                             const std::filesystem::path& driver,
-                                             const std::filesystem::path& defaultDirectory,
-                                             bool windows) {
-    const std::string driverText = driver.string();
-    for (auto const& command : commands) {
-        auto words = split_command_words(command, windows);
-        std::vector<std::vector<std::string>> segments(1);
-        for (auto& w : words) {
-            if (w == "&&") segments.emplace_back();
-            else segments.back().push_back(std::move(w));
-        }
-        std::filesystem::path cwd;
-        for (auto& seg : segments) {
-            if (seg.empty()) continue;
-            if (seg.front() == "cd") {
-                std::size_t k = 1;
-                if (k < seg.size() && (seg[k] == "/d" || seg[k] == "/D")) ++k;
-                if (k < seg.size()) cwd = std::filesystem::path{seg[k]};
-                continue;
-            }
-            std::size_t b = 0;
-            if (b < seg.size() && seg[b] == "env") ++b;
-            while (b < seg.size() && is_assignment(seg[b])) ++b;
-            std::vector<std::string> argv;
-            for (std::size_t k = b; k < seg.size(); ++k) {
-                switch (redirect_kind(seg[k])) {
-                    case Redirect::Attached: continue;
-                    case Redirect::Detached: ++k; continue;
-                    case Redirect::None:     argv.push_back(seg[k]);
-                }
-            }
-            if (argv.empty()) continue;
-            // A driver path rendered without quotes splits at its spaces.
-            if (argv.front() != driverText
-                && driverText.find(' ') != std::string::npos) {
-                std::string joined = argv.front();
-                std::size_t k = 1;
-                while (k < argv.size() && joined.size() < driverText.size()) {
-                    joined += ' ';
-                    joined += argv[k];
-                    ++k;
-                }
-                if (joined == driverText) {
-                    argv.erase(argv.begin() + 1, argv.begin() + static_cast<std::ptrdiff_t>(k));
-                    argv.front() = driverText;
-                }
-            }
-            const bool named = std::ranges::any_of(argv, [&](const std::string& w) {
-                return names_path(w, source, cwd.empty() ? defaultDirectory : cwd);
-            });
-            if (!named) continue;
-            return Invocation{cwd.empty() ? defaultDirectory : cwd, std::move(argv)};
-        }
-    }
-    return std::nullopt;
-}
-
 Rendered render(std::span<const Member> members,
                 std::span<const std::filesystem::path> failedMemberRoots,
                 const std::filesystem::path& workspaceRoot,
                 std::string_view selector) {
     Rendered r;
-    const bool windows = mcpp::platform::is_windows;
     nlohmann::json toolchains = nlohmann::json::object();
     nlohmann::json sets = nlohmann::json::array();
 
@@ -480,40 +400,48 @@ Rendered render(std::span<const Member> members,
             });
         }
 
-        if (ctx.stdModule) {
-            const auto& sm = *ctx.stdModule;
-            auto add_std = [&](const std::filesystem::path& source,
-                               const std::vector<std::string>& commands,
-                               const std::filesystem::path& object,
-                               std::string_view module,
-                               std::vector<std::string> requires_) {
-                if (source.empty() || commands.empty()) return;
-                auto inv = recover_invocation(commands, source, ctx.tc.binaryPath,
-                                              sm.cacheDir, windows);
-                if (!inv) {
-                    r.notes.push_back({"MCPP_BUILD_DATABASE_STD_UNIT_UNDESCRIBED",
-                        std::format("no command that builds the {} module names its "
-                                    "source '{}'; the unit is not listed",
-                                    module, source.string())});
-                    return;
-                }
-                auto& set = set_for(member.setPrefix + std::string(kStdSetName),
-                                    std::string(kStdSetName), "library");
+        // D5a/D5b (design 2026-09-26 §3.5): the standard-library units,
+        // already recovered onto the plan (prepare.cppm, from the same
+        // derivation `ensure_built` and `describe_std_module` both read), so
+        // this rendering cannot list a command or a BMI path that
+        // compile_commands.json (mcpp.build.compile_commands) disagrees with
+        // (P1). S1-12-1: they are translation units of the build like any
+        // other, so `--spec compile-commands` lists them too.
+        if (!ctx.plan.stdModuleUnits.empty()) {
+            auto& set = set_for(member.setPrefix + std::string(kStdSetName),
+                                std::string(kStdSetName), "library");
+            for (auto const& unit : ctx.plan.stdModuleUnits) {
+                const auto sourceStr = native_string(unit.source);
+                const auto objectStr = native_string(unit.object);
+                const auto workDirStr = native_string(unit.workDirectory);
+                r.compileCommands.push_back(nlohmann::json{
+                    {"directory", workDirStr},
+                    {"file",      sourceStr},
+                    {"arguments", unit.arguments},
+                    {"output",    objectStr},
+                });
+                nlohmann::json requires_ = nlohmann::json::array();
+                for (auto const& name : unit.requiresModules) requires_.push_back(name);
                 set.units.push_back(nlohmann::json{
-                    {"source",         native_string(source)},
-                    {"work-directory", native_string(inv->workDirectory)},
-                    {"arguments",      std::move(inv->arguments)},
-                    {"object",         native_string(object)},
+                    {"source",         sourceStr},
+                    {"work-directory", workDirStr},
+                    {"arguments",      unit.arguments},
+                    {"object",         objectStr},
                     {"private",        false},
-                    {"provides",       {{std::string(module), ""}}},
+                    // D5b, S1-8-6: the path of the BMI the build writes, in
+                    // the shared std cache that `emit` and the build share.
+                    // The planning pass never compiles (SPEC-005 R2.2), but
+                    // this path is the cache key's, not a compiler output it
+                    // would have to run to learn.
+                    {"provides",       {{unit.module, native_string(unit.bmi)}}},
                     {"requires",       std::move(requires_)},
                     {"ide",            {{"role", "module-interface"}}},
                 });
-            };
-            add_std(ctx.tc.stdModuleSource, sm.stdCommands, sm.objectPath, "std", {});
-            add_std(ctx.tc.stdCompatSource, sm.compatCommands, sm.compatObjectPath,
-                    "std.compat", {"std"});
+            }
         }
+        // A recovery failure is now reported where the recovery runs
+        // (prepare.cppm, onto BuildContext::planNotes) and reaches `r.notes`
+        // through the unconditional copy below, with every other plan note.
 
         for (auto const& name : order) {
             auto& set = groups.at(name);

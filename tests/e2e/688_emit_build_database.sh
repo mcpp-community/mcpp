@@ -200,17 +200,22 @@ EOF
 echo "ok: J, baseline and local arguments, private, config-files; K, the test's imports"
 
 # ── F (the S1 and compile-commands renderings agree) ──────────────────────
+# D5a: the standard-library units are translation units of the build like any
+# other (S1-12-1), so they are in BOTH renderings now, not just the S1 one --
+# no `mcpp:std` exclusion on the S1 side any more.
 "$MCPP" emit build-database --spec compile-commands > "$OUT/cc.json" 2> "$OUT/cc.err" \
     || fail "F: --spec compile-commands exited non-zero" "$OUT/cc.err"
 "$PY" - "$OUT/env.json" "$OUT/cc.json" <<'EOF' || fail "F: the two renderings disagree" "$OUT/cc.json"
 import json, sys
 db = json.load(open(sys.argv[1]))["data"]["database"]
 cc = json.load(open(sys.argv[2]))
-s1 = {u["source"]: u["arguments"] for s in db["sets"] if s["name"] != "mcpp:std" for u in s["translation-units"]}
+s1 = {u["source"]: u["arguments"] for s in db["sets"] for u in s["translation-units"]}
 cdb = {e["file"]: e["arguments"] for e in cc}
 assert s1 == cdb, (sorted(s1), sorted(cdb))
+std_files = {u["source"] for s in db["sets"] if s["name"] == "mcpp:std" for u in s["translation-units"]}
+assert std_files and std_files <= set(cdb), (std_files, sorted(cdb))
 EOF
-echo "ok: F, the S1 units and the compile-commands entries carry the same arguments"
+echo "ok: F, the S1 units and the compile-commands entries carry the same arguments, std included"
 
 # ── G ──────────────────────────────────────────────────────────────────────
 set +e
@@ -305,14 +310,23 @@ import json, sys
 emitted = json.load(open(sys.argv[1]))
 written = json.load(open(sys.argv[2]))
 # The one difference by construction is where the build writes: the planning
-# pass writes under its work directory, configure-only under the project.
+# pass writes under its work directory, configure-only under the project. The
+# standard-library units' `output` names the shared std cache instead (D5a),
+# outside either root, so the mapping is learned from a PROJECT entry --
+# `compile_commands.json` is sorted by `file` and a std source's absolute
+# path may sort before a project one, so index 0 is not reliably a project
+# entry any more.
 def slash(text):
     # One spelling for the comparison: a Windows argument may name a path with
     # either separator, and the mapping below is textual.
     return text.replace("\\", "/")
-def write_root(entry):
-    return slash(entry["output"]).split("/target/")[0]
-work, project = write_root(emitted[0]), write_root(written[0])
+def write_root(entries):
+    for e in entries:
+        s = slash(e["output"])
+        if "/target/" in s:
+            return s.split("/target/")[0]
+    raise AssertionError("no project entry (an /target/ output) found")
+work, project = write_root(emitted), write_root(written)
 def mapped(args):
     return [slash(a).replace(work, project) for a in args]
 e = {slash(x["file"]): mapped(x["arguments"]) for x in emitted}
