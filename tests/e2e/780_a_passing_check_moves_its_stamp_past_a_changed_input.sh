@@ -3,7 +3,7 @@
 # "check"` whose command writes no stamp, after one of its inputs changed.
 #
 # The engine writes such a check's stamp when the command succeeds (313). Until
-# 2026.9.27.1 it only CREATED the stamp: an existing one was left alone. So once
+# 2026.9.26.2 it only CREATED the stamp: an existing one was left alone. So once
 # an input changed, the check ran and passed, and its stamp stayed older than
 # that input -- and ninja ran it again on every build after, forever. Measured
 # with mcpp-plugins' `deps-cmake`, whose check is a CMake build: every `mcpp

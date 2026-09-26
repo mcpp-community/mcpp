@@ -619,7 +619,7 @@ void report_flag_words_changes(const mcpp::manifest::Manifest& m) {
         }
     };
     // THE SAME QUESTION FOR THE LINK FLAGS, which take the reading from
-    // 2026.9.27.1 (#703). Before, a `-L` or `-Wl,-rpath,` element was escaped
+    // 2026.9.26.2 (#703). Before, a `-L` or `-Wl,-rpath,` element was escaped
     // for ninja, so its text reached the host's reader as written, and any
     // other element was pasted into the ninja rule, so ninja replaced its `$`
     // sequences first. `$ORIGIN` written plainly reads the same under both
@@ -634,7 +634,7 @@ void report_flag_words_changes(const mcpp::manifest::Manifest& m) {
             if (now == before) continue;
             note_change(std::format(
                 "{}: {} element '{}' reaches the linker as {}; mcpp before "
-                "2026.9.27.1 passed {} on this host",
+                "2026.9.26.2 passed {} on this host",
                 who, where, e, show(now), show(before)),
                 std::string(
                 "a link-flag element is read by the compile-flag syntax, so `$ORIGIN` "

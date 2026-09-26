@@ -4,7 +4,7 @@
 #
 # SPEC-004 §8 reads an element of a flag list into words, and each word
 # reaches the tool verbatim whatever the host's command-line reader. Until
-# 2026.9.27.1 that reading covered the compile flags only. A link-flag element
+# 2026.9.26.2 that reading covered the compile flags only. A link-flag element
 # was escaped for ninja and not quoted for the shell, so the `sh` that runs a
 # POSIX link expanded a `$ORIGIN` the author wrote, and the program's run path
 # held `/../lib`, which is the host's `/lib`.

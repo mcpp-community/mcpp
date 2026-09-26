@@ -423,7 +423,7 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
 
 An element of `cflags`, `cxxflags` or `asmflags` stands for one or more compiler
 arguments ("words"), and an element of `ldflags` for one or more linker
-arguments (mcpp 2026.9.27.1+). The syntax is the same on every host, wherever
+arguments (mcpp 2026.9.26.2+). The syntax is the same on every host, wherever
 the list is written: `[build]`, `[targets.<name>]`, a `flags` glob entry, a
 feature, a `[target.<selector>.build]` section, an xpkg descriptor, and the
 `mcpp:cflag=` / `mcpp:cxxflag=` / `mcpp:link-flag=` directives of a build
@@ -458,7 +458,7 @@ A `defines` entry is one value and is not read by this syntax: `defines =
 ["NAME=\"text\""]` passes the single word `-DNAME="text"`. `dialect_cxxflags`
 and `std-module-flags` are not covered by this section.
 
-`ldflags` follows the syntax from mcpp 2026.9.27.1 (#703). Before, a link-flag
+`ldflags` follows the syntax from mcpp 2026.9.26.2 (#703). Before, a link-flag
 element was escaped for ninja and not quoted for the shell, so on Linux and
 macOS a `$ORIGIN` reached the program's run path as `/../lib`. A `-L` or
 `-Wl,-rpath,` word with a package-relative path resolves against the package
@@ -1458,7 +1458,7 @@ Link intent keeps discovery stages separate:
 |---|---|---|---|
 | `link_library_dirs` | `-L` | `-L` | `-L` or `/LIBPATH:` |
 | `transitive_needed_dirs` | `-Wl,-rpath-link` | no flag | no flag |
-| `runtime_search_dirs` | RUNPATH/rpath only, never `-L` | rpath only | no flag; after the link, the DLLs the program imports from these directories are placed beside it *(2026.9.27.1+)* |
+| `runtime_search_dirs` | RUNPATH/rpath only, never `-L` | rpath only | no flag; after the link, the DLLs the program imports from these directories are placed beside it *(2026.9.26.2+)* |
 | `frameworks` | no flag | `-framework` | no flag |
 | `deploy_files` | copy edge | copy edge | copy beside the output; never a linker flag |
 | `deploy` *(2026.9.12.2+)* | copy edge into `bin/<to>/` | copy edge into `bin/<to>/` | copy edge into `bin/<to>/`; never a linker flag |
@@ -1494,7 +1494,7 @@ action may populate it later, at build time.
 
 A PE image has no run path, so on Windows a runtime search directory serves
 `mcpp run`, which puts it on `PATH`, and `mcpp pack`, which stages the closure.
-From 2026.9.27.1 the link of a PE program whose plan has runtime search
+From 2026.9.26.2 the link of a PE program whose plan has runtime search
 directories is followed by one more edge, `mcpp place-dlls`, which reads the
 program's import closure as `mcpp pack` does and places beside the program
 every DLL it imports, directly or through another DLL, that resolves in one of

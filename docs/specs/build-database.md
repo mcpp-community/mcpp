@@ -7,7 +7,7 @@
 | 状态 | 评审中 v1.3 |
 | 版本 | 1.3 |
 | 最后修改 | 2026-09-26 |
-| 对应实现 | mcpp >= 2026.9.15.1;v1.3 修改的 R2.5、R3.7、R3.8、R4.1、R5.2 为 mcpp >= 2026.9.27.1 |
+| 对应实现 | mcpp >= 2026.9.15.1;v1.3 修改的 R2.5、R3.7、R3.8、R4.1、R5.2 为 mcpp >= 2026.9.26.2 |
 | 相关设计文档 | `.agents/docs/2026-09-14-636-build-database-and-the-latest-xlings.md`<br>`.agents/docs/2026-09-26-compile-database-and-issue-699-design.md` |
 | 相关 issue | #636, #648, #655, #699, #702 |
 | 依据的外部规范 | S1「C++ Build Database: IDE Profile」profile 0.2.0 与 S2 0.2.0 §3.4,取自 https://github.com/Sunrisepeak/lsp-mcpp-private 提交 `b82859d`(schema 自提交 `28ecd6e` 起未变);S2 0.3.0 §3.4 的部分回答(S2-3.4-12、S2-3.4-13,Sunrisepeak/mcpp-language-server#25);JSON Compilation Database |
@@ -170,7 +170,7 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
   `MCPP_BUILD_DATABASE_PROGRAM_FAILED`,`path` 为该包的 `build.mcpp`;后续失败若是
   由缺失的指令引起,则按前一条规则使整个成员失败。只要 `diagnostics` 中有一条
   `error`,退出码就是 1,无论 `data` 是否出现。**已实现**(离线诊断码:
-  mcpp >= 2026.9.16.1;成员独立规划、`path` 与构建程序失败的描述:mcpp >= 2026.9.27.1)
+  mcpp >= 2026.9.16.1;成员独立规划、`path` 与构建程序失败的描述:mcpp >= 2026.9.26.2)
 - **R5.3** 信封的 `effects` 为 `read-project` 与 `write-global-cache`,运行了构建程序时
   另有 `exec-build-script`,本次运行启动过网络子进程(索引刷新、安装、git 远程操作,
   失败或超时的也算)时另有 `network`。**已实现**(`network`:mcpp >= 2026.9.16.1)

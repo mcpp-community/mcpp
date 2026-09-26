@@ -3,6 +3,85 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.9.26.2] - 2026-09-26
+
+### 编译数据库:一个配置一个数据库(#699 的报告;#397 C-1、#677 B1)
+
+`compile_commands.json` 此前是一份跨命令、跨工具链合并的文件:删除后的下一次构建不再写回它,
+另一个工具写入的条目与上一个工具链的条目都被保留,`directory` 写的是工程根目录而编译器在输出目录
+中运行。现在:
+
+- 每个配置一份数据库,位于 `target/<triple>/<fingerprint>/compile_commands.json`,只在本配置之内
+  合并,因此 `mcpp test` 之后的 `mcpp build` 保留测试单元的条目。工程根目录的文件是当前配置数据库
+  的副本,整体替换、从不合并,内容相同时不写;切换工具链或 profile 就切换整个文件,切回时恢复该
+  配置的条目。根目录的符号链接照旧按其指向写入。
+- 根文件被删除后,下一次构建从配置数据库恢复它,快路径也是如此,不需要规划。
+- 被替换的根文件含有 mcpp 没有写的条目时(条目的 `output` 不在本工程的 `target/` 或 mcpp 主目录
+  之下),构建以一条警告说明其数量。
+- `directory` 与 S1 的 `work-directory` 是编译器运行的输出目录,与 JSON Compilation Database 格式、
+  S1-8-2 以及 CMake、ninja 的写法一致;从 `directory` 重放 GCC 的条目不再在源码树中写出
+  `gcm.cache/`。
+- 提供模块的单元在 `-c` 之前带上接口语言 flag(clang 为 `-x c++-module`,GCC 为 `-x c++`),
+  clangd 因此能处理 `.ixx` 接口;MSVC 的写法待 Windows 实测后再加。
+- 导入 `std` 的构建在 `compile_commands.json` 与 `emit --spec compile-commands` 中列出标准库单元
+  (S1-12-1),另一个版本的 clangd 因此能自己构建 `std`。S1 文档中标准库单元的 `provides` 指向
+  共享 std 缓存中的 BMI,工具链带 `build-id`,版本与构建身份完全一致的读者可以直接复用。
+- `mcpp new` 写出的 `.gitignore` 包含 `compile_commands.json`。
+
+### `emit build-database` 按成员规划(#699)
+
+`emit build-database --workspace` 此前在第一个规划失败的成员处停止,已规划成员的集合全部丢失。
+现在每个选中的成员独立规划:规划失败的成员不贡献集合,贡献一条 `error` 诊断,`path` 为它的
+`mcpp.toml`;至少一个成员规划成功时文档带 `data`,`watch` 也列出失败成员的 `mcpp.toml` 与
+`build.mcpp`;有任何错误时退出码为 1。在 `emit` 下,构建失败的宿主工具是警告
+`MCPP_BUILD_DATABASE_HOST_TOOL_UNBUILT`,规划继续,构建程序得到该工具将被发布的路径;构建程序失败
+的包不带该程序的指令地被描述,并得到一条 `MCPP_BUILD_DATABASE_PROGRAM_FAILED` 错误,`path` 为它的
+`build.mcpp`。`mcpp build` 的行为不变。带错误诊断的 `data` 是 S2 0.3.0 的部分回答
+(Sunrisepeak/mcpp-language-server#25)。
+
+### 构建程序:`runtime_search_dir`、`prepare` 角色与 stamp 规则(#701、#702)
+
+- `mcpp::runtime_search_dir(dir)`(`mcpp:runtime-search-dir=`,协议 12)是 `[runtime]
+  runtime_search_dirs` 的构建程序形态,并入同一个字段:ELF 与 Mach-O 的运行路径、`mcpp run` 的加载
+  路径、`mcpp pack` 的闭包搜索与运行时校验都照常读取它,依赖的声明到达消费方的可执行文件。目录在
+  构建程序运行时不必存在。保留字段 `[runtime] library_dirs` 不获得指令。
+- 新角色 `prepare` 用于文件名在构建程序运行时未知的施工(安装一个前缀、解开一个 SDK):命令填充
+  用 `a.output_dir(dir)` 声明的目录,引擎写 stamp。命令成功而目录不存在或除 stamp 外不含文件时,
+  这条边失败并点名目录。声明包的每条编译边与计划中的每条链接边等待它,构建输出以 `PREPARE`
+  标注。构建程序的重新运行依据落在某个 `prepare` 目录内时,构建给出警告。
+- 角色以常量书写:`mcpp::roles::{source, check, object, artifact, prepare}`。引擎拒绝这五个之外的
+  角色字符串并列出它们;此前未知的字符串被静默读作 `source`。
+- `check` 与 `prepare` 的命令成功后,引擎创建缺失的 stamp,并把已存在的 stamp 更新到当前时间;
+  此前已存在的 stamp 不被更新,一个输入改变一次之后,该 action 在此后每次构建中都会重新运行。
+
+### Windows 程序的 DLL 在链接后放到程序旁
+
+PE 映像没有运行路径,运行时搜索目录中的 DLL 此前只服务于 `mcpp run` 与 `mcpp pack`,从构建目录直接
+启动的程序找不到它。现在计划中带运行时搜索目录的 PE 程序在链接后多一条边 `mcpp place-dlls`:按
+`mcpp pack` 的闭包求解与系统规则,把程序直接或间接导入、且在这些目录中解析到的 DLL 放到程序旁,
+字节不同时才写;DLL 在其目录中被替换(包括被 `prepare` action 替换)后,同一次构建会再次放置它。
+部署到程序旁的 DLL 从链接边的隐式输入改为 order-only 输入,DLL 变化不再使程序重新链接。
+
+### 链接 flag 按词读取(#703)
+
+`[build] ldflags`、`mcpp::link_flag` 与依赖传播的链接 flag 此前只为 ninja 转义,Linux 与 macOS 的
+`sh` 展开其中的 `$ORIGIN`,程序的运行路径因此含有 `/../lib`,即宿主的 `/lib`。SPEC-004 §8 的词读法
+现在同样适用于链接 flag:每个词原样到达链接器;依赖的链接 flag 按词传播;`link_search`、`link_lib`、
+`link_script` 由路径构成的值是一个词,含空格的目录不再被拆开。为 shell 或 ninja 手工转义的写法
+(`\$ORIGIN`、`'$$ORIGIN'`)现在按写法读取,首次规划以 `build/flag-words` 指出这样的元素;
+索引中没有这样的写法。
+
+### 构建插件规范 SPEC-007
+
+新增 `docs/specs/build-plugins.md`(草案 0.2):插件的配置、施工与校验各用一种机制,环境不完整时
+警告而不失败,配置不依赖施工结果,运行时库以 `runtime_search_dir` 声明,构建期的网络访问在离线
+构建中不发生。mcpp 只提供通用机制,某一个工具的知识只属于它的插件。
+
+### 兼容性
+
+- 构建程序缓存的 epoch 升到 3,升级后每个构建程序重新运行一次。
+- 构建程序协议升到 12;使用新指令、新角色或角色常量的构建程序在旧引擎上编译失败并指出名字。
+
 ## [2026.9.26.1] - 2026-09-26
 
 ### 路径与文本统一为 UTF-8(#693)

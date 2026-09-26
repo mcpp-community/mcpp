@@ -425,7 +425,7 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
 
 `cflags`、`cxxflags` 或 `asmflags` 里的一个元素代表一个或多个编译器
 参数（「词」），`ldflags` 里的一个元素代表一个或多个链接器参数
-（mcpp 2026.9.27.1+）。这套语法在每个宿主上都相同，无论写在哪张表里：
+（mcpp 2026.9.26.2+）。这套语法在每个宿主上都相同，无论写在哪张表里：
 `[build]`、`[targets.<name>]`、`flags` glob 条目、feature、
 `[target.<selector>.build]` 小节、xpkg 描述符，以及构建程序的
 `mcpp:cflag=` / `mcpp:cxxflag=` / `mcpp:link-flag=` 指令。
@@ -458,7 +458,7 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
 ["NAME=\"text\""]` 传出单独一个词 `-DNAME="text"`。`dialect_cxxflags` 与
 `std-module-flags` 不受本节约束。
 
-`ldflags` 自 mcpp 2026.9.27.1 起遵循这套语法（#703）。此前链接 flag 的元素只为
+`ldflags` 自 mcpp 2026.9.26.2 起遵循这套语法（#703）。此前链接 flag 的元素只为
 ninja 转义、没有为 shell 加引号，所以在 Linux 与 macOS 上 `$ORIGIN` 以 `/../lib`
 进入程序的运行路径。带包内相对路径的 `-L` 或 `-Wl,-rpath,` 词相对包根解析，依赖的
 `ldflags` 按词传给消费者。为 ninja 或 shell 手工转义的元素（`\$ORIGIN`、
@@ -1389,7 +1389,7 @@ Link intent 把各个发现阶段分开处理：
 |---|---|---|---|
 | `link_library_dirs` | `-L` | `-L` | `-L` 或 `/LIBPATH:` |
 | `transitive_needed_dirs` | `-Wl,-rpath-link` | 无旗标 | 无旗标 |
-| `runtime_search_dirs` | 仅 RUNPATH/rpath，从不是 `-L` | 仅 rpath | 无旗标；链接之后，程序从这些目录导入的 DLL 被放到程序旁 *(2026.9.27.1+)* |
+| `runtime_search_dirs` | 仅 RUNPATH/rpath，从不是 `-L` | 仅 rpath | 无旗标；链接之后，程序从这些目录导入的 DLL 被放到程序旁 *(2026.9.26.2+)* |
 | `frameworks` | 无旗标 | `-framework` | 无旗标 |
 | `deploy_files` | 拷贝边 | 拷贝边 | 拷贝到输出旁边；从不是链接器旗标 |
 | `deploy` *（2026.9.12.2+）* | 拷贝边，进 `bin/<to>/` | 拷贝边，进 `bin/<to>/` | 拷贝边，进 `bin/<to>/`；从不是链接器旗标 |
@@ -1421,7 +1421,7 @@ Link intent 把各个发现阶段分开处理：
 存在；一个 `prepare` action 可能在构建期之后才把它填充起来。
 
 PE 映像没有运行路径，所以在 Windows 上运行时搜索目录服务于 `mcpp run`（把它放进
-`PATH`）与 `mcpp pack`（暂存闭包）。自 2026.9.27.1 起，计划中带运行时搜索目录的
+`PATH`）与 `mcpp pack`（暂存闭包）。自 2026.9.26.2 起，计划中带运行时搜索目录的
 PE 程序在链接之后多一条边 `mcpp place-dlls`：它按 `mcpp pack` 的方式读取程序的
 导入闭包，把程序直接或经另一个 DLL 间接导入、且在这些目录之一中解析到的每个 DLL
 放到程序旁。系统 DLL 与 API set 从不复制，副本只在字节不同时写入，某个 DLL 在

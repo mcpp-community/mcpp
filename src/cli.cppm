@@ -1008,7 +1008,7 @@ int run(int argc, char** argv) {
     // before the run is needed — a stamp feeds no compile or link edge (a
     // blocking `check` or a `prepare` action orders edges through an
     // order-only edge instead), so unconditionally touching a stamp the
-    // command already wrote changes no build. Until 2026.9.27.1 an existing
+    // command already wrote changes no build. Until 2026.9.26.2 an existing
     // stamp was left alone whatever the command did, and every check whose
     // command writes nothing -- clang-tidy, an installer run through
     // `mcpp-deps` -- re-ran on every build after its first input change,
