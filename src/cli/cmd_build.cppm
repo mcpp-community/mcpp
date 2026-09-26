@@ -304,8 +304,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
         return 0;
     };
     // A failure with nothing to describe is one envelope with diagnostics and
-    // no `data` (S2 0.2.0 §3.4: a command without data has failed), and exit
-    // 1. `fail_no_data` finishes with whatever `diagnostics` already holds —
+    // no `data` (S2 §3.4: a command without data has failed), and exit 1. `fail_no_data` finishes with whatever `diagnostics` already holds —
     // used once a single diagnostic is pushed onto it (`failed`, below, for a
     // usage error decided before any member is tried) and once every
     // selected member's own planning has failed in turn (#699 item 1, E1: a
@@ -416,8 +415,9 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
     }
     // Every selected member was planned independently (#699 item 1, E1): one
     // that failed contributed its own diagnostic above and nothing else.
-    // Only when none of them planned is there nothing left to describe — S2
-    // has no partial outcome, so `data` is present or it is not.
+    // Only when none of them planned is there nothing left to describe. A
+    // document with `data` and error diagnostics is S2 0.3.0's partial answer
+    // (S2-3.4-12, S2-3.4-13): it describes everything the errors do not name.
     if (contexts.empty())
         return fail_no_data();
 
