@@ -1473,10 +1473,13 @@ For one compatibility train, `library_dirs` maps only to runtime search,
 `capabilities` maps to required run-phase capability requirements. None of
 these legacy fields creates a provider.
 
-`library_dirs` has a build-program form for a directory only a build.mcpp can
-locate (a vcpkg prefix's `bin/`, a Qt SDK's `bin/`): `mcpp::runtime_library_dir(dir)`
-(2026.9.27.1+, protocol 12; [30 — Build Programs](30-build-mcpp.md)), which
-joins this same field.
+`runtime_search_dirs` has a build-program form for a directory only a
+build.mcpp can locate (a vcpkg prefix's `bin/`, a Qt SDK's `bin/`, a directory
+a `prepare` action populates): `mcpp::runtime_search_dir(dir)` (protocol 12;
+[30 — Build Programs](30-build-mcpp.md)), which joins this same field
+directly — not the legacy `library_dirs` above, which gains no directive of
+its own. The directory need not exist when the program runs; a `prepare`
+action may populate it later, at build time.
 
 `target/<triple>/<fp>/resolution.json` schema 2 stores the RuntimeBinding,
 canonical requirements/providers/artifacts, LinkIntent, platform search
