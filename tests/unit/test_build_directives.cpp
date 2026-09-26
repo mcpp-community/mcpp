@@ -767,6 +767,122 @@ TEST(BuildDirectives, OverflowMarkerIsRefusedAsAllocationFailure) {
     EXPECT_EQ(err.find("did not fit"), std::string::npos);
 }
 
+// ── mcpp#702: the five action roles, and `output_dir` (`prepare` only) ─────
+//
+// `mcpp::roles::{source, check, object, artifact, prepare}` are the five
+// spellings `decode_action` accepts. Before this, ANY unrecognised string
+// decoded silently as Source; from here on `action_error` refuses one,
+// naming the value and the five it knows, and `decode_action` refuses it too
+// -- a cache-hit replay reaches the payload through `apply` alone, never
+// through `action_error` (see the epoch-3 comment in program_protocol.cppm).
+
+TEST(BuildDirectives, DecodeActionAcceptsEachOfTheFiveRoles) {
+    struct Row {
+        const char* role;
+        mcpp::manifest::BuildAction::Role want;
+        const char* extra;   // extra JSON fields `prepare` needs
+    };
+    const Row rows[] = {
+        {"source",   mcpp::manifest::BuildAction::Role::Source,   ""},
+        {"check",    mcpp::manifest::BuildAction::Role::Check,    ""},
+        {"object",   mcpp::manifest::BuildAction::Role::Object,   ""},
+        {"artifact", mcpp::manifest::BuildAction::Role::Artifact, ""},
+        {"prepare",  mcpp::manifest::BuildAction::Role::Prepare,
+         ",\"output_dir\":\"out/prep\""},
+    };
+    for (auto const& row : rows) {
+        auto d = parse(std::format(
+            "mcpp:action={{\"id\":\"a\",\"role\":\"{}\","
+            "\"description\":\"\",\"blocking\":false{},"
+            "\"inputs\":[],\"outputs\":[\"out/a\"],"
+            "\"command\":[\"cmd\"],\"provides\":[],\"imports\":[],\"targets\":[]}}\n",
+            row.role, row.extra));
+        ASSERT_EQ(d.at(dirs::Slot::Actions).size(), 1u) << row.role;
+        auto a = dirs::decode_action(d.at(dirs::Slot::Actions).front());
+        ASSERT_TRUE(a.has_value()) << row.role;
+        EXPECT_EQ(a->role, row.want) << row.role;
+    }
+}
+
+// The default when `role` is absent is still `source`, exactly as it was
+// before `prepare` and `output_dir` existed.
+TEST(BuildDirectives, DecodeActionDefaultsRoleToSourceWhenAbsent) {
+    auto d = parse(
+        "mcpp:action={\"id\":\"gen\","
+        "\"description\":\"\",\"blocking\":false,"
+        "\"inputs\":[],\"outputs\":[\"out/gen.cpp\"],"
+        "\"command\":[\"gen.sh\"],\"provides\":[],\"imports\":[],\"targets\":[]}\n");
+    auto a = dirs::decode_action(d.at(dirs::Slot::Actions).front());
+    ASSERT_TRUE(a.has_value());
+    EXPECT_EQ(a->role, mcpp::manifest::BuildAction::Role::Source);
+}
+
+TEST(BuildDirectives, ActionErrorRefusesAnUnknownRoleAndListsTheFive) {
+    auto d = parse(
+        "mcpp:action={\"id\":\"a\",\"role\":\"chek\","
+        "\"description\":\"\",\"blocking\":false,"
+        "\"inputs\":[],\"outputs\":[\"out/a\"],"
+        "\"command\":[\"cmd\"],\"provides\":[],\"imports\":[],\"targets\":[]}\n");
+    auto err = dirs::action_error(d);
+    ASSERT_FALSE(err.empty());
+    EXPECT_NE(err.find("\"chek\""), std::string::npos) << err;
+    for (auto const* role : {"source", "check", "object", "artifact", "prepare"})
+        EXPECT_NE(err.find(role), std::string::npos) << err;
+}
+
+TEST(BuildDirectives, DecodeActionRefusesAnUnknownRoleEvenOutsideActionError) {
+    auto d = parse(
+        "mcpp:action={\"id\":\"a\",\"role\":\"chek\","
+        "\"description\":\"\",\"blocking\":false,"
+        "\"inputs\":[],\"outputs\":[\"out/a\"],"
+        "\"command\":[\"cmd\"],\"provides\":[],\"imports\":[],\"targets\":[]}\n");
+    EXPECT_FALSE(dirs::decode_action(d.at(dirs::Slot::Actions).front()).has_value());
+}
+
+// `output_dir` round-trips like `depfile`: present when the typed builder
+// set it, and read back verbatim.
+TEST(BuildDirectives, DecodeActionRoundTripsOutputDir) {
+    auto d = parse(
+        "mcpp:action={\"id\":\"prep\",\"role\":\"prepare\","
+        "\"description\":\"\",\"blocking\":false,\"output_dir\":\"out/prefix\","
+        "\"inputs\":[],\"outputs\":[\"out/prep.stamp\"],"
+        "\"command\":[\"install.sh\"],\"provides\":[],\"imports\":[],\"targets\":[]}\n");
+    auto a = dirs::decode_action(d.at(dirs::Slot::Actions).front());
+    ASSERT_TRUE(a.has_value());
+    EXPECT_EQ(a->outputDir, "out/prefix");
+}
+
+// A `prepare` action with no `output_dir` is refused: it would be a stamp
+// and nothing else, indistinguishable from a `check` that forgot
+// `blocking = true`.
+TEST(BuildDirectives, PrepareActionWithNoOutputDirIsRefused) {
+    auto d = parse(
+        "mcpp:action={\"id\":\"prep\",\"role\":\"prepare\","
+        "\"description\":\"\",\"blocking\":false,"
+        "\"inputs\":[],\"outputs\":[\"out/prep.stamp\"],"
+        "\"command\":[\"install.sh\"],\"provides\":[],\"imports\":[],\"targets\":[]}\n");
+    EXPECT_FALSE(dirs::decode_action(d.at(dirs::Slot::Actions).front()).has_value());
+    EXPECT_FALSE(dirs::action_error(d).empty());
+}
+
+// Cache round trip: `mcpp:action=` is persisted (Scope::GraphNode), and a
+// replayed `prepare` payload decodes to the same role and output_dir a fresh
+// run would -- the cache hit must replay both exactly.
+TEST(BuildDirectives, PrepareActionSurvivesTheCacheRoundTrip) {
+    const std::string payload = std::format(
+        "{{\"id\":\"prep\",\"role\":\"prepare\","
+        "\"description\":\"\",\"blocking\":false,\"output_dir\":\"{}\","
+        "\"inputs\":[],\"outputs\":[\"{}\"],"
+        "\"command\":[\"install.sh\"],\"provides\":[],\"imports\":[],\"targets\":[]}}",
+        under_root("prefix"), under_root("prep.stamp"));
+    dirs::Directives replayed;
+    ASSERT_TRUE(dirs::accept_cache_record(replayed, "action", payload));
+    auto a = dirs::decode_action(replayed.at(dirs::Slot::Actions).front());
+    ASSERT_TRUE(a.has_value());
+    EXPECT_EQ(a->role, mcpp::manifest::BuildAction::Role::Prepare);
+    EXPECT_EQ(a->outputDir, under_root("prefix"));
+}
+
 // ── #618: a named executable's subsystem and entry ──────────────────────────
 //
 // `windows-subsystem` and `windows-entry` name a target of the package being
@@ -978,17 +1094,18 @@ TEST(BuildDirectives, DeployReachesOnlyTheRuntimeDeployListNotAnyFlagChannel) {
     EXPECT_TRUE(m.buildConfig.cxxflags.empty());
 }
 
-// ── v12: `mcpp::runtime_library_dir(dir)` ───────────────────────────────────
+// ── v12: `mcpp::runtime_search_dir(dir)` ────────────────────────────────────
 //
-// The build-program form of `[runtime] library_dirs` (docs/04 §2.11): a
+// The build-program form of `runtime_search_dirs` (docs/04 §2.11): a
 // launch-time search directory reached from a build.mcpp instead of TOML.
-// What is asserted: it lands on the SAME manifest field the manifest key
-// populates (`RuntimeConfig::libraryDirs`), which is what makes every existing
-// consumer of that field (the plan merge, the RUNPATH rendering, `mcpp pack`'s
-// closure search) see a directive-declared entry without any of them changing.
+// What is asserted: it lands DIRECTLY on `LinkIntent::runtimeSearchDirs` --
+// NOT the legacy `RuntimeConfig::libraryDirs`, which docs/04 §2.11 retires --
+// which is what makes every existing consumer of that field (the plan merge,
+// the RUNPATH rendering, `mcpp pack`'s closure search) see a
+// directive-declared entry without any of them changing.
 
-TEST(BuildDirectives, RuntimeLibraryDirRowIsProtocolTwelveWithLinkGlobalScopeAndATag) {
-    auto def = dirs::find_by_wire("runtime-library-dir");
+TEST(BuildDirectives, RuntimeSearchDirRowIsProtocolTwelveWithLinkGlobalScopeAndATag) {
+    auto def = dirs::find_by_wire("runtime-search-dir");
     ASSERT_NE(def, nullptr);
     EXPECT_EQ(def->scope, dirs::Scope::LinkGlobal);
     EXPECT_EQ(def->sinceProtocol, 12);
@@ -997,76 +1114,78 @@ TEST(BuildDirectives, RuntimeLibraryDirRowIsProtocolTwelveWithLinkGlobalScopeAnd
 }
 
 // The manifest key's own field, not a new one -- this is the whole point of
-// the design: no downstream consumer has to learn a second field exists.
-TEST(BuildDirectives, RuntimeLibraryDirJoinsTheSameFieldTheManifestKeyPopulates) {
-    auto d = parse("mcpp:runtime-library-dir=rtlib\n");
+// the design: no downstream consumer has to learn a second field exists. NOT
+// `RuntimeConfig::libraryDirs`, the retiring vector #702 as first written
+// joined by mistake (design §5.3 point 1).
+TEST(BuildDirectives, RuntimeSearchDirJoinsLinkIntentDirectlyNotTheLegacyVector) {
+    auto d = parse("mcpp:runtime-search-dir=rtlib\n");
     mcpp::manifest::Manifest m;
     dirs::apply(m, d);
-    ASSERT_EQ(m.runtimeConfig.libraryDirs.size(), 1u);
-    EXPECT_EQ(m.runtimeConfig.libraryDirs[0].string(), under_root("rtlib"));
+    ASSERT_EQ(m.runtimeConfig.linkIntent.runtimeSearchDirs.size(), 1u);
+    EXPECT_EQ(m.runtimeConfig.linkIntent.runtimeSearchDirs[0].string(), under_root("rtlib"));
+    EXPECT_TRUE(m.runtimeConfig.libraryDirs.empty());
 }
 
 // Relative resolves against the package root, exactly as `include-dir`'s
 // AbsPath case and `deploy`'s `from` do -- the directive never leaves a
 // relative path for a later stage to guess the base of.
-TEST(BuildDirectives, RuntimeLibraryDirRelativeToTheRootIsMadeAbsolute) {
-    auto d = parse("mcpp:runtime-library-dir=vendor/qt/bin\n");
+TEST(BuildDirectives, RuntimeSearchDirRelativeToTheRootIsMadeAbsolute) {
+    auto d = parse("mcpp:runtime-search-dir=vendor/qt/bin\n");
     mcpp::manifest::Manifest m;
     dirs::apply(m, d);
-    ASSERT_EQ(m.runtimeConfig.libraryDirs.size(), 1u);
-    EXPECT_EQ(m.runtimeConfig.libraryDirs[0].string(), under_root("vendor/qt/bin"));
+    ASSERT_EQ(m.runtimeConfig.linkIntent.runtimeSearchDirs.size(), 1u);
+    EXPECT_EQ(m.runtimeConfig.linkIntent.runtimeSearchDirs[0].string(),
+             under_root("vendor/qt/bin"));
 }
 
-TEST(BuildDirectives, RuntimeLibraryDirAcceptsAnAlreadyAbsoluteValue) {
+TEST(BuildDirectives, RuntimeSearchDirAcceptsAnAlreadyAbsoluteValue) {
     const std::string abs = under_root("prefix/lib");
-    auto d = parse(std::format("mcpp:runtime-library-dir={}\n", abs));
+    auto d = parse(std::format("mcpp:runtime-search-dir={}\n", abs));
     mcpp::manifest::Manifest m;
     dirs::apply(m, d);
-    ASSERT_EQ(m.runtimeConfig.libraryDirs.size(), 1u);
-    EXPECT_EQ(m.runtimeConfig.libraryDirs[0].string(), abs);
+    ASSERT_EQ(m.runtimeConfig.linkIntent.runtimeSearchDirs.size(), 1u);
+    EXPECT_EQ(m.runtimeConfig.linkIntent.runtimeSearchDirs[0].string(), abs);
 }
 
 // Reaches only the run-time search field -- no compile or link flag channel
 // gains anything, unlike `link-search`, which shares the manifest's -L/-L
-// distinction (docs/04 §2.11's own table: `library_dirs` maps ONLY to
-// runtime search).
-TEST(BuildDirectives, RuntimeLibraryDirReachesNoFlagChannel) {
-    auto d = parse("mcpp:runtime-library-dir=rtlib\n");
+// distinction.
+TEST(BuildDirectives, RuntimeSearchDirReachesNoFlagChannel) {
+    auto d = parse("mcpp:runtime-search-dir=rtlib\n");
     mcpp::manifest::Manifest m;
     dirs::apply(m, d);
     EXPECT_TRUE(m.buildConfig.ldflags.empty());
     EXPECT_TRUE(m.buildConfig.cxxflags.empty());
-    EXPECT_TRUE(m.runtimeConfig.linkIntent.runtimeSearchDirs.empty());
     EXPECT_TRUE(m.runtimeConfig.linkIntent.linkLibraryDirs.empty());
 }
 
 // Multiple directives accumulate, in emission order, the same as every other
 // repeated directive in this table.
-TEST(BuildDirectives, RuntimeLibraryDirDirectivesAccumulate) {
-    auto d = parse("mcpp:runtime-library-dir=a\n"
-                   "mcpp:runtime-library-dir=b\n");
+TEST(BuildDirectives, RuntimeSearchDirDirectivesAccumulate) {
+    auto d = parse("mcpp:runtime-search-dir=a\n"
+                   "mcpp:runtime-search-dir=b\n");
     mcpp::manifest::Manifest m;
     dirs::apply(m, d);
-    ASSERT_EQ(m.runtimeConfig.libraryDirs.size(), 2u);
-    EXPECT_EQ(m.runtimeConfig.libraryDirs[0].string(), under_root("a"));
-    EXPECT_EQ(m.runtimeConfig.libraryDirs[1].string(), under_root("b"));
+    ASSERT_EQ(m.runtimeConfig.linkIntent.runtimeSearchDirs.size(), 2u);
+    EXPECT_EQ(m.runtimeConfig.linkIntent.runtimeSearchDirs[0].string(), under_root("a"));
+    EXPECT_EQ(m.runtimeConfig.linkIntent.runtimeSearchDirs[1].string(), under_root("b"));
 }
 
 // Persisted like `deploy`, `warning` and `pack-format`: the cache tag is
 // non-empty and round-trips through the same table-driven serialize/
 // accept_cache_record pair, so a build.mcpp CACHE HIT replays the directive
 // rather than losing it on every build after the first.
-TEST(BuildDirectives, RuntimeLibraryDirIsPersistedAndRoundTrips) {
-    auto d = parse("mcpp:runtime-library-dir=rtlib\n");
+TEST(BuildDirectives, RuntimeSearchDirIsPersistedAndRoundTrips) {
+    auto d = parse("mcpp:runtime-search-dir=rtlib\n");
     std::ostringstream os;
     dirs::serialize(os, d);
-    EXPECT_NE(os.str().find("d runtime-library-dir "), std::string::npos) << os.str();
+    EXPECT_NE(os.str().find("d runtime-search-dir "), std::string::npos) << os.str();
 
     dirs::Directives replayed;
-    ASSERT_TRUE(dirs::accept_cache_record(replayed, "runtime-library-dir",
+    ASSERT_TRUE(dirs::accept_cache_record(replayed, "runtime-search-dir",
                                           under_root("rtlib")));
     mcpp::manifest::Manifest m;
     dirs::apply(m, replayed);
-    ASSERT_EQ(m.runtimeConfig.libraryDirs.size(), 1u);
-    EXPECT_EQ(m.runtimeConfig.libraryDirs[0].string(), under_root("rtlib"));
+    ASSERT_EQ(m.runtimeConfig.linkIntent.runtimeSearchDirs.size(), 1u);
+    EXPECT_EQ(m.runtimeConfig.linkIntent.runtimeSearchDirs[0].string(), under_root("rtlib"));
 }

@@ -673,11 +673,17 @@ runtime_env_for_dirs(const std::vector<std::filesystem::path>& dirs) {
 
 // `Object` outputs are link inputs and `Artifact` inputs are link outputs, so
 // ninja's file dependencies already order both. `Source` may produce a header,
-// which is never an edge input, and a `Check` gates compilation exactly when it
-// says it does — the `blocking` flag, which nothing read before mcpp#534.
+// which is never an edge input, a `Check` gates compilation exactly when it
+// says it does — the `blocking` flag, which nothing read before mcpp#534 — and
+// a `Prepare` (mcpp#702) gates it UNCONDITIONALLY: the build reads its
+// declared directory by directory (`include_dir`, `link_search`,
+// `runtime_search_dir`), which a compile edge cannot express as a file
+// dependency any more than a `Source` header can, so it needs the same
+// order-only edge every time, with no opt-in flag of its own.
 bool action_precedes_compilation(const mcpp::manifest::BuildAction& a) {
     return a.role == mcpp::manifest::BuildAction::Role::Source
-        || (a.role == mcpp::manifest::BuildAction::Role::Check && a.blocking);
+        || (a.role == mcpp::manifest::BuildAction::Role::Check && a.blocking)
+        || a.role == mcpp::manifest::BuildAction::Role::Prepare;
 }
 
 // A phony per package. Not a path — ninja resolves it in the build dir, and no
@@ -688,6 +694,27 @@ std::string action_phony_name(std::string_view pkg) {
         s += (std::isalnum(static_cast<unsigned char>(c)) || c == '.'
               || c == '_' || c == '-') ? c : '_';
     return s;
+}
+
+// Packages whose `prepare` action gates every LINK edge in the plan, not only
+// their own compile edges (mcpp#702, design §5.4 P). `plan.linkIntent` — and
+// therefore the `$ldflags` every link rule interpolates, `runtime_search_dir`
+// included — is ONE value merged from every package's LinkGlobal directives
+// (`resolve_runtime_contract`, plan.cppm), read by every link unit in this
+// plan alike: the declaring package's own link, and the link of every package
+// that depends on it, which in mcpp's flat per-plan merge is indistinguishable
+// from "every link unit this plan emits". A directory a `prepare` action
+// populates therefore has to exist before ANY such link runs, not only the
+// declaring package's. File-scope for the same reason
+// `action_precedes_compilation`/`action_phony_name` are: the emitter and
+// `check_action_ordering` ask the identical question.
+std::set<std::string> packages_with_prepare_actions(const BuildPlan& plan) {
+    std::set<std::string> pkgs;
+    for (auto const& a : plan.actions)
+        if (a.role == mcpp::manifest::BuildAction::Role::Prepare
+            && !a.packageName.empty() && !a.outputs.empty())
+            pkgs.insert(a.packageName);
+    return pkgs;
 }
 
 }  // namespace
@@ -2267,6 +2294,15 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                                        : stagedOrderOnly + " " + phony;
     };
 
+    // Order-only suffix for every LINK edge (mcpp#702, design §5.4 P): the
+    // phony of every package whose `prepare` action gates the whole plan's
+    // link, per `packages_with_prepare_actions` above. `ar` never reads
+    // `$ldflags`, so a static archive is not one of the edges this reaches —
+    // applied at the link-unit loop below, keyed on `lu.kind`.
+    std::string linkOrderOnly;
+    for (auto const& pkg : packages_with_prepare_actions(plan))
+        linkOrderOnly += " " + action_phony_name(pkg);
+
     if (dyndep) {
         // ── Phase 1: scan edges (one .ddi per TU). ──────────────────────
         // .ddi is placed beside the object so multi-version mangling can
@@ -2740,9 +2776,15 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
         if (!lu.defFile.empty()) implicit += " " + escape_ninja_path(lu.defFile);
 
-        std::string out_line = std::format("build {}{} : {}{}{}\n",
+        // `ar` (StaticLibrary) never reads `$ldflags`, so it never reads a
+        // `runtime_search_dir` either — see `linkOrderOnly`, above.
+        const std::string linkOrderOnlyPart =
+            (lu.kind != LinkUnit::StaticLibrary && !linkOrderOnly.empty())
+                ? " ||" + linkOrderOnly : std::string{};
+        std::string out_line = std::format("build {}{} : {}{}{}{}\n",
             escape_ninja_path(lu.output), implicitOut, rule, ins,
-            implicit.empty() ? std::string{} : " |" + implicit);
+            implicit.empty() ? std::string{} : " |" + implicit,
+            linkOrderOnlyPart);
         if (auto flag = shared_soname_flag(lu, plan); !flag.empty())
             out_line += "  soname_flag = " + flag + "\n";
         if (auto flag = shared_soname_default(lu, plan); !flag.empty())
@@ -2941,7 +2983,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // nothing on success — and the obvious workaround, a wrapper script,
         // cannot be written portably because an action's command is an argv
         // with no shell assumed. So the engine wraps it: mcpp is already on
-        // disk on every platform it runs on.
+        // disk on every platform it runs on. A PREPARE (mcpp#702) shares the
+        // wrapper: its command populates a directory, not the stamp, and the
+        // wrapper's post-condition is what checks that directory exists once
+        // the command has succeeded (R3.2/R3.3) — `--require-dir`, below.
         //
         // Prepended rather than appended, and the original command is passed
         // through unchanged after `--`, so a command that DOES write its own
@@ -2951,7 +2996,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // action with none at parse time — and is kept because this loop reads
         // as if it could see one, and a wrapper with no stamp to write would
         // be a command that swallows its own exit code.
-        if (a.role == mcpp::manifest::BuildAction::Role::Check
+        if ((a.role == mcpp::manifest::BuildAction::Role::Check
+             || a.role == mcpp::manifest::BuildAction::Role::Prepare)
             && !a.outputs.empty()) {
             // `mcpp_exe_path()`, not `self_exe_path()` directly: this file
             // already has one spelling of "where am I" and a second would be
@@ -2965,6 +3011,14 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             std::string wrapped =
                 shell_quote_arg(escape_ninja_chars(mcpp_exe_path().string()))
                 + " __action-stamp";
+            // Before the stamp list, so the wrapper can tell the flag from a
+            // stamp path without an allowlist of extensions. `directives.cppm`
+            // refuses a `prepare` action with no `output_dir`, so this is
+            // reached with a non-empty directory whenever the role is Prepare.
+            if (a.role == mcpp::manifest::BuildAction::Role::Prepare) {
+                wrapped += " --require-dir "
+                         + shell_quote_arg(escape_ninja_chars(a.outputDir));
+            }
             for (auto const& o : a.outputs)
                 wrapped += " " + shell_quote_arg(escape_ninja_chars(o));
             wrapped += " -- " + cmd;
@@ -2974,6 +3028,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append(std::format("  command = {}\n", cmd));
         append(std::format("  description = {} {}\n",
             a.role == mcpp::manifest::BuildAction::Role::Check    ? "CHECK"
+          : a.role == mcpp::manifest::BuildAction::Role::Prepare  ? "PREPARE"
           : a.role == mcpp::manifest::BuildAction::Role::Artifact ? "ARTIFACT"
           : a.role == mcpp::manifest::BuildAction::Role::Object   ? "OBJECT"
                                                                   : "GENERATE",
@@ -3181,6 +3236,58 @@ std::optional<std::string> check_action_ordering(const std::string& manifest,
             "the ordering guard cannot see what it is supposed to check.\n"
             "       This is a build-emitter defect; please report it.",
             pkg);
+    }
+
+    // mcpp#702, design §5.4 P: every LINK edge must wait for every package's
+    // `prepare` action — see `packages_with_prepare_actions`'s comment for
+    // why the set is plan-wide rather than scoped to one package the way the
+    // compile-edge check above is. `ar` (a StaticLibrary) never reads
+    // `$ldflags` and is excluded for the same reason the emitter excludes it.
+    auto preparePkgs = packages_with_prepare_actions(plan);
+    if (!preparePkgs.empty()) {
+        std::set<std::string> linkOutputs;
+        for (auto const& lu : plan.linkUnits) {
+            if (lu.kind == LinkUnit::StaticLibrary) continue;
+            linkOutputs.insert(escape_ninja_path(lu.output));
+        }
+        std::map<std::string, int> seenLinks;         // link output -> edges checked
+        for (auto line : manifest | std::views::split('\n')) {
+            std::string_view l{line.begin(), line.end()};
+            if (!l.starts_with("build ")) continue;
+            auto colon = l.find(" : ");
+            if (colon == std::string_view::npos) continue;
+            auto outs = l.substr(6, colon - 6);
+            for (auto const& obj : linkOutputs) {
+                if (outs != obj && outs.find(obj) == std::string_view::npos) continue;
+                ++seenLinks[obj];
+                for (auto const& pkg : preparePkgs) {
+                    auto phony = action_phony_name(pkg);
+                    if (l.find(phony) == std::string_view::npos)
+                        return std::format(
+                            "internal: link edge '{}' does not wait for '{}', "
+                            "the phony of package '{}', which declares a "
+                            "`prepare` action.\n"
+                            "       A directory that action populates may be "
+                            "named by a `runtime_search_dir` this link reads "
+                            "through the plan's one merged LinkIntent "
+                            "(mcpp#702).\n"
+                            "       This is a build-emitter defect; please "
+                            "report it.",
+                            outs, phony, pkg);
+                }
+                break;
+            }
+        }
+        for (auto const& obj : linkOutputs) {
+            if (seenLinks[obj] > 0) continue;
+            return std::format(
+                "internal: a linked image '{}' was expected in the manifest "
+                "while the plan declares a `prepare` action, but no link edge "
+                "for it was found there — the ordering guard cannot see what "
+                "it is supposed to check.\n"
+                "       This is a build-emitter defect; please report it.",
+                obj);
+        }
     }
     return std::nullopt;
 }

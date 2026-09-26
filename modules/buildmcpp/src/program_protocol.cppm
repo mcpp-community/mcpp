@@ -81,13 +81,21 @@ export namespace mcpp::build::program_protocol {
 // at a path relative to the executable. Same cost as v5's: a package calling
 // `mcpp::deploy()` fails on an older engine at the build.mcpp COMPILE, because
 // that engine's bundled module has no such function.
-// v12: adds `runtime-library-dir` -- the build-program form of `[runtime]
-// library_dirs`: a launch-time search directory for a dependency (a vcpkg
-// prefix's `bin/`, a Qt SDK's `bin/`) whose location a build.mcpp learns
-// rather than one an author can write into TOML. Same cost as v5's: a
-// package calling `mcpp::runtime_library_dir()` fails on an older engine at
-// the build.mcpp COMPILE, because that engine's bundled module has no such
-// function.
+// v12 (mcpp#701/#702): adds `runtime-search-dir` -- the build-program form of
+// `runtime_search_dirs`: a launch-time search directory for a dependency (a
+// vcpkg prefix's `bin/`, a Qt SDK's `bin/`, a directory a `prepare` action
+// populates) whose location a build.mcpp learns rather than one an author can
+// write into TOML. Same cost as v5's: a package calling
+// `mcpp::runtime_search_dir()` fails on an older engine at the build.mcpp
+// COMPILE, because that engine's bundled module has no such function.
+//
+// v12 also adds the `prepare` role: construction whose file names are not
+// known when the build program runs. Its constants
+// (`mcpp::roles::{source, check, object, artifact, prepare}`) and its
+// `mcpp::action::output_dir()` method live in the bundled module for the
+// same reason `deploy` and `runtime_search_dir` do -- a program that uses
+// them fails to COMPILE on an older engine, naming the missing symbol,
+// rather than reaching that engine as a string it misreads.
 inline constexpr int kProtocolVersion = 12;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
@@ -101,7 +109,17 @@ inline constexpr int kProtocolVersion = 12;
 // Epoch 2 (#359): entries gained `glob` records. An engine that does not know
 // them would replay a strict subset of the declared inputs and call a stale
 // build fresh, which is exactly the silent-wrong-answer this guard exists for.
-inline constexpr int kCacheEpoch = 2;
+// Epoch 3 (mcpp#702): `decode_action` now refuses an `mcpp:action=` payload
+// whose `role` names none of the five the engine knows, where it used to read
+// an unrecognised string as `Source` silently. That is an INTERPRETATION
+// change on an existing tag (`action`, since v1) rather than a new one: an
+// entry cached under epoch 2 could hold such a role and decoded successfully
+// then; replaying it through `apply` (which runs no validator) would now
+// either refuse or, worse, silently drop the action, neither of which is what
+// a fresh run of the SAME build.mcpp would do. Bumping the epoch forces one
+// fresh run, which goes through `action_error` and reports exactly what
+// changed, instead of a stale entry reinterpreted two ways by two code paths.
+inline constexpr int kCacheEpoch = 3;
 
 // ── Run bound ──────────────────────────────────────────────────────────────
 //
