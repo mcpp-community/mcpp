@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # requires: mingw-cross wine
-# 795_runtime_search_dir_on_pe_under_wine.sh — the Linux-hosted stand-in for
+# 796_runtime_search_dir_on_pe_under_wine.sh — the Linux-hosted stand-in for
 # 794's native-Windows leg of design §5.4 R1' / SPEC-007 R4.1, R4.3: on a PE
 # target, `mcpp::runtime_search_dir(dir)` is what `mcpp run` uses (through
 # `PATH`, since PE has no run path) and what `mcpp pack` uses (placing the
@@ -133,4 +133,4 @@ PACKED_EXE="$(find target/dist -name 'app.exe' | head -1)"
 rc2=0; out2="$(wine "$PACKED_EXE" 2>/dev/null)" || rc2=$?
 [[ $rc2 -eq 0 ]] || { echo "FAIL: the packed program did not run cleanly under wine (rc=$rc2)"; exit 1; }
 
-echo "PASS: 795_runtime_search_dir_on_pe_under_wine"
+echo "PASS: 796_runtime_search_dir_on_pe_under_wine"
