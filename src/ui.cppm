@@ -198,6 +198,9 @@ void touch_region();
 bool region_live();
 // The heartbeat interval of the log medium (tests shorten it).
 void set_heartbeat(std::chrono::milliseconds interval);
+// The shortest interval between two frames: a tenth of a second, and a
+// twentieth while a game plays (build output design revision 3, §5.14).
+void set_frame_interval(std::chrono::milliseconds interval);
 
 // Erases the region for the lifetime of the object, and draws it again after:
 // for a child that writes to the terminal itself.
@@ -564,9 +567,11 @@ void verbose_record(const mcpp::log::Record& record) {
     emit(term::Stream::Err, mcpp::log::verbose_line(record, g_color));
 }
 
+std::atomic<long long> g_frameIntervalMs{100};
+
 void tick(std::stop_token stop) {
     auto& t = ticker();
-    constexpr auto kMinInterval = std::chrono::milliseconds(100);
+    const auto kMinInterval = std::chrono::milliseconds(g_frameIntervalMs.load());
     auto lastTick = std::chrono::steady_clock::now() - kMinInterval;
     while (!stop.stop_requested()) {
         {
@@ -1048,6 +1053,10 @@ void touch_region() {
 bool region_live() {
     std::lock_guard line(line_mutex());
     return region().open && region().live;
+}
+
+void set_frame_interval(std::chrono::milliseconds interval) {
+    g_frameIntervalMs.store(std::max<long long>(20, interval.count()));
 }
 
 void set_heartbeat(std::chrono::milliseconds interval) {

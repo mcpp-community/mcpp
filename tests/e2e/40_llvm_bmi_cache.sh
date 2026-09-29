@@ -73,7 +73,7 @@ echo "$out1" | grep -q "Compiling.*mcpplibs.cmdline" || {
 # Second build, clean target dir, cache kept — the dependency must be reused.
 rm -rf target
 out2=$("$MCPP" build -v 2>&1)
-echo "$out2" | grep -qE "Compiling .*mcpplibs\.cmdline.* cached [0-9]+ unit" || {
+echo "$out2" | grep -qE "Cached mcpplibs\.cmdline v[0-9.]+ \([0-9]+ units?\)" || {
     echo "FAIL: mcpplibs.cmdline not cached on second build: $out2"
     exit 1
 }

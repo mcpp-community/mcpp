@@ -137,7 +137,7 @@ grep -q "declared identity is used" b2.log \
     && fail "the member's key adopted the root's identity" b2.log
 grep -q 'DEPBIN tool=\[[^]]' b2.log || fail "the member's tools request was lost" b2.log
 grep -qE "Compiling spike\.fw v( |$)" b2.log && fail "the git banner printed an empty version" b2.log
-grep -q "spike.fw (git rev ${REV:0:12})" b2.log \
+grep -qE "spike\.fw v[^ ]+ \(git rev ${REV:0:12}\)" b2.log \
     || fail "the git banner does not name the reference" b2.log
 "$MCPP" run > r2.log 2>&1 || fail "the application over the git root does not run" r2.log
 

@@ -2348,21 +2348,51 @@ static void step13_report_packages(PrepareState& state, BuildContext& ctx) {
         }
         const auto dir = relative(pkg.root);
         const bool insideProject = dir == "." || !dir.starts_with("..");
+        // The source is the resolution's record of the package, not the
+        // consumer's key: a package reached through `[feature-deps]` or
+        // another table has no entry in the consumer's `[dependencies]`.
+        const ResolvedRecord* rec = nullptr;
+        {
+            auto rn = mcpp::pm::compat::resolve_package_name(m.package.name, m.package.namespace_);
+            for (auto const& ns : {rn.namespace_, std::string(mcpp::pm::kDefaultNamespace), std::string{}})
+                if (auto it = state.resolved.find(ResolvedKey{ns, rn.shortName});
+                    it != state.resolved.end()) { rec = &it->second; break; }
+        }
+        const std::string kind = rec ? rec->source
+                               : spec && spec->isPath() ? "path"
+                               : spec && spec->isGit()  ? "git" : "version";
+        // A path or git package is named without the default namespace: a
+        // manifest that declares none takes it during resolution, and a bare
+        // name means that namespace (package-identity §4.2), so the prefix
+        // would state something its author never wrote.
+        const auto declared =
+            m.package.namespace_.empty() || m.package.namespace_ == mcpp::pm::kDefaultNamespace
+                ? m.package.name : std::format("{}.{}", m.package.namespace_, m.package.name);
         if (pkg.selectedMember || (spec && spec->workspaceMember)
-            || (spec && spec->isPath() && insideProject)) {
+            || (kind == "path" && insideProject)) {
             p.subject = m.package.name;
             p.detail  = versioned(m, dir);
             p.source  = "project";
-        } else if (spec && spec->isPath()) {
-            p.subject = p.name;
+        } else if (kind == "path") {
+            p.subject = declared;
             p.detail  = versioned(m, dir);
             p.source  = "path";
-        } else if (spec && spec->isGit()) {
-            std::string ref = spec->gitRev;
-            if (spec->gitRefKind == "rev" && ref.size() > 12) ref.resize(12);
-            p.subject = p.name;
-            p.detail  = versioned(m, std::format("git {} {}",
-                                    spec->gitRefKind.empty() ? "rev" : spec->gitRefKind, ref));
+        } else if (kind == "git") {
+            // The declared reference: `<url>#<kind>=<ref>` in the record, or
+            // the consumer's spec.
+            std::string refKind = spec ? spec->gitRefKind : std::string{};
+            std::string ref     = spec ? spec->gitRev : std::string{};
+            if (rec) {
+                const auto hash = rec->sourceRef.rfind('#');
+                const auto eq   = rec->sourceRef.find('=', hash == std::string::npos ? 0 : hash);
+                if (hash != std::string::npos && eq != std::string::npos) {
+                    refKind = rec->sourceRef.substr(hash + 1, eq - hash - 1);
+                    ref     = rec->sourceRef.substr(eq + 1);
+                }
+            }
+            if ((refKind.empty() || refKind == "rev") && ref.size() > 12) ref.resize(12);
+            p.subject = declared;
+            p.detail  = versioned(m, std::format("git {} {}", refKind.empty() ? "rev" : refKind, ref));
             p.source  = "git";
         } else {
             // An index package: official when the default index serves its

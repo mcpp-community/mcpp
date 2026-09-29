@@ -66,6 +66,20 @@ public:
     virtual void draw(Screen& screen) const = 0;
 };
 
+// The keys a game reads (design §5.14).
+enum class Key { Up, Down, Left, Right, Space };
+
+// A GAME IS AN ANIMATION THE USER STEERS (`--play-game`, design §5.14). It
+// runs at a speed of its own, not at the build's pace: `update` reads only the
+// elapsed time and the failure; the counts beside the screen state the build.
+// A round that ends starts again at once, and the best round is kept.
+class Game : public Animation {
+public:
+    virtual void key(Key k) = 0;
+    virtual int score() const = 0;   // this round
+    virtual int best() const = 0;    // the best round so far
+};
+
 } // namespace mcpp::ui::dots_screen
 
 namespace mcpp::ui::dots_screen {

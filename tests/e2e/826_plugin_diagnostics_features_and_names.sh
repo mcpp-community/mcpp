@@ -69,7 +69,8 @@ grep -q "mcpp.acme.gen'.*mcpp\.\|claims an origin" d1.log && fail "R1: an own-na
 # D2. `touch` first, as e2e 139 does: an unmodified build takes the project
 # fast path and reaches no build program, so it would measure neither path.
 touch src/main.cpp
-"$MCPP" build > d2.log 2>&1 || fail "D2: the second build failed" d2.log
+# A reused program is stated under --verbose only (build output design revision 3, §7.1).
+"$MCPP" build -v > d2.log 2>&1 || fail "D2: the second build failed" d2.log
 grep -qE "^ *build\.mcpp .* cached" d2.log || fail "D2: the second build ran the program; the replay is not measured" d2.log
 grep -q "impact: no bindings are generated" d2.log || fail "D2: the cached run did not report the diagnostic" d2.log
 

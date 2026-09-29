@@ -59,7 +59,8 @@ grep -q "build.mcpp" b1.log || { cat b1.log; echo "FAIL: build.mcpp not invoked"
 #    rebuild is skipped wholesale by the top-level up-to-date check, so we touch a
 #    source to actually exercise the prepare path.)
 touch src/main.cpp
-"$MCPP" build > b2.log 2>&1 || { cat b2.log; echo "FAIL: build 2 errored"; exit 1; }
+# A reused program is stated under --verbose only (build output design revision 3, §7.1).
+"$MCPP" build -v > b2.log 2>&1 || { cat b2.log; echo "FAIL: build 2 errored"; exit 1; }
 grep -qi "build.mcpp.*cached" b2.log || { cat b2.log; echo "FAIL: build.mcpp did not short-circuit (expected cached)"; exit 1; }
 
 # ── Build 3: a declared env input changed — forces a re-run ────────────────

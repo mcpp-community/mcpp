@@ -138,3 +138,77 @@ TEST(DotsScreen, TheChomperStandsAtTheFraction) {
     EXPECT_FALSE(pellet);
     EXPECT_EQ(sc.at(kWidth - 5, 1), Colour::Yellow);
 }
+
+// ─── The games of --play-game (design §5.14) ─────────────────────────────
+
+namespace {
+bool any_red(const Game& g) {
+    Screen sc;
+    g.draw(sc);
+    for (int x = 0; x < kWidth; ++x)
+        for (int y = 0; y < kHeight; ++y)
+            if (sc.at(x, y) == Colour::Red) return true;
+    return false;
+}
+void run(Game& g, double seconds) {
+    Input in;
+    in.dt = 0.05;
+    for (double t = 0; t < seconds; t += in.dt) g.update(in);
+}
+} // namespace
+
+TEST(DotsScreenGames, TheThreeGamesAreBuiltIn) {
+    auto names = game_names();
+    ASSERT_EQ(names.size(), 3u);
+    EXPECT_EQ(names[0], "snake");
+    EXPECT_EQ(names[1], "stack");
+    EXPECT_EQ(names[2], "runner");
+    for (auto n : names) EXPECT_NE(make_game(n, 1), nullptr) << n;
+    EXPECT_EQ(make_game("chomp", 1), nullptr);   // an animation, not a game
+}
+
+TEST(DotsScreenGames, TheSnakeTurnsWithTheArrowsAndAWallEndsTheRound) {
+    auto g = make_game("snake", 4);
+    EXPECT_FALSE(any_red(*g));
+    g->key(Key::Up);      // from row 1: row 0, then the wall
+    run(*g, 0.3);
+    EXPECT_TRUE(any_red(*g)) << "the snake went through the wall";
+    run(*g, 1.2);         // a new round starts after a second
+    EXPECT_FALSE(any_red(*g));
+    EXPECT_EQ(g->score(), 0);
+}
+
+TEST(DotsScreenGames, TheStackPlacesPiecesAgainstTheLeftAndScoresClearedColumns) {
+    auto g = make_game("stack", 9);
+    for (int i = 0; i < 400 && g->score() == 0; ++i) {
+        // Spread the pieces over the four rows so that columns fill.
+        g->key(i % 4 == 0 ? Key::Up : i % 4 == 1 ? Key::Down : Key::Space);
+        g->key(Key::Left);
+        run(*g, 0.05);
+    }
+    Screen sc;
+    g->draw(sc);
+    bool left = false;
+    for (int y = 0; y < kHeight; ++y) left = left || sc.at(0, y) != Colour::None;
+    EXPECT_TRUE(left) << "no piece rests against the left edge";
+    EXPECT_GE(g->best(), g->score());
+}
+
+TEST(DotsScreenGames, TheRunnerJumpsOnSpaceAndACactusEndsTheRound) {
+    auto g = make_game("runner", 2);
+    // Without a key, a cactus reaches the runner within a few seconds.
+    bool ended = false;
+    Input in;
+    in.dt = 0.05;
+    for (double t = 0; t < 6 && !ended; t += in.dt) { g->update(in); ended = any_red(*g); }
+    EXPECT_TRUE(ended) << "no cactus ever touched the runner";
+    run(*g, 1.1);
+    // Space lifts it: its head rises above row 1.
+    g->key(Key::Space);
+    run(*g, 0.1);
+    Screen sc;
+    g->draw(sc);
+    bool high = false;
+    for (int x = 3; x < 7; ++x) high = high || sc.at(x, 0) == Colour::White;
+    EXPECT_TRUE(high) << "the runner did not jump";
+}

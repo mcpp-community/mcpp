@@ -174,7 +174,8 @@ cp "$CACHE" "$TMP/good.cache"
 # Touching a source defeats the whole-project fast path so prepare (and with it
 # the build.mcpp cache) actually runs.
 touch src/main.cpp
-"$MCPP" build > b6.log 2>&1 || { cat b6.log; echo "FAIL: build failed"; exit 1; }
+# A reused program is stated under --verbose only (build output design revision 3, §7.1).
+"$MCPP" build -v > b6.log 2>&1 || { cat b6.log; echo "FAIL: build failed"; exit 1; }
 grep -qE "^ *build\.mcpp .* cached" b6.log || {
     cat b6.log; echo "FAIL: an unchanged build.mcpp was re-run"; exit 1; }
 

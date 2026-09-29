@@ -37,6 +37,9 @@ module;
 #include <fcntl.h>       // fcntl O_NONBLOCK
 #include <time.h>        // nanosleep
 #include <cstdio>        // fputs, stderr — the out-of-slots diagnostic
+#if defined(__linux__) || defined(__APPLE__)
+#include <termios.h>     // tcgetattr, tcsetattr — the terminal mode a signal restores
+#endif
 #if defined(__APPLE__)
 #include <crt_externs.h> // _NSGetEnviron
 #endif
@@ -173,6 +176,17 @@ void background_stop(long long group, long long graceMs);
 void guard_group_on_signal(long long group);
 void unguard_group(long long group);
 void clear_group_guard();
+
+// THE TERMINAL MODE A SIGNAL RESTORES (build output design revision 3,
+// §5.14). `--play-game` reads keys from the terminal without echo. A Ctrl-C,
+// a termination or a hangup that ends mcpp must leave the terminal in the
+// mode it found, and the handler installed while ninja runs is the one above,
+// so the saved mode is restored there, with tcsetattr, which is
+// async-signal-safe. `fd`'s current mode is saved; the caller changes the mode
+// after this returns. A process killed outright cannot restore anything.
+void guard_terminal_mode(int fd);
+// Restores the saved mode and stops guarding it.
+void unguard_terminal_mode();
 
 } // namespace mcpp::platform::unixproc
 
@@ -353,6 +367,12 @@ namespace {
 constexpr int kMaxGuardedGroups = 8;
 volatile sig_atomic_t g_guardedGroups[kMaxGuardedGroups] = {};
 
+// The terminal whose mode the handler restores (-1: none), and that mode.
+volatile sig_atomic_t g_terminalFd = -1;
+struct termios g_terminalMode{};
+
+void install_handlers();
+
 extern "C" void background_signal_handler(int sig) {
     // killpg is async-signal-safe. SIGKILL rather than SIGTERM: this is the
     // path where mcpp is about to stop existing, and there is nobody left to
@@ -367,6 +387,7 @@ extern "C" void background_signal_handler(int sig) {
         const auto group = g_guardedGroups[i];
         if (group > 0) ::killpg(static_cast<pid_t>(group), SIGKILL);
     }
+    if (g_terminalFd >= 0) ::tcsetattr(g_terminalFd, TCSANOW, &g_terminalMode);
     // Die of the signal we were sent, so the exit status is the one the shell
     // and any outer script expect from a Ctrl-C.
     ::signal(sig, SIG_DFL);
@@ -472,9 +493,7 @@ void guard_group_on_signal(long long group) {
     for (int i = 0; i < kMaxGuardedGroups; ++i) {
         if (g_guardedGroups[i] == 0) {
             g_guardedGroups[i] = static_cast<sig_atomic_t>(group);
-            ::signal(SIGINT,  background_signal_handler);
-            ::signal(SIGTERM, background_signal_handler);
-            ::signal(SIGHUP,  background_signal_handler);
+            install_handlers();
             return;
         }
     }
@@ -498,7 +517,7 @@ void unguard_group(long long group) {
         else if (g_guardedGroups[i] != 0)
             any = true;
     }
-    if (!any) {
+    if (!any && g_terminalFd < 0) {
         ::signal(SIGINT,  SIG_DFL);
         ::signal(SIGTERM, SIG_DFL);
         ::signal(SIGHUP,  SIG_DFL);
@@ -507,10 +526,38 @@ void unguard_group(long long group) {
 
 void clear_group_guard() {
     for (int i = 0; i < kMaxGuardedGroups; ++i) g_guardedGroups[i] = 0;
+    if (g_terminalFd >= 0) return;   // the terminal's guard still needs the handler
     ::signal(SIGINT,  SIG_DFL);
     ::signal(SIGTERM, SIG_DFL);
     ::signal(SIGHUP,  SIG_DFL);
 }
+
+void guard_terminal_mode(int fd) {
+    if (fd < 0 || ::tcgetattr(fd, &g_terminalMode) != 0) return;
+    g_terminalFd = fd;
+    install_handlers();
+}
+
+void unguard_terminal_mode() {
+    if (g_terminalFd < 0) return;
+    ::tcsetattr(g_terminalFd, TCSANOW, &g_terminalMode);
+    g_terminalFd = -1;
+    bool any = false;
+    for (int i = 0; i < kMaxGuardedGroups; ++i) any = any || g_guardedGroups[i] != 0;
+    if (!any) {
+        ::signal(SIGINT,  SIG_DFL);
+        ::signal(SIGTERM, SIG_DFL);
+        ::signal(SIGHUP,  SIG_DFL);
+    }
+}
+
+namespace {
+void install_handlers() {
+    ::signal(SIGINT,  background_signal_handler);
+    ::signal(SIGTERM, background_signal_handler);
+    ::signal(SIGHUP,  background_signal_handler);
+}
+} // namespace
 
 #else
 
@@ -531,6 +578,8 @@ void background_stop(long long, long long) {}
 void guard_group_on_signal(long long) {}
 void unguard_group(long long) {}
 void clear_group_guard() {}
+void guard_terminal_mode(int) {}
+void unguard_terminal_mode() {}
 
 #endif
 

@@ -86,7 +86,8 @@ grep -qi "Finished" first.log \
 # reaches nothing and prints nothing — including this. It is not asserted here,
 # because it is a fact about the fast path rather than about this feature.
 touch src/main.cpp
-"$MCPP" build > second.log 2>&1
+# A reused program is stated under --verbose only (build output design revision 3, §7.1).
+"$MCPP" build -v > second.log 2>&1
 
 # First establish that this build really was a cache hit. Without this the next
 # assertion could pass for the wrong reason — a re-run would also print the

@@ -643,6 +643,11 @@ struct Report {
     // by the build, or none.
     std::unique_ptr<screen::Animation> animation;
     bool animationColour = false;
+    // `--play-game` (revision 3, §5.14): the game, its name, and the keys it
+    // reads. The game is also `animation`'s place on the screen.
+    std::unique_ptr<screen::Game> game;
+    std::string gameName;
+    std::unique_ptr<mcpp::platform::terminal::KeyInput> keys;
     std::vector<screen::Source> started;   // packages announced since the last frame
     long long   lastFrame = 0;             // ms since command start
     std::size_t lastDone  = 0;
@@ -745,13 +750,17 @@ std::string plain_subject(const Build::Impl& b, std::size_t i) {
 // its units, `Compiling` otherwise.
 std::string package_line(const Report& r, const Build::Impl& b, std::size_t i) {
     const auto& p = b.record->packages[i];
-    std::string subject = subject_of(r, b, p);
     if (p.cachedUnits > 0) {
-        subject += " " + mcpp::ui::hue(std::format("({})", plural(p.cachedUnits, "unit", "units")),
-                                       mcpp::ui::Hue::Dim);
-        return mcpp::ui::step_line("Cached", subject, 0, "");
+        // The unit count joins the origin's parentheses when there are any:
+        // `v3.6.1 (index acme, 2 units)`, `v6.1.9 (73 units)`.
+        auto q = p;
+        const auto units = plural(p.cachedUnits, "unit", "units");
+        q.detail = !q.detail.empty() && q.detail.ends_with(")")
+            ? std::format("{}, {})", q.detail.substr(0, q.detail.size() - 1), units)
+            : std::format("{}{}({})", q.detail, q.detail.empty() ? "" : " ", units);
+        return mcpp::ui::step_line("Cached", subject_of(r, b, q), 0, "");
     }
-    return mcpp::ui::step_line("Compiling", subject, 0, "");
+    return mcpp::ui::step_line("Compiling", subject_of(r, b, p), 0, "");
 }
 
 // Writes a package's line the first time it does work; model lock held. The
@@ -833,7 +842,15 @@ void read_log(Report& r, Build::Impl& b, std::vector<std::string>& out) {
             s.first = std::min(s.first, start);
             s.last  = std::max(s.last, end);
             label = std::format("{}: {}", b.record->packages[*owner].subject, label);
-            announce(r, b, *owner, out);
+            // A package is named at its first step that is not a scan: a
+            // dependency scan finishes before the compiles it orders, and
+            // naming a package there put a consumer before the package it
+            // imports. A package that only scanned is named when the pass
+            // ends.
+            const bool scan = std::ranges::all_of(st.outputs, [](const std::string& o) {
+                return o.ends_with(".ddi") || o.ends_with(".dd");
+            });
+            if (!scan) announce(r, b, *owner, out);
         }
         if (st.end - st.start > b.longest || !b.anyStep) {
             b.longest = st.end - st.start;
@@ -949,7 +966,21 @@ mcpp::ui::Frame frame() {
     std::lock_guard lock(r.m);
     mcpp::ui::Frame f;
     std::string cells;
-    if (r.animation) {
+    std::string score;
+    if (r.game) {
+        const auto now = now_ms();
+        screen::Input in;
+        in.dt     = r.lastFrame ? static_cast<double>(now - r.lastFrame) / 1000.0 : 0.0;
+        in.failed = r.failureReported;
+        for (auto s : r.started) r.game->package(s);
+        r.started.clear();
+        r.game->update(in);
+        r.lastFrame = now;
+        screen::Screen sc;
+        r.game->draw(sc);
+        cells = sc.render(r.animationColour);
+        score = std::format("{} {}", r.gameName, r.game->score());
+    } else if (r.animation) {
         std::size_t done = 0, total = 0;
         for (auto const& b : live_builds(r)) {
             done  += b->doneBefore + b->finished;
@@ -975,6 +1006,7 @@ mcpp::ui::Frame frame() {
         }
     }
     f.status = phase_status(r, cells);
+    if (!score.empty()) f.status += " · " + score;
     return f;
 }
 
@@ -983,6 +1015,14 @@ void poll() {
     std::vector<std::string> out;
     {
         std::lock_guard lock(r.m);
+        if (r.game && r.keys)
+            for (auto k : r.keys->read()) {
+                using TK = mcpp::platform::terminal::Key;
+                r.game->key(k == TK::Up   ? screen::Key::Up
+                          : k == TK::Down ? screen::Key::Down
+                          : k == TK::Left ? screen::Key::Left
+                          : k == TK::Right ? screen::Key::Right : screen::Key::Space);
+            }
         for (auto const& b : live_builds(r)) {
             read_starts(r, *b, out);
             read_log(r, *b, out);
@@ -1011,18 +1051,58 @@ std::unique_ptr<screen::Animation> choose_animation() {
     return screen::make(names[seed % names.size()], seed);
 }
 
+// `--play-game[=NAME]` (revision 3, §5.14): the CLI publishes the request as
+// MCPP_PLAY_GAME (`random` or a name). The game needs what the screen needs,
+// and keys: standard input and standard output on a terminal. Otherwise it is
+// off, and one line says why.
+void choose_game(Report& r, std::vector<std::string>& notes) {
+    auto want = mcpp::platform::env::get("MCPP_PLAY_GAME").value_or("");
+    if (want.empty()) return;
+    mcpp::platform::env::unset("MCPP_PLAY_GAME");   // not inherited by what mcpp runs
+    for (auto& c : want) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    const auto names = screen::game_names();
+    if (want != "random" && !screen::make_game(want, 0)) {
+        std::string known;
+        for (auto n : names) known += (known.empty() ? "" : ", ") + std::string(n);
+        notes.push_back(std::format("--play-game: no game called '{}' (the games: {}); one is chosen",
+                                    want, known));
+        want = "random";
+    }
+    const auto progress = mcpp::platform::env::get("MCPP_PROGRESS").value_or("");
+    if (mcpp::ui::is_quiet() || !mcpp::ui::live_progress() || progress == "plain" || progress == "off"
+        || !mcpp::platform::terminal::unicode_capable()) {
+        notes.push_back("--play-game: the status row's screen is off here (a terminal that "
+                        "draws braille, without --quiet and MCPP_PROGRESS=plain or off, is needed)");
+        return;
+    }
+    auto keys = std::make_unique<mcpp::platform::terminal::KeyInput>();
+    if (!keys->active()) {
+        notes.push_back("--play-game: standard input is not a terminal, so no key can be read");
+        return;
+    }
+    const auto seed = static_cast<std::uint64_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    r.gameName = want == "random" ? std::string(names[seed % names.size()]) : want;
+    r.game = screen::make_game(r.gameName, seed);
+    r.keys = std::move(keys);
+    mcpp::ui::set_frame_interval(std::chrono::milliseconds(50));
+}
+
 } // namespace
 
 void open(bool verbose) {
     auto& r = report();
+    std::vector<std::string> notes;
     {
         std::lock_guard lock(r.m);
         if (r.open) return;
         r.open = true;
         r.verbose = verbose;
-        r.animation = choose_animation();
+        choose_game(r, notes);
+        if (!r.game) r.animation = choose_animation();
         r.animationColour = mcpp::ui::is_color_enabled();
     }
+    for (auto const& n : notes) mcpp::ui::info("Game", n);
     mcpp::ui::open_region(&frame, &poll);
 }
 
@@ -1031,6 +1111,7 @@ void close() {
     auto& r = report();
     std::lock_guard lock(r.m);
     r.open = false;
+    r.keys.reset();   // the terminal's mode is restored here
 }
 
 void configurations(std::size_t n) {
@@ -1169,8 +1250,14 @@ void finished(std::string_view profile, std::string_view descriptor) {
     }
     // `Finished` ends the report: the region is erased before it, and not
     // drawn again below it.
+    std::string played;
+    {
+        std::lock_guard lock(r.m);
+        if (r.game) played = std::format("{} · best {}", r.gameName, r.game->best());
+    }
     close();
     mcpp::ui::finished(profile, ms(total), descriptor, detail);
+    if (!played.empty()) mcpp::ui::line(mcpp::ui::step_line("Played", played, 0, ""));
 }
 
 // ─── Build ───────────────────────────────────────────────────────────────
@@ -1317,6 +1404,9 @@ void Build::pass_end() {
         std::lock_guard lock(r.m);
         auto& b = *impl_;
         read_log(r, b, out);
+        if (b.record)
+            for (std::size_t i = 0; i < b.packages.size(); ++i)
+                if (b.packages[i].finished > 0) announce(r, b, i, out);
         b.inPass = false;
         b.running.clear();
     }

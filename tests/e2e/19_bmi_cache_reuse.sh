@@ -85,8 +85,8 @@ if find "$MCPP_HOME/build-cache/v1/pkg" -path "*mylibA*" 2>/dev/null | grep -q .
 fi
 
 # Build output must NOT state that mylibA came from the cache (it's a path
-# dep, not a registry dep). `-v` lists the dependencies the default folds.
-if grep -qE 'Compiling mylibA .*cached [0-9]+ unit' build.log; then
+# dep, not a registry dep): no `Cached mylibA` line.
+if grep -qE 'Cached mylibA|Compiling mylibA .*cached [0-9]+ unit' build.log; then
     echo "FAIL: path dep wrongly labeled Cached"
     cat build.log; exit 1
 fi

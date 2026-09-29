@@ -98,6 +98,7 @@ void print_usage() {
     std::println("  --no-color                           Disable colored output");
     std::println("  --offline                            Never touch the network (also: MCPP_OFFLINE=1)");
     std::println("  --locked                             Fail if resolution differs from mcpp.lock (also: --frozen, MCPP_LOCKED=1)");
+    std::println("  --play-game[=NAME]                   Play snake, stack or runner in the status row while it builds");
     std::println("  --jobs N|auto, -j                    Concurrent compiles ('auto' = cores + free RAM)");
     std::println("  --toolchain SPEC                     Use this toolchain for one build (e.g. llvm@22.1.8)");
     std::println("");
@@ -202,6 +203,15 @@ int run(int argc, char** argv) {
         else if (a.starts_with("--toolchain=")) mcpp::platform::env::set("MCPP_TOOLCHAIN", std::string(a.substr(12)));
         else if (a.starts_with("-j") && a.size() > 2)
             mcpp::platform::env::set("MCPP_JOBS", std::string(a.substr(2)));
+        // --play-game rides the same channel: its value is optional
+        // (`--play-game` chooses a game, `--play-game=snake` names one), which
+        // the parser's options do not express, and its consumer is the build's
+        // report deep in mcpp.build.progress (build output design revision 3,
+        // §5.14). The option is also declared on build, run and test below, so
+        // that --help lists it and the parser accepts both spellings.
+        else if (a == "--play-game") mcpp::platform::env::set("MCPP_PLAY_GAME", "random");
+        else if (a.starts_with("--play-game="))
+            mcpp::platform::env::set("MCPP_PLAY_GAME", std::string(a.substr(12)));
     }
     // Decline xlings' linker-wrapper path injection, for this process and
     // everything it spawns (openxlings/xlings#540).
@@ -391,6 +401,8 @@ int run(int argc, char** argv) {
                 .help("Treat manifest schema warnings (unknown feature/platform) as errors"))
             .option(cl::Option("workspace")
                 .help("Build all workspace members"))
+            .option(cl::Option("play-game")
+                .help("Play a game in the status row while it builds: --play-game=snake|stack|runner, or one at random"))
             .action(wrap_rc(cmd_build)))
         .subcommand(cl::App("run")
             .description("Build + run a binary target (after `--`, args are passed to it)")
@@ -486,6 +498,8 @@ int run(int argc, char** argv) {
                 .help("Run the distributable a `--format <name>` pack would produce "
                       "(same values as `mcpp pack --format`); refused together with "
                       "--no-runner"))
+            .option(cl::Option("play-game")
+                .help("Play a game in the status row while it builds: --play-game=snake|stack|runner, or one at random"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_run(p, std::span<const std::string>(passthrough));
             })))
@@ -531,6 +545,8 @@ int run(int argc, char** argv) {
                 .help("Deprecated alias for --cache=off (also clears the build dir)"))
             .option(cl::Option("workspace")
                 .help("Run tests for all workspace members"))
+            .option(cl::Option("play-game")
+                .help("Play a game in the status row while it builds: --play-game=snake|stack|runner, or one at random"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_test(p, std::span<const std::string>(passthrough));
             })))

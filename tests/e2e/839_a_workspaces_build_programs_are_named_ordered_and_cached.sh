@@ -14,9 +14,9 @@
 #       requester of the plan, the virtual root included, so its cache key
 #       followed the selection);
 #   B4  `mcpp emit build-database` after the build reuses them too;
-#   B5  in a `--workspace` build a member another member depends on is
-#       named by its directory, and as a path dependency only where it is not
-#       selected (`-v` lists the dependencies the default output folds).
+#   B5  a member another member depends on is named by its short name,
+#       version and directory, whether it is selected or reached as cli's path
+#       dependency under `-p cli` (build output design revision 3, §5.8).
 set -e
 
 TMP=$(mktemp -d)
@@ -70,11 +70,12 @@ first=$(grep -m1 -E "^ *build\.mcpp .* ran [0-9]" b1.log)
 case "$first" in *"build.mcpp core "*) ;; *) fail "B2: core's program did not run first" b1.log ;; esac
 
 # B3
+# A reused program has a line under --verbose only (revision 3, §7.1).
 "$MCPP" build -p cli -v > b2.log 2>&1 || fail "-p cli failed" b2.log
 touch core/src/core.cppm
-"$MCPP" build --workspace > b3.log 2>&1 || fail "the second --workspace failed" b3.log
+"$MCPP" build --workspace -v > b3.log 2>&1 || fail "the second --workspace failed" b3.log
 touch core/src/core.cppm
-"$MCPP" build -p gui > b4.log 2>&1 || fail "-p gui failed" b4.log
+"$MCPP" build -p gui -v > b4.log 2>&1 || fail "-p gui failed" b4.log
 for f in b2.log b3.log b4.log; do
     ! grep -qE "^ *build\.mcpp .* ran [0-9]" $f || fail "B3: a program reran in $f" $f
     grep -qE "^ *build\.mcpp .* cached" $f || fail "B3: $f shows no program at all" $f
@@ -85,8 +86,8 @@ done
 ! grep -qE "^ *build\.mcpp .* ran [0-9]" e.log || fail "B4: emit reran a program" e.log
 
 # B5
-grep -q "Compiling core (core)" b1.log || fail "B5: core is not announced by its directory" b1.log
-! grep -q "Compiling core (path)" b1.log || fail "B5: a selected member is announced as a path dependency" b1.log
-grep -q "Compiling core (path)" b2.log || fail "B5: under -p cli, core is cli's path dependency" b2.log
+grep -qxF "   Compiling core v0.1.0 (core)" b1.log || fail "B5: core is not named by its directory" b1.log
+grep -qE "^ +(Compiling|Fresh) core v0\.1\.0 \(core\)$" b2.log || fail "B5: under -p cli, core is not named by its directory" b2.log
+! grep -q "(path)" b1.log b2.log || fail "B5: a package is named by its source kind, not its directory" b1.log b2.log
 
 echo "PASS: 839_a_workspaces_build_programs_are_named_ordered_and_cached"

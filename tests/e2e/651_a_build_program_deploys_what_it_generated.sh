@@ -147,7 +147,8 @@ grep -qx "changed resource" "$DEPLOYED" \
 # ── 4. the replay criterion: bin/ deleted, rebuilt on a build.mcpp cache hit
 rm -rf "$BINDIR"
 touch src/main.cpp
-"$MCPP" build > b3.log 2>&1 || fail "third build failed" b3.log
+# A reused program is stated under --verbose only (build output design revision 3, §7.1).
+"$MCPP" build -v > b3.log 2>&1 || fail "third build failed" b3.log
 grep -qE "^ *build\.mcpp .* cached" b3.log \
   || fail "the third build re-ran build.mcpp; the replay path was not exercised" b3.log
 [ -f "$DEPLOYED" ] \

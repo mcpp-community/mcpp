@@ -118,7 +118,8 @@ grep -F -- "-Wl,-rpath,$RTDIR" "$G" >/dev/null \
 # profile `mcpp build` and `mcpp run` already used.
 touch src/main.cpp   # past the whole-project no-op fast path, without
                       # touching build.mcpp itself
-"$MCPP" build > b2.log 2>&1 || fail "second build failed" b2.log
+# A reused program is stated under --verbose only (build output design revision 3, §7.1).
+"$MCPP" build -v > b2.log 2>&1 || fail "second build failed" b2.log
 grep -qE "^ *build\.mcpp .* cached" b2.log \
   || fail "the second build re-ran build.mcpp; the replay path was not exercised" b2.log
 G2=$(find_graph)

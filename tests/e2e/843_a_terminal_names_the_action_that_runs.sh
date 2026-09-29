@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # requires: python3 unix-shell
 # 843_a_terminal_names_the_action_that_runs.sh -- build progress design
-# 2026-09-29, §4.4 and §5.1 (the terminal medium), through a pseudo-terminal.
+# 2026-09-29, §4.4 and §5.1 (the terminal medium), through a pseudo-terminal,
+# as revised by the build output design 2026-09-30 (revision 3), §5.9 and §9.
 #
-#   T1  while a `prepare` action runs, the status line names its package, its
+#   T1  while a `prepare` action runs, the status row names its package, its
 #       label and its clock: ninja reports no step when it starts, and the
 #       engine's action wrapper does (§6.4);
-#   T2  the package's line becomes final with its outcome, and one blank line
+#   T2  the package is named once, when its action starts, and one blank line
 #       precedes `Finished`;
-#   T3  the status line is not drawn again after `Finished`.
+#   T3  the status row is not drawn again after `Finished`;
+#   T4  the status row's phase is aligned with the verbs (12 columns), and on
+#       a UTF-8 terminal it carries the screen: 24 braille cells;
+#   T5  no row of the region is blank: the status row follows the output.
 set -e
 
 TMP=$(mktemp -d)
@@ -51,7 +55,10 @@ import fcntl, os, pty, re, struct, sys, termios
 pid, fd = pty.fork()
 if pid == 0:
     os.environ["TERM"] = "xterm-256color"
+    os.environ["LANG"] = "C.UTF-8"
+    os.environ["MCPP_PROGRESS"] = "snake"
     os.environ.pop("NO_COLOR", None)
+    os.environ.pop("LC_ALL", None)
     os.execvp(sys.argv[1], [sys.argv[1], "build"])
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
 raw = b""
@@ -110,11 +117,32 @@ assert re.search(r"app: app:install \d+:\d\d", plain), "T1: no status line named
 # T2
 at = max(i for i, row in enumerate(screen) if "Finished" in row)
 assert screen[at - 1] == "", "T2: no blank line precedes Finished"
-assert re.search(r"Compiling app v0\.1\.0 \(\.\) +done \d", screen[at - 2]), \
-    "T2: the package's final line does not come before Finished"
+assert sum(1 for row in screen if row == "   Compiling app v0.1.0 (.)") == 1, \
+    "T2: the package is not named exactly once"
 # T3
 assert not any(("Building" in row or "Checking" in row) for row in screen[at:]), \
     "T3: the status line was drawn after Finished"
+# T4: a status row as it was written: the phase in 12 columns, then the screen.
+rows = [r for r in re.split(r"[\r\n]", plain) if re.match(r"^ *(Planning|Running|Building|Checking) ", r)]
+assert rows, "T4: no status row was drawn"
+assert all(re.match(r"^ {4}(Planning|Building|Checking) | {5}Running ", r) for r in rows), \
+    f"T4: a status row is not aligned with the verbs: {rows[:3]}"
+assert any(re.search(r"[\u2800-\u28ff]{24}", r) for r in rows), \
+    f"T4: no status row carries the 24-cell screen: {rows[:3]}"
+# T5: replayed frame by frame -- each status row ends with `ESC[?7h` -- the
+# row directly above the status row is never blank (revision 2 drew a blank
+# separator row there), and the status row is the last row of the screen.
+checked = 0
+for m in re.finditer(r"\x1b\[\?7h", text):
+    rows_now = screen_of(text[:m.end()])
+    while rows_now and rows_now[-1] == "":
+        rows_now.pop()
+    assert rows_now and re.match(r"^ *(Planning|Running|Building|Stopping|Checking) ", rows_now[-1]), \
+        f"T5: the last row after a frame is not the status row: {rows_now[-2:]}"
+    if len(rows_now) > 1:
+        assert rows_now[-2] != "", f"T5: a blank row precedes the status row: {rows_now[-3:]}"
+    checked += 1
+assert checked >= 3, f"T5: only {checked} frames were drawn"
 PY
 
 echo "PASS: 843_a_terminal_names_the_action_that_runs"

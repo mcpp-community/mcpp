@@ -86,7 +86,7 @@ mkapp app1 acme ../idx1 acme widget
 # compiled here or served from the global build cache is a different subsystem's
 # business — and now that the cache actually works, a sibling app dir under the
 # same MCPP_HOME (or a restored CI sandbox) can legitimately supply them.
-grep -qE "Compiling acme\.widget" app1/out.txt || {
+grep -qE "(Compiling|Cached) acme\.widget" app1/out.txt || {
     cat app1/out.txt
     echo "FAIL: acme.widget was neither compiled nor served from cache"
     exit 1
