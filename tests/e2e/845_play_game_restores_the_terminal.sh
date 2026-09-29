@@ -49,17 +49,26 @@ import fcntl, os, re, select, struct, subprocess, sys, termios, time
 mcpp, mode = sys.argv[1], sys.argv[2]
 master, slave = os.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
-before = termios.tcgetattr(slave)
 env = dict(os.environ, TERM="xterm-256color", LANG="C.UTF-8")
 env.pop("LC_ALL", None)
 env.pop("NO_COLOR", None)
+# The terminal's mode before and after is recorded by a shell in the same
+# session, while the terminal is still its controlling terminal: on macOS the
+# slave side is revoked for everyone else once the session leader exits. The
+# shell catches SIGINT (a trap, not an ignore, so mcpp starts with the default
+# action) and records the mode after mcpp has gone.
+for f in ("before.txt", "after.txt"):
+    if os.path.exists(f):
+        os.remove(f)
 pid = os.fork()
 if pid == 0:
     os.setsid()
     fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
     for fd in (0, 1, 2):
         os.dup2(slave, fd)
-    os.execvpe(mcpp, [mcpp, "build", "--play-game=snake"], env)
+    script = ('trap : INT; stty -g > before.txt; "$0" build --play-game=snake; '
+              'code=$?; stty -g > after.txt; exit $code')
+    os.execvpe("sh", ["sh", "-c", script, mcpp], env)
 raw, t0, during, sent, status = b"", time.time(), None, False, 0
 while True:
     r, _, _ = select.select([master], [], [], 0.1)
@@ -88,7 +97,8 @@ while True:
                 break
             raw += chunk
         break
-after = termios.tcgetattr(slave)
+before = open("before.txt").read().strip() if os.path.exists("before.txt") else None
+after = open("after.txt").read().strip() if os.path.exists("after.txt") else None
 plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", raw.decode("utf-8", "replace")).replace("\r\n", "\n")
 print(plain)
 assert during is not None, "the build ended before the game could be observed"
@@ -97,14 +107,15 @@ assert not (during[3] & termios.ECHO), "G1: echo stayed on during the game"
 assert not (during[3] & termios.ICANON), "G1: the terminal still waited for a line end"
 assert re.search(r"Building .* · snake \d+", plain), "G1: no status row carries the score"
 # G2 / G3
-assert after == before, "G2/G3: the terminal's mode was not restored"
+assert before and after == before, f"G2/G3: the terminal's mode was not restored: {before!r} -> {after!r}"
+code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
 if mode == "ctrlc":
-    assert os.WIFSIGNALED(status) and os.WTERMSIG(status) == 2, f"G3: mcpp did not end by SIGINT ({status})"
+    assert code == 130, f"G3: mcpp did not end by SIGINT (the shell reports {code})"
     time.sleep(0.5)
     left = subprocess.run(["pgrep", "-f", "app:install|time.sleep\\(4\\)"], capture_output=True, text=True).stdout
     assert os.path.basename(os.getcwd()) not in left or not left.strip(), f"G3: the prepare action outlived mcpp: {left}"
 else:
-    assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, f"G2: the build failed ({status})"
+    assert code == 0, f"G2: the build failed ({code})"
     assert re.search(r"^ +Played snake · best \d+$", plain, re.M), "G2: no line states the best round"
     fin = [i for i, l in enumerate(plain.splitlines()) if "Finished" in l]
     pla = [i for i, l in enumerate(plain.splitlines()) if "Played snake" in l]
