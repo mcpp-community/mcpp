@@ -6,6 +6,9 @@ status: landed
 # Build progress: each step's line states its outcome, and one status line states the build
 
 - Status: landed (revision 2). Implemented in #742, released as 2026.9.29.5
+  (the parts listed in section 6 of
+  `2026-09-30-build-output-refinement-design.md` are replaced by revision 3,
+  #743, 2026.9.30.1)
 - Date: 2026-09-29
 - Origin: the cross-verification of #742 on the validation project (run
   36562019799). `mcpp build --workspace` printed its last `Compiling` line at

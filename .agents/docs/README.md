@@ -30,7 +30,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### design
 
-- [Build output, revision 3: every package that does work is named, the live display is one line drawn in one write, and a repeated warning is stated once per file](2026-09-30-build-output-refinement-design.md) — active
+- [Build output, revision 3: every package that does work is named, the live display is one line drawn in one write, and a repeated warning is stated once per file](2026-09-30-build-output-refinement-design.md) — landed
 - [The workspace as the unit of build: one graph per configuration, one scheduler, product directories, and a reusable graph module](2026-09-29-workspace-build-graph-design.md) — landed
 - [Build progress: each step's line states its outcome, and one status line states the build](2026-09-29-build-progress-display-design.md) — landed
 - [An ecosystem design for mcpp and xlings: one authority per fact, and the work that follows from it](2026-09-28-ecosystem-design-and-optimisation-plan.md) — landed
@@ -110,7 +110,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-09
 
-- [Build output, revision 3: every package that does work is named, the live display is one line drawn in one write, and a repeated warning is stated once per file](2026-09-30-build-output-refinement-design.md) — active
+- [Build output, revision 3: every package that does work is named, the live display is one line drawn in one write, and a repeated warning is stated once per file](2026-09-30-build-output-refinement-design.md) — landed
 - [The workspace as the unit of build: one graph per configuration, one scheduler, product directories, and a reusable graph module](2026-09-29-workspace-build-graph-design.md) — landed
 - [Build progress: each step's line states its outcome, and one status line states the build](2026-09-29-build-progress-display-design.md) — landed
 - [Two days of mcpp and xlings: a review of what merged, what is known, and what is open](2026-09-28-ecosystem-review-of-two-days-of-mcpp-and-xlings.md) — active

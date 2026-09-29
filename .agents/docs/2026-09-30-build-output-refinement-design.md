@@ -1,14 +1,14 @@
 ---
 subject: design
-status: active
+status: landed
 ---
 
 # Build output, revision 3: every package that does work is named, the live display is one line drawn in one write, and a repeated warning is stated once per file
 
-- Status: active (a proposal for review; draft 3, after review rounds 1
-  and 2 of section 5). It refines `2026-09-29-build-progress-display-design.md`
-  (revision 2, landed in #742, released as 2026.9.29.5) and replaces the
-  parts listed in section 6.
+- Status: landed (revision 3). Implemented in #743, released as 2026.9.30.1.
+  It refines `2026-09-29-build-progress-display-design.md` (revision 2,
+  landed in #742, released as 2026.9.29.5) and replaces the parts listed in
+  section 6.
 - Date: 2026-09-30
 - Origin: a report on `mcpp build` in the xlings repository with mcpp
   2026.9.29.5. It raised three questions: why the build prints warnings;
