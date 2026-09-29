@@ -211,45 +211,83 @@ commit 记进 `mcpp.toml`;`mcpp index unpin` 移除它。
 
 ## 构建输出
 
-构建在每一步的结果已知时报告一次（2026.9.29.5+）：
+一次构建在每个包开始做事时写出它的一行，并用一行状态行陈述构建的进展（2026.9.30.1 起）：
 
 ```console
-$ mcpp build --workspace
-  build.mcpp gpp.core                     ran 16.00s
-  build.mcpp gpp.gui                      ran 6.70s
-   Compiling gpp.core (GalTranslPP)       done 3m12s
-   Compiling 23 dependencies              done 6m20s
-   Compiling gpp.gui (GPPGUI)             done 38m05s
+$ mcpp build
+   Workspace building member 'xlings'
+  build.mcpp mcpplibs.xpkg v0.0.59        ran 0.64s
+      Cached compat.ftxui v6.1.9 (73 units)
+      Cached mcpplibs.cmdline v0.0.2 (3 units)
+   Compiling cancellation v0.1.0 (modules/cancellation)
+   Compiling platform v0.1.0 (modules/platform)
+   Compiling mcpplibs.xpkg v0.0.59
+   Compiling xlings v2026.9.29.1 (.)
 
-    Finished fast-release [unoptimized + debuginfo] in 41m53s · plan 1m13s · programs 32s · build 40m08s · longest gpp.gui: vcpkg install 22m10s
+    Finished dev [unoptimized + debuginfo] in 33.63s · plan 3.06s · programs 0.64s · build 29.94s
 ```
 
-- 包的行写出包名与结果：`done` 后接其各步骤的跨度，`cached` 表示由全局缓存提供，
-  `failed`，或者在失败的构建于该包完成前停止时，写出它已运行的步骤数。没有工作
-  的包不写行。
-- 命令被要求构建的包（根包或被选中的成员）逐个列出；它们依赖的包折叠为一行，
-  失败的依赖单独写出名字。
-- 构建程序的行写出 `ran` 及其耗时、`cached` 或 `failed`。
-- 一个步骤失败时立即报告，连同其诊断；ninja 此时仍在等待正在运行的步骤。
-- `Finished` 写出整条命令的耗时。十秒及以上的命令还写出时间的分布，并在某一步
-  占构建阶段四分之一以上时写出这一步。
+- **何时写出**：包的第一个步骤完成时（依赖扫描不计），或它的第一个 `check`、`prepare` 动作开始时，写出该包的行；此后这一行不再改变。
+- **Cached**：`Cached` 表示该依赖的单元由全局构建缓存提供，并给出单元数。
+- **不写出的包**：本次无事可做的包没有行。
+- **项目内的包**：根包、工作区成员、位于项目根之下的 path 依赖，以短名、版本和目录命名。
+- **其余的包**：以完整身份命名。
+  - 索引包写出命名空间和名字；若由项目声明的其他索引提供，再附 `(index <名字>)`。
+  - git 依赖附其引用。
+  - 项目外的 path 依赖附其相对目录。
+- **来源配色**：在终端上，名字的颜色表示来源。官方索引为青色，其他索引为品红，git 仓库为蓝色，项目自身的包为默认色。
+- **构建程序**：构建程序在运行或失败时有一行，并给出耗时。结果被复用的构建程序只在 `--verbose` 下有行。
+- **失败**：失败的步骤在失败时即报告：先写 `error: build failed in <包>`，再写它的诊断信息；与此同时 ninja 等待仍在运行的步骤。
+- **Finished**：`Finished` 给出整个命令的耗时。命令耗时达到十秒时，还说明时间的构成；若某一步骤占构建时间的四分之一以上，则给出该步骤。
 
-在终端上，仍在运行的步骤与一行状态行绘制在输出下方，并原地更新：
+在终端上，输出下方画一行状态行，并原地更新：
 
 ```
-   Compiling gpp.gui (GPPGUI)             61 steps
-
-Building 612/1203 · 14:32 · gpp.gui: vcpkg install 6:10
+   Compiling platform v0.1.0 (modules/platform)
+    Building ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢾⡷⠀⠰⣿⠆⠄⠄⠄⠄⠄⠄⠄⠄ 612/707 · 0:35 · gpp.gui: CMAKE ElaWidgetTools 6:10
 ```
 
-状态行给出构建的步骤计数、自命令开始以来的时间，以及运行最久的 `check` 或
-`prepare` 动作；其他步骤 ninja 只在完成时报告。输出不是终端时（CI 日志、管道），
-只写最终的行，并在输出静默一分钟时写一次状态行。`TERM=dumb` 在终端上也选择
-这种形式。
+- **阶段**：阶段（`Planning`，构建程序阶段为 `Running`，`Building`，失败后为 `Stopping`，`Checking`）与上方的动词对齐。
+- **点阵屏**：阶段之后是由 24 个盲文点字格组成的点阵屏，每次命令随机播放四种动画之一。
+  - 吃豆人：位置即进度。
+  - 贪吃蛇：每有一个包开始，就吃下一颗该包来源颜色的食物。
+  - 横版俄罗斯方块：堆的面积即进度。
+  - 离子发射器：离子堆积成进度条。
 
-`--verbose` 列出每个包（包括没有工作的包，记为 `fresh`），写出每个构建程序的编译
-与运行耗时，并按 ninja 的报告打印每一步（`[f/t] <命令>` 及其输出）。`--quiet`
-不打印这些。机器输出（`--message-format json`）不变。
+  动画在 mcpp 工作时缓慢移动，有步骤完成时加快，构建等待时静止。
+- **计数与时间**：随后是已完成与计划的步骤数，以及自命令开始的时间。当没有待启动的步骤时，追加 `last N running`。
+- **正在运行的动作**：最后是运行最久的 `check` 或 `prepare` 动作。其余步骤只在完成时由 ninja 报告。
+- **绘制方式**：状态行在命令开始半秒后才首次绘制；每次更新都以一次写入原地覆盖，不会闪烁。
+
+`MCPP_PROGRESS` 选择点阵屏的内容：
+
+- `random`：默认值；
+- 动画名：`chomp`、`snake`、`stack` 或 `ions`；
+- `plain`：保留状态行，不显示点阵屏；
+- `off`：不绘制实时行，与日志输出相同。
+
+点阵屏需要能绘制盲文点字的终端，即 UTF-8 locale 或 Windows Terminal；否则状态行不含点阵屏。输出不是终端（CI 日志、管道）时，只写出最终的行，并在输出静默一分钟时写出状态行。在终端上设置 `TERM=dumb` 同样选择这种形式。
+
+`--play-game` 在构建期间于点阵屏上玩一个游戏。`build`、`run`、`test` 都接受该选项；`--play-game=NAME` 指定游戏，否则随机选择：
+
+- `snake`：方向键控制方向；
+- `stack`：上下键移动方块，左键直接落下，右键或空格旋转，填满的一列会消除；
+- `runner`：空格或上键跳跃。
+
+```console
+$ mcpp build --play-game=snake
+    Building ⠀⠀⠀⢲⠈⠀⠀⠀⠀⠀⠠⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀ 3/7 · 0:12 · snake 4
+...
+    Finished dev [unoptimized + debuginfo] in 41.20s
+      Played snake · best 9
+```
+
+- **速度与计数**：游戏以自身的速度运行，旁边的计数陈述构建的进展。
+- **按键读取**：按键不回显；Ctrl-C 仍然中断构建。
+- **终端模式**：构建结束或被中断时，终端模式会恢复；被强制杀死的进程无法恢复，此时可执行 `stty sane`。
+- **使用条件**：游戏要求标准输入和标准输出都是终端；否则写出一行说明原因，构建照常进行。
+
+`--verbose` 列出每个包：无事可做的包记为 `Fresh`，做了事的包记为 `Compiled`，并给出其步骤数和耗时跨度。它还给出每个构建程序的编译与运行时间，并按 ninja 的报告打印每个步骤（`[f/t] <命令>` 及其输出）。`--quiet` 不输出以上内容。机器输出（`--message-format json`）不变。
 
 ## 发布前校验描述符
 

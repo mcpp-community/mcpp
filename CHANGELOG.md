@@ -4,6 +4,89 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.9.30.1] - 2026-09-30
+
+This release revises what a build prints, from a report on `mcpp build` in the
+xlings repository with 2026.9.29.5
+(`.agents/docs/2026-09-30-build-output-refinement-design.md`): a package is
+named when it does work, the live display is one status row drawn in one
+write, and a bare key of a path dependency is no longer reported. It also
+records one lock entry per identity again.
+
+### Added
+
+- **A screen in the status row.** Beside the phase, 24 braille cells play one
+  of four animations, chosen per command: a chomper whose position is the
+  progress, a snake that eats a food in the colour of each package that
+  starts, Tetris on its side whose stack is the progress, and an emitter whose
+  ions build the progress bar. Each takes its tempo from the build: slow
+  while mcpp works, faster as steps finish, still while the build waits.
+  `MCPP_PROGRESS` names one, or `plain` (the row without the screen) or `off`
+  (no live row) (e2e 843; `mcpp.ui.dots_screen`).
+- **`--play-game[=NAME]`** on `build`, `run` and `test` plays `snake`, `stack`
+  or `runner` on the screen while the build runs, steered from the keyboard at
+  a speed of its own. The best round is stated after `Finished`. Keys are
+  read without echo; Ctrl-C still stops the build, and the terminal's mode is
+  restored when the build ends or is interrupted. Where standard input or
+  output is not a terminal, one line says why and the build proceeds
+  (e2e 845).
+- **`last N running`.** Once ninja has no step left to start (its `%u`
+  reaches 0), the status row states how many steps remain, all of them
+  running.
+
+### Fixed
+
+- **The live display no longer flickers.** A frame reached the terminal in two
+  or three writes (stdout is line-buffered, and a line above the region was
+  erase, text, redraw), and every frame erased the region before drawing it:
+  in one build of xlings, 184 of 202 frames left in two parts. A frame now
+  leaves in one write that overwrites the rows in place, with autowrap off for
+  the status row, so a terminal that draws East Asian ambiguous characters
+  wide clips the row instead of wrapping it. The row is first drawn half a
+  second into the command, so the first lines of output no longer push it
+  down (e2e 843).
+- **A dependency the global cache serves is named when its units are
+  placed.** Its staging steps ran in a pass of their own that nothing read,
+  so such a package never completed and the folded dependency line waited
+  for ninja to exit (27 s late in a first build of xlings), after the root's
+  line (e2e 842).
+- **The phase returns to planning after the build programs.** The status
+  line read `Running build programs` for as long as planning continued.
+- **A planned build leaves a committed `mcpp.lock` unchanged.** Since
+  2026.9.29.1 a planned build of a workspace root wrote the dependencies of a
+  `[dependencies.<ns>]` table under a second spelling with another hash,
+  beside the entries already there; the lock now holds one entry per
+  identity, spelled as 2026.9.28.3 spelled it, and a lock that holds two is
+  reduced to one by the next planned build (e2e 844).
+
+### Behaviour changes
+
+- **A package is named once, when it does work**: `Compiling <package>` when
+  the first of its steps that is not a dependency scan finishes, or when its
+  first `check` or `prepare` action starts, and `Cached <package> (N units)`
+  when the global cache places its units. The line states no outcome and does
+  not change; nothing is folded, and a package with nothing to do has no line
+  (`--verbose` names it `Fresh`, and states each package's steps and span as
+  `Compiled`) (e2e 842).
+- **A package inside the project is named by its short name, version and
+  directory** (`platform v0.1.0 (modules/platform)`); any other by its
+  identity, with `(index <name>)`, `(git <kind> <ref>)` or its relative
+  directory. On a terminal the name's colour states the source: the official
+  index cyan, another index magenta, git blue, the project's own packages the
+  default colour.
+- **A build program has a line when it runs or fails**; a reused program has
+  one under `--verbose`. The folded `build.mcpp N dependencies` line is gone.
+- **A failure names its package**: `error: build failed in <package>`.
+- **The status row is aligned with the verbs** (`    Building 612/707 · 0:35`),
+  its phases are `Planning`, `Running`, `Building`, `Stopping` and `Checking`,
+  and no blank row separates it from the output.
+- **A bare key of a path or git dependency states only the short name.** Its
+  adoption of the namespace the manifest declares is no longer reported; a
+  key that states a namespace the manifest contradicts is reported once per
+  consumer manifest, named by its path, with the TOML that states the
+  declared identity (e2e 679, 713; package-identity §4.2).
+- **The bundled xlings is 2026.9.30.1.**
+
 ## [2026.9.29.5] - 2026-09-29
 
 This release completes the workspace build graph in the commands around the

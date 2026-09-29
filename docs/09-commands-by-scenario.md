@@ -229,53 +229,109 @@ shows its status line and finishes silently, as before.
 
 ## What a build prints
 
-A build reports each step once, when its outcome is known (2026.9.29.5+):
+A build names each package when it does work, and one status row states the
+build while it runs (2026.9.30.1+):
 
 ```console
-$ mcpp build --workspace
-  build.mcpp gpp.core                     ran 16.00s
-  build.mcpp gpp.gui                      ran 6.70s
-   Compiling gpp.core (GalTranslPP)       done 3m12s
-   Compiling 23 dependencies              done 6m20s
-   Compiling gpp.gui (GPPGUI)             done 38m05s
+$ mcpp build
+   Workspace building member 'xlings'
+  build.mcpp mcpplibs.xpkg v0.0.59        ran 0.64s
+      Cached compat.ftxui v6.1.9 (73 units)
+      Cached mcpplibs.cmdline v0.0.2 (3 units)
+   Compiling cancellation v0.1.0 (modules/cancellation)
+   Compiling platform v0.1.0 (modules/platform)
+   Compiling mcpplibs.xpkg v0.0.59
+   Compiling xlings v2026.9.29.1 (.)
 
-    Finished fast-release [unoptimized + debuginfo] in 41m53s · plan 1m13s · programs 32s · build 40m08s · longest gpp.gui: vcpkg install 22m10s
+    Finished dev [unoptimized + debuginfo] in 33.63s · plan 3.06s · programs 0.64s · build 29.94s
 ```
 
-- A package's line names the package and states its outcome: `done` with the
-  span of its steps, `cached` when the global cache supplied it, `failed`, or
-  the number of its steps that ran when a failed build stopped before the
-  package completed. A package with nothing to do has no line.
-- The packages the command was asked to build (the root package, or the
-  selected members) are listed. The packages they depend on are folded into
-  one line, and a dependency that fails is named.
-- A build program's line states `ran` with its time, `cached`, or `failed`.
-- A failed step is reported when it fails, with its diagnostics, while ninja
-  waits for the steps still running.
+- A package's line is written when the first of its steps finishes (a
+  dependency scan does not count), or when its first `check` or `prepare`
+  action starts, and it does not change. `Cached` names a dependency whose
+  units the global build cache supplied, with their number. A package with
+  nothing to do has no line.
+- A package inside the project (the root, a workspace member, a path
+  dependency under the project root) is named by its short name, version and
+  directory. Any other package is named by its identity: an index package by
+  its namespace and name, followed by `(index <name>)` when an index the
+  project declares serves it; a git dependency with its reference; a path
+  outside the project with its relative directory. On a terminal the name's
+  colour states the source: the official index cyan, another index magenta,
+  a git repository blue, and the project's own packages the default colour.
+- A build program has a line when it runs or fails, with its time. A program
+  whose result is reused has one under `--verbose`.
+- A failed step is reported when it fails: `error: build failed in
+  <package>`, then its diagnostics, while ninja waits for the steps still
+  running.
 - `Finished` states the whole command's time. A command of ten seconds or
   more also states how the time was spent, and names the step that took at
   least a quarter of the build when there is one.
 
-On a terminal, the steps still running and one status line are drawn below
-the output and updated in place:
+On a terminal one status row is drawn below the output and updated in place:
 
 ```
-   Compiling gpp.gui (GPPGUI)             61 steps
-
-Building 612/1203 · 14:32 · gpp.gui: vcpkg install 6:10
+   Compiling platform v0.1.0 (modules/platform)
+    Building ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢾⡷⠀⠰⣿⠆⠄⠄⠄⠄⠄⠄⠄⠄ 612/707 · 0:35 · gpp.gui: CMAKE ElaWidgetTools 6:10
 ```
 
-The status line counts the build's steps, shows the time since the command
-started, and names the longest-running `check` or `prepare` action; ninja
-reports every other step only when it finishes. When the output is not a
-terminal (a CI log, a pipe), only final lines are written, and the status line
-is written when the output has been silent for a minute. `TERM=dumb` selects
-that form on a terminal too.
+- The phase (`Planning`, `Running` for the build programs, `Building`,
+  `Stopping` after a failure, `Checking`) is aligned with the verbs above it.
+- Beside it, a screen of 24 braille cells plays one of four animations,
+  chosen per command: a chomper whose position is the progress, a snake that
+  eats a food in the colour of each package that starts, Tetris on its side
+  whose stack is the progress, and an emitter whose ions build the progress
+  bar. An animation moves slowly while mcpp works and faster as steps finish,
+  and it stands still while the build waits.
+- Then come the steps finished and planned, and the time since the command
+  started. When no step is left to start, `last N running` follows.
+- Last comes the longest-running `check` or `prepare` action. ninja reports
+  every other step only when it finishes.
+- The row is first drawn half a second into the command. Every change leaves
+  in one write that overwrites the row in place, so the row never flickers.
 
-`--verbose` lists every package, including those with nothing to do (`fresh`),
-states each build program's compile and run times, and prints every step as
-ninja reports it (`[f/t] <command>` and its output). `--quiet` prints none of
-it. Machine output (`--message-format json`) is unchanged.
+`MCPP_PROGRESS` chooses the screen:
+
+- `random`, the default;
+- an animation: `chomp`, `snake`, `stack` or `ions`;
+- `plain`: the row without the screen;
+- `off`: no live row, only the lines of a log.
+
+The screen needs a terminal that draws braille: a UTF-8 locale, or Windows
+Terminal. Elsewhere the row is plain. When the output is not a terminal (a CI
+log, a pipe), only final lines are written, and the status row is written
+when the output has been silent for a minute. `TERM=dumb` selects that form
+on a terminal too.
+
+`--play-game` plays a game on the screen while the build runs. It is accepted
+by `build`, `run` and `test`, and `--play-game=NAME` names the game;
+otherwise one is chosen:
+
+- `snake`: the arrows steer;
+- `stack`: up and down move the piece, left drops it, right or space turns
+  it, and a filled column clears;
+- `runner`: space or up jumps.
+
+```console
+$ mcpp build --play-game=snake
+    Building ⠀⠀⠀⢲⠈⠀⠀⠀⠀⠀⠠⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀ 3/7 · 0:12 · snake 4
+...
+    Finished dev [unoptimized + debuginfo] in 41.20s
+      Played snake · best 9
+```
+
+The game runs at its own speed; the counts beside it state the build. Keys
+are read without echo, and Ctrl-C still stops the build. The terminal's mode
+is restored when the build ends or is interrupted; a process killed outright
+cannot restore it, and `stty sane` does. The game needs standard input and
+standard output on a terminal; otherwise one line says why, and the build
+proceeds.
+
+`--verbose` names every package: `Fresh` for those with nothing to do, and
+`Compiled` with the steps and span of each that did work. It also states each
+build program's compile and run times, and prints every step as ninja reports
+it (`[f/t] <command>` and its output). `--quiet` prints none of this. Machine
+output (`--message-format json`) is unchanged.
 
 ## Validating a descriptor before publishing
 

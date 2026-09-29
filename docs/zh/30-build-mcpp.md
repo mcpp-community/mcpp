@@ -1276,11 +1276,11 @@ mcpp **不会**每次构建都重跑 `build.mcpp`。它会缓存程序产出的�
 `mcpp:rerun-if-changed=config.h` / `mcpp:rerun-if-env-changed=USE_FAST`。这用一份明确的
 输入/输出契约取代了过去「进程退出码为 0 就当成功」的猜测——让增量构建保持正确。
 
-每个程序一行，在程序结束时写出（2026.9.29.5+）：无变化时是 `build.mcpp <包名>  cached`，
-编译或运行过时是 `build.mcpp <包名>  ran <耗时>`（`--verbose` 下为 `compiled <耗时> · ran
-<耗时>`），失败时是 `failed`。在终端上，程序等待或运行期间该行显示 `waiting`、`compiling`
-或 `running` 及计时。命令被要求构建的包的程序逐个列出；其依赖的程序折叠为一行
-`build.mcpp N dependencies`。
+运行过或失败的程序各有一行，在程序结束时写出（2026.9.30.1+）：编译或运行过时是
+`build.mcpp <包名>  ran <耗时>`（`--verbose` 下为 `compiled <耗时> · ran <耗时>`），失败时是
+`failed`。结果被复用的程序没有做事，只在 `--verbose` 下有一行 `build.mcpp <包名>  cached`。
+程序运行期间，状态行显示 `Running`、已完成与已安排的程序数，并给出正在运行的程序、它的状态
+（`compiling` 或 `running`）及计时。
 
 ## 依赖产出的 host 工具（mcpp 2026.8.5.1+）
 

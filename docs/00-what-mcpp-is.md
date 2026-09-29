@@ -144,7 +144,7 @@ int main() {
 ```console
 $ mcpp run
     Inferred target hello (bin from src/main.cpp)
-   Compiling hello v0.1.0 (.)  done 0.61s
+   Compiling hello v0.1.0 (.)
 
     Finished dev [unoptimized + debuginfo] in 0.64s
      Running `target/x86_64-linux-gnu/0946988e9e4b52ba/bin/hello`

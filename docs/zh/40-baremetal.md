@@ -170,7 +170,7 @@ cd blinky
 mcpp run
 ```
 
-输出（2026.9.29.5；耗时因机器而异）：
+输出（2026.9.30.1；耗时因机器而异）：
 
 ```
    Resolving toolchain
@@ -179,8 +179,7 @@ mcpp run
   build.mcpp blinky  ran 0.41s
     Inferred sources [src/**/*.{cppm,cpp,cc,c,S,s,asm}]
     Inferred target blinky (bin from src/main.cpp)
-   Compiling blinky v0.1.0 (.)  done 0.04s
-   Compiling 1 dependency       cached
+   Compiling blinky v0.1.0 (.)
 
     Finished dev [unoptimized + debuginfo] in 0.05s
         Size blinky  text 8572  data 80  bss 5668  total 14320
