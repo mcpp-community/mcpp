@@ -148,6 +148,10 @@ TEST(ProgressRecord, EveryStatementIsRecordedWithItsOwner) {
     EXPECT_EQ(steps[2].outputs, std::vector<std::string>{"obj/with space.o"});
     EXPECT_EQ(steps[3].outputs, std::vector<std::string>{"C:/abs/gen.stamp"});
     EXPECT_EQ(steps[4].owner, "");
+    // The first explicit input, unescaped; an implicit input is not one.
+    EXPECT_EQ(steps[0].input, "src/main.cpp");
+    EXPECT_EQ(steps[2].input, "src/with space.cpp");
+    EXPECT_EQ(steps[3].input, "a.in");
 
     auto r = a.record({{"app", true, "app v0.1.0 (.)", 0, 0}});
     EXPECT_EQ(r.steps, 5u);
@@ -191,7 +195,45 @@ TEST(ProgressRecord, AVersionOneRecordIsRead) {
     EXPECT_EQ(r.packages[0].subject, "xlings (.)");
     EXPECT_TRUE(r.packages[0].detail.empty());
     EXPECT_TRUE(r.packages[0].source.empty());
+    EXPECT_TRUE(r.descriptor.empty());
+    EXPECT_TRUE(r.sources.empty());
     EXPECT_EQ(r.owner.at("obj/a.o"), 0u);
+}
+
+TEST(ProgressRecord, ACompileIsNamedByItsSourceAndTheHeaderCarriesTheDescriptor) {
+    // An absolute path on this host, spelled as build.ninja spells it.
+    const bool drive = !std::filesystem::path("/w").is_absolute();
+    const std::string root = drive ? "C:/w" : "/w", ninjaRoot = drive ? "C$:/w" : "/w";
+    Attribution a;
+    a.owner("app");
+    a.statement(std::format("build obj/app/src/main.o: cxx_obj {}/app/src/main.cpp | pcm.cache/std.pcm\n",
+                            ninjaRoot));
+    a.statement("build obj/app/gen.o: cxx_obj obj/gen.cpp\n");                  // in the build directory
+    a.statement(std::format("build obj/app/x.o: cxx_obj {}/elsewhere/x.cpp\n", ninjaRoot));
+    a.statement("build bin/app: cxx_link obj/app/src/main.o obj/util/src/u.o\n");
+    a.owner("util");
+    a.statement(std::format("build obj/util/src/u.o: cxx_obj {}/app/deps/util/src/u.cpp\n", ninjaRoot));
+    a.statement("build obj/util/none.stamp: stamp || obj/util/src/u.o\n");       // no explicit input
+
+    auto r = a.record({{"app", true, "app", 0, 0}}, {root + "/app", root + "/app/deps/util"});
+    EXPECT_EQ(r.sources.at(r.step.at("obj/app/src/main.o")), "src/main.cpp");
+    // The innermost root that holds the file.
+    EXPECT_EQ(r.sources.at(r.step.at("obj/util/src/u.o")), "src/u.cpp");
+    EXPECT_FALSE(r.sources.contains(r.step.at("obj/app/gen.o")));
+    EXPECT_FALSE(r.sources.contains(r.step.at("obj/app/x.o")));
+    EXPECT_FALSE(r.sources.contains(r.step.at("bin/app")));
+    EXPECT_FALSE(r.sources.contains(r.step.at("obj/util/none.stamp")));
+
+    r.descriptor = "unoptimized + debuginfo";
+    auto back = parse_record(format_record(r));
+    EXPECT_EQ(back.sources, r.sources);
+    EXPECT_EQ(back.descriptor, "unoptimized + debuginfo");
+
+    // The fast path reads the header line alone.
+    Tmp t;
+    write_record(t.path, r);
+    EXPECT_EQ(read_descriptor(t.path), "unoptimized + debuginfo");
+    EXPECT_EQ(read_descriptor(t.path / "absent"), "");
 }
 
 TEST(ProgressRecord, PathsAreComparedNormalised) {

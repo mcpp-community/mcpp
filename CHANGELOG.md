@@ -79,6 +79,13 @@ records one lock entry per identity again.
 - **A build program has a line when it runs or fails**; a reused program has
   one under `--verbose`. The folded `build.mcpp N dependencies` line is gone.
 - **A failure names its package**: `error: build failed in <package>`.
+- **`Finished` states how the time was spent from one minute**, where it did
+  from ten seconds; below a minute it states the profile and the total alone.
+  The longest step, when it took at least a quarter of the build, is named
+  by its source file for a compile (`longest slow: src/main.cpp 1m08s`), not
+  by its object file. A build with nothing to do states the profile's
+  descriptor as a full build does (`Finished dev [unoptimized + debuginfo]
+  in 0.02s`): the step record's header carries it for the fast path.
 - **The status row is aligned with the verbs** (`    Building 612/707 · 0:35`),
   its phases are `Planning`, `Running`, `Building`, `Stopping` and `Checking`,
   and no blank row separates it from the output.

@@ -1226,7 +1226,12 @@ mcpp::build::progress::Record step_record(const BuildPlan& plan,
     declared.reserve(plan.packages.size());
     for (auto const& p : plan.packages)
         declared.push_back({p.name, p.requested, p.subject, p.cachedUnits, 0, p.detail, p.source});
-    return attribution.record(declared);
+    // A compile's source is stated relative to its package's root, and the
+    // profile's descriptor is the one `Finished` states on the full path, so
+    // that the fast path states it too (build output design revision 3, §7.3).
+    auto record = attribution.record(declared, plan.packageRoots);
+    record.descriptor = profile_descriptor(plan.manifest.buildConfig);
+    return record;
 }
 
 // The aggregate target for everything staged out of the global cache. Named

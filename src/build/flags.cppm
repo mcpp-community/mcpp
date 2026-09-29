@@ -203,6 +203,13 @@ std::string realised_opt_level(const mcpp::manifest::BuildConfig& bc);
 // Whether `realised_opt_level` names an optimizing level.
 bool realises_optimization(const mcpp::manifest::BuildConfig& bc);
 
+// The profile as `Finished` describes it: `optimized` or `unoptimized` by the
+// realised level, then `+ debuginfo` and `+ lto` when they are on. The full
+// path states it from the plan it built, and the step record's header carries
+// it for the fast path, which has no plan (build output design revision 3,
+// §7.3): both read this one function.
+std::string profile_descriptor(const mcpp::manifest::BuildConfig& bc);
+
 // The sysroot of an ELF link over a graph-supplied C library: an empty
 // directory inside the build directory, so the driver derives no library
 // search from the host (#696). `compute_flags` names it and the backend creates
@@ -604,6 +611,13 @@ std::string realised_opt_level(const mcpp::manifest::BuildConfig& bc) {
 
 bool realises_optimization(const mcpp::manifest::BuildConfig& bc) {
     return realised_opt_level(bc) != "0";
+}
+
+std::string profile_descriptor(const mcpp::manifest::BuildConfig& bc) {
+    std::string d = realises_optimization(bc) ? "optimized" : "unoptimized";
+    if (bc.debug) d += " + debuginfo";
+    if (bc.lto)   d += " + lto";
+    return d;
 }
 
 std::filesystem::path graph_link_sysroot(const std::filesystem::path& outputDir) {

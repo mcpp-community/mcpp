@@ -8,11 +8,11 @@ status: landed
 - Status: landed (revision 3). Implemented in #743, released as 2026.9.30.1.
   It refines `2026-09-29-build-progress-display-design.md` (revision 2,
   landed in #742, released as 2026.9.29.5) and replaces the parts listed in
-  section 6. Decision D3 of section 16 was settled after the implementation
-  as no change: the configuration lines stay as they are, and T6 is dropped.
-  Decision D4 is open, so the part of T4 it covers (the 60 s threshold, the
-  profile descriptor on the fast path, and the source file of `longest`) is
-  not implemented; `Finished` keeps revision 2's form there.
+  section 6. Decisions D3 and D4 of section 16 were settled after the first
+  implementation: D3 as no change (the configuration lines stay as they are,
+  and T6 is dropped), and D4 as recommended (section 7.3: the 60 s threshold,
+  the profile descriptor on the fast path, and the source file of `longest`),
+  implemented in the same pull request.
 - Date: 2026-09-30
 - Origin: a report on `mcpp build` in the xlings repository with mcpp
   2026.9.29.5. It raised three questions: why the build prints warnings;
@@ -1358,8 +1358,11 @@ of silence.
   from the consumer's key, since a package reached through `[feature-deps]`
   has no entry in the consumer's `[dependencies]`. A version 1 record is read
   with both empty, and its subject then carries what version 1 wrote there,
-  until the next plan writes version 2. The profile descriptor on the fast
-  path and the source file of `longest` (section 7.3) wait for decision D4.
+  until the next plan writes version 2. Version 2 also carries the profile's
+  descriptor in the header, which the fast path reads alone, and an `S` line
+  per compile step: the step's first input, relative to the innermost package
+  root that holds it, which `Finished` names for the longest step
+  (section 7.3).
 - **Unchanged**: the log reader and its recompaction handling, the
   attribution in the generator, the action-start file, and the heartbeat.
 

@@ -224,7 +224,7 @@ $ mcpp build
    Compiling mcpplibs.xpkg v0.0.59
    Compiling xlings v2026.9.29.1 (.)
 
-    Finished dev [unoptimized + debuginfo] in 33.63s · plan 3.06s · programs 0.64s · build 29.94s
+    Finished dev [unoptimized + debuginfo] in 1m08s · plan 16.90s · programs 0.98s · build 50.99s
 ```
 
 - **何时写出**：包的第一个步骤完成时（依赖扫描不计），或它的第一个 `check`、`prepare` 动作开始时，写出该包的行；此后这一行不再改变。
@@ -238,7 +238,7 @@ $ mcpp build
 - **来源配色**：在终端上，名字的颜色表示来源。官方索引为青色，其他索引为品红，git 仓库为蓝色，项目自身的包为默认色。
 - **构建程序**：构建程序在运行或失败时有一行，并给出耗时。结果被复用的构建程序只在 `--verbose` 下有行。
 - **失败**：失败的步骤在失败时即报告：先写 `error: build failed in <包>`，再写它的诊断信息；与此同时 ninja 等待仍在运行的步骤。
-- **Finished**：`Finished` 给出整个命令的耗时。命令耗时达到十秒时，还说明时间的构成；若某一步骤占构建时间的四分之一以上，则给出该步骤。
+- **Finished**：`Finished` 给出配置档和整个命令的耗时，构建有无事可做都一样。命令耗时达到一分钟时，还说明时间的构成；若某一步骤占构建时间的四分之一以上，则给出该步骤：编译步骤给出其源文件（相对于所在包），动作给出其标签。
 
 在终端上，输出下方画一行状态行，并原地更新：
 

@@ -243,7 +243,7 @@ $ mcpp build
    Compiling mcpplibs.xpkg v0.0.59
    Compiling xlings v2026.9.29.1 (.)
 
-    Finished dev [unoptimized + debuginfo] in 33.63s · plan 3.06s · programs 0.64s · build 29.94s
+    Finished dev [unoptimized + debuginfo] in 1m08s · plan 16.90s · programs 0.98s · build 50.99s
 ```
 
 - A package's line is written when the first of its steps finishes (a
@@ -264,9 +264,11 @@ $ mcpp build
 - A failed step is reported when it fails: `error: build failed in
   <package>`, then its diagnostics, while ninja waits for the steps still
   running.
-- `Finished` states the whole command's time. A command of ten seconds or
-  more also states how the time was spent, and names the step that took at
-  least a quarter of the build when there is one.
+- `Finished` states the profile and the whole command's time, whether the
+  build had work to do or not. A command of a minute or more also states how
+  the time was spent, and names the step that took at least a quarter of the
+  build when there is one: a compile by its source file, relative to its
+  package, and an action by its label.
 
 On a terminal one status row is drawn below the output and updated in place:
 

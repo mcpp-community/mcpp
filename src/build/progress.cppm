@@ -61,7 +61,14 @@ struct Record {
     std::unordered_map<std::string, std::size_t> step;
     // The first output of a check or prepare action, normalised, to its label.
     std::unordered_map<std::string, std::string> actions;
+    // A step, by its identity in `step`, to the source file it reads: its
+    // first input, relative to the package root that holds it. `Finished`
+    // names the longest step by it (build output design revision 3, §7.3).
+    std::unordered_map<std::size_t, std::string> sources;
     std::size_t steps = 0;         // every step of the graph
+    // The profile as `Finished` describes it. The fast path, which has no
+    // plan, reads it from the header line alone (`read_descriptor`).
+    std::string descriptor;
 };
 
 inline constexpr std::string_view kRecordFile = "steps.tsv";
@@ -75,6 +82,9 @@ std::string format_record(const Record& record);
 Record parse_record(std::string_view text);
 void write_record(const std::filesystem::path& buildDir, const Record& record);
 std::optional<Record> read_record(const std::filesystem::path& buildDir);
+// The descriptor in the header of the record in `buildDir`; empty when there
+// is no record or it carries none. Reads the first line only.
+std::string read_descriptor(const std::filesystem::path& buildDir);
 
 // What the emitter states about each step as it writes it: the package whose
 // unit, link, action or staged file the statement is for. `owner("")` marks
@@ -85,6 +95,7 @@ public:
         std::vector<std::string> outputs;   // normalised
         std::string              rule;
         std::string              owner;
+        std::string              input;     // the first explicit input, unescaped
     };
     void owner(std::string_view package);
     // Text appended to build.ninja: each `build` statement in it is recorded
@@ -94,8 +105,12 @@ public:
     void action(std::string_view firstOutput, std::string_view label);
     const std::vector<Step>& steps() const { return steps_; }
     // The record: `declared` states how the packages are shown; an owner that
-    // no entry declares is shown by its qualified name, as a dependency.
-    Record record(const std::vector<PackageInfo>& declared) const;
+    // no entry declares is shown by its qualified name, as a dependency. A
+    // step's source is its first input when that is an absolute path inside
+    // one of `roots`, the package roots of the graph, and is stated relative
+    // to the innermost of them.
+    Record record(const std::vector<PackageInfo>& declared,
+                  const std::vector<std::filesystem::path>& roots = {}) const;
 
 private:
     std::string owner_;
@@ -288,13 +303,14 @@ long long to_ll(std::string_view s) {
 
 } // namespace
 
-// Format: a header, then `P` lines (packages, in order), `A` lines (actions)
-// and `O` lines (an output and its package's index). Version 2 adds a
-// package's detail and source to its `P` line; a version 1 record (mcpp
-// 2026.9.29.5) is read with both empty, and its subject then carries what
-// version 1 wrote there.
+// Format: a header, then `P` lines (packages, in order), `A` lines (actions),
+// `S` lines (a step's identity and its source) and `O` lines (an output, its
+// package's index and its step's identity). Version 2 adds the profile's
+// descriptor to the header, a package's detail and source to its `P` line,
+// and the `S` lines; a version 1 record (mcpp 2026.9.29.5) is read with all
+// of them empty, and its subject then carries what version 1 wrote there.
 std::string format_record(const Record& r) {
-    std::string out = std::format("# mcpp steps v2\t{}\n", r.steps);
+    std::string out = std::format("# mcpp steps v2\t{}\t{}\n", r.steps, field(r.descriptor));
     for (auto const& p : r.packages)
         out += std::format("P\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n", field(p.name),
                            p.requested ? 1 : 0, p.cachedUnits, p.steps, field(p.subject),
@@ -303,6 +319,10 @@ std::string format_record(const Record& r) {
     std::ranges::sort(actions);
     for (auto const& [out1, label] : actions)
         out += std::format("A\t{}\t{}\n", field(out1), field(label));
+    std::vector<std::pair<std::size_t, std::string>> sources(r.sources.begin(), r.sources.end());
+    std::ranges::sort(sources);
+    for (auto const& [id, source] : sources)
+        out += std::format("S\t{}\t{}\n", id, field(source));
     std::vector<std::pair<std::string, std::size_t>> owners(r.owner.begin(), r.owner.end());
     std::ranges::sort(owners);
     for (auto const& [path, index] : owners) {
@@ -324,6 +344,7 @@ Record parse_record(std::string_view text) {
         auto f = split_tabs(line);
         if ((f[0] == "# mcpp steps v1" || f[0] == "# mcpp steps v2") && f.size() >= 2) {
             r.steps = to_size(f[1]);
+            if (f.size() >= 3) r.descriptor = std::string(f[2]);
             continue;
         }
         if (f[0] == "P" && f.size() >= 6) {
@@ -333,6 +354,8 @@ Record parse_record(std::string_view text) {
                                   f.size() >= 8 ? std::string(f[7]) : std::string{}});
         } else if (f[0] == "A" && f.size() >= 3) {
             r.actions.emplace(std::string(f[1]), std::string(f[2]));
+        } else if (f[0] == "S" && f.size() >= 3) {
+            r.sources.emplace(to_size(f[1]), std::string(f[2]));
         } else if (f[0] == "O" && f.size() >= 4) {
             const auto index = to_size(f[1]);
             if (index < r.packages.size()) {
@@ -356,16 +379,30 @@ std::optional<Record> read_record(const std::filesystem::path& buildDir) {
     return parse_record(text);
 }
 
+std::string read_descriptor(const std::filesystem::path& buildDir) {
+    std::ifstream f(buildDir / kRecordFile, std::ios::binary);
+    std::string header;
+    if (!f || !std::getline(f, header)) return {};
+    return parse_record(header).descriptor;
+}
+
 // ─── Attribution ─────────────────────────────────────────────────────────
 
 void Attribution::owner(std::string_view package) { owner_ = std::string(package); }
 
 namespace {
 
-// The outputs and the rule of a `build` line: tokens up to the first colon
-// ninja does not read as escaped, `|` dropped, `$ ` `$:` `$$` unescaped.
-std::optional<std::pair<std::vector<std::string>, std::string>>
-parse_build_line(std::string_view line) {
+struct BuildLine {
+    std::vector<std::string> outputs;   // normalised
+    std::string              rule;
+    std::string              input;     // the first explicit input, unescaped
+};
+
+// The outputs, the rule and the first explicit input of a `build` line:
+// outputs are the tokens up to the first colon ninja does not read as
+// escaped, with `|` dropped; the input is the token after the rule, unless
+// the explicit inputs are empty. `$ ` `$:` `$$` are unescaped.
+std::optional<BuildLine> parse_build_line(std::string_view line) {
     if (!line.starts_with("build ")) return std::nullopt;
     line.remove_prefix(6);
     std::vector<std::string> outputs;
@@ -391,8 +428,24 @@ parse_build_line(std::string_view line) {
     if (!done) return std::nullopt;
     std::string_view rest = line.substr(i + 1);
     while (!rest.empty() && rest.front() == ' ') rest.remove_prefix(1);
-    auto rule = rest.substr(0, rest.find_first_of(" \n"));
-    return std::pair{std::move(outputs), std::string(rule)};
+    const auto ruleEnd = std::min(rest.find_first_of(" \n"), rest.size());
+    BuildLine b{std::move(outputs), std::string(rest.substr(0, ruleEnd)), {}};
+    rest.remove_prefix(ruleEnd);
+    while (!rest.empty() && rest.front() == ' ') rest.remove_prefix(1);
+    // `|`, `||` and `|@` begin the implicit and order-only inputs; `$` alone
+    // continues the line, where no explicit input is on this one.
+    if (rest.empty() || rest.front() == '|' || rest.front() == '\n' || rest == "$") return b;
+    for (std::size_t k = 0; k < rest.size(); ++k) {
+        const char c = rest[k];
+        if (c == '$' && k + 1 < rest.size()
+            && (rest[k + 1] == ' ' || rest[k + 1] == ':' || rest[k + 1] == '$')) {
+            b.input += rest[++k];
+            continue;
+        }
+        if (c == ' ' || c == '\n') break;
+        b.input += c;
+    }
+    return b;
 }
 
 } // namespace
@@ -403,8 +456,9 @@ void Attribution::statement(std::string_view text) {
         auto line = text.substr(0, nl);
         text.remove_prefix(nl == std::string_view::npos ? text.size() : nl + 1);
         auto parsed = parse_build_line(line);
-        if (!parsed || parsed->second == "phony" || parsed->first.empty()) continue;
-        steps_.push_back({std::move(parsed->first), std::move(parsed->second), owner_});
+        if (!parsed || parsed->rule == "phony" || parsed->outputs.empty()) continue;
+        steps_.push_back({std::move(parsed->outputs), std::move(parsed->rule), owner_,
+                          std::move(parsed->input)});
     }
 }
 
@@ -412,7 +466,28 @@ void Attribution::action(std::string_view firstOutput, std::string_view label) {
     actions_.emplace_back(normalise(firstOutput), std::string(label));
 }
 
-Record Attribution::record(const std::vector<PackageInfo>& declared) const {
+namespace {
+
+// `input` relative to the innermost of `roots` that holds it; empty when it is
+// not an absolute path or no root holds it.
+std::string source_in(std::string_view input, const std::vector<std::filesystem::path>& roots) {
+    const std::filesystem::path in = std::filesystem::path(input).lexically_normal();
+    if (input.empty() || !in.is_absolute()) return {};
+    std::filesystem::path best;
+    for (auto const& root : roots) {
+        auto rel = in.lexically_relative(root.lexically_normal());
+        if (rel.empty() || *rel.begin() == "..") continue;
+        if (best.empty() || std::distance(rel.begin(), rel.end())
+                                < std::distance(best.begin(), best.end()))
+            best = std::move(rel);
+    }
+    return best.generic_string();
+}
+
+} // namespace
+
+Record Attribution::record(const std::vector<PackageInfo>& declared,
+                           const std::vector<std::filesystem::path>& roots) const {
     Record r;
     std::unordered_map<std::string, std::size_t> index;
     for (auto const& d : declared) {
@@ -435,6 +510,7 @@ Record Attribution::record(const std::vector<PackageInfo>& declared) const {
             r.owner.emplace(o, it->second);
             r.step.emplace(o, id);
         }
+        if (auto src = source_in(s.input, roots); !src.empty()) r.sources.emplace(id, std::move(src));
     }
     for (auto const& [out1, label] : actions_) r.actions.emplace(out1, label);
     return r;
@@ -821,21 +897,28 @@ void read_log(Report& r, Build::Impl& b, std::vector<std::string>& out) {
     *b.logOffset += consumed;
     for (auto const& st : steps) {
         const long long start = b.passStart + st.start, end = b.passStart + st.end;
-        std::optional<std::size_t> owner;
+        std::optional<std::size_t> owner, stepId;
         bool seen = false;
         for (auto const& o : st.outputs) {
             if (auto it = b.record->owner.find(o); it != b.record->owner.end()) {
                 owner = it->second;
-                if (auto sid = b.record->step.find(o); sid != b.record->step.end())
+                if (auto sid = b.record->step.find(o); sid != b.record->step.end()) {
+                    stepId = sid->second;
                     seen = !b.counted.insert(sid->second).second;
+                }
                 break;
             }
         }
         // The rest of a step whose first entries an earlier read counted.
         if (seen) continue;
+        // An action by its label, a compile by its source file, any other
+        // step by its first output.
         std::string label = st.outputs.front();
         if (auto it = b.record->actions.find(st.outputs.front()); it != b.record->actions.end())
             label = it->second;
+        else if (stepId)
+            if (auto src = b.record->sources.find(*stepId); src != b.record->sources.end())
+                label = src->second;
         if (owner) {
             auto& s = b.packages[*owner];
             ++s.finished;
@@ -1226,8 +1309,9 @@ void finished(std::string_view profile, std::string_view descriptor) {
             return;
         }
         // The breakdown and the longest step explain a wait; a command shorter
-        // than ten seconds has none to explain (design §4.5).
-        if (total >= 10'000) {
+        // than a minute has none worth a longer line (build output design
+        // revision 3, §7.3).
+        if (total >= 60'000) {
             const long long build = r.buildStart ? total - *r.buildStart : 0;
             const long long programs = r.programTime.count();
             const long long plan = std::max<long long>(0, total - build - programs);

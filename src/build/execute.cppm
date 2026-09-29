@@ -30,7 +30,7 @@ import mcpp.freestanding.linkline;
 import mcpp.build.graph_shape;    // #407: which mode wrote this build.ninja
 import mcpp.build.backend;
 import mcpp.build.ninja;
-import mcpp.build.flags;       // realises_optimization — one answer for the level (#694)
+import mcpp.build.flags;       // profile_descriptor — one answer for the level (#694)
 import mcpp.build.runtime_validation;
 import mcpp.bmi_cache;
 import mcpp.bmi_cache.maintenance;  // dir_size + human_bytes, for `clean --stale`
@@ -1066,16 +1066,12 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     if (!mcpp::diag::flush(ctx.strict)) return 1;
 
     // The descriptor reads the level the compile realised, from the one
-    // function `compute_flags` spells it from (#694). It once read the declared
-    // level while the compile used another, and said `[optimized]` over `-Og`.
-    {
-        const auto& bc = ctx.manifest.buildConfig;
-        std::string descriptor =
-            mcpp::build::realises_optimization(bc) ? "optimized" : "unoptimized";
-        if (bc.debug) descriptor += " + debuginfo";
-        if (bc.lto)   descriptor += " + lto";
-        mcpp::build::progress::finished(ctx.profile, descriptor);
-    }
+    // function `compute_flags` spells it from (#694), and from the plan's
+    // manifest, which `compute_flags` reads. It once read the declared level
+    // while the compile used another, and said `[optimized]` over `-Og`. The
+    // step record's header carries the same value for the fast path.
+    mcpp::build::progress::finished(
+        ctx.profile, mcpp::build::profile_descriptor(ctx.plan.manifest.buildConfig));
     report_freestanding_size(ctx);
     return 0;
 }
@@ -1689,7 +1685,10 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
             *validatedBefore))
         return fast_path_declined("build", "ninja relinked an artifact, whose closure the full path validates"); // relinked: full path reconstructs + validates closure
 
-    mcpp::build::progress::finished(want->profile, "");
+    // The descriptor the plan recorded (revision 3, §7.3); empty for a record
+    // written before it was carried.
+    mcpp::build::progress::finished(want->profile,
+                                    mcpp::build::progress::read_descriptor(outputDir));
     return 0;
 }
 
@@ -1799,7 +1798,10 @@ export std::optional<int> try_fast_workspace_build(
         if (!mcpp::build::runtime_validation::artifact_snapshot_unchanged(r.validated))
             return fast_path_declined("workspace", "ninja relinked an artifact, whose closure the full path validates");
     }
-    mcpp::build::progress::finished(profile, "");
+    // The groups share the profile, and so its descriptor.
+    mcpp::build::progress::finished(
+        profile, ready.empty() ? std::string{}
+                               : mcpp::build::progress::read_descriptor(ready.front().outputDir));
     return 0;
 }
 
