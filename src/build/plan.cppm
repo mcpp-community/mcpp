@@ -300,8 +300,14 @@ std::optional<RecoveredInvocation> recover_invocation(
 struct PlanPackage {
     std::string name;
     bool        requested   = false;
+    // As a package line names it (build output design revision 3, §5.10): the
+    // short name for a package inside the project, the full identity for any
+    // other; `detail` is its version and origin; `source` is where it comes
+    // from: project, official, index, git or path.
     std::string subject;
     std::size_t cachedUnits = 0;
+    std::string detail;
+    std::string source;
 };
 
 struct BuildPlan {

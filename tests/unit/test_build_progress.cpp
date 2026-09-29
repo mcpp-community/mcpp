@@ -4,9 +4,10 @@ import std;
 import mcpp.ui;
 import mcpp.build.progress;
 
-// The build's report (.agents/docs/2026-09-29-build-progress-display-design.md):
-// its readers, the step record, the measures of text the renderer uses, and
-// the completion rule of §3.2.
+// The build's report (.agents/docs/2026-09-29-build-progress-display-design.md,
+// revised by .agents/docs/2026-09-30-build-output-refinement-design.md): its
+// readers, the step record, the measures of text the renderer uses, the bytes
+// of one frame, and when a package is named.
 
 using namespace mcpp::build::progress;
 
@@ -56,6 +57,16 @@ TEST(ProgressStatus, ReadsTheCountsAndTheEndTime) {
 
     // A nested ninja's status line, which the outer ninja relays with its
     // escape sequence stripped, is output, not a status line.
+    // `%u`: the steps not yet started (revision 3, §5.8); absent in a line of
+    // the three-field format.
+    EXPECT_FALSE(s->unstarted.has_value());
+    auto u = parse_status("\x1b[0m@@mcpp 700 707 41.2 0@@ LINK bin/xlings");
+    ASSERT_TRUE(u.has_value());
+    EXPECT_EQ(u->finished, 700u);
+    EXPECT_EQ(u->total, 707u);
+    ASSERT_TRUE(u->unstarted.has_value());
+    EXPECT_EQ(*u->unstarted, 0u);
+    EXPECT_EQ(u->text, "LINK bin/xlings");
     EXPECT_FALSE(parse_status("@@mcpp 3 12 0.027@@ OBJ obj/a.o").has_value());
     EXPECT_FALSE(parse_status("[3/12] OBJ obj/a.o").has_value());
     EXPECT_FALSE(parse_status("src/a.cpp:1:2: error: @@mcpp").has_value());
@@ -156,14 +167,31 @@ TEST(ProgressRecord, EveryStatementIsRecordedWithItsOwner) {
     EXPECT_EQ(r.step.at("obj/main.o"), r.step.at("pcm.cache/app.pcm"));
     EXPECT_NE(r.step.at("obj/main.o"), r.step.at("bin/app.bin"));
 
+    r.packages[0].detail = "v0.1.0 (.)";
+    r.packages[0].source = "project";
     auto back = parse_record(format_record(r));
     EXPECT_EQ(back.steps, r.steps);
     ASSERT_EQ(back.packages.size(), 2u);
     EXPECT_EQ(back.packages[0].subject, "app v0.1.0 (.)");
+    EXPECT_EQ(back.packages[0].detail, "v0.1.0 (.)");
+    EXPECT_EQ(back.packages[0].source, "project");
     EXPECT_TRUE(back.packages[0].requested);
     EXPECT_EQ(back.owner, r.owner);
     EXPECT_EQ(back.step, r.step);
     EXPECT_EQ(back.actions, r.actions);
+}
+
+TEST(ProgressRecord, AVersionOneRecordIsRead) {
+    // 2026.9.29.5 wrote version 1: six fields to a package line, the subject
+    // carrying the origin. The fast path of a newer mcpp reads it as it is.
+    auto r = parse_record("# mcpp steps v1\t3\nP\txlings\t1\t0\t2\txlings (.)\n"
+                          "O\t0\t0\tobj/a.o\n");
+    EXPECT_EQ(r.steps, 3u);
+    ASSERT_EQ(r.packages.size(), 1u);
+    EXPECT_EQ(r.packages[0].subject, "xlings (.)");
+    EXPECT_TRUE(r.packages[0].detail.empty());
+    EXPECT_TRUE(r.packages[0].source.empty());
+    EXPECT_EQ(r.owner.at("obj/a.o"), 0u);
 }
 
 TEST(ProgressRecord, PathsAreComparedNormalised) {
@@ -210,100 +238,139 @@ TEST(ProgressText, TheStateStartsAtTheBlocksColumn) {
 
 // ─── The region ──────────────────────────────────────────────────────────
 
-TEST(ProgressRegion, TheStatusLineIsLastAfterABlankRow) {
-    mcpp::ui::Frame f{{"   Compiling gpp.gui (GPPGUI)  61 steps"}, "Building 612/1203 · 14:32"};
-    auto rows = mcpp::ui::region_rows({}, f, 10, true);
-    ASSERT_EQ(rows.size(), 3u);
-    EXPECT_EQ(rows[1], "");
-    EXPECT_EQ(rows[2], "Building 612/1203 · 14:32");
-    // Nothing above it and no live line: no blank row.
-    auto alone = mcpp::ui::region_rows({}, {{}, "Resolving · 0:01"}, 10, false);
-    ASSERT_EQ(alone.size(), 1u);
+TEST(ProgressRegion, TheStatusLineIsTheLastRowWithNoBlankRow) {
+    mcpp::ui::Frame f{{}, "    Building 612/1203 · 14:32"};
+    auto rows = mcpp::ui::region_rows({"bar"}, f, 10);
+    ASSERT_EQ(rows.size(), 2u);
+    EXPECT_EQ(rows[0], "bar");
+    EXPECT_EQ(rows[1], "    Building 612/1203 · 14:32");
 }
 
 TEST(ProgressRegion, LinesBeyondTheRoomAreSummarised) {
     mcpp::ui::Frame f;
     for (int i = 0; i < 14; ++i) f.lines.push_back(std::format("line {}", i));
     f.status = "Building";
-    auto rows = mcpp::ui::region_rows({}, f, 10, true);
-    ASSERT_EQ(rows.size(), 12u);   // 9 lines, the summary, the blank row, the status
+    auto rows = mcpp::ui::region_rows({}, f, 10);
+    ASSERT_EQ(rows.size(), 11u);   // 9 lines, the summary, the status
     EXPECT_NE(rows[9].find("… 5 more"), std::string::npos);
 }
 
-TEST(ProgressRegion, ARedrawReplacesThePreviousRows) {
-    auto bytes = mcpp::ui::redraw_bytes(3, {"a", "", "status"});
-    EXPECT_TRUE(bytes.starts_with("\r\033[2A\033[J"));
-    EXPECT_TRUE(bytes.ends_with("a\n\nstatus"));
-    EXPECT_EQ(mcpp::ui::redraw_bytes(0, {"x"}), "x");
+TEST(ProgressRegion, AFrameOverwritesTheOldRowsInsteadOfErasingThem) {
+    // From the first row of a region of two rows: the line over the first,
+    // the new status row over the second, the tail of each cleared, and only
+    // then what is left below. No row is erased before it is written
+    // (revision 3, §9.2).
+    EXPECT_EQ(mcpp::ui::frame_bytes(2, "   Compiling a\n", {"s"}),
+              "\r\033[1A   Compiling a\033[K\n\033[?7ls\033[K\033[?7h\033[J");
+    // A region drawn for the first time starts where the cursor is.
+    EXPECT_EQ(mcpp::ui::frame_bytes(0, {}, {"s"}), "\033[?7ls\033[K\033[?7h");
+    // Erasing leaves the cursor at the region's first row.
+    EXPECT_EQ(mcpp::ui::frame_bytes(1, {}, {}), "\r\033[J");
+    auto bytes = mcpp::ui::redraw_bytes(3, {"a", "status"});
+    EXPECT_TRUE(bytes.starts_with("\r\033[2A\033[?7la")) << bytes;
+    EXPECT_EQ(count(bytes, "\033[J"), 1u);
+    EXPECT_TRUE(bytes.ends_with("\033[J"));
 }
 
-// ─── The completion rule (§3.2) ──────────────────────────────────────────
+TEST(ProgressText, AmbiguousCharactersCountTwoWhereTheTerminalDrawsThemWide) {
+    mcpp::ui::set_ambiguous_wide(true);
+    EXPECT_EQ(mcpp::ui::display_width("·"), 2u);
+    EXPECT_EQ(mcpp::ui::display_width("━─"), 4u);
+    EXPECT_EQ(mcpp::ui::display_width("⣿⣀"), 2u);   // braille is narrow everywhere
+    mcpp::ui::set_ambiguous_wide(false);
+    EXPECT_EQ(mcpp::ui::display_width("·"), 1u);
+}
 
-TEST(ProgressModel, APackageIsFinalWhenEveryStepOfItRan) {
+TEST(ProgressText, ThePhaseIsAlignedWithTheVerbs) {
+    mcpp::ui::disable_color();
+    EXPECT_EQ(mcpp::ui::status_line("Building", "612/707 · 0:35"), "    Building 612/707 · 0:35");
+    EXPECT_EQ(mcpp::ui::status_line("Running", "· 0:04"), "     Running · 0:04");
+}
+
+// ─── When a package is named (revision 3, §5.3) ──────────────────────────
+
+TEST(ProgressModel, APackageIsNamedOnceWhenItsFirstStepFinishes) {
     mcpp::ui::disable_color();
     Tmp tmp;
     Record rec;
-    rec.packages = {{"app", true, "app v0.1.0 (.)", 0, 2}, {"dep", false, "dep v1.0.0", 0, 1},
-                    {"std", false, "std", 0, 2}};
+    rec.packages = {{"app", true, "app", 0, 2, "v0.1.0 (.)", "project"},
+                    {"compat.dep", false, "compat.dep", 0, 1, "v1.0.0", "official"},
+                    {"std", false, "std", 0, 2, {}, {}}};
     rec.owner = {{"obj/main.o", 0}, {"bin/app", 0}, {"obj/dep.o", 1},
-                 {"pcm.cache/std.pcm", 2}, {"pcm.cache/std.compat.pcm", 2}};
-    rec.step  = {{"obj/main.o", 0}, {"bin/app", 1}, {"obj/dep.o", 2},
-                 {"pcm.cache/std.pcm", 3}, {"pcm.cache/std.compat.pcm", 4}};
-    rec.steps = 5;
+                 {"pcm.cache/std.pcm", 2}};
+    rec.step  = {{"obj/main.o", 0}, {"bin/app", 1}, {"obj/dep.o", 2}, {"pcm.cache/std.pcm", 3}};
+    rec.steps = 4;
     Build b(tmp.path);
     b.set_record(rec);
     testing::internal::CaptureStdout();
     b.pass_begin();
     const auto log = tmp.path / ".ninja_log";
     append(log, "# ninja log v6\n1\t10\t0\tobj/dep.o\taa\n");
-    b.status({1, 4, 10, {}});
-    append(log, "10\t30\t0\tobj/main.o\tbb\n");
-    b.status({2, 4, 30, {}});
-    auto mid = testing::internal::GetCapturedStdout();
-    // `dep` ran its one step, but `std` has a step that never runs
-    // (`std.compat`): the folded line waits, and states nothing early.
-    EXPECT_EQ(mid.find("dependenc"), std::string::npos) << mid;
-    EXPECT_EQ(mid.find("app v0.1.0"), std::string::npos) << mid;
-
-    testing::internal::CaptureStdout();
+    b.status({1, 4, 10, {}, {}});
+    append(log, "1\t12\t0\tpcm.cache/std.pcm\tdd\n10\t30\t0\tobj/main.o\tbb\n");
+    b.status({3, 4, 30, {}, {}});
     append(log, "30\t50\t0\tbin/app\tcc\n");
-    b.status({3, 4, 50, {}});
-    auto done = testing::internal::GetCapturedStdout();
-    EXPECT_NE(done.find("Compiling app v0.1.0 (.)"), std::string::npos) << done;
-    EXPECT_NE(done.find("done 0.04s"), std::string::npos) << done;   // 10 ms to 50 ms
-
-    testing::internal::CaptureStdout();
+    b.status({4, 4, 50, 0, {}});
     b.pass_end();
     b.finish(true);
-    auto end = testing::internal::GetCapturedStdout();
-    EXPECT_NE(end.find("Compiling 1 dependency"), std::string::npos) << end;
-    EXPECT_EQ(count(end, "app v0.1.0"), 0u) << end;   // written once, earlier
+    auto out = testing::internal::GetCapturedStdout();
+    // The dependency first, as its first step finished first; each once; the
+    // standard library module is the toolchain's and is not named.
+    const auto dep = out.find("Compiling compat.dep v1.0.0");
+    const auto app = out.find("Compiling app v0.1.0 (.)");
+    ASSERT_NE(dep, std::string::npos) << out;
+    ASSERT_NE(app, std::string::npos) << out;
+    EXPECT_LT(dep, app) << out;
+    EXPECT_EQ(count(out, "app v0.1.0"), 1u) << out;
+    EXPECT_EQ(out.find("std"), std::string::npos) << out;
+    // No outcome, no fold: the line states that the package compiles.
+    EXPECT_EQ(out.find("done"), std::string::npos) << out;
+    EXPECT_EQ(out.find("dependenc"), std::string::npos) << out;
 }
 
-TEST(ProgressModel, AfterAFailureAnOpenPackageStatesOnlyItsSteps) {
+TEST(ProgressModel, APackageTheCacheServesIsNamedCachedWithItsUnits) {
     mcpp::ui::disable_color();
     Tmp tmp;
     Record rec;
-    rec.packages = {{"app", true, "app v0.1.0 (.)", 0, 3}, {"lib", true, "lib (lib)", 0, 2}};
-    rec.owner = {{"obj/a.o", 0}, {"obj/b.o", 0}, {"bin/app", 0}, {"obj/l.o", 1}, {"bin/l.a", 1}};
-    rec.step  = {{"obj/a.o", 0}, {"obj/b.o", 1}, {"bin/app", 2}, {"obj/l.o", 3}, {"bin/l.a", 4}};
+    rec.packages = {{"compat.ftxui", false, "compat.ftxui", 73, 2, "v6.1.9", "official"}};
+    rec.owner = {{"obj/a.o", 0}, {"obj/b.o", 0}};
+    rec.step  = {{"obj/a.o", 0}, {"obj/b.o", 1}};
     Build b(tmp.path);
     b.set_record(rec);
     testing::internal::CaptureStdout();
     b.pass_begin();
-    append(tmp.path / ".ninja_log", "# ninja log v6\n1\t10\t0\tobj/a.o\taa\n");
-    b.status({1, 5, 10, {}});
-    const bool first = b.failed("obj/l.o ");
-    b.status({2, 5, 12, {}});
+    append(tmp.path / ".ninja_log", "# ninja log v6\n1\t2\t0\tobj/a.o\taa\n1\t2\t0\tobj/b.o\tbb\n");
+    b.status({2, 2, 2, 0, {}});
+    b.pass_end();
+    b.finish(true);
+    auto out = testing::internal::GetCapturedStdout();
+    EXPECT_NE(out.find("Cached compat.ftxui v6.1.9 (73 units)"), std::string::npos) << out;
+    EXPECT_EQ(count(out, "compat.ftxui"), 1u) << out;
+}
+
+TEST(ProgressModel, AFailureNamesItsPackageOnce) {
+    mcpp::ui::disable_color();
+    Tmp tmp;
+    Record rec;
+    rec.packages = {{"app", true, "app", 0, 1, "v0.1.0 (.)", "project"},
+                    {"lib", true, "lib", 0, 1, "v0.1.0 (lib)", "project"}};
+    rec.owner = {{"obj/a.o", 0}, {"obj/l.o", 1}};
+    rec.step  = {{"obj/a.o", 0}, {"obj/l.o", 1}};
+    Build b(tmp.path);
+    b.set_record(rec);
+    testing::internal::CaptureStdout();
+    b.pass_begin();
+    // A failed step is not in ninja's log: the package is named from the
+    // FAILED line.
+    const auto first = b.failed("obj/l.o ");
+    const auto second = b.failed("obj/a.o ");
     b.pass_end();
     b.finish(false);
     auto out = testing::internal::GetCapturedStdout();
-    EXPECT_TRUE(first);
-    EXPECT_NE(out.find("lib (lib)"), std::string::npos) << out;
-    EXPECT_NE(out.find("failed"), std::string::npos) << out;
-    EXPECT_NE(out.find("app v0.1.0 (.)"), std::string::npos) << out;
-    EXPECT_NE(out.find("1 step"), std::string::npos) << out;
-    EXPECT_EQ(out.find("done"), std::string::npos) << out;
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(*first, "lib v0.1.0 (lib)");
+    EXPECT_FALSE(second.has_value());
+    EXPECT_EQ(count(out, "Compiling lib v0.1.0 (lib)"), 1u) << out;
 }
 
 TEST(ProgressModel, AStepWhoseEntriesAreReadInTwoPiecesCountsOnce) {
@@ -312,7 +379,7 @@ TEST(ProgressModel, AStepWhoseEntriesAreReadInTwoPiecesCountsOnce) {
     mcpp::ui::disable_color();
     Tmp tmp;
     Record rec;
-    rec.packages = {{"lib", true, "lib (lib)", 0, 2}};
+    rec.packages = {{"lib", true, "lib", 0, 2, "v0.1.0 (lib)", "project"}};
     rec.owner = {{"obj/lib.m.o", 0}, {"pcm.cache/lib.pcm", 0}, {"bin/lib.a", 0}};
     rec.step  = {{"obj/lib.m.o", 0}, {"pcm.cache/lib.pcm", 0}, {"bin/lib.a", 1}};
     Build b(tmp.path);
@@ -321,14 +388,11 @@ TEST(ProgressModel, AStepWhoseEntriesAreReadInTwoPiecesCountsOnce) {
     b.pass_begin();
     const auto log = tmp.path / ".ninja_log";
     append(log, "# ninja log v6\n1\t10\t0\tobj/lib.m.o\taa\n");
-    b.status({1, 2, 10, {}});
+    b.status({1, 2, 10, {}, {}});
     append(log, "1\t10\t0\tpcm.cache/lib.pcm\taa\n");
-    b.status({1, 2, 10, {}});
-    auto out = testing::internal::GetCapturedStdout();
-    // Two steps, one of them run: the package is not complete.
-    EXPECT_EQ(out.find("done"), std::string::npos) << out;
-    testing::internal::CaptureStdout();
+    b.status({1, 2, 10, {}, {}});
     b.pass_end();
     b.finish(true);
-    (void)testing::internal::GetCapturedStdout();
+    auto out = testing::internal::GetCapturedStdout();
+    EXPECT_EQ(count(out, "Compiling lib"), 1u) << out;
 }

@@ -2295,10 +2295,30 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
 // 2026-09-29, §4.2): as the requester wrote its key, with where it comes from.
 // A package is named after the edge from the root (or the virtual root) when
 // there is one, and after its first requester otherwise.
+// HOW A PACKAGE LINE NAMES ITS PACKAGE (build output design revision 3,
+// §5.8 and §5.10). A package inside the project -- the root, a member, a path
+// dependency whose directory lies under the project root -- is named by its
+// short name and located by its directory, which is always shown. Any other
+// package keeps its full identity, since nothing else on its line says where
+// it comes from: an index package (official when the default index serves its
+// namespace, otherwise the index is named), a git dependency with its
+// reference, a path outside the project with its relative directory. Before
+// this, a path dependency was named by the consumer's key and `(path)`, and a
+// workspace member by its directory without its version.
 static void step13_report_packages(PrepareState& state, BuildContext& ctx) {
     std::vector<mcpp::build::PlanPackage> out;
     out.reserve(state.packages.size());
     const auto base = ctx.projectRoot.lexically_normal();
+    auto relative = [&](const std::filesystem::path& root) {
+        auto rel = root.lexically_normal().lexically_relative(base).generic_string();
+        return rel.empty() ? std::string(".") : rel;
+    };
+    auto versioned = [](const mcpp::manifest::Manifest& m, std::string_view origin) {
+        std::string d = m.package.version.empty() ? std::string{}
+                                                  : std::format("v{}", m.package.version);
+        if (!origin.empty()) d += std::format("{}({})", d.empty() ? "" : " ", origin);
+        return d;
+    };
     for (std::size_t i = 0; i < state.packages.size(); ++i) {
         const auto& pkg = state.packages[i];
         const auto& m = pkg.manifest;
@@ -2307,7 +2327,9 @@ static void step13_report_packages(PrepareState& state, BuildContext& ctx) {
         if (i == 0) {
             if (m.package.virtualRoot) continue;
             p.requested = true;
-            p.subject = std::format("{} v{} (.)", m.package.name, m.package.version);
+            p.subject = m.package.name;
+            p.detail  = versioned(m, ".");
+            p.source  = "project";
             out.push_back(std::move(p));
             continue;
         }
@@ -2324,20 +2346,35 @@ static void step13_report_packages(PrepareState& state, BuildContext& ctx) {
             const auto& deps = state.packages[edge->consumerPackageIndex].manifest.dependencies;
             if (auto it = deps.find(key); it != deps.end()) spec = &it->second;
         }
-        std::string origin;
-        if (pkg.selectedMember || (spec && spec->workspaceMember)) {
-            auto rel = pkg.root.lexically_normal().lexically_relative(base).generic_string();
-            origin = std::format("({})", rel.empty() ? std::string(".") : rel);
+        const auto dir = relative(pkg.root);
+        const bool insideProject = dir == "." || !dir.starts_with("..");
+        if (pkg.selectedMember || (spec && spec->workspaceMember)
+            || (spec && spec->isPath() && insideProject)) {
+            p.subject = m.package.name;
+            p.detail  = versioned(m, dir);
+            p.source  = "project";
         } else if (spec && spec->isPath()) {
-            origin = "(path)";
+            p.subject = p.name;
+            p.detail  = versioned(m, dir);
+            p.source  = "path";
         } else if (spec && spec->isGit()) {
             std::string ref = spec->gitRev;
             if (spec->gitRefKind == "rev" && ref.size() > 12) ref.resize(12);
-            origin = std::format("(git {} {})", spec->gitRefKind.empty() ? "rev" : spec->gitRefKind, ref);
-        } else if (!m.package.version.empty()) {
-            origin = "v" + m.package.version;
+            p.subject = p.name;
+            p.detail  = versioned(m, std::format("git {} {}",
+                                    spec->gitRefKind.empty() ? "rev" : spec->gitRefKind, ref));
+            p.source  = "git";
+        } else {
+            // An index package: official when the default index serves its
+            // namespace, otherwise the index that does is named.
+            const auto ns = m.package.namespace_.empty()
+                ? std::string(mcpp::pm::kDefaultNamespace) : m.package.namespace_;
+            const auto* index = state.findIndexForNs ? state.findIndexForNs(ns) : nullptr;
+            const bool official = index == nullptr || index->is_builtin();
+            p.subject = p.name.empty() ? key : p.name;
+            p.detail  = versioned(m, official ? std::string{} : std::format("index {}", index->name));
+            p.source  = official ? "official" : "index";
         }
-        p.subject = origin.empty() ? key : std::format("{} {}", key, origin);
         for (auto const& c : ctx.cachedDeps)
             if (c.name == p.name) p.cachedUnits = c.units;
         out.push_back(std::move(p));

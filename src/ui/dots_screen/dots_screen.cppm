@@ -1,0 +1,45 @@
+// mcpp.ui.dots_screen — the screen of the status row and the animations it plays
+// (.agents/docs/2026-09-30-build-output-refinement-design.md, §5.9 to §5.13).
+//
+// The counts beside the screen state the progress, so the screen plays one of
+// four animations, chosen per command: the chomper, the snake, the stack and
+// the ions. Each lives in a partition of its own; this unit knows them by
+// name. The progress model feeds the chosen animation and asks it for its
+// cells; nothing here touches a terminal or a clock.
+
+export module mcpp.ui.dots_screen;
+
+export import :core;
+export import :chomp;
+export import :snake;
+export import :stack;
+export import :ions;
+
+import std;
+
+export namespace mcpp::ui::dots_screen {
+
+// The animations built in: chomp, snake, stack, ions.
+std::span<const std::string_view> names();
+// The animation called `name`, seeded; nullptr for a name not in `names()`.
+std::unique_ptr<Animation> make(std::string_view name, std::uint64_t seed);
+
+} // namespace mcpp::ui::dots_screen
+
+namespace mcpp::ui::dots_screen {
+
+namespace {
+constexpr std::array<std::string_view, 4> kNames = {"chomp", "snake", "stack", "ions"};
+} // namespace
+
+std::span<const std::string_view> names() { return kNames; }
+
+std::unique_ptr<Animation> make(std::string_view name, std::uint64_t seed) {
+    if (name == "chomp") return make_chomp(seed);
+    if (name == "snake") return make_snake(seed);
+    if (name == "stack") return make_stack(seed);
+    if (name == "ions")  return make_ions(seed);
+    return nullptr;
+}
+
+} // namespace mcpp::ui::dots_screen

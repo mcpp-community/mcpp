@@ -3,14 +3,17 @@
 // All user-visible status lines from CLI / fetcher / build go through
 // here. TTY auto-detect; MCPP_NO_COLOR / --no-color disables colors.
 //
-// ONE RENDERER, TWO MEDIA (build progress design 2026-09-29, §5). Every line
-// goes through `emit`. On a terminal that can move the cursor, the lines that
-// are still changing -- a download bar, a build program running, a package
-// still compiling, and the status line -- form a region below the log, and a
-// line written while the region is on screen is written above it: the region
-// is erased, the line is written, and the region is drawn again. Anywhere
-// else only final lines are written, and the status line is repeated when the
-// log has been silent for a minute.
+// ONE RENDERER, TWO MEDIA (build progress design 2026-09-29, §5, and its
+// revision 3, 2026-09-30, §9). Every line goes through `emit`. On a terminal
+// that can move the cursor, the rows that are still changing -- a download
+// bar and the status row -- form a region below the log, and a line written
+// while the region is on screen is written above it. The lines and the
+// region's new rows leave in ONE write that overwrites the old rows in place:
+// no row is erased before it is written, so no screen between two writes
+// shows the region half-drawn (measured with 2026.9.29.5: 184 of 202 frames of
+// one build left in two writes, and every line above the region in three).
+// Anywhere else only final lines are written, and the status line is repeated
+// when the log has been silent for a minute.
 
 module;
 #include <cstdio>      // fileno, stdout
@@ -126,8 +129,12 @@ void set_line_buffered();
 
 // The columns `text` occupies on a terminal: colour sequences count zero, an
 // East Asian wide or fullwidth character two, a combining mark zero, and every
-// other character one.
+// other character one. Where the terminal is likely to draw East Asian
+// ambiguous characters wide (`terminal::ambiguous_wide`), those count two, so
+// that a row fitted by this measure never overflows and wraps.
 std::size_t display_width(std::string_view text);
+// Overrides the ambiguous-width decision (tests).
+void set_ambiguous_wide(bool wide);
 // `text` cut to at most `width` columns, its last column `…` when it was cut.
 // Colour sequences are kept, and a reset follows a cut inside colour.
 std::string fit(std::string_view text, std::size_t width);
@@ -146,8 +153,15 @@ enum class Tone { Plain, Good, Muted, Bad };
 std::string step_line(std::string_view verb, std::string_view subject,
                       std::size_t column, std::string_view state,
                       Tone tone = Tone::Plain, bool infoVerb = false);
-// The status line (design §4.4): its first word in the verb colour.
+// The status line (design §4.4): its phase in the verb colour, right-aligned
+// in the 12 columns of the verbs above it (revision 3, §7.2).
 std::string status_line(std::string_view phase, std::string_view rest);
+
+// A hue for part of a line (revision 3, §5.10): the name of a package from the
+// official index is cyan, from another index magenta, from a git repository
+// blue; a version and an origin are dim. Plain text when colour is off.
+enum class Hue { Plain, Cyan, Magenta, Blue, Dim };
+std::string hue(std::string_view text, Hue h);
 
 // --- the command's clock ---
 
@@ -198,17 +212,23 @@ public:
 // One final line to stdout, through the region; suppressed by --quiet.
 void line(std::string_view text);
 
-// The bytes that replace a region of `previousRows` rows with `rows` (each
-// already fitted to the width), and leave the cursor at the end of the last
-// row. Pure: the unit tests read it.
+// The bytes of one frame: from the first row of a region of `previousRows`
+// rows, `text` (whole lines) is written over it, then `rows` (each already
+// fitted to the width), and what remains of the old region is cleared. Every
+// row is written over the old one and its tail cleared (`ESC[K`) rather than
+// erased first; each row of the region is drawn with autowrap off, so a row
+// that a terminal draws wider than it was measured is cut at the margin
+// instead of wrapping. The cursor is left at the end of the last row. Pure:
+// the unit tests read it.
+std::string frame_bytes(std::size_t previousRows, std::string_view text,
+                        const std::vector<std::string>& rows);
+// `frame_bytes` without lines above the region.
 std::string redraw_bytes(std::size_t previousRows, const std::vector<std::string>& rows);
 // The rows of a frame: the bars, then at most `maxLines` of the frame's lines
-// (the rest summarised as `… N more`), then a blank row and the status line
-// when there is a status. The blank row is left out when nothing precedes the
-// status line, on the screen or above it (`anythingAbove`).
+// (the rest summarised as `… N more`), then the status line when there is a
+// status.
 std::vector<std::string> region_rows(const std::vector<std::string>& bars,
-                                     const Frame& frame, std::size_t maxLines,
-                                     bool anythingAbove);
+                                     const Frame& frame, std::size_t maxLines);
 
 // --- progress bar (single-line, \r-rewritten) ---
 //
@@ -345,6 +365,8 @@ bool g_quiet  = false;
 bool g_inited = false;
 // -1: follow stdout; 0 / 1: set by set_live_progress.
 int  g_liveOverride = -1;
+// East Asian ambiguous characters count two columns (terminal::ambiguous_wide).
+bool g_ambiguousWide = false;
 
 constexpr std::string_view kReset      = "\033[0m";
 constexpr std::string_view kBold       = "\033[1m";
@@ -407,6 +429,7 @@ struct Region {
     // The bars of the ProgressBars alive, in creation order.
     std::vector<std::pair<const void*, std::string>> bars;
     std::size_t drawnRows = 0;  // rows of the region on the screen now
+    std::vector<std::string> lastRows;   // the rows drawn last
     bool anythingAbove = false; // this command wrote a line to stdout
     std::chrono::steady_clock::time_point lastDraw{};
     std::chrono::steady_clock::time_point lastLine{};
@@ -457,43 +480,81 @@ std::size_t max_live_lines() {
     return std::min<std::size_t>(10, rows > 3 ? rows - 3 : 1);
 }
 
-// Draws the region as it is now; line_mutex() held.
-void redraw_locked() {
+// The region is first drawn half a second into the command (revision 3,
+// §7.2): a command that ends sooner shows no status row, and the lines of its
+// first half-second do not move one. Measured with 2026.9.29.5: the status
+// line was on the screen 0.6 ms after the command started, and the first
+// warning, 0.37 s later, pushed it down.
+constexpr auto kFirstDraw = std::chrono::milliseconds(500);
+
+// Whether the region has something to draw on a terminal now; line_mutex()
+// held.
+bool may_draw_locked() {
     auto& r = region();
-    if (r.suspended > 0 || g_quiet) return;
-    const bool live = bars_live();
-    if (!live) return;
+    if (r.suspended > 0 || g_quiet || !bars_live()) return false;
+    if (r.drawnRows > 0) return true;
+    if (!(r.open && r.live) && r.bars.empty()) return false;
+    return std::chrono::steady_clock::now() - start_point() >= kFirstDraw;
+}
+
+// The region's rows as they are now, fitted to the width; line_mutex() held.
+std::vector<std::string> current_rows_locked() {
+    auto& r = region();
     Frame frame;
     if (r.open && r.source) frame = r.source();
     std::vector<std::string> bars;
     for (auto const& [who, text] : r.bars) bars.push_back(text);
-    auto rows = region_rows(bars, frame, max_live_lines(), r.anythingAbove);
+    auto rows = region_rows(bars, frame, max_live_lines());
     const auto width = term::cols() > 1 ? term::cols() - 1 : 1;
     for (auto& row : rows) row = fit(row, width);
-    term::write(term::Stream::Out, redraw_bytes(r.drawnRows, rows));
-    std::fflush(stdout);
+    return rows;
+}
+
+void drawn_locked(std::vector<std::string> rows) {
+    auto& r = region();
     r.drawnRows = rows.size();
+    r.lastRows  = std::move(rows);
     r.lastDraw  = std::chrono::steady_clock::now();
+}
+
+// Draws the region as it is now, in one write; line_mutex() held. A region
+// that has not changed is not written again.
+void redraw_locked() {
+    auto& r = region();
+    if (!may_draw_locked()) return;
+    auto rows = current_rows_locked();
+    if (rows.size() == r.drawnRows && rows == r.lastRows) return;
+    term::write_frame(term::Stream::Out, frame_bytes(r.drawnRows, {}, rows));
+    drawn_locked(std::move(rows));
 }
 
 void erase_locked() {
     auto& r = region();
     if (r.drawnRows == 0) return;
-    term::write(term::Stream::Out, erase_bytes(r.drawnRows));
-    std::fflush(stdout);
+    term::write_frame(term::Stream::Out, erase_bytes(r.drawnRows));
     r.drawnRows = 0;
+    r.lastRows.clear();
 }
 
-// Writes `text` (whole lines) to the stream above the region; line_mutex()
-// held.
+// Writes `text` (whole lines) above the region; line_mutex() held. With the
+// region on a terminal, the lines and the region's new rows leave in one
+// write. A line for standard error travels in that write when standard error
+// is the same terminal; otherwise it goes to standard error alone, which is
+// not the screen the region is on.
 void emit_locked(term::Stream s, std::string_view text) {
     auto& r = region();
-    erase_locked();
-    term::write(s, text);
-    std::fflush(s == term::Stream::Out ? stdout : stderr);
     if (s == term::Stream::Out && !text.empty()) r.anythingAbove = true;
     r.lastLine = std::chrono::steady_clock::now();
-    redraw_locked();
+    const bool framed = may_draw_locked()
+        && (s == term::Stream::Out || term::same_terminal());
+    if (!framed) {
+        term::write(s, text);
+        std::fflush(s == term::Stream::Out ? stdout : stderr);
+        return;
+    }
+    auto rows = current_rows_locked();
+    term::write_frame(term::Stream::Out, frame_bytes(r.drawnRows, text, rows));
+    drawn_locked(std::move(rows));
 }
 
 void emit(term::Stream s, std::string_view text);
@@ -555,9 +616,12 @@ void emit(term::Stream s, std::string_view text) {
 void init() {
     if (g_inited) return;
     g_color  = detect_color();
+    g_ambiguousWide = term::ambiguous_wide();
     g_inited = true;
     mcpp::log::set_terminal_sink(&verbose_record);
 }
+
+void set_ambiguous_wide(bool wide) { g_ambiguousWide = wide; }
 
 void disable_color() { g_color = false; }
 bool is_color_enabled() { return g_color; }
@@ -770,8 +834,17 @@ std::pair<char32_t, std::size_t> decode(std::string_view s, std::size_t i) {
     return {b, 1};
 }
 
+// East Asian ambiguous characters this program writes: the middle dot, the
+// punctuation block (`…`, dashes), arrows, box drawing, blocks and geometric
+// shapes. Braille, which the status row's display uses, is narrow everywhere.
+bool ambiguous(char32_t c) {
+    return c == 0x00B7 || (c >= 0x2010 && c <= 0x203E) || (c >= 0x2190 && c <= 0x21FF)
+        || (c >= 0x2500 && c <= 0x25FF);
+}
+
 std::size_t char_width(char32_t c) {
     if (c < 0x20 || c == 0x7F) return 0;
+    if (g_ambiguousWide && ambiguous(c)) return 2;
     // Combining marks.
     if ((c >= 0x0300 && c <= 0x036F) || (c >= 0x1AB0 && c <= 0x1AFF)
         || (c >= 0x1DC0 && c <= 0x1DFF) || (c >= 0x20D0 && c <= 0x20FF)
@@ -867,10 +940,21 @@ std::string step_line(std::string_view verb, std::string_view subject,
 
 std::string status_line(std::string_view phase, std::string_view rest) {
     init();
-    std::string s = g_color ? std::format("{}{}{}{}", kBold, kBrightCyan, phase, kReset)
-                            : std::string(phase);
+    const auto verb = std::format("{:>12}", phase);
+    std::string s = g_color ? std::format("{}{}{}{}", kBold, kBrightCyan, verb, kReset)
+                            : verb;
     if (!rest.empty()) s += std::format(" {}", rest);
     return s;
+}
+
+std::string hue(std::string_view text, Hue h) {
+    init();
+    if (!g_color || h == Hue::Plain || text.empty()) return std::string(text);
+    std::string_view code = h == Hue::Cyan    ? "\033[36m"
+                          : h == Hue::Magenta ? "\033[95m"
+                          : h == Hue::Blue    ? "\033[94m"
+                                              : kDim;
+    return std::format("{}{}{}", code, text, kReset);
 }
 
 // ─── The command's clock ─────────────────────────────────────────────────
@@ -880,18 +964,35 @@ std::chrono::steady_clock::time_point command_start() { return start_point(); }
 
 // ─── The live region ─────────────────────────────────────────────────────
 
-std::string redraw_bytes(std::size_t previousRows, const std::vector<std::string>& rows) {
-    std::string s = erase_bytes(previousRows);
+std::string frame_bytes(std::size_t previousRows, std::string_view text,
+                        const std::vector<std::string>& rows) {
+    std::string s;
+    if (previousRows > 0) {
+        s += '\r';
+        if (previousRows > 1) s += std::format("\033[{}A", previousRows - 1);
+    }
+    while (!text.empty()) {
+        const auto nl = text.find('\n');
+        s += text.substr(0, nl);
+        s += "\033[K\n";
+        text.remove_prefix(nl == std::string_view::npos ? text.size() : nl + 1);
+    }
     for (std::size_t i = 0; i < rows.size(); ++i) {
         if (i) s += '\n';
+        s += "\033[?7l";
         s += rows[i];
+        s += "\033[K\033[?7h";
     }
+    if (previousRows > 0) s += "\033[J";
     return s;
 }
 
+std::string redraw_bytes(std::size_t previousRows, const std::vector<std::string>& rows) {
+    return frame_bytes(previousRows, {}, rows);
+}
+
 std::vector<std::string> region_rows(const std::vector<std::string>& bars,
-                                     const Frame& frame, std::size_t maxLines,
-                                     bool anythingAbove) {
+                                     const Frame& frame, std::size_t maxLines) {
     std::vector<std::string> rows = bars;
     const std::size_t room = maxLines > bars.size() ? maxLines - bars.size() : 0;
     const std::size_t shown = frame.lines.size() <= room
@@ -900,10 +1001,7 @@ std::vector<std::string> region_rows(const std::vector<std::string>& bars,
     if (shown < frame.lines.size())
         rows.push_back(std::format("{}… {} more", std::string(12, ' '),
                                    frame.lines.size() - shown));
-    if (!frame.status.empty()) {
-        if (!rows.empty() || anythingAbove) rows.emplace_back();
-        rows.push_back(frame.status);
-    }
+    if (!frame.status.empty()) rows.push_back(frame.status);
     return rows;
 }
 

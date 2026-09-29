@@ -1199,8 +1199,9 @@ NinjaRun run_ninja_reporting(const std::vector<std::string>& argv,
             trimmed.remove_prefix(1);
         if (trimmed.starts_with("FAILED:")) {
             inFailure = true;
-            if (progress.failed(trimmed.substr(std::string_view("FAILED:").size())))
-                mcpp::ui::error("build failed");
+            if (auto pkg = progress.failed(trimmed.substr(std::string_view("FAILED:").size())))
+                mcpp::ui::error(pkg->empty() ? std::string("build failed")
+                                             : std::format("build failed in {}", *pkg));
             run.reported = true;
         }
         if (inFailure) {
@@ -1224,7 +1225,7 @@ mcpp::build::progress::Record step_record(const BuildPlan& plan,
     std::vector<mcpp::build::progress::PackageInfo> declared;
     declared.reserve(plan.packages.size());
     for (auto const& p : plan.packages)
-        declared.push_back({p.name, p.requested, p.subject, p.cachedUnits, 0});
+        declared.push_back({p.name, p.requested, p.subject, p.cachedUnits, 0, p.detail, p.source});
     return attribution.record(declared);
 }
 
@@ -4211,16 +4212,30 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // scans are current -- a dependency upgraded with its build served from the
     // cache -- crashed ninja (e2e 196). After this pass the staged nodes are
     // current, and the second pass loads those dyndep files when it starts.
+    //
+    // WITH A REPORT, THE PASS IS THE BUILD'S FIRST (build output design
+    // revision 3, §5.3). Run quietly and unread, as it was, its steps never
+    // counted: a package the cache serves never completed, and 2026.9.29.5
+    // wrote its folded dependency line only when ninja exited. Read like the
+    // main pass, each such package is named `Cached` as its units are placed,
+    // and its steps count in `Building f/t`.
     if (manifest.find("\nbuild " + std::string(kStagedCacheGoal) + " : phony") != std::string::npos) {
-        std::vector<std::string> pre{ninjaProgram, "--quiet", "-C", plan.outputDir.string(),
-                                     std::string(kStagedCacheGoal)};
-        // A ninja whose progress nobody reads reports no action start, not
-        // even into the file of a build that runs this one (design §6.4).
-        auto preEnv = nenv;
-        preEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
-        (void)mcpp::platform::process::capture_exec_deadline(pre, preEnv,
-            std::chrono::milliseconds(static_cast<long long>(opts.buildTimeoutSecs) * 1000),
-            nullptr);
+        const auto preDeadline =
+            std::chrono::milliseconds(static_cast<long long>(opts.buildTimeoutSecs) * 1000);
+        if (opts.progress) {
+            std::vector<std::string> pre{ninjaProgram, "-C", plan.outputDir.string(),
+                                         std::string(kStagedCacheGoal)};
+            (void)run_ninja_reporting(pre, nenv, preDeadline, *opts.progress, opts.verbose,
+                                      command_prefixes(flags, plan));
+        } else {
+            std::vector<std::string> pre{ninjaProgram, "--quiet", "-C", plan.outputDir.string(),
+                                         std::string(kStagedCacheGoal)};
+            // A ninja whose progress nobody reads reports no action start, not
+            // even into the file of a build that runs this one (design §6.4).
+            auto preEnv = nenv;
+            preEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
+            (void)mcpp::platform::process::capture_exec_deadline(pre, preEnv, preDeadline, nullptr);
+        }
         stage("ninja-staged-cache");
     }
 
