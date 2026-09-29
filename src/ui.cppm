@@ -491,12 +491,14 @@ std::size_t max_live_lines() {
 constexpr auto kFirstDraw = std::chrono::milliseconds(500);
 
 // Whether the region has something to draw on a terminal now; line_mutex()
-// held.
+// held. The half-second wait is the status row's: a download bar outside a
+// report is drawn when its download starts.
 bool may_draw_locked() {
     auto& r = region();
     if (r.suspended > 0 || g_quiet || !bars_live()) return false;
     if (r.drawnRows > 0) return true;
-    if (!(r.open && r.live) && r.bars.empty()) return false;
+    const bool report = r.open && r.live;
+    if (!report) return !r.bars.empty();
     return std::chrono::steady_clock::now() - start_point() >= kFirstDraw;
 }
 
