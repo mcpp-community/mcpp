@@ -28,8 +28,10 @@ records one lock entry per identity again.
   a speed of its own. The best round is stated after `Finished`. Keys are
   read without echo; Ctrl-C still stops the build, and the terminal's mode is
   restored when the build ends or is interrupted. Where standard input or
-  output is not a terminal, one line says why and the build proceeds
-  (e2e 845).
+  output is not a terminal, or mcpp runs as a background job, one line says
+  why and the build proceeds (e2e 845). An arrow with a modifier is read as
+  the arrow, and a sequence for any other key is skipped whole
+  (`TerminalKeys` unit tests).
 - **`last N running`.** Once ninja has no step left to start (its `%u`
   reaches 0), the status row states how many steps remain, all of them
   running.

@@ -114,9 +114,17 @@ bool unicode_capable();
 // the space bar, and `wasd` as a second set of arrows.
 enum class Key { Up, Down, Left, Right, Space };
 
+// The keys in `pending`, the bytes a POSIX terminal sent: an arrow is
+// `ESC [ A` to `ESC [ D`, `ESC O A` to `ESC O D` in application mode, or
+// `ESC [ 1 ; 5 A` and the like with a modifier; a sequence for any other key
+// is skipped whole. An incomplete sequence at the end is left in `pending`.
+std::vector<Key> decode_keys(std::string& pending);
+
 // KEYS READ FROM THE TERMINAL FOR THE LIFETIME OF THE OBJECT, without echo and
 // without waiting for a line end; Ctrl-C still interrupts. Active only when
-// standard input and standard output are both terminals. The mode the
+// standard input and standard output are both terminals and, on POSIX, mcpp
+// is in the terminal's foreground process group: a background job that
+// changed the terminal's mode would be stopped by SIGTTOU. The mode the
 // terminal had is restored when the object is destroyed, and by the signal
 // handler if a signal ends mcpp first (POSIX: `unixproc::guard_terminal_mode`;
 // Windows: a console control handler).
@@ -368,28 +376,32 @@ BOOL WINAPI restore_input_mode(DWORD) {
 }
 #endif
 
-// The keys in `bytes` (POSIX): an arrow is `ESC [ A` to `ESC [ D`, or with
-// `O` in place of `[` in application mode. An incomplete sequence at the end
-// is left in `pending`.
+} // namespace
+
 std::vector<Key> decode_keys(std::string& pending) {
     std::vector<Key> keys;
     std::size_t i = 0;
     while (i < pending.size()) {
         const char c = pending[i];
         if (c == '\x1b') {
-            if (i + 2 >= pending.size()) break;   // wait for the rest
-            if (pending[i + 1] == '[' || pending[i + 1] == 'O') {
-                switch (pending[i + 2]) {
-                case 'A': keys.push_back(Key::Up);    break;
-                case 'B': keys.push_back(Key::Down);  break;
-                case 'C': keys.push_back(Key::Right); break;
-                case 'D': keys.push_back(Key::Left);  break;
-                default: break;
-                }
-                i += 3;
-                continue;
+            if (i + 1 >= pending.size()) break;   // wait for the rest
+            if (pending[i + 1] != '[' && pending[i + 1] != 'O') { ++i; continue; }
+            // Parameter and intermediate bytes (0x20 to 0x3F), then one final
+            // byte (0x40 to 0x7E) that names the key.
+            std::size_t end = i + 2;
+            while (end < pending.size()
+                   && static_cast<unsigned char>(pending[end]) >= 0x20
+                   && static_cast<unsigned char>(pending[end]) <= 0x3F)
+                ++end;
+            if (end >= pending.size()) break;     // wait for the final byte
+            switch (pending[end]) {
+            case 'A': keys.push_back(Key::Up);    break;
+            case 'B': keys.push_back(Key::Down);  break;
+            case 'C': keys.push_back(Key::Right); break;
+            case 'D': keys.push_back(Key::Left);  break;
+            default: break;
             }
-            ++i;
+            i = end + 1;
             continue;
         }
         switch (c) {
@@ -406,8 +418,6 @@ std::vector<Key> decode_keys(std::string& pending) {
     return keys;
 }
 
-} // namespace
-
 KeyInput::KeyInput() {
     if (!is_terminal(Stream::Out)) return;
 #if defined(_WIN32)
@@ -422,7 +432,7 @@ KeyInput::KeyInput() {
     if (!::SetConsoleMode(h, mode & ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT))) return;
     active_ = true;
 #elif defined(__unix__) || defined(__APPLE__)
-    if (::isatty(0) == 0) return;
+    if (::isatty(0) == 0 || ::tcgetpgrp(0) != ::getpgrp()) return;
     struct termios mode{};
     if (::tcgetattr(0, &mode) != 0) return;
     mcpp::platform::unixproc::guard_terminal_mode(0);

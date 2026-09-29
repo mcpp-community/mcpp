@@ -324,8 +324,8 @@ The game runs at its own speed; the counts beside it state the build. Keys
 are read without echo, and Ctrl-C still stops the build. The terminal's mode
 is restored when the build ends or is interrupted; a process killed outright
 cannot restore it, and `stty sane` does. The game needs standard input and
-standard output on a terminal; otherwise one line says why, and the build
-proceeds.
+standard output on a terminal, with mcpp in its foreground (not a background
+job); otherwise one line says why, and the build proceeds.
 
 `--verbose` names every package: `Fresh` for those with nothing to do, and
 `Compiled` with the steps and span of each that did work. It also states each

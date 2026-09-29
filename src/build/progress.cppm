@@ -1053,8 +1053,8 @@ std::unique_ptr<screen::Animation> choose_animation() {
 
 // `--play-game[=NAME]` (revision 3, §5.14): the CLI publishes the request as
 // MCPP_PLAY_GAME (`random` or a name). The game needs what the screen needs,
-// and keys: standard input and standard output on a terminal. Otherwise it is
-// off, and one line says why.
+// and keys: standard input and standard output on a terminal, with mcpp in
+// its foreground. Otherwise it is off, and one line says why.
 void choose_game(Report& r, std::vector<std::string>& notes) {
     auto want = mcpp::platform::env::get("MCPP_PLAY_GAME").value_or("");
     if (want.empty()) return;
@@ -1068,7 +1068,8 @@ void choose_game(Report& r, std::vector<std::string>& notes) {
                                     want, known));
         want = "random";
     }
-    const auto progress = mcpp::platform::env::get("MCPP_PROGRESS").value_or("");
+    auto progress = mcpp::platform::env::get("MCPP_PROGRESS").value_or("");
+    for (auto& c : progress) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     if (mcpp::ui::is_quiet() || !mcpp::ui::live_progress() || progress == "plain" || progress == "off"
         || !mcpp::platform::terminal::unicode_capable()) {
         notes.push_back("--play-game: the status row's screen is off here (a terminal that "
@@ -1077,7 +1078,8 @@ void choose_game(Report& r, std::vector<std::string>& notes) {
     }
     auto keys = std::make_unique<mcpp::platform::terminal::KeyInput>();
     if (!keys->active()) {
-        notes.push_back("--play-game: standard input is not a terminal, so no key can be read");
+        notes.push_back("--play-game: standard input is not a terminal in the foreground, "
+                        "so no key can be read");
         return;
     }
     const auto seed = static_cast<std::uint64_t>(
