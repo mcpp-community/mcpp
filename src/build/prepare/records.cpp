@@ -81,6 +81,26 @@ namespace mcpp::build {
 // runs, called from it in the same order, and are declared in the `:state`
 // partition (state.cppm) as the phases are.
 
+// The short name of a lock entry. An index entry is written under the map key
+// its declaring manifest used (`mcpplibs.cmdline` under `[dependencies.mcpplibs]`,
+// `cmdline` under a bare key), so the spelled name may carry its namespace as a
+// prefix; the identity is (namespace, short name) whichever way it was spelled.
+// An entry without a namespace (a git entry, keyed by the root's map key) is its
+// own short name.
+static std::string lock_short_name(const mcpp::lockfile::LockedPackage& p) {
+    if (!p.namespace_.empty()) {
+        const std::string prefix = p.namespace_ + ".";
+        if (p.name.size() > prefix.size() && p.name.starts_with(prefix))
+            return p.name.substr(prefix.size());
+    }
+    return p.name;
+}
+
+// The identity two entries of one lock are compared by.
+static std::string lock_identity(const mcpp::lockfile::LockedPackage& p) {
+    return p.namespace_ + "\x1f" + lock_short_name(p);
+}
+
 std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildContext& ctx) {
     // Write/update mcpp.lock for any version-based deps that succeeded.
     // Path deps are intentionally NOT locked — their source is local filesystem.
@@ -102,10 +122,33 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
         // lookup uses, and changing it would silently unpin every branch dep.
         // A dep reached only transitively has no such key, so it is written
         // under its fully-qualified identity.
+        //
+        // In a workspace plan `state.m` is the virtual root, which declares
+        // nothing; the manifests that declare are the workspace root's own
+        // package and the selected members. Reading only `state.m` there made
+        // every root-declared dependency fall through to the qualified name, so
+        // 2026.9.29.1 wrote `cmdline` (and a different hash, which is taken
+        // over the spelled name) where 2026.9.28.3 had written the root's map
+        // key `mcpplibs.cmdline`, and the merge below kept both. The map key is
+        // the spelling that existing committed locks hold, and it is the one
+        // #329 already fixes for git entries, so it stays; the merge and the
+        // `--locked` comparison work on the identity, not on the spelling.
         auto lock_name_for = [&](const ResolvedKey& k) -> std::string {
-            for (auto const& [n, s] : state.m->dependencies) {
-                const std::string sn = s.shortName.empty() ? n : s.shortName;
-                if (s.namespace_ == k.ns && sn == k.shortName) return n;
+            auto declared = [&](const mcpp::manifest::Manifest& mf)
+                -> std::optional<std::string> {
+                for (auto const& [n, s] : mf.dependencies) {
+                    const std::string sn = s.shortName.empty() ? n : s.shortName;
+                    if (s.namespace_ == k.ns && sn == k.shortName) return n;
+                }
+                return std::nullopt;
+            };
+            if (auto n = declared(*state.m)) return *n;
+            if (state.workspacePlan()) {
+                if (state.wsManifest)
+                    if (auto n = declared(*state.wsManifest)) return *n;
+                for (std::size_t i = 1; i < state.packages.size(); ++i)
+                    if (state.packages[i].selectedMember)
+                        if (auto n = declared(state.packages[i].manifest)) return *n;
             }
             return mcpp::pm::compat::qualified_name(k.ns, k.shortName);
         };
@@ -151,6 +194,7 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
 
         // Version deps: the whole resolved graph, at the versions actually
         // chosen. `resolved` is an ordered map, so the file is deterministic.
+        std::set<std::string> versionLocked;
         for (auto const& [key, rec] : state.resolved) {
             if (rec.source != "version") continue;   // path / git handled elsewhere
             if (rec.version.empty()) continue;
@@ -178,6 +222,9 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             // prefix claimed otherwise. `index_package_digest` is FNV-1a on
             // every host.
             lp.hash = mcpp::pm::index_package_digest(sourceIndex, lp.name, lp.version);
+            // One entry per identity: a dependency declared by the root and by
+            // a member under different spellings is one package.
+            if (!versionLocked.insert(lock_identity(lp)).second) continue;
             lock.packages.push_back(std::move(lp));
         }
         // A workspace's lock is at its root and records every member's
@@ -196,13 +243,16 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
         }
         if (partialWorkspace) {
             if (auto prior = mcpp::lockfile::load(state.workRoot / "mcpp.lock")) {
-                auto keyOf = [](const mcpp::lockfile::LockedPackage& p) {
-                    return p.namespace_ + "\x1f" + p.name;
-                };
+                // By identity, not by spelling: a prior entry that names a
+                // package resolved here under another spelling is that
+                // package's older record and is dropped, and a prior lock that
+                // holds one identity twice (written by 2026.9.29.1 to .5) keeps
+                // its first entry only.
                 std::set<std::string> resolvedHere;
-                for (auto const& p : lock.packages) resolvedHere.insert(keyOf(p));
+                for (auto const& p : lock.packages) resolvedHere.insert(lock_identity(p));
                 for (auto const& p : prior->packages)
-                    if (!resolvedHere.contains(keyOf(p))) lock.packages.push_back(p);
+                    if (resolvedHere.insert(lock_identity(p)).second)
+                        lock.packages.push_back(p);
                 std::set<std::string> indicesHere;
                 for (auto const& i : lock.indices) indicesHere.insert(i.name);
                 for (auto const& i : prior->indices)
@@ -234,8 +284,9 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
                         lockPath.string()));
                 }
                 auto key = [](const mcpp::lockfile::LockedPackage& p) {
-                    return p.namespace_.empty() ? p.name
-                                                : p.namespace_ + "." + p.name;
+                    const std::string sn = lock_short_name(p);
+                    return p.namespace_.empty() ? sn
+                                                : p.namespace_ + "." + sn;
                 };
                 std::map<std::string, std::string> was, now;
                 for (auto const& p : prior->packages) was[key(p)] = p.version;
