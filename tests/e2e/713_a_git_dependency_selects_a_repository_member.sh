@@ -133,7 +133,7 @@ int main() { return fw_answer() == 42 ? 0 : 1; }
 EOF
 cd "$TMP/both"
 "$MCPP" build -v > b2.log 2>&1 || fail "the root and a member by one revision did not build" b2.log
-grep -q "that identity is used" b2.log \
+grep -q "declared identity is used" b2.log \
     && fail "the member's key adopted the root's identity" b2.log
 grep -q 'DEPBIN tool=\[[^]]' b2.log || fail "the member's tools request was lost" b2.log
 grep -qE "Compiling spike\.fw v( |$)" b2.log && fail "the git banner printed an empty version" b2.log

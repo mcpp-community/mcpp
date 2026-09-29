@@ -177,20 +177,32 @@ settled by guessing which one was declared first — that is exactly the
 ### The identity of a `path` or `git` dependency (mcpp 2026.9.14.2+)
 
 A `path` or `git` dependency is the package its manifest declares, whatever key
-reaches it. A key that normalises to another identity than the manifest's
-`[package] namespace` and `name` takes the declared identity, and mcpp warns
-once for each declaring edge, naming the requester, the key, the identity the
-key names and the identity the manifest declares:
+reaches it. The source fixes the package, so a bare key states only the short
+name: it does not mean `mcpplibs`, the declared namespace is adopted, and
+nothing is reported.
 
 ```toml
 # comp/mcpp.toml; fw/mcpp.toml declares namespace = "huxdemo"
 [dependencies]
-fw = { path = "../fw" }            # names mcpplibs.fw; huxdemo.fw is used
+fw = { path = "../fw" }            # huxdemo.fw is used; no warning
+```
+
+A key that writes a namespace (a `[dependencies.<ns>]` table or a dotted key)
+states an identity, and a manifest that declares another one contradicts it.
+The declared identity is still used, and mcpp warns once for each consumer
+manifest and declared namespace, after resolution. The warning names the
+manifest by its path relative to the project root and lists the keys:
+
+```toml
+# mcpp.toml; libs/fw and libs/comp declare namespace = "huxdemo"
+[dependencies.acme]
+fw   = { path = "libs/fw" }
+comp = { path = "libs/comp" }
 ```
 
 ```
-warning: 'huxdemo.comp@path' declares the dependency 'fw', which names mcpplibs.fw; the manifest '.../fw/mcpp.toml' declares huxdemo.fw, and that identity is used.
-  hint: write 'huxdemo.fw' in 'huxdemo.comp@path' to state the identity the manifest declares.
+warning: mcpp.toml names 2 dependencies in namespace acme, and the manifests they reach declare huxdemo; the declared identity is used: acme.fw, acme.comp
+  hint: write them in a [dependencies.huxdemo] table, for example `fw = { path = "libs/fw" }`
 ```
 
 Two edges written `fw` and `huxdemo.fw` over one directory are therefore one

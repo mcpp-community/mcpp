@@ -7,14 +7,23 @@
 # `huxdemo.fw` over the same directory put the same module into the build
 # twice, which the scanner then refused naming one file twice.
 #
+# A bare key of a `path` or `git` dependency states only the short name (rule
+# W-b, package-identity.md 4.2): the source fixes the package, so adopting the
+# namespace its manifest declares corrects nothing and is not reported. A key
+# that WRITES a namespace the manifest contradicts is still reported, once per
+# consumer manifest and declared namespace.
+#
 # Legs:
 #   A. Two edges over one directory, keyed `huxdemo.fw` (the application) and
-#      `fw` (a component): the build succeeds, the unit is compiled once, one
-#      warning names the component's key, its normalisation and the declared
-#      identity, and the resolution record shows one package with both keys.
+#      `fw` (a component): the build succeeds, the unit is compiled once, no
+#      identity warning is written (the bare key states no namespace), and the
+#      resolution record shows one package with both keys.
 #   B. Keys that match the declaration warn nothing.
 #   C. Two keys over a manifest that declares no namespace are two identities
 #      over one source, and are refused before scanning.
+#   D. Keys that state a namespace the manifests contradict are reported in one
+#      warning that names the consumer manifest by its path relative to the
+#      project root, lists the keys, and gives a hint in TOML.
 set -e
 
 TMP=$(mktemp -d)
@@ -56,12 +65,9 @@ printf 'import fw;\nimport comp;\nint main() { return fw_anchor() + comp_anchor(
 # ── A ──────────────────────────────────────────────────────────────────────
 ( cd "$TMP/app" && "$MCPP" build > build.log 2>&1 ) || fail "A: build failed" "$TMP/app/build.log"
 ( cd "$TMP/app" && "$MCPP" run > run.log 2>&1 ) || fail "A: the program did not exit 0" "$TMP/app/run.log"
-n=$(grep -c "that identity is used" "$TMP/app/build.log" || true)
-[ "$n" = "1" ] || fail "A: expected one identity warning, saw $n" "$TMP/app/build.log"
-grep "that identity is used" "$TMP/app/build.log" | grep -q "'fw'" \
-    && grep "that identity is used" "$TMP/app/build.log" | grep -q "mcpplibs.fw" \
-    && grep "that identity is used" "$TMP/app/build.log" | grep -q "huxdemo.fw" \
-    || fail "A: the warning does not name the key, its normalisation and the declaration" "$TMP/app/build.log"
+if grep -q "declared identity is used\|that identity is used" "$TMP/app/build.log"; then
+    fail "A: a bare key produced an identity warning" "$TMP/app/build.log"
+fi
 units=$(find "$TMP/app/target" -path '*/obj/*' -name 'fw.m.o' | wc -l | tr -d ' ')
 [ "$units" = "1" ] || fail "A: fw.cppm compiled $units times"
 json=$(find "$TMP/app/target" -name resolution.json | head -1)
@@ -79,7 +85,7 @@ sed 's/^fw = { path/huxdemo.fw = { path/' "$TMP/comp/mcpp.toml" > "$TMP/comp/mcp
 mv "$TMP/comp/mcpp.toml.new" "$TMP/comp/mcpp.toml"
 rm -rf "$TMP/app/target"
 ( cd "$TMP/app" && "$MCPP" build > build2.log 2>&1 ) || fail "B: build failed" "$TMP/app/build2.log"
-if grep -q "that identity is used" "$TMP/app/build2.log"; then
+if grep -q "declared identity is used" "$TMP/app/build2.log"; then
     fail "B: matching keys produced an identity warning" "$TMP/app/build2.log"
 fi
 
@@ -96,6 +102,38 @@ grep -q "one source is reached as two packages" "$TMP/nons/app/build.log" \
     || fail "C: the refusal does not name the two identities" "$TMP/nons/app/build.log"
 if grep -q "already provided\|is provided by package" "$TMP/nons/app/build.log"; then
     fail "C: the refusal came from the scanner, not before scanning" "$TMP/nons/app/build.log"
+fi
+
+# ── D ──────────────────────────────────────────────────────────────────────
+mkdir -p "$TMP/grp/app/src" "$TMP/grp/app/libs/fw/src" "$TMP/grp/app/libs/comp/src"
+cp "$TMP/fw/mcpp.toml" "$TMP/grp/app/libs/fw/mcpp.toml"
+cp "$TMP/fw/src/fw.cppm" "$TMP/grp/app/libs/fw/src/fw.cppm"
+cp "$TMP/comp/mcpp.toml" "$TMP/grp/app/libs/comp/mcpp.toml"
+cp "$TMP/comp/src/comp.cppm" "$TMP/grp/app/libs/comp/src/comp.cppm"
+sed -i.bak 's|^huxdemo.fw = { path = "../fw" }|fw = { path = "../fw" }|' "$TMP/grp/app/libs/comp/mcpp.toml"
+cat > "$TMP/grp/app/mcpp.toml" <<'TOML'
+[package]
+name    = "app"
+version = "0.1.0"
+[dependencies]
+acme.fw   = { path = "libs/fw" }
+acme.comp = { path = "libs/comp" }
+TOML
+cp "$TMP/app/src/main.cpp" "$TMP/grp/app/src/main.cpp"
+( cd "$TMP/grp/app" && "$MCPP" build > build.log 2>&1 ) || fail "D: build failed" "$TMP/grp/app/build.log"
+n=$(grep -c "declared identity is used" "$TMP/grp/app/build.log" || true)
+[ "$n" = "1" ] || fail "D: expected one grouped warning, saw $n" "$TMP/grp/app/build.log"
+grep "declared identity is used" "$TMP/grp/app/build.log" | grep -q "mcpp.toml names 2 dependencies in namespace acme" \
+    || fail "D: the warning does not name the manifest by its relative path and the count" "$TMP/grp/app/build.log"
+grep "declared identity is used" "$TMP/grp/app/build.log" | grep -q "declare huxdemo" \
+    || fail "D: the warning does not name the declared namespace" "$TMP/grp/app/build.log"
+grep "declared identity is used" "$TMP/grp/app/build.log" | grep -q "acme.fw" \
+    && grep "declared identity is used" "$TMP/grp/app/build.log" | grep -q "acme.comp" \
+    || fail "D: the warning does not list the keys" "$TMP/grp/app/build.log"
+grep -q "\[dependencies.huxdemo\] table, for example" "$TMP/grp/app/build.log" \
+    || fail "D: the hint is not written in TOML" "$TMP/grp/app/build.log"
+if grep -q "libs/comp/mcpp.toml names" "$TMP/grp/app/build.log"; then
+    fail "D: the bare key inside libs/comp was reported" "$TMP/grp/app/build.log"
 fi
 
 echo "OK"

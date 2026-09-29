@@ -855,8 +855,7 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
                         item.requestedBy, state.qualifiedKey(key),
                         declaring.path, declaring.path));
                 }
-                state.reportAdoption(item.requestedBy, name, key, bySource->second,
-                               declaring.path);
+                state.reportAdoption(item, key, bySource->second);
                 key = bySource->second;
                 state.stateAdoptedIdentity(item, key);
             }
@@ -1690,7 +1689,7 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
             ResolvedKey declared{ ctx.dep_manifest->package.namespace_,
                                   declaredName.shortName };
             if (!(declared == key)) {
-                state.reportAdoption(item.requestedBy, name, key, declared, manifestPath);
+                state.reportAdoption(item, key, declared);
                 state.stateAdoptedIdentity(item, declared);
                 if (state.resolved.contains(declared)) {
                     // Another source already resolved the declared identity,
@@ -2472,6 +2471,7 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
 
     if (auto r = step4b_cycle_check(state); !r) return std::unexpected(r.error());
 
+    state.emitAdoptionWarnings();
     state.computeUsageRequirements();
 
     return {};

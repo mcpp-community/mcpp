@@ -455,6 +455,17 @@ struct PrepareState {
     std::map<std::string, ResolvedKey> identityBySource;
     std::map<ResolvedKey, DeclaringManifest> declaringManifest;
     std::set<std::pair<std::string, std::string>> adoptionsReported;
+    // The adoptions that are corrections (rule W-b), collected while the graph
+    // is walked and reported once after it, grouped by the consumer manifest
+    // and the namespace its dependencies declare.
+    struct AdoptionGroup {
+        std::string              consumer;       // manifest path, relative to the project root
+        std::string              declaredNs;
+        std::set<std::string>    writtenNs;      // the namespaces the keys stated
+        std::vector<std::string> keys;           // as written, in walk order
+        std::string              example;        // a TOML line for the hint
+    };
+    std::map<std::pair<std::string, std::string>, AdoptionGroup> adoptionGroups;
     std::map<std::string, GitClone> gitCloneBySource;
     std::set<std::string> selectorMigrationWarnings;
     std::set<std::string> preinstallStack;
@@ -464,8 +475,9 @@ struct PrepareState {
                                               const ResolvedKey&)> gitMemberDeclaring;
     std::function<std::string(const ResolvedKey&)> qualifiedKey;
     std::function<void(const WorkItem&, const ResolvedKey&)> stateAdoptedIdentity;
-    std::function<void(const std::string&, const std::string&, const ResolvedKey&,
-                        const ResolvedKey&, const std::string&)> reportAdoption;
+    std::function<void(const WorkItem&, const ResolvedKey&,
+                        const ResolvedKey&)> reportAdoption;
+    std::function<void()> emitAdoptionWarnings;
     std::function<mcpp::pm::IndexRoute(mcpp::config::GlobalConfig*)> index_route;
     std::function<const mcpp::pm::IndexSpec*(const std::string&)> findIndexForNs;
     std::function<std::expected<void, std::string>(mcpp::manifest::DependencySpec&,

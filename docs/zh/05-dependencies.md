@@ -162,20 +162,31 @@ sdk = { version = "1.0", visibility = "private" }
 
 ### `path` 或 `git` 依赖的身份（mcpp 2026.9.14.2+）
 
-`path` 或 `git` 依赖就是它的 manifest 所声明的那个包，与指向它的键无关。一个
-键规范化后的身份，若不同于 manifest `[package]` 的 `namespace` 与 `name`,
-就采用 manifest 声明的身份；mcpp 对每条声明边告警一次，点名请求方、键、键所指
-的身份，以及 manifest 声明的身份：
+`path` 或 `git` 依赖就是它的 manifest 所声明的那个包，与指向它的键无关。来源
+已经固定了包，所以裸键只表示短名：它不表示 `mcpplibs`，采用 manifest 声明的
+命名空间，也不告警。
 
 ```toml
 # comp/mcpp.toml; fw/mcpp.toml declares namespace = "huxdemo"
 [dependencies]
-fw = { path = "../fw" }            # names mcpplibs.fw; huxdemo.fw is used
+fw = { path = "../fw" }            # huxdemo.fw is used; no warning
+```
+
+写出命名空间的键（`[dependencies.<ns>]` 表或带点的键）声明了一个身份，而声明了另一个
+身份的 manifest 与之矛盾。此时仍采用 manifest 声明的身份，并在解析完成之后按声明它的
+manifest 与被声明的命名空间分组，每组告警一次；告警以相对项目根的路径点名 manifest，
+并列出各个键：
+
+```toml
+# mcpp.toml; libs/fw and libs/comp declare namespace = "huxdemo"
+[dependencies.acme]
+fw   = { path = "libs/fw" }
+comp = { path = "libs/comp" }
 ```
 
 ```
-warning: 'huxdemo.comp@path' declares the dependency 'fw', which names mcpplibs.fw; the manifest '.../fw/mcpp.toml' declares huxdemo.fw, and that identity is used.
-  hint: write 'huxdemo.fw' in 'huxdemo.comp@path' to state the identity the manifest declares.
+warning: mcpp.toml names 2 dependencies in namespace acme, and the manifests they reach declare huxdemo; the declared identity is used: acme.fw, acme.comp
+  hint: write them in a [dependencies.huxdemo] table, for example `fw = { path = "libs/fw" }`
 ```
 
 因此，同一目录上分别写作 `fw` 与 `huxdemo.fw` 的两条边是同一个包，只编译

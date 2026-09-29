@@ -205,19 +205,62 @@ static void step4a_define_split_and_identity_closures(PrepareState& state) {
             it->second.shortName = declared.shortName;
         }
     };
-    // One warning per declaring edge: each names a line someone can correct.
-    state.reportAdoption = [&](const std::string& requestedBy, const std::string& written,
-                              const ResolvedKey& normalised, const ResolvedKey& declared,
-                              const std::string& manifestPath) {
-        if (!state.adoptionsReported.emplace(requestedBy, written).second) return;
-        mcpp::diag::warning("dependency/identity", std::format(
-            "'{}' declares the dependency '{}', which names {}; the manifest "
-            "'{}' declares {}, and that identity is used.",
-            requestedBy, written, state.qualifiedKey(normalised), manifestPath,
-            state.qualifiedKey(declared)),
-            std::format("write '{}' in '{}' to state the identity the "
-                        "manifest declares.",
-                        state.qualifiedKey(declared), requestedBy));
+    // A key that names an identity other than the one its `path` or `git`
+    // manifest declares is a statement the manifest contradicts, and is
+    // reported (#719). A BARE key states no namespace for such a source: the
+    // source fixes the package, and the manifest there names its namespace, so
+    // reading the key as `mcpplibs.<key>` and then "correcting" it was the
+    // engine holding the author to a reading the author never wrote (rule W-b,
+    // docs/specs/package-identity.md 4.2). Adoption itself is unchanged; only
+    // the report is. `namespaceOmitted` is true exactly for a bare key: a
+    // namespace table (`[dependencies.ns]`) and a dotted key both state one.
+    //
+    // The reports are collected here and written once after resolution
+    // (emitAdoptionWarnings), one per consumer manifest and declared
+    // namespace, so a manifest that lists eight such keys is one warning.
+    state.reportAdoption = [&](const WorkItem& item, const ResolvedKey& normalised,
+                              const ResolvedKey& declared) {
+        if (item.spec.namespaceOmitted) return;
+        if (!state.adoptionsReported.emplace(item.requestedBy, item.name).second) return;
+        const auto base = state.workRoot.empty() ? *state.root : state.workRoot;
+        const auto consumerFile = ((item.resolveRoot.empty() ? *state.root
+                                                             : item.resolveRoot)
+                                   / "mcpp.toml").lexically_normal();
+        auto rel = consumerFile.lexically_relative(base.lexically_normal());
+        const bool inside = !rel.empty() && !rel.generic_string().starts_with("..");
+        auto& g = state.adoptionGroups[{ consumerFile.generic_string(), declared.ns }];
+        if (g.keys.empty()) {
+            g.consumer   = inside ? rel.generic_string() : consumerFile.generic_string();
+            g.declaredNs = declared.ns;
+            g.example    = item.spec.isGit()
+                ? std::format("{} = {{ git = \"{}\", {} = \"{}\" }}",
+                              declared.shortName, item.spec.git,
+                              item.spec.gitRefKind, item.spec.gitRev)
+                : std::format("{} = {{ path = \"{}\" }}",
+                              declared.shortName,
+                              std::filesystem::path(item.spec.path).generic_string());
+        }
+        g.writtenNs.insert(normalised.ns);
+        g.keys.push_back(item.name);
+    };
+    state.emitAdoptionWarnings = [&] {
+        for (auto const& [id, g] : state.adoptionGroups) {
+            std::string written;
+            for (auto const& ns : g.writtenNs) written += (written.empty() ? "" : ", ") + ns;
+            std::string keys;
+            for (auto const& k : g.keys) keys += (keys.empty() ? "" : ", ") + k;
+            mcpp::diag::warning("dependency/identity", std::format(
+                "{} names {} {} in namespace {}, and the {} {} {} {}; "
+                "the declared identity is used: {}",
+                g.consumer, g.keys.size(),
+                g.keys.size() == 1 ? "dependency" : "dependencies", written,
+                g.keys.size() == 1 ? "manifest" : "manifests",
+                g.keys.size() == 1 ? "it reaches" : "they reach",
+                g.keys.size() == 1 ? "declares" : "declare", g.declaredNs, keys),
+                std::format("write {} in a [dependencies.{}] table, for example `{}`",
+                            g.keys.size() == 1 ? "it" : "them", g.declaredNs, g.example));
+        }
+        state.adoptionGroups.clear();
     };
 
 
