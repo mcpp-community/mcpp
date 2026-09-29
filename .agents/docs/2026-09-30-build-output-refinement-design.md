@@ -8,7 +8,11 @@ status: landed
 - Status: landed (revision 3). Implemented in #743, released as 2026.9.30.1.
   It refines `2026-09-29-build-progress-display-design.md` (revision 2,
   landed in #742, released as 2026.9.29.5) and replaces the parts listed in
-  section 6.
+  section 6. Decisions D3 and D4 of section 16 were not taken in the review,
+  so T6 (the configuration lines under `-v`) and the part of T4 that D4
+  covers (the 60 s threshold, the profile descriptor on the fast path, and
+  the source file of `longest`) are not implemented; the output keeps
+  revision 2's form there.
 - Date: 2026-09-30
 - Origin: a report on `mcpp build` in the xlings repository with mcpp
   2026.9.29.5. It raised three questions: why the build prints warnings;
