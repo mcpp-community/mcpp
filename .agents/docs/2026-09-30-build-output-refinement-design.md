@@ -919,6 +919,157 @@ smallest rendition.
 - `play_demo.py`: the revised chomp, snake, ions and stack, and the beaver.
   Flags: `--anim NAME`, `--fail`, `--speed`.
 
+### 5.12 Review round 8: the first set, a playable stack, and the sign withdrawn
+
+The eighth review settled or asked about five things:
+
+- the revised chomp is harder to read than the first;
+- the snake is liked, and its food and body should carry the colours of real
+  modules;
+- the stack is liked, and the review asked whether it could be a real game
+  steered with the arrow keys;
+- the runner is liked;
+- the `MC++` sign reads oddly.
+
+**Chomp** returns to the first design, in which the chomper's position is
+the fraction, pellets lie ahead and one ghost follows. It gains one addition:
+a faint corridor along the top and bottom rows, so the part already eaten is
+not blank (`--anim chomp1`).
+
+**Snake.**
+
+- A package's first step drops a food in the colour of the package's source
+  (section 5.10), and the snake takes the foods in the order the packages
+  started.
+- The segments that grow after a meal keep that meal's colour, so the body
+  is a coloured record of the packages the build reached. The head stays
+  bright.
+- The grey food between meals keeps the snake moving at the build's pace.
+
+**A playable stack.** It can be built, and it would be the first input mcpp
+reads while a build runs:
+
+- the ticker thread reads keys in a non-canonical terminal mode (POSIX
+  `termios` without `ICANON` and `ECHO`, `ISIG` kept so that Ctrl-C still
+  stops the build; the console input mode on Windows);
+- up and down move the piece between the four rows, left drops it, space
+  turns it; a filled column clears, as a filled row does in the original;
+- the score is stated after `Finished`.
+
+Its costs decide its place:
+
+- **Type-ahead.** Keys typed ahead while a build runs, usually the next
+  command, would be taken by the game. No build tool reads its terminal
+  during a build, for this reason.
+- **The terminal mode.** It must be restored on every exit: success,
+  failure, Ctrl-C, termination. A process killed outright leaves the shell
+  without echo until `stty sane`.
+- **Competing readers.** A child that reads the terminal (a prepare action's
+  installer) would compete with the game for keys.
+- **What the stack means.** In play the stack no longer shows progress; the
+  counts do.
+
+It is therefore proposed only as an explicit opt-in (`MCPP_PROGRESS=play`),
+never a default, and after the display itself has shipped.
+
+**The sign is withdrawn.** A status row is one text row, and braille gives
+it four dots of height, the most any character offers. The smallest legible
+pixel fonts need five rows (3 × 5), and at four `M`, `C` and `+` become
+ambiguous. No arrangement of the letters fixes that. A mark for mcpp at this
+size is better carried by a mascot's silhouette (section 5.11) than by
+letters.
+
+**The first set,** from the reviews: chomp (the first design, with the
+corridor), snake (coloured by source), stack (automatic), runner, and the
+beaver if the mascot is adopted, chosen at random per command. The LED bar
+and a plain text row remain available through `MCPP_PROGRESS`.
+
+### 5.13 Review round 9: the four animations, and where they live
+
+The ninth review fixed the set:
+
+- the chomper exactly as first designed (its position is the fraction, the
+  pellets ahead are the work left, one ghost follows);
+- the snake coloured by source;
+- the stack (Tetris on its side);
+- the ion emitter.
+
+The command chooses one at random. The runner and the LED bar are not built
+in.
+
+The screen and its animations form one module in a directory of their own,
+`src/ui/dots_screen/`:
+
+- `mcpp.ui.dots_screen:core` holds the 48 × 4 screen (`Screen`), its colours,
+  the sources, the input an animation receives, and the `Animation`
+  interface;
+- one partition per animation (`:chomp`, `:snake`, `:stack`, `:ions`);
+- the primary unit `mcpp.ui.dots_screen` knows them by name.
+
+The progress model imports only the primary unit. An animation is pure, so
+its frames are compared in unit tests from a seed and a sequence of inputs.
+
+### 5.14 Review round 9: `--play-game`
+
+The review asked whether the snake, the stack and the runner could be
+steered with the arrow keys, turned on by a `--play-game` option, and run at
+a game's own speed.
+
+They can. The option removes the objection of section 5.12: a user who asks
+for a game has chosen to have the keys read, so keys typed ahead are no
+longer taken by surprise. The design:
+
+**Games.**
+
+| Game | Keys | Rules on 48 × 4 |
+|---|---|---|
+| snake | arrows steer | the food of section 5.12, coloured by the source of each package that starts; hitting the body ends the round, and a new one starts at once |
+| stack | up and down move the piece between the four rows, left drops it, space turns it | a filled column clears; a stack that reaches the right edge ends the round |
+| runner | space or up jumps | cacti come from the right; a collision ends the round |
+
+- `--play-game` chooses one of the three at random; `--play-game=snake`
+  names one.
+- The option is accepted by `build`, `run` and `test`.
+- A game runs at a fixed speed of its own (the snake eight cells a second,
+  the stack's pieces two cells a second, faster as columns clear), not at the
+  build's pace. The counts and the clock beside the screen state the build.
+
+**The row.** The status row reads, for example,
+`    Building ⣿…⣀ 612/707 · 0:35 · snake 12`: the score follows the clock. When
+the build ends the game ends, and a line after `Finished` states the round's
+best score.
+
+**The terminal.** Keys are read by the region's thread from the controlling
+terminal:
+
+- **POSIX**: the terminal's mode loses `ICANON` and `ECHO` and keeps `ISIG`,
+  so Ctrl-C still stops the build. Reads do not block (`VMIN` 0, `VTIME` 0).
+  The arrows arrive as `ESC [ A` to `ESC [ D` (or `ESC O A` in application
+  mode).
+- **Windows**: the console input mode loses `ENABLE_LINE_INPUT` and
+  `ENABLE_ECHO_INPUT`, and `ReadConsoleInputW` yields key events (`VK_UP`
+  and the others).
+- **Restoring the mode**: it is restored when the region closes, at normal
+  exit, on failure, and in the handler of SIGINT, SIGTERM and SIGHUP, which
+  then re-raises. A process killed outright cannot restore it; the option's
+  help says so, and names `stty sane`.
+- **No competing readers**: ninja already gives the commands it runs
+  `/dev/null` for input; the build programs mcpp runs receive a null input
+  while a game is on.
+
+**Where it is off.** The game is off when standard input or standard output
+is not a terminal, under `--quiet`, and where the screen is off
+(`MCPP_PROGRESS=plain` or `off`, or no braille). A note says why.
+
+**Tests.**
+
+- A game is pure given its seed, its key sequence and its clock, so rounds
+  are replayed in unit tests.
+- An e2e through a pseudo-terminal writes arrow keys to the terminal's
+  master side and checks that the snake turned, that the terminal's mode
+  after the command equals its mode before, and that Ctrl-C during a game
+  leaves the mode restored.
+
 ## 6. Requirements, revised
 
 | Revision 2 | Revision 3 |
@@ -1342,6 +1493,9 @@ Settled in review round 2: W-b, C and 2.
     (section 5.10). If the animations, the set to build in.
   - The tail clause, and the tab and taskbar progress.
   - `MCPP_PROGRESS` and its values.
+Settled in review round 9: the four animations (section 5.13), the module
+`mcpp.ui.dots_screen`, and `--play-game` (section 5.14).
+
 - **D3''. The animations (section 5.11).** The first set to build in, from
   the sign (logo or project name), chomp, snake, ions, stack, scanner,
   pulse, glide, runner and life; whether mcpp adopts a mascot (the beaver is
