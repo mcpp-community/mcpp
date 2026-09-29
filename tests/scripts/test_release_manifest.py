@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "scripts" / "release" / "generate_manifest.py"
+SCRIPT = REPO_ROOT / "tools" / "release" / "generate_manifest.py"
 VERSION = "2026.8.10.1"
 TAG = f"v{VERSION}"
 COMMIT = "a" * 40

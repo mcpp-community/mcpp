@@ -127,7 +127,7 @@ N="$(find_ninja "$TMP/projhit")"
 [[ -n "$N" ]] || { echo "FAIL: projhit has no build.ninja"; exit 1; }
 
 # The hit actually happened — otherwise the assertion below proves nothing.
-grep -qE 'Cached local-dev\.stdlib-dep v1\.0\.0 .*\([0-9]+ units?\)' build.log || {
+grep -qE 'Cached local-dev\.stdlib-dep v1\.0\.0 \((index [^,)]+, )?[0-9]+ units?\)' build.log || {
     echo "FAIL: the second project did not hit the cache, so #405 was not exercised"
     cat build.log
     exit 1

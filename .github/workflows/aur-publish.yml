@@ -58,7 +58,7 @@ jobs:
           TRIGGER: ${{ github.event_name }}
           MANUAL_PUBLISH: ${{ inputs.publish }}
           # Repository variable, absent until a human has watched one publish
-          # succeed. See "Arming the automatic triggers" in scripts/aur/README.md.
+          # succeed. See "Arming the automatic triggers" in tools/aur/README.md.
           AUTOPUBLISH: ${{ vars.AUR_AUTOPUBLISH }}
         run: |
           args=(
@@ -67,7 +67,7 @@ jobs:
             --summary "$GITHUB_STEP_SUMMARY"
           )
           [[ -z "$REQUESTED_TAG" ]] || args+=(--tag "$REQUESTED_TAG")
-          python3 scripts/aur/reconcile_mcpp_bin.py "${args[@]}"
+          python3 tools/aur/reconcile_mcpp_bin.py "${args[@]}"
 
           # An unattended push to a third-party service must be ARMED, not
           # inherited from a merge. `schedule` fires every six hours off the
@@ -102,7 +102,7 @@ jobs:
           install -dm700 "$HOME/.ssh"
           install -m600 /dev/null "$HOME/.ssh/aur"
           printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$HOME/.ssh/aur"
-          install -m600 scripts/aur/aur.archlinux.org.known_hosts "$HOME/.ssh/known_hosts"
+          install -m600 tools/aur/aur.archlinux.org.known_hosts "$HOME/.ssh/known_hosts"
           ssh-keygen -lf "$HOME/.ssh/known_hosts" -E sha256 \
             | grep -F 'SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4'
           install -m600 /dev/null "$HOME/.ssh/config"
@@ -145,7 +145,7 @@ jobs:
           # EVERY OTHER NON-ZERO CODE STILL FAILS. A refused downgrade (3) and
           # a permanent error (2) are this repository's problem and stay red.
           set +e
-          python3 scripts/aur/reconcile_mcpp_bin.py "${args[@]}"
+          python3 tools/aur/reconcile_mcpp_bin.py "${args[@]}"
           rc=$?
           set -e
           if [[ "$rc" == "75" ]]; then

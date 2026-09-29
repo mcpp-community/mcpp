@@ -9,7 +9,7 @@ bytes `install.sh`, Homebrew and the AUR `mcpp-bin` package install:
     mcpp_bin/registry/bin/xlings    the bundled xlings
 
 The launcher pins MCPP_HOME to the per-user home and MCPP_VENDORED_XLINGS to
-the bundled xlings, for the reason scripts/aur/README.md gives: mcpp resolves
+the bundled xlings, for the reason tools/aur/README.md gives: mcpp resolves
 its home from the real path of its binary, and site-packages is not a place a
 per-user sandbox may be written into.
 
@@ -210,7 +210,7 @@ def build_wheel(version: str, platform_tag: str, members: dict[str, tuple[bytes,
         (f"{dist_info}/METADATA", metadata(version, readme).encode(), False),
         (f"{dist_info}/WHEEL", (
             "Wheel-Version: 1.0\n"
-            "Generator: mcpp scripts/pypi/build_wheels.py\n"
+            "Generator: mcpp tools/pypi/build_wheels.py\n"
             "Root-Is-Purelib: false\n"
             + "".join(f"Tag: py3-none-{p}\n" for p in platform_tag.split("."))
         ).encode(), False),

@@ -37,7 +37,7 @@ site-packages, the home would sit inside the Python environment, which may be
 shared or read-only and is removed by `pip uninstall`. The launcher therefore
 sets `MCPP_HOME=~/.mcpp` (`%USERPROFILE%\.mcpp` on Windows) and
 `MCPP_VENDORED_XLINGS=<site-packages>/mcpp_bin/registry/bin/xlings`, the same
-two variables `scripts/aur/mcpp-bin/mcpp.sh` sets. A value the user already
+two variables `tools/aur/mcpp-bin/mcpp.sh` sets. A value the user already
 exported is kept. On POSIX the launcher `exec`s the binary; on Windows it runs
 the binary as a child process and exits with its status.
 
@@ -67,7 +67,7 @@ file, so such a run reports "already on PyPI" and succeeds.
 To build locally without uploading:
 
 ```bash
-python3 scripts/pypi/build_wheels.py --tag v2026.9.21.3 --out dist/
+python3 tools/pypi/build_wheels.py --tag v2026.9.21.3 --out dist/
 python3 -m venv /tmp/v && /tmp/v/bin/pip install --no-index --find-links dist mcpp-bin
 ```
 

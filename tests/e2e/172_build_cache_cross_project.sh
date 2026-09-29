@@ -146,7 +146,7 @@ staged="$(dep_stage_edges "$N2")"
 # The status line must agree, and must carry the unit count. The bare word
 # "Cached" was printed for months while every unit was recompiled behind it; a
 # number that has to match the skipped edges cannot go quietly wrong that way.
-grep -qE 'Cached local-dev\.shared-lib v1\.0\.0 .*\([0-9]+ units?\)' build.log || {
+grep -qE 'Cached local-dev\.shared-lib v1\.0\.0 \((index [^,)]+, )?[0-9]+ units?\)' build.log || {
     echo "FAIL: no 'cached N units' line for the reused dependency"
     cat build.log
     exit 1

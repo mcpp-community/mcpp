@@ -9,7 +9,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 if (( $# > 1 )); then
-    echo "usage: scripts/aur/update.sh [VERSION|vVERSION]" >&2
+    echo "usage: tools/aur/update.sh [VERSION|vVERSION]" >&2
     exit 2
 fi
 

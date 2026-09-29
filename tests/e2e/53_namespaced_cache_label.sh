@@ -103,7 +103,7 @@ rm -rf target
     exit 1
 }
 
-grep -qE "Cached compat\.widget v1\.0\.0 .*\([0-9]+ units?\)" build2.log || {
+grep -qE "Cached compat\.widget v1\.0\.0 \((index [^,)]+, )?[0-9]+ units?\)" build2.log || {
     echo "FAIL: cached namespaced dependency should be reported as compat.widget"
     cat build2.log
     exit 1

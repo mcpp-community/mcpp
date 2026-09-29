@@ -1,8 +1,8 @@
 # Maintainer: mcpp-community <speak-agent@users.noreply.github.com>
 #
 # mcpp-bin — prebuilt release binaries from GitHub, the same artifacts the
-# upstream `install.sh` one-liner downloads. See scripts/aur/README.md for
-# how this is published to the AUR and how to bump it (scripts/aur/update.sh).
+# upstream `install.sh` one-liner downloads. See tools/aur/README.md for
+# how this is published to the AUR and how to bump it (tools/aur/update.sh).
 
 pkgname=mcpp-bin
 pkgver=2026.8.8.4

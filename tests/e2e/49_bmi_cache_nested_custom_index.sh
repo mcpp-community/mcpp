@@ -122,7 +122,7 @@ PYEOF
 rm -rf target
 "$MCPP" build -v > build2.log 2>&1 || { cat build2.log; exit 1; }
 
-grep -qE "Cached local-dev\.collision-lib v1\.0\.0 .*\([0-9]+ units?\)" build2.log || {
+grep -qE "Cached local-dev\.collision-lib v1\.0\.0 \((index [^,)]+, )?[0-9]+ units?\)" build2.log || {
     echo "FAIL: second cold build did not reuse the build cache"
     cat build2.log
     exit 1

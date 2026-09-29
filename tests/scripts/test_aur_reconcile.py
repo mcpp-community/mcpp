@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-AUR_DIR = REPO_ROOT / "scripts" / "aur"
+AUR_DIR = REPO_ROOT / "tools" / "aur"
 
 
 def load_module(name: str, path: Path):
@@ -313,7 +313,7 @@ class AurReconcileTests(unittest.TestCase):
         for path in paths:
             with self.subTest(path=path):
                 text = path.read_text(encoding="utf-8")
-                self.assertNotIn("scripts/aur/mcpp-m", text)
+                self.assertNotIn("tools/aur/mcpp-m", text)
                 self.assertNotIn("publish mcpp-m", text)
                 self.assertNotIn("publish(mcpp-m", text)
 

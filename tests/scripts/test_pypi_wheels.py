@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contract tests for scripts/pypi/build_wheels.py.
+"""Contract tests for tools/pypi/build_wheels.py.
 
 Offline: a synthetic release (manifest + four payloads with the real archive
 layout) is built into wheels, and each wheel is read back the way pip reads it.
@@ -17,7 +17,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-BUILDER = ROOT / "scripts" / "pypi" / "build_wheels.py"
+BUILDER = ROOT / "tools" / "pypi" / "build_wheels.py"
 VERSION = "2026.1.2.3"
 
 ROWS = [

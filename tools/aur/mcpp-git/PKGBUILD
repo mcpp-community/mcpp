@@ -10,7 +10,7 @@
 # NB: the AUR/official name `mcpp` is taken by Matsui's C preprocessor
 # (extra/mcpp), so this package is `mcpp-git`. It still installs the `mcpp`
 # command at /usr/bin/mcpp, hence the conflict with that preprocessor.
-# See scripts/aur/README.md.
+# See tools/aur/README.md.
 
 pkgname=mcpp-git
 # Static seed only — real builds override it via pkgver() below. Kept at the
@@ -82,7 +82,7 @@ build() {
 }
 
 package() {
-    # Same /opt + wrapper layout as mcpp-bin / mcpp-m (see scripts/aur/README.md
+    # Same /opt + wrapper layout as mcpp-bin / mcpp-m (see tools/aur/README.md
     # for why the per-user wrapper exists instead of a /usr/bin symlink).
     install -Dm755 "${srcdir}/stage/bin/mcpp"            "${pkgdir}/opt/mcpp/bin/mcpp"
     install -Dm755 "${srcdir}/stage/registry/bin/xlings" "${pkgdir}/opt/mcpp/registry/bin/xlings"

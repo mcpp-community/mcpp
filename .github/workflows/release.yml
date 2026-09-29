@@ -818,7 +818,7 @@ jobs:
             > "$AUDIT_ROOT/release.json"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --dir "$AUDIT_ROOT/assets"
-          python3 scripts/release/generate_manifest.py \
+          python3 tools/release/generate_manifest.py \
             --release-json "$AUDIT_ROOT/release.json" \
             --assets-dir "$AUDIT_ROOT/assets" \
             --version "$VERSION" \
@@ -856,7 +856,7 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --dir "$AUDIT_ROOT/final-assets"
           test -f "$AUDIT_ROOT/final-assets/mcpp-release.json"
-          python3 scripts/release/generate_manifest.py \
+          python3 tools/release/generate_manifest.py \
             --release-json "$AUDIT_ROOT/final-release.json" \
             --assets-dir "$AUDIT_ROOT/final-assets" \
             --version "$VERSION" \

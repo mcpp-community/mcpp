@@ -159,7 +159,7 @@ yay -S mcpp-m        # or build from source (bootstrapped with mcpp-bin)
 
 Installs the `mcpp` command system-wide; per-user data still lives in `~/.mcpp/`.
 On Arch the name `mcpp` is an unrelated C preprocessor, so the packages are
-`mcpp-bin` / `mcpp-m` (see [`scripts/aur/`](scripts/aur/)).
+`mcpp-bin` / `mcpp-m` (see [`tools/aur/`](tools/aur/)).
 Stable-release automation reconciles `mcpp-bin` only; `mcpp-m` and `mcpp-git`
 remain manually maintained and may intentionally lag.
 
@@ -177,7 +177,7 @@ mcpp-bin` gives it an environment of its own. The wheels carry the same
 prebuilt release binary for Linux x86_64 / aarch64, macOS 14+ on Apple silicon
 and Windows x86_64. Per-user data still lives in `~/.mcpp/`, outside the Python
 environment. On PyPI the name `mcpp` belongs to an unrelated project, hence
-`mcpp-bin` (see [`scripts/pypi/`](scripts/pypi/)).
+`mcpp-bin` (see [`tools/pypi/`](tools/pypi/)).
 
 </details>
 

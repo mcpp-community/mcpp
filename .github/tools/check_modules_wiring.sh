@@ -100,7 +100,7 @@ fi
 # The two xmake source lists must actually carry the glob. Asserted by content
 # rather than by trusting the loop above: a renamed pattern would leave every
 # per-module check passing while compiling nothing.
-for f in scripts/bootstrap-macos.sh .github/workflows/bootstrap-macos.yml \
+for f in tools/bootstrap-macos.sh .github/workflows/bootstrap-macos.yml \
          bench/projects/mcpp/xmake.lua; do
     [[ -f "$f" ]] || { bad "$f is missing"; continue; }
     grep -qF 'modules/*/src/**.cppm' "$f" \
@@ -109,7 +109,7 @@ done
 
 # The vendored json header is reached through a private include dir. Its path
 # appears in three places and has already moved once.
-for f in scripts/bootstrap-macos.sh .github/workflows/bootstrap-macos.yml \
+for f in tools/bootstrap-macos.sh .github/workflows/bootstrap-macos.yml \
          bench/projects/mcpp/xmake.lua; do
     grep -qF 'modules/libs/src/json' "$f" \
         || bad "$f does not add the json include dir (modules/libs/src/json)"

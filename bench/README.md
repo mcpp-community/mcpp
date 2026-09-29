@@ -1069,7 +1069,7 @@ bench --project . --buildfiles bench/projects/mcpp \
 `--buildfiles` is what keeps these files **out of the repository root**. mcpp is
 built by mcpp; a CMakeLists.txt and an xmake.lua at the root are files every
 contributor has to learn to ignore, and one of them actively broke something:
-`scripts/bootstrap-macos.sh` generates its own root `xmake.lua` when none is
+`tools/bootstrap-macos.sh` generates its own root `xmake.lua` when none is
 present, and a bench-owned file at that path silently pre-empted it. cmake is
 pointed at the directory with `-S`, xmake with `-P`; mcpp reads the project's
 own manifest and ignores the flag. Copying the descriptions into the tree for

@@ -89,7 +89,7 @@ The workflow then downloads the public release again, regenerates the manifest,
 and requires a byte-for-byte match. A workflow rerun accepts an existing
 manifest only when it is already byte-identical; it never overwrites different
 bytes for the same tag. Downstream release consumers (notably the `mcpp-bin`
-AUR reconciler and the `mcpp-bin` PyPI wheel builder in `scripts/pypi/`) must consume this manifest instead of guessing completeness
+AUR reconciler and the `mcpp-bin` PyPI wheel builder in `tools/pypi/`) must consume this manifest instead of guessing completeness
 from a moving workspace or from a subset of release assets.
 
 Two steps are **not** automated:
@@ -156,7 +156,7 @@ AUDIT=$(mktemp -d)
 mkdir -p "$AUDIT/assets"
 gh api "repos/mcpp-community/mcpp/releases/tags/$TAG" > "$AUDIT/release.json"
 gh release download "$TAG" -R mcpp-community/mcpp --dir "$AUDIT/assets"
-python3 scripts/release/generate_manifest.py \
+python3 tools/release/generate_manifest.py \
   --release-json "$AUDIT/release.json" \
   --assets-dir "$AUDIT/assets" \
   --version "$V" \

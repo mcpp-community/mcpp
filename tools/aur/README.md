@@ -72,7 +72,7 @@ between releases — at the cost of tracking bleeding-edge master.
 ## Files
 
 ```
-scripts/aur/
+tools/aur/
   README.md            this file
   update.sh            render + verify mcpp-bin from mcpp-release.json
   render_mcpp_bin.py   pure manifest-to-PKGBUILD renderer
@@ -96,8 +96,8 @@ required so `.SRCINFO` comes from a non-root Arch `makepkg`, not a handwritten
 fallback):
 
 ```sh
-scripts/aur/update.sh                 # latest complete stable release
-scripts/aur/update.sh 2026.8.10.1      # accepted only if it is that exact latest tag
+tools/aur/update.sh                 # latest complete stable release
+tools/aur/update.sh 2026.8.10.1      # accepted only if it is that exact latest tag
 ```
 
 The renderer downloads both Linux payloads and sidecars, recomputes their
@@ -108,7 +108,7 @@ version-from-worktree fallback and no downgrade override.
 For a read-only live reconciliation (including AUR RPC and HTTPS git state):
 
 ```sh
-python3 scripts/aur/reconcile_mcpp_bin.py \
+python3 tools/aur/reconcile_mcpp_bin.py \
   --trigger local \
   --report-json /tmp/mcpp-aur-report.json
 ```
@@ -119,8 +119,8 @@ exact dry-run diff but never pushed.
 ### Test locally (on Arch)
 
 ```sh
-cd scripts/aur/mcpp-bin && makepkg -si        # prebuilt
-cd scripts/aur/mcpp-m   && makepkg -si        # from source (slow: builds mcpp)
+cd tools/aur/mcpp-bin && makepkg -si        # prebuilt
+cd tools/aur/mcpp-m   && makepkg -si        # from source (slow: builds mcpp)
 mcpp --version
 ```
 
@@ -220,7 +220,7 @@ review the initial history by hand:
 
 ```sh
 git clone ssh://aur@aur.archlinux.org/mcpp-bin.git
-cp scripts/aur/mcpp-bin/{PKGBUILD,.SRCINFO,mcpp.sh} mcpp-bin/ && cd mcpp-bin
+cp tools/aur/mcpp-bin/{PKGBUILD,.SRCINFO,mcpp.sh} mcpp-bin/ && cd mcpp-bin
 git add PKGBUILD .SRCINFO mcpp.sh
 git commit -m "initial mcpp-bin" && git push
 ```
