@@ -97,8 +97,18 @@ while True:
                 break
             raw += chunk
         break
-before = open("before.txt").read().strip() if os.path.exists("before.txt") else None
-after = open("after.txt").read().strip() if os.path.exists("after.txt") else None
+# PENDIN (0x20000000 in a BSD `stty -g` lflag) is the kernel's own
+# bookkeeping: macOS sets it whenever ICANON is turned back on, and the next
+# read clears it. It is not a mode mcpp left behind, so it is not compared.
+def mode_of(path):
+    if not os.path.exists(path):
+        return None
+    g = open(path).read().strip()
+    if g.startswith("gfmt1:"):
+        g = ":".join(f"lflag={int(f[6:], 16) & ~0x20000000:x}" if f.startswith("lflag=") else f
+                     for f in g.split(":"))
+    return g
+before, after = mode_of("before.txt"), mode_of("after.txt")
 plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", raw.decode("utf-8", "replace")).replace("\r\n", "\n")
 print(plain)
 assert during is not None, "the build ended before the game could be observed"
