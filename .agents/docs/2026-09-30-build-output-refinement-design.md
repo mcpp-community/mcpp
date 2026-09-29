@@ -1095,8 +1095,8 @@ ninja will run. Revision 2 needed that knowledge and could not obtain it
 
 | Verb | Subject | Written when | Example |
 |---|---|---|---|
-| `Compiling` | the package | its first step in the main ninja pass finishes, or its first `check` or `prepare` action starts | `   Compiling platform v0.1.0 (modules/platform)` |
-| `Cached` | the package, with the number of units placed | the cache pass ends, for each package whose units it placed; sorted by name | `      Cached compat.ftxui v6.1.9 (73 units)` |
+| `Compiling` | the package | its first step that is not a dependency scan finishes, or its first `check` or `prepare` action starts; a package that only scanned is named when its pass ends | `   Compiling platform v0.1.0 (modules/platform)` |
+| `Cached` | the package, with the number of units the cache serves, inside the origin's parentheses when there are any | its first staging step finishes (the cache pass runs first, so these lines come first) | `      Cached compat.ftxui v6.1.9 (73 units)` |
 | `build.mcpp` | the package | the program ran or failed | `  build.mcpp mcpplibs.xpkg v0.0.59   ran 0.71s` |
 | `Downloading` | unchanged | unchanged | unchanged |
 
@@ -1338,17 +1338,24 @@ of silence.
   (`complete`, `dependencies_complete`, the commit loop of `settle`),
   `package_column`, and the frame's live rows.
 - **Added**:
-  - A package is announced at its first finished step. This replaces
-    `settle`, and is one set lookup per finished step.
+  - A package is announced at its first finished step that is not a
+    dependency scan (outputs `.ddi` and `.dd`): a scan finishes before the
+    compiles it orders, and naming a package there put a consumer before the
+    package it imports. A package that only scanned is announced when its
+    pass ends. This replaces `settle`, and is one set lookup per finished
+    step.
   - The cache pass runs through `run_ninja_reporting` as the build's first
-    pass (`pass_begin`/`pass_end` already sum passes). Its per-package counts
-    give the `Cached` lines when the pass ends.
+    pass (`pass_begin`/`pass_end` already sum passes), so a cache-served
+    package is announced, as `Cached`, at its first staging step.
   - `programs_done()` returns the phase to `Planning`.
-- **The step record becomes version 2.** Its header carries the profile
-  descriptor. An `S` line gives the source file of each compile step. A
-  version 1 record makes the fast path decline once, so the first build after
-  the upgrade plans and writes a version 2 record. Without this, the fast
-  path would name no packages until the next plan.
+- **The step record becomes version 2.** A package's line gains its detail
+  (version and origin) and its source (project, official, index, git or
+  path). The source is read from the resolution's record of the package, not
+  from the consumer's key, since a package reached through `[feature-deps]`
+  has no entry in the consumer's `[dependencies]`. A version 1 record is read
+  with both empty, and its subject then carries what version 1 wrote there,
+  until the next plan writes version 2. The profile descriptor on the fast
+  path and the source file of `longest` (section 7.3) wait for decision D4.
 - **Unchanged**: the log reader and its recompaction handling, the
   attribution in the generator, the action-start file, and the heartbeat.
 
@@ -1365,10 +1372,11 @@ of silence.
   Each is checked before the pull request is opened.
 - **Machine output.** Unchanged, except that the identity warnings are
   grouped (section 8).
-- **Upgrade.** A build directory with a version 1 record is planned once
-  (section 10). No configuration is involved.
-- **Downgrade.** An older mcpp reads a version 2 record as absent: its fast
-  path names no packages until its next plan.
+- **Upgrade.** A build directory with a version 1 record is read as it is
+  (section 10) until the next plan rewrites it. No configuration is involved.
+- **Downgrade.** An older mcpp reads a version 2 record's package lines by
+  their first six fields and ignores the rest, so its lines keep the subject
+  version 2 wrote.
 
 ## 12. Not addressed here
 
@@ -1425,8 +1433,8 @@ of silence.
     again after a recompaction of the log.
   - The cache pass yields `Cached` lines with the counts of steps that ran.
   - The phase returns to `Planning` after `programs_done()`.
-  - A record of version 2 round-trips its descriptor and source lines.
-  - A version 1 record makes the fast path decline.
+  - A record of version 2 round-trips its detail and source.
+  - A version 1 record is read, with its subject as written.
 - **Unit, identity warning.** A bare key of a path or git dependency is not
   reported. A key that states a contradicted namespace is reported, and the
   formatter groups such keys by manifest and namespace, uses relative paths,
