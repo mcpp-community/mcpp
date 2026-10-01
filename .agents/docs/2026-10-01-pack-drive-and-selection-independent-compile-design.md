@@ -5,7 +5,9 @@ status: active
 
 # A pack's build reported as a build, and a unit's compile independent of the member selection: triage and design (#753, #751)
 
-- Status: revision 2, being implemented as 2026.10.1.2.
+- Status: implemented as 2026.10.1.2 (pull request #754). Section 15 records
+  what was built, what was measured, and where the implementation departs
+  from sections 3, 4 and 10.
   - Revision 1 was reviewed on 2026-10-01. D1 to D4 were accepted as
     recommended: one placement rule for every plan, uniform PIC on ELF
     targets subject to M3, the module map as an argument file, and every
@@ -557,3 +559,70 @@ command lines that T7's criteria compare.
 | openxlings/xlings | Release canary; built and tested with the release in the sandbox; no change expected | T11, T12 |
 | openxlings/xim-pkgindex | The release workflow opens the version bump; merged by a maintainer | T11 |
 | mcpp-community/mcpp-index | The `latest_mcpp` pin moves to the release, and the full sweep runs | T11 |
+
+## 15. Implementation record
+
+### 15.1 Departures from sections 3, 4 and 10
+
+- **The module map is per unit, not per package (B1).** `resolve_provider`
+  answers a name's single provider whether or not it lies in the importer's
+  closure, so a map derived from it lists other members' modules under
+  `--workspace` and not under `-p`. A package's closure also differs between
+  `mcpp build` and `mcpp test`, which adds the dev-dependencies. The map
+  therefore lists what one unit reaches through its imports (and, for GCC,
+  the module it provides and `std`), resolved hop by hop in each importer's
+  closure. Units with equal maps share one file.
+- **A third census (B1).** The whole-argument-list criterion found that a
+  file a member lists from outside its directory (`../shared/m.cppm`, the
+  GalTranslPP shape) was owned by the workspace's virtual root, whose
+  directory is the workspace's. It entered the root's basename census, so its
+  object was `obj/m.m.o` under `-p` and `obj/core/__pkg/workspace/shared/m.m.o`
+  under `--workspace`. A workspace plan's root now owns no source; such a unit
+  belongs to the member that declares it.
+- **The map's key.** A module and a unit that imports it can hold the same map
+  and differ in what they load (only the importer has an argument file). The
+  key hashes the map and the relative paths the argument file loads, so it is
+  the same in every build directory, as the map is.
+- **`emit build-database` writes the maps** into its work directory, so a
+  reader that expands the argument files finds them.
+- **The cache artifact.** `DepArtifacts` names each BMI's build path in a
+  vector of pairs (`BmiPlacement`). A `std::map<std::string, std::string,
+  std::less<>>` in that struct made clang 22.1.8 crash (SIGSEGV in
+  `ASTReader::readTypeRecord`) compiling every importer of
+  `mcpp.build.prepare` that instantiates a ranges algorithm, on Linux and
+  macOS; GCC 16 compiled it. The first CI round of #754 failed on every macOS
+  leg for this reason, and the cause was bisected locally.
+- **B2's predicate** is "ELF and not freestanding", read from the target
+  triple with the host triple when the target is empty. Mach-O is excluded
+  because its compilers default to PIC; WebAssembly refuses shared objects.
+- **A2.** `mcpp test`'s bulk, per-test and per-member drives pass `Caller`.
+  The dispatch pass of a pack reopens the report, because `Finished` closes
+  it. The library pack and the Android legs are reported by the default.
+- **e2e numbers.** 860 and 861 were already taken on main, so the criteria of
+  section 10 are e2e 871 (A) and 872 (B). e2e 847 G holds unchanged (the
+  updater alone is a root package); 847 A, 09 and 849 B are restated for the
+  new placement.
+
+### 15.2 Measurements
+
+- **M3, GCC 16.1.0, mcpp's own release build (`--cache off`), the same
+  sources built by 2026.10.1.1 (no PIC) and by this branch (PIC):** wall time
+  111.52 s and 111.95 s; binary 25,184,592 and 25,227,320 bytes (+0.17%), text
+  11,669,387 and 11,684,419 bytes; a full plan of the mcpp tree (`emit
+  build-database`, median of ten alternating runs) 0.167 s and 0.169 s.
+- **The reproductions of section 2 on this branch:** F6 and F8 compile nothing
+  after the first `--workspace`; F7's `--workspace` after `-p app` and
+  `-p tool` archives `bin/core/libcore.a`, the one product neither `-p` build
+  needs, and compiles nothing.
+- **Self-hosting:** mcpp builds itself with this branch under GCC 16 (204
+  module maps; a repeat build is a no-op; an edit recompiles one unit) and
+  under clang 22 (`--dev`).
+- **Local suites (clang 22 default host):** unit tests 143 of 143; e2e 477
+  passed, 21 failed, 61 skipped, and each of the 21 fails in the same way on
+  2026.10.1.1 except 872, whose run used a binary older than its script, and
+  178, which passed on both when repeated. e2e 871 and 872 pass under GCC 16
+  and clang 22 and fail on 2026.10.1.1.
+- **The sandbox script** `.agents/docs/2026-10-01-pack-drive-and-selection-verify.sh`,
+  on the host against this branch: 9 of 9 sections pass, xlings built from its
+  source among them; against 2026.10.1.1 every CHANGE section fails.
+
