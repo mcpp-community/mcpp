@@ -334,6 +334,9 @@ TEST(ModuleAddress, ArgumentFilesAreWrittenAsEachCompilerReadsThem) {
     ms.arguments = {"/reference", "m=C:/build/ifc.cache/core/m.ifc",
                     "/reference", "n=C:/build/ifc.cache/core/n.ifc"};
     msvc.moduleScopes.emplace("core-1", ms);
+    // A file a moved or restored build directory left behind is rewritten.
+    std::filesystem::create_directories(msvc.outputDir / "modmap");
+    std::ofstream(msvc.outputDir / "modmap/core-1.modmap") << "/reference m=D:/old/m.ifc\n";
     write_module_maps(msvc);
     EXPECT_EQ(read(msvc.outputDir / "modmap/core-1.modmap"),
               "\xEF\xBB\xBF/reference m=C:/build/ifc.cache/core/m.ifc\n"

@@ -475,3 +475,16 @@ TEST(ProgressModel, AStepWhoseEntriesAreReadInTwoPiecesCountsOnce) {
     auto out = testing::internal::GetCapturedStderr();
     EXPECT_EQ(count(out, "Compiling lib"), 1u) << out;
 }
+
+// `Finished` is written once per command. `mcpp run --format <name>` packs, and
+// the pack states its build with `Finished`; the run then drives the same build
+// again, and its second `Finished` repeated the line with the first's time
+// counted twice (pack drive and selection design 2026-10-01, A3).
+TEST(ProgressModel, FinishedIsWrittenOncePerCommand) {
+    mcpp::ui::disable_color();
+    testing::internal::CaptureStderr();
+    mcpp::build::progress::finished("release", "optimized");
+    mcpp::build::progress::finished("release", "optimized");
+    auto out = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(count(out, "Finished"), 1u) << out;
+}

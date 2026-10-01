@@ -4733,22 +4733,27 @@ std::unique_ptr<Backend> make_ninja_backend() {
 }
 
 // The module maps of the units that reach a BMI below its provider's directory
-// (B1). The key in a file's name is a hash of what the file holds, so a file
-// that exists is already right, and a changed resolution names a new file.
+// (B1). The key in a file's name is a hash of the relative paths the file
+// holds, so it is the same in every build directory. The argument file also
+// holds the build directory's absolute path, so a file is written whenever
+// what it holds differs from what is there: a build directory that was moved
+// or restored at another path would otherwise keep pointing at the old one.
 void write_module_maps(const BuildPlan& plan) {
     const bool msvc = msvc_module_spelling(plan);
-    for (auto const& [key, scope] : plan.moduleScopes) {
+    auto write_if_changed = [](const std::filesystem::path& path, const std::string& text) {
         std::error_code ec;
-        const auto path = plan.outputDir / scope.mapFile;
-        if (!std::filesystem::exists(path, ec)) {
-            std::filesystem::create_directories(path.parent_path(), ec);
-            std::ofstream(path, std::ios::binary | std::ios::trunc) << scope.content;
+        if (std::filesystem::exists(path, ec)) {
+            std::ifstream in(path, std::ios::binary);
+            if (std::string(std::istreambuf_iterator<char>(in), {}) == text) return;
         }
-        if (scope.argsFile.empty()) continue;
-        const auto args = plan.outputDir / scope.argsFile;
-        if (std::filesystem::exists(args, ec)) continue;
-        std::ofstream(args, std::ios::binary | std::ios::trunc)
-            << module_map_arguments(scope.arguments, msvc);
+        std::filesystem::create_directories(path.parent_path(), ec);
+        std::ofstream(path, std::ios::binary | std::ios::trunc) << text;
+    };
+    for (auto const& [key, scope] : plan.moduleScopes) {
+        write_if_changed(plan.outputDir / scope.mapFile, scope.content);
+        if (!scope.argsFile.empty())
+            write_if_changed(plan.outputDir / scope.argsFile,
+                             module_map_arguments(scope.arguments, msvc));
     }
 }
 

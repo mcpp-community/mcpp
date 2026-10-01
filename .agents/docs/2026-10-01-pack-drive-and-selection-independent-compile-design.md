@@ -597,6 +597,26 @@ command lines that T7's criteria compare.
   command file: the second CI round of #754 failed e2e 258, 262 and 848 on
   the Windows legs with `D8004: '/reference' requires an argument`. A unit
   test now writes both compilers' files and reads them back.
+- **The review of the pull request** (section 15.3) found five more places,
+  each fixed with a unit test:
+  - `mcpp run --format <name>` wrote `Finished` twice, once for the pack and
+    once for the build it drives again to resolve the runner. `Finished` is
+    now written once per command, in the progress model.
+  - An eleventh drive site, the sub-build of a dependency's host tool inside
+    planning (`prepare/features.cpp`), took the new default and was reported
+    as lines of the command, while its caller folds its output into an error
+    message. It states `Caller`.
+  - An argument file holds the build directory's absolute path while its name
+    hashes relative paths, so a moved or restored build directory kept the
+    old file. Both module map files are now written whenever their content
+    differs.
+  - The root was recognised by the name `workspace`; a member of that name
+    would have kept its BMIs at their names. A virtual root is recognised by
+    `virtualRoot`.
+  - A member's file inside another member's directory was addressed under
+    the containing package, which the virtual root replaced when the selection
+    did not hold that member. A workspace plan addresses such a file by its
+    place in the workspace (`obj/<member>/__ws/<path>`).
 - **B2's predicate** is "ELF and not freestanding", read from the target
   triple with the host triple when the target is empty. Mach-O is excluded
   because its compilers default to PIC; WebAssembly refuses shared objects.
@@ -630,4 +650,13 @@ command lines that T7's criteria compare.
 - **The sandbox script** `.agents/docs/2026-10-01-pack-drive-and-selection-verify.sh`,
   on the host against this branch: 9 of 9 sections pass, xlings built from its
   source among them; against 2026.10.1.1 every CHANGE section fails.
+
+### 15.3 Review
+
+A review of the full diff, independent of the author, read the plan, backend,
+pack, cache and progress code against this record. Its three findings above
+medium confidence and its two below were confirmed in the code and fixed
+(section 15.1). It found the per-unit maps, their keys, the dyndep and staging
+paths, the cache population, both argument-file writers, the job count and the
+token reclaim consistent with sections 3 and 4.
 

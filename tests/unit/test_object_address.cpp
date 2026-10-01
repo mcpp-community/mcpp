@@ -415,3 +415,43 @@ TEST(ObjectAddress, AMembersOutsideSourceIsImmuneToAnotherMemberListingIt) {
     // Filed under its declaring member, not at the root's flat address.
     EXPECT_NE(alone.generic_string().find("obj/core/"), std::string::npos) << alone;
 }
+
+// The same for a file inside ANOTHER member's directory: the member that
+// contains it may be outside the selection, and then the virtual root contains
+// the file instead. The address is the file's place in the workspace.
+TEST(ObjectAddress, AMembersSourceInAnotherMembersDirectoryIsImmuneToTheSelection) {
+    Tmp t;
+    const auto ws = t.path / "ws";
+    auto plan_with = [&](bool withLib) -> std::filesystem::path {
+        mcpp::manifest::Manifest root;
+        root.package.name        = "workspace";
+        root.package.version     = "0.0.0";
+        root.package.standard    = "c++23";
+        root.package.virtualRoot = true;
+        std::vector<mcpp::modgraph::PackageRoot> packages;
+        auto rootPkg = makePackage(ws, "workspace");
+        rootPkg.manifest = root;
+        packages.push_back(rootPkg);
+        packages.push_back(makePackage(ws / "app", "app"));
+        if (withLib) packages.push_back(makePackage(ws / "lib", "lib"));
+
+        mcpp::modgraph::Graph graph;
+        graph.units.push_back(unitFor(ws / "app", "../lib/src/shared.c", "app"));
+        if (withLib) graph.units.push_back(unitFor(ws / "lib", "src/lib.c", "lib"));
+        std::vector<std::size_t> topo;
+        for (std::size_t i = 0; i < graph.units.size(); ++i) topo.push_back(i);
+        auto plan = make_plan(root, gccLike(), {}, graph, topo, packages, ws,
+                              ws / "target" / "t", {}, {}, {});
+        EXPECT_TRUE(plan) << (plan ? std::string{} : plan.error());
+        if (!plan) return {};
+        for (auto const& cu : plan->compileUnits)
+            if (cu.packageName == "app") return cu.object;
+        ADD_FAILURE() << "app's unit is not in the plan";
+        return {};
+    };
+    const auto alone  = plan_with(false);
+    const auto beside = plan_with(true);
+    EXPECT_FALSE(alone.empty());
+    EXPECT_EQ(alone, beside);
+    EXPECT_NE(alone.generic_string().find("obj/app/__ws/lib/src/"), std::string::npos) << alone;
+}

@@ -1954,6 +1954,19 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     };
     auto outside_prefix = [&](const std::filesystem::path& src)
         -> std::filesystem::path {
+        // IN A WORKSPACE PLAN, BY ITS PLACE IN THE WORKSPACE (pack drive and
+        // selection design 2026-10-01, B1). The package that contains the file
+        // may be a member the selection does not hold, and then the virtual
+        // root contains it instead: a member that lists a file of another
+        // member's directory had one address under `-p` and another under
+        // `--workspace`. The workspace's directory is the same in every
+        // selection.
+        if (manifest.package.virtualRoot) {
+            std::error_code ec;
+            auto rel = std::filesystem::relative(src, projectRoot, ec);
+            if (!ec && !rel.empty() && !rel.generic_string().starts_with(".."))
+                return std::filesystem::path("__ws") / safe_object_prefix({}, rel.parent_path());
+        }
         if (auto c = container_of(src)) {
             std::error_code ec;
             auto rel = std::filesystem::relative(src, packages[*c].root, ec);
@@ -3275,7 +3288,10 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // after every producer of a compile unit (a target's `main` included).
     {
         const auto traits = mcpp::toolchain::bmi_traits(tc);
-        const auto rootPackage = qualified_package_name(manifest);
+        // A workspace plan's root is virtual and provides nothing, so every
+        // member is placed below its own directory, whatever it is named.
+        const auto rootPackage = manifest.package.virtualRoot
+            ? std::string{} : qualified_package_name(manifest);
         auto basename = [&](std::string_view name) {
             std::string out;
             for (char c : name) out.push_back(c == ':' ? '-' : c);

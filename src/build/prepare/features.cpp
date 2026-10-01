@@ -1727,6 +1727,10 @@ step6_build_tool(PrepareState& state, HostToolCtx& ctx) {
     auto be = mcpp::build::make_ninja_backend();
     mcpp::build::BuildOptions bopt;
     bopt.ninjaTargets = { goal.generic_string() };
+    // A build inside planning: its output is this function's error message,
+    // not lines of the command's report (pack drive and selection design
+    // 2026-10-01, A2).
+    bopt.report = mcpp::build::BuildOptions::Report::Caller;
     // Unfiltered inner output on demand: the filter drops
     // ninja's own progress and command echoes, which is right
     // for a normal build and wrong when the question is "what
