@@ -124,12 +124,14 @@ N=$(find target -name build.ninja | head -1)
 [ -n "$N" ] || fail "B: no build.ninja"
 D=$(dirname "$N")
 # The BMI directory and extension are the toolchain's (gcm.cache/*.gcm for
-# GCC, pcm.cache/*.pcm for clang); they are read from the stage edge.
-stage=$(grep -E '^build [a-z]+\.cache/gen\.dep\.[a-z]+ : stage_file ' "$N" || true)
+# GCC, pcm.cache/*.pcm for clang), and a dependency's BMIs lie below its
+# package's directory there (pack drive and selection design 2026-10-01, B1);
+# all three are read from the stage edge.
+stage=$(grep -E '^build [a-z]+\.cache/[^ ]*gen\.dep\.[a-z]+ : stage_file ' "$N" || true)
 [ -n "$stage" ] || fail "B: the cached BMI has no stage edge" "$N"
 bmi=$(echo "$stage" | awk '{print $2}')
-bmidir=${bmi%%/*}; ext=${bmi##*.}
-table="$bmidir/gen.dep.table.$ext"
+ext=${bmi##*.}
+table="$(dirname "$bmi")/gen.dep.table.$ext"
 case "$stage" in
     *"|| $table"*) ;;
     *) fail "B: the stage edge does not wait for the generated module's BMI: $stage" ;;

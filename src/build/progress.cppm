@@ -190,6 +190,9 @@ enum class ProgramOutcome { Ran, Cached, Failed };
 void open(bool verbose);
 // Closes it: the region is erased. Idempotent.
 void close();
+// Whether the command opened the report and has not closed it. A drive whose
+// caller supplies no report is reported by the backend exactly then.
+bool is_open();
 // The status row as the region would draw it now.
 std::string status_row();
 // The number of configurations the command builds: with more than one, a
@@ -1231,6 +1234,12 @@ void close() {
     std::lock_guard lock(r.m);
     r.open = false;
     r.keys.reset();   // the terminal's mode is restored here
+}
+
+bool is_open() {
+    auto& r = report();
+    std::lock_guard lock(r.m);
+    return r.open;
 }
 
 void configurations(std::size_t n) {

@@ -63,6 +63,20 @@ public:
 // Factory for this backend implementation.
 std::unique_ptr<Backend> make_ninja_backend();
 
+// What a command writes when a drive failed. Under a report the failed step's
+// package line and diagnostics were written as it failed, and `message`
+// would repeat them; what remains is the advice that reads the whole output.
+// Without one, both are written now. One function for `build`, `test` and
+// `pack`, whose drives are reported alike (pack drive and selection design
+// 2026-10-01, A2).
+void report_failed_drive(const BuildError& error);
+
+// Writes the module maps the plan's units name (pack drive and selection
+// design 2026-10-01, B1) into the plan's build directory: what the backend
+// does before a drive, and what `mcpp emit build-database` does for the
+// database it prints, whose argument lists name these files.
+void write_module_maps(const BuildPlan& plan);
+
 // The ninja mcpp runs for a toolchain: the sandbox-local ninja beside the
 // toolchain when there is one, else `ninja` from PATH. One answer for the
 // engine's own builds and for the build information (#734 E2).
@@ -277,6 +291,39 @@ namespace {
 
 // U+FEFF in UTF-8. The response files of the MSVC tools begin with it (#693).
 constexpr std::string_view kUtf8ByteOrderMark = "\xEF\xBB\xBF";
+
+// Whether the plan's compiler names an imported module's BMI as MSVC does
+// (`/reference <name>=<path>`), and so reads an argument file by MSVC's rules.
+bool msvc_module_spelling(const BuildPlan& plan) {
+    const auto prefix = mcpp::toolchain::bmi_traits(plan.toolchain).moduleFileUsePrefix;
+    return !prefix.empty() && prefix.back() == ' ';
+}
+
+// The text of a module map's argument file (B1): one argument per line. clang
+// reads it by GNU rules on every host (#247), where a word holding a space or
+// a quote is written in double quotes with `\` and `"` escaped; the paths are
+// written with forward slashes, so a backslash does not occur. MSVC reads it
+// by its own rules (`shell_quote_arg` on a Windows host) and needs the byte
+// order mark to read a path that is not ASCII (#693).
+std::string module_map_arguments(const std::vector<std::string>& arguments, bool msvc) {
+    std::string out = msvc ? std::string(kUtf8ByteOrderMark) : std::string{};
+    for (auto const& a : arguments) {
+        if (msvc) {
+            out += mcpp::build::shell_quote_arg(a);
+        } else if (a.find_first_of(" \t\"'\\") == std::string::npos) {
+            out += a;
+        } else {
+            out += '"';
+            for (char c : a) {
+                if (c == '"' || c == '\\') out += '\\';
+                out += c;
+            }
+            out += '"';
+        }
+        out += '\n';
+    }
+    return out;
+}
 
 std::string escape_ninja_path(const std::filesystem::path& p) {
     // Ninja escapes: $ → $$, : → $:, space → $ (with leading space).
@@ -1492,9 +1539,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // or a plain .cpp still compiles in one edge whose output is the object,
     // and a `--target-bmi` there would name an edge nobody declared.
     //
-    // `$module_map` (mcpp#732) names the package's module map when two packages
-    // of the plan provide one module name; the rule carries it only then, so
-    // a plan without such a name writes the file it always wrote.
+    // `$module_map` names the unit's module map when it reaches a BMI below its
+    // provider's directory (B1); the rule carries it only when some unit does,
+    // so a plan of the root's modules alone writes the file it always wrote.
     append(std::format(
         "rule cxx_dyndep\n"
         "  command = $mcpp dyndep --single --bmi-dir {} --bmi-ext {} $bind $expect{} --output $out $in\n"
@@ -2246,11 +2293,13 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // exactly one symbol (`_ZGIW3std`, measured) and an importing TU references
     // it, so a missed unit is an undefined symbol at link time rather than a
     // silent miscompile.
-    // The module map of each package whose closure holds a name two packages
-    // provide (mcpp#732): module name -> BMI path, as the plan resolved it.
+    // The module map of each unit that reaches a BMI below its provider's
+    // directory (pack drive and selection design 2026-10-01, B1), by
+    // `CompileUnit::moduleScope`: module name -> BMI path, as the plan resolved
+    // it.
     std::map<std::string, std::map<std::string, std::string, std::less<>>, std::less<>> scopeBmis;
-    for (auto const& [pkg, scope] : plan.moduleScopes) {
-        auto& m = scopeBmis[pkg];
+    for (auto const& [key, scope] : plan.moduleScopes) {
+        auto& m = scopeBmis[key];
         std::istringstream lines(scope.content);
         for (std::string name, path; lines >> name >> path;) m[name] = path;
     }
@@ -2258,13 +2307,13 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     for (auto& cu : plan.compileUnits)
         if (!cu.providesModule.empty()) byModule[cu.providesModule].push_back(&cu);
     // The unit `importer`'s import of `name` means: the one provider, or the
-    // one its package's module map names.
+    // one its module map names.
     auto provider_of = [&](const CompileUnit& importer,
                            const std::string& name) -> const CompileUnit* {
         auto it = byModule.find(name);
         if (it == byModule.end()) return nullptr;
         if (it->second.size() == 1) return it->second.front();
-        auto sc = scopeBmis.find(importer.packageName);
+        auto sc = scopeBmis.find(importer.moduleScope);
         if (sc == scopeBmis.end()) return nullptr;
         auto m = sc->second.find(name);
         if (m == sc->second.end()) return nullptr;
@@ -2364,15 +2413,15 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         return s;
     };
     // The BMI a unit provides, where the plan placed it: below its package's
-    // directory when two packages provide its module name (mcpp#732).
+    // directory unless the root package provides it (B1).
     auto unit_bmi = [&](const mcpp::build::CompileUnit& cu) {
         return cu.bmiFile.empty() ? bmi_path(cu.providesModule)
                                   : std::string(traits.bmiDir) + "/" + cu.bmiFile;
     };
-    // The BMI `cu`'s import of `name` means: its package's module map when it
-    // has one, and the module's own name otherwise.
+    // The BMI `cu`'s import of `name` means: its module map when it has one,
+    // and the module's own name otherwise.
     auto import_bmi = [&](const mcpp::build::CompileUnit& cu, std::string_view name) {
-        if (auto sc = scopeBmis.find(cu.packageName); sc != scopeBmis.end())
+        if (auto sc = scopeBmis.find(cu.moduleScope); sc != scopeBmis.end())
             if (auto it = sc->second.find(name); it != sc->second.end()) return it->second;
         return bmi_path(name);
     };
@@ -2615,6 +2664,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         std::vector<std::string> ddi_paths;
         ddi_paths.reserve(plan.compileUnits.size());
         std::unordered_map<std::string, std::string> ddiOwner;
+        std::unordered_map<std::string, std::string> ddiScope;   // ddi -> its unit's module map
         for (auto& cu : plan.compileUnits) {
             attribute(cu.packageName);
             if (cu.servedFromCache) continue;   // staged, never scanned
@@ -2623,6 +2673,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
             ddi_paths.push_back(ddi);
             ddiOwner[ddi] = cu.packageName;
+            if (!cu.moduleScope.empty()) ddiScope[ddi] = cu.moduleScope;
             append(std::format("build {} : cxx_scan {}{}\n", escape_ninja_path(ddi),
                                escape_ninja_path(cu.source), order_only_for(cu)));
             // `-o` and `-fdeps-target` are DIFFERENT under the split shape and
@@ -2726,7 +2777,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             append(std::format("build {} : cxx_dyndep {}\n", dd, ddi));
             if (two_phase_ddi.contains(ddi))
                 append("  bind = --split-module\n");
-            if (auto sc = plan.moduleScopes.find(ddiOwner[ddi]); sc != plan.moduleScopes.end())
+            if (auto at = ddiScope.find(ddi); at != ddiScope.end())
+                if (auto sc = plan.moduleScopes.find(at->second); sc != plan.moduleScopes.end())
                 append(std::format("  module_map = --module-map {}\n",
                                    escape_ninja_path(sc->second.mapFile)));
             if (auto it = ddi_expect.find(ddi); it != ddi_expect.end())
@@ -3953,9 +4005,49 @@ std::optional<std::string> ninja_encoding_mismatch(std::string_view reported,
                           "it), so a build here must be ASCII.", processCodePage));
 }
 
+namespace {
+
+// RECLAIM THE STALE CONCURRENCY TOKENS, ONCE PER BUILD DIRECTORY PER COMMAND.
+//
+// detach-codegen bounds real compiler concurrency with a semaphore of
+// directories under `<build dir>/.mcpp-sched`, released by the supervisor
+// holding each token. A supervisor that never runs its cleanup (Ctrl-C on the
+// build, the OOM killer, a reboot) leaves its directory behind, and nothing
+// else deletes one. Every such event permanently lowers the cap for that build
+// directory; after `cap` of them the next build waits for a token that can
+// never be released and hangs with no output at all.
+//
+// The reclaim was first placed in prepare, where an incremental build that
+// replays build.ninja never reaches it, and then on the path of `mcpp build`,
+// which `mcpp test` and `mcpp pack` do not take (pack drive and selection
+// design 2026-10-01, A1). Here every drive reaches it. It runs before the
+// first drive of a directory in this process, when no supervisor of this
+// command can own a token; a later drive of the same command may still have a
+// detached code generation of an earlier one running, whose token is live.
+void reclaim_stale_schedule_tokens(const std::filesystem::path& outputDir) {
+    static std::mutex m;
+    static std::set<std::string> reclaimed;
+    std::lock_guard lock(m);
+    if (!reclaimed.insert(outputDir.lexically_normal().generic_string()).second) return;
+    std::error_code ec;
+    std::filesystem::remove_all(outputDir / ".mcpp-sched", ec);
+}
+
+} // namespace
+
 std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan,
                                                            const BuildOptions& opts) {
     auto t0 = std::chrono::steady_clock::now();
+    // THE REPORT OF THIS DRIVE (pack drive and selection design 2026-10-01,
+    // A2): the caller's, or, when the caller leaves it to the backend, one of
+    // the backend's own while the command's report is open.
+    std::optional<mcpp::build::progress::Build> ownReport;
+    mcpp::build::progress::Build* report = opts.progress;
+    if (!report && !opts.dryRun && opts.report == BuildOptions::Report::Region
+        && mcpp::build::progress::is_open() && !mcpp::ui::is_quiet()) {
+        ownReport.emplace(plan.outputDir);
+        report = &*ownReport;
+    }
     // Where a drive's wall clock went. `mcpp test` calls this once per test on
     // an already-built tree, so anything here that is not proportional to the
     // work done is paid N times — and that is invisible from the outside,
@@ -3984,6 +4076,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         return std::unexpected(BuildError{std::format("cannot create output dir '{}': {}",
                                                       plan.outputDir.string(), ec.message()),
                                           plan.outputDir});
+    if (!opts.dryRun && plan.scheduleTag == "detach-codegen")
+        reclaim_stale_schedule_tokens(plan.outputDir);
 
     auto ninja_path = plan.outputDir / "build.ninja";
     // Written beside build.ninja and not into it: the fast path replays the
@@ -4004,7 +4098,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     {
         auto record = step_record(plan, attribution);
         mcpp::build::progress::write_record(plan.outputDir, record);
-        if (opts.progress) opts.progress->set_record(std::move(record));
+        if (report) report->set_record(std::move(record));
     }
     if (!placements.empty()) {
         // Written only when it changes: it is an input of the placement edge.
@@ -4020,16 +4114,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             std::ofstream(listPath, std::ios::binary | std::ios::trunc) << placements;
         }
     }
-    // mcpp#732: the module maps the units of a package read when two packages
-    // provide one module name. The content's hash is in the name, so a file
-    // that exists is already right; a changed resolution names a new file.
-    for (auto const& [pkg, scope] : plan.moduleScopes) {
-        const auto path = plan.outputDir / scope.mapFile;
-        std::error_code mec;
-        if (std::filesystem::exists(path, mec)) continue;
-        std::filesystem::create_directories(path.parent_path(), mec);
-        std::ofstream(path, std::ios::binary | std::ios::trunc) << scope.content;
-    }
+    write_module_maps(plan);
 
     // Command-length backstop (see
     // .agents/docs/2026-08-06-command-length-architecture.md). The structural
@@ -4273,7 +4358,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     std::vector<std::string> nargv{ninjaProgram};
     // With a report, ninja's status lines are read as it runs (build progress
     // design 2026-09-29, §6.1), so they are not suppressed.
-    if (!opts.verbose && !opts.progress)
+    if (!opts.verbose && !report)
         nargv.push_back("--quiet");
     nargv.push_back("-C");
     nargv.push_back(plan.outputDir.string());
@@ -4296,8 +4381,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         nargv.push_back("-d");
         nargv.push_back(topics);
     }
-    if (opts.parallelJobs)
-        nargv.push_back(std::format("-j{}", opts.parallelJobs));
+    if (plan.scheduleNinjaJobs > 0)
+        nargv.push_back(std::format("-j{}", plan.scheduleNinjaJobs));
 
     if (opts.keepGoing) {
         nargv.push_back("-k");
@@ -4340,10 +4425,10 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     if (manifest.find("\nbuild " + std::string(kStagedCacheGoal) + " : phony") != std::string::npos) {
         const auto preDeadline =
             std::chrono::milliseconds(static_cast<long long>(opts.buildTimeoutSecs) * 1000);
-        if (opts.progress) {
+        if (report) {
             std::vector<std::string> pre{ninjaProgram, "-C", plan.outputDir.string(),
                                          std::string(kStagedCacheGoal)};
-            (void)run_ninja_reporting(pre, nenv, preDeadline, *opts.progress, opts.verbose,
+            (void)run_ninja_reporting(pre, nenv, preDeadline, *report, opts.verbose,
                                       command_prefixes(flags, plan),
                                       mcpp::build::progress::PassKind::Placement);
         } else {
@@ -4382,17 +4467,18 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             std::chrono::milliseconds(static_cast<long long>(opts.buildTimeoutSecs) * 1000);
         // The main pass's options, and its goal last.
         std::vector<std::string> scan{ninjaProgram};
-        if (!opts.verbose && !opts.progress) scan.push_back("--quiet");
+        if (!opts.verbose && !report) scan.push_back("--quiet");
         scan.insert(scan.end(), {std::string("-C"), plan.outputDir.string()});
         if (opts.verbose) scan.push_back("-v");
         if (const char* topics = std::getenv("MCPP_NINJA_DEBUG"); topics && *topics) {
             scan.push_back("-d");
             scan.push_back(topics);
         }
-        if (opts.parallelJobs) scan.push_back(std::format("-j{}", opts.parallelJobs));
+        if (plan.scheduleNinjaJobs > 0)
+            scan.push_back(std::format("-j{}", plan.scheduleNinjaJobs));
         scan.push_back(std::string(kScannedGoal));
-        if (opts.progress) {
-            auto run = run_ninja_reporting(scan, nenv, scanDeadline, *opts.progress, opts.verbose,
+        if (report) {
+            auto run = run_ninja_reporting(scan, nenv, scanDeadline, *report, opts.verbose,
                                            command_prefixes(flags, plan),
                                            mcpp::build::progress::PassKind::Scan);
             if (run.exitCode != 0 || run.timedOut) {
@@ -4422,8 +4508,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         std::chrono::milliseconds(static_cast<long long>(opts.buildTimeoutSecs) * 1000);
     if (scanFailed) {
         // `out`, `ninjaExit`, `buildTimedOut` and `reported` are the scan's.
-    } else if (opts.progress) {
-        auto run = run_ninja_reporting(nargv, nenv, deadline, *opts.progress, opts.verbose,
+    } else if (report) {
+        auto run = run_ninja_reporting(nargv, nenv, deadline, *report, opts.verbose,
                                        command_prefixes(flags, plan));
         out = std::move(run.output);
         ninjaExit = run.exitCode;
@@ -4441,8 +4527,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     bool ok = (ninjaExit == 0) && !buildTimedOut;
     // Every package gets its final line before what the build has to say
     // after ninja: validations, advice, `Finished`.
-    if (opts.progress) {
-        opts.progress->finish(ok);
+    if (report) {
+        report->finish(ok);
         if (ok) mcpp::build::progress::checking();
     }
 
@@ -4455,7 +4541,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             std::chrono::steady_clock::now() - t0);
         // Under a report the failed steps were written as they failed, and
         // under --verbose every line was: only what is left is attached.
-        std::string partial = !opts.progress ? out
+        std::string partial = !report ? out
             : reported || opts.verbose ? std::string{}
             : filter_ninja_output(out, command_prefixes(flags, plan));
         return std::unexpected(BuildError{
@@ -4583,7 +4669,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         }
         stage("symbol-provision");
         // Under a report the lines were printed as ninja wrote them.
-        if (opts.verbose && !opts.progress && !out.empty())
+        if (opts.verbose && !report && !out.empty())
             mcpp::ui::block(out);
         std::set<std::string> want(opts.ninjaTargets.begin(), opts.ninjaTargets.end());
         for (auto& lu : plan.linkUnits) {
@@ -4597,7 +4683,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         auto prefixes = command_prefixes(flags, plan);
         // What was reported as it happened is not repeated: a failed step's
         // diagnostics (default output), or every line (--verbose).
-        auto diagnostics = reported || (opts.progress && opts.verbose) ? std::string{}
+        auto diagnostics = reported || (report && opts.verbose) ? std::string{}
                          : opts.verbose ? out : filter_ninja_output(out, prefixes);
         // Appended here as well as on the fast path (execute.cppm): the two
         // paths report failure through different channels, and advice attached
@@ -4638,6 +4724,31 @@ std::string ninja_program_for(const mcpp::toolchain::Toolchain& tc) {
 
 std::unique_ptr<Backend> make_ninja_backend() {
     return std::make_unique<NinjaBackend>();
+}
+
+// The module maps of the units that reach a BMI below its provider's directory
+// (B1). The key in a file's name is a hash of what the file holds, so a file
+// that exists is already right, and a changed resolution names a new file.
+void write_module_maps(const BuildPlan& plan) {
+    const bool msvc = msvc_module_spelling(plan);
+    for (auto const& [key, scope] : plan.moduleScopes) {
+        std::error_code ec;
+        const auto path = plan.outputDir / scope.mapFile;
+        if (!std::filesystem::exists(path, ec)) {
+            std::filesystem::create_directories(path.parent_path(), ec);
+            std::ofstream(path, std::ios::binary | std::ios::trunc) << scope.content;
+        }
+        if (scope.argsFile.empty()) continue;
+        const auto args = plan.outputDir / scope.argsFile;
+        if (std::filesystem::exists(args, ec)) continue;
+        std::ofstream(args, std::ios::binary | std::ios::trunc)
+            << module_map_arguments(scope.arguments, msvc);
+    }
+}
+
+void report_failed_drive(const BuildError& error) {
+    if (!error.reported) mcpp::ui::error(error.message);
+    mcpp::ui::block(error.diagnosticOutput);
 }
 
 }  // namespace mcpp::build

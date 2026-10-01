@@ -2059,17 +2059,17 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                 // consumer three edges away, which is far harder to read than
                 // one extra compile.
                 if (cu.packageObjectRel.empty()) { addressable = false; break; }
-                // A BMI below its package's directory (a module name two
-                // packages of the plan provide, mcpp#732) has no address in
-                // the entry, whose BMIs are named by module: the package
-                // compiles here instead of being cached.
-                if (cu.bmiFile.find('/') != std::string::npos) { addressable = false; break; }
 
+                // The entry names a BMI by its module; the build places it
+                // below its package's directory (B1), and the entry is filled
+                // from there.
                 if (!cu.providesModule.empty()) {
                     std::string bmi;
                     for (char c : cu.providesModule)
                         bmi.push_back(c == ':' ? '-' : c);
                     bmi += std::string(bmiT.bmiExt);
+                    if (!cu.bmiFile.empty() && cu.bmiFile != bmi)
+                        arts.bmiBuildRel.emplace(bmi, cu.bmiFile);
                     arts.bmiFiles.push_back(std::move(bmi));
                 }
                 arts.objFiles.push_back({cu.packageObjectRel.generic_string(),
@@ -2463,6 +2463,20 @@ void focus_on_member(BuildContext& ctx) {
         if (g.member == m.name) { swap_link_group(ctx.plan, g); break; }
     ctx.manifest = m.manifest;
     ctx.projectRoot = m.root;
+}
+
+void populate_dependency_cache(BuildContext& ctx) {
+    if (ctx.cacheMode != CacheMode::Global) ctx.depsToPopulate.clear();
+    for (auto& task : ctx.depsToPopulate) {
+        auto pr = mcpp::bmi_cache::populate_from(task.key, ctx.outputDir, task.artifacts);
+        if (!pr) {
+            mcpp::ui::warning(std::format(
+                "bmi cache populate failed for {}@{}: {}",
+                task.key.packageName, task.key.version, pr.error()));
+        }
+    }
+    // Once: a second drive of the same plan has nothing new to add.
+    ctx.depsToPopulate.clear();
 }
 
 } // namespace mcpp::build

@@ -12,6 +12,7 @@ import std;
 import mcpplibs.cmdline;
 import mcpp.build.prepare;
 import mcpp.build.execute;
+import mcpp.build.ninja;          // write_module_maps
 import mcpp.bmi_cache.maintenance;   // parse_duration, for `clean --stale --older-than`
 import mcpp.build.directives;      // the device-slot table
 import mcpp.build.configure;
@@ -695,6 +696,10 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
                 for (auto const& r : planRoots) failedMemberRoots.push_back(r);
                 continue;
             }
+            // The argument lists name the plan's module maps; the files are
+            // written into the plan's work directory, so a reader that
+            // expands them finds them.
+            mcpp::build::write_module_maps(ctx->plan);
             contexts.push_back(std::move(*ctx));
             workDirs.push_back(mo.work_dir);
             testDiscovery.push_back(std::move(discovery));
@@ -1239,8 +1244,8 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (!bmiExtStorage.empty())
         opts.bmiExt = bmiExtStorage;
     opts.splitModuleEdges = parsed.is_flag_set("split-module");
-    // mcpp#732: the package's module map, when two packages of the plan
-    // provide one module name.
+    // The unit's module map, when a BMI it reaches lies below its provider's
+    // directory (pack drive and selection design 2026-10-01, B1).
     std::map<std::string, std::string, std::less<>> moduleMap;
     if (auto mm = parsed.option_or_empty("module-map").value(); !mm.empty()) {
         std::ifstream is{mcpp::platform::fs::extended_length(std::filesystem::path{mm})};

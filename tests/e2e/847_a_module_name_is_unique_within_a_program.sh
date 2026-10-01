@@ -16,8 +16,9 @@
 # Criteria, with the default toolchain (GCC on Linux, clang on macOS and
 # Windows):
 #   A. An app and its `artifacts` updater each provide a different module `boost`:
-#      the build succeeds, each program prints its own module's value, and the
-#      two BMIs lie below their packages' directories.
+#      the build succeeds, each program prints its own module's value, the
+#      updater's BMI lies below its package's directory and the app's, the
+#      root's, at its name (pack drive and selection design 2026-10-01, B1).
 #   B. Editing the updater's `boost` rebuilds the updater and not the app.
 #   C. Two independent members of one workspace, each with its own `boost`:
 #      `--workspace` builds both, each with its own value.
@@ -27,7 +28,7 @@
 #      naming the program's package.
 #   F. One file reached twice within one closure: refused, and named as one
 #      file reached as two packages.
-#   G. A build whose module names each have one provider writes no module map
+#   G. A build whose modules are all the root package's writes no module map
 #      and no binding flag: its build directory is laid out as before.
 set -e
 
@@ -81,8 +82,9 @@ app=$(bin_of a/app/target app); upd=$(bin_of a/app/target updater)
 [ -n "$app" ] && [ -n "$upd" ] || fail "A: a program is missing" a.log
 [ "$("$app" | tr -d '\r')" = 1 ] || fail "A: the app does not print its own module's value"
 [ "$("$upd" | tr -d '\r')" = 2 ] || fail "A: the updater does not print its own module's value"
-nb=$(find a/app/target -path '*.cache/*/boost.*' -type f | wc -l)
-[ "$nb" -eq 2 ] || { find a/app/target -name 'boost.*'; fail "A: expected two BMIs below their packages' directories, found $nb"; }
+nq=$(find a/app/target -path '*.cache/*updater/boost.*' -type f | wc -l)
+nf=$(find a/app/target -path '*.cache/boost.*' -type f | wc -l)
+[ "$nq" -eq 1 ] && [ "$nf" -eq 1 ] || { find a/app/target -name 'boost.*'; fail "A: expected the updater's BMI below its directory and the app's at its name, found $nq and $nf"; }
 echo "ok: A, an app and its artifacts updater each have their own boost"
 
 # ── B ──────────────────────────────────────────────────────────────────────
@@ -210,12 +212,12 @@ echo "ok: F, one file reached twice in one program is refused as such"
 
 # ── G ──────────────────────────────────────────────────────────────────────
 (cd a/updater && "$MCPP" build > "$TMP/g.log" 2>&1) || fail "G: a plain build failed" g.log
-[ -z "$(find a/updater/target -type d -name modmap)" ] || fail "G: a plan without a collision wrote a module map"
+[ -z "$(find a/updater/target -type d -name modmap)" ] || fail "G: a plan of the root's own modules wrote a module map"
 ninja=$(find a/updater/target -name build.ninja | head -1)
 [ -n "$ninja" ] || fail "G: no build.ninja"
 if grep -q 'module-map\|fmodule-mapper\|cache/[^ ]*/boost\.' "$ninja"; then
-    fail "G: a plan without a collision binds a module name" "$ninja"
+    fail "G: a plan of the root's own modules binds a module name" "$ninja"
 fi
-echo "ok: G, a plan without a collision is laid out as before"
+echo "ok: G, a plan of the root's own modules is laid out as before"
 
 echo "PASS: 847_a_module_name_is_unique_within_a_program"

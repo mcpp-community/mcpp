@@ -874,4 +874,13 @@ prepare_build(bool print_fingerprint, bool includeDevDeps = false,
 // set of notes.
 export std::vector<PlanNote> take_notes_on_failure();
 
+// After a drive of `ctx`'s plan succeeded: the global cache receives the
+// dependencies that the drive compiled because no entry served them. Called by
+// every command that builds a plan (`build`, `test`, `pack`); a pack once left
+// the cache unfilled, so the next build of another configuration compiled the
+// same dependencies again (pack drive and selection design 2026-10-01, A4).
+// prepare_build records no such dependency under `--cache=local|off`; the mode
+// is checked here as well, so the write side states its own condition.
+export void populate_dependency_cache(BuildContext& ctx);
+
 } // namespace mcpp::build

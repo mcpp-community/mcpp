@@ -645,7 +645,7 @@ reads this flag**.
 
 | axis | the question | examples | the form of the query |
 |---|---|---|---|
-| **target format** | what kind of image is produced | `-fPIC` (PE code is position independent by design; clang refuses the flag outright) | `triple::parse(...)->is_pe()`, host fallback |
+| **target format** | what kind of image is produced | `-fPIC`: on every unit of an ELF target that is not freestanding, whether or not the graph links a shared library (2026.10.1.2+), and never on PE, whose code is position independent by design and where clang refuses the flag outright | `triple::parse(...)->object_format()`, `is_pe()`, host fallback |
 | **target ABI** | which linker will consume this | `--out-implib` vs `/IMPLIB:`, `/DEF:`, the SONAME / install-name form | `is_msvc_target(tc)`, `triple->is_msvc_env()` |
 | **dialect** | which program mcpp is invoking | `-L` vs `/LIBPATH:`, `-I` vs `/I`, the archive command | `dialect_for(tc)`, `LinkStyle::SeparateLinker` |
 

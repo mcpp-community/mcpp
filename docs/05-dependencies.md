@@ -551,14 +551,22 @@ each of them may have its own module of one name.
   are built separately.
 - Two packages that one program links may not provide the same name. The build
   is refused, and the message names the package whose closure holds both.
-- When two packages of one build provide a name, each BMI lies below its
-  package's directory in the build directory, and every compile that may import
-  the name is told which one it means: through a module map with GCC, through
-  `-fmodule-file=` with Clang, and through `/reference` with MSVC. When every
-  name has one provider, the build directory and every command are as they
-  were before.
-- A package that provides such a name is compiled in the project, not served
-  from the global dependency cache.
+- Every package's BMIs lie below the package's directory in the build
+  directory, `gcm.cache/<package>/` (`pcm.cache` with Clang), except the root
+  package's, which lie at their names, as object files do (2026.10.1.2+). A
+  compile that imports a module of another package is told where its BMI is,
+  and where the BMIs of the modules that one imports are, through one module
+  map: a mapper file with GCC (`-fmodule-mapper=`), and an argument file of
+  `-fmodule-file=` lines with Clang or `/reference` lines with MSVC
+  (`@<build directory>/modmap/<package>-<hash>.modmap`). The map lists what the
+  unit reaches through its imports and nothing else, so the command does not
+  change with the rest of the graph. A project whose modules are all its own
+  is laid out, and every command spelled, as before.
+- Until 2026.10.1.2 a BMI moved below its package's directory only when two
+  packages of the graph provided its name, and such a package was not served
+  from the global dependency cache. Both depended on which packages a command
+  selected, so a workspace member was compiled again at each switch between
+  `-p` and `--workspace` (mcpp#751).
 - clangd finds a module by its name in the compilation database, so for a name
   two packages provide it may show the other program's module. The build is
   not affected.

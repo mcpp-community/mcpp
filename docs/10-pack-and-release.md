@@ -170,6 +170,16 @@ relative `-o` keeps meaning the directory the command was typed in.
 take, with the same precedence: `--profile` wins over either, on all three
 commands.
 
+A pack states the build it performs as `mcpp build` states one (mcpp
+2026.10.1.2+): a line for each package that does work, the status row while it
+runs, and `Finished` before the first `Packing` line. A pack over several
+configurations builds every configuration first and writes one `Finished`. The
+second pass of a dispatched `--format` is stated in the same way, and its
+`Distributing` and `Packed` lines follow it. The build runs `[build] jobs`
+compiles at once, as every command that compiles does. Before 2026.10.1.2 the
+build of a pack wrote none of this, and a pack that recompiled for minutes
+showed only `Planning`.
+
 ### Packing several members (mcpp 2026.10.1.1+)
 
 `-p` may be repeated, and `--workspace` and `--exclude` select members as they do

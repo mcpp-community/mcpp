@@ -371,3 +371,47 @@ TEST(ObjectAddress, AnUnownedEscapingSourceIsAddressedByAHashOfItsDirectory) {
     EXPECT_TRUE(std::ranges::all_of(hash, [](char c) {
         return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); })) << outsideObj;
 }
+
+// A WORKSPACE PLAN'S ROOT OWNS NO SOURCE (pack drive and selection design
+// 2026-10-01, B1; mcpp#751). A member lists a file that lies in the workspace
+// but in no member (`../shared/m.cppm`). The virtual root's directory is the
+// workspace's, and owning the file put it in the root's basename census, so
+// its object moved when a second member listed the same file: `-p` and
+// `--workspace` compiled it to two addresses in one build directory.
+TEST(ObjectAddress, AMembersOutsideSourceIsImmuneToAnotherMemberListingIt) {
+    Tmp t;
+    const auto ws = t.path / "ws";
+    auto plan_with = [&](bool withTool) -> std::filesystem::path {
+        mcpp::manifest::Manifest root;
+        root.package.name        = "workspace";
+        root.package.version     = "0.0.0";
+        root.package.standard    = "c++23";
+        root.package.virtualRoot = true;
+        std::vector<mcpp::modgraph::PackageRoot> packages;
+        auto rootPkg = makePackage(ws, "workspace");
+        rootPkg.manifest = root;
+        packages.push_back(rootPkg);
+        packages.push_back(makePackage(ws / "core", "core"));
+        if (withTool) packages.push_back(makePackage(ws / "tool", "tool"));
+
+        mcpp::modgraph::Graph graph;
+        graph.units.push_back(unitFor(ws / "core", "../shared/util.c", "core"));
+        if (withTool) graph.units.push_back(unitFor(ws / "tool", "../shared/util.c", "tool"));
+        std::vector<std::size_t> topo;
+        for (std::size_t i = 0; i < graph.units.size(); ++i) topo.push_back(i);
+        auto plan = make_plan(root, gccLike(), {}, graph, topo, packages, ws,
+                              ws / "target" / "t", {}, {}, {});
+        EXPECT_TRUE(plan) << (plan ? std::string{} : plan.error());
+        if (!plan) return {};
+        for (auto const& cu : plan->compileUnits)
+            if (cu.packageName == "core") return cu.object;
+        ADD_FAILURE() << "core's unit is not in the plan";
+        return {};
+    };
+    const auto alone  = plan_with(false);
+    const auto beside = plan_with(true);
+    EXPECT_FALSE(alone.empty());
+    EXPECT_EQ(alone, beside);
+    // Filed under its declaring member, not at the root's flat address.
+    EXPECT_NE(alone.generic_string().find("obj/core/"), std::string::npos) << alone;
+}

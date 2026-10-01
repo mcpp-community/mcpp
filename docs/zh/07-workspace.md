@@ -441,9 +441,13 @@ mcpp test --workspace --workspace-timeout 1800   # whole fan-out (default 0 = no
   `[indices]` 路径）按该成员的目录解析。
 - **选择。** `--workspace`，以及虚拟工作空间根下不带 `-p` 的命令，选中全体成员；`-p X` 与在
   X 的目录中执行的命令规划 X 及其所依赖的一切；`-p X -p Y` 把两者放在一起规划，作为一个
-  选择（§5.3）。这些选择共用构建目录，因此先执行
-  `mcpp build --workspace` 再执行 `mcpp build -p X` 不编译任何内容；只有当某个包在两条命令中
-  启用的 feature 不同时，它才会被重新编译。
+  选择（§5.3）。这些选择共用构建目录，同一个编译单元在包含它的每个选择中都由同一条命令编译：
+  命令取决于单元所属的包、该包所到达的包、选择为它启用的 feature，以及被选成员作为根所持有的
+  声明，而不取决于图中的其他任何内容（2026.10.1.2+）。因此先执行 `mcpp build --workspace`
+  再执行 `mcpp build -p X` 不编译任何内容；只有当某个包启用的 feature，或被选成员的根声明在
+  两条命令中不同时，它才会被重新编译。2026.10.1.2 之前，另有三个关于整张图的事实也会进入
+  其他成员的命令：两个成员提供同一个模块名、两个成员从各自目录之外列出同一个文件、某个成员
+  构建共享库。
 - **编译参数。** 成员的 `cflags`、`cxxflags`、`ldflags` 与 defines 作用于该成员自己的命令。
   修改它们会重新编译该成员以及导入它的单元，构建目录保持不变。
 - **Feature。** `--features f` 在每个声明了 `f` 的被选成员中启用它；没有被选成员声明它时，
@@ -506,6 +510,8 @@ myproject/
 └── target/<triple>/<configuration>/
     ├── build.ninja, compile_commands.json  # 每个配置一张图、一份数据库
     ├── obj/<package>/                      # 各包的中间产物
+    ├── gcm.cache/<package>/                # 各包的 BMI（clang 为 pcm.cache）
+    ├── modmap/                             # 导入它们的编译单元所读的模块映射
     └── bin/
         ├── server/                         # 成员的产物：bin/<包名>/
         │   ├── server

@@ -486,9 +486,17 @@ member that several members use is compiled once.
 - **Selection.** `--workspace`, and a virtual root without `-p`, select every
   member. `-p X`, and a command run in X's directory, plan X and what X
   reaches; `-p X -p Y` plans both together, as one selection (§5.3). The
-  selections share the build directory, so `mcpp build --workspace`
+  selections share the build directory, and a unit is compiled by the same
+  command in every selection that holds it: the command depends on the unit's
+  package, the packages that package reaches, the features the selection
+  activates for it and the declarations a selected member holds as the root,
+  and on nothing else in the graph (2026.10.1.2+). So `mcpp build --workspace`
   followed by `mcpp build -p X` compiles nothing, and a package is compiled
-  again only when its active features differ between the two commands.
+  again only when its active features, or the root declarations of the
+  selected members, differ between the two commands. Before 2026.10.1.2,
+  three facts about the whole graph also reached other members' commands: a
+  module name that two members provide, a file that two members list from
+  outside their own directories, and a member that builds a shared library.
 - **Flags.** A member's `cflags`, `cxxflags`, `ldflags` and defines apply to
   that member's commands. Editing them recompiles that member and what
   imports it; the build directory stays the same.
@@ -570,6 +578,8 @@ myproject/
 └── target/<triple>/<configuration>/
     ├── build.ninja, compile_commands.json  # one graph and one database per configuration
     ├── obj/<package>/                      # intermediate objects of every package
+    ├── gcm.cache/<package>/                # each package's BMIs (pcm.cache with clang)
+    ├── modmap/                             # the module maps of the units that import them
     └── bin/
         ├── server/                         # a member's products: bin/<package name>/
         │   ├── server

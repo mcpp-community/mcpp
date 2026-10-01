@@ -957,36 +957,12 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     // wrong, where the bare word was printed for three months over full
     // recompiles.
     mcpp::build::progress::programs_done();
-    mcpp::build::progress::Build report(ctx.outputDir);
 
-    // RECLAIM THE STALE CONCURRENCY TOKENS, HERE AND NOT IN prepare.
-    //
-    // detach-codegen bounds real compiler concurrency with a semaphore of
-    // directories under `<build dir>/.mcpp-sched`, released by the supervisor
-    // holding each token. A supervisor that never runs its cleanup — Ctrl-C on
-    // the build, the OOM killer, a reboot — leaves its directory behind, and
-    // nothing else deletes one. Every such event permanently lowers the cap for
-    // that build directory; after `cap` of them the next build waits for a token
-    // that can never be released and hangs with no output at all.
-    //
-    // This was first placed in prepare, beside the schedule decision, and an
-    // e2e that plants a full set of stale tokens showed it never running: an
-    // incremental build takes the project-level fast path, which replays
-    // build.ninja without re-deriving the plan. The reclaim has to sit on the
-    // path EVERY build takes, which is the line below this one.
-    //
-    // Safe here because ninja has not been spawned yet, so no token in the
-    // directory can have a live owner.
-    if (ctx.plan.scheduleTag == "detach-codegen") {
-        std::error_code semEc;
-        std::filesystem::remove_all(
-            std::filesystem::path(ctx.plan.outputDir) / ".mcpp-sched", semEc);
-    }
-
+    // The job count, the stale-token reclaim and the report are the backend's
+    // (pack drive and selection design 2026-10-01, A1, A2): every command's
+    // drive takes them from the plan and the open report.
     mcpp::build::BuildOptions opts;
     opts.verbose = verbose;
-    opts.parallelJobs = static_cast<std::size_t>(ctx.plan.scheduleNinjaJobs);
-    if (!mcpp::ui::is_quiet()) opts.progress = &report;
     auto r = be->build(ctx.plan, opts);
     if (!r) {
         // A failed step was reported when it failed; what follows is the
@@ -996,19 +972,8 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         return 1;
     }
 
-    // Populate the global cache for deps that did NOT hit. prepare_build leaves
-    // depsToPopulate empty under --cache=local|off, so the mode gate is already
-    // enforced there; asserting it again here keeps the write side legible on
-    // its own terms rather than as a consequence of something in prepare.
-    if (ctx.cacheMode != CacheMode::Global) ctx.depsToPopulate.clear();
-    for (auto& task : ctx.depsToPopulate) {
-        auto pr = mcpp::bmi_cache::populate_from(task.key, ctx.outputDir, task.artifacts);
-        if (!pr) {
-            mcpp::ui::warning(std::format(
-                "bmi cache populate failed for {}@{}: {}",
-                task.key.packageName, task.key.version, pr.error()));
-        }
-    }
+    // Populate the global cache for deps that did NOT hit.
+    mcpp::build::populate_dependency_cache(ctx);
 
     // P1.5: warn if fingerprint changed from last build (explains full rebuild).
     // Compared against the entry for the SAME profile: the profile is now a
@@ -2892,14 +2857,7 @@ static std::optional<BuildError> test_phase_a(TestBuild& tb, const TestOptions& 
 
     // M3.2: populate BMI cache for deps that did NOT hit cache — deps
     // are package-level artifacts, so this belongs right after Phase A.
-    for (auto& task : ctx->depsToPopulate) {
-        auto pr = mcpp::bmi_cache::populate_from(task.key, ctx->outputDir, task.artifacts);
-        if (!pr) {
-            mcpp::ui::warning(std::format(
-                "bmi cache populate failed for {}@{}: {}",
-                task.key.packageName, task.key.version, pr.error()));
-        }
-    }
+    mcpp::build::populate_dependency_cache(*ctx);
 
     // No "Finished test" line here: Phase A only built the shared
     // prerequisites. Printing a success banner right before per-test
@@ -2930,6 +2888,7 @@ static void test_bulk(TestBuild& tb, const TestOptions& testOpts, Keep&& keep) {
     auto* ctx = &*tb.ctx;
     auto& backend = tb.backend;
     mcpp::build::BuildOptions bulk;
+    bulk.report = mcpp::build::BuildOptions::Report::Caller;   // a test's own lines
     bulk.keepGoing = true;
     bulk.buildTimeoutSecs = static_cast<unsigned>(testOpts.buildTimeoutSecs);
     for (auto& lu : ctx->plan.linkUnits)
@@ -3278,6 +3237,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         std::expected<mcpp::build::BuildResult, mcpp::build::BuildError> b{};
         if (!bulkBuiltEverything) {
             mcpp::build::BuildOptions bOpts;
+            bOpts.report = mcpp::build::BuildOptions::Report::Caller;   // a test's own lines
             bOpts.ninjaTargets = {lu.output.generic_string()};
             bOpts.buildTimeoutSecs = static_cast<unsigned>(testOpts.buildTimeoutSecs);
             auto tBuild = std::chrono::steady_clock::now();
@@ -3798,6 +3758,7 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
                     const auto goals = member_package_goals(*tb.ctx, slots[i].owner);
                     if (goals.empty()) continue;
                     mcpp::build::BuildOptions own;
+                    own.report = mcpp::build::BuildOptions::Report::Caller;   // a test's own lines
                     own.ninjaTargets = goals;
                     own.buildTimeoutSecs = static_cast<unsigned>(testOpts.buildTimeoutSecs);
                     const auto t0 = std::chrono::steady_clock::now();

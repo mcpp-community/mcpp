@@ -18,6 +18,7 @@ import mcpp.build.distribution;
 import mcpp.build.flags;
 import mcpp.build.ninja;
 import mcpp.build.plan;
+import mcpp.build.progress;
 import mcpp.config;
 import mcpp.fetcher.progress;
 import mcpp.manifest;
@@ -164,15 +165,13 @@ build_extra_android_legs(const std::string& targetName,
         if (!ctx) { mcpp::ui::error(ctx.error()); return std::nullopt; }
 
         auto be = mcpp::build::make_ninja_backend();
+        mcpp::build::progress::programs_done();
         mcpp::build::BuildOptions bo;
         if (auto br = be->build(ctx->plan, bo); !br) {
-            if (!br.error().diagnosticOutput.empty()) {
-                std::fputs(br.error().diagnosticOutput.c_str(), stderr);
-                if (br.error().diagnosticOutput.back() != '\n') std::fputs("\n", stderr);
-            }
-            mcpp::ui::error(br.error().message);
+            mcpp::build::report_failed_drive(br.error());
             return std::nullopt;
         }
+        mcpp::build::populate_dependency_cache(*ctx);
 
         // FROM THE PLAN, never a glob — see the function comment. A
         // dependency's own `shared` target also contributes a `SharedLibrary`
@@ -349,6 +348,9 @@ struct PackRun {
     // The value of a dispatched `--format` is not known to be one until prepare
     // has run; see `prepare_group`.
     bool                                      quietUntilValidated = false;
+    // The command reports its build (`mcpp pack` in human output): the drives
+    // are stated as `mcpp build` states one (#753).
+    bool                                      reporting = false;
     std::optional<mcpp::config::GlobalConfig> cfg;
 };
 
@@ -996,6 +998,15 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
         }
     };
     stage_members();
+    // THE DISPATCH PASS IS REPORTED AS A BUILD (#753). `Finished` closed the
+    // report of the build above; this pass reopens it for its own planning,
+    // its build programs and its drive, and closes it before the members'
+    // results.
+    if (run.reporting) mcpp::build::progress::open(mcpp::log::is_verbose());
+    struct CloseReport {
+        bool on;
+        ~CloseReport() { if (on) mcpp::build::progress::close(); }
+    } closeReport{run.reporting};
     auto distCtx = mcpp::build::prepare_build(false, false, {}, g.ov);
     // A MEMBER WITHOUT A TREE FAILS ALONE (P3). Its provider may name only a
     // built file and proceed, which is why the member is kept in the pass; when
@@ -1149,18 +1160,16 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
         for (auto const& [name, s] : submitted)
             for (auto const& o : s.outputs) std::filesystem::remove_all(absolute_of(o), rmEc);
     }
+    mcpp::build::progress::programs_done();
     mcpp::build::BuildOptions dbo;
     dbo.keepGoing = run.several;
     auto dr = be.build(distCtx->plan, dbo);
     const bool driveFailed = !dr.has_value();
     if (!dr) {
-        if (!dr.error().diagnosticOutput.empty()) {
-            std::fputs(dr.error().diagnosticOutput.c_str(), stderr);
-            if (dr.error().diagnosticOutput.back() != '\n') std::fputs("\n", stderr);
-        }
-        if (!run.several) return Refusal{1, dr.error().message};
-        if (!dr.error().reported) mcpp::ui::error(dr.error().message);
+        mcpp::build::report_failed_drive(dr.error());
+        if (!run.several) return Refusal{1, {}};
     }
+    if (run.reporting) mcpp::build::progress::close();
 
     // THE CRITERION IS THE FILE, NOT THE EXIT CODE. A cached build program
     // replaying the first pass's answer, or a tool that writes nothing and
@@ -1245,6 +1254,7 @@ std::optional<Refusal> check_destinations(PackRun& run, std::vector<GroupJob>& g
 // in, which is one member; a single member is the same steps with one member.
 PackOutcome run_pack(PackRun run) {
     auto be = mcpp::build::make_ninja_backend();
+    run.reporting = mcpp::build::progress::is_open();
 
     // ─── Build first (pack implies a fresh build) ────────────────────
     mcpp::build::BuildOverrides base;
@@ -1311,23 +1321,47 @@ PackOutcome run_pack(PackRun run) {
             return PackOutcome{refused->rc};
         }
 
-    // ─── One build per group, each member staged, one dispatch ───────
+    // ─── One build per group, then one `Finished` ────────────────────
+    //
+    // THE PACK STATES ITS BUILD AS `mcpp build` STATES ONE (#753): each
+    // package that does work has its line, the status row counts the build,
+    // and `Finished` closes the report before the first `Packing` line. Every
+    // group is built before any is staged, so a pack over several
+    // configurations writes one `Finished`, as `mcpp build` does; a group
+    // whose build fails still fails alone (P3).
+    mcpp::build::progress::programs_done();
+    std::size_t building = 0;
+    for (auto const& g : groups) if (g.rc == 0) ++building;
+    if (run.reporting && building > 1) {
+        mcpp::build::progress::configurations(building);
+        mcpp::build::progress::defer_finished();
+    }
+    bool everyGroupBuilt = true;
     for (auto& g : groups) {
         if (g.rc != 0) continue;
         mcpp::build::BuildOptions bo;
         auto br = be->build(g.ctx->plan, bo);
         if (!br) {
-            // The compiler's own output, not just "build failed" — same reason as
-            // in the library pipeline.
-            if (!br.error().diagnosticOutput.empty()) {
-                std::fputs(br.error().diagnosticOutput.c_str(), stderr);
-                if (br.error().diagnosticOutput.back() != '\n') std::fputs("\n", stderr);
-            }
-            mcpp::ui::error(br.error().message);
+            mcpp::build::report_failed_drive(br.error());
             g.rc = 1;
+            everyGroupBuilt = false;
             if (!run.several) return PackOutcome{1};
             continue;
         }
+        mcpp::build::populate_dependency_cache(*g.ctx);
+        if (run.reporting)
+            mcpp::build::progress::finished(
+                g.ctx->profile, mcpp::build::profile_descriptor(g.ctx->plan.manifest.buildConfig));
+    }
+    if (run.reporting && building > 1 && everyGroupBuilt)
+        mcpp::build::progress::finish_deferred();
+    // A report not closed by `Finished` (a group failed) is closed here, before
+    // the members' own lines.
+    mcpp::build::progress::close();
+
+    // ─── Each member staged, one dispatch per group ──────────────────
+    for (auto& g : groups) {
+        if (g.rc != 0) continue;
         // Everything below reads the package being packed: in a workspace plan,
         // each selected member in turn (workspace design 2026-09-29 §15).
         for (auto& m : g.members) {
@@ -1343,7 +1377,8 @@ PackOutcome run_pack(PackRun run) {
         }
         if (run.opts.format != mcpp::pack::Format::Dispatched) continue;
         if (auto refused = dispatch_group(run, g, *be)) {
-            mcpp::ui::error(refused->message);
+            // A failed drive was reported where it failed.
+            if (!refused->message.empty()) mcpp::ui::error(refused->message);
             for (auto& m : g.members)
                 if (m.result.rc == 0) m.result.rc = refused->rc;
             if (!run.several) return PackOutcome{refused->rc};

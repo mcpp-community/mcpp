@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-321 records.
+322 records.
 
 ## By subject
 
@@ -30,6 +30,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### design
 
+- [A pack's build reported as a build, and a unit's compile independent of the member selection: triage and design (#753, #751)](2026-10-01-pack-drive-and-selection-independent-compile-design.md) — active
 - [Member selection, build programs prepared once, a pack over several members, and the output streams of `mcpp run`: the plan for the release after 2026.9.30.2 (#748, #749, #750)](2026-09-30-member-selection-and-build-program-cost-plan.md) — landed
 - [The build's wall time, its progress count, a hang after the build, and #732 and #744: measurements and a remediation plan](2026-09-30-build-wall-time-progress-count-and-hang-plan.md) — landed
 - [Build output, revision 3: every package that does work is named, the live display is one line drawn in one write, and a repeated warning is stated once per file](2026-09-30-build-output-refinement-design.md) — landed
@@ -110,6 +111,9 @@ Records that declare one. Everything else is listed by date below.
 
 ## By date
 
+### 2026-10
+
+- [A pack's build reported as a build, and a unit's compile independent of the member selection: triage and design (#753, #751)](2026-10-01-pack-drive-and-selection-independent-compile-design.md) — active
 ### 2026-09
 
 - [Member selection, build programs prepared once, a pack over several members, and the output streams of `mcpp run`: the plan for the release after 2026.9.30.2 (#748, #749, #750)](2026-09-30-member-selection-and-build-program-cost-plan.md) — landed

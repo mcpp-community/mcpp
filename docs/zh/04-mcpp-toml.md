@@ -778,7 +778,9 @@ jobs         = "auto"    # or a positive number; --jobs / MCPP_JOBS override it
 bmi_schedule = "off"     # auto (default, = off) | on | off
 ```
 
-`jobs` 是同时运行多少个编译。`"auto"` 是**相对正在执行构建的这台机器**
+`jobs` 是同时运行多少个编译，适用于每一条会编译的命令：`build`、`run`、`test` 与 `pack`
+（2026.10.1.2+；此前 `test` 与 `pack` 无论这个键怎么写都按 ninja 的默认并行数运行）。
+`"auto"` 是**相对正在执行构建的这台机器**
 解析的，绝不会被冻结进 manifest：它取一颗异构 CPU 的物理核心数（一颗
 13900K 是 8 个 P-core + 16 个 E-core，所以它的 32 个线程不是 32 个
 等价的工作者），并按空闲内存夹紧这个数字，因为单次模块接口编译峰值

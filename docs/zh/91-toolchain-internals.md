@@ -601,7 +601,7 @@ SDK 解析它的 C 世界（`CLibMode::Sysroot`），并有自己的 libc++ 链�
 
 | 轴 | 要问的问题 | 例子 | 查询方式 |
 |---|---|---|---|
-| **目标格式** | 产出的是哪一种镜像 | `-fPIC`（PE 代码按设计就是位置无关的；clang 直接拒绝这个 flag） | `triple::parse(...)->is_pe()`，宿主兜底 |
+| **目标格式** | 产出的是哪一种镜像 | `-fPIC`：ELF 且非独立环境（freestanding）的目标上每个编译单元都带，无论图中是否链接共享库（2026.10.1.2+）；PE 上从不带，PE 代码按设计就是位置无关的，clang 直接拒绝这个 flag | `triple::parse(...)->object_format()`、`is_pe()`，宿主兜底 |
 | **目标 ABI** | 哪个链接器会消费它 | `--out-implib` 与 `/IMPLIB:`、`/DEF:`，SONAME / install-name 的形式 | `is_msvc_target(tc)`、`triple->is_msvc_env()` |
 | **dialect** | mcpp 调用的是哪个程序 | `-L` 与 `/LIBPATH:`、`-I` 与 `/I`，归档命令 | `dialect_for(tc)`、`LinkStyle::SeparateLinker` |
 

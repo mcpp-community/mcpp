@@ -4,6 +4,72 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.1.2] - 2026-10-01
+
+This release implements the design for a pack's build and a compile that does
+not depend on the member selection
+(`.agents/docs/2026-10-01-pack-drive-and-selection-independent-compile-design.md`),
+and resolves mcpp#751 and mcpp#753. A project that imports a module of a
+dependency, and every project on an ELF target, is compiled once more after the
+upgrade, because its commands change (both under **Changed**).
+
+### Fixed
+
+- **A unit is compiled by the same command in every selection of a
+  workspace.** The selections of one configuration share a build directory,
+  and three facts about the whole graph reached the commands of members they
+  did not concern, so each switch between `--workspace` and `-p` recompiled
+  them (mcpp#751; GalTranslPP 3.1.3 recompiled its core for 3m22s):
+  - a module name that two members provide moved every BMI of that name below
+    its provider's directory, and told the importers so, only when the graph
+    held both providers;
+  - a file that a member lists from outside its own directory was owned by the
+    workspace's virtual root, whose object census depended on how many members
+    listed it;
+  - a member that builds a shared library put `-fPIC` on every unit of the
+    graph.
+  A command now depends on the unit's package, the packages it reaches, the
+  features the selection activates for it and the declarations a selected
+  member holds as the root, and on nothing else in the graph. `mcpp build
+  --workspace` followed by `mcpp build -p <member>` compiles nothing, and so
+  does any alternation of selections (e2e 872).
+- **`mcpp pack` states the build it performs.** Its build wrote no package
+  line, no status row and no `Finished`, so a release job whose pack
+  recompiled mcpp showed `Planning` for six minutes (mcpp#753). A pack is now
+  stated as `mcpp build` states one, with `Finished` before the first `Packing`
+  line and one `Finished` for a pack over several configurations; the second
+  pass of a dispatched `--format` is stated in the same way (e2e 871).
+- **`[build] jobs` bounds every command that compiles.** `mcpp test` and
+  `mcpp pack` ran ninja's default number of jobs whatever `[build] jobs`,
+  `--jobs` or `MCPP_JOBS` said, which on a machine with little memory exceeded
+  the bound the key exists to enforce. The backend reads the job count from
+  the plan, and the reclaim of stale `bmi_schedule = "on"` tokens, which ran
+  only under `mcpp build`, runs before the first drive of every build
+  directory (e2e 871).
+- **A pack fills the global dependency cache** with the dependencies its
+  build compiled, as `mcpp build` and `mcpp test` do.
+
+### Changed
+
+- **Every package's BMIs lie below the package's directory, except the root
+  package's.** The rule is the one object files have followed since mcpp#233:
+  `gcm.cache/<package>/<module>.gcm` (`pcm.cache` with clang). A unit that
+  imports a module of another package reads one module map of the modules it
+  reaches through its imports: a mapper file with GCC, and an argument file
+  `@<build directory>/modmap/<package>-<hash>.modmap` of `-fmodule-file=` or
+  `/reference` lines with clang or MSVC. A project whose modules are all its
+  own is laid out, and every command spelled, as before. A package whose
+  module name another package of the graph provides is served from the global
+  dependency cache again; 2026.9.30.2 compiled it in the project.
+- **Every unit of an ELF target that is not freestanding is compiled with
+  `-fPIC`,** whether or not the graph links a shared library, as rustc's
+  default relocation model does on these targets: an object compiled once
+  serves a program and a shared object. Mach-O compilers produce
+  position-independent code by default, PE has no such flag, and nothing
+  changes on those targets or on freestanding ones. The global dependency
+  cache keys these entries by the flag, so each is compiled once more and
+  then served again.
+
 ## [2026.10.1.1] - 2026-10-01
 
 This release implements the plan for member selection, build programs prepared

@@ -77,7 +77,9 @@ out=$("$MCPP" run 2>&1)
 # build.ninja should compile sources from BOTH packages
 ninja_file="$(find target -name build.ninja)"
 grep -q 'mylibA.*greet.cppm' "$ninja_file" || { echo "ninja missing dep package source"; exit 1; }
-grep -q 'mcpp.cache/mylibA.greet.gcm\|gcm.cache/mylibA.greet.gcm' "$ninja_file" || {
+# A dependency's BMI lies below its package's directory (pack drive and
+# selection design 2026-10-01, B1); the root's would lie at its name.
+grep -q 'gcm.cache/[^ /]*mylibA/mylibA.greet.gcm' "$ninja_file" || {
     echo "ninja missing dep BMI"; exit 1; }
 
 # Path-resolution error reporting: declared name mismatch

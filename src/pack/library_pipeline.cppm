@@ -29,6 +29,8 @@ import mcpp.build.backend;
 import mcpp.build.ninja;
 import mcpp.build.plan;
 import mcpp.build.prepare;
+import mcpp.build.progress;
+import mcpp.build.flags;      // profile_descriptor
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
@@ -127,6 +129,15 @@ export int build_and_pack_library(const std::string& targetName,
     std::vector<std::string> legs = triples;
     if (legs.empty()) legs.push_back({});   // one leg, this host
 
+    // EACH LEG'S BUILD IS STATED AS `mcpp build` STATES ONE (#753): its
+    // packages' lines and the status row as it runs, and one `Finished` for
+    // the legs together, after the last of them.
+    const bool reporting = mcpp::build::progress::is_open();
+    if (reporting && legs.size() > 1) {
+        mcpp::build::progress::configurations(legs.size());
+        mcpp::build::progress::defer_finished();
+    }
+
     LibraryPackPlan plan;
     plan.builtBy      = std::string(mcpp::MCPP_VERSION);
     plan.writeArchive = opts.format == mcpp::pack::Format::Tar;
@@ -186,19 +197,20 @@ export int build_and_pack_library(const std::string& targetName,
         // fingerprint, and picking one by name or by mtime silently selects a
         // stale binary. The link unit knows its own output.
         auto be = mcpp::build::make_ninja_backend();
+        mcpp::build::progress::programs_done();
         mcpp::build::BuildOptions bo;
         if (auto br = be->build(ctx->plan, bo); !br) {
             // The compiler's own output, not just "build failed". `mcpp build`
             // has always printed this; `mcpp pack` dropped it, so a failure
             // inside the packer's build arrived as three words and CI logs had
             // nothing to go on.
-            if (!br.error().diagnosticOutput.empty()) {
-                std::fputs(br.error().diagnosticOutput.c_str(), stderr);
-                if (br.error().diagnosticOutput.back() != '\n') std::fputs("\n", stderr);
-            }
-            mcpp::ui::error(br.error().message);
+            mcpp::build::report_failed_drive(br.error());
             return 1;
         }
+        mcpp::build::populate_dependency_cache(*ctx);
+        if (reporting)
+            mcpp::build::progress::finished(
+                ctx->profile, mcpp::build::profile_descriptor(ctx->plan.manifest.buildConfig));
         // Everything below reads the package being packed.
         const auto kept = *target;
         mcpp::build::focus_on_member(*ctx);
@@ -430,6 +442,7 @@ export int build_and_pack_library(const std::string& targetName,
         });
         mcpp::ui::status("Packed leg", std::format("{}  [{}]", triple, tag.str()));
     }
+    if (reporting && legs.size() > 1) mcpp::build::progress::finish_deferred();
 
     // ── does the package cover what it claims? ─────────────────────────
     //

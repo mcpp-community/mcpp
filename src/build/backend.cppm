@@ -14,7 +14,6 @@ struct BuildOptions {
     bool                        verbose       = false;
     bool                        dryRun       = false;
     bool                        requireCompileDatabase = false;
-    std::size_t                 parallelJobs = 0;
     // Explicit ninja goal targets (LinkUnit::output paths, relative to the
     // plan's outputDir). Empty = build the full plan (default behavior).
     std::vector<std::string>    ninjaTargets;
@@ -35,9 +34,23 @@ struct BuildOptions {
     // The report of this build directory (build progress design 2026-09-29).
     // Set, ninja runs without `--quiet` and is read as it runs: the step
     // record is written, the status lines and ninja's log feed the report,
-    // and a failed step's diagnostics are written when it fails. Null (under
-    // --quiet or machine output), ninja's output is examined after it exits.
+    // and a failed step's diagnostics are written when it fails. Null, the
+    // backend applies `report`.
     mcpp::build::progress::Build* progress = nullptr;
+    // Who states this drive when `progress` is null (pack drive and selection
+    // design 2026-10-01, A2). `Region`: the backend reports it whenever the
+    // command opened the progress region and is not quiet, which is how
+    // `mcpp pack` came to build for six minutes under `Planning` (#753): the
+    // default is the reported form, so a caller that says nothing is
+    // reported. `Caller`: the caller writes its own lines, as `mcpp test`
+    // does for each test's build.
+    //
+    // The job count is not an option. Every drive takes it from the plan
+    // (`BuildPlan::scheduleNinjaJobs`), where `[build] jobs`, `--jobs` and
+    // `MCPP_JOBS` were resolved once; it was an option set by one of ten
+    // callers, and `test` and `pack` ran ninja's default instead (A1).
+    enum class Report { Region, Caller };
+    Report                      report = Report::Region;
 };
 
 struct BuildResult {

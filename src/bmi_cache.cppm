@@ -128,6 +128,12 @@ struct ObjArtifact {
 // objects above.
 struct DepArtifacts {
     std::vector<std::string>  bmiFiles;
+    // Where an entry of `bmiFiles` lies in the build's BMI directory when not
+    // at its name: below its package's directory, which is every package but
+    // the root's (pack drive and selection design 2026-10-01, B1). Read when
+    // the entry is populated, as `ObjArtifact::buildRel` is, and never written
+    // to entry.json, whose BMIs are named by module.
+    std::map<std::string, std::string, std::less<>> bmiBuildRel;
     std::vector<ObjArtifact>  objFiles;
 };
 
@@ -369,7 +375,8 @@ populate_from(const CacheKey& key,
     auto projectBmi = projectTargetDir / key.bmiDirName;
 
     for (auto& g : arts.bmiFiles) {
-        auto from = projectBmi / g;
+        auto rel = arts.bmiBuildRel.find(g);
+        auto from = projectBmi / (rel == arts.bmiBuildRel.end() ? g : rel->second);
         if (!std::filesystem::exists(from)) {
             return std::unexpected(std::format(
                 "expected build output missing: {}", from.string()));

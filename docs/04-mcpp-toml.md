@@ -819,7 +819,9 @@ jobs         = "auto"    # or a positive number; --jobs / MCPP_JOBS override it
 bmi_schedule = "off"     # auto (default, = off) | on | off
 ```
 
-`jobs` is how many compiles run at once. `"auto"` is resolved **against the
+`jobs` is how many compiles run at once, in every command that compiles:
+`build`, `run`, `test` and `pack` (2026.10.1.2+; before it, `test` and `pack`
+ran ninja's default number of jobs whatever the key said). `"auto"` is resolved **against the
 machine doing the build**, never frozen into the manifest: it takes the physical
 core count on a heterogeneous CPU (a 13900K is 8 P-cores + 16 E-cores, so its 32
 threads are not 32 equal workers) and clamps that by free memory, because a
