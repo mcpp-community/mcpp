@@ -2779,8 +2779,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                 append("  bind = --split-module\n");
             if (auto at = ddiScope.find(ddi); at != ddiScope.end())
                 if (auto sc = plan.moduleScopes.find(at->second); sc != plan.moduleScopes.end())
-                append(std::format("  module_map = --module-map {}\n",
-                                   escape_ninja_path(sc->second.mapFile)));
+                    append(std::format("  module_map = --module-map {}\n",
+                                       escape_ninja_path(sc->second.mapFile)));
             if (auto it = ddi_expect.find(ddi); it != ddi_expect.end())
                 append(std::format("  expect = {}\n", it->second));
         }
