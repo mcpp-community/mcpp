@@ -592,6 +592,11 @@ command lines that T7's criteria compare.
   `mcpp.build.prepare` that instantiates a ranges algorithm, on Linux and
   macOS; GCC 16 compiled it. The first CI round of #754 failed on every macOS
   leg for this reason, and the cause was bisected locally.
+- **The MSVC argument file** holds each `/reference` and its value on one
+  line. cl.exe does not take an option's value from the next line of a
+  command file: the second CI round of #754 failed e2e 258, 262 and 848 on
+  the Windows legs with `D8004: '/reference' requires an argument`. A unit
+  test now writes both compilers' files and reads them back.
 - **B2's predicate** is "ELF and not freestanding", read from the target
   triple with the host triple when the target is empty. Mach-O is excluded
   because its compilers default to PIC; WebAssembly refuses shared objects.
