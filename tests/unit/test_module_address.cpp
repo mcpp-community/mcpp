@@ -60,16 +60,19 @@ mcpp::modgraph::PackageRoot package(const std::filesystem::path& root, std::stri
     return p;
 }
 
+// `provides` is empty for a unit that provides no module. A plain string and
+// not an `std::optional<std::string>`, which does not construct under clang
+// with the MSVC STL (see `CompileUnit::providesModule`).
 mcpp::modgraph::SourceUnit unit(const std::filesystem::path& root, std::string_view rel,
-                                std::string_view pkg, std::optional<std::string> provides,
+                                std::string_view pkg, std::string_view provides,
                                 std::vector<std::string> requires_) {
     mcpp::modgraph::SourceUnit u;
     u.path        = root / rel;
     u.relPath     = std::filesystem::path(rel);
     u.packageName = std::string(pkg);
-    u.kind        = provides ? mcpp::SourceKind::ModuleInterface : mcpp::SourceKind::Cxx;
-    if (provides) {
-        u.provides = mcpp::modgraph::ModuleId{*provides};
+    u.kind        = provides.empty() ? mcpp::SourceKind::Cxx : mcpp::SourceKind::ModuleInterface;
+    if (!provides.empty()) {
+        u.provides = mcpp::modgraph::ModuleId{std::string(provides)};
         u.providesInterface = true;
         u.declaration = mcpp::modgraph::ModuleDeclaration::Interface;
     }
@@ -136,10 +139,10 @@ std::expected<BuildPlan, std::string> plan_workspace(const Tmp& t, mcpp::toolcha
     mcpp::modgraph::Graph graph;
     graph.units.push_back(unit(ws / "core", "src/m.cppm", "core", "m", {"std"}));
     graph.units.push_back(unit(ws / "core", "src/core.cppm", "core", "corelib", {"m"}));
-    graph.units.push_back(unit(ws / "app", "src/main.cpp", "app", std::nullopt, {"corelib"}));
+    graph.units.push_back(unit(ws / "app", "src/main.cpp", "app", "", {"corelib"}));
     if (withTool) {
         graph.units.push_back(unit(ws / "tool", "src/m.cppm", "tool", "m", {}));
-        graph.units.push_back(unit(ws / "tool", "src/main.cpp", "tool", std::nullopt, {"m"}));
+        graph.units.push_back(unit(ws / "tool", "src/main.cpp", "tool", "", {"m"}));
     }
     for (std::size_t i = 0; i < graph.units.size(); ++i)
         if (auto const& p = graph.units[i].provides)
@@ -235,7 +238,7 @@ TEST(ModuleAddress, RootModulesStayFlatAndNeedNoMap) {
 
     mcpp::modgraph::Graph graph;
     graph.units.push_back(unit(proj, "src/m.cppm", "app", "m", {"std"}));
-    graph.units.push_back(unit(proj, "src/main.cpp", "app", std::nullopt, {"m", "std"}));
+    graph.units.push_back(unit(proj, "src/main.cpp", "app", "", {"m", "std"}));
     graph.providersOf["m"] = {0};
     graph.producerOf["m"] = 0;
     graph.closures["app"] = {"app"};
@@ -274,7 +277,7 @@ TEST(ModuleAddress, PositionIndependenceFollowsTheTargetNotTheGraph) {
     rootPkg.manifest = root;
     packages.push_back(rootPkg);
     mcpp::modgraph::Graph graph;
-    graph.units.push_back(unit(proj, "src/main.cpp", "fw", std::nullopt, {}));
+    graph.units.push_back(unit(proj, "src/main.cpp", "fw", "", {}));
     auto tc = toolchain(mcpp::toolchain::CompilerId::GCC);
     tc.targetTriple = "arm-none-eabi";
     auto plan = make_plan(root, tc, {}, graph, {0}, packages, proj, proj / "target" / "t",
