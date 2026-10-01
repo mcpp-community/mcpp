@@ -299,18 +299,24 @@ bool msvc_module_spelling(const BuildPlan& plan) {
     return !prefix.empty() && prefix.back() == ' ';
 }
 
-// The text of a module map's argument file (B1): one argument per line. clang
-// reads it by GNU rules on every host (#247), where a word holding a space or
-// a quote is written in double quotes with `\` and `"` escaped; the paths are
+// The text of a module map's argument file (B1). clang reads it by GNU rules on
+// every host (#247), one argument per line, where a word holding a space or a
+// quote is written in double quotes with `\` and `"` escaped; the paths are
 // written with forward slashes, so a backslash does not occur. MSVC reads it
 // by its own rules (`shell_quote_arg` on a Windows host) and needs the byte
-// order mark to read a path that is not ASCII (#693).
+// order mark to read a path that is not ASCII (#693). Its arguments come in
+// pairs, `/reference` and `<name>=<path>`, and each pair is one line: cl.exe
+// does not take an option's value from the next line of a command file
+// (`D8004: '/reference' requires an argument`, measured on windows-2025).
 std::string module_map_arguments(const std::vector<std::string>& arguments, bool msvc) {
     std::string out = msvc ? std::string(kUtf8ByteOrderMark) : std::string{};
+    if (msvc) {
+        for (std::size_t i = 0; i + 1 < arguments.size(); i += 2)
+            out += arguments[i] + " " + mcpp::build::shell_quote_arg(arguments[i + 1]) + "\n";
+        return out;
+    }
     for (auto const& a : arguments) {
-        if (msvc) {
-            out += mcpp::build::shell_quote_arg(a);
-        } else if (a.find_first_of(" \t\"'\\") == std::string::npos) {
+        if (a.find_first_of(" \t\"'\\") == std::string::npos) {
             out += a;
         } else {
             out += '"';

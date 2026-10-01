@@ -19,6 +19,7 @@
 
 import std;
 import mcpp.build.plan;
+import mcpp.build.ninja;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
@@ -309,4 +310,48 @@ TEST(ModuleAddress, EveryNamedArgumentFileIsOneThePlanStates) {
     // core.cppm, app's main.cpp and tool's main.cpp import a module of
     // another package or of a member.
     EXPECT_EQ(named, 3u);
+}
+
+// The argument file of a module map, as each compiler reads it. MSVC takes an
+// option's value only from the same line of a command file (`D8004: '/reference'
+// requires an argument` on windows-2025 when they were on two lines), and reads
+// a non-ASCII path only with a byte order mark; clang reads GNU rules, where a
+// word with a space is quoted.
+TEST(ModuleAddress, ArgumentFilesAreWrittenAsEachCompilerReadsThem) {
+    Tmp t;
+    auto read = [](const std::filesystem::path& p) {
+        std::ifstream in(p, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+
+    BuildPlan msvc;
+    msvc.outputDir = t.path / "msvc";
+    msvc.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
+    ModuleScope ms;
+    ms.mapFile = "modmap/core-1.map";
+    ms.content = "m ifc.cache/core/m.ifc\n";
+    ms.argsFile = "modmap/core-1.modmap";
+    ms.arguments = {"/reference", "m=C:/build/ifc.cache/core/m.ifc",
+                    "/reference", "n=C:/build/ifc.cache/core/n.ifc"};
+    msvc.moduleScopes.emplace("core-1", ms);
+    write_module_maps(msvc);
+    EXPECT_EQ(read(msvc.outputDir / "modmap/core-1.modmap"),
+              "\xEF\xBB\xBF/reference m=C:/build/ifc.cache/core/m.ifc\n"
+              "/reference n=C:/build/ifc.cache/core/n.ifc\n");
+    EXPECT_EQ(read(msvc.outputDir / "modmap/core-1.map"), ms.content);
+
+    BuildPlan clang;
+    clang.outputDir = t.path / "clang";
+    clang.toolchain.compiler = mcpp::toolchain::CompilerId::Clang;
+    ModuleScope cs;
+    cs.mapFile = "modmap/core-2.map";
+    cs.content = "m pcm.cache/core/m.pcm\n";
+    cs.argsFile = "modmap/core-2.modmap";
+    cs.arguments = {"-fmodule-file=m=/build dir/pcm.cache/core/m.pcm",
+                    "-fmodule-file=n=/build/pcm.cache/core/n.pcm"};
+    clang.moduleScopes.emplace("core-2", cs);
+    write_module_maps(clang);
+    EXPECT_EQ(read(clang.outputDir / "modmap/core-2.modmap"),
+              "\"-fmodule-file=m=/build dir/pcm.cache/core/m.pcm\"\n"
+              "-fmodule-file=n=/build/pcm.cache/core/n.pcm\n");
 }
