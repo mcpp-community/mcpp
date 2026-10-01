@@ -2069,7 +2069,7 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                         bmi.push_back(c == ':' ? '-' : c);
                     bmi += std::string(bmiT.bmiExt);
                     if (!cu.bmiFile.empty() && cu.bmiFile != bmi)
-                        arts.bmiBuildRel.emplace(bmi, cu.bmiFile);
+                        arts.bmiPlacements.push_back({bmi, cu.bmiFile});
                     arts.bmiFiles.push_back(std::move(bmi));
                 }
                 arts.objFiles.push_back({cu.packageObjectRel.generic_string(),

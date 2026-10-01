@@ -126,14 +126,25 @@ struct ObjArtifact {
 
 // The artifacts belonging to one package's cache entry: BMI basenames plus the
 // objects above.
+// Where a BMI of an entry lies in the build's BMI directory when not at its
+// name: below its package's directory, which is every package but the root's
+// (pack drive and selection design 2026-10-01, B1). Read when the entry is
+// populated, as `ObjArtifact::buildRel` is, and never written to entry.json,
+// whose BMIs are named by module.
+//
+// A vector of this pair and not a `std::map<std::string, std::string,
+// std::less<>>`: with that member in this struct, clang 22.1.8 crashed
+// (SIGSEGV in ASTReader::readTypeRecord) compiling every importer of
+// mcpp.build.prepare that instantiates a ranges algorithm of its own, on Linux
+// and macOS alike, while GCC 16 compiled it.
+struct BmiPlacement {
+    std::string name;       // as `DepArtifacts::bmiFiles` names it
+    std::string buildRel;   // relative to the build's BMI directory
+};
+
 struct DepArtifacts {
     std::vector<std::string>  bmiFiles;
-    // Where an entry of `bmiFiles` lies in the build's BMI directory when not
-    // at its name: below its package's directory, which is every package but
-    // the root's (pack drive and selection design 2026-10-01, B1). Read when
-    // the entry is populated, as `ObjArtifact::buildRel` is, and never written
-    // to entry.json, whose BMIs are named by module.
-    std::map<std::string, std::string, std::less<>> bmiBuildRel;
+    std::vector<BmiPlacement> bmiPlacements;
     std::vector<ObjArtifact>  objFiles;
 };
 
@@ -375,8 +386,10 @@ populate_from(const CacheKey& key,
     auto projectBmi = projectTargetDir / key.bmiDirName;
 
     for (auto& g : arts.bmiFiles) {
-        auto rel = arts.bmiBuildRel.find(g);
-        auto from = projectBmi / (rel == arts.bmiBuildRel.end() ? g : rel->second);
+        std::string rel = g;
+        for (auto const& p : arts.bmiPlacements)
+            if (p.name == g) { rel = p.buildRel; break; }
+        auto from = projectBmi / rel;
         if (!std::filesystem::exists(from)) {
             return std::unexpected(std::format(
                 "expected build output missing: {}", from.string()));
