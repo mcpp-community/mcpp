@@ -3,7 +3,7 @@
 # for #770 / #771 / #769 relies on. Prints; asserts nothing.
 set -u
 M="${MCPP_BUILT:?}"
-W="$RUNNER_TEMP/mcpp-probes"; rm -rf "$W"; mkdir -p "$W"
+W="$RUNNER_TEMP/mcpp-probes"; mkdir -p "$W"
 run() { echo "\$ $*"; "$@" 2>&1; echo "rc=$?"; }
 section() { echo; echo "### $1"; }
 edges() {   # the link edges of the generated build.ninja, with their link flags
@@ -33,6 +33,8 @@ PY
 }
 "$M" --version
 
+MODE="${1:-all}"
+if [ "$MODE" = msvc ] || [ "$MODE" = all ]; then
 # ---------------------------------------------------------------- #771
 section "771 workspace member's shared library and its build.mcpp link_lib (msvc@system)"
 mkdir -p "$W/ws771/player/src" "$W/ws771/other/src"; cd "$W/ws771"
@@ -151,8 +153,12 @@ run "$M" build --release
 n=$(find target -name build.ninja | head -1); grep -n "GL\|LTCG\|flto" "$n" | head -5; echo "(grep done)"
 
 # ---------------------------------------------------------------- #769 / D2
-section "D2 import std only: is std.compat compiled anyway?"
-mkdir -p "$W/stdonly/src"; cd "$W/stdonly"
+fi
+if [ "$MODE" = llvm ] || [ "$MODE" = all ]; then
+section "D2 import std only: is std.compat compiled anyway? (std cache cleared first)"
+echo "WindowsSdkDir=${WindowsSdkDir:-<unset>}"
+rm -rf "${MCPP_HOME:-$HOME/.mcpp}/build-cache/v1/std"
+rm -rf "$W/stdonly"; mkdir -p "$W/stdonly/src"; cd "$W/stdonly"
 cat > mcpp.toml <<'EOF'
 [package]
 name = "std-only"
@@ -175,7 +181,7 @@ find "${MCPP_HOME:-$HOME/.mcpp}" -path '*std.compat*' \( -name '*.pcm' -o -name 
 echo "(compat artefacts listed above, if any)"
 
 section "769 llvm + MSVC STL: import std.compat"
-mkdir -p "$W/compat/src"; cd "$W/compat"
+rm -rf "$W/compat"; mkdir -p "$W/compat/src"; cd "$W/compat"
 cat > mcpp.toml <<'EOF'
 [package]
 name = "std-compat-canary"
@@ -205,3 +211,4 @@ int main() {
 EOF
 run "$M" build
 run "$M" run
+fi

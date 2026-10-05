@@ -11,6 +11,7 @@ on:
 
 jobs:
   msvc-facts:
+    if: false   # measured in run 37290831503; not repeated
     name: cl.exe / link.exe / lib.exe facts (/GL, /bigobj, /LTCG)
     runs-on: windows-latest
     timeout-minutes: 20
@@ -50,17 +51,28 @@ jobs:
           built=$(find target -type f -name mcpp.exe -path '*/bin/*' | head -1)
           mkdir -p dist && cp "$built" dist/mcpp.exe
           echo "MCPP_BUILT=$PWD/dist/mcpp.exe" >> "$GITHUB_ENV"
-      - uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-      - name: probe
+      - name: probe llvm row, plain environment (control)
         shell: bash
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          bash .github/probe/mcpp_probes.sh 2>&1 | tee probes.log
+          bash .github/probe/mcpp_probes.sh llvm 2>&1 | tee probes-llvm-plain.log
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: probe cl.exe row (developer environment)
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          bash .github/probe/mcpp_probes.sh msvc 2>&1 | tee probes-msvc.log
+      - name: probe llvm row, developer environment
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          bash .github/probe/mcpp_probes.sh llvm 2>&1 | tee probes-llvm-devenv.log
+          cat probes-llvm-plain.log probes-msvc.log probes-llvm-devenv.log > probes.log
           { echo '## mcpp probes'; echo '```'; cat probes.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: mcpp-probes
-          path: probes.log
+          path: probes*.log
