@@ -989,6 +989,8 @@ int run(int argc, char** argv) {
             .option(cl::Option("llvm-cxx").takes_value().value_name("PATH").help("selected LLVM compiler for bitcode inspection"))
             .option(cl::Option("llvm-nm").takes_value().value_name("PATH").help("llvm-nm from the selected LLVM installation"))
             .option(cl::Option("llvm-target").takes_value().value_name("TRIPLE").help("selected target triple"))
+            .option(cl::Option("exports-file").takes_value().value_name("PATH").help("the target's `exports` patterns, one per line"))
+            .option(cl::Option("required").help("a consumer of this build links the DLL: an empty export surface is an error"))
             .action(wrap_rc(cmd_coff_def)))
         .subcommand(cl::App("bmi-equal")
             .description("(internal: invoked by ninja) Compare two BMIs ignoring the compiler's embedded timestamp")

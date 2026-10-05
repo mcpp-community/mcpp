@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-324 records.
+325 records.
 
 ## By subject
 
@@ -30,6 +30,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### design
 
+- [`mcpp run` hands the terminal to the program, and the follow-ups of #761, #763 and #765 (#766)](2026-10-05-run-terminal-handoff-and-766-follow-ups-design.md) — landed
 - [PR CI acceleration and the toolchain specification (#756, #757, #669)](2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md) — active
 - [工具与工具链的来源：声明、编程决定、可观察](2026-10-01-tool-and-toolchain-sources-design.md) — landed
 - [A pack's build reported as a build, and a unit's compile independent of the member selection: triage and design (#753, #751)](2026-10-01-pack-drive-and-selection-independent-compile-design.md) — landed
@@ -115,6 +116,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-10
 
+- [`mcpp run` hands the terminal to the program, and the follow-ups of #761, #763 and #765 (#766)](2026-10-05-run-terminal-handoff-and-766-follow-ups-design.md) — landed
 - [PR CI acceleration and the toolchain specification (#756, #757, #669)](2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md) — active
 - [工具与工具链的来源：声明、编程决定、可观察](2026-10-01-tool-and-toolchain-sources-design.md) — landed
 - [A pack's build reported as a build, and a unit's compile independent of the member selection: triage and design (#753, #751)](2026-10-01-pack-drive-and-selection-independent-compile-design.md) — landed

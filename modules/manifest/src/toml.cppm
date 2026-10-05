@@ -1849,11 +1849,11 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         if (auto msg = validate_target_soname(t, std::format("targets.{}.", tname))) {
             return std::unexpected(error(origin, *msg));
         }
-        if (auto it = tt.find("auto_export"); it != tt.end()) {
+        if (auto it = tt.find("windows_auto_export"); it != tt.end()) {
             if (!it->second.is_bool())
                 return std::unexpected(error(origin, std::format(
-                    "targets.{}.auto_export must be a boolean", tname)));
-            t.autoExport = it->second.as_bool();
+                    "targets.{}.windows_auto_export must be a boolean", tname)));
+            t.windowsAutoExport = it->second.as_bool();
         }
         // `exports` -- a file of symbol patterns, or the patterns inline.
         //
@@ -1989,7 +1989,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         // must reach SHARED code is intentionally not a target key; point users
         // at the right axis (workspace / features / profile).
         static constexpr std::string_view kKnownTargetKeys[] = {
-            "kind", "linkage", "main", "soname", "exports", "auto_export",
+            "kind", "linkage", "main", "soname", "exports", "windows_auto_export",
             "cflags", "cxxflags", "defines", "required_features",
             "windows_entry", "windows_subsystem", "windows_code_page",
         };

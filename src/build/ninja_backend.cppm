@@ -600,6 +600,13 @@ std::string exports_file_contents(const LinkUnit& lu, std::string_view os) {
         for (auto const& p : lu.exportPatterns) out += "_" + p + "\n";
         return out;
     }
+    // PE (MSVC ABI): the patterns themselves, one per line, read by the `.def`
+    // edge (`mcpp coff-def --exports-file`), which narrows the discovered
+    // symbols to them. The linker is given the resulting `.def`, not this file.
+    if (os == "windows") {
+        for (auto const& p : lu.exportPatterns) out += p + "\n";
+        return out;
+    }
     // ELF version script. One anonymous version node: naming versions is a
     // separate capability (symbol VERSIONING, `foo@@LIB_1.0`) that cannot be
     // stated neutrally, and a package needing it writes the map itself and
@@ -612,8 +619,8 @@ std::string exports_file_contents(const LinkUnit& lu, std::string_view os) {
 
 // The flag that names the file. PE is absent on purpose: there the export set
 // is the `.def`, which lu.defFile already declares and the def-generating step
-// already writes, so narrowing it is that step's business rather than a second
-// flag on the link line.
+// writes from the discovered symbols narrowed to these patterns
+// (`--exports-file`), rather than a second flag on the link line.
 std::string exports_flag(const LinkUnit& lu, std::string_view os,
                          const std::filesystem::path& file) {
     if (lu.kind != LinkUnit::SharedLibrary || lu.exportPatterns.empty()) return "";
@@ -2154,7 +2161,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // POSIX-shell command is skipped entirely on Windows, the only platform this
     // edge exists for.
     append("rule coff_def\n");
-    append("  command = $mcpp coff-def --output $out --name $def_name $coff_tools $in\n");
+    append("  command = $mcpp coff-def --output $out --name $def_name $coff_args $in\n");
     append("  description = DEF $out\n\n");
 
     // A WINDOWS PROGRAM'S RUNTIME DLLS, PLACED AFTER ITS LINK (SPEC-007 R4.3).
@@ -3192,13 +3199,17 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // drift from it. It is an ordinary explicit input to the link rather
         // than an implicit one: the linker reads it, so ninja should rebuild the
         // DLL when it changes.
+        //
+        // `exports` narrows the discovered symbols on this edge: the patterns
+        // are written beside the objects and are an input of the edge, so a
+        // changed list regenerates the `.def`. `--required` when a link unit
+        // of this plan consumes the import library, which an empty export
+        // surface does not produce.
         if (!lu.defFile.empty()) {
             std::string defIns;
             for (auto const& o : lu.objects) defIns += " " + escape_ninja_path(o);
-            append(std::format("build {} : coff_def{}\n",
-                               escape_ninja_path(lu.defFile), defIns));
-            append(std::format("  def_name = {}\n",
-                               lu.output.filename().string()));
+            std::string coffArgs;
+            std::string defImplicit;
             if (mcpp::toolchain::is_clang(plan.toolchain)) {
                 const auto& compiler = plan.toolchain.binaryPath;
                 const auto nm = compiler.parent_path()
@@ -3207,10 +3218,27 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                 auto nmArg = mcpp::modgraph::try_narrow(nm);
                 if (!cxxArg || !nmArg)
                     throw std::runtime_error("the selected LLVM tools have no UTF-8 spelling");
-                append("  coff_tools = --llvm-cxx " + ninja_command_word(*cxxArg)
+                coffArgs += " --llvm-cxx " + ninja_command_word(*cxxArg)
                     + " --llvm-nm " + ninja_command_word(*nmArg)
-                    + " --llvm-target " + ninja_command_word(plan.toolchain.targetTriple) + "\n");
+                    + " --llvm-target " + ninja_command_word(plan.toolchain.targetTriple);
             }
+            if (!lu.exportPatterns.empty()) {
+                const auto rel = std::filesystem::path("obj") / (lu.targetName + ".exports.gen");
+                std::error_code mkec;
+                std::filesystem::create_directories((plan.outputDir / rel).parent_path(), mkec);
+                write_file(plan.outputDir / rel, exports_file_contents(lu, "windows"));
+                coffArgs += " --exports-file " + ninja_command_word(rel.generic_string());
+                defImplicit = " | " + escape_ninja_path(rel);
+            }
+            const bool consumed = std::ranges::any_of(plan.linkUnits, [&](const LinkUnit& other) {
+                return &other != &lu && std::ranges::contains(other.implicitInputs, lu.importLibrary);
+            });
+            if (consumed) coffArgs += " --required";
+            append(std::format("build {} : coff_def{}{}\n",
+                               escape_ninja_path(lu.defFile), defIns, defImplicit));
+            append(std::format("  def_name = {}\n",
+                               lu.output.filename().string()));
+            if (!coffArgs.empty()) append("  coff_args =" + coffArgs + "\n");
             append("\n");
         }
 

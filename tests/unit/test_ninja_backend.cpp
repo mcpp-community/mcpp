@@ -97,7 +97,7 @@ TEST(NinjaBackend, BitcodeExportToolsComeFromTheSelectedLlvmAndAreQuotedAsWords)
     EXPECT_NE(text.find("build bin/probe.def : coff_def obj/probe.o"), std::string::npos);
     plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
     plan.toolchain.binaryPath = "/native/bin/cl.exe";
-    EXPECT_EQ(emit_ninja_string(plan).find("coff_tools ="), std::string::npos);
+    EXPECT_EQ(emit_ninja_string(plan).find("coff_args ="), std::string::npos);
 }
 
 TEST(NinjaBackend, ObjectiveCSourceUsesCObjectRuleAndCFlags) {
@@ -2884,4 +2884,40 @@ TEST(NinjaBackendEncoding, OutputThatNamesNoEncodingDecidesNothing) {
     EXPECT_FALSE(ninja_encoding_mismatch("", 65001, "ninja").has_value());
     EXPECT_FALSE(ninja_encoding_mismatch("ninja: error: unknown tool 'wincodepage'",
                                          65001, "ninja").has_value());
+}
+
+TEST(NinjaBackend, PeExportsPatternsAndAConsumerReachTheDefEdge) {
+    auto plan = minimal_plan();
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
+    plan.toolchain.targetTriple = "x86_64-pc-windows-msvc";
+    plan.toolchain.binaryPath = "/native/bin/cl.exe";
+    plan.outputDir = std::filesystem::temp_directory_path() / "mcpp-ninja-pe-exports";
+    LinkUnit dll;
+    dll.kind = LinkUnit::SharedLibrary;
+    dll.targetName = "probe";
+    dll.output = "bin/probe.dll";
+    dll.importLibrary = "bin/probe.lib";
+    dll.defFile = "bin/probe.def";
+    dll.exportPatterns = {"probe_*"};
+    dll.objects = {"obj/probe.o"};
+    plan.linkUnits.push_back(dll);
+    auto alone = emit_ninja_string(plan);
+    EXPECT_NE(alone.find("build bin/probe.def : coff_def obj/probe.o | obj/probe.exports.gen"),
+              std::string::npos) << alone;
+    EXPECT_NE(alone.find("--exports-file obj/probe.exports.gen"), std::string::npos);
+    EXPECT_EQ(alone.find("--required"), std::string::npos);
+    std::ifstream in(plan.outputDir / "obj" / "probe.exports.gen");
+    std::string written((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(written, "probe_*\n");
+
+    LinkUnit consumer;
+    consumer.kind = LinkUnit::Binary;
+    consumer.targetName = "app";
+    consumer.output = "bin/app.exe";
+    consumer.objects = {"obj/app.o"};
+    consumer.implicitInputs = {"bin/probe.dll", "bin/probe.lib"};
+    plan.linkUnits.push_back(consumer);
+    EXPECT_NE(emit_ninja_string(plan).find("--required"), std::string::npos);
+    std::error_code ec;
+    std::filesystem::remove_all(plan.outputDir, ec);
 }

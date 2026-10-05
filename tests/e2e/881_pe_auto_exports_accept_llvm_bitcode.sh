@@ -103,7 +103,7 @@ def=$(find annotated/target -name annotated.def | head -1)
 
 # C: native-only export control never depends on coff-def.
 printf '\n' >> annotated/mcpp.toml
-sed 's/kind = "shared"/kind = "shared"\nauto_export = false/' annotated/mcpp.toml > native.toml
+sed 's/kind = "shared"/kind = "shared"\nwindows_auto_export = false/' annotated/mcpp.toml > native.toml
 mv native.toml annotated/mcpp.toml
 (cd annotated && "$MCPP" build --profile release > native.log 2>&1) || fail "C: opt-out did not build" annotated/native.log
 nj=$(find annotated/target -name build.ninja | head -1)
@@ -166,4 +166,77 @@ grep -q 'literal_value DATA' union.def || fail "G: bitcode data was lost" union.
 "$compiler" --driver-mode=g++ --target=i686-pc-windows-msvc -flto=thin -c literal.cpp -o x86.obj
 "$MCPP" coff-def --output x86.def --name x86 --llvm-cxx "$compiler" --llvm-nm "$nm" --llvm-target i686-pc-windows-msvc x86.obj > x86.log 2>&1 || fail "H: x86 bitcode discovery failed" x86.log
 grep -q 'literal_value DATA' x86.def || fail "H: x86 cdecl decoration was not normalized" x86.def
+
+# I: `exports` narrows what discovery finds (#766). Only the matching symbols
+# are published, data keeps its DATA keyword, and the rest is not exported.
+mkdir -p narrowed/src
+cat > narrowed/mcpp.toml <<'EOF'
+[package]
+name = "narrowed"
+version = "0.1.0"
+[toolchain]
+windows = "llvm@20.1.7"
+[targets.narrowed]
+kind = "shared"
+exports = ["keep_*"]
+EOF
+cat > narrowed/src/api.cpp <<'EOF'
+extern "C" int keep_api() { return 29; }
+extern "C" int keep_value = 31;
+extern "C" int drop_api() { return 37; }
+EOF
+(cd narrowed && "$MCPP" build > build.log 2>&1) || fail "I: the narrowed DLL did not build" narrowed/build.log
+narrowedDef=$(find narrowed/target -name narrowed.def | head -1)
+grep -q 'keep_api$' "$narrowedDef" || fail "I: a matching function was not exported" "$narrowedDef"
+grep -q 'keep_value DATA' "$narrowedDef" || fail "I: matching data lost its DATA keyword" "$narrowedDef"
+if grep -q 'drop_api' "$narrowedDef"; then fail "I: a symbol outside the patterns was exported" "$narrowedDef"; fi
+narrowedDll=$(find narrowed/target -name narrowed.dll | head -1)
+python3 - "$narrowedDll" <<'PY'
+import ctypes, os, sys
+lib = ctypes.CDLL(os.path.abspath(sys.argv[1]))
+assert lib.keep_api() == 29
+assert ctypes.c_int.in_dll(lib, "keep_value").value == 31
+try:
+    lib.drop_api
+except AttributeError:
+    pass
+else:
+    raise AssertionError("drop_api is published")
+PY
+
+# J: beside source annotations `exports` cannot narrow, and says so.
+printf 'keep_*\n' > patterns.txt
+"$MCPP" coff-def --output warned.def --name warned --exports-file patterns.txt annotated.obj > warned.log 2>&1 \
+    || fail "J: coff-def failed beside annotations" warned.log
+grep -q '`exports` has no effect on this DLL' warned.log || fail "J: no warning beside annotations" warned.log
+
+# K: `exports` with discovery off has nothing to narrow, and is refused when
+# an MSVC-ABI row is planned.
+mkdir -p contradictory/src
+cat > contradictory/mcpp.toml <<'EOF'
+[package]
+name = "contradictory"
+version = "0.1.0"
+[toolchain]
+windows = "llvm@20.1.7"
+[targets.contradictory]
+kind = "shared"
+exports = ["api_*"]
+windows_auto_export = false
+EOF
+printf 'extern "C" int api_one() { return 1; }\n' > contradictory/src/api.cpp
+if (cd contradictory && "$MCPP" build > build.log 2>&1); then
+    fail "K: exports with windows_auto_export = false was accepted" contradictory/build.log
+fi
+grep -q 'windows_auto_export = false' contradictory/build.log || fail "K: the refusal did not name the keys" contradictory/build.log
+
+# L: a DLL a consumer links must export something; one nothing links may not.
+printf 'static int internal_only() { return 1; }\n' > empty.cpp
+"$compiler" --driver-mode=g++ --target=x86_64-pc-windows-msvc -c empty.cpp -o empty.obj
+"$MCPP" coff-def --output empty.def --name empty empty.obj > empty.log 2>&1 \
+    || fail "L: an empty surface without a consumer was refused" empty.log
+if "$MCPP" coff-def --output empty.def --name empty --required empty.obj > required.log 2>&1; then
+    fail "L: an empty surface a consumer links was accepted" required.log
+fi
+grep -q 'exports no symbol, and a consumer in this build links it' required.log || fail "L: the refusal was not stated" required.log
 echo "PASS: 881_pe_auto_exports_accept_llvm_bitcode"

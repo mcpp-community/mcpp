@@ -18,6 +18,7 @@ import mcpp.build.directives;      // the device-slot table
 import mcpp.build.configure;
 import mcpp.build.coff_exports;
 import mcpp.build.pe_exports;
+import mcpp.modgraph.glob;          // escaped_spelling, for coff-def's warning
 import mcpp.build.stage;
 import mcpp.build.schedule.detach_codegen;
 import mcpp.build.test_targets;
@@ -1457,12 +1458,48 @@ export int cmd_coff_def(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::vector<std::filesystem::path> objects;
     for (std::size_t i = 0; i < parsed.positional_count(); ++i)
         objects.emplace_back(parsed.positional(i));
-    auto exports = mcpp::build::pe::read_exports(objects, tools);
-    if (!exports) {
-        std::println(stderr, "error: {}", exports.error());
+    // `[targets.<n>] exports`, one pattern per line (ninja_backend writes it).
+    std::vector<std::string> patterns;
+    if (auto v = parsed.value("exports-file")) {
+        std::ifstream in(mcpp::platform::fs::extended_length(std::filesystem::path{*v}));
+        if (!in) {
+            std::println(stderr, "error: cannot read the exports list '{}'", *v);
+            return 1;
+        }
+        for (std::string line; std::getline(in, line);) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            if (!line.empty()) patterns.push_back(std::move(line));
+        }
+    }
+    auto discovery = mcpp::build::pe::discover_exports(objects, tools);
+    if (!discovery) {
+        std::println(stderr, "error: {}", discovery.error());
         return 1;
     }
-    auto all = std::move(*exports);
+    // THE PRECEDENCE OF THE THREE SOURCES (docs/04, `exports`): the inputs'
+    // own declarations decide; otherwise `exports` narrows what discovery
+    // found; otherwise everything discovered is published.
+    if (discovery->declaredBy && !patterns.empty())
+        std::println(stderr,
+            "warning: {}: `exports` has no effect on this DLL: '{}' declares its exports "
+            "in the source (__declspec(dllexport) or /EXPORT:), and the linker publishes "
+            "exactly those",
+            libName, mcpp::modgraph::escaped_spelling(*discovery->declaredBy));
+    auto all = discovery->declaredBy ? std::vector<mcpp::build::coff::Export>{}
+             : patterns.empty()      ? std::move(discovery->candidates)
+                                     : mcpp::build::pe::narrow(std::move(discovery->candidates), patterns);
+    // A DLL that publishes nothing gets no import library, and a consumer of
+    // this build links that import library: say so here, at the DLL, rather
+    // than as a missing file at the consumer. A DLL nothing links (resources
+    // only, or loaded for DllMain) is valid as it is.
+    if (all.empty() && !discovery->declaredBy && parsed.is_flag_set("required")) {
+        std::println(stderr,
+            "error: {} exports no symbol, and a consumer in this build links it.\n"
+            "  Declare the exports in the source (__declspec(dllexport)), or let\n"
+            "  `[targets.<name>] exports` patterns match the symbols to publish.",
+            libName);
+        return 1;
+    }
 
     // Refused, not truncated. A `.def` cut at the ceiling links cleanly and
     // then fails at whichever consumer happens to need a symbol that fell off

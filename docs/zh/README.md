@@ -114,7 +114,7 @@
 | | 章节 | | 章节 |
 |---|---|---|---|
 | `[package]`、`[targets.<n>]`、`[build]`、`[lib]` | [04](04-mcpp-toml.md) | `[profile.<n>]`、`[resources]`、`[runtime]` | [04](04-mcpp-toml.md) |
-| `[targets.<n>] auto_export` | [04](04-mcpp-toml.md) | `[targets.<n>] exports` | [04](04-mcpp-toml.md) |
+| `[targets.<n>] windows_auto_export` | [04](04-mcpp-toml.md) | `[targets.<n>] exports` | [04](04-mcpp-toml.md) |
 | `[dependencies]`、`[dev-dependencies]`、`[build-dependencies]` | [05](05-dependencies.md) | `scan_overrides`、`module_extensions` | [04](04-mcpp-toml.md) |
 | `[features]`、`[feature-deps.<f>]`、`provides` / `requires` | [06](06-features-and-capabilities.md) | `[workspace]` | [07](07-workspace.md) |
 | `[toolchain]`、`cxx_runtime` | [20](20-toolchains.md) | `[target.<sel>]`、`cfg(…)` | [22](22-target-side.md) |

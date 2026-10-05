@@ -139,6 +139,28 @@ void note_unnarrowable_path(const std::filesystem::path& p);
 // ("路径窄化不变式") and the user-facing behaviour in docs/04-mcpp-toml.md.
 std::vector<std::string> take_unnarrowable_paths();
 
+// THE WALK OF EVERY GLOB: a package's `sources` and a build program's
+// `rerun_if_changed_glob` inputs select files from the same walk, so one tree
+// cannot hold a file that one sees and the other does not (#766).
+//
+// From `start`, directory symlinks are followed (vendored trees are often
+// symlink farms). A directory whose canonical path is already on the current
+// recursion chain is a link cycle and is not entered; the same real directory
+// reached through a second lexical path still is, because matching is lexical.
+// is_excluded_walk_dir's directories are not entered. `onDir` sees every other
+// directory below `start` and may refuse to enter it; `onFile` sees every
+// regular file. Returns false when the iteration stopped on an error.
+bool walk_glob_tree(const std::filesystem::path& root, const std::filesystem::path& start,
+                    const std::function<bool(const std::filesystem::path&)>& onDir,
+                    const std::function<void(const std::filesystem::path&)>& onFile);
+
+// Directories no glob walk enters: VCS metadata (`.git`), mcpp's build output
+// (`target`), mcpp's project-metadata directory (`.mcpp`, whose xlings data
+// tree links back to every path-dependency root, mcpp#230), and the
+// submodules `.gitmodules` registers under `root`, which are foreign and
+// often large trees.
+bool is_excluded_walk_dir(const std::filesystem::path& dir, const std::filesystem::path& root);
+
 // Does `relative`, a generic spelling relative to the glob's root, match
 // `glob`? The matching half of path_matches_glob, for a caller that already
 // holds the narrowed relative spelling (a cached directory listing).
@@ -347,6 +369,98 @@ std::string no_utf8_spelling_reason() {
         return "The name's bytes are not UTF-8, and build.ninja and "
                "compile_commands.json hold UTF-8 text.";
     }
+}
+
+namespace {
+
+std::string_view trim_ws(std::string_view s) {
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())))  s.remove_suffix(1);
+    return s;
+}
+
+// The submodule paths `.gitmodules` registers under `root`, canonical and
+// absolute, read once per root for the process. Glob walks run on several
+// threads at once (a workspace's build programs), hence the lock. An entry is
+// never erased, so the reference stays valid after the lock is released; this
+// runs once per directory entry of a walk, where a copy would be paid each time.
+const std::set<std::filesystem::path>& submodule_paths(const std::filesystem::path& root) {
+    static std::mutex m;
+    static std::map<std::filesystem::path, std::set<std::filesystem::path>> cache;
+    std::error_code kec;
+    auto key = std::filesystem::canonical(root, kec);
+    if (kec) key = root;
+    std::lock_guard lock(m);
+    if (auto it = cache.find(key); it != cache.end()) return it->second;
+    std::set<std::filesystem::path> paths;
+    std::ifstream f(root / ".gitmodules");
+    std::string line;
+    while (f && std::getline(f, line)) {
+        auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string_view k = trim_ws(std::string_view(line).substr(0, eq));
+        if (k != "path") continue;
+        std::string_view v = trim_ws(std::string_view(line).substr(eq + 1));
+        if (v.empty()) continue;
+        std::error_code pec;
+        auto abs = std::filesystem::canonical(root / std::filesystem::path(std::string(v)), pec);
+        paths.insert(pec ? (root / std::filesystem::path(std::string(v))) : abs);
+    }
+    return cache.emplace(key, std::move(paths)).first->second;
+}
+
+} // namespace
+
+bool is_excluded_walk_dir(const std::filesystem::path& dir,
+                          const std::filesystem::path& root) {
+    // Compare as paths, never narrowed: a name the ANSI code page cannot spell
+    // made `filename().string()` throw on Windows (#516), and this runs once
+    // per directory entry, before any other guard of the walk.
+    static const std::filesystem::path kMcppDir{".mcpp"};
+    static const std::filesystem::path kGitDir{".git"};
+    static const std::filesystem::path kTargetDir{"target"};
+    const auto name = dir.filename();
+    if (name == kMcppDir || name == kGitDir || name == kTargetDir) return true;
+    auto const& submodules = submodule_paths(root);
+    if (submodules.empty()) return false;
+    std::error_code ec;
+    auto c = std::filesystem::canonical(dir, ec);
+    return submodules.contains(ec ? dir : c);
+}
+
+bool walk_glob_tree(const std::filesystem::path& root, const std::filesystem::path& start,
+                    const std::function<bool(const std::filesystem::path&)>& onDir,
+                    const std::function<void(const std::filesystem::path&)>& onFile) {
+    namespace fs = std::filesystem;
+    std::vector<fs::path> chain;   // canonical directories of the recursion stack
+    std::error_code ec, eec;       // ec: iteration; eec: per-entry probes
+    {
+        auto c = fs::canonical(start, eec);
+        chain.push_back(eec ? start : c);
+    }
+    fs::recursive_directory_iterator it(start, fs::directory_options::follow_directory_symlink, ec);
+    for (fs::recursive_directory_iterator end; !ec && it != end; it.increment(ec)) {
+        auto& e = *it;
+        if (e.is_directory(eec) && !eec) {
+            if (is_excluded_walk_dir(e.path(), root)) {
+                it.disable_recursion_pending();
+                continue;
+            }
+            auto depth = static_cast<std::size_t>(it.depth());
+            chain.resize(std::min(chain.size(), depth + 1));
+            auto c = fs::canonical(e.path(), eec);
+            if (!eec && std::find(chain.begin(), chain.end(), c) != chain.end()) {
+                it.disable_recursion_pending();   // link cycle
+                continue;
+            }
+            chain.push_back(eec ? e.path() : c);
+            if (!onDir(e.path())) it.disable_recursion_pending();
+            continue;
+        }
+        if (!e.is_regular_file(eec) || eec) continue;
+        onFile(e.path());
+    }
+    return !ec;
 }
 
 std::vector<std::string> take_unnarrowable_paths() {

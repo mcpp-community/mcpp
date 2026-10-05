@@ -220,6 +220,10 @@ void background_stop(long long group, long long graceMs);
 void guard_group_on_signal(long long group);
 void unguard_group(long long group);
 void clear_group_guard();
+// Whether no process group is guarded. A caller about to replace mcpp with
+// another program (`mcpp run`) requires it: a guarded group is a child that
+// would lose its owner.
+bool group_guard_idle();
 
 // THE TERMINAL MODE A SIGNAL RESTORES (build output design revision 3,
 // §5.14). `--play-game` reads keys from the terminal without echo. A Ctrl-C,
@@ -622,6 +626,13 @@ void clear_group_guard() {
     ::signal(SIGHUP,  SIG_DFL);
 }
 
+bool group_guard_idle() {
+    std::lock_guard lock(g_guardMutex);
+    for (int i = 0; i < kMaxGuardedGroups; ++i)
+        if (g_guardedGroups[i] != 0) return false;
+    return true;
+}
+
 void guard_terminal_mode(int fd) {
     std::lock_guard lock(g_guardMutex);
     if (fd < 0 || ::tcgetattr(fd, &g_terminalMode) != 0) return;
@@ -674,6 +685,7 @@ void LaunchSection::release() {}
 void guard_group_on_signal(long long) {}
 void unguard_group(long long) {}
 void clear_group_guard() {}
+bool group_guard_idle() { return true; }
 void guard_terminal_mode(int) {}
 void unguard_terminal_mode() {}
 

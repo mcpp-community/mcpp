@@ -82,4 +82,68 @@ for step in content unchanged; do
     fi
 done
 
+
+# An absolute pattern is matched against absolute paths (#766): the root
+# package may watch a directory outside its tree by its absolute name.
+INPUTS_ABS=$(cd ../inputs && pwd -P)
+sed -i.bak "s|\"../inputs/\\*\\*/\\*.in\"|\"$INPUTS_ABS/**/*.in\"|" build.mcpp
+grep -q "$INPUTS_ABS/\*\*/\*.in" build.mcpp || fail "the fixture did not take the absolute pattern"
+build_count absolute 1
+printf 'c\n' > ../inputs/c.in
+build_count absolute-added 2
+rm ../inputs/c.in
+mv build.mcpp.bak build.mcpp
+
+# A pattern no walk enters is reported, not silently kept as an empty set.
+cp build.mcpp build.mcpp.bak
+awk '{ print } /rerun_if_changed_glob\("\.\.\/inputs/ { print "    mcpp::rerun_if_changed_glob(\"target/**/*.in\");" }' \
+    build.mcpp.bak > build.mcpp
+grep -q 'rerun_if_changed_glob("target/' build.mcpp || fail "the fixture did not take the second glob"
+"$MCPP" build > "$TMP/logs/unwatchable.log" 2>&1 || fail "build with an unwatchable glob failed"
+grep -q 'rerun_if_changed_glob("target/\*\*/\*.in") can never re-run it' "$TMP/logs/unwatchable.log" \
+    || fail "the unwatchable glob was not reported"
+mv build.mcpp.bak build.mcpp
+
+# A git dependency is sealed: its program may not watch outside its own tree.
+mkdir -p "$TMP/origin/src" "$TMP/consumer/src"
+cd "$TMP/origin"
+git init --quiet
+git config user.email "test@local"
+git config user.name test
+cat > mcpp.toml <<'EOF'
+[package]
+name = "sealed"
+version = "0.1.0"
+
+[targets.sealed]
+kind = "lib"
+EOF
+printf 'export module t882_sealed;\nexport int sealed_value() { return 1; }\n' > src/sealed.cppm
+cat > build.mcpp <<'EOF'
+import mcpp;
+int main() {
+    mcpp::rerun_if_changed_glob("../outside/**/*.in");
+    return 0;
+}
+EOF
+git add -A >/dev/null
+git commit --quiet -m init
+REV=$(git rev-parse HEAD)
+ORIGIN_HOST=$(host_path "$TMP/origin")
+cd "$TMP/consumer"
+cat > mcpp.toml <<EOF
+[package]
+name = "consumer"
+version = "0.1.0"
+
+[dependencies]
+sealed = { git = "$ORIGIN_HOST", rev = "$REV" }
+EOF
+printf 'import t882_sealed;\nint main() { return sealed_value() == 1 ? 0 : 1; }\n' > src/main.cpp
+if "$MCPP" build > "$TMP/logs/sealed.log" 2>&1; then
+    fail "a git dependency's glob that leaves its package was accepted"
+fi
+grep -q "which leaves the package" "$TMP/logs/sealed.log" \
+    || fail "the refusal did not name the escaping glob"
+
 echo "PASS: parent-directory glob inputs invalidate builds on membership changes"

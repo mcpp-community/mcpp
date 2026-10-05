@@ -560,10 +560,10 @@ int main() {
 ```
 
 The pattern is relative to the manifest directory and uses the same `*` / `**`
-grammar as `sources = [...]`. A literal directory prefix can leave the package:
-`../inputs/**/*.in` watches a sibling directory, including its creation after
-the first build. Output and `.git` directories remain excluded, and directory
-symlinks are not followed. Its fingerprint is the **sorted set of matching
+grammar as `sources = [...]`, over the same walk: directory symlinks are
+followed, a symlink cycle is entered once, and directories named `.git`,
+`.mcpp` or `target`, the build's output directory and registered submodules
+are not entered (2026.10.5.1+). Its fingerprint is the **sorted set of matching
 paths** and nothing else:
 
 - **not contents** — a file whose bytes matter is an ordinary
@@ -572,7 +572,23 @@ paths** and nothing else:
   builds and `rsync`, and size is a weaker signal than the hash above.
 
 The build output tree and `.git` are never part of the set, so a wide pattern
-cannot make the program re-run forever against its own outputs.
+cannot make the program re-run forever against its own outputs. A pattern
+whose literal prefix passes through an excluded directory (`target/**/*.in`,
+`.git/HEAD`) can never match, and the build states this as a warning naming
+the pattern; one file's contents are watched with `rerun_if_changed`.
+
+**Inputs outside the package** (2026.10.5.1+). A pattern may leave the package
+when the package is the project, a path dependency or a workspace member:
+
+| Pattern | Watches |
+|---|---|
+| `../inputs/**/*.in` | a sibling directory, including its creation after the first build |
+| `/srv/data/**/*.csv` | an absolute directory, matched against absolute paths |
+
+In a registry or git dependency, a pattern that leaves the package, by `..` or
+as an absolute path, is an error naming the package and the pattern. A wide
+literal prefix (`../../**`) walks its whole tree on every fast-path check, so a
+specific prefix keeps the check short.
 
 **Every declared input is compared on the fast path too** (2026.9.5.4+). A
 project whose sources are all older than `build.ninja` takes a fast path that

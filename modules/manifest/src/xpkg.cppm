@@ -1626,13 +1626,13 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                         t.main = cur.read_string();
                     } else if (sub == "soname") {
                         t.soname = cur.read_string();
-                    } else if (sub == "auto_export") {
+                    } else if (sub == "windows_auto_export") {
                         auto raw = cur.read_bareword();
                         if (raw != "true" && raw != "false")
                             return std::unexpected(ManifestError{
-                                std::format("targets.{}.auto_export must be a boolean", tname),
+                                std::format("targets.{}.windows_auto_export must be a boolean", tname),
                                 m.sourcePath, 0, 0});
-                        t.autoExport = raw == "true";
+                        t.windowsAutoExport = raw == "true";
                     } else if (sub == "required_features") {
                         // #355: without this, a Form B descriptor could not
                         // express the cost gate that makes an optional host

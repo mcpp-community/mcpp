@@ -4,6 +4,77 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.5.1] - 2026-10-05
+
+This release gives the program that `mcpp run` starts the terminal, and closes
+the follow-ups of 2026.10.3.1's three fixes (#761, #763, #765) recorded in
+mcpp#766: the shared dependencies of statics placed in a program's own image,
+`exports` on the MSVC ABI, and the walk and boundary of build-program glob
+inputs. The key added by #763 is renamed before its first release
+(`windows_auto_export`). No default toolchain changes.
+
+### Fixed
+
+- **`mcpp run` hands the terminal to the program.** The program started by
+  `mcpp run`, `mcpp run -q --release` or a named runner ran in a process group
+  of its own, which on a terminal is a background group: its first read of the
+  terminal stopped it with `SIGTTIN`, and Ctrl-C reached mcpp, which killed the
+  program instead of letting its handler run. On Linux and macOS mcpp now
+  replaces itself with the program once the build is done (`execve`). The
+  program reads the terminal, receives Ctrl-C, Ctrl-\ and Ctrl-Z, and runs with
+  the process id the shell started, so a `timeout` or a closed terminal reaches
+  it directly and nothing of mcpp remains. On Windows the program runs in mcpp's
+  console and process group, and mcpp ignores Ctrl-C while it waits. A program
+  that ends by a signal is seen by the caller as ending by that signal, as in a
+  direct run; before, mcpp exited with `128+n`. Notices concerning the whole
+  command (`tip:` lines) are printed before the `Running` line. E2E 883 drives
+  `mcpp run` through a pseudo-terminal.
+- **A program links the shared dependencies of the statics placed in its own
+  image.** A workspace member's executable, or an artifact, links the objects of
+  a static package that is placed in its own package's shared image, and now
+  also links that package's shared dependencies; before, the link failed with an
+  undefined reference. A program does not link the objects of a static placed in
+  another package's image, which that image's library supplies.
+- **`exports` takes effect on the MSVC ABI.** The `.def` of a DLL holds the
+  discovered symbols that match a pattern; before, the patterns were ignored on
+  PE. Source declarations (`__declspec(dllexport)`, `/EXPORT:`, the same in
+  LLVM bitcode) still decide the export set when present, and `exports` beside
+  them is reported as a warning. A DLL that exports nothing and is linked by a
+  program of the same build fails at its `.def` step with a message naming it,
+  rather than at the consumer as a missing import library.
+- **Build-program glob inputs use the walk of `sources` globs.** Directory
+  symlinks are followed with the cycle guard, and the same directories are
+  excluded. A pattern whose literal prefix passes through an excluded directory
+  is reported as a warning, since it can never re-run the program.
+
+### Changed
+
+- **`[targets.<n>] auto_export` is renamed `windows_auto_export`.** The key
+  added by #763 affects only MSVC-ABI DLLs, and SPEC-004 §5.3 now states that a
+  key with an effect on one platform carries that platform's prefix. The key was
+  not in a release, so no alias is kept. `windows_auto_export = false` together
+  with `exports` is refused when an MSVC-ABI target is planned.
+- **Glob inputs that leave the package.** An absolute `rerun_if_changed_glob`
+  pattern is matched against absolute paths. A pattern that leaves the package,
+  by `..` or as an absolute path, is an error in a registry or git dependency,
+  whose tree is the package store's; it is honoured for the project, a path
+  dependency and a workspace member.
+- **The `.def` step runs its LLVM tools concurrently**, one compiler and one
+  `llvm-nm` invocation per bitcode object, up to eight at a time.
+
+### Specifications
+
+- SPEC-004 v1.11: §5.3, platform-scoped keys carry the platform's prefix. The
+  field admission criteria are referred to docs/90.
+- SPEC-009 v0.2: §10.5 gate G7, E2E 881 passes with a candidate LLVM release on
+  the MSVC-ABI rows.
+
+### Repository CI
+
+- `tests/e2e/run_all.sh` bounds each test on hosts without GNU `timeout`
+  (the macOS runners) with `tests/e2e/_timeout.py`, which ends the test's whole
+  process tree. One hung test no longer consumes the shard's step budget.
+
 ## [2026.10.3.1] - 2026-10-03
 
 This release is identical to 2026.10.2.1 in code; the bump exists to publish a

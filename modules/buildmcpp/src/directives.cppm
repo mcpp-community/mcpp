@@ -611,6 +611,20 @@ std::string glob_fingerprint(const std::filesystem::path& root,
                              std::string_view pattern,
                              std::string_view outputDirName);
 
+// Why `pattern` can never match, or nullopt: its literal prefix passes through
+// a directory no glob walk enters, or it is absolute with no literal directory.
+// The fingerprint of such a pattern is the empty set, so a build program that
+// declares it is never re-run by it; the run reports the reason (#766).
+std::optional<std::string> glob_unwatchable(const std::filesystem::path& root,
+                                            std::string_view pattern,
+                                            std::string_view outputDirName);
+
+// Whether `pattern` names files outside its package: absolute, or leading
+// with `..` once normalized. Honoured for the root, a path dependency and a
+// workspace member, whose surroundings are the user's tree; refused for a
+// registry or git dependency, whose surroundings are the package store.
+bool glob_leaves_package(std::string_view pattern);
+
 // ── Apply ──────────────────────────────────────────────────────────────────
 
 // Fold the collected directives into the manifest's buildConfig. The single
@@ -930,57 +944,90 @@ bool accept_cache_record(Directives& d, std::string_view tag, std::string_view v
     return true;
 }
 
+namespace {
+
+bool absolute_glob(std::string_view pattern) {
+    return pattern.starts_with('/')
+        || (pattern.size() > 2 && std::isalpha(static_cast<unsigned char>(pattern[0]))
+            && pattern[1] == ':' && pattern[2] == '/');
+}
+
+// Where a glob's walk starts: its literal directory prefix, against `root`
+// unless the pattern is absolute.
+std::filesystem::path glob_walk_start(const std::filesystem::path& root, std::string_view pattern) {
+    const auto prefix = mcpp::modgraph::glob_literal_prefix(pattern);
+    if (absolute_glob(pattern)) return prefix.lexically_normal();
+    return (root / prefix).lexically_normal();
+}
+
+} // namespace
+
+bool glob_leaves_package(std::string_view pattern) {
+    if (absolute_glob(pattern)) return true;
+    const auto normal = std::filesystem::path(std::string(pattern)).lexically_normal();
+    return !normal.empty() && *normal.begin() == "..";
+}
+
+std::optional<std::string> glob_unwatchable(const std::filesystem::path& root,
+                                            std::string_view pattern,
+                                            std::string_view outputDirName) {
+    namespace fs = std::filesystem;
+    if (absolute_glob(pattern) && mcpp::modgraph::glob_literal_prefix(pattern).empty())
+        return std::string("an absolute pattern needs a literal directory before its first wildcard");
+    // Only the prefix as written is examined: the directories above the
+    // package root, and the whole path an absolute pattern spells, are the
+    // user's own choice and are not a walk's to exclude.
+    if (absolute_glob(pattern)) return std::nullopt;
+    const auto outName = mcpp::modgraph::native_path_from_generic(outputDirName);
+    fs::path at = root;
+    for (auto const& component : mcpp::modgraph::glob_literal_prefix(pattern)) {
+        at /= component;
+        if (component == ".." || component == ".") continue;
+        if (mcpp::modgraph::is_excluded_walk_dir(at, root)
+            || (!outputDirName.empty() && component == outName))
+            return std::format("its literal prefix passes through '{}', a directory no glob "
+                               "walk enters (`.git`, `.mcpp`, `target`, the output directory "
+                               "or a submodule)", component.generic_string());
+    }
+    return std::nullopt;
+}
+
 std::string glob_fingerprint(const std::filesystem::path& root,
                              std::string_view pattern,
                              std::string_view outputDirName) {
     namespace fs = std::filesystem;
-    std::vector<std::string> hits;
-    std::error_code ec;
     const auto empty = mcpp::toolchain::hash_string("");
-    const auto prefix = mcpp::modgraph::glob_literal_prefix(pattern);
-    // Starting at the literal prefix must not bypass the exclusions applied
-    // during traversal, or target/** and symlink/subdir/** would enter them.
-    auto start = root;
-    for (const auto& component : prefix) {
-        if (component == ".git" || (!outputDirName.empty()
-                && component == mcpp::modgraph::native_path_from_generic(outputDirName)))
-            return empty;
-        start /= component;
-        if (fs::is_symlink(start, ec)) return empty;
-    }
-    start = start.lexically_normal();
-    ec.clear();
-    // skip_permission_denied only: symlinked directories are NOT followed, the
-    // same rule the source scan uses, so a self-referential link cannot make
-    // this walk diverge.
-    fs::recursive_directory_iterator it(
-        start, fs::directory_options::skip_permission_denied, ec);
+    // A glob no walk can enter is the empty set; glob_unwatchable says why,
+    // and the program's run reports it.
+    if (glob_unwatchable(root, pattern, outputDirName)) return empty;
+    const bool absolute = absolute_glob(pattern);
+    const auto start = glob_walk_start(root, pattern);
     // A missing input directory is the same empty set as an existing directory
     // containing no matches. Its first matching file will invalidate the key.
-    if (ec) return empty;
-    for (; it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        if (ec) break;
-        const auto& p = it->path();
-        std::error_code dec;
-        if (it->is_directory(dec)) {
-            const auto name = p.filename();
-            if (name == ".git" || (!outputDirName.empty()
-                    && name == mcpp::modgraph::native_path_from_generic(outputDirName))) {
-                it.disable_recursion_pending();
-                continue;
+    std::error_code ec;
+    if (!fs::is_directory(start, ec)) return empty;
+    const auto outName = mcpp::modgraph::native_path_from_generic(outputDirName);
+    std::vector<std::string> hits;
+    // The walk the source globs take (mcpp.modgraph.glob): directory symlinks
+    // followed with the cycle guard, the same exclusions, plus this build's
+    // output directory by name, since a build program writes its outputs
+    // inside the project and `**` would otherwise change on every run.
+    mcpp::modgraph::walk_glob_tree(root, start,
+        [&](const fs::path& d) { return outputDirName.empty() || d.filename() != outName; },
+        [&](const fs::path& f) {
+            // Relative patterns name the file relative to the package root; an
+            // absolute pattern names it absolutely.
+            auto spelled = mcpp::modgraph::try_narrow(absolute ? f.lexically_normal()
+                                                               : f.lexically_relative(root));
+            if (!spelled) {
+                mcpp::modgraph::note_unnarrowable_path(f);
+                return;
             }
-            if (it->is_symlink(dec)) it.disable_recursion_pending();
-            continue;
-        }
-        if (!mcpp::modgraph::path_matches_glob(p, root, pattern)) continue;
-        auto rel = mcpp::modgraph::try_narrow(p.lexically_relative(root));
-        if (!rel) {
-            mcpp::modgraph::note_unnarrowable_path(p);
-            continue;
-        }
-        hits.push_back(std::move(*rel));
-    }
+            if (mcpp::modgraph::relative_path_matches_glob(*spelled, pattern))
+                hits.push_back(std::move(*spelled));
+        });
     std::ranges::sort(hits);
+    hits.erase(std::ranges::unique(hits).begin(), hits.end());
     std::string joined;
     for (auto const& h : hits) { joined += h; joined.push_back('\n'); }
     return mcpp::toolchain::hash_string(joined);

@@ -84,6 +84,10 @@ struct BuildProgramEnv {
     // every other package are folded into one (build progress design
     // 2026-09-29, §4.3).
     bool requested = false;
+    // The program's package is a registry or git dependency, whose tree sits in
+    // the package store: a `rerun_if_changed_glob` pattern leaving it is
+    // refused (#766).
+    bool sealedPackage = false;
     std::string targetTriple;               // resolved canonical triple; "" = host
     // The resolved toolchain's payload root and the target's own C library
     // root. Both exist so a package can ASK instead of DECLARE — see
@@ -2078,6 +2082,24 @@ std::expected<void, std::string> run_build_program_impl(
     // applied, for the same reason.
     if (auto derr = dirs::deploy_directive_error(m, d); !derr.empty()) {
         return std::unexpected(derr);
+    }
+    // GLOB INPUTS OUTSIDE THE PACKAGE (#766). A registry or git dependency's
+    // tree sits in the package store, whose other contents depend on what
+    // else is installed: a pattern leaving that package would make its re-run
+    // key a fact about this machine. Refused, naming the pattern. Elsewhere it
+    // is honoured; a pattern that no walk can enter is reported, since it can
+    // never re-run the program.
+    for (auto const& g : d.at(Slot::RerunGlobs)) {
+        if (env.sealedPackage && dirs::glob_leaves_package(g))
+            return std::unexpected(std::format(
+                "build.mcpp of '{}' watches '{}', which leaves the package: a registry or git "
+                "dependency may only watch files inside its own tree",
+                m.package.name, g));
+        if (auto why = dirs::glob_unwatchable(root, g, output_dir_name(root, bdir)))
+            mcpp::ui::warning(std::format(
+                "build.mcpp of '{}': rerun_if_changed_glob(\"{}\") can never re-run it: {}. "
+                "To watch one file's contents, use rerun_if_changed",
+                m.package.name, g, *why));
     }
     if (d.protocol == 0) {
         for (auto const& k : d.unknownKeys)

@@ -359,8 +359,8 @@ bitcode 检查（尚未发布的源码构建）使用所选 LLVM 编译器和它
 叠加一份列表，会把同一批符号导出两次（`LNK4197`），还会把其余所有符号也一并
 导出，用「全部」取代作者选定的那个公开面。bitcode 的 `dllexport` 存储类别和
 linker-option 元数据表达同样的意图。导出意图在枚举候选符号前检查。每个 target
-可以通过 [`auto_export`](04-mcpp-toml.md#auto_export--msvc-abi-上的原生导出控制尚未发布)
-完全关闭导出发现（尚未发布的源码构建）。
+可以通过 [`windows_auto_export`](04-mcpp-toml.md#windows_auto_export--msvc-abi-上的导出发现mcpp-20261051)
+关闭导出发现，[`exports`](04-mcpp-toml.md#exports--产物发布的符号集合mcpp-2026965) 收窄发现的结果。
 
 超过 65535 个可导出符号时，mcpp 拒绝而不是截断。一个被截断的导出表能干净地
 链接完成，随后在恰好需要那个掉出去的符号的消费方那里失败。

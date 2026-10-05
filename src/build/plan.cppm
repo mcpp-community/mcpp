@@ -1491,6 +1491,20 @@ bool source_defines_main(const std::filesystem::path& src) {
     return false;
 }
 
+// On the MSVC ABI `exports` narrows the symbols discovery found, so a target
+// that turns discovery off has nothing for its patterns to narrow. The same
+// manifest is valid on ELF and Mach-O, where `exports` acts on its own, so this
+// is refused when an MSVC-ABI row is planned and not when the manifest loads.
+std::string exports_without_discovery(const mcpp::manifest::Target& t,
+                                      std::string_view package) {
+    return std::format(
+        "target '{}' of '{}' sets `exports` and `windows_auto_export = false`: on the "
+        "MSVC ABI `exports` narrows the symbols that automatic discovery finds, and "
+        "discovery is off. Declare the exports in the source (__declspec(dllexport)), "
+        "or remove `windows_auto_export = false`",
+        t.name, package);
+}
+
 std::expected<BuildPlan, std::string>
 make_plan(const mcpp::manifest::Manifest&         manifest,
          const mcpp::toolchain::Toolchain&       tc,
@@ -2487,6 +2501,26 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         }
     };
 
+    // WHOSE OBJECTS A PROGRAM OF PACKAGE `ownerIndex` LINKS ITSELF (#761,
+    // #766). Its own package's, even when that package also produces a shared
+    // image: an executable is an independent program of its package. Those of
+    // the statics placed in its own image (#646 F1), for the same reason. Not
+    // another shared package's, nor those of the statics placed in another
+    // package's image: that image's library supplies them by link. A package
+    // whose objects a unit links also contributes its direct shared
+    // dependencies to that unit's link, which is how a static placed in the
+    // owner's image brings the library it calls.
+    auto links_objects_of = [&](const std::string& packageName, std::size_t ownerIndex) {
+        if (packageName == qualified_package_name(packages[ownerIndex].manifest)) return true;
+        if (sharedDepPackages.contains(packageName)) return false;
+        if (!placedInImage.contains(packageName)) return true;
+        auto it = staticsByImagePackage.find(ownerIndex);
+        return it != staticsByImagePackage.end()
+            && std::ranges::any_of(it->second, [&](std::size_t s) {
+                   return qualified_package_name(packages[s].manifest) == packageName;
+               });
+    };
+
     auto append_package_objects = [&](LinkUnit& lu, const std::string& packageName) {
         for (auto& cu : plan.compileUnits) {
             if (cu.packageName != packageName) continue;
@@ -2511,7 +2545,9 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         lu.dependencyOwned = true;
         lu.output     = dep.output;
         lu.importLibrary = import_library_for(dep.target, naming);
-        if (msvcTarget && dep.target.autoExport && !lu.importLibrary.empty())
+        if (msvcTarget && !dep.target.windowsAutoExport && !dep.target.exportPatterns.empty())
+            return std::unexpected(exports_without_discovery(dep.target, dep.packageName));
+        if (msvcTarget && dep.target.windowsAutoExport && !lu.importLibrary.empty())
             lu.defFile = std::filesystem::path("bin") / (dep.target.name + ".def");
         lu.soname     = dep.target.soname;
         lu.exportPatterns = dep.target.exportPatterns;
@@ -2643,7 +2679,9 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             lu.importLibrary = import_library_for(t, naming);
             // MSVC only: MinGW's linker auto-exports, and generating a second
             // source of truth for what a DLL exports is how the two disagree.
-            if (msvcTarget && t.autoExport && !lu.importLibrary.empty())
+            if (msvcTarget && !t.windowsAutoExport && !t.exportPatterns.empty())
+                return std::unexpected(exports_without_discovery(t, qualified_package_name(manifest)));
+            if (msvcTarget && t.windowsAutoExport && !lu.importLibrary.empty())
                 lu.defFile = std::filesystem::path("bin") / (t.name + ".def");
             lu.soname = t.soname;
             lu.exportPatterns = t.exportPatterns;
@@ -2877,7 +2915,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // that package also provides a shared image to other consumers.
         for (auto const& cu : plan.compileUnits) {
             if (!closure.contains(cu.packageName)) continue;
-            if (cu.packageName != owner && sharedDepPackages.contains(cu.packageName)) continue;
+            if (!links_objects_of(cu.packageName, r.packageIndex)) continue;
             if (mcpp::links_unconditionally(cu.kind)) lu.objects.push_back(cu.object);
         }
         if (!r.target.main.empty()) {
@@ -2925,7 +2963,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         }
         for (auto const& cu : plan.compileUnits) {
             if (!closure.contains(cu.packageName)) continue;
-            if (cu.packageName != owner && sharedDepPackages.contains(cu.packageName)) continue;
+            if (!links_objects_of(cu.packageName, r.packageIndex)) continue;
             if (!is_implementation_source(cu.kind)) continue;
             if (lu.entryMain && cu.source == *lu.entryMain) continue;
             if (entryFilesAcrossTargets.contains(cu.source)) continue;
@@ -2935,9 +2973,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // compile unit also picked up consumers of its sibling shared image
         // and made the artifact depend on that image instead of its own code.
         for (auto i : seen)
-            if (i == r.packageIndex
-                || (!sharedDepPackages.contains(qualified_package_name(packages[i].manifest))
-                    && !placedInImage.contains(qualified_package_name(packages[i].manifest))))
+            if (links_objects_of(qualified_package_name(packages[i].manifest), r.packageIndex))
                 append_direct_shared_deps(lu, i);
         // In a workspace plan the plan's own line pools the dependencies'
         // flags and not a member's, so the program links with its closure's
@@ -3104,7 +3140,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             // package's shared target supplies its implementation by link.
             for (auto const& cu : plan.compileUnits) {
                 if (!closure.contains(cu.packageName)) continue;
-                if (cu.packageName != owner && sharedDepPackages.contains(cu.packageName)) continue;
+                if (!links_objects_of(cu.packageName, mi)) continue;
                 if (mcpp::links_unconditionally(cu.kind)) lu.objects.push_back(cu.object);
             }
             if (!t.main.empty() && lu.kind != LinkUnit::StaticLibrary) {
@@ -3162,7 +3198,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             const bool entryDefinesMain = lu.entryMain && source_defines_main(*lu.entryMain);
             for (auto const& cu : plan.compileUnits) {
                 if (!closure.contains(cu.packageName)) continue;
-                if (cu.packageName != owner && sharedDepPackages.contains(cu.packageName)) continue;
+                if (!links_objects_of(cu.packageName, mi)) continue;
                 if (!is_implementation_source(cu.kind)) continue;
                 if (lu.entryMain && cu.source == *lu.entryMain) continue;
                 if (entryFilesAcrossTargets.contains(cu.source)) continue;
@@ -3174,12 +3210,10 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             }
             if (lu.kind != LinkUnit::StaticLibrary) {
                 const auto before = lu.implicitInputs.size();
-                // The member still links its declared shared dependencies
-                // even when it also produces a shared target of its own.
+                // The shared libraries of the packages whose objects it links
+                // (links_objects_of), its own package's included.
                 for (auto i : closureIdx)
-                    if (i == mi
-                        || (!sharedDepPackages.contains(qualified_package_name(packages[i].manifest))
-                            && !placedInImage.contains(qualified_package_name(packages[i].manifest))))
+                    if (links_objects_of(qualified_package_name(packages[i].manifest), mi))
                         append_direct_shared_deps(lu, i);
                 // The graph-built shared libraries this unit loads are placed
                 // beside it.

@@ -94,15 +94,49 @@ TEST_F(GlobInputs, ParentPatternsRetainPathSetSemantics) {
     EXPECT_NE(fingerprint("../inputs/**"), before);
 }
 
-TEST_F(GlobInputs, DirectorySymlinksAreNotFollowedThroughTheLiteralPrefix) {
+TEST_F(GlobInputs, DirectorySymlinksAreFollowedAsTheSourceScanFollowsThem) {
     write("../real/nested/a.in");
     std::error_code ec;
     std::filesystem::create_directory_symlink(tree / "workspace" / "real",
         root / "../link", ec);
     if (ec) GTEST_SKIP() << "Directory symlinks are unavailable: " << ec.message();
-    EXPECT_EQ(fingerprint("../link/**/*.in"), mcpp::toolchain::hash_string(""));
-    EXPECT_EQ(fingerprint("../link/nested/*.in"), mcpp::toolchain::hash_string(""));
-    const auto before = fingerprint("../**/*.in");
+    const auto before = fingerprint("../link/**/*.in");
+    EXPECT_NE(before, mcpp::toolchain::hash_string(""));
+    EXPECT_NE(fingerprint("../link/nested/*.in"), mcpp::toolchain::hash_string(""));
     write("../real/nested/b.in");
-    EXPECT_NE(fingerprint("../**/*.in"), before);
+    EXPECT_NE(fingerprint("../link/**/*.in"), before);
+}
+
+TEST_F(GlobInputs, ALinkCycleEndsTheWalk) {
+    write("../loop/a.in");
+    std::error_code ec;
+    std::filesystem::create_directory_symlink(tree / "workspace" / "loop",
+        root / "../loop/again", ec);
+    if (ec) GTEST_SKIP() << "Directory symlinks are unavailable: " << ec.message();
+    EXPECT_NE(fingerprint("../loop/**/*.in"), mcpp::toolchain::hash_string(""));
+}
+
+TEST_F(GlobInputs, AbsolutePatternsMatchAbsolutePaths) {
+    write("../inputs/a.in");
+    const auto dir = (tree / "workspace" / "inputs").lexically_normal().generic_string();
+    const auto before = fingerprint(dir + "/**/*.in");
+    EXPECT_NE(before, mcpp::toolchain::hash_string(""));
+    write("../inputs/nested/b.in");
+    EXPECT_NE(fingerprint(dir + "/**/*.in"), before);
+}
+
+TEST(GlobInputBoundary, PatternsThatLeaveThePackageAreRecognised) {
+    EXPECT_FALSE(dirs::glob_leaves_package("proto/**/*.proto"));
+    EXPECT_FALSE(dirs::glob_leaves_package("a/../b/*.in"));
+    EXPECT_TRUE(dirs::glob_leaves_package("../inputs/**/*.in"));
+    EXPECT_TRUE(dirs::glob_leaves_package("a/../../inputs/*.in"));
+    EXPECT_TRUE(dirs::glob_leaves_package("/usr/share/data/*.in"));
+    EXPECT_TRUE(dirs::glob_leaves_package("C:/data/*.in"));
+}
+
+TEST_F(GlobInputs, AnUnwatchablePatternSaysWhy) {
+    EXPECT_FALSE(dirs::glob_unwatchable(root, "proto/**", "target").has_value());
+    EXPECT_FALSE(dirs::glob_unwatchable(root, "../inputs/**", "target").has_value());
+    for (const auto pattern : {"target/**", ".git/HEAD", "../inputs/.mcpp/*", "/*.in"})
+        EXPECT_TRUE(dirs::glob_unwatchable(root, pattern, "target").has_value()) << pattern;
 }

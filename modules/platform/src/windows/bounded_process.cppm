@@ -212,6 +212,18 @@ void clear_job_guard();
 // for the supervisor that must not block.
 int wait_background(unsigned long long process, int* exitCode);
 
+// ─── The program a user runs (`mcpp run`) ────────────────────────────────
+//
+// Started in the console mcpp was started from and in mcpp's own process
+// group, so the console's input, Ctrl-C and Ctrl-Break reach the program and
+// the program decides what they mean. While it runs, mcpp ignores Ctrl-C and
+// Ctrl-Break through a handler of its own, which a child does not inherit, so
+// that mcpp survives to return the program's status. The kill-on-close job
+// still ends the program's tree when mcpp itself ends for any other reason.
+// Returns the program's exit code, or -1 when it could not be started, with
+// GetLastError() in `*refused`.
+int run_foreground(const char* commandLine, unsigned long* refused);
+
 } // namespace mcpp::platform::winproc
 
 namespace mcpp::platform::winproc {
@@ -650,6 +662,62 @@ void clear_job_guard() {
     ::SetConsoleCtrlHandler(background_console_handler, FALSE);
 }
 
+namespace {
+BOOL WINAPI ignore_interrupt(DWORD type) {
+    return (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT) ? TRUE : FALSE;
+}
+} // namespace
+
+int run_foreground(const char* commandLine, unsigned long* refused) {
+    if (refused) *refused = 0;
+    if (!commandLine || !*commandLine) return -1;
+
+    HANDLE job = ::CreateJobObjectA(nullptr, nullptr);
+    if (job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli{};
+        jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        ::SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+                                  &jeli, sizeof(jeli));
+    }
+
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    std::string cmdBuf(commandLine);        // CreateProcessA may modify it
+
+    // A handler, not SetConsoleCtrlHandler(nullptr, TRUE): the null form sets
+    // an attribute the child inherits, and the child would then ignore the
+    // Ctrl-C it is meant to receive.
+    ::SetConsoleCtrlHandler(ignore_interrupt, TRUE);
+    BOOL ok = FALSE;
+    {
+        LaunchSection launch;
+        // No CREATE_NEW_PROCESS_GROUP: that flag is what keeps the console's
+        // Ctrl-C from the child. CREATE_SUSPENDED so the child joins the job
+        // before it can start anything.
+        ok = ::CreateProcessA(nullptr, cmdBuf.data(), nullptr, nullptr,
+                              /*bInheritHandles=*/TRUE, CREATE_SUSPENDED,
+                              nullptr, nullptr, &si, &pi);
+    }
+    if (!ok) {
+        if (refused) *refused = ::GetLastError();
+        if (job) ::CloseHandle(job);
+        ::SetConsoleCtrlHandler(ignore_interrupt, FALSE);
+        return -1;
+    }
+    if (job) ::AssignProcessToJobObject(job, pi.hProcess);
+    ::ResumeThread(pi.hThread);
+    ::CloseHandle(pi.hThread);
+
+    ::WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 0;
+    ::GetExitCodeProcess(pi.hProcess, &code);
+    ::CloseHandle(pi.hProcess);
+    if (job) ::CloseHandle(job);
+    ::SetConsoleCtrlHandler(ignore_interrupt, FALSE);
+    return static_cast<int>(code);
+}
+
 int wait_background(unsigned long long process, int* exitCode) {
     HANDLE h = reinterpret_cast<HANDLE>(process);
     if (!h) return -1;
@@ -679,6 +747,7 @@ void guard_job_on_signal(unsigned long long) {}
 void unguard_job(unsigned long long) {}
 void clear_job_guard() {}
 int  wait_background(unsigned long long, int*) { return -1; }
+int  run_foreground(const char*, unsigned long*) { return -1; }
 
 #endif
 

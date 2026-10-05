@@ -213,4 +213,55 @@ cp "$TMP/tooldual/src/main.cpp" src/main.cpp
 "$(bin_of toolapp)" || fail "the dual-role provider's consumer did not run"
 [ -n "$(find target -path '*/bin/*' \( -name '*dual_dll.dll' -o -name '*dual_dll.so*' -o -name '*dual_dll.dylib' \) -type f | head -1)" ] || fail "the dual-role provider's shared library is missing" dual-role.log
 
+
+# A static placed in the owner's own image (#766). `common` is reached only
+# through `dual`, which produces a shared image, so `common` is placed in that
+# image. `dual`'s executable links `common`'s objects itself and must then also
+# link `common`'s own shared dependency. `client` links `dual`'s image, which
+# holds `common`, and not `common`'s objects a second time.
+mkdir -p "$TMP/ws2"
+cd "$TMP/ws2"
+cat > mcpp.toml <<'EOF'
+[workspace]
+members = ["dual", "client", "support"]
+EOF
+mkdir -p common/src dual/src client/src support/src
+cp "$TMP/ws/support/mcpp.toml" support/mcpp.toml
+cp "$TMP/ws/support/src/support.cppm" support/src/support.cppm
+cat > common/mcpp.toml <<'EOF'
+[package]
+name = "common"
+version = "0.1.0"
+
+[dependencies]
+support = { path = "../support" }
+
+[targets.common]
+kind = "lib"
+EOF
+printf 'export module t880_base;\nimport t880_support;\nexport int base_value() { return 40 + delta(); }\n' > common/src/base.cppm
+cat > dual/mcpp.toml <<'EOF'
+[package]
+name = "dual"
+version = "0.1.0"
+
+[dependencies]
+common = { path = "../common" }
+
+[targets.dual_dll]
+kind = "shared"
+
+[targets.dual]
+kind = "bin"
+main = "src/main.cpp"
+EOF
+cp "$TMP/ws/dual/src/dual.cppm" dual/src/dual.cppm
+printf 'module t880_dual;\nimport t880_base;\nint answer() { return base_value() + 1; }\n' > dual/src/impl.cpp
+cp "$TMP/ws/dual/src/main.cpp" dual/src/main.cpp
+cp "$TMP/ws/client/mcpp.toml" client/mcpp.toml
+cp "$TMP/ws/client/src/main.cpp" client/src/main.cpp
+"$MCPP" build --workspace > placed.log 2>&1 || fail "a static placed in the owner's image lost its shared dependency" placed.log
+"$(bin_of dual)" || fail "the owner's executable with a placed static did not run"
+"$(bin_of client)" || fail "the consumer of an image holding a placed static did not run"
+
 echo "PASS: 880_a_members_executable_keeps_its_own_implementation"

@@ -32,6 +32,7 @@ module;
 // Linux and macOS launchers do a direct exec (see run_exec / capture_exec
 // below); only Windows keeps the std::system shell path (#248).
 #include <unistd.h>    // pipe, dup2, close, read
+#include <cerrno>      // errno after a refused execve (run_foreground)
 #include <fcntl.h>     // O_RDONLY, O_WRONLY for capture_stdout's /dev/null
 #include <sys/wait.h>  // waitpid
 #include <spawn.h>     // posix_spawnp, posix_spawn_file_actions_* (incl. addchdir_np)
@@ -99,6 +100,28 @@ RunResult capture_with_env(
 int run_exec(const std::vector<std::string>& argv,
              const std::vector<std::pair<std::string, std::string>>& extraEnv = {},
              int* spawn_error = nullptr);
+
+// THE PROGRAM A USER RUNS (`mcpp run`): it owns the terminal, its signals and
+// its exit status, as it would if the shell had started it.
+//
+// POSIX: mcpp REPLACES ITSELF with the program (execve). The program inherits
+// mcpp's process group, which is the terminal's foreground group, so it reads
+// the terminal and receives Ctrl-C, Ctrl-\ and Ctrl-Z itself. Whoever waits on
+// mcpp waits on the program, so its exit status, a death by signal included,
+// is seen unchanged, and nothing can outlive mcpp because nothing remains of
+// it. `run_exec` is the wrong launcher for this: its process group of its own
+// is a BACKGROUND group on a terminal, where the program's first read stops it
+// with SIGTTIN and the terminal's Ctrl-C reaches mcpp instead of the program.
+// Returns only when the program could not be started: 127, with the errno in
+// `*spawn_error` under the contract of `run_exec`. The caller has finished
+// everything it prints before calling: nothing of mcpp runs afterwards.
+//
+// Windows: the program runs in mcpp's console and process group, mcpp ignores
+// Ctrl-C while it waits, and the program's exit code is returned
+// (winproc::run_foreground).
+int run_foreground(const std::vector<std::string>& argv,
+                   const std::vector<std::pair<std::string, std::string>>& extraEnv = {},
+                   int* spawn_error = nullptr);
 
 // Same as run_exec but captures stdout AND stderr combined (replaces the old
 // `… 2>&1` redirect) into RunResult::output. Required because the only consumer
@@ -783,6 +806,76 @@ int run_exec(const std::vector<std::string>& argv,
     // Closes both handles; the child has already exited, so this is cleanup
     // rather than a kill.
     mcpp::platform::winproc::background_stop(child.job, child.process, 0);
+    return code;
+#endif
+}
+
+int run_foreground(const std::vector<std::string>& argv,
+                   const std::vector<std::pair<std::string, std::string>>& extraEnv,
+                   int* spawn_error)
+{
+    if (spawn_error) *spawn_error = 0;
+    if (argv.empty()) return 127;
+#if defined(__linux__) || defined(__APPLE__)
+    // A guarded group is a child mcpp still owns (ninja, a `during_build`
+    // hook). Replacing mcpp would leave it without an owner, so that is an
+    // internal error and not a silent orphan.
+    if (!mcpp::platform::unixproc::group_guard_idle()) {
+        std::fputs("mcpp: internal: a child of mcpp is still running; the program "
+                   "is not started\n", stderr);
+        return 125;
+    }
+    // The terminal's mode and the signal handlers mcpp installed are restored
+    // here; execve then resets every handled signal to its default.
+    mcpp::platform::unixproc::unguard_terminal_mode();
+    mcpp::platform::unixproc::clear_group_guard();
+
+    auto envStore = merged_environ(extraEnv);
+    std::vector<char*> envp;
+    for (auto& s : envStore) envp.push_back(s.data());
+    envp.push_back(nullptr);
+    std::vector<char*> cargv;
+    for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
+    cargv.push_back(nullptr);
+
+    std::fflush(nullptr);
+    // PATH is searched with mcpp's own PATH, as posix_spawnp searched it for
+    // run_exec, and not with the program's environment.
+    const std::string& file = argv.front();
+    int err = ENOENT;
+    if (file.find('/') != std::string::npos) {
+        ::execve(file.c_str(), cargv.data(), envp.data());
+        err = errno;
+    } else {
+        const char* path = std::getenv("PATH");
+        std::string_view dirs = (path && *path) ? path : "/usr/bin:/bin";
+        bool denied = false;
+        for (auto dir : dirs | std::views::split(':')) {
+            std::string candidate{std::string_view(dir)};
+            if (candidate.empty()) candidate = ".";
+            candidate += '/';
+            candidate += file;
+            ::execve(candidate.c_str(), cargv.data(), envp.data());
+            // The search continues past a directory that cannot hold the
+            // program; any other refusal names the program that was found.
+            if (errno == EACCES) { denied = true; continue; }
+            if (errno != ENOENT && errno != ENOTDIR) { err = errno; denied = false; break; }
+        }
+        if (denied && err == ENOENT) err = EACCES;
+    }
+    if (spawn_error) *spawn_error = err;
+    else std::fputs(spawn_failure(file, err).c_str(), stderr);
+    return 127;
+#else
+    std::string prefix = mcpp::platform::env::build_env_prefix(extraEnv);
+    std::string cmd = windows_shell_command_line(prefix + command_from_argv(argv));
+    unsigned long refused = 0;
+    const int code = mcpp::platform::winproc::run_foreground(cmd.c_str(), &refused);
+    if (code == -1 && refused != 0) {
+        if (spawn_error) *spawn_error = static_cast<int>(refused);
+        else std::fputs(spawn_failure(argv.front(), static_cast<int>(refused)).c_str(), stderr);
+        return 127;
+    }
     return code;
 #endif
 }

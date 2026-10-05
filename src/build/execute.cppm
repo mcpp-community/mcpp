@@ -2067,6 +2067,17 @@ void run_separator() {
     mcpp::ui::flush();
 }
 
+// THE PROGRAM OWNS THE TERMINAL FROM THE `Running` LINE ON, and nothing of
+// mcpp runs after it: on POSIX mcpp is replaced by the program
+// (process::run_foreground). The live report is closed, which restores the
+// terminal's mode, and the run's closing notices are printed now, before the
+// `Running` line, because after the program there is no mcpp left to print
+// them.
+void yield_terminal() {
+    mcpp::build::progress::close();
+    mcpp::ui::print_closing_notices();
+}
+
 // mcpp#225 (E2): `mcpp run`'s fast path. Mirrors try_fast_build's
 // fingerprint/freshness gate against the SAME cache entry `mcpp build`
 // wrote (targetTriple == "" — a HOST build; see the precondition below), then
@@ -2179,7 +2190,7 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
 
     auto exe = outputDir / chosen->second;
     auto pathCtx = mcpp::fetcher::make_path_ctx(/*cfg=*/nullptr, projectRoot);
-    mcpp::build::progress::close();   // the program owns the terminal
+    yield_terminal();
     mcpp::ui::status("Running",
         std::format("`{}`", mcpp::ui::shorten_path(exe, pathCtx)));
     run_separator();
@@ -2209,7 +2220,7 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     // `runnerDeclared` gate above), so the artifact is the only thing that
     // could have been refused.
     int spawnErr = 0;
-    const int exitRc = mcpp::platform::process::run_exec(argv, childEnv, &spawnErr);
+    const int exitRc = mcpp::platform::process::run_foreground(argv, childEnv, &spawnErr);
     if (spawnErr != 0) {
         using namespace mcpp::build::runner_lookup;
         const auto triple = mcpp::toolchain::triple::host_triple().str();
@@ -2369,13 +2380,13 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
                                                              : slotName;
         if (!isRunSlot && !runner_from_format && !verb.empty())
             verb[0] = static_cast<char>(std::toupper(verb[0]));
-        mcpp::build::progress::close();   // the program owns the terminal
+        yield_terminal();
         mcpp::ui::status(verb, std::format("`{} … {}`", choice.tmpl.front(),
                                            mcpp::ui::shorten_path(exe, pathCtx)));
     } else {
         argv.push_back(exe.string());
         for (auto& a : passthrough) argv.push_back(a);
-        mcpp::build::progress::close();   // the program owns the terminal
+        yield_terminal();
         mcpp::ui::status("Running",
             std::format("`{}`", mcpp::ui::shorten_path(exe, pathCtx)));
     }
@@ -2401,7 +2412,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     // message carries the key that would change that. Anything else is reported
     // as itself — EACCES is a permission problem, not an absence.
     int spawnErr = 0;
-    const int rc = mcpp::platform::process::run_exec(argv, childEnv, &spawnErr);
+    const int rc = mcpp::platform::process::run_foreground(argv, childEnv, &spawnErr);
     if (spawnErr != 0) {
         using namespace mcpp::build::runner_lookup;
         if (!choice.tmpl.empty())

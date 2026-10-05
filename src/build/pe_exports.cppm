@@ -21,11 +21,29 @@ bool ir_declares_exports(std::string_view ir);
 std::expected<std::vector<coff::Export>, std::string>
 read_nm_exports(std::string_view text, bool i386);
 
-// Inputs that already declare their exported surface produce an empty result.
-// No candidate reader is entered on that path; in particular, annotated COFF
-// does not require LLVM tools merely because another input happens to be LTO.
-std::expected<std::vector<coff::Export>, std::string>
-read_exports(std::span<const std::filesystem::path> objects, const LLVMTools& tools);
+// What the inputs of one MSVC-ABI DLL say about its exported surface.
+//
+// An input that declares exports itself (`__declspec(dllexport)`, `/EXPORT:`
+// directives, linker-option metadata) decides the surface for the whole DLL:
+// the linker reads those declarations whatever the `.def` says, so `declaredBy`
+// names the first such input and `candidates` is empty. No candidate reader is
+// entered on that path; in particular, annotated COFF does not require LLVM
+// tools merely because another input happens to be LTO. Otherwise
+// `candidates` holds every exportable definition the inputs contain.
+struct Discovery {
+    std::optional<std::filesystem::path> declaredBy;
+    std::vector<coff::Export>            candidates;
+};
+std::expected<Discovery, std::string>
+discover_exports(std::span<const std::filesystem::path> objects, const LLVMTools& tools);
+
+// `[targets.<n>] exports` on the MSVC ABI: the candidates whose name matches
+// one of `patterns`, with the glob semantics of an ELF version script (`*`,
+// `?`, `[...]`, `[!...]`). A pattern matches the linker-level name: undecorated
+// on i386, as coff::export_name spells it, and MSVC-mangled for C++.
+bool symbol_matches(std::string_view pattern, std::string_view name);
+std::vector<coff::Export> narrow(std::vector<coff::Export> candidates,
+                                 std::span<const std::string> patterns);
 
 } // namespace mcpp::build::pe
 
@@ -197,8 +215,26 @@ read_nm_exports(std::string_view text, bool i386) {
     return out;
 }
 
-std::expected<std::vector<coff::Export>, std::string>
-read_exports(std::span<const std::filesystem::path> objects, const LLVMTools& tools) {
+namespace {
+
+// The tool runs of one call, `jobs` at a time and in input order. Each
+// inspects one object, and the objects of a large LTO DLL number in the
+// hundreds, so running them one after another dominated the `.def` edge.
+template <class Fn>
+void for_each_concurrently(std::size_t count, Fn&& fn) {
+    const std::size_t jobs = std::clamp<std::size_t>(std::thread::hardware_concurrency(), 1, 8);
+    std::atomic<std::size_t> next{0};
+    std::vector<std::jthread> workers;
+    for (std::size_t w = 0; w < std::min(jobs, count); ++w)
+        workers.emplace_back([&] {
+            for (std::size_t i = next++; i < count; i = next++) fn(i);
+        });
+}
+
+} // namespace
+
+std::expected<Discovery, std::string>
+discover_exports(std::span<const std::filesystem::path> objects, const LLVMTools& tools) {
     auto error = [](const std::filesystem::path& obj, std::string message) {
         return std::unexpected(mcpp::modgraph::escaped_spelling(obj) + ": " + message);
     };
@@ -207,7 +243,8 @@ read_exports(std::span<const std::filesystem::path> objects, const LLVMTools& to
         auto bytes = read_object(obj);
         if (!bytes) return error(obj, bytes.error());
         bitcode.push_back(is_bitcode(*bytes));
-        if (!bitcode.back() && coff::declares_exports(*bytes)) return std::vector<coff::Export>{};
+        if (!bitcode.back() && coff::declares_exports(*bytes))
+            return Discovery{.declaredBy = obj, .candidates = {}};
     }
     std::vector<std::string> arguments;
     for (auto const& obj : objects) {
@@ -217,34 +254,107 @@ read_exports(std::span<const std::filesystem::path> objects, const LLVMTools& to
     }
     const bool i386 = tools.target.starts_with("i386-") || tools.target.starts_with("i686-")
         || tools.target.starts_with("x86-");
-    for (std::size_t i = 0; i < objects.size(); ++i) {
-        if (!bitcode[i]) continue;
-        if (tools.target.empty()) return error(objects[i], "LLVM bitcode inspection requires the selected target triple");
+    std::vector<std::size_t> lto;
+    for (std::size_t i = 0; i < objects.size(); ++i)
+        if (bitcode[i]) lto.push_back(i);
+    if (!lto.empty() && tools.target.empty())
+        return error(objects[lto.front()], "LLVM bitcode inspection requires the selected target triple");
+
+    // Intent first, for every bitcode input; the first declaring input in
+    // input order is the one named.
+    std::vector<std::expected<bool, std::string>> declares(lto.size(), false);
+    for_each_concurrently(lto.size(), [&](std::size_t k) {
+        const auto i = lto[k];
         std::vector<std::string> args{"--driver-mode=g++", "-S", "-emit-llvm", "-x", "ir",
-                                      "--target=" + tools.target};
-        args.insert(args.end(), {arguments[i], "-o", "-"});
+                                      "--target=" + tools.target, arguments[i], "-o", "-"};
         auto ir = run_tool(tools.compiler, std::move(args));
-        if (!ir) return error(objects[i], ir.error());
-        if (ir_declares_exports(*ir)) return std::vector<coff::Export>{};
+        if (!ir) declares[k] = std::unexpected(ir.error());
+        else     declares[k] = ir_declares_exports(*ir);
+    });
+    for (std::size_t k = 0; k < lto.size(); ++k) {
+        if (!declares[k]) return error(objects[lto[k]], declares[k].error());
+        if (*declares[k]) return Discovery{.declaredBy = objects[lto[k]], .candidates = {}};
     }
-    std::vector<coff::Export> all;
+
+    std::vector<std::expected<std::vector<coff::Export>, std::string>> symbols(
+        objects.size(), std::vector<coff::Export>{});
+    for_each_concurrently(lto.size(), [&](std::size_t k) {
+        const auto i = lto[k];
+        auto text = run_tool(tools.nm, {"--quiet", "--format=posix", "--extern-only", "--defined-only",
+                                      "--no-demangle", arguments[i]});
+        if (!text) symbols[i] = std::unexpected(text.error());
+        else       symbols[i] = read_nm_exports(*text, i386);
+    });
+    Discovery out;
     for (std::size_t i = 0; i < objects.size(); ++i) {
-        std::expected<std::vector<coff::Export>, std::string> symbols;
-        if (bitcode[i]) {
-            auto text = run_tool(tools.nm, {"--quiet", "--format=posix", "--extern-only", "--defined-only",
-                                          "--no-demangle", arguments[i]});
-            if (!text) return error(objects[i], text.error());
-            symbols = read_nm_exports(*text, i386);
-        } else {
+        if (!bitcode[i]) {
             auto bytes = read_object(objects[i]);
             if (!bytes) return error(objects[i], bytes.error());
-            symbols = coff::read_exports(*bytes);
+            symbols[i] = coff::read_exports(*bytes);
         }
-        if (!symbols) return error(objects[i], symbols.error());
-        all.insert(all.end(), std::make_move_iterator(symbols->begin()),
-                             std::make_move_iterator(symbols->end()));
+        if (!symbols[i]) return error(objects[i], symbols[i].error());
+        out.candidates.insert(out.candidates.end(),
+                              std::make_move_iterator(symbols[i]->begin()),
+                              std::make_move_iterator(symbols[i]->end()));
     }
-    return all;
+    return out;
+}
+
+bool symbol_matches(std::string_view pattern, std::string_view name) {
+    // Iterative glob with single-star backtracking, as fnmatch does it without
+    // FNM_PATHNAME: a symbol name has no separator to respect.
+    std::size_t p = 0, n = 0, starP = std::string_view::npos, starN = 0;
+    auto class_matches = [&](std::size_t& at, char c) -> std::optional<bool> {
+        // `at` is on '['. Returns nullopt for an unterminated class, which is
+        // then an ordinary character.
+        std::size_t i = at + 1;
+        bool negate = false;
+        if (i < pattern.size() && (pattern[i] == '!' || pattern[i] == '^')) { negate = true; ++i; }
+        bool hit = false;
+        bool first = true;
+        for (; i < pattern.size() && (first || pattern[i] != ']'); ++i, first = false) {
+            if (i + 2 < pattern.size() && pattern[i + 1] == '-' && pattern[i + 2] != ']') {
+                if (pattern[i] <= c && c <= pattern[i + 2]) hit = true;
+                i += 2;
+            } else if (pattern[i] == c) {
+                hit = true;
+            }
+        }
+        if (i >= pattern.size()) return std::nullopt;
+        at = i;   // on ']'
+        return hit != negate;
+    };
+    while (n < name.size()) {
+        if (p < pattern.size() && pattern[p] == '*') {
+            starP = p++;
+            starN = n;
+            continue;
+        }
+        if (p < pattern.size()) {
+            if (pattern[p] == '?') { ++p; ++n; continue; }
+            if (pattern[p] == '[') {
+                std::size_t at = p;
+                if (auto m = class_matches(at, name[n])) {
+                    if (*m) { p = at + 1; ++n; continue; }
+                } else if (name[n] == '[') { ++p; ++n; continue; }
+            } else if (pattern[p] == name[n]) { ++p; ++n; continue; }
+        }
+        if (starP == std::string_view::npos) return false;
+        p = starP + 1;
+        n = ++starN;
+    }
+    while (p < pattern.size() && pattern[p] == '*') ++p;
+    return p == pattern.size();
+}
+
+std::vector<coff::Export> narrow(std::vector<coff::Export> candidates,
+                                 std::span<const std::string> patterns) {
+    std::erase_if(candidates, [&](const coff::Export& e) {
+        return std::ranges::none_of(patterns, [&](const std::string& p) {
+            return symbol_matches(p, e.name);
+        });
+    });
+    return candidates;
 }
 
 } // namespace mcpp::build::pe

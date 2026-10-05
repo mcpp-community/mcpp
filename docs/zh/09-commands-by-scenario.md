@@ -339,6 +339,24 @@ $ echo $?
 
 无法启动的程序保留拒绝时的状态（`127` 找不到，`126` 不可执行，`125` 其他），`mcpp build`、`mcpp test`、`mcpp pack` 的状态不变。程序本身，或者 runner（`--runner`、`[target.<triple>].runner`），自己返回 101 时，读起来与构建失败相同；各区间见 [50 —— 机器可读输出](50-machine-output.md) §6。
 
+### 程序与终端 *(2026.10.5.1+)*
+
+`mcpp run` 启动的程序拥有终端，与由 shell 直接启动时相同：它读取终端的输入，Ctrl-C、Ctrl-\ 与 Ctrl-Z 送达程序，由程序决定其含义。runner 与具名 runner（`--runner`）同样如此。
+
+- 在 Linux 与 macOS 上，构建完成后 `mcpp` 被程序替换。程序以 shell 启动的进程号运行，`mcpp` 不再留存：`timeout` 或关闭终端直接作用于程序。
+- 因信号结束的程序，调用方看到的同样是该信号，与直接运行一致：shell 报告 `128+n`，Python 的 `subprocess` 报告 `-n`。
+- 在 Windows 上，程序在同一控制台与同一进程组中运行，`mcpp` 返回其退出码。
+- 关于整条命令的提示（`tip:` 行，例如要求更新 mcpp 的索引）在 `Running` 行之前输出，因为程序之后不再有 `mcpp` 的输出。
+
+```console
+$ mcpp run -q
+> hello
+read: hello
+> ^C                  # 程序的 SIGINT 处理函数运行
+$ echo $?
+3                     # 处理函数返回的状态
+```
+
 ## 发布前校验描述符
 
 `mcpp xpkg parse` 用解析器自己的文法读一个描述符，所以它报告的就是解析时

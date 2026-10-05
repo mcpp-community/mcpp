@@ -386,71 +386,8 @@ bool is_module_name_char(char c) {
     return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == ':';
 }
 
-// mcpp#225: submodule paths registered in `<root>/.gitmodules` ("path = ..."
-// entries), resolved to canonical absolute paths. is_excluded_walk_dir is
-// called once per directory ENTRY seen during a walk, so this is parsed
-// once per root and cached for the life of the process rather than
-// re-reading .gitmodules on every call (that would defeat the point of
-// bounding the walk).
-const std::set<std::filesystem::path>&
-submodule_paths(const std::filesystem::path& root) {
-    static std::map<std::filesystem::path, std::set<std::filesystem::path>> cache;
-    std::error_code kec;
-    auto key = std::filesystem::canonical(root, kec);
-    if (kec) key = root;
-    if (auto it = cache.find(key); it != cache.end()) return it->second;
-
-    std::set<std::filesystem::path> paths;
-    std::ifstream f(root / ".gitmodules");
-    std::string line;
-    while (f && std::getline(f, line)) {
-        auto eq = line.find('=');
-        if (eq == std::string::npos) continue;
-        std::string_view k = trim(std::string_view(line).substr(0, eq));
-        if (k != "path") continue;
-        std::string_view v = trim(std::string_view(line).substr(eq + 1));
-        if (v.empty()) continue;
-        std::error_code pec;
-        auto abs = std::filesystem::canonical(root / std::filesystem::path(std::string(v)), pec);
-        paths.insert(pec ? (root / std::filesystem::path(std::string(v))) : abs);
-    }
-    return cache.emplace(key, std::move(paths)).first->second;
-}
-
-// mcpp#225: directory names that never hold project sources — VCS metadata,
-// mcpp's own build output, and mcpp's own project-metadata dir (mcpp#230:
-// `.mcpp`'s xlings data tree holds a symlink back to each path-dep index
-// root, so following it walks that entire checkout). A directory whose path
-// matches a `.gitmodules`-registered submodule path under `root` is pruned
-// too — submodules are foreign trees, often huge, and not part of this
-// package's source glob.
-bool is_excluded_walk_dir(const std::filesystem::path& dir,
-                          const std::filesystem::path& root) {
-    // Compare as paths. Do NOT narrow.
-    //
-    // #516: `dir.filename().string()` went through MSVC's wide→ANSI
-    // conversion and threw std::system_error for any directory name the
-    // active code page cannot spell (`test/www/<CJK>Dir/` in cpp-httplib).
-    // This function is the FIRST line of the walk loop and runs once per
-    // directory entry, so it fires before `path_matches_glob`'s guard —
-    // hardening that one (#231) could never cover a directory name.
-    //
-    // The three literals are ASCII, so their conversion to the native
-    // representation is lossless, and `path::operator==` compares native
-    // strings case-sensitively — byte-for-byte the same decision the narrow
-    // comparison made. Static constants rather than temporaries per entry:
-    // #225 bounded this walk for a reason, and this is on its hot path.
-    static const std::filesystem::path kMcppDir{".mcpp"};
-    static const std::filesystem::path kGitDir{".git"};
-    static const std::filesystem::path kTargetDir{"target"};
-    const auto name = dir.filename();
-    if (name == kMcppDir || name == kGitDir || name == kTargetDir) return true;
-    auto const& submodules = submodule_paths(root);
-    if (submodules.empty()) return false;
-    std::error_code ec;
-    auto c = std::filesystem::canonical(dir, ec);
-    return submodules.contains(ec ? dir : c);
-}
+// The exclusions and the walk itself are mcpp.modgraph.glob's
+// (is_excluded_walk_dir, walk_glob_tree), shared with build-program inputs.
 
 } // namespace
 
@@ -569,46 +506,16 @@ std::shared_ptr<const TreeListing> walk_tree(const std::filesystem::path& root,
     };
     note_dir(start);
 
-    // Follow directory symlinks (vendored trees are often symlink farms).
-    // Cycle guard: a directory whose canonical path is already on the
-    // CURRENT recursion chain is a link loop — only that is pruned; the same
-    // real directory reached via a second lexical path (dir + link to it)
-    // still walks, because glob matching is lexical. Files reachable twice
-    // are deduped by canonical identity by the caller.
-    std::vector<fs::path> chain;   // canonical dirs of the recursion stack
-    std::error_code ec, eec;       // ec: iteration; eec: per-entry probes
-    {
-        auto c = fs::canonical(start, eec);
-        chain.push_back(eec ? start : c);
-    }
-    fs::recursive_directory_iterator it(
-        start, fs::directory_options::follow_directory_symlink, ec);
-    for (fs::recursive_directory_iterator end; !ec && it != end; it.increment(ec)) {
-        auto& e = *it;
-        if (e.is_directory(eec) && !eec) {
-            if (is_excluded_walk_dir(e.path(), root)) {
-                it.disable_recursion_pending();
-                continue;
-            }
-            auto depth = static_cast<std::size_t>(it.depth());
-            chain.resize(std::min(chain.size(), depth + 1));
-            auto c = fs::canonical(e.path(), eec);
-            if (!eec && std::find(chain.begin(), chain.end(), c) != chain.end()) {
-                it.disable_recursion_pending();   // link cycle
-            } else {
-                chain.push_back(eec ? e.path() : c);
-                note_dir(e.path());
-            }
-            continue;
-        }
-        if (!e.is_regular_file(eec) || eec) continue;
-        auto rel = try_narrow(e.path().lexically_relative(root));
-        // A name the code page cannot spell can never match a glob, and is
-        // recorded as path_matches_glob records it.
-        if (!rel) note_unnarrowable_path(e.path());
-        listing->files.push_back({e.path(), std::move(rel)});
-    }
-    if (ec) listing->trusted = false;
+    const bool complete = walk_glob_tree(root, start,
+        [&](const fs::path& d) { note_dir(d); return true; },
+        [&](const fs::path& f) {
+            auto rel = try_narrow(f.lexically_relative(root));
+            // A name the code page cannot spell can never match a glob, and is
+            // recorded as path_matches_glob records it.
+            if (!rel) note_unnarrowable_path(f);
+            listing->files.push_back({f, std::move(rel)});
+        });
+    if (!complete) listing->trusted = false;
     return listing;
 }
 
@@ -734,35 +641,15 @@ std::vector<std::filesystem::path> expand_dir_glob(const std::filesystem::path& 
     std::error_code startEc;
     if (!std::filesystem::exists(start, startEc)) return out;
 
-    // Walk all directories under start, match each against the glob. Same
-    // follow-symlinks + recursion-chain cycle guard as expand_glob above.
+    // Every directory under start, matched against the glob, by the walk the
+    // file globs take.
     out.push_back(root);   // sentinel, always dropped below regardless of value
-    std::vector<std::filesystem::path> chain;
-    std::error_code eec;   // per-entry probes; ec drives iteration
-    {
-        auto c = std::filesystem::canonical(start, eec);
-        chain.push_back(eec ? start : c);
-    }
-    std::filesystem::recursive_directory_iterator it(
-        start, std::filesystem::directory_options::follow_directory_symlink, ec);
-    for (std::filesystem::recursive_directory_iterator end;
-         !ec && it != end; it.increment(ec)) {
-        auto& e = *it;
-        if (!e.is_directory(eec) || eec) continue;
-        if (is_excluded_walk_dir(e.path(), root)) {
-            it.disable_recursion_pending();
-            continue;
-        }
-        auto depth = static_cast<std::size_t>(it.depth());
-        chain.resize(std::min(chain.size(), depth + 1));
-        auto c = std::filesystem::canonical(e.path(), eec);
-        if (!eec && std::find(chain.begin(), chain.end(), c) != chain.end()) {
-            it.disable_recursion_pending();   // link cycle
-            continue;
-        }
-        chain.push_back(eec ? e.path() : c);
-        if (path_matches_glob(e.path(), root, glob)) out.push_back(e.path());
-    }
+    walk_glob_tree(root, start,
+        [&](const std::filesystem::path& d) {
+            if (path_matches_glob(d, root, glob)) out.push_back(d);
+            return true;
+        },
+        [](const std::filesystem::path&) {});
     out.erase(out.begin());   // drop root sentinel
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());

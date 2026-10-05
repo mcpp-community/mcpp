@@ -346,16 +346,20 @@ check_requires() {
 # Per-test timeout: bail out of an individual test that gets stuck (e.g.
 # 10_env_command.sh has been observed hanging for the full job budget on
 # slow xlings/network combinations). 600s default; override via env.
-# Linux + git-bash on Windows have GNU `timeout`; macOS may need `gtimeout`
-# (coreutils). If neither is present, we run without a wrapper and rely on
-# the step-level GitHub Actions timeout-minutes as the backstop.
+# Linux + git-bash on Windows have GNU `timeout`; macOS has `gtimeout` only
+# with coreutils, and the hosted macOS runners have neither, so the bound
+# falls back to `_timeout.py`, which ends the test's whole process tree. Without
+# a bound, one hung test (721 on macOS, 2026-10-04) consumed the shard's
+# step-level budget and failed every test after it, and the coverage job that
+# reads the shard's report.
 E2E_TEST_TIMEOUT="${E2E_TEST_TIMEOUT:-600}"
-TIMEOUT_CMD=""
-if   command -v timeout  &>/dev/null; then TIMEOUT_CMD=timeout
-elif command -v gtimeout &>/dev/null; then TIMEOUT_CMD=gtimeout
+TIMEOUT_CMD=()
+if   command -v timeout  &>/dev/null; then TIMEOUT_CMD=(timeout)
+elif command -v gtimeout &>/dev/null; then TIMEOUT_CMD=(gtimeout)
+elif command -v python3  &>/dev/null; then TIMEOUT_CMD=(python3 "$HERE/_timeout.py")
 fi
-if [[ -n "$TIMEOUT_CMD" ]]; then
-    echo "Per-test timeout: ${E2E_TEST_TIMEOUT}s (via $TIMEOUT_CMD)"
+if [[ ${#TIMEOUT_CMD[@]} -gt 0 ]]; then
+    echo "Per-test timeout: ${E2E_TEST_TIMEOUT}s (via ${TIMEOUT_CMD[*]})"
 else
     echo "Per-test timeout: <unavailable> (no timeout/gtimeout on PATH)"
 fi
@@ -505,8 +509,8 @@ for test in "$HERE"/[0-9]*.sh; do
     fi
     echo "=== $name ==="
     _start_ms=$(_t_ms)
-    if [[ -n "$TIMEOUT_CMD" ]]; then
-        MCPP="$MCPP" "$TIMEOUT_CMD" "$E2E_TEST_TIMEOUT" bash "$test"
+    if [[ ${#TIMEOUT_CMD[@]} -gt 0 ]]; then
+        MCPP="$MCPP" "${TIMEOUT_CMD[@]}" "$E2E_TEST_TIMEOUT" bash "$test"
     else
         MCPP="$MCPP" bash "$test"
     fi

@@ -103,7 +103,7 @@ TEST(PeExports, OptOutAffectsOnlyTheMsvcAbiSharedLinkForm) {
             manifest.package.version = "0.1.0";
             manifest.package.standard = "c++23";
             manifest.targets.push_back({.name = "probe",
-                .kind = mcpp::manifest::Target::SharedLibrary, .autoExport = enabled});
+                .kind = mcpp::manifest::Target::SharedLibrary, .windowsAutoExport = enabled});
             mcpp::toolchain::Toolchain tc;
             tc.compiler = mcpp::toolchain::CompilerId::Clang;
             tc.targetTriple = triple;
@@ -116,6 +116,60 @@ TEST(PeExports, OptOutAffectsOnlyTheMsvcAbiSharedLinkForm) {
             ASSERT_EQ(plan->linkUnits.size(), 1u);
             EXPECT_EQ(!plan->linkUnits.front().defFile.empty(),
                 enabled && std::string_view(triple).ends_with("windows-msvc")) << triple;
+        }
+    }
+}
+
+TEST(PeExports, SymbolPatternsFollowVersionScriptGlobs) {
+    using mcpp::build::pe::symbol_matches;
+    EXPECT_TRUE(symbol_matches("vk_icd*", "vk_icdGetInstanceProcAddr"));
+    EXPECT_TRUE(symbol_matches("vk_icd*", "vk_icd"));
+    EXPECT_FALSE(symbol_matches("vk_icd*", "vkGetInstanceProcAddr"));
+    EXPECT_TRUE(symbol_matches("api_?", "api_x"));
+    EXPECT_FALSE(symbol_matches("api_?", "api_xy"));
+    EXPECT_TRUE(symbol_matches("api_[a-c]*", "api_b_open"));
+    EXPECT_FALSE(symbol_matches("api_[!a-c]*", "api_b_open"));
+    EXPECT_TRUE(symbol_matches("*Plugin*", "?createPlugin@@YAPEAXXZ"));
+    EXPECT_TRUE(symbol_matches("exact", "exact"));
+    EXPECT_FALSE(symbol_matches("exact", "exactly"));
+    EXPECT_TRUE(symbol_matches("*", ""));
+    EXPECT_TRUE(symbol_matches("a[b", "a[b"));   // an unterminated class is a character
+}
+
+TEST(PeExports, NarrowKeepsTheMatchingCandidatesAndTheirDataFlag) {
+    std::vector<mcpp::build::coff::Export> all{
+        {"plugin_open", false}, {"plugin_table", true}, {"helper", false}};
+    const std::vector<std::string> patterns{"plugin_*"};
+    auto kept = mcpp::build::pe::narrow(all, patterns);
+    ASSERT_EQ(kept.size(), 2u);
+    EXPECT_EQ(kept[0].name, "plugin_open");
+    EXPECT_FALSE(kept[0].data);
+    EXPECT_EQ(kept[1].name, "plugin_table");
+    EXPECT_TRUE(kept[1].data);
+}
+
+TEST(PeExports, ExportsWithoutDiscoveryIsRefusedOnlyOnMsvcAbiRows) {
+    for (auto triple : {"x86_64-pc-windows-msvc", "x86_64-w64-mingw32", "x86_64-linux-gnu"}) {
+        mcpp::manifest::Manifest manifest;
+        manifest.package.name = "probe";
+        manifest.package.version = "0.1.0";
+        manifest.package.standard = "c++23";
+        manifest.targets.push_back({.name = "probe",
+            .kind = mcpp::manifest::Target::SharedLibrary,
+            .windowsAutoExport = false, .exportPatterns = {"probe_*"}});
+        mcpp::toolchain::Toolchain tc;
+        tc.compiler = mcpp::toolchain::CompilerId::Clang;
+        tc.targetTriple = triple;
+        mcpp::modgraph::PackageRoot root;
+        root.root = std::filesystem::temp_directory_path() / "mcpp-pe-plan";
+        root.manifest = manifest;
+        const auto plan = mcpp::build::make_plan(manifest, tc, {}, {}, {}, {root},
+            root.root, root.root / "target", {}, {});
+        if (std::string_view(triple).ends_with("windows-msvc")) {
+            ASSERT_FALSE(plan.has_value()) << triple;
+            EXPECT_NE(plan.error().find("windows_auto_export = false"), std::string::npos);
+        } else {
+            EXPECT_TRUE(plan.has_value()) << triple << ": " << (plan ? "" : plan.error());
         }
     }
 }

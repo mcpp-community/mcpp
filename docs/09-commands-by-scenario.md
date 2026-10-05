@@ -426,6 +426,34 @@ test` and `mcpp pack` keep their statuses. A program, or a runner
 failed build; [50 — Machine-Readable Output](50-machine-output.md) §6 gives the
 bands.
 
+### The program and the terminal *(2026.10.5.1+)*
+
+The program `mcpp run` starts owns the terminal as it would if the shell had
+started it: it reads the terminal's input, and Ctrl-C, Ctrl-\ and Ctrl-Z reach
+the program, which decides what they mean. The same holds for a runner and for
+the named runners (`--runner`).
+
+- On Linux and macOS, `mcpp` is replaced by the program once the build is done.
+  The program runs with the process id the shell started, and nothing of `mcpp`
+  remains: a `timeout` or a closed terminal reaches the program directly.
+- A program that ends by a signal is seen by the caller as ending by that
+  signal, as in a direct run: a shell reports `128+n`, and Python's
+  `subprocess` reports `-n`.
+- On Windows, the program runs in the same console and process group, and
+  `mcpp` returns its exit code.
+- A notice concerning the whole command (a `tip:` line, for example an index
+  that requires a newer mcpp) is printed before the `Running` line, since no
+  output of `mcpp` follows the program.
+
+```console
+$ mcpp run -q
+> hello
+read: hello
+> ^C                  # the program's SIGINT handler runs
+$ echo $?
+3                     # the status the handler returned
+```
+
 ## Validating a descriptor before publishing
 
 `mcpp xpkg parse` reads a descriptor with the resolver's own grammar, so what

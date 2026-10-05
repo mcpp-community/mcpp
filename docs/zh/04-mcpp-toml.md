@@ -216,6 +216,10 @@ loader 打开的 `.dll` 与链接器消费的导入库，导出列表从对象�
 ABI 生成（不带 `__declspec(dllexport)` 或 `.def` 时什么都不导出）。见
 `tests/e2e/08`、`257` 与 `259`。
 
+同时有 `shared` target 与 `bin` target 的包，每个可执行文件都以本包自己的对象链接，
+作为独立的程序：可执行文件不加载本包自己的共享库。加载某个包的共享库的程序属于另一个包，
+例如同一工作空间中的另一个成员（[07 —— 工作空间](07-workspace.md)）。
+
 #### `kind = "app"` —— 用户启动的那个东西（mcpp 2026.9.12.3+）
 
 ```toml
@@ -267,7 +271,7 @@ exports = "abi/mydriver.exports"     # or inline: exports = ["vk_icd*"]
 
 省略 `exports` 会保留 ELF 和 Mach-O 的原生可见性规则。在 MSVC ABI 上，
 mcpp 会发现可导出的外部定义；任一输入已经声明导出，或设置了
-`auto_export = false` 时不进行这种发现。`exports` 收窄链接器发布的集合。
+`windows_auto_export = false` 时不进行这种发现。`exports` 收窄链接器发布的集合。
 
 两类工程需要这种收窄。**带稳定 ABI 的运行时**只发布一份经过审查的
 集合，其余一概不发布，让不在集合里的东西保留自由变化的空间。**与同类
@@ -284,7 +288,7 @@ loader 以及进程中的其它 ICD 相撞。
 |---|---|
 | ELF | 一份 version script，`-Wl,--version-script=` |
 | Mach-O | `-Wl,-exported_symbols_list`（前导下划线由引擎补上） |
-| PE | 那份 `.def`，替换自动生成的、导出一切的那一份 |
+| PE（MSVC ABI） | 那份 `.def`：被发现的符号中与某个模式匹配的那些 |
 
 **它不改变编译期可见性，这是刻意的。** 这种收窄在全部三种格式上都是
 链接期属性，所以一个键只有一种效果。`-fvisibility=hidden` 仍可通过
@@ -300,27 +304,37 @@ script 并通过 `[build] ldflags` 传入，或者自行计算并发出
 [`dependency_linkage`](#dependency_linkage--静态还是动态由消费者决定)，
 在那里，一个库采取的形式变成消费者的决定。
 
-#### `auto_export` —— MSVC ABI 上的原生导出控制（尚未发布）
+在 MSVC ABI 上，一个 DLL 的导出集合的三种来源按以下次序生效：
 
-这个键和 LLVM bitcode 导出发现需要尚未发布的源码构建，mcpp 2026.10.3.1
-不提供这些能力。自行控制导出的 target 可以省略自动导出发现步骤：
+1. **源码中的声明。** 任一对象声明了导出（`__declspec(dllexport)`、
+   `#pragma comment(linker, "/EXPORT:...")`，或 LLVM bitcode 中的同类声明）时，
+   DLL 恰好发布这些符号。与这种声明并存的 `exports` 不起作用，构建以警告说明这一点，
+   并指出该对象。
+2. **`exports`。** 否则，发布被发现的符号中名字与某个模式匹配的那些。模式匹配的是
+   符号在链接器中的名字：32 位 x86 上不带修饰，C++ 符号为 MSVC 修饰名。因此为 C 名字
+   写的模式可在三种格式间通用，为 C++ 修饰名写的模式不能。
+3. **发现。** 否则，发布全部可导出的定义。
+
+不发布任何符号的 DLL 没有导入库。同一构建中的程序链接这样的 DLL 时，它的 `.def` 步骤
+失败并指出该 DLL；没有程序链接的 DLL（例如只含资源的 DLL）照常构建。
+
+#### `windows_auto_export` —— MSVC ABI 上的导出发现（mcpp 2026.10.5.1+）
 
 ```toml
 [targets.plugin]
 kind = "shared"
-auto_export = false
+windows_auto_export = false
 ```
 
-这个布尔值默认为 `true`，只作用于 MSVC ABI 上的 PE 共享库，包括 clang 和
-clang-cl；库作为依赖构建时也生效。它不影响静态库、可执行文件、ELF、Mach-O
-或 MinGW。关闭发现后，原生 `__declspec(dllexport)`、链接旗标和显式 `exports`
-列表仍然生效。
+这个布尔值默认为 `true`。`false` 去掉发现步骤，DLL 发布其源码与 `[build] ldflags`
+所声明的符号。它作用于 MSVC ABI 上的 PE 共享库，包括 clang 与 clang-cl，target
+作为依赖构建时同样生效；在静态库、可执行文件、ELF、Mach-O 与 MinGW 上不产生任何内容。
 
-开启发现时，任一输入的显式导出意图都会禁止整个 DLL 的自动导出。首先检查
-COFF 指令，再使用所选 LLVM 编译器检查 bitcode 中的 `dllexport` 声明和
-linker-option 元数据。只有没有标注的 DLL 才需要枚举候选符号，bitcode 的
-候选符号由该编译器旁的 `llvm-nm` 提供。FullLTO 和 ThinLTO 输入都可以与
-普通 COFF 对象混用。
+规划 MSVC ABI 的 target 时，`windows_auto_export = false` 与 `exports` 同时出现会被
+拒绝，因为 `exports` 收窄的是被发现的符号；同一份 manifest 在 ELF 与 Mach-O 上照常构建。
+
+发现直接读取 COFF 对象，并用所选 LLVM 编译器及其旁边的 `llvm-nm` 读取 LLVM bitcode
+（FullLTO 与 ThinLTO，单独或与 COFF 对象混用）。
 
 #### `windows_subsystem` 与 `windows_entry` —— Windows GUI 可执行文件（mcpp 2026.9.12.2+）
 

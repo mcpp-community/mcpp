@@ -390,8 +390,10 @@ makes mcpp write an empty `EXPORTS` section. Adding a list on top would export t
 same names twice (`LNK4197`) and export everything else besides, replacing a
 chosen public surface with all of it. Bitcode's `dllexport` storage class and
 linker-option metadata express the same intent. Export intent is checked before
-candidate enumeration. The per-target [`auto_export`](04-mcpp-toml.md#auto_export--native-export-control-on-the-msvc-abi-unreleased)
-key disables discovery entirely (unreleased source builds).
+candidate enumeration. The per-target
+[`windows_auto_export`](04-mcpp-toml.md#windows_auto_export--export-discovery-on-the-msvc-abi-mcpp-20261051)
+key disables discovery, and [`exports`](04-mcpp-toml.md#exports--the-artifacts-published-symbol-set-mcpp-2026965)
+narrows what it finds.
 
 Past 65535 exportable symbols mcpp refuses rather than truncating. A truncated
 export table links cleanly and then fails at whichever consumer needed the symbol

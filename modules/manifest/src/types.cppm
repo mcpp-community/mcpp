@@ -180,7 +180,7 @@ struct Target {
     std::string                 soname;         // ABI name for shared libraries, e.g. libfoo.so.1
     // PE / MSVC ABI only: discover exports when the objects do not declare
     // any. False leaves export control entirely to the native linker inputs.
-    bool                        autoExport = true;
+    bool                        windowsAutoExport = true;
     // WHICH SYMBOLS THIS ARTIFACT PUBLISHES. Empty = every symbol, which is
     // what both platforms do today (ELF default visibility; PE gets an
     // auto-generated .def listing everything, mcpp.build.coff_exports).

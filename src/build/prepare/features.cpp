@@ -15,6 +15,7 @@ import mcpp.platform.axis;
 import mcpp.manifest;
 import mcpp.source_kind;
 import mcpp.modgraph.glob;
+import mcpp.pm.compat;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.modgraph.validate;
@@ -1920,6 +1921,19 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
             fill_package_build_env(bpEnv, pkg.manifest);
             state.fillPackEnv(bpEnv, i);
             bpEnv.requested       = pkg.selectedMember;
+            // A registry or git dependency: its tree is the package store's,
+            // and its program may not watch files outside it (#766).
+            {
+                auto rn = mcpp::pm::compat::resolve_package_name(
+                    pkg.manifest.package.name, pkg.manifest.package.namespace_);
+                for (auto const& ns : {rn.namespace_, std::string(mcpp::pm::kDefaultNamespace),
+                                       std::string{}})
+                    if (auto it = state.resolved.find(ResolvedKey{ns, rn.shortName});
+                        it != state.resolved.end()) {
+                        bpEnv.sealedPackage = it->second.source != "path";
+                        break;
+                    }
+            }
             bpEnv.languageModules = pkg.manifest.language.modules;
             bpEnv.ruleModules  = pkg.manifest.buildConfig.ruleModules;
             if (auto dit = state.deviceSourcesByPackage.find(pkg.root.string()); dit != state.deviceSourcesByPackage.end())

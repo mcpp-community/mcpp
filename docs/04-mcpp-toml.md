@@ -210,6 +210,12 @@ the loader opens and the import library the linker consumes, with the export
 list generated from the objects on the MSVC ABI (which exports nothing without
 `__declspec(dllexport)` or a `.def`). See `tests/e2e/08`, `257` and `259`.
 
+A package with a `shared` target and `bin` targets links each executable from
+its own objects, as a separate program: the executable does not load the
+package's own shared library. A program that loads a package's shared library
+is a program of another package, for example another member of the same
+workspace ([07 — Workspaces](07-workspace.md)).
+
 #### `kind = "app"` — the thing a user launches (mcpp 2026.9.12.3+)
 
 ```toml
@@ -265,8 +271,8 @@ exports = "abi/mydriver.exports"     # or inline: exports = ["vk_icd*"]
 
 Omitting `exports` leaves ELF and Mach-O's native visibility rules in effect.
 On the MSVC ABI, mcpp discovers exportable external definitions unless an input
-already declares exports or `auto_export = false` disables discovery. `exports`
-narrows the linker's published set.
+already declares exports or `windows_auto_export = false` disables discovery.
+`exports` narrows the linker's published set.
 
 Two projects need the narrowing. A **runtime with a stable ABI** publishes a
 reviewed set and nothing else, so that what is not in the set stays free to
@@ -284,7 +290,7 @@ One statement, three renderings:
 |---|---|
 | ELF | a version script, `-Wl,--version-script=` |
 | Mach-O | `-Wl,-exported_symbols_list` (the leading underscore is supplied by the engine) |
-| PE | the `.def`, replacing the auto-generated all-exports one |
+| PE (MSVC ABI) | the `.def`: the discovered symbols that match a pattern |
 
 **It does not change compile-time visibility, and that is deliberate.** The
 narrowing is a link-time property on all three formats, so one key has one
@@ -301,30 +307,45 @@ A `soname` is meaningful on `kind = "lib"` too — see
 [`dependency_linkage`](#dependency_linkage--static-or-shared-is-the-consumers-decision)
 below, where the form a library takes becomes the consumer's decision.
 
-#### `auto_export` — native export control on the MSVC ABI (unreleased)
+On the MSVC ABI the three sources of a DLL's export set apply in this order:
 
-The key and LLVM bitcode discovery require an unreleased source build; they are
-not available in mcpp 2026.10.3.1. A target that supplies its own export control
-can omit the automatic export-discovery step:
+1. **Declarations in the sources.** When any object declares exports
+   (`__declspec(dllexport)`, `#pragma comment(linker, "/EXPORT:...")`, or the
+   same in LLVM bitcode), the DLL publishes exactly those. `exports` beside such
+   a declaration has no effect, and the build states this as a warning that
+   names the object.
+2. **`exports`.** Otherwise the discovered symbols whose name matches a pattern
+   are published. A pattern matches the linker's name of the symbol:
+   undecorated on 32-bit x86, and MSVC-mangled for C++. A pattern written for a
+   C name is therefore portable across the three formats; one written for a
+   mangled C++ name is not.
+3. **Discovery.** Otherwise every exportable definition is published.
+
+A DLL that publishes nothing has no import library. When a program of the same
+build links such a DLL, its `.def` step fails and names the DLL; a DLL that no
+program links, such as a resource-only DLL, builds.
+
+#### `windows_auto_export` — export discovery on the MSVC ABI (mcpp 2026.10.5.1+)
 
 ```toml
 [targets.plugin]
 kind = "shared"
-auto_export = false
+windows_auto_export = false
 ```
 
-The boolean defaults to `true` and applies only to PE shared libraries on the
-MSVC ABI, including clang and clang-cl. It applies when a library target is
-built as a dependency too. It has no effect on static libraries, executables,
-ELF, Mach-O or MinGW. Native `__declspec(dllexport)`, linker flags and explicit
-`exports` lists remain effective when discovery is disabled.
+The boolean defaults to `true`. `false` removes the discovery step, and the
+DLL publishes what its sources and `[build] ldflags` declare. It applies to PE
+shared libraries on the MSVC ABI, including clang and clang-cl, also when the
+target is built as a dependency, and renders nothing on static libraries,
+executables, ELF, Mach-O and MinGW.
 
-With discovery enabled, any input's explicit export intent suppresses automatic
-exports for the whole DLL. COFF directives are checked first. LLVM bitcode is
-inspected with the selected LLVM compiler, including `dllexport` declarations
-and linker-option metadata. Only an unannotated DLL needs candidate enumeration;
-bitcode candidates come from `llvm-nm` beside that compiler. Both FullLTO and
-ThinLTO inputs can be mixed with ordinary COFF objects.
+`windows_auto_export = false` together with `exports` is refused when an
+MSVC-ABI target is planned, since `exports` narrows the discovered symbols; the
+same manifest builds on ELF and Mach-O.
+
+Discovery reads COFF objects directly and LLVM bitcode (FullLTO and ThinLTO,
+alone or mixed with COFF objects) with the selected LLVM compiler and the
+`llvm-nm` beside it.
 
 #### `windows_subsystem` and `windows_entry` — a Windows GUI executable (mcpp 2026.9.12.2+)
 
