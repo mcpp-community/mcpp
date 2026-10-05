@@ -1,0 +1,66 @@
+name: probe-770-771 (temporary, do not merge)
+
+# TEMPORARY. Collects the measurements the design record
+# .agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md
+# leaves open. Every other workflow is removed on this branch so only this runs.
+# Nothing here asserts: each step prints, and the job summary carries the logs.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  msvc-facts:
+    name: cl.exe / link.exe / lib.exe facts (/GL, /bigobj, /LTCG)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: probe
+        shell: bash
+        run: |
+          bash .github/probe/msvc_facts.sh 2>&1 | tee facts.log
+          { echo '## msvc facts'; echo '```'; cat facts.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: msvc-facts
+          path: facts.log
+
+  mcpp-probes:
+    name: mcpp (built from this commit) on #771, #770, #769
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      MCPP_HOME: C:\Users\runneradmin\.mcpp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - name: Build mcpp from source
+        shell: bash
+        run: |
+          set -euo pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build
+          built=$(find target -type f -name mcpp.exe -path '*/bin/*' | head -1)
+          mkdir -p dist && cp "$built" dist/mcpp.exe
+          echo "MCPP_BUILT=$PWD/dist/mcpp.exe" >> "$GITHUB_ENV"
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: probe
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          bash .github/probe/mcpp_probes.sh 2>&1 | tee probes.log
+          { echo '## mcpp probes'; echo '```'; cat probes.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mcpp-probes
+          path: probes.log
