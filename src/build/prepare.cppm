@@ -844,6 +844,10 @@ export struct BuildOverrides {
     // on every machine the author has. Both are read out of what the first pass
     // and `make_plan` already answered.
     std::string           pack_format;
+    // `mcpp pack` of a library: the static libraries this build produces are
+    // shipped, so no object of theirs carries LTO intermediate code, which is
+    // tied to the exact compiler that wrote it (2026.10.5.2).
+    bool                  no_lto_in_archives = false;
     // What a packaging pass knows of one packed member: where its tree is
     // staged, and what the staging resolved for the programs that act for it.
     struct PackStage {

@@ -333,8 +333,21 @@ windows_auto_export = false
 规划 MSVC ABI 的 target 时，`windows_auto_export = false` 与 `exports` 同时出现会被
 拒绝，因为 `exports` 收窄的是被发现的符号；同一份 manifest 在 ELF 与 Mach-O 上照常构建。
 
-发现直接读取 COFF 对象，并用所选 LLVM 编译器及其旁边的 `llvm-nm` 读取 LLVM bitcode
-（FullLTO 与 ThinLTO，单独或与 COFF 对象混用）。
+发现直接读取 COFF 对象（包括 `/bigobj` 对象，2026.10.5.2+），并用所选 LLVM 编译器
+及其旁边的 `llvm-nm` 读取 LLVM bitcode（FullLTO 与 ThinLTO，单独或与 COFF 对象混用）。
+cl.exe 以 `/GL` 编译的对象没有符号表，会被点名报告。
+
+**cl.exe 上的 LTO（2026.10.5.2+）。** `lto = true` 以 `/GL` 编译，发现因此无从读取。
+这个键的三种写法在此表现不同，因为只有省略的键由 mcpp 决定：
+
+| 写法 | cl.exe 上 `lto = true` 时的结果 |
+|---|---|
+| 省略 | 对象被该 DLL 链接的包（它自己的，以及放入它的静态库）以 `/GL-` 编译；DLL 仍以 `/LTCG` 链接；构建报告一次，摘要显示 `+ lto (partial)` |
+| `true` | 规划该 target 时被拒绝（`lto-export-discovery`） |
+| `false` | 完整的 `/GL` 与 `/LTCG`；源码以 `__declspec(dllexport)` 声明导出 |
+
+写进这类 DLL 所链接的包的 flag 中的 `/GL` 同样被拒绝，与 `lto` 是否开启无关。
+MSVC ABI 上的 LLVM LTO 产出 bitcode，发现可以读取，不受影响。
 
 #### `windows_subsystem` 与 `windows_entry` —— Windows GUI 可执行文件（mcpp 2026.9.12.2+）
 
@@ -531,6 +544,15 @@ ninja 转义、没有为 shell 加引号，所以在 Linux 与 macOS 上 `$ORIGI
 进入程序的运行路径。带包内相对路径的 `-L` 或 `-Wl,-rpath,` 词相对包根解析，依赖的
 `ldflags` 按词传给消费者。为 ninja 或 shell 手工转义的元素（`\$ORIGIN`、
 `'$$ORIGIN'`）现在按写法读取；首次 plan 会在 `build/flag-words` 下点名这样的元素。
+
+**一个包的 `ldflags` 到达哪些链接（2026.10.5.2+）。** 根包自己的程序与共享库以它的
+`ldflags` 以及它所到达的每个包的 `ldflags` 链接。由其它包拥有的共享库，以图级 flag
+（profile 的 `ldflags`，以及 `[target.<selector>.abi]` 为链接渲染的词）和其拥有者
+所到达的包的 `ldflags`（含 `build.mcpp` 的输出）链接。2026.10.5.2 之前，这样的库以
+根的链接行链接，于是根包的私有 flag 与无关工作空间成员的 flag 会到达它，而在工作空间
+中成员自己 `build.mcpp` 声明的库却不会（#771）。依赖需要的搜索路径或库，由依赖在自己
+的 `ldflags` 或 `build.mcpp` 中声明；根声明了这样的词且计划中有依赖的共享库时，构建会
+在 `link/root-flags` 下给出提示。
 
 `compile_commands.json` 与 `mcpp emit build-database` 在 `arguments`
 里列出同样的词，可以不经 shell 直接执行。
@@ -1302,7 +1324,7 @@ GCC 16.1 报告 `sorry, unimplemented: private module fragment`，mcpp
 [profile.dist]
 opt      = 3              # -O level (a number, or the string "s"/"z")
 debug    = false          # -g
-lto      = true           # -flto (note: some packaged gcc builds ship without the LTO plugin)
+lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gcc builds ship without the LTO plugin)
 strip    = true           # -s at link time
 # passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
@@ -1710,12 +1732,17 @@ discover = ["tests/**/*.cpp"]    # the default
 | 键 | 类型 | 含义 |
 |---|---|---|
 | `discover` | glob 数组 | 每个被某条 glob 匹配到的文件都是一个测试程序；以 `!` 开头的 glob 会移除它匹配到的文件；`[]` 不发现任何测试 |
+| `windows_code_page` | `"utf-8"` 或 `"legacy"` | Windows 上每个测试程序的 ANSI 代码页，含义与同名的 target 键相同；默认 `"legacy"`，即系统代码页 *(2026.10.5.2+)* |
 
 这些 glob 使用与 `[build] sources` 相同的词汇。一个测试的名字，是它
 相对第一条匹配到它的 glob 所在的固定目录的路径，去掉扩展名。两个
 同名文件会被拒绝，并点名两者。一个不是「非空字符串数组」的取值是
 一个错误；`[test]` 里的其它任何键都是警告，`--strict` 下是错误。
 测试模型见[08 —— 测试](08-testing.md)。
+
+测试程序检验它所链接的代码，而这些代码可能运行在声明的代码页中。`windows_code_page
+= "utf-8"` 使测试在同一个代码页中运行，于是测试结果不取决于运行它的机器的区域设置。
+测试程序只接收应用程序清单，不接收 `[resources]` 的其它内容。
 
 ## 3. 实战示例
 

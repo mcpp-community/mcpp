@@ -53,3 +53,6 @@ examples/*/target/
 
 # `mcpp test` writes a per-invocation scratch dir here.
 .mcpp/
+
+# Local review reports (not part of the design record).
+/.agents/reviews/

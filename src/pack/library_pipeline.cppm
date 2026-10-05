@@ -158,6 +158,7 @@ export int build_and_pack_library(const std::string& targetName,
         // rather than the interactive "dev". `[build] default-profile` still
         // decides when the project states one — see resolve_profile_name.
         ov.profile          = opts.profile;
+        ov.no_lto_in_archives = true;
         ov.profile_fallback = "release";
         ov.features         = opts.features;
         auto ctx = mcpp::build::prepare_build(false, /*includeDevDeps=*/false, {}, ov);

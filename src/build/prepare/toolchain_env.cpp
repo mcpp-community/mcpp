@@ -238,16 +238,12 @@ bind_msvc_sysroot(mcpp::toolchain::Toolchain& tc,
     const bool msvcStl = tc.stdModuleSource.empty()
                       || tc.stdModuleSource.filename() == "std.ixx";
     if (msvcStl && std::filesystem::exists(ixx, ec)) {
-        tc.stdModuleSource   = ixx;
         const auto compat = ixx.parent_path() / "std.compat.ixx";
-        tc.stdCompatSource = std::filesystem::exists(compat, ec)
-            ? compat : std::filesystem::path{};
-        tc.hasImportStd      = true;
+        tc.set_std_modules(ixx, std::filesystem::exists(compat, ec)
+                                    ? compat : std::filesystem::path{});
         tc.importStdMinLevel = msvc::std_module_min_level_for_stl(ixx);
     } else if (msvcStl && !tc.stdModuleSource.empty()) {
-        tc.stdModuleSource.clear();
-        tc.stdCompatSource.clear();
-        tc.hasImportStd = false;
+        tc.clear_std_modules();
     }
 
     mcpp::ui::info("Resolved", std::format(

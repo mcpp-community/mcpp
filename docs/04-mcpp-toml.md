@@ -343,9 +343,24 @@ executables, ELF, Mach-O and MinGW.
 MSVC-ABI target is planned, since `exports` narrows the discovered symbols; the
 same manifest builds on ELF and Mach-O.
 
-Discovery reads COFF objects directly and LLVM bitcode (FullLTO and ThinLTO,
-alone or mixed with COFF objects) with the selected LLVM compiler and the
-`llvm-nm` beside it.
+Discovery reads COFF objects directly, including `/bigobj` objects
+(2026.10.5.2+), and LLVM bitcode (FullLTO and ThinLTO, alone or mixed with COFF
+objects) with the selected LLVM compiler and the `llvm-nm` beside it. An object
+compiled by cl.exe with `/GL` holds no symbol table and is reported by name.
+
+**With LTO on cl.exe (2026.10.5.2+).** `lto = true` compiles with `/GL`, which
+leaves nothing to discover. The three ways of writing the key behave
+differently there, because only an omitted key is mcpp's to decide:
+
+| Written | Result under `lto = true` on cl.exe |
+|---|---|
+| omitted | the packages whose objects the DLL links (its own and the static libraries placed in it) compile with `/GL-`; the DLL still links with `/LTCG`; the build reports this once and its summary reads `+ lto (partial)` |
+| `true` | refused when the target is planned (`lto-export-discovery`) |
+| `false` | full `/GL` and `/LTCG`; the sources declare the exports with `__declspec(dllexport)` |
+
+`/GL` written into the flags of a package whose objects such a DLL links is
+refused in the same way, with or without `lto`. LLVM LTO on the MSVC ABI emits
+bitcode, which discovery reads, and is not affected.
 
 #### `windows_subsystem` and `windows_entry` — a Windows GUI executable (mcpp 2026.9.12.2+)
 
@@ -549,6 +564,18 @@ macOS a `$ORIGIN` reached the program's run path as `/../lib`. A `-L` or
 root, and a dependency's `ldflags` reach its consumer word by word. An element
 escaped for ninja or the shell by hand (`\$ORIGIN`, `'$$ORIGIN'`) now reads as
 written; the first plan names such an element under `build/flag-words`.
+
+**Which link a package's `ldflags` reach (2026.10.5.2+).** The root package's
+own programs and shared libraries link with its `ldflags` and those of every
+package it reaches. A shared library that another package owns links with the
+graph's flags (the profile's `ldflags` and the words `[target.<selector>.abi]`
+renders for the link) and the `ldflags` of the packages its owner reaches,
+`build.mcpp` output included. Before 2026.10.5.2 such a library linked with the
+root's line, so the root's private flags and an unrelated workspace member's
+reached it, and in a workspace a member's own `build.mcpp` libraries did not
+(#771). A dependency that needs a search path or a library states it in its own
+`ldflags` or `build.mcpp`; when the root names one and the plan holds a
+dependency's shared library, the build notes this under `link/root-flags`.
 
 `compile_commands.json` and `mcpp emit build-database` list the same words in
 `arguments`, ready to execute without a shell.
@@ -1386,7 +1413,7 @@ where it would become a BMI path that nothing reports.
 [profile.dist]
 opt      = 3              # -O level (a number, or the string "s"/"z")
 debug    = false          # -g
-lto      = true           # -flto (note: some packaged gcc builds ship without the LTO plugin)
+lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gcc builds ship without the LTO plugin)
 strip    = true           # -s at link time
 # passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
@@ -1819,6 +1846,7 @@ discover = ["tests/**/*.cpp"]    # the default
 | Key | Type | Meaning |
 |---|---|---|
 | `discover` | array of globs | every file a glob matches is one test program; a glob beginning with `!` removes the files it matches; `[]` discovers none |
+| `windows_code_page` | `"utf-8"` or `"legacy"` | the ANSI code page of every test program on Windows, in the meaning of the target key of the same name; the default is `"legacy"`, the system's code page *(2026.10.5.2+)* |
 
 The globs use the vocabulary of `[build] sources`. A test's name is its path
 relative to the fixed directory of the first glob that matched it, without the
@@ -1826,6 +1854,12 @@ extension. Two files with one name are refused, naming both. A value that is not
 an array of non-empty strings is an error; any other key in `[test]` is a
 warning, and an error under `--strict`. [08 — Testing](08-testing.md) describes
 the test model.
+
+A test program exercises the code it links, and that code may run in a
+declared code page. `windows_code_page = "utf-8"` lets the tests run in the same
+one, so that their result does not depend on the region setting of the machine
+that runs them. The test programs receive the application manifest and nothing
+else of `[resources]`.
 
 
 ## 3. Worked Examples

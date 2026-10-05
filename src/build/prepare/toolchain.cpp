@@ -260,6 +260,8 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         state.profileCxxflags = pr.cxxflags;
         state.m->buildConfig.ldflags.insert(state.m->buildConfig.ldflags.end(),
                                       pr.ldflags.begin(), pr.ldflags.end());
+        state.m->buildConfig.graphLdflags.insert(state.m->buildConfig.graphLdflags.end(),
+                                           pr.ldflags.begin(), pr.ldflags.end());
     }
 
     // Every directory a package payload may legitimately have been INSTALLED
@@ -1099,6 +1101,7 @@ static std::expected<void, std::string> step1_device_axis_and_layer_merge(Prepar
         state.add_once(state.m->buildConfig.dialectCxxflags, "-pthread");
         state.add_once(state.m->buildConfig.cflags, "-pthread");
         state.add_once(state.m->buildConfig.ldflags, "-pthread");
+        state.add_once(state.m->buildConfig.graphLdflags, "-pthread");
     }
     // `[target.<selector>.abi] exceptions` -- design 2026-09-12 (the UI
     // framework record), section 2.1, A1: the second `abi` member, the
@@ -1118,6 +1121,7 @@ static std::expected<void, std::string> step1_device_axis_and_layer_merge(Prepar
     if (abiExceptionsRendered) {
         state.add_once(state.m->buildConfig.dialectCxxflags, "-fexceptions");
         state.add_once(state.m->buildConfig.ldflags, "-fexceptions");
+        state.add_once(state.m->buildConfig.graphLdflags, "-fexceptions");
     }
     // `[build].defines` must reach the scanner (P1689) and the compile edge,
     // and must participate in the fingerprint. Fold before dependency
@@ -1946,9 +1950,7 @@ step2_retarget_for_retargetable_driver(PrepareState& state) {
               // an ordinary package (`mcpplibs.std.freestanding`), so mcpp's job
               // here is to stop pretending the hosted one exists and to say
               // where the other one is.
-              state.tc->hasImportStd = false;
-              state.tc->stdModuleSource.clear();
-              state.tc->stdCompatSource.clear();
+              state.tc->clear_std_modules();
 
               // ── The target's C library, resolved like its compiler ─────────
               //

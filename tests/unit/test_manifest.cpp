@@ -16,7 +16,9 @@ TEST(Manifest, PeAutoExportDefaultsOnAndAcceptsAnExplicitOptOut) {
             "[targets.dll]\nkind = \"shared\"\n{}\n", declaration));
         ASSERT_TRUE(m.has_value()) << m.error().format();
         ASSERT_EQ(m->targets.size(), 1u);
-        EXPECT_EQ(m->targets.front().windowsAutoExport, std::string_view(declaration) != "windows_auto_export = false");
+        EXPECT_EQ(m->targets.front().windows_auto_export(), std::string_view(declaration) != "windows_auto_export = false");
+        // An omitted key stays distinguishable from a stated `true`.
+        EXPECT_EQ(m->targets.front().windowsAutoExportDeclared, *declaration != '\0');
         EXPECT_TRUE(m->schemaWarnings.empty());
     }
     auto bad = mcpp::manifest::parse_string(
@@ -37,7 +39,8 @@ package = {{
 )", declaration), "dll", "0.1.0", mcpp::platform::HostPlatform::current());
         ASSERT_TRUE(m.has_value()) << m.error().format();
         ASSERT_EQ(m->targets.size(), 1u);
-        EXPECT_EQ(m->targets.front().windowsAutoExport, std::string_view(declaration) != "windows_auto_export = false,");
+        EXPECT_EQ(m->targets.front().windows_auto_export(), std::string_view(declaration) != "windows_auto_export = false,");
+        EXPECT_EQ(m->targets.front().windowsAutoExportDeclared, *declaration != '\0');
     }
     auto bad = mcpp::manifest::synthesize_from_xpkg_lua(R"(
 package = {
@@ -6785,4 +6788,18 @@ TEST(ConditionalOrder, EqualSpecificityKeepsTheSelectorTextOrder) {
     EXPECT_EQ(tables[0].predicate, "cfg(arch = \"x86_64\")");
     EXPECT_EQ(tables[1].predicate, "cfg(env = \"gnu\")");
     EXPECT_EQ(tables[2].predicate, "cfg(unix)");
+}
+
+// `[test] windows_code_page` (2026.10.5.2): the code page of every discovered
+// test program, in the closed vocabulary of the target key.
+TEST(Manifest, TestWindowsCodePageIsAClosedSetOfTwo) {
+    auto ok = mcpp::manifest::parse_string(
+        "[package]\nname = \"p\"\nversion = \"0.1.0\"\n[test]\nwindows_code_page = \"utf-8\"\n");
+    ASSERT_TRUE(ok.has_value()) << ok.error().format();
+    EXPECT_EQ(ok->testWindowsCodePage, "utf-8");
+    EXPECT_TRUE(ok->schemaWarnings.empty());
+    auto bad = mcpp::manifest::parse_string(
+        "[package]\nname = \"p\"\nversion = \"0.1.0\"\n[test]\nwindows_code_page = \"936\"\n");
+    ASSERT_FALSE(bad.has_value());
+    EXPECT_NE(bad.error().format().find("windows_code_page"), std::string::npos);
 }

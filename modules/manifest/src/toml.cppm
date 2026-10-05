@@ -1854,6 +1854,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 return std::unexpected(error(origin, std::format(
                     "targets.{}.windows_auto_export must be a boolean", tname)));
             t.windowsAutoExport = it->second.as_bool();
+            t.windowsAutoExportDeclared = true;
         }
         // `exports` -- a file of symbol patterns, or the patterns inline.
         //
@@ -3244,9 +3245,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         }
     }
 
-    // [test] — which files are test programs (#634 A5).
+    // [test] — which files are test programs (#634 A5), and the code page
+    // they run in on Windows.
     //
-    // One key. A suite compiled from several sources is a package of its own,
+    // Two keys. A suite compiled from several sources is a package of its own,
     // as any program that must diverge from its siblings is (see `Target`);
     // what a project could not say before was only WHERE its test programs
     // are, which mattered once `tests/` belonged to another build system.
@@ -3259,10 +3261,24 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     }
     if (auto* tt = doc->get_table("test")) {
         for (auto& [key, value] : *tt) {
+            if (key == "windows_code_page") {
+                // A test exercises the code it links, and that code may run in
+                // a declared code page (mcpp.exe does): the test program has to
+                // be able to say the same, or it measures another environment.
+                if (!value.is_string())
+                    return std::unexpected(error(origin,
+                        "[test] windows_code_page must be a string"));
+                const std::string v = value.as_string();
+                if (auto list = windows_code_page_problem(v); !list.empty())
+                    return std::unexpected(error(origin, std::format(
+                        "[test] windows_code_page = \"{}\" is not one of {}", v, list)));
+                m.testWindowsCodePage = v;
+                continue;
+            }
             if (key != "discover") {
                 m.schemaWarnings.push_back(std::format(
                     "[test] has unsupported key '{}' (ignored). Supported keys: "
-                    "discover.", key));
+                    "discover, windows_code_page.", key));
                 continue;
             }
             bool ok = value.is_array();

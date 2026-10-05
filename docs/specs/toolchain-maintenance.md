@@ -4,7 +4,7 @@
 |---|---|
 | 规范编号 | SPEC-009 |
 | 标题 | 工具链的支持与维护:版本线、默认值、来源、移动与退役 |
-| 状态 | 草案 v0.2 |
+| 状态 | 草案 v0.3 |
 | 最后修改 | 2026-10-05 |
 | 对应实现 | 逐条标注;本版只有规范,多数条款未实现 |
 | 相关设计文档 | `.agents/docs/2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md`(第 IV 部分) |
@@ -163,7 +163,7 @@
 在一个线是 Default 的每一行上,引擎**必须**通过验收程序(一个使用 `<memory>`、`<mutex>` 与 `<thread>` 的程序;`import std`;`import std.compat`)与 e2e 套件;
 该宿主构建 mcpp 时,还**必须**通过 mcpp 自身的构建。
 
-当前:e2e 套件在各 CI 宿主上运行;验收程序的矩阵部分实现(SPEC-006 §6.2)。macOS 的 Default `llvm@20.1.7` 无法构建 mcpp 自身
+当前:e2e 套件在各 CI 宿主上运行;验收程序的矩阵部分实现(SPEC-006 §6.2)。`import std.compat` 在 GCC 行由 2026.10.5.2 补上(libstdc++ 的 `bits/std.compat.cc`,此前在第一个 import 它的单元中失败),在 MSVC ABI 的 llvm 行由 2026.10.5.1 补上;两行与开发者环境中的 llvm 行由 e2e 886 与 888 覆盖。macOS 的 Default `llvm@20.1.7` 无法构建 mcpp 自身
 (其 libc++ 的 `std` 模块不暴露 `directory_iterator` 的比较),mcpp 的清单因此以 22.1.8 构建;该行的第三项验收不成立。
 
 ### 6.3 随发布编码的输出 部分实现
@@ -386,3 +386,4 @@ mcpp 自己的清单**必须**使用其构建所在的每一行的 Default 发�
 |---|---|---|
 | v0.1 | 2026-10-02 | 初版 |
 | v0.2 | 2026-10-05 | §10.5 增加 G7:MSVC ABI 行上 e2e 881 以候选发布通过(mcpp 2026.10.5.1,#766)。 |
+| v0.3 | 2026-10-05 | §6.2 的「当前」:GCC 行与 MSVC ABI 的 llvm 行的 `import std.compat`(mcpp 2026.10.5.2)。 |

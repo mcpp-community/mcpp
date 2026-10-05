@@ -251,6 +251,22 @@ struct Toolchain {
     // member added to this exported class: "failed to load pendings".)
     std::vector<EnvVar> envOverrides;
     bool                                hasImportStd = false;
+
+    // THE STANDARD LIBRARY'S MODULES ARE SET AND CLEARED AS ONE (2026.10.5.2).
+    //
+    // `std.compat` is a second module over the library that provides `std`,
+    // and a compat source from another library, or without its `std`, cannot
+    // be built. Six places once wrote the two fields one at a time, and #768
+    // was the place that wrote one of them. Every writer goes through these.
+    void set_std_modules(std::filesystem::path stdSource,
+                         std::filesystem::path compatSource = {}) {
+        stdModuleSource = std::move(stdSource);
+        stdCompatSource = stdModuleSource.empty() ? std::filesystem::path{}
+                                                  : std::move(compatSource);
+        hasImportStd    = !stdModuleSource.empty();
+    }
+    void clear_std_modules() { set_std_modules({}, {}); }
+
     // Lowest -std= level this toolchain can build the std module at. 0 = the
     // provider did not say, callers fall back to the plain hasImportStd
     // question. Filled next to hasImportStd by each provider, because "which

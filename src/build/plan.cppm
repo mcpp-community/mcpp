@@ -163,6 +163,9 @@ struct LinkUnit {
     // fails with unresolved externals for symbols that are visibly in the
     // objects. MinGW's linker auto-exports and needs none of this.
     std::filesystem::path           defFile;           // relative to plan.outputDir
+    // The target states `windows_auto_export` (either value); see
+    // `Target::windowsAutoExport`.
+    bool                            autoExportStated = false;
     std::string                     soname;            // ABI name for shared libraries
     std::vector<std::filesystem::path> runtimeAliases; // relative aliases, e.g. bin/libfoo.so.1
     std::optional<std::filesystem::path> entryMain;   // src path of main.cpp for bin
@@ -2537,34 +2540,6 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         }
     };
 
-    for (auto const& dep : sharedDepTargets) {
-        LinkUnit lu;
-        lu.targetName = dep.target.name;
-        lu.package    = dep.packageName;
-        lu.kind       = LinkUnit::SharedLibrary;
-        lu.dependencyOwned = true;
-        lu.output     = dep.output;
-        lu.importLibrary = import_library_for(dep.target, naming);
-        if (msvcTarget && !dep.target.windowsAutoExport && !dep.target.exportPatterns.empty())
-            return std::unexpected(exports_without_discovery(dep.target, dep.packageName));
-        if (msvcTarget && dep.target.windowsAutoExport && !lu.importLibrary.empty())
-            lu.defFile = std::filesystem::path("bin") / (dep.target.name + ".def");
-        lu.soname     = dep.target.soname;
-        lu.exportPatterns = dep.target.exportPatterns;
-        lu.runtimeAliases = runtime_aliases_for_target(dep.target, naming);
-        lu.loaderTagFlag = loader_tag_flag(lu.kind);
-        append_package_objects(lu, dep.packageName);
-        append_direct_shared_deps(lu, dep.packageIndex);
-        if (auto it = staticsByImagePackage.find(dep.packageIndex);
-            it != staticsByImagePackage.end()) {
-            for (auto staticIndex : it->second) {
-                append_package_objects(
-                    lu, qualified_package_name(packages[staticIndex].manifest));
-                append_direct_shared_deps(lu, staticIndex);
-            }
-        }
-        plan.linkUnits.push_back(std::move(lu));
-    }
 
     // THE PROGRAMS A CONSUMER SHIPS FROM ITS DEPENDENCIES (mcpp#711).
     //
@@ -2615,6 +2590,91 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             }
         }
     }
+    // THE LINK LINE OF AN IMAGE THAT IS NOT THE ROOT'S (2026.10.5.2, #771).
+    //
+    // A dependency's shared library linked with the plan's line, which pools
+    // every package's `ldflags` and the root's own. Two defects followed. In a
+    // workspace plan a member's `build.mcpp` output was not on that line, so
+    // its DLL lost the libraries it declared (`LNK2019` on the symbol); and in
+    // every plan the root's private flags, and an unrelated member's, reached a
+    // dependency's image, which SPEC-004 §9.6 forbids. Such an image now links
+    // with the graph's flags (`graphLdflags`: the profile, the ABI words) and
+    // the flags of the packages its owner reaches, which is the rule a member's
+    // program already followed. Artifact edges and build-time-only packages
+    // contribute nothing to an image, so they are not walked.
+    auto image_closure = [&](std::size_t owner) {
+        std::set<std::size_t> closure{owner};
+        std::vector<std::size_t> work{owner};
+        while (!work.empty()) {
+            const auto i = work.back(); work.pop_back();
+            if (auto it = directPackageDeps.find(i); it != directPackageDeps.end())
+                for (auto j : it->second) {
+                    if (artifactEdges.contains({i, j}) || packages[j].buildTimeOnly) continue;
+                    if (closure.insert(j).second) work.push_back(j);
+                }
+        }
+        return closure;
+    };
+    // The owner's flags first, then those of the packages it reaches, in
+    // discovery order.
+    auto closure_ldflags = [&](std::size_t owner, const std::set<std::size_t>& closure) {
+        std::vector<std::string> out = manifest.buildConfig.graphLdflags;
+        auto add = [&](std::size_t i) {
+            for (auto const& f : packages[i].linkUsage.ldflags) out.push_back(f);
+        };
+        add(owner);
+        for (auto i : closure) if (i != owner) add(i);
+        return out;
+    };
+    std::map<std::size_t, int> sharedLinkGroups;   // package index → group
+    auto shared_link_group = [&](std::size_t owner, const std::filesystem::path& productDir) {
+        if (auto it = sharedLinkGroups.find(owner); it != sharedLinkGroups.end())
+            return it->second;
+        const auto closure = image_closure(owner);
+        BuildPlan::LinkGroup group;
+        group.linkOnly   = true;
+        group.productDir = productDir;
+        group.ldflags    = closure_ldflags(owner, closure);
+        std::vector<mcpp::modgraph::PackageRoot> closurePackages;
+        for (auto i : closure) closurePackages.push_back(packages[i]);
+        derive_runtime(closurePackages, group.productDir, group);
+        const int index = static_cast<int>(plan.linkGroups.size());
+        plan.linkGroups.push_back(std::move(group));
+        sharedLinkGroups[owner] = index;
+        return index;
+    };
+
+    for (auto const& dep : sharedDepTargets) {
+        LinkUnit lu;
+        lu.targetName = dep.target.name;
+        lu.package    = dep.packageName;
+        lu.kind       = LinkUnit::SharedLibrary;
+        lu.dependencyOwned = true;
+        lu.output     = dep.output;
+        lu.importLibrary = import_library_for(dep.target, naming);
+        if (msvcTarget && !dep.target.windows_auto_export() && !dep.target.exportPatterns.empty())
+            return std::unexpected(exports_without_discovery(dep.target, dep.packageName));
+        if (msvcTarget && dep.target.windows_auto_export() && !lu.importLibrary.empty())
+            lu.defFile = std::filesystem::path("bin") / (dep.target.name + ".def");
+        lu.autoExportStated = dep.target.windowsAutoExportDeclared;
+        lu.soname     = dep.target.soname;
+        lu.exportPatterns = dep.target.exportPatterns;
+        lu.runtimeAliases = runtime_aliases_for_target(dep.target, naming);
+        lu.loaderTagFlag = loader_tag_flag(lu.kind);
+        lu.linkGroup = shared_link_group(dep.packageIndex, lu.output.parent_path());
+        append_package_objects(lu, dep.packageName);
+        append_direct_shared_deps(lu, dep.packageIndex);
+        if (auto it = staticsByImagePackage.find(dep.packageIndex);
+            it != staticsByImagePackage.end()) {
+            for (auto staticIndex : it->second) {
+                append_package_objects(
+                    lu, qualified_package_name(packages[staticIndex].manifest));
+                append_direct_shared_deps(lu, staticIndex);
+            }
+        }
+        plan.linkUnits.push_back(std::move(lu));
+    }
+
     // Reached through a non-artifact edge from the root (its dependencies,
     // dev- and build-dependencies included), versus reached only through an
     // artifact edge. Only the second set is withheld from the root's images,
@@ -2679,10 +2739,11 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             lu.importLibrary = import_library_for(t, naming);
             // MSVC only: MinGW's linker auto-exports, and generating a second
             // source of truth for what a DLL exports is how the two disagree.
-            if (msvcTarget && !t.windowsAutoExport && !t.exportPatterns.empty())
+            if (msvcTarget && !t.windows_auto_export() && !t.exportPatterns.empty())
                 return std::unexpected(exports_without_discovery(t, qualified_package_name(manifest)));
-            if (msvcTarget && t.windowsAutoExport && !lu.importLibrary.empty())
+            if (msvcTarget && t.windows_auto_export() && !lu.importLibrary.empty())
                 lu.defFile = std::filesystem::path("bin") / (t.name + ".def");
+            lu.autoExportStated = t.windowsAutoExportDeclared;
             lu.soname = t.soname;
             lu.exportPatterns = t.exportPatterns;
             lu.runtimeAliases = runtime_aliases_for_target(t, naming);
@@ -2982,7 +3043,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             BuildPlan::LinkGroup group;
             group.linkOnly   = true;
             group.productDir = lu.output.parent_path();
-            group.ldflags    = packages[0].linkUsage.ldflags;
+            group.ldflags    = manifest.buildConfig.graphLdflags;
             for (auto i : seen)
                 for (auto const& f : packages[i].linkUsage.ldflags)
                     group.ldflags.push_back(f);
@@ -3049,14 +3110,14 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         for (auto i : closureIdx) closure.insert(qualified_package_name(packages[i].manifest));
 
         // The member's link group: the closure's link flags after the
-        // root's own (`packages[0]` is snapshotted before any dependency is
-        // loaded, so it holds the profile's flags and nothing pooled), in the
-        // order a root build gives them (the member, then its dependencies in
-        // discovery order), and the closure's runtime.
+        // graph's (`graphLdflags`: the profile and the ABI words, and not the
+        // workspace's own package's `[build] ldflags`, which are that
+        // package's), in the order a root build gives them (the member, then
+        // its dependencies in discovery order), and the closure's runtime.
         BuildPlan::LinkGroup group;
         group.member = owner;
         group.productDir = productDir;
-        group.ldflags = packages[0].linkUsage.ldflags;
+        group.ldflags = manifest.buildConfig.graphLdflags;
         for (auto i : closureIdx)
             for (auto const& f : packages[i].linkUsage.ldflags)
                 group.ldflags.push_back(f);

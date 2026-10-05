@@ -440,6 +440,7 @@ replaced}` —— `origin` 与构建的状态行使用的是同一句话
 | `managed-only` | `--managed-only` 遇到了不属于生态的来源：消息逐条点名它与陈述它的位置 *(2026.10.1.3+)* |
 | `payload-override` | 一条 `[xlings.overrides]` 点名的路径不存在、版本被某条要求拒绝，或它由依赖写出 *(2026.10.1.3+)* |
 | `payload-request` | 构建程序请求了本次构建中没有任何清单声明 `provision = "on-request"` 的载荷，或连续三次运行都在请求 *(2026.10.1.3+)* |
+| `lto-export-discovery` | 导出需要被发现的 PE 共享库会被 cl.exe 编译成没有符号表的 `/GL` 对象：在 `lto = true` 下陈述了 `windows_auto_export = true`，或在它所链接的包的 flag 中写了 `/GL` *(2026.10.5.2+)* |
 | `local-toolchain` | 由路径命名的工具链，或构建程序工具链阶段陈述的工具链无法使用：没有驱动、族与驱动矛盾、缺少某个工具或 sysroot *(2026.10.1.3+)* |
 | `convention-unreplaced` | 约定被推翻了，而没有任何东西接替它 |
 | `os-mismatch` | 请求的三元组与解析出的三元组命名不同的系统 |

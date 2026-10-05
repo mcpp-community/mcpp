@@ -121,6 +121,7 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
         target.name = name;
         target.kind = mcpp::manifest::Target::TestBinary;
         target.main = mainRelative->string();
+        if (packageManifest) target.windowsCodePage = packageManifest->testWindowsCodePage;
         for (std::size_t i = 0; i < globFlags.size(); ++i) {
             if (!globHits[i].contains(file)) continue;
             for (auto const& define : globFlags[i].defines)

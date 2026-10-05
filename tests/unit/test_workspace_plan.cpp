@@ -136,3 +136,67 @@ TEST(WorkspacePlan, IndexPathsAreAnchoredWhereTheyWereWritten) {
     std::error_code ec;
     fs::remove_all(ws, ec);
 }
+
+// THE WORKSPACE'S PROFILES ARE ROOT-POSITION VALUES (2026.10.5.2). A member
+// inherits each `[profile.<name>]` it does not declare, and its own table of a
+// name replaces the workspace's whole, so members without a profile of their
+// own share one configuration with the workspace's profile in it.
+TEST(WorkspacePlan, MembersInheritTheWorkspacesProfilesByName) {
+    namespace fs = std::filesystem;
+    const auto ws = fs::temp_directory_path()
+        / std::format("mcpp-ws-profile-{}", std::random_device{}());
+    fs::create_directories(ws / "a");
+    fs::create_directories(ws / "b");
+    auto write = [](const fs::path& p, std::string_view text) { std::ofstream(p) << text; };
+    write(ws / "mcpp.toml",
+          "[workspace]\nmembers = [\"a\", \"b\"]\n\n"
+          "[profile.release]\nopt = 3\nldflags = [\"-Wl,-z,now\"]\n\n"
+          "[profile.bench]\nopt = 2\n");
+    write(ws / "a" / "mcpp.toml", "[package]\nname = \"a\"\nversion = \"0.1.0\"\n");
+    write(ws / "b" / "mcpp.toml",
+          "[package]\nname = \"b\"\nversion = \"0.1.0\"\n\n[profile.release]\nopt = 1\n");
+    auto root = mcpp::manifest::load(ws / "mcpp.toml");
+    ASSERT_TRUE(root.has_value());
+    auto a = mcpp::project::load_member_manifest(*root, ws, "a");
+    auto b = mcpp::project::load_member_manifest(*root, ws, "b");
+    ASSERT_TRUE(a.has_value()) << a.error();
+    ASSERT_TRUE(b.has_value()) << b.error();
+    EXPECT_EQ(a->profiles.at("release").optLevel, "3");
+    EXPECT_EQ(a->profiles.at("release").ldflags, (std::vector<std::string>{"-Wl,-z,now"}));
+    EXPECT_EQ(b->profiles.at("release").optLevel, "1");
+    EXPECT_TRUE(b->profiles.at("release").ldflags.empty());
+    EXPECT_EQ(b->profiles.at("bench").optLevel, "2");
+    std::error_code ec;
+    fs::remove_all(ws, ec);
+}
+
+// THE ROOT PACKAGE OF A WORKSPACE IS A MEMBER (2026.10.5.2): it receives
+// `[workspace.build]` once, before its own `[build]`, on every path that reads it.
+TEST(WorkspacePlan, TheRootPackageInheritsTheWorkspaceBuildOnce) {
+    namespace fs = std::filesystem;
+    const auto ws = fs::temp_directory_path()
+        / std::format("mcpp-ws-rooted-{}", std::random_device{}());
+    fs::create_directories(ws / "lib");
+    std::ofstream(ws / "mcpp.toml")
+        << "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n"
+           "[build]\ncxxflags = [\"-DOWN\"]\n\n"
+           "[workspace]\nmembers = [\"lib\"]\n\n"
+           "[workspace.build]\ncxxflags = [\"-DSHARED\"]\n";
+    std::ofstream(ws / "lib" / "mcpp.toml") << "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n";
+    const std::vector<std::string> expected{"-DSHARED", "-DOWN"};
+    auto effective = mcpp::project::load_effective_manifest(ws);
+    ASSERT_TRUE(effective.has_value()) << effective.error();
+    EXPECT_EQ(effective->manifest.buildConfig.cxxflags, expected);
+    // The manifest a selection reads is the one already inherited; the member
+    // "." loaded from it is not inherited a second time.
+    auto dot = mcpp::project::load_member_manifest(effective->manifest, ws, ".");
+    ASSERT_TRUE(dot.has_value()) << dot.error();
+    EXPECT_EQ(dot->buildConfig.cxxflags, expected);
+    auto raw = mcpp::manifest::load(ws / "mcpp.toml");
+    ASSERT_TRUE(raw.has_value());
+    auto fromRaw = mcpp::project::load_member_manifest(*raw, ws, ".");
+    ASSERT_TRUE(fromRaw.has_value()) << fromRaw.error();
+    EXPECT_EQ(fromRaw->buildConfig.cxxflags, expected);
+    std::error_code ec;
+    fs::remove_all(ws, ec);
+}

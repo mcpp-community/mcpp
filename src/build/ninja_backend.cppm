@@ -2103,7 +2103,11 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             link_rule("cxx_link",
                       "$ld /nologo /OUT:$out $in $ldflags $unit_ldflags",
                       "LINK");
-            link_rule("cxx_archive", std::string(dial.archiveCmd), "AR");
+            // lib.exe takes `/LTCG` for `/GL` objects, as CMake's IPO archive
+            // rule passes it (2026.10.5.2).
+            link_rule("cxx_archive", plan.manifest.buildConfig.lto
+                          ? std::string("$ar /nologo /LTCG /OUT:$out $in")
+                          : std::string(dial.archiveCmd), "AR");
             link_rule("cxx_shared",
                       "$ld /nologo /DLL /OUT:$out $implib_flag $def_flag "
                       "$in $ldflags $unit_ldflags",

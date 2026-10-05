@@ -802,6 +802,26 @@ bool graph_or_targets_import_std(const mcpp::modgraph::Graph& graph,
                                  const mcpp::manifest::Manifest& manifest,
                                  const std::filesystem::path& projectRoot,
                                  const std::vector<mcpp::modgraph::PackageRoot>& packages) {
+    return graph_or_targets_import(graph, manifest, projectRoot, packages, is_std_module);
+}
+
+// `std.compat` alone: its BMI is built when, and only when, a unit of the plan
+// imports it (2026.10.5.2), so a library whose `std.compat` fails to build
+// costs nothing to a project that does not use it.
+bool graph_or_targets_import_std_compat(const mcpp::modgraph::Graph& graph,
+                                        const mcpp::manifest::Manifest& manifest,
+                                        const std::filesystem::path& projectRoot,
+                                        const std::vector<mcpp::modgraph::PackageRoot>& packages) {
+    return graph_or_targets_import(graph, manifest, projectRoot, packages,
+                                   [](std::string_view n) { return n == "std.compat"; });
+}
+
+bool graph_or_targets_import(const mcpp::modgraph::Graph& graph,
+                             const mcpp::manifest::Manifest& manifest,
+                             const std::filesystem::path& projectRoot,
+                             const std::vector<mcpp::modgraph::PackageRoot>& packages,
+                             const std::function<bool(std::string_view)>& wanted) {
+    const auto is_std_module = [&](std::string_view n) { return wanted(n); };
     for (auto& u : graph.units) {
         for (auto& req : u.requires_) {
             if (is_std_module(req.logicalName))
@@ -815,8 +835,8 @@ bool graph_or_targets_import_std(const mcpp::modgraph::Graph& graph,
     // packages whose targets make_plan compiles are the root and, in a
     // workspace plan, every selected member (a member whose only sources are
     // its tests is the case the root alone misses).
-    auto targets_import_std = [](const mcpp::manifest::Manifest& m,
-                                 const std::filesystem::path& root) {
+    auto targets_import_std = [&](const mcpp::manifest::Manifest& m,
+                                  const std::filesystem::path& root) {
         const auto extTable = mcpp::extension_table_for(m.buildConfig.moduleExtensions,
                                                         m.buildConfig.deviceExtensions);
         for (auto& t : m.targets) {

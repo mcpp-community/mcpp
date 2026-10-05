@@ -1659,7 +1659,8 @@ std::expected<void, std::string> run_build_program_impl(
                 static std::mutex stdModuleMutex;
                 std::lock_guard stdLock(stdModuleMutex);
                 auto built = mcpp::toolchain::ensure_built(
-                    tc, cppStandard.canonical, std_flag, macosDeploymentTarget);
+                    tc, cppStandard.canonical, std_flag, macosDeploymentTarget,
+                    mcpp::toolchain::default_cache_root(), {}, usesStdCompat);
                 if (built) smValue = std::move(*built);
                 else       smError = built.error().message;
             }

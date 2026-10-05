@@ -621,7 +621,7 @@ bool realises_optimization(const mcpp::manifest::BuildConfig& bc) {
 std::string profile_descriptor(const mcpp::manifest::BuildConfig& bc) {
     std::string d = realises_optimization(bc) ? "optimized" : "unoptimized";
     if (bc.debug) d += " + debuginfo";
-    if (bc.lto)   d += " + lto";
+    if (bc.lto)   d += bc.ltoPartial ? " + lto (partial)" : " + lto";
     return d;
 }
 
@@ -1138,7 +1138,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         ? " /Od"    // MSVC's no-opt spelling (there is no /O0)
         : std::format(" {}{}", d.optPrefix, optLevel);
     if (prof.debug) opt_flag += std::format(" {}", d.debugFlags);
-    if (prof.lto && !isMsvcDialect) opt_flag += " -flto";
+    // LTO ON EVERY COMPILER (2026.10.5.2). cl.exe spells it `/GL` here and
+    // `/LTCG` on the link and the archive; before, it was not spelled at all,
+    // and a build with `lto = true` reported `+ lto` while doing none.
+    if (prof.lto) opt_flag += isMsvcDialect ? " /GL" : " -flto";
 
     // MSVC baseline: /nologo /EHsc /utf-8 (dialect alwaysFlags) + the CRT
     // model — /MD by default, /MT when either knob asks for the static CRT
@@ -1879,7 +1882,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             // ldflags pass through verbatim; GNU link_extra (-flto/-s) does
             // not apply.
             f.ldBinary = mcpp::toolchain::link_tool(plan.toolchain);
-            f.ld = link_intent_ld + user_ldflags;
+            // `/LTCG` whenever LTO is requested: link.exe restarts with it on
+            // the first `/GL` object anyway, and says so on every link.
+            f.ld = link_intent_ld + user_ldflags + (prof.lto ? " /LTCG" : "");
             f.ldC = f.ld;   // link.exe: no driver, nothing implicit to elide
             return f;
         }

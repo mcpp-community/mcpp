@@ -271,6 +271,26 @@ workspace 键。
 块本来就按 triple 逐项被全体成员继承（成员优先）。为同一能力再造一种拼法，只会
 增加接口面而不增加功能。
 
+**profile 按名字继承（2026.10.5.2+）。** 工作空间根里的 `[profile.<name>]` 到达每个
+没有声明同名 profile 的成员；成员自己的同名表整体替换工作空间的，与
+`[target.<triple>]` 相同。profile 是每张构建图一个的值，因此共享它的成员一起规划、
+一起编译。2026.10.5.2 之前，虚拟根的 profile 不到达任何成员，并且被无声忽略；带根包
+的工作空间的 profile 只在根包是第一个被选中的包时生效。
+
+**根包是一个成员。** 根上带 `[package]` 的工作空间中，根包与其它成员一样恰好一次地
+继承 `[workspace.package]` 与 `[workspace.build]`（2026.10.5.2+），因此它的命令在
+每种选择下相同。根清单包含三类键：
+
+| 键 | 归属 | 对根包的作用 | 对其它成员的作用 |
+|---|---|---|---|
+| `[workspace]`、`[workspace.dependencies]` | 工作空间 | 通过 `x.workspace = true` | 通过 `x.workspace = true` |
+| `[workspace.package]`、`[workspace.build]` | 工作空间 | 继承 | 继承 |
+| `[toolchain]`、`[target.<triple>]`、`[indices]`、`[profile.<name>]` | 根位置 | 本身的值 | 成员作为一次构建的根时继承；成员自己的声明优先 |
+| `[package]`、`[build]`、`[dependencies]`、`[targets]`、`[features]`、`[resources]`、`[test]` | 根包 | 本身的值 | 无 |
+
+根包的 `[build] ldflags` 同样属于它自己：它们到达根包自己的镜像，不到达成员的镜像，
+也不到达依赖的共享库。
+
 ### 4.2 整个模块图只有一个标准
 
 C++ 模块图有且只有一个标准：BMI 跨档位不兼容，因此根包的 `standard` 施加于图中

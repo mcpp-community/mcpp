@@ -1615,12 +1615,15 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
             };
             // A rooted workspace's own package, the member "." of a workspace
             // plan (§15), is the workspace's manifest: it reads its own
-            // `[workspace.dependencies]`, as it did as the root.
+            // `[workspace.dependencies]`, as it did as the root, and receives
+            // `[workspace.package]` and `[workspace.build]` as every member does.
             const bool depIsWorkspacePackage = state.workspacePlan() && state.wsManifest
                 && dep_root.lexically_normal() == state.runtimeWorkspaceRoot.lexically_normal();
             if (depIsWorkspacePackage) {
                 mcpp::project::merge_workspace_deps(*dep_manifest, *state.wsManifest,
                                                     state.runtimeWorkspaceRoot);
+                mcpp::project::inherit_as_root_package(*dep_manifest,
+                                                       state.runtimeWorkspaceRoot);
             } else if (depIsMember) {
                 if (auto bad = inheritAsMember(*state.wsManifest, state.runtimeWorkspaceRoot))
                     return std::unexpected(*bad);

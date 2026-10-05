@@ -1034,6 +1034,24 @@ The device row keeps `runner` unset. An artifact cannot be run off an iOS
 device without a signature the developer owns, which is not something a build
 tool can supply.
 
+## The standard library modules: `std` and `std.compat`
+
+A toolchain provides `import std` when its standard library ships the module
+source, and `import std.compat` when it ships the second one beside it. The two
+are read from one directory and offered as a pair (2026.10.5.2+):
+
+| Standard library | `std` | `std.compat` |
+|---|---|---|
+| libstdc++ (GCC 15 and later) | `bits/std.cc` | `bits/std.compat.cc` (2026.10.5.2+) |
+| libc++ | `std.cppm` | `std.compat.cppm` |
+| MSVC STL (cl.exe and the llvm row on the MSVC ABI) | `modules/std.ixx` | `modules/std.compat.ixx` (llvm row 2026.10.5.1+) |
+| a package (`[package] std-module`) | its `std-module` | its `std-compat-module`, or none |
+
+Each module is compiled once per configuration into the global cache, and
+`std.compat` only when a unit of the build imports it (2026.10.5.2+). A build
+that imports `std.compat` from a library that does not provide it is refused
+before any compile, naming the library.
+
 ## Project-Level Version Pinning
 
 If a project needs to pin a specific version rather than rely on the global default, declare it in the project's `mcpp.toml`:

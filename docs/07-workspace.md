@@ -282,6 +282,30 @@ in the workspace root is already inherited by every member, per triple, with the
 member winning. A second spelling for the same capability would be surface with
 no function.
 
+**Profiles are inherited by name (2026.10.5.2+).** A `[profile.<name>]` in the
+workspace root reaches every member that does not declare a profile of that
+name; a member's own table replaces the workspace's whole, as
+`[target.<triple>]` does. A profile is one value per graph, so members that
+share it are planned and compiled together. Before 2026.10.5.2 a virtual root's
+profiles reached no member and were ignored without a diagnostic, and a rooted
+workspace's applied only when its own package was the first one selected.
+
+**The root package is a member.** In a workspace whose root carries
+`[package]`, the root package receives `[workspace.package]` and
+`[workspace.build]` once, as every other member does (2026.10.5.2+), so its
+commands are the same in every selection. The root manifest holds three kinds
+of keys:
+
+| Keys | Owner | Effect on the root package | Effect on other members |
+|---|---|---|---|
+| `[workspace]`, `[workspace.dependencies]` | the workspace | through `x.workspace = true` | through `x.workspace = true` |
+| `[workspace.package]`, `[workspace.build]` | the workspace | inherited | inherited |
+| `[toolchain]`, `[target.<triple>]`, `[indices]`, `[profile.<name>]` | the root position | its own | inherited where the member is the root of a build; the member's own declaration wins |
+| `[package]`, `[build]`, `[dependencies]`, `[targets]`, `[features]`, `[resources]`, `[test]` | the root package | its own | none |
+
+The root package's `[build] ldflags` are its own as well: they reach its own
+images, and neither the members' images nor a dependency's shared library.
+
 ### 4.2 One standard for the whole module graph
 
 A C++ module graph has exactly one standard: BMIs are not compatible across

@@ -5,11 +5,11 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.11 |
+| **版本** | 1.12 |
 | **最后修改** | 2026-10-05 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
-| **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md` |
+| **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md` |
 | **相关使用文档** | [docs/04 —— mcpp.toml 字段参考](../04-mcpp-toml.md) |
 
 ## 规范用语
@@ -451,6 +451,18 @@ feature-deps          feature-xlings         ← 限定词是门
     `mcpp pack` 的归档含该程序;有 musl 工具链时,`--target x86_64-linux-musl` 下它为目标构建
     (`tests/e2e/801_a_dependency_program_is_shipped_with_the_consumer.sh`)。
 
+21. §9 第 1 条的根包与第 10 条的 profile:虚拟根的 `[profile.release]` 到达成员;成员自己的
+    同名表替换它;带 `[package]` 的工作空间在根构建与 `--workspace` 下都只有一张图,根包的
+    编译命令恰好含一次 `[workspace.build]` 的词(`tests/e2e/885_workspace_profiles_and_the_root_package.sh`,
+    `tests/unit/test_workspace_plan.cpp`)。
+22. §9 第 11 条的判据**必须**在产物上读取:成员共享库的 RUNPATH 含它自己构建程序的标记而不含
+    另一成员的,`-p` 下相同;非工作空间中依赖的共享库含自己与 profile 的标记而不含根包与兄弟
+    依赖的;只由根声明的搜索路径不再到达依赖的共享库,构建给出 `link/root-flags` 提示,依赖
+    自己声明后链接通过(`tests/e2e/884_a_shared_library_links_with_its_own_closure.sh`)。
+23. §11 的判据(`tests/e2e/887_msvc_lto_and_export_discovery.sh`,需要 cl.exe):cl.exe 上
+    `lto = true` 以 `/GL` 编译、以 `/LTCG` 链接;省略 `windows_auto_export` 的 DLL 所链接的包以
+    `/GL-` 编译并报告一次;陈述 `true` 与写入 `/GL` 被拒绝;陈述 `false` 时完整使用 `/GL`。
+
 ## 8. flag 列表的元素
 
 `cflags`、`cxxflags`、`asmflags` 与 `ldflags` 的一个元素是一段文本,代表零个或多个词;
@@ -505,7 +517,9 @@ mcpp 2026.9.26.2,#703)。**
    工作空间、工作空间根在哪里)取决于清单**在哪里**,与命令走的是哪条分支无关——带
    `[package]` 的工作空间根按自身构建时,同样要在解析任何依赖之前建立这一上下文。
    `-p`/`--package` 首先按成员的包身份(限定名 `<namespace>.<name>`,其次是裸包名)
-   为其命名,目录路径与目录名是回落拼法。
+   为其命名,目录路径与目录名是回落拼法。带 `[package]` 的工作空间根自己的包是成员
+   `"."`,同样恰好一次地接收 `[workspace.package]` 与 `[workspace.build]`,无论命令选中
+   的是它、它与其它成员,还是只有其它成员。
 2. 向量按工作空间、成员、命中的 `[target.<selector>.build]` 的顺序追加,命中的条件表
    之间按 §3.1.1 的具体程度排序;`defines` 按 §8 的集合语义合并。标量仅在成员未
    **声明**该键时取工作空间的值。
@@ -529,16 +543,24 @@ mcpp 2026.9.26.2,#703)。**
    (根包、`-p` 选中的成员、`path` 与 `git` 依赖、索引依赖)拒绝它,并点名条目所在的表与
    名称。带 `[package]` 的工作空间根按它自己的 `[workspace.dependencies]` 解析自己的
    `workspace = true` 条目。
-10. `[toolchain]`、`[target.<triple>]` 与 `[indices]` 是根位置的键:它们为整个依赖图选择
-    编译器、目标行与索引,因此只在成员作为一次构建的根时继承。作为宿主工具构建的成员是其
+10. `[toolchain]`、`[target.<triple>]`、`[indices]` 与 `[profile.<name>]` 是根位置的键:它们
+    为整个依赖图选择编译器、目标行、索引与构建 profile,因此只在成员作为一次构建的根时继承。
+    profile 按名字继承,成员自己声明的同名表整体替换工作空间的。作为宿主工具构建的成员是其
     子构建的根,同样继承这三项(§10.1)。`[build] dialect_cxxflags`(及其条件形式
     `[target.<selector>.build] dialect_cxxflags`)同样是根位置的键:它是 §3.1
     所述的图级联方言开关,只在包作为一次构建的根时被渲染并到达命令。与前三项相同,
     一个包声明它不被诊断——一个依赖包为自己将来作为根的构建合法地声明这些键,这一条
     只是把已有行为写成明文规则。
 
+11. 一个包的 `ldflags`(含其构建程序的链接指令)是它的使用需求,按第 6 条只流向消费者。
+    根包自己的程序与共享库以根的链接行链接:根包的 `ldflags` 与它所到达的每个包的
+    `ldflags`。其它包拥有的共享库**必须**以图级链接 flag 加上其拥有者所到达的包的
+    `ldflags` 链接,**禁止**接收根包或无关包的私有 `ldflags`。图级链接 flag 是 profile 的
+    `ldflags` 与 `[target.<selector>.abi]` 为链接渲染的词;它们到达每一个镜像。
+
 **状态:已实现(第 1 至 7 条 mcpp 2026.9.25.1;第 8 至 10 条 mcpp 2026.9.27.1,mcpp#713、
-#714、#710;第 10 条的 `dialect_cxxflags` 为 mcpp 2026.9.28.1,#717)。**
+#714、#710;第 10 条的 `dialect_cxxflags` 为 mcpp 2026.9.28.1,#717;第 1 条的根包、第 10 条的
+`[profile.<name>]` 与第 11 条为 mcpp 2026.10.5.2,#771)。**
 
 ## 10. 依赖的程序
 
@@ -580,6 +602,21 @@ mcpp 2026.9.26.2,#703)。**
 
 **状态:已实现**(mcpp 2026.9.27.1,mcpp#711)。
 
+## 11. 链接期优化与导出发现
+
+1. `lto = true` 在每一个能兑现它的编译器上兑现:gcc 与 clang 以 `-flto` 编译与链接,cl.exe
+   以 `/GL` 编译、以 `/LTCG` 链接与归档。一个行无法兑现时**禁止**声称兑现。
+2. `[targets.<n>] windows_auto_export` 区分「省略」与「陈述 `true`」。在 cl.exe 上 LTO 生效
+   时,导出需要被发现的 PE 共享库:
+   - 省略该键:其对象所来自的包以 `/GL-` 编译,DLL 仍以 `/LTCG` 链接,构建报告一次降级;
+   - 陈述 `true`:规划期拒绝(`lto-export-discovery`);
+   - 陈述 `false`:不受影响。
+3. 写进这类 DLL 所链接的包的 flag 中的 `/GL`,无论 LTO 是否生效,都在规划期被拒绝。
+4. `mcpp pack` 产出的静态库**禁止**携带 LTO 中间表示;其对象不以 LTO 编译,构建报告一次。
+5. `[test] windows_code_page` 为所发现的每个测试程序陈述 Windows 代码页,取值与 target 键相同。
+
+**状态:已实现(mcpp 2026.10.5.2,#770)。**
+
 ## 变更记录
 
 | 版本 | 日期 | 变更 |
@@ -596,3 +633,4 @@ mcpp 2026.9.26.2,#703)。**
 | 1.9 | 2026-09-28 | mcpp 2026.9.28.1:§9 第 1 条补上带 `[package]` 的工作空间根自己的 `path` 依赖所到达的成员,`-p` 先按包的身份解析(#725);§3.1 接受 `[target.<selector>.build] dialect_cxxflags`,§9 第 10 条把它列为根位置的键(#717);§3.1.1 的状态改为部分实现,多个命中的条件表的先后见 mcpp#728。 |
 | 1.10 | 2026-09-28 | 多个命中的条件表按选择器的具体程度生效,三元组高于操作系统高于族,字典序只打破平局(mcpp 2026.9.28.2,mcpp#728,2026-09-28 设计 D7):§3.1.1 陈述规则与具体程度,§3.1 与 §9 第 2 条的「按清单顺序」随之更正;§3.1.1 转为已实现。 |
 | 1.11 | 2026-10-05 | 新增 §5.3:只在一个平台生效的键带平台前缀(mcpp 2026.10.5.1,#766;`auto_export` 在发布前更名为 `windows_auto_export`)。§1 与 §6 引用的字段准入条件改指 docs/90,字段参考改指 docs/04。 |
+| 1.12 | 2026-10-05 | mcpp 2026.10.5.2:§9 第 1 条补上带 `[package]` 的工作空间根自己的包;第 10 条把 `[profile.<name>]` 列为根位置的键;新增第 11 条链接 flag 的作用域(#771);新增 §11 链接期优化与导出发现(#770)与 `[test] windows_code_page`;§7 补第 21 至 23 条判据。 |

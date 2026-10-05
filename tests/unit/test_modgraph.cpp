@@ -1167,17 +1167,25 @@ TEST(Glob, Utf8ValidityIsDecidedByteByByte) {
 }
 
 // A diagnostic names a path that has no UTF-8 spelling through an escaped one.
+//
+// Each platform is given a name in its own native form. A Windows path is
+// UTF-16, and constructing one from the bytes "caf\xE9" converts them through
+// the process's ANSI code page: code page 1252 accepts them, 936 and 65001
+// throw. The assertion that once followed the branches did exactly that, so
+// the test passed on an English runner and failed on a Chinese one (O6 of the
+// 2026-10-05 design).
 TEST(Glob, EscapedSpellingIsUtf8WhateverTheName) {
 #ifdef _WIN32
     const std::wstring lone{L'a', wchar_t(0xD800), L'b'};
     EXPECT_EQ(escaped_spelling(std::filesystem::path(lone)), "a\\u{D800}b");
+    EXPECT_TRUE(is_valid_utf8(escaped_spelling(std::filesystem::path(lone))));
     const std::wstring cafe{L'c', L'a', L'f', wchar_t(0x00E9)};
     EXPECT_EQ(escaped_spelling(std::filesystem::path(cafe)), "caf\xC3\xA9");
 #else
     EXPECT_EQ(escaped_spelling("/x/caf\xE9"), "/x/caf\\xE9");
     EXPECT_EQ(escaped_spelling("/x/caf\xC3\xA9"), "/x/caf\xC3\xA9");
-#endif
     EXPECT_TRUE(is_valid_utf8(escaped_spelling(std::filesystem::path("caf\xE9"))));
+#endif
 }
 
 TEST(Scanner, GlobWalkSkipsNamesThatAreNotUtf8) {

@@ -318,6 +318,13 @@ error while loading shared libraries: libstdc++.so.6: cannot open shared object 
 使消费方的链接失败并报
 `archive has no index; run ranlib to add one`。
 
+### 不分发 LTO 中间码（2026.10.5.2+）
+
+`lto = true` 的 profile 下，被打包的静态库的对象不以 LTO 编译：没有 `-flto` 中间码，
+在 cl.exe 上也没有 `/GL` 对象。这种代码只能由写出它的编译器版本读取，而预制的归档
+会被其它版本消费。构建报告一次，摘要显示 `+ lto (partial)`。同一次构建中的程序与
+共享库仍然使用 LTO。
+
 ## 当前边界
 
 | | 状态 |

@@ -50,6 +50,15 @@ std::vector<std::string> std_module_build_commands(
     std::string_view sysrootFlag,
     std::string_view cppStandardFlag);
 
+// `std.compat` (2026.10.5.2): compiled in the same directory after `std`, whose
+// `gcm.cache/std.gcm` it finds there, into `gcm.cache/std.compat.gcm`.
+std::filesystem::path std_compat_bmi_path(const std::filesystem::path& cacheDir);
+std::vector<std::string> std_compat_build_commands(
+    const Toolchain& tc,
+    const std::filesystem::path& cacheDir,
+    std::string_view sysrootFlag,
+    std::string_view cppStandardFlag);
+
 } // namespace mcpp::toolchain::gcc
 
 namespace mcpp::toolchain::gcc {
@@ -143,8 +152,12 @@ void enrich_toolchain(Toolchain& tc) {
     tc.stdlibId      = "libstdc++";
     tc.stdlibVersion = tc.version;
     if (auto p = find_std_module_source(tc.binaryPath, tc.version)) {
-        tc.stdModuleSource = *p;
-        tc.hasImportStd    = true;
+        // libstdc++ installs `bits/std.compat.cc` beside `bits/std.cc` (GCC 15
+        // and later), so the pair is read from one directory, as libc++'s is.
+        std::error_code ec;
+        const auto compat = p->parent_path() / "std.compat.cc";
+        tc.set_std_modules(*p, std::filesystem::exists(compat, ec)
+                                   ? compat : std::filesystem::path{});
         // libstdc++'s bits/std.cc carries no __cplusplus guard: any GCC that
         // ships it builds the std module at C++20 too. Verified on gcc 15.1.0
         // and 16.1.0 across glibc / musl / mingw-cross targets (design §2.2).
@@ -186,6 +199,44 @@ std::filesystem::path std_bmi_path(const std::filesystem::path& cacheDir) {
 
 std::filesystem::path staged_std_bmi_path(const std::filesystem::path& outputDir) {
     return outputDir / "gcm.cache" / "std.gcm";
+}
+
+// One compile of a libstdc++ module source in the cache directory, which is
+// where GCC writes and reads `gcm.cache/`.
+static std::string module_source_command(const Toolchain& tc,
+                                         const std::filesystem::path& cacheDir,
+                                         std::string_view sysrootFlag,
+                                         std::string_view cppStandardFlag,
+                                         const std::filesystem::path& source,
+                                         std::string_view object) {
+    std::string bFlag;
+    if (auto binutilsBin = binutils_prefix_dir(tc); !binutilsBin.empty())
+        bFlag = std::format(" -B{}", mcpp::xlings::shq(binutilsBin.string()));
+    const char* cd = mcpp::platform::is_windows ? "cd /d" : "cd";
+    return std::format(
+        "{} {} && {}{} {} -fmodules -O2{}{} -c {} -o {} 2>&1",
+        cd,
+        mcpp::xlings::shq(cacheDir.string()),
+        mcpp::toolchain::compiler_env_prefix(tc),
+        mcpp::xlings::shq(tc.binaryPath.string()),
+        cppStandardFlag,
+        sysrootFlag,
+        bFlag,
+        mcpp::xlings::shq(source.string()),
+        object);
+}
+
+std::filesystem::path std_compat_bmi_path(const std::filesystem::path& cacheDir) {
+    return cacheDir / "gcm.cache" / "std.compat.gcm";
+}
+
+std::vector<std::string> std_compat_build_commands(
+    const Toolchain& tc,
+    const std::filesystem::path& cacheDir,
+    std::string_view sysrootFlag,
+    std::string_view cppStandardFlag) {
+    return { module_source_command(tc, cacheDir, sysrootFlag, cppStandardFlag,
+                                   tc.stdCompatSource, "std.compat.o") };
 }
 
 std::string std_module_build_command(const Toolchain& tc,

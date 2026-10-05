@@ -1,6 +1,6 @@
 [package]
 name        = "mcpp"
-version = "2026.10.5.1"
+version = "2026.10.5.2"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
@@ -39,6 +39,12 @@ bmi_schedule = "on"
 # target compiles a resource script, so this changes nothing elsewhere.
 [resources]
 files = ["docs/res/mcpp.rc"]
+
+# The unit tests run in the code page mcpp.exe runs in, so a result does not
+# depend on the region setting of the machine that runs them (2026.10.5.2). An
+# engine older than the key reports it as unsupported and ignores it.
+[test]
+windows_code_page = "utf-8"
 
 [toolchain]
 default = "gcc@16.1.0"

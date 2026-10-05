@@ -486,6 +486,7 @@ a program classifying the outcome reads `reason`:
 | `managed-only` | `--managed-only` met a source that is not the ecosystem's: the message names each one and where it was stated *(2026.10.1.3+)* |
 | `payload-override` | an `[xlings.overrides]` entry names a path that does not exist, a version a requirement refuses, or is stated by a dependency *(2026.10.1.3+)* |
 | `payload-request` | a build program asked for a payload no manifest of this build declares `provision = "on-request"`, or asked again in three consecutive runs *(2026.10.1.3+)* |
+| `lto-export-discovery` | a PE shared library whose exports are discovered would be compiled by cl.exe into `/GL` objects, which hold no symbol table: `windows_auto_export = true` stated under `lto = true`, or `/GL` written into the flags of a package it links *(2026.10.5.2+)* |
 | `local-toolchain` | a toolchain named by path, or stated by a build program's toolchain phase, cannot be used: no driver, a contradicting family, a missing tool or sysroot *(2026.10.1.3+)* |
 | `convention-unreplaced` | the convention was overridden and nothing replaced it |
 | `os-mismatch` | the requested and resolved triples name different systems |

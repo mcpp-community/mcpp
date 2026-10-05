@@ -345,6 +345,14 @@ archive is only ever `--strip-debug`ed, because `--strip-all` removes the
 archive symbol index and the consumer's link then fails with `archive has no
 index; run ranlib to add one`.
 
+### LTO intermediate code is not shipped (2026.10.5.2+)
+
+A profile with `lto = true` compiles a packed static library's objects without
+LTO: no `-flto` intermediate code, and no `/GL` objects on cl.exe. Such code is
+readable only by the compiler release that wrote it, and a prebuilt archive is
+consumed by other releases. The build reports this once and its summary reads
+`+ lto (partial)`. Programs and shared libraries in the same build keep LTO.
+
 ## Current limitations
 
 | | status |

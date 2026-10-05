@@ -110,6 +110,24 @@ constexpr std::size_t kFileHeaderSize   = 20;
 constexpr std::size_t kSymbolRecordSize = 18;
 constexpr std::size_t kSectionHeaderSize = 40;
 
+// AN ANONYMOUS OBJECT: machine 0 and 0xFFFF where an ordinary header has its
+// section count, then a version and, from version 1 on, a class GUID at
+// offset 12 that says what the rest is. Three kinds reach a link (2026.10.5.2;
+// headers measured from cl 19.51 output, GUIDs as LLVM's `identify_magic`
+// spells them):
+//   version 0           a short import object, a member of an import library;
+//   kBigObjClassId      `/bigobj`, an ordinary object with 32-bit counts;
+//   kClGlClassId        `/GL`, cl's intermediate code, with no symbol table.
+// `/GL` together with `/bigobj` yields the `/GL` header.
+constexpr std::size_t kBigObjHeaderSize  = 56;
+constexpr std::size_t kBigObjSymbolSize  = 20;
+constexpr std::array<std::uint8_t, 16> kBigObjClassId{
+    0xc7, 0xa1, 0xba, 0xd1, 0xee, 0xba, 0xa9, 0x4b,
+    0xaf, 0x20, 0xfa, 0xf6, 0x6a, 0xa4, 0xdc, 0xb8};
+constexpr std::array<std::uint8_t, 16> kClGlClassId{
+    0x38, 0xfe, 0xb3, 0x0c, 0xa5, 0xd9, 0xab, 0x4d,
+    0xac, 0x9b, 0xd6, 0xb6, 0x22, 0x26, 0x53, 0xc2};
+
 // The subset of IMAGE_FILE_MACHINE_* that mcpp targets or can be handed.
 constexpr std::uint16_t kMachineI386   = 0x014c;
 constexpr std::uint16_t kMachineAmd64  = 0x8664;
@@ -130,6 +148,66 @@ std::uint32_t rd32(std::span<const std::byte> b, std::size_t off) {
          | (std::to_integer<unsigned>(b[off + 1]) << 8)
          | (std::to_integer<unsigned>(b[off + 2]) << 16)
          | (std::to_integer<unsigned>(b[off + 3]) << 24));
+}
+
+// Where an object keeps its sections and symbols. An ordinary header and a
+// `/bigobj` one differ in the width of the counts and of a symbol record and in
+// where the section headers start; the records themselves are the same apart
+// from the section number, which `/bigobj` widens to 32 bits.
+struct Layout {
+    std::uint16_t machine      = 0;
+    std::uint32_t numSections  = 0;
+    std::size_t   sectionsOff  = 0;
+    std::uint32_t symTableOff  = 0;
+    std::uint32_t numSymbols   = 0;
+    std::size_t   symbolSize   = kSymbolRecordSize;
+    bool          big          = false;
+};
+
+bool class_id_is(std::span<const std::byte> b, const std::array<std::uint8_t, 16>& id) {
+    if (b.size() < 28) return false;
+    for (std::size_t i = 0; i < id.size(); ++i)
+        if (std::to_integer<std::uint8_t>(b[12 + i]) != id[i]) return false;
+    return true;
+}
+
+std::expected<Layout, std::string> layout_of(std::span<const std::byte> b) {
+    if (b.size() < kFileHeaderSize)
+        return std::unexpected("not a COFF object: shorter than a file header");
+    Layout l;
+    if (rd16(b, 0) == 0 && rd16(b, 2) == 0xFFFF) {
+        const auto version = b.size() >= 6 ? rd16(b, 4) : 0;
+        if (version == 0)
+            return std::unexpected(
+                "this is a short import object (a member of an import library), "
+                "not a compiled object; it declares no symbols to export");
+        if (class_id_is(b, kClGlClassId))
+            return std::unexpected(
+                "this object was compiled by cl.exe with /GL: it holds the "
+                "compiler's intermediate code and no symbol table, so its exports "
+                "cannot be discovered.\n"
+                "  Set `windows_auto_export = false` on the shared library and mark "
+                "its public surface with __declspec(dllexport), or compile it "
+                "without /GL.");
+        if (!class_id_is(b, kBigObjClassId) || b.size() < kBigObjHeaderSize)
+            return std::unexpected(std::format(
+                "this is an anonymous COFF object of a kind mcpp does not read "
+                "(version {}); reading it would be a guess at its layout", version));
+        l.big         = true;
+        l.machine     = rd16(b, 6);
+        l.numSections = rd32(b, 44);
+        l.symTableOff = rd32(b, 48);
+        l.numSymbols  = rd32(b, 52);
+        l.sectionsOff = kBigObjHeaderSize;
+        l.symbolSize  = kBigObjSymbolSize;
+        return l;
+    }
+    l.machine     = rd16(b, 0);
+    l.numSections = rd16(b, 2);
+    l.symTableOff = rd32(b, 8);
+    l.numSymbols  = rd32(b, 12);
+    l.sectionsOff = kFileHeaderSize + rd16(b, 16);   // + optional header
+    return l;
 }
 
 // Symbols bindexplib skips, and why each one would be wrong to export.
@@ -165,12 +243,13 @@ std::optional<std::string> export_name(std::string_view name, bool i386) {
 }
 
 bool declares_exports(std::span<const std::byte> bytes) {
-    if (bytes.size() < kFileHeaderSize) return false;
-    const auto numSections = rd16(bytes, 2);
-    const std::size_t sectionsOff = kFileHeaderSize + rd16(bytes, 16);
+    // An object whose layout cannot be read declares nothing here; reading its
+    // symbols reports why (`read_exports`).
+    const auto layout = layout_of(bytes);
+    if (!layout) return false;
 
-    for (std::uint16_t i = 0; i < numSections; ++i) {
-        const auto hdr = sectionsOff + std::size_t(i) * kSectionHeaderSize;
+    for (std::uint32_t i = 0; i < layout->numSections; ++i) {
+        const auto hdr = layout->sectionsOff + std::size_t(i) * kSectionHeaderSize;
         if (hdr + kSectionHeaderSize > bytes.size()) return false;
 
         std::string name;
@@ -209,26 +288,11 @@ bool is_supported_machine(std::uint16_t machine) {
 std::expected<std::vector<Export>, std::string>
 read_exports(std::span<const std::byte> bytes)
 {
-    if (bytes.size() < kFileHeaderSize)
-        return std::unexpected("not a COFF object: shorter than a file header");
-
-    const auto machine = rd16(bytes, 0);
-
-    // `/bigobj` objects are a DIFFERENT container: machine 0 and a `0xFFFF`
-    // where the section count would be, followed by a class GUID and a much
-    // larger header. Named here rather than left to fall out as "unsupported
-    // machine 0x0000", which is true and useless — the reader would be blamed
-    // for a flag the project passed.
-    if (machine == 0 && bytes.size() >= 4 && rd16(bytes, 2) == 0xFFFF) {
-        return std::unexpected(
-            "this is a /bigobj object, whose header layout differs from an "
-            "ordinary COFF one.\n"
-            "  mcpp's export reader does not parse it. Build the shared library "
-            "without /bigobj,\n"
-            "  or mark its public surface with __declspec(dllexport) — an "
-            "annotated library needs\n"
-            "  no generated .def at all.");
-    }
+    // An anonymous object is read when it is `/bigobj`, and named when it is
+    // anything else: "unsupported machine 0x0000" would be true and useless.
+    const auto layout = layout_of(bytes);
+    if (!layout) return std::unexpected(layout.error());
+    const auto machine = layout->machine;
 
     if (!is_supported_machine(machine)) {
         return std::unexpected(std::format(
@@ -237,15 +301,19 @@ read_exports(std::span<const std::byte> bytes)
             "has never been run against.", machine));
     }
 
-    const auto numSections   = rd16(bytes, 2);
-    const auto symTableOff   = rd32(bytes, 8);
-    const auto numSymbols    = rd32(bytes, 12);
+    const auto numSections   = layout->numSections;
+    const auto symTableOff   = layout->symTableOff;
+    const auto numSymbols    = layout->numSymbols;
+    const auto symbolSize    = layout->symbolSize;
     if (symTableOff == 0 || numSymbols == 0) return std::vector<Export>{};
 
     // Section characteristics, indexed 1-based the way symbols address them.
-    const std::size_t sectionsOff = kFileHeaderSize + rd16(bytes, 16); // + optional header
-    std::vector<std::uint32_t> sectionFlags(numSections + 1, 0);
-    for (std::uint16_t i = 0; i < numSections; ++i) {
+    // A count no file of this size can hold is refused before it sizes a vector.
+    const std::size_t sectionsOff = layout->sectionsOff;
+    if (sectionsOff + std::size_t(numSections) * kSectionHeaderSize > bytes.size())
+        return std::unexpected("COFF section headers run past the end of the file");
+    std::vector<std::uint32_t> sectionFlags(std::size_t(numSections) + 1, 0);
+    for (std::uint32_t i = 0; i < numSections; ++i) {
         const auto off = sectionsOff + std::size_t(i) * kSectionHeaderSize;
         if (off + kSectionHeaderSize > bytes.size())
             return std::unexpected("COFF section headers run past the end of the file");
@@ -253,7 +321,7 @@ read_exports(std::span<const std::byte> bytes)
     }
 
     const std::size_t symbolsEnd = std::size_t(symTableOff)
-                                 + std::size_t(numSymbols) * kSymbolRecordSize;
+                                 + std::size_t(numSymbols) * symbolSize;
     if (symbolsEnd > bytes.size())
         return std::unexpected("COFF symbol table runs past the end of the file");
 
@@ -289,11 +357,16 @@ read_exports(std::span<const std::byte> bytes)
     std::vector<Export> out;
     for (std::uint32_t i = 0; i < numSymbols; ) {
         const std::size_t rec = std::size_t(symTableOff)
-                              + std::size_t(i) * kSymbolRecordSize;
-        const auto sectionNum = static_cast<std::int16_t>(rd16(bytes, rec + 12));
-        const auto type       = rd16(bytes, rec + 14);
-        const auto storage    = std::to_integer<std::uint8_t>(bytes[rec + 16]);
-        const auto numAux     = std::to_integer<std::uint8_t>(bytes[rec + 17]);
+                              + std::size_t(i) * symbolSize;
+        // `/bigobj` widens the section number to 32 bits, which moves the
+        // three fields after it by two bytes.
+        const std::size_t wide = layout->big ? 2 : 0;
+        const auto sectionNum = layout->big
+            ? static_cast<std::int32_t>(rd32(bytes, rec + 12))
+            : static_cast<std::int32_t>(static_cast<std::int16_t>(rd16(bytes, rec + 12)));
+        const auto type       = rd16(bytes, rec + 14 + wide);
+        const auto storage    = std::to_integer<std::uint8_t>(bytes[rec + 16 + wide]);
+        const auto numAux     = std::to_integer<std::uint8_t>(bytes[rec + 17 + wide]);
 
         // Advance past auxiliary records regardless of whether this symbol is
         // taken — an aux record is not a symbol and reading it as one produces

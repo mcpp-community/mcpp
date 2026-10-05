@@ -198,8 +198,8 @@ void enrich_toolchain(Toolchain& tc, const std::string& envPrefix) {
         tc.binaryPath, tc.targetTriple);
 
     if (auto p = find_libcxx_std_module_source(tc.binaryPath, envPrefix)) {
-        tc.stdModuleSource = *p;
-        tc.hasImportStd    = true;
+        tc.set_std_modules(*p, find_libcxx_std_compat_source(tc.binaryPath, envPrefix)
+                                   .value_or(std::filesystem::path{}));
         // libc++ documents the std module for C++20 and later, and its
         // std.cppm carries no __cplusplus guard. Verified on clang 22.1.8 +
         // libc++ (std and std.compat) at -std=c++20 (design §2.2).
@@ -215,8 +215,11 @@ void enrich_toolchain(Toolchain& tc, const std::string& envPrefix) {
     // as `mcpp toolchain list`.
     if (!tc.hasImportStd && msvTarget) {
         if (auto p = mcpp::toolchain::msvc::find_std_module_source()) {
-            tc.stdModuleSource = *p;
-            tc.hasImportStd    = true;
+            // The STL's own pair: `std.compat.ixx` beside `std.ixx`.
+            std::error_code ec;
+            const auto compat = p->parent_path() / "std.compat.ixx";
+            tc.set_std_modules(*p, std::filesystem::exists(compat, ec)
+                                       ? compat : std::filesystem::path{});
             // This is MSVC STL's std.ixx, so the STL's own C++20 policy
             // applies rather than libc++'s. `tc.version` is clang's and cannot
             // answer it -- which is a reason to change the input, not to assume
@@ -227,12 +230,6 @@ void enrich_toolchain(Toolchain& tc, const std::string& envPrefix) {
         }
     }
 #endif
-
-    if (tc.hasImportStd) {
-        if (auto p = find_libcxx_std_compat_source(tc.binaryPath, envPrefix)) {
-            tc.stdCompatSource = *p;
-        }
-    }
 }
 
 std::filesystem::path std_bmi_path(const std::filesystem::path& cacheDir) {
@@ -241,6 +238,20 @@ std::filesystem::path std_bmi_path(const std::filesystem::path& cacheDir) {
 
 std::filesystem::path staged_std_bmi_path(const std::filesystem::path& outputDir) {
     return outputDir / "pcm.cache" / "std.pcm";
+}
+
+// THE LANGUAGE OF A STANDARD LIBRARY MODULE SOURCE, FROM ITS NAME, ON EVERY HOST.
+//
+// MSVC STL names its module sources `.ixx`, which clang does not infer as a
+// module interface: given one without `-x c++-module`, `--precompile` treats
+// it as linker input, writes nothing and exits 0. It also includes headers in
+// the module purview, which clang reports. One answer for `std` and
+// `std.compat`, decided by the file and not by the machine running the build;
+// a libc++ `.cppm` receives nothing, so its commands are unchanged.
+static std::string module_source_language_flags(const std::filesystem::path& source) {
+    return source.extension() == ".ixx"
+        ? " -x c++-module -Wno-include-angled-in-module-purview"
+        : "";
 }
 
 std::vector<std::string> std_module_build_commands(const Toolchain& tc,
@@ -312,13 +323,7 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
     // -x c++-module is needed for MSVC STL's .ixx files (Clang doesn't
     // recognize the .ixx extension as a module source by default).
     auto absBmi = (cacheDir / relBmi).string();
-    auto ext = tc.stdModuleSource.extension().string();
-    // MSVC STL's std.ixx needs -x c++-module (Clang doesn't recognize .ixx)
-    // and generates harmless warnings about #include in module purview and
-    // the reserved 'std' module name — suppress both.
-    std::string ixxFlags = (ext == ".ixx")
-        ? " -x c++-module -Wno-include-angled-in-module-purview"
-        : "";
+    std::string ixxFlags = module_source_language_flags(tc.stdModuleSource);
     // AND THE RESERVED-NAME WARNING UNCONDITIONALLY, WHICH IS WHAT THE OTHER
     // BRANCH DOES.
     //
@@ -380,7 +385,7 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
 #else
     return {
         std::format(
-            "cd {} && {}{} {}{} -Wno-reserved-module-identifier{}{} "
+            "cd {} && {}{} {}{} -Wno-reserved-module-identifier{}{}{} "
             "--precompile {} -o {} 2>&1",
             mcpp::xlings::shq(cacheDir.string()),
             mcpp::toolchain::compiler_env_prefix(tc),
@@ -389,6 +394,7 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
             crtToken,
             sysrootFlag,
             precompileFlags,
+            module_source_language_flags(tc.stdModuleSource),
             mcpp::xlings::shq(tc.stdModuleSource.string()),
             mcpp::xlings::shq(relBmi)),
         std::format(
@@ -566,11 +572,8 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
     auto absBmi    = (cacheDir / relBmi).string();
     auto absStdBmi = (cacheDir / relStdBmi).string();
     auto absObj    = (cacheDir / "std.compat.o").string();
-    // MSVC STL ships .ixx, which Clang does not infer as C++ module input.
-    // Apply the override only when parsing source, never when compiling a BMI.
-    std::string ixxFlags = (tc.stdCompatSource.extension() == ".ixx")
-        ? " -x c++-module -Wno-include-angled-in-module-purview"
-        : "";
+    // Applied when parsing the source, never when compiling the BMI.
+    std::string ixxFlags = module_source_language_flags(tc.stdCompatSource);
     return {
         std::format("{}{} {}{} -Wno-reserved-module-identifier{}{}{} "
                     "-fmodule-file=std={} "

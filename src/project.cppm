@@ -272,9 +272,10 @@ export void inherit_workspace_xlings(mcpp::manifest::Manifest& member,
 }
 
 // The keys a member inherits only where it is the ROOT of a build: `[toolchain]`,
-// `[target.<triple>]` and `[indices]`. They choose the compiler, the target
-// rows and the indices for the whole graph, so a member reached as somebody's
-// dependency takes them from that build's root instead. A member built as a
+// `[target.<triple>]`, `[indices]` and `[profile.<name>]`. They choose the
+// compiler, the target rows, the indices and the build profile for the whole
+// graph, so a member reached as somebody's dependency takes them from that
+// build's root instead. A member built as a
 // host tool is the root of its own sub-build, which is the second caller
 // (#710): without it, `mcpp build -p tool` used the workspace's compiler and
 // the same tool built for a consumer used the global default.
@@ -286,7 +287,32 @@ export void inherit_workspace_root_position(mcpp::manifest::Manifest& member,
     for (auto& [triple, entry] : workspace.targetOverrides)
         if (!member.targetOverrides.contains(triple))
             member.targetOverrides[triple] = entry;
+    // A profile is inherited by name, and a member's own table of that name
+    // replaces it whole, as `[target.<triple>]` does. Before 2026.10.5.2 the
+    // workspace's profiles reached no member: a virtual root's were ignored
+    // without a word, and a rooted root's applied only when its own package
+    // was the first one selected.
+    for (auto& [name, profile] : workspace.profiles)
+        if (!member.profiles.contains(name))
+            member.profiles[name] = profile;
     inherit_workspace_indices(member, workspace, wsRoot);
+}
+
+// THE ROOT PACKAGE OF A WORKSPACE IS ONE OF ITS MEMBERS.
+//
+// A root that carries `[package]` beside `[workspace]` is selected as member
+// `"."`, and it receives `[workspace.package]` and `[workspace.build]` once,
+// as every other member does, so that one manifest compiles the same way in
+// every selection. Its root-position keys and `[workspace.dependencies]` are
+// handled by the caller: they are its own already, or merged explicitly.
+export void inherit_as_root_package(mcpp::manifest::Manifest& root,
+                                    const std::filesystem::path& wsRoot) {
+    if (!root.workspace.present || root.package.name.empty()) return;
+    if (root.inheritedAsRootPackage) return;
+    root.inheritedAsRootPackage = true;
+    const auto workspace = root;
+    inherit_workspace_package(root, workspace);
+    inherit_workspace_build(root, workspace, wsRoot);
 }
 
 export void inherit_workspace_config(mcpp::manifest::Manifest& member,
@@ -457,9 +483,9 @@ unresolved_workspace_dependency_error(const mcpp::manifest::Manifest& m,
 // The rule is the one `prepare_build` follows: a directory that its workspace
 // lists as a member is loaded with `insideWorkspace` and receives
 // `inherit_workspace_config` anchored at the workspace root, and the
-// required-field check runs after inheritance. A directory that is not a
-// member, including a workspace root that carries its own `[package]`, is
-// loaded as written.
+// required-field check runs after inheritance. A workspace root that carries
+// its own `[package]` receives the same inheritance as member `"."`
+// (`inherit_as_root_package`). Any other directory is loaded as written.
 export struct EffectiveManifest {
     mcpp::manifest::Manifest                manifest;       // after inheritance
     std::optional<mcpp::manifest::Manifest> workspace;      // set when `member`
@@ -474,6 +500,7 @@ load_effective_manifest(const std::filesystem::path& dir) {
     if (wsRoot.empty()) {
         auto m = mcpp::manifest::load(manifestPath);
         if (!m) return std::unexpected(m.error().format());
+        inherit_as_root_package(*m, std::filesystem::absolute(dir));
         return EffectiveManifest{ std::move(*m), std::nullopt, {}, false };
     }
     auto m = mcpp::manifest::load(manifestPath, {.insideWorkspace = true});
@@ -685,6 +712,7 @@ load_member_manifest(const mcpp::manifest::Manifest& workspace,
     if (memberPath == ".") {
         auto m = workspace;
         merge_workspace_deps(m, workspace, wsRoot);
+        inherit_as_root_package(m, wsRoot);
         return m;
     }
     if (!std::filesystem::exists(dir / "mcpp.toml"))

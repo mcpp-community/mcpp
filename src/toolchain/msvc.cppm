@@ -1242,10 +1242,14 @@ std::optional<WindowsSdk> find_windows_sdk(
 
     // 1. Declared: WindowsSdkDir (+ WindowsSdkVersion). vcvars exports both;
     //    WindowsSdkVersion carries a trailing backslash there, which is not
-    //    part of the directory name.
+    //    part of the directory name, and so does WindowsSdkDir. The separator
+    //    is removed so that one SDK has one spelling, and therefore one cache
+    //    key, inside and outside a developer environment.
     const std::string want = declared_sdk_version();
     if (auto* dir = std::getenv("WindowsSdkDir"); dir && *dir) {
-        if (auto s = pick_sdk_in(std::filesystem::path{dir}, want)) return s;
+        std::filesystem::path root{dir};
+        if (!root.has_filename() && root.has_relative_path()) root = root.parent_path();
+        if (auto s = pick_sdk_in(root, want)) return s;
     }
 
     // 2. Roots the caller knows about (managed toolset's own store).
@@ -1640,8 +1644,9 @@ std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {
     std::error_code ec;
     if (auto ixx = toolsDir / "modules" / "std.ixx";
         std::filesystem::exists(ixx, ec)) {
-        tc.stdModuleSource = ixx;
-        tc.hasImportStd    = true;
+        const auto compat = toolsDir / "modules" / "std.compat.ixx";
+        tc.set_std_modules(ixx, std::filesystem::exists(compat, ec)
+                                    ? compat : std::filesystem::path{});
     }
     if (tc.hasImportStd) {
         // The STL, not the banner. For a real cl installation the two agree by
@@ -1650,10 +1655,6 @@ std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {
         // `find_msvc_tools_dir()` and the selected module source disagree, and
         // there the file that will be compiled is the correct answer.
         tc.importStdMinLevel = std_module_min_level_for_stl(tc.stdModuleSource);
-    }
-    if (auto compat = toolsDir / "modules" / "std.compat.ixx";
-        std::filesystem::exists(compat, ec)) {
-        tc.stdCompatSource = compat;
     }
 
     // Build environment (INCLUDE/LIB/PATH/VSLANG). SDK absence keeps

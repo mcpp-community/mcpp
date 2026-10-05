@@ -214,19 +214,99 @@ TEST(CoffExports, RefusesATruncatedSymbolTable) {
     EXPECT_NE(r.error().find("past the end"), std::string::npos);
 }
 
-TEST(CoffExports, NamesBigobjRatherThanCallingItAnUnknownMachine) {
-    // A `/bigobj` object is a different container: machine 0 and 0xFFFF where
-    // the section count would be. Falling through to "unsupported machine
-    // 0x0000" is true and useless — it blames the reader for a flag the project
-    // passed.
-    auto obj = make_obj({ Sym{ .name = "f" } });
-    obj[0] = std::byte{0}; obj[1] = std::byte{0};
-    obj[2] = std::byte{0xFF}; obj[3] = std::byte{0xFF};
+// ─── anonymous objects (2026.10.5.2) ────────────────────────────────────────
+//
+// Machine 0 and 0xFFFF open three containers, told apart by a version and a
+// class GUID. The headers below are the ones cl 19.51 writes (measured on
+// windows-latest, 2026-10-05).
+
+namespace {
+
+constexpr std::array<std::uint8_t, 16> kBigObj{
+    0xc7, 0xa1, 0xba, 0xd1, 0xee, 0xba, 0xa9, 0x4b,
+    0xaf, 0x20, 0xfa, 0xf6, 0x6a, 0xa4, 0xdc, 0xb8};
+constexpr std::array<std::uint8_t, 16> kClGl{
+    0x38, 0xfe, 0xb3, 0x0c, 0xa5, 0xd9, 0xab, 0x4d,
+    0xac, 0x9b, 0xd6, 0xb6, 0x22, 0x26, 0x53, 0xc2};
+
+std::vector<std::byte> anonymous(std::uint16_t version,
+                                 const std::array<std::uint8_t, 16>& classId,
+                                 std::size_t size = 64) {
+    std::vector<std::byte> b(size, std::byte{0});
+    put16(b, 2, 0xFFFF);
+    put16(b, 4, version);
+    put16(b, 6, 0x8664);
+    for (std::size_t i = 0; i < 16; ++i) b[12 + i] = std::byte(classId[i]);
+    return b;
+}
+
+// The `/bigobj` form of `make_obj`: a 56-byte header, 32-bit counts and
+// section numbers, 20-byte symbol records.
+std::vector<std::byte> make_bigobj(std::vector<Sym> syms,
+                                   std::vector<std::uint32_t> sectionFlags = { 0x60000020u }) {
+    constexpr std::size_t kHdr = 56, kSec = 40, kSym = 20;
+    const std::size_t nsec = sectionFlags.size();
+    const std::size_t symOff = kHdr + nsec * kSec;
+    auto b = anonymous(2, kBigObj, symOff + syms.size() * kSym + 4);
+    put32(b, 44, static_cast<std::uint32_t>(nsec));
+    put32(b, 48, static_cast<std::uint32_t>(symOff));
+    put32(b, 52, static_cast<std::uint32_t>(syms.size()));
+    for (std::size_t i = 0; i < nsec; ++i)
+        put32(b, kHdr + i * kSec + 36, sectionFlags[i]);
+    for (std::size_t i = 0; i < syms.size(); ++i) {
+        const auto rec = symOff + i * kSym;
+        for (std::size_t c = 0; c < syms[i].name.size() && c < 8; ++c)
+            b[rec + c] = std::byte(syms[i].name[c]);
+        put32(b, rec + 12, static_cast<std::uint32_t>(static_cast<std::int32_t>(syms[i].section)));
+        put16(b, rec + 16, syms[i].type);
+        b[rec + 18] = std::byte(syms[i].storage);
+        b[rec + 19] = std::byte(syms[i].aux);
+    }
+    put32(b, b.size() - 4, 4);
+    return b;
+}
+
+}  // namespace
+
+TEST(CoffExports, ReadsABigobjObjectAsTheOrdinaryOneWithTheSameSymbols) {
+    const std::vector<Sym> syms = {
+        Sym{ .name = "f" }, Sym{ .name = "v", .section = 2, .type = 0 },
+        Sym{ .name = "s", .storage = 3 }, Sym{ .name = "u", .section = 0 },
+        Sym{ .name = "g", .aux = 1 }, Sym{ .name = "aux" }, Sym{ .name = "h" },
+    };
+    auto small = read_exports(make_obj(syms, { kText, kData }));
+    auto big   = read_exports(make_bigobj(syms, { kText, kData }));
+    ASSERT_TRUE(small) << small.error();
+    ASSERT_TRUE(big) << big.error();
+    EXPECT_EQ(*big, *small);
+    EXPECT_EQ(names(*big), (std::vector<std::string>{ "f", "g", "h", "v" }));
+}
+
+TEST(CoffExports, NamesAGlObjectAndSaysWhatToDo) {
+    auto r = read_exports(anonymous(1, kClGl));
+    ASSERT_FALSE(r);
+    EXPECT_NE(r.error().find("/GL"), std::string::npos) << r.error();
+    EXPECT_EQ(r.error().find("bigobj"), std::string::npos) << r.error();
+    EXPECT_NE(r.error().find("windows_auto_export = false"), std::string::npos);
+    EXPECT_NE(r.error().find("dllexport"), std::string::npos);
+    EXPECT_FALSE(declares_exports(anonymous(1, kClGl)));
+}
+
+TEST(CoffExports, NamesAnImportObjectAndAnUnknownAnonymousObject) {
+    auto imp = read_exports(anonymous(0, {}));
+    ASSERT_FALSE(imp);
+    EXPECT_NE(imp.error().find("import object"), std::string::npos) << imp.error();
+    auto other = read_exports(anonymous(3, {}));
+    ASSERT_FALSE(other);
+    EXPECT_NE(other.error().find("anonymous"), std::string::npos) << other.error();
+}
+
+TEST(CoffExports, RefusesABigobjObjectWhoseCountsOverrunIt) {
+    auto obj = make_bigobj({ Sym{ .name = "f" } });
+    put32(obj, 44, 0x00ffffffu);   // sections no file of this size can hold
     auto r = read_exports(obj);
     ASSERT_FALSE(r);
-    EXPECT_NE(r.error().find("bigobj"), std::string::npos);
-    // And it says what to do, or it is a dead end.
-    EXPECT_NE(r.error().find("dllexport"), std::string::npos);
+    EXPECT_NE(r.error().find("past the end"), std::string::npos) << r.error();
 }
 
 TEST(CoffExports, RefusesSomethingThatIsNotAnObject) {

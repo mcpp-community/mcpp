@@ -1633,6 +1633,7 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                                 std::format("targets.{}.windows_auto_export must be a boolean", tname),
                                 m.sourcePath, 0, 0});
                         t.windowsAutoExport = raw == "true";
+                        t.windowsAutoExportDeclared = true;
                     } else if (sub == "required_features") {
                         // #355: without this, a Form B descriptor could not
                         // express the cost gate that makes an optional host

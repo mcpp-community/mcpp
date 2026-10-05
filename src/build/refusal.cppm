@@ -171,6 +171,12 @@ enum class Code {
     PayloadOverride,
     PayloadRequest,
     LocalToolchain,
+    // A PE shared library whose exports are discovered (`windows_auto_export`
+    // stated `true`, or `/GL` written into its sources' flags) would be
+    // compiled by cl.exe into `/GL` objects, which hold no symbol table to
+    // discover them from (2026.10.5.2). Distinct from every other code: both
+    // statements are the author's, and one of them has to change.
+    LtoExportDiscovery,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -223,6 +229,7 @@ constexpr std::string_view name(Code c) {
         case Code::PayloadOverride:      return "payload-override";
         case Code::PayloadRequest:       return "payload-request";
         case Code::LocalToolchain:       return "local-toolchain";
+        case Code::LtoExportDiscovery:   return "lto-export-discovery";
         case Code::Other:                return "other";
     }
     return "other";

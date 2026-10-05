@@ -147,6 +147,8 @@ static std::expected<bool, std::string> step11_scan_sources(PrepareState& state)
         return std::unexpected(msg);
     }
 
+    state.needsStdCompat = graph_or_targets_import_std_compat(
+        state.scan.graph, *state.m, *state.root, state.packages);
     return graph_or_targets_import_std(state.scan.graph, *state.m, *state.root, state.packages);
 }
 
@@ -410,7 +412,6 @@ step11_package_std_module_source(PrepareState& state) {
                 pkg.manifest.package.name, pkg.manifest.stdModule,
                 pkg.root.string()));
         }
-        state.tc->stdModuleSource   = src;
         // AND THE COMPAT MODULE, FROM THE SAME PACKAGE OR NOT AT ALL.
         //
         // `std.compat` is a second module over the SAME library. Leaving it
@@ -434,12 +435,11 @@ step11_package_std_module_source(PrepareState& state) {
                     pkg.manifest.package.name, pkg.manifest.stdCompatModule,
                     pkg.root.string()));
             }
-            state.tc->stdCompatSource = csrc;
+            state.tc->set_std_modules(src, csrc);
         } else {
-            state.tc->stdCompatSource.clear();
+            state.tc->set_std_modules(src);
         }
         state.tc->targetCxxRuntime  = true;
-        state.tc->hasImportStd      = true;
         state.tc->importStdMinLevel = 20;   // libc++'s own floor; see clang.cppm
         // The target, first. On a freestanding target that means the whole ISA
         // profile --- `--target', `-march', `-mabi', `-mcmodel' --- because a
@@ -612,9 +612,7 @@ step11_apple_sdk_cxx_runtime(PrepareState& state, bool needsStdModule) {
         && !state.resolvedTargetSide.cxx.fromGraph()) {
         if (!needsStdModule) {
             state.tc->appleSdkCxxHeaders = true;
-            state.tc->hasImportStd = false;
-            state.tc->stdModuleSource.clear();
-            state.tc->stdCompatSource.clear();
+            state.tc->clear_std_modules();
         } else {
             mcpp::diag::degraded("target/cxx-runtime", std::format(
                 "{} links the SDK's libc++ under the toolchain payload's "
@@ -717,6 +715,19 @@ step11_std_module_availability_gate(PrepareState& state, bool needsStdModule) {
         return std::unexpected(std::format(
             "source imports std but toolchain '{}' provides no std module source",
             state.tc->label()));
+    }
+    // `std.compat` is a second module of the same library, and not every
+    // library has it: a package that supplies `std` alone, or a toolset without
+    // `std.compat.ixx`. Said here, before any compile, instead of as the
+    // compiler's "module 'std.compat' not found" inside the first unit that
+    // imports it, which names neither the library nor the reason.
+    if (state.needsStdCompat && state.tc->hasImportStd
+        && state.tc->stdCompatSource.empty()) {
+        return std::unexpected(std::format(
+            "source imports std.compat but the standard library of toolchain '{}' "
+            "({}) provides `std` without `std.compat`; import std and the C headers "
+            "the code uses instead",
+            state.tc->label(), state.tc->stdlibId.empty() ? "unknown" : state.tc->stdlibId));
     }
     // `import std` availability is two-dimensional once C++20 is a legal level:
     // having a std module source is not the same as being able to build it at
@@ -833,7 +844,8 @@ step11_prebuild_std_module(PrepareState& state, bool needsStdModule) {
                 *state.tc, state.m->package.standard, state.stdFlagAndDialect,
                 mcpp::platform::macos::deployment_target(
                     stdTargetIsMacos, state.m->buildConfig.macosDeploymentTarget),
-                mcpp::toolchain::default_cache_root(), stdCrt);
+                mcpp::toolchain::default_cache_root(), stdCrt,
+                state.needsStdCompat);
             if (!described) {
                 refusal::record(refusal::Code::StdModulePrecompile);
                 return std::unexpected(described.error().message);
@@ -848,7 +860,8 @@ step11_prebuild_std_module(PrepareState& state, bool needsStdModule) {
                 *state.tc, state.m->package.standard, state.stdFlagAndDialect,
                 mcpp::platform::macos::deployment_target(
                     stdTargetIsMacos, state.m->buildConfig.macosDeploymentTarget),
-                mcpp::toolchain::default_cache_root(), stdCrt);
+                mcpp::toolchain::default_cache_root(), stdCrt,
+                state.needsStdCompat);
             if (!sm) {
                 // THE ONE CODE IN THE TAXONOMY THAT NOTHING WROTE.
                 //
@@ -885,7 +898,8 @@ step11_prebuild_std_module(PrepareState& state, bool needsStdModule) {
                 *state.tc, state.m->package.standard, state.stdFlagAndDialect,
                 mcpp::platform::macos::deployment_target(
                     stdTargetIsMacos, state.m->buildConfig.macosDeploymentTarget),
-                mcpp::toolchain::default_cache_root(), stdCrt);
+                mcpp::toolchain::default_cache_root(), stdCrt,
+                state.needsStdCompat);
             if (described) state.describedStdModule = std::move(*described);
         }
     }

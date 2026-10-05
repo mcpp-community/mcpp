@@ -947,6 +947,22 @@ libc++abi 用到的线程局部存储；在 Xcode 16.4 上实测过），所以�
 设备行的 `runner` 保持未设置。没有开发者自己拥有的签名，一个产物无法在一台
 iOS 设备上运行，而那不是一个构建工具能供给的东西。
 
+## 标准库模块：`std` 与 `std.compat`
+
+工具链的标准库附带模块源码时，它提供 `import std`；附带第二份源码时，它还提供
+`import std.compat`。两者从同一个目录读取，并成对提供（2026.10.5.2+）：
+
+| 标准库 | `std` | `std.compat` |
+|---|---|---|
+| libstdc++（GCC 15 及之后） | `bits/std.cc` | `bits/std.compat.cc`（2026.10.5.2+） |
+| libc++ | `std.cppm` | `std.compat.cppm` |
+| MSVC STL（cl.exe，以及 MSVC ABI 上的 llvm 行） | `modules/std.ixx` | `modules/std.compat.ixx`（llvm 行 2026.10.5.1+） |
+| 包（`[package] std-module`） | 它的 `std-module` | 它的 `std-compat-module`，或没有 |
+
+每个模块按配置在全局缓存中编译一次；`std.compat` 只在构建中有单元 import 它时编译
+（2026.10.5.2+）。从不提供 `std.compat` 的标准库 import 它的构建，会在任何编译之前
+被拒绝，并点名该标准库。
+
 ## 项目级版本锁定
 
 若工程需要锁定某个特定版本，而不依赖全局默认值，可在工程自己的 `mcpp.toml`

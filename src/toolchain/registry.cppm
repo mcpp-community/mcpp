@@ -1585,6 +1585,8 @@ std::filesystem::path staged_std_compat_bmi_path(const Toolchain& tc,
                                                  const std::filesystem::path& outputDir) {
     if (tc.compiler == CompilerId::MSVC)
         return mcpp::toolchain::msvc::staged_std_compat_bmi_path(outputDir);
+    if (tc.compiler == CompilerId::GCC)
+        return outputDir / "gcm.cache" / "std.compat.gcm";
     return mcpp::toolchain::clang::staged_std_compat_bmi_path(outputDir);
 }
 

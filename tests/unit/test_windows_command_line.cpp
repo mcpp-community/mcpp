@@ -267,3 +267,56 @@ TEST(WindowsCommandLine, MetacharacterQuotingIsUnchangedForPlainText) {
     ASSERT_EQ(argv.size(), 3u) << parsed.passedOn;
     EXPECT_EQ(argv[2], plain);
 }
+
+// ─── The argv rules of CommandLineToArgvW (2026.10.5.2) ──────────────────
+//
+// A parser of the rules, so that every quoted argument is checked by what a
+// Windows program reads back rather than by the string it looks like.
+static std::vector<std::string> argv_of(std::string_view line) {
+    std::vector<std::string> out;
+    std::size_t i = 0;
+    while (i < line.size()) {
+        while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
+        if (i >= line.size()) break;
+        std::string arg;
+        bool quoted = false;
+        while (i < line.size() && (quoted || (line[i] != ' ' && line[i] != '\t'))) {
+            std::size_t backslashes = 0;
+            while (i < line.size() && line[i] == '\\') { ++backslashes; ++i; }
+            if (i < line.size() && line[i] == '"') {
+                arg.append(backslashes / 2, '\\');
+                if (backslashes % 2) arg.push_back('"');
+                else quoted = !quoted;
+                ++i;
+            } else {
+                arg.append(backslashes, '\\');
+                if (i < line.size() && (quoted || (line[i] != ' ' && line[i] != '\t')))
+                    arg.push_back(line[i++]);
+            }
+        }
+        out.push_back(std::move(arg));
+    }
+    return out;
+}
+
+TEST(WindowsCommandLine, EveryArgumentRoundTripsThroughTheArgvRules) {
+    const std::vector<std::string> args = {
+        "plain",
+        "C:\\Program Files (x86)\\Windows Kits\\10\\",   // vcvars' WindowsSdkDir
+        "trailing\\\\",
+        "a\\\"b",
+        "a\\\\\"b",
+        "say \"hi\"",
+        "",
+        "C:\\dir with space\\file.cpp",
+    };
+    std::string line;
+    for (auto const& a : args) line += mcpp::platform::shell::quote_windows(a) + " ";
+    EXPECT_EQ(argv_of(line), args) << line;
+}
+
+TEST(WindowsCommandLine, AnArgumentEndingInABackslashDoesNotSwallowTheNext) {
+    const auto line = mcpp::platform::shell::quote_windows("C:\\Kits\\10\\") + " "
+                    + mcpp::platform::shell::quote_windows("-o");
+    EXPECT_EQ(argv_of(line), (std::vector<std::string>{"C:\\Kits\\10\\", "-o"})) << line;
+}

@@ -4,6 +4,79 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.5.2] - 2026-10-05
+
+This release closes mcpp#771 and mcpp#770 and the follow-ups of mcpp#768: the
+link line of a shared library that is not the root's, native MSVC LTO and its
+meeting with export discovery, and `std.compat` on every Default row. It also
+fixes the Windows quoting of an argument that ends in a backslash, and makes a
+workspace's `[profile.*]` and its own package behave as members do. No default
+toolchain changes. The design record is
+`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`.
+
+### Fixed
+
+- **A shared library links with its own package's flags (#771).** A shared
+  library that is not the root's linked with the root's link line. In a
+  workspace a member's `build.mcpp` libraries did not reach the member's own
+  DLL (`LNK2019` on the symbol), and in every plan the root's private
+  `ldflags`, and an unrelated member's, reached a dependency's image. Such a
+  library now links with the graph's flags (the profile's `ldflags`, the words
+  `[target.<selector>.abi]` renders) and those of the packages its owner
+  reaches. E2E 884 reads the result from the produced images.
+- **Arguments ending in a backslash on Windows.** The quoting of a Windows
+  command line escaped `"` but not the backslashes before it, so an argument
+  ending in `\` closed no quote and shifted every argument after it. In a
+  Visual Studio developer environment, whose `WindowsSdkDir` ends in `\`, the
+  LLVM row's `import std` failed in the std module precompile. The quoting
+  follows the argv rules of the Windows runtime, and `WindowsSdkDir` is read
+  without its trailing separator, so one SDK has one cache key inside and
+  outside a developer environment. E2E 888.
+- **`import std.compat` on the GCC row.** libstdc++'s `bits/std.compat.cc` was
+  not built, and the first unit importing `std.compat` failed. It is built
+  beside `std` now, as SPEC-009 §6.2 requires of a Default row. E2E 886.
+- **`/bigobj` objects take part in export discovery.** The reader of a DLL's
+  objects reads the `/bigobj` layout. A `/GL` object, which has no symbol table,
+  and an import object are reported as what they are; both were reported as
+  `/bigobj` before.
+- **A workspace's `[profile.*]` reaches its members.** A virtual root's profiles
+  reached no member and were ignored without a diagnostic. Profiles are now
+  root-position keys, inherited by name, and a member's own table of a name
+  replaces the workspace's. In a workspace with its own `[package]`, the root
+  file's profile is the same for every selection, so `--workspace` plans one
+  graph and compiles a shared library once. E2E 885.
+- **The unit tests of mcpp run in mcpp.exe's code page.**
+  `Glob.EscapedSpellingIsUtf8WhateverTheName` constructed a Windows path from
+  bytes that only a single-byte code page converts, and failed on a machine in
+  the Chinese region; it passed on CI, whose code page is 1252. The test is
+  corrected, and mcpp's tests run in UTF-8 as mcpp.exe does.
+
+### Changed
+
+- **`lto = true` on cl.exe.** It compiled nothing differently while the build
+  summary said `+ lto`. It now compiles with `/GL` and links and archives with
+  `/LTCG`. A DLL whose exports are discovered cannot hold `/GL` objects: when
+  `windows_auto_export` is omitted, the packages linked into it compile with
+  `/GL-` and the build reports this once (`+ lto (partial)`); a stated `true`,
+  and `/GL` written into those packages' flags, are refused with
+  `lto-export-discovery`.
+- **The root package's `[build] ldflags` no longer reach a dependency's shared
+  library.** A dependency that needs a search path or a library states it in
+  its own `ldflags` or `build.mcpp`. When the root names one and the plan holds
+  a dependency's shared library, the build notes it under `link/root-flags`.
+- **A workspace's own package receives `[workspace.package]` and
+  `[workspace.build]`** once, as every member does.
+- **`std.compat` is built only when a unit imports it**, and an import of it
+  from a standard library that does not provide it is refused before any
+  compile, naming the library.
+- **`mcpp pack` ships static libraries without LTO intermediate code**, which
+  only the compiler release that wrote it can read.
+
+### Added
+
+- **`[test] windows_code_page`** states the code page of every discovered test
+  program on Windows, with the values of the target key of the same name.
+
 ## [2026.10.5.1] - 2026-10-05
 
 This release gives the program that `mcpp run` starts the terminal, and closes

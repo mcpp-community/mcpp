@@ -731,6 +731,9 @@ struct PrepareState {
     std::filesystem::path stdBmiPath;
     std::filesystem::path stdObjectPath;
     std::filesystem::path stdCompatBmiPath;
+    // A unit of the plan imports `std.compat` (2026.10.5.2): its BMI is built
+    // only then.
+    bool needsStdCompat = false;
     std::filesystem::path stdCompatObjectPath;
     std::optional<mcpp::toolchain::StdModuleDescription> describedStdModule;
     std::string stdFlagAndDialect;
@@ -752,6 +755,11 @@ std::expected<void, std::string> phase0_manifest_and_workspace(PrepareState& sta
 // plan.cpp: the member path of a package root within the workspace this build
 // runs in, or empty (W3).
 std::string workspace_member_of(const PrepareState& state, const std::filesystem::path& root);
+// windows_resources.cpp: the Windows resources of the plan's images (P13).
+std::expected<void, std::string> step13_windows_resources(PrepareState& state, BuildContext& ctx);
+// link_scope.cpp: what an image links with beyond its objects (P13, 2026.10.5.2).
+void note_root_link_words_withheld(const PrepareState& state, const BuildContext& ctx);
+std::expected<void, std::string> scope_lto(PrepareState& state, BuildContext& ctx);
 // graph.cpp: a dependency's link flags as its consumer's link reads them --
 // word by word, each search path made absolute against the package.
 std::vector<std::string> normalized_dependency_ldflags(
@@ -809,6 +817,15 @@ bool graph_or_targets_import_std(const mcpp::modgraph::Graph& graph,
                                  const mcpp::manifest::Manifest& manifest,
                                  const std::filesystem::path& projectRoot,
                                  const std::vector<mcpp::modgraph::PackageRoot>& packages);
+bool graph_or_targets_import_std_compat(const mcpp::modgraph::Graph& graph,
+                                        const mcpp::manifest::Manifest& manifest,
+                                        const std::filesystem::path& projectRoot,
+                                        const std::vector<mcpp::modgraph::PackageRoot>& packages);
+bool graph_or_targets_import(const mcpp::modgraph::Graph& graph,
+                             const mcpp::manifest::Manifest& manifest,
+                             const std::filesystem::path& projectRoot,
+                             const std::vector<mcpp::modgraph::PackageRoot>& packages,
+                             const std::function<bool(std::string_view)>& wanted);
 
 // toolchain_env.cpp: target rows, sysroots, the MSVC binding, build-program environments
 const mcpp::manifest::TargetEntry*

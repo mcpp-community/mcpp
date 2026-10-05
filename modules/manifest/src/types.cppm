@@ -180,7 +180,12 @@ struct Target {
     std::string                 soname;         // ABI name for shared libraries, e.g. libfoo.so.1
     // PE / MSVC ABI only: discover exports when the objects do not declare
     // any. False leaves export control entirely to the native linker inputs.
+    // Whether the manifest states it is kept beside the value, because an
+    // omitted key yields to cl.exe's `/GL` and a stated one does not
+    // (2026.10.5.2). Two members, for the reason `Profile` records.
     bool                        windowsAutoExport = true;
+    bool                        windowsAutoExportDeclared = false;
+    bool windows_auto_export() const { return windowsAutoExport; }
     // WHICH SYMBOLS THIS ARTIFACT PUBLISHES. Empty = every symbol, which is
     // what both platforms do today (ELF default visibility; PE gets an
     // auto-generated .def listing everything, mcpp.build.coff_exports).
@@ -762,6 +767,15 @@ inline std::string effective_c_standard(std::string_view declared) {
 }
 
 struct BuildConfig : BuildInputs {
+    // THE LINK FLAGS OF THE GRAPH, NOT OF THE ROOT PACKAGE (2026.10.5.2).
+    //
+    // The profile's `ldflags` and the words `[target.<selector>.abi]` renders
+    // for the link belong to every image the plan links. They are also in
+    // `ldflags`, which the root's own images read; this copy is what an image
+    // that is not the root's reads in their place, beside its own closure's
+    // flags, so that the root package's private `[build] ldflags` stay with
+    // the root (SPEC-004 §9.6).
+    std::vector<std::string> graphLdflags;
     // How `mcpp run` / `mcpp test` execute an artifact this host cannot run,
     // as an argv template (the artifact path is appended, or substituted for
     // `{}`).
@@ -1065,7 +1079,12 @@ struct BuildConfig : BuildInputs {
     // Resolved build-profile knobs (from [profile.<name>] + built-in defaults).
     std::string                         optLevel = "2";  // -O level
     bool                                debug    = false; // -g
-    bool                                lto      = false; // -flto
+    bool                                lto      = false; // -flto, /GL + /LTCG on cl.exe
+    // LTO was requested and some objects of the plan are compiled without it:
+    // those that feed a PE shared library whose exports are discovered, or a
+    // static library `mcpp pack` ships (2026.10.5.2). Set by prepare, read by
+    // the build summary, which says `+ lto (partial)` rather than `+ lto`.
+    bool                                ltoPartial = false;
     bool                                strip    = false; // link -s
     // `[build].default-profile` (alias: `profile`) — the project's DEFAULT
     // profile when no --profile/--dev/--release is passed. The global convention
@@ -2011,6 +2030,15 @@ struct Manifest {
     // optional vector, for the reason `TargetEntry::sysrootDeclared` records.
     std::vector<std::string>    testDiscover;
     bool                        testDiscoverDeclared = false;
+    // `[test] windows_code_page`: the ANSI code page of every discovered test
+    // program on Windows, in the vocabulary of the target key of the same
+    // name. Empty is `legacy`, the system's code page.
+    std::string                 testWindowsCodePage;
+    // Set once a workspace root's own package has received `[workspace.package]`
+    // and `[workspace.build]` (`mcpp::project::inherit_as_root_package`). The
+    // manifest is read on two paths before it is planned, and an appended
+    // vector must be appended once.
+    bool                        inheritedAsRootPackage = false;
     std::vector<ConditionalConfig> conditionalConfigs;  // [target.'cfg(...)'.build], deferred
     std::map<std::string, Profile> profiles;   // [profile.<name>]
     // [features] — feature name → implied features ("default" = default set).

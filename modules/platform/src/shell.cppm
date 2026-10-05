@@ -83,14 +83,35 @@ constexpr std::string_view silent_redirect = ">/dev/null 2>&1";
 
 namespace mcpp::platform::shell {
 
+// THE ARGV RULES OF CommandLineToArgvW AND THE MSVC RUNTIME, NOT ONLY `\"`.
+//
+// Backslashes are literal unless a run of them precedes a `"`: then 2n
+// backslashes stand for n and the quote ends (or begins) a quoted region,
+// and 2n+1 stand for n and a literal quote. Escaping only the quote is wrong
+// whenever backslashes precede it. The case that was met is an
+// argument ENDING in a backslash: `"C:\Kits\10\"` closes nothing, because
+// its last two characters are an escaped quote, and every following
+// argument shifts. Measured 2026-10-05 in a Visual Studio developer
+// environment, whose `WindowsSdkDir` ends in `\`: the LLVM row's std module
+// precompile received `Files\Microsoft`, `Visual` and the rest of the
+// command as separate inputs. Doubling such a run changes only arguments
+// that were parsed wrongly before.
 std::string quote_windows(std::string_view s) {
     std::string out;
     out.reserve(s.size() + 2);
     out.push_back('"');
+    std::size_t backslashes = 0;
     for (char c : s) {
-        if (c == '"') out += "\\\"";
-        else out.push_back(c);
+        if (c == '\\') { ++backslashes; continue; }
+        if (c == '"') {
+            out.append(backslashes * 2 + 1, '\\');
+        } else {
+            out.append(backslashes, '\\');
+        }
+        out.push_back(c);
+        backslashes = 0;
     }
+    out.append(backslashes * 2, '\\');
     out.push_back('"');
     return out;
 }
