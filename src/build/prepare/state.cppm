@@ -734,6 +734,11 @@ struct PrepareState {
     // A unit of the plan imports `std.compat` (2026.10.5.2): its BMI is built
     // only then.
     bool needsStdCompat = false;
+    // The packages whose units `scope_lto` compiles without LTO, and the word
+    // that does it (2026.10.5.2). A package's dependency-cache key folds the
+    // word in, because the same package is compiled with LTO in another plan.
+    std::set<std::string> ltoWithheld;
+    std::string           ltoOffWord;
     std::filesystem::path stdCompatObjectPath;
     std::optional<mcpp::toolchain::StdModuleDescription> describedStdModule;
     std::string stdFlagAndDialect;

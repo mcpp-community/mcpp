@@ -142,6 +142,8 @@ std::expected<void, std::string> scope_lto(PrepareState& state, BuildContext& ct
     if (withoutLto.empty()) return {};
 
     const std::string off = cl ? "/GL-" : "-fno-lto";
+    state.ltoWithheld = withoutLto;
+    state.ltoOffWord  = off;
     for (auto& cu : plan.compileUnits) {
         if (!withoutLto.contains(cu.packageName)) continue;
         cu.packageCxxflags.push_back(off);

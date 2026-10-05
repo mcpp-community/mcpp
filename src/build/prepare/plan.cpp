@@ -1532,6 +1532,13 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                                     state.storeRoots.empty() ? std::filesystem::path{}
                                                        : state.storeRoots.front());
             pa.sources = pkgSources[idx];
+            // What `scope_lto` appended to this package's units is part of
+            // their command, so it is part of the entry's identity.
+            if (state.ltoWithheld.contains(
+                    mcpp::build::qualified_package_name(state.packages[idx].manifest))) {
+                pa.cflags.push_back(state.ltoOffWord);
+                pa.cxxflags.push_back(state.ltoOffWord);
+            }
             const bool selfIsIndex = idx > 0
                 && idx - 1 < state.dep_cache_identities.size()
                 && state.dep_cache_identities[idx - 1].sourceKind == "version";
