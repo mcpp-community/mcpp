@@ -7,6 +7,9 @@ export MSYS2_ARG_CONV_EXCL='*'   # keep /GL etc. away from MSYS path conversion
 W="$RUNNER_TEMP/msvc-facts"; rm -rf "$W"; mkdir -p "$W"; cd "$W"
 
 run() { echo "\$ $*"; "$@" 2>&1; echo "rc=$?"; }
+# Git Bash ships /usr/bin/link (coreutils); name MSVC's linker by path.
+LINK="$(cygpath -u "${VCToolsInstallDir}")bin/Hostx64/x64/link.exe"
+link() { "$LINK" "$@"; }
 section() { echo; echo "### $1"; }
 hex() { od -A d -t x1 -N 64 "$1"; }
 
