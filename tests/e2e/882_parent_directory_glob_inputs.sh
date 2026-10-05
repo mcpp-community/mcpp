@@ -85,9 +85,10 @@ done
 
 # An absolute pattern is matched against absolute paths (#766): the root
 # package may watch a directory outside its tree by its absolute name.
-INPUTS_ABS=$(cd ../inputs && pwd -P)
-sed -i.bak "s|\"../inputs/\\*\\*/\\*.in\"|\"$INPUTS_ABS/**/*.in\"|" build.mcpp
-grep -q "$INPUTS_ABS/\*\*/\*.in" build.mcpp || fail "the fixture did not take the absolute pattern"
+# The host's own spelling: on Windows `C:/...`, not Git Bash's `/c/...`.
+INPUTS_HOST=$(host_path "$(cd ../inputs && pwd -P)")
+sed -i.bak "s|\"../inputs/\\*\\*/\\*.in\"|\"$INPUTS_HOST/**/*.in\"|" build.mcpp
+grep -q "$INPUTS_HOST/\*\*/\*.in" build.mcpp || fail "the fixture did not take the absolute pattern"
 build_count absolute 1
 printf 'c\n' > ../inputs/c.in
 build_count absolute-added 2
