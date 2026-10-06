@@ -114,6 +114,10 @@ TEST(MsvcCompilerVersion, IsReadFromTheCompilerClangReadsForTheTarget) {
     EXPECT_EQ(msvc::compiler_version_in_tools_dir(tools, "x86_64"),  "19.51.36260");
     EXPECT_EQ(msvc::compiler_version_in_tools_dir(tools, "aarch64"), "19.51.36261");
     EXPECT_EQ(msvc::compiler_version_in_tools_dir(tools, "i686"),    "19.51.36262");
+    // Every 32-bit x86 spelling is the x86 directory (2026.10.5.3; i386-i586
+    // used to read x64's compiler).
+    EXPECT_EQ(msvc::compiler_version_in_tools_dir(tools, "i386"),    "19.51.36262");
+    EXPECT_EQ(msvc::compiler_version_in_tools_dir(tools, "i586"),    "19.51.36262");
     // No compiler where clang looks: no version, and clang falls back itself.
     EXPECT_EQ(msvc::compiler_version_in_tools_dir(tools / "absent", "x86_64"), "");
     std::error_code ec;
@@ -564,6 +568,8 @@ TEST(MsvcRedist, ToolsDirArchMapping) {
     auto toolsDir = t.clPath.parent_path().parent_path().parent_path().parent_path();
     EXPECT_FALSE(msvc::vc_redist_dir_for_tools_dir(toolsDir, "aarch64").empty());
     EXPECT_FALSE(msvc::vc_redist_dir_for_tools_dir(toolsDir, "i686").empty());
+    EXPECT_EQ(msvc::vc_redist_dir_for_tools_dir(toolsDir, "i386"),
+              msvc::vc_redist_dir_for_tools_dir(toolsDir, "i686"));
     EXPECT_FALSE(msvc::vc_redist_dir_for_tools_dir(toolsDir, "x86_64").empty());
     // An architecture this toolset was never given a redist for finds none —
     // it does not fall back to a different one.

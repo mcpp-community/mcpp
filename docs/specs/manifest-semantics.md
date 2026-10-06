@@ -5,11 +5,11 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.12 |
-| **最后修改** | 2026-10-05 |
+| **版本** | 1.13 |
+| **最后修改** | 2026-10-06 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
-| **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md` |
+| **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`<br>`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md` |
 | **相关使用文档** | [docs/04 —— mcpp.toml 字段参考](../04-mcpp-toml.md) |
 
 ## 规范用语
@@ -299,7 +299,11 @@ feature-deps          feature-xlings         ← 限定词是门
 `x86_64-unknown-linux-gnu` 找到 `[target.x86_64-linux-gnu]`。命令行的 `--toolchain`
 (`MCPP_TOOLCHAIN`)仍优先于行的 `toolchain`。
 
-**状态:已实现**(mcpp 2026.9.27.1,mcpp#704)。
+该比较中,架构段的 `amd64`、`arm64` 与 `x86` 依次与 `x86_64`、`aarch64` 与 `i686` 相同:
+`[target.x86-windows-msvc]` 即 `i686-windows-msvc` 的行,交给工具的也是后者的拼写。
+`i386`、`i486` 与 `i586` 是不同的目标,**禁止**与 `i686` 相互替代。
+
+**状态:已实现**(mcpp 2026.9.27.1,mcpp#704;`x86` 自 mcpp 2026.10.5.3)。
 
 ### 4.7 载荷的来源与供给时机
 
@@ -634,3 +638,4 @@ mcpp 2026.9.26.2,#703)。**
 | 1.10 | 2026-09-28 | 多个命中的条件表按选择器的具体程度生效,三元组高于操作系统高于族,字典序只打破平局(mcpp 2026.9.28.2,mcpp#728,2026-09-28 设计 D7):§3.1.1 陈述规则与具体程度,§3.1 与 §9 第 2 条的「按清单顺序」随之更正;§3.1.1 转为已实现。 |
 | 1.11 | 2026-10-05 | 新增 §5.3:只在一个平台生效的键带平台前缀(mcpp 2026.10.5.1,#766;`auto_export` 在发布前更名为 `windows_auto_export`)。§1 与 §6 引用的字段准入条件改指 docs/90,字段参考改指 docs/04。 |
 | 1.12 | 2026-10-05 | mcpp 2026.10.5.2:§9 第 1 条补上带 `[package]` 的工作空间根自己的包;第 10 条把 `[profile.<name>]` 列为根位置的键;新增第 11 条链接 flag 的作用域(#771);新增 §11 链接期优化与导出发现(#770)与 `[test] windows_code_page`;§7 补第 21 至 23 条判据。 |
+| 1.13 | 2026-10-06 | mcpp 2026.10.5.3:§4.6 陈述架构段的等同拼写,`x86` 即 `i686`;`i386` 至 `i586` 不与 `i686` 相互替代。 |

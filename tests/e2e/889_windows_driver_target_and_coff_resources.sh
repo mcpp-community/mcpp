@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # requires: msvc
 # mcpp#775: the driver link and COFF resource must target the selected machine.
+# 2026.10.5.3: `x86-windows-msvc` is the i686 row.
 set -e
 source "$(dirname "$0")/_host_path.sh"
 TMP=$(mktemp -d)
@@ -18,10 +19,14 @@ pe_machine() {
     offset=$(od -An -tu4 -j60 -N4 "$1" | tr -d ' \n')
     od -An -tu2 -j"$((offset + 4))" -N2 "$1" | tr -d ' \n'
 }
-for arch in i686 x86_64; do
+# `x86` is MSVC's spelling of i686 (2026.10.5.3): the same row, reached by the
+# name an MSVC user writes. Before, it reached clang as `x86-pc-windows-msvc`.
+for arch in i686 x86_64 x86; do
     machine=332
     [ "$arch" != x86_64 ] || machine=34404
-    for case_name in c cxx dll; do
+    cases="c cxx dll"
+    [ "$arch" != x86 ] || cases=cxx
+    for case_name in $cases; do
         mkdir -p "$arch/$case_name/src"
         cd "$arch/$case_name"
         kind=bin

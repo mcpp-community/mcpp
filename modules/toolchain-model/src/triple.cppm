@@ -377,13 +377,35 @@ struct Triple {
         return {};
     }
 
+    // THE 32-BIT x86 ISA, ASKED IN ONE PLACE.
+    //
+    // Four spellings name it, and to clang they are not synonyms -- each sets
+    // a different baseline CPU. They are one answer to the question every
+    // caller here asks: the NASM format, the COFF machine of a resource, the
+    // MSVC directory, the decoration of a C symbol. Six sites used to answer it
+    // for themselves, with four different sets; `i386-windows-msvc` reached the
+    // x64 toolset directory through two of them. `x86` is not among the
+    // spellings because `parse` writes it `i686`.
+    bool is_x86_32() const {
+        return arch == "i386" || arch == "i486" || arch == "i586" || arch == "i686";
+    }
+
+    // MSVC's name for this architecture: the directory under a toolset's
+    // `bin/Host<h>/`, the Windows SDK's `bin/<version>/`, and the redistributable
+    // CRT. Empty for an architecture MSVC ships no directory for.
+    std::string_view msvc_arch() const {
+        if (arch == "x86_64")  return "x64";
+        if (arch == "aarch64") return "arm64";
+        if (is_x86_32())       return "x86";
+        return {};
+    }
+
     // NASM `-f` output format for this target. NASM is x86-family only:
     // nullopt off x86, and the caller must hard-error (suggesting cfg-gated
     // sources) rather than pick a format.
     std::optional<std::string> nasm_format() const {
         bool x64 = arch == "x86_64";
-        bool x32 = arch == "x86" || arch == "i386" || arch == "i486"
-                || arch == "i586" || arch == "i686";
+        bool x32 = is_x86_32();
         if (!x64 && !x32) return std::nullopt;
         if (os == "windows") return x64 ? "win64" : "win32";
         if (os == "macos")   return x64 ? "macho64" : "macho32";
@@ -1267,6 +1289,11 @@ bool starts_with(std::string_view s, std::string_view p) {
 std::string normalize_arch(std::string_view a) {
     if (a == "arm64") return "aarch64";   // Apple/xlings spelling → GNU
     if (a == "amd64") return "x86_64";
+    // MSVC's spelling. No LLVM tool accepts it as an architecture -- measured:
+    // clang and llvm-windres both answer `unknown target triple
+    // 'x86-pc-windows-msvc'` -- and Windows' 32-bit baseline is i686, the
+    // triple MSVC's own `x86` toolset reports.
+    if (a == "x86")   return "i686";
     return std::string(a);
 }
 

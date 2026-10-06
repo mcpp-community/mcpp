@@ -7,6 +7,7 @@ import mcpp.build.coff_exports;
 import mcpp.modgraph.glob;
 import mcpp.platform.fs;
 import mcpp.platform.process;
+import mcpp.toolchain.triple;
 
 export namespace mcpp::build::pe {
 
@@ -252,8 +253,8 @@ discover_exports(std::span<const std::filesystem::path> objects, const LLVMTools
         if (!arg) return error(obj, "object has no UTF-8 spelling");
         arguments.push_back(std::move(*arg));
     }
-    const bool i386 = tools.target.starts_with("i386-") || tools.target.starts_with("i686-")
-        || tools.target.starts_with("x86-");
+    const auto targetTriple = mcpp::toolchain::triple::parse(tools.target);
+    const bool i386 = targetTriple && targetTriple->is_x86_32();
     std::vector<std::size_t> lto;
     for (std::size_t i = 0; i < objects.size(); ++i)
         if (bitcode[i]) lto.push_back(i);

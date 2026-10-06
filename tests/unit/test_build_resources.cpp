@@ -3,12 +3,14 @@
 import std;
 import mcpp.manifest;
 import mcpp.build.resources;
+import mcpp.platform;
+import mcpp.toolchain.detect;
 
 namespace res = mcpp::build::resources;
 namespace fs  = std::filesystem;
 
 TEST(BuildResources, CoffTargetFollowsTheTargetInsteadOfTheHost) {
-    const res::RcTool llvm{"/selected/bin/llvm-windres.exe", "gnu"};
+    const res::RcTool llvm{"/selected/bin/llvm-windres.exe", "gnu", true};
     EXPECT_EQ(res::coff_target_flag(llvm, "i686-windows-msvc"),
               "--target=i686-pc-windows-msvc");
     EXPECT_EQ(res::coff_target_flag(llvm, "x86_64-windows-msvc"),
@@ -22,6 +24,9 @@ TEST(BuildResources, CoffTargetFollowsTheTargetInsteadOfTheHost) {
     }
     EXPECT_EQ(res::coff_target_flag(llvm, "i386-windows-msvc"),
               "--target=i386-pc-windows-msvc");
+    // MSVC's spelling reaches LLVM as the triple LLVM accepts (#776 review).
+    EXPECT_EQ(res::coff_target_flag(llvm, "x86-windows-msvc"),
+              "--target=i686-pc-windows-msvc");
     EXPECT_EQ(res::coff_target_flag(gnu, "x86_64-windows-gnu"), "--target=pe-x86-64");
     EXPECT_TRUE(res::coff_target_flag({"rc.exe", "msvc"}, "i686-windows-msvc").empty());
     EXPECT_TRUE(res::coff_target_flag({"llvm-rc.exe", "msvc"}, "x86_64-windows-msvc").empty());
@@ -58,6 +63,74 @@ struct TempDir {
 };
 
 } // namespace
+
+// ─── Which windres: decided where the tool is found ───────────────────────
+
+TEST(BuildResources, LlvmWindresIsRecognisedThroughTheSymlinkThatNamesIt) {
+    if constexpr (mcpp::platform::is_windows)
+        GTEST_SKIP() << "creating a symlink needs a privilege a Windows runner may lack";
+    TempDir d;
+    const auto real = d.write("llvm-rc", "");
+    std::error_code ec;
+    fs::create_symlink(real, d.path / "llvm-windres", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    fs::create_symlink(d.path / "llvm-windres", d.path / "i686-w64-mingw32-windres", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    const auto gnu = d.write("windres", "");
+    EXPECT_TRUE(res::is_llvm_windres(d.path / "llvm-windres"));
+    EXPECT_TRUE(res::is_llvm_windres(d.path / "i686-w64-mingw32-windres"));
+    EXPECT_FALSE(res::is_llvm_windres(gnu));
+    EXPECT_FALSE(res::is_llvm_windres(d.path / "absent-windres"));
+
+    // And `find_rc_tool` records it: the llvm-mingw spelling gets the triple.
+    mcpp::toolchain::Toolchain tc;
+    tc.binaryPath   = d.path / "clang";
+    tc.targetTriple = "i686-windows-gnu";
+    auto tool = res::find_rc_tool(tc, "gnu");
+    ASSERT_TRUE(tool.has_value());
+    EXPECT_EQ(tool->name(), "i686-w64-mingw32-windres");
+    EXPECT_TRUE(tool->llvm);
+    EXPECT_EQ(res::coff_target_flag(*tool, tc.targetTriple), "--target=i686-w64-windows-gnu");
+}
+
+// ─── The build program's manifest object: the command is part of it ───────
+
+TEST(BuildResources, TheManifestObjectIsRemadeWhenItsCommandChanges) {
+    if constexpr (mcpp::platform::is_windows)
+        GTEST_SKIP() << "the stand-in resource compiler is a POSIX shell script";
+    TempDir d;
+    // A windres that writes the words it was given into its output.
+    const auto tool = d.write("windres",
+        "#!/bin/sh\nall=\"$*\"\n"
+        "while [ $# -gt 0 ]; do [ \"$1\" = -o ] && out=\"$2\"; shift; done\n"
+        "printf '%s\\n' \"$all\" > \"$out\"\n");
+    fs::permissions(tool, fs::perms::owner_all);
+    mcpp::toolchain::Toolchain tc;
+    tc.binaryPath   = d.path / "gcc";
+    tc.targetTriple = "x86_64-windows-gnu";
+    const auto read = [](const fs::path& p) {
+        std::ifstream in(p, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+
+    auto first = res::compile_utf8_manifest(tc, "gnu", d.path / "out", "m");
+    ASSERT_TRUE(first.has_value()) << first.error();
+    EXPECT_NE(read(*first).find("--target=pe-x86-64"), std::string::npos);
+
+    // The same command reuses the object: a marker written into it survives.
+    { std::ofstream(*first, std::ios::binary) << "reused"; }
+    auto again = res::compile_utf8_manifest(tc, "gnu", d.path / "out", "m");
+    ASSERT_TRUE(again.has_value()) << again.error();
+    EXPECT_EQ(read(*again), "reused");
+
+    // Another target is another command, so the object is made again. Before
+    // 2026.10.5.3 only the manifest and the script were compared, and this
+    // returned the x86-64 object.
+    tc.targetTriple = "i686-windows-gnu";
+    auto other = res::compile_utf8_manifest(tc, "gnu", d.path / "out", "m");
+    ASSERT_TRUE(other.has_value()) << other.error();
+    EXPECT_NE(read(*other).find("--target=pe-i386"), std::string::npos);
+}
 
 // ─── Synthesis: the mcpp#365 headline ─────────────────────────────────────
 //

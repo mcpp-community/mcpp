@@ -32,6 +32,7 @@ import std;
 import mcpp.platform;
 import mcpp.toolchain.model;
 import mcpp.toolchain.probe;
+import mcpp.toolchain.triple;
 import mcpp.xlings;
 
 export namespace mcpp::toolchain::msvc {
@@ -444,6 +445,17 @@ std::string compiler_version_in_tools_dir(const std::filesystem::path& toolsDir,
 namespace mcpp::toolchain::msvc {
 
 namespace {
+
+// MSVC's directory name for a GNU-spelled architecture, `x64` when MSVC has
+// none: the toolset's `bin/Host<h>/<arch>` and the redistributable CRT's.
+// The question is the triple module's (`Triple::msvc_arch`), asked here
+// rather than answered again.
+std::string_view msvc_arch_dir(std::string_view archGnu) {
+    mcpp::toolchain::triple::Triple t;
+    t.arch = std::string(archGnu);
+    const auto arch = t.msvc_arch();
+    return arch.empty() ? std::string_view{"x64"} : arch;
+}
 
 #if defined(_WIN32)
 
@@ -1450,9 +1462,7 @@ std::string compiler_version_in_tools_dir(const std::filesystem::path& toolsDir,
     // have chosen, or the flag would change what a build compiles for.
     const std::string_view host =
         mcpp::platform::host_arch == std::string_view("x86_64") ? "Hostx64" : "Hostx86";
-    std::string_view target = "x64";
-    if (archGnu == "aarch64")                            target = "arm64";
-    else if (archGnu == "i686" || archGnu == "x86")      target = "x86";
+    const auto target = msvc_arch_dir(archGnu);
     const auto cl = toolsDir / "bin" / host / target / "cl.exe";
     std::error_code ec;
     if (!std::filesystem::is_regular_file(cl, ec)) return {};
@@ -1611,10 +1621,7 @@ std::filesystem::path vc_redist_dir_for_tools_dir(
     auto vc = toolsDir.parent_path()   // Tools/MSVC
                   .parent_path()      // Tools
                   .parent_path();     // <VC>
-    std::string_view arch = "x64";
-    if (archGnu == "aarch64")                    arch = "arm64";
-    else if (archGnu == "i686" || archGnu == "x86") arch = "x86";
-    return vc_redist_dir_under(vc, arch);
+    return vc_redist_dir_under(vc, msvc_arch_dir(archGnu));
 }
 
 std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {

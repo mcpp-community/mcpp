@@ -4,6 +4,44 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.5.3] - 2026-10-06
+
+This release carries the fix of mcpp#775 (#776), in which an x86 Windows build
+linked against the host's runtime and received an x64 resource object, and the
+follow-ups of its review: MSVC's `x86` spelling, one answer to the question
+"is this 32-bit x86", how LLVM's windres is recognised, and when the build
+program's manifest resource is compiled again. No default toolchain changes.
+The design record is
+`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md`.
+
+### Fixed
+
+- **An x86 Windows build links against x86 libraries and receives an x86
+  resource object (#775, #776).** The clang driver link on a Windows host
+  carried no `--target`, so the driver searched the x64 MSVC libraries; windres
+  received no target and produced an x64 COFF object. Both links of C and C++
+  carry the target now; LLVM's windres receives the target triple and GNU
+  windres the BFD format (`pe-i386`, `pe-x86-64`). E2E 889.
+- **`x86` names the i686 target.** `[target.x86-windows-msvc]` and
+  `--target x86-windows-msvc` reached clang as `x86-pc-windows-msvc`, which no
+  LLVM tool accepts. `x86` is written `i686` when a triple is read, as `amd64`
+  and `arm64` are written `x86_64` and `aarch64`; a section and a `--target`
+  match whichever spelling either uses (SPEC-004 §4.6). E2E 889.
+- **`i386`, `i486` and `i586` on the MSVC ABI select the x86 toolset.** The
+  MSVC directory of the target's compiler and redistributable runtime was
+  `x64` for them, and export discovery read the LLVM bitcode of their DLLs
+  without removing the leading underscore that 32-bit x86 adds to a C name. Every such question is answered by the triple
+  module now (`Triple::is_x86_32`, `Triple::msvc_arch`).
+
+### Changed
+
+- **LLVM's windres is recognised where it is found**, by its name or by the
+  file its symlink resolves to, so llvm-mingw's `<triple>-windres` receives a
+  target triple rather than a BFD format name.
+- **The build program's UTF-8 manifest resource is compiled again when its
+  command changes**, as every edge of the build graph is; before, only the
+  manifest and the script were compared.
+
 ## [2026.10.5.2] - 2026-10-05
 
 This release closes mcpp#771 and mcpp#770 and the follow-ups of mcpp#768: the

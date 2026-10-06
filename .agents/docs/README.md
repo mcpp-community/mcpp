@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-326 records.
+327 records.
 
 ## By subject
 
@@ -30,6 +30,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### design
 
+- [2026.10.5.3 发布方案：32 位 x86 的架构词汇、资源编译器的识别与增量（#776 后续）](2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md) — active
 - [下一个版本的发布方案：标准库模块、原生 MSVC LTO 与导出发现、共享库的链接配置、Windows 参数引号（#768 后续、#770、#771）](2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md) — active
 - [`mcpp run` hands the terminal to the program, and the follow-ups of #761, #763 and #765 (#766)](2026-10-05-run-terminal-handoff-and-766-follow-ups-design.md) — landed
 - [PR CI acceleration and the toolchain specification (#756, #757, #669)](2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md) — active
@@ -117,6 +118,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-10
 
+- [2026.10.5.3 发布方案：32 位 x86 的架构词汇、资源编译器的识别与增量（#776 后续）](2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md) — active
 - [下一个版本的发布方案：标准库模块、原生 MSVC LTO 与导出发现、共享库的链接配置、Windows 参数引号（#768 后续、#770、#771）](2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md) — active
 - [`mcpp run` hands the terminal to the program, and the follow-ups of #761, #763 and #765 (#766)](2026-10-05-run-terminal-handoff-and-766-follow-ups-design.md) — landed
 - [PR CI acceleration and the toolchain specification (#756, #757, #669)](2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md) — active

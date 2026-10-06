@@ -84,7 +84,7 @@ constexpr std::string_view host_arch =
 #elif defined(__x86_64__) || defined(_M_X64)
     "x86_64";
 #elif defined(__i386__) || defined(_M_IX86)
-    "x86";
+    "i686";   // the GNU spelling; `x86` is MSVC's, and `triple::parse` writes it `i686`
 #elif defined(__riscv) && (__riscv_xlen == 64)
     "riscv64";
 #else

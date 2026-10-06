@@ -313,9 +313,9 @@ namespace {
 
 // #734 E2: the MSVC architecture directory name of a target triple.
 std::string msvc_arch_of(std::string_view triple) {
-    if (triple.starts_with("aarch64") || triple.starts_with("arm64")) return "arm64";
-    if (triple.starts_with("i686") || triple.starts_with("i386") || triple.starts_with("x86-")) return "x86";
-    return "x64";
+    const auto tt = mcpp::toolchain::triple::parse(triple);
+    const auto arch = tt ? tt->msvc_arch() : std::string_view{};
+    return arch.empty() ? "x64" : std::string(arch);
 }
 
 // The `bin/Host<h>/<arch>` directory of an MSVC toolset that holds cl.exe,

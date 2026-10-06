@@ -1751,6 +1751,15 @@ generates the resource script automatically.
 **not** need (and cannot use) a `cfg(windows)` predicate — write it once,
 unconditionally.
 
+**The resource object is the target's.** rc.exe and llvm-rc produce a `.res`,
+which carries no machine and is linked as it is. windres produces a COFF object,
+which does: mcpp gives LLVM's windres the target triple and GNU windres the BFD
+format (`pe-i386`, `pe-x86-64`), so an `i686` image receives an i386 object on an
+x86_64 machine (2026.10.5.3+; LLVM's windres is recognised by its name or by the
+file its symlink resolves to). The resource that gives a build program the
+UTF-8 code page is compiled the same way for the host, and is compiled again
+when its command changes.
+
 **A declared file that does not exist fails the build — on every target.** A
 resource is a build input like a source file; mcpp will not quietly ship a
 binary without it. Validation is deliberately *not* PE-gated: whether a path

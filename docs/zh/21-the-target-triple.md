@@ -38,6 +38,12 @@ C 库。选中 `x86_64-linux-musl` 就是选中 musl-gcc 的 payload，选中
 | `os` | 操作系统，或 `none` | `linux`、`windows`、`macos`、`ios`、`emscripten`、`none` |
 | `env` | 见下文 —— 它在每个平台上是不同的一根轴 | `gnu`、`musl`、`msvc`、`android`、`elf` |
 
+架构段采用 GNU 写法。另有三种写法在读取三元组时被改写为 GNU 写法，因此
+`[target.<triple>]` 段与 `--target` 无论用哪一种都能互相匹配：`amd64` 即
+`x86_64`，`arm64` 即 `aarch64`，MSVC 的 `x86` 即 `i686`（2026.10.5.3+；没有
+任何 LLVM 工具接受 `x86` 作为架构名）。`i386`、`i486` 与 `i586` 保持各自的
+含义，因为它们各自选择不同的基线 CPU。
+
 第三段值得留意，因为它在不同平台上命名的并不是同一类东西：
 
 | 平台 | `env` 命名的对象 | 取值 |

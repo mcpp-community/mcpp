@@ -42,6 +42,13 @@ and the build reports what it resolved.
 | `os` | operating system, or `none` | `linux`, `windows`, `macos`, `ios`, `emscripten`, `none` |
 | `env` | see below — it is a different axis per platform | `gnu`, `musl`, `msvc`, `android`, `elf` |
 
+The architecture is spelled the GNU way. Three other spellings are accepted and
+written in it when the triple is read, so a `[target.<triple>]` section and a
+`--target` match whichever was used: `amd64` is `x86_64`, `arm64` is `aarch64`,
+and MSVC's `x86` is `i686` (2026.10.5.3+; no LLVM tool accepts `x86` as an
+architecture). `i386`, `i486` and `i586` keep their own meaning, because each
+selects a different baseline CPU.
+
 The third segment is the one that repays attention, because it does not name
 the same kind of thing everywhere:
 

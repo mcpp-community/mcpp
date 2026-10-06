@@ -64,8 +64,21 @@ struct RcTool {
     //          take directly. llvm-rc preprocesses by default and accepts
     //          /I and /D (measured; there is no depfile option).
     std::string           style;
+    // A "gnu"-style tool that is LLVM's windres, decided where the tool is
+    // found (`is_llvm_windres`) rather than guessed where it is used. It takes
+    // a target triple and preprocesses for it; GNU windres takes only a BFD
+    // format name.
+    bool                  llvm = false;
     std::string           name() const { return path.filename().string(); }
 };
+
+// Is the windres at `p` LLVM's? By its name, or by the name of the file it
+// resolves to: llvm-mingw installs `<triple>-windres` as a symlink to
+// `llvm-windres`, and an LLVM distribution installs `llvm-windres` as one to
+// `llvm-rc`. No process is run. A renamed COPY reads as GNU windres, which is
+// harmless -- llvm-windres accepts the BFD names too, and only its
+// preprocessing triple falls back to MinGW's.
+bool is_llvm_windres(const std::filesystem::path& p);
 
 // Find the resource compiler for `tc`, searching PAYLOAD-RELATIVE locations
 // only — never the host PATH.
@@ -168,17 +181,26 @@ compile_utf8_manifest(const mcpp::toolchain::Toolchain& tc,
 
 namespace mcpp::build::resources {
 
+bool is_llvm_windres(const std::filesystem::path& p) {
+    const auto named = [](const std::filesystem::path& q) {
+        const auto n = q.filename().string();
+        return n.find("llvm-windres") != std::string::npos
+            || n.find("llvm-rc") != std::string::npos;
+    };
+    if (named(p)) return true;
+    std::error_code ec;
+    const auto real = std::filesystem::canonical(p, ec);
+    return !ec && named(real);
+}
+
 std::string coff_target_flag(const RcTool& tool, std::string_view targetTriple) {
     if (tool.style != "gnu") return {};
     auto trip = mcpp::toolchain::triple::parse(targetTriple);
     if (!trip) return {};
     // LLVM accepts a full triple; GNU windres takes a BFD format name.
     // BFD's pe-i386 denotes 32-bit x86 COFF, including i686 targets.
-    if (tool.name().find("llvm-windres") != std::string::npos)
-        return "--target=" + trip->llvm_triple();
-    if (trip->arch == "x86" || trip->arch == "i386" || trip->arch == "i486"
-        || trip->arch == "i586" || trip->arch == "i686")
-        return "--target=pe-i386";
+    if (tool.llvm) return "--target=" + trip->llvm_triple();
+    if (trip->is_x86_32())      return "--target=pe-i386";
     if (trip->arch == "x86_64") return "--target=pe-x86-64";
     return {};
 }
@@ -283,12 +305,12 @@ std::optional<RcTool> find_rc_tool(const mcpp::toolchain::Toolchain& tc,
     }
 
     const auto names = gnu_candidates(tc.targetTriple);
-    if (auto p = probe_dir(compilerDir, names)) return RcTool{*p, "gnu"};
+    if (auto p = probe_dir(compilerDir, names)) return RcTool{*p, "gnu", is_llvm_windres(*p)};
     // Cross payloads keep binutils in a sibling <triple>/bin.
     if (!tc.targetTriple.empty()) {
         auto root = compilerDir.parent_path();
         if (auto p = probe_dir(root / tc.targetTriple / "bin", names))
-            return RcTool{*p, "gnu"};
+            return RcTool{*p, "gnu", is_llvm_windres(*p)};
     }
     return std::nullopt;
 }
@@ -331,11 +353,6 @@ compile_utf8_manifest(const mcpp::toolchain::Toolchain& tc,
         os << text;
         return true;
     };
-    bool changed = write_if_changed(manifest, utf8_code_page_manifest());
-    changed = write_if_changed(script, std::format(
-        "1 24 \"{}\"\n", escape_rc_string(manifest.generic_string()))) || changed;
-    if (!changed && std::filesystem::is_regular_file(out, ec)) return out;
-
     // The same spelling as the `rc_object` rule of the ninja backend.
     std::vector<std::string> argv = {tool->path.string()};
     if (auto target = coff_target_flag(*tool, tc.targetTriple); !target.empty())
@@ -346,6 +363,19 @@ compile_utf8_manifest(const mcpp::toolchain::Toolchain& tc,
         for (auto a : {"-O", "coff", "--codepage=65001", "-o"}) argv.emplace_back(a);
     argv.push_back(out.string());
     argv.push_back(script.string());
+
+    // THE COMMAND IS PART OF WHAT THE OBJECT IS, as it is on every edge of the
+    // ninja graph: a different tool, or a different target for it, makes a
+    // different object from the same script. Its words are kept beside the
+    // output and compared like the two inputs.
+    std::string command;
+    for (auto const& a : argv) command += a + '\n';
+    bool changed = write_if_changed(manifest, utf8_code_page_manifest());
+    changed = write_if_changed(script, std::format(
+        "1 24 \"{}\"\n", escape_rc_string(manifest.generic_string()))) || changed;
+    changed = write_if_changed(dir / (std::string(stem) + ".cmd"), command) || changed;
+    if (!changed && std::filesystem::is_regular_file(out, ec)) return out;
+
     // rc.exe resolves through the SDK PATH the toolchain states for itself.
     std::vector<std::pair<std::string, std::string>> env;
     for (auto const& ev : tc.envOverrides) env.emplace_back(ev.key, ev.value);
