@@ -63,11 +63,8 @@ namespace mcpp::build {
 // index is first opened, which can be hundreds of lines earlier; the message
 // that STOPS the build has to carry the cause, because that is the one a user
 // reads. See mcpp::pm::unusable_index_hint.
-// Spelling-independent `[target.<triple>]` lookup.
-//
-// A section keyed `x86_64-w64-mingw32` matches a resolved `x86_64-windows-gnu`,
-// and unparseable keys compare exactly (the escape hatch for custom triples).
 // The project's `[target.<triple>].sysroot`, or nullptr when it declared none.
+// The row is found by `find_target_entry` (prepare_inputs), as every row is.
 const std::string*
 sysroot_override(const mcpp::manifest::Manifest& m,
                  const mcpp::toolchain::triple::Triple& t) {

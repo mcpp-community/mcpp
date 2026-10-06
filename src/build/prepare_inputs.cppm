@@ -499,7 +499,8 @@ inline std::string vocabulary_sentence() {
 // keyed `x86-windows-msvc` the `i686-windows-msvc` row. Every reader of a row
 // asks here. Readers that compared the key exactly gave a section that applied
 // to `toolchain` and not to `runner`, which is a defect nobody would think to
-// look for -- measured for the `x86` spelling (2026.10.5.3).
+// look for -- measured for the `x86` spelling (2026.10.5.3). A key the parser
+// does not know compares exactly: the escape hatch for a custom triple.
 inline const mcpp::manifest::TargetEntry*
 find_target_entry(const mcpp::manifest::Manifest& m,
                   const mcpp::toolchain::triple::Triple& t) {
