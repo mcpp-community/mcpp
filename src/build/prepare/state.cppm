@@ -833,9 +833,6 @@ bool graph_or_targets_import(const mcpp::modgraph::Graph& graph,
                              const std::function<bool(std::string_view)>& wanted);
 
 // toolchain_env.cpp: target rows, sysroots, the MSVC binding, build-program environments
-const mcpp::manifest::TargetEntry*
-find_target_entry(const mcpp::manifest::Manifest& m,
-                  const mcpp::toolchain::triple::Triple& t);
 const std::string*
 sysroot_override(const mcpp::manifest::Manifest& m,
                  const mcpp::toolchain::triple::Triple& t);

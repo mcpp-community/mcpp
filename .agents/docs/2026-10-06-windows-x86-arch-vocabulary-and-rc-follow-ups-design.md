@@ -22,6 +22,7 @@ status: active
 | D2 | 6 处 | 另加 `mcpp.platform` 的 `host_arch`：32 位宿主由 `"x86"` 改为 `"i686"` | 它绕过 `parse` 直接成为 `host_triple()` 的架构段；mcpp 不发布 32 位宿主，无可见变化 |
 | D3 | `enum class Flavour` | `RcTool::llvm`（bool）与导出的 `is_llvm_windres(path)` | `style` 已经区分 msvc 与 gnu，第三个取值只在 gnu 内部有意义；bool 不重复 `style` |
 | D5 | 不改 specs | SPEC-004 升到 1.13：§4.6 陈述架构段的等同拼写 | §4.6 已规定 `[target.X]` 的查找与拼写无关，`x86` 改变了这条规则的内容 |
+| D6（新增） | — | `find_target_entry` 移入 `mcpp.build.prepare_inputs` 并导出；`runner` 的两处读取（prepare 的冲突检查、`execute` 的 `choose_device_action`）与 `min_api_level` 的两处读取改用它 | 自审发现：这四处按键精确比较，`[target.x86-windows-msvc]` 在 D1 之后对 `toolchain`/`sysroot` 生效而对 `runner` 不生效。`toolchain` 与 `sysroot` 一直经由与拼写无关的查找，规则本身不变，只是让每个读取者使用它。单测 `TargetRowSpelling` |
 
 ---
 

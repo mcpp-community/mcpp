@@ -134,9 +134,9 @@ static void step6_check_version_floors_closure(PrepareState& state) {
                 const auto value = min_platform_version(*state.m, *t, state.tc->binaryPath);
                 std::string name, origin;
                 if (t->is_android()) {
-                    auto row = state.m->targetOverrides.find(t->str());
+                    auto* row = find_target_entry(*state.m, *t);
                     name = "android.api-level";
-                    origin = row != state.m->targetOverrides.end() && row->second.minApiLevel > 0
+                    origin = row && row->minApiLevel > 0
                         ? std::format("[target.{}] min_api_level", t->str())
                         : std::format("the toolchain's lowest supported level, because "
                                       "[target.{}] min_api_level is not set", t->str());

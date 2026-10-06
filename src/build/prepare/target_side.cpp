@@ -1755,16 +1755,20 @@ static std::expected<void, std::string> step9_root_build_program(PrepareState& s
             // project writes outranks every supplied one where the runner is
             // looked up, so a name the manifest declares is not refused here.
             {
-                const auto rowKey = [&]() -> std::string {
-                    if (!state.tc) return {};
-                    auto t = mcpp::toolchain::triple::parse(state.tc->targetTriple);
-                    return t ? t->str() : state.tc->targetTriple;
+                const auto parsedTarget = state.tc
+                    ? mcpp::toolchain::triple::parse(state.tc->targetTriple)
+                    : std::nullopt;
+                const auto rowKey = parsedTarget ? parsedTarget->str()
+                                  : state.tc     ? state.tc->targetTriple : std::string{};
+                const auto* row = [&]() -> const mcpp::manifest::TargetEntry* {
+                    if (parsedTarget) return find_target_entry(*state.m, *parsedTarget);
+                    auto it = state.m->targetOverrides.find(rowKey);
+                    return it == state.m->targetOverrides.end() ? nullptr : &it->second;
                 }();
-                const auto row = state.m->targetOverrides.find(rowKey);
                 const auto manifestNames = [&](std::string_view name) {
-                    if (row == state.m->targetOverrides.end()) return false;
-                    if (name.empty()) return !row->second.runner.empty();
-                    return row->second.namedRunners.contains(std::string(name));
+                    if (!row) return false;
+                    if (name.empty()) return !row->runner.empty();
+                    return row->namedRunners.contains(std::string(name));
                 };
                 if (!state.runnerProvider.empty() && !runnerBeforeRoot.empty()
                     && bcRoot.runner.size() > runnerBeforeRoot.size()

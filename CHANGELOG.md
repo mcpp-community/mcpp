@@ -38,6 +38,10 @@ The design record is
 - **LLVM's windres is recognised where it is found**, by its name or by the
   file its symlink resolves to, so llvm-mingw's `<triple>-windres` receives a
   target triple rather than a BFD format name.
+- **Every reader of a `[target.<triple>]` row finds it by any spelling.**
+  `toolchain` and `sysroot` were found whichever spelling the section used;
+  `runner`, the named runners and `min_api_level` were found only under the
+  canonical one.
 - **The build program's UTF-8 manifest resource is compiled again when its
   command changes**, as every edge of the build graph is; before, only the
   manifest and the script were compared.

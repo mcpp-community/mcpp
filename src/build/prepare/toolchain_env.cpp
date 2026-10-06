@@ -67,22 +67,6 @@ namespace mcpp::build {
 //
 // A section keyed `x86_64-w64-mingw32` matches a resolved `x86_64-windows-gnu`,
 // and unparseable keys compare exactly (the escape hatch for custom triples).
-// Factored out of the toolchain-override path because the sysroot override must
-// use the SAME matching: two lookups that disagreed about spelling would give a
-// section that applies to `toolchain` and not to `sysroot`, which is a defect
-// nobody would think to look for.
-const mcpp::manifest::TargetEntry*
-find_target_entry(const mcpp::manifest::Manifest& m,
-                  const mcpp::toolchain::triple::Triple& t) {
-    if (auto it = m.targetOverrides.find(t.str()); it != m.targetOverrides.end())
-        return &it->second;
-    for (auto const& [key, entry] : m.targetOverrides) {
-        if (auto k = mcpp::toolchain::triple::parse(key); k && k->str() == t.str())
-            return &entry;
-    }
-    return nullptr;
-}
-
 // The project's `[target.<triple>].sysroot`, or nullptr when it declared none.
 const std::string*
 sysroot_override(const mcpp::manifest::Manifest& m,
@@ -520,9 +504,8 @@ std::string min_platform_version(const mcpp::manifest::Manifest& m,
                                  const mcpp::toolchain::triple::Triple& t,
                                  const std::filesystem::path& compilerPath) {
     if (t.is_android()) {
-        if (auto it = m.targetOverrides.find(t.str()); it != m.targetOverrides.end())
-            if (it->second.minApiLevel > 0)
-                return std::to_string(it->second.minApiLevel);
+        if (auto* row = find_target_entry(m, t); row && row->minApiLevel > 0)
+            return std::to_string(row->minApiLevel);
         // AND THERE IS NO SUCH THING AS LEAVING IT OUT. This returned an empty
         // string with the comment "the NDK's own default, which clang
         // supplies", which was never verified and is false. Measured:

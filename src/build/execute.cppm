@@ -959,26 +959,28 @@ RunnerChoice choose_device_action(const BuildContext& ctx,
         c.tmpl      = it->second.argv;
         c.longLived = it->second.longLived;
     }
-    // The manifest key is the CANONICAL spelling — `aarch64-macos`, the name
-    // of the output directory and the key every other `[target.<triple>]`
-    // reader uses (prepare.cppm resolves overrides by `t.str()`). The
-    // toolchain's own `targetTriple` is what the driver reported, which on a
-    // Linux host happens to be the canonical spelling and on macOS is
-    // `arm64-apple-darwin24.6.0`. Looking up the raw spelling alone matched on
-    // Linux and never on macOS (measured on CI, 2026-09-02); the raw form is
-    // kept as a fallback for a triple the parser does not know.
-    auto lookup = [&](std::string_view key) {
-        auto it = ctx.manifest.targetOverrides.find(std::string(key));
+    // The row is found as every other `[target.<triple>]` reader finds it
+    // (`find_target_entry`), whichever spelling the section and the toolchain
+    // use. The toolchain's own `targetTriple` is what the driver reported,
+    // which on macOS is `arm64-apple-darwin24.6.0`; an exact lookup of it
+    // matched on Linux and never on macOS (measured on CI, 2026-09-02), and an
+    // exact lookup of the canonical spelling missed a section written
+    // `[target.x86-windows-msvc]`. The raw form is kept as a fallback for a
+    // triple the parser does not know.
+    auto with_slot = [&](const mcpp::manifest::TargetEntry* e) {
         const mcpp::manifest::TargetEntry* none = nullptr;
-        if (it == ctx.manifest.targetOverrides.end()) return none;
-        if (isDefault) return it->second.runner.empty() ? none : &it->second;
-        auto nr = it->second.namedRunners.find(std::string(which));
-        return (nr != it->second.namedRunners.end() && !nr->second.empty())
-             ? &it->second : none;
+        if (!e) return none;
+        if (isDefault) return e->runner.empty() ? none : e;
+        auto nr = e->namedRunners.find(std::string(which));
+        return (nr != e->namedRunners.end() && !nr->second.empty()) ? e : none;
     };
-    const mcpp::manifest::TargetEntry* entry = lookup(c.tripleKey);
-    if (!entry && c.tripleKey != ctx.tc.targetTriple)
-        entry = lookup(ctx.tc.targetTriple);
+    const mcpp::manifest::TargetEntry* entry = nullptr;
+    if (ft) {
+        entry = with_slot(mcpp::build::find_target_entry(ctx.manifest, *ft));
+    } else if (auto it = ctx.manifest.targetOverrides.find(ctx.tc.targetTriple);
+               it != ctx.manifest.targetOverrides.end()) {
+        entry = with_slot(&it->second);
+    }
     if (entry) {
         if (isDefault) {
             c.fromManifest = !ctx.manifest.buildConfig.runner.empty();
