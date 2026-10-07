@@ -910,7 +910,10 @@ Mechanism resolve(const MechanismInput& in) {
                 // because the process already had libstdc++'s.
                 m.unitFlags += " --unwindlib=libgcc";
             } else if (!in.libunwindArchive.empty()) {
-                m.unitFlags += " " + in.libunwindArchive;
+                // The archive supplies the unwinder. An automatic -lunwind
+                // makes lld export its public definitions even when as-needed
+                // drops the shared library; suppress that second selection.
+                m.unitFlags += " " + in.libunwindArchive + " --unwindlib=none";
                 m.unitFlags += detail::hide_static_cxx_runtime(
                     in.role, in.foreignCxxRuntime, {"libunwind.a"});
             } else {

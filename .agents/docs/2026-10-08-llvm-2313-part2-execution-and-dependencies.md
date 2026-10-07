@@ -265,3 +265,35 @@ ARM64 与 x86_64 的 libunwind.a 都具有默认可见的全局符号。
 31 个并增加对应 DT_NEEDED。这是定位对照，不能替代原生消费证明。
 失败门补存实际测试 ELF、readelf 结果与 build.ninja，再根据链接
 闭包判断原因；尚不调整资产、不隐藏导出以替代动态依赖诊断。
+
+## 13. 2026-10-08 静态 unwinder 的驱动追加项更正
+
+第 12 节的强化对照使用同一 ARM64 候选 glibc、libc++、libc++abi
+与 libunwind，加入 filesystem、thread、exception_ptr 和 runtime_error。
+静态链接组合导出零个 unwind 符号；按驱动顺序追加
+`--as-needed libunwind.so --no-as-needed` 后导出 31 个，两者均在
+QEMU 下运行成功，DT_NEEDED 均仅为 libc.so.6 与 libm.so.6。
+因此，额外动态库即使最终被丢弃，LLD 扫描时对静态定义的导出提升
+仍会保留；第 12 节简单对照中的额外 DT_NEEDED 不是必要条件。
+
+distribution 的 ELF self-contained 分支已经显式链接 libunwind.a，
+现以末尾 `--unwindlib=none` 停止 Clang 再追加动态 unwinder。该更正
+保留显式静态归档；foreign C++ runtime 分支仍用 libgcc，未提供
+静态归档时仍报告运行依赖，toolchain-coupled 分支仍由驱动选择。
+资产摘要与符号可见性不变，不以隐藏导出替代运行时闭包验证。
+原生完整单测和后续消费门仍须在新提交执行；QEMU 对照只作为根因
+与链接机制的聚焦证据。
+
+修正后的 distribution 单测 43/43 通过，新引擎自举通过，使用新引擎
+构建的 ELF 单测 22 项通过，另有一项非 Linux 分支按既有条件跳过。
+实际 Ninja 链接行包含 `--unwindlib=none`。同一 ARM64 Clang 驱动的
+对照显示自动 `-lunwind` 消失，unwind 导出从 31 个降至零，两个
+程序在 QEMU 下均运行成功且仅依赖 libc/libm。随后提交仍须完成
+原生全量消费及最终 CI，未将聚焦测试计作发布准入。
+
+发布后的原生 ARM64 CN SubOS 验证另有手动工作流，直接下载并
+核对公开 CN 的精确客户端与 mcpp 归档，在冷 home 中实际执行
+SubOS、GNU 默认构建、打包部署、四个索引成员及 openkal；三个
+交叉产物由对应目标 runner 实际运行。sandbox backend 明确记录
+为发行版 CI 基础设施，不冒充索引尚未交付的 ARM64 backend 包。
+该工作流须待正式发布、镜像与索引就绪后执行。
