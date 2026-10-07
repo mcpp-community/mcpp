@@ -177,5 +177,21 @@ class W4ShardCoverage(unittest.TestCase):
         self.assertTrue(lint.incomplete_shards("- image: xcode-27\nshard: 1\nshards: 2\n- image: xcode-27\nshard: 1\nshards: 2\n"))
 
 
+class W5JobRunnerContext(unittest.TestCase):
+    def test_job_env_runner_is_rejected_before_startup(self):
+        text = 'jobs:\n  native:\n    env:\n      REPORT: ${{ runner.temp }}/report\n    steps:\n      - run: true\n'
+        found = problems_for(text)
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith('W5 '), found)
+
+    def test_step_runner_and_job_github_context_are_accepted(self):
+        text = 'jobs:\n  native:\n    env:\n      SOURCE: ${{ github.workspace }}\n    steps:\n      - run: true\n        env:\n          REPORT: ${{ runner.temp }}/report\n'
+        self.assertEqual(problems_for(text), [])
+
+    def test_expression_string_does_not_name_a_context(self):
+        text = "jobs:\n  native:\n    env:\n      LABEL: ${{ 'runner.temp' }}\n    steps:\n      - run: true\n"
+        self.assertEqual(problems_for(text), [])
+
+
 if __name__ == "__main__":
     unittest.main()

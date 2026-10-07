@@ -33,9 +33,12 @@ THE RULES
       (and `GH_TOKEN`), every such issue must be open: a job leaves the list
       when its issue closes.
 
+  W5  Job-level env cannot use the runner context. GitHub rejects that shape
+      before starting any job; use a step or GITHUB_ENV for runtime paths.
+
 Where it stands beside `tools/lint-ci-assertions.sh`: that script WARNS about
 where an assertion is placed (a matrix row, an emptiness check, a job with no
-emulator), because those rules have real false positives. These three rules
+emulator), because those rules have real false positives. These rules
 have none found in this repository, so they are a gate.
 
 The parser is line-based and fitted to this repository's workflow layout
@@ -79,6 +82,7 @@ class Job:
     shell: str = ""
     continue_on_error: str = ""
     matrix_text: str = ""
+    env_lines: list[tuple[int, str]] = field(default_factory=list)
     steps: list[Step] = field(default_factory=list)
     line: int = 0
 
@@ -175,6 +179,10 @@ def parse(path: Path) -> Workflow:
             job.matrix_text += stripped + "\n"
             i += 1
             continue
+        if section == "env":
+            job.env_lines.append((i + 1, stripped))
+            i += 1
+            continue
         if section == "defaults" and stripped.startswith("shell:"):
             job.shell = scalar(stripped.split(":", 1)[1])
             i += 1
@@ -245,6 +253,12 @@ def check(workflows: list[Path], check_open: bool) -> list[str]:
         wf = parse(path)
         for job in wf.jobs:
             problems.extend(f"{p} ({path}:{job.line})" for p in incomplete_shards(job.matrix_text))
+            for line, value in job.env_lines:
+                for expression in re.findall(r"\$\{\{(.*?)\}\}", value):
+                    expression = re.sub(r"'(?:[^']|'')*'", "''", expression)
+                    if re.search(r"\brunner\s*\.", expression, re.IGNORECASE):
+                        problems.append(f"W5 {path}:{line} ({job.key}): job-level env cannot "
+                                        "use runner context; set runtime paths in a step.")
             for step in job.steps:
                 where = f"{path}:{step.line} ({job.key} / {step.name or 'unnamed step'})"
                 shell = effective_shell(wf, job, step)

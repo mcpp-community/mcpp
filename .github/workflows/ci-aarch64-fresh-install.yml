@@ -261,7 +261,6 @@ jobs:
       XLINGS_NON_INTERACTIVE: '1'
       MCPP_E2E_MIRROR: GLOBAL
       MCPP_NATIVE_XIM_INDEX: ${{ github.workspace }}/_candidate-xim
-      MCPP_NATIVE_REPORT_DIR: ${{ runner.temp }}/native-llvm-arm64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -270,7 +269,9 @@ jobs:
           ref: ${{ inputs.xim_pkgindex_ref }}
           path: _candidate-xim
       - name: Candidate admission contracts
-        run: python3 tests/scripts/test_native_candidate_admission.py
+        run: |
+          echo "MCPP_NATIVE_REPORT_DIR=$RUNNER_TEMP/native-llvm-arm64" >> "$GITHUB_ENV"
+          python3 tests/scripts/test_native_candidate_admission.py
       - name: Verify and download this head's successful native mcpp build
         env:
           GH_TOKEN: ${{ github.token }}
