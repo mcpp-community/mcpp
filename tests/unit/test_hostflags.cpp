@@ -118,7 +118,7 @@ TEST(HostFlags, LinkModelStringsAreStable) {
     lm.systemIncludes = { "/glibc/include" };
 
     EXPECT_EQ(lm.compile_flags(mcpp::toolchain::no_escape),
-              " -isystem/glibc/include");
+              " -nostdlibinc -isystem/glibc/include");
     EXPECT_EQ(lm.link_flags(mcpp::toolchain::no_escape),
               " -B/glibc/lib -L/glibc/lib -Wl,-rpath,/glibc/lib"
               " -Wl,--dynamic-linker=/glibc/lib/ld.so");
