@@ -33,7 +33,7 @@ seed_candidate
 "$MCPP" self config --mirror "${MCPP_E2E_MIRROR:-GLOBAL}"
 "$MCPP" self env --format json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["data"]["defaultToolchain"] == "llvm@23.1.3", d'
 verify_candidate
-"$MCPP" new "$work/native-probe"
+(cd "$work" && "$MCPP" new native-probe)
 mkdir -p "$work/nativeabi/src"
 cat > "$work/nativeabi/mcpp.toml" <<'TOML'
 [package]
@@ -194,7 +194,7 @@ PYPACK
 cp -a "$bundle" "$work/deployed"
 (cd / && env -u LD_LIBRARY_PATH "$work/deployed/native-probe") | tee "$report/deployed.log"
 grep -qF 'native-stdlib-cabi=ok' "$report/deployed.log"
-"$MCPP" new "$work/musl-probe"
+(cd "$work" && "$MCPP" new musl-probe)
 cd "$work/musl-probe"
 "$MCPP" build --target aarch64-linux-musl --toolchain gcc@16.1.0-musl
 "$MCPP" run --target aarch64-linux-musl --toolchain gcc@16.1.0-musl
