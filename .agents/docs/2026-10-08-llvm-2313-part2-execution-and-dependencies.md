@@ -93,3 +93,26 @@ xim-pkgindex #938 已推送 `193f910e`，冻结五种依赖源码的下载摘要
 15 跳过、952 未选入、3 项既有 xpass；架构与客户端门 11/11 通过。
 原生资源首轮 CI 已完成依赖构建并进入 glibc；新提交将生成包含完整
 来源记录的资源。尚未写入 ARM64 公开路由或占位摘要。
+
+## 6. 2026-10-08 最终头缺口与客户端发布
+
+mcpp `42e8b884` 的 CI 已结束，存在五个失败检查：Linux E2E 分片、
+xcode-27 E2E 分片、ARM64 matrix、其依赖 coverage，以及 bare-Windows。
+Linux 641 将通用能力列表中的 Android 名称误判为实际目标选择；修正
+需要对解析出的 Linux C ABI 作正向断言。macOS 230 使用 benchmark 的
+旧 LLVM 常量，Xcode 27 链接失败；benchmark 当前常量更新，历史测量
+记录继续保持原版本与数字。
+
+ARM64 matrix 的失败包含旧客户端选取 x86 glibc loader 和公开资源
+缺席。新的客户端、每架构配方和真实资源路由均是它的前置条件。coverage
+随 matrix 未完成失败，不构成另一个已定位的引擎故障。Windows 现场
+驱动搜索目录与已验证归档版本不一致，新增字节哈希、改名启动及原生
+启动对照；根因尚未确定，不按基础设施故障豁免准入。
+
+xlings #647 在 `276fce5` 上的 9 个检查全部通过，自审确认 metadata、
+overlay、本地校验和安装复用同一进程 ABI 上下文。PR 已 squash 合入
+`c55d89aa`，关联 #646 随合入关闭。普通合入需要 reviewer；用户已授权
+完整合入与发布，按该仓库贡献流程，在全部检查通过后使用管理员合入。
+[2026.10.8.1 发布工作流](https://github.com/openxlings/xlings/actions/runs/37690643833)
+已经启动。发版成功、CN 补传、索引传播和 mcpp bootstrap pin 前移仍须
+以公开资源与消费证据证明。

@@ -28,11 +28,36 @@ cleanup() {
         find "$MCPP_HOME" -type f \( -name cc1plus.exe -o -name g++.exe -o -name '*.dll' \) \
             -printf '%p %s bytes\n' > "$report/payload-files.txt" 2>/dev/null || true
         while IFS= read -r compiler; do
+            printf '%s\n' "$compiler" > "$report/driver-path.txt"
+            "$compiler" --version > "$report/driver-version.txt" 2>&1 || true
+            "$compiler" -v > "$report/driver-configure.txt" 2>&1 || true
             "$compiler" -print-prog-name=cc1plus > "$report/driver-helper.txt" 2>&1 || true
             "$compiler" -print-search-dirs > "$report/driver-search.txt" 2>&1 || true
+            sha256sum "$compiler" >> "$report/sha256.txt"
+            # Keep DLL lookup identical while changing the executable basename.
+            # Compare Git Bash launch with a native PowerShell launch, so a
+            # name-dependent redirect cannot impersonate the cold compiler.
+            local probe="$(dirname "$compiler")/mcpp-driver-probe.exe"
+            cp "$compiler" "$probe" 2>/dev/null || true
+            "$probe" --version > "$report/renamed-driver-version.txt" 2>&1 || true
+            "$probe" -print-search-dirs > "$report/renamed-driver-search.txt" 2>&1 || true
+            MCPP_DRIVER_DIAGNOSTIC="$(cygpath -w "$compiler")" \
+                powershell.exe -NoProfile -Command \
+                '$p = $env:MCPP_DRIVER_DIAGNOSTIC; Get-Item -LiteralPath $p | Format-List FullName,Length,LinkType,Target; Get-FileHash -LiteralPath $p -Algorithm SHA256; & $p --version; & $p -print-search-dirs; Write-Output "native driver exit: $LASTEXITCODE"' \
+                > "$report/native-driver-probe.txt" 2>&1 || true
+            if command -v objdump >/dev/null; then
+                objdump -p "$compiler" > "$report/driver-pe.txt" 2>&1 || true
+            fi
         done < <(find "$MCPP_HOME" -name g++.exe -type f 2>/dev/null)
         printf 'GCC_EXEC_PREFIX=%s\nCOMPILER_PATH=%s\nLIBRARY_PATH=%s\n' \
             "${GCC_EXEC_PREFIX:-}" "${COMPILER_PATH:-}" "${LIBRARY_PATH:-}" > "$report/driver-environment.txt"
+        printf 'XLINGS_HOME=%s\nXLINGS_PROJECT_DIR=%s\nXLINGS_ACTIVE_SUBOS=%s\nPATH=%s\n' \
+            "${XLINGS_HOME:-}" "${XLINGS_PROJECT_DIR:-}" "${XLINGS_ACTIVE_SUBOS:-}" "$PATH" \
+            >> "$report/driver-environment.txt"
+        command -v g++ > "$report/ambient-driver-path.txt" 2>&1 || true
+        # Windows variable names are case-insensitive; Bash's lookup is not.
+        env | grep -Ei '^(gcc_exec_prefix|compiler_path|library_path|collect_gcc|collect_lto_wrapper|xlings_[^=]*|msys[^=]*)=' \
+            > "$report/driver-environment-all-cases.txt" || true
         while IFS= read -r helper; do
             echo "Direct invocation: $helper"
             "$helper" --version > "$report/cc1plus-version.txt" 2>&1 || \

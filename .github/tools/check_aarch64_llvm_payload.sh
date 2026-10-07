@@ -102,12 +102,46 @@ grep -q 'libnativeabi.so.1' "$report/dynamic.txt" || {
 # Replay the engine's effective header compile as a preprocess trace. The trace
 # must resolve libc headers through the payload, without an ambient /usr tree.
 python3 - "$report" <<'PYTRACE'
-import json, pathlib, re, shlex, subprocess, sys
+import json, os, pathlib, re, shlex, subprocess, sys
 report = pathlib.Path(sys.argv[1])
 cdb = next(pathlib.Path('target/aarch64-linux-gnu').rglob('compile_commands.json'))
 entries = json.loads(cdb.read_text())
 entry = next(e for e in entries if e['file'].endswith('/headers.cpp'))
 args = entry.get('arguments') or shlex.split(entry['command'])
+# The driver named by the cold project's CDB must itself have a managed
+# ARM64 loader and dependency closure, independently of the program it emits.
+store = (pathlib.Path(os.environ['MCPP_HOME']) / 'registry/data/xpkgs').resolve()
+compiler = pathlib.Path(args[0]).resolve()
+relative = compiler.relative_to(store)
+assert relative.parts[:2] == ('xim-x-llvm', '23.1.3'), compiler
+
+driver_env = dict(os.environ)
+driver_env.pop('LD_LIBRARY_PATH', None)
+driver_env.pop('LD_PRELOAD', None)
+
+def capture(name, command):
+    result = subprocess.run(command, text=True, capture_output=True, env=driver_env)
+    text = result.stdout + result.stderr
+    (report / name).write_text(text)
+    assert result.returncode == 0, (command, text)
+    return text
+
+header = capture('compiler-elf-header.txt', ['readelf', '-hW', str(compiler)])
+assert re.search(r'Machine:\s+AArch64', header), header
+version = capture('compiler-version.txt', [str(compiler), '--version'])
+assert re.search(r'clang version 23\.1\.3(?:\s|$)', version), version
+program_headers = capture('compiler-program-headers.txt', ['readelf', '-lW', str(compiler)])
+match = re.search(r'Requesting program interpreter: ([^\]]+)', program_headers)
+assert match, program_headers
+loader = pathlib.Path(match.group(1)).resolve()
+loader_relative = loader.relative_to(store)
+assert loader_relative.parts[0] == 'xim-x-glibc', loader
+assert loader.name == 'ld-linux-aarch64.so.1', loader
+closure = capture('compiler-loader-resolution.txt', [str(loader), '--list', str(compiler)])
+assert not re.search(r'=> /(?:usr/lib|lib64?|usr/local/lib)/', closure), closure
+for path in re.findall(r'=> (/\S+)', closure):
+    pathlib.Path(path).resolve().relative_to(store)
+print('PASS: cold LLVM frontend has native ARM64 managed loader and libraries')
 clean = []
 i = 0
 while i < len(args):
@@ -130,7 +164,10 @@ assert any('xim-x-glibc' in path and path.endswith('/features.h') for path in he
 assert not any(re.match(r'/usr/(include|lib/gcc|local/include)(/|$)', path) for path in headers), headers
 print('PASS: libc include trace uses the managed payload')
 PYTRACE
-cat "$report/program-headers.txt" "$report/loader-resolution.txt" "$report/include-trace.txt"
+cat "$report/program-headers.txt" "$report/loader-resolution.txt" \
+    "$report/compiler-version.txt" "$report/compiler-elf-header.txt" \
+    "$report/compiler-program-headers.txt" "$report/compiler-loader-resolution.txt" \
+    "$report/include-trace.txt"
 "$MCPP" pack --mode self-contained --format dir --message-format json > "$report/pack.json"
 bundle="$(python3 - "$report/pack.json" <<'PYPACK'
 import json, sys

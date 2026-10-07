@@ -401,3 +401,63 @@ xlings 客户端修复集中在一个必要 PR。资源生产、配方和消费�
 依赖发布物摘要的自动索引更新、bootstrap pin 更新属于必要收尾；
 它们不能通过提前引用尚未发布的版本消除。Windows 红项的原因仍需
 失败现场证据，不能将新增 ARM64 支持视为该问题已经解决。
+
+## 12. 2026-10-08 综合 review 补记
+
+本节给出维护者评审入口，更新以上快照中的验证状态。本文仍为设计与
+准入方案；存在实现提交或资源构建通过，不表示生态交付已经完成。
+
+### 12.1 默认组合与软件闭包
+
+推荐冻结的新安装组合为 `llvm@23.1.3 + aarch64-linux-gnu`。工具链和
+target 两个持久配置同时验证。已有 musl 配置继续保留；迁移命令需要
+显式 target，例如 `mcpp toolchain default llvm@23.1.3 --target aarch64-linux-gnu`，
+并以实际配置、解析结果及构建运行确认两轴已经改变。
+
+首批资源采用 glibc 2.44.3-r1、linux-headers 5.11.1、gcc-runtime 15.1.0、
+zlib 1.3.1、libxml2 2.13.5，以及 LLVM 内的 libc++、libc++abi、libunwind
+和 compiler-rt。gcc-runtime 满足编译器进程的 GNU C++ 运行依赖；新项目
+的 C++ 标准库仍是 libc++。C ABI 系统库消费者纳入交付，预制 C++ 库仍
+遵守现有 ABI 校验；完整 GUI 栈和 native GCC 不作为本次默认切换前提。
+
+glibc 包的准入覆盖开发文件和运行数据：CRT、头文件、linker scripts、
+loader、核心库、gconv、UTF-8 locale、时区数据。NSS 探针验证解析功能；
+宿主 `/etc/hosts`、`resolv.conf`、`nsswitch.conf`、用户数据库是明确的
+配置输入，不能把读取这些输入描述为所有宿主依赖均已消除。受管 loader
+和核心 libc 同源，并分别验证工具进程与生成程序的实际依赖路径。
+
+### 12.2 Review 结论与待决风险
+
+| 项目 | Review 结论 | 准入条件 |
+|---|---|---|
+| 上游 ARM64 复用 | 优先采用上游 carve，已有内容检查支持继续推进 | G0–G3 原生运行证据及每份公开资产摘要 |
+| 架构资源选择 | 元数据和安装使用同一个客户端进程 ABI 上下文 | xlings 修复发布；索引能力下界与旧索引回退实际可用 |
+| GNU native 能力 | LLVM 默认及 target 双轴一起切换 | 冷安装、自举、modules、matrix、openkal、pack 均实际通过 |
+| 宿主污染 | unset 环境变量只是隔离措施的一部分 | include trace、INTERP、loader `--list` 证明受管路径，缺包负向探针失败 |
+| 历史兼容 | 新增 ARM64 不改变已发布 x86_64 资产摘要 | 旧 LLVM ARM64 具名不可用；有安装行为变化的旧配方递增 revision |
+| Windows 红项 | 原底镜像归因证据不足，仍是待闭合项 | 对实际驱动与辅助程序抓哈希、版本、搜索路径及原生启动对照 |
+| latest 与回退 | 精确版本先交付；latest 遵循 SPEC-009 §10.7 | 发布版 mcpp 消费通过；双镜像一致；故障回退用新 revision |
+
+Windows 后续失败现场的驱动搜索目录含 `15.2.0` 和全局 registry，
+而索引钉住的归档是 GCC 16.1.0，归档 cc1plus 摘要与现场文件一致。
+这提示驱动选择或环境存在不一致，但尚未确定原因。驱动字节哈希、
+同字节改名启动及 PowerShell 原生启动对照用于区分污染与路径路由。
+归档有 cc1plus 和镜像发生变化均不能单独证明 Defender 是根因。
+
+### 12.3 实测状态与发布顺序
+
+| 证据对象 | 本次核查 | 尚未证明 |
+|---|---|---|
+| [索引首次原生资源构建](https://github.com/openxlings/xim-pkgindex/actions/runs/37684733504) | run 已完成，结论 success | 后续 provenance、运行数据修订的最终资产准入及双镜像消费 |
+| [xlings #647](https://github.com/openxlings/xlings/pull/647)，`276fce5` | draft/open，9 个检查均 success | 已合入、已发版、旧客户端兼容与新索引公开传播 |
+| [xim-pkgindex #938](https://github.com/openxlings/xim-pkgindex/pull/938)，`6ebe2179` | draft/open；源码、配方与运行数据修订已提交 | 最终 ARM64 资产公开路由与全部消费门 |
+| [mcpp #781](https://github.com/mcpp-community/mcpp/pull/781)，`42e8b884` | draft/open；[该头 CI](https://github.com/mcpp-community/mcpp/actions/runs/37686310140) 已完成，结论 failure | Windows 缺口闭合及最终生态准入 |
+
+发布依赖采用第 11.3 节的集中 PR 安排。资源构建与引擎接线可并行准备；
+公开启用顺序为：原生资产准入 → xlings 修复发布与镜像 → 索引架构路由和
+客户端下界 → mcpp 最终矩阵与发布 → GLOBAL/CN 发布版冷消费 → latest。
+不能提前宣告未来客户端版本已可用，也不能以旧头 CI 替代最终头验证。
+
+维护者本次 review 的重点为默认组合、完整 glibc 运行数据、必要客户端
+修复、原生 GNU 支持范围及上述准入顺序。原生 GNU 行在未通过门之前
+维持 preview；本补记不授予发布准入，也不将计划中的测试计为通过。

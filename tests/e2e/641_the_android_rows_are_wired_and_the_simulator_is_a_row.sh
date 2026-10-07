@@ -125,12 +125,16 @@ fi
 #    not make bionic a candidate C library for a request that named none.
 d="$t/bare"; pkg "$d"
 out=$( cd "$d" && MCPP_NO_AUTO_INSTALL=1 "$MCPP" build --target aarch64-linux 2>&1 ) || true
-if grep -q "android" <<<"$out"; then
-    echo "FAIL: a bare aarch64-linux request mentioned android"
-    grep -m4 -E "android" <<<"$out" | sed 's/^/    /'
+# The refusal may list Android among OTHER targets this host can serve.
+# Only the selected target's resolution and diagnostic establish completion.
+selected=$(grep -E '(^|[[:space:]])(Target|Resolved)[[:space:]]|^error:.*target|target default for' <<<"$out" || true)
+if ! grep -Eq 'aarch64-linux-(gnu|musl)' <<<"$selected" \
+        || grep -q 'android' <<<"$selected"; then
+    echo "FAIL: a bare aarch64-linux request did not select a Linux C ABI"
+    printf '%s\n' "$out" | sed 's/^/    /'
     fail=1
 else
-    echo "  ok: a bare aarch64-linux request never mentions android"
+    echo "  ok: a bare aarch64-linux request selects a Linux C ABI"
 fi
 
 # 6. `min_api_level` IS A MANIFEST KEY WITH A FLOOR, and it is refused where a

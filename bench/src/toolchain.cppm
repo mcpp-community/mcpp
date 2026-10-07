@@ -28,12 +28,11 @@ export namespace bench::toolchain {
 
 // The payload every arm of the benchmark compiles against.
 //
-// Windows is on llvm 20.1.7 rather than 22.1.8 because that is the version
-// mcpp's registry actually ships for the PE target; pinning a version that is
-// not there does not produce a slower number, it produces `unavailable`.
+// LLVM uses the same published line on every host. In particular, the macOS
+// linker must understand the arm64e.x1 SDK architecture shipped by Xcode 27.
 inline constexpr std::string_view kGcc          = "16.1.0";
-inline constexpr std::string_view kLlvm         = "22.1.8";
-inline constexpr std::string_view kLlvmWindows  = "20.1.7";
+inline constexpr std::string_view kLlvm         = "23.1.3";
+inline constexpr std::string_view kLlvmWindows  = kLlvm;
 
 bool on_windows();
 
