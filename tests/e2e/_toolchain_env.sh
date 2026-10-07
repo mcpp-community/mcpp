@@ -22,7 +22,7 @@
 # payload the fallback stands, which is what lets a fixture pin a toolchain
 # the engine then installs on first use):
 #   LLVM_VERSION / LLVM_ROOT                 store dir xim-x-llvm
-#   GCC_VERSION / GCC_ROOT                   store dir xim-x-gcc
+#   GCC_VERSION / MCPP_E2E_GCC_ROOT          store dir xim-x-gcc
 #   MUSL_GCC_VERSION / MUSL_GCC_ROOT         store dir xim-x-musl-gcc
 #   MINGW_CROSS_VERSION / MINGW_CROSS_ROOT   store dir xim-x-mingw-cross-gcc
 #
@@ -61,7 +61,10 @@ LLVM_VERSION="$(_e2e_family_version xim-x-llvm MCPP_E2E_LLVM_VERSION 23.1.3)"
 LLVM_ROOT="$(_e2e_family_root xim-x-llvm "$LLVM_VERSION")"
 
 GCC_VERSION="$(_e2e_family_version xim-x-gcc MCPP_E2E_GCC_VERSION 16.1.0)"
-GCC_ROOT="$(_e2e_family_root xim-x-gcc "$GCC_VERSION")"
+# GCC_ROOT is a compiler control variable: GCC uses it to rewrite executable
+# and library prefixes. A fixture's registry path must not alter the driver's
+# lookup, especially after a test switches to a cold MCPP_HOME.
+MCPP_E2E_GCC_ROOT="$(_e2e_family_root xim-x-gcc "$GCC_VERSION")"
 
 MUSL_GCC_VERSION="$(_e2e_family_version xim-x-musl-gcc MCPP_E2E_MUSL_GCC_VERSION 15.1.0)"
 MUSL_GCC_ROOT="$(_e2e_family_root xim-x-musl-gcc "$MUSL_GCC_VERSION")"
@@ -69,5 +72,5 @@ MUSL_GCC_ROOT="$(_e2e_family_root xim-x-musl-gcc "$MUSL_GCC_VERSION")"
 MINGW_CROSS_VERSION="$(_e2e_family_version xim-x-mingw-cross-gcc MCPP_E2E_MINGW_CROSS_VERSION 16.1.0)"
 MINGW_CROSS_ROOT="$(_e2e_family_root xim-x-mingw-cross-gcc "$MINGW_CROSS_VERSION")"
 
-export LLVM_VERSION LLVM_ROOT GCC_VERSION GCC_ROOT \
+export LLVM_VERSION LLVM_ROOT GCC_VERSION MCPP_E2E_GCC_ROOT \
        MUSL_GCC_VERSION MUSL_GCC_ROOT MINGW_CROSS_VERSION MINGW_CROSS_ROOT

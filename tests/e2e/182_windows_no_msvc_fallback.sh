@@ -90,12 +90,14 @@ cleanup() {
         done < <(find "$MCPP_HOME/registry/subos" -name g++.exe -type f 2>/dev/null)
         printf 'GCC_EXEC_PREFIX=%s\nCOMPILER_PATH=%s\nLIBRARY_PATH=%s\n' \
             "${GCC_EXEC_PREFIX:-}" "${COMPILER_PATH:-}" "${LIBRARY_PATH:-}" > "$report/driver-environment.txt"
+        printf 'GCC_ROOT=%s\nBINUTILS_ROOT=%s\nMCPP_E2E_GCC_ROOT=%s\n' \
+            "${GCC_ROOT:-}" "${BINUTILS_ROOT:-}" "${MCPP_E2E_GCC_ROOT:-}" >> "$report/driver-environment.txt"
         printf 'XLINGS_HOME=%s\nXLINGS_PROJECT_DIR=%s\nXLINGS_ACTIVE_SUBOS=%s\nPATH=%s\n' \
             "${XLINGS_HOME:-}" "${XLINGS_PROJECT_DIR:-}" "${XLINGS_ACTIVE_SUBOS:-}" "$PATH" \
             >> "$report/driver-environment.txt"
         command -v g++ > "$report/ambient-driver-path.txt" 2>&1 || true
         # Windows variable names are case-insensitive; Bash's lookup is not.
-        env | grep -Ei '^(gcc_exec_prefix|compiler_path|library_path|collect_gcc|collect_lto_wrapper|xlings_[^=]*|msys[^=]*)=' \
+        env | grep -Ei '^(gcc_[^=]*|binutils_root|mcpp_e2e_gcc_root|compiler_path|library_path|collect_gcc|collect_lto_wrapper|xlings_[^=]*|msys[^=]*)=' \
             > "$report/driver-environment-all-cases.txt" || true
         while IFS= read -r helper; do
             echo "Direct invocation: $helper"

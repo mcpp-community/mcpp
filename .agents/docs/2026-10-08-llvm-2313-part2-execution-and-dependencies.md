@@ -213,3 +213,32 @@ c29e53df 的 fresh-install workflow 在启动前失败，GitHub annotation
 先验证构建脚本与来源一致，再重新执行原生准入，结果成功。
 旧头及排队中的重复全量构建取消；该复用不覆盖安装消费门，也
 不重新发布任何已钉住的归档。
+
+## 11. 2026-10-08 Windows 前端查找根因更正
+
+同一头 9229b979 的 Windows 单测与打包成功后，bare Windows
+[113062257150](https://github.com/mcpp-community/mcpp/actions/runs/37699239809/job/113062257150)
+再次失败，独立驱动目录保留了真实载荷与 shim 的不同证据。真实
+g++ 16.1.0 的摘要与归档一致；cc1plus 直接编译 C++ 源成功并生成
+汇编。PowerShell 长路径和完整 8.3 路径调用均失败，两个驱动搜索
+列表都把辅助程序前缀指向全局 xim-x-gcc，载荷自身的安装前缀正确。
+这组对照排除了短路径单独致错及辅助程序缺失的解释。
+
+最终根因为本 PR 的测试版本抽象层导出了 GCC_ROOT。182 在创建
+隔离 MCPP_HOME 前加载该层，GCC_ROOT 因而指向全局通用 GCC 目录。
+[GCC 的前缀处理](https://github.com/gcc-mirror/gcc/blob/master/gcc/prefix.cc)
+将 GCC_ROOT 作为驱动控制变量，替换辅助程序及库的搜索根；隔离的
+MinGW 载荷因此查不到自身的 cc1plus。原环境快照仅包含
+GCC_EXEC_PREFIX，遗漏了这个变量。此前把失败归因为 Windows 底镜像
+滚动或 Defender 的结论撤回；15.2.0 搜索列表来自被覆盖的 shim
+报告，亦不能用于推断真实 16.1.0 驱动。本次归因由独立真实载荷
+报告与 GCC 源码支持，基础设施假设不再作为合入豁免。
+
+测试路径变量改为 MCPP_E2E_GCC_ROOT，保持用户原有 GCC_ROOT 不变。
+诊断同时捕获 GCC_ROOT、BINUTILS_ROOT 及测试路径变量。真实 Linux
+GCC 16.1.0 对照验证：正常环境编译成功；显式不存在的 GCC_ROOT
+使驱动返回裸 cc1plus 并编译失败；加载修正后的测试层保留两种
+行为。四项聚焦测试、Bash 语法及差异检查通过。此修复也消除原生
+ARM64 消费门切换至 musl GCC 时同一测试变量造成的前端查找污染，
+但 Windows 与 ARM64 的最终通过状态仍须新头执行确认。引擎算法、
+编译器归档及镜像摘要不变，无须重新发布资源。
