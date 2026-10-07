@@ -461,3 +461,161 @@ Windows 后续失败现场的驱动搜索目录含 `15.2.0` 和全局 registry�
 维护者本次 review 的重点为默认组合、完整 glibc 运行数据、必要客户端
 修复、原生 GNU 支持范围及上述准入顺序。原生 GNU 行在未通过门之前
 维持 preview；本补记不授予发布准入，也不将计划中的测试计为通过。
+
+### 12.4 Windows 驱动证据更正
+
+同日进一步核查确认，第 12.2 节所引用的搜索目录来自诊断循环中的
+xlings shim，不能证明冷载荷驱动选择错误。循环依次枚举 payload 与
+SubOS 的两个 `g++.exe`，后者覆盖了前者的单文件报告；两轮 CI 的文件
+清单都包含这两个文件。此处撤回“实际载荷驱动版本不一致”的推断。
+
+run 37690944669 的新摘要证明冷载荷 g++.exe 与已验证的 16.1.0
+归档逐字节一致，cc1plus 同样一致。后续诊断按 driver 分开记录，并
+加入 cc1plus 对真实 C++ 源的编译探针。`--version` 静默退出 0 不足以
+证明该辅助前端可以完成编译；Windows 根因仍未确定。
+
+## 13. 2026-10-08 Part 2 维护者评审摘要
+
+本节是本次综合方案的评审入口。第 1–10 节保留初始设计快照，后续
+具名补记更新前提；实现进展不能替代原生消费与发布验收。
+
+### 13.1 推荐裁决与跨仓库职责
+
+| 裁决项 | 推荐方案 | 所属交付 |
+|---|---|---|
+| 新安装默认 | Linux aarch64 选择 `llvm@23.1.3` 与 `aarch64-linux-gnu`，两轴一起验证 | mcpp 默认钉点、首次使用与迁移文档 |
+| LLVM 来源 | 复用已核验摘要的上游 ARM64 全量包，carve 为 llvm 与 llvm-tools | xim-pkgindex 构建、来源清单与不可变资产 |
+| glibc 世界 | glibc 2.44.3-r1、UAPI 5.11.1、gcc-runtime 15.1.0、zlib 1.3.1、libxml2 2.13.5 | xim-pkgindex 架构配方、runtime exports、冷安装 |
+| C++ 标准库 | 生成程序使用 libc++、libc++abi、libunwind 与 compiler-rt；gcc-runtime 服务工具自身的 GNU 运行依赖 | 两仓库分别验证工具进程和产物的 ELF 闭包 |
+| 架构选择 | metadata 与 install 使用一致的客户端进程 ABI；新增 ARM64 不宣称旧 LLVM 版本具有资产 | 必要 xlings 修复、索引能力下界、mcpp 可用性过滤 |
+| 原生支持等级 | GNU 行完成实际编译、模块、运行、自举与 pack 后才提升为 verified | mcpp 原生 ARM64 准入与 matrix 实测 |
+| 已有配置 | 保留用户选择；musl 到 GNU 的迁移显式修改工具链及 target | mcpp 配置优先级与迁移复验 |
+
+完整 glibc 包同时交付 loader、核心库、CRT、开发头、linker scripts、
+gconv、locale 和时区数据。NSS 使用受管实现，宿主身份与网络配置仍是
+明确输入。不能用只有 libc 的归档作为完整生态交付。
+
+Linux x86_64 保留 GCC 默认，其他 Linux 架构保留既有选择，显式
+aarch64-musl 静态发布继续验证。本阶段必要消费者包括 C ABI 库、
+mcpp 自举、代表性 mcpp-index 成员及 openkal；完整 GUI 栈、native
+GCC、跨宿主 GNU sysroot、llvm-dev/SPIRV 和 latest 语法另行立项。
+
+### 13.2 发布与验收顺序
+
+1. 冻结来源与包版本，在原生 ARM64 上构建并验证资源。归档、GLOBAL
+   重下载与 CN 重下载的摘要逐文件一致后，才启用公开索引路由。
+2. 发布必要客户端修复，验证架构上下文、旧索引回退及新客户端下界。
+   两仓库用候选索引联测，避免依赖公开默认提前切换。
+3. 验证工具启动、C/C++、`import std`/`std.compat`、异常、线程、原子、
+   冷 home 默认、自举单测、host tool、系统 C ABI、pack 与 openkal。
+   头文件搜索、INTERP 和 loader 实际路径须证明使用受管闭包。
+4. 最终提交完成原平台回归与全部必要准入；原生 GNU 行依据实测提升，
+   然后合入并发布。失败、挂起与 SKIP 均不能作为该门通过。
+5. 使用发布版执行 GLOBAL/CN 冷消费与 `xlings subos … --sandbox --cmd …`
+   复验，记录隔离后端及有效索引。随后按 SPEC-009 §10.7 移动 latest。
+
+若准入失败，保留候选精确版本用于诊断，不发布新的默认承诺。已发布
+内容发生错误时使用新版本或具名 revision 修复，保持原资产摘要不变。
+
+### 13.3 当前证据边界
+
+以下状态于本次写入前通过 GitHub API 核查，不表示整体验收通过。
+
+| 对象 | 已核查状态 | 仍需闭合 |
+|---|---|---|
+| [xlings #647](https://github.com/openxlings/xlings/pull/647) | 已合入；[v2026.10.8.1](https://github.com/openxlings/xlings/releases/tag/v2026.10.8.1) 已公开发布 | 生态最终消费与索引兼容链复验 |
+| [原生资源构建 37689904325](https://github.com/openxlings/xim-pkgindex/actions/runs/37689904325) | completed / success | 最新准入逻辑、最终公开资产及双镜像消费 |
+| [xim-pkgindex #938](https://github.com/openxlings/xim-pkgindex/pull/938) | draft/open，头 `d0e4af9d` | ARM64 公开路由与最终消费验收 |
+| [mcpp #781](https://github.com/mcpp-community/mcpp/pull/781) | draft/open，公开头 `bed48766`；[该头 CI](https://github.com/mcpp-community/mcpp/actions/runs/37690944669) 为 failure | Windows 失败根因、候选原生 GNU 全链与最终头回归 |
+
+Windows 驱动与辅助前端的现场摘要已经证明与钉住的归档一致。
+此前单文件诊断被 shim 覆盖，第 12.4 节已撤回版本不一致的推断。
+后续按 payload 和 shim 分开记录，并比较真实编译及长路径/8.3 路径；
+Defender 排除和资产重发均不作为缺乏证据时的默认修法。
+
+维护者重点评审三项：是否接受上述原生 GNU 默认组合、是否接受完整
+glibc 依赖范围、是否接受以原生生态消费及发布后 CN 复验作为准入条件。
+
+## 14. 2026-10-08 aarch64 LLVM 宿主与 openkal 跨平台生态补充
+
+本节响应维护者新增要求：原生 ARM64 LLVM 就绪后，以 Linux aarch64
+作为开发宿主，使用 mcpp 与 openkal 从源码构建目标运行时及应用，覆盖
+Windows、macOS 与 x86_64 Linux。该范围补充第 9 节的边界：本轮纳入
+openkal 图供应的交叉链，普通 payload GNU cross sysroot 仍另行验收。
+
+### 14.1 宿主 glibc 与目标运行时的关系
+
+这条路线在架构上成立，但 LLVM 可启动只是前置条件。aarch64 LLVM
+23.1.3 的 glibc、libstdc++、libgcc_s 等运行依赖服务编译器进程；目标
+程序的内核接口、C 库、C++ 运行时由依赖图独立供应。宿主 glibc
+不会因此成为 Windows、macOS 或 openkal-musl 产物的运行依赖。
+
+```mermaid
+flowchart TD
+    A[Linux aarch64 受管 glibc] --> B[宿主 LLVM 23.1.3 与构建工具]
+    B --> C[mcpp 解析目标和依赖图]
+    C --> D[按目标构建 openkal 平台实现]
+    C --> E[按目标构建 openkal-musl]
+    C --> F[按目标构建 openkal-llvm-runtime]
+    D --> G[目标应用编译与链接]
+    E --> G
+    F --> G
+    G --> H[Windows PE]
+    G --> I[macOS Mach-O]
+    G --> J[Linux ELF]
+    H --> K[对应目标系统运行验证]
+    I --> K
+    J --> K
+```
+
+已检查的 mcpp-index 配方将 openkal-llvm-runtime 描述为源码包，其
+manifest 依赖 openkal-musl，再由后者按目标选择平台实现。mcpp 在
+目标图解析与构建计划中编译这些来源，不要求先安装每种目标的完整
+GCC 工具链。用户仍须声明该依赖并选择目标；安装普通 LLVM 不会为
+所有项目自动改用 openkal，也不会将项目全部依赖自动变为可移植。
+
+host tool 与 build.mcpp 在 aarch64 宿主运行，运行时和应用对象按
+target 编译。生成程序需要的 loader、CRT、链接符号与系统导入来自
+目标图或明确目标系统契约，不能由宿主 glibc、头文件或 SDK 偶然补齐。
+Clang 后端、lld 格式支持与依赖构建脚本也分别检查，不能仅凭
+`clang --version` 宣告整条交叉链可用。
+
+### 14.2 目标范围与支持声明
+
+| ARM64 Linux 开发宿主上的目标 | 目标侧供应 | 本轮验收与声明边界 |
+|---|---|---|
+| 原生 aarch64 Linux openkal | openkal-linux、openkal-musl、openkal-llvm-runtime | 原生构建与运行；独立于默认 GNU/glibc 产物验收 |
+| x86_64 Linux openkal | 相应 x86_64 平台接口、musl 与 C++ runtime | ARM64 上交叉构建；x86_64 Linux runner 实际运行并检查闭包 |
+| x86_64 Windows openkal | openkal-windows、musl、C++ runtime 与目标导入库 | PE、x64 machine、异常与 TLS/线程；Windows runner 实际运行 |
+| aarch64 macOS openkal | openkal-macos、musl、C++ runtime 与目标启动/系统契约 | Mach-O、arm64、依赖清单；macOS ARM64 runner 实际运行 |
+| x86_64 macOS 或其他架构 | 需要相应平台实现、汇编、ABI 与运行时覆盖 | 不从 ARM64 macOS 成功推导；逐目标新增实测后公布 |
+
+Windows 的新推荐公开目标名为 `x86_64-windows-musl`，沿用旧
+`x86_64-windows-gnu` 的示例属于兼容路径，不表示链接了 MinGW CRT。
+同理，历史 `x86_64-linux-gnu` 名称的示例若报告 c-abi 来自图中的
+musl，应按实际解析层描述，不能计作普通 glibc cross 支持。
+macOS 生成 Mach-O 不等于任意 Apple 框架、SDK 或所有 POSIX 功能可用；
+程序可用接口以 openkal 实现与依赖的能力声明为准。
+
+### 14.3 跨仓库任务依赖与原生证明
+
+1. xim-pkgindex 完成 ARM64 LLVM 工具、受管宿主 glibc 与配套依赖
+   的安装准入；这是编译器及宿主构建程序运行的前置条件。
+2. mcpp 的 ARM64 原生门验证 openkal-linux/musl/C++ runtime 从图
+   构建并实际运行，报告 kernel-abi、c-abi、c++-abi 的供应者。
+3. 在现有 openkal-cross 工作流增加 Linux aarch64 构建宿主，保持
+   同一应用源码，生成既有 Windows、macOS、x86_64 Linux 三种产物。
+   使用本 PR 当前提交的 mcpp 和精确 LLVM 23.1.3，记录生态来源 SHA。
+4. 将这三个交叉产物送到对应 Windows、macOS ARM64、Linux x86_64
+   runner 运行；运行 job 不安装编译器或额外 C/C++ runtime。检查输出、
+   架构、异常展开与目标依赖，构建成功和目标运行成功分别计数。
+5. 对代表性 mcpp-index 软件重复原生与所承诺交叉路径，记录不满足
+   openkal 能力契约的库。缺失平台接口和目标运行能力不得变成绿色 SKIP。
+6. 发布后在 CN SubOS sandbox 中重做 ARM64 原生与交叉构建，并以
+   对应目标系统运行证据完成闭环；本地不能运行某目标时保留外部 runner
+   证据，不将文件格式检查代替实际执行。
+
+已有三宿主 openkal-cross 证明的是原来的宿主集合，不覆盖新增的
+Linux aarch64 编译器进程和宿主构建程序。286 的单个原生 Linux
+静态程序也不证明 ARM64 到 Windows/macOS/x86 Linux 的交叉链。
+只有新增宿主列及目标系统运行全部通过后，才能公布这条开发路线已验证。

@@ -14,6 +14,17 @@ name: ci-aarch64-fresh-install
 
 on:
   workflow_dispatch:
+    inputs:
+      xim_pkgindex_ref:
+        description: 'Candidate xim-pkgindex SHA or branch; empty runs ordinary released fresh-install'
+        type: string
+        required: false
+        default: ''
+      mcpp_run_id:
+        description: 'CI run with a successful native build of exactly this dispatched mcpp head'
+        type: string
+        required: false
+        default: ''
   schedule:
     - cron: '0 6 * * 1'   # weekly Mon 06:00 UTC
   pull_request:
@@ -30,6 +41,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -37,6 +49,7 @@ concurrency:
 
 jobs:
   fresh-install:
+    if: github.event_name != 'workflow_dispatch' || inputs.xim_pkgindex_ref == ''
     name: fresh install + native build (aarch64 / glibc)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
@@ -235,3 +248,134 @@ jobs:
 
       - name: "Regression: build.mcpp host helper is self-contained (#295)"
         run: MCPP="$MCPP_SELF" bash tests/e2e/168_build_mcpp_musl_host_static.sh
+
+  candidate-admission:
+    name: candidate index + current mcpp native admission
+    if: github.event_name == 'workflow_dispatch' && inputs.xim_pkgindex_ref != ''
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      XLINGS_NON_INTERACTIVE: '1'
+      MCPP_E2E_MIRROR: GLOBAL
+      MCPP_NATIVE_XIM_INDEX: ${{ github.workspace }}/_candidate-xim
+      MCPP_NATIVE_REPORT_DIR: ${{ runner.temp }}/native-llvm-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: openxlings/xim-pkgindex
+          ref: ${{ inputs.xim_pkgindex_ref }}
+          path: _candidate-xim
+      - name: Candidate admission contracts
+        run: python3 tests/scripts/test_native_candidate_admission.py
+      - name: Verify and download this head's successful native mcpp build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MCPP_SOURCE_RUN: ${{ inputs.mcpp_run_id }}
+        run: python3 .github/tools/download_native_admission_mcpp.py "$MCPP_SOURCE_RUN" "$RUNNER_TEMP/mcpp-built"
+      - uses: ./.github/actions/bootstrap-mcpp
+      - name: Seed the candidate index before installing the native runtime
+        run: |
+          set -euo pipefail
+          mkdir -p "$MCPP_NATIVE_REPORT_DIR"
+          git -C "$MCPP_NATIVE_XIM_INDEX" rev-parse HEAD | tee "$MCPP_NATIVE_REPORT_DIR/xim-commit.txt"
+          printf '%s\n' "$GITHUB_SHA" > "$MCPP_NATIVE_REPORT_DIR/mcpp-commit.txt"
+          python3 .github/tools/seed_native_xim_index.py "$HOME/.mcpp" "$MCPP_NATIVE_XIM_INDEX"
+          echo "MCPP_HOME=$HOME/.mcpp" >> "$GITHUB_ENV"
+          "$XLINGS_BIN" --version
+      - name: Use this head's mcpp against the candidate runtime
+        run: bash .github/actions/use-built-mcpp/use.sh linux-aarch64 GLOBAL
+      - name: Install, build, run and pack the native GNU default with candidate recipes
+        env:
+          MCPP: ${{ env.MCPP_FRESH }}
+        run: |
+          set -euo pipefail
+          bash .github/tools/check_aarch64_llvm_payload.sh 2>&1 | tee "$RUNNER_TEMP/native-llvm-arm64/admission.log"
+          grep -qF 'PASS: native ARM64 LLVM installs, builds and runs' "$RUNNER_TEMP/native-llvm-arm64/admission.log"
+      - name: GNU self-host with LLVM 23.1.3 on native ARM64
+        run: |
+          set -euo pipefail
+          python3 .github/tools/seed_native_xim_index.py --verify "$MCPP_HOME" "$MCPP_NATIVE_XIM_INDEX"
+          marker="$MCPP_NATIVE_REPORT_DIR/gnu-build-start"
+          touch "$marker"
+          "$MCPP_FRESH" build --toolchain llvm@23.1.3 --target aarch64-linux-gnu 2>&1 | tee "$MCPP_NATIVE_REPORT_DIR/gnu-selfhost.log"
+          mapfile -t binaries < <(find "$GITHUB_WORKSPACE/target/aarch64-linux-gnu" -type f -path '*/bin/mcpp' -newer "$marker")
+          [ "${#binaries[@]}" = 1 ] || { echo "expected one newly built GNU mcpp, found ${#binaries[@]}"; exit 1; }
+          gnu=$(realpath "${binaries[0]}")
+          readelf -hW "$gnu" | tee "$MCPP_NATIVE_REPORT_DIR/gnu-mcpp-header.txt"
+          grep -q 'Machine:.*AArch64' "$MCPP_NATIVE_REPORT_DIR/gnu-mcpp-header.txt"
+          readelf -lW "$gnu" | tee "$MCPP_NATIVE_REPORT_DIR/gnu-mcpp-program-headers.txt"
+          python3 - "$MCPP_HOME" "$MCPP_NATIVE_REPORT_DIR/gnu-mcpp-program-headers.txt" <<'PY'
+          import pathlib, re, sys
+          home = pathlib.Path(sys.argv[1]).resolve()
+          text = pathlib.Path(sys.argv[2]).read_text()
+          match = re.search(r'Requesting program interpreter: ([^\]]+)', text)
+          assert match, text
+          loader = pathlib.Path(match.group(1)).resolve()
+          loader.relative_to(home / 'registry/data/xpkgs/xim-x-glibc')
+          assert loader.name == 'ld-linux-aarch64.so.1', loader
+          PY
+          "$gnu" --version | tee "$MCPP_NATIVE_REPORT_DIR/gnu-mcpp-version.txt"
+          printf '%s\n' "$gnu" > "$MCPP_NATIVE_REPORT_DIR/gnu-mcpp-binary.txt"
+          echo "MCPP_NATIVE_GNU=$gnu" >> "$GITHUB_ENV"
+      - name: The GNU self-host runs the complete native unit and integration suite
+        run: |
+          set -euo pipefail
+          "$MCPP_NATIVE_GNU" test --toolchain llvm@23.1.3 --target aarch64-linux-gnu 2>&1 | tee "$MCPP_NATIVE_REPORT_DIR/gnu-tests.log"
+      - name: GNU mcpp builds the LLVM path host helper (804 LLVM case only)
+        env:
+          MCPP: ${{ env.MCPP_NATIVE_GNU }}
+          MCPP_E2E_804_LLVM_HOST_ONLY: '1'
+        run: |
+          set -euo pipefail
+          bash tests/e2e/804_a_path_host_tool_builds_with_its_chosen_toolchain.sh 2>&1 | tee "$MCPP_NATIVE_REPORT_DIR/gnu-llvm-host-helper.log"
+          grep -qF 'PASS: 804 native LLVM path host helper (LLVM case only)' "$MCPP_NATIVE_REPORT_DIR/gnu-llvm-host-helper.log"
+      - uses: actions/checkout@v4
+        with:
+          repository: mcpp-community/mcpp-index
+          ref: main
+          path: _native-mcpp-index
+      - name: Four real index members consume the native LLVM GNU ecosystem
+        run: |
+          set -euo pipefail
+          git -C _native-mcpp-index rev-parse HEAD | tee "$MCPP_NATIVE_REPORT_DIR/mcpp-index-commit.txt"
+          python3 .github/tools/seed_native_xim_index.py --verify "$MCPP_HOME" "$MCPP_NATIVE_XIM_INDEX"
+          adapter="$RUNNER_TEMP/mcpp-llvm-gnu-consumer"
+          cat > "$adapter" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          case "${1:-}" in
+            build|test|run) set -- "$@" --toolchain llvm@23.1.3 --target aarch64-linux-gnu ;;
+          esac
+          { printf 'GNU consumer argv:'; printf ' %q' "$@"; printf '\n'; } >> "$MCPP_NATIVE_REPORT_DIR/index-consumer-argv.log"
+          exec "$MCPP_NATIVE_GNU" "$@"
+          SH
+          chmod +x "$adapter"
+          cd _native-mcpp-index
+          MCPP="$adapter" MCPP_VERBOSE=1 MCPP_TIMINGS="$MCPP_NATIVE_REPORT_DIR/index-members.tsv" \
+            bash tests/run_members.sh cjson sqlite3 fmtlib.fmt nlohmann.json 2>&1 | tee "$MCPP_NATIVE_REPORT_DIR/index-members.log"
+          python3 - "$MCPP_NATIVE_REPORT_DIR/index-members.tsv" <<'PY'
+          import pathlib, sys
+          rows = [line.split('\t') for line in pathlib.Path(sys.argv[1]).read_text().splitlines()]
+          assert len(rows) == 4, rows
+          assert {row[1] for row in rows} == {'cjson', 'sqlite3', 'fmtlib.fmt', 'nlohmann.json'}, rows
+          assert all(row[2] == 'ok' for row in rows), rows
+          PY
+      - name: The real openkal stack runs as native ARM64 without skipping
+        env:
+          MCPP: ${{ env.MCPP_NATIVE_GNU }}
+          MCPP_E2E_EXPECT_ARCH: aarch64
+        run: |
+          set -euo pipefail
+          bash tests/e2e/286_the_openkal_stack_still_builds.sh 2>&1 | tee "$RUNNER_TEMP/native-llvm-arm64/openkal.log"
+          ! grep -q '^SKIP:' "$RUNNER_TEMP/native-llvm-arm64/openkal.log"
+          grep -qF 'OK: the openkal stack builds, links statically and runs' "$RUNNER_TEMP/native-llvm-arm64/openkal.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: candidate-native-ecosystem-admission
+          path: ${{ runner.temp }}/native-llvm-arm64
+          if-no-files-found: warn

@@ -112,7 +112,9 @@ namespace pinned {
     // no output (mcpp#693), and under an MCPP_HOME outside it the xlings mcpp
     // vendors could not initialise its sandbox. It now declares the UTF-8 code
     // page, as mcpp.exe does.
-    inline constexpr std::string_view kXlingsVersion   = "2026.9.30.1";
+    // Metadata and install share the process ABI context from 2026.10.8.1;
+    // ARM64 runtime exports must be correct before dependency resolution.
+    inline constexpr std::string_view kXlingsVersion   = "2026.10.8.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 

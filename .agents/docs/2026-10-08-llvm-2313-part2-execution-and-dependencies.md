@@ -116,3 +116,65 @@ overlay、本地校验和安装复用同一进程 ABI 上下文。PR 已 squash 
 [2026.10.8.1 发布工作流](https://github.com/openxlings/xlings/actions/runs/37690643833)
 已经启动。发版成功、CN 补传、索引传播和 mcpp bootstrap pin 前移仍须
 以公开资源与消费证据证明。
+
+## 7. 2026-10-08 客户端就绪与候选消费准入
+
+xlings v2026.10.8.1 已公开发布，四平台构建及候选发布物检查通过。
+本地补传 CN 后，四个平台的 GLOBAL/CN 二进制重下载摘要均与发布
+sidecar 一致。必要索引收尾 [#939](https://github.com/openxlings/xim-pkgindex/pull/939)
+在 17 个检查通过、1 个版本变更门按契约跳过后合入 `f8ad78a0`。
+mcpp 的客户端钉点与全部当前 CI/release 读取者前移至这个已发布版本；
+mcpp 自举 pin 仍保持已发布的 2026.9.24.1。版本钉点检查通过。
+
+第 6 节关于 Windows 驱动版本不一致的推断在此撤回。两轮诊断循环
+枚举了 payload 和 SubOS shim，却使用同名报告，shim 覆盖了 payload
+结果。`bed48766` 的现场摘要证明 payload g++ 与 cc1plus 均与钉住的
+GCC 16.1.0 归档一致。新诊断分别保存驱动与 shim，并执行真实 C++
+编译及 PowerShell 长路径/8.3 路径对照；根因尚未确定。
+
+`bed48766` CI 的 Linux 第三分片、两镜像 macOS 第一分片与 Windows
+第三分片共同失败于 233：benchmark 常量为 LLVM 23.1.3，而 matrix
+仍钉旧版本。当前 matrix 两个 LLVM 钉点同步，检查器支持现有常量
+引用；完整 233 本地通过。历史测量与历史源码 pin 保持原记录。
+
+受管 Clang 头文件策略增加 `-nostdlibinc`，同时覆盖 driver config
+与 mcpp 显式 compile tokens，修复 revision 为 hermetic-5-managed-headers。
+本地真实 compile database 与预处理追踪确认 glibc、UAPI、resource
+来自受管路径；宿主 sqlite3.h 存在，受管策略拒绝，而 ambient 控制
+可读。linkmodel 17/17、133 freestanding、804 host helper 和 GCC musl
+编译运行通过。该证据属于本地 x86_64，不能替代原生 ARM64 准入。
+
+为解除候选索引与 mcpp 合入的依赖环，已有 ARM64 fresh-install
+workflow 增加手动候选入口：使用明确索引 ref 和当前 mcpp 提交的成功
+原生 build artifact。入口验证来源仓库、完整 commit、workflow、原生
+成功 job 与唯一未过期 artifact，分别为外层 home 和冷 home 注入候选
+索引并核对有效 registry。5 个合同测试通过。普通发布版 cold-install
+入口继续消费公开索引；手动候选证据不能替代发布后的冷消费。
+
+索引原生来源构建 [37689904325](https://github.com/openxlings/xim-pkgindex/actions/runs/37689904325)
+已成功。最新准入首次执行在九份归档摘要全部通过后发现检查清单错误：
+要求了 Unix carve 未交付的 llvm-strings。该工具属于现有 Windows
+manifest，已修正准入清单而保持来源构建和资源字节不变。后续使用
+同一成功来源构建重跑准入；公开上传仍依赖全部原生门通过。
+
+## 8. 2026-10-08 原生资源准入与 openkal 宿主扩展
+
+[37695531148](https://github.com/openxlings/xim-pkgindex/actions/runs/37695531148)
+的 native-assets job 已通过，准入提交为 `984d468b`，来源提交为
+`6ebe2179`。九份归档摘要核验，13 个工具进程的受管依赖、宿主头文件
+负向门、默认 Tokyo/UTC、C.UTF-8、GBK、NSS、CRT，以及 std/std.compat
+编译和程序运行均通过。上次数据门失败来自准入脚本误拼预留前缀；
+这次匹配源码与配方实际的 255 字节占位串，并断言替换发生。原归档
+字节保持不变。该成功 job 已触发 GLOBAL 上传；尚不构成公开索引启用。
+
+候选 mcpp 原生入口继续增加真实 GNU 自举：当前头 ARM64 build artifact
+编译 LLVM 23.1.3 GNU mcpp，再由该新二进制运行完整单测、LLVM path
+host helper、四个真实索引成员和 openkal。消费者命令显式带工具链
+与 GNU target；6 个合同测试通过。本地当前代码自举 93.57 秒成功。
+以上 workflow 内容尚须原生 runner 执行，不能将配置检查计为生态消费通过。
+
+维护者新增 aarch64 开发宿主的 openkal 交叉路线，已加入方案第 14 节。
+既有 openkal-cross 扩为四宿主乘三目标，新增 ARM64 Linux 构建列，
+目标系统分别运行全部四宿主产物；运行 job 不安装工具链或 C/C++ runtime。
+源码 SHA、候选 LLVM 与输出架构均留下证据，原生 286 仍单独验收。
+12 个构建和运行组合尚未实跑，不从旧三宿主结果推导新增列已通过。

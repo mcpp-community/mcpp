@@ -1,4 +1,4 @@
-name: openkal cross-build (3 hosts × 3 targets)
+name: openkal cross-build (4 hosts × 3 targets)
 
 # WHAT THIS WORKFLOW ASSERTS, AND WHY IT IS A MATRIX RATHER THAN A ROW.
 #
@@ -31,17 +31,17 @@ name: openkal cross-build (3 hosts × 3 targets)
 #
 # ── The shape ──────────────────────────────────────────────────────────────
 #
-# THREE build jobs, one per host, each producing THREE artefacts — nine builds.
+# FOUR build jobs, one per host, each producing THREE artefacts — twelve builds.
 # THREE run jobs, one per system, each executing the artefact FOR that system
-# produced by ALL THREE hosts.
+# produced by ALL FOUR hosts, including native Linux ARM64.
 #
-#              build on Linux   build on macOS   build on Windows
-#   run Linux                                       
-#   run macOS                                       
-#   run Windows                                     
+#              Linux x86_64   Linux aarch64   macOS ARM64   Windows x86_64
+#   run Linux
+#   run macOS
+#   run Windows
 #
-# The diagonal is an ordinary native build. The six off-diagonal cells are
-# the claim, and they are what a single-host workflow cannot reach.
+# Three cells are native. The nine crosses include every output built on Linux
+# ARM64, and are what a single-host workflow cannot reach.
 #
 # THE RUN JOBS INSTALL NOTHING — not mcpp, not a compiler, not a C runtime.
 # A program above openkal carries its C library, its C++ runtime and its
@@ -98,9 +98,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { host: linux,   runner: ubuntu-24.04  }
-          - { host: macos,   runner: macos-14      }
-          - { host: windows, runner: windows-2022  }
+          - { host: linux,         runner: ubuntu-24.04,     artifact: linux-x86_64   }
+          - { host: linux-aarch64, runner: ubuntu-24.04-arm, artifact: linux-aarch64  }
+          - { host: macos,         runner: macos-14,         artifact: macos-aarch64  }
+          - { host: windows,       runner: windows-2022,     artifact: windows-x86_64 }
     defaults:
       run:
         shell: bash
@@ -119,7 +120,7 @@ jobs:
       # and that pin does not move when mcpp is released — so it names a version
       # the index no longer carries, and a bare install inside the checkout
       # obeys the pin rather than the argument. `bootstrap-mcpp` already knows
-      # this (it runs `install_pinned_mcpp.sh`), works on all three systems, and
+      # this (it runs `install_pinned_mcpp.sh`), works on all four hosts, and
       # shares the cache lineage every other job lands on.
       #
       # ⇒ Two bootstraps would be two things to keep correct, and the second one
@@ -136,7 +137,7 @@ jobs:
       - if: matrix.host != 'macos'
         uses: ./.github/actions/use-built-mcpp
         with:
-          host: ${{ matrix.host == 'linux' && 'linux-x86_64' || 'windows-x86_64' }}
+          host: ${{ matrix.artifact }}
 
       - name: Name this commit's mcpp MCPP_UNDER_TEST
         if: matrix.host != 'macos'
@@ -252,13 +253,21 @@ jobs:
             https://github.com/mcpplibs/openkal-llvm-runtime "$RUNNER_TEMP/okl"
           cd "$RUNNER_TEMP/okl/examples/same-source"
           mkdir -p "$RUNNER_TEMP/out"
+          git -C "$RUNNER_TEMP/okl" rev-parse HEAD > "$RUNNER_TEMP/out/source-sha.txt"
+          echo "openkal-llvm-runtime source SHA: $(cat "$RUNNER_TEMP/out/source-sha.txt")"
+          BIN="${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-llvm/23.1.3/bin"
+          READOBJ="$BIN/llvm-readobj"
+          [ -x "$READOBJ" ] || READOBJ="$BIN/llvm-readobj.exe"
+          [ -x "$READOBJ" ] || { echo "::error::no llvm-readobj under $BIN"; exit 1; }
           # The three HOSTED targets. Bare metal is verified by
           # `openkal-llvm-runtime`'s own CI under qemu; it has no runner here to
           # execute on, and a build-only cell in a workflow whose point is
           # running would be the weaker claim.
           for t in x86_64-linux-gnu aarch64-macos x86_64-windows-gnu; do
             rm -rf target
-            "$MCPP_UNDER_TEST" build --target "$t"
+            # The upstream manifest may pin an older LLVM line. The invocation
+            # selects this candidate explicitly, including on the ARM64 host.
+            "$MCPP_UNDER_TEST" build --target "$t" --toolchain llvm@23.1.3
             a=$(find target -type f \( -name 'openkal-same-source' -o -name 'openkal-same-source.exe' \) | head -1)
             [ -n "$a" ] || { echo "::error::$t produced no artefact on ${{ matrix.host }}"; exit 1; }
             case "$t" in
@@ -266,7 +275,15 @@ jobs:
               aarch64-macos)      cp "$a" "$RUNNER_TEMP/out/macos"       ;;
               *)                  cp "$a" "$RUNNER_TEMP/out/linux"       ;;
             esac
+            "$READOBJ" --file-headers "$a" > "$RUNNER_TEMP/out/$t.headers.txt"
+            case "$t" in
+              aarch64-macos) arch=aarch64 ;;
+              *) arch=x86_64 ;;
+            esac
+            grep -q "Arch: $arch" "$RUNNER_TEMP/out/$t.headers.txt" \
+              || { echo "::error::$t emitted the wrong architecture"; cat "$RUNNER_TEMP/out/$t.headers.txt"; exit 1; }
             echo "${{ matrix.host }} → $t : $(ls -l "$a" | awk '{print $5}') bytes"
+            cat "$RUNNER_TEMP/out/$t.headers.txt"
           done
 
       # THE ONLY CRITERION THE `builtins` TOKEN HAS, AND WHY IT IS HERE.
@@ -399,7 +416,7 @@ jobs:
           if-no-files-found: error
 
   run:
-    name: run 3 builds on ${{ matrix.system }}
+    name: run 4 builds on ${{ matrix.system }}
     needs: build
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
@@ -420,11 +437,25 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { pattern: openkal-built-on-*, path: art }
 
-      - name: The same program, from all three build hosts
+      - name: The same program, from all four build hosts
         run: |
           set -euo pipefail
           fail=0
-          for host in linux macos windows; do
+          source_sha=""
+          for host in linux linux-aarch64 macos windows; do
+            sha_file="art/openkal-built-on-$host/source-sha.txt"
+            if [ ! -f "$sha_file" ]; then
+              echo "::error::source SHA missing for $host"; fail=1; continue
+            fi
+            sha=$(tr -d '\r\n' < "$sha_file")
+            if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::invalid source SHA for $host: $sha"; fail=1; continue
+            fi
+            if [ -z "$source_sha" ]; then source_sha="$sha"; fi
+            if [ "$sha" != "$source_sha" ]; then
+              echo "::error::$host built source $sha, expected $source_sha"; fail=1; continue
+            fi
+            echo "openkal-llvm-runtime source SHA: $sha"
             bin="art/openkal-built-on-$host/${{ matrix.file }}"
             echo "──────── built on $host, running on ${{ matrix.system }} ────────"
             if [ ! -f "$bin" ]; then
@@ -452,7 +483,7 @@ jobs:
             [ "$ok" = 1 ] || { echo "::error::built on $host: wrong output"; fail=1; }
           done
           [ "$fail" = 0 ] || exit 1
-          echo "three builds, one system, same four lines"
+          echo "four builds, one system, same source SHA and four lines"
 
   # ──────────────────────────────────────────────────────────────────
   # The e2e scripts that BUILD the openkal ecosystem, on a runner that

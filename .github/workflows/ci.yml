@@ -142,6 +142,7 @@ jobs:
           python3 tests/scripts/test_classify_changes.py
           python3 tests/scripts/test_check_e2e_coverage.py
           python3 tests/scripts/test_check_default_toolchain_docs.py
+          python3 tests/scripts/test_native_candidate_admission.py
 
   build-linux:
     needs: changes

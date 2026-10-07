@@ -17,6 +17,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 #      (gcc 16.1.0) while the consumer keeps llvm.
 # The compiler that produced the tool is read from its `.comment` section.
 set -e
+candidate_seed="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.github/tools" && pwd)/seed_native_xim_index.py"
+if [[ "${MCPP_E2E_804_LLVM_HOST_ONLY:-0}" == 1 ]]; then
+    [[ "$(uname -s)" == Linux && "$(uname -m)" == aarch64 ]] || {
+        echo "FAIL: LLVM-only host-helper admission requires native Linux ARM64"; exit 1; }
+fi
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -29,6 +34,9 @@ export MCPP_HOME="$TMP/mcpphome"
 mkdir -p "$MCPP_HOME"
 if [ -d "$HOME/.mcpp/registry" ]; then
     ln -s "$HOME/.mcpp/registry" "$MCPP_HOME/registry"
+fi
+if [[ -n "${MCPP_NATIVE_XIM_INDEX:-}" ]]; then
+    python3 "$candidate_seed" "$MCPP_HOME" "$MCPP_NATIVE_XIM_INDEX"
 fi
 unset MCPP_TOOLCHAIN
 
@@ -86,6 +94,14 @@ readelf -p .comment "$t" > c1.txt
 grep -q 'clang version 23\.1\.3' c1.txt || {
     cat c1.txt; echo "FAIL: 1: the tool was not built by the consumer's llvm ${LLVM_VERSION}"; exit 1; }
 echo "ok: 1"
+
+# ARM64 publishes LLVM GNU, while native GCC GNU 16.1.0 is unavailable. This
+# explicit admission mode proves only the path host-helper LLVM case; the
+# ordinary test still exercises both compiler families below.
+if [[ "${MCPP_E2E_804_LLVM_HOST_ONLY:-0}" == 1 ]]; then
+    echo "PASS: 804 native LLVM path host helper (LLVM case only)"
+    exit 0
+fi
 
 # ── 2 ── its own toolchain: that one, whatever the consumer uses
 write_tool 'default = "gcc@16.1.0"'

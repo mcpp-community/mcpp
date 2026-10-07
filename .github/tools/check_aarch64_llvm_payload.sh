@@ -5,7 +5,19 @@ set -euo pipefail
     echo 'FAIL: this gate requires a native Linux aarch64 host'; exit 1;
 }
 MCPP="${MCPP:-mcpp}"
+index_seed="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/seed_native_xim_index.py"
+seed_candidate() {
+    [[ -n "${MCPP_NATIVE_XIM_INDEX:-}" ]] || return 0
+    python3 "$index_seed" "${MCPP_HOME:-$HOME/.mcpp}" "$MCPP_NATIVE_XIM_INDEX"
+}
+verify_candidate() {
+    [[ -n "${MCPP_NATIVE_XIM_INDEX:-}" ]] || return 0
+    python3 "$index_seed" --verify "${MCPP_HOME:-$HOME/.mcpp}" "$MCPP_NATIVE_XIM_INDEX"
+}
+# Optional only for manual cross-repository admission; normal CI keeps main.
+seed_candidate
 "$MCPP" toolchain install llvm 23.1.3
+verify_candidate
 MCPP_E2E_LLVM_VERSION=23.1.3 source tests/e2e/_toolchain_env.sh
 [[ -x "$LLVM_ROOT/bin/clang++" ]] || { echo 'FAIL: LLVM frontend missing'; exit 1; }
 file -L "$LLVM_ROOT/bin/clang++" | grep -q 'ARM aarch64' || {
@@ -17,8 +29,10 @@ report="${MCPP_NATIVE_REPORT_DIR:-${RUNNER_TEMP:-$work}/native-llvm-arm64}"
 mkdir -p "$report"
 trap 'rm -rf "$work"' EXIT
 export MCPP_HOME="$work/mcpp-home"
+seed_candidate
 "$MCPP" self config --mirror "${MCPP_E2E_MIRROR:-GLOBAL}"
 "$MCPP" self env --format json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["data"]["defaultToolchain"] == "llvm@23.1.3", d'
+verify_candidate
 "$MCPP" new "$work/native-probe"
 mkdir -p "$work/nativeabi/src"
 cat > "$work/nativeabi/mcpp.toml" <<'TOML'
