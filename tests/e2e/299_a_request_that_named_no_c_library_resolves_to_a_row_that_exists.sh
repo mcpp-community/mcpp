@@ -95,8 +95,8 @@ esac
 # identity. Asserting only "it did not refuse with tier-planned" would stay
 # green in a world where the completion picked some other row entirely.
 case "$row" in
-  *-musl) echo "  ok  and it resolved to the musl row ($row)" ;;
-  *)      echo "FAIL: aarch64-linux resolved to '$row', not a musl row"; exit 1 ;;
+  aarch64-linux-gnu) echo "  ok  and it resolved to the native GNU row ($row)" ;;
+  *)      echo "FAIL: aarch64-linux resolved to '$row', not the GNU row"; exit 1 ;;
 esac
 case "$row" in
   aarch64*) ;;
@@ -118,13 +118,13 @@ esac
 
 # ── Half three: a written segment is a request, not a gap ────────────────
 #
-# The escape hatch. Someone who wants the `planned` row writes it out, and the
-# tier gate then refuses a string that IS in their command.
+# An explicit segment names the same GNU identity. Host serviceability is a
+# separate property and agrees with the omitted-segment query.
 wr="$(reason_for aarch64-linux-gnu)"
-if [ "$wr" = tier-planned ]; then
-    echo "  ok  and writing -gnu still opts into the planned row's refusal"
+if [ "$wr" = "$r" ] && [ "$(resolved_row aarch64-linux-gnu)" = "$row" ]; then
+    echo "  ok  and writing -gnu preserves the selected GNU row"
 else
-    echo "FAIL: --target aarch64-linux-gnu gave reason '$wr', expected tier-planned"
+    echo "FAIL: written and omitted GNU segments disagree ($wr / $r)"
     exit 1
 fi
 

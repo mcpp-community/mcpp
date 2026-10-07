@@ -40,10 +40,14 @@ mcpp 首次运行时会把一条默认工具链装进 `~/.mcpp/`，按宿主选�
 | 宿主 | 默认 |
 |---|---|
 | Linux x86_64 | `gcc@16.1.0` |
+| Linux aarch64 | `llvm@23.1.3` |
 | 其它 Linux 架构 | `gcc@15.1.0-musl` |
 | macOS | `llvm@23.1.3` |
 | 有可用 MSVC 的 Windows | `llvm@23.1.3` |
 | 没有 MSVC 的 Windows | 面向 `x86_64-windows-gnu` 的 `gcc@16.1.0` |
+
+Linux aarch64 默认值适用于 2026.10.8.1 起的版本。已配置的工具链与目标
+保持有效。
 
 完整安装说明（含 Windows）见
 [README 的「安装」小节](../../README.zh-CN.md#安装)。

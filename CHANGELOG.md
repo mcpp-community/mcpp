@@ -4,6 +4,28 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.8.1] - 2026-10-08
+
+### Changed
+
+- Move the LLVM target line and macOS/Windows-with-MSVC defaults to 23.1.3.
+  New Linux aarch64 installations select LLVM 23.1.3 and the native GNU target;
+  Linux x86_64 retains GCC 16.1.0. Existing user defaults and explicit musl
+  targets remain available. The ARM64 rollout depends on the coordinated
+  xlings client and architecture-specific runtime resources.
+- Use the native GNU manifest row when building mcpp and installing the
+  toolchain for ARM64 consumer jobs. Centralize E2E toolchain version discovery
+  and respect a custom MCPP_HOME.
+
+### Fixed
+
+- Install explicitly requested toolchains for graph-supplied targets even when
+  the host payload matrix cannot serve the target. Preserve the refusal for
+  engine-selected foreign payloads.
+- Cover both xcode-27 E2E shards and exercise explicit toolchain installation
+  with a cold registry. Restore historical measurements to their original
+  environment and adapt the namespace fixture to libc++ 23.
+
 ## [2026.10.5.3] - 2026-10-06
 
 This release carries the fix of mcpp#775 (#776), in which an x86 Windows build

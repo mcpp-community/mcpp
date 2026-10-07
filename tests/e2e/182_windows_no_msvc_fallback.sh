@@ -17,7 +17,41 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # detection FAILS turns that silent false-green into a hard failure.
 set -e
 
-TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+TMP=$(mktemp -d)
+# Preserve executable and loader evidence before the isolated store is removed.
+# A missing helper and an unloadable helper require different repairs.
+cleanup() {
+    local rc=$?
+    if [[ $rc -ne 0 ]]; then
+        local report="${RUNNER_TEMP:-$TMP}/bare-windows-diagnostics"
+        mkdir -p "$report"
+        find "$MCPP_HOME" -type f \( -name cc1plus.exe -o -name g++.exe -o -name '*.dll' \) \
+            -printf '%p %s bytes\n' > "$report/payload-files.txt" 2>/dev/null || true
+        while IFS= read -r compiler; do
+            "$compiler" -print-prog-name=cc1plus > "$report/driver-helper.txt" 2>&1 || true
+            "$compiler" -print-search-dirs > "$report/driver-search.txt" 2>&1 || true
+        done < <(find "$MCPP_HOME" -name g++.exe -type f 2>/dev/null)
+        printf 'GCC_EXEC_PREFIX=%s\nCOMPILER_PATH=%s\nLIBRARY_PATH=%s\n' \
+            "${GCC_EXEC_PREFIX:-}" "${COMPILER_PATH:-}" "${LIBRARY_PATH:-}" > "$report/driver-environment.txt"
+        while IFS= read -r helper; do
+            echo "Direct invocation: $helper"
+            "$helper" --version > "$report/cc1plus-version.txt" 2>&1 || \
+                echo "cc1plus exit: $?" >> "$report/cc1plus-version.txt"
+            sha256sum "$helper" >> "$report/sha256.txt"
+            if command -v objdump >/dev/null; then
+                objdump -p "$helper" > "$report/cc1plus-pe.txt" 2>&1 || true
+            fi
+        done < <(find "$MCPP_HOME" -name cc1plus.exe -type f 2>/dev/null)
+        powershell.exe -NoProfile -Command \
+            'Get-WinEvent -FilterHashtable @{LogName="Microsoft-Windows-Windows Defender/Operational"; StartTime=(Get-Date).AddHours(-1)} -ErrorAction SilentlyContinue | Select-Object TimeCreated,Id,Message | Format-List' \
+            > "$report/defender-events.txt" 2>&1 || true
+        cat "$report/payload-files.txt" "$report/driver-helper.txt" "$report/cc1plus-version.txt" 2>/dev/null || true
+        echo "Diagnostics: $report"
+    fi
+    rm -rf "$TMP"
+    return "$rc"
+}
+trap cleanup EXIT
 export MCPP_HOME="$TMP/mcpp-home"      # isolated: no inherited default
 
 # ── 0) Self-check: the environment really has no usable MSVC ────────────────

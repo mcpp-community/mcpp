@@ -174,8 +174,8 @@ mcpp run
 
 ```
    Resolving toolchain
-    Resolved llvm@23.1.3 → riscv64-none-elf → @mcpp/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/clang++
-    Resolved host toolchain for build.mcpp: clang 23.1.3 (x86_64-unknown-linux-gnu)
+    Resolved llvm@22.1.8 → riscv64-none-elf → @mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/clang++
+    Resolved host toolchain for build.mcpp: clang 22.1.8 (x86_64-unknown-linux-gnu)
   build.mcpp blinky  ran 0.41s
     Inferred sources [src/**/*.{cppm,cpp,cc,c,S,s,asm}]
     Inferred target blinky (bin from src/main.cpp)
@@ -708,7 +708,7 @@ int main() {
 |---|---|
 | mcpp | 2026.8.20.1，由本仓库构建 |
 | 宿主 | `x86_64-linux-gnu` |
-| 工具链 | `xim:llvm` 23.1.3 |
+| 工具链 | `xim:llvm` 22.1.8 |
 | 目标 C 库 | `xim:picolibc-riscv` 1.8.12 |
 | 模拟器 | `xim:qemu-riscv` 9.2.4-1 |
 | 板级支持包 | `mcpplibs:riscv-virt-rt` 0.3.0 |

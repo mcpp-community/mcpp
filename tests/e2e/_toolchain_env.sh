@@ -33,8 +33,8 @@
 #
 # Usage:   source "$(dirname "$0")/_toolchain_env.sh"
 
-_e2e_registry_base="${HOME}/.mcpp/registry/data/xpkgs"
-if [[ ! -d "$_e2e_registry_base" && -n "${USERPROFILE:-}" ]]; then
+_e2e_registry_base="${MCPP_HOME:-${HOME}/.mcpp}/registry/data/xpkgs"
+if [[ -z "${MCPP_HOME:-}" && ! -d "$_e2e_registry_base" && -n "${USERPROFILE:-}" ]]; then
     _e2e_registry_base="${USERPROFILE}/.mcpp/registry/data/xpkgs"
 fi
 

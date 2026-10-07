@@ -37,6 +37,9 @@ jobs:
           - image: xcode-27
             shard: 1
             shards: 2
+          - image: xcode-27
+            shard: 2
+            shards: 2
     runs-on: ${{ matrix.image }}
     timeout-minutes: 60
     env:

@@ -83,6 +83,8 @@ runtime_lib_dirs(const std::filesystem::path& toolchain_root) {
             dirs.push_back(p);
     };
     add(toolchain_root / "lib" / "x86_64-unknown-linux-gnu");
+    add(toolchain_root / "lib" / "aarch64-unknown-linux-gnu");
+    add(toolchain_root / "lib" / "aarch64-linux-gnu");
 #else
     (void)toolchain_root;
 #endif

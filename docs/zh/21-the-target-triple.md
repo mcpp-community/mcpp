@@ -142,7 +142,7 @@ target spec 设置 `exe_suffix: ".js"`。
 mcpp build --target x86_64-linux      # = x86_64-linux-gnu
 mcpp build --target x86_64-windows    # = x86_64-windows-gnu
 mcpp build --target riscv64-none      # = riscv64-none-elf
-mcpp build --target aarch64-linux     # = aarch64-linux-musl
+mcpp build --target aarch64-linux     # = aarch64-linux-gnu
 mcpp build --target aarch64-macos     # macOS has no segment to decline
 ```
 
@@ -156,39 +156,14 @@ mcpp build --target aarch64-macos     # macOS has no segment to decline
 
 ### 补全取自词汇表，而不是取自一个固定的词
 
-上面第四行正是这两种角色必须分开的理由。把 `aarch64-linux` 按词法填成
-`aarch64-linux-gnu`，而那一行是 `planned`——`aarch64-linux-musl` 才是
-`verified`。2026.8.26.2 之前，档位闸问的是填充之后的值：
+省略环境段的请求按已知目标表补全。受支持的词法默认值优先；否则采用
+唯一受支持的同族行。没有受支持的行时保留词法形式，并在诊断中列出
+已登记的同族行。歧义请求列出受支持的候选。
 
-```
-$ mcpp build --target aarch64-linux
-  error: target 'aarch64-linux-gnu' is registered but not yet supported (planned)
-$ mcpp build --target aarch64-linux-musl
-  Finished dev [unoptimized + debuginfo] in 0.99s
-```
+`aarch64-linux` 选择 `aarch64-linux-gnu`。原生 Linux ARM64 载荷采用
+LLVM 23.1.3 与 glibc。`aarch64-linux-musl` 仍是静态 musl 产物的显式
+拼法。显式写出的环境段保持不变。
 
-被问的问题是「aarch64，Linux」。被回答的问题却是「aarch64-linux-**gnu**」，
-而报错引用的三元组在那条命令里根本不存在。`riscv64-linux` 更严重：填充
-出来的那一行完全不在词汇表里，于是一个已登记的目标族被报成
-`unknown target`。
-
-省略了这一段的请求，按下列顺序对着已知目标表补全：
-
-1. 词法默认值命中一个受支持的行 —— 采用它（`x86_64-linux` → `gnu`）；
-2. 该 `(arch, os)` 下恰好一个受支持的行 —— 采用它（`aarch64-linux` →
-   `musl`）；
-3. 一个受支持的都没有 —— 保留词法形式，并对着**确实存在**的那些行给出
-   诊断（`riscv64-linux` → 「planned；该系统已登记的行：
-   `riscv64-linux-musl`」）；
-4. 多个受支持而词法默认值不在其中 —— 拒绝并列出候选。今天没有任何
-   `(arch, os)` 呈这个形状。
-
-规则 1 排在最前，使这条规则能自己退休：`aarch64-linux-gnu` 从
-`planned` 升级的那一天，词法答案重新胜出，不需要任何人回来修改什么。
-
-**写出这一段即是退出补全。** 写出来的段是一次请求而不是一处空缺，因此
-`--target aarch64-linux-gnu` 仍会撞上 `planned` 行的拒绝 —— 那正是用
-显式的 `[target.<triple>] toolchain` 提前加入某一行的逃生口。
 
 ### 采用的拼法
 
@@ -478,7 +453,7 @@ docs/22。
 **两台 Linux 宿主不是同一台。** `x86_64-linux-gnu` 需要本机架构的
 `xim:glibc` 与 `xim:linux-headers` payload，而它们只为宿主自己的架构
 存在 —— 因此那一行从 `linux-x86_64` 够得着，从 `linux-aarch64` 却够不
-着；`aarch64-linux-gnu` 是镜像的情形，在两台上都是 `planned`。把它们
+着；`aarch64-linux-gnu` 由 `linux-aarch64` 原生宿主服务。把它们
 合并成 `linux`，会让一台的行覆盖掉另一台的行。
 
 ### 构建机与它们服务的目标
@@ -486,7 +461,7 @@ docs/22。
 | target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
 |---|---|---|---|---|---|---|
 | `x86_64-linux-gnu` | verified | — | 载荷 | — | — | — |
-| `aarch64-linux-gnu` | planned | — | planned | planned | planned | planned |
+| `aarch64-linux-gnu` | preview | `llvm@23.1.3` | — | 载荷 | — | — |
 | `x86_64-linux-musl` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | 载荷 |
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | — |
 | `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |

@@ -85,13 +85,11 @@ TEST(TripleRequest, ASupportedLexicalDefaultIsKept) {
     EXPECT_FALSE(r.ambiguous);
 }
 
-TEST(TripleRequest, TheOnlySupportedSiblingIsTaken) {
-    // aarch64-linux-gnu is `planned`; aarch64-linux-musl is `verified`. Measured
-    // on 2026.8.26.1: `--target aarch64-linux` refused as planned while
-    // `--target aarch64-linux-musl` built.
+TEST(TripleRequest, NativeArm64UsesTheSupportedGnuRow) {
+    // The supported GNU lexical default outranks the musl sibling.
     auto r = triple::resolve_request(*parse("aarch64-linux"));
-    EXPECT_EQ(r.triple.str(), "aarch64-linux-musl");
-    EXPECT_TRUE(r.completedFromVocabulary);
+    EXPECT_EQ(r.triple.str(), "aarch64-linux-gnu");
+    EXPECT_FALSE(r.completedFromVocabulary);
     // mcpp CHOOSING A ROW IS NOT THE PROJECT NAMING A C LIBRARY. `envExplicit`
     // feeds the request/fact comparison and the report's display name; setting
     // it here would make mcpp compare its own answer against itself.
@@ -110,8 +108,8 @@ TEST(TripleRequest, ABareLinuxTripleIsNeverCompletedToAndroid) {
     // outcomes of that ambiguity are wrong -- refusing a request with an
     // obvious answer, or answering it with bionic.
     auto r = triple::resolve_request(*parse("aarch64-linux"));
-    EXPECT_EQ(r.triple.str(), "aarch64-linux-musl");
-    EXPECT_TRUE(r.completedFromVocabulary);
+    EXPECT_EQ(r.triple.str(), "aarch64-linux-gnu");
+    EXPECT_FALSE(r.completedFromVocabulary);
     EXPECT_FALSE(r.ambiguous);
     // Not offered as a suggestion either: `siblings` is what the diagnostic
     // prints, and naming it there would suggest building for another platform.
@@ -133,8 +131,7 @@ TEST(TripleRequest, ABareLinuxTripleIsNeverCompletedToAndroid) {
 }
 
 TEST(TripleRequest, AWrittenSegmentIsARequestAndIsNotRevised) {
-    // The escape hatch: writing the segment opts into the `planned` row, and the
-    // tier gate then refuses something the user actually typed.
+    // An explicit environment segment is preserved independently of tier.
     auto r = triple::resolve_request(*parse("aarch64-linux-gnu"));
     EXPECT_EQ(r.triple.str(), "aarch64-linux-gnu");
     EXPECT_FALSE(r.completedFromVocabulary);

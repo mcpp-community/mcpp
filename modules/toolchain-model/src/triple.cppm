@@ -536,7 +536,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     { "x86_64-windows-msvc",   "verified",  "PE",  "",           "",                            false },
     { "aarch64-macos",         "verified",  "",    "",           "",                            false },
     { "riscv64-linux-musl",    "planned",   "",    "",           "",                            true  },
-    { "aarch64-linux-gnu",     "planned",   "",    "",           "",                            false },
+    { "aarch64-linux-gnu",     "preview",   "",    "llvm@23.1.3", "",                            false },
     { "x86_64-macos",          "planned",   "",    "",           "",                            false },
     // Bare metal. `defaultStatic` is not a preference here — there is no
     // loader, so there is no other option. The pin is llvm on every host
@@ -1079,13 +1079,15 @@ namespace pins {
     // `pin` in kKnownTargets above — test_windows_defaults.cpp enforces it.
     inline constexpr std::string_view kFirstRunWinGnu       = "gcc@16.1.0";
     inline constexpr std::string_view kFirstRunWinGnuTarget = "x86_64-windows-gnu";
-    // Linux keeps the gcc family as its host default by design (SPEC-009
+    // Linux x86_64 keeps the gcc family as its host default (SPEC-009
     // §4.1 reason, recorded 2026.10 with the LLVM 23.1.3 line move): native
     // glibc ABI, so X11/OpenGL and other system libraries link directly.
     // This is the platform's answer, not a lag behind the llvm line — no
     // exit condition.
     inline constexpr std::string_view kFirstRunLinuxX86_64  = "gcc@16.1.0";
-    // Non-x86_64 Linux hosts have no managed glibc gcc payload, so the
+    // Native Linux ARM64 uses the managed LLVM payload and glibc ABI.
+    inline constexpr std::string_view kFirstRunLinuxAarch64 = "llvm@23.1.3";
+    // Other Linux hosts have no managed glibc gcc payload, so the
     // default is the fully static musl one: the only self-contained choice
     // on this axis (SPEC-009 §4.1 reason; re-evaluate if a managed glibc
     // gcc for these hosts ships).
@@ -1102,15 +1104,19 @@ namespace pins {
     // report on each host's CI row. `msvcUsable` is the one input a constant
     // cannot know -- whether a usable MSVC (STL and SDK, from Visual Studio or
     // a managed toolset) is on this machine, which decides the Windows row.
+    inline std::string_view linux_default_toolchain(std::string_view arch) {
+        if (arch == "x86_64") return kFirstRunLinuxX86_64;
+        if (arch == "aarch64") return kFirstRunLinuxAarch64;
+        return kFirstRunLinuxOther;
+    }
+
     inline std::string_view host_default_toolchain(bool msvcUsable) {
         if constexpr (mcpp::platform::is_macos) {
             return kFirstRunMac;
         } else if constexpr (mcpp::platform::is_windows) {
             return msvcUsable ? kFirstRunWinMsvc : kFirstRunWinGnu;
-        } else if (mcpp::platform::host_arch == std::string_view("x86_64")) {
-            return kFirstRunLinuxX86_64;
         } else {
-            return kFirstRunLinuxOther;
+            return linux_default_toolchain(mcpp::platform::host_arch);
         }
     }
 } // namespace pins

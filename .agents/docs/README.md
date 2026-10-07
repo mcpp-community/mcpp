@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-328 records.
+330 records.
 
 ## By subject
 
@@ -97,6 +97,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### toolchain
 
+- [LLVM 23.1.3 Part 2：任务依赖与生态交付记录](2026-10-08-llvm-2313-part2-execution-and-dependencies.md) — active
+- [LLVM 23.1.3 Part 2：Linux aarch64 默认工具链与 glibc 生态闭环](2026-10-08-llvm-2313-linux-aarch64-ecosystem-part2-design.md) — active
 - [LLVM 23.1.3 全平台统一默认:跨仓库联动方案(mcpp × xim-pkgindex)](2026-10-07-llvm-2313-unified-default-cross-repo-design.md) — active
 
 ### triage
@@ -122,6 +124,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-10
 
+- [LLVM 23.1.3 Part 2：任务依赖与生态交付记录](2026-10-08-llvm-2313-part2-execution-and-dependencies.md) — active
+- [LLVM 23.1.3 Part 2：Linux aarch64 默认工具链与 glibc 生态闭环](2026-10-08-llvm-2313-linux-aarch64-ecosystem-part2-design.md) — active
 - [LLVM 23.1.3 全平台统一默认:跨仓库联动方案(mcpp × xim-pkgindex)](2026-10-07-llvm-2313-unified-default-cross-repo-design.md) — active
 - [2026.10.5.3 发布方案：32 位 x86 的架构词汇、资源编译器的识别与增量（#776 后续）](2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md) — active
 - [下一个版本的发布方案：标准库模块、原生 MSVC LTO 与导出发现、共享库的链接配置、Windows 参数引号（#768 后续、#770、#771）](2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md) — active

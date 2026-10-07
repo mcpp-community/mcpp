@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / ".github" / "tools" / "check_default_toolchain_docs.py"
 DOCS = ["docs/01-getting-started.md", "docs/zh/01-getting-started.md",
         "docs/20-toolchains.md", "docs/zh/20-toolchains.md"]
-ROWS = [("Linux", "x86_64", "gcc@16.1.0"), ("Linux", "aarch64", "gcc@15.1.0-musl"),
+ROWS = [("Linux", "x86_64", "gcc@16.1.0"), ("Linux", "aarch64", "llvm@23.1.3"), ("Linux", "riscv64", "gcc@15.1.0-musl"),
         ("Darwin", "arm64", "llvm@23.1.3"), ("Windows", "AMD64", "llvm@23.1.3"),
         ("Windows", "AMD64", "gcc@16.1.0")]
 

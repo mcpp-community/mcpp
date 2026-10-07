@@ -209,6 +209,13 @@ jobs:
         run: |
           MCPP="$MCPP_SELF" bash tests/e2e/182_windows_no_msvc_fallback.sh
 
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: bare-windows-diagnostics
+          path: ${{ runner.temp }}/bare-windows-diagnostics
+          if-no-files-found: warn
+
   toolchains:
     name: "toolchains + regressions (windows x64)"
     runs-on: windows-latest

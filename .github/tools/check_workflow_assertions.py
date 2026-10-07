@@ -224,12 +224,27 @@ def last_statement(script: str) -> str:
     return stmts[-1] if stmts else ""
 
 
+def incomplete_shards(matrix_text: str) -> list[str]:
+    """Each explicitly declared image runs every shard exactly once."""
+    rows = re.findall(r"- image:\s*(\S+)\s+shard:\s*(\d+)\s+shards:\s*(\d+)", matrix_text)
+    grouped: dict[str, list[tuple[int, int]]] = {}
+    for image, shard, total in rows:
+        grouped.setdefault(image, []).append((int(shard), int(total)))
+    problems = []
+    for image, entries in grouped.items():
+        totals = {n for _, n in entries}
+        if len(totals) != 1 or sorted(s for s, _ in entries) != list(range(1, entries[0][1] + 1)):
+            problems.append(f"W4 image {image}: incomplete or duplicate shard coverage {entries}")
+    return problems
+
+
 def check(workflows: list[Path], check_open: bool) -> list[str]:
     problems: list[str] = []
     known_red: list[tuple[str, str, int]] = []
     for path in workflows:
         wf = parse(path)
         for job in wf.jobs:
+            problems.extend(f"{p} ({path}:{job.line})" for p in incomplete_shards(job.matrix_text))
             for step in job.steps:
                 where = f"{path}:{step.line} ({job.key} / {step.name or 'unnamed step'})"
                 shell = effective_shell(wf, job, step)

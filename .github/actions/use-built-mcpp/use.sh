@@ -29,6 +29,19 @@ fi
 # The toolchain mcpp.toml names for this host is the one the build used, so it
 # is the one whose payloads hold the binary's runtime.
 manifest_toolchain() {
+    # Native ARM64 overrides the platform-wide GCC pin. Consumers must install
+    # the same payload used by build.yml, including the first launch's runtime.
+    if [ "$host" = linux-aarch64 ]; then
+        local native
+        native="$(awk '
+            /^\[/ { in_tc = ($0 == "[target.aarch64-linux-gnu]"); next }
+            in_tc && $1 == "toolchain" { gsub(/"/, "", $3); print $3; exit }
+        ' mcpp.toml)"
+        if [ -n "$native" ]; then
+            printf '%s\n' "$native"
+            return
+        fi
+    fi
     local key
     case "$host" in
         macos-*)   key=macos ;;

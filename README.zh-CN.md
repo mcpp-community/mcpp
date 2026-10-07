@@ -244,7 +244,7 @@ import mcpplibs.cmdline;
 <summary><b>工具链管理</b></summary>
 
 - 内置 GCC 16.1.0 与 LLVM/Clang 20.1.7，一条命令安装
-- 按宿主选择默认值：Linux x86_64 使用原生 glibc GCC，其他 Linux 架构使用 musl GCC，macOS 以及有可用 MSVC 的 Windows 使用 LLVM，裸 Windows 使用 MinGW-w64 GCC
+- 按宿主选择默认值：Linux x86_64 使用原生 glibc GCC，Linux aarch64 使用原生 glibc LLVM，其他 Linux 架构使用 musl GCC，macOS 以及有可用 MSVC 的 Windows 使用 LLVM，裸 Windows 使用 MinGW-w64 GCC
 - 多版本共存：`mcpp toolchain install gcc 16` / `mcpp toolchain install llvm 20`
 - 隔离沙盒：所有工具链位于 `~/.mcpp/registry/`，不改动系统
 - 按平台指定：`linux = "gcc@16"`、`macos = "llvm@20"`
@@ -389,7 +389,8 @@ mcpp 的身份模型有两条正交的轴：**工具链**是 `family@version`（
 | `armv7a-none-eabi` · `armv7a-none-eabihf` | llvm 22；Cortex-A 32 位，第一个带 MMU 的目标 ² | verified |
 | `aarch64-none-elf` · `x86_64-none-elf` | llvm 22；裸机，默认不带 C 库 ² | preview |
 | `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22；Cortex-M4/M7 软浮点、M23、M33F/M55F ² | preview |
-| `riscv64-linux-musl` · `aarch64-linux-gnu` · `x86_64-macos` | — | planned |
+| `aarch64-linux-gnu` | `llvm@23.1.3` | preview |
+| `riscv64-linux-musl` · `x86_64-macos` | — | planned |
 | `wasm32-emscripten` | `emsdk@6.0.9`；Emscripten 自带 sysroot 与 libc++ 模块接口；`mcpp run` 使用 payload 声明的 `node`（`xim:node`）运行模块，不使用 PATH 上的 `node` | verified |
 | `x86_64-linux-android` | `android-ndk@30.0.16248370`；bionic 来自 NDK，一个 payload 服务两个 ABI；已在 API 24 的 x86_64 模拟器镜像上运行 | verified |
 | `aarch64-linux-android` | 同一个 payload、同样的构建；已在 qemu-user 上配合系统镜像自带的 bionic 运行，平台模拟器无法在 x86_64 宿主上做到这一点 | verified |

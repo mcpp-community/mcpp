@@ -166,5 +166,16 @@ class TheRepository(unittest.TestCase):
         self.assertEqual(lint.check(workflows, check_open=False), [])
 
 
+class W4ShardCoverage(unittest.TestCase):
+    def test_missing_shard_is_rejected(self):
+        self.assertTrue(lint.incomplete_shards("- image: xcode-27\nshard: 1\nshards: 2\n"))
+
+    def test_full_image_is_accepted(self):
+        self.assertEqual(lint.incomplete_shards("- image: xcode-27\nshard: 1\nshards: 2\n- image: xcode-27\nshard: 2\nshards: 2\n"), [])
+
+    def test_duplicate_shard_is_rejected(self):
+        self.assertTrue(lint.incomplete_shards("- image: xcode-27\nshard: 1\nshards: 2\n- image: xcode-27\nshard: 1\nshards: 2\n"))
+
+
 if __name__ == "__main__":
     unittest.main()

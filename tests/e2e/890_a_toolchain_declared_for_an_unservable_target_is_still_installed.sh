@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires: llvm unix-shell
+# requires: unix-shell
 # 890_a_toolchain_declared_for_an_unservable_target_is_still_installed.sh — mcpp#782.
 #
 # A target no payload on this host produces (a linux-gnu guest on a macOS
@@ -30,6 +30,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 TMP=$(mktemp -d)
 trap 'rm -rf $TMP' EXIT
 cd "$TMP"
+
+# A cold registry proves installation rather than an out-of-band cache hit.
+export MCPP_HOME="$TMP/mcpp-home"
+"$MCPP" self config --mirror "${MCPP_E2E_MIRROR:-GLOBAL}"
 
 # The guest triple must be one no payload here serves. `x86_64-linux-gnu`
 # qualifies on macOS and Windows; on Linux the row is servable natively, so

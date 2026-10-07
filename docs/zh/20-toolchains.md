@@ -26,6 +26,7 @@ mcpp 把所有工具链装进同一个沙盒目录（`~/.mcpp/registry/data/xpkg
 
 - Linux x86_64 使用面向原生 glibc ABI 的 `gcc@16.1.0`，X11、OpenGL 与系统库
   因此可以直接使用。
+- Linux aarch64 使用面向原生 glibc ABI 的 `llvm@23.1.3`（2026.10.8.1+）。
 - 其他 Linux 架构使用 `gcc@15.1.0-musl`，这是一套自包含的全静态工具链。
 - macOS 使用 `llvm@23.1.3`。
 - Windows 上存在可用 MSVC 时使用面向 MSVC ABI 的 `llvm@23.1.3`；没有可用

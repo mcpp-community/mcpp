@@ -24,6 +24,7 @@ host-aware:
 
 - Linux x86_64 uses `gcc@16.1.0` for the native glibc ABI, so X11, OpenGL, and
   system libraries work out of the box.
+- Linux aarch64 uses `llvm@23.1.3` for the native glibc ABI (2026.10.8.1+).
 - Other Linux architectures use `gcc@15.1.0-musl`, a self-contained static
   toolchain.
 - macOS uses `llvm@23.1.3`.
