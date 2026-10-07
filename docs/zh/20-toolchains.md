@@ -93,6 +93,17 @@ mcpp toolchain default gcc@16 --target x86_64-linux-musl   # "default to fully-s
 `default_target = "x86_64-linux-musl"`。（存量配置里 `default =
 "gcc@15.1.0-musl"` 这类合并拼写原样可用，不受影响。）
 
+在原生 Linux aarch64 上（2026.10.8.1+），原生载荷发布后，显式迁移同时
+选择 LLVM 23.1.3 与 GNU 目标：
+
+```bash
+mcpp toolchain install llvm 23.1.3
+mcpp toolchain default llvm@23.1.3 --target aarch64-linux-gnu
+```
+
+该命令将 `llvm@23.1.3` 与 `aarch64-linux-gnu` 记录为默认值对。存量配置在
+显式修改前保持有效；工程清单中的声明保留原有优先级。
+
 ### 一次构建的编译器选定
 
 有五种来源可以给它命名。它们分级排列，而正是这套分级，让工程能够写下的那两条

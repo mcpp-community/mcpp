@@ -762,3 +762,10 @@ jobs:
         shell: bash
         run: |
           MCPP="$(command -v mcpp)" bash tests/e2e/182_windows_no_msvc_fallback.sh
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: bare-windows-fresh-install-diagnostics
+          path: ${{ runner.temp }}/bare-windows-diagnostics
+          if-no-files-found: warn

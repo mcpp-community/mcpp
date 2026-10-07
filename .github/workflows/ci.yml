@@ -223,7 +223,7 @@ jobs:
 
   # Pull requests and dispatch only, as when it was a workflow of its own.
   openkal:
-    needs: [build-linux, build-macos, build-windows]
+    needs: [build-linux, build-linux-arm, build-macos, build-windows]
     if: github.event_name != 'push'
     uses: ./.github/workflows/openkal-cross.yml
 

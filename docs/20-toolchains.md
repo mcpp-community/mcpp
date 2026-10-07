@@ -92,6 +92,18 @@ The pair persists as `[toolchain] default = "gcc@16.1.0"` +
 configs with combined spellings like `default = "gcc@15.1.0-musl"` keep
 working unchanged.)
 
+On native Linux aarch64 (2026.10.8.1+), an explicit migration selects both
+LLVM 23.1.3 and the GNU target after the native payload is published:
+
+```bash
+mcpp toolchain install llvm 23.1.3
+mcpp toolchain default llvm@23.1.3 --target aarch64-linux-gnu
+```
+
+The command records `llvm@23.1.3` and `aarch64-linux-gnu` as the default pair.
+Existing configurations remain effective until explicitly changed; project
+manifest declarations retain their precedence.
+
 ### Compiler selection for a build
 
 Five things can name it. They are ranked, and the rank is what makes the two

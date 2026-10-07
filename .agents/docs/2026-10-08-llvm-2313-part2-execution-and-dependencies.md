@@ -38,7 +38,7 @@ LLVM 与 glibc 是原生 aarch64 的新默认组合；x86_64 保持 GCC，显式
 |---|---|---|---|---|
 | T1 review 修正与引擎默认 | [mcpp #784](https://github.com/mcpp-community/mcpp/issues/784)，沿用 #781 | T4 公开资源后完整 CI | 冷 home、默认双轴、GNU native、自举、modules、Windows 诊断 | 实现中 |
 | T2 ARM64 配套与 carve | [xim-pkgindex #937](https://github.com/openxlings/xim-pkgindex/issues/937) | 原生构建机 | 架构、来源摘要、loader/runtime、编译运行 | 原生构建已启动 |
-| T3 配方元数据上下文 | [xlings #646](https://github.com/openxlings/xlings/issues/646) | 现有 libxpkg LoaderContext | metadata 与 install 相同架构；三平台回归 | 已复现并实现，构建中 |
+| T3 配方元数据上下文 | [xlings #647](https://github.com/openxlings/xlings/pull/647)，关联 #646 | 现有 libxpkg LoaderContext | metadata 与 install 相同架构；三平台回归 | 本地验证通过，CI 中 |
 | T4 索引接线与镜像 | [xim-pkgindex #938](https://github.com/openxlings/xim-pkgindex/pull/938) | T2、T3 发布 | 每架构哈希、旧版本拒绝、双镜像 GET、消费门 | draft |
 | T5 原生与生态消费 | mcpp、xlings、mcpp-index、openkal | T1、T4 | 原生 ARM64、CN SubOS sandbox、真实 build/test/run/pack | 待资源与客户端就绪 |
 | T6 自审与发布 | mcpp、xlings、资源与索引 | T1–T5 | 最终头 CI、发版产物、指针传播、消费审计 | 待前置门 |
@@ -75,3 +75,21 @@ ubuntu-24.04-arm，生成 UAPI、zlib、libxml2、gcc-runtime、glibc 和 LLVM �
 
 本地测试按变更契约聚焦执行，避免用重复测试占据资源制作与集成时间。
 最终闭环审计仍须逐项覆盖方案 G0–G9；局部通过不能替代整个生态已可用。
+
+## 5. 集中 PR 当前证据
+
+2026-10-08：mcpp #781 已推送 `42e8b884`，包含 Part 2 默认接线、
+review 修正与候选发布版本 2026.10.8.1。ARM64 native GNU 仍为 preview；
+实测矩阵与完整生态消费尚未准入。临时报告及本地 dist 未纳入提交。
+
+xlings #647 的 `276fce5` 统一配方上下文，版本两处均为 2026.10.8.1。
+本地构建通过，catalog 套件 48 通过、9 项因索引 fixture 缺席跳过。
+完整单测执行得到 57 个测试程序通过、1 个失败；失败来自既有 progress
+测试在当前 TERM=dumb 下的颜色断言。该程序以 TERM=xterm 复验 7/7 通过。
+这些局部证据不替代发布版三平台 CI。
+
+xim-pkgindex #938 已推送 `193f910e`，冻结五种依赖源码的下载摘要，
+加入许可证、provenance 与 ELF 清单。静态及隔离套件 4053 通过，
+15 跳过、952 未选入、3 项既有 xpass；架构与客户端门 11/11 通过。
+原生资源首轮 CI 已完成依赖构建并进入 glibc；新提交将生成包含完整
+来源记录的资源。尚未写入 ARM64 公开路由或占位摘要。

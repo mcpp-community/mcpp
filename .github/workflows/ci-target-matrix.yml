@@ -106,6 +106,13 @@ jobs:
           MCPP_VENDORED_XLINGS: ${{ env.XLINGS_BIN }}
         run: bash .github/tools/check_aarch64_llvm_payload.sh
 
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && matrix.host == 'linux-aarch64' }}
+        with:
+          name: native-llvm-arm64-admission
+          path: ${{ runner.temp }}/native-llvm-arm64
+          if-no-files-found: warn
+
       - name: Each invariant RAN
         run: |
           set -euo pipefail
@@ -166,20 +173,8 @@ jobs:
             check 298_overriding_a_convention_requires_replacing_it.sh \
               "OK: a convention may be overridden, but not merely removed" || fail=1
           else
-            # THE MIRROR OF 297's EXEMPTION, AND FOR THE OTHER FAMILY.
-            #
-            # 298 declares llvm, and there is no llvm payload for aarch64 Linux —
-            # upstream stopped publishing linux-aarch64 after 19.x and the index
-            # has none. Measured on `ubuntu-24.04-arm`:
-            #
-            #     SKIP: llvm is not installed here, and this test is about
-            #           declaring it
-            #
-            # Granting it by REASON rather than by host is what makes it
-            # retire itself: the day
-            # `.agents/docs/2026-08-26-aarch64-linux-ecosystem-closure.md`
-            # lands an aarch64 llvm, this stops being a skip and starts being
-            # the assertion, with nothing here to change.
+            # Non-Linux rows may restore a cache with no declared LLVM.
+            # Both Linux hosts require the assertion after native provisioning.
             check_or_declared_skip 298_overriding_a_convention_requires_replacing_it.sh \
               "OK: a convention may be overridden, but not merely removed" \
               "llvm is not installed here" || fail=1
@@ -187,11 +182,8 @@ jobs:
 
           # ── 2026.8.26.2: an answer mcpp already had, now used ─────────────
           #
-          # 299/300/303 CARRY NO SKIP AT ALL, so they use `check` on every
-          # host. They read the vocabulary and the query's own document —
-          # neither depends on which payloads this machine happens to hold, and
-          # a version of them that skipped anywhere would be a version that
-          # could skip everywhere.
+          # Vocabulary completion is host-independent. The C-library query
+          # additionally checks graph layering on both GNU Linux hosts.
           check 299_a_request_that_named_no_c_library_resolves_to_a_row_that_exists.sh \
             "OK: a request that named no C library resolves to a row that exists" || fail=1
           check 300_a_registered_family_is_not_reported_unknown.sh \
@@ -199,9 +191,9 @@ jobs:
           # 303's third half stacks a musl c-abi over this host's own target,
           # and not every host stacks that — an MSVC-ABI host answers the
           # layering question first, correctly, and there is then no
-          # two-answer document to check. Granted by reason; linux-x86_64 below
-          # is the denominator that must run the whole file.
-          if [ "${{ matrix.host }}" = linux-x86_64 ]; then
+          # two-answer document to check. Both GNU Linux hosts must run all
+          # three halves; a skip there is a failed assertion.
+          if [[ "${{ matrix.host }}" = linux-* ]]; then
             check 303_the_query_gives_one_answer_for_the_c_library.sh \
               "OK: the query gives one answer for the C library" || fail=1
           else
@@ -213,8 +205,8 @@ jobs:
           # 301/302 NEED TWO COMPILER FAMILIES, AND THAT IS A PROPERTY OF THE
           # MACHINE RATHER THAN OF THE CLAIM. "A requirement that DIFFERS from
           # mcpp's own answer is applied" cannot be stated where only one family
-          # exists — macOS installs llvm only, and aarch64 Linux has no llvm
-          # payload at all (see 298's note).
+          # exists — macOS ordinarily installs LLVM only. Both Linux hosts
+          # now have LLVM and GCC payloads.
           #
           # AND THE DENOMINATOR IS linux-x86_64, WHICH HAS BOTH. Without a
           # host required to actually run these, a reason accepted everywhere is

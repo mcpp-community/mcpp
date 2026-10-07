@@ -100,6 +100,12 @@ bin="$(find target -type f -name okstack | head -1)"
 
 # ── The artefact is what a graph-supplied target side produces ──────────────
 desc="$(file -b "$bin")"
+if [ "${MCPP_E2E_EXPECT_ARCH:-}" = aarch64 ]; then
+    case "$desc" in
+      *"ELF 64-bit"*"ARM aarch64"*) echo "  ok  native aarch64 ELF" ;;
+      *) echo "FAIL: native ARM64 job produced a different architecture: $desc"; exit 1 ;;
+    esac
+fi
 case "$desc" in
   *"statically linked"*) echo "  ok  statically linked" ;;
   *) echo "FAIL: not static — the payload's C library was linked instead"

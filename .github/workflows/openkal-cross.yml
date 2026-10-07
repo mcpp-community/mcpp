@@ -633,3 +633,41 @@ jobs:
           check 778_a_graph_link_searches_no_host_directory.sh \
             "ok: a host directory in ldflags is refused, by name" || fail=1
           [ "$fail" = 0 ] || exit 1
+
+
+  ecosystem-native-arm64:
+    name: openkal native stack (Linux ARM64, LLVM 23.1.3)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - uses: ./.github/actions/use-built-mcpp
+        with:
+          host: linux-aarch64
+
+      - name: Native platform and graph stack
+        env:
+          MCPP_VENDORED_XLINGS: ${{ env.XLINGS_BIN }}
+          MCPP_E2E_EXPECT_ARCH: aarch64
+          MCPP_E2E_LLVM_VERSION: 23.1.3
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          export MCPP="$MCPP_FRESH"
+          "$MCPP" toolchain install llvm 23.1.3
+          # The existing test builds real openkal-musl and LLVM runtime packages,
+          # verifies every graph layer, checks static ELF closure and runs it.
+          bash tests/e2e/286_the_openkal_stack_still_builds.sh 2>&1 | tee native-openkal.log
+          grep -qF "ok  native aarch64 ELF" native-openkal.log
+          grep -qF "OK: the openkal stack builds, links statically and runs" native-openkal.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openkal-native-arm64
+          path: native-openkal.log
+          if-no-files-found: warn
