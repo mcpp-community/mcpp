@@ -242,3 +242,26 @@ GCC 16.1.0 对照验证：正常环境编译成功；显式不存在的 GCC_ROOT
 ARM64 消费门切换至 musl GCC 时同一测试变量造成的前端查找污染，
 但 Windows 与 ARM64 的最终通过状态仍须新头执行确认。引擎算法、
 编译器归档及镜像摘要不变，无须重新发布资源。
+
+## 12. 2026-10-08 Windows 回归通过与原生 GNU 单测证据
+
+提交 553861c4 的 [bare Windows job](https://github.com/mcpp-community/mcpp/actions/runs/37701315331/job/113069650755)
+通过首次 fallback、配置持久化、独立 exe 与显式选择验证；同头 Windows
+单测与打包亦通过。该结果验证第 11 节的 GCC_ROOT 根因修复，不能将
+此前失败继续作为基础设施豁免。测试抽象层的四项回归纳入 CI fixture
+门。Ubuntu GCC 13 不处理本次 GCC_ROOT 控制，而生态 GCC 16 处理；
+测试分别保持真实驱动的基线，显式选择生态驱动时要求负控制重现失败。
+
+同头 [原生候选消费门](https://github.com/mcpp-community/mcpp/actions/runs/37701961377)
+已通过 LLVM/GNU 冷安装、头文件隔离、std/std.compat、打包部署、
+GCC-musl 回归及 GNU 自举。完整单测为 145/147：工具链注册测试仍
+将非 x86 Linux 的原生 GCC 映射写成 gcc，现改按实际 musl-gcc
+载荷验证；ELF 测试发现静态 libunwind 的 32 个动态导出符号。
+GNU host helper、四个真实索引成员与 openkal 原生消费尚未执行。
+
+ARM64 与 x86_64 的 libunwind.a 都具有默认可见的全局符号。
+使用同一 ARM64 候选归档交叉链接的异常程序在 QEMU 下运行成功，
+静态归档组合导出零个 unwind 符号；额外链接 libunwind.so 则导出
+31 个并增加对应 DT_NEEDED。这是定位对照，不能替代原生消费证明。
+失败门补存实际测试 ELF、readelf 结果与 build.ninja，再根据链接
+闭包判断原因；尚不调整资产、不隐藏导出以替代动态依赖诊断。
