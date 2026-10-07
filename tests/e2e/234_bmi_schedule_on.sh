@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # `bmi_schedule = "on"` end to end, and the token leak that used to hang it.
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 #
 # The split schedule reorders the module graph: a BMI edge that exits as soon as
 # the compiler has published its BMI, plus a join edge that waits for code
@@ -52,15 +53,15 @@ cd "$TMP"
 # reported as "the build with bmi_schedule=on failed", which is a completely
 # different diagnosis. Same three-line block every other e2e in this directory
 # uses.
-cat > mcpp.toml <<'EOF'
+cat > mcpp.toml <<EOF
 [package]
 name    = "schedon"
 version = "0.1.0"
 
 [toolchain]
 default = "gcc@16.1.0"
-macos   = "llvm@22.1.8"
-windows = "llvm@20.1.7"
+macos   = "llvm@${LLVM_VERSION}"
+windows = "llvm@${LLVM_VERSION}"
 
 [build]
 bmi_schedule = "on"

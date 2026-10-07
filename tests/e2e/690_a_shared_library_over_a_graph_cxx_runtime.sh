@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm elf
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 690 -- a dependency's C++ shared library in a graph whose C++ runtime is a
 # package (#641, item 5). The runtime package's objects are linked into the
 # program; the dependency's shared library was linked from its own objects with
@@ -29,7 +30,7 @@ fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2
 
 # The container job that runs this has no binutils; the llvm payload has nm.
 NM=$(command -v nm || true)
-[ -n "$NM" ] || NM=$(ls "$MCPP_HOME"/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/llvm-nm 2>/dev/null | head -1)
+[ -n "$NM" ] || NM=$(ls "$MCPP_HOME"/registry/data/xpkgs/xim-x-llvm/${LLVM_VERSION}/bin/llvm-nm 2>/dev/null | head -1)
 
 cd "$TMP"
 mkdir -p fw/src app/src
@@ -64,7 +65,7 @@ name    = "app"
 version = "0.1.0"
 
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@${LLVM_VERSION}"
 
 [build]
 $2

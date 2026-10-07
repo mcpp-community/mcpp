@@ -26,8 +26,8 @@ host-aware:
   system libraries work out of the box.
 - Other Linux architectures use `gcc@15.1.0-musl`, a self-contained static
   toolchain.
-- macOS uses `llvm@20.1.7`.
-- Windows with a usable MSVC installation uses `llvm@20.1.7` for the MSVC ABI.
+- macOS uses `llvm@23.1.3`.
+- Windows with a usable MSVC installation uses `llvm@23.1.3` for the MSVC ABI.
   Without usable MSVC, it uses `gcc@16.1.0` with target
   `x86_64-windows-gnu` (MinGW-w64, static by default).
 
@@ -60,7 +60,7 @@ this model with a one-line `note:` hint.
 
 ```bash
 mcpp toolchain install gcc 16.1.0           # host target (GNU libc on Linux)
-mcpp toolchain install llvm 20.1.7          # LLVM/Clang, default on macOS and Windows with usable MSVC
+mcpp toolchain install llvm 23.1.3          # LLVM/Clang, default on macOS and Windows with usable MSVC
 mcpp toolchain install gcc 16 --target x86_64-linux-musl    # musl target payload
 mcpp toolchain install --target x86_64-windows-gnu          # family omitted → the
                                             # target's convention pin (gcc@16.1.0)
@@ -113,7 +113,7 @@ the required family for that build:
 ```
 $ mcpp build
    Resolving toolchain
-    Resolved llvm@22.1.8 → …/xim-x-llvm/22.1.8/bin/clang++
+    Resolved llvm@23.1.3 → …/xim-x-llvm/23.1.3/bin/clang++
              required by openkal-llvm-runtime@0.1.3 (`requires = ["mcpp:compiler=llvm"]`),
              not your gcc@16.1.0 — this project only
 ```
@@ -159,7 +159,7 @@ The output has two blocks — one per axis:
 Toolchains:
   *  gcc 16.1.0              (default)
      gcc 15.1.0
-     llvm 22.1.8
+     llvm 23.1.3
 
 Targets:
      TARGET                  NOTE                  TOOLCHAIN         STATUS
@@ -171,7 +171,7 @@ Targets:
 
 Available toolchains (run `mcpp toolchain install <family> <version>`):
      gcc 15.1.0 / 13.3.0 / 11.5.0 / 9.4.0
-     llvm 20.1.7
+     llvm 20.1.7 / 22.1.8
 ```
 
 `*` marks the default pair. The Targets block is the live view of the target
@@ -429,7 +429,7 @@ and records, in the shape `msvc@system` has always had.
 ```toml
 [toolchain]
 default   = { path = "/opt/llvm-trunk" }
-bootstrap = "llvm@22.1.8"
+bootstrap = "llvm@23.1.3"
 ```
 
 Build programs (`build.mcpp`), host tools and host modules are compiled and run
@@ -638,7 +638,7 @@ with `sysroot`, using the same spellings (2026.9.24.1+):
 
 ```toml
 [toolchain]
-windows = "llvm@22.1.8"
+windows = "llvm@23.1.3"
 
 [target.x86_64-windows-msvc]
 sysroot = "msvc@14.44.35207"     # or "msvc@system" (the default), or "xim:msvc@14.44.35207"
@@ -722,11 +722,11 @@ only thing that can. So the payload NAME is fixed while the version is open:
 
 ```toml
 [target.aarch64-linux-android]
-toolchain = "llvm@22.1.8"        # refused
+toolchain = "llvm@23.1.3"        # refused
 ```
 
 ```
-error: target 'aarch64-linux-android' cannot be emitted by 'llvm@22.1.8'.
+error: target 'aarch64-linux-android' cannot be emitted by 'llvm@23.1.3'.
        An Android target needs bionic, not just an aarch64 or x86_64 back end:
        its headers, its per-API-level stubs and its loader path are inside the
        NDK, and no package adds them to another compiler.
@@ -806,7 +806,7 @@ two SDK toolchains above because they answer the same question differently.
 
 **The compiler is ours; only the SDK is Apple's.** Any sufficiently new clang
 emits arm64 Mach-O for an iOS deployment target, so these rows pin
-`llvm@22.1.8` -- the ordinary payload, the same one `aarch64-macos` uses. What
+`llvm@23.1.3` -- the ordinary payload, the same one `aarch64-macos` uses. What
 cannot be packaged is the iPhoneOS and iPhoneSimulator SDK: it ships inside
 Xcode and is not redistributable. So mcpp **locates** it, through
 `xcrun --sdk <name> --show-sdk-path`, exactly as it has always located the
@@ -816,8 +816,8 @@ That is why these rows carry no `sysroot` entry. That column names a package,
 and a located directory is not one.
 
 ```bash
-mcpp build --target aarch64-ios        # resolves llvm@22.1.8 + the iPhoneOS SDK
-mcpp build --target aarch64-ios-sim    # resolves llvm@22.1.8 + the Simulator SDK
+mcpp build --target aarch64-ios        # resolves llvm@23.1.3 + the iPhoneOS SDK
+mcpp build --target aarch64-ios-sim    # resolves llvm@23.1.3 + the Simulator SDK
 ```
 
 ## The source of each tool (2026.10.1.3+)
@@ -839,7 +839,7 @@ came from, and the statement that chose it:
 
 ```
    Resolving toolchain
-   Bootstrap llvm@22.1.8 → @mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/clang++
+   Bootstrap llvm@23.1.3 → @mcpp/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/clang++
        Using toolchain clang 23.0.0git ← /opt/acme-llvm   [program · build.mcpp:9]
       Target x86_64-unknown-linux-gnu
        Using xim:cmake ← /usr/bin/cmake                   [custom · mcpp.toml:22]
@@ -1060,7 +1060,7 @@ If a project needs to pin a specific version rather than rely on the global defa
 [toolchain]
 default = "gcc@16.1.0"
 linux   = "gcc@16.1.0"
-macos   = "llvm@20.1.7"
+macos   = "llvm@23.1.3"
 ```
 
 A project-level declaration takes precedence over the global default configuration.
@@ -1099,7 +1099,7 @@ name a different compiler and supply nothing:
 ```
 $ mcpp build --target x86_64-linux-musl        # [toolchain] default = "llvm@…"
 error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
-       payload, and 'llvm@22.1.8' has none here.
+       payload, and 'llvm@23.1.3' has none here.
 ```
 
 Two rows answer a different question, and their pin cannot be overridden at all:

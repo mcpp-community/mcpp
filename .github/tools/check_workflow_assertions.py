@@ -6,7 +6,7 @@ WHY THIS EXISTS
 
 #729: the step "Toolchain: LLVM -- build mcpp" ran
 
-    "$MCPP" build 2>&1 | tee build.log; grep -q "Resolved llvm@20.1.7" build.log
+    "$MCPP" build 2>&1 | tee build.log; grep -q "Resolved llvm@23.1.3" build.log
 
 A pipeline's status is its last command's. Under GitHub's default shell for a
 `run:` block with no `shell:` key (`bash -e {0}`, no pipefail) the build's

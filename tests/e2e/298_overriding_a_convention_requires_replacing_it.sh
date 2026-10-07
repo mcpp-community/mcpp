@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # requires: llvm unix-shell jq
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # Naming your own compiler for a pinned target is allowed. Naming it and
 # supplying nothing in place of what the pin supplied is not.
 #
 # THE TWO CASES ARE THE SAME MANIFEST MINUS ONE LINE.
 #
-#   [toolchain] default = "llvm@22.1.8"          → refused
+#   [toolchain] default = "llvm@${LLVM_VERSION}"          → refused
 #
 #   [dependencies] openkal-llvm-runtime = "…"    → built
-#   [toolchain]    default = "llvm@22.1.8"
+#   [toolchain]    default = "llvm@${LLVM_VERSION}"
 #
 # A hosted row's pin says "this payload supplies the target's C library". The
 # escape hatch exists because a project whose graph supplies one instead has no

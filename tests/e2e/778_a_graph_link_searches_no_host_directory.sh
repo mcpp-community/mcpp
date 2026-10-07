@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm elf unix-shell
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # mcpp#696: a link whose C library comes from the dependency graph searches no
 # library directory of the host.
 #
@@ -45,7 +46,7 @@ name    = "lmprobe"
 version = "0.1.0"
 
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@${LLVM_VERSION}"
 
 [build]
 ldflags = [$ldflags]

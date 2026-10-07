@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: gcc unix-shell jq
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # The layer the report names is the layer the link line reaches for.
 #
 # TWO RELATIONS, NO EXPECTED VALUES. Like e2e 295, this compares two things
@@ -179,13 +180,13 @@ for tc in gcc llvm; do
 done
 
 # ── Relation two: a graph C library must not drag the host's in ───────────
-cat > mcpp.toml <<'TOML'
+cat > mcpp.toml <<TOML
 [package]
 name    = "linkprobe"
 version = "0.1.0"
 
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@${LLVM_VERSION}"
 
 [dependencies]
 openkal-musl = "0.3.5"

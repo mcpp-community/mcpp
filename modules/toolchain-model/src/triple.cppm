@@ -532,7 +532,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // artefact was built AND RUN. Running a PE on a Linux host needs wine, and
     // openkal's CI has that step — so this is measurable, and the tier moves
     // when it has been measured rather than when it seems likely.
-    { "x86_64-windows-musl",   "preview",   "PE",  "llvm@22.1.8","",                            true  },
+    { "x86_64-windows-musl",   "preview",   "PE",  "llvm@23.1.3","",                            true  },
     { "x86_64-windows-msvc",   "verified",  "PE",  "",           "",                            false },
     { "aarch64-macos",         "verified",  "",    "",           "",                            false },
     { "riscv64-linux-musl",    "planned",   "",    "",           "",                            true  },
@@ -546,8 +546,8 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // which is the single place that decision is made.
     // The sysroot column is what keeps a bare-metal PACKAGE from having to
     // name a libc: the C library is the target's, like the compiler.
-    { "riscv64-none-elf",      "verified",  "bare","llvm@22.1.8","xim:picolibc-riscv@1.8.12",  true  },
-    { "riscv32-none-elf",      "verified",  "bare","llvm@22.1.8","xim:picolibc-riscv@1.8.12",  true  },
+    { "riscv64-none-elf",      "verified",  "bare","llvm@23.1.3","xim:picolibc-riscv@1.8.12",  true  },
+    { "riscv32-none-elf",      "verified",  "bare","llvm@23.1.3","xim:picolibc-riscv@1.8.12",  true  },
     // AN EMPTY SYSROOT COLUMN, AND IT IS A STATEMENT RATHER THAN AN OMISSION.
     //
     // The two rows above name a C library because a project targeting them
@@ -569,7 +569,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // an emulator. `xim:qemu-arm` provides `qemu-system-aarch64`; until a probe
     // has actually booted under it, claiming `verified` would be claiming the
     // measurement rather than reporting it.
-    { "aarch64-none-elf",      "preview",   "bare","llvm@22.1.8","",                            true  },
+    { "aarch64-none-elf",      "preview",   "bare","llvm@23.1.3","",                            true  },
     // THIS ROW EXISTS SO THAT A THIRD MACHINE CAN DISAGREE WITH THE FIRST
     // TWO, WHICH IS THE ONLY THING THAT TELLS AN ABSTRACTION FROM A HABIT.
     //
@@ -590,7 +590,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // The sysroot column is empty, the zero-libc tier, for the reason given
     // above `aarch64-none-elf`: the first consumer is `openarch`, which
     // references no C library symbol.
-    { "x86_64-none-elf",       "preview",   "bare","llvm@22.1.8","",                            true  },
+    { "x86_64-none-elf",       "preview",   "bare","llvm@23.1.3","",                            true  },
     // ── Cortex-M ────────────────────────────────────────────────────────────
     //
     // SEVEN ROWS AND NOT ONE, BECAUSE "Cortex-M" IS NOT AN INSTRUCTION SET.
@@ -627,13 +627,13 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // thumbv6m on `microbit`, thumbv7m on `mps2-an385`, thumbv7em-eabihf on
     // `mps2-an386`, thumbv8m.main-eabi on `mps2-an505`. The three `preview`
     // rows build and link; no emulator run has been recorded for them.
-    { "thumbv6m-none-eabi",    "verified",  "bare","llvm@22.1.8","",                            true  },
-    { "thumbv7m-none-eabi",    "verified",  "bare","llvm@22.1.8","",                            true  },
-    { "thumbv7em-none-eabi",   "preview",   "bare","llvm@22.1.8","",                            true  },
-    { "thumbv7em-none-eabihf", "verified",  "bare","llvm@22.1.8","",                            true  },
-    { "thumbv8m.base-none-eabi","preview",  "bare","llvm@22.1.8","",                            true  },
-    { "thumbv8m.main-none-eabi","verified", "bare","llvm@22.1.8","",                            true  },
-    { "thumbv8m.main-none-eabihf","preview","bare","llvm@22.1.8","",                            true  },
+    { "thumbv6m-none-eabi",    "verified",  "bare","llvm@23.1.3","",                            true  },
+    { "thumbv7m-none-eabi",    "verified",  "bare","llvm@23.1.3","",                            true  },
+    { "thumbv7em-none-eabi",   "preview",   "bare","llvm@23.1.3","",                            true  },
+    { "thumbv7em-none-eabihf", "verified",  "bare","llvm@23.1.3","",                            true  },
+    { "thumbv8m.base-none-eabi","preview",  "bare","llvm@23.1.3","",                            true  },
+    { "thumbv8m.main-none-eabi","verified", "bare","llvm@23.1.3","",                            true  },
+    { "thumbv8m.main-none-eabihf","preview","bare","llvm@23.1.3","",                            true  },
     // ── ARMv7-A (Cortex-A, 32-bit) ──────────────────────────────────────────
     //
     // NOT A SECOND SPELLING OF THE M ROWS. A-profile has a memory management
@@ -650,8 +650,8 @@ inline constexpr TargetInfo kKnownTargets[] = {
     //
     // `sysroot` is empty, the zero-libc tier, exactly as for the M rows: a C
     // library for these targets arrives from the dependency graph.
-    { "armv7a-none-eabi",      "verified",  "bare","llvm@22.1.8","",                            true  },
-    { "armv7a-none-eabihf",    "verified",  "bare","llvm@22.1.8","",                            true  },
+    { "armv7a-none-eabi",      "verified",  "bare","llvm@23.1.3","",                            true  },
+    { "armv7a-none-eabihf",    "verified",  "bare","llvm@23.1.3","",                            true  },
 
     // ── The three platforms a package cannot add ────────────────────────────
     //
@@ -737,7 +737,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // THE COMPILER IS OURS AND ONLY THE SDK IS APPLE'S, which is the sentence
     // that shrank this row from a packaging problem to a located directory.
     //
-    // `llvm@22.1.8` -- any sufficiently new clang emits arm64 Mach-O for an
+    // `llvm@23.1.3` -- any sufficiently new clang emits arm64 Mach-O for an
     // iOS deployment target, and the C++ runtime comes from the SDK the way it
     // does on every Apple platform. `aarch64-macos` is verified on exactly
     // this split and is the precedent: `xim:llvm` compiles and the SDK is
@@ -785,7 +785,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // is not something a build tool or a package can supply -- so this is a
     // tier bounded by a fact about the platform rather than by work not yet
     // done.
-    { "aarch64-ios",           "preview",   "",    "llvm@22.1.8","",                            false },
+    { "aarch64-ios",           "preview",   "",    "llvm@23.1.3","",                            false },
     // THE SIMULATOR'S TWO ROWS. Not a convenience and not a runner: a
     // simulator build has its own SDK (`iPhoneSimulator.sdk`), produces its own
     // object, and takes `-mios-simulator-version-min` rather than
@@ -816,8 +816,8 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // SIMULATOR RUNS THE HOST'S ARCHITECTURE and the runner is Apple silicon.
     // That is a property of the machine the measurement was taken on, so the
     // row stays `preview` until an Intel host takes it.
-    { "aarch64-ios-sim",       "verified",  "",    "llvm@22.1.8","",                            false },
-    { "x86_64-ios-sim",        "preview",   "",    "llvm@22.1.8","",                            false },
+    { "aarch64-ios-sim",       "verified",  "",    "llvm@23.1.3","",                            false },
+    { "x86_64-ios-sim",        "preview",   "",    "llvm@23.1.3","",                            false },
 
     // WEB IS THE OUTLIER, AND IT IS THE ONLY ONE OF THE THREE THAT CHANGES THE
     // MODEL RATHER THAN EXTENDING A TABLE. A new arch (`wasm32`), a new os
@@ -1064,21 +1064,34 @@ namespace pins {
     // A bare Windows box got a default it could never build with, and no
     // diagnostic. The Windows pin is now chosen by detection, not by
     // sharing macOS's answer.
-    inline constexpr std::string_view kFirstRunMac          = "llvm@20.1.7";
+    // The llvm pin moves with the LLVM line (SPEC-009 §10). 23.1.3 is the
+    // first point release carrying the macOS 27 SDK's arm64e.x1 linker fix
+    // (mcpp#669; landed on release/23.x as ee66426) — every earlier release
+    // fails to link against that SDK with a malformed-TAPI error.
+    inline constexpr std::string_view kFirstRunMac          = "llvm@23.1.3";
     // Windows WITH a usable MSVC (STL + SDK, see msvc::has_usable_msvc()):
     // unchanged behavior. The MSVC ABI is what lets a project link vcpkg /
     // third-party .lib artifacts, so it stays the answer when it can work.
-    inline constexpr std::string_view kFirstRunWinMsvc      = "llvm@20.1.7";
+    inline constexpr std::string_view kFirstRunWinMsvc      = "llvm@23.1.3";
     // Windows WITHOUT one: winlibs GCC targeting PE/GNU. Fully self-contained
     // (static libstdc++/libgcc, its own UCRT), zero Visual Studio dependency,
     // `import std` works. Must stay equal to the x86_64-windows-gnu row's
     // `pin` in kKnownTargets above — test_windows_defaults.cpp enforces it.
     inline constexpr std::string_view kFirstRunWinGnu       = "gcc@16.1.0";
     inline constexpr std::string_view kFirstRunWinGnuTarget = "x86_64-windows-gnu";
+    // Linux keeps the gcc family as its host default by design (SPEC-009
+    // §4.1 reason, recorded 2026.10 with the LLVM 23.1.3 line move): native
+    // glibc ABI, so X11/OpenGL and other system libraries link directly.
+    // This is the platform's answer, not a lag behind the llvm line — no
+    // exit condition.
     inline constexpr std::string_view kFirstRunLinuxX86_64  = "gcc@16.1.0";
+    // Non-x86_64 Linux hosts have no managed glibc gcc payload, so the
+    // default is the fully static musl one: the only self-contained choice
+    // on this axis (SPEC-009 §4.1 reason; re-evaluate if a managed glibc
+    // gcc for these hosts ships).
     inline constexpr std::string_view kFirstRunLinuxOther   = "gcc@15.1.0-musl";
     // Suggested install spellings used by help / MCPP_NO_AUTO_INSTALL errors.
-    inline constexpr std::string_view kSuggestLlvm          = "llvm 20.1.7";
+    inline constexpr std::string_view kSuggestLlvm          = "llvm 23.1.3";
     inline constexpr std::string_view kSuggestGccMusl       = "gcc 15.1.0-musl";
     inline constexpr std::string_view kSuggestGccMingw      = "gcc 16.1.0";
 

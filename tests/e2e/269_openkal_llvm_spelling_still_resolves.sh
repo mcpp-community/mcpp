@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: import-std-libcxx
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # The older toolchain spelling keeps working, and keeps meaning the same thing.
 #
 # WHY THIS FILE EXISTS.
@@ -46,19 +47,19 @@ driver_for() {
     "$MCPP" build 2>&1 | sed -n 's/.*Resolved [^ ]* → \(.*\)$/\1/p' | head -1
 }
 
-new_spelling=$(driver_for "llvm@22.1.8")
-old_spelling=$(driver_for "openkal-llvm@22.1.8")
+new_spelling=$(driver_for "llvm@${LLVM_VERSION}")
+old_spelling=$(driver_for "openkal-llvm@${LLVM_VERSION}")
 
 [ -n "$new_spelling" ] || {
     echo "could not read the resolved driver for the current spelling" >&2
-    manifest "llvm@22.1.8"; "$MCPP" build 2>&1 | head -20 >&2
+    manifest "llvm@${LLVM_VERSION}"; "$MCPP" build 2>&1 | head -20 >&2
     exit 1
 }
 
 [ "$new_spelling" = "$old_spelling" ] || {
     echo "the two spellings must resolve to the same driver" >&2
-    echo "  llvm@22.1.8         → $new_spelling" >&2
-    echo "  openkal-llvm@22.1.8 → $old_spelling" >&2
+    echo "  llvm@${LLVM_VERSION}         → $new_spelling" >&2
+    echo "  openkal-llvm@${LLVM_VERSION} → $old_spelling" >&2
     exit 1
 }
 
@@ -66,7 +67,7 @@ old_spelling=$(driver_for "openkal-llvm@22.1.8")
 # have an empty dependency graph, so both must report a target side supplied
 # entirely by the payload. If the family name still carried the fact it used to,
 # the second would report `graph` somewhere and the first would not.
-manifest "openkal-llvm@22.1.8"
+manifest "openkal-llvm@${LLVM_VERSION}"
 rm -rf target
 # MCPP_VERBOSE, because an ordinary report prints only the layers the compiler
 # payload did NOT supply — and every layer here is the payload's, which is

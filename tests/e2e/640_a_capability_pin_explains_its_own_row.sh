@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: gcc
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 640_a_capability_pin_explains_its_own_row.sh — a row whose pin is a
 # capability refuses a declared toolchain that cannot emit it, and the reason
 # names THAT row.
@@ -15,7 +16,7 @@
 # AND THE GATE ASKED THE WRONG QUESTION. It tested `family != Llvm`, which was
 # right while every capability-pinned row pinned llvm. `wasm32-emscripten` pins
 # `emsdk@6.0.9`, and emsdk normalises to the llvm family because `em++` IS
-# clang -- so a declared `llvm@22.1.8` passed the gate, was never refused, and
+# clang -- so a declared `llvm@${LLVM_VERSION}` passed the gate, was never refused, and
 # resolved the generic llvm payload for a target it cannot emit. Case 4 is that
 # one, and it is the case a reader would not think to write.
 set -e
@@ -62,14 +63,14 @@ check x86_64-windows-musl gcc@16.1.0 "PE with a musl C library"                 
 check aarch64-linux-android gcc@16.1.0 "An Android target needs bionic" "android names bionic"
 check x86_64-linux-android  gcc@16.1.0 "An Android target needs bionic" "android names bionic (x86_64)"
 
-# 4. THE GATE. `llvm@22.1.8` is the llvm family, and so is emsdk -- so a family
+# 4. THE GATE. `llvm@${LLVM_VERSION}` is the llvm family, and so is emsdk -- so a family
 #    test cannot separate them and this declaration used to pass unrefused.
-check wasm32-emscripten   llvm@22.1.8 "Nothing but Emscripten emits WebAssembly" "a declared llvm is refused too"
+check wasm32-emscripten   llvm@${LLVM_VERSION} "Nothing but Emscripten emits WebAssembly" "a declared llvm is refused too"
 # The NDK normalises to the llvm family for the same reason, so the same hole
-# would have existed for Android. A declared `llvm@22.1.8` names a real
+# would have existed for Android. A declared `llvm@${LLVM_VERSION}` names a real
 # compiler that emits aarch64 ELF perfectly well -- what it cannot supply is
 # bionic, which is why this row is a capability at all.
-check aarch64-linux-android llvm@22.1.8 "An Android target needs bionic" "a declared llvm is refused for android too"
+check aarch64-linux-android llvm@${LLVM_VERSION} "An Android target needs bionic" "a declared llvm is refused for android too"
 
 # 5. And the sentence names the row's OWN pin rather than a fixed word: the
 #    closing line used to read "The row names llvm as a capability" on every

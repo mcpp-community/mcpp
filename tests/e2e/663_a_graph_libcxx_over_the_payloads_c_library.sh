@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 663 -- a package supplies the C++ standard library while the C library stays
 # the payload's (#630, item 4). `llvm.libcxx` carries libc++ and libc++abi as
 # source with a std module; the engine reports the C++ layer as the graph's,
@@ -29,10 +30,10 @@ int main() {
     std::print("{}-{}-3\n", m["one"], a.load());
 }
 CPP
-cat >> mcpp.toml <<'TOML'
+cat >> mcpp.toml <<TOML
 
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@${LLVM_VERSION}"
 TOML
 
 # The negative direction first, so that the baseline is read before the

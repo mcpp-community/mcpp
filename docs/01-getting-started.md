@@ -43,8 +43,8 @@ the host:
 |---|---|
 | Linux x86_64 | `gcc@16.1.0` |
 | other Linux architectures | `gcc@15.1.0-musl` |
-| macOS | `llvm@20.1.7` |
-| Windows with usable MSVC | `llvm@20.1.7` |
+| macOS | `llvm@23.1.3` |
+| Windows with usable MSVC | `llvm@23.1.3` |
 | Windows without it | `gcc@16.1.0` for `x86_64-windows-gnu` |
 
 Full installation instructions, including Windows, are in the

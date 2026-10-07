@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: gcc
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 641_the_android_rows_are_wired_and_the_simulator_is_a_row.sh — the vocabulary
 # half of the Android and iOS work, which is the half a runner without a 704 MB
 # NDK can still assert. Nothing here installs a payload.
@@ -230,7 +231,7 @@ esac
 #    project that has named its own.
 for target in aarch64-ios aarch64-ios-sim; do
     d="$t/sdk-$target"
-    pkg "$d" "" "[target.$target]" 'toolchain = "llvm@22.1.8"'
+    pkg "$d" "" "[target.$target]" "toolchain = \"llvm@${LLVM_VERSION}\""
     out=$( cd "$d" && MCPP_NO_AUTO_INSTALL=1 "$MCPP" build --target "$target" 2>&1 ) || true
     case "$(uname -s)" in
       Darwin)

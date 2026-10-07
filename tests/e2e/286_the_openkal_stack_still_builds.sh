@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm unix-shell
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # The whole target side from packages: kernel interface, C library, C++ runtime.
 #
 # WHY THIS FILE EXISTS, AND WHAT IT COST NOT TO HAVE IT.
@@ -32,7 +33,7 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/app/src"
 cd "$work/app"
 
-cat > mcpp.toml <<'TOML'
+cat > mcpp.toml <<TOML
 [package]
 name    = "okstack"
 version = "0.1.0"
@@ -42,7 +43,7 @@ version = "0.1.0"
 # toolchain here rather than relying on a global default keeps this test from
 # depending on how the machine running it is configured.
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@${LLVM_VERSION}"
 
 [dependencies]
 openkal-musl = "0.3.5"

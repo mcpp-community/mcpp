@@ -67,8 +67,8 @@ ARMv7-A 镜像退出码本应是 0，报回的却是 1；`openarch` 的一个 Co
 决定从表里搬进每一份清单。
 
 `eabi`/`eabihf` 后缀就是浮点 ABI，clang 无需额外提示就能从 triple 读出它：实测
-llvm 22.1.8，`thumbv7em-none-eabi` 得到 `-mfloat-abi soft`，`thumbv7em-none-eabihf`
-得到 `hard`。
+llvm 23.1.3（2026-10-07；22.1.8 上的读数与此一致），`thumbv7em-none-eabi` 得到
+`-mfloat-abi soft`，`thumbv7em-none-eabihf` 得到 `hard`。
 
 **浮点 ABI 并不决定 FPU 是否被使用。**它约束的是浮点值如何跨越函数边界，而不是
 编译器在函数内部可以发出什么指令，而 `thumbv7em` 架构本身蕴含 FPv4-SP。实测：在
@@ -113,7 +113,7 @@ sysroot = "xim:picolibc-aarch64@1.8.12"
 
 这类目标不需要逐宿主的交叉工具链。clang 与 lld 在构造上就是交叉编译器——一个
 二进制发射它构建时支持的每一个目标——因此目标表在每个宿主上都钉住
-`llvm@22.1.8`，任何能安装这份 LLVM 载荷的机器，都能为这四个目标中的任意一个产出
+`llvm@23.1.3`，任何能安装这份 LLVM 载荷的机器，都能为这四个目标中的任意一个产出
 镜像。
 
 ### x86_64 这一行不只是四个字符串
@@ -126,7 +126,7 @@ clang 按 triple 选择工具链。它为 arm、aarch64、riscv 备有 *BareMeta
 通用 GCC 工具链上——而那个工具链的链接器是**宿主的 `g++`**：
 
 ```
-g++: error: unrecognized command-line option '-fuse-ld=/…/llvm/22.1.8/bin/ld.lld'
+g++: error: unrecognized command-line option '-fuse-ld=/…/llvm/23.1.3/bin/ld.lld'
 ```
 
 对 `x86_64-none-elf`、`x86_64-unknown-none-elf`、`x86_64-unknown-none`、
@@ -174,8 +174,8 @@ mcpp run
 
 ```
    Resolving toolchain
-    Resolved llvm@22.1.8 → riscv64-none-elf → @mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/clang++
-    Resolved host toolchain for build.mcpp: clang 22.1.8 (x86_64-unknown-linux-gnu)
+    Resolved llvm@23.1.3 → riscv64-none-elf → @mcpp/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/clang++
+    Resolved host toolchain for build.mcpp: clang 23.1.3 (x86_64-unknown-linux-gnu)
   build.mcpp blinky  ran 0.41s
     Inferred sources [src/**/*.{cppm,cpp,cc,c,S,s,asm}]
     Inferred target blinky (bin from src/main.cpp)
@@ -261,7 +261,7 @@ extern "C" int main() {
 | 层 | 拥有的内容 | 例子 |
 |---|---|---|
 | 引擎 | ISA 档位、freestanding 链接行、产物集，以及「产物如何执行」的单一读取点 | `-march=rv64gc -mabi=lp64d -mcmodel=medany -ffreestanding` |
-| 目标 | 用哪个编译器、用哪份 C 库，两者都从目标的表行解析并按需安装 | `pin = llvm@22.1.8`、`sysroot = xim:picolibc-riscv@1.8.12` |
+| 目标 | 用哪个编译器、用哪份 C 库，两者都从目标的表行解析并按需安装 | `pin = llvm@23.1.3`、`sysroot = xim:picolibc-riscv@1.8.12` |
 | 板级支持包 | 选哪个启动对象和哪些库、哪份链接脚本、哪条模拟器命令行 | `-lcrt0-semihost`、`picolibcpp.ld`、`qemu-system-riscv64 -machine virt …` |
 
 中间那一行正是让包不必指名 C 库的原因。两个生态包更早的版本都在环境表里直接
@@ -339,8 +339,9 @@ atomic 42
 span 4 ok
 ```
 
-该子集覆盖 LLVM 22.1.8 载荷所带 110 个 `std/*.inc` 头文件中的 103 个——2026-08-20
-在两侧目录分别计数得到——而它是由机械挑选生成的，不是手写的导出表。被略去的
+该子集覆盖 LLVM 载荷所带 110 个 `std/*.inc` 头文件中的 103 个——2026-08-20 在两侧
+目录分别计数得到（LLVM 22.1.8），2026-10-07 在 LLVM 23.1.3 上复数分母仍为 110——
+而它是由机械挑选生成的，不是手写的导出表。被略去的
 7 个，按包一侧的说明，在 hosted `x86_64` 上同样会失败；那份说明没有在这里重新
 实测。可用的实体包括 `array`、`span`、`optional`、`expected`、`atomic`、
 `string_view`、`ranges`、`algorithm`、`bit`、`charconv`、`concepts`、
@@ -707,7 +708,7 @@ int main() {
 |---|---|
 | mcpp | 2026.8.20.1，由本仓库构建 |
 | 宿主 | `x86_64-linux-gnu` |
-| 工具链 | `xim:llvm` 22.1.8 |
+| 工具链 | `xim:llvm` 23.1.3 |
 | 目标 C 库 | `xim:picolibc-riscv` 1.8.12 |
 | 模拟器 | `xim:qemu-riscv` 9.2.4-1 |
 | 板级支持包 | `mcpplibs:riscv-virt-rt` 0.3.0 |

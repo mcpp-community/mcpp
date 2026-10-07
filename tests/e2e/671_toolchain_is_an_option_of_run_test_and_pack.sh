@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # requires:
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 671_toolchain_is_an_option_of_run_test_and_pack.sh -- `--toolchain` is
 # declared on `run`, `test` and `pack` as it is on `build` (#634 A10).
 #
 # The value always reached the three commands: the pre-parse loop publishes it
-# as MCPP_TOOLCHAIN for every command, and `MCPP_TOOLCHAIN=llvm@22.1.8 mcpp
+# as MCPP_TOOLCHAIN for every command, and `MCPP_TOOLCHAIN=llvm@${LLVM_VERSION} mcpp
 # test` compiled with clang. The spelling the help of `build` teaches was
 # refused by the option parser of the other three (2026.9.14.1):
 #
@@ -16,8 +17,8 @@
 #      naming the value, and not by the option parser;
 #   2. positive direction: the toolchain this host resolves by default, named
 #      with the option, builds and runs the program and passes the test;
-#   3. with a second toolchain installed (llvm@22.1.8 while the default is
-#      another family), `mcpp test --toolchain llvm@22.1.8` compiles the tests
+#   3. with a second toolchain installed (llvm@${LLVM_VERSION} while the default is
+#      another family), `mcpp test --toolchain llvm@${LLVM_VERSION}` compiles the tests
 #      with that compiler, read from the build graph it wrote. Reported as not
 #      measured when the payload is absent, because installing it here would
 #      make the criterion a download.
@@ -59,22 +60,22 @@ grep -q "Hello from tcopt" r2.log || fail "mcpp run --toolchain $own did not run
 echo "the default toolchain named with --toolchain builds, runs and tests OK"
 
 # ── 3. a second installed toolchain compiles the tests ────────────────────
-store="${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-llvm/22.1.8/bin"
+store="${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-llvm/${LLVM_VERSION}/bin"
 case "$own" in
     llvm@*)
         echo "NOT MEASURED: the default toolchain is already $own"
         ;;
     *)
         if [ -x "$store/clang++" ] || [ -x "$store/clang++.exe" ]; then
-            "$MCPP" test --toolchain llvm@22.1.8 > t3.log 2>&1 \
-                || fail "mcpp test --toolchain llvm@22.1.8 failed" t3.log
-            grep -q "Resolved llvm@22.1.8" t3.log \
-                || fail "the test build did not resolve llvm@22.1.8" t3.log
-            grep -lq "xim-x-llvm/22.1.8/bin/clang++" target/*/*/build.ninja \
+            "$MCPP" test --toolchain llvm@${LLVM_VERSION} > t3.log 2>&1 \
+                || fail "mcpp test --toolchain llvm@${LLVM_VERSION} failed" t3.log
+            grep -q "Resolved llvm@${LLVM_VERSION}" t3.log \
+                || fail "the test build did not resolve llvm@${LLVM_VERSION}" t3.log
+            grep -lq "xim-x-llvm/${LLVM_VERSION}/bin/clang++" target/*/*/build.ninja \
                 || fail "no build graph compiles with the llvm payload's clang++" t3.log
-            echo "mcpp test --toolchain llvm@22.1.8 compiles with clang OK"
+            echo "mcpp test --toolchain llvm@${LLVM_VERSION} compiles with clang OK"
         else
-            echo "NOT MEASURED: llvm@22.1.8 is not installed in this home"
+            echo "NOT MEASURED: llvm@${LLVM_VERSION} is not installed in this home"
         fi
         ;;
 esac

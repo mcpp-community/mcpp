@@ -364,8 +364,9 @@ Target x86_64-windows-gnu → x86_64-w64-windows-gnu
 ```
 
 Keeping the third vocabulary separate is what lets mcpp name something LLVM
-cannot. Measured on llvm 22.1.8, `windows` with a `musl` environment is accepted
-by the triple parser and crashes the compiler:
+cannot. Measured on llvm 23.1.3 (2026-10-07; unchanged from the 22.1.8
+reading), `windows` with a `musl` environment is accepted by the triple parser
+and crashes the compiler:
 
 ```
 clang++ --target=x86_64-pc-windows-musl -c t.cpp
@@ -404,8 +405,8 @@ every target it was built with. Measured on one host, one source:
 |---|---|---|---|---|
 | `gcc@16.1.0` | `x86_64-linux-musl` | `xim-x-musl-gcc/…/x86_64-linux-musl-g++` | musl | libstdc++ |
 | `gcc@16.1.0` | `x86_64-windows-gnu` | `xim-x-mingw-cross-gcc/…/x86_64-w64-mingw32-g++` | gnu | libstdc++ |
-| `llvm@22.1.8` | `x86_64-linux-musl` | `xim-x-llvm/…/clang++` | musl | libc++ |
-| `llvm@22.1.8` | `x86_64-windows-gnu` | `xim-x-llvm/…/clang++` | gnu | libc++ |
+| `llvm@23.1.3` | `x86_64-linux-musl` | `xim-x-llvm/…/clang++` | musl | libc++ |
+| `llvm@23.1.3` | `x86_64-windows-gnu` | `xim-x-llvm/…/clang++` | gnu | libc++ |
 
 clang does not reach into gcc's payload for a C library, and gcc does not reach
 into clang's. Each brings its own.
@@ -419,13 +420,13 @@ do is name a different compiler and supply nothing.
 
 ```toml
 [toolchain]
-default = "llvm@22.1.8"        # x86_64-linux-musl's row names gcc
+default = "llvm@23.1.3"        # x86_64-linux-musl's row names gcc
 ```
 
 ```
 $ mcpp build --target x86_64-linux-musl
 error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
-       payload, and 'llvm@22.1.8' has none here.
+       payload, and 'llvm@23.1.3' has none here.
 ```
 
 **Before 2026.8.26.1 this ran the whole build and failed at the link**, with
@@ -441,7 +442,7 @@ Adding the replacement is the whole difference:
 [dependencies]
 openkal-llvm-runtime = "0.1.3"   # → openkal-musl → openkal-<os>
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@23.1.3"
 ```
 
 That is [`examples/06-openkal-cross`](../examples/06-openkal-cross), and it is
@@ -522,28 +523,28 @@ other's rows.
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | — |
 | `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
 | `x86_64-windows-gnu` | verified | `gcc@16.1.0` | payload | payload | — | payload |
-| `x86_64-windows-musl` | preview | `llvm@22.1.8` | graph | graph | graph | payload |
+| `x86_64-windows-musl` | preview | `llvm@23.1.3` | graph | graph | graph | payload |
 | `x86_64-windows-msvc` | verified | — | — | — | — | system |
 | `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
-| `riscv64-none-elf` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
-| `riscv32-none-elf` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
-| `aarch64-none-elf` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
-| `x86_64-none-elf` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
-| `thumbv6m-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
-| `thumbv7m-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
-| `thumbv7em-none-eabi` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
-| `thumbv7em-none-eabihf` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
-| `thumbv8m.base-none-eabi` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
-| `thumbv8m.main-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
-| `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
-| `armv7a-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
-| `armv7a-none-eabihf` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
+| `riscv64-none-elf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `riscv32-none-elf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `aarch64-none-elf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `x86_64-none-elf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `thumbv6m-none-eabi` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `thumbv7m-none-eabi` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `thumbv7em-none-eabi` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `thumbv7em-none-eabihf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `thumbv8m.base-none-eabi` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `thumbv8m.main-none-eabi` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `thumbv8m.main-none-eabihf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `armv7a-none-eabi` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `armv7a-none-eabihf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `aarch64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
 | `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
-| `aarch64-ios` | preview | `llvm@22.1.8` | — | — | SDK | — |
-| `aarch64-ios-sim` | verified | `llvm@22.1.8` | — | — | SDK | — |
-| `x86_64-ios-sim` | preview | `llvm@22.1.8` | — | — | SDK | — |
+| `aarch64-ios` | preview | `llvm@23.1.3` | — | — | SDK | — |
+| `aarch64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
+| `x86_64-ios-sim` | preview | `llvm@23.1.3` | — | — | SDK | — |
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | payload | payload | payload | payload |
 
 `payload` a toolchain payload here produces it · `graph` no payload, but a

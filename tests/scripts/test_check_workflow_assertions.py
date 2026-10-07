@@ -157,7 +157,12 @@ class TheRepository(unittest.TestCase):
         self.assertGreater(steps, 200)
         self.assertGreater(runs, 150)
         known = [j.key for p in workflows for j in lint.parse(p).jobs if j.continue_on_error]
-        self.assertGreaterEqual(len(known), 4, known)
+        # The four known-red legs (#669: ci-macos, ci-macos-e2e and the two
+        # fresh-install macOS jobs) left the mechanism with the LLVM 23.1.3
+        # line move, which removed their external cause. Zero is the state the
+        # assertion table requires; the mechanism itself stays covered by the
+        # fixture tests above.
+        self.assertEqual(len(known), 0, known)
         self.assertEqual(lint.check(workflows, check_open=False), [])
 
 

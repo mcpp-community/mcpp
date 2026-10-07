@@ -167,7 +167,7 @@ linkage   = "static"
 ```toml
 # a member overrides the toolchain
 [toolchain]
-default = "llvm@20.1.7"
+default = "llvm@23.1.3"
 ```
 
 `[toolchain]`、`[target.<triple>]` 与 `[indices]` 为整个依赖图选择编译器、目标行与索引，

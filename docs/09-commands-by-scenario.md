@@ -113,9 +113,9 @@ on the strength of it.
 which selects the compiler for that invocation and writes nothing:
 
 ```bash
-mcpp test --toolchain llvm@22.1.8
+mcpp test --toolchain llvm@23.1.3
 mcpp run --toolchain gcc@16.1.0
-mcpp pack --toolchain llvm@22.1.8 --format dir
+mcpp pack --toolchain llvm@23.1.3 --format dir
 ```
 
 For that invocation the option takes the place of `[toolchain] default` in

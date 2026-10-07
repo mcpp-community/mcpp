@@ -760,7 +760,7 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
         auto* info = find_known_target(*t);
         ASSERT_NE(info, nullptr) << name;
         EXPECT_EQ(info->tier, tier) << name;
-        EXPECT_EQ(info->pin, "llvm@22.1.8") << name;
+        EXPECT_EQ(info->pin, "llvm@23.1.3") << name;
         EXPECT_TRUE(info->sysroot.empty()) << name;
         EXPECT_FALSE(t->pin_is_capability()) << name;
     }

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm unix-shell
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # The same stack, for a machine this one is not.
 #
 # `aarch64-linux-musl` APPEARED IN NO e2e SCRIPT UNTIL THIS ONE. It is a
@@ -28,13 +29,13 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/app/src"
 cd "$work/app"
 
-cat > mcpp.toml <<'TOML'
+cat > mcpp.toml <<TOML
 [package]
 name    = "okcross"
 version = "0.1.0"
 
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@${LLVM_VERSION}"
 
 [dependencies]
 openkal-musl = "0.3.5"

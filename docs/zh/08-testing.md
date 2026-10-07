@@ -71,7 +71,7 @@ mcpp test -- --verbose    # everything after `--` goes to each test binary
 | `--target <triple>` | 宿主以外的目标 |
 | `--accel <spec>` / `--no-accel` | 本次构建面向的设备后端 |
 | `--cap <list>` | 钉住某个能力的 provider |
-| `--toolchain <spec>` | 本次调用使用的工具链，例如 `llvm@22.1.8` |
+| `--toolchain <spec>` | 本次调用使用的工具链，例如 `llvm@23.1.3` |
 
 `--timeout <secs>` 杀掉仍在运行的测试（默认 300；`0` 关闭），`--build-timeout <secs>`
 限制编译耗时。挂起的测试以它自己的名字被报为失败，而不是报成一个停止的任务。

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm qemu-riscv unix-shell
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # The freestanding subset of the standard library, as an ordinary package.
 #
 # `import std;` is one module over the whole library — threads, filesystem and
@@ -171,9 +172,22 @@ EOF
 # inline namespace (std::__1::), so a hand-written `namespace std { ... }`
 # definition compiles, links nothing, and leaves the undefined-symbol error
 # looking exactly as it did before.
+#
+# The namespace is spelled by hand rather than through
+# _LIBCPP_BEGIN_NAMESPACE_STD: since libc++ 23 that macro opens the namespace
+# under the library's ODR-signature attribute pragma
+# (`__abi_tag__("nqn230103")`, an encoded hardening/assertion/exceptions/
+# version signature), and clang refuses to ADD an abi_tag attribute on a
+# redeclaration -- which is exactly what this override definition is. Spelling
+# `namespace std { inline namespace _LIBCPP_ABI_NAMESPACE { ... } }` keeps the
+# mangling identical to the callers' spelling (inline namespaces mangle in)
+# while no pragma is active, so the definition carries no new attributes.
+# Measured on llvm ${LLVM_VERSION}: the macro form fails with "cannot add 'abi_tag'
+# attribute in a redeclaration", this form compiles and links.
 cat > src/verbose_abort.cpp <<'EOF'
 #include <__verbose_abort>
-_LIBCPP_BEGIN_NAMESPACE_STD
+namespace std {
+inline namespace _LIBCPP_ABI_NAMESPACE {
 [[noreturn]] void __libcpp_verbose_abort(const char*, ...) _NOEXCEPT {
     for (;;) {
 #if defined(__riscv)
@@ -181,7 +195,8 @@ _LIBCPP_BEGIN_NAMESPACE_STD
 #endif
     }
 }
-_LIBCPP_END_NAMESPACE_STD
+} // namespace _LIBCPP_ABI_NAMESPACE
+} // namespace std
 EOF
 
 # ── the consumer ────────────────────────────────────────────────────────────

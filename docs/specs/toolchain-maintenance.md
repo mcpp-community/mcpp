@@ -4,8 +4,8 @@
 |---|---|
 | 规范编号 | SPEC-009 |
 | 标题 | 工具链的支持与维护:版本线、默认值、来源、移动与退役 |
-| 状态 | 草案 v0.3 |
-| 最后修改 | 2026-10-05 |
+| 状态 | 草案 v0.4 |
+| 最后修改 | 2026-10-07 |
 | 对应实现 | 逐条标注;本版只有规范,多数条款未实现 |
 | 相关设计文档 | `.agents/docs/2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md`(第 IV 部分) |
 | 相关 issue | mcpp#669(macOS 27 的链接)、mcpp#685、mcpp#687、mcpp#755 |
@@ -85,7 +85,7 @@
 或者由一项 CI 检查与它比对。既不读取也不比对的字面量是缺陷。
 
 当前:只有宿主默认值在文档中的四条陈述被比对:`.github/tools/check_default_toolchain_docs.py` 在每个 CI 宿主上检查该宿主的行,
-在 `docs/01`、`docs/20` 及其 `docs/zh/` 副本中各一条。其余读者既不读取也不比对:`mcpp.toml`、`tests/matrix/expected.tsv` 的 175 行、
+在 `docs/01`、`docs/20` 及其 `docs/zh/` 副本中各一条。其余读者既不读取也不比对:`mcpp.toml`、`tests/matrix/expected.tsv` 的 210 行、
 七个工作流、一个 action、六个 CI 工具、至少八个 e2e 脚本、示例,以及 33 个文档文件中的其余陈述。
 
 ### 3.4 索引的 latest 不是默认值 已实现
@@ -101,8 +101,10 @@
 在一台宿主上,同一个族的各行**应当**解析到同一个发布。一行**可以**落后,但**必须**在线表中写明理由,
 且理由**必须**在下一次移动时重新评估。
 
-当前:不成立。macOS 与带 MSVC 的 Windows 默认 `llvm@20.1.7`,而 17 个目标行钉住 `llvm@22.1.8`。Linux 在 x86_64 之外的架构默认
-`gcc@15.1.0-musl`,其余 gcc 行为 16.1.0。这些落后都没有记录理由。
+当前:llvm 族成立(2026.10 的 LLVM 23.1.3 线移动:macOS 与带 MSVC 的 Windows 宿主默认与 17 个目标行同为 `llvm@23.1.3`)。
+gcc 族:Linux x86_64 宿主默认 `gcc@16.1.0`(平台设计:面向原生 glibc ABI,非落后,无退出条件),非 x86_64 Linux 宿主默认
+`gcc@15.1.0-musl`(无受管 glibc gcc 载荷时的唯一自包含选择)。两处理由记录在引擎的单一钉点(`modules/toolchain-model/src/triple.cppm`
+的 `pins` 注释);线表尚未落地,理由还没有线表条目这一形态。
 
 ### 4.2 载荷齐备 未实现
 
@@ -163,8 +165,8 @@
 在一个线是 Default 的每一行上,引擎**必须**通过验收程序(一个使用 `<memory>`、`<mutex>` 与 `<thread>` 的程序;`import std`;`import std.compat`)与 e2e 套件;
 该宿主构建 mcpp 时,还**必须**通过 mcpp 自身的构建。
 
-当前:e2e 套件在各 CI 宿主上运行;验收程序的矩阵部分实现(SPEC-006 §6.2)。`import std.compat` 在 GCC 行由 2026.10.5.2 补上(libstdc++ 的 `bits/std.compat.cc`,此前在第一个 import 它的单元中失败),在 MSVC ABI 的 llvm 行由 2026.10.5.1 补上;两行与开发者环境中的 llvm 行由 e2e 886 与 888 覆盖。macOS 的 Default `llvm@20.1.7` 无法构建 mcpp 自身
-(其 libc++ 的 `std` 模块不暴露 `directory_iterator` 的比较),mcpp 的清单因此以 22.1.8 构建;该行的第三项验收不成立。
+当前:e2e 套件在各 CI 宿主上运行;验收程序的矩阵部分实现(SPEC-006 §6.2)。`import std.compat` 在 GCC 行由 2026.10.5.2 补上(libstdc++ 的 `bits/std.compat.cc`,此前在第一个 import 它的单元中失败),在 MSVC ABI 的 llvm 行由 2026.10.5.1 补上;两行与开发者环境中的 llvm 行由 e2e 886 与 888 覆盖。macOS 的 Default 曾是 `llvm@20.1.7`,无法构建 mcpp 自身
+(其 libc++ 的 `std` 模块不暴露 `directory_iterator` 的比较);LLVM 线移动到 23.1.3 后,自举清单的 `macos` 偏离随之消除,该行的第三项验收由 macOS 自举腿检验。
 
 ### 6.3 随发布编码的输出 部分实现
 
@@ -232,7 +234,7 @@ issue 关闭时该腿**必须**离开已知红色的列表。
 
 宿主平台新版本引出的工具链缺陷,其修复遵循 §5.3 与 §5.4。
 
-当前:状态同 §5.3 与 §5.4。mcpp#669 尚未修复,两条 `xcode-27` 腿保持已知红色。
+当前:状态同 §5.3 与 §5.4。mcpp#669 的上游修复随 LLVM 23.1.3 到达(§10 的本线移动),`xcode-27` 两腿改用 23.1.3 后离开已知红色列表;§8.1 的「尽早」义务对下一个宿主新版本继续成立。
 
 ---
 
@@ -352,8 +354,7 @@ mcpp 在首次运行时写下的默认值不是使用者的声明,其记录**必
 
 mcpp 自己的清单**必须**使用其构建所在的每一行的 Default 发布。偏离是线表中的一项,带理由与退出条件。
 
-当前:`mcpp.toml` 的 `[toolchain]` 为 `default = "gcc@16.1.0"`、`macos = "llvm@22.1.8"`、`windows = "llvm@20.1.7"`。`default` 等于 Linux x86_64 的默认,
-`windows` 等于带 MSVC 的 Windows 的默认;`macos` 偏离该行的默认 `llvm@20.1.7`,原因见 §6.2,但没有线表项记录理由与退出条件。
+当前:`mcpp.toml` 的 `[toolchain]` 为 `default = "gcc@16.1.0"`、`macos = "llvm@23.1.3"`、`windows = "llvm@23.1.3"`。三个值都等于其行的默认:Linux x86_64 保留 gcc 是平台设计(§4.1 的理由注记),llvm 族随 23.1.3 线移动;无偏离条目。
 
 ---
 
@@ -387,3 +388,4 @@ mcpp 自己的清单**必须**使用其构建所在的每一行的 Default 发�
 | v0.1 | 2026-10-02 | 初版 |
 | v0.2 | 2026-10-05 | §10.5 增加 G7:MSVC ABI 行上 e2e 881 以候选发布通过(mcpp 2026.10.5.1,#766)。 |
 | v0.3 | 2026-10-05 | §6.2 的「当前」:GCC 行与 MSVC ABI 的 llvm 行的 `import std.compat`(mcpp 2026.10.5.2)。 |
+| v0.4 | 2026-10-07 | LLVM 线移动到 23.1.3:§4.1 的 llvm 族一致成立、gcc 族两处理由入档;§6.2 的 macOS 第三项验收恢复;§8.3 的 `xcode-27` 腿离开已知红;§12 的自举清单无偏离;§3.3 的 expected.tsv 行数订正。 |

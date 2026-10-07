@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: elf
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # A DEFAULT SubOS that predates `subos_info` must not stop the build (#427).
 #
 # THE REGRESSION THIS PINS
@@ -71,15 +72,15 @@ done
 
 mkdir -p "$TMP/proj/src"
 cd "$TMP/proj"
-cat > mcpp.toml <<'EOF'
+cat > mcpp.toml <<EOF
 [package]
 name    = "nosubosinfo"
 version = "0.1.0"
 
 [toolchain]
 default = "gcc@16.1.0"
-macos   = "llvm@22.1.8"
-windows = "llvm@20.1.7"
+macos   = "llvm@${LLVM_VERSION}"
+windows = "llvm@${LLVM_VERSION}"
 EOF
 echo 'int main() { return 0; }' > src/main.cpp
 

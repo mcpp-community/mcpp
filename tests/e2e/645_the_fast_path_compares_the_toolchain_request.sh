@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # 645_the_fast_path_compares_the_toolchain_request.sh -- the fast path replays a
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # recorded build only for the toolchain request that recorded it (T1 of the
 # 2026-09-12 engine-gaps record).
 #
 # Measured before the fix: after `mcpp build` with gcc, `mcpp build --toolchain
-# llvm@22.1.8` printed `Finished dev in 0.00s` and left the gcc artefact in
+# llvm@${LLVM_VERSION}` printed `Finished dev in 0.00s` and left the gcc artefact in
 # place. Neither `--toolchain` (which reaches the build as MCPP_TOOLCHAIN) nor
 # the machine default (`[toolchain] default` in config.toml) was compared, and
 # every resolution-time check was skipped with them.

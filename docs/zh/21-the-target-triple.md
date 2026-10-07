@@ -341,8 +341,8 @@ Target x86_64-windows-gnu → x86_64-w64-windows-gnu
 ```
 
 让第三套词汇表保持独立，正是 mcpp 能够命名 LLVM 命名不了的东西的原因。
-在 llvm 22.1.8 上实测：`windows` 配一个 `musl` 环境能被三元组解析器
-接受，却会让编译器崩溃：
+在 llvm 23.1.3 上实测（2026-10-07；与 22.1.8 上的读数一致）：`windows` 配一个
+`musl` 环境能被三元组解析器接受，却会让编译器崩溃：
 
 ```
 clang++ --target=x86_64-pc-windows-musl -c t.cpp
@@ -378,8 +378,8 @@ Windows 环境 —— `gnu`、`cygnus`、`itanium`、`musl` —— 前三个都�
 |---|---|---|---|---|
 | `gcc@16.1.0` | `x86_64-linux-musl` | `xim-x-musl-gcc/…/x86_64-linux-musl-g++` | musl | libstdc++ |
 | `gcc@16.1.0` | `x86_64-windows-gnu` | `xim-x-mingw-cross-gcc/…/x86_64-w64-mingw32-g++` | gnu | libstdc++ |
-| `llvm@22.1.8` | `x86_64-linux-musl` | `xim-x-llvm/…/clang++` | musl | libc++ |
-| `llvm@22.1.8` | `x86_64-windows-gnu` | `xim-x-llvm/…/clang++` | gnu | libc++ |
+| `llvm@23.1.3` | `x86_64-linux-musl` | `xim-x-llvm/…/clang++` | musl | libc++ |
+| `llvm@23.1.3` | `x86_64-windows-gnu` | `xim-x-llvm/…/clang++` | gnu | libc++ |
 
 clang 不会伸进 gcc 的 payload 里取 C 库，gcc 也不会伸进 clang 的。
 各带各的。
@@ -392,13 +392,13 @@ clang 不会伸进 gcc 的 payload 里取 C 库，gcc 也不会伸进 clang 的�
 
 ```toml
 [toolchain]
-default = "llvm@22.1.8"        # x86_64-linux-musl's row names gcc
+default = "llvm@23.1.3"        # x86_64-linux-musl's row names gcc
 ```
 
 ```
 $ mcpp build --target x86_64-linux-musl
 error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
-       payload, and 'llvm@22.1.8' has none here.
+       payload, and 'llvm@23.1.3' has none here.
 ```
 
 **2026.8.26.1 之前，这会把整个构建跑完，才在链接阶段失败**，报出
@@ -414,7 +414,7 @@ error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
 [dependencies]
 openkal-llvm-runtime = "0.1.3"   # → openkal-musl → openkal-<os>
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@23.1.3"
 ```
 
 这就是 [`examples/06-openkal-cross`](../../examples/06-openkal-cross)，也是
@@ -491,28 +491,28 @@ docs/22。
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | — |
 | `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
 | `x86_64-windows-gnu` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | 载荷 |
-| `x86_64-windows-musl` | preview | `llvm@22.1.8` | 图 | 图 | 图 | 载荷 |
+| `x86_64-windows-musl` | preview | `llvm@23.1.3` | 图 | 图 | 图 | 载荷 |
 | `x86_64-windows-msvc` | verified | — | — | — | — | 系统 |
 | `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
-| `riscv64-none-elf` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `riscv32-none-elf` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `aarch64-none-elf` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `x86_64-none-elf` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `thumbv6m-none-eabi` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `thumbv7m-none-eabi` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `thumbv7em-none-eabi` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `thumbv7em-none-eabihf` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `thumbv8m.base-none-eabi` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `thumbv8m.main-none-eabi` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `armv7a-none-eabi` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `armv7a-none-eabihf` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `riscv64-none-elf` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `riscv32-none-elf` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `aarch64-none-elf` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `x86_64-none-elf` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `thumbv6m-none-eabi` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `thumbv7m-none-eabi` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `thumbv7em-none-eabi` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `thumbv7em-none-eabihf` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `thumbv8m.base-none-eabi` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `thumbv8m.main-none-eabi` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `thumbv8m.main-none-eabihf` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `armv7a-none-eabi` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `armv7a-none-eabihf` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `aarch64-linux-android` | verified | `android-ndk@30.0.16248370` | 载荷 | 载荷 | 载荷 | — |
 | `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | 载荷 | 载荷 | 载荷 | — |
-| `aarch64-ios` | preview | `llvm@22.1.8` | — | — | SDK | — |
-| `aarch64-ios-sim` | verified | `llvm@22.1.8` | — | — | SDK | — |
-| `x86_64-ios-sim` | preview | `llvm@22.1.8` | — | — | SDK | — |
+| `aarch64-ios` | preview | `llvm@23.1.3` | — | — | SDK | — |
+| `aarch64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
+| `x86_64-ios-sim` | preview | `llvm@23.1.3` | — | — | SDK | — |
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | 载荷 | 载荷 | 载荷 | 载荷 |
 
 `载荷` 这里有工具链 payload 产出它 · `图` 没有 payload，但依赖能供给

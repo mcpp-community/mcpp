@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # requires: llvm elf
-# 700 -- one process, one C++ runtime (#646 F3a), read with llvm@22.1.8.
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
+# 700 -- one process, one C++ runtime (#646 F3a), read with llvm@${LLVM_VERSION}.
 #
 # The ELF defaults gave a program `self-contained` and a shared library
 # `toolchain-coupled`. A program that loads a C++ shared library therefore held
@@ -26,7 +27,7 @@ export MCPP_HOME=${MCPP_HOME:-$HOME/.mcpp}
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
 
 READELF=$(command -v readelf || true)
-[ -n "$READELF" ] || READELF=$(ls "$MCPP_HOME"/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/llvm-readelf 2>/dev/null | head -1)
+[ -n "$READELF" ] || READELF=$(ls "$MCPP_HOME"/registry/data/xpkgs/xim-x-llvm/${LLVM_VERSION}/bin/llvm-readelf 2>/dev/null | head -1)
 [ -n "$READELF" ] || fail "no readelf and no llvm-readelf to read NEEDED with"
 
 cd "$TMP"
@@ -57,7 +58,7 @@ name    = "app"
 version = "0.1.0"
 
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@${LLVM_VERSION}"
 
 [build]
 $1

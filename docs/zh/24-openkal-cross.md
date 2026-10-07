@@ -96,7 +96,7 @@ SDK，或者区分 `linux`/`windows`/`macos`。那些是 C 环境层或平台层
 openkal-llvm-runtime = "0.1.1"
 
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@23.1.3"
 ```
 
 两行。第一行选定目标侧的三个层；第二行命名一个编译器，并且对其余一切来自
@@ -277,7 +277,7 @@ iPhoneSimulator 的 SDK 随 Xcode 分发、不可再分发，这界定的是**�
 它并不界定**定位**它们：`aarch64-macos` 早在这三行存在之前，就已经以完全
 相同的切分方式达到 `verified` —— `xim:llvm` 负责编译，机器自己的 macOS
 SDK 通过 `xcrun` 被找到。iOS 的这几行采用的是同一种切分，只是加了第二个
-SDK，所以它们把 `llvm@22.1.8` 钉死，且不带 `sysroot` 条目：那一列命名的是
+SDK，所以它们把 `llvm@23.1.3` 钉死，且不带 `sysroot` 条目：那一列命名的是
 一个包，而一个被定位到的目录不是包。
 
 对本文而言，其后果是这几行不再是一个结构性的论证。`openkal-macos` 能为它们

@@ -33,13 +33,13 @@ implementation of the platform interface matches the target being built. One
 line therefore selects three of the five target-side layers.
 
 **And the fourth — the compiler — without the manifest naming it.** There
-used to be a `[toolchain] default = "llvm@22.1.8"` here. It is gone, because
+used to be a `[toolchain] default = "llvm@23.1.3"` here. It is gone, because
 `openkal-llvm-runtime` declares `requires = ["mcpp:compiler=llvm"]` — a C++
 runtime is configured for one compiler family and records that in the headers it
 ships — and since 2026.8.26.2 mcpp reads that and takes it:
 
 ```
-    Resolved llvm@22.1.8 → aarch64-linux-musl → …/xim-x-llvm/22.1.8/bin/clang++
+    Resolved llvm@23.1.3 → aarch64-linux-musl → …/xim-x-llvm/22.1.8/bin/clang++
              required by openkal-llvm-runtime@0.1.3
              (`requires = ["mcpp:compiler=llvm"]`), not your gcc@16.1.0
              — this project only

@@ -89,8 +89,8 @@ Apple 要么是 Android，所以两者在指纹里共用一个槽。
 Android 和 wasm 的钉是**能力**而不是约定：
 
 ```bash
-mcpp build --target aarch64-linux-android    # [target.…] toolchain = "llvm@22.1.8"
-# error: target 'aarch64-linux-android' cannot be emitted by 'llvm@22.1.8'.
+mcpp build --target aarch64-linux-android    # [target.…] toolchain = "llvm@23.1.3"
+# error: target 'aarch64-linux-android' cannot be emitted by 'llvm@23.1.3'.
 #        An Android target needs bionic, not just an aarch64 or x86_64 back end:
 #        its headers, its per-API-level stubs and its loader path are inside the
 #        NDK, and no package adds them to another compiler.
@@ -108,7 +108,7 @@ mcpp build --target aarch64-ios        # 真机产物
 mcpp run   --target aarch64-ios-sim    # 模拟器，经由 runner
 ```
 
-**编译器是生态的，只有 SDK 是 Apple 的。** 这三行钉 `llvm@22.1.8` —— 和
+**编译器是生态的，只有 SDK 是 Apple 的。** 这三行钉 `llvm@23.1.3` —— 和
 `aarch64-macos` 用的是同一个普通载荷。任何足够新的 clang 都能为一个 iOS 部署目标
 产出 arm64 Mach-O；不可打包的是 iPhoneOS 与 iPhoneSimulator 的 SDK，它在 Xcode 里
 且不可再分发。所以 mcpp **定位**它，经由 `xcrun --sdk <名字> --show-sdk-path`，与
@@ -185,6 +185,6 @@ error: target aarch64-ios needs the iphoneos SDK, which this machine does not pr
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | 是，载荷声明的 `node` |
 | `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | 是，平台模拟器 |
 | `aarch64-linux-android` | verified | `android-ndk@30.0.16248370` | 是，`qemu-aarch64-static` + 从镜像取出的 bionic |
-| `aarch64-ios` | preview | `llvm@22.1.8` | 否 —— 真机需要开发者自己的签名 |
-| `aarch64-ios-sim` | verified | `llvm@22.1.8` | 是，`simctl-run`（macos-15） |
-| `x86_64-ios-sim` | preview | `llvm@22.1.8` | 否 —— 模拟器跑宿主架构，而那台宿主是 arm64 |
+| `aarch64-ios` | preview | `llvm@23.1.3` | 否 —— 真机需要开发者自己的签名 |
+| `aarch64-ios-sim` | verified | `llvm@23.1.3` | 是，`simctl-run`（macos-15） |
+| `x86_64-ios-sim` | preview | `llvm@23.1.3` | 否 —— 模拟器跑宿主架构，而那台宿主是 arm64 |

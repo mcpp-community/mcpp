@@ -27,8 +27,8 @@ mcpp 把所有工具链装进同一个沙盒目录（`~/.mcpp/registry/data/xpkg
 - Linux x86_64 使用面向原生 glibc ABI 的 `gcc@16.1.0`，X11、OpenGL 与系统库
   因此可以直接使用。
 - 其他 Linux 架构使用 `gcc@15.1.0-musl`，这是一套自包含的全静态工具链。
-- macOS 使用 `llvm@20.1.7`。
-- Windows 上存在可用 MSVC 时使用面向 MSVC ABI 的 `llvm@20.1.7`；没有可用
+- macOS 使用 `llvm@23.1.3`。
+- Windows 上存在可用 MSVC 时使用面向 MSVC ABI 的 `llvm@23.1.3`；没有可用
   MSVC 时使用 `gcc@16.1.0`，target 为 `x86_64-windows-gnu`（MinGW-w64，默认
   静态链接）。
 
@@ -61,7 +61,7 @@ mcpp 把所有工具链装进同一个沙盒目录（`~/.mcpp/registry/data/xpkg
 
 ```bash
 mcpp toolchain install gcc 16.1.0           # host target (GNU libc on Linux)
-mcpp toolchain install llvm 20.1.7          # LLVM/Clang, default on macOS and Windows with usable MSVC
+mcpp toolchain install llvm 23.1.3          # LLVM/Clang, default on macOS and Windows with usable MSVC
 mcpp toolchain install gcc 16 --target x86_64-linux-musl    # musl target payload
 mcpp toolchain install --target x86_64-windows-gnu          # family omitted → the
                                             # target's convention pin (gcc@16.1.0)
@@ -113,7 +113,7 @@ mcpp 就为这次构建取用被要求的那个族：
 ```
 $ mcpp build
    Resolving toolchain
-    Resolved llvm@22.1.8 → …/xim-x-llvm/22.1.8/bin/clang++
+    Resolved llvm@23.1.3 → …/xim-x-llvm/23.1.3/bin/clang++
              required by openkal-llvm-runtime@0.1.3 (`requires = ["mcpp:compiler=llvm"]`),
              not your gcc@16.1.0 — this project only
 ```
@@ -156,7 +156,7 @@ mcpp toolchain list
 Toolchains:
   *  gcc 16.1.0              (default)
      gcc 15.1.0
-     llvm 22.1.8
+     llvm 23.1.3
 
 Targets:
      TARGET                  NOTE                  TOOLCHAIN         STATUS
@@ -168,7 +168,7 @@ Targets:
 
 Available toolchains (run `mcpp toolchain install <family> <version>`):
      gcc 15.1.0 / 13.3.0 / 11.5.0 / 9.4.0
-     llvm 20.1.7
+     llvm 20.1.7 / 22.1.8
 ```
 
 `*` 标记当前的默认对。Targets 块是 target 词汇表的实时视图，共有四种状态：
@@ -398,7 +398,7 @@ mcpp 自己的文件，而一棵不属于 mcpp 的树不会得到一份。
 ```toml
 [toolchain]
 default   = { path = "/opt/llvm-trunk" }
-bootstrap = "llvm@22.1.8"
+bootstrap = "llvm@23.1.3"
 ```
 
 构建程序（`build.mcpp`）、宿主工具与宿主模块在执行构建的那台机器上编译并运行。
@@ -588,7 +588,7 @@ cxx_runtime = "self-contained"   # the C++ runtime axis
 
 ```toml
 [toolchain]
-windows = "llvm@22.1.8"
+windows = "llvm@23.1.3"
 
 [target.x86_64-windows-msvc]
 sysroot = "msvc@14.44.35207"     # or "msvc@system" (the default), or "xim:msvc@14.44.35207"
@@ -664,11 +664,11 @@ toolchain = "emsdk@6.0.9"
 
 ```toml
 [target.aarch64-linux-android]
-toolchain = "llvm@22.1.8"        # refused
+toolchain = "llvm@23.1.3"        # refused
 ```
 
 ```
-error: target 'aarch64-linux-android' cannot be emitted by 'llvm@22.1.8'.
+error: target 'aarch64-linux-android' cannot be emitted by 'llvm@23.1.3'.
        An Android target needs bionic, not just an aarch64 or x86_64 back end:
        its headers, its per-API-level stubs and its loader path are inside the
        NDK, and no package adds them to another compiler.
@@ -742,7 +742,7 @@ runner 是一个 argv 前缀，而一次**会话**不是。在一台 iOS 模拟�
 是同一个问题，只是答法不同。
 
 **编译器是我们的；只有 SDK 是 Apple 的。** 任何足够新的 clang 都能为一个
-iOS 部署目标产出 arm64 Mach-O，所以这三行钉的是 `llvm@22.1.8`——那个普通
+iOS 部署目标产出 arm64 Mach-O，所以这三行钉的是 `llvm@23.1.3`——那个普通
 载荷，和 `aarch64-macos` 用的是同一个。无法打包的是 iPhoneOS 与
 iPhoneSimulator 的 SDK：它在 Xcode 里，而且不可再分发。所以 mcpp **定位**
 它，通过 `xcrun --sdk <name> --show-sdk-path`，与它一直以来定位 macOS SDK
@@ -752,8 +752,8 @@ iPhoneSimulator 的 SDK：它在 Xcode 里，而且不可再分发。所以 mcpp
 目录不是包。
 
 ```bash
-mcpp build --target aarch64-ios        # resolves llvm@22.1.8 + the iPhoneOS SDK
-mcpp build --target aarch64-ios-sim    # resolves llvm@22.1.8 + the Simulator SDK
+mcpp build --target aarch64-ios        # resolves llvm@23.1.3 + the iPhoneOS SDK
+mcpp build --target aarch64-ios-sim    # resolves llvm@23.1.3 + the Simulator SDK
 ```
 
 ## 每个工具的来源（2026.10.1.3+）
@@ -773,7 +773,7 @@ mcpp build --target aarch64-ios-sim    # resolves llvm@22.1.8 + the Simulator SD
 
 ```
    Resolving toolchain
-   Bootstrap llvm@22.1.8 → @mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/clang++
+   Bootstrap llvm@23.1.3 → @mcpp/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/clang++
        Using toolchain clang 23.0.0git ← /opt/acme-llvm   [program · build.mcpp:9]
       Target x86_64-unknown-linux-gnu
        Using xim:cmake ← /usr/bin/cmake                   [custom · mcpp.toml:22]
@@ -972,7 +972,7 @@ iOS 设备上运行，而那不是一个构建工具能供给的东西。
 [toolchain]
 default = "gcc@16.1.0"
 linux   = "gcc@16.1.0"
-macos   = "llvm@20.1.7"
+macos   = "llvm@23.1.3"
 ```
 
 工程级声明优先于全局默认配置。
@@ -1009,7 +1009,7 @@ linkage   = "static"
 ```
 $ mcpp build --target x86_64-linux-musl        # [toolchain] default = "llvm@…"
 error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
-       payload, and 'llvm@22.1.8' has none here.
+       payload, and 'llvm@23.1.3' has none here.
 ```
 
 有两类行回答的是另一个问题，它们的 pin 根本不可能被推翻：

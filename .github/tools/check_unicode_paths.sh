@@ -62,7 +62,7 @@ check_bytes() {
 }
 
 rows=(
-    'llvm|[toolchain]\nwindows = "llvm@20.1.7"|'
+    'llvm|[toolchain]\nwindows = "llvm@23.1.3"|'
     'msvc|[toolchain]\nwindows = "msvc@system"|'
     'mingw|[toolchain]\ndefault = "gcc@16.1.0"|--target x86_64-windows-gnu'
 )
@@ -97,7 +97,7 @@ done
 # and the header found at the directory the program printed.
 dir="$ROOT/$CJK/buildprogram"
 mkdir -p "$dir/src" "$dir/inc"
-printf '[package]\nname    = "unicodebp"\nversion = "0.1.0"\n\n[toolchain]\nwindows = "llvm@20.1.7"\n' > "$dir/mcpp.toml"
+printf '[package]\nname    = "unicodebp"\nversion = "0.1.0"\n\n[toolchain]\nwindows = "llvm@23.1.3"\n' > "$dir/mcpp.toml"
 printf '#define UNICODE_BP 42\n' > "$dir/inc/unicode_bp.h"
 cat > "$dir/build.mcpp" <<'EOF'
 #include <cstdio>

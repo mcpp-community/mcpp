@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm mingw-host-headers python3
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 738 -- when the target's C library and C++ runtime both come from the
 # dependency graph, clang's own driver stops searching the HOST's copies of
 # either (mcpp#662).
@@ -53,13 +54,13 @@ cd "$TMP/app"
 # manifest) plus a plain C unit: the defect's C-library half is invisible
 # from `import std`-only sources, which is exactly why the issue's own
 # minimal repro (root project only `import std`) did not reach it.
-cat > mcpp.toml <<'TOML'
+cat > mcpp.toml <<TOML
 [package]
 name    = "hdriso"
 version = "0.1.0"
 
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@${LLVM_VERSION}"
 
 [dependencies]
 openkal-musl = "0.3.5"

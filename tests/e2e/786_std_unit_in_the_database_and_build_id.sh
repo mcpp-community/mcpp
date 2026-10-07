@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm python3
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 786_std_unit_in_the_database_and_build_id.sh — C5, D5a and D5b (design
 # 2026-09-26
 # .agents/docs/2026-09-26-compile-database-and-issue-699-design.md §3.5): a
@@ -29,7 +30,7 @@ import std;
 int main() { std::println("hi"); return 0; }
 EOF
 
-"$MCPP" build --toolchain llvm@22.1.8 > build.log 2>&1 || {
+"$MCPP" build --toolchain llvm@${LLVM_VERSION} > build.log 2>&1 || {
     cat build.log; echo "FAIL: build failed"; exit 1; }
 
 python3 - <<'PY'
@@ -46,7 +47,7 @@ print(f"  (std directory: {std['directory']})")
 print("ok: the std unit's directory is the shared std cache, not the project's output directory")
 PY
 
-"$MCPP" emit build-database --toolchain llvm@22.1.8 --spec compile-commands \
+"$MCPP" emit build-database --toolchain llvm@${LLVM_VERSION} --spec compile-commands \
     > emitted.json 2> emit.err || { cat emit.err; echo "FAIL: emit failed"; exit 1; }
 
 python3 - <<'PY'
@@ -66,9 +67,9 @@ assert b["output"] == e["output"], (b["output"], e["output"])
 print("ok: emit --spec compile-commands renders the same std entry as the build's database")
 PY
 
-"$MCPP" emit build-database --toolchain llvm@22.1.8 --format json > s1_1.json 2> s1_1.err \
+"$MCPP" emit build-database --toolchain llvm@${LLVM_VERSION} --format json > s1_1.json 2> s1_1.err \
     || { cat s1_1.err; echo "FAIL: emit (s1, run 1) failed"; exit 1; }
-"$MCPP" emit build-database --toolchain llvm@22.1.8 --format json > s1_2.json 2> s1_2.err \
+"$MCPP" emit build-database --toolchain llvm@${LLVM_VERSION} --format json > s1_2.json 2> s1_2.err \
     || { cat s1_2.err; echo "FAIL: emit (s1, run 2) failed"; exit 1; }
 
 python3 - <<'PY'

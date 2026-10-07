@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: windows no-msvc
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 182_windows_no_msvc_fallback.sh — a bare Windows box builds with no setup
 #
 # A stock Windows install has the UCRT runtime DLLs but neither the MSVC STL
@@ -71,10 +72,10 @@ iso_out=$(cd "$ISO" && PATH="/usr/bin:/c/Windows/System32" ./bare_win.exe 2>&1) 
 cd "$TMP"
 "$MCPP" new explicit_msvc >/dev/null 2>&1
 cd explicit_msvc
-cat >> mcpp.toml <<'EOF'
+cat >> mcpp.toml <<EOF
 
 [toolchain]
-windows = "llvm@20.1.7"
+windows = "llvm@${LLVM_VERSION}"
 EOF
 
 set +e

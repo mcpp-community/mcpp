@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # `--jobs N|auto` and the `--` boundary that keeps it from eating a program's flags.
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 #
 # Two separate contracts, both easy to break without noticing:
 #   1. the option is honoured and a bad value is REPORTED, not silently dropped
@@ -28,15 +29,15 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
 
-cat > mcpp.toml <<'EOF'
+cat > mcpp.toml <<EOF
 [package]
 name    = "jobsopt"
 version = "0.1.0"
 
 [toolchain]
 default = "gcc@16.1.0"
-macos   = "llvm@22.1.8"
-windows = "llvm@20.1.7"
+macos   = "llvm@${LLVM_VERSION}"
+windows = "llvm@${LLVM_VERSION}"
 EOF
 mkdir -p src
 # A module interface unit, not just a .cpp: the split schedule asserted at the
@@ -107,8 +108,8 @@ echo "$out" | grep -q "Resolved $own" \
 # ...and it must BEAT the manifest, or it is not an override. The fixture pins
 # gcc on Linux, so asking for something else has to change what gets resolved.
 if [ "$(uname -s)" = "Linux" ]; then
-    out=$("$MCPP" build --release --toolchain llvm@22.1.8 2>&1) || true
-    echo "$out" | grep -q 'Resolved llvm@22.1.8' \
+    out=$("$MCPP" build --release --toolchain llvm@${LLVM_VERSION} 2>&1) || true
+    echo "$out" | grep -q "Resolved llvm@${LLVM_VERSION}" \
       || { echo "--toolchain lost to the manifest pin:"; echo "$out"; exit 1; }
 fi
 

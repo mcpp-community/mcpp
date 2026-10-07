@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 785_cdb_interface_flag_module_extensions.sh — C4 (design 2026-09-26
 # .agents/docs/2026-09-26-compile-database-and-issue-699-design.md §3.4): the
 # record states a module interface's language explicitly
@@ -34,7 +35,7 @@ import ixxtest.greet;
 int main() { return answer() == 42 ? 0 : 1; }
 EOF
 
-"$MCPP" build --toolchain llvm@22.1.8 > build.log 2>&1 || {
+"$MCPP" build --toolchain llvm@${LLVM_VERSION} > build.log 2>&1 || {
     cat build.log; echo "FAIL: build failed"; exit 1; }
 
 python3 - <<'PY'

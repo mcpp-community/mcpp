@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: gcc llvm
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 784_cdb_replays_from_its_directory.sh — C3 (design 2026-09-26
 # .agents/docs/2026-09-26-compile-database-and-issue-699-design.md §3.3):
 # `directory` is the OUTPUT directory the compiler actually runs in, for
@@ -62,7 +63,7 @@ sys.exit(1 if fail else 0)
 PY
 }
 
-for tc in gcc@16.1.0 llvm@22.1.8; do
+for tc in gcc@16.1.0 llvm@${LLVM_VERSION}; do
     "$MCPP" build --toolchain "$tc" --no-cache > "build-$tc.log" 2>&1 || {
         cat "build-$tc.log"; echo "FAIL: build with $tc failed"; exit 1; }
     replay_all "$tc" || { echo "FAIL: replay failed for $tc"; exit 1; }

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: unix-shell jq
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # A compiler the dependency graph requires is USED, not merely checked — and
 # selecting it writes no configuration.
 #
@@ -13,7 +14,7 @@
 #     $ mcpp build                       # global default gcc@16.1.0
 #       error: `openkal-llvm-runtime@0.1.3` requires the compiler to be `llvm`.
 #              Select that compiler …  mcpp toolchain default llvm
-#     $ MCPP_TOOLCHAIN=llvm@22.1.8 mcpp build
+#     $ MCPP_TOOLCHAIN=llvm@${LLVM_VERSION} mcpp build
 #       Finished dev [unoptimized + debuginfo] in 1.02s
 #
 # Nothing was missing. The remedy printed was a GLOBAL change — the default for

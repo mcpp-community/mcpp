@@ -30,7 +30,7 @@ BUILD=(
     # Built here for one reason worth the cost: it is the only example whose
     # CPU-only configuration exercises `cfg(accelerator = "none")` and two rule
     # packages in one build program, and both of those are engine paths that a
-    # description cannot cover. Its `[toolchain] default = "llvm@22.1.8"` means
+    # description cannot cover. Its `[toolchain] default = "llvm@23.1.3"` means
     # this job installs an LLVM payload it otherwise would not -- the CUDA leg
     # takes the clang route, because the nvcc route on the 12.9 line is refused
     # by nvcc's own front end and the 13.x line raises the driver floor to r580.
