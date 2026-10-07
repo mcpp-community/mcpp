@@ -89,6 +89,11 @@ struct ToolchainLinkModel {
     // Compile-side flags as argv tokens. Each entry is ONE argv word.
     std::vector<std::string> compile_tokens(const PathEscape& esc) const {
         std::vector<std::string> out;
+        // A managed libc supplies the complete system header surface. Keep
+        // Clang's resource headers while refusing an ambient /usr/include
+        // fallback, including when the driver cfg is explicitly bypassed.
+        if (mode == CLibMode::PayloadFirst && clangDriver)
+            out.push_back("-nostdlibinc");
         if (mode == CLibMode::Sysroot)
             out.push_back("--sysroot=" + esc(sysroot));
         // PayloadFirst headers: clang takes -isystem; GCC needs -idirafter so
