@@ -78,7 +78,7 @@ row="$(resolved_row aarch64-linux)"
 case "$r" in
   tier-planned|unknown-target)
     echo "FAIL: the tier gate still answers about the lexical fill (reason '$r')"
-    echo "      aarch64-linux-musl is 'verified'; aarch64-linux-gnu is 'planned'"
+    echo "      aarch64-linux-gnu is verified; completion must preserve its GNU identity"
     message_of aarch64-linux | sed 's/^/        /'
     exit 1 ;;
   none)
@@ -95,7 +95,7 @@ esac
 # identity. Asserting only "it did not refuse with tier-planned" would stay
 # green in a world where the completion picked some other row entirely.
 case "$row" in
-  aarch64-linux-gnu) echo "  ok  and it resolved to the native GNU row ($row)" ;;
+  aarch64-linux-gnu|aarch64-unknown-linux-gnu) echo "  ok  and it resolved to the native GNU row ($row)" ;;
   *)      echo "FAIL: aarch64-linux resolved to '$row', not the GNU row"; exit 1 ;;
 esac
 case "$row" in

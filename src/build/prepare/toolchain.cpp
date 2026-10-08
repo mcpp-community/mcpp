@@ -1312,10 +1312,10 @@ step2_resolve_explicit_spec(PrepareState& state, ToolchainResolveCtx& ctx) {
         // `--target x86_64-linux-musl`: xim:x86_64-linux-musl-gcc@16.1.0 is
         // x86_64-only, and the hard install failure used to preempt the
         // refusal that names the target correctly. The held diagnosis is
-        // that refusal, released early with one cause per message. (On the
-        // aarch64 linux host the same shape reaches the gnu row: a skip
-        // here is also what keeps `host-cannot-serve` from turning into a
-        // broken x86_64 payload extracted into the sandbox.)
+        // that refusal, released early with one cause per message. The same
+        // rule applies to an unservable foreign GNU payload. Native ARM64
+        // GNU now has a managed LLVM/glibc payload and does not enter this
+        // refusal path.
         const bool engineChoseUnservable =
             !state.unservedTargetDiagnosis.empty() && !spec->target.empty()
             && !tc_origin_is_user_explicit(state.tcOrigin);
