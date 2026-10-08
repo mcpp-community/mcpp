@@ -1,0 +1,25 @@
+name: probe-2026.10.8.1-consumption (temporary, do not merge)
+# TEMPORARY. Consumes the published mcpp 2026.10.8.1 from a fresh xlings home
+# on each hosted runner and through both mirrors. Every other workflow is
+# removed on this branch.
+on:
+  pull_request:
+jobs:
+  consume:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04-arm, macos-latest, windows-latest]
+        mirror: [GLOBAL, CN]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: consume
+        shell: bash
+        run: bash .github/probe/consume.sh "${{ matrix.mirror }}" 2>&1 | tee consume.log; exit ${PIPESTATUS[0]}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: consume-${{ matrix.runner }}-${{ matrix.mirror }}
+          path: consume.log
