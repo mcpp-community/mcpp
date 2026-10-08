@@ -1,0 +1,2 @@
+# The cross-host admission compares the exact source bytes compiled by each host.
+tests/fixtures/openkal-hosted-threads/src/main.cpp.in text eol=lf

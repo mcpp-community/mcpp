@@ -427,3 +427,17 @@ helper 在 Windows 的 Bash 环境中先用 `cygpath -u` 规范输出路径，
 job `113112389601` 已成功，实际完成原有样例与线程应用的三个
 目标构建，验证第 17 节原生 Windows 路径规范化更正。该 job 使用
 新增 JSON 行为检查之前的线程源码，不替代本节新增库的最终 CI。
+
+## 19. 2026-10-08 四宿主源码字节一致性更正
+
+Windows job `113112389601` 的线程源码摘要为
+`debee4f23a080caf1eb65450aed992dda41f3c5b322fd7d3b468764a242a1d6b`，
+而相同提交的 Linux/macOS 摘要为
+`ca48c94242e8d38e21503925d1205c75caf074e2c74db858d198d8831a372bc4`。
+将仓库源码的 LF 换为 CRLF 可精确复现 Windows 摘要。六份 Windows
+构建产物的架构与依赖闭包检查通过，但不能通过源码字节一致性门。
+
+根目录 `.gitattributes` 对该源码模板指定 `text eol=lf`，使 checkout、
+复制到应用和计算摘要使用相同字节。该规则不改变摘要算法或运行断言。
+使用 `core.autocrlf=true` 的独立 checkout 验证 LF 字节及当前 JSON
+模板摘要一致；实际 Windows checkout 的验证由后续 CI 承担。
