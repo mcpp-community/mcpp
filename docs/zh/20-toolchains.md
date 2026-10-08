@@ -869,6 +869,31 @@ warning: the assembler for this build is the host's ('/usr/bin/nasm'), not the o
 正是上面是一张表而不是一条禁令的原因：每一条都到得了，每一条都有自己的理由，
 而且每一条都会在被用到的地方说出来。
 
+### 系统头文件：不取自宿主（2026.10.8.1+）
+
+使用受管 C 库的构建不搜索宿主的任何系统头文件目录。受管 glibc 与
+`linux-headers` 提供完整的系统头文件，两类编译器各自对宿主副本关闭：
+
+- **clang** 在原生 Linux 行上携带 `-nostdlibinc`。驱动保留自身的资源头文件，
+  不再回退到 `/usr/include`，绕过驱动配置文件时同样如此。直接调用的
+  `clang++` 从 mcpp 安装后重新生成的配置文件中读到同一参数。
+- **GCC** 以 `--sysroot=<xlings subos>` 编译，搜索止于该 subos 的
+  `usr/include`。没有可用 subos 时，GCC 退回载荷布局，并获得
+  `-isysroot <C 库载荷>`，以替换编译器构建时记录的 sysroot：该路径属于构建
+  编译器的机器，否则在恰好存在它的机器上会被搜索。
+
+因此只存在于宿主的头文件不会被找到。需要它的项目在自己的清单中写出该目录，
+对宿主的依赖由此可见：
+
+```toml
+[build]
+cflags   = ["-idirafter", "/usr/include"]
+cxxflags = ["-idirafter", "/usr/include"]
+```
+
+`-idirafter` 把该目录排在受管头文件之后，构建所链接的 C 库仍由自身提供声明。
+`allow_host_libs` 不改变头文件搜索，它只涉及链接可以从宿主解析的库。
+
 ### 这条路新增的宿主面，具名且有界
 
 两项，都只在 macOS 上，都落在「一个只存在于它自己那个操作系统上的专有运行时」
@@ -1172,6 +1197,46 @@ xutility:6542:49: note: in instantiation of function template specialization
 - 在 MSVC STL 早于 14.51 的镜像上构建，例如 `windows-2022`。
 
 跟踪于 [mcpp#609](https://github.com/mcpp-community/mcpp/issues/609)。
+
+## 已知工具链限制：32 位 x86 Microsoft ABI 上的协程（clang 23）
+
+clang 23 不支持 `i686-pc-windows-msvc` 上的 C++20 协程。它不为该目标预定义
+`__cpp_impl_coroutine`，并以 `-Wcoroutines-unsupported-target` 报告在该目标上
+使用协程的代码。clang 22.1.8 以及 mcpp 支持的其他所有目标（包括
+`x86_64-pc-windows-msvc` 与 `i686-pc-windows-gnu`）仍预定义该宏。
+
+MSVC STL 依据该宏决定 `<coroutine>` 的内容，因此该头文件在此目标上为空，
+由此产生两种失败：
+
+- **C++23 std 模块。** `std.ixx` 在 C++23 下包含 `<generator>`，而
+  `<generator>` 不加检查地使用 `coroutine_handle` 与 `suspend_always`，
+  预编译在 `generator` 内停止。
+- **使用协程的代码。** 编译停在 `use of undeclared identifier 'std'` 与
+  `std::coroutine_traits type was not found`，尚未到达 clang 自身的协程诊断。
+
+mcpp 遵循编译器的决定：不定义该宏，也不改动 std 模块，而是在上述两种失败之后
+追加说明，指出原因与可选做法。说明在失败之后才判定，依据是失败的命令以及对同一
+编译器、同一目标的 `-dM -E` 探测；成功的构建不受影响，编译器或 STL 变化后说明
+随之消失。
+
+说明按以下顺序给出选项：
+
+- 以 C++20 构建该包。此时 `import std` 与 `import std.compat` 不包含
+  `<generator>`，可在该目标上构建；协程仍不可用。
+- 为该目标指定仍启用协程的 LLVM：
+
+  ```toml
+  [target.i686-windows-msvc]
+  toolchain = "llvm@22.1.8"
+  ```
+
+  新版编译器视该 ABI 上的协程为不支持；在此目标上使用协程的代码风险自负。
+
+在项目中定义 `__cpp_impl_coroutine` 不是解决办法：它打开了编译器已声明在该 ABI
+上不支持的功能。
+
+`i686-windows-msvc` 不是目标表中的一行；为它构建的项目需要声明
+`[target.i686-windows-msvc]`，与其他自定义三元组相同。
 
 ## C++ 运行时契约（`cxx_runtime`）
 

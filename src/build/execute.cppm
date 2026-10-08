@@ -50,6 +50,7 @@ import mcpp.build.schedule.policy;   // resolve_jobs — one answer to "how many
 import mcpp.fetcher.progress;
 import mcpp.project;
 import mcpp.ui;
+import mcpp.toolchain.msvc_coroutines;
 import mcpp.build.progress;
 
 namespace mcpp::build {
@@ -1477,12 +1478,16 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         // silently remove the advice along with them.
         if (auto advice = mcpp::build::link_failure_advice(out); !advice.empty())
             mcpp::ui::block(advice);
-        // mcpp#662, the fast-path form: no `BuildPlan` here to name the C
-        // library from (the whole point of this path is skipping `prepare`),
-        // so both name arguments are empty — the note still fires (it reads
-        // the isolation token in `out` itself) but names no package.
-        if (auto advice = mcpp::build::graph_c_library_isolation_advice(out);
-            !advice.empty())
+        // mcpp#662, the fast-path form: no `BuildPlan` here (the whole point
+        // of this path is skipping `prepare`), so whether the C library is the
+        // graph's, and its name, come from the file the plan wrote beside
+        // build.ninja. `-nostdlibinc` alone no longer says so: a native build
+        // on a managed C library carries it too.
+        if (auto graph = mcpp::build::read_graph_c_library_sidecar(ninjaPath.parent_path()))
+            if (auto advice = mcpp::build::graph_c_library_isolation_advice(
+                    out, graph->first, graph->second); !advice.empty())
+                mcpp::ui::block(advice);
+        if (auto advice = mcpp::toolchain::msvc_coroutines::advice(out); !advice.empty())
             mcpp::ui::block(advice);
         // #696, the fast-path form of the same unnamed shape.
         if (auto advice = mcpp::build::graph_link_library_advice(out); !advice.empty())

@@ -536,7 +536,11 @@ inline constexpr TargetInfo kKnownTargets[] = {
     { "x86_64-windows-msvc",   "verified",  "PE",  "",           "",                            false },
     { "aarch64-macos",         "verified",  "",    "",           "",                            false },
     { "riscv64-linux-musl",    "planned",   "",    "",           "",                            true  },
-    { "aarch64-linux-gnu",     "verified",   "",    "llvm@23.1.3", "",                            false },
+    // `preview` until the released engine is consumed on a clean ARM64 host
+    // (SPEC-009 §10.7): CI built and ran the native LLVM 23.1.3/glibc default
+    // from source, and the published chain (xlings client, glibc revision 3,
+    // the ARM LLVM resources, the CN mirrors) is what that consumption checks.
+    { "aarch64-linux-gnu",     "preview",   "",    "llvm@23.1.3","",                            false },
     { "x86_64-macos",          "planned",   "",    "",           "",                            false },
     // Bare metal. `defaultStatic` is not a preference here — there is no
     // loader, so there is no other option. The pin is llvm on every host

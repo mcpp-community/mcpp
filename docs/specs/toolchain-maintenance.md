@@ -4,8 +4,8 @@
 |---|---|
 | 规范编号 | SPEC-009 |
 | 标题 | 工具链的支持与维护:版本线、默认值、来源、移动与退役 |
-| 状态 | 草案 v0.5 |
-| 最后修改 | 2026-10-08 |
+| 状态 | 草案 v0.6 |
+| 最后修改 | 2026-10-09 |
 | 对应实现 | 逐条标注;本版只有规范,多数条款未实现 |
 | 相关设计文档 | `.agents/docs/2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md`(第 IV 部分) |
 | 相关 issue | mcpp#669(macOS 27 的链接)、mcpp#685、mcpp#687、mcpp#755、mcpp#784 |
@@ -180,6 +180,16 @@ musl 构建与运行成功。
 
 当前:ABI 标签带编译器主版本(`src/pack/abi_tag.cppm`):GCC 16.1 到 16.2 保持 `gcc16-libstdcxx16`;LLVM 22 到 23 由 `clang22-libcxx22`
 变为 `clang23-libcxx23`,带旧标签的预制产物被拒绝(`src/pack/prebuilt.cppm`)。版本已进入指纹(`modules/toolchain-model/src/fingerprint.cppm`)。评审本身没有清单,也没有检查。
+
+### 6.4 上游声明不支持的能力 部分实现
+
+一个发布声明某项语言能力在某个 ABI 上不支持(撤去特性宏、对使用处给出不支持目标的诊断)时,引擎**必须**遵循该声明:
+**禁止**定义特性宏、改写标准库或其模块以重新打开该能力。由此导致的失败**应当**附上说明,写明原因与可选做法;
+说明**应当**在失败之后、依据失败的命令对同一编译器的探测作出,使成功的构建不受影响,能力恢复后说明随之消失。
+
+当前:clang 23 不为 `i686-pc-windows-msvc` 预定义 `__cpp_impl_coroutine`,MSVC STL 的 `<coroutine>` 因此为空;C++23 的 std 模块
+停在 `<generator>`,使用协程的代码停在 `std::coroutine_traits` 未找到。两种失败的说明由 `src/toolchain/msvc_coroutines.cppm` 给出,
+依次建议 C++20 与可选的 `llvm@22.1.8`(mcpp 2026.10.8.1,e2e 892)。该三元组不是目标表中的一行,§10.5 的门不覆盖它。
 
 ---
 
@@ -396,3 +406,4 @@ mcpp 自己的清单**必须**使用其构建所在的每一行的 Default 发�
 | v0.3 | 2026-10-05 | §6.2 的「当前」:GCC 行与 MSVC ABI 的 llvm 行的 `import std.compat`(mcpp 2026.10.5.2)。 |
 | v0.4 | 2026-10-07 | LLVM 线移动到 23.1.3:§4.1 的 llvm 族一致成立、gcc 族两处理由入档;§6.2 的 macOS 第三项验收恢复;§8.3 的 `xcode-27` 腿离开已知红;§12 的自举清单无偏离;§3.3 的 expected.tsv 行数订正。 |
 | v0.5 | 2026-10-08 | Linux aarch64 原生默认采用 LLVM 23.1.3 与 GNU ABI;保留显式声明、既有默认值及 musl 发布路径;原生载荷采用正向准入检查。 |
+| v0.6 | 2026-10-09 | 新增 §6.4:上游声明某 ABI 上不支持的能力,引擎遵循并在失败后说明(clang 23 在 32 位 MSVC ABI 上的协程)。`aarch64-linux-gnu` 在发布后的冷启动消费之前保持 `preview`。 |

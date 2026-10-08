@@ -736,9 +736,10 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
     {
         // Native ARM64 admission 37706303240 on 2026-10-08 built and ran
         // the LLVM 23.1.3/glibc default, its deployed pack, GNU self-host,
-        // all 147 suites and four real index members. This is native GNU
-        // evidence, not a claim about prebuilt GNU cross payloads.
-        auto [name, tier] = std::pair{"aarch64-linux-gnu", "verified"};
+        // all 147 suites and four real index members, from source. The tier
+        // stays `preview` until the released engine is consumed on a clean
+        // ARM64 host (SPEC-009 §10.7).
+        auto [name, tier] = std::pair{"aarch64-linux-gnu", "preview"};
         auto t = parse(name);
         ASSERT_TRUE(t.has_value());
         auto* info = find_known_target(*t);

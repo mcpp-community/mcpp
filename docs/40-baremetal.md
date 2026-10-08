@@ -205,7 +205,7 @@ Output (2026.9.30.1; the times vary by machine):
 
 ```
    Resolving toolchain
-    Resolved llvm@22.1.8 → riscv64-none-elf → @mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/clang++
+    Resolved llvm@23.1.3 → riscv64-none-elf → @mcpp/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/clang++
     Resolved host toolchain for build.mcpp: clang 22.1.8 (x86_64-unknown-linux-gnu)
   build.mcpp blinky  ran 0.41s
     Inferred sources [src/**/*.{cppm,cpp,cc,c,S,s,asm}]

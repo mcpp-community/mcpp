@@ -4,7 +4,7 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
-## [2026.10.8.1] - 2026-10-08
+## [2026.10.8.1] - 2026-10-09
 
 ### Changed
 
@@ -16,6 +16,16 @@
 - Use the native GNU manifest row when building mcpp and installing the
   toolchain for ARM64 consumer jobs. Centralize E2E toolchain version discovery
   and respect a custom MCPP_HOME.
+- Search no system header directory of the host on a managed C library. clang
+  carries `-nostdlibinc` on the native Linux rows, including through the driver
+  configuration file regenerated after installation; GCC without a usable
+  subos takes `-isysroot <C library payload>` in place of the sysroot recorded
+  when it was built. A project that needs a host header writes the directory,
+  for example `cxxflags = ["-idirafter", "/usr/include"]`; `allow_host_libs`
+  concerns the link only. The std module and object caches of Linux clang
+  builds are rebuilt once.
+- Mark `aarch64-linux-gnu` `preview` until the released engine is consumed on
+  a clean ARM64 host.
 
 ### Fixed
 
@@ -24,7 +34,8 @@
   engine-selected foreign payloads.
 - Keep AArch64 host `std` modules and build programs on the same compiler-rt
   code-generation settings. Suppress the driver's automatic unwinder library
-  when a self-contained ELF already links its static unwinder explicitly.
+  (`--unwindlib=none`, on every architecture) when a self-contained ELF already
+  links its static unwinder explicitly.
 - Stop E2E package discovery from exporting GCC's reserved `GCC_ROOT` variable,
   which redirected managed Windows GCC helper lookup to the registry wrapper.
 - Verify the native ARM64 openkal stack and indexed JSON serialization and
@@ -33,6 +44,18 @@
 - Cover both xcode-27 E2E shards and exercise explicit toolchain installation
   with a cold registry. Restore historical measurements to their original
   environment and adapt the namespace fixture to libc++ 23.
+- Give the note for a graph-supplied C library only when the C library is the
+  graph's, on the full build and on the fast path; a native build on a managed
+  C library carries `-nostdlibinc` as well.
+
+### Known limitations
+
+- clang 23 does not support C++20 coroutines on `i686-pc-windows-msvc`: it no
+  longer predefines `__cpp_impl_coroutine` there, so the MSVC STL's
+  `<coroutine>` is empty. The C++23 std module (through `<generator>`) and code
+  that uses coroutines fail on that target, and mcpp appends a note naming the
+  cause: C++20, where `import std` and `import std.compat` build, or optionally
+  `llvm@22.1.8` for that target. mcpp does not define the macro (#786).
 
 ## [2026.10.5.3] - 2026-10-06
 

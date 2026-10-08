@@ -947,6 +947,39 @@ that reaches a build silently is.** That is why the entries above are a table
 rather than a prohibition: each is reachable, each has a reason, and each says
 so where it is used.
 
+### System headers: none are the host's (2026.10.8.1+)
+
+A build on a managed C library searches no system header directory of the
+host. The managed glibc and `linux-headers` supply the whole system header
+surface, and each compiler family is closed against the host's copy:
+
+- **clang** carries `-nostdlibinc` on the native Linux rows. The driver keeps
+  its own resource headers and stops its fallback to `/usr/include`, including
+  when the driver configuration file is bypassed. A directly invoked
+  `clang++` reads the same token from the configuration file mcpp regenerates
+  after installation.
+- **GCC** compiles with `--sysroot=<the xlings subos>`, so its search ends at
+  the subos's `usr/include`. When no usable subos exists, it falls back to the
+  payload layout and receives `-isysroot <the C library payload>`, which
+  replaces the sysroot recorded when the compiler was built: that recorded
+  path belongs to the machine that built the compiler and is otherwise
+  searched wherever it happens to exist.
+
+A header that only the host has is therefore not found. A project that needs
+one names the directory in its own manifest, where the dependency on the host
+is visible:
+
+```toml
+[build]
+cflags   = ["-idirafter", "/usr/include"]
+cxxflags = ["-idirafter", "/usr/include"]
+```
+
+`-idirafter` places the directory after the managed headers, so the C library
+the build links against still supplies its own declarations. `allow_host_libs`
+does not change the header search: it concerns the libraries a link may
+resolve from the host.
+
 ### The host surface this adds, named and bounded
 
 Two items, both macOS-only, both in the category a proprietary runtime that
@@ -1268,6 +1301,51 @@ workarounds were measured downstream:
 - Build on an image whose MSVC STL predates 14.51, such as `windows-2022`.
 
 Tracked as [mcpp#609](https://github.com/mcpp-community/mcpp/issues/609).
+
+## Known Toolchain Limitation: Coroutines on the 32-bit x86 Microsoft ABI (clang 23)
+
+clang 23 does not support C++20 coroutines on `i686-pc-windows-msvc`. It does
+not predefine `__cpp_impl_coroutine` for that target, and it reports code that
+uses coroutines there with `-Wcoroutines-unsupported-target`. clang 22.1.8 and
+every other target mcpp builds for, including `x86_64-pc-windows-msvc` and
+`i686-pc-windows-gnu`, still predefine the macro.
+
+The MSVC STL keys `<coroutine>` on that macro, so the header is empty on this
+target. Two failures follow:
+
+- **The C++23 std module.** `std.ixx` includes `<generator>` under C++23, and
+  `<generator>` uses `coroutine_handle` and `suspend_always` without checking
+  for them. The precompile stops inside `generator`.
+- **Code that uses coroutines.** The compile stops at `use of undeclared
+  identifier 'std'` and `std::coroutine_traits type was not found`, before
+  clang's own coroutine diagnostic is reached.
+
+mcpp follows the compiler. It does not define the macro and does not alter the
+std module; it appends a note to either failure, naming the cause and the
+options. The note is decided after the failure, from the failed command and a
+`-dM -E` probe of the same compiler and target, so a build that succeeds is not
+affected and the note disappears when the compiler or the STL changes.
+
+The options, in the order the note gives them:
+
+- Build the package as C++20. `import std` and `import std.compat` do not
+  include `<generator>` there and build on this target. This does not make
+  coroutines available.
+- Name an LLVM that still enables coroutines for this target:
+
+  ```toml
+  [target.i686-windows-msvc]
+  toolchain = "llvm@22.1.8"
+  ```
+
+  The newer compiler treats coroutines on this ABI as unsupported; code that
+  uses them on this target does so at its own risk.
+
+Defining `__cpp_impl_coroutine` in a project is not a workaround. It switches
+on a feature the compiler has declared unsupported for this ABI.
+
+`i686-windows-msvc` is not a row of the target table; a project that builds
+for it declares `[target.i686-windows-msvc]`, as for any custom triple.
 
 ## The C++ runtime contract (`cxx_runtime`)
 

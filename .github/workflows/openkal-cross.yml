@@ -651,7 +651,7 @@ jobs:
           for t in tests/e2e/285_*.sh tests/e2e/286_*.sh tests/e2e/287_*.sh \
                    tests/e2e/288_*.sh tests/e2e/289_*.sh tests/e2e/291_*.sh \
                    tests/e2e/292_*.sh tests/e2e/293_*.sh tests/e2e/294_*.sh \
-                   tests/e2e/738_*.sh tests/e2e/778_*.sh; do
+                   tests/e2e/738_*.sh tests/e2e/778_*.sh tests/e2e/891_*.sh; do
             echo "=== $t ==="
             bash "$t" 2>&1 | tee "$(basename "$t").log" || true
             rc=${PIPESTATUS[0]}
@@ -718,6 +718,11 @@ jobs:
             "ok: aarch64-linux-musl links -lm from the graph and runs under qemu-aarch64" || fail=1
           check 778_a_graph_link_searches_no_host_directory.sh \
             "ok: a host directory in ldflags is refused, by name" || fail=1
+          # LLVM 23.1.3 Part 3 (D2/D3): the payload's C library closes the
+          # host's /usr/include, a written -idirafter reopens it, and the
+          # graph note stays away from a payload C library on both paths.
+          check 891_a_host_header_is_written_not_searched.sh \
+            "PASS: 891 a host header is written down, not searched" || fail=1
           [ "$fail" = 0 ] || exit 1
 
 
