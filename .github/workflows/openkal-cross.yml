@@ -620,7 +620,7 @@ jobs:
           "$XLINGS_BIN" install xim:qemu-riscv@9.2.4-1 -g -y -u
           XLINGS_HOME="${MCPP_HOME:-$HOME/.mcpp}/registry" \
             "$XLINGS_BIN" install xim:qemu-riscv@9.2.4-1 -g -y -u
-          "$XLINGS_BIN" run qemu-system-riscv64 --version
+          qemu-system-riscv64 --version
 
       - name: Install the separate host MinGW header fixture with xlings
         run: |
