@@ -1,0 +1,60 @@
+name: probe-llvm-2313-x86-msvc (temporary, do not merge)
+
+# TEMPORARY. Collects G1/G2/G3 of the LLVM 23.1.3 Part 3 plan (32-bit MSVC
+# coroutines and `import std`). Based on the #781 head; every other workflow
+# is removed on this branch so only this runs. Nothing here asserts: each step
+# prints, and the job summary carries the logs.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  stl-facts:
+    name: MSVC STL coroutine guards and std.ixx
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: probe
+        shell: bash
+        run: |
+          bash .github/probe/stl_coroutine_facts.sh 2>&1 | tee stl-facts.log
+          { echo '## MSVC STL coroutine facts'; echo '```'; cat stl-facts.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stl-facts
+          path: stl-facts.log
+
+  x86-msvc-std:
+    name: import std on i686-windows-msvc (llvm 23.1.3 / 22.1.8)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      MCPP_HOME: C:\Users\runneradmin\.mcpp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - name: Build mcpp from source
+        shell: bash
+        run: |
+          set -euo pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build
+          built=$(find target -type f -name mcpp.exe -path '*/bin/*' | head -1)
+          mkdir -p dist && cp "$built" dist/mcpp.exe
+          echo "MCPP_BUILT=$PWD/dist/mcpp.exe" >> "$GITHUB_ENV"
+      - name: probe
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          bash .github/probe/x86_msvc_std_cases.sh 2>&1 | tee x86-msvc-std.log
+          { echo '## i686-windows-msvc import std'; echo '```'; tail -c 900000 x86-msvc-std.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: x86-msvc-std
+          path: x86-msvc-std.log
