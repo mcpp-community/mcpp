@@ -461,7 +461,7 @@ docs/22。
 | target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
 |---|---|---|---|---|---|---|
 | `x86_64-linux-gnu` | verified | — | 载荷 | — | — | — |
-| `aarch64-linux-gnu` | preview | `llvm@23.1.3` | — | 载荷 | — | — |
+| `aarch64-linux-gnu` | verified | `llvm@23.1.3` | — | 载荷 | — | — |
 | `x86_64-linux-musl` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | 载荷 |
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | — |
 | `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |

@@ -323,3 +323,30 @@ build.mcpp 导入宿主 std.pcm 时，Clang 报目标特征 `-fmv` 不一致。
 后，PCM、std 对象与同一导入者均编译成功，并以候选 ARM64 运行时
 链接后在 QEMU 下运行成功。该结果验证配置一致性的根因修复，
 原生 openkal 全量构建仍作为独立准入门。
+
+## 15. 2026-10-08 原生 GNU 与 openkal 完整消费准入
+
+原生候选门 [37706303240](https://github.com/mcpp-community/mcpp/actions/runs/37706303240)
+在 mcpp 提交 `5a0d70ec75c074bfa57273e8676dd7fd92c4086a` 与索引提交
+`84c27c3014e676f2175868627b93494d6bd442e8` 上全部通过。冷安装、
+受管头文件负对照、std/std.compat、线程、异常、16 字节原子、共享 C ABI、
+GNU 默认构建与打包部署、GCC musl 回归、GNU 自举及完整单测 147/147
+均通过；804 的 LLVM 宿主工具案例与四个真实索引成员均成功。
+
+同一原生门的 openkal 286 从依赖图供应 kernel-abi、c-abi 与 c++-abi，
+产出 aarch64 静态 ELF，九个程序头中没有 INTERP，并在原生宿主输出
+`x0x1x2x3 4`。第 14 节宿主 std PCM 配置更正已由完整生态消费验证。
+GNU 默认目标的 tier 据此由 preview 提升为 verified；此声明限于
+原生 linux-aarch64 供应，不新增预构建 GNU 交叉载荷的支持声明。
+
+主 CI 同一提交的 Windows 单测与打包 job `113081590235`、bare
+Windows job `113084571444` 均成功，支持第 11 节 GCC_ROOT 根因更正。
+macOS E2E 48 暴露旧断言将 `--rtlib=compiler-rt` 一律视为仅链接参数；
+第 14 节实际 ARM64 对照已证明该选项影响代码生成。测试仅移除对此
+参数的禁令，保留其余仅链接参数、私有环境与错误输出检查；本地完整
+E2E 48 通过。该测试修正仍须最终提交的 CI 验证。
+
+索引原生资源门与 mcpp 原生消费门均已通过，公开索引切换仍等待
+索引 PR 当前提交其余 CI 完成。四宿主三目标实际运行、正式发布、
+CN 镜像及发布版 SubOS 消费继续作为独立准入项；本节原生成功不
+替代这些证据。

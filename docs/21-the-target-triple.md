@@ -492,7 +492,7 @@ other's rows.
 | target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
 |---|---|---|---|---|---|---|
 | `x86_64-linux-gnu` | verified | — | payload | — | — | — |
-| `aarch64-linux-gnu` | preview | `llvm@23.1.3` | — | payload | — | — |
+| `aarch64-linux-gnu` | verified | `llvm@23.1.3` | — | payload | — | — |
 | `x86_64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | payload |
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | — |
 | `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |

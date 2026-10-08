@@ -733,6 +733,23 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
         EXPECT_TRUE(info->sysroot.empty()) << name;
     }
 
+    {
+        // Native ARM64 admission 37706303240 on 2026-10-08 built and ran
+        // the LLVM 23.1.3/glibc default, its deployed pack, GNU self-host,
+        // all 147 suites and four real index members. This is native GNU
+        // evidence, not a claim about prebuilt GNU cross payloads.
+        auto [name, tier] = std::pair{"aarch64-linux-gnu", "verified"};
+        auto t = parse(name);
+        ASSERT_TRUE(t.has_value());
+        auto* info = find_known_target(*t);
+        ASSERT_NE(info, nullptr);
+        EXPECT_EQ(info->tier, tier);
+        EXPECT_EQ(info->pin, "llvm@23.1.3");
+        EXPECT_TRUE(info->sysroot.empty());
+        EXPECT_FALSE(info->defaultStatic);
+        EXPECT_FALSE(t->pin_is_capability());
+    }
+
     // THE THREE APPLE ROWS, AND WHAT THE SDK'S LICENCE DOES AND DOES NOT
     // BOUND.
     //

@@ -435,7 +435,7 @@ list` reports for this machine):
 | `armv7a-none-eabi` · `armv7a-none-eabihf` | llvm 22 — Cortex-A 32-bit, the first row with an MMU ² | verified |
 | `aarch64-none-elf` · `x86_64-none-elf` | llvm 22 — bare metal, no C library by default ² | preview |
 | `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22 — Cortex-M4/M7 soft float, M23, M33F/M55F ² | preview |
-| `aarch64-linux-gnu` | `llvm@23.1.3` | preview |
+| `aarch64-linux-gnu` | `llvm@23.1.3` | verified |
 | `riscv64-linux-musl` · `x86_64-macos` | — | planned |
 | `wasm32-emscripten` | `emsdk@6.0.9` — Emscripten ships its own sysroot and its own libc++ module surface; `mcpp run` executes the module with the `node` the payload declares (`xim:node`), not one found on PATH | verified |
 | `x86_64-linux-android` | `android-ndk@30.0.16248370` — bionic from the NDK, one payload for both ABIs; ran on an API 24 x86_64 emulator image | verified |

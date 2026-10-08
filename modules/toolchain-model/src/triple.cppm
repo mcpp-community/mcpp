@@ -536,7 +536,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     { "x86_64-windows-msvc",   "verified",  "PE",  "",           "",                            false },
     { "aarch64-macos",         "verified",  "",    "",           "",                            false },
     { "riscv64-linux-musl",    "planned",   "",    "",           "",                            true  },
-    { "aarch64-linux-gnu",     "preview",   "",    "llvm@23.1.3", "",                            false },
+    { "aarch64-linux-gnu",     "verified",   "",    "llvm@23.1.3", "",                            false },
     { "x86_64-macos",          "planned",   "",    "",           "",                            false },
     // Bare metal. `defaultStatic` is not a preference here — there is no
     // loader, so there is no other option. The pin is llvm on every host
@@ -905,9 +905,8 @@ inline bool is_known_target(const Triple& t) { return find_known_target(t) != nu
 // — compile-time data, therefore the same on every host, so target identity
 // still does not depend on where the build ran.
 //
-// RULE ONE MAKES THIS RETIRE ITSELF. When `aarch64-linux-gnu` graduates from
-// `planned`, rule one matches first and the completion goes back to the lexical
-// answer with nobody editing this function.
+// Rule one now selects the supported `aarch64-linux-gnu` lexical default.
+// Its promotion from `planned` required no change to this completion logic.
 struct RequestResolution {
     Triple triple;                            // the identity to use from here on
     // The lexical fill was replaced by a row from the vocabulary. For the

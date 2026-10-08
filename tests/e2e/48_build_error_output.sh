@@ -92,8 +92,10 @@ if grep -q 'LD_LIBRARY_PATH\|toolenv' "$build_ninja"; then
     sed -n '1,80p' "$build_ninja"
     exit 1
 fi
-if grep '^cxxflags\|^cflags' "$build_ninja" | grep -Eq -- '-stdlib=libc\+\+|-fuse-ld=lld|--rtlib=compiler-rt|--unwindlib=libunwind'; then
-    echo "compile flags should not contain clang link/runtime-only flags"
+# --rtlib=compiler-rt also controls AArch64 FMV/outline-atomics codegen;
+# the std PCM and its consumers must carry the same runtime selection.
+if grep '^cxxflags\|^cflags' "$build_ninja" | grep -Eq -- '-stdlib=libc\+\+|-fuse-ld=lld|--unwindlib=libunwind'; then
+    echo "compile flags should not contain clang link-only flags"
     grep '^cxxflags\|^cflags' "$build_ninja"
     exit 1
 fi
