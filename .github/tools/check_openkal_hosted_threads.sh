@@ -10,11 +10,22 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 runtime_root=$(cd "$1" && pwd)
 target=$2
 output_file=${3:-}
+# Actions supplies native drive/UNC paths on Windows, even to a Bash step.
+if [ -n "$output_file" ] && command -v cygpath >/dev/null 2>&1; then
+    output_file=$(cygpath -u "$output_file")
+fi
 if [ -n "$output_file" ] && [[ "$output_file" != /* ]]; then
     output_file="$PWD/$output_file"
 fi
 source "$repo_root/tests/e2e/_toolchain_env.sh"
 mcpp_bin=${MCPP:-mcpp}
+case "$mcpp_bin" in
+    */*|*\\*|[A-Za-z]:*)
+        if command -v cygpath >/dev/null 2>&1; then
+            mcpp_bin=$(cygpath -u "$mcpp_bin")
+        fi
+        ;;
+esac
 if [[ "$mcpp_bin" == */* ]] && [[ "$mcpp_bin" != /* ]]; then
     mcpp_bin="$PWD/$mcpp_bin"
 fi

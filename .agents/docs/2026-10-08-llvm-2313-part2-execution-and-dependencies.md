@@ -378,3 +378,25 @@ openkal-llvm-runtime 提交 `b4198d346cf0682c95dc0e51b5c32b096843ee83`。
 `tests/**/*.cpp` 发现为独立单测。该源码改为 `.cpp.in` 模板，构建
 helper 与 286 复制为实际应用的 `main.cpp`。根项目单测仍为原有
 147 项，线程证明来自真实 openkal 栈，不由宿主 GNU 单测替代。
+
+## 17. 2026-10-08 原生线程准入与 Windows helper 路径更正
+
+修正提交 `daa3aab1d5338edee5a14ee3d3fb5d86212873cc` 的候选门
+[37713960833](https://github.com/mcpp-community/mcpp/actions/runs/37713960833)
+与精确索引 `84c27c3014e676f2175868627b93494d6bd442e8` 全部通过。
+完整 GNU 单测恢复为 147/147，四个真实索引成员通过。ARM64
+原生 openkal 的静态闭包、原有输出及新增 TLS/线程/并发异常展开
+均实际运行成功。此前 `a6cecdb7` 的线程成功保留为历史证据，其
+148 项发现结果不计作本节的 147 项准入。
+
+同一提交 Windows openkal job `113106857225` 构建原有 Linux
+目标样例成功，线程样例编译链接也在 13.81 秒完成。随后 helper
+将 Actions 提供的原生绝对输出路径 `D:\a\_temp/threads-binary.txt`
+判作相对路径，错误地加上当前目录，写回路径时失败。该结果属于
+测试 helper 的路径错误，不作为 openkal 目标编译或基础设施失败。
+
+helper 在 Windows 的 Bash 环境中先用 `cygpath -u` 规范输出路径，
+再判断相对路径；mcpp 的文件路径参数也经过同一转换，裸命令继续
+按 PATH 查找。运行时目录由 `cd` 与 `pwd` 获取。该更正不改变
+引擎、线程源码或 GNU 单测发现，其 Windows 实际验证仍由随后 CI
+承担。
