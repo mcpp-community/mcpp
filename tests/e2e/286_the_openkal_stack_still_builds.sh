@@ -49,7 +49,26 @@ default = "llvm@${LLVM_VERSION}"
 [dependencies]
 openkal-musl = "0.3.5"
 openkal-llvm-runtime = "0.1.3"
+nlohmann.json = "3.12.0"
 TOML
+
+if [ -n "${MCPP_OPENKAL_INDEX:-}" ]; then
+    index_path="$MCPP_OPENKAL_INDEX"
+    manifest_path="$PWD/mcpp.toml"
+    if command -v cygpath >/dev/null 2>&1; then
+        index_path=$(cygpath -m "$index_path")
+        manifest_path=$(cygpath -m "$manifest_path")
+    fi
+    python3 - "$manifest_path" "$index_path" <<'PYINDEX'
+import json, os, pathlib, sys
+manifest = pathlib.Path(sys.argv[1]).resolve()
+index = pathlib.Path(sys.argv[2]).resolve()
+assert (index / "pkgs/n/nlohmann.json.lua").is_file(), index
+relative = os.path.relpath(index, manifest.parent)
+with manifest.open("a") as output:
+    output.write("\n[indices]\nnlohmann = { path = " + json.dumps(relative) + " }\n")
+PYINDEX
+fi
 
 cat > src/main.cpp <<'CPP'
 #include <cstdio>
@@ -160,7 +179,8 @@ if ! out="$("$bin" 2>&1)"; then
     echo "FAIL: the hosted threads companion did not run: $out"
     exit 1
 fi
-expected="openkal hosted threads: isolation, destructors and concurrent unwind ok"
+expected="openkal indexed JSON: dump, parse, literals and ordered_json ok
+openkal hosted threads: isolation, destructors and concurrent unwind ok"
 [ "$out" = "$expected" ] || { echo "FAIL: wrong hosted threads output: $out"; exit 1; }
 echo "$out"
 

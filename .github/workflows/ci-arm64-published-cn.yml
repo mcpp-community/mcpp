@@ -91,6 +91,7 @@ jobs:
           sha256sum -c SHA256SUMS
           grep -Eq '^[0-9a-f]{40}$' source-sha.txt
           grep -Eq '^[0-9a-f]{40}$' engine-release-sha.txt
+          grep -Eq '^[0-9a-f]{40}$' index-source-sha.txt
           grep -Eq '^[0-9a-f]{64}$' threads-source-sha256.txt
           chmod +x "$TARGET_FILE"
           if [ "$TARGET_SYSTEM" = macos ]; then
@@ -113,6 +114,7 @@ jobs:
           "./$threads_file" > threads.log 2>&1
           cat threads.log
           grep -qxF 'openkal hosted threads: isolation, destructors and concurrent unwind ok' threads.log
+          grep -qxF 'openkal indexed JSON: dump, parse, literals and ordered_json ok' threads.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

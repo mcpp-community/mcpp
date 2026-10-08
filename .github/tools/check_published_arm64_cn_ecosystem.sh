@@ -76,14 +76,16 @@ grep -q "Hello from $project!" "$work/deployed.log"
 cd "$work"
 git clone --depth 1 --branch "v$version" https://github.com/mcpp-community/mcpp mcpp-source
 git -C mcpp-source rev-parse HEAD | tee "$work/mcpp-source-sha.txt"
+git clone --depth 1 https://github.com/mcpp-community/mcpp-index index-source
+git -C index-source rev-parse HEAD | tee "$work/index-source-sha.txt"
+export MCPP_OPENKAL_INDEX="$work/index-source"
 cd mcpp-source
 bash tests/e2e/286_the_openkal_stack_still_builds.sh | tee "$work/openkal-native.log"
 ! grep -q 'SKIP' "$work/openkal-native.log"
 grep -qF 'OK: the openkal stack builds, links statically and runs' "$work/openkal-native.log"
 grep -qxF 'openkal hosted threads: isolation, destructors and concurrent unwind ok' "$work/openkal-native.log"
+grep -qxF 'openkal indexed JSON: dump, parse, literals and ordered_json ok' "$work/openkal-native.log"
 cd "$work"
-git clone --depth 1 https://github.com/mcpp-community/mcpp-index index-source
-git -C index-source rev-parse HEAD | tee "$work/index-source-sha.txt"
 export CN_PROBE_MCPP="$MCPP" CN_PROBE_TARGET="$native" CN_PROBE_WORK="$work"
 cat > "$work/llvm-consumer" <<'ADAPTER'
 #!/usr/bin/env bash
@@ -113,6 +115,7 @@ cd "$work/openkal-source/examples/same-source"
 readobj="$MCPP_HOME/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/llvm-readobj"
 [[ -x "$readobj" ]] || { echo 'LLVM readobj unavailable'; exit 1; }
 mkdir -p "$work/cross"
+cp "$work/index-source-sha.txt" "$work/cross/index-source-sha.txt"
 sha256sum "$work/mcpp-source/tests/fixtures/openkal-hosted-threads/src/main.cpp.in" | cut -d ' ' -f 1 > "$work/cross/threads-source-sha256.txt"
 for target in x86_64-linux-gnu aarch64-macos x86_64-windows-gnu; do
     rm -rf target

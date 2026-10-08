@@ -1,4 +1,5 @@
 import std;
+import nlohmann.json;
 
 namespace {
 std::atomic<unsigned> arrived{0};
@@ -40,6 +41,17 @@ void worker(unsigned bit) {
 }
 
 int main() {
+    using namespace nlohmann::literals;
+    const auto value = R"({"answer":42,"items":[2,4,7]})"_json;
+    const auto parsed = nlohmann::json::parse(value.dump());
+    const auto ordered = nlohmann::ordered_json::parse(R"({"z":1,"a":2})");
+    if (parsed != value || parsed["answer"].get<int>() != 42
+        || parsed["items"][2].get<int>() != 7
+        || ordered.dump() != R"({"z":1,"a":2})") {
+        std::println("openkal indexed JSON: FAILED");
+        return 1;
+    }
+    std::println("openkal indexed JSON: dump, parse, literals and ordered_json ok");
     local.value = 4;
     std::thread first(worker, 1);
     std::thread second(worker, 2);

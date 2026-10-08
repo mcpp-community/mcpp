@@ -251,9 +251,13 @@ jobs:
           "$GITHUB_WORKSPACE/.github/tools/git_clone_retry.sh" \
             --quiet --depth 1 -b "$OPENKAL_BRANCH" \
             https://github.com/mcpplibs/openkal-llvm-runtime "$RUNNER_TEMP/okl"
+          "$GITHUB_WORKSPACE/.github/tools/git_clone_retry.sh" \
+            --quiet --depth 1 https://github.com/mcpp-community/mcpp-index "$RUNNER_TEMP/openkal-index"
+          export MCPP_OPENKAL_INDEX="$RUNNER_TEMP/openkal-index"
           cd "$RUNNER_TEMP/okl/examples/same-source"
           mkdir -p "$RUNNER_TEMP/out"
           git -C "$RUNNER_TEMP/okl" rev-parse HEAD > "$RUNNER_TEMP/out/source-sha.txt"
+          git -C "$MCPP_OPENKAL_INDEX" rev-parse HEAD > "$RUNNER_TEMP/out/index-source-sha.txt"
           echo "openkal-llvm-runtime source SHA: $(cat "$RUNNER_TEMP/out/source-sha.txt")"
           python3 - "$GITHUB_WORKSPACE/tests/fixtures/openkal-hosted-threads/src/main.cpp.in" "$RUNNER_TEMP/out/threads-source-sha256.txt" <<'PYHASH'
           import hashlib, pathlib, sys
@@ -459,6 +463,7 @@ jobs:
           fail=0
           source_sha=""
           threads_sha=""
+          index_sha=""
           mkdir -p run-evidence
           for host in linux linux-aarch64 macos windows; do
             sha_file="art/openkal-built-on-$host/source-sha.txt"
@@ -474,6 +479,10 @@ jobs:
               echo "::error::$host built source $sha, expected $source_sha"; fail=1; continue
             fi
             echo "openkal-llvm-runtime source SHA: $sha"
+            index_commit=$(tr -d '\r\n' < "art/openkal-built-on-$host/index-source-sha.txt")
+            [[ "$index_commit" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::invalid index source SHA'; exit 1; }
+            if [ -z "$index_sha" ]; then index_sha="$index_commit"; fi
+            [ "$index_commit" = "$index_sha" ] || { echo '::error::index sources differ'; exit 1; }
             probe_sha=$(tr -d '\r\n' < "art/openkal-built-on-$host/threads-source-sha256.txt")
             [[ "$probe_sha" =~ ^[0-9a-f]{64}$ ]] || { echo '::error::invalid hosted probe digest'; exit 1; }
             if [ -z "$threads_sha" ]; then threads_sha="$probe_sha"; fi
@@ -516,6 +525,7 @@ jobs:
             "./$threads_bin" > "run-evidence/$host.threads.log" 2>&1
             cat "run-evidence/$host.threads.log"
             grep -qxF 'openkal hosted threads: isolation, destructors and concurrent unwind ok' "run-evidence/$host.threads.log"
+            grep -qxF 'openkal indexed JSON: dump, parse, literals and ordered_json ok' "run-evidence/$host.threads.log"
           done
           [ "$fail" = 0 ] || exit 1
           echo "four builds, one system, identical sources, exceptions and hosted TLS/threads"
@@ -722,6 +732,12 @@ jobs:
         with:
           host: linux-aarch64
 
+      - uses: actions/checkout@v4
+        with:
+          repository: mcpp-community/mcpp-index
+          ref: main
+          path: _openkal-native-index
+
       - name: Native platform and graph stack
         env:
           MCPP_VENDORED_XLINGS: ${{ env.XLINGS_BIN }}
@@ -731,6 +747,8 @@ jobs:
           set -euo pipefail
           test "$(uname -m)" = aarch64
           export MCPP="$MCPP_FRESH"
+          export MCPP_OPENKAL_INDEX="$GITHUB_WORKSPACE/_openkal-native-index"
+          git -C "$MCPP_OPENKAL_INDEX" rev-parse HEAD | tee native-openkal-index-sha.txt
           "$MCPP" toolchain install llvm 23.1.3
           # The existing test builds real openkal-musl and LLVM runtime packages,
           # verifies every graph layer, checks static ELF closure and runs it.
@@ -738,10 +756,13 @@ jobs:
           grep -qF "ok  native aarch64 ELF" native-openkal.log
           grep -qF "OK: the openkal stack builds, links statically and runs" native-openkal.log
           grep -qxF 'openkal hosted threads: isolation, destructors and concurrent unwind ok' native-openkal.log
+          grep -qxF 'openkal indexed JSON: dump, parse, literals and ordered_json ok' native-openkal.log
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: openkal-native-arm64
-          path: native-openkal.log
+          path: |
+            native-openkal.log
+            native-openkal-index-sha.txt
           if-no-files-found: warn

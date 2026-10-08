@@ -4,3 +4,4 @@ version = "0.1.0"
 
 [dependencies]
 openkal-llvm-runtime = { path = "../.." }
+nlohmann.json = "3.12.0"
