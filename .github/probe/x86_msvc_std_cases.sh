@@ -33,8 +33,17 @@ case_run() {
   fi
 }
 
+# A custom triple needs its own section (measured in run 37791590252: without
+# one, `--target i686-windows-msvc` is refused as an unknown target).
 T23='[toolchain]
-windows = "llvm@23.1.3"'
+windows = "llvm@23.1.3"
+
+[target.i686-windows-msvc]
+toolchain = "llvm@23.1.3"'
+TEMPTY='[toolchain]
+windows = "llvm@23.1.3"
+
+[target.i686-windows-msvc]'
 T22i='[toolchain]
 windows = "llvm@23.1.3"
 
@@ -54,6 +63,10 @@ case_run g2-23-cxx20-i686-compat i686-windows-msvc   c++20 "$T23"  compat
 # Using the coroutine library itself under C++20 (expected to be refused by the
 # STL or the compiler; recorded for the documentation).
 case_run g2-23-cxx20-i686-coro   i686-windows-msvc   c++20 "$T23"  coro
+# The section with nothing in it: what does a user who only names the triple get?
+case_run g1-23-cxx23-i686-empty  i686-windows-msvc   c++23 "$TEMPTY" std
+# Option (b) and G3 were measured in run 37791590252 (both build and run); not repeated.
+exit 0
 # Option (b): llvm 22.1.8 for this target only, in the spelling the note uses
 # and in MSVC's x86 spelling.
 case_run g1b-22-cxx23-i686       i686-windows-msvc   c++23 "$T22i" std
