@@ -22,6 +22,14 @@
 - Install explicitly requested toolchains for graph-supplied targets even when
   the host payload matrix cannot serve the target. Preserve the refusal for
   engine-selected foreign payloads.
+- Keep AArch64 host `std` modules and build programs on the same compiler-rt
+  code-generation settings. Suppress the driver's automatic unwinder library
+  when a self-contained ELF already links its static unwinder explicitly.
+- Stop E2E package discovery from exporting GCC's reserved `GCC_ROOT` variable,
+  which redirected managed Windows GCC helper lookup to the registry wrapper.
+- Verify the native ARM64 openkal stack and indexed JSON serialization and
+  parsing, hosted TLS, thread destruction and concurrent exception unwinding
+  in the four-host cross-target matrix.
 - Cover both xcode-27 E2E shards and exercise explicit toolchain installation
   with a cold registry. Restore historical measurements to their original
   environment and adapt the namespace fixture to libc++ 23.

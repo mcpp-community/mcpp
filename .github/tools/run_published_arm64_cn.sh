@@ -46,7 +46,9 @@ cp "$base/data/xim-pkgindex/.xlings-index-cache.json" "$base/reports/outer-publi
 # ARM package. The published bwrap package is x86-only. The client locates the
 # system proot directly; bwrap's current locator needs this explicit private
 # system-backend directory. Record the symlink and actual distro version.
-dpkg-query -W "$backend" | tee "$base/reports/backend-version.txt"
+backend_package="$backend"
+[[ "$backend" != bwrap ]] || backend_package=bubblewrap
+dpkg-query -W "$backend_package" | tee "$base/reports/backend-version.txt"
 command -v "$backend" | tee "$base/reports/backend-path.txt"
 sha256sum "$(command -v "$backend")" > "$base/reports/backend.sha256"
 if [[ "$backend" == bwrap ]]; then

@@ -37,8 +37,10 @@ jobs:
           set -euo pipefail
           test "$(uname -m)" = aarch64
           sudo apt-get update
-          sudo apt-get install -y "$SANDBOX_BACKEND"
-          dpkg-query -W "$SANDBOX_BACKEND"
+          backend_package="$SANDBOX_BACKEND"
+          [ "$SANDBOX_BACKEND" != bwrap ] || backend_package=bubblewrap
+          sudo apt-get install -y "$backend_package"
+          dpkg-query -W "$backend_package"
       - name: Exact public CN release in a cold real SubOS
         run: bash .github/tools/run_published_arm64_cn.sh "$RELEASE_VERSION" "$GITHUB_WORKSPACE" "$SANDBOX_BACKEND"
       - uses: actions/upload-artifact@v4
