@@ -31,7 +31,8 @@ name: openkal cross-build (4 hosts × 3 targets)
 #
 # ── The shape ──────────────────────────────────────────────────────────────
 #
-# FOUR build jobs, one per host, each producing THREE artefacts — twelve builds.
+# FOUR build jobs, one per host, each producing two applications for THREE
+# targets — twenty-four binaries across twelve host/target cells.
 # THREE run jobs, one per system, each executing the artefact FOR that system
 # produced by ALL FOUR hosts, including native Linux ARM64.
 #
@@ -49,10 +50,12 @@ name: openkal cross-build (4 hosts × 3 targets)
 # toolchain step is ever added to one of them because "the program needs it",
 # that is the finding rather than the fix.
 #
-# AND THE ASSERTION IS ON THE OUTPUT, NOT THE EXIT STATUS. The program prints
-# four lines, and `unwound: true` is the one a link cannot fake: it says a
+# AND THE ASSERTION IS ON THE OUTPUT, NOT THE EXIT STATUS. The original program
+# prints four lines, and `unwound: true` is the one a link cannot fake: it says a
 # destructor ran while an exception was being carried out of a frame, which
 # means the unwinder found this image's own frame descriptions.
+# The companion also requires its JSON and TLS/thread/concurrent unwind
+# success lines on each target system.
 
 on:
   workflow_call:

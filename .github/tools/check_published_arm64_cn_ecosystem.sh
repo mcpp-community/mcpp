@@ -21,7 +21,7 @@ export MCPP_VENDORED_XLINGS="$xl"
 export MCPP_E2E_MIRROR=CN MCPP_E2E_LLVM_VERSION=23.1.3 MCPP_E2E_EXPECT_ARCH=aarch64
 unset LD_LIBRARY_PATH LD_PRELOAD MCPP_TOOLCHAIN
 "$xl" config --mirror CN
-"$xl" install "mcpp@$version" -y -u
+"$xl" install "mcpp@$version" -g -y -u
 MCPP="$base/data/xpkgs/xim-x-mcpp/$version/bin/mcpp"
 [[ -x "$MCPP" ]] || { echo "mcpp not executable: $MCPP"; exit 1; }
 export MCPP
