@@ -255,7 +255,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/out"
           git -C "$RUNNER_TEMP/okl" rev-parse HEAD > "$RUNNER_TEMP/out/source-sha.txt"
           echo "openkal-llvm-runtime source SHA: $(cat "$RUNNER_TEMP/out/source-sha.txt")"
-          python3 - "$GITHUB_WORKSPACE/tests/fixtures/openkal-hosted-threads/src/main.cpp" "$RUNNER_TEMP/out/threads-source-sha256.txt" <<'PYHASH'
+          python3 - "$GITHUB_WORKSPACE/tests/fixtures/openkal-hosted-threads/src/main.cpp.in" "$RUNNER_TEMP/out/threads-source-sha256.txt" <<'PYHASH'
           import hashlib, pathlib, sys
           pathlib.Path(sys.argv[2]).write_text(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest() + "\n")
           PYHASH

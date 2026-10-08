@@ -113,7 +113,7 @@ cd "$work/openkal-source/examples/same-source"
 readobj="$MCPP_HOME/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/llvm-readobj"
 [[ -x "$readobj" ]] || { echo 'LLVM readobj unavailable'; exit 1; }
 mkdir -p "$work/cross"
-sha256sum "$work/mcpp-source/tests/fixtures/openkal-hosted-threads/src/main.cpp" | cut -d ' ' -f 1 > "$work/cross/threads-source-sha256.txt"
+sha256sum "$work/mcpp-source/tests/fixtures/openkal-hosted-threads/src/main.cpp.in" | cut -d ' ' -f 1 > "$work/cross/threads-source-sha256.txt"
 for target in x86_64-linux-gnu aarch64-macos x86_64-windows-gnu; do
     rm -rf target
     "$MCPP" build --target "$target" --toolchain llvm@23.1.3 | tee "$work/cross/$target.build.log"

@@ -22,7 +22,7 @@ llvm_toolchain=${LLVM_TOOLCHAIN:-llvm@$LLVM_VERSION}
 fixture="$runtime_root/examples/mcpp-hosted-threads"
 mkdir -p "$fixture/src"
 cp "$repo_root/tests/fixtures/openkal-hosted-threads/mcpp.toml" "$fixture/mcpp.toml"
-cp "$repo_root/tests/fixtures/openkal-hosted-threads/src/main.cpp" "$fixture/src/main.cpp"
+cp "$repo_root/tests/fixtures/openkal-hosted-threads/src/main.cpp.in" "$fixture/src/main.cpp"
 cd "$fixture"
 "$mcpp_bin" build --target "$target" --toolchain "$llvm_toolchain"
 binaries=()

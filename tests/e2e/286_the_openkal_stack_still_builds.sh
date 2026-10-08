@@ -27,7 +27,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # static image with no interpreter and no reference to the host's loader.
 set -e
 
-hosted_threads_source="$(cd "$(dirname "${BASH_SOURCE[0]}")/../fixtures/openkal-hosted-threads/src" && pwd)/main.cpp"
+hosted_threads_source="$(cd "$(dirname "${BASH_SOURCE[0]}")/../fixtures/openkal-hosted-threads/src" && pwd)/main.cpp.in"
 MCPP="${MCPP:-mcpp}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

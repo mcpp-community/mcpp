@@ -371,3 +371,10 @@ openkal-llvm-runtime 提交 `b4198d346cf0682c95dc0e51b5c32b096843ee83`。
 闭包与原有输出检查通过后，复用同一栈再次构建线程源码，运行
 输出 `openkal hosted threads: isolation, destructors and concurrent unwind ok`。
 新增源码在 ARM64 与三个外部目标系统上的执行仍须最终 CI 验证。
+
+### 16.1 2026-10-08 fixture 发现更正
+
+本节后续发现新 fixture 的 `.cpp` 后缀被根项目默认的
+`tests/**/*.cpp` 发现为独立单测。该源码改为 `.cpp.in` 模板，构建
+helper 与 286 复制为实际应用的 `main.cpp`。根项目单测仍为原有
+147 项，线程证明来自真实 openkal 栈，不由宿主 GNU 单测替代。
