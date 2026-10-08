@@ -297,3 +297,29 @@ SubOS、GNU 默认构建、打包部署、四个索引成员及 openkal；三个
 交叉产物由对应目标 runner 实际运行。sandbox backend 明确记录
 为发行版 CI 基础设施，不冒充索引尚未交付的 ARM64 backend 包。
 该工作流须待正式发布、镜像与索引就绪后执行。
+
+## 14. 2026-10-08 原生 GNU 完整通过与 openkal 宿主模块更正
+
+提交 b67e9283 的原生候选门通过 GNU 自举、完整单测 147/147、
+804 的 LLVM 宿主工具案例及 cjson、sqlite3、fmtlib.fmt、nlohmann.json
+四个真实索引成员。此前 ELF 动态导出与显式 GCC 请求的载荷映射
+失败均已消除。最后的 openkal 原生门仍失败：openkal-musl 的
+build.mcpp 导入宿主 std.pcm 时，Clang 报目标特征 `-fmv` 不一致。
+这不是目标 musl 源码缺失，也不作为资源或基础设施豁免。
+
+宿主 std PCM 只使用 host_compile_tokens；build.mcpp 在同一次
+驱动调用中组合 host_compile_tokens 与 host_link_tokens。后者的
+`--rtlib=compiler-rt` 在 AArch64 还影响代码生成特征，因此此前
+两者的配置不同。现由 cfg bypass 且使用 payload C++ runtime
+的共享编译参数生产者同时声明这一运行时选择，使 std PCM 与
+宿主程序一致。图供应的目标 runtime、SDK sysroot、GCC、x86
+及信任 cfg 的路径保持各自选择；未向宿主导入目标平台参数。
+新版缓存身份从实际 std 构建命令导出，无须复用配置不相容的 PCM。
+完整原生门及 openkal 生态消费仍须新提交验证。
+
+共享生产者的 HostFlags 聚焦单测 29/29 通过。实际 ARM64 std.cppm
+对照使用受管 libc++、glibc 与 UAPI 头文件：旧 PCM 构建成功，但
+带 compiler-rt 的导入者重现 FMV/outline-atomics 不一致；两边统一
+后，PCM、std 对象与同一导入者均编译成功，并以候选 ARM64 运行时
+链接后在 QEMU 下运行成功。该结果验证配置一致性的根因修复，
+原生 openkal 全量构建仍作为独立准入门。

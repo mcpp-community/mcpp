@@ -706,6 +706,16 @@ TEST(HostFlags, TheCxxLayerDecidesWhoseLibcxxHeadersAreEmitted) {
     const auto a = mcpp::toolchain::host_compile_tokens(tc, payload, mcpp::toolchain::no_escape);
     EXPECT_TRUE(any_payload_cxx(a));
     EXPECT_TRUE(has(a, "-nostdinc++"));
+    EXPECT_FALSE(has(a, "--rtlib=compiler-rt"));
+
+    // Runtime selection affects AArch64 PCM compatibility even on a compile
+    // without a link. The host std producer and one-shot helper must agree.
+    auto arm = tc;
+    arm.targetTriple = "aarch64-linux-gnu";
+    auto armCompile = mcpp::toolchain::host_compile_tokens(arm, payload, mcpp::toolchain::no_escape);
+    auto armLink = mcpp::toolchain::host_link_tokens(arm, payload, mcpp::toolchain::no_escape);
+    EXPECT_TRUE(has(armCompile, "--rtlib=compiler-rt"));
+    EXPECT_TRUE(has(armLink, "--rtlib=compiler-rt"));
 
     // A graph C++ runtime over the same prebuilt C library: the payload's
     // headers are withheld and the driver's own search is closed, since the
@@ -716,6 +726,10 @@ TEST(HostFlags, TheCxxLayerDecidesWhoseLibcxxHeadersAreEmitted) {
     EXPECT_FALSE(any_payload_cxx(b));
     EXPECT_TRUE(has(b, "-nostdinc++"));
     EXPECT_TRUE(has(b, "--no-default-config"));
+    // A graph owns its runtime/codegen broadcast; payload selection must not
+    // be introduced merely because the target architecture is AArch64.
+    EXPECT_FALSE(has(mcpp::toolchain::host_compile_tokens(arm, graph, mcpp::toolchain::no_escape),
+                     "--rtlib=compiler-rt"));
 
     // An Apple cross target whose runtime is the SDK's libc++ and whose graph
     // does not import `std`: prepare chose the SDK's headers, named
