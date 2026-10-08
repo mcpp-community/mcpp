@@ -32,20 +32,48 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # that never had it -- the search list would end at the compiler's own
 # resource directory before AND after this fix, for an unrelated reason.
 #
-# `# requires: llvm` is why this test does not run through the ordinary
-# sharded suite at all -- `llvm` is never in run_all.sh's detected CAPS on
-# any shard (nothing there installs a toolchain), so every script declaring
-# it is invoked DIRECTLY, with the capability installed first and its PASS
-# line demanded, the same way openkal-cross.yml's `ecosystem-e2e` job
-# already runs 285-294: it installs the distro `mingw-w64` package there
-# specifically so `mingw-host-headers` holds and this test is not a
-# guaranteed skip.
+# The dedicated CI job supplies an xlings-managed MinGW fixture in a
+# separate store. An unrestricted driver must first find those headers;
+# only then can their absence from graph-supplied commands prove isolation.
+# Ordinary suites can still use the distro's host MinGW prefix.
 set -e
 
 MCPP="${MCPP:-mcpp}"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $1"; [ -n "${2:-}" ] && cat "$2"; exit 1; }
+
+# PATH exposes a genuine host cross toolchain, outside the store whose
+# include paths the graph is allowed to use. Do not export GCC_ROOT: it is
+# a compiler control variable, not a fixture label.
+if [ -n "${MCPP_E2E_HOST_MINGW_ROOT:-}" ]; then
+    export PATH="$MCPP_E2E_HOST_MINGW_ROOT/bin:$PATH"
+    python3 - "$LLVM_ROOT/bin/clang" "$MCPP_E2E_HOST_MINGW_ROOT" "${MCPP_HOME:-$HOME/.mcpp}" <<'PYCONTROL'
+from pathlib import Path
+import subprocess, sys
+compiler, root, home = sys.argv[1], Path(sys.argv[2]).resolve(), Path(sys.argv[3]).resolve()
+if root.is_relative_to(home):
+    sys.exit("FAIL: the host MinGW fixture must be outside MCPP_HOME")
+include = (root / "x86_64-w64-mingw32/include").resolve()
+if not (include / "io.h").is_file():
+    sys.exit("FAIL: the separate host MinGW headers are absent")
+r = subprocess.run([compiler, "--no-default-config", "--target=x86_64-w64-windows-gnu",
+                    "-E", "-v", "-x", "c", "-"], input="#include <io.h>\n",
+                   capture_output=True, text=True)
+searched, capture = [], False
+for line in r.stderr.splitlines():
+    if "search starts here" in line:
+        capture = True
+    elif "End of search list" in line:
+        capture = False
+    elif capture:
+        searched.append(Path(line.strip()).resolve())
+if r.returncode != 0 or include not in searched:
+    print(r.stderr)
+    sys.exit("FAIL: unrestricted Clang did not find the host MinGW fixture")
+print("ok: unprotected clang finds the separate host MinGW headers")
+PYCONTROL
+fi
 
 mkdir -p "$TMP/app/src"
 cd "$TMP/app"
