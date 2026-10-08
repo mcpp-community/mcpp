@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: elf
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # `obj/std.o` is linked into a unit only when that unit actually needs it (#416).
 #
 # `std.o` holds the `std` module's global initialiser (exactly one symbol,
@@ -34,7 +35,7 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP || true" EXIT
 
 toolchain_block() {
-  printf '[toolchain]\ndefault = "gcc@16.1.0"\nmacos   = "llvm@22.1.8"\nwindows = "llvm@20.1.7"\n'
+  printf "[toolchain]\ndefault = \"gcc@16.1.0\"\nmacos   = \"llvm@${LLVM_VERSION}\"\nwindows = \"llvm@${LLVM_VERSION}\"\n"
 }
 
 # ── 1. nothing imports std anywhere ────────────────────────────────────────

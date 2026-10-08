@@ -85,13 +85,11 @@ TEST(TripleRequest, ASupportedLexicalDefaultIsKept) {
     EXPECT_FALSE(r.ambiguous);
 }
 
-TEST(TripleRequest, TheOnlySupportedSiblingIsTaken) {
-    // aarch64-linux-gnu is `planned`; aarch64-linux-musl is `verified`. Measured
-    // on 2026.8.26.1: `--target aarch64-linux` refused as planned while
-    // `--target aarch64-linux-musl` built.
+TEST(TripleRequest, NativeArm64UsesTheSupportedGnuRow) {
+    // The supported GNU lexical default outranks the musl sibling.
     auto r = triple::resolve_request(*parse("aarch64-linux"));
-    EXPECT_EQ(r.triple.str(), "aarch64-linux-musl");
-    EXPECT_TRUE(r.completedFromVocabulary);
+    EXPECT_EQ(r.triple.str(), "aarch64-linux-gnu");
+    EXPECT_FALSE(r.completedFromVocabulary);
     // mcpp CHOOSING A ROW IS NOT THE PROJECT NAMING A C LIBRARY. `envExplicit`
     // feeds the request/fact comparison and the report's display name; setting
     // it here would make mcpp compare its own answer against itself.
@@ -110,8 +108,8 @@ TEST(TripleRequest, ABareLinuxTripleIsNeverCompletedToAndroid) {
     // outcomes of that ambiguity are wrong -- refusing a request with an
     // obvious answer, or answering it with bionic.
     auto r = triple::resolve_request(*parse("aarch64-linux"));
-    EXPECT_EQ(r.triple.str(), "aarch64-linux-musl");
-    EXPECT_TRUE(r.completedFromVocabulary);
+    EXPECT_EQ(r.triple.str(), "aarch64-linux-gnu");
+    EXPECT_FALSE(r.completedFromVocabulary);
     EXPECT_FALSE(r.ambiguous);
     // Not offered as a suggestion either: `siblings` is what the diagnostic
     // prints, and naming it there would suggest building for another platform.
@@ -133,8 +131,7 @@ TEST(TripleRequest, ABareLinuxTripleIsNeverCompletedToAndroid) {
 }
 
 TEST(TripleRequest, AWrittenSegmentIsARequestAndIsNotRevised) {
-    // The escape hatch: writing the segment opts into the `planned` row, and the
-    // tier gate then refuses something the user actually typed.
+    // An explicit environment segment is preserved independently of tier.
     auto r = triple::resolve_request(*parse("aarch64-linux-gnu"));
     EXPECT_EQ(r.triple.str(), "aarch64-linux-gnu");
     EXPECT_FALSE(r.completedFromVocabulary);
@@ -736,6 +733,24 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
         EXPECT_TRUE(info->sysroot.empty()) << name;
     }
 
+    {
+        // Native ARM64 admission 37706303240 on 2026-10-08 built and ran
+        // the LLVM 23.1.3/glibc default, its deployed pack, GNU self-host,
+        // all 147 suites and four real index members, from source. The tier
+        // stays `preview` until the released engine is consumed on a clean
+        // ARM64 host (SPEC-009 §10.7).
+        auto [name, tier] = std::pair{"aarch64-linux-gnu", "preview"};
+        auto t = parse(name);
+        ASSERT_TRUE(t.has_value());
+        auto* info = find_known_target(*t);
+        ASSERT_NE(info, nullptr);
+        EXPECT_EQ(info->tier, tier);
+        EXPECT_EQ(info->pin, "llvm@23.1.3");
+        EXPECT_TRUE(info->sysroot.empty());
+        EXPECT_FALSE(info->defaultStatic);
+        EXPECT_FALSE(t->pin_is_capability());
+    }
+
     // THE THREE APPLE ROWS, AND WHAT THE SDK'S LICENCE DOES AND DOES NOT
     // BOUND.
     //
@@ -760,7 +775,7 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
         auto* info = find_known_target(*t);
         ASSERT_NE(info, nullptr) << name;
         EXPECT_EQ(info->tier, tier) << name;
-        EXPECT_EQ(info->pin, "llvm@22.1.8") << name;
+        EXPECT_EQ(info->pin, "llvm@23.1.3") << name;
         EXPECT_TRUE(info->sysroot.empty()) << name;
         EXPECT_FALSE(t->pin_is_capability()) << name;
     }

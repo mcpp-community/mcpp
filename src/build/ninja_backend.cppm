@@ -44,6 +44,7 @@ import mcpp.toolchain.dialect;
 import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;   // shared_soname_flag decides by TARGET, not host
+import mcpp.toolchain.msvc_coroutines;
 import mcpp.xlings;
 import mcpp.platform;
 import mcpp.ui;
@@ -189,6 +190,20 @@ void write_c_abi_absent_sidecar(
 // `{name, absent}` read back, or an empty pair when no build wrote one.
 std::pair<std::string, std::vector<mcpp::targetside::CAbiAbsentEntry>>
 read_c_abi_absent_sidecar(const std::filesystem::path& outputDir);
+
+// WHETHER THE C LIBRARY CAME FROM THE DEPENDENCY GRAPH, for the same two
+// channels. `graph_c_library_isolation_advice` explains a missing header by the
+// graph's C library closing the host's search; a native build on a managed C
+// library also carries `-nostdlibinc` (mcpp.toolchain.linkmodel), so the token
+// alone no longer says where the C library came from. The plan knows, writes
+// `{name, coordinate}` here when the answer is the graph, and removes the file
+// otherwise; the fast path gives the note only when the file is present.
+void write_graph_c_library_sidecar(const std::filesystem::path& outputDir,
+                                   const mcpp::targetside::Layer& cAbi);
+
+// `{name, coordinate}` read back, or nullopt when the C library is not the graph's.
+std::optional<std::pair<std::string, std::string>>
+read_graph_c_library_sidecar(const std::filesystem::path& outputDir);
 
 // mcpp#662: the compile-side sibling of `link_failure_advice`, same shape —
 // text-matched against RAW ninja output (command lines included; the caller
@@ -946,6 +961,30 @@ read_c_abi_absent_sidecar(const std::filesystem::path& outputDir) {
         out.second.push_back(std::move(e));
     }
     return out;
+}
+
+namespace {
+constexpr std::string_view kGraphCLibrarySidecar = ".mcpp-graph-c-library";
+}
+
+void write_graph_c_library_sidecar(const std::filesystem::path& outputDir,
+                                   const mcpp::targetside::Layer& cAbi) {
+    const auto path = outputDir / kGraphCLibrarySidecar;
+    std::error_code ec;
+    if (!cAbi.fromGraph()) { std::filesystem::remove(path, ec); return; }
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (f) f << cAbi.interfaceName << '\t' << cAbi.impl << '\n';
+}
+
+std::optional<std::pair<std::string, std::string>>
+read_graph_c_library_sidecar(const std::filesystem::path& outputDir) {
+    std::ifstream f(outputDir / kGraphCLibrarySidecar, std::ios::binary);
+    if (!f) return std::nullopt;
+    std::string line;
+    std::getline(f, line);
+    const auto tab = line.find('\t');
+    if (tab == std::string::npos) return std::pair{line, std::string{}};
+    return std::pair{line.substr(0, tab), line.substr(tab + 1)};
 }
 
 namespace {
@@ -4158,6 +4197,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         plan.targetSide.cAbiDecl ? plan.targetSide.cAbiDecl->absent
                                  : std::vector<mcpp::targetside::CAbiAbsentEntry>{});
     write_consumer_include_sidecar(plan.outputDir, root_include_dirs_of(plan));
+    write_graph_c_library_sidecar(plan.outputDir, plan.targetSide.cAbi);
     std::string placements;
     mcpp::build::progress::Attribution attribution;
     auto manifest = emit_ninja_string(plan, &placements, &attribution);
@@ -4763,8 +4803,13 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         // mcpp#662: named precisely here, where `plan.targetSide` is resolved
         // — the fast path (execute.cppm) calls the same function with no name
         // and gets the degraded-but-still-correct form.
-        diagnostics += graph_c_library_isolation_advice(
-            out, plan.targetSide.cAbi.interfaceName, plan.targetSide.cAbi.impl);
+        // Only when the C library IS the graph's: a native build on a managed
+        // C library carries the same `-nostdlibinc` (D3, LLVM 23.1.3 Part 3).
+        if (plan.targetSide.cAbi.fromGraph())
+            diagnostics += graph_c_library_isolation_advice(
+                out, plan.targetSide.cAbi.interfaceName, plan.targetSide.cAbi.impl);
+        // A compiler that does not support coroutines on its MSVC ABI.
+        diagnostics += mcpp::toolchain::msvc_coroutines::advice(out);
         // #696: an unanswered `-l` on a link with the empty graph sysroot.
         diagnostics += graph_link_library_advice(
             out, plan.targetSide.cAbi.interfaceName, plan.targetSide.cAbi.impl);

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: msvc
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # mcpp#775: the driver link and COFF resource must target the selected machine.
 # 2026.10.5.3: `x86-windows-msvc` is the i686 row.
 set -e
@@ -48,7 +49,7 @@ for arch in i686 x86_64 x86; do
 name = "probe"
 version = "0.1.0"
 [toolchain]
-windows = "llvm@20.1.7"
+windows = "llvm@${LLVM_VERSION}"
 [build]
 cxx_runtime = "host-coupled"
 [target.$arch-windows-msvc]

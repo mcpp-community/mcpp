@@ -26,9 +26,10 @@ mcpp 把所有工具链装进同一个沙盒目录（`~/.mcpp/registry/data/xpkg
 
 - Linux x86_64 使用面向原生 glibc ABI 的 `gcc@16.1.0`，X11、OpenGL 与系统库
   因此可以直接使用。
+- Linux aarch64 使用面向原生 glibc ABI 的 `llvm@23.1.3`（2026.10.8.1+）。
 - 其他 Linux 架构使用 `gcc@15.1.0-musl`，这是一套自包含的全静态工具链。
-- macOS 使用 `llvm@20.1.7`。
-- Windows 上存在可用 MSVC 时使用面向 MSVC ABI 的 `llvm@20.1.7`；没有可用
+- macOS 使用 `llvm@23.1.3`。
+- Windows 上存在可用 MSVC 时使用面向 MSVC ABI 的 `llvm@23.1.3`；没有可用
   MSVC 时使用 `gcc@16.1.0`，target 为 `x86_64-windows-gnu`（MinGW-w64，默认
   静态链接）。
 
@@ -61,7 +62,7 @@ mcpp 把所有工具链装进同一个沙盒目录（`~/.mcpp/registry/data/xpkg
 
 ```bash
 mcpp toolchain install gcc 16.1.0           # host target (GNU libc on Linux)
-mcpp toolchain install llvm 20.1.7          # LLVM/Clang, default on macOS and Windows with usable MSVC
+mcpp toolchain install llvm 23.1.3          # LLVM/Clang, default on macOS and Windows with usable MSVC
 mcpp toolchain install gcc 16 --target x86_64-linux-musl    # musl target payload
 mcpp toolchain install --target x86_64-windows-gnu          # family omitted → the
                                             # target's convention pin (gcc@16.1.0)
@@ -92,6 +93,17 @@ mcpp toolchain default gcc@16 --target x86_64-linux-musl   # "default to fully-s
 `default_target = "x86_64-linux-musl"`。（存量配置里 `default =
 "gcc@15.1.0-musl"` 这类合并拼写原样可用，不受影响。）
 
+在原生 Linux aarch64 上（2026.10.8.1+），原生载荷发布后，显式迁移同时
+选择 LLVM 23.1.3 与 GNU 目标：
+
+```bash
+mcpp toolchain install llvm 23.1.3
+mcpp toolchain default llvm@23.1.3 --target aarch64-linux-gnu
+```
+
+该命令将 `llvm@23.1.3` 与 `aarch64-linux-gnu` 记录为默认值对。存量配置在
+显式修改前保持有效；工程清单中的声明保留原有优先级。
+
 ### 一次构建的编译器选定
 
 有五种来源可以给它命名。它们分级排列，而正是这套分级，让工程能够写下的那两条
@@ -113,7 +125,7 @@ mcpp 就为这次构建取用被要求的那个族：
 ```
 $ mcpp build
    Resolving toolchain
-    Resolved llvm@22.1.8 → …/xim-x-llvm/22.1.8/bin/clang++
+    Resolved llvm@23.1.3 → …/xim-x-llvm/23.1.3/bin/clang++
              required by openkal-llvm-runtime@0.1.3 (`requires = ["mcpp:compiler=llvm"]`),
              not your gcc@16.1.0 — this project only
 ```
@@ -156,7 +168,7 @@ mcpp toolchain list
 Toolchains:
   *  gcc 16.1.0              (default)
      gcc 15.1.0
-     llvm 22.1.8
+     llvm 23.1.3
 
 Targets:
      TARGET                  NOTE                  TOOLCHAIN         STATUS
@@ -168,7 +180,7 @@ Targets:
 
 Available toolchains (run `mcpp toolchain install <family> <version>`):
      gcc 15.1.0 / 13.3.0 / 11.5.0 / 9.4.0
-     llvm 20.1.7
+     llvm 20.1.7 / 22.1.8
 ```
 
 `*` 标记当前的默认对。Targets 块是 target 词汇表的实时视图，共有四种状态：
@@ -398,7 +410,7 @@ mcpp 自己的文件，而一棵不属于 mcpp 的树不会得到一份。
 ```toml
 [toolchain]
 default   = { path = "/opt/llvm-trunk" }
-bootstrap = "llvm@22.1.8"
+bootstrap = "llvm@23.1.3"
 ```
 
 构建程序（`build.mcpp`）、宿主工具与宿主模块在执行构建的那台机器上编译并运行。
@@ -588,7 +600,7 @@ cxx_runtime = "self-contained"   # the C++ runtime axis
 
 ```toml
 [toolchain]
-windows = "llvm@22.1.8"
+windows = "llvm@23.1.3"
 
 [target.x86_64-windows-msvc]
 sysroot = "msvc@14.44.35207"     # or "msvc@system" (the default), or "xim:msvc@14.44.35207"
@@ -664,11 +676,11 @@ toolchain = "emsdk@6.0.9"
 
 ```toml
 [target.aarch64-linux-android]
-toolchain = "llvm@22.1.8"        # refused
+toolchain = "llvm@23.1.3"        # refused
 ```
 
 ```
-error: target 'aarch64-linux-android' cannot be emitted by 'llvm@22.1.8'.
+error: target 'aarch64-linux-android' cannot be emitted by 'llvm@23.1.3'.
        An Android target needs bionic, not just an aarch64 or x86_64 back end:
        its headers, its per-API-level stubs and its loader path are inside the
        NDK, and no package adds them to another compiler.
@@ -742,7 +754,7 @@ runner 是一个 argv 前缀，而一次**会话**不是。在一台 iOS 模拟�
 是同一个问题，只是答法不同。
 
 **编译器是我们的；只有 SDK 是 Apple 的。** 任何足够新的 clang 都能为一个
-iOS 部署目标产出 arm64 Mach-O，所以这三行钉的是 `llvm@22.1.8`——那个普通
+iOS 部署目标产出 arm64 Mach-O，所以这三行钉的是 `llvm@23.1.3`——那个普通
 载荷，和 `aarch64-macos` 用的是同一个。无法打包的是 iPhoneOS 与
 iPhoneSimulator 的 SDK：它在 Xcode 里，而且不可再分发。所以 mcpp **定位**
 它，通过 `xcrun --sdk <name> --show-sdk-path`，与它一直以来定位 macOS SDK
@@ -752,8 +764,8 @@ iPhoneSimulator 的 SDK：它在 Xcode 里，而且不可再分发。所以 mcpp
 目录不是包。
 
 ```bash
-mcpp build --target aarch64-ios        # resolves llvm@22.1.8 + the iPhoneOS SDK
-mcpp build --target aarch64-ios-sim    # resolves llvm@22.1.8 + the Simulator SDK
+mcpp build --target aarch64-ios        # resolves llvm@23.1.3 + the iPhoneOS SDK
+mcpp build --target aarch64-ios-sim    # resolves llvm@23.1.3 + the Simulator SDK
 ```
 
 ## 每个工具的来源（2026.10.1.3+）
@@ -773,7 +785,7 @@ mcpp build --target aarch64-ios-sim    # resolves llvm@22.1.8 + the Simulator SD
 
 ```
    Resolving toolchain
-   Bootstrap llvm@22.1.8 → @mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/clang++
+   Bootstrap llvm@23.1.3 → @mcpp/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/clang++
        Using toolchain clang 23.0.0git ← /opt/acme-llvm   [program · build.mcpp:9]
       Target x86_64-unknown-linux-gnu
        Using xim:cmake ← /usr/bin/cmake                   [custom · mcpp.toml:22]
@@ -856,6 +868,31 @@ warning: the assembler for this build is the host's ('/usr/bin/nasm'), not the o
 **一个宿主工具到达构建，本身不是缺陷；一个宿主工具静默地到达构建才是。** 这
 正是上面是一张表而不是一条禁令的原因：每一条都到得了，每一条都有自己的理由，
 而且每一条都会在被用到的地方说出来。
+
+### 系统头文件：不取自宿主（2026.10.8.1+）
+
+使用受管 C 库的构建不搜索宿主的任何系统头文件目录。受管 glibc 与
+`linux-headers` 提供完整的系统头文件，两类编译器各自对宿主副本关闭：
+
+- **clang** 在原生 Linux 行上携带 `-nostdlibinc`。驱动保留自身的资源头文件，
+  不再回退到 `/usr/include`，绕过驱动配置文件时同样如此。直接调用的
+  `clang++` 从 mcpp 安装后重新生成的配置文件中读到同一参数。
+- **GCC** 以 `--sysroot=<xlings subos>` 编译，搜索止于该 subos 的
+  `usr/include`。没有可用 subos 时，GCC 退回载荷布局，并获得
+  `-isysroot <C 库载荷>`，以替换编译器构建时记录的 sysroot：该路径属于构建
+  编译器的机器，否则在恰好存在它的机器上会被搜索。
+
+因此只存在于宿主的头文件不会被找到。需要它的项目在自己的清单中写出该目录，
+对宿主的依赖由此可见：
+
+```toml
+[build]
+cflags   = ["-idirafter", "/usr/include"]
+cxxflags = ["-idirafter", "/usr/include"]
+```
+
+`-idirafter` 把该目录排在受管头文件之后，构建所链接的 C 库仍由自身提供声明。
+`allow_host_libs` 不改变头文件搜索，它只涉及链接可以从宿主解析的库。
 
 ### 这条路新增的宿主面，具名且有界
 
@@ -972,7 +1009,7 @@ iOS 设备上运行，而那不是一个构建工具能供给的东西。
 [toolchain]
 default = "gcc@16.1.0"
 linux   = "gcc@16.1.0"
-macos   = "llvm@20.1.7"
+macos   = "llvm@23.1.3"
 ```
 
 工程级声明优先于全局默认配置。
@@ -1009,7 +1046,7 @@ linkage   = "static"
 ```
 $ mcpp build --target x86_64-linux-musl        # [toolchain] default = "llvm@…"
 error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
-       payload, and 'llvm@22.1.8' has none here.
+       payload, and 'llvm@23.1.3' has none here.
 ```
 
 有两类行回答的是另一个问题，它们的 pin 根本不可能被推翻：
@@ -1160,6 +1197,46 @@ xutility:6542:49: note: in instantiation of function template specialization
 - 在 MSVC STL 早于 14.51 的镜像上构建，例如 `windows-2022`。
 
 跟踪于 [mcpp#609](https://github.com/mcpp-community/mcpp/issues/609)。
+
+## 已知工具链限制：32 位 x86 Microsoft ABI 上的协程（clang 23）
+
+clang 23 不支持 `i686-pc-windows-msvc` 上的 C++20 协程。它不为该目标预定义
+`__cpp_impl_coroutine`，并以 `-Wcoroutines-unsupported-target` 报告在该目标上
+使用协程的代码。clang 22.1.8 以及 mcpp 支持的其他所有目标（包括
+`x86_64-pc-windows-msvc` 与 `i686-pc-windows-gnu`）仍预定义该宏。
+
+MSVC STL 依据该宏决定 `<coroutine>` 的内容，因此该头文件在此目标上为空，
+由此产生两种失败：
+
+- **C++23 std 模块。** `std.ixx` 在 C++23 下包含 `<generator>`，而
+  `<generator>` 不加检查地使用 `coroutine_handle` 与 `suspend_always`，
+  预编译在 `generator` 内停止。
+- **使用协程的代码。** 编译停在 `use of undeclared identifier 'std'` 与
+  `std::coroutine_traits type was not found`，尚未到达 clang 自身的协程诊断。
+
+mcpp 遵循编译器的决定：不定义该宏，也不改动 std 模块，而是在上述两种失败之后
+追加说明，指出原因与可选做法。说明在失败之后才判定，依据是失败的命令以及对同一
+编译器、同一目标的 `-dM -E` 探测；成功的构建不受影响，编译器或 STL 变化后说明
+随之消失。
+
+说明按以下顺序给出选项：
+
+- 以 C++20 构建该包。此时 `import std` 与 `import std.compat` 不包含
+  `<generator>`，可在该目标上构建；协程仍不可用。
+- 为该目标指定仍启用协程的 LLVM：
+
+  ```toml
+  [target.i686-windows-msvc]
+  toolchain = "llvm@22.1.8"
+  ```
+
+  新版编译器视该 ABI 上的协程为不支持；在此目标上使用协程的代码风险自负。
+
+在项目中定义 `__cpp_impl_coroutine` 不是解决办法：它打开了编译器已声明在该 ABI
+上不支持的功能。
+
+`i686-windows-msvc` 不是目标表中的一行；为它构建的项目需要声明
+`[target.i686-windows-msvc]`，与其他自定义三元组相同。
 
 ## C++ 运行时契约（`cxx_runtime`）
 

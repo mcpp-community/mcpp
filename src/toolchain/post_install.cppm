@@ -312,6 +312,8 @@ export void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
         if (std::filesystem::exists(cxxInclude))
             cxxOnly += "-isystem " + cxxInclude.string() + "\n";
     } else {
+        if constexpr (mcpp::platform::is_linux)
+            common += "-nostdlibinc\n";
         if (!glibcLibDir.empty()) {
             auto loader = resolve_loader(glibcLibDir, triple);
             common += "-B" + glibcLibDir.string() + "\n";
@@ -525,7 +527,7 @@ void llvm_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
 // runtime libs. Idempotent via a content-fingerprinted marker.
 //
 // Bump when the fixup logic changes so existing installs re-run it.
-constexpr std::string_view kFixupRev = "hermetic-4-exact-runtime";
+constexpr std::string_view kFixupRev = "hermetic-5-managed-headers";
 
 // What the fixup DID, so the caller can decide how loud to be about it.
 //

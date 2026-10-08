@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: msvc python3
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 881 -- mcpp#762: PE auto-export accepts LLVM LTO objects while preserving an
 # explicitly annotated surface. Opting out removes the scanner from the graph.
 set -e
@@ -21,12 +22,12 @@ cd "$TMP"
 # A consumer proves the module initializer and code
 # exports work with LTO; ctypes independently reads the exported data.
 mkdir -p automatic/src app/src
-cat > automatic/mcpp.toml <<'EOF'
+cat > automatic/mcpp.toml <<EOF
 [package]
 name = "automatic"
 version = "0.1.0"
 [toolchain]
-windows = "llvm@20.1.7"
+windows = "llvm@${LLVM_VERSION}"
 [profile.release]
 lto = true
 [targets.automatic]
@@ -35,14 +36,14 @@ EOF
 printf 'export module t881_lto;\nexport int answer();\n' > automatic/src/api.cppm
 printf 'module t881_lto;\nint answer() { return 42; }\n' > automatic/src/impl.cpp
 printf 'extern "C" int exported_data = 9;\n' > automatic/src/data.cpp
-cat > app/mcpp.toml <<'EOF'
+cat > app/mcpp.toml <<EOF
 [package]
 name = "app"
 version = "0.1.0"
 [dependencies]
 automatic = { path = "../automatic" }
 [toolchain]
-windows = "llvm@20.1.7"
+windows = "llvm@${LLVM_VERSION}"
 EOF
 printf 'import t881_lto;\nint main() { return answer() == 42 ? 0 : 1; }\n' > app/src/main.cpp
 (cd automatic && "$MCPP" build --profile release > build.log 2>&1) || fail "A: the LTO DLL did not build" automatic/build.log
@@ -68,12 +69,12 @@ nm="$(dirname "$compiler")/llvm-nm.exe"
 # B: annotations in bitcode define the whole surface, including DATA. A
 # literal containing export-like text must not be mistaken for an annotation.
 mkdir -p annotated/src
-cat > annotated/mcpp.toml <<'EOF'
+cat > annotated/mcpp.toml <<EOF
 [package]
 name = "annotated"
 version = "0.1.0"
 [toolchain]
-windows = "llvm@20.1.7"
+windows = "llvm@${LLVM_VERSION}"
 [profile.release]
 lto = true
 [targets.annotated]
@@ -111,14 +112,14 @@ if grep -qE '^build .* : coff_def' "$nj"; then fail "C: the opt-out still schedu
 
 # The same target is also read through a path dependency, not just as the root.
 mkdir -p native-consumer/src
-cat > native-consumer/mcpp.toml <<'EOF'
+cat > native-consumer/mcpp.toml <<EOF
 [package]
 name = "native-consumer"
 version = "0.1.0"
 [dependencies]
 annotated = { path = "../annotated" }
 [toolchain]
-windows = "llvm@20.1.7"
+windows = "llvm@${LLVM_VERSION}"
 EOF
 printf 'extern "C" __declspec(dllimport) int chosen();\nint main() { return chosen() == 7 ? 0 : 1; }\n' > native-consumer/src/main.cpp
 (cd native-consumer && "$MCPP" run --profile release > run.log 2>&1) || fail "C: dependency opt-out did not run" native-consumer/run.log
@@ -170,12 +171,12 @@ grep -q 'literal_value DATA' x86.def || fail "H: x86 cdecl decoration was not no
 # I: `exports` narrows what discovery finds (#766). Only the matching symbols
 # are published, data keeps its DATA keyword, and the rest is not exported.
 mkdir -p narrowed/src
-cat > narrowed/mcpp.toml <<'EOF'
+cat > narrowed/mcpp.toml <<EOF
 [package]
 name = "narrowed"
 version = "0.1.0"
 [toolchain]
-windows = "llvm@20.1.7"
+windows = "llvm@${LLVM_VERSION}"
 [targets.narrowed]
 kind = "shared"
 exports = ["keep_*"]
@@ -213,12 +214,12 @@ grep -q '`exports` has no effect on this DLL' warned.log || fail "J: no warning 
 # K: `exports` with discovery off has nothing to narrow, and is refused when
 # an MSVC-ABI row is planned.
 mkdir -p contradictory/src
-cat > contradictory/mcpp.toml <<'EOF'
+cat > contradictory/mcpp.toml <<EOF
 [package]
 name = "contradictory"
 version = "0.1.0"
 [toolchain]
-windows = "llvm@20.1.7"
+windows = "llvm@${LLVM_VERSION}"
 [targets.contradictory]
 kind = "shared"
 exports = ["api_*"]

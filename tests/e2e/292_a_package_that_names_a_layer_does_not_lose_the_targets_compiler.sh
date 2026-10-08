@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm unix-shell
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # Declaring which layer a package supplies must not change which compiler can
 # emit the target.
 #
@@ -73,14 +74,14 @@ fi
 # comes from its graph does not use that payload, so the row must not replace
 # a toolchain the user set.
 mkdir -p "$work/hosted/src"
-cat > "$work/hosted/mcpp.toml" <<'TOML'
+cat > "$work/hosted/mcpp.toml" <<TOML
 [package]
 name     = "hostedprobe"
 version  = "0.1.0"
 provides = ["mcpp:c-abi=musl"]
 
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@${LLVM_VERSION}"
 TOML
 printf 'int main() { return 0; }\n' > "$work/hosted/src/main.cpp"
 hosted="$(resolved "$work/hosted" x86_64-linux-musl)"
@@ -91,7 +92,7 @@ case "$hosted" in
     echo "SKIP: the hosted project did not report a resolution here" ;;
   *)
     echo "FAIL: the target row replaced the toolchain this project chose"
-    echo "        chose llvm@22.1.8, resolved $hosted"
+    echo "        chose llvm@${LLVM_VERSION}, resolved $hosted"
     exit 1 ;;
 esac
 

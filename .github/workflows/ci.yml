@@ -142,6 +142,8 @@ jobs:
           python3 tests/scripts/test_classify_changes.py
           python3 tests/scripts/test_check_e2e_coverage.py
           python3 tests/scripts/test_check_default_toolchain_docs.py
+          python3 tests/scripts/test_native_candidate_admission.py
+          python3 -m unittest discover -s tests/scripts -p test_toolchain_env.py
 
   build-linux:
     needs: changes
@@ -152,7 +154,7 @@ jobs:
       runs-on: ubuntu-24.04
       # What the Linux consumers install beyond the build's own toolchain: the
       # e2e shards (musl, llvm, mingw-cross), the toolchain legs (musl, llvm).
-      prewarm: gcc 16.1.0-musl; llvm 22.1.8; mingw-cross 16.1.0
+      prewarm: gcc 16.1.0-musl; llvm 23.1.3; mingw-cross 16.1.0
 
   build-linux-arm:
     needs: changes
@@ -161,6 +163,7 @@ jobs:
     with:
       host: linux-aarch64
       runs-on: ubuntu-24.04-arm
+      prewarm: llvm 23.1.3; gcc 16.1.0-musl
 
   build-macos:
     needs: changes
@@ -191,19 +194,10 @@ jobs:
   macos:
     needs: build-macos
     uses: ./.github/workflows/ci-macos.yml
-    with:
-      # R7: the known-red legs (#669) run where they can change a decision: on
-      # main, on dispatch, and on a pull request labelled `macos-27`. The label
-      # is read when the pull request is pushed to; adding it starts no run,
-      # because a run on every label of every pull request would cost a whole
-      # CI each time.
-      known-red: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos-27') }}
 
   macos-e2e:
     needs: build-macos
     uses: ./.github/workflows/ci-macos-e2e.yml
-    with:
-      known-red: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos-27') }}
 
   macos-ios:
     needs: build-macos
@@ -231,7 +225,7 @@ jobs:
 
   # Pull requests and dispatch only, as when it was a workflow of its own.
   openkal:
-    needs: [build-linux, build-macos, build-windows]
+    needs: [build-linux, build-linux-arm, build-macos, build-windows]
     if: github.event_name != 'push'
     uses: ./.github/workflows/openkal-cross.yml
 

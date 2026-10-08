@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm unix-shell qemu-riscv
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # openkal where there is no operating system, and no C library either.
 #
 # THE FREESTANDING SHAPE IS THE ONE THE ENGINE MODELS MOST AND TESTS LEAST.
@@ -29,13 +30,13 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/app/src"
 cd "$work/app"
 
-cat > mcpp.toml <<'TOML'
+cat > mcpp.toml <<TOML
 [package]
 name    = "okbare"
 version = "0.1.0"
 
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@${LLVM_VERSION}"
 
 # `sysroot = ""` IS WHAT MAKES THIS THE NO-C-LIBRARY SHAPE, AND THE TARGET
 # NAME DOES NOT IMPLY IT.

@@ -76,7 +76,7 @@ configuration it is meant to check rather than against the default one:
 | `--target <triple>` | a target other than the host |
 | `--accel <spec>` / `--no-accel` | the device backends the build targets |
 | `--cap <list>` | pin a capability provider |
-| `--toolchain <spec>` | the toolchain for this invocation, e.g. `llvm@22.1.8` |
+| `--toolchain <spec>` | the toolchain for this invocation, e.g. `llvm@23.1.3` |
 
 `--timeout <secs>` kills a test still running (default 300; `0` disables it) and
 `--build-timeout <secs>` bounds the compile. A test that hangs is reported as a

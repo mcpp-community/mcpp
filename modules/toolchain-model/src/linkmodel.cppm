@@ -68,6 +68,17 @@ struct ToolchainLinkModel {
     // Sysroot fields.
     std::filesystem::path sysroot;
 
+    // GCC in PayloadFirst mode: the header-only sysroot (`-isysroot`) that
+    // replaces the sysroot GCC recorded when it was built. Without it, GCC
+    // still searches `<recorded>/usr/include` and `<recorded>/usr/local/include`
+    // -- a path from the machine that built the compiler, which on another
+    // machine either does not exist or belongs to someone else (gcc 15.1.0
+    // records `/home/xlings/.xlings_data/subos/linux`). Pointing it at the C
+    // library payload's root makes both directories absent; GCC's own include
+    // directories are not sysroot-relative and are unaffected (measured,
+    // LLVM 23.1.3 Part 3 §2.5).
+    std::filesystem::path headerSysroot;
+
     // Compile-side C library / kernel headers (payload dirs, or the
     // linux-headers supplement for a sysroot that lacks them).
     std::vector<std::filesystem::path> systemIncludes;
@@ -89,6 +100,15 @@ struct ToolchainLinkModel {
     // Compile-side flags as argv tokens. Each entry is ONE argv word.
     std::vector<std::string> compile_tokens(const PathEscape& esc) const {
         std::vector<std::string> out;
+        // A managed libc supplies the complete system header surface. Keep
+        // Clang's resource headers while refusing an ambient /usr/include
+        // fallback, including when the driver cfg is explicitly bypassed.
+        if (mode == CLibMode::PayloadFirst && clangDriver)
+            out.push_back("-nostdlibinc");
+        if (mode == CLibMode::PayloadFirst && !clangDriver && !headerSysroot.empty()) {
+            out.push_back("-isysroot");
+            out.push_back(esc(headerSysroot));
+        }
         if (mode == CLibMode::Sysroot)
             out.push_back("--sysroot=" + esc(sysroot));
         // PayloadFirst headers: clang takes -isystem; GCC needs -idirafter so
@@ -485,6 +505,8 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
         lm.libDirs.push_back(pp.glibcLib);
         add_compiler_runtime_dir();
         lm.systemIncludes.push_back(pp.glibcInclude);
+        if (!lm.clangDriver && !pp.glibcInclude.empty())
+            lm.headerSysroot = pp.glibcInclude.parent_path();
         if (!pp.linuxInclude.empty())
             lm.systemIncludes.push_back(pp.linuxInclude);
         // Resolved for both drivers now that both emit it.

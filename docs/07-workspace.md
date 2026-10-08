@@ -165,7 +165,7 @@ linkage   = "static"
 ```toml
 # a member overrides the toolchain
 [toolchain]
-default = "llvm@20.1.7"
+default = "llvm@23.1.3"
 ```
 
 `[toolchain]`, `[target.<triple>]` and `[indices]` choose the compiler, the

@@ -44,6 +44,13 @@ def expected_phrases(spec: str, os_name: str, arch: str) -> dict[str, list[str]]
                 "docs/20-toolchains.md": [f"- Linux x86_64 uses {s}"],
                 "docs/zh/20-toolchains.md": [f"- Linux x86_64 使用面向原生 glibc ABI 的 {s}"],
             }
+        if arch in ("aarch64", "arm64"):
+            return {
+                "docs/01-getting-started.md": [f"| Linux aarch64 | {s} |"],
+                "docs/zh/01-getting-started.md": [f"| Linux aarch64 | {s} |"],
+                "docs/20-toolchains.md": [f"- Linux aarch64 uses {s}"],
+                "docs/zh/20-toolchains.md": [f"- Linux aarch64 使用面向原生 glibc ABI 的 {s}"],
+            }
         return {
             "docs/01-getting-started.md": [f"| other Linux architectures | {s} |"],
             "docs/zh/01-getting-started.md": [f"| 其它 Linux 架构 | {s} |"],

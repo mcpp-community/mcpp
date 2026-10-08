@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: gcc elf
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 804_a_path_host_tool_builds_with_its_chosen_toolchain.sh — mcpp#710.
 #
 # A host tool is built by one compiler, chosen once and recorded in the tool
@@ -10,12 +11,17 @@
 # a tool reached through a plain path dependency, which belongs to no
 # workspace:
 #   1. a tool package that names no toolchain is built by the consumer's
-#      build-program compiler (llvm 22.1.8 here), not by the global default
+#      build-program compiler (llvm ${LLVM_VERSION} here), not by the global default
 #      (gcc on Linux), which is what the sub-build used to resolve for itself;
 #   2. a tool package that names its own toolchain is built by it
 #      (gcc 16.1.0) while the consumer keeps llvm.
 # The compiler that produced the tool is read from its `.comment` section.
 set -e
+candidate_seed="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.github/tools" && pwd)/seed_native_xim_index.py"
+if [[ "${MCPP_E2E_804_LLVM_HOST_ONLY:-0}" == 1 ]]; then
+    [[ "$(uname -s)" == Linux && "$(uname -m)" == aarch64 ]] || {
+        echo "FAIL: LLVM-only host-helper admission requires native Linux ARM64"; exit 1; }
+fi
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -28,6 +34,9 @@ export MCPP_HOME="$TMP/mcpphome"
 mkdir -p "$MCPP_HOME"
 if [ -d "$HOME/.mcpp/registry" ]; then
     ln -s "$HOME/.mcpp/registry" "$MCPP_HOME/registry"
+fi
+if [[ -n "${MCPP_NATIVE_XIM_INDEX:-}" ]]; then
+    python3 "$candidate_seed" "$MCPP_HOME" "$MCPP_NATIVE_XIM_INDEX"
 fi
 unset MCPP_TOOLCHAIN
 
@@ -50,13 +59,13 @@ cat > toolpkg/src/stamp.cpp <<'CPP'
 int main() { return 0; }
 CPP
 
-cat > app/mcpp.toml <<'TOML'
+cat > app/mcpp.toml <<TOML
 [package]
 name    = "app"
 version = "0.1.0"
 
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@${LLVM_VERSION}"
 
 [dependencies]
 toolpkg = { path = "../toolpkg", tools = ["stamp"] }
@@ -82,9 +91,17 @@ write_tool ""
 t="$(tool_path b1.log)"
 [[ -x "$t" ]] || { cat b1.log; echo "FAIL: 1: no tool binary at '$t'"; exit 1; }
 readelf -p .comment "$t" > c1.txt
-grep -q 'clang version 22\.1\.8' c1.txt || {
-    cat c1.txt; echo "FAIL: 1: the tool was not built by the consumer's llvm 22.1.8"; exit 1; }
+grep -q 'clang version 23\.1\.3' c1.txt || {
+    cat c1.txt; echo "FAIL: 1: the tool was not built by the consumer's llvm ${LLVM_VERSION}"; exit 1; }
 echo "ok: 1"
+
+# ARM64 publishes LLVM GNU, while native GCC GNU 16.1.0 is unavailable. This
+# explicit admission mode proves only the path host-helper LLVM case; the
+# ordinary test still exercises both compiler families below.
+if [[ "${MCPP_E2E_804_LLVM_HOST_ONLY:-0}" == 1 ]]; then
+    echo "PASS: 804 native LLVM path host helper (LLVM case only)"
+    exit 0
+fi
 
 # ── 2 ── its own toolchain: that one, whatever the consumer uses
 write_tool 'default = "gcc@16.1.0"'

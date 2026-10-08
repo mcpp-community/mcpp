@@ -157,8 +157,40 @@ class TheRepository(unittest.TestCase):
         self.assertGreater(steps, 200)
         self.assertGreater(runs, 150)
         known = [j.key for p in workflows for j in lint.parse(p).jobs if j.continue_on_error]
-        self.assertGreaterEqual(len(known), 4, known)
+        # The four known-red legs (#669: ci-macos, ci-macos-e2e and the two
+        # fresh-install macOS jobs) left the mechanism with the LLVM 23.1.3
+        # line move, which removed their external cause. Zero is the state the
+        # assertion table requires; the mechanism itself stays covered by the
+        # fixture tests above.
+        self.assertEqual(len(known), 0, known)
         self.assertEqual(lint.check(workflows, check_open=False), [])
+
+
+class W4ShardCoverage(unittest.TestCase):
+    def test_missing_shard_is_rejected(self):
+        self.assertTrue(lint.incomplete_shards("- image: xcode-27\nshard: 1\nshards: 2\n"))
+
+    def test_full_image_is_accepted(self):
+        self.assertEqual(lint.incomplete_shards("- image: xcode-27\nshard: 1\nshards: 2\n- image: xcode-27\nshard: 2\nshards: 2\n"), [])
+
+    def test_duplicate_shard_is_rejected(self):
+        self.assertTrue(lint.incomplete_shards("- image: xcode-27\nshard: 1\nshards: 2\n- image: xcode-27\nshard: 1\nshards: 2\n"))
+
+
+class W5JobRunnerContext(unittest.TestCase):
+    def test_job_env_runner_is_rejected_before_startup(self):
+        text = 'jobs:\n  native:\n    env:\n      REPORT: ${{ runner.temp }}/report\n    steps:\n      - run: true\n'
+        found = problems_for(text)
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith('W5 '), found)
+
+    def test_step_runner_and_job_github_context_are_accepted(self):
+        text = 'jobs:\n  native:\n    env:\n      SOURCE: ${{ github.workspace }}\n    steps:\n      - run: true\n        env:\n          REPORT: ${{ runner.temp }}/report\n'
+        self.assertEqual(problems_for(text), [])
+
+    def test_expression_string_does_not_name_a_context(self):
+        text = "jobs:\n  native:\n    env:\n      LABEL: ${{ 'runner.temp' }}\n    steps:\n      - run: true\n"
+        self.assertEqual(problems_for(text), [])
 
 
 if __name__ == "__main__":

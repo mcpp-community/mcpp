@@ -126,8 +126,11 @@ TEST(LinkModel, ClangCfgPayloadFirstCarriesCrtDiscovery) {
     EXPECT_NE(link.find("--dynamic-linker=" + lm.loader.string()), std::string::npos);
 
     auto compile = lm.compile_flags(ident);
+    EXPECT_NE(compile.find("-nostdlibinc"), std::string::npos);
     EXPECT_NE(compile.find("-isystem"), std::string::npos);
     EXPECT_EQ(compile.find("-idirafter"), std::string::npos);
+    // `-nostdlibinc` already closes clang's host search; no -isysroot.
+    EXPECT_EQ(compile.find("-isysroot"), std::string::npos);
 }
 
 TEST(LinkModel, ClangDriverModelExposesCfgAndHeaders) {
@@ -156,6 +159,9 @@ TEST(LinkModel, GccSysrootWinsOverPayload) {
     auto lm = tc::resolve_link_model(t);
     EXPECT_EQ(lm.mode, tc::CLibMode::Sysroot);
     EXPECT_NE(lm.compile_flags(ident).find("--sysroot="), std::string::npos);
+    EXPECT_EQ(lm.compile_flags(ident).find("-nostdlibinc"), std::string::npos);
+    // --sysroot already replaces the recorded sysroot.
+    EXPECT_EQ(lm.compile_flags(ident).find("-isysroot"), std::string::npos);
     EXPECT_NE(lm.link_flags(ident).find("--sysroot="), std::string::npos);
     // Kernel headers exist in the sysroot → no supplement.
     EXPECT_TRUE(lm.systemIncludes.empty());
@@ -197,6 +203,16 @@ TEST(LinkModel, GccPayloadEmitsIdirafterAndItsOwnAddressing) {
     // Headers still differ by driver: libstdc++'s #include_next wrappers need
     // -idirafter, and that has not changed.
     EXPECT_NE(lm.compile_flags(ident).find("-idirafter"), std::string::npos);
+    EXPECT_EQ(lm.compile_flags(ident).find("-nostdlibinc"), std::string::npos);
+
+    // The sysroot GCC recorded when it was built is replaced, for headers
+    // only, by the C library payload's root: `-isysroot <root>` as two argv
+    // words, so `<recorded>/usr/include` is never searched.
+    auto tokens = lm.compile_tokens(ident);
+    auto it = std::ranges::find(tokens, std::string("-isysroot"));
+    ASSERT_NE(it, tokens.end());
+    ASSERT_NE(std::next(it), tokens.end());
+    EXPECT_EQ(*std::next(it), (dir.path / "glibc").string());
 
     // Addressing no longer differs. GCC used to be left to its install-time
     // specs here, which made the RUN side a per-toolchain-install decision

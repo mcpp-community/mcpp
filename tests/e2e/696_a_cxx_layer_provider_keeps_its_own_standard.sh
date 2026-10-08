@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 696 -- a package that provides the C++ layer compiles its own implementation
 # units at the standard it states, while every module unit, the std module
 # included, stays at the graph's (#641 item 2).
@@ -68,7 +69,7 @@ version  = "0.1.0"
 standard = "$2"
 
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@${LLVM_VERSION}"
 
 [dependencies.llvm.libcxx]
 path = "$LIBCXX_HOST"

@@ -4,8 +4,8 @@
 |---|---|
 | 规范编号 | SPEC-006 |
 | 标题 | 工具链管理:身份、来源、选择与载荷契约 |
-| 状态 | 草案 v0.6 |
-| 最后修改 | 2026-10-02 |
+| 状态 | 草案 v0.7 |
+| 最后修改 | 2026-10-09 |
 | 对应实现 | 逐条标注;标为「已实现」的条款对应 mcpp >= 2026.9.24.1。标为「未实现」的条款计划与下一批 LLVM 工具链一同落地,届时按实测修订本规范 |
 | 相关设计文档 | `.agents/docs/2026-09-24-toolchain-selection-and-payload-trust-design.md`、`.agents/docs/2026-09-24-685-687-msvc-stl-and-toolchain-payloads.md`、`.agents/docs/2026-09-28-ecosystem-design-and-optimisation-plan.md`、`.agents/docs/2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md` |
 | 相关 issue | mcpp#685、mcpp#687、mcpp#718、mcpp#755 |
@@ -207,6 +207,16 @@ MinGW 的运行时(`libstdc++-6.dll`、`libgcc_s_seh-1.dll`、`libwinpthread-1.d
 
 ---
 
+### 3.8 系统头文件不取自宿主 已实现
+
+使用受管 C 库的构建**禁止**隐式搜索宿主的系统头文件目录。clang 在受管 glibc 上**必须**携带 `-nostdlibinc`;
+GCC 以 xlings subos 为 `--sysroot`,没有可用 subos 而退回载荷布局时,**必须**以 `-isysroot <C 库载荷>`
+取代编译器构建时记录的 sysroot。需要宿主头文件的项目**必须**在自己的清单中写出该目录(例如 `cflags`/`cxxflags`
+中的 `-idirafter /usr/include`);`allow_host_libs` 只放开链接,不改变头文件搜索。
+
+当前:clang 一侧由 `ToolchainLinkModel::compile_tokens` 与安装后重新生成的驱动配置文件给出;GCC 的退回路径由同一函数给出
+`-isysroot`(mcpp 2026.10.8.1)。e2e 891 覆盖 clang 一侧的未找到、显式写出与依赖图提示的边界。
+
 ## 4. 载荷契约
 
 ### 4.1 可重定位 部分实现
@@ -319,3 +329,4 @@ xim-pkgindex 的准入脚本 `verify-toolchain.sh` 对一个载荷归档做一�
 | v0.5 | 2026-10-01 | 随 mcpp 2026.10.1.3(mcpp#755):新增 §2.2.1,工具链可由路径命名,并说明 `bootstrap` 与 `configure = "build.mcpp"`;§3.3 增加非缺省来源的陈述、汇总、记录与 `--managed-only`。 |
 | v0.4 | 2026-09-28 | 随 mcpp 2026.9.28.2:新增 §3.7.1,程序旁的文件由一个解析器决定;MSVC C++ 运行时是一个带版本的集合;契约决定种类;声明的运行时文件与 toolset 的版本比较;读不出的版本不作决定;action 的 `PATH` 首位是 toolset 的运行时目录(2026-09-28 设计 WS1)。 |
 | v0.6 | 2026-10-02 | §7 移入 SPEC-009(工具链的支持与维护):移动默认版本或 C 库绑定的顺序、门与撤销由 SPEC-009 §10 规定,本节改为引用。 |
+| v0.7 | 2026-10-09 | 随 mcpp 2026.10.8.1:新增 §3.8,使用受管 C 库的构建不隐式搜索宿主的系统头文件;需要时由项目显式写出。 |

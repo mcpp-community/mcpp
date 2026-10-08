@@ -28,16 +28,16 @@
 # WHAT THIS NEEDS
 #
 # A compile database that names BMIs explicitly (-fmodule-file=...), which
-# only a build actually produces: `mcpp build --toolchain llvm@22.1.8` writes
+# only a build actually produces: `mcpp build --toolchain llvm@23.1.3` writes
 # compile_commands.json at the project root. This script does not build it:
 # the caller runs that build first. check_file_lengths.sh needs no such
 # division because it reads the tree.
 #
 # IN CI SINCE 2026.9.28.2 (#729). ci-linux.yml's "toolchain: musl + llvm" job
-# builds mcpp with llvm@22.1.8 -- failing on the build's own status, which it
+# builds mcpp with llvm@23.1.3 -- failing on the build's own status, which it
 # did not do while it built with llvm@20.1.7 and read only the resolution line
 # -- and runs this script after it, over the compile database that build
-# writes. By hand: `mcpp build --toolchain llvm@22.1.8`, then this script.
+# writes. By hand: `mcpp build --toolchain llvm@23.1.3`, then this script.
 #
 # clang-tidy itself is not part of the plain xim:llvm payload mcpp resolves
 # for `--toolchain llvm@...` (measured: xim-x-llvm/22.1.8/bin has clang,
@@ -67,7 +67,7 @@ FAIL: $CDB does not exist.
   This check reads clang-tidy's own function boundaries, which needs a
   compile database that names every imported module's BMI explicitly.
   Produce one first:
-      mcpp build --toolchain llvm@22.1.8
+      mcpp build --toolchain llvm@23.1.3
   (any installed LLVM row works; the database is written at the project
   root regardless of the row's exact version).
 EOF

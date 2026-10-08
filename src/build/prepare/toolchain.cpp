@@ -1283,29 +1283,42 @@ step2_resolve_explicit_spec(PrepareState& state, ToolchainResolveCtx& ctx) {
         }
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
-        // AND NOT INSTALLED WHEN NO PAYLOAD HERE COULD SERVE THE TARGET.
+        // AND INSTALLED ANYWAY WHEN THE USER DECLARED IT, SKIPPED ONLY WHEN
+        // THE ENGINE CHOSE IT.
         //
         // `unservedTargetDiagnosis` is decided a thousand lines above and
         // released a thousand lines below — deliberately, because whether the
         // dependency GRAPH supplies the target's system is not knowable until
-        // it is resolved. This install sits between the two, and it does not
-        // need to wait: if no payload here serves the target, then either the
-        // graph supplies the system (and this payload is not wanted) or the
-        // build refuses later (and it is not wanted then either).
+        // it is resolved. This install sits between the two.
         //
-        // Measured on ubuntu-24.04-arm, `--target x86_64-linux-musl`:
+        // A DECLARED toolchain installs anyway. The held diagnosis means no
+        // payload HERE produces the target, not that the target is
+        // unbuildable: a retargetable clang plus a graph package supplying
+        // the target's system is exactly the arrangement the openkal rows
+        // exist for. Skipping the install behind the diagnosis was tried and
+        // measured twice (mcpp#782): the openkal macos leg resolved
+        // `llvm@22.1.8` for years because the suite installed it out of
+        // band, and both the line move (autoInstall skip) and, on the next
+        // run, even a successful 23.1.3 install still died — the skip and
+        // the spec's target axis together made the resolution refuse before
+        // the graph release could ever run. A user's declaration outranks
+        // the payload matrix (the same standing the `[target.X] toolchain`
+        // escape hatch has).
         //
-        //     error: toolchain 'gcc@16.1.0': xlings install of
-        //       'xim:x86_64-linux-musl-gcc@16.1.0' failed …
-        //
-        // — the cross-musl packages are published per host arch and that one is
-        // x86_64-only. The refusal that names this correctly never ran, because
-        // the install failed first and failed hard.
-        //
-        // Skipping leaves BOTH later paths intact; attempting cannot help
-        // either of them.
-        const bool targetPayloadUnservable =
-            !state.unservedTargetDiagnosis.empty() && !spec->target.empty();
+        // An ENGINE-CHOSEN toolchain skips. There the spec carries the
+        // target axis because the ROW asked for it (e.g. the musl rows), the
+        // package is published per host arch, and on a host of the wrong
+        // arch the install cannot succeed — measured on ubuntu-24.04-arm,
+        // `--target x86_64-linux-musl`: xim:x86_64-linux-musl-gcc@16.1.0 is
+        // x86_64-only, and the hard install failure used to preempt the
+        // refusal that names the target correctly. The held diagnosis is
+        // that refusal, released early with one cause per message. The same
+        // rule applies to an unservable foreign GNU payload. Native ARM64
+        // GNU now has a managed LLVM/glibc payload and does not enter this
+        // refusal path.
+        const bool engineChoseUnservable =
+            !state.unservedTargetDiagnosis.empty() && !spec->target.empty()
+            && !tc_origin_is_user_explicit(state.tcOrigin);
 
         auto cfg = state.get_cfg(true);
         if (!cfg) return std::unexpected(cfg.error());
@@ -1313,9 +1326,8 @@ step2_resolve_explicit_spec(PrepareState& state, ToolchainResolveCtx& ctx) {
 
         mcpp::ui::info("Resolving", "toolchain");
         mcpp::fetcher::InstallProgressHandler progress;
-        auto payload = fetcher.resolve_xpkg_path(
-            pkg.target(), /*autoInstall=*/!targetPayloadUnservable, &progress);
-        if (!payload && targetPayloadUnservable) {
+        auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/!engineChoseUnservable, &progress);
+        if (!payload && !state.unservedTargetDiagnosis.empty() && !spec->target.empty()) {
             // The held diagnosis is already the right words for this; releasing
             // it here rather than at its usual site keeps one sentence per cause.
             refusal::record(refusal::Code::HostCannotServe);
@@ -1867,7 +1879,7 @@ step2_retarget_for_retargetable_driver(PrepareState& state) {
 
                   // ── iOS: THE COMPILER IS OURS, THE SDK IS THE MACHINE'S ──
                   //
-                  // The three iOS rows pin `llvm@22.1.8` -- any sufficiently
+                  // The three iOS rows pin `llvm@23.1.3` -- any sufficiently
                   // new clang emits arm64 Mach-O for an iOS deployment target
                   // -- and take their headers and stub libraries from the
                   // machine's Xcode, which is where the whole item shrinks to

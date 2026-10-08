@@ -202,7 +202,7 @@ __format/format_functions.h:99:30: error: call to implicitly-deleted default
 | xmake | **3.1.0** | `matrix.json` → `tools` |
 | bazel | **9.2.0** | `matrix.json` → `tools` |
 | gcc | **16.1.0** | `bench/src/toolchain.cppm` |
-| clang / libc++ | **22.1.8**（Windows：20.1.7） | `bench/src/toolchain.cppm` |
+| clang / libc++ | **23.1.3**（所有宿主） | `bench/src/toolchain.cppm` |
 | 参照 mcpp | **2026.8.11.3** | `matrix.json` → `reference_mcpp`;每次跑把实际解析到的版本写进 `meta.json`,报告的表头直接写出它 |
 | mcpp（被测工作负载） | **2026.8.11.3** — `a749e9f` | 子模块 `projects/mcpp/mcpp-2026.8.11.3` |
 | xlings（合并风格） | **2026.8.11.2** — `b1563fe` | 子模块 `projects/xlings/xlings-2026.8.11.2` |

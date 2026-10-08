@@ -1,0 +1,127 @@
+name: released ARM64 CN SubOS ecosystem
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: Exact published mcpp version (without v)
+        required: true
+        type: string
+      sandbox_backend:
+        description: Native distro backend used only as CI isolation infrastructure
+        required: true
+        type: choice
+        default: proot
+        options: [proot, bwrap]
+permissions:
+  contents: read
+concurrency:
+  group: released-arm64-cn-${{ inputs.release_version }}
+  cancel-in-progress: false
+jobs:
+  consume:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    env:
+      RELEASE_VERSION: ${{ inputs.release_version }}
+      SANDBOX_BACKEND: ${{ inputs.sandbox_backend }}
+      GH_TOKEN: ${{ github.token }}
+      XLINGS_NON_INTERACTIVE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Initialize the cold runtime home
+        run: echo "XLINGS_HOME=$RUNNER_TEMP/arm64-published-cn" >> "$GITHUB_ENV"
+      - name: Native distro sandbox infrastructure (not an ARM xim package)
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          sudo apt-get update
+          backend_package="$SANDBOX_BACKEND"
+          [ "$SANDBOX_BACKEND" != bwrap ] || backend_package=bubblewrap
+          sudo apt-get install -y "$backend_package"
+          dpkg-query -W "$backend_package"
+      - name: Exact public CN release in a cold real SubOS
+        run: bash .github/tools/run_published_arm64_cn.sh "$RELEASE_VERSION" "$GITHUB_WORKSPACE" "$SANDBOX_BACKEND"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: published-cn-arm64-openkal-targets
+          path: ${{ env.CN_CROSS_ARTIFACTS }}
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: published-cn-arm64-consumer-evidence
+          path: |
+            ${{ env.XLINGS_HOME }}/reports/*.json
+            ${{ env.XLINGS_HOME }}/reports/*.txt
+            ${{ env.XLINGS_HOME }}/reports/*.sha256
+            ${{ env.XLINGS_HOME }}/probes/runs/*/probe.log
+            ${{ env.XLINGS_HOME }}/probes/runs/*/*.txt
+            ${{ env.XLINGS_HOME }}/probes/runs/*/*.sha256
+            ${{ env.XLINGS_HOME }}/probes/runs/*/*.log
+            ${{ env.XLINGS_HOME }}/probes/runs/*/members.tsv
+          if-no-files-found: warn
+  target-run:
+    needs: consume
+    name: Run ARM-host CN artifacts on ${{ matrix.system }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {system: linux, runner: ubuntu-24.04, file: linux}
+          - {system: macos, runner: macos-14, file: macos}
+          - {system: windows, runner: windows-2022, file: windows.exe}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # No checkout, compiler, mcpp or runtime install: run these exact bytes.
+      - uses: actions/download-artifact@v4
+        with:
+          name: published-cn-arm64-openkal-targets
+          path: art
+      - name: Validate artifact identity and real target execution
+        env:
+          TARGET_SYSTEM: ${{ matrix.system }}
+          TARGET_FILE: ${{ matrix.file }}
+        run: |
+          set -euo pipefail
+          cd art
+          sha256sum -c SHA256SUMS
+          grep -Eq '^[0-9a-f]{40}$' source-sha.txt
+          grep -Eq '^[0-9a-f]{40}$' engine-release-sha.txt
+          grep -Eq '^[0-9a-f]{40}$' index-source-sha.txt
+          grep -Eq '^[0-9a-f]{64}$' threads-source-sha256.txt
+          chmod +x "$TARGET_FILE"
+          if [ "$TARGET_SYSTEM" = macos ]; then
+            codesign -dv "$TARGET_FILE" 2>&1 | grep -q 'adhoc\|Signature'
+          fi
+          "./$TARGET_FILE" > output.log 2>&1
+          cat output.log
+          grep -q 'sorted: 2 4 7' output.log
+          grep -q 'caught: 42' output.log
+          grep -q 'unwound: true' output.log
+          grep -q 'import std over openkal: ok' output.log
+          case "$TARGET_SYSTEM" in
+            windows) threads_file=windows-threads.exe ;;
+            *) threads_file="$TARGET_SYSTEM-threads" ;;
+          esac
+          chmod +x "$threads_file"
+          if [ "$TARGET_SYSTEM" = macos ]; then
+            codesign -dv "$threads_file" 2>&1 | grep -q 'adhoc\|Signature'
+          fi
+          "./$threads_file" > threads.log 2>&1
+          cat threads.log
+          grep -qxF 'openkal hosted threads: isolation, destructors and concurrent unwind ok' threads.log
+          grep -qxF 'openkal indexed JSON: dump, parse, literals and ordered_json ok' threads.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: published-cn-arm64-target-run-${{ matrix.system }}
+          path: |
+            art/output.log
+            art/threads.log
+          if-no-files-found: warn

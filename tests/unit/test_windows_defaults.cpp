@@ -41,7 +41,7 @@ TEST(WindowsDefaults, FirstRunPinsParse) {
     namespace pins = mcpp::toolchain::triple::pins;
     for (auto spec : { pins::kFirstRunMac, pins::kFirstRunWinMsvc,
                        pins::kFirstRunWinGnu, pins::kFirstRunLinuxX86_64,
-                       pins::kFirstRunLinuxOther }) {
+                       pins::kFirstRunLinuxAarch64, pins::kFirstRunLinuxOther }) {
         auto parsed = mcpp::toolchain::parse_toolchain_spec(std::string(spec));
         ASSERT_TRUE(parsed.has_value()) << spec;
         EXPECT_FALSE(parsed->version.empty()) << spec;
@@ -112,4 +112,17 @@ TEST(WindowsDefaults, GnuFallbackTargetIsWindowsGnu) {
     EXPECT_EQ(t->os, "windows");
     EXPECT_EQ(t->env, "gnu");
     EXPECT_TRUE(t->is_windows_gnu());
+}
+
+TEST(LinuxDefaults, NativeArm64UsesLlvmAndOtherDefaultsRemainStable) {
+    namespace pins = mcpp::toolchain::triple::pins;
+    EXPECT_EQ(pins::linux_default_toolchain("aarch64"), "llvm@23.1.3");
+    EXPECT_EQ(pins::linux_default_toolchain("x86_64"), "gcc@16.1.0");
+    EXPECT_EQ(pins::linux_default_toolchain("riscv64"), "gcc@15.1.0-musl");
+    auto target = mcpp::toolchain::triple::parse("aarch64-linux-gnu");
+    ASSERT_TRUE(target);
+    auto row = mcpp::toolchain::triple::find_known_target(*target);
+    ASSERT_TRUE(row);
+    EXPECT_EQ(row->pin, pins::kFirstRunLinuxAarch64);
+    EXPECT_FALSE(target->pin_is_capability());
 }

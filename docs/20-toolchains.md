@@ -24,10 +24,11 @@ host-aware:
 
 - Linux x86_64 uses `gcc@16.1.0` for the native glibc ABI, so X11, OpenGL, and
   system libraries work out of the box.
+- Linux aarch64 uses `llvm@23.1.3` for the native glibc ABI (2026.10.8.1+).
 - Other Linux architectures use `gcc@15.1.0-musl`, a self-contained static
   toolchain.
-- macOS uses `llvm@20.1.7`.
-- Windows with a usable MSVC installation uses `llvm@20.1.7` for the MSVC ABI.
+- macOS uses `llvm@23.1.3`.
+- Windows with a usable MSVC installation uses `llvm@23.1.3` for the MSVC ABI.
   Without usable MSVC, it uses `gcc@16.1.0` with target
   `x86_64-windows-gnu` (MinGW-w64, static by default).
 
@@ -60,7 +61,7 @@ this model with a one-line `note:` hint.
 
 ```bash
 mcpp toolchain install gcc 16.1.0           # host target (GNU libc on Linux)
-mcpp toolchain install llvm 20.1.7          # LLVM/Clang, default on macOS and Windows with usable MSVC
+mcpp toolchain install llvm 23.1.3          # LLVM/Clang, default on macOS and Windows with usable MSVC
 mcpp toolchain install gcc 16 --target x86_64-linux-musl    # musl target payload
 mcpp toolchain install --target x86_64-windows-gnu          # family omitted → the
                                             # target's convention pin (gcc@16.1.0)
@@ -91,6 +92,18 @@ The pair persists as `[toolchain] default = "gcc@16.1.0"` +
 configs with combined spellings like `default = "gcc@15.1.0-musl"` keep
 working unchanged.)
 
+On native Linux aarch64 (2026.10.8.1+), an explicit migration selects both
+LLVM 23.1.3 and the GNU target after the native payload is published:
+
+```bash
+mcpp toolchain install llvm 23.1.3
+mcpp toolchain default llvm@23.1.3 --target aarch64-linux-gnu
+```
+
+The command records `llvm@23.1.3` and `aarch64-linux-gnu` as the default pair.
+Existing configurations remain effective until explicitly changed; project
+manifest declarations retain their precedence.
+
 ### Compiler selection for a build
 
 Five things can name it. They are ranked, and the rank is what makes the two
@@ -113,7 +126,7 @@ the required family for that build:
 ```
 $ mcpp build
    Resolving toolchain
-    Resolved llvm@22.1.8 → …/xim-x-llvm/22.1.8/bin/clang++
+    Resolved llvm@23.1.3 → …/xim-x-llvm/23.1.3/bin/clang++
              required by openkal-llvm-runtime@0.1.3 (`requires = ["mcpp:compiler=llvm"]`),
              not your gcc@16.1.0 — this project only
 ```
@@ -159,7 +172,7 @@ The output has two blocks — one per axis:
 Toolchains:
   *  gcc 16.1.0              (default)
      gcc 15.1.0
-     llvm 22.1.8
+     llvm 23.1.3
 
 Targets:
      TARGET                  NOTE                  TOOLCHAIN         STATUS
@@ -171,7 +184,7 @@ Targets:
 
 Available toolchains (run `mcpp toolchain install <family> <version>`):
      gcc 15.1.0 / 13.3.0 / 11.5.0 / 9.4.0
-     llvm 20.1.7
+     llvm 20.1.7 / 22.1.8
 ```
 
 `*` marks the default pair. The Targets block is the live view of the target
@@ -429,7 +442,7 @@ and records, in the shape `msvc@system` has always had.
 ```toml
 [toolchain]
 default   = { path = "/opt/llvm-trunk" }
-bootstrap = "llvm@22.1.8"
+bootstrap = "llvm@23.1.3"
 ```
 
 Build programs (`build.mcpp`), host tools and host modules are compiled and run
@@ -638,7 +651,7 @@ with `sysroot`, using the same spellings (2026.9.24.1+):
 
 ```toml
 [toolchain]
-windows = "llvm@22.1.8"
+windows = "llvm@23.1.3"
 
 [target.x86_64-windows-msvc]
 sysroot = "msvc@14.44.35207"     # or "msvc@system" (the default), or "xim:msvc@14.44.35207"
@@ -722,11 +735,11 @@ only thing that can. So the payload NAME is fixed while the version is open:
 
 ```toml
 [target.aarch64-linux-android]
-toolchain = "llvm@22.1.8"        # refused
+toolchain = "llvm@23.1.3"        # refused
 ```
 
 ```
-error: target 'aarch64-linux-android' cannot be emitted by 'llvm@22.1.8'.
+error: target 'aarch64-linux-android' cannot be emitted by 'llvm@23.1.3'.
        An Android target needs bionic, not just an aarch64 or x86_64 back end:
        its headers, its per-API-level stubs and its loader path are inside the
        NDK, and no package adds them to another compiler.
@@ -806,7 +819,7 @@ two SDK toolchains above because they answer the same question differently.
 
 **The compiler is ours; only the SDK is Apple's.** Any sufficiently new clang
 emits arm64 Mach-O for an iOS deployment target, so these rows pin
-`llvm@22.1.8` -- the ordinary payload, the same one `aarch64-macos` uses. What
+`llvm@23.1.3` -- the ordinary payload, the same one `aarch64-macos` uses. What
 cannot be packaged is the iPhoneOS and iPhoneSimulator SDK: it ships inside
 Xcode and is not redistributable. So mcpp **locates** it, through
 `xcrun --sdk <name> --show-sdk-path`, exactly as it has always located the
@@ -816,8 +829,8 @@ That is why these rows carry no `sysroot` entry. That column names a package,
 and a located directory is not one.
 
 ```bash
-mcpp build --target aarch64-ios        # resolves llvm@22.1.8 + the iPhoneOS SDK
-mcpp build --target aarch64-ios-sim    # resolves llvm@22.1.8 + the Simulator SDK
+mcpp build --target aarch64-ios        # resolves llvm@23.1.3 + the iPhoneOS SDK
+mcpp build --target aarch64-ios-sim    # resolves llvm@23.1.3 + the Simulator SDK
 ```
 
 ## The source of each tool (2026.10.1.3+)
@@ -839,7 +852,7 @@ came from, and the statement that chose it:
 
 ```
    Resolving toolchain
-   Bootstrap llvm@22.1.8 → @mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/clang++
+   Bootstrap llvm@23.1.3 → @mcpp/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/clang++
        Using toolchain clang 23.0.0git ← /opt/acme-llvm   [program · build.mcpp:9]
       Target x86_64-unknown-linux-gnu
        Using xim:cmake ← /usr/bin/cmake                   [custom · mcpp.toml:22]
@@ -933,6 +946,39 @@ warning: the assembler for this build is the host's ('/usr/bin/nasm'), not the o
 that reaches a build silently is.** That is why the entries above are a table
 rather than a prohibition: each is reachable, each has a reason, and each says
 so where it is used.
+
+### System headers: none are the host's (2026.10.8.1+)
+
+A build on a managed C library searches no system header directory of the
+host. The managed glibc and `linux-headers` supply the whole system header
+surface, and each compiler family is closed against the host's copy:
+
+- **clang** carries `-nostdlibinc` on the native Linux rows. The driver keeps
+  its own resource headers and stops its fallback to `/usr/include`, including
+  when the driver configuration file is bypassed. A directly invoked
+  `clang++` reads the same token from the configuration file mcpp regenerates
+  after installation.
+- **GCC** compiles with `--sysroot=<the xlings subos>`, so its search ends at
+  the subos's `usr/include`. When no usable subos exists, it falls back to the
+  payload layout and receives `-isysroot <the C library payload>`, which
+  replaces the sysroot recorded when the compiler was built: that recorded
+  path belongs to the machine that built the compiler and is otherwise
+  searched wherever it happens to exist.
+
+A header that only the host has is therefore not found. A project that needs
+one names the directory in its own manifest, where the dependency on the host
+is visible:
+
+```toml
+[build]
+cflags   = ["-idirafter", "/usr/include"]
+cxxflags = ["-idirafter", "/usr/include"]
+```
+
+`-idirafter` places the directory after the managed headers, so the C library
+the build links against still supplies its own declarations. `allow_host_libs`
+does not change the header search: it concerns the libraries a link may
+resolve from the host.
 
 ### The host surface this adds, named and bounded
 
@@ -1060,7 +1106,7 @@ If a project needs to pin a specific version rather than rely on the global defa
 [toolchain]
 default = "gcc@16.1.0"
 linux   = "gcc@16.1.0"
-macos   = "llvm@20.1.7"
+macos   = "llvm@23.1.3"
 ```
 
 A project-level declaration takes precedence over the global default configuration.
@@ -1099,7 +1145,7 @@ name a different compiler and supply nothing:
 ```
 $ mcpp build --target x86_64-linux-musl        # [toolchain] default = "llvm@…"
 error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
-       payload, and 'llvm@22.1.8' has none here.
+       payload, and 'llvm@23.1.3' has none here.
 ```
 
 Two rows answer a different question, and their pin cannot be overridden at all:
@@ -1255,6 +1301,51 @@ workarounds were measured downstream:
 - Build on an image whose MSVC STL predates 14.51, such as `windows-2022`.
 
 Tracked as [mcpp#609](https://github.com/mcpp-community/mcpp/issues/609).
+
+## Known Toolchain Limitation: Coroutines on the 32-bit x86 Microsoft ABI (clang 23)
+
+clang 23 does not support C++20 coroutines on `i686-pc-windows-msvc`. It does
+not predefine `__cpp_impl_coroutine` for that target, and it reports code that
+uses coroutines there with `-Wcoroutines-unsupported-target`. clang 22.1.8 and
+every other target mcpp builds for, including `x86_64-pc-windows-msvc` and
+`i686-pc-windows-gnu`, still predefine the macro.
+
+The MSVC STL keys `<coroutine>` on that macro, so the header is empty on this
+target. Two failures follow:
+
+- **The C++23 std module.** `std.ixx` includes `<generator>` under C++23, and
+  `<generator>` uses `coroutine_handle` and `suspend_always` without checking
+  for them. The precompile stops inside `generator`.
+- **Code that uses coroutines.** The compile stops at `use of undeclared
+  identifier 'std'` and `std::coroutine_traits type was not found`, before
+  clang's own coroutine diagnostic is reached.
+
+mcpp follows the compiler. It does not define the macro and does not alter the
+std module; it appends a note to either failure, naming the cause and the
+options. The note is decided after the failure, from the failed command and a
+`-dM -E` probe of the same compiler and target, so a build that succeeds is not
+affected and the note disappears when the compiler or the STL changes.
+
+The options, in the order the note gives them:
+
+- Build the package as C++20. `import std` and `import std.compat` do not
+  include `<generator>` there and build on this target. This does not make
+  coroutines available.
+- Name an LLVM that still enables coroutines for this target:
+
+  ```toml
+  [target.i686-windows-msvc]
+  toolchain = "llvm@22.1.8"
+  ```
+
+  The newer compiler treats coroutines on this ABI as unsupported; code that
+  uses them on this target does so at its own risk.
+
+Defining `__cpp_impl_coroutine` in a project is not a workaround. It switches
+on a feature the compiler has declared unsupported for this ABI.
+
+`i686-windows-msvc` is not a row of the target table; a project that builds
+for it declares `[target.i686-windows-msvc]`, as for any custom triple.
 
 ## The C++ runtime contract (`cxx_runtime`)
 

@@ -133,17 +133,17 @@ jobs:
       # #729. This step reported success for a year while the build failed:
       # the build was piped into `tee` with no pipefail, and the only
       # assertion was a grep for the resolution line. It now fails on the
-      # build's own status. It builds with llvm@22.1.8, the LLVM row mcpp
+      # build's own status. It builds with llvm@23.1.3, the LLVM row mcpp
       # develops with (`[toolchain] macos`) and that Windows CI resolves;
       # libc++ 20's `std` module does not expose directory_iterator's
       # comparison, so llvm@20.1.7 cannot build mcpp's own sources.
-      - name: "Toolchain: LLVM 22.1.8 — build mcpp"
+      - name: "Toolchain: LLVM 23.1.3 — build mcpp"
         run: |
           set -o pipefail
-          "$MCPP" toolchain install llvm 22.1.8
+          "$MCPP" toolchain install llvm 23.1.3
           "$MCPP" clean
-          "$MCPP" build --toolchain llvm@22.1.8 2>&1 | tee build.log
-          grep -q "Resolved llvm@22.1.8" build.log
+          "$MCPP" build --toolchain llvm@23.1.3 2>&1 | tee build.log
+          grep -q "Resolved llvm@23.1.3" build.log
 
       # #722's function-size gate, which needs the compile database a
       # successful clang build writes at the project root, and clang-tidy from
@@ -151,7 +151,7 @@ jobs:
       # mcpp with clang (#729).
       - name: "Function sizes of the prepare decomposition (#722)"
         run: |
-          "$XLINGS_BIN" install xim:llvm-tools@22.1.8 -y
+          "$XLINGS_BIN" install xim:llvm-tools@23.1.3 -y
           bash .github/tools/check_function_sizes.sh
 
   # Integration: the mcpp built from THIS PR's source builds & runs a real

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm unix-shell
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # One source, one host, every machine the ecosystem serves.
 #
 # THIS IS CHEAP BECAUSE OF WHAT THE ECOSYSTEM IS, AND THAT IS THE POINT.
@@ -47,7 +48,7 @@ while IFS='|' read -r target deps want_fmt want_link; do
     d="$work/$target"; mkdir -p "$d/src"; cd "$d"
     {
         printf '[package]\nname    = "sweep"\nversion = "0.1.0"\n\n'
-        printf '[toolchain]\ndefault = "llvm@22.1.8"\n\n'
+        printf "[toolchain]\ndefault = \"llvm@${LLVM_VERSION}\"\n\n"
         # `sysroot = ""` IS HOW A PROJECT SAYS "NO C LIBRARY", AND IT IS NOT
         # IMPLIED BY THE TARGET. `riscv64-none-elf` names a machine with no
         # operating system; whether the program has a C library is a separate

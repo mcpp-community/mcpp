@@ -10,18 +10,10 @@ name: ci-macos
 
 on:
   workflow_call:
-    inputs:
-      known-red:
-        description: >
-          Include the legs that are known red (#669). ci.yml passes true on
-          main, on dispatch and on a pull request labelled `macos-27` (rule R7).
-        type: boolean
-        required: false
-        default: true
 
 jobs:
   macos-xlings-llvm:
-    name: macOS ARM64 — xlings LLVM end-to-end (${{ matrix.image }}${{ matrix.known_red != '' && format(', known red {0}', matrix.known_red) || '' }})
+    name: macOS ARM64 — xlings LLVM end-to-end (${{ matrix.image }})
     # Two images: macos-15, the image every other macOS job uses, and macOS 27,
     # the newest macOS release. The newest release is where a change of the SDK,
     # the system libc++ headers or the loader first shows; the packaged binaries
@@ -31,20 +23,19 @@ jobs:
     # Xcode 27, actions/runner-images#14404); there is no `macos-27` label, and
     # a job naming one waits for a runner that never comes. The "System info"
     # step prints the OS the label delivered.
+    #
+    # Both images run on every pull request: while the line was on LLVM 22.1.8
+    # the xcode-27 leg was known red (#669, the arm64e.x1 .tbd stubs, gated
+    # behind an input so a PR that could not fix it held no green slot) — the
+    # 23.1.3 line move removed that cause, and a change can change the outcome
+    # here again.
     strategy:
       fail-fast: false
       matrix:
-        # The known-red leg is in the matrix only when the caller asks for it:
-        # a pull request cannot change its outcome unless it addresses #669,
-        # and on every other one it held a macOS slot to fail in three minutes.
-        include: ${{ fromJSON(inputs.known-red && '[{"image":"macos-15","known_red":""},{"image":"xcode-27","known_red":"#669"}]' || '[{"image":"macos-15","known_red":""}]') }}
+        include:
+          - image: macos-15
+          - image: xcode-27
     runs-on: ${{ matrix.image }}
-    # KNOWN RED, MACHINE-READABLY (the 2026-09-28 design, WS7). A leg whose
-    # failure has a tracked external cause carries that issue in `known_red`:
-    # the leg may fail without failing the workflow, its own result and log
-    # stay visible, and .github/tools/check_workflow_assertions.py requires
-    # the issue to be open. The leg leaves the list when #669 closes.
-    continue-on-error: ${{ matrix.known_red != '' }}
     timeout-minutes: 45
     # NOTE: no MCPP_VERBOSE here — keep this job's output shape identical to
     # ci-macos-e2e.yml, which asserts mcpp's default quiet output (48/53).
@@ -96,11 +87,9 @@ jobs:
       # (modules/platform/src/macos/macos.cppm). These raw compiles state the
       # SDK the same way, on purpose.
       #
-      # KNOWN RED on the xcode-27 image, this job and "e2e suite (macOS ARM64,
-      # self-host, xcode-27)" both: the Command Line Tools SDK there ships an
-      # `arm64e.x1` .tbd stub ld64.lld 22.1.8 cannot parse — fixed upstream
-      # (llvm-project#222721) after 22.1.8 was tagged, not yet in any release.
-      # See mcpp-community/mcpp#669 for the evidence and status.
+      # On the 22.1.8 line this was the known-red spot (mcpp#669 has the
+      # evidence): both SDKs on the macOS 27 image ship `arm64e.x1` .tbd stubs
+      # that ld64.lld 22.1.8 cannot parse. LLVM 23.1.3 carries the fix.
       - name: The SDK mcpp selects for an Apple target
         run: echo "APPLE_SYSROOT=-isysroot $(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
 

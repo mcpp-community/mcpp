@@ -18,8 +18,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / ".github" / "tools" / "check_default_toolchain_docs.py"
 DOCS = ["docs/01-getting-started.md", "docs/zh/01-getting-started.md",
         "docs/20-toolchains.md", "docs/zh/20-toolchains.md"]
-ROWS = [("Linux", "x86_64", "gcc@16.1.0"), ("Linux", "aarch64", "gcc@15.1.0-musl"),
-        ("Darwin", "arm64", "llvm@20.1.7"), ("Windows", "AMD64", "llvm@20.1.7"),
+ROWS = [("Linux", "x86_64", "gcc@16.1.0"), ("Linux", "aarch64", "llvm@23.1.3"), ("Linux", "riscv64", "gcc@15.1.0-musl"),
+        ("Darwin", "arm64", "llvm@23.1.3"), ("Windows", "AMD64", "llvm@23.1.3"),
         ("Windows", "AMD64", "gcc@16.1.0")]
 
 
@@ -41,11 +41,11 @@ class DefaultToolchainDocs(unittest.TestCase):
             for rel in DOCS:
                 (root / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(REPO_ROOT / rel, root / rel)
-            self.assertEqual(run(root, "Darwin", "arm64", "llvm@20.1.7"), 0)
+            self.assertEqual(run(root, "Darwin", "arm64", "llvm@23.1.3"), 0)
             zh = root / "docs/zh/01-getting-started.md"
             zh.write_text(zh.read_text(encoding="utf-8").replace(
-                "| macOS | `llvm@20.1.7` |", "| macOS | `llvm@22.1.8` |"), encoding="utf-8")
-            self.assertEqual(run(root, "Darwin", "arm64", "llvm@20.1.7"), 1)
+                "| macOS | `llvm@23.1.3` |", "| macOS | `llvm@22.1.8` |"), encoding="utf-8")
+            self.assertEqual(run(root, "Darwin", "arm64", "llvm@23.1.3"), 1)
 
     def test_a_different_answer_fails_against_the_tables(self) -> None:
         self.assertEqual(run(REPO_ROOT, "Darwin", "arm64", "llvm@22.1.8"), 1)

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # `[build] module_extensions` on the platform's DEFAULT toolchain (#412).
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 #
 # WHY THIS EXISTS SEPARATELY FROM 217. `217_module_extensions.sh` declares
 # `# requires: gcc`, and `run_all.sh` deliberately does not grant `gcc` on
@@ -39,15 +40,15 @@ cd "$TMP/proj"
 # `.ixx` is the extension this is about: cl's own spelling, and the one an MSVC
 # project arrives with. The toolchain block gives each platform its default —
 # the point is that no leg is skipped, not that they all use the same compiler.
-cat > mcpp.toml <<'EOF'
+cat > mcpp.toml <<EOF
 [package]
 name    = "extdefault"
 version = "0.1.0"
 
 [toolchain]
 default = "gcc@16.1.0"
-macos   = "llvm@22.1.8"
-windows = "llvm@20.1.7"
+macos   = "llvm@${LLVM_VERSION}"
+windows = "llvm@${LLVM_VERSION}"
 
 [build]
 module_extensions = [".ixx"]

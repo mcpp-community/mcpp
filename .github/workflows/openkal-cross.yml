@@ -1,4 +1,4 @@
-name: openkal cross-build (3 hosts × 3 targets)
+name: openkal cross-build (4 hosts × 3 targets)
 
 # WHAT THIS WORKFLOW ASSERTS, AND WHY IT IS A MATRIX RATHER THAN A ROW.
 #
@@ -31,17 +31,18 @@ name: openkal cross-build (3 hosts × 3 targets)
 #
 # ── The shape ──────────────────────────────────────────────────────────────
 #
-# THREE build jobs, one per host, each producing THREE artefacts — nine builds.
+# FOUR build jobs, one per host, each producing two applications for THREE
+# targets — twenty-four binaries across twelve host/target cells.
 # THREE run jobs, one per system, each executing the artefact FOR that system
-# produced by ALL THREE hosts.
+# produced by ALL FOUR hosts, including native Linux ARM64.
 #
-#              build on Linux   build on macOS   build on Windows
-#   run Linux                                       
-#   run macOS                                       
-#   run Windows                                     
+#              Linux x86_64   Linux aarch64   macOS ARM64   Windows x86_64
+#   run Linux
+#   run macOS
+#   run Windows
 #
-# The diagonal is an ordinary native build. The six off-diagonal cells are
-# the claim, and they are what a single-host workflow cannot reach.
+# Three cells are native. The nine crosses include every output built on Linux
+# ARM64, and are what a single-host workflow cannot reach.
 #
 # THE RUN JOBS INSTALL NOTHING — not mcpp, not a compiler, not a C runtime.
 # A program above openkal carries its C library, its C++ runtime and its
@@ -49,10 +50,12 @@ name: openkal cross-build (3 hosts × 3 targets)
 # toolchain step is ever added to one of them because "the program needs it",
 # that is the finding rather than the fix.
 #
-# AND THE ASSERTION IS ON THE OUTPUT, NOT THE EXIT STATUS. The program prints
-# four lines, and `unwound: true` is the one a link cannot fake: it says a
+# AND THE ASSERTION IS ON THE OUTPUT, NOT THE EXIT STATUS. The original program
+# prints four lines, and `unwound: true` is the one a link cannot fake: it says a
 # destructor ran while an exception was being carried out of a frame, which
 # means the unwinder found this image's own frame descriptions.
+# The companion also requires its JSON and TLS/thread/concurrent unwind
+# success lines on each target system.
 
 on:
   workflow_call:
@@ -98,9 +101,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { host: linux,   runner: ubuntu-24.04  }
-          - { host: macos,   runner: macos-14      }
-          - { host: windows, runner: windows-2022  }
+          - { host: linux,         runner: ubuntu-24.04,     artifact: linux-x86_64   }
+          - { host: linux-aarch64, runner: ubuntu-24.04-arm, artifact: linux-aarch64  }
+          - { host: macos,         runner: macos-14,         artifact: macos-aarch64  }
+          - { host: windows,       runner: windows-2022,     artifact: windows-x86_64 }
     defaults:
       run:
         shell: bash
@@ -119,7 +123,7 @@ jobs:
       # and that pin does not move when mcpp is released — so it names a version
       # the index no longer carries, and a bare install inside the checkout
       # obeys the pin rather than the argument. `bootstrap-mcpp` already knows
-      # this (it runs `install_pinned_mcpp.sh`), works on all three systems, and
+      # this (it runs `install_pinned_mcpp.sh`), works on all four hosts, and
       # shares the cache lineage every other job lands on.
       #
       # ⇒ Two bootstraps would be two things to keep correct, and the second one
@@ -136,7 +140,7 @@ jobs:
       - if: matrix.host != 'macos'
         uses: ./.github/actions/use-built-mcpp
         with:
-          host: ${{ matrix.host == 'linux' && 'linux-x86_64' || 'windows-x86_64' }}
+          host: ${{ matrix.artifact }}
 
       - name: Name this commit's mcpp MCPP_UNDER_TEST
         if: matrix.host != 'macos'
@@ -209,8 +213,8 @@ jobs:
           # Install, then select. `toolchain default` names one and does not
           # fetch it.
           "$MCPP_UNDER_TEST" self config --mirror GLOBAL 2>/dev/null || true
-          "$MCPP_UNDER_TEST" toolchain install llvm 22.1.8
-          "$MCPP_UNDER_TEST" toolchain default 'llvm@22.1.8'
+          "$MCPP_UNDER_TEST" toolchain install llvm 23.1.3
+          "$MCPP_UNDER_TEST" toolchain default 'llvm@23.1.3'
 
       # WHAT THIS RUNNER ACTUALLY PROVIDES FOR THE mingw TARGET. On a Windows
       # host `openkal-windows`'s build program generates no import libraries
@@ -226,7 +230,7 @@ jobs:
         run: |
           echo "PATH=$PATH" | tr ':' '\n' | head -40
           ls "${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs" 2>/dev/null || echo "(no xpkgs dir)"
-          CLANG=$(ls "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/clang++.exe 2>/dev/null | head -1)
+          CLANG=$(ls "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/clang++.exe 2>/dev/null | head -1)
           echo "clang=$CLANG"
           [ -n "$CLANG" ] && "$CLANG" --target=x86_64-w64-windows-gnu -print-search-dirs
           [ -n "$CLANG" ] && "$CLANG" --target=x86_64-w64-windows-gnu -print-file-name=libntdll.a
@@ -250,15 +254,31 @@ jobs:
           "$GITHUB_WORKSPACE/.github/tools/git_clone_retry.sh" \
             --quiet --depth 1 -b "$OPENKAL_BRANCH" \
             https://github.com/mcpplibs/openkal-llvm-runtime "$RUNNER_TEMP/okl"
+          "$GITHUB_WORKSPACE/.github/tools/git_clone_retry.sh" \
+            --quiet --depth 1 https://github.com/mcpp-community/mcpp-index "$RUNNER_TEMP/openkal-index"
+          export MCPP_OPENKAL_INDEX="$RUNNER_TEMP/openkal-index"
           cd "$RUNNER_TEMP/okl/examples/same-source"
           mkdir -p "$RUNNER_TEMP/out"
+          git -C "$RUNNER_TEMP/okl" rev-parse HEAD > "$RUNNER_TEMP/out/source-sha.txt"
+          git -C "$MCPP_OPENKAL_INDEX" rev-parse HEAD > "$RUNNER_TEMP/out/index-source-sha.txt"
+          echo "openkal-llvm-runtime source SHA: $(cat "$RUNNER_TEMP/out/source-sha.txt")"
+          python3 - "$GITHUB_WORKSPACE/tests/fixtures/openkal-hosted-threads/src/main.cpp.in" "$RUNNER_TEMP/out/threads-source-sha256.txt" <<'PYHASH'
+          import hashlib, pathlib, sys
+          pathlib.Path(sys.argv[2]).write_text(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest() + "\n")
+          PYHASH
+          BIN="${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-llvm/23.1.3/bin"
+          READOBJ="$BIN/llvm-readobj"
+          [ -x "$READOBJ" ] || READOBJ="$BIN/llvm-readobj.exe"
+          [ -x "$READOBJ" ] || { echo "::error::no llvm-readobj under $BIN"; exit 1; }
           # The three HOSTED targets. Bare metal is verified by
           # `openkal-llvm-runtime`'s own CI under qemu; it has no runner here to
           # execute on, and a build-only cell in a workflow whose point is
           # running would be the weaker claim.
           for t in x86_64-linux-gnu aarch64-macos x86_64-windows-gnu; do
             rm -rf target
-            "$MCPP_UNDER_TEST" build --target "$t"
+            # The upstream manifest may pin an older LLVM line. The invocation
+            # selects this candidate explicitly, including on the ARM64 host.
+            "$MCPP_UNDER_TEST" build --target "$t" --toolchain llvm@23.1.3
             a=$(find target -type f \( -name 'openkal-same-source' -o -name 'openkal-same-source.exe' \) | head -1)
             [ -n "$a" ] || { echo "::error::$t produced no artefact on ${{ matrix.host }}"; exit 1; }
             case "$t" in
@@ -266,7 +286,27 @@ jobs:
               aarch64-macos)      cp "$a" "$RUNNER_TEMP/out/macos"       ;;
               *)                  cp "$a" "$RUNNER_TEMP/out/linux"       ;;
             esac
+            "$READOBJ" --file-headers "$a" > "$RUNNER_TEMP/out/$t.headers.txt"
+            case "$t" in
+              aarch64-macos) arch=aarch64 ;;
+              *) arch=x86_64 ;;
+            esac
+            grep -q "Arch: $arch" "$RUNNER_TEMP/out/$t.headers.txt" \
+              || { echo "::error::$t emitted the wrong architecture"; cat "$RUNNER_TEMP/out/$t.headers.txt"; exit 1; }
             echo "${{ matrix.host }} → $t : $(ls -l "$a" | awk '{print $5}') bytes"
+            cat "$RUNNER_TEMP/out/$t.headers.txt"
+            MCPP="$MCPP_UNDER_TEST" LLVM_TOOLCHAIN=llvm@23.1.3 \
+              bash "$GITHUB_WORKSPACE/.github/tools/check_openkal_hosted_threads.sh" \
+                "$RUNNER_TEMP/okl" "$t" "$RUNNER_TEMP/threads-binary.txt"
+            thread_bin=$(cat "$RUNNER_TEMP/threads-binary.txt")
+            case "$t" in
+              x86_64-windows-gnu) thread_output=windows-threads.exe ;;
+              aarch64-macos) thread_output=macos-threads ;;
+              *) thread_output=linux-threads ;;
+            esac
+            cp "$thread_bin" "$RUNNER_TEMP/out/$thread_output"
+            "$READOBJ" --file-headers "$thread_bin" > "$RUNNER_TEMP/out/$t.threads.headers.txt"
+            grep -q "Arch: $arch" "$RUNNER_TEMP/out/$t.threads.headers.txt"
           done
 
       # THE ONLY CRITERION THE `builtins` TOKEN HAS, AND WHY IT IS HERE.
@@ -313,7 +353,7 @@ jobs:
       - name: builtins = "iso" withdraws the Apple pattern fill
         run: |
           set -euo pipefail
-          BIN="${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-llvm/22.1.8/bin"
+          BIN="${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-llvm/23.1.3/bin"
           # Not `ls ... | head -1`: with `pipefail` the absent candidate's
           # exit status ends the step before the guard below is reached.
           pick() {  # $1..$n = candidate paths; prints the first executable one
@@ -360,7 +400,7 @@ jobs:
           openkal-llvm-runtime = { path = "../.." }
 
           [toolchain]
-          default = "llvm@22.1.8"
+          default = "llvm@23.1.3"
           PROJECT
 
           # THE READER ASKS FOR UNDEFINED SYMBOLS, NOT FOR BYTES.
@@ -399,7 +439,7 @@ jobs:
           if-no-files-found: error
 
   run:
-    name: run 3 builds on ${{ matrix.system }}
+    name: run 4 builds on ${{ matrix.system }}
     needs: build
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
@@ -420,11 +460,36 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { pattern: openkal-built-on-*, path: art }
 
-      - name: The same program, from all three build hosts
+      - name: The same program, from all four build hosts
         run: |
           set -euo pipefail
           fail=0
-          for host in linux macos windows; do
+          source_sha=""
+          threads_sha=""
+          index_sha=""
+          mkdir -p run-evidence
+          for host in linux linux-aarch64 macos windows; do
+            sha_file="art/openkal-built-on-$host/source-sha.txt"
+            if [ ! -f "$sha_file" ]; then
+              echo "::error::source SHA missing for $host"; fail=1; continue
+            fi
+            sha=$(tr -d '\r\n' < "$sha_file")
+            if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::invalid source SHA for $host: $sha"; fail=1; continue
+            fi
+            if [ -z "$source_sha" ]; then source_sha="$sha"; fi
+            if [ "$sha" != "$source_sha" ]; then
+              echo "::error::$host built source $sha, expected $source_sha"; fail=1; continue
+            fi
+            echo "openkal-llvm-runtime source SHA: $sha"
+            index_commit=$(tr -d '\r\n' < "art/openkal-built-on-$host/index-source-sha.txt")
+            [[ "$index_commit" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::invalid index source SHA'; exit 1; }
+            if [ -z "$index_sha" ]; then index_sha="$index_commit"; fi
+            [ "$index_commit" = "$index_sha" ] || { echo '::error::index sources differ'; exit 1; }
+            probe_sha=$(tr -d '\r\n' < "art/openkal-built-on-$host/threads-source-sha256.txt")
+            [[ "$probe_sha" =~ ^[0-9a-f]{64}$ ]] || { echo '::error::invalid hosted probe digest'; exit 1; }
+            if [ -z "$threads_sha" ]; then threads_sha="$probe_sha"; fi
+            [ "$probe_sha" = "$threads_sha" ] || { echo '::error::hosted probe sources differ'; exit 1; }
             bin="art/openkal-built-on-$host/${{ matrix.file }}"
             echo "──────── built on $host, running on ${{ matrix.system }} ────────"
             if [ ! -f "$bin" ]; then
@@ -443,6 +508,7 @@ jobs:
               echo "::error::built on $host: it did not run"; cat out.log; fail=1; continue
             fi
             cat out.log
+            cp out.log "run-evidence/$host.same-source.log"
             ok=1
             grep -q 'sorted: 2 4 7' out.log || ok=0
             grep -q 'caught: 42'    out.log || ok=0
@@ -450,9 +516,29 @@ jobs:
             grep -q 'unwound: true' out.log || ok=0
             grep -q 'import std over openkal: ok' out.log || ok=0
             [ "$ok" = 1 ] || { echo "::error::built on $host: wrong output"; fail=1; }
+            case "${{ matrix.system }}" in
+              windows) threads_file=windows-threads.exe ;;
+              *) threads_file="${{ matrix.system }}-threads" ;;
+            esac
+            threads_bin="art/openkal-built-on-$host/$threads_file"
+            chmod +x "$threads_bin"
+            if [ "${{ matrix.system }}" = macos ]; then
+              codesign -dv "$threads_bin" 2>&1 | grep -q 'adhoc\|Signature'
+            fi
+            "./$threads_bin" > "run-evidence/$host.threads.log" 2>&1
+            cat "run-evidence/$host.threads.log"
+            grep -qxF 'openkal hosted threads: isolation, destructors and concurrent unwind ok' "run-evidence/$host.threads.log"
+            grep -qxF 'openkal indexed JSON: dump, parse, literals and ordered_json ok' "run-evidence/$host.threads.log"
           done
           [ "$fail" = 0 ] || exit 1
-          echo "three builds, one system, same four lines"
+          echo "four builds, one system, identical sources, exceptions and hosted TLS/threads"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openkal-target-execution-${{ matrix.system }}
+          path: run-evidence/*.log
+          if-no-files-found: warn
 
   # ──────────────────────────────────────────────────────────────────
   # The e2e scripts that BUILD the openkal ecosystem, on a runner that
@@ -502,7 +588,7 @@ jobs:
           # C library), 286-289 and 291's second half with llvm (the whole
           # stack from the graph, where openkal-llvm-runtime IS libc++).
           "$MCPP_UNDER_TEST" toolchain install gcc 16.1.0
-          "$MCPP_UNDER_TEST" toolchain install llvm 22.1.8
+          "$MCPP_UNDER_TEST" toolchain install llvm 23.1.3
 
       # THE EMULATORS, OR TWO OF THE SIX MEASURE HALF OF WHAT THEY SAY.
       #
@@ -520,40 +606,38 @@ jobs:
       # the shim on PATH dispatches against whichever home owns it, so an
       # emulator installed only in the ambient one answers "not installed" when
       # mcpp asks.
-      - name: Install the emulators, and this host's mingw-w64 (#662)
+      - name: Install the AArch64 user emulator with xlings
         run: |
           set -euo pipefail
-          # The runner image carries third-party apt lists (Google Chrome
-          # among them) that this job does not use, and a transient
-          # `Hash Sum mismatch` on one of them fails the whole update -- which
-          # killed two cross-build jobs in setup, before a single byte was
-          # compiled. Dropping the lists this job has no use for is what makes
-          # the step's failure mean something about this job.
-          #
-          # BY CONTENT, NOT BY FILENAME. The first attempt removed
-          # `google-chrome.list` and the update failed on the same URL: on
-          # ubuntu-24.04 the runner writes deb822 `.sources` files, so the
-          # name was a guess and the guess was wrong.
-          sudo grep -rlE 'dl[.]google[.]com|packages[.]microsoft[.]com' \
-               /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -f
-          # `mingw-w64` (the distro package, NOT `mingw-cross-gcc`) is what
-          # 738's `mingw-host-headers` capability probes for
-          # (`/usr/x86_64-w64-mingw32/include`). The assertion it gates --
-          # clang's own driver no longer searches the host once a graph
-          # package supplies the target's C library -- has no discriminating
-          # power without a host copy to have leaked in in the first place;
-          # this is the one runner in the fleet that installs it for that
-          # reason (run_all.sh's capability probe, and the design doc's note
-          # on `# requires:` gates CI never satisfies on its own).
-          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user mingw-w64
-          "$XLINGS_BIN" install xim:qemu-riscv -y
+          "$XLINGS_BIN" install xim:qemu-user-aarch64@7.2.0 -g -y -u
           XLINGS_HOME="${MCPP_HOME:-$HOME/.mcpp}/registry" \
-            "$XLINGS_BIN" install xim:qemu-riscv -y
-          # Reachable AND runnable, asserted before the tests: without this the
-          # scripts would simply skip and say so in a line nobody reads.
-          qemu-aarch64 --version | head -1
-          "$XLINGS_BIN" run qemu-system-riscv64 --version 2>/dev/null | head -1 \
-            || command -v qemu-system-riscv64
+            "$XLINGS_BIN" install xim:qemu-user-aarch64@7.2.0 -g -y -u
+          qemu-aarch64-static --version
+
+      - name: Install the RISC-V system emulator with xlings
+        run: |
+          set -euo pipefail
+          "$XLINGS_BIN" install xim:qemu-riscv@9.2.4-1 -g -y -u
+          XLINGS_HOME="${MCPP_HOME:-$HOME/.mcpp}/registry" \
+            "$XLINGS_BIN" install xim:qemu-riscv@9.2.4-1 -g -y -u
+          qemu-system-riscv64 --version
+
+      - name: Install the separate host MinGW header fixture with xlings
+        run: |
+          set -euo pipefail
+          source tests/e2e/_toolchain_env.sh
+          # This store stays outside MCPP_HOME. Test 738 first proves that
+          # unrestricted Clang finds its headers through PATH, then proves
+          # that the graph-supplied C library closes that host search.
+          export XLINGS_HOME="$RUNNER_TEMP/openkal-host-mingw"
+          mkdir -p "$XLINGS_HOME"
+          cd "$XLINGS_HOME"
+          "$XLINGS_BIN" config --mirror GLOBAL
+          "$XLINGS_BIN" install "xim:mingw-cross-gcc@$MINGW_CROSS_VERSION" -g -y
+          host_root="$XLINGS_HOME/data/xpkgs/xim-x-mingw-cross-gcc/$MINGW_CROSS_VERSION"
+          test -f "$host_root/x86_64-w64-mingw32/include/io.h"
+          test -x "$host_root/bin/x86_64-w64-mingw32-gcc"
+          echo "MCPP_E2E_HOST_MINGW_ROOT=$host_root" >> "$GITHUB_ENV"
 
       - name: The scripts
         run: |
@@ -567,7 +651,7 @@ jobs:
           for t in tests/e2e/285_*.sh tests/e2e/286_*.sh tests/e2e/287_*.sh \
                    tests/e2e/288_*.sh tests/e2e/289_*.sh tests/e2e/291_*.sh \
                    tests/e2e/292_*.sh tests/e2e/293_*.sh tests/e2e/294_*.sh \
-                   tests/e2e/738_*.sh tests/e2e/778_*.sh; do
+                   tests/e2e/738_*.sh tests/e2e/778_*.sh tests/e2e/891_*.sh; do
             echo "=== $t ==="
             bash "$t" 2>&1 | tee "$(basename "$t").log" || true
             rc=${PIPESTATUS[0]}
@@ -621,6 +705,8 @@ jobs:
             "OK: the list answers what can be built, not what has a payload" || fail=1
           check 738_a_graph_supplied_target_closes_the_hosts_own_search.sh \
             "PASS: 738 a graph-supplied target closes the host's own search" || fail=1
+          check 738_a_graph_supplied_target_closes_the_hosts_own_search.sh \
+            "ok: unprotected clang finds the separate host MinGW headers" || fail=1
           # mcpp#696, the link-side twin of 738: both legs, because the one
           # that separates the engines is the refusal, and a skip of either
           # prints the final line all the same.
@@ -632,4 +718,59 @@ jobs:
             "ok: aarch64-linux-musl links -lm from the graph and runs under qemu-aarch64" || fail=1
           check 778_a_graph_link_searches_no_host_directory.sh \
             "ok: a host directory in ldflags is refused, by name" || fail=1
+          # LLVM 23.1.3 Part 3 (D2/D3): the payload's C library closes the
+          # host's /usr/include, a written -idirafter reopens it, and the
+          # graph note stays away from a payload C library on both paths.
+          check 891_a_host_header_is_written_not_searched.sh \
+            "PASS: 891 a host header is written down, not searched" || fail=1
           [ "$fail" = 0 ] || exit 1
+
+
+  ecosystem-native-arm64:
+    name: openkal native stack (Linux ARM64, LLVM 23.1.3)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - uses: ./.github/actions/use-built-mcpp
+        with:
+          host: linux-aarch64
+
+      - uses: actions/checkout@v4
+        with:
+          repository: mcpp-community/mcpp-index
+          ref: main
+          path: _openkal-native-index
+
+      - name: Native platform and graph stack
+        env:
+          MCPP_VENDORED_XLINGS: ${{ env.XLINGS_BIN }}
+          MCPP_E2E_EXPECT_ARCH: aarch64
+          MCPP_E2E_LLVM_VERSION: 23.1.3
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          export MCPP="$MCPP_FRESH"
+          export MCPP_OPENKAL_INDEX="$GITHUB_WORKSPACE/_openkal-native-index"
+          git -C "$MCPP_OPENKAL_INDEX" rev-parse HEAD | tee native-openkal-index-sha.txt
+          "$MCPP" toolchain install llvm 23.1.3
+          # The existing test builds real openkal-musl and LLVM runtime packages,
+          # verifies every graph layer, checks static ELF closure and runs it.
+          bash tests/e2e/286_the_openkal_stack_still_builds.sh 2>&1 | tee native-openkal.log
+          grep -qF "ok  native aarch64 ELF" native-openkal.log
+          grep -qF "OK: the openkal stack builds, links statically and runs" native-openkal.log
+          grep -qxF 'openkal hosted threads: isolation, destructors and concurrent unwind ok' native-openkal.log
+          grep -qxF 'openkal indexed JSON: dump, parse, literals and ordered_json ok' native-openkal.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openkal-native-arm64
+          path: |
+            native-openkal.log
+            native-openkal-index-sha.txt
+          if-no-files-found: warn

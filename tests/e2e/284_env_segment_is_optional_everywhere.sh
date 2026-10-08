@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: gcc
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # `arch-os` is a target on every platform, not only on Linux.
 #
 # WHY THIS WAS ASYMMETRIC AND WHY THE ASYMMETRY COST SOMETHING.
@@ -100,7 +101,7 @@ echo "OK: the env segment is optional on every platform, and declining it change
 # ── The Windows C-library axis has a name of its own ─────────────────────────
 #
 # `x86_64-windows-musl` is a target mcpp names and LLVM cannot. Measured on
-# llvm 22.1.8, handing `windows` with a `musl` environment to clang is not a
+# llvm ${LLVM_VERSION}, handing `windows` with a `musl` environment to clang is not a
 # diagnostic but an ICE inside the COFF writer:
 #
 #     #5  llvm::MCWinCOFFStreamer::emitCGProfileEntry(...)
@@ -139,7 +140,7 @@ esac
 # about the wrong subject. So the toolchain line has to show the pin winning,
 # and it has to show mcpp's own name being what was asked for:
 #
-#     Resolved llvm@22.1.8 → x86_64-windows-musl → …/xim-x-llvm/22.1.8/bin/clang++
+#     Resolved llvm@${LLVM_VERSION} → x86_64-windows-musl → …/xim-x-llvm/${LLVM_VERSION}/bin/clang++
 #              target default for x86_64-windows-musl, replacing your gcc@16.1.0
 #
 # THIS WAS WRITTEN WITH AN `*) : ;;` FALLBACK, WHICH MADE IT UNFAILABLE.
@@ -156,7 +157,7 @@ case "$out" in
 esac
 
 case "$out" in
-  *"llvm@22.1.8"*)
+  *"llvm@${LLVM_VERSION}"*)
     echo "  ok  the row's pin decided the toolchain" ;;
   *)
     echo "FAIL: the target table's pin did not decide the toolchain"

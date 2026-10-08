@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: gcc
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 641_the_android_rows_are_wired_and_the_simulator_is_a_row.sh — the vocabulary
 # half of the Android and iOS work, which is the half a runner without a 704 MB
 # NDK can still assert. Nothing here installs a payload.
@@ -124,12 +125,16 @@ fi
 #    not make bionic a candidate C library for a request that named none.
 d="$t/bare"; pkg "$d"
 out=$( cd "$d" && MCPP_NO_AUTO_INSTALL=1 "$MCPP" build --target aarch64-linux 2>&1 ) || true
-if grep -q "android" <<<"$out"; then
-    echo "FAIL: a bare aarch64-linux request mentioned android"
-    grep -m4 -E "android" <<<"$out" | sed 's/^/    /'
+# The refusal may list Android among OTHER targets this host can serve.
+# Only the selected target's resolution and diagnostic establish completion.
+selected=$(grep -E '(^|[[:space:]])(Target|Resolved)[[:space:]]|^error:.*target|target default for' <<<"$out" || true)
+if ! grep -Eq 'aarch64-linux-(gnu|musl)' <<<"$selected" \
+        || grep -q 'android' <<<"$selected"; then
+    echo "FAIL: a bare aarch64-linux request did not select a Linux C ABI"
+    printf '%s\n' "$out" | sed 's/^/    /'
     fail=1
 else
-    echo "  ok: a bare aarch64-linux request never mentions android"
+    echo "  ok: a bare aarch64-linux request selects a Linux C ABI"
 fi
 
 # 6. `min_api_level` IS A MANIFEST KEY WITH A FLOOR, and it is refused where a
@@ -230,7 +235,7 @@ esac
 #    project that has named its own.
 for target in aarch64-ios aarch64-ios-sim; do
     d="$t/sdk-$target"
-    pkg "$d" "" "[target.$target]" 'toolchain = "llvm@22.1.8"'
+    pkg "$d" "" "[target.$target]" "toolchain = \"llvm@${LLVM_VERSION}\""
     out=$( cd "$d" && MCPP_NO_AUTO_INSTALL=1 "$MCPP" build --target "$target" 2>&1 ) || true
     case "$(uname -s)" in
       Darwin)

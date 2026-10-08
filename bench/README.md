@@ -212,7 +212,7 @@ than what it said.
 | xmake | **3.1.0** | `matrix.json` → `tools` |
 | bazel | **9.2.0** | `matrix.json` → `tools` |
 | gcc | **16.1.0** | `bench/src/toolchain.cppm` |
-| clang / libc++ | **22.1.8** (Windows: 20.1.7) | `bench/src/toolchain.cppm` |
+| clang / libc++ | **23.1.3** (all hosts) | `bench/src/toolchain.cppm` |
 | reference mcpp | **2026.8.11.3** | `matrix.json` → `reference_mcpp`; the run records which release it actually resolved in `meta.json`, and the report names it in the column header |
 | mcpp (the workload) | **2026.8.11.3** — `a749e9f` | submodule `projects/mcpp/mcpp-2026.8.11.3` |
 | xlings (combined style) | **2026.8.11.2** — `b1563fe` | submodule `projects/xlings/xlings-2026.8.11.2` |

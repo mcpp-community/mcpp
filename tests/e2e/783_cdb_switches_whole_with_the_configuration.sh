@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: gcc llvm
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 783_cdb_switches_whole_with_the_configuration.sh — design 2026-09-26
 # .agents/docs/2026-09-26-compile-database-and-issue-699-design.md §3.2: one
 # database per configuration, identified by the output directory (toolchain,
@@ -28,7 +29,7 @@ for e in entries:
 }
 
 # `mcpp test` (llvm): a complete database that includes the test file.
-"$MCPP" test --toolchain llvm@22.1.8 > test1.log 2>&1 || { cat test1.log; echo "FAIL: mcpp test (llvm) failed"; exit 1; }
+"$MCPP" test --toolchain llvm@${LLVM_VERSION} > test1.log 2>&1 || { cat test1.log; echo "FAIL: mcpp test (llvm) failed"; exit 1; }
 grep -q "test_smoke" compile_commands.json || {
     echo "FAIL: after 'mcpp test' (llvm), no entry for tests/test_smoke.cpp"
     cat compile_commands.json; exit 1
@@ -36,7 +37,7 @@ grep -q "test_smoke" compile_commands.json || {
 driver_of | grep -q "clang" || { echo "FAIL: the llvm test entry does not name a clang driver"; exit 1; }
 
 # `mcpp build` in the SAME configuration: the test entry survives (item 1).
-"$MCPP" build --toolchain llvm@22.1.8 > build1.log 2>&1 || { cat build1.log; echo "FAIL: mcpp build (llvm) failed"; exit 1; }
+"$MCPP" build --toolchain llvm@${LLVM_VERSION} > build1.log 2>&1 || { cat build1.log; echo "FAIL: mcpp build (llvm) failed"; exit 1; }
 grep -q "test_smoke" compile_commands.json || {
     echo "FAIL: 'mcpp build' in the same (llvm) configuration lost the test entry"
     cat compile_commands.json; exit 1
@@ -59,7 +60,7 @@ assert 'g++' in main['arguments'][0] or 'gcc' in main['arguments'][0], main['arg
 
 # Switch back to llvm: that configuration's database, test entry included, is
 # restored whole -- it was never touched by the gcc build in between.
-"$MCPP" build --toolchain llvm@22.1.8 > build3.log 2>&1 || { cat build3.log; echo "FAIL: mcpp build (llvm again) failed"; exit 1; }
+"$MCPP" build --toolchain llvm@${LLVM_VERSION} > build3.log 2>&1 || { cat build3.log; echo "FAIL: mcpp build (llvm again) failed"; exit 1; }
 grep -q "test_smoke" compile_commands.json || {
     echo "FAIL: llvm's test entries did not return when switching back"
     cat compile_commands.json; exit 1

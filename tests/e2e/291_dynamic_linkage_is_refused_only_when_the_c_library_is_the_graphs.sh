@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: gcc llvm elf unix-shell
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # `linkage = "dynamic"` is reported as ineffective only when it actually is.
 #
 # THE PREDICATE USED TO SPAN TWO LAYERS AND THE REASON SPANS ONE. The
@@ -108,7 +109,7 @@ fi
 # libunwind, so the toolchain has to be the one that package exists for — and
 # it is the C library coming from the graph, not the C++ runtime, that this
 # half is about.
-make_project "$work/fullgraph" "llvm@22.1.8" 'openkal-musl = "0.3.5"
+make_project "$work/fullgraph" "llvm@${LLVM_VERSION}" 'openkal-musl = "0.3.5"
 openkal-llvm-runtime = "0.1.3"'
 out2="$(cd "$work/fullgraph" && "$MCPP" build --target "$TARGET" 2>&1)" || true
 

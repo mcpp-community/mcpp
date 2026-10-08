@@ -41,6 +41,7 @@ import mcpp.toolchain.gcc;
 import mcpp.toolchain.hostflags;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.msvc;
+import mcpp.toolchain.msvc_coroutines;
 
 export namespace mcpp::toolchain {
 
@@ -128,6 +129,15 @@ std::expected<std::string, StdModError> run_capture_command(
                         r.exit_code, r.output, cmd)});
     }
     return r.output;
+}
+
+// A precompile of the MSVC STL's std module that cannot succeed because the
+// compiler does not support coroutines on this MSVC ABI says so after the
+// error (mcpp.toolchain.msvc_coroutines). Decided from the command: the
+// compiler's diagnostics reach the terminal, not this message.
+StdModError with_coroutine_note(StdModError e) {
+    e.message += msvc_coroutines::std_module_advice(e.message);
+    return e;
 }
 
 std::filesystem::path metadata_path(const std::filesystem::path& cacheDir) {
@@ -460,7 +470,7 @@ std::expected<StdModule, StdModError> ensure_built(
             std::format("cannot create '{}': {}", sm.bmiPath.parent_path().string(), ec.message())});
 
         auto out = run_commands(stdCommands, tc);
-        if (!out) return std::unexpected(out.error());
+        if (!out) return std::unexpected(with_coroutine_note(out.error()));
 
         if (!std::filesystem::exists(sm.bmiPath)) {
             return std::unexpected(StdModError{
@@ -477,7 +487,7 @@ std::expected<StdModule, StdModError> ensure_built(
         if (rebuiltStd || !std::filesystem::exists(compatBmi)
             || !metadata_matches(metaPath, metadata)) {
             if (auto out = run_commands(compatCommands, tc); !out) {
-                return std::unexpected(out.error());
+                return std::unexpected(with_coroutine_note(out.error()));
             }
         }
         sm.compatBmiPath    = desc.compatBmiPath;

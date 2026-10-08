@@ -114,7 +114,7 @@ practice.
 openkal-llvm-runtime = "0.1.1"
 
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@23.1.3"
 ```
 
 Two lines. The first selects three layers of the target side; the second names
@@ -313,7 +313,7 @@ redistributable, which bounds *packaging* them. It does not bound *locating*
 them: `aarch64-macos` has been `verified` on exactly that split since long
 before these rows existed — `xim:llvm` compiles and the machine's macOS SDK is
 found through `xcrun`. The iOS rows take the same split with a second SDK, so
-they pin `llvm@22.1.8` and carry no `sysroot` entry, because that column names a
+they pin `llvm@23.1.3` and carry no `sysroot` entry, because that column names a
 package and a located directory is not one.
 
 The consequence for this document is that the rows are no longer a structural

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm unix-shell
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # The whole target side from packages: kernel interface, C library, C++ runtime.
 #
 # WHY THIS FILE EXISTS, AND WHAT IT COST NOT TO HAVE IT.
@@ -26,13 +27,14 @@
 # static image with no interpreter and no reference to the host's loader.
 set -e
 
+hosted_threads_source="$(cd "$(dirname "${BASH_SOURCE[0]}")/../fixtures/openkal-hosted-threads/src" && pwd)/main.cpp.in"
 MCPP="${MCPP:-mcpp}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/app/src"
 cd "$work/app"
 
-cat > mcpp.toml <<'TOML'
+cat > mcpp.toml <<TOML
 [package]
 name    = "okstack"
 version = "0.1.0"
@@ -42,12 +44,31 @@ version = "0.1.0"
 # toolchain here rather than relying on a global default keeps this test from
 # depending on how the machine running it is configured.
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@${LLVM_VERSION}"
 
 [dependencies]
 openkal-musl = "0.3.5"
 openkal-llvm-runtime = "0.1.3"
+nlohmann.json = "3.12.0"
 TOML
+
+if [ -n "${MCPP_OPENKAL_INDEX:-}" ]; then
+    index_path="$MCPP_OPENKAL_INDEX"
+    manifest_path="$PWD/mcpp.toml"
+    if command -v cygpath >/dev/null 2>&1; then
+        index_path=$(cygpath -m "$index_path")
+        manifest_path=$(cygpath -m "$manifest_path")
+    fi
+    python3 - "$manifest_path" "$index_path" <<'PYINDEX'
+import json, os, pathlib, sys
+manifest = pathlib.Path(sys.argv[1]).resolve()
+index = pathlib.Path(sys.argv[2]).resolve()
+assert (index / "pkgs/n/nlohmann.json.lua").is_file(), index
+relative = os.path.relpath(index, manifest.parent)
+with manifest.open("a") as output:
+    output.write("\n[indices]\nnlohmann = { path = " + json.dumps(relative) + " }\n")
+PYINDEX
+fi
 
 cat > src/main.cpp <<'CPP'
 #include <cstdio>
@@ -99,6 +120,12 @@ bin="$(find target -type f -name okstack | head -1)"
 
 # ── The artefact is what a graph-supplied target side produces ──────────────
 desc="$(file -b "$bin")"
+if [ "${MCPP_E2E_EXPECT_ARCH:-}" = aarch64 ]; then
+    case "$desc" in
+      *"ELF 64-bit"*"ARM aarch64"*) echo "  ok  native aarch64 ELF" ;;
+      *) echo "FAIL: native ARM64 job produced a different architecture: $desc"; exit 1 ;;
+    esac
+fi
 case "$desc" in
   *"statically linked"*) echo "  ok  statically linked" ;;
   *) echo "FAIL: not static — the payload's C library was linked instead"
@@ -139,5 +166,22 @@ else
     echo "FAIL: the artefact does not run: $out"
     exit 1
 fi
+
+# Reuse the resolved native stack and cache for hosted thread/TLS execution.
+cp "$hosted_threads_source" src/main.cpp
+if ! out="$("$MCPP" build 2>&1)"; then
+    echo "FAIL: the hosted threads companion did not build: $out"
+    exit 1
+fi
+bin="$(find target -type f -name okstack | head -1)"
+[ -n "$bin" ] || { echo "FAIL: no hosted threads artefact"; exit 1; }
+if ! out="$("$bin" 2>&1)"; then
+    echo "FAIL: the hosted threads companion did not run: $out"
+    exit 1
+fi
+expected="openkal indexed JSON: dump, parse, literals and ordered_json ok
+openkal hosted threads: isolation, destructors and concurrent unwind ok"
+[ "$out" = "$expected" ] || { echo "FAIL: wrong hosted threads output: $out"; exit 1; }
+echo "$out"
 
 echo "OK: the openkal stack builds, links statically and runs"

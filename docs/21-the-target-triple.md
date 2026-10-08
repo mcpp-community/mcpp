@@ -154,7 +154,7 @@ descriptor gained a `runner` field needs the index refresh
 mcpp build --target x86_64-linux      # = x86_64-linux-gnu
 mcpp build --target x86_64-windows    # = x86_64-windows-gnu
 mcpp build --target riscv64-none      # = riscv64-none-elf
-mcpp build --target aarch64-linux     # = aarch64-linux-musl
+mcpp build --target aarch64-linux     # = aarch64-linux-gnu
 mcpp build --target aarch64-macos     # macOS has no segment to decline
 ```
 
@@ -170,42 +170,16 @@ that the fill was a fill.
 
 ### The completion is chosen from the vocabulary, not from a fixed word
 
-The fourth line above is why the two roles have to stay separate. Filling
-`aarch64-linux` lexically gives `aarch64-linux-gnu`, and that row is `planned`
-— while `aarch64-linux-musl` is `verified`. Before 2026.8.26.2 the tier gate
-asked about the filled value, so:
+A request with an omitted environment segment is completed against the
+known-target table. A supported lexical default takes precedence; otherwise,
+a unique supported sibling is selected. If none is supported, the lexical
+form is retained and the diagnostic names the registered siblings. An
+ambiguous request lists the supported candidates.
 
-```
-$ mcpp build --target aarch64-linux
-  error: target 'aarch64-linux-gnu' is registered but not yet supported (planned)
-$ mcpp build --target aarch64-linux-musl
-  Finished dev [unoptimized + debuginfo] in 0.99s
-```
+`aarch64-linux` selects `aarch64-linux-gnu`. The native Linux ARM64 payload
+uses LLVM 23.1.3 and glibc. `aarch64-linux-musl` remains the explicit spelling
+for a static musl artifact. A written environment segment is retained.
 
-The question asked was *aarch64, Linux*. The question answered was
-*aarch64-linux-**gnu***, and the message quotes a triple that appears nowhere in
-the command. `riscv64-linux` was worse: the fill named a row outside the
-vocabulary entirely, so a registered family was reported as `unknown target`.
-
-A request that declined the segment is completed against the known-target table,
-in this order:
-
-1. the lexical default names a supported row — take it (`x86_64-linux` → `gnu`);
-2. exactly one row for this `(arch, os)` is supported — take it
-   (`aarch64-linux` → `musl`);
-3. nothing is supported — keep the lexical form, and diagnose against the rows
-   that *do* exist (`riscv64-linux` → "planned; registered rows for this system:
-   `riscv64-linux-musl`");
-4. several are supported and the lexical default is none of them — refuse and
-   list them. No `(arch, os)` has this shape today.
-
-Rule 1 comes first so this retires itself: the day `aarch64-linux-gnu` graduates
-from `planned`, the lexical answer wins again with nothing to edit.
-
-**Writing the segment opts out.** A written segment is a request, not a gap, so
-`--target aarch64-linux-gnu` still reaches the `planned` row's refusal — which
-is the escape hatch for opting into a row early with an explicit
-`[target.<triple>] toolchain`.
 
 ### The Spelling To Use
 
@@ -364,8 +338,9 @@ Target x86_64-windows-gnu → x86_64-w64-windows-gnu
 ```
 
 Keeping the third vocabulary separate is what lets mcpp name something LLVM
-cannot. Measured on llvm 22.1.8, `windows` with a `musl` environment is accepted
-by the triple parser and crashes the compiler:
+cannot. Measured on llvm 23.1.3 (2026-10-07; unchanged from the 22.1.8
+reading), `windows` with a `musl` environment is accepted by the triple parser
+and crashes the compiler:
 
 ```
 clang++ --target=x86_64-pc-windows-musl -c t.cpp
@@ -404,8 +379,8 @@ every target it was built with. Measured on one host, one source:
 |---|---|---|---|---|
 | `gcc@16.1.0` | `x86_64-linux-musl` | `xim-x-musl-gcc/…/x86_64-linux-musl-g++` | musl | libstdc++ |
 | `gcc@16.1.0` | `x86_64-windows-gnu` | `xim-x-mingw-cross-gcc/…/x86_64-w64-mingw32-g++` | gnu | libstdc++ |
-| `llvm@22.1.8` | `x86_64-linux-musl` | `xim-x-llvm/…/clang++` | musl | libc++ |
-| `llvm@22.1.8` | `x86_64-windows-gnu` | `xim-x-llvm/…/clang++` | gnu | libc++ |
+| `llvm@23.1.3` | `x86_64-linux-musl` | `xim-x-llvm/…/clang++` | musl | libc++ |
+| `llvm@23.1.3` | `x86_64-windows-gnu` | `xim-x-llvm/…/clang++` | gnu | libc++ |
 
 clang does not reach into gcc's payload for a C library, and gcc does not reach
 into clang's. Each brings its own.
@@ -419,13 +394,13 @@ do is name a different compiler and supply nothing.
 
 ```toml
 [toolchain]
-default = "llvm@22.1.8"        # x86_64-linux-musl's row names gcc
+default = "llvm@23.1.3"        # x86_64-linux-musl's row names gcc
 ```
 
 ```
 $ mcpp build --target x86_64-linux-musl
 error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
-       payload, and 'llvm@22.1.8' has none here.
+       payload, and 'llvm@23.1.3' has none here.
 ```
 
 **Before 2026.8.26.1 this ran the whole build and failed at the link**, with
@@ -441,7 +416,7 @@ Adding the replacement is the whole difference:
 [dependencies]
 openkal-llvm-runtime = "0.1.3"   # → openkal-musl → openkal-<os>
 [toolchain]
-default = "llvm@22.1.8"
+default = "llvm@23.1.3"
 ```
 
 That is [`examples/06-openkal-cross`](../examples/06-openkal-cross), and it is
@@ -508,8 +483,8 @@ choices a project makes. The third is not: it is the machine the build runs on.
 **The two Linux hosts are not one host.** `x86_64-linux-gnu` needs the
 host-native `xim:glibc` and `xim:linux-headers` payloads, which exist for the
 host's own architecture only — so that row is reachable from `linux-x86_64` and
-not from `linux-aarch64`, while `aarch64-linux-gnu` is the mirror case and is
-`planned` on both. Collapsing them to `linux` would let one overwrite the
+not from `linux-aarch64`, while `aarch64-linux-gnu` is served natively by
+`linux-aarch64`. Collapsing them to `linux` would let one overwrite the
 other's rows.
 
 ### Build hosts and the targets they serve
@@ -517,33 +492,33 @@ other's rows.
 | target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
 |---|---|---|---|---|---|---|
 | `x86_64-linux-gnu` | verified | — | payload | — | — | — |
-| `aarch64-linux-gnu` | planned | — | planned | planned | planned | planned |
+| `aarch64-linux-gnu` | preview | `llvm@23.1.3` | — | payload | — | — |
 | `x86_64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | payload |
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | — |
 | `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
 | `x86_64-windows-gnu` | verified | `gcc@16.1.0` | payload | payload | — | payload |
-| `x86_64-windows-musl` | preview | `llvm@22.1.8` | graph | graph | graph | payload |
+| `x86_64-windows-musl` | preview | `llvm@23.1.3` | graph | graph | graph | payload |
 | `x86_64-windows-msvc` | verified | — | — | — | — | system |
 | `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
-| `riscv64-none-elf` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
-| `riscv32-none-elf` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
-| `aarch64-none-elf` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
-| `x86_64-none-elf` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
-| `thumbv6m-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
-| `thumbv7m-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
-| `thumbv7em-none-eabi` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
-| `thumbv7em-none-eabihf` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
-| `thumbv8m.base-none-eabi` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
-| `thumbv8m.main-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
-| `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
-| `armv7a-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
-| `armv7a-none-eabihf` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
+| `riscv64-none-elf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `riscv32-none-elf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `aarch64-none-elf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `x86_64-none-elf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `thumbv6m-none-eabi` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `thumbv7m-none-eabi` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `thumbv7em-none-eabi` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `thumbv7em-none-eabihf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `thumbv8m.base-none-eabi` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `thumbv8m.main-none-eabi` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `thumbv8m.main-none-eabihf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `armv7a-none-eabi` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `armv7a-none-eabihf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `aarch64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
 | `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
-| `aarch64-ios` | preview | `llvm@22.1.8` | — | — | SDK | — |
-| `aarch64-ios-sim` | verified | `llvm@22.1.8` | — | — | SDK | — |
-| `x86_64-ios-sim` | preview | `llvm@22.1.8` | — | — | SDK | — |
+| `aarch64-ios` | preview | `llvm@23.1.3` | — | — | SDK | — |
+| `aarch64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
+| `x86_64-ios-sim` | preview | `llvm@23.1.3` | — | — | SDK | — |
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | payload | payload | payload | payload |
 
 `payload` a toolchain payload here produces it · `graph` no payload, but a

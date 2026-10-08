@@ -42,10 +42,14 @@ the host:
 | host | default |
 |---|---|
 | Linux x86_64 | `gcc@16.1.0` |
+| Linux aarch64 | `llvm@23.1.3` |
 | other Linux architectures | `gcc@15.1.0-musl` |
-| macOS | `llvm@20.1.7` |
-| Windows with usable MSVC | `llvm@20.1.7` |
+| macOS | `llvm@23.1.3` |
+| Windows with usable MSVC | `llvm@23.1.3` |
 | Windows without it | `gcc@16.1.0` for `x86_64-windows-gnu` |
+
+The Linux aarch64 default applies from 2026.10.8.1. Existing configured
+toolchains and targets remain in effect.
 
 Full installation instructions, including Windows, are in the
 ["Installation" section of the README](../README.md#install).

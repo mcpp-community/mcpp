@@ -411,6 +411,12 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     if (bypassCfg && !graphSuppliesTarget && cxxFromPayload) {
         for (auto& t : dm.compile_tokens(esc, opt.clangStdlibSelect))
             out.push_back(t);
+        // On AArch64 the runtime choice changes FMV/outline-atomics codegen.
+        // The std BMI must match a one-shot host compile/link, whose link
+        // tokens select compiler-rt after the same cfg bypass.
+        if (auto target = triple::parse(tc.targetTriple);
+            target && target->arch == "aarch64")
+            out.emplace_back("--rtlib=compiler-rt");
     } else if (bypassCfg) {
         // THE BYPASS IS NOT PART OF THE PAYLOAD'S HEADER SET, AND IT WAS
         // BEING SUPPRESSED WITH IT.

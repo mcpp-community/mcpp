@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: elf
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # A link unit with no C++ in it is linked by the C driver (#426).
 #
 # Every link went through `$cxx`. `g++` appends `-lstdc++` unconditionally, and
@@ -44,7 +45,7 @@ trap "rm -rf $TMP || true" EXIT
 # pure-C library's link and the predicate under test would never see a C-only
 # unit at all. Discovered by writing it the other way first.
 tc_block() {
-  printf '[toolchain]\ndefault = "gcc@16.1.0"\nmacos   = "llvm@22.1.8"\nwindows = "llvm@20.1.7"\n'
+  printf "[toolchain]\ndefault = \"gcc@16.1.0\"\nmacos   = \"llvm@${LLVM_VERSION}\"\nwindows = \"llvm@${LLVM_VERSION}\"\n"
 }
 
 # ── 1. a pure-C shared library ─────────────────────────────────────────────

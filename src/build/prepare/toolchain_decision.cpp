@@ -114,7 +114,7 @@ std::expected<void, std::string> phase5_toolchain_after_graph(PrepareState& stat
         //      second place.
         //
         // NOT `pins::kFirstRun*`. Those are per-HOST first-run defaults —
-        // `llvm@20.1.7` on macOS, `gcc@16.1.0` on Linux x86_64 — so reading them
+        // `llvm@23.1.3` on macOS, `gcc@16.1.0` on Linux x86_64 — so reading them
         // would make the version a package requires depend on which machine
         // built it. A requirement is a property of the package.
         auto resolve_required_family =

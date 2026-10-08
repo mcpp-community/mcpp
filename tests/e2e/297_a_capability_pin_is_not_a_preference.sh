@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: gcc unix-shell jq
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # A declared toolchain overrides a convention. It does not override a capability.
 #
 # THE TARGET TABLE'S PIN MEANS TWO DIFFERENT THINGS AND ONLY ONE OF THEM IS
@@ -10,7 +11,7 @@
 #                   who names their own compiler has said they supply it
 #                   instead, so the declaration wins.
 #
-#   bare-metal row  `riscv64-none-elf → llvm@22.1.8`
+#   bare-metal row  `riscv64-none-elf → llvm@${LLVM_VERSION}`
 #                   the table's own words: "the pin is llvm on every host
 #                   because clang/lld are cross-compilers by construction".
 #                   A host g++ does not emit riscv64 whatever anyone declares.
@@ -43,6 +44,30 @@ printf 'extern "C" int main(int, char**, char**) { return 0; }\n' > src/main.cpp
 gccver="$("$MCPP" toolchain list --format json 2>/dev/null \
           | jq -r '[.data.toolchains[] | select(.family=="gcc") | .version][0] // empty' | tr -d '\r')"
 if [ -z "$gccver" ]; then
+    echo "SKIP: gcc is not installed here, and this test is about declaring it"
+    exit 0
+fi
+
+# LISTED IS NOT USABLE. A registry entry extracted from another host's
+# archive passes `toolchain list` and fails at the first link (hermetic
+# check, wrong-arch binaries) — measured on linux-aarch64, where the
+# restored sandbox cache held an x86_64-only gcc@16.1.0. The fact the
+# matrix contract names is "gcc does not work here", so the gate asks the
+# resolver, not the file listing: the HOST-ARCH gnu row — the row a gcc
+# payload serves on the hosts this test means — must resolve without a
+# refusal. The query runs in a directory WITH a minimal manifest, because
+# from a bare one `why` refuses with "no mcpp.toml found" (reason `other`)
+# before it ever reaches the resolver. The same sentence covers a genuinely
+# installed gcc (reason `none`, half one runs) and a foreign-arch leftover
+# (`host-cannot-serve`, same SKIP reason).
+hostArch="$(uname -m)"; { [ "$hostArch" = x86_64 ] || [ "$hostArch" = amd64 ]; } && hostArch=x86_64
+mkdir -p probe/src
+printf '[package]\nname = "gate"\nversion = "0.1.0"\n' > probe/mcpp.toml
+printf 'int main() { return 0; }\n' > probe/src/main.cpp
+serveReason="$(cd probe && "$MCPP" why toolchain --toolchain "gcc@$gccver" \
+    --target "$hostArch-linux-gnu" --format json 2>/dev/null \
+    | jq -r '.data.reason // "none"' | tr -d '\r')"
+if [ "$serveReason" != "none" ]; then
     echo "SKIP: gcc is not installed here, and this test is about declaring it"
     exit 0
 fi

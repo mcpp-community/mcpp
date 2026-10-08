@@ -46,10 +46,19 @@ TEST(ToolchainRegistry, MapsGccSpecToGccPackage) {
     // gcc family on a Windows host = MinGW-w64 (the GNU-env host toolchain).
     EXPECT_EQ(pkg.ximName, "mingw-gcc");
 #else
-    EXPECT_EQ(pkg.ximName, "gcc");
-    EXPECT_TRUE(pkg.needsGccPostInstallFixup);
     ASSERT_FALSE(pkg.frontendCandidates.empty());
-    EXPECT_EQ(pkg.frontendCandidates.front(), "g++");
+    if constexpr (mcpp::platform::is_linux
+                  && mcpp::platform::host_arch != std::string_view("x86_64")) {
+        // Non-x86 Linux native GCC payloads are musl-backed even when the host
+        // process uses glibc. Its driver needs no glibc specs fixup.
+        EXPECT_EQ(pkg.ximName, "musl-gcc");
+        EXPECT_FALSE(pkg.needsGccPostInstallFixup);
+        EXPECT_EQ(pkg.frontendCandidates.front(), host_musl() + "-g++");
+    } else {
+        EXPECT_EQ(pkg.ximName, "gcc");
+        EXPECT_TRUE(pkg.needsGccPostInstallFixup);
+        EXPECT_EQ(pkg.frontendCandidates.front(), "g++");
+    }
 #endif
     EXPECT_EQ(pkg.ximVersion, "16.1.0");
     EXPECT_EQ(pkg.display_spec(), "gcc@16.1.0");

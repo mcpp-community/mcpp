@@ -62,7 +62,7 @@ example writes the rule edge and nothing else.
 
 ## The CUDA leg takes the clang route
 
-`[toolchain] default = "llvm@22.1.8"`, and the reason is measured rather than
+`[toolchain] default = "llvm@23.1.3"`, and the reason is measured rather than
 stylistic. On the 12.9 line the nvcc route is refused by nvcc's own front end:
 the toolkit headers redeclare the C23 `cospi`, `sinpi` and `rsqrt` for the host
 without `noexcept` while the C library declares them with it. Driving an older

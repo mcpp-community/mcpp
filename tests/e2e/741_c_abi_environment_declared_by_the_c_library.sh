@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm unix-shell
+source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 741 -- the `[c-abi]` block a `mcpp:c-abi=<impl>` provider declares (design
 # 2026-09-18, "C environment declared by the C library layer") reaches the
 # target-side report, realises into the tokens `docs/22` documents, reaches
@@ -131,7 +132,7 @@ EOF
 
 # ── A. the realisable request reaches the report and the compile database ──
 fakemusl_declares 32
-out=$("$MCPP" build --target x86_64-windows-gnu --toolchain llvm@22.1.8 2>&1) || {
+out=$("$MCPP" build --target x86_64-windows-gnu --toolchain llvm@${LLVM_VERSION} 2>&1) || {
     echo "FAIL: a realisable [c-abi] request must not fail the build" >&2
     echo "$out" >&2; exit 1
 }
@@ -141,7 +142,7 @@ echo "$out" | grep -q 'c-abi  *fakemusl' || {
     echo "$out" >&2; exit 1
 }
 
-"$MCPP" emit build-database --target x86_64-windows-gnu --toolchain llvm@22.1.8 \
+"$MCPP" emit build-database --target x86_64-windows-gnu --toolchain llvm@${LLVM_VERSION} \
     --format json > db.json 2> db.err || {
     echo "FAIL: emit build-database must succeed on the realised graph" >&2
     cat db.err >&2; exit 1
@@ -282,7 +283,7 @@ wchar      = 32
 EOF
 rm -rf target
 
-out=$("$MCPP" build --target x86_64-windows-gnu --toolchain llvm@22.1.8 2>&1) && {
+out=$("$MCPP" build --target x86_64-windows-gnu --toolchain llvm@${LLVM_VERSION} 2>&1) && {
     echo "FAIL: an unrealisable [c-abi] request must refuse the build" >&2
     echo "$out" >&2; exit 1
 }

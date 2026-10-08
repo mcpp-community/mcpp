@@ -1981,6 +1981,35 @@ TEST(GraphCLibraryIsolationAdvice, FiresOnlyWhenBothTheTokenAndTheErrorAreThere)
     EXPECT_FALSE(mcpp::build::graph_c_library_isolation_advice(out).empty());
 }
 
+// WHETHER THE C LIBRARY IS THE GRAPH'S reaches the fast path through a file
+// beside build.ninja (LLVM 23.1.3 Part 3, D3): a native build on a managed C
+// library carries `-nostdlibinc` too, so the token alone no longer answers it.
+TEST(GraphCLibrarySidecar, PresentOnlyForAGraphCLibrary) {
+    const auto dir = std::filesystem::temp_directory_path()
+        / std::format("mcpp_graph_clib_{}", std::random_device{}());
+    std::filesystem::create_directories(dir);
+
+    mcpp::targetside::Layer graph;
+    graph.origin = mcpp::targetside::Origin::Graph;
+    graph.interfaceName = "musl";
+    graph.impl = "openkal-musl@0.3.5";
+    mcpp::build::write_graph_c_library_sidecar(dir, graph);
+    auto read = mcpp::build::read_graph_c_library_sidecar(dir);
+    ASSERT_TRUE(read.has_value());
+    EXPECT_EQ(read->first, "musl");
+    EXPECT_EQ(read->second, "openkal-musl@0.3.5");
+
+    // A payload C library (the native managed glibc) removes the file.
+    mcpp::targetside::Layer payload;
+    payload.origin = mcpp::targetside::Origin::Payload;
+    payload.interfaceName = "glibc";
+    mcpp::build::write_graph_c_library_sidecar(dir, payload);
+    EXPECT_FALSE(mcpp::build::read_graph_c_library_sidecar(dir).has_value());
+
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
 TEST(GraphCLibraryIsolationAdvice, NamesTheLibraryWhenGiven) {
     const std::string out =
         "clang -nostdlibinc -c probe.c\n"

@@ -135,7 +135,7 @@ compiler.
 The rule package compiles the device unit either way:
 
 - **clang** (`-x cuda --cuda-path=<payload>`) is the default and what
-  `[toolchain] default = "llvm@22.1.8"` selects. The compiler that builds the
+  `[toolchain] default = "llvm@23.1.3"` selects. The compiler that builds the
   rest of the project builds the device unit too: no second host compiler and
   no host-compiler bound.
 

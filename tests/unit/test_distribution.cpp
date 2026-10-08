@@ -163,7 +163,7 @@ TEST(Distribution, LinuxLibcxxSelfContainedIsRealOrLoud) {
     EXPECT_EQ(full.effective, dist::Contract::SelfContained);
     EXPECT_FALSE(full.degraded);
     EXPECT_EQ(full.unitFlags,
-              " -nostdlib++ /tc/libc++.a /tc/libc++abi.a /tc/libunwind.a");
+              " -nostdlib++ /tc/libc++.a /tc/libc++abi.a /tc/libunwind.a --unwindlib=none");
     // Mach-O only — ELF sorts .init_array by priority, so the ordering bug
     // does not exist here (confirmed by running the repro on Linux).
     EXPECT_FALSE(full.streamInitShim);
@@ -172,6 +172,13 @@ TEST(Distribution, LinuxLibcxxSelfContainedIsRealOrLoud) {
     auto noUnwind = dist::resolve(in);
     EXPECT_TRUE(noUnwind.degraded);
     EXPECT_NE(noUnwind.diagnostic.find("libunwind"), std::string::npos);
+    EXPECT_EQ(noUnwind.unitFlags.find("--unwindlib=none"), std::string::npos);
+
+    in.libunwindArchive = "/tc/libunwind.a";
+    for (auto contract : {dist::Contract::ToolchainCoupled, dist::Contract::HostCoupled}) {
+        in.requested = contract;
+        EXPECT_EQ(dist::resolve(in).unitFlags.find("--unwindlib=none"), std::string::npos);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -741,8 +748,8 @@ TEST(Distribution, FormatUsesTheFallbackOnlyWhenTheTripleSaysNothing) {
 //     object references, and a loaded libstdc++ references them: measured, 89
 //     exported symbols of which 68 were also defined by libstdc++ or libgcc_s.
 //
-// The byte-level assertions are the point, as they are for every other cell in
-// this table: a build with no second runtime on its line must be unchanged.
+// The byte-level assertions distinguish the explicit static unwinder from
+// libgcc in the foreign-runtime branch; neither selects a second unwinder.
 
 TEST(Distribution, LinuxLibcxxWithAForeignRuntimeTakesOneUnwinder) {
     dist::MechanismInput in;
@@ -753,11 +760,11 @@ TEST(Distribution, LinuxLibcxxWithAForeignRuntimeTakesOneUnwinder) {
     in.libcxxAbiArchive  = "/tc/libc++abi.a";
     in.libunwindArchive  = "/tc/libunwind.a";
 
-    // Unchanged when nothing else is on the line. Byte-for-byte the string the
-    // cell above asserts.
+    // The explicit archive supplies the unwinder without a second driver
+    // selection; the foreign-runtime branch still selects libgcc instead.
     auto alone = dist::resolve(in);
     EXPECT_EQ(alone.unitFlags,
-              " -nostdlib++ /tc/libc++.a /tc/libc++abi.a /tc/libunwind.a");
+              " -nostdlib++ /tc/libc++.a /tc/libc++abi.a /tc/libunwind.a --unwindlib=none");
 
     in.foreignCxxRuntime = true;
     auto shared = dist::resolve(in);
@@ -775,8 +782,7 @@ TEST(Distribution, LinuxLibcxxWithAForeignRuntimeTakesOneUnwinder) {
     EXPECT_EQ(shared.unitFlags.find("libunwind.a"), std::string::npos);
 }
 
-// A shared library already hid these archives, and that path is untouched: the
-// widened guard adds executables, it does not change what a .so emits.
+// A shared library retains archive privacy and uses the explicit unwinder.
 TEST(Distribution, ASharedLibraryStillHidesTheArchivesWithoutASecondRuntime) {
     dist::MechanismInput in;
     in.format            = dist::Format::Elf;
@@ -790,7 +796,7 @@ TEST(Distribution, ASharedLibraryStillHidesTheArchivesWithoutASecondRuntime) {
     EXPECT_EQ(m.unitFlags,
               " -nostdlib++ /tc/libc++.a /tc/libc++abi.a"
               " -Wl,--exclude-libs,libc++.a -Wl,--exclude-libs,libc++abi.a"
-              " /tc/libunwind.a -Wl,--exclude-libs,libunwind.a");
+              " /tc/libunwind.a --unwindlib=none -Wl,--exclude-libs,libunwind.a");
 }
 
 // THE NAMES `--exclude-libs` MATCHES ARE THE ARCHIVES THE LINKER OPENS
@@ -816,7 +822,7 @@ TEST(Distribution, ALinkerScriptsArchivesAreTheNamesHidden) {
               " -Wl,--exclude-libs,libc++.a -Wl,--exclude-libs,libc++abi.a"
               " -Wl,--exclude-libs,libc++_static.a"
               " /ndk/lib/clang/21/lib/linux/x86_64/libunwind.a"
-              " -Wl,--exclude-libs,libunwind.a");
+              " --unwindlib=none -Wl,--exclude-libs,libunwind.a");
 
     // An executable still carries no guard, whatever the names are.
     in.role = dist::Role::Test;

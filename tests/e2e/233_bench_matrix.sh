@@ -296,15 +296,31 @@ if not re.match(r"^\d+(\.\d+)+$", str(m.get("reference_mcpp", ""))):
 tc_src = os.path.join(root, "bench/src/toolchain.cppm")
 if os.path.isfile(tc_src):
     tc = open(tc_src, encoding="utf-8").read()
+    constants = dict(re.findall(
+        r'inline\s+constexpr\s+std::string_view\s+(\w+)\s*=\s*("[^"\n]+"|\w+)\s*;', tc))
+
+    def pin_value(name):
+        seen = set()
+        while name not in seen:
+            seen.add(name)
+            value = constants.get(name)
+            if value is None:
+                raise ValueError(f"undefined compiler pin {name}")
+            if value.startswith('"'):
+                return value[1:-1]
+            name = value
+        raise ValueError(f"cyclic compiler pin reference at {name}")
+
     for key, const in (("gcc", "kGcc"), ("llvm", "kLlvm"), ("llvm_windows", "kLlvmWindows")):
-        # `kLlvm` is a prefix of `kLlvmWindows`, so anchor on the whole name.
-        mm = re.search(rf"\b{const}\b\s*=\s*\"([^\"]+)\"", tc)
-        if not mm:
-            fail.append(f"bench/src/toolchain.cppm no longer defines {const} — this check "
-                        f"cannot compare the pins and must not pass silently")
-        elif mm.group(1) != str(m.get("tools", {}).get(key, "")):
+        try:
+            actual = pin_value(const)
+        except ValueError as error:
+            fail.append(f"bench/src/toolchain.cppm: {error} — this check cannot compare "
+                        f"the pins and must not pass silently")
+            continue
+        if actual != str(m.get("tools", {}).get(key, "")):
             fail.append(f"tools.{key}={m.get('tools', {}).get(key)!r} but toolchain.cppm's "
-                        f"{const} is {mm.group(1)!r} — CI installs one and the harness hands "
+                        f"{const} is {actual!r} — CI installs one and the harness hands "
                         f"every engine the other; the cells fail naming a missing path")
 
 # The READMEs open with a "what is pinned" table whose whole claim is that those

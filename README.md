@@ -267,7 +267,7 @@ import mcpplibs.cmdline;
 <summary><b>Toolchain management</b></summary>
 
 - Bundled GCC 16.1.0 + LLVM/Clang 20.1.7, one-command install
-- Host-aware defaults: native glibc GCC on Linux x86_64, musl GCC on other Linux architectures, LLVM on macOS and on Windows with usable MSVC, MinGW-w64 GCC on bare Windows
+- Host-aware defaults: native glibc GCC on Linux x86_64, native glibc LLVM on Linux aarch64, musl GCC on other Linux architectures, LLVM on macOS and on Windows with usable MSVC, MinGW-w64 GCC on bare Windows
 - Multiple versions side by side: `mcpp toolchain install gcc 16` / `mcpp toolchain install llvm 20`
 - Isolated sandbox: all toolchains live in `~/.mcpp/registry/`, leaving the system untouched
 - Per-platform selection: `linux = "gcc@16"`, `macos = "llvm@20"`
@@ -427,19 +427,20 @@ list` reports for this machine):
 | `aarch64-linux-musl`  | gcc 16, fully static — cross from x86_64 (qemu) or native | verified |
 | `x86_64-windows-gnu`  | gcc 16 MinGW-w64 — native on Windows, cross from Linux (wine) *(Windows default without Visual Studio)* | verified |
 | `x86_64-windows-msvc` | `msvc@system` (detected VS/BuildTools) or llvm ¹ *(Windows default with Visual Studio)* | verified |
-| `x86_64-windows-musl` | llvm 22 — a PE with a musl C library, which no gcc emits; the system comes from the dependency graph | preview |
+| `x86_64-windows-musl` | llvm 23 — a PE with a musl C library, which no gcc emits; the system comes from the dependency graph | preview |
 | `aarch64-macos`       | llvm *(macOS default)* | verified |
-| `riscv64-none-elf` · `riscv32-none-elf` | llvm 22 — bare metal, `xim:picolibc-riscv` ² | verified |
-| `thumbv6m-none-eabi` · `thumbv7m-none-eabi` | llvm 22 — Cortex-M0/M0+/M1, Cortex-M3 ² | verified |
-| `thumbv7em-none-eabihf` · `thumbv8m.main-none-eabi` | llvm 22 — Cortex-M4F/M7F hard float, Cortex-M33/M55 soft float ² | verified |
-| `armv7a-none-eabi` · `armv7a-none-eabihf` | llvm 22 — Cortex-A 32-bit, the first row with an MMU ² | verified |
-| `aarch64-none-elf` · `x86_64-none-elf` | llvm 22 — bare metal, no C library by default ² | preview |
-| `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22 — Cortex-M4/M7 soft float, M23, M33F/M55F ² | preview |
-| `riscv64-linux-musl` · `aarch64-linux-gnu` · `x86_64-macos` | — | planned |
+| `riscv64-none-elf` · `riscv32-none-elf` | llvm 23 — bare metal, `xim:picolibc-riscv` ² | verified |
+| `thumbv6m-none-eabi` · `thumbv7m-none-eabi` | llvm 23 — Cortex-M0/M0+/M1, Cortex-M3 ² | verified |
+| `thumbv7em-none-eabihf` · `thumbv8m.main-none-eabi` | llvm 23 — Cortex-M4F/M7F hard float, Cortex-M33/M55 soft float ² | verified |
+| `armv7a-none-eabi` · `armv7a-none-eabihf` | llvm 23 — Cortex-A 32-bit, the first row with an MMU ² | verified |
+| `aarch64-none-elf` · `x86_64-none-elf` | llvm 23 — bare metal, no C library by default ² | preview |
+| `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 23 — Cortex-M4/M7 soft float, M23, M33F/M55F ² | preview |
+| `aarch64-linux-gnu` | `llvm@23.1.3` | preview |
+| `riscv64-linux-musl` · `x86_64-macos` | — | planned |
 | `wasm32-emscripten` | `emsdk@6.0.9` — Emscripten ships its own sysroot and its own libc++ module surface; `mcpp run` executes the module with the `node` the payload declares (`xim:node`), not one found on PATH | verified |
 | `x86_64-linux-android` | `android-ndk@30.0.16248370` — bionic from the NDK, one payload for both ABIs; ran on an API 24 x86_64 emulator image | verified |
 | `aarch64-linux-android` | the same payload and the same build; ran under qemu-user over the system image's own bionic, which the platform emulator cannot do from an x86_64 host | verified |
-| `aarch64-ios-sim` | llvm 22 plus the machine's iPhoneSimulator SDK, which mcpp locates rather than installs; ran on a simulator through `simctl-run` ³ | verified |
+| `aarch64-ios-sim` | llvm 23 plus the machine's iPhoneSimulator SDK, which mcpp locates rather than installs; ran on a simulator through `simctl-run` ³ | verified |
 | `aarch64-ios` | the same split for the device; the artefact names the iOS platform, and running it off a device needs a signature the developer owns ³ | preview |
 | `x86_64-ios-sim` | the same build; nothing ran it, because a simulator runs the host's architecture and the machine measured was Apple silicon ³ | preview |
 
