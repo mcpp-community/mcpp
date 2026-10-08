@@ -300,9 +300,6 @@ jobs:
           want="$(awk -F'\t' -v h='${{ matrix.host }}' \
                     'NF>=11 && $2==h {print $4}' tests/matrix/expected.tsv \
                   | sort -u)"
-          if [ "${{ matrix.host }}" = linux-aarch64 ]; then
-            want="$(printf '%s\n' "$want" llvm@23.1.3 | sort -u)"
-          fi
           if [ -z "$want" ]; then
             echo "  ?   ${{ matrix.host }} 尚无期望行 —— 扫描它现有的工具链"
             exit 0
@@ -338,9 +335,6 @@ jobs:
           MATRIX_COMPILERS="$(awk -F'\t' -v h='${{ matrix.host }}' \
                                 'NF>=11 && $2==h {print $4}' tests/matrix/expected.tsv \
                               | sort -u | tr '\n' ' ')"
-          if [ "${{ matrix.host }}" = linux-aarch64 ]; then
-            MATRIX_COMPILERS="$MATRIX_COMPILERS llvm@23.1.3"
-          fi
           export MATRIX_COMPILERS
           echo "declared compiler axis: ${MATRIX_COMPILERS:-<none — scanning what is installed>}"
           # 两种体系各自成表。scan 把 mode 写进第一列,而比对必须按 mode 分开

@@ -643,3 +643,31 @@ ARM64 Linux GNU 身份。断言接受这两个精确表示，继续拒绝不同
 四宿主扫描仍因该不变量失败被跳过，覆盖门随之失败；因此还没有
 本轮完整矩阵测量。必须先通过不变量，再收集真实扫描输出并回填
 基线，不能把目标实跑成功当作扫描覆盖通过。
+
+
+## 28. 2026-10-08 四宿主实际矩阵与单一编译器轴
+
+运行 [37761833670](https://github.com/mcpp-community/mcpp/actions/runs/37761833670)
+对应源码 `e862c65757d8f7215a954b58a15c605370e7a2ee`。四台宿主的
+invariants 全部通过；四份扫描归档均已完整采集。扫描报告共 244 格，
+Linux x86_64 为 70 格、Linux aarch64 为 66 格、macOS ARM64 为
+38 格、Windows x86_64 为 70 格，各宿主分别覆盖 payload 与 graph。
+
+本次声明相对于旧表新增 35 格、更新 18 格。全部旧键保留；每行
+11 列，键无重复，没有 build-fail 或 other。新增格全部来自 ARM
+宿主：LLVM 编译器轴 33 格，GCC 的 Windows musl 目标 2 格。
+ARM 原生 GNU 的 LLVM payload 实际通过，graph 的 GNU、musl、
+x86 Linux 与两个 Windows 目标实际通过。GCC 的层要求及非原生
+GNU 载荷拒绝采用实测 reason，不再沿用 planned。
+
+四条扫描失败只来自声明与实测差异。声明按四份实际报告更新，同时
+删除工作流中临时追加 ARM LLVM 的两个分支。安装与扫描的编译器
+集合再次完全取自同一声明列，避免重复扫描或第二个版本钉点。
+维护规范删去漂移的固定行数，支持范围由完整表而非注释数字决定。
+
+86 格为 ok，其余为命名拒绝。既有 std-module-precompile 与
+lld-required-absent 拒绝没有变化。报告器在 iOS 的五个描述字段
+仍有命名局限：aarch64-ios 的 c-abi 输出 glibc(payload)，iOS
+simulator 输出 sim(payload)。这些列不参与支持判定，记录其输出
+不构成 iOS 链接 glibc 的声明；实际 Apple 依赖以目标验收为准。
+基线注释明确这一边界，没有通过修改报告器扩大本次支持范围。

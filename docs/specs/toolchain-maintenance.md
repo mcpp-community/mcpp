@@ -85,7 +85,7 @@
 或者由一项 CI 检查与它比对。既不读取也不比对的字面量是缺陷。
 
 当前:只有宿主默认值在文档中的四条陈述被比对:`.github/tools/check_default_toolchain_docs.py` 在每个 CI 宿主上检查该宿主的行,
-在 `docs/01`、`docs/20` 及其 `docs/zh/` 副本中各一条。其余读者既不读取也不比对:`mcpp.toml`、`tests/matrix/expected.tsv` 的 210 行、
+在 `docs/01`、`docs/20` 及其 `docs/zh/` 副本中各一条。其余读者既不读取也不比对:`mcpp.toml`、`tests/matrix/expected.tsv` 的支持声明、
 七个工作流、一个 action、六个 CI 工具、至少八个 e2e 脚本、示例,以及 33 个文档文件中的其余陈述。
 
 ### 3.4 索引的 latest 不是默认值 已实现
