@@ -91,6 +91,7 @@ jobs:
           sha256sum -c SHA256SUMS
           grep -Eq '^[0-9a-f]{40}$' source-sha.txt
           grep -Eq '^[0-9a-f]{40}$' engine-release-sha.txt
+          grep -Eq '^[0-9a-f]{64}$' threads-source-sha256.txt
           chmod +x "$TARGET_FILE"
           if [ "$TARGET_SYSTEM" = macos ]; then
             codesign -dv "$TARGET_FILE" 2>&1 | grep -q 'adhoc\|Signature'
@@ -101,9 +102,22 @@ jobs:
           grep -q 'caught: 42' output.log
           grep -q 'unwound: true' output.log
           grep -q 'import std over openkal: ok' output.log
+          case "$TARGET_SYSTEM" in
+            windows) threads_file=windows-threads.exe ;;
+            *) threads_file="$TARGET_SYSTEM-threads" ;;
+          esac
+          chmod +x "$threads_file"
+          if [ "$TARGET_SYSTEM" = macos ]; then
+            codesign -dv "$threads_file" 2>&1 | grep -q 'adhoc\|Signature'
+          fi
+          "./$threads_file" > threads.log 2>&1
+          cat threads.log
+          grep -qxF 'openkal hosted threads: isolation, destructors and concurrent unwind ok' threads.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: published-cn-arm64-target-run-${{ matrix.system }}
-          path: art/output.log
+          path: |
+            art/output.log
+            art/threads.log
           if-no-files-found: warn

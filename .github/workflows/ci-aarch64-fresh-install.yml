@@ -391,6 +391,7 @@ jobs:
           bash tests/e2e/286_the_openkal_stack_still_builds.sh 2>&1 | tee "$RUNNER_TEMP/native-llvm-arm64/openkal.log"
           ! grep -q '^SKIP:' "$RUNNER_TEMP/native-llvm-arm64/openkal.log"
           grep -qF 'OK: the openkal stack builds, links statically and runs' "$RUNNER_TEMP/native-llvm-arm64/openkal.log"
+          grep -qxF 'openkal hosted threads: isolation, destructors and concurrent unwind ok' "$RUNNER_TEMP/native-llvm-arm64/openkal.log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -1,0 +1,6 @@
+[package]
+name = "openkal-hosted-threads"
+version = "0.1.0"
+
+[dependencies]
+openkal-llvm-runtime = { path = "../.." }

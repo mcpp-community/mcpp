@@ -27,6 +27,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # static image with no interpreter and no reference to the host's loader.
 set -e
 
+hosted_threads_source="$(cd "$(dirname "${BASH_SOURCE[0]}")/../fixtures/openkal-hosted-threads/src" && pwd)/main.cpp"
 MCPP="${MCPP:-mcpp}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -146,5 +147,21 @@ else
     echo "FAIL: the artefact does not run: $out"
     exit 1
 fi
+
+# Reuse the resolved native stack and cache for hosted thread/TLS execution.
+cp "$hosted_threads_source" src/main.cpp
+if ! out="$("$MCPP" build 2>&1)"; then
+    echo "FAIL: the hosted threads companion did not build: $out"
+    exit 1
+fi
+bin="$(find target -type f -name okstack | head -1)"
+[ -n "$bin" ] || { echo "FAIL: no hosted threads artefact"; exit 1; }
+if ! out="$("$bin" 2>&1)"; then
+    echo "FAIL: the hosted threads companion did not run: $out"
+    exit 1
+fi
+expected="openkal hosted threads: isolation, destructors and concurrent unwind ok"
+[ "$out" = "$expected" ] || { echo "FAIL: wrong hosted threads output: $out"; exit 1; }
+echo "$out"
 
 echo "OK: the openkal stack builds, links statically and runs"

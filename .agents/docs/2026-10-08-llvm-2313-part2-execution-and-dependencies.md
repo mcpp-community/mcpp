@@ -350,3 +350,24 @@ E2E 48 通过。该测试修正仍须最终提交的 CI 验证。
 索引 PR 当前提交其余 CI 完成。四宿主三目标实际运行、正式发布、
 CN 镜像及发布版 SubOS 消费继续作为独立准入项；本节原生成功不
 替代这些证据。
+
+## 16. 2026-10-08 当前原生准入与托管线程覆盖补充
+
+mcpp 提交 `cd6d44b80b1e794c2ff6499c72a3317aff94dedd` 的原生候选门
+[37708843400](https://github.com/mcpp-community/mcpp/actions/runs/37708843400)
+与同一索引 `84c27c3014e676f2175868627b93494d6bd442e8` 全部通过，
+包括 GNU 自举完整单测 147/147、四个真实索引成员及原生 openkal。
+同一提交主 CI 的两个 macOS E2E 48 分片均通过，验证第 15 节断言
+修正。其 ARM64 公开安装门仍等待索引交付，不计作候选消费失败。
+
+生态覆盖复核发现原有 same-source 示例没有启动线程。原生 GNU
+线程测试与主线程异常测试均不能替代 openkal 的托管 TLS/线程
+证明。新增的共同线程源码与构建 helper 已接入现有四宿主三目标
+矩阵、原生 286、候选 ARM64 门及发布版 CN SubOS 门。
+
+本地 LLVM 23.1.3 与当前 mcpp 实际构建并运行线程示例，使用
+openkal-llvm-runtime 提交 `b4198d346cf0682c95dc0e51b5c32b096843ee83`。
+两个线程的状态隔离、退出析构与异常展开检查通过。286 原生静态
+闭包与原有输出检查通过后，复用同一栈再次构建线程源码，运行
+输出 `openkal hosted threads: isolation, destructors and concurrent unwind ok`。
+新增源码在 ARM64 与三个外部目标系统上的执行仍须最终 CI 验证。

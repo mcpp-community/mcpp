@@ -80,6 +80,7 @@ cd mcpp-source
 bash tests/e2e/286_the_openkal_stack_still_builds.sh | tee "$work/openkal-native.log"
 ! grep -q 'SKIP' "$work/openkal-native.log"
 grep -qF 'OK: the openkal stack builds, links statically and runs' "$work/openkal-native.log"
+grep -qxF 'openkal hosted threads: isolation, destructors and concurrent unwind ok' "$work/openkal-native.log"
 cd "$work"
 git clone --depth 1 https://github.com/mcpp-community/mcpp-index index-source
 git -C index-source rev-parse HEAD | tee "$work/index-source-sha.txt"
@@ -112,6 +113,7 @@ cd "$work/openkal-source/examples/same-source"
 readobj="$MCPP_HOME/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/llvm-readobj"
 [[ -x "$readobj" ]] || { echo 'LLVM readobj unavailable'; exit 1; }
 mkdir -p "$work/cross"
+sha256sum "$work/mcpp-source/tests/fixtures/openkal-hosted-threads/src/main.cpp" | cut -d ' ' -f 1 > "$work/cross/threads-source-sha256.txt"
 for target in x86_64-linux-gnu aarch64-macos x86_64-windows-gnu; do
     rm -rf target
     "$MCPP" build --target "$target" --toolchain llvm@23.1.3 | tee "$work/cross/$target.build.log"
@@ -131,6 +133,24 @@ for target in x86_64-linux-gnu aarch64-macos x86_64-windows-gnu; do
     esac
     cp "${artifacts[0]}" "$work/cross/$output"
     (cd "$work/cross" && sha256sum "$output") >> "$work/cross/SHA256SUMS"
+    LLVM_TOOLCHAIN=llvm@23.1.3 bash "$work/mcpp-source/.github/tools/check_openkal_hosted_threads.sh" \
+        "$work/openkal-source" "$target" "$work/threads-binary.txt"
+    threads_binary=$(cat "$work/threads-binary.txt")
+    case "$target" in
+      x86_64-windows-gnu) threads_output=windows-threads.exe ;;
+      aarch64-macos) threads_output=macos-threads ;;
+      *) threads_output=linux-threads ;;
+    esac
+    cp "$threads_binary" "$work/cross/$threads_output"
+    "$readobj" --file-headers "$threads_binary" > "$work/cross/$target.threads.headers.txt"
+    case "$target" in
+      aarch64-macos) threads_arch=aarch64; threads_format='Format: Mach-O' ;;
+      x86_64-windows-gnu) threads_arch=x86_64; threads_format='Format: COFF' ;;
+      *) threads_arch=x86_64; threads_format='Format: elf64-x86-64' ;;
+    esac
+    grep -q "Arch: $threads_arch" "$work/cross/$target.threads.headers.txt"
+    grep -q "$threads_format" "$work/cross/$target.threads.headers.txt"
+    (cd "$work/cross" && sha256sum "$threads_output") >> "$work/cross/SHA256SUMS"
 done
 echo 'RELEASE BUILD PASS: CN install/default/new/build/run/pack, native openkal, four consumers and three target artifacts.'
 cp "$work/openkal-source-sha.txt" "$work/cross/source-sha.txt"
