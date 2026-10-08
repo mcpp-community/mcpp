@@ -131,11 +131,12 @@ std::expected<std::string, StdModError> run_capture_command(
     return r.output;
 }
 
-// A precompile that stopped inside the STL's <generator> because the
+// A precompile of the MSVC STL's std module that cannot succeed because the
 // compiler does not support coroutines on this MSVC ABI says so after the
-// compiler's own output (mcpp.toolchain.msvc_coroutines).
+// error (mcpp.toolchain.msvc_coroutines). Decided from the command: the
+// compiler's diagnostics reach the terminal, not this message.
 StdModError with_coroutine_note(StdModError e) {
-    e.message += msvc_coroutines::advice(e.message);
+    e.message += msvc_coroutines::std_module_advice(e.message);
     return e;
 }
 

@@ -17,11 +17,20 @@
 //     coroutine diagnostic can run (measured, probe PR #788).
 //
 // ASKED ONLY AFTER A FAILURE, OF THE COMPILER THAT FAILED. The command is read
-// from the failure output itself — the std module's `command:` line, or the
-// command ninja prints after `FAILED:` — so the plan path and the fast path
-// share this one function and no record has to be written in advance. A
-// successful build never reaches it, and when the compiler or the STL changes,
-// either the symptom or the probe stops matching and the note disappears.
+// from the failure itself, so no record has to be written in advance, and a
+// successful build never reaches this module:
+//
+//   * a compile ninja ran: the output carries the command after `FAILED:` and
+//     the compiler's diagnostics, so the symptom is read from it (`advice`);
+//     the plan path and the fast path share that one function;
+//   * the std module precompile: its error carries the `command:` line but not
+//     the compiler's diagnostics, which reach the terminal directly (measured
+//     on #781's Windows CI). The answer there rests on the command alone
+//     (`std_module_advice`): the MSVC STL's `std.ixx` at C++23 or later
+//     includes <generator>, which cannot compile without the macro.
+//
+// When the compiler or the STL changes, the probe stops matching and the note
+// disappears.
 
 export module mcpp.toolchain.msvc_coroutines;
 
@@ -62,6 +71,13 @@ std::optional<FailedCommand> failed_command_in(std::string_view output);
 // The note, or empty when the output is not this failure. `probe` is called
 // only after the symptom and the command have both matched.
 std::string advice(std::string_view output, const ProbeFn& probe);
+
+// The note for a failed std module precompile, from its error message: the
+// `command:` line compiles the MSVC STL's `std.ixx` or `std.compat.ixx` at
+// C++23 or later for a `*-windows-msvc` target, and the probe finds the macro
+// undefined. Empty otherwise.
+std::string std_module_advice(std::string_view message, const ProbeFn& probe);
+std::string std_module_advice(std::string_view message);
 
 // The probe that runs the compiler: `-dM -E` of an empty unit, with the same
 // target and standard and without the driver's configuration file.
@@ -169,25 +185,74 @@ std::optional<FailedCommand> failed_command_in(std::string_view output) {
     return found;
 }
 
+namespace {
+
+bool targets_msvc_abi(const FailedCommand& cmd) {
+    auto triple = mcpp::toolchain::triple::parse(cmd.target);
+    return triple && triple->os == "windows" && triple->env == "msvc";
+}
+
+// C++23 or later: `c++23`, `gnu++2b`, `c++26`, `c++2c`, `c++latest`.
+bool at_least_cxx23(std::string_view standard) {
+    auto plus = standard.find("++");
+    if (plus == std::string_view::npos) return false;
+    auto level = standard.substr(plus + 2);
+    if (level == "latest") return true;
+    if (level.size() != 2) return false;
+    if (level[0] == '2' && level[1] >= 'b' && level[1] <= 'z') return true;
+    return level >= "23" && level <= "99";
+}
+
+std::string render(Symptom symptom, const FailedCommand& cmd, const Probe& probed);
+
+} // namespace
+
 std::string advice(std::string_view output, const ProbeFn& probe) {
     const auto symptom = symptom_in(output);
     if (symptom == Symptom::None) return {};
     auto cmd = failed_command_in(output);
-    if (!cmd) return {};
-    auto triple = mcpp::toolchain::triple::parse(cmd->target);
-    if (!triple || triple->os != "windows" || triple->env != "msvc") return {};
+    if (!cmd || !targets_msvc_abi(*cmd)) return {};
     auto probed = probe(*cmd);
     if (!probed || probed->predefinesImplCoroutine) return {};
+    return render(symptom, *cmd, *probed);
+}
 
-    const std::string compiler = probed->version.empty()
-        ? std::string("this clang") : std::format("clang {}", probed->version);
-    const std::string section = triple->str();
+std::string std_module_advice(std::string_view message, const ProbeFn& probe) {
+    std::optional<FailedCommand> cmd;
+    bool stlModule = false;
+    for_each_line(message, [&](std::string_view line) {
+        if (!line.starts_with("command: ")) return;
+        if (auto c = failed_command_in(line)) {
+            cmd = std::move(c);
+            for (auto const& w : split_words(line.substr(9)))
+                if (w.ends_with("std.ixx") || w.ends_with("std.compat.ixx")) stlModule = true;
+        }
+    });
+    if (!cmd || !stlModule || !targets_msvc_abi(*cmd) || !at_least_cxx23(cmd->standard))
+        return {};
+    auto probed = probe(*cmd);
+    if (!probed || probed->predefinesImplCoroutine) return {};
+    return render(Symptom::StdModuleGenerator, *cmd, *probed);
+}
+
+std::string std_module_advice(std::string_view message) {
+    return std_module_advice(message, run_probe);
+}
+
+namespace {
+
+std::string render(Symptom symptom, const FailedCommand& cmd, const Probe& probed) {
+    auto triple = mcpp::toolchain::triple::parse(cmd.target);
+
+    const std::string compiler = probed.version.empty()
+        ? std::string("this clang") : std::format("clang {}", probed.version);
+    const std::string section = triple ? triple->str() : cmd.target;
     std::string note = std::format(
         "\n"
         "note: {} does not support C++20 coroutines on {} (this Microsoft\n"
         "      ABI): it does not predefine __cpp_impl_coroutine there, so the\n"
         "      MSVC STL's <coroutine> is empty.",
-        compiler, cmd->target);
+        compiler, cmd.target);
     if (symptom == Symptom::StdModuleGenerator) {
         note +=
             " The C++23 std module includes\n"
@@ -225,6 +290,8 @@ std::string advice(std::string_view output, const ProbeFn& probe) {
         section);
     return note;
 }
+
+} // namespace
 
 std::optional<Probe> run_probe(const FailedCommand& cmd) {
     std::error_code ec;

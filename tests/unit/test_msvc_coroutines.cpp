@@ -42,6 +42,55 @@ co::ProbeFn answering(bool predefines, int* calls = nullptr) {
     };
 }
 
+// What the std module precompile's error actually carries (#781's Windows CI,
+// run 37802975713): the command, not the compiler's diagnostics, which reach
+// the terminal directly.
+constexpr std::string_view kStdModuleMessage =
+    "std module precompile failed (rc=1):\n"
+    "\n"
+    "command: C:/Users/runneradmin/.mcpp/registry\\data\\xpkgs\\xim-x-llvm\\23.1.3\\bin\\clang++.exe "
+    "-std=c++23 -fms-runtime-lib=dll -x c++-module -Wno-include-angled-in-module-purview "
+    "--target=i686-pc-windows-msvc "
+    "-Xmicrosoft-visualc-tools-root \"C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\VC\\Tools\\MSVC\\14.51.36231\" "
+    "--precompile \"C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\VC\\Tools\\MSVC\\14.51.36231\\modules\\std.ixx\" "
+    "-o std.pcm\n";
+
+std::string with_standard(std::string_view message, std::string_view from, std::string_view to) {
+    std::string s(message);
+    s.replace(s.find(from), from.size(), to);
+    return s;
+}
+
+TEST(MsvcCoroutines, StdModuleMessageWithoutDiagnosticsGetsTheNote) {
+    auto note = co::std_module_advice(kStdModuleMessage, answering(false));
+    ASSERT_FALSE(note.empty());
+    EXPECT_NE(note.find("<generator>"), std::string::npos);
+    EXPECT_NE(note.find("standard = \"c++20\""), std::string::npos);
+    EXPECT_NE(note.find("[target.i686-windows-msvc]"), std::string::npos);
+}
+
+TEST(MsvcCoroutines, StdModuleBelowCxx23IsNotThisFailure) {
+    int calls = 0;
+    auto cxx20 = with_standard(kStdModuleMessage, "-std=c++23", "-std=c++20");
+    EXPECT_TRUE(co::std_module_advice(cxx20, answering(false, &calls)).empty());
+    EXPECT_EQ(calls, 0);
+    for (auto spelling : {"-std=c++2b", "-std=c++26", "-std=gnu++23"}) {
+        auto later = with_standard(kStdModuleMessage, "-std=c++23", spelling);
+        EXPECT_FALSE(co::std_module_advice(later, answering(false)).empty()) << spelling;
+    }
+}
+
+TEST(MsvcCoroutines, StdModuleOfLibcxxIsNotThisFailure) {
+    int calls = 0;
+    auto libcxx = with_standard(kStdModuleMessage, "modules\\std.ixx", "share\\libc++\\v1\\std.cppm");
+    EXPECT_TRUE(co::std_module_advice(libcxx, answering(false, &calls)).empty());
+    EXPECT_EQ(calls, 0);
+}
+
+TEST(MsvcCoroutines, StdModuleOnACompilerThatPredefinesTheMacroGetsNoNote) {
+    EXPECT_TRUE(co::std_module_advice(kStdModuleMessage, answering(true)).empty());
+}
+
 TEST(MsvcCoroutines, StdModuleFailureIsTheGeneratorSymptom) {
     EXPECT_EQ(co::symptom_in(kStdModuleFailure), co::Symptom::StdModuleGenerator);
     auto cmd = co::failed_command_in(kStdModuleFailure);
