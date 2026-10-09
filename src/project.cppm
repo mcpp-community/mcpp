@@ -114,21 +114,7 @@ export void merge_workspace_deps(mcpp::manifest::Manifest& member,
 // disagreeing about which packages are real.
 export void inherit_workspace_indices(mcpp::manifest::Manifest& member,
                                       const mcpp::manifest::Manifest& workspace,
-                                      const std::filesystem::path& wsRoot) {
-    if (!member.indices.empty() || workspace.indices.empty()) return;
-    member.indices = workspace.indices;
-    for (auto& [_, idx] : member.indices) {
-        if (idx.is_local() && idx.path.is_relative()) {
-            // This is an ownership/anchoring operation, not a request to
-            // resolve filesystem aliases.  weakly_canonical can rewrite a
-            // Windows short/case-preserving workspace path into a different
-            // spelling before the inherited index is opened.  Keep the path
-            // rooted exactly where the workspace manifest declared it; the
-            // normal reader remains responsible for existence/readability.
-            idx.path = (wsRoot / idx.path).lexically_normal();
-        }
-    }
-}
+                                      const std::filesystem::path& wsRoot);
 
 // Is `candidate` one of this workspace's declared members?
 //
@@ -428,6 +414,27 @@ export void inherit_workspace_root_position(mcpp::manifest::Manifest& member,
         if (table == "xlings") continue;
         detail::warn_position(workspace, member, table, detail::lists(received, table));
     }
+}
+
+// The effective `[indices]` of a member, for a reader that needs only them
+// (`mcpp add`, the index router): `[workspace.indices]` by name (W3), and the
+// root's own `[indices]` by position where the root has no
+// `[workspace.indices]` (COMPAT(workspace-position)). A relative `path` was
+// written at the workspace root and is anchored there (#224).
+void inherit_workspace_indices(mcpp::manifest::Manifest& member,
+                               const mcpp::manifest::Manifest& workspace,
+                               const std::filesystem::path& wsRoot) {
+    if (auto const* layer = workspace.layer.get())
+        for (auto const& [name, idx] : layer->indices) {
+            auto [it, inserted] = member.indices.try_emplace(name, idx);
+            if (inserted && it->second.is_local() && it->second.path.is_relative())
+                it->second.path = (wsRoot / it->second.path).lexically_normal();
+        }
+    const std::vector<std::string> indices{"indices"};
+    if (!detail::lists(mcpp::pm::compat::position_tables(workspace), "indices")) return;
+    const auto received = mcpp::pm::compat::inherit_root_position_by_position(
+        member, workspace, wsRoot, indices);
+    detail::warn_position(workspace, member, "indices", !received.empty());
 }
 
 // THE ROOT PACKAGE OF A WORKSPACE IS ONE OF ITS MEMBERS.
