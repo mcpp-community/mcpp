@@ -33,7 +33,7 @@ inputs:
     # `package.name`, so one of the two was simply unreachable — and which one
     # depended on the machine, which is why CI failed on `compat:lua` on
     # Windows and `mcpplibs.capi:lua` on Linux. Never pin below that.
-    default: '2026.10.8.1'
+    default: '2026.10.10.2'
 
 outputs:
   sandbox-key:
