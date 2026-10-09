@@ -1539,7 +1539,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     }
     const bool need_rc_rule = !plan.resourceUnits.empty();
     if (need_rc_rule) {
-        append(std::format("rc        = {}\n", escape_ninja_path(plan.rcPath)));
+        append(std::format("rc        = {}{}\n", toolEnv, escape_ninja_path(plan.rcPath)));
         std::string rcf;
         for (auto const& f : plan.rcFlags) { rcf += ' '; rcf += shell_quote_arg(f); }
         append(std::format("rcflags   ={}\n", rcf));
