@@ -287,7 +287,7 @@ set -e
 [ "$rc" -ne 0 ] || fail "K: a member that claimed nothing was reported as packed" k.log
 grep -q "member 'mute': no action claimed --format 'zap'" k.log \
     || fail "K: the failure does not name the member" k.log
-[ -n "$(find good -name good.zap | head -1)" ] || fail "K: the member that claimed the format was not packed" k.log
+[ -n "$(find target/.build-mcpp/out -path '*/good/good.zap' | head -1)" ] || fail "K: the member that claimed the format was not packed" k.log
 grep -q "Packed .*good.zap" k.log || fail "K: the member that was packed was not reported" k.log
 echo "ok: K, a member that claimed nothing fails alone, by name, and the others are packed"
 

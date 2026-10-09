@@ -157,11 +157,11 @@ staged=$(ls -d target/dist/myapp-0.1.0-*/ 2>/dev/null | head -1)
 echo "mcpp pack --format blob on Android stages lib/libmyapp.so OK"
 
 # ── 5. MCPP_TARGET_MIN_PLATFORM_VERSION: numeric on Android, empty on host ─
-# `mcpp::out_dir()` for a build PROGRAM (as opposed to `${mcpp.out_dir}` inside
-# an action, which is per-triple) is one path per package,
-# `target/.build-mcpp/out/` -- read the value RIGHT AFTER the Android pack
-# above, before the host build below writes the SAME file with its own answer.
-minplatFile="target/.build-mcpp/out/minplat.txt"
+# `mcpp::out_dir()` for a build PROGRAM is one directory per configuration and
+# package (mcpp 2026.10.10.1+), so the Android pack and the host build below
+# write different files: the newest one is the build that just ran.
+newest_minplat() { ls -t target/.build-mcpp/out/*/*/minplat.txt 2>/dev/null | head -1; }
+minplatFile=$(newest_minplat)
 [ -f "$minplatFile" ] || fail "build.mcpp did not write $minplatFile" pack.log
 androidMinplat=$(cat "$minplatFile")
 case "$androidMinplat" in
@@ -170,7 +170,9 @@ esac
 echo "MCPP_TARGET_MIN_PLATFORM_VERSION is numeric on $TARGET ($androidMinplat) OK"
 
 "$MCPP" build > buildhost.log 2>&1 || fail "the host build failed" buildhost.log
-hostMinplat=$(cat "$minplatFile" 2>/dev/null || true)
+hostFile=$(newest_minplat)
+[ "$hostFile" != "$minplatFile" ] || fail "the host build wrote into the Android configuration's out_dir" buildhost.log
+hostMinplat=$(cat "$hostFile" 2>/dev/null || true)
 [ -z "$hostMinplat" ] \
     || fail "MCPP_TARGET_MIN_PLATFORM_VERSION was '$hostMinplat', not empty, on the host" buildhost.log
 echo "MCPP_TARGET_MIN_PLATFORM_VERSION is empty on the host OK"

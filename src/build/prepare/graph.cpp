@@ -2159,7 +2159,8 @@ step4b_define_provisioning_closures(PrepareState& state) {
     // (the scanner walks the legacy modules.sources mirror). ninja overwrites
     // the placeholder before the compile edge runs, because that compile
     // depends on the action's output.
-    state.programOutDir = [&state](const mcpp::manifest::Manifest& pm,
+    state.programOutDir = [&state](const std::filesystem::path& base,
+                                    const mcpp::manifest::Manifest& pm,
                                     const std::vector<std::string>& features) {
         // What changes the program's environment and is known before it runs.
         std::string id = std::format("target={}\nprofile={}\naccel={}\n",
@@ -2174,7 +2175,7 @@ step4b_define_provisioning_closures(PrepareState& state) {
             ? pm.package.name : pm.package.namespace_ + "." + pm.package.name;
         for (auto& c : name)
             if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '-' && c != '_') c = '_';
-        return state.workRoot / "target" / ".build-mcpp" / "out"
+        return base / "target" / ".build-mcpp" / "out"
              / mcpp::toolchain::hash_string(id) / (name.empty() ? std::string("root") : name);
     };
 

@@ -132,8 +132,12 @@ int main() {
 EOF
 done
 
+# A member's build-program output directory: one per configuration and
+# package, below the workspace root (mcpp 2026.10.10.1+). Every command here
+# builds the one configuration the pack asks for.
+outdir() { ls -d target/.build-mcpp/out/*/"$1" 2>/dev/null | head -1; }
 # The lines a member's program appended to its log, all of them.
-runs() { cat "$1/target/.build-mcpp/out/runs.log" 2>/dev/null; }
+runs() { cat "$(outdir "$1")/runs.log" 2>/dev/null; }
 count() { runs "$1" | grep -c "$2" || true; }
 
 stage_of() { ls -d "$1"/target/dist/"$1"-0.1.0-* | grep -v -e '\.stage-manifest$' -e '\.tar\.gz$' | head -1; }
@@ -144,11 +148,11 @@ objects() { awk -F'\t' '$4 ~ /\.o$/' "$1/.ninja_log" | wc -l | tr -d ' '; }
 # `core` is not a program, so it is not packed, and its program ran once in all:
 # in the pass that asks for no format, and never again for a member whose answer
 # does not depend on the request.
-[ "$(count core '')" = 1 ] || fail "A: core's program ran $(count core '') times, not once" core/target/.build-mcpp/out/runs.log
+[ "$(count core '')" = 1 ] || fail "A: core's program ran $(count core '') times, not once" $(outdir core)/runs.log
 for m in cli gui; do
-    [ "$(count $m '')" = 2 ] || fail "A: $m's program ran $(count $m '') times, not once for each pass" $m/target/.build-mcpp/out/runs.log
-    [ "$(count $m '^format= stage=$')" = 1 ] || fail "A: $m's first pass was told a request" $m/target/.build-mcpp/out/runs.log
-    [ "$(count $m '^format=zap stage=/')" = 1 ] || fail "A: $m's second pass was not told its format and stage" $m/target/.build-mcpp/out/runs.log
+    [ "$(count $m '')" = 2 ] || fail "A: $m's program ran $(count $m '') times, not once for each pass" $(outdir $m)/runs.log
+    [ "$(count $m '^format= stage=$')" = 1 ] || fail "A: $m's first pass was told a request" $(outdir $m)/runs.log
+    [ "$(count $m '^format=zap stage=/')" = 1 ] || fail "A: $m's second pass was not told its format and stage" $(outdir $m)/runs.log
 done
 grep -q "Packed .*cli.zap" a.log || fail "A: cli's distributable was not reported" a.log
 grep -q "Packed .*gui.zap" a.log || fail "A: gui's distributable was not reported" a.log
@@ -159,15 +163,15 @@ for m in cli gui; do
     # The two spellings of one directory are compared as directories: a
     # temporary directory may be reached through a symbolic link.
     want="$(cd "$(stage_of $m)" && pwd -P)"
-    saw="$(cat $m/target/.build-mcpp/out/seen-stage.txt)"
+    saw="$(cat $(outdir $m)/seen-stage.txt)"
     [ -d "$saw" ] && [ "$(cd "$saw" && pwd -P)" = "$want" ] \
         || fail "D: $m's program read '$saw', and its tree is '$want'" a.log
-    grep -qx "member=$m" $m/target/.build-mcpp/out/$m.zap || fail "D: $m's distributable was made for another member" $m/target/.build-mcpp/out/$m.zap
-    grep -qx "./bin/$m" $m/target/.build-mcpp/out/$m.zap || fail "D: $m's tree did not hold $m's program" $m/target/.build-mcpp/out/$m.zap
+    grep -qx "member=$m" $(outdir $m)/$m.zap || fail "D: $m's distributable was made for another member" $(outdir $m)/$m.zap
+    grep -qx "./bin/$m" $(outdir $m)/$m.zap || fail "D: $m's tree did not hold $m's program" $(outdir $m)/$m.zap
 done
-[ "$(cat cli/target/.build-mcpp/out/seen-stage.txt)" != "$(cat gui/target/.build-mcpp/out/seen-stage.txt)" ] \
+[ "$(cat $(outdir cli)/seen-stage.txt)" != "$(cat $(outdir gui)/seen-stage.txt)" ] \
     || fail "D: two members were told one staged tree"
-grep -q "gui" cli/target/.build-mcpp/out/cli.zap && fail "D: cli's tree holds gui's program" cli/target/.build-mcpp/out/cli.zap
+grep -q "gui" $(outdir cli)/cli.zap && fail "D: cli's tree holds gui's program" $(outdir cli)/cli.zap
 echo "ok: D, each member's program reads its own staged tree"
 
 # ── B ────────────────────────────────────────────────────────────────────────
@@ -176,11 +180,11 @@ for m in cli gui; do
     mkdir multi/$m single/$m
     cp -R "$(stage_of $m)" multi/$m/tree
     cp "$(stage_of $m).stage-manifest" multi/$m/stage-manifest
-    cp $m/target/.build-mcpp/out/$m.zap multi/$m/dist
+    cp $(outdir $m)/$m.zap multi/$m/dist
     "$MCPP" pack -p $m --format zap > b-$m.log 2>&1 || fail "B: mcpp pack -p $m failed" b-$m.log
     cp -R "$(stage_of $m)" single/$m/tree
     cp "$(stage_of $m).stage-manifest" single/$m/stage-manifest
-    cp $m/target/.build-mcpp/out/$m.zap single/$m/dist
+    cp $(outdir $m)/$m.zap single/$m/dist
     diff -r multi/$m single/$m > b-$m.diff || fail "B: $m's packed tree differs from the one mcpp pack -p $m makes" b-$m.diff
 done
 echo "ok: B, each member's tree and distributable are those of mcpp pack -p <member>"

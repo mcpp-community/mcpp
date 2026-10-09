@@ -94,7 +94,9 @@ member a tool
 member b tool
 member c ctool c++20
 
-zap() { echo "$1/target/.build-mcpp/out/$1.zap"; }
+# A member's distributable, in its build-program output directory: one per
+# configuration and package, below the workspace root (mcpp 2026.10.10.1+).
+zap() { ls -d target/.build-mcpp/out/*/"$1"/"$1".zap 2>/dev/null | head -1; }
 
 # ── A ────────────────────────────────────────────────────────────────────────
 "$MCPP" pack --workspace --format zap > a.log 2>&1 || fail "A: the pack failed" a.log
