@@ -4,6 +4,85 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.10.1] - 2026-10-10
+
+### Changed
+
+- Give a table under `workspace.` to every member and keep every other table
+  of a manifest for its own package (#785, #786). `[workspace.toolchain]`,
+  `[workspace.indices]`, `[workspace.profile.<name>]`,
+  `[workspace.target.<selector>]` with its `.build`, `.abi`, `.runtime` and
+  `.xlings.workspace` subtables, and `[workspace.xlings]` mirror the tables of
+  the same name and are read by the same reader. The merge rule belongs to the
+  key: a scalar the member declared is the member's, a list puts the
+  workspace's entries first, `profile.<name>` and `target.<triple>` merge key
+  by key, and conditional rows are inherited ahead of the member's. A key that
+  describes one package is refused under `workspace.`, and so is an unknown
+  table under `[workspace]`.
+- Keep reading a workspace root's own `[toolchain]`, `[indices]`,
+  `[profile.<name>]`, `[target.<triple>]` scalars and `[xlings]` entries by
+  position, with the merge they had, and report each use as
+  `manifest/workspace-position` with the `[workspace.X]` spelling. This
+  reading is removed in mcpp 1.0.0. On a root without `[package]`, a table
+  written both ways is refused, and package tables (`[build]`, `[targets]`,
+  `[dependencies]`, a selector's `.build`, ...) are reported as acting on no
+  package; `--strict` refuses them. A root that uses `[workspace.X]` without
+  `[workspace.package] mcpp = ">=2026.10.10.1"` gets a note, because an older
+  engine ignores these tables.
+- Group workspace members by their configuration as it evaluates for the
+  target being built, and carry a member's conditional `dialect_cxxflags` and
+  `.abi` rows to the root it is planned under. A row for another target no
+  longer splits two members into two graphs.
+- Write the workspace layer into a published member's own tables
+  (`[workspace.toolchain]` as `[toolchain]`, `[workspace.target.<sel>.build]`
+  as `[target.<sel>.build]`), rewriting relative paths against the package and
+  refusing one that leaves it.
+- Give each configuration and package its own build-program output directory,
+  `target/.build-mcpp/out/<configuration>/<package>` below the build's root,
+  and record it as `outDir` in `resolution.json`. `mcpp::out_dir()` and
+  `MCPP_OUT_DIR` change; `${mcpp.out_dir}` does not.
+- Write nothing at an action's outputs before the action runs. A generated
+  translation unit enters the plan from its action's declaration; a generated
+  module interface without `.provides(...)` is reported as degraded.
+- Pass the managed toolchain's library path on Linux to the tools that need
+  it (`$cxx`, `$cc`, `$ar`, `clang-scan-deps`) instead of ninja's environment,
+  so no shell ninja starts loads the toolchain's libc++.
+- Pin xlings 2026.10.10.2 and bootstrap from mcpp 2026.10.8.1.
+
+### Added
+
+- Warn when `--toolchain` replaces a toolchain the manifest declares, naming
+  both, the key and the file. The warning does not fail `--strict`.
+- Report `android` in `mcpp self env --format json`. An Android host takes the
+  default toolchain of GNU/Linux on its architecture; Android 10 or later is
+  required.
+- Show an xlings extraction that runs longer than 10 s and a long install hook
+  as `Installing` lines while a toolchain is installed, and give the install
+  hint by the failure's class (network, disk full, permission, damaged
+  archive).
+- Run Termux fresh-install jobs on the released archive: termux-docker on an
+  arm64 runner and the Termux app sandbox on an Android 14 emulator.
+
+### Fixed
+
+- Take a module unit's role from its module declaration and its language from
+  its extension (#790). An implementation partition in a `.cpp` writes its BMI
+  and is not rebuilt by every build; an interface unit in a `.cpp` is found by
+  its importers under Clang. cl.exe compiles an implementation partition with
+  `/internalPartition`.
+- Regenerate an action's output that was removed while the build's log
+  recorded the action (#778), and keep a profile's generated output from
+  serving another profile.
+- Find the Windows SDK where its installer recorded it (`KitsRoot10`) and under
+  `%ProgramFiles(x86)%`/`%ProgramFiles%`, and `vswhere.exe` under
+  `%ProgramFiles(x86)%`. Say which half of the MSVC ABI is missing, and where it
+  was looked for, both on a first run that falls back to MinGW-w64 and when a
+  specified MSVC-ABI toolchain is refused; a specified toolchain is never
+  replaced.
+- Resolve the shell an argv-launched command string runs in (`/bin/sh`, else
+  `/system/bin/sh`, else `$PREFIX/bin/sh`).
+- Report the first error of an xlings install, which is its cause.
+
 ## [2026.10.8.1] - 2026-10-09
 
 ### Changed
