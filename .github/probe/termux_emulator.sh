@@ -50,7 +50,9 @@ run)
     adb push "$EMU/$f" /data/local/tmp/ >/dev/null; adb shell chmod 644 /data/local/tmp/$f
   done
   RA() { adb shell run-as com.termux "$@"; }
-  RA sh -c "'mkdir -p $A/probe && cp /data/local/tmp/*.sh /data/local/tmp/*.gz $A/probe/'"
+  RA mkdir -p $A/probe
+  for f in mcpp.tar.gz xlings.tar.gz termux_inner.sh termux_feasibility.sh; do RA cp /data/local/tmp/$f $A/probe/$f; done
+  RA ls -la $A/probe
   T="PREFIX=$A/usr TMPDIR=$A/usr/tmp PATH=$A/usr/bin LANG=en_US.UTF-8"
 
   say '### F: llvm@23.1.3 + glibc inside the sandbox (payload without hard links)'

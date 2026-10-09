@@ -42,6 +42,7 @@ jobs:
 
   # O7 / O8: the published aarch64 mcpp in a Termux userland (termux-docker).
   termux-docker:
+    if: false
     name: termux-docker aarch64 first run
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
@@ -57,6 +58,7 @@ jobs:
 
   # The same on an arm64 runner with an arm64-v8a emulator, if the runner has KVM.
   termux-emulator-arm64:
+    if: false
     name: termux app sandbox on an arm64 emulator (if KVM)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
