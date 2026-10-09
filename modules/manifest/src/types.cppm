@@ -1849,8 +1849,6 @@ inline constexpr std::array<WorkspaceBuildKey, 15> kWorkspaceBuildKeys{{
     {"ios_deployment_target",   &BuildConfig::iosDeploymentTarget},
 }};
 
-struct Manifest;
-
 struct WorkspaceConfig {
     std::vector<std::string>                            members;       // relative paths to member dirs
     std::vector<std::string>                            exclude;       // paths to exclude
@@ -1858,19 +1856,8 @@ struct WorkspaceConfig {
     WorkspaceInherited                                  inherited;     // [workspace.package|build]
     bool                                                present = false;
 
-    // THE WORKSPACE LAYER: what `[workspace.toolchain]`, `[workspace.indices]`,
-    // `[workspace.profile.<name>]`, `[workspace.target.<sel>]` (with its
-    // `.build`, `.abi`, `.runtime` and `.xlings` subtables) and
-    // `[workspace.xlings]` say to every member (SPEC-004 §9.10, W1-W3).
-    //
-    // Read by the reader of the tables they mirror -- the text under
-    // `workspace.` is a manifest of its own, without `[package]` -- so the
-    // keys, subtables and selectors of `[workspace.X]` are those of `X` by
-    // construction, not by a second list. Null when none of them is written.
-    // `layerTables` names the ones that are (`toolchain`, `indices`,
-    // `profile`, `target`, `xlings`); a workspace root that writes one of
-    // them also at the root position is refused for that table.
-    std::shared_ptr<const Manifest>                     layer;
+    // The `[workspace.X]` tables the root writes (`toolchain`, `indices`,
+    // `profile`, `target`, `xlings`); what they say is `Manifest::layer`.
     std::vector<std::string>                            layerTables;
 };
 
@@ -2064,6 +2051,19 @@ struct Manifest {
     // manifest is read on two paths before it is planned, and an appended
     // vector must be appended once.
     bool                        inheritedAsRootPackage = false;
+    // THE WORKSPACE LAYER: what `[workspace.toolchain]`, `[workspace.indices]`,
+    // `[workspace.profile.<name>]`, `[workspace.target.<sel>]` (with its
+    // `.build`, `.abi`, `.runtime` and `.xlings` subtables) and
+    // `[workspace.xlings]` say to every member (SPEC-004 §9.10, W1-W3). Set
+    // on a workspace root only; `workspace.layerTables` names the tables.
+    //
+    // Read by the reader of the tables they mirror -- the document under
+    // `workspace.` is a manifest of its own, without `[package]` -- so the
+    // keys, subtables and selectors of `[workspace.X]` are those of `X` by
+    // construction, not by a second list. Null when none of them is written.
+    // A workspace root without `[package]` that writes one of them also at
+    // the root position is refused for that table.
+    std::shared_ptr<const Manifest> layer;
     // W7: the package tables a workspace root WITHOUT `[package]` wrote
     // (`[build]`, `[targets]`, `[dependencies]`, ...). They act on no
     // package there; the parser records them, the loader warns (`--strict`:

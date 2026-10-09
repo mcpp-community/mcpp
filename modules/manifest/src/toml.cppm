@@ -3,6 +3,7 @@
 export module mcpp.manifest.toml;
 
 import mcpp.manifest.types;
+import mcpp.manifest.key_registry;
 import mcpp.manifest.cfg_selector;
 import mcpp.targetside;
 import std;
@@ -2953,24 +2954,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
     // policy as [targets.<name>] above: a warning, an error under --strict.
     //
     // MUST stay in sync with the `doc->get_*("build.<key>")` reads above.
-    static constexpr std::string_view kKnownBuildKeys[] = {
-        "accel",
-        "allow_host_libs", "bmi_schedule", "build_program_timeout", "c_standard",
-        "cache", "cflags", "cxxflags", "cxx_runtime", "default-profile", "defines",
-        "dependency_linkage",
-        "dialect_cxxflags", "flags", "include_dirs", "include_dirs_after",
-        "private_include_dirs",
-        "ios_deployment_target",
-        "jobs", "ldflags", "macos_deployment_target", "module_extensions",
-        "platform-dependencies", "profile",
-        "sources", "static_stdlib", "target",
-        // #540: read a few hundred lines above and, until now, absent here —
-        // the SECOND drift of this list, and the comment below narrates the
-        // first. Moved to `[build]` by #494 precisely so their flags could be
-        // conditioned; a manifest writing the documented spelling was told the
-        // key had been ignored while it was taking effect.
-        "std-compat-module", "std-module", "std-module-flags",
-    };
+    // The keys of `[build]` are the registry's (mcpp.manifest.key_registry):
+    // the third hand-written copy of this list had drifted twice before it
+    // was derived (#540).
+    const auto kKnownBuildKeys = registry_keys("build");
     if (auto* bt = doc->get_table("build")) {
         for (auto& [key, _] : *bt) {
             bool known = false;
@@ -4055,11 +4042,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 // is not conditionable and would otherwise vanish without a
                 // word, the #296 failure mode. MUST stay in sync with the reads
                 // above and with types.cppm's BuildInputs and ConditionalConfig.
-                static constexpr std::string_view kKnownConditionalBuildKeys[] = {
-                    "cflags", "cxxflags", "defines", "dialect_cxxflags", "flags",
-                    "include_dirs", "include_dirs_after", "ldflags",
-                    "private_include_dirs", "sources", "std-module-flags",
-                };
+                const auto kKnownConditionalBuildKeys = conditional_build_keys();
                 for (auto& [key, _] : bt) {
                     bool known = false;
                     for (auto k : kKnownConditionalBuildKeys)
@@ -4528,18 +4511,17 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                                     "specific artifact, so it belongs in that package's own "
                                     "table where the person turning it off owns the result.",
                                     sel), value.position));
-                            // The keys of a shared `.build` are those of
-                            // [workspace.build]: sources and per-glob flags
-                            // name one package's files.
+                            // The keys of a shared `.build` are the shared
+                            // keys a condition may carry (the registry):
+                            // sources and per-glob flags name one package's
+                            // files.
                             if (key == "build" && value.is_table()) {
                                 for (auto const& [bk, bv] : value.as_table()) {
-                                    if (std::ranges::any_of(kWorkspaceBuildKeys,
-                                            [&](auto const& row) { return row.key == bk; }))
-                                        continue;
+                                    const auto shared = shared_conditional_build_keys();
+                                    if (std::ranges::find(shared, bk) != shared.end()) continue;
                                     std::string supported;
-                                    for (auto const& row : kWorkspaceBuildKeys)
-                                        supported += std::format("{}{}", supported.empty() ? "" : ", ",
-                                                                 row.key);
+                                    for (auto k : shared)
+                                        supported += std::format("{}{}", supported.empty() ? "" : ", ", k);
                                     return std::unexpected(error(origin, std::format(
                                         "[workspace.target.{}.build] has no key '{}' (or it is "
                                         "not inheritable). Supported: {}.", sel, bk, supported),
@@ -4594,7 +4576,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 for (auto const& w : layer->schemaWarnings)
                     m.schemaWarnings.push_back(
                         w.starts_with("[") ? "[workspace." + w.substr(1) : w);
-                m.workspace.layer = std::make_shared<const Manifest>(std::move(*layer));
+                m.layer = std::make_shared<const Manifest>(std::move(*layer));
             }
         }
 
@@ -4602,11 +4584,14 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // that describes one acts on nothing here. Recorded; the loader warns,
         // and refuses under --strict.
         if (!pkg_t && !ctx.workspaceLayer) {
-            static constexpr std::pair<std::string_view, std::string_view> kPackageTables[] = {
-                {"build", "workspace.build"}, {"targets", ""}, {"dependencies", "workspace.dependencies"},
-                {"dev-dependencies", ""}, {"build-dependencies", ""}, {"features", ""},
-                {"resources", ""}, {"test", ""}, {"hooks", ""}, {"runtime", ""},
-            };
+            // The package's own tables, from the registry, and [build].
+            std::vector<std::pair<std::string_view, std::string_view>> kPackageTables{
+                {"build", "workspace.build"}};
+            for (auto const& row : kKeyRegistry)
+                if (row.key.empty() && row.scope == KeyScope::Package
+                    && row.table.find('.') == std::string_view::npos)
+                    kPackageTables.emplace_back(row.table,
+                        row.table == "dependencies" ? "workspace.dependencies" : "");
             auto note = [&](std::string table, std::string mirror) {
                 m.virtualRootPackageTables.push_back(mirror.empty()
                     ? std::format("[{}] is written on a workspace root without [package], "

@@ -168,7 +168,7 @@ report_workspace_root(const mcpp::manifest::Manifest& ws, bool strict) {
         if (strict) return std::unexpected(w);
         mcpp::diag::warning("manifest/schema", w);
     }
-    if (ws.workspace.layer) {
+    if (ws.layer) {
         const auto have = mcpp::xpkg_version::parse(mcpp::MCPP_VERSION);
         const auto floor = ws.workspace.inherited.mcppFloor;
         const auto need = floor.empty() ? std::nullopt : mcpp::xpkg_version::parse(floor);

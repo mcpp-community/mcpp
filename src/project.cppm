@@ -366,7 +366,7 @@ void merge_layer_root_position(mcpp::manifest::Manifest& member,
 export void inherit_workspace_xlings(mcpp::manifest::Manifest& member,
                                      const mcpp::manifest::Manifest& workspace) {
     static const std::vector<mcpp::manifest::ConditionalConfig> none;
-    if (auto const* layer = workspace.workspace.layer.get()) {
+    if (auto const* layer = workspace.layer.get()) {
         auto const& tables = workspace.workspace.layerTables;
         detail::merge_xlings(member,
                              detail::lists(tables, "xlings") ? &layer->xlings : nullptr,
@@ -389,7 +389,7 @@ export void inherit_workspace_xlings(mcpp::manifest::Manifest& member,
 export void inherit_workspace_layer_rows(mcpp::manifest::Manifest& member,
                                          const mcpp::manifest::Manifest& workspace,
                                          const std::filesystem::path& wsRoot) {
-    auto const* layer = workspace.workspace.layer.get();
+    auto const* layer = workspace.layer.get();
     if (!layer || layer->conditionalConfigs.empty()) return;
     auto anchor = [&](std::vector<std::filesystem::path>& dirs) {
         for (auto& d : dirs)
@@ -417,7 +417,7 @@ export void inherit_workspace_layer_rows(mcpp::manifest::Manifest& member,
 export void inherit_workspace_root_position(mcpp::manifest::Manifest& member,
                                             const mcpp::manifest::Manifest& workspace,
                                             const std::filesystem::path& wsRoot) {
-    if (auto const* layer = workspace.workspace.layer.get())
+    if (auto const* layer = workspace.layer.get())
         detail::merge_layer_root_position(member, *layer, wsRoot, workspace.sourcePath);
     // COMPAT(workspace-position)
     const auto position = mcpp::pm::compat::position_tables(workspace);
@@ -446,7 +446,7 @@ export void inherit_as_root_package(mcpp::manifest::Manifest& root,
     const auto workspace = root;
     inherit_workspace_package(root, workspace);
     inherit_workspace_build(root, workspace, wsRoot);
-    if (auto const* layer = workspace.workspace.layer.get()) {
+    if (auto const* layer = workspace.layer.get()) {
         static const std::vector<mcpp::manifest::ConditionalConfig> none;
         auto const& tables = workspace.workspace.layerTables;
         detail::merge_layer_root_position(root, *layer, wsRoot, workspace.sourcePath);
@@ -924,6 +924,13 @@ export std::string root_position_key(
     for (auto const& [platform, spec] : m.toolchain.byPlatform)
         field("toolchain." + platform, spec);
     for (auto const& [triple, e] : m.targetOverrides) {
+        // A row with no scalar written (a `[target.<sel>.build]`-only header)
+        // states no configuration; a row whose selector does not hold for
+        // this build's target is not this build's.
+        const bool written = !e.toolchain.empty() || !e.linkage.empty() || !e.cxxRuntime.empty()
+            || e.sysrootDeclared || e.minApiLevel != 0 || !e.runner.empty()
+            || !e.namedRunners.empty();
+        if (!written || (applies && !applies(triple))) continue;
         field("target." + triple + ".toolchain", e.toolchain);
         field("target." + triple + ".linkage", e.linkage);
         field("target." + triple + ".cxx_runtime", e.cxxRuntime);
