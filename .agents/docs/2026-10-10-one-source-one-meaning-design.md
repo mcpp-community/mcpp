@@ -26,7 +26,8 @@ status: landed
   它读 `Manifest`，而 `mcpp.manifest.types` 导入该门面。
 - `KeyRegistry`（`mcpp.manifest.key_registry`）推导出：解析器的 `[build]` 与 `[target.<sel>.build]` 已知键、
   `[workspace.target.<sel>.build]` 接受的键、W7 的包表清单；单元测试核对它与 `kWorkspaceBuildKeys`、与分组键。
-  `[target.<sel>]` 标量清单与文档中的键类别表仍由各自已有的测试守护。
+  `[target.<sel>]` 标量清单仍由已有的测试守护。`.github/tools/check_manifest_key_classes.py` 核对登记表与
+  docs/04（每个 `[build]` 键）、docs/07（每张共享表）的中英文版本；它发现 docs/04 漏了五个 `[build]` 键，已补。
 - D7：构建程序的缓存仍是每个包一条记录；切换配置会重新运行程序，不会重新编译它。
 - D28：以 argv 启动的 shell 由 `posix_shell()` 解析；`popen` 与 `std::system` 仍用 C 库的 `/bin/sh`，
   因此 Android 的基线是 10 及以上。

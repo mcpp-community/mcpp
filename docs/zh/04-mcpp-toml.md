@@ -829,6 +829,15 @@ minos`）里记录的最低系统版本，也就是这个二进制能运行的�
 aarch64-macos` 在 Linux 或 Windows 上和在 Mac 上一样遵从这个字段
 （以及环境变量），非 macOS 目标则永远不会看到它。
 
+### 在其他章节说明的 `[build]` 键
+
+| 键 | 章节 |
+|---|---|
+| `allow_host_libs` | [20 —— 工具链](20-toolchains.md)、[22 —— 目标侧](22-target-side.md) |
+| `ios_deployment_target` | [20 —— 工具链](20-toolchains.md) |
+| `platform-dependencies` | [22 —— 目标侧](22-target-side.md) |
+| `std-module`、`std-compat-module` | [22 —— 目标侧](22-target-side.md) |
+
 ### 构建并发（`jobs`）与模块调度（`bmi_schedule`）
 
 ```toml

@@ -886,6 +886,15 @@ machine running mcpp: `mcpp build --target aarch64-macos` honors this field
 (and the environment variable) the same way on Linux or Windows as it does on
 a Mac, and a non-macOS target never sees it.
 
+### `[build]` keys described in other chapters
+
+| Key | Chapter |
+|---|---|
+| `allow_host_libs` | [20 — Toolchains](20-toolchains.md), [22 — Target Side](22-target-side.md) |
+| `ios_deployment_target` | [20 — Toolchains](20-toolchains.md) |
+| `platform-dependencies` | [22 — Target Side](22-target-side.md) |
+| `std-module`, `std-compat-module` | [22 — Target Side](22-target-side.md) |
+
 ### Build concurrency (`jobs`) and module scheduling (`bmi_schedule`)
 
 ```toml
