@@ -432,8 +432,8 @@ jobs:
           # a neighbouring step happened to select makes this step's subject
           # depend on step order, which is not a property anybody reads.
           "$MCPP_SELF" build --toolchain "llvm@23.1.3"
+          d="$(sh "$GITHUB_WORKSPACE/.github/tools/out_dir.sh")/spirv"
           for f in triangle_vert triangle_frag; do
-            d="target/.build-mcpp/out/spirv"
             test -f "$d/$f.h" || { echo "missing $d/$f.h"; exit 1; }
             # THE MAGIC IS NOT ALWAYS IN THE HEADER, AND THAT IS THE POINT OF
             # THIS JOB. The rule chooses the shader compiler this platform

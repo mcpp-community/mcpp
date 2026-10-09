@@ -349,8 +349,8 @@ jobs:
           # THE SHADERS ARE THE FIRST ASSERTION, and both of them: a rule that
           # compiled only the first source would leave the second header absent
           # and everything after this would still pass.
+          d="$(sh "$GITHUB_WORKSPACE/.github/tools/out_dir.sh")/spirv"
           for f in triangle_vert triangle_frag; do
-            d="target/.build-mcpp/out/spirv"
             test -f "$d/$f.h" || { echo "missing $d/$f.h"; exit 1; }
             # Either file: which of the two carries the words is a property of
             # the shader compiler the rule chose, not of the shader. See the
