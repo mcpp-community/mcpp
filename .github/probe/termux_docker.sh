@@ -38,7 +38,7 @@ docker run --rm --privileged --entrypoint /system/bin/sh \
 say "- pass 2 (/bin -> /system/bin) exit: ${PIPESTATUS[0]}, wall: $(( $(date +%s) - start )) s"
 
 # Pass 3: as pass 2, with the static musl gcc an Android default would use (D21).
-mkdir -p "$LOGS/pass3"; chmod 777 "$LOGS/pass3"
+mkdir -p "$LOGS/pass3"; chmod 777 "$LOGS/pass3"; echo "--toolchain gcc@15.1.0-musl" > "$LOGS/pass3/build-args"; chmod 666 "$LOGS/pass3/build-args"
 start=$(date +%s)
 docker run --rm --privileged --entrypoint /system/bin/sh \
   -v "$DL:/mnt/dl:ro" -v "$LOGS/pass3:/mnt/logs" -e PROBE_BUILD_ARGS="--toolchain gcc@15.1.0-musl" \
@@ -48,7 +48,7 @@ say "- pass 3 (/bin -> /system/bin, --toolchain gcc@15.1.0-musl) exit: ${PIPESTA
 
 say '### environment'
 say '```'
-for f in "$LOGS/container.log" "$LOGS/pass2/container.log" "$LOGS/pass3/container.log"; do echo "-- $f" >> "$S"; grep -E "^(ENV|UNAME|ID|HARDLINK|XLINGS|MCPP|STAGE|TIMING|ELF)" "$f" | head -60 >> "$S"; done
+for f in "$LOGS/container.log" "$LOGS/pass2/container.log" "$LOGS/pass3/container.log"; do echo "-- $f" >> "$S"; grep -E "^(ENV|UNAME|ID|HARDLINK|XLINGS|MCPP|STAGE|TIMING|ELF|BUILD)" "$f" | head -60 >> "$S"; done
 say '```'
 for pass in . pass2 pass3; do
 say "### first run ($pass): key lines"

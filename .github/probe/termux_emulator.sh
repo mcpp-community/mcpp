@@ -53,6 +53,12 @@ run)
   timeout 3000 adb shell run-as com.termux $A/usr/bin/env $TENVB \
     PROBE_OUT=$A/probe/outB PROBE_TARBALL=$A/probe/mcpp.tar.gz PROBE_HOME=$A/homeB \
     $A/usr/bin/sh $A/probe/termux_inner.sh 2>&1 | sed 's/^/[B] /' | tee -a "$LOGS/inner.log"
+  # Session C: as B, with the static musl gcc an Android default would use (D21).
+  adb shell run-as com.termux sh -c "'mkdir -p $A/probe/outC && echo --toolchain gcc@15.1.0-musl > $A/probe/outC/build-args'"
+  TENVC="PREFIX=$A/usr HOME=$A/homeC TMPDIR=$A/usr/tmp PATH=$A/usr/bin LANG=en_US.UTF-8"
+  timeout 3000 adb shell run-as com.termux $A/usr/bin/env $TENVC \
+    PROBE_OUT=$A/probe/outC PROBE_TARBALL=$A/probe/mcpp.tar.gz PROBE_HOME=$A/homeC \
+    $A/usr/bin/sh $A/probe/termux_inner.sh 2>&1 | sed 's/^/[C] /' | tee -a "$LOGS/inner.log"
   say "- wall: $(( $(date +%s) - start )) s"
   for f in first-build.log; do
     adb shell run-as com.termux cat "$A/probe/out/$f" > "$LOGS/$f" 2>/dev/null
@@ -61,12 +67,12 @@ run)
   say '### sandbox'
   say '```'
   cat "$LOGS/sandbox.txt" >> "$S"
-  grep -E '^(\[B\] )?(ENV|UNAME|ID|HARDLINK|MCPP|TIMING|XLINGS|STAGE|ELF)' "$LOGS/inner.log" >> "$S"
+  grep -E '^(\[[BC]\] )?(ENV|UNAME|ID|HARDLINK|MCPP|TIMING|XLINGS|STAGE|ELF|BUILD)' "$LOGS/inner.log" >> "$S"
   say '```'
   say '### first run: key lines'
   say '```'
   grep -E 'First run|Resolving|Resolved|Installing|Downloading|error|warning|hint|Finished|glibc|llvm|musl|Can.t create|did not complete' \
-    "$LOGS/inner.log" | head -90 >> "$S"
+    "$LOGS/inner.log" | head -150 >> "$S"
   say '```'
   say '### plan stage timings'
   say '```'

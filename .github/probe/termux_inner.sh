@@ -41,6 +41,8 @@ cd "$HOME/hello"
 printf '[package]\nname = "hello"\nversion = "0.1.0"\n\n[targets.hello]\nkind = "bin"\nmain = "src/main.cpp"\n' > mcpp.toml
 printf 'import std;\nint main() { std::println("hello from termux"); }\n' > src/main.cpp
 
+[ -f "$OUT/build-args" ] && PROBE_BUILD_ARGS=$(cat "$OUT/build-args")
+echo "BUILD ARGS: ${PROBE_BUILD_ARGS:-<none>}"
 echo "ELF mcpp: $(od -An -tx1 -j16 -N2 "$MCPP" | tr -d ' \n') (0200=ET_EXEC 0300=ET_DYN)"
 t0=$(date +%s)
 MCPP_LOG_LEVEL=info timeout 3600 "$MCPP" build --verbose ${PROBE_BUILD_ARGS:-} > "$OUT/first-build.log" 2>&1
