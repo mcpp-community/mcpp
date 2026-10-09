@@ -80,8 +80,9 @@ after="$(find "$TMP/deplib" | sort)"
     diff <(echo "$before") <(echo "$after") || true
     echo "dependency root was written to"; exit 1; }
 
-# Artifacts live in the consuming project.
-find target/.build-mcpp/deps -name 'gen_dep.cpp' | grep -q . || {
+# Artifacts live in the consuming project: the program in .build-mcpp/deps,
+# its output in this configuration's directory (mcpp 2026.10.10.1+).
+find target/.build-mcpp/out -path '*deplib/gen_dep.cpp' | grep -q . || {
     echo "dep OUT_DIR generated file not in project tree"; exit 1; }
 
 echo "OK"

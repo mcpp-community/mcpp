@@ -1497,7 +1497,10 @@ std::expected<void, std::string> run_build_program_impl(
     // the program's turn comes.
     if (mode == ProgramMode::Compile) programReport.reported = true;
 
-    fs::create_directories(outDir, ec);   // creates bdir too
+    // Both: the output directory is per configuration and need not lie
+    // below `bdir`, where the program binary and its cache are (D7).
+    fs::create_directories(bdir, ec);
+    fs::create_directories(outDir, ec);
     // #230: on Windows the capture_exec shell is cmd.exe, which can only launch
     // a PE by an executable extension — a bare `.bin` is not in PATHEXT and
     // fails to run. Name the compiled program `.exe` there; other platforms keep
