@@ -11,6 +11,7 @@ export TMPDIR="${TMPDIR:-$HOME/tmp}"; mkdir -p "$TMPDIR"
 
 echo "ENV ANDROID_ROOT=${ANDROID_ROOT-<unset>} ANDROID_DATA=${ANDROID_DATA-<unset>} PREFIX=${PREFIX-<unset>} TERMUX_VERSION=${TERMUX_VERSION-<unset>}"
 echo "ENV HOME=$HOME TMPDIR=$TMPDIR SSL_CERT_FILE=${SSL_CERT_FILE-<unset>}"
+echo "ENV TERMUX_EXEC: LD_PRELOAD=${LD_PRELOAD-<unset>} $(env | grep -i TERMUX_EXEC | tr '\n' ' ')"
 echo "ENV linker64: $(ls -l /system/bin/linker64 2>&1 | head -1)"
 echo "UNAME $(uname -a 2>&1)"
 echo "ID $(id 2>&1)"
@@ -40,8 +41,9 @@ cd "$HOME/hello"
 printf '[package]\nname = "hello"\nversion = "0.1.0"\n\n[targets.hello]\nkind = "bin"\nmain = "src/main.cpp"\n' > mcpp.toml
 printf 'import std;\nint main() { std::println("hello from termux"); }\n' > src/main.cpp
 
+echo "ELF mcpp: $(od -An -tx1 -j16 -N2 "$MCPP" | tr -d ' \n') (0200=ET_EXEC 0300=ET_DYN)"
 t0=$(date +%s)
-MCPP_LOG_LEVEL=info timeout 3600 "$MCPP" build --verbose > "$OUT/first-build.log" 2>&1
+MCPP_LOG_LEVEL=info timeout 3600 "$MCPP" build --verbose ${PROBE_BUILD_ARGS:-} > "$OUT/first-build.log" 2>&1
 rc=$?
 cat "$OUT/first-build.log"
 echo "TIMING first build: exit $rc, $(( $(date +%s) - t0 )) s"
@@ -52,6 +54,9 @@ echo "TIMING run: $(( $(date +%s) - t0 )) s"
 mkdir -p "$OUT/mcpp-log"
 cp -r "$HOME"/.mcpp/log/. "$OUT/mcpp-log/" 2>/dev/null
 cp -r "$(dirname "$(dirname "$MCPP")")"/log/. "$OUT/mcpp-log/" 2>/dev/null
+for b in "$(dirname "$(dirname "$MCPP")")"/registry/data/xpkgs/*/*/bin/*; do
+  case "$b" in *gcc*|*g++*|*clang++|*ld|*as|*ninja|*patchelf) echo "ELF $(basename "$(dirname "$(dirname "$b")")")/$(basename "$b"): $(od -An -tx1 -j16 -N2 "$b" 2>/dev/null | tr -d ' \n')";; esac
+done 2>/dev/null | sort -u | head -20
 grep -h 'build/stage' "$OUT"/mcpp-log/*.log 2>/dev/null | tail -30 | sed 's/^/STAGE /'
 cp "$TMPDIR"/mcpp-xlings-*.stderr "$OUT/" 2>/dev/null
 ls "$HOME"/.mcpp/registry/logs/hooks/ 2>/dev/null | head

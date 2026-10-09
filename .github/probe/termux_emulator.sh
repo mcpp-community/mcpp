@@ -44,9 +44,15 @@ run)
   # A Termux session's environment, as the app sets it up for its shell.
   TENV="PREFIX=$A/usr HOME=$A/home TMPDIR=$A/usr/tmp PATH=$A/usr/bin LANG=en_US.UTF-8 LD_PRELOAD=$A/usr/lib/libtermux-exec.so"
   start=$(date +%s)
-  timeout 5400 adb shell run-as com.termux $A/usr/bin/env $TENV \
-    PROBE_OUT=$A/probe/out PROBE_TARBALL=$A/probe/mcpp.tar.gz PROBE_HOME=$A/home \
+  # Session A: the environment a Termux shell has (termux-exec preloaded).
+  timeout 2400 adb shell run-as com.termux $A/usr/bin/env $TENV \
+    PROBE_OUT=$A/probe/outA PROBE_TARBALL=$A/probe/mcpp.tar.gz PROBE_HOME=$A/home \
     $A/usr/bin/sh $A/probe/termux_inner.sh 2>&1 | tee "$LOGS/inner.log"
+  # Session B: the same without termux-exec, so the binaries are exec'd directly.
+  TENVB="PREFIX=$A/usr HOME=$A/homeB TMPDIR=$A/usr/tmp PATH=$A/usr/bin LANG=en_US.UTF-8"
+  timeout 3000 adb shell run-as com.termux $A/usr/bin/env $TENVB \
+    PROBE_OUT=$A/probe/outB PROBE_TARBALL=$A/probe/mcpp.tar.gz PROBE_HOME=$A/homeB \
+    $A/usr/bin/sh $A/probe/termux_inner.sh 2>&1 | sed 's/^/[B] /' | tee -a "$LOGS/inner.log"
   say "- wall: $(( $(date +%s) - start )) s"
   for f in first-build.log; do
     adb shell run-as com.termux cat "$A/probe/out/$f" > "$LOGS/$f" 2>/dev/null
@@ -55,12 +61,12 @@ run)
   say '### sandbox'
   say '```'
   cat "$LOGS/sandbox.txt" >> "$S"
-  grep -E '^(ENV|UNAME|ID|HARDLINK|MCPP|TIMING|XLINGS|STAGE)' "$LOGS/inner.log" >> "$S"
+  grep -E '^(\[B\] )?(ENV|UNAME|ID|HARDLINK|MCPP|TIMING|XLINGS|STAGE|ELF)' "$LOGS/inner.log" >> "$S"
   say '```'
   say '### first run: key lines'
   say '```'
   grep -E 'First run|Resolving|Resolved|Installing|Downloading|error|warning|hint|Finished|glibc|llvm|musl|Can.t create|did not complete' \
-    "$LOGS/inner.log" | head -60 >> "$S"
+    "$LOGS/inner.log" | head -90 >> "$S"
   say '```'
   say '### plan stage timings'
   say '```'

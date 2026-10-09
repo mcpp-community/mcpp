@@ -37,11 +37,20 @@ docker run --rm --privileged --entrypoint /system/bin/sh \
   2>&1 | tee "$LOGS/pass2/container.log"
 say "- pass 2 (/bin -> /system/bin) exit: ${PIPESTATUS[0]}, wall: $(( $(date +%s) - start )) s"
 
+# Pass 3: as pass 2, with the static musl gcc an Android default would use (D21).
+mkdir -p "$LOGS/pass3"; chmod 777 "$LOGS/pass3"
+start=$(date +%s)
+docker run --rm --privileged --entrypoint /system/bin/sh \
+  -v "$DL:/mnt/dl:ro" -v "$LOGS/pass3:/mnt/logs" -e PROBE_BUILD_ARGS="--toolchain gcc@15.1.0-musl" \
+  termux/termux-docker:aarch64 -c 'ln -s /system/bin /bin; exec /entrypoint.sh bash /mnt/dl/termux_inner.sh' \
+  2>&1 | tee "$LOGS/pass3/container.log"
+say "- pass 3 (/bin -> /system/bin, --toolchain gcc@15.1.0-musl) exit: ${PIPESTATUS[0]}, wall: $(( $(date +%s) - start )) s"
+
 say '### environment'
 say '```'
-for f in "$LOGS/container.log" "$LOGS/pass2/container.log"; do echo "-- $f" >> "$S"; grep -E "^(ENV|UNAME|ID|HARDLINK|XLINGS|MCPP|STAGE|TIMING)" "$f" | head -60 >> "$S"; done
+for f in "$LOGS/container.log" "$LOGS/pass2/container.log" "$LOGS/pass3/container.log"; do echo "-- $f" >> "$S"; grep -E "^(ENV|UNAME|ID|HARDLINK|XLINGS|MCPP|STAGE|TIMING|ELF)" "$f" | head -60 >> "$S"; done
 say '```'
-for pass in . pass2; do
+for pass in . pass2 pass3; do
 say "### first run ($pass): key lines"
 say '```'
 grep -E 'First run|Resolving|Resolved|Installing|Downloading|Planning|error|warning|hint|Finished|TIMING|glibc|llvm|musl|Can.t create' \
