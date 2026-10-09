@@ -96,6 +96,7 @@ jobs:
   # O8 / D19: the Android app sandbox (SELinux) on an emulator, through the
   # debuggable Termux APK and `run-as`.
   termux-emulator:
+    if: false
     name: termux app sandbox on an x86_64 emulator
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -123,3 +124,111 @@ jobs:
         with:
           name: termux-emulator
           path: ${{ runner.temp }}/termux-emu-logs
+
+  # Round 8: the release candidate (mcpp release/2026.10.10.1 + xlings
+  # 2026.10.10.2) through the fresh-install script the release adds (D27).
+  candidate:
+    name: candidate tarballs (release/2026.10.10.1)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/2026.10.10.1
+      - name: Bootstrap
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+        run: |
+          sudo apt-get install -y qemu-user-static >/dev/null
+          XV=2026.10.10.2
+          curl -fsSL -o /tmp/xl.tgz "https://github.com/openxlings/xlings/releases/download/v$XV/xlings-$XV-linux-x86_64.tar.gz"
+          tar -xzf /tmp/xl.tgz -C /tmp
+          "/tmp/xlings-$XV-linux-x86_64/subos/default/bin/xlings" self install
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.xlings/bin" >> "$GITHUB_PATH"
+          echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
+      - name: Build both static binaries
+        run: |
+          xlings config --mirror GLOBAL 2>/dev/null || true
+          xlings update -y 2>/dev/null || true
+          MCPP=$(bash .github/tools/install_pinned_mcpp.sh "$GITHUB_WORKSPACE")
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" build --target x86_64-linux-musl
+          X=$(find target/x86_64-linux-musl -type f -name mcpp | head -1)
+          "$X" build --target aarch64-linux-musl
+          A=$(find target/aarch64-linux-musl -type f -name mcpp | head -1)
+          file "$X" "$A"
+          echo "X=$GITHUB_WORKSPACE/$X" >> "$GITHUB_ENV"
+          echo "A=$GITHUB_WORKSPACE/$A" >> "$GITHUB_ENV"
+      - name: Assemble the candidates on the 2026.10.8.1 layout
+        run: |
+          mkdir -p cand && cd cand
+          for arch in x86_64 aarch64; do
+            curl -fsSL -o base.tgz "https://github.com/mcpp-community/mcpp/releases/download/v2026.10.8.1/mcpp-2026.10.8.1-linux-$arch.tar.gz"
+            curl -fsSL -o xl.tgz "https://github.com/openxlings/xlings/releases/download/v2026.10.10.2/xlings-2026.10.10.2-linux-$arch.tar.gz"
+            rm -rf w xl && mkdir w xl && tar -xzf base.tgz -C w && tar -xzf xl.tgz -C xl
+            D=$(ls -d w/mcpp-*)
+            if [ "$arch" = x86_64 ]; then cp "$X" "$D/bin/mcpp"; else cp "$A" "$D/bin/mcpp"; fi
+            cp "$(find xl -path '*/bin/xlings' -type f | head -1)" "$D/registry/bin/xlings"
+            mv "$D" "w/mcpp-2026.10.10.1-linux-$arch"
+            tar -czf "mcpp-candidate-linux-$arch.tar.gz" -C w "mcpp-2026.10.10.1-linux-$arch"
+          done
+          ls -la
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidates
+          path: cand/mcpp-candidate-linux-*.tar.gz
+
+  candidate-termux-docker:
+    needs: [candidate]
+    name: candidate in termux-docker aarch64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/2026.10.10.1
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidates
+          path: cand
+      - run: bash .github/tools/termux_fresh_install.sh docker "$GITHUB_WORKSPACE/cand/mcpp-candidate-linux-aarch64.tar.gz"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: candidate-termux-docker
+          path: ${{ runner.temp }}/termux-fresh/logs
+
+  candidate-termux-emulator:
+    needs: [candidate]
+    name: candidate in the Termux app sandbox (x86_64 emulator)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/2026.10.10.1
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidates
+          path: cand
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - run: bash .github/tools/termux_fresh_install.sh emulator-download "$GITHUB_WORKSPACE/cand/mcpp-candidate-linux-x86_64.tar.gz"
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disk-size: 14G
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash .github/tools/termux_fresh_install.sh emulator-run
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: candidate-termux-emulator
+          path: ${{ runner.temp }}/termux-fresh/logs
