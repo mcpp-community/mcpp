@@ -27,6 +27,12 @@ tar -xzf "$TARBALL" -C "$HOME/dist" 2>&1 | tail -3
 MCPP=$(find "$HOME/dist" -path '*/bin/mcpp' -type f | head -1)
 echo "MCPP $MCPP"
 "$MCPP" --version 2>&1
+XL=$(dirname "$(dirname "$MCPP")")/registry/bin/xlings
+echo "XLINGS $XL"
+"$XL" --version 2>&1 | head -3
+echo "XLINGS self init (direct):"
+XLINGS_HOME=$(dirname "$XL")/.. "$XL" self init 2>&1 | tail -25
+echo "XLINGS exit: $?"
 "$MCPP" self env 2>&1 | head -40
 
 mkdir -p "$HOME/hello/src"

@@ -14,9 +14,7 @@ say() { echo "$*"; echo "$*" >> "$S"; }
 
 case "${1:-}" in
 download)
-  apk_url=$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN:-}" \
-      https://api.github.com/repos/termux/termux-app/releases/latest \
-    | python3 -c 'import json,sys; a=[x["browser_download_url"] for x in json.load(sys.stdin)["assets"] if x["name"].endswith("github-debug_x86_64.apk")]; print(a[0] if a else "")')
+  apk_url="https://github.com/termux/termux-app/releases/download/v0.118.3/termux-app_v0.118.3+github-debug_x86_64.apk"
   echo "apk: $apk_url"
   curl -fsSL -o "$EMU/termux.apk" "$apk_url"
   curl -fsSL -o "$EMU/mcpp.tar.gz" \

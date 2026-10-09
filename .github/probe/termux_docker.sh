@@ -29,7 +29,7 @@ say "- container exit: ${PIPESTATUS[0]}, wall: $(( $(date +%s) - start )) s"
 
 say '### environment'
 say '```'
-grep -E '^(ENV|UNAME|ID|HARDLINK)' "$LOGS/container.log" | head -40 >> "$S"
+grep -E "^(ENV|UNAME|ID|HARDLINK|XLINGS|MCPP)" "$LOGS/container.log" | head -40 >> "$S"
 say '```'
 say '### first run: key lines'
 say '```'

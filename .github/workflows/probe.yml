@@ -12,6 +12,7 @@ env:
 jobs:
   # O6 / D17 / D18: a Windows SDK outside the conventional C: paths.
   windows-sdk:
+    if: false
     name: windows sdk moved out of the conventional path
     runs-on: windows-latest
     timeout-minutes: 120
@@ -28,6 +29,7 @@ jobs:
 
   # O5: cl.exe options for each module role.
   msvc-module-roles:
+    if: false
     name: cl.exe module roles
     runs-on: windows-latest
     timeout-minutes: 20
