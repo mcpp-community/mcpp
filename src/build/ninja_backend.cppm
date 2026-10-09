@@ -2518,11 +2518,18 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // inhabitant of a `.cppm` and provides nothing. That second question is
     // answered here, once, from `cu.providesModule` — the same field `bmi_out`
     // is bound from, so the flag and the binding can no longer disagree.
+    //
+    // An implementation partition (`module M:part;`) writes a BMI but is not
+    // an interface, and cl.exe is told so: `/internalPartition`, measured
+    // (design 2026-10-10 §5.2) -- `/interface` on one is C3474 and no option
+    // is C7621. Clang and GCC compile it as they compile an interface.
     auto module_edge_vars = [&](const mcpp::build::CompileUnit& cu) -> std::string {
         if (cu.providesModule.empty())
             return std::format("  module_lang ={}\n", traits.moduleImplLangFlag);
         std::string v = std::format("  module_lang ={}\n",
-                                    traits.moduleInterfaceLangFlag);
+            cu.is_implementation_partition()
+                ? traits.moduleImplPartitionLangFlag
+                : traits.moduleInterfaceLangFlag);
         if (traits.needsExplicitModuleOutput)
             v += std::format("  module_output ={}{}\n", traits.moduleOutputPrefix,
                              unit_bmi(cu));
@@ -2530,6 +2537,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     };
 
     auto pick_rule = [](const mcpp::build::CompileUnit& cu) -> std::string {
+        if (cu.uses_module_rule()) return "cxx_module";
         switch (cu.kind) {
             case mcpp::SourceKind::ModuleInterface: return "cxx_module";
             case mcpp::SourceKind::C:               return "c_object";
@@ -2837,7 +2845,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                 if (cu.servedFromCache) continue;
                 if (is_scan_exempt(cu)) continue;
                 if (cu.providesModule.empty()) continue;
-                if (cu.kind != mcpp::SourceKind::ModuleInterface) continue;
+                if (!cu.uses_module_rule()) continue;
                 two_phase_ddi.insert(
                     (cu.object.parent_path() / cu.source.filename()).string() + ".ddi");
             }
@@ -2883,7 +2891,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             std::string rule = pick_rule(cu);
 
             if (splitBmi && !cu.providesModule.empty() &&
-                cu.kind == mcpp::SourceKind::ModuleInterface) {
+                cu.uses_module_rule()) {
                 const auto bmi  = unit_bmi(cu);
                 const auto obj  = escape_ninja_path(cu.object);
                 const auto slot = obj + ".sched";
@@ -2948,7 +2956,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             }
 
             if (twoPhase && !cu.providesModule.empty() &&
-                cu.kind == mcpp::SourceKind::ModuleInterface) {
+                cu.uses_module_rule()) {
                 const auto bmi = unit_bmi(cu);
                 const auto obj = escape_ninja_path(cu.object);
                 const auto ddi = (cu.object.parent_path() / cu.source.filename())

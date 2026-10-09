@@ -74,6 +74,25 @@ struct CompileUnit {
     // The module declaration form the scanner read (mcpp.modgraph.graph).
     // Stated as the unit's role by the build database.
     mcpp::modgraph::ModuleDeclaration declaration = mcpp::modgraph::ModuleDeclaration::None;
+
+    // THE EXTENSION SAYS WHICH LANGUAGE; THE MODULE DECLARATION SAYS WHICH
+    // ROLE (D8, #790). A C++ unit that provides a module -- an interface, or
+    // either kind of partition -- writes a BMI and takes the module rule,
+    // whatever its extension; a module-extension file takes it as well, for
+    // its depfile handling, even when it holds an implementation unit. Read
+    // by every place that chooses a rule or a BMI edge, so the rule, the BMI
+    // the edge declares and the flags the edge passes cannot disagree.
+    // Before this the choice was the extension's: a `.cpp` holding
+    // `module m:part;` declared a BMI its `cxx_object` edge never wrote, and
+    // was rebuilt by every build (R4); `export module m;` in a `.cpp` was not
+    // found by its importers under Clang (R5).
+    bool is_implementation_partition() const {
+        return declaration == mcpp::modgraph::ModuleDeclaration::ImplementationPartition;
+    }
+    bool uses_module_rule() const {
+        return kind == mcpp::SourceKind::ModuleInterface
+            || (kind == mcpp::SourceKind::Cxx && !providesModule.empty());
+    }
     // This unit's outputs are already in the global cache: the backend emits
     // `stage_file` edges from the cache instead of a compile edge (and skips
     // the P1689 scan for it entirely). The unit itself stays in the plan so
