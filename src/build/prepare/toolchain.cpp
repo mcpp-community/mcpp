@@ -1546,11 +1546,12 @@ step2_offline_refusal(PrepareState& state) {
             && !state.msvc_usable_either_origin()) {
             refusal::record(refusal::Code::OfflineDownloadRequired);
             return std::unexpected(std::format(
-                "no toolchain configured (and no Visual Studio found).\n"
+                "no toolchain configured, and the MSVC ABI is not usable here: {}.\n"
                 "       run one of:\n"
                 "         mcpp toolchain install {} --target {}\n"
                 "         mcpp toolchain default {} --target {}\n"
                 "       {}",
+                mcpp::toolchain::msvc::describe_msvc_probe(mcpp::toolchain::msvc::probe_msvc()),
                 pins::kSuggestGccMingw, pins::kFirstRunWinGnuTarget,
                 pins::kFirstRunWinGnu,  pins::kFirstRunWinGnuTarget, release));
         }
@@ -1719,10 +1720,25 @@ step2_windows_gnu_first_run_persist(PrepareState& state) {
       // still the one this branch was written for.
       if (state.windowsGnuFirstRun && state.tcSpec.has_value()
           && tc_origin_may_persist(state.tcOrigin)) {
-        mcpp::ui::info("First run",
-            std::format("no toolchain configured and no Visual Studio found — "
-                        "using {} for {} (MinGW-w64, self-contained)",
-                        *state.tcSpec, state.overrides.target_triple));
+        // D17: said once, and said exactly: which half of the MSVC ABI is
+        // missing and where it was looked for -- not "no Visual Studio found"
+        // on a machine whose Visual Studio was found and whose Windows SDK
+        // was on another drive (design 2026-10-10 §12.1, S1) -- and how to
+        // move to the MSVC ABI once it is complete. Nothing was specified, so
+        // MinGW is chosen and recorded; a toolchain that was specified is
+        // never replaced by it (D18, `msvc_unavailable_guidance`).
+        static bool told = false;
+        if (!std::exchange(told, true)) {
+            const auto why = mcpp::toolchain::msvc::describe_msvc_probe(
+                mcpp::toolchain::msvc::probe_msvc());
+            mcpp::ui::info("First run",
+                std::format("no toolchain configured, and the MSVC ABI is not usable here: {}. "
+                            "Using {} for {} (MinGW-w64, self-contained). Once Visual Studio "
+                            "and the Windows SDK are both in place: `mcpp toolchain default {}`",
+                            why.empty() ? std::string("its STL or SDK is incomplete") : why,
+                            *state.tcSpec, state.overrides.target_triple,
+                            mcpp::toolchain::triple::pins::kFirstRunWinMsvc));
+        }
         if (auto cfgW = state.get_cfg(true); cfgW) {
             if (mcpp::config::write_default_toolchain(**cfgW, *state.tcSpec))
                 (*cfgW)->defaultToolchain = *state.tcSpec;
