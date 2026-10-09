@@ -392,7 +392,7 @@ PackMembers pack_members(const mcpplibs::cmdline::ParsedArgs& parsed) {
         }
         return out;
     }
-    auto groups = mcpp::cli::workspace_groups(sel.root, packable);
+    auto groups = mcpp::cli::workspace_groups(sel.root, packable, {});
     if (!groups) {
         mcpp::ui::error(groups.error());
         out.rc = 2;

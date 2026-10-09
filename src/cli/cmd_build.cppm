@@ -253,7 +253,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
             mo.package_filter = members.front();
             return configure_member(std::move(mo), "");
         }
-        auto groups = workspace_groups((*selection)->root, members);
+        auto groups = workspace_groups((*selection)->root, members, ov.target_triple);
         if (!groups) { mcpp::ui::error(std::format("{}", groups.error())); return 2; }
         std::vector<std::string> request;
         for (auto const& g : *groups)
@@ -540,7 +540,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
         wsRoot = (*selection)->root;
         // A member whose manifest cannot be read has no configuration; the
         // members are then planned one by one, and it fails alone (R5.2).
-        auto groups = workspace_groups(wsRoot, (*selection)->members);
+        auto groups = workspace_groups(wsRoot, (*selection)->members, ov.target_triple);
         if (!groups) {
             for (auto const& mp : (*selection)->members) plan_alone(mp);
         } else {
@@ -1087,7 +1087,7 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
             // has no configuration: each member is then its own group, and it
             // fails alone when it is planned.
             std::vector<std::vector<std::string>> groups;
-            if (auto g = workspace_groups(sel.root, members)) groups = std::move(*g);
+            if (auto g = workspace_groups(sel.root, members, ov.target_triple)) groups = std::move(*g);
             else for (auto const& mp : members) groups.push_back({mp});
 
             mcpp::build::WorkspaceTestHooks hooks;

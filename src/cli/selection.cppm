@@ -20,6 +20,7 @@ import std;
 import mcpplibs.cmdline;
 import mcpp.manifest;
 import mcpp.project;
+import mcpp.build.prepare_inputs;
 
 export namespace mcpp::cli {
 
@@ -209,8 +210,14 @@ MemberRequest member_request(const mcpplibs::cmdline::ParsedArgs& parsed) {
 // The workspace a fan-out acts on, and its members grouped by configuration
 // (workspace design 2026-09-29 §15): members whose root-position values are
 // equal are planned together, in one graph, in one build directory.
+//
+// A member's conditional configuration rows are evaluated for the target the
+// command builds -- `--target`, else the member's `[build] target`, else the
+// host -- with prepare's evaluator, so a group and the plan it becomes agree
+// on them by construction (W4).
 std::expected<std::vector<std::vector<std::string>>, std::string>
-workspace_groups(const std::filesystem::path& wsRoot, const std::vector<std::string>& members) {
+workspace_groups(const std::filesystem::path& wsRoot, const std::vector<std::string>& members,
+                 std::string_view targetTriple) {
     auto ws = mcpp::manifest::load(wsRoot / "mcpp.toml");
     if (!ws) return std::unexpected(ws.error().format());
     std::vector<std::vector<std::string>> groups;
@@ -218,7 +225,12 @@ workspace_groups(const std::filesystem::path& wsRoot, const std::vector<std::str
     for (auto const& mp : members) {
         auto mm = mcpp::project::load_member_manifest(*ws, wsRoot, mp);
         if (!mm) return std::unexpected(mm.error());
-        const auto key = mcpp::project::root_position_key(*mm);
+        namespace cfgpred = mcpp::build::cfgpred;
+        const auto ctx = cfgpred::context_for(
+            targetTriple.empty() ? std::string_view(mm->buildConfig.target) : targetTriple);
+        const auto key = mcpp::project::root_position_key(*mm, [&](std::string_view predicate) {
+            return cfgpred::matches(std::string(predicate), ctx);
+        });
         auto [it, fresh] = byKey.try_emplace(key, groups.size());
         if (fresh) groups.emplace_back();
         groups[it->second].push_back(mp);
