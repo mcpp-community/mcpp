@@ -67,7 +67,7 @@ static void warn_toolchain_override(const std::string& given, const std::string&
     if (auto it = tc.fileByPlatform.find(key); it != tc.fileByPlatform.end()) file = it->second;
     std::error_code ec;
     auto shown = std::filesystem::relative(file, std::filesystem::current_path(), ec);
-    if (ec || shown.empty() || shown.native().starts_with("..")) shown = file;
+    if (ec || shown.empty() || *shown.begin() == "..") shown = file;
     mcpp::diag::warning("toolchain/override", std::format(
         "--toolchain {} replaces {} declared at [toolchain].{} ({})",
         given, declared, key, shown.generic_string()));
