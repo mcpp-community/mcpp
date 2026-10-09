@@ -1,0 +1,85 @@
+# [temp][do not merge] Probe for .agents/docs/2026-10-10-one-source-one-meaning-design.md
+# (O5, O6, O7, O8). Every script prints what it observes and never asserts.
+name: probe
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  MCPP_VERSION: 2026.10.8.1
+
+jobs:
+  # O6 / D17 / D18: a Windows SDK outside the conventional C: paths.
+  windows-sdk:
+    name: windows sdk moved out of the conventional path
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: probe
+        shell: pwsh
+        run: ./.github/probe/windows_sdk.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-sdk
+          path: C:\probe\logs
+
+  # O5: cl.exe options for each module role.
+  msvc-module-roles:
+    name: cl.exe module roles
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: probe
+        shell: pwsh
+        run: ./.github/probe/msvc_module_roles.ps1
+
+  # O7 / O8: the published aarch64 mcpp in a Termux userland (termux-docker).
+  termux-docker:
+    name: termux-docker aarch64 first run
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: probe
+        run: bash .github/probe/termux_docker.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: termux-docker
+          path: ${{ runner.temp }}/termux-logs
+
+  # O8 / D19: the Android app sandbox (SELinux) on an emulator, through the
+  # debuggable Termux APK and `run-as`.
+  termux-emulator:
+    name: termux app sandbox on an x86_64 emulator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Download Termux and mcpp
+        run: bash .github/probe/termux_emulator.sh download
+      - name: probe on an API 34 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disk-size: 8G
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash .github/probe/termux_emulator.sh run
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: termux-emulator
+          path: ${{ runner.temp }}/termux-emu-logs
