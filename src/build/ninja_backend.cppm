@@ -1453,7 +1453,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         plan.toolchain.binaryPath, plan.toolchain.targetTriple);
 
     if (!fsObjcopy.empty()) {
-        append("objcopy = " + escape_ninja_path(fsObjcopy) + "\n\n");
+        append("objcopy = " + mcpp::platform::linux_::build_clean_ld_library_path_prefix(
+                   plan.toolchain.compilerRuntimeDirs) + escape_ninja_path(fsObjcopy) + "\n\n");
         // ── The raw image a flasher takes ──────────────────────────────────
         //
         // A SEPARATE EDGE with the ELF as its input, not a second output of
@@ -1482,7 +1483,22 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // a link through ccache is passed to the compiler unchanged.
     const std::string launch = flags.launcher.empty() ? std::string{}
         : escape_ninja_path(std::filesystem::path(flags.launcher)) + " ";
-    append(std::format("cxx       = {}{}\n", launch, escape_ninja_path(flags.cxxBinary)));
+    // D29: THE TOOLCHAIN'S PRIVATE LIBRARIES ARE THE TOOLCHAIN'S. A managed
+    // LLVM's `clang`, `llvm-ar` and `clang-scan-deps` find their own libc++ and
+    // libLLVM through LD_LIBRARY_PATH, and that path used to be in ninja's
+    // environment -- so every `/bin/sh -c` ninja starts had it too. A shell
+    // that links libc++ (Android's bionic `sh`) then loaded the LLVM's,
+    // built for glibc, and died before running anything:
+    //   CANNOT LINK EXECUTABLE "/bin/sh": .../xim-x-llvm/23.1.3/lib/
+    //     aarch64-unknown-linux-gnu/libc++.so is too small
+    // (termux-docker, design 2026-10-10 §13). The path now prefixes the tools
+    // that need it and reaches nothing else; macOS keeps no such path at all
+    // (`runtime_library_path_key`), Windows keeps its PATH.
+    const std::string toolEnv = mcpp::platform::is_linux
+        ? mcpp::platform::linux_::build_clean_ld_library_path_prefix(
+              plan.toolchain.compilerRuntimeDirs)
+        : std::string{};
+    append(std::format("cxx       = {}{}{}\n", toolEnv, launch, escape_ninja_path(flags.cxxBinary)));
     // The driver alone, for the dependency scan: `clang-scan-deps` reads its
     // argv[0] as the compiler (and the resource directory beside it), and a
     // launcher there is not one.
@@ -1509,7 +1525,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // static case, which goes to `ar` and produces an empty archive with exit
     // 0, it does not touch at all. `check_undefined_ninja_variables` below is
     // what stops the class.
-    append(std::format("cc        = {}{}\n", launch, escape_ninja_path(flags.ccBinary)));
+    append(std::format("cc        = {}{}{}\n", toolEnv, launch, escape_ninja_path(flags.ccBinary)));
     if (need_c_rule || need_ios_init_shim) {
         append(std::format("cflags    = {}\n", flags.cc));
     }
@@ -1537,7 +1553,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
 
     // `ar` for cxx_archive.
     if (!flags.arBinary.empty()) {
-        append(std::format("ar        = {}\n", escape_ninja_path(flags.arBinary)));
+        append(std::format("ar        = {}{}\n", toolEnv, escape_ninja_path(flags.arBinary)));
     } else {
         append("ar        = ar\n");
     }
@@ -1553,13 +1569,13 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // hand the link to a foreign one. Bound only when set, so a graph that does
     // not use it has no variable naming a tool it never runs.
     if (!flags.ldDriver.empty())
-        append(std::format("ld_driver = {}\n", escape_ninja_path(flags.ldDriver)));
+        append(std::format("ld_driver = {}{}\n", toolEnv, escape_ninja_path(flags.ldDriver)));
     // `$mcpp` is needed by stage_file in EVERY configuration (dyndep or not),
     // so the binding cannot live inside the `if (dyndep)` below.
     append(std::format("mcpp      = {}\n", escape_ninja_path(mcpp_exe_path())));
     if (dyndep) {
         if (!plan.scanDepsPath.empty()) {
-            append(std::format("scan_deps = {}\n", escape_ninja_path(plan.scanDepsPath)));
+            append(std::format("scan_deps = {}{}\n", toolEnv, escape_ninja_path(plan.scanDepsPath)));
         }
     }
     append("\n");
@@ -4457,11 +4473,13 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             if (!joined.empty()) joined += '\x1f';
             joined += k; joined += '='; joined += v;
         };
-        if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs))
-            add(runtimeEnv->first, runtimeEnv->second);
+        if (!mcpp::platform::is_linux)
+            if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs))
+                add(runtimeEnv->first, runtimeEnv->second);
         for (auto& ev : plan.toolchain.envOverrides) add(ev.key, ev.value);
         r.runtimeEnvValue = std::move(joined);
-    } else if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs)) {
+    } else if (auto runtimeEnv = mcpp::platform::is_linux ? std::nullopt
+                   : runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs)) {
         r.runtimeEnvKey = runtimeEnv->first;
         r.runtimeEnvValue = runtimeEnv->second;
     } else {
@@ -4516,8 +4534,11 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // Real env pairs for THIS run (the "@env" cache encoding above is only
     // for the fast path's later re-creation of the same environment).
     std::vector<std::pair<std::string, std::string>> nenv;
-    if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs))
-        nenv.emplace_back(runtimeEnv->first, runtimeEnv->second);
+    // On Linux the toolchain's library path prefixes its tools (`$cxx`, ...),
+    // never ninja's environment (D29).
+    if (!mcpp::platform::is_linux)
+        if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs))
+            nenv.emplace_back(runtimeEnv->first, runtimeEnv->second);
     for (auto& ev : plan.toolchain.envOverrides)
         nenv.emplace_back(ev.key, ev.value);
 
