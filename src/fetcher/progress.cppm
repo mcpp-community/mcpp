@@ -282,6 +282,33 @@ export struct InstallProgressHandler : mcpp::fetcher::EventHandler {
         capturedDiagnostics_.push_back(std::move(blob));
     }
 
+    // D23: WHAT XLINGS IS DOING, WHILE IT DOES IT. A toolchain install runs
+    // inside `Planning`, and an archive being unpacked or a hook running for
+    // half an hour on a phone showed nothing but the clock (design 2026-10-10
+    // §13, R4). xlings reports both (`extract` per percent of the archive,
+    // `hook` after 10 s and then every 30 s; interface 1.7). A hook line is
+    // shown as it comes; an extraction once it has run 10 s, then every 10 s,
+    // so a quick one prints nothing. Every event is in the log.
+    struct Shown {
+        std::chrono::steady_clock::time_point first, last;
+    };
+    std::map<std::string, Shown> shown_;
+
+    void on_progress(const mcpp::fetcher::ProgressEvent& e) override {
+        mcpp::log::verbose("xlings", std::format("[{}] {}", e.phase, e.message));
+        if (e.phase != "extract" && e.phase != "hook") return;
+        const auto now = std::chrono::steady_clock::now();
+        const auto subject = e.phase + ":" + e.message.substr(0, e.message.find(' '));
+        auto it = shown_.try_emplace(subject, Shown{now, {}}).first;
+        if (e.phase == "extract") {
+            if (now - it->second.first < std::chrono::seconds(10)) return;
+            if (it->second.last != std::chrono::steady_clock::time_point{}
+                && now - it->second.last < std::chrono::seconds(10)) return;
+        }
+        it->second.last = now;
+        mcpp::ui::status("Installing", e.message);
+    }
+
     // progress_'s own destructor finishes the active bar.
     ~InstallProgressHandler() override = default;
 };

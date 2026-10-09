@@ -1553,7 +1553,11 @@ call(const Env& env, std::string_view capability,
                     result.dataEvents.push_back(e);
                     if (handler) handler->on_data(e);
                 } else if constexpr (std::is_same_v<T, ErrorEvent>) {
-                    result.error = e;
+                    // The FIRST error is the cause. A package whose
+                    // dependency failed reports that after it (xlings
+                    // 2026.10.10.2), and older clients followed a failure with
+                    // its consequences ("registered none of its programs").
+                    if (!result.error) result.error = e;
                     if (handler) handler->on_error(e);
                 } else if constexpr (std::is_same_v<T, ResultEvent>) {
                     result.exitCode = e.exitCode;
