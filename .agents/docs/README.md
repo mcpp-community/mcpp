@@ -30,7 +30,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### design
 
-- [一处来源，一种含义：工作空间的传递语义、生成输出、模块角色与首次运行（#786、#785、#778、#790）](2026-10-10-one-source-one-meaning-design.md) — proposed
+- [一处来源，一种含义：工作空间的传递语义、生成输出、模块角色与首次运行（#786、#785、#778、#790）](2026-10-10-one-source-one-meaning-design.md) — landed
 - [2026.10.5.3 发布方案：32 位 x86 的架构词汇、资源编译器的识别与增量（#776 后续）](2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md) — active
 - [下一个版本的发布方案：标准库模块、原生 MSVC LTO 与导出发现、共享库的链接配置、Windows 参数引号（#768 后续、#770、#771）](2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md) — active
 - [`mcpp run` hands the terminal to the program, and the follow-ups of #761, #763 and #765 (#766)](2026-10-05-run-terminal-handoff-and-766-follow-ups-design.md) — landed
@@ -124,7 +124,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-10
 
-- [一处来源，一种含义：工作空间的传递语义、生成输出、模块角色与首次运行（#786、#785、#778、#790）](2026-10-10-one-source-one-meaning-design.md) — proposed
+- [一处来源，一种含义：工作空间的传递语义、生成输出、模块角色与首次运行（#786、#785、#778、#790）](2026-10-10-one-source-one-meaning-design.md) — landed
 - [LLVM 23.1.3 Part 2：Linux aarch64 默认工具链与 glibc 生态闭环](2026-10-08-llvm-2313-linux-aarch64-ecosystem-part2-design.md) — active
 - [LLVM 23.1.3 全平台统一默认:跨仓库联动方案(mcpp × xim-pkgindex)](2026-10-07-llvm-2313-unified-default-cross-repo-design.md) — active
 - [2026.10.5.3 发布方案：32 位 x86 的架构词汇、资源编译器的识别与增量（#776 后续）](2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md) — active

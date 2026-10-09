@@ -142,47 +142,107 @@ its own `[package]` resolves its own entries the same way.
 
 ## 4. Inheriting Toolchain and Build Configuration
 
-The workspace root's `[toolchain]` and `[target.<triple>]` settings are automatically inherited by all members. A member can override them in its own project file.
+A table under `workspace.` speaks to every member; a table outside it speaks
+about the package of the manifest that holds it (mcpp 2026.10.10.1+). To share
+a table with every member, write it with the `workspace.` prefix:
 
-Configuration precedence (highest to lowest):
+| A package's own table | Shared with every member |
+|---|---|
+| `[package]` (metadata, `standard`) | `[workspace.package]` |
+| `[build]` | `[workspace.build]` |
+| `[dependencies]` entries | `[workspace.dependencies]` + `x.workspace = true` (§3) |
+| `[toolchain]` | `[workspace.toolchain]` |
+| `[indices]` | `[workspace.indices]` |
+| `[profile.<name>]` | `[workspace.profile.<name>]` |
+| `[target.<selector>]` scalars, `.build`, `.abi`, `.runtime`, `.xlings.workspace` | `[workspace.target.<selector>]` and the same subtables |
+| `[xlings.workspace]` | `[workspace.xlings.workspace]` |
 
-1. Command-line arguments (`--target`, `--static`)
-2. Declarations in the member `mcpp.toml`
-3. Declarations in the workspace-root `mcpp.toml`
-4. Global configuration (`~/.mcpp/config.toml`)
-5. Built-in defaults
+A `[workspace.X]` table has the keys, subtables and selectors of `X`. Keys
+that describe one package are not shared and are refused there: `[targets]`,
+`[features]`, `[resources]`, `[test]`, a selector's `.targets` and
+`.dependencies`, `requires_abi`, `allow_host_libs`, and the `sources` and
+per-glob `flags` of a `.build` table. An unknown table under `[workspace]` is
+refused.
 
 ```toml
 # workspace root
-[toolchain]
+[workspace]
+members = ["libs/core", "apps/server"]
+
+[workspace.package]
+mcpp = ">=2026.10.10.1"
+
+[workspace.toolchain]
 default = "gcc@16.1.0"
 
-[target.x86_64-linux-musl]
+[workspace.target.x86_64-linux-musl]
 toolchain = "gcc@16.1.0"
 linkage   = "static"
+
+[workspace.target.'cfg(os = "windows")'.build]
+dialect_cxxflags = ["-DARCH_COMPAT=1"]
 ```
 
 ```toml
-# a member overrides the toolchain
+# a member overrides the toolchain for itself
 [toolchain]
 default = "llvm@23.1.3"
 ```
 
-`[toolchain]`, `[target.<triple>]` and `[indices]` choose the compiler, the
-target rows and the indices for a whole graph, so a member takes them from the
-workspace root only where it is the root of a build: built from the workspace,
-with `-p`, or as a host tool of another package (mcpp 2026.9.27.1+ for the
-last). A member reached as a dependency takes them from that build's root.
+Configuration precedence (highest to lowest):
+
+1. Command-line arguments (`--target`, `--toolchain`, `--profile`, `--static`)
+2. Declarations in the member `mcpp.toml`
+3. The workspace's `[workspace.X]` tables
+4. Global configuration (`~/.mcpp/config.toml`)
+5. Built-in defaults
+
+`--toolchain` that differs from a toolchain the manifest declares prints a
+warning naming both and the file and key that declared the replaced one; it
+does not fail under `--strict`.
+
+`[workspace.toolchain]`, `[workspace.indices]`, `[workspace.profile.<name>]`
+and the scalar rows of `[workspace.target.<triple>]` choose the compiler, the
+indices, the profile and the target rows for a whole graph, so a member takes
+them where it is the root of a build: built from the workspace, with `-p`, or as
+a host tool of another package. A member reached as a dependency takes them
+from that build's root. The rows of `[workspace.target.<selector>]` --
+`.build`, `.abi`, `.runtime`, `.xlings.workspace` -- and `[workspace.xlings]`
+reach a member in every position (§4.1).
+
+A conditional row counts as it evaluates for the target being built: a
+`dialect_cxxflags` or `.abi` row for another target does not separate a member
+from the others (§5.4), and one that holds is applied when the member is built
+under the workspace's root.
 
 A build without `--target` targets the host, and `[target.<host-triple>]`
-applies to it as `--target <host-triple>` would (mcpp 2026.9.27.1+).
+applies to it as `--target <host-triple>` would.
 
-The root's `[xlings.workspace]` entries, including its
-`[target.<selector>.xlings.workspace]` rows, are inherited implicitly as well
-(mcpp 2026.9.27.1+): a payload describes the environment a build runs in, like
-`[toolchain]`, so no opt-in is needed. A member's own declaration of the same
-package wins. `[feature-xlings.<f>]` entries are not inherited, because a
-feature belongs to the package that declares it.
+`[feature-xlings.<f>]` entries are not shared, because a feature belongs to
+the package that declares it.
+
+**A workspace that uses `[workspace.X]` declares the engine floor.** An mcpp
+older than 2026.10.10.1 ignores these tables and builds the members without
+them. `[workspace.package] mcpp = ">=2026.10.10.1"` makes an older mcpp refuse
+instead; without it the build prints a note.
+
+**The root's own tables, read by position.** On a workspace root, a
+`[toolchain]`, `[indices]`, `[profile.<name>]`, a `[target.<triple>]` scalar row
+or an `[xlings]` / `[target.<selector>.xlings]` entry that has no `[workspace.X]`
+spelling still reaches the members as it did before 2026.10.10.1: a member's own
+`[toolchain]` replaces the root's whole, a member's row or profile of the same
+name replaces the root's whole, and `[indices]` reaches only a member that
+declares none. Each use prints a `manifest/workspace-position` warning with the
+`[workspace.X]` spelling; on a root with `[package]` the tables are the root
+package's own and the warning appears only for a member that received a value
+from them. This reading is removed in mcpp 1.0.0. On a root without
+`[package]`, writing a table both ways is refused.
+
+**A root without `[package]` holds no package.** `[build]`, `[targets]`,
+`[dependencies]`, `[features]`, `[resources]`, `[test]`, `[hooks]`, `[runtime]`
+and a selector's `.build`, `.abi`, `.runtime`, `.targets` and `.dependencies`
+written there act on nothing; each prints a warning naming the shared spelling
+where there is one, and `--strict` refuses.
 
 ### 4.1 `[workspace.package]` and `[workspace.build]`
 
@@ -277,31 +337,22 @@ with the package whose artifact it is. Any other unknown key in
 a key that is silently dropped from a table whose whole purpose is propagation
 produces a workspace that looks configured and is not.
 
-**There is no `[workspace.target.<triple>]`.** A plain `[target.<triple>]` block
-in the workspace root is already inherited by every member, per triple, with the
-member winning. A second spelling for the same capability would be surface with
-no function.
-
-**Profiles are inherited by name (2026.10.5.2+).** A `[profile.<name>]` in the
-workspace root reaches every member that does not declare a profile of that
-name; a member's own table replaces the workspace's whole, as
-`[target.<triple>]` does. A profile is one value per graph, so members that
-share it are planned and compiled together. Before 2026.10.5.2 a virtual root's
-profiles reached no member and were ignored without a diagnostic, and a rooted
-workspace's applied only when its own package was the first one selected.
+**Named tables merge key by key.** A member's `[profile.release]` and
+`[workspace.profile.release]` combine: a key the member wrote is the member's, a
+list has the workspace's entries first. `[target.<triple>]` rows combine the
+same way. A profile is one value per graph, so members that share it are
+planned and compiled together.
 
 **The root package is a member.** In a workspace whose root carries
-`[package]`, the root package receives `[workspace.package]` and
-`[workspace.build]` once, as every other member does (2026.10.5.2+), so its
-commands are the same in every selection. The root manifest holds three kinds
-of keys:
+`[package]`, the root package receives `[workspace.package]`,
+`[workspace.build]` and every `[workspace.X]` table once, as every other member
+does, so its commands are the same in every selection. The root manifest holds
+two kinds of tables:
 
-| Keys | Owner | Effect on the root package | Effect on other members |
+| Tables | Owner | Effect on the root package | Effect on other members |
 |---|---|---|---|
-| `[workspace]`, `[workspace.dependencies]` | the workspace | through `x.workspace = true` | through `x.workspace = true` |
-| `[workspace.package]`, `[workspace.build]` | the workspace | inherited | inherited |
-| `[toolchain]`, `[target.<triple>]`, `[indices]`, `[profile.<name>]` | the root position | its own | inherited where the member is the root of a build; the member's own declaration wins |
-| `[package]`, `[build]`, `[dependencies]`, `[targets]`, `[features]`, `[resources]`, `[test]` | the root package | its own | none |
+| `[workspace]` and every `[workspace.X]` | the workspace | received, its own declarations first | received; `[workspace.dependencies]` through `x.workspace = true` |
+| every other table (`[package]`, `[build]`, `[toolchain]`, `[target.<selector>]`, `[profile.<name>]`, ...) | the root package | its own | none (the position reading above excepted, until 1.0.0) |
 
 The root package's `[build] ldflags` are its own as well: they reach its own
 images, and neither the members' images nor a dependency's shared library.
@@ -504,9 +555,12 @@ member that several members use is compiled once.
   toolchain request, target, C++ standard, `dialect_cxxflags`, C++ runtime,
   `linkage`, profile, indices and the other `[build]` values that apply to a
   whole graph. Members that differ in one of them are built in separate
-  graphs, at the same time, sharing the command's jobs. A relative path a
-  member writes, such as its own `[indices]` path, is read from the member's
-  directory.
+  graphs, at the same time, sharing the command's jobs. A conditional row
+  (`[target.<selector>.build] dialect_cxxflags`, `[target.<selector>.abi]`,
+  a `[target.<selector>]` scalar) counts as it evaluates for the target
+  being built: `--target`, else the member's `[build] target`, else the host
+  (2026.10.10.1+). A relative path a member writes, such as its own
+  `[indices]` path, is read from the member's directory.
 - **Selection.** `--workspace`, and a virtual root without `-p`, select every
   member. `-p X`, and a command run in X's directory, plan X and what X
   reaches; `-p X -p Y` plans both together, as one selection (§5.3). The

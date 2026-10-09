@@ -1,16 +1,40 @@
 ---
 subject: design
-status: proposed
+status: landed
 ---
 
 # 一处来源，一种含义：工作空间的传递语义、生成输出、模块角色与首次运行（#786、#785、#778、#790）
 
-- 日期：2026-10-10。状态：修订 5，跨仓库方案（mcpp、xlings、xim-pkgindex/xlings-res、mcpp-plugins），待维护者 review；尚未实施。
+- 日期：2026-10-10。状态：修订 6，已实施（mcpp 2026.10.10.1、xlings 2026.10.10.2、xim-pkgindex glibc 2.44.3 r4、mcpp-plugins）。
 - 基线：`main` `b1652184`（2026.10.8.1）。
 - 证据：本地 Linux x86_64，已发布的 mcpp 2026.10.8.1，gcc 16.1.0 与 llvm 23.1.3。
   复现脚本 [2026-10-10-one-source-one-meaning-repro.sh](2026-10-10-one-source-one-meaning-repro.sh)
   只打印观察结果，不做断言；下文 R1–R6 引用其中的用例。
 - 外部 PR #787（#786）与 #779（#778）各自只修复报告中的一个实例，本文不以它们为基础（§15）。
+
+**修订 6 的变化（实施时的结论）：**
+- review 结论：Q1 X1–X3 全做；Q2 做 P1；Q3 按依赖关系等 xlings 发布；Q4 D29 用 `env LD_LIBRARY_PATH=… <tool>`；
+  Q5 全部发布后由维护者在真机验收（O11）。
+- X3 的钩子心跳为 10 s 后首次、之后每 30 s（不是每 10 s）；终端上的解包行同样在 10 s 后首次、之后每 30 s，
+  NDJSON 的 `extract` 事件每多读 1% 一次。接口协议升到 1.7。
+- P1 只重新打包 glibc（r4，两个架构，已发布到 GitHub 与 GitCode，逐字节核对）。gcc 16.1.0、musl-gcc 15.1.0
+  不重新发布：X1 已能处理，新 revision 会让每个已安装的用户重新下载。P2 只检查一次变更新增的载荷 URL。
+- 新增 X4（维护者报告）：交互式加入已运行的 SubOS 会话时，命令得到调用者的终端，fish 退出
+  （`tcgetpgrp failed`）。改为在沙箱内为它分配 PTY 作为控制终端，调用者终端置 raw 模式并转发字节与窗口尺寸。
+- xlings PR 651 另修一处竞态：proxy 会话结束时 supervisor 立即 SIGKILL bwrap，命令的退出码变成 137。
+- 兼容模块 `mcpp.pm.compat.workspace_position` 由 `mcpp.manifest` 伞模块导出，而不是 `mcpp.pm.compat` 门面：
+  它读 `Manifest`，而 `mcpp.manifest.types` 导入该门面。
+- `KeyRegistry`（`mcpp.manifest.key_registry`）推导出：解析器的 `[build]` 与 `[target.<sel>.build]` 已知键、
+  `[workspace.target.<sel>.build]` 接受的键、W7 的包表清单；单元测试核对它与 `kWorkspaceBuildKeys`、与分组键。
+  `[target.<sel>]` 标量清单与文档中的键类别表仍由各自已有的测试守护。
+- D7：构建程序的缓存仍是每个包一条记录；切换配置会重新运行程序，不会重新编译它。
+- D28：以 argv 启动的 shell 由 `posix_shell()` 解析；`popen` 与 `std::system` 仍用 C 库的 `/bin/sh`，
+  因此 Android 的基线是 10 及以上。
+- D23：mcpp 把 xlings 的 `extract`、`hook` 事件显示为 `Installing …` 行，并写入日志；不另加 30 s 心跳。
+- D26 以 `degraded`（`build-program/provides`）实现。
+- 工作空间层的解析：`[workspace.*]` 下的文档由同一个 `parse_document` 读取，保留原值的行号。
+- 测试：e2e 893–901（在 2026.10.8.1 上全部失败）；Windows 探测由单元测试覆盖；D27 的两个 job 在
+  `ci-fresh-install.yml`（发布后），发布前在探测 PR #791 上以候选包运行。
 
 **修订 5 的变化（review 结论与探测）：**
 - Android 不换工具链：aarch64 仍用 llvm@23.1.3 + glibc，目标是真实跑通（D21 改为只识别、不改默认值）。
