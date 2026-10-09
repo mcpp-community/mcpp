@@ -53,6 +53,26 @@ import mcpp.ui;
 
 namespace mcpp::build {
 
+// D11's sentence: which spec, replacing what, declared where. The key is the
+// platform entry `for_platform` answered with (`[toolchain].linux`, else
+// `.default`), and the file is the manifest that wrote it -- the workspace
+// root's, for an entry a member received from `[workspace.toolchain]`.
+static void warn_toolchain_override(const std::string& given, const std::string& declared,
+                                    const mcpp::manifest::Toolchain& tc,
+                                    std::string_view platform,
+                                    const std::filesystem::path& manifest) {
+    const std::string key = tc.byPlatform.contains(std::string(platform))
+        ? std::string(platform) : std::string("default");
+    auto file = manifest;
+    if (auto it = tc.fileByPlatform.find(key); it != tc.fileByPlatform.end()) file = it->second;
+    std::error_code ec;
+    auto shown = std::filesystem::relative(file, std::filesystem::current_path(), ec);
+    if (ec || shown.empty() || shown.native().starts_with("..")) shown = file;
+    mcpp::diag::warning("toolchain/override", std::format(
+        "--toolchain {} replaces {} declared at [toolchain].{} ({})",
+        given, declared, key, shown.generic_string()));
+}
+
 // STEP FUNCTIONS (mcpp#722 / T6), split at the points where phase1's
 // own banners mark a new concern: the closures phase1 assigns onto
 // `state` (each captures only `state`), the target/static override
@@ -336,6 +356,9 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
     // costs nobody anything and needs no coordination.
     //
     // It counts as user-explicit, so mcpp will not quietly revise it.
+    // What the manifest declared, before the command line replaces it: D11
+    // says so when the two differ.
+    const auto manifestSpec = state.tcSpec;
     if (const char* tcEnv = std::getenv("MCPP_TOOLCHAIN"); tcEnv && *tcEnv) {
         state.tcSpec   = std::string(tcEnv);
         state.tcOrigin = TcOrigin::ManifestToolchain;
@@ -346,6 +369,15 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         state.tcOrigin = TcOrigin::ManifestToolchain;
         state.tcFromConsumer = true;
     }
+    // D11: `--toolchain` replacing a toolchain the manifest declared is done
+    // as asked, and said, so a build that ignores `[toolchain]` is never a
+    // surprise. A warning and not `degraded`: nothing was left undone, so
+    // `--strict` does not fail on it. Not for a host tool's sub-build, whose
+    // toolchain is its consumer's decision.
+    if (state.tcFromCommandLine && !state.tcFromConsumer && manifestSpec
+        && *manifestSpec != *state.tcSpec)
+        warn_toolchain_override(*state.tcSpec, *manifestSpec,
+            state.m->toolchain, kCurrentPlatform, state.m->sourcePath);
     if (!state.tcSpec.has_value()) {
         auto cfg = state.get_cfg(true);
         if (cfg && !(*cfg)->defaultToolchain.empty()) {
@@ -449,6 +481,14 @@ struct TargetOverrideCtx {
 // `--target` -- so it is a named helper rather than a per-call closure.
 static void step1_apply_target_section(PrepareState& state,
                                         const mcpp::manifest::TargetEntry& e) {
+    if (!e.toolchain.empty() && state.tcFromCommandLine && !state.tcFromConsumer
+        && state.tcSpec && *state.tcSpec != e.toolchain)
+        mcpp::diag::warning("toolchain/override", std::format(
+            "--toolchain {} replaces {} declared at [target.{}].toolchain ({})",
+            *state.tcSpec, e.toolchain, state.overrides.target_triple.empty()
+                ? std::string(mcpp::toolchain::triple::host_triple().str())
+                : state.overrides.target_triple,
+            state.m->sourcePath.filename().string()));
     if (!e.toolchain.empty() && !state.tcFromCommandLine && !state.tcFromConsumer) {
         state.tcSpec   = e.toolchain;
         state.tcOrigin = TcOrigin::TargetSection;
