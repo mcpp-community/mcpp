@@ -256,11 +256,11 @@ IndexMap effective_indices(const std::filesystem::path& root) {
     // by name; the root's own [indices] by position when it has none of the
     // former), whose relative `path` is anchored at the ROOT (#224).
     auto wsRoot = mcpp::project::find_workspace_root(root);
-    if (wsRoot.empty()) return m->indices;
     // The workspace root itself: its own [indices], and what it gives every
     // member, its root package included.
     std::error_code ec;
-    if (std::filesystem::equivalent(wsRoot, root, ec)) {
+    if (m->workspace.present || (!wsRoot.empty() && std::filesystem::equivalent(wsRoot, root, ec))) {
+        if (m->workspace.present) wsRoot = root;
         if (m->layer)
             for (auto const& [name, idx] : m->layer->indices) {
                 auto [it, inserted] = m->indices.try_emplace(name, idx);
@@ -269,6 +269,7 @@ IndexMap effective_indices(const std::filesystem::path& root) {
             }
         return m->indices;
     }
+    if (wsRoot.empty()) return m->indices;
     auto ws = mcpp::manifest::load(wsRoot / "mcpp.toml");
     if (!ws || !ws->workspace.present) return m->indices;
     mcpp::project::inherit_workspace_indices(*m, *ws, wsRoot);
