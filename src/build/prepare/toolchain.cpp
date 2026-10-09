@@ -1591,14 +1591,14 @@ step2_first_run_auto_install(PrepareState& state) {
         //        breaks GUI/native packages out of the box. musl-static stays
         //        opt-in via `mcpp build --target x86_64-linux-musl` for users
         //        who explicitly want portable static binaries.
-        // Linux default is arch-aware:
-        //   x86_64 → glibc gcc (native ABI; the glibc toolchain is published
-        //            for x86_64). musl-static stays opt-in via --target.
-        //   other arches (aarch64, ...) → musl-static gcc: it's what's
-        //            published for them, is self-contained, and yields portable
-        //            static binaries (ideal for aarch64 / Termux, no bionic dep).
-        //            glibc-world linking (X11/GL) needs an explicit glibc
-        //            toolchain, addable later for native-ABI aarch64 builds.
+        // Linux default is arch-aware, and the table is
+        // `pins::host_default_toolchain` (`mcpp self env` reports it):
+        //   x86_64  → glibc gcc (native ABI). musl-static stays opt-in via
+        //             --target.
+        //   aarch64 → llvm with the managed glibc (2026.10.8.1), on GNU/Linux
+        //             and on Android (Termux) alike: an Android host is
+        //             recognised (`linux_::is_android_host`) but not given a
+        //             different toolchain (design 2026-10-10 §13, D21).
         // `native_first_run_spec()` (declared above) is this exact selection
         // — on Windows it re-checks `msvc_usable_either_origin()`, which here
         // is redundant (the seed above already diverted the unusable case

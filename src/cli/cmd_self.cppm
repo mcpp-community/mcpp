@@ -64,6 +64,10 @@ nlohmann::json env_data_readonly() {
         // read-only, as the rest of this path is.
         {"defaultToolchain", std::string(mcpp::toolchain::triple::pins::host_default_toolchain(
             mcpp::toolchain::msvc::msvc_available_here(registry / "data" / "xpkgs")))},
+        // An Android host (Termux): the same default toolchain as GNU/Linux on
+        // this architecture; reported because the shell and the loader rules
+        // differ (D21, D28).
+        {"android",      mcpp::platform::linux_::is_android_host()},
     };
 }
 
