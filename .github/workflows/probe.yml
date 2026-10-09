@@ -55,6 +55,42 @@ jobs:
           name: termux-docker
           path: ${{ runner.temp }}/termux-logs
 
+  # The same on an arm64 runner with an arm64-v8a emulator, if the runner has KVM.
+  termux-emulator-arm64:
+    name: termux app sandbox on an arm64 emulator (if KVM)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    continue-on-error: true
+    env:
+      EMU_ARCH: aarch64
+    steps:
+      - uses: actions/checkout@v4
+      - name: KVM on this runner?
+        id: kvm
+        run: |
+          ls -l /dev/kvm 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ -e /dev/kvm ]; then echo "ok=1" >> "$GITHUB_OUTPUT"; fi
+      - name: Enable KVM
+        if: steps.kvm.outputs.ok == '1'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Download Termux and mcpp
+        if: steps.kvm.outputs.ok == '1'
+        run: bash .github/probe/termux_emulator.sh download
+      - name: probe on an API 34 arm64 emulator
+        if: steps.kvm.outputs.ok == '1'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: arm64-v8a
+          target: google_apis
+          disk-size: 14G
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash .github/probe/termux_emulator.sh run
+
   # O8 / D19: the Android app sandbox (SELinux) on an emulator, through the
   # debuggable Termux APK and `run-as`.
   termux-emulator:
@@ -76,7 +112,7 @@ jobs:
           api-level: 34
           arch: x86_64
           target: google_apis
-          disk-size: 8G
+          disk-size: 14G
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           script: bash .github/probe/termux_emulator.sh run

@@ -1,83 +1,76 @@
 #!/usr/bin/env bash
-# O8 / D19 probe: the Android app sandbox on an x86_64 emulator. The debuggable
-# Termux APK gives an app uid and SELinux app domain that `run-as` can enter,
-# which is where the hard-link rule the Termux report hit applies. The published
-# x86_64 mcpp is static, so it runs there without Termux's own bootstrap.
-# Prints only.
+# Android app sandbox probe (emulator, debuggable Termux APK, run-as).
+# Round 6: can llvm@23.1.3 + the managed glibc run inside the sandbox once the
+# payloads carry no hard links, does the latest xlings unpack hard links there,
+# and is the static-binary exec failure an artifact of run-as? Prints only.
 set -u
 V="${MCPP_VERSION}"
+XV="${XLINGS_LATEST:-2026.10.10.1}"
+ARCH="${EMU_ARCH:-x86_64}"
 EMU="$RUNNER_TEMP/termux-emu"
 LOGS="$RUNNER_TEMP/termux-emu-logs"
 mkdir -p "$EMU" "$LOGS"
 S="$GITHUB_STEP_SUMMARY"
 say() { echo "$*"; echo "$*" >> "$S"; }
+A=/data/data/com.termux/files
+case "$ARCH" in x86_64) APKARCH=x86_64; MARCH=x86_64;; *) APKARCH=arm64-v8a; MARCH=aarch64;; esac
 
 case "${1:-}" in
 download)
-  apk_url="https://github.com/termux/termux-app/releases/download/v0.118.3/termux-app_v0.118.3+github-debug_x86_64.apk"
-  echo "apk: $apk_url"
-  curl -fsSL -o "$EMU/termux.apk" "$apk_url"
+  curl -fsSL -o "$EMU/termux.apk" \
+    "https://github.com/termux/termux-app/releases/download/v0.118.3/termux-app_v0.118.3+github-debug_${APKARCH}.apk"
   curl -fsSL -o "$EMU/mcpp.tar.gz" \
-    "https://github.com/mcpp-community/mcpp/releases/download/v$V/mcpp-$V-linux-x86_64.tar.gz"
-  cp /etc/ssl/certs/ca-certificates.crt "$EMU/cacert.pem"
-  cp "$GITHUB_WORKSPACE/.github/probe/termux_inner.sh" "$EMU/"
+    "https://github.com/mcpp-community/mcpp/releases/download/v$V/mcpp-$V-linux-$MARCH.tar.gz"
+  curl -fsSL -o "$EMU/xlings.tar.gz" \
+    "https://github.com/openxlings/xlings/releases/download/v$XV/xlings-$XV-linux-$MARCH.tar.gz"
+  cp "$GITHUB_WORKSPACE"/.github/probe/termux_inner.sh "$GITHUB_WORKSPACE"/.github/probe/termux_feasibility.sh "$EMU/"
+  # Install llvm@23.1.3 + glibc on THIS host at the exact path the app sandbox
+  # uses, so every absolute path the install writes is the device's, then pack
+  # it with hard links dereferenced -- the state D19 would produce.
+  sudo mkdir -p "$A" && sudo chown -R "$(id -u):$(id -g)" /data/data/com.termux
+  mkdir -p "$A/homeP/dist" "$A/homeP/hello/src"
+  tar -xzf "$EMU/mcpp.tar.gz" -C "$A/homeP/dist"
+  D=$(ls -d "$A"/homeP/dist/mcpp-*)
+  printf '[package]\nname = "hello"\nversion = "0.1.0"\n\n[toolchain]\ndefault = "llvm@23.1.3"\n\n[targets.hello]\nkind = "bin"\nmain = "src/main.cpp"\n' > "$A/homeP/hello/mcpp.toml"
+  printf 'import std;\nint main() { std::println("host-built hello runs on android"); }\n' > "$A/homeP/hello/src/main.cpp"
+  (cd "$A/homeP/hello" && MCPP_HOME="$D" "$D/bin/mcpp" build 2>&1 | tail -4)
+  find "$A/homeP" -type f -links +1 | wc -l | sed 's/^/hard-linked files before packing: /'
+  tar --hard-dereference -czf "$EMU/prebuilt.tgz" -C "$A" homeP
   ls -la "$EMU"
   ;;
 run)
-  say "## Termux app sandbox on an API 34 x86_64 emulator (mcpp $V)"
+  say "## Android app sandbox ($ARCH emulator), round 6"
   adb wait-for-device
-  say "- getenforce: $(adb shell getenforce | tr -d '\r')"
+  say "- getenforce: $(adb shell getenforce | tr -d '\r'); release: $(adb shell getprop ro.build.version.release | tr -d '\r')"
   adb install -r "$EMU/termux.apk" 2>&1 | tail -1
-  for f in mcpp.tar.gz cacert.pem termux_inner.sh; do adb push "$EMU/$f" /data/local/tmp/ >/dev/null; done
-  adb shell chmod 644 /data/local/tmp/mcpp.tar.gz /data/local/tmp/cacert.pem /data/local/tmp/termux_inner.sh
-  A=/data/data/com.termux/files
-  # Launch Termux once so it installs its bootstrap ($PREFIX: bash, curl,
-  # resolv.conf, termux-exec), which is what a real Termux session has.
   adb shell am start -n com.termux/com.termux.app.TermuxActivity 2>&1 | tail -1
-  for i in $(seq 1 60); do
-    adb shell run-as com.termux ls $A/usr/bin/bash >/dev/null 2>&1 && break
-    sleep 5
+  for i in $(seq 1 60); do adb shell run-as com.termux ls $A/usr/bin/bash >/dev/null 2>&1 && break; sleep 5; done
+  say "- Termux bootstrap: $(adb shell run-as com.termux ls $A/usr/bin/bash 2>&1 | tr -d '\r')"
+  for f in mcpp.tar.gz xlings.tar.gz prebuilt.tgz termux_inner.sh termux_feasibility.sh; do
+    adb push "$EMU/$f" /data/local/tmp/ >/dev/null; adb shell chmod 644 /data/local/tmp/$f
   done
-  say "- Termux bootstrap: $(adb shell run-as com.termux ls -l $A/usr/bin/bash 2>&1 | tr -d '\r')"
-  adb shell run-as com.termux sh -c "'mkdir -p $A/home $A/probe && cp /data/local/tmp/mcpp.tar.gz /data/local/tmp/cacert.pem /data/local/tmp/termux_inner.sh $A/probe/'" 2>&1
-  adb shell run-as com.termux sh -c "'id; cat /proc/self/attr/current; echo; ls -la $A'" 2>&1 | tee -a "$LOGS/sandbox.txt"
-  # A Termux session's environment, as the app sets it up for its shell.
-  TENV="PREFIX=$A/usr HOME=$A/home TMPDIR=$A/usr/tmp PATH=$A/usr/bin LANG=en_US.UTF-8 LD_PRELOAD=$A/usr/lib/libtermux-exec.so"
-  start=$(date +%s)
-  # Session A: the environment a Termux shell has (termux-exec preloaded).
-  timeout 2400 adb shell run-as com.termux $A/usr/bin/env $TENV \
-    PROBE_OUT=$A/probe/outA PROBE_TARBALL=$A/probe/mcpp.tar.gz PROBE_HOME=$A/home \
-    $A/usr/bin/sh $A/probe/termux_inner.sh 2>&1 | tee "$LOGS/inner.log"
-  # Session B: the same without termux-exec, so the binaries are exec'd directly.
-  TENVB="PREFIX=$A/usr HOME=$A/homeB TMPDIR=$A/usr/tmp PATH=$A/usr/bin LANG=en_US.UTF-8"
-  timeout 3000 adb shell run-as com.termux $A/usr/bin/env $TENVB \
-    PROBE_OUT=$A/probe/outB PROBE_TARBALL=$A/probe/mcpp.tar.gz PROBE_HOME=$A/homeB \
-    $A/usr/bin/sh $A/probe/termux_inner.sh 2>&1 | sed 's/^/[B] /' | tee -a "$LOGS/inner.log"
-  # Session C: as B, with the static musl gcc an Android default would use (D21).
-  adb shell run-as com.termux sh -c "'mkdir -p $A/probe/outC && echo --toolchain gcc@15.1.0-musl > $A/probe/outC/build-args'"
-  TENVC="PREFIX=$A/usr HOME=$A/homeC TMPDIR=$A/usr/tmp PATH=$A/usr/bin LANG=en_US.UTF-8"
-  timeout 3000 adb shell run-as com.termux $A/usr/bin/env $TENVC \
-    PROBE_OUT=$A/probe/outC PROBE_TARBALL=$A/probe/mcpp.tar.gz PROBE_HOME=$A/homeC \
-    $A/usr/bin/sh $A/probe/termux_inner.sh 2>&1 | sed 's/^/[C] /' | tee -a "$LOGS/inner.log"
-  say "- wall: $(( $(date +%s) - start )) s"
-  for f in first-build.log; do
-    adb shell run-as com.termux cat "$A/probe/out/$f" > "$LOGS/$f" 2>/dev/null
+  RA() { adb shell run-as com.termux "$@"; }
+  RA sh -c "'mkdir -p $A/probe && cp /data/local/tmp/*.sh /data/local/tmp/*.gz $A/probe/'"
+  T="PREFIX=$A/usr TMPDIR=$A/usr/tmp PATH=$A/usr/bin LANG=en_US.UTF-8"
+
+  say '### F: llvm@23.1.3 + glibc inside the sandbox (payload without hard links)'
+  RA $A/usr/bin/env $T HOME=$A/homeP sh -c "'cd $A && tar -xzf /data/local/tmp/prebuilt.tgz && echo extracted'" 2>&1 | tail -2
+  D=$(RA sh -c "'ls -d $A/homeP/dist/mcpp-*'" | tr -d '\r')
+  RA $A/usr/bin/env $T HOME=$A/homeP sh $A/probe/termux_feasibility.sh "$D" "$A/homeP/work" 2>&1 | tee "$LOGS/feas.log"
+  say '```'; grep '^FEAS' "$LOGS/feas.log" >> "$S"; say '```'
+  say "- host-built hello inside the sandbox: $(RA sh -c "'$A/homeP/hello/target/*/*/bin/hello 2>&1'" | tr -d '\r' | head -2)"
+
+  say '### X: the latest xlings unpacking a payload with hard links'
+  RA $A/usr/bin/env $T HOME=$A/homeX sh -c "'mkdir -p $A/homeX/dist $A/homeX/xl && tar -xzf $A/probe/mcpp.tar.gz -C $A/homeX/dist && tar -xzf $A/probe/xlings.tar.gz -C $A/homeX/xl && XL=\$(find $A/homeX/xl -path \"*/bin/xlings\" -type f | head -1) && D=\$(ls -d $A/homeX/dist/mcpp-*) && cp \$XL \$D/registry/bin/xlings && \$D/registry/bin/xlings --version && cd $A/homeX && XLINGS_HOME=\$D/registry \$D/registry/bin/xlings install xim:glibc@2.44.3 -y'" 2>&1 | tee "$LOGS/xlings.log" | tail -15
+  say '```'; grep -E 'xlings [0-9]|Can.t create|error|installed|hard' "$LOGS/xlings.log" | head -12 >> "$S"; say '```'
+
+  say '### E: termux-exec, with and without its linker exec mode'
+  for mode in "" "TERMUX_EXEC__SYSTEM_LINKER_EXEC__MODE=disable"; do
+    out=$(RA $A/usr/bin/env $T HOME=$A/homeP LD_PRELOAD=$A/usr/lib/libtermux-exec.so $mode $D/bin/mcpp --version 2>&1 | tr -d '\r' | head -2)
+    say "- LD_PRELOAD=libtermux-exec.so ${mode:-<default mode>}: \`$out\`"
   done
-  adb shell run-as com.termux sh -c "'cat $A/probe/out/mcpp-log/*.log'" > "$LOGS/mcpp.log" 2>/dev/null
-  say '### sandbox'
-  say '```'
-  cat "$LOGS/sandbox.txt" >> "$S"
-  grep -E '^(\[[BC]\] )?(ENV|UNAME|ID|HARDLINK|MCPP|TIMING|XLINGS|STAGE|ELF|BUILD)' "$LOGS/inner.log" >> "$S"
-  say '```'
-  say '### first run: key lines'
-  say '```'
-  grep -E 'First run|Resolving|Resolved|Installing|Downloading|error|warning|hint|Finished|glibc|llvm|musl|Can.t create|did not complete' \
-    "$LOGS/inner.log" | head -150 >> "$S"
-  say '```'
-  say '### plan stage timings'
-  say '```'
-  grep 'build/stage' "$LOGS/mcpp.log" | tail -30 >> "$S"
-  say '```'
+  say "- termux-exec package: $(RA $A/usr/bin/env $T $A/usr/bin/dpkg -s termux-exec 2>&1 | grep -E '^Version' | tr -d '\r')"
+  say "- process context under run-as: $(RA cat /proc/self/attr/current | tr -d '\r\0')"
   ;;
 esac
 exit 0

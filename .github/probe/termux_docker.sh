@@ -14,7 +14,7 @@ say() { echo "$*"; echo "$*" >> "$S"; }
 
 curl -fsSL -o "$DL/mcpp.tar.gz" \
   "https://github.com/mcpp-community/mcpp/releases/download/v$V/mcpp-$V-linux-aarch64.tar.gz"
-cp "$GITHUB_WORKSPACE/.github/probe/termux_inner.sh" "$DL/"
+cp "$GITHUB_WORKSPACE/.github/probe/termux_inner.sh" "$GITHUB_WORKSPACE/.github/probe/termux_feasibility.sh" "$DL/"
 chmod -R a+rX "$DL"
 
 say "## termux-docker aarch64 (mcpp $V)"
@@ -33,7 +33,7 @@ mkdir -p "$LOGS/pass2"; chmod 777 "$LOGS/pass2"
 start=$(date +%s)
 docker run --rm --privileged --entrypoint /system/bin/sh \
   -v "$DL:/mnt/dl:ro" -v "$LOGS/pass2:/mnt/logs" \
-  termux/termux-docker:aarch64 -c 'ln -s /system/bin /bin; ls -ld /bin; exec /entrypoint.sh bash /mnt/dl/termux_inner.sh' \
+  termux/termux-docker:aarch64 -c 'ln -s /system/bin /bin; ls -ld /bin; exec /entrypoint.sh bash -c "bash /mnt/dl/termux_inner.sh; sh /mnt/dl/termux_feasibility.sh \$HOME/dist/mcpp-*-linux-aarch64 \$HOME/feas"' \
   2>&1 | tee "$LOGS/pass2/container.log"
 say "- pass 2 (/bin -> /system/bin) exit: ${PIPESTATUS[0]}, wall: $(( $(date +%s) - start )) s"
 
@@ -48,7 +48,7 @@ say "- pass 3 (/bin -> /system/bin, --toolchain gcc@15.1.0-musl) exit: ${PIPESTA
 
 say '### environment'
 say '```'
-for f in "$LOGS/container.log" "$LOGS/pass2/container.log" "$LOGS/pass3/container.log"; do echo "-- $f" >> "$S"; grep -E "^(ENV|UNAME|ID|HARDLINK|XLINGS|MCPP|STAGE|TIMING|ELF|BUILD)" "$f" | head -60 >> "$S"; done
+for f in "$LOGS/container.log" "$LOGS/pass2/container.log" "$LOGS/pass3/container.log"; do echo "-- $f" >> "$S"; grep -E "^(ENV|UNAME|ID|HARDLINK|XLINGS|MCPP|STAGE|TIMING|ELF|BUILD|FEAS)" "$f" | head -60 >> "$S"; done
 say '```'
 for pass in . pass2 pass3; do
 say "### first run ($pass): key lines"
