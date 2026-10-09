@@ -289,6 +289,10 @@ struct BuildProgramEnv {
     // root-project default). Dependencies MUST point this into the CONSUMING
     // project's tree — a registry package root is shared and may be read-only.
     std::filesystem::path artifactsDir;
+    // The program's output directory, `mcpp::out_dir()` (D7). Empty →
+    // <artifactsDir>/out, a directory every configuration shares, which is
+    // what a caller with no configuration (a test) gets.
+    std::filesystem::path outDir;
     // Base for resolving relative `mcpp:generated=` paths. Empty → root (the
     // root-project contract, unchanged). Dependencies point this at OUT_DIR so
     // a shared package root is never written to.
@@ -1225,7 +1229,7 @@ std::expected<void, std::string> run_build_program_impl(
     }
 
     fs::path bdir = build_dir(root, env);
-    fs::path outDir = bdir / "out";
+    fs::path outDir = env.outDir.empty() ? bdir / "out" : env.outDir;
     auto childEnv = contract_env(root, outDir, env, mode != ProgramMode::Compile);
     std::string ctxHash = contract_hash(childEnv);
     // THE GRAPH DOCUMENT'S CONTENT, NOT ITS PATH. The path is the same on

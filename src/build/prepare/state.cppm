@@ -621,6 +621,14 @@ struct PrepareState {
     std::function<void()> computeUsageRequirements;
     std::function<void(mcpp::manifest::Manifest&, const std::filesystem::path&,
                         std::size_t)> adoptActionOutputs;
+    // A package's build-program output directory (`mcpp::out_dir()`,
+    // MCPP_OUT_DIR) for this build's configuration (D7, D25): below the plan
+    // root, one directory per configuration -- the target, the profile, the
+    // toolchain, the accelerators and the features the package is built
+    // with -- and per package. The program binary and its cache stay in the
+    // configuration-independent `.build-mcpp`.
+    std::function<std::filesystem::path(const mcpp::manifest::Manifest&,
+                                        const std::vector<std::string>&)> programOutDir;
     std::function<void(mcpp::build::BuildProgramEnv&, const mcpp::manifest::Manifest&,
                         std::size_t)> fillXpkgDirs;
     std::function<void(mcpp::build::BuildProgramEnv&, std::size_t,

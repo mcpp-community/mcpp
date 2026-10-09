@@ -657,35 +657,19 @@ std::string target_directive_error(const mcpp::manifest::Manifest& m, const Dire
 // both the directive and the declaring package, like `target_directive_error`.
 std::string deploy_directive_error(const mcpp::manifest::Manifest& m, const Directives& d);
 
-// Resolve an action's paths against `pkgRoot` and make its Source outputs
-// exist, so the ordinary source scan can see them.
+// Resolve an action's paths against `pkgRoot`.
 //
-// A placeholder rather than a synthesised CompileUnit, because that reuses
-// every existing mechanism: the glob finds it, the scanner reads it, the plan
-// gives it an object path, and ninja overwrites it with the real content
-// before the compile edge runs (the compile depends on the action's output).
-//
-// For a module interface the placeholder carries the DECLARED interface —
-// `export module X;` plus its imports — so the prepare-time scan agrees with
-// what the generator will emit. That is the same assertion-plus-verification
-// trade `[modules].scan_overrides` makes: the declaration is checked against
-// the compiler's own P1689 output at build time, so a wrong one is caught
-// rather than silently believed.
-//
-// Never truncates an existing file: after the first build the real content is
-// there, and rewriting it would make ninja think the input changed on every
-// prepare.
-//
-// ONLY FOR OUTPUTS THAT ARE TRANSLATION UNITS, which is why this needs the
-// table. A placeholder exists so the SCAN has something to read, and the scan
-// never reads a header — but writing one anyway turned "the generator did not
-// run" into "the header is empty", and mcpp#534 was diagnosed as a race for
-// exactly that reason: the file was on disk, so the action looked like it had
-// run. A missing file is the honest report, and after the ordering fix the
-// generator runs before anything reads it either way.
+// It writes nothing. A Source action's outputs are written by the action and
+// by nothing else (D6, design 2026-10-10 §4): the placeholder this used to
+// write for the scan was newer than the action's inputs, so a ninja log that
+// had recorded the action took the placeholder for its output (#778), and an
+// output directory shared by two configurations held one file that both of
+// their logs believed current (R2). The units the action generates enter the
+// scan from its declaration instead (`Modules::declaredUnits`): what it says
+// it provides and imports, checked against the compiler's own P1689 output at
+// build time, the trade `[modules].scan_overrides` makes.
 void prepare_actions(std::vector<mcpp::manifest::BuildAction>& actions,
-                     const std::filesystem::path& pkgRoot,
-                     const mcpp::ExtensionTable& extensions);
+                     const std::filesystem::path& pkgRoot);
 
 // Does this action output belong in the COMPILE set?
 //
@@ -1448,8 +1432,7 @@ bool is_compilable_output(const fs::path& p, const mcpp::ExtensionTable& t) {
 }
 
 void prepare_actions(std::vector<mcpp::manifest::BuildAction>& actions,
-                     const fs::path& pkgRoot,
-                     const mcpp::ExtensionTable& extensions) {
+                     const fs::path& pkgRoot) {
     for (auto& a : actions) {
         auto absolutize = [&](std::vector<std::string>& v) {
             for (auto& p : v) {
@@ -1482,30 +1465,13 @@ void prepare_actions(std::vector<mcpp::manifest::BuildAction>& actions,
         // the action (SPEC-007 R2.2), never the build directory.
         if (!a.cwd.empty() && a.cwd.find("${mcpp.") == std::string::npos)
             a.cwd = abs_against(pkgRoot, a.cwd);
-        if (a.role != mcpp::manifest::BuildAction::Role::Source) continue;
-        for (auto const& o : a.outputs) {
-            if (o.find("${mcpp.") != std::string::npos) continue;
-            // A placeholder exists so the scan has a translation unit to read.
-            // A header is not one — nothing scans it, and the empty file it
-            // used to leave behind is what made a generator that never ran
-            // look like one that had (mcpp#534).
-            if (!is_compilable_output(o, extensions)) continue;
-            std::error_code ec;
-            fs::path p(o);
-            if (fs::exists(p, ec)) continue;      // real content already there
-            fs::create_directories(p.parent_path(), ec);
-            std::ofstream os(p, std::ios::trunc);
-            if (!os) continue;
-            if (!a.provides.empty()) {
-                os << "// placeholder — replaced by action '" << a.id
-                   << "' during the build\n";
-                for (auto const& imp : a.imports) os << "import " << imp << ";\n";
-                os << "export module " << a.provides.front() << ";\n";
-            }
-            // A non-module output needs nothing: an empty TU scans as
-            // "provides nothing, imports nothing", which is what a plain
-            // generated .cpp/.cc is.
-        }
+        // Nothing is written for a Source action's outputs: the action is the
+        // only writer of what it outputs (D6). A placeholder written here was
+        // newer than the action's inputs, so a ninja log that recorded the
+        // action took it for the generated file (#778), and with an `out_dir`
+        // shared by configurations each log thought the other's output
+        // current. The generated units enter the scan as declared units
+        // (`Modules::declaredUnits`).
     }
 }
 

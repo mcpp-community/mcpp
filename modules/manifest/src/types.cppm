@@ -123,6 +123,11 @@ struct Modules {
     bool                        strict = false;
     // glob → declared scan result; every glob must match ≥1 source file.
     std::map<std::string, ScanOverride> scanOverrides;
+    // The translation units a source action of this package generates, by
+    // absolute path, with what the action declares they provide and import
+    // (D6). They enter the scan as declared, never read: the action is the
+    // only writer of its output, and before the build it may not exist.
+    std::map<std::string, ScanOverride> declaredUnits;
 };
 
 // The accepted values of `windows_subsystem` (`subsystem = true`) and

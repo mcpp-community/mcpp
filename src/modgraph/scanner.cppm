@@ -1134,6 +1134,10 @@ package_source_files(const std::filesystem::path& root,
         }
     }
     for (auto& p : excluded) all_files.erase(p);
+    // A unit an action generates is a source whether or not the action has
+    // run yet (D6): it is scanned from its declaration, not read.
+    for (auto const& [path, _] : manifest.modules.declaredUnits)
+        all_files.insert(native_path_from_generic(path));
     return all_files;
 }
 
@@ -1216,6 +1220,15 @@ void scan_one_into(ScanResult& result,
 
     for (auto const& f : all_files) {
         const mcpp::manifest::ScanOverride* ov = nullptr;
+        // An action's generated unit: what the action declares, never the
+        // file, which the action alone writes (D6). Without a declared
+        // `provides` it asserts nothing, and the build's own scan finds what
+        // it imports.
+        bool declaredByAction = false;
+        for (auto const& [path, o] : manifest.modules.declaredUnits) {
+            if (native_path_from_generic(path) == f) { ov = &o; declaredByAction = true; break; }
+        }
+        if (!ov)
         for (auto const& [glob, o] : manifest.modules.scanOverrides) {
             if (path_matches_glob(f, root, glob)) {
                 ov = &o;
@@ -1231,9 +1244,12 @@ void scan_one_into(ScanResult& result,
             // root here.
             u.relPath        = std::filesystem::relative(f, root);
             u.packageName    = qualifiedName;
-            u.scanOverridden = true;
+            // What is asserted is audited against the build's own scan; an
+            // action unit that declares no module asserts nothing.
+            u.scanOverridden = !declaredByAction || !ov->provides.empty();
             // The override names modules; it does not carry the declaration.
-            u.declaration    = ModuleDeclaration::Unknown;
+            u.declaration    = declaredByAction && ov->provides.empty()
+                                   ? ModuleDeclaration::None : ModuleDeclaration::Unknown;
             // A declared unit still gets its role from the same classifier —
             // scan_overrides overrides what was SCANNED, not what the file is.
             u.kind           = mcpp::classify(f, extTable);
