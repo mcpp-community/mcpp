@@ -15,6 +15,10 @@
 # Each check has a control at the workspace root or in a member that declares
 # the value itself, so a reading that never depended on inheritance cannot
 # pass as one that does.
+#
+# The root's `[toolchain]` is read by POSITION here on purpose: with
+# tests/e2e/120 this is the coverage of COMPAT(workspace-position) until
+# mcpp 1.0.0 (SPEC-004 §9.10); tests/e2e/893 covers `[workspace.toolchain]`.
 set -e
 
 TMP=$(mktemp -d)

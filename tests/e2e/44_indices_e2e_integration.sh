@@ -76,7 +76,7 @@ cat > mcpp.toml <<EOF
 [workspace]
 members = ["member-a"]
 
-[indices]
+[workspace.indices]
 corp-index = { path = "$INDEX_DIR_HOST" }
 EOF
 
