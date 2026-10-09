@@ -31,14 +31,22 @@ run)
   for f in mcpp.tar.gz cacert.pem termux_inner.sh; do adb push "$EMU/$f" /data/local/tmp/ >/dev/null; done
   adb shell chmod 644 /data/local/tmp/mcpp.tar.gz /data/local/tmp/cacert.pem /data/local/tmp/termux_inner.sh
   A=/data/data/com.termux/files
+  # Launch Termux once so it installs its bootstrap ($PREFIX: bash, curl,
+  # resolv.conf, termux-exec), which is what a real Termux session has.
+  adb shell am start -n com.termux/com.termux.app.TermuxActivity 2>&1 | tail -1
+  for i in $(seq 1 60); do
+    adb shell run-as com.termux ls $A/usr/bin/bash >/dev/null 2>&1 && break
+    sleep 5
+  done
+  say "- Termux bootstrap: $(adb shell run-as com.termux ls -l $A/usr/bin/bash 2>&1 | tr -d '\r')"
   adb shell run-as com.termux sh -c "'mkdir -p $A/home $A/probe && cp /data/local/tmp/mcpp.tar.gz /data/local/tmp/cacert.pem /data/local/tmp/termux_inner.sh $A/probe/'" 2>&1
   adb shell run-as com.termux sh -c "'id; cat /proc/self/attr/current; echo; ls -la $A'" 2>&1 | tee -a "$LOGS/sandbox.txt"
-  # The bash in termux_inner.sh is not there without Termux's bootstrap; run it
-  # with the system sh, which handles everything the script uses.
+  # A Termux session's environment, as the app sets it up for its shell.
+  TENV="PREFIX=$A/usr HOME=$A/home TMPDIR=$A/usr/tmp PATH=$A/usr/bin LANG=en_US.UTF-8 LD_PRELOAD=$A/usr/lib/libtermux-exec.so"
   start=$(date +%s)
-  timeout 5400 adb shell run-as com.termux sh -c \
-    "'PROBE_OUT=$A/probe/out PROBE_TARBALL=$A/probe/mcpp.tar.gz PROBE_HOME=$A/home SSL_CERT_FILE=$A/probe/cacert.pem sh $A/probe/termux_inner.sh'" \
-    2>&1 | tee "$LOGS/inner.log"
+  timeout 5400 adb shell run-as com.termux $A/usr/bin/env $TENV \
+    PROBE_OUT=$A/probe/out PROBE_TARBALL=$A/probe/mcpp.tar.gz PROBE_HOME=$A/home \
+    $A/usr/bin/sh $A/probe/termux_inner.sh 2>&1 | tee "$LOGS/inner.log"
   say "- wall: $(( $(date +%s) - start )) s"
   for f in first-build.log; do
     adb shell run-as com.termux cat "$A/probe/out/$f" > "$LOGS/$f" 2>/dev/null
@@ -47,11 +55,11 @@ run)
   say '### sandbox'
   say '```'
   cat "$LOGS/sandbox.txt" >> "$S"
-  grep -E '^(ENV|UNAME|ID|HARDLINK|MCPP|TIMING)' "$LOGS/inner.log" >> "$S"
+  grep -E '^(ENV|UNAME|ID|HARDLINK|MCPP|TIMING|XLINGS|STAGE)' "$LOGS/inner.log" >> "$S"
   say '```'
   say '### first run: key lines'
   say '```'
-  grep -E 'First run|Resolving|Installing|Downloading|error|warning|hint|Finished|glibc|Can.t create' \
+  grep -E 'First run|Resolving|Resolved|Installing|Downloading|error|warning|hint|Finished|glibc|llvm|musl|Can.t create|did not complete' \
     "$LOGS/inner.log" | head -60 >> "$S"
   say '```'
   say '### plan stage timings'

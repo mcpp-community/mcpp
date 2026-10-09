@@ -37,15 +37,7 @@ echo "XLINGS exit: $?"
 
 mkdir -p "$HOME/hello/src"
 cd "$HOME/hello"
-cat > mcpp.toml <<'EOF'
-[package]
-name = "hello"
-version = "0.1.0"
-
-[targets.hello]
-kind = "bin"
-main = "src/main.cpp"
-EOF
+printf '[package]\nname = "hello"\nversion = "0.1.0"\n\n[targets.hello]\nkind = "bin"\nmain = "src/main.cpp"\n' > mcpp.toml
 printf 'import std;\nint main() { std::println("hello from termux"); }\n' > src/main.cpp
 
 t0=$(date +%s)
