@@ -31,7 +31,18 @@ mcpp 把所有工具链装进同一个沙盒目录（`~/.mcpp/registry/data/xpkg
 - macOS 使用 `llvm@23.1.3`。
 - Windows 上存在可用 MSVC 时使用面向 MSVC ABI 的 `llvm@23.1.3`；没有可用
   MSVC 时使用 `gcc@16.1.0`，target 为 `x86_64-windows-gnu`（MinGW-w64，默认
-  静态链接）。
+  静态链接），说明 MSVC ABI 缺的是哪一半（Visual Studio 的 C++ 工具或 Windows SDK）
+  以及查找过的位置，并把这一对记为本机默认值。两半都齐备之后，
+  `mcpp toolchain default llvm@23.1.3` 把本机切换到 MSVC ABI。
+- Android（Termux）使用 GNU/Linux 在同一架构上的默认值：aarch64 上为
+  `llvm@23.1.3` 加受管 glibc。需要 Android 10 或更高版本（shell 以 `/bin/sh` 取得），
+  以及 xlings 2026.10.10.2 或更高版本，它在不能创建硬链接的应用沙箱中解包载荷。
+
+被指定过的工具链——写在 `mcpp.toml` 中、由 `--toolchain` 给出，或是本机默认值——
+永不被换成 MinGW-w64。它需要 MSVC ABI 而 Visual Studio 的 C++ 工具或 Windows SDK
+缺失时，构建在规划阶段被拒绝，错误写出缺的那一半、查找过的位置与可选做法：安装缺失的
+部分或设置 `WindowsSdkDir`；`mcpp toolchain install msvc`（受管 MSVC，自带 SDK）；或用
+`--toolchain`、在 `mcpp.toml` 中自行选择 MinGW-w64。
 
 在 Linux 宿主上，全静态的 musl 产物始终只差一个参数：
 `mcpp build --target x86_64-linux-musl`。
@@ -470,6 +481,14 @@ mcpp 按下面的顺序取第一个完整的 toolset（2026.9.24.1+）：
    toolset（含 prerelease / Insiders 实例）；
 5. 没有 `vswhere.exe` 时，标准的
    `Program Files\Microsoft Visual Studio\<year>\<edition>` 路径。
+
+`vswhere.exe` 在 `%ProgramFiles(x86)%` 下查找，标准路径依次在 `%ProgramFiles%`、
+`%ProgramFiles(x86)%` 与 `C:` 下查找（2026.10.10.1+）。
+
+Windows SDK 依次取自：`WindowsSdkDir`（及 `WindowsSdkVersion`）、受管 toolset 旁的 SDK、
+SDK 安装器记录的根（`HKLM\SOFTWARE\Microsoft\Windows Kits\Installed Roots` 的
+`KitsRoot10`，两种注册表视图），以及 `%ProgramFiles(x86)%`、`%ProgramFiles%`、`C:` 下的
+`Windows Kits\10`。因此装在其他盘的 SDK 不需要开发者命令行也能找到（2026.10.10.1+）。
 
 实例的默认 toolset 是它的
 `VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt` 所指的那一个。
@@ -1232,8 +1251,16 @@ mcpp 遵循编译器的决定：不定义该宏，也不改动 std 模块，而�
 
   新版编译器视该 ABI 上的协程为不支持；在此目标上使用协程的代码风险自负。
 
-在项目中定义 `__cpp_impl_coroutine` 不是解决办法：它打开了编译器已声明在该 ABI
-上不支持的功能。
+在项目中定义 `__cpp_impl_coroutine` 不是解决办法，也不推荐：它打开了编译器已声明在
+该 ABI 上不支持的功能，mcpp 不对结果做保证。坚持定义时，写在 `dialect_cxxflags` 中，
+它到达 std 模块的预编译、扫描与每个 C++ 单元（[04 —— mcpp.toml](04-mcpp-toml.md)）：
+
+```toml
+[target.i686-windows-msvc.build]
+dialect_cxxflags = ["-D__cpp_impl_coroutine=201902L"]
+```
+
+写在 `cxxflags` 中时，std 模块的预编译看不到它。
 
 `i686-windows-msvc` 不是目标表中的一行；为它构建的项目需要声明
 `[target.i686-windows-msvc]`，与其他自定义三元组相同。

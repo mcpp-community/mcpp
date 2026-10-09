@@ -566,8 +566,13 @@ int main() {
 > 那条边的输入，所以顺序是白得的。生成的**头文件**永远不会：它是通过 `-I` 找到的，
 > 而能记录它的 depfile 要等到某次编译成功之后才存在。在此之前，一个产物全是头文件的
 > action 在 `build.ninja` 里有节点却无人可达 —— 不在 `default`、不在 goal 集、没有
-> 任何边消费它 —— 于是它从不执行，而编译器读到的是 mcpp 为已声明产物写下的那个空占位
-> 文件。这条边**按包**划分，因为 `include_dir` 只染色声明它的那个包自己的 TU。
+> 任何边消费它 —— 于是它从不执行。这条边**按包**划分，因为 `include_dir` 只染色声明它
+> 的那个包自己的 TU。
+
+mcpp 不在 action 的产物位置写任何东西：action 是其产物唯一的写入者（mcpp 2026.10.10.1+）。
+生成的翻译单元以声明的形式进入规划——它的路径与扩展名，以及 action 声明它提供与导入的
+模块——只由消费它的那次编译读取。`--configure-only` 之后，生成的文件尚不存在，
+`compile_commands.json` 在它首次构建之前就已写出它的条目。
 
 **命令自己发现依赖的 action 要声明 depfile**(mcpp 2026.9.7.1+)。`input()` 在
 `build.mcpp` 运行时就把边的输入定死了，而那时命令还没执行，所以一个靠解析源码才知道自己
@@ -641,9 +646,10 @@ JSON），放不下的声明会被拒绝，于是一个消费者的 checkout 深
 a.output(gen.c_str()).provides("my.generated").imports("std").submit();
 ```
 
-mcpp 会播下一个带着该声明的占位文件，使 prepare 期的扫描与生成器将要产出的
-内容一致 —— 与 `[modules].scan_overrides` 同一条「声明 + 验证」的取舍，build 期由
-编译器自己的 P1689 输出复核。
+规划以该声明作为这个单元的模块接口，build 期由编译器自己的 P1689 输出复核——与
+`[modules].scan_overrides` 同一条「声明 + 验证」的取舍。生成的模块接口不写
+`.provides(...)` 时，构建中没有它的 BMI，导入它会失败；构建把这样的 action 报为
+degraded（`build-program/provides`）。
 
 #### 环境变量与工作目录：`env` / `cwd`（protocol 13）
 
@@ -1139,7 +1145,7 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来，缓存
 | `MCPP_PACK_STRIP` *(2026.9.16.1+)* | `mcpp::pack_strip()` | 本程序所处的这次 `mcpp pack` 剥离时为 `1`，`--no-strip` 下为 `0`；任何普通构建下都为空。自己暂存库的成员跟随它，于是一个开关管住包里的每个文件 |
 | `MCPP_PACK_DEBUG_SYMBOLS_DIR` *(2026.9.16.1+)* | `mcpp::pack_debug_symbols_dir()` | `--debug-symbols` 放置分离出的 `*.debug` 文件的位置，绝对路径；丢弃调试信息或本次构建不在打包时为空 |
 | `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | 本包有效 `sources` 匹配到的设备类源文件（`.cu`、`.hip`…），相对包根，一行一个；没有时为空串。引擎一个都不编译 —— 由本程序引入的规则包把每一个变成一条 `mcpp::action`。已经过收窄：构建未覆盖的 `{ glob, accel }` 条目贡献为空，因此 `--no-accel` 得到空列表 |
-| `MCPP_OUT_DIR` | `mcpp::out_dir()` | mcpp 提供的可写输出/暂存目录 |
+| `MCPP_OUT_DIR` | `mcpp::out_dir()` | mcpp 提供的可写输出目录，按配置（目标、profile、工具链、加速器、该包的 features）与包各一个，位于构建的根之下：`target/.build-mcpp/out/<配置>/<包>`（2026.10.10.1+）。构建之外的脚本从 `resolution.json` 的 `graph.packages[].outDir` 读取它 |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | 包根（= CWD） |
 | `MCPP_FEATURE_<NAME>` | `mcpp::has_feature("name")` | 每个活跃 feature 置 `1`（`<NAME>` 消毒规则与 `MCPP_FEATURE_` 编译宏一致） |
 | `MCPP_FEATURES` | — | 活跃 feature 逗号列表 |
@@ -1292,8 +1298,9 @@ action，由引擎调度。工具说明的是构建程序需要、而没有任�
 带 `build.mcpp` 的依赖包也会被编译并运行（Cargo `build.rs` 模型——构建一个包
 即信任其构建程序），时机在其 feature 解析之后、源扫描之前。作用域照 Cargo:
 `cxxflag`/`cflag`/`cfg` 指令只染色**该包自身的 TU**；`link-lib`/`link-search`
-到达终链。其产物（二进制、缓存、`MCPP_OUT_DIR`）放在**消费方工程**的
-`target/.build-mcpp/deps/<pkg>@<ver>/` 下——registry 包根跨工程共享（且可能只读），
+到达终链。其产物（二进制、缓存）放在**消费方工程**的
+`target/.build-mcpp/deps/<pkg>@<ver>/` 下，`MCPP_OUT_DIR` 在该工程的
+`target/.build-mcpp/out/<配置>/<pkg>`——registry 包根跨工程共享（且可能只读），
 绝不写入；相对 `generated=` 路径按 `MCPP_OUT_DIR` 解析，而非包根。
 
 ### 既独立构建又被当依赖的库：发绝对路径

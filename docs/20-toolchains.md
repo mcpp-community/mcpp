@@ -30,7 +30,24 @@ host-aware:
 - macOS uses `llvm@23.1.3`.
 - Windows with a usable MSVC installation uses `llvm@23.1.3` for the MSVC ABI.
   Without usable MSVC, it uses `gcc@16.1.0` with target
-  `x86_64-windows-gnu` (MinGW-w64, static by default).
+  `x86_64-windows-gnu` (MinGW-w64, static by default), says which half of the
+  MSVC ABI is missing — Visual Studio's C++ tools or the Windows SDK — and where
+  it looked, and records the pair as the machine's default. Once both halves
+  are present, `mcpp toolchain default llvm@23.1.3` moves the machine to the
+  MSVC ABI.
+- Android (Termux) uses the default of GNU/Linux on its architecture: on
+  aarch64, `llvm@23.1.3` with the managed glibc. Android 10 or later is
+  required (the shell is reached as `/bin/sh`), with xlings 2026.10.10.2 or
+  later, which unpacks payloads in the app sandbox, where hard links cannot be
+  created.
+
+A toolchain that was specified — in `mcpp.toml`, with `--toolchain`, or as the
+machine's default — is never replaced by MinGW-w64. When it needs the MSVC ABI
+and Visual Studio's C++ tools or the Windows SDK is missing, the build is
+refused at planning with the missing half, the places searched and the
+options: install the missing part or set `WindowsSdkDir`,
+`mcpp toolchain install msvc` (a managed MSVC with its own SDK), or choose
+MinGW-w64 with `--toolchain` or in `mcpp.toml`.
 
 Fully static musl output remains one flag away on a Linux host:
 `mcpp build --target x86_64-linux-musl`.
@@ -509,6 +526,18 @@ mcpp takes the first complete toolset in this order (2026.9.24.1+):
    tools, as `vswhere.exe` reports them (prerelease/Insiders included);
 5. without `vswhere.exe`, the standard
    `Program Files\Microsoft Visual Studio\<year>\<edition>` paths.
+
+`vswhere.exe` is looked for under `%ProgramFiles(x86)%`, and the standard
+paths under `%ProgramFiles%` and `%ProgramFiles(x86)%`, then under `C:`
+(2026.10.10.1+).
+
+The Windows SDK is taken from, in order: `WindowsSdkDir` (with
+`WindowsSdkVersion`), the SDK installed beside a managed toolset, the root the
+SDK installer recorded (`HKLM\SOFTWARE\Microsoft\Windows Kits\Installed
+Roots`, `KitsRoot10`, in either registry view), and `Windows Kits\10` under
+`%ProgramFiles(x86)%` and `%ProgramFiles%`, then under `C:`. An SDK installed
+on another drive is therefore found without a developer command prompt
+(2026.10.10.1+).
 
 An instance's default toolset is the one its
 `VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt` names. A toolset is
@@ -1341,8 +1370,18 @@ The options, in the order the note gives them:
   The newer compiler treats coroutines on this ABI as unsupported; code that
   uses them on this target does so at its own risk.
 
-Defining `__cpp_impl_coroutine` in a project is not a workaround. It switches
-on a feature the compiler has declared unsupported for this ABI.
+Defining `__cpp_impl_coroutine` in a project is not a workaround and is not
+recommended. It switches on a feature the compiler has declared unsupported for
+this ABI, and mcpp gives no guarantee about the result. A project that defines
+it anyway writes it in `dialect_cxxflags`, which reaches the std module's
+precompile, the scan and every C++ unit ([04 — mcpp.toml](04-mcpp-toml.md)):
+
+```toml
+[target.i686-windows-msvc.build]
+dialect_cxxflags = ["-D__cpp_impl_coroutine=201902L"]
+```
+
+In `cxxflags` the std module's precompile does not see it.
 
 `i686-windows-msvc` is not a row of the target table; a project that builds
 for it declares `[target.i686-windows-msvc]`, as for any custom triple.

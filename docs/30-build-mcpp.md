@@ -663,10 +663,15 @@ package's compile edges to that package's action outputs.
 > that would record it does not exist until a compile has already succeeded.
 > Before this, an action whose outputs were all headers had a node in
 > `build.ninja` that nothing could reach — not `default`, not the goal set, no
-> consuming edge — so it never ran, and what the compiler read was the empty
-> placeholder mcpp writes for a declared output. The ordering is **per
-> package**, because `include_dir` colours only the declaring package's own
-> translation units.
+> consuming edge — so it never ran. The ordering is **per package**, because
+> `include_dir` colours only the declaring package's own translation units.
+
+mcpp writes nothing at an action's outputs: the action is their only writer
+(mcpp 2026.10.10.1+). A generated translation unit enters the plan as declared
+— its path and extension, and the modules its action says it provides and
+imports — and is read only by the compile that consumes it. After
+`--configure-only` a generated file does not exist yet, and
+`compile_commands.json` names it ahead of its first build.
 
 **An action whose command discovers its own dependencies declares a depfile**
 (mcpp 2026.9.7.1+). `input()` fixes the edge's inputs when `build.mcpp` runs,
@@ -761,10 +766,11 @@ For a generated **module interface**, declare its interface too:
 a.output(gen.c_str()).provides("my.generated").imports("std").submit();
 ```
 
-mcpp seeds a placeholder carrying exactly that declaration so the prepare-time
-scan agrees with what the generator will emit — the same assertion-plus-
-verification trade `[modules].scan_overrides` makes, and the compiler's own
-P1689 output checks it at build time.
+The plan takes the declaration as the unit's module interface, and the
+compiler's own P1689 output checks it at build time — the trade
+`[modules].scan_overrides` makes. A generated module interface without
+`.provides(...)` has no BMI in the build, so an import of it fails; the build
+reports such an action as degraded (`build-program/provides`).
 
 #### Environment and working directory: `env` / `cwd` (protocol 13)
 
@@ -1335,7 +1341,7 @@ The running program receives the build context as `MCPP_*` variables
 | `MCPP_PACK_STRIP` *(2026.9.16.1+)* | `mcpp::pack_strip()` | `1` when the `mcpp pack` pass this program is part of strips, `0` under `--no-strip`; empty for every ordinary build. A member that stages libraries of its own follows it, so one switch governs every file in the package |
 | `MCPP_PACK_DEBUG_SYMBOLS_DIR` *(2026.9.16.1+)* | `mcpp::pack_debug_symbols_dir()` | Where `--debug-symbols` sends the separated `*.debug` files, absolute; empty when they are discarded or the build is not packing |
 | `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | the device-kind sources (`.cu`, `.hip`, …) the package's effective `sources` match, package-root-relative, one per line; empty when there are none. The engine compiles none of them — the rule package this program imports turns each into an `mcpp::action`. Already narrowed: a `{ glob, accel }` entry the build does not cover contributes nothing, so `--no-accel` yields an empty list |
-| `MCPP_OUT_DIR` | `mcpp::out_dir()` | a writable scratch/output dir owned by mcpp |
+| `MCPP_OUT_DIR` | `mcpp::out_dir()` | a writable output directory owned by mcpp, one per configuration (target, profile, toolchain, accelerators, the package's features) and package, below the build's root: `target/.build-mcpp/out/<configuration>/<package>` (2026.10.10.1+). A script outside the build reads it from `resolution.json`, `graph.packages[].outDir` |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | the package root (= CWD) |
 | `MCPP_FEATURE_<NAME>` | `mcpp::has_feature("name")` | set to `1` per active feature (same `<NAME>` sanitization as the `MCPP_FEATURE_` compile macro) |
 | `MCPP_FEATURES` | — | comma-separated active feature list |
@@ -1535,10 +1541,12 @@ Cargo `build.rs` model — building a package means trusting its build program),
 after its features are resolved and before the source scan. Scope follows
 Cargo: `cxxflag`/`cflag`/`cfg` directives color **only that package's own
 TUs**; `link-lib`/`link-search` reach the final link. Its artifacts (binary,
-cache, `MCPP_OUT_DIR`) live in the **consuming project's**
-`target/.build-mcpp/deps/<pkg>@<ver>/` — a registry package root is shared
-across projects (and may be read-only), so it is never written to; relative
-`generated=` paths resolve against `MCPP_OUT_DIR`, not the package root.
+cache) live in the **consuming project's**
+`target/.build-mcpp/deps/<pkg>@<ver>/` and its `MCPP_OUT_DIR` in that project's
+`target/.build-mcpp/out/<configuration>/<pkg>` — a registry package root is
+shared across projects (and may be read-only), so it is never written to;
+relative `generated=` paths resolve against `MCPP_OUT_DIR`, not the package
+root.
 
 ### A library that is also built standalone: emit an absolute path
 
