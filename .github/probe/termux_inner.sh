@@ -59,6 +59,8 @@ echo "TIMING run: $(( $(date +%s) - t0 )) s"
 
 mkdir -p "$OUT/mcpp-log"
 cp -r "$HOME"/.mcpp/log/. "$OUT/mcpp-log/" 2>/dev/null
+cp -r "$(dirname "$(dirname "$MCPP")")"/log/. "$OUT/mcpp-log/" 2>/dev/null
+grep -h 'build/stage' "$OUT"/mcpp-log/*.log 2>/dev/null | tail -30 | sed 's/^/STAGE /'
 cp "$TMPDIR"/mcpp-xlings-*.stderr "$OUT/" 2>/dev/null
 ls "$HOME"/.mcpp/registry/logs/hooks/ 2>/dev/null | head
 cp -r "$HOME"/.mcpp/registry/logs "$OUT/registry-logs" 2>/dev/null

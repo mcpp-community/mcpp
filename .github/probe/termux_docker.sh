@@ -25,19 +25,27 @@ start=$(date +%s)
 docker run --rm --privileged \
   -v "$DL:/mnt/dl:ro" -v "$LOGS:/mnt/logs" \
   termux/termux-docker:aarch64 bash /mnt/dl/termux_inner.sh 2>&1 | tee "$LOGS/container.log"
-say "- container exit: ${PIPESTATUS[0]}, wall: $(( $(date +%s) - start )) s"
+say "- pass 1 (image as published) exit: ${PIPESTATUS[0]}, wall: $(( $(date +%s) - start )) s"
+say "- /bin/sh in the image: $(docker run --rm --entrypoint /system/bin/sh termux/termux-docker:aarch64 -c 'ls -ld /bin /bin/sh 2>&1' | tr '\n' ' ')"
+
+# Pass 2: Android 10+ devices have /bin -> /system/bin; the image does not.
+mkdir -p "$LOGS/pass2"; chmod 777 "$LOGS/pass2"
+start=$(date +%s)
+docker run --rm --privileged --entrypoint /system/bin/sh \
+  -v "$DL:/mnt/dl:ro" -v "$LOGS/pass2:/mnt/logs" \
+  termux/termux-docker:aarch64 -c 'ln -s /system/bin /bin; ls -ld /bin; exec /entrypoint.sh bash /mnt/dl/termux_inner.sh' \
+  2>&1 | tee "$LOGS/pass2/container.log"
+say "- pass 2 (/bin -> /system/bin) exit: ${PIPESTATUS[0]}, wall: $(( $(date +%s) - start )) s"
 
 say '### environment'
 say '```'
-grep -E "^(ENV|UNAME|ID|HARDLINK|XLINGS|MCPP)" "$LOGS/container.log" | head -40 >> "$S"
+for f in "$LOGS/container.log" "$LOGS/pass2/container.log"; do echo "-- $f" >> "$S"; grep -E "^(ENV|UNAME|ID|HARDLINK|XLINGS|MCPP|STAGE|TIMING)" "$f" | head -60 >> "$S"; done
 say '```'
-say '### first run: key lines'
+for pass in . pass2; do
+say "### first run ($pass): key lines"
 say '```'
-grep -E 'First run|Resolving|Installing|Downloading|Planning|error|warning|hint|Finished|TIMING|glibc|llvm|musl' \
-  "$LOGS/container.log" | grep -v '^\s*$' | head -60 >> "$S"
+grep -E 'First run|Resolving|Resolved|Installing|Downloading|Planning|error|warning|hint|Finished|TIMING|glibc|llvm|musl|Can.t create' \
+  "$LOGS/$pass/container.log" | grep -v '^\s*$' | head -70 >> "$S"
 say '```'
-say '### plan stage timings'
-say '```'
-grep -h 'build/stage' "$LOGS"/mcpp-log/*.log 2>/dev/null | tail -40 >> "$S"
-say '```'
+done
 exit 0
