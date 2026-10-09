@@ -1453,8 +1453,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         plan.toolchain.binaryPath, plan.toolchain.targetTriple);
 
     if (!fsObjcopy.empty()) {
-        append("objcopy = " + mcpp::platform::linux_::build_clean_ld_library_path_prefix(
-                   plan.toolchain.compilerRuntimeDirs) + escape_ninja_path(fsObjcopy) + "\n\n");
+        append("objcopy = " + escape_ninja_path(fsObjcopy) + "\n\n");
         // ── The raw image a flasher takes ──────────────────────────────────
         //
         // A SEPARATE EDGE with the ELF as its input, not a second output of
@@ -1484,20 +1483,26 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     const std::string launch = flags.launcher.empty() ? std::string{}
         : escape_ninja_path(std::filesystem::path(flags.launcher)) + " ";
     // D29: THE TOOLCHAIN'S PRIVATE LIBRARIES ARE THE TOOLCHAIN'S. A managed
-    // LLVM's `clang`, `llvm-ar` and `clang-scan-deps` find their own libc++ and
-    // libLLVM through LD_LIBRARY_PATH, and that path used to be in ninja's
-    // environment -- so every `/bin/sh -c` ninja starts had it too. A shell
-    // that links libc++ (Android's bionic `sh`) then loaded the LLVM's,
+    // LLVM's library directories used to be put in ninja's environment as
+    // LD_LIBRARY_PATH, so every `/bin/sh -c` ninja starts inherited them. A
+    // shell that links libc++ (Android's bionic `sh`) then loaded the LLVM's,
     // built for glibc, and died before running anything:
     //   CANNOT LINK EXECUTABLE "/bin/sh": .../xim-x-llvm/23.1.3/lib/
     //     aarch64-unknown-linux-gnu/libc++.so is too small
-    // (termux-docker, design 2026-10-10 §13). The path now prefixes the tools
-    // that need it and reaches nothing else; macOS keeps no such path at all
+    // (termux-docker, design 2026-10-10 §13). A managed payload's programs
+    // carry their own search path (the RPATH xlings writes at install), so on
+    // Linux the variable reaches no process ninja starts. A compiler without
+    // one -- a toolchain named by path -- gets it on the tools alone, as an
+    // `env` prefix. macOS keeps no such path at all
     // (`runtime_library_path_key`), Windows keeps its PATH.
-    const std::string toolEnv = mcpp::platform::is_linux
-        ? mcpp::platform::linux_::build_clean_ld_library_path_prefix(
-              plan.toolchain.compilerRuntimeDirs)
-        : std::string{};
+    const std::string toolEnv = [&]() -> std::string {
+        if (!mcpp::platform::is_linux || plan.toolchain.compilerRuntimeDirs.empty()) return {};
+        if (auto facts = mcpp::platform::elf::inspect_elf_runtime(flags.cxxBinary);
+            facts && facts->searchPathTag != mcpp::platform::elf::SearchPathTag::None)
+            return {};
+        return mcpp::platform::linux_::build_clean_ld_library_path_prefix(
+            plan.toolchain.compilerRuntimeDirs);
+    }();
     append(std::format("cxx       = {}{}{}\n", toolEnv, launch, escape_ninja_path(flags.cxxBinary)));
     // The driver alone, for the dependency scan: `clang-scan-deps` reads its
     // argv[0] as the compiler (and the resource directory beside it), and a

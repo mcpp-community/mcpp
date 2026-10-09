@@ -31,6 +31,10 @@ status: landed
 - D28：以 argv 启动的 shell 由 `posix_shell()` 解析；`popen` 与 `std::system` 仍用 C 库的 `/bin/sh`，
   因此 Android 的基线是 10 及以上。
 - D23：mcpp 把 xlings 的 `extract`、`hook` 事件显示为 `Installing …` 行，并写入日志；不另加 30 s 心跳。
+- D29：受管载荷的程序带有 xlings 安装时写入的 RPATH，不依赖 `LD_LIBRARY_PATH`（实测 clang、clang-scan-deps、
+  llvm-ar、lld 去掉该变量都能运行）。因此在 Linux 上该变量不再进入 ninja 的环境，也不加在工具上；只有编译器
+  本身没有 RPATH/RUNPATH 时（以路径指定的工具链），才以 `env LD_LIBRARY_PATH=… <tool>` 前缀加在工具上。
+  这样 `build.ninja` 中 `cxx =` 的写法对受管工具链不变（tests/e2e/188 读取它）。
 - D26 以 `degraded`（`build-program/provides`）实现。
 - 工作空间层的解析：`[workspace.*]` 下的文档由同一个 `parse_document` 读取，保留原值的行号。
 - 测试：e2e 893–901（在 2026.10.8.1 上全部失败）；Windows 探测由单元测试覆盖；D27 的两个 job 在

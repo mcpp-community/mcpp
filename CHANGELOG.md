@@ -44,9 +44,10 @@
 - Write nothing at an action's outputs before the action runs. A generated
   translation unit enters the plan from its action's declaration; a generated
   module interface without `.provides(...)` is reported as degraded.
-- Pass the managed toolchain's library path on Linux to the tools that need
-  it (`$cxx`, `$cc`, `$ar`, `clang-scan-deps`) instead of ninja's environment,
-  so no shell ninja starts loads the toolchain's libc++.
+- Keep the managed toolchain's library path out of ninja's environment on
+  Linux, so no shell ninja starts loads the toolchain's libc++. The managed
+  tools find their libraries through their own RPATH; a compiler without one
+  gets the path on the tools alone.
 - Pin xlings 2026.10.10.2 and bootstrap from mcpp 2026.10.8.1.
 
 ### Added
