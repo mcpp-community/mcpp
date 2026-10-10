@@ -11,8 +11,15 @@ import tempfile
 import unittest
 
 
+def native_path(value):
+    """Make a path exported by Git Bash usable by native Windows Python."""
+    if os.name == "nt" and value[:1] == "/" and value[2:3] == "/":
+        return value[1].upper() + ":" + value[2:]
+    return value
+
+
 ROOT = Path(__file__).resolve().parents[2]
-MCPP = Path(os.environ["MCPP"]).resolve() if os.environ.get("MCPP") else None
+MCPP = Path(native_path(os.environ["MCPP"])).resolve() if os.environ.get("MCPP") else None
 
 
 @unittest.skipUnless(MCPP, "set MCPP to a freshly built binary")

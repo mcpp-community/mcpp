@@ -66,7 +66,8 @@ compdef _mcpp_complete mcpp mcpp.exe
 )MCPP";
     if (shell == "fish") return R"MCPP(# mcpp completion; source this file from config.fish.
 function __mcpp_candidates
-    set -l words (commandline -xpc)
+    # --tokenize (-o) exists in fish 3.x; --tokens-expanded (-x) is 4.0+.
+    set -l words (commandline -opc)
     set -l current (commandline -ct)
     set -l reply (command $words[1] __complete $words[2..-1] "__mcpp_word__$current" 2>/dev/null)
     if test "$reply[1]" = files
