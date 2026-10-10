@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-330 records.
+331 records.
 
 ## By subject
 
@@ -26,6 +26,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### build-program
 
+- [构建依赖的一条管线：配置与产物两轴、包的实例、库接口、兼容系统与工作空间收尾（#797）](2026-10-11-build-dependencies-one-pipeline-design.md) — active
 - [Four upstream asks from a UI framework: what each one is under mcpp's design, and the combined plan](2026-09-13-four-upstream-asks-from-a-ui-framework.md) — landed
 
 ### design
@@ -124,6 +125,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-10
 
+- [构建依赖的一条管线：配置与产物两轴、包的实例、库接口、兼容系统与工作空间收尾（#797）](2026-10-11-build-dependencies-one-pipeline-design.md) — active
 - [一处来源，一种含义：工作空间的传递语义、生成输出、模块角色与首次运行（#786、#785、#778、#790）](2026-10-10-one-source-one-meaning-design.md) — landed
 - [LLVM 23.1.3 Part 2：Linux aarch64 默认工具链与 glibc 生态闭环](2026-10-08-llvm-2313-linux-aarch64-ecosystem-part2-design.md) — active
 - [LLVM 23.1.3 全平台统一默认:跨仓库联动方案(mcpp × xim-pkgindex)](2026-10-07-llvm-2313-unified-default-cross-repo-design.md) — active
