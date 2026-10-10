@@ -178,16 +178,28 @@ $(find "$XLINGS_HOME" -name mcpp -type f -path '*/bin/*' | head -1) --version
 ## 4. 自举 pin 的定义与更新条件
 
 `.xlings.json` 的 `[workspace].mcpp` 是**自举的起点**——那个由
-`xlings install mcpp` 装进 workspace、供 CI 从源码构建 mcpp 的已发布
-mcpp。它唯一的要求是：能构建**当前**这棵源码树。
+`xlings install` 装进 workspace、供 CI 从源码构建 mcpp 的已发布 mcpp。
+它也是开发者构建所用的版本：在克隆的仓库里，`mcpp` shim 只运行这个版本，
+未经 `xlings install` 安装时拒绝运行。它唯一的要求是：能构建**当前**这棵
+源码树。
 
 **它不必每次发布都跟着动。** 索引保留每一个已发布版本（撰写时 105 个
 条目，一直回溯到 0.0.x 系列），旧 pin 可以无限期继续解析——这一点用
 「在当前索引下安装一个隔了两个版本的旧版」实测验证过。
 
-跟着 bump 仍然是合理的，也是本仓库的实际做法：bump 后 CI 一轮全绿，直接
-证明了新发布能在每个平台上构建 mcpp 自己。把它当作**一项有用的检查**，
-而不是前置条件。
+**树需要时它才动**：`mcpp.toml` 或源码用到了固定版本没有的东西——一个键、
+一张表、一条工具链线。何时到了这一刻由 CI 判定：固定版本以 `--strict` 构建
+这棵树，它不认识的键是错误。不加 `--strict` 时，固定版本对不认识的键只给
+警告、丢弃该键、构建出与清单不同的结果，并以 0 退出（2026.9.24.1 遇到
+2026.10.5.2 的 `[test] windows_code_page`）。每个改动代码的 PR 上有三组构建：
+
+| 作业 | mcpp | 方式 |
+| --- | --- | --- |
+| `build.yml`（四个主机） | 固定版本 | `install_pinned_mcpp.sh` 全局安装，`mcpp build --strict` |
+| `ci-bootstrap.yml` `developer`（Linux、macOS、Windows） | 固定版本 | 冷克隆：在仓库内 `xlings install`，经 shim 执行 `mcpp build --strict` |
+| `ci-bootstrap.yml` `latest`（Linux） | 最新发布版 | 仅在固定版本落后于最新发布版时运行 |
+
+需要更新固定版本的 PR 在这里失败，并在同一个 PR 中更新它。
 
 **唯一的硬约束是方向**：pin 绝不能指向一个尚不可安装的版本。只在发布
 已完成、已镜像、**且已合入 xim-pkgindex 之后**再 bump——否则所有 CI 会

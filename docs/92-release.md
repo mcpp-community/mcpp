@@ -189,17 +189,33 @@ up. `ci-fresh-install`'s `wait-index` job encodes exactly this with a bounded
 ## 4. The bootstrap pin: its definition and its update conditions
 
 `.xlings.json`'s `[workspace].mcpp` is the **starting point of self-hosting** —
-the released mcpp that `xlings install mcpp` puts in the workspace so CI can build
-mcpp from source. Its only requirement is that it can build the **current** tree.
+the released mcpp that `xlings install` puts in the workspace so CI can build
+mcpp from source. It is also what a developer builds with: inside a clone, the
+`mcpp` shim runs this version and no other, and refuses to run until
+`xlings install` has installed it. Its only requirement is that it can build the
+**current** tree.
 
 **It does not have to move with every release.** The index retains every
 published version (105 entries at the time of writing, back to the 0.0.x series),
 so an older pin keeps resolving indefinitely — verified by installing a
 two-releases-old version against the current index.
 
-Bumping it anyway is reasonable and is what this repository does in practice: a
-green CI round on the bumped pin is a direct proof that the new release can build
-mcpp itself on every platform. Treat it as a *useful check*, not a prerequisite.
+**It moves when the tree needs it**: when `mcpp.toml` or the sources use something
+the pinned mcpp does not have — a key, a table, a toolchain line. CI tells when
+that moment has come, because the pinned mcpp builds the tree with `--strict`,
+which makes a key it does not know an error. Without it the pinned mcpp warns,
+drops the key, builds something other than the manifest describes, and exits 0
+(2026.9.24.1 against the `[test] windows_code_page` of 2026.10.5.2). Three jobs build
+the tree on every pull request that changes code:
+
+| Job | mcpp | Installation and build |
+| --- | --- | --- |
+| `build.yml` (four hosts) | the pin | installed globally by `install_pinned_mcpp.sh`, `mcpp build --strict` |
+| `ci-bootstrap.yml` `developer` (Linux, macOS, Windows) | the pin | a cold clone: `xlings install` in the checkout, then `mcpp build --strict` through the shim |
+| `ci-bootstrap.yml` `latest` (Linux) | the newest release | only while the pin lags it |
+
+A pull request that needs a newer pin fails there, and moves the pin in the same
+pull request.
 
 **The one hard constraint is direction**: the pin must never name a version that
 is not yet installable. Bump it only after the release is published, mirrored,

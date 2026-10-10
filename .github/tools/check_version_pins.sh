@@ -157,11 +157,11 @@ fi
 #     full index, and the mechanism is not yet understood; what is established
 #     is the pattern and its fix.
 #
-#     The operational rule that satisfies both directions: after publishing
-#     release N, the post-release commit sets this pin to N. Never ahead
-#     (check (c) enforces that), and in practice never behind either. This is
-#     not checkable here — it needs the index — so it surfaces as the error
-#     above, and this note is where to look when it does.
+#     That job now checks the repository out last, so the pin no longer
+#     reaches it. The rule that stands: never ahead (check (c) enforces it),
+#     and behind for as long as the pinned mcpp builds the tree, which
+#     ci-bootstrap.yml and build.yml measure with `mcpp build --strict`
+#     (docs/92-release.md §4).
 
 # (c) …and the bootstrap pin must never run AHEAD of the version being built.
 #     Four-key numeric sort, so the date scheme orders correctly (a plain

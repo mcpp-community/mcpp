@@ -1,0 +1,143 @@
+name: ci-bootstrap
+
+# Which released mcpp builds this tree, measured the way a developer builds it.
+#
+# `.xlings.json` names the mcpp a clone of this repository builds with: inside
+# the checkout the `mcpp` shim refuses to run any other version
+# ("mcpp@<pin> is the version this project asks for ... set this project up:
+# xlings install"). The pin does not move with every release; it moves when the
+# tree starts to need something the pinned mcpp does not have. Two jobs answer
+# whether that moment has come:
+#
+#   developer  the pinned mcpp, installed by `xlings install` in the checkout
+#              (project scope, no -g) and run through the shim, builds the tree
+#              with --strict, on Linux, macOS and Windows. build.yml builds with
+#              the same version but installs it globally and runs it by path; a
+#              shim or project-scope defect, or a cold runner, is only seen here.
+#   latest     the newest release builds the tree with --strict. It runs only
+#              while the pin lags the newest release; when they are equal the
+#              developer job has already answered.
+#
+# --strict is the assertion. A mcpp older than the manifest warns about a key it
+# does not know, drops it and exits 0 (2026.9.24.1 against
+# `[test] windows_code_page`); under --strict that is an error.
+#
+# No cache, on purpose: the subject is a fresh clone.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  developer:
+    name: the pinned mcpp builds the tree (${{ matrix.os }}, xlings install + mcpp build --strict)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    env:
+      XLINGS_NON_INTERACTIVE: '1'
+      XLINGS_VERSION: '2026.10.10.2'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xlings
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.10.10.2
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.xlings/bin" >> "$GITHUB_PATH"
+
+      - name: Install xlings
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          irm https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.ps1 | iex
+          "$env:USERPROFILE\.xlings\subos\current\bin" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+
+      - name: Install the mcpp .xlings.json names, in this project
+        shell: bash
+        run: |
+          set -euo pipefail
+          xlings install -y
+          pin=$(grep -oE '"mcpp"[[:space:]]*:[[:space:]]*"[^"]+"' .xlings.json \
+                | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)
+          got=$(mcpp --version | head -1 | awk '{print $2}' | tr -d '\r')
+          [ -n "$pin" ] && [ "$got" = "$pin" ] || {
+            echo "::error::.xlings.json names mcpp ${pin:-?}; the shim in this checkout runs ${got:-nothing}"; exit 1; }
+          echo "the shim runs mcpp $got, the version .xlings.json names"
+
+      - name: Build the tree with it (mcpp build --strict)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mcpp self config --mirror GLOBAL
+          mcpp build --strict
+          case "$RUNNER_OS" in Windows) exe=mcpp.exe ;; *) exe=mcpp ;; esac
+          built=$(find target -type f -name "$exe" -path '*/bin/*' | grep -v '/dist/' || true)
+          [ "$(printf '%s\n' "$built" | grep -c .)" = 1 ] || {
+            echo "::error::expected one $exe under target/, found: ${built:-none}"; exit 1; }
+          want=$(awk -F '"' '/^version[[:space:]]*=/{print $2; exit}' mcpp.toml)
+          got=$("$built" --version | head -1 | tr -d '\r')
+          [ "$got" = "mcpp $want" ] || {
+            echo "::error::the built binary says '$got', mcpp.toml says $want"; exit 1; }
+          echo "built $got"
+
+  latest:
+    name: the newest release builds the tree (linux, when the pin lags it)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      XLINGS_NON_INTERACTIVE: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare the pin with the newest release
+        id: cmp
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pin=$(grep -oE '"mcpp"[[:space:]]*:[[:space:]]*"[^"]+"' .xlings.json \
+                | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)
+          latest=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name | sed 's/^v//')
+          [ -n "$pin" ] && [ -n "$latest" ] || {
+            echo "::error::could not read the pin (${pin:-?}) or the newest release (${latest:-?})"; exit 1; }
+          echo "pin=$pin latest=$latest"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          if [ "$pin" = "$latest" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::.xlings.json names the newest release ($latest); the developer job covers it"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install xlings
+        if: steps.cmp.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.10.10.2
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+
+      - name: Install the newest release and build the tree with it (mcpp build --strict)
+        if: steps.cmp.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Makes the released version the one the shim runs here, over the
+          # checkout's own pin, and asserts it.
+          bash .github/tools/install_released_mcpp.sh "${{ steps.cmp.outputs.latest }}" "$(pwd)"
+          mcpp self config --mirror GLOBAL
+          mcpp build --strict
+          built=$(find target -type f -name mcpp -path '*/bin/*' | grep -v '/dist/' || true)
+          [ "$(printf '%s\n' "$built" | grep -c .)" = 1 ] || {
+            echo "::error::expected one mcpp under target/, found: ${built:-none}"; exit 1; }
+          "$built" --version
