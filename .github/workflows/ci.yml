@@ -186,6 +186,13 @@ jobs:
       # The MinGW payload every Windows e2e shard installs.
       prewarm: mingw 16.1.0
 
+  # The mcpp .xlings.json names builds the tree as a developer's clone does,
+  # and so does the newest release while the pin lags it (ci-bootstrap.yml).
+  bootstrap:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    uses: ./.github/workflows/ci-bootstrap.yml
+
   linux:
     needs: build-linux
     uses: ./.github/workflows/ci-linux.yml

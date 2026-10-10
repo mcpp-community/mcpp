@@ -59,7 +59,12 @@ jobs:
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
           "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
-          "$MCPP" build
+          # --strict: a key this bootstrap mcpp does not know is an error, not
+          # a warning. A bootstrap older than the manifest used to drop such a
+          # key and build something else, and still exit 0 (2026.9.24.1 and
+          # `[test] windows_code_page`): the moment `.xlings.json` must move is
+          # the moment this fails.
+          "$MCPP" build --strict
           # target/ is not restored from a cache, so the tree holds exactly the
           # binary this build linked.
           case "${{ inputs.host }}" in windows-*) exe=mcpp.exe ;; *) exe=mcpp ;; esac
