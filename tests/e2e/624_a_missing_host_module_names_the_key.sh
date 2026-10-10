@@ -65,7 +65,7 @@ standard   = "c++23"
 modules    = true
 import_std = true
 [build-dependencies]
-rule = { path = "../rule" }
+rule = { path = "../rule", host-module = false }
 [targets.consumer]
 kind = "bin"
 main = "src/main.cpp"
@@ -81,7 +81,7 @@ echo "ok: refused by name, before the compiler"
 
 # The same project with the key added must build -- otherwise the check could
 # be refusing something that was always going to work.
-sed -i 's|rule = { path = "../rule" }|rule = { path = "../rule", host-module = true }|' mcpp.toml
+sed -i 's|rule = { path = "../rule", host-module = false }|rule = { path = "../rule", host-module = true }|' mcpp.toml
 "$MCPP" build >/dev/null 2>&1 || { echo "FAIL: adding host-module = true did not make it build"; exit 1; }
 echo "ok: the fix the message names is the fix that works"
 

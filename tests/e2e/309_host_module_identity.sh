@@ -80,30 +80,22 @@ out="$("$MCPP" run 2>&1 | grep '^DIVERGENT=' | tail -1)"
 [[ "$out" == "DIVERGENT=1" ]] || {
     echo "FAIL: the divergently-named rule's directive did not land: $out"; exit 1; }
 
-# THE IMPORT ABOVE DOES NOT DISCRIMINATE ON GCC, AND THAT IS THE WHOLE
-# POINT OF THIS FEATURE. Measured: with the pre-I1 code — which registered the
-# PACKAGE name — this build still succeeded under GCC, because GCC's BMIs are
-# implicit under gcm.cache and keyed by the name the SOURCE declares, so
-# nothing consulted the registered name at all. Under Clang and MSVC the same
-# fixture fails, since both are handed an explicit `<name>=<bmi>` mapping.
+# THE IMPORT ABOVE DOES NOT DISCRIMINATE ON GCC: GCC's BMIs are implicit under
+# gcm.cache and keyed by the name the SOURCE declares, so a build that
+# registered the PACKAGE name succeeded there and failed under Clang and MSVC,
+# which are handed an explicit `<name>=<bmi>` mapping.
 #
-# So the criterion below is the one that works everywhere: `build_host_module`
-# derives the BMI and OBJECT filenames from the REGISTERED name. Under the old
-# rule the object was `protobufgen.o`; under this one it is named for what the
-# source declares. A file listing is platform-independent evidence about which
-# name the engine used, where the successful import is not.
-#
-# A host module is kept as an entry of the workspace's store, keyed by what it
-# was compiled from (#748), and the entry names its files as before: the BMI
-# under `bmi/` and the object under `obj/`.
-BM=target/.build-mcpp/host-modules
+# The build programs' graph (mcpp#797) compiles the library as a package of
+# its plan, and the plan names a BMI for the module the source declares. The
+# BMI is the platform-independent evidence of which name the engine used.
+BM=target/.build-mcpp/host
 [ -n "$(find "$BM" -name 'acme.rules.protobuf.*' 2>/dev/null)" ] || {
     echo "FAIL: the host module was not named for its DECLARED module name"
-    find "$BM" 2>/dev/null
+    find "$BM" 2>/dev/null | head -40
     exit 1; }
-if [ -n "$(find "$BM" -name 'protobufgen.*' 2>/dev/null)" ]; then
-    find "$BM"
-    echo "FAIL: the host module is still named for the PACKAGE name"
+if [ -n "$(find "$BM" \( -name 'protobufgen.gcm' -o -name 'protobufgen.pcm' -o -name 'protobufgen.ifc' \) 2>/dev/null)" ]; then
+    find "$BM" | head -40
+    echo "FAIL: a BMI is named for the PACKAGE name"
     exit 1
 fi
 

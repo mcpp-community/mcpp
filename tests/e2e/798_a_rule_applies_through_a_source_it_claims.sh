@@ -33,7 +33,7 @@ rm -f build.mcpp
 "$MCPP" build > b1.log 2>&1 || { cat b1.log; echo "FAIL: leg 1 did not build"; exit 1; }
 grep -q 'Rules.*example.rules.toy' b1.log || {
     cat b1.log; echo "FAIL: leg 1 did not report the rule it applied"; exit 1; }
-find target -name build.mcpp | grep -q . || {
+find target -name synthesised.mcpp | grep -q . || {
     echo "FAIL: leg 1 synthesised no build program"; exit 1; }
 out="$("$MCPP" run 2>&1 | tail -1)"
 [[ "$out" == *"= 42"* ]] || {

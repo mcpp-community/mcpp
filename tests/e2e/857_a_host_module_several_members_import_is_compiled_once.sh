@@ -1,31 +1,29 @@
 #!/usr/bin/env bash
 # requires:
-# 857 -- a host module that several members import is compiled once for all of
-# them, and a host module of a path dependency is never kept globally.
+# 857 -- a library that several members' build programs use is compiled once
+# for all of them, and a library of a path dependency is never kept globally.
 #
-# #748 (B1, D4 of the plan for member selection and build programs). Every
-# member of a workspace has a build program, and each imports the same host
-# module, which imports the bundled `mcpp` module. Until this change each
-# program compiled the `mcpp` module and every host module it imports into its
-# own `target/.build-mcpp`, before its own compile and again for every program
-# and every invocation: 7.8 s per program on #748's runner.
+# #748 (B1), and mcpp#797. Every member of a workspace has a build program,
+# and each uses the same library, which imports the engine interface. The
+# programs of one build that share a host toolchain and a C++ standard are the
+# members of one build programs' graph, below the workspace root, so the
+# library is compiled once for them; a program of another standard is in
+# another graph and never takes the others' BMI.
 #
-# The host module here is a path dependency, so its sources can change without
-# its name and version changing, and it is kept where the project keeps
-# everything that is its own: under the workspace's `target/`. The engine's own
-# `mcpp` module is identical for every project and is kept in the global cache.
+# The library is a path dependency, so its sources can change without its name
+# and version changing, and it is kept where the project keeps everything that
+# is its own: under the workspace's `target/`. The engine interface is
+# identical for every project and is kept in the global cache.
 #
 # Criteria:
-#   A. `m1` and `m2` import one host module and agree on every flag; the module
-#      is compiled once for the two, and the second program reuses the entry.
-#      (The compile commands are logged under `buildmcpp-host`.)
-#   B. `m3` states another standard. Its flags differ, so it gets an entry of
-#      its own and never takes the BMI of the others.
-#   C. The entries are under the workspace root's `target/.build-mcpp/
-#      host-modules/`, each recording the inputs it was compiled from, and not
-#      under any member's own `target/`.
-#   D. With `--cache global`, no entry of the host module is written below the
-#      global cache root; the engine's `mcpp` module is.
+#   A. `m1` and `m2` agree on every flag: their programs are in one graph,
+#      which compiles the library once.
+#   B. `m3` states another standard. Its program is in another graph, with a
+#      compile of the library of its own, at its own standard.
+#   C. The graphs are under the workspace root's `target/.build-mcpp/host/`,
+#      and not under any member's own `target/`.
+#   D. With `--cache global`, nothing of the path dependency is written below
+#      the global cache root; the engine interface is.
 set -e
 source "$(dirname "$0")/_host_path.sh"
 
@@ -96,38 +94,37 @@ for m in m1 m2 m3; do
     grep -qE "^ *build\.mcpp $m .* ran " a.log || fail "the program of $m did not run" a.log
 done
 
-STORE=target/.build-mcpp/host-modules
+HOST=target/.build-mcpp/host
+# The compiles of the library: one entry per graph in that graph's database.
+entries() { cat $HOST/*/compile_commands.json 2>/dev/null | grep -c '"file": ".*rules/src/rule857.cppm"' || true; }
 
-# A and B. Three programs, two flag sets: two compiles, and one reuse.
-compiles=$(grep -cE "host module 't857\.rules' (precompile|compile):" a.log || true)
-[ "$compiles" = 2 ] || fail "A/B: the host module was compiled $compiles times for three programs of two flag sets (want 2)" a.log
-reused=$(grep -cE "host module 't857\.rules': entry [0-9a-f]+ workspace \(reused\)" a.log || true)
-[ "$reused" = 1 ] || fail "A: $reused programs reused the host module's entry (want 1: m1 and m2 share one)" a.log
-entries=$(find "$STORE" -name entry.json | wc -l | tr -d ' ')
-[ "$entries" = 2 ] || fail "B: the store holds $entries entries of the host module (want 2: one per standard)" a.log
-# The two entries state different standards, which is what keeps them apart.
-flags=$(for e in $(find "$STORE" -name entry.json); do
-            grep -h '"std_flag"' "$e"; done | sort -u | wc -l | tr -d ' ')
-[ "$flags" = 2 ] || fail "B: the two entries record $flags distinct standard flags (want 2)"
-
-# C. One store for the workspace, below the workspace root; none per member.
-for m in m1 m2 m3; do
-    [ ! -d "$m/target/.build-mcpp/host-modules" ] \
-        || fail "C: $m keeps its own host-module store beside the workspace's"
+# A and B. Three programs, two standards: two graphs, two compiles.
+graphs=$(ls $HOST/*/programs.json 2>/dev/null | wc -l | tr -d ' ')
+[ "$graphs" = 2 ] || fail "A/B: $graphs build programs' graphs for three programs of two standards (want 2)" a.log
+[ "$(entries)" = 2 ] || fail "A/B: the library was compiled $(entries) times for three programs of two standards (want 2)" a.log
+for g in $HOST/*/programs.json; do
+    if grep -q '"m3-' "$g"; then
+        grep -q '"m1-' "$g" && fail "B: m3's program shares a graph with m1's" "$g"
+    else
+        { grep -q '"m1-' "$g" && grep -q '"m2-' "$g"; } || fail "A: m1 and m2 are not in one graph" "$g"
+    fi
 done
-for e in $(find "$STORE" -name entry.json); do
-    grep -q '"module": "t857.rules"' "$e" || fail "C: an entry does not record its module name" "$e"
-    grep -q '"interface_sha256"' "$e"      || fail "C: an entry does not record the digest of its interface" "$e"
-    grep -q '"imports"' "$e"               || fail "C: an entry does not record the BMIs it imports" "$e"
+stds=$(cat $HOST/*/compile_commands.json | grep -o -- '-std=c++2[03]' | sort -u | wc -l | tr -d ' ')
+[ "$stds" = 2 ] || fail "B: the two graphs compile at $stds distinct standards (want 2)"
+
+# C. One place for the workspace, below the workspace root; none per member.
+for m in m1 m2 m3; do
+    [ ! -d "$m/target/.build-mcpp/host" ] \
+        || fail "C: $m keeps its own build programs' graph beside the workspace's"
 done
 
 # D. The path dependency's module is not below the global cache root; the
-# engine's module is.
+# engine's interface is.
 CACHE_ROOT="$("$MCPP" cache dir | head -1)"
 if [ -d "$CACHE_ROOT/pkg" ] && grep -rl 't857.rules' "$CACHE_ROOT/pkg" --include=entry.json 2>/dev/null | grep -q .; then
-    fail "D: a host module of a path dependency was written below the global cache root"
+    fail "D: a module of a path dependency was written below the global cache root"
 fi
 [ -n "$(find "$CACHE_ROOT/pkg/_engine" -name entry.json 2>/dev/null)" ] \
-    || fail "D: the engine's bundled module is not in the global cache" a.log
+    || fail "D: the engine interface is not in the global cache" a.log
 
 echo "PASS: 857_a_host_module_several_members_import_is_compiled_once"

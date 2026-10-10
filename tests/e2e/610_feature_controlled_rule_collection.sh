@@ -186,12 +186,17 @@ version = "0.1.0"
 [dependencies]
 plugins = { path = "../plugins", host-module = true }
 EOT
-echo 'import mcpp; int main() {}' > app/build.mcpp
+printf 'import mcpp;\nint main() {}\n' > app/build.mcpp
 echo 'int main() {}' > app/src/main.cpp
 cd app
 if "$MCPP" build > b5.log 2>&1; then
-    echo "FAIL: a host-module package with no interface unit built"; cat b5.log; exit 1; fi
-grep -q 'no interface unit at' b5.log || { echo "FAIL: the missing-lib-root diagnostic changed"; cat b5.log; exit 1; }
+    echo "FAIL: a library whose only unit implements a module no unit declares built"; cat b5.log; exit 1; fi
+# The library is compiled as the package it is (mcpp#797), so its own defect is
+# reported as it would be anywhere: the unit, the module, and where the build
+# programs' workspace is to reproduce it.
+grep -q 'nothing.exported' b5.log || { echo "FAIL: the diagnostic does not name the module"; cat b5.log; exit 1; }
+grep -q 'rules/impl.cppm' b5.log || { echo "FAIL: the diagnostic does not name the unit"; cat b5.log; exit 1; }
+grep -q "the build programs' workspace" b5.log || { echo "FAIL: the diagnostic does not say where to reproduce it"; cat b5.log; exit 1; }
 echo "PASS: a package with neither a lib root nor a listed interface unit keeps its diagnostic"
 
 echo "PASS: feature-controlled rule collection"

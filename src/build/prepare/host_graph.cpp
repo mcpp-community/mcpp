@@ -399,6 +399,47 @@ std::expected<void, std::string> check_program_imports(PrepareState& state, std:
     return {};
 }
 
+// ONE MODULE NAME, ONE PROVIDER, IN ONE PROGRAM. Two packages of a program's
+// graph that declare one module name would both be compiled and linked, and
+// the failure would be a duplicate module initializer naming one object twice.
+// The two package identities and the two interface paths are the content of
+// the refusal: with one name shared they are the only way to tell them apart.
+std::expected<void, std::string> check_module_collisions(const PrepareState& state, std::size_t i) {
+    const auto libs = program_libraries(state, i);
+    std::map<std::string, std::pair<std::size_t, fs::path>> seen;
+    for (auto d : closure_of(state, libs)) {
+        if (engine::is_engine_package(state.packages[d].root)) continue;
+        auto const& pkg = state.packages[d];
+        std::set<fs::path> files;
+        for (auto const& f : mcpp::modgraph::package_source_files(pkg.root, pkg.manifest))
+            files.insert(f);
+        for (auto const& f : program_features(state, d))
+            if (auto it = pkg.manifest.buildConfig.featureSources.find(f);
+                it != pkg.manifest.buildConfig.featureSources.end())
+                for (auto const& g : it->second)
+                    for (auto const& file : mcpp::modgraph::expand_glob(pkg.root, g))
+                        files.insert(file);
+        for (auto const& file : files) {
+            std::ifstream in(file, std::ios::binary);
+            const std::string text{std::istreambuf_iterator<char>(in), {}};
+            for (auto const& m : mcpp::pm::declared_module_roots(text)) {
+                auto [it, fresh] = seen.try_emplace(m, d, file);
+                if (fresh || it->second.first == d) continue;
+                return std::unexpected(std::format(
+                    "two libraries of the build program of '{}' declare the module '{}':\n"
+                    "         {}  ({})\n"
+                    "         {}  ({})\n"
+                    "       A module name identifies one module within a program. Depend on one "
+                    "of them, or rename the module in one.",
+                    qualified(manifest_of(state, i)), m,
+                    qualified(state.packages[it->second.first].manifest),
+                    path_text(it->second.second), qualified(pkg.manifest), path_text(file)));
+            }
+        }
+    }
+    return {};
+}
+
 // SPEC-007 R9.6: a module whose name opens with `mcpp.<reserved>` comes only
 // from a package of namespace `mcpp`. Warned once per (package, module).
 void warn_reserved_prefixes(const PrepareState& state, std::size_t i) {
@@ -480,7 +521,9 @@ void write_group(PrepareState& state, const fs::path& dir, const std::vector<Pro
         const auto memberDir = dir / p.member;
         fs::path main = p.source.file;
         if (main.empty()) {
-            main = memberDir / "build.mcpp";
+            // Not `build.mcpp` at the member's root: that file would be the
+            // member's OWN build program.
+            main = memberDir / "synthesised.mcpp";
             write_if_changed(main, p.source.synthesised);
         }
         std::string m = std::format(
@@ -605,6 +648,9 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
         bopt.verbose = true;
     auto br = be->build(ctx->plan, bopt);
     timer.mark("built");
+    // What an index package and the engine interface compiled to is kept in
+    // the global dependency cache, as for any build (`--cache` decides).
+    if (br && br->exitCode == 0) mcpp::build::populate_dependency_cache(*ctx);
     if (!br || br->exitCode != 0) {
         std::string who;
         for (auto const* g : goals)
@@ -803,11 +849,11 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
             if (current) {
                 state.buildProgramBinaries[p.index] = {fs::path(it->value("binary", std::string{})),
                                                        p.identity};
-                mcpp::log::info("build-program", std::format(
+                mcpp::log::verbose("build-program", std::format(
                     "{}: identity {} current", qualified(manifest_of(state, p.index)), p.identity));
                 continue;
             }
-            mcpp::log::info("build-program", std::format(
+            mcpp::log::verbose("build-program", std::format(
                 "{}: identity {} -> {}, compiled", qualified(manifest_of(state, p.index)),
                 it != record.end() && it->is_object() ? it->value("identity", std::string("none"))
                                                       : std::string("none"),
@@ -817,6 +863,8 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
         if (stale.empty()) continue;
         for (auto const* p : stale) {
             warn_reserved_prefixes(state, p->index);
+            if (auto r = check_module_collisions(state, p->index); !r)
+                return std::unexpected(r.error());
             if (auto r = check_program_imports(state, p->index, p->source); !r)
                 return std::unexpected(r.error());
         }

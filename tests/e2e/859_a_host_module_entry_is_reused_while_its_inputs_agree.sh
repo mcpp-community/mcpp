@@ -1,24 +1,23 @@
 #!/usr/bin/env bash
 # requires:
-# 859 -- an entry of a host module is reused across invocations, and only while
-# the inputs it records agree with the ones the compile would have.
+# 859 -- a build program's library is compiled again exactly when what it is
+# compiled from changed, and the program never runs on a stale compile.
 #
-# #748 (B1). A host module from a path dependency is kept in the workspace's
-# store, keyed by what it is compiled from. A hit compares the recorded inputs
-# field by field (mcpp.bmi_cache::probe_cached), and never the hash alone. The
-# sources of such a package can change without its name and version changing,
-# so the key holds the interface's digest and the digest of the tree the
-# interface sits in: an included header beside it is part of what was compiled.
+# #748 (B1), mcpp#797 (R6). A library of a path dependency can change without
+# its name and version changing, so a program's identity holds the content
+# digest of that package's tree: an included header beside the interface is
+# part of what was compiled. Hashing the interface file alone left an edited
+# header unseen, and the program was neither compiled nor run again (R6).
 #
 # Criteria:
-#   A. A second run of a stale program reuses the entry: nothing is compiled.
-#   B. An edit to the interface compiles a new entry.
+#   A. A second run of a stale program (its declared input changed, its
+#      graph did not) compiles nothing.
+#   B. An edit to the interface compiles the library and the program again.
 #   C. An edit to a header the interface includes, and not to the interface
-#      itself, compiles a new entry. The program of the project that imports
-#      the module re-runs either way; what must not happen is that it takes the
-#      old BMI.
-#   D. An entry whose recorded inputs disagree with the compile's (here, its
-#      standard flag edited in place) is a miss, and it is replaced.
+#      itself, does too, and the program reads the new value.
+#   D. A record that disagrees with the identity the program would have
+#      (here, edited in place) is a miss: the program is compiled again and
+#      the record replaced.
 set -e
 source "$(dirname "$0")/_host_path.sh"
 
@@ -76,23 +75,24 @@ int main() {
 EOF
 echo 0 > marker.txt
 
-STORE=target/.build-mcpp/host-modules
-compile_lines() { grep -cE "host module 't859\.rules' (precompile|compile):" "$1" || true; }
-entry_count()   { find "$STORE" -name entry.json | wc -l | tr -d ' '; }
+HOST=target/.build-mcpp/host
+lib_object() { find $HOST -name 'rule859.m.o' | head -1; }
+stamp() { stat -c %Y.%s "$(lib_object)" 2>/dev/null || stat -f %m.%z "$(lib_object)"; }
+compiled() { grep -cE "build-program: app859: identity [0-9a-f]+ -> [0-9a-f]+, compiled" "$1" || true; }
 # A stale program: its declared input changed, the sources of its imports did not.
 rerun() { echo "$1" > marker.txt; MCPP_VERBOSE=1 "$MCPP" build > "$2" 2>&1 || fail "the build failed ($2)" "$2"; }
 
 MCPP_VERBOSE=1 "$MCPP" build > first.log 2>&1 || fail "the first build failed" first.log
-[ "$(compile_lines first.log)" = 1 ] || fail "the first build compiled the host module $(compile_lines first.log) times" first.log
-[ "$(entry_count)" = 1 ] || fail "the first build left $(entry_count) entries"
-grep -q "T859 value one" first.log || fail "the program did not read the host module's value" first.log
+[ -n "$(lib_object)" ] || fail "the first build compiled no library object" first.log
+grep -q "T859 value one" first.log || fail "the program did not read the library's value" first.log
+s0=$(stamp)
 
 # A
+sleep 1
 rerun 1 a.log
-[ "$(compile_lines a.log)" = 0 ] || fail "A: a stale program compiled its host module again" a.log
-grep -qE "host module 't859\.rules': entry [0-9a-f]+ workspace \(reused\)" a.log \
-    || fail "A: the log does not say the entry was reused" a.log
-grep -q "T859 value one" a.log || fail "A: the reused BMI gave another value" a.log
+[ "$(compiled a.log)" = 0 ] || fail "A: a stale program was compiled again" a.log
+[ "$(stamp)" = "$s0" ] || fail "A: the library was compiled again" a.log
+grep -q "T859 value one" a.log || fail "A: the program gave another value" a.log
 
 # B
 sleep 1
@@ -104,31 +104,24 @@ import mcpp;
 export int rule_value() { return T859_VALUE + 0; }
 EOF
 rerun 2 b.log
-[ "$(compile_lines b.log)" = 1 ] || fail "B: an edit to the interface did not compile a new entry" b.log
-[ "$(entry_count)" = 2 ] || fail "B: expected two entries, found $(entry_count)" b.log
+[ "$(compiled b.log)" = 1 ] || fail "B: an edit to the interface did not compile the program again" b.log
+[ "$(stamp)" != "$s0" ] || fail "B: an edit to the interface did not compile the library" b.log
+s1=$(stamp)
 
 # C
 sleep 1
 printf '#define T859_VALUE 2\n' > "$TMP/rules/src/value.h"
 rerun 3 c.log
-[ "$(compile_lines c.log)" = 1 ] || fail "C: an edit to an included header did not compile a new entry" c.log
-[ "$(entry_count)" = 3 ] || fail "C: expected three entries, found $(entry_count)" c.log
-grep -q "T859 value two" c.log || fail "C: the program took the BMI compiled before the header changed" c.log
+[ "$(compiled c.log)" = 1 ] || fail "C: an edit to an included header did not compile the program again" c.log
+[ "$(stamp)" != "$s1" ] || fail "C: an edit to an included header did not compile the library" c.log
+grep -q "T859 value two" c.log || fail "C: the program took the compile made before the header changed" c.log
 
 # D
-# The entry the last build used is the one the tree as it stands maps to: the
-# most recently written or read. Its recorded standard flag is edited in place,
-# so that the key still names it and what it records no longer agrees.
-entry=$(ls -t $(find "$STORE" -name entry.json) | head -1)
-grep -q '"std_flag"' "$entry" || fail "D: the entry records no standard flag" "$entry"
-sed 's/"std_flag": "[^"]*"/"std_flag": "-std=c++98"/' "$entry" > "$entry.edited"
-mv "$entry.edited" "$entry"
+rec=$(ls $HOST/*/programs.json | head -1)
+sed 's/"identity": "[0-9a-f]*"/"identity": "0000000000000000"/' "$rec" > "$rec.edited" && mv "$rec.edited" "$rec"
 rerun 4 d.log
-[ "$(compile_lines d.log)" = 1 ] || fail "D: an entry whose recorded inputs disagree was used without compiling" d.log
-if grep -q -- '-std=c++98' "$entry"; then
-    fail "D: the entry that disagreed was not replaced" "$entry"
-fi
-[ "$(entry_count)" = 3 ] || fail "D: expected the entry to be replaced in place, found $(entry_count) entries" d.log
-grep -q "T859 value two" d.log || fail "D: the replaced entry gave another value" d.log
+[ "$(compiled d.log)" = 1 ] || fail "D: a record that disagrees was used without compiling" d.log
+grep -q '"identity": "0000000000000000"' "$rec" && fail "D: the record that disagreed was not replaced" "$rec"
+grep -q "T859 value two" d.log || fail "D: the replaced compile gave another value" d.log
 
 echo "PASS: 859_a_host_module_entry_is_reused_while_its_inputs_agree"

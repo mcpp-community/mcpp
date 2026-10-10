@@ -282,7 +282,10 @@ static void recordDependencyEdge(
         // program and not the target before the section decided the
         // configuration (mcpp#797). It keeps that meaning, reported where the
         // manifest can be edited.
-        if (!buildTable && ((spec.hostModuleDeclared && spec.hostModule) || ruleFeature)) {
+        // Not in the build programs' graph: every package there is a build-program
+        // instance already, and a library's rule features are what its edge asks.
+        if (!buildTable && !state.overrides.build_program_graph
+            && ((spec.hostModuleDeclared && spec.hostModule) || ruleFeature)) {
             buildTable = true;
             state.reportCompatUse("host-module-in-dependencies", consumerPackageIndex,
                                   std::format("[dependencies] {}", writtenKey));
@@ -1974,7 +1977,11 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
                 && child_spec.hostModule
                 && !state.dep_manifests.back()->dependencies.contains(child_name)) {
                 state.compatLibraryEdges.push_back({selfIdx, child_name});
-                state.worklist.push_back({child_name, childReq,
+                // A library dependency now: the request is what the edge is.
+                auto asDependency = childReq;
+                asDependency.hostModule = false;
+                asDependency.hostModuleDeclared = false;
+                state.worklist.push_back({child_name, asDependency,
                                     thisDepLabel + " (build-dep, read as a dependency)",
                                     childReq.version, selfIdx, ctx.dep_root,
                                     item.devOnly, item.buildOnly});

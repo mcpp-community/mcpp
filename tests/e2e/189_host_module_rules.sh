@@ -140,14 +140,15 @@ cd "$TMP"
 rm -f rules/src/rules.cppm
 mv rules/src/rules.cppm.bak rules/src/rules.cppm
 
-# A missing lib root must say so, not fail three edges later.
+# The interface root is not what makes a library usable by a build program
+# (mcpp#797): the module is found by the name its unit declares, wherever the
+# file is. A unit renamed away from the conventional lib root still serves.
 cd "$TMP"
 mv rules/src/rules.cppm rules/src/elsewhere.cppm
 cd app && rm -rf target
-if "$MCPP" build > b3.log 2>&1; then
-    cat b3.log; echo "FAIL: a host module with no interface unit was accepted"; exit 1
-fi
-grep -q "no interface unit" b3.log || {
-    cat b3.log; echo "FAIL: unhelpful diagnostic for a missing rule interface"; exit 1; }
+"$MCPP" build > b3.log 2>&1 || {
+    cat b3.log; echo "FAIL: a library whose interface is not at the conventional lib root was refused"; exit 1; }
+out="$("$MCPP" run 2>&1 | grep '^ANSWER=' | tail -1)"
+[[ "$out" == "ANSWER=43" ]] || { cat b3.log; echo "FAIL: the renamed interface's directive did not land: $out"; exit 1; }
 
 echo "OK"
