@@ -83,6 +83,13 @@ if [[ "${MCPP_INHERIT_SUBOS:-1}" != "0" && -d "$USER_MCPP/registry/subos" ]]; th
     [[ -e "$MCPP_HOME/registry/subos" ]] \
         || ln -sf "$USER_MCPP/registry/subos" "$MCPP_HOME/registry/subos" 2>/dev/null \
         || cp -r "$USER_MCPP/registry/subos" "$MCPP_HOME/registry/subos"
+    # The subos's workspace names the assets it projects (glibc's Scrt1.o,
+    # ...), and xlings checks each one against the home's version ledger
+    # before it changes the sysroot. A ledger without them refuses every
+    # install that touches the sysroot ("installed asset registration
+    # missing"), so the inherited subos comes with a copy of the ledger.
+    [[ -e "$MCPP_HOME/registry/.xlings.json" || ! -f "$USER_MCPP/registry/.xlings.json" ]] \
+        || cp -f "$USER_MCPP/registry/.xlings.json" "$MCPP_HOME/registry/.xlings.json"
 fi
 if [[ "${MCPP_INHERIT_CONFIG:-1}" != "0" && -f "$USER_MCPP/config.toml" ]]; then
     cp -f "$USER_MCPP/config.toml" "$MCPP_HOME/config.toml" 2>/dev/null || true
