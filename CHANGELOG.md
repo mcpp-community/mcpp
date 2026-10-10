@@ -4,6 +4,16 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.10.2] - 2026-10-10
+
+### Fixed
+
+- Bundle xlings 2026.10.10.2 in the linux-x86_64 archive. The 2026.10.10.1
+  archive carried xlings 2026.10.8.1, which a restored release cache provided:
+  its install failures had no class and its extractions no progress. The
+  release installs the pinned xlings by version and refuses a different one;
+  the other archives were correct.
+
 ## [2026.10.10.1] - 2026-10-10
 
 ### Changed
