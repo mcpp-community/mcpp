@@ -1283,16 +1283,90 @@ export int why_sources_json(std::string_view topic, std::string_view subject,
     return 0;
 }
 
+// ── `mcpp why build-programs` and `mcpp why compat` (mcpp#797) ───────────
+
+// The build programs' graphs of the project at `root`, read from the records
+// each graph writes beside its workspace (`programs.json`): which program is in
+// which graph, what it uses, the identity it was compiled from, and its binary.
+nlohmann::json build_programs_json(const std::filesystem::path& root) {
+    nlohmann::json graphs = nlohmann::json::array();
+    std::error_code ec;
+    const auto host = root / "target" / ".build-mcpp" / "host";
+    if (!std::filesystem::is_directory(host, ec)) return graphs;
+    for (auto const& d : std::filesystem::directory_iterator(host, ec)) {
+        const auto rec = d.path() / "programs.json";
+        if (!std::filesystem::is_regular_file(rec, ec)) continue;
+        std::ifstream in(rec);
+        auto j = nlohmann::json::parse(in, nullptr, false);
+        if (!j.is_object()) continue;
+        nlohmann::json programs = nlohmann::json::array();
+        for (auto it = j.begin(); it != j.end(); ++it) {
+            auto r = it.value();
+            r["member"] = it.key();
+            programs.push_back(std::move(r));
+        }
+        graphs.push_back({{"workspace", d.path().generic_string()}, {"programs", programs}});
+    }
+    return graphs;
+}
+
+// Every use of a deprecated reading this process recorded, with the row of
+// the deprecation registry it belongs to.
+nlohmann::json compat_uses_json() {
+    nlohmann::json uses = nlohmann::json::array();
+    for (auto const& u : mcpp::pm::compat::recorded_uses()) {
+        nlohmann::json row{{"id", u.id}, {"where", u.where}, {"detail", u.detail},
+                           {"warned", u.warned}};
+        if (auto const* d = mcpp::pm::compat::find_deprecation(u.id)) {
+            row["since"] = std::string(d->since);
+            row["floor"] = std::string(d->floor);
+            row["canonical"] = std::string(d->canonical);
+            row["docs"] = std::string(d->docs);
+        }
+        uses.push_back(std::move(row));
+    }
+    return uses;
+}
+
+export int why_build_programs_or_compat_json(std::string_view topic, const std::string& features) {
+    const bool wasQuiet = mcpp::ui::is_quiet();
+    mcpp::ui::set_quiet(true);
+    struct QuietGuard {
+        bool prev;
+        ~QuietGuard() { mcpp::ui::set_quiet(prev); }
+    } quietGuard{wasQuiet};
+    mcpp::build::BuildOverrides ov;
+    ov.features = features;
+    auto ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false,
+                                          /*includeDevDeps=*/false, {}, ov);
+    nlohmann::json data;
+    std::vector<mcpp::wire::Diagnostic> diags;
+    data["status"] = ctx ? "ok" : "refused";
+    if (!ctx)
+        diags.push_back({.code = "prepare.failed", .severity = mcpp::wire::Severity::Error,
+                         .message = ctx.error()});
+    if (topic == "compat") data["uses"] = compat_uses_json();
+    else data["graphs"] = ctx ? build_programs_json(ctx->projectRoot) : nlohmann::json::array();
+    mcpp::wire::emit({
+        .kind        = topic == "compat" ? "mcpp.why.compat" : "mcpp.why.build-programs",
+        .effects     = { mcpp::wire::Effect::ReadProject },
+        .data        = data,
+        .diagnostics = diags,
+    });
+    return ctx ? 0 : 2;
+}
+
 export int why_report(const std::string& topic, const std::string& features,
                       const std::string& subject = {}) {
     const bool all = topic.empty() || topic == "all";
     static constexpr std::string_view kTopics[] = {
         "all", "toolchain", "runtime", "deps", "runners", "sources", "tool", "payload",
+        "build-programs", "compat",
     };
     if (!topic.empty() && std::ranges::find(kTopics, std::string_view(topic)) == std::end(kTopics)) {
         std::println(stderr, "error: '{}' is not a topic of `mcpp why`; the topics are "
-                     "toolchain, runtime, deps, runners, sources, tool <name> and "
-                     "payload <ns:name>", topic);
+                     "toolchain, runtime, deps, runners, sources, tool <name>, "
+                     "payload <ns:name>, build-programs and compat", topic);
         return 2;
     }
 
@@ -1350,6 +1424,39 @@ export int why_report(const std::string& topic, const std::string& features,
     if (all || topic == "sources" || topic == "tool" || topic == "payload")
         print_sources(ctx->sources, all ? std::string_view("sources") : std::string_view(topic),
                       subject, ctx->projectRoot);
+    // mcpp#797: which build programs' graph compiled each program, from what.
+    if (all || topic == "build-programs") {
+        std::println("build programs:");
+        const auto graphs = build_programs_json(ctx->projectRoot);
+        if (graphs.empty()) std::println("  (none)");
+        for (auto const& g : graphs) {
+            std::println("  graph {}", g.value("workspace", std::string{}));
+            for (auto const& p : g["programs"]) {
+                std::println("    {}  ({})", p.value("package", std::string("?")),
+                             p.value("source", std::string("?")));
+                std::string libs;
+                for (auto const& l : p.value("libraries", nlohmann::json::array()))
+                    libs += (libs.empty() ? "" : ", ") + l.get<std::string>();
+                std::println("      uses: {}", libs.empty() ? std::string("(no library)") : libs);
+                std::println("      identity {}  binary {}", p.value("identity", std::string("?")),
+                             p.value("binary", std::string("?")));
+            }
+        }
+    }
+    // The deprecated readings this project and its dependencies use, with
+    // when each is removed (the deprecation registry, docs/51).
+    if (all || topic == "compat") {
+        std::println("deprecated readings:");
+        const auto uses = compat_uses_json();
+        if (uses.empty()) std::println("  (none)");
+        for (auto const& u : uses)
+            std::println("  {}: {}  ({})\n      deprecated since {}, removed from {}; write {}{}",
+                         u.value("id", std::string{}), u.value("detail", std::string{}),
+                         u.value("where", std::string{}), u.value("since", std::string{}),
+                         u.value("floor", std::string{}), u.value("canonical", std::string{}),
+                         u.value("warned", false) ? std::string{}
+                             : "\n      (in a package this build does not edit: not warned)");
+    }
     if (all) (void)print_stored_runtime_resolution();
     // WHERE A NAMED RUNNER BECOMES DISCOVERABLE.
     //
@@ -1413,7 +1520,20 @@ export int why_report(const std::string& topic, const std::string& features,
                             r.value("requester", std::string("?")),
                             r.value("key", std::string("?")),
                             r.value("table", std::string("?")));
-                    if (auto link = entry.find("link"); link != entry.end())
+                    // mcpp#797: the target instance is compiled in this plan, the
+                    // build-program instance in the build programs' graph.
+                    if (auto inst = entry.find("instances");
+                        inst != entry.end() && inst->is_array() && !inst->empty()) {
+                        std::string list;
+                        for (auto const& x : *inst)
+                            list += (list.empty() ? "" : ", ") + x.get<std::string>();
+                        std::println("      instances: {}", list);
+                    }
+                    // A package with no target instance is linked into nothing here.
+                    const auto inst = entry.value("instances", nlohmann::json::array());
+                    const bool linked = !inst.is_array() || inst.empty()
+                        || std::ranges::any_of(inst, [](auto const& x) { return x == "target"; });
+                    if (auto link = entry.find("link"); linked && link != entry.end())
                         std::println("      linked {} ({})",
                             link->value("form", std::string("?")),
                             link->value("reason", std::string("?")));

@@ -1511,6 +1511,15 @@ static void step9_define_graph_package_entry_closure(PrepareState& state) {
             });
         }
         entry["requested_by"] = std::move(requests);
+        // Which instances the package has in this build (mcpp#797): a target
+        // instance, compiled in this plan, and a build-program instance,
+        // compiled in the build programs' graph.
+        {
+            nlohmann::json instances = nlohmann::json::array();
+            if (i == 0 || !state.packages[i].buildTimeOnly) instances.push_back("target");
+            if (state.packages[i].hostInstance) instances.push_back("build-program");
+            entry["instances"] = std::move(instances);
+        }
         if (auto form = state.dependencyLinkForms.find(i);
             form != state.dependencyLinkForms.end() && form->second.recorded)
             entry["link"] = {

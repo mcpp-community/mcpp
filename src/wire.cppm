@@ -68,7 +68,7 @@ inline constexpr int kEnvelopeVersion = 1;
 // from what comes back.
 struct KindVersion { std::string_view kind; int version; };
 
-inline constexpr std::array<KindVersion, 8> kKinds{{
+inline constexpr std::array<KindVersion, 10> kKinds{{
     {"mcpp.env",             1},
     {"mcpp.xpkg",            1},
     {"mcpp.cache",           1},
@@ -81,6 +81,13 @@ inline constexpr std::array<KindVersion, 8> kKinds{{
     // record of a prepare -- where the toolchain, each payload and each plugin
     // tool came from, its class and origin -- filtered to the topic.
     {"mcpp.why.sources",     1},
+    // `mcpp why build-programs --format json` (mcpp#797): the build programs'
+    // graphs of the project, each program's member, libraries, identity and
+    // binary.
+    {"mcpp.why.build-programs", 1},
+    // `mcpp why compat --format json` (mcpp#797): every use of a deprecated
+    // reading, with its row of the deprecation registry.
+    {"mcpp.why.compat",      1},
     // `mcpp toolchain list --format json`: which toolchains are installed and
     // which target rows this host serves, with their status.
     {"mcpp.toolchain.list",  1},

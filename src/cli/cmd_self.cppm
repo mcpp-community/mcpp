@@ -116,10 +116,14 @@ export int cmd_why(const mcpplibs::cmdline::ParsedArgs& parsed) {
         if (topic == "sources" || topic == "tool" || topic == "payload")
             return mcpp::doctor::why_sources_json(topic, parsed.positional(1),
                                                   parsed.option_or_empty("features").value());
+        if (topic == "build-programs" || topic == "compat")
+            return mcpp::doctor::why_build_programs_or_compat_json(
+                topic, parsed.option_or_empty("features").value());
         if (!topic.empty() && topic != "toolchain") {
             std::println(stderr,
-                "error: --format json is defined for `mcpp why toolchain` and "
-                "`mcpp why sources|tool|payload`; '{}' has no machine-readable "
+                "error: --format json is defined for `mcpp why toolchain`, "
+                "`mcpp why sources|tool|payload`, `mcpp why build-programs` and "
+                "`mcpp why compat`; '{}' has no machine-readable "
                 "shape yet", topic);
             return 2;
         }
