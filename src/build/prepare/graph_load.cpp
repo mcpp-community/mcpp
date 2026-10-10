@@ -111,8 +111,13 @@ static void step4a_define_split_and_identity_closures(PrepareState& state) {
         const std::size_t rootClaims = claims.size();
         for (std::size_t i = 0; i < state.packages.size(); ++i) {
             const auto& man = state.packages[i].manifest;
-            const auto feats = i < state.activeFeaturesByPackage.size()
+            // Both instances' features: a payload a feature declares serves
+            // this build whichever instance activated it (mcpp#797).
+            auto feats = i < state.activeFeaturesByPackage.size()
                 ? state.activeFeaturesByPackage[i] : std::vector<std::string>{};
+            if (i < state.buildProgramFeaturesByPackage.size())
+                for (auto const& f : state.buildProgramFeaturesByPackage[i])
+                    if (std::ranges::find(feats, f) == feats.end()) feats.push_back(f);
             for (auto const& spec : applicable_xlings_addresses(
                      man, feats, state.toolPurpose, /*isRoot=*/i == 0
                          || state.packages[i].selectedMember)) {

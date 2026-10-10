@@ -130,18 +130,25 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // THIS plan for its target. A package asked for them is scanned and
         // configured here even when every target it declares is a program.
         std::vector<std::string> requestedArtifacts;
-        // #355 step 5 / #359: does this edge ask for the dependency's lib-root
-        // interface as a HOST module, and does it hand its build-time
-        // provisions on to this consumer's own consumers?
-        bool hostModule = false;
+        // WHICH CONFIGURATION THE EDGE SERVES, AND WHAT IT ASKS FOR (mcpp#797).
+        //
+        // `buildTable`: the declaration is in `[build-dependencies]` (or is a
+        // compatibility reading of one, `host-module-in-dependencies`), so the
+        // edge serves the consumer's BUILD PROGRAM and never its target. It is
+        // the declaration's own table and is not inherited: a build
+        // dependency's `[dependencies]` are ordinary edges, and they serve the
+        // build program only because the package they start from does. Which
+        // packages have a target instance follows from reachability over the
+        // edges that are not `buildTable` (`step6_instances`).
+        //
+        // `wantsLibrary`: on a `buildTable` edge, the build program uses the
+        // dependency's library (`host-module`, default true unless the edge
+        // lists `tools` or `artifacts`, implied by a `rule_module` feature).
+        // On an ordinary edge the library is what the edge means, and the
+        // field is not read.
+        bool buildTable = false;
+        bool wantsLibrary = false;
         bool reexport = false;
-        // Did this edge come from `[build-dependencies]`? Such an edge serves
-        // the BUILD and never the target, and the property is inherited by
-        // everything reachable through it. It is a property of the edge and
-        // not of the package: the same package may be an ordinary dependency
-        // of someone else in the same build, and then it does reach the
-        // target.
-        bool buildOnly = false;
     };
 
     struct GraphRequest {
@@ -220,6 +227,10 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // target that also provides a tool is written once, in
         // `[dependencies]`, with a `tools` request on it.
         bool                                 buildOnly = false;
+        // The item was declared in its consumer's `[build-dependencies]`. NOT
+        // inherited, unlike `buildOnly`: it is the table of this one
+        // declaration, which is what an edge records (DependencyEdge).
+        bool                                 fromBuildTable = false;
     };
 
     struct DeclaringManifest {
@@ -560,7 +571,15 @@ struct PrepareState {
     // the moment that former's phase returns, which the compiler cannot
     // detect (nothing outside the escaping closure's own body names them).
     std::vector<mcpp::modgraph::PackageRoot> packages;
+    // The features active in the instance this plan compiles: the target
+    // instance's where the package has one, the build-program instance's
+    // otherwise (mcpp#797). A request made only through `[build-dependencies]`
+    // does not reach a target instance (R3).
     std::vector<std::vector<std::string>> activeFeaturesByPackage;
+    // The features of each package's build-program instance (empty where it
+    // has none). The build program's graph activates the same set; payloads a
+    // feature declares serve this build in either instance.
+    std::vector<std::vector<std::string>> buildProgramFeaturesByPackage;
     // #734 E7: per consumer, the dormant features of its host-module providers.
     std::map<std::size_t, std::vector<mcpp::build::BuildProgramEnv::DormantFeature>>
         dormantFeaturesByConsumer;
@@ -642,6 +661,16 @@ struct PrepareState {
     std::function<std::map<std::string, mcpp::build::provisions::BareBinding>(std::size_t)>
         bareBindingsFor;
     std::function<bool(std::size_t)> compilesHere;
+    // A use of a deprecated reading (mcpp.pm.compat.registry) by the manifest
+    // of package `i`: warned where that manifest can be edited -- the root, a
+    // workspace member, a path package outside the package store -- and
+    // recorded for `mcpp why compat` either way.
+    std::function<void(std::string_view id, std::size_t i, std::string detail)>
+        reportCompatUse;
+    // Whether the manifest of package `i` is one the person running the build
+    // can edit (SPEC-008 §4: a diagnostic is given to the package that can act
+    // on it).
+    std::function<bool(std::size_t)> editablePackage;
     std::function<bool(const mcpp::manifest::Manifest&)> isProgramOnlyPackage;
     std::function<bool(std::vector<std::string>&, const std::vector<std::string>&)>
         appendUniqueFlags;
@@ -820,7 +849,8 @@ std::optional<std::string>
 inherit_as_workspace_member(mcpp::manifest::Manifest& member,
                             const mcpp::manifest::Manifest& workspace,
                             const std::filesystem::path& workspaceRoot,
-                            const std::filesystem::path& memberDir);
+                            const std::filesystem::path& memberDir,
+                            bool reportPosition = true);
 std::optional<std::pair<mcpp::manifest::Manifest, std::filesystem::path>>
 workspace_listing(const std::filesystem::path& memberDir,
                   const std::filesystem::path& bound);

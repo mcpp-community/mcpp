@@ -74,6 +74,18 @@ export void merge_workspace_deps(mcpp::manifest::Manifest& member,
         spec.git        = wsSpec.git;
         spec.gitRev     = wsSpec.gitRev;
         spec.gitRefKind = wsSpec.gitRefKind;
+        // The features every member asks of it come first and a member's own
+        // follow; `default-features` is the member's when it states one
+        // (Cargo's rule). They were not copied, so a feature written in
+        // [workspace.dependencies] was dropped without a word (mcpp#797, W2).
+        std::vector<std::string> features = wsSpec.features;
+        for (auto const& f : spec.features)
+            if (std::ranges::find(features, f) == features.end()) features.push_back(f);
+        spec.features = std::move(features);
+        if (!spec.defaultFeaturesDeclared && wsSpec.defaultFeaturesDeclared) {
+            spec.defaultFeatures = wsSpec.defaultFeatures;
+            spec.defaultFeaturesDeclared = true;
+        }
         if (!spec.path.empty() && !wsRoot.empty()) {
             std::filesystem::path p(spec.path);
             if (p.is_relative()) {
@@ -195,14 +207,24 @@ bool lists(std::span<const std::string> names, std::string_view name) {
 // no other reading of these tables, so every use is reported; a root with one
 // reads them as its own package's first, and only a member that actually
 // received a value through the old rule is told.
+//
+// `report` is false where the value received changes nothing in the build: a
+// member reached as a dependency of a build whose root is in the same
+// workspace, which received the same entries itself (mcpp#797, R5). The use
+// is still recorded for `mcpp why compat`.
 void warn_position(const mcpp::manifest::Manifest& workspace,
                    const mcpp::manifest::Manifest& member,
-                   std::string_view table, bool received) {
+                   std::string_view table, bool received, bool report = true) {
     const bool virtualRoot = workspace.package.name.empty();
     if (!virtualRoot && !received) return;
-    mcpp::diag::warning("manifest/workspace-position",
-                        mcpp::pm::compat::position_warning(
-                            table, virtualRoot ? std::string_view{} : member.package.name));
+    const auto text = mcpp::pm::compat::position_warning(
+        table, virtualRoot ? std::string_view{} : member.package.name);
+    mcpp::pm::compat::record_use("workspace-position", workspace.sourcePath.string(),
+                                 std::format("[{}] -> {}", table,
+                                             virtualRoot ? std::string("every member")
+                                                         : member.package.name),
+                                 report);
+    if (report) mcpp::diag::warning("manifest/workspace-position", text);
 }
 
 // `[xlings]` entries and `[target.<sel>.xlings]` rows from `top` and `rows`,
@@ -213,9 +235,18 @@ void warn_position(const mcpp::manifest::Manifest& workspace,
 // the emitter's per-platform view (`workspaceByPlatform`), so a published
 // member's descriptor states only what the member itself declared. Returns
 // whether the member received anything.
+//
+// TWO PARTS, TWO POSITIONS (mcpp#797, R4). The entries say which payloads a
+// package needs and travel in every position (W5). `[xlings.overrides]` says
+// where a payload comes from on THIS machine: it belongs to the root of a
+// build, and a dependency stating one is refused (`dependency_override_
+// refusal`). Copying the workspace's overrides into a member reached as a
+// dependency made a workspace's own statement fail its own build.
+enum class XlingsPart { Entries, Overrides };
 bool merge_xlings(mcpp::manifest::Manifest& member,
                   const mcpp::manifest::XlingsConfig* top,
-                  std::span<const mcpp::manifest::ConditionalConfig> rows) {
+                  std::span<const mcpp::manifest::ConditionalConfig> rows,
+                  XlingsPart part) {
     // `(namespace, name)`, the identity `mcpp.xlings.address_set` defines,
     // spelled here from the same parser rather than imported. Importing that
     // module here makes GCC 16.1 fail with an internal compiler error
@@ -234,6 +265,14 @@ bool merge_xlings(mcpp::manifest::Manifest& member,
     // with the pin and the tier each address carries.
     auto take = [&](const mcpp::manifest::XlingsConfig& from,
                     mcpp::manifest::XlingsConfig& to) {
+        if (part == XlingsPart::Overrides) {
+            // `[xlings.overrides]` states where a payload comes from on THIS
+            // machine, so a member built as the root of its own build takes
+            // the workspace's statement unless it makes its own (mcpp#755).
+            for (auto const& [pkg, o] : from.overrides)
+                if (to.overrides.try_emplace(pkg, o).second) received = true;
+            return;
+        }
         std::vector<std::string> taken;
         for (auto const& a : from.deps) {
             if (own.contains(package_key(a))) continue;
@@ -247,11 +286,6 @@ bool merge_xlings(mcpp::manifest::Manifest& member,
         }
         received = received || !taken.empty();
         to.deps.insert(to.deps.begin(), taken.begin(), taken.end());
-        // `[xlings.overrides]` states where a payload comes from on THIS
-        // machine, so a member built as the root of its own build takes the
-        // workspace's statement unless it makes its own (mcpp#755).
-        for (auto const& [pkg, o] : from.overrides)
-            if (to.overrides.try_emplace(pkg, o).second) received = true;
     };
     if (top) take(*top, member.xlings);
 
@@ -349,14 +383,22 @@ void merge_layer_root_position(mcpp::manifest::Manifest& member,
 // An xlings entry describes the environment a build runs in, so it is
 // inherited without an opt-in; only dependencies, which are graph edges, need
 // `.workspace = true` (`merge_workspace_deps`).
+//
+// The entries only: `[xlings.overrides]` is a root-position table
+// (`inherit_workspace_xlings_overrides`). `reportPosition` is false for a
+// member reached as a dependency of a build rooted in the same workspace, whose
+// root already received these entries (R5).
 export void inherit_workspace_xlings(mcpp::manifest::Manifest& member,
-                                     const mcpp::manifest::Manifest& workspace) {
+                                     const mcpp::manifest::Manifest& workspace,
+                                     bool reportPosition = true) {
     static const std::vector<mcpp::manifest::ConditionalConfig> none;
+    using detail::XlingsPart;
     if (auto const* layer = workspace.layer.get()) {
         auto const& tables = workspace.workspace.layerTables;
         detail::merge_xlings(member,
                              detail::lists(tables, "xlings") ? &layer->xlings : nullptr,
-                             detail::lists(tables, "target") ? layer->conditionalConfigs : none);
+                             detail::lists(tables, "target") ? layer->conditionalConfigs : none,
+                             XlingsPart::Entries);
     }
     // COMPAT(workspace-position): the root's own [xlings] and [target.<sel>.xlings].
     const auto position = mcpp::pm::compat::position_tables(workspace);
@@ -364,8 +406,36 @@ export void inherit_workspace_xlings(mcpp::manifest::Manifest& member,
     const bool rows = detail::lists(position, "target");
     if (!top && !rows) return;
     const bool received = detail::merge_xlings(member, top ? &workspace.xlings : nullptr,
-                                               rows ? workspace.conditionalConfigs : none);
-    if (top) detail::warn_position(workspace, member, "xlings", received);
+                                               rows ? workspace.conditionalConfigs : none,
+                                               XlingsPart::Entries);
+    if (top && !workspace.xlings.deps.empty())
+        detail::warn_position(workspace, member, "xlings", received, reportPosition);
+}
+
+// `[workspace.xlings.overrides]` and `[workspace.target.<sel>.xlings.overrides]`,
+// and by position the root's own `[xlings.overrides]`, for a member that is
+// the root of a build (mcpp#797, R4).
+export void inherit_workspace_xlings_overrides(mcpp::manifest::Manifest& member,
+                                               const mcpp::manifest::Manifest& workspace) {
+    static const std::vector<mcpp::manifest::ConditionalConfig> none;
+    using detail::XlingsPart;
+    if (auto const* layer = workspace.layer.get()) {
+        auto const& tables = workspace.workspace.layerTables;
+        detail::merge_xlings(member,
+                             detail::lists(tables, "xlings") ? &layer->xlings : nullptr,
+                             detail::lists(tables, "target") ? layer->conditionalConfigs : none,
+                             XlingsPart::Overrides);
+    }
+    // COMPAT(workspace-position)
+    const auto position = mcpp::pm::compat::position_tables(workspace);
+    const bool top = detail::lists(position, "xlings");
+    const bool rows = detail::lists(position, "target");
+    if (!top && !rows) return;
+    const bool received = detail::merge_xlings(member, top ? &workspace.xlings : nullptr,
+                                               rows ? workspace.conditionalConfigs : none,
+                                               XlingsPart::Overrides);
+    if (top && !workspace.xlings.overrides.empty())
+        detail::warn_position(workspace, member, "xlings.overrides", received);
 }
 
 // The rows of `[workspace.target.<sel>]` -- `.build`, `.abi`, `.runtime` --
@@ -405,6 +475,7 @@ export void inherit_workspace_root_position(mcpp::manifest::Manifest& member,
                                             const std::filesystem::path& wsRoot) {
     if (auto const* layer = workspace.layer.get())
         detail::merge_layer_root_position(member, *layer, wsRoot, workspace.sourcePath);
+    inherit_workspace_xlings_overrides(member, workspace);
     // COMPAT(workspace-position)
     const auto position = mcpp::pm::compat::position_tables(workspace);
     if (position.empty()) return;
@@ -445,8 +516,13 @@ void inherit_workspace_indices(mcpp::manifest::Manifest& member,
 // compiles the same way in every selection. Its own `[toolchain]`,
 // `[target.*]`, ... are its own declarations and come first; its
 // `[workspace.dependencies]` are merged explicitly by the caller.
+//
+// `asBuildRoot` is false when the package is reached as a dependency of a
+// member's build: it then takes the workspace's entries and not its
+// `[xlings.overrides]`, which belong to the build's root (R4).
 export void inherit_as_root_package(mcpp::manifest::Manifest& root,
-                                    const std::filesystem::path& wsRoot) {
+                                    const std::filesystem::path& wsRoot,
+                                    bool asBuildRoot = true) {
     if (!root.workspace.present || root.package.name.empty()) return;
     if (root.inheritedAsRootPackage) return;
     root.inheritedAsRootPackage = true;
@@ -460,7 +536,13 @@ export void inherit_as_root_package(mcpp::manifest::Manifest& root,
         inherit_workspace_layer_rows(root, workspace, wsRoot);
         detail::merge_xlings(root,
                              detail::lists(tables, "xlings") ? &layer->xlings : nullptr,
-                             detail::lists(tables, "target") ? layer->conditionalConfigs : none);
+                             detail::lists(tables, "target") ? layer->conditionalConfigs : none,
+                             detail::XlingsPart::Entries);
+        if (asBuildRoot)
+            detail::merge_xlings(root,
+                                 detail::lists(tables, "xlings") ? &layer->xlings : nullptr,
+                                 detail::lists(tables, "target") ? layer->conditionalConfigs : none,
+                                 detail::XlingsPart::Overrides);
     }
 }
 

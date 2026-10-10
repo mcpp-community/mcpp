@@ -76,19 +76,24 @@ struct DependencySpec {
     // takes the dependency's programs and not its code: nothing of the
     // package is linked into the consumer through this edge.
     std::vector<std::string>    artifacts;
-    // #355 step 5: compile this dependency's lib-root module interface FOR THE
-    // HOST and make it importable from the consumer's build.mcpp — the
-    // mechanism behind reusable build rules distributed as ordinary packages
-    // (`import mcpp.rules.protobuf;`), instead of a second, non-C++ rule DSL.
+    // `host-module`: the build program uses this dependency's LIBRARY -- its
+    // public modules are importable from build.mcpp, its public headers are
+    // visible, and its objects are linked (mcpp#797; SPEC-004 §12). The name is
+    // older than the meaning: it was written when only a lib-root module was
+    // compiled for the host, and a key in published descriptors is never
+    // renamed (SPEC-004 §5.2).
     //
-    // Compiled ALONGSIDE build.mcpp with the SAME flags, not by a separate
-    // sub-build. That is not an optimisation: a BMI is only usable by a
-    // compile that agrees with it on standard, dialect flags and compiler
-    // identity, and two independently-resolved builds have no reason to. The
-    // shared-compile construction makes that agreement structural rather than
-    // something to verify — the same class of failure as `module X CRC
-    // mismatch`, which this project has paid for before.
+    // In `[build-dependencies]` it defaults to true unless the edge lists
+    // `tools` or `artifacts`, so `hostModuleDeclared` tells the default from a
+    // statement. In `[dependencies]` it is the compatibility reading
+    // `host-module-in-dependencies`: the entry is read as a build dependency.
+    //
+    // The library is compiled in the build program's dependency graph, the
+    // same plan that compiles build.mcpp, so a BMI and the program importing it
+    // come from one flag producer by construction (the reason the old
+    // shared-compile path existed).
     bool                        hostModule = false;
+    bool                        hostModuleDeclared = false;
     // #359: re-export everything this edge provides at BUILD time — the tools
     // above, the host module above, and the dependency's directory — to this
     // package's own consumers, transitively.
@@ -109,6 +114,7 @@ struct DependencySpec {
     // are private-only.)
     bool                        reexport = false;
     bool                        defaultFeatures = true; // consumer opt-out: `default-features = false`
+    bool                        defaultFeaturesDeclared = false;
     // A member edge (workspace design 2026-09-29 §15): the edge from a
     // workspace plan's root to a selected member. It puts the member in the
     // graph and links nothing into the root, as an `artifacts` edge does.

@@ -8,6 +8,7 @@ import mcpp.build.prepare_inputs;
 
 import std;
 import mcpp.diag;
+import mcpp.log;
 import mcpp.build.refusal;
 import mcpp.build.version_floor;
 import mcpp.home;
@@ -69,12 +70,28 @@ namespace mcpp::build {
 // function of PrepareState&, the same treatment #719 gave every closure
 // that a later phase needed.
 
+// The feature request for one instance of a package, aggregated over the
+// edges that reach that instance (Cargo semantics: requested features union,
+// `default-features` stays on unless every edge opts out). The target
+// instance is asked by ordinary edges from consumers that have a target
+// instance; the build-program instance by `[build-dependencies]` edges and by
+// ordinary edges from consumers that have a build-program instance (mcpp#797).
+enum class Instance { Target, BuildProgram };
 static std::pair<std::vector<std::string>, bool>
-aggregatedRequest(PrepareState& state, std::size_t depPkgIndex) {
+aggregatedRequest(PrepareState& state, std::size_t depPkgIndex, Instance instance) {
             std::vector<std::string> feats;
             bool anyEdge = false, anyDefault = false;
             for (auto const& edge : state.dependencyEdges) {
                 if (edge.dependencyPackageIndex != depPkgIndex) continue;
+                const auto c = edge.consumerPackageIndex;
+                const bool consumerTarget = c == 0 || (c < state.packages.size()
+                                                       && !state.packages[c].buildTimeOnly);
+                const bool consumerHost = c < state.packages.size()
+                                       && state.packages[c].hostInstance;
+                const bool serves = instance == Instance::Target
+                    ? !edge.buildTable && consumerTarget
+                    : edge.buildTable || consumerHost;
+                if (!serves) continue;
                 anyEdge = true;
                 if (edge.defaultFeatures) anyDefault = true;
                 for (auto const& f : edge.requestedFeatures)
@@ -82,6 +99,74 @@ aggregatedRequest(PrepareState& state, std::size_t depPkgIndex) {
                         feats.push_back(f);
             }
             return { std::move(feats), anyEdge ? anyDefault : true };
+}
+
+// WHICH INSTANCES EACH PACKAGE HAS (mcpp#797).
+//
+// A package has a target instance when a chain of ordinary edges reaches it
+// from the root, and a build-program instance when a `[build-dependencies]`
+// edge reaches it or a package that has one. The test used to be "is every
+// edge into it a host-module or build-only edge", and a host-module request
+// merged onto an ordinary edge then removed a library the target imports
+// (R2). Stated as reachability, a package the project depends on directly
+// keeps its target instance whatever else also reaches it, and a build
+// dependency's own `[dependencies]` stay out of the target with it.
+//
+// Nothing is cleared from a manifest: `compilesHere` reads the result, and the
+// link flags a package without a target instance contributed during
+// resolution are withdrawn from the root's link line.
+static void step6_instances(PrepareState& state) {
+    const auto n = state.packages.size();
+    if (n == 0) return;
+    std::vector<bool> target(n, false), host(n, false);
+    std::vector<std::size_t> stack{0};
+    target[0] = true;
+    while (!stack.empty()) {
+        const auto p = stack.back();
+        stack.pop_back();
+        for (auto const& e : state.dependencyEdges) {
+            if (e.consumerPackageIndex != p || e.buildTable) continue;
+            const auto d = e.dependencyPackageIndex;
+            if (d >= n || target[d]) continue;
+            target[d] = true;
+            stack.push_back(d);
+        }
+    }
+    for (auto const& e : state.dependencyEdges)
+        if (e.buildTable && e.dependencyPackageIndex < n && !host[e.dependencyPackageIndex]) {
+            host[e.dependencyPackageIndex] = true;
+            stack.push_back(e.dependencyPackageIndex);
+        }
+    while (!stack.empty()) {
+        const auto p = stack.back();
+        stack.pop_back();
+        for (auto const& e : state.dependencyEdges) {
+            if (e.consumerPackageIndex != p) continue;
+            const auto d = e.dependencyPackageIndex;
+            if (d >= n || host[d]) continue;
+            host[d] = true;
+            stack.push_back(d);
+        }
+    }
+    for (std::size_t d = 1; d < n; ++d) {
+        state.packages[d].hostInstance = host[d];
+        // A package no edge mentions is a bookkeeping gap, not a build
+        // dependency: it keeps its target instance.
+        state.packages[d].buildTimeOnly = !target[d] && host[d];
+        auto const& pkg = state.packages[d].manifest.package;
+        mcpp::log::info("edges", std::format(
+            "{}{}: {}{}", pkg.namespace_.empty() ? "" : pkg.namespace_ + ".", pkg.name,
+            target[d] ? "target" : "", host[d] ? (target[d] ? " + build-program" : "build-program")
+                                               : ""));
+    }
+    for (auto const& [key, rec] : state.resolved) {
+        const auto p = rec.depIndex + 1;
+        if (p >= n || !state.packages[p].buildTimeOnly) continue;
+        auto& ldflags = state.m->buildConfig.ldflags;
+        for (auto const& flag : rec.linkFlagsAdded)
+            if (auto pos = std::ranges::find(ldflags, flag); pos != ldflags.end())
+                ldflags.erase(pos);
+    }
 }
 
 static void step6_check_version_floors_closure(PrepareState& state) {
@@ -553,9 +638,17 @@ static std::expected<void, std::string> step6_activate_features(PrepareState& st
         // activation AGREE with resolution (mergeActiveFeatureDeps, which reads
         // the true per-edge spec): a transitive dep's requested features and its
         // consumer's `default-features = false` are no longer silently dropped.
+        state.buildProgramFeaturesByPackage.assign(state.packages.size(), {});
         for (std::size_t i = 1; i < state.packages.size(); ++i) {
             auto& pname = state.packages[i].manifest.package.name;
-            auto [req, depDefaultFeatures] = aggregatedRequest(state, i);
+            if (state.packages[i].hostInstance) {
+                auto [hreq, hdef] = aggregatedRequest(state, i, Instance::BuildProgram);
+                state.buildProgramFeaturesByPackage[i] =
+                    feature_closure(state.packages[i].manifest, hreq, hdef);
+            }
+            auto [req, depDefaultFeatures] = aggregatedRequest(
+                state, i, state.packages[i].buildTimeOnly ? Instance::BuildProgram
+                                                          : Instance::Target);
             if (!req.empty() && !state.packages[i].manifest.featuresMap.empty()) {
                 for (auto& f : req) {
                     if (state.packages[i].manifest.featuresMap.contains(f)) continue;
@@ -620,9 +713,13 @@ static std::expected<void, std::string> step6_device_extensions_and_rules(Prepar
                 if (edge.consumerPackageIndex != ci) continue;
                 if (edge.dependencyPackageIndex >= state.packages.size()) continue;
                 auto const& dep = state.packages[edge.dependencyPackageIndex];
+                // The features of the instance this edge reaches: a rule is
+                // requested through `[build-dependencies]` (mcpp#797).
+                const auto& byInstance = edge.buildTable ? state.buildProgramFeaturesByPackage
+                                                         : state.activeFeaturesByPackage;
                 const auto& depFeatures =
-                    edge.dependencyPackageIndex < state.activeFeaturesByPackage.size()
-                        ? state.activeFeaturesByPackage[edge.dependencyPackageIndex]
+                    edge.dependencyPackageIndex < byInstance.size()
+                        ? byInstance[edge.dependencyPackageIndex]
                         : edge.requestedFeatures;
                 for (auto const& f : depFeatures) {
                     auto it = dep.manifest.featureDeviceExtensions.find(f);
@@ -1248,86 +1345,6 @@ step6_host_module_registration(PrepareState& state) {
                 }
             }
 
-            // A build rule is BUILD-TIME ONLY. Registering the module is not
-            // enough: the package is still an ordinary node of the consumer's
-            // graph, so its interface was ALSO compiled as a normal library and
-            // linked into the target. That is wrong on its own terms — a rule
-            // has no business in the consumer's binary — and it made the
-            // feature nearly unusable, because in that second compile the
-            // bundled `mcpp` module does not exist: any rule that actually used
-            // the API it exists to wrap died with `fatal error: module 'mcpp'
-            // not found` (2026.8.5.1).
-            //
-            // Emptying the source globs is how a package is removed from the
-            // compile set here — the same mechanism the feature-gated-sources
-            // drop above uses. Resolution is untouched: the package still lands
-            // on disk, which is what `resolve_lib_root_path` just read.
-            //
-            // Guarded on EVERY edge into the package being a host-module edge.
-            // A package can legitimately be both a rule and a library, and
-            // silently dropping its objects then would surface as an undefined
-            // reference far from here. (The predicate used to be "no consumer
-            // other than the root", which said the same thing only while the
-            // root was the only possible requester.)
-            //
-            // Stated as FORWARD REACHABILITY rather than as exclusion, and the
-            // difference is not cosmetic.
-            //
-            // The predicate used to be per-edge: "every in-edge into this
-            // package is a host-module edge". That is right about the rule
-            // itself and wrong about everything BEHIND it — a rule's own
-            // `[dependencies]` are reached by ordinary edges, so they kept
-            // their globs and were compiled and LINKED INTO THE CONSUMER'S
-            // BINARY, while the rule could not even import them. Both halves
-            // were wrong, and the sharper harm was that a rule's dependency
-            // versions took part in the consumer's real resolution, so a rule
-            // could create a version conflict in a project that never asked
-            // for one.
-            //
-            // Exclusion would also get the dual-role case backwards. A package
-            // the project depends on directly must stay in the target even
-            // when some rule's build dependencies also reach it: the
-            // build-time path never subtracts from what the project asked to
-            // link. Asking "can the target reach it" answers both cases with
-            // one rule and no special case.
-            {
-                auto reachable = [&](bool targetEdgesOnly) {
-                    std::vector<bool> seen(state.packages.size(), false);
-                    if (state.packages.empty()) return seen;
-                    std::vector<std::size_t> stack{0};
-                    seen[0] = true;
-                    while (!stack.empty()) {
-                        auto p = stack.back();
-                        stack.pop_back();
-                        for (auto const& e : state.dependencyEdges) {
-                            if (e.consumerPackageIndex != p) continue;
-                            if (targetEdgesOnly && (e.hostModule || e.buildOnly))
-                                continue;
-                            auto d = e.dependencyPackageIndex;
-                            if (d >= seen.size() || seen[d]) continue;
-                            seen[d] = true;
-                            stack.push_back(d);
-                        }
-                    }
-                    return seen;
-                };
-                const auto viaTarget = reachable(/*targetEdgesOnly=*/true);
-                const auto viaAny    = reachable(/*targetEdgesOnly=*/false);
-                for (std::size_t d = 1; d < state.packages.size(); ++d) {
-                    // `viaAny` is the guard that keeps this from acting on a
-                    // package no edge ever mentioned. Such a package is a
-                    // bookkeeping gap, not a build dependency, and clearing
-                    // its sources would turn that gap into an undefined
-                    // reference a long way from here.
-                    if (viaTarget[d] || !viaAny[d]) continue;
-                    state.packages[d].buildTimeOnly = true;
-                    auto& dm = state.packages[d].manifest;
-                    dm.buildConfig.sources.clear();
-                    dm.buildConfig.featureSources.clear();
-                    dm.modules.sources.clear();
-                }
-            }
-
             if (state.overrides.tool_depth >= mcpp::build::tool_store::kMaxDepth
                 && !toolRequests.empty()) {
                 return std::unexpected(std::format(
@@ -1898,7 +1915,7 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
             // Same edge-graph aggregation as feature activation above, so a
             // dep build.mcpp sees the SAME active feature set the dep is built
             // with (incl. transitive requests / default-features opt-out).
-            auto [req, depDefaultFeatures] = aggregatedRequest(state, i);
+            auto [req, depDefaultFeatures] = aggregatedRequest(state, i, Instance::Target);
             auto dirSafe = [](std::string s) {
                 for (auto& c : s) if (c == '/' || c == '\\' || c == ':') c = '_';
                 return s;
@@ -2253,6 +2270,7 @@ static std::expected<void, std::string> step6_capability_binding(PrepareState& s
 
 std::expected<void, std::string> phase6_features_and_host_tools(PrepareState& state) {
     step6_check_version_floors_closure(state);
+    step6_instances(state);
 
     if (auto r = step6_activate_features(state); !r) return std::unexpected(r.error());
     if (auto r = step6_device_extensions_and_rules(state); !r) return std::unexpected(r.error());

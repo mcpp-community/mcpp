@@ -8,6 +8,7 @@ import mcpp.build.prepare_inputs;
 
 import std;
 import mcpp.diag;
+import mcpp.log;
 import mcpp.build.refusal;
 import mcpp.xlings.address_set;
 import mcpp.build.version_floor;
@@ -244,7 +245,7 @@ static void recordDependencyEdge(
         std::size_t consumerDepIndex,
         std::size_t dependencyPackageIndex,
         const mcpp::manifest::DependencySpec& spec,
-        bool buildOnly,
+        bool buildTable,
         const std::string& writtenKey)
 {
         const auto consumerPackageIndex = packageIndexForConsumer(consumerDepIndex);
@@ -263,27 +264,50 @@ static void recordDependencyEdge(
                 .key = writtenKey,
                 .table = spec.declaredIn,
             });
+
+        // A REQUESTED FEATURE THAT IS A BUILD RULE IMPLIES THE LIBRARY.
+        //
+        // A feature declaring `rule_module` is usable only by a build program,
+        // so requesting it asks for the dependency's library there. Requiring
+        // `host-module` beside it was a second spelling of one fact.
+        bool ruleFeature = false;
+        {
+            auto const& depManifest = state.packages[dependencyPackageIndex].manifest;
+            for (auto const& f : spec.features)
+                if (depManifest.featureRuleModule.contains(f)) { ruleFeature = true; break; }
+        }
+        // COMPAT(host-module-in-dependencies): a `[dependencies]` entry asking
+        // for `host-module = true`, or for a rule feature, served the build
+        // program and not the target before the section decided the
+        // configuration (mcpp#797). It keeps that meaning, reported where the
+        // manifest can be edited.
+        if (!buildTable && ((spec.hostModuleDeclared && spec.hostModule) || ruleFeature)) {
+            buildTable = true;
+            state.reportCompatUse("host-module-in-dependencies", consumerPackageIndex,
+                                  std::format("[dependencies] {}", writtenKey));
+        }
+        const bool wantsLibrary = buildTable
+            && (ruleFeature
+                || (spec.hostModuleDeclared ? spec.hostModule
+                                            : spec.tools.empty() && spec.artifacts.empty()));
+
+        // One edge per (consumer, dependency, visibility, configuration). The
+        // same package written in [dependencies] and [build-dependencies] of
+        // one consumer is two edges and two instances (mcpp#797, R2): merging
+        // them made the build-program request read as "not in the target".
         const auto visibility = parseVisibility(spec.visibility);
         auto same = [&](const DependencyEdge& edge) {
             return edge.consumerPackageIndex == consumerPackageIndex
                 && edge.dependencyPackageIndex == dependencyPackageIndex
-                && edge.visibility == visibility;
+                && edge.visibility == visibility
+                && edge.buildTable == buildTable;
         };
         auto it = std::find_if(state.dependencyEdges.begin(), state.dependencyEdges.end(), same);
         if (it != state.dependencyEdges.end()) {
-            // One consumer naming one dependency in BOTH tables. The ordinary
-            // declaration wins, because the build-time path never subtracts
-            // from what the project asked to link — stating the rule the other
-            // way round would let a `[build-dependencies]` line quietly drop a
-            // library the target needs.
-            if (!buildOnly) it->buildOnly = false;
-            // AND THE SECOND DECLARATION'S REQUESTS ARE KEPT (#649 E7). Both
-            // declarations name one edge, so what each asks of the dependency
-            // is asked of that edge: this used to return here and lose the
-            // second one's `tools`, `features`, `host-module` and `reexport`
-            // without a word, under `--strict` too. The rule is the one
-            // `mergeActiveFeatureDeps` already applies to a feature's
-            // restatement: additive fields union, `default-features` stays on
+            // One consumer restating one dependency in one table (an
+            // unconditional entry and a `[target.<sel>.*]` or `[feature-deps]`
+            // row): every declaration's requests are requested of the one edge
+            // (#649 E7). Additive fields union, `default-features` stays on
             // unless every declaration opts out.
             for (auto const& t : spec.tools)
                 if (std::ranges::find(it->requestedTools, t) == it->requestedTools.end())
@@ -297,29 +321,9 @@ static void recordDependencyEdge(
                     == it->requestedFeatures.end())
                     it->requestedFeatures.push_back(f);
             it->defaultFeatures = it->defaultFeatures || spec.defaultFeatures;
-            if (spec.hostModule) it->hostModule = true;
-            else if (dependencyPackageIndex < state.packages.size())
-                for (auto const& f : spec.features)
-                    if (state.packages[dependencyPackageIndex].manifest.featureRuleModule.contains(f)) {
-                        it->hostModule = true;
-                        break;
-                    }
+            it->wantsLibrary = it->wantsLibrary || wantsLibrary;
             it->reexport = it->reexport || spec.reexport;
             return;
-        }
-        // A REQUESTED FEATURE THAT IS A BUILD RULE IMPLIES `host-module`.
-        //
-        // `host-module = true` says "compile this dependency's interface unit
-        // for the host so my build program can import it", and a feature
-        // declaring `rule_module` has already said that is the only way to use
-        // it. Requiring both was a second spelling of one fact, and the failure
-        // when only the feature was written landed in the consumer's build as
-        // an unresolved import rather than in the line that was incomplete.
-        bool hostModule = spec.hostModule;
-        if (!hostModule && dependencyPackageIndex < state.packages.size()) {
-            auto const& depManifest = state.packages[dependencyPackageIndex].manifest;
-            for (auto const& f : spec.features)
-                if (depManifest.featureRuleModule.contains(f)) { hostModule = true; break; }
         }
         state.dependencyEdges.push_back(DependencyEdge{
             .consumerPackageIndex = consumerPackageIndex,
@@ -329,9 +333,9 @@ static void recordDependencyEdge(
             .defaultFeatures = spec.defaultFeatures,
             .requestedTools = spec.tools,
             .requestedArtifacts = spec.artifacts,
-            .hostModule = hostModule,
+            .buildTable = buildTable,
+            .wantsLibrary = wantsLibrary,
             .reexport = spec.reexport,
-            .buildOnly = buildOnly,
         });
 }
 
@@ -615,6 +619,7 @@ static std::expected<void, std::string> mergeActiveFeatureDeps(
                         == dst.features.end())
                         dst.features.push_back(f2);
                 dst.hostModule = dst.hostModule || spec.hostModule;
+                dst.hostModuleDeclared = dst.hostModuleDeclared || spec.hostModuleDeclared;
                 dst.reexport   = dst.reexport   || spec.reexport;
             }
         }
@@ -1043,7 +1048,7 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     if (!secPackage) return std::unexpected(secPackage.error());
                     state.packages.push_back(std::move(*secPackage));
                     recordDependencyEdge(state, item.consumerDepIndex, depPackageIndex,
-                                         spec, item.buildOnly, name);
+                                         spec, item.fromBuildTable, name);
                     auto linkFlagsAdded = propagateLinkFlags(state, secStage, *state.dep_manifests.back());
 
                     ResolvedKey mangledKey{key.ns, mangledPackage};
@@ -1086,7 +1091,7 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     // no re-fetch needed; just record this consumer edge.
                     recordDependencyEdge(state, item.consumerDepIndex,
                                          it->second.depIndex + 1,
-                                         spec, item.buildOnly, name);
+                                         spec, item.fromBuildTable, name);
                     return {};
                 }
 
@@ -1146,7 +1151,7 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                 state.packages[it->second.depIndex + 1] = std::move(*mergedPackage);
                 recordDependencyEdge(state, item.consumerDepIndex,
                                      it->second.depIndex + 1,
-                                     spec, item.buildOnly, name);
+                                     spec, item.fromBuildTable, name);
 
                 it->second.version            = *merged;
                 it->second.linkFlagsAdded     = std::move(linkFlagsAdded);
@@ -1284,7 +1289,7 @@ step4b_handle_already_resolved(PrepareState& state, WorklistItemCtx& ctx,
                 if (it->second.depIndex + 1 < state.packages.size()) {
                     recordDependencyEdge(state, item.consumerDepIndex,
                                          it->second.depIndex + 1,
-                                         spec, item.buildOnly, name);
+                                         spec, item.fromBuildTable, name);
                 }
                 return {};
             }
@@ -1360,7 +1365,7 @@ step4b_handle_already_resolved(PrepareState& state, WorklistItemCtx& ctx,
             if (it->second.depIndex + 1 < state.packages.size()) {
                 recordDependencyEdge(state, item.consumerDepIndex,
                                      it->second.depIndex + 1,
-                                     spec, item.buildOnly, name);
+                                     spec, item.fromBuildTable, name);
             }
             return {};
     return {};
@@ -1610,8 +1615,10 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
             // git-hosted workspace inherits from ITS repository, anchored at
             // the clone.
             auto inheritAsMember = [&](const mcpp::manifest::Manifest& ws,
-                                       const std::filesystem::path& wsRoot) {
-                return inherit_as_workspace_member(*dep_manifest, ws, wsRoot, dep_root);
+                                       const std::filesystem::path& wsRoot,
+                                       bool reportPosition) {
+                return inherit_as_workspace_member(*dep_manifest, ws, wsRoot, dep_root,
+                                                   reportPosition);
             };
             // A rooted workspace's own package, the member "." of a workspace
             // plan (§15), is the workspace's manifest: it reads its own
@@ -1623,13 +1630,15 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
                 mcpp::project::merge_workspace_deps(*dep_manifest, *state.wsManifest,
                                                     state.runtimeWorkspaceRoot);
                 mcpp::project::inherit_as_root_package(*dep_manifest,
-                                                       state.runtimeWorkspaceRoot);
+                                                       state.runtimeWorkspaceRoot,
+                                                       /*asBuildRoot=*/false);
             } else if (depIsMember) {
-                if (auto bad = inheritAsMember(*state.wsManifest, state.runtimeWorkspaceRoot))
+                if (auto bad = inheritAsMember(*state.wsManifest, state.runtimeWorkspaceRoot,
+                                               /*reportPosition=*/false))
                     return std::unexpected(*bad);
             } else if (!gitMember.empty()) {
                 if (auto rm = mcpp::manifest::load(gitMemberCloneRoot / "mcpp.toml")) {
-                    if (auto bad = inheritAsMember(*rm, gitMemberCloneRoot))
+                    if (auto bad = inheritAsMember(*rm, gitMemberCloneRoot, /*reportPosition=*/true))
                         return std::unexpected(*bad);
                 }
             }
@@ -1824,7 +1833,7 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
         }
         state.packages.push_back(std::move(*depPackage));
         recordDependencyEdge(state, item.consumerDepIndex, depPackageIndex, spec,
-                             item.buildOnly, name);
+                             item.fromBuildTable, name);
 
         // Record this dep as resolved so future encounters of the same
         // (ns, name) hit the fast path (skip / merge / conflict).
@@ -1923,7 +1932,8 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
             state.worklist.push_back({child_name, childReq,
                                 thisDepLabel + " (build-dep)",
                                 childReq.version, selfIdx, ctx.dep_root,
-                                item.devOnly, /*buildOnly=*/true});
+                                item.devOnly, /*buildOnly=*/true,
+                                /*fromBuildTable=*/true});
         }
     return {};
 }
@@ -2028,9 +2038,40 @@ static void step4b_define_lookup_closures(PrepareState& state) {
     };
     // A selected workspace member is compiled here whatever its targets are
     // (workspace design 2026-09-29 §15).
+    //
+    // NOT a package with no target instance (mcpp#797): one reached only
+    // through `[build-dependencies]` is compiled in the build program's graph,
+    // not here. `targetInstance` is decided by `step6_instances`; until then
+    // every package counts.
     state.compilesHere = [&](std::size_t i) {
+        if (i < state.packages.size() && i > 0 && state.packages[i].buildTimeOnly)
+            return false;
         return i == 0 || !state.isProgramOnlyPackage(state.packages[i].manifest)
             || state.isArtifactPackage(i) || state.packages[i].selectedMember;
+    };
+    state.editablePackage = [&](std::size_t i) {
+        if (i == 0 || i >= state.packages.size()) return true;
+        auto const& pkg = state.packages[i];
+        if (pkg.selectedMember || state.isWorkspaceMemberPackage(i)) return true;
+        if (mcpp::build::path_is_under_any(pkg.root, state.storeRoots)) return false;
+        const auto home = !state.runtimeWorkspaceRoot.empty() ? state.runtimeWorkspaceRoot
+                                                               : *state.root;
+        auto rel = pkg.root.lexically_normal().lexically_relative(home.lexically_normal());
+        return !rel.empty() && *rel.begin() != "..";
+    };
+    state.reportCompatUse = [&](std::string_view id, std::size_t i, std::string detail) {
+        auto const* d = mcpp::pm::compat::find_deprecation(id);
+        if (!d) return;
+        const bool warn = state.editablePackage(i);
+        const auto where = i < state.packages.size()
+            ? (state.packages[i].root / "mcpp.toml").string() : std::string{};
+        mcpp::pm::compat::record_use(id, where, detail, warn);
+        mcpp::log::info("compat", std::format("{} {}: {}{}", id, where, detail,
+                                              warn ? "" : " (not editable here; not warned)"));
+        if (!warn) return;
+        mcpp::diag::warning(d->domain, std::format(
+            "{}: {} is {}. Write {} instead.", where, detail, mcpp::pm::compat::deprecation_clause(*d),
+            d->canonical));
     };
 
 
@@ -2263,6 +2304,10 @@ step4b_define_provisioning_closures(PrepareState& state) {
                 }
                 auto& consumer = state.packages[edge.consumerPackageIndex];
                 auto const& dependency = state.packages[edge.dependencyPackageIndex];
+                // A build dependency serves the build program, which is planned
+                // in its own graph: its include directories and interface
+                // defines do not reach this consumer's target compile (mcpp#797).
+                if (edge.buildTable) continue;
                 // A package of programs publishes no usage requirements to its
                 // consumers (#649 E6): nothing of it is compiled or linked here.
                 if (edge.dependencyPackageIndex > 0
@@ -2437,7 +2482,7 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
         injectCliForwards(n, req);
         state.worklist.push_back({n, req, mainPkgLabel + " (build-dep)",
                             req.version, kMainConsumer, {}, /*devOnly=*/false,
-                            /*buildOnly=*/true});
+                            /*buildOnly=*/true, /*fromBuildTable=*/true});
     }
 
 

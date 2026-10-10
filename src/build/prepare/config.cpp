@@ -634,15 +634,22 @@ unfolded_defines_error(const mcpp::manifest::Manifest& m) {
 // dependency, a member of a git-hosted workspace, and a member inside an
 // index package's archive. The same commit then compiles the same way in its
 // own checkout and in every consumer's graph.
+//
+// `reportPosition` is false for a member of the workspace the build itself is
+// rooted in: the root received the same position-read entries and was told
+// about them, so telling the dependency too reports a use that changes
+// nothing (mcpp#797, R5). `[xlings.overrides]` never travels here: it belongs
+// to the root of a build (R4).
 std::optional<std::string>
 inherit_as_workspace_member(mcpp::manifest::Manifest& member,
                             const mcpp::manifest::Manifest& workspace,
                             const std::filesystem::path& workspaceRoot,
-                            const std::filesystem::path& memberDir) {
+                            const std::filesystem::path& memberDir,
+                            bool reportPosition) {
     mcpp::project::inherit_workspace_package(member, workspace);
     mcpp::project::merge_workspace_deps(member, workspace, workspaceRoot);
     mcpp::project::inherit_workspace_build(member, workspace, workspaceRoot);
-    mcpp::project::inherit_workspace_xlings(member, workspace);
+    mcpp::project::inherit_workspace_xlings(member, workspace, reportPosition);
     mcpp::project::inherit_workspace_layer_rows(member, workspace, workspaceRoot);
     return mcpp::project::workspace_inheritance_error(member, memberDir);
 }

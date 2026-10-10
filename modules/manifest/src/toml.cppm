@@ -2246,6 +2246,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // the default pseudo-feature is not seeded for this dependency.
         if (auto it = sub.find("default-features"); it != sub.end() && it->second.is_bool()) {
             spec.defaultFeatures = it->second.as_bool();
+            spec.defaultFeaturesDeclared = true;
         }
         // #355: `tools = ["protoc"]` — HOST binaries this consumer wants from
         // the dependency. Same shape as `features`, and deliberately on the
@@ -2265,6 +2266,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // module importable from build.mcpp (reusable rules as packages).
         if (auto it = sub.find("host-module"); it != sub.end() && it->second.is_bool()) {
             spec.hostModule = it->second.as_bool();
+            spec.hostModuleDeclared = true;
         }
         // #359: `reexport = true` — hand this edge's build-time provisions
         // (tools, host module, dependency dir) on to THIS package's consumers.
@@ -2287,6 +2289,20 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         } else if (auto it = sub.find("branch"); it != sub.end() && it->second.is_string()) {
             spec.gitRev     = it->second.as_string();
             spec.gitRefKind = "branch";
+        }
+        // [workspace.dependencies] states a dependency's SOURCE (and the
+        // features every member asks of it). The other requests belong to a
+        // member's own edge, and one entry may be inherited into both
+        // [dependencies] and [build-dependencies], where they mean different
+        // things; they were dropped without a word (mcpp#797, W2).
+        if (section.starts_with("workspace.dependencies")) {
+            for (std::string_view key : {"host-module", "tools", "artifacts", "reexport",
+                                         "visibility", "linkage"})
+                if (sub.contains(std::string(key)))
+                    m.schemaWarnings.push_back(std::format(
+                        "[{}.\"{}\"] '{}' is a request of a member's own edge and is not "
+                        "inherited; write it in the member's entry beside `workspace = true`",
+                        section, fqName, key));
         }
         if (auto it = sub.find("workspace"); it != sub.end() && it->second.is_bool() && it->second.as_bool()) {
             spec.inheritWorkspace = true;

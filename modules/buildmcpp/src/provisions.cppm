@@ -124,7 +124,7 @@ struct Provision {
 // Templated on the edge type for the reason `dep_graph` is: `DependencyEdge`
 // is a local struct inside prepare_build. An edge must expose
 // `consumerPackageIndex`, `dependencyPackageIndex`, `reexport`,
-// `requestedTools` and `hostModule`.
+// `requestedTools`, `buildTable` and `wantsLibrary`.
 struct Propagation {
     std::vector<std::set<Provision>> visible;
     std::vector<std::set<Provision>> exported;
@@ -144,7 +144,8 @@ Propagation propagate(const std::vector<Edge>& edges, std::size_t packageCount) 
         s.insert(Provision{ Kind::DepDir, e.dependencyPackageIndex, {} });
         for (auto const& t : e.requestedTools)
             s.insert(Provision{ Kind::Tool, e.dependencyPackageIndex, t });
-        if (e.hostModule)
+        // The build program uses this dependency's library (mcpp#797).
+        if (e.buildTable && e.wantsLibrary)
             s.insert(Provision{ Kind::HostModule, e.dependencyPackageIndex, {} });
         return s;
     };

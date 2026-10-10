@@ -141,9 +141,14 @@ struct PackageRoot {
     UsageRequirements               publicUsage;
     UsageRequirements               linkUsage;
     bool                            usageResolved = false;
-    // Reached only through build-time edges: resolved for host tools/rules,
-    // but neither its sources nor its products belong to the target plan.
+    // No TARGET INSTANCE (mcpp#797): no chain of ordinary edges reaches it
+    // from the root. It is resolved here -- one version per package, and its
+    // tools, directory and payloads serve this build -- and it is compiled in
+    // the build program's graph, not in this plan.
     bool                            buildTimeOnly = false;
+    // A BUILD-PROGRAM INSTANCE: reached through a `[build-dependencies]` edge
+    // and then any edges. A package may have both instances (mcpp#797, R2).
+    bool                            hostInstance = false;
     // A selected workspace member that the plan builds (workspace design
     // 2026-09-29 §15), and the directory below `bin/` its products are placed
     // in (empty: `bin/` itself). False on the plan's root and on every

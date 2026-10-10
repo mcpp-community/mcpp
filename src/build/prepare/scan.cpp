@@ -91,7 +91,7 @@ static std::expected<bool, std::string> step11_scan_sources(PrepareState& state)
         };
         std::map<std::size_t, std::vector<std::size_t>> codeEdges;
         for (auto const& e : state.dependencyEdges) {
-            if (!e.requestedArtifacts.empty() || e.buildOnly) continue;
+            if (!e.requestedArtifacts.empty() || e.buildTable) continue;
             codeEdges[e.consumerPackageIndex].push_back(e.dependencyPackageIndex);
         }
         for (std::size_t i = 0; i < state.packages.size(); ++i) {

@@ -157,16 +157,29 @@ report_manifest_statements(const mcpp::manifest::Manifest& m, bool strict) {
 // What the workspace root's own manifest states about itself, reported once
 // for the command that plans its members (SPEC-004 §9.10):
 //   W7  a package table on a root without [package] acts on no package --
-//       warning, an error under --strict;
+//       warning, an error under --strict; so does a `build.mcpp` beside such
+//       a root, which no package owns and which never runs (mcpp#797, W1);
 //   the workspace layer read by an engine older than this one is ignored by
 //   it without a word (2026.10.8.1 builds with a different toolchain), so a
 //   root that writes `[workspace.X]` without stating this engine as its floor
 //   gets a note.
 static std::expected<void, std::string>
-report_workspace_root(const mcpp::manifest::Manifest& ws, bool strict) {
+report_workspace_root(const mcpp::manifest::Manifest& ws, const std::filesystem::path& wsRoot,
+                      bool strict) {
     for (auto const& w : ws.virtualRootPackageTables) {
         if (strict) return std::unexpected(w);
         mcpp::diag::warning("manifest/schema", w);
+    }
+    if (ws.package.name.empty()) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(wsRoot / "build.mcpp", ec)) {
+            const std::string w =
+                "build.mcpp is written beside a workspace root without [package], so it "
+                "belongs to no package and does not run; move it into the member whose "
+                "build it configures";
+            if (strict) return std::unexpected(w);
+            mcpp::diag::warning("manifest/schema", w);
+        }
     }
     if (ws.layer) {
         const auto have = mcpp::xpkg_version::parse(mcpp::MCPP_VERSION);
@@ -191,7 +204,7 @@ static std::expected<void, std::string>
 select_workspace_members(PrepareState& state, const std::filesystem::path& wsRoot,
                          mcpp::manifest::Manifest ws,
                          const std::vector<std::string>& selection) {
-    if (auto r = report_workspace_root(ws, state.overrides.strict); !r) return r;
+    if (auto r = report_workspace_root(ws, wsRoot, state.overrides.strict); !r) return r;
     const auto all = mcpp::project::workspace_members(ws, wsRoot);
     {
         auto first = mcpp::project::load_member_manifest(ws, wsRoot, selection.front());

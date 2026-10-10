@@ -1,8 +1,8 @@
 // mcpp.pm.compat.workspace_position - the workspace root's own tables, given
 // to its members by POSITION.
 //
-// COMPAT(workspace-position): removed with the rest of mcpp.pm.compat in
-// mcpp 1.0.0 (DEPRECATION SCHEDULE in compat.cppm).
+// COMPAT(workspace-position): a row of the deprecation registry
+// (compat/registry.cppm), which states when it is removed.
 //
 // Before 2026.10.10.1 a workspace root's `[toolchain]`, `[indices]`,
 // `[profile.<name>]`, the scalar rows of `[target.<triple>]` and its
@@ -37,6 +37,7 @@ export module mcpp.pm.compat.workspace_position;
 
 import std;
 import mcpp.manifest.types;
+import mcpp.pm.compat.registry;
 
 export namespace mcpp::pm::compat {
 
@@ -118,13 +119,16 @@ inherit_root_position_by_position(mcpp::manifest::Manifest& member,
     return used;
 }
 
-// What the warning for one table says.
+// What the warning for one table says. `xlings.overrides` is the overrides
+// half of `[xlings]`, named apart because its example and its mirror differ.
 std::string position_warning(std::string_view table, std::string_view member) {
     std::string_view example =
           table == "toolchain" ? "[workspace.toolchain]\n          default = \"llvm@23.1.3\""
         : table == "indices"   ? "[workspace.indices]\n          acme = { path = \"vendor/index\" }"
         : table == "profile"   ? "[workspace.profile.release]\n          opt = 3"
         : table == "target"    ? "[workspace.target.x86_64-linux-musl]\n          linkage = \"static\""
+        : table == "xlings.overrides"
+                               ? "[workspace.xlings.overrides]\n          \"xim:cmake\" = \"/usr/bin/cmake\""
         :                        "[workspace.xlings.workspace]\n          cmake = \"4.0.2\"";
     const std::string mirror = table == "profile" ? "[workspace.profile.<name>]"
                              : table == "target"  ? "[workspace.target.<selector>]"
@@ -134,10 +138,9 @@ std::string position_warning(std::string_view table, std::string_view member) {
                                : std::format("[{}]", table);
     return std::format(
         "{} on the workspace root reaches {} by its position; this reading is "
-        "deprecated and is removed in mcpp 1.0.0. Write it as {} to give it to every "
-        "member, for example:\n          {}",
+        "{}. Write it as {} to give it to every member, for example:\n          {}",
         original, member.empty() ? std::string("every member") : std::format("member '{}'", member),
-        mirror, example);
+        deprecation_clause(*find_deprecation("workspace-position")), mirror, example);
 }
 
 }  // namespace mcpp::pm::compat
