@@ -1861,7 +1861,7 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 // original comment was describing.
                 std::string dver;
                 std::vector<std::string> dtools;
-                bool dhostModule = false, dreexport = false;
+                bool dhostModule = false, dreexport = false, dhostModuleDeclared = false;
                 if (cur.peek() == '{') {
                     cur.consume('{');
                     cur.skip_ws_and_comments();
@@ -1889,7 +1889,7 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                             // two spellings of ONE schema, so a key accepted in
                             // one must not be an unknown-key error in the other.
                             bool v = cur.read_bareword() == "true";
-                            if (dk == "host-module") dhostModule = v;
+                            if (dk == "host-module") { dhostModule = v; dhostModuleDeclared = true; }
                             else                     dreexport   = v;
                         } else {
                             // Record rather than swallow — a descriptor author
@@ -1911,6 +1911,7 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     spec.version    = dver;
                     spec.tools      = std::move(dtools);
                     spec.hostModule = dhostModule;
+                    spec.hostModuleDeclared = dhostModuleDeclared;
                     spec.reexport   = dreexport;
                     auto selector = parse_xpkg_dependency_selector(
                         dname, m.sourcePath);

@@ -993,158 +993,8 @@ static std::expected<void, std::string> step6_xlings_workspace_from_graph(Prepar
     return {};
 }
 
-// Every host module one package contributes, the lib root first.
-//
-// The lib root is what a rule package has always been: one unit,
-// compiled alone, registered under the name it declares. A package
-// that offers several rules through features (mcpp 2026.9.5.3+)
-// lists their sources under `[features.<f>] sources`, and those
-// globs have been folded into `buildConfig.sources` by now for
-// exactly the features the consumer activated. Every module
-// INTERFACE unit among them is therefore a host module of its own,
-// under its own declared name, and nothing else in the host-module
-// path assumes one unit per package: `build_host_module` is per
-// unit and the compile loop accumulates BMIs in list order, so a
-// feature unit may import the lib root, which precedes it.
-//
-// Only sources the manifest LISTS take part. The inferred `src/**`
-// of a package with no `sources` is not consulted, so a rule
-// package published before this round exposes exactly what it
-// exposed then; widening that implicitly would compile units that
-// were written to be part of an ordinary library, alone.
-//
-// Split out of step6_host_module_registration (#734).
-static std::vector<prov::HostModule> host_module_units(const PrepareState& st, std::size_t p) {
-    auto identity = [&](std::size_t q) {
-        auto const& pkg = st.packages[q].manifest.package;
-        return pkg.namespace_.empty() ? pkg.name : pkg.namespace_ + "." + pkg.name;
-    };
-    auto const& depPkg = st.packages[p];
-    auto const& pkg    = depPkg.manifest.package;
-    std::vector<prov::HostModule> out;
-    auto push = [&](std::filesystem::path iface, std::string name) {
-        prov::HostModule hm;
-        hm.module    = std::move(name);
-        hm.package   = identity(p);
-        hm.nameSpace = pkg.namespace_;
-        hm.interface = std::move(iface);
-        out.push_back(std::move(hm));
-    };
-    // PROBING form: a host-module dependency whose interface is
-    // `.ixx` resolves to a `src/<tail>.cppm` that does not exist,
-    // and the consumer's build.mcpp is then handed a path to
-    // nothing.
-    auto rel   = mcpp::manifest::resolve_lib_root_path(
-        depPkg.manifest, depPkg.root);
-    auto iface = depPkg.root / rel;
-    auto rootName = prov::host_module_name(iface, pkg.name);
-    // A missing lib root is reported as such by build_host_module,
-    // and that has to stay the diagnostic. Enumerating the listed
-    // units first would let one of them collide with the missing
-    // root's fallback name and report a collision between a file
-    // and a file that does not exist.
-    std::error_code ec;
-    if (!std::filesystem::exists(iface, ec)) {
-        push(iface, std::move(rootName));
-        return out;
-    }
-
-    std::set<std::filesystem::path> matched, dropped;
-    for (auto const& g : depPkg.manifest.buildConfig.sources) {
-        if (g.empty()) continue;
-        if (g[0] == '!') {
-            for (auto& f : mcpp::modgraph::expand_glob(depPkg.root, g.substr(1)))
-                dropped.insert(f.lexically_normal());
-        } else {
-            for (auto& f : mcpp::modgraph::expand_glob(depPkg.root, g))
-                matched.insert(f.lexically_normal());
-        }
-    }
-    const auto root = iface.lexically_normal();
-    // ORDERED BY WHAT THEY IMPORT, NOT BY WHERE THEY SIT.
-    //
-    // The compile loop accumulates BMIs in list order, so each
-    // entry sees only what precedes it. Path order was the previous
-    // rule and it is not a valid one: `rules/spirv.cppm` sorts
-    // before `src/surface.cppm`, so a member importing a unit its
-    // package shares was compiled first and failed with "failed to
-    // read compiled module ... imports must be built before being
-    // imported". Reproduced, and reproduced in both directions --
-    // renaming the shared unit so its path sorted first made the
-    // same package build, which is what says the cause is the sort
-    // and nothing else.
-    //
-    // A package that works today is ordered IDENTICALLY: the sort
-    // below keeps path order wherever no import constrains it, so
-    // it differs only where the old order was already broken.
-    struct Unit {
-        std::filesystem::path        path;
-        std::string                  name;
-        std::vector<std::string>     imports;
-    };
-    // The lib root is the first node of the same sort (mcpp#720).
-    // Placing it ahead of the sort assumed that it imports no
-    // other unit of its package; a root that does was compiled
-    // before the unit it imports and failed with "module not
-    // found". As the first node it is still emitted first whenever
-    // it imports nothing of its own package, so the order of every
-    // package that built before is unchanged.
-    std::vector<Unit> pending;
-    {
-        std::ifstream is(root);
-        std::stringstream buf;
-        if (is) buf << is.rdbuf();
-        pending.push_back({root, std::move(rootName),
-                           prov::declared_imports(buf.str())});
-    }
-    for (auto const& f : matched) {          // std::set: sorted
-        if (dropped.contains(f)) continue;
-        if (std::filesystem::equivalent(f, root, ec)) continue;
-        std::ifstream is(f);
-        if (!is) continue;
-        std::stringstream buf;
-        buf << is.rdbuf();
-        auto text = buf.str();
-        auto name = prov::declared_interface_name(text);
-        if (name.empty()) continue;
-        pending.push_back({f, std::move(name), prov::declared_imports(text)});
-    }
-
-    // Only names this package itself declares constrain anything.
-    // `import std;` is ahead of every entry here, and a name from
-    // another package is ordered by the cross-package DFS below
-    // rather than by this sort.
-    std::map<std::string, std::size_t> byName;
-    for (std::size_t i = 0; i < pending.size(); ++i)
-        byName.emplace(pending[i].name, i);
-
-    // deps[u] = the pending-list indices `u` imports BY NAME within this
-    // same package, in import order. A depth-first order from every unit in
-    // path order emits the first unit that can be emitted, which is what
-    // preserves path order in the unconstrained case, and is the order the
-    // build program's objects are linked in.
-    mcpp::graph::AdjacencyList deps(pending.size());
-    for (std::size_t u = 0; u < pending.size(); ++u)
-        for (auto const& want : pending[u].imports)
-            if (auto it = byName.find(want); it != byName.end())
-                deps[u].push_back(it->second);
-    std::vector<std::size_t> roots(pending.size());
-    std::iota(roots.begin(), roots.end(), std::size_t{0});
-
-    // A CYCLE IS LEFT TO THE COMPILER, ON PURPOSE. It is ill-formed C++ and
-    // the compiler says so with the two units named; refusing here would
-    // report the same fact in a worse place, and getting the ordering wrong
-    // is no longer possible either way -- so the edge that closes a cycle is
-    // skipped.
-    std::vector<std::size_t> order;
-    order = *mcpp::graph::depth_first_order(deps, roots, mcpp::graph::Cycles::Skip);
-
-    for (auto i : order) push(pending[i].path, std::move(pending[i].name));
-    return out;
-}
-
 static std::expected<std::map<std::size_t, std::set<std::string>>, std::string>
-step6_host_module_registration(PrepareState& state) {
+step6_tool_requests(PrepareState& state) {
         // ── #355: HOST tool provisioning ────────────────────────────────────
         //
         // Runs AFTER feature activation (a tool target's gate is a feature) and
@@ -1173,10 +1023,13 @@ step6_host_module_registration(PrepareState& state) {
             // store key are the edge-requested tool's in every respect.
             for (auto& edge : state.dependencyEdges) {
                 const auto d = edge.dependencyPackageIndex;
-                if (d >= state.packages.size() || d >= state.activeFeaturesByPackage.size()) continue;
+                // The features of the instance this edge reaches (mcpp#797).
+                const auto& byInstance = edge.buildTable ? state.buildProgramFeaturesByPackage
+                                                         : state.activeFeaturesByPackage;
+                if (d >= state.packages.size() || d >= byInstance.size()) continue;
                 auto const& ft = state.packages[d].manifest.featureTools;
                 if (ft.empty()) continue;
-                for (auto const& f : state.activeFeaturesByPackage[d])
+                for (auto const& f : byInstance[d])
                     if (auto it = ft.find(f); it != ft.end())
                         for (auto const& t : it->second)
                             if (std::ranges::find(edge.requestedTools, t)
@@ -1195,154 +1048,25 @@ step6_host_module_registration(PrepareState& state) {
             // that asked for it rather than the project that needs it.
             state.provisionGraph = prov::propagate(state.dependencyEdges, state.packages.size());
 
-            // #355 step 5: dependencies offering HOST build rules. Nothing is
-            // compiled here — the interface is handed to build_program.cppm,
-            // which compiles it in the SAME command as build.mcpp so the BMI
-            // and its consumer agree on standard, dialect and compiler by
-            // construction rather than by luck.
-            //
-            // Driven off the visible set rather than the root manifest, so a
-            // rule a library re-exports is importable from the consumer's
-            // build.mcpp without the consumer naming it. The name matching the
-            // old loop needed is gone with it: the edge already knows which
-            // package it points at.
-            //
-            // The registered name is the one the rule's SOURCE declares, not
-            // the package's name. See provisions::host_module_name for why the
-            // two had drifted apart and what that cost on Clang and MSVC.
-            std::set<std::string> prefixWarned;
-            // Providers of host modules that THIS package sees directly.
-            auto directHostProviders = [&](std::size_t p) {
-                std::vector<std::size_t> out;
-                if (p >= state.provisionGraph.visible.size()) return out;
-                for (auto const& pr : state.provisionGraph.visible[p]) {
-                    if (pr.kind != prov::Kind::HostModule) continue;
-                    if (pr.provider >= state.packages.size()) continue;
-                    out.push_back(pr.provider);
-                }
-                return out;
-            };
-            auto identity = [&](std::size_t p) {
-                auto const& pkg = state.packages[p].manifest.package;
-                return pkg.namespace_.empty()
-                     ? pkg.name : pkg.namespace_ + "." + pkg.name;
-            };
-            auto units = [&](std::size_t p) { return host_module_units(state, p); };
-            // Host-module provider edges over EVERY package, built once:
-            // pkgHostDeps[p] is what directHostProviders(p) computes, reused
-            // below instead of re-querying provisionGraph per consumer.
-            mcpp::graph::AdjacencyList pkgHostDeps(state.packages.size());
-            for (std::size_t p = 0; p < state.packages.size(); ++p)
-                pkgHostDeps[p] = directHostProviders(p);
+            // Each consumer's build program's graph: the libraries it uses and
+            // everything they reach (mcpp#797).
             for (std::size_t c = 0; c < state.provisionGraph.visible.size(); ++c) {
-                const auto direct = directHostProviders(c);
-                if (direct.empty()) continue;
-                std::set<std::size_t> isDirect(direct.begin(), direct.end());
-
-                // #734 E7: what each direct provider could offer with a feature
-                // it does not have enabled here. Globs are expanded, nothing is
-                // read: the module names are looked up only if build.mcpp
-                // imports something no provider offers.
-                for (auto p : direct) {
-                    auto const& dm = state.packages[p].manifest;
-                    const auto& active = p < state.activeFeaturesByPackage.size()
-                        ? state.activeFeaturesByPackage[p] : std::vector<std::string>{};
-                    for (auto const& [fname, globs] : dm.buildConfig.featureSources) {
-                        if (std::ranges::find(active, fname) != active.end()) continue;
-                        mcpp::build::BuildProgramEnv::DormantFeature df;
-                        df.package = identity(p);
-                        df.feature = fname;
-                        for (auto const& g : globs)
-                            for (auto& f : mcpp::modgraph::expand_glob(state.packages[p].root, g))
-                                df.files.push_back(f);
-                        if (!df.files.empty())
-                            state.dormantFeaturesByConsumer[c].push_back(std::move(df));
-                    }
+                std::vector<std::size_t> work;
+                for (auto const& pr : state.provisionGraph.visible[c])
+                    if (pr.kind == prov::Kind::HostModule && pr.provider < state.packages.size())
+                        work.push_back(pr.provider);
+                if (work.empty()) continue;
+                std::set<std::size_t> seen(work.begin(), work.end());
+                while (!work.empty()) {
+                    const auto p = work.back();
+                    work.pop_back();
+                    for (auto const& e : state.dependencyEdges)
+                        if (e.consumerPackageIndex == p
+                            && e.dependencyPackageIndex < state.packages.size()
+                            && seen.insert(e.dependencyPackageIndex).second)
+                            work.push_back(e.dependencyPackageIndex);
                 }
-
-                // Post-order DFS, so a rule's own host modules are compiled
-                // BEFORE it. That ordering is the entire mechanism: the
-                // compile loop in build_program.cppm accumulates the module
-                // flags as it goes, so each entry sees the BMIs of everything
-                // ahead of it, and "a rule may import another rule" needs no
-                // second machinery — only this sort. It walks only what `c`
-                // reaches, so a cycle elsewhere never fails `c`'s build.
-                auto topo = mcpp::graph::depth_first_order(pkgHostDeps, direct);
-                if (!topo) {
-                    // A cycle, reported AS a cycle and naming the packages
-                    // on it. A depth limit would answer a different
-                    // question and would answer it later.
-                    std::string ring;
-                    bool first = true;
-                    for (auto q : topo.error().cycle) {
-                        if (!first) ring += " -> ";
-                        first = false;
-                        ring += identity(q);
-                    }
-                    return std::unexpected(std::format(
-                        "build rules form an import cycle: {}\n"
-                        "       A rule's host modules are compiled before "
-                        "it, so a cycle has no order that could satisfy "
-                        "all of them.", ring));
-                }
-
-                std::vector<prov::HostModule> ordered;
-                // The package each entry of `ordered` came from, for where its
-                // compiled module may be kept (#748, B1).
-                std::vector<std::size_t> orderedProvider;
-                for (auto p : *topo) {
-                    for (auto& hm : units(p)) {
-                        hm.importable = isDirect.contains(p);
-                        ordered.push_back(std::move(hm));
-                        orderedProvider.push_back(p);
-                    }
-                }
-
-                // Every provider on this consumer's rule closure, transitive
-                // ones included, and a rule imported by another rule declares
-                // payloads just as directly.
-                std::set<std::size_t> reached(topo->begin(), topo->end());
-                state.hostModuleProvidersByConsumer[c].assign(reached.begin(), reached.end());
-
-                if (auto clash = prov::host_module_collision(ordered))
-                    return std::unexpected(*clash);
-                for (std::size_t k = 0; k < ordered.size(); ++k) {
-                    auto const& hm = ordered[k];
-                    // Warned once per (package, module), not once per consumer:
-                    // a rule re-exported down a chain is visible to every
-                    // package on it, and repeating one naming remark N times
-                    // reads as N problems.
-                    if (auto w = prov::reserved_prefix_warning(
-                            hm.module, hm.nameSpace, hm.package)) {
-                        if (prefixWarned.insert(hm.package + "\x1e" + hm.module).second)
-                            mcpp::diag::warning("build/rule-namespace", *w);
-                    }
-                    mcpp::build::BuildProgramEnv::HostModuleRef ref{
-                        hm.module, hm.interface, hm.importable};
-                    // Where the compiled module may be kept (#748, B1): in the
-                    // global cache only when the provider is an index package
-                    // whose sources are in the immutable store, the rule the
-                    // dependency cache applies to a package (plan.cpp). The
-                    // module is compiled alone, so nothing it was built against
-                    // can be local: the provider's own location decides.
-                    {
-                        const auto pi = orderedProvider[k];
-                        const auto& provider = state.packages[pi];
-                        const auto* ident = pi >= 1 && pi - 1 < state.dep_cache_identities.size()
-                            ? &state.dep_cache_identities[pi - 1] : nullptr;
-                        ref.providerName = identity(pi);
-                        ref.providerVersion = provider.manifest.package.version;
-                        ref.providerRoot = provider.root;
-                        if (ident && ident->sourceKind == "version"
-                            && mcpp::build::path_is_under_any(provider.root, state.storeRoots)) {
-                            ref.immutableSource = true;
-                            ref.providerIndex   = ident->indexName;
-                            ref.providerName    = ident->packageName;
-                            if (!ident->version.empty()) ref.providerVersion = ident->version;
-                        }
-                    }
-                    state.hostModulesByConsumer[c].push_back(std::move(ref));
-                }
+                state.buildProgramLibrariesByConsumer[c].assign(seen.begin(), seen.end());
             }
 
             if (state.overrides.tool_depth >= mcpp::build::tool_store::kMaxDepth
@@ -1899,6 +1623,25 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
         // files live in the CONSUMING project's tree — a registry package
         // root is shared across projects and may be read-only; it is never
         // written to.
+        // EVERY PROGRAM THIS PLAN RUNS IS COMPILED IN ONE BUILD of the build
+        // programs' graph, the dependencies', the members' and the root's
+        // (mcpp#797). They run one at a time, in their order, below and in
+        // phase 9; their compiles have no order and share their libraries.
+        // A failure here is not reported here: each program asks for its
+        // binary at its turn, alone, so the failure that reaches the user is
+        // the first in the order the programs run.
+        {
+            std::vector<std::size_t> programs;
+            for (std::size_t i = 0; i < state.packages.size(); ++i) {
+                if (i == 0 && state.m->package.virtualRoot) continue;
+                if (i > 0 && !state.compilesHere(i)) continue;
+                programs.push_back(i);
+            }
+            if (auto r = ensure_build_programs(state, programs); !r)
+                mcpp::log::verbose("host-graph", std::format(
+                    "the build programs' graph failed; each program is compiled at its turn: {}",
+                    r.error()));
+        }
         for (std::size_t i = 1; i < state.packages.size(); ++i) {
             auto& pkg = state.packages[i];
             // A package of programs runs its build program in its own tool
@@ -1960,11 +1703,6 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
                 / (dirSafe(pkg.manifest.package.name) + "@" + pkg.manifest.package.version);
             bpEnv.outDir       = state.programOutDir(state.workRoot, pkg.manifest, bpEnv.features);
             bpEnv.genBase      = bpEnv.outDir;
-            // What the program imports is kept once for the workspace, and in the
-            // global cache where it comes from the engine or the index (#748).
-            bpEnv.moduleStore  = state.workRoot / "target" / ".build-mcpp" / "host-modules";
-            if (state.cacheMode == CacheMode::Global)
-                bpEnv.moduleCacheRoot = mcpp::home::cache_root();
             // mcpp#241: this package's resolved dependencies as
             // MCPP_DEP_<NAME>_DIR, from the authoritative edge graph (no
             // name-guessing); covers feature-activated deps too
@@ -1978,12 +1716,16 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
             // #355: the host tools THIS package requested (resolved above).
             if (auto tit = state.toolEnvByConsumer.find(i); tit != state.toolEnvByConsumer.end())
                 bpEnv.toolPaths = tit->second;
-            bpEnv.hostModules = state.hostModulesByConsumer.count(i)
-                ? state.hostModulesByConsumer.at(i)
-                : decltype(bpEnv.hostModules){};
-            bpEnv.dormantFeatures = state.dormantFeaturesByConsumer.count(i)
-                ? state.dormantFeaturesByConsumer.at(i)
-                : decltype(bpEnv.dormantFeatures){};
+            // The program, as the build programs' graph compiled it (mcpp#797).
+            auto program = build_program_binary(state, i);
+            if (!program && !state.overrides.plan_only) return std::unexpected(program.error());
+            if (program) {
+                bpEnv.programBinary   = program->path;
+                bpEnv.programIdentity = program->identity;
+                bpEnv.programCompile  = program->compile;
+            } else {
+                bpEnv.programError = program.error();
+            }
             auto& bcDep = pkg.manifest.buildConfig;
             const auto mark = state.markDirectiveTail(pkg.manifest);
             const auto ldN = bcDep.ldflags.size();
@@ -2276,7 +2018,7 @@ std::expected<void, std::string> phase6_features_and_host_tools(PrepareState& st
     if (auto r = step6_device_extensions_and_rules(state); !r) return std::unexpected(r.error());
     if (auto r = step6_xlings_workspace_from_graph(state); !r) return std::unexpected(r.error());
 
-    auto toolRequests = step6_host_module_registration(state);
+    auto toolRequests = step6_tool_requests(state);
     if (!toolRequests) return std::unexpected(toolRequests.error());
     // The root build program's toolchain phase (mcpp#755): its host modules
     // are registered, and nothing that depends on the build toolchain has

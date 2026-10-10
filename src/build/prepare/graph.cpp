@@ -9,6 +9,7 @@ import mcpp.build.prepare_inputs;
 import std;
 import mcpp.diag;
 import mcpp.log;
+import mcpp.build.engine_package;
 import mcpp.build.refusal;
 import mcpp.xlings.address_set;
 import mcpp.build.version_floor;
@@ -818,6 +819,16 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
             }
         }
 
+        // THE BUILD PROGRAMS' GRAPH TAKES EACH PACKAGE AT THE VERSION THE BUILD
+        // THAT ASKED RESOLVED (mcpp#797): one package, one version, across the
+        // two graphs, as the lock records it.
+        if (!state.overrides.resolution_pins.empty() && !spec.isPath() && !spec.isGit()) {
+            const auto shortName = spec.shortName.empty() ? name : spec.shortName;
+            const auto k = spec.namespace_.empty() ? shortName : spec.namespace_ + "." + shortName;
+            if (auto pin = state.overrides.resolution_pins.find(k);
+                pin != state.overrides.resolution_pins.end())
+                spec.version = "=" + pin->second;
+        }
         // Pin SemVer constraint before dedup/fetch.
         if (auto r = state.resolveSemver(spec, name); !r) {
             return std::unexpected(r.error());
@@ -1824,10 +1835,27 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
                          : sourceKind == "path" ? ctx.dep_root.string()
                          : std::string{},
         });
+        // The engine interface (mcpp#797) is addressed in the dependency cache
+        // as it always was: by the engine's name and version, in the global
+        // cache, because its directory is immutable for that version.
+        if (sourceKind == "path" && mcpp::build::engine::is_engine_package(ctx.dep_root)) {
+            auto& ident = state.dep_cache_identities.back();
+            ident.indexName   = std::string(mcpp::build::engine::kCacheIndex);
+            ident.packageName = std::string(mcpp::build::engine::kCachePackage);
+            ident.version     = state.dep_manifests.back()->package.version;
+            ident.sourceKind  = "version";
+            ident.sourceRef.clear();
+        }
         const auto depPackageIndex = state.packages.size();
         auto depPackage = makePackageRoot(state, ctx.dep_root, *state.dep_manifests.back());
         if (!depPackage) return std::unexpected(depPackage.error());
         if (selectedMember) {
+            // P3 (mcpp#797): a selected member that is a build plugin.
+            if (auto r = configure_build_plugin_root(
+                    state, *state.dep_manifests.back(), ctx.dep_root,
+                    feature_closure(*state.dep_manifests.back(), {}));
+                !r)
+                return std::unexpected(r.error());
             depPackage->selectedMember = true;
             depPackage->memberProducts = state.selectedMembers.at(*selectedMember);
         }
@@ -1934,6 +1962,23 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
                                 childReq.version, selfIdx, ctx.dep_root,
                                 item.devOnly, /*buildOnly=*/true,
                                 /*fromBuildTable=*/true});
+            // COMPAT(plugin-imports-from-build-dependencies): before mcpp#797 a
+            // build plugin's library was compiled inside its consumer's build
+            // program, so a package it listed in its own
+            // `[build-dependencies]` with `host-module = true` was importable
+            // from the library too. In the build programs' graph that library
+            // is an ordinary package, and its library's dependencies are its
+            // `[dependencies]`: the entry is read as one as well. Reported at
+            // the scan, where a unit of the library is seen to import it.
+            if (state.overrides.build_program_graph && child_spec.hostModuleDeclared
+                && child_spec.hostModule
+                && !state.dep_manifests.back()->dependencies.contains(child_name)) {
+                state.compatLibraryEdges.push_back({selfIdx, child_name});
+                state.worklist.push_back({child_name, childReq,
+                                    thisDepLabel + " (build-dep, read as a dependency)",
+                                    childReq.version, selfIdx, ctx.dep_root,
+                                    item.devOnly, item.buildOnly});
+            }
         }
     return {};
 }

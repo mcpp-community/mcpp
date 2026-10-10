@@ -359,8 +359,8 @@ void fill_xpkg_env(PrepareState& state, mcpp::build::BuildProgramEnv& e,
     // Their own active features, not the consumer's: the consumer asked for
     // `features = ["rules-cuda"]` on the edge, and that is what decides which
     // of the rule's `[feature-xlings]` tables apply.
-    if (auto pit = state.hostModuleProvidersByConsumer.find(consumer);
-        pit != state.hostModuleProvidersByConsumer.end()) {
+    if (auto pit = state.buildProgramLibrariesByConsumer.find(consumer);
+        pit != state.buildProgramLibrariesByConsumer.end()) {
         for (auto q : pit->second) {
             if (q >= state.packages.size()) continue;
             auto const& pm = state.packages[q].manifest;
@@ -369,8 +369,8 @@ void fill_xpkg_env(PrepareState& state, mcpp::build::BuildProgramEnv& e,
                     declared.push_back(address);
             };
             for (auto const& address : pm.xlings.deps) want(address);
-            const auto& pf = q < state.activeFeaturesByPackage.size()
-                ? state.activeFeaturesByPackage[q] : std::vector<std::string>{};
+            const auto& pf = q < state.buildProgramFeaturesByPackage.size()
+                ? state.buildProgramFeaturesByPackage[q] : std::vector<std::string>{};
             for (auto const& f : pf)
                 if (auto it = pm.xlings.featureDeps.find(f); it != pm.xlings.featureDeps.end())
                     for (auto const& address : it->second) want(address);

@@ -157,6 +157,14 @@ validate_module_extensions(std::span<const std::string> extras);
 
 SourceKind classify(const std::filesystem::path& p, const ExtensionTable& t);
 
+// A BUILD PROGRAM'S SOURCE (`build.mcpp`) is a C++ translation unit whose
+// extension no driver knows (mcpp#797). It is classified `Cxx`, and its
+// compile and scan state the language explicitly (`-x c++`, `/TP`), which a
+// driver would otherwise hand the file to the linker as a script. Only a
+// plan's entry point can be one: the default source globs never match it.
+inline constexpr std::string_view kBuildProgramExtension = ".mcpp";
+bool needs_explicit_cxx_language(const std::filesystem::path& p);
+
 // ─── Predicates derived from the kind ────────────────────────────────────
 //
 // These exist so that a consumer interested in ONE axis does not write its own
@@ -458,6 +466,7 @@ SourceKind classify(const std::filesystem::path& p, const ExtensionTable& t) {
     for (auto const& m : t.moduleInterface)
         if (ext == m) return SourceKind::ModuleInterface;
     if (contains(kCxxExtensions, ext))    return SourceKind::Cxx;
+    if (ext == kBuildProgramExtension)    return SourceKind::Cxx;
     if (contains(kCExtensions, ext))      return SourceKind::C;
     if (contains(kGasExtensions, ext))    return SourceKind::GasAsm;
     if (contains(kNasmExtensions, ext))   return SourceKind::NasmAsm;
@@ -470,6 +479,10 @@ SourceKind classify(const std::filesystem::path& p, const ExtensionTable& t) {
     if (contains(kHeaderExtensions, ext)
         || contains(kDeviceHeaderExtensions, ext)) return SourceKind::Header;
     return SourceKind::Other;
+}
+
+bool needs_explicit_cxx_language(const std::filesystem::path& p) {
+    return p.extension() == kBuildProgramExtension;
 }
 
 bool produces_bmi(SourceKind k) { return k == SourceKind::ModuleInterface; }

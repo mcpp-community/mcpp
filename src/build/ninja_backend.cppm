@@ -2816,6 +2816,13 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                 while (!lang.empty() && lang.front() == ' ')
                     lang.remove_prefix(1);
                 append(std::format("  unit_lang = {}\n", lang));
+            } else if (mcpp::needs_explicit_cxx_language(cu.source)
+                       && !traits.moduleImplLangFlag.empty()) {
+                // `build.mcpp`: an extension no driver knows (mcpp#797).
+                auto lang = traits.moduleImplLangFlag;
+                while (!lang.empty() && lang.front() == ' ')
+                    lang.remove_prefix(1);
+                append(std::format("  unit_lang = {}\n", lang));
             }
         }
         append("\n");

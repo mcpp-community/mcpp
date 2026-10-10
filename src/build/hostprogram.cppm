@@ -12,9 +12,8 @@
 //
 // WHAT IS LEFT HERE IS THE TEXT, AND THE COMPILE OF IT IS ELSEWHERE. The bundled
 // module's source and the question "does this program import that module" stay;
-// `build_mcpp_module` and `build_host_module`, which compiled the module and the
-// host modules into each program's own directory, moved to
-// mcpp.build.host_module_compile (#748), which keeps them in a store by key.
+// the text is written as a package of the build programs' graph by
+// mcpp.build.engine_package, and compiled by that graph's plan (mcpp#797).
 
 export module mcpp.build.hostprogram;
 

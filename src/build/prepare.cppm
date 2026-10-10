@@ -431,6 +431,9 @@ export struct DepSourceRoot {
 };
 
 export struct BuildContext {
+    // The root is a build plugin, planned in the build-program configuration
+    // (mcpp#797, SPEC-007 P3). `mcpp pack` refuses it (P5).
+    bool                            buildPluginRoot = false;
     // THE PER-MACHINE JOB DEFAULT, carried so it is read once.
     //
     // `[build] default_jobs` in `$MCPP_HOME/config.toml` is the machine's
@@ -780,6 +783,16 @@ export struct BuildOverrides {
     // mcpp.build.execute imported it). A pointer keeps the exported layout
     // trivial, and it also avoids copying the manifest per tool build.
     std::shared_ptr<const mcpp::manifest::Manifest> preloaded_manifest;
+    // THE BUILD PROGRAMS' GRAPH (mcpp#797). Set on the sub-build that compiles
+    // a build's programs (prepare/host_graph.cpp). Every package it shares
+    // with the build that asked is taken at the version that build resolved
+    // (`<namespace>.<name>` -> version): one package has one version across
+    // the two graphs, as the lock records. `build_program_graph` marks every
+    // package the sub-build loads as a build-program instance, which is what
+    // the compatibility reading `plugin-imports-from-build-dependencies`
+    // applies to.
+    std::map<std::string, std::string> resolution_pins;
+    bool build_program_graph = false;
     // Nested source/tool builds inherit the consumer root's local development
     // OS. A dependency's own [xlings].subos is never consulted or propagated.
     std::shared_ptr<const mcpp::xlings::runtime::RuntimeSelection>

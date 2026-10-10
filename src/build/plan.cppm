@@ -89,9 +89,13 @@ struct CompileUnit {
     bool is_implementation_partition() const {
         return declaration == mcpp::modgraph::ModuleDeclaration::ImplementationPartition;
     }
+    // A build program's `.mcpp` source takes the module rule too: that rule
+    // states the unit's language per edge (`module_lang`), which a `.mcpp`
+    // file needs whether or not it imports anything (mcpp#797).
     bool uses_module_rule() const {
         return kind == mcpp::SourceKind::ModuleInterface
-            || (kind == mcpp::SourceKind::Cxx && !providesModule.empty());
+            || (kind == mcpp::SourceKind::Cxx && !providesModule.empty())
+            || mcpp::needs_explicit_cxx_language(source);
     }
     // This unit's outputs are already in the global cache: the backend emits
     // `stage_file` edges from the cache instead of a compile edge (and skips

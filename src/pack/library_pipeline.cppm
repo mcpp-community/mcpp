@@ -163,6 +163,15 @@ export int build_and_pack_library(const std::string& targetName,
         ov.features         = opts.features;
         auto ctx = mcpp::build::prepare_build(false, /*includeDevDeps=*/false, {}, ov);
         if (!ctx) { mcpp::ui::error(ctx.error()); return 2; }
+        // P5 (mcpp#797): a build plugin is distributed as source; its BMIs
+        // are the build program's toolchain's and travel nowhere.
+        if (ctx->buildPluginRoot) {
+            mcpp::ui::error(std::format(
+                "'{}' is a build plugin (its library imports mcpp.core) and is distributed as "
+                "source: build programs compile it with their own toolchain. Publish it "
+                "(`mcpp publish`) instead of packing it.", ctx->manifest.package.name));
+            return 2;
+        }
 
         // ── the target, and what its kind means here ──────────────────
         // In a workspace plan the package is its one selected member

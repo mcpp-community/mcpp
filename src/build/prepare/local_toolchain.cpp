@@ -342,15 +342,16 @@ std::expected<void, std::string> step6_toolchain_phase(PrepareState& state) {
     // one program with two contracts, and one record would make each
     // invalidate the other on every build.
     bpEnv.artifactsDir = state.workRoot / "target" / ".build-mcpp" / "toolchain-phase";
-    bpEnv.moduleStore  = state.workRoot / "target" / ".build-mcpp" / "host-modules";
-    if (state.cacheMode == CacheMode::Global)
-        bpEnv.moduleCacheRoot = mcpp::home::cache_root();
     bpEnv.features = feature_closure(*state.m, parse_feature_request(state.overrides.features));
     state.fillDepDirs(bpEnv, 0, nullptr);
-    bpEnv.hostModules = state.hostModulesByConsumer.count(0u)
-        ? state.hostModulesByConsumer.at(0u) : decltype(bpEnv.hostModules){};
-    bpEnv.dormantFeatures = state.dormantFeaturesByConsumer.count(0u)
-        ? state.dormantFeaturesByConsumer.at(0u) : decltype(bpEnv.dormantFeatures){};
+    // The program, compiled by the build programs' graph with the bootstrap
+    // toolchain (mcpp#797).
+    auto program = build_program_binary(state, 0);
+    if (!program) return std::unexpected(std::format("the root build program's toolchain phase: {}",
+                                                     program.error()));
+    bpEnv.programBinary   = program->path;
+    bpEnv.programIdentity = program->identity;
+    bpEnv.programCompile  = program->compile;
     bpEnv.phase = "toolchain";
     // A copy: the first pass is discarded, and what the phase states is the
     // whole of what is carried to the second.

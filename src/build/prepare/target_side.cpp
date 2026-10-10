@@ -1617,11 +1617,6 @@ static std::expected<void, std::string> step9_root_build_program(PrepareState& s
         // helper straight into it. Same value as the default when work_dir is
         // unset, so an ordinary build is unchanged.
         bpEnv.artifactsDir = state.workRoot / "target" / ".build-mcpp";
-        // What the program imports is kept once for the workspace, and in the
-        // global cache where it comes from the engine or the index (#748).
-        bpEnv.moduleStore  = bpEnv.artifactsDir / "host-modules";
-        if (state.cacheMode == CacheMode::Global)
-            bpEnv.moduleCacheRoot = mcpp::home::cache_root();
         // Root mode keeps genBase empty: a relative `generated=` from the ROOT
         // package resolves against the package root (the documented contract),
         // not against OUT_DIR.
@@ -1652,12 +1647,16 @@ static std::expected<void, std::string> step9_root_build_program(PrepareState& s
         // #355: the host tools the ROOT package requested (consumer index 0).
         if (auto tit = state.toolEnvByConsumer.find(0u); tit != state.toolEnvByConsumer.end())
             bpEnv.toolPaths = tit->second;
-        bpEnv.hostModules = state.hostModulesByConsumer.count(0u)
-            ? state.hostModulesByConsumer.at(0u)
-            : decltype(bpEnv.hostModules){};
-        bpEnv.dormantFeatures = state.dormantFeaturesByConsumer.count(0u)
-            ? state.dormantFeaturesByConsumer.at(0u)
-            : decltype(bpEnv.dormantFeatures){};
+        // The program, as the build programs' graph compiled it (mcpp#797).
+        if (auto program = build_program_binary(state, 0); program) {
+            bpEnv.programBinary   = program->path;
+            bpEnv.programIdentity = program->identity;
+            bpEnv.programCompile  = program->compile;
+        } else if (!state.overrides.plan_only) {
+            return std::unexpected(program.error());
+        } else {
+            bpEnv.programError = program.error();
+        }
         // #647 E1: THE RESOLVED GRAPH, FOR THE ROOT'S PROGRAM ONLY.
         //
         // Every package, dependencies before the packages that request them
@@ -2044,110 +2043,27 @@ static std::expected<void, std::string> step9_member_build_programs(PrepareState
         state.fillXpkgDirs(bpEnv, pkg.manifest, i);
         if (auto tit = state.toolEnvByConsumer.find(i); tit != state.toolEnvByConsumer.end())
             bpEnv.toolPaths = tit->second;
-        bpEnv.hostModules = state.hostModulesByConsumer.count(i)
-            ? state.hostModulesByConsumer.at(i) : decltype(bpEnv.hostModules){};
-        bpEnv.dormantFeatures = state.dormantFeaturesByConsumer.count(i)
-            ? state.dormantFeaturesByConsumer.at(i) : decltype(bpEnv.dormantFeatures){};
+        // The program, as the build programs' graph compiled it (mcpp#797).
+        if (auto program = build_program_binary(state, i); program) {
+            bpEnv.programBinary   = program->path;
+            bpEnv.programIdentity = program->identity;
+            bpEnv.programCompile  = program->compile;
+        } else {
+            bpEnv.programError = program.error();
+        }
         auto graph = write_graph_document(state, i, bpEnv.artifactsDir);
         if (!graph) return std::unexpected(graph.error());
         bpEnv.graphFile   = graph->first;
         bpEnv.graphDigest = graph->second;
-        // What the program imports is kept once for the workspace, so that a host
-        // module several members import is compiled once for all of them, and in
-        // the global cache where it comes from the engine or the index (#748).
-        bpEnv.moduleStore  = state.workRoot / "target" / ".build-mcpp" / "host-modules";
-        if (state.cacheMode == CacheMode::Global)
-            bpEnv.moduleCacheRoot = mcpp::home::cache_root();
         return bpEnv;
     };
 
-    // THE COMPILES COME FIRST, AT THE SAME TIME (#748, B2). What a program needs
-    // before it runs is a compile, and a compile depends on no other program's
-    // run: only the runs have an order. So every program that needs compiling is
-    // compiled now, up to the build's job count at once, and the programs are then
-    // run in the order above, each taking the compile made for it.
-    //
-    // What the compile phase leaves out is what keeps the plan the serial build's
-    // plan: it applies no directive, reports no outcome, states no warning and
-    // writes no program cache. (It writes what the compile reads: the graph
-    // document and a program synthesised from rules.) The runs below do the
-    // rest, in the same order as before, so `build.ninja` and the directives
-    // applied are byte for byte the serial build's. A program's environment is computed again at its turn, from
-    // the plan as the programs before it left it; the compile is used only when
-    // it was made for what that computes, and is made again otherwise.
-    std::vector<std::size_t> turns;   // the programs, in the order they run
-    for (auto const i : order)
-        if (hasProgram(i)) turns.push_back(i);
-    std::vector<mcpp::build::PrecompiledProgram> precompiled(turns.size());
-    if (turns.size() >= 2) {
-        if (auto host = state.host_tc_for_build_program()) {
-            std::vector<std::optional<mcpp::build::BuildProgramEnv>> envs(turns.size());
-            for (std::size_t k = 0; k < turns.size(); ++k)
-                if (auto e = program_env(turns[k])) envs[k] = std::move(*e);
-
-            int globalDefaultJobs = 0;
-            if (auto c = state.get_cfg(/*requireBootstrap=*/false))
-                globalDefaultJobs = static_cast<int>((*c)->defaultJobs);
-            int jobs = mcpp::build::schedule::resolve_jobs(*state.m, {}, globalDefaultJobs);
-            if (jobs <= 0)
-                jobs = mcpp::platform::capacity::recommended_jobs(
-                    mcpp::platform::capacity::host_capacity());
-            const std::size_t workers = std::min<std::size_t>(
-                turns.size(), static_cast<std::size_t>(std::max(jobs, 1)));
-
-            std::atomic<std::size_t> next{0};
-            // The first program, in the order they run, whose compile failed. A
-            // program after it is never reached by a build that stops at the
-            // first failure, so its compile is not started.
-            std::atomic<std::size_t> firstFailure{turns.size()};
-            auto work = [&] {
-                for (;;) {
-                    const auto k = next.fetch_add(1);
-                    if (k >= turns.size()) return;
-                    if (k > firstFailure.load() || !envs[k]) continue;
-                    auto& pkg = state.packages[turns[k]];
-                    try {
-                        precompiled[k] = mcpp::build::precompile_build_program(
-                            pkg.manifest, pkg.root, host->first, host->second,
-                            pkg.manifest.cppStandard, *envs[k]);
-                    } catch (const std::exception& ex) {
-                        // A compile that threw is a compile that failed. Its
-                        // empty stamp matches nothing, so the program's turn
-                        // compiles it again, alone, and reports what that
-                        // compile says.
-                        precompiled[k] = {};
-                        precompiled[k].compiled = true;
-                        precompiled[k].stamp    = {};
-                        precompiled[k].error    = std::format(
-                            "build.mcpp failed to compile: {}", ex.what());
-                    }
-                    if (precompiled[k].compiled && !precompiled[k].error.empty()) {
-                        auto seen = firstFailure.load();
-                        while (k < seen && !firstFailure.compare_exchange_weak(seen, k)) {}
-                    }
-                }
-            };
-            const auto phaseBegan = std::chrono::steady_clock::now();
-            std::vector<std::thread> pool;
-            for (std::size_t w = 1; w < workers; ++w) {
-                // A thread the system cannot start is one fewer worker, and the
-                // compiles are shared by the ones that did.
-                try { pool.emplace_back(work); } catch (const std::system_error&) { break; }
-            }
-            work();
-            for (auto& t : pool) t.join();
-            // The compiles overlapped, so the time they took is the phase's wall
-            // time, stated once; each program's line still shows its own.
-            mcpp::build::progress::programs_compiled(
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - phaseBegan));
-        }
-    }
-
-    std::size_t turn = 0;
+    // THE COMPILES WERE MADE TOGETHER: every program this plan runs is compiled
+    // in one build of the build programs' graph, before the dependencies'
+    // programs run (features.cpp, mcpp#797). The programs run here, one at a
+    // time, in the order above.
     for (auto const i : order) {
         if (!hasProgram(i)) continue;
-        const auto& made = precompiled[turn++];
         auto& pkg = state.packages[i];
         auto host = state.host_tc_for_build_program();
         if (!host) return std::unexpected(host.error());
@@ -2165,7 +2081,7 @@ static std::expected<void, std::string> step9_member_build_programs(PrepareState
             pkg.manifest.package.name, [&] {
                 return mcpp::build::run_build_program(
                     pkg.manifest, pkg.root, host->first, host->second,
-                    pkg.manifest.cppStandard, bpEnv, made.compiled ? &made : nullptr);
+                    pkg.manifest.cppStandard, bpEnv);
             });
         if (!bp) {
             if (!state.overrides.plan_only)

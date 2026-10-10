@@ -243,6 +243,15 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         std::string url, refKind, ref;
     };
 
+// A build program as its graph compiled it (host_graph.cpp, mcpp#797): where
+// the binary is, the identity it was compiled from -- which the program's run
+// cache keys on -- and how long the compile took when this build made it.
+struct BuildProgramBinary {
+    std::filesystem::path     path;
+    std::string               identity;
+    std::chrono::milliseconds compile{0};
+};
+
 // PrepareState carries prepare_build's working state across the phases it
 // decomposes into (see the layout comment at the top of prepare.cppm). Each
 // phase is an ordinary function taking `PrepareState&`; the state itself is
@@ -580,9 +589,6 @@ struct PrepareState {
     // has none). The build program's graph activates the same set; payloads a
     // feature declares serve this build in either instance.
     std::vector<std::vector<std::string>> buildProgramFeaturesByPackage;
-    // #734 E7: per consumer, the dormant features of its host-module providers.
-    std::map<std::size_t, std::vector<mcpp::build::BuildProgramEnv::DormantFeature>>
-        dormantFeaturesByConsumer;
     std::map<std::string, std::string> xlingsWinner;
 
     // ── Sources (mcpp#755): see sources.cpp ─────────────────────────────────
@@ -628,7 +634,10 @@ struct PrepareState {
     std::vector<DependencyEdge> dependencyEdges;
     std::vector<GraphRequest> graphRequests;
     std::map<std::size_t, DependencyLinkForm> dependencyLinkForms;
-    std::map<std::size_t, std::vector<std::size_t>> hostModuleProvidersByConsumer;
+    // Every package of a consumer's build program's graph: the libraries the
+    // program uses and everything they reach (mcpp#797). Their payloads are
+    // what the program asks `xpkg_dir` about.
+    std::map<std::size_t, std::vector<std::size_t>> buildProgramLibrariesByConsumer;
     std::string runnerProvider;
     std::map<std::string, std::string> namedRunnerProvider;
     std::vector<std::string> rootReq;
@@ -661,6 +670,17 @@ struct PrepareState {
     std::function<std::map<std::string, mcpp::build::provisions::BareBinding>(std::size_t)>
         bareBindingsFor;
     std::function<bool(std::size_t)> compilesHere;
+    // The build programs this prepare compiled or found current, by package
+    // index (`ensure_build_programs`).
+    std::map<std::size_t, BuildProgramBinary> buildProgramBinaries;
+    // COMPAT(plugin-imports-from-build-dependencies): `[build-dependencies]`
+    // entries a build-program instance's library also reads as dependencies,
+    // by the consumer's dep_manifests slot and the key it wrote. The scan
+    // reports those its units import.
+    struct CompatLibraryEdge { std::size_t consumerDepIndex; std::string key; };
+    std::vector<CompatLibraryEdge> compatLibraryEdges;
+    // The roots (package directories) planned as build plugins (P3).
+    std::set<std::string> buildPluginRoots;
     // A use of a deprecated reading (mcpp.pm.compat.registry) by the manifest
     // of package `i`: warned where that manifest can be edited -- the root, a
     // workspace member, a path package outside the package store -- and
@@ -735,8 +755,6 @@ struct PrepareState {
     std::map<ResolvedKey, ResolvedRecord> resolved;
     std::map<std::size_t, std::vector<std::pair<std::string, std::string>>>
         toolEnvByConsumer;
-    std::map<std::size_t, std::vector<mcpp::build::BuildProgramEnv::HostModuleRef>>
-        hostModulesByConsumer;
     std::function<void(mcpp::modgraph::PackageRoot&, const mcpp::manifest::Manifest&,
                         const mcpp::build::directives::Mark&)>
         foldDirectiveTailIntoPrivateBuild;
@@ -914,6 +932,23 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                            const std::filesystem::path& legacyStampRoot,
                            std::string_view label);
 std::string with_index_cause(std::string msg);
+
+// ── The build programs' graph (mcpp#797), defined in host_graph.cpp ───────
+// Compile, in one build of the build programs' graph, every program of
+// `packages` whose identity moved; a current one is recorded and not planned.
+std::expected<void, std::string>
+ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packages);
+// The program of package `i`, compiled first when it is not current. An empty
+// path: the package has no program.
+std::expected<BuildProgramBinary, std::string>
+build_program_binary(PrepareState& state, std::size_t i);
+// P3: plan a build plugin built as a root in the build-program configuration.
+std::expected<void, std::string>
+configure_build_plugin_root(PrepareState& state, mcpp::manifest::Manifest& m,
+                            const std::filesystem::path& root,
+                            const std::vector<std::string>& features);
+// P1, P4: refuse a build-plugin unit in a target instance (after the scan).
+std::expected<void, std::string> refuse_plugin_units_in_target(PrepareState& state);
 
 // ── Sources (mcpp#755), defined in sources.cpp ─────────────────────────────
 // Record (or replace) the decision for `d.subject`; a non-default source is
