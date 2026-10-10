@@ -6,6 +6,7 @@ import std;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
+import mcpp.modgraph.library_interface;
 
 export namespace mcpp::modgraph {
 
@@ -87,31 +88,29 @@ ValidateReport validate(const Graph&                    g,
         }
     }
 
-    // 2. modules.exports vs scanner result.
-    // Only checks the primary manifest's package — dep packages have their
-    // own [modules].exports validated by their own builds.
+    // 2. `[modules] exports` (a Form B descriptor's `modules`) is an
+    //    ASSERTION about the package's public modules (mcpp#797, SPEC-008):
+    //    the interface root and what it re-exports, or, with no root, every
+    //    exported module. Only the primary manifest's package is checked --
+    //    a dependency's assertion is its own build's to check.
     if (!manifest.modules.exports_.empty()) {
         std::set<std::string> declared(manifest.modules.exports_.begin(),
                                        manifest.modules.exports_.end());
-        std::set<std::string> actual;
-        for (auto& u : g.units) {
-            if (u.provides && u.packageName == manifest.package.name) {
-                auto base = u.provides->logicalName.substr(0, u.provides->logicalName.find(':'));
-                actual.insert(base);
-            }
-        }
-        // Any actual module that isn't in declared is a violation.
-        for (auto& m : actual) {
+        const auto iface = library_interface(g, manifest, projectRoot,
+                                             manifest.package.name, {});
+        for (auto& m : iface.publicModules) {
             if (!declared.contains(m)) {
                 r.errors.push_back({{},
-                    std::format("module '{}' is exported by code but not listed in [modules].exports", m)});
+                    std::format("module '{}' is a public module of this package but not listed "
+                                "in [modules].exports", m)});
             }
         }
         if (manifest.modules.strict) {
             for (auto& m : declared) {
-                if (!actual.contains(m)) {
+                if (!iface.publicModules.contains(m)) {
                     r.errors.push_back({{},
-                        std::format("module '{}' declared in [modules].exports but never exported (strict)", m)});
+                        std::format("module '{}' declared in [modules].exports but not a public "
+                                    "module of this package (strict)", m)});
                 }
             }
         }

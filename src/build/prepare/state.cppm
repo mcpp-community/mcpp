@@ -681,6 +681,8 @@ struct PrepareState {
     std::vector<CompatLibraryEdge> compatLibraryEdges;
     // The roots (package directories) planned as build plugins (P3).
     std::set<std::string> buildPluginRoots;
+    // The build programs' graphs planned for description (`plan_only`).
+    std::vector<BuildProgramGraph> buildProgramGraphs;
     // A use of a deprecated reading (mcpp.pm.compat.registry) by the manifest
     // of package `i`: warned where that manifest can be edited -- the root, a
     // workspace member, a path package outside the package store -- and

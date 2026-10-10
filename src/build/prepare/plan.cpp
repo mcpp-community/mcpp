@@ -1868,6 +1868,7 @@ static std::expected<void, std::string> step13_empty_link_check(PrepareState& st
 std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     BuildContext ctx;
     ctx.buildPluginRoot = !state.buildPluginRoots.empty();
+    ctx.buildProgramGraphs = state.buildProgramGraphs;
     ctx.strict      = state.overrides.strict;
     ctx.manifest    = *state.m;
     ctx.tc          = *state.tc;

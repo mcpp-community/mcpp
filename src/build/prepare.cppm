@@ -430,7 +430,22 @@ export struct DepSourceRoot {
     bool operator==(const DepSourceRoot&) const = default;
 };
 
+export struct BuildContext;
+
+// A BUILD PROGRAMS' GRAPH a prepare planned (mcpp#797), for the readers that
+// describe it: `mcpp emit build-database` lists its units (SPEC-005 v1.8).
+// `programOf` maps each member of the graph to the package whose build program
+// it is.
+export struct BuildProgramGraph {
+    std::shared_ptr<const BuildContext>   ctx;
+    std::filesystem::path                 dir;
+    std::map<std::string, std::string>    programOf;
+};
+
 export struct BuildContext {
+    // The build programs' graphs this prepare planned to describe them
+    // (`plan_only`; empty otherwise).
+    std::vector<BuildProgramGraph>  buildProgramGraphs;
     // The root is a build plugin, planned in the build-program configuration
     // (mcpp#797, SPEC-007 P3). `mcpp pack` refuses it (P5).
     bool                            buildPluginRoot = false;

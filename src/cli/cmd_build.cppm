@@ -746,6 +746,15 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
     for (std::size_t i = 0; i < contexts.size(); ++i) {
         members.push_back({&contexts[i], configurationPrefix(contexts[i]), workDirs[i],
                            testDiscovery[i]});
+        // The build programs' graphs of this plan (mcpp#797, SPEC-005 v1.8).
+        for (auto const& g : contexts[i].buildProgramGraphs) {
+            mcpp::build::database::Member m;
+            m.ctx = g.ctx.get();
+            m.workDir = g.dir;
+            m.buildPrograms = true;
+            m.programOf = g.programOf;
+            members.push_back(std::move(m));
+        }
         if (!mcpp::build::declared_program_inputs(workDirs[i]).empty())
             ranBuildPrograms = true;
         for (auto const& sp : contexts[i].sourcePackages) {

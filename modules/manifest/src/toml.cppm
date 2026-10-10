@@ -5243,6 +5243,19 @@ std::filesystem::path resolve_lib_root_path(const Manifest& manifest,
                                             const std::filesystem::path& projectRoot) {
     auto candidates = lib_root_candidates(manifest);
     std::error_code ec;
+    // A Form B `lib` names the file below the archive's wrapping directory
+    // the way its `sources` and `include_dirs` do: `*/` stands for that one
+    // directory, whatever the archive calls it (mcpp#797).
+    if (!manifest.lib.path.empty()) {
+        auto it = manifest.lib.path.begin();
+        if (it != manifest.lib.path.end() && *it == "*") {
+            std::filesystem::path rest;
+            for (++it; it != manifest.lib.path.end(); ++it) rest /= *it;
+            for (auto const& d : std::filesystem::directory_iterator(projectRoot, ec))
+                if (d.is_directory(ec) && std::filesystem::is_regular_file(d.path() / rest, ec))
+                    return d.path().lexically_relative(projectRoot) / rest;
+        }
+    }
     for (auto const& rel : candidates)
         if (std::filesystem::is_regular_file(projectRoot / rel, ec)) return rel;
     // None on disk: hand back the conventional first candidate so the caller's

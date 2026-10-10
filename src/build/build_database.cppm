@@ -58,6 +58,15 @@ struct Member {
     // per package the plan tests (each member of a group plan): a new file
     // matching it is a new test target, and so a new unit in the document.
     std::vector<std::pair<std::filesystem::path, std::vector<std::string>>> tests;
+    // A build programs' graph (mcpp#797, SPEC-005 v1.8): its sets are named by
+    // the reserved suffixes -- `<package>:build` for a build program (from
+    // `programOf`, member to package), `<package>:host` for a library of the
+    // build-program configuration, `mcpp:core` for the engine interface,
+    // `mcpp:std:host` for its standard library -- carry the configuration
+    // `build-program`, and enter the S1 document only, never the JSON
+    // Compilation Database.
+    bool                               buildPrograms = false;
+    std::map<std::string, std::string> programOf;
 };
 
 struct Rendered {
@@ -414,8 +423,21 @@ Rendered render(std::span<const Member> members,
             const std::string kind = isTest ? "test"
                                    : subject != subjectByName.end() ? target_kind(*subject->second)
                                    : "library";
-            auto& set = set_for(member.setPrefix + package + (isTest ? ":test" : ""),
-                                package, kind);
+            std::string setName = member.setPrefix + package + (isTest ? ":test" : "");
+            std::string setKind = kind;
+            if (member.buildPrograms) {
+                if (auto it = member.programOf.find(package); it != member.programOf.end()) {
+                    setName = it->second + ":build";
+                    setKind = "executable";
+                } else if (package == "mcpp.core") {
+                    setName = "mcpp:core";
+                    setKind = "library";
+                } else {
+                    setName = package + ":host";
+                    setKind = "library";
+                }
+            }
+            auto& set = set_for(setName, package, setKind);
             for (auto const* dirs : {&cu.localIncludeDirs, &cu.localIncludeDirsAfter})
                 for (auto const& dir : *dirs)
                     if (relative_to(dir, generatedTree))
@@ -424,7 +446,8 @@ Rendered render(std::span<const Member> members,
             if (!cu.providesModule.empty()) provides[cu.providesModule] = "";
             nlohmann::json requires_ = nlohmann::json::array();
             for (auto const& name : cu.imports) requires_.push_back(name);
-            if (describedCommands.insert(inv.file + '\x1f' + inv.output).second)
+            if (!member.buildPrograms
+                && describedCommands.insert(inv.file + '\x1f' + inv.output).second)
                 r.compileCommands.push_back(nlohmann::json{
                 {"directory", inv.directory},
                 {"file",      inv.file},
@@ -451,13 +474,16 @@ Rendered render(std::span<const Member> members,
         // (P1). S1-12-1: they are translation units of the build like any
         // other, so `--spec compile-commands` lists them too.
         if (!ctx.plan.stdModuleUnits.empty()) {
-            auto& set = set_for(member.setPrefix + std::string(kStdSetName),
+            auto& set = set_for(member.buildPrograms
+                                    ? std::string(kStdSetName) + ":host"
+                                    : member.setPrefix + std::string(kStdSetName),
                                 std::string(kStdSetName), "library");
             for (auto const& unit : ctx.plan.stdModuleUnits) {
                 const auto sourceStr = native_string(unit.source);
                 const auto objectStr = native_string(unit.object);
                 const auto workDirStr = native_string(unit.workDirectory);
-                if (describedCommands.insert(sourceStr + '\x1f' + objectStr).second)
+                if (!member.buildPrograms
+                    && describedCommands.insert(sourceStr + '\x1f' + objectStr).second)
                     r.compileCommands.push_back(nlohmann::json{
                     {"directory", workDirStr},
                     {"file",      sourceStr},
@@ -547,7 +573,8 @@ Rendered render(std::span<const Member> members,
                 {"translation-units", std::move(set.units)},
                 {"ide", {
                     {"toolchain",     tcId},
-                    {"configuration", ctx.profile},
+                    {"configuration", member.buildPrograms ? std::string("build-program")
+                                                           : ctx.profile},
                     {"kind",          set.kind},
                 }},
             };

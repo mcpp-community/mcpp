@@ -505,6 +505,12 @@ std::vector<UnitInvocation> unit_invocations(const BuildPlan& plan,
             for (auto& w : split_flags(traits.moduleInterfaceLangFlag))
                 inv.arguments.push_back(std::move(w));
         }
+        // A build program's `.mcpp` source: an extension no driver knows, so
+        // its language is stated, as the compile states it (mcpp#797).
+        else if (mcpp::needs_explicit_cxx_language(cu.source)) {
+            for (auto& w : split_flags(traits.moduleImplLangFlag))
+                inv.arguments.push_back(std::move(w));
+        }
         inv.arguments.push_back("-c");
         inv.arguments.push_back(inv.file);
         inv.arguments.push_back("-o");

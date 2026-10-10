@@ -8,6 +8,7 @@ module;
 export module mcpp.cli.cmd_self;
 
 import std;
+import mcpp.build.engine_package;
 import mcpplibs.cmdline;
 import mcpp.doctor;
 import mcpp.toolchain.fingerprint;   // MCPP_VERSION
@@ -58,6 +59,10 @@ nlohmann::json env_data_readonly() {
                            ("xlings" + std::string(mcpp::platform::exe_suffix)))},
         {"config",       s(config)},
         {"buildCache",   s(mcpp::home::cache_root())},
+        // The engine interface a build program imports, as a package directory
+        // (mcpp#797): written by the first build program of this version, read
+        // by an editor (`mcpp:core` in the build database).
+        {"engineModules", s(mcpp::build::engine::package_dir())},
         {"mcppVersion",  std::string(mcpp::toolchain::MCPP_VERSION)},
         // What a build with nothing configured resolves on this host (WS8):
         // the one function the first run uses. Probing for a usable MSVC is

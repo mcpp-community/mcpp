@@ -574,6 +574,15 @@ std::map<std::string, std::string> resolution_pins(const PrepareState& state) {
 std::expected<std::map<std::string, fs::path>, std::string>
 build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>& all,
             const std::vector<const Program*>& goals, const HostToolchain& tc) {
+    // The graph `mcpp emit build-database` describes, beside the one it builds.
+    auto describe = [&](const BuildContext& ctx) {
+        if (!state.overrides.plan_only) return;
+        BuildProgramGraph g;
+        g.ctx = std::make_shared<const BuildContext>(ctx);
+        g.dir = dir;
+        for (auto const& p : all) g.programOf[p.member] = qualified(manifest_of(state, p.index));
+        state.buildProgramGraphs.push_back(std::move(g));
+    };
     BuildOverrides sub;
     sub.project_root = dir;
     sub.work_dir     = dir;
@@ -622,6 +631,8 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
         return std::unexpected(std::format("planning the build programs failed: {}{}",
                                            ctx.error(), reproduce()));
     timer.mark("planned");
+    describe(*ctx);
+    if (goals.empty()) return std::map<std::string, fs::path>{};
 
     std::map<std::string, fs::path> binaries;
     std::vector<std::string> ninjaGoals;
@@ -860,7 +871,16 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
                 p.identity));
             stale.push_back(&p);
         }
-        if (stale.empty()) continue;
+        if (stale.empty()) {
+            // Described, not built: `mcpp emit build-database` lists the graph
+            // of programs that are current too.
+            if (state.overrides.plan_only) {
+                write_group(state, dir, programs, standard, *enginePackage);
+                if (auto r = build_group(state, dir, programs, {}, *tc); !r)
+                    mcpp::log::verbose("host-graph", r.error());
+            }
+            continue;
+        }
         for (auto const* p : stale) {
             warn_reserved_prefixes(state, p->index);
             if (auto r = check_module_collisions(state, p->index); !r)

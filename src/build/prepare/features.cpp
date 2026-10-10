@@ -733,6 +733,32 @@ static std::expected<void, std::string> step6_device_extensions_and_rules(Prepar
                     // anything is compiled and a build that scanned a
                     // dependency to decide what to write would order the two
                     // the wrong way round.
+                    // `rule_module` names one of the modules the feature's
+                    // own sources declare (SPEC-008 I2 as amended, mcpp#797):
+                    // a name nothing declares would be imported by the
+                    // synthesised program and fail as an unknown module.
+                    if (auto mit = dep.manifest.featureRuleModule.find(f);
+                        mit != dep.manifest.featureRuleModule.end()) {
+                        std::vector<std::string> declared;
+                        if (auto fs = dep.manifest.buildConfig.featureSources.find(f);
+                            fs != dep.manifest.buildConfig.featureSources.end())
+                            for (auto const& g : fs->second)
+                                for (auto const& file : mcpp::modgraph::expand_glob(dep.root, g)) {
+                                    std::ifstream in(file, std::ios::binary);
+                                    const std::string text{std::istreambuf_iterator<char>(in), {}};
+                                    for (auto& d : mcpp::pm::declared_module_roots(text))
+                                        declared.push_back(std::move(d));
+                                }
+                        if (std::ranges::find(declared, mit->second) == declared.end()) {
+                            std::string list;
+                            for (auto const& d : declared) list += (list.empty() ? "" : ", ") + d;
+                            return std::unexpected(std::format(
+                                "{}: feature \"{}\" states `rule_module = \"{}\"`, and no unit "
+                                "among its sources declares that module (they declare: {})",
+                                dep.manifest.package.name, f, mit->second,
+                                list.empty() ? "nothing" : list));
+                        }
+                    }
                     if (auto mit = dep.manifest.featureRuleModule.find(f);
                         mit != dep.manifest.featureRuleModule.end()
                         && std::ranges::find(ruleModules, mit->second) == ruleModules.end()) {

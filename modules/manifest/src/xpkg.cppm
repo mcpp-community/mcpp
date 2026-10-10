@@ -257,7 +257,7 @@ namespace mcpp::manifest {
 // the parser accepts.
 inline constexpr std::string_view kKnownXpkgKeys[] = {
     "cflags", "c_standard", "cxxflags", "defines", "deps", "features", "flags",
-    "generated_files", "import_std", "include_dirs", "include_dirs_after",
+    "generated_files", "import_std", "include_dirs", "include_dirs_after", "lib",
     "private_include_dirs",
     "language", "ldflags",
     "linux", "macosx", "modules", "provides", "requires", "runtime",
@@ -1341,6 +1341,16 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
         else if (key == "import_std") {
             auto v = cur.read_bareword();
             m.language.importStd = (v == "true");
+        }
+        // `lib = "<path>"` (mcpp#797): the interface root, as `[lib] path` states it
+        // in a manifest. Relative to the version directory; `*/` stands for the
+        // archive's wrapping directory, as in `sources`.
+        else if (key == "lib") {
+            auto v = cur.read_string();
+            if (v.empty())
+                return std::unexpected(ManifestError{
+                    "expected a path string after `lib =`", m.sourcePath, 0, 0});
+            m.lib.path = v;
         }
         else if (key == "modules") {
             // `{ "a", "b", ... }`
