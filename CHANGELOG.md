@@ -82,7 +82,13 @@
   replaced.
 - Resolve the shell an argv-launched command string runs in (`/bin/sh`, else
   `/system/bin/sh`, else `$PREFIX/bin/sh`).
-- Report the first error of an xlings install, which is its cause.
+- Report the first error of an xlings install, which is its cause, and the
+  failure of a dependency's own address ahead of the `compat` spellings tried
+  after it.
+- List in `mcpp index list` the indices resolution searches on a workspace
+  root and its members: `[workspace.indices]` and the root's own `[indices]`.
+- Run a build program of a workspace member once for a build and
+  `mcpp emit build-database`: its output directory is beside its cache.
 
 ## [2026.10.8.1] - 2026-10-09
 
