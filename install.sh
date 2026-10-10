@@ -8,9 +8,11 @@
 #   MCPP_VERSION   — pin a specific version (default: latest)
 #   MCPP_PREFIX    — install root (default: $HOME/.mcpp)
 #   MCPP_NO_PATH   — set to skip shell-rc PATH editing
+#   MCPP_NO_COMPLETION — set to skip shell-rc completion editing
 #
 # Layout afterwards (PREFIX = $HOME/.mcpp by default):
 #   $PREFIX/bin/{mcpp,xlings}     ← binary + pinned bundled xlings
+#   $PREFIX/config/shell/        ← sourceable shell completion scripts
 #   $PREFIX/registry/             ← seeded on first `mcpp` invocation
 #   $PREFIX/...                   ← mcpp's full self-contained tree
 #
@@ -21,6 +23,8 @@ set -euo pipefail
 REPO="mcpp-community/mcpp"
 VERSION="${MCPP_VERSION:-latest}"
 PREFIX="${MCPP_PREFIX:-$HOME/.mcpp}"
+shell_name="${SHELL:-}"
+shell_name="${shell_name##*/}"
 
 # ---- platform detection ---------------------------------------------------
 # OS+arch → release asset platform tag. Linux reports the arch as aarch64;
@@ -126,22 +130,46 @@ mkdir -p "$PREFIX"
 echo ":: Extracting to $PREFIX"
 tar -xzf "$WORK/mcpp.tar.gz" -C "$PREFIX" --strip-components=1
 
+# Older pinned releases predate completion. Probe help without initialization.
+completion_available=0
+if "$PREFIX/bin/mcpp" self --help 2>/dev/null | grep 'completion' >/dev/null; then
+    MCPP_HOME="$PREFIX" "$PREFIX/bin/mcpp" self completion
+    completion_available=1
+fi
+
 # ---- PATH integration -----------------------------------------------------
-if [[ -z "${MCPP_NO_PATH:-}" ]]; then
-    rc=""
-    case "${SHELL##*/}" in
-        bash) rc="$HOME/.bashrc" ;;
-        zsh)  rc="${ZDOTDIR:-$HOME}/.zshrc" ;;
-        fish) rc="$HOME/.config/fish/config.fish" ;;
+rc=""
+case "$shell_name" in
+    bash) rc="$HOME/.bashrc" ;;
+    zsh) rc="${ZDOTDIR:-$HOME}/.zshrc" ;;
+    fish) rc="${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish" ;;
+    pwsh)
+        if command -v pwsh >/dev/null 2>&1; then
+            rc=$(pwsh -NoProfile -Command '$PROFILE.CurrentUserAllHosts')
+        fi ;;
+esac
+shell_quote() {
+    local value="$1"
+    case "$shell_name" in
+        pwsh) value="${value//\'/\'\'}" ;;
+        fish)
+            value="${value//\\/\\\\}"
+            value="${value//\'/\\\'}" ;;
+        *) value="${value//\'/\'\\\'\'}" ;;
     esac
+    printf "'%s'" "$value"
+}
+if [[ -z "${MCPP_NO_PATH:-}" ]]; then
     if [[ -n "$rc" ]]; then
-        if [[ "${SHELL##*/}" == "fish" ]]; then
-            line="set -gx PATH \"$PREFIX/bin\" \$PATH"
-        else
-            line="export PATH=\"$PREFIX/bin:\$PATH\""
-        fi
+        quoted_bin=$(shell_quote "$PREFIX/bin")
+        case "$shell_name" in
+            fish) line="set -gx PATH $quoted_bin \$PATH" ;;
+            pwsh) line="\$env:PATH = $quoted_bin + [IO.Path]::PathSeparator + \$env:PATH" ;;
+            *) line="export PATH=$quoted_bin:\"\$PATH\"" ;;
+        esac
         mkdir -p "$(dirname "$rc")"
-        if ! grep -Fqs "$PREFIX/bin" "$rc" 2>/dev/null; then
+        if ! grep -Fqx "$line" "$rc" 2>/dev/null \
+            && ! grep -Fqs "$PREFIX/bin" "$rc" 2>/dev/null; then
             printf '\n# mcpp\n%s\n' "$line" >> "$rc"
             echo ":: Added $PREFIX/bin to PATH via $rc"
         else
@@ -153,13 +181,39 @@ if [[ -z "${MCPP_NO_PATH:-}" ]]; then
     fi
 fi
 
+# ---- completion integration ----------------------------------------------
+if [[ -z "${MCPP_NO_COMPLETION:-}" && "$completion_available" == 1 ]]; then
+    if [[ -n "$rc" ]]; then
+        extension="$shell_name"
+        [[ "$shell_name" == pwsh ]] && extension=ps1
+        script="$PREFIX/config/shell/mcpp.$extension"
+        quoted_script=$(shell_quote "$script")
+        if [[ "$shell_name" == pwsh ]]; then
+            line="if (Test-Path -LiteralPath $quoted_script) { . $quoted_script }"
+        elif [[ "$shell_name" == fish ]]; then
+            line="test -f $quoted_script; and source $quoted_script"
+        else
+            line="[ ! -f $quoted_script ] || source $quoted_script"
+        fi
+        mkdir -p "$(dirname "$rc")"
+        if ! grep -Fqx "$line" "$rc" 2>/dev/null; then
+            printf '\n# mcpp completion\n%s\n' "$line" >> "$rc"
+            echo ":: Enabled completion via $rc"
+        fi
+    else
+        echo ":: Completion scripts: $PREFIX/config/shell/ (source the script for your shell)"
+    fi
+fi
+
 # ---- verify install -------------------------------------------------------
 echo
 "$PREFIX/bin/mcpp" --version
 echo
 echo "✓ mcpp installed at $PREFIX"
-if [[ -n "${rc:-}" ]]; then
-    echo "  Open a new shell (or 'source $rc') and run:  mcpp --help"
+if [[ -n "${rc:-}" && -f "$rc" ]]; then
+    load_command="source $(shell_quote "$rc")"
+    [[ "$shell_name" == pwsh ]] && load_command=". $(shell_quote "$rc")"
+    echo "  Open a new shell (or $load_command) and run:  mcpp --help"
 else
     echo "  Add $PREFIX/bin to your PATH, then run:  mcpp --help"
 fi
