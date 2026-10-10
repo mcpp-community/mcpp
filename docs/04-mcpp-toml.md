@@ -168,7 +168,8 @@ dialect_cxxflags = ["-D_HAS_EXCEPTIONS=0"]
 Unlike an ordinary build input, `dialect_cxxflags` is graph-wide (SPEC-004 §9 item 10), so only
 the root of the build contributes it: the command's own package, or the member `-p` selects.
 Entries are appended in this order — `[workspace.build]`, the root's own `[build]`, then each
-matching `[target.<selector>.build]` in order of selector specificity (a triple after an OS,
+matching `[workspace.target.<selector>.build]` row, then each matching
+`[target.<selector>.build]` in order of selector specificity (a triple after an OS,
 an OS after a family; SPEC-004 §3.1.1) — and the resolved list is what reaches
 the std BMI prebuild, the module scan and every translation unit, on the root and on every
 dependency alike. A dependency's own `dialect_cxxflags`, conditional or not, reaches no command:
@@ -884,6 +885,15 @@ the module cache. Resolution and application both follow the TARGET, not the
 machine running mcpp: `mcpp build --target aarch64-macos` honors this field
 (and the environment variable) the same way on Linux or Windows as it does on
 a Mac, and a non-macOS target never sees it.
+
+### `[build]` keys described in other chapters
+
+| Key | Chapter |
+|---|---|
+| `allow_host_libs` | [20 — Toolchains](20-toolchains.md), [22 — Target Side](22-target-side.md) |
+| `ios_deployment_target` | [20 — Toolchains](20-toolchains.md) |
+| `platform-dependencies` | [22 — Target Side](22-target-side.md) |
+| `std-module`, `std-compat-module` | [22 — Target Side](22-target-side.md) |
 
 ### Build concurrency (`jobs`) and module scheduling (`bmi_schedule`)
 
@@ -1870,6 +1880,29 @@ one, so that their result does not depend on the region setting of the machine
 that runs them. The test programs receive the application manifest and nothing
 else of `[resources]`.
 
+
+### 2.18 `[workspace.*]` — Tables a Workspace Shares (2026.10.10.1+)
+
+On a workspace root, a table under `workspace.` is given to every member, and
+has the keys, subtables and selectors of the table it mirrors:
+`[workspace.package]`, `[workspace.build]`, `[workspace.dependencies]`,
+`[workspace.toolchain]`, `[workspace.indices]`, `[workspace.profile.<name>]`,
+`[workspace.target.<selector>]` with `.build`, `.abi`, `.runtime` and
+`.xlings.workspace`, and `[workspace.xlings]`. A table without the prefix
+describes the root's own package. The merge rules, what is refused and the
+reading of the root's own tables by position are in
+[07 — Workspaces](07-workspace.md) §4.
+
+```toml
+[workspace]
+members = ["core", "app"]
+
+[workspace.package]
+mcpp = ">=2026.10.10.1"
+
+[workspace.target.'cfg(os = "windows")'.build]
+dialect_cxxflags = ["-DARCH_COMPAT=1"]
+```
 
 ## 3. Worked Examples
 

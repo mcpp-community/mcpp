@@ -1025,6 +1025,15 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             mcpp::platform::env::ScopedEnv hookVar4(hookVars.at(4).first, hookVars.at(4).second);
             mcpp::platform::env::ScopedEnv hookVar5(hookVars.at(5).first, hookVars.at(5).second);
             auto r = install_one(target);
+            // The first address's failure is the one about the package; a
+            // compat spelling tried after it fails as "not found" whatever
+            // the cause was.
+            std::string firstError;
+            if (r && r->exitCode != 0) {
+                firstError = capturedChildError;
+                if (r->error)
+                    firstError += (firstError.empty() ? "" : "; ") + r->error->message;
+            }
             if (r && r->exitCode != 0 &&
                 (ns.empty() || ns == mcpp::pm::kDefaultNamespace)) {
                 // Compat retry for a bare/default-namespace request whose
@@ -1061,6 +1070,10 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
                     / ".xlings.json";
                 auto indexRepos = mcpp::pm::read_seeded_index_repos(xlingsJson);
                 std::string childErr = capturedChildError;
+                if (attempted.size() > 1 && !firstError.empty()) {
+                    if (!childErr.empty()) childErr += "; ";
+                    childErr += std::format("{}: {}", attempted.front(), firstError);
+                }
                 if (r->error) {
                     if (!childErr.empty()) childErr += "; ";
                     childErr += r->error->message;

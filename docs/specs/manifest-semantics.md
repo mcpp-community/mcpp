@@ -5,11 +5,11 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.13 |
-| **最后修改** | 2026-10-06 |
+| **版本** | 1.14 |
+| **最后修改** | 2026-10-10 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
-| **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`<br>`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md` |
+| **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`<br>`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md`<br>`.agents/docs/2026-10-10-one-source-one-meaning-design.md` |
 | **相关使用文档** | [docs/04 —— mcpp.toml 字段参考](../04-mcpp-toml.md) |
 
 ## 规范用语
@@ -56,6 +56,13 @@
 | 生命周期 | `[hooks]` | 构建前后跑什么 |
 
 **状态:已实现。**
+
+**每个键有两个互相独立的属性。** 作用域是键自身的属性:包私有(P,作用于本包的单元)、
+使用需求(U,从依赖流向消费者)、配置(C,一次构建中全图共有的值,只从构建的根读取)、
+元数据(M,不进入命令)。来源是表的属性:命令行、本包的表、工作空间的共享表
+(`[workspace.X]`,§9 第 12 条)、引擎默认值。条件(`[target.<selector>]`)是作用在值上的
+谓词,既不改变作用域,也不改变来源。键的类别只陈述一次(`mcpp.manifest.key_registry`),
+解析器的已知键检查从中取得。
 
 **库依赖与工具是两个平面,不是一个。** 库有模块与 ABI,参与解析与链接;载荷是可执行
 的工具或被编译对着的输入,不参与模块图。二者的解析规则不同(§4),因此**禁止**把工具
@@ -536,21 +543,28 @@ mcpp 2026.9.26.2,#703)。**
    另一个包的编译单元。使用需求只从依赖流向它的消费者,**禁止**从消费者流入依赖。
    一个依赖的编译命令**必须**与构建它的工程无关;依赖缓存键**必须**包含到达该命令的
    全部输入。
-7. 工作空间成员的发布形态**必须**自包含:发布的清单写出继承来的值,兄弟成员之间的
-   `path` 边以版本边发布,无法以版本表达的 `path` 边**必须**被拒绝发布。
-8. 成员**必须**继承工作空间根的 `[xlings.workspace]` 条目,包括
-   `[target.<selector>.xlings.workspace]` 的条件行(按行继承,合并时由选择器决定)。继承是
-   隐式的,与 `[toolchain]` 相同,因为载荷描述的是构建运行的环境,不是依赖图的边。成员自己
-   声明的同一个包(身份为 `(namespace, name)`)优先。`[feature-xlings.<f>]` 不被继承:特性
-   属于声明它的包。
+7. 工作空间成员的发布形态**必须**自包含:发布的清单写出继承来的值,包括工作空间层
+   (第 12 条)按第 12 条的合并规则写进成员自己的表(`[workspace.toolchain]` 写成
+   `[toolchain]`,`[workspace.target.<selector>.build]` 写成 `[target.<selector>.build]`),
+   工作空间写下的相对路径改写为相对于成员目录,离开成员目录的**必须**被拒绝发布;兄弟成员
+   之间的 `path` 边以版本边发布,无法以版本表达的 `path` 边**必须**被拒绝发布。
+8. 成员**必须**接收工作空间的 `[workspace.xlings.workspace]` 条目与
+   `[workspace.target.<selector>.xlings.workspace]` 的条件行(按行继承,合并时由选择器决定),
+   在第 1 条所列的每个位置。接收是隐式的,因为载荷描述的是构建运行的环境,不是依赖图的边。
+   成员自己声明的同一个包(身份为 `(namespace, name)`)优先。`[feature-xlings.<f>]` 不共享:
+   特性属于声明它的包。
 9. 一条 `x.workspace = true` 条目在继承之后仍未解析时,实现**必须**在它进入构建的每个位置
    (根包、`-p` 选中的成员、`path` 与 `git` 依赖、索引依赖)拒绝它,并点名条目所在的表与
    名称。带 `[package]` 的工作空间根按它自己的 `[workspace.dependencies]` 解析自己的
    `workspace = true` 条目。
-10. `[toolchain]`、`[target.<triple>]`、`[indices]` 与 `[profile.<name>]` 是根位置的键:它们
-    为整个依赖图选择编译器、目标行、索引与构建 profile,因此只在成员作为一次构建的根时继承。
-    profile 按名字继承,成员自己声明的同名表整体替换工作空间的。作为宿主工具构建的成员是其
-    子构建的根,同样继承这三项(§10.1)。`[build] dialect_cxxflags`(及其条件形式
+10. 构建的配置(作用域 C 的键:`[toolchain]`、`[target.<triple>]` 的标量行、`[indices]`、
+    `[profile.<name>]`、`[build] dialect_cxxflags` 与 `[target.<selector>.abi]` 等)按以下顺序
+    决定,先出现者优先:命令行;被选中成员按第 12 条合并后的配置键,条件行按该构建的目标
+    (`--target`,否则 `[build] target`,否则宿主)求值。因此成员只在作为一次构建的根时
+    接收工作空间层中的这些键;作为宿主工具构建的成员是其子构建的根,同样接收(§10.1)。
+    同一张构建图中的成员,求值后的配置**必须**相等;不相等的**必须**分到不同的图;只在其他
+    目标上不同的成员**必须**在同一张图中。规划成员的根**必须**携带成员的条件配置行,以与成员
+    相同的上下文求值。`[build] dialect_cxxflags`(及其条件形式
     `[target.<selector>.build] dialect_cxxflags`)同样是根位置的键:它是 §3.1
     所述的图级联方言开关,只在包作为一次构建的根时被渲染并到达命令。与前三项相同,
     一个包声明它不被诊断——一个依赖包为自己将来作为根的构建合法地声明这些键,这一条
@@ -562,9 +576,34 @@ mcpp 2026.9.26.2,#703)。**
     `ldflags` 链接,**禁止**接收根包或无关包的私有 `ldflags`。图级链接 flag 是 profile 的
     `ldflags` 与 `[target.<selector>.abi]` 为链接渲染的词;它们到达每一个镜像。
 
+12. **前缀即语义(W1–W7)。** 一份清单中,`workspace.` 之外的每张表只说本包:P、U、M 键作用于
+    本包,C 键是本包作为构建的根时的配置;`workspace.` 之内的每张表只说成员。可共享的表 `X`
+    有镜像 `[workspace.X]`:`[workspace.package]`、`[workspace.build]`、
+    `[workspace.dependencies]`、`[workspace.toolchain]`、`[workspace.indices]`、
+    `[workspace.profile.<name>]`、`[workspace.target.<selector>]`(及其 `.build`、`.abi`、
+    `.runtime`、`.xlings.workspace`)、`[workspace.xlings]`。镜像的键、子表与选择器与 `X`
+    相同,由读取 `X` 的同一读取器读取;描述一个包的键(`targets`、`dependencies`、
+    `requires_abi`、`allow_host_libs`、`.build` 的 `sources` 与 `flags`、`[workspace.xlings]`
+    的 `subos`)**必须**被拒绝;`[workspace]` 下的未知表**必须**被拒绝。合并规则只由键决定:
+    标量在成员**声明**了该键时取成员的值;向量追加,工作空间在前;`defines` 按 §8 的集合语义;
+    命名表(`profile.<name>`、`target.<triple>`)逐键合并;条件行逐行继承,工作空间的行在
+    成员的行之前;成员自己的 `[toolchain] default` 覆盖工作空间的全部平台条目;相对路径以
+    写下它的清单所在目录为锚点。不带 `[package]` 的工作空间根上的包表(`[build]`、
+    `[targets]`、`[dependencies]`、`[features]`、`[resources]`、`[test]`、`[hooks]`、
+    `[runtime]`,选择器的 `.build`、`.abi`、`.runtime`、`.targets`、`.dependencies`)不作用于
+    任何包,实现**必须**给出警告,`--strict` 下**必须**拒绝;同一张表在这样的根上同时写在根位置
+    与 `[workspace.X]` **必须**被拒绝。
+13. **按位置读取(兼容,至 1.0.0)。** 工作空间根上没有 `[workspace.X]` 写法的 `[toolchain]`、
+    `[indices]`、`[profile.<name>]`、`[target.<triple>]` 标量行与 `[xlings]`、
+    `[target.<selector>.xlings]` 条目,仍按 mcpp 2026.10.8.1 的规则到达成员(成员的
+    `[toolchain]` 整体替换根的,同名的行与 profile 整体替换,`[indices]` 只到达未声明任何索引
+    的成员)。每次使用**必须**给出警告 `manifest/workspace-position` 并写出 `[workspace.X]`
+    写法;在带 `[package]` 的根上,只在成员确实经由这一读法得到值时给出。
+
 **状态:已实现(第 1 至 7 条 mcpp 2026.9.25.1;第 8 至 10 条 mcpp 2026.9.27.1,mcpp#713、
 #714、#710;第 10 条的 `dialect_cxxflags` 为 mcpp 2026.9.28.1,#717;第 1 条的根包、第 10 条的
-`[profile.<name>]` 与第 11 条为 mcpp 2026.10.5.2,#771)。**
+`[profile.<name>]` 与第 11 条为 mcpp 2026.10.5.2,#771;第 7、8、10 条的工作空间层与第 12、13 条为
+mcpp 2026.10.10.1,#785、#786)。**
 
 ## 10. 依赖的程序
 
@@ -639,3 +678,4 @@ mcpp 2026.9.26.2,#703)。**
 | 1.11 | 2026-10-05 | 新增 §5.3:只在一个平台生效的键带平台前缀(mcpp 2026.10.5.1,#766;`auto_export` 在发布前更名为 `windows_auto_export`)。§1 与 §6 引用的字段准入条件改指 docs/90,字段参考改指 docs/04。 |
 | 1.12 | 2026-10-05 | mcpp 2026.10.5.2:§9 第 1 条补上带 `[package]` 的工作空间根自己的包;第 10 条把 `[profile.<name>]` 列为根位置的键;新增第 11 条链接 flag 的作用域(#771);新增 §11 链接期优化与导出发现(#770)与 `[test] windows_code_page`;§7 补第 21 至 23 条判据。 |
 | 1.13 | 2026-10-06 | mcpp 2026.10.5.3:§4.6 陈述架构段的等同拼写,`x86` 即 `i686`;`i386` 至 `i586` 不与 `i686` 相互替代。 |
+| 1.14 | 2026-10-10 | mcpp 2026.10.10.1(#785、#786):§2 陈述键的作用域与来源;§9 新增第 12 条前缀即语义(工作空间层 `[workspace.X]`、按键合并、W7)与第 13 条按位置读取的兼容期;第 7 条发布写出工作空间层;第 8 条改为 `[workspace.xlings]`;第 10 条按求值后的配置分组。 |

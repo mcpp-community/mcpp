@@ -29,6 +29,13 @@ std::string build_clean_ld_library_path_prefix(
 std::vector<std::filesystem::path>
 runtime_lib_dirs(const std::filesystem::path& toolchain_root);
 
+// Is this Linux an Android (D21)? `ANDROID_ROOT` and `ANDROID_DATA` are set in
+// every Android process environment (Termux included), and
+// `/system/bin/linker64` is bionic's dynamic loader. Answers which shell
+// exists and how a failure is explained; it does not choose a toolchain:
+// Android takes the same default as GNU/Linux on its architecture.
+bool is_android_host();
+
 } // namespace mcpp::platform::linux_
 
 // ─── Implementation ──────────────────────────────────────────────────────
@@ -89,6 +96,20 @@ runtime_lib_dirs(const std::filesystem::path& toolchain_root) {
     (void)toolchain_root;
 #endif
     return dirs;
+}
+
+bool is_android_host() {
+#if defined(__linux__)
+    static const bool android = [] {
+        if (std::getenv("ANDROID_ROOT") && std::getenv("ANDROID_DATA")) return true;
+        std::error_code ec;
+        return std::filesystem::exists("/system/bin/linker64", ec)
+            || std::filesystem::exists("/system/bin/linker", ec);
+    }();
+    return android;
+#else
+    return false;
+#endif
 }
 
 } // namespace mcpp::platform::linux_

@@ -11,6 +11,8 @@
 //   mcpp.manifest.toml   mcpp.toml parsing (projects / packages on disk)
 //   mcpp.manifest.xpkg   xpkg .lua `mcpp = {}` segment (index descriptors)
 //   mcpp.manifest.flag_words  the words an element of a compile-flag list stands for
+//   mcpp.pm.compat.workspace_position  COMPAT(workspace-position): a workspace
+//                        root's own tables given to members by position
 
 export module mcpp.manifest;
 
@@ -19,3 +21,5 @@ export import mcpp.manifest.toml;
 export import mcpp.manifest.xpkg;
 export import mcpp.manifest.flag_words;
 export import mcpp.manifest.cfg_selector;
+export import mcpp.manifest.key_registry;
+export import mcpp.pm.compat.workspace_position;

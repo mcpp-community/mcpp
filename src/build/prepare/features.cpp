@@ -1941,7 +1941,8 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
             bpEnv.features     = feature_closure(pkg.manifest, req, depDefaultFeatures);
             bpEnv.artifactsDir = state.workRoot / "target" / ".build-mcpp" / "deps"
                 / (dirSafe(pkg.manifest.package.name) + "@" + pkg.manifest.package.version);
-            bpEnv.genBase      = bpEnv.artifactsDir / "out";
+            bpEnv.outDir       = state.programOutDir(state.workRoot, pkg.manifest, bpEnv.features);
+            bpEnv.genBase      = bpEnv.outDir;
             // What the program imports is kept once for the workspace, and in the
             // global cache where it comes from the engine or the index (#748).
             bpEnv.moduleStore  = state.workRoot / "target" / ".build-mcpp" / "host-modules";

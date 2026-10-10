@@ -143,45 +143,93 @@ mbedtls = "4.0.0"          # override; does not use the workspace version
 
 ## 4. 工具链与构建配置的继承
 
-工作空间根的 `[toolchain]` 与 `[target.<triple>]` 配置由全体成员自动继承。成员
-可以在自己的工程文件中覆盖。
+`workspace.` 之下的表对全体成员说话；`workspace.` 之外的表只说它所在清单的那个包
+（mcpp 2026.10.10.1+）。要与全体成员共享一张表，就加上 `workspace.` 前缀：
 
-配置优先级（从高到低）：
+| 包自己的表 | 与全体成员共享 |
+|---|---|
+| `[package]`（元数据、`standard`） | `[workspace.package]` |
+| `[build]` | `[workspace.build]` |
+| `[dependencies]` 的条目 | `[workspace.dependencies]` + `x.workspace = true`（§3） |
+| `[toolchain]` | `[workspace.toolchain]` |
+| `[indices]` | `[workspace.indices]` |
+| `[profile.<name>]` | `[workspace.profile.<name>]` |
+| `[target.<selector>]` 的标量行、`.build`、`.abi`、`.runtime`、`.xlings.workspace` | `[workspace.target.<selector>]` 及同名子表 |
+| `[xlings.workspace]` | `[workspace.xlings.workspace]` |
 
-1. 命令行参数（`--target`、`--static`）
-2. 成员 `mcpp.toml` 中的声明
-3. 工作空间根 `mcpp.toml` 中的声明
-4. 全局配置（`~/.mcpp/config.toml`）
-5. 内置默认值
+`[workspace.X]` 的键、子表与选择器与 `X` 相同。描述某一个包的键不共享，写在那里会被
+拒绝：`[targets]`、`[features]`、`[resources]`、`[test]`、选择器的 `.targets` 与
+`.dependencies`、`requires_abi`、`allow_host_libs`，以及 `.build` 表的 `sources` 与按
+glob 的 `flags`。`[workspace]` 下的未知表会被拒绝。
 
 ```toml
 # workspace root
-[toolchain]
+[workspace]
+members = ["libs/core", "apps/server"]
+
+[workspace.package]
+mcpp = ">=2026.10.10.1"
+
+[workspace.toolchain]
 default = "gcc@16.1.0"
 
-[target.x86_64-linux-musl]
+[workspace.target.x86_64-linux-musl]
 toolchain = "gcc@16.1.0"
 linkage   = "static"
+
+[workspace.target.'cfg(os = "windows")'.build]
+dialect_cxxflags = ["-DARCH_COMPAT=1"]
 ```
 
 ```toml
-# a member overrides the toolchain
+# a member overrides the toolchain for itself
 [toolchain]
 default = "llvm@23.1.3"
 ```
 
-`[toolchain]`、`[target.<triple>]` 与 `[indices]` 为整个依赖图选择编译器、目标行与索引，
-因此成员只在作为一次构建的根时从工作空间根继承它们：从工作空间构建、以 `-p` 选中，或作为
-另一个包的宿主工具构建（最后一种自 mcpp 2026.9.27.1）。作为依赖到达的成员从该次构建的根
-取得它们。
+配置优先级（从高到低）：
+
+1. 命令行参数（`--target`、`--toolchain`、`--profile`、`--static`）
+2. 成员 `mcpp.toml` 中的声明
+3. 工作空间的 `[workspace.X]` 表
+4. 全局配置（`~/.mcpp/config.toml`）
+5. 内置默认值
+
+`--toolchain` 与清单声明的工具链不同时，打印一条警告，写出两者以及声明被替换者的文件与键；
+`--strict` 不因此失败。
+
+`[workspace.toolchain]`、`[workspace.indices]`、`[workspace.profile.<name>]` 与
+`[workspace.target.<triple>]` 的标量行为整个依赖图选择编译器、索引、配置档与目标行，因此
+成员在作为一次构建的根时接收它们：从工作空间构建、以 `-p` 选中，或作为另一个包的宿主工具
+构建。作为依赖到达的成员从该次构建的根取得它们。`[workspace.target.<selector>]` 的各行
+（`.build`、`.abi`、`.runtime`、`.xlings.workspace`）与 `[workspace.xlings]` 在每种位置
+都到达成员（§4.1）。
+
+条件行按所构建的目标求值后计入：其他目标上的 `dialect_cxxflags` 或 `.abi` 行不会把成员与
+其他成员分开（§5.4）；对当前目标成立的行，在成员于工作空间的根下构建时生效。
 
 不带 `--target` 的构建以宿主为目标，`[target.<宿主三元组>]` 对它生效，与
-`--target <宿主三元组>` 相同（mcpp 2026.9.27.1+）。
+`--target <宿主三元组>` 相同。
 
-根的 `[xlings.workspace]` 条目，包括 `[target.<selector>.xlings.workspace]` 行，同样隐式
-继承（mcpp 2026.9.27.1+）：载荷描述的是构建运行的环境，与 `[toolchain]` 相同，不需要
-显式声明。成员自己声明的同一个包优先。`[feature-xlings.<f>]` 不被继承，因为特性属于声明
-它的包。
+`[feature-xlings.<f>]` 不共享，因为特性属于声明它的包。
+
+**使用 `[workspace.X]` 的工作空间应声明引擎下限。** 早于 2026.10.10.1 的 mcpp 忽略这些表，
+不带它们构建成员。`[workspace.package] mcpp = ">=2026.10.10.1"` 让旧版 mcpp 拒绝构建；
+不写时构建打印一条 note。
+
+**根自己的表按位置读取。** 工作空间根上没有对应 `[workspace.X]` 写法的 `[toolchain]`、
+`[indices]`、`[profile.<name>]`、`[target.<triple>]` 标量行，以及 `[xlings]` /
+`[target.<selector>.xlings]` 条目，仍按 2026.10.10.1 之前的方式到达成员：成员自己的
+`[toolchain]` 整体替换根的，成员同名的行或配置档整体替换根的，`[indices]` 只到达未声明
+任何索引的成员。每次使用打印一条 `manifest/workspace-position` 警告，并给出
+`[workspace.X]` 写法；在带 `[package]` 的根上，这些表首先属于根包，警告只对确实经由它们
+得到值的成员给出。这种读法在 mcpp 1.0.0 移除。在不带 `[package]` 的根上，同一张表两种写法
+并存会被拒绝。
+
+**不带 `[package]` 的根上没有包。** 写在那里的 `[build]`、`[targets]`、`[dependencies]`、
+`[features]`、`[resources]`、`[test]`、`[hooks]`、`[runtime]`，以及选择器的 `.build`、
+`.abi`、`.runtime`、`.targets`、`.dependencies` 不作用于任何包；每张表打印一条警告，有共享
+写法时一并给出，`--strict` 下拒绝。
 
 ### 4.1 `[workspace.package]` 与 `[workspace.build]`
 
@@ -267,26 +315,18 @@ workspace 键。
 为唯一目的的表，如果能静默丢弃某个键，产出的就是一个看起来配置好了、实际上没有
 的工作空间。
 
-**没有 `[workspace.target.<triple>]`。** 工作空间根里一个普通的 `[target.<triple>]`
-块本来就按 triple 逐项被全体成员继承（成员优先）。为同一能力再造一种拼法，只会
-增加接口面而不增加功能。
-
-**profile 按名字继承（2026.10.5.2+）。** 工作空间根里的 `[profile.<name>]` 到达每个
-没有声明同名 profile 的成员；成员自己的同名表整体替换工作空间的，与
-`[target.<triple>]` 相同。profile 是每张构建图一个的值，因此共享它的成员一起规划、
-一起编译。2026.10.5.2 之前，虚拟根的 profile 不到达任何成员，并且被无声忽略；带根包
-的工作空间的 profile 只在根包是第一个被选中的包时生效。
+**命名表逐键合并。** 成员的 `[profile.release]` 与 `[workspace.profile.release]` 合在
+一起：成员写下的键属于成员，列表以工作空间的条目在前。`[target.<triple>]` 行按同样的方式
+合并。配置档是每张构建图一个的值，因此共享它的成员一起规划、一起编译。
 
 **根包是一个成员。** 根上带 `[package]` 的工作空间中，根包与其它成员一样恰好一次地
-继承 `[workspace.package]` 与 `[workspace.build]`（2026.10.5.2+），因此它的命令在
-每种选择下相同。根清单包含三类键：
+接收 `[workspace.package]`、`[workspace.build]` 与每一张 `[workspace.X]` 表，因此它的命令
+在每种选择下相同。根清单包含两类表：
 
-| 键 | 归属 | 对根包的作用 | 对其它成员的作用 |
+| 表 | 归属 | 对根包的作用 | 对其它成员的作用 |
 |---|---|---|---|
-| `[workspace]`、`[workspace.dependencies]` | 工作空间 | 通过 `x.workspace = true` | 通过 `x.workspace = true` |
-| `[workspace.package]`、`[workspace.build]` | 工作空间 | 继承 | 继承 |
-| `[toolchain]`、`[target.<triple>]`、`[indices]`、`[profile.<name>]` | 根位置 | 本身的值 | 成员作为一次构建的根时继承；成员自己的声明优先 |
-| `[package]`、`[build]`、`[dependencies]`、`[targets]`、`[features]`、`[resources]`、`[test]` | 根包 | 本身的值 | 无 |
+| `[workspace]` 与每一张 `[workspace.X]` | 工作空间 | 接收，根包自己的声明优先 | 接收；`[workspace.dependencies]` 通过 `x.workspace = true` |
+| 其余每一张表（`[package]`、`[build]`、`[toolchain]`、`[target.<selector>]`、`[profile.<name>]`……） | 根包 | 本身的值 | 无（上文的按位置读取除外，直到 1.0.0） |
 
 根包的 `[build] ldflags` 同样属于它自己：它们到达根包自己的镜像，不到达成员的镜像，
 也不到达依赖的共享库。
@@ -457,8 +497,10 @@ mcpp test --workspace --workspace-timeout 1800   # whole fan-out (default 0 = no
 
 - **配置。** 工具链请求、目标、C++ 标准、`dialect_cxxflags`、C++ 运行时、`linkage`、配置档、
   索引，以及其他作用于整张图的 `[build]` 值都相同的成员在同一张图中构建。其中任一项不同的成员
-  在各自的图中构建，这些图同时进行，共享命令的并行任务数。成员写下的相对路径（例如它自己的
-  `[indices]` 路径）按该成员的目录解析。
+  在各自的图中构建，这些图同时进行，共享命令的并行任务数。条件行（`[target.<selector>.build]
+  dialect_cxxflags`、`[target.<selector>.abi]`、`[target.<selector>]` 标量）按所构建的目标求值后
+  计入：`--target`，否则成员的 `[build] target`，否则宿主（2026.10.10.1+）。成员写下的相对路径
+  （例如它自己的 `[indices]` 路径）按该成员的目录解析。
 - **选择。** `--workspace`，以及虚拟工作空间根下不带 `-p` 的命令，选中全体成员；`-p X` 与在
   X 的目录中执行的命令规划 X 及其所依赖的一切；`-p X -p Y` 把两者放在一起规划，作为一个
   选择（§5.3）。这些选择共用构建目录，同一个编译单元在包含它的每个选择中都由同一条命令编译：

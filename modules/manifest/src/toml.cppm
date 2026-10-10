@@ -3,6 +3,7 @@
 export module mcpp.manifest.toml;
 
 import mcpp.manifest.types;
+import mcpp.manifest.key_registry;
 import mcpp.manifest.cfg_selector;
 import mcpp.targetside;
 import std;
@@ -198,6 +199,10 @@ export namespace mcpp::manifest {
 // message can name both files.
 struct LoadContext {
     bool insideWorkspace = false;
+    // The text is the body of a workspace root's `[workspace.toolchain]`,
+    // `[workspace.target.*]`, ... (the workspace layer): it has no
+    // `[package]`, and it states nothing about one.
+    bool workspaceLayer = false;
 };
 
 // ─── `[xlings]`: mcpp's surface for xlings' local project mechanism ─────────
@@ -877,6 +882,12 @@ std::optional<std::string> sysroot_refusal(std::string_view triple, std::string_
 } // namespace
 
 
+namespace {
+std::expected<Manifest, ManifestError> parse_document(const t::Document& document,
+                                                      const std::filesystem::path& origin,
+                                                      LoadContext ctx);
+}
+
 std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                                                     const std::filesystem::path& origin,
                                                     LoadContext ctx) {
@@ -884,6 +895,18 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (!doc) {
         return std::unexpected(error(origin, doc.error().message, doc.error().where));
     }
+    return parse_document(*doc, origin, ctx);
+}
+
+namespace {
+// The reader of one manifest document. `parse_string` gives it the text's
+// document; the workspace layer gives it the document under `workspace.`
+// (`[workspace.toolchain]` read as `[toolchain]`, ...), whose values keep
+// the lines they were written on.
+std::expected<Manifest, ManifestError> parse_document(const t::Document& document,
+                                                      const std::filesystem::path& origin,
+                                                      LoadContext ctx) {
+    const t::Document* doc = &document;
 
     // Closed-grammar guard: reject any array-of-tables whose dotted path
     // isn't explicitly allowlisted, BEFORE any section is read. See
@@ -927,11 +950,11 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // [package] — required unless [workspace] is present (virtual workspace).
     auto* pkg_t = doc->get_table("package");
     bool has_workspace = (doc->get_table("workspace") != nullptr);
-    if (!pkg_t && !has_workspace)
+    if (!pkg_t && !has_workspace && !ctx.workspaceLayer)
         return std::unexpected(error(origin, "missing required [package] section"));
 
     auto name = doc->get_string("package.name");
-    if (!name && !has_workspace && !ctx.insideWorkspace)
+    if (!name && !has_workspace && !ctx.insideWorkspace && !ctx.workspaceLayer)
         return std::unexpected(error(origin, "missing required field 'package.name'"));
     if (name) m.package.name = *name;
 
@@ -941,7 +964,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string("package.namespace")) m.package.namespace_ = *v;
 
     auto version = doc->get_string("package.version");
-    if (!version && !has_workspace && !ctx.insideWorkspace)
+    if (!version && !has_workspace && !ctx.insideWorkspace && !ctx.workspaceLayer)
         return std::unexpected(error(origin, "missing required field 'package.version'"));
     if (version) m.package.version = *version;
 
@@ -1094,10 +1117,20 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (auto it = tt.find("opt"); it != tt.end()) {
                 if      (it->second.is_string()) pr.optLevel = it->second.as_string();
                 else if (it->second.is_int())    pr.optLevel = std::to_string(it->second.as_int());
+                pr.optDeclared = it->second.is_string() || it->second.is_int();
             }
-            if (auto it = tt.find("debug"); it != tt.end() && it->second.is_bool()) pr.debug = it->second.as_bool();
-            if (auto it = tt.find("lto");   it != tt.end() && it->second.is_bool()) pr.lto   = it->second.as_bool();
-            if (auto it = tt.find("strip"); it != tt.end() && it->second.is_bool()) pr.strip = it->second.as_bool();
+            if (auto it = tt.find("debug"); it != tt.end() && it->second.is_bool()) {
+                pr.debug = it->second.as_bool();
+                pr.debugDeclared = true;
+            }
+            if (auto it = tt.find("lto"); it != tt.end() && it->second.is_bool()) {
+                pr.lto = it->second.as_bool();
+                pr.ltoDeclared = true;
+            }
+            if (auto it = tt.find("strip"); it != tt.end() && it->second.is_bool()) {
+                pr.strip = it->second.as_bool();
+                pr.stripDeclared = true;
+            }
             auto read_list = [&](const char* key, std::vector<std::string>& out) {
                 if (auto it = tt.find(key); it != tt.end() && it->second.is_array())
                     for (auto& v : it->second.as_array())
@@ -2921,24 +2954,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // policy as [targets.<name>] above: a warning, an error under --strict.
     //
     // MUST stay in sync with the `doc->get_*("build.<key>")` reads above.
-    static constexpr std::string_view kKnownBuildKeys[] = {
-        "accel",
-        "allow_host_libs", "bmi_schedule", "build_program_timeout", "c_standard",
-        "cache", "cflags", "cxxflags", "cxx_runtime", "default-profile", "defines",
-        "dependency_linkage",
-        "dialect_cxxflags", "flags", "include_dirs", "include_dirs_after",
-        "private_include_dirs",
-        "ios_deployment_target",
-        "jobs", "ldflags", "macos_deployment_target", "module_extensions",
-        "platform-dependencies", "profile",
-        "sources", "static_stdlib", "target",
-        // #540: read a few hundred lines above and, until now, absent here —
-        // the SECOND drift of this list, and the comment below narrates the
-        // first. Moved to `[build]` by #494 precisely so their flags could be
-        // conditioned; a manifest writing the documented spelling was told the
-        // key had been ignored while it was taking effect.
-        "std-compat-module", "std-module", "std-module-flags",
-    };
+    // The keys of `[build]` are the registry's (mcpp.manifest.key_registry):
+    // the third hand-written copy of this list had drifted twice before it
+    // was derived (#540).
+    const auto kKnownBuildKeys = registry_keys("build");
     if (auto* bt = doc->get_table("build")) {
         for (auto& [key, _] : *bt) {
             bool known = false;
@@ -4023,11 +4042,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 // is not conditionable and would otherwise vanish without a
                 // word, the #296 failure mode. MUST stay in sync with the reads
                 // above and with types.cppm's BuildInputs and ConditionalConfig.
-                static constexpr std::string_view kKnownConditionalBuildKeys[] = {
-                    "cflags", "cxxflags", "defines", "dialect_cxxflags", "flags",
-                    "include_dirs", "include_dirs_after", "ldflags",
-                    "private_include_dirs", "sources", "std-module-flags",
-                };
+                const auto kKnownConditionalBuildKeys = conditional_build_keys();
                 for (auto& [key, _] : bt) {
                     bool known = false;
                     for (auto k : kKnownConditionalBuildKeys)
@@ -4436,6 +4451,170 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 }
             }
         }
+
+        // [workspace.toolchain|indices|profile|target|xlings] — THE WORKSPACE
+        // LAYER (SPEC-004 §9.10, W1-W3): what every member receives. The
+        // document under `workspace.` is read by this same reader, so each
+        // mirror has the keys, subtables and selectors of the table it
+        // mirrors; what it refuses is stated below, once.
+        {
+            const auto* ws = doc->get_table("workspace");
+            static constexpr std::string_view kWorkspaceKeys[] = {
+                "members", "exclude", "package", "build", "dependencies",
+                "toolchain", "indices", "profile", "target", "xlings",
+            };
+            static constexpr std::string_view kMirrored[] = {
+                "toolchain", "indices", "profile", "target", "xlings",
+            };
+            // An unknown table under [workspace] used to be dropped without a
+            // word: a workspace that looked configured and was not, the defect
+            // a propagating table is refused for (docs/07 §4.1).
+            for (auto const& [key, value] : *ws) {
+                (void)value;
+                if (std::ranges::find(kWorkspaceKeys, key) != std::end(kWorkspaceKeys)) continue;
+                return std::unexpected(error(origin, std::format(
+                    "[workspace] has no key or table '{}'. It holds members, exclude, "
+                    "and the tables members receive: [workspace.package], "
+                    "[workspace.build], [workspace.dependencies], [workspace.toolchain], "
+                    "[workspace.indices], [workspace.profile.<name>], "
+                    "[workspace.target.<selector>], [workspace.xlings]", key)));
+            }
+            t::Table layerRoot;
+            for (auto k : kMirrored) {
+                auto it = ws->find(k);
+                if (it == ws->end()) continue;
+                layerRoot.emplace(std::string(k), it->second);
+                m.workspace.layerTables.emplace_back(k);
+            }
+            if (!layerRoot.empty()) {
+                // Keys that describe one package are not shared: a member's
+                // targets, dependencies and the safety gates it turns off are
+                // its own (W2).
+                if (auto it = layerRoot.find("target"); it != layerRoot.end() && it->second.is_table()) {
+                    static constexpr std::string_view kPackageOnly[] = {
+                        "targets", "dependencies", "dev-dependencies", "build-dependencies",
+                        "requires_abi", "feature-requires-abi",
+                    };
+                    for (auto const& [sel, row] : it->second.as_table()) {
+                        if (!row.is_table()) continue;
+                        for (auto const& [key, value] : row.as_table()) {
+                            if (std::ranges::find(kPackageOnly, key) != std::end(kPackageOnly))
+                                return std::unexpected(error(origin, std::format(
+                                    "[workspace.target.{}] cannot hold `{}`: it describes one "
+                                    "package. Write it in the member's own [target.{}].",
+                                    sel, key, sel), value.position));
+                            if (key == "build" && value.is_table()
+                                && value.as_table().contains("allow_host_libs"))
+                                return std::unexpected(error(origin, std::format(
+                                    "[workspace.target.{}.build] allow_host_libs is not "
+                                    "inheritable. It disables the hermetic-link check for a "
+                                    "specific artifact, so it belongs in that package's own "
+                                    "table where the person turning it off owns the result.",
+                                    sel), value.position));
+                            // The keys of a shared `.build` are the shared
+                            // keys a condition may carry (the registry):
+                            // sources and per-glob flags name one package's
+                            // files.
+                            if (key == "build" && value.is_table()) {
+                                for (auto const& [bk, bv] : value.as_table()) {
+                                    const auto shared = shared_conditional_build_keys();
+                                    if (std::ranges::find(shared, bk) != shared.end()) continue;
+                                    std::string supported;
+                                    for (auto k : shared)
+                                        supported += std::format("{}{}", supported.empty() ? "" : ", ", k);
+                                    return std::unexpected(error(origin, std::format(
+                                        "[workspace.target.{}.build] has no key '{}' (or it is "
+                                        "not inheritable). Supported: {}.", sel, bk, supported),
+                                        bv.position));
+                                }
+                            }
+                        }
+                    }
+                }
+                if (auto it = layerRoot.find("xlings"); it != layerRoot.end()
+                    && it->second.is_table() && it->second.as_table().contains("subos"))
+                    return std::unexpected(error(origin,
+                        "[workspace.xlings] cannot hold `subos`: the workspace root's own "
+                        "[xlings] subos is the one every member already runs in.",
+                        it->second.position));
+                // On a workspace root without [package], the root-position
+                // table and its mirror would both speak to the members.
+                if (!pkg_t) {
+                    for (auto const& name : m.workspace.layerTables) {
+                        bool both = false;
+                        if (name == "xlings") {
+                            if (auto* x = doc->get_table("xlings"))
+                                both = std::ranges::any_of(*x, [](auto const& kv) {
+                                    return kv.first != "subos";
+                                });
+                        } else {
+                            both = doc->get(name) != nullptr;
+                        }
+                        if (both)
+                            return std::unexpected(error(origin, std::format(
+                                "[{0}] and [workspace.{0}] both state what every member "
+                                "receives; write it once, as [workspace.{0}]", name)));
+                    }
+                }
+                std::set<std::string, std::less<>> explicitTables;
+                for (auto const& e : doc->explicit_tables()) {
+                    if (!e.starts_with("workspace.")) continue;
+                    auto rest = std::string_view(e).substr(std::string_view("workspace.").size());
+                    for (auto k : kMirrored)
+                        if (rest == k || rest.starts_with(std::string(k) + "."))
+                            explicitTables.emplace(rest);
+                }
+                const t::Document layerDoc(std::move(layerRoot), std::move(explicitTables));
+                auto layer = parse_document(layerDoc, origin,
+                                            LoadContext{.insideWorkspace = true,
+                                                        .workspaceLayer = true});
+                if (!layer) {
+                    auto e = std::move(layer).error();
+                    e.message = "in the workspace layer ([workspace.*]): " + e.message;
+                    return std::unexpected(std::move(e));
+                }
+                for (auto const& w : layer->schemaWarnings)
+                    m.schemaWarnings.push_back(
+                        w.starts_with("[") ? "[workspace." + w.substr(1) : w);
+                m.layer = std::make_shared<const Manifest>(std::move(*layer));
+            }
+        }
+
+        // W7: a workspace root without [package] holds no package, so a table
+        // that describes one acts on nothing here. Recorded; the loader warns,
+        // and refuses under --strict.
+        if (!pkg_t && !ctx.workspaceLayer) {
+            // The package's own tables, from the registry, and [build].
+            std::vector<std::pair<std::string_view, std::string_view>> kPackageTables{
+                {"build", "workspace.build"}};
+            for (auto const& row : kKeyRegistry)
+                if (row.key.empty() && row.scope == KeyScope::Package
+                    && row.table.find('.') == std::string_view::npos)
+                    kPackageTables.emplace_back(row.table,
+                        row.table == "dependencies" ? "workspace.dependencies" : "");
+            auto note = [&](std::string table, std::string mirror) {
+                m.virtualRootPackageTables.push_back(mirror.empty()
+                    ? std::format("[{}] is written on a workspace root without [package], "
+                                  "so it acts on no package; write it in a member", table)
+                    : std::format("[{}] is written on a workspace root without [package], "
+                                  "so it acts on no package; write it in a member, or as "
+                                  "[{}] to give it to every member", table, mirror));
+            };
+            for (auto const& [table, mirror] : kPackageTables)
+                if (doc->get(table)) note(std::string(table), std::string(mirror));
+            if (auto* targets = doc->get_table("target"))
+                for (auto const& [sel, row] : *targets) {
+                    if (!row.is_table()) continue;
+                    for (std::string_view sub : {"build", "abi", "runtime", "targets", "dependencies",
+                                                 "dev-dependencies", "build-dependencies"}) {
+                        if (!row.as_table().contains(sub)) continue;
+                        const bool shared = sub == "build" || sub == "abi" || sub == "runtime";
+                        note(std::format("target.{}.{}", toml_header_key(sel), sub),
+                             shared ? std::format("workspace.target.{}.{}", toml_header_key(sel), sub)
+                                    : std::string());
+                    }
+                }
+        }
     }
 
     // [indices] — custom package index repositories.
@@ -4525,6 +4704,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
 
     return m;
 }
+}  // namespace
 
 // M5.0: inject defaults and auto-infer targets when fields are absent.
 // Mutates manifest in-place; called from load() with the project root.

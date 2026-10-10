@@ -226,7 +226,7 @@ cat > mcpp.toml <<'EOF'
 [workspace]
 members = ["m1"]
 
-[indices]
+[workspace.indices]
 acme = { path = "index" }
 EOF
 "$MCPP" new m1 > /dev/null

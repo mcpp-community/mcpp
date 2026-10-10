@@ -13,6 +13,7 @@ export module mcpp.project;
 import std;
 import mcpp.manifest;
 import mcpp.ui;
+import mcpp.diag;
 
 namespace mcpp::project {
 
@@ -113,21 +114,7 @@ export void merge_workspace_deps(mcpp::manifest::Manifest& member,
 // disagreeing about which packages are real.
 export void inherit_workspace_indices(mcpp::manifest::Manifest& member,
                                       const mcpp::manifest::Manifest& workspace,
-                                      const std::filesystem::path& wsRoot) {
-    if (!member.indices.empty() || workspace.indices.empty()) return;
-    member.indices = workspace.indices;
-    for (auto& [_, idx] : member.indices) {
-        if (idx.is_local() && idx.path.is_relative()) {
-            // This is an ownership/anchoring operation, not a request to
-            // resolve filesystem aliases.  weakly_canonical can rewrite a
-            // Windows short/case-preserving workspace path into a different
-            // spelling before the inherited index is opened.  Keep the path
-            // rooted exactly where the workspace manifest declared it; the
-            // normal reader remains responsible for existence/readability.
-            idx.path = (wsRoot / idx.path).lexically_normal();
-        }
-    }
-}
+                                      const std::filesystem::path& wsRoot);
 
 // Is `candidate` one of this workspace's declared members?
 //
@@ -183,44 +170,52 @@ export void inherit_workspace_package(mcpp::manifest::Manifest& member,
     if (member.package.mcppFloor.empty())   member.package.mcppFloor   = inh.mcppFloor;
 }
 
-// EVERYTHING A MEMBER INHERITS FROM ITS WORKSPACE ROOT, IN ONE FUNCTION.
+// ─── The workspace layer and the position reading (SPEC-004 §9.10) ──────────
 //
-// There are two inheritance SITES in prepare_build — the command issued at the
-// workspace root with `-p <member>`, and the command issued inside a member
-// directory — and until this function existed they were two hand-copied lists
-// of the same merges. A fifth key added to one of them is a defect that
-// compiles, which is exactly how `[build]` came to be inherited by neither
-// (#527 Bug 2).
+// A workspace root speaks to its members through `[workspace.X]` (the layer,
+// `WorkspaceConfig::layer`) and nothing else (W1). The merge rule is the key's,
+// not the table's (W3): a scalar the member declared is the member's, a list
+// appends with the workspace first, a named table (`profile.<name>`,
+// `target.<triple>`) is merged key by key, conditional rows are inherited row
+// by row ahead of the member's own, and a relative path is anchored at the
+// manifest that wrote it (#224).
 //
-// The discipline is stated on `WorkspaceInherited`: scalars are taken when the
-// member did not DECLARE the key, vectors append with the workspace first, and
-// dependencies keep their explicit `.workspace = true` opt-in because they are
-// graph edges. `[toolchain]`, `[target.<triple>]` and `[indices]` were already
-// inherited before these tables existed and keep the behaviour they had.
-//
-// `wsRoot` anchors relative paths: an `[indices].path` or a
-// `[workspace.dependencies] path` was written against the WORKSPACE ROOT, and
-// re-anchoring it to the member directory is #224.
-// The workspace root's `[xlings.workspace]`, for a member (#713).
-//
-// An xlings entry describes the environment a build runs in, the same class of
-// declaration as `[toolchain]` and `[target.*]`, so it is inherited implicitly
-// rather than through an explicit opt-in: only dependencies, which are graph
-// edges, need `.workspace = true` (`merge_workspace_deps`). Before this a member
-// saw none of the root's entries: they were installed for the workspace, and
-// `mcpp::xpkg_dir` in the member's build program still answered "" for them.
-//
-// The root's entries come first and a member's own declaration of the same
-// package wins, which is the "nearer the artifact" rule of SPEC-004 §4.5 --
-// identity is `(namespace, name)`, decided by `package_key`. Conditional
-// `[target.<sel>.xlings.workspace]` rows travel as conditional rows, so they are
-// still decided by the selector at merge time. Feature-gated entries do not
-// travel: a feature belongs to the package that declares it. Neither does the
-// emitter's per-platform view (`workspaceByPlatform`), so a published member's
-// descriptor states only what the member itself declared; the `subos` is the
-// root's choice already (`select_runtime`).
-export void inherit_workspace_xlings(mcpp::manifest::Manifest& member,
-                                     const mcpp::manifest::Manifest& workspace) {
+// The root's own `[toolchain]`, `[indices]`, `[profile.*]`, `[target.*]` and
+// `[xlings]` still reach members by position where they have no
+// `[workspace.X]` (mcpp.pm.compat.workspace_position), with the old merge and
+// a warning.
+
+namespace detail {
+
+bool lists(std::span<const std::string> names, std::string_view name) {
+    return std::ranges::find(names, name) != names.end();
+}
+
+// The position reading was used for `table`. A root without `[package]` has
+// no other reading of these tables, so every use is reported; a root with one
+// reads them as its own package's first, and only a member that actually
+// received a value through the old rule is told.
+void warn_position(const mcpp::manifest::Manifest& workspace,
+                   const mcpp::manifest::Manifest& member,
+                   std::string_view table, bool received) {
+    const bool virtualRoot = workspace.package.name.empty();
+    if (!virtualRoot && !received) return;
+    mcpp::diag::warning("manifest/workspace-position",
+                        mcpp::pm::compat::position_warning(
+                            table, virtualRoot ? std::string_view{} : member.package.name));
+}
+
+// `[xlings]` entries and `[target.<sel>.xlings]` rows from `top` and `rows`,
+// for a member. The workspace's entries come first and a member's own
+// declaration of the same package wins, the "nearer the artifact" rule of
+// SPEC-004 §4.5; identity is `(namespace, name)`. Feature-gated entries do
+// not travel: a feature belongs to the package that declares it. Neither does
+// the emitter's per-platform view (`workspaceByPlatform`), so a published
+// member's descriptor states only what the member itself declared. Returns
+// whether the member received anything.
+bool merge_xlings(mcpp::manifest::Manifest& member,
+                  const mcpp::manifest::XlingsConfig* top,
+                  std::span<const mcpp::manifest::ConditionalConfig> rows) {
     // `(namespace, name)`, the identity `mcpp.xlings.address_set` defines,
     // spelled here from the same parser rather than imported. Importing that
     // module here makes GCC 16.1 fail with an internal compiler error
@@ -234,6 +229,7 @@ export void inherit_workspace_xlings(mcpp::manifest::Manifest& member,
     for (auto const& cc : member.conditionalConfigs)
         for (auto const& a : cc.xlings.deps) own.insert(package_key(a));
 
+    bool received = false;
     // Copies the entries of `from` whose package the member does not declare,
     // with the pin and the tier each address carries.
     auto take = [&](const mcpp::manifest::XlingsConfig& from,
@@ -249,62 +245,206 @@ export void inherit_workspace_xlings(mcpp::manifest::Manifest& member,
                 to.depWhen.try_emplace(a, w->second);
             if (from.onRequest.contains(a)) to.onRequest.insert(a);
         }
+        received = received || !taken.empty();
         to.deps.insert(to.deps.begin(), taken.begin(), taken.end());
         // `[xlings.overrides]` states where a payload comes from on THIS
         // machine, so a member built as the root of its own build takes the
         // workspace's statement unless it makes its own (mcpp#755).
-        for (auto const& [pkg, o] : from.overrides) to.overrides.try_emplace(pkg, o);
+        for (auto const& [pkg, o] : from.overrides)
+            if (to.overrides.try_emplace(pkg, o).second) received = true;
     };
-    take(workspace.xlings, member.xlings);
+    if (top) take(*top, member.xlings);
 
-    std::vector<mcpp::manifest::ConditionalConfig> rows;
-    for (auto const& cc : workspace.conditionalConfigs) {
+    std::vector<mcpp::manifest::ConditionalConfig> taken;
+    for (auto const& cc : rows) {
         if (cc.xlings.deps.empty() && cc.xlings.overrides.empty()) continue;
         mcpp::manifest::ConditionalConfig row;
         row.predicate = cc.predicate;
         take(cc.xlings, row.xlings);
         if (!row.xlings.deps.empty() || !row.xlings.overrides.empty())
-            rows.push_back(std::move(row));
+            taken.push_back(std::move(row));
+    }
+    member.conditionalConfigs.insert(member.conditionalConfigs.begin(),
+                                     std::make_move_iterator(taken.begin()),
+                                     std::make_move_iterator(taken.end()));
+    return received;
+}
+
+// W3 for the tables only a build's root reads: `[workspace.toolchain]`,
+// `[workspace.indices]`, `[workspace.profile.<name>]` and the scalar rows of
+// `[workspace.target.<triple>]`.
+void merge_layer_root_position(mcpp::manifest::Manifest& member,
+                               const mcpp::manifest::Manifest& layer,
+                               const std::filesystem::path& wsRoot,
+                               const std::filesystem::path& wsManifest) {
+    // A platform's entry: the member's own for that platform, else the
+    // member's own `default`, else the workspace's. The member's `default`
+    // is a statement about every platform, so it outranks the workspace's
+    // platform entries too.
+    auto& tc = member.toolchain;
+    if (!tc.byPlatform.contains("default")) {
+        for (auto const& [platform, spec] : layer.toolchain.byPlatform) {
+            if (tc.byPlatform.contains(platform)) continue;
+            tc.byPlatform[platform] = spec;
+            if (auto it = layer.toolchain.localByPlatform.find(platform);
+                it != layer.toolchain.localByPlatform.end())
+                tc.localByPlatform[platform] = it->second;
+            if (auto it = layer.toolchain.lineByPlatform.find(platform);
+                it != layer.toolchain.lineByPlatform.end())
+                tc.lineByPlatform[platform] = it->second;
+            tc.fileByPlatform[platform] = wsManifest;
+        }
+    }
+    if (tc.bootstrap.empty() && !layer.toolchain.bootstrap.empty()) {
+        tc.bootstrap = layer.toolchain.bootstrap;
+        tc.bootstrapLine = layer.toolchain.bootstrapLine;
+    }
+
+    for (auto const& [name, idx] : layer.indices) {
+        auto [it, inserted] = member.indices.try_emplace(name, idx);
+        if (inserted && it->second.is_local() && it->second.path.is_relative())
+            it->second.path = (wsRoot / it->second.path).lexically_normal();
+    }
+
+    for (auto const& [name, from] : layer.profiles) {
+        auto [it, inserted] = member.profiles.try_emplace(name, from);
+        if (inserted) continue;
+        auto& to = it->second;
+        if (!to.optDeclared && from.optDeclared) { to.optLevel = from.optLevel; to.optDeclared = true; }
+        if (!to.debugDeclared && from.debugDeclared) { to.debug = from.debug; to.debugDeclared = true; }
+        if (!to.ltoDeclared && from.ltoDeclared) { to.lto = from.lto; to.ltoDeclared = true; }
+        if (!to.stripDeclared && from.stripDeclared) { to.strip = from.strip; to.stripDeclared = true; }
+        if (!to.dependencyLinkageDeclared && from.dependencyLinkageDeclared) {
+            to.dependencyLinkage = from.dependencyLinkage;
+            to.dependencyLinkageDeclared = true;
+        }
+        to.cflags.insert(to.cflags.begin(), from.cflags.begin(), from.cflags.end());
+        to.cxxflags.insert(to.cxxflags.begin(), from.cxxflags.begin(), from.cxxflags.end());
+        to.ldflags.insert(to.ldflags.begin(), from.ldflags.begin(), from.ldflags.end());
+    }
+
+    for (auto const& [triple, from] : layer.targetOverrides) {
+        auto [it, inserted] = member.targetOverrides.try_emplace(triple, from);
+        if (inserted) continue;
+        auto& to = it->second;
+        if (to.toolchain.empty())  to.toolchain = from.toolchain;
+        if (to.linkage.empty())    to.linkage = from.linkage;
+        if (to.cxxRuntime.empty()) to.cxxRuntime = from.cxxRuntime;
+        if (!to.sysrootDeclared && from.sysrootDeclared) {
+            to.sysroot = from.sysroot;
+            to.sysrootDeclared = true;
+        }
+        if (to.minApiLevel == 0)   to.minApiLevel = from.minApiLevel;
+        if (to.runner.empty())     to.runner = from.runner;
+        for (auto const& [n, argv] : from.namedRunners) to.namedRunners.try_emplace(n, argv);
+    }
+}
+
+}  // namespace detail
+
+// The workspace's `[xlings]` entries, for a member, at every position it is
+// reached (W5): selected, a sibling's `path` dependency, a member of a
+// git-hosted workspace, a host tool's sub-build root (#713).
+//
+// An xlings entry describes the environment a build runs in, so it is
+// inherited without an opt-in; only dependencies, which are graph edges, need
+// `.workspace = true` (`merge_workspace_deps`).
+export void inherit_workspace_xlings(mcpp::manifest::Manifest& member,
+                                     const mcpp::manifest::Manifest& workspace) {
+    static const std::vector<mcpp::manifest::ConditionalConfig> none;
+    if (auto const* layer = workspace.layer.get()) {
+        auto const& tables = workspace.workspace.layerTables;
+        detail::merge_xlings(member,
+                             detail::lists(tables, "xlings") ? &layer->xlings : nullptr,
+                             detail::lists(tables, "target") ? layer->conditionalConfigs : none);
+    }
+    // COMPAT(workspace-position): the root's own [xlings] and [target.<sel>.xlings].
+    const auto position = mcpp::pm::compat::position_tables(workspace);
+    const bool top = detail::lists(position, "xlings");
+    const bool rows = detail::lists(position, "target");
+    if (!top && !rows) return;
+    const bool received = detail::merge_xlings(member, top ? &workspace.xlings : nullptr,
+                                               rows ? workspace.conditionalConfigs : none);
+    if (top) detail::warn_position(workspace, member, "xlings", received);
+}
+
+// The rows of `[workspace.target.<sel>]` -- `.build`, `.abi`, `.runtime` --
+// for a member, at every position it is reached (W5), ahead of the member's
+// own rows (W3). Their `.xlings` part is `inherit_workspace_xlings`'s.
+// A relative path in them was written against the workspace root (#224).
+export void inherit_workspace_layer_rows(mcpp::manifest::Manifest& member,
+                                         const mcpp::manifest::Manifest& workspace,
+                                         const std::filesystem::path& wsRoot) {
+    auto const* layer = workspace.layer.get();
+    if (!layer || layer->conditionalConfigs.empty()) return;
+    auto anchor = [&](std::vector<std::filesystem::path>& dirs) {
+        for (auto& d : dirs)
+            if (d.is_relative()) d = (wsRoot / d).lexically_normal();
+    };
+    std::vector<mcpp::manifest::ConditionalConfig> rows;
+    for (auto cc : layer->conditionalConfigs) {
+        cc.xlings = {};
+        anchor(cc.inputs.includeDirs);
+        anchor(cc.inputs.includeDirsAfter);
+        anchor(cc.inputs.privateIncludeDirs);
+        anchor(cc.linkLibraryDirs);
+        rows.push_back(std::move(cc));
     }
     member.conditionalConfigs.insert(member.conditionalConfigs.begin(),
                                      std::make_move_iterator(rows.begin()),
                                      std::make_move_iterator(rows.end()));
 }
 
-// The keys a member inherits only where it is the ROOT of a build: `[toolchain]`,
-// `[target.<triple>]`, `[indices]` and `[profile.<name>]`. They choose the
-// compiler, the target rows, the indices and the build profile for the whole
-// graph, so a member reached as somebody's dependency takes them from that
-// build's root instead. A member built as a
-// host tool is the root of its own sub-build, which is the second caller
-// (#710): without it, `mcpp build -p tool` used the workspace's compiler and
-// the same tool built for a consumer used the global default.
+// The tables only the root of a build reads -- `toolchain`, `indices`,
+// `profile.<name>`, the scalar rows of `target.<triple>` -- for a member that
+// is the root of one: selected by a command, or the root of a host tool's
+// sub-build (#710). A member reached as somebody's dependency takes them from
+// that build's root instead.
 export void inherit_workspace_root_position(mcpp::manifest::Manifest& member,
                                             const mcpp::manifest::Manifest& workspace,
                                             const std::filesystem::path& wsRoot) {
-    if (member.toolchain.byPlatform.empty())
-        member.toolchain = workspace.toolchain;
-    for (auto& [triple, entry] : workspace.targetOverrides)
-        if (!member.targetOverrides.contains(triple))
-            member.targetOverrides[triple] = entry;
-    // A profile is inherited by name, and a member's own table of that name
-    // replaces it whole, as `[target.<triple>]` does. Before 2026.10.5.2 the
-    // workspace's profiles reached no member: a virtual root's were ignored
-    // without a word, and a rooted root's applied only when its own package
-    // was the first one selected.
-    for (auto& [name, profile] : workspace.profiles)
-        if (!member.profiles.contains(name))
-            member.profiles[name] = profile;
-    inherit_workspace_indices(member, workspace, wsRoot);
+    if (auto const* layer = workspace.layer.get())
+        detail::merge_layer_root_position(member, *layer, wsRoot, workspace.sourcePath);
+    // COMPAT(workspace-position)
+    const auto position = mcpp::pm::compat::position_tables(workspace);
+    if (position.empty()) return;
+    const auto received = mcpp::pm::compat::inherit_root_position_by_position(
+        member, workspace, wsRoot, position);
+    for (auto const& table : position) {
+        if (table == "xlings") continue;
+        detail::warn_position(workspace, member, table, detail::lists(received, table));
+    }
+}
+
+// The effective `[indices]` of a member, for a reader that needs only them
+// (`mcpp add`, the index router): `[workspace.indices]` by name (W3), and the
+// root's own `[indices]` by position where the root has no
+// `[workspace.indices]` (COMPAT(workspace-position)). A relative `path` was
+// written at the workspace root and is anchored there (#224).
+void inherit_workspace_indices(mcpp::manifest::Manifest& member,
+                               const mcpp::manifest::Manifest& workspace,
+                               const std::filesystem::path& wsRoot) {
+    if (auto const* layer = workspace.layer.get())
+        for (auto const& [name, idx] : layer->indices) {
+            auto [it, inserted] = member.indices.try_emplace(name, idx);
+            if (inserted && it->second.is_local() && it->second.path.is_relative())
+                it->second.path = (wsRoot / it->second.path).lexically_normal();
+        }
+    const std::vector<std::string> indices{"indices"};
+    if (!detail::lists(mcpp::pm::compat::position_tables(workspace), "indices")) return;
+    const auto received = mcpp::pm::compat::inherit_root_position_by_position(
+        member, workspace, wsRoot, indices);
+    detail::warn_position(workspace, member, "indices", !received.empty());
 }
 
 // THE ROOT PACKAGE OF A WORKSPACE IS ONE OF ITS MEMBERS.
 //
 // A root that carries `[package]` beside `[workspace]` is selected as member
-// `"."`, and it receives `[workspace.package]` and `[workspace.build]` once,
-// as every other member does, so that one manifest compiles the same way in
-// every selection. Its root-position keys and `[workspace.dependencies]` are
-// handled by the caller: they are its own already, or merged explicitly.
+// `"."`, and it receives `[workspace.package]`, `[workspace.build]` and the
+// workspace layer once, as every other member does, so that one manifest
+// compiles the same way in every selection. Its own `[toolchain]`,
+// `[target.*]`, ... are its own declarations and come first; its
+// `[workspace.dependencies]` are merged explicitly by the caller.
 export void inherit_as_root_package(mcpp::manifest::Manifest& root,
                                     const std::filesystem::path& wsRoot) {
     if (!root.workspace.present || root.package.name.empty()) return;
@@ -313,14 +453,41 @@ export void inherit_as_root_package(mcpp::manifest::Manifest& root,
     const auto workspace = root;
     inherit_workspace_package(root, workspace);
     inherit_workspace_build(root, workspace, wsRoot);
+    if (auto const* layer = workspace.layer.get()) {
+        static const std::vector<mcpp::manifest::ConditionalConfig> none;
+        auto const& tables = workspace.workspace.layerTables;
+        detail::merge_layer_root_position(root, *layer, wsRoot, workspace.sourcePath);
+        inherit_workspace_layer_rows(root, workspace, wsRoot);
+        detail::merge_xlings(root,
+                             detail::lists(tables, "xlings") ? &layer->xlings : nullptr,
+                             detail::lists(tables, "target") ? layer->conditionalConfigs : none);
+    }
 }
 
+// EVERYTHING A MEMBER INHERITS FROM ITS WORKSPACE ROOT, IN ONE FUNCTION.
+//
+// There are two inheritance SITES in prepare_build — the command issued at the
+// workspace root with `-p <member>`, and the command issued inside a member
+// directory — and until this function existed they were two hand-copied lists
+// of the same merges. A fifth key added to one of them is a defect that
+// compiles, which is exactly how `[build]` came to be inherited by neither
+// (#527 Bug 2).
+//
+// The discipline is stated on `WorkspaceInherited`: scalars are taken when the
+// member did not DECLARE the key, vectors append with the workspace first, and
+// dependencies keep their explicit `.workspace = true` opt-in because they are
+// graph edges. The workspace layer follows the same rule (W3, above).
+//
+// `wsRoot` anchors relative paths: an `[indices].path` or a
+// `[workspace.dependencies] path` was written against the WORKSPACE ROOT, and
+// re-anchoring it to the member directory is #224.
 export void inherit_workspace_config(mcpp::manifest::Manifest& member,
                                      const mcpp::manifest::Manifest& workspace,
                                      const std::filesystem::path& wsRoot) {
     merge_workspace_deps(member, workspace, wsRoot);
     inherit_workspace_root_position(member, workspace, wsRoot);
     inherit_workspace_xlings(member, workspace);
+    inherit_workspace_layer_rows(member, workspace, wsRoot);
 
     // The two halves, each with a second caller of its own: a member reached
     // as a sibling.s `path` dependency needs both, at two different points.
@@ -329,6 +496,7 @@ export void inherit_workspace_config(mcpp::manifest::Manifest& member,
     inherit_workspace_package(member, workspace);
     inherit_workspace_build(member, workspace, wsRoot);
 }
+
 
 // The `[workspace.build]` half on its own.
 //
@@ -740,7 +908,17 @@ load_member_manifest(const mcpp::manifest::Manifest& workspace,
 // keys are equal are planned together; the key is a canonical string of those
 // values and nothing else, so a member's own flags, sources and dependencies
 // never separate it from another member.
-export std::string root_position_key(const mcpp::manifest::Manifest& m) {
+//
+// A conditional row's configuration values (`[target.<sel>.build]
+// dialect_cxxflags`, `[target.<sel>.abi]`) count as they evaluate for this
+// build (W4): `applies` answers whether a row's selector holds for the target
+// the members are planned for, and it is the evaluator prepare uses
+// (`cfgpred::matches` over `cfgpred::context_for`). Two members whose rows
+// differ only on other targets therefore share a plan; without `applies` no
+// row counts.
+export std::string root_position_key(
+        const mcpp::manifest::Manifest& m,
+        const std::function<bool(std::string_view)>& applies = {}) {
     std::string s;
     auto field = [&](std::string_view name, std::string_view value) {
         s += name; s += '='; s += value; s += '\x1f';
@@ -753,6 +931,13 @@ export std::string root_position_key(const mcpp::manifest::Manifest& m) {
     for (auto const& [platform, spec] : m.toolchain.byPlatform)
         field("toolchain." + platform, spec);
     for (auto const& [triple, e] : m.targetOverrides) {
+        // A row with no scalar written (a `[target.<sel>.build]`-only header)
+        // states no configuration; a row whose selector does not hold for
+        // this build's target is not this build's.
+        const bool written = !e.toolchain.empty() || !e.linkage.empty() || !e.cxxRuntime.empty()
+            || e.sysrootDeclared || e.minApiLevel != 0 || !e.runner.empty()
+            || !e.namedRunners.empty();
+        if (!written || (applies && !applies(triple))) continue;
         field("target." + triple + ".toolchain", e.toolchain);
         field("target." + triple + ".linkage", e.linkage);
         field("target." + triple + ".cxx_runtime", e.cxxRuntime);
@@ -764,7 +949,19 @@ export std::string root_position_key(const mcpp::manifest::Manifest& m) {
     }
     field("standard", m.package.standard);
     auto const& b = m.buildConfig;
-    list("dialect_cxxflags", b.dialectCxxflags);
+    auto dialect = b.dialectCxxflags;
+    auto abiThreads = b.abiThreadsDeclared ? (b.abiThreads ? "1" : "0") : "-";
+    auto abiExceptions = b.abiExceptionsDeclared ? (b.abiExceptions ? "1" : "0") : "-";
+    if (applies)
+        for (auto const& cc : m.conditionalConfigs) {
+            if (cc.dialectCxxflags.empty() && !cc.abiThreadsDeclared && !cc.abiExceptionsDeclared)
+                continue;
+            if (!applies(cc.predicate)) continue;
+            dialect.insert(dialect.end(), cc.dialectCxxflags.begin(), cc.dialectCxxflags.end());
+            if (cc.abiThreadsDeclared) abiThreads = cc.abiThreads ? "1" : "0";
+            if (cc.abiExceptionsDeclared) abiExceptions = cc.abiExceptions ? "1" : "0";
+        }
+    list("dialect_cxxflags", dialect);
     field("cxx_runtime", b.cxxRuntime);
     field("cxx_runtime_tests", b.cxxRuntimeTests);
     field("cxx_runtime_shared", b.cxxRuntimeShared);
@@ -774,8 +971,8 @@ export std::string root_position_key(const mcpp::manifest::Manifest& m) {
     field("target", b.target);
     field("macos_deployment_target", b.macosDeploymentTarget);
     field("ios_deployment_target", b.iosDeploymentTarget);
-    field("abi_threads", b.abiThreadsDeclared ? (b.abiThreads ? "1" : "0") : "-");
-    field("abi_exceptions", b.abiExceptionsDeclared ? (b.abiExceptions ? "1" : "0") : "-");
+    field("abi_threads", abiThreads);
+    field("abi_exceptions", abiExceptions);
     field("accel", b.accel);
     field("bmi_schedule", b.bmiSchedule);
     field("jobs", b.jobs);
@@ -858,6 +1055,23 @@ virtual_workspace_root(const mcpp::manifest::Manifest& workspace,
     b.dependencyLinkage = f.dependencyLinkage;
     b.cacheMode = f.cacheMode;
     b.platformDependencies = f.platformDependencies;
+    // The member's conditional configuration rows, as rows: prepare evaluates
+    // them against the target exactly as it would on the member, so a
+    // `[target.<sel>.build] dialect_cxxflags` or `[target.<sel>.abi]` the
+    // member declares (or inherits) reaches the build when the member is
+    // planned under a virtual root (#786). Nothing a package owns travels.
+    for (auto const& cc : first.conditionalConfigs) {
+        if (cc.dialectCxxflags.empty() && !cc.abiThreadsDeclared && !cc.abiExceptionsDeclared)
+            continue;
+        mcpp::manifest::ConditionalConfig row;
+        row.predicate = cc.predicate;
+        row.dialectCxxflags = cc.dialectCxxflags;
+        row.abiThreads = cc.abiThreads;
+        row.abiThreadsDeclared = cc.abiThreadsDeclared;
+        row.abiExceptions = cc.abiExceptions;
+        row.abiExceptionsDeclared = cc.abiExceptionsDeclared;
+        v.conditionalConfigs.push_back(std::move(row));
+    }
     return v;
 }
 

@@ -1276,3 +1276,31 @@ TEST(MsvcVswhereText, OneInstancePerInstanceId) {
     EXPECT_EQ(v[1].product, "Visual Studio Community 2026 Insiders");
     EXPECT_TRUE(mcpp::toolchain::msvc::parse_vswhere_text("").empty());
 }
+
+// D16: the refusal and the first-run notice say which half of the MSVC ABI is
+// missing and where the SDK was looked for. The sentence they replaced said
+// "no Visual Studio found" on a machine whose Visual Studio was found and
+// whose SDK sat on another drive (design 2026-10-10 §12.1, run 37974353683).
+TEST(MsvcProbe, TheDescriptionNamesTheMissingHalfAndWhereItLooked) {
+    namespace msvc = mcpp::toolchain::msvc;
+    msvc::MsvcProbe vsOnly;
+    vsOnly.visualStudio = {"D:\\VS\\2026\\Enterprise"};
+    vsOnly.stl = true;
+    vsOnly.sdkSearched = {"D:\\Kits\\10", "C:\\Program Files (x86)\\Windows Kits\\10"};
+    const auto a = msvc::describe_msvc_probe(vsOnly);
+    EXPECT_NE(a.find("Visual Studio was found at D:\\VS\\2026\\Enterprise"), std::string::npos) << a;
+    EXPECT_NE(a.find("no Windows SDK"), std::string::npos) << a;
+    EXPECT_NE(a.find("D:\\Kits\\10"), std::string::npos) << a;
+    EXPECT_EQ(a.find("no Visual Studio"), std::string::npos) << a;
+
+    msvc::MsvcProbe sdkOnly;
+    sdkOnly.sdk = msvc::WindowsSdk{"D:\\Kits\\10", "10.0.26100.0"};
+    const auto b = msvc::describe_msvc_probe(sdkOnly);
+    EXPECT_NE(b.find("10.0.26100.0"), std::string::npos) << b;
+    EXPECT_NE(b.find("no Visual Studio"), std::string::npos) << b;
+
+    msvc::MsvcProbe both = vsOnly;
+    both.sdk = sdkOnly.sdk;
+    EXPECT_TRUE(both.usable());
+    EXPECT_TRUE(msvc::describe_msvc_probe(both).empty());
+}

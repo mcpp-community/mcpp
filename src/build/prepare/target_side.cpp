@@ -1518,7 +1518,22 @@ static void step9_define_graph_package_entry_closure(PrepareState& state) {
                              form->second.answer.linkage))},
                 {"reason", form->second.answer.reason},
             };
-        if (!forBuildProgram) return entry;
+        // D7: where this package's build program writes in this
+        // configuration (`mcpp::out_dir()`), for a reader outside the build
+        // -- a test script -- that needs a generated file and must not guess.
+        // resolution.json only: the graph document a build program reads is
+        // part of its re-run key, and must not change with when it is asked.
+        if (!forBuildProgram) {
+            static const std::vector<std::string> none;
+            // A member's program keeps its cache in the project (step 9).
+            const bool member = state.m->package.virtualRoot && i != 0
+                             && state.isWorkspaceMemberPackage(i);
+            entry["outDir"] = state.programOutDir(member ? *state.root : state.workRoot, pm,
+                                                  i < state.activeFeaturesByPackage.size()
+                                                      ? state.activeFeaturesByPackage[i] : none)
+                                  .generic_string();
+            return entry;
+        }
 
         std::error_code ec;
         auto dir = std::filesystem::absolute(state.packages[i].root, ec).lexically_normal();
@@ -1614,6 +1629,7 @@ static std::expected<void, std::string> step9_root_build_program(PrepareState& s
         // contract hash — and therefore the build.mcpp cache — is unchanged
         // across the move for feature-identical builds.
         bpEnv.features     = feature_closure(*state.m, parse_feature_request(state.overrides.features));
+        bpEnv.outDir       = state.programOutDir(state.workRoot, *state.m, bpEnv.features);
         // mcpp#241 (root): consumer index 0, same owner as the dep loop.
         //
         // AND THE LINK FORM OF EACH DEPENDENCY (#642 E2), to this program only.
@@ -1819,6 +1835,9 @@ static std::expected<void, std::string> step9_root_build_program(PrepareState& s
             pkg0.manifest.modules.sources.insert(
                 pkg0.manifest.modules.sources.end(),
                 state.m->modules.sources.begin() + rmodN, state.m->modules.sources.end());
+            // The units its actions generate, as they declared them (D6).
+            for (auto const& [path, unit] : state.m->modules.declaredUnits)
+                pkg0.manifest.modules.declaredUnits.insert_or_assign(path, unit);
             // The snapshot's manifest is what later readers of the root's
             // flags see -- mirror the flag/include tails, as the old
             // pre-snapshot ordering implicitly did.
@@ -2011,6 +2030,9 @@ static std::expected<void, std::string> step9_member_build_programs(PrepareState
         bpEnv.artifactsDir = pkg.root / "target" / ".build-mcpp";
         if (i < state.activeFeaturesByPackage.size())
             bpEnv.features = state.activeFeaturesByPackage[i];
+        // Beside the cache above, which is in the project under a plan's
+        // work directory too: `emit build-database` reuses the build's run.
+        bpEnv.outDir = state.programOutDir(*state.root, pkg.manifest, bpEnv.features);
         {
             std::map<std::size_t, std::string> linkForms;
             for (auto const& [idx, form] : state.dependencyLinkForms)

@@ -79,6 +79,10 @@ jobs:
           "$MCPP" self config
           # macOS default toolchain is LLVM
           "$MCPP" toolchain default "llvm@${MCPP_LLVM_VER}"
+          # The index payloads e2e 32, 33 and 40 link from this home into their
+          # own (_inherit_toolchain.sh); see ci-linux-e2e.yml.
+          XLINGS_HOME="$HOME/.mcpp/registry" "$MCPP_VENDORED_XLINGS" install \
+              mcpplibs:cmdline@0.0.1 mcpplibs:cmdline@0.0.2 -y
           echo "MCPP=$MCPP" >> "$GITHUB_ENV"
           set -o pipefail
           bash tests/e2e/run_all.sh 2>&1 | tee "$RUNNER_TEMP/e2e-suite.log"

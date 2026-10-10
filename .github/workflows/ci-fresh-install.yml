@@ -152,7 +152,7 @@ jobs:
         env:
           XLINGS_NON_INTERACTIVE: '1'
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.10.8.1
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.10.10.2
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Install mcpp and config mirror
@@ -315,7 +315,7 @@ jobs:
 
       - name: Install xlings + mcpp
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.10.8.1
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.10.10.2
           # Deliberately NOT writing to $GITHUB_PATH here. On container
           # images that declare no PATH in their config (opensuse/
           # tumbleweed), appending a single dir to GITHUB_PATH makes the
@@ -358,6 +358,58 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   # macOS: llvm@23.1.3
   # ──────────────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────────
+  # Termux (Android): the released tarball, `mcpp new` → `mcpp run` with the
+  # default toolchain (design 2026-10-10 §13, D27). Two halves, because no
+  # runner has a phone: termux-docker on a native arm64 runner is Termux's
+  # bionic userland and aarch64's default toolchain (llvm + the managed glibc);
+  # an Android 14 emulator (x86_64, KVM) is the app sandbox, where SELinux
+  # refuses link(2) and every install of a payload with hard links failed.
+  # The real aarch64 phone is a release check (O11), not a runner.
+  # ──────────────────────────────────────────────────────────────────
+  termux-docker:
+    needs: [wait-index]
+    name: Termux userland (termux-docker aarch64)
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Default: mcpp new → run"
+        run: |
+          V="${{ needs.wait-index.outputs.version }}"
+          bash .github/tools/termux_fresh_install.sh docker \
+            "https://github.com/mcpp-community/mcpp/releases/download/v$V/mcpp-$V-linux-aarch64.tar.gz"
+
+  termux-emulator:
+    needs: [wait-index]
+    name: Termux app sandbox (Android 14 emulator, x86_64)
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Download Termux and mcpp
+        run: |
+          V="${{ needs.wait-index.outputs.version }}"
+          bash .github/tools/termux_fresh_install.sh emulator-download \
+            "https://github.com/mcpp-community/mcpp/releases/download/v$V/mcpp-$V-linux-x86_64.tar.gz"
+      - name: "Default: mcpp new → run, in the app sandbox"
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disk-size: 14G
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash .github/tools/termux_fresh_install.sh emulator-run
+
   macos-fresh:
     needs: [wait-index]
     name: macOS fresh install (${{ matrix.image }})
@@ -412,7 +464,7 @@ jobs:
           #             (older ones carry minos=15 and refuse to start).
           #   v0.4.51+: in-process sha256 — this image has no sha256sum
           #             binary, so pinned fetches failed before it.
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.10.8.1
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.10.10.2
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Install mcpp and config mirror

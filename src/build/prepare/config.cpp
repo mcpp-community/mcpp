@@ -622,11 +622,13 @@ unfolded_defines_error(const mcpp::manifest::Manifest& m) {
 // Three parts of the inheritance matter to a dependency: `[workspace.package]`
 // (a member may omit `version`), `x.workspace = true` dependency entries
 // (without the merge the entry reaches resolution with neither version nor
-// path), and `[workspace.build]`. They are applied at the dependency's LOAD
+// path), `[workspace.build]`, `[workspace.xlings]` and the rows of
+// `[workspace.target.<sel>]`. They are applied at the dependency's LOAD
 // site, before the conditional merge and the `defines` fold, which is the
 // order the root follows; `makePackageRoot` only captures the result (#690).
-// `[toolchain]`, `[target.<triple>]` and `[indices]` are decided by the root
-// for the whole graph and are not applied to a dependency.
+// `[workspace.toolchain]`, the scalar rows of `[workspace.target.<triple>]`,
+// `[workspace.indices]` and `[workspace.profile.*]` describe the build, which
+// the root decides for the whole graph; they are not applied to a dependency.
 //
 // One function for every way a member is reached: a sibling `path`
 // dependency, a member of a git-hosted workspace, and a member inside an
@@ -641,6 +643,7 @@ inherit_as_workspace_member(mcpp::manifest::Manifest& member,
     mcpp::project::merge_workspace_deps(member, workspace, workspaceRoot);
     mcpp::project::inherit_workspace_build(member, workspace, workspaceRoot);
     mcpp::project::inherit_workspace_xlings(member, workspace);
+    mcpp::project::inherit_workspace_layer_rows(member, workspace, workspaceRoot);
     return mcpp::project::workspace_inheritance_error(member, memberDir);
 }
 

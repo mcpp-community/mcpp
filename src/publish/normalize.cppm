@@ -393,6 +393,95 @@ normalize_for_publish(const std::filesystem::path&           packageDir,
         }
     }
 
+    // W6: what the workspace layer gave the member is written into the
+    // member's own tables -- `[workspace.toolchain]` as `[toolchain]`,
+    // `[workspace.target.<sel>.build]` as `[target.<sel>.build]`, and so on --
+    // merged as the build merged it (W3): a key the member wrote is the
+    // member's, a list has the workspace's entries first. The archive is then
+    // complete on its own (SPEC-004 §9.7), and the package built as the root of
+    // a host-tool sub-build is configured as it was in its workspace. A
+    // relative path was written against the workspace root; it is rewritten
+    // against the package, and refused when it leaves the package.
+    if (effective.member && effective.workspace && effective.workspace->layer) {
+        auto wsDoc = t::parse_file(effective.workspaceRoot / "mcpp.toml");
+        if (!wsDoc) return std::unexpected(std::format("{}: {}",
+            (effective.workspaceRoot / "mcpp.toml").string(), wsDoc.error().message));
+        const auto* wsTable = wsDoc->get_table("workspace");
+        static constexpr std::string_view kPathKeys[] = {
+            "include_dirs", "include_dirs_after", "private_include_dirs", "link_library_dirs", "path",
+        };
+        std::function<std::expected<void, std::string>(t::Table&, const t::Table&, const std::string&)>
+            merge = [&](t::Table& into, const t::Table& from, const std::string& at)
+                -> std::expected<void, std::string> {
+            for (auto const& [key, value] : from) {
+                const auto here = at.empty() ? key : at + "." + key;
+                auto value2 = value;
+                if (std::ranges::find(kPathKeys, key) != std::end(kPathKeys)) {
+                    auto rebase = [&](const std::string& p) -> std::expected<std::string, std::string> {
+                        std::filesystem::path path(p);
+                        if (path.is_absolute()) return p;
+                        const auto abs = (effective.workspaceRoot / path).lexically_normal();
+                        if (!inside(packageDir, abs))
+                            return std::unexpected(std::format(
+                                "{}: [workspace.{}] entry '{}' resolves to '{}', outside this "
+                                "package's directory, and the published archive contains only "
+                                "that directory. Move it into the package, or declare it in the "
+                                "package's own table for its own build only.",
+                                manifestPath.string(), here, p, abs.string()));
+                        return abs.lexically_relative(packageDir.lexically_normal()).generic_string();
+                    };
+                    if (value.is_string()) {
+                        auto r = rebase(value.as_string());
+                        if (!r) return std::unexpected(r.error());
+                        value2 = t::Value{*r};
+                    } else if (value.is_array()) {
+                        t::Array a;
+                        for (auto const& e : value.as_array()) {
+                            if (!e.is_string()) { a.push_back(e); continue; }
+                            auto r = rebase(e.as_string());
+                            if (!r) return std::unexpected(r.error());
+                            a.emplace_back(*r);
+                        }
+                        value2 = t::Value{std::move(a)};
+                    }
+                }
+                auto it = into.find(key);
+                if (it == into.end()) {
+                    if (value2.is_table() && wsDoc->has_explicit_table("workspace." + here))
+                        explicitTables.insert(here);
+                    into.emplace(key, std::move(value2));
+                    changed = true;
+                    continue;
+                }
+                if (it->second.is_table() && value2.is_table()) {
+                    if (auto r = merge(it->second.as_table(), value2.as_table(), here); !r) return r;
+                } else if (it->second.is_array() && value2.is_array()) {
+                    auto joined = value2.as_array();
+                    for (auto const& e : it->second.as_array()) joined.push_back(e);
+                    it->second = t::Value{std::move(joined)};
+                    changed = true;
+                }
+                // A scalar the member wrote is the member's.
+            }
+            return {};
+        };
+        if (wsTable)
+            for (auto const& name : effective.workspace->workspace.layerTables) {
+                auto src = wsTable->find(name);
+                if (src == wsTable->end() || !src->second.is_table()) continue;
+                auto* dst = table_at(root, name, name, explicitTables);
+                if (!dst) return std::unexpected(std::format(
+                    "{}: `{}` is not a table", manifestPath.string(), name));
+                auto from = src->second.as_table();
+                // The member's own `default` speaks for every platform, as in
+                // `merge_layer_root_position`.
+                if (name == "toolchain" && dst->contains("default"))
+                    std::erase_if(from, [](auto const& kv) { return kv.first != "bootstrap"; });
+                if (auto r = merge(*dst, from, name); !r)
+                    return std::unexpected(r.error());
+            }
+    }
+
     // Dependencies: the unconditional sections and every conditional one.
     Walk walk{ packageDir, effective, *doc, manifestPath };
     for (auto section : {"dependencies", "build-dependencies", "dev-dependencies"}) {

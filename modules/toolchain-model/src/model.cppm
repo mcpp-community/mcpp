@@ -545,6 +545,13 @@ struct BmiTraits {
     // one compiler and not the other, and the split was one flag wide.
     std::string_view moduleImplLangFlag;      // " -x c++" | " /TP"
 
+    // How this compiler is told that a translation unit is an IMPLEMENTATION
+    // PARTITION (`module M:part;`): it writes a BMI and is not an interface.
+    // Measured on cl.exe 14.51 (design 2026-10-10 §5.2): `/internalPartition`
+    // is required -- no option is C7621 for a `.cpp`, `/interface` is C3474.
+    // Clang and GCC compile one as they compile an interface.
+    std::string_view moduleImplPartitionLangFlag; // " -x c++" | " -x c++-module" | " /internalPartition /TP"
+
     // Non-empty ⇔ the driver can emit the BMI *and stop*, producing the SAME
     // BMI an ordinary compile of that TU would have produced. Both halves
     // matter, and the second one is the trap.
@@ -715,6 +722,7 @@ BmiTraits bmi_traits(const Toolchain& tc) {
             // is the half that says "this is C++". A non-interface unit keeps
             // the second and drops the first.
             .moduleImplLangFlag = " /TP",
+            .moduleImplPartitionLangFlag = " /internalPartition /TP",
         };
     }
     if (is_clang(tc)) {
@@ -733,6 +741,7 @@ BmiTraits bmi_traits(const Toolchain& tc) {
             .bmiSearchPrefix = " -fprebuilt-module-path=",
             .moduleInterfaceLangFlag = " -x c++-module",
             .moduleImplLangFlag = " -x c++",
+            .moduleImplPartitionLangFlag = " -x c++-module",
             .bmiOnlyFlags = " --precompile -Xclang -emit-reduced-module-interface",
         };
     }
@@ -758,6 +767,7 @@ BmiTraits bmi_traits(const Toolchain& tc) {
         // The same flag, and for GCC that is not a coincidence: since GCC reads
         // interface-ness from the content, both answers are "this is C++".
         .moduleImplLangFlag = " -x c++",
+        .moduleImplPartitionLangFlag = " -x c++",
     };
 }
 

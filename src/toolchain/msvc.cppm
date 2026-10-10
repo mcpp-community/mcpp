@@ -299,6 +299,31 @@ struct WindowsSdk {
 std::optional<WindowsSdk> find_windows_sdk(
     std::span<const std::filesystem::path> extraRoots = {});
 
+// The machine's Windows SDK roots, in the order step 3 above searches them
+// (D15): the root the SDK installer recorded (`Installed Roots\KitsRoot10`,
+// either registry view), then `Windows Kits\10` under %ProgramFiles(x86)%
+// and %ProgramFiles%, then the same two under `C:`. Deduplicated.
+std::vector<std::filesystem::path> machine_sdk_roots();
+
+// WHAT A MACHINE HAS OF THE MSVC ABI, AND WHERE IT LOOKED (D16).
+//
+// "MSVC is usable" is two halves -- Visual Studio's C++ tools with their STL,
+// and a Windows SDK -- and a diagnostic that only had the conjunction said
+// "no Visual Studio found" on a machine whose Visual Studio was found and
+// whose SDK sat on another drive (design 2026-10-10 §12, run 37974353683).
+struct MsvcProbe {
+    std::vector<std::filesystem::path> visualStudio;   // instances with the C++ tools
+    bool                               stl = false;    // the MSVC STL's std module source
+    std::optional<WindowsSdk>          sdk;
+    std::vector<std::filesystem::path> sdkSearched;     // the roots step 3 tried
+    bool usable() const { return stl && sdk.has_value(); }
+};
+MsvcProbe probe_msvc();
+
+// One sentence: what was found, what is missing, and where it was looked
+// for. Empty when both halves are present.
+std::string describe_msvc_probe(const MsvcProbe& probe);
+
 // Windows SDK payload roots that belong to the same xlings store as this
 // compiler. The compiler binary says which store it came from, so a managed
 // toolset finds its own SDK with nothing configured and no version hardcoded
@@ -492,10 +517,14 @@ std::optional<std::filesystem::path> find_vs_via_comntools() {
 
 // Strategy 4: Scan well-known paths.
 std::optional<std::filesystem::path> find_vs_via_paths() {
-    static constexpr std::string_view bases[] = {
-        "C:\\Program Files\\Microsoft Visual Studio",
-        "C:\\Program Files (x86)\\Microsoft Visual Studio",
-    };
+    // %ProgramFiles% and %ProgramFiles(x86)% first: the system drive is not
+    // `C:` on every machine (D15).
+    std::vector<std::filesystem::path> bases;
+    for (const char* var : {"ProgramFiles", "ProgramFiles(x86)"})
+        if (auto b = mcpp::platform::windows::env_directory(var))
+            bases.push_back(*b / "Microsoft Visual Studio");
+    bases.emplace_back("C:\\Program Files\\Microsoft Visual Studio");
+    bases.emplace_back("C:\\Program Files (x86)\\Microsoft Visual Studio");
     // Newer VS installs use the major version as the directory ("18", seen
     // on windows-latest 2026-07: …\Microsoft Visual Studio\18\Enterprise),
     // older ones the year branding.
@@ -505,10 +534,10 @@ std::optional<std::filesystem::path> find_vs_via_paths() {
     };
 
     std::error_code ec;
-    for (auto base : bases) {
+    for (auto const& base : bases) {
         for (auto year : years) {
             for (auto edition : editions) {
-                auto p = std::filesystem::path(base) / std::string(year) / std::string(edition);
+                auto p = base / std::string(year) / std::string(edition);
                 if (std::filesystem::exists(p / "VC" / "Tools" / "MSVC", ec))
                     return p;
             }
@@ -1057,8 +1086,12 @@ std::vector<VsInstance> enumerate_vs_instances() {
             if (same_root(e.root, inst.root)) return;
         out.push_back(std::move(inst));
     };
+    // Where the Visual Studio Installer keeps it: %ProgramFiles(x86)%, which
+    // is not `C:` on every machine (D15).
     const std::filesystem::path vswhere =
-        "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe";
+        mcpp::platform::windows::env_directory("ProgramFiles(x86)")
+            .value_or(std::filesystem::path("C:\\Program Files (x86)"))
+        / "Microsoft Visual Studio" / "Installer" / "vswhere.exe";
     bool listed = false;
     if (std::filesystem::exists(vswhere)) {
         // `-all -prerelease`: every instance, Insiders included, complete or
@@ -1268,12 +1301,64 @@ std::optional<WindowsSdk> find_windows_sdk(
     for (const auto& root : extraRoots)
         if (auto s = pick_sdk_in(root, want)) return s;
 
-    // 3. The conventional absolute install roots.
-    for (const char* base : {"C:\\Program Files (x86)\\Windows Kits\\10",
-                             "C:\\Program Files\\Windows Kits\\10"}) {
-        if (auto s = pick_sdk_in(std::filesystem::path{base}, want)) return s;
-    }
+    // 3. Where the machine's SDK installer put it (D15).
+    for (const auto& root : machine_sdk_roots())
+        if (auto s = pick_sdk_in(root, want)) return s;
     return std::nullopt;
+}
+
+std::vector<std::filesystem::path> machine_sdk_roots() {
+    std::vector<std::filesystem::path> out;
+    auto add = [&](std::optional<std::filesystem::path> p) {
+        if (!p || p->empty()) return;
+        auto n = p->lexically_normal();
+        for (auto const& e : out)
+            if (e.lexically_normal() == n) return;
+        out.push_back(std::move(n));
+    };
+    namespace win = mcpp::platform::windows;
+    add(win::machine_registry_path(L"SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots",
+                                   L"KitsRoot10"));
+    for (const char* var : {"ProgramFiles(x86)", "ProgramFiles"})
+        if (auto base = win::env_directory(var)) add(*base / "Windows Kits" / "10");
+    add(std::filesystem::path("C:\\Program Files (x86)\\Windows Kits\\10"));
+    add(std::filesystem::path("C:\\Program Files\\Windows Kits\\10"));
+    return out;
+}
+
+MsvcProbe probe_msvc() {
+    MsvcProbe p;
+#if defined(_WIN32)
+    for (auto const& inst : enumerate_vs_instances()) p.visualStudio.push_back(inst.root);
+    p.stl = find_std_module_source().has_value();
+    p.sdk = find_windows_sdk();
+    p.sdkSearched = machine_sdk_roots();
+#endif
+    return p;
+}
+
+std::string describe_msvc_probe(const MsvcProbe& p) {
+    if (p.usable()) return {};
+    std::string searched;
+    for (auto const& r : p.sdkSearched)
+        searched += std::format("{}{}", searched.empty() ? "" : ", ", r.string());
+    const bool haveVs = !p.visualStudio.empty() && p.stl;
+    if (haveVs && !p.sdk)
+        return std::format("Visual Studio was found at {}, but no Windows SDK was "
+                           "(WindowsSdkDir is not set; searched: {})",
+                           p.visualStudio.front().string(), searched);
+    if (!haveVs && p.sdk)
+        return std::format("the Windows SDK {} was found at {}, but no Visual Studio with "
+                           "the C++ tools (its MSVC STL) was",
+                           p.sdk->version, p.sdk->root.string());
+    if (!p.visualStudio.empty() && !p.stl)
+        return std::format("Visual Studio was found at {}, but without the MSVC STL's "
+                           "std module (the C++ tools component), and {}",
+                           p.visualStudio.front().string(),
+                           p.sdk ? std::format("the Windows SDK {} was found", p.sdk->version)
+                                 : std::format("no Windows SDK was (searched: {})", searched));
+    return std::format("no Visual Studio with the C++ tools and no Windows SDK were found "
+                       "(searched for the SDK: {})", searched);
 }
 
 Origin origin_of(const std::filesystem::path& clPath) {

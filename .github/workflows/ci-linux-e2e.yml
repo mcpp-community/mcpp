@@ -70,6 +70,12 @@ jobs:
           "$MCPP" toolchain install llvm 23.1.3
           "$MCPP" toolchain install mingw-cross 16.1.0
           XLINGS_HOME="$MCPP_HOME/registry" "$MCPP_VENDORED_XLINGS" install xim:nasm -y
+          # The index payloads e2e 32, 33 and 40 link from this home into their
+          # own (_inherit_toolchain.sh). Installed in a test home instead, they
+          # are refused: the inherited subos projects assets that home's ledger
+          # does not register. A warm sandbox used to hold them by accident.
+          XLINGS_HOME="$MCPP_HOME/registry" "$MCPP_VENDORED_XLINGS" install \
+              mcpplibs:cmdline@0.0.1 mcpplibs:cmdline@0.0.2 -y
 
       - name: E2E suite
         # About twice the shard's budget of ten minutes (R4): reached only by a
@@ -359,7 +365,7 @@ jobs:
 
       - name: Bootstrap xlings + released mcpp
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.10.8.1
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.10.10.2
           export PATH="$HOME/.xlings/subos/current/bin:$PATH"
           xlings update
           xlings install mcpp -y -g

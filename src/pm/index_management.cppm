@@ -16,6 +16,7 @@ import mcpp.lockfile;
 import mcpp.manifest;
 import mcpp.platform;
 import mcpp.project;
+import mcpp.pm.index_route;
 import mcpp.ui;
 import mcpp.xlings;
 
@@ -95,15 +96,15 @@ export int index_list() {
     // Show project-level custom indices from mcpp.toml [indices].
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (root) {
-        // The effective manifest: a member inherits the workspace's
-        // `[indices]` (#690, W4).
-        std::optional<mcpp::manifest::Manifest> m;
-        if (auto effective = mcpp::project::load_effective_manifest(*root))
-            m = std::move(effective->manifest);
-        if (m && !m->indices.empty()) {
+        // The effective `[indices]`: a member's own, `[workspace.indices]`, and
+        // a workspace root's own read by position (#690; SPEC-004 §9.12, §9.13).
+        // One function with the index router, so the list names what
+        // resolution searches.
+        const auto indices = mcpp::pm::effective_indices(*root);
+        if (!indices.empty()) {
             std::println("");
             std::println("Project indices (mcpp.toml):");
-            for (auto& [name, spec] : m->indices) {
+            for (auto& [name, spec] : indices) {
                 if (spec.is_local()) {
                     std::println("  {:<15}  {}  (local path)", name, spec.path.string());
                 } else {

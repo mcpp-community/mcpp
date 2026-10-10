@@ -1016,6 +1016,27 @@ ParsedTarget parse_target(std::string_view target, std::string_view defaultIndex
     return r;
 }
 
+// D22: what to do about a failed install depends on why it failed, and xlings
+// says why (`code`, interface 1.5+; extraction since 2026.10.10.2). Every
+// failure used to end in "check network and retry": a phone whose app sandbox
+// refused hard links was sent to check its network (design 2026-10-10 §13).
+std::string install_failure_hint(const std::optional<mcpp::xlings::ErrorEvent>& error,
+                                 const std::filesystem::path& home) {
+    const std::string code = error ? error->code : std::string{};
+    if (code == "E_NETWORK")
+        return "check network and retry, or `mcpp self init --force`";
+    if (code == "E_DISK_FULL")
+        return std::format("free space on the disk that holds {}, then retry", home.string());
+    if (code == "E_PERMISSION")
+        return std::format("a file under {} could not be written: check the owner and "
+                           "permissions of its directory, then retry", home.string());
+    if (code == "E_INVALID_INPUT")
+        return "the downloaded archive was damaged and has been dropped; a retry downloads it again";
+    if (error && !error->hint.empty()) return error->hint;
+    return "the whole failure is in ~/.mcpp/log/mcpp.log (`mcpp self doctor` checks the "
+           "installation); retry, or `mcpp self init --force`";
+}
+
 } // namespace
 
 std::expected<Fetcher::XpkgPayload, CallError>
@@ -1254,8 +1275,8 @@ Fetcher::resolve_xpkg_path(std::string_view target,
             if (inst->error)
                 installError += ": " + inst->error->message;
             return std::unexpected(CallError{std::format(
-                "{}\n  hint: check network and retry, or `mcpp self init --force`",
-                installError)});
+                "{}\n  hint: {}", installError,
+                install_failure_hint(inst->error, cfg_.xlingsHome()))});
         }
     }
     // No autoInstall fallback: when the caller explicitly disables

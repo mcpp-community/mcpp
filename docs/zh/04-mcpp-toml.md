@@ -175,7 +175,8 @@ dialect_cxxflags = ["-D_HAS_EXCEPTIONS=0"]
 
 与普通的构建输入不同，`dialect_cxxflags` 是图级联的（SPEC-004 §9 第 10 条），
 所以只有这次构建的根贡献它：命令直接构建的那个包，或 `-p` 选中的成员。条目
-按这个顺序追加——`[workspace.build]`、根自己的 `[build]`、再到每个命中的
+按这个顺序追加——`[workspace.build]`、根自己的 `[build]`、每个命中的
+`[workspace.target.<selector>.build]` 行、再到每个命中的
 `[target.<selector>.build]`（按选择器的具体程度：三元组在操作系统之后，操作系统在族之后；
 SPEC-004 §3.1.1）——解出的列表到达 std BMI 的预构建、
 模块扫描与每一个翻译单元，对根和对每个依赖一视同仁。依赖包自己声明的
@@ -827,6 +828,15 @@ minos`）里记录的最低系统版本，也就是这个二进制能运行的�
 按 TARGET 判定，不按运行 mcpp 的那台机器判定：`mcpp build --target
 aarch64-macos` 在 Linux 或 Windows 上和在 Mac 上一样遵从这个字段
 （以及环境变量），非 macOS 目标则永远不会看到它。
+
+### 在其他章节说明的 `[build]` 键
+
+| 键 | 章节 |
+|---|---|
+| `allow_host_libs` | [20 —— 工具链](20-toolchains.md)、[22 —— 目标侧](22-target-side.md) |
+| `ios_deployment_target` | [20 —— 工具链](20-toolchains.md) |
+| `platform-dependencies` | [22 —— 目标侧](22-target-side.md) |
+| `std-module`、`std-compat-module` | [22 —— 目标侧](22-target-side.md) |
 
 ### 构建并发（`jobs`）与模块调度（`bmi_schedule`）
 
@@ -1750,6 +1760,26 @@ discover = ["tests/**/*.cpp"]    # the default
 测试程序检验它所链接的代码，而这些代码可能运行在声明的代码页中。`windows_code_page
 = "utf-8"` 使测试在同一个代码页中运行，于是测试结果不取决于运行它的机器的区域设置。
 测试程序只接收应用程序清单，不接收 `[resources]` 的其它内容。
+
+### 2.18 `[workspace.*]` —— 工作空间共享的表（2026.10.10.1+）
+
+在工作空间根上，`workspace.` 之下的表交给每个成员，其键、子表与选择器与它所镜像的表
+相同：`[workspace.package]`、`[workspace.build]`、`[workspace.dependencies]`、
+`[workspace.toolchain]`、`[workspace.indices]`、`[workspace.profile.<name>]`、
+`[workspace.target.<selector>]`（及其 `.build`、`.abi`、`.runtime`、`.xlings.workspace`）
+与 `[workspace.xlings]`。不带前缀的表描述根自己的包。合并规则、被拒绝的键以及根自己的表
+按位置读取的方式见 [07 —— 工作空间](07-workspace.md) §4。
+
+```toml
+[workspace]
+members = ["core", "app"]
+
+[workspace.package]
+mcpp = ">=2026.10.10.1"
+
+[workspace.target.'cfg(os = "windows")'.build]
+dialect_cxxflags = ["-DARCH_COMPAT=1"]
+```
 
 ## 3. 实战示例
 

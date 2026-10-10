@@ -154,10 +154,44 @@ report_manifest_statements(const mcpp::manifest::Manifest& m, bool strict) {
 // links nothing into the root. A rooted workspace's own package is a member
 // like any other ("."), so it is the same node, with the same commands, in
 // every selection that reaches it.
+// What the workspace root's own manifest states about itself, reported once
+// for the command that plans its members (SPEC-004 §9.10):
+//   W7  a package table on a root without [package] acts on no package --
+//       warning, an error under --strict;
+//   the workspace layer read by an engine older than this one is ignored by
+//   it without a word (2026.10.8.1 builds with a different toolchain), so a
+//   root that writes `[workspace.X]` without stating this engine as its floor
+//   gets a note.
+static std::expected<void, std::string>
+report_workspace_root(const mcpp::manifest::Manifest& ws, bool strict) {
+    for (auto const& w : ws.virtualRootPackageTables) {
+        if (strict) return std::unexpected(w);
+        mcpp::diag::warning("manifest/schema", w);
+    }
+    if (ws.layer) {
+        const auto have = mcpp::xpkg_version::parse(mcpp::MCPP_VERSION);
+        const auto floor = ws.workspace.inherited.mcppFloor;
+        const auto need = floor.empty() ? std::nullopt : mcpp::xpkg_version::parse(floor);
+        // The first release that reads the layer.
+        const auto first = mcpp::xpkg_version::parse("2026.10.10.1");
+        if (have && first && (!need || mcpp::xpkg_version::compare(*need, *first) < 0)) {
+            std::string tables;
+            for (auto const& t : ws.workspace.layerTables)
+                tables += std::format("{}[workspace.{}]", tables.empty() ? "" : ", ", t);
+            mcpp::diag::note("manifest/workspace-layer", std::format(
+                "{} is read by mcpp 2026.10.10.1 and later; an older mcpp ignores it and "
+                "builds the members without it. State the floor so an older one refuses "
+                "instead: [workspace.package] mcpp = \">=2026.10.10.1\"", tables));
+        }
+    }
+    return {};
+}
+
 static std::expected<void, std::string>
 select_workspace_members(PrepareState& state, const std::filesystem::path& wsRoot,
                          mcpp::manifest::Manifest ws,
                          const std::vector<std::string>& selection) {
+    if (auto r = report_workspace_root(ws, state.overrides.strict); !r) return r;
     const auto all = mcpp::project::workspace_members(ws, wsRoot);
     {
         auto first = mcpp::project::load_member_manifest(ws, wsRoot, selection.front());

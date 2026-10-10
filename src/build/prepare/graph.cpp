@@ -2159,6 +2159,26 @@ step4b_define_provisioning_closures(PrepareState& state) {
     // (the scanner walks the legacy modules.sources mirror). ninja overwrites
     // the placeholder before the compile edge runs, because that compile
     // depends on the action's output.
+    state.programOutDir = [&state](const std::filesystem::path& base,
+                                    const mcpp::manifest::Manifest& pm,
+                                    const std::vector<std::string>& features) {
+        // What changes the program's environment and is known before it runs.
+        std::string id = std::format("target={}\nprofile={}\naccel={}\n",
+            state.resolvedTargetCanonical, state.effectiveProfile, state.resolvedAccel());
+        if (state.tc)
+            id += std::format("toolchain={}@{}\n", state.tc->binaryPath.generic_string(),
+                              state.tc->version);
+        auto sorted = features;
+        std::ranges::sort(sorted);
+        for (auto const& f : sorted) id += "feature=" + f + "\n";
+        std::string name = pm.package.namespace_.empty()
+            ? pm.package.name : pm.package.namespace_ + "." + pm.package.name;
+        for (auto& c : name)
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '-' && c != '_') c = '_';
+        return base / "target" / ".build-mcpp" / "out"
+             / mcpp::toolchain::hash_string(id) / (name.empty() ? std::string("root") : name);
+    };
+
     state.adoptActionOutputs = [](mcpp::manifest::Manifest& mm,
                                  const std::filesystem::path& pkgRoot,
                                  std::size_t firstNewAction) {
@@ -2169,13 +2189,11 @@ step4b_define_provisioning_closures(PrepareState& state) {
             mm.buildConfig.actions.end());
         // The package that DECLARED the outputs classifies them: a dependency
         // generating a `.ixx` asks its own manifest, not the root project's.
-        // Built once per package, not once per output — and BEFORE
-        // `prepare_actions`, which needs the same table to decide which
-        // outputs get a placeholder (a header does not; see mcpp#534).
+        // Built once per package, not once per output.
         const auto pkgExtTable =
             mcpp::extension_table_for(mm.buildConfig.moduleExtensions,
                                       mm.buildConfig.deviceExtensions);
-        mcpp::build::directives::prepare_actions(fresh, pkgRoot, pkgExtTable);
+        mcpp::build::directives::prepare_actions(fresh, pkgRoot);
         std::copy(fresh.begin(), fresh.end(),
                   mm.buildConfig.actions.begin()
                       + static_cast<std::ptrdiff_t>(firstNewAction));
@@ -2189,6 +2207,22 @@ step4b_define_provisioning_closures(PrepareState& state) {
                     continue;
                 mm.buildConfig.sources.push_back(o);
                 mm.modules.sources.push_back(o);
+                // A declared unit: the scan takes what the action says the
+                // file provides and imports, and reads nothing (D6). A unit
+                // that declares no `provides` asserts nothing; the build's own
+                // scan finds its imports, as it did with the empty placeholder.
+                mm.modules.declaredUnits[o] = mcpp::manifest::ScanOverride{a.provides, a.imports};
+                // D26: a generated module interface must say which module it
+                // is. Without `.provides()` nothing writes its BMI, and the
+                // first importer fails far from the action.
+                if (a.provides.empty()
+                    && mcpp::classify(o, pkgExtTable) == mcpp::SourceKind::ModuleInterface)
+                    mcpp::diag::degraded("build-program/provides", std::format(
+                        "action '{}' generates the module-interface file '{}' and declares no "
+                        "`.provides(...)`", a.id, o),
+                        "the module it defines has no BMI in this build, so an import of it fails",
+                        "declare the module the generated file defines: "
+                        "mcpp::action(...).provides(\"<module>\")");
             }
         }
     };

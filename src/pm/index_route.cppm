@@ -251,11 +251,24 @@ cross_namespace_suggestions(
 IndexMap effective_indices(const std::filesystem::path& root) {
     auto m = mcpp::manifest::load(root / "mcpp.toml");
     if (!m) return {};
-    if (!m->indices.empty()) return m->indices;
 
-    // A member with no [indices] of its own inherits the workspace root's,
-    // whose relative `path` is anchored at the ROOT, not the member (#224).
+    // A member's own [indices], then its workspace's (`[workspace.indices]`
+    // by name; the root's own [indices] by position when it has none of the
+    // former), whose relative `path` is anchored at the ROOT (#224).
     auto wsRoot = mcpp::project::find_workspace_root(root);
+    // The workspace root itself: its own [indices], and what it gives every
+    // member, its root package included.
+    std::error_code ec;
+    if (m->workspace.present || (!wsRoot.empty() && std::filesystem::equivalent(wsRoot, root, ec))) {
+        if (m->workspace.present) wsRoot = root;
+        if (m->layer)
+            for (auto const& [name, idx] : m->layer->indices) {
+                auto [it, inserted] = m->indices.try_emplace(name, idx);
+                if (inserted && it->second.is_local() && it->second.path.is_relative())
+                    it->second.path = (wsRoot / it->second.path).lexically_normal();
+            }
+        return m->indices;
+    }
     if (wsRoot.empty()) return m->indices;
     auto ws = mcpp::manifest::load(wsRoot / "mcpp.toml");
     if (!ws || !ws->workspace.present) return m->indices;

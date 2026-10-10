@@ -123,6 +123,11 @@ struct Modules {
     bool                        strict = false;
     // glob → declared scan result; every glob must match ≥1 source file.
     std::map<std::string, ScanOverride> scanOverrides;
+    // The translation units a source action of this package generates, by
+    // absolute path, with what the action declares they provide and import
+    // (D6). They enter the scan as declared, never read: the action is the
+    // only writer of its output, and before the build it may not exist.
+    std::map<std::string, ScanOverride> declaredUnits;
 };
 
 // The accepted values of `windows_subsystem` (`subsystem = true`) and
@@ -324,6 +329,11 @@ struct Toolchain {
     int         bootstrapLine = 0;
     // Where each string entry was written, for the source a build reports.
     std::map<std::string, int> lineByPlatform;
+    // The manifest that wrote an entry, by the same key, when it is not the
+    // manifest that holds this table: an entry a member took from its
+    // workspace (`[workspace.toolchain]`, or the root position) names the
+    // workspace root's mcpp.toml.
+    std::map<std::string, std::filesystem::path> fileByPlatform;
 
     // The table behind the entry `for_platform` answers with, by the same key.
     const LocalToolchain* local_for(std::string_view platform) const {
@@ -1803,14 +1813,10 @@ struct WorkspaceInherited {
     BuildConfig              build;
     bool                     buildPresent = false;
 
-    // THERE IS NO `[workspace.target.<triple>]`, DELIBERATELY.
-    //
-    // A plain `[target.<triple>]` block in the workspace root manifest is
-    // ALREADY inherited by every member, per triple, member-wins — that
-    // predates these tables. Adding a second spelling for a capability that
-    // exists would be surface with no function, and two spellings of one rule
-    // is how the two acquire different behaviour later. Documented in docs/05
-    // rather than implemented here.
+    // `[workspace.toolchain]`, `[workspace.indices]`, `[workspace.profile.*]`,
+    // `[workspace.target.<sel>]` and `[workspace.xlings]` are not here: they
+    // are read by the same reader as the tables they mirror, into
+    // `WorkspaceConfig::layer` (SPEC-004 §9.10, rule W2).
 };
 
 // THE INHERITABLE SUBSET OF `[build]`, STATED ONCE.
@@ -1852,8 +1858,12 @@ struct WorkspaceConfig {
     std::vector<std::string>                            members;       // relative paths to member dirs
     std::vector<std::string>                            exclude;       // paths to exclude
     std::map<std::string, DependencySpec>               dependencies;  // [workspace.dependencies]
-    WorkspaceInherited                                  inherited;     // [workspace.package|build|target.*]
+    WorkspaceInherited                                  inherited;     // [workspace.package|build]
     bool                                                present = false;
+
+    // The `[workspace.X]` tables the root writes (`toolchain`, `indices`,
+    // `profile`, `target`, `xlings`); what they say is `Manifest::layer`.
+    std::vector<std::string>                            layerTables;
 };
 
 // `[hooks]` — project build lifecycle commands (#496).
@@ -1944,6 +1954,13 @@ struct Profile {
     bool        debug    = false;
     bool        lto      = false;
     bool        strip    = false;
+    // Which scalars the table WROTE: a profile inherited from the workspace
+    // layer is merged key by key (W3), and "the member did not write `opt`"
+    // cannot be read off a default of "2".
+    bool        optDeclared   = false;
+    bool        debugDeclared = false;
+    bool        ltoDeclared   = false;
+    bool        stripDeclared = false;
     // `dependency_linkage`, per profile (#519).
     //
     // DECLARED-OR-NOT IS LOAD-BEARING, and that is why there are two members
@@ -2039,6 +2056,24 @@ struct Manifest {
     // manifest is read on two paths before it is planned, and an appended
     // vector must be appended once.
     bool                        inheritedAsRootPackage = false;
+    // THE WORKSPACE LAYER: what `[workspace.toolchain]`, `[workspace.indices]`,
+    // `[workspace.profile.<name>]`, `[workspace.target.<sel>]` (with its
+    // `.build`, `.abi`, `.runtime` and `.xlings` subtables) and
+    // `[workspace.xlings]` say to every member (SPEC-004 §9.10, W1-W3). Set
+    // on a workspace root only; `workspace.layerTables` names the tables.
+    //
+    // Read by the reader of the tables they mirror -- the document under
+    // `workspace.` is a manifest of its own, without `[package]` -- so the
+    // keys, subtables and selectors of `[workspace.X]` are those of `X` by
+    // construction, not by a second list. Null when none of them is written.
+    // A workspace root without `[package]` that writes one of them also at
+    // the root position is refused for that table.
+    std::shared_ptr<const Manifest> layer;
+    // W7: the package tables a workspace root WITHOUT `[package]` wrote
+    // (`[build]`, `[targets]`, `[dependencies]`, ...). They act on no
+    // package there; the parser records them, the loader warns (`--strict`:
+    // refuses). Empty for every other manifest.
+    std::vector<std::string>    virtualRootPackageTables;
     std::vector<ConditionalConfig> conditionalConfigs;  // [target.'cfg(...)'.build], deferred
     std::map<std::string, Profile> profiles;   // [profile.<name>]
     // [features] — feature name → implied features ("default" = default set).

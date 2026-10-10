@@ -114,7 +114,15 @@ namespace pinned {
     // page, as mcpp.exe does.
     // Metadata and install share the process ABI context from 2026.10.8.1;
     // ARM64 runtime exports must be correct before dependency resolution.
-    inline constexpr std::string_view kXlingsVersion   = "2026.10.8.1";
+    //
+    // Seventh, at 2026.10.10.2 (openxlings/xlings#651). Below it, a payload's
+    // hard-link entry failed the whole extraction where link(2) is refused --
+    // Android's app sandbox, so every Termux install of the managed glibc --
+    // every local write failure was reported as E_DISK_FULL, the packages that
+    // depended on a failed one ran their hooks anyway, and an extraction said
+    // nothing until it ended. mcpp reads the failure's code for its hint and
+    // the `extract` and `hook` progress events for its `Installing` lines.
+    inline constexpr std::string_view kXlingsVersion   = "2026.10.10.2";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 
@@ -1553,7 +1561,11 @@ call(const Env& env, std::string_view capability,
                     result.dataEvents.push_back(e);
                     if (handler) handler->on_data(e);
                 } else if constexpr (std::is_same_v<T, ErrorEvent>) {
-                    result.error = e;
+                    // The FIRST error is the cause. A package whose
+                    // dependency failed reports that after it (xlings
+                    // 2026.10.10.2), and older clients followed a failure with
+                    // its consequences ("registered none of its programs").
+                    if (!result.error) result.error = e;
                     if (handler) handler->on_error(e);
                 } else if constexpr (std::is_same_v<T, ResultEvent>) {
                     result.exitCode = e.exitCode;

@@ -63,6 +63,12 @@ struct RunResult {
     std::string output;
 };
 
+// The POSIX shell a command string is handed to (D28): `/bin/sh`, else
+// Android's `/system/bin/sh`, else `$PREFIX/bin/sh` (Termux). Resolved once.
+// `popen` and `std::system` use the C library's own choice, `/bin/sh`, which
+// is why Android below 10 (no `/bin`) is not supported (docs/20).
+const std::string& posix_shell();
+
 // Run `command` via the platform shell, capture stdout.
 // On POSIX, stdin is automatically redirected from /dev/null.
 RunResult capture(std::string_view command);
@@ -1228,6 +1234,21 @@ int run_exec_deadline(const std::vector<std::string>& argv,
     return r.exit_code;
 }
 
+const std::string& posix_shell() {
+    static const std::string shell = [] {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        for (const char* p : {"/bin/sh", "/system/bin/sh"})
+            if (fs::exists(p, ec)) return std::string(p);
+        if (const char* prefix = std::getenv("PREFIX"); prefix && *prefix) {
+            auto p = fs::path(prefix) / "bin" / "sh";
+            if (fs::exists(p, ec)) return p.string();
+        }
+        return std::string("/bin/sh");
+    }();
+    return shell;
+}
+
 int run_shell_deadline(std::string_view command,
                        std::string_view cwd,
                        std::chrono::milliseconds deadline,
@@ -1239,7 +1260,7 @@ int run_shell_deadline(std::string_view command,
     // argv is what the POSIX branch launches; the Windows branch takes the
     // shaped command line instead. Both are built here so neither platform's
     // spelling can drift into a launcher that does not use it.
-    const std::vector<std::string> argv{"/bin/sh", "-c", std::string(command)};
+    const std::vector<std::string> argv{posix_shell(), "-c", std::string(command)};
     auto r = dispatch_bounded(argv, {}, cwd, deadline, /*capture=*/false,
                               windows_shell_command_line(command));
     // No fallback to the unbounded launcher here, unlike run_exec_deadline: a
@@ -1262,7 +1283,7 @@ int run_streaming_bounded(std::string_view command,
     // The popen path's shaping, minus the outer cmd.exe pair: the Windows
     // launcher's command line supplies that pair itself.
     const auto sealed = seal_stdin(command);
-    const std::vector<std::string> argv{"/bin/sh", "-c", sealed};
+    const std::vector<std::string> argv{posix_shell(), "-c", sealed};
     std::function<void(std::string_view)> sink =
         on_line ? std::move(on_line) : [](std::string_view) {};
     auto r = dispatch_bounded(argv, {}, {}, total, /*capture=*/true,
@@ -1295,7 +1316,7 @@ BackgroundCommand start_shell_background(std::string_view command,
         out.process = r.process;
     } else {
         const std::string cmdStore(command);
-        const char* argv[] = {"/bin/sh", "-c", cmdStore.c_str()};
+        const char* argv[] = {posix_shell().c_str(), "-c", cmdStore.c_str()};
         auto r = mcpp::platform::unixproc::spawn_background(
             argv, 3, cwdArg, inheritStdio ? 1 : 0);
         out.ok    = r.ok;

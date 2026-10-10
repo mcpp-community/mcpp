@@ -4,12 +4,12 @@
 |---|---|
 | 规范编号 | SPEC-007 |
 | 标题 | 构建插件:配置、施工与校验的分工,运行时与规划期的义务 |
-| 状态 | 草案 v0.7 |
-| 版本 | 0.7 |
-| 最后修改 | 2026-10-01 |
-| 对应实现 | 逐条标注。未注明版本的「已实现」条款对应 mcpp >= 2026.9.26.1;注明 mcpp#702 的条款对应 mcpp >= 2026.9.26.2;注明 mcpp#707、#708、#709、#711 的条款对应 mcpp >= 2026.9.27.1;注明 mcpp#723 的条款对应 mcpp >= 2026.9.28.1;注明 mcpp 2026.9.28.2 的条款对应该版本;§9 与注明 mcpp#734 的条款对应 mcpp >= 2026.9.28.3 |
-| 相关设计文档 | `.agents/docs/2026-09-26-compile-database-and-issue-699-design.md`(§5)、`.agents/docs/2026-09-28-ecosystem-design-and-optimisation-plan.md`(WS1、WS3)、`.agents/docs/2026-09-28-build-cost-foreign-toolsets-and-library-surface-design.md`(§3、§4) |
-| 相关 issue | mcpp#699、mcpp#701、mcpp#702、mcpp#703、mcpp#707、mcpp#708、mcpp#709、mcpp#711、mcpp#734、mcpp#755 |
+| 状态 | 草案 v0.8 |
+| 版本 | 0.8 |
+| 最后修改 | 2026-10-10 |
+| 对应实现 | 逐条标注。未注明版本的「已实现」条款对应 mcpp >= 2026.9.26.1;注明 mcpp#702 的条款对应 mcpp >= 2026.9.26.2;注明 mcpp#707、#708、#709、#711 的条款对应 mcpp >= 2026.9.27.1;注明 mcpp#723 的条款对应 mcpp >= 2026.9.28.1;注明 mcpp 2026.9.28.2 的条款对应该版本;§9 与注明 mcpp#734 的条款对应 mcpp >= 2026.9.28.3;注明 mcpp#778 的条款对应 mcpp >= 2026.10.10.1 |
+| 相关设计文档 | `.agents/docs/2026-09-26-compile-database-and-issue-699-design.md`(§5)、`.agents/docs/2026-09-28-ecosystem-design-and-optimisation-plan.md`(WS1、WS3)、`.agents/docs/2026-09-28-build-cost-foreign-toolsets-and-library-surface-design.md`(§3、§4)、`.agents/docs/2026-10-10-one-source-one-meaning-design.md`(§4) |
+| 相关 issue | mcpp#699、mcpp#701、mcpp#702、mcpp#703、mcpp#707、mcpp#708、mcpp#709、mcpp#711、mcpp#734、mcpp#755、mcpp#778 |
 | 使用文档 | [docs/30 - build.mcpp](../30-build-mcpp.md)、[docs/31 - 编写规则包](../31-authoring-a-rule-package.md) |
 
 本规范规定构建插件对引擎和对消费方承担的义务,以及引擎为此提供的机制。docs/31 说明怎样编写
@@ -132,6 +132,18 @@
   输入、输出与 stamp 在规划时解析为绝对路径,不受 `cwd` 影响;命令参数原样传给命令,其中的
   相对路径相对于 `cwd`。变量的值属于这条边的命令行,值改变时该 action 重新运行。两者都未
   声明的 action,其命令行与协议 12 逐字节相同。(**已实现**,mcpp#708)
+
+- **R3.9** action 的输出只有一个写入者,即 action 本身:引擎**禁止**在构建前或规划时写入
+  action 的任何输出(包括为扫描而写的占位文件)。`source` action 生成的翻译单元以**声明单元**
+  进入规划:它的路径与语言取自输出路径与扩展名,它提供与导入的模块取自 action 的
+  `.provides()` 与 `.imports()`,引擎不读文件;声明了 `provides` 的单元在构建时由编译器的
+  P1689 扫描核对。生成模块接口单元的 action **必须**声明 `.provides()`;未声明时引擎给出
+  `degraded`(`build-program/provides`)。(**已实现**,mcpp#778)
+- **R3.10** 构建程序的输出目录(`mcpp::out_dir()`、`MCPP_OUT_DIR`)按配置分开:它位于计划根
+  目录下,每个配置一个目录(目标三元组、profile、工具链、加速器与该包启用的 features 的摘要),
+  每个包一个子目录。同一张图之外的读者(测试脚本)**必须**从 `resolution.json` 的
+  `graph.packages[].outDir` 取得它,**禁止**拼写其路径。构建程序的二进制与缓存不按配置分开。
+  `${mcpp.out_dir}`(构建目录)不变。(**已实现**,mcpp#778)
 
 ## 4. 运行时:程序依赖的共享库的查找
 
@@ -286,4 +298,5 @@
 | 0.5 | 2026-09-28 | 随 mcpp 2026.9.28.2:R4.3 的部署清单是运行时放置解析器的答案(SPEC-006 §3.7.1),MSVC C++ 运行时按集合规则决定,`prepare` 填充的目录中的运行时名字由同一解析器决定;新增 R4.5,构建边在成功时的通告,构建后报告一次(2026-09-28 设计 WS1、WS3)。 |
 | 0.7 | 2026-10-01 | 随 mcpp 2026.10.1.3(mcpp#755):R6.2 改为禁止**未经指定**的宿主探测并要求报告回落;新增 R6.5(工具来源的顺序与记录)、R6.6(`provision = "on-request"` 与 `xpkg_request`)、R9.9(构建程序在工具链阶段陈述构建工具链);R9.2 的协议表新增第 15 行。 |
 | 0.6 | 2026-09-28 | 随 mcpp 2026.9.28.3:新增 §9(mcpp#734),即 `mcpp.core` 与 `mcpp` 的永久等价、接口的稳定性与协议表、构建信息、结构化诊断、批量放置、插件模块的名字、缺失模块指出 feature、包的版本下限;R7.1 的版本写在清单中;变更记录移为 §10。 |
+| 0.8 | 2026-10-10 | 随 mcpp 2026.10.10.1(mcpp#778):新增 R3.9(action 的输出只有一个写入者,生成的翻译单元以声明单元进入规划,生成的模块接口须声明 `.provides()`)与 R3.10(构建程序的输出目录按配置分开,`resolution.json` 记录 `outDir`)。 |
 | 0.2 | 2026-09-26 | 随 mcpp 2026.9.26.2 落地:R1.3 的警告、R2.1 的 `runtime_search_dir`、R2.4、R3.3 的 `prepare`(目录须含文件;链接边等待所有 `prepare`)、R3.5、R3.6、R4.1、R4.3、R5.2、R5.3 标为已实现。 |

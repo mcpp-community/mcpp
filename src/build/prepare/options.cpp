@@ -37,29 +37,32 @@ import mcpp.platform;
 
 namespace mcpp::build {
 
+// D18: a toolchain that was SPECIFIED (manifest, `--toolchain`, global default)
+// and needs the MSVC ABI is never replaced by MinGW when that ABI is
+// incomplete; the build is refused here, and the refusal says which half is
+// missing and where it was looked for (D16) -- the sentence it replaced said
+// "neither was found" on a machine where Visual Studio was.
 std::string msvc_unavailable_guidance(const mcpp::toolchain::Toolchain& tc) {
     namespace pins = mcpp::toolchain::triple::pins;
-    const bool haveVcTools = tc.compiler == mcpp::toolchain::CompilerId::MSVC;
-    if (haveVcTools && mcpp::toolchain::msvc::find_msvc_tools_dir()) {
-        return std::format(
-            "msvc {} was detected at {}, but no Windows SDK was found —\n"
-            "       cl.exe cannot compile without the UCRT/SDK headers.\n"
-            "       Install the 'Windows 11 SDK' component via the Visual Studio\n"
-            "       Installer (it is part of the Desktop development with C++\n"
-            "       workload), then retry.",
-            tc.version, tc.binaryPath.string());
-    }
+    const auto probe = mcpp::toolchain::msvc::probe_msvc();
+    const bool haveVcTools = tc.compiler == mcpp::toolchain::CompilerId::MSVC
+        && mcpp::toolchain::msvc::find_msvc_tools_dir();
+    std::string what = haveVcTools
+        ? std::format("msvc {} was detected at {}, but no Windows SDK was found",
+                      tc.version, tc.binaryPath.string())
+        : mcpp::toolchain::msvc::describe_msvc_probe(probe);
+    if (what.empty()) what = "the MSVC STL or the Windows SDK is incomplete";
     return std::format(
-        "this build targets the MSVC ABI, which needs Visual Studio /\n"
-        "       Build Tools (MSVC STL + Windows SDK) — neither was found.\n"
+        "this build targets the MSVC ABI, which needs Visual Studio's C++ tools (the MSVC\n"
+        "       STL) and a Windows SDK: {}.\n"
         "\n"
-        "       No Visual Studio? Use the self-contained MinGW-w64 toolchain\n"
-        "       (no Visual Studio required, `import std` works):\n"
-        "         mcpp toolchain default {} --target {}\n"
-        "\n"
-        "       Have Visual Studio? Install the 'Desktop development with C++'\n"
-        "       workload — it provides the MSVC STL and the Windows SDK.",
-        pins::kSuggestGccMingw, pins::kFirstRunWinGnuTarget);
+        "       The toolchain was specified, so mcpp does not replace it. Either:\n"
+        "         - install the missing part (the 'Desktop development with C++' workload,\n"
+        "           or its Windows SDK component), or set WindowsSdkDir to an SDK root;\n"
+        "         - `mcpp toolchain install msvc`: a managed MSVC with its own SDK;\n"
+        "         - or choose MinGW-w64 yourself: `--toolchain {}` (or [toolchain] in\n"
+        "           mcpp.toml) with `--target {}`.",
+        what, pins::kFirstRunWinGnu, pins::kFirstRunWinGnuTarget);
 }
 
 std::optional<CacheMode> parse_cache_mode(std::string_view v) {

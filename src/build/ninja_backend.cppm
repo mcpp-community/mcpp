@@ -1482,7 +1482,28 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // a link through ccache is passed to the compiler unchanged.
     const std::string launch = flags.launcher.empty() ? std::string{}
         : escape_ninja_path(std::filesystem::path(flags.launcher)) + " ";
-    append(std::format("cxx       = {}{}\n", launch, escape_ninja_path(flags.cxxBinary)));
+    // D29: THE TOOLCHAIN'S PRIVATE LIBRARIES ARE THE TOOLCHAIN'S. A managed
+    // LLVM's library directories used to be put in ninja's environment as
+    // LD_LIBRARY_PATH, so every `/bin/sh -c` ninja starts inherited them. A
+    // shell that links libc++ (Android's bionic `sh`) then loaded the LLVM's,
+    // built for glibc, and died before running anything:
+    //   CANNOT LINK EXECUTABLE "/bin/sh": .../xim-x-llvm/23.1.3/lib/
+    //     aarch64-unknown-linux-gnu/libc++.so is too small
+    // (termux-docker, design 2026-10-10 §13). A managed payload's programs
+    // carry their own search path (the RPATH xlings writes at install), so on
+    // Linux the variable reaches no process ninja starts. A compiler without
+    // one -- a toolchain named by path -- gets it on the tools alone, as an
+    // `env` prefix. macOS keeps no such path at all
+    // (`runtime_library_path_key`), Windows keeps its PATH.
+    const std::string toolEnv = [&]() -> std::string {
+        if (!mcpp::platform::is_linux || plan.toolchain.compilerRuntimeDirs.empty()) return {};
+        if (auto facts = mcpp::platform::elf::inspect_elf_runtime(flags.cxxBinary);
+            facts && facts->searchPathTag != mcpp::platform::elf::SearchPathTag::None)
+            return {};
+        return mcpp::platform::linux_::build_clean_ld_library_path_prefix(
+            plan.toolchain.compilerRuntimeDirs);
+    }();
+    append(std::format("cxx       = {}{}{}\n", toolEnv, launch, escape_ninja_path(flags.cxxBinary)));
     // The driver alone, for the dependency scan: `clang-scan-deps` reads its
     // argv[0] as the compiler (and the resource directory beside it), and a
     // launcher there is not one.
@@ -1509,7 +1530,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // static case, which goes to `ar` and produces an empty archive with exit
     // 0, it does not touch at all. `check_undefined_ninja_variables` below is
     // what stops the class.
-    append(std::format("cc        = {}{}\n", launch, escape_ninja_path(flags.ccBinary)));
+    append(std::format("cc        = {}{}{}\n", toolEnv, launch, escape_ninja_path(flags.ccBinary)));
     if (need_c_rule || need_ios_init_shim) {
         append(std::format("cflags    = {}\n", flags.cc));
     }
@@ -1523,7 +1544,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     }
     const bool need_rc_rule = !plan.resourceUnits.empty();
     if (need_rc_rule) {
-        append(std::format("rc        = {}\n", escape_ninja_path(plan.rcPath)));
+        append(std::format("rc        = {}{}\n", toolEnv, escape_ninja_path(plan.rcPath)));
         std::string rcf;
         for (auto const& f : plan.rcFlags) { rcf += ' '; rcf += shell_quote_arg(f); }
         append(std::format("rcflags   ={}\n", rcf));
@@ -1537,7 +1558,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
 
     // `ar` for cxx_archive.
     if (!flags.arBinary.empty()) {
-        append(std::format("ar        = {}\n", escape_ninja_path(flags.arBinary)));
+        append(std::format("ar        = {}{}\n", toolEnv, escape_ninja_path(flags.arBinary)));
     } else {
         append("ar        = ar\n");
     }
@@ -1553,13 +1574,13 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // hand the link to a foreign one. Bound only when set, so a graph that does
     // not use it has no variable naming a tool it never runs.
     if (!flags.ldDriver.empty())
-        append(std::format("ld_driver = {}\n", escape_ninja_path(flags.ldDriver)));
+        append(std::format("ld_driver = {}{}\n", toolEnv, escape_ninja_path(flags.ldDriver)));
     // `$mcpp` is needed by stage_file in EVERY configuration (dyndep or not),
     // so the binding cannot live inside the `if (dyndep)` below.
     append(std::format("mcpp      = {}\n", escape_ninja_path(mcpp_exe_path())));
     if (dyndep) {
         if (!plan.scanDepsPath.empty()) {
-            append(std::format("scan_deps = {}\n", escape_ninja_path(plan.scanDepsPath)));
+            append(std::format("scan_deps = {}{}\n", toolEnv, escape_ninja_path(plan.scanDepsPath)));
         }
     }
     append("\n");
@@ -2518,11 +2539,18 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // inhabitant of a `.cppm` and provides nothing. That second question is
     // answered here, once, from `cu.providesModule` — the same field `bmi_out`
     // is bound from, so the flag and the binding can no longer disagree.
+    //
+    // An implementation partition (`module M:part;`) writes a BMI but is not
+    // an interface, and cl.exe is told so: `/internalPartition`, measured
+    // (design 2026-10-10 §5.2) -- `/interface` on one is C3474 and no option
+    // is C7621. Clang and GCC compile it as they compile an interface.
     auto module_edge_vars = [&](const mcpp::build::CompileUnit& cu) -> std::string {
         if (cu.providesModule.empty())
             return std::format("  module_lang ={}\n", traits.moduleImplLangFlag);
         std::string v = std::format("  module_lang ={}\n",
-                                    traits.moduleInterfaceLangFlag);
+            cu.is_implementation_partition()
+                ? traits.moduleImplPartitionLangFlag
+                : traits.moduleInterfaceLangFlag);
         if (traits.needsExplicitModuleOutput)
             v += std::format("  module_output ={}{}\n", traits.moduleOutputPrefix,
                              unit_bmi(cu));
@@ -2530,6 +2558,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     };
 
     auto pick_rule = [](const mcpp::build::CompileUnit& cu) -> std::string {
+        if (cu.uses_module_rule()) return "cxx_module";
         switch (cu.kind) {
             case mcpp::SourceKind::ModuleInterface: return "cxx_module";
             case mcpp::SourceKind::C:               return "c_object";
@@ -2837,7 +2866,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                 if (cu.servedFromCache) continue;
                 if (is_scan_exempt(cu)) continue;
                 if (cu.providesModule.empty()) continue;
-                if (cu.kind != mcpp::SourceKind::ModuleInterface) continue;
+                if (!cu.uses_module_rule()) continue;
                 two_phase_ddi.insert(
                     (cu.object.parent_path() / cu.source.filename()).string() + ".ddi");
             }
@@ -2883,7 +2912,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             std::string rule = pick_rule(cu);
 
             if (splitBmi && !cu.providesModule.empty() &&
-                cu.kind == mcpp::SourceKind::ModuleInterface) {
+                cu.uses_module_rule()) {
                 const auto bmi  = unit_bmi(cu);
                 const auto obj  = escape_ninja_path(cu.object);
                 const auto slot = obj + ".sched";
@@ -2948,7 +2977,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             }
 
             if (twoPhase && !cu.providesModule.empty() &&
-                cu.kind == mcpp::SourceKind::ModuleInterface) {
+                cu.uses_module_rule()) {
                 const auto bmi = unit_bmi(cu);
                 const auto obj = escape_ninja_path(cu.object);
                 const auto ddi = (cu.object.parent_path() / cu.source.filename())
@@ -4449,11 +4478,13 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             if (!joined.empty()) joined += '\x1f';
             joined += k; joined += '='; joined += v;
         };
-        if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs))
-            add(runtimeEnv->first, runtimeEnv->second);
+        if (!mcpp::platform::is_linux)
+            if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs))
+                add(runtimeEnv->first, runtimeEnv->second);
         for (auto& ev : plan.toolchain.envOverrides) add(ev.key, ev.value);
         r.runtimeEnvValue = std::move(joined);
-    } else if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs)) {
+    } else if (auto runtimeEnv = mcpp::platform::is_linux ? std::nullopt
+                   : runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs)) {
         r.runtimeEnvKey = runtimeEnv->first;
         r.runtimeEnvValue = runtimeEnv->second;
     } else {
@@ -4508,8 +4539,11 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // Real env pairs for THIS run (the "@env" cache encoding above is only
     // for the fast path's later re-creation of the same environment).
     std::vector<std::pair<std::string, std::string>> nenv;
-    if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs))
-        nenv.emplace_back(runtimeEnv->first, runtimeEnv->second);
+    // On Linux the toolchain's library path prefixes its tools (`$cxx`, ...),
+    // never ninja's environment (D29).
+    if (!mcpp::platform::is_linux)
+        if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs))
+            nenv.emplace_back(runtimeEnv->first, runtimeEnv->second);
     for (auto& ev : plan.toolchain.envOverrides)
         nenv.emplace_back(ev.key, ev.value);
 

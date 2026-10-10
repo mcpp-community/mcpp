@@ -16,6 +16,10 @@
 #      the member's path is anchored at the member (2026.9.29.1 resolved it
 #      against the workspace root and found no index). The two members name
 #      one tree, so they are one configuration.
+#   4. COMPAT(workspace-position): the root's own `[indices]` reaches the
+#      members by POSITION, with a warning naming `[workspace.indices]`, until
+#      mcpp 1.0.0 (SPEC-004 §9.10). Kept in this spelling as that coverage;
+#      tests/e2e/893 covers `[workspace.indices]`.
 set -e
 
 TMP=$(mktemp -d)
@@ -147,6 +151,17 @@ EOF
 "$MCPP" build -p member-a > build.log 2>&1 || {
     cat build.log
     echo "FAIL: member did not resolve root-anchored [indices]/[workspace.dependencies] path"
+    exit 1
+}
+
+grep -q '\[indices\] on the workspace root reaches every member by its position' build.log || {
+    cat build.log
+    echo "FAIL: the position reading of [indices] says nothing (COMPAT(workspace-position))"
+    exit 1
+}
+grep -q '\[workspace.indices\]' build.log || {
+    cat build.log
+    echo "FAIL: the warning does not name the canonical spelling"
     exit 1
 }
 

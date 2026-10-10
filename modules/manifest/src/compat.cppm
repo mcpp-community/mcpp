@@ -14,6 +14,12 @@
 //   ├─────────────────────────────────────┼──────────────────────────────┤
 //   │ [dependencies]                      │ [dependencies.mcpplibs]      │
 //   │ "mcpplibs.cmdline" = "0.0.2"       │ cmdline = "0.0.2"            │
+//   ├─────────────────────────────────────┼──────────────────────────────┤
+//   │ on a workspace root: [toolchain],   │ [workspace.toolchain],       │
+//   │ [indices], [profile.<n>], the rows  │ [workspace.indices], ...,    │
+//   │ of [target.<t>], [xlings] given to  │ [workspace.target.<sel>],    │
+//   │ members by position                 │ [workspace.xlings]           │
+//   │ (compat/workspace_position.cppm)    │ (SPEC-004 §9.10)             │
 //   └─────────────────────────────────────┴──────────────────────────────┘
 //
 // See also: mcpp.pm.dep_spec (kDefaultNamespace definition).

@@ -81,6 +81,7 @@ extern char** environ;
 export module mcpp.build.schedule.detach_codegen;
 
 import std;
+import mcpp.platform.process;
 import mcpp.build.stage;
 
 export namespace mcpp::build::schedule::detach {
@@ -447,7 +448,7 @@ bool spawn_detached(const std::vector<std::string>& argv) {
 
 int run_to_completion(std::string_view command,
                       const std::filesystem::path& logPath) {
-    const std::vector<std::string> argv{"/bin/sh", "-c", std::string(command)};
+    const std::vector<std::string> argv{mcpp::platform::process::posix_shell(), "-c", std::string(command)};
     posix_spawn_file_actions_t fa;
     ::posix_spawn_file_actions_init(&fa);
     ::posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);

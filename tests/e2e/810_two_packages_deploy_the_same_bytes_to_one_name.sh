@@ -137,16 +137,17 @@ STAGE_LINES=$(grep -c "^build .*shared/shared\.bin : stage_file" "$G" || true)
 [ "$STAGE_LINES" -eq 1 ] \
     || fail "expected exactly one stage_file edge for shared/shared.bin, found $STAGE_LINES" "$G"
 STAGE_LINE=$(grep "^build .*shared/shared\.bin : stage_file" "$G")
-# The dependency's own build.mcpp runs in the CONSUMING project's tree
-# (`target/.build-mcpp/deps/dep@<version>/...`, 111_dep_build_mcpp.sh), so its
-# source is distinguished by that path segment; the app's own source is the
-# sibling under `target/.build-mcpp/out/...` with no `deps/` segment.
+# Each package's build program writes in the CONSUMING project's tree, in
+# its own directory of this configuration's output
+# (`target/.build-mcpp/out/<configuration>/<package>/...`, mcpp 2026.10.10.1+,
+# 111_dep_build_mcpp.sh), so the two sources are told apart by the package
+# segment.
 INPUTS=$(echo "$STAGE_LINE" | sed 's/^.*: stage_file //')
 [ "$(echo "$INPUTS" | wc -w)" -eq 2 ] \
     || fail "expected exactly two inputs on the stage_file edge, got: $INPUTS" "$G"
-echo "$INPUTS" | tr ' ' '\n' | grep -qF "deps/dep@" \
+echo "$INPUTS" | tr ' ' '\n' | grep -q "\.build-mcpp/out/[0-9a-f]*/[a-z.]*dep/gen/shared\.bin$" \
     || fail "the edge does not list the dependency's source" "$G"
-echo "$INPUTS" | tr ' ' '\n' | grep -v "deps/dep@" | grep -q "\.build-mcpp/out/gen/shared\.bin$" \
+echo "$INPUTS" | tr ' ' '\n' | grep -q "\.build-mcpp/out/[0-9a-f]*/app/gen/shared\.bin$" \
     || fail "the edge does not also list the app's own source" "$G"
 echo "PASS: one stage_file edge lists both sources"
 
@@ -163,9 +164,9 @@ set -e
 [ "$rc" -ne 0 ] || fail "different bytes for one destination were accepted" collision.log
 grep -q "disagree" collision.log \
     || fail "the refusal does not say the sources disagree" collision.log
-grep -qF "deps/dep@" collision.log \
+grep -q '\.build-mcpp/out/[0-9a-f]*/[a-z.]*dep/gen/shared\.bin' collision.log \
     || fail "the refusal does not name the dependency's source" collision.log
-grep -q '\.build-mcpp/out/gen/shared\.bin' collision.log \
+grep -q '\.build-mcpp/out/[0-9a-f]*/app/gen/shared\.bin' collision.log \
     || fail "the refusal does not name the app's own source" collision.log
 grep -q "shared.bin" collision.log || fail "the refusal does not name the destination" collision.log
 echo "PASS: different bytes are refused at build time, naming both sources"

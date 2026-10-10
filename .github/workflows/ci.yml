@@ -131,6 +131,9 @@ jobs:
       - name: Check documentation structure
         run: bash .github/tools/check_docs_structure.sh
 
+      - name: The key registry and the field reference agree
+        run: python3 .github/tools/check_manifest_key_classes.py
+
       - name: Documented target tiers agree with the table
         run: python3 .github/tools/check_target_tiers.py
 
