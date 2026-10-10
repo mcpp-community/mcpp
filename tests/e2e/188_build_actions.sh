@@ -298,6 +298,8 @@ EOF
 printf 'int main() { return 0; }\n' > src/main.cpp
 "$MCPP" build > o0.log 2>&1 || { cat o0.log; echo "FAIL: probe build failed"; exit 1; }
 OBJ_NINJA=$(find target -name build.ninja | head -1)
+# A command line, written into mkobj.sh as one: it may start with
+# `env LD_LIBRARY_PATH=...` for a compiler without its own search path.
 OBJ_CXX=$(sed -n 's/^cxx *= *//p' "$OBJ_NINJA" | head -1)
 [ -n "$OBJ_CXX" ] || { cat "$OBJ_NINJA"; echo "FAIL: could not read the compiler out of build.ninja"; exit 1; }
 
@@ -311,7 +313,7 @@ printf 'extern "C" int blob_value() { return 7; }\n' > blob.cpp
 cat > mkobj.sh <<EOF
 #!/usr/bin/env bash
 # \$1 = source, \$2 = object to produce
-"$OBJ_CXX" -c "\$1" -o "\$2"
+$OBJ_CXX -c "\$1" -o "\$2"
 EOF
 chmod +x mkobj.sh
 cat > build.mcpp <<'EOF'

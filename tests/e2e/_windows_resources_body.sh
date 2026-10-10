@@ -119,7 +119,9 @@ esac
 # The rc tool comes out of build.ninja rather than off PATH: mcpp resolved it
 # payload-relative on purpose (a bare `windres` on PATH is an xlings shim), so
 # asking PATH here would inspect the artifact with a different tool than the one
-# that built it.
+# that built it. The binding is a command line: for a compiler without its own
+# library search path it starts with `env LD_LIBRARY_PATH=...`, so it is run by
+# a shell.
 RC_TOOL=$(sed -n 's/^rc *= *//p' "$BUILD_DIR/build.ninja" | head -1)
 [ -n "$RC_TOOL" ] || fail "no 'rc =' binding in build.ninja" "$BUILD_DIR/build.ninja"
 
@@ -138,7 +140,7 @@ version_name_is() {
 
     # Route 1 — windres back to rc SOURCE. Readable, and no PE parser needed.
     if [ -n "$RC_TOOL" ] \
-       && "$RC_TOOL" -J coff -O rc -i "$1" -o "rt.$2.rc" 2>"rt.$2.err" \
+       && sh -c "$RC_TOOL -J coff -O rc -i \"\$1\" -o \"\$2\"" rc "$1" "rt.$2.rc" 2>"rt.$2.err" \
        && grep -qiE 'VERSIONINFO' "rt.$2.rc"; then
         grep -qE "$_want" "rt.$2.rc" \
             || fail "expected the version resource to be named by $3 in $1" "rt.$2.rc"
