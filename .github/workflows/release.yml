@@ -106,7 +106,12 @@ jobs:
           # download + self-install manually to avoid broken releases.
           XLINGS_VERSION: '2026.10.10.2'
         run: |
-          if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
+          # BY VERSION, NOT BY PRESENCE. A restored ~/.xlings holds the
+          # xlings of an earlier release, and this binary is the one the
+          # tarball bundles: 2026.10.10.1 shipped xlings 2026.10.8.1 on
+          # linux-x86_64 because one was present.
+          have=$("$HOME/.xlings/subos/default/bin/xlings" --version 2>/dev/null | awk '{print $2}')
+          if [ "$have" != "$XLINGS_VERSION" ]; then
             tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
             bash "$GITHUB_WORKSPACE/.github/tools/fetch_release.sh" \
               "https://github.com/openxlings/xlings/releases/download/v${XLINGS_VERSION}/${tarball}" \
@@ -116,6 +121,8 @@ jobs:
           fi
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           xlings --version
+          test "$(xlings --version | awk '{print $2}')" = "$XLINGS_VERSION" || {
+            echo "::error::the xlings this release bundles is $(xlings --version), not $XLINGS_VERSION"; exit 1; }
           # Pinned to .xlings.json — a bare `xlings install mcpp` resolves
           # "newest in this runner's index copy" and put 0.0.105 (below the
           # index floor) into this job. See .github/tools/install_pinned_mcpp.sh.
@@ -484,7 +491,9 @@ jobs:
           XLINGS_NON_INTERACTIVE: '1'
           XLINGS_VERSION: '2026.10.10.2'
         run: |
-          if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
+          # By version, not by presence (see the Linux job).
+          have=$("$HOME/.xlings/subos/default/bin/xlings" --version 2>/dev/null | awk '{print $2}')
+          if [ "$have" != "$XLINGS_VERSION" ]; then
             WORK=$(mktemp -d)
             tarball="xlings-${XLINGS_VERSION}-macosx-arm64.tar.gz"
             bash "$GITHUB_WORKSPACE/.github/tools/fetch_release.sh" \
@@ -495,6 +504,8 @@ jobs:
           fi
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           xlings --version
+          test "$(xlings --version | awk '{print $2}')" = "$XLINGS_VERSION" || {
+            echo "::error::the xlings this release bundles is $(xlings --version), not $XLINGS_VERSION"; exit 1; }
           # Pinned to .xlings.json — a bare `xlings install mcpp` resolves
           # "newest in this runner's index copy" and put 0.0.105 (below the
           # index floor) into this job. See .github/tools/install_pinned_mcpp.sh.
@@ -682,6 +693,8 @@ jobs:
           export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
           echo "$USERPROFILE/.xlings/subos/default/bin" >> "$GITHUB_PATH"
           xlings.exe --version
+          test "$(xlings.exe --version | awk '{print $2}' | tr -d '\r')" = "$XLINGS_VERSION" || {
+            echo "::error::the xlings this release bundles is not $XLINGS_VERSION"; exit 1; }
           # Pinned + version-scoped lookup. The old `find | head -1` returned
           # whichever version the directory walk reached first.
           MCPP=$(bash "$REPO_DIR/.github/tools/install_pinned_mcpp.sh" "$REPO_DIR")
