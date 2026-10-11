@@ -81,6 +81,13 @@ jobs:
         run: |
           export MCPP="$CANDIDATE"
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          # The project's commands do not see the name: mcpp has its xlings
+          # above, and a project may give XLINGS_BIN its own meaning. xlings'
+          # test kit reads it as the binary under test, so its tests drove the
+          # released xlings instead of the one they had just built (2026.10.11.1:
+          # test_subos_new_template read an instance.json the released xlings
+          # does not write).
+          unset XLINGS_BIN
           # The bash running this step, by path (release_canaries.py says why).
           if [ "$RUNNER_OS" = Windows ]; then
             export CANARY_BASH="$(cygpath -w "$BASH")"
