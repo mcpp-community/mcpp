@@ -53,7 +53,7 @@ EOF
 cd app
 "$MCPP" build > build1.log 2>&1 || { cat build1.log; echo "FAIL: initial build"; exit 1; }
 
-NINJA=$(find target -name build.ninja | head -1)
+NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 EDGE=$(grep -E '^build [^ ]+ : stage_file ' "$NINJA" | head -1)
 [[ -n "$EDGE" ]] || { echo "FAIL: no stage_file edge for the std BMI"; exit 1; }
 DST="$(dirname "$NINJA")/$(unescape_ninja "$(echo "$EDGE" | awk '{print $2}')")"

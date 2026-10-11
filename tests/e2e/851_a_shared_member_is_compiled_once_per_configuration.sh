@@ -111,7 +111,7 @@ lib_objects() { awk -F'\t' '$4 ~ /(^|\/)lib\/src\/lib\.m\.o$/' "$1/.ninja_log" |
 
 # ── A ──────────────────────────────────────────────────────────────────────
 "$MCPP" build --workspace > a.log 2>&1 || fail "A: the workspace did not build" a.log
-dirs=$(find target -name build.ninja -exec dirname {} \; | sort)
+dirs=$(find target -name build.ninja -not -path '*/.build-mcpp/*' -exec dirname {} \; | sort)
 [ "$(echo "$dirs" | wc -l | tr -d ' ')" = 2 ] || fail "A: expected two build directories, got: $dirs" a.log
 for d in $dirs; do
     [ "$(lib_objects "$d")" = 1 ] || fail "A: lib's object was compiled $(lib_objects "$d") times in $d" "$d/.ninja_log"
@@ -137,7 +137,7 @@ echo "ok: B, one configuration compiles lib once, with its own flags and the uni
 "$MCPP" build -p app23b > c.log 2>&1 || fail "C: -p app23b did not build" c.log
 read -r _ xc _ <<< "$(run app23b)"
 [ "$xc" = 0 ] || fail "C: lib kept a feature app23b's closure does not ask for" c.log
-[ "$(find target -name build.ninja | wc -l | tr -d ' ')" = 2 ] || fail "C: -p made a third build directory" c.log
+[ "$(find target -name build.ninja -not -path '*/.build-mcpp/*' | wc -l | tr -d ' ')" = 2 ] || fail "C: -p made a third build directory" c.log
 echo "ok: C, -p plans its own closure's features in the same build directory"
 
 echo "PASS: 851_a_shared_member_is_compiled_once_per_configuration"

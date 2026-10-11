@@ -186,9 +186,9 @@ grep -q '\[workspace.indices\]' build.log || {
     echo "FAIL: --workspace"
     exit 1
 }
-n=$(find target -name build.ninja | wc -l)
+n=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | wc -l)
 [[ "$n" == 1 ]] || {
-    find target -name build.ninja
+    find target -name build.ninja -not -path '*/.build-mcpp/*'
     echo "FAIL: members naming one index tree are $n configurations, expected 1"
     exit 1
 }

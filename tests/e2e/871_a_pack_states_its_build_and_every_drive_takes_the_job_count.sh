@@ -69,7 +69,7 @@ cd app
 # (start and end in ms, one line per output) never run at the same time.
 no_overlap() {
     local log
-    log=$(find target -name .ninja_log -newer "$TMP/stamp" | head -1)
+    log=$(find target -name .ninja_log -not -path '*/.build-mcpp/*' -newer "$TMP/stamp" | head -1)
     [ -n "$log" ] || fail "$1: no .ninja_log was written"
     awk -F'\t' -v label="$1" '
         NR > 1 && $4 ~ /\.o(bj)?$/ { s[n] = $1; e[n] = $2; o[n] = $4; n++ }

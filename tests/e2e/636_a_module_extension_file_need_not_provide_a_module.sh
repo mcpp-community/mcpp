@@ -55,7 +55,7 @@ bin=$(find target -type f -name implunit -perm -u+x | head -1)
 [ -n "$bin" ] || { echo "FAIL: no binary"; exit 1; }
 "$bin" || { echo "FAIL: the program did not return 5"; exit 1; }
 
-graph=$(find target -name build.ninja | head -1)
+graph=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 [ -n "$graph" ] || { echo "FAIL: no build graph"; exit 1; }
 
 # EVERY module edge states its language, AND THE DENOMINATOR IS ASSERTED.

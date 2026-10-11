@@ -919,27 +919,27 @@ CacheRecord read_cache(const fs::path& bdir) {
     return r;
 }
 
-// Decide whether the cached run is still valid (so we can skip recompiling/running).
-bool cache_fresh(const fs::path& root, const fs::path& bdir, const CacheRecord& c,
-                 const std::string& programHash, const std::string& compilerHash,
-                 const std::string& ctxHash) {
-    if (!c.loaded) return false;
-    if (c.epoch != dirs::kCacheEpoch) return false;  // pre-epoch entries rerun once
-    if (c.unknownRecord) return false;
-    if (c.programHash != programHash) return false;
-    if (c.compilerHash != compilerHash) return false;
-    if (c.ctxHash != ctxHash) return false;   // pre-G3 caches (no ctx line) rerun once
+// Why the cached run is not valid, for the log; empty when it is.
+std::string cache_stale_reason(const fs::path& root, const fs::path& bdir, const CacheRecord& c,
+                               const std::string& programHash, const std::string& compilerHash,
+                               const std::string& ctxHash) {
+    if (!c.loaded) return "no record";
+    if (c.epoch != dirs::kCacheEpoch) return "record epoch";  // pre-epoch entries rerun once
+    if (c.unknownRecord) return "unknown record line";
+    if (c.programHash != programHash) return "program identity " + c.programHash + " -> " + programHash;
+    if (c.compilerHash != compilerHash) return "record shape";
+    if (c.ctxHash != ctxHash) return "environment contract";   // pre-G3 caches rerun once
     for (auto const& [h, path] : c.inputs)
-        if (mcpp::toolchain::hash_file(abs_against_root(root, path)) != h) return false;
+        if (mcpp::toolchain::hash_file(abs_against_root(root, path)) != h) return "input " + path;
     for (auto const& [h, name] : c.envs)
-        if (mcpp::toolchain::hash_string(env_value(name)) != h) return false;
+        if (mcpp::toolchain::hash_string(env_value(name)) != h) return "environment variable " + name;
     // #359: the path SET behind each declared glob. A file appearing or
     // disappearing changes it; editing one does not (that is what the `in`
     // entries above are for).
     if (!c.globs.empty()) {
         auto outName = output_dir_name(root, bdir);
         for (auto const& [h, pattern] : c.globs)
-            if (dirs::glob_fingerprint(root, pattern, outName) != h) return false;
+            if (dirs::glob_fingerprint(root, pattern, outName) != h) return "glob " + pattern;
     }
     // A declared output that vanished invalidates the cache. Driven off the
     // table's mustExistAfterRun so a future output-shaped directive is covered
@@ -947,9 +947,16 @@ bool cache_fresh(const fs::path& root, const fs::path& bdir, const CacheRecord& 
     for (auto const& def : dirs::kTable) {
         if (!def.mustExistAfterRun) continue;
         for (auto const& p : c.directives.at(def.slot))
-            if (!fs::exists(abs_against_root(root, p))) return false;
+            if (!fs::exists(abs_against_root(root, p))) return "output " + p;
     }
-    return true;
+    return {};
+}
+
+// Decide whether the cached run is still valid (so we can skip recompiling/running).
+bool cache_fresh(const fs::path& root, const fs::path& bdir, const CacheRecord& c,
+                 const std::string& programHash, const std::string& compilerHash,
+                 const std::string& ctxHash) {
+    return cache_stale_reason(root, bdir, c, programHash, compilerHash, ctxHash).empty();
 }
 
 
@@ -1052,7 +1059,10 @@ std::expected<void, std::string> run_build_program_impl(
     // Fast path: declared inputs + contract unchanged → reapply cached
     // directives, no run.
     CacheRecord cache = read_cache(bdir);
-    if (cache_fresh(root, bdir, cache, programHash, compilerHash, ctxHash)) {
+    const auto stale = cache_stale_reason(root, bdir, cache, programHash, compilerHash, ctxHash);
+    if (!stale.empty())
+        mcpp::log::verbose("build-program", std::format("{}: runs ({})", who, stale));
+    if (stale.empty()) {
         if (auto terr = dirs::target_directive_error(m, cache.directives); !terr.empty())
             return std::unexpected(terr);
         // #622 A4. Checked on the cache-hit path too, so a `deploy` a fresh

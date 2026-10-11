@@ -96,7 +96,7 @@ echo "$test_out" | grep -q "test result ok" || {
 # there and actually first — a silently-absent shim would leave this test
 # passing by luck on a future toolchain and failing for users on another.
 if [[ "$HOST" == macos ]]; then
-    NINJA=$(find target -name build.ninja | head -1)
+    NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
     grep -q "mcpp_ios_init" "$NINJA" || {
         echo "FAIL: no initializer-ordering shim in the macOS link"; exit 1; }
     # `build <exe> : cxx_link <first-input> ...`
@@ -112,7 +112,7 @@ fi
 echo "== 3. cxx_runtime = host-coupled reaches BOTH roles (#336 part one) =="
 # Capture the self-contained shape first so the comparison is against this
 # machine's actual output rather than a hard-coded flag string.
-NINJA=$(find target -name build.ninja | head -1)
+NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 self_units=$(grep -c "unit_ldflags" "$NINJA" || true)
 
 cat >> mcpp.toml <<'EOF'
@@ -123,7 +123,7 @@ EOF
 "$MCPP" build >/dev/null 2>&1 || { echo "FAIL: host-coupled build"; exit 1; }
 "$MCPP" test  >/dev/null 2>&1 || { echo "FAIL: host-coupled test"; exit 1; }
 
-NINJA=$(find target -name build.ninja | head -1)
+NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 # Whatever the platform's self-contained mechanism is (-static-libstdc++,
 # -static, -load_hidden archives), host-coupled must not carry it — for the
 # test target as much as for the binary.
@@ -138,7 +138,7 @@ echo "== 4. the older spelling means the same thing =="
 sed 's/cxx_runtime = "host-coupled"/static_stdlib = false/' mcpp.toml > mcpp.toml.tmp
 mv mcpp.toml.tmp mcpp.toml
 "$MCPP" build >/dev/null 2>&1 || { echo "FAIL: static_stdlib=false build"; exit 1; }
-NINJA=$(find target -name build.ninja | head -1)
+NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 if grep -E "unit_ldflags.*(-static-libstdc\+\+|-load_hidden|-nostdlib\+\+)" "$NINJA" >/dev/null; then
     echo "FAIL: static_stdlib = false is not an alias of host-coupled:"
     grep "unit_ldflags" "$NINJA"

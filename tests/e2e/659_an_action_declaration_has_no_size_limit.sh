@@ -130,7 +130,7 @@ EOF
 out="$("$MCPP" run 2>&1 | tail -1)"
 [[ "$out" == *LARGE_DECLARATION_OK* ]] || { echo "FAIL: the program did not run: '$out'"; exit 1; }
 
-NINJA=$(find target -name build.ninja -print -quit)
+NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' -print -quit)
 [ -n "$NINJA" ] || { echo "FAIL: no build.ninja"; exit 1; }
 
 # THE criterion: the edge in the graph names every declared output and every
@@ -167,7 +167,7 @@ cat > src/extra.cpp <<'EOF'
 int extra() { return 1; }
 EOF
 "$MCPP" build > b2.log 2>&1 || { cat b2.log; echo "FAIL: rebuild after an unrelated source failed"; exit 1; }
-NINJA=$(find target -name build.ninja -print -quit)
+NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' -print -quit)
 outs=$(count_in_edge "output-[0-9]*\.txt")
 [ "$outs" = "$N" ] || { echo "FAIL: after a replay build.ninja names $outs of $N declared outputs"; exit 1; }
 echo "ok: the replayed record carries all $N outputs"

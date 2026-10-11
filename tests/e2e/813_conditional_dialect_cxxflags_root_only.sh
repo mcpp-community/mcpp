@@ -57,7 +57,7 @@ TOML
 printf 'import std;\nint main() { std::println("ok"); return 0; }\n' > src/main.cpp
 
 "$MCPP" build --toolchain gcc@16.1.0 > build1.log 2>&1 || fail "the build with a matching [target.linux.build] row failed" build1.log
-ninja1=$(find target -name build.ninja | head -1)
+ninja1=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 [ -n "$ninja1" ] || fail "no build.ninja produced" build1.log
 
 cxxflags_line=$(grep -E '^cxxflags' "$ninja1" | head -1)
@@ -105,7 +105,7 @@ TOML
 printf 'import std;\nint main() { std::println("ok"); return 0; }\n' > src/main.cpp
 
 "$MCPP" build --toolchain gcc@16.1.0 > build2.log 2>&1 || fail "the build with a non-matching [target.windows.build] row failed" build2.log
-ninja2=$(find target -name build.ninja | head -1)
+ninja2=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 grep -qF -- '-DX717A' "$ninja2" compile_commands.json \
     && fail "-DX717A from a non-matching [target.windows.build] row reached a Linux build" "$ninja2"
 grep -E '^cxxflags' "$ninja2" | grep -qF -- '-DBASE717' \
@@ -136,7 +136,7 @@ printf 'import std;\nint main() { std::println("ok"); return 0; }\n' > src/main.
 write_cyc linux
 rm -rf target compile_commands.json
 "$MCPP" build --toolchain gcc@16.1.0 > cyc-a1.log 2>&1 || fail "build A (matching) failed" cyc-a1.log
-grep -qF -- '-DCYC717' "$(find target -name build.ninja | head -1)" \
+grep -qF -- '-DCYC717' "$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)" \
     || fail "build A did not carry -DCYC717" cyc-a1.log
 stdA1=$(std_module_json_for '-DCYC717')
 [ -n "$stdA1" ] || fail "no std-module.json for build A" cyc-a1.log
@@ -151,14 +151,14 @@ echo "  ok: build A (linux, matching) carries -DCYC717 ($stdA1)"
 write_cyc windows
 rm -rf target compile_commands.json
 "$MCPP" build --toolchain gcc@16.1.0 > cyc-b.log 2>&1 || fail "build B (non-matching) failed" cyc-b.log
-grep -qF -- '-DCYC717' "$(find target -name build.ninja | head -1)" compile_commands.json \
+grep -qF -- '-DCYC717' "$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)" compile_commands.json \
     && fail "build B (windows, non-matching on a Linux host) still carries -DCYC717" cyc-b.log
 echo "  ok: build B (windows, non-matching) carries no -DCYC717 -- a different std BMI"
 
 write_cyc linux
 rm -rf target compile_commands.json
 "$MCPP" build --toolchain gcc@16.1.0 > cyc-a2.log 2>&1 || fail "build A2 (matching again) failed" cyc-a2.log
-grep -qF -- '-DCYC717' "$(find target -name build.ninja | head -1)" \
+grep -qF -- '-DCYC717' "$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)" \
     || fail "build A2 did not carry -DCYC717" cyc-a2.log
 stdA2=$(std_module_json_for '-DCYC717')
 [ -n "$stdA2" ] || fail "no std-module.json for build A2" cyc-a2.log
@@ -200,7 +200,7 @@ TOML
 printf 'import dep717;\nint main() { return value() == 42 ? 0 : 1; }\n' > src/main.cpp
 
 "$MCPP" build --toolchain gcc@16.1.0 > build4a.log 2>&1 || fail "the first build (dependency carries -DDEPFLAG_V1) failed" build4a.log
-ninjas4a=$(find target -name build.ninja)
+ninjas4a=$(find target -name build.ninja -not -path '*/.build-mcpp/*')
 [ "$(echo "$ninjas4a" | wc -l)" -eq 1 ] || fail "more than one build.ninja after the first build" build4a.log
 grep -qF -- '-DDEPFLAG_V1' "$ninjas4a" compile_commands.json \
     && fail "the dependency's own dialect_cxxflags reached a command" "$ninjas4a"
@@ -208,7 +208,7 @@ echo "  ok: the dependency's -DDEPFLAG_V1 reaches neither build.ninja nor compil
 
 sed -i 's/-DDEPFLAG_V1/-DDEPFLAG_V2/' "$TMP/dep717/mcpp.toml"
 "$MCPP" build --toolchain gcc@16.1.0 > build4b.log 2>&1 || fail "the second build (dependency's flag changed) failed" build4b.log
-ninjas4b=$(find target -name build.ninja)
+ninjas4b=$(find target -name build.ninja -not -path '*/.build-mcpp/*')
 if [ "$(echo "$ninjas4b" | wc -l)" -ne 1 ]; then
     echo "build.ninja files after the second build:"; echo "$ninjas4b"
     fail "changing the dependency's own dialect_cxxflags left a second output directory behind (the fingerprint moved)" build4b.log

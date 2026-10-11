@@ -80,7 +80,7 @@ grep -q 'enabled: .*contracts' "$TMP/build.log" || {
 }
 
 # Latest level + gate flags reach the global cxxflags (every TU, deps incl.).
-build_ninja="$(find target -name build.ninja | head -1)"
+build_ninja="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -qE '^cxxflags  = -std=c\+\+26 -freflection' "$build_ninja" || {
     grep '^cxxflags' "$build_ninja" || true
     echo "FAIL: build.ninja cxxflags lacks -std=c++26 -freflection"
@@ -137,7 +137,7 @@ EOF
     echo "FAIL: c++latest build failed"
     exit 1
 }
-latest_ninja="$(find target -name build.ninja | head -1)"
+latest_ninja="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -qE '^cxxflags  = -std=c\+\+26' "$latest_ninja" || {
     grep '^cxxflags' "$latest_ninja" || true
     echo "FAIL: c++latest did not resolve to -std=c++26"

@@ -74,7 +74,7 @@ imp="$(find target -name 'libmathkit.dll.a' | head -1)"
 # targeting MSVC. Asserted here rather than only on Windows because this runs on
 # every Linux CI pass through mingw-cross, and the flag is equally meaningless
 # for a PE target whichever compiler emits it.
-nj_pic="$(find target -name build.ninja | head -1)"
+nj_pic="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -q '\-fPIC' "$nj_pic" && {
     grep -n 'fPIC' "$nj_pic" | head -3
     echo "FAIL: -fPIC on a PE target. It means nothing here, and clang targeting"
@@ -84,7 +84,7 @@ grep -q '\-fPIC' "$nj_pic" && {
 # It is a declared output of the link edge, not a side effect ninja knows nothing
 # about — otherwise the consumer that links it has no producer and ninja stops
 # with 'no known rule to make it'.
-nj="$(find target -name build.ninja | head -1)"
+nj="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -qE "^build bin/libmathkit\.dll \| bin/libmathkit\.dll\.a : " "$nj" || {
     grep -n 'libmathkit' "$nj"
     echo "FAIL: the import library is not an implicit output of the link edge"

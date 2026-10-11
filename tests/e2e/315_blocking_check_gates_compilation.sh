@@ -73,7 +73,7 @@ if find target -name 'main*.o' | grep -q .; then
 fi
 
 # The edge that makes it a property rather than a race lost by the compiler.
-nj=$(find target -name build.ninja | head -1)
+nj=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 [[ -n "$nj" ]] || { echo "FAIL: no build.ninja"; exit 1; }
 grep -qE '^build mcpp-actions-app : phony.*gate\.stamp' "$nj" || {
     echo "FAIL: the blocking check's stamp is not in the package's action phony"
@@ -97,7 +97,7 @@ if ! find target -name 'main*.o' | grep -q .; then
     echo "      not distinguishing anything, it is just always on"
     exit 1
 fi
-nj2=$(find target -name build.ninja | head -1)
+nj2=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 if grep -qE '^build mcpp-actions-app : phony.*gate\.stamp' "$nj2"; then
     echo "FAIL: a NON-blocking check joined the ordering phony"; exit 1
 fi

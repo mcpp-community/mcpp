@@ -46,7 +46,7 @@ out=$("$binary")
     exit 1
 }
 
-build_ninja="$(find target -name build.ninja | head -1)"
+build_ninja="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 [[ -n "$build_ninja" ]] || { echo "FAIL: build.ninja missing"; exit 1; }
 
 grep -qE '^cxxflags  = -std=c\+\+26' "$build_ninja" || {
@@ -93,7 +93,7 @@ MCPP_SCANNER=p1689 "$MCPP" build --no-cache > "$TMP/build-p1689.log" 2>&1 || {
     echo "FAIL: C++26 P1689 scanner build failed"
     exit 1
 }
-p1689_ninja="$(find target -name build.ninja | head -1)"
+p1689_ninja="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -qE '^cxxflags  = -std=c\+\+26' "$p1689_ninja" || {
     echo "FAIL: P1689 build.ninja missing C++26 standard flag"
     cat "$p1689_ninja"

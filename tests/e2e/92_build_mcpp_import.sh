@@ -48,9 +48,9 @@ EOF
 grep -q "build.mcpp" b.log || { cat b.log; echo "FAIL: build.mcpp not invoked"; exit 1; }
 # The bundled module is compiled once and kept by key: in the global cache, where
 # every project of the machine finds it, or, when the cache mode asks for no
-# global entry, in the workspace's own store (#748).
+# global entry, in the build programs' graph under target/ (#748, #797).
 CACHE_ROOT="$("$MCPP" cache dir | head -1)"
-find "$CACHE_ROOT/pkg/_engine" target/.build-mcpp/host-modules \( -name 'mcpp.o' -o -name 'mcpp.obj' \) 2>/dev/null | grep -q . \
+find "$CACHE_ROOT/pkg/_engine" target/.build-mcpp/host \( -name 'mcpp.m.o' -o -name 'mcpp.m.obj' \) 2>/dev/null | grep -q . \
     || { echo "FAIL: bundled mcpp module not compiled"; exit 1; }
 # The binary returns 0 only if both the module-emitted define AND the generated
 # source took effect.

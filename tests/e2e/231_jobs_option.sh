@@ -119,7 +119,7 @@ echo "toolchain override OK"
 #     on the GRAPH's own declaration and on the edges it emits — not on timing,
 #     which on CI measures the runner's mood.
 "$MCPP" build --release > /dev/null 2>&1
-ninja_file=$(find target -name build.ninja | head -1)
+ninja_file=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 grep -q 'schedule=none' "$ninja_file" \
   || { echo "default should not use the split schedule:"; head -2 "$ninja_file"; exit 1; }
 
@@ -135,7 +135,7 @@ cp mcpp.toml "$TMP/mcpp.toml.bak"
 printf '\n[build]\nbmi_schedule = "on"\n' >> mcpp.toml
 "$MCPP" build --release > "$TMP/sched-manifest.txt" 2>&1 \
   || { echo "bmi_schedule = \"on\" failed to build:"; cat "$TMP/sched-manifest.txt"; exit 1; }
-ninja_file=$(find target -name build.ninja | head -1)
+ninja_file=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 grep -qE 'schedule=(detach-codegen|two-phase)' "$ninja_file" \
   || { echo "[build] bmi_schedule = \"on\" did not select a split schedule:"
        head -2 "$ninja_file"; exit 1; }
@@ -145,7 +145,7 @@ echo "manifest key bmi_schedule OK"
 rm -rf target
 MCPP_BMI_SCHEDULE=on "$MCPP" build --release > "$TMP/sched.txt" 2>&1 \
   || { echo "schedule=on failed to build:"; cat "$TMP/sched.txt"; exit 1; }
-ninja_file=$(find target -name build.ninja | head -1)
+ninja_file=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 grep -q 'schedule=detach-codegen\|schedule=two-phase\|schedule=none' "$ninja_file" \
   || { echo "graph does not declare its schedule:"; head -2 "$ninja_file"; exit 1; }
 

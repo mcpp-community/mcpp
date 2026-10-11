@@ -1480,6 +1480,7 @@ step6_build_tool(PrepareState& state, HostToolCtx& ctx) {
     sub.work_dir     = mcpp::build::tool_store::scratch_dir(
         ctx.cacheRoot, ctx.entry, state.workRoot);
     sub.target_triple = "";            // HOST — the whole point
+    sub.host_target   = true;
     sub.toolchain     = ctx.toolTcSpec;
     sub.profile       = "release";
     sub.cache_mode    = state.overrides.cache_mode;

@@ -64,7 +64,7 @@ echo "ok: A1 the full path reports the advice once"
 # its time when the text is unchanged), and the fast path replays it untouched.
 # A `Compiling` line no longer tells the two apart: it states that a package's
 # steps ran, on either path (build progress design 2026-09-29).
-planned_since() { find target -name build.ninja -newer "$1" 2>/dev/null | grep -q .; }
+planned_since() { find target -name build.ninja -not -path '*/.build-mcpp/*' -newer "$1" 2>/dev/null | grep -q .; }
 touch .before-b2
 sleep 1   # a coarse file system clock must see the input as newer
 printf 'second\n' > data/probe.in

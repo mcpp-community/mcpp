@@ -1010,12 +1010,13 @@ static std::expected<void, std::string> step1_target_and_static_overrides(Prepar
     // Target-axis default resolution when no --target flag was passed:
     // [build] target (project default, ≙ cargo build.target) >
     // [toolchain] default_target (global config) > host.
-    if (state.overrides.target_triple.empty() && !state.m->buildConfig.target.empty())
+    if (state.overrides.target_triple.empty() && !state.m->buildConfig.target.empty()
+        && !state.overrides.host_target)
         state.overrides.target_triple = state.m->buildConfig.target;
     // Remembered, not requested: this one came out of the global config, so
     // it must not outrank anything the user wrote down (see the pin below).
     bool targetFromGlobalDefault = false;
-    if (state.overrides.target_triple.empty()) {
+    if (state.overrides.target_triple.empty() && !state.overrides.host_target) {
         if (auto cfg = state.get_cfg(true); cfg && !(*cfg)->defaultTarget.empty()) {
             state.overrides.target_triple = (*cfg)->defaultTarget;
             targetFromGlobalDefault = true;

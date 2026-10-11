@@ -36,7 +36,7 @@ EOF
 
 "$MCPP" build > build.log 2>&1 || { cat build.log; exit 1; }
 
-RES="$(find target -name resolution.json | head -1)"
+RES="$(find target -name resolution.json -not -path '*/.build-mcpp/*' | head -1)"
 [[ -n "$RES" ]] || { echo "FAIL: no resolution.json"; exit 1; }
 
 python3 - "$RES" <<'PY'

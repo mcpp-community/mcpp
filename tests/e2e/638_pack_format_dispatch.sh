@@ -112,7 +112,7 @@ EOF
 MCPP="${MCPP:-mcpp}"
 
 graph_dist() { sed -n '2p' "$1" | sed 's/.*;dist=//;s/;.*//'; }
-find_graph() { find target -name build.ninja | head -1; }
+find_graph() { find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1; }
 
 # ── 1. a plain build declares, and submits nothing ─────────────────────────
 "$MCPP" build --release > b1.log 2>&1 || { cat b1.log; echo "FAIL: plain build failed"; exit 1; }

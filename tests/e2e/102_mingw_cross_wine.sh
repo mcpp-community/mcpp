@@ -101,7 +101,7 @@ out="$(wine "$EXE" 2>/dev/null)"
 [[ "$out" == *"import-std + multi-module OK"* ]] || { echo "main output missing: $out"; exit 1; }
 
 # ── ninja sanity: std BMI + module BMI were built for the cross target ──────
-build_ninja="$(find target/$TRIPLE -name build.ninja | head -1)"
+build_ninja="$(find target/$TRIPLE -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -q "gcm.cache/std.gcm"               "$build_ninja" || { echo "ninja missing std BMI"; exit 1; }
 grep -q "gcm.cache/crosswin.banner.gcm"   "$build_ninja" || { echo "ninja missing module BMI"; exit 1; }
 

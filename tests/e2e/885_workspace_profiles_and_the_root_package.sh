@@ -26,10 +26,10 @@ cat > "$MCPP_HOME/config.toml" <<EOF
 home = "$REGISTRY_HOST"
 EOF
 
-graphs() { find target -name build.ninja | wc -l | tr -d ' '; }
+graphs() { find target -name build.ninja -not -path '*/.build-mcpp/*' | wc -l | tr -d ' '; }
 # The compile edge of one source, with the file-level flags it inherits.
 edge() {   # $1 = an object path fragment, e.g. obj/app/src/main
-    local n; n=$(find target -name build.ninja | head -1)
+    local n; n=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
     { grep -E '^(cxxflags|cflags) *=' "$n"
       awk -v o="$1" 'index($0, "build " o)==1 {f=1; print; next} f && /^  / {print; next} {f=0}' "$n"; }
 }

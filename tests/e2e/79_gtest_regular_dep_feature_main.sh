@@ -25,7 +25,7 @@ cd app
 "$MCPP" add compat.gtest@1.15.2 > /dev/null
 grep -q '^\[dependencies\.compat\]' mcpp.toml || { echo "FAIL: add did not write [dependencies.compat]"; cat mcpp.toml; exit 1; }
 "$MCPP" build > /dev/null || { echo "FAIL: #168 — build with regular-dep gtest failed"; exit 1; }
-nj=$(find target -name build.ninja | xargs ls -t 2>/dev/null | head -1)
+nj=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | xargs ls -t 2>/dev/null | head -1)
 if grep -q 'gtest_main' "$nj"; then
     echo "FAIL: gtest_main linked into app by default (would collide with main)"; exit 1
 fi
@@ -46,7 +46,7 @@ cat > src/main.cpp <<'EOF'
 TEST(App, ok) { EXPECT_EQ(1 + 1, 2); }
 EOF
 "$MCPP" build > /dev/null || { echo "FAIL: features=[main] build failed"; exit 1; }
-nj=$(find target -name build.ninja | xargs ls -t 2>/dev/null | head -1)
+nj=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | xargs ls -t 2>/dev/null | head -1)
 grep -q 'gtest_main' "$nj" || { echo "FAIL: features=[main] did not link gtest_main"; exit 1; }
 
 # (3) `mcpp add --dev` routes to [dev-dependencies].

@@ -35,7 +35,7 @@ cd "$TMP/ex/app"
 "$MCPP" build --configure-only > configure.log 2>&1 \
     || { cat configure.log; echo "FAIL: configure-only did not succeed"; exit 1; }
 
-ninja_file="$(find target -name build.ninja | head -1)"
+ninja_file="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 [[ -n "$ninja_file" ]] || { echo "FAIL: no build.ninja generated"; exit 1; }
 
 if grep -qE '^build [^:]*: cxx_object [^|]*answer\.toy' "$ninja_file"; then

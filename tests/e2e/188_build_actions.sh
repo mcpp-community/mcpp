@@ -297,7 +297,7 @@ version = "0.1.0"
 EOF
 printf 'int main() { return 0; }\n' > src/main.cpp
 "$MCPP" build > o0.log 2>&1 || { cat o0.log; echo "FAIL: probe build failed"; exit 1; }
-OBJ_NINJA=$(find target -name build.ninja | head -1)
+OBJ_NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 # A command line, written into mkobj.sh as one: it may start with
 # `env LD_LIBRARY_PATH=...` for a compiler without its own search path.
 OBJ_CXX=$(sed -n 's/^cxx *= *//p' "$OBJ_NINJA" | head -1)

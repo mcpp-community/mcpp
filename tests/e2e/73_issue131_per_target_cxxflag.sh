@@ -57,7 +57,7 @@ EOF
 # the shared unit (shared check) — both are #error guards above.
 "$MCPP" build > build.log 2>&1 || { cat build.log; echo "build failed"; exit 1; }
 
-ninja_file="$(find target -name build.ninja | head -1)"
+ninja_file="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 [[ -n "$ninja_file" ]] || { echo "no build.ninja"; exit 1; }
 grep -q -- "-fno-exceptions" "$ninja_file" || { echo "per-target cxxflag missing from build.ninja"; exit 1; }
 

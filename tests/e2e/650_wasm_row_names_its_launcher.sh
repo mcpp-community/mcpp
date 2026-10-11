@@ -145,7 +145,7 @@ TOML
 printf 'extern "C" int mcpp_factory() { return 42; }\n' > src/lib.cpp
 "$MCPP" build --target wasm32-emscripten > build.log 2>&1 \
     || fail "a main()-less bin with --no-entry did not link" build.log
-ninjafile=$(find target/wasm32-emscripten -name 'build.ninja' | head -1)
+ninjafile=$(find target/wasm32-emscripten -name 'build.ninja' -not -path '*/.build-mcpp/*' | head -1)
 grep -q -- '--no-entry' "$ninjafile" || fail "--no-entry did not reach build.ninja" "$ninjafile"
 echo "  ok: --no-entry reaches the link line as an ordinary ldflag"
 

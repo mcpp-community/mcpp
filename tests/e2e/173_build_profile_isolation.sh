@@ -58,7 +58,7 @@ dir_for_opt() {
 "$MCPP" build --release > release.log 2>&1 || { cat release.log; exit 1; }
 "$MCPP" build --profile dist > dist.log 2>&1 || { cat dist.log; exit 1; }
 
-count=$(find target -name build.ninja | wc -l)
+count=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | wc -l)
 [[ "$count" -eq 3 ]] || {
     echo "FAIL: expected one build dir per profile, found $count"
     for d in target/*/*/; do echo "  $d -> $(opt_of "$d")"; done

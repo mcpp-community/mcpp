@@ -38,7 +38,7 @@ done
 
 # The build directory of a command: the one directory under target/ holding a
 # build.ninja.
-build_dir() { find target -name build.ninja -exec dirname {} \; | head -1; }
+build_dir() { find target -name build.ninja -not -path '*/.build-mcpp/*' -exec dirname {} \; | head -1; }
 # How many times ninja built the object of member $2 in build directory $1.
 object_edges() { awk -F'\t' -v m="$2" '$4 ~ ("(^|/)obj/" m "/src/" m "\\.m\\.o$")' "$1/.ninja_log" | wc -l | tr -d ' '; }
 
@@ -73,7 +73,7 @@ echo "ok: A, -p a -p b builds a and b, and c is untouched"
 "$MCPP" build -p a -p ./b -p b -p a > b2.log 2>&1 || fail "B: a member named twice did not build" b2.log
 [ "$(object_edges "$dir" a)" = 1 ] && [ "$(object_edges "$dir" b)" = 1 ] \
     || fail "B: naming a member twice compiled an edge again" "$dir/.ninja_log"
-[ "$(find target -name build.ninja | wc -l | tr -d ' ')" = 1 ] || fail "B: the order made a second build directory" b.log
+[ "$(find target -name build.ninja -not -path '*/.build-mcpp/*' | wc -l | tr -d ' ')" = 1 ] || fail "B: the order made a second build directory" b.log
 echo "ok: B, the order of -p, and a member named twice, do not change the selection"
 
 echo "PASS: 852_a_repeated_dash_p_selects_every_member_it_names"

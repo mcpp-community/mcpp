@@ -62,7 +62,7 @@ EOF
 out="$("$MCPP" run 2>&1 | tail -1)"
 [[ "$out" == *SELF_COPY_OK* ]] || { echo "FAIL: the program did not run: '$out'"; exit 1; }
 
-NINJA=$(find target -name build.ninja -print -quit)
+NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' -print -quit)
 [ -n "$NINJA" ] || { echo "FAIL: no build.ninja"; exit 1; }
 
 # The token is substituted, never emitted literally.

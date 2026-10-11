@@ -69,7 +69,7 @@ out=$("$binary")
 }
 
 # The level reaches the module-graph-global cxxflags (every TU, deps included).
-build_ninja="$(find target -name build.ninja | head -1)"
+build_ninja="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -qE '^cxxflags  = -std=c\+\+20' "$build_ninja" || {
     grep '^cxxflags' "$build_ninja" || true
     echo "FAIL: build.ninja cxxflags is not -std=c++20"
@@ -112,7 +112,7 @@ EOF
     echo "FAIL: gnu++20 build failed"
     exit 1
 }
-gnu_ninja="$(find target -name build.ninja | head -1)"
+gnu_ninja="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -qE '^cxxflags  = -std=gnu\+\+20' "$gnu_ninja" || {
     grep '^cxxflags' "$gnu_ninja" || true
     echo "FAIL: gnu++20 did not reach cxxflags"

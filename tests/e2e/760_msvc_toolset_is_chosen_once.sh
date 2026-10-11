@@ -38,7 +38,7 @@ echo "runner: $VSROOT, default toolset $EXPECTED"
 # No developer prompt: the default selection must not depend on one.
 unset VCToolsInstallDir VSINSTALLDIR VCINSTALLDIR
 
-resolution() { find target -name resolution.json | head -1; }
+resolution() { find target -name resolution.json -not -path '*/.build-mcpp/*' | head -1; }
 
 # ── 1. The clang row, no sysroot declared: the machine's default ──────────
 "$MCPP" new chosen > /dev/null
@@ -64,7 +64,7 @@ print("OK:", t["version"], t["origin"], sdk["version"])
 PY
 
 # The driver is TOLD the toolset, with the same directory the record names.
-NINJA="$(find target -name build.ninja | head -1)"
+NINJA="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -q -- "-Xmicrosoft-visualc-tools-root" "$NINJA" \
     || { echo "FAIL: build.ninja does not pass the toolset to clang"; exit 1; }
 grep -q -- "-Xmicrosoft-windows-sdk-version" "$NINJA" \
@@ -99,7 +99,7 @@ grep -q "sysroot msvc@$EXPECTED → MSVC $EXPECTED (system" pinned.log \
     || { echo "FAIL: pinned toolset not taken from the machine:"; cat pinned.log; exit 1; }
 # The declaration the environment makes is ignored for the version too: the
 # pinned build says the same version as the default one.
-PINNED_NINJA="$(find target -name build.ninja | xargs ls -t | head -1)"
+PINNED_NINJA="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | xargs ls -t | head -1)"
 [[ "$(grep -o -- '-fms-compatibility-version=[0-9.]*' "$PINNED_NINJA" | sort -u)" == "$MSVER" ]] \
     || { echo "FAIL: the pinned build says another MSVC compiler version than $MSVER"; exit 1; }
 

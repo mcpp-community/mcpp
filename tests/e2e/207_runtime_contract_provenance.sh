@@ -75,7 +75,7 @@ cd "$TMP/app"
     exit 1
 }
 
-RES=$(find target -name resolution.json | head -1)
+RES=$(find target -name resolution.json -not -path '*/.build-mcpp/*' | head -1)
 test -n "$RES" || { echo "resolution.json missing"; exit 1; }
 python3 - "$RES" <<'PY'
 import json, sys

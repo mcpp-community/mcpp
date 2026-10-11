@@ -38,7 +38,7 @@ for m in a b c; do
     printf 'int main() { return 0; }\n' > $m/tests/smoke.cpp
 done
 
-build_dir() { find target -name build.ninja -exec dirname {} \; | head -1; }
+build_dir() { find target -name build.ninja -not -path '*/.build-mcpp/*' -exec dirname {} \; | head -1; }
 refused() {   # refused <label> <log> <command...>: non-zero, no planning, nothing built
     local label=$1 log=$2; shift 2
     local rc=0

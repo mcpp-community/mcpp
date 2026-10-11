@@ -39,7 +39,7 @@ cd app
 # its time when the text is unchanged), and the fast path replays it untouched.
 # A `Compiling` line no longer tells the two apart: it states that a package's
 # steps ran, on either path (build progress design 2026-09-29).
-planned_since() { find target -name build.ninja -newer "$1" 2>/dev/null | grep -q .; }
+planned_since() { find target -name build.ninja -not -path '*/.build-mcpp/*' -newer "$1" 2>/dev/null | grep -q .; }
 # on a path it never took.
 touch .before-warm; sleep 1
 "$MCPP" build > warm.log 2>&1 || { cat warm.log; exit 1; }

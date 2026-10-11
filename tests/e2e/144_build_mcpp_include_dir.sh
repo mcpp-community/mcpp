@@ -66,7 +66,7 @@ out="$("$MCPP" run 2>&1 | grep '^ANSWER=' | tail -1)"
 
 # include-dir-after reaches the compile edges as -idirafter (typed #249
 # channel: privateBuild.includeDirsAfter → localIncludeDirsAfter).
-ninja_file=$(find target -name build.ninja | head -1)
+ninja_file=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 grep -q -- "-idirafter.*vendor/sysinc" "$ninja_file" || {
     echo "FAIL: include-dir-after not emitted as -idirafter in build.ninja";
     grep -n "local_includes" "$ninja_file" | head; exit 1; }

@@ -34,7 +34,7 @@ grep -qF "requested by mcpplibs.app@0.1.0 as 'demo.fw' in [dependencies]" why.lo
 grep -q "linked static (default)" why.log || fail "A: the link form is not listed" why.log
 
 # ── B ──────────────────────────────────────────────────────────────────────
-json=$(find target -name resolution.json | head -1)
+json=$(find target -name resolution.json -not -path '*/.build-mcpp/*' | head -1)
 python3 - "$json" <<'PY' || fail "B: record shape" "$json"
 import json, sys
 doc = json.load(open(sys.argv[1]))

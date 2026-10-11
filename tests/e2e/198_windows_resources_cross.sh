@@ -37,7 +37,7 @@ main = "src/main.cpp"
 TOML
 "$MCPP" build > host.log 2>&1 || { cat host.log; echo "FAIL: host build with [resources] failed"; exit 1; }
 grep -qi 'resource' host.log && { cat host.log; echo "FAIL: a non-PE build must say nothing about resources"; exit 1; }
-HOST_DIR=$(dirname "$(find target -name 'build.ninja' -print | xargs grep -L 'rc_object' | head -1)")
+HOST_DIR=$(dirname "$(find target -name 'build.ninja' -not -path '*/.build-mcpp/*' -print | xargs grep -L 'rc_object' | head -1)")
 [ -d "$HOST_DIR/res" ] && { echo "FAIL: a non-PE build must not emit resource units"; exit 1; }
 
 # ── A4. "inapplicable" stops at COMPILATION, not at validation ────────────

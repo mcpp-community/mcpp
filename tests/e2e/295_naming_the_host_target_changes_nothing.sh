@@ -81,7 +81,7 @@ line_of() {   # channel, extra args… → that line of build.ninja, or nothing
     local channel="$1"; shift
     rm -rf target
     "$MCPP" build "$@" >/dev/null 2>&1 || true
-    local f; f="$(find target -name build.ninja 2>/dev/null | head -1)"
+    local f; f="$(find target -name build.ninja -not -path '*/.build-mcpp/*' 2>/dev/null | head -1)"
     # AN EXPLICIT `return 0`, BECAUSE THIS FUNCTION IS ALLOWED TO FIND
     # NOTHING. The first draft ended on `[ -n "$f" ] && grep …`, whose exit
     # status under `set -e` is the test's — so the one case this test exists to

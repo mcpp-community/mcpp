@@ -52,7 +52,7 @@ grep -q 'skipped: .*reflection' "$TMP/build.log" || {
     exit 1
 }
 
-build_ninja="$(find target -name build.ninja | head -1)"
+build_ninja="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -qE '^cxxflags  = -std=c\+\+2c' "$build_ninja" || {
     grep '^cxxflags' "$build_ninja" || true
     echo "FAIL: clang c++fly did not resolve to -std=c++2c"

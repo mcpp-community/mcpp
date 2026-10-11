@@ -75,7 +75,7 @@ out=$("$MCPP" run 2>&1)
 [[ "$out" == *"path dep build OK"*               ]] || { echo "main println missing: $out"; exit 1; }
 
 # build.ninja should compile sources from BOTH packages
-ninja_file="$(find target -name build.ninja)"
+ninja_file="$(find target -name build.ninja -not -path '*/.build-mcpp/*')"
 grep -q 'mylibA.*greet.cppm' "$ninja_file" || { echo "ninja missing dep package source"; exit 1; }
 # A dependency's BMI lies below its package's directory (pack drive and
 # selection design 2026-10-01, B1); the root's would lie at its name.

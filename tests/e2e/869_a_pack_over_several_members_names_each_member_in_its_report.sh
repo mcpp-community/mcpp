@@ -173,7 +173,7 @@ for a in app23 app26; do
     printf '#include <cstdio>\nint main() { std::printf("%%ld\\n", (long)__cplusplus); return 0; }\n' > $a/src/main.cpp
 done
 "$MCPP" pack --mode system --workspace --message-format json > p.json 2> p.log || fail "P: members of two configurations were not packed" p.log
-[ "$(find target -name build.ninja | wc -l | tr -d ' ')" = 2 ] || fail "P: expected one build directory for each configuration" p.log
+[ "$(find target -name build.ninja -not -path '*/.build-mcpp/*' | wc -l | tr -d ' ')" = 2 ] || fail "P: expected one build directory for each configuration" p.log
 [ "$(members_in < p.json)" = "app23 app26" ] || fail "P: data.artifacts does not name the two members in order" p.json
 for a in app23 app26; do
     [ -n "$(find $a/target/dist -maxdepth 1 -name "$a-0.1.0-*.tar.gz" | head -1)" ] || fail "P: $a was not packed" p.log

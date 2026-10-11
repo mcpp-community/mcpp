@@ -113,7 +113,7 @@ names "engine-three" && fail "D: a graph still names the path the engine was mov
 # E. The graph names its engine itself. Another engine rewrote the graph and
 #    left the record: the fast path asks the graph, declines, and plans again.
 "$ONE" build > e0.log 2>&1 || fail "E: the build before the rewrite failed" e0.log
-for g in $(find target -name build.ninja); do
+for g in $(find target -name build.ninja -not -path '*/.build-mcpp/*'); do
     awk -v p="$TMP/engine-gone/mcpp$EXE" '/^mcpp *=/ { print "mcpp      = " p; next } { print }' \
         "$g" > "$g.rewritten" && mv "$g.rewritten" "$g"
 done

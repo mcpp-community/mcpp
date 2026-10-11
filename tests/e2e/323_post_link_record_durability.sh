@@ -31,7 +31,7 @@ printf 'int main(){ return 0; }\n' > src/main.cpp
 for t in one two; do printf 'int main(){ return 0; }\n' > "tests/t_$t.cpp"; done
 
 "$MCPP" build > b1.log 2>&1 || { cat b1.log; exit 1; }
-OUT=$(dirname "$(find target -name build.ninja | head -1)")
+OUT=$(dirname "$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)")
 [ -n "$OUT" ] || { echo "FAIL: no build.ninja"; exit 1; }
 
 REC="$OUT/.mcpp-runtime-verdicts.json"

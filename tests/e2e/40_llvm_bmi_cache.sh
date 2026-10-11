@@ -80,7 +80,7 @@ echo "$out2" | grep -qE "Cached mcpplibs\.cmdline v[0-9.]+ \([0-9]+ units?\)" ||
 
 # ...and reuse must mean "not recompiled". The status line alone used to be
 # printed while ninja rebuilt every unit behind it, so assert on the graph.
-NINJA="$(find target -name build.ninja | head -1)"
+NINJA="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 [[ -n "$NINJA" ]] || { echo "FAIL: no build.ninja"; exit 1; }
 if grep -qE ': (cxx_module|cxx_object|cxx_scan) .*mcpplibs' "$NINJA"; then
     echo "FAIL: cached dependency still has compile edges"

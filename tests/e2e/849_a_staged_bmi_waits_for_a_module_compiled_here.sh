@@ -120,7 +120,7 @@ grep -qE 'Cached local-dev\.gen-dep v1\.0\.0' hit.log \
 echo "ok: A, the package is staged from the cache"
 
 # ── B ──────────────────────────────────────────────────────────────────────
-N=$(find target -name build.ninja | head -1)
+N=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 [ -n "$N" ] || fail "B: no build.ninja"
 D=$(dirname "$N")
 # The BMI directory and extension are the toolchain's (gcm.cache/*.gcm for

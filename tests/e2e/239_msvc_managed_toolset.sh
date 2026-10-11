@@ -164,7 +164,7 @@ cat >> mcpp.toml <<EOF
 sysroot = "xim:msvc@$TOOLSET"
 EOF
 out=$("$MCPP" build 2>&1) || { echo "FAIL: clang build against the package: $out"; exit 1; }
-res=$(find target -name resolution.json | head -1)
+res=$(find target -name resolution.json -not -path '*/.build-mcpp/*' | head -1)
 python3 - "$res" "$TOOLSET" <<'PYEOF'
 import json, sys
 d = json.load(open(sys.argv[1]))

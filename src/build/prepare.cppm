@@ -811,6 +811,10 @@ export struct BuildOverrides {
     // not apply to them.
     std::map<std::string, std::string> resolution_pins;
     bool build_program_graph = false;
+    // The build targets the machine doing it: a sub-build of build programs
+    // or of a host tool. Neither `[build] target` nor the configured default
+    // target applies, since both name the target of the build that asked.
+    bool host_target = false;
     // The project whose `.mcpp/` holds the packages of its custom indices.
     // Empty = the project being built. The build programs' graph names the
     // build that asked, whose indices it shares and whose store already holds

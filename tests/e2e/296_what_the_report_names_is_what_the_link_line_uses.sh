@@ -37,7 +37,7 @@ report=""; ldflags=""
 build_and_read() {   # extra args… → sets $report and $ldflags
     rm -rf target
     report="$("$MCPP" build "$@" 2>&1 || true)"
-    local f; f="$(find target -name build.ninja 2>/dev/null | head -1)"
+    local f; f="$(find target -name build.ninja -not -path '*/.build-mcpp/*' 2>/dev/null | head -1)"
     ldflags=""
     if [ -n "$f" ]; then
         ldflags="$(grep -m1 '^ldflags' "$f" || true)"

@@ -126,9 +126,9 @@ done
 echo "ok: A, the workspace builds and each program prints its own module's value"
 
 # ── B ──────────────────────────────────────────────────────────────────────
-log=$(find target -name .ninja_log | head -1)
+log=$(find target -name .ninja_log -not -path '*/.build-mcpp/*' | head -1)
 [ -n "$log" ] || fail "B: no .ninja_log"
-[ "$(find target -name .ninja_log | wc -l | tr -d ' ')" = 1 ] || fail "B: more than one build directory"
+[ "$(find target -name .ninja_log -not -path '*/.build-mcpp/*' | wc -l | tr -d ' ')" = 1 ] || fail "B: more than one build directory"
 for sel in "-p core" "-p app" "-p tool" "-p tool2" "-p dso" "-p app" "-p tool2" "-p app" "--workspace"; do
     before=$(wc -l < "$log")
     "$MCPP" build $sel > b.log 2>&1 || fail "B: build $sel failed" b.log

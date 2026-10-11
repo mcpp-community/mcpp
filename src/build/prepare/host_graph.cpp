@@ -652,6 +652,7 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
     sub.project_root = dir;
     sub.work_dir     = dir;
     sub.target_triple = "";
+    sub.host_target  = true;
     sub.toolchain    = tc.spec;
     sub.profile      = "build-program";
     sub.cache_mode   = state.overrides.cache_mode;
@@ -711,10 +712,17 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
             }
     }
     for (auto const* g : goals)
-        if (!binaries.contains(g->member))
+        if (!binaries.contains(g->member)) {
+            std::string planned;
+            for (auto const& lu : ctx->plan.linkUnits)
+                planned += std::format("{}{}:{}", planned.empty() ? "" : ", ",
+                                       lu.memberOf.empty() ? lu.package : lu.memberOf,
+                                       lu.targetName);
             return std::unexpected(std::format(
-                "the build programs' plan has no program for '{}'{}",
-                qualified(manifest_of(state, g->index)), reproduce()));
+                "the build programs' plan has no program for '{}' (member {}; planned: {}){}",
+                qualified(manifest_of(state, g->index)), g->member,
+                planned.empty() ? std::string("nothing") : planned, reproduce()));
+        }
 
     auto be = mcpp::build::make_ninja_backend();
     mcpp::build::BuildOptions bopt;

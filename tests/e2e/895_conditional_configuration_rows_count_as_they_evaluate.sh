@@ -44,7 +44,7 @@ member a "[target.'cfg(os = \"none\")'.build]
 dialect_cxxflags = [\"-DNEVER=1\"]"
 member b ""
 "$MCPP" build --workspace > ws.log 2>&1 || fail "--workspace" ws.log
-n=$(find target -name build.ninja | wc -l | tr -d ' ')
+n=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | wc -l | tr -d ' ')
 [ "$n" = 1 ] || fail "a row for another target split the members into $n configurations" ws.log
 
 mkdir -p "$TMP/r3" && cd "$TMP/r3"
@@ -53,7 +53,7 @@ member a "[target.'$HOST'.build]
 dialect_cxxflags = [\"-DDIAL=3\"]"
 member b ""
 "$MCPP" build --workspace > ws.log 2>&1 || fail "--workspace" ws.log
-n=$(find target -name build.ninja | wc -l | tr -d ' ')
+n=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | wc -l | tr -d ' ')
 [ "$n" = 2 ] || fail "members whose rows evaluate differently share $n configuration(s)" ws.log
 [ "$(run_of a)" = "DIAL=3" ] || fail "member a lost its dialect: $(run_of a)" ws.log
 [ "$(run_of b)" = "DIAL=0" ] || fail "member b received a's dialect: $(run_of b)" ws.log

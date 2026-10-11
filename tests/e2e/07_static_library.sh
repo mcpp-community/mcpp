@@ -45,7 +45,7 @@ AR="${SANDBOX_AR:-ar}"
 "$AR" t "$archive" | grep -q '\.o$' || { echo ".a contains no objects"; exit 1; }
 
 # build.ninja must use cxx_archive rule for the lib target
-ninja_file="$(find target -name build.ninja)"
+ninja_file="$(find target -name build.ninja -not -path '*/.build-mcpp/*')"
 grep -q 'bin/libmathlib.a : cxx_archive' "$ninja_file" || {
     echo "build.ninja did not use cxx_archive for the lib target"; exit 1; }
 

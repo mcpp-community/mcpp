@@ -59,7 +59,7 @@ cd nocfg
 "$MCPP" build > b.log 2>&1 || { cat b.log; echo "FAIL: default build broke"; exit 1; }
 grep -q 'sources \[src/\*\*/\*\.{cppm,cpp,cc,c,S,s,asm}\]' b.log || {
     cat b.log; echo "FAIL: default source glob changed"; exit 1; }
-nj="$(find target -name build.ninja | head -1)"
+nj="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 for stray in b.ccm c.cxxm d.ixx; do
     grep -q "$stray" "$nj" && { echo "FAIL: $stray compiled without opt-in"; exit 1; }
 done
@@ -90,7 +90,7 @@ $2"
         [[ "$out" == *"$want"* ]] || { echo "FAIL[$1]: missing '$want' in: $out"; exit 1; }
     done
 
-    local nj; nj="$(find target -name build.ninja | head -1)"
+    local nj; nj="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 
     # Every module interface must use the MODULE rule. Asserting on the rule —
     # not on the BMI path — is the point: the BMI output line is emitted from

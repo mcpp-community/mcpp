@@ -88,7 +88,7 @@ TOML
             exit 4
         fi
         local contracts
-        contracts=$(tr -d ' \n\r' < "$(find target -name resolution.json | head -1)" 2>/dev/null \
+        contracts=$(tr -d ' \n\r' < "$(find target -name resolution.json -not -path '*/.build-mcpp/*' | head -1)" 2>/dev/null \
             | grep -o '"cxx_runtime_by_role":{[^}]*}' || true)
         echo "READING $IMAGE_FORMAT $1 record: ${contracts:-none}"
     )

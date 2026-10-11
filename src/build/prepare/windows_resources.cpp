@@ -526,9 +526,19 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
 // Read by W3 (a member's non-public modules).
 std::string workspace_member_of(const PrepareState& state, const std::filesystem::path& root) {
     if (!state.wsManifest || state.runtimeWorkspaceRoot.empty()) return {};
-    const auto rel = root.lexically_normal()
-                         .lexically_relative(state.runtimeWorkspaceRoot.lexically_normal())
-                         .generic_string();
+    auto relative = [](const std::filesystem::path& a, const std::filesystem::path& b) {
+        return a.lexically_normal().lexically_relative(b.lexically_normal()).generic_string();
+    };
+    auto rel = relative(root, state.runtimeWorkspaceRoot);
+    // One directory has more than one spelling (`/var` is `/private/var` on
+    // macOS; a symlinked home; HOME and USERPROFILE on Windows): a member
+    // reached through the other spelling is the same member.
+    if (rel.empty() || rel.starts_with("..")) {
+        std::error_code e1, e2;
+        const auto cr = std::filesystem::weakly_canonical(root, e1);
+        const auto cw = std::filesystem::weakly_canonical(state.runtimeWorkspaceRoot, e2);
+        if (!e1 && !e2) rel = relative(cr, cw);
+    }
     if (rel.empty() || rel == "." || rel.starts_with("..")) return {};
     for (auto const& m : state.wsManifest->workspace.members) {
         if (m == rel) return rel;

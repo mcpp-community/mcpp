@@ -67,7 +67,7 @@ EOF
 count() {   # $1 = macro name
     # The NAME, not `-D<name>`: the prefix is dialect-specific (`/D` on MSVC),
     # and what this test is about is whether the section applied at all.
-    local nj; nj="$(find target -name build.ninja | head -1)"
+    local nj; nj="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
     grep -c -- "$1" "$nj" || true
 }
 

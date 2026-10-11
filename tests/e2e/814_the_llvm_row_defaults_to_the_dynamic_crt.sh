@@ -57,7 +57,7 @@ TOML
 }
 
 record_of() {   # prints the distributable contract from the one resolution.json
-    tr -d ' \n\r' < "$(find target -name resolution.json | head -1)" \
+    tr -d ' \n\r' < "$(find target -name resolution.json -not -path '*/.build-mcpp/*' | head -1)" \
         | grep -o '"distributable":"[a-z-]*"' | head -1 | cut -d'"' -f4
 }
 

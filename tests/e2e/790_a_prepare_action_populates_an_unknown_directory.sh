@@ -108,7 +108,7 @@ ran_prepare() { grep -qE 'PREPARE prep:install|__action(-stamp)? .*install\.sh' 
 # ── 1. first build: header compiles, program runs through runtime_search_dir
 "$MCPP" build -v > b1.log 2>&1 || { cat b1.log; echo "FAIL: first build failed"; exit 1; }
 ran_prepare b1.log || { cat b1.log; echo "FAIL: the prepare action did not run on the first build"; exit 1; }
-nj=$(find target -name build.ninja | head -1)
+nj=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 [[ -n "$nj" ]] || { echo "FAIL: no build.ninja"; exit 1; }
 grep -qE '^build [^:]*(prep\.stamp|prepgreet)' "$nj" >/dev/null || true   # sanity, not load-bearing
 out1="$("$MCPP" run 2>&1)" || { echo "FAIL: run failed after the first build: $out1"; exit 1; }

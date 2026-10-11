@@ -59,7 +59,7 @@ cd mathkit
     exit 1; }
 
 # ── the .def was generated, and it is a build-graph node ────────────────
-nj="$(find target -name build.ninja | head -1)"
+nj="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -qE "^build .*mathkit\.def : coff_def " "$nj" || {
     grep -n 'def' "$nj" | head
     echo "FAIL: no coff_def edge. The .def has to be produced from the same"

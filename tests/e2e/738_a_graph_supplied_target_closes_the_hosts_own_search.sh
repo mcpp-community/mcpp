@@ -117,7 +117,7 @@ fi
 printf '%s\n' "$out" > build.log
 
 cdb="compile_commands.json"
-[ -f "$cdb" ] || cdb="$(find target -name compile_commands.json | head -1)"
+[ -f "$cdb" ] || cdb="$(find target -name compile_commands.json -not -path '*/.build-mcpp/*' | head -1)"
 [ -n "$cdb" ] && [ -f "$cdb" ] || fail "no compile_commands.json produced"
 
 home="${MCPP_HOME:-$HOME/.mcpp}"

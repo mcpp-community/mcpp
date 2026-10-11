@@ -36,7 +36,7 @@ out=$("$MCPP" run 2>&1)
 [[ "$out" == *"multi-module build OK"* ]] || { echo "main println missing: $out"; exit 1; }
 
 # Verify build.ninja contents
-build_ninja="$(find target -name build.ninja | head -1)"
+build_ninja="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -q "gcm.cache/multi.greeter.gcm"  "$build_ninja" || { echo "ninja missing greeter BMI"; exit 1; }
 grep -q "gcm.cache/std.gcm"            "$build_ninja" || { echo "ninja missing std BMI"; exit 1; }
 

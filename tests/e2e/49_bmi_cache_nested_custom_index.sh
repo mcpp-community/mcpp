@@ -131,7 +131,7 @@ grep -qE "Cached local-dev\.collision-lib v1\.0\.0 \((index [^,)]+, )?[0-9]+ uni
 # A reused dependency must not be recompiled — that was the whole defect. Its
 # outputs are declared by stage_file edges now, so there is no compile edge for
 # its sources at all.
-NINJA="$(find target -name build.ninja | head -1)"
+NINJA="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 [[ -n "$NINJA" ]] || { echo "FAIL: no build.ninja"; exit 1; }
 if grep -qE ': (cxx_module|cxx_object) .*collision-lib' "$NINJA"; then
     echo "FAIL: cached dependency still has compile edges"

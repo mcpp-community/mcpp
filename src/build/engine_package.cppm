@@ -105,8 +105,17 @@ fs::path root() { return mcpp::home::root() / "engine"; }
 fs::path package_dir() { return root() / std::string(mcpp::MCPP_VERSION) / "modules"; }
 
 bool is_engine_package(const fs::path& dir) {
-    auto rel = dir.lexically_normal().lexically_relative(root().lexically_normal());
-    return !rel.empty() && *rel.begin() != "..";
+    auto inside = [](const fs::path& a, const fs::path& b) {
+        auto rel = a.lexically_normal().lexically_relative(b.lexically_normal());
+        return !rel.empty() && *rel.begin() != "..";
+    };
+    if (inside(dir, root())) return true;
+    // One directory has more than one spelling: `/var` is `/private/var` on
+    // macOS, and Windows has HOME and USERPROFILE, drive-letter case, 8.3 names.
+    std::error_code e1, e2;
+    const auto cd = fs::weakly_canonical(dir, e1);
+    const auto cr = fs::weakly_canonical(root(), e2);
+    return !e1 && !e2 && inside(cd, cr);
 }
 
 std::pair<std::string, std::string> module_texts() {

@@ -98,7 +98,7 @@ out=$("$MCPP" cache dir 2>&1)
     exit 1
 }
 # The dependency still has to be built, in-project.
-NINJA="$(find target -name build.ninja | head -1)"
+NINJA="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -qE ': (cxx_module|cxx_object) .*mode-lib' "$NINJA" || {
     echo "FAIL: --cache=local did not compile the dependency locally"
     grep -n 'mode-lib' "$NINJA" | head
@@ -167,7 +167,7 @@ mv "$victim.bak" "$victim"
 # ── off: clears this build's build dir and touches no cache ────────────────
 # The build DIRECTORY (target/<triple>/<fp>/), not all of target/: sibling dirs
 # for other profiles and other targets are not this invocation's business.
-builddir="$(dirname "$(find target -name build.ninja | head -1)")"
+builddir="$(dirname "$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)")"
 marker="$builddir/_off_marker"
 touch "$marker"
 before="$(entry_count)"
@@ -177,7 +177,7 @@ before="$(entry_count)"
     echo "FAIL: --cache=off changed the cache ($before -> $(entry_count))"
     exit 1
 }
-NINJA="$(find target -name build.ninja | head -1)"
+NINJA="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -qE ': (cxx_module|cxx_object) .*mode-lib' "$NINJA" || {
     echo "FAIL: --cache=off served the dependency from the cache"
     exit 1
@@ -197,7 +197,7 @@ grep -qi 'cache mode' bogus.log || { cat bogus.log; echo "FAIL: unhelpful error"
 # MCPP_BUILD_CACHE is the env-level equivalent.
 rm -rf target
 MCPP_BUILD_CACHE=local "$MCPP" build > env.log 2>&1 || { cat env.log; exit 1; }
-NINJA="$(find target -name build.ninja | head -1)"
+NINJA="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -qE ': (cxx_module|cxx_object) .*mode-lib' "$NINJA" || {
     echo "FAIL: MCPP_BUILD_CACHE=local was ignored"
     exit 1
@@ -211,14 +211,14 @@ cache = "local"
 EOF
 rm -rf target
 "$MCPP" build > manifest.log 2>&1 || { cat manifest.log; exit 1; }
-NINJA="$(find target -name build.ninja | head -1)"
+NINJA="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 grep -qE ': (cxx_module|cxx_object) .*mode-lib' "$NINJA" || {
     echo "FAIL: [build] cache = local was ignored"
     exit 1
 }
 rm -rf target
 "$MCPP" build --cache=global > override.log 2>&1 || { cat override.log; exit 1; }
-NINJA="$(find target -name build.ninja | head -1)"
+NINJA="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 if grep -qE ': (cxx_module|cxx_object) .*mode-lib' "$NINJA"; then
     echo "FAIL: --cache=global did not override [build] cache = local"
     exit 1
@@ -261,7 +261,7 @@ cache = "local"
 EOF
 rm -rf target
 "$MCPP" build --cache=global > modeglobal.log 2>&1 || { cat modeglobal.log; exit 1; }
-NINJA="$(find target -name build.ninja | head -1)"
+NINJA="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 staged_before=$(grep -c ': stage_file .*mode-lib' "$NINJA" || true)
 [[ "$staged_before" -gt 0 ]] || {
     echo "FAIL: --cache=global did not produce stage edges (cache should be warm here)"
@@ -272,7 +272,7 @@ staged_before=$(grep -c ': stage_file .*mode-lib' "$NINJA" || true)
 # global graph. Note mcpp.toml is untouched between these two builds, so its
 # mtime cannot be what saves us — only the recorded mode can.
 "$MCPP" build > modebare.log 2>&1 || { cat modebare.log; exit 1; }
-NINJA="$(find target -name build.ninja | head -1)"
+NINJA="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 staged_after=$(grep -c ': stage_file .*mode-lib' "$NINJA" || true)
 [[ "$staged_after" -eq 0 ]] || {
     echo "FAIL: bare build replayed the global-mode graph ($staged_after stage edges)"

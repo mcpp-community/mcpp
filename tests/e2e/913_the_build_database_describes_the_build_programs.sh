@@ -70,7 +70,8 @@ for entries in (cc, root_cc):
 engine = env["data"]["engineModules"]
 assert os.path.isfile(os.path.join(engine, "mcpp.cppm")), ("D", engine)
 core = sets["mcpp:core"]["translation-units"]
-assert all(os.path.dirname(u["source"]) == os.path.normpath(engine) for u in core), \
+real = os.path.realpath   # one directory, two spellings (macOS /var, Windows)
+assert all(real(os.path.dirname(u["source"])) == real(engine) for u in core), \
     ("D", engine, [u["source"] for u in core])
 EOF
 echo "PASS: 913_the_build_database_describes_the_build_programs"

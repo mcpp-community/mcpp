@@ -46,7 +46,7 @@ printf 'int main() { return 0; }\n' > multi/src/main.cpp
 cd multi
 "$MCPP" build > b.log 2>&1 || { cat b.log; echo "FAIL: build"; exit 1; }
 
-ninja_file=$(find target -name build.ninja | head -1)
+ninja_file=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 [ -n "$ninja_file" ] || { echo "FAIL: no build.ninja"; exit 1; }
 
 # 1. Structural: no link rule may write its response file on one line. Under

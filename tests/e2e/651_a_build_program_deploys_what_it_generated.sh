@@ -99,7 +99,7 @@ int main() {
 EOF
 
 MCPP="${MCPP:-mcpp}"
-find_graph() { find target -name build.ninja | head -1; }
+find_graph() { find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1; }
 
 # ── 1. a plain build deploys the generated file beside the executable ──────
 # `target/<triple>/<fingerprint>/bin/...`, never a bare `bin/` at the project

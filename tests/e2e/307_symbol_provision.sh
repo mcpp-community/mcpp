@@ -98,7 +98,7 @@ cd app
 
 # ── half 1: the legitimate arrangement must stay silent ────────────────────
 "$MCPP" build > silent.log 2>&1 || { cat silent.log; exit 1; }
-res="$(find target -name resolution.json | head -1)"
+res="$(find target -name resolution.json -not -path '*/.build-mcpp/*' | head -1)"
 [[ -n "$res" ]] || { echo "FAIL: no resolution.json"; exit 1; }
 
 status="$(verdict "$res" status)"
@@ -168,7 +168,7 @@ EOF
 # keyed off the directory that contains the conflicting verdict.
 found=0
 conflict_dir=""
-for r in $(find target -name resolution.json); do
+for r in $(find target -name resolution.json -not -path '*/.build-mcpp/*'); do
     if [[ "$(verdict "$r" status)" == "conflict" ]]; then
         conflict_dir="$(dirname "$r")"
         "$PYTHON" - "$r" <<'PY' || exit 1

@@ -85,7 +85,7 @@ out=$("$MCPP" run 2>&1)
 [[ "$out" == *"answer = 42"* ]] || { echo "dep header not found via -idirafter: $out"; exit 1; }
 
 # The -idirafter flag (not -I) must carry the dep's include root.
-ninja_file="$(find target -name build.ninja)"
+ninja_file="$(find target -name build.ninja -not -path '*/.build-mcpp/*')"
 grep -q -- '-idirafter[^ ]*poisonlib[^ ]*inc' "$ninja_file" || {
     echo "ninja missing -idirafter for dep include root"; exit 1; }
 

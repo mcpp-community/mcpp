@@ -45,7 +45,7 @@ cd proj
 "$MCPP" test > test.log 2>&1 || { cat test.log; echo "FAIL: mcpp test"; exit 1; }
 grep -q "sanity ... ok" test.log || { cat test.log; exit 1; }
 
-NINJA=$(find target -name build.ninja | head -1)
+NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 [ -n "$NINJA" ] || { echo "FAIL: no build.ninja"; exit 1; }
 
 # The phony edge is how the goal set reaches ninja.

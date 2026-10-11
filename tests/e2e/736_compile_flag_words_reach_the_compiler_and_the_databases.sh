@@ -91,7 +91,7 @@ cat > words.json <<'EOF'
 ["-DV_ESC=\"esc.h\"", "-DV_MID=mid", "-DV_SQ=sq", "-DV_SP=a b",
  "-DV_DOL=a$b", "-O0", "-DV_A=1", "-DV_B=long long", "-DV_DEF=\"def\"", "-DV_DSP=a b"]
 EOF
-cdb=$(find target -name compile_commands.json | head -1)
+cdb=$(find target -name compile_commands.json -not -path '*/.build-mcpp/*' | head -1)
 [ -n "$cdb" ] || cdb=compile_commands.json
 [ -f "$cdb" ] || fail "B: no compile_commands.json"
 "$MCPP" emit build-database --format json > db.json 2> db.err || fail "C: emit failed" db.err

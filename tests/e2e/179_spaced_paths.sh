@@ -69,7 +69,7 @@ run_out=$("$MCPP" run 2>&1) || { echo "FAIL: run: $run_out"; exit 1; }
 # The include flag must reach the compiler as ONE shell word. Assert on the
 # generated ninja file rather than on the build succeeding by luck: a split
 # flag can still compile if the header happens to be findable another way.
-ninja_file=$(find target -name build.ninja | head -1)
+ninja_file=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 [[ -n "$ninja_file" ]] || { echo "FAIL: no build.ninja found"; exit 1; }
 grep -q "vendor" "$ninja_file" || {
     echo "FAIL: include dir absent from build.ninja"; exit 1; }

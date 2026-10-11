@@ -66,7 +66,7 @@ manifest ''
 rm -rf target
 if "$MCPP" build > undeclared.log 2>&1; then
     echo "FAIL: an undeclared '.ixx' was accepted."
-    nj="$(find target -name build.ninja | head -1)"
+    nj="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
     grep -n 'mathkit' "$nj" | head
     echo "      Check whether its object is in the link edge — if it is not,"
     echo "      this 'success' produces an undefined reference at link time."

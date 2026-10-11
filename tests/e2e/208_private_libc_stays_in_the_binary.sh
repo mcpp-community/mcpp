@@ -97,7 +97,7 @@ EOF
 cd app
 "$MCPP" build > build.log 2>&1 || { cat build.log; echo "build failed"; exit 1; }
 
-NINJA=$(find target -name build.ninja | head -1)
+NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 GLIBC_LIB=$(grep -oE '/[^ ",]*/xim-x-glibc/[0-9.]+/lib(64)?' "$NINJA" | head -1 || true)
 if [[ -z "$GLIBC_LIB" ]]; then
     echo "SKIP: this toolchain has no private glibc payload"

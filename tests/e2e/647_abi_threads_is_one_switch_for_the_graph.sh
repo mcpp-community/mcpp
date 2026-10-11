@@ -67,7 +67,7 @@ $2
 TOML
 }
 
-newest_ninja() { ls -t $(find target -name build.ninja) | head -1; }
+newest_ninja() { ls -t $(find target -name build.ninja -not -path '*/.build-mcpp/*') | head -1; }
 pthread_in_dep_command() {   # the compile command of mtdep.cppm carries -pthread
     local cdb
     cdb=$(dirname "$(newest_ninja)")/compile_commands.json

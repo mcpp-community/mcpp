@@ -97,7 +97,7 @@ EOF
 
 MCPP="${MCPP:-mcpp}"
 cd app
-find_graph() { find target -name build.ninja | head -1; }
+find_graph() { find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1; }
 
 # ── 1. a plain build gets the RUNPATH treatment, never -L ──────────────────
 "$MCPP" build > b1.log 2>&1 || fail "build failed" b1.log

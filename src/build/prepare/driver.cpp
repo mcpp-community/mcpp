@@ -112,6 +112,7 @@ void read_build_programs_marker(BuildOverrides& ov) {
     std::ifstream in(root / ".mcpp-build-programs");
     if (!in) return;
     ov.build_program_graph = true;
+    ov.host_target = true;
     std::string line;
     while (std::getline(in, line)) {
         const auto eq = line.find('=');

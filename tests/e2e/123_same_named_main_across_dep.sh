@@ -62,7 +62,7 @@ cd consumer
     exit 1
 }
 
-ninja_file="$(find target -name build.ninja | head -1)"
+ninja_file="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 [[ -n "$ninja_file" ]] || { echo "no build.ninja generated"; exit 1; }
 
 # THE invariant: every object the link edge names must be PRODUCED by an edge in

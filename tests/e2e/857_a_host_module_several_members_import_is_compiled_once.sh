@@ -96,7 +96,7 @@ done
 
 HOST=target/.build-mcpp/host
 # The compiles of the library: one entry per graph in that graph's database.
-entries() { cat $HOST/*/compile_commands.json 2>/dev/null | grep -c '"file": ".*rules/src/rule857.cppm"' || true; }
+entries() { cat $HOST/*/compile_commands.json 2>/dev/null | grep -cE '"file": ".*rules[/\\]+src[/\\]+rule857\.cppm"' || true; }
 
 # A and B. Three programs, two standards: two graphs, two compiles.
 graphs=$(ls $HOST/*/programs.json 2>/dev/null | wc -l | tr -d ' ')

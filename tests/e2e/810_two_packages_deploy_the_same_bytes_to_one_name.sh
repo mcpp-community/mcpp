@@ -117,7 +117,7 @@ int main() {
 CPP
 }
 
-find_graph() { find target -name build.ninja | head -1; }
+find_graph() { find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1; }
 
 # ── 1, 2, 3: identical bytes ────────────────────────────────────────────────
 write_dep 'shared payload'

@@ -53,7 +53,7 @@ printf 'import std;\nimport gshape.face;\nint main(){ std::println("{}", face())
 
 # Ask mcpp for the fingerprint instead of inferring it from the build tree.
 #
-# The obvious `find target -name build.ninja | head -1` is WRONG here and was
+# The obvious `find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1` is WRONG here and was
 # flaky in exactly the way this test is meant to catch: after part 2 there are
 # TWO output dirs, and `head -1` picks whichever `find` happened to walk first.
 # It passed standalone and failed inside the suite. Assert on the value, not on
@@ -71,7 +71,7 @@ FP_BEFORE="$(fingerprint)"
 # its time when the text is unchanged), and the fast path replays it untouched.
 # A `Compiling` line no longer tells the two apart: it states that a package's
 # steps ran, on either path (build progress design 2026-09-29).
-planned_since() { find target -name build.ninja -newer "$1" 2>/dev/null | grep -q .; }
+planned_since() { find target -name build.ninja -not -path '*/.build-mcpp/*' -newer "$1" 2>/dev/null | grep -q .; }
 touch .before-b1; sleep 1
 "$MCPP" build > b1.log 2>&1 || { cat b1.log; echo "FAIL: no-change build"; exit 1; }
 planned_since .before-b1 && {

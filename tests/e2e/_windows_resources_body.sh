@@ -69,7 +69,7 @@ EOF
 
 "$MCPP" build $BUILD_ARGS > b1.log 2>&1 || fail "build with [resources] failed" b1.log
 
-BUILD_DIR=$(dirname "$(find target -name 'build.ninja' -print | head -1)")
+BUILD_DIR=$(dirname "$(find target -name 'build.ninja' -not -path '*/.build-mcpp/*' -print | head -1)")
 [ -n "$BUILD_DIR" ] || fail "no build dir" b1.log
 
 # ── A1. The generated script names the version resource by ORDINAL ────────

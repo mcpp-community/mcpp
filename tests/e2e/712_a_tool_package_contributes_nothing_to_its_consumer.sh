@@ -137,7 +137,7 @@ int main() { std::printf("tool %d\n", z_only_in_the_tool()); return 0; }
 EOF
 cd "$TMP/s2/app"
 "$MCPP" build --features windows-installer > b2.log 2>&1 || fail "the tool-with-a-library build failed" b2.log
-ninja_file=$(find target -name build.ninja | head -1)
+ninja_file=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 grep '^build bin/app' "$ninja_file" | grep -q 'spike_z' \
     && fail "the tool's own library was linked into the application" "$ninja_file"
 grep -q 'spike_fw-installer' "$ninja_file" \

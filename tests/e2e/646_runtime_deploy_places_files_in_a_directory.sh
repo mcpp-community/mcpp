@@ -124,7 +124,7 @@ write_manifest '{ from = "assets/icd2/lvp_icd.json", to = "vulkan/icd.d" }'
 "$MCPP" build > merge.log 2>&1 || fail "identical bytes for one destination were refused" merge.log
 grep -q 'library_path' "$bin/vulkan/icd.d/lvp_icd.json" 2>/dev/null \
     || fail "the merged destination does not carry the shared bytes" merge.log
-G=$(find target -name build.ninja | head -1)
+G=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 # One placement is its own `stage_file` edge; two or more (a Windows program
 # also places its C++ runtime DLLs) are one `stage_list` edge reading
 # placements.list (#734 E4). Either way the destination has both sources.

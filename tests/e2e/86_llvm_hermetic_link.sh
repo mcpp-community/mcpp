@@ -62,7 +62,7 @@ EOF
 }
 
 # 1. The link flags must carry the CRT discovery prefix (-B<glibc payload>).
-ninja_file=$(find target -name build.ninja | head -1)
+ninja_file=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 ldflags=$(grep '^ldflags' "$ninja_file" | sed 's/^ldflags *= *//')
 echo "$ldflags" | grep -q ' -B' || {
     echo "ldflags: $ldflags"

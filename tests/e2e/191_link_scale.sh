@@ -94,7 +94,7 @@ cd scale
 "$MCPP" build > b.log 2>&1 || { tail -40 b.log; echo "FAIL: build $N objects"; exit 1; }
 echo "  ok: built $((N + 1)) objects"
 
-ninja_file=$(find target -name build.ninja | head -1)
+ninja_file=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 [ -n "$ninja_file" ] || { echo "FAIL: no build.ninja"; exit 1; }
 bdir=$(dirname "$ninja_file")
 # The program by its name: on an MSVC-ABI row bin/ also holds the toolset's

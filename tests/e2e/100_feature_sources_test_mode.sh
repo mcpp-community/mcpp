@@ -55,7 +55,7 @@ EOF
     "$MCPP" test 2>&1 | tail -5
     exit 1
 }
-nj=$(find target -name build.ninja | xargs ls -t 2>/dev/null | head -1)
+nj=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | xargs ls -t 2>/dev/null | head -1)
 grep -q 'cJSON_Utils' "$nj" || {
     echo "FAIL: cJSON_Utils.c absent from the test-mode build graph"; exit 1
 }
@@ -71,7 +71,7 @@ int main() {
 }
 EOF
 "$MCPP" build > /dev/null || { echo "FAIL: build with feature sources failed"; exit 1; }
-nj=$(find target -name build.ninja | xargs ls -t 2>/dev/null | head -1)
+nj=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | xargs ls -t 2>/dev/null | head -1)
 grep -q 'cJSON_Utils' "$nj" || { echo "FAIL: cJSON_Utils.c absent from build graph"; exit 1; }
 
 # (3) The drop still works: without the feature, the gated source stays OUT of a
@@ -89,7 +89,7 @@ cat > src/main.cpp <<'EOF'
 int main() { cJSON* r = cJSON_Parse("{\"a\":1}"); cJSON_Delete(r); return 0; }
 EOF
 "$MCPP" build > /dev/null || { echo "FAIL: default (no feature) build failed"; exit 1; }
-nj=$(find target -name build.ninja | xargs ls -t 2>/dev/null | head -1)
+nj=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | xargs ls -t 2>/dev/null | head -1)
 if grep -q 'cJSON_Utils' "$nj"; then
     echo "FAIL: cJSON_Utils.c compiled without the \`utils\` feature"; exit 1
 fi

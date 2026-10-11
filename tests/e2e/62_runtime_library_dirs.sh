@@ -87,7 +87,7 @@ cd app
 # A launch-time search directory belongs in RUNPATH, not in the linker's -L
 # namespace.  The plugin is dlopen-only and has no link-time import; leaking
 # this directory into -L can silently select an unrelated same-name library.
-NINJA=$(find target -name build.ninja | head -1)
+NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 RUNTIME_DIR=$(realpath runtime)
 grep -F -- "-Wl,-rpath,$RUNTIME_DIR" "$NINJA" >/dev/null || {
     echo "FAIL: runtime directory missing from RUNPATH intent"

@@ -76,7 +76,7 @@ EOF
     # THE POSITIVE LEG. An absence alone would also be satisfied by an mcpp that
     # failed earlier for an unrelated reason, so assert the artifact a correct
     # scan produces: a graph, with a module edge for this file.
-    graph=$(find target -name build.ninja | head -1)
+    graph=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
     [ -n "$graph" ] || { echo "FAIL [$spelling]: no build graph was written"
                          cat build.log; exit 1; }
     grep -q "cxx_module .*pf\.cppm" "$graph" || {

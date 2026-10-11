@@ -81,7 +81,7 @@ do
     fi
 done
 
-build_ninja=$(find target -name build.ninja | head -1)
+build_ninja=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 [[ -n "$build_ninja" ]] || {
     echo "missing generated build.ninja"
     echo "$out"

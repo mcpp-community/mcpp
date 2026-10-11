@@ -52,7 +52,7 @@ EOF
 cd app
 "$MCPP" build > build.log 2>&1 || { cat build.log; echo "build failed"; exit 1; }
 
-RES=$(find target -name resolution.json | head -1)
+RES=$(find target -name resolution.json -not -path '*/.build-mcpp/*' | head -1)
 [[ -n "$RES" ]] || { echo "no resolution.json produced"; exit 1; }
 
 # The only provider entry must be the provides-declarer, with canonical ID.

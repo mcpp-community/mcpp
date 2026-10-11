@@ -19,7 +19,7 @@ cd app
 "$MCPP" build > build1.log 2>&1 || { cat build1.log; echo "FAIL: the first build failed"; exit 1; }
 [[ -s compile_commands.json ]] || { echo "FAIL: no compile_commands.json after the first build"; exit 1; }
 
-config_cdb=$(find target -name compile_commands.json | head -1)
+config_cdb=$(find target -name compile_commands.json -not -path '*/.build-mcpp/*' | head -1)
 [[ -n "$config_cdb" ]] || { echo "FAIL: no configuration database under target/"; exit 1; }
 before=$(cat "$config_cdb")
 
@@ -27,7 +27,7 @@ before=$(cat "$config_cdb")
 # its time when the text is unchanged), and the fast path replays it untouched.
 # A `Compiling` line no longer tells the two apart: it states that a package's
 # steps ran, on either path (build progress design 2026-09-29).
-planned_since() { find target -name build.ninja -newer "$1" 2>/dev/null | grep -q .; }
+planned_since() { find target -name build.ninja -not -path '*/.build-mcpp/*' -newer "$1" 2>/dev/null | grep -q .; }
 rm compile_commands.json
 touch .before-build2; sleep 1
 

@@ -72,7 +72,7 @@ echo "build program read: compiler='$compiler' stdlib='$stdlib'"
 [ -n "$stdlib" ] || { echo "FAIL: mcpp::cxx_stdlib() is empty"; exit 1; }
 
 # 1. against resolution.json, which the engine writes from its own resolution.
-res=$(find target -name resolution.json | head -1)
+res=$(find target -name resolution.json -not -path '*/.build-mcpp/*' | head -1)
 [ -n "$res" ] || { echo "FAIL: no resolution.json under target/"; exit 1; }
 engine=$(sed -n 's/.*"stdlib"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$res" | head -1)
 echo "resolution.json ($res) says: '$engine'"

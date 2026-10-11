@@ -39,7 +39,7 @@ so="$(find target -name 'libmathlib.so' | head -1)"
 file "$so" | grep -q 'ELF.*shared object' || { echo "not a valid .so"; exit 1; }
 
 # build.ninja must use cxx_shared rule
-ninja_file="$(find target -name build.ninja)"
+ninja_file="$(find target -name build.ninja -not -path '*/.build-mcpp/*')"
 grep -q 'bin/libmathlib.so : cxx_shared' "$ninja_file" || {
     echo "build.ninja did not use cxx_shared for the shared lib target"; exit 1; }
 

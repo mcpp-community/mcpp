@@ -44,7 +44,7 @@ EOF
 # S1
 program 50
 "$MCPP" build > s1.log 2>&1 || fail "S1: the build failed" s1.log
-NINJA=$(find target -name build.ninja | head -1)
+NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 [ "$(grep -c ': stage_list ' "$NINJA")" = 1 ] || fail "S1: not exactly one stage_list edge" "$NINJA"
 grep -q ': stage_file .*data' "$NINJA" && fail "S1: a per-file placement edge remains" "$NINJA"
 OUT=$(dirname "$NINJA")
@@ -73,7 +73,7 @@ grep -qx changed "$DEST1" || fail "S3: the changed source did not arrive" "$DEST
 # S4
 program 1
 "$MCPP" build > s4.log 2>&1 || fail "S4: the build failed" s4.log
-NINJA=$(find target -name build.ninja | head -1)
+NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 grep -q ': stage_list ' "$NINJA" && fail "S4: one entry produced a list edge" "$NINJA"
 grep -q ': stage_file .*f1.txt' "$NINJA" || fail "S4: the single entry lost its per-file edge" "$NINJA"
 

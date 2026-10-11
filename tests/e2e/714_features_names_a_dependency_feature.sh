@@ -88,7 +88,7 @@ cd "$TMP/app"
 # ── 1. no [features] table: the dependency's feature opens, no macro ─────
 "$MCPP" build --features spike.fw/installer > b1.log 2>&1 || fail "the dependency feature build failed" b1.log
 grep -q 'DEPBIN tool=\[[^]]' b1.log || fail "--features spike.fw/installer did not open the feature" b1.log
-ninja_file=$(find target -name build.ninja | head -1)
+ninja_file=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 grep -q 'MCPP_FEATURE_SPIKE_FW_INSTALLER' "$ninja_file" \
     && fail "the dependency token became a macro of the root" "$ninja_file"
 

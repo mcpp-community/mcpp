@@ -58,7 +58,7 @@ main = "src/main.cpp"
 TOML
 printf 'import std;\nint main() { std::println("ok"); return 0; }\n' > src/main.cpp
 "$MCPP" build > plain-build.log 2>&1 || fail "the plain Linux build failed" plain-build.log
-plain_ninja=$(find target -name build.ninja | head -1)
+plain_ninja=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 cp "$plain_ninja" "$TMP/plain.ninja"
 rm -rf target
 cat >> mcpp.toml <<'TOML'
@@ -67,7 +67,7 @@ cat >> mcpp.toml <<'TOML'
 exceptions = true
 TOML
 "$MCPP" build > with-table.log 2>&1 || fail "the Linux build with the table failed" with-table.log
-with_ninja=$(find target -name build.ninja | head -1)
+with_ninja=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 diff -u "$TMP/plain.ninja" "$with_ninja" > "$TMP/ninja.diff" \
     || fail "a Linux build.ninja differs with the emscripten-only abi table present" "$TMP/ninja.diff"
 echo "  ok: build.ninja is byte-identical"
@@ -123,7 +123,7 @@ cd "$TMP/app"
 write_app ''
 "$MCPP" build --target wasm32-emscripten > build-noexc.log 2>&1 \
     || fail "the build without the abi table failed (expected: it succeeds; only the run fails)" build-noexc.log
-plain_dir=$(dirname "$(ls -t $(find target/wasm32-emscripten -name build.ninja) | head -1)")
+plain_dir=$(dirname "$(ls -t $(find target/wasm32-emscripten -name build.ninja -not -path '*/.build-mcpp/*') | head -1)")
 if "$MCPP" run --target wasm32-emscripten > run-noexc.log 2>&1; then
     fail "mcpp run succeeded without -fexceptions -- the throw should have aborted" run-noexc.log
 fi
@@ -138,7 +138,7 @@ echo "== 653/3: with exceptions, the marker prints, the flags reach both compile
 write_app $'[target.\'cfg(os = "emscripten")\'.abi]\nexceptions = true\n'
 "$MCPP" build --target wasm32-emscripten > build-exc.log 2>&1 \
     || fail "the build with the abi table failed" build-exc.log
-exc_dir=$(dirname "$(ls -t $(find target/wasm32-emscripten -name build.ninja) | head -1)")
+exc_dir=$(dirname "$(ls -t $(find target/wasm32-emscripten -name build.ninja -not -path '*/.build-mcpp/*') | head -1)")
 [ "$exc_dir" != "$plain_dir" ] \
     || fail "the build with exceptions reused the fingerprint directory of the build without" build-exc.log
 

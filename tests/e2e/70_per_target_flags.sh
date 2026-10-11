@@ -61,7 +61,7 @@ EOF
 
 "$MCPP" build > build.log 2>&1 || { cat build.log; echo "build failed"; exit 1; }
 
-ninja_file="$(find target -name build.ninja | head -1)"
+ninja_file="$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)"
 [[ -n "$ninja_file" ]] || { echo "no build.ninja"; exit 1; }
 grep -q -- "-DROLE_SERVER=1"  "$ninja_file" || { echo "server define missing from ninja"; exit 1; }
 grep -q -- "-DROLE_CLIENT=2"  "$ninja_file" || { echo "client define missing from ninja"; exit 1; }

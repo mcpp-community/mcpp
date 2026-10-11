@@ -26,7 +26,7 @@ cat > "$MCPP_HOME/config.toml" <<EOF
 home = "$REGISTRY_HOST"
 EOF
 cd "$TMP"
-ninja_of() { find target -name build.ninja | head -1; }
+ninja_of() { find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1; }
 
 # ── A ──────────────────────────────────────────────────────────────────────
 mkdir -p a/src

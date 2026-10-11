@@ -43,7 +43,7 @@ EOF
 cd app
 "$MCPP" build > build1.log 2>&1 || { cat build1.log; echo "FAIL: initial build"; exit 1; }
 
-NINJA=$(find target -name build.ninja | head -1)
+NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 [[ -n "$NINJA" ]] || { echo "FAIL: no build.ninja produced"; exit 1; }
 
 # Parse the staging edge, NOT the rule declaration: `awk '{print $NF}'` over a
