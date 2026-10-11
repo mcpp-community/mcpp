@@ -818,6 +818,40 @@ std::string contract_hash(const std::vector<std::pair<std::string, std::string>>
     return mcpp::toolchain::hash_string(s);
 }
 
+// THE CONTRACT, KEY BY KEY, beside the run record: `contract_hash` keeps one
+// digest, and "the environment contract changed" does not say which variable
+// moved. The record names each key with the digest of its value, and the log
+// names the keys that differ when a run is not replayed.
+std::string contract_keys_path(const fs::path& bdir) {
+    return (bdir / "build.mcpp.ctx").string();
+}
+
+void write_contract_keys(const fs::path& bdir,
+                         const std::vector<std::pair<std::string, std::string>>& e) {
+    std::ofstream os(contract_keys_path(bdir), std::ios::trunc);
+    for (auto const& [k, v] : e) os << k << '\t' << mcpp::toolchain::hash_string(v) << '\n';
+}
+
+std::string changed_contract_keys(const fs::path& bdir,
+                                  const std::vector<std::pair<std::string, std::string>>& e) {
+    std::map<std::string, std::string> before;
+    std::ifstream in(contract_keys_path(bdir));
+    for (std::string line; std::getline(in, line);)
+        if (auto tab = line.find('\t'); tab != std::string::npos)
+            before[line.substr(0, tab)] = line.substr(tab + 1);
+    std::string out;
+    std::set<std::string> seen;
+    for (auto const& [k, v] : e) {
+        seen.insert(k);
+        auto it = before.find(k);
+        if (it == before.end() || it->second != mcpp::toolchain::hash_string(v))
+            out += (out.empty() ? "" : ", ") + k;
+    }
+    for (auto const& [k, h] : before)
+        if (!seen.contains(k)) out += (out.empty() ? "" : ", ") + k;
+    return out;
+}
+
 // The project-relative name of the build output tree ("target" by default), so
 // a glob input never walks into what a previous run produced. Empty when the
 // output lives outside the project, in which case nothing needs excluding.
@@ -1029,6 +1063,9 @@ std::expected<void, std::string> run_build_program_impl(
     fs::path outDir = env.outDir.empty() ? bdir / "out" : env.outDir;
     auto childEnv = contract_env(root, outDir, env);
     std::string ctxHash = contract_hash(childEnv);
+    // What ctxHash is the digest of: the environment and the graph document.
+    auto contractEnv = childEnv;
+    contractEnv.emplace_back("(graph document)", env.graphDigest);
     // THE GRAPH DOCUMENT'S CONTENT, NOT ITS PATH. The path is the same on
     // every run; what the document says is what the program's answer depends
     // on (#647 E1).
@@ -1060,8 +1097,12 @@ std::expected<void, std::string> run_build_program_impl(
     // directives, no run.
     CacheRecord cache = read_cache(bdir);
     const auto stale = cache_stale_reason(root, bdir, cache, programHash, compilerHash, ctxHash);
-    if (!stale.empty())
-        mcpp::log::verbose("build-program", std::format("{}: runs ({})", who, stale));
+    if (!stale.empty()) {
+        std::string keys;
+        if (stale == "environment contract") keys = changed_contract_keys(bdir, contractEnv);
+        mcpp::log::verbose("build-program", std::format("{}: runs ({}{}{})", who, stale,
+                                                        keys.empty() ? "" : ": ", keys));
+    }
     if (stale.empty()) {
         if (auto terr = dirs::target_directive_error(m, cache.directives); !terr.empty())
             return std::unexpected(terr);
@@ -1303,7 +1344,10 @@ std::expected<void, std::string> run_build_program_impl(
     report_stated_diagnostics(m.package.name, d);
     // A run kept although it asked for a payload (`plan_only`) is never
     // cached: replaying it would keep the build from ever asking again.
-    if (cacheThisRun) write_cache(bdir, root, programHash, compilerHash, ctxHash, d);
+    if (cacheThisRun) {
+        write_cache(bdir, root, programHash, compilerHash, ctxHash, d);
+        write_contract_keys(bdir, contractEnv);
+    }
     return {};
 }
 

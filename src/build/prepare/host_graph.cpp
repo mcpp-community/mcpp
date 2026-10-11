@@ -492,6 +492,21 @@ void write_if_changed(const fs::path& file, const std::string& text) {
 // The manifests of one group: the workspace and a member per program.
 std::map<std::string, std::string> resolution_pins(const PrepareState& state);
 
+}  // namespace
+
+std::filesystem::path build_program_dir(const PrepareState& state, std::size_t i) {
+    if (i == 0) return state.workRoot / "target" / ".build-mcpp";
+    auto const& pkg = state.packages[i];
+    if (pkg.selectedMember || (state.isWorkspaceMemberPackage && state.isWorkspaceMemberPackage(i)))
+        return pkg.root / "target" / ".build-mcpp";
+    auto safe = pkg.manifest.package.name;
+    for (auto& c : safe) if (c == '/' || c == '\\' || c == ':') c = '_';
+    return state.workRoot / "target" / ".build-mcpp" / "deps"
+        / (safe + "@" + pkg.manifest.package.version);
+}
+
+namespace {
+
 void write_group(PrepareState& state, const fs::path& dir, const std::vector<Program>& programs,
                  const std::string& standard, const fs::path& enginePackage,
                  const std::string& toolchainSpec) {
@@ -568,9 +583,11 @@ void write_group(PrepareState& state, const fs::path& dir, const std::vector<Pro
         const auto memberDir = dir / p.member;
         fs::path main = p.source.file;
         if (main.empty()) {
-            // Not `build.mcpp` at the member's root: that file would be the
-            // member's OWN build program.
-            main = memberDir / "synthesised.mcpp";
+            // Where it has always been written, beside the package's program
+            // cache: the file a project copies to its root to take it over.
+            main = build_program_dir(state, p.index) / "build.mcpp";
+            std::error_code ec;
+            fs::create_directories(main.parent_path(), ec);
             write_if_changed(main, p.source.synthesised);
         }
         std::string m = std::format(

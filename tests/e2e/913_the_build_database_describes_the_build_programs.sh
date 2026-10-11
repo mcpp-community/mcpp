@@ -55,7 +55,11 @@ assert "app" in sets and sets["app"]["ide"]["configuration"] == "dev", sets.get(
 # B
 unit = next(u for u in sets["app:build"]["translation-units"] if u["source"].endswith("build.mcpp"))
 built = next(e for e in host_cc if e["file"].endswith("build.mcpp"))
-norm = lambda args, wd: [a.replace(wd, "<work>") for a in args]
+def norm(args, wd):
+    # One separator, and the directory above the graph -- the planning
+    # directory of the database, the project of the build -- named alike.
+    root = wd.replace("\\", "/").split("/target/.build-mcpp/host/")[0]
+    return [a.replace("\\", "/").replace(root + "/target/", "<root>/target/") for a in args]
 assert norm(unit["arguments"], unit["work-directory"]) == norm(built["arguments"], built["directory"]), \
     ("B", unit["arguments"], built["arguments"])
 

@@ -1751,10 +1751,6 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
             // dep build.mcpp sees the SAME active feature set the dep is built
             // with (incl. transitive requests / default-features opt-out).
             auto [req, depDefaultFeatures] = aggregatedRequest(state, i, Instance::Target);
-            auto dirSafe = [](std::string s) {
-                for (auto& c : s) if (c == '/' || c == '\\' || c == ':') c = '_';
-                return s;
-            };
             mcpp::build::BuildProgramEnv bpEnv;
             bpEnv.targetTriple = state.resolvedTargetCanonical;
             // Everything the engine already knows and a build program would
@@ -1791,8 +1787,7 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
             if (auto dit = state.deviceSourcesByPackage.find(pkg.root.string()); dit != state.deviceSourcesByPackage.end())
                 bpEnv.deviceSources = dit->second;
             bpEnv.features     = feature_closure(pkg.manifest, req, depDefaultFeatures);
-            bpEnv.artifactsDir = state.workRoot / "target" / ".build-mcpp" / "deps"
-                / (dirSafe(pkg.manifest.package.name) + "@" + pkg.manifest.package.version);
+            bpEnv.artifactsDir = build_program_dir(state, i);
             bpEnv.outDir       = state.programOutDir(state.workRoot, pkg.manifest, bpEnv.features);
             bpEnv.genBase      = bpEnv.outDir;
             // mcpp#241: this package's resolved dependencies as

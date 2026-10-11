@@ -106,7 +106,8 @@ int main() {
 EOF
 out=$("$MCPP" build 2>&1) || { echo "FAIL: build with build.mcpp: $out"; exit 1; }
 [[ -f helper-ran ]] || { echo "FAIL: build.mcpp did not run: $out"; exit 1; }
-HELPER="target/.build-mcpp/build.mcpp.exe"
+# The program as the build programs' graph linked it (mcpp#797).
+HELPER=$(find target/.build-mcpp/host -path '*/bin/*' -name 'build-program.exe' -type f | head -1)
 [[ -f "$HELPER" ]] || { echo "FAIL: no helper binary at $HELPER"; exit 1; }
 if [[ -x "$OBJDUMP" ]]; then
     h_imports=$("$OBJDUMP" -p "$HELPER" 2>/dev/null | grep -i "DLL Name" || true)
@@ -117,7 +118,7 @@ fi
 HISO="$TMP/hiso"; mkdir -p "$HISO"
 cp "$HELPER" "$HISO/"
 h_rc=0
-(cd "$HISO" && PATH="/usr/bin:/c/Windows/System32" ./build.mcpp.exe >/dev/null 2>&1) || h_rc=$?
+(cd "$HISO" && PATH="/usr/bin:/c/Windows/System32" ./build-program.exe >/dev/null 2>&1) || h_rc=$?
 [[ $h_rc -eq 0 ]] || {
     echo "FAIL: build.mcpp helper does not run without the toolchain bin on PATH (rc=$h_rc)"
     exit 1

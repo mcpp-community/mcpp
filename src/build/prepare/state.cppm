@@ -836,6 +836,11 @@ std::expected<void, std::string> phase4a_graph_load(PrepareState& state);
 std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state);
 // The lookups the later phases ask of the graph (graph_closures.cpp).
 void step4b_define_lookup_closures(PrepareState& state);
+// Where the build program of package `i` keeps its files: its cache, its
+// graph document, and the program mcpp synthesises for it. The root's and a
+// workspace member's are below their own target/; a dependency's is below the
+// build's, by name and version (host_graph.cpp).
+std::filesystem::path build_program_dir(const PrepareState& state, std::size_t i);
 std::expected<void, std::string> phase5_toolchain_after_graph(PrepareState& state);
 std::expected<void, std::string> phase6_features_and_host_tools(PrepareState& state);
 std::expected<void, std::string> phase9_target_side(PrepareState& state);

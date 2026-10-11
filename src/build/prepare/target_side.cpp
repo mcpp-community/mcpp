@@ -1625,7 +1625,7 @@ static std::expected<void, std::string> step9_root_build_program(PrepareState& s
         // and may be read-only, and the default would write the compiled
         // helper straight into it. Same value as the default when work_dir is
         // unset, so an ordinary build is unchanged.
-        bpEnv.artifactsDir = state.workRoot / "target" / ".build-mcpp";
+        bpEnv.artifactsDir = build_program_dir(state, 0);
         // Root mode keeps genBase empty: a relative `generated=` from the ROOT
         // package resolves against the package root (the documented contract),
         // not against OUT_DIR.
@@ -2035,7 +2035,7 @@ static std::expected<void, std::string> step9_member_build_programs(PrepareState
         if (auto dit = state.deviceSourcesByPackage.find(pkg.root.string());
             dit != state.deviceSourcesByPackage.end())
             bpEnv.deviceSources = dit->second;
-        bpEnv.artifactsDir = pkg.root / "target" / ".build-mcpp";
+        bpEnv.artifactsDir = build_program_dir(state, i);
         if (i < state.activeFeaturesByPackage.size())
             bpEnv.features = state.activeFeaturesByPackage[i];
         // Beside the cache above, which is in the project under a plan's
