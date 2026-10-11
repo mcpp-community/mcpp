@@ -29,7 +29,8 @@
   directory as `engineModules`.
 - Read a unit that imports `mcpp.core` as a build-plugin unit (SPEC-007 §10). A
   plugin's `[dependencies]` are compiled with it for the build program, so a
-  plugin may build on plugins and libraries; `mcpp build` and `mcpp test` in a
+  plugin may build on plugins and libraries, and one it marks `reexport = true`
+  is importable by its consumers' build programs; `mcpp build` and `mcpp test` in a
   plugin plan it in the build-program configuration. A plugin reached through
   a target's `[dependencies]`, a program target that imports `mcpp`, `--target`
   for another machine on a plugin, and `mcpp pack` of a plugin are refused,
