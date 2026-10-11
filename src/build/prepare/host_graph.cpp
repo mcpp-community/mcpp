@@ -499,8 +499,9 @@ std::map<std::string, std::string> resolution_pins(const PrepareState& state);
 // in its own directory; a copy beside the package's run record, under the name
 // it had before the graph (`build.mcpp.bin`, `build.mcpp.exe` on Windows), is
 // what a person or a test runs by hand with an environment of their choosing.
-// Placed when absent or older than the compiled program.
+// Placed when absent or older than the compiled program, by a build.
 static void place_program_copy(const PrepareState& state, std::size_t i, const fs::path& bin) {
+    if (state.overrides.plan_only) return;   // a planning pass writes nothing in the project
     const auto dest = build_program_dir(state, i)
         / (mcpp::platform::is_windows ? "build.mcpp.exe" : "build.mcpp.bin");
     std::error_code ec;
