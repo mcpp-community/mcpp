@@ -789,7 +789,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
         // replaces a variable outright in the child, so writing only the
         // project's own directory would silently be the substitution this
         // deliberately is not.
-        if (const char* inherited = std::getenv("PATH"); inherited && *inherited) {
+        if (auto const& inherited = mcpp::platform::env::inherited_path(); !inherited.empty()) {
             path += mcpp::platform::env::path_list_separator();
             path += inherited;
         }

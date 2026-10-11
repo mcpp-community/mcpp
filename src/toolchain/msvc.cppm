@@ -1489,8 +1489,10 @@ std::vector<EnvVar> build_env_for_cl(const std::filesystem::path& clPath,
         sdk.root / "Lib" / sdk.version / "ucrt" / a,
         sdk.root / "Lib" / sdk.version / "um" / a,
     })});
+    // The PATH mcpp was started with: the process's own has been given to the
+    // children launched so far, this value among them.
     std::string path = clDir.string();
-    if (const char* p = std::getenv("PATH"); p && *p) {
+    if (auto const& p = mcpp::platform::env::inherited_path(); !p.empty()) {
         path += ';';
         path += p;
     }

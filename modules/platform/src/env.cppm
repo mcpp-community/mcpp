@@ -79,6 +79,11 @@ private:
 };
 
 std::string path_list_separator();
+// The PATH this process was started with. On Windows a child's environment is
+// applied to this process (`_putenv_s`), so `getenv("PATH")` answers what the
+// children launched so far were given; a value that must not depend on that --
+// an environment a build program's run is keyed on -- starts from this one.
+const std::string& inherited_path();
 std::string runtime_library_path_key();
 std::string host_tool_runtime_library_path_key();
 
@@ -113,6 +118,16 @@ std::string build_env_prefix(
 // ─── Implementation ──────────────────────────────────────────────────────
 
 namespace mcpp::platform::env {
+
+namespace {
+// Initialised before main, ahead of anything that starts a child.
+const std::string kInheritedPath = [] {
+    const char* p = std::getenv("PATH");
+    return p ? std::string(p) : std::string{};
+}();
+}  // namespace
+
+const std::string& inherited_path() { return kInheritedPath; }
 
 bool offline_mode() {
     // Not cached: `mcpp test` runs nested mcpp invocations in-process in some
