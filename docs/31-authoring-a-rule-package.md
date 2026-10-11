@@ -178,9 +178,11 @@ the build-program configuration only. Three consequences follow for its author.
 - **What the rule's library imports is in its `[dependencies]`.** A rule built
   on another rule (`mcpp:plugins`' `plugins-core`, say) or on an ordinary
   library (a TOML parser) names it there. When a consumer's build program uses
-  the rule, those dependencies are compiled for the build program with it. The
-  rule's `[build-dependencies]` serve the rule package's own `build.mcpp`, as
-  any package's do.
+  the rule, those dependencies are compiled for the build program with it. A
+  dependency the consumers' build programs import themselves is handed on with
+  `reexport = true` on its entry; without it the import is refused, naming the
+  key. The rule's `[build-dependencies]` serve the rule package's own
+  `build.mcpp`, as any package's do.
 - **The package builds and tests as the root of a build.** `mcpp build` in the
   package compiles its library for this machine, with the engine interface, and
   `mcpp test` runs its tests under `tests/` the same way: a test may import the

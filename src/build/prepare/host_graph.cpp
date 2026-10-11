@@ -307,7 +307,16 @@ std::expected<void, std::string> check_program_imports(PrepareState& state, std:
     }
     const auto wants = mcpp::pm::imported_module_names(text);
     if (wants.empty()) return {};
-    const auto libs = program_libraries(state, i);
+    auto libs = program_libraries(state, i);
+    // What a library hands on: a dependency on a `reexport = true` edge of its
+    // own `[dependencies]` is importable by the programs that use the library,
+    // as a `[build-dependencies]` entry it re-exports is (provisions).
+    for (std::size_t k = 0; k < libs.size(); ++k)
+        for (auto const& e : state.dependencyEdges)
+            if (e.consumerPackageIndex == libs[k] && !e.buildTable && e.reexport
+                && e.dependencyPackageIndex < state.packages.size()
+                && std::ranges::find(libs, e.dependencyPackageIndex) == libs.end())
+                libs.push_back(e.dependencyPackageIndex);
     std::set<std::string> available{"std", "std.compat", "mcpp", "mcpp.core"};
     std::map<std::string, std::size_t> providerOf;
     for (auto d : libs)

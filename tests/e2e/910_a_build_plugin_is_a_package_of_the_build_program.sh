@@ -11,7 +11,10 @@
 #   D  P1: a plugin reached through [dependencies] of a target is refused,
 #      naming the chain and [build-dependencies];
 #   E  P4: a program target importing mcpp is refused;
-#   F  P5: `mcpp pack` refuses a plugin.
+#   F  P5: `mcpp pack` refuses a plugin;
+#   G  a library a plugin depends on is importable by the plugin's consumers'
+#      build programs when the plugin hands it on (`reexport = true` on its
+#      [dependencies] edge), and refused, naming `reexport`, when it does not.
 set -e
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -95,4 +98,12 @@ grep -q "exists only in a build" e.log || fail "E: the refusal does not say why"
 cd "$TMP/rule"
 "$MCPP" pack > f.log 2>&1 && fail "F: mcpp pack accepted a plugin" f.log
 grep -q "is a build plugin" f.log || fail "F: the refusal does not say why" f.log
+# G
+cd "$TMP/app"
+printf 'import acme.rule;\nimport acme.util;\nint main() { if (util_base() == 40) acme::rule::go(); }\n' > build.mcpp
+"$MCPP" build > g1.log 2>&1 && fail "G: a library the plugin does not hand on was importable" g1.log
+grep -q "reexport = true" g1.log || fail "G: the refusal does not name reexport" g1.log
+sed -i 's|util = { path = "../util" }|util = { path = "../util", reexport = true }|' "$TMP/rule/mcpp.toml"
+"$MCPP" build > g2.log 2>&1 || fail "G: a library the plugin hands on was refused" g2.log
+[ "$("$MCPP" run 2>/dev/null | grep '^V=' | tail -1)" = "V=42" ] || fail "G: value" g2.log
 echo "PASS: 910_a_build_plugin_is_a_package_of_the_build_program"
