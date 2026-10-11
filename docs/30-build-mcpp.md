@@ -1086,6 +1086,14 @@ none to rely on), and the only interpolations are a closed set:
 | `${mcpp.stage_dir}` *(2026.9.11.1+)* | the tree `mcpp pack` staged, absolute. `artifact` role only, and only under `mcpp pack --format <name>` |
 | `${mcpp.self}` *(2026.9.13.1+)* | the engine's own executable, absolute. An action's command is an argv with no shell, so a build program has no portable way to copy a file; the engine is present wherever a build runs, and `${mcpp.self} stage --verify content --output <dst> <src>` copies one file, creates the destination's parent, and writes only when the bytes differ. That argument shape is a contract from 2026.9.13.1 on; a build program that names it declares that release as its floor |
 
+Every path a `${mcpp.*}` token expands to is spelled with **forward slashes**.
+A token is spliced into the text the build program wrote, and that text spells
+its own separators as `/`; a native spelling on Windows would put a `C:\…`
+prefix beside that `/` inside one argv token. This is the spelling `mcpp` gives
+the compiler, the archiver and every ninja node name, so
+`${mcpp.out_dir}/gen/x.cppm` reads as one separator on Windows as well as on
+POSIX.
+
 The raw stdout protocol above remains the low-level substrate; `import mcpp;`
 is the typed layer over it.
 

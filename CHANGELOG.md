@@ -81,6 +81,9 @@
   `[workspace.xlings.overrides]`.
 - Report a `build.mcpp` beside a workspace root without `[package]`, and the
   schema warnings of a workspace root when its members are built.
+- Spell every `${mcpp.*}` path token with forward slashes on every platform, so
+  the `${mcpp.out_dir}/gen/x.cppm` a build program writes is one separator on
+  Windows too instead of a native prefix beside the author's `/` (#393).
 
 ### Deprecated
 

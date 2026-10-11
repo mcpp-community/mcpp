@@ -981,9 +981,19 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
                 for (std::size_t p; (p = s.find(what)) != std::string::npos; )
                     s.replace(p, what.size(), with);
             };
-            rep("${mcpp.out_dir}",    ctx.plan.outputDir.string());
-            rep("${mcpp.bin_dir}",    binDir.string());
-            rep("${mcpp.compile_db}", ctx.plan.compileDbPath.string());
+            // EVERY `${mcpp.*}` PATH TOKEN IS SPELLED GENERICALLY -- `\`-free on
+            // Windows too (mcpp#393). A token is spliced into text the build
+            // program wrote, and that text writes its own separators as `/`
+            // (`${mcpp.out_dir}/gen/x.cppm`); a native `C:\…` prefix beside
+            // that `/` is a mixed spelling, and the command line carries it to
+            // the tool as one string. Generic is also the spelling the engines
+            // around us already use: `escape_ninja_path` spells every ninja node
+            // name and every tool path this way (the compiler, `ar`, `mcpp`
+            // itself), and `${mcpp.target_file:}` below always has. POSIX output
+            // is byte-identical.
+            rep("${mcpp.out_dir}",    ctx.plan.outputDir.generic_string());
+            rep("${mcpp.bin_dir}",    binDir.generic_string());
+            rep("${mcpp.compile_db}", ctx.plan.compileDbPath.generic_string());
             // The engine's own executable, absolute (2026.9.13.1+). An action
             // whose command is an argv with no shell has no portable way to
             // copy, touch or compare a file, and the engine is the one
@@ -995,7 +1005,7 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
             // wrapper's: a version change regenerates build.ninja, and a
             // binary moved under an unchanged version leaves a stale path,
             // exactly as it would for the compiler.
-            rep("${mcpp.self}",       mcpp::platform::fs::self_exe_path().string());
+            rep("${mcpp.self}",       mcpp::platform::fs::self_exe_path().generic_string());
             // ABSOLUTE, unlike `${mcpp.target_file:}` and for the same reason
             // stated the other way round: the staged tree lives outside the
             // build directory and no ninja edge produces it, so there is no
@@ -1011,7 +1021,7 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
                 } else {
                     thisActionUsesStageDir = true;
                 }
-                rep("${mcpp.stage_dir}", stage ? stage->dir.string() : std::string{});
+                rep("${mcpp.stage_dir}", stage ? stage->dir.generic_string() : std::string{});
             }
             constexpr std::string_view kTf = "${mcpp.target_file:";
             for (std::size_t p; (p = s.find(kTf)) != std::string::npos; ) {

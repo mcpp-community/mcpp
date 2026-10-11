@@ -922,6 +922,12 @@ mcpp 会写出 `<暂存树>.stage-manifest` —— 一个兄弟文件，永不�
 | `${mcpp.stage_dir}` *(2026.9.11.1+)* | `mcpp pack` 暂存出的那棵树，绝对路径。仅 `artifact` role 可用，且仅在 `mcpp pack --format <name>` 下可用 |
 | `${mcpp.self}` *(2026.9.13.1+)* | 引擎自己的可执行文件，绝对路径。action 的命令是没有 shell 的 argv，构建程序因此没有可移植的拷贝手段；引擎在构建运行的每台机器上都在，`${mcpp.self} stage --verify content --output <dst> <src>` 拷贝一个文件、创建目标的父目录、只在字节不同时写入。这个参数形状自 2026.9.13.1 起是契约；写下它的构建程序即以该版本为下限 |
 
+`${mcpp.*}` 展开出的每个路径都用**正斜杠**拼写。token 会被拼进构建程序写下的
+文本，而那段文本用自己的分隔符 `/`；在 Windows 上按原生拼写就会把 `C:\…` 前缀
+和那个 `/` 放进同一个 argv token 里。这与 mcpp 给编译器、归档器和每个 ninja
+节点名的一贯拼写相同，因此 `${mcpp.out_dir}/gen/x.cppm` 在 Windows 上和在 POSIX
+上读起来是同一种分隔符。
+
 上面的裸 stdout 协议仍是底层基底；`import mcpp;` 是其上的类型化层。
 
 ### 读取解析后的依赖图：`graph_file`（2026.9.16.1+）

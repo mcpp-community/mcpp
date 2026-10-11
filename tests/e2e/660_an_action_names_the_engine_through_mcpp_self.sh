@@ -71,6 +71,37 @@ if grep -q 'mcpp\.self' "$NINJA"; then
     echo "FAIL: \${mcpp.self} reached build.ninja unsubstituted"; exit 1
 fi
 
+# ── every `${mcpp.*}` path token expands to the GENERIC spelling ───────────
+#
+# A token is spliced into text the build program wrote, and that text writes
+# its own separators as `/` (`${mcpp.out_dir}/copied/deeper/app-copy`); a
+# native `C:\…` prefix beside that `/` is a mixed spelling, and the command
+# line reaches the tool as one string (mcpp#393). Every token this action names
+# -- `${mcpp.self}`, `${mcpp.out_dir}` and `${mcpp.target_file:app}` -- is an
+# engine path, so on Windows a backslash left in the argv IS the regression.
+# On POSIX the two spellings are byte-identical, so this leg only bites on the
+# shard the test exists for; the `# requires:`-free note at the top is why it
+# is here and not in a unit test.
+#
+# The ARGV is read out of the rule's `command =` line, past the wrapper the
+# engine adds when a check/stamp or an env/cwd is in play (`... -- <argv>`); a
+# bare action has no wrapper, and then the whole line is the argv. The EDGE
+# line cannot show the bug: `escape_ninja_path` generic-izes every node name
+# whatever the token spelled.
+CMD_LINES=$(
+    awk '/^rule mcpp_action_/{seen=1; next}
+         seen && /^  command = /{sub(/^  command = /, ""); print; seen=0}' "$NINJA"
+)
+[ -n "$CMD_LINES" ] || { echo "FAIL: no mcpp_action_ rule in build.ninja"; exit 1; }
+while IFS= read -r line; do
+    argv="${line#* -- }"
+    case "$argv" in
+        *\\*) printf 'FAIL: a ${mcpp.*} path token expanded to a native spelling:\n  %s\n' "$argv"
+              exit 1;;
+    esac
+done <<< "$CMD_LINES"
+echo "ok: \${mcpp.*} path tokens are spelled with forward slashes"
+
 # The copy exists, in a directory the action never created itself, and is the
 # program byte for byte: the only way it got there is the engine's `stage`.
 COPY=$(find target -path '*/copied/deeper/app-copy' -print -quit)
