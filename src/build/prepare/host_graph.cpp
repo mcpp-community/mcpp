@@ -45,6 +45,7 @@ import mcpp.libs.json;
 import mcpp.manifest;
 import mcpp.modgraph.scanner;
 import mcpp.platform.fs;
+import mcpp.platform;
 import mcpp.pm.mangle;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.triple;
@@ -493,6 +494,25 @@ void write_if_changed(const fs::path& file, const std::string& text) {
 std::map<std::string, std::string> resolution_pins(const PrepareState& state);
 
 }  // namespace
+
+// THE PROGRAM, ALSO WHERE ITS PACKAGE KEEPS IT. The graph compiles and runs it
+// in its own directory; a copy beside the package's run record, under the name
+// it had before the graph (`build.mcpp.bin`, `build.mcpp.exe` on Windows), is
+// what a person or a test runs by hand with an environment of their choosing.
+// Placed when absent or older than the compiled program.
+static void place_program_copy(const PrepareState& state, std::size_t i, const fs::path& bin) {
+    const auto dest = build_program_dir(state, i)
+        / (mcpp::platform::is_windows ? "build.mcpp.exe" : "build.mcpp.bin");
+    std::error_code ec;
+    const auto src = fs::last_write_time(bin, ec);
+    if (ec) return;
+    if (std::error_code dc; fs::last_write_time(dest, dc) == src && !dc) return;
+    fs::create_directories(dest.parent_path(), ec);
+    fs::copy_file(bin, dest, fs::copy_options::overwrite_existing, ec);
+    if (!ec) fs::last_write_time(dest, src, ec);
+    if (ec) mcpp::log::verbose("build-program", std::format(
+        "cannot place {} beside its record: {}", path_text(dest), ec.message()));
+}
 
 std::filesystem::path build_program_dir(const PrepareState& state, std::size_t i) {
     if (i == 0) return state.workRoot / "target" / ".build-mcpp";
@@ -949,6 +969,7 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
                 && it->value("identity", std::string{}) == p.identity
                 && fs::exists(it->value("binary", std::string{}), ec);
             if (current) {
+                place_program_copy(state, p.index, fs::path(it->value("binary", std::string{})));
                 state.buildProgramBinaries[p.index] = {fs::path(it->value("binary", std::string{})),
                                                        p.identity};
                 mcpp::log::verbose("build-program", std::format(
@@ -992,6 +1013,7 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
         for (auto const* p : stale) {
             const auto bin = built->at(p->member);
             state.buildProgramBinaries[p->index] = {bin, p->identity, took};
+            place_program_copy(state, p->index, bin);
             nlohmann::json row;
             row["identity"] = p->identity;
             row["binary"]   = path_text(bin);

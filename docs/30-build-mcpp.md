@@ -1750,6 +1750,9 @@ the same plan, so a BMI and the program importing it agree on standard,
 dialect and compiler by construction. A library several programs use is
 compiled once for them, and a program of another standard is in another graph.
 `mcpp build` in that directory reproduces the compile of the build programs.
+The compiled program is also placed beside its package's run record, as
+`target/.build-mcpp/build.mcpp.bin` (`build.mcpp.exe` on Windows), to be run by
+hand with an environment of one's choosing.
 
 A program is compiled when its **identity** changes: the engine version, the
 host toolchain, the standard, the program's text, and every package of its
