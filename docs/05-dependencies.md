@@ -402,36 +402,53 @@ gtest = "1.15.2"
 
 ```toml
 [build-dependencies]
-protobuf = { version = "35.1", tools = ["protoc"] }
+tomlplusplus = "3.4.0"                                    # a library build.mcpp imports
+protobuf     = { version = "35.1", tools = ["protoc"] }   # a program the build runs
 ```
 
-The section and the per-edge request answer **different questions**, and
-conflating them is a modelling error rather than a matter of spelling.
+A dependency is described on two axes (mcpp 2026.10.11.1+, SPEC-004 §12), and
+each axis has its own place in the manifest.
 
-- The **section** says whether the package itself reaches the target.
-  `[dependencies]` means it does; `[build-dependencies]` means it never does,
-  and neither does anything reachable only through it.
-- The **request on the edge** says which build-time product is wanted.
-  `tools = [...]` asks for a host executable; `host-module = true` asks for a
-  module the build program can import.
+- The **section** decides the configuration the dependency serves.
+  `[dependencies]` and `[dev-dependencies]` serve the target: the package is
+  compiled for it and linked into the project. `[build-dependencies]` serves the
+  project's build program (`build.mcpp`): the package is compiled for the machine
+  that runs the build and linked into that program. A configuration is inherited
+  along `[dependencies]`, so the dependencies of a build dependency serve the
+  build program as well.
+- The **request on the edge** decides which products are wanted. A
+  `[build-dependencies]` entry asks for the package's library unless it lists
+  `tools` or `artifacts`; `host-module = true` asks for the library beside them,
+  and `host-module = false` declines it. `tools = [...]` asks for programs built
+  for the machine that runs the build, from either section.
 
-A package takes a value on both axes at once, and protobuf is the case that
-proves the axes must stay separate: a project links `libprotobuf` *and* needs
-`protoc` during the build. It is written once, in `[dependencies]`:
+| Entry | Effect |
+|---|---|
+| `[build-dependencies] x = "1.0"` | `build.mcpp` imports the public modules of `x`, includes its public headers and links its objects |
+| `[build-dependencies] x = { tools = ["gen"] }` | the program `gen`; no library |
+| `[build-dependencies] x = { tools = ["gen"], host-module = true }` | the program and the library |
+| `[build-dependencies] x = { host-module = false }` | neither; the directory of `x` (`mcpp::dep_dir`) and its payloads |
+| `[dependencies] x = { tools = ["gen"] }` | the library in the target, and the program |
 
-```toml
-[dependencies]
-protobuf = { version = "35.1", tools = ["protoc"] }
-```
+The name `host-module` is older than its meaning: it was introduced when a build
+program received the lib-root module of a dependency and nothing else, and a key
+that has reached published descriptors is not renamed (SPEC-004 §5.2). A library
+used by a build program is compiled as the package it is: its include
+directories, defines, features, dependencies and implementation units take part,
+and the build program is compiled by the same plan (30 — `build.mcpp`).
 
-`[build-dependencies]` is for the combination the first axis cannot otherwise
-express — a package whose library must not reach the target while its tool or
-its rule is still wanted. Naming one package in both tables is not an error:
-the ordinary declaration wins, because a `[build-dependencies]` line must not
-quietly drop a library the target needs, and what each declaration requests
-(`tools`, `features`, `host-module`, `reexport`) is requested of the one edge
-(mcpp 2026.9.16.1+; before that release the second declaration's requests were
-dropped).
+**One package in both tables.** A package written in `[dependencies]` and in
+`[build-dependencies]` of one manifest has two instances, one compiled for the
+target and one for the build program. Both have the version the lock records.
+Their features are activated separately: a feature requested only by a
+`[build-dependencies]` edge does not reach the target instance.
+
+**A reading kept for compatibility.** A `[dependencies]` entry that asks for
+`host-module = true`, or for a feature that declares `rule_module`, is read as a
+`[build-dependencies]` entry: the package serves the build program and not the
+target, as it did before mcpp 2026.10.11.1. The reading is deprecated since
+mcpp 2026.10.11.1 and removed from mcpp 2027.1 (`host-module-in-dependencies`,
+51 — Supported Versions); `mcpp why compat` lists its uses.
 
 **A package of programs contributes only its programs (mcpp 2026.9.16.1+).** A
 dependency whose declared `[targets]` are all programs (`bin`, `app`, `test`)
@@ -448,9 +465,9 @@ A cycle among packages is refused where the graph is resolved, naming its
 edges, under every cache mode; a tool whose own sub-build requests it again is
 refused at that first repetition, naming the chain.
 
-Unlike `[dev-dependencies]`, these **are** walked transitively: a build
-dependency's own dependencies are what make it work, and they inherit its
-build-only nature.
+Unlike `[dev-dependencies]`, build dependencies **are** walked transitively and
+resolved with the project, one version per package: a build dependency's own
+dependencies are what make it work, and they serve the build program with it.
 
 A feature scopes build-time requests without a second declaration site. A
 `[feature-deps.<name>]` entry may restate a dependency already declared

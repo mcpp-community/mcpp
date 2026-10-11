@@ -1110,6 +1110,9 @@ virtual_workspace_root(const mcpp::manifest::Manifest& workspace,
     v.workspace = workspace.workspace;
     v.xlings.subos = workspace.xlings.subos;
     v.xlings.subosDeclared = workspace.xlings.subosDeclared;
+    // Where a payload comes from is a root-position statement, received from
+    // `[workspace.xlings.overrides]` as the tables above are (mcpp#797, R4).
+    v.xlings.overrides = first.xlings.overrides;
     auto& b = v.buildConfig;
     auto const& f = first.buildConfig;
     b.sourcesDeclared = true;

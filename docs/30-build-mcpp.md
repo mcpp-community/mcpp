@@ -144,9 +144,9 @@ interface and belongs in the declarative manifest/descriptor
 
 Instead of printing raw strings, `build.mcpp` can be written **modules-first** —
 `import mcpp;`, no `#include` needed. The `mcpp` module is bundled in the
-mcpp binary (so it always matches that mcpp's protocol) and is compiled on demand,
-once per mcpp version and host compiler, into the build cache (see *Where compiled
-host modules are kept* below); its functions just emit the directives above:
+mcpp binary (so it always matches that mcpp's protocol), written once per mcpp
+version as a package and compiled like any library of the build program (see
+*The build programs' graph* below); its functions just emit the directives above:
 
 ```cpp
 // build.mcpp
@@ -295,7 +295,7 @@ neither one's.
 **Within one build program, the tokens are one argv per name.** Every
 `mcpp::runner(tok)` call appends to the default runner, and every
 `mcpp::runner(name, tok)` call appends to the runner `name`, in emission order,
-whichever host module compiled into the program makes the call. A program that
+whichever library of the program makes the call. A program that
 chooses between two runners chooses before it emits either. A runner named
 after a pack format reaches that format's distributable under `mcpp run
 --format <name>` ([41 — Reaching a Device](41-devices.md)).
@@ -1407,9 +1407,9 @@ and when to want one; `examples/07-project-subos/` is a working project.
 
 A rule — "run protoc over these `.proto` files", "run clang-tidy over these
 sources" — belongs in a package, not copy-pasted into every consumer's
-`build.mcpp`. The mechanism is
-[`host-module = true`](04-mcpp-toml.md); this section is about the shape of
-what goes inside.
+`build.mcpp`. The mechanism is a library in the consumer's
+`[build-dependencies]` (*Libraries of a build program*); this section is about
+the shape of what goes inside.
 
 The guidance below generalises from `mcpplibs.grpcgen`, the first such package,
 with each of its traits judged individually. It is guidance and not a rule
@@ -1443,24 +1443,23 @@ this build names no backend it serves — a build program with several rules
 calls them all.
 
 **An import nothing provides is refused by name.** A build program may import
-`std`, `std.compat`, the bundled `mcpp`, and the host modules its dependency
-edges asked for. Anything else is refused before the compiler is reached, with
-the key that would have made it importable:
+`std`, `std.compat`, the engine interface `mcpp`, and the public modules of the
+libraries its package uses. Anything else is refused before the compiler is
+reached, with the entry that would make it importable:
 
-    error: build.mcpp imports 'mcpp.rules.spirv', and no dependency provides it
-    as a host module.
+    error: build.mcpp imports 'mcpp.rules.spirv', and no build dependency provides it.
            ...
              [build-dependencies.<namespace>]
-             <name> = { version = "...", host-module = true }
-           declared without `host-module = true`: mcpp.plugins (in [build-dependencies])
+             <name> = { version = "..." }      # or `host-module = true` beside `tools`
+           declared without its library: mcpp.plugins (in [build-dependencies])
 
 **The module name is declared by the rule's source, and `mcpp.*` is reserved.**
-A host module is registered under the name its interface unit declares, not
+A module is imported under the name its interface unit declares, not
 under the package name, so `export module mcpp.rules.spirv;` is what a consumer
 then imports. Official plugins live in one package, `mcpp:plugins` (repository
 `mcpp-community/mcpp-plugins`): rule packages are named `mcpp.rules.<x>`,
 build-time utilities `mcpp.tools.<x>`, and each member is selected by a feature
-of that package (see [`host-module = true`](04-mcpp-toml.md)). `mcpp.build.*`
+of that package (*Several modules behind features*). `mcpp.build.*`
 is the engine's own module family and is not used for plugins. The engine
 cannot tell who is official, so it keys the check on the package *namespace*
 and warns when the two disagree —
@@ -1705,109 +1704,125 @@ Qt's `QT_HOST_PATH`), and for the same reason: a tool that cannot be built from
 source on this machine must not be a dead end. It is deliberately **not** part
 of the cache key — an override is an escape hatch, not a reproducible input.
 
-### `host-module = true` — reusable build rules as packages
+### Libraries of a build program: `[build-dependencies]` (mcpp 2026.10.11.1+)
 
-A rule (say "run protoc over these `.proto` files") should be written once, not
-copy-pasted into every consumer's `build.mcpp`. Ship it as an ordinary mcpp
-library package and import it:
+A rule (say "run protoc over these `.proto` files") is written once, as an
+ordinary mcpp library package, and so is any library a build program needs —
+a TOML parser, a formatter. A build program uses a library its package names
+in `[build-dependencies]`:
 
 ```toml
-[dependencies]
-protobufgen = { version = "0.1.0", host-module = true }
+[build-dependencies]
+tomlplusplus = "3.4.0"
+protobufgen  = { version = "0.1.0" }
 ```
 
 ```cpp
 // build.mcpp
+import std;
 import mcpp;
+import tomlplusplus;
 import protobufgen;
-int main() { return protobufgen::generate({"schema"}) ? 0 : 1; }
+int main() {
+    auto cfg = toml::parse_file("codegen.toml");
+    return protobufgen::generate({cfg["schema"].value_or("schema")}) ? 0 : 1;
+}
 ```
 
-mcpp compiles that package's lib-root module **for the host, with the same
-flags as `build.mcpp`** — which is what makes the BMI usable at all, since a
-module interface is only importable by a compile that agrees with it on
-standard, dialect and compiler identity. The compiled module is kept by key, so
-it is compiled once for every program that agrees on those flags (see
-*Placement of compiled host modules*).
+The entry asks for the library unless it lists `tools` or `artifacts`;
+`host-module = true` asks for it beside them, and `host-module = false`
+declines it (05 — Dependencies and Resolution). A library a dependency hands on
+with `reexport = true` is used the same way.
 
-Rules are therefore versioned, testable and distributable through the package
-manager already in use, written in **C++** — no second language, which is the
-whole point of `build.mcpp` existing.
+#### The build programs' graph
 
-**The module name is what the rule's source declares** (mcpp 2026.8.29.1+).
-`export module acme.rules.protobuf;` is imported as `acme.rules.protobuf`,
-whatever the package is called. Module names are authored API and do not mirror
-package identity — the rule ordinary library packages have always followed.
+A build program is a program of the build-program configuration. Its main file
+is `build.mcpp`, and its dependencies are the libraries above. The build
+programs of one build that share a host toolchain and a C++ standard are the
+members of one workspace, written to
 
-Until 2026.8.29.1 the host-module path registered the bare `package.name`
-instead, which made a divergent name build under GCC and fail under Clang and
-MSVC: GCC's BMIs are implicit under `gcm.cache` and keyed by the declared name,
-while the other two are handed an explicit `<name>=<bmi>` mapping. Package names
-carry no C++ naming constraint as a result, and `grpc-rules` is a legal package
-name again.
+    <workspace>/target/.build-mcpp/host/<group>/
 
-**Two rules may not declare one module name.** `import` addresses the module,
-so two such packages are indistinguishable to the compiler, and their BMIs and
-objects share a filename — the second overwrites the first and the surviving
-object reaches the link twice. mcpp refuses this, naming both packages and both
-interface paths. The check covers the rules one `build.mcpp` can see; it is not
-an index-wide uniqueness rule, which `path` dependencies and private registries
-would escape anyway.
+and planned and built by mcpp like any workspace: each library is compiled as
+the package it is — its include directories, defines, features, its own
+dependencies and its implementation units — and `build.mcpp` is compiled by
+the same plan, so a BMI and the program importing it agree on standard,
+dialect and compiler by construction. A library several programs use is
+compiled once for them, and a program of another standard is in another graph.
+`mcpp build` in that directory reproduces the compile of the build programs.
 
-**`mcpp.` is reserved for rules maintained by the mcpp project.** A module name
-under that prefix from a package outside the `mcpp` namespace produces a
-warning naming both, and the build proceeds. It is a warning because the engine
-cannot decide who is official: a `path` dependency, a private mirror and an
-internal fork are all legitimate and indistinguishable from here.
+A program is compiled when its **identity** changes: the engine version, the
+host toolchain, the standard, the program's text, and every package of its
+graph — name, version, source, the features of its build-program instance, and
+the content of a source tree that can change in place (a `path` package or a
+workspace member). An edit to a header a library includes therefore compiles
+the program again and runs it again. When the identity of every program stands,
+the graph is not planned. A program's run is cached on the identity and on its
+declared inputs (*Incremental: declared inputs*).
 
-The lib root must be at `src/<name>.cppm` (or wherever `[lib] path` points); a
-missing one is reported as *"host module 'x': no interface unit at …"*.
+Where the compiled packages are kept follows the dependency cache's rule
+([04 §2.10](04-mcpp-toml.md)):
 
-#### Placement of compiled host modules (2026.10.1.1+)
-
-The bundled `mcpp` module and the host modules a program imports are not
-compiled into each program's own directory. Each is an entry of a store,
-addressed by everything that reaches its compile: the host compiler's identity,
-the standard flag, the flags the compile carries, the BMIs it imports, the
-SHA-256 of the interface file, the mcpp version (for the bundled module) and the
-providing package (for a host module). The inputs are recorded in the entry's
-`entry.json`, and a hit compares them field by field, never the hash alone. Two
-programs whose compiles agree on all of these share one entry, and a program
-whose standard or flags differ has an entry of its own, so a BMI is never taken
-by a compile that does not agree with it.
-
-Where an entry lives depends on where its text comes from:
-
-| Module | Kept in | Reason |
+| Package | Kept in | Reason |
 |---|---|---|
-| the bundled `mcpp` module and its `mcpp.core` alias | the global cache: `$MCPP_HOME/build-cache/v1/pkg/_engine/mcpp-build-module@<mcpp version>/<key>/` | the engine owns its text, which is identical in every project for one mcpp version and one host compiler |
-| a host module of an index package whose sources are in the immutable store | the global cache: `…/pkg/<index>/<package>@<version>/<key>/` | the dependency cache's rule: a name and version identify the bytes |
-| a host module of a `path` or `git` dependency, or of a workspace member | `<workspace>/target/.build-mcpp/host-modules/<key>/` | its sources can change without its name and version changing |
+| the engine interface, `mcpp` and its `mcpp.core` alias | the global cache: `$MCPP_HOME/build-cache/v1/pkg/_engine/mcpp-build-module@<mcpp version>/<key>/` | its text is the engine's, written once per version to `$MCPP_HOME/engine/<version>/modules/` |
+| an index package whose sources are in the immutable store | the global cache: `…/pkg/<index>/<package>@<version>/<key>/` | a name and version identify the bytes |
+| a `path` or `git` package, or a workspace member | the build programs' graph under `<workspace>/target/` | its sources can change without its name and version changing |
 
-The cache mode applies as it does to dependencies (see
-[04 §2.10](04-mcpp-toml.md)). With `--cache global`, the default, an entry goes to
-the global cache where the table says so. With `--cache local` or `--cache off`
-every entry is kept in the workspace's store, and the programs of one invocation
-still share them. A host module of a `path` dependency is never written to the
-global cache. The key of an entry in the workspace's store also holds a digest of
-the package's source tree, so an edit to a header that the interface includes
-compiles a new entry, and the old one is left where it is.
+`mcpp why build-programs` lists each graph, its programs, the libraries each
+uses, the identity it was compiled from and its binary; `--verbose` states,
+for each program, whether its identity stood. `mcpp emit build-database`
+describes the graph to an editor (SPEC-005: the sets `<package>:build`,
+`<package>:host` and `mcpp:core`).
 
-An entry in the global cache is an entry like a dependency's. `mcpp cache list`
-shows the bundled module as `_engine/mcpp-build-module@<version>`, `mcpp cache
-verify` checks it, and `mcpp cache gc` collects it by last use; an upgrade of mcpp
-leaves the previous version's entry for `gc`. The workspace's store is removed
-with its `target/` by `mcpp clean`. A program sees what it saw before: the same
-modules, compiled with the same flags.
+#### Module names
 
-**A package may offer several rules, selected by features** (mcpp 2026.9.5.3+).
-Every module interface unit among the package's resolved `[build] sources` —
-including the sources a feature adds — is compiled as a host module under the
-name it declares, the lib root first. A feature unit may import the lib root;
-units are otherwise compiled alone, so they import `std`, `mcpp` and nothing
-else. Only listed sources take part: the inferred `src/**` of a package that
-declares no `sources` is not consulted, so a rule package published before this
-release exposes exactly what it exposed then.
+**The module name is what the library's source declares** (mcpp 2026.8.29.1+).
+`export module acme.rules.protobuf;` is imported as `acme.rules.protobuf`,
+whatever the package is called. A build program imports the public modules of
+the libraries it uses (SPEC-008): the interface root and what it re-exports,
+and the units an active feature adds; another exported module draws the
+warning a target build gives (W3).
+
+**Two libraries of one program may not declare one module name.** `import`
+addresses the module, so the two are indistinguishable to the compiler. mcpp
+refuses this before compiling, naming both packages and both interface paths.
+
+**`mcpp.` is reserved for modules maintained by the mcpp project**
+(SPEC-007 R9.6). A module name under that prefix from a package outside the
+`mcpp` namespace produces a warning naming both, and the build proceeds.
+
+A build program that imports a module no library provides, a module of a
+library that reaches it only as another library's dependency, or a module
+behind a feature that is not enabled, is refused by name before anything is
+compiled.
+
+#### Build plugins
+
+A unit that imports the engine interface (`mcpp.core`, or `mcpp`) is a
+**build-plugin unit**; nothing else declares it. The engine interface exists
+only in the build-program configuration, so:
+
+- a plugin may depend on other plugins and on ordinary libraries in its
+  **`[dependencies]`**: when a build program uses the plugin, those
+  dependencies are build-program instances too;
+- a package whose library has plugin units, built as the root of a build
+  (`mcpp build`, `mcpp test`, a selected member), is planned in the
+  build-program configuration, for this machine. Its unit tests are ordinary
+  tests under `tests/` that may import `mcpp`; `--target` naming another machine
+  is refused;
+- a plugin unit in the target — a plugin reached through `[dependencies]` of a
+  project — is refused when the build is planned, naming the chain of
+  dependencies and the section to move it to;
+- `mcpp pack` refuses a plugin: it is distributed as source, and a build
+  program compiles it with its own toolchain.
+
+#### Several modules behind features
+
+A package may offer several rules, each behind a feature (mcpp 2026.9.5.3+).
+The units a feature adds are that feature's public modules (SPEC-008 I2), and
+`rule_module` names the one the feature's synthesised program imports; it must
+be declared by one of the feature's units:
 
 ```toml
 # the collection's manifest
@@ -1815,69 +1830,32 @@ release exposes exactly what it exposed then.
 sources = ["src/plugins.cppm"]                   # export module mcpp.plugins;
 
 [features]
-rules-cuda  = { sources = ["rules/cuda.cppm"] }  # export module mcpp.rules.cuda;
-rules-spirv = { sources = ["rules/spirv.cppm"] } # export module mcpp.rules.spirv;
+rules-cuda  = { sources = ["rules/cuda.cppm"], rule_module = "mcpp.rules.cuda" }
+rules-spirv = { sources = ["rules/spirv.cppm"], rule_module = "mcpp.rules.spirv" }
 ```
 
 ```toml
 # a consumer
 [build-dependencies.mcpp]
-plugins = { version = "0.3.0", features = ["rules-spirv"], host-module = true }
+plugins = { version = "0.3.0", features = ["rules-spirv"] }
 ```
-
-**`[build-dependencies]`, not `[dependencies]`** — a rule package is the case
-[04 §2.6.1](04-mcpp-toml.md) describes exactly: its library must never reach the target while its
-rule is still wanted. The two axes are separate, so `host-module = true` says
-*which build-time product* is wanted and the section says *whether the package
-reaches the target*; a rule package answers "no" on the second axis, and the
-section is where that is said. Written in `[dependencies]` it still works, and
-that is precisely why the distinction has to be stated rather than enforced by
-a failure.
 
 The module set is the feature set: a unit whose feature is not active is not
-compiled, and importing it fails as an unknown module. `mcpp:plugins` is the
-collection the mcpp project maintains (repository `mcpp-community/mcpp-plugins`);
-its members are named `mcpp.rules.<x>` for rule packages and `mcpp.tools.<x>`
-for build-time utilities.
+compiled, and importing it is refused naming the feature. `mcpp:plugins` is the
+collection the mcpp project maintains (repository `mcpp-community/mcpp-plugins`).
 
-*Build-time only:* a `host-module = true` dependency is **not** compiled into
-or linked with the target, and neither is anything it depends on. It exists to
-run during `build.mcpp` and nowhere else. (Before 2026.8.5.2 it was also built
-as an ordinary library, which made `import mcpp;` inside a rule fail: the
-bundled module does not exist in that second compile. Until 2026.8.29.1 the
-rule itself was excluded but its own `[dependencies]` were not, so they were
-compiled and linked into the consumer's binary while the rule could not import
-them.)
+#### Readings kept for compatibility
 
-### A rule that depends on another rule (mcpp 2026.8.29.1+)
+Two spellings from before mcpp 2026.10.11.1 keep their meaning and are
+deprecated (51 — Supported Versions):
 
-A rule declares what it needs in its own `[build-dependencies]`, and may import
-any entry there marked `host-module = true`:
+| Spelling | Read as | Removed from |
+|---|---|---|
+| `[dependencies] x = { host-module = true }`, or a `[dependencies]` entry requesting a `rule_module` feature | the same entry in `[build-dependencies]` (`host-module-in-dependencies`) | mcpp 2027.1 |
+| a plugin whose library imports a package listed in its own `[build-dependencies]` with `host-module = true` | that entry in the plugin's `[dependencies]` as well (`plugin-imports-from-build-dependencies`) | mcpp 2027.1 |
 
-```toml
-# inside the rule package's manifest
-[build-dependencies]
-globbing = { path = "../globbing", host-module = true }
-```
-
-```cpp
-// the rule's own interface
-export module tidyrule;
-import std;
-import mcpp;
-import globbing;
-```
-
-mcpp compiles the inner rule first, in the same command and with the same
-flags, so BMI agreement stays structural rather than checked.
-
-The consumer may **not** import `globbing`: build-time provisions cross one
-further edge only on a `reexport = true` edge, and mcpp enforces that rather
-than leaving it to the compiler, which on GCC would allow the import and then
-fail on someone else's machine.
-
-*Limit:* one interface unit per host module. A library with implementation
-units or several modules cannot yet be a rule's build dependency.
+Each use is warned about where the manifest can be edited, and every use is
+listed by `mcpp why compat`.
 
 ### `reexport = true` — a library standing up a toolchain for its user (2026.8.6.2+)
 

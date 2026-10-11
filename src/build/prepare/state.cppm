@@ -507,6 +507,11 @@ struct PrepareState {
     std::filesystem::path runtimeWorkspaceRoot;
     mcpp::xlings::runtime::RuntimeSelection runtimeSelection;
     std::filesystem::path workRoot;
+    // The project whose `.mcpp/` holds the packages of the custom indices:
+    // `overrides.project_index_root`, else the project being built.
+    std::filesystem::path projectIndexRoot() const {
+        return overrides.project_index_root.empty() ? *root : overrides.project_index_root;
+    }
     std::vector<PlanNote> planNotes;
     std::map<std::string, mcpp::pm::LockedGitSource> gitLockAnchors;
     std::map<std::string, std::string> packageIdentityLockAnchors;
@@ -673,12 +678,6 @@ struct PrepareState {
     // The build programs this prepare compiled or found current, by package
     // index (`ensure_build_programs`).
     std::map<std::size_t, BuildProgramBinary> buildProgramBinaries;
-    // COMPAT(plugin-imports-from-build-dependencies): `[build-dependencies]`
-    // entries a build-program instance's library also reads as dependencies,
-    // by the consumer's dep_manifests slot and the key it wrote. The scan
-    // reports those its units import.
-    struct CompatLibraryEdge { std::size_t consumerDepIndex; std::string key; };
-    std::vector<CompatLibraryEdge> compatLibraryEdges;
     // The roots (package directories) planned as build plugins (P3).
     std::set<std::string> buildPluginRoots;
     // The build programs' graphs planned for description (`plan_only`).
@@ -835,6 +834,8 @@ std::expected<void, std::string> phase2_define_toolchain_resolver(PrepareState& 
 std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state);
 std::expected<void, std::string> phase4a_graph_load(PrepareState& state);
 std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state);
+// The lookups the later phases ask of the graph (graph_closures.cpp).
+void step4b_define_lookup_closures(PrepareState& state);
 std::expected<void, std::string> phase5_toolchain_after_graph(PrepareState& state);
 std::expected<void, std::string> phase6_features_and_host_tools(PrepareState& state);
 std::expected<void, std::string> phase9_target_side(PrepareState& state);
@@ -956,6 +957,8 @@ std::expected<void, std::string> refuse_plugin_units_in_target(PrepareState& sta
 // Record (or replace) the decision for `d.subject`; a non-default source is
 // announced once with its `Using` line.
 void record_source(PrepareState& state, SourceDecision d);
+// Whether an override value names a file path rather than a program on PATH.
+bool names_a_file_path(std::string_view v);
 // The override for a package key, resolved and cached; nullptr when none.
 std::expected<const PrepareState::PayloadOverride*, std::string>
 payload_override(PrepareState& state, std::string_view key);

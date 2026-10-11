@@ -3,11 +3,14 @@
 // explicit retirement boundary.
 //
 // DEPRECATION SCHEDULE:
-//   The shims in this module are slated for removal in mcpp 1.0.0.
-//   Projects should migrate to the canonical forms before that point:
+//   A reading a user can write and that is to be removed is a row of the
+//   deprecation registry (compat/registry.cppm), which states the release that
+//   deprecated it and the CalVer month from which it is removed. The shims
+//   below that no manifest can spell carry `COMPAT(internal:<topic>)` and
+//   promise nothing. The readings this module serves:
 //
 //   ┌─────────────────────────────────────┬──────────────────────────────┐
-//   │ Deprecated (works until 1.0)        │ Canonical (use now)          │
+//   │ Deprecated                          │ Canonical (use now)          │
 //   ├─────────────────────────────────────┼──────────────────────────────┤
 //   │ name = "mcpplibs.cmdline"           │ namespace = "mcpplibs"       │
 //   │  (namespace embedded in name)       │ name      = "cmdline"        │
@@ -158,9 +161,9 @@ inline std::string xpkg_dir_name(std::string_view indexName,
 // The FIRST candidate is the canonical form; subsequent candidates are
 // backward-compatibility fallbacks.
 //
-// DEPRECATION SCHEDULE (fallback candidates):
-//   Fallback candidates are slated for removal in mcpp 1.0.0.
-//   Package indices should use the canonical filename form by then.
+// Fallback candidates (COMPAT(internal:xpkg-fallback-candidates)): index
+// files written before the canonical filename form. Package indices should
+// use the canonical form.
 
 inline std::vector<std::string> xpkg_lua_candidates(std::string_view ns,
                                                      std::string_view shortName)
@@ -179,7 +182,7 @@ inline std::vector<std::string> xpkg_lua_candidates(std::string_view ns,
         candidates.push_back(fqname + ".lua");
     }
 
-    // ── Fallback candidates (COMPAT, remove in 1.0.0) ──────────────
+    // ── Fallback candidates (COMPAT(internal:xpkg-fallback-candidates)) ──────────────
 
     // Fallback: full qualified name when it differs from qname
     // (e.g. default-ns "mcpplibs": qname="cmdline", fqname="mcpplibs.cmdline")
@@ -245,7 +248,7 @@ inline std::vector<std::string> install_dir_candidates(std::string_view ns,
         candidates.push_back(std::format("{}-x-{}", ns, fqname));
     }
 
-    // ── Fallback candidates (COMPAT, remove in 1.0.0) ──────────────
+    // ── Fallback candidates (COMPAT(internal:xpkg-fallback-candidates)) ──────────────
 
     // Old index-prefixed layout: <index>-x-<ns>.<shortName>
     candidates.push_back(std::format("{}-x-{}", indexName, fqname));

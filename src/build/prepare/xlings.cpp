@@ -530,15 +530,19 @@ std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state)
             // Under `plan_only` (`emit build-database`) nothing is written
             // into the project (SPEC-005 R2.1, mcpp#724 side finding B, e2e
             // 817), so the owner's half goes to the planning directory too.
+            // The build programs' graph shares the indices of the build that
+            // asked, whose project already holds them (`project_index_root`).
             const auto& runtimeRoot = state.overrides.plan_only
                 ? state.workRoot : state.runtimeSelection.ownerRoot;
+            const auto indices = state.overrides.project_index_root.empty()
+                ? state.m->indices : decltype(state.m->indices){};
             if (runtimeRoot == state.workRoot) {
                 mcpp::config::ensure_project_index_dir(
-                    **cfg2, state.workRoot, state.m->indices, penv);
+                    **cfg2, state.workRoot, indices, penv);
             } else {
-                if (!state.m->indices.empty())
+                if (!indices.empty())
                     mcpp::config::ensure_project_index_dir(
-                        **cfg2, state.workRoot, state.m->indices, {});
+                        **cfg2, state.workRoot, indices, {});
                 if (materializeRootRuntime)
                     mcpp::config::ensure_project_index_dir(
                         **cfg2, runtimeRoot, {}, penv);
@@ -604,7 +608,7 @@ std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state)
                 }
             }
             if (hasCustomIndices) {
-                bool needsClone = !mcpp::config::project_index_data_initialized(*state.root);
+                bool needsClone = !mcpp::config::project_index_data_initialized(state.projectIndexRoot());
                 if (needsClone) {
                     bool needsRemoteUpdate = false;
                     for (auto& [idxName, spec] : state.m->indices) {
@@ -637,7 +641,7 @@ std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state)
                     }
                     if (needsRemoteUpdate && !refreshPolicy.offline) {
                         mcpp::ui::status("Fetching", "custom index repos (first use)");
-                        auto projEnv = mcpp::config::make_project_xlings_env(**cfg2, *state.root);
+                        auto projEnv = mcpp::config::make_project_xlings_env(**cfg2, state.projectIndexRoot());
                         int rc = mcpp::xlings::update_index(projEnv, /*quiet=*/true);
                         if (rc != 0) {
                             return std::unexpected(

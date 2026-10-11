@@ -94,7 +94,7 @@ done
 snapshot() {
     local out="$1"
     mkdir -p "$out"
-    find target -name build.ninja | sort > "$out/ninja.list"
+    find target -name build.ninja -not -path '*/.build-mcpp/*' | sort > "$out/ninja.list"
     [ -s "$out/ninja.list" ] || fail "no build.ninja was written"
     local n=0
     while read -r f; do

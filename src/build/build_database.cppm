@@ -425,10 +425,14 @@ Rendered render(std::span<const Member> members,
                                    : "library";
             std::string setName = member.setPrefix + package + (isTest ? ":test" : "");
             std::string setKind = kind;
+            std::string family = package;
             if (member.buildPrograms) {
                 if (auto it = member.programOf.find(package); it != member.programOf.end()) {
+                    // The program belongs to the package whose build.mcpp it is,
+                    // not to the member the graph names it by.
                     setName = it->second + ":build";
                     setKind = "executable";
+                    family = it->second;
                 } else if (package == "mcpp.core") {
                     setName = "mcpp:core";
                     setKind = "library";
@@ -437,7 +441,7 @@ Rendered render(std::span<const Member> members,
                     setKind = "library";
                 }
             }
-            auto& set = set_for(setName, package, setKind);
+            auto& set = set_for(setName, family, setKind);
             for (auto const* dirs : {&cu.localIncludeDirs, &cu.localIncludeDirsAfter})
                 for (auto const& dir : *dirs)
                     if (relative_to(dir, generatedTree))

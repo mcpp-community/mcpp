@@ -1056,8 +1056,18 @@ path = "src/capi/lua.cppm"    # Override the default lib-root location
 默认约定：`src/<包名的最后一段>.cppm`（例如包名 `mcpplibs.cmdline` →
 `src/cmdline.cppm`）。
 `path` 是这张表唯一的键；其他键像 `[build]` 中一样被报告（mcpp 2026.9.28.3+）。lib root 即
-SPEC-008 的接口根：打包后的库发布的模块（连同它转出的模块），以及构建程序从 host-module
-依赖中导入的模块。
+SPEC-008 的接口根，它对每一种消费方给出同一个陈述（mcpp 2026.10.11.1+）：它的模块及其以
+`export import` 转出的模块，连同已启用特性加入的接口单元，是**公开模块**。导入该库的目标、
+在 `[build-dependencies]` 中使用它的构建程序与 `mcpp pack` 读同一个集合；导出而不公开的模块
+引起警告（SPEC-008 W3）。没有 lib root 的包不陈述接口，它导出的每个模块都是公开模块。
+
+`[lib] path` 写出而不存在的路径，在本包的构建中是错误，在本包作为依赖时是警告。Form B
+描述符以 `lib = "<path>"` 写出同一件事，与 `sources` 并列，相对于版本目录，`*/` 代表归档的
+外层目录。
+
+`[modules] exports`（Form B 描述符的 `modules = { ... }`）把公开模块列为断言：在本包的构建
+中，未列出的公开模块是错误；`[modules] strict = true` 时，列出而不公开的名字也是错误。它不
+选择接口根。
 
 ### 2.5 `[dependencies]`、`[dev-dependencies]`、`[build-dependencies]`
 
@@ -1392,10 +1402,10 @@ cache = "global"   # "global" (default) | "local" | "off"
 workspace 成员。它们的源码可以在 `name@version` 不变的情况下改变，
 所以没有任何基于那个身份的键能察觉到变化。
 
-构建程序 import 的模块遵循同一条规则（2026.10.1.1+）。内置的 `mcpp` 模块与索引包的 host
-模块保存在全局缓存中；`path` 或 `git` 依赖、或 workspace 成员的 host 模块保存在
-`target/.build-mcpp/host-modules/` 下，绝不进入全局缓存。`--cache local` 与 `--cache off`
-把它们全部保存在工程内。见 [30 — 已编译 host 模块的存放位置](30-build-mcpp.md)。
+构建程序 import 的库遵循同一条规则（2026.10.11.1+）。引擎接口（`mcpp.core`）与索引包保存在
+全局缓存中；`path` 或 `git` 包、或 workspace 成员在 `target/.build-mcpp/host/` 下的构建程序图
+中编译，绝不进入全局缓存。`--cache local` 与 `--cache off` 把它们全部保存在工程内。见
+[30 — 构建程序图](30-build-mcpp.md)。
 
 查看与回收：
 

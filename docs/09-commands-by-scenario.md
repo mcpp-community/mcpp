@@ -168,7 +168,14 @@ dependency graph:
       requested by mcpplibs.app@0.1.0 as 'huxdemo.fw' in [dependencies]
       requested by huxdemo.comp@0.1.0 as 'fw' in [dependencies]
       linked static (default)
+      instances: target
 ```
+
+`instances` states whether the package is compiled for the target, for the
+build programs, or for both (2026.10.11.1+). `mcpp why build-programs` lists the
+build programs' graphs: each program, the libraries it uses, the identity it
+was compiled from and its binary. `mcpp why compat` lists every use of a
+deprecated reading with the release that removes it (51 — Supported Versions).
 
 The same graph is recorded under `graph` in
 `target/<triple>/<fp>/resolution.json`, one entry per package with the root
@@ -682,9 +689,9 @@ mcpp is involved and its documentation will not help.
 
 ## Current limitations
 
-- `mcpp why --format json` is defined for the `toolchain`, `sources`, `tool` and
-  `payload` topics. The other topics report `'<topic>' has no machine-readable
-  shape yet` and exit non-zero.
+- `mcpp why --format json` is defined for the `toolchain`, `sources`, `tool`,
+  `payload`, `build-programs` and `compat` topics. The other topics report
+  `'<topic>' has no machine-readable shape yet` and exit non-zero.
 - `mcpp search` matches a substring; there is no field selector, and no way to
   restrict a search to one namespace.
 - `mcpp clean --stale` reads `target/.build_cache`, which holds a bounded number

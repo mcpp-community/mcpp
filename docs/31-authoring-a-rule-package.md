@@ -122,12 +122,12 @@ device_extensions = [".toy"]
 | key | effect on a consumer |
 |---|---|
 | `sources` | the module is compiled only when the feature is active |
-| `rule_module` *(2026.9.7.1+)* | the module the consumer's build program imports. It implies `host-module = true` |
+| `rule_module` *(2026.9.7.1+)* | the module the consumer's build program imports; requesting the feature asks for the package's library. One of the feature's units must declare it (2026.10.11.1+) |
 | `device_extensions` *(2026.9.7.1+)* | those extensions are classified as **device sources**: never scanned for imports, never producing a BMI, and refused if no action claims them |
 
 A rule that generates or checks rather than compiling a language declares no
-`device_extensions`; `08-build-rules` is that shape and its consumer writes
-`host-module = true` on the dependency edge itself.
+`device_extensions`; `08-build-rules` is that shape, and its consumer lists the
+package in `[build-dependencies]`.
 
 Device extensions are not in the default source glob. A consumer opts in by
 naming the files:
@@ -168,6 +168,31 @@ consumer a way past its last knob without hand-writing the action:
 and it holds the package's **whole** device set. A build with two backends puts
 both backends' sources in that one list, and every rule in the build program
 reads the same value.
+
+## A rule package's own dependencies, build and tests (mcpp 2026.10.11.1+)
+
+A rule's module imports `mcpp`, the engine interface, and that makes it a
+**build plugin** (30 — `build.mcpp`, *Build plugins*): a package that exists in
+the build-program configuration only. Three consequences follow for its author.
+
+- **What the rule's library imports is in its `[dependencies]`.** A rule built
+  on another rule (`mcpp:plugins`' `plugins-core`, say) or on an ordinary
+  library (a TOML parser) names it there. When a consumer's build program uses
+  the rule, those dependencies are compiled for the build program with it. The
+  rule's `[build-dependencies]` serve the rule package's own `build.mcpp`, as
+  any package's do.
+- **The package builds and tests as the root of a build.** `mcpp build` in the
+  package compiles its library for this machine, with the engine interface, and
+  `mcpp test` runs its tests under `tests/` the same way: a test may import the
+  rule's modules and `mcpp`, and checks the rule's logic without a consumer
+  project around it.
+- **It is published as source.** `mcpp pack` refuses a build plugin; a consumer's
+  build compiles it with the toolchain of its own build programs.
+
+A rule package written before this release that imports a package from its own
+`[build-dependencies]` (`host-module = true`) keeps building: the entry is read
+as a dependency of the rule as well, and the author is told to move it
+(`plugin-imports-from-build-dependencies`, 51 — Supported Versions).
 
 ## Declaring work: `mcpp::action`
 
@@ -357,10 +382,10 @@ consumer's build program, so a member that runs a payload tool declares it
 itself — and says so when the lookup returns empty, rather than pointing at a
 manifest the reader does not own.
 
-A host module's declaration is the exception, and it is visible in every build
-program it is compiled into (`tests/e2e/622`), because a host module's own
-code runs as part of each of those build programs rather than as a dependency
-seen only through the graph. This is why a member declares its own payload on
+A build program's library's declaration is the exception, and it is visible in
+every build program that uses the library (`tests/e2e/622`), because the
+library's own code runs as part of each of those build programs rather than as
+a dependency seen only through the graph. This is why a member declares its own payload on
 itself, and a project that pulls the member in never repeats the declaration.
 A dist member's payload therefore belongs on the member — on the target axis
 when the tool serves one target and not others, exactly as any other

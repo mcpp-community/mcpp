@@ -1,6 +1,6 @@
 // mcpp.fallback.legacy_dirs — legacy xpkg directory scan.
 //
-// Last-resort fallback scan (COMPAT, remove in 1.0.0): walk xpkgs/ for a
+// Last-resort fallback scan (COMPAT(internal:legacy-xpkgs-scan)): walk xpkgs/ for a
 // directory that holds the requested package under an older naming layout.
 //
 // WHY THE SCAN IS NAMESPACE-BOUND

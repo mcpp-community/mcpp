@@ -35,9 +35,11 @@ MCPP="${MCPP:-mcpp}"
 export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
 
-# No object was compiled in $1, and no build was driven.
+# No object of the members was compiled in $1, and no build of them was driven.
+# The build programs are compiled while planning (they declare the providers),
+# in the build programs' graph under target/.build-mcpp/host (mcpp#797).
 compiled_nothing() {
-    [ -z "$(find "$1" -name .ninja_log 2>/dev/null)" ]
+    [ -z "$(find "$1" -name .ninja_log -not -path '*/.build-mcpp/host/*' 2>/dev/null)" ]
 }
 
 # A program member named $1, optionally using the packages in $2.

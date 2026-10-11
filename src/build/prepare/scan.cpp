@@ -951,6 +951,18 @@ static void step11_public_module_check(PrepareState& state) {
     std::map<std::string, std::set<std::string>> publicOf;
     for (std::size_t i = 1; i < state.packages.size(); ++i) {
         auto const& pr = state.packages[i];
+        // A declared interface root that names no file: the package's own build
+        // refuses it (modgraph::validate); here, where the package is a
+        // dependency, it is reported (mcpp#797, SPEC-008 D14).
+        if (!pr.manifest.lib.path.empty()) {
+            std::error_code lec;
+            const auto declared = pr.root / mcpp::manifest::resolve_lib_root_path(pr.manifest, pr.root);
+            if (!std::filesystem::is_regular_file(declared, lec))
+                mcpp::diag::warning("build/interface", std::format(
+                    "'{}' states [lib] path = '{}', which names no file; it states no "
+                    "interface root to its consumers", qualified(pr.manifest),
+                    pr.manifest.lib.path.generic_string()));
+        }
         if (!workspace_member_of(state, pr.root).empty()) continue;
         // One definition of what a library offers (mcpp.modgraph.library_interface).
         const auto iface = mcpp::modgraph::library_interface(
@@ -986,51 +998,9 @@ static void step11_public_module_check(PrepareState& state) {
     }
 }
 
-// COMPAT(plugin-imports-from-build-dependencies): a build plugin's library
-// imports a package it lists in its own `[build-dependencies]` with
-// `host-module = true` (mcpp#797). The worklist read the entry as a dependency
-// too; the use is reported here, where a unit of the library is seen to import
-// a module of that package, and only then.
-static void step11_compat_library_edges(PrepareState& state) {
-    if (state.compatLibraryEdges.empty()) return;
-    const auto& g = state.scan.graph;
-    for (auto const& ce : state.compatLibraryEdges) {
-        const auto consumer = ce.consumerDepIndex + 1;
-        if (consumer >= state.packages.size()) continue;
-        std::size_t dep = state.packages.size();
-        for (auto const& r : state.graphRequests)
-            if (r.consumerPackageIndex == consumer && r.key == ce.key) {
-                dep = r.dependencyPackageIndex;
-                break;
-            }
-        if (dep >= state.packages.size()) continue;
-        auto qualified = [](const mcpp::manifest::Manifest& m) {
-            return m.package.namespace_.empty() ? m.package.name
-                                                : m.package.namespace_ + "." + m.package.name;
-        };
-        const auto consumerName = qualified(state.packages[consumer].manifest);
-        const auto depName = qualified(state.packages[dep].manifest);
-        std::set<std::string> provided;
-        for (auto const& u : g.units)
-            if (u.packageName == depName && u.provides)
-                provided.insert(u.provides->logicalName.substr(0, u.provides->logicalName.find(':')));
-        bool imports = false;
-        for (auto const& u : g.units) {
-            if (u.packageName != consumerName) continue;
-            for (auto const& req : u.requires_)
-                if (provided.contains(req.logicalName.substr(0, req.logicalName.find(':'))))
-                    imports = true;
-        }
-        if (imports)
-            state.reportCompatUse("plugin-imports-from-build-dependencies", consumer,
-                                  std::format("[build-dependencies] {}", ce.key));
-    }
-}
-
 std::expected<void, std::string> phase11_scan(PrepareState& state) {
     auto needsStdModule = step11_scan_sources(state);
     if (!needsStdModule) return std::unexpected(needsStdModule.error());
-    step11_compat_library_edges(state);
     if (auto r = refuse_plugin_units_in_target(state); !r) return std::unexpected(r.error());
     step11_public_module_check(state);
 

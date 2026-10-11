@@ -129,8 +129,8 @@ manifest/描述符里（`[build] include_dirs`），而不是构建期程序里�
 
 除打印裸字符串外，`build.mcpp` 也可以写成**模块优先**形式——`import mcpp;`，不需要
 `#include`。`mcpp` 模块**内置在 mcpp 二进制里**（因此始终与当前这版 mcpp
-的协议匹配），按需编译——每个 mcpp 版本与 host 编译器组合只编一次，存入构建缓存
-（见下文*已编译 host 模块的存放位置*）；它的函数只是 emit 上面那些指令：
+的协议匹配），每个 mcpp 版本写成一个包，像构建程序的任何库一样编译（见下文*构建程序图*）；
+它的函数只是 emit 上面那些指令：
 
 ```cpp
 // build.mcpp
@@ -259,7 +259,7 @@ for (auto a : {"-machine","virt","-nographic","-no-reboot","-kernel"})
 
 **在一个构建程序之内，每个名字的 token 组成一个 argv。** 每次 `mcpp::runner(tok)`
 调用追加到默认 runner，每次 `mcpp::runner(name, tok)` 调用追加到名为 `name` 的
-runner，按发出顺序，无论调用来自编译进这个程序的哪个 host module。要在两个 runner
+runner，按发出顺序，无论调用来自这个程序的哪个库。要在两个 runner
 之间选择的程序，在发出任何一个之前完成选择。以打包格式命名的 runner 在
 `mcpp run --format <name>` 下抵达该格式的可分发物（[41 —— 抵达一台设备](41-devices.md)）。
 
@@ -1202,7 +1202,7 @@ shim，而可用的那份就在项目自己的环境里，根本不在 `PATH` �
 
 一条规则 ——「对这些 `.proto` 跑 protoc」「对这些源码跑 clang-tidy」—— 属于一个包，
 而不该被复制到每个消费者的 `build.mcpp` 里。机制是
-[`host-module = true`](../04-mcpp-toml.md)；本节讲的是它里面应该长什么样。
+消费方 `[build-dependencies]` 中的库（*构建程序的库*）；本节讲的是它里面应该长什么样。
 
 下面这些从第一个规则包 `mcpplibs.grpcgen` 归纳而来，每一条特征都单独判过是必然还是偶然。
 它们是指引而非规则，因为其中没有一条能给出引擎可以检查的判据。
@@ -1228,21 +1228,20 @@ shim，而可用的那份就在项目自己的环境里，根本不在 `PATH` �
 全部调用一遍。
 
 **没有任何东西提供的 import 会被点名拒绝。** 一个构建程序可以 import 的是：`std`、
-`std.compat`、内置的 `mcpp`，以及依赖边要来的 host 模块。此外的名字在编译器被调用之前
-就被拒绝，并给出那个本该让它可导入的键：
+`std.compat`、引擎接口 `mcpp`，以及其包所用库的公开模块。此外的名字在编译器被调用之前
+就被拒绝，并给出能让它可导入的条目：
 
-    error: build.mcpp imports 'mcpp.rules.spirv', and no dependency provides it
-    as a host module.
+    error: build.mcpp imports 'mcpp.rules.spirv', and no build dependency provides it.
            ...
              [build-dependencies.<namespace>]
-             <name> = { version = "...", host-module = true }
-           declared without `host-module = true`: mcpp.plugins (in [build-dependencies])
+             <name> = { version = "..." }      # or `host-module = true` beside `tools`
+           declared without its library: mcpp.plugins (in [build-dependencies])
 
-**模块名由规则的源码声明，`mcpp.*` 是保留前缀。** host 模块以其接口单元声明的名字注册，
-而不是以包名注册，所以 `export module mcpp.rules.spirv;` 就是消费者 import 的那个名字。
+**模块名由规则的源码声明，`mcpp.*` 是保留前缀。** 模块以其接口单元声明的名字导入，
+而不是以包名导入，所以 `export module mcpp.rules.spirv;` 就是消费者 import 的那个名字。
 官方插件集中在一个包里，`mcpp:plugins`（仓库 `mcpp-community/mcpp-plugins`）：规则包命名为
 `mcpp.rules.<x>`，构建期工具命名为 `mcpp.tools.<x>`，每个成员由该包的一个 feature 选择
-（见 [`host-module = true`](../04-mcpp-toml.md)）。`mcpp.build.*` 是引擎自己的模块族，
+（*特性之后的多个模块*）。`mcpp.build.*` 是引擎自己的模块族，
 不用于插件。引擎判定不了谁是官方，所以检查以包的**命名空间**为键，两者不一致时告警 ——
 
     warning: build rule 'mcpplibs.plugins' declares the module
@@ -1429,148 +1428,127 @@ MCPP_TOOL_PROTOBUF_PROTOC=/usr/bin/protoc mcpp build
 理由一样：一个在本机构建不出来的工具**不能是死路**。它**刻意不进** cache key ——
 逃生舱不是可复现输入。
 
-### `host-module = true` —— 可复用的构建规则以包分发
+### 构建程序的库：`[build-dependencies]`（mcpp 2026.10.11.1+）
 
-一条规则（比如「对这些 `.proto` 跑 protoc」）应该**写一次**，而不是复制进每个
-消费者的 `build.mcpp`。把它做成普通的 mcpp 库包再 import:
+一条规则（例如"对这些 `.proto` 文件运行 protoc"）只写一次，作为普通的 mcpp 库包发布；
+构建程序需要的任何库（TOML 解析器、格式化库）也是如此。构建程序使用其包在
+`[build-dependencies]` 中写出的库：
 
 ```toml
-[dependencies]
-protobufgen = { version = "0.1.0", host-module = true }
+[build-dependencies]
+tomlplusplus = "3.4.0"
+protobufgen  = { version = "0.1.0" }
 ```
 
 ```cpp
 // build.mcpp
+import std;
 import mcpp;
+import tomlplusplus;
 import protobufgen;
-int main() { return protobufgen::generate({"schema"}) ? 0 : 1; }
+int main() {
+    auto cfg = toml::parse_file("codegen.toml");
+    return protobufgen::generate({cfg["schema"].value_or("schema")}) ? 0 : 1;
+}
 ```
 
-mcpp 会把该包的 lib 根模块**为 host 编译，且与 `build.mcpp` 使用相同的标志** ——
-这正是 BMI 能用的前提：一个模块接口只对「在 standard / dialect / 编译器身份上与
-它一致」的编译可导入。编译结果按键保存，因此对每组在这些标志上一致的程序只编一次
-（见*已编译 host 模块的存放位置*）。
+条目在没有列出 `tools` 或 `artifacts` 时请求库；`host-module = true` 在它们之外再请求库，
+`host-module = false` 不要库（05 —— 依赖与解析）。依赖以 `reexport = true` 转交的库，
+以同样的方式使用。
 
-于是规则**有版本、能测试、能通过既有的包管理器分发**，而且是用 **C++** 写的
-—— 不引入第二门语言，这正是 `build.mcpp` 存在的理由。
+#### 构建程序图
 
-**模块名是规则源码自己声明的那个**(mcpp 2026.8.29.1+)。`export module
-acme.rules.protobuf；` 就以 `acme.rules.protobuf` 被 import，与包叫什么无关。
-模块名是作者定义的 API，不镜像包身份 —— 普通库包一直遵循的就是这条规则。
+构建程序是构建程序配置中的一个程序。它的主文件是 `build.mcpp`，它的依赖是上面的库。
+一次构建中宿主工具链与 C++ 标准相同的构建程序，是同一个工作空间的成员，写到
 
-2026.8.29.1 之前 host 模块这条路径注册的是裸 `package.name`，于是声明名与包名
-分叉的规则包在 GCC 上能构建、在 Clang 与 MSVC 上失败：GCC 的 BMI 隐式落在
-`gcm.cache` 且按**声明名**索引，而另外两者拿到的是显式的 `<name>=<bmi>` 映射。
-因此包名不再承担任何 C++ 命名约束，`grpc-rules` 重新是合法包名。
+    <workspace>/target/.build-mcpp/host/<group>/
 
-**两个规则不得声明同一个模块名。** `import` 寻址的是模块，所以两个这样的包对编译器
-不可区分，而它们的 BMI 与对象文件同名 —— 后者覆盖前者，存活的那个对象被送进链接两次。
-mcpp 拒绝这种情形，并点名两个包与各自的 interface 路径。检查的范围是一次 `build.mcpp`
-能看见的那些规则，不是索引级的全局唯一性 —— `path` 依赖与私有 registry 本来就绕得开。
+并像任何工作空间一样由 mcpp 规划与构建：每个库按完整的包编译——它的包含目录、宏定义、
+特性、自己的依赖与实现单元都参与——`build.mcpp` 由同一个计划编译，因此 BMI 与导入它的
+程序在标准、方言与编译器上的一致由构造保证。多个程序使用的库只为它们编译一次，标准不同的
+程序在另一张图中。在该目录中执行 `mcpp build` 即可复现构建程序的编译。
 
-**`mcpp.` 前缀保留给由 mcpp 项目维护的规则。** 不在 `mcpp` 命名空间下的包声明该前缀
-的模块名时给出一条同时点名两者的警告，构建继续。之所以是警告：引擎判定不了谁是官方，
-`path` 依赖、私有镜像与内部 fork 都合法，而且从这里看都一样。
+程序在其**身份**变化时编译：引擎版本、宿主工具链、标准、程序文本，以及其图中的每个包——
+名字、版本、来源、构建程序实例的特性，以及可以原地变化的源码树（`path` 包或工作空间成员）
+的内容。因此，库所包含的头文件被修改时，程序会重新编译并重新运行。所有程序的身份都未变时，
+不规划这张图。程序的运行按身份与它声明的输入缓存（*增量：声明的输入*）。
 
-lib 根必须在 `src/<name>.cppm`（或 `[lib] path` 指向的位置）；缺失时报
-*"host module 'x': no interface unit at …"*。
+编译产物的存放位置遵循依赖缓存的规则（[04 §2.10](04-mcpp-toml.md)）：
 
-#### 已编译 host 模块的存放位置（2026.10.1.1+）
-
-内置的 `mcpp` 模块与程序 import 的 host 模块不再编译进每个程序自己的目录。每一个都是存储中
-的一个条目，条目的地址由进入它那次编译的一切决定：host 编译器的身份、standard 标志、该次
-编译携带的标志、它 import 的 BMI、interface 文件的 SHA-256、mcpp 版本（对内置模块）与提供者
-包（对 host 模块）。这些输入记录在条目的 `entry.json` 中，命中时逐字段比较，而不只比较哈希。
-两个程序的编译在所有这些上一致时共用一个条目；standard 或标志不同的程序有自己的条目，因此
-BMI 不会被与它不一致的编译取用。
-
-条目放在哪里取决于它的文本从哪里来：
-
-| 模块 | 存放位置 | 依据 |
+| 包 | 存放位置 | 依据 |
 |---|---|---|
-| 内置的 `mcpp` 模块及其 `mcpp.core` 别名 | 全局缓存：`$MCPP_HOME/build-cache/v1/pkg/_engine/mcpp-build-module@<mcpp 版本>/<key>/` | 引擎拥有这段文本，对同一 mcpp 版本与同一 host 编译器，它在每个工程中都相同 |
-| 源码位于不可变 store 的索引包的 host 模块 | 全局缓存：`…/pkg/<index>/<package>@<version>/<key>/` | 依赖缓存的规则：名称与版本确定了字节 |
-| `path` 或 `git` 依赖、或 workspace 成员的 host 模块 | `<workspace>/target/.build-mcpp/host-modules/<key>/` | 它的源码可以在名称与版本不变的情况下改变 |
+| 引擎接口 `mcpp` 及其别名 `mcpp.core` | 全局缓存：`$MCPP_HOME/build-cache/v1/pkg/_engine/mcpp-build-module@<mcpp 版本>/<key>/` | 文本属于引擎，每个版本写一次到 `$MCPP_HOME/engine/<版本>/modules/` |
+| 源码位于不可变存储中的索引包 | 全局缓存：`…/pkg/<index>/<package>@<version>/<key>/` | 名字与版本确定其内容 |
+| `path` 或 `git` 包、工作空间成员 | `<workspace>/target/` 下的构建程序图 | 源码可以在名字与版本不变的情况下变化 |
 
-缓存模式的作用与对依赖相同（见 [04 §2.10](04-mcpp-toml.md)）。`--cache global`（默认）下，
-条目按上表放入全局缓存。`--cache local` 或 `--cache off` 下，所有条目都保存在 workspace 的
-存储里，同一次调用中的各程序仍共用它们。`path` 依赖的 host 模块绝不写入全局缓存。workspace
-存储中条目的键还包含包源码树的摘要，因此修改 interface 所 include 的头文件会编出新条目，
-旧条目原样保留。
+`mcpp why build-programs` 列出每张图、其中的程序、每个程序使用的库、编译所依据的身份与其
+二进制；`--verbose` 写出每个程序的身份是否未变。`mcpp emit build-database` 向编辑器描述
+这张图（SPEC-005：集合 `<package>:build`、`<package>:host` 与 `mcpp:core`）。
 
-全局缓存中的条目与依赖的条目一样：`mcpp cache list` 把内置模块显示为
-`_engine/mcpp-build-module@<version>`，`mcpp cache verify` 检查它，`mcpp cache gc` 按最近
-使用回收它；升级 mcpp 会留下上一版本的条目，交给 `gc`。workspace 的存储随 `target/` 由
-`mcpp clean` 一并删除。程序看到的与以前相同：同样的模块，用同样的标志编译。
+#### 模块名
 
-**一个包可以提供多条规则，由 feature 选择**(mcpp 2026.9.5.3+)。包解析后的
-`[build] sources` 里 —— 含 feature 加入的源文件 —— 每一个模块接口单元都以它自己声明的
-名字编成一个 host 模块，lib 根排在最前。feature 单元可以 import lib 根；除此之外每个
-单元单独编译，因此只 import `std` 与 `mcpp`。只有写在清单里的源文件参与：未声明
-`sources` 的包所推断出的 `src/**` 不被读取，所以此前发布的规则包暴露的仍是它当时暴露
-的那一个模块。
+**模块名是库的源码所声明的名字**（mcpp 2026.8.29.1+）。`export module acme.rules.protobuf;`
+以 `acme.rules.protobuf` 导入，与包名无关。构建程序导入其所用库的公开模块（SPEC-008）：
+接口根及其转出的模块，以及已启用特性加入的单元；导入其他导出模块时给出与目标构建相同的警告（W3）。
+
+**一个程序的两个库不得声明同一个模块名。** `import` 按模块寻址，两者对编译器不可区分。
+mcpp 在编译之前拒绝，写出两个包与两个接口文件的路径。
+
+**`mcpp.` 前缀保留给 mcpp 项目维护的模块**（SPEC-007 R9.6）。命名空间不是 `mcpp`
+的包使用该前缀时给出警告，写出两者，构建继续。
+
+构建程序导入没有库提供的模块、仅作为另一个库的依赖到达的库的模块，或未启用特性之后的模块时，
+在任何编译之前按名字拒绝。
+
+#### 构建插件
+
+导入引擎接口（`mcpp.core` 或 `mcpp`）的单元是**构建插件单元**，不需要另行声明。
+引擎接口只存在于构建程序配置中，因此：
+
+- 插件可以在 **`[dependencies]`** 中依赖其他插件与普通库：构建程序使用该插件时，
+  这些依赖同样是构建程序实例；
+- 库中含有插件单元的包作为构建的根（`mcpp build`、`mcpp test`、被选中的成员）时，
+  以构建程序配置、为本机规划。它的单元测试是 `tests/` 下可以导入 `mcpp` 的普通测试；
+  指向他处的 `--target` 被拒绝；
+- 目标中出现插件单元（工程经 `[dependencies]` 到达插件）时，在规划期拒绝，写出依赖链
+  与应当移入的段；
+- `mcpp pack` 拒绝插件：插件以源码分发，由构建程序用自己的工具链编译。
+
+#### 特性之后的多个模块
+
+一个包可以提供多条规则，每条位于一个特性之后（mcpp 2026.9.5.3+）。特性加入的单元是该
+特性的公开模块（SPEC-008 I2），`rule_module` 写出该特性合成程序所导入的模块，它必须由
+该特性的某个单元声明：
 
 ```toml
-# the collection's manifest
+# 集合的清单
 [build]
 sources = ["src/plugins.cppm"]                   # export module mcpp.plugins;
 
 [features]
-rules-cuda  = { sources = ["rules/cuda.cppm"] }  # export module mcpp.rules.cuda;
-rules-spirv = { sources = ["rules/spirv.cppm"] } # export module mcpp.rules.spirv;
+rules-cuda  = { sources = ["rules/cuda.cppm"], rule_module = "mcpp.rules.cuda" }
+rules-spirv = { sources = ["rules/spirv.cppm"], rule_module = "mcpp.rules.spirv" }
 ```
 
 ```toml
-# a consumer
+# 消费方
 [build-dependencies.mcpp]
-plugins = { version = "0.3.0", features = ["rules-spirv"], host-module = true }
+plugins = { version = "0.3.0", features = ["rules-spirv"] }
 ```
 
-**用 `[build-dependencies]` 而不是 `[dependencies]`** —— 规则包正是 [04 §2.6.1](04-mcpp-toml.md) 描述的那种
-情形：它的库绝不该到达目标，而它的规则仍然被需要。两条轴是分开的：
-`host-module = true` 说的是**要哪一种构建期产物**，而 section 说的是**这个包是否到达
-目标**；规则包在第二条轴上的答案是"否"，而 section 就是说这件事的地方。写在
-`[dependencies]` 里同样能工作 —— 这恰恰是为什么这条区分必须被**陈述**，而不能指望由
-一次失败来教会。
+模块集合即特性集合：特性未启用的单元不编译，导入它时按特性名拒绝。`mcpp:plugins` 是
+mcpp 项目维护的集合（仓库 `mcpp-community/mcpp-plugins`）。
 
-模块集合就是 feature 集合：feature 未激活的单元不编译，import 它会以未知模块失败。
-`mcpp:plugins` 是 mcpp 项目维护的集合（仓库 `mcpp-community/mcpp-plugins`）；其成员
-命名为 `mcpp.rules.<x>`（规则包）与 `mcpp.tools.<x>`（构建期工具）。
+#### 为兼容保留的读法
 
-*仅构建期：* `host-module = true` 的依赖**不会**被编进、也不会被链进本工程的 target,
-它所依赖的东西也不会。它只在 `build.mcpp` 期间运行，别处都不出现。（2026.8.5.2 之前
-它还会被当作普通库再编一遍，这正是规则里 `import mcpp;` 失败的原因：在那第二次编译里
-内置模块并不存在。2026.8.29.1 之前被排除的只有规则本身，它自己的 `[dependencies]`
-仍会被编译并链进消费者的二进制，而规则却 import 不到它们。）
+mcpp 2026.10.11.1 之前的两种写法保留其含义并被弃用（51 —— 支持的版本）：
 
-### 依赖另一个规则的规则（mcpp 2026.8.29.1+）
+| 写法 | 读作 | 移除版本 |
+|---|---|---|
+| `[dependencies] x = { host-module = true }`，或请求 `rule_module` 特性的 `[dependencies]` 条目 | `[build-dependencies]` 中的同一条目（`host-module-in-dependencies`） | mcpp 2027.1 |
+| 插件的库导入其自身 `[build-dependencies]` 中以 `host-module = true` 写出的包 | 该条目同时作为插件的 `[dependencies]`（`plugin-imports-from-build-dependencies`） | mcpp 2027.1 |
 
-规则在自己的 `[build-dependencies]` 里声明所需之物，并可以 import 其中标了
-`host-module = true` 的条目：
-
-```toml
-# inside the rule package's manifest
-[build-dependencies]
-globbing = { path = "../globbing", host-module = true }
-```
-
-```cpp
-// the rule's own interface
-export module tidyrule;
-import std;
-import mcpp;
-import globbing;
-```
-
-mcpp 先编译内层规则，同一条命令、同一套 flag，因此 BMI 的一致性仍是结构性事实而不是
-需要事后校验的性质。
-
-消费者**不可以** import `globbing`：构建期的 provision 只在 `reexport = true` 的边上
-再跨一跳，而 mcpp 自己执行这条规则，不交给编译器 —— 在 GCC 上那个 import 会成功，
-然后在别人的机器上失败。
-
-*限制：* 每个 host 模块只有一个接口单元。带实现单元或多个模块的库还不能作为规则的
-构建期依赖。
+每次使用在清单可编辑处给出警告，`mcpp why compat` 列出所有使用。
 
 ### `reexport = true` —— 由库替用户拉起整条工具链（2026.8.6.2+）
 

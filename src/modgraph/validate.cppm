@@ -96,8 +96,11 @@ ValidateReport validate(const Graph&                    g,
     if (!manifest.modules.exports_.empty()) {
         std::set<std::string> declared(manifest.modules.exports_.begin(),
                                        manifest.modules.exports_.end());
-        const auto iface = library_interface(g, manifest, projectRoot,
-                                             manifest.package.name, {});
+        // The name the scan records on the package's units.
+        const auto unitsName = manifest.package.namespace_.empty()
+            ? manifest.package.name
+            : manifest.package.namespace_ + "." + manifest.package.name;
+        const auto iface = library_interface(g, manifest, projectRoot, unitsName, {});
         for (auto& m : iface.publicModules) {
             if (!declared.contains(m)) {
                 r.errors.push_back({{},

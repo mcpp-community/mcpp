@@ -271,7 +271,8 @@ mcpp self env --format json
   "config":      "/home/u/.mcpp/config.toml",
   "buildCache":  "/home/u/.mcpp/build-cache/v1",
   "mcppVersion": "2026.8.8.3",
-  "defaultToolchain": "gcc@16.1.0"   // 2026.9.28.2+
+  "defaultToolchain": "gcc@16.1.0",  // 2026.9.28.2+
+  "engineModules": "/home/u/.mcpp/engine/2026.10.11.1/modules"   // 2026.10.11.1+
 }
 ```
 
@@ -349,6 +350,23 @@ mcpp why sources|tool <name>|payload <ns:name> --format json
 
 每次构建把同一份记录写入
 `target/<triple>/<fingerprint>/resolution.json` 的 `sources`。
+
+### `mcpp.why.build-programs` 与 `mcpp.why.compat` *(mcpp 2026.10.11.1+)*
+
+```
+mcpp why build-programs --format json
+mcpp why compat --format json
+```
+
+两者都像 `mcpp why` 一样准备构建并报告它记录的内容；`data` 带 `status`（`ok` 或 `refused`），以及：
+
+| kind | 字段 | 内容 |
+|---|---|---|
+| `mcpp.why.build-programs` | `graphs[]` | 每张构建程序图一项：`workspace`（其目录）与 `programs[]`，每个程序为 `{member, package, source, libraries[], identity, binary}` |
+| `mcpp.why.compat` | `uses[]` | 每次使用弃用读法一项：`{id, where, detail, warned, since, floor, canonical, docs}`；在构建不编辑的清单中 `warned` 为 false |
+
+`mcpp.env` 的 `engineModules` 是本版本 mcpp 的引擎接口包的目录，构建程序图依赖它（30 ——
+`build.mcpp`）；第一次编译构建程序之后它才存在。
 
 ### `mcpp.toolchain.list` —— 已安装的工具链，以及这台宿主能服务的目标
 

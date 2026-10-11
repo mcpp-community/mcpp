@@ -1129,9 +1129,25 @@ path = "src/capi/lua.cppm"    # Override the default lib-root location
 
 Default convention: `src/<last segment of package name>.cppm` (e.g. package name `mcpplibs.cmdline` → `src/cmdline.cppm`).
 `path` is the only key of the table; any other key is reported, as in `[build]`
-(mcpp 2026.9.28.3+). The lib root is the interface root of SPEC-008: the module a
-packed library publishes, with what it re-exports, and the module a build
-program imports from a host-module dependency.
+(mcpp 2026.9.28.3+). The lib root is the interface root of SPEC-008, and it states
+what the library offers to every consumer alike (mcpp 2026.10.11.1+): its module
+and what that module re-exports with `export import`, together with the
+interface units an enabled feature adds, are the **public modules**. A target that
+imports the library, a build program that uses it from `[build-dependencies]`,
+and `mcpp pack` read the same set; a module that is exported and not public draws
+a warning (SPEC-008 W3). A package without a lib root states no interface, and
+every module it exports is public.
+
+A path that `[lib] path` states and that names no file is an error in the
+package's own build and a warning where the package is a dependency. A Form B
+descriptor states the same thing as `lib = "<path>"` beside `sources`, relative to
+the version directory, `*/` standing for the archive's wrapping directory.
+
+`[modules] exports` (a Form B descriptor's `modules = { ... }`) lists the public
+modules as an assertion: in the package's own build, a public module it does not
+list is an error, and with `[modules] strict = true` so is a listed name that is
+not public. It does not choose the interface root.
+
 ### 2.5 `[dependencies]`, `[dev-dependencies]`, `[build-dependencies]`
 
 Moved to [05 — Dependencies and Resolution](05-dependencies.md).
@@ -1481,12 +1497,12 @@ What is **not** cached: `path` and `git` dependencies, at any depth, and
 workspace members. Their sources can change without their `name@version`
 changing, so no key over that identity could notice the change.
 
-The modules a build program imports follow the same rule (2026.10.1.1+). The
-bundled `mcpp` module and the host modules of index packages are kept in the
-global cache, and a host module of a `path` or `git` dependency or of a workspace
-member is kept under `target/.build-mcpp/host-modules/`, never in the global
-cache. `--cache local` and `--cache off` keep all of them in the project. See
-[30 — Placement of compiled host modules](30-build-mcpp.md).
+The libraries a build program imports follow the same rule (2026.10.11.1+). The
+engine interface (`mcpp.core`) and index packages are kept in the global cache;
+a `path` or `git` package or a workspace member is compiled in the build
+programs' graph under `target/.build-mcpp/host/`, never in the global cache.
+`--cache local` and `--cache off` keep all of them in the project. See
+[30 — The build programs' graph](30-build-mcpp.md).
 
 Inspection and reclamation:
 

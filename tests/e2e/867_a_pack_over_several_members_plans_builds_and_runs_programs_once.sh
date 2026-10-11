@@ -192,12 +192,12 @@ echo "ok: B, each member's tree and distributable are those of mcpp pack -p <mem
 # ── C ────────────────────────────────────────────────────────────────────────
 rm -rf target core/target cli/target gui/target
 "$MCPP" build --workspace --release > c-build.log 2>&1 || fail "C: the workspace did not build" c-build.log
-dirs=$(find target -name build.ninja -exec dirname {} \;)
+dirs=$(find target -name build.ninja -not -path '*/.build-mcpp/*' -exec dirname {} \;)
 [ "$(echo "$dirs" | wc -l | tr -d ' ')" = 1 ] || fail "C: expected one build directory, got: $dirs" c-build.log
 before=$(objects "$dirs")
 [ "$before" -gt 0 ] || fail "C: the build compiled nothing" "$dirs/.ninja_log"
 "$MCPP" pack --workspace --format zap > c-pack.log 2>&1 || fail "C: the pack failed" c-pack.log
-[ "$(find target -name build.ninja | wc -l | tr -d ' ')" = 1 ] || fail "C: the pack used another build directory" c-pack.log
+[ "$(find target -name build.ninja -not -path '*/.build-mcpp/*' | wc -l | tr -d ' ')" = 1 ] || fail "C: the pack used another build directory" c-pack.log
 after=$(objects "$dirs")
 [ "$after" = "$before" ] || fail "C: the pack compiled $((after - before)) object(s) after the build" "$dirs/.ninja_log" c-pack.log
 echo "ok: C, after a build of the workspace the pack compiles nothing"

@@ -76,11 +76,6 @@ std::string override_env_var(std::string_view key) {
     return out;
 }
 
-bool names_a_file_path(std::string_view v) {
-    return v.contains('/') || v.contains('\\') || v.starts_with(".")
-        || (v.size() > 1 && v[1] == ':');
-}
-
 // The root a program implies: its directory, or that directory's parent when
 // it is a `bin/` -- so `<root>/bin/<program>`, the layout every payload
 // plugin already reads, holds for `/usr/bin/cmake` as it does for a payload.
@@ -91,6 +86,11 @@ fs::path root_of_program(const fs::path& program) {
 }
 
 } // namespace
+
+bool names_a_file_path(std::string_view v) {
+    return v.contains('/') || v.contains('\\') || v.starts_with(".")
+        || (v.size() > 1 && v[1] == ':');
+}
 
 std::string source_tag(const SourceDecision& d, const fs::path& relativeTo) {
     const auto cls = std::string(source_class_name(d.cls));

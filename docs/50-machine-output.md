@@ -308,7 +308,8 @@ mcpp self env --format json
   "config":      "/home/u/.mcpp/config.toml",
   "buildCache":  "/home/u/.mcpp/build-cache/v1",
   "mcppVersion": "2026.8.8.3",
-  "defaultToolchain": "gcc@16.1.0"   // 2026.9.28.2+
+  "defaultToolchain": "gcc@16.1.0",  // 2026.9.28.2+
+  "engineModules": "/home/u/.mcpp/engine/2026.10.11.1/modules"   // 2026.10.11.1+
 }
 ```
 
@@ -388,6 +389,25 @@ Each entry is `{subject, value, class, origin, decidedFor, considered[]}`:
 
 Every build writes the same record into
 `target/<triple>/<fingerprint>/resolution.json` under `sources`.
+
+### `mcpp.why.build-programs` and `mcpp.why.compat` *(mcpp 2026.10.11.1+)*
+
+```
+mcpp why build-programs --format json
+mcpp why compat --format json
+```
+
+Both prepare the build as `mcpp why` does and report what it recorded; `data`
+carries `status` (`ok` or `refused`) and:
+
+| kind | field | content |
+|---|---|---|
+| `mcpp.why.build-programs` | `graphs[]` | one entry per build programs' graph: `workspace` (its directory) and `programs[]`, each `{member, package, source, libraries[], identity, binary}` |
+| `mcpp.why.compat` | `uses[]` | one entry per use of a deprecated reading: `{id, where, detail, warned, since, floor, canonical, docs}`; `warned` is false in a manifest the build does not edit |
+
+`engineModules` in `mcpp.env` is the directory of the engine interface package
+of this mcpp version, which a build program's graph depends on (30 —
+`build.mcpp`); it exists once a build program has been compiled.
 
 ### `mcpp.toolchain.list` — the installed toolchains and the targets this host serves
 

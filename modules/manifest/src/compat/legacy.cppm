@@ -1,8 +1,8 @@
 // mcpp.pm.compat.legacy - legacy dependency-key compatibility.
 //
 // COMPAT: This module exists only to keep pre-namespace dependency syntax
-// working during migration. It is slated for removal in mcpp 1.0.0.
-// TODO(mcpp 1.0.0): remove this module and the legacy dotted-key parser.
+// working during migration: COMPAT(internal:legacy-dotted-keys), which no
+// deprecation registry row schedules yet.
 //
 // Deprecated:
 //

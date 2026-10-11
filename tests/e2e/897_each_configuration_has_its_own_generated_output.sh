@@ -69,7 +69,7 @@ done
 # Each configuration directory: what its binary prints, and what its outDir's
 # generated file says. They must agree, and the two must be dev and release.
 seen=""
-for r in $(find target -name resolution.json); do
+for r in $(find target -name resolution.json -not -path '*/.build-mcpp/*'); do
     d=$(dirname "$r")
     out=$(outdir "$d")
     [ -n "$out" ] || fail "resolution.json records no outDir: $r"

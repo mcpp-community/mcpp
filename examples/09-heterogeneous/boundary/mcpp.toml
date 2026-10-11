@@ -6,9 +6,9 @@ version = "0.1.0"
 standard = "c++23"
 
 # `tools-island` is not a device rule: it claims no extension and names no rule
-# module, so the edge states `host-module = true` itself.
+# module. A [build-dependencies] entry asks for the library all the same.
 [build-dependencies.mcpp]
-plugins = { version = "0.5.2", features = ["tools-island"], host-module = true }
+plugins = { version = "0.5.2", features = ["tools-island"] }
 
 [build]
 sources = ["src/*.cpp", "src/kernels/**/*.c"]

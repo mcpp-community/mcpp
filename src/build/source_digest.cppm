@@ -14,6 +14,12 @@
 // ninja's own assumption. A file whose stat moved is read again, so a touched
 // file whose bytes did not change leaves the digest as it was.
 //
+// A RACILY CLEAN FILE IS READ AGAIN (git's rule). A file written in the same
+// timestamp tick as the walk that recorded it can be written again in that
+// tick with the same size, and its stat does not move. A row whose mtime is
+// not at least `kSettled` older than the walk that recorded it is therefore
+// recorded without a hash, and the next walk reads the file.
+//
 // WHAT IS WALKED. Every regular file below the root, except `target`, `.git`
 // and `.mcpp`, and except a subdirectory holding its own `mcpp.toml`: that is
 // another package (a workspace member), with its own digest where something
@@ -39,6 +45,10 @@ namespace mcpp::build {
 namespace fs = std::filesystem;
 
 namespace {
+
+// Coarser than the timestamp granularity of every file system mcpp builds on
+// (FAT's is two seconds).
+constexpr auto kSettled = std::chrono::seconds(3);
 
 struct Row {
     std::uintmax_t size = 0;
@@ -94,8 +104,8 @@ std::string source_tree_digest(const fs::path& root, const fs::path& statCache) 
         r.size = it->file_size(tec);
         r.mtime = static_cast<long long>(
             it->last_write_time(tec).time_since_epoch().count());
-        if (auto p = previous.find(rel);
-            p != previous.end() && p->second.size == r.size && p->second.mtime == r.mtime) {
+        if (auto p = previous.find(rel); p != previous.end() && !p->second.hash.empty()
+                                         && p->second.size == r.size && p->second.mtime == r.mtime) {
             r.hash = p->second.hash;
         } else {
             r.hash = mcpp::toolchain::hash_file(it->path());
@@ -108,6 +118,12 @@ std::string source_tree_digest(const fs::path& root, const fs::path& statCache) 
     std::string text;
     for (auto const& [rel, r] : now) text += std::format("{}\t{}\n", rel, r.hash);
     const auto digest = mcpp::toolchain::hash_string(text);
+
+    // The rows a later walk may trust: those settled before this one.
+    const auto settled = static_cast<long long>(
+        (fs::file_time_type::clock::now() - kSettled).time_since_epoch().count());
+    for (auto& [rel, r] : now)
+        if (r.mtime > settled) { r.hash.clear(); moved = true; }
 
     if (moved && !statCache.empty()) {
         fs::create_directories(statCache.parent_path(), ec);

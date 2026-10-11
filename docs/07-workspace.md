@@ -126,6 +126,24 @@ mbedtls.workspace = true    # inherits version → "3.6.1"
 gtest.workspace = true      # inherits version → "1.15.2"
 ```
 
+The features an entry of `[workspace.dependencies]` requests are inherited
+with its source, ahead of the member's own; `default-features` is the
+member's when it states one (mcpp 2026.10.11.1+). The other requests of an
+edge -- `host-module`, `tools`, `artifacts`, `reexport`, `visibility`,
+`linkage` -- belong to the member's own entry, because one workspace entry may
+be inherited into `[dependencies]` and into `[build-dependencies]`, where they
+mean different things; written in `[workspace.dependencies]` each is warned
+about, and `--strict` refuses it.
+
+```toml
+[workspace.dependencies]
+hl = { path = "libs/hl", features = ["x"] }
+
+# member mcpp.toml
+[dependencies]
+hl = { workspace = true, features = ["y"] }    # requests x and y
+```
+
 A member can override an inherited version:
 
 ```toml
@@ -208,7 +226,12 @@ them where it is the root of a build: built from the workspace, with `-p`, or as
 a host tool of another package. A member reached as a dependency takes them
 from that build's root. The rows of `[workspace.target.<selector>]` --
 `.build`, `.abi`, `.runtime`, `.xlings.workspace` -- and `[workspace.xlings]`
-reach a member in every position (§4.1).
+reach a member in every position (§4.1). `[workspace.xlings.overrides]` --
+where a payload comes from on this machine -- is a table of the build's root,
+like `[workspace.toolchain]`: a member takes it where it is the root of a build,
+and a member reached as a dependency does not (mcpp 2026.10.11.1+; before that
+release a member reached as a dependency received it and was refused for
+stating an override).
 
 A conditional row counts as it evaluates for the target being built: a
 `dialect_cxxflags` or `.abi` row for another target does not separate a member
@@ -235,14 +258,19 @@ name replaces the root's whole, and `[indices]` reaches only a member that
 declares none. Each use prints a `manifest/workspace-position` warning with the
 `[workspace.X]` spelling; on a root with `[package]` the tables are the root
 package's own and the warning appears only for a member that received a value
-from them. This reading is removed in mcpp 1.0.0. On a root without
+from them, and for a member reached as a dependency only when the build's root
+lies outside the workspace (the root's own build already holds the entries).
+The reading is deprecated since mcpp 2026.10.10.1 and removed from mcpp 2027.1
+(`workspace-position`, 51 — Supported Versions). On a root without
 `[package]`, writing a table both ways is refused.
 
 **A root without `[package]` holds no package.** `[build]`, `[targets]`,
 `[dependencies]`, `[features]`, `[resources]`, `[test]`, `[hooks]`, `[runtime]`
 and a selector's `.build`, `.abi`, `.runtime`, `.targets` and `.dependencies`
 written there act on nothing; each prints a warning naming the shared spelling
-where there is one, and `--strict` refuses.
+where there is one, and `--strict` refuses. A `build.mcpp` beside such a root
+belongs to no package and does not run; it is reported the same way
+(mcpp 2026.10.11.1+).
 
 ### 4.1 `[workspace.package]` and `[workspace.build]`
 
@@ -352,7 +380,7 @@ two kinds of tables:
 | Tables | Owner | Effect on the root package | Effect on other members |
 |---|---|---|---|
 | `[workspace]` and every `[workspace.X]` | the workspace | received, its own declarations first | received; `[workspace.dependencies]` through `x.workspace = true` |
-| every other table (`[package]`, `[build]`, `[toolchain]`, `[target.<selector>]`, `[profile.<name>]`, ...) | the root package | its own | none (the position reading above excepted, until 1.0.0) |
+| every other table (`[package]`, `[build]`, `[toolchain]`, `[target.<selector>]`, `[profile.<name>]`, ...) | the root package | its own | none (the position reading above excepted, until mcpp 2027.1) |
 
 The root package's `[build] ldflags` are its own as well: they reach its own
 images, and neither the members' images nor a dependency's shared library.
@@ -678,9 +706,10 @@ myproject/
 - `mcpp.lock` at the workspace root records the resolution of every member.
   `mcpp build --workspace` writes the whole record; `mcpp build -p X` updates
   the entries of X's graph.
-- A member's build program writes to `<member>/target/.build-mcpp/`. The host
-  modules the programs import are compiled into the workspace's own
-  `target/.build-mcpp/host-modules/`, once for all of them.
+- A member's build program writes to `<member>/target/.build-mcpp/`. The
+  members' build programs are compiled in the workspace's build programs'
+  graph, `target/.build-mcpp/host/`, and a library several of them import is
+  compiled once.
 - Build directories a member held under its own `target/` with an earlier mcpp
   are not read; `mcpp clean --stale` removes them.
 

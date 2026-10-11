@@ -39,7 +39,9 @@ behind a linter costs more than it saves, and a failing check fails the build
 either way; `blocking = true` is for the case where a failure means the compile
 was wasted.
 
-**`rules-tidy` depends on `rules-embed`** through its own
-`[build-dependencies]`, which is what lets one rule reuse another instead of
-copying it. The consumer cannot import `rules-embed` through that edge — build
-time provisions cross one further edge only when the edge says `reexport`.
+**`rules-tidy` depends on `rules-embed`** through its own `[dependencies]`,
+which is what lets one rule reuse another instead of copying it: the library of
+a build plugin imports what its dependencies provide, and they are compiled
+with it for each build program that uses it. The consumer's `build.mcpp`
+imports `rules-embed` as well, so the consumer names it in its own
+`[build-dependencies]`.

@@ -93,7 +93,7 @@ done
 
 runs() { find . -name runs.log -exec cat {} + | wc -l | tr -d ' '; }
 core_edges() { awk -F'\t' '$4 ~ /(^|\/)obj\/core\/src\/core\.m\.o$/' "$1/.ninja_log" | wc -l | tr -d ' '; }
-build_dir() { find target -name build.ninja -exec dirname {} \; | head -1; }
+build_dir() { find target -name build.ninja -not -path '*/.build-mcpp/*' -exec dirname {} \; | head -1; }
 reset() { rm -rf target core/target a/target b/target; }
 
 # ── F ──────────────────────────────────────────────────────────────────────
@@ -105,7 +105,7 @@ grep -q "Workspace building 2 members: a, b" f.log || fail "F: the plan does not
 grep -q "member 'a' (2/3) ok — 1 passed" f.log && grep -q "member 'b' (3/3) ok — 1 passed" f.log \
     || fail "F: a and b did not both run their test" f.log
 grep -q "workspace result ok. 3 member(s); 2 passed" f.log || fail "F: the workspace result is not that of the two tests" f.log
-[ "$(find target -name build.ninja | wc -l | tr -d ' ')" = 1 ] || fail "F: the members were built in more than one directory" f.log
+[ "$(find target -name build.ninja -not -path '*/.build-mcpp/*' | wc -l | tr -d ' ')" = 1 ] || fail "F: the members were built in more than one directory" f.log
 [ "$(core_edges "$(build_dir)")" = 1 ] || fail "F: core was compiled more than once" "$(build_dir)/.ninja_log"
 echo "ok: F, the members' shared build program ran once, in one plan, and each member's tests ran"
 

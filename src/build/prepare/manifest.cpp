@@ -170,6 +170,12 @@ report_workspace_root(const mcpp::manifest::Manifest& ws, const std::filesystem:
         if (strict) return std::unexpected(w);
         mcpp::diag::warning("manifest/schema", w);
     }
+    // The root's own statements, its layer's among them: a build of members
+    // reads this manifest as much as theirs (mcpp#797, W2).
+    for (auto const& w : ws.schemaWarnings) {
+        if (strict) return std::unexpected(w);
+        mcpp::diag::warning("manifest/schema", w);
+    }
     if (ws.package.name.empty()) {
         std::error_code ec;
         if (std::filesystem::is_regular_file(wsRoot / "build.mcpp", ec)) {

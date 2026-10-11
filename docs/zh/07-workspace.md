@@ -129,6 +129,21 @@ mbedtls.workspace = true    # 继承版本 → "3.6.1"
 gtest.workspace = true      # 继承版本 → "1.15.2"
 ```
 
+`[workspace.dependencies]` 条目请求的特性随其来源一起继承，排在成员自己的特性之前；
+成员写出 `default-features` 时以成员为准（mcpp 2026.10.11.1+）。边上的其余请求——
+`host-module`、`tools`、`artifacts`、`reexport`、`visibility`、`linkage`——属于成员自己的
+条目，因为同一个工作空间条目可以被继承进 `[dependencies]` 与 `[build-dependencies]`，
+两处含义不同；写在 `[workspace.dependencies]` 中时逐个给出警告，`--strict` 下拒绝。
+
+```toml
+[workspace.dependencies]
+hl = { path = "libs/hl", features = ["x"] }
+
+# 成员 mcpp.toml
+[dependencies]
+hl = { workspace = true, features = ["y"] }    # 请求 x 与 y
+```
+
 成员可以覆盖继承来的版本：
 
 ```toml
@@ -203,7 +218,9 @@ default = "llvm@23.1.3"
 成员在作为一次构建的根时接收它们：从工作空间构建、以 `-p` 选中，或作为另一个包的宿主工具
 构建。作为依赖到达的成员从该次构建的根取得它们。`[workspace.target.<selector>]` 的各行
 （`.build`、`.abi`、`.runtime`、`.xlings.workspace`）与 `[workspace.xlings]` 在每种位置
-都到达成员（§4.1）。
+都到达成员（§4.1）。`[workspace.xlings.overrides]`（载荷在这台机器上从哪里来）与
+`[workspace.toolchain]` 一样属于构建的根：成员作为一次构建的根时接收它，作为依赖到达时
+不接收（mcpp 2026.10.11.1+；此前作为依赖到达的成员会收到它，随后因声明了 override 被拒绝）。
 
 条件行按所构建的目标求值后计入：其他目标上的 `dialect_cxxflags` 或 `.abi` 行不会把成员与
 其他成员分开（§5.4）；对当前目标成立的行，在成员于工作空间的根下构建时生效。
@@ -223,13 +240,16 @@ default = "llvm@23.1.3"
 `[toolchain]` 整体替换根的，成员同名的行或配置档整体替换根的，`[indices]` 只到达未声明
 任何索引的成员。每次使用打印一条 `manifest/workspace-position` 警告，并给出
 `[workspace.X]` 写法；在带 `[package]` 的根上，这些表首先属于根包，警告只对确实经由它们
-得到值的成员给出。这种读法在 mcpp 1.0.0 移除。在不带 `[package]` 的根上，同一张表两种写法
+得到值的成员给出；对作为依赖到达的成员，只在构建的根位于该工作空间之外时给出（根自己的构建
+已经包含这些条目）。该读法自 mcpp 2026.10.10.1 弃用，自 mcpp 2027.1 移除
+（`workspace-position`，51 —— 支持的版本）。在不带 `[package]` 的根上，同一张表两种写法
 并存会被拒绝。
 
 **不带 `[package]` 的根上没有包。** 写在那里的 `[build]`、`[targets]`、`[dependencies]`、
 `[features]`、`[resources]`、`[test]`、`[hooks]`、`[runtime]`，以及选择器的 `.build`、
 `.abi`、`.runtime`、`.targets`、`.dependencies` 不作用于任何包；每张表打印一条警告，有共享
-写法时一并给出，`--strict` 下拒绝。
+写法时一并给出，`--strict` 下拒绝。这样的根旁边的 `build.mcpp` 不属于任何包，不会运行，
+以同样的方式报告（mcpp 2026.10.11.1+）。
 
 ### 4.1 `[workspace.package]` 与 `[workspace.build]`
 
@@ -326,7 +346,7 @@ workspace 键。
 | 表 | 归属 | 对根包的作用 | 对其它成员的作用 |
 |---|---|---|---|
 | `[workspace]` 与每一张 `[workspace.X]` | 工作空间 | 接收，根包自己的声明优先 | 接收；`[workspace.dependencies]` 通过 `x.workspace = true` |
-| 其余每一张表（`[package]`、`[build]`、`[toolchain]`、`[target.<selector>]`、`[profile.<name>]`……） | 根包 | 本身的值 | 无（上文的按位置读取除外，直到 1.0.0） |
+| 其余每一张表（`[package]`、`[build]`、`[toolchain]`、`[target.<selector>]`、`[profile.<name>]`……） | 根包 | 本身的值 | 无（上文的按位置读取除外，直到 mcpp 2027.1） |
 
 根包的 `[build] ldflags` 同样属于它自己：它们到达根包自己的镜像，不到达成员的镜像，
 也不到达依赖的共享库。
@@ -588,8 +608,8 @@ myproject/
 - 工作空间根的 `compile_commands.json` 覆盖所有已构建或已配置的成员。
 - 工作空间根的 `mcpp.lock` 记录全体成员的解析结果。`mcpp build --workspace` 写入完整记录；
   `mcpp build -p X` 更新 X 所在图中的条目。
-- 成员的构建程序写入 `<member>/target/.build-mcpp/`。各程序 import 的 host 模块编译进
-  workspace 自己的 `target/.build-mcpp/host-modules/`，为全体程序只编一次。
+- 成员的构建程序写入 `<member>/target/.build-mcpp/`。各成员的构建程序在 workspace 的构建程序图
+  `target/.build-mcpp/host/` 中编译，多个程序 import 的库只编一次。
 - 早期版本的 mcpp 在成员自己的 `target/` 下留下的构建目录不再被读取；`mcpp clean --stale`
   会删除它们。
 

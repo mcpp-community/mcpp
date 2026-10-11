@@ -462,7 +462,7 @@ default   = { path = "/opt/llvm-trunk" }
 bootstrap = "llvm@23.1.3"
 ```
 
-Build programs (`build.mcpp`), host tools and host modules are compiled and run
+Build programs (`build.mcpp`), their libraries and host tools are compiled and run
 on the machine doing the build. `bootstrap` names the toolchain that does that
 when it should not be the one building the project — a toolchain under
 development, say, which has to be able to fail without stopping the program that

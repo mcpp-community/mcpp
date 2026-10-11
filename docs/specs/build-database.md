@@ -4,12 +4,12 @@
 |---|---|
 | 规范编号 | SPEC-005 |
 | 标题 | mcpp 输出的构建数据库:内容、取值规则与不写工程目录的保证 |
-| 状态 | 评审中 v1.7 |
-| 版本 | 1.7 |
-| 最后修改 | 2026-09-30 |
-| 对应实现 | mcpp >= 2026.9.15.1;v1.3 修改的 R2.5、R3.7、R3.8、R4.1、R5.2 为 mcpp >= 2026.9.26.2;v1.4 修改的 R2.5 为 mcpp >= 2026.9.27.1;v1.5 修改的 R3.7、R3.12、R5.1、R5.2 为 mcpp >= 2026.9.28.1;v1.6 修改的 R2.1、R3.3、R3.4、R3.5、R4.1、R5.2 为 mcpp >= 2026.9.29.5;v1.7 新增的 R3.8a 为 mcpp >= 2026.9.30.2 |
+| 状态 | 评审中 v1.8 |
+| 版本 | 1.8 |
+| 最后修改 | 2026-10-11 |
+| 对应实现 | mcpp >= 2026.9.15.1;v1.3 修改的 R2.5、R3.7、R3.8、R4.1、R5.2 为 mcpp >= 2026.9.26.2;v1.4 修改的 R2.5 为 mcpp >= 2026.9.27.1;v1.5 修改的 R3.7、R3.12、R5.1、R5.2 为 mcpp >= 2026.9.28.1;v1.6 修改的 R2.1、R3.3、R3.4、R3.5、R4.1、R5.2 为 mcpp >= 2026.9.29.5;v1.7 新增的 R3.8a 为 mcpp >= 2026.9.30.2;v1.8 新增的 R3.13 为 mcpp >= 2026.10.11.1 |
 | 相关设计文档 | `.agents/docs/2026-09-14-636-build-database-and-the-latest-xlings.md`<br>`.agents/docs/2026-09-26-compile-database-and-issue-699-design.md` |
-| 相关 issue | #636, #648, #655, #699, #702, #707, #732 |
+| 相关 issue | #636, #648, #655, #699, #702, #707, #732, #797 |
 | 依据的外部规范 | S1「C++ Build Database: IDE Profile」profile 0.3.0(§7.2 的 `generated`,Sunrisepeak/mcpp-language-server#28;此前为 0.2.0)与 S2 0.2.0 §3.4,取自 https://github.com/Sunrisepeak/lsp-mcpp-private 提交 `b82859d`(schema 自提交 `28ecd6e` 起未变);S2 0.3.0 §3.4 的部分回答(S2-3.4-12、S2-3.4-13,Sunrisepeak/mcpp-language-server#25);JSON Compilation Database |
 
 ## 0. 适用范围
@@ -183,6 +183,19 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
   (R2.5);由消费方决定是否在其用户同意时运行 `generator`。**已实现**
   (mcpp >= 2026.9.28.1,mcpp#724)
 
+### 3.6 构建程序
+
+- **R3.13** 计划中的构建程序由构建程序图编译(SPEC-004 §12),文档以保留的集合名描述该图的每个
+  单元:构建程序(`build.mcpp` 或合成的规则程序)归入 `<包>:build`,构建程序实例的库归入
+  `<包>:host`,引擎接口归入 `mcpp:core`,构建程序图的标准库模块归入 `mcpp:std:host`。`<包>:build`
+  的 `family-name` 是该包的名字。这些集合的 `ide.configuration` 为 `build-program`,`visible-sets` 只列出同一张图的集合;构建程序配置不计为
+  R3.3 的多个配置,不改变其余集合的名字。单元的 `arguments` 取自构建程序图计划中该单元的编译
+  记录,`.mcpp` 单元带有语言参数(GCC、Clang 为 `-x c++`)。`mcpp:core` 的单元提供 `mcpp` 与
+  `mcpp.core`,其 `source` 位于 `mcpp self env` 的 `engineModules` 目录。这些单元**禁止**进入
+  `--spec compile-commands` 的文档与 `mcpp build` 写出的 `compile_commands.json`:`build.mcpp` 与
+  引擎接口是 mcpp 生态内部的约定,由 mcppls 消费。构建程序全部新鲜时,命令仍规划构建程序图以描述
+  它,而不编译。**已实现**
+
 ## 4. `--spec compile-commands`
 
 - **R4.1** 文档为 `mcpp build --configure-only` 在同一组选择器下写入
@@ -247,3 +260,4 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 | 1.5 | 2026-09-28 | R3.7:规则声明的设备源不是编译单元,不进入 S1 与 `compile_commands.json`(#724)。新增 R3.12:集合的 `ide.generated` 列出规则生成的文件与目录,给出构建写入的路径与生成它的步骤,S1 0.3.0(#724,Sunrisepeak/mcpp-language-server#28)。R5.1:S1 版本为 0.3.0。R5.2:以构建程序的指令为前提的检查不对其构建程序已失败的包运行,失败路径保留已记录的说明(#724)。 |
 | 1.6 | 2026-09-29 | 工作区按配置规划,与 `mcpp build` 相同(R2.1、R3.3、R3.4、R5.2):成员共用的包在一个配置中只描述一次;集合名的前缀由 `<成员>/` 改为只在文档描述多个配置时出现的 `<配置>/`;一个配置的规划失败时逐成员规划。R3.5:被选成员的集合按其目标给出 `ide.kind`。R4.1:同一文件与输出一条条目。 |
 | 1.7 | 2026-09-30 | 新增 R3.8a:同一配置中两个包提供同一个模块名时,两个单元都列出它,可能导入它的单元的 `arguments` 带有构建所用的绑定(#732)。 |
+| 1.8 | 2026-10-11 | 新增 R3.13:构建程序、构建程序实例的库与引擎接口以 `<包>:build`、`<包>:host`、`mcpp:core`、`mcpp:std:host` 集合描述,`ide.configuration` 为 `build-program`,只进入 S1 文档(#797)。 |

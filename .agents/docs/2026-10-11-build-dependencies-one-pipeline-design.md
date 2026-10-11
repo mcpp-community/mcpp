@@ -727,3 +727,18 @@ mcpp-index、mcpp-plugins 各一个 PR（发布之后）；mcppls 一个 issue�
 关键路径是 T3 → T4 → T7 → T8/T9/T10 → T11。T1、T2、T5、T6 与关键路径并行。
 宿主图的合成工作空间**写到磁盘**（修订 3 写作"不落盘"）：它由引擎生成，落盘之后可以在该目录直接运行
 `mcpp build` 复现宿主图的构建，这是可观测性要求的一部分；内容不变时不重写，ninja 保持增量。
+
+## 21. 实施记录（实现中确定的细节）
+
+| 项 | 结论 |
+|---|---|
+| 宿主图目录的自描述 | 目录中写 `.mcpp-build-programs`（`toolchain=`、`profile=`、`pin=`、`index-store=`），`prepare_build` 在其所在目录读取它，使 `cd <dir> && mcpp build` 与子构建得到相同的覆盖项 |
+| 宿主图的 `[xlings.overrides]` | 构建根生效的 overrides 写入合成工作空间的 `[workspace.xlings.overrides]`（相对路径改为绝对路径），子构建以同一来源声明供给宿主图中的包所声明的载荷（e2e 873） |
+| 项目级 index 存储 | 自定义 index 的包装在发起构建的项目的 `.mcpp/` 中；子构建以 `BuildOverrides::project_index_root` 指向它，不在宿主图目录重新安装（e2e 858 E） |
+| `plugin-imports-from-build-dependencies` | 判据是两包的源码（插件库 import 的模块由 `[build-dependencies]` 中 `host-module = true` 的包声明），在 phase 6 的 `step6_compat_library_edges` 中改写为普通边并写入清单的 `[dependencies]`，使链接闭包包含它；与读取它的图无关 |
+| 可编辑的包 | 兼容读法的警告给"不在包存储（index 存储、`$MCPP_HOME`）中的包"，`path` 依赖无论位置都算可编辑（与 Cargo 对 lint 的划分一致） |
+| 失败报告的确定性 | 一次构建的全部程序先在宿主图中一次编译；失败时各程序按运行顺序单独请求自己的二进制，报告的是运行顺序中第一个失败的程序（e2e 860 C） |
+| 虚拟根的 overrides | `virtual_workspace_root` 原本没有从首个成员复制 `xlings.overrides`，`[workspace.xlings.overrides]` 在不带 `[package]` 的根上不生效；本 PR 修正（e2e 911 V） |
+| 工作空间根的 schema 警告 | 不带 `[package]` 的根在成员构建时其 `schemaWarnings`（含层表与 W2 的请求键）此前不报告；`report_workspace_root` 报告它们 |
+| 文件长度 | `graph.cpp` 的查询闭包拆到 `graph_closures.cpp`（P4b 的阶段边界） |
+| 本机限制 | 代理会话运行在 xlings 沙箱 subos 中，`xlings self init` 被拒绝，依赖全新 `MCPP_HOME` 的 e2e（618、622、625、627–630、657、669、686、737、779、790、884 等）在本机与基线二进制同样失败；它们由 CI 验证 |

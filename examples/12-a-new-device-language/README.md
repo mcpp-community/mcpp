@@ -122,13 +122,13 @@ device_extensions = [".toy"]
 | key | effect |
 |---|---|
 | `device_extensions` | a consumer that activates the feature gets `.toy` classified as a **device source**: never scanned for imports, never producing a BMI, and refused if no action claims it |
-| `rule_module` | the module the consumer's build program imports. It implies `host-module = true`, so the consumer writes the feature and nothing else |
+| `rule_module` | the module the consumer's build program imports; one of the feature's units declares it. Requesting the feature asks for the package's library, so the consumer writes the feature and nothing else |
 
 Device extensions are not in the default source glob. A `.toy` is compiled
 because the manifest names it:
 
 ```toml
-[dependencies]
+[build-dependencies]
 example.rules-toy = { path = "../rules-toy", features = ["rules-toy"] }
 
 [build]
@@ -159,8 +159,9 @@ That gating was measured. With `features = ["rules-toy"]` removed from the
 consumer, the build stops before any tool is built:
 
 ```
-error: build.mcpp imports 'example.rules.toy', and no dependency provides it as a host module.
-       declared without `host-module = true`: rules-toy (in [dependencies])
+error: build.mcpp imports 'example.rules.toy'
+  provided by: example.rules-toy, feature "rules-toy" (not enabled)
+  hint: enable it on the dependency edge: example.rules-toy = { ..., features = ["rules-toy"] }
 ```
 
 and the tool store holds no `toyc` entry afterwards.

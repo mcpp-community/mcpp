@@ -101,6 +101,71 @@ aggregatedRequest(PrepareState& state, std::size_t depPkgIndex, Instance instanc
             return { std::move(feats), anyEdge ? anyDefault : true };
 }
 
+// COMPAT(plugin-imports-from-build-dependencies). Before mcpp#797 a build
+// plugin's library was compiled inside its consumer's build program, so a
+// package it listed in its own `[build-dependencies]` with `host-module = true`
+// was importable from the library as well. In the new model a library's
+// dependencies are its `[dependencies]`: where the plugin's library imports a
+// module that entry provides, the entry is read as a dependency too -- an
+// ordinary edge, and an entry of the manifest's `[dependencies]`, which the
+// link closure follows. The condition is a fact of the two packages' sources,
+// so the reading is the same in every graph that loads them.
+static void step6_compat_library_edges(PrepareState& state) {
+    auto declared = [&](std::size_t d) {
+        std::set<std::string> out;
+        for (auto const& f : mcpp::modgraph::package_source_files(state.packages[d].root,
+                                                                  state.packages[d].manifest)) {
+            std::ifstream in(f, std::ios::binary);
+            const std::string text{std::istreambuf_iterator<char>(in), {}};
+            for (auto& m : mcpp::pm::declared_module_roots(text)) out.insert(std::move(m));
+        }
+        return out;
+    };
+    auto imported = [&](std::size_t p) {
+        std::set<std::string> out;
+        for (auto const& f : mcpp::modgraph::package_source_files(state.packages[p].root,
+                                                                  state.packages[p].manifest)) {
+            std::ifstream in(f, std::ios::binary);
+            const std::string text{std::istreambuf_iterator<char>(in), {}};
+            for (auto& m : mcpp::pm::imported_module_names(text)) out.insert(std::move(m));
+        }
+        return out;
+    };
+    std::vector<DependencyEdge> added;
+    for (auto const& r : state.graphRequests) {
+        const auto p = r.consumerPackageIndex, d = r.dependencyPackageIndex;
+        if (p == 0 || p >= state.packages.size() || d >= state.packages.size()) continue;
+        if (r.table.find("build-dependencies") == std::string::npos) continue;
+        auto& pm = state.packages[p].manifest;
+        auto spec = pm.buildDependencies.find(r.key);
+        if (spec == pm.buildDependencies.end() || !spec->second.hostModuleDeclared
+            || !spec->second.hostModule || pm.dependencies.contains(r.key))
+            continue;
+        const auto provides = declared(d);
+        const auto wants = imported(p);
+        if (std::ranges::none_of(wants, [&](auto const& m) { return provides.contains(m); }))
+            continue;
+        auto asDependency = spec->second;
+        asDependency.hostModule = false;
+        asDependency.hostModuleDeclared = false;
+        asDependency.declaredIn = "[dependencies]";
+        pm.dependencies.emplace(r.key, asDependency);
+        if (p - 1 < state.dep_manifests.size() && state.dep_manifests[p - 1])
+            state.dep_manifests[p - 1]->dependencies.emplace(r.key, asDependency);
+        for (auto const& e : state.dependencyEdges)
+            if (e.consumerPackageIndex == p && e.dependencyPackageIndex == d && e.buildTable) {
+                auto copy = e;
+                copy.buildTable = false;
+                copy.wantsLibrary = false;
+                added.push_back(std::move(copy));
+                break;
+            }
+        state.reportCompatUse("plugin-imports-from-build-dependencies", p,
+                              std::format("[build-dependencies] {}", r.key));
+    }
+    for (auto& e : added) state.dependencyEdges.push_back(std::move(e));
+}
+
 // WHICH INSTANCES EACH PACKAGE HAS (mcpp#797).
 //
 // A package has a target instance when a chain of ordinary edges reaches it
@@ -2038,6 +2103,7 @@ static std::expected<void, std::string> step6_capability_binding(PrepareState& s
 
 std::expected<void, std::string> phase6_features_and_host_tools(PrepareState& state) {
     step6_check_version_floors_closure(state);
+    step6_compat_library_edges(state);
     step6_instances(state);
 
     if (auto r = step6_activate_features(state); !r) return std::unexpected(r.error());

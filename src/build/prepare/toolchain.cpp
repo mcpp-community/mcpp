@@ -298,6 +298,9 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         if (auto c = state.get_cfg(true)) roots.push_back((*c)->xlingsHome() / "data" / "xpkgs");
         for (auto& d : mcpp::config::project_xlings_data_roots(state.workRoot))
             roots.push_back(d / "xpkgs");
+        if (!state.overrides.project_index_root.empty())
+            for (auto& d : mcpp::config::project_xlings_data_roots(state.overrides.project_index_root))
+                roots.push_back(d / "xpkgs");
         // The engine interface's package: written once per mcpp version and
         // never edited, like a payload (mcpp#797).
         roots.push_back(mcpp::build::engine::root());

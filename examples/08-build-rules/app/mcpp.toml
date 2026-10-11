@@ -3,7 +3,8 @@ name    = "app"
 version = "0.1.0"
 
 # Both rules are BUILD-time only: neither reaches this binary, and neither does
-# anything they depend on.
-[dependencies]
-example.rules-tidy  = { path = "../rules-tidy",  host-module = true }
-example.rules-embed = { path = "../rules-embed", host-module = true }
+# anything they depend on. A [build-dependencies] entry gives build.mcpp the
+# package's library.
+[build-dependencies]
+example.rules-tidy  = { path = "../rules-tidy" }
+example.rules-embed = { path = "../rules-embed" }

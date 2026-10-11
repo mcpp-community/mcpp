@@ -6803,3 +6803,35 @@ TEST(Manifest, TestWindowsCodePageIsAClosedSetOfTwo) {
     ASSERT_FALSE(bad.has_value());
     EXPECT_NE(bad.error().format().find("windows_code_page"), std::string::npos);
 }
+
+// A Form B descriptor states its interface root with `lib`, below the
+// archive's wrapping directory as its `sources` are (SPEC-008 v0.2, mcpp#797).
+TEST(SynthesizeFromXpkgLua, LibStatesTheInterfaceRootBelowTheWrappingDirectory) {
+    constexpr auto src = R"(
+package = {
+    spec = "1",
+    name = "tomlpp",
+    xpm  = { linux = { ["3.4.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        lib          = "*/modules/tomlplusplus.cppm",
+        sources      = { "*/modules/tomlplusplus.cppm" },
+        include_dirs = { "*/include" },
+        targets      = { ["tomlpp"] = { kind = "lib" } },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tomlpp", "3.4.0",
+                                                      mcpp::platform::HostPlatform::current());
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->lib.path.generic_string(), "*/modules/tomlplusplus.cppm");
+    EXPECT_TRUE(m->xpkgUnknownKeys.empty());
+
+    const auto root = std::filesystem::temp_directory_path()
+        / std::format("mcpp-lib-root-{}", std::random_device{}());
+    std::filesystem::create_directories(root / "tomlplusplus-3.4.0" / "modules");
+    std::ofstream(root / "tomlplusplus-3.4.0" / "modules" / "tomlplusplus.cppm") << "export module tomlpp;\n";
+    EXPECT_EQ(mcpp::manifest::resolve_lib_root_path(*m, root).generic_string(),
+              "tomlplusplus-3.4.0/modules/tomlplusplus.cppm");
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+}

@@ -81,7 +81,8 @@ inline std::string deprecation_clause(const Deprecation& d) {
 }
 
 // The `(year, month)` of a version or of a floor: the first two dot-separated
-// numbers. Both are CalVer, so their order is the order of these pairs.
+// numbers, a four-digit year and a month 1-12. Both are CalVer, so their order
+// is the order of these pairs; anything else (a SemVer string) has none.
 inline std::optional<std::pair<int, int>> calver_month(std::string_view v) {
     int parts[2] = {0, 0};
     for (int i = 0; i < 2; ++i) {
@@ -93,6 +94,7 @@ inline std::optional<std::pair<int, int>> calver_month(std::string_view v) {
         if (i == 0 && dot == std::string_view::npos) return std::nullopt;
         v = dot == std::string_view::npos ? std::string_view{} : v.substr(dot + 1);
     }
+    if (parts[0] < 1000 || parts[0] > 9999 || parts[1] < 1 || parts[1] > 12) return std::nullopt;
     return std::pair{parts[0], parts[1]};
 }
 

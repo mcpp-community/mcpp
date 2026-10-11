@@ -41,7 +41,7 @@ worth stating precisely.
 
 | Surface | Stability |
 |---|---|
-| `mcpp.toml` keys | Additive. An existing key keeps its meaning; an unrecognised key is reported, never silently ignored |
+| `mcpp.toml` keys | Additive. An existing key keeps its meaning; an unrecognised key is reported, never silently ignored. The exceptions are the deprecations below |
 | CLI commands and flags | Additive. A removed spelling is kept as an alias |
 | Machine output (`--message-format json`) | Versioned by `schemaVersion`; see [50](50-machine-output.md) |
 | `build.mcpp` directive protocol | Versioned; see `kProtocolVersion`. An engine refuses a program declaring a **higher** version rather than guessing |
@@ -54,6 +54,30 @@ have fails at the **compile** of the build program, not through a protocol
 error. The protocol number governs directives on the wire; the typed API is
 governed by which engine is installed. Both are stated here because the failure
 a package author sees depends on which one they crossed.
+
+## Deprecations
+
+A spelling or a reading of a manifest that is to be removed is deprecated
+first, and the exceptions to "an existing key keeps its meaning" are exactly
+the rows of this table (mcpp 2026.10.11.1+).
+
+- A deprecated spelling keeps working. Each use in a manifest the build can
+  edit (the root, a workspace member, a path package of the workspace) is
+  warned about, naming the spelling that replaces it, the release that
+  deprecated it and the release from which it is removed. `--strict` refuses
+  it. `mcpp why compat` lists every use, in dependencies too.
+- The removal is a CalVer month. At least two whole calendar months separate
+  the release that deprecates a reading and that month, and the reading is
+  removed in the first release of that month or later.
+- The table is generated from one registry in the engine
+  (`modules/manifest/src/compat/registry.cppm`); the engine's own tests fail
+  once a release reaches a row's month while the reading is still present.
+
+| Reading | Since | Removed from | Write instead |
+|---|---|---|---|
+| `workspace-position`: a workspace root's own `[toolchain]`, `[indices]`, `[profile.<name>]`, `[target.<triple>]` scalars or `[xlings]` reaching members by position | 2026.10.10.1 | 2027.1 | `[workspace.toolchain]`, `[workspace.indices]`, `[workspace.profile.<name>]`, `[workspace.target.<selector>]`, `[workspace.xlings]` |
+| `host-module-in-dependencies`: a `[dependencies]` entry asking for `host-module = true` or for a `rule_module` feature, read as a build dependency | 2026.10.11.1 | 2027.1 | the same entry in `[build-dependencies]` |
+| `plugin-imports-from-build-dependencies`: a build plugin's library importing a package it lists in its own `[build-dependencies]` with `host-module = true` | 2026.10.11.1 | 2027.1 | the package in the plugin's `[dependencies]` |
 
 ## Reproducing a build
 

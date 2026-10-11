@@ -93,7 +93,7 @@ saying it after the vocabulary grows.
 
 ```toml
 [build-dependencies.mcpp]
-plugins = { version = "0.5.2", features = ["rules-cuda", "rules-spirv"], host-module = true }
+plugins = { version = "0.5.2", features = ["rules-cuda", "rules-spirv"] }
 ```
 
 Two rules, in one build program, which is what an additive-backend package
@@ -106,6 +106,7 @@ action, naming the file.
 
 `[build-dependencies]`, not `[dependencies]`: a rule package's library must
 never reach the target while its rule is still wanted, which is the case
-docs/05 section 2.6.1 exists for. `host-module = true` says which build-time
-product is wanted; the section says whether the package reaches the target.
-Two axes, and a rule package answers "no" on the second.
+docs/05 section 2.6.1 exists for. The section says whether the package reaches
+the target; the entry says which build-time products are wanted, and an entry
+that names none asks for the library. Two axes, and a rule package answers "no"
+on the first.

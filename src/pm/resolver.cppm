@@ -74,7 +74,7 @@ try_merge_semver(std::string_view ns, std::string_view shortName,
                  const mcpp::pm::IndexRoute& route,
                  const mcpp::platform::PlatformKey& platform);
 
-// ─── Legacy overloads (COMPAT, remove in 1.0.0) ─────────────────────
+// ─── Legacy overloads (COMPAT(internal:legacy-resolver-api)) ─────────────────────
 
 std::expected<std::string, std::string>
 resolve_semver(std::string_view name,
@@ -287,7 +287,7 @@ try_merge_semver(std::string_view ns, std::string_view shortName,
     return resolve_semver(ns, shortName, merged, route, platform);
 }
 
-// ─── Legacy overloads (COMPAT, remove in 1.0.0) ─────────────────────
+// ─── Legacy overloads (COMPAT(internal:legacy-resolver-api)) ─────────────────────
 
 std::expected<std::string, std::string>
 resolve_semver(std::string_view name,

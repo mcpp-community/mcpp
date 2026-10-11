@@ -23,7 +23,8 @@ struct Edge {
     std::size_t consumerPackageIndex = 0;
     std::size_t dependencyPackageIndex = 0;
     std::vector<std::string> requestedTools;
-    bool hostModule = false;
+    bool buildTable = false;     // the edge is a [build-dependencies] entry
+    bool wantsLibrary = false;   // and it asks for the package's library
     bool reexport = false;
 };
 
@@ -67,7 +68,7 @@ TEST(Provisions, EveryKindAnswersBothQuestions) {
 
 TEST(Provisions, ToolIsVisibleToTheRequesterWithoutAnyReexport) {
     // 0=root, 1=protobuf.  root --tools=[protoc]--> protobuf
-    std::vector<Edge> edges{ { 0, 1, { "protoc" }, false, false } };
+    std::vector<Edge> edges{ { 0, 1, { "protoc" }, false, false, false } };
     auto p = prov::propagate(edges, 2);
     EXPECT_TRUE(sees_tool(p, 0, 1, "protoc"));
     // Nothing to export: the root has no consumers, and it never said it
@@ -78,8 +79,8 @@ TEST(Provisions, ToolIsVisibleToTheRequesterWithoutAnyReexport) {
 TEST(Provisions, WithoutReexportALibrarysToolStaysWithTheLibrary) {
     // 0=app, 1=lib, 2=protobuf.  app -> lib --tools=[protoc]--> protobuf
     std::vector<Edge> edges{
-        { 0, 1, {}, false, false },
-        { 1, 2, { "protoc" }, false, /*reexport=*/false },
+        { 0, 1, {}, false, false, false },
+        { 1, 2, { "protoc" }, false, false, /*reexport=*/false },
     };
     auto p = prov::propagate(edges, 3);
     EXPECT_TRUE(sees_tool(p, 1, 2, "protoc"));
@@ -91,8 +92,8 @@ TEST(Provisions, WithoutReexportALibrarysToolStaysWithTheLibrary) {
 
 TEST(Provisions, ReexportHandsTheToolToTheLibrarysConsumer) {
     std::vector<Edge> edges{
-        { 0, 1, {}, false, false },
-        { 1, 2, { "protoc" }, false, /*reexport=*/true },
+        { 0, 1, {}, false, false, false },
+        { 1, 2, { "protoc" }, false, false, /*reexport=*/true },
     };
     auto p = prov::propagate(edges, 3);
     EXPECT_TRUE(sees_tool(p, 0, 2, "protoc"));
@@ -103,9 +104,9 @@ TEST(Provisions, ReexportTravelsFurtherOnlyWhenEachHopSaysSo) {
     // 0=app, 1=mid, 2=lib, 3=protobuf.
     // lib re-exports protoc to mid; mid does NOT re-export to app.
     std::vector<Edge> edges{
-        { 0, 1, {}, false, /*reexport=*/false },
-        { 1, 2, {}, false, /*reexport=*/false },
-        { 2, 3, { "protoc" }, false, /*reexport=*/true },
+        { 0, 1, {}, false, false, /*reexport=*/false },
+        { 1, 2, {}, false, false, /*reexport=*/false },
+        { 2, 3, { "protoc" }, false, false, /*reexport=*/true },
     };
     auto p = prov::propagate(edges, 4);
     EXPECT_TRUE(sees_tool(p, 2, 3, "protoc"));
@@ -122,8 +123,8 @@ TEST(Provisions, ReexportTravelsFurtherOnlyWhenEachHopSaysSo) {
 
 TEST(Provisions, HostModuleFollowsTheSameRule) {
     std::vector<Edge> edges{
-        { 0, 1, {}, false, false },
-        { 1, 2, {}, /*hostModule=*/true, /*reexport=*/true },
+        { 0, 1, {}, false, false, false },
+        { 1, 2, {}, /*buildTable=*/true, /*wantsLibrary=*/true, /*reexport=*/true },
     };
     auto p = prov::propagate(edges, 3);
     const prov::Provision rule{ prov::Kind::HostModule, 2, {} };
@@ -135,9 +136,9 @@ TEST(Provisions, EveryEdgeExposesTheDependencyDirectory) {
     // dep_dir() has always worked for a DIRECT dependency without anyone
     // declaring anything; that stays true. Re-export is what extends it.
     std::vector<Edge> edges{
-        { 0, 1, {}, false, false },
-        { 1, 2, {}, false, /*reexport=*/true },
-        { 1, 3, {}, false, /*reexport=*/false },
+        { 0, 1, {}, false, false, false },
+        { 1, 2, {}, false, false, /*reexport=*/true },
+        { 1, 3, {}, false, false, /*reexport=*/false },
     };
     auto p = prov::propagate(edges, 4);
     EXPECT_TRUE(sees_dir(p, 0, 1));
@@ -150,8 +151,8 @@ TEST(Provisions, ACycleTerminates) {
     // Resolution should not produce one, but the fixpoint must not depend on
     // that: sets only grow and are bounded, so a cycle simply stops changing.
     std::vector<Edge> edges{
-        { 0, 1, { "a" }, false, true },
-        { 1, 0, { "b" }, false, true },
+        { 0, 1, { "a" }, false, false, true },
+        { 1, 0, { "b" }, false, false, true },
     };
     auto p = prov::propagate(edges, 2);
     EXPECT_TRUE(sees_tool(p, 0, 1, "a"));

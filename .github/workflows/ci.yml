@@ -134,6 +134,9 @@ jobs:
       - name: The key registry and the field reference agree
         run: python3 .github/tools/check_manifest_key_classes.py
 
+      - name: The deprecation registry, the code and docs/51 agree
+        run: python3 .github/tools/check_compat_registry.py
+
       - name: Documented target tiers agree with the table
         run: python3 .github/tools/check_target_tiers.py
 

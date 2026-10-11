@@ -22,6 +22,7 @@ import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.platform;
 import mcpp.log;
+import mcpp.project;
 import mcpp.ui;
 
 namespace mcpp::build {
@@ -43,6 +44,22 @@ std::vector<PlanNote> take_notes_on_failure() {
 }
 
 namespace {
+// `--strict` refuses a deprecated reading the build can edit (docs/51
+// §Deprecations): each was warned about where it was read, and is refused
+// here, after the phase that reads it, naming every use.
+std::expected<void, std::string> refuse_deprecated_readings_under_strict(const PrepareState& state) {
+    if (!state.overrides.strict) return {};
+    std::string uses;
+    for (auto const& u : mcpp::pm::compat::recorded_uses()) {
+        if (!u.warned) continue;
+        auto const* d = mcpp::pm::compat::find_deprecation(u.id);
+        uses += std::format("\n       {}: {} ({}; write {})", u.where, u.detail, u.id,
+                            d ? std::string(d->canonical) : std::string("the canonical spelling"));
+    }
+    if (uses.empty()) return {};
+    return std::unexpected("--strict refuses the deprecated readings this build uses:" + uses);
+}
+
 std::expected<BuildContext, std::string>
 prepare_build_pass(bool print_fingerprint,
                    bool includeDevDeps,
@@ -80,11 +97,41 @@ prepare_build(bool print_fingerprint,
 }
 
 namespace {
+// A BUILD PROGRAMS' GRAPH IS SELF-DESCRIBING (mcpp#797). The engine writes
+// `.mcpp-build-programs` beside the graph's workspace manifest: the toolchain,
+// the profile and the version pins its sub-build was given. A command run in
+// that directory reads them, so `mcpp build` there reproduces the compile of
+// the build programs exactly, as the build's own error message says it does.
+void read_build_programs_marker(BuildOverrides& ov) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    auto root = ov.project_root;
+    if (root.empty())
+        if (auto r = mcpp::project::find_manifest_root(fs::current_path(ec))) root = *r;
+    if (root.empty()) return;
+    std::ifstream in(root / ".mcpp-build-programs");
+    if (!in) return;
+    ov.build_program_graph = true;
+    std::string line;
+    while (std::getline(in, line)) {
+        const auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        const auto key = line.substr(0, eq), value = line.substr(eq + 1);
+        if (key == "toolchain" && ov.toolchain.empty()) ov.toolchain = value;
+        else if (key == "profile" && ov.profile.empty()) ov.profile = value;
+        else if (key == "index-store" && ov.project_index_root.empty()) ov.project_index_root = value;
+        else if (key == "pin")
+            if (auto p = value.find('='); p != std::string::npos)
+                ov.resolution_pins.try_emplace(value.substr(0, p), value.substr(p + 1));
+    }
+}
+
 std::expected<BuildContext, std::string>
 prepare_build_pass(bool print_fingerprint,
                    bool includeDevDeps,
                    std::vector<mcpp::manifest::Target> extraTargets,
                    BuildOverrides overrides) {
+    read_build_programs_marker(overrides);
     PrepareState state(print_fingerprint, includeDevDeps,
                         std::move(extraTargets), std::move(overrides));
     pending_flag_words_notes().clear();
@@ -142,6 +189,7 @@ prepare_build_pass(bool print_fingerprint,
     if (auto r = timed("graph", [&] { return phase4b_graph_worklist(state); }); !r)
         return fail(r.error());
     if (auto r = check_engine_floors(state, /*rootOnly=*/false); !r) return fail(r.error());
+    if (auto r = refuse_deprecated_readings_under_strict(state); !r) return fail(r.error());
     if (auto r = timed("toolchain", [&] { return phase5_toolchain_after_graph(state); }); !r)
         return fail(r.error());
     if (auto r = timed("features and host tools", [&] { return phase6_features_and_host_tools(state); }); !r)
@@ -150,6 +198,7 @@ prepare_build_pass(bool print_fingerprint,
         return fail(r.error());
     if (auto r = timed("scan", [&] { return phase11_scan(state); }); !r)
         return fail(r.error());
+    if (auto r = refuse_deprecated_readings_under_strict(state); !r) return fail(r.error());
 
     g_notesOnFailure.clear();
     return timed("finish", [&] { return phase13_finish(state); });

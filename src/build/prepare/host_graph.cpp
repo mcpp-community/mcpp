@@ -66,6 +66,10 @@ const mcpp::manifest::Manifest& manifest_of(const PrepareState& state, std::size
     return i == 0 ? *state.m : state.packages[i].manifest;
 }
 
+bool imports_engine(std::string_view text);
+std::vector<fs::path> build_plugin_units(const mcpp::manifest::Manifest& m, const fs::path& root,
+                                         const std::vector<std::string>& features);
+
 // A TOML basic string.
 std::string toml_string(std::string_view s) {
     std::string out = "\"";
@@ -486,8 +490,11 @@ void write_if_changed(const fs::path& file, const std::string& text) {
 }
 
 // The manifests of one group: the workspace and a member per program.
+std::map<std::string, std::string> resolution_pins(const PrepareState& state);
+
 void write_group(PrepareState& state, const fs::path& dir, const std::vector<Program>& programs,
-                 const std::string& standard, const fs::path& enginePackage) {
+                 const std::string& standard, const fs::path& enginePackage,
+                 const std::string& toolchainSpec) {
     std::string root = std::format(
         "# Written by mcpp {}: the build programs of {} (mcpp#797).\n"
         "# `mcpp build` here reproduces their compile; it is rewritten on every build.\n"
@@ -515,7 +522,47 @@ void write_group(PrepareState& state, const fs::path& dir, const std::vector<Pro
             root += std::format("{} = {{ {} }}\n", key(name.empty() ? "default" : name), row);
         }
     }
+    // Where a payload comes from is the build root's statement (mcpp#755); the
+    // packages of the build programs' graph declare payloads too, and are
+    // provisioned by the sub-build under the same statement. A relative path
+    // is relative to the manifest that wrote it.
+    {
+        std::map<std::string, std::string> rows;
+        const mcpp::manifest::Manifest* stating[] = {state.m ? &*state.m : nullptr,
+                                                     state.runtimeOwnerManifest};
+        for (auto const* man : stating) {
+            if (!man) continue;
+            for (auto const& [k, o] : man->xlings.overrides) {
+                if (rows.contains(k)) continue;
+                using Kind = mcpp::manifest::XlingsOverride::Kind;
+                auto value = o.value;
+                if (fs::path v(value); (o.kind != Kind::Program || names_a_file_path(value))
+                                           && v.is_relative())
+                    value = path_text((man->sourcePath.parent_path() / v).lexically_normal());
+                const bool isRoot = o.kind == Kind::Root
+                    || (o.kind == Kind::Path && fs::is_directory(value));
+                std::vector<std::string> fields;
+                fields.push_back(std::format("{} = {}", isRoot ? "root" : "program", toml_string(value)));
+                if (!o.version.empty()) fields.push_back("version = " + toml_string(o.version));
+                std::string row;
+                for (auto const& f : fields) row += (row.empty() ? "" : ", ") + f;
+                rows.emplace(k, std::format("{} = {{ {} }}\n", toml_string(k), row));
+            }
+        }
+        if (!rows.empty()) {
+            root += "\n[workspace.xlings.overrides]\n";
+            for (auto const& [k, row] : rows) root += row;
+        }
+    }
     write_if_changed(dir / "mcpp.toml", root);
+    // What the sub-build is given, for a command run in this directory
+    // (driver.cpp, `read_build_programs_marker`).
+    {
+        std::string marker = std::format("toolchain={}\nprofile=build-program\nindex-store={}\n",
+                                         toolchainSpec, path_text(state.projectIndexRoot()));
+        for (auto const& [k, v] : resolution_pins(state)) marker += std::format("pin={}={}\n", k, v);
+        write_if_changed(dir / ".mcpp-build-programs", marker);
+    }
 
     for (auto const& p : programs) {
         const auto memberDir = dir / p.member;
@@ -533,8 +580,26 @@ void write_group(PrepareState& state, const fs::path& dir, const std::vector<Pro
             qualified(manifest_of(state, p.index)), path_text(main), toml_string(p.member),
             toml_string(standard));
         std::map<std::string, std::vector<std::string>> tables;   // namespace -> lines
-        tables[std::string(engine::kNamespace)].push_back(
-            std::format("{} = {{ path = {} }}", key(engine::kName), toml_string(path_text(enginePackage))));
+        // THE ENGINE INTERFACE ONLY WHERE SOMETHING IMPORTS IT. A module's
+        // object is linked whether or not anything references it, and the
+        // interface announces the directive protocol when the program starts:
+        // a hand-written `printf` program that imports nothing must stay one,
+        // whose unknown directives are warned about rather than refused.
+        bool needsEngine = !p.source.synthesised.empty();
+        if (!needsEngine) {
+            std::ifstream in(p.source.file, std::ios::binary);
+            needsEngine = imports_engine(std::string{std::istreambuf_iterator<char>(in), {}});
+        }
+        if (!needsEngine)
+            for (auto d : closure_of(state, program_libraries(state, p.index)))
+                if (!build_plugin_units(state.packages[d].manifest, state.packages[d].root,
+                                        program_features(state, d)).empty()) {
+                    needsEngine = true;
+                    break;
+                }
+        if (needsEngine)
+            tables[std::string(engine::kNamespace)].push_back(
+                std::format("{} = {{ path = {} }}", key(engine::kName), toml_string(path_text(enginePackage))));
         for (auto d : program_libraries(state, p.index)) {
             const auto line = dependency_line(state, d);
             tables[line.ns].push_back(std::format("{} = {{ {}, {} }}", key(line.name),
@@ -602,11 +667,12 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
         std::make_shared<const mcpp::platform::runtime::RuntimeBinding>(state.runtimeBindingSnapshot);
     sub.resolution_pins = resolution_pins(state);
     sub.build_program_graph = true;
+    sub.project_index_root = state.projectIndexRoot();
     for (auto const& p : all) sub.workspace_members.push_back(p.member);
 
     auto reproduce = [&] {
         return std::format("\n  the build programs' workspace: {}\n"
-                           "  re-run it directly:  cd {} && mcpp build --profile build-program\n"
+                           "  re-run it directly:  cd {} && mcpp build\n"
                            "  (MCPP_TOOL_BUILD_VERBOSE=1 shows the inner build's output unfiltered)",
                            path_text(dir), path_text(dir));
     };
@@ -875,7 +941,7 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
             // Described, not built: `mcpp emit build-database` lists the graph
             // of programs that are current too.
             if (state.overrides.plan_only) {
-                write_group(state, dir, programs, standard, *enginePackage);
+                write_group(state, dir, programs, standard, *enginePackage, tc->spec);
                 if (auto r = build_group(state, dir, programs, {}, *tc); !r)
                     mcpp::log::verbose("host-graph", r.error());
             }
@@ -889,7 +955,7 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
                 return std::unexpected(r.error());
         }
 
-        write_group(state, dir, programs, standard, *enginePackage);
+        write_group(state, dir, programs, standard, *enginePackage, tc->spec);
         const auto began = std::chrono::steady_clock::now();
         for (auto const* p : stale)
             mcpp::build::progress::program_compiling(qualified(manifest_of(state, p->index)),

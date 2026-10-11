@@ -96,7 +96,8 @@ EOF
     exit 1
 }
 
-helper=target/.build-mcpp/build.mcpp.bin
+# The program as the build programs' graph linked it (mcpp#797).
+helper=$(find target/.build-mcpp/host -path '*/bin/*' -name build-program -type f | head -1)
 test -f helper-ran || { cat build.log; echo "FAIL: build.mcpp did not run"; exit 1; }
 test -x "$helper" || { cat build.log; echo "FAIL: helper binary missing"; exit 1; }
 

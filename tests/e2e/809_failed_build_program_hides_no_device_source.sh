@@ -58,7 +58,7 @@ version = "0.1.0"
 [language]
 standard = "c++23"
 
-[dependencies]
+[build-dependencies]
 t809.rules = { path = "../rules", features = ["x"] }
 
 [build]

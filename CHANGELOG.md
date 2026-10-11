@@ -4,6 +4,98 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.11.1] - 2026-10-11
+
+### Added
+
+- Compile build programs by their own graph (#797). The build programs of one
+  build that share a host toolchain and a C++ standard are the members of one
+  workspace under `target/.build-mcpp/host/<group>/`, planned and built like
+  any workspace: a library is compiled as its package, with its include
+  directories, defines, features, dependencies and implementation units, and
+  `build.mcpp` by the same plan. `mcpp build` in that directory reproduces the
+  compile.
+- Give a `[build-dependencies]` entry the package's library unless it names
+  `tools` or `artifacts` only; `host-module = false` declines it. Any library
+  is importable from `build.mcpp`.
+- Plan a package once per configuration that reaches it: a package in
+  `[dependencies]` and `[build-dependencies]` has a target instance and a
+  build-program instance, each with the features its own edges request, and a
+  build-only package's usage requirements and link flags stay out of the
+  target.
+- Write the engine interface (`mcpp`, `mcpp.core`) as a package under
+  `$MCPP_HOME/engine/<version>/modules/`, compiled into the global dependency
+  cache once per version and host toolchain. `mcpp self env` states the
+  directory as `engineModules`.
+- Read a unit that imports `mcpp.core` as a build-plugin unit (SPEC-007 §10). A
+  plugin's `[dependencies]` are compiled with it for the build program, so a
+  plugin may build on plugins and libraries; `mcpp build` and `mcpp test` in a
+  plugin plan it in the build-program configuration. A plugin reached through
+  a target's `[dependencies]`, a program target that imports `mcpp`, `--target`
+  for another machine on a plugin, and `mcpp pack` of a plugin are refused,
+  naming the cause.
+- Define a library's interface once (SPEC-008 v0.2): the interface root (`[lib]
+  path`, the new `lib` key of a Form B descriptor, or `src/<name>.cppm`), the
+  public modules it re-exports together with the interface units of active
+  features, and the exported modules. `[modules] exports` is checked against
+  the public modules, and a feature's `rule_module` must be declared by one of
+  its units.
+- Describe the build programs in `mcpp emit build-database`: the sets
+  `<package>:build`, `<package>:host`, `mcpp:core` and `mcpp:std:host`, in the
+  configuration `build-program`. `compile_commands.json` is unchanged.
+- Add `mcpp why build-programs` and `mcpp why compat` (JSON kinds
+  `mcpp.why.build-programs` and `mcpp.why.compat`). `resolution.json` and
+  `mcpp why deps` state each package's instances.
+- Keep every deprecated reading in one registry with its id, the release that
+  deprecated it and the CalVer month from which it is removed. The warning
+  states both releases, `mcpp why compat` lists the uses, `--strict` refuses
+  them, and docs/51 lists the rows.
+
+### Changed
+
+- Compile a build program again when its identity changes: the engine version,
+  the host toolchain, the standard, the program text and every package of its
+  graph, including the source tree of a `path` package or workspace member. An
+  edited header that a library includes compiles and runs the program again.
+- Remove the `workspace-position` reading from mcpp 2027.1 instead of 1.0.0,
+  which CalVer does not reach.
+- Give `[xlings.overrides]` and `[workspace.xlings.overrides]` to the root of a
+  build only; a member reached as a dependency does not receive them. A member
+  reached as a dependency is told about a position reading only when the
+  build's root lies outside its workspace.
+- Pass `features` and `default-features` of a `[workspace.dependencies]` entry
+  to the members that inherit it, and report a request key written there
+  (`host-module`, `tools`, `artifacts`, `reexport`, `visibility`, `linkage`).
+
+### Fixed
+
+- Import from `build.mcpp` a module library whose interface includes the
+  package's own headers (#797).
+- Keep the target's library of a package listed in both `[dependencies]` and
+  `[build-dependencies]` (#797).
+- Keep a feature requested only by a build edge out of the target.
+- Build a build plugin as the root of its own build; the engine interface was
+  absent.
+- Give the members of a workspace root without `[package]` its
+  `[workspace.xlings.overrides]`.
+- Report a `build.mcpp` beside a workspace root without `[package]`, and the
+  schema warnings of a workspace root when its members are built.
+
+### Deprecated
+
+- `host-module-in-dependencies`: a `[dependencies]` entry that asks for
+  `host-module = true` or for a feature declaring `rule_module` is read as a
+  build dependency and warned about. Removed from mcpp 2027.1.
+- `plugin-imports-from-build-dependencies`: a plugin library that imports a
+  package from its own `[build-dependencies]` reads that entry as a dependency
+  too. Removed from mcpp 2027.1.
+
+### Removed
+
+- The single-unit host module compile and its store
+  `target/.build-mcpp/host-modules/`. Build programs are compiled by their
+  graph.
+
 ## [2026.10.10.2] - 2026-10-10
 
 ### Fixed

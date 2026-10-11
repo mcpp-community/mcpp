@@ -5,11 +5,11 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.14 |
-| **最后修改** | 2026-10-10 |
+| **版本** | 1.15 |
+| **最后修改** | 2026-10-11 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
-| **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`<br>`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md`<br>`.agents/docs/2026-10-10-one-source-one-meaning-design.md` |
+| **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`<br>`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md`<br>`.agents/docs/2026-10-10-one-source-one-meaning-design.md`<br>`.agents/docs/2026-10-11-build-dependencies-one-pipeline-design.md` |
 | **相关使用文档** | [docs/04 —— mcpp.toml 字段参考](../04-mcpp-toml.md) |
 
 ## 规范用语
@@ -593,17 +593,28 @@ mcpp 2026.9.26.2,#703)。**
     `[runtime]`,选择器的 `.build`、`.abi`、`.runtime`、`.targets`、`.dependencies`)不作用于
     任何包,实现**必须**给出警告,`--strict` 下**必须**拒绝;同一张表在这样的根上同时写在根位置
     与 `[workspace.X]` **必须**被拒绝。
-13. **按位置读取(兼容,至 1.0.0)。** 工作空间根上没有 `[workspace.X]` 写法的 `[toolchain]`、
+13. **按位置读取(兼容,自 mcpp 2026.10.10.1 弃用,自 mcpp 2027.1 移除;docs/51 的弃用登记表,
+    `workspace-position`)。** 工作空间根上没有 `[workspace.X]` 写法的 `[toolchain]`、
     `[indices]`、`[profile.<name>]`、`[target.<triple>]` 标量行与 `[xlings]`、
     `[target.<selector>.xlings]` 条目,仍按 mcpp 2026.10.8.1 的规则到达成员(成员的
     `[toolchain]` 整体替换根的,同名的行与 profile 整体替换,`[indices]` 只到达未声明任何索引
     的成员)。每次使用**必须**给出警告 `manifest/workspace-position` 并写出 `[workspace.X]`
-    写法;在带 `[package]` 的根上,只在成员确实经由这一读法得到值时给出。
+    写法;在带 `[package]` 的根上,只在成员确实经由这一读法得到值时给出;对作为依赖到达的成员,
+    只在构建的根位于该工作空间之外时给出。
+14. **`[xlings.overrides]` 属于构建的根。** `[workspace.xlings.overrides]`(与按位置读取的根自己的
+    `[xlings.overrides]`)只给作为构建之根的成员,不给作为依赖到达的成员,与 `[workspace.toolchain]`
+    相同。
+15. **`[workspace.dependencies]` 的继承。** 成员以 `x.workspace = true` 继承条目的来源与它请求的
+    `features`(工作空间的在前,成员的追加);`default-features` 在成员写出时以成员为准。边上的其余
+    请求(`host-module`、`tools`、`artifacts`、`reexport`、`visibility`、`linkage`)属于成员自己的边,
+    写在 `[workspace.dependencies]` 中时实现**必须**给出警告,`--strict` 下**必须**拒绝。
+16. **虚拟根旁的 `build.mcpp`。** 不带 `[package]` 的工作空间根旁的 `build.mcpp` 不属于任何包,
+    不运行;实现**必须**给出警告,`--strict` 下**必须**拒绝。
 
 **状态:已实现(第 1 至 7 条 mcpp 2026.9.25.1;第 8 至 10 条 mcpp 2026.9.27.1,mcpp#713、
 #714、#710;第 10 条的 `dialect_cxxflags` 为 mcpp 2026.9.28.1,#717;第 1 条的根包、第 10 条的
 `[profile.<name>]` 与第 11 条为 mcpp 2026.10.5.2,#771;第 7、8、10 条的工作空间层与第 12、13 条为
-mcpp 2026.10.10.1,#785、#786)。**
+mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 mcpp 2026.10.11.1,#797)。**
 
 ## 10. 依赖的程序
 
@@ -660,6 +671,41 @@ mcpp 2026.10.10.1,#785、#786)。**
 
 **状态:已实现(mcpp 2026.10.5.2,#770)。**
 
+## 12. 依赖的库与配置
+
+一条依赖由两条轴描述:**段**决定它服务的配置,**边上的请求**决定需要的产物。
+
+1. **配置。** `[dependencies]` 与 `[dev-dependencies]` 的条目服务目标配置;`[build-dependencies]`
+   的条目服务声明它的包的构建程序配置。配置沿 `[dependencies]` 继承:一个服务构建程序的包,其
+   `[dependencies]` 同样服务构建程序。边的配置取自该条声明所在的表,不随依赖链传递;一个包在
+   某配置中是否有实例,由从根出发、经过该配置的边的可达性决定。
+2. **实例。** 一个包在一次构建中可以有目标实例与构建程序实例。一份清单在两张表中写同一个包,
+   得到两条边、两个实例,实现**禁止**把它们合并为一条边。
+3. **一个包一个版本。** 两个实例的版本相同,是锁文件记录的版本;构建程序图**必须**以主图的
+   解析为准。
+4. **按配置激活特性。** 目标实例的特性只由服务目标的边请求;构建程序实例的特性只由服务构建程序
+   的边请求。特性声明的载荷(`feature-xlings`)服务这次构建,取两者的并集。构建程序实例的
+   公开 include 目录、接口宏定义与链接 flag **禁止**进入目标的编译与链接。
+5. **产物。** `[build-dependencies]` 的条目在没有列出 `tools` 或 `artifacts` 时请求包的库;
+   `host-module = true` 在它们之外再请求库,`host-module = false` 不要库;请求声明了 `rule_module`
+   的特性即请求库。`host-module` 的名字来自它只表示接口根模块的时期,按 §5.2 不改名;它的含义
+   是"构建程序使用这个依赖的库":公开模块可导入、公开头文件可见、对象参与链接。在
+   `[dependencies]` 中,库就是这条边的含义。
+6. **构建程序图。** 一次构建中宿主工具链与 C++ 标准相同的构建程序,是同一张图的成员;图中每个库
+   按完整的包编译(包含目录、宏定义、特性、依赖、实现单元),构建程序本身由同一个计划编译。程序
+   在其身份变化时编译;身份**必须**覆盖引擎版本、工具链、标准、程序文本,以及图中每个包的名字、
+   版本、来源、构建程序实例的特性与可原地变化的源码树的内容。
+7. **构建插件。** 导入引擎接口(`mcpp.core` 或 `mcpp`)的单元是构建插件单元。插件单元只能出现在
+   构建程序实例中;目标实例中出现插件单元时实现**必须**在规划期拒绝并写出依赖链。库中含有插件
+   单元的包作为构建的根时,以构建程序配置、为构建机器规划。
+8. **兼容读法(docs/51 的弃用登记表)。** `[dependencies]` 中请求 `host-module = true` 或
+   `rule_module` 特性的条目按 `[build-dependencies]` 读取(`host-module-in-dependencies`);
+   构建插件的库导入其自身 `[build-dependencies]` 中以 `host-module = true` 写出的包时,该条目同时
+   读作插件的 `[dependencies]`(`plugin-imports-from-build-dependencies`)。两者自 mcpp
+   2026.10.11.1 弃用,自 mcpp 2027.1 移除;每次使用在可编辑的清单处**必须**给出警告。
+
+**状态:已实现(mcpp 2026.10.11.1,#797)。**
+
 ## 变更记录
 
 | 版本 | 日期 | 变更 |
@@ -679,3 +725,4 @@ mcpp 2026.10.10.1,#785、#786)。**
 | 1.12 | 2026-10-05 | mcpp 2026.10.5.2:§9 第 1 条补上带 `[package]` 的工作空间根自己的包;第 10 条把 `[profile.<name>]` 列为根位置的键;新增第 11 条链接 flag 的作用域(#771);新增 §11 链接期优化与导出发现(#770)与 `[test] windows_code_page`;§7 补第 21 至 23 条判据。 |
 | 1.13 | 2026-10-06 | mcpp 2026.10.5.3:§4.6 陈述架构段的等同拼写,`x86` 即 `i686`;`i386` 至 `i586` 不与 `i686` 相互替代。 |
 | 1.14 | 2026-10-10 | mcpp 2026.10.10.1(#785、#786):§2 陈述键的作用域与来源;§9 新增第 12 条前缀即语义(工作空间层 `[workspace.X]`、按键合并、W7)与第 13 条按位置读取的兼容期;第 7 条发布写出工作空间层;第 8 条改为 `[workspace.xlings]`;第 10 条按求值后的配置分组。 |
+| 1.15 | 2026-10-11 | mcpp 2026.10.11.1(#797):新增 §12 依赖的库与配置(两条轴、实例、一个包一个版本、按配置激活特性、`host-module` 的含义与默认值、构建程序图、构建插件、兼容读法);§9 第 13 条的移除版本改为 mcpp 2027.1,并补依赖位置;新增 §9 第 14 至 16 条(`[xlings.overrides]` 属于构建的根、`[workspace.dependencies]` 的继承、虚拟根旁的 `build.mcpp`)。 |

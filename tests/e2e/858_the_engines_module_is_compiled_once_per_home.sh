@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
 # requires:
-# 858 -- the bundled `mcpp` module is compiled once per mcpp version and host
-# compiler, for every project that shares a home.
+# 858 -- the engine interface (`mcpp.core`) is compiled once per mcpp version and
+# host compiler, for every project that shares a home.
 #
-# #748 (B1). The module is the engine's own text: identical in every project
-# for one mcpp version and one host compiler. Each build program used to compile
-# it into its own directory. It is now an entry of the global cache, in the
-# layout of a dependency's entry, so `mcpp cache list`, `info`, `verify` and `gc`
-# treat it as they treat one.
+# #748 (B1), mcpp#797. The interface is the engine's own text, written as a
+# package under $MCPP_HOME/engine/<version>/modules, and the build programs'
+# graph depends on it like on any library. Its compiled entry is kept in the
+# global cache under `_engine/mcpp-build-module@<version>`, so `mcpp cache list`,
+# `info`, `verify` and `gc` treat it as they treat a dependency's entry.
 #
 # Criteria:
-#   A. The first project compiles the module (the compile commands are logged
-#      under `buildmcpp-host`); a second project with another name in another
-#      directory, sharing the home, compiles nothing of it.
+#   A. The first project's build programs' graph compiles the interface; a
+#      second project with another name in another directory, sharing the home,
+#      places the cached entry and compiles nothing of it.
 #   B. The entry is one of `mcpp cache list`, is complete to `mcpp cache verify`,
 #      and records inputs that name no project: the flags it was compiled with
 #      are the toolchain's, so they hold for every project.
 #   C. `mcpp cache gc` collects it, and the next build compiles it again.
 #   D. `--cache local` writes nothing below the global cache's package tree; the
-#      module is then kept in the project's own store.
-#   E. A host module of an index package, whose sources are in the immutable
-#      store, is kept in the global cache too, under its package address, and a
-#      second project that imports it compiles nothing of it.
+#      interface is compiled in the project's build programs' graph.
+#   E. A library of an index package that a build program imports is kept in
+#      the global cache too, under its package address, and a second project
+#      that imports it compiles nothing of it.
 set -e
 source "$(dirname "$0")/_host_path.sh"
 
@@ -56,19 +56,21 @@ project "$TMP/beta"  beta858
 ALPHA_HOST="$(host_path "$TMP/alpha")"
 BETA_HOST="$(host_path "$TMP/beta")"
 
-compiled_module() { grep -cE "mcpp module (precompile|compile|object|mcpp\.core (precompile|compile|object)):" "$1" || true; }
+# The build programs' graph of project $1, and how it obtains object $2.
+host_ninja() { find "$1/target/.build-mcpp/host" -name build.ninja | head -1; }
+compiles() { grep -qE "^build obj/[^ ]*/$2( [|] [^:]*)? : cxx_module " "$(host_ninja "$1")"; }
+places()   { grep -qE "^build obj/[^ ]*/$2 : stage_file [^ ]*/build-cache/v1/pkg/$3" "$(host_ninja "$1")"; }
 
 # A
 ( cd "$TMP/alpha" && MCPP_VERBOSE=1 "$MCPP" build > "$TMP/alpha.log" 2>&1 ) \
     || fail "the first project did not build" "$TMP/alpha.log"
-[ "$(compiled_module "$TMP/alpha.log")" -ge 2 ] \
-    || fail "A: the first project did not compile the bundled module" "$TMP/alpha.log"
+compiles "$TMP/alpha" 'mcpp\.m\.o' \
+    || fail "A: the first project did not compile the engine interface" "$TMP/alpha.log" "$(host_ninja "$TMP/alpha")"
 ( cd "$TMP/beta" && MCPP_VERBOSE=1 "$MCPP" build > "$TMP/beta.log" 2>&1 ) \
     || fail "the second project did not build" "$TMP/beta.log"
-[ "$(compiled_module "$TMP/beta.log")" = 0 ] \
-    || fail "A: the second project compiled the bundled module again" "$TMP/beta.log"
-grep -qE "bundled module mcpp: entry [0-9a-f]+ global \(reused\)" "$TMP/beta.log" \
-    || fail "A: the second project's log does not say it reused the entry" "$TMP/beta.log"
+places "$TMP/beta" 'mcpp\.m\.o' '_engine/mcpp-build-module@' \
+    || fail "A: the second project did not place the cached entry" "$TMP/beta.log" "$(host_ninja "$TMP/beta")"
+compiles "$TMP/beta" 'mcpp\.m\.o' && fail "A: the second project compiled the engine interface again" "$(host_ninja "$TMP/beta")"
 
 # B
 "$MCPP" cache list > "$TMP/list.log" 2>&1
@@ -77,7 +79,7 @@ grep -qE "bundled module mcpp: entry [0-9a-f]+ global \(reused\)" "$TMP/beta.log
 "$MCPP" cache verify > "$TMP/verify.log" 2>&1 || fail "B: mcpp cache verify failed" "$TMP/verify.log"
 grep -q "all complete" "$TMP/verify.log" || fail "B: the entry is not complete" "$TMP/verify.log"
 "$MCPP" cache info _engine/mcpp-build-module > "$TMP/info.log" 2>&1
-grep -q '"interface_sha256"' "$TMP/info.log" || fail "B: the entry does not record the digest of its text" "$TMP/info.log"
+grep -q 'mcpp.cppm' "$TMP/info.log" || fail "B: the entry does not record its sources" "$TMP/info.log"
 if grep -qF "$ALPHA_HOST" "$TMP/info.log" || grep -qF "$BETA_HOST" "$TMP/info.log"; then
     fail "B: the recorded inputs name a project, so the entry could not serve another" "$TMP/info.log"
 fi
@@ -89,8 +91,8 @@ grep -q "Collected 1 entries" "$TMP/gc.log" || fail "C: gc did not collect the e
 ( cd "$TMP/alpha" && touch build.mcpp && echo '// edited' >> build.mcpp \
     && MCPP_VERBOSE=1 "$MCPP" build > "$TMP/alpha2.log" 2>&1 ) \
     || fail "C: the build after gc failed" "$TMP/alpha2.log"
-[ "$(compiled_module "$TMP/alpha2.log")" -ge 2 ] \
-    || fail "C: the module was not compiled again after gc collected it" "$TMP/alpha2.log"
+compiles "$TMP/alpha" 'mcpp\.m\.o' \
+    || fail "C: the interface was not compiled again after gc collected it" "$TMP/alpha2.log"
 
 # D
 export MCPP_HOME="$TMP/mcpp-home-local"
@@ -101,10 +103,8 @@ project "$TMP/gamma" gamma858
 if [ -n "$(find "$MCPP_HOME/build-cache/v1/pkg" -name entry.json 2>/dev/null)" ]; then
     fail "D: --cache local wrote an entry below the global cache's package tree" "$TMP/gamma.log"
 fi
-[ -n "$(find "$TMP/gamma/target/.build-mcpp/host-modules" -name entry.json 2>/dev/null)" ] \
-    || fail "D: the module is not in the project's own store" "$TMP/gamma.log"
-grep -qE "bundled module mcpp: entry [0-9a-f]+ workspace \(compiled\)" "$TMP/gamma.log" \
-    || fail "D: the log does not say the module went to the workspace store" "$TMP/gamma.log"
+compiles "$TMP/gamma" 'mcpp\.m\.o' \
+    || fail "D: the interface was not compiled in the project's build programs' graph" "$TMP/gamma.log"
 
 # E. The package is in a local index, and its payload is where the store keeps
 # installed packages: the two facts the cache admits a package on.
@@ -117,7 +117,7 @@ cat > "$INDEX_DIR/pkgs/r/rule-dep.lua" <<'LUA'
 package = {
     spec = "1",
     name = "rule-dep",
-    description = "A package that offers a build rule as a host module",
+    description = "A library a build program imports",
     licenses = {"MIT"},
     type = "package",
     xpm = {
@@ -175,25 +175,18 @@ BUILDMCPP
 indexed "$TMP/delta" delta858
 indexed "$TMP/epsilon" epsilon858
 ( cd "$TMP/delta" && MCPP_VERBOSE=1 "$MCPP" build > "$TMP/delta.log" 2>&1 ) \
-    || fail "E: the first project that imports the index package's host module did not build" "$TMP/delta.log"
-grep -qE "host module 't858\.rule' (precompile|compile):" "$TMP/delta.log" \
-    || fail "E: the first project did not compile the host module" "$TMP/delta.log"
-entry=$(grep -rl '"module": "t858.rule"' "$MCPP_HOME/build-cache/v1/pkg" --include=entry.json 2>/dev/null | head -1)
-[ -n "$entry" ] || fail "E: the host module of an index package is not in the global cache" "$TMP/delta.log"
+    || fail "E: the first project that imports the index package's library did not build" "$TMP/delta.log"
+compiles "$TMP/delta" 'rule-dep\.m\.o' \
+    || fail "E: the first project did not compile the library" "$TMP/delta.log" "$(host_ninja "$TMP/delta")"
+entry=$(find "$MCPP_HOME/build-cache/v1/pkg" -path '*local-dev.rule-dep@1.0.0*' -name entry.json 2>/dev/null | head -1)
+[ -n "$entry" ] || fail "E: the library of an index package is not in the global cache" "$TMP/delta.log"
 case "$entry" in
     */pkg/local-dev/local-dev.rule-dep@1.0.0/*/entry.json) ;;
     *) fail "E: the entry is not at its package address: $entry" ;;
 esac
-if [ -d "$TMP/delta/target/.build-mcpp/host-modules" ] \
-   && grep -rl 't858.rule' "$TMP/delta/target/.build-mcpp/host-modules" --include=entry.json 2>/dev/null | grep -q .; then
-    fail "E: a host module of an index package was also written to the project's store"
-fi
 ( cd "$TMP/epsilon" && MCPP_VERBOSE=1 "$MCPP" build > "$TMP/epsilon.log" 2>&1 ) \
     || fail "E: the second project did not build" "$TMP/epsilon.log"
-if grep -qE "host module 't858\.rule' (precompile|compile):" "$TMP/epsilon.log"; then
-    fail "E: the second project compiled the index package's host module again" "$TMP/epsilon.log"
-fi
-grep -qE "host module 't858\.rule': entry [0-9a-f]+ global \(reused\)" "$TMP/epsilon.log" \
-    || fail "E: the second project's log does not say it reused the entry" "$TMP/epsilon.log"
+places "$TMP/epsilon" 'rule-dep\.m\.o' 'local-dev/local-dev.rule-dep@1.0.0' \
+    || fail "E: the second project did not place the cached library" "$TMP/epsilon.log" "$(host_ninja "$TMP/epsilon")"
 
 echo "PASS: 858_the_engines_module_is_compiled_once_per_home"

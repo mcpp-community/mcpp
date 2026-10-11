@@ -182,7 +182,7 @@ public:
     // dirs). Used to feed `scan_short_name_matches` on the failure path.
     std::vector<std::filesystem::path> builtin_index_roots() const;
 
-    // ─── Legacy overloads (COMPAT, remove in 1.0.0) ─────────────
+    // ─── Legacy overloads (COMPAT(internal:legacy-fetcher-api)) ─────────────
     //
     // Accept a raw package name string and infer namespace from it.
     // New code should use the (ns, shortName) overloads above.
@@ -967,7 +967,7 @@ Fetcher::builtin_index_roots() const
     return roots;
 }
 
-// ─── Legacy read_xpkg_lua (COMPAT, remove in 1.0.0) ─────────────────
+// ─── Legacy read_xpkg_lua (COMPAT(internal:legacy-fetcher-api)) ─────────────────
 //
 // Infers namespace from the raw package_name string and delegates to the
 // namespace-aware overload.
@@ -1321,7 +1321,7 @@ Fetcher::install_path(std::string_view ns, std::string_view shortName,
         if (auto p = try_dir(dirName)) return *p;
     }
 
-    // Last-resort fallback scan (COMPAT, remove in 1.0.0): walk xpkgs/ for a
+    // Last-resort fallback scan (COMPAT(internal:legacy-fetcher-api)): walk xpkgs/ for a
     // directory holding this package under an older layout.
     //
     // The bare `-x-<shortName>` arm is bound to the namespaces the caller
@@ -1342,7 +1342,7 @@ Fetcher::install_path(std::string_view ns, std::string_view shortName,
     return std::nullopt;
 }
 
-// ─── Legacy install_path (COMPAT, remove in 1.0.0) ──────────────────
+// ─── Legacy install_path (COMPAT(internal:legacy-fetcher-api)) ──────────────────
 //
 // Infers namespace from the raw name string and delegates to the
 // namespace-aware overload.

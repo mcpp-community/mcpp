@@ -293,7 +293,7 @@ static void step4a_define_split_and_identity_closures(PrepareState& state) {
     // rebuilt on demand because `root` moves when a workspace member is
     // selected above.
     state.index_route = [&](mcpp::config::GlobalConfig* cfg = nullptr) {
-        return mcpp::pm::IndexRoute{ &state.m->indices, *state.root, cfg };
+        return mcpp::pm::IndexRoute{ &state.m->indices, state.projectIndexRoot(), cfg };
     };
     state.findIndexForNs = [&](const std::string& ns)
         -> const mcpp::pm::IndexSpec*
@@ -701,7 +701,7 @@ step4a_read_lua_content(PrepareState& state, LoadVersionDepCtx& ctx) {
     }
     if (ctx.idxSpec && !ctx.idxSpec->is_builtin()) {
         return mcpp::fetcher::Fetcher::read_xpkg_lua_from_project_data(
-            *state.root, ctx.ns, ctx.shortName);
+            state.projectIndexRoot(), ctx.ns, ctx.shortName);
     }
     return fetcher.read_xpkg_lua(ctx.ns, ctx.shortName);
 }
@@ -716,7 +716,7 @@ step4a_find_raw_installed(PrepareState& state, LoadVersionDepCtx& ctx) {
     mcpp::fetcher::Fetcher fetcher(**cfg);
     if (ctx.useProjectEnv) {
         if (auto p = mcpp::fetcher::Fetcher::install_path_from_project_data(
-                *state.root, ctx.ns, ctx.shortName, ctx.version)) {
+                state.projectIndexRoot(), ctx.ns, ctx.shortName, ctx.version)) {
             return p;
         }
     }
@@ -965,7 +965,7 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
                     // Using the interface (rather than the silenced direct CLI)
                     // restores the live `Downloading … [bar] X/Y Z/s` UI here,
                     // matching the toolchain and builtin-index paths.
-                    auto projEnv = mcpp::config::make_project_xlings_env(**cfg, *state.root);
+                    auto projEnv = mcpp::config::make_project_xlings_env(**cfg, state.projectIndexRoot());
                     auto argsJson = std::format(
                         R"({{"targets":["{}"],"yes":true}})", target);
                     mcpp::fetcher::InstallProgressHandler progress;
@@ -1070,7 +1070,9 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
                 // a hint about the known ≥2-repo xlings resolution gap. The
                 // real fix lives in openxlings/xlings; this only surfaces WHY.
                 auto xlingsJson = (ctx.useProjectEnv
-                        ? (state.workRoot / ".mcpp")
+                        ? ((state.overrides.project_index_root.empty() ? state.workRoot
+                                                         : state.overrides.project_index_root)
+                           / ".mcpp")
                         : (*cfg)->xlingsHome())
                     / ".xlings.json";
                 auto indexRepos = mcpp::pm::read_seeded_index_repos(xlingsJson);

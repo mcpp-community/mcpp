@@ -4,14 +4,15 @@
 # the job count, and run one after another; the failure reported is the first
 # in the order they run in.
 #
-# #748 (B2). A member's program runs after the programs of the members it
-# depends on, and that order is kept. Their compiles have no order, and each
-# used to wait for the one before it.
+# #748 (B2), mcpp#797. A member's program runs after the programs of the
+# members it depends on, and that order is kept. Their compiles have no order:
+# every program of the build is compiled in one build of the build programs'
+# graph, whose ninja runs up to the job count at once.
 #
 # Criteria:
 #   A. With `-j 4`, the compile intervals of three independent programs
-#      overlap. The test compares the timestamps the verbose log records at the
-#      start and the end of each compile, not the time the build took.
+#      overlap. The test compares the start and the end ninja records for each
+#      program's object in the graph's `.ninja_log`, not the time the build took.
 #   B. With `-j 1`, they do not: each compile ends before the next begins.
 #   C. When two programs fail to compile, the failure reported is the first in
 #      the order the programs run in, whichever compile finished first. The
@@ -64,21 +65,21 @@ int main() {
 EOF
 done
 
-# Milliseconds since midnight of the first log line that matches $2 in $1.
-at() {
-    awk -v pat="$2" '$0 ~ pat { split($3, t, /[]:.]/); print ((t[1] * 60 + t[2]) * 60 + t[3]) * 1000 + t[4]; exit }' "$1"
-}
+# The start and the end, in milliseconds, ninja recorded for the object of
+# member $2's program in the build programs' graph. ($1, the build's log, is
+# kept for the failure message.)
+host_log() { find target/.build-mcpp/host -name .ninja_log | head -1; }
 # The names of the programs that ran, one per line, in the order the lines came.
 ran_lines() { grep -E "^ *build\.mcpp p[abc] .*ran [0-9]" "$1" | sed -E 's/^ *build\.mcpp (p[abc]) .*/\1/'; }
-span() { echo "$(at "$1" "build\\.mcpp $2: compile start") $(at "$1" "build\\.mcpp $2: compile end")"; }
+span() { awk -F'\t' -v m="$2" '$4 ~ ("^obj/" m "-[0-9a-f]+/.*build\\.mcpp\\.o$") { print $1, $2; exit }' "$(host_log)"; }
 
 # A
-MCPP_VERBOSE=1 "$MCPP" build --workspace -j 4 > a.log 2>&1 || fail "A: the workspace did not build at -j 4" a.log
+"$MCPP" build --workspace -j 4 > a.log 2>&1 || fail "A: the workspace did not build at -j 4" a.log
 read -r sa ea <<< "$(span a.log pa)"
 read -r sb eb <<< "$(span a.log pb)"
 read -r sc ec <<< "$(span a.log pc)"
 for v in "$sa" "$ea" "$sb" "$eb" "$sc" "$ec"; do
-    [ -n "$v" ] || fail "A: the log does not record the start and the end of every compile" a.log
+    [ -n "$v" ] || fail "A: the build programs' .ninja_log does not record every compile" a.log "$(host_log)"
 done
 latest_start=$sa; [ "$sb" -gt "$latest_start" ] && latest_start=$sb; [ "$sc" -gt "$latest_start" ] && latest_start=$sc
 earliest_end=$ea; [ "$eb" -lt "$earliest_end" ] && earliest_end=$eb; [ "$ec" -lt "$earliest_end" ] && earliest_end=$ec
@@ -91,11 +92,11 @@ order=$(ran_lines a.log | tr '\n' ' ')
 
 # B
 rm -rf target pa/target pb/target pc/target
-MCPP_VERBOSE=1 "$MCPP" build --workspace -j 1 > b.log 2>&1 || fail "B: the workspace did not build at -j 1" b.log
+"$MCPP" build --workspace -j 1 > b.log 2>&1 || fail "B: the workspace did not build at -j 1" b.log
 starts=()
 for m in pa pb pc; do
     read -r s e <<< "$(span b.log $m)"
-    [ -n "$s" ] && [ -n "$e" ] || fail "B: the log does not record the compile of $m" b.log
+    [ -n "$s" ] && [ -n "$e" ] || fail "B: the build programs' .ninja_log does not record the compile of $m" b.log "$(host_log)"
     starts+=("$s:$e")
 done
 sorted=$(printf '%s\n' "${starts[@]}" | sort -n)

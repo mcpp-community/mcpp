@@ -20,6 +20,9 @@
 //   xlings.cpp         P3 -- xlings payloads before the graph.
 //   graph_load.cpp     P4a -- loading one git, path or version dependency.
 //   graph.cpp          P4b -- the worklist, the graph, the cycle check.
+//   graph_closures.cpp P4b -- the lookups the later phases ask of the graph.
+//   host_graph.cpp     the build programs' graph: its workspace, its sub-build,
+//                      the programs' identities and the build-plugin checks.
 //   toolchain_decision.cpp  P5 -- the toolchain, decided once the graph exists.
 //   features.cpp       P6-P8 -- features, capabilities, host tools, and the
 //                      dependencies' build programs.
@@ -802,12 +805,17 @@ export struct BuildOverrides {
     // a build's programs (prepare/host_graph.cpp). Every package it shares
     // with the build that asked is taken at the version that build resolved
     // (`<namespace>.<name>` -> version): one package has one version across
-    // the two graphs, as the lock records. `build_program_graph` marks every
-    // package the sub-build loads as a build-program instance, which is what
-    // the compatibility reading `plugin-imports-from-build-dependencies`
-    // applies to.
+    // the two graphs, as the lock records. `build_program_graph` marks the
+    // sub-build as that graph: its members' `[dependencies]` are the build
+    // programs' libraries, so the reading `host-module-in-dependencies` does
+    // not apply to them.
     std::map<std::string, std::string> resolution_pins;
     bool build_program_graph = false;
+    // The project whose `.mcpp/` holds the packages of its custom indices.
+    // Empty = the project being built. The build programs' graph names the
+    // build that asked, whose indices it shares and whose store already holds
+    // what they installed.
+    std::filesystem::path project_index_root;
     // Nested source/tool builds inherit the consumer root's local development
     // OS. A dependency's own [xlings].subos is never consulted or propagated.
     std::shared_ptr<const mcpp::xlings::runtime::RuntimeSelection>

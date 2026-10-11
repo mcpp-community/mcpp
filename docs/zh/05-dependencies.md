@@ -374,32 +374,44 @@ gtest = "1.15.2"
 
 ```toml
 [build-dependencies]
-protobuf = { version = "35.1", tools = ["protoc"] }
+tomlplusplus = "3.4.0"                                    # build.mcpp 导入的库
+protobuf     = { version = "35.1", tools = ["protoc"] }   # 构建期间运行的程序
 ```
 
-段与边上的请求回答的是**两个不同的问题**，把它们混为一谈是建模上的错误，
-不是写法之争。
+一条依赖由两条轴描述（mcpp 2026.10.11.1+，SPEC-004 §12），每条轴在清单中有自己的位置。
 
-- **段**回答：这个包本身进不进目标。`[dependencies]` 表示进；
-  `[build-dependencies]` 表示永不进，只能经由它到达的东西同样不进。
-- **边上的请求**回答：想要它的哪一种构建期产物。`tools = [...]` 要一个宿主
-  可执行文件，`host-module = true` 要一个构建程序可以 import 的模块。
+- **段**决定依赖服务的配置。`[dependencies]` 与 `[dev-dependencies]` 服务目标：
+  包为目标编译，链接进工程。`[build-dependencies]` 服务工程的构建程序
+  （`build.mcpp`）：包为执行构建的机器编译，链接进该程序。配置沿 `[dependencies]`
+  继承，因此构建依赖自己的依赖同样服务构建程序。
+- **边上的请求**决定需要哪些产物。`[build-dependencies]` 的条目在没有列出 `tools`
+  或 `artifacts` 时请求包的库；`host-module = true` 在它们之外再请求库，
+  `host-module = false` 不要库。`tools = [...]` 请求为执行构建的机器构建的程序，
+  两个段都可以写。
 
-一个包可以同时在这两个轴上取值，而 protobuf 正是证明这两个轴必须分开的
-例子：一个工程既链接 `libprotobuf`，构建期又需要 `protoc`。它只写一次，
-写在 `[dependencies]` 里：
+| 条目 | 效果 |
+|---|---|
+| `[build-dependencies] x = "1.0"` | `build.mcpp` 导入 `x` 的公开模块、包含其公开头文件并链接其对象 |
+| `[build-dependencies] x = { tools = ["gen"] }` | 程序 `gen`；不要库 |
+| `[build-dependencies] x = { tools = ["gen"], host-module = true }` | 程序与库 |
+| `[build-dependencies] x = { host-module = false }` | 都不要；只有 `x` 的目录（`mcpp::dep_dir`）与其载荷 |
+| `[dependencies] x = { tools = ["gen"] }` | 目标中的库，以及该程序 |
 
-```toml
-[dependencies]
-protobuf = { version = "35.1", tools = ["protoc"] }
-```
+`host-module` 这个名字早于它现在的含义：引入它时，构建程序只得到依赖的接口根模块；
+已经进入已发布描述符的键不改名（SPEC-004 §5.2）。构建程序使用的库按完整的包编译：
+它的包含目录、宏定义、特性、依赖与实现单元都参与，构建程序本身也由同一个计划编译
+（30 —— `build.mcpp`）。
 
-`[build-dependencies]` 用于第一个轴无法表达的那种组合 —— 某个包的库不得
-进入目标，而它的工具或规则仍然需要。同一个包同时出现在两张表里不是错误：
-普通声明胜出，因为一行 `[build-dependencies]` 不应该悄悄拿掉目标真正需要
-的库；两条声明各自请求的内容（`tools`、`features`、`host-module`、
-`reexport`）都作用在同一条边上（mcpp 2026.9.16.1+；该版本之前，第二条声明
-的请求会被丢弃）。
+**同一个包写在两张表中。** 一份清单在 `[dependencies]` 与 `[build-dependencies]`
+中写同一个包时，这个包有两个实例，一个为目标编译，一个为构建程序编译。两者的版本都是
+锁文件记录的版本。它们的特性分别激活：只由 `[build-dependencies]` 边请求的特性
+不进入目标实例。
+
+**为兼容保留的读法。** `[dependencies]` 中请求 `host-module = true`、或请求声明了
+`rule_module` 的特性的条目，按 `[build-dependencies]` 的条目读取：这个包服务构建程序
+而不进入目标，与 mcpp 2026.10.11.1 之前相同。该读法自 mcpp 2026.10.11.1 弃用，
+自 mcpp 2027.1 移除（`host-module-in-dependencies`，51 —— 支持的版本）；
+`mcpp why compat` 列出它的使用。
 
 **只含程序的包，只贡献它的程序（mcpp 2026.9.16.1+）。** 一个声明的
 `[targets]` 全部是程序（`bin`、`app`、`test`）的依赖，没有可链接的东西。
@@ -413,8 +425,8 @@ protobuf = { version = "35.1", tools = ["protoc"] }
 一个工具子构建再次请求正在构建的同一个工具时，在第一次重复处被拒绝，并给出
 请求链。
 
-与 `[dev-dependencies]` 不同，这些依赖**会**被传递遍历：一个构建期依赖自己
-的依赖，正是让它能工作的东西，并且继承它"只服务构建"的性质。
+与 `[dev-dependencies]` 不同，构建期依赖**会**被传递遍历，并与工程一起解析，
+一个包一个版本：构建期依赖自己的依赖正是让它能工作的东西，它们与它一起服务构建程序。
 
 一个 feature 可以为构建期请求划定范围，而无需另开一个声明处。
 `[feature-deps.<name>]` 的条目可以用相同的源，重述一条已经无条件声明的

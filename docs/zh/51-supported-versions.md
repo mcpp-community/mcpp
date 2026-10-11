@@ -35,7 +35,7 @@ schema，那是 [50 —— 机器可读输出](50-machine-output.md)。
 
 | 面 | 稳定性 |
 |---|---|
-| `mcpp.toml` 的键 | 只增。既有键保持原有含义；无法识别的键会被报告，不会被静默忽略 |
+| `mcpp.toml` 的键 | 只增。既有键保持原有含义；无法识别的键会被报告，不会被静默忽略。例外是下文的弃用 |
 | CLI 命令与旗标 | 只增。被替换的拼写保留为别名 |
 | 机器输出（`--message-format json`） | 由 `schemaVersion` 版本化，见 [50](50-machine-output.md) |
 | `build.mcpp` 指令协议 | 版本化，见 `kProtocolVersion`。引擎遇到声明版本**高于**自身的程序会拒绝，而不是猜测 |
@@ -46,6 +46,25 @@ schema，那是 [50 —— 机器可读输出](50-machine-output.md)。
 一个调用了自身引擎所带 `mcpp` 模块中不存在的函数的 `build.mcpp`，失败发生在
 构建程序的**编译**阶段，而不是通过协议错误。协议号管的是线上的指令；类型化 API
 由所装的引擎决定。两者都写在这里，是因为包作者看到的失败取决于他越过了哪一条边界。
+
+## 弃用
+
+清单中将被移除的写法或读法先被弃用；"已有的键保持其含义"的例外，恰好是本表的各行
+（mcpp 2026.10.11.1+）。
+
+- 被弃用的写法照常工作。构建可以编辑的清单（根、工作空间成员、工作空间内的 path 包）
+  中的每次使用都给出警告，写出取代它的写法、弃用它的版本与移除它的版本；`--strict` 下拒绝。
+  `mcpp why compat` 列出所有使用，包括依赖中的使用。
+- 移除以 CalVer 月份表示。弃用的版本与该月份之间至少相隔两个完整的日历月，读法在该月的
+  第一个版本或之后移除。
+- 本表由引擎中的唯一登记表（`modules/manifest/src/compat/registry.cppm`）生成；某个版本
+  到达某一行的月份而读法仍在时，引擎自己的测试失败。
+
+| 读法 | 弃用版本 | 移除版本 | 应写作 |
+|---|---|---|---|
+| `workspace-position`：工作空间根自己的 `[toolchain]`、`[indices]`、`[profile.<name>]`、`[target.<triple>]` 标量或 `[xlings]` 按位置到达成员 | 2026.10.10.1 | 2027.1 | `[workspace.toolchain]`、`[workspace.indices]`、`[workspace.profile.<name>]`、`[workspace.target.<selector>]`、`[workspace.xlings]` |
+| `host-module-in-dependencies`：`[dependencies]` 中请求 `host-module = true` 或 `rule_module` 特性的条目，按构建期依赖读取 | 2026.10.11.1 | 2027.1 | `[build-dependencies]` 中的同一条目 |
+| `plugin-imports-from-build-dependencies`：构建插件的库导入其自身 `[build-dependencies]` 中以 `host-module = true` 写出的包 | 2026.10.11.1 | 2027.1 | 插件 `[dependencies]` 中的该包 |
 
 ## 复现一次构建
 
