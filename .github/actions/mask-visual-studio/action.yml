@@ -1,0 +1,94 @@
+name: Mask Visual Studio
+description: >
+  Make every MSVC discovery strategy of msvc.cppm fail on a runner that ships
+  Visual Studio, and assert that they do. The runner is disposable, so this is
+  both safe and closer to "absent" than any env-only trick.
+
+inputs:
+  attempts:
+    description: How many times one rename is retried before it counts as denied
+    required: false
+    default: "5"
+  retry-delay-ms:
+    description: Milliseconds between two attempts at the same rename
+    required: false
+    default: "2000"
+
+runs:
+  using: composite
+  steps:
+    - name: Mask Visual Studio
+      shell: pwsh
+      env:
+        MASK_ATTEMPTS: ${{ inputs.attempts }}
+        MASK_RETRY_DELAY_MS: ${{ inputs.retry-delay-ms }}
+      run: |
+        $ErrorActionPreference = 'Continue'
+
+        # All three of msvc.cppm's discovery strategies converge on
+        # <vsRoot>\VC\Tools\MSVC — vswhere returns an installationPath that
+        # find_latest_msvc_tools then resolves through it, the env strategy
+        # checks it explicitly, and the well-known-path scan tests for it — so
+        # masking that directory is what makes this runner answer "no Visual
+        # Studio" to all three.
+        #
+        # The rename is refused outright on some hosts: "Access to the path
+        # '...\18\Enterprise\VC' is denied", while the same script on the same
+        # runner image commits the same rename minutes earlier or later (image
+        # windows-2025-vs2026 20260925.250 renamed it in one run and was
+        # refused in another). A refusal is therefore retried, and then
+        # answered one level deeper: a handle into VC does not block renaming
+        # VC\Tools, and the postcondition below only needs VC\Tools\MSVC gone.
+        # What outlasts both is reported, never swallowed.
+        $attempts = [int]$env:MASK_ATTEMPTS
+        $delay    = [int]$env:MASK_RETRY_DELAY_MS
+
+        function Mask-Path([string]$Path) {
+          for ($i = 1; $i -le $attempts; $i++) {
+            try {
+              Rename-Item -LiteralPath $Path -NewName "$(Split-Path $Path -Leaf).masked" -ErrorAction Stop
+              Write-Host "masked $Path"
+              return $true
+            } catch {
+              if ($i -lt $attempts) {
+                Start-Sleep -Milliseconds $delay
+              } else {
+                Write-Host "  denied after $attempts attempts: $Path — $($_.Exception.Message)"
+              }
+            }
+          }
+          return $false
+        }
+
+        $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+        if (Test-Path $vswhere) { [void](Mask-Path $vswhere) }
+
+        # -Path with a trailing wildcard segment lists the CONTENTS of the
+        # matches, not the matches themselves, so `…\*\*\VC` would hand back
+        # VC's children. Resolve-Path returns the directories themselves.
+        $vsRoots = @(Resolve-Path "C:\Program Files*\Microsoft Visual Studio\*\*\VC" `
+            -ErrorAction SilentlyContinue)
+        foreach ($p in $vsRoots) { [void](Mask-Path $p.Path) }
+
+        # The fallback, and the reason it is enough: vswhere's resolution and
+        # the well-known-path scan both end at VC\Tools\MSVC, so masking Tools
+        # answers "no Visual Studio" as well as masking VC does.
+        $tools = @(Resolve-Path "C:\Program Files*\Microsoft Visual Studio\*\*\VC\Tools" `
+            -ErrorAction SilentlyContinue)
+        foreach ($p in $tools) { [void](Mask-Path $p.Path) }
+
+        foreach ($v in @('VSINSTALLDIR','VCINSTALLDIR','VCToolsInstallDir',
+                         'VS170COMNTOOLS','VS160COMNTOOLS','VS150COMNTOOLS')) {
+          "$v=" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+        }
+
+        # Check the mask's own postcondition here, where the cause is obvious,
+        # instead of letting it surface three steps later as a confusing pass.
+        $remaining = Get-ChildItem "C:\Program Files*\Microsoft Visual Studio\*\*\VC\Tools\MSVC" `
+            -Directory -ErrorAction SilentlyContinue
+        if ($remaining) {
+          Write-Host "FAIL: VC tools still present after masking:"
+          $remaining | ForEach-Object { Write-Host "  $($_.FullName)" }
+          exit 1
+        }
+        Write-Host "Visual Studio masked: no VC\Tools\MSVC remains."

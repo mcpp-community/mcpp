@@ -84,24 +84,12 @@ jobs:
           name: measure-candidate
           path: candidate
 
-      # The same mask as ci-windows.yml's bare-Windows row, applied before
-      # anything touches Visual Studio.
+      # The same mask as ci-windows.yml's bare-Windows row — one action, so
+      # the two rows cannot drift apart — applied before anything touches
+      # Visual Studio.
       - name: Mask Visual Studio
         if: matrix.row == 'bare'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Continue'
-          $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (Test-Path $vswhere) { Rename-Item $vswhere "vswhere.exe.masked" }
-          Resolve-Path "C:\Program Files*\Microsoft Visual Studio\*\*\VC" -ErrorAction SilentlyContinue | ForEach-Object {
-            try { Rename-Item -LiteralPath $_.Path -NewName "VC.masked" -ErrorAction Stop }
-            catch { Write-Host "  rename failed: $($_.Exception.Message)" }
-          }
-          foreach ($v in @('VSINSTALLDIR','VCINSTALLDIR','VCToolsInstallDir','VS170COMNTOOLS','VS160COMNTOOLS','VS150COMNTOOLS')) {
-            "$v=" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          }
-          $left = Get-ChildItem "C:\Program Files*\Microsoft Visual Studio\*\*\VC\Tools\MSVC" -Directory -ErrorAction SilentlyContinue
-          if ($left) { Write-Host "FAIL: VC tools still present after masking"; exit 1 }
+        uses: ./.github/actions/mask-visual-studio
 
       - uses: ./.github/actions/bootstrap-mcpp
 
