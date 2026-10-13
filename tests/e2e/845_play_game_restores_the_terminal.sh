@@ -14,6 +14,12 @@
 #       terminal's mode, and the prepare action does not outlive mcpp;
 #   G4  with standard input not a terminal the game is off, a line says why,
 #       and the build succeeds.
+#
+# The arrows and the Ctrl-C are sent when the status row that carries the
+# score first appears: the frame the build itself drew is what the test waits
+# for, not a wall-clock delay. A delay sent them into the Programs phase
+# whenever the build program took that long, and G1 then failed on the phase
+# word while the score was on the screen beside it.
 set -e
 
 TMP=$(mktemp -d)
@@ -69,7 +75,18 @@ if pid == 0:
     script = ('trap : INT; stty -g > before.txt; "$0" build --play-game=snake; '
               'code=$?; stty -g > after.txt; exit $code')
     os.execvpe("sh", ["sh", "-c", script, mcpp], env)
-raw, t0, during, sent, status = b"", time.time(), None, False, 0
+
+def strip_ansi(blob):
+    return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", blob.decode("utf-8", "replace"))
+
+# The game rides every frame, and the row the assertion below names is the row
+# to steer on: nothing is gained by guessing when it is up. The build reaches
+# Phase::Building only after its build program has compiled and run (and after
+# the toolchain was resolved), which on a loaded runner is a second or more —
+# so the arrows and the Ctrl-C wait for the row rather than for the clock.
+STEER_ROW = re.compile(r"Building .* · snake \d+")
+raw, during, sent, status = b"", None, False, 0
+give_up = time.time() + 60      # a build that never draws the row is a failure, not a hang
 while True:
     r, _, _ = select.select([master], [], [], 0.1)
     if r:
@@ -78,7 +95,7 @@ while True:
         except OSError:
             chunk = b""
         raw += chunk
-    if time.time() - t0 > 1.5 and not sent:
+    if not sent and (STEER_ROW.search(strip_ansi(raw)) or time.time() > give_up):
         during = termios.tcgetattr(slave)
         for key in (b"\x1b[B", b"\x1b[C", b"\x1b[A"):
             os.write(master, key)
@@ -109,7 +126,7 @@ def mode_of(path):
                      for f in g.split(":"))
     return g
 before, after = mode_of("before.txt"), mode_of("after.txt")
-plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", raw.decode("utf-8", "replace")).replace("\r\n", "\n")
+plain = strip_ansi(raw).replace("\r\n", "\n")
 print(plain)
 assert during is not None, "the build ended before the game could be observed"
 # G1
