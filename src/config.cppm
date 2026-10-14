@@ -22,6 +22,7 @@ export module mcpp.config;
 
 import std;
 import mcpp.home;
+import mcpp.shell;
 import mcpp.modgraph.glob;   // try_narrow: the one UTF-8 spelling of a path
 import mcpp.libs.toml;
 import mcpp.libs.json;
@@ -742,6 +743,9 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         if (ec) return std::unexpected(ConfigError{
             std::format("cannot create '{}': {}", d.string(), ec.message())});
     }
+
+    if (mcpp::shell::install(cfg.mcppHome) != 0)
+        return std::unexpected(ConfigError{"cannot install shell completion scripts"});
 
     // 2b. Initialize logger (early init with defaults; re-init after config load)
     {

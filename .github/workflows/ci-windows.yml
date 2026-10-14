@@ -41,6 +41,12 @@ jobs:
           export MCPP_VENDORED_XLINGS=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
           "$MCPP_SELF" test
 
+      - name: Native PowerShell completion
+        shell: pwsh
+        run: |
+          $env:MCPP = $env:MCPP_FRESH
+          python tests/scripts/test_shell_completion.py ShellCompletionTests.test_powershell ShellCompletionTests.test_query_is_read_only_and_does_not_execute_partial_commands
+
       # WS8: this row has Visual Studio, so its answer is the "Windows with
       # usable MSVC" row of docs/01 and docs/20.
       - name: The documented default toolchain is this host's answer

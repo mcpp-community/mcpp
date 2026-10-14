@@ -73,6 +73,48 @@ mcpp --version
 > rather than using `source`, and verify the active command with
 > `Get-Command mcpp.exe`.
 
+### Shell completion
+
+mcpp provides Tab completion for bash, zsh, PowerShell (`pwsh`) and fish.
+Generate all four scripts, or select one shell:
+
+```bash
+mcpp self completion
+mcpp self completion bash
+```
+
+Scripts are written to `<mcpp-home>/config/shell/`. This command does not
+initialize a toolchain or access the network. Normal sandbox initialization
+also creates the scripts. Repeating the command updates generated scripts;
+keep local customizations in the shell's own configuration file.
+
+For the default `~/.mcpp` home, add the corresponding line to the configuration
+file below and start a new shell, or execute the line in the current session:
+
+| Shell | Configuration file | Loading command |
+|---|---|---|
+| bash | `~/.bashrc` | `source ~/.mcpp/config/shell/mcpp.bash` |
+| zsh | `${ZDOTDIR:-$HOME}/.zshrc` | `source ~/.mcpp/config/shell/mcpp.zsh` |
+| fish | `$XDG_CONFIG_HOME/fish/config.fish`, or `~/.config/fish/config.fish` | `source ~/.mcpp/config/shell/mcpp.fish` |
+| PowerShell | `$PROFILE.CurrentUserAllHosts` | `. "$HOME/.mcpp/config/shell/mcpp.ps1"` |
+
+Use the actual mcpp home for a standalone custom prefix or an explicit
+`MCPP_HOME`. zsh initializes its completion system if it is not already active;
+when the configuration calls `compinit`, load the mcpp script after that call.
+In PowerShell, create the profile's parent directory and file if absent.
+
+The standalone installer generates the scripts and appends a loading command
+for the shell identified by `SHELL`. Reinstallation does not append the same
+command twice. `MCPP_NO_COMPLETION=1` disables this profile change;
+`MCPP_NO_PATH=1` independently disables its PATH change. Unknown shells receive
+manual loading instructions.
+
+Completion covers commands, nested subcommands, long and short options, and
+built-in values such as cache modes, profiles and mirrors. File arguments use
+the shell's filename completion. Completion queries do not run project scripts,
+install dependencies or access registries. Package names, custom profiles,
+target names and registry versions are not dynamically queried.
+
 ## Creating a Project
 
 ```bash
@@ -267,4 +309,3 @@ For the differences between the four modes and their artifact layouts, see [10 â
 - Explaining default decisions: `mcpp why [toolchain|runtime|deps]`; host capability checkup: `mcpp self doctor`;
   machine-readable resolution manifest: the build artifact `target/<triple>/<fp>/resolution.json`.
 - Offline operation: `mcpp --offline` or `MCPP_OFFLINE=1` prevents index refreshes, downloads, and toolchain installation. In a home that has never been used it also skips the first-use sandbox bootstrap (index clone, ninja, patchelf), announces the skip once, and leaves the home un-bootstrapped; commands that need those tools report it.
-
