@@ -1,0 +1,70 @@
+# [temp][do not merge] Probe for
+# .agents/docs/2026-10-16-xlings-provider-port-and-shared-store-design.md
+# (O1, O2, O3, F2, O5). Every script prints what it observes and never asserts.
+name: probe
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # O1 + O2 (+ O5 read-only upstream): xlings 2026.10.15.4 toolchains in a
+  # fresh home; mcpp 2026.10.11.1 with its gcc/llvm replaced by links.
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    name: linux (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: probe
+        run: bash .github/probe/linux.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-${{ matrix.runner }}
+          path: ${{ runner.temp }}/p/logs
+
+  # O1 + O2 on macOS: llvm through a symbolic link.
+  macos:
+    name: macos (macos-15)
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: probe
+        run: bash .github/probe/mac.sh
+
+  # O3: junctions and a deep MCPP_HOME on Windows.
+  windows:
+    name: windows
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: probe
+        shell: pwsh
+        run: ./.github/probe/win.ps1
+
+  # F2 / #809: mcpp new, toolchain install and a build on NFSv3.
+  nfs:
+    name: nfs v3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: An NFSv3 export of this runner, mounted
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y nfs-kernel-server
+          sudo mkdir -p /srv/nfs /mnt/nfs
+          sudo chown "$(id -u):$(id -g)" /srv/nfs
+          echo "/srv/nfs 127.0.0.1(rw,sync,no_subtree_check,all_squash,anonuid=$(id -u),anongid=$(id -g))" | sudo tee /etc/exports
+          sudo exportfs -ra
+          sudo systemctl restart nfs-kernel-server
+          sudo mount -t nfs -o vers=3,nolock,local_lock=all 127.0.0.1:/srv/nfs /mnt/nfs
+      - name: probe
+        run: bash .github/probe/nfs.sh /mnt/nfs
