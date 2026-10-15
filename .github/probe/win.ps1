@@ -56,25 +56,48 @@ $H = "$T\mh"; $W = "$T\w"
 Run-Demo 'baseline' $H $W
 $reg = "$H\registry\data\xpkgs"
 Obs 'mcpp registry xim payloads' { Get-ChildItem $reg | ForEach-Object { "$($_.Name): " + ((Get-ChildItem $_.FullName -Name) -join ' ') } }
-$linked = @()
-foreach ($pkg in Get-ChildItem "$UP\data\xpkgs" -Directory) {
-  foreach ($ver in Get-ChildItem $pkg.FullName -Directory) {
-    $mine = Join-Path $reg (Join-Path $pkg.Name $ver.Name)
-    if ((Test-Path $mine) -and -not ((Get-Item $mine).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-      Rename-Item $mine "$mine.own"
-      cmd /c mklink /J "$mine" "$($ver.FullName)" | Out-Null
-      $linked += "$($pkg.Name)/$($ver.Name)"
+function Digest($d) { $f = Get-ChildItem -Recurse -File -Force -Path $d -ErrorAction SilentlyContinue; "$($f.Count) files, $(($f | Measure-Object Length -Sum).Sum) bytes" }
+function Link-All($withMarker) {
+  $linked = @()
+  foreach ($pkg in Get-ChildItem "$UP\data\xpkgs" -Directory) {
+    foreach ($ver in Get-ChildItem $pkg.FullName -Directory) {
+      $mine = Join-Path $reg (Join-Path $pkg.Name $ver.Name)
+      if (Test-Path $mine) {
+        $it = Get-Item $mine -Force
+        if ($it.LinkType) { cmd /c rmdir "$mine" | Out-Null } else { Remove-Item -Recurse -Force "$mine.own" -ErrorAction SilentlyContinue; Rename-Item $mine "$mine.own" }
+        if ($withMarker) { New-Item -ItemType File -Force -Path (Join-Path $ver.FullName '.mcpp_ok') | Out-Null }
+        cmd /c mklink /J "$mine" "$($ver.FullName)" | Out-Null
+        $linked += "$($pkg.Name)/$($ver.Name)"
+      }
     }
   }
+  Say "linked by junction (marker=$withMarker): $($linked -join ', ')"
 }
-Say "linked by junction: $($linked -join ', ')"
-Set-Location "$W\demo"; Remove-Item -Recurse -Force target -ErrorAction SilentlyContinue
-Obs 'junctions: build -v' { & $M -v build } 40
-Obs 'junctions: run' { & $M run }
-Obs 'junctions: clang++ through the junction' { & "$reg\xim-x-llvm\23.1.3\bin\clang++.exe" -print-resource-dir }
+$UL = "$UP\data\xpkgs\xim-x-llvm\23.1.3"
+$RLW = "$reg\xim-x-llvm\23.1.3"
 
-Say "### O3: deep MCPP_HOME and project path"
-$deep = 'C:\d\' + ((1..6 | ForEach-Object { 'segment-of-a-deep-path-' + $_ }) -join '\')
+Say "#### round A: junction, no marker (mcpp reinstalls) -- is the upstream deleted through the junction?"
+Say "upstream before: $(Digest $UL)"
+Link-All $false
+Set-Location "$W\demo"; Remove-Item -Recurse -Force target -ErrorAction SilentlyContinue
+Obs 'A: build -v' { & $M -v build } 20
+Obs 'A: the entry afterwards' { Get-Item $RLW -Force | Select-Object FullName, LinkType, Target | Format-List }
+Say "upstream after A: $(Digest $UL)"
+
+Say "#### round B: junction, marker present (mcpp uses the borrowed payload)"
+Link-All $true
+Say "upstream before B: $(Digest $UL)"
+Set-Location "$W\demo"; Remove-Item -Recurse -Force target -ErrorAction SilentlyContinue
+Obs 'B: build -v' { & $M -v build } 40
+Obs 'B: the entry afterwards' { Get-Item $RLW -Force | Select-Object FullName, LinkType, Target | Format-List }
+Obs 'B: run' { & $M run }
+Obs 'B: clang++ resource dir through the junction' { & "$RLW\bin\clang++.exe" -print-resource-dir }
+Say "upstream after B: $(Digest $UL)"
+
+Say "### O3: deep MCPP_HOME and project path, LongPathsEnabled = 0"
+Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Value 0
+Obs 'LongPathsEnabled now' { Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled }
+$deep = 'C:\d\' + ((1..7 | ForEach-Object { 'segment-of-a-deep-path-' + $_ }) -join '\')
 Say "MCPP_HOME length: $($deep.Length + 3)"
 Run-Demo 'deep' "$deep\mh" "$deep\w"
 $longest = Get-ChildItem -Recurse -Force -Path "$deep" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName.Length } | Measure-Object -Maximum

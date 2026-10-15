@@ -43,6 +43,9 @@ obs "clang++ (upstream) builds and runs hello, no flags" bash -c "cd '$T' && '$L
 obs "the product's loader/runpath" bash -c "$(declare -f elf); elf '$T/h-clang'"
 
 section "O5 setup: the upstream store becomes root-owned and read-only (a system layer)"
+# Round 2: the port's answer "installed" is simulated with mcpp's own marker,
+# so that mcpp uses the linked payload instead of reinstalling over the link.
+obs "simulate the port's answer (.mcpp_ok)" bash -c "for d in '$UP'/data/xpkgs/xim-x-gcc/16.1.0 '$UP'/data/xpkgs/xim-x-binutils/* '$UP'/data/xpkgs/xim-x-llvm/23.1.3; do touch \$d/.mcpp_ok && echo \$d; done"
 obs "chown root, remove write" bash -c "sudo chown -R root:root '$UP/data/xpkgs' && sudo chmod -R a-w '$UP/data/xpkgs' && stat -c '%U %A %n' '$UP/data/xpkgs/xim-x-gcc/16.1.0' '$UP/data/xpkgs/xim-x-llvm/23.1.3'"
 
 section "O2: mcpp $MV, managed gcc replaced by a link to the upstream payload"
@@ -67,6 +70,7 @@ UPD_BEFORE="$(tree_digest "$G")"
 mv "$R" "$R.own" && ln -s "$G" "$R"
 rm -rf "$T/w/demo/target"
 OBS_LINES=30 obs "variant A (gcc linked): build -v" m build -v
+obs "variant A: is the entry still a link?" ls -ld "$R"
 obs "variant A: run" m run
 obs "variant A: product" bash -c "$(declare -f elf); elf \$(find '$T/w/demo/target' -type f -name demo -perm -u+x | head -1)"
 obs "variant A: compile/link commands (loader, rpath, -B, specs)" bash -c "grep -rhoE -- '(--dynamic-linker[= ][^ ]+|-rpath[, ][^ ]+|-B[^ ]+|-specs=[^ ]+|--sysroot[= ][^ ]+)' '$T/w/demo/target' 2>/dev/null | sort | uniq -c | head -20"
@@ -76,6 +80,7 @@ for b in "$UP"/data/xpkgs/xim-x-binutils/*; do
 done
 rm -rf "$T/w/demo/target"
 OBS_LINES=15 obs "variant B (gcc + binutils linked): build" m build
+obs "variant B: are the entries still links?" bash -c "ls -ld '$R' '$MCPP_HOME'/registry/data/xpkgs/xim-x-binutils/*"
 obs "variant B: run" m run
 obs "variant B: product" bash -c "$(declare -f elf); elf \$(find '$T/w/demo/target' -type f -name demo -perm -u+x | head -1)"
 obs "was the upstream gcc written?" bash -c "echo before=$UPD_BEFORE after=\$( cd '$G' && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
@@ -92,6 +97,7 @@ LUP_BEFORE="$(tree_digest "$L")"
 mv "$RL" "$RL.own" && ln -s "$L" "$RL"
 rm -rf "$T/w/demo/target"
 OBS_LINES=30 obs "llvm linked: build -v" m build -v --toolchain llvm@23.1.3
+obs "llvm linked: is the entry still a link?" ls -ld "$RL"
 obs "llvm linked: run" bash -c "\$(find '$T/w/demo/target' -type f -name demo -perm -u+x | head -1)"
 obs "llvm linked: product" bash -c "$(declare -f elf); elf \$(find '$T/w/demo/target' -type f -name demo -perm -u+x | head -1)"
 obs "was the upstream llvm written?" bash -c "echo before=$LUP_BEFORE after=\$( cd '$L' && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"

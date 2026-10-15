@@ -45,11 +45,15 @@ obs "baseline: product" bash -c "$(declare -f macho); macho \$(find '$T/w/demo/t
 RL="$MCPP_HOME/registry/data/xpkgs/xim-x-llvm/23.1.3"
 obs "resource dir (mcpp's own payload)" "$RL/bin/clang++" -print-resource-dir
 obs "mcpp-modified cfg (comparison)" bash -c "cat '$RL/bin/clang++.cfg' 2>&1 | head -20"
+# Round 2: simulate the port's answer "installed" with mcpp's own marker, then
+# make the upstream read-only so that any write is visible.
+touch "$L/.mcpp_ok"; chmod -R a-w "$L"
 LUP_BEFORE="$(tree_digest "$L")"
 mv "$RL" "$RL.own" && ln -s "$L" "$RL"
 obs "resource dir through the link" "$RL/bin/clang++" -print-resource-dir
 rm -rf "$T/w/demo/target"
 OBS_LINES=30 obs "llvm linked: build -v" m -v build
+obs "llvm linked: is the entry still a link?" ls -ld "$RL"
 obs "llvm linked: run" m run
 obs "llvm linked: product" bash -c "$(declare -f macho); macho \$(find '$T/w/demo/target' -type f -name demo -perm -u+x | head -1)"
 obs "llvm linked: flags in build.ninja (sysroot, -isystem, -L, rpath)" bash -c "grep -rhoE -- '(--sysroot[= ][^ ]+|-isystem [^ ]+|-L[^ ]+|-rpath[, ][^ ]+|-resource-dir[= ][^ ]+)' '$T/w/demo/target' 2>/dev/null | sort | uniq -c | head -20"
