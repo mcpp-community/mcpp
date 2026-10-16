@@ -668,6 +668,7 @@ mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 m
 3. 写进这类 DLL 所链接的包的 flag 中的 `/GL`,无论 LTO 是否生效,都在规划期被拒绝。
 4. `mcpp pack` 产出的静态库**禁止**携带 LTO 中间表示;其对象不以 LTO 编译,构建报告一次。
 5. `[test] windows_code_page` 为所发现的每个测试程序陈述 Windows 代码页,取值与 target 键相同。
+6. `windows_long_paths`(target 键与 `[test]` 键)陈述 PE 可执行文件是否声明 `longPathAware`;作为 host 工具构建的程序默认 `true`,其余默认不声明;写在库目标上被拒绝。
 
 **状态:已实现(mcpp 2026.10.5.2,#770)。**
 

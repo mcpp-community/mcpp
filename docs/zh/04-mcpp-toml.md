@@ -422,6 +422,7 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `windows_subsystem` *（2026.9.12.2+）* | 可执行文件的 PE subsystem：`"console"`（默认）或 `"windows"`，一个启动时没有控制台的 GUI 程序。只到达这个目标的链接，别处不受影响，在非 PE 的目标上不渲染任何东西。见上一节。 |
 | `windows_entry` *（2026.9.12.2+）* | 程序定义的入口函数：`"main"`（默认）、`"wmain"`、`"WinMain"` 或 `"wWinMain"`。见上一节。 |
 | `windows_code_page` *（2026.9.26.1+）* | 可执行文件在 Windows 上的 ANSI 代码页：`"utf-8"`，以 Windows 10 1903 及以后版本会遵从的应用程序清单嵌入；或 `"legacy"`，即系统代码页。两者都不写的程序目标运行在系统代码页里，作为 host 工具构建的程序（§2.14）除外，它默认为 `"utf-8"`。写在库目标上会被拒绝；在非 PE 目标上不产生任何东西。见 §2.3 的*路径与文本编码*。 |
+| `windows_long_paths` *（2026.10.16.1+）* | `true` 在可执行文件的应用程序清单中嵌入 `longPathAware`：在 Windows 启用长路径（`LongPathsEnabled`）时，进程可以使用超过 260 个字符的路径。`false` 不嵌入。两者都不写的程序目标不嵌入，作为 host 工具构建的程序（§2.14）除外，它默认为 `true`。写在库目标上会被拒绝；在非 PE 目标上不产生任何东西。 |
 | `linkage` *（2026.9.15.2+）* | 一个库目标的**默认**链接形态，`"static"` 或 `"shared"`：不写 `linkage` 的消费者得到的形态。与 `kind = "shared"` 不同，它不是约束，因此消费者的显式陈述会被遵从。与 `kind = "shared"` 同写，或写在程序目标上，都会被拒绝。见[`dependency_linkage`](#dependency_linkage--静态还是动态由消费者决定)。 |
 
 > **范围（重要）：** 目标上的 `defines` / `cxxflags` / `cflags` **只**
@@ -1760,6 +1761,7 @@ discover = ["tests/**/*.cpp"]    # the default
 |---|---|---|
 | `discover` | glob 数组 | 每个被某条 glob 匹配到的文件都是一个测试程序；以 `!` 开头的 glob 会移除它匹配到的文件；`[]` 不发现任何测试 |
 | `windows_code_page` | `"utf-8"` 或 `"legacy"` | Windows 上每个测试程序的 ANSI 代码页，含义与同名的 target 键相同；默认 `"legacy"`，即系统代码页 *(2026.10.5.2+)* |
+| `windows_long_paths` | `true` 或 `false` | Windows 上每个测试程序是否支持长路径，含义与同名的 target 键相同；默认 `false` *(2026.10.16.1+)* |
 
 这些 glob 使用与 `[build] sources` 相同的词汇。一个测试的名字，是它
 相对第一条匹配到它的 glob 所在的固定目录的路径，去掉扩展名。两个

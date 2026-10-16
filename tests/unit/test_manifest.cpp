@@ -2661,6 +2661,47 @@ windows_code_page = "{}"
     }
 }
 
+// `windows_long_paths` (design 2026-10-16 §11): an executable's statement
+// that it handles paths past MAX_PATH; unset when the author says nothing.
+TEST(Manifest, ParsesWindowsLongPathsOnABinaryTargetAndForTests) {
+    for (bool value : {true, false}) {
+        const auto src = std::format(R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[targets.app]
+kind               = "bin"
+main               = "src/main.cpp"
+windows_long_paths = {0}
+[test]
+windows_long_paths = {0}
+)", value);
+        auto m = mcpp::manifest::parse_string(src);
+        ASSERT_TRUE(m.has_value()) << m.error().format();
+        ASSERT_EQ(m->targets.size(), 1u);
+        ASSERT_TRUE(m->targets[0].windowsLongPaths.has_value());
+        EXPECT_EQ(*m->targets[0].windowsLongPaths, value);
+        ASSERT_TRUE(m->testWindowsLongPaths.has_value());
+        EXPECT_EQ(*m->testWindowsLongPaths, value);
+        EXPECT_TRUE(m->schemaWarnings.empty());
+    }
+    auto unset = mcpp::manifest::parse_string(
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[targets.app]\nkind = \"bin\"\nmain = \"m.cpp\"\n");
+    ASSERT_TRUE(unset.has_value());
+    EXPECT_FALSE(unset->targets[0].windowsLongPaths.has_value());
+    auto wrong = mcpp::manifest::parse_string(
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[targets.app]\nkind = \"bin\"\nmain = \"m.cpp\"\n"
+        "windows_long_paths = \"yes\"\n");
+    ASSERT_FALSE(wrong.has_value());
+    EXPECT_NE(wrong.error().message.find("windows_long_paths must be true or false"), std::string::npos);
+    auto library = mcpp::manifest::parse_string(
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[targets.core]\nkind = \"lib\"\n"
+        "windows_long_paths = true\n");
+    ASSERT_FALSE(library.has_value());
+    EXPECT_NE(library.error().message.find("targets.core.windows_long_paths"), std::string::npos)
+        << library.error().message;
+}
+
 TEST(Manifest, RefusesAnUnknownWindowsCodePageNamingTheAcceptedOnes) {
     constexpr auto src = R"(
 [package]

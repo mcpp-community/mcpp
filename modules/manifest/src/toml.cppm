@@ -1991,6 +1991,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     tname, v, list)));
             t.windowsCodePage = v;
         }
+        if (auto it = tt.find("windows_long_paths"); it != tt.end()) {
+            if (!it->second.is_bool())
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.windows_long_paths must be true or false", tname)));
+            t.windowsLongPaths = it->second.as_bool();
+        }
         // An executable's property. A library has no subsystem, and a GUI
         // subsystem on anything a test runner executes is the defect #618
         // describes, so both are refused naming the key. `app` is accepted
@@ -1999,14 +2005,15 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // `is_program()` is "is this the program", which is what the PE
         // subsystem attaches to; `TestBinary` stays refused on purpose.
         if ((!t.windowsSubsystem.empty() || !t.windowsEntry.empty()
-             || !t.windowsCodePage.empty())
+             || !t.windowsCodePage.empty() || t.windowsLongPaths)
             && !t.is_program())
             return std::unexpected(error(origin, std::format(
                 "targets.{}.{} applies to an executable (`kind = \"bin\"` or "
                 "`\"app\"`), and this target is not one", tname,
                 !t.windowsSubsystem.empty() ? "windows_subsystem"
                 : !t.windowsEntry.empty()   ? "windows_entry"
-                                            : "windows_code_page")));
+                : !t.windowsCodePage.empty() ? "windows_code_page"
+                                             : "windows_long_paths")));
         // Guard: -std=... belongs to [package].standard, not per-target flags
         // (same rule as [build].cxxflags). Reject early with a clear message.
         for (auto const& flag : t.cxxflags) {
@@ -2025,7 +2032,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         static constexpr std::string_view kKnownTargetKeys[] = {
             "kind", "linkage", "main", "soname", "exports", "windows_auto_export",
             "cflags", "cxxflags", "defines", "required_features",
-            "windows_entry", "windows_subsystem", "windows_code_page",
+            "windows_entry", "windows_subsystem", "windows_code_page", "windows_long_paths",
         };
         for (auto& [key, _] : tt) {
             bool known = false;
@@ -3310,10 +3317,17 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 m.testWindowsCodePage = v;
                 continue;
             }
+            if (key == "windows_long_paths") {
+                if (!value.is_bool())
+                    return std::unexpected(error(origin,
+                        "[test] windows_long_paths must be true or false"));
+                m.testWindowsLongPaths = value.as_bool();
+                continue;
+            }
             if (key != "discover") {
                 m.schemaWarnings.push_back(std::format(
                     "[test] has unsupported key '{}' (ignored). Supported keys: "
-                    "discover, windows_code_page.", key));
+                    "discover, windows_code_page, windows_long_paths.", key));
                 continue;
             }
             bool ok = value.is_array();

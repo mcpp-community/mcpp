@@ -17,7 +17,6 @@ import std;
 import mcpp.provider;
 import mcpp.pm.compat;
 import mcpp.pm.index_contract;
-import mcpp.pm.index_snapshot;
 import mcpp.platform;
 import mcpp.log;
 import mcpp.ui;                 // closing notices of the refresh guard
@@ -286,6 +285,36 @@ namespace paths {
 
     // index data root: env.home / "data"
     std::filesystem::path index_data(const Env& env);
+
+    // ── Where each index is, and where its payloads go (design 2026-10-16
+    // §5): an `index_repos` entry may name its own data directory and store
+    // (xlings 2026.10.16.1, X1/X2); mcpp names them for the indices it owns.
+    struct DeclaredIndex {
+        std::string           name;
+        std::filesystem::path dir;     // where its data is (absolute)
+        std::filesystem::path store;   // where its payloads go (absolute; empty: the home's)
+        bool                  owned = false;   // a `dir` was declared: its owner refreshes it
+    };
+    // The entries of this env's configuration (a project's, then the home's
+    // when the env has a project).
+    std::vector<DeclaredIndex> declared_indices(const Env& env);
+    // Where the index `name` keeps its data here.
+    std::filesystem::path index_dir_of(const Env& env, std::string_view name);
+    // Every store a payload of this env may be in: the declared ones, then
+    // the home's. A payload mcpp installed into the home's store before its
+    // index had a store of its own is found there (COMPAT(internal:legacy-registry-store)).
+    std::vector<std::filesystem::path> stores(const Env& env);
+    // Every directory an index of this env's scope (its project's when it
+    // has one, else the home's) keeps its data in, sorted.
+    std::vector<std::filesystem::path> index_roots(const Env& env);
+    // The same of a provider home (the global one, or a project's), read
+    // from its configuration alone: its index directories, its stores.
+    std::vector<std::filesystem::path> index_roots_of(const std::filesystem::path& home);
+    std::vector<std::filesystem::path> stores_of(const std::filesystem::path& home);
+    // Record where the indices mcpp owns keep their data and payloads in
+    // this env's configuration, and move data an index kept at the home's
+    // own place there, once (design §5.3).
+    void own_indices(const Env& env, std::span<const mcpp::provider::SeedRepo> owned);
 
     // sandbox init marker: env.home / "subos" / "default" / ".xlings.json"
     std::filesystem::path sandbox_init_marker(const Env& env);
@@ -601,6 +630,15 @@ std::optional<std::string> index_revision(const std::filesystem::path& indexDir)
 
 std::expected<std::string, std::string> run_capture(const std::string& cmd);
 
+// What the xlings at `binary` is (`xlings interface --version`, protocol
+// 1.10+): its version, protocol, capabilities, features and home layouts;
+// `answered` false for an xlings before the handshake.
+mcpp::provider::ProviderInfo describe(const std::filesystem::path& binary);
+
+// Why that xlings cannot serve this mcpp (design 2026-10-16 §12): empty when
+// it can. The pinned version, and every feature mcpp relies on.
+std::string unmet(const mcpp::provider::ProviderInfo& info);
+
 } // namespace mcpp::provider::xlings
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -623,7 +661,7 @@ void print_status(std::string_view verb, std::string_view msg) {
 }
 
 std::filesystem::path default_index_dir(const Env& env) {
-    return paths::index_data(env) / "mcpplibs";
+    return paths::index_dir_of(env, "mcpplibs");
 }
 
 std::filesystem::path official_index_dir(const Env& env) {
@@ -844,6 +882,43 @@ std::optional<std::string> index_revision(const std::filesystem::path& indexDir)
     return read_index_revision(indexDir);
 }
 
+// ─── The handshake ──────────────────────────────────────────────────
+
+mcpp::provider::ProviderInfo describe(const std::filesystem::path& binary) {
+    mcpp::provider::ProviderInfo info;
+    auto out = run_capture(std::format("{} interface --version {}", shq(binary.string()),
+                                       mcpp::platform::null_redirect));
+    if (!out) return info;
+    auto j = nlohmann::json::parse(*out, nullptr, false);
+    if (!j.is_object()) return info;
+    const auto strings = [&](const char* key) {
+        std::vector<std::string> v;
+        if (j.contains(key) && j[key].is_array())
+            for (auto& e : j[key]) if (e.is_string()) v.push_back(e.get<std::string>());
+        return v;
+    };
+    info.version = j.value("version", std::string{});
+    info.protocol = j.value("protocol_version", std::string{});
+    info.capabilities = strings("capabilities");
+    info.features = strings("features");
+    if (j.contains("home_layouts") && j["home_layouts"].is_array())
+        for (auto& e : j["home_layouts"]) if (e.is_number_integer()) info.homeLayouts.push_back(e.get<int>());
+    info.answered = !info.version.empty();
+    return info;
+}
+
+std::string unmet(const mcpp::provider::ProviderInfo& info) {
+    if (!info.answered) return "answers no handshake (an xlings before 2026.10.16.1)";
+    if (mcpp::xpkg_version::compare_keys(info.version, pinned::kXlingsVersion) < 0)
+        return std::format("is {}, older than {}", info.version, pinned::kXlingsVersion);
+    for (auto feature : {"index_dir", "index_store", "upstreams", "payload_status", "sync_index"})
+        if (std::ranges::find(info.features, feature) == info.features.end())
+            return std::format("does not offer `{}`", feature);
+    if (std::ranges::find(info.capabilities, "install_packages") == info.capabilities.end())
+        return "does not offer `install_packages`";
+    return {};
+}
+
 // ─── run_capture ────────────────────────────────────────────────────
 
 std::expected<std::string, std::string> run_capture(const std::string& cmd) {
@@ -911,7 +986,9 @@ XpkgRef parse_xpkg_ref(std::string_view spec) { return mcpp::provider::parse_ref
 std::optional<std::filesystem::path>
 xpkg_payload(const Env& env, const XpkgRef& ref) {
     if (auto recorded = recorded_payload(env, ref)) return recorded;
-    return xpkg_payload_at(xpkgs_base(env), ref);
+    for (const auto& store : stores(env))
+        if (auto found = xpkg_payload_at(store, ref)) return found;
+    return std::nullopt;
 }
 
 std::optional<std::filesystem::path>
@@ -1023,9 +1100,11 @@ recorded_payload(const Env& env, const XpkgRef& ref) {
     // provisioning check treats "no answer" as not installed (#716).
     std::error_code ec;
     if (!std::filesystem::is_directory(dir, ec)) return std::nullopt;
-    const auto root = xpkgs_base(env) / std::format("{}-x-{}", ref.ns, ref.name);
-    if (dir.parent_path().lexically_normal() != root.lexically_normal()) return std::nullopt;
-    return dir;
+    for (const auto& store : stores(env)) {
+        const auto root = store / std::format("{}-x-{}", ref.ns, ref.name);
+        if (dir.parent_path().lexically_normal() == root.lexically_normal()) return dir;
+    }
+    return std::nullopt;
 }
 
 std::optional<std::filesystem::path>
@@ -1210,6 +1289,135 @@ find_sibling_package(const std::filesystem::path& compilerBin,
 
 std::filesystem::path index_data(const Env& env) {
     return env.home / "data";
+}
+
+namespace {
+std::vector<DeclaredIndex> declared_in(const std::filesystem::path& file, const std::filesystem::path& base,
+                                       const std::filesystem::path& dataRoot) {
+    std::vector<DeclaredIndex> out;
+    std::ifstream in(file);
+    if (!in) return out;
+    auto j = nlohmann::json::parse(in, nullptr, false);
+    if (!j.is_object() || !j.contains("index_repos") || !j["index_repos"].is_array()) return out;
+    const auto absolute = [&](const std::string& p) {
+        const std::filesystem::path path = p;
+        return path.is_absolute() ? path.lexically_normal() : (base / path).lexically_normal();
+    };
+    for (const auto& e : j["index_repos"]) {
+        if (!e.is_object() || !e.contains("name") || !e["name"].is_string()) continue;
+        DeclaredIndex d;
+        d.name = e["name"].get<std::string>();
+        if (e.contains("dir") && e["dir"].is_string() && !e["dir"].get<std::string>().empty()) {
+            d.dir = absolute(e["dir"].get<std::string>());
+            d.owned = true;
+        } else {
+            d.dir = dataRoot / d.name;
+        }
+        if (e.contains("store") && e["store"].is_string() && !e["store"].get<std::string>().empty())
+            d.store = absolute(e["store"].get<std::string>());
+        out.push_back(std::move(d));
+    }
+    return out;
+}
+} // namespace
+
+std::vector<DeclaredIndex> declared_indices(const Env& env) {
+    std::vector<DeclaredIndex> out;
+    if (!env.projectDir.empty())
+        out = declared_in(env.projectDir / ".xlings.json", env.projectDir, env.projectDir / "data");
+    for (auto& d : declared_in(env.home / ".xlings.json", env.home, index_data(env)))
+        if (std::ranges::none_of(out, [&](const DeclaredIndex& o) { return o.name == d.name; }))
+            out.push_back(std::move(d));
+    return out;
+}
+
+std::filesystem::path index_dir_of(const Env& env, std::string_view name) {
+    for (auto& d : declared_indices(env))
+        if (d.name == name) return d.dir;
+    return index_data(env) / std::string(name);
+}
+
+std::vector<std::filesystem::path> index_roots_of(const std::filesystem::path& home) {
+    const auto data = home / "data";
+    std::vector<std::filesystem::path> out;
+    std::error_code ec;
+    for (auto& e : std::filesystem::directory_iterator(data, ec))
+        if (e.is_directory(ec)) out.push_back(e.path());
+    for (auto& d : declared_in(home / ".xlings.json", home, data))
+        if (d.owned && std::filesystem::is_directory(d.dir, ec) && std::ranges::find(out, d.dir) == out.end())
+            out.push_back(d.dir);
+    std::ranges::sort(out);
+    return out;
+}
+
+std::vector<std::filesystem::path> stores_of(const std::filesystem::path& home) {
+    std::vector<std::filesystem::path> out;
+    for (auto& d : declared_in(home / ".xlings.json", home, home / "data"))
+        if (!d.store.empty() && std::ranges::find(out, d.store) == out.end()) out.push_back(d.store);
+    if (auto own = home / "data" / "xpkgs"; std::ranges::find(out, own) == out.end()) out.push_back(own);
+    return out;
+}
+
+std::vector<std::filesystem::path> index_roots(const Env& env) {
+    return index_roots_of(env.projectDir.empty() ? env.home : env.projectDir);
+}
+
+void own_indices(const Env& env, std::span<const mcpp::provider::SeedRepo> owned) {
+    const bool project = !env.projectDir.empty();
+    const auto base = project ? env.projectDir : env.home;
+    const auto data = project ? env.projectDir / "data" : index_data(env);
+    const auto file = base / ".xlings.json";
+    std::ifstream in(file);
+    if (!in) return;
+    auto j = nlohmann::json::parse(in, nullptr, false);
+    in.close();
+    if (!j.is_object() || !j.contains("index_repos") || !j["index_repos"].is_array()) return;
+    bool changed = false;
+    for (const auto& o : owned) {
+        if (o.dir.empty()) continue;
+        for (auto& e : j["index_repos"]) {
+            if (!e.is_object() || e.value("name", std::string{}) != o.name) continue;
+            // Its data, from where the provider kept it, once: a rename on one
+            // filesystem, a copy and a removal across two.
+            std::error_code ec;
+            const auto old = data / o.name;
+            if (!e.contains("dir") && std::filesystem::is_directory(old, ec)
+                && !std::filesystem::exists(o.dir, ec)) {
+                std::filesystem::create_directories(o.dir.parent_path(), ec);
+                std::filesystem::rename(old, o.dir, ec);
+                if (ec) {
+                    ec.clear();
+                    std::filesystem::copy(old, o.dir, std::filesystem::copy_options::recursive
+                                                          | std::filesystem::copy_options::copy_symlinks, ec);
+                    if (!ec) std::filesystem::remove_all(old, ec);
+                    else std::filesystem::remove_all(o.dir, ec);
+                }
+            }
+            if (e.value("dir", std::string{}) != o.dir.generic_string()) {
+                e["dir"] = o.dir.generic_string();
+                changed = true;
+            }
+            if (!o.store.empty() && e.value("store", std::string{}) != o.store.generic_string()) {
+                e["store"] = o.store.generic_string();
+                changed = true;
+            }
+        }
+    }
+    if (!changed) return;
+    auto tmp = file;
+    tmp += std::format(".mcpp-{:x}", std::random_device{}());
+    write_file(tmp, j.dump(2) + "\n");
+    std::error_code ec;
+    std::filesystem::rename(tmp, file, ec);
+    if (ec) std::filesystem::remove(tmp, ec);
+}
+
+std::vector<std::filesystem::path> stores(const Env& env) {
+    std::vector<std::filesystem::path> out;
+    for (auto& d : declared_indices(env))
+        if (!d.store.empty() && std::ranges::find(out, d.store) == out.end()) out.push_back(d.store);
+    if (auto home = xpkgs_base(env); std::ranges::find(out, home) == out.end()) out.push_back(home);
+    return out;
 }
 
 std::filesystem::path sandbox_init_marker(const Env& env) {
@@ -1814,6 +2022,10 @@ void seed_xlings_json(const Env& env,
         if (!repos[i].source.empty())
             json += std::format(", \"source\": \"{}\"",
                                 json_escape(repos[i].source));
+        if (!repos[i].dir.empty())
+            json += std::format(", \"dir\": \"{}\"", json_escape(repos[i].dir.generic_string()));
+        if (!repos[i].store.empty())
+            json += std::format(", \"store\": \"{}\"", json_escape(repos[i].store.generic_string()));
         json += std::format(" }}{}\n", i + 1 == repos.size() ? "" : ",");
     }
     json += "  ],\n";
@@ -2053,27 +2265,68 @@ bool is_official_package_index_fresh(const Env& env,
         && official_index_cache_matches_package_file(env, packageName);
 }
 
-namespace {
-// The raw sync. Everything that makes a refresh SAFE lives in the wrapper
-// below; this function's only job is to run `xlings update` and report.
-int update_index_unguarded(const Env& env, bool quiet);
-} // namespace
-
-// Guarded entry point — the ONE place every refresh in this process passes
-// through, which is why the monotonicity guarantee is installed here rather
-// than at the seven call sites.
+// The one entry point every refresh in this process passes through.
 //
 //   an index-side change must never take mcpp from "works" to "does not work"
 //
-// A published index can raise its client-version floor (index.toml min_mcpp).
-// `xlings update` rewrites the tree in place, so before this guard existed a
-// floor bump replaced a readable index with an unreadable one and left no way
-// back — the refresh itself was the thing that broke the machine. See
-// mcpp.pm.index_snapshot for why the shape is archive/judge/restore rather
-// than the stage-and-swap the original design assumed.
+// A published index can raise its client-version floor (index.toml
+// min_mcpp). An index mcpp owns (one whose data directory mcpp declared,
+// design 2026-10-16 §6) is therefore fetched into a staging directory beside
+// it (xlings' `sync_index` with a destination, X1), judged there, and swapped
+// in only when this mcpp can read it -- or when the copy in use is no better.
+// The rest (the provider's own indexes, which carry no floor of mcpp's) are
+// refreshed by the provider in place; it leaves an owned index that is there
+// to its owner.
 namespace {
 std::atomic<long long> g_index_refresh_timeout_s{kDefaultIndexRefreshTimeout.count()};
+
+struct StagedOutcome {
+    std::vector<std::filesystem::path> kept;        // the refreshed copy needs a newer mcpp; the old one stays
+    std::vector<std::filesystem::path> unusable;    // no copy this mcpp can read
+    std::map<std::filesystem::path, std::string> requiredMcpp;
+};
+
+// One owned index: <dir>.staging-<n> fetched, judged, then exchanged with
+// <dir> (or renamed onto it when there is none yet); the staging directory
+// holds the old copy afterwards and is removed.
+int refresh_owned(const Env& env, const paths::DeclaredIndex& d, StagedOutcome& out) {
+    std::error_code ec;
+    auto staging = d.dir;
+    staging += std::format(".staging-{:x}", std::random_device{}());
+    std::filesystem::create_directories(d.dir.parent_path(), ec);
+    const auto args = nlohmann::json{{"name", d.name}, {"dest", staging.generic_string()}}.dump();
+    auto r = call(env, "sync_index", args, nullptr);
+    if (!r || r->exitCode != 0 || !std::filesystem::is_directory(staging, ec)) {
+        std::filesystem::remove_all(staging, ec);
+        return r ? (r->exitCode != 0 ? r->exitCode : 1) : 1;
+    }
+    const bool present = std::filesystem::exists(d.dir, ec);
+    const bool before = present && mcpp::pm::index_usable(d.dir);
+    if (!mcpp::pm::index_usable(staging)) {
+        if (auto c = mcpp::pm::read_index_contract(staging)) out.requiredMcpp[d.dir] = c->minMcpp;
+        if (before) {
+            std::filesystem::remove_all(staging, ec);
+            out.kept.push_back(d.dir);
+            return 0;
+        }
+        out.unusable.push_back(d.dir);
+    }
+    auto swapped = present ? mcpp::platform::exchange_paths(staging, d.dir)
+                           : mcpp::platform::rename_no_replace(staging, d.dir);
+    std::filesystem::remove_all(staging, ec);
+    if (!swapped) {
+        mcpp::log::warn("index", std::format("the refreshed index `{}` could not replace the one in use: {}",
+                                             d.name, swapped.error()));
+        return 1;
+    }
+    mark_index_refreshed(d.dir);
+    return 0;
 }
+
+// The raw sync. Everything that makes a refresh SAFE lives in the wrapper
+// below; this function's only job is to run the provider's refresh and report.
+int update_index_unguarded(const Env& env, bool quiet);
+} // namespace
 
 void set_index_refresh_timeout(std::chrono::seconds timeout) {
     g_index_refresh_timeout_s.store(
@@ -2086,46 +2339,7 @@ std::chrono::seconds index_refresh_timeout() {
 }
 
 int update_index(const Env& env, bool quiet) {
-    namespace snap = mcpp::pm::index_snapshot;
-    const auto dataRoot = paths::index_data(env);
-
-    snap::GuardOutcome out;
-    int rc = snap::guarded_refresh(dataRoot,
-        [&] { return update_index_unguarded(env, quiet); }, out);
-
-    // Report ONLY when the guard had to act. The common path — refresh keeps
-    // the index readable — must stay silent, or the notice becomes noise that
-    // users learn to skip past, which is the same as not printing it.
-    //
-    // A floor is not an error of the run (an index is data; mcpp is the
-    // program). Each case is one closing notice, printed after the command's
-    // own output (mcpp::ui::add_closing_notice), and only because this run
-    // refreshed the index. `quiet` governs the refresh's own narration, not
-    // these: they are the one thing the refresh has to say.
-    (void)quiet;
-    auto advice = [&](const std::filesystem::path& dir) {
-        auto it = out.requiredMcpp.find(dir);
-        return mcpp::pm::index_floor_upgrade_advice(
-            it == out.requiredMcpp.end() ? std::string_view{} : std::string_view{it->second});
-    };
-    for (auto& dir : out.rolledBack) {
-        mcpp::ui::add_closing_notice("MCPP_INDEX_REQUIRES_NEWER_MCPP", std::format(
-            "the refreshed package index `{}` requires a newer mcpp; this run "
-            "used the previous index. {}", dir.filename().string(), advice(dir)));
-    }
-    for (auto& dir : out.recovered) {
-        mcpp::ui::add_closing_notice("MCPP_INDEX_REQUIRES_NEWER_MCPP", std::format(
-            "the package index `{}` was restored from a local snapshot this mcpp "
-            "can read; the published index requires a newer mcpp. {}",
-            dir.filename().string(), advice(dir)));
-    }
-    for (auto& dir : out.stillUnusable) {
-        mcpp::ui::add_closing_notice("MCPP_INDEX_REQUIRES_NEWER_MCPP", std::format(
-            "the package index `{}` requires a newer mcpp and no earlier copy is "
-            "usable; packages it serves cannot be resolved. {}",
-            dir.filename().string(), advice(dir)));
-    }
-    return rc;
+    return update_index_unguarded(env, quiet);
 }
 
 namespace {
@@ -2158,6 +2372,28 @@ int update_index_unguarded(const Env& env, bool quiet) {
         return 0;
     }
 
+    // The indices mcpp owns, each staged and judged before it replaces the
+    // copy in use. A floor is not an error of the run (an index is data;
+    // mcpp is the program): each case is one closing notice, printed after
+    // the command's own output, and only because this run refreshed.
+    StagedOutcome staged;
+    int ownedRc = 0;
+    for (const auto& d : paths::declared_indices(env))
+        if (d.owned) ownedRc = std::max(ownedRc, refresh_owned(env, d, staged));
+    auto advice = [&](const std::filesystem::path& dir) {
+        auto it = staged.requiredMcpp.find(dir);
+        return mcpp::pm::index_floor_upgrade_advice(
+            it == staged.requiredMcpp.end() ? std::string_view{} : std::string_view{it->second});
+    };
+    for (auto& dir : staged.kept)
+        mcpp::ui::add_closing_notice("MCPP_INDEX_REQUIRES_NEWER_MCPP", std::format(
+            "the refreshed package index `{}` requires a newer mcpp; this run "
+            "used the previous index. {}", dir.filename().string(), advice(dir)));
+    for (auto& dir : staged.unusable)
+        mcpp::ui::add_closing_notice("MCPP_INDEX_REQUIRES_NEWER_MCPP", std::format(
+            "the package index `{}` requires a newer mcpp and no earlier copy is "
+            "usable; packages it serves cannot be resolved. {}", dir.filename().string(), advice(dir)));
+
     // Through the NDJSON interface, as installs are (W11): the refresh reports
     // its steps as events and is drawn by the same renderer, instead of the
     // bare CLI's terminal text, which was either reprinted verbatim or, for
@@ -2187,7 +2423,7 @@ int update_index_unguarded(const Env& env, bool quiet) {
             if (rc == 0 && renderer.result_exit() > 0) rc = renderer.result_exit();
             if (rc != 0 || timedOut) renderer.fail();
         }
-        if (rc == 0 && !timedOut) { mark_known_indexes_refreshed(env); return 0; }
+        if (rc == 0 && !timedOut) { mark_known_indexes_refreshed(env); return ownedRc; }
         // A refresh that exceeded its bound is not retried: the retries exist for
         // a transient failure that ends, and a connection that never answers
         // would only be waited on three times. The caller treats the refresh as

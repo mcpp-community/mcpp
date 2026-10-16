@@ -236,6 +236,14 @@ struct Target {
     // mcpp's UTF-8 paths on its command line). Inert on every object format
     // that is not PE.
     std::string                 windowsCodePage;
+    // `windows_long_paths` (design 2026-10-16 §11): true embeds
+    // `longPathAware` in this PE executable's application manifest, so the
+    // process may use paths past MAX_PATH where the system allows it
+    // (LongPathsEnabled); false embeds none. Unset = the default of the build
+    // role: true for a target built as a host tool, nothing for an ordinary
+    // one (whether a program handles long paths is its author's statement).
+    // Inert on every object format that is not PE.
+    std::optional<bool>         windowsLongPaths;
     // Where `kind` was stated, as the manifest line that states it:
     // `[targets.fw] kind = "shared"`, or, when a row states it,
     // `[target.'cfg(os = "android")'.targets.fw] kind = "shared"`. Read by
@@ -2051,6 +2059,8 @@ struct Manifest {
     // program on Windows, in the vocabulary of the target key of the same
     // name. Empty is `legacy`, the system's code page.
     std::string                 testWindowsCodePage;
+    // `[test] windows_long_paths`: the same for every discovered test program.
+    std::optional<bool>         testWindowsLongPaths;
     // Set once a workspace root's own package has received `[workspace.package]`
     // and `[workspace.build]` (`mcpp::project::inherit_as_root_package`). The
     // manifest is read on two paths before it is planned, and an appended

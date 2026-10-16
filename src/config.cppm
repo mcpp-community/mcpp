@@ -50,6 +50,11 @@ struct IndexRepo {
     // default. The provisioning line names an index that such a table
     // redirected (#634, C4).
     bool        fromConfig = false;
+    // An index mcpp owns keeps its data in <mcppHome>/indices/<name> and its
+    // payloads in <mcppHome>/xpkgs (design 2026-10-16 §5.1); empty for the
+    // provider's own indexes.
+    std::filesystem::path dir;
+    std::filesystem::path store;
 };
 
 // Canonical mcpplibs index coordinates. The index repository moved from the
@@ -124,6 +129,13 @@ struct GlobalConfig {
     // Empty means no global default; mcpp will hard-error unless the project
     // mcpp.toml declares its own [toolchain].
     std::string                     defaultToolchain;
+
+    // [xlings] upstream (design 2026-10-16 §8): read-only homes the registry
+    // installs from by link -- the user's configuration, else the system's,
+    // else none (self-contained). Each one passed the trust check.
+    std::vector<std::filesystem::path> upstreams;
+    // This home is the machine's system home (`mcpp --system`, §9).
+    bool                            systemHome = false;
     //   default_target = "<triple>"        e.g. "x86_64-linux-musl"
     // The target axis of the default pair (toolchain = family@version and
     // target = triple are orthogonal axes). Empty means host.
@@ -399,7 +411,7 @@ bool write_default_xlings_json(const std::filesystem::path& path,
     std::vector<mcpp::provider::SeedRepo> pairs;
     pairs.reserve(repos.size());
     for (auto& r : repos)
-        pairs.push_back({ r.name, r.url, r.artifact, r.source, r.artifactCn });
+        pairs.push_back({ r.name, r.url, r.artifact, r.source, r.artifactCn, r.dir, r.store });
     // seed_xlings_json writes to env.home / ".xlings.json", so we
     // construct a temporary Env with home = path.parent_path().
     mcpp::provider::Location env;
@@ -468,6 +480,8 @@ nlohmann::json index_repo_entry(const IndexRepo& r) {
     else if (!r.artifact.empty())
         e["artifact"] = r.artifact;
     if (!r.source.empty())   e["source"] = r.source;
+    if (!r.dir.empty())      e["dir"] = r.dir.generic_string();
+    if (!r.store.empty())    e["store"] = r.store.generic_string();
     return e;
 }
 
@@ -755,6 +769,43 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     cfg.searchTtlSeconds = doc->get_int("cache.search_ttl_seconds").value_or(3600);
     cfg.defaultJobs    = doc->get_int("build.default_jobs").value_or(0);
     cfg.defaultToolchain = doc->get_string("toolchain.default").value_or("");
+    // The system-level configuration (design 2026-10-16 §8.1, §9): what an
+    // administrator states for every user, below what the user states.
+    cfg.systemHome = mcpp::home::is_system_home(cfg.mcppHome);
+    std::optional<mcpp::libs::toml::Document> systemDoc;
+    if (auto sys = mcpp::libs::toml::parse_file(mcpp::home::system_config_file()); sys) systemDoc = std::move(*sys);
+    if (cfg.defaultToolchain.empty() && systemDoc)
+        cfg.defaultToolchain = systemDoc->get_string("toolchain.default").value_or("");
+    {
+        auto declared = doc->get_string_array("xlings.upstream");
+        if (!declared && systemDoc) declared = systemDoc->get_string_array("xlings.upstream");
+        for (auto entry : declared.value_or(std::vector<std::string>{})) {
+            std::filesystem::path dir = entry;
+            if (entry == "~" || entry.starts_with("~/"))
+                if (auto* h = std::getenv(mcpp::platform::is_windows ? "USERPROFILE" : "HOME"); h && *h)
+                    dir = std::filesystem::path(h) / (entry.size() > 2 ? entry.substr(2) : std::string{});
+            dir = dir.lexically_normal();
+            std::error_code ec;
+            if (!dir.is_absolute() || !std::filesystem::is_directory(dir, ec)) {
+                // Fewer packages reused than asked for: said, not hidden.
+                std::println(stderr, "warning: [xlings] upstream {}: not a directory; this run does not reuse it",
+                             entry);
+                continue;
+            }
+            // The trust boundary (§8.2): another user's home is code that
+            // user can replace at any time.
+            if (auto why = mcpp::platform::untrusted_because(dir); !why.empty())
+                return std::unexpected(ConfigError{std::format(
+                    "[xlings] upstream {}: not used, {}; an upstream belongs to this user or to the system "
+                    "and only its owner can change it", dir.string(), why)});
+            if (mcpp::provider::layout().upstream_of(dir).empty()) {
+                std::println(stderr, "warning: [xlings] upstream {}: neither an mcpp home nor an xlings home; "
+                                     "this run does not reuse it", dir.string());
+                continue;
+            }
+            cfg.upstreams.push_back(dir);
+        }
+    }
     cfg.defaultTarget    = doc->get_string("toolchain.default_target").value_or("");
     // [xlings.overrides] (mcpp#755), read by the same function the tests read.
     if (auto overrides = parse_payload_overrides(*doc); overrides)
@@ -843,6 +894,14 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     add_default("mcpplibs", kMcpplibsIndexUrl, kMcpplibsIndexArtifact,
                 kMcpplibsIndexArtifactCn);
     canonicalize_legacy_index_names(cfg);
+    // Ownership is by index (design 2026-10-16 §5): an index mcpp serves
+    // keeps its data and payloads in mcpp's home; the provider's own indexes
+    // stay where the provider keeps them.
+    for (auto& r : cfg.indexRepos) {
+        if (mcpp::provider::layout().is_provider_index(r.name)) continue;
+        r.dir = cfg.mcppHome / "indices" / r.name;
+        r.store = mcpp::provider::layout().own_store(cfg.mcppHome);
+    }
 
     // 5. Seed registry/.xlings.json if missing; migrate legacy cached
     // sandboxes in place so CI/user caches move from mcpp-index to mcpplibs
@@ -854,9 +913,23 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     } else {
         mcpp::fallback::migrate_xlings_json_index_names(xjson);
         reconcile_index_repos(xjson, cfg.indexRepos, quiet);
+        // A home from before: its indices' places recorded, their data moved
+        // there once; payloads already installed stay where they are and are
+        // still found (design §5.3).
+        std::vector<mcpp::provider::SeedRepo> owned;
+        for (auto& r : cfg.indexRepos)
+            if (!r.dir.empty()) owned.push_back({ r.name, r.url, {}, {}, {}, r.dir, r.store });
+        mcpp::provider::open(make_xlings_env(cfg))->own_indices(owned);
+    }
+    {
+        std::vector<mcpp::provider::Upstream> upstreams;
+        for (auto& dir : cfg.upstreams)
+            for (auto& u : mcpp::provider::layout().upstream_of(dir)) upstreams.push_back(std::move(u));
+        mcpp::provider::open(make_xlings_env(cfg))->set_upstreams(upstreams);
     }
 
     // 6. Acquire xlings binary if needed
+    const auto bundledBinary = cfg.xlingsBinary;
     if (cfg.xlingsBinaryMode == "bundled") {
         auto xbin = mcpp::fallback::acquire_xlings_binary(
             cfg.xlingsBinary, quiet, kXlingsPinnedVersion,
@@ -873,6 +946,21 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         if (!std::filesystem::exists(cfg.xlingsBinary))
             return std::unexpected(ConfigError{std::format(
                 "configured xlings binary not found: {}", cfg.xlingsBinary.string())});
+    }
+    // The handshake (design 2026-10-16 §12): an xlings chosen by
+    // `[xlings] binary` that cannot serve this mcpp gives way to the one mcpp
+    // ships, with a note.
+    if (cfg.xlingsBinaryMode != "bundled") {
+        if (auto why = mcpp::provider::unmet(mcpp::provider::describe(cfg.xlingsBinary)); !why.empty()) {
+            if (!quiet)
+                std::println(stderr, "note: the configured xlings {} {}; using the one mcpp ships",
+                             cfg.xlingsBinary.string(), why);
+            cfg.xlingsBinary = bundledBinary;
+            auto xbin = mcpp::fallback::acquire_xlings_binary(
+                cfg.xlingsBinary, quiet, kXlingsPinnedVersion,
+                cfg.metaCacheDir / "vendored-xlings.versions");
+            if (!xbin) return std::unexpected(ConfigError{xbin.error()});
+        }
     }
 
     // 7. Sandbox bootstrap (mcpp self-contained xlings environment).
@@ -974,7 +1062,11 @@ bool ensure_project_index_dir(
         // #269: pass a declared artifact source through to xlings unless a
         // rev/tag/branch pin forces git (the artifact channel only tracks
         // the latest published pointer).
+        // A project's index keeps its data and payloads in the project
+        // (design 2026-10-16 §5.1, D4).
         mcpp::provider::SeedRepo repo{ name, spec.url, "", "" };
+        repo.dir = projectDir / ".mcpp" / "indices" / name;
+        repo.store = mcpp::provider::layout().own_store(projectDir / ".mcpp");
         if (spec.artifact_applicable()) {
             repo.artifact = spec.artifact;
             repo.source   = spec.source;

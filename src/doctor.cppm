@@ -1659,6 +1659,42 @@ std::string upper_ascii(std::string s) {
 }
 
 
+// `mcpp self store dedupe [--apply]` (design 2026-10-16 §8.5): the payloads
+// this home installed itself that an upstream has the same of -- namespace,
+// name, version and revision, complete there -- listed; with --apply each is
+// replaced by a link to the upstream's, atomically, one at a time.
+export int store_dedupe(bool apply) {
+    auto cfg = mcpp::config::load_or_init(/*quiet=*/true);
+    if (!cfg) {
+        mcpp::ui::error(cfg.error().message);
+        return 4;
+    }
+    if (cfg->upstreams.empty()) {
+        std::println("no upstream is configured ([xlings] upstream in config.toml); nothing to compare with");
+        return 0;
+    }
+    auto provider = mcpp::provider::open(mcpp::config::make_xlings_env(*cfg));
+    const auto found = provider->duplicates();
+    int failed = 0;
+    for (const auto& d : found) {
+        if (!apply) {
+            std::println("{}  =  {}", d.local.string(), d.upstream.string());
+            continue;
+        }
+        if (auto why = provider->link_to_upstream(d); why.empty())
+            std::println("linked {} -> {}", d.local.string(), d.upstream.string());
+        else {
+            mcpp::ui::error(why);
+            ++failed;
+        }
+    }
+    if (found.empty()) std::println("no payload here is also in an upstream");
+    else if (!apply)
+        std::println("{} payload(s) could be links to an upstream's; `mcpp self store dedupe --apply` makes them so",
+                     found.size());
+    return failed == 0 ? 0 : 1;
+}
+
 // `mcpp self config [--mirror CN|GLOBAL]` (mirror = raw option value).
 export int self_config(std::string mirror) {
     if (!mirror.empty()) {

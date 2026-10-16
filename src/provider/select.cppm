@@ -77,6 +77,12 @@ resolve_env(const runtime_info::Info& info, const std::filesystem::path& environ
     return mcpp::provider::xlings::subos::resolve_env(info, environment, ambient);
 }
 
+// What the provider program at `binary` says it is, and why it cannot serve
+// this mcpp (empty: it can) -- the handshake every provider source passes
+// (design §12).
+ProviderInfo describe(const std::filesystem::path& binary) { return mcpp::provider::xlings::describe(binary); }
+std::string unmet(const ProviderInfo& info) { return mcpp::provider::xlings::unmet(info); }
+
 // The provider version this mcpp ships with and requires at least.
 inline constexpr std::string_view kPinnedVersion = mcpp::provider::xlings::pinned::kXlingsVersion;
 // The pinned tools mcpp provisions through the provider.

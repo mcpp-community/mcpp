@@ -160,9 +160,12 @@ synthesize_rc(const mcpp::manifest::Package&   pkg,
               const std::filesystem::path&     iconAbs,
               const std::filesystem::path&     manifestAbs = {});
 
-// The application manifest that makes a process's ANSI code page UTF-8 on
-// Windows 10 1903 and later (#693), as Microsoft documents it. ASCII text; the
-// same bytes for every image that carries it.
+// An application manifest, as Microsoft documents its settings: the process
+// ANSI code page UTF-8 on Windows 10 1903 and later (#693), and paths past
+// MAX_PATH where the system enables them (`longPathAware`, design 2026-10-16
+// §11). ASCII text; the same bytes for every image that carries the same.
+std::string application_manifest(bool utf8CodePage, bool longPathAware);
+// The manifest of a host tool: both.
 std::string utf8_code_page_manifest();
 
 // A compiled resource holding `utf8_code_page_manifest()`, for an executable
@@ -315,18 +318,26 @@ std::optional<RcTool> find_rc_tool(const mcpp::toolchain::Toolchain& tc,
     return std::nullopt;
 }
 
-std::string utf8_code_page_manifest() {
-    return
+std::string application_manifest(bool utf8CodePage, bool longPathAware) {
+    std::string text =
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
         "<assembly manifestVersion=\"1.0\" xmlns=\"urn:schemas-microsoft-com:asm.v1\">\n"
         "  <application xmlns=\"urn:schemas-microsoft-com:asm.v3\">\n"
-        "    <windowsSettings>\n"
-        "      <activeCodePage xmlns=\"http://schemas.microsoft.com/SMI/2019/WindowsSettings\">"
-        "UTF-8</activeCodePage>\n"
+        "    <windowsSettings>\n";
+    if (utf8CodePage)
+        text += "      <activeCodePage xmlns=\"http://schemas.microsoft.com/SMI/2019/WindowsSettings\">"
+                "UTF-8</activeCodePage>\n";
+    if (longPathAware)
+        text += "      <longPathAware xmlns=\"http://schemas.microsoft.com/SMI/2016/WindowsSettings\">"
+                "true</longPathAware>\n";
+    text +=
         "    </windowsSettings>\n"
         "  </application>\n"
         "</assembly>\n";
+    return text;
 }
+
+std::string utf8_code_page_manifest() { return application_manifest(true, true); }
 
 std::expected<std::filesystem::path, std::string>
 compile_utf8_manifest(const mcpp::toolchain::Toolchain& tc,

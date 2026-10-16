@@ -273,12 +273,16 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
     // the same fact twice is how two of them start disagreeing.
     state.storeRoots = [&]() -> std::vector<std::filesystem::path> {
         std::vector<std::filesystem::path> roots;
-        if (auto c = state.get_cfg(true)) roots.push_back(mcpp::provider::open(mcpp::config::make_xlings_env(**c))->store());
-        for (auto& d : mcpp::config::project_xlings_data_roots(state.workRoot))
-            roots.push_back(mcpp::provider::layout().store_in(d));
-        if (!state.overrides.project_index_root.empty())
-            for (auto& d : mcpp::config::project_xlings_data_roots(state.overrides.project_index_root))
+        auto c = state.get_cfg(true);
+        if (c) for (auto& s : mcpp::provider::open(mcpp::config::make_xlings_env(**c))->stores()) roots.push_back(s);
+        auto project = [&](const std::filesystem::path& dir) {
+            for (auto& s : mcpp::provider::layout().stores_of(dir / ".mcpp"))
+                roots.push_back(s);
+            for (auto& d : mcpp::config::project_xlings_data_roots(dir))
                 roots.push_back(mcpp::provider::layout().store_in(d));
+        };
+        project(state.workRoot);
+        if (!state.overrides.project_index_root.empty()) project(state.overrides.project_index_root);
         // The engine interface's package: written once per mcpp version and
         // never edited, like a payload (mcpp#797).
         roots.push_back(mcpp::build::engine::root());

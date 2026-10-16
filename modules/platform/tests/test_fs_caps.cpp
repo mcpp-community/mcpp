@@ -1,4 +1,8 @@
 #include <gtest/gtest.h>
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 import std;
 import mcpp.platform.fs_caps;
@@ -86,4 +90,38 @@ TEST(PlatformFsCaps, AnExchangeTradesTwoTreesWhateverTheFilesystemDoes) {
     std::size_t entries = 0;
     for ([[maybe_unused]] const auto& e : fs::directory_iterator(s.dir)) ++entries;
     EXPECT_EQ(entries, 2u) << "nothing set aside is left";
+}
+
+// Whom an upstream home may belong to (design 2026-10-16 §8.2): this user, or
+// the system when this user cannot change it.
+TEST(PlatformTrust, ThisUsersDirectoryIsTrusted) {
+    Scratch s;
+    EXPECT_EQ(pf::untrusted_because(s.dir), "");
+    EXPECT_NE(pf::untrusted_because(s.dir / "absent"), "");
+}
+
+#if !defined(_WIN32)
+TEST(PlatformTrust, ASystemDirectoryThisUserCanWriteIsNot) {
+    if (::getuid() == 0) GTEST_SKIP() << "root may write anything";
+    const auto rootOwned = [](const char* p) {
+        struct stat st {};
+        return ::stat(p, &st) == 0 && st.st_uid == 0;
+    };
+    // /tmp: root's, and writable by everyone.
+    if (rootOwned("/tmp") && ::access("/tmp", W_OK) == 0) EXPECT_NE(pf::untrusted_because("/tmp"), "");
+    // /usr: root's, and not this user's to write.
+    if (rootOwned("/usr") && ::access("/usr", W_OK) != 0) EXPECT_EQ(pf::untrusted_because("/usr"), "");
+}
+#endif
+
+TEST(PlatformTrust, ADirectoryLinkReachesItsTarget) {
+    Scratch s;
+    fs::create_directories(s.dir / "target");
+    write(s.dir / "target" / "f", "x");
+    ASSERT_TRUE(pf::create_directory_link(s.dir / "target", s.dir / "link"));
+    EXPECT_EQ(read(s.dir / "link" / "f"), "x");
+    // Removing the link removes the link only.
+    std::error_code ec;
+    fs::remove(s.dir / "link", ec);
+    EXPECT_TRUE(fs::exists(s.dir / "target" / "f"));
 }

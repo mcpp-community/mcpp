@@ -14,6 +14,10 @@ module;
 #    define NOMINMAX
 #  endif
 #  include <windows.h>
+#  include <aclapi.h>
+#  include <sddl.h>
+// GetNamedSecurityInfoW and the token calls live in advapi32.
+#  pragma comment(lib, "advapi32")
 #elif defined(__linux__)
 #  include <cerrno>
 #  include <fcntl.h>
@@ -27,6 +31,7 @@ module;
 #  include <sys/mount.h>
 #  include <sys/param.h>
 #  include <sys/stat.h>
+#  include <unistd.h>
 #else
 #  include <cerrno>
 #  include <sys/stat.h>
@@ -81,6 +86,17 @@ std::expected<void, std::string> rename_no_replace(const std::filesystem::path& 
 std::expected<void, std::string> exchange_paths(const std::filesystem::path& a,
                                                 const std::filesystem::path& b);
 
+// Whether a directory another program wrote may be read and run from: it
+// belongs to this user or to the system (root; on Windows also Administrators
+// and SYSTEM), and when it is not this user's, this user cannot write it.
+// Empty: trusted; else why not. Using another person's home is running
+// what that person can replace at any time.
+std::string untrusted_because(const std::filesystem::path& dir);
+
+// `link` made a link to the directory `target`: a symbolic link; on Windows,
+// where one needs a privilege a user rarely has, a junction.
+bool create_directory_link(const std::filesystem::path& target, const std::filesystem::path& link);
+
 } // namespace mcpp::platform
 
 namespace mcpp::platform::native {
@@ -103,6 +119,25 @@ std::uint64_t device_of(const std::filesystem::path& dir) {
     if (!::GetVolumeInformationW(root, nullptr, 0, &serial, nullptr, nullptr, nullptr, 0)) return 0;
     return serial;
 }
+std::string owner_problem(const std::filesystem::path& dir) {
+    PSID owner = nullptr;
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (::GetNamedSecurityInfoW(dir.wstring().c_str(), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
+                                &owner, nullptr, nullptr, nullptr, &sd) != ERROR_SUCCESS)
+        return "its owner cannot be read";
+    bool trusted = ::IsWellKnownSid(owner, WinLocalSystemSid) || ::IsWellKnownSid(owner, WinBuiltinAdministratorsSid);
+    HANDLE token = nullptr;
+    if (!trusted && ::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        DWORD size = 0;
+        ::GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+        std::vector<unsigned char> buffer(size);
+        if (::GetTokenInformation(token, TokenUser, buffer.data(), size, &size))
+            trusted = ::EqualSid(owner, reinterpret_cast<TOKEN_USER*>(buffer.data())->User.Sid);
+        ::CloseHandle(token);
+    }
+    ::LocalFree(sd);
+    return trusted ? std::string{} : "it belongs to another user";
+}
 std::string filesystem_type(const std::filesystem::path& dir) {
     wchar_t root[MAX_PATH] {}, name[MAX_PATH] {};
     if (!::GetVolumePathNameW(dir.wstring().c_str(), root, MAX_PATH)) return {};
@@ -120,6 +155,15 @@ int exchange(const std::filesystem::path& a, const std::filesystem::path& b) {
 }
 bool unsupported(int error) { return error == EINVAL || error == ENOSYS || error == EOPNOTSUPP; }
 std::error_category const& category() { return std::generic_category(); }
+std::string owner_problem(const std::filesystem::path& dir) {
+    struct stat st {};
+    if (::stat(dir.c_str(), &st) != 0) return "it cannot be read";
+    if (st.st_uid == ::getuid()) return {};
+    if (st.st_uid != 0) return "it belongs to another user";
+    if (::access(dir.c_str(), W_OK) == 0) return "it belongs to root and this user can write it";
+    return {};
+}
+
 std::uint64_t device_of(const std::filesystem::path& dir) {
     struct stat st {};
     return ::stat(dir.c_str(), &st) == 0 ? static_cast<std::uint64_t>(st.st_dev) : 0;
@@ -156,6 +200,15 @@ int exchange(const std::filesystem::path& a, const std::filesystem::path& b) {
 }
 bool unsupported(int error) { return error == EINVAL || error == ENOTSUP || error == EOPNOTSUPP || error == ENOSYS; }
 std::error_category const& category() { return std::generic_category(); }
+std::string owner_problem(const std::filesystem::path& dir) {
+    struct stat st {};
+    if (::stat(dir.c_str(), &st) != 0) return "it cannot be read";
+    if (st.st_uid == ::getuid()) return {};
+    if (st.st_uid != 0) return "it belongs to another user";
+    if (::access(dir.c_str(), W_OK) == 0) return "it belongs to root and this user can write it";
+    return {};
+}
+
 std::uint64_t device_of(const std::filesystem::path& dir) {
     struct stat st {};
     return ::stat(dir.c_str(), &st) == 0 ? static_cast<std::uint64_t>(st.st_dev) : 0;
@@ -166,6 +219,7 @@ std::string filesystem_type(const std::filesystem::path& dir) {
 }
 #else
 // No native primitive: the strategies below that need none.
+std::string owner_problem(const std::filesystem::path&) { return {}; }
 int rename_no_replace(const std::filesystem::path&, const std::filesystem::path&) { return ENOSYS; }
 int exchange(const std::filesystem::path&, const std::filesystem::path&) { return ENOSYS; }
 bool unsupported(int error) { return error == ENOSYS || error == EINVAL; }
@@ -272,6 +326,24 @@ std::expected<void, std::string> rename_no_replace(const fs::path& from, const f
     auto parent = to.parent_path();
     if (parent.empty()) parent = ".";
     return publish_no_replace(from, to, fs_caps(parent));
+}
+
+bool create_directory_link(const fs::path& target, const fs::path& link) {
+    std::error_code ec;
+    fs::create_directory_symlink(target, link, ec);
+    if (!ec) return true;
+#if defined(_WIN32)
+    const auto cmd = std::format("cmd /c mklink /J \"{}\" \"{}\" >nul 2>&1", link.string(), target.string());
+    return std::system(cmd.c_str()) == 0;
+#else
+    return false;
+#endif
+}
+
+std::string untrusted_because(const fs::path& dir) {
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) return "it is not a directory";
+    return native::owner_problem(dir);
 }
 
 std::expected<void, std::string> exchange_paths(const fs::path& a, const fs::path& b) {

@@ -332,6 +332,21 @@ TEST(BuildResources, AManifestOnlyScriptCarriesTheManifestAndNothingElse) {
               std::string::npos);
 }
 
+// An application manifest states what was asked of it and nothing else; a
+// host tool's states both (design 2026-10-16 §11).
+TEST(BuildResources, AnApplicationManifestStatesWhatWasAskedOfIt) {
+    const std::string codePage = "<activeCodePage xmlns=\"http://schemas.microsoft.com/SMI/2019/WindowsSettings\">UTF-8</activeCodePage>";
+    const std::string longPaths = "<longPathAware xmlns=\"http://schemas.microsoft.com/SMI/2016/WindowsSettings\">true</longPathAware>";
+    const auto both = res::application_manifest(true, true);
+    EXPECT_NE(both.find(codePage), std::string::npos);
+    EXPECT_NE(both.find(longPaths), std::string::npos);
+    const auto onlyLong = res::application_manifest(false, true);
+    EXPECT_EQ(onlyLong.find("activeCodePage"), std::string::npos);
+    EXPECT_NE(onlyLong.find(longPaths), std::string::npos);
+    EXPECT_EQ(res::application_manifest(true, false).find("longPathAware"), std::string::npos);
+    EXPECT_EQ(res::utf8_code_page_manifest(), both);
+}
+
 TEST(BuildResources, ScanNamesWhatItCouldNotResolve) {
     TempDir d;
     auto rc = d.write("app.rc", "1 ICON APP_ICON\n");

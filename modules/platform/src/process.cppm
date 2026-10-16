@@ -36,6 +36,7 @@ module;
 #include <fcntl.h>     // O_RDONLY, O_WRONLY for capture_stdout's /dev/null
 #include <sys/wait.h>  // waitpid
 #include <spawn.h>     // posix_spawnp, posix_spawn_file_actions_* (incl. addchdir_np)
+#include <sys/stat.h>  // umask
 // The deadline runners' headers (signal.h, errno, poll.h, fcntl.h, time.h)
 // left with them: bounded runs now live in mcpp.platform.unix.bounded_process
 // and mcpp.platform.windows.bounded_process, and this file only dispatches.
@@ -57,6 +58,16 @@ import mcpp.platform.unix.bounded_process;
 import mcpp.platform.windows.bounded_process;
 
 export namespace mcpp::platform::process {
+
+// Every file this process creates from here on is readable by everyone and
+// writable by its owner only (umask 022): what a home shared by every user of
+// a machine is written with. Nothing on Windows, where the ACL inherited from
+// the directory decides.
+inline void set_umask_022() {
+#if !defined(_WIN32)
+    ::umask(022);
+#endif
+}
 
 struct RunResult {
     int         exit_code = 0;

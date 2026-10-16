@@ -171,6 +171,32 @@ public:
     std::string index_revision(const std::filesystem::path& indexDir) const override {
         return xlings::index_revision(indexDir).value_or(std::string{});
     }
+    std::vector<std::filesystem::path> index_roots_of(const std::filesystem::path& home) const override {
+        return paths::index_roots_of(home);
+    }
+    std::vector<std::filesystem::path> stores_of(const std::filesystem::path& home) const override {
+        return paths::stores_of(home);
+    }
+    std::filesystem::path own_store(const std::filesystem::path& mcppHome) const override {
+        // xlings takes a store only by the name `xpkgs` (a payload's path is
+        // its identity, <store>/<ns>-x-<name>/<version>).
+        return mcppHome / "xpkgs";
+    }
+    std::vector<mcpp::provider::Upstream> upstream_of(const std::filesystem::path& dir) const override {
+        std::error_code ec;
+        // An mcpp home: the provider home under it serves xim, its store the
+        // namespaces of mcpp's indices -- never xim from a plain xlings home's
+        // view of mcpp's packages (design §8.3).
+        if (std::filesystem::is_regular_file(dir / "registry" / ".xlings.json", ec))
+            return {{dir / "registry", {}, {"xim"}}, {dir / "registry", own_store(dir), {}}};
+        if (std::filesystem::is_regular_file(dir / ".xlings.json", ec))
+            return {{dir, {}, {"xim"}}};
+        return {};
+    }
+    bool is_provider_index(std::string_view name) const override {
+        // xlings' default index and the ones it adds beside it.
+        return name == "xim" || name == "awesome" || name == "scode" || name == "d2x";
+    }
 };
 
 class XlingsProvider final : public mcpp::provider::Provider {
@@ -190,6 +216,7 @@ public:
     }
 
     std::filesystem::path store() const override { return paths::xpkgs_base(env_); }
+    std::vector<std::filesystem::path> stores() const override { return paths::stores(env_); }
     std::vector<mcpp::provider::PayloadStatus> status(std::span<const mcpp::provider::PackageRef> refs) const override {
         std::vector<mcpp::provider::PayloadStatus> out;
         if (refs.empty()) return out;
@@ -254,6 +281,73 @@ public:
               const mcpp::provider::ProjectEnv& penv) const override {
         seed_xlings_json(env_, repos, mirror, penv);
     }
+    void set_upstreams(std::span<const mcpp::provider::Upstream> upstreams) const override {
+        const auto file = env_.home / ".xlings.json";
+        std::ifstream in(file);
+        if (!in) return;
+        auto j = nlohmann::json::parse(in, nullptr, false);
+        in.close();
+        if (!j.is_object()) return;
+        nlohmann::json list = nlohmann::json::array();
+        for (const auto& u : upstreams) {
+            nlohmann::json e{{"home", u.home.generic_string()}};
+            if (!u.store.empty()) e["store"] = u.store.generic_string();
+            if (!u.namespaces.empty()) e["namespaces"] = u.namespaces;
+            list.push_back(std::move(e));
+        }
+        if (list.empty() ? !j.contains("upstreams") : (j.contains("upstreams") && j["upstreams"] == list)) return;
+        if (list.empty()) j.erase("upstreams");
+        else j["upstreams"] = std::move(list);
+        auto tmp = file;
+        tmp += std::format(".mcpp-{:x}", std::random_device{}());
+        { std::ofstream(tmp) << j.dump(2) << "\n"; }
+        std::error_code ec;
+        std::filesystem::rename(tmp, file, ec);
+        if (ec) std::filesystem::remove(tmp, ec);
+    }
+    std::vector<mcpp::provider::Duplicate> duplicates() const override {
+        std::vector<mcpp::provider::Duplicate> out;
+        std::ifstream in(env_.home / ".xlings.json");
+        auto j = nlohmann::json::parse(in, nullptr, false);
+        if (!j.is_object() || !j.contains("upstreams") || !j["upstreams"].is_array()) return out;
+        std::error_code ec;
+        for (const auto& store : paths::stores(env_)) {
+            for (const auto& entry : XlingsLayout{}.entries(store)) {
+                if (std::filesystem::is_symlink(entry.dir, ec) || std::filesystem::is_empty(entry.dir, ec)) continue;
+                const auto mine = paths::installed_revision(entry.dir);
+                if (!mine) continue;
+                for (const auto& u : j["upstreams"]) {
+                    if (!u.is_object() || !u.contains("home") || !u["home"].is_string()) continue;
+                    if (u.contains("namespaces") && u["namespaces"].is_array() && !u["namespaces"].empty()
+                        && std::ranges::none_of(u["namespaces"], [&](const nlohmann::json& n) { return n == entry.ns; }))
+                        continue;
+                    const std::filesystem::path home = u["home"].get<std::string>();
+                    const std::filesystem::path ustore = u.contains("store") && u["store"].is_string()
+                        ? std::filesystem::path(u["store"].get<std::string>()) : home / "data" / "xpkgs";
+                    const auto candidate = ustore / entry.dir.parent_path().filename() / entry.dir.filename();
+                    if (!std::filesystem::is_directory(candidate, ec) || std::filesystem::is_empty(candidate, ec)) continue;
+                    if (paths::installed_revision(candidate) != mine) continue;
+                    out.push_back({entry.dir, candidate});
+                    break;
+                }
+            }
+        }
+        return out;
+    }
+    std::string link_to_upstream(const mcpp::provider::Duplicate& d) const override {
+        std::error_code ec;
+        auto link = d.local;
+        link += std::format(".mcpp-link-{:x}", std::random_device{}());
+        if (!mcpp::platform::create_directory_link(d.upstream, link))
+            return std::format("cannot link {} to {}", link.string(), d.upstream.string());
+        if (auto swapped = mcpp::platform::exchange_paths(link, d.local); !swapped) {
+            std::filesystem::remove(link, ec);
+            return swapped.error();
+        }
+        // The copy this home installed, now at the scratch name.
+        std::filesystem::remove_all(link, ec);
+        return {};
+    }
     int show_config() const override { return config_show(env_); }
     int set_mirror(std::string_view mirror, bool quiet) const override { return config_set_mirror(env_, mirror, quiet); }
     void ensure_initialized(bool quiet) const override { ensure_init(env_, quiet); }
@@ -284,6 +378,10 @@ public:
     std::filesystem::path placed_nasm() const override { return find_sandbox_nasm(env_).value_or(std::filesystem::path{}); }
     bool nasm_is_from_host(const std::filesystem::path& bin) const override { return xlings::nasm_is_from_host(env_, bin); }
 
+    std::vector<std::filesystem::path> index_roots() const override { return paths::index_roots(env_); }
+    void own_indices(std::span<const mcpp::provider::SeedRepo> owned) const override {
+        paths::own_indices(env_, owned);
+    }
     mcpp::provider::IndexStatus default_index_status(std::int64_t ttlSeconds) const override {
         return xlings::default_index_status(env_, ttlSeconds);
     }

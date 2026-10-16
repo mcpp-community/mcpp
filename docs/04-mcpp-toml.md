@@ -436,6 +436,7 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `windows_subsystem` *(2026.9.12.2+)* | The PE subsystem of an executable: `"console"` (the default) or `"windows"`, a GUI program that starts without a console. Reaches this target's link and no other, and renders nothing on a target that is not PE. See the section above. |
 | `windows_entry` *(2026.9.12.2+)* | The entry function the program defines: `"main"` (the default), `"wmain"`, `"WinMain"` or `"wWinMain"`. See the section above. |
 | `windows_code_page` *(2026.9.26.1+)* | The ANSI code page of an executable on Windows: `"utf-8"`, embedded as an application manifest that Windows 10 version 1903 and later honour, or `"legacy"`, the system's code page. A program target that writes neither runs in the system's code page, except a program built as a host tool (§2.14), which defaults to `"utf-8"`. Refused on a library target; renders nothing on a target that is not PE. See *Paths and text encoding* in §2.3. |
+| `windows_long_paths` *(2026.10.16.1+)* | `true` embeds `longPathAware` in the executable's application manifest: the process may use paths longer than 260 characters where Windows enables them (`LongPathsEnabled`). `false` embeds nothing. A program target that writes neither embeds nothing, except a program built as a host tool (§2.14), which defaults to `true`. Refused on a library target; renders nothing on a target that is not PE. |
 | `linkage` *(2026.9.15.2+)* | A library target's **default** link form, `"static"` or `"shared"`: the form a consumer that writes no `linkage` receives. Unlike `kind = "shared"` it is not a constraint, so a consumer's explicit statement is honoured. Refused beside `kind = "shared"` and on a program target. See [`dependency_linkage`](#dependency_linkage--static-or-shared-is-the-consumers-decision). |
 
 > **Scope (important):** `defines` / `cxxflags` / `cflags` on a target apply **only to that
@@ -1882,6 +1883,7 @@ discover = ["tests/**/*.cpp"]    # the default
 |---|---|---|
 | `discover` | array of globs | every file a glob matches is one test program; a glob beginning with `!` removes the files it matches; `[]` discovers none |
 | `windows_code_page` | `"utf-8"` or `"legacy"` | the ANSI code page of every test program on Windows, in the meaning of the target key of the same name; the default is `"legacy"`, the system's code page *(2026.10.5.2+)* |
+| `windows_long_paths` | `true` or `false` | whether every test program on Windows is long-path aware, in the meaning of the target key of the same name; the default is `false` *(2026.10.16.1+)* |
 
 The globs use the vocabulary of `[build] sources`. A test's name is its path
 relative to the fixed directory of the first glob that matched it, without the

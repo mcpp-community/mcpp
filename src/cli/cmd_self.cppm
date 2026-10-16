@@ -156,6 +156,16 @@ export int cmd_self_config(const mcpplibs::cmdline::ParsedArgs& parsed) {
     return mcpp::doctor::self_config(parsed.option_or_empty("mirror").value());
 }
 
+// `mcpp self store dedupe [--apply]`.
+export int cmd_self_store(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    auto sub = parsed.has_subcommand() && parsed.subcommand_name() == "dedupe" ? parsed.subcommand() : std::nullopt;
+    if (!sub) {
+        std::println(stderr, "error: `mcpp self store` requires a subcommand: dedupe");
+        return 2;
+    }
+    return mcpp::doctor::store_dedupe(sub->get().is_flag_set("apply"));
+}
+
 // Used both by `mcpp explain <CODE>` (top-level) and `mcpp self explain
 // <CODE>` (legacy alias).
 export int cmd_explain_action(const mcpplibs::cmdline::ParsedArgs& parsed) {

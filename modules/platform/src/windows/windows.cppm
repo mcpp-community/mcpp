@@ -53,6 +53,12 @@ std::optional<std::filesystem::path> machine_registry_path(std::wstring_view sub
 // `ProgramFiles(x86)`), or nullopt. The system drive is not always `C:`.
 std::optional<std::filesystem::path> env_directory(const char* name);
 
+// Whether the system lets a program that declares itself `longPathAware` use
+// paths past MAX_PATH (260): HKLM\SYSTEM\CurrentControlSet\Control\FileSystem
+// `LongPathsEnabled` = 1. false when it is 0 or absent, and on every other
+// platform, which has no such limit.
+bool long_paths_enabled();
+
 } // namespace mcpp::platform::windows
 
 // ─── Implementation ──────────────────────────────────────────────────────
@@ -91,6 +97,17 @@ std::optional<std::filesystem::path> machine_registry_path(std::wstring_view sub
 #else
     (void)subkey; (void)value;
     return std::nullopt;
+#endif
+}
+
+bool long_paths_enabled() {
+#if defined(_WIN32)
+    DWORD value = 0, bytes = sizeof(value);
+    return RegGetValueW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\FileSystem",
+                        L"LongPathsEnabled", RRF_RT_REG_DWORD, nullptr, &value, &bytes) == ERROR_SUCCESS
+        && value == 1;
+#else
+    return false;
 #endif
 }
 

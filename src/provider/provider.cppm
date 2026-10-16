@@ -151,6 +151,10 @@ struct SeedRepo {
     std::string artifact;
     std::string source;
     std::string artifactCn;
+    // An index mcpp owns (design §5): where its data is and where the
+    // payloads it serves go. Empty: the provider's own places.
+    std::filesystem::path dir;
+    std::filesystem::path store;
 };
 
 // How long a completed index sync suppresses the next (a second sync because
@@ -245,6 +249,23 @@ struct ProviderInfo {
     bool answered = false;                   // false: an older provider without the handshake
 };
 
+// A read-only home this provider installs from by link (design 2026-10-16
+// §8): its home, its store (empty: the home's), the namespaces taken from it
+// (empty: every one).
+struct Upstream {
+    std::filesystem::path home;
+    std::filesystem::path store;
+    std::vector<std::string> namespaces;
+};
+
+// A payload installed here that an upstream has with the same identity
+// (namespace, name, version, revision) and complete: the copy here could be
+// a link to it (`mcpp self store dedupe`, §8.5).
+struct Duplicate {
+    std::filesystem::path local;
+    std::filesystem::path upstream;
+};
+
 // One payload in a store: its package and version, and its directory.
 struct StoreEntry {
     std::string ns;
@@ -255,9 +276,10 @@ struct StoreEntry {
 
 // What a payload path says without asking the provider program: the store
 // it is in and what is beside it. Each answer is a path as the store spells
-// it, never canonicalised; an empty path is "none" (std::optional is kept out
-// of these virtual signatures: GCC 16 writes an unreadable module for its
-// importers when an abstract class returns one).
+// it, never canonicalised; an empty path is "none" (std::optional and
+// std::expected<void, ...> are kept out of the virtual signatures of this
+// module: GCC 16 writes an unreadable module for its importers when an
+// abstract class returns one).
 class Layout {
 public:
     virtual ~Layout() = default;
@@ -321,6 +343,21 @@ public:
     // An index's content identity (opaque: compared and printed, never
     // parsed); empty: none.
     virtual std::string index_revision(const std::filesystem::path& indexDir) const = 0;
+    // A provider home's index directories and stores (the global home, or a
+    // project's: project_home), read from its configuration alone.
+    virtual std::vector<std::filesystem::path> index_roots_of(const std::filesystem::path& home) const = 0;
+    virtual std::vector<std::filesystem::path> stores_of(const std::filesystem::path& home) const = 0;
+    // The store an mcpp home (or a project's .mcpp) keeps the payloads of
+    // mcpp's own indices in: the provider names a store by its last
+    // component (design §5.1).
+    virtual std::filesystem::path own_store(const std::filesystem::path& mcppHome) const = 0;
+    // What a directory offers as an upstream: an mcpp home (its registry for
+    // the provider's own packages, its store for mcpp's), a provider home (its
+    // own packages only), or nothing (empty).
+    virtual std::vector<Upstream> upstream_of(const std::filesystem::path& dir) const = 0;
+    // Whether `name` is one of the provider's own indexes (its default and
+    // the ones it adds itself), which stay where the provider keeps them.
+    virtual bool is_provider_index(std::string_view name) const = 0;
 };
 
 // What a provider says of a package's payload without installing anything
@@ -353,8 +390,10 @@ public:
     virtual std::filesystem::path versions(std::string_view tool) const = 0;
     // Remember what an install resolved each request to (its `install_targets`).
     virtual void remember(const DataEvent& installTargets) const = 0;
-    // The store this provider installs into.
+    // The store this provider installs into, and every store a payload here
+    // may be in (the indices' own, then the home's).
     virtual std::filesystem::path store() const = 0;
+    virtual std::vector<std::filesystem::path> stores() const = 0;
     // What each request resolves to and what its payload is here, nothing
     // installed; one entry per request, in order (empty: the provider cannot
     // say -- a provider before the handshake).
@@ -381,6 +420,14 @@ public:
     // ── setup ──
     virtual void seed(std::span<const SeedRepo> repos, std::string_view mirror = "auto",
                       const ProjectEnv& penv = {}) const = 0;
+    // The upstreams this home installs from (replacing what it had; none:
+    // self-contained). Never written to.
+    virtual void set_upstreams(std::span<const Upstream> upstreams) const = 0;
+    // What this home installed itself that an upstream has the same of, and
+    // one of them replaced by a link to the upstream's (atomically; empty:
+    // done, else why not).
+    virtual std::vector<Duplicate> duplicates() const = 0;
+    virtual std::string link_to_upstream(const Duplicate& d) const = 0;
     virtual int show_config() const = 0;
     virtual int set_mirror(std::string_view mirror, bool quiet = false) const = 0;
     virtual void ensure_initialized(bool quiet) const = 0;
@@ -394,6 +441,12 @@ public:
     virtual bool nasm_is_from_host(const std::filesystem::path& bin) const = 0;
 
     // ── indexes ──
+    // Every directory an index of this scope keeps its data in, sorted.
+    virtual std::vector<std::filesystem::path> index_roots() const = 0;
+    // Take over the indices mcpp owns (`dir`, `store` set): their places
+    // recorded in the provider's configuration, data the provider kept at its
+    // own place moved there once.
+    virtual void own_indices(std::span<const SeedRepo> owned) const = 0;
     virtual IndexStatus default_index_status(std::int64_t ttlSeconds) const = 0;
     virtual IndexStatus official_index_status(std::int64_t ttlSeconds) const = 0;
     virtual bool index_fresh(std::int64_t ttlSeconds) const = 0;

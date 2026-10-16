@@ -39,6 +39,7 @@ import mcpp.build.progress;          // __action reports its start
 import mcpp.platform.runtime_search; // linker-wrapper path-injection opt-out
 import mcpp.ui;
 import mcpp.log;
+import mcpp.home;              // --system: the system home
 import mcpp.diag;               // the single sink for the report below
 import mcpp.modgraph.glob;      // take_unnarrowable_paths()
 
@@ -97,6 +98,7 @@ void print_usage() {
     std::println("  --no-cache                           Deprecated alias for --cache=off (clears the build dir)");
     std::println("  --no-color                           Disable colored output");
     std::println("  --offline                            Never touch the network (also: MCPP_OFFLINE=1)");
+    std::println("  --system                             Maintain the machine's system home (administrators)");
     std::println("  --locked                             Fail if resolution differs from mcpp.lock (also: --frozen, MCPP_LOCKED=1)");
     std::println("  --play-game[=NAME]                   Play snake, stack or runner in the status row while it builds");
     std::println("  --jobs N|auto, -j                    Concurrent compiles ('auto' = cores + free RAM)");
@@ -146,6 +148,57 @@ struct ReportUnnarrowablePaths {
         // Losing the report is bad; terminating instead of it is worse.
     }
 };
+
+// The words of the command line that name the command, up to two.
+std::vector<std::string_view> command_words(int argc, char** argv) {
+    std::vector<std::string_view> words;
+    for (int i = 1; i < argc && words.size() < 2; ++i) {
+        std::string_view a = argv[i];
+        if (a == "--") break;
+        if (a.starts_with("-")) {
+            if (a == "--jobs" || a == "-j" || a == "--toolchain") ++i;
+            continue;
+        }
+        words.push_back(a);
+    }
+    return words;
+}
+
+// `--system`: the command is one that maintains a home, and this process may
+// write the system home; MCPP_HOME then names it, files are written readable
+// by everyone (umask 022), and the home is held exclusively while this runs.
+int enter_system_home(int argc, char** argv) {
+    const auto words = command_words(argc, argv);
+    const auto is = [&](std::string_view a, std::initializer_list<std::string_view> bs) {
+        return words.size() == 2 && words[0] == a && std::ranges::find(bs, words[1]) != bs.end();
+    };
+    if (!(is("self", {"init", "doctor", "store"}) || is("toolchain", {"install", "remove", "default"})
+          || is("index", {"update"}))) {
+        mcpp::ui::error("`--system` maintains the machine's system home: self init|doctor|store, toolchain "
+                        "install|remove|default, index update. A build as root would write root's files into a "
+                        "user's project; build as yourself");
+        return 2;
+    }
+    const auto home = mcpp::home::system_root();
+    std::error_code ec;
+    std::filesystem::create_directories(home, ec);
+    const auto probe = home / std::format(".mcpp-write-{:x}", std::random_device{}());
+    { std::ofstream(probe) << ""; }
+    if (ec || !std::filesystem::exists(probe, ec)) {
+        mcpp::ui::error(std::format("`--system` writes {}, which this user cannot; run it with sudo "
+                                    "(or as a member of the group that maintains it)", home.string()));
+        return 4;
+    }
+    std::filesystem::remove(probe, ec);
+    mcpp::platform::process::set_umask_022();
+    mcpp::platform::env::set("MCPP_HOME", home.string());
+    static std::optional<mcpp::platform::fs::FileLock> held;
+    while (!(held = mcpp::platform::fs::FileLock::try_acquire(home)))
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    if (!mcpp::home::is_system_home(home))
+        std::ofstream(home / std::string(mcpp::home::kHomeMarker)) << "# The machine's mcpp home: written by `mcpp --system`, read by every user.\nmode = \"system\"\n";
+    return 0;
+}
 
 int run(int argc, char** argv) {
     namespace cl = mcpplibs::cmdline;
@@ -217,6 +270,13 @@ int run(int argc, char** argv) {
         else if (a == "--play-game") mcpp::platform::env::set("MCPP_PLAY_GAME", "random");
         else if (a.starts_with("--play-game="))
             mcpp::platform::env::set("MCPP_PLAY_GAME", std::string(a.substr(12)));
+    }
+    // `--system` (design 2026-10-16 §9.2): the maintenance commands act on
+    // the machine's system home, whatever the caller's HOME and MCPP_HOME
+    // say. Building as root would write root's files into a user's project,
+    // so no other command takes it.
+    if (std::ranges::any_of(std::span(argv + 1, argv + argc), [](const char* a) { return std::string_view(a) == "--system"; })) {
+        if (int rc = enter_system_home(argc, argv); rc != 0) return rc;
     }
     // Decline xlings' linker-wrapper path injection, for this process and
     // everything it spawns (openxlings/xlings#540).
@@ -341,6 +401,9 @@ int run(int argc, char** argv) {
             .help("Disable colored output").global())
         .option(cl::Option("offline")
             .help("Never touch the network (index refresh, downloads, toolchain install)")
+            .global())
+        .option(cl::Option("system")
+            .help("Maintain the machine's system home (self init|doctor|store, toolchain install|remove|default, index update)")
             .global())
         // Declared here as well as read in the pre-pass: the pre-pass sets the
         // env var, and this makes the parser accept the token instead of
@@ -916,8 +979,14 @@ int run(int argc, char** argv) {
             .subcommand(cl::App("explain")
                 .description("Show extended description for an error code")
                 .arg(cl::Arg("code").help("Error code such as E0001").required()))
+            .subcommand(cl::App("store")
+                .description("Compare this home's payloads with its upstreams")
+                .subcommand(cl::App("dedupe")
+                    .description("List payloads an upstream has the same of; --apply links them")
+                    .option(cl::Option("apply").help("Replace each by a link to the upstream's"))))
             .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
                 return dispatch_sub("self", p, {
+                    {"store",     cmd_self_store},
                     {"init",      cmd_self_init},
                     {"doctor",    cmd_doctor},
                     {"env",       cmd_env},

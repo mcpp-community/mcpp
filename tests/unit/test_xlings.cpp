@@ -455,6 +455,86 @@ TEST(XlingsSeed, ArtifactAndSourceEmittedWhenSet) {
     std::filesystem::remove_all(dir);
 }
 
+// ─── Indices mcpp owns: their places (design 2026-10-16 §5) ──────────────
+
+TEST(XlingsOwnedIndex, SeedNamesItsDataAndStore) {
+    auto dir = make_tempdir("mcpp-seed-owned");
+    mcpp::provider::xlings::Env env;
+    env.home = dir / "registry";
+    mcpp::provider::xlings::SeedRepo repo{ "mcpplibs", "https://x.git", "", "" };
+    repo.dir = dir / "indices" / "mcpplibs";
+    repo.store = dir / "xpkgs";
+    std::vector<mcpp::provider::xlings::SeedRepo> repos{ repo };
+    mcpp::provider::xlings::seed_xlings_json(env, repos);
+    const auto declared = mcpp::provider::xlings::paths::declared_indices(env);
+    ASSERT_EQ(declared.size(), 1u);
+    EXPECT_TRUE(declared[0].owned);
+    EXPECT_EQ(declared[0].dir, (dir / "indices" / "mcpplibs").lexically_normal());
+    EXPECT_EQ(declared[0].store, (dir / "xpkgs").lexically_normal());
+    // Its store first, the home's after it (payloads from before, §5.3).
+    const auto stores = mcpp::provider::xlings::paths::stores(env);
+    ASSERT_EQ(stores.size(), 2u);
+    EXPECT_EQ(stores[0], (dir / "xpkgs").lexically_normal());
+    EXPECT_EQ(stores[1], env.home / "data" / "xpkgs");
+    std::filesystem::remove_all(dir);
+}
+
+TEST(XlingsOwnedIndex, AHomeFromBeforeHasItsIndexMovedOnce) {
+    auto dir = make_tempdir("mcpp-own-indices");
+    mcpp::provider::xlings::Env env;
+    env.home = dir / "registry";
+    std::vector<mcpp::provider::xlings::SeedRepo> plain{ { "mcpplibs", "https://x.git", "", "" } };
+    mcpp::provider::xlings::seed_xlings_json(env, plain);
+    const auto old = env.home / "data" / "mcpplibs";
+    std::filesystem::create_directories(old / "pkgs" / "f");
+    { std::ofstream(old / "pkgs" / "f" / "foo.lua") << "package = {}\n"; }
+    std::filesystem::create_directories(env.home / "data" / "xim-pkgindex" / "pkgs");
+
+    mcpp::provider::xlings::SeedRepo owned{ "mcpplibs", "https://x.git", "", "" };
+    owned.dir = dir / "indices" / "mcpplibs";
+    owned.store = dir / "xpkgs";
+    std::vector<mcpp::provider::xlings::SeedRepo> repos{ owned };
+    mcpp::provider::xlings::paths::own_indices(env, repos);
+    EXPECT_FALSE(std::filesystem::exists(old));
+    EXPECT_TRUE(std::filesystem::exists(owned.dir / "pkgs" / "f" / "foo.lua"));
+    const auto declared = mcpp::provider::xlings::paths::declared_indices(env);
+    ASSERT_EQ(declared.size(), 1u);
+    EXPECT_TRUE(declared[0].owned);
+    // Read from both places: the provider's data dir and the owned one.
+    const auto roots = mcpp::provider::xlings::paths::index_roots(env);
+    EXPECT_NE(std::ranges::find(roots, owned.dir.lexically_normal()), roots.end());
+    EXPECT_NE(std::ranges::find(roots, env.home / "data" / "xim-pkgindex"), roots.end());
+
+    // Once: data that reappears at the old place is not moved over the new.
+    std::filesystem::create_directories(old / "pkgs");
+    mcpp::provider::xlings::paths::own_indices(env, repos);
+    EXPECT_TRUE(std::filesystem::exists(old));
+    EXPECT_TRUE(std::filesystem::exists(owned.dir / "pkgs" / "f" / "foo.lua"));
+    std::filesystem::remove_all(dir);
+}
+
+TEST(XlingsOwnedIndex, APayloadIsFoundInItsIndexStoreThenInTheHomes) {
+    auto dir = make_tempdir("mcpp-owned-payload");
+    mcpp::provider::xlings::Env env;
+    env.home = dir / "registry";
+    mcpp::provider::xlings::SeedRepo owned{ "mcpplibs", "https://x.git", "", "" };
+    owned.dir = dir / "indices" / "mcpplibs";
+    owned.store = dir / "xpkgs";
+    std::vector<mcpp::provider::xlings::SeedRepo> repos{ owned };
+    mcpp::provider::xlings::seed_xlings_json(env, repos);
+    // One installed before the index had a store of its own, one after.
+    std::filesystem::create_directories(env.home / "data" / "xpkgs" / "compat-x-zlib" / "1.3.1" / "lib");
+    std::filesystem::create_directories(dir / "xpkgs" / "mcpplibs-x-cmdline" / "0.0.1" / "src");
+    using mcpp::provider::xlings::paths::xpkg_payload;
+    auto zlib = xpkg_payload(env, { "compat", "zlib", "1.3.1" });
+    ASSERT_TRUE(zlib.has_value());
+    EXPECT_EQ(*zlib, env.home / "data" / "xpkgs" / "compat-x-zlib" / "1.3.1");
+    auto cmdline = xpkg_payload(env, { "mcpplibs", "cmdline", "" });
+    ASSERT_TRUE(cmdline.has_value());
+    EXPECT_EQ(*cmdline, (dir / "xpkgs").lexically_normal() / "mcpplibs-x-cmdline" / "0.0.1");
+    std::filesystem::remove_all(dir);
+}
+
 // ─── Index identity + clock-skew hardening (#315) ────────────────────────
 
 TEST(XlingsIndexFreshness, FutureMarkerIsStaleNotEternallyFresh) {
