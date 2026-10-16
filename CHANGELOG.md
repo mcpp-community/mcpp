@@ -48,6 +48,9 @@
   store layout, which `.github/tools/check_provider_boundary.py` checks.
 - Publish scaffolds and index swaps by what the filesystem holding them does
   (NFSv3, SMB, FAT and FUSE included), measured once per filesystem (#809).
+- Bundle xlings 2026.10.16.1, the first that places an index's data and store
+  where its client names them, links from upstreams, and answers the
+  handshake (openxlings/xlings#676).
 
 ### Fixed
 

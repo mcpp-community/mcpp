@@ -118,7 +118,15 @@ namespace pinned {
     // depended on a failed one ran their hooks anyway, and an extraction said
     // nothing until it ended. mcpp reads the failure's code for its hint and
     // the `extract` and `hook` progress events for its `Installing` lines.
-    inline constexpr std::string_view kXlingsVersion   = "2026.10.10.2";
+    //
+    // Eighth, at 2026.10.16.1 (openxlings/xlings#676). Below it, an index's
+    // data and payloads could only live in xlings' own home, `update` fetched
+    // every index including the ones mcpp refreshes itself, a home could not
+    // install from another by link, and nothing answered which payloads were
+    // complete. mcpp now places its indices and store in its home (`dir`,
+    // `store`), stages each refresh (`sync_index`), names upstreams, reads
+    // `payload_status`, and checks all of it through `interface --version`.
+    inline constexpr std::string_view kXlingsVersion   = "2026.10.16.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 
