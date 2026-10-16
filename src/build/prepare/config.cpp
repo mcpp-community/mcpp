@@ -12,7 +12,9 @@ import mcpp.build.prepare_inputs;
 import std;
 import mcpp.targetside;
 import mcpp.diag;
-import mcpp.xlings.address_set;
+import mcpp.provider;
+import mcpp.provider.select;
+import mcpp.provider.address_set;
 import mcpp.build.version_floor;
 import mcpp.platform.axis;
 import mcpp.manifest;
@@ -33,7 +35,6 @@ import mcpp.pack.stage_tree;   // where `${mcpp.stage_dir}` points, and its mani
 import mcpp.build.build_program;
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
-import mcpp.xlings;
 import mcpp.platform;
 import mcpp.ui;
 import mcpp.project;
@@ -169,9 +170,9 @@ void merge_conditional_xlings(mcpp::manifest::Manifest& m,
     // to be `parse_address(a).target` — the bare name, so `xim:cuda` and a
     // hypothetical `scode:cuda` collided, and the graph split a few thousand
     // lines below compared whole address strings instead. See
-    // mcpp.xlings.address_set for what the two definitions cost.
+    // mcpp.provider.address_set for what the two definitions cost.
     auto package_of = [](std::string_view address) {
-        return mcpp::xlings::addrset::package_key(address);
+        return mcpp::provider::addrset::package_key(address);
     };
     for (auto const& a : cc.xlings.deps) {
         const auto pkg = package_of(a);

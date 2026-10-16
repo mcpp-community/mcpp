@@ -10,7 +10,7 @@ import mcpp.platform;
 import mcpp.platform.axis;
 import mcpp.runtime.binding;
 import mcpp.platform.runtime_search;
-import mcpp.xlings.subos_info;
+import mcpp.provider.xlings.subos_info;
 
 namespace build = mcpp::build;
 namespace mf = mcpp::manifest;

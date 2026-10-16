@@ -11,9 +11,10 @@ module;
 #include <cstdio>      // stderr
 #include <cstdlib>
 
-export module mcpp.xlings;
+export module mcpp.provider.xlings;
 
 import std;
+import mcpp.provider;
 import mcpp.pm.compat;
 import mcpp.pm.index_contract;
 import mcpp.pm.index_snapshot;
@@ -24,15 +25,11 @@ import mcpp.home;
 import mcpp.xpkg_version;
 import mcpp.libs.json;
 
-export namespace mcpp::xlings {
+export namespace mcpp::provider::xlings {
 
 // ─── Env: resolved xlings binary + home directory ───────────────────
 
-struct Env {
-    std::filesystem::path binary;      // xlings binary path
-    std::filesystem::path home;        // XLINGS_HOME directory
-    std::filesystem::path projectDir;  // XLINGS_PROJECT_DIR (empty = global mode)
-};
+using Env = mcpp::provider::Location;
 
 // ─── Pinned version constants ───────────────────────────────────────
 
@@ -158,11 +155,7 @@ namespace paths {
     // that layout (`xpkgs_base`, `xim_tool`). A second place deriving it is
     // the shape this codebase has paid for repeatedly: it does not fail when
     // you add it, it fails later, somewhere else.
-    struct XpkgRef {
-        std::string ns;       // "xim" when the spec omitted one
-        std::string name;
-        std::string version;  // empty = unpinned
-    };
+    using XpkgRef = mcpp::provider::PackageRef;
 
     // Parse `[<ns>:]<name>[@<version>]` exactly as a manifest writes it.
     XpkgRef parse_xpkg_ref(std::string_view spec);
@@ -388,36 +381,17 @@ std::string build_interface_command(const Env& env,
 
 // ─── NDJSON event types ─────────────────────────────────────────────
 
-struct ProgressEvent {
-    std::string  phase;      // "download", "extract", "configure", ...
-    int          percent;    // 0..100
-    std::string  message;
-};
+using ProgressEvent = mcpp::provider::ProgressEvent;
 
-struct LogEvent {
-    std::string  level;      // "debug" | "info" | "warn" | "error"
-    std::string  message;
-};
+using LogEvent = mcpp::provider::LogEvent;
 
-struct DataEvent {
-    std::string  dataKind;   // "install_plan", "styled_list", ...
-    std::string  payloadJson;// raw JSON (let caller parse)
-};
+using DataEvent = mcpp::provider::DataEvent;
 
-struct ErrorEvent {
-    std::string  code;
-    std::string  message;
-    std::string  hint;
-    bool         recoverable = false;
-};
+using ErrorEvent = mcpp::provider::ErrorEvent;
 
-struct ResultEvent {
-    int          exitCode = 0;
-    std::string  dataJson;   // additional payload, may be empty
-};
+using ResultEvent = mcpp::provider::ResultEvent;
 
-using Event = std::variant<ProgressEvent, LogEvent, DataEvent,
-                           ErrorEvent, ResultEvent>;
+using Event = mcpp::provider::Event;
 
 // Parse one NDJSON line into an Event.
 std::optional<Event> parse_event_line(std::string_view line);
@@ -431,17 +405,7 @@ std::string extract_object(std::string_view text, std::string_view key);
 
 // ─── Subprocess call ────────────────────────────────────────────────
 
-struct CallResult {
-    int                          exitCode = 0;
-    std::vector<DataEvent>       dataEvents;
-    std::optional<ErrorEvent>    error;
-    std::string                  resultJson;
-    // xlings' own error-level lines from its stderr, the last few, kept only
-    // when the call failed (#614). The NDJSON error event carries a summary
-    // ("config hook failed"); the line that says WHICH binding was rejected and
-    // why is a log line on stderr, which this call used to discard.
-    std::vector<std::string>     stderrTail;
-};
+using CallResult = mcpp::provider::CallResult;
 
 // The error-level lines of an xlings invocation's stderr, the last `limit` of
 // them (#614). A line is kept when it contains "error" in any case, contains
@@ -450,14 +414,7 @@ struct CallResult {
 // install.
 std::vector<std::string> stderr_error_tail(std::string_view text, std::size_t limit = 20);
 
-struct EventHandler {
-    virtual ~EventHandler() = default;
-    virtual void on_progress(const ProgressEvent&) {}
-    virtual void on_log     (const LogEvent&)     {}
-    virtual void on_data    (const DataEvent&)    {}
-    virtual void on_error   (const ErrorEvent&)   {}
-    virtual void on_result  (const ResultEvent&)  {}
-};
+using EventHandler = mcpp::provider::EventHandler;
 
 std::expected<CallResult, std::string>
 call(const Env& env, std::string_view capability,
@@ -465,20 +422,11 @@ call(const Env& env, std::string_view capability,
 
 // ─── Bootstrap progress types ───────────────────────────────────────
 
-struct BootstrapFile {
-    std::string  name;             // xim package id, e.g. "xim:patchelf@0.18.0"
-    double       downloadedBytes = 0;
-    double       totalBytes      = 0;
-    bool         started         = false;
-    bool         finished        = false;
-};
+using BootstrapFile = mcpp::provider::BootstrapFile;
 
-struct BootstrapProgress {
-    std::vector<BootstrapFile>  files;
-    double                      elapsedSec = 0;
-};
+using BootstrapProgress = mcpp::provider::BootstrapProgress;
 
-using BootstrapProgressCallback = std::function<void(const BootstrapProgress&)>;
+using BootstrapProgressCallback = mcpp::provider::BootstrapProgressCallback;
 
 // Run xlings install with progress callback (used by bootstrap functions).
 // When not `quiet` and stderr is a TTY, an elapsed-time spinner is shown
@@ -507,30 +455,13 @@ int install_direct(const Env& env, std::string_view target, bool quiet = false);
 // The project's build-environment payload (L-1), materialized 1:1 into the
 // `.xlings.json` keys xlings already understands. Plain types (no manifest
 // dependency); the caller fills it from a manifest's [xlings] section.
-struct ProjectEnv {
-    std::vector<std::string>                          deps;       // → "deps"
-    std::vector<std::pair<std::string,std::string>>   workspace;  // → "workspace"
-    std::string                                       subos;      // → "subos"
-    // No `envs`: the key was materialised here and read by nothing. See
-    // .agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md §4.
-    bool empty() const {
-        return deps.empty() && workspace.empty() && subos.empty();
-    }
-};
+using ProjectEnv = mcpp::provider::ProjectEnv;
 
 // One index_repos entry for seed_xlings_json. `artifact`/`source` are the
 // xlings >= 0.4.68 per-repo artifact-sync fields (#269); empty means "do not
 // emit the key", which keeps pre-artifact output byte-identical and matches
 // xlings' "undeclared = plain git" semantics. Older xlings ignores both keys.
-struct SeedRepo {
-    std::string name;
-    std::string url;
-    std::string artifact;   // artifact source base, e.g. https://github.com/xlings-res/mcpp-index
-    std::string source;     // "auto" | "artifact" | "git"
-    // Non-empty: `artifact` is written as the region object
-    // {"GLOBAL": artifact, "CN": artifactCn} (xlings #377).
-    std::string artifactCn;
-};
+using SeedRepo = mcpp::provider::SeedRepo;
 
 void seed_xlings_json(const Env& env,
                       std::span<const SeedRepo> repos,
@@ -583,7 +514,7 @@ std::optional<std::filesystem::path> find_sandbox_nasm(const Env& env);
 // still absent afterwards is absent upstream. Lives here, in the leaf module,
 // because both users need it and the policy layer (mcpp.pm.index_refresh)
 // imports this module — the reverse would be a cycle.
-inline constexpr std::int64_t kIndexRefreshDebounceSeconds = 120;
+inline constexpr std::int64_t kIndexRefreshDebounceSeconds = mcpp::provider::kIndexRefreshDebounceSeconds;
 
 // ─── Bounds on the xlings children mcpp starts (#648 A3) ───────────────
 //
@@ -605,7 +536,7 @@ inline constexpr std::int64_t kIndexRefreshDebounceSeconds = 120;
 //     only a total bound can apply, and it is generous: a toolchain archive on a
 //     slow link is not a hang;
 //   - a local command (the one-time sandbox init) gets a total bound.
-inline constexpr std::chrono::seconds kDefaultIndexRefreshTimeout{120};
+inline constexpr std::chrono::seconds kDefaultIndexRefreshTimeout = mcpp::provider::kDefaultIndexRefreshTimeout;
 inline constexpr std::chrono::seconds kInterfaceIdleTimeout{300};
 inline constexpr std::chrono::seconds kDirectInstallTimeout{3 * 3600};
 inline constexpr std::chrono::seconds kLocalCommandTimeout{600};
@@ -651,13 +582,7 @@ bool official_package_present(const Env& env, std::string_view packageName);
 // ─── Index status (read-only, offline) ──────────────────────────────
 // Snapshot of a local index directory — computed without touching the
 // network, for `mcpp index status`.
-struct IndexStatus {
-    std::filesystem::path      dir;        // on-disk index directory
-    bool                       present;    // pkgs/ tree exists locally
-    bool                       fresh;      // refreshed within ttlSeconds
-    std::int64_t               ageSeconds; // since last refresh marker, -1 if unknown
-    std::optional<std::string> rev;        // index CONTENT identity, nullopt if absent
-};
+using IndexStatus = mcpp::provider::IndexStatus;
 IndexStatus default_index_status(const Env& env, std::int64_t ttlSeconds);
 IndexStatus official_index_status(const Env& env, std::int64_t ttlSeconds);
 
@@ -676,13 +601,13 @@ std::optional<std::string> index_revision(const std::filesystem::path& indexDir)
 
 std::expected<std::string, std::string> run_capture(const std::string& cmd);
 
-} // namespace mcpp::xlings
+} // namespace mcpp::provider::xlings
 
 // ═══════════════════════════════════════════════════════════════════════
 // Implementation
 // ═══════════════════════════════════════════════════════════════════════
 
-namespace mcpp::xlings {
+namespace mcpp::provider::xlings {
 
 namespace {
 
@@ -967,25 +892,7 @@ std::filesystem::path xim_tool(const Env& env, std::string_view tool,
 }
 
 // Parse `[<ns>:]<name>[@<version>]` exactly as a manifest writes it.
-XpkgRef parse_xpkg_ref(std::string_view spec) {
-    XpkgRef r;
-    if (auto colon = spec.find(':'); colon != std::string_view::npos) {
-        r.ns = std::string(spec.substr(0, colon));
-        spec = spec.substr(colon + 1);
-    } else {
-        // The manifest's own default, spelled once here rather than at each
-        // call site: `deps = ["ninja"]` and `deps = ["xim:ninja"]` name the
-        // same package.
-        r.ns = "xim";
-    }
-    if (auto at = spec.find('@'); at != std::string_view::npos) {
-        r.name    = std::string(spec.substr(0, at));
-        r.version = std::string(spec.substr(at + 1));
-    } else {
-        r.name = std::string(spec);
-    }
-    return r;
-}
+XpkgRef parse_xpkg_ref(std::string_view spec) { return mcpp::provider::parse_ref(spec); }
 
 // Where that package's payload is, or nullopt if it is not installed.
 //
@@ -2325,4 +2232,4 @@ bool official_package_present(const Env& env, std::string_view packageName) {
     return !pkg.empty() && std::filesystem::exists(pkg, ec);
 }
 
-} // namespace mcpp::xlings
+} // namespace mcpp::provider::xlings

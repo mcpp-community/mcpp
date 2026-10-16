@@ -31,7 +31,8 @@ import mcpp.build.build_program;
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.config;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 import mcpp.platform;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
@@ -296,8 +297,7 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
             std::vector<std::string> missing;
             if (have == want)
                 for (auto const& d : declaredDeps)
-                    if (!mcpp::xlings::paths::xpkg_payload(
-                            xlEnv, mcpp::xlings::paths::parse_xpkg_ref(d)))
+                    if (!mcpp::provider::payload(*mcpp::provider::open(xlEnv), mcpp::provider::parse_ref(d)))
                         missing.push_back(d);
             if (!missing.empty()) {
                 std::string list;
@@ -439,8 +439,7 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                 args["yes"]     = true;
 
                 mcpp::fetcher::InstallProgressHandler progress;
-                auto r = mcpp::xlings::call(
-                    xlEnv, "install_packages", args.dump(), &progress);
+                auto r = mcpp::provider::open(xlEnv)->call("install_packages", args.dump(), &progress);
                 // `if (!r)` IS NOT THE FAILURE TEST, AND TESTING ONLY
                 // IT MADE THIS PATH REPORT SUCCESS FOR EVERY FAILURE XLINGS
                 // CAN REPORT.
@@ -499,8 +498,7 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                 // gets xlings' answer rather than a re-derivation of it.
                 for (auto const& e : r->dataEvents)
                     if (e.dataKind == "install_targets")
-                        mcpp::xlings::paths::record_resolutions(xlEnv,
-                            mcpp::xlings::paths::parse_install_targets(e.payloadJson));
+                        mcpp::provider::open(xlEnv)->remember(e);
                 // Written only on success, for the same reason the check
                 // above exists: a stamp is a record that the effect
                 // happened, and recording an effect that did not is worse

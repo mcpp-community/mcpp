@@ -19,7 +19,8 @@ export module mcpp.toolchain.registry;
 import std;
 import mcpp.libs.json;
 import mcpp.platform;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.compat;
 import mcpp.toolchain.gcc;
@@ -396,7 +397,7 @@ Origin origin_of(const ToolchainSpec& spec);
 // `identifyVersion = false` skips running cl.exe for its banner; callers that
 // only need to know whether a toolset is there should pass false.
 std::expected<msvc::MsvcInstallation, std::string>
-resolve_managed_msvc(const mcpp::xlings::Env& env,
+resolve_managed_msvc(const mcpp::provider::Location& env,
                      const XimToolchainPackage& pkg,
                      bool identifyVersion = true);
 
@@ -664,7 +665,7 @@ Origin origin_of(const ToolchainSpec& spec) {
 }
 
 std::expected<msvc::MsvcInstallation, std::string>
-resolve_managed_msvc(const mcpp::xlings::Env& env,
+resolve_managed_msvc(const mcpp::provider::Location& env,
                      const XimToolchainPackage& pkg,
                      bool identifyVersion) {
     // NOT the fetcher's `root`: that field is its guess at where the useful
@@ -672,7 +673,7 @@ resolve_managed_msvc(const mcpp::xlings::Env& env,
     // dir has no bin/ include/ lib/. An msvc payload's only entry is `VC/`,
     // so the guess lands exactly one level too deep. (store, name, version)
     // is known — compose it.
-    auto verDir = mcpp::xlings::paths::xim_tool(env, pkg.ximName, pkg.ximVersion);
+    auto verDir = mcpp::provider::open(env)->pinned(pkg.ximName, pkg.ximVersion);
     // The package version IS the toolset directory name, so cl.exe is derived
     // rather than searched for: nothing here can silently pick a different
     // toolset, which is the whole reason the version axis exists.

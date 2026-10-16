@@ -6,7 +6,8 @@ import std;
 import mcpp.platform;
 import mcpp.toolchain.model;
 import mcpp.toolchain.probe;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 
 export namespace mcpp::toolchain::gcc {
 
@@ -167,8 +168,7 @@ void enrich_toolchain(Toolchain& tc) {
 
 std::optional<std::filesystem::path>
 find_binutils_bin(const std::filesystem::path& compilerBin) {
-    if (auto as = mcpp::xlings::paths::find_sibling_binary(
-            compilerBin, "binutils", "bin/as")) {
+    if (auto as = mcpp::provider::beside_binary(compilerBin, "binutils", "bin/as")) {
         return as->parent_path();
     }
     return std::nullopt;
@@ -211,18 +211,18 @@ static std::string module_source_command(const Toolchain& tc,
                                          std::string_view object) {
     std::string bFlag;
     if (auto binutilsBin = binutils_prefix_dir(tc); !binutilsBin.empty())
-        bFlag = std::format(" -B{}", mcpp::xlings::shq(binutilsBin.string()));
+        bFlag = std::format(" -B{}", mcpp::platform::shell::quote(binutilsBin.string()));
     const char* cd = mcpp::platform::is_windows ? "cd /d" : "cd";
     return std::format(
         "{} {} && {}{} {} -fmodules -O2{}{} -c {} -o {} 2>&1",
         cd,
-        mcpp::xlings::shq(cacheDir.string()),
+        mcpp::platform::shell::quote(cacheDir.string()),
         mcpp::toolchain::compiler_env_prefix(tc),
-        mcpp::xlings::shq(tc.binaryPath.string()),
+        mcpp::platform::shell::quote(tc.binaryPath.string()),
         cppStandardFlag,
         sysrootFlag,
         bFlag,
-        mcpp::xlings::shq(source.string()),
+        mcpp::platform::shell::quote(source.string()),
         object);
 }
 
@@ -245,7 +245,7 @@ std::string std_module_build_command(const Toolchain& tc,
                                      std::string_view cppStandardFlag) {
     std::string bFlag;
     if (auto binutilsBin = binutils_prefix_dir(tc); !binutilsBin.empty())
-        bFlag = std::format(" -B{}", mcpp::xlings::shq(binutilsBin.string()));
+        bFlag = std::format(" -B{}", mcpp::platform::shell::quote(binutilsBin.string()));
 
     // Windows (MinGW): cmd.exe needs `/d` to change DRIVE (project on D:,
     // BMI cache on C: is the real CI layout — same-drive runs masked this).
@@ -253,13 +253,13 @@ std::string std_module_build_command(const Toolchain& tc,
     return std::format(
         "{} {} && {}{} {} -fmodules -O2{}{} -c {} -o std.o 2>&1",
         cd,
-        mcpp::xlings::shq(cacheDir.string()),
+        mcpp::platform::shell::quote(cacheDir.string()),
         mcpp::toolchain::compiler_env_prefix(tc),
-        mcpp::xlings::shq(tc.binaryPath.string()),
+        mcpp::platform::shell::quote(tc.binaryPath.string()),
         cppStandardFlag,
         sysrootFlag,
         bFlag,
-        mcpp::xlings::shq(tc.stdModuleSource.string()));
+        mcpp::platform::shell::quote(tc.stdModuleSource.string()));
 }
 
 std::vector<std::string> std_module_build_commands(

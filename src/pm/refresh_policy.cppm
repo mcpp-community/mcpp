@@ -21,7 +21,8 @@ import mcpp.log;
 import mcpp.platform;
 import mcpp.pm.index_contract;
 import mcpp.ui;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 
 export namespace mcpp::pm {
 
@@ -46,7 +47,7 @@ struct RefreshPolicy {
     bool         autoRefresh = true;
     // Shared with the xim install gate — one constant, one rationale, in the
     // leaf module both layers can see (mcpp::xlings).
-    std::int64_t debounceSeconds = mcpp::xlings::kIndexRefreshDebounceSeconds;
+    std::int64_t debounceSeconds = mcpp::provider::kIndexRefreshDebounceSeconds;
 };
 
 struct RefreshDecision {
@@ -66,7 +67,7 @@ RefreshPolicy policy_for(const mcpp::config::GlobalConfig& cfg);
 // judgement is left to make. Keeps the opt-outs in one place rather than
 // re-tested at each call site.
 RefreshDecision decide_for_miss(const RefreshPolicy&     policy,
-                                const mcpp::xlings::Env& env,
+                                const mcpp::provider::Location& env,
                                 std::string_view         subject);
 
 // Run the sync a decision asked for. At most ONE per process: a build whose
@@ -74,16 +75,16 @@ RefreshDecision decide_for_miss(const RefreshPolicy&     policy,
 // Returns an error only when the sync itself failed; callers decide whether
 // that is fatal (it is not, if the build can still resolve locally).
 std::expected<void, std::string> apply(const RefreshDecision& d,
-                                       const mcpp::xlings::Env& env);
+                                       const mcpp::provider::Location& env);
 
 // Explicit user intent (`mcpp update`): ignores debounce and the once-per-
 // process guard. Still refuses when offline, and says so.
-std::expected<void, std::string> force_refresh(const mcpp::xlings::Env& env);
+std::expected<void, std::string> force_refresh(const mcpp::provider::Location& env);
 
 // One line of advisory context for a resolution failure: what the index is and
 // how old it is. Never a gate — only ever appended to an error the user is
 // already seeing.
-std::string staleness_note(const mcpp::xlings::Env& env);
+std::string staleness_note(const mcpp::provider::Location& env);
 
 } // namespace mcpp::pm
 
@@ -130,7 +131,7 @@ RefreshPolicy policy_for(const mcpp::config::GlobalConfig& cfg) {
 }
 
 RefreshDecision decide_for_miss(const RefreshPolicy&     policy,
-                                const mcpp::xlings::Env& env,
+                                const mcpp::provider::Location& env,
                                 std::string_view         subject) {
     RefreshDecision d;
     d.subject = std::string(subject);
@@ -144,7 +145,7 @@ RefreshDecision decide_for_miss(const RefreshPolicy&     policy,
     // Same debounce as the build path: two `mcpp add` typos in a row should not
     // buy two multi-repo syncs, for the same reason a build with two missing
     // packages does not.
-    auto status = mcpp::xlings::default_index_status(env, policy.debounceSeconds);
+    auto status = mcpp::provider::open(env)->default_index_status(policy.debounceSeconds);
     if (status.present && status.ageSeconds >= 0
         && status.ageSeconds < policy.debounceSeconds) {
         d.reason = RefreshReason::SuppressedDebounce;
@@ -157,14 +158,14 @@ RefreshDecision decide_for_miss(const RefreshPolicy&     policy,
 
 namespace {
 
-std::expected<void, std::string> run_sync(const mcpp::xlings::Env& env,
+std::expected<void, std::string> run_sync(const mcpp::provider::Location& env,
                                           std::string_view banner) {
-    auto before = mcpp::xlings::default_index_status(env, 0).rev;
+    auto before = mcpp::provider::open(env)->default_index_status(0).rev;
     mcpp::ui::status("Refreshing", banner);
-    int rc = mcpp::xlings::update_index(env, /*quiet=*/true);
+    int rc = mcpp::provider::open(env)->update_index(/*quiet=*/true);
     if (rc != 0)
         return std::unexpected(std::format("package index refresh failed (rc {})", rc));
-    auto after = mcpp::xlings::default_index_status(env, 0).rev;
+    auto after = mcpp::provider::open(env)->default_index_status(0).rev;
     if (before && after && *before != *after)
         mcpp::ui::status("Updated", std::format("package index {} → {}", *before, *after));
     else if (after)
@@ -175,7 +176,7 @@ std::expected<void, std::string> run_sync(const mcpp::xlings::Env& env,
 } // namespace
 
 std::expected<void, std::string> apply(const RefreshDecision& d,
-                                       const mcpp::xlings::Env& env)
+                                       const mcpp::provider::Location& env)
 {
     if (!d.shouldRefresh) {
         mcpp::log::verbose("index", std::format(
@@ -192,7 +193,7 @@ std::expected<void, std::string> apply(const RefreshDecision& d,
                                      d.subject, reason_text(d.reason)));
 }
 
-std::expected<void, std::string> force_refresh(const mcpp::xlings::Env& env) {
+std::expected<void, std::string> force_refresh(const mcpp::provider::Location& env) {
     if (mcpp::platform::env::offline_mode())
         return std::unexpected(
             "offline mode is on — cannot refresh the package index "
@@ -201,8 +202,8 @@ std::expected<void, std::string> force_refresh(const mcpp::xlings::Env& env) {
     return run_sync(env, "package index (requested)");
 }
 
-std::string staleness_note(const mcpp::xlings::Env& env) {
-    auto st = mcpp::xlings::default_index_status(env, 0);
+std::string staleness_note(const mcpp::provider::Location& env) {
+    auto st = mcpp::provider::open(env)->default_index_status(0);
     if (!st.present) return "no local package index";
     return st.rev
         ? std::format("local index {} ({})", *st.rev, age_phrase(st.ageSeconds))

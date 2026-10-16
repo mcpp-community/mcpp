@@ -1,9 +1,9 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.xlings.address_set;
+import mcpp.provider.address_set;
 
-namespace addrset = mcpp::xlings::addrset;
+namespace addrset = mcpp::provider::addrset;
 
 namespace {
 

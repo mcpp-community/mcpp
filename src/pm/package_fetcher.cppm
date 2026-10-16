@@ -1,10 +1,10 @@
-// mcpp.pm.package_fetcher — subprocess-based xlings interface client (NDJSON over stdio).
+// mcpp.pm.package_fetcher — packages through the provider port: search,
+// plan, install, the index list, a package's descriptor and its payload.
 //
-// Each Fetcher::call() invokes:
-//   XLINGS_HOME=<cfg.xlingsHome()> <cfg.xlingsBinary> interface <cap> --args '{...}'
-// then parses the NDJSON event stream emitted on stdout.
-//
-// Wire format reference: xlings/src/interface.cppm.
+// Each operation goes to the provider (mcpp.provider.select): which program
+// runs, its protocol and its layout are the adapter's. A payload's
+// completeness is the provider's answer (its `payload_status`, design §7.1):
+// mcpp writes nothing into a payload -- no marker, no copy from another home.
 
 module;
 #include <cstdio>
@@ -24,10 +24,9 @@ import mcpp.pm.refresh_policy;   // decide_for_miss / apply (#648 A5)
 import mcpp.build.refusal;       // offline-download-required (#648 A1)
 import mcpp.ui;
 import mcpp.pm.index_spec;
-import mcpp.xlings;
-import mcpp.libs.toml;       // re-used for tiny JSON-ish parsing? no — stick with manual
-import mcpp.fallback.xpkg_copy;
-import mcpp.fallback.install_integrity;
+import mcpp.provider;
+import mcpp.provider.select;
+import mcpp.libs.json;
 import mcpp.fallback.legacy_dirs;
 
 export namespace mcpp::pm {
@@ -36,16 +35,16 @@ export namespace mcpp::pm {
 
 enum class EventKind { Progress, Log, Data, Error, Heartbeat, Result };
 
-using ProgressEvent = mcpp::xlings::ProgressEvent;
-using LogEvent      = mcpp::xlings::LogEvent;
-using DataEvent     = mcpp::xlings::DataEvent;
-using ErrorEvent    = mcpp::xlings::ErrorEvent;
-using ResultEvent   = mcpp::xlings::ResultEvent;
-using Event         = mcpp::xlings::Event;
+using ProgressEvent = mcpp::provider::ProgressEvent;
+using LogEvent      = mcpp::provider::LogEvent;
+using DataEvent     = mcpp::provider::DataEvent;
+using ErrorEvent    = mcpp::provider::ErrorEvent;
+using ResultEvent   = mcpp::provider::ResultEvent;
+using Event         = mcpp::provider::Event;
 
-// --- Listener interface (alias to mcpp::xlings::EventHandler) ---
+// --- Listener interface (alias to mcpp::provider::EventHandler) ---
 
-using EventHandler = mcpp::xlings::EventHandler;
+using EventHandler = mcpp::provider::EventHandler;
 
 // --- Capability invocation ---
 
@@ -53,7 +52,7 @@ struct CallError {
     std::string message;
 };
 
-using CallResult = mcpp::xlings::CallResult;
+using CallResult = mcpp::provider::CallResult;
 
 class Fetcher {
 public:
@@ -265,23 +264,31 @@ namespace mcpp::pm {
 
 namespace {
 
-// JSON extraction and NDJSON parsing are now in mcpp::xlings.
-// Bring them into this TU's anonymous namespace for use by search/plan_install
-// helper code that still needs extract_string/extract_object.
-using mcpp::xlings::extract_string;
-using mcpp::xlings::extract_int;
-using mcpp::xlings::extract_bool;
-using mcpp::xlings::extract_object;
-using mcpp::xlings::parse_event_line;
-using mcpp::xlings::shq;
+// A field of a data event's JSON: a string, or an object/array as compact
+// JSON text (what the readers below walk). Empty when absent.
+std::string extract_string(std::string_view text, std::string_view key) {
+    auto j = nlohmann::json::parse(text, nullptr, false);
+    if (!j.is_object()) return {};
+    auto it = j.find(std::string(key));
+    return it != j.end() && it->is_string() ? it->get<std::string>() : std::string{};
+}
+std::string extract_object(std::string_view text, std::string_view key) {
+    auto j = nlohmann::json::parse(text, nullptr, false);
+    if (!j.is_object()) return {};
+    auto it = j.find(std::string(key));
+    return it != j.end() && (it->is_object() || it->is_array()) ? it->dump() : std::string{};
+}
+
+mcpp::provider::Location location_of(const config::GlobalConfig& cfg) {
+    return mcpp::config::make_xlings_env(cfg);
+}
 
 } // namespace
 
 std::string Fetcher::build_command(std::string_view capability,
                                    std::string_view argsJson) const
 {
-    mcpp::xlings::Env env{ cfg_.xlingsBinary, cfg_.xlingsHome() };
-    return mcpp::xlings::build_interface_command(env, capability, argsJson);
+    return mcpp::provider::open(location_of(cfg_))->operation_command(capability, argsJson);
 }
 
 // ─── install_packages failure diagnostics (#238) ────────────────────
@@ -418,13 +425,13 @@ Fetcher::call(std::string_view capability,
               std::string_view argsJson,
               EventHandler* handler)
 {
-    mcpp::xlings::Env env{ cfg_.xlingsBinary, cfg_.xlingsHome() };
+    auto provider = mcpp::provider::open(location_of(cfg_));
     mcpp::log::debug("fetcher", std::format("call: cap='{}'", capability));
     if (mcpp::log::is_enabled(mcpp::log::Level::debug)) {
-        auto cmd = mcpp::xlings::build_interface_command(env, capability, argsJson);
+        auto cmd = provider->operation_command(capability, argsJson);
         mcpp::log::debug("fetcher", std::format("cmd = {}", cmd));
     }
-    auto r = mcpp::xlings::call(env, capability, argsJson, handler);
+    auto r = provider->call(capability, argsJson, handler);
     if (!r) {
         mcpp::log::error("fetcher", std::format("call '{}' failed: {}", capability, r.error()));
         return std::unexpected(CallError{r.error()});
@@ -805,7 +812,7 @@ Fetcher::read_xpkg_lua(std::string_view ns, std::string_view shortName) const
 {
     if (shortName.empty()) return std::nullopt;
 
-    auto data = cfg_.xlingsHome() / "data";
+    auto data = mcpp::provider::open(location_of(cfg_))->data_root();
     std::error_code ec;
     if (!std::filesystem::exists(data, ec)) return std::nullopt;
 
@@ -880,7 +887,7 @@ Fetcher::install_path_from_project_data(const std::filesystem::path& projectDir,
                                          std::string_view version)
 {
     for (auto& data : mcpp::config::project_xlings_data_roots(projectDir)) {
-        auto base = data / "xpkgs";
+        auto base = mcpp::provider::layout().store_in(data);
         if (!std::filesystem::exists(base)) continue;
 
         // Try canonical directory name: ns.shortName
@@ -960,7 +967,7 @@ std::vector<std::filesystem::path>
 Fetcher::builtin_index_roots() const
 {
     std::vector<std::filesystem::path> roots;
-    auto data = cfg_.xlingsHome() / "data";
+    auto data = mcpp::provider::open(location_of(cfg_))->data_root();
     std::error_code ec;
     if (!std::filesystem::exists(data, ec)) return roots;
     for (auto& dir : sorted_index_dirs(data)) roots.push_back(dir);
@@ -1020,7 +1027,7 @@ ParsedTarget parse_target(std::string_view target, std::string_view defaultIndex
 // says why (`code`, interface 1.5+; extraction since 2026.10.10.2). Every
 // failure used to end in "check network and retry": a phone whose app sandbox
 // refused hard links was sent to check its network (design 2026-10-10 §13).
-std::string install_failure_hint(const std::optional<mcpp::xlings::ErrorEvent>& error,
+std::string install_failure_hint(const std::optional<mcpp::provider::ErrorEvent>& error,
                                  const std::filesystem::path& home) {
     const std::string code = error ? error->code : std::string{};
     if (code == "E_NETWORK")
@@ -1054,16 +1061,10 @@ Fetcher::resolve_xpkg_path(std::string_view target,
                         target)});
     }
 
-    auto base = cfg_.xlingsHome() / "data" / "xpkgs";
-    std::filesystem::path verdir = base
-        / std::format("{}-x-{}", parsed.indexName, parsed.packageName)
-        / parsed.version;
+    auto provider = mcpp::provider::open(location_of(cfg_));
+    const mcpp::provider::PackageRef ref{parsed.indexName, parsed.packageName, parsed.version};
 
-    mcpp::log::verbose("fetcher", std::format(
-        "resolve: target='{}' verdir='{}'", target, verdir.string()));
-    mcpp::log::debug("fetcher", std::format(
-        "  xlingsHome='{}' autoInstall={} verdir_exists={}",
-        cfg_.xlingsHome().string(), autoInstall, std::filesystem::exists(verdir)));
+    mcpp::log::verbose("fetcher", std::format("resolve: target='{}'", target));
 
     auto fill_payload = [&](XpkgPayload& p) {
         p.binDir     = p.root / "bin";
@@ -1083,20 +1084,16 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         p.sourceDir = (subs.size() == 1) ? subs.front() : p.root;
     };
 
-    // Build the payload from a verdir that is known to exist.
-    auto make_payload = [&]() -> XpkgPayload {
+    // The payload as the provider placed it: a version dir that holds bin/,
+    // include/ or lib/ is the root (xim packages); otherwise its one
+    // subdirectory (an extracted source tarball, mcpplibs packages).
+    auto make_payload = [&](const std::filesystem::path& verdir) -> XpkgPayload {
         XpkgPayload payload;
-        // For xim packages (gcc, cmake, ...) the version dir IS the root.
-        // For mcpplibs packages the version dir contains an extracted
-        // tarball subdirectory; we treat the wrapper subdir as the root
-        // when its content includes bin/ or include/.
         std::error_code ec;
         std::vector<std::filesystem::path> subs;
         for (auto& e : std::filesystem::directory_iterator(verdir, ec)) {
             if (e.is_directory()) subs.push_back(e.path());
         }
-        // If verdir directly contains bin/ or include/ -> it's the root.
-        // Otherwise prefer the unique subdirectory.
         bool verdir_is_root = std::filesystem::exists(verdir / "bin")
                            || std::filesystem::exists(verdir / "include")
                            || std::filesystem::exists(verdir / "lib");
@@ -1107,38 +1104,25 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         return payload;
     };
 
-    // ─── Resolution chain: marker check → clean residue → install → fallback ─
+    // What the provider says of this payload, nothing installed: there and
+    // complete is the only "installed" (a directory that merely exists may
+    // be an interrupted install, or a success that installed nothing, #533).
+    const auto complete_here = [&]() -> std::optional<std::filesystem::path> {
+        const std::array<mcpp::provider::PackageRef, 1> refs{ref};
+        auto st = provider->status(refs);
+        if (st.size() == 1 && st[0].complete && !st[0].dir.empty()) return st[0].dir;
+        return std::nullopt;
+    };
 
-    // 1. Already installed and complete (has .mcpp_ok marker)?
-    //
-    // Strict marker-only. We do NOT do legacy heuristic adoption here
-    // because we cannot distinguish a legacy-complete install (has bin/)
-    // from a half-extracted residue (also has bin/). Adopting the latter
-    // would silently corrupt the user's toolchain.
-    //
-    // Cost for users upgrading mcpp: a one-time reinstall per toolchain.
-    // The install path normally hits copy_xpkg_from_global() as a fast
-    // fallback (reuses ~/.xlings/ copy), so this is rarely a real download.
-    if (mcpp::fallback::is_install_complete(verdir)) {
-        mcpp::log::debug("fetcher", "install complete in sandbox");
-        return make_payload();
+    if (auto dir = complete_here()) {
+        mcpp::log::debug("fetcher", "payload complete in the store");
+        return make_payload(*dir);
     }
 
-    // 2. Directory exists without marker → either interrupted install
-    //    or legacy package. Stash it aside (don't delete outright) so a
-    //    failed reinstall can roll back to a content-complete legacy package
-    //    instead of leaving it destroyed (the xim-x-zlib regression). The
-    //    guard commits (drops the backup) on each success path below; on any
-    //    failure path its destructor restores a looks_complete_legacy() stash.
-    mcpp::fallback::InstallStash stash(verdir);
-
-    // 3. Install via xlings (primary path).
     if (autoInstall) {
-        // Offline is checked HERE, after the "already installed" fast paths
-        // above: a build whose packages are all present must stay fully
-        // functional offline — that is the whole point. Only an actual
-        // download attempt is refused, and it names the package so the user
-        // knows what to fetch rather than seeing a generic network error.
+        // Offline is checked HERE, after the "already installed" fast path
+        // above: a build whose packages are all present stays functional
+        // offline. Only an actual download is refused, naming the package.
         if (mcpp::platform::env::offline_mode()) {
             mcpp::build::refusal::record(
                 mcpp::build::refusal::Code::OfflineDownloadRequired);
@@ -1148,149 +1132,62 @@ Fetcher::resolve_xpkg_path(std::string_view target,
                 parsed.packageName, parsed.version) });
         }
         if (parsed.indexName == "xim") {
-            mcpp::xlings::Env xlEnv{ cfg_.xlingsBinary, cfg_.xlingsHome() };
             // A descriptor missing from the local xim index may be one the
             // remote index has. Whether that miss refreshes is the refresh
-            // policy's decision, so `[index] auto_refresh = false` and the
-            // debounce hold here as on every other path (#648 A5). The status
-            // line `apply` prints makes the one-time network pause visible.
-            if (!mcpp::xlings::official_package_present(xlEnv, parsed.packageName)) {
+            // policy's decision (#648 A5).
+            if (!provider->official_package_present(parsed.packageName)) {
                 auto decision = mcpp::pm::decide_for_miss(
-                    mcpp::pm::policy_for(cfg_), xlEnv,
+                    mcpp::pm::policy_for(cfg_), location_of(cfg_),
                     std::format("xim:{}", parsed.packageName));
-                if (auto r = mcpp::pm::apply(decision, xlEnv); !r)
+                if (auto r = mcpp::pm::apply(decision, location_of(cfg_)); !r)
                     mcpp::ui::warning(r.error());
             }
         }
 
-        std::vector<std::string> targets {
-            std::format("{}:{}@{}", parsed.indexName, parsed.packageName, parsed.version)
-        };
-        mcpp::log::verbose("fetcher", std::format("xlings install: {}", targets[0]));
+        std::vector<std::string> targets { mcpp::provider::to_string(ref) };
+        mcpp::log::verbose("fetcher", std::format("install: {}", targets[0]));
         auto inst = install(targets, handler);
-        if (!inst) {
-            // xlings launch/protocol failure — propagate the real error.
-            return std::unexpected(inst.error());
-        }
-        if (inst->exitCode == 0 && std::filesystem::exists(verdir)) {
-            // Normal success path — but "the callee exited 0 and the directory
-            // it creates before doing any work exists" is not evidence that
-            // anything was installed. mcpp#533: a package-identity collision
-            // made xlings skip the descriptor's `install()` while still
-            // reporting success, and stamping that state cemented it, because
-            // `.mcpp_ok` is what the fast path above reads.
-            //
-            // Withheld rather than failed: a package can legitimately install
-            // no payload, and refusing here would break those. The cost of
-            // being wrong is one cheap re-check next build (xlings
-            // short-circuits its own install); the cost of the marker being
-            // wrong is permanent.
-            if (mcpp::fallback::payload_is_substantive(verdir)) {
-                mcpp::fallback::mark_install_complete(verdir);
-            } else {
-                mcpp::log::warn("fetcher", std::format(
-                    "'{}@{}' reported a successful install but {} holds "
-                    "nothing the package installed — not marking it complete",
-                    parsed.packageName, parsed.version,
-                    verdir.string()));
-            }
-            stash.commit();
-            return make_payload();
-        }
-        if (inst->exitCode == 0 && !std::filesystem::exists(verdir)) {
-            // xlings reported success but the package didn't land in the
-            // sandbox. This is the documented XLINGS_HOME-propagation bug:
-            // a successful xlings install can extract to ~/.xlings/ instead
-            // of the sandbox. ONLY in this narrow case do we trust the
-            // global location enough to fall through to copy_xpkg_from_global.
-            mcpp::log::verbose("fetcher",
-                "xlings reported success but verdir is missing — "
-                "checking global xlings (XLINGS_HOME propagation fallback)");
-            bool copyOk = mcpp::fallback::copy_xpkg_from_global(verdir);
-            if (copyOk && mcpp::fallback::looks_complete_legacy(verdir)) {
-                mcpp::fallback::mark_install_complete(verdir);
-                stash.commit();
-                mcpp::log::verbose("fetcher", "resolved via copy fallback");
-                return make_payload();
-            }
-            // Copy didn't yield a usable package — clean any partial state.
-            mcpp::fallback::clean_incomplete_install(verdir);
-        }
-        if (inst->exitCode != 0) {
-            // xlings interface install actually failed (network, missing
-            // package, extraction subprocess issue, etc.). Retry once through
-            // direct `xlings install`: xlings' own CLI path is more reliable
-            // for large toolchain packages and keeps the real failure output
-            // visible to CI/users when it still fails.
-            mcpp::fallback::clean_incomplete_install(verdir);
-
-            // Offline-first refresh-on-miss: the failure may be a stale local
-            // index that doesn't list this package@version (e.g. installing a
-            // NEW toolchain version when the cached index predates it). The
-            // pre-install gate only refreshes when the package *file* is
-            // missing, so a version-miss slips through. Refresh the index ONCE
-            // here — on an actual install miss — then retry. Steady-state
-            // installs (package+version already local) succeed on the first
-            // try and never reach this path, so they stay offline.
-            if (parsed.indexName == "xim") {
-                mcpp::xlings::Env refreshEnv{ cfg_.xlingsBinary, cfg_.xlingsHome() };
-                mcpp::log::verbose("fetcher",
-                    std::format("install failed for {}; asking the refresh policy before retry",
-                                targets[0]));
-                auto decision = mcpp::pm::decide_for_miss(
-                    mcpp::pm::policy_for(cfg_), refreshEnv, targets[0]);
-                if (auto r = mcpp::pm::apply(decision, refreshEnv); !r)
-                    mcpp::log::verbose("fetcher", r.error());
-            }
-
-            mcpp::log::verbose("fetcher",
-                std::format("interface install failed for {}; retrying direct xlings install",
-                            targets[0]));
-            mcpp::xlings::Env directEnv{ cfg_.xlingsBinary, cfg_.xlingsHome() };
-            int directRc = mcpp::xlings::install_direct(directEnv, targets[0]);
-            if (directRc == 0 && std::filesystem::exists(verdir)) {
-                mcpp::fallback::mark_install_complete(verdir);
-                stash.commit();
-                return make_payload();
-            }
-            if (directRc == 0 && !std::filesystem::exists(verdir)) {
-                bool copyOk = mcpp::fallback::copy_xpkg_from_global(verdir);
-                if (copyOk && mcpp::fallback::looks_complete_legacy(verdir)) {
-                    mcpp::fallback::mark_install_complete(verdir);
-                    stash.commit();
-                    mcpp::log::verbose("fetcher", "resolved via copy fallback after direct install");
-                    return make_payload();
-                }
-                mcpp::fallback::clean_incomplete_install(verdir);
-            }
-
-            // If both interface and direct install failed, do NOT try copy
-            // fallback: the global ~/.xlings/ state may itself be residue from
-            // the same failure, and looks_complete_legacy() can't tell residue
-            // from complete.
-            std::string installError = std::format(
-                "xlings install of '{}:{}@{}' failed (interface exit {}, direct exit {})",
-                parsed.indexName, parsed.packageName, parsed.version,
-                inst->exitCode, directRc);
-            if (inst->error)
-                installError += ": " + inst->error->message;
+        if (!inst) return std::unexpected(inst.error());
+        if (inst->exitCode == 0) {
+            if (auto dir = complete_here()) return make_payload(*dir);
+            // Reported a success and left nothing complete (mcpp#533's shape):
+            // said, not stamped over.
             return std::unexpected(CallError{std::format(
-                "{}\n  hint: {}", installError,
-                install_failure_hint(inst->error, cfg_.xlingsHome()))});
+                "'{}' reported a successful install, but its payload is not complete\n"
+                "  hint: {}", targets[0], install_failure_hint(inst->error, cfg_.xlingsHome()))});
         }
-    }
-    // No autoInstall fallback: when the caller explicitly disables
-    // auto-install, do NOT perform any implicit recovery from the global
-    // ~/.xlings/ location. Without "this session's xlings install
-    // reported success" as a witness, we can't tell a complete legacy
-    // package apart from interrupted residue, and silently marking the
-    // latter as complete would mask the underlying problem.
 
-    // 4. All paths exhausted.
+        // The install failed. The index may predate this version: the refresh
+        // policy decides whether to refresh once, then the provider's own
+        // command line tries again -- more robust for a large toolchain, and
+        // its output stays visible when it still fails.
+        if (parsed.indexName == "xim") {
+            mcpp::log::verbose("fetcher",
+                std::format("install failed for {}; asking the refresh policy before retry", targets[0]));
+            auto decision = mcpp::pm::decide_for_miss(
+                mcpp::pm::policy_for(cfg_), location_of(cfg_), targets[0]);
+            if (auto r = mcpp::pm::apply(decision, location_of(cfg_)); !r)
+                mcpp::log::verbose("fetcher", r.error());
+        }
+        mcpp::log::verbose("fetcher", std::format("retrying {} through the provider's command line", targets[0]));
+        int directRc = provider->install_direct(targets[0]);
+        if (directRc == 0)
+            if (auto dir = complete_here()) return make_payload(*dir);
+
+        std::string installError = std::format(
+            "install of '{}' failed (interface exit {}, direct exit {})",
+            targets[0], inst->exitCode, directRc);
+        if (inst->error)
+            installError += ": " + inst->error->message;
+        return std::unexpected(CallError{std::format(
+            "{}\n  hint: {}", installError,
+            install_failure_hint(inst->error, cfg_.xlingsHome()))});
+    }
+
     return std::unexpected(CallError{
-        std::format("xpkg payload missing: {}\n"
+        std::format("payload of '{}' is not installed\n"
                     "  hint: check network and retry, or `mcpp self init --force`",
-                    verdir.string())});
+                    mcpp::provider::to_string(ref))});
 }
 
 // ─── Namespace-aware install_path (canonical, 0.0.10+) ──────────────
@@ -1303,7 +1200,7 @@ Fetcher::install_path(std::string_view ns, std::string_view shortName,
     // Layout discrimination is done by the caller via the xpkg.lua's
     // `mcpp = "<glob path>"` (Form A pointer) or `mcpp = { ... }` (Form B
     // inline) field.
-    auto base = cfg_.xlingsHome() / "data" / "xpkgs";
+    auto base = mcpp::provider::open(location_of(cfg_))->store();
     if (!std::filesystem::exists(base)) return std::nullopt;
 
     auto try_dir = [&](std::string_view dirName) -> std::optional<std::filesystem::path> {

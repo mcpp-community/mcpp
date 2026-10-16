@@ -18,7 +18,8 @@ import mcpp.platform;
 import mcpp.project;
 import mcpp.pm.index_route;
 import mcpp.ui;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 
 namespace mcpp::pm {
 
@@ -43,9 +44,9 @@ export int search_packages(const std::string& keyword, bool allVersions) {
     // Offline is still honoured: update_index() returns without touching the
     // network, and search reports whatever the local copy holds.
     auto xlEnv = mcpp::config::make_xlings_env(*cfg);
-    if (!mcpp::xlings::is_index_fresh(xlEnv, cfg->searchTtlSeconds)) {
+    if (!mcpp::provider::open(xlEnv)->index_fresh(cfg->searchTtlSeconds)) {
         mcpp::ui::status("Updating", "package index (auto-refresh)");
-        mcpp::xlings::ensure_index_fresh(xlEnv, cfg->searchTtlSeconds, /*quiet=*/true);
+        mcpp::provider::open(xlEnv)->ensure_index_fresh(cfg->searchTtlSeconds, /*quiet=*/true);
     }
 
     mcpp::fetcher::Fetcher f(*cfg);
@@ -170,7 +171,7 @@ export int index_update(const std::string& filterName) {
     // Update global index repos.
     mcpp::ui::status("Updating", "all index repos");
     auto xlEnv = mcpp::config::make_xlings_env(*cfg);
-    int rc = mcpp::xlings::update_index(xlEnv);
+    int rc = mcpp::provider::open(xlEnv)->update_index();
     if (rc != 0) { mcpp::ui::error("index update failed"); return 1; }
 
     // Also update project-level custom indices if present.
@@ -193,7 +194,7 @@ export int index_update(const std::string& filterName) {
                 // Re-sync the project-level clone via xlings.
                 mcpp::config::ensure_project_index_dir(*cfg, *root, m->indices);
                 auto projEnv = mcpp::config::make_project_xlings_env(*cfg, *root);
-                int prc = mcpp::xlings::update_index(projEnv);
+                int prc = mcpp::provider::open(projEnv)->update_index();
                 if (prc != 0) {
                     mcpp::ui::error(std::format("project index `{}` update failed", idxName));
                 } else {
@@ -223,7 +224,7 @@ export int index_status() {
         if (s < 172800) return std::format("{}h ago", s / 3600);
         return std::format("{}d ago", s / 86400);
     };
-    auto show = [&](const char* label, const mcpp::xlings::IndexStatus& st) {
+    auto show = [&](const char* label, const mcpp::provider::IndexStatus& st) {
         std::string state = !st.present ? "missing"
                           :  st.fresh   ? "fresh"
                           :              "stale";
@@ -235,8 +236,8 @@ export int index_status() {
                      st.rev.value_or("-"), st.dir.string());
     };
 
-    auto official = mcpp::xlings::official_index_status(xlEnv, cfg->searchTtlSeconds);
-    auto deflt    = mcpp::xlings::default_index_status(xlEnv, cfg->searchTtlSeconds);
+    auto official = mcpp::provider::open(xlEnv)->official_index_status(cfg->searchTtlSeconds);
+    auto deflt    = mcpp::provider::open(xlEnv)->default_index_status(cfg->searchTtlSeconds);
 
     std::println("");
     std::println("  {:<10} {:<8} {:<12} {:<12} {}",

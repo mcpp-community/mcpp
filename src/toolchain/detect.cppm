@@ -9,7 +9,9 @@ import std;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.gcc;
 import mcpp.toolchain.msvc;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
+import mcpp.platform;
 
 export namespace mcpp::toolchain {
 
@@ -63,7 +65,7 @@ detect(const std::filesystem::path& explicit_compiler,
 
     auto ver_r = run_capture(std::format("{}{} --version 2>&1",
                                          envPrefix,
-                                         mcpp::xlings::shq(tc.binaryPath.string())));
+                                         mcpp::platform::shell::quote(tc.binaryPath.string())));
     if (!ver_r) return std::unexpected(ver_r.error());
 
     const auto& vstr = *ver_r;
@@ -100,7 +102,7 @@ detect(const std::filesystem::path& explicit_compiler,
         auto vr = run_capture(std::format(
             "{}{} -print-effective-triple 2>NUL",
             envPrefix,
-            mcpp::xlings::shq(tc.binaryPath.string())));
+            mcpp::platform::shell::quote(tc.binaryPath.string())));
         if (vr) {
             auto effective = trim_line(*vr);
             if (!effective.empty() && effective != tc.targetTriple)

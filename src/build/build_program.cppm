@@ -347,7 +347,7 @@ struct BuildProgramEnv {
     // project on two machines would not. A declared `[xlings].subos` is a
     // directory that belongs to the project and travels with it.
     //
-    // WHO DECIDES IS NOT DECIDED HERE. `mcpp::xlings::runtime` is the sole
+    // WHO DECIDES IS NOT DECIDED HERE. `mcpp::provider::runtime` is the sole
     // project runtime-selection policy and `RuntimeBinding::subosDir` is its
     // resolved answer; this field carries that answer to the child. Deriving
     // it a second time — from the manifest, from `[xlings] deps`, from the

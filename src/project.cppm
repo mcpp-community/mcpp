@@ -247,7 +247,7 @@ bool merge_xlings(mcpp::manifest::Manifest& member,
                   const mcpp::manifest::XlingsConfig* top,
                   std::span<const mcpp::manifest::ConditionalConfig> rows,
                   XlingsPart part) {
-    // `(namespace, name)`, the identity `mcpp.xlings.address_set` defines,
+    // `(namespace, name)`, the identity `mcpp.provider.address_set` defines,
     // spelled here from the same parser rather than imported. Importing that
     // module here makes GCC 16.1 fail with an internal compiler error
     // (segmentation fault) at `import mcpp.cli;` in src/main.cpp. Measured.

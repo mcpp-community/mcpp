@@ -25,8 +25,9 @@ import mcpp.ui;
 import mcpp.wire;
 import mcpp.libs.json;
 import mcpp.log;
-import mcpp.xlings;
-import mcpp.xlings.runtime_selection;
+import mcpp.provider;
+import mcpp.provider.select;
+import mcpp.provider.runtime_selection;
 import mcpp.runtime.binding;
 
 namespace mcpp::toolchain {
@@ -884,8 +885,11 @@ export bool ensure_declared_runtime(const mcpp::config::GlobalConfig& cfg,
                                     mcpp::platform::runtime::RuntimeBinding& binding) {
     namespace rt = mcpp::platform::runtime;
     if constexpr (!mcpp::platform::is_linux) return false;
-    if (!binding.libraryDirs.empty()) return false;
     if (rt::runtime_provider(binding.runtimeId) != "glibc") return false;
+    // The toolchains the provider installs run on this runtime (design
+    // 2026-10-16 §7.2), not on whatever it installs newest.
+    mcpp::provider::open(mcpp::config::make_xlings_env(cfg))->pin_runtime(binding.runtimeId);
+    if (!binding.libraryDirs.empty()) return false;
 
     const auto target = "xim:" + binding.runtimeId;
     mcpp::log::verbose("toolchain", std::format(
@@ -999,8 +1003,7 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         // by now whatever held it has exited, so free the bytes before adding
         // another few hundred MB.
         {
-            auto vdir = mcpp::xlings::paths::xim_tool(
-                mcpp::config::make_xlings_env(cfg), pkg.ximName, pkg.ximVersion);
+            auto vdir = mcpp::provider::open(mcpp::config::make_xlings_env(cfg))->pinned(pkg.ximName, pkg.ximVersion);
             sweep_parked_payloads(vdir.parent_path(), vdir);
         }
         auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
@@ -1074,45 +1077,17 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
             return 1;
         }
 
-        // Post-install fixup (patchelf / specs / cfg regeneration) — ONE
-        // pipeline shared by every toolchain install path, dispatched and
-        // made idempotent inside ensure_post_install_fixup.
-        //
-        // RESOLVE THE RUNTIME BINDING HERE, do not let the fixup guess.
-        // The fixup is a CONSUMER of RuntimeBinding (`prepare.cppm` says so
-        // where it does the same thing) and it no longer derives an identity
-        // of its own — so a caller that passes nothing gets no fixup at all.
-        // `mcpp toolchain install` is the path that needs it MOST: without
-        // the patchelf/specs wiring a fresh sandbox gcc cannot find the C
-        // library. There is no project here, so the selection is mcpp's
-        // default SubOS, which is exactly what `RuntimeSelection{}` means.
-        std::string runtimeId;
-        std::filesystem::path runtimeLibDir;
-        if (auto rb = mcpp::platform::runtime::resolve_runtime_binding(
-                mcpp::xlings::runtime::RuntimeSelection{}, {}, cfg.xlingsHome())) {
-            if (!mcpp::toolchain::post_install_fixup_kind(pkg).empty())
+        // The toolchain runs on the runtime its provider bound it to (design
+        // 2026-10-16 §7.2); mcpp writes nothing into it. What it needs is
+        // that runtime installed: `mcpp toolchain install` is the path that
+        // needs it MOST, before any build has provided it. There is no project
+        // here, so the selection is mcpp's default environment, which is what
+        // `RuntimeSelection{}` means.
+        if (!mcpp::toolchain::runtime_payload_kind(pkg).empty()) {
+            if (auto rb = mcpp::platform::runtime::resolve_runtime_binding(
+                    mcpp::provider::runtime::RuntimeSelection{}, {}, cfg.xlingsHome()))
                 ensure_declared_runtime(cfg, *rb);
-            runtimeId = rb->runtimeId;
-            if (!rb->libraryDirs.empty()) runtimeLibDir = rb->libraryDirs.front();
-        }   // a binding that cannot be resolved degrades below, it does not stop
-            // the install — same rule the build path follows.
-
-        if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
-                cfg, payload->root, pkg, runtimeId, runtimeLibDir); !fixed) {
-            mcpp::ui::error(std::format(
-                "post-install fixup failed: {}", fixed.error()));
-            return 1;
-        } else if (!fixed->skippedReason.empty()) {
-            // The user asked for this install explicitly, so the degradation
-            // is louder here than on a build — but it is still a warning, and
-            // the install itself succeeded.
-            mcpp::ui::warning(std::format(
-                "installed, but not bound to a C runtime: {}.\n"
-                "         The install itself succeeded. To complete the wiring, "
-                "run `xlings self doctor --fix` from inside this SubOS, then "
-                "re-run this command (openxlings/xlings#547).",
-                fixed->skippedReason));
-        }
+        }   // a binding that cannot be resolved degrades, as on the build path
 
         mcpp::ui::status("Installed",
             std::format("{} → {}", pkg.display_spec(), bin.string()));
@@ -1215,7 +1190,7 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
             pkg = mcpp::toolchain::to_xim_package(*spec);
         }
 
-        auto installDir = mcpp::xlings::paths::xim_tool(xlEnv, pkg.ximName, pkg.ximVersion);
+        auto installDir = mcpp::provider::open(xlEnv)->pinned(pkg.ximName, pkg.ximVersion);
         // A RESOLVABLE COMPILER, not a directory that exists. A removal that
         // could not delete the last empty directories leaves a skeleton
         // behind (see remove_payload_tree), and `exists()` would call that
@@ -1300,7 +1275,7 @@ export int toolchain_remove(const mcpp::config::GlobalConfig& cfg,
         if (int rc = attach_target_arg(*parsedSpec, targetArg); rc != 0) return rc;
         auto pkg = mcpp::toolchain::to_xim_package(*parsedSpec);
         auto spec = parsedSpec->display();
-        auto installDir = mcpp::xlings::paths::xim_tool(xlEnv, pkg.ximName, pkg.ximVersion);
+        auto installDir = mcpp::provider::open(xlEnv)->pinned(pkg.ximName, pkg.ximVersion);
         std::error_code ec;
         if (!std::filesystem::exists(installDir, ec)) {
             mcpp::ui::error(std::format("{} is not installed", spec));

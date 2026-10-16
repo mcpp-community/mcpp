@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.xlings;
+import mcpp.provider.xlings;
 import mcpp.platform.env;
 
 namespace {
@@ -96,9 +96,9 @@ TEST(FindUsableNasm, FindsOnPathWhenVersionIsAdequate) {
     mcpp::platform::env::ScopedEnv path("PATH", pathDir.string() + ":" + base);
 
     auto home = make_tempdir("mcpp-nasm-home");  // no sandbox nasm present
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    auto found = mcpp::xlings::find_usable_nasm(env);
+    auto found = mcpp::provider::xlings::find_usable_nasm(env);
     ASSERT_TRUE(found.has_value());
     EXPECT_EQ(*found, expected);
 
@@ -114,9 +114,9 @@ TEST(FindUsableNasm, RejectsPathNasmBelowMinVersionAndFindsNoSandboxFallback) {
     mcpp::platform::env::ScopedEnv path("PATH", pathDir.string() + ":" + base);
 
     auto home = make_tempdir("mcpp-nasm-home-empty");  // no sandbox nasm
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    EXPECT_FALSE(mcpp::xlings::find_usable_nasm(env).has_value());
+    EXPECT_FALSE(mcpp::provider::xlings::find_usable_nasm(env).has_value());
 
     std::filesystem::remove_all(pathDir);
     std::filesystem::remove_all(home);
@@ -131,9 +131,9 @@ TEST(FindUsableNasm, FallsBackToSandboxWhenPathHasNoNasm) {
     auto sandboxDir = home / "data" / "xpkgs" / "xim-x-nasm" / "3.02";
     auto expected = make_fake_nasm(sandboxDir, "NASM version 3.02 compiled on Jan  1 2026");
 
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    auto found = mcpp::xlings::find_usable_nasm(env);
+    auto found = mcpp::provider::xlings::find_usable_nasm(env);
     ASSERT_TRUE(found.has_value());
     EXPECT_EQ(*found, expected);
 
@@ -145,9 +145,9 @@ TEST(FindSandboxNasm, FindsUnderVersionedBinSubdir) {
     auto sandboxDir = home / "data" / "xpkgs" / "xim-x-nasm" / "3.02" / "bin";
     auto expected = make_fake_nasm(sandboxDir, "NASM version 3.02 compiled on Jan  1 2026");
 
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    auto found = mcpp::xlings::find_sandbox_nasm(env);
+    auto found = mcpp::provider::xlings::find_sandbox_nasm(env);
     ASSERT_TRUE(found.has_value());
     EXPECT_EQ(*found, expected);
 
@@ -159,18 +159,18 @@ TEST(FindSandboxNasm, RejectsInstalledNasmBelowMinVersion) {
     auto sandboxDir = home / "data" / "xpkgs" / "xim-x-nasm" / "2.10";
     make_fake_nasm(sandboxDir, "NASM version 2.10.00 compiled on Jan  1 2020");
 
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    EXPECT_FALSE(mcpp::xlings::find_sandbox_nasm(env).has_value());
+    EXPECT_FALSE(mcpp::provider::xlings::find_sandbox_nasm(env).has_value());
 
     std::filesystem::remove_all(home);
 }
 
 TEST(FindSandboxNasm, NoSandboxDirectoryYieldsNullopt) {
     auto home = make_tempdir("mcpp-nasm-home-absent");
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    EXPECT_FALSE(mcpp::xlings::find_sandbox_nasm(env).has_value());
+    EXPECT_FALSE(mcpp::provider::xlings::find_sandbox_nasm(env).has_value());
 
     std::filesystem::remove_all(home);
 }
@@ -181,9 +181,9 @@ TEST(XlingsIndexFreshness, RequiresDefaultMcpplibsIndex) {
     auto home = make_tempdir("mcpp-xlings-index-freshness");
     std::filesystem::create_directories(home / "data" / "xim-pkgindex" / "pkgs");
 
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    EXPECT_FALSE(mcpp::xlings::is_index_fresh(env, 3600));
+    EXPECT_FALSE(mcpp::provider::xlings::is_index_fresh(env, 3600));
 
     std::filesystem::remove_all(home);
 }
@@ -193,9 +193,9 @@ TEST(XlingsIndexFreshness, AcceptsFreshDefaultMcpplibsIndex) {
     std::filesystem::create_directories(home / "data" / "mcpplibs" / "pkgs");
     std::ofstream(home / "data" / "mcpplibs" / ".mcpp-index-updated") << "ok\n";
 
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    EXPECT_TRUE(mcpp::xlings::is_index_fresh(env, 3600));
+    EXPECT_TRUE(mcpp::provider::xlings::is_index_fresh(env, 3600));
 
     std::filesystem::remove_all(home);
 }
@@ -204,9 +204,9 @@ TEST(XlingsIndexFreshness, RequiresRefreshMarkerForDefaultMcpplibsIndex) {
     auto home = make_tempdir("mcpp-xlings-index-freshness");
     std::filesystem::create_directories(home / "data" / "mcpplibs" / "pkgs");
 
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    EXPECT_FALSE(mcpp::xlings::is_index_fresh(env, 3600));
+    EXPECT_FALSE(mcpp::provider::xlings::is_index_fresh(env, 3600));
 
     std::filesystem::remove_all(home);
 }
@@ -219,9 +219,9 @@ TEST(XlingsIndexFreshness, RejectsStaleRefreshMarker) {
     std::filesystem::last_write_time(
         marker, std::filesystem::file_time_type::clock::now() - std::chrono::seconds(7200));
 
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    EXPECT_FALSE(mcpp::xlings::is_index_fresh(env, 3600));
+    EXPECT_FALSE(mcpp::provider::xlings::is_index_fresh(env, 3600));
 
     std::filesystem::remove_all(home);
 }
@@ -231,9 +231,9 @@ TEST(XlingsIndexFreshness, RequiresOfficialXimIndexEvenWhenDefaultIndexIsFresh) 
     std::filesystem::create_directories(home / "data" / "mcpplibs" / "pkgs");
     std::ofstream(home / "data" / "mcpplibs" / ".mcpp-index-updated") << "ok\n";
 
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    EXPECT_FALSE(mcpp::xlings::is_official_index_fresh(env, 3600));
+    EXPECT_FALSE(mcpp::provider::xlings::is_official_index_fresh(env, 3600));
 
     std::filesystem::remove_all(home);
 }
@@ -243,9 +243,9 @@ TEST(XlingsIndexFreshness, AcceptsFreshOfficialXimIndex) {
     std::filesystem::create_directories(home / "data" / "xim-pkgindex" / "pkgs");
     std::ofstream(home / "data" / "xim-pkgindex" / ".mcpp-index-updated") << "ok\n";
 
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    EXPECT_TRUE(mcpp::xlings::is_official_index_fresh(env, 3600));
+    EXPECT_TRUE(mcpp::provider::xlings::is_official_index_fresh(env, 3600));
 
     std::filesystem::remove_all(home);
 }
@@ -255,9 +255,9 @@ TEST(XlingsIndexFreshness, RequiresOfficialPackageFileEvenWhenOfficialIndexIsFre
     std::filesystem::create_directories(home / "data" / "xim-pkgindex" / "pkgs");
     std::ofstream(home / "data" / "xim-pkgindex" / ".mcpp-index-updated") << "ok\n";
 
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    EXPECT_FALSE(mcpp::xlings::is_official_package_index_fresh(env, "musl-gcc", 3600));
+    EXPECT_FALSE(mcpp::provider::xlings::is_official_package_index_fresh(env, "musl-gcc", 3600));
 
     std::filesystem::remove_all(home);
 }
@@ -268,9 +268,9 @@ TEST(XlingsIndexFreshness, AcceptsFreshOfficialPackageFile) {
     std::ofstream(home / "data" / "xim-pkgindex" / ".mcpp-index-updated") << "ok\n";
     std::ofstream(home / "data" / "xim-pkgindex" / "pkgs" / "m" / "musl-gcc.lua") << "package = {}\n";
 
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    EXPECT_TRUE(mcpp::xlings::is_official_package_index_fresh(env, "musl-gcc", 3600));
+    EXPECT_TRUE(mcpp::provider::xlings::is_official_package_index_fresh(env, "musl-gcc", 3600));
 
     std::filesystem::remove_all(home);
 }
@@ -284,9 +284,9 @@ TEST(XlingsIndexFreshness, RejectsOfficialPackageCacheWithForeignPath) {
     std::ofstream(home / "data" / "xim-pkgindex" / ".xlings-index-cache.json")
         << R"({"entries":{"musl-gcc":{"path":"/tmp/foreign/xim-pkgindex/pkgs/m/musl-gcc.lua"}}})";
 
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    EXPECT_FALSE(mcpp::xlings::is_official_package_index_fresh(env, "musl-gcc", 3600));
+    EXPECT_FALSE(mcpp::provider::xlings::is_official_package_index_fresh(env, "musl-gcc", 3600));
 
     std::filesystem::remove_all(home);
 }
@@ -300,9 +300,9 @@ TEST(XlingsIndexFreshness, AcceptsOfficialPackageCacheWithCurrentPath) {
     std::ofstream(home / "data" / "xim-pkgindex" / ".xlings-index-cache.json")
         << std::format(R"({{"entries":{{"musl-gcc":{{"path":"{}"}}}}}})", pkg.string());
 
-    mcpp::xlings::Env env{.home = home};
+    mcpp::provider::xlings::Env env{.home = home};
 
-    EXPECT_TRUE(mcpp::xlings::is_official_package_index_fresh(env, "musl-gcc", 3600));
+    EXPECT_TRUE(mcpp::provider::xlings::is_official_package_index_fresh(env, "musl-gcc", 3600));
 
     std::filesystem::remove_all(home);
 }
@@ -337,7 +337,7 @@ TEST(XlingsSiblingPackage, MetadataOnlyHuskIsNotContent) {
     // Isolate from the host's ~/.xlings fallback.
     const char* oldHome = std::getenv("HOME");
     mcpp::platform::env::set("HOME", tmp.string());
-    auto found = mcpp::xlings::paths::find_sibling_package(gccBin, "linux-headers");
+    auto found = mcpp::provider::xlings::paths::find_sibling_package(gccBin, "linux-headers");
     mcpp::platform::env::set("HOME", oldHome ? oldHome : "");
 
     EXPECT_FALSE(found.has_value());
@@ -358,7 +358,7 @@ TEST(XlingsSiblingPackage, SkipsHuskAndFindsPayloadUnderOtherPrefix) {
     auto real = xpkgs / "scode-x-linux-headers" / "5.11.1";
     touch(real / "include" / "linux" / "limits.h");
 
-    auto found = mcpp::xlings::paths::find_sibling_package(gccBin, "linux-headers");
+    auto found = mcpp::provider::xlings::paths::find_sibling_package(gccBin, "linux-headers");
     ASSERT_TRUE(found.has_value());
     EXPECT_EQ(*found, real);
 
@@ -378,7 +378,7 @@ TEST(XlingsSiblingPackage, RequiredRelPathRejectsContentfulButWrongCandidate) {
     auto real = xpkgs / "scode-x-linux-headers" / "5.11.1";
     touch(real / "include" / "linux" / "limits.h");
 
-    auto found = mcpp::xlings::paths::find_sibling_package(
+    auto found = mcpp::provider::xlings::paths::find_sibling_package(
         gccBin, "linux-headers", "include/linux/limits.h");
     ASSERT_TRUE(found.has_value());
     EXPECT_EQ(*found, real);
@@ -399,7 +399,7 @@ TEST(XlingsHomeTool, FindsPayloadUnderNonXimPrefix) {
 
     const char* oldMcppHome = std::getenv("MCPP_HOME");
     mcpp::platform::env::set("MCPP_HOME", tmp.string());
-    auto found = mcpp::xlings::paths::find_home_tool(
+    auto found = mcpp::provider::xlings::paths::find_home_tool(
         "linux-headers", "include/linux/limits.h");
     mcpp::platform::env::set("MCPP_HOME", oldMcppHome ? oldMcppHome : "");
 
@@ -425,11 +425,11 @@ TEST(XlingsSeed, PlainRepoEmissionIsByteStable) {
     // Zero-diff gate: repos without artifact/source must serialize exactly
     // as before the SeedRepo extension.
     auto dir = make_tempdir("mcpp-seed-plain");
-    mcpp::xlings::Env env;
+    mcpp::provider::xlings::Env env;
     env.home = dir;
-    std::vector<mcpp::xlings::SeedRepo> repos{
+    std::vector<mcpp::provider::xlings::SeedRepo> repos{
         { "mcpplibs", "https://x.git", "", "" } };
-    mcpp::xlings::seed_xlings_json(env, repos);
+    mcpp::provider::xlings::seed_xlings_json(env, repos);
     auto text = read_seeded(dir);
     EXPECT_NE(text.find(
         "    { \"name\": \"mcpplibs\", \"url\": \"https://x.git\" }\n"),
@@ -441,12 +441,12 @@ TEST(XlingsSeed, PlainRepoEmissionIsByteStable) {
 
 TEST(XlingsSeed, ArtifactAndSourceEmittedWhenSet) {
     auto dir = make_tempdir("mcpp-seed-art");
-    mcpp::xlings::Env env;
+    mcpp::provider::xlings::Env env;
     env.home = dir;
-    std::vector<mcpp::xlings::SeedRepo> repos{
+    std::vector<mcpp::provider::xlings::SeedRepo> repos{
         { "mcpplibs", "https://x.git",
           "https://github.com/xlings-res/mcpp-index", "auto" } };
-    mcpp::xlings::seed_xlings_json(env, repos);
+    mcpp::provider::xlings::seed_xlings_json(env, repos);
     auto text = read_seeded(dir);
     EXPECT_NE(text.find(
         "\"url\": \"https://x.git\", \"artifact\": "
@@ -470,8 +470,8 @@ TEST(XlingsIndexFreshness, FutureMarkerIsStaleNotEternallyFresh) {
     std::filesystem::last_write_time(
         marker, std::filesystem::file_time_type::clock::now() + std::chrono::hours{72}, ec);
 
-    mcpp::xlings::Env env{.home = home};
-    auto st = mcpp::xlings::default_index_status(env, 3600);
+    mcpp::provider::xlings::Env env{.home = home};
+    auto st = mcpp::provider::xlings::default_index_status(env, 3600);
 
     EXPECT_FALSE(st.fresh);
     EXPECT_EQ(st.ageSeconds, -1);   // unusable timestamp reports as unknown
@@ -485,23 +485,23 @@ TEST(XlingsIndexRevision, ReadsTrimmedValueAndDegradesToNullopt) {
     std::filesystem::create_directories(dir / "pkgs");
 
     // Absent: a local `path` index has no such file — must not be an error.
-    EXPECT_FALSE(mcpp::xlings::index_revision(dir).has_value());
+    EXPECT_FALSE(mcpp::provider::xlings::index_revision(dir).has_value());
 
     // Present. The observed files carry no trailing newline, but a writer that
     // added one (or a \r from Windows) must not change the value, or every run
     // would look like the index had changed.
     std::ofstream(dir / ".xlings-index-version") << "  8d67478\r\n";
-    auto rev = mcpp::xlings::index_revision(dir);
+    auto rev = mcpp::provider::xlings::index_revision(dir);
     ASSERT_TRUE(rev.has_value());
     EXPECT_EQ(*rev, "8d67478");
 
     // Blank is not an identity.
     std::ofstream(dir / ".xlings-index-version", std::ios::trunc) << "\n";
-    EXPECT_FALSE(mcpp::xlings::index_revision(dir).has_value());
+    EXPECT_FALSE(mcpp::provider::xlings::index_revision(dir).has_value());
 
     // The value is OPAQUE: sub-indexes carry a date version, not a sha.
     std::ofstream(dir / ".xlings-index-version", std::ios::trunc) << "2026.7.30.1";
-    EXPECT_EQ(mcpp::xlings::index_revision(dir).value(), "2026.7.30.1");
+    EXPECT_EQ(mcpp::provider::xlings::index_revision(dir).value(), "2026.7.30.1");
 
     std::filesystem::remove_all(home);
 }
@@ -513,8 +513,8 @@ TEST(XlingsIndexRevision, StatusCarriesTheRevision) {
     std::ofstream(dir / ".mcpp-index-updated") << "ok\n";
     std::ofstream(dir / ".xlings-index-version") << "abc1234";
 
-    mcpp::xlings::Env env{.home = home};
-    auto st = mcpp::xlings::default_index_status(env, 3600);
+    mcpp::provider::xlings::Env env{.home = home};
+    auto st = mcpp::provider::xlings::default_index_status(env, 3600);
 
     ASSERT_TRUE(st.rev.has_value());
     EXPECT_EQ(*st.rev, "abc1234");
@@ -529,7 +529,7 @@ TEST(XlingsIndexRevision, StatusCarriesTheRevision) {
 // child cannot bury the diagnostic they are attached to.
 
 TEST(XlingsStderrTail, KeepsOnlyErrorLevelLines) {
-    auto tail = mcpp::xlings::stderr_error_tail(
+    auto tail = mcpp::provider::xlings::stderr_error_tail(
         "[xim] resolving acme.widget\r\n"
         "downloading 42%\n"
         "Error: checksum mismatch\n"
@@ -544,14 +544,14 @@ TEST(XlingsStderrTail, KeepsOnlyErrorLevelLines) {
 TEST(XlingsStderrTail, KeepsTheLastLinesUpToTheLimit) {
     std::string text;
     for (int i = 0; i < 30; ++i) text += std::format("error {}\n", i);
-    auto tail = mcpp::xlings::stderr_error_tail(text);
+    auto tail = mcpp::provider::xlings::stderr_error_tail(text);
     ASSERT_EQ(tail.size(), 20u);
     EXPECT_EQ(tail.front(), "error 10");
     EXPECT_EQ(tail.back(), "error 29");
-    EXPECT_EQ(mcpp::xlings::stderr_error_tail(text, 2),
+    EXPECT_EQ(mcpp::provider::xlings::stderr_error_tail(text, 2),
               (std::vector<std::string>{"error 28", "error 29"}));
-    EXPECT_TRUE(mcpp::xlings::stderr_error_tail("").empty());
-    EXPECT_EQ(mcpp::xlings::stderr_error_tail("error without a newline"),
+    EXPECT_TRUE(mcpp::provider::xlings::stderr_error_tail("").empty());
+    EXPECT_EQ(mcpp::provider::xlings::stderr_error_tail("error without a newline"),
               (std::vector<std::string>{"error without a newline"}));
 }
 
@@ -563,8 +563,8 @@ TEST(XlingsStderrTail, KeepsTheLastLinesUpToTheLimit) {
 
 namespace {
 
-mcpp::xlings::Env xlings_env(std::string_view projectDir) {
-    mcpp::xlings::Env env;
+mcpp::provider::xlings::Env xlings_env(std::string_view projectDir) {
+    mcpp::provider::xlings::Env env;
     env.home = std::filesystem::temp_directory_path() / "mcpp-xlings-home";
     env.binary = env.home / "bin" / "xlings";
     env.projectDir = std::filesystem::path(projectDir);
@@ -573,8 +573,8 @@ mcpp::xlings::Env xlings_env(std::string_view projectDir) {
 
 // The decided entry for `key`; a default entry named "" when the decision omits
 // the key.
-mcpp::xlings::InvocationVar decided(const mcpp::xlings::Env& env, std::string_view key) {
-    for (auto const& var : mcpp::xlings::invocation_env(env))
+mcpp::provider::xlings::InvocationVar decided(const mcpp::provider::xlings::Env& env, std::string_view key) {
+    for (auto const& var : mcpp::provider::xlings::invocation_env(env))
         if (var.name == key) return var;
     return {};
 }
@@ -605,8 +605,8 @@ TEST(XlingsInvocationEnv, TheProcessEnvironmentIsUnchangedAfterwards) {
 
     {
         auto global = xlings_env("");
-        mcpp::xlings::ScopedInvocationEnv scope(global);
-        (void)mcpp::xlings::build_command_prefix(global);
+        mcpp::provider::xlings::ScopedInvocationEnv scope(global);
+        (void)mcpp::provider::xlings::build_command_prefix(global);
 #if defined(_WIN32)
         EXPECT_FALSE(env::get("XLINGS_PROJECT_DIR").has_value());
 #endif
@@ -615,8 +615,8 @@ TEST(XlingsInvocationEnv, TheProcessEnvironmentIsUnchangedAfterwards) {
 
     {
         auto project = xlings_env("proj-dir");
-        mcpp::xlings::ScopedInvocationEnv scope(project);
-        (void)mcpp::xlings::build_command_prefix(project);
+        mcpp::provider::xlings::ScopedInvocationEnv scope(project);
+        (void)mcpp::provider::xlings::build_command_prefix(project);
 #if defined(_WIN32)
         EXPECT_EQ(env::get("XLINGS_PROJECT_DIR"),
                   std::optional<std::string>(project.projectDir.string()));
@@ -637,8 +637,8 @@ TEST(XlingsInvocationEnv, NeitherPathNorTheHomeOutlivesTheInvocation) {
 
     auto e = xlings_env("");
     for (int i = 0; i < 3; ++i) {
-        mcpp::xlings::ScopedInvocationEnv scope(e);
-        (void)mcpp::xlings::build_command_prefix(e);
+        mcpp::provider::xlings::ScopedInvocationEnv scope(e);
+        (void)mcpp::provider::xlings::build_command_prefix(e);
 #if defined(_WIN32)
         EXPECT_EQ(env::get("XLINGS_HOME"), std::optional<std::string>(e.home.string()));
         const auto path = env::get("PATH");
@@ -651,7 +651,7 @@ TEST(XlingsInvocationEnv, NeitherPathNorTheHomeOutlivesTheInvocation) {
     EXPECT_EQ(env::get("XLINGS_HOME"), std::optional<std::string>("shell-home"));
 
     // Building a command alone changes nothing on any platform.
-    (void)mcpp::xlings::build_command_prefix(e);
+    (void)mcpp::provider::xlings::build_command_prefix(e);
     EXPECT_EQ(env::get("PATH"), pathBefore);
     EXPECT_EQ(env::get("XLINGS_HOME"), std::optional<std::string>("shell-home"));
 }
@@ -660,22 +660,22 @@ TEST(XlingsInvocationEnv, NeitherPathNorTheHomeOutlivesTheInvocation) {
 // directory mcpp was started from, so a project's `.xlings.json` cannot put it
 // in that project's mode.
 TEST(XlingsInvocationEnv, TheWindowsPrefixStartsInTheHome) {
-    mcpp::xlings::Env e;
+    mcpp::provider::xlings::Env e;
     e.home = "C:\\Users\\a b\\.mcpp\\registry";
     e.binary = "C:\\Users\\a b\\.mcpp\\registry\\bin\\xlings.exe";
-    EXPECT_EQ(mcpp::xlings::windows_command_prefix(e),
+    EXPECT_EQ(mcpp::provider::xlings::windows_command_prefix(e),
               "cd /d \"C:\\Users\\a b\\.mcpp\\registry\" && "
               "\"C:\\Users\\a b\\.mcpp\\registry\\bin\\xlings.exe\"");
 }
 
 #if !defined(_WIN32)
 TEST(XlingsInvocationEnv, ThePosixPrefixRendersTheDecision) {
-    auto global = mcpp::xlings::build_command_prefix(xlings_env(""));
+    auto global = mcpp::provider::xlings::build_command_prefix(xlings_env(""));
     EXPECT_NE(global.find("env -u XLINGS_PROJECT_DIR -u XLINGS_ACTIVE_SUBOS PATH="),
               std::string::npos) << global;
     EXPECT_EQ(global.find("XLINGS_PROJECT_DIR="), std::string::npos) << global;
 
-    auto project = mcpp::xlings::build_command_prefix(xlings_env("/work/proj"));
+    auto project = mcpp::provider::xlings::build_command_prefix(xlings_env("/work/proj"));
     EXPECT_EQ(project.find("-u XLINGS_PROJECT_DIR"), std::string::npos) << project;
     EXPECT_NE(project.find("env -u XLINGS_ACTIVE_SUBOS PATH="), std::string::npos) << project;
     EXPECT_NE(project.find("XLINGS_PROJECT_DIR="), std::string::npos) << project;
@@ -700,8 +700,8 @@ TEST(XlingsInvocationEnv, TheShellsActiveSubosIsNeverInherited) {
     env::ScopedEnv prior("XLINGS_ACTIVE_SUBOS", std::string("shell-subos"));
     {
         auto e = xlings_env("");
-        mcpp::xlings::ScopedInvocationEnv scope(e);
-        (void)mcpp::xlings::build_command_prefix(e);
+        mcpp::provider::xlings::ScopedInvocationEnv scope(e);
+        (void)mcpp::provider::xlings::build_command_prefix(e);
 #if defined(_WIN32)
         EXPECT_FALSE(env::get("XLINGS_ACTIVE_SUBOS").has_value());
 #endif

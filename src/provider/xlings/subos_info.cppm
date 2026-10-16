@@ -1,4 +1,4 @@
-// mcpp.xlings.subos_info — read the `subos_info` block xlings writes into a
+// mcpp.provider.xlings.subos_info — read the `subos_info` block xlings writes into a
 // subos's own `.xlings.json`.
 //
 // WHAT THIS IS FOR
@@ -33,96 +33,23 @@
 //
 // Design: .agents/docs/2026-08-07-xlings-as-runtime-substrate-design.md §3-S3
 
-export module mcpp.xlings.subos_info;
+export module mcpp.provider.xlings.subos_info;
 
 import std;
 import mcpp.libs.json;
 import mcpp.platform;
+import mcpp.provider;
 
-export namespace mcpp::xlings::subos {
+export namespace mcpp::provider::xlings::subos {
 
-// The schema this build understands. A HIGHER one on disk is still read — we
-// take the fields we know and say so. Refusing outright would let a newer
-// xlings break an older mcpp, which is the failure shape the index-floor
-// incident already paid for once: publishing data must not invalidate the
-// program that reads it.
-inline constexpr int kSupportedSchema = 1;
-
+// The description's types and the runtime's family are the port's
+// (mcpp.provider runtime_info); this module reads xlings' block of them.
+inline constexpr int kSupportedSchema = mcpp::provider::runtime_info::kSupportedSchema;
 inline constexpr std::string_view kBlock = "subos_info";
+std::string family_of(std::string_view runtime, std::string_view arch = "x86_64") { return mcpp::provider::runtime_info::family_of(runtime, arch); }
 
-struct EnvDecl {
-    std::string var;
-    std::string op;      // "set" | "prepend"
-    std::string value;   // may contain ${subosdir}
-};
-
-struct Provider {
-    std::string          binding;   // "<name>@<version>"
-    std::vector<EnvDecl> decls;
-};
-
-struct PackageIdentity {
-    std::string namespace_;
-    std::string name;
-    std::string version;
-    std::string source;
-};
-
-struct CapabilityProvider {
-    std::string     capability;
-    PackageIdentity provider;
-};
-
-struct RuntimeArtifact {
-    std::string           role;
-    PackageIdentity       provider;
-    std::filesystem::path path;
-    std::string           provenance;
-    std::string           abi;
-    std::string           digest;
-    std::string           hostFingerprint;
-};
-
-struct Info {
-    int                   schema = 0;
-    std::string           runtime;    // "glibc@2.39"
-    std::string           hostGlibc;  // optional creation-host floor, e.g. "2.43"
-    std::vector<Provider> providers;  // sorted by binding
-    // Optional generic contract exported by xlings after it resolves provider
-    // recipes.  mcpp interprets these facts and never performs provider/hardware
-    // discovery itself.
-    std::vector<CapabilityProvider> runtimeProviders;
-    std::vector<RuntimeArtifact>    runtimeArtifacts;
-    bool                  present = false;
-    // Non-empty ⇒ the caller MUST surface it. Never an error: a missing or
-    // newer block degrades the experience; it does not invalidate a build.
-    std::string           note;
-};
-
-// The runtime string is self-describing: "glibc@2.39" says Linux/glibc
-// without a second field that could disagree with it.
-//
-// Mirrors xlings's `subos::manifest::family_of`. Two implementations of one
-// mapping is a cost, and the alternative — asking the xlings binary — costs
-// a subprocess in the build's hot path and fails on exactly the machines
-// where it matters (a sandbox xlings that has not been updated). The mapping
-// is five rows and stable, and test_subos_info.cpp pins every one of them, so
-// a drift is a test failure rather than a silent ABI disagreement.
-std::string family_of(std::string_view runtime,
-                      std::string_view arch = "x86_64") {
-    const auto at   = runtime.find('@');
-    const auto name = runtime.substr(0, at == std::string_view::npos
-                                            ? runtime.size() : at);
-    if (name == "glibc")     return std::format("linux-{}-glibc", arch);
-    if (name == "musl")      return std::format("linux-{}-musl", arch);
-    if (name == "wasi-libc") return "wasm32-wasi";
-    if (name == "macos_sdk") return std::format("darwin-{}", arch);
-    if (name == "ucrt")      return std::format("windows-{}-ucrt", arch);
-    return "unknown";
-}
-
-Info read(const std::filesystem::path& subosDir) {
-    Info info;
+mcpp::provider::runtime_info::Info read(const std::filesystem::path& subosDir) {
+    mcpp::provider::runtime_info::Info info;
     auto path = subosDir / ".xlings.json";
     std::error_code ec;
     if (!std::filesystem::exists(path, ec)) {
@@ -193,11 +120,11 @@ Info read(const std::filesystem::path& subosDir) {
     if (auto envs = it->find("envs"); envs != it->end() && envs->is_object()) {
         for (auto e = envs->begin(); e != envs->end(); ++e) {
             if (!e.value().is_array()) continue;
-            Provider prov;
+            mcpp::provider::runtime_info::Declarer prov;
             prov.binding = e.key();
             for (auto const& d : e.value()) {
                 if (!d.is_object()) continue;
-                EnvDecl decl;
+                mcpp::provider::runtime_info::EnvDecl decl;
                 if (auto x = d.find("var");   x != d.end() && x->is_string())
                     decl.var = x->get<std::string>();
                 if (auto x = d.find("op");    x != d.end() && x->is_string())
@@ -223,7 +150,7 @@ Info read(const std::filesystem::path& subosDir) {
     if (auto contract = it->find("runtime_contract");
         contract != it->end() && contract->is_object()) {
         auto read_identity = [](const nlohmann::json& value) {
-            PackageIdentity id;
+            mcpp::provider::runtime_info::PackageIdentity id;
             if (!value.is_object()) return id;
             id.namespace_ = value.value("namespace", "");
             id.name = value.value("name", "");
@@ -239,7 +166,7 @@ Info read(const std::filesystem::path& subosDir) {
             providers != contract->end() && providers->is_array()) {
             for (auto const& value : *providers) {
                 if (!value.is_object()) continue;
-                CapabilityProvider provider;
+                mcpp::provider::runtime_info::CapabilityProvider provider;
                 provider.capability = value.value("capability", "");
                 if (auto identity = value.find("provider"); identity != value.end())
                     provider.provider = read_identity(*identity);
@@ -254,7 +181,7 @@ Info read(const std::filesystem::path& subosDir) {
             artifacts != contract->end() && artifacts->is_array()) {
             for (auto const& value : *artifacts) {
                 if (!value.is_object()) continue;
-                RuntimeArtifact artifact;
+                mcpp::provider::runtime_info::RuntimeArtifact artifact;
                 artifact.role = value.value("role", "");
                 if (auto identity = value.find("provider"); identity != value.end())
                     artifact.provider = read_identity(*identity);
@@ -297,7 +224,7 @@ Info read(const std::filesystem::path& subosDir) {
     // cosmetic here: it decides which provider wins a list variable, and
     // libglvnd resolves GL vendors by exactly that order.
     std::sort(info.providers.begin(), info.providers.end(),
-              [](Provider const& a, Provider const& b) {
+              [](mcpp::provider::runtime_info::Declarer const& a, mcpp::provider::runtime_info::Declarer const& b) {
                   return a.binding < b.binding;
               });
 
@@ -326,7 +253,7 @@ Info read(const std::filesystem::path& subosDir) {
 // never matches and the joined value is a corrupt list. Caught by CI on
 // Windows, not by any amount of reading.
 std::vector<std::pair<std::string, std::string>>
-resolve_env(const Info& info, const std::filesystem::path& subosDir,
+resolve_env(const mcpp::provider::runtime_info::Info& info, const std::filesystem::path& subosDir,
             const std::function<std::optional<std::string>(std::string_view)>&
                 ambient = {}) {
     std::vector<std::pair<std::string, std::string>> out;
@@ -412,4 +339,4 @@ resolve_env(const Info& info, const std::filesystem::path& subosDir,
     return out;
 }
 
-}  // namespace mcpp::xlings::subos
+}  // namespace mcpp::provider::xlings::subos

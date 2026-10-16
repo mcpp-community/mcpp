@@ -54,7 +54,8 @@ import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.lockfile;
 import mcpp.config;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 import mcpp.runtime.binding;
 import mcpp.platform.runtime_search;
 import mcpp.toolchain.post_install;
@@ -300,8 +301,8 @@ static std::expected<void, std::string> step13_runner_and_xlings(PrepareState& s
             if (auto cfg = state.get_cfg(true)) {
                 auto xlEnv = mcpp::config::make_xlings_env(**cfg);
                 for (auto const& spec : xlingsSpecs) {
-                    auto ref = mcpp::xlings::paths::parse_xpkg_ref(spec);
-                    if (auto dir = mcpp::xlings::paths::xpkg_payload(xlEnv, ref)) {
+                    auto ref = mcpp::provider::parse_ref(spec);
+                    if (auto dir = mcpp::provider::payload(*mcpp::provider::open(xlEnv), ref)) {
                         ctx.xlingsPayloads.push_back(*dir);
                         // `bin/`, then the payload root. The measurement that
                         // added the second entry is recorded with the rule, in
@@ -1348,12 +1349,12 @@ static std::expected<void, std::string> step13_assembly_units(PrepareState& stat
             if (!cfgNasm) return std::unexpected(cfgNasm.error());
 
             std::optional<std::filesystem::path> nasmBin =
-                mcpp::xlings::find_usable_nasm(mcpp::config::make_xlings_env(**cfgNasm));
+                mcpp::provider::usable_nasm(*mcpp::provider::open(mcpp::config::make_xlings_env(**cfgNasm)));
             if (!nasmBin) {
                 mcpp::fetcher::Fetcher nasmFetcher(**cfgNasm);
                 mcpp::fetcher::InstallProgressHandler nasmProgress;
                 auto nasmTarget = std::format("xim:nasm@{}",
-                    mcpp::xlings::pinned::kNasmVersion);
+                    mcpp::provider::kNasmVersion);
                 auto payload = nasmFetcher.resolve_xpkg_path(
                     nasmTarget, /*autoInstall=*/true, &nasmProgress);
                 if (!payload) {
@@ -1361,8 +1362,7 @@ static std::expected<void, std::string> step13_assembly_units(PrepareState& stat
                         "NASM sources (.asm) present but nasm provisioning "
                         "failed: {}", payload.error().message));
                 }
-                nasmBin = mcpp::xlings::find_sandbox_nasm(
-                    mcpp::config::make_xlings_env(**cfgNasm));
+                nasmBin = mcpp::provider::placed_nasm(*mcpp::provider::open(mcpp::config::make_xlings_env(**cfgNasm)));
             }
             if (!nasmBin) {
                 return std::unexpected(std::string(
@@ -1376,8 +1376,7 @@ static std::expected<void, std::string> step13_assembly_units(PrepareState& stat
             // that already has an assembler. Saying nothing would leave two
             // machines assembling the same source with different tools and
             // no line in either build recording which.
-            if (mcpp::xlings::nasm_is_from_host(
-                    mcpp::config::make_xlings_env(**cfgNasm), *nasmBin)) {
+            if (mcpp::provider::open(mcpp::config::make_xlings_env(**cfgNasm))->nasm_is_from_host(*nasmBin)) {
                 mcpp::diag::degraded("build/nasm-from-host", std::format(
                     "the assembler for this build is the host's ('{}'), not "
                     "the one this engine pins", nasmBin->string()),

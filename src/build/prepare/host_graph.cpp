@@ -710,7 +710,7 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
         ? std::string("root → build programs")
         : state.overrides.tool_chain + " → build programs";
     sub.inherited_runtime_selection =
-        std::make_shared<const mcpp::xlings::runtime::RuntimeSelection>(state.runtimeSelection);
+        std::make_shared<const mcpp::provider::runtime::RuntimeSelection>(state.runtimeSelection);
     sub.inherited_runtime_binding =
         std::make_shared<const mcpp::platform::runtime::RuntimeBinding>(state.runtimeBindingSnapshot);
     sub.resolution_pins = resolution_pins(state);

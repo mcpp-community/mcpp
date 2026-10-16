@@ -345,7 +345,7 @@ inline XlingsEntry parse_address(std::string_view address) {
 }
 
 // The identity an `[xlings.overrides]` key names: `<ns>:<name>`, the namespace
-// defaulted to `xim` -- the identity mcpp.xlings.address_set gives a package,
+// defaulted to `xim` -- the identity mcpp.provider.address_set gives a package,
 // restated here because the manifest reader cannot import it.
 inline std::string override_package_key(std::string_view key) {
     const auto e = parse_address(key);

@@ -14,7 +14,7 @@
 // it from fingerprint made index_contract depend on xlings — which made it
 // impossible for xlings to depend on index_contract, which is exactly where the
 // index-refresh guard has to live (mcpp.pm.index_snapshot, and see
-// mcpp::xlings::update_index). The cycle was the layering telling us the
+// mcpp::provider::xlings::update_index). The cycle was the layering telling us the
 // constant was in the wrong place.
 //
 // A leaf module with no imports beyond `std` can be used by anyone. Keep it

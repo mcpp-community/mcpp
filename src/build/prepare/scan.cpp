@@ -44,7 +44,8 @@ import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
 import mcpp.build.build_program;
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 import mcpp.toolchain.post_install;
 import mcpp.platform;
 import mcpp.platform.macos;
@@ -488,8 +489,7 @@ step11_package_std_module_source(PrepareState& state) {
             // A flag naming a path is relative to the package that named it,
             // for the same reason the module source is.
             auto candidate = pkg.root / f;
-            flags += " " + mcpp::xlings::shq(
-                std::filesystem::exists(candidate) ? candidate.string() : f);
+            flags += " " + mcpp::platform::shell::quote(std::filesystem::exists(candidate) ? candidate.string() : f);
         }
         // AND THE HEADERS THIS PACKAGE ITSELF IS BUILT AGAINST.
         //
@@ -525,9 +525,9 @@ step11_package_std_module_source(PrepareState& state) {
         // reach both or the `std` BMI describes a different world than the
         // units importing it — which is mcpp#514 exactly.
         for (auto& d : state.targetSideUsage.includeDirs)
-            flags += " -isystem " + mcpp::xlings::shq(d.string());
+            flags += " -isystem " + mcpp::platform::shell::quote(d.string());
         for (auto& d : state.targetSideUsage.includeDirsAfter)
-            flags += " -idirafter " + mcpp::xlings::shq(d.string());
+            flags += " -idirafter " + mcpp::platform::shell::quote(d.string());
         // And the definitions, for the same reason as the directories: a C
         // library's headers show a different library depending on which feature
         // macros are set, and the ones this package is built with are the ones
@@ -571,18 +571,18 @@ step11_package_std_module_source(PrepareState& state) {
                 cAbiTargetIsMacos, state.m->buildConfig.macosDeploymentTarget);
             for (auto& t : mcpp::toolchain::host_compile_tokens(
                      *state.tc, hopt, mcpp::toolchain::no_escape)) {
-                const auto q = " " + mcpp::xlings::shq(t);
+                const auto q = " " + mcpp::platform::shell::quote(t);
                 if (flags.find(q) == std::string::npos) flags += q;
             }
             for (auto& t : mcpp::toolchain::apple_float_macro_words(*state.tc)) {
-                const auto q = " " + mcpp::xlings::shq(t);
+                const auto q = " " + mcpp::platform::shell::quote(t);
                 if (flags.find(q) == std::string::npos) flags += q;
             }
         }
         // The same words the package's own units receive from this list
         // (mcpp.manifest.flag_words), one quoted word each.
         for (auto& w : mcpp::manifest::flag_words(state.targetSideUsage.cxxflags))
-            flags += " " + mcpp::xlings::shq(w);
+            flags += " " + mcpp::platform::shell::quote(w);
         state.tc->stdModuleFlags = flags;
         break;
     }

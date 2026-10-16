@@ -11,7 +11,9 @@ import mcpp.diag;
 import mcpp.log;
 import mcpp.build.engine_package;
 import mcpp.build.refusal;
-import mcpp.xlings.address_set;
+import mcpp.provider;
+import mcpp.provider.select;
+import mcpp.provider.address_set;
 import mcpp.build.version_floor;
 import mcpp.home;
 import mcpp.platform.axis;
@@ -43,7 +45,6 @@ import mcpp.build.directives;   // directive table: mark / fold_private_tail
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.config;
-import mcpp.xlings;
 import mcpp.toolchain.post_install;
 import mcpp.platform;
 import mcpp.pm.resolver;

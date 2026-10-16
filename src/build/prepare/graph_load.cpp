@@ -9,7 +9,9 @@ import mcpp.build.prepare_inputs;
 import std;
 import mcpp.diag;
 import mcpp.build.refusal;
-import mcpp.xlings.address_set;
+import mcpp.provider;
+import mcpp.provider.select;
+import mcpp.provider.address_set;
 import mcpp.build.version_floor;
 import mcpp.platform.axis;
 import mcpp.log;
@@ -29,7 +31,6 @@ import mcpp.build.build_program;
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.config;
-import mcpp.xlings;
 import mcpp.platform;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
@@ -45,7 +46,6 @@ import mcpp.pm.dependency_selector;
 import mcpp.pm.lock_io;
 import mcpp.ui;
 import mcpp.log;
-import mcpp.fallback.install_integrity;
 import mcpp.project;
 
 namespace mcpp::build {
@@ -82,11 +82,11 @@ static void step4a_define_split_and_identity_closures(PrepareState& state) {
     // from a rule package were two packages: both installed, gigabytes each,
     // and `xpkg_dir` answered one of them. The unification below adjudicates
     // (the declaration nearer the artifact wins) and validates (the winner must
-    // satisfy every requirement that lost) — see mcpp.xlings.address_set.
+    // satisfy every requirement that lost) — see mcpp.provider.address_set.
     state.graph_xlings_split = [&]() -> std::expected<
             std::pair<std::vector<std::string>, std::vector<std::string>>,
             std::string> {
-        namespace addrset = mcpp::xlings::addrset;
+        namespace addrset = mcpp::provider::addrset;
         auto describe = [&](std::size_t i) {
             auto const& pkg = state.packages[i].manifest.package;
             return pkg.namespace_.empty() ? pkg.name
@@ -646,8 +646,7 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
                 // in. That is a download the run needs, not a wrong selector.
                 if (mcpp::platform::env::offline_mode()) {
                     if (auto cfgO = state.get_cfg(true);
-                        cfgO && !mcpp::xlings::default_index_status(
-                                     mcpp::config::make_xlings_env(**cfgO), 0).present) {
+                        cfgO && !mcpp::provider::open(mcpp::config::make_xlings_env(**cfgO))->default_index_status(0).present) {
                         hint += "\n  offline: the package index has never been fetched; "
                                 "run `mcpp index update` without --offline";
                         refusal::record(refusal::Code::OfflineDownloadRequired);
@@ -723,12 +722,6 @@ step4a_find_raw_installed(PrepareState& state, LoadVersionDepCtx& ctx) {
     return fetcher.install_path(ctx.ns, ctx.shortName, ctx.version);
 }
 
-// The body of the `markInstalled` closure, called once below after a fresh
-// install completes.
-static void step4a_mark_installed(const std::filesystem::path& p) {
-    mcpp::fallback::mark_install_complete(p);
-}
-
 static std::expected<void, std::string>
 step4a_load_version_dep_locate(PrepareState& state, LoadVersionDepCtx& ctx) {
         // ─── Routing: check if this dep's namespace maps to a custom index ──
@@ -790,7 +783,7 @@ step4a_load_version_dep_locate(PrepareState& state, LoadVersionDepCtx& ctx) {
             return 0;
         }();
         auto revisionIsCurrent = [&](const std::filesystem::path& p) {
-            const auto installed = mcpp::xlings::paths::installed_revision(p);
+            const auto installed = mcpp::provider::revision_of(p);
             if (!installed || *installed == recipeRevision) return true;
             mcpp::log::verbose("fetcher", std::format(
                 "{}@{}: installed revision {}, descriptor revision {}; reinstalling",
@@ -798,22 +791,19 @@ step4a_load_version_dep_locate(PrepareState& state, LoadVersionDepCtx& ctx) {
             return false;
         };
 
+        // Installed is what the payload holds: the files its descriptor names
+        // (and the provider's revision record, above). mcpp writes no marker
+        // into a payload and removes none (design 2026-10-16 §7.1): one that
+        // is not complete goes back to the provider, which replaces it.
         auto findCompleteInstalled = [&]() -> std::optional<std::filesystem::path> {
             auto p = step4a_find_raw_installed(state, ctx);
             if (!p) return std::nullopt;
             if (!revisionIsCurrent(*p)) return std::nullopt;
-            if (mcpp::fallback::is_install_complete(*p)) return p;
-            if (installedLayoutMatchesIndex(*p)) {
-                mcpp::fallback::mark_install_complete(*p);
-                return p;
-            }
-            mcpp::fallback::clean_incomplete_install(*p);
+            if (installedLayoutMatchesIndex(*p)) return p;
             return std::nullopt;
         };
 
-        // For custom indices, try project-level xlings data roots first.
-        // Existing directories without the mcpp completion marker are treated
-        // as stale/incomplete on this active resolve path and reinstalled.
+        // For custom indices, try project-level data roots first.
         ctx.installed = findCompleteInstalled();
 
     return {};
@@ -948,12 +938,12 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             std::string capturedChildError;
             // xlings' own error lines, after its structured summary (#614).
             auto append_xlings_stderr = [](std::string& into,
-                                           const mcpp::xlings::CallResult& r) {
+                                           const mcpp::provider::CallResult& r) {
                 if (r.exitCode == 0) return;
                 for (auto const& line : r.stderrTail)
                     into += (into.empty() ? "" : "\n  ") + std::string("xlings: ") + line;
             };
-            auto install_one = [&](std::string target) -> std::expected<mcpp::xlings::CallResult, mcpp::pm::CallError> {
+            auto install_one = [&](std::string target) -> std::expected<mcpp::provider::CallResult, mcpp::pm::CallError> {
                 if (ctx.useProjectEnv) {
                     // Project/custom-index deps install into the project-local
                     // xlings data root (so a package's install hook can find
@@ -969,8 +959,7 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
                     auto argsJson = std::format(
                         R"({{"targets":["{}"],"yes":true}})", target);
                     mcpp::fetcher::InstallProgressHandler progress;
-                    auto r = mcpp::xlings::call(
-                        projEnv, "install_packages", argsJson, &progress);
+                    auto r = mcpp::provider::open(projEnv)->call("install_packages", argsJson, &progress);
                     capturedChildError = progress.captured_error();
                     if (!r) return std::unexpected(mcpp::pm::CallError{r.error()});
                     append_xlings_stderr(capturedChildError, *r);
@@ -1101,7 +1090,6 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             ctx.installed = step4a_find_raw_installed(state, ctx);
             if (!ctx.installed) return std::unexpected(std::format(
                 "package '{}@{}' install path missing after fetch", depName, version));
-            step4a_mark_installed(*ctx.installed);
         }
 
     return {};

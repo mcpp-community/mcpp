@@ -19,7 +19,7 @@
 //
 // WHY BACKUP-AND-ROLLBACK RATHER THAN STAGE-AND-SWAP
 //
-// mcpp does not fetch indexes. `mcpp::xlings::update_index` shells out to
+// mcpp does not fetch indexes. `mcpp::provider::xlings::update_index` shells out to
 // `xlings update`, which rewrites the tree in place; mcpp cannot ask it to
 // unpack somewhere else (the `index_repos` entry it seeds carries name / url /
 // artifact / source and no version or destination). So the sequence is

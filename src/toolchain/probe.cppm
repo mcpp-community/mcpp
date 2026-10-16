@@ -15,7 +15,8 @@ export module mcpp.toolchain.probe;
 import std;
 import mcpp.toolchain.model;
 import mcpp.toolchain.triple;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 import mcpp.platform;
 import mcpp.log;
 import mcpp.fallback.sysroot_complete;
@@ -202,7 +203,7 @@ discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin) {
             append_existing_unique(dirs, d);
     }
 
-    if (auto rt = mcpp::xlings::paths::find_sibling_tool(compilerBin, "gcc-runtime")) {
+    if (auto rt = mcpp::provider::beside_tool(compilerBin, "gcc-runtime")) {
         append_existing_unique(dirs, *rt / "lib64");
         append_existing_unique(dirs, *rt / "lib");
     }
@@ -248,7 +249,7 @@ discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
     append_existing_unique(dirs, root / "lib");
 
     if constexpr (mcpp::platform::is_linux) {
-        if (auto rt = mcpp::xlings::paths::find_sibling_tool(compilerBin, "gcc-runtime")) {
+        if (auto rt = mcpp::provider::beside_tool(compilerBin, "gcc-runtime")) {
             append_existing_unique(dirs, *rt / "lib64");
             append_existing_unique(dirs, *rt / "lib");
         }
@@ -292,7 +293,7 @@ probe_target_triple(const std::filesystem::path& compilerBin,
                     const std::string& envPrefix) {
     auto triple_r = run_capture(std::format("{}{} -dumpmachine {}",
                                             envPrefix,
-                                            mcpp::xlings::shq(compilerBin.string()),
+                                            mcpp::platform::shell::quote(compilerBin.string()),
                                             mcpp::platform::null_redirect));
     if (!triple_r) return std::unexpected(triple_r.error());
     return trim_line(*triple_r);
@@ -313,7 +314,7 @@ probe_sysroot(const std::filesystem::path& compilerBin,
     // 1. Ask the compiler directly (works for GCC; Clang often doesn't support it).
     auto r = run_capture(std::format("{}{} -print-sysroot {}",
                                      envPrefix,
-                                     mcpp::xlings::shq(compilerBin.string()),
+                                     mcpp::platform::shell::quote(compilerBin.string()),
                                      mcpp::platform::null_redirect));
     if (r) {
         auto s = trim_line(*r);
@@ -417,11 +418,11 @@ payload_root_for_binding(const std::filesystem::path& compilerBin,
         return std::nullopt;
     };
     // Compiler siblings: <...>/xpkgs/xim-x-<name>/<version>
-    if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(compilerBin)) {
+    if (auto xpkgs = mcpp::provider::store_of(compilerBin)) {
         if (auto root = exact(*xpkgs)) return *root;
     }
     // Active home.
-    if (auto xpkgs = mcpp::xlings::paths::active_home_xpkgs()) {
+    if (auto xpkgs = mcpp::provider::home_store()) {
         if (auto root = exact(*xpkgs)) return *root;
     }
     return std::nullopt;
@@ -458,8 +459,6 @@ probe_payload_paths(const std::filesystem::path& compilerBin,
         return std::nullopt;
     }
 
-    namespace paths = mcpp::xlings::paths;
-
     // Layout WITHIN the chosen payload. This convention stays: it answers
     // "where inside", not "which one".
     auto glibcInclude = *glibc / "include";
@@ -484,9 +483,9 @@ probe_payload_paths(const std::filesystem::path& compilerBin,
     // needs <linux/limits.h>, so a silent miss breaks every glibc build).
     constexpr std::string_view kLinuxLimits = "include/linux/limits.h";
     auto linuxHeaders =
-        paths::find_sibling_package(compilerBin, "linux-headers", kLinuxLimits);
+        mcpp::provider::beside(compilerBin, "linux-headers", kLinuxLimits);
     if (!linuxHeaders)
-        linuxHeaders = paths::find_home_tool("linux-headers", kLinuxLimits);
+        linuxHeaders = mcpp::provider::in_home_store("linux-headers", kLinuxLimits);
     if (linuxHeaders) {
         pp.linuxInclude = *linuxHeaders / "include";
     } else {

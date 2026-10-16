@@ -45,8 +45,9 @@ import mcpp.build.build_program;
 import mcpp.build.tool_store;   // #355 host tools: store layout + key + overrides
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
-import mcpp.xlings;
-import mcpp.xlings.runtime_selection;
+import mcpp.provider;
+import mcpp.provider.select;
+import mcpp.provider.runtime_selection;
 import mcpp.runtime.binding;
 import mcpp.toolchain.post_install;
 import mcpp.platform;
@@ -1507,7 +1508,7 @@ step6_build_tool(PrepareState& state, HostToolCtx& ctx) {
             : std::make_shared<const mcpp::manifest::Manifest>(dep);
     }
     sub.inherited_runtime_selection = std::make_shared<
-        const mcpp::xlings::runtime::RuntimeSelection>(
+        const mcpp::provider::runtime::RuntimeSelection>(
             state.runtimeSelection);
     sub.inherited_runtime_binding = std::make_shared<
         const mcpp::platform::runtime::RuntimeBinding>(

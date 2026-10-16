@@ -21,7 +21,7 @@ import mcpp.pm.index_refresh;
 import mcpp.pm.index_route;
 import mcpp.pm.index_spec;
 import mcpp.platform.axis;
-import mcpp.xlings;
+import mcpp.provider.xlings;
 
 namespace {
 
@@ -94,7 +94,7 @@ package = {{
 
     void remove_index() { std::filesystem::remove_all(index_dir()); }
 
-    mcpp::xlings::Env env() const { return mcpp::xlings::Env{ .home = home }; }
+    mcpp::provider::xlings::Env env() const { return mcpp::provider::xlings::Env{ .home = home }; }
 
     mcpp::config::GlobalConfig config() const {
         mcpp::config::GlobalConfig cfg;
@@ -117,7 +117,7 @@ mcpp::pm::DependencySpec version_dep(std::string_view ns,
 
 RefreshReason decide(const mcpp::pm::IndexRoute& route,
                      const mcpp::pm::DependencySpec& spec,
-                     const mcpp::xlings::Env& env,
+                     const mcpp::provider::xlings::Env& env,
                      mcpp::pm::RefreshPolicy policy = {}) {
     return mcpp::pm::decide_for_dependency(
         route, spec.shortName, spec, env,
@@ -126,7 +126,7 @@ RefreshReason decide(const mcpp::pm::IndexRoute& route,
 
 bool refreshes(const mcpp::pm::IndexRoute& route,
                const mcpp::pm::DependencySpec& spec,
-               const mcpp::xlings::Env& env,
+               const mcpp::provider::xlings::Env& env,
                mcpp::pm::RefreshPolicy policy = {}) {
     return mcpp::pm::decide_for_dependency(
         route, spec.shortName, spec, env,

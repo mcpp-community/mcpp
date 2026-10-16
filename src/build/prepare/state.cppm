@@ -51,9 +51,10 @@ import mcpp.build.provisions;   // #359 build-time provisions: table + propagati
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.config;
-import mcpp.xlings;
-import mcpp.xlings.address_set;   // mcpp#755: override checks reuse the unification's claims
-import mcpp.xlings.runtime_selection;
+import mcpp.provider;
+import mcpp.provider.select;
+import mcpp.provider.runtime_selection;
+import mcpp.provider.address_set;
 import mcpp.runtime.binding;
 import mcpp.toolchain.post_install;
 import mcpp.platform;
@@ -505,7 +506,7 @@ struct PrepareState {
         return out;
     }
     std::filesystem::path runtimeWorkspaceRoot;
-    mcpp::xlings::runtime::RuntimeSelection runtimeSelection;
+    mcpp::provider::runtime::RuntimeSelection runtimeSelection;
     std::filesystem::path workRoot;
     // The project whose `.mcpp/` holds the packages of the custom indices:
     // `overrides.project_index_root`, else the project being built.
@@ -518,7 +519,7 @@ struct PrepareState {
     CacheMode cacheMode{};
 
     // ── P1: toolchain spec resolution, target axis, L1 cfg merge ────────────
-    // `get_cfg`, `provide_runtime_payload`, `report_fixup`,
+    // `get_cfg`, `provide_runtime_payload`,
     // `msvc_usable_either_origin`, `native_first_run_spec`, `tcSpecSource`,
     // `resolvedAccel`, `cfgCtx` and `add_once` are closures that outlive P1
     // (later phases call them by name): each captures `state` itself, not the
@@ -534,8 +535,6 @@ struct PrepareState {
     std::filesystem::path runtimeLibDir;
     bool runtimePayloadProvided = false;
     std::function<void(const mcpp::toolchain::XimToolchainPackage&)> provide_runtime_payload;
-    std::function<void(const mcpp::toolchain::FixupOutcome&,
-                        const std::filesystem::path&)> report_fixup;
     std::string effectiveProfile;
     std::vector<std::filesystem::path> storeRoots;
     std::optional<std::string> tcSpec;
@@ -973,8 +972,8 @@ payload_override(PrepareState& state, std::string_view key);
 // declared `provision = "on-request"`.
 std::expected<std::vector<std::string>, std::string>
 payloads_to_provision(PrepareState& state,
-                      const mcpp::xlings::addrset::Resolution& unified,
-                      std::span<const mcpp::xlings::addrset::Claim> claims,
+                      const mcpp::provider::addrset::Resolution& unified,
+                      std::span<const mcpp::provider::addrset::Claim> claims,
                       const std::vector<char>& onRequest);
 // A dependency that states `[xlings.overrides]` is refused: where a payload
 // comes from is the root's statement (mcpp#755).

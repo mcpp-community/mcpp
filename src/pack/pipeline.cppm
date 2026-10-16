@@ -33,7 +33,8 @@ import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;
 import mcpp.log;
 import mcpp.ui;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 
 namespace mcpp::pack {
 
@@ -98,7 +99,7 @@ struct DriverLibraryDirs {
 DriverLibraryDirs driver_library_dirs(const mcpp::toolchain::Toolchain& tc)
 {
     DriverLibraryDirs out;
-    const auto base = std::format("{} {}", mcpp::xlings::shq(tc.binaryPath.string()),
+    const auto base = std::format("{} {}", mcpp::platform::shell::quote(tc.binaryPath.string()),
                                   tc.crossTargetFlag);
     if (auto r = mcpp::toolchain::run_capture(std::format(
             "{} -print-search-dirs {}", base, mcpp::platform::null_redirect))) {

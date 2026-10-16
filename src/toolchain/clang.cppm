@@ -6,7 +6,8 @@ import std;
 import mcpp.toolchain.model;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.probe;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 import mcpp.platform;
 
 export namespace mcpp::toolchain::clang {
@@ -109,7 +110,7 @@ std::optional<std::filesystem::path> find_libcxx_std_module_source(
     auto manifest_r = mcpp::toolchain::run_capture(std::format(
         "{}{} -print-library-module-manifest-path {}",
         envPrefix,
-        mcpp::xlings::shq(cxx_binary.string()),
+        mcpp::platform::shell::quote(cxx_binary.string()),
         mcpp::platform::null_redirect));
     if (manifest_r) {
         auto manifestPath = std::filesystem::path(
@@ -165,7 +166,7 @@ std::optional<std::filesystem::path> find_libcxx_std_module_source(
     // replaces made with `bin/../share`.
     if (auto lib_r = mcpp::toolchain::run_capture(std::format(
             "{}{} --print-file-name=libc++.a {}",
-            envPrefix, mcpp::xlings::shq(cxx_binary.string()),
+            envPrefix, mcpp::platform::shell::quote(cxx_binary.string()),
             mcpp::platform::null_redirect))) {
         std::filesystem::path lib(mcpp::toolchain::trim_line(*lib_r));
         // A driver that cannot place the library echoes the bare name back.
@@ -369,8 +370,8 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
             ixxFlags,
             sysrootFlag,
             precompileFlags,
-            mcpp::xlings::shq(tc.stdModuleSource.string()),
-            mcpp::xlings::shq(absBmi)),
+            mcpp::platform::shell::quote(tc.stdModuleSource.string()),
+            mcpp::platform::shell::quote(absBmi)),
         std::format(
             "{} {}{}{}{} "
             "{} -c -o {}",
@@ -379,35 +380,35 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
             crtToken,
             sysrootFlag,
             codegenFlags,
-            mcpp::xlings::shq(absBmi),
-            mcpp::xlings::shq((cacheDir / "std.o").string()))
+            mcpp::platform::shell::quote(absBmi),
+            mcpp::platform::shell::quote((cacheDir / "std.o").string()))
     };
 #else
     return {
         std::format(
             "cd {} && {}{} {}{} -Wno-reserved-module-identifier{}{}{} "
             "--precompile {} -o {} 2>&1",
-            mcpp::xlings::shq(cacheDir.string()),
+            mcpp::platform::shell::quote(cacheDir.string()),
             mcpp::toolchain::compiler_env_prefix(tc),
-            mcpp::xlings::shq(tc.binaryPath.string()),
+            mcpp::platform::shell::quote(tc.binaryPath.string()),
             cppStandardFlag,
             crtToken,
             sysrootFlag,
             precompileFlags,
             module_source_language_flags(tc.stdModuleSource),
-            mcpp::xlings::shq(tc.stdModuleSource.string()),
-            mcpp::xlings::shq(relBmi)),
+            mcpp::platform::shell::quote(tc.stdModuleSource.string()),
+            mcpp::platform::shell::quote(relBmi)),
         std::format(
             "cd {} && {}{} {}{} -Wno-reserved-module-identifier{}{} "
             "{} -c -o std.o 2>&1",
-            mcpp::xlings::shq(cacheDir.string()),
+            mcpp::platform::shell::quote(cacheDir.string()),
             mcpp::toolchain::compiler_env_prefix(tc),
-            mcpp::xlings::shq(tc.binaryPath.string()),
+            mcpp::platform::shell::quote(tc.binaryPath.string()),
             cppStandardFlag,
             crtToken,
             sysrootFlag,
             codegenFlags,
-            mcpp::xlings::shq(relBmi))
+            mcpp::platform::shell::quote(relBmi))
     };
 #endif
 }
@@ -461,7 +462,7 @@ std::filesystem::path runtime_archive_path(const Toolchain& tc,
     if (auto r = mcpp::toolchain::run_capture(std::format(
             "{}{}{} --print-file-name={} {}",
             mcpp::toolchain::compiler_env_prefix(tc),
-            mcpp::xlings::shq(tc.binaryPath.string()),
+            mcpp::platform::shell::quote(tc.binaryPath.string()),
             driverFlags, archive, mcpp::platform::null_redirect))) {
         std::filesystem::path lib(mcpp::toolchain::trim_line(*r));
         std::error_code ec;
@@ -579,27 +580,27 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
                     "-fmodule-file=std={} "
                     "--precompile {} -o {} 2>&1",
                     mcpp::toolchain::compiler_env_prefix(tc),
-                    mcpp::xlings::shq(tc.binaryPath.string()),
+                    mcpp::platform::shell::quote(tc.binaryPath.string()),
                     cppStandardFlag,
                     crtToken,
                     sysrootFlag,
                     precompileFlags,
                     ixxFlags,
                     absStdBmi,
-                    mcpp::xlings::shq(tc.stdCompatSource.string()),
-                    mcpp::xlings::shq(absBmi)),
+                    mcpp::platform::shell::quote(tc.stdCompatSource.string()),
+                    mcpp::platform::shell::quote(absBmi)),
         std::format("{}{} {}{} -Wno-reserved-module-identifier{}{} "
                     "-fmodule-file=std={} "
                     "{} -c -o {} 2>&1",
                     mcpp::toolchain::compiler_env_prefix(tc),
-                    mcpp::xlings::shq(tc.binaryPath.string()),
+                    mcpp::platform::shell::quote(tc.binaryPath.string()),
                     cppStandardFlag,
                     crtToken,
                     sysrootFlag,
                     codegenFlags,
                     absStdBmi,
-                    mcpp::xlings::shq(absBmi),
-                    mcpp::xlings::shq(absObj))
+                    mcpp::platform::shell::quote(absBmi),
+                    mcpp::platform::shell::quote(absObj))
     };
 }
 

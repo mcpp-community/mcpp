@@ -14,9 +14,9 @@ import std;
 // its own. The caller passes the path; see subos_path.
 import mcpp.libs.json;
 import mcpp.platform;
-import mcpp.xlings.runtime_selection;
-import mcpp.xlings.subos_info;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
+import mcpp.provider.runtime_selection;
 
 export namespace mcpp::platform::runtime {
 
@@ -66,14 +66,14 @@ struct RuntimeBinding {
     // rule. A payload directory and a farm directory are not interchangeable
     // even when they currently resolve to the same file.
     std::vector<std::filesystem::path> searchDirs;
-    std::vector<mcpp::xlings::subos::EnvDecl> environment;
+    std::vector<mcpp::provider::runtime_info::EnvDecl> environment;
     std::vector<std::string> providerBindings;
     std::vector<std::string> capabilities;
-    std::vector<mcpp::xlings::subos::CapabilityProvider> runtimeProviders;
-    std::vector<mcpp::xlings::subos::RuntimeArtifact> runtimeArtifacts;
+    std::vector<mcpp::provider::runtime_info::CapabilityProvider> runtimeProviders;
+    std::vector<mcpp::provider::runtime_info::RuntimeArtifact> runtimeArtifacts;
     std::string provenance;
     std::filesystem::path subosDir;
-    mcpp::xlings::runtime::RuntimeSelection selection;
+    mcpp::provider::runtime::RuntimeSelection selection;
 
     // Did the SubOS describe itself (does it carry a `subos_info` block)?
     //
@@ -170,7 +170,7 @@ std::string canonical_contract(const RuntimeBinding& binding) {
     append_field(out, binding.arch);
     append_field(out, binding.runtimeId);
     append_field(out, binding.selection.mode
-        == mcpp::xlings::runtime::RuntimeSelection::Mode::McppDefault
+        == mcpp::provider::runtime::RuntimeSelection::Mode::McppDefault
             ? "mcpp-default" : "named");
     append_field(out, binding.selection.subosName);
     append_field(out, binding.provenance);
@@ -185,7 +185,7 @@ std::string canonical_contract(const RuntimeBinding& binding) {
     // before revisions existed keeps the contract, and the output directory,
     // it had.
     for (auto const& p : binding.libraryDirs)
-        if (const int r = mcpp::xlings::paths::installed_revision(p.parent_path())
+        if (const int r = mcpp::provider::revision_of(p.parent_path())
                               .value_or(0); r > 0)
             append_field(out, std::format("revision={}", r));
     // The farm participates in the hash because it participates in the
@@ -228,9 +228,9 @@ std::string canonical_contract(const RuntimeBinding& binding) {
 }
 
 std::filesystem::path subos_path(
-    const mcpp::xlings::runtime::RuntimeSelection& selection,
+    const mcpp::provider::runtime::RuntimeSelection& selection,
     const std::filesystem::path& xlingsHome) {
-    using Mode = mcpp::xlings::runtime::RuntimeSelection::Mode;
+    using Mode = mcpp::provider::runtime::RuntimeSelection::Mode;
     if (selection.mode == Mode::McppDefault || selection.subosName == "default")
         return xlingsHome / "subos" / "default";
     return selection.ownerRoot / ".mcpp" / ".xlings" / "subos"
@@ -314,7 +314,7 @@ std::optional<ManagedGlibcPayload> exact_declared_glibc_payload(
 
 std::expected<RuntimeBinding, std::string>
 resolve_runtime_binding(
-    const mcpp::xlings::runtime::RuntimeSelection& selection,
+    const mcpp::provider::runtime::RuntimeSelection& selection,
     const std::filesystem::path& /*compiler*/,
     const std::filesystem::path& xlingsHome) {
     RuntimeBinding out;
@@ -344,7 +344,7 @@ resolve_runtime_binding(
         out.note += std::move(message);
     };
 
-    auto info = mcpp::xlings::subos::read(out.subosDir);
+    auto info = mcpp::provider::layout().runtime_info(out.subosDir);
     out.declared = info.present;
     if (!info.present) {
         note(std::format(
@@ -360,7 +360,7 @@ resolve_runtime_binding(
             "it described (openxlings/xlings#547).",
             selection.subosName,
             info.note.empty() ? "no `subos_info` block" : info.note));
-    } else if (info.schema > mcpp::xlings::subos::kSupportedSchema) {
+    } else if (info.schema > mcpp::provider::runtime_info::kSupportedSchema) {
         // Mirrors `subos_info::read`, which already reads a HIGHER schema and
         // says so. A consumer stricter than its own reader is a time bomb:
         // the day xlings writes schema 2, an equality check stops every build
@@ -369,7 +369,7 @@ resolve_runtime_binding(
             "SubOS '{}' declares runtime contract schema {}, newer than the {} "
             "this mcpp understands; using the fields it knows",
             selection.subosName, info.schema,
-            mcpp::xlings::subos::kSupportedSchema));
+            mcpp::provider::runtime_info::kSupportedSchema));
     }
     if (info.present && info.runtime.empty()) {
         note(std::format(
@@ -384,7 +384,7 @@ resolve_runtime_binding(
     out.arch = std::string(mcpp::platform::host_arch);
     out.runtimeId = info.runtime;
     out.provenance = selection.mode
-        == mcpp::xlings::runtime::RuntimeSelection::Mode::McppDefault
+        == mcpp::provider::runtime::RuntimeSelection::Mode::McppDefault
             ? "mcpp_default" : "named_subos";
 
     // libc/ELF are Linux concepts.  macOS and Windows still carry the same
@@ -542,10 +542,10 @@ std::string serialize_runtime_binding(const RuntimeBinding& binding) {
     j["subos_dir"] = binding.subosDir.generic_string();
     j["selection"] = {
         {"mode", binding.selection.mode
-            == mcpp::xlings::runtime::RuntimeSelection::Mode::McppDefault
+            == mcpp::provider::runtime::RuntimeSelection::Mode::McppDefault
                 ? "mcpp_default" : "named_subos"},
         {"source", binding.selection.source
-            == mcpp::xlings::runtime::RuntimeSelection::Source::DefaultPolicy
+            == mcpp::provider::runtime::RuntimeSelection::Source::DefaultPolicy
                 ? "default_policy" : "manifest"},
         {"name", binding.selection.subosName},
         {"owner_root", binding.selection.ownerRoot.generic_string()},
@@ -580,7 +580,7 @@ deserialize_runtime_binding(std::string_view encoded) {
         if (auto it = j.find("environment"); it != j.end() && it->is_array()) {
             for (auto const& v : *it) {
                 if (!v.is_object()) continue;
-                mcpp::xlings::subos::EnvDecl decl;
+                mcpp::provider::runtime_info::EnvDecl decl;
                 decl.var = v.value("var", "");
                 decl.op = v.value("op", "");
                 decl.value = v.value("value", "");
@@ -593,7 +593,7 @@ deserialize_runtime_binding(std::string_view encoded) {
         out.capabilities = j.value(
             "capabilities", std::vector<std::string>{});
         auto read_identity = [](const nlohmann::json& value) {
-            mcpp::xlings::subos::PackageIdentity id;
+            mcpp::provider::runtime_info::PackageIdentity id;
             if (!value.is_object()) return id;
             id.namespace_ = value.value("namespace", "");
             id.name = value.value("name", "");
@@ -605,7 +605,7 @@ deserialize_runtime_binding(std::string_view encoded) {
             it != j.end() && it->is_array()) {
             for (auto const& value : *it) {
                 if (!value.is_object()) continue;
-                mcpp::xlings::subos::CapabilityProvider provider;
+                mcpp::provider::runtime_info::CapabilityProvider provider;
                 provider.capability = value.value("capability", "");
                 if (auto identity = value.find("provider"); identity != value.end())
                     provider.provider = read_identity(*identity);
@@ -617,7 +617,7 @@ deserialize_runtime_binding(std::string_view encoded) {
             it != j.end() && it->is_array()) {
             for (auto const& value : *it) {
                 if (!value.is_object()) continue;
-                mcpp::xlings::subos::RuntimeArtifact artifact;
+                mcpp::provider::runtime_info::RuntimeArtifact artifact;
                 artifact.role = value.value("role", "");
                 if (auto identity = value.find("provider"); identity != value.end())
                     artifact.provider = read_identity(*identity);
@@ -635,11 +635,11 @@ deserialize_runtime_binding(std::string_view encoded) {
         out.subosDir = j.value("subos_dir", "");
         auto s = j.at("selection");
         out.selection.mode = s.value("mode", "") == "named_subos"
-            ? mcpp::xlings::runtime::RuntimeSelection::Mode::NamedSubos
-            : mcpp::xlings::runtime::RuntimeSelection::Mode::McppDefault;
+            ? mcpp::provider::runtime::RuntimeSelection::Mode::NamedSubos
+            : mcpp::provider::runtime::RuntimeSelection::Mode::McppDefault;
         out.selection.source = s.value("source", "") == "manifest"
-            ? mcpp::xlings::runtime::RuntimeSelection::Source::Manifest
-            : mcpp::xlings::runtime::RuntimeSelection::Source::DefaultPolicy;
+            ? mcpp::provider::runtime::RuntimeSelection::Source::Manifest
+            : mcpp::provider::runtime::RuntimeSelection::Source::DefaultPolicy;
         out.selection.subosName = s.value("name", "default");
         out.selection.ownerRoot = s.value("owner_root", "");
         // Completeness is conditional on `declared`. An UNDECLARED binding
@@ -666,13 +666,13 @@ std::vector<std::pair<std::string, std::string>>
 resolve_runtime_environment(
     const RuntimeBinding& binding,
     const std::function<std::optional<std::string>(std::string_view)>& ambient = {}) {
-    mcpp::xlings::subos::Info info;
+    mcpp::provider::runtime_info::Info info;
     info.present = true;
-    mcpp::xlings::subos::Provider snapshot;
+    mcpp::provider::runtime_info::Declarer snapshot;
     snapshot.binding = "runtime-binding-snapshot";
     snapshot.decls = binding.environment;
     info.providers.push_back(std::move(snapshot));
-    return mcpp::xlings::subos::resolve_env(info, binding.subosDir, ambient);
+    return mcpp::provider::resolve_env(info, binding.subosDir, ambient);
 }
 
 } // namespace mcpp::platform::runtime

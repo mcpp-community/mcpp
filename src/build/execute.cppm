@@ -40,8 +40,8 @@ import mcpp.modgraph.scanner;
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.stdmod;
 import mcpp.version;               // MCPP_VERSION — the engine a build record names
-import mcpp.xlings;
-import mcpp.xlings.subos_info;
+import mcpp.provider;
+import mcpp.provider.select;
 import mcpp.runtime.binding;
 import mcpp.log;
 import mcpp.platform;
@@ -3522,7 +3522,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // binaries that shell out to bootstrapped tools (patchelf, ninja) find
         // them — applied to the child only, not via a leaky shell prefix.
         if constexpr (!mcpp::platform::is_windows) {
-            if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(ctx->tc.binaryPath)) {
+            if (auto xpkgs = mcpp::provider::store_of(ctx->tc.binaryPath)) {
                 // xpkgs is <registry>/data/xpkgs → registry = xpkgs/../..
                 auto registryDir = xpkgs->parent_path().parent_path();
                 auto sandboxBin  = registryDir / "subos" / "default" / "bin";

@@ -30,8 +30,9 @@ import mcpp.pack.stage_tree;   // where `${mcpp.stage_dir}` points, and its mani
 import mcpp.build.build_program;
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
-import mcpp.xlings;
-import mcpp.xlings.runtime_selection;
+import mcpp.provider;
+import mcpp.provider.select;
+import mcpp.provider.runtime_selection;
 import mcpp.platform;
 import mcpp.pm.resolver;
 import mcpp.pm.index_spec;
@@ -592,7 +593,7 @@ std::expected<void, std::string> phase0_manifest_and_workspace(PrepareState& sta
     } else {
         std::optional<std::reference_wrapper<const mcpp::manifest::Manifest>> wsRef;
         if (state.wsManifest) wsRef = std::cref(*state.wsManifest);
-        auto selected = mcpp::xlings::runtime::select_runtime(
+        auto selected = mcpp::provider::runtime::select_runtime(
             *state.m, wsRef, *state.root, state.runtimeWorkspaceRoot);
         if (!selected) return std::unexpected(selected.error());
         state.runtimeSelection = std::move(*selected);

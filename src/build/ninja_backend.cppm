@@ -45,7 +45,8 @@ import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;   // shared_soname_flag decides by TARGET, not host
 import mcpp.toolchain.msvc_coroutines;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 import mcpp.platform;
 import mcpp.ui;
 import mcpp.log;
@@ -4872,7 +4873,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
 
 std::string ninja_program_for(const mcpp::toolchain::Toolchain& tc) {
     auto ninja_name = std::string("ninja") + std::string(mcpp::platform::exe_suffix);
-    if (auto nb = mcpp::xlings::paths::find_sibling_binary(tc.binaryPath, "ninja", ninja_name))
+    if (auto nb = mcpp::provider::beside_binary(tc.binaryPath, "ninja", ninja_name))
         return nb->string();
     return "ninja";
 }

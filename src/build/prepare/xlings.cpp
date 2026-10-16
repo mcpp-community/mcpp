@@ -9,7 +9,9 @@ import mcpp.build.prepare_inputs;
 import std;
 import mcpp.diag;
 import mcpp.build.refusal;
-import mcpp.xlings.address_set;
+import mcpp.provider;
+import mcpp.provider.select;
+import mcpp.provider.address_set;
 import mcpp.build.version_floor;
 import mcpp.log;
 import mcpp.manifest;
@@ -35,7 +37,6 @@ import mcpp.build.build_program;
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.config;
-import mcpp.xlings;
 import mcpp.toolchain.post_install;
 import mcpp.platform;
 import mcpp.fetcher;
@@ -257,12 +258,6 @@ step3_define_host_tc_closures_and_refresh_index(PrepareState& state) {
                     mcpp::toolchain::payload_frontend_dir(payload->root, pkg).string()));
         }
         state.provide_runtime_payload(pkg);
-        if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
-                **cfgH, payload->root, pkg,
-                state.runtimeBindingSnapshot.runtimeId, state.runtimeLibDir); !fixed)
-            return std::unexpected(std::format(
-                "host toolchain post-install fixup: {}", fixed.error()));
-        else state.report_fixup(*fixed, payload->root);
         // SAME THREE ARGUMENTS THE NATIVE CALL USES (line ~3550), not the
         // one-argument form. `detect()` probes `payloadPaths` — the
         // fine-grained glibc/linux-headers xpkg directories `resolve_link_model`
@@ -448,7 +443,7 @@ std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state)
     if (!state.m->indices.empty() || materializeRootRuntime) {
         auto cfg2 = state.get_cfg(true);
         if (cfg2) {
-            mcpp::xlings::ProjectEnv penv;
+            mcpp::provider::ProjectEnv penv;
             if (materializeRootRuntime) {
                 penv.deps  = state.runtimeOwnerManifest->xlings.deps;
                 // Appended, never substituted: a project may legitimately
@@ -488,7 +483,7 @@ std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state)
             // what it cannot see is `[xlings.workspace]` and
             // `[feature-xlings.<f>]` naming one package at two versions, which
             // reaches here as two addresses and used to install both.
-            std::vector<mcpp::xlings::addrset::Claim> rootClaims;
+            std::vector<mcpp::provider::addrset::Claim> rootClaims;
             std::vector<char> rootOnRequest;
             for (auto const& spec : applicable_xlings_addresses(
                      *state.runtimeOwnerManifest,
@@ -498,7 +493,7 @@ std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state)
                 rootClaims.push_back({spec, "this project", 0});
                 rootOnRequest.push_back(state.runtimeOwnerManifest->xlings.on_request(spec));
             }
-            auto rootUnified = mcpp::xlings::addrset::unify(rootClaims);
+            auto rootUnified = mcpp::provider::addrset::unify(rootClaims);
             if (!rootUnified) {
                 refusal::record(refusal::Code::ToolVersionConflict);
                 return std::unexpected(rootUnified.error());
@@ -514,7 +509,7 @@ std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state)
             if (!rootInstall) return std::unexpected(rootInstall.error());
             std::vector<std::string> declaredDeps = std::move(*rootInstall);
             if (materializeRootRuntime && !state.xlingsOverridden.empty()) {
-                namespace addrset = mcpp::xlings::addrset;
+                namespace addrset = mcpp::provider::addrset;
                 std::erase_if(penv.deps, [&](const std::string& a) {
                     return state.xlingsOverridden.contains(addrset::package_key(a));
                 });
@@ -642,7 +637,7 @@ std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state)
                     if (needsRemoteUpdate && !refreshPolicy.offline) {
                         mcpp::ui::status("Fetching", "custom index repos (first use)");
                         auto projEnv = mcpp::config::make_project_xlings_env(**cfg2, state.projectIndexRoot());
-                        int rc = mcpp::xlings::update_index(projEnv, /*quiet=*/true);
+                        int rc = mcpp::provider::open(projEnv)->update_index(/*quiet=*/true);
                         if (rc != 0) {
                             return std::unexpected(
                                 "project custom index update failed; run `mcpp index update` for details");

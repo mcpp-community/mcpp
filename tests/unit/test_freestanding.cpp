@@ -5,7 +5,7 @@ import mcpp.freestanding.target;
 import mcpp.freestanding.linkline;
 import mcpp.freestanding.runner;
 import mcpp.toolchain.triple;
-import mcpp.xlings;
+import mcpp.provider.xlings;
 import mcpp.build.build_program;
 
 using namespace mcpp::freestanding;
@@ -160,7 +160,7 @@ TEST(FreestandingRunner, TheMissingRunnerMessageNamesTheKeyAndTheTriple) {
 // to store internals mcpp is free to change.
 
 TEST(XpkgRef, ParsesEverySpellingAManifestMayWrite) {
-    using mcpp::xlings::paths::parse_xpkg_ref;
+    using mcpp::provider::xlings::paths::parse_xpkg_ref;
 
     auto full = parse_xpkg_ref("xim:picolibc-riscv@1.8.12");
     EXPECT_EQ(full.ns, "xim");
@@ -183,7 +183,7 @@ TEST(XpkgRef, ParsesEverySpellingAManifestMayWrite) {
 }
 
 TEST(XpkgPayload, APinnedRefResolvesToThatVersionOrToNothing) {
-    namespace xp = mcpp::xlings::paths;
+    namespace xp = mcpp::provider::xlings::paths;
     auto base = std::filesystem::temp_directory_path()
               / std::format("mcpp-xpkg-test-{}", ::getpid());
     std::filesystem::remove_all(base);
@@ -203,7 +203,7 @@ TEST(XpkgPayload, APinnedRefResolvesToThatVersionOrToNothing) {
 }
 
 TEST(XpkgPayload, AnUnpinnedRefTakesTheHighestVersionNumerically) {
-    namespace xp = mcpp::xlings::paths;
+    namespace xp = mcpp::provider::xlings::paths;
     auto base = std::filesystem::temp_directory_path()
               / std::format("mcpp-xpkg-test2-{}", ::getpid());
     std::filesystem::remove_all(base);
@@ -226,7 +226,7 @@ TEST(XpkgPayload, AnUnpinnedRefTakesTheHighestVersionNumerically) {
 // nothing was installed. That is what made a rule package unable to state a
 // floor: it declared `>=8.5.0`, got it, and `xpkg_dir` answered "".
 TEST(XpkgPayload, AConstrainedRefTakesTheHighestInstalledVersionSatisfyingIt) {
-    namespace xp = mcpp::xlings::paths;
+    namespace xp = mcpp::provider::xlings::paths;
     auto base = std::filesystem::temp_directory_path()
               / std::format("mcpp-xpkg-test3-{}", ::getpid());
     std::filesystem::remove_all(base);
@@ -261,7 +261,7 @@ TEST(XpkgPayload, AConstrainedRefTakesTheHighestInstalledVersionSatisfyingIt) {
 // An installed version whose directory name is not a SemVer is addressable by
 // its exact spelling. `8.0.RC1` is a real CANN version.
 TEST(XpkgPayload, AnUnparseableVersionIsStillAddressableExactly) {
-    namespace xp = mcpp::xlings::paths;
+    namespace xp = mcpp::provider::xlings::paths;
     auto base = std::filesystem::temp_directory_path()
               / std::format("mcpp-xpkg-test4-{}", ::getpid());
     std::filesystem::remove_all(base);
@@ -289,7 +289,7 @@ TEST(XpkgPayload, AnUnparseableVersionIsStillAddressableExactly) {
 // three or more are written-prefix equality, and a fourth segment is an
 // ordinary version. The lookup answered "" for every one of these before.
 TEST(XpkgPayload, ABareVersionSelectsWhatXlingsSelected) {
-    namespace xp = mcpp::xlings::paths;
+    namespace xp = mcpp::provider::xlings::paths;
     auto base = std::filesystem::temp_directory_path()
               / std::format("mcpp-xpkg-test5-{}", ::getpid());
     std::filesystem::remove_all(base);
@@ -317,7 +317,7 @@ TEST(XpkgPayload, ABareVersionSelectsWhatXlingsSelected) {
 // field when present, 0 for a record that predates it, and nothing at all when
 // there is no record -- which is the case mcpp judges by its marker alone.
 TEST(XpkgPayload, InstalledRevisionReadsTheXlingsRecord) {
-    namespace xp = mcpp::xlings::paths;
+    namespace xp = mcpp::provider::xlings::paths;
     auto dir = std::filesystem::temp_directory_path()
              / std::format("mcpp-xpkg-rev-{}", ::getpid());
     std::filesystem::remove_all(dir);

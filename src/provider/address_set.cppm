@@ -1,4 +1,4 @@
-// mcpp.xlings.address_set — one package, one version.
+// mcpp.provider.address_set — one package, one version.
 //
 // THE PROBLEM THIS EXISTS FOR. An xlings address is written
 // `[<ns>:]<name>[@<version>]`, and mcpp had two definitions of when two such
@@ -35,13 +35,13 @@
 // winner that fails it is refused. The asymmetry is the point: an upgrade must
 // not turn every dependency that pinned a tool into a hard failure, while a
 // floor a rule package depends on must not be silently lowered.
-export module mcpp.xlings.address_set;
+export module mcpp.provider.address_set;
 
 import std;
 import mcpp.manifest;
 import mcpp.version_req;
 
-export namespace mcpp::xlings::addrset {
+export namespace mcpp::provider::addrset {
 
 // One declaration of one address, and where it came from.
 struct Claim {
@@ -97,11 +97,11 @@ std::optional<std::string> override_violation(std::span<const Claim> claims,
 std::vector<std::string> requirements_for(std::span<const Claim> claims,
                                           std::string_view key);
 
-} // namespace mcpp::xlings::addrset
+} // namespace mcpp::provider::addrset
 
 // ── implementation ──────────────────────────────────────────────────────────
 
-namespace mcpp::xlings::addrset {
+namespace mcpp::provider::addrset {
 
 std::string package_key(std::string_view address) {
     const auto e = mcpp::manifest::parse_address(address);
@@ -224,4 +224,4 @@ std::expected<Resolution, std::string> unify(std::span<const Claim> claims) {
     return out;
 }
 
-} // namespace mcpp::xlings::addrset
+} // namespace mcpp::provider::addrset

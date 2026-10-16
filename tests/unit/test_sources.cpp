@@ -12,10 +12,10 @@ import mcpp.libs.toml;
 import mcpp.build.directives;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.registry;
-import mcpp.xlings.address_set;
+import mcpp.provider.address_set;
 
 namespace dirs = mcpp::build::directives;
-namespace addrset = mcpp::xlings::addrset;
+namespace addrset = mcpp::provider::addrset;
 
 namespace {
 

@@ -11,7 +11,8 @@ module;
 export module mcpp.fallback.probe_sysroot;
 
 import std;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 import mcpp.platform;
 import mcpp.log;
 
@@ -53,7 +54,7 @@ remap_xlings_baked_sysroot(std::string_view reportedPath,
     if (reportedPath.empty()) return std::nullopt;
     if (!reportedPath.ends_with("subos/default")) return std::nullopt;
 
-    auto xpkgsOpt = mcpp::xlings::paths::xpkgs_from_compiler(compilerBin);
+    auto xpkgsOpt = mcpp::provider::store_of(compilerBin);
     if (xpkgsOpt) {
         // Owned by this toolchain's registry? Then it is the right answer.
         auto registry = xpkgsOpt->parent_path().parent_path();
@@ -81,7 +82,7 @@ remap_xlings_baked_sysroot(std::string_view reportedPath,
 bool sysroot_is_owned(std::string_view reportedPath,
                       const std::filesystem::path& compilerBin) {
     if (reportedPath.empty()) return false;
-    auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(compilerBin);
+    auto xpkgs = mcpp::provider::store_of(compilerBin);
     // No registry to compare against -- nothing to contradict, so accept.
     if (!xpkgs) return true;
     return path_is_under(std::filesystem::path(std::string(reportedPath)),

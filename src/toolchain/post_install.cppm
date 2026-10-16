@@ -1,9 +1,13 @@
-// mcpp.toolchain.post_install — toolchain payload post-install fixups (patchelf / specs / cfg)
+// mcpp.toolchain.post_install — what an installed toolchain payload says
+// about the runtime it was built against, read and never written: its baked
+// runtime binding, the pristine link spec a build generates into its own
+// directory, the glibc payload a runtime identity names.
 //
-// Extracted verbatim from cli.cppm (cli modularization, see
-// .agents/docs/2026-06-10-cli-modularization.md). Zero behavior change:
-// bodies are byte-identical moves; only the surrounding module/namespace
-// changed (mcpp::cli::detail -> mcpp::cli).
+// A payload is immutable (design 2026-10-16 §7): the post-install rewrites
+// that used to live here (PT_INTERP/RUNPATH by patchelf, gcc specs, clang cfg,
+// the `.mcpp-fixup.json` marker) are gone. A toolchain runs on the runtime
+// its provider bound it to; what mcpp's artifacts load is decided per build
+// (mcpp.toolchain.linkmodel).
 
 module;
 #include <cstdio>
@@ -20,153 +24,11 @@ import mcpp.runtime.binding;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.registry;
 import mcpp.ui;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 
 namespace mcpp::toolchain {
 
-// ── #273 sandbox containment ─────────────────────────────────────────────
-// patchelf_walk once escaped its sandbox through a symlinked payload
-// directory (an e2e sandbox seeded `registry/data/xpkgs/xim-x-gcc` from the
-// user's real ~/.xlings via `ln -s`) and rewrote PT_INTERP/RUNPATH of the
-// REAL installation against loader paths inside a soon-deleted mktemp dir.
-//
-// Containment rule: every rewrite in this module is fenced by ONE explicit
-// trust root — the owning sandbox's registry (`cfg.registryDir`), resolved
-// once at the entry point via `containment_root` and threaded down as a
-// parameter. The root is a first-class fact of the system; it is never
-// re-derived from the payload path (canonicalizing the payload first would
-// resolve the malicious symlink and collapse the fence into a tautology).
-export std::filesystem::path
-containment_root(const std::filesystem::path& registryDir) {
-    std::error_code ec;
-    auto canon = std::filesystem::weakly_canonical(registryDir, ec);
-    if (ec) return {};   // empty root → escapes_containment fails closed
-    return canon;
-}
-
-// True when `file`'s physical (symlink-resolved) location falls outside
-// `rootCanon`. Fails CLOSED: an empty root or an unresolvable path counts
-// as escaping — never patch what cannot be proven contained. Comparison is
-// per path component (a `registry-evil` sibling sharing the string prefix
-// is outside).
-export bool escapes_containment(const std::filesystem::path& file,
-                                const std::filesystem::path& rootCanon) {
-    if (rootCanon.empty()) return true;
-    std::error_code ec;
-    auto real = std::filesystem::weakly_canonical(file, ec);
-    if (ec) return true;
-    auto r = rootCanon.generic_string();
-    auto f = real.generic_string();
-    if (f == r) return false;
-    return !(f.size() > r.size() && f.starts_with(r) && f[r.size()] == '/');
-}
-
-// Run patchelf on every dynamic ELF in `dir` (recursively):
-//   - Set PT_INTERP to `loader` (the sandbox-local glibc loader).
-//   - Set RUNPATH to `rpath` (colon-separated list of sandbox lib dirs).
-// Idempotent; skips static binaries and shared libs without PT_INTERP.
-//
-// TODO(xlings/libxpkg-upstream): xim 0.4.10's `elfpatch.auto({interpreter=...})`
-// is supposed to do this in install hooks but currently scans 0 files for
-// some packages (verified empirically: `binutils: elfpatch auto: 0 0 0`).
-// Once the upstream legacy elfpatch path is fixed, this mcpp-side walker
-// can be deleted.
-export void patchelf_walk(const std::filesystem::path& dir,
-                   const std::filesystem::path& loader,
-                   const std::string& rpath,
-                   const std::filesystem::path& patchelfBin,
-                   const std::filesystem::path& fenceRoot)
-{
-    if (!std::filesystem::exists(dir) || !std::filesystem::exists(patchelfBin))
-        return;
-    std::error_code ec;
-    for (auto it = std::filesystem::recursive_directory_iterator(dir, ec);
-         it != std::filesystem::recursive_directory_iterator{}; it.increment(ec))
-    {
-        if (ec) { ec.clear(); continue; }
-        if (!it->is_regular_file(ec)) continue;
-        auto path = it->path();
-        // Skip non-ELF (cheap magic check)
-        std::ifstream is(path, std::ios::binary);
-        char m[4]{};
-        is.read(m, 4);
-        if (!is || m[0] != 0x7f || m[1] != 'E' || m[2] != 'L' || m[3] != 'F')
-            continue;
-        is.close();
-        // #273 fence: never rewrite files that physically live outside the
-        // sandbox (payload reached through a symlink → foreign installation).
-        if (escapes_containment(path, fenceRoot)) {
-            mcpp::log::verbose("toolchain", std::format(
-                "patchelf_walk: skip (outside sandbox, #273 fence): {}",
-                path.string()));
-            continue;
-        }
-        // Probe PT_INTERP — skip static binaries (no interp).
-        auto probe = std::format("{} --print-interpreter {} 2>/dev/null",
-                                 mcpp::platform::shell::quote(patchelfBin.string()),
-                                 mcpp::platform::shell::quote(path.string()));
-        auto probeResult = mcpp::platform::process::capture(probe);
-        bool hasInterp = (probeResult.exit_code == 0 && !probeResult.output.empty());
-
-        // Patch a COPY and atomically rename it into place. The payload can
-        // contain libraries the CURRENT process has mmapped (a self-hosted
-        // mcpp links the sandbox glibc/libgcc_s, and since the fixup
-        // pipeline runs on every install path, the patching process may BE
-        // such a consumer). In-place patchelf rewrites the backing file of
-        // those live mappings and corrupts the running process — observed
-        // on CI as an exit-time SIGSEGV in _dl_fini jumping to an
-        // unrelocated address. rename() gives the patched content a fresh
-        // inode while live processes keep the old one.
-        auto tmp = path;
-        tmp += ".mcpp-patch.tmp";
-        {
-            std::error_code cec;
-            std::filesystem::copy_file(
-                path, tmp, std::filesystem::copy_options::overwrite_existing, cec);
-            if (cec) continue;
-            std::filesystem::permissions(
-                tmp, std::filesystem::status(path, cec).permissions(),
-                std::filesystem::perm_options::replace, cec);
-        }
-        bool patched = true;
-        if (hasInterp) {
-            patched = (mcpp::platform::process::run_silent(std::format(
-                "{} --set-interpreter {} {} 2>/dev/null",
-                mcpp::platform::shell::quote(patchelfBin.string()),
-                mcpp::platform::shell::quote(loader.string()),
-                mcpp::platform::shell::quote(tmp.string()))) == 0) && patched;
-        }
-        // Always set RUNPATH (works on .so too — they need to find deps).
-        if (!rpath.empty()) {
-            patched = (mcpp::platform::process::run_silent(std::format(
-                "{} --set-rpath {} {} 2>/dev/null",
-                mcpp::platform::shell::quote(patchelfBin.string()),
-                mcpp::platform::shell::quote(rpath),
-                mcpp::platform::shell::quote(tmp.string()))) == 0) && patched;
-        }
-        std::error_code rec;
-        if (patched) std::filesystem::rename(tmp, path, rec);
-        if (!patched || rec) std::filesystem::remove(tmp, rec);
-    }
-}
-
-// xim bakes the installing user's XLINGS_HOME into gcc specs at install
-// time (as `--dynamic-linker` and `-rpath`). When mcpp uses its own
-// isolated sandbox (MCPP_HOME/registry/), the baked-in paths point to
-// xlings' home, not mcpp's sandbox glibc — binaries would fail to exec.
-//
-// Mcpp does a post-install spec rewrite:
-//   - Dynamically detects the baked-in loader path from the specs file
-//   - Replaces it with the sandbox glibc payload's loader
-//   - Replaces the rpath with <glibc_lib>:<gcc_lib64>
-// NOT idempotent across homes -- and that is a defect, not a caveat. The
-// needle is one path (the baked glibc dir) while the replacement is two
-// (glibc + gccLib), so a second home patching the same shared payload leaves
-// the first home's gccLib entry behind: it never appears in any later needle.
-// One stale rpath per run, forever. Measured at 68 on a developer machine,
-// all of them gccLib, none glibc -- a distribution only this mechanism
-// produces. See 2026-08-08-payload-version-and-contract-drift-design.md §2.1;
-// this function is slated for deletion, with the flags moving to the build.
 // Extract the baked-in glibc loader path (".../ld-linux-<arch>.so.N") from a
 // gcc specs file. xim bakes the installing user's XLINGS_HOME into specs at
 // install time, so the DIR varies per machine, and the loader NAME varies
@@ -257,126 +119,6 @@ export std::string detect_baked_loader(const std::string& specsContent) {
 // which prints what is compiled into the binary and is therefore always
 // recoverable.
 //
-// patchelf_walk stays: making the compiler itself runnable is a different
-// question from what the compiler produces.
-
-
-// Regenerate the clang driver cfg files after the LLVM payload landed in the
-// sandbox. The cfg xlings authored at install time is a per-machine,
-// per-install-path artifact (its content depended on what existed when the
-// package was installed); mcpp's builds bypass it entirely
-// (--no-default-config), so its only remaining job is to make a HUMAN
-// running `clang++` directly get a working, hermetic compiler. We therefore
-// regenerate it deterministically from the same link model the builds use,
-// instead of line-patching whatever a given install produced:
-//   C + C++:  -B/-L glibc payload, payload dynamic linker + rpath,
-//             lld / compiler-rt / libunwind
-//   C++ only: -nostdinc++ -stdlib=libc++ + payload libc++ headers/libs
-// On macOS the C library comes from the SDK: --sysroot=<sdk> + libc++ headers.
-export void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
-                     const std::filesystem::path& glibcLibDir,
-                     const std::filesystem::path& fenceRoot) {
-    // #273 fence — same rule the removed gcc specs fixup used.
-    if (escapes_containment(payloadRoot, fenceRoot)) {
-        mcpp::log::verbose("toolchain",
-            "fixup_clang_cfg: skip (payload outside sandbox, #273 fence)");
-        return;
-    }
-    auto binDir = payloadRoot / "bin";
-    if (!std::filesystem::exists(binDir)) return;
-
-    // Target triple from the payload layout (lib/<triple>), used for the
-    // loader lookup and the per-target libc++ include/lib dirs.
-    std::string triple;
-    std::error_code ec;
-    for (auto it = std::filesystem::directory_iterator(payloadRoot / "lib", ec);
-         !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
-        auto name = it->path().filename().string();
-        if (it->is_directory(ec) && name.find("-linux-") != std::string::npos) {
-            triple = name;
-            break;
-        }
-    }
-
-    std::string common, cxxOnly, cHdr;
-    auto cxxInclude = payloadRoot / "include" / "c++" / "v1";
-    if constexpr (mcpp::platform::is_macos) {
-        // macOS keeps its historical cfg semantics: the C library and the
-        // C++ runtime LINK both come from the SDK; only the libc++ HEADERS
-        // come from the payload. Do NOT add -nostdinc++/-stdlib=libc++
-        // here — a bare cfg-driven link has no libc++abi handling (that
-        // lives in the main build's needs_explicit_libcxx path) and dies
-        // with undefined __cxa_* / __gxx_personality_v0.
-        if (auto sdk = mcpp::platform::macos::sdk_path())
-            common += "--sysroot=" + sdk->string() + "\n";
-        if (std::filesystem::exists(cxxInclude))
-            cxxOnly += "-isystem " + cxxInclude.string() + "\n";
-    } else {
-        if constexpr (mcpp::platform::is_linux)
-            common += "-nostdlibinc\n";
-        if (!glibcLibDir.empty()) {
-            auto loader = resolve_loader(glibcLibDir, triple);
-            common += "-B" + glibcLibDir.string() + "\n";
-            common += "-L" + glibcLibDir.string() + "\n";
-            if (!loader.empty())
-                common += "-Wl,--dynamic-linker=" + loader.string() + "\n";
-            common += "-Wl,--enable-new-dtags,-rpath," + glibcLibDir.string() + "\n";
-        }
-        common += "-fuse-ld=lld\n--rtlib=compiler-rt\n--unwindlib=libunwind\n";
-
-        // HEADER axis (C and C++ drivers alike): the C library and kernel
-        // headers come from the same payloads the link axis uses. Without
-        // these, a direct `clang hello.c` only works when the HOST happens
-        // to ship /usr/include — silently non-hermetic, broken on
-        // header-less machines. For C++ they must come AFTER the libc++
-        // block (its C-header wrappers reach libc via #include_next), so
-        // they are collected separately and appended in order below —
-        // byte-consistent with what llvm.lua's install hook generates.
-        if (!glibcLibDir.empty()) {
-            auto glibcInclude = glibcLibDir.parent_path() / "include";
-            if (std::filesystem::exists(glibcInclude / "features.h"))
-                cHdr += "-isystem " + glibcInclude.string() + "\n";
-            constexpr std::string_view kLinuxLimits = "include/linux/limits.h";
-            auto linuxHeaders = mcpp::xlings::paths::find_sibling_package(
-                payloadRoot / "bin" / "clang++", "linux-headers", kLinuxLimits);
-            if (!linuxHeaders)
-                linuxHeaders = mcpp::xlings::paths::find_home_tool(
-                    "linux-headers", kLinuxLimits);
-            if (linuxHeaders)
-                cHdr += "-isystem " + (*linuxHeaders / "include").string() + "\n";
-        }
-
-        if (std::filesystem::exists(cxxInclude)) {
-            cxxOnly += "-nostdinc++\n-stdlib=libc++\n";
-            cxxOnly += "-isystem " + cxxInclude.string() + "\n";
-        }
-        if (!triple.empty()) {
-            auto tripleInclude = payloadRoot / "include" / triple / "c++" / "v1";
-            if (std::filesystem::exists(tripleInclude))
-                cxxOnly += "-isystem " + tripleInclude.string() + "\n";
-        }
-        cxxOnly += cHdr;
-        if (!triple.empty()) {
-            auto tripleLib = payloadRoot / "lib" / triple;
-            if (std::filesystem::exists(tripleLib)) {
-                cxxOnly += "-L" + tripleLib.string() + "\n";
-                cxxOnly += "-Wl,-rpath," + tripleLib.string() + "\n";
-            }
-        }
-    }
-
-    // Regenerate every existing cfg in bin/ (clang.cfg, clang++.cfg, and any
-    // versioned clang-<major>.cfg xlings created), classified C vs C++ by
-    // whether the driver name contains "++".
-    for (auto it = std::filesystem::directory_iterator(binDir, ec);
-         !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
-        auto name = it->path().filename().string();
-        if (!name.ends_with(".cfg")) continue;
-        const bool isCxx = name.find("++") != std::string::npos;
-        std::ofstream os(it->path());
-        os << common << (isCxx ? cxxOnly : cHdr);
-    }
-}
 
 // Resolve one glibc payload from the RuntimeBinding identity. The lookup is
 // exact: `glibc@2.44.3` means the `2.44.3` directory and no other, which is
@@ -439,238 +181,19 @@ select_glibc_payload_lib(const std::filesystem::path& glibcRoot,
     return lib;
 }
 
-std::expected<std::filesystem::path, std::string>
-find_sandbox_glibc_lib(const mcpp::xlings::Env& xlEnv,
-                       std::string_view runtimeId) {
-    return select_glibc_payload_lib(
-        mcpp::xlings::paths::xim_tool_root(xlEnv, "glibc"), runtimeId);
-}
-
-// Post-install fixup for a freshly-installed GNU gcc payload: patchelf
-// PT_INTERP/RUNPATH for gcc/binutils binaries + linker-specs wiring against
-// the sandbox glibc — without it a fresh-sandbox glibc gcc cannot find the
-// C library (stdlib.h not found).
-void gcc_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
-                            const std::filesystem::path& payloadRoot,
-                            const std::filesystem::path& glibcLibDir) {
-    auto xlEnv = mcpp::config::make_xlings_env(cfg);
-    auto gccLibDir = payloadRoot / "lib64";
-    auto patchelfBin = mcpp::xlings::paths::xim_tool(xlEnv, "patchelf",
-        mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
-
-    if (!glibcLibDir.empty() && std::filesystem::exists(gccLibDir)
-        && std::filesystem::exists(patchelfBin))
-    {
-        auto loader = resolve_loader(glibcLibDir, /*targetTriple=*/{});
-        auto rpath = std::format("{}:{}",
-            glibcLibDir.string(), gccLibDir.string());
-
-        mcpp::log::verbose("toolchain", std::format(
-            "gcc fixup: patchelf_walk rpath='{}'", rpath));
-        // Single trust root for every walk below — including the binutils
-        // SIBLING payloads, which the entry-point ownership guard does not
-        // cover (it only vets the gcc payload itself).
-        auto fence = containment_root(cfg.registryDir);
-        auto binutilsRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "binutils");
-        if (std::filesystem::exists(binutilsRoot)) {
-            for (auto& v : std::filesystem::directory_iterator(binutilsRoot))
-                patchelf_walk(v.path(), loader, rpath, patchelfBin, fence);
-        }
-        patchelf_walk(payloadRoot, loader, rpath, patchelfBin, fence);
-
-    } else {
-        mcpp::ui::warning(
-            "could not locate sandbox glibc/gcc/patchelf paths; "
-            "gcc-built binaries may have unresolved PT_INTERP/RUNPATH");
-    }
-}
-
-// LLVM payload fixup: RUNPATH for the bundled runtime shared libraries
-// (libc++.so / libunwind.so need to find siblings like libatomic.so.1 after
-// the payload moved) + deterministic cfg regeneration. Only lib/ dirs are
-// walked — NOT bin/: the clang++ binary's own RUNPATH (zlib, libxml2, …) was
-// set by xlings and must be preserved.
-void llvm_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
-                             const std::filesystem::path& payloadRoot,
-                             const std::filesystem::path& glibcLibDir) {
-    auto xlEnv = mcpp::config::make_xlings_env(cfg);
-    auto patchelfBin = mcpp::xlings::paths::xim_tool(xlEnv, "patchelf",
-        mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
-    if (!glibcLibDir.empty() && std::filesystem::exists(patchelfBin)) {
-        auto loader = resolve_loader(glibcLibDir, /*targetTriple=*/{});
-        auto llvmLib = payloadRoot / "lib";
-        std::string rpath;
-        std::error_code ec;
-        for (auto it = std::filesystem::directory_iterator(llvmLib, ec);
-             !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
-            if (it->is_directory(ec)
-                && it->path().filename().string().find("-linux-") != std::string::npos)
-                rpath += it->path().string() + ":";
-        }
-        rpath += llvmLib.string() + ":" + glibcLibDir.string();
-        mcpp::log::verbose("toolchain", std::format(
-            "llvm fixup: patchelf_walk lib/ rpath='{}'", rpath));
-        patchelf_walk(llvmLib, loader, rpath, patchelfBin,
-                      containment_root(cfg.registryDir));
-    }
-    mcpp::log::verbose("toolchain", "llvm fixup: fixup_clang_cfg");
-    fixup_clang_cfg(payloadRoot, glibcLibDir, containment_root(cfg.registryDir));
-}
-
-// ── the single fixup pipeline entry ──────────────────────────────────────
-//
-// Called from the payload-resolution seam shared by ALL toolchain install
-// paths (explicit `mcpp toolchain install`, default-toolchain auto-install,
-// and manifest `[toolchain]` auto-install). Previously each path remembered
-// (or forgot) its own subset of fixups: the manifest path ran none, which is
-// how a fresh llvm install kept a stale install-time cfg and unpatched
-// runtime libs. Idempotent via a content-fingerprinted marker.
-//
-// Bump when the fixup logic changes so existing installs re-run it.
-constexpr std::string_view kFixupRev = "hermetic-5-managed-headers";
-
-// What the fixup DID, so the caller can decide how loud to be about it.
-//
-// mcpp#427: this used to be `expected<void>`, and "the runtime identity is
-// unknown" was an ERROR inside this function. That made one severity for every
-// caller, and it was the wrong one: `mcpp build` died on a machine whose
-// default SubOS predates xlings' `subos_info` block — an absence, not a
-// contradiction — while the very function this gate protects already degrades
-// correctly on an empty `glibcLibDir` (it warns and skips patching). The
-// degradation existed and was unreachable.
-//
-// Severity belongs to the caller. `build` continues; `toolchain install`,
-// which the user asked for explicitly, says so at warning level.
-export struct FixupOutcome {
-    bool        applied = false;   // patching actually ran
-    std::string skippedReason;     // non-empty ⇒ degraded, and why
-};
-
-// WHICH TOOLCHAIN PAYLOADS THE FIXUP PATCHES AGAINST A C RUNTIME, stated once.
-//
-// Empty for every payload the fixup leaves alone. On Windows it is always
-// empty: a PE toolchain has nothing to patch. Callers that must provide the
-// runtime payload before a fixup ask this rather than repeating the dispatch,
-// so a toolchain that needs no C runtime payload never causes one to be
-// installed.
-export std::string_view post_install_fixup_kind(const XimToolchainPackage& pkg) {
+// WHICH TOOLCHAIN PAYLOADS RUN ON A C RUNTIME PAYLOAD, stated once: a GNU
+// gcc and an llvm on Linux. The runtime they run on is the one the provider
+// bound them to when it installed them (its home's runtime pin, design
+// 2026-10-16 §7.2); mcpp makes sure that runtime is installed and writes
+// nothing into the toolchain (§7.1: the patchelf, specs and cfg rewrites
+// that once lived here are gone). Empty on every other payload and on
+// Windows, where a PE toolchain has no C runtime payload.
+export std::string_view runtime_payload_kind(const XimToolchainPackage& pkg) {
     if constexpr (mcpp::platform::is_windows) return {};
     if (pkg.needsGccPostInstallFixup) return "gcc";
     if (pkg.ximName == "llvm")        return "llvm";
     return {};
 }
-
-export std::expected<FixupOutcome, std::string>
-ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
-                          const std::filesystem::path& payloadRoot,
-                          const XimToolchainPackage& pkg,
-                          std::string_view runtimeId = {},
-                          const std::filesystem::path& selectedRuntimeLibDir = {}) {
-    const std::string kind{post_install_fixup_kind(pkg)};
-    if (kind.empty()) return FixupOutcome{};
-
-    // Ownership guard: payloads inherited via symlink from another MCPP_HOME
-    // are not ours to patch — their owner already ran the fixup, and patching
-    // through the symlink would rewrite the canonical files against OUR
-    // (possibly ephemeral) paths, bricking the owner's toolchain.
-    // Rewritten on the shared containment predicate (#273): the old inline
-    // check reused one error_code across both canonicalizations (the second
-    // success cleared the first failure) and compared raw strings without a
-    // component boundary (a `registry-evil` sibling passed). The predicate
-    // fails closed on any resolution error.
-    if (escapes_containment(payloadRoot, containment_root(cfg.registryDir))) {
-        mcpp::log::verbose("toolchain", std::format(
-            "skip {} fixup: payload '{}' resolves outside this home — "
-            "inherited payload, owner is responsible for its fixup",
-            kind, payloadRoot.string()));
-        return FixupOutcome{};
-    }
-
-    auto xlEnv = mcpp::config::make_xlings_env(cfg);
-    std::filesystem::path glibcLibDir;
-    std::string skipped;
-    if constexpr (mcpp::platform::is_linux) {
-        // ONE DERIVATION, AND IT IS NOT THIS FUNCTION'S.
-        //
-        // The caller resolves a RuntimeBinding first and hands the identity in;
-        // `prepare.cppm` says so where it does it ("The fixup is itself a
-        // consumer of RuntimeBinding: doing it first would recreate #392 by
-        // letting directory order choose a libc"). This function used to ALSO
-        // read `<xlings home>/subos/default` when the identity was empty —
-        // a second derivation that (a) contradicted that architecture, (b)
-        // consulted a HARDCODED SubOS even when the project selected another
-        // one, and (c) turned an absent description into a fatal error.
-        //
-        // Unknown degrades. A CONTRADICTION — an identity that is declared but
-        // cannot be honoured — still fails, below.
-        std::string selected(runtimeId);
-        if (selected.empty()) {
-            skipped = "the selected SubOS declares no runtime identity, so "
-                      "there is no C runtime to bind this toolchain to";
-        } else if (!selectedRuntimeLibDir.empty()) {
-            constexpr std::string_view prefix = "glibc@";
-            auto version = selected.starts_with(prefix)
-                ? std::string_view(selected).substr(prefix.size())
-                : std::string_view{};
-            auto payload = selectedRuntimeLibDir.parent_path();
-            auto discovered = payload_lib_dir_with_loader(payload);
-            std::error_code dec, sec;
-            auto discoveredReal = std::filesystem::weakly_canonical(discovered, dec);
-            auto selectedReal = std::filesystem::weakly_canonical(
-                selectedRuntimeLibDir, sec);
-            if (version.empty() || payload.filename() != version
-                || discovered.empty() || dec || sec
-                || discoveredReal != selectedReal) {
-                return std::unexpected(std::format(
-                    "selected RuntimeBinding {} points at incompatible/stale "
-                    "runtime directory '{}'; expected the exact payload version",
-                    selected, selectedRuntimeLibDir.string()));
-            }
-            glibcLibDir = selectedRuntimeLibDir;
-        } else {
-            auto exact = find_sandbox_glibc_lib(xlEnv, selected);
-            if (!exact) return std::unexpected(exact.error());
-            glibcLibDir = std::move(*exact);
-        }
-    }
-
-    // Nothing to bind to. Report it and change nothing — patching a payload
-    // against a runtime we cannot name would be a guess, and a guess here is
-    // an ABI. NO MARKER IS WRITTEN: "we did nothing" must never be able to
-    // read back as "already applied", so the day the SubOS learns to describe
-    // itself the fixup runs on the next invocation.
-    if (!skipped.empty())
-        return FixupOutcome{.applied = false, .skippedReason = std::move(skipped)};
-
-    // Content-fingerprinted marker: a marker whose INPUTS drifted (different
-    // glibc payload, newer fixup logic) re-runs the fixup — "a process once
-    // exited 0" is not evidence the current inputs were ever applied.
-    auto markerPath = payloadRoot / ".mcpp-fixup.json";
-    nlohmann::json expected;
-    expected["schema"]   = 1;
-    expected["kind"]     = kind;
-    expected["rev"]      = std::string(kFixupRev);
-    expected["glibcLib"] = glibcLibDir.generic_string();
-    {
-        std::ifstream is(markerPath);
-        if (is) {
-            try {
-                nlohmann::json actual;
-                is >> actual;
-                if (actual == expected)     // fixup already applied
-                    return FixupOutcome{.applied = true, .skippedReason = {}};
-            } catch (...) { /* corrupt marker → re-run */ }
-        }
-    }
-
-    if (kind == "gcc")  gcc_post_install_fixup(cfg, payloadRoot, glibcLibDir);
-    else                llvm_post_install_fixup(cfg, payloadRoot, glibcLibDir);
-
-    std::ofstream os(markerPath);
-    os << expected.dump(2) << "\n";
-    return FixupOutcome{.applied = true, .skippedReason = {}};
-}
-
 
 // PT_INTERP of an ELF, read directly.
 //
@@ -768,7 +291,7 @@ std::string baked_runtime_binding(const std::filesystem::path& compilerBin) {
     // host loader. A fossil that names something no longer present is not an
     // authority; it is just old.
     std::vector<std::string> installed;
-    if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(compilerBin)) {
+    if (auto xpkgs = mcpp::provider::store_of(compilerBin)) {
         for (auto it = std::filesystem::directory_iterator(*xpkgs / "xim-x-glibc", ec);
              !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
             if (!it->is_directory(ec)) continue;

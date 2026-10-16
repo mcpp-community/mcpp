@@ -33,7 +33,8 @@ import mcpp.platform;
 import mcpp.toolchain.model;
 import mcpp.toolchain.probe;
 import mcpp.toolchain.triple;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 
 export namespace mcpp::toolchain::msvc {
 
@@ -1168,7 +1169,7 @@ std::optional<MsvcInstallation> detect_installation() {
 std::vector<std::filesystem::path>
 sibling_sdk_roots(const std::filesystem::path& clPath) {
     std::vector<std::filesystem::path> out;
-    auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(clPath);
+    auto xpkgs = mcpp::provider::store_of(clPath);
     if (!xpkgs) return out;   // a system cl.exe: not in any store
     std::error_code ec;
     auto pkgRoot = *xpkgs / "xim-x-windows-sdk";
@@ -1362,7 +1363,7 @@ std::string describe_msvc_probe(const MsvcProbe& p) {
 }
 
 Origin origin_of(const std::filesystem::path& clPath) {
-    return mcpp::xlings::paths::xpkgs_from_compiler(clPath)
+    return mcpp::provider::store_of(clPath)
         ? Origin::Managed : Origin::SystemMsvc;
 }
 
@@ -1574,13 +1575,13 @@ std::string cl_stage_command(const Toolchain& tc,
     // cache on C: is the real CI layout).
     return std::format(
         "cd /d {} && {} /nologo {}{} /EHsc /O2 /W0{} /c {} /ifcOutput {} /Fo:{} 2>&1",
-        mcpp::xlings::shq(cacheDir.string()),
-        mcpp::xlings::shq(tc.binaryPath.string()),
+        mcpp::platform::shell::quote(cacheDir.string()),
+        mcpp::platform::shell::quote(tc.binaryPath.string()),
         cppStandardFlag,
         crtFlag.empty() ? std::string{} : std::format(" {}", crtFlag),
         extraRef,
-        mcpp::xlings::shq(source.string()),
-        mcpp::xlings::shq(ifcOut.string()),
+        mcpp::platform::shell::quote(source.string()),
+        mcpp::platform::shell::quote(ifcOut.string()),
         objName);
 }
 
@@ -1648,7 +1649,7 @@ std::vector<std::string> std_compat_build_commands(
     std::string_view cppStandardFlag, std::string_view crtFlag) {
     // std.compat imports std — reference the freshly staged std.ifc.
     auto ref = std::format(" /reference std={}",
-                           mcpp::xlings::shq(std_bmi_path(cacheDir).string()));
+                           mcpp::platform::shell::quote(std_bmi_path(cacheDir).string()));
     return { cl_stage_command(tc, cacheDir, cppStandardFlag,
                               tc.stdCompatSource,
                               std_compat_bmi_path(cacheDir), "std.compat.obj",

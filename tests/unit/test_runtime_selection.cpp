@@ -5,9 +5,9 @@ import mcpp.config;
 import mcpp.manifest;
 import mcpp.platform;
 import mcpp.runtime.binding;
-import mcpp.xlings.runtime_selection;
+import mcpp.provider.runtime_selection;
 
-namespace runtime = mcpp::xlings::runtime;
+namespace runtime = mcpp::provider::runtime;
 
 namespace {
 

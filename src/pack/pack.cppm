@@ -48,7 +48,8 @@ import mcpp.pack.stage_tree;
 import mcpp.pack.strip;
 import mcpp.pack.zip;
 import mcpp.platform;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 import mcpp.manifest;
 import mcpp.toolchain.triple;
 
@@ -848,11 +849,10 @@ ldd_parse(const std::filesystem::path& binary)
 std::filesystem::path
 sandbox_patchelf(const mcpp::config::GlobalConfig& cfg) {
     auto env = mcpp::config::make_xlings_env(cfg);
-    auto bin = mcpp::xlings::paths::xim_tool(env, "patchelf",
-        mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
+    auto bin = mcpp::provider::open(env)->pinned("patchelf", mcpp::provider::kPatchelfVersion) / "bin" / "patchelf";
     if (std::filesystem::exists(bin)) return bin;
     // Fallback: scan all versions (in case a different version is installed).
-    auto root = mcpp::xlings::paths::xim_tool_root(env, "patchelf");
+    auto root = mcpp::provider::open(env)->versions("patchelf");
     std::error_code ec;
     if (!std::filesystem::exists(root, ec)) return {};
     for (auto& v : std::filesystem::directory_iterator(root, ec)) {

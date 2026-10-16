@@ -39,7 +39,8 @@ import mcpp.build.build_program;
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.config;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 import mcpp.build.resources;   // the resource compiler the row uses (#734 E2)
 import mcpp.toolchain.post_install;
 import mcpp.platform;
@@ -426,7 +427,7 @@ void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
     // toolchain or link mode resolved, so this is set before the toolchain
     // gate below.
     if (cfg) {
-        const auto view = mcpp::xlings::paths::sysroot(mcpp::config::make_xlings_env(*cfg));
+        const auto view = mcpp::provider::open(mcpp::config::make_xlings_env(*cfg))->sysroot();
         e.pkgConfigLibdir = (view / "usr" / "lib" / "pkgconfig").generic_string()
             + mcpp::platform::env::path_list_separator()
             + (view / "usr" / "share" / "pkgconfig").generic_string();

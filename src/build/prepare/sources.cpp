@@ -23,13 +23,14 @@ import mcpp.wire;
 import mcpp.manifest;
 import mcpp.platform;
 import mcpp.ui;
-import mcpp.xlings;
-import mcpp.xlings.address_set;
+import mcpp.provider;
+import mcpp.provider.select;
+import mcpp.provider.address_set;
 
 namespace mcpp::build {
 
 namespace fs = std::filesystem;
-namespace addrset = mcpp::xlings::addrset;
+namespace addrset = mcpp::provider::addrset;
 
 namespace {
 
@@ -383,7 +384,7 @@ void fill_xpkg_env(PrepareState& state, mcpp::build::BuildProgramEnv& e,
     std::set<std::string> answered;
     // Namespaced first -- it is the exact spelling, and the bare form must not
     // shadow it (the receiver keeps the first value it is given for a name).
-    auto put = [&](const mcpp::xlings::paths::XpkgRef& ref, std::string_view suffix,
+    auto put = [&](const mcpp::provider::PackageRef& ref, std::string_view suffix,
                    const std::string& value) {
         e.xpkgDirs.emplace_back(mcpp::build::xpkg_env_var(ref.ns, ref.name, suffix), value);
         e.xpkgDirs.emplace_back(mcpp::build::xpkg_env_var("", ref.name, suffix), value);
@@ -398,7 +399,7 @@ void fill_xpkg_env(PrepareState& state, mcpp::build::BuildProgramEnv& e,
         if (!answered.insert(key).second) continue;
         auto wit = state.xlingsWinner.find(key);
         const std::string spec = wit == state.xlingsWinner.end() ? raw : wit->second;
-        auto ref = mcpp::xlings::paths::parse_xpkg_ref(spec);
+        auto ref = mcpp::provider::parse_ref(spec);
         // AN OVERRIDE ANSWERS INSTEAD OF THE REGISTRY (mcpp#755): its root as
         // the directory, so a plugin that reads `<dir>/bin/<tool>` needs no
         // change, its program where it named one, and the source.
@@ -410,7 +411,7 @@ void fill_xpkg_env(PrepareState& state, mcpp::build::BuildProgramEnv& e,
             }
             continue;
         }
-        auto dir = mcpp::xlings::paths::xpkg_payload(xlEnv, ref);
+        auto dir = mcpp::provider::payload(*mcpp::provider::open(xlEnv), ref);
         if (dir) {
             put(ref, "DIR", dir->string());
             put(ref, "SOURCE", "payload");

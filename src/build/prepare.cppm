@@ -91,8 +91,9 @@ import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
 import mcpp.build.build_program;
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
-import mcpp.xlings;
-import mcpp.xlings.runtime_selection;
+import mcpp.provider;
+import mcpp.provider.select;
+import mcpp.provider.runtime_selection;
 import mcpp.runtime.binding;
 import mcpp.toolchain.post_install;
 import mcpp.platform;
@@ -471,7 +472,7 @@ export struct BuildContext {
     mcpp::manifest::Manifest        manifest;
     mcpp::toolchain::Toolchain      tc;
     mcpp::toolchain::Fingerprint    fp;
-    mcpp::xlings::runtime::RuntimeSelection runtimeSelection;
+    mcpp::provider::runtime::RuntimeSelection runtimeSelection;
     mcpp::platform::runtime::RuntimeBinding runtimeBinding;
     std::filesystem::path           projectRoot;
     // THE SOURCE TREES THIS BUILD READ THAT ARE NOT UNDER `projectRoot`.
@@ -822,7 +823,7 @@ export struct BuildOverrides {
     std::filesystem::path project_index_root;
     // Nested source/tool builds inherit the consumer root's local development
     // OS. A dependency's own [xlings].subos is never consulted or propagated.
-    std::shared_ptr<const mcpp::xlings::runtime::RuntimeSelection>
+    std::shared_ptr<const mcpp::provider::runtime::RuntimeSelection>
         inherited_runtime_selection;
     std::shared_ptr<const mcpp::platform::runtime::RuntimeBinding>
         inherited_runtime_binding;

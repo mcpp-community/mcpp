@@ -47,7 +47,8 @@ import mcpp.pm.index_route;
 export import mcpp.pm.refresh_policy;   // the policy half, shared with the fetcher
 import mcpp.pm.resolver;
 import mcpp.ui;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 
 export namespace mcpp::pm {
 
@@ -56,7 +57,7 @@ export namespace mcpp::pm {
 RefreshDecision decide_for_dependency(const IndexRoute&               route,
                                       std::string_view                depKey,
                                       const DependencySpec&           spec,
-                                      const mcpp::xlings::Env&        env,
+                                      const mcpp::provider::Location&        env,
                                       const mcpp::platform::PlatformKey& platform,
                                       const RefreshPolicy&            policy);
 
@@ -113,7 +114,7 @@ std::vector<DependencyCoordinate> coords_of(std::string_view depKey,
 RefreshDecision decide_for_dependency(const IndexRoute&               route,
                                       std::string_view                depKey,
                                       const DependencySpec&           spec,
-                                      const mcpp::xlings::Env&        env,
+                                      const mcpp::provider::Location&        env,
                                       const mcpp::platform::PlatformKey& platform,
                                       const RefreshPolicy&            policy)
 {
@@ -155,7 +156,7 @@ RefreshDecision decide_for_dependency(const IndexRoute&               route,
         return d;
     }
 
-    auto status = mcpp::xlings::default_index_status(env, policy.debounceSeconds);
+    auto status = mcpp::provider::open(env)->default_index_status(policy.debounceSeconds);
 
     // 4-6. The three ways local state fails to answer.
     //

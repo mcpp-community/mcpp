@@ -24,7 +24,8 @@ import mcpp.platform;
 import mcpp.runtime.binding;
 import mcpp.platform.runtime_env_contract;
 import mcpp.platform.runtime_search;
-import mcpp.xlings.subos_info;
+import mcpp.provider;
+import mcpp.provider.select;
 
 export namespace mcpp::build {
 
@@ -1366,7 +1367,7 @@ std::vector<mcpp::platform::search::Dir> runtime_search_closure(
 void merge_runtime_binding_contract(
     BuildPlan& plan,
     const mcpp::platform::runtime::RuntimeBinding& binding) {
-    auto package_id = [](const mcpp::xlings::subos::PackageIdentity& value) {
+    auto package_id = [](const mcpp::provider::runtime_info::PackageIdentity& value) {
         return mcpp::manifest::PackageId{
             .namespace_ = value.namespace_,
             .name = value.name,

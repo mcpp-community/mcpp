@@ -23,7 +23,6 @@ import mcpp.build.runtime_validation;
 import mcpp.config;
 import mcpp.fallback.probe_sysroot;
 import mcpp.fallback.xlings_binary;
-import mcpp.fallback.install_integrity;
 import mcpp.fetcher.progress;
 import mcpp.home;
 import mcpp.libs.json;
@@ -42,7 +41,8 @@ import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.stdmod;
 import mcpp.toolchain.abi;
 import mcpp.ui;
-import mcpp.xlings;
+import mcpp.provider;
+import mcpp.provider.select;
 
 namespace mcpp::doctor {
 
@@ -375,8 +375,7 @@ export int doctor_report() {
         // that resolves what it needs has nothing to report), so doctor is
         // where the state is visible without a failing run.
         mcpp::ui::status("Checking", "package indexes");
-        const auto dataRoot = mcpp::xlings::paths::index_data(
-            mcpp::config::make_xlings_env(*cfg));
+        const auto dataRoot = mcpp::provider::open(mcpp::config::make_xlings_env(*cfg))->data_root();
         std::error_code idxEc;
         bool anyIndex = false;
         for (auto const& entry : std::filesystem::directory_iterator(dataRoot, idxEc)) {
@@ -1644,14 +1643,6 @@ export int self_init(bool force) {
         return 1;
     }
 
-    // Clean any incomplete xpkg installations (interrupted downloads, etc.).
-    auto xpkgsBase = cfg->xlingsHome() / "data" / "xpkgs";
-    int cleaned = mcpp::fallback::clean_all_incomplete(xpkgsBase);
-    if (cleaned > 0) {
-        mcpp::ui::info("Cleaned", std::format(
-            "{} incomplete installation(s)", cleaned));
-    }
-
     // Verify result.
     auto problem = mcpp::config::check_base_init(*cfg);
     if (!problem.empty()) {
@@ -1691,7 +1682,7 @@ export int self_config(std::string mirror) {
     // file via xlings.
     //
     // TODO(mirror-default): the default "CN" lives in
-    // mcpp::xlings::seed_xlings_json — see the matching note there for the
+    // mcpp::provider::xlings::seed_xlings_json — see the matching note there for the
     // long-term plan (flip default to GLOBAL, or auto-detect on first init).
     auto cfg = mcpp::config::load_or_init(
         /*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback(), mirror);
@@ -1702,11 +1693,11 @@ export int self_config(std::string mirror) {
 
     auto env = mcpp::config::make_xlings_env(*cfg);
     if (mirror.empty()) {
-        auto rc = mcpp::xlings::config_show(env);
+        auto rc = mcpp::provider::open(env)->show_config();
         return rc == 0 ? 0 : 1;
     }
 
-    auto rc = mcpp::xlings::config_set_mirror(env, mirror, /*quiet=*/true);
+    auto rc = mcpp::provider::open(env)->set_mirror(mirror, /*quiet=*/true);
     if (rc != 0) {
         mcpp::ui::error(std::format("failed to set xlings mirror to {}", mirror));
         return 1;

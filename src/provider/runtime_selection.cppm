@@ -1,4 +1,4 @@
-// mcpp.xlings.runtime_selection — the sole project runtime-selection policy.
+// mcpp.provider.runtime_selection — the sole project runtime-selection policy.
 //
 // This module chooses a name and an owner.  It deliberately does not inspect
 // the process environment, xlings' active/current state, the compiler path, or
@@ -6,12 +6,12 @@
 // any of them to choose the build OS would make one mcpp.toml mean different
 // ABIs in different shells.
 
-export module mcpp.xlings.runtime_selection;
+export module mcpp.provider.runtime_selection;
 
 import std;
 import mcpp.manifest;
 
-export namespace mcpp::xlings::runtime {
+export namespace mcpp::provider::runtime {
 
 struct RuntimeSelection {
     enum class Mode { McppDefault, NamedSubos } mode = Mode::McppDefault;
@@ -67,4 +67,4 @@ select_runtime(
     return out;
 }
 
-} // namespace mcpp::xlings::runtime
+} // namespace mcpp::provider::runtime

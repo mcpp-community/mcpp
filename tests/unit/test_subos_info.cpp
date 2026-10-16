@@ -11,9 +11,9 @@
 
 import std;
 import mcpp.platform;
-import mcpp.xlings.subos_info;
+import mcpp.provider.xlings.subos_info;
 
-namespace su = mcpp::xlings::subos;
+namespace su = mcpp::provider::xlings::subos;
 
 namespace {
 
