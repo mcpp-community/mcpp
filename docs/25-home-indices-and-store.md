@@ -119,6 +119,7 @@ upstream = ["/var/lib/mcpp"]
 
 [toolchain]
 default = "gcc@16.1.0"
+default_target = "x86_64-linux-gnu"
 ```
 
 Each user keeps a home of their own: their index data, their build cache (never

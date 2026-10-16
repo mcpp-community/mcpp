@@ -210,7 +210,8 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
         // `windows_long_paths` (design 2026-10-16 §11), with the same
         // defaults: a host tool is long-path aware unless it says otherwise.
         auto longPathsOf = [&](const mcpp::manifest::Target& t) {
-            if (t.windowsLongPaths) return *t.windowsLongPaths;
+            const auto& stated = t.windowsLongPaths;
+            if (stated) return *stated;
             return hostToolBuild && t.is_program() && !ownManifest;
         };
         // A test program carries the code page `[test] windows_code_page`

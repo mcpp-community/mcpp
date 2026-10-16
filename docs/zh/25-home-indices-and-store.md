@@ -94,6 +94,7 @@ upstream = ["/var/lib/mcpp"]
 
 [toolchain]
 default = "gcc@16.1.0"
+default_target = "x86_64-linux-gnu"
 ```
 
 每个用户保留自己的 home：自己的索引数据、自己的构建缓存（不在用户之间共享）以及指向系统 home 中 payload

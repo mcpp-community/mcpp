@@ -770,13 +770,17 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     cfg.searchTtlSeconds = doc->get_int("cache.search_ttl_seconds").value_or(3600);
     cfg.defaultJobs    = doc->get_int("build.default_jobs").value_or(0);
     cfg.defaultToolchain = doc->get_string("toolchain.default").value_or("");
+    cfg.defaultTarget    = doc->get_string("toolchain.default_target").value_or("");
     // The system-level configuration (design 2026-10-16 §8.1, §9): what an
     // administrator states for every user, below what the user states.
     cfg.systemHome = mcpp::home::is_system_home(cfg.mcppHome);
     std::optional<mcpp::libs::toml::Document> systemDoc;
     if (auto sys = mcpp::libs::toml::parse_file(mcpp::home::system_config_file()); sys) systemDoc = std::move(*sys);
-    if (cfg.defaultToolchain.empty() && systemDoc)
+    if (cfg.defaultToolchain.empty() && systemDoc) {
         cfg.defaultToolchain = systemDoc->get_string("toolchain.default").value_or("");
+        if (cfg.defaultTarget.empty())
+            cfg.defaultTarget = systemDoc->get_string("toolchain.default_target").value_or("");
+    }
     {
         auto declared = doc->get_string_array("xlings.upstream");
         if (!declared && systemDoc) declared = systemDoc->get_string_array("xlings.upstream");
@@ -809,7 +813,6 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
             cfg.upstreams.push_back(dir);
         }
     }
-    cfg.defaultTarget    = doc->get_string("toolchain.default_target").value_or("");
     // [xlings.overrides] (mcpp#755), read by the same function the tests read.
     if (auto overrides = parse_payload_overrides(*doc); overrides)
         cfg.payloadOverrides = std::move(*overrides);
