@@ -541,23 +541,23 @@ mcpp PR 钉该版本 → mcpp 2026.10.16.1 → xim-pkgindex bump mcpp，core 的
 
 | 编号 | 决策 | 状态 |
 |---|---|---|
-| D1 | 端口模块 `mcpp.provider`；`mcpp.xlings` 降为适配器 | 已确认 |
-| D2 | 归属按 index 划分 | |
-| D3 | mcpp 的 index 与 store 在 `~/.mcpp/indices`、`~/.mcpp/xpkgs`；`registry/` 为适配器私有 | |
-| D4 | 项目 index 的数据与 payload 在 `<project>/.mcpp/` | 已确认（O6） |
-| D5 | index 刷新改为暂存再交换 | |
-| D6 | mcpp 不写 payload：删除 W1–W6 与 #273 限制 | 依据 §2.1、§2.2 |
-| D7 | 工具链运行库由 registry home 的运行库钉版本决定 | 依据 §2.1 |
-| D8 | 复用：`[xlings] upstream`，默认空，用户配置 > 系统级配置 > 空；链接条目；上游只读；悬空自愈 | |
-| D9 | store 路径不 canonical 化；兄弟包与删除经端口 | |
-| D10 | `[xlings] home` 仍是 registry 位置，拒绝非 mcpp 的 home | |
-| D11 | 所有 xlings 来源经握手，不满足回退内置 | |
-| D12 | mcpp 平台层的文件系统能力表与 xlings 同构 | |
-| D13 | `windows_long_paths`；mcpp 自身与宿主工具默认开；路径预算检查 | |
-| D14 | `mcpp self store dedupe`，默认只列出 | 已确认（O4） |
-| D15 | 系统级安装：`--system` 只用于维护命令；以写权限判断；用户侧无需 root；构建缓存不跨用户 | |
-| D16 | 上游信任边界：当前用户或 root 所有 | |
-| D17 | 一个 PR，mcpp 2026.10.16.1；前置 xlings 发布 X1–X7 | |
+| D1 | 端口模块 `mcpp.provider`；`mcpp.xlings` 降为适配器 | 已确认，已实现 |
+| D2 | 归属按 index 划分 | 已实现 |
+| D3 | mcpp 的 index 与 store 在 `~/.mcpp/indices`、`~/.mcpp/xpkgs`；`registry/` 为适配器私有 | 已实现 |
+| D4 | 项目 index 的数据与 payload 在 `<project>/.mcpp/` | 已确认（O6），已实现 |
+| D5 | index 刷新改为暂存再交换 | 已实现 |
+| D6 | mcpp 不写 payload：删除 W1–W6 与 #273 限制 | 已实现（依据 §2.1、§2.2） |
+| D7 | 工具链运行库由 registry home 的运行库钉版本决定 | 已实现（依据 §2.1） |
+| D8 | 复用：`[xlings] upstream`，默认空，用户配置 > 系统级配置 > 空；链接条目；上游只读；悬空自愈 | 已实现 |
+| D9 | store 路径不 canonical 化；兄弟包与删除经端口 | 已实现 |
+| D10 | `[xlings] home` 仍是 registry 位置，拒绝非 mcpp 的 home | 已实现 |
+| D11 | 所有 xlings 来源经握手，不满足回退内置 | 已实现 |
+| D12 | mcpp 平台层的文件系统能力表与 xlings 同构 | 已实现 |
+| D13 | `windows_long_paths`；mcpp 自身与宿主工具默认开；路径预算检查 | 已实现 |
+| D14 | `mcpp self store dedupe`，默认只列出 | 已确认（O4），已实现 |
+| D15 | 系统级安装：`--system` 只用于维护命令；以写权限判断；用户侧无需 root；构建缓存不跨用户 | 已实现 |
+| D16 | 上游信任边界：当前用户或 root 所有 | 已实现 |
+| D17 | 一个 PR，mcpp 2026.10.16.1；前置 xlings 发布 X1–X7 | 已实现 |
 
 ## 19. 开放问题
 
@@ -590,3 +590,18 @@ mcpp PR 钉该版本 → mcpp 2026.10.16.1 → xim-pkgindex bump mcpp，core 的
 release PR `release/2026.10.16.1`；CI 全绿后自我 review，dispatch mcpp-plugins CI，合并后 `release.yml`。
 检查每个归档内置的 xlings 版本等于 X 发布的钉版本；clean-room 中分别验证自包含、`upstream=["~/.xlings"]`、系统级三种形态。
 probe PR #810 保留到发布完成后关闭。
+
+## 22. 实现记录
+
+| 项 | 实现 |
+|---|---|
+| 归属与位置 | `[index.repos]` 与 mcpplibs 的条目带 `dir`、`store`（`<MCPP_HOME>/indices/<name>`、`<MCPP_HOME>/xpkgs`；项目在 `<project>/.mcpp`）；`own_indices` 在每次加载配置时把旧位置的数据移动一次；同名的旧副本不再被读取 |
+| 刷新 | 适配器对每个自有索引调用 `sync_index`（目的地为 `<dir>.staging-<n>`），按 `min_mcpp` 判定后 `exchange_paths`；xlings 侧 `update` 只在自有索引缺失时拉取它，之后由属主刷新（xlings `repo.cpp`） |
+| 兼容读 | 提供者说不出、或在索引的 store 中没有时，按版本文法在 home 的各 store 中查找（`COMPAT(internal:legacy-registry-store)`） |
+| 握手 | 非 bundled 来源在加载配置时经 `xlings interface --version` 判定，不满足退回 bundled 并给出 note；bundled 由钉版本保证 |
+| 上游 | `[xlings] upstream`（用户配置，否则系统级配置）；信任检查在 `platform::untrusted_because`；mcpp home 提供两条上游（registry 的 `xim`、`xpkgs` 的全部命名空间） |
+| 系统级 | `--system` 在 CLI 预处理阶段校验命令、写权限，设置 `MCPP_HOME`、umask 022、排他锁与 `.mcpp-home`；系统级配置路径可由 `MCPP_SYSTEM_CONFIG` 指定（测试用） |
+| 长路径 | `windows_long_paths`（target 与 `[test]`）；host 工具默认 true；mcpp.exe 清单声明；路径预算常量 140（gcc 16.1.0 libstdc++ 头文件在 `<MCPP_HOME>` 下的最深路径，实测） |
+| GCC 16 | 端口的虚函数不返回 `std::optional` 与 `std::expected<void, …>`：两者都使导入方读不出模块 |
+| 测试 | 单元：适配器的自有索引、迁移、store 查找；platform 的信任与目录链接；清单键与应用程序清单。e2e：914 上游、915 系统 home、916 存量 home、917 Windows 长路径；CI：NFSv3 上的 home 与项目；桩 xlings 回答握手 |
+

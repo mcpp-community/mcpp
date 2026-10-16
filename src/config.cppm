@@ -760,8 +760,24 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     }
 
     cfg.xlingsBinaryMode = doc->get_string("xlings.binary").value_or("bundled");
-    if (auto h = doc->get_string("xlings.home"); h && !h->empty())
+    if (auto h = doc->get_string("xlings.home"); h && !h->empty()) {
         cfg.xlingsHomeOverride = *h;
+        // The registry is mcpp's (design 2026-10-16 §12, D10): a provider
+        // home mcpp did not make -- one whose configuration names none of
+        // mcpp's indices -- is somebody else's, and reusing it is what an
+        // upstream is for.
+        if (auto xj = read_json_file(cfg.xlingsHomeOverride / ".xlings.json"); xj && xj->is_object()) {
+            bool mcpps = false;
+            if (auto it = xj->find("index_repos"); it != xj->end() && it->is_array())
+                for (auto& e : *it)
+                    if (e.is_object() && e.value("name", std::string{}) == "mcpplibs") mcpps = true;
+            if (!mcpps)
+                return std::unexpected(ConfigError{std::format(
+                    "[xlings] home = \"{}\" is a home mcpp did not make; to reuse its packages, name it as "
+                    "an upstream instead: [xlings] upstream = [\"{}\"]",
+                    cfg.xlingsHomeOverride.string(), cfg.xlingsHomeOverride.string())});
+        }
+    }
     cfg.defaultIndex   = doc->get_string("index.default").value_or("mcpplibs");
     cfg.indexAutoRefresh = doc->get_bool("index.auto_refresh").value_or(true);
     if (auto t = doc->get_int("index.refresh_timeout"); t && *t > 0)

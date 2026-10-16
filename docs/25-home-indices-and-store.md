@@ -137,6 +137,10 @@ mcpp asks it what it is (`xlings interface --version`): its version, its
 protocol and the features mcpp relies on. One that cannot serve this mcpp gives
 way to the bundled one, with a note naming why.
 
+`[xlings] home` moves the registry; it names a home mcpp made. A home mcpp did
+not make (an `~/.xlings`) is refused there: reusing its packages is what
+`upstream` is for (§3).
+
 ## 6. Filesystems and long paths
 
 A home may be on any filesystem. mcpp measures what the one holding its home

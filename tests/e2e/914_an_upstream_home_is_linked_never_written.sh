@@ -13,6 +13,8 @@
 #      nothing to link that is not linked already.
 #   D. An upstream another user could change is refused when the configuration
 #      is read (a directory this user can write but does not own: /tmp).
+#   E. A provider home mcpp did not make is refused as `[xlings] home`, and
+#      the refusal names `upstream`.
 set -e
 source "$(dirname "$0")/_host_path.sh"
 
@@ -73,5 +75,17 @@ if [ "$(id -u)" != 0 ] && [ "$(stat -c %u /tmp 2>/dev/null || stat -f %u /tmp)" 
     cp "$TMP/config.keep" "$MCPP_HOME/config.toml"
     echo "ok: D. an upstream another user could change is refused"
 fi
+
+# ── E ─────────────────────────────────────────────────────────────────────────
+FOREIGN="$TMP/foreign-xlings"
+mkdir -p "$FOREIGN"
+printf '{"index_repos":[{"name":"xim","url":"https://example.invalid/xim.git"}]}\n' > "$FOREIGN/.xlings.json"
+cp "$MCPP_HOME/config.toml" "$TMP/config.keep"
+sed -i.bak '/^home *=/d' "$MCPP_HOME/config.toml"
+sed -i.bak "s|^\[xlings\]\$|[xlings]\nhome = \"$(host_path "$FOREIGN")\"|" "$MCPP_HOME/config.toml"
+if "$MCPP" self env > foreign.log 2>&1; then fail "E: a home mcpp did not make was taken as its registry" foreign.log; fi
+grep -q 'name it as an upstream' foreign.log || fail "E: the refusal does not name upstream" foreign.log
+cp "$TMP/config.keep" "$MCPP_HOME/config.toml"
+echo "ok: E. a home mcpp did not make is not its registry"
 
 echo "PASS: 914_an_upstream_home_is_linked_never_written"

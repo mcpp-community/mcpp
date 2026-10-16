@@ -108,6 +108,9 @@ default_target = "x86_64-linux-gnu"
 无论哪一个，mcpp 都会询问它是什么（`xlings interface --version`）：版本、协议以及 mcpp 依赖的特性。不能服务当前 mcpp
 的，让位于随附的 xlings，并以一条 note 说明原因。
 
+`[xlings] home` 移动 registry，它指向的必须是 mcpp 建立的 home。不是 mcpp 建立的 home（例如 `~/.xlings`）在这里被拒绝：
+复用它的包应使用 `upstream`（§3）。
+
 ## 6. 文件系统与长路径
 
 home 可以在任何文件系统上。mcpp 测量其所在文件系统能做什么（拒绝覆盖已有名字的原子改名、原子交换、硬链接、符号链接），
