@@ -18,11 +18,13 @@ fail() { echo "FAIL: $1"; [ -n "${2:-}" ] && cat "$2"; exit 1; }
 
 export MCPP_HOME="$TMP/home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
-rm -rf "$MCPP_HOME/registry/data/mcpplibs"
+rm -rf "$MCPP_HOME/indices/mcpplibs"
 
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/xlings" <<'EOF'
 #!/usr/bin/env bash
+# The handshake mcpp asks of every xlings (docs/25 §5).
+[[ "${1:-}" == "interface" && "${2:-}" == "--version" ]] && { echo '{"protocol_version":"1.10","version":"9999.1.1.1","capabilities":["install_packages"],"home_layouts":[2],"features":["index_dir","index_store","upstreams","payload_status","sync_index"]}'; exit 0; }
 echo "$*" >> "${STUB_LOG:?}"
 exit 0
 EOF

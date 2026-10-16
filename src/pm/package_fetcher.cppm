@@ -1106,7 +1106,20 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     const auto complete_here = [&]() -> std::optional<std::filesystem::path> {
         const std::array<mcpp::provider::PackageRef, 1> refs{ref};
         auto st = provider->status(refs);
-        if (st.size() == 1 && st[0].complete && !st[0].dir.empty()) return st[0].dir;
+        if (st.size() == 1) {
+            if (st[0].complete && !st[0].dir.empty()) return st[0].dir;
+            // Present but not complete (an interrupted install, a success
+            // that installed nothing): not installed.
+            if (st[0].origin != "absent") return std::nullopt;
+        }
+        // The provider could not say, or has nothing where the index's store
+        // is: what is installed elsewhere in the home, by its version grammar,
+        // holding something -- a payload installed before its index had a
+        // store of its own (COMPAT(internal:legacy-registry-store), design
+        // 2026-10-16 §5.3).
+        auto dir = provider->payload(ref);
+        std::error_code ec;
+        if (!dir.empty() && std::filesystem::is_directory(dir, ec) && !std::filesystem::is_empty(dir, ec)) return dir;
         return std::nullopt;
     };
 

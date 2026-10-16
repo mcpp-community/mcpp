@@ -16,8 +16,8 @@ mkdir -p "$MCPP_HOME"
 "$MCPP" self config --mirror "${MCPP_E2E_TOOLCHAIN_MIRROR:-GLOBAL}" >/dev/null 2>&1 || true
 
 # ── index entry (local official-index clone) ────────────────────────────
-mkdir -p "$MCPP_HOME/registry/data/mcpplibs/pkgs/t"
-cat > "$MCPP_HOME/registry/data/mcpplibs/pkgs/t/tpl-demo.lua" <<'EOF'
+mkdir -p "$MCPP_HOME/indices/mcpplibs/pkgs/t"
+cat > "$MCPP_HOME/indices/mcpplibs/pkgs/t/tpl-demo.lua" <<'EOF'
 package = {
     spec      = "1",
     namespace = "mcpplibs",
@@ -143,25 +143,25 @@ version = "0.1.0"
 EOF
 }
 
-write_descriptor "$MCPP_HOME/registry/data/mcpplibs/pkgs/a/acme.tpl-demo.lua" \
+write_descriptor "$MCPP_HOME/indices/mcpplibs/pkgs/a/acme.tpl-demo.lua" \
     acme tpl-demo 3.0.0
 seed_template acme-x-tpl-demo tpl-demo 3.0.0 solo false acme-solo
 
-write_descriptor "$MCPP_HOME/registry/data/mcpplibs/pkgs/m/mcpplibs.capi.lua.lua" \
+write_descriptor "$MCPP_HOME/indices/mcpplibs/pkgs/m/mcpplibs.capi.lua.lua" \
     mcpplibs.capi lua 5.4.7
 seed_template mcpplibs.capi-x-lua lua 5.4.7 module false nested-lua
 
-write_descriptor "$MCPP_HOME/registry/data/mcpplibs/pkgs/a/ambiguous.lua" \
+write_descriptor "$MCPP_HOME/indices/mcpplibs/pkgs/a/ambiguous.lua" \
     mcpplibs ambiguous 1.0.0
 seed_template mcpplibs-x-ambiguous ambiguous 1.0.0 one false ambiguous-one
 seed_template mcpplibs-x-ambiguous ambiguous 1.0.0 two false ambiguous-two
 
-write_descriptor "$MCPP_HOME/registry/data/mcpplibs/pkgs/d/dupe-default.lua" \
+write_descriptor "$MCPP_HOME/indices/mcpplibs/pkgs/d/dupe-default.lua" \
     mcpplibs dupe-default 1.0.0
 seed_template mcpplibs-x-dupe-default dupe-default 1.0.0 one true dupe-one
 seed_template mcpplibs-x-dupe-default dupe-default 1.0.0 two true dupe-two
 
-write_descriptor "$MCPP_HOME/registry/data/mcpplibs/pkgs/n/no-templates.lua" \
+write_descriptor "$MCPP_HOME/indices/mcpplibs/pkgs/n/no-templates.lua" \
     mcpplibs no-templates 1.0.0
 mkdir -p "$MCPP_HOME/registry/data/xpkgs/mcpplibs-x-no-templates/1.0.0/no-templates-1.0.0"
 cat > "$MCPP_HOME/registry/data/xpkgs/mcpplibs-x-no-templates/1.0.0/no-templates-1.0.0/mcpp.toml" <<'EOF'
@@ -225,8 +225,8 @@ grep -qi "deprecated" out6.log || { cat out6.log; echo "missing gui deprecation"
 # 7. Form B (mcpp = { ... }) compat package is selected only when compat is
 # explicit, then rejected as a non-template payload. Bare `tpl-repro` must not
 # cross from mcpplibs into compat.
-mkdir -p "$MCPP_HOME/registry/data/mcpplibs/pkgs/c"
-cat > "$MCPP_HOME/registry/data/mcpplibs/pkgs/c/compat.tpl-repro.lua" <<'EOF'
+mkdir -p "$MCPP_HOME/indices/mcpplibs/pkgs/c"
+cat > "$MCPP_HOME/indices/mcpplibs/pkgs/c/compat.tpl-repro.lua" <<'EOF'
 package = {
     spec      = "1",
     namespace = "compat",

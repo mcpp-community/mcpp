@@ -30,7 +30,7 @@ cd "$TMP"
 # A real, downloadable payload so this exercises the whole install path rather
 # than stopping at resolution. Reuse whatever asio the registry already has.
 SRC=""
-for c in "$MCPP_HOME/registry/data/mcpplibs/pkgs/c/chriskohlhoff.asio.lua"; do
+for c in "$MCPP_HOME/indices/mcpplibs/pkgs/c/chriskohlhoff.asio.lua"; do
     [ -f "$c" ] && SRC="$c" && break
 done
 if [ -z "$SRC" ]; then

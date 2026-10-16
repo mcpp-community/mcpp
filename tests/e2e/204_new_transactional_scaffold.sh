@@ -48,7 +48,7 @@ mkdir -p "$MCPP_HOME"
     >/dev/null 2>&1 || true
 
 # Exact foreign-namespace provider with a same-short default-namespace sibling.
-INDEX="$MCPP_HOME/registry/data/mcpplibs/pkgs/t"
+INDEX="$MCPP_HOME/indices/mcpplibs/pkgs/t"
 mkdir -p "$INDEX"
 for row in 'acme tx-template acme-x-tx-template 2.0.0' \
            'mcpplibs tx-template mcpplibs-x-tx-template 9.0.0'; do

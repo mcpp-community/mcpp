@@ -20,23 +20,31 @@ fail() { echo "FAIL: $1"; [ -n "${2:-}" ] && cat "$2"; exit 1; }
 export MCPP_HOME="$TMP/home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
 
-DATA="$MCPP_HOME/registry/data/mcpplibs"
+DATA="$MCPP_HOME/indices/mcpplibs"
 rm -rf "$DATA"
 mkdir -p "$DATA/pkgs/f"
 printf '[index]\nspec = "1"\nmin_mcpp = "0.0.1"\n' > "$DATA/index.toml"
 printf 'package = { spec = "1", name = "fixture", type = "package" }\n' > "$DATA/pkgs/f/fixture.lua"
 
-# The stub stands in for xlings: an index update rewrites the tree so that it
-# requires a newer mcpp than any release, which is what a published floor bump
-# looks like to an older client. Every other call succeeds and does nothing.
+# The stub stands in for xlings: an owned index is refreshed into a staging
+# directory (sync_index with a destination, docs/25 §2), and the copy it
+# fetches requires a newer mcpp than any release, which is what a published
+# floor bump looks like to an older client. Every other call succeeds and does
+# nothing.
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/xlings" <<EOF
 #!/usr/bin/env bash
+# The handshake mcpp asks of every xlings (docs/25 §5).
+[[ "\${1:-}" == "interface" && "\${2:-}" == "--version" ]] && { echo '{"protocol_version":"1.10","version":"9999.1.1.1","capabilities":["install_packages"],"home_layouts":[2],"features":["index_dir","index_store","upstreams","payload_status","sync_index"]}'; exit 0; }
 case " \$* " in
-    *" update"*|*"update_packages"*)
-        printf '[index]\nspec = "1"\nmin_mcpp = "9999.9.9.9"\n' > "$DATA/index.toml"
-        case " \$* " in *" interface "*) echo '{"kind":"result","exitCode":0}' ;; esac
+    *" sync_index "*)
+        dest=\$(printf '%s' "\$4" | sed -n 's/.*"dest":"\([^"]*\)".*/\1/p')
+        mkdir -p "\$dest/pkgs/f"
+        cp "$DATA/pkgs/f/fixture.lua" "\$dest/pkgs/f/fixture.lua"
+        printf '[index]\nspec = "1"\nmin_mcpp = "9999.9.9.9"\n' > "\$dest/index.toml"
+        echo '{"kind":"result","exitCode":0}'
         ;;
+    *" interface "*) echo '{"kind":"result","exitCode":0}' ;;
 esac
 exit 0
 EOF

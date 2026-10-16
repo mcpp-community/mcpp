@@ -18,7 +18,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $1"; [ -n "${2:-}" ] && cat "$2"; exit 1; }
 
-INDEX_ROOT="${MCPP_HOME:-$HOME/.mcpp}/registry/data/mcpplibs/pkgs/c"
+INDEX_ROOT="${MCPP_HOME:-$HOME/.mcpp}/indices/mcpplibs/pkgs/c"
 DESC=""
 for cand in cjson argparse gtest ftxui; do
     if [ -f "$INDEX_ROOT/compat.$cand.lua" ]; then DESC="$cand"; break; fi

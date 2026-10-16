@@ -20,7 +20,7 @@ trap "rm -rf $TMP" EXIT
 export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
 
-INDEX="$MCPP_HOME/registry/data/mcpplibs"
+INDEX="$MCPP_HOME/indices/mcpplibs"
 mkdir -p "$INDEX/pkgs/w"
 
 cat > "$INDEX/pkgs/w/widget.lua" <<'EOF'

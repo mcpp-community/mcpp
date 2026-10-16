@@ -23,7 +23,7 @@ trap "rm -rf $TMP" EXIT
 export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
 
-INDEX_DIR="$MCPP_HOME/registry/data/mcpplibs"
+INDEX_DIR="$MCPP_HOME/indices/mcpplibs"
 # Observed real install layout is <ns>-x-<short>: aimol-x-tensorvia-cpu.
 PKG_ROOT="$MCPP_HOME/registry/data/xpkgs/aimol-x-tensorvia-cpu/0.1.1"
 mkdir -p "$INDEX_DIR/pkgs/t" "$PKG_ROOT/src"

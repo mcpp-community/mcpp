@@ -29,7 +29,7 @@ cd "$TMP"
 
 # Reuse a real, downloadable descriptor so this exercises the whole install
 # path rather than stopping at resolution.
-SRC="$MCPP_HOME/registry/data/mcpplibs/pkgs/c/chriskohlhoff.asio.lua"
+SRC="$MCPP_HOME/indices/mcpplibs/pkgs/c/chriskohlhoff.asio.lua"
 if [ ! -f "$SRC" ]; then
     echo "SKIP 165_bare_name_cross_namespace_wire_address (no asio descriptor in registry)"
     exit 0

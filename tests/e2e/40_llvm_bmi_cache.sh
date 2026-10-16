@@ -31,11 +31,11 @@ source "$(dirname "$0")/_inherit_toolchain.sh"
 # mcpplibs packages live in a separate registry namespace; inherit it so the
 # index lookup for mcpplibs.cmdline succeeds in the isolated MCPP_HOME.
 USER_MCPP="${HOME}/.mcpp"
-if [[ -d "$USER_MCPP/registry/data/mcpplibs" ]]; then
-    mkdir -p "$MCPP_HOME/registry/data"
-    [[ -e "$MCPP_HOME/registry/data/mcpplibs" ]] \
-        || ln -sf "$USER_MCPP/registry/data/mcpplibs" "$MCPP_HOME/registry/data/mcpplibs" 2>/dev/null \
-        || cp -r "$USER_MCPP/registry/data/mcpplibs" "$MCPP_HOME/registry/data/mcpplibs"
+if [[ -d "$USER_MCPP/indices/mcpplibs" ]]; then
+    mkdir -p "$MCPP_HOME/indices"
+    [[ -e "$MCPP_HOME/indices/mcpplibs" ]] \
+        || ln -sf "$USER_MCPP/indices/mcpplibs" "$MCPP_HOME/indices/mcpplibs" 2>/dev/null \
+        || cp -r "$USER_MCPP/indices/mcpplibs" "$MCPP_HOME/indices/mcpplibs"
 fi
 
 mkdir -p "$TMP/proj/src"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # requires: gcc fresh-sandbox
-# Version dependencies must not reuse stale xpkg directories that predate
-# mcpp's .mcpp_ok install marker. Such directories can have an old extracted
+# Version dependencies must not reuse stale xpkg directories the provider
+# does not call complete. Such directories can have an old extracted
 # layout that no longer matches the package index's mcpp metadata.
 set -e
 source "$(dirname "$0")/_host_path.sh"
@@ -45,6 +45,8 @@ mkdir -p "$TMP/fake-bin"
 FAKE_INSTALL_LOG="$TMP/fake-install.log"
 cat > "$TMP/fake-bin/xlings" <<'EOF'
 #!/usr/bin/env bash
+# The handshake mcpp asks of every xlings (docs/25 §5).
+[[ "${1:-}" == "interface" && "${2:-}" == "--version" ]] && { echo '{"protocol_version":"1.10","version":"9999.1.1.1","capabilities":["install_packages"],"home_layouts":[2],"features":["index_dir","index_store","upstreams","payload_status","sync_index"]}'; exit 0; }
 set -e
 
 if [[ "${1:-}" == "self" && "${2:-}" == "init" ]]; then
@@ -155,8 +157,9 @@ grep -Fq 'compat:compat.stale@1.0.0' "$FAKE_INSTALL_LOG" || {
     exit 1
 }
 
-test -f .mcpp/.xlings/data/xpkgs/compat-x-compat.stale/1.0.0/.mcpp_ok || {
-    echo "FAIL: successful reinstall should be marked complete"
+# The payload is the provider's: mcpp writes no marker into it (docs/25).
+test ! -e .mcpp/.xlings/data/xpkgs/compat-x-compat.stale/1.0.0/.mcpp_ok || {
+    echo "FAIL: mcpp wrote a marker into the payload"
     find .mcpp/.xlings/data/xpkgs/compat-x-compat.stale/1.0.0 -maxdepth 2 -print
     exit 1
 }

@@ -21,6 +21,18 @@ REGION="{ \"GLOBAL\": \"$ART\", \"CN\": \"$ART_CN\" }"
 CFG="$MCPP_HOME/config.toml"
 XJ="$MCPP_HOME/registry/.xlings.json"
 
+# The mcpplibs entry of .xlings.json has these fields (a JSON object), however
+# the file is laid out.
+entry_has() {
+    python3 - "$XJ" "$1" <<'PYEOF2'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+want = json.loads(sys.argv[2])
+e = next(r for r in doc["index_repos"] if r["name"] == "mcpplibs")
+sys.exit(0 if all(e.get(k) == v for k, v in want.items()) else 1)
+PYEOF2
+}
+
 # 1. Fresh init: new org URL + artifact declaration in both files.
 # (xlings' own bootstrap may re-serialize .xlings.json with its writer, so
 # assert on the key/value pairs, not on mcpp's seed line layout.)
@@ -64,7 +76,7 @@ cat > "$XJ" <<EOF
 EOF
 "$MCPP" self env > /dev/null
 grep -q "url = \"$NEW_URL\"" "$CFG"       || { echo "config.toml url not healed"; cat "$CFG"; exit 1; }
-grep -qF "\"url\": \"$NEW_URL\", \"artifact\": $REGION" "$XJ" \
+entry_has "{\"url\": \"$NEW_URL\", \"artifact\": $REGION}" \
     || { echo ".xlings.json not healed"; cat "$XJ"; exit 1; }
 grep -q '"subos": "default"' "$XJ"        || { echo "unrelated .xlings.json key lost"; exit 1; }
 if grep -q 'mcpp-community/mcpp-index' "$CFG" "$XJ"; then
@@ -80,7 +92,7 @@ cmp -s "$XJ" "$TMP/xj1"   || { echo ".xlings.json heal not idempotent"; exit 1; 
 # 3. Legacy heal (compact spacing, old index name): xlings-writer format.
 printf '{"index_repos":[{"name":"mcpp-index","url":"%s"}],"mirror":"auto"}' "$OLD_URL" > "$XJ"
 "$MCPP" self env > /dev/null
-grep -q '"name":"mcpplibs"' "$XJ"      || { echo "compact name not healed"; cat "$XJ"; exit 1; }
+entry_has '{}'                          || { echo "compact name not healed"; cat "$XJ"; exit 1; }
 grep -q 'xlings-res/mcpp-index' "$XJ"  || { echo "compact artifact not injected"; cat "$XJ"; exit 1; }
 grep -q 'gitcode.com/xlings-res/mcpp-index' "$XJ" || { echo "compact artifact has no CN half"; cat "$XJ"; exit 1; }
 
@@ -88,7 +100,7 @@ grep -q 'gitcode.com/xlings-res/mcpp-index' "$XJ" || { echo "compact artifact ha
 #    gains the CN half, once; a base the user wrote is left alone.
 printf '{\n  "index_repos": [\n    { "name": "mcpplibs", "url": "%s", "artifact": "%s" }\n  ],\n  "mirror": "CN"\n}\n' "$NEW_URL" "$ART" > "$XJ"
 "$MCPP" self env > /dev/null
-grep -qF "\"artifact\": $REGION" "$XJ" || { echo "flat default artifact not upgraded"; cat "$XJ"; exit 1; }
+entry_has "{\"artifact\": $REGION}" || { echo "flat default artifact not upgraded"; cat "$XJ"; exit 1; }
 cp "$XJ" "$TMP/xj4"; "$MCPP" self env > /dev/null
 cmp -s "$XJ" "$TMP/xj4" || { echo "region upgrade not idempotent"; diff "$TMP/xj4" "$XJ"; exit 1; }
 # A base the user states in config.toml owns the entry, and has no CN half.

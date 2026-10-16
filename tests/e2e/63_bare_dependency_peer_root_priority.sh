@@ -10,7 +10,7 @@ trap "rm -rf $TMP" EXIT
 export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
 
-INDEX_DIR="$MCPP_HOME/registry/data/mcpplibs"
+INDEX_DIR="$MCPP_HOME/indices/mcpplibs"
 PKG_ROOT="$MCPP_HOME/registry/data/xpkgs/mcpplibs-x-imgui/1.0.0"
 mkdir -p "$INDEX_DIR/pkgs/i" "$PKG_ROOT/src"
 printf 'ok\n' > "$INDEX_DIR/.mcpp-index-updated"

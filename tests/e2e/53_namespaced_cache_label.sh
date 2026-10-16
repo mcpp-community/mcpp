@@ -90,7 +90,7 @@ if grep -Eq '^\[[0-9]+/[0-9]+\] ' build.log; then
     exit 1
 fi
 
-[[ ! -e "$MCPP_HOME/registry/data/mcpplibs/.mcpp-index-updated" ]] || {
+[[ ! -e "$MCPP_HOME/indices/mcpplibs/.mcpp-index-updated" ]] || {
     echo "FAIL: local path index dependency should not refresh builtin mcpplibs index"
     find "$MCPP_HOME/registry/data" -maxdepth 3 -type f | sort
     cat build.log
