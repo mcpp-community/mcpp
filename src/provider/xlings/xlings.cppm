@@ -126,7 +126,14 @@ namespace pinned {
     // complete. mcpp now places its indices and store in its home (`dir`,
     // `store`), stages each refresh (`sync_index`), names upstreams, reads
     // `payload_status`, and checks all of it through `interface --version`.
-    inline constexpr std::string_view kXlingsVersion   = "2026.10.16.1";
+    //
+    // Ninth, at 2026.10.16.2 (openxlings/xlings#677). Below it, inside a Luban
+    // system mcpp's registry could not build its catalog (its recipes need a
+    // worker bwrap cannot start there), and was layered on the system's home
+    // besides its upstream, so a borrowed payload had no entry in the store
+    // mcpp reads. A runtime's own install now makes the home's runtime links;
+    // `pin_runtime` still asks for them after it (idempotent).
+    inline constexpr std::string_view kXlingsVersion   = "2026.10.16.2";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 

@@ -4,6 +4,17 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.16.2] - 2026-10-17
+
+### Changed
+
+- Bundle xlings 2026.10.16.2 (openxlings/xlings#677). Inside a Luban system,
+  `mcpp build` uses the system's gcc: the registry builds its catalog there
+  (a Landlock write fence stands in for bwrap, which cannot start inside a
+  system), and a home that names upstreams borrows through them alone, so the
+  borrowed toolchain has an entry in the registry's store. Before, the build
+  stopped at `Bootstrap patchelf/ninja ... did not complete`.
+
 ## [2026.10.16.1] - 2026-10-16
 
 ### Added
