@@ -235,38 +235,41 @@ std::string filesystem_type(const std::filesystem::path&) { return {}; }
 
 namespace mcpp::platform {
 
-namespace fs = std::filesystem;
+// Not `fs`: mcpp::platform::fs is the namespace of mcpp.platform.fs, and an
+// alias of the same name beside it is ill-formed (GCC 16 crashes reading the
+// two modules into one translation unit).
+namespace stdfs = std::filesystem;
 
-FsCaps probe_fs_caps(const fs::path& dir) {
+FsCaps probe_fs_caps(const stdfs::path& dir) {
     FsCaps caps;
     caps.type = native::filesystem_type(dir);
     std::error_code ec;
     std::random_device random;
     const auto scratch = dir / std::format(".mcpp-fsprobe-{:08x}{:08x}", random(), random());
-    if (!fs::create_directory(scratch, ec) || ec) return caps;   // cannot write here: native answers
-    const auto touch = [&](const fs::path& p) { std::ofstream(p).put('x'); return fs::exists(p, ec); };
+    if (!stdfs::create_directory(scratch, ec) || ec) return caps;   // cannot write here: native answers
+    const auto touch = [&](const stdfs::path& p) { std::ofstream(p).put('x'); return stdfs::exists(p, ec); };
     if (touch(scratch / "a") && touch(scratch / "c")) {
         caps.measured = true;
         if (const int e = native::rename_no_replace(scratch / "a", scratch / "b"); e != 0) {
             caps.rename_no_replace = !native::unsupported(e);
-            fs::rename(scratch / "a", scratch / "b", ec);
+            stdfs::rename(scratch / "a", scratch / "b", ec);
         }
         if (const int e = native::exchange(scratch / "b", scratch / "c"); e != 0)
             caps.rename_exchange = !native::unsupported(e);
         ec.clear();
-        fs::create_hard_link(scratch / "b", scratch / "d", ec);
+        stdfs::create_hard_link(scratch / "b", scratch / "d", ec);
         caps.hard_links = !ec;
         ec.clear();
-        fs::create_symlink("b", scratch / "e", ec);
+        stdfs::create_symlink("b", scratch / "e", ec);
         caps.symlinks = !ec;
         ec.clear();
-        if (touch(scratch / "Case")) caps.case_sensitive = !fs::exists(scratch / "cASE", ec);
+        if (touch(scratch / "Case")) caps.case_sensitive = !stdfs::exists(scratch / "cASE", ec);
     }
-    fs::remove_all(scratch, ec);
+    stdfs::remove_all(scratch, ec);
     return caps;
 }
 
-FsCaps fs_caps(const fs::path& dir) {
+FsCaps fs_caps(const stdfs::path& dir) {
     static std::mutex lock;
     static std::map<std::uint64_t, FsCaps> known;
     const auto device = native::device_of(dir);
@@ -285,7 +288,7 @@ FsCaps fs_caps(const fs::path& dir) {
     return caps;
 }
 
-std::expected<void, std::string> publish_no_replace(const fs::path& from, const fs::path& to, const FsCaps& caps) {
+std::expected<void, std::string> publish_no_replace(const stdfs::path& from, const stdfs::path& to, const FsCaps& caps) {
     const auto failed = [&](std::error_code error) {
         return std::unexpected(std::format("cannot publish {} as {}: {}", from.string(), to.string(), error.message()));
     };
@@ -297,40 +300,40 @@ std::expected<void, std::string> publish_no_replace(const fs::path& from, const 
         // the directory probed): the strategies below.
     }
     std::error_code ec;
-    const auto status = fs::symlink_status(from, ec);
+    const auto status = stdfs::symlink_status(from, ec);
     if (ec) return failed(ec);
-    if (status.type() == fs::file_type::symlink) {
+    if (status.type() == stdfs::file_type::symlink) {
         // A link made again with the same target refuses a name that is
         // there, as the rename flag would. (A hard link to a symbolic link is
         // the link on Linux but its target on macOS.)
-        fs::copy_symlink(from, to, ec);
+        stdfs::copy_symlink(from, to, ec);
         if (ec) return failed(ec);
-        fs::remove(from, ec);
+        stdfs::remove(from, ec);
         return {};
     }
-    if (status.type() != fs::file_type::directory && caps.hard_links) {
-        fs::create_hard_link(from, to, ec);
+    if (status.type() != stdfs::file_type::directory && caps.hard_links) {
+        stdfs::create_hard_link(from, to, ec);
         if (ec) return failed(ec);
-        fs::remove(from, ec);
+        stdfs::remove(from, ec);
         return {};
     }
-    const auto there = fs::symlink_status(to, ec);
+    const auto there = stdfs::symlink_status(to, ec);
     if (ec && ec != std::errc::no_such_file_or_directory) return failed(ec);
-    if (fs::exists(there)) return failed(std::make_error_code(std::errc::file_exists));
-    fs::rename(from, to, ec);
+    if (stdfs::exists(there)) return failed(std::make_error_code(std::errc::file_exists));
+    stdfs::rename(from, to, ec);
     if (ec) return failed(ec);
     return {};
 }
 
-std::expected<void, std::string> rename_no_replace(const fs::path& from, const fs::path& to) {
+std::expected<void, std::string> rename_no_replace(const stdfs::path& from, const stdfs::path& to) {
     auto parent = to.parent_path();
     if (parent.empty()) parent = ".";
     return publish_no_replace(from, to, fs_caps(parent));
 }
 
-bool create_directory_link(const fs::path& target, const fs::path& link) {
+bool create_directory_link(const stdfs::path& target, const stdfs::path& link) {
     std::error_code ec;
-    fs::create_directory_symlink(target, link, ec);
+    stdfs::create_directory_symlink(target, link, ec);
     if (!ec) return true;
 #if defined(_WIN32)
     const auto cmd = std::format("cmd /c mklink /J \"{}\" \"{}\" >nul 2>&1", link.string(), target.string());
@@ -340,13 +343,13 @@ bool create_directory_link(const fs::path& target, const fs::path& link) {
 #endif
 }
 
-std::string untrusted_because(const fs::path& dir) {
+std::string untrusted_because(const stdfs::path& dir) {
     std::error_code ec;
-    if (!fs::is_directory(dir, ec)) return "it is not a directory";
+    if (!stdfs::is_directory(dir, ec)) return "it is not a directory";
     return native::owner_problem(dir);
 }
 
-std::expected<void, std::string> exchange_paths(const fs::path& a, const fs::path& b) {
+std::expected<void, std::string> exchange_paths(const stdfs::path& a, const stdfs::path& b) {
     auto parent = b.parent_path();
     if (parent.empty()) parent = ".";
     if (fs_caps(parent).rename_exchange) {
@@ -359,15 +362,15 @@ std::expected<void, std::string> exchange_paths(const fs::path& a, const fs::pat
     std::error_code ec;
     std::random_device random;
     const auto aside = parent / std::format(".{}.mcpp-aside-{:08x}", b.filename().string(), random());
-    fs::rename(b, aside, ec);
+    stdfs::rename(b, aside, ec);
     if (ec) return std::unexpected(std::format("cannot move {} aside: {}", b.string(), ec.message()));
-    fs::rename(a, b, ec);
+    stdfs::rename(a, b, ec);
     if (ec) {
         std::error_code back;
-        fs::rename(aside, b, back);
+        stdfs::rename(aside, b, back);
         return std::unexpected(std::format("cannot move {} to {}: {}", a.string(), b.string(), ec.message()));
     }
-    fs::rename(aside, a, ec);
+    stdfs::rename(aside, a, ec);
     if (ec) return std::unexpected(std::format("cannot move the old {} to {}: {}", b.string(), a.string(), ec.message()));
     return {};
 }

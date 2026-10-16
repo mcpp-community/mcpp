@@ -20,12 +20,14 @@ export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
 
 # Index + xpkgs need to be visible since we exercise version-source deps.
-mkdir -p "$MCPP_HOME/registry/data"
-# Link pre-cached index data (may be under old "mcpp-index" or new "mcpplibs" name)
-for idx_name in mcpplibs mcpp-index; do
-    if [[ -d "$HOME/.mcpp/registry/data/$idx_name" ]]; then
-        ln -sf "$HOME/.mcpp/registry/data/$idx_name" \
-            "$MCPP_HOME/registry/data/$idx_name"
+mkdir -p "$MCPP_HOME/registry/data" "$MCPP_HOME/indices"
+# Link the pre-cached mcpplibs index: where mcpp keeps it (indices/), or where
+# an earlier mcpp kept it, under the old or the new name.
+for src in "$HOME/.mcpp/indices/mcpplibs" "$HOME/.mcpp/registry/data/mcpplibs" "$HOME/.mcpp/registry/data/mcpp-index"; do
+    if [[ -d "$src" ]]; then
+        ln -sf "$src" "$MCPP_HOME/indices/mcpplibs" 2>/dev/null \
+            || cp -r "$src" "$MCPP_HOME/indices/mcpplibs"
+        break
     fi
 done
 if [[ -d "$HOME/.mcpp/registry/data/xpkgs" ]]; then
