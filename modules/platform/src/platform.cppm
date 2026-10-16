@@ -55,6 +55,7 @@ export import mcpp.platform.common;
 export import mcpp.platform.shell;
 export import mcpp.platform.process;
 export import mcpp.platform.fs;
+export import mcpp.platform.fs_caps;
 export import mcpp.platform.env;
 export import mcpp.platform.macos;
 export import mcpp.platform.linux;

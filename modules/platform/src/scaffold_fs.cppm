@@ -29,6 +29,7 @@ module;
 export module mcpp.platform.scaffold_fs;
 
 import std;
+import mcpp.platform.fs_caps;
 
 namespace mcpp::platform::detail {
 
@@ -60,47 +61,12 @@ export namespace mcpp::platform {
 std::expected<void, std::string> atomic_rename_directory_no_replace(
     const std::filesystem::path& source,
     const std::filesystem::path& target) {
-#if defined(_WIN32)
-    if (::MoveFileExW(source.c_str(), target.c_str(),
-                      MOVEFILE_WRITE_THROUGH) != 0) {
-        return {};
-    }
-    const auto error = ::GetLastError();
-    return std::unexpected(std::format(
-        "atomic no-replace rename '{}' -> '{}' failed: {}",
-        source.string(), target.string(), detail::win32_message(error)));
-#elif defined(__linux__) && defined(SYS_renameat2)
-    if (::syscall(SYS_renameat2, AT_FDCWD, source.c_str(), AT_FDCWD,
-                  target.c_str(), RENAME_NOREPLACE) == 0) {
-        return {};
-    }
-    const int error = errno;
-    return std::unexpected(std::format(
-        "atomic no-replace rename '{}' -> '{}' failed: {}",
-        source.string(), target.string(), detail::errno_message(error)));
-#elif defined(__APPLE__)
-    if (::renamex_np(source.c_str(), target.c_str(), RENAME_EXCL) == 0) {
-        return {};
-    }
-    const int error = errno;
-    return std::unexpected(std::format(
-        "atomic no-replace rename '{}' -> '{}' failed: {}",
-        source.string(), target.string(), detail::errno_message(error)));
-#else
-    // The fallback remains no-clobber in ordinary use, but platforms without
-    // a native exclusive rename cannot close the existence-check race.  All
-    // release platforms use one of the branches above.
-    std::error_code ec;
-    if (std::filesystem::exists(target, ec) || ec) {
-        return std::unexpected(std::format(
-            "atomic scaffold target '{}' already exists", target.string()));
-    }
-    std::filesystem::rename(source, target, ec);
-    if (!ec) return {};
-    return std::unexpected(std::format(
-        "scaffold rename '{}' -> '{}' failed: {}",
-        source.string(), target.string(), ec.message()));
-#endif
+    // By what the target's filesystem does (fs_caps, #809): renameat2's
+    // RENAME_NOREPLACE is EINVAL on NFSv3, where `mcpp new` failed.
+    if (auto published = rename_no_replace(source, target); !published)
+        return std::unexpected(std::format("atomic no-replace rename '{}' -> '{}' failed: {}",
+                                           source.string(), target.string(), published.error()));
+    return {};
 }
 
 // Make a newly written regular file durable before its containing staging
