@@ -695,6 +695,12 @@ bool gcc_native_payload_is_musl(std::string_view hostArch, bool isLinux,
     if (hostArch == "x86_64") return false;      // the glibc payload exists here
     // "Native" = no explicit target, or one naming this same machine. A CROSS
     // target keeps its own payload rule (the `<triple>-gcc` packages above).
+    //
+    // A target that names glibc (`aarch64-linux-gnu`) asks for the glibc
+    // payload, which `xim:gcc` publishes for aarch64 since 16.1.0 (a Luban
+    // system's own gcc is that one): answering it with musl-gcc built for
+    // another C library than the one named.
+    if (target.env == "gnu") return false;
     return target.empty()
         || (target.os == "linux" && target.arch == hostArch);
 }

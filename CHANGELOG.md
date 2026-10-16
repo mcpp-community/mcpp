@@ -4,6 +4,20 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.16.3] - 2026-10-17
+
+### Fixed
+
+- Keep the toolchain the configuration names for this machine's own target.
+  `[toolchain] default` with a `default_target` that is the host's triple (a
+  Luban system's `/etc/mcpp/config.toml`: its gcc on `aarch64-linux-gnu`) was
+  replaced by the target row's convention, and on aarch64 a first build
+  downloaded llvm instead of using the system's gcc. A cross target and a
+  capability pin are unchanged.
+- `gcc` for a target that names glibc (`aarch64-linux-gnu`) is the glibc
+  payload, which `xim:gcc` publishes for aarch64 since 16.1.0; it was
+  answered with `musl-gcc`. With no target, aarch64 still takes `musl-gcc`.
+
 ## [2026.10.16.2] - 2026-10-17
 
 ### Changed

@@ -222,9 +222,13 @@ TEST(ToolchainRegistry, NativeGccPayloadFollowsWhatTheArchActuallyPublishes) {
     EXPECT_FALSE(gcc_native_payload_is_musl(
         "x86_64", true, {"x86_64", "linux", "gnu"}));
 
-    // aarch64: the glibc package has no asset, musl-gcc does.
+    // aarch64 with no target: musl-gcc, the payload every version publishes.
     EXPECT_TRUE(gcc_native_payload_is_musl("aarch64", true, none));
     EXPECT_TRUE(gcc_native_payload_is_musl(
+        "aarch64", true, {"aarch64", "linux", "musl"}));
+    // A target that names glibc asks for the glibc payload (xim:gcc publishes
+    // aarch64 since 16.1.0; a Luban system's own gcc is that one).
+    EXPECT_FALSE(gcc_native_payload_is_musl(
         "aarch64", true, {"aarch64", "linux", "gnu"}));
 
     // A CROSS target keeps its own payload rule — this is about the native

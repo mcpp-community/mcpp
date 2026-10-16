@@ -464,6 +464,9 @@ struct TargetOverrideCtx {
     const mcpp::manifest::TargetEntry* sectionEntry = nullptr;
     bool hasExplicitSection = false;
     bool hasToolchainOverride = false;
+    // The target came from the configuration's `default_target`, beside its
+    // `[toolchain] default`: a pair the configuration states.
+    bool targetFromGlobalDefault = false;
     const mcpp::toolchain::triple::TargetInfo* known = nullptr;
 };
 
@@ -869,8 +872,13 @@ step1_target_row_pin_and_capability_check(PrepareState& state, TargetOverrideCtx
         state.targetRowPin  = std::string(ctx.known->pin);
         state.targetRowName = ctx.parsed->str();
     }
+    // A pair the configuration states for this machine's own target is kept
+    // (`configured_native_pair`).
+    const bool configuredNativePair = ctx.parsed
+        && configured_native_pair(ctx.targetFromGlobalDefault, state.tcOrigin, *ctx.parsed,
+                                  mcpp::toolchain::triple::host_triple());
     if (ctx.known && !ctx.hasToolchainOverride && !ctx.known->pin.empty()
-        && !tc_origin_is_user_explicit(state.tcOrigin)) {
+        && !tc_origin_is_user_explicit(state.tcOrigin) && !configuredNativePair) {
         state.targetPinCandidate = std::string(ctx.known->pin);
         state.targetPinIsCapability = ctx.parsed && ctx.parsed->pin_is_capability();
     }
@@ -1012,6 +1020,7 @@ static std::expected<void, std::string> step1_target_and_static_overrides(Prepar
     // override and the vocabulary-table convention (pin + default linkage).
     if (!state.overrides.target_triple.empty()) {
         TargetOverrideCtx ctx;
+        ctx.targetFromGlobalDefault = targetFromGlobalDefault;
         if (auto r = step1_resolve_target_triple_request(state, ctx); !r)
             return std::unexpected(r.error());
         if (auto r = step1_validate_target_tier(state, ctx); !r)

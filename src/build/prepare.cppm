@@ -85,6 +85,7 @@ import mcpp.toolchain.lifecycle;
 import mcpp.toolchain.stdmod;
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
+import mcpp.toolchain.triple;
 import mcpp.build.plan;
 import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
 import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
@@ -277,6 +278,21 @@ export enum class TcOrigin {
 export inline bool tc_origin_is_user_explicit(TcOrigin o) {
     return o == TcOrigin::ManifestToolchain || o == TcOrigin::TargetSection
         || o == TcOrigin::BuildProgram;
+}
+
+// IS THIS A PAIR THE CONFIGURATION STATES FOR THE MACHINE'S OWN TARGET?
+//
+// `[toolchain] default` with a `default_target` that is the host's triple
+// names the compiler that serves this machine (a Luban system's
+// /etc/mcpp/config.toml: its own gcc on aarch64-linux-gnu). A row's
+// convention pin does not replace it: on aarch64 it replaced the system's gcc
+// with a download of llvm. A cross target keeps the rule above (the
+// windows-gnu regression), and a capability pin always applies.
+export inline bool configured_native_pair(bool targetFromGlobalDefault, TcOrigin origin,
+                                          const mcpp::toolchain::triple::Triple& target,
+                                          const mcpp::toolchain::triple::Triple& host) {
+    return targetFromGlobalDefault && origin == TcOrigin::GlobalDefault
+        && !target.pin_is_capability() && target.str() == host.str();
 }
 
 // MAY A BUILD THAT RESOLVED THIS WAY WRITE THE MACHINE'S DEFAULT?

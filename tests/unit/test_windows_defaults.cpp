@@ -126,3 +126,22 @@ TEST(LinuxDefaults, NativeArm64UsesLlvmAndOtherDefaultsRemainStable) {
     EXPECT_EQ(row->pin, pins::kFirstRunLinuxAarch64);
     EXPECT_FALSE(target->pin_is_capability());
 }
+
+// A Luban system's /etc/mcpp/config.toml names its own gcc on the host's
+// triple (gcc@16.1.0 + aarch64-linux-gnu); the aarch64-linux-gnu row's llvm
+// convention replaced it with a download (xim-pkgindex#986, editions CI on
+// arm). The configured pair for the host's own target is kept; a cross target
+// and a remembered default without a target are not this case.
+TEST(LinuxDefaults, AConfiguredPairForTheHostsOwnTargetKeepsItsToolchain) {
+    namespace tr = mcpp::toolchain::triple;
+    using mcpp::build::TcOrigin;
+    using mcpp::build::configured_native_pair;
+    auto arm = tr::parse("aarch64-linux-gnu");
+    auto x86 = tr::parse("x86_64-linux-gnu");
+    auto winGnu = tr::parse("x86_64-windows-gnu");
+    ASSERT_TRUE(arm && x86 && winGnu);
+    EXPECT_TRUE(configured_native_pair(true, TcOrigin::GlobalDefault, *arm, *arm));
+    EXPECT_FALSE(configured_native_pair(false, TcOrigin::GlobalDefault, *arm, *arm)) << "--target names it";
+    EXPECT_FALSE(configured_native_pair(true, TcOrigin::FirstRun, *arm, *arm)) << "mcpp's own guess";
+    EXPECT_FALSE(configured_native_pair(true, TcOrigin::GlobalDefault, *winGnu, *x86)) << "a cross target";
+}
