@@ -1341,9 +1341,16 @@ std::vector<std::filesystem::path> index_roots_of(const std::filesystem::path& h
     const auto data = home / "data";
     std::vector<std::filesystem::path> out;
     std::error_code ec;
+    const auto declared = declared_in(home / ".xlings.json", home, data);
+    // An owned index is read where its owner keeps it; a copy left at the
+    // provider's own place (written by a provider that did not know the
+    // owner's place) is not a second index.
+    const auto owned_name = [&](const std::filesystem::path& p) {
+        return std::ranges::any_of(declared, [&](const DeclaredIndex& d) { return d.owned && d.name == p.filename(); });
+    };
     for (auto& e : std::filesystem::directory_iterator(data, ec))
-        if (e.is_directory(ec)) out.push_back(e.path());
-    for (auto& d : declared_in(home / ".xlings.json", home, data))
+        if (e.is_directory(ec) && !owned_name(e.path())) out.push_back(e.path());
+    for (auto& d : declared)
         if (d.owned && std::filesystem::is_directory(d.dir, ec) && std::ranges::find(out, d.dir) == out.end())
             out.push_back(d.dir);
     std::ranges::sort(out);
@@ -1381,8 +1388,7 @@ void own_indices(const Env& env, std::span<const mcpp::provider::SeedRepo> owned
             // filesystem, a copy and a removal across two.
             std::error_code ec;
             const auto old = data / o.name;
-            if (!e.contains("dir") && std::filesystem::is_directory(old, ec)
-                && !std::filesystem::exists(o.dir, ec)) {
+            if (std::filesystem::is_directory(old, ec) && !std::filesystem::exists(o.dir, ec)) {
                 std::filesystem::create_directories(o.dir.parent_path(), ec);
                 std::filesystem::rename(old, o.dir, ec);
                 if (ec) {

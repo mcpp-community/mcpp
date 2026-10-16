@@ -510,6 +510,9 @@ TEST(XlingsOwnedIndex, AHomeFromBeforeHasItsIndexMovedOnce) {
     mcpp::provider::xlings::paths::own_indices(env, repos);
     EXPECT_TRUE(std::filesystem::exists(old));
     EXPECT_TRUE(std::filesystem::exists(owned.dir / "pkgs" / "f" / "foo.lua"));
+    // And it is not read as a second index.
+    const auto again = mcpp::provider::xlings::paths::index_roots(env);
+    EXPECT_EQ(std::ranges::find(again, old), again.end());
     std::filesystem::remove_all(dir);
 }
 

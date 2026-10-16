@@ -375,18 +375,16 @@ export int doctor_report() {
         // that resolves what it needs has nothing to report), so doctor is
         // where the state is visible without a failing run.
         mcpp::ui::status("Checking", "package indexes");
-        const auto dataRoot = mcpp::provider::open(mcpp::config::make_xlings_env(*cfg))->data_root();
         std::error_code idxEc;
         bool anyIndex = false;
-        for (auto const& entry : std::filesystem::directory_iterator(dataRoot, idxEc)) {
-            if (!entry.is_directory(idxEc)) continue;
-            if (!std::filesystem::exists(entry.path() / "pkgs", idxEc)) continue;
+        for (auto const& root : mcpp::provider::open(mcpp::config::make_xlings_env(*cfg))->index_roots()) {
+            if (!std::filesystem::exists(root / "pkgs", idxEc)) continue;
             anyIndex = true;
-            const auto name = entry.path().filename().string();
-            auto contract = mcpp::pm::read_index_contract(entry.path());
+            const auto name = root.filename().string();
+            auto contract = mcpp::pm::read_index_contract(root);
             if (!contract || contract->minMcpp.empty()) {
                 ok(std::format("index '{}' declares no mcpp floor", name));
-            } else if (mcpp::pm::index_usable(entry.path())) {
+            } else if (mcpp::pm::index_usable(root)) {
                 ok(std::format("index '{}' requires mcpp >= {}", name, contract->minMcpp));
             } else {
                 warn(std::format(
@@ -397,6 +395,26 @@ export int doctor_report() {
             }
         }
         if (!anyIndex) ok("no package index synced yet");
+
+        // Where the home is, and what it reuses (design 2026-10-16 §8, §10, §11).
+        mcpp::ui::status("Checking", "home");
+        if ((*cfg).systemHome) ok(std::format("{} is the machine's system home", (*cfg).mcppHome.string()));
+        if ((*cfg).upstreams.empty())
+            ok("self-contained: no upstream ([xlings] upstream)");
+        for (auto const& u : (*cfg).upstreams) ok(std::format("upstream {}", u.string()));
+        const auto caps = mcpp::platform::fs_caps((*cfg).mcppHome);
+        if (caps.native())
+            ok(std::format("{} on {}: every write is the filesystem's own",
+                           (*cfg).mcppHome.string(), caps.type.empty() ? "this filesystem" : caps.type));
+        else
+            ok(std::format("{} on {}: {}{}{}", (*cfg).mcppHome.string(), caps.type.empty() ? "this filesystem" : caps.type,
+                           caps.rename_no_replace ? "" : "publishes by hard link or a rename to a free name; ",
+                           caps.rename_exchange ? "" : "exchanges by moving aside; ",
+                           caps.symlinks ? "" : "no symbolic links (no reuse from an upstream)"));
+        if constexpr (mcpp::platform::is_windows)
+            ok(std::format("Windows long paths: {}", mcpp::platform::windows::long_paths_enabled()
+                               ? "on (LongPathsEnabled = 1)"
+                               : "off (LongPathsEnabled = 0; mcpp does not change it)"));
     }
 
     mcpp::ui::status("Checking", "cache health");

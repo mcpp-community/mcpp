@@ -30,6 +30,7 @@ import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.platform;
 import mcpp.log;
+import mcpp.diag;
 import mcpp.fallback.xlings_binary;
 import mcpp.fallback.config_migration;
 
@@ -788,8 +789,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
             std::error_code ec;
             if (!dir.is_absolute() || !std::filesystem::is_directory(dir, ec)) {
                 // Fewer packages reused than asked for: said, not hidden.
-                std::println(stderr, "warning: [xlings] upstream {}: not a directory; this run does not reuse it",
-                             entry);
+                mcpp::diag::degraded("xlings/upstream", std::format("[xlings] upstream {} is not a directory", entry),
+                                     "this run does not reuse it");
                 continue;
             }
             // The trust boundary (§8.2): another user's home is code that
@@ -799,8 +800,10 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
                     "[xlings] upstream {}: not used, {}; an upstream belongs to this user or to the system "
                     "and only its owner can change it", dir.string(), why)});
             if (mcpp::provider::layout().upstream_of(dir).empty()) {
-                std::println(stderr, "warning: [xlings] upstream {}: neither an mcpp home nor an xlings home; "
-                                     "this run does not reuse it", dir.string());
+                mcpp::diag::degraded("xlings/upstream",
+                                     std::format("[xlings] upstream {} is neither an mcpp home nor an xlings home",
+                                                 dir.string()),
+                                     "this run does not reuse it");
                 continue;
             }
             cfg.upstreams.push_back(dir);
@@ -920,6 +923,18 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         for (auto& r : cfg.indexRepos)
             if (!r.dir.empty()) owned.push_back({ r.name, r.url, {}, {}, {}, r.dir, r.store });
         mcpp::provider::open(make_xlings_env(cfg))->own_indices(owned);
+    }
+    // The path budget (design 2026-10-16 §11): with Windows' long paths off,
+    // a payload whose deepest file (gcc's libstdc++ headers: 140 characters
+    // below <MCPP_HOME>, measured) would pass MAX_PATH cannot be installed.
+    if constexpr (mcpp::platform::is_windows) {
+        constexpr std::size_t kDeepestPayloadSuffix = 140;
+        const auto length = cfg.mcppHome.native().size();
+        if (!mcpp::platform::windows::long_paths_enabled() && length + 1 + kDeepestPayloadSuffix > 259)
+            mcpp::diag::degraded("home/path-budget",
+                std::format("MCPP_HOME is {} characters long and Windows long paths are off", length),
+                "installing a toolchain may fail because a path is too long",
+                "enable long paths (LongPathsEnabled = 1, `mcpp self doctor` shows it) or use a shorter MCPP_HOME");
     }
     {
         std::vector<mcpp::provider::Upstream> upstreams;
