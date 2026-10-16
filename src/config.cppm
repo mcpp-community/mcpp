@@ -919,6 +919,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     } else {
         mcpp::fallback::migrate_xlings_json_index_names(xjson);
         reconcile_index_repos(xjson, cfg.indexRepos, quiet);
+    }
+    {
         // A home from before: its indices' places recorded, their data moved
         // there once; payloads already installed stay where they are and are
         // still found (design §5.3).
