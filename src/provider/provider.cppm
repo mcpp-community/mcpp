@@ -437,7 +437,9 @@ public:
     virtual void ensure_initialized(bool quiet) const = 0;
     // The runtime the toolchains this provider installs run on (design
     // 2026-10-16 §7.2): mcpp's selected one ("glibc@2.44.3"), pinned once.
-    virtual void pin_runtime(std::string_view runtimeId) const = 0;
+    // Pinning makes the provider's links to it current; `relink` makes them
+    // again when the pin already says so (its payload was installed since).
+    virtual void pin_runtime(std::string_view runtimeId, bool relink) const = 0;
     virtual void ensure_patchelf(bool quiet, const BootstrapProgressCallback& cb) const = 0;
     virtual void ensure_ninja(bool quiet, const BootstrapProgressCallback& cb) const = 0;
     virtual std::filesystem::path usable_nasm() const = 0;   // empty: none

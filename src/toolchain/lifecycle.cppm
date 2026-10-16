@@ -872,9 +872,13 @@ ensure_declared_runtime(const mcpp::config::GlobalConfig& cfg,
     if constexpr (!mcpp::platform::is_linux) return false;
     if (rt::runtime_provider(binding.runtimeId) != "glibc") return false;
     // The toolchains the provider installs run on this runtime (design
-    // 2026-10-16 §7.2), not on whatever it installs newest.
-    mcpp::provider::open(mcpp::config::make_xlings_env(cfg))->pin_runtime(binding.runtimeId);
-    if (!binding.libraryDirs.empty()) return false;
+    // 2026-10-16 §7.2), not on whatever it installs newest; pinned once its
+    // payload is there, which is what the provider's links point at.
+    const auto provider = mcpp::provider::open(mcpp::config::make_xlings_env(cfg));
+    if (!binding.libraryDirs.empty()) {
+        provider->pin_runtime(binding.runtimeId, /*relink=*/false);
+        return false;
+    }
 
     const auto target = "xim:" + binding.runtimeId;
     mcpp::log::verbose("toolchain", std::format(
@@ -885,6 +889,7 @@ ensure_declared_runtime(const mcpp::config::GlobalConfig& cfg,
     if (auto installed = fetcher.resolve_xpkg_path(target, /*autoInstall=*/true, &progress); !installed)
         return std::unexpected(std::format(
             "the C runtime the toolchain runs on, {}, is not installed: {}", target, installed.error().message));
+    provider->pin_runtime(binding.runtimeId, /*relink=*/true);
     auto again = rt::resolve_runtime_binding(binding.selection, {}, cfg.xlingsHome());
     if (!again) return false;
     binding = std::move(*again);

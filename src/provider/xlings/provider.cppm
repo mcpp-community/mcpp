@@ -354,15 +354,20 @@ public:
     int show_config() const override { return config_show(env_); }
     int set_mirror(std::string_view mirror, bool quiet) const override { return config_set_mirror(env_, mirror, quiet); }
     void ensure_initialized(bool quiet) const override { ensure_init(env_, quiet); }
-    void pin_runtime(std::string_view runtimeId) const override {
+    void pin_runtime(std::string_view runtimeId, bool relink) const override {
         // `.xlings.json` `runtime: {"glibc": "2.44.3"}` is the pin; set
-        // through xlings itself, and only when it says otherwise.
+        // through xlings itself, and only when it says otherwise or the
+        // links must be made again: `config --runtime` makes <home>/abi
+        // (the loader a toolchain names) point at the pinned payload, and
+        // installing that payload alone does not.
         const auto at = runtimeId.find('@');
         if (at == std::string_view::npos) return;
         const std::string family(runtimeId.substr(0, at)), version(runtimeId.substr(at + 1));
         std::ifstream in(env_.home / ".xlings.json");
         auto j = nlohmann::json::parse(in, nullptr, false);
-        if (j.is_object() && j.contains("runtime") && j["runtime"].is_object()
+        std::error_code ec;
+        if (!relink && std::filesystem::exists(std::filesystem::symlink_status(env_.home / "abi", ec))
+            && j.is_object() && j.contains("runtime") && j["runtime"].is_object()
             && j["runtime"].value(family, std::string{}) == version)
             return;
         mcpp::provider::Location global = env_;
