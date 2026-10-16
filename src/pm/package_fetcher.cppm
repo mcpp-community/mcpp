@@ -27,7 +27,6 @@ import mcpp.pm.index_spec;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.libs.json;
-import mcpp.fallback.legacy_dirs;
 
 export namespace mcpp::pm {
 
@@ -1232,9 +1231,9 @@ Fetcher::install_path(std::string_view ns, std::string_view shortName,
     std::vector<std::string> acceptedPrefixes;
     if (!ns.empty()) acceptedPrefixes.emplace_back(ns);
     if (!cfg_.defaultIndex.empty()) acceptedPrefixes.emplace_back(cfg_.defaultIndex);
-    if (auto legacy = mcpp::fallback::scan_legacy_install_dirs(
-            base, qname, shortName, acceptedPrefixes)) {
-        if (auto p = try_dir(*legacy)) return *p;
+    if (auto legacy = mcpp::provider::layout().legacy_install_dir(base, qname, shortName, acceptedPrefixes);
+        !legacy.empty()) {
+        if (auto p = try_dir(legacy)) return *p;
     }
     return std::nullopt;
 }

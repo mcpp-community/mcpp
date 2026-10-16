@@ -93,7 +93,7 @@ std::filesystem::path root() {
              p.has_parent_path() && p != p.root_path();
              p = p.parent_path()) {
             if (p.filename() == "target") { disqualified = true; break; }
-            if (p.filename() == "xpkgs") {
+            if (p.filename() == "xpkgs") {  // provider-boundary-ok: mcpp.home sits below the port (the adapter imports it)
                 auto parent = p.parent_path().filename().string();
                 if (parent == "data") { disqualified = true; break; }
             }

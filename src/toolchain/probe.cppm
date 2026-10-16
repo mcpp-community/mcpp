@@ -193,7 +193,7 @@ discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin) {
 
     auto rootStr = root.string();
     auto exe = compilerBin.filename().string();
-    bool looksLikeLlvm = rootStr.find("xim-x-llvm") != std::string::npos
+    bool looksLikeLlvm = mcpp::provider::layout().entry_of(root).name == "llvm"
                       || exe.find("clang") != std::string::npos;
     if (looksLikeLlvm) {
         append_existing_unique(dirs, root / "lib");
@@ -412,7 +412,7 @@ payload_root_for_binding(const std::filesystem::path& compilerBin,
     //     bits/os_defines.h:39: fatal error: features.h: No such file
     const auto exact = [&](const std::filesystem::path& xpkgs)
         -> std::optional<std::filesystem::path> {
-        auto root = xpkgs / std::format("xim-x-{}", name) / version;
+        auto root = mcpp::provider::layout().tool_in(xpkgs, name) / version;
         std::error_code ec;
         if (std::filesystem::is_directory(root, ec)) return root;
         return std::nullopt;

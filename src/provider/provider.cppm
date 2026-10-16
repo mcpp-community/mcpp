@@ -245,6 +245,14 @@ struct ProviderInfo {
     bool answered = false;                   // false: an older provider without the handshake
 };
 
+// One payload in a store: its package and version, and its directory.
+struct StoreEntry {
+    std::string ns;
+    std::string name;
+    std::string version;
+    std::filesystem::path dir;
+};
+
 // What a payload path says without asking the provider program: the store
 // it is in and what is beside it. Each answer is a path as the store spells
 // it, never canonicalised; an empty path is "none" (std::optional is kept out
@@ -273,6 +281,41 @@ public:
     virtual std::filesystem::path in_home_store(std::string_view name, std::string_view requiredRel) const = 0;
     // The store under a provider's data root (a project's).
     virtual std::filesystem::path store_in(const std::filesystem::path& dataRoot) const = 0;
+    // A directory of `store` that holds the package under an older naming
+    // (the namespaces `prefixes` allow); empty: none.
+    virtual std::string legacy_install_dir(const std::filesystem::path& store, std::string_view qualifiedName,
+                                           std::string_view shortName,
+                                           const std::vector<std::string>& prefixes) const = 0;
+    // The store of a home.
+    virtual std::filesystem::path store_of_home(const std::filesystem::path& home) const = 0;
+    // The home a store belongs to.
+    virtual std::filesystem::path home_of_store(const std::filesystem::path& store) const = 0;
+    // Whether `dir` is a home's default runtime environment.
+    virtual bool is_default_environment(std::string_view dir) const = 0;
+    // Whether `dir` is a store (a payload's path is <store>/...).
+    virtual bool is_store(const std::filesystem::path& dir) const = 0;
+    // The directory of every version of the provider-index package `name`
+    // in `store`.
+    virtual std::filesystem::path tool_in(const std::filesystem::path& store, std::string_view name) const = 0;
+    // Every payload in `store`, and the payload a path is in (empty name: none).
+    virtual std::vector<StoreEntry> entries(const std::filesystem::path& store) const = 0;
+    virtual StoreEntry entry_of(const std::filesystem::path& path) const = 0;
+    // What a path of a provider home is: "payload", "environment", "index",
+    // or "" (nothing the provider keeps).
+    virtual std::string kind_of(const std::filesystem::path& path) const = 0;
+    // A runtime environment of a home ("default"), a project's provider
+    // home, and the file an environment describes itself in (its changes
+    // mark the environment changed).
+    virtual std::filesystem::path environment(const std::filesystem::path& home, std::string_view name) const = 0;
+    virtual std::filesystem::path project_home(const std::filesystem::path& projectRoot) const = 0;
+    virtual std::filesystem::path description(const std::filesystem::path& environment) const = 0;
+    // The index directories under a data root, whether any index has data
+    // there, and where a provider-index package's descriptor may be (in the
+    // order an index is consulted).
+    virtual std::vector<std::filesystem::path> index_dirs(const std::filesystem::path& dataRoot) const = 0;
+    virtual bool index_data_present(const std::filesystem::path& dataRoot) const = 0;
+    virtual std::vector<std::filesystem::path> descriptor_candidates(const std::filesystem::path& dataRoot,
+                                                                     std::string_view name) const = 0;
     // A runtime environment's description of itself.
     virtual runtime_info::Info runtime_info(const std::filesystem::path& environment) const = 0;
     // An index's content identity (opaque: compared and printed, never
@@ -322,6 +365,7 @@ public:
     virtual std::filesystem::path bin_dir() const = 0;     // the programs it placed
     virtual bool initialized() const = 0;
     virtual std::filesystem::path data_root() const = 0;   // where its indexes are
+    virtual std::filesystem::path config_file() const = 0; // the home's own configuration
 
     // ── operations ──
     virtual std::expected<CallResult, std::string>

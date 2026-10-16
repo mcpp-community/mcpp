@@ -106,7 +106,7 @@ list_installed_versions(const std::filesystem::path& pkgsDir,
                         std::string_view ximName)
 {
     std::vector<std::string> out;
-    auto root = pkgsDir / std::format("xim-x-{}", ximName);
+    auto root = mcpp::provider::layout().tool_in(pkgsDir, ximName);
     std::error_code ec;
     if (!std::filesystem::exists(root, ec)) return out;
     for (auto& v : std::filesystem::directory_iterator(root, ec)) {
@@ -119,17 +119,13 @@ list_installed_versions(const std::filesystem::path& pkgsDir,
 // Falls back to an empty list silently — the caller will then either error
 // out with a clear message or just keep the partial as-is.
 //
-// Index layout in mcpp's sandbox is two-tier:
-//   <reg>/data/xim-pkgindex/pkgs/<n[0]>/<name>.lua          — primary
-//   <reg>/data/xim-index-repos/<sub-index>/pkgs/<n[0]>/<name>.lua
-// We scan both so a package living in either tier resolves.
+// Where a descriptor may be is the provider's answer (its primary index, then
+// its sub-indexes), so a package living in either resolves.
 std::vector<std::string>
 list_available_xpkg_versions(const mcpp::config::GlobalConfig& cfg,
                              std::string_view ximName)
 {
     if (ximName.empty()) return {};
-    std::string subdir(1, ximName[0]);
-    std::string fname = std::string(ximName) + ".lua";
 
     auto try_load = [&](const std::filesystem::path& p)
         -> std::optional<std::vector<std::string>>
@@ -148,18 +144,9 @@ list_available_xpkg_versions(const mcpp::config::GlobalConfig& cfg,
             body, mcpp::platform::HostPlatform::current());
     };
 
-    auto data = cfg.xlingsHome() / "data";
-    if (auto v = try_load(data / "xim-pkgindex" / "pkgs" / subdir / fname); v)
-        return std::move(*v);
-
-    std::error_code ec;
-    auto repos = data / "xim-index-repos";
-    if (std::filesystem::exists(repos, ec)) {
-        for (auto& repo : std::filesystem::directory_iterator(repos, ec)) {
-            auto cand = repo.path() / "pkgs" / subdir / fname;
-            if (auto v = try_load(cand); v) return std::move(*v);
-        }
-    }
+    auto data = mcpp::provider::open(mcpp::config::make_xlings_env(cfg))->data_root();
+    for (const auto& cand : mcpp::provider::layout().descriptor_candidates(data, ximName))
+        if (auto v = try_load(cand); v) return std::move(*v);
     return {};
 }
 
@@ -453,7 +440,7 @@ bool version_greater(const std::string& a, const std::string& b) {
 // the two come to disagree about what is installed.
 export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
                           bool json = false) {
-    auto pkgsDir = cfg.xlingsHome() / "data" / "xpkgs";
+    auto pkgsDir = mcpp::provider::open(mcpp::config::make_xlings_env(cfg))->store();
     auto effective = effective_default_toolchain(cfg);
 
     // The default is a PAIR: toolchain axis (family@version) + target axis.
@@ -479,24 +466,20 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
     };
     std::vector<Payload> payloads;
     std::error_code ec;
-    if (std::filesystem::exists(pkgsDir, ec)) {
-        for (auto& entry : std::filesystem::directory_iterator(pkgsDir, ec)) {
-            auto name = entry.path().filename().string();
-            if (auto sep = name.find("-x-"); sep != std::string::npos)
-                name = name.substr(sep + 3);
-            auto id = mcpp::toolchain::identify_xim_payload(name);
+    {
+        for (const auto& entry : mcpp::provider::layout().entries(pkgsDir)) {
+            auto id = mcpp::toolchain::identify_xim_payload(entry.name);
             if (!id) continue;                       // ninja/glibc/… — not a toolchain
-            for (auto& vEntry : std::filesystem::directory_iterator(entry.path(), ec)) {
-                if (!vEntry.is_directory(ec)) continue;
+            {
                 mcpp::toolchain::ToolchainSpec s;
                 s.family  = id->family;
-                s.version = vEntry.path().filename().string();
+                s.version = entry.version;
                 s.target  = id->target;
                 auto pkg = mcpp::toolchain::to_xim_package(s);
                 // From the payload ROOT, not `root/bin`: msvc keeps cl.exe
                 // four levels deeper, and asking for `root/bin` skipped every
                 // installed toolset silently.
-                auto bin = mcpp::toolchain::payload_frontend(vEntry.path(), pkg);
+                auto bin = mcpp::toolchain::payload_frontend(entry.dir, pkg);
                 // A MALFORMED DESCRIPTOR IS REPORTED, NOT SKIPPED. This
                 // enumeration's `continue` means "nothing usable here", and a
                 // payload whose own description does not parse would then be
@@ -1108,7 +1091,7 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
 export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
                                  const std::string& pos0, const std::string& pos1,
                                  const std::string& targetArg = {}) {
-    auto pkgsDir = cfg.xlingsHome() / "data" / "xpkgs";
+    auto pkgsDir = mcpp::provider::open(mcpp::config::make_xlings_env(cfg))->store();
     auto xlEnv = mcpp::config::make_xlings_env(cfg);
         // Accept three input shapes (mirrors `install`):
         //   mcpp toolchain default gcc@16.1.0

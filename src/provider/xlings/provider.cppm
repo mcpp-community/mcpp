@@ -8,6 +8,7 @@ import std;
 import mcpp.provider;
 import mcpp.provider.xlings;
 import mcpp.provider.xlings.subos_info;
+import mcpp.provider.xlings.legacy_dirs;
 import mcpp.libs.json;
 import mcpp.platform;
 
@@ -42,6 +43,128 @@ public:
         return paths::find_home_tool(name, requiredRel).value_or(std::filesystem::path{});
     }
     std::filesystem::path store_in(const std::filesystem::path& dataRoot) const override { return dataRoot / "xpkgs"; }
+    std::string legacy_install_dir(const std::filesystem::path& store, std::string_view qualifiedName,
+                                   std::string_view shortName,
+                                   const std::vector<std::string>& prefixes) const override {
+        return scan_legacy_install_dirs(store, qualifiedName, shortName, prefixes).value_or(std::string{});
+    }
+    std::filesystem::path store_of_home(const std::filesystem::path& home) const override {
+        return home / "data" / "xpkgs";
+    }
+    std::filesystem::path home_of_store(const std::filesystem::path& store) const override {
+        return store.parent_path().parent_path();
+    }
+    bool is_default_environment(std::string_view dir) const override { return dir.ends_with("subos/default"); }
+    bool is_store(const std::filesystem::path& dir) const override {
+        return dir.filename() == "xpkgs" && dir.parent_path().filename() == "data";
+    }
+    std::filesystem::path tool_in(const std::filesystem::path& store, std::string_view name) const override {
+        return store / std::format("xim-x-{}", name);
+    }
+    std::vector<mcpp::provider::StoreEntry> entries(const std::filesystem::path& store) const override {
+        std::vector<mcpp::provider::StoreEntry> out;
+        std::error_code ec;
+        for (auto it = std::filesystem::directory_iterator(store, ec); !ec && it != std::filesystem::directory_iterator{};
+             it.increment(ec)) {
+            if (!it->is_directory(ec)) continue;
+            const auto pkg = it->path().filename().string();
+            const auto sep = pkg.find("-x-");
+            if (sep == std::string::npos) continue;
+            std::error_code vec;
+            for (auto v = std::filesystem::directory_iterator(it->path(), vec); !vec && v != std::filesystem::directory_iterator{};
+                 v.increment(vec)) {
+                if (!v->is_directory(vec)) continue;
+                const auto ver = v->path().filename().string();
+                if (ver.empty() || ver.front() == '.') continue;
+                out.push_back({pkg.substr(0, sep), pkg.substr(sep + 3), ver, v->path()});
+            }
+        }
+        return out;
+    }
+    mcpp::provider::StoreEntry entry_of(const std::filesystem::path& path) const override {
+        // <store>/<ns>-x-<name>/<version>/...: the chain of ancestors, leaf first.
+        std::vector<std::filesystem::path> chain;
+        for (auto p = path;; p = p.parent_path()) {
+            chain.push_back(p);
+            if (!p.has_parent_path() || p.parent_path() == p) break;
+        }
+        for (std::size_t i = 1; i < chain.size(); ++i) {
+            if (chain[i].filename() != "xpkgs") continue;
+            const auto pkg = chain[i - 1].filename().string();
+            const auto sep = pkg.find("-x-");
+            if (sep == std::string::npos) return {};
+            mcpp::provider::StoreEntry e{pkg.substr(0, sep), pkg.substr(sep + 3), {}, {}};
+            if (i >= 2) {
+                e.version = chain[i - 2].filename().string();
+                e.dir = chain[i - 2];
+            }
+            return e;
+        }
+        return {};
+    }
+    std::string kind_of(const std::filesystem::path& path) const override {
+        const auto s = path.generic_string();
+        if (s.find("registry/data/xpkgs") != std::string::npos) return "payload";
+        if (s.find("registry/subos") != std::string::npos) return "environment";
+        if (s.find("registry/data/") != std::string::npos) return "index";
+        return {};
+    }
+    std::filesystem::path environment(const std::filesystem::path& home, std::string_view name) const override {
+        return home / "subos" / std::string(name);
+    }
+    std::filesystem::path project_home(const std::filesystem::path& projectRoot) const override {
+        return projectRoot / ".mcpp" / ".xlings";
+    }
+    std::filesystem::path description(const std::filesystem::path& environment) const override {
+        return environment / ".xlings.json";
+    }
+    std::vector<std::filesystem::path> index_dirs(const std::filesystem::path& dataRoot) const override {
+        std::vector<std::filesystem::path> out;
+        std::error_code ec;
+        for (auto it = std::filesystem::directory_iterator(dataRoot, ec); !ec && it != std::filesystem::directory_iterator{};
+             it.increment(ec)) {
+            if (!it->is_directory(ec)) continue;
+            const auto n = it->path().filename().string();
+            if (n == "xpkgs" || n == "runtimedir" || n == "stale" || n.starts_with(".")) continue;
+            if (n == "xim-index-repos") {
+                std::error_code rec;
+                for (auto r = std::filesystem::directory_iterator(it->path(), rec);
+                     !rec && r != std::filesystem::directory_iterator{}; r.increment(rec))
+                    if (r->is_directory(rec)) out.push_back(r->path());
+                continue;
+            }
+            out.push_back(it->path());
+        }
+        std::ranges::sort(out);
+        return out;
+    }
+    bool index_data_present(const std::filesystem::path& data) const override {
+        std::error_code ec;
+        auto reposDir = data / "xim-index-repos";
+        if (std::filesystem::exists(reposDir / "xim-indexrepos.json", ec)) return true;
+        for (const auto& base : {reposDir, data}) {
+            if (!std::filesystem::is_directory(base, ec)) continue;
+            for (auto const& entry : std::filesystem::directory_iterator(base, ec))
+                if (entry.is_directory(ec) && std::filesystem::exists(entry.path() / "pkgs", ec)) return true;
+        }
+        return false;
+    }
+    std::vector<std::filesystem::path> descriptor_candidates(const std::filesystem::path& data,
+                                                             std::string_view name) const override {
+        std::vector<std::filesystem::path> out;
+        if (name.empty()) return out;
+        const std::string subdir(1, name[0]), fname = std::string(name) + ".lua";
+        // xim-pkgindex first, then each sub-index.
+        out.push_back(data / "xim-pkgindex" / "pkgs" / subdir / fname);
+        std::error_code ec;
+        std::vector<std::filesystem::path> repos;
+        for (auto it = std::filesystem::directory_iterator(data / "xim-index-repos", ec);
+             !ec && it != std::filesystem::directory_iterator{}; it.increment(ec))
+            if (it->is_directory(ec)) repos.push_back(it->path());
+        std::ranges::sort(repos);
+        for (const auto& r : repos) out.push_back(r / "pkgs" / subdir / fname);
+        return out;
+    }
     mcpp::provider::runtime_info::Info runtime_info(const std::filesystem::path& environment) const override {
         return subos::read(environment);
     }
@@ -107,6 +230,9 @@ public:
         return std::filesystem::exists(paths::sandbox_init_marker(env_), ec);
     }
     std::filesystem::path data_root() const override { return paths::index_data(env_); }
+    std::filesystem::path config_file() const override {
+        return (env_.projectDir.empty() ? env_.home : env_.projectDir) / ".xlings.json";
+    }
 
     std::expected<mcpp::provider::CallResult, std::string>
     call(std::string_view operation, std::string_view argsJson, mcpp::provider::EventHandler* handler) const override {

@@ -1833,9 +1833,9 @@ admit_recorded_build(const BuildCacheEntry& e, const ReplayAsk& ask) {
     if (ec) return std::unexpected("the time of build.ninja cannot be read");
 
     const auto runtimeTime = std::filesystem::last_write_time(
-        e.runtimeBinding->subosDir / ".xlings.json", ec);
+        mcpp::provider::layout().description(e.runtimeBinding->subosDir), ec);
     if (ec || runtimeTime > ninjaTime)
-        return std::unexpected("the runtime's .xlings.json is newer than build.ninja");
+        return std::unexpected("the runtime environment's description is newer than build.ninja");
 
     const auto manifestTime = std::filesystem::last_write_time(ask.manifest, ec);
     if (ec || manifestTime > ninjaTime)
@@ -3518,14 +3518,12 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 invocationNotRunReason = listed.error();
         }
 
-        // Prepend the sandbox's subos/default/bin to the CHILD PATH so test
+        // Prepend the toolchain's environment's bin to the CHILD PATH so test
         // binaries that shell out to bootstrapped tools (patchelf, ninja) find
         // them — applied to the child only, not via a leaky shell prefix.
         if constexpr (!mcpp::platform::is_windows) {
-            if (auto xpkgs = mcpp::provider::store_of(ctx->tc.binaryPath)) {
-                // xpkgs is <registry>/data/xpkgs → registry = xpkgs/../..
-                auto registryDir = xpkgs->parent_path().parent_path();
-                auto sandboxBin  = registryDir / "subos" / "default" / "bin";
+            if (auto environment = mcpp::provider::environment_of(ctx->tc.binaryPath)) {
+                auto sandboxBin  = *environment / "bin";
                 if (std::filesystem::exists(sandboxBin)) {
                     std::array<std::filesystem::path, 1> extra{sandboxBin};
                     auto pathVal = mcpp::platform::env::prepend_path_list("PATH", extra);

@@ -1172,7 +1172,7 @@ sibling_sdk_roots(const std::filesystem::path& clPath) {
     auto xpkgs = mcpp::provider::store_of(clPath);
     if (!xpkgs) return out;   // a system cl.exe: not in any store
     std::error_code ec;
-    auto pkgRoot = *xpkgs / "xim-x-windows-sdk";
+    auto pkgRoot = mcpp::provider::layout().tool_in(*xpkgs, "windows-sdk");
     for (auto& e : std::filesystem::directory_iterator(pkgRoot, ec)) {
         if (e.is_directory(ec)) out.push_back(e.path());
     }
@@ -1446,7 +1446,7 @@ bool msvc_available_here([[maybe_unused]] const std::filesystem::path& pkgsDir) 
     // gets the wrong answer. Any installed version whose cl.exe resolves
     // counts; `installation_at` is the same resolution install and build use.
     std::error_code ec;
-    auto root = pkgsDir / "xim-x-msvc";
+    auto root = mcpp::provider::layout().tool_in(pkgsDir, "msvc");
     if (!std::filesystem::is_directory(root, ec)) return false;
     for (auto& v : std::filesystem::directory_iterator(root, ec)) {
         if (!v.is_directory(ec)) continue;

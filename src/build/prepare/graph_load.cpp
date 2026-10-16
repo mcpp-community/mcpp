@@ -1058,12 +1058,11 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
                 // global xlings home), any child error text we captured, plus
                 // a hint about the known ≥2-repo xlings resolution gap. The
                 // real fix lives in openxlings/xlings; this only surfaces WHY.
-                auto xlingsJson = (ctx.useProjectEnv
-                        ? ((state.overrides.project_index_root.empty() ? state.workRoot
-                                                         : state.overrides.project_index_root)
-                           / ".mcpp")
-                        : (*cfg)->xlingsHome())
-                    / ".xlings.json";
+                const auto projectRoot = state.overrides.project_index_root.empty()
+                    ? state.workRoot : state.overrides.project_index_root;
+                auto xlingsJson = mcpp::provider::open(ctx.useProjectEnv
+                        ? mcpp::config::make_project_xlings_env(**cfg, projectRoot)
+                        : mcpp::config::make_xlings_env(**cfg))->config_file();
                 auto indexRepos = mcpp::pm::read_seeded_index_repos(xlingsJson);
                 std::string childErr = capturedChildError;
                 if (attempted.size() > 1 && !firstError.empty()) {

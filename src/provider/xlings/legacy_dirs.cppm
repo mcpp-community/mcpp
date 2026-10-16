@@ -1,4 +1,4 @@
-// mcpp.fallback.legacy_dirs — legacy xpkg directory scan.
+// mcpp.provider.xlings.legacy_dirs — legacy store directory scan (the adapter's: store naming is xlings').
 //
 // Last-resort fallback scan (COMPAT(internal:legacy-xpkgs-scan)): walk xpkgs/ for a
 // directory that holds the requested package under an older naming layout.
@@ -30,11 +30,11 @@
 // for (`<ns>-x-<shortName>`, `<index>-x-<shortName>`) and refuses the one it
 // was never meant to serve: some other namespace's package.
 
-export module mcpp.fallback.legacy_dirs;
+export module mcpp.provider.xlings.legacy_dirs;
 
 import std;
 
-export namespace mcpp::fallback {
+export namespace mcpp::provider::xlings {
 
 // Scan the xpkgs base directory for a legacy install directory holding
 // (namespace, shortName). Returns the matching directory name (not the full
@@ -73,4 +73,4 @@ scan_legacy_install_dirs(const std::filesystem::path& xpkgsBase,
     return std::nullopt;
 }
 
-} // namespace mcpp::fallback
+} // namespace mcpp::provider::xlings

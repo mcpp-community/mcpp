@@ -52,12 +52,12 @@ std::optional<std::filesystem::path>
 remap_xlings_baked_sysroot(std::string_view reportedPath,
                            const std::filesystem::path& compilerBin) {
     if (reportedPath.empty()) return std::nullopt;
-    if (!reportedPath.ends_with("subos/default")) return std::nullopt;
+    if (!mcpp::provider::layout().is_default_environment(reportedPath)) return std::nullopt;
 
     auto xpkgsOpt = mcpp::provider::store_of(compilerBin);
     if (xpkgsOpt) {
         // Owned by this toolchain's registry? Then it is the right answer.
-        auto registry = xpkgsOpt->parent_path().parent_path();
+        auto registry = mcpp::provider::layout().home_of_store(*xpkgsOpt);
         std::error_code ec;
         const bool inside = path_is_under(
             std::filesystem::path(std::string(reportedPath)), registry);
@@ -65,10 +65,8 @@ remap_xlings_baked_sysroot(std::string_view reportedPath,
             return std::nullopt;
     }
 
-    if (auto xpkgs = std::move(xpkgsOpt)) {
-        // xpkgs is <registry>/data/xpkgs -> registry = xpkgs/../..
-        auto registrySysroot = xpkgs->parent_path().parent_path()
-                               / "subos" / "default";
+    if (auto environment = mcpp::provider::environment_of(compilerBin)) {
+        auto registrySysroot = *environment;
         if (std::filesystem::exists(registrySysroot / "usr" / "include"))
             return registrySysroot;
     }
@@ -86,7 +84,7 @@ bool sysroot_is_owned(std::string_view reportedPath,
     // No registry to compare against -- nothing to contradict, so accept.
     if (!xpkgs) return true;
     return path_is_under(std::filesystem::path(std::string(reportedPath)),
-                         xpkgs->parent_path().parent_path());
+                         mcpp::provider::layout().home_of_store(*xpkgs));
 }
 
 // Is this sysroot foreign -- neither this mcpp home's registry nor a tree

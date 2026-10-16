@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.fallback.legacy_dirs;
+import mcpp.provider.xlings.legacy_dirs;
 
 // The legacy install-dir scan must not cross namespaces.
 //
@@ -35,7 +35,7 @@ TEST(FallbackLegacyDirs, DoesNotReturnAnotherNamespacesDirectory) {
     auto base = make_xpkgs({"compat-x-imgui"});
     // Asking for ocornut:imgui. Only compat's directory exists, and it is NOT
     // an answer to this question.
-    auto hit = mcpp::fallback::scan_legacy_install_dirs(
+    auto hit = mcpp::provider::xlings::scan_legacy_install_dirs(
         base, "ocornut.imgui", "imgui", {"ocornut", "mcpplibs"});
     EXPECT_FALSE(hit.has_value())
         << "returned '" << hit.value_or("") << "' for ocornut:imgui";
@@ -44,7 +44,7 @@ TEST(FallbackLegacyDirs, DoesNotReturnAnotherNamespacesDirectory) {
 
 TEST(FallbackLegacyDirs, StillFindsOwnNamespaceShortNameLayout) {
     auto base = make_xpkgs({"compat-x-imgui", "ocornut-x-imgui"});
-    auto hit = mcpp::fallback::scan_legacy_install_dirs(
+    auto hit = mcpp::provider::xlings::scan_legacy_install_dirs(
         base, "ocornut.imgui", "imgui", {"ocornut", "mcpplibs"});
     ASSERT_TRUE(hit.has_value());
     EXPECT_EQ(*hit, "ocornut-x-imgui");
@@ -54,7 +54,7 @@ TEST(FallbackLegacyDirs, StillFindsOwnNamespaceShortNameLayout) {
 TEST(FallbackLegacyDirs, StillFindsIndexPrefixedLegacyLayout) {
     // The old layout this arm exists for: <index>-x-<shortName>.
     auto base = make_xpkgs({"mcpplibs-x-tinyhttps"});
-    auto hit = mcpp::fallback::scan_legacy_install_dirs(
+    auto hit = mcpp::provider::xlings::scan_legacy_install_dirs(
         base, "mcpplibs.tinyhttps", "tinyhttps", {"mcpplibs", "mcpplibs"});
     ASSERT_TRUE(hit.has_value());
     EXPECT_EQ(*hit, "mcpplibs-x-tinyhttps");
@@ -65,7 +65,7 @@ TEST(FallbackLegacyDirs, QualifiedSuffixNeedsNoPrefixAllowance) {
     // `-x-<ns>.<name>` carries the namespace in the suffix itself, so it is
     // accepted whatever the prefix is — that is the legacy FQN layout.
     auto base = make_xpkgs({"someindex-x-ocornut.imgui"});
-    auto hit = mcpp::fallback::scan_legacy_install_dirs(
+    auto hit = mcpp::provider::xlings::scan_legacy_install_dirs(
         base, "ocornut.imgui", "imgui", {"ocornut"});
     ASSERT_TRUE(hit.has_value());
     EXPECT_EQ(*hit, "someindex-x-ocornut.imgui");

@@ -239,8 +239,8 @@ export int doctor_report() {
         }
         {
             std::error_code sdkEc;
-            auto msvcRoot = mcpp::home::root()
-                / "registry" / "data" / "xpkgs" / "xim-x-msvc";
+            auto msvcRoot = mcpp::provider::layout().tool_in(
+                mcpp::provider::home_store().value_or(std::filesystem::path{}), "msvc");
             for (auto& v : std::filesystem::directory_iterator(msvcRoot, sdkEc)) {
                 if (!v.is_directory(sdkEc)) continue;
                 auto ver = v.path().filename().string();
@@ -266,8 +266,8 @@ export int doctor_report() {
 
         mcpp::ui::status("Checking", "mingw (xim:mingw-gcc)");
         {
-            auto pkgs = mcpp::home::root()
-                / "registry" / "data" / "xpkgs" / "xim-x-mingw-gcc";
+            auto pkgs = mcpp::provider::layout().tool_in(
+                mcpp::provider::home_store().value_or(std::filesystem::path{}), "mingw-gcc");
             std::error_code ec;
             bool any = false;
             if (std::filesystem::exists(pkgs, ec)) {
@@ -288,8 +288,8 @@ export int doctor_report() {
             auto triple = std::string(mcpp::platform::host_arch) + "-linux-musl";
             auto label  = std::format("linux cross (xim:{}-gcc)", triple);
             mcpp::ui::status("Checking", label);
-            auto pkgs = mcpp::home::root() / "registry" / "data" / "xpkgs"
-                      / std::format("xim-x-{}-gcc", triple);
+            auto pkgs = mcpp::provider::layout().tool_in(
+                mcpp::provider::home_store().value_or(std::filesystem::path{}), triple + "-gcc");
             std::error_code ec;
             bool any = false;
             if (std::filesystem::exists(pkgs, ec)) {
@@ -525,7 +525,7 @@ export int doctor_report() {
     //      (std::filesystem::exists follows symlinks → false for dangling).
     mcpp::ui::status("Checking", "toolchain runtime deps");
     if (cfg) {
-        auto pkgsDir = (*cfg).xlingsHome() / "data" / "xpkgs";
+        auto pkgsDir = mcpp::provider::open(mcpp::config::make_xlings_env(*cfg))->store();
         std::error_code ec;
         bool sawAny = false;
         bool anyMissing = false;
@@ -533,17 +533,16 @@ export int doctor_report() {
         if (std::filesystem::exists(pkgsDir, ec)) {
             // Mirror `mcpp toolchain list`: each xim-x-<name>/<version>/bin
             // holds one installed toolchain frontend (clang++/g++/musl-gcc-…).
-            for (auto& entry : std::filesystem::directory_iterator(pkgsDir, ec)) {
-                auto name = entry.path().filename().string();
-                if (name.rfind("xim-x-", 0) != 0) continue;          // toolchains only
-                auto id = mcpp::toolchain::identify_xim_payload(
-                    name.substr(std::string("xim-x-").size()));
+            for (const auto& entry : mcpp::provider::layout().entries(pkgsDir)) {
+                if (entry.ns != "xim") continue;          // toolchains only
+                auto id = mcpp::toolchain::identify_xim_payload(entry.name);
                 if (!id) continue;                                   // not a compiler pkg
 
-                for (auto& vEntry : std::filesystem::directory_iterator(entry.path(), ec)) {
+                {
+                    const auto& vDir = entry.dir;
                     mcpp::toolchain::ToolchainSpec s;
                     s.family  = id->family;
-                    s.version = vEntry.path().filename().string();
+                    s.version = vDir.filename().string();
                     s.target  = id->target;
                     // payload_frontend, not toolchain_frontend(root/"bin"):
                     // cl.exe is four levels down at
@@ -553,7 +552,7 @@ export int doctor_report() {
                     // in `toolchain list`; doctor kept its own copy, so the
                     // two commands disagreed about the same machine.
                     auto binR = mcpp::toolchain::payload_frontend(
-                        vEntry.path(), mcpp::toolchain::to_xim_package(s));
+                        vDir, mcpp::toolchain::to_xim_package(s));
                     // DOCTOR IS THE COMMAND FOR EXACTLY THIS. A payload whose
                     // own description does not parse is a finding, and
                     // skipping it would make the one command that reports on
@@ -622,9 +621,9 @@ export int doctor_report() {
             }
         }
 
-        // Dangling symlinks under registry/subos/default/lib — these point
-        // into xim payload lib dirs; a removed package leaves them broken.
-        auto subosLib = (*cfg).xlingsHome() / "subos" / "default" / "lib";
+        // Dangling symlinks under the provider environment's lib — these
+        // point into payload lib dirs; a removed package leaves them broken.
+        auto subosLib = mcpp::provider::open(mcpp::config::make_xlings_env(*cfg))->sysroot() / "lib";
         if (std::filesystem::exists(subosLib, ec)) {
             bool anyDangling = false;
             for (auto& e : std::filesystem::directory_iterator(subosLib, ec)) {
@@ -653,7 +652,7 @@ export int doctor_report() {
     // musl-gcc payload on a Linux, macOS or Windows mcpp.
     mcpp::ui::status("Checking", "gcc include-fixed headers");
     if (cfg) {
-        auto pkgsDir = (*cfg).xlingsHome() / "data" / "xpkgs";
+        auto pkgsDir = mcpp::provider::open(mcpp::config::make_xlings_env(*cfg))->store();
         std::error_code ec;
         bool sawAnyGcc = false;
         bool anyFrozen = false;
@@ -663,23 +662,21 @@ export int doctor_report() {
             // directory `identify_xim_payload` recognises, filtered to the
             // GCC family (native, musl-gcc, mingw-(cross-)gcc, and any
             // `<triple>-gcc` cross payload all answer Family::Gcc).
-            for (auto& entry : std::filesystem::directory_iterator(pkgsDir, ec)) {
-                auto name = entry.path().filename().string();
-                if (name.rfind("xim-x-", 0) != 0) continue;
-                auto id = mcpp::toolchain::identify_xim_payload(
-                    name.substr(std::string("xim-x-").size()));
+            for (const auto& entry : mcpp::provider::layout().entries(pkgsDir)) {
+                if (entry.ns != "xim") continue;
+                auto id = mcpp::toolchain::identify_xim_payload(entry.name);
                 if (!id || id->family != mcpp::toolchain::Family::Gcc) continue;
 
-                for (auto& vEntry : std::filesystem::directory_iterator(entry.path(), ec)) {
-                    if (!vEntry.is_directory(ec)) continue;
+                {
+                    const auto& vDir = entry.dir;
                     sawAnyGcc = true;
-                    auto findings = find_fixincludes_banners(vEntry.path());
+                    auto findings = find_fixincludes_banners(vDir);
                     if (findings.empty()) continue;
                     anyFrozen = true;
 
                     mcpp::toolchain::ToolchainSpec s;
                     s.family  = id->family;
-                    s.version = vEntry.path().filename().string();
+                    s.version = vDir.filename().string();
                     s.target  = id->target;
                     auto specStr = s.spec_str();
                     auto targetFlag = id->target.empty()
@@ -1123,11 +1120,11 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
     // same question of the same authority rather than re-deriving an answer
     // that can drift from the one the build uses.
     const auto lm = mcpp::toolchain::resolve_link_model(tc);
-    auto path_origin = [](const std::filesystem::path& p) -> std::string_view {
+    auto path_origin = [](const std::filesystem::path& p) -> std::string {
         if (p.empty()) return "none";
-        const auto sp = p.generic_string();
-        if (sp.find("registry/data/xpkgs") != std::string::npos) return "payload";
-        if (sp.find("registry/subos")      != std::string::npos) return "subos";
+        const auto kind = mcpp::provider::layout().kind_of(p);
+        if (kind == "payload") return "payload";
+        if (kind == "environment") return "subos";  // provider-boundary-ok: doctor --json's published origin value
         return "host";
     };
     const auto& srPath =

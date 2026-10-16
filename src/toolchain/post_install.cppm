@@ -292,7 +292,7 @@ std::string baked_runtime_binding(const std::filesystem::path& compilerBin) {
     // authority; it is just old.
     std::vector<std::string> installed;
     if (auto xpkgs = mcpp::provider::store_of(compilerBin)) {
-        for (auto it = std::filesystem::directory_iterator(*xpkgs / "xim-x-glibc", ec);
+        for (auto it = std::filesystem::directory_iterator(mcpp::provider::layout().tool_in(*xpkgs, "glibc"), ec);
              !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
             if (!it->is_directory(ec)) continue;
             auto v = it->path().filename().string();

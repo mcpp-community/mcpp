@@ -26,6 +26,8 @@ export module mcpp.build.hermetic;
 import std;
 import mcpp.log;
 import mcpp.platform;
+import mcpp.provider;
+import mcpp.provider.select;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.model;
 import mcpp.toolchain.triple;
@@ -120,24 +122,21 @@ std::expected<void, std::string> verify_hermetic_link(
 {
     if constexpr (!mcpp::platform::is_linux) return {};
 
-    // Sandbox toolchains only: the compiler must live under an xpkgs
-    // registry. A host/system compiler is the user's explicit opt-in to the
-    // host world.
-    auto binStr = tc.binaryPath.string();
-    auto xpkgsPos = binStr.find("xpkgs");
-    if (xpkgsPos == std::string::npos) return {};
+    // Provider toolchains only: the compiler must live in a store. A
+    // host/system compiler is the user's explicit opt-in to the host world.
+    auto store = mcpp::provider::store_of(tc.binaryPath);
+    if (!store) return {};
     std::vector<std::filesystem::path> allowed;
-    allowed.emplace_back(binStr.substr(0, xpkgsPos + 5));  // the xpkgs root
-    // Payloads may be symlink-inherited from another MCPP_HOME (the e2e
-    // isolation pattern): mcpp passes the symlink-view paths on the command
-    // line, but the driver reports its own resource dir (clang_rt.crt*)
-    // through the CANONICAL path. Allow that registry too.
+    allowed.push_back(*store);
+    // A toolchain borrowed from an upstream is a link entry (design
+    // 2026-10-16 §8): mcpp passes the link's paths on the command line, but
+    // the driver reports its own resource dir (clang_rt.crt*) through the
+    // path the link names. That store is allowed too.
     {
         std::error_code ec;
-        auto canon = std::filesystem::weakly_canonical(tc.binaryPath, ec).string();
-        auto pos = ec ? std::string::npos : canon.find("xpkgs");
-        if (pos != std::string::npos)
-            allowed.emplace_back(canon.substr(0, pos + 5));
+        auto real = std::filesystem::weakly_canonical(tc.binaryPath, ec);
+        if (!ec)
+            if (auto upstream = mcpp::provider::store_of(real)) allowed.push_back(*upstream);
     }
     if (!tc.sysroot.empty()) allowed.push_back(tc.sysroot);
 

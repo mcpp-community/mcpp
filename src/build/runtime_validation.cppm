@@ -16,6 +16,8 @@
 export module mcpp.build.runtime_validation;
 
 import std;
+import mcpp.provider;
+import mcpp.provider.select;
 import mcpp.build.loader_contract;
 import mcpp.build.plan;
 import mcpp.build.symbol_provision;
@@ -341,7 +343,7 @@ std::string post_link_key(const mcpp::build::BuildPlan& plan) {
     material += '\x1f';
     if (!plan.runtimeBinding.subosDir.empty()) {
         std::error_code ec;
-        auto stampPath = plan.runtimeBinding.subosDir / ".xlings.json";
+        auto stampPath = mcpp::provider::layout().description(plan.runtimeBinding.subosDir);
         auto size = std::filesystem::file_size(stampPath, ec);
         if (!ec) material += std::to_string(size);
         ec.clear();

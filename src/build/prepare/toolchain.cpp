@@ -273,12 +273,12 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
     // the same fact twice is how two of them start disagreeing.
     state.storeRoots = [&]() -> std::vector<std::filesystem::path> {
         std::vector<std::filesystem::path> roots;
-        if (auto c = state.get_cfg(true)) roots.push_back((*c)->xlingsHome() / "data" / "xpkgs");
+        if (auto c = state.get_cfg(true)) roots.push_back(mcpp::provider::open(mcpp::config::make_xlings_env(**c))->store());
         for (auto& d : mcpp::config::project_xlings_data_roots(state.workRoot))
-            roots.push_back(d / "xpkgs");
+            roots.push_back(mcpp::provider::layout().store_in(d));
         if (!state.overrides.project_index_root.empty())
             for (auto& d : mcpp::config::project_xlings_data_roots(state.overrides.project_index_root))
-                roots.push_back(d / "xpkgs");
+                roots.push_back(mcpp::provider::layout().store_in(d));
         // The engine interface's package: written once per mcpp version and
         // never edited, like a payload (mcpp#797).
         roots.push_back(mcpp::build::engine::root());
@@ -395,7 +395,7 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         auto c = state.get_cfg(true);
         if (!c) return mcpp::toolchain::msvc::has_usable_msvc();
         return mcpp::toolchain::msvc::msvc_available_here(
-            (*c)->xlingsHome() / "data" / "xpkgs");
+            mcpp::provider::open(mcpp::config::make_xlings_env(**c))->store());
     };
 
     // THE PLATFORM'S CANONICAL NATIVE DEFAULT — a spec string only; no

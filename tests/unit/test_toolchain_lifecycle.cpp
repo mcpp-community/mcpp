@@ -195,21 +195,20 @@ TEST(DeclaredRuntime, NothingIsInstalledOffLinux) {
     EXPECT_FALSE(ensure_declared_runtime(cfg, binding));
 }
 
-// The dispatch that decides whether a toolchain needs the payload at all. A
-// toolchain whose fixup does not patch against a C runtime must not cause a
-// download.
-TEST(DeclaredRuntime, OnlyToolchainsTheFixupPatchesNeedThePayload) {
+// Which toolchains run on a C runtime payload: a GNU gcc and an llvm on
+// Linux. Any other toolchain must not cause a runtime download.
+TEST(DeclaredRuntime, OnlyToolchainsOnARuntimePayloadNeedIt) {
     XimToolchainPackage gcc;   gcc.ximName = "gcc";   gcc.needsGccPostInstallFixup = true;
     XimToolchainPackage llvm;  llvm.ximName = "llvm";
     XimToolchainPackage musl;  musl.ximName = "musl-gcc";
     XimToolchainPackage msvc;  msvc.ximName = "msvc";
     if constexpr (mcpp::platform::is_windows) {
         for (auto const* p : {&gcc, &llvm, &musl, &msvc})
-            EXPECT_TRUE(post_install_fixup_kind(*p).empty()) << p->ximName;
+            EXPECT_TRUE(runtime_payload_kind(*p).empty()) << p->ximName;
     } else {
-        EXPECT_EQ(post_install_fixup_kind(gcc), "gcc");
-        EXPECT_EQ(post_install_fixup_kind(llvm), "llvm");
-        EXPECT_TRUE(post_install_fixup_kind(musl).empty());
-        EXPECT_TRUE(post_install_fixup_kind(msvc).empty());
+        EXPECT_EQ(runtime_payload_kind(gcc), "gcc");
+        EXPECT_EQ(runtime_payload_kind(llvm), "llvm");
+        EXPECT_TRUE(runtime_payload_kind(musl).empty());
+        EXPECT_TRUE(runtime_payload_kind(msvc).empty());
     }
 }

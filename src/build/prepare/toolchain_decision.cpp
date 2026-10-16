@@ -134,7 +134,7 @@ std::expected<void, std::string> phase5_toolchain_after_graph(PrepareState& stat
                 auto pkg = mcpp::toolchain::to_xim_package(*spec);
                 if (auto picked = mcpp::toolchain::resolve_version_match(
                         "", mcpp::toolchain::list_installed_versions(
-                                (*cfg)->xlingsHome() / "data" / "xpkgs",
+                                mcpp::provider::open(mcpp::config::make_xlings_env(**cfg))->store(),
                                 pkg.ximName)))
                     return std::format("{}@{}", family, *picked);
             }

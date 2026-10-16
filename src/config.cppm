@@ -193,27 +193,8 @@ resolve_project_index_path(const std::filesystem::path& projectDir,
 
 bool project_index_data_initialized(const std::filesystem::path& projectDir)
 {
-    std::error_code ec;
-    for (auto const& data : project_xlings_data_roots(projectDir)) {
-        auto reposDir = data / "xim-index-repos";
-        if (std::filesystem::exists(reposDir / "xim-indexrepos.json", ec)) {
-            return true;
-        }
-        if (std::filesystem::is_directory(reposDir, ec)) {
-            for (auto const& entry : std::filesystem::directory_iterator(reposDir, ec)) {
-                if (entry.is_directory(ec) && std::filesystem::exists(entry.path() / "pkgs", ec)) {
-                    return true;
-                }
-            }
-        }
-        if (std::filesystem::is_directory(data, ec)) {
-            for (auto const& entry : std::filesystem::directory_iterator(data, ec)) {
-                if (entry.is_directory(ec) && std::filesystem::exists(entry.path() / "pkgs", ec)) {
-                    return true;
-                }
-            }
-        }
-    }
+    for (auto const& data : project_xlings_data_roots(projectDir))
+        if (mcpp::provider::layout().index_data_present(data)) return true;
     return false;
 }
 
@@ -231,10 +212,9 @@ std::string check_base_init(const GlobalConfig& cfg) {
     if (!std::filesystem::exists(cfg.xlingsBinary))
         return std::format("xlings binary missing: {}", cfg.xlingsBinary.string());
 
-    // Check sandbox init marker
-    auto marker = xlEnv.home / "subos" / "default" / ".xlings.json";
-    if (!std::filesystem::exists(marker))
-        return "sandbox not initialized (missing subos/default/.xlings.json)";
+    // The provider's own environment, initialised once.
+    if (!mcpp::provider::open(xlEnv)->initialized())
+        return "the provider's environment is not initialized";
 
     // Check patchelf (Linux only)
 #if !defined(__APPLE__) && !defined(_WIN32)
@@ -867,7 +847,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // 5. Seed registry/.xlings.json if missing; migrate legacy cached
     // sandboxes in place so CI/user caches move from mcpp-index to mcpplibs
     // without losing xlings' active subos or version bindings.
-    auto xjson = cfg.xlingsHome() / ".xlings.json";
+    auto xjson = mcpp::provider::open(make_xlings_env(cfg))->config_file();
     if (!std::filesystem::exists(xjson)) {
         write_default_xlings_json(xjson, cfg.indexRepos, initial_mirror);
         record_seeded_index_repos(xjson, cfg.indexRepos, quiet);

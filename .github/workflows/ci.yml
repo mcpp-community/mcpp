@@ -143,11 +143,15 @@ jobs:
       - name: Reason tokens agree with the engine, and with the mirror
         run: bash .github/tools/check_reason_tokens.sh
 
+      - name: Only the adapter and the composition root name the provider
+        run: python3 .github/tools/check_provider_boundary.py
+
       - name: The tools of the CI stages pass their fixtures
         run: |
           python3 tests/scripts/test_classify_changes.py
           python3 tests/scripts/test_check_e2e_coverage.py
           python3 tests/scripts/test_check_default_toolchain_docs.py
+          python3 tests/scripts/test_check_provider_boundary.py
           python3 tests/scripts/test_native_candidate_admission.py
           python3 -m unittest discover -s tests/scripts -p test_toolchain_env.py
 

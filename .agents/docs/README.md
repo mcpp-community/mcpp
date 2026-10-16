@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-331 records.
+332 records.
 
 ## By subject
 
@@ -121,10 +121,15 @@ Records that declare one. Everything else is listed by date below.
 - [The engine gaps left open after the SDK batch](2026-09-12-engine-gaps-after-the-sdk-batch.md) — landed
 - [Six open issues: what each one actually is, and what would answer it](2026-09-11-six-open-issues-analysis.md) — active
 
+### xlings
+
+- [mcpp 对 xlings 的依赖：Provider 端口、归属与位置、上游复用、系统级安装、payload 不可变、文件系统能力与长路径（#809）](2026-10-16-xlings-provider-port-and-shared-store-design.md) — active
+
 ## By date
 
 ### 2026-10
 
+- [mcpp 对 xlings 的依赖：Provider 端口、归属与位置、上游复用、系统级安装、payload 不可变、文件系统能力与长路径（#809）](2026-10-16-xlings-provider-port-and-shared-store-design.md) — active
 - [构建依赖的一条管线：配置与产物两轴、包的实例、库接口、兼容系统与工作空间收尾（#797）](2026-10-11-build-dependencies-one-pipeline-design.md) — active
 - [一处来源，一种含义：工作空间的传递语义、生成输出、模块角色与首次运行（#786、#785、#778、#790）](2026-10-10-one-source-one-meaning-design.md) — landed
 - [LLVM 23.1.3 Part 2：Linux aarch64 默认工具链与 glibc 生态闭环](2026-10-08-llvm-2313-linux-aarch64-ecosystem-part2-design.md) — active

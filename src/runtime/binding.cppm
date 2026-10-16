@@ -231,10 +231,10 @@ std::filesystem::path subos_path(
     const mcpp::provider::runtime::RuntimeSelection& selection,
     const std::filesystem::path& xlingsHome) {
     using Mode = mcpp::provider::runtime::RuntimeSelection::Mode;
+    const auto& layout = mcpp::provider::layout();
     if (selection.mode == Mode::McppDefault || selection.subosName == "default")
-        return xlingsHome / "subos" / "default";
-    return selection.ownerRoot / ".mcpp" / ".xlings" / "subos"
-         / selection.subosName;
+        return layout.environment(xlingsHome, "default");
+    return layout.environment(layout.project_home(selection.ownerRoot), selection.subosName);
 }
 
 // `subos_info.runtime` is the provider's declared identity, while the SubOS
@@ -249,8 +249,9 @@ std::optional<std::string> managed_glibc_identity(
     const std::filesystem::path& libraryDir,
     const std::filesystem::path& xlingsRoot) {
     std::error_code bec, lec;
+    const auto& layout = mcpp::provider::layout();
     auto base = std::filesystem::weakly_canonical(
-        xlingsRoot / "data" / "xpkgs" / "xim-x-glibc", bec);
+        layout.tool_in(layout.store_of_home(xlingsRoot), "glibc"), bec);
     auto real = std::filesystem::weakly_canonical(libraryDir, lec);
     if (bec || lec || base.empty() || real.empty()) return std::nullopt;
 
@@ -286,7 +287,8 @@ std::optional<ManagedGlibcPayload> exact_declared_glibc_payload(
         || version.find('\\') != std::string_view::npos)
         return std::nullopt;
 
-    auto payload = xlingsRoot / "data" / "xpkgs" / "xim-x-glibc"
+    const auto& layout = mcpp::provider::layout();
+    auto payload = layout.tool_in(layout.store_of_home(xlingsRoot), "glibc")
                  / std::string(version);
     for (auto const& leaf : {"lib64", "lib"}) {
         auto lib = payload / leaf;
