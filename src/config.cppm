@@ -765,12 +765,12 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         // The registry is mcpp's (design 2026-10-16 §12, D10): a provider
         // home mcpp did not make -- one whose configuration names none of
         // mcpp's indices -- is somebody else's, and reusing it is what an
-        // upstream is for.
-        if (auto xj = read_json_file(cfg.xlingsHomeOverride / ".xlings.json"); xj && xj->is_object()) {
-            bool mcpps = false;
-            if (auto it = xj->find("index_repos"); it != xj->end() && it->is_array())
-                for (auto& e : *it)
-                    if (e.is_object() && e.value("name", std::string{}) == "mcpplibs") mcpps = true;
+        // upstream is for. `mcpp-index` is the name an earlier mcpp gave it
+        // (COMPAT(internal:legacy-index-name)).
+        if (const auto served = mcpp::provider::layout().indices_of(cfg.xlingsHomeOverride); !served.empty()) {
+            const bool mcpps = std::ranges::any_of(served, [](const std::string& name) {
+                return name == "mcpplibs" || name == "mcpp-index";
+            });
             if (!mcpps)
                 return std::unexpected(ConfigError{std::format(
                     "[xlings] home = \"{}\" is a home mcpp did not make; to reuse its packages, name it as "

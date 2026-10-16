@@ -479,6 +479,16 @@ TEST(XlingsOwnedIndex, SeedNamesItsDataAndStore) {
     std::filesystem::remove_all(dir);
 }
 
+TEST(XlingsOwnedIndex, AHomeServesItsDefaultAndItsConfiguredIndexes) {
+    auto dir = make_tempdir("mcpp-indices-of");
+    EXPECT_TRUE(mcpp::provider::xlings::paths::indices_of(dir).empty());   // not a provider home
+    std::ofstream(dir / ".xlings.json") << "{}";
+    EXPECT_EQ(mcpp::provider::xlings::paths::indices_of(dir), std::vector<std::string>{"xim"});
+    std::ofstream(dir / ".xlings.json") << R"({"index_repos":[{"name":"mcpp-index","url":"u"},{"name":"xim","url":"v"}]})";
+    EXPECT_EQ(mcpp::provider::xlings::paths::indices_of(dir), (std::vector<std::string>{"xim", "mcpp-index"}));
+    std::filesystem::remove_all(dir);
+}
+
 TEST(XlingsOwnedIndex, AHomeFromBeforeHasItsIndexMovedOnce) {
     auto dir = make_tempdir("mcpp-own-indices");
     mcpp::provider::xlings::Env env;

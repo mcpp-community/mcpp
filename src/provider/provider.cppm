@@ -347,6 +347,10 @@ public:
     // project's: project_home), read from its configuration alone.
     virtual std::vector<std::filesystem::path> index_roots_of(const std::filesystem::path& home) const = 0;
     virtual std::vector<std::filesystem::path> stores_of(const std::filesystem::path& home) const = 0;
+    // The indexes a provider home is configured to serve, its default
+    // included; empty: the directory is not a provider home (no
+    // configuration there).
+    virtual std::vector<std::string> indices_of(const std::filesystem::path& home) const = 0;
     // The store an mcpp home (or a project's .mcpp) keeps the payloads of
     // mcpp's own indices in: the provider names a store by its last
     // component (design §5.1).

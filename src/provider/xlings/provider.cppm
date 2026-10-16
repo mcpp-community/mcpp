@@ -177,6 +177,9 @@ public:
     std::vector<std::filesystem::path> stores_of(const std::filesystem::path& home) const override {
         return paths::stores_of(home);
     }
+    std::vector<std::string> indices_of(const std::filesystem::path& home) const override {
+        return paths::indices_of(home);
+    }
     std::filesystem::path own_store(const std::filesystem::path& mcppHome) const override {
         // xlings takes a store only by the name `xpkgs` (a payload's path is
         // its identity, <store>/<ns>-x-<name>/<version>).

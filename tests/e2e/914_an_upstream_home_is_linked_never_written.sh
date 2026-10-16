@@ -85,6 +85,10 @@ sed -i.bak '/^home *=/d' "$MCPP_HOME/config.toml"
 sed -i.bak "s|^\[xlings\]\$|[xlings]\nhome = \"$(host_path "$FOREIGN")\"|" "$MCPP_HOME/config.toml"
 if "$MCPP" self env > foreign.log 2>&1; then fail "E: a home mcpp did not make was taken as its registry" foreign.log; fi
 grep -q 'name it as an upstream' foreign.log || fail "E: the refusal does not name upstream" foreign.log
+# A home an earlier mcpp made names its index `mcpp-index`: it is mcpp's.
+printf '{"index_repos":[{"name":"mcpp-index","url":"https://example.invalid/mcpp-index.git"}]}\n' > "$FOREIGN/.xlings.json"
+"$MCPP" self env > earlier.log 2>&1 || true
+if grep -q 'name it as an upstream' earlier.log; then fail "E: a home an earlier mcpp made was refused" earlier.log; fi
 cp "$TMP/config.keep" "$MCPP_HOME/config.toml"
 echo "ok: E. a home mcpp did not make is not its registry"
 

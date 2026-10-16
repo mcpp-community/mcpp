@@ -319,6 +319,9 @@ namespace paths {
     // from its configuration alone: its index directories, its stores.
     std::vector<std::filesystem::path> index_roots_of(const std::filesystem::path& home);
     std::vector<std::filesystem::path> stores_of(const std::filesystem::path& home);
+    // The indexes a provider home serves: xim, then its configuration's
+    // `index_repos`; empty when it has no configuration.
+    std::vector<std::string> indices_of(const std::filesystem::path& home);
     // Record where the indices mcpp owns keep their data and payloads in
     // this env's configuration, and move data an index kept at the home's
     // own place there, once (design §5.3).
@@ -1343,6 +1346,15 @@ std::filesystem::path index_dir_of(const Env& env, std::string_view name) {
     for (auto& d : declared_indices(env))
         if (d.name == name) return d.dir;
     return index_data(env) / std::string(name);
+}
+
+std::vector<std::string> indices_of(const std::filesystem::path& home) {
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(home / ".xlings.json", ec)) return {};
+    std::vector<std::string> out{"xim"};
+    for (auto& d : declared_in(home / ".xlings.json", home, home / "data"))
+        if (std::ranges::find(out, d.name) == out.end()) out.push_back(d.name);
+    return out;
 }
 
 std::vector<std::filesystem::path> index_roots_of(const std::filesystem::path& home) {
