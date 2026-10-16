@@ -408,6 +408,24 @@ warning: pre-v1 cache at '/home/speak/.mcpp/bmi' occupies 167.5 MiB and is no lo
 `mcpp self config --mirror CN|GLOBAL` 选择下载镜像；mcpp 与 xlings 各自
 持有这个设置，为其中一个选定，不会为另一个选定。
 
+## 复用另一个 home，以及机器的系统 home
+
+设置 `[xlings] upstream`（[25](25-home-indices-and-store.md) §3）后，安装以链接方式使用上游的 payload，而不是下载。
+此前已安装副本的 home 可以把它们换成链接：
+
+```bash
+mcpp self store dedupe            # list what an upstream has the same of
+mcpp self store dedupe --apply    # replace each by a link, atomically
+```
+
+管理员用 `--system` 维护机器的系统 home，只有维护类命令接受它（[25](25-home-indices-and-store.md) §4）：
+
+```bash
+sudo mcpp --system self init
+sudo mcpp --system toolchain install gcc 16.1.0
+sudo mcpp --system index update
+```
+
 ## `[hooks]` —— 项目构建生命周期命令（实验性）
 
 > **实验性。** Hook 目前**不能**决定一次构建是否成功。每一次 Hook 失败

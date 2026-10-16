@@ -116,11 +116,10 @@ mcpp build                            # must download and compile 0.0.48
 在上面这条链还没走完时，可以手工向 registry 播种，让消费方在库发布之前就能编译：
 
 ```bash
-REG=~/.mcpp/registry/data/xpkgs/<ns>-x-<name>/0.0.48
+REG=~/.mcpp/xpkgs/<ns>-x-<name>/0.0.48     # the store of mcpp's indices (25 §1)
 mkdir -p "$REG"
 git -C /path/to/library archive --format=tar --prefix=<repo>-0.0.48/ HEAD \
   | tar -x -C "$REG"
-touch "$REG/.mcpp_ok"                 # the marker that says "resolved"
 cp ../0.0.47/.xpkg.lua "$REG/.xpkg.lua"   # add a 0.0.48 entry to it
 ```
 

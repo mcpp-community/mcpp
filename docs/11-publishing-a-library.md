@@ -126,11 +126,10 @@ While the chain above is still in flight, seed the registry by hand so
 consumers can compile against the library before it is published:
 
 ```bash
-REG=~/.mcpp/registry/data/xpkgs/<ns>-x-<name>/0.0.48
+REG=~/.mcpp/xpkgs/<ns>-x-<name>/0.0.48     # the store of mcpp's indices (25 §1)
 mkdir -p "$REG"
 git -C /path/to/library archive --format=tar --prefix=<repo>-0.0.48/ HEAD \
   | tar -x -C "$REG"
-touch "$REG/.mcpp_ok"                 # the marker that says "resolved"
 cp ../0.0.47/.xpkg.lua "$REG/.xpkg.lua"   # add a 0.0.48 entry to it
 ```
 

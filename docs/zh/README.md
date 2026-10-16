@@ -78,6 +78,7 @@
 - [22 —— 目标侧](22-target-side.md)
 - [23 —— 项目环境](23-the-project-environment.md)
 - [24 —— 基于 openkal 的交叉构建](24-openkal-cross.md)
+- [25 —— home、索引与 store](25-home-indices-and-store.md)
 
 ### 3x —— 扩展 mcpp 与它的生态
 

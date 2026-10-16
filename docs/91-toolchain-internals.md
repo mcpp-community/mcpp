@@ -25,15 +25,14 @@ resolve runtime binding          ← which libc the artifact will load (§2.1) �
         ▼
 resolve toolchain payload        ← project/default/install paths share one pipeline
         ▼
-ensure_post_install_fixup()      ← exact glibc@version, marker-gated; never readdir-first
+ensure_declared_runtime()        ← exact glibc@version installed; the payload is never written
         ▼
 detect / probe                   ← triple, sysroot, payload paths (glibc, linux-headers)
         ▼
 ToolchainLinkModel (single resolver for the C-library axis)
         ├──► flags.cppm        (main build compile/link flags)
         ├──► stdmod.cppm       (`import std;` BMI precompile)
-        ├──► build_program     (build.mcpp host compiles)
-        └──► cfg regeneration  (the human-facing clang++.cfg)
+        └──► build_program     (build.mcpp host compiles)
         ▼
 hermetic link check (`-###` dry-run)  ← checks sandbox CRT/loader resolution
         ▼
@@ -53,9 +52,9 @@ Two principles run through everything:
    path still works.
 2. **Path knowledge has one owner per layer.** What used to be four divergent
    copies of "how to link against the payload glibc" is now one resolver
-   (`linkmodel`); what used to be per-entry-path fixup behavior is now one
-   pipeline. Divergence between copies is where an entire class of bugs came
-   from (issue #195).
+   (`linkmodel`); what used to be per-entry-path fixup behavior is gone, and a
+   payload is the provider's alone (§4). Divergence between copies is where an
+   entire class of bugs came from (issue #195).
 
 ## 2. Toolchain resolution
 
@@ -309,69 +308,37 @@ shouldn't carry a mechanism whose sole reader is one downstream tool. If an
 installed-state metadata DB ever appears, it must be designed with xlings
 itself as its first consumer; mcpp can then re-add a reader.
 
-## 4. The unified post-install fixup pipeline (`src/toolchain/post_install.cppm`)
+## 4. Payloads are never written (`src/toolchain/post_install.cppm`)
 
-Sandbox payloads are prebuilt ELF trees whose baked `PT_INTERP`/`RUNPATH` are
-unknowable at packaging time and must be aligned to the *local* sandbox.
-`ensure_post_install_fixup(cfg, payloadRoot, pkg)` is the **single entry** for
-that alignment, called from all three entry paths (explicit install, default
-auto-install, manifest auto-install).
+A payload is written by the provider (xlings) when it installs it, and by no one
+afterwards. mcpp reads payloads; it does not patch their ELF headers, rewrite
+their `specs` or clang `.cfg`, write marker files into them, or copy them from
+another home. The checks in `.github/tools/check_provider_boundary.py` keep code
+outside the provider adapter from naming the store's layout or removing a
+payload.
 
-> This pipeline used to rewrite GCC's `specs` file as well, so that produced
-> binaries got a loader and an rpath. That is no longer done, and §5 is why.
+**What a toolchain runs on.** A prebuilt gcc or llvm on Linux is an ELF tree
+whose `PT_INTERP` and `RUNPATH` must name a C runtime. The provider binds them
+when it installs the toolchain, through its home's runtime pin: mcpp sets the
+pin of its registry home to the runtime it selected (`glibc@2.44.3`) before the
+first toolchain install (`xlings config --runtime`, once), and the provider
+links the toolchain to that runtime's loader and libraries. A toolchain borrowed
+from an upstream home runs on that home's runtime; what it produces is the same,
+because the artifact's loader, run paths and sysroot come from the build's own
+command lines (§5).
 
-> Historical note: before 0.0.83 each path remembered — or forgot — its own
-> subset. The manifest path ran *nothing*, which is how a freshly
-> auto-installed llvm kept a stale, environment-dependent cfg (issue #195),
-> and how gcc once shipped a sandbox that couldn't find `stdlib.h`. "Which
-> command used to install it" must never decide "whether the toolchain
-> works".
+**What mcpp still does here** (`post_install.cppm`, all read-only):
 
-**Trigger semantics — ask every build, act once:**
-
-```
-every build → ensure() → read <payload>/.mcpp-fixup.json
-                          marker == {schema, kind, rev, glibcLib}?  → return   (ms-level)
-                          mismatch → run the fixup for this kind, write marker
-```
-
-The marker is a *content-fingerprinted cache*, not an event flag: it encodes
-the fixup revision and the glibc payload it was aligned against. The
-"act" branch therefore fires exactly once per
-`(payload × fixup-rev × glibc-fingerprint)` — first use, plus the two
-re-convergence events that genuinely require rewriting (a fixup-logic
-upgrade via `kFixupRev`, or the glibc payload changing underneath). mcpp
-asks on every build because the events that invalidate a payload (xlings
-swapping glibc, a payload inherited from another home) happen outside
-mcpp's sight — trust-but-verify is the only reliable semantic.
-
-**Per-kind actions:**
-
-| kind | actions |
+| function | answer |
 |---|---|
-| `gcc` (glibc) | patchelf walk over the gcc payload **and the shared binutils payload** (PT_INTERP → sandbox loader, RUNPATH → glibc+gcc lib dirs) — so that *gcc itself* runs. Nothing is written into `specs` |
-| `llvm` | patchelf walk over `lib/` only (runtime `.so` RUNPATH; `bin/` is left alone to preserve xlings-set RUNPATHs); deterministic cfg regeneration (§5) |
-| `musl-gcc` | nothing — self-contained sysroot, static world |
+| `runtime_payload_kind` | whether a toolchain runs on a C runtime payload: `gcc`, `llvm` on Linux; nothing for musl-gcc, a system compiler or a PE toolchain |
+| `select_glibc_payload_lib` | the library directory of exactly `glibc@<version>` (never another installed version) |
+| `detect_baked_loader`, `baked_runtime_binding` | the loader and runtime a payload was bound to, read from its ELF headers |
+| `write_clean_link_specs` | the per-build `-specs=` file in the build directory (§5) |
 
-**Safety invariants** (each earned by a real incident):
-
-- **Never patch in place.** patchelf operates on a copy which is then
-  atomically `rename()`d in: the payload can contain libraries the *current
-  process* (a self-hosted, dynamically linked mcpp) or a concurrent build
-  has mmapped, and rewriting a live mapping's backing file corrupts the
-  running process (observed: exit-time SIGSEGV in `_dl_fini`). `rename` gives
-  new content a fresh inode; live processes keep the old one.
-- **Ownership guard.** Payloads that resolve outside this home's registry
-  (symlink-inherited from another `MCPP_HOME`) are never patched — their
-  owner already converged them, and patching through the symlink would brick
-  the owner's toolchain.
-- Extending content-awareness to the patchelf walk (compare
-  `--print-interpreter`/`--print-rpath` before writing, so an already-aligned
-  payload converges with **zero writes**) is a known follow-up.
-- The long-term direction is for the *installer* (xlings) to own all
-  writes — at install time and when a payload enters a new home — leaving
-  mcpp read-only + verification. The pipeline here is the compatibility
-  layer until then, and the self-healing mechanism for drift either way.
+A home written by an earlier mcpp keeps its patched payloads and the markers it
+wrote (`.mcpp_ok`, `.mcpp-fixup.json`); they still run, and the markers are no
+longer read.
 
 ## 5. The compiler is a capability, not a configuration
 
@@ -408,14 +375,9 @@ the artifact, not the specs file — what a user ships is what matters.
 ### 5.1 The clang cfg
 
 `bin/clang++.cfg` exists so that direct invocations of the bundled
-`clang++` (outside mcpp) get a working, hermetic compiler configuration. The fixup pipeline **regenerates** it
-deterministically from the link model — same payload ⇒ byte-identical cfg on
-every machine and install path — rather than line-patching whatever an
-install produced. On Linux that means CRT discovery (`-B`), payload loader +
-rpath, lld/compiler-rt/libunwind, and bundled libc++ for the C++ drivers; on
-macOS it keeps the historical shape (`--sysroot=<SDK>` + payload libc++
-headers — the C++ *runtime link* stays with the platform's
-`needs_explicit_libcxx` handling in the main build).
+`clang++` (outside mcpp) get a working, hermetic compiler configuration. The
+llvm recipe's install hook writes it, for the home it installs into; mcpp does
+not read it (`--no-default-config`) and does not write it.
 
 ## 6. The hermetic link check (`src/build/hermetic.cppm`)
 
@@ -480,21 +442,18 @@ before/after Ninja, and perform zero ELF parses. An unexpected relink drops to
 the full path before success or execution. `mcpp self doctor` reports the same
 stored verdict rather than re-probing a potentially different current host.
 
-Post-install alignment follows the same identity rule: `glibc@2.44` resolves
-only `<xpkgs>/xim-x-glibc/2.44/{lib64,lib}`. A missing/stale exact payload is an
-error; another installed version is never a fallback.
+The runtime follows the same identity rule: `glibc@2.44` resolves only
+`<xpkgs>/xim-x-glibc/2.44/{lib64,lib}`. A missing exact payload is installed,
+never replaced by another installed version.
 
-The exact payload is installed by mcpp before the first fixup that patches
-against it (`ensure_declared_runtime`, mcpp#660). The step runs only when the
-binding locates no payload, only on Linux, only for the `glibc` provider, and
-only for a toolchain whose fixup consumes a C runtime (`gcc` and `llvm`
-payloads), so a build with a system, musl or PE toolchain downloads nothing. It
-installs `xim:glibc@<declared version>` through xlings and re-resolves the
-binding. Before this step existed, the payload was present only when xlings had
-installed it as a dependency of a toolchain; a toolchain restored from a CI
-cache is not reinstalled, so a cache holding another glibc revision left the
-declared payload absent. When the install is impossible, for example offline,
-the fixup error names the coordinate `xim:glibc@<version>` to provide.
+mcpp installs it before the first toolchain that runs on it is installed or
+used (`ensure_declared_runtime`, mcpp#660): only when the binding locates no
+payload, only on Linux, only for the `glibc` provider, and only for a toolchain
+`runtime_payload_kind` names, so a build with a system, musl or PE toolchain
+downloads nothing. It pins the registry home's runtime to the declared one,
+installs `xim:glibc@<declared version>` through the provider and re-resolves the
+binding. When the install is impossible, for example offline, the error names
+the coordinate `xim:glibc@<version>` to provide.
 
 ### 6.2 The permitted locations of a runtime search path (`runtime_env_contract.cppm`)
 
@@ -542,10 +501,9 @@ loader coupling, so a host binary that stumbles onto them is at worst confused.
    the C++ driver). Legacy spellings, if any, go in `compat.cppm` only.
 3. **Capabilities** (`src/toolchain/provider.cppm`): stdlib identity, BMI
    traits, and feature switches consumed by `flags.cppm`.
-4. **Fixup kind** (`post_install.cppm`): decide what post-install alignment
-   the payload needs — gcc-like (patchelf + specs), llvm-like (lib patchelf +
-   cfg), or none (self-contained). Wire it into
-   `ensure_post_install_fixup`'s dispatch.
+4. **Runtime kind** (`post_install.cppm`): whether the payload runs on a C
+   runtime payload (`runtime_payload_kind`); the provider binds it to the
+   pinned runtime at install, and mcpp writes nothing into it.
 5. **e2e**: a hermetic-link test in the spirit of
    `86_llvm_hermetic_link.sh`, and coverage in the no-host-toolchain CI job.
 
@@ -560,8 +518,8 @@ The machinery is already arch-parameterized; the work is data:
    itself) — the aarch64-linux-musl cross target is the working precedent
    (`[target.aarch64-linux-musl]`, cross frontend resolution via the spec's
    `targetTriple`);
-3. nothing else: `-B`/`-L`/loader emission, the fixup pipeline, and the
-   hermetic check are all name-agnostic.
+3. nothing else: `-B`/`-L`/loader emission and the hermetic check are
+   name-agnostic, and the provider binds the toolchain to its runtime.
 
 ### 7.3 Embedded and bare-metal toolchains
 
@@ -573,8 +531,8 @@ Three of this section's earlier predictions held:
 
 - **No dynamic linker.** `loader` stays empty, which every renderer already
   permitted; the deployment story is flashing rather than ELF interp.
-- **The target side needs no fixup.** Host-run compiler binaries still want
-  PT_INTERP/RUNPATH alignment, identical to today's gcc kind.
+- **The target side needs no fixup.** Host-run compiler binaries run on the
+  runtime the provider bound them to at install, as a hosted gcc does (§4).
 - **MCU flags, linker-script handling and a run story genuinely needed new
   design.** All three landed, and above this document's layer as predicted:
   ISA flags come from a one-row-per-target table in
@@ -672,9 +630,9 @@ answer them.
 | spec → xim package, frontends | `src/toolchain/registry.cppm` |
 | detect/probe (triple, sysroot, payloads) | `src/toolchain/detect.cppm`, `probe.cppm` |
 | link model + loader resolution | `modules/toolchain-model/src/linkmodel.cppm` |
-| unified fixup pipeline (patchelf/specs/cfg, marker) | `src/toolchain/post_install.cppm` |
+| read-only payload facts (runtime kind, glibc lib dir, baked loader, link specs) | `src/toolchain/post_install.cppm` |
 | install/lifecycle entry | `src/toolchain/lifecycle.cppm`; auto-install entries in `src/build/prepare.cppm` |
-| root runtime selection/binding | `src/xlings/runtime_selection.cppm`, `src/runtime/binding.cppm`, `src/xlings/subos_info.cppm` |
+| root runtime selection/binding | `src/provider/runtime_selection.cppm`, `src/runtime/binding.cppm`, `src/provider/xlings/subos_info.cppm` |
 | generic runtime contract + LinkIntent | `modules/manifest/src/types.cppm`, `src/build/plan.cppm`, `src/build/flags.cppm` |
 | stored resolution explanation | `src/build/prepare.cppm`, `src/build/runtime_validation.cppm`, `src/doctor.cppm` |
 | flag assembly (main build) | `src/build/flags.cppm` |

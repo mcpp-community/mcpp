@@ -510,6 +510,26 @@ included. `mcpp self config --mirror CN|GLOBAL` selects the download mirror;
 mcpp and xlings hold this setting separately, so selecting it for one does not
 select it for the other.
 
+## Reusing another home, and a machine's system home
+
+With `[xlings] upstream` set ([25](25-home-indices-and-store.md) §3), installs
+link an upstream's payloads instead of downloading them. A home that installed
+copies before can trade them for links:
+
+```bash
+mcpp self store dedupe            # list what an upstream has the same of
+mcpp self store dedupe --apply    # replace each by a link, atomically
+```
+
+An administrator maintains the machine's system home with `--system`, which
+only the maintenance commands take ([25](25-home-indices-and-store.md) §4):
+
+```bash
+sudo mcpp --system self init
+sudo mcpp --system toolchain install gcc 16.1.0
+sudo mcpp --system index update
+```
+
 ## `[hooks]` — Project Build Lifecycle Commands (experimental)
 
 > **Experimental.** A hook cannot currently decide whether a build succeeded.

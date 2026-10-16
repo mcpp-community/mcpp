@@ -23,15 +23,14 @@ resolve runtime binding          ← which libc the artifact will load (§2.1) �
         ▼
 resolve toolchain payload        ← project/default/install paths share one pipeline
         ▼
-ensure_post_install_fixup()      ← exact glibc@version, marker-gated; never readdir-first
+ensure_declared_runtime()        ← exact glibc@version installed; the payload is never written
         ▼
 detect / probe                   ← triple, sysroot, payload paths (glibc, linux-headers)
         ▼
 ToolchainLinkModel (single resolver for the C-library axis)
         ├──► flags.cppm        (main build compile/link flags)
         ├──► stdmod.cppm       (`import std;` BMI precompile)
-        ├──► build_program     (build.mcpp host compiles)
-        └──► cfg regeneration  (the human-facing clang++.cfg)
+        └──► build_program     (build.mcpp host compiles)
         ▼
 hermetic link check (`-###` dry-run)  ← checks sandbox CRT/loader resolution
         ▼
@@ -49,7 +48,7 @@ link → internal ELF physics check    ← validates the artifact and resolved c
    正常工作。
 2. **每一层的路径知识只有一个属主。** 过去「如何链接 payload glibc」有四份
    彼此漂移的副本，现在收敛为一个解析器（`linkmodel`）；过去按入口路径各自
-   维护的 fixup 行为，现在是一条管线。副本之间的漂移正是一整类 bug 的来源
+   维护的 fixup 行为已经删除，payload 只归提供者所有（§4）。副本之间的漂移正是一整类 bug 的来源
    （issue #195）。
 
 ## 2. 工具链解析
@@ -286,63 +285,28 @@ CLibMode::None           nothing usable — host defaults apply; the hermetic
 库」的需求，它必须以 xlings 自身作为第一消费者来设计，届时 mcpp 可以再
 加回一个读取端。
 
-## 4. 统一的 post-install fixup 管线（`src/toolchain/post_install.cppm`）
+## 4. payload 从不被写入（`src/toolchain/post_install.cppm`）
 
-沙箱 payload 是预先构建好的 ELF 树，其中烙入的 `PT_INTERP`/`RUNPATH` 在
-打包期无从得知，必须对齐到**本机**沙箱。
-`ensure_post_install_fixup(cfg, payloadRoot, pkg)` 是完成这次对齐的
-**唯一入口**，由三条入口路径共同调用：显式 install、默认 auto-install、
-manifest auto-install。
+payload 由提供者（xlings）在安装时写入，此后没有任何程序写它。mcpp 只读取 payload：不修补其 ELF 头，不改写其 `specs`
+或 clang 的 `.cfg`，不往其中写标记文件，也不从另一个 home 复制它。`.github/tools/check_provider_boundary.py`
+保证提供者适配器之外的代码不写出 store 的布局，也不删除 payload。
 
-> 这条管线过去也会重写 GCC 的 `specs` 文件，以便产物获得 loader 与
-> rpath。现在不再这样做，原因见 §5。
+**工具链运行在什么之上。** Linux 上预构建的 gcc 或 llvm 是一棵 ELF 树，其 `PT_INTERP` 与 `RUNPATH` 必须指向一份 C
+运行库。提供者在安装工具链时经由其 home 的运行库钉版本完成绑定：mcpp 在第一次安装工具链之前，把 registry home 的钉版本设为它选定的运行库
+（`glibc@2.44.3`，`xlings config --runtime`，只设一次），提供者把工具链链接到该运行库的加载器与库。从上游 home
+借来的工具链运行在那个 home 的运行库上；它的产物不变，因为产物的加载器、运行路径与 sysroot 来自构建自己的命令行（§5）。
 
-> 历史注记：0.0.83 之前，各条路径各自记得 —— 或者忘记 —— 自己那一部分。
-> manifest 路径**什么都不跑**，这正是一个刚刚自动安装的 llvm 会保留一份
-> 陈旧、随装机环境漂移的 cfg 的原因（issue #195），也是 gcc 曾经产出一个
-> 找不到 `stdlib.h` 的沙箱的原因。「用哪条命令装的」绝不能决定「这条工具
-> 链好不好用」。
+**mcpp 在这里仍做的事**（`post_install.cppm`，全部只读）：
 
-**触发语义 —— 每次构建都询问，只执行一次：**
-
-```
-every build → ensure() → read <payload>/.mcpp-fixup.json
-                          marker == {schema, kind, rev, glibcLib}?  → return   (ms-level)
-                          mismatch → run the fixup for this kind, write marker
-```
-
-marker 是一份**内容指纹化的缓存**，不是事件标志：它编码了 fixup 的版本，
-以及它对齐时所针对的那个 glibc payload。因此「执行」这一分支在每一个
-`(payload × fixup-rev × glibc 指纹)` 组合上恰好触发一次 —— 首次使用，外加
-两类确实需要重写的重新收敛事件（经 `kFixupRev` 升级的 fixup 逻辑，或者
-底层的 glibc payload 发生变化）。mcpp 之所以每次构建都要问一遍，是因为
-使 payload 失效的那些事件（xlings 换掉 glibc、payload 从另一个 home 继承
-而来）发生在 mcpp 的视野之外 —— trust-but-verify 是唯一可靠的语义。
-
-**按 kind 划分的动作：**
-
-| kind | actions |
+| 函数 | 回答 |
 |---|---|
-| `gcc`（glibc） | 对 gcc payload **以及共享的 binutils payload** 做一次 patchelf 遍历（PT_INTERP → 沙箱 loader，RUNPATH → glibc + gcc 的 lib 目录）—— 目的是让 *gcc 自己* 能跑起来。不会往 `specs` 里写入任何东西 |
-| `llvm` | 只对 `lib/` 做 patchelf 遍历（运行期 `.so` 的 RUNPATH；`bin/` 不动，以保留 xlings 设置的 RUNPATH）；确定性地重新生成 cfg（见 §5） |
-| `musl-gcc` | 无操作 —— 自包含 sysroot，静态世界 |
+| `runtime_payload_kind` | 工具链是否运行在 C 运行库 payload 上：Linux 上的 `gcc`、`llvm`；musl-gcc、系统编译器与 PE 工具链为否 |
+| `select_glibc_payload_lib` | 恰好 `glibc@<版本>` 的库目录（绝不取另一个已安装版本） |
+| `detect_baked_loader`、`baked_runtime_binding` | payload 绑定的加载器与运行库，读自其 ELF 头 |
+| `write_clean_link_specs` | 构建目录中每次构建的 `-specs=` 文件（§5） |
 
-**安全不变量**（每一条都由一次真实事故换来）：
-
-- **绝不就地打补丁。** patchelf 作用于一份副本，随后原子地 `rename()`
-  换入：payload 中可能有库被**当前进程**（一个自托管、动态链接的 mcpp）
-  或某个并发构建 mmap 着，就地重写一个活映射的 backing file 会损坏正在
-  运行的进程（实测现象：退出时 `_dl_fini` 中的 SIGSEGV）。`rename` 让新
-  内容获得一个新 inode，活跃进程仍持有旧的那一个。
-- **所有权护栏。** 解析到本 home registry 之外的 payload（通过 symlink
-  从另一个 `MCPP_HOME` 继承而来）绝不会被打补丁 —— 它们的属主已经完成
-  过收敛，隔着 symlink 打补丁会毁掉属主自己的工具链。
-- 把内容感知能力扩展到 patchelf 遍历本身（写入前先比对
-  `--print-interpreter`/`--print-rpath`，使一个已经对齐的 payload 能以
-  **零写入**收敛）是一项已知的后续工作。
-- 长期方向是让**安装器**（xlings）拥有全部写入 —— 无论是在安装时，还是
-  在 payload 进入一个新 home 时 —— 让 mcpp 退化为只读加校验。在那之前，
-  这里的管线是兼容层，也是应对双向漂移的自愈机制。
+早期 mcpp 写过的 home 保留其被修补过的 payload 与写入的标记（`.mcpp_ok`、`.mcpp-fixup.json`）；它们仍可运行，
+标记不再被读取。
 
 ## 5. 编译器是一种能力，不是一份配置
 
@@ -377,14 +341,8 @@ payload 自身的主张被覆盖，而 payload 本身不受触碰。这带来两
 ### 5.1 clang 的 cfg
 
 `bin/clang++.cfg` 的存在，是为了让直接调用打包内 `clang++`（不经由
-mcpp）的场景，也能得到一份可用、hermetic 的编译器配置。fixup 管线从
-链接模型**确定性地重新生成**它 —— 同一个 payload 在任何机器、任何安装
-路径上都产出字节相同的 cfg —— 而不是对某次安装产出的文件做行级修补。在
-Linux 上，它包含 CRT 发现（`-B`）、payload loader 加 rpath、
-lld/compiler-rt/libunwind，以及供 C++ 驱动使用的 bundled libc++；在
-macOS 上，它保留历史形态（`--sysroot=<SDK>` 加 payload 的 libc++ 头
-文件 —— C++ **运行时链接**仍由主构建中平台专属的
-`needs_explicit_libcxx` 处理）。
+mcpp）的场景，也能得到一份可用、hermetic 的编译器配置。llvm 配方的安装 hook
+为它所安装进的 home 写出这个文件；mcpp 不读取它（`--no-default-config`），也不写它。
 
 ## 6. hermetic 链接检查（`src/build/hermetic.cppm`）
 
@@ -445,20 +403,14 @@ ELF/glibc 规则。
 执行。`mcpp self doctor` 报告的是同一份存档判定，而不是针对可能已经
 变化的当前宿主重新探测一次。
 
-装后对齐遵循同一条身份规则：`glibc@2.44` 只解析
-`<xpkgs>/xim-x-glibc/2.44/{lib64,lib}`。精确 payload 缺失或陈旧是一个
-错误；另一个已安装的版本绝不会被当作回退。
+运行库遵循同一条身份规则：`glibc@2.44` 只解析
+`<xpkgs>/xim-x-glibc/2.44/{lib64,lib}`。精确 payload 缺失时被安装，绝不以另一个已安装的版本代替。
 
-精确的 payload 由 mcpp 在第一次需要针对它打补丁的 fixup 之前安装
-（`ensure_declared_runtime`，mcpp#660）。这一步只在以下条件同时成立时
-执行：binding 找不到 payload、宿主是 Linux、provider 是 `glibc`，且该
-工具链的 fixup 需要消费一份 C 运行时（`gcc` 与 `llvm` 的 payload）——
-因此使用系统、musl 或 PE 工具链的构建不会下载任何东西。它通过 xlings
-安装 `xim:glibc@<声明的版本>`，然后重新解析 binding。在这一步存在之
-前，payload 只有在 xlings 把它当作某个工具链的依赖装上时才会出现；从
-CI 缓存恢复的工具链不会被重新安装，因此当缓存中是另一个 glibc 修订版
-时，声明的 payload 就会缺席。当安装不可能完成时（例如处于离线状态），
-fixup 的报错会写出需要预先提供的坐标 `xim:glibc@<版本>`。
+mcpp 在第一个运行于它之上的工具链被安装或使用之前安装它（`ensure_declared_runtime`，mcpp#660）：只在 binding
+找不到 payload、宿主是 Linux、provider 是 `glibc`，且 `runtime_payload_kind` 指出该工具链时执行，因此使用系统、musl
+或 PE 工具链的构建不会下载任何东西。它把 registry home 的运行库钉到声明的版本，经提供者安装
+`xim:glibc@<声明的版本>`，然后重新解析 binding。安装不可能完成时（例如离线），报错写出需要预先提供的坐标
+`xim:glibc@<版本>`。
 
 ### 6.2 运行时搜索路径的允许位置（`runtime_env_contract.cppm`）
 
@@ -506,10 +458,8 @@ loader，任何环境变量都无法覆盖它，因此一个 `popen()`/`system()
    驱动）。若有旧拼法，一律只放进 `compat.cppm`。
 3. **能力**（`src/toolchain/provider.cppm`）：stdlib 身份、BMI 特性，
    以及 `flags.cppm` 消费的 feature 开关。
-4. **fixup kind**（`post_install.cppm`）：确定这个 payload 需要哪种
-   装后对齐 —— gcc 式（patchelf + specs）、llvm 式（lib patchelf +
-   cfg），或者不需要（自包含）。把它接入 `ensure_post_install_fixup`
-   的分发逻辑。
+4. **运行库类别**（`post_install.cppm`）：payload 是否运行在 C 运行库 payload 上
+   （`runtime_payload_kind`）；提供者在安装时把它绑定到钉住的运行库，mcpp 不往其中写入任何东西。
 5. **e2e**：按 `86_llvm_hermetic_link.sh` 的思路写一个 hermetic 链接
    测试，并纳入无宿主工具链的 CI job。
 
@@ -523,8 +473,8 @@ loader，任何环境变量都无法覆盖它，因此一个 `popen()`/`system()
 2. 为该架构发布 payload 资产（glibc、linux-headers、工具链本体）——
    aarch64-linux-musl 交叉目标是现成的先例（`[target.aarch64-linux-musl]`，
    交叉前端经由 spec 的 `targetTriple` 解析）；
-3. 其余什么都不用做：`-B`/`-L`/loader 的发出、fixup 管线，以及
-   hermetic 检查全都与具体名字无关。
+3. 其余什么都不用做：`-B`/`-L`/loader 的发出与 hermetic 检查都与具体名字无关，
+   提供者把工具链绑定到它的运行库。
 
 ### 7.3 嵌入式与裸机工具链
 
@@ -536,8 +486,8 @@ loader，任何环境变量都无法覆盖它，因此一个 `popen()`/`system()
 
 - **没有动态链接器。** `loader` 保持为空，每个渲染器本来就允许这一点；
   部署方式是烧录，而不是 ELF interp。
-- **目标侧不需要 fixup。** 宿主上运行的编译器二进制仍然需要
-  PT_INTERP/RUNPATH 对齐，与今天的 gcc kind 完全相同。
+- **目标侧不需要 fixup。** 宿主上运行的编译器二进制运行在提供者安装时为其绑定的运行库上，
+  与 hosted gcc 相同（§4）。
 - **MCU flag、linker script 处理与运行方式确实需要全新设计。** 三者均
   已落地，而且都如预测那样位于本文档所述层次之上：ISA flag 来自
   `src/freestanding/target.cppm` 中每个目标一行的表，linker script 经
@@ -625,9 +575,9 @@ dialect、产出 MSVC-ABI 的对象、生成 PE 镜像。问错轴的后果是�
 | spec → xim 包、前端 | `src/toolchain/registry.cppm` |
 | detect/probe（triple、sysroot、payload） | `src/toolchain/detect.cppm`、`probe.cppm` |
 | 链接模型 + loader 解析 | `modules/toolchain-model/src/linkmodel.cppm` |
-| 统一 fixup 管线（patchelf/specs/cfg、marker） | `src/toolchain/post_install.cppm` |
+| payload 的只读事实（运行库类别、glibc 库目录、烙入的加载器、链接 specs） | `src/toolchain/post_install.cppm` |
 | install/lifecycle 入口 | `src/toolchain/lifecycle.cppm`；auto-install 入口在 `src/build/prepare.cppm` |
-| root runtime 选择 / binding | `src/xlings/runtime_selection.cppm`、`src/runtime/binding.cppm`、`src/xlings/subos_info.cppm` |
+| root runtime 选择 / binding | `src/provider/runtime_selection.cppm`、`src/runtime/binding.cppm`、`src/provider/xlings/subos_info.cppm` |
 | 通用 runtime contract + LinkIntent | `modules/manifest/src/types.cppm`、`src/build/plan.cppm`、`src/build/flags.cppm` |
 | 已存储的 resolution 解释 | `src/build/prepare.cppm`、`src/build/runtime_validation.cppm`、`src/doctor.cppm` |
 | flag 组装（主构建） | `src/build/flags.cppm` |

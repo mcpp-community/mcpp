@@ -1,0 +1,155 @@
+# 25 — The Home, Its Indices and Its Store
+
+**Reader:** someone who decides where mcpp keeps what it installs: a developer
+with an existing `~/.xlings`, an administrator of a shared machine, a Luban
+system.
+
+**The question this chapter answers:** what is in an mcpp home, which program
+owns each part, and how a home reuses packages another home already has.
+
+**Not here:** choosing a toolchain, which is [20 — Toolchain
+Management](20-toolchains.md), and a project's own build environment, which is
+[23 — The Project Environment](23-the-project-environment.md).
+
+mcpp installs toolchains and packages through xlings, its package provider. A
+payload — an installed package version — is written by the provider alone and
+is never modified afterwards: mcpp does not patch, mark or copy it. Whatever a
+build needs that a payload does not hold (a loader, a run path, a sysroot) is
+stated on the build's own command lines.
+
+## 1. The layout
+
+```
+~/.mcpp/                    (MCPP_HOME)
+  config.toml
+  indices/<name>/           the data of each index mcpp serves (mcpplibs, [index.repos.<name>])
+  xpkgs/                    the payloads those indices serve
+  registry/                 the provider's own home: its index (xim), its runtime environments, its store
+    data/xpkgs/             toolchains and tools; an entry may be a link to an upstream's payload
+  build-cache/  cache/  provisioned/ …
+
+<project>/.mcpp/
+  indices/<name>/           the data of the project's own [indices]
+  xpkgs/                    the payloads they serve
+```
+
+Ownership follows the index. An index mcpp serves keeps its data and its
+payloads in mcpp's home; the provider's own indexes (`xim` and the ones it adds)
+stay under `registry/`. A local path index (`path = "…"`) is read where it is.
+
+A home created by an earlier mcpp keeps working. Its index data moves to
+`indices/<name>` once, on the first run; payloads already installed under
+`registry/data/xpkgs` stay where they are and are still found, and what was
+built against them keeps running. The markers an earlier mcpp wrote into
+payloads (`.mcpp_ok`, `.mcpp-fixup.json`) are no longer read.
+
+## 2. Refreshing an index
+
+An index mcpp owns is fetched into a staging directory beside it, checked there
+against the floor it declares (`index.toml` `min_mcpp`), and exchanged with the
+copy in use only when this mcpp can read it. A refreshed index that needs a
+newer mcpp leaves the previous copy in place and is reported once, after the
+command's own output.
+
+## 3. Reusing another home: upstreams
+
+```toml
+# ~/.mcpp/config.toml
+[xlings]
+upstream = ["~/.xlings"]
+```
+
+An upstream is a home whose payloads this home installs from **by link**: a
+payload of the same identity — namespace, name, version and the recipe's
+revision — that is complete there is published in this home's store as a
+symbolic link (a junction on Windows). Nothing is downloaded and the upstream is
+never written to. Removing the package here removes the link only. When the
+upstream's payload disappears, the next install puts a payload of its own at the
+same path, so what was built against that path keeps working; with `--offline`
+that install cannot happen and the command fails.
+
+| upstream | provides |
+|---|---|
+| an xlings home (`~/.xlings`, `/xlings`) | the provider's own packages (`xim`) |
+| an mcpp home (another `~/.mcpp`, the system home) | its registry's `xim` packages, and the packages of mcpp's indices in its `xpkgs` |
+
+mcpp's own packages are taken only from an mcpp home, never from an xlings home.
+
+**Trust.** An upstream belongs to the current user or to the system (root; on
+Windows also Administrators and SYSTEM), and when it is not the user's own the
+user cannot write it. A home that fails this is refused when the configuration
+is read: using another person's home means running programs that person can
+replace. An upstream that does not exist, or is neither kind of home, is
+reported as a degradation (no reuse this run).
+
+**Where it is read.** `upstream` in the user's `config.toml`; when absent, the
+system-level configuration (`/etc/mcpp/config.toml`; Windows
+`%ProgramData%\mcpp\config.toml`); when absent too, none — the default, a
+self-contained home.
+
+**A home that already has copies.** `mcpp self store dedupe` lists the payloads
+this home installed itself that an upstream has the same of;
+`mcpp self store dedupe --apply` replaces each with a link, atomically.
+
+## 4. A machine's system home
+
+On a machine shared by several users an administrator maintains one home for
+all of them:
+
+```bash
+sudo mcpp --system self init
+sudo mcpp --system toolchain install gcc 16.1.0
+```
+
+| | |
+|---|---|
+| location | `[system] home` of the system configuration; else `/var/lib/mcpp` (macOS `/Library/Application Support/mcpp`, Windows `%ProgramData%\mcpp`) |
+| written by | `mcpp --system` with one of `self init`, `self doctor`, `self store`, `toolchain install`, `toolchain remove`, `toolchain default`, `index update` |
+| refused | `--system` with any other command (a build as root would write root's files into a user's project); `--system` without write access to the system home (the message names `sudo`) |
+| written as | files readable by every user (umask 022), one writer at a time, the caller's `HOME` and `MCPP_HOME` ignored |
+| marked by | `.mcpp-home` with `mode = "system"` |
+
+Users read it without root. The system configuration names it as their
+upstream, and may name a default toolchain:
+
+```toml
+# /etc/mcpp/config.toml
+[xlings]
+upstream = ["/var/lib/mcpp"]
+
+[toolchain]
+default = "gcc@16.1.0"
+```
+
+Each user keeps a home of their own: their index data, their build cache (never
+shared between users) and links into the system home's payloads. An index of
+the user's that resolves a newer version installs it into the user's home.
+
+On Luban OS the system configuration names `/xlings` as well, so a payload the
+machine already has exists on it once.
+
+## 5. The provider program
+
+`[xlings] binary` chooses the xlings mcpp runs: `"bundled"` (the one mcpp
+ships, the default), `"system"` (the one on `PATH`) or a path. Whichever it is,
+mcpp asks it what it is (`xlings interface --version`): its version, its
+protocol and the features mcpp relies on. One that cannot serve this mcpp gives
+way to the bundled one, with a note naming why.
+
+## 6. Filesystems and long paths
+
+A home may be on any filesystem. mcpp measures what the one holding its home
+can do — an atomic rename that refuses an existing name, an atomic exchange,
+hard links, symbolic links — and publishes by what it measured.
+`mcpp self doctor` shows the answer, and whether reuse from an upstream is
+possible there (it needs symbolic links).
+
+On Windows a path is limited to 260 characters unless the system enables long
+paths (`LongPathsEnabled` = 1). `mcpp.exe` declares itself long-path aware. When
+long paths are off and `MCPP_HOME` is long enough that a toolchain's deepest
+file would pass the limit, mcpp reports a degradation naming the two remedies:
+enable long paths, or use a shorter `MCPP_HOME`. mcpp does not change the
+setting; `mcpp self doctor` reports it.
+
+A program's own manifest states whether it is long-path aware:
+`windows_long_paths` ([04](04-mcpp-toml.md)).

@@ -12,7 +12,7 @@ base=${XLINGS_HOME:?cold isolated home required}
 mkdir -p "$base/bootstrap" "$base/probes" "$base/reports"
 cd "$base"
 # Derive the client version from the repository's existing single pin.
-xl_version=$(python3 - "$repo/src/xlings/xlings.cppm" <<'PY'
+xl_version=$(python3 - "$repo/src/provider/xlings/xlings.cppm" <<'PY'
 import pathlib,re,sys
 s=pathlib.Path(sys.argv[1]).read_text()
 m=re.search(r'kXlingsVersion\s*=\s*"([0-9.]+)"',s)

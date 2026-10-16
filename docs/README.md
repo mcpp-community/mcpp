@@ -82,6 +82,7 @@ Within a part the order is a reading order, not an alphabet.
 - [22 — The Target Side](22-target-side.md)
 - [23 — The Project Environment](23-the-project-environment.md)
 - [24 — Cross-Compilation Over openkal](24-openkal-cross.md)
+- [25 — The Home, Its Indices and Its Store](25-home-indices-and-store.md)
 
 ### 3x — Extending mcpp and its ecosystem
 

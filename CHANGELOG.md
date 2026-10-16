@@ -4,6 +4,56 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.16.1] - 2026-10-16
+
+### Added
+
+- Keep the data and payloads of each index mcpp serves in mcpp's home:
+  `<MCPP_HOME>/indices/<name>` and `<MCPP_HOME>/xpkgs` (a project's in
+  `<project>/.mcpp`). The provider's own indexes stay under `registry/`. A home
+  from an earlier mcpp has its index data moved once; payloads already
+  installed stay where they are and are still found (docs/25 §1).
+- Reuse another home's packages: `[xlings] upstream = ["~/.xlings"]` in the
+  user's `config.toml`, else in the system configuration
+  (`/etc/mcpp/config.toml`). A payload of the same identity is linked, never
+  copied or written; an upstream must belong to the user or to the system and
+  be unwritable by the user unless it is the user's own (docs/25 §3).
+- `mcpp self store dedupe [--apply]`: list the payloads an upstream has the
+  same of, and replace each by a link.
+- `--system` maintains the machine's system home (`/var/lib/mcpp`, `[system]
+  home` of the system configuration) with `self init|doctor|store`,
+  `toolchain install|remove|default` and `index update`; any other command is
+  refused, and so is a caller without write access (docs/25 §4).
+- `windows_long_paths` (target and `[test]` keys): `longPathAware` in a PE
+  executable's application manifest; the default of a host tool. `mcpp.exe`
+  declares it. With Windows long paths off and a long `MCPP_HOME`, the path
+  budget is reported as a degradation.
+- `mcpp self doctor` states the home: whether it is the system home, its
+  upstreams, what its filesystem does, and Windows' long-path setting.
+- Ask every xlings source what it is (`xlings interface --version`); one that
+  cannot serve this mcpp gives way to the bundled xlings, with a note.
+
+### Changed
+
+- Payloads are written by the provider alone. mcpp no longer patches a
+  toolchain's ELF headers, rewrites its `specs` or clang `.cfg`, writes
+  `.mcpp_ok` or `.mcpp-fixup.json` into it, or copies payloads from
+  `~/.xlings`. A toolchain runs on the runtime the provider bound it to through
+  the registry home's runtime pin, which mcpp sets to the runtime it selected.
+- Refresh an owned index into a staging directory, check its `min_mcpp` there,
+  and exchange it with the copy in use only when this mcpp can read it. The
+  backup-and-rollback of earlier versions is removed.
+- Every use of xlings goes through one port (`mcpp.provider`); only the
+  adapter under `src/provider/xlings/` names xlings' commands, protocol and
+  store layout, which `.github/tools/check_provider_boundary.py` checks.
+- Publish scaffolds and index swaps by what the filesystem holding them does
+  (NFSv3, SMB, FAT and FUSE included), measured once per filesystem (#809).
+
+### Fixed
+
+- Resolve the openkal index and runtime revisions once per run (#804).
+- Accept space-separated `toolchain remove` specs (#808).
+
 ## [2026.10.11.1] - 2026-10-11
 
 ### Added

@@ -5,8 +5,8 @@
 | **规范编号** | SPEC-001 |
 | **标题** | 包身份(`package.namespace` / `package.name`)、`[dependencies]` 选择器与匹配机制 |
 | **状态** | **评审中(Review)** —— 已实现 |
-| **版本** | 1.5 |
-| **最后修改** | 2026-09-27 |
+| **版本** | 1.6 |
+| **最后修改** | 2026-10-16 |
 | **最低实现版本** | 描述符身份:mcpp **0.0.106**;精确 selector:mcpp **2026.8.10.1**(xlings >= 0.4.69) |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-06-20-package-resolution-architecture.md` §4<br>`.agents/docs/2026-06-26-identity-first-resolution-no-filename.md`<br>`.agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md`<br>`.agents/docs/2026-07-25-name-namespace-bidirectional-verification-report.md`<br>`.agents/docs/2026-07-25-name-namespace-canonical-implementation-spec.md` |
@@ -509,6 +509,16 @@ V2 规范。版本回答「装的是哪一个上游版本」,修订号回答「�
 - 修订号大于 0 的运行时载荷进入运行时契约(`revision=<n>`),因此修订号变化使依赖该载荷的
   产物重新链接;修订号为 0 时契约的文本不变。
 
+### 10.3 载荷的身份与位置(2026.10.16.1+)
+
+1. 载荷的身份是 `(namespace, name, version, revision)`。两个 home 中身份相同且完整的载荷可以互换:一个
+   home **可以**以链接条目使用上游 home 中身份相同的载荷(见 [docs/25](../25-home-indices-and-store.md) §3);
+   身份不同(含修订号不同)的载荷**禁止**互相代替。
+2. 载荷所在的 store 由服务它的索引决定:mcpp 所服务的索引的载荷在 `<MCPP_HOME>/xpkgs`(项目索引在
+   `<project>/.mcpp/xpkgs`),提供者自己的索引的载荷在提供者 home 的 store 中。
+3. 载荷的完整性由提供者回答(安装记录存在、无失败标记、修订号与索引条目一致、有内容)。mcpp **禁止**写入载荷,
+   包括标记文件;一个载荷的路径按提供者的回答使用,**禁止**被规范化(链接条目的路径即其身份)。
+
 ---
 
 ## 11. 变更记录
@@ -516,6 +526,7 @@ V2 规范。版本回答「装的是哪一个上游版本」,修订号回答「�
 | 版本 | 日期 | 变更 |
 |---|---|---|
 | 1.5 | 2026-09-27 | 新增 §10.1:版本位的回答与 xlings 一致(安装记录优先,其次按 xlings 版本文法选择;已记录而缺失的载荷不算已安装),mcpp#712、#716;新增 §10.2:打包修订 `revision` 的含义与 mcpp 侧的三处使用(mcpp 2026.9.27.1,xlings 2026.9.27.1) |
+| 1.6 | 2026-10-16 | 新增 §10.3:载荷的身份含修订号,身份相同的载荷可以经链接条目在 home 之间共用;载荷所在的 store 由服务它的索引决定;完整性由提供者回答,mcpp 不写入载荷(mcpp 2026.10.16.1,xlings 2026.10.16.1) |
 | 1.4 | 2026-09-14 | 新增 §5.4:`path` 与 `git` 依赖的身份取自其清单,键规范化到另一身份时采用清单声明并告警,同一来源上的两个身份在扫描前拒绝(mcpp 2026.9.14.2) |
 | 1.3 | 2026-09-07 | 新增 §10:同一条身份规则扩展到 xlings 工具地址(mcpp 2026.9.6.6)。此前工具侧有两套定义,同一个包被两处以不同版本声明时两份都装、只用一份 |
 | 1.2 | 2026-08-09 | selector 收敛为唯一精确 PackageId:裸名只表示默认 mcpplibs,dotted 以最后一段为 name;移除 compat/空 namespace 隐式候选,加入 lock 保持与一个 release train 的双 selector 迁移 warning |
