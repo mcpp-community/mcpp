@@ -107,6 +107,55 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # An MCPP_HOME and a project on NFSv3 (docs/25 §6, #809): the filesystem
+  # whose rename refuses RENAME_NOREPLACE with EINVAL, where `mcpp new` once
+  # failed. mcpp measures what the filesystem does and publishes by it.
+  nfs:
+    name: e2e nfs (NFSv3 home and project)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - uses: ./.github/actions/use-built-mcpp
+        with:
+          host: linux-x86_64
+
+      - name: An NFSv3 export of this machine, mounted
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends nfs-kernel-server nfs-common
+          sudo mkdir -p /srv/nfs /mnt/nfs
+          sudo chown "$(id -u):$(id -g)" /srv/nfs
+          echo "/srv/nfs 127.0.0.1(rw,sync,no_subtree_check,no_root_squash)" | sudo tee /etc/exports
+          sudo exportfs -ra
+          sudo systemctl restart nfs-kernel-server
+          sudo mount -t nfs -o vers=3,nolock 127.0.0.1:/srv/nfs /mnt/nfs
+          test "$(stat -f -c %T /mnt/nfs)" = nfs
+
+      - name: A toolchain, a new project, its build and run, all on NFSv3
+        run: |
+          set -euo pipefail
+          export MCPP_HOME=/mnt/nfs/mcpp-home
+          "$MCPP" toolchain install gcc 16.1.0
+          cd /mnt/nfs
+          "$MCPP" new hello
+          cd hello
+          "$MCPP" build
+          "$MCPP" run > "$RUNNER_TEMP/run.log"
+          grep -q 'Hello from hello' "$RUNNER_TEMP/run.log"
+
+      - name: Doctor names the home's filesystem
+        run: |
+          set -euo pipefail
+          export MCPP_HOME=/mnt/nfs/mcpp-home
+          # doctor's exit status reports the machine's health, not this line.
+          "$MCPP" self doctor > "$RUNNER_TEMP/doctor.log" 2>&1 || true
+          grep -q '/mnt/nfs/mcpp-home on nfs' "$RUNNER_TEMP/doctor.log"
+
   # ──────────────────────────────────────────────────────────────────
   # Bare metal: the one chain the sharded suite above cannot be trusted
   # to exercise.

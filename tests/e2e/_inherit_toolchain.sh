@@ -33,7 +33,9 @@ fi
 # existing payload remains the first shape of #293.
 link_xpkg_payloads() {
     local source_dir="$1"
-    local target_dir="$MCPP_HOME/registry/data/xpkgs"
+    # The provider's store by default; the store of mcpp's own indices when
+    # named (docs/25 §1).
+    local target_dir="${2:-$MCPP_HOME/registry/data/xpkgs}"
     [[ -d "$source_dir" ]] || return 0
     mkdir -p "$target_dir"
 
@@ -61,6 +63,7 @@ link_xpkg_payloads() {
 if [[ -d "$USER_MCPP/registry/data/xpkgs" || -d "$HOME/.xlings/data/xpkgs" || ( -n "${USERPROFILE:-}" && -d "$USERPROFILE/.xlings/data/xpkgs" ) ]]; then
     mkdir -p "$MCPP_HOME/registry/data"
     link_xpkg_payloads "$USER_MCPP/registry/data/xpkgs"
+    link_xpkg_payloads "$USER_MCPP/xpkgs" "$MCPP_HOME/xpkgs"
     link_xpkg_payloads "$HOME/.xlings/data/xpkgs"
     if [[ -n "${USERPROFILE:-}" ]]; then
         link_xpkg_payloads "$USERPROFILE/.xlings/data/xpkgs"
