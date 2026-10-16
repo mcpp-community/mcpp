@@ -201,17 +201,20 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
     // refreshed with the binding, because detection and the fingerprint read
     // them afterwards.
     state.runtimePayloadProvided = false;
-    state.provide_runtime_payload = [&](const mcpp::toolchain::XimToolchainPackage& pkg) {
-        if (state.runtimePayloadProvided) return;
-        if (mcpp::toolchain::runtime_payload_kind(pkg).empty()) return;
+    state.provide_runtime_payload = [&](const mcpp::toolchain::XimToolchainPackage& pkg)
+        -> std::expected<void, std::string> {
+        if (state.runtimePayloadProvided) return {};
+        if (mcpp::toolchain::runtime_payload_kind(pkg).empty()) return {};
         state.runtimePayloadProvided = true;
         auto cfgP = state.get_cfg(true);
-        if (!cfgP) return;
-        if (!mcpp::toolchain::ensure_declared_runtime(**cfgP, state.runtimeBindingSnapshot))
-            return;
+        if (!cfgP) return {};
+        auto changed = mcpp::toolchain::ensure_declared_runtime(**cfgP, state.runtimeBindingSnapshot);
+        if (!changed) return std::unexpected(changed.error());
+        if (!*changed) return {};
         state.runtimePayload = state.runtimeBindingSnapshot.libc;
         state.runtimeLibDir = state.runtimeBindingSnapshot.libraryDirs.empty()
             ? std::filesystem::path{} : state.runtimeBindingSnapshot.libraryDirs.front();
+        return {};
     };
 
 
@@ -1421,7 +1424,8 @@ step2_resolve_explicit_spec(PrepareState& state, ToolchainResolveCtx& ctx) {
             // manifest [toolchain] path previously ran none, so a freshly
             // auto-installed payload kept its stale install-time cfg /
             // unpatched runtime libs.
-            state.provide_runtime_payload(pkg);
+            if (auto provided = state.provide_runtime_payload(pkg); !provided)
+                return std::unexpected(provided.error());
             // Canonical rendering, whatever spelling the manifest/config used:
             // "Resolved gcc@16.1.0 → x86_64-linux-musl → <frontend>".
             //
@@ -1644,7 +1648,8 @@ step2_first_run_auto_install(PrepareState& state) {
         // `mcpp toolchain install` performs — without it a fresh sandbox
         // gcc cannot find the C library (stdlib.h: No such file or
         // directory) and a fresh llvm keeps its stale install-time cfg.
-        state.provide_runtime_payload(defaultPkg);
+        if (auto provided = state.provide_runtime_payload(defaultPkg); !provided)
+            return std::unexpected(provided.error());
 
         // Persist the default so we don't ask again next time.
         if (auto wr = mcpp::config::write_default_toolchain(**cfg, defaultSpec); wr) {
@@ -2213,7 +2218,8 @@ step2_msvc_abi_without_msvc_repair(PrepareState& state) {
                   gnuPkg.target(),
                   mcpp::toolchain::payload_frontend_dir(payloadR->root, gnuPkg).string()));
           }
-          state.provide_runtime_payload(gnuPkg);
+          if (auto provided = state.provide_runtime_payload(gnuPkg); !provided)
+              return std::unexpected(provided.error());
 
           // Persist both axes so the repair happens once, not on every build.
           if (mcpp::config::write_default_toolchain(**cfgR, pins::kFirstRunWinGnu))

@@ -860,12 +860,14 @@ int attach_target_arg(mcpp::toolchain::ToolchainSpec& spec,
 // already locates a payload, off Linux, and for a provider other than glibc,
 // so a home in its normal state starts no process.
 //
-// A failed install is reported at verbose level and is not an error here. The
-// consumer that needs the payload, the fixup, reports its absence with the
-// exact coordinate, and a caller whose toolchain needs no C runtime payload
-// is unaffected. Returns whether `binding` changed.
-export bool ensure_declared_runtime(const mcpp::config::GlobalConfig& cfg,
-                                    mcpp::platform::runtime::RuntimeBinding& binding) {
+// A toolchain that runs on this runtime cannot start without it (design
+// 2026-10-16 §7.2: its loader is the runtime's), so a failed install is the
+// caller's error, naming the exact coordinate that provides the payload. The
+// callers ask only for a toolchain that runs on it. Returns whether `binding`
+// changed.
+export std::expected<bool, std::string>
+ensure_declared_runtime(const mcpp::config::GlobalConfig& cfg,
+                        mcpp::platform::runtime::RuntimeBinding& binding) {
     namespace rt = mcpp::platform::runtime;
     if constexpr (!mcpp::platform::is_linux) return false;
     if (rt::runtime_provider(binding.runtimeId) != "glibc") return false;
@@ -880,13 +882,9 @@ export bool ensure_declared_runtime(const mcpp::config::GlobalConfig& cfg,
         binding.runtimeId, target));
     mcpp::fetcher::Fetcher fetcher(cfg);
     mcpp::fetcher::InstallProgressHandler progress;
-    if (auto installed = fetcher.resolve_xpkg_path(target, /*autoInstall=*/true, &progress);
-        !installed) {
-        mcpp::log::verbose("toolchain", std::format(
-            "installing the declared runtime {} failed: {}",
-            target, installed.error().message));
-        return false;
-    }
+    if (auto installed = fetcher.resolve_xpkg_path(target, /*autoInstall=*/true, &progress); !installed)
+        return std::unexpected(std::format(
+            "the C runtime the toolchain runs on, {}, is not installed: {}", target, installed.error().message));
     auto again = rt::resolve_runtime_binding(binding.selection, {}, cfg.xlingsHome());
     if (!again) return false;
     binding = std::move(*again);
@@ -1069,7 +1067,10 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         if (!mcpp::toolchain::runtime_payload_kind(pkg).empty()) {
             if (auto rb = mcpp::platform::runtime::resolve_runtime_binding(
                     mcpp::provider::runtime::RuntimeSelection{}, {}, cfg.xlingsHome()))
-                ensure_declared_runtime(cfg, *rb);
+                if (auto provided = ensure_declared_runtime(cfg, *rb); !provided) {
+                    mcpp::ui::error(provided.error());
+                    return 1;
+                }
         }   // a binding that cannot be resolved degrades, as on the build path
 
         mcpp::ui::status("Installed",

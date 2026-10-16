@@ -168,7 +168,7 @@ TEST(DeclaredRuntime, ABindingThatLocatesItsPayloadIsLeftAlone) {
     binding.runtimeId = "glibc@2.44.3";
     binding.libraryDirs = {"/store/xim-x-glibc/2.44.3/lib64"};
     const auto before = binding.libraryDirs;
-    EXPECT_FALSE(ensure_declared_runtime(cfg, binding));
+    EXPECT_EQ(ensure_declared_runtime(cfg, binding).value_or(true), false);
     EXPECT_EQ(binding.libraryDirs, before);
     EXPECT_EQ(binding.runtimeId, "glibc@2.44.3");
 }
@@ -180,7 +180,7 @@ TEST(DeclaredRuntime, OnlyAGlibcPayloadIsInstalled) {
     for (auto id : {"", "ucrt@10.0.26100.0", "macos_sdk@15.0", "glibc"}) {
         mcpp::platform::runtime::RuntimeBinding binding;
         binding.runtimeId = id;
-        EXPECT_FALSE(ensure_declared_runtime(cfg, binding)) << id;
+        EXPECT_EQ(ensure_declared_runtime(cfg, binding).value_or(true), false) << id;
         EXPECT_TRUE(binding.libraryDirs.empty()) << id;
     }
 }
@@ -192,7 +192,7 @@ TEST(DeclaredRuntime, NothingIsInstalledOffLinux) {
     auto cfg = unreachable_cfg();
     mcpp::platform::runtime::RuntimeBinding binding;
     binding.runtimeId = "glibc@2.44.3";
-    EXPECT_FALSE(ensure_declared_runtime(cfg, binding));
+    EXPECT_EQ(ensure_declared_runtime(cfg, binding).value_or(true), false);
 }
 
 // Which toolchains run on a C runtime payload: a GNU gcc and an llvm on
