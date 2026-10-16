@@ -169,8 +169,8 @@ int resolve_jobs(const manifest::Manifest& m,
 // UNDER DetachCodegen, `hostJobs == 0` MEANS NO BOUND AT ALL. A detached
 // compiler stops holding a ninja slot the moment it publishes its BMI, so
 // ninja's -j is no longer a limit on how many compilers are running — the
-// semaphore is. A cap of 0 disables the semaphore (`acquire_token` returns
-// immediately), and the graph then goes out with `sched_cap = 0`: ninja keeps
+// semaphore is. A cap of 0 disables counting slots, and the graph then goes
+// out with `sched_cap = 0`: when memory allows, ninja keeps
 // starting compiles as fast as BMIs appear, with nothing counting them. That is
 // hazard 2 in detach_codegen, and it was live in the DEFAULT configuration —
 // nobody passing `--jobs` got any bound, on a workload whose single compile

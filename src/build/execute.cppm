@@ -1367,6 +1367,22 @@ export bool dep_sources_newer_than(const std::vector<DepSourceRoot>& depSourceRo
 // should abandon the fast path and fall back to a full prepare_build — or
 // an exit code otherwise (0 success; 1 hard failure, diagnostics already
 // printed to stderr).
+std::optional<unsigned long long> read_ninja_memory_baseline(
+    const std::filesystem::path& ninjaPath) {
+    std::ifstream in(ninjaPath);
+    std::string line;
+    constexpr std::string_view prefix = "mcpp_mem_baseline = ";
+    while (std::getline(in, line)) {
+        if (!line.starts_with(prefix)) continue;
+        unsigned long long value = 0;
+        const auto text = std::string_view(line).substr(prefix.size());
+        const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
+        if (ec == std::errc{} && end == text.data() + text.size()) return value;
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
                                   const std::filesystem::path& outputDir,
                                   const std::filesystem::path& ninjaPath,
@@ -1417,6 +1433,8 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
     } else if (runtimeEnvKey != "-" && !runtimeEnvValue.empty()) {
         childEnv.emplace_back(runtimeEnvKey, runtimeEnvValue);
     }
+    if (auto baseline = read_ninja_memory_baseline(ninjaPath))
+        childEnv.emplace_back("MCPP_MEM_BASELINE", std::to_string(*baseline));
 
     auto t0 = std::chrono::steady_clock::now();
     // capture_exec merges stderr into the captured output (replacing `2>&1`),

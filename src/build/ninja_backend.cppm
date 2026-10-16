@@ -319,6 +319,12 @@ namespace {
 // U+FEFF in UTF-8. The response files of the MSVC tools begin with it (#693).
 constexpr std::string_view kUtf8ByteOrderMark = "\xEF\xBB\xBF";
 
+// The token directory every admission wrapper shares: the detached-compiler
+// edges spell it as the `$sched_sem` edge variable, the ordinary compile rules
+// interpolate it straight into the command, and the stale-token reclaim below
+// removes it. One constant, so the spellings cannot drift apart.
+constexpr std::string_view kSchedSemaphoreDir = ".mcpp-sched";
+
 // Whether the plan's compiler names an imported module's BMI as MSVC does
 // (`/reference <name>=<path>`), and so reads an argument file by MSVC's rules.
 bool msvc_module_spelling(const BuildPlan& plan) {
@@ -1406,6 +1412,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                                     plan.accelOverridden,
                                     plan.packFormat, plan.requestTag) + "\n");
     append("ninja_required_version = 1.11\n\n");
+    // Runtime memory admission is deliberately an environment input rather
+    // than part of any edge command. Ninja's command hash must not rebuild the
+    // graph when the startup observation moves between baseline buckets.
+    append(std::format("mcpp_mem_baseline = {}\n\n", plan.memoryBaselineBytes));
 
     // All compile/link flags are computed once via flags.cppm.
     auto flags = compute_flags(plan);
@@ -1839,6 +1849,18 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         append(std::format("  rspfile_content ={}{}\n",
                            msvcDeps ? " " + std::string(kUtf8ByteOrderMark) : "", payload));
     };
+    // Keep ordinary compile edges inside the same admission controller as the
+    // detached GCC path. The compiler command remains argv-based; only the
+    // existing shell-free depfile filter is moved into the wrapper.
+    const bool memoryAdmission = plan.memoryBaselineBytes != 0;
+    auto admission_prefix = [&]() {
+        return std::format("$mcpp compile-admit --sem {} --mem-threshold {}",
+                           kSchedSemaphoreDir, plan.memoryThresholdPercent);
+    };
+    auto admission_dep = [&]() {
+        return needsGnuModuleFilter
+            ? std::string(" --dep-raw $out.d.raw --dep-out $out.d") : std::string{};
+    };
 
     // Tell the driver, every time, that this TU is a module interface.
     //
@@ -1907,6 +1929,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         append("rule cxx_module_bmi\n");
         append("  command = $mcpp bmi-compile --bmi $bmi_out --slot $slot"
                " --self $mcpp --sem $sched_sem --cap $sched_cap"
+               " --mem-threshold $sched_mem_threshold"
                " --command-file $out.cmd --dep-from $scan_dep --dep-to $out.d\n");
         append(std::format(
             "  rspfile = $out.cmd\n"
@@ -1956,10 +1979,16 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         append("rule cxx_precompile\n");
         if constexpr (mcpp::platform::is_windows) {
             const std::string payload = " $local_includes";
-            append(std::format(
-                "  command = {}$cxx{} $cxxflags $unit_cxxflags{}{} {}$in {}$out\n",
-                win_depfile_filter, rsp_ref(payload), traits.bmiOnlyFlags,
-                module_src_flags, mmd_flag, dial.outputObjPrefix));
+            if (memoryAdmission)
+                append(std::format(
+                    "  command = {} -- $cxx{} $cxxflags $unit_cxxflags{}{} {}$in {}$out\n",
+                    admission_prefix(), rsp_ref(payload), traits.bmiOnlyFlags,
+                    module_src_flags, mmd_flag, dial.outputObjPrefix));
+            else
+                append(std::format(
+                    "  command = {}$cxx{} $cxxflags $unit_cxxflags{}{} {}$in {}$out\n",
+                    win_depfile_filter, rsp_ref(payload), traits.bmiOnlyFlags,
+                    module_src_flags, mmd_flag, dial.outputObjPrefix));
             append_rspfile(payload);
             append_cxx_deps();
         } else {
@@ -1967,15 +1996,22 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             // same reason: ninja's `restat` compares the output's MTIME, and a
             // compiler that rewrites a byte-identical BMI still moves it. What
             // suppresses the cascade is putting the old file back.
-            append(std::format(
-                "  command = "
-                "if [ -f \"$out\" ]; then cp -p \"$out\" \"$out.bak\"; fi && "
-                "$cxx $local_includes $cxxflags $unit_cxxflags{}{} {}$in {}$out && "
-                "if [ -f \"$out.bak\" ] && $mcpp bmi-equal \"$out\" \"$out.bak\"; then "
-                  "mv \"$out.bak\" \"$out\"; "
-                "else rm -f \"$out.bak\"; fi\n",
-                traits.bmiOnlyFlags, module_src_flags, mmd_flag,
-                dial.outputObjPrefix));
+            if (memoryAdmission)
+                append(std::format("  command = {}{} --bmi-restat \"$out\" -- $cxx $local_includes"
+                                   " $cxxflags $unit_cxxflags{}{} {}$in {}$out\n",
+                                   admission_prefix(), admission_dep(),
+                                   traits.bmiOnlyFlags, module_src_flags, mmd_flag,
+                                   dial.outputObjPrefix));
+            else
+                append(std::format(
+                    "  command = "
+                    "if [ -f \"$out\" ]; then cp -p \"$out\" \"$out.bak\"; fi && "
+                    "$cxx $local_includes $cxxflags $unit_cxxflags{}{} {}$in {}$out && "
+                    "if [ -f \"$out.bak\" ] && $mcpp bmi-equal \"$out\" \"$out.bak\"; then "
+                      "mv \"$out.bak\" \"$out\"; "
+                    "else rm -f \"$out.bak\"; fi\n",
+                    traits.bmiOnlyFlags, module_src_flags, mmd_flag,
+                    dial.outputObjPrefix));
             append_cxx_deps();
         }
         append("  description = BMI $out\n");
@@ -1988,15 +2024,26 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         append("rule cxx_module_object\n");
         if constexpr (mcpp::platform::is_windows) {
             const std::string payload = " $local_includes";
-            append(std::format("  command = {}$cxx{} $cxxflags $unit_cxxflags{} {}{}\n",
-                               win_depfile_filter, rsp_ref(payload), module_src_flags,
-                               mmd_flag, compile_tail));
+            if (memoryAdmission)
+                append(std::format("  command = {}{} -- \"$cxx\"{} $cxxflags $unit_cxxflags{} {}{}\n",
+                                   admission_prefix(), admission_dep(), rsp_ref(payload),
+                                   module_src_flags, mmd_flag, compile_tail));
+            else
+                append(std::format("  command = {}$cxx{} $cxxflags $unit_cxxflags{} {}{}\n",
+                                   win_depfile_filter, rsp_ref(payload), module_src_flags,
+                                   mmd_flag, compile_tail));
             append_rspfile(payload);
             append_cxx_deps();
         } else {
-            append(std::format(
-                "  command = $cxx $local_includes $cxxflags $unit_cxxflags{} {}{}{}\n",
-                module_src_flags, mmd_flag, compile_tail, mmd_filter));
+            if (memoryAdmission)
+                append(std::format("  command = {}{} -- $cxx $local_includes"
+                                   " $cxxflags $unit_cxxflags{} {}{}\n",
+                                   admission_prefix(), admission_dep(),
+                                   module_src_flags, mmd_flag, compile_tail));
+            else
+                append(std::format(
+                    "  command = $cxx $local_includes $cxxflags $unit_cxxflags{} {}{}{}\n",
+                    module_src_flags, mmd_flag, compile_tail, mmd_filter));
             append_cxx_deps();
         }
         append("  description = OBJ $out\n");
@@ -2006,14 +2053,24 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     append("rule cxx_object\n");
     if constexpr (mcpp::platform::is_windows) {
         const std::string payload = " $local_includes";
-        append(std::format("  command = {}$cxx{} $cxxflags $unit_cxxflags {}{}\n",
-                           win_depfile_filter, rsp_ref(payload), mmd_flag,
-                           compile_tail));
+        if (memoryAdmission)
+            append(std::format("  command = {}{} -- \"$cxx\"{} $cxxflags $unit_cxxflags {}{}\n",
+                               admission_prefix(), admission_dep(), rsp_ref(payload),
+                               mmd_flag, compile_tail));
+        else
+            append(std::format("  command = {}$cxx{} $cxxflags $unit_cxxflags {}{}\n",
+                               win_depfile_filter, rsp_ref(payload), mmd_flag, compile_tail));
         append_rspfile(payload);
     } else {
-        append(std::format(
-            "  command = $cxx $local_includes $cxxflags $unit_cxxflags {}{}{}\n",
-            mmd_flag, compile_tail, mmd_filter));
+        if (memoryAdmission)
+            append(std::format("  command = {}{} -- $cxx $local_includes"
+                               " $cxxflags $unit_cxxflags {}{}\n",
+                               admission_prefix(), admission_dep(),
+                               mmd_flag, compile_tail));
+        else
+            append(std::format(
+                "  command = $cxx $local_includes $cxxflags $unit_cxxflags {}{}{}\n",
+                mmd_flag, compile_tail, mmd_filter));
     }
     append("  description = OBJ $out\n");
     append_cxx_deps();
@@ -2024,8 +2081,13 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     if (need_c_rule) {
         append("rule c_object\n");
         const std::string payload = " $local_includes";
-        append(std::format("  command = $cc{} $cflags $unit_cflags {}{}\n",
-                           rsp_ref(payload), c_mmd_flag, compile_tail));
+        if (memoryAdmission)
+            append(std::format("  command = {} -- \"$cc\"{} $cflags $unit_cflags {}{}\n",
+                               admission_prefix(), rsp_ref(payload), c_mmd_flag,
+                               compile_tail));
+        else
+            append(std::format("  command = $cc{} $cflags $unit_cflags {}{}\n",
+                               rsp_ref(payload), c_mmd_flag, compile_tail));
         append_rspfile(payload);
         append("  description = CC $out\n");
         append_cxx_deps();
@@ -2936,8 +2998,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                     e += "  obj_out = " + obj + "\n";
                     e += "  slot = " + slot + "\n";
                     e += "  scan_dep = " + escape_ninja_path(ddi) + ".dep\n";
-                    e += "  sched_sem = .mcpp-sched\n";
+                    e += std::format("  sched_sem = {}\n", kSchedSemaphoreDir);
                     e += std::format("  sched_cap = {}\n", plan.scheduleCompilerCap);
+                    e += std::format("  sched_mem_threshold = {}\n", plan.memoryThresholdPercent);
                     if (auto inc = local_include_flags(cu, dial); !inc.empty())
                         e += "  local_includes =" + inc + "\n";
                     if (auto fl = join_compile_flags(cu.packageCxxflags); !fl.empty())
@@ -4153,7 +4216,7 @@ namespace {
 
 // RECLAIM THE STALE CONCURRENCY TOKENS, ONCE PER BUILD DIRECTORY PER COMMAND.
 //
-// detach-codegen bounds real compiler concurrency with a semaphore of
+// Detached compiler caps and the memory-pressure fallback use a semaphore of
 // directories under `<build dir>/.mcpp-sched`, released by the supervisor
 // holding each token. A supervisor that never runs its cleanup (Ctrl-C on the
 // build, the OOM killer, a reboot) leaves its directory behind, and nothing
@@ -4174,7 +4237,7 @@ void reclaim_stale_schedule_tokens(const std::filesystem::path& outputDir) {
     std::lock_guard lock(m);
     if (!reclaimed.insert(outputDir.lexically_normal().generic_string()).second) return;
     std::error_code ec;
-    std::filesystem::remove_all(outputDir / ".mcpp-sched", ec);
+    std::filesystem::remove_all(outputDir / kSchedSemaphoreDir, ec);
 }
 
 } // namespace
@@ -4220,7 +4283,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         return std::unexpected(BuildError{std::format("cannot create output dir '{}': {}",
                                                       plan.outputDir.string(), ec.message()),
                                           plan.outputDir});
-    if (!opts.dryRun && plan.scheduleTag == "detach-codegen")
+    if (!opts.dryRun)
         reclaim_stale_schedule_tokens(plan.outputDir);
 
     auto ninja_path = plan.outputDir / "build.ninja";
@@ -4553,6 +4616,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             nenv.emplace_back(runtimeEnv->first, runtimeEnv->second);
     for (auto& ev : plan.toolchain.envOverrides)
         nenv.emplace_back(ev.key, ev.value);
+    nenv.emplace_back("MCPP_MEM_BASELINE", std::to_string(plan.memoryBaselineBytes));
 
     // THE STAGED CACHE IS PLACED BY A PASS OF ITS OWN, before the graph that
     // reads it. ninja 1.12.1 loads a dyndep file whose producer is up to date

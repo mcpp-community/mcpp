@@ -77,11 +77,14 @@ module;
 #include <unistd.h>
 extern char** environ;
 #endif
+#include <cerrno>
 
 export module mcpp.build.schedule.detach_codegen;
 
 import std;
 import mcpp.platform.process;
+import mcpp.platform.capacity;
+import mcpp.build.depfile;
 import mcpp.build.stage;
 
 export namespace mcpp::build::schedule::detach {
@@ -98,6 +101,8 @@ struct CompileRequest {
     // Directory of concurrency tokens. Empty disables the cap (hazard 2).
     std::filesystem::path semaphore;
     int                   maxCompilers{0};
+    unsigned long long    memoryBaselineBytes{0};
+    int                   memoryThresholdPercent{80};
     // The compiler invocation, as ONE shell command line.
     //
     // Not a token list: the backend has already joined and quoted the flags for
@@ -148,6 +153,18 @@ int supervise(const std::filesystem::path& slot,
 // must not pass on.
 int await_unit(const std::filesystem::path& slot, const std::filesystem::path& object);
 
+// Run an ordinary compiler edge through memory admission. A nonpositive cap
+// skips counting slots; under pressure a single shared slot guarantees progress.
+// The command is argv-based so compiler arguments do not acquire a second quoting language at the admission boundary.
+int run_admitted(const std::vector<std::string>& command,
+                 const std::filesystem::path& semaphore,
+                 int maxCompilers,
+                 unsigned long long memoryBaselineBytes,
+                 int memoryThresholdPercent,
+                 const std::filesystem::path& depFrom = {},
+                 const std::filesystem::path& depTo = {},
+                 const std::filesystem::path& bmiRestat = {});
+
 }  // namespace mcpp::build::schedule::detach
 
 // ---------------------------------------------------------------------------
@@ -195,29 +212,61 @@ void write_rc(const std::filesystem::path& slot, int rc) {
 // The wait is bounded anyway. If a token is somehow still unreleasable, the
 // honest outcome is a failure that names the directory, not a build that stops
 // producing output and never returns.
-std::filesystem::path acquire_token(const std::filesystem::path& dir, int cap) {
-    if (dir.empty() || cap <= 0) return {};
+std::filesystem::path acquire_token(const std::filesystem::path& dir, int cap,
+                                    unsigned long long baselineBytes,
+                                    int thresholdPercent) {
+    if (dir.empty()) return {};
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     const auto started = std::chrono::steady_clock::now();
     constexpr auto kLimit = std::chrono::hours(2);
+    const auto deadline = started + kLimit;
+    bool wasDenied = false;
     for (;;) {
-        for (int i = 0; i < cap; ++i) {
-            const auto tok = dir / std::to_string(i);
-            if (std::filesystem::create_directory(tok, ec) && !ec) return tok;
-        }
-        if (std::chrono::steady_clock::now() - started > kLimit) {
-            // Proceeds WITHOUT the cap rather than failing: the semaphore bounds
-            // memory pressure, it is not a correctness property, so an unbounded
-            // compile is a worse build and a failed one is no build at all.
-            std::println(std::cerr,
-                         "mcpp: no compiler slot became free in 2h — all {} tokens in {} "
-                         "are held by processes that are gone. Continuing without the "
-                         "concurrency cap; remove that directory to restore it.",
-                         cap, dir.string());
+        const auto snapshot = mcpp::platform::capacity::memory_snapshot();
+        const bool denied = snapshot.supported && baselineBytes != 0
+            && !mcpp::platform::capacity::memory_allows(
+                snapshot, baselineBytes, thresholdPercent, wasDenied);
+        if (denied) wasDenied = true;
+        // Check before every admission attempt. Memory denial is a wait just
+        // like a full semaphore: it must not bypass the bounded-wait escape.
+        if (std::chrono::steady_clock::now() >= deadline) {
+            if (denied) {
+                std::println(std::cerr,
+                             "mcpp: timed out waiting for memory admission in {} after 2h; "
+                             "continuing without the concurrency cap",
+                             dir.string());
+            } else {
+                std::println(std::cerr,
+                             "mcpp: no compiler slot became free in 2h — all {} tokens in {} "
+                             "are held by processes that are gone. Continuing without the "
+                             "concurrency cap; remove that directory to restore it.",
+                             (std::max)(1, cap), dir.string());
+            }
             return {};
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (cap <= 0) {
+            // Ninja alone bounds ordinary edges. Only memory denial uses a
+            // shared fallback slot, allowing one compiler to make progress even
+            // when external processes keep available memory below the reserve.
+            if (!denied) return {};
+            const auto tok = dir / "0";
+            if (std::filesystem::create_directory(tok, ec) && !ec) return tok;
+        } else {
+            bool anyToken = false;
+            for (auto it = std::filesystem::directory_iterator(dir, ec);
+                 !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
+                anyToken = true;
+                break;
+            }
+            if (!denied || !anyToken) {
+                for (int i = 0; i < cap; ++i) {
+                    const auto tok = dir / std::to_string(i);
+                    if (std::filesystem::create_directory(tok, ec) && !ec) return tok;
+                }
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(denied ? 50 : 5));
     }
 }
 
@@ -502,7 +551,9 @@ int compile_release_at_bmi(const CompileRequest& req) {
         }
     }
 
-    const auto token = acquire_token(req.semaphore, req.maxCompilers);
+    const auto token = acquire_token(req.semaphore, req.maxCompilers,
+                                     req.memoryBaselineBytes,
+                                     req.memoryThresholdPercent);
 
     // The supervisor reads the SAME argv file rather than receiving the command
     // on its own command line: one representation, no re-quoting, and no limit
@@ -661,6 +712,90 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
                      object.string());
         return 1;
     }
+    return 0;
+}
+
+int run_admitted(const std::vector<std::string>& command,
+                 const std::filesystem::path& semaphore,
+                 int maxCompilers,
+                 unsigned long long memoryBaselineBytes,
+                 int memoryThresholdPercent,
+                 const std::filesystem::path& depFrom,
+                 const std::filesystem::path& depTo,
+                 const std::filesystem::path& bmiRestat) {
+    if (command.empty()) return 2;
+    const auto token = acquire_token(semaphore, maxCompilers,
+                                     memoryBaselineBytes, memoryThresholdPercent);
+    std::error_code ec;
+    auto backup = bmiRestat;
+    backup += ".bak";
+    bool backedUp = false;
+    if (!bmiRestat.empty() && file_exists(bmiRestat)) {
+        const auto oldTime = std::filesystem::last_write_time(bmiRestat, ec);
+        if (!ec) {
+            backedUp = std::filesystem::copy_file(
+                bmiRestat, backup, std::filesystem::copy_options::overwrite_existing, ec);
+            if (backedUp) {
+                std::filesystem::last_write_time(backup, oldTime, ec);
+                backedUp = !ec;
+            }
+        }
+        if (!backedUp) {
+            std::println(std::cerr, "mcpp: cannot back up BMI {}: {}",
+                         bmiRestat.string(), ec.message());
+            if (!token.empty()) std::filesystem::remove(token, ec);
+            std::filesystem::remove(backup, ec);
+            return 1;
+        }
+    }
+    bool timedOut = false;
+    const int rc = mcpp::platform::process::run_exec_deadline(
+        command, {}, std::chrono::milliseconds(0), &timedOut);
+    if (!token.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(token, ec);
+    }
+    if (backedUp) {
+        if (rc == 0 && mcpp::build::stage::bmi_equivalent(bmiRestat, backup)) {
+            std::filesystem::rename(backup, bmiRestat, ec);
+            if (ec) {
+                std::println(std::cerr, "mcpp: cannot restore BMI {}: {}",
+                             bmiRestat.string(), ec.message());
+                return 1;
+            }
+        } else {
+            std::filesystem::remove(backup, ec);
+        }
+    }
+    if (rc != 0 || depFrom.empty() || depTo.empty()) return rc;
+
+    // The compiler succeeded, so a failure from here on is this wrapper's, not
+    // a compiler failure. Name the file: an exit 1 with no message is read as
+    // a compiler failure and points at no culprit.
+    const auto reason = [] { return std::error_code{errno, std::generic_category()}.message(); };
+    std::ifstream in(depFrom, std::ios::binary);
+    if (!in) {
+        std::println(std::cerr, "mcpp: cannot read scanner depfile {}: {}",
+                     depFrom.string(), reason());
+        return 1;
+    }
+    std::string raw{std::istreambuf_iterator<char>{in}, {}};
+    if (in.bad()) {
+        std::println(std::cerr, "mcpp: cannot read scanner depfile {}: {}",
+                     depFrom.string(), reason());
+        return 1;
+    }
+    std::ofstream out(depTo, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        std::println(std::cerr, "mcpp: cannot write depfile {}: {}", depTo.string(), reason());
+        return 1;
+    }
+    out << mcpp::build::depfile::first_record(raw);
+    if (!out) {
+        std::println(std::cerr, "mcpp: cannot write depfile {}: {}", depTo.string(), reason());
+        return 1;
+    }
+    std::filesystem::remove(depFrom, ec);
     return 0;
 }
 

@@ -22,7 +22,9 @@
 //
 //   * a compile ninja ran: the output carries the command after `FAILED:` and
 //     the compiler's diagnostics, so the symptom is read from it (`advice`);
-//     the plan path and the fast path share that one function;
+//     the plan path and the fast path share that one function. An ordinary
+//     compile edge is wrapped in mcpp's own admission control, so the command
+//     on that line is mcpp's and the compiler is read from inside it;
 //   * the std module precompile: its error carries the `command:` line but not
 //     the compiler's diagnostics, which reach the terminal directly (measured
 //     on #781's Windows CI). The answer there rests on the command alone
@@ -66,6 +68,8 @@ Symptom symptom_in(std::string_view output);
 
 // The last command line in `output` that names a clang driver and a
 // `--target=`. Double-quoted words are honoured (Windows paths with spaces).
+// The driver need not be the first word: an ordinary compile edge runs through
+// mcpp's own admission wrapper, which ninja echoes in front of it.
 std::optional<FailedCommand> failed_command_in(std::string_view output);
 
 // The note, or empty when the output is not this failure. `probe` is called
@@ -173,9 +177,20 @@ std::optional<FailedCommand> failed_command_in(std::string_view output) {
     for_each_line(output, [&](std::string_view line) {
         if (auto at = line.find("command: "); at == 0) line.remove_prefix(9);
         auto words = split_words(line);
-        if (words.empty() || !names_clang_driver(words.front())) return;
+        // The driver is not necessarily the FIRST word. An ordinary compile
+        // edge runs through mcpp's own admission wrapper, and ninja echoes
+        // that line verbatim on failure:
+        //
+        //     <mcpp> compile-admit --sem .mcpp-sched --cap N \
+        //         --mem-threshold P -- "<clang++>" --target=...
+        //
+        // The compiler is still on the line, one wrapper in front of it, so
+        // the driver is looked for wherever it sits. Everything read from the
+        // line (the target, the standard) is unchanged by the wrapper.
+        auto driver = std::find_if(words.begin(), words.end(), names_clang_driver);
+        if (driver == words.end()) return;
         FailedCommand cmd;
-        cmd.compiler = words.front();
+        cmd.compiler = *driver;
         for (auto const& w : words) {
             if (w.starts_with("--target=")) cmd.target = w.substr(9);
             else if (w.starts_with("-std=")) cmd.standard = w.substr(5);

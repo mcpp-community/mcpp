@@ -10,6 +10,8 @@ import mcpp.platform.capacity;
 
 using mcpp::platform::capacity::HostCapacity;
 using mcpp::platform::capacity::recommended_jobs;
+using mcpp::platform::capacity::MemorySnapshot;
+using mcpp::platform::capacity::memory_allows;
 
 namespace {
 constexpr unsigned long long GiB = 1024ull * 1024 * 1024;
@@ -80,4 +82,32 @@ TEST(RecommendedJobs, HostQueryIsPlausible) {
     EXPECT_GE(cap.physicalCores, 1);
     EXPECT_LE(cap.physicalCores, cap.logicalCores);
     EXPECT_GE(recommended_jobs(cap), 1);
+}
+
+TEST(MemoryAdmission, StopsAtConfiguredConsumption) {
+    MemorySnapshot now{.availableBytes = 2 * GiB, .supported = true};
+    EXPECT_TRUE(memory_allows(now, 10 * GiB, 80));
+    now.availableBytes = 2 * GiB - 1;
+    EXPECT_FALSE(memory_allows(now, 10 * GiB, 80));
+}
+
+TEST(MemoryAdmission, HysteresisRequiresRecoveryMargin) {
+    MemorySnapshot now{.availableBytes = 2 * GiB + 1, .supported = true};
+    EXPECT_TRUE(memory_allows(now, 10 * GiB, 80, false));
+    EXPECT_FALSE(memory_allows(now, 10 * GiB, 80, true));
+}
+
+TEST(MemoryAdmission, UnsupportedReadIsNotPermission) {
+    EXPECT_FALSE(memory_allows(MemorySnapshot{}, 10 * GiB, 80));
+}
+
+TEST(MemoryAdmission, BaselineRoundsUpToTheNextBucket) {
+    using mcpp::platform::capacity::memory_baseline;
+    EXPECT_EQ(memory_baseline(0), GiB);
+    EXPECT_EQ(memory_baseline(1), 4 * GiB);
+    EXPECT_EQ(memory_baseline(3 * GiB), 4 * GiB);
+    EXPECT_EQ(memory_baseline(4 * GiB), 4 * GiB);
+    EXPECT_EQ(memory_baseline(4 * GiB + 1), 8 * GiB);
+    EXPECT_EQ(memory_baseline(7 * GiB), 8 * GiB);
+    EXPECT_EQ(memory_baseline(~0ULL), ~0ULL);
 }
