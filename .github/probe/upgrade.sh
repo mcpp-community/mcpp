@@ -155,6 +155,9 @@ for path, key in ((os.path.join(reg, "data/versions.json"), "versions"), (os.pat
 PY
 fi
 
+section "xlings self doctor on the home before the upgrade (read-only)"
+(cd "$REG" && XLINGS_HOME="$REG" "$REG/bin/xlings$EXE" self doctor 2>&1 | grep -v '^\s*ok' | head -60) || true
+
 # ---------------------------------------------------------------- new release
 if [ "$VARIANT" = snapshot ]; then
   # the old index is still in place: does the new release use the old-revision
@@ -175,6 +178,8 @@ fi
 stamps after-new
 [ $IS_LINUX = 1 ] && llvm_facts after-new
 run new-doctor "$W" "$NEW" self doctor
+section "xlings self doctor after the upgrade (read-only)"
+(cd "$REG" && XLINGS_HOME="$REG" "$REG/bin/xlings$EXE" self doctor 2>&1 | grep -v '^\s*ok' | head -60) || true
 
 section "SUMMARY variant=$VARIANT platform=$PLAT"
 {
