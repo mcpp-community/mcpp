@@ -1,0 +1,37 @@
+name: probe-upgrade-revision (temporary, do not merge)
+# TEMPORARY. Upgrades a home made by mcpp 2026.10.11.1 (xlings 2026.10.10.2)
+# to mcpp 2026.10.16.3 (xlings 2026.10.16.2) and records what `mcpp new &&
+# mcpp run` does. Every other workflow is removed on this branch.
+on:
+  pull_request:
+jobs:
+  upgrade:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04,     variant: plain }
+          - { runner: ubuntu-24.04,     variant: snapshot }
+          - { runner: ubuntu-24.04,     variant: stamp }
+          - { runner: ubuntu-24.04,     variant: orphan }
+          - { runner: ubuntu-24.04-arm, variant: plain }
+          - { runner: ubuntu-24.04-arm, variant: stamp }
+          - { runner: ubuntu-24.04-arm, variant: orphan }
+          - { runner: macos-15,         variant: plain }
+          - { runner: macos-15,         variant: stamp }
+          - { runner: windows-2025,     variant: plain }
+          - { runner: windows-2025,     variant: stamp }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: upgrade (${{ matrix.variant }})
+        shell: bash
+        run: bash .github/probe/upgrade.sh "${{ matrix.variant }}" 2>&1 | tee probe.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upgrade-${{ matrix.runner }}-${{ matrix.variant }}
+          path: |
+            probe.log
+            probe-out/
