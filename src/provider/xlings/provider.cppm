@@ -247,8 +247,14 @@ public:
                     ps.installedRevision = t["installed_revision"].get<int>();
                 ps.complete = t.value("complete", false);
                 if (t.contains("floor") && t["floor"].is_number_integer()) ps.floor = t["floor"].get<int>();
-                ps.usable = t.value("usable", false);
-                ps.current = t.value("current", false);
+                // COMPAT(internal:provider-protocol-1.10): an xlings before
+                // 2026.10.17.1 reports no `usable` / `current`, and its
+                // `complete` already required the recipe's revision -- so it
+                // is both, read as 1.10 meant it. A vendored xlings that cannot
+                // be updated (no newer source beside this mcpp) keeps the
+                // behaviour it had.
+                ps.usable = t.contains("usable") ? t.value("usable", false) : ps.complete;
+                ps.current = t.contains("current") ? t.value("current", false) : ps.complete;
                 ps.error = str(t, "error");
                 out.push_back(std::move(ps));
             }

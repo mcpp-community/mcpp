@@ -1147,7 +1147,7 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     // currency; this function only maps them through the caller's intent.
     struct Here {
         std::filesystem::path dir;      // empty: nothing there
-        bool usable = false, current = false;
+        bool complete = false, usable = false, current = false;
         int installed = -1, revision = 0, floor = 0;
     };
     const auto here = [&]() -> Here {
@@ -1157,7 +1157,7 @@ Fetcher::resolve_xpkg_path(std::string_view target,
             // Present: a complete one (usable / current as the provider says),
             // or an interrupted install, or a success that installed nothing
             // (#533) -- the provider's verdicts say which.
-            return {st[0].dir, st[0].usable, st[0].current,
+            return {st[0].dir, st[0].complete, st[0].usable, st[0].current,
                     st[0].installedRevision, st[0].revision, st[0].floor};
         }
         // The provider could not say, or has nothing where the index's store
@@ -1168,7 +1168,7 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         auto dir = provider->payload(ref);
         std::error_code ec;
         if (!dir.empty() && std::filesystem::is_directory(dir, ec) && !std::filesystem::is_empty(dir, ec))
-            return {dir, true, true};
+            return {dir, true, true, true};
         return {};
     };
 
@@ -1209,10 +1209,14 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         if (now.usable)
             mcpp::ui::status("Updating", std::format("{}  packaging revision {} → {}",
                                                      label, now.installed, now.revision));
-        else if (now.installed >= 0 && now.installed < now.floor)
+        else if (now.complete && now.installed >= 0 && now.installed < now.floor)
             mcpp::ui::status("Updating", std::format(
                 "{}  packaging revision {} → {} (revision {} is below the index's floor {})",
                 label, now.installed, now.revision, now.installed, now.floor));
+        else if (now.installed >= 0 && now.installed != now.revision)
+            // A provider before 1.11 calls an older packaging incomplete.
+            mcpp::ui::status("Updating", std::format("{}  packaging revision {} → {}",
+                                                     label, now.installed, now.revision));
         else
             mcpp::ui::status("Reinstalling", std::format("{}  (the installed payload is incomplete)", label));
     }
