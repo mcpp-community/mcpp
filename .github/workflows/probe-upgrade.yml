@@ -10,17 +10,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-24.04,     variant: plain }
-          - { runner: ubuntu-24.04,     variant: snapshot }
-          - { runner: ubuntu-24.04,     variant: stamp }
           - { runner: ubuntu-24.04,     variant: orphan }
-          - { runner: ubuntu-24.04-arm, variant: plain }
-          - { runner: ubuntu-24.04-arm, variant: stamp }
           - { runner: ubuntu-24.04-arm, variant: orphan }
-          - { runner: macos-15,         variant: plain }
-          - { runner: macos-15,         variant: stamp }
-          - { runner: windows-2025,     variant: plain }
-          - { runner: windows-2025,     variant: stamp }
+          - { runner: ubuntu-24.04,     variant: snapshot }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 75
     steps:

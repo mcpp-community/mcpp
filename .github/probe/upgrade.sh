@@ -138,20 +138,31 @@ for f in glob.glob(os.path.join(sys.argv[1], "xim-x-*", "*", ".xpkg-install.json
 PY
 fi
 if [ "$VARIANT" = orphan ]; then
-  section "drop c++@<gcc version> from the version DB, keep the workspace"
+  section "make gcc's c++ the active one, then drop it from the version DB (the reported home)"
   "$PY" - "$REG" <<'PY'
 import json, os, sys
 reg = sys.argv[1]
-ws = json.load(open(os.path.join(reg, "subos/default/.xlings.json")))["workspace"]
-print("workspace c++:", ws.get("c++"))
-active = (ws.get("c++") or {}).get("active")
-for path, key in ((os.path.join(reg, "data/versions.json"), "versions"), (os.path.join(reg, ".xlings.json"), "versions")):
+wsf = os.path.join(reg, "subos/default/.xlings.json")
+wsdoc = json.load(open(wsf)); ws = wsdoc["workspace"]
+print("workspace c++ before:", ws.get("c++"))
+dbf = os.path.join(reg, "data/versions.json")
+src = json.load(open(dbf))["versions"] if os.path.exists(dbf) else json.load(open(os.path.join(reg, ".xlings.json")))["versions"]
+cxx = src.get("c++", {})
+owner = {k: (v.get("bindingGroup") or {}).get("provider") for k, v in cxx.get("versions", {}).items()}
+print("c++ versions and owners:", owner)
+gcc_keys = [k for k, p in owner.items() if p and "gcc" in p]
+if not gcc_keys:
+    print("no gcc-owned c++ version; nothing to do"); sys.exit(0)
+key = gcc_keys[0]
+ws["c++"]["active"] = key
+json.dump(wsdoc, open(wsf, "w"))
+for path in (dbf, os.path.join(reg, ".xlings.json")):
     if not os.path.exists(path): continue
-    doc = json.load(open(path)); db = doc.get(key, {})
-    cxx = db.get("c++", {})
-    gone = cxx.get("versions", {}).pop(active, None) is not None
-    for edges in cxx.get("bindings", {}).values(): edges.pop(active, None)
-    json.dump(doc, open(path, "w")); print(path, "dropped c++@%s:" % active, gone)
+    doc = json.load(open(path)); db = doc.get("versions", {}); c = db.get("c++", {})
+    gone = c.get("versions", {}).pop(key, None) is not None
+    for edges in c.get("bindings", {}).values(): edges.pop(key, None)
+    json.dump(doc, open(path, "w")); print(path, "dropped c++@%s:" % key, gone)
+print("workspace c++ after:", ws.get("c++"))
 PY
 fi
 
@@ -174,6 +185,12 @@ run new-run3-llvm-old-project "$W/p-llvm" "$NEW" run
 if [ $IS_LINUX = 1 ]; then
   run new-run1-gcc "$W/p-gcc" "$NEW" run
   run new-run2-gcc "$W/p-gcc" "$NEW" run
+fi
+run new-doctor-in-project "$W/p-new" "$NEW" self doctor
+if [ "$VARIANT" = orphan ]; then
+  section "xlings self doctor --fix (the existing repair)"
+  (cd "$REG" && XLINGS_HOME="$REG" "$REG/bin/xlings$EXE" self doctor --fix 2>&1 | tail -30) || true
+  run new-run-after-fix "$W/p-new" "$NEW" run
 fi
 stamps after-new
 [ $IS_LINUX = 1 ] && llvm_facts after-new
