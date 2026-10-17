@@ -206,7 +206,11 @@ export int doctor_report() {
     // diagnoses, and reports something else, is two defects.
     //
     // Offline for the call: nothing is downloaded, installed or replaced, so
-    // a build that would install first is reported as exactly that.
+    // a build that would install first is reported as exactly that. Planned
+    // to describe, not to build (`plan_only`, as `mcpp emit build-database`
+    // plans): the std module is described rather than compiled, generated
+    // files are compared rather than written, and the lock this planning
+    // produces goes to a scratch directory, not the project.
     const bool inPackage = mcpp::project::find_manifest_root(std::filesystem::current_path()).has_value();
     bool prepareWouldInstall = false;
     auto pctx = [&]() -> decltype(mcpp::build::prepare_build(false)) {
@@ -215,7 +219,13 @@ export int doctor_report() {
         const bool wasQuiet = mcpp::ui::is_quiet();
         mcpp::ui::set_quiet(true);
         (void)mcpp::build::refusal::take();
-        auto r = mcpp::build::prepare_build(/*print_fingerprint=*/false);
+        mcpp::build::BuildOverrides ov;
+        ov.plan_only = true;
+        std::error_code tec;
+        ov.work_dir = std::filesystem::temp_directory_path(tec)
+            / std::format("mcpp-doctor-{}", std::chrono::steady_clock::now().time_since_epoch().count());
+        auto r = mcpp::build::prepare_build(/*print_fingerprint=*/false, /*includeDevDeps=*/false, {}, ov);
+        std::filesystem::remove_all(ov.work_dir, tec);
         prepareWouldInstall = !r && mcpp::build::refusal::take()
             == mcpp::build::refusal::Code::OfflineDownloadRequired;
         mcpp::ui::set_quiet(wasQuiet);

@@ -12,10 +12,6 @@ trap "rm -rf $TMP" EXIT
 export MCPP_HOME="$TMP/mcpp-home"
 
 # 0) cache list on a genuinely empty cache: friendly message.
-#    This has to come BEFORE doctor — doctor resolves a build plan, which
-#    precompiles the std module, and `cache list` now reports std entries too.
-#    Hiding them is how 16 GB of duplicated std BMIs went unnoticed, so listing
-#    them is the fix, not a regression.
 out=$("$MCPP" cache list 2>&1)
 [[ "$out" == *"empty"* ]] || { echo "cache list on empty cache: '$out'"; exit 1; }
 
@@ -29,8 +25,17 @@ grep -q 'Checking registry'       doctor.log || { cat doctor.log; echo "no regis
 grep -q 'Checking cache health'   doctor.log || { cat doctor.log; echo "no cache check"; exit 1; }
 grep -q 'Doctor result'             doctor.log || { cat doctor.log; echo "no result line"; exit 1; }
 
-# 2) after doctor, the std module it precompiled must be VISIBLE. std entries
+# 1b) doctor changes nothing (2026.10.17.1): its plan is prepared offline and
+#     builds nothing, so the cache is still empty after it.
+out=$("$MCPP" cache list 2>&1)
+[[ "$out" == *"empty"* ]] || { echo "doctor wrote to the build cache: '$out'"; exit 1; }
+
+# 2) after a build, the std module it precompiled must be VISIBLE. std entries
 #    dominate the cache's size, and `cache list` used to walk only dep entries.
+#    Hiding them is how 16 GB of duplicated std BMIs went unnoticed, so listing
+#    them is the fix, not a regression.
+( cd "$TMP" && "$MCPP" new stdprobe >/dev/null && cd stdprobe && "$MCPP" build > "$TMP/stdprobe.log" 2>&1 ) \
+    || { cat "$TMP/stdprobe.log"; echo "the build that precompiles std failed"; exit 1; }
 out=$("$MCPP" cache list 2>&1)
 [[ "$out" == *"std"* ]] || { echo "cache list omits the std entry: '$out'"; exit 1; }
 # The age column must be plausible: file_time_type's epoch is not the Unix
