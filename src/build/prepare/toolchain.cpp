@@ -1376,7 +1376,9 @@ step2_resolve_explicit_spec(PrepareState& state, ToolchainResolveCtx& ctx) {
 
         mcpp::ui::info("Resolving", "toolchain");
         mcpp::fetcher::InstallProgressHandler progress;
-        auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/!engineChoseUnservable, &progress);
+        auto payload = fetcher.resolve_xpkg_path(pkg.target(),
+            engineChoseUnservable ? mcpp::fetcher::PayloadIntent::Locate : mcpp::fetcher::PayloadIntent::Use,
+            &progress);
         if (!payload && !state.unservedTargetDiagnosis.empty() && !spec->target.empty()) {
             // The held diagnosis is already the right words for this; releasing
             // it here rather than at its usual site keeps one sentence per cause.
@@ -1633,7 +1635,7 @@ step2_first_run_auto_install(PrepareState& state) {
 
         mcpp::fetcher::InstallProgressHandler progress;
         auto payload = fetcher.resolve_xpkg_path(defaultPkg.target(),
-                            /*autoInstall=*/true, &progress);
+                            mcpp::fetcher::PayloadIntent::Use, &progress);
         if (!payload) {
             return std::unexpected(std::format(
                 "auto-installing default toolchain {} failed: {}\n"
@@ -2045,7 +2047,7 @@ step2_retarget_for_retargetable_driver(PrepareState& state) {
                       //
                       // The row names two things and only one of them used to
                       // be made to exist: `pin` went through
-                      // `resolve_xpkg_path(…, autoInstall=true, …)` while
+                      // `resolve_xpkg_path(…, PayloadIntent::Use, …)` while
                       // `sysroot` was a pure lookup that returned nullopt and
                       // let the whole block below be skipped without a word.
                       //
@@ -2070,7 +2072,7 @@ step2_retarget_for_retargetable_driver(PrepareState& state) {
                       mcpp::fetcher::InstallProgressHandler srProgress;
                       std::optional<std::filesystem::path> dir;
                       if (auto p = srFetcher.resolve_xpkg_path(
-                              want_sysroot, /*autoInstall=*/true, &srProgress))
+                              want_sysroot, mcpp::fetcher::PayloadIntent::Use, &srProgress))
                           dir = p->root;
                       else
                           dir = mcpp::provider::payload(*mcpp::provider::open(xl), ref);
@@ -2208,7 +2210,7 @@ step2_msvc_abi_without_msvc_repair(PrepareState& state) {
           mcpp::fetcher::Fetcher fetcherR(**cfgR);
           mcpp::fetcher::InstallProgressHandler progressR;
           auto payloadR = fetcherR.resolve_xpkg_path(gnuPkg.target(),
-                              /*autoInstall=*/true, &progressR);
+                              mcpp::fetcher::PayloadIntent::Use, &progressR);
           if (!payloadR) {
               return std::unexpected(std::format(
                   "switching to the MinGW-w64 toolchain ({}) failed: {}\n"

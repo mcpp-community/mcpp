@@ -70,6 +70,16 @@ detect(const std::filesystem::path& explicit_compiler,
 
     const auto& vstr = *ver_r;
     tc.driverIdent = normalize_driver_output(vstr);
+    // The packaging revision of the payload this compiler is in (design
+    // 2026-10-17 D8). A build keeps an installed revision while the provider
+    // calls it usable, so one version can be present in two packagings -- two
+    // homes, or one home before and after `mcpp toolchain install` -- whose
+    // `--version` reads the same; their artifacts and caches must not mix.
+    // Revision 0 adds nothing: a payload from before revisions keeps the
+    // identity, and the caches, it had.
+    if (const auto entry = mcpp::provider::layout().entry_of(tc.binaryPath); !entry.dir.empty())
+        if (const int r = mcpp::provider::revision_of(entry.dir).value_or(0); r > 0)
+            tc.driverIdent += std::format("\npayload-revision: {}", r);
     auto head = first_line_of(vstr);
     auto headLower = lower_copy(head);
     auto fullLower = lower_copy(vstr);

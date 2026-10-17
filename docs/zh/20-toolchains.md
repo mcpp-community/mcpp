@@ -89,6 +89,23 @@ mcpp toolchain install gcc 15               # installs the highest 15.x.y versio
 mcpp toolchain install gcc@16               # the @ form works too
 ```
 
+### 已安装工具链的新打包（2026.10.17.1+）
+
+上游版本不变、安装的内容变化时（为新的 glibc 布局重新生成 cfg、为 Android 去掉硬链接），索引提高该版本的打包
+`revision`。已安装的载荷只要*可用*，构建就继续使用它；构建不会为一个已有的工具链下载新打包。`mcpp index update`
+列出刷新后的索引重新打包了的已装载荷，`mcpp toolchain list` 标出它们，按名字安装该工具链即取得新打包：
+
+```text
+$ mcpp toolchain list
+Toolchains:
+  *  llvm 23.1.3             (default)  (packaging revision 1 available: `mcpp toolchain install llvm 23.1.3`)
+$ mcpp toolchain install llvm 23.1.3
+    Updating llvm@23.1.3  packaging revision 0 → 1
+```
+
+修订修复的是每个已装载荷都有的缺陷时，索引同时提高该版本的 `floor`，低于它的已装载荷在下一次构建时被替换，
+并说明原因。替换失败时已装载荷保留；`mcpp toolchain install` 此时报错，并说明仍在使用的修订号。
+
 ## 切换默认工具链
 
 默认值是一*对*——toolchain 轴 + target 轴（省略 target 即宿主）：
@@ -842,7 +859,7 @@ mcpp build --managed-only          # 或 MCPP_MANAGED_ONLY=1
 | **一个 Apple SDK** | 经 `xcrun` 定位，从不安装 | 不可再分发。没有东西可以打包，而拒绝会在解析任何载荷之前就点名它。 |
 | **iOS 模拟器运行时** | `simctl`，经由 `xim:apple-simulator-tools` | 同上。 |
 | **一个汇编器（`nasm`）** | 先取被钉住的 `xim:nasm`；只有那条路服务不了时才取宿主的，且**在构建报告里点名**用到的是哪一个 | 一台离线、但本来就装了可用汇编器的机器仍然能构建。它此前是反过来的——见下文。 |
-| **PATH 上的 C++ 编译器（`$CXX`，否则 `g++`）** | 只有 `mcpp doctor` | 那个命令的职责就是报告宿主的状况。构建这条路上，在每一个到得了这个探针的分支上都从解析出的载荷设定编译器，载荷解析不了时**拒绝**，而不是落到 PATH。 |
+| **PATH 上的 C++ 编译器（`$CXX`，否则 `g++`）** | 只有 `mcpp self env` | 那个命令的职责就是报告宿主的状况。`mcpp self doctor` 报告的是当前目录下构建解析出的工具链（2026.10.17.1）。构建这条路上，在每一个到得了这个探针的分支上都从解析出的载荷设定编译器，载荷解析不了时**拒绝**，而不是落到 PATH。 |
 | **一个命令解释器（`/bin/sh`，Windows 上是 `cmd.exe`）** | `[hooks]` 走 `run_shell_deadline`，xlings CLI 走 `run_streaming_bounded`，还有一个分离式的代码生成命令 | 一条 hook 是**用户自己**用 shell 语法写下的那一行。自带一个 shell 会改变那一行被解读所用的语言，所以这里依赖的不是一个能打包的工具，而是宿主对那一行含义的约定。 |
 | **MSVC 工具集与 Windows SDK** | 用户点名的 `msvc@system`；在机器上找到的 pin 版本 `msvc@<toolset>`；或者一个受管工具集旁边没有 SDK 载荷时 | 不可再分发，与 Apple SDK 同一类。受管工具集**绑定**自己的 SDK，即使 `WindowsSdkDir` 被设置也不理会——一个环境能覆盖的 pin 就不是 pin；回落到机器自己那份能用，但不可复现，因此会带一句说明（`SdkChoice::note`，调用方必须把它呈现出来）。 |
 

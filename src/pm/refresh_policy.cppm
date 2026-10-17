@@ -33,6 +33,7 @@ enum class RefreshReason {
     None,                   // resolvable locally — the steady state, zero network
     IndexAbsent,            // no local index at all (cold start)
     DescriptorMiss,         // package unknown locally, and the index can say so
+    InstallMiss,            // the provider could not find what the local index names
     VersionMiss,            // package known, constraint unsatisfiable locally
     SuppressedOffline,      // --offline / MCPP_OFFLINE
     SuppressedDisabled,     // [index] auto_refresh = false
@@ -66,9 +67,14 @@ RefreshPolicy policy_for(const mcpp::config::GlobalConfig& cfg);
 // `lookup_descriptor` (that is `mcpp add`): only the policy half of the
 // judgement is left to make. Keeps the opt-outs in one place rather than
 // re-tested at each call site.
+//
+// `why` is what the status line says: DescriptorMiss for a descriptor the
+// local index lacks, InstallMiss after an install the provider failed for
+// want of the package (the descriptor is local; the index may predate it).
 RefreshDecision decide_for_miss(const RefreshPolicy&     policy,
                                 const mcpp::provider::Location& env,
-                                std::string_view         subject);
+                                std::string_view         subject,
+                                RefreshReason            why = RefreshReason::DescriptorMiss);
 
 // Run the sync a decision asked for. At most ONE per process: a build whose
 // deps miss for the same reason should pay one sync, not one per dep.
@@ -110,6 +116,7 @@ std::string_view reason_text(RefreshReason r) {
         case RefreshReason::None:                   return "resolvable locally";
         case RefreshReason::IndexAbsent:            return "no local package index";
         case RefreshReason::DescriptorMiss:         return "not found locally";
+        case RefreshReason::InstallMiss:            return "could not be installed; the index may predate it";
         case RefreshReason::VersionMiss:            return "not satisfiable locally";
         case RefreshReason::SuppressedOffline:      return "offline mode";
         case RefreshReason::SuppressedDisabled:     return "[index] auto_refresh = false";
@@ -132,7 +139,8 @@ RefreshPolicy policy_for(const mcpp::config::GlobalConfig& cfg) {
 
 RefreshDecision decide_for_miss(const RefreshPolicy&     policy,
                                 const mcpp::provider::Location& env,
-                                std::string_view         subject) {
+                                std::string_view         subject,
+                                RefreshReason            why) {
     RefreshDecision d;
     d.subject = std::string(subject);
     // See decide(): a refresh cannot fix an index this binary cannot read.
@@ -151,7 +159,7 @@ RefreshDecision decide_for_miss(const RefreshPolicy&     policy,
         d.reason = RefreshReason::SuppressedDebounce;
         return d;
     }
-    d.reason = RefreshReason::DescriptorMiss;
+    d.reason = why;
     d.shouldRefresh = true;
     return d;
 }
@@ -168,6 +176,12 @@ std::expected<void, std::string> run_sync(const mcpp::provider::Location& env,
     auto after = mcpp::provider::open(env)->default_index_status(0).rev;
     if (before && after && *before != *after)
         mcpp::ui::status("Updated", std::format("package index {} → {}", *before, *after));
+    // A refresh inside a build changes nothing the build uses (design
+    // 2026-10-17 D6): newer packagings are recorded, and `mcpp index update`
+    // and `mcpp toolchain list` say them.
+    if (mcpp::log::is_verbose())
+        for (const auto& st : mcpp::provider::not_current(*mcpp::provider::open(env)))
+            mcpp::log::verbose("index", std::format("newer packaging: {}", mcpp::provider::describe_currency(st)));
     else if (after)
         mcpp::log::verbose("index", std::format("package index still at {}", *after));
     return {};
@@ -189,7 +203,7 @@ std::expected<void, std::string> apply(const RefreshDecision& d,
         return {};
     }
     g_refreshed_this_process = true;
-    return run_sync(env, std::format("package index — `{}` {} (one-time)",
+    return run_sync(env, std::format("package index — `{}` {}",
                                      d.subject, reason_text(d.reason)));
 }
 

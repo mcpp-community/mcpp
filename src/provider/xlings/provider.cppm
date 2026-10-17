@@ -246,6 +246,9 @@ public:
                 if (t.contains("installed_revision") && t["installed_revision"].is_number_integer())
                     ps.installedRevision = t["installed_revision"].get<int>();
                 ps.complete = t.value("complete", false);
+                if (t.contains("floor") && t["floor"].is_number_integer()) ps.floor = t["floor"].get<int>();
+                ps.usable = t.value("usable", false);
+                ps.current = t.value("current", false);
                 ps.error = str(t, "error");
                 out.push_back(std::move(ps));
             }

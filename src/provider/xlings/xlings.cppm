@@ -133,7 +133,16 @@ namespace pinned {
     // besides its upstream, so a borrowed payload had no entry in the store
     // mcpp reads. A runtime's own install now makes the home's runtime links;
     // `pin_runtime` still asks for them after it (idempotent).
-    inline constexpr std::string_view kXlingsVersion   = "2026.10.16.2";
+    //
+    // Tenth, at 2026.10.17.1 (openxlings/xlings#678). Below it, `payload_status`
+    // called a payload of an older packaging revision incomplete, so a build
+    // replaced llvm, gcc and glibc after every revision the index raised, and
+    // a replacement was refused for good by another package's dangling record
+    // in the home. It now reports integrity, `usable` and `current` apart
+    // (`payload_currency`), drops dangling records in every transaction and
+    // says so (`scope_repaired`), and summarizes the binding state
+    // (`binding_state`) for `mcpp self doctor` (design 2026-10-17).
+    inline constexpr std::string_view kXlingsVersion   = "2026.10.17.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 
@@ -534,7 +543,7 @@ void ensure_ninja(const Env& env, bool quiet,
 // images ship one), the mcpp sandbox second. NEVER triggers an install —
 // pure lookup. A build that needs to *provision* nasm goes through the
 // toolchain's synchronous fetcher gate
-// (mcpp::pm::Fetcher::resolve_xpkg_path("xim:nasm@<version>", autoInstall,
+// (mcpp::pm::Fetcher::resolve_xpkg_path("xim:nasm@<version>", PayloadIntent::Use,
 // ...)) from mcpp.build.prepare, the same gate the compiler toolchain uses:
 // this module is a LEAF dependency and must not import mcpp.config /
 // mcpp.fetcher (#232 — the old bespoke `ensure_nasm` install path skipped
@@ -929,7 +938,8 @@ std::string unmet(const mcpp::provider::ProviderInfo& info) {
     if (!info.answered) return "answers no handshake (an xlings before 2026.10.16.1)";
     if (mcpp::xpkg_version::compare_keys(info.version, pinned::kXlingsVersion) < 0)
         return std::format("is {}, older than {}", info.version, pinned::kXlingsVersion);
-    for (auto feature : {"index_dir", "index_store", "upstreams", "payload_status", "sync_index"})
+    for (auto feature : {"index_dir", "index_store", "upstreams", "payload_status", "sync_index",
+                         "payload_currency", "binding_state"})
         if (std::ranges::find(info.features, feature) == info.features.end())
             return std::format("does not offer `{}`", feature);
     if (std::ranges::find(info.capabilities, "install_packages") == info.capabilities.end())

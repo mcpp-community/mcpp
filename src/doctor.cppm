@@ -192,13 +192,135 @@ export int doctor_report() {
     auto warn = [&](std::string_view m) { mcpp::ui::warning(m); ++warns; };
     auto err   = [&](std::string_view m) { mcpp::ui::error(m);   ++errors; };
 
-    mcpp::ui::status("Checking", "toolchain");
-    auto tc = mcpp::toolchain::detect();
-    if (!tc) {
-        err(std::format("toolchain detection failed: {}", tc.error().message));
-    } else {
-        ok(std::format("{} at {}", tc->label(), tc->binaryPath.string()));
+    auto cfg = mcpp::config::load_or_init(/*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
 
+    // ONE PREPARE, READ-ONLY, AND THE SECTIONS BELOW REPORT ON IT (design
+    // 2026-10-17 D7).
+    //
+    // doctor ran a full `prepare_build` for its runtime-capabilities line and
+    // reported the PATH compiler as "the toolchain". On a user's home whose
+    // llvm replacement failed on every build, doctor started the same
+    // replacement (22-45 s), called its failure "run inside a package" while
+    // the user was in one, and printed `ok` for `~/.xlings/.../g++`, a
+    // compiler no build there used. A diagnosis that changes what it
+    // diagnoses, and reports something else, is two defects.
+    //
+    // Offline for the call: nothing is downloaded, installed or replaced, so
+    // a build that would install first is reported as exactly that.
+    const bool inPackage = mcpp::project::find_manifest_root(std::filesystem::current_path()).has_value();
+    bool prepareWouldInstall = false;
+    auto pctx = [&]() -> decltype(mcpp::build::prepare_build(false)) {
+        if (!inPackage) return std::unexpected(std::string("not inside a package"));
+        mcpp::platform::env::ScopedEnv offline("MCPP_OFFLINE", "1");
+        const bool wasQuiet = mcpp::ui::is_quiet();
+        mcpp::ui::set_quiet(true);
+        (void)mcpp::build::refusal::take();
+        auto r = mcpp::build::prepare_build(/*print_fingerprint=*/false);
+        prepareWouldInstall = !r && mcpp::build::refusal::take()
+            == mcpp::build::refusal::Code::OfflineDownloadRequired;
+        mcpp::ui::set_quiet(wasQuiet);
+        return r;
+    }();
+    const auto first_line = [](std::string_view text) {
+        return std::string(text.substr(0, text.find('\n')));
+    };
+
+    // What the provider says of the payload a compiler is in: its packaging
+    // against the index (D1/D6). Nothing for a compiler outside mcpp's store.
+    const auto report_payload = [&](const std::filesystem::path& compiler) {
+        if (!cfg) return;
+        const auto entry = mcpp::provider::layout().entry_of(compiler);
+        if (entry.dir.empty()) return;
+        const std::array<mcpp::provider::PackageRef, 1> refs{{{entry.ns, entry.name, entry.version}}};
+        const auto st = mcpp::provider::open(mcpp::config::make_xlings_env(*cfg))->status(refs);
+        if (st.size() != 1 || !st[0].error.empty()) return;
+        const auto& s0 = st[0];
+        if (!s0.complete)
+            err(std::format("payload {}@{} is incomplete; the next build reinstalls it", s0.name, s0.version));
+        else if (s0.current)
+            ok(std::format("payload {}@{}, packaging revision {} (current)", s0.name, s0.version,
+                           s0.installedRevision < 0 ? 0 : s0.installedRevision));
+        else if (s0.usable)
+            ok(std::format("payload {}  (builds keep it; `mcpp toolchain install` takes the new one)",
+                           mcpp::provider::describe_currency(s0)));
+        else
+            warn(std::format("payload {}", mcpp::provider::describe_currency(s0)));
+    };
+
+    mcpp::ui::status("Checking", "toolchain");
+    std::optional<mcpp::toolchain::Toolchain> tc;
+    if (pctx) {
+        tc = pctx->tc;
+        ok(std::format("{} at {} (what a build here uses)", tc->label(), tc->binaryPath.string()));
+        report_payload(tc->binaryPath);
+    } else if (inPackage) {
+        if (prepareWouldInstall)
+            warn(std::format("a build here installs or replaces packages first: {}",
+                             first_line(pctx.error())));
+        else
+            err(std::format("a build here fails before it compiles: {}", first_line(pctx.error())));
+    } else if (cfg) {
+        // Outside a package: the configured default, as `mcpp new && mcpp
+        // build` would resolve it.
+        const auto spec = cfg->defaultToolchain;
+        auto parsed = mcpp::toolchain::parse_toolchain_spec(spec);
+        if (spec.empty()) {
+            ok("no default toolchain configured (the first build installs one)");
+        } else if (!parsed) {
+            err(std::format("the configured default toolchain '{}' does not parse", spec));
+        } else {
+            auto pkg = mcpp::toolchain::to_xim_package(*parsed);
+            auto dir = mcpp::provider::open(mcpp::config::make_xlings_env(*cfg))->pinned(pkg.ximName, pkg.ximVersion);
+            auto frontend = mcpp::toolchain::payload_frontend(dir, pkg);
+            std::error_code fec;
+            if (frontend && !frontend->empty() && std::filesystem::exists(*frontend, fec)) {
+                if (auto detected = mcpp::toolchain::detect(*frontend)) {
+                    tc = *detected;
+                    ok(std::format("{} at {} (the configured default)", tc->label(), tc->binaryPath.string()));
+                } else {
+                    err(std::format("the configured default {} does not run: {}", spec,
+                                    detected.error().message));
+                }
+                report_payload(*frontend);
+            } else {
+                warn(std::format("the configured default {} is not installed (the first build installs it)", spec));
+            }
+        }
+    }
+
+    // mcpp's package home, as the provider reads it (X3): records that point
+    // at nothing are dropped by the next install; the rest needs the
+    // provider's own repair, run in that home.
+    if (cfg) {
+        mcpp::ui::status("Checking", "package home");
+        auto provider = mcpp::provider::open(mcpp::config::make_xlings_env(*cfg));
+        std::size_t broken = 0, notices = 0;
+        std::string example;
+        bool answered = false;
+        if (auto r = provider->call("system_status", "{}"); r && r->exitCode == 0) {
+            for (const auto& d : r->dataEvents) {
+                if (d.dataKind != "binding_state") continue;
+                auto j = nlohmann::json::parse(d.payloadJson, nullptr, false);
+                if (!j.is_object() || !j.contains("findings") || !j["findings"].is_array()) continue;
+                answered = true;
+                for (const auto& f : j["findings"]) {
+                    const bool isBroken = f.value("severity", std::string{}) == "broken";
+                    (isBroken ? broken : notices) += 1;
+                    if (isBroken && example.empty())
+                        example = std::format("{}@{}: {}", f.value("target", std::string{}),
+                                              f.value("version", std::string{}), f.value("summary", std::string{}));
+                }
+            }
+        }
+        if (!answered)
+            ok("(the provider reports no binding state)");
+        else if (broken == 0)
+            ok(notices == 0 ? std::string("consistent")
+                            : std::format("consistent ({} notice(s))", notices));
+        else
+            warn(std::format("{} record(s) in mcpp's package home point at nothing (first: {})\n"
+                             "  hint: `{} self doctor --fix` repairs them",
+                             broken, example, provider->command_prefix()));
     }
 
     // Windows: report the system MSVC (msvc@system). Absence is a warning,
@@ -336,7 +458,6 @@ export int doctor_report() {
     }
 
     mcpp::ui::status("Checking", "registry");
-    auto cfg = mcpp::config::load_or_init(/*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
 
     // Whose sysroot is this? gcc bakes `--sysroot=<...>/subos/default`
     // at build time, and that path is a string, not a reference -- it
@@ -494,9 +615,10 @@ export int doctor_report() {
         // dependency graph's provider packages (e.g. compat.glx-runtime); the
         // search dirs are the resolved runtime library_dirs. The same code path
         // works on every platform — providers carry the platform knowledge.
-        auto pctx = mcpp::build::prepare_build(/*print_fingerprint=*/false);
-        if (!pctx) {
+        if (!inPackage) {
             ok("(run inside a package to check its runtime capabilities)");
+        } else if (!pctx) {
+            ok("(not checked: the toolchain above is not ready)");
         } else if (pctx->plan.runtimeCapabilities.empty()) {
             ok("no host runtime capabilities required");
         } else {

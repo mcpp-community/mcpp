@@ -307,3 +307,66 @@ TEST(PackageFetcher, AnIndexThatRequiresANewerMcppIsRecordedNotPrinted) {
     mcpp::pm::reset_unusable_indexes_for_test();
     std::filesystem::remove_all(root);
 }
+
+// ─── What a caller's intent does with a payload (design 2026-10-17 D3) ───
+//
+// The user's home: llvm@23.1.3 recorded at packaging revision 0, the index at
+// revision 1 with no floor -- complete, usable, not current. A build USES it;
+// only `mcpp toolchain install` replaces it. 2026.10.16.x replaced it inside
+// the build (and, with one dangling record in the home, failed every run).
+TEST(PmPayloadIntent, AnOlderPackagingIsUsedByABuildAndReplacedOnlyWhenProvisioned) {
+    using mcpp::pm::PayloadAction;
+    using mcpp::pm::PayloadIntent;
+    using mcpp::pm::payload_action;
+    // present, usable, current
+    EXPECT_EQ(payload_action(PayloadIntent::Use,       true, true, false), PayloadAction::Take);
+    EXPECT_EQ(payload_action(PayloadIntent::Locate,    true, true, false), PayloadAction::Take);
+    EXPECT_EQ(payload_action(PayloadIntent::Provision, true, true, false), PayloadAction::Replace);
+    EXPECT_EQ(payload_action(PayloadIntent::Provision, true, true, true),  PayloadAction::Take);
+}
+
+// Below the recipe's floor, or incomplete: not usable, so even a build
+// replaces it -- the author said the old packaging must go.
+TEST(PmPayloadIntent, AnUnusablePayloadIsReplacedByEveryIntentThatMayInstall) {
+    using mcpp::pm::PayloadAction;
+    using mcpp::pm::PayloadIntent;
+    using mcpp::pm::payload_action;
+    EXPECT_EQ(payload_action(PayloadIntent::Use,       true, false, false), PayloadAction::Replace);
+    EXPECT_EQ(payload_action(PayloadIntent::Provision, true, false, false), PayloadAction::Replace);
+    EXPECT_EQ(payload_action(PayloadIntent::Locate,    true, false, false), PayloadAction::Refuse);
+}
+
+TEST(PmPayloadIntent, NothingThereIsInstalledUnlessOnlyLocated) {
+    using mcpp::pm::PayloadAction;
+    using mcpp::pm::PayloadIntent;
+    using mcpp::pm::payload_action;
+    EXPECT_EQ(payload_action(PayloadIntent::Use,       false, false, false), PayloadAction::Install);
+    EXPECT_EQ(payload_action(PayloadIntent::Provision, false, false, false), PayloadAction::Install);
+    EXPECT_EQ(payload_action(PayloadIntent::Locate,    false, false, false), PayloadAction::Refuse);
+}
+
+// ─── What a failed install calls for (D5) ───
+//
+// The user's failure was `E_INTERNAL` (a metadata transaction refused): mcpp
+// refreshed the index with the reason "not found locally (one-time)" for a
+// descriptor that was local, retried the same doomed replacement through the
+// command line, and told the user to retry. A deterministic refusal is said
+// once; only a package the provider could not find refreshes the index.
+TEST(PmInstallFailurePolicy, ADeterministicRefusalIsNeitherRefreshedNorRetried) {
+    for (std::string_view code : {"E_INTERNAL", "E_PERMISSION", "E_DISK_FULL", "E_CANCELLED"}) {
+        const auto p = mcpp::pm::install_failure_policy(code);
+        EXPECT_FALSE(p.refreshIndex) << code;
+        EXPECT_FALSE(p.retry) << code;
+    }
+}
+
+TEST(PmInstallFailurePolicy, OnlyAMissingPackageRefreshesTheIndex) {
+    EXPECT_TRUE(mcpp::pm::install_failure_policy("E_NOT_FOUND").refreshIndex);
+    EXPECT_TRUE(mcpp::pm::install_failure_policy("E_NOT_FOUND").retry);
+    EXPECT_FALSE(mcpp::pm::install_failure_policy("E_NETWORK").refreshIndex);
+    EXPECT_TRUE(mcpp::pm::install_failure_policy("E_NETWORK").retry);
+    EXPECT_TRUE(mcpp::pm::install_failure_policy("E_INVALID_INPUT").retry);
+    // A provider that said nothing (#238): the old conservative path.
+    EXPECT_TRUE(mcpp::pm::install_failure_policy("").refreshIndex);
+    EXPECT_TRUE(mcpp::pm::install_failure_policy("").retry);
+}

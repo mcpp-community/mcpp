@@ -240,6 +240,12 @@ jobs:
     needs: [build-linux, build-linux-arm, build-macos, build-windows]
     uses: ./.github/workflows/ci-target-matrix.yml
 
+  # A home the previous release made, run by this commit's mcpp (D9 of the
+  # 2026-10-17 upgrade-continuity design).
+  upgrade:
+    needs: [build-linux, build-linux-arm, build-macos, build-windows]
+    uses: ./.github/workflows/ci-upgrade.yml
+
   # Pull requests and dispatch only, as when it was a workflow of its own.
   openkal:
     needs: [build-linux, build-linux-arm, build-macos, build-windows]

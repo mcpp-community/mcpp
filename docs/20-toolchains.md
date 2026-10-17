@@ -94,6 +94,29 @@ mcpp toolchain install gcc 15               # installs the highest 15.x.y versio
 mcpp toolchain install gcc@16               # the @ form works too
 ```
 
+### A newer packaging of an installed toolchain (2026.10.17.1+)
+
+The index raises a version's packaging `revision` when what it installs changes
+under the same upstream version (a cfg regenerated for a new glibc layout, hard
+links removed for Android). Builds keep using an installed payload while it is
+*usable*; a build does not download a newer packaging of a toolchain it already
+has. `mcpp index update` lists the installed payloads the refreshed index
+packages anew, `mcpp toolchain list` marks them, and installing the toolchain by
+name takes the new packaging:
+
+```text
+$ mcpp toolchain list
+Toolchains:
+  *  llvm 23.1.3             (default)  (packaging revision 1 available: `mcpp toolchain install llvm 23.1.3`)
+$ mcpp toolchain install llvm 23.1.3
+    Updating llvm@23.1.3  packaging revision 0 → 1
+```
+
+When a revision fixes something every installed payload has, the index also
+raises the version's `floor`, and the next build replaces an installed payload
+below it, saying why. A replacement that fails leaves the installed payload in
+place; `mcpp toolchain install` then fails and names the revision still in use.
+
 ## Switching the Default Toolchain
 
 The default is a *pair* — toolchain axis + target axis (target omitted = host):
@@ -923,7 +946,7 @@ reason it cannot.
 | **an Apple SDK** | located through `xcrun`, never installed | Not redistributable. There is nothing to package, and the refusal says so before any payload is resolved. |
 | **the iOS simulator runtime** | `simctl`, through `xim:apple-simulator-tools` | The same. |
 | **an assembler (`nasm`)** | the pinned `xim:nasm` first; the host's only when that route could not serve, and **named in the build report** when it is used | An offline machine that already has a usable assembler can still build. It used to be the other way round -- see below. |
-| **a C++ compiler on PATH (`$CXX`, else `g++`)** | `mcpp doctor` only | That command's job is to report on the host. The build path sets the compiler from a resolved payload at every branch that reaches the probe, and refuses when the payload cannot be resolved rather than falling through to PATH. |
+| **a C++ compiler on PATH (`$CXX`, else `g++`)** | `mcpp self env` only | That command's job is to report on the host. `mcpp self doctor` reports the toolchain a build in the current directory resolves instead (2026.10.17.1). The build path sets the compiler from a resolved payload at every branch that reaches the probe, and refuses when the payload cannot be resolved rather than falling through to PATH. |
 | **a command interpreter (`/bin/sh`, `cmd.exe` on Windows)** | `run_shell_deadline` for `[hooks]`, `run_streaming_bounded` for the xlings CLI, and the detached codegen command | A hook is a line the USER wrote in shell syntax. Shipping a shell would change the language that line is read in, so the thing mcpp depends on here is not a tool it could package -- it is the host's agreement about what that line means. |
 | **the MSVC toolset and the Windows SDK** | `msvc@system`, which a user names; a pinned `msvc@<toolset>` found installed on the machine; or a managed toolset that has no SDK payload beside it | Not redistributable, the same category as the Apple SDK. A managed toolset BINDS its SDK and ignores `WindowsSdkDir` even when set, because a pin the environment can overwrite is not a pin; the fallback to the machine's SDK works, is not reproducible, and carries a note saying so (`SdkChoice::note`, which the caller must surface). |
 

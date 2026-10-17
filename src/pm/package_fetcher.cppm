@@ -53,6 +53,43 @@ struct CallError {
 
 using CallResult = mcpp::provider::CallResult;
 
+// What a caller wants of one payload (design 2026-10-17 D3).
+//
+// A packaging revision the index raised is a newer packaging, not a broken
+// payload: a command that only USES a package keeps an installed payload while
+// the provider calls it usable, and only an explicit request for the package
+// (`mcpp toolchain install`) brings the index's current packaging. 2026.10.16.x
+// replaced every payload whose revision was not the index's inside the build
+// that read it -- a 101.7 MB gcc and a 36.7 MB glibc on a user's next
+// `mcpp run`, and, on a home with one dangling record, a failure on every run.
+enum class PayloadIntent {
+    Locate,     // the installed payload when it is usable; never installs
+    Use,        // a usable payload; installs or replaces only one that is not
+    Provision,  // the index's current packaging; also replaces a usable payload that is not current
+};
+
+// What to do about one payload, from what the provider says of it. Pure: the
+// unit tests pin the whole matrix.
+enum class PayloadAction {
+    Take,       // use the payload that is there
+    Install,    // nothing is there: install it
+    Replace,    // something is there and will not do: replace it
+    Refuse,     // Locate, and nothing usable is there
+};
+PayloadAction payload_action(PayloadIntent intent, bool present, bool usable, bool current);
+
+// What a failed install calls for, by the provider's error code (D5). A
+// deterministic refusal (`E_INTERNAL`: a hook or a metadata transaction that
+// refused; `E_PERMISSION`, `E_DISK_FULL`, `E_CANCELLED`) is said once and not
+// retried, and no index refresh can help it; only a package the provider could
+// not find refreshes the index first. No code at all (a provider that said
+// nothing, #238) keeps the old conservative path.
+struct InstallFailurePolicy {
+    bool refreshIndex = false;   // the index may predate this version
+    bool retry = false;          // a second attempt can succeed
+};
+InstallFailurePolicy install_failure_policy(std::string_view errorCode);
+
 class Fetcher {
 public:
     explicit Fetcher(const config::GlobalConfig& cfg) : cfg_(cfg) {}
@@ -205,15 +242,15 @@ public:
     };
 
     // Resolve a target like "xim:gcc@15.1.0" or "name@1.0" to its xpkg
-    // payload location. Auto-installs via xlings if missing and
-    // autoInstall is true.
+    // payload location, installing through the provider as `intent` allows
+    // (PayloadIntent, design 2026-10-17 D3).
     //
     // Target syntax:
     //   "<index>:<name>@<version>"   explicit index namespace
     //   "<name>@<version>"           uses xim namespace by default
     std::expected<XpkgPayload, CallError>
         resolve_xpkg_path(std::string_view target,
-                          bool autoInstall,
+                          PayloadIntent intent,
                           EventHandler* handler = nullptr);
 
 private:
@@ -1036,6 +1073,11 @@ std::string install_failure_hint(const std::optional<mcpp::provider::ErrorEvent>
     if (code == "E_INVALID_INPUT")
         return "the downloaded archive was damaged and has been dropped; a retry downloads it again";
     if (error && !error->hint.empty()) return error->hint;
+    // A refusal the provider decided (a hook, a metadata transaction): the
+    // same command fails the same way, so retrying is not the advice (D5).
+    if (code == "E_INTERNAL")
+        return "the provider refused the change; `mcpp self doctor` reports the state of mcpp's "
+               "package home, and the whole failure is in ~/.mcpp/log/mcpp.log";
     return "the whole failure is in ~/.mcpp/log/mcpp.log (`mcpp self doctor` checks the "
            "installation); retry, or `mcpp self init --force`";
 }
@@ -1044,7 +1086,7 @@ std::string install_failure_hint(const std::optional<mcpp::provider::ErrorEvent>
 
 std::expected<Fetcher::XpkgPayload, CallError>
 Fetcher::resolve_xpkg_path(std::string_view target,
-                           bool autoInstall,
+                           PayloadIntent intent,
                            EventHandler* handler)
 {
     // Default to xim namespace for tools/toolchain. Modular libs use
@@ -1100,103 +1142,166 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         return payload;
     };
 
-    // What the provider says of this payload, nothing installed: there and
-    // complete is the only "installed" (a directory that merely exists may
-    // be an interrupted install, or a success that installed nothing, #533).
-    const auto complete_here = [&]() -> std::optional<std::filesystem::path> {
+    // What the provider says of this payload, nothing installed (D1): the
+    // provider decides completeness, usability against the recipe's floor and
+    // currency; this function only maps them through the caller's intent.
+    struct Here {
+        std::filesystem::path dir;      // empty: nothing there
+        bool usable = false, current = false;
+        int installed = -1, revision = 0, floor = 0;
+    };
+    const auto here = [&]() -> Here {
         const std::array<mcpp::provider::PackageRef, 1> refs{ref};
         auto st = provider->status(refs);
-        if (st.size() == 1) {
-            if (st[0].complete && !st[0].dir.empty()) return st[0].dir;
-            // Present but not complete (an interrupted install, a success
-            // that installed nothing): not installed.
-            if (st[0].origin != "absent") return std::nullopt;
+        if (st.size() == 1 && st[0].origin != "absent" && !st[0].dir.empty()) {
+            // Present: a complete one (usable / current as the provider says),
+            // or an interrupted install, or a success that installed nothing
+            // (#533) -- the provider's verdicts say which.
+            return {st[0].dir, st[0].usable, st[0].current,
+                    st[0].installedRevision, st[0].revision, st[0].floor};
         }
         // The provider could not say, or has nothing where the index's store
         // is: what is installed elsewhere in the home, by its version grammar,
         // holding something -- a payload installed before its index had a
         // store of its own (COMPAT(internal:legacy-registry-store), design
-        // 2026-10-16 §5.3).
+        // 2026-10-16 §5.3). Nothing to judge it by: it is taken as it is.
         auto dir = provider->payload(ref);
         std::error_code ec;
-        if (!dir.empty() && std::filesystem::is_directory(dir, ec) && !std::filesystem::is_empty(dir, ec)) return dir;
+        if (!dir.empty() && std::filesystem::is_directory(dir, ec) && !std::filesystem::is_empty(dir, ec))
+            return {dir, true, true};
+        return {};
+    };
+
+    const auto label = std::format("{}@{}", parsed.packageName, parsed.version);
+    auto now = here();
+    const auto action = payload_action(intent, !now.dir.empty(), now.usable, now.current);
+    if (action == PayloadAction::Take) {
+        if (!now.current)
+            mcpp::log::verbose("fetcher", std::format(
+                "{}: packaging revision {} in use; the index has {} (floor {})",
+                label, now.installed, now.revision, now.floor));
+        return make_payload(now.dir);
+    }
+    if (action == PayloadAction::Refuse) {
+        return std::unexpected(CallError{std::format(
+            "payload of '{}' is not installed\n"
+            "  hint: `mcpp toolchain install` installs a toolchain; a build installs what it needs",
+            mcpp::provider::to_string(ref))});
+    }
+
+    // Offline is checked HERE, after the "already usable" fast path above: a
+    // build whose packages are all usable stays functional offline. Only an
+    // actual download is refused, naming the package.
+    if (mcpp::platform::env::offline_mode()) {
+        mcpp::build::refusal::record(
+            mcpp::build::refusal::Code::OfflineDownloadRequired);
+        return std::unexpected(CallError{ std::format(
+            "offline mode: `{}` is not installed and cannot be downloaded\n"
+            "       run without --offline (or unset MCPP_OFFLINE) to fetch it",
+            label) });
+    }
+
+    // A replacement says why, once, before it starts (D3): the user sees a
+    // download in a command that only builds, so the reason is part of it.
+    const bool replacing = action == PayloadAction::Replace;
+    const bool replacingUsable = replacing && now.usable;
+    if (replacing) {
+        if (now.usable)
+            mcpp::ui::status("Updating", std::format("{}  packaging revision {} → {}",
+                                                     label, now.installed, now.revision));
+        else if (now.installed >= 0 && now.installed < now.floor)
+            mcpp::ui::status("Updating", std::format(
+                "{}  packaging revision {} → {} (revision {} is below the index's floor {})",
+                label, now.installed, now.revision, now.installed, now.floor));
+        else
+            mcpp::ui::status("Reinstalling", std::format("{}  (the installed payload is incomplete)", label));
+    }
+
+    if (parsed.indexName == "xim" && !provider->official_package_present(parsed.packageName)) {
+        // A descriptor missing from the local xim index may be one the
+        // remote index has. Whether that miss refreshes is the refresh
+        // policy's decision (#648 A5).
+        auto decision = mcpp::pm::decide_for_miss(
+            mcpp::pm::policy_for(cfg_), location_of(cfg_),
+            std::format("xim:{}", parsed.packageName));
+        if (auto r = mcpp::pm::apply(decision, location_of(cfg_)); !r)
+            mcpp::ui::warning(r.error());
+    }
+
+    // Satisfied: what the intent asks of the payload now there.
+    const auto satisfied = [&]() -> std::optional<std::filesystem::path> {
+        auto after = here();
+        if (after.dir.empty()) return std::nullopt;
+        if (intent == PayloadIntent::Provision ? after.current : after.usable) return after.dir;
         return std::nullopt;
     };
 
-    if (auto dir = complete_here()) {
-        mcpp::log::debug("fetcher", "payload complete in the store");
-        return make_payload(*dir);
-    }
-
-    if (autoInstall) {
-        // Offline is checked HERE, after the "already installed" fast path
-        // above: a build whose packages are all present stays functional
-        // offline. Only an actual download is refused, naming the package.
-        if (mcpp::platform::env::offline_mode()) {
-            mcpp::build::refusal::record(
-                mcpp::build::refusal::Code::OfflineDownloadRequired);
-            return std::unexpected(CallError{ std::format(
-                "offline mode: `{}@{}` is not installed and cannot be downloaded\n"
-                "       run without --offline (or unset MCPP_OFFLINE) to fetch it",
-                parsed.packageName, parsed.version) });
-        }
-        if (parsed.indexName == "xim") {
-            // A descriptor missing from the local xim index may be one the
-            // remote index has. Whether that miss refreshes is the refresh
-            // policy's decision (#648 A5).
-            if (!provider->official_package_present(parsed.packageName)) {
-                auto decision = mcpp::pm::decide_for_miss(
-                    mcpp::pm::policy_for(cfg_), location_of(cfg_),
-                    std::format("xim:{}", parsed.packageName));
-                if (auto r = mcpp::pm::apply(decision, location_of(cfg_)); !r)
-                    mcpp::ui::warning(r.error());
-            }
-        }
-
-        std::vector<std::string> targets { mcpp::provider::to_string(ref) };
-        mcpp::log::verbose("fetcher", std::format("install: {}", targets[0]));
-        auto inst = install(targets, handler);
-        if (!inst) return std::unexpected(inst.error());
-        if (inst->exitCode == 0) {
-            if (auto dir = complete_here()) return make_payload(*dir);
-            // Reported a success and left nothing complete (mcpp#533's shape):
-            // said, not stamped over.
-            return std::unexpected(CallError{std::format(
-                "'{}' reported a successful install, but its payload is not complete\n"
-                "  hint: {}", targets[0], install_failure_hint(inst->error, cfg_.xlingsHome()))});
-        }
-
-        // The install failed. The index may predate this version: the refresh
-        // policy decides whether to refresh once, then the provider's own
-        // command line tries again -- more robust for a large toolchain, and
-        // its output stays visible when it still fails.
-        if (parsed.indexName == "xim") {
-            mcpp::log::verbose("fetcher",
-                std::format("install failed for {}; asking the refresh policy before retry", targets[0]));
-            auto decision = mcpp::pm::decide_for_miss(
-                mcpp::pm::policy_for(cfg_), location_of(cfg_), targets[0]);
-            if (auto r = mcpp::pm::apply(decision, location_of(cfg_)); !r)
-                mcpp::log::verbose("fetcher", r.error());
-        }
-        mcpp::log::verbose("fetcher", std::format("retrying {} through the provider's command line", targets[0]));
-        int directRc = provider->install_direct(targets[0]);
-        if (directRc == 0)
-            if (auto dir = complete_here()) return make_payload(*dir);
-
-        std::string installError = std::format(
-            "install of '{}' failed (interface exit {}, direct exit {})",
-            targets[0], inst->exitCode, directRc);
-        if (inst->error)
-            installError += ": " + inst->error->message;
+    std::vector<std::string> targets { mcpp::provider::to_string(ref) };
+    mcpp::log::verbose("fetcher", std::format("install: {}", targets[0]));
+    auto inst = install(targets, handler);
+    if (!inst) return std::unexpected(inst.error());
+    if (inst->exitCode == 0) {
+        if (auto dir = satisfied()) return make_payload(*dir);
+        // Reported a success and left nothing complete (mcpp#533's shape):
+        // said, not stamped over.
         return std::unexpected(CallError{std::format(
-            "{}\n  hint: {}", installError,
-            install_failure_hint(inst->error, cfg_.xlingsHome()))});
+            "'{}' reported a successful install, but its payload is not complete\n"
+            "  hint: {}", targets[0], install_failure_hint(inst->error, cfg_.xlingsHome()))});
     }
 
-    return std::unexpected(CallError{
-        std::format("payload of '{}' is not installed\n"
-                    "  hint: check network and retry, or `mcpp self init --force`",
-                    mcpp::provider::to_string(ref))});
+    // The install failed. What happens next depends on why (D5).
+    const std::string code = inst->error ? inst->error->code : std::string{};
+    const auto policy = install_failure_policy(code);
+    int directRc = -1;
+    if (policy.refreshIndex && parsed.indexName == "xim") {
+        auto decision = mcpp::pm::decide_for_miss(
+            mcpp::pm::policy_for(cfg_), location_of(cfg_), targets[0],
+            mcpp::pm::RefreshReason::InstallMiss);
+        if (auto r = mcpp::pm::apply(decision, location_of(cfg_)); !r)
+            mcpp::log::verbose("fetcher", r.error());
+    }
+    if (policy.retry) {
+        // The provider's own command line: more robust for a large toolchain,
+        // and its output stays visible when it fails again.
+        mcpp::log::verbose("fetcher", std::format("retrying {} through the provider's command line", targets[0]));
+        directRc = provider->install_direct(targets[0]);
+        if (directRc == 0)
+            if (auto dir = satisfied()) return make_payload(*dir);
+    }
+
+    std::string installError = std::format("install of '{}' failed (interface exit {}{})", targets[0],
+        inst->exitCode, policy.retry ? std::format(", direct exit {}", directRc) : std::string{});
+    if (inst->error)
+        installError += ": " + inst->error->message;
+
+    // A replacement that failed leaves the previous payload where it was (the
+    // provider's replacement is a transaction). Only a provisioning command
+    // replaces a payload that is still usable, so only it can fail with one
+    // left in place: it says which revision stays in use. A build replaces
+    // only a payload that is not usable, and has nothing to fall back to.
+    if (replacingUsable) {
+        auto after = here();
+        if (!after.dir.empty() && after.usable)
+            return std::unexpected(CallError{std::format(
+                "{}\n  packaging revision {} is still installed and in use\n  hint: {}",
+                installError, after.installed, install_failure_hint(inst->error, cfg_.xlingsHome()))});
+    }
+    return std::unexpected(CallError{std::format(
+        "{}\n  hint: {}", installError,
+        install_failure_hint(inst->error, cfg_.xlingsHome()))});
+}
+
+PayloadAction payload_action(PayloadIntent intent, bool present, bool usable, bool current) {
+    if (present && usable && (intent != PayloadIntent::Provision || current)) return PayloadAction::Take;
+    if (intent == PayloadIntent::Locate) return PayloadAction::Refuse;
+    return present ? PayloadAction::Replace : PayloadAction::Install;
+}
+
+InstallFailurePolicy install_failure_policy(std::string_view errorCode) {
+    if (errorCode == "E_NOT_FOUND") return {.refreshIndex = true, .retry = true};
+    if (errorCode.empty()) return {.refreshIndex = true, .retry = true};
+    if (errorCode == "E_NETWORK" || errorCode == "E_INVALID_INPUT") return {.refreshIndex = false, .retry = true};
+    return {};
 }
 
 // ─── Namespace-aware install_path (canonical, 0.0.10+) ──────────────

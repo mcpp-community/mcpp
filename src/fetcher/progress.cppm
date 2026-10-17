@@ -12,6 +12,7 @@ export module mcpp.fetcher.progress;
 import std;
 import mcpp.config;
 import mcpp.fetcher;
+import mcpp.libs.json;
 import mcpp.log;
 import mcpp.ui;
 
@@ -251,6 +252,20 @@ export struct InstallProgressHandler : mcpp::fetcher::EventHandler {
     }
 
     void on_data(const mcpp::fetcher::DataEvent& d) override {
+        // What the provider repaired in the home it keeps for mcpp while it
+        // installed (xlings protocol 1.11, design 2026-10-17 X2): a record
+        // that pointed at nothing, dropped so it no longer refuses an install.
+        // Said, because it changed the home, and it is not the package asked.
+        if (d.dataKind == "scope_repaired") {
+            auto j = nlohmann::json::parse(d.payloadJson, nullptr, false);
+            if (j.is_object() && j.contains("repairs") && j["repairs"].is_array())
+                for (const auto& r : j["repairs"])
+                    mcpp::ui::status("Repaired", std::format(
+                        "{}@{} in mcpp's package home had no registration; {}",
+                        r.value("target", std::string{}), r.value("version", std::string{}),
+                        r.value("action", std::string{}) == "deactivated" ? "deactivated" : "dropped"));
+            return;
+        }
         if (d.dataKind != "download_progress") return;
         auto files = parse_all_install_files(d.payloadJson);
         if (files.empty()) return;

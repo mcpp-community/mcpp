@@ -1,0 +1,6 @@
+  Installing gcc@16.1.0 via mcpp's xlings
+ Downloading xim:binutils@2.42.1 done, 27.4 MB in 24.0s
+ Downloading xim:gcc@16.1.0 done, 101.7 MB in 9.9s
+   Installed gcc@16.1.0 → /tmp/lane/upgrade-lane/home/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++
+
+Tip: `mcpp toolchain default gcc@16.1.0` to make this the default.

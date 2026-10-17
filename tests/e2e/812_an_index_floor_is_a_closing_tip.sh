@@ -35,7 +35,7 @@ mkdir -p "$TMP/bin"
 cat > "$TMP/bin/xlings" <<EOF
 #!/usr/bin/env bash
 # The handshake mcpp asks of every xlings (docs/25 §5).
-[[ "\${1:-}" == "interface" && "\${2:-}" == "--version" ]] && { echo '{"protocol_version":"1.10","version":"9999.1.1.1","capabilities":["install_packages"],"home_layouts":[2],"features":["index_dir","index_store","upstreams","payload_status","sync_index"]}'; exit 0; }
+[[ "\${1:-}" == "interface" && "\${2:-}" == "--version" ]] && { echo '{"protocol_version":"1.11","version":"9999.1.1.1","capabilities":["install_packages"],"home_layouts":[2],"features":["index_dir","index_store","upstreams","payload_status","sync_index","payload_currency","binding_state"]}'; exit 0; }
 case " \$* " in
     *" sync_index "*)
         dest=\$(printf '%s' "\$4" | sed -n 's/.*"dest":"\([^"]*\)".*/\1/p')

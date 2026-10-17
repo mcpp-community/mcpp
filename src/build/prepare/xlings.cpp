@@ -242,7 +242,7 @@ step3_define_host_tc_closures_and_refresh_index(PrepareState& state) {
         if (!cfgH) return std::unexpected(cfgH.error());
         mcpp::fetcher::Fetcher fetcher(**cfgH);
         mcpp::fetcher::InstallProgressHandler progress;
-        auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
+        auto payload = fetcher.resolve_xpkg_path(pkg.target(), mcpp::fetcher::PayloadIntent::Use, &progress);
         if (!payload) {
             return std::unexpected(std::format(
                 "host toolchain for build.mcpp ('{}'): {}", hostSpecText,

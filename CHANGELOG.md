@@ -4,6 +4,56 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.17.1] - 2026-10-17
+
+### Fixed
+
+- An upgrade no longer replaces installed payloads inside a build. A payload
+  the index has since repackaged under the same version (a raised packaging
+  `revision`) is used while the provider calls it usable; 2026.10.16.x
+  replaced llvm, gcc (101.7 MB) and glibc (36.7 MB) on a user's next
+  `mcpp run`. Only a payload below the version's `floor`, incomplete or
+  missing is installed by a build, and the build says why (`Updating
+  llvm@23.1.3  packaging revision 0 → 1 (revision 0 is below the index's
+  floor 1)`). `mcpp toolchain install <toolchain>` takes the new packaging.
+- A home with a record that points at nothing no longer fails every build.
+  `c++` active at a gcc version whose registration was gone made every
+  replacement of llvm refuse with `sysroot update refused before metadata
+  changed: c++@16.1.0: installed asset registration missing`. The bundled
+  xlings drops such records in every install and mcpp reports it (`Repaired
+  c++@16.1.0 in mcpp's package home had no registration; deactivated`).
+- A failed install is described by its cause. A refusal the provider decided
+  is said once and is neither retried through the command line nor followed by
+  an index refresh; only a package the provider could not find refreshes the
+  index, and the line says so (`could not be installed; the index may predate
+  it`) instead of `not found locally (one-time)`. A replacement that fails
+  keeps the installed payload, and `mcpp toolchain install` names the
+  revision still in use.
+- `mcpp self doctor` changes nothing. It reports the toolchain a build in the
+  current directory resolves (the configured default outside a package) with
+  its payload's packaging revision, says when that build would install first
+  instead of installing, and reports records in mcpp's package home that point
+  at nothing. It used to start the build's installs and report the compiler
+  on PATH as the toolchain.
+
+### Added
+
+- `mcpp index update` lists installed payloads the refreshed index packages
+  anew; `mcpp toolchain list` marks them (`packaging revision 1 available`),
+  in `--format json` as `installedRevision` / `availableRevision`.
+- CI: an upgrade lane (`ci-upgrade.yml`) builds a home with the previous
+  release, read from GitHub at run time, and runs this commit's mcpp in it on
+  Linux x86_64 and aarch64, macOS and Windows, with an old-index and a
+  dangling-record variant on Linux.
+
+### Changed
+
+- Bundle xlings 2026.10.17.1 (openxlings/xlings#678): `payload_status`
+  reports integrity, `usable` and `current` apart (protocol 1.11).
+- A toolchain payload's packaging revision, when above 0, is part of the
+  toolchain's identity in the build fingerprint and the caches. A toolchain
+  with a revision rebuilds its caches once after the upgrade.
+
 ## [2026.10.16.3] - 2026-10-17
 
 ### Fixed

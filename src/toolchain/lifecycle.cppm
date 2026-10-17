@@ -463,6 +463,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         mcpp::toolchain::PayloadIdentity id;
         std::string version;
         std::filesystem::path bin;
+        mcpp::provider::PackageRef ref;
     };
     std::vector<Payload> payloads;
     std::error_code ec;
@@ -488,7 +489,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
                 // runs to find out what is installed.
                 if (!bin) { mcpp::ui::warning(bin.error()); continue; }
                 if (bin->empty()) continue;
-                payloads.push_back({ *id, s.version, *bin });
+                payloads.push_back({ *id, s.version, *bin, {entry.ns, entry.name, entry.version} });
             }
         }
     }
@@ -507,6 +508,24 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         return version_greater(a.version, b.version);
     });
 
+    // Each payload's packaging against the index (design 2026-10-17 D6),
+    // asked once for all of them: a build keeps a usable payload of an older
+    // packaging, so this list is where a newer one is said.
+    std::vector<mcpp::provider::PayloadStatus> currency;
+    {
+        std::vector<mcpp::provider::PackageRef> refs;
+        for (auto& p : payloads) refs.push_back(p.ref);
+        currency = mcpp::provider::open(mcpp::config::make_xlings_env(cfg))->status(refs);
+        if (currency.size() != payloads.size()) currency.clear();
+    }
+    const auto newer_of = [&](const FamVer& f) -> const mcpp::provider::PayloadStatus* {
+        for (std::size_t i = 0; i < currency.size(); ++i)
+            if (payloads[i].id.family == f.family && payloads[i].version == f.version
+                && currency[i].complete && !currency[i].current)
+                return &currency[i];
+        return nullptr;
+    };
+
     if (payloads.empty()) {
         std::println("(no toolchains installed — run `mcpp toolchain install gcc 16.1.0` "
                      "or just `mcpp build` to auto-install the default)");
@@ -515,16 +534,30 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         for (auto& f : famvers) {
             bool isDefault = defSpec
                 && mcpp::toolchain::spec_matches_payload(*defSpec, { f.family, {} }, f.version);
-            jsonToolchains.push_back({
+            const auto* newer = newer_of(f);
+            nlohmann::json row{
                 {"family",  std::string(mcpp::toolchain::family_name(f.family))},
                 {"version", f.version},
                 {"default", isDefault},
-            });
+            };
+            if (newer) {
+                row["installedRevision"] = newer->installedRevision;
+                row["availableRevision"] = newer->revision;
+                row["usable"] = newer->usable;
+            }
+            jsonToolchains.push_back(std::move(row));
             if (json) continue;
-            std::println("  {:<3}{:<22}{}",
+            std::string currencyNote;
+            if (newer)
+                currencyNote = newer->usable
+                    ? std::format("  (packaging revision {} available: `mcpp toolchain install {} {}`)",
+                                  newer->revision, mcpp::toolchain::family_name(f.family), f.version)
+                    : std::format("  (revision {} is below the index's floor {}; the next build replaces it)",
+                                  newer->installedRevision, newer->floor);
+            std::println("  {:<3}{:<22}{}{}",
                 isDefault ? "*" : "",
                 std::format("{} {}", mcpp::toolchain::family_name(f.family), f.version),
-                isDefault ? "  (default)" : "");
+                isDefault ? "  (default)" : "", currencyNote);
         }
         if (!json && effective.fromProject) {
             std::println("  (* = effective toolchain from project mcpp.toml "
@@ -886,7 +919,7 @@ ensure_declared_runtime(const mcpp::config::GlobalConfig& cfg,
         binding.runtimeId, target));
     mcpp::fetcher::Fetcher fetcher(cfg);
     mcpp::fetcher::InstallProgressHandler progress;
-    if (auto installed = fetcher.resolve_xpkg_path(target, /*autoInstall=*/true, &progress); !installed)
+    if (auto installed = fetcher.resolve_xpkg_path(target, mcpp::fetcher::PayloadIntent::Use, &progress); !installed)
         return std::unexpected(std::format(
             "the C runtime the toolchain runs on, {}, is not installed: {}", target, installed.error().message));
     provider->pin_runtime(binding.runtimeId, /*relink=*/true);
@@ -992,7 +1025,10 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
             auto vdir = mcpp::provider::open(mcpp::config::make_xlings_env(cfg))->pinned(pkg.ximName, pkg.ximVersion);
             sweep_parked_payloads(vdir.parent_path(), vdir);
         }
-        auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
+        // Provision (design 2026-10-17 D3): the command that asks for this
+        // toolchain by name brings the index's current packaging; a build
+        // keeps the installed one while it is usable.
+        auto payload = fetcher.resolve_xpkg_path(pkg.target(), mcpp::fetcher::PayloadIntent::Provision, &progress);
         mcpp::log::verbose("toolchain", std::format("main install result: {}",
             payload ? ("ok → " + payload->root.string()) : payload.error().message));
         if (!payload) {

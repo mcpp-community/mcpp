@@ -494,12 +494,20 @@ $ mcpp xpkg parse mcpp.plugins.lua --json
 `mcpp self doctor` checks the toolchain, the `std` module, the registry, cache
 health, the last runtime-closure verdict, and installed GCC payloads for
 fixincludes-frozen headers left over from the build machine that produced
-them, and reports what it found rather than only what failed:
+them, and reports what it found rather than only what failed. It changes
+nothing: the toolchain it reports is the one a build in the current directory
+resolves (the configured default outside a package), with its payload's
+packaging revision; when that build would install or replace a package first,
+doctor says so instead of doing it. It also reports whether mcpp's package home
+holds records that point at nothing (2026.10.17.1+):
 
 ```
 $ mcpp self doctor
     Checking toolchain
-          ok gcc 13.3.0 (x86_64-linux-gnu) at /usr/bin/g++
+          ok llvm 23.1.3 (x86_64-unknown-linux-gnu) at ~/.mcpp/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/clang++ (what a build here uses)
+          ok payload llvm@23.1.3, packaging revision 1 (current)
+    Checking package home
+          ok consistent
     Checking cache health
           ok build cache size = 2.5 GiB
 warning: pre-v1 cache at '/home/speak/.mcpp/bmi' occupies 167.5 MiB and is no longer used — `mcpp cache clean --legacy` reclaims it

@@ -66,6 +66,30 @@ std::optional<std::filesystem::path> payload(const Provider& p, const PackageRef
 }
 // The nasm a build may use (the host's first, then the provider's), and the
 // one the provider placed.
+// The installed payloads of the provider's own store whose packaging is not
+// the index's current one, as the provider reports them (design 2026-10-17
+// D6). Shown where the index changes and where a person looks at what is
+// installed (`index update`, `toolchain list`, doctor), never inside a build:
+// a build keeps a usable payload. Empty when the provider cannot say.
+std::vector<PayloadStatus> not_current(const Provider& p) {
+    std::vector<PackageRef> refs;
+    for (const auto& e : layout().entries(p.store()))
+        if (!e.ns.empty() && !e.name.empty() && !e.version.empty()) refs.push_back({e.ns, e.name, e.version});
+    std::vector<PayloadStatus> out;
+    for (auto& st : p.status(refs))
+        if (st.error.empty() && st.complete && !st.current) out.push_back(std::move(st));
+    return out;
+}
+
+// "llvm@23.1.3 (revision 0 → 1)", and what using it means when it is below the
+// index's floor.
+std::string describe_currency(const PayloadStatus& st) {
+    auto text = std::format("{}@{} (packaging revision {} → {})", st.name, st.version,
+                            st.installedRevision, st.revision);
+    if (!st.usable) text += std::format(" — below the index's floor {}; the next build replaces it", st.floor);
+    return text;
+}
+
 std::optional<std::filesystem::path> usable_nasm(const Provider& p) { return detail::some(p.usable_nasm()); }
 std::optional<std::filesystem::path> placed_nasm(const Provider& p) { return detail::some(p.placed_nasm()); }
 

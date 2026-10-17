@@ -31,5 +31,6 @@ using EventHandler  = mcpp::pm::EventHandler;
 using CallError     = mcpp::pm::CallError;
 using CallResult    = mcpp::pm::CallResult;
 using Fetcher       = mcpp::pm::Fetcher;
+using PayloadIntent = mcpp::pm::PayloadIntent;
 
 } // namespace mcpp::fetcher

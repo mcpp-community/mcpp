@@ -1,0 +1,4 @@
+     Running `target/x86_64-linux-gnu/6fca180a97c5f98c/bin/p-new`
+
+Hello from p-new!
+Built with import std + std::println on modular C++23.

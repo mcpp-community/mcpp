@@ -148,7 +148,7 @@ bind_msvc_sysroot(mcpp::toolchain::Toolchain& tc,
         auto pkg = mcpp::toolchain::to_xim_package(pkgSpec);
         mcpp::fetcher::Fetcher fetcher(**cfg);
         mcpp::fetcher::InstallProgressHandler progress;
-        auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true,
+        auto payload = fetcher.resolve_xpkg_path(pkg.target(), mcpp::fetcher::PayloadIntent::Use,
                                                  &progress);
         if (!payload) {
             // `xim:` never looked at the machine, so the refusal does not

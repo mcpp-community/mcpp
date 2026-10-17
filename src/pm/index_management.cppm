@@ -143,6 +143,17 @@ export int index_remove(const std::string& name) {
     return 0;
 }
 
+// What the refreshed index packages anew of what is installed (design
+// 2026-10-17 D6): said here, where the index changed, and not by the next
+// build, which keeps every usable payload.
+export void report_newer_packagings(const mcpp::provider::Provider& p) {
+    const auto stale = mcpp::provider::not_current(p);
+    if (stale.empty()) return;
+    mcpp::ui::status("Note", "the index has newer packagings of installed payloads:");
+    for (const auto& st : stale) mcpp::ui::line(std::format("           {}", mcpp::provider::describe_currency(st)));
+    mcpp::ui::line("           builds keep the installed ones; `mcpp toolchain install <toolchain>` takes the new one");
+}
+
 // `mcpp index update [name]` — empty filterName updates everything.
 //
 // NOTE on `name`: it only filters the PROJECT-level custom indices below. The
@@ -173,6 +184,7 @@ export int index_update(const std::string& filterName) {
     auto xlEnv = mcpp::config::make_xlings_env(*cfg);
     int rc = mcpp::provider::open(xlEnv)->update_index();
     if (rc != 0) { mcpp::ui::error("index update failed"); return 1; }
+    report_newer_packagings(*mcpp::provider::open(xlEnv));
 
     // Also update project-level custom indices if present.
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());

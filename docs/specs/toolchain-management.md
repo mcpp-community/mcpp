@@ -4,8 +4,8 @@
 |---|---|
 | 规范编号 | SPEC-006 |
 | 标题 | 工具链管理:身份、来源、选择与载荷契约 |
-| 状态 | 草案 v0.8 |
-| 最后修改 | 2026-10-16 |
+| 状态 | 草案 v0.9 |
+| 最后修改 | 2026-10-17 |
 | 对应实现 | 逐条标注;标为「已实现」的条款对应 mcpp >= 2026.9.24.1。标为「未实现」的条款计划与下一批 LLVM 工具链一同落地,届时按实测修订本规范 |
 | 相关设计文档 | `.agents/docs/2026-09-24-toolchain-selection-and-payload-trust-design.md`、`.agents/docs/2026-09-24-685-687-msvc-stl-and-toolchain-payloads.md`、`.agents/docs/2026-09-28-ecosystem-design-and-optimisation-plan.md`、`.agents/docs/2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md` |
 | 相关 issue | mcpp#685、mcpp#687、mcpp#718、mcpp#755 |
@@ -257,6 +257,14 @@ gcc 载荷的 `lib/gcc/<三元组>/<版本>/include-fixed/` **禁止**含带 fix
 
 一个版本在索引中的内容由 sha256 固定。内容有任何变化,**必须**使用新的资产名,因为 GitCode 上的发布资产既不能替换,也不能删除。
 
+### 4.7 已安装的修订 已实现
+
+内容变化时版本项提高 `revision`;修订修复的是每个已装载荷都有的缺陷时,同时把 `floor` 提到该修订
+([SPEC-001](package-identity.md) §10.2)。构建、运行与诊断**禁止**替换一个可用的工具链载荷(完整,且修订号
+不低于 `floor`);`mcpp toolchain install <spec>` 把已安装而非当前修订的载荷替换为当前修订,替换失败时原载荷
+保留并报告。`mcpp toolchain list` 对非当前修订的载荷注明可用的新修订,`mcpp index update` 在刷新后列出它们。
+构建的工具链身份记录载荷实际的修订号(大于 0 时)。(mcpp 2026.10.17.1)
+
 ---
 
 ## 5. 构建
@@ -307,6 +315,11 @@ xim-pkgindex 的准入脚本 `verify-toolchain.sh` 对一个载荷归档做一�
 
 `mcpp self doctor` **必须**对已安装的载荷执行 §6.1 中不依赖归档的检查;发现问题时,**必须**给出重装命令。
 
+`mcpp self doctor` **禁止**安装或替换载荷。它报告的工具链是当前上下文中构建实际使用的工具链(在包内为该包的
+解析结果,包外为配置的默认工具链),附其载荷的修订状态;PATH 上的编译器不作为工具链报告。构建需要先安装时,
+doctor 如实报告这一点。它同时报告 mcpp 的包 home 中指向不存在注册的记录数(xlings `system_status` 的
+`binding_state`)。(mcpp 2026.10.17.1)
+
 当前:doctor 执行 §4.2 的检查(gcc 载荷 `include-fixed/` 中带 fixincludes 横幅的文件);§4.1、§4.3、§4.4 的检查未实现。
 
 ---
@@ -330,3 +343,4 @@ xim-pkgindex 的准入脚本 `verify-toolchain.sh` 对一个载荷归档做一�
 | v0.6 | 2026-10-02 | §7 移入 SPEC-009(工具链的支持与维护):移动默认版本或 C 库绑定的顺序、门与撤销由 SPEC-009 §10 规定,本节改为引用。 |
 | v0.7 | 2026-10-09 | 随 mcpp 2026.10.8.1:新增 §3.8,使用受管 C 库的构建不隐式搜索宿主的系统头文件;需要时由项目显式写出。 |
 | v0.8 | 2026-10-16 | 随 mcpp 2026.10.16.1:§4.3 改为「安装后不改写」,载荷只由提供者写入;工具链运行在提供者按 home 的运行库钉版本绑定的运行库上。 |
+| v0.9 | 2026-10-17 | 随 mcpp 2026.10.17.1:新增 §4.7,已安装的修订在构建中继续使用,`floor` 决定是否必须替换,`toolchain install` 取当前修订;§6.4 doctor 只读,报告构建实际使用的工具链与包 home 的一致性。 |

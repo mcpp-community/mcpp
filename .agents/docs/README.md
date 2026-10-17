@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-332 records.
+333 records.
 
 ## By subject
 
@@ -31,6 +31,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### design
 
+- [升级的连续性：打包修订不在使用路径上替换载荷、替换失败不拆掉可用状态、home 中的悬空记录自愈、真实的升级 lane](2026-10-17-upgrade-continuity-design.md) — active
 - [一处来源，一种含义：工作空间的传递语义、生成输出、模块角色与首次运行（#786、#785、#778、#790）](2026-10-10-one-source-one-meaning-design.md) — landed
 - [2026.10.5.3 发布方案：32 位 x86 的架构词汇、资源编译器的识别与增量（#776 后续）](2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md) — active
 - [下一个版本的发布方案：标准库模块、原生 MSVC LTO 与导出发现、共享库的链接配置、Windows 参数引号（#768 后续、#770、#771）](2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md) — active
@@ -129,6 +130,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-10
 
+- [升级的连续性：打包修订不在使用路径上替换载荷、替换失败不拆掉可用状态、home 中的悬空记录自愈、真实的升级 lane](2026-10-17-upgrade-continuity-design.md) — active
 - [mcpp 对 xlings 的依赖：Provider 端口、归属与位置、上游复用、系统级安装、payload 不可变、文件系统能力与长路径（#809）](2026-10-16-xlings-provider-port-and-shared-store-design.md) — active
 - [构建依赖的一条管线：配置与产物两轴、包的实例、库接口、兼容系统与工作空间收尾（#797）](2026-10-11-build-dependencies-one-pipeline-design.md) — active
 - [一处来源，一种含义：工作空间的传递语义、生成输出、模块角色与首次运行（#786、#785、#778、#790）](2026-10-10-one-source-one-meaning-design.md) — landed

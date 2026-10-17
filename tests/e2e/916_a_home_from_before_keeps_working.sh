@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # requires: unix-shell python3
-# 916 -- a home an earlier mcpp made keeps working (docs/25 §1).
+# 916 -- the index layout of a home an earlier mcpp made is migrated
+# (docs/25 §1).
 #
 # An earlier mcpp kept the data of its own index under the provider's data
-# directory and wrote markers into payloads. Criteria:
+# directory and wrote markers into payloads. This home is written by hand and
+# holds no toolchain: whether a home the previous release made goes on
+# building is the upgrade lane's question (.github/workflows/ci-upgrade.yml),
+# which builds that home with the previous release itself. Criteria:
 #   A. The first run moves the index data to <home>/indices/<name>, once, and
 #      records its place and its store in the provider's configuration.
 #   B. The index is read from there (doctor lists it), and the copy is not

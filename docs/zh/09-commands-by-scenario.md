@@ -393,12 +393,17 @@ $ mcpp xpkg parse mcpp.plugins.lua --json
 
 `mcpp self doctor` 检查工具链、`std` 模块、registry、缓存健康、最近一次
 运行期闭包判定，以及已安装的 GCC 载荷里是否留有构建它的那台机器自己的
-fixincludes 冻结头文件，并报告它查到了什么，而不只报告失败的部分：
+fixincludes 冻结头文件，并报告它查到了什么，而不只报告失败的部分。它不改变任何东西：报告的工具链是当前目录下
+构建解析出的工具链（包外为配置的默认工具链），附其载荷的打包修订号；构建需要先安装或替换某个包时，doctor 报告
+这一点而不去执行。它还报告 mcpp 的包 home 中是否有指向不存在注册的记录（2026.10.17.1+）：
 
 ```
 $ mcpp self doctor
     Checking toolchain
-          ok gcc 13.3.0 (x86_64-linux-gnu) at /usr/bin/g++
+          ok llvm 23.1.3 (x86_64-unknown-linux-gnu) at ~/.mcpp/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/clang++ (what a build here uses)
+          ok payload llvm@23.1.3, packaging revision 1 (current)
+    Checking package home
+          ok consistent
     Checking cache health
           ok build cache size = 2.5 GiB
 warning: pre-v1 cache at '/home/speak/.mcpp/bmi' occupies 167.5 MiB and is no longer used — `mcpp cache clean --legacy` reclaims it

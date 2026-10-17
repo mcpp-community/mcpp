@@ -365,17 +365,27 @@ public:
 };
 
 // What a provider says of a package's payload without installing anything
-// (its `payload_status`, design §7.1 / X4): where it is, whether it is
-// complete (there, holding something, no recorded failure, the recipe's
-// revision), and whether it is this home's own or an upstream's link entry.
+// (its `payload_status`, design 2026-10-16 §7.1 / X4, 2026-10-17 D1): where it
+// is, whether it is this home's own or an upstream's link entry, and three
+// verdicts the provider decides -- mcpp repeats none of their rules:
+//
+//   complete  there, holding something, no recorded failure (integrity only);
+//   usable    complete, and recorded at or above the recipe's `floor`;
+//   current   complete, and recorded at the recipe's revision.
+//
+// A command that uses a payload acts on `usable`; one that provisions it acts
+// on `current`.
 struct PayloadStatus {
     std::string request;            // the address as asked
     std::string ns, name, version;  // what it resolved to
     int revision = 0;               // the recipe's
+    int floor = 0;                  // the oldest installed revision the recipe calls usable
     std::filesystem::path dir;      // the payload directory (empty: does not resolve)
     std::string origin;             // "local" | "upstream" | "absent"
     int installedRevision = -1;     // what the payload's stamp records; -1: none
     bool complete = false;
+    bool usable = false;
+    bool current = false;
     std::string error;              // non-empty: the request did not resolve
 };
 

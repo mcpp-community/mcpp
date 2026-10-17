@@ -1,0 +1,34 @@
+    Checking toolchain
+          ok clang 23.1.3 (x86_64-unknown-linux-gnu) at /tmp/lane/upgrade-lane/home/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/clang++ (what a build here uses)
+          ok payload llvm@23.1.3 (packaging revision 0 → 1)  (builds keep it; `mcpp toolchain install` takes the new one)
+    Checking package home
+          ok consistent
+    Checking std module
+          ok /tmp/lane/upgrade-lane/home/build-cache/v1/std/d74c7107fd501d77  (entry 36.8 MiB)
+    Checking registry
+          ok xlings at /tmp/lane/upgrade-lane/home/registry/bin/xlings
+          ok default index = 'mcpplibs'
+    Checking package indexes
+          ok index 'mcpplibs' requires mcpp >= 2026.9.18.3
+          ok index 'xim-pkgindex' declares no mcpp floor
+    Checking home
+          ok self-contained: no upstream ([xlings] upstream)
+          ok /tmp/lane/upgrade-lane/home on ext4: every write is the filesystem's own
+    Checking cache health
+          ok build cache size = 36.8 MiB
+    Checking last runtime closure verdict
+          ok /tmp/lane/upgrade-lane/p-new/target/x86_64-linux-gnu/6fca180a97c5f98c/bin/p-new (RuntimeBinding f3b2c2d035013bc2): pass
+    Checking runtime capabilities
+          ok no host runtime capabilities required
+    Checking toolchain runtime deps
+          ok all installed toolchain RUNPATH dirs present
+          ok vendored xlings 2026.10.17.1 (pinned 2026.10.17.1)
+          ok subos lib symlinks all resolve (/tmp/lane/upgrade-lane/home/registry/subos/default/lib)
+    Checking gcc include-fixed headers
+          ok no installed gcc-family payloads to check
+    Checking build policy
+          ok module interfaces: .cppm  (built-in only)
+          ok build.mcpp run bound: 600s  (from built-in default)
+          ok process deadlines: enforced (POSIX SIGKILL / Windows job object)
+
+Doctor result: all checks passed

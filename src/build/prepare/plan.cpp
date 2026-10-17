@@ -1356,7 +1356,7 @@ static std::expected<void, std::string> step13_assembly_units(PrepareState& stat
                 auto nasmTarget = std::format("xim:nasm@{}",
                     mcpp::provider::kNasmVersion);
                 auto payload = nasmFetcher.resolve_xpkg_path(
-                    nasmTarget, /*autoInstall=*/true, &nasmProgress);
+                    nasmTarget, mcpp::fetcher::PayloadIntent::Use, &nasmProgress);
                 if (!payload) {
                     return std::unexpected(std::format(
                         "NASM sources (.asm) present but nasm provisioning "
