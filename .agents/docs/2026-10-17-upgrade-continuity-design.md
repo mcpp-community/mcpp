@@ -5,7 +5,7 @@ status: active
 
 # 升级的连续性：打包修订不在使用路径上替换载荷、替换失败不拆掉可用状态、home 中的悬空记录自愈、真实的升级 lane
 
-- 日期：2026-10-17。状态：修订 2，O1、O2 按推荐项确定，实施中（§11）。
+- 日期：2026-10-17。状态：修订 3，已实施（libxpkg #50、xlings #678 与 2026.10.17.1、xim-pkgindex #993、mcpp #815）。
 - 起因：用户报告。`xlings self update && xlings update mcpp -y` 之后，`mcpp new hhss && mcpp run` 每次失败：
   `toolchain 'llvm@23.1.3': install of 'xim:llvm@23.1.3' failed … sysroot update refused before metadata changed:
   c++@16.1.0: installed asset registration missing`；`mcpp self doctor` 不报错。
@@ -189,12 +189,14 @@ xlings（一次发布，mcpp 的 PR 把内置 xlings 钉到它）：
   它的依赖必须同为当前修订（llvm revision 1 的 cfg 指向 glibc revision 4 的 `lib64`，配上 revision 3 的 glibc
   就不自洽）。使用路径不受影响：按 P1，使用意图对一个 usable 的载荷根本不发起安装。（修订 1 曾写「依赖按
   usable 判断」，实施前的审读发现上述不自洽，改为此条。）
-- **X2** 元数据事务（`process_xvm_operations_`、`publish_removal_state_`）在计算投影之前，以 doctor 的同一个函数
-  规范化候选工作区：引用不存在注册的 `installed[]` 条目删除，悬空 active 按 O1 处理；规范化随事务提交，并以
-  事件报告（mcpp 原样显示）。投影预检只对本事务注册与移除的成员严格。
-- **X3** doctor：悬空记录的检测与 X2 的规范化是同一个函数；remedy 文本不再把 target 当包名（`xlings install c++`），
-  拥有者可知时给出 `xlings install <namespace>:<package>@<version>`，否则给出 `xlings use`；以 `interface` 提供
-  一致性摘要，供 mcpp doctor 读取。
+- **X2** 元数据事务（`process_xvm_operations_`、`publish_removal_state_`）在本包的注册读取作用域之前，以 doctor 的同一个
+  函数（`xvm::plan_scope_reference_repair`）规范化候选工作区：引用不存在注册的 `installed[]` 条目删除，悬空 active 按 O1
+  解除；本包自己的注册恢复了的记录不算修复。规范化随事务提交，提交后以 `scope_repaired` 事件报告（mcpp 原样显示）；
+  其他 subos 的投影用规范化后的副本计算，不写回。投影预检本身不变：规范化之后，悬空记录不再进入预检。
+- **X3** doctor：当前 subos 的 `--fix` 调用 X2 的同一个函数（含 `installed[]`）；`xvm-active-version-missing` 与
+  `xvm-subos-active-missing` 的 remedy 不再把 target 当包名，改为 `xlings self doctor --fix` 或 `xlings use <target>
+  <version>`（注册已缺失，拥有者无从得知）；`system_status` 输出 `binding_state` 摘要（特性 `binding_state`），供 mcpp
+  doctor 读取。
 - **X4** 测试：两个包注册同一 target、删除一方的注册后，另一方的安装与替换成功并报告规范化；`payload_status`
   的六个字段与 `floor` 的组合；依赖中的旧修订不被替换。新测试在 2026.10.16.2 上必须失败。
 
