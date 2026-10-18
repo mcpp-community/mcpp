@@ -182,7 +182,23 @@ environment. On PyPI the name `mcpp` belongs to an unrelated project, hence
 </details>
 
 <details>
-<summary><b>Option 5</b> — let an AI assistant install it for you</summary>
+<summary><b>Option 5</b> — Nix (flake)</summary>
+
+```bash
+nix run github:mcpp-community/nix-mcpp -- --version      # try it
+nix profile install github:mcpp-community/nix-mcpp       # install it
+```
+
+The flake in [`mcpp-community/nix-mcpp`](https://github.com/mcpp-community/nix-mcpp)
+packages the same prebuilt release binary for Linux x86_64 / aarch64 and macOS
+on Apple silicon, and follows each stable release. Its overlay adds
+`pkgs.mcpp-bin`: nixpkgs' `mcpp` is an unrelated C preprocessor. Per-user data
+still lives in `~/.mcpp/`.
+
+</details>
+
+<details>
+<summary><b>Option 6</b> — let an AI assistant install it for you</summary>
 
 Copy the following prompt to your AI coding assistant (Claude Code / Cursor / Copilot, etc.):
 

@@ -162,7 +162,19 @@ pip install mcpp-bin
 </details>
 
 <details>
-<summary><b>方式 5</b>：由 AI 助手安装</summary>
+<summary><b>方式 5</b>：Nix（flake）</summary>
+
+```bash
+nix run github:mcpp-community/nix-mcpp -- --version      # 试用
+nix profile install github:mcpp-community/nix-mcpp       # 安装
+```
+
+[`mcpp-community/nix-mcpp`](https://github.com/mcpp-community/nix-mcpp) 中的 flake 打包的是同一份预编译 release 二进制，支持 Linux x86_64 / aarch64 与 Apple 芯片上的 macOS，并跟随每个稳定版更新。它的 overlay 提供 `pkgs.mcpp-bin`，因为 nixpkgs 中的 `mcpp` 是一个无关的 C 预处理器。每个用户的数据仍在各自的 `~/.mcpp/` 中。
+
+</details>
+
+<details>
+<summary><b>方式 6</b>：由 AI 助手安装</summary>
 
 将以下提示词发给 AI 编码助手（Claude Code、Cursor、Copilot 等）：
 
