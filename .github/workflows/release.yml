@@ -879,6 +879,18 @@ jobs:
           cmp "$AUDIT_ROOT/final-assets/mcpp-release.json" \
               "$AUDIT_ROOT/final-expected.json"
           cat "$AUDIT_ROOT/final-assets/mcpp-release.json"
+          echo "SEALED_RELEASE_MANIFEST=$AUDIT_ROOT/final-assets/mcpp-release.json" >> "$GITHUB_ENV"
+
+      # Downstream notifications consume the identity sealed by THIS run,
+      # including workflow_dispatch rebuilds of a tag other than main's version.
+      - name: Save the sealed manifest for package notifications
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpp-release-manifest
+          path: ${{ env.SEALED_RELEASE_MANIFEST }}
+          if-no-files-found: error
+          overwrite: true # A rerun has already proved the public bytes identical.
+          retention-days: 30
 
   # Publish this release into the xlings ecosystem, after ALL platform builds
   # have uploaded their assets and the immutable manifest gate has passed:

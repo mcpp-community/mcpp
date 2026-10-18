@@ -2,7 +2,7 @@ name: pypi-publish
 
 # Publish the `mcpp-bin` wheels to PyPI (`pip install mcpp-bin`).
 #
-# Downstream of `release`, like aur-publish.yml and homebrew-publish.yml: the
+# Downstream of `release`, like aur-publish.yml and publish-packages.yml: the
 # wheels are built from the release's own mcpp-release.json and payloads, so
 # this runs only once the release workflow has completed.
 #

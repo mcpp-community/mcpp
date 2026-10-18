@@ -1,0 +1,119 @@
+name: publish-packages
+
+# Notify repositories that own their package definitions. PyPI and AUR retain
+# their own publishing workflows, credentials and verification contracts.
+# Each target accepts mcpp-release and has a scheduled catch-up as a fallback.
+# HOMEBREW_TAP_TOKEN and NIX_PUBLISH_TOKEN are optional fine-grained PATs with
+# Contents: write on homebrew-mcpp and nix-mcpp respectively. Missing tokens
+# are reported as skipped; accepted dispatches are not publication success.
+on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Exact complete stable release tag, e.g. v2026.10.17.1'
+        type: string
+        required: true
+      channel:
+        description: 'Repository to notify'
+        type: choice
+        options: [all, homebrew, nix]
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-packages
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: resolve the sealed release
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      tag: ${{ steps.identity.outputs.tag }}
+      version: ${{ steps.identity.outputs.version }}
+      commit: ${{ steps.identity.outputs.commit }}
+      matrix: ${{ steps.identity.outputs.matrix }}
+    steps:
+      # Execute trusted notification code, never code from a downloaded artifact.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Read the manifest sealed by the completed release run
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: mcpp-release-manifest
+          path: release-identity
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Download the manually selected release manifest
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+)+$ ]] || { echo 'Expected a stable release tag'; exit 1; }
+          mkdir -p release-identity
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            -p mcpp-release.json -O release-identity/mcpp-release.json
+
+      - name: Validate the manifest and select notification targets
+        id: identity
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+          CHANNEL: ${{ inputs.channel || 'all' }}
+        run: |
+          python3 tools/release/notify_packages.py resolve \
+            --manifest release-identity/mcpp-release.json \
+            --expected-tag "$REQUESTED_TAG" --channel "$CHANNEL"
+
+      - name: The public manifest matches the sealed release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.identity.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            -p mcpp-release.json -O public-mcpp-release.json
+          cmp release-identity/mcpp-release.json public-mcpp-release.json
+
+  notify:
+    name: notify ${{ matrix.channel }}
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Send the release notification and report acceptance
+        env:
+          GH_TOKEN: ${{ secrets[matrix.token] }}
+          CHANNEL: ${{ matrix.channel }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          COMMIT: ${{ needs.resolve.outputs.commit }}
+        run: |
+          python3 tools/release/notify_packages.py notify \
+            --channel "$CHANNEL" --tag "$TAG" --version "$VERSION" --commit "$COMMIT"

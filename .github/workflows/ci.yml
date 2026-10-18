@@ -149,6 +149,7 @@ jobs:
       - name: The tools of the CI stages pass their fixtures
         run: |
           python3 tests/scripts/test_classify_changes.py
+          python3 tests/scripts/test_notify_packages.py
           python3 tests/scripts/test_check_e2e_coverage.py
           python3 tests/scripts/test_check_default_toolchain_docs.py
           python3 tests/scripts/test_check_provider_boundary.py
