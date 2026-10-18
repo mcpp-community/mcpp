@@ -70,6 +70,43 @@ mcpp --version
 > 命令安装，重启 PowerShell 而不是执行 `source`，并用
 > `Get-Command mcpp.exe` 确认当前生效的命令。
 
+### Shell 补全
+
+mcpp 为 bash、zsh、PowerShell（`pwsh`）和 fish 提供 Tab 补全。
+以下命令生成全部四种脚本，或仅生成指定 shell 的脚本：
+
+```bash
+mcpp self completion
+mcpp self completion bash
+```
+
+脚本写入 `<mcpp-home>/config/shell/`。该命令不初始化工具链，也不访问网络。
+正常的沙箱初始化也会生成这些脚本。重复执行会更新生成的脚本；本地自定义配置
+放在 shell 自身的配置文件中。
+
+使用默认 `~/.mcpp` home 时，将对应加载语句加入下表中的配置文件并启动新 shell，
+或在当前会话直接执行该语句：
+
+| Shell | 配置文件 | 加载语句 |
+|---|---|---|
+| bash | `~/.bashrc` | `source ~/.mcpp/config/shell/mcpp.bash` |
+| zsh | `${ZDOTDIR:-$HOME}/.zshrc` | `source ~/.mcpp/config/shell/mcpp.zsh` |
+| fish | `$XDG_CONFIG_HOME/fish/config.fish`，未设置时为 `~/.config/fish/config.fish` | `source ~/.mcpp/config/shell/mcpp.fish` |
+| PowerShell | `$PROFILE.CurrentUserAllHosts` | `. "$HOME/.mcpp/config/shell/mcpp.ps1"` |
+
+独立安装的自定义前缀或显式设置的 `MCPP_HOME` 使用实际的 mcpp home 路径。
+zsh 的补全系统尚未启用时，脚本会初始化它；配置中已有 `compinit` 调用时，
+在该调用之后加载 mcpp 脚本。PowerShell 的 profile 文件及其父目录不存在时，
+先创建它们。
+
+独立安装器会生成脚本，并为 `SHELL` 标识的 shell 追加加载语句。重复安装不会
+重复追加同一条语句。`MCPP_NO_COMPLETION=1` 关闭这一配置文件修改；
+`MCPP_NO_PATH=1` 独立控制 PATH 修改。未识别的 shell 会收到手动加载提示。
+
+补全覆盖命令、嵌套子命令、长短选项，以及缓存模式、构建 profile、镜像等内置值。
+文件参数使用 shell 原生文件名补全。补全查询不执行项目脚本、不安装依赖，也不访问
+索引。包名、自定义 profile、目标名称和索引中的版本不进行动态查询。
+
 ## 创建项目
 
 ```bash

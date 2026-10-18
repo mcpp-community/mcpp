@@ -52,6 +52,16 @@ jobs:
         run: |
           "$MCPP_FRESH" test
 
+      - name: Shell completion in bash, zsh, PowerShell and fish
+        env:
+          MCPP_REQUIRE_SHELLS: "1"
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y zsh fish
+          command -v pwsh
+          MCPP="$MCPP_FRESH" bash tests/e2e/894_shell_completion.sh
+
       # Each package under `modules/` carries its own tests, and they are built
       # as that package ALONE -- a configuration the root suite never produces,
       # since there every module is linked together. A subsystem that has
