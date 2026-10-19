@@ -126,7 +126,9 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
     state.get_cfg = [&](bool requireBootstrap = true) -> std::expected<mcpp::config::GlobalConfig*, std::string> {
         if (!state.cfg_opt) {
             auto c = mcpp::config::load_or_init(/*quiet=*/false,
-                mcpp::fetcher::make_bootstrap_progress_callback());
+                mcpp::fetcher::make_bootstrap_progress_callback(), {},
+                state.overrides.plan_only ? mcpp::config::Initialization::ReadOnly
+                                          : mcpp::config::Initialization::Bootstrap);
             if (!c) return std::unexpected(c.error().message);
             state.cfg_opt = std::move(*c);
         }

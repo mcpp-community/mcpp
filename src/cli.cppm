@@ -84,7 +84,8 @@ void print_usage() {
     std::println("About mcpp itself:");
     std::println("  mcpp self doctor                     Diagnose mcpp environment health");
     std::println("  mcpp self env                        Print mcpp paths and toolchain");
-    std::println("  mcpp self config [--mirror CN|GLOBAL] Show or modify mcpp's xlings config");
+    std::println("  mcpp self init [--force] [--home PATH] Initialize or select a remembered home");
+    std::println("  mcpp self config [--mirror auto|CN|GLOBAL] Show or modify mcpp's xlings config");
     std::println("  mcpp self version                    Show mcpp version");
     std::println("  mcpp self explain <CODE>             Show extended description for an error code");
     std::println("  mcpp --help / --version              Help / version");
@@ -276,6 +277,13 @@ int run(int argc, char** argv) {
     // say. Building as root would write root's files into a user's project,
     // so no other command takes it.
     if (std::ranges::any_of(std::span(argv + 1, argv + argc), [](const char* a) { return std::string_view(a) == "--system"; })) {
+        if (std::ranges::any_of(std::span(argv + 1, argv + argc), [](const char* a) {
+                const std::string_view arg{a};
+                return arg == "--home" || arg.starts_with("--home=");
+            })) {
+            mcpp::ui::error("--home cannot be combined with --system");
+            return 2;
+        }
         if (int rc = enter_system_home(argc, argv); rc != 0) return rc;
     }
     // Decline xlings' linker-wrapper path injection, for this process and
@@ -962,8 +970,10 @@ int run(int argc, char** argv) {
             .description("Inspect and manage mcpp itself")
             .subcommand(cl::App("init")
                 .description("Initialize or repair mcpp sandbox")
+                .option(cl::Option("home").takes_value().value_name("PATH")
+                    .help("Initialize PATH and remember it from the original home (does not migrate data)"))
                 .option(cl::Option("force")
-                    .help("Delete registry and re-initialize from scratch")))
+                    .help("Rebuild registry/caches; with --home, replace the default without deleting data")))
             .subcommand(cl::App("doctor")
                 .description("Diagnose mcpp environment health"))
             .subcommand(cl::App("env")
@@ -972,7 +982,7 @@ int run(int argc, char** argv) {
                     .help("Machine-readable output (enveloped; see docs/50-machine-output.md)")))
             .subcommand(cl::App("config")
                 .description("Show or modify mcpp's private xlings configuration")
-                .option(cl::Option("mirror").takes_value().value_name("CN|GLOBAL")
+                .option(cl::Option("mirror").takes_value().value_name("auto|CN|GLOBAL")
                     .help("Set xlings mirror for mcpp's private registry")))
             .subcommand(cl::App("version")
                 .description("Show mcpp version"))

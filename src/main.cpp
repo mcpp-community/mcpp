@@ -4,6 +4,7 @@
 import std;
 import mcpp.cli;
 import mcpp.ui;
+import mcpp.home;
 
 int main(int argc, char* argv[]) {
     // Line-buffer stdout even when it is not a TTY.
@@ -33,6 +34,9 @@ int main(int argc, char* argv[]) {
     int rc;
     try {
         rc = mcpp::cli::run(argc, argv);
+    } catch (const mcpp::home::Error& e) {
+        mcpp::ui::error(e.what());
+        rc = 4;
     } catch (const std::exception& e) {
         // Last-resort boundary: without it an escaped exception is
         // std::terminate — on Windows a silent 0xC0000409 that git-bash

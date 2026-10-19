@@ -6,21 +6,19 @@ set -e
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 export MCPP_HOME="$TMP/mcpp-home"
-source "$(dirname "$0")/_inherit_toolchain.sh"
-
-"$MCPP" self env > "$TMP/env.log" 2>&1 || {
-    cat "$TMP/env.log"
-    echo "FAIL: self env failed"
+"$MCPP" self config > "$TMP/query.log" 2>&1 || {
+    cat "$TMP/query.log"
+    echo "FAIL: reading fresh configuration failed"
     exit 1
 }
+[[ ! -e "$MCPP_HOME" ]] || { echo "FAIL: reading configuration initialized the home"; exit 1; }
 
-# Default (no explicit --mirror): mcpp seeds "auto" so xlings' own region
-# detection (probe github vs gitcode) picks the reachable/faster mirror, instead
-# of mcpp hardcoding one. An explicit `mcpp self config --mirror X` still pins a
-# concrete value (asserted below).
+# Choosing a mirror creates local configuration, never a sandbox bootstrap.
+"$MCPP" self config --mirror auto > "$TMP/auto.log" 2>&1 || {
+    cat "$TMP/auto.log"; echo "FAIL: selecting auto failed"; exit 1; }
 grep -q '"mirror": "auto"' "$MCPP_HOME/registry/.xlings.json" || {
     cat "$MCPP_HOME/registry/.xlings.json"
-    echo "FAIL: default mirror should be auto (defer to xlings region detection)"
+    echo "FAIL: auto should restore adaptive region detection"
     exit 1
 }
 

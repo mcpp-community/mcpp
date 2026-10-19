@@ -9,8 +9,8 @@
 // `.mcpp-bmi/`, while dep BMIs went to %USERPROFILE%\.mcpp\bmi — two roots for
 // one cache, and a cwd-dependent one at that.
 //
-// This module is deliberately a leaf: it imports std + mcpp.platform only, so
-// anything (config, toolchain, build) can depend on it without cycles.
+// A leaf over platform and the TOML reader: configuration, toolchains and
+// builds share its single path selection without depending on CLI or provider.
 
 module;
 #include <cstdlib>    // getenv
@@ -19,6 +19,7 @@ export module mcpp.home;
 
 import std;
 import mcpp.platform;
+import mcpp.libs.toml;
 
 export namespace mcpp::home {
 
@@ -41,6 +42,26 @@ bool is_system_home(const std::filesystem::path& home);
 
 // $MCPP_HOME. See root() below for the resolution order.
 std::filesystem::path root();
+
+// The original directory owns the one-hop locator; every data consumer uses
+// effective. No environment variable is rewritten to implement a selection.
+struct Selection {
+    std::filesystem::path original;
+    std::filesystem::path effective;
+    std::filesystem::path previous;
+    std::string source;
+    bool redirected = false;
+};
+struct Error : std::runtime_error { using std::runtime_error::runtime_error; };
+std::string spelling(const std::filesystem::path& path);
+std::filesystem::path from_utf8(std::string_view value);
+std::filesystem::path original_root();
+std::expected<Selection, std::string> inspect(const std::filesystem::path& original);
+Selection selection();
+bool initialized(const std::filesystem::path& path);
+std::expected<Selection, std::string> choose(const std::filesystem::path& target, bool force);
+std::expected<void, std::string> save(const Selection& selected);
+void use(const Selection& selected);
 
 // The cross-project build cache root ($MCPP_HOME/build-cache/v1). Holds both
 // the std module cache (toolchain/stdmod.cppm, under std/) and the per-package
@@ -90,7 +111,7 @@ std::filesystem::path default_home() {
 //      "in a bin/ dir" shape — so we additionally exclude any path
 //      with a "target" ancestor as mcpp's own dev convention.
 //   3. fallback to $HOME/.mcpp (%USERPROFILE%\.mcpp on Windows).
-std::filesystem::path root() {
+std::filesystem::path original_root() {
     // 1. Explicit $MCPP_HOME takes priority (CI, advanced users).
     if (auto* e = std::getenv("MCPP_HOME"); e && *e)
         return std::filesystem::path(e);
@@ -120,6 +141,146 @@ std::filesystem::path root() {
     }
 
     return default_home();
+}
+
+std::string spelling(const std::filesystem::path& path) {
+    const auto bytes = path.generic_u8string();
+    return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+}
+
+std::filesystem::path from_utf8(std::string_view value) {
+    return std::filesystem::path(std::u8string(
+        reinterpret_cast<const char8_t*>(value.data()), value.size()));
+}
+
+namespace {
+std::optional<Selection> selected_home;
+
+std::expected<std::filesystem::path, std::string> absolute_home(const std::filesystem::path& path) {
+    std::error_code ec;
+    auto result = std::filesystem::weakly_canonical(std::filesystem::absolute(path, ec), ec);
+    if (ec) return std::unexpected(std::format("cannot resolve home '{}': {}", spelling(path), ec.message()));
+    return result;
+}
+
+bool contains_path(const std::filesystem::path& parent, const std::filesystem::path& child) {
+    // Case folding matters even for a not-yet-created Windows destination.
+    auto p = spelling(parent), c = spelling(child);
+    if constexpr (mcpp::platform::is_windows) {
+        std::ranges::transform(p, p.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        std::ranges::transform(c, c.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    }
+    if (p == c) return true;
+    if (!p.ends_with('/')) p += '/';
+    return c.starts_with(p);
+}
+bool same_path(const std::filesystem::path& a, const std::filesystem::path& b) {
+    std::error_code ec;
+    if (std::filesystem::equivalent(a, b, ec)) return true;
+    return contains_path(a, b) && contains_path(b, a);
+}
+} // namespace
+
+std::expected<Selection, std::string> inspect(const std::filesystem::path& original) {
+    auto absolute = absolute_home(original);
+    if (!absolute) return std::unexpected(absolute.error());
+    Selection result{.original = *absolute, .effective = *absolute};
+    result.source = is_system_home(*absolute) ? "system"
+                  : (std::getenv("MCPP_HOME") && *std::getenv("MCPP_HOME")) ? "environment"
+                  : *absolute == default_home() ? "user" : "portable";
+    if (result.source == "system") return result;
+    const auto locator = result.original / "home.toml";
+    std::error_code ec;
+    const bool exists = std::filesystem::exists(locator, ec);
+    if (ec) return std::unexpected(std::format("cannot read home locator '{}': {}", spelling(locator), ec.message()));
+    if (!exists) return result;
+    auto doc = mcpp::libs::toml::parse_file(locator);
+    if (!doc) return std::unexpected(std::format("invalid home locator '{}': {}. Repair it with `mcpp self init --force --home <path>`", spelling(locator), doc.error().message));
+    const auto home = doc->get_string("home");
+    if (!home || home->empty() || !from_utf8(*home).is_absolute())
+        return std::unexpected(std::format("home locator '{}' requires an absolute `home` path", spelling(locator)));
+    auto target = absolute_home(from_utf8(*home));
+    if (!target) return std::unexpected(target.error());
+    if (!std::filesystem::is_directory(*target, ec) || ec)
+        return std::unexpected(std::format("home '{}' from '{}' is unavailable; repair it with `mcpp self init --force --home <path>`", spelling(*target), spelling(locator)));
+    result.effective = *target;
+    result.redirected = !same_path(result.effective, result.original);
+    if (result.redirected && (contains_path(result.original, result.effective)
+                             || contains_path(result.effective, result.original)))
+        return std::unexpected(std::format("invalid nested home in '{}'", spelling(locator)));
+    if (auto previous = doc->get_string("previous_home"); previous && from_utf8(*previous).is_absolute())
+        result.previous = from_utf8(*previous);
+    // Deliberately do not inspect effective/home.toml: one hop, on every host.
+    return result;
+}
+
+Selection selection() {
+    auto origin = absolute_home(original_root());
+    if (!origin) throw Error(origin.error());
+    if (selected_home && selected_home->original == *origin) return *selected_home;
+    auto result = inspect(*origin);
+    if (!result) throw Error(result.error());
+    selected_home = *result;
+    return *result;
+}
+
+void use(const Selection& selected) { selected_home = selected; }
+
+std::filesystem::path root() { return selection().effective; }
+
+bool initialized(const std::filesystem::path& path) {
+    std::error_code ec;
+    return std::filesystem::is_regular_file(path / "config.toml", ec)
+        || (std::filesystem::is_directory(path / "registry", ec)
+            && std::filesystem::is_directory(path / "bin", ec));
+}
+
+std::expected<Selection, std::string> choose(const std::filesystem::path& target, bool force) {
+    if (target.empty()) return std::unexpected("--home requires a non-empty directory");
+    auto original = absolute_home(original_root());
+    auto effective = absolute_home(target);
+    if (!original) return std::unexpected(original.error());
+    if (!effective) return std::unexpected(effective.error());
+    if (is_system_home(*original)) return std::unexpected("--home cannot change a system home");
+    auto before = inspect(*original);
+    if (!before && !force) return std::unexpected(before.error());
+    if (before && !same_path(before->effective, *effective) && initialized(before->effective) && !force)
+        return std::unexpected(std::format("a home is already initialized at '{}'; use `mcpp self init --force --home {}` to select '{}'", spelling(before->effective), spelling(*effective), spelling(*effective)));
+    if (!same_path(*original, *effective) && (contains_path(*original, *effective) || contains_path(*effective, *original)))
+        return std::unexpected("the original and selected home must not contain each other");
+    Selection result{.original = *original, .effective = *effective,
+                     .source = before ? before->source : "explicit",
+                     .redirected = !same_path(*original, *effective)};
+    if (!result.redirected) result.effective = result.original;
+    if (before) result.previous = same_path(before->effective, *effective) ? before->previous : before->effective;
+    return result;
+}
+
+std::expected<void, std::string> save(const Selection& selected) {
+    const auto locator = selected.original / "home.toml";
+    std::error_code ec;
+    if (selected.original == selected.effective) {
+        std::filesystem::remove(locator, ec);
+    } else {
+        auto staged = locator;
+        staged += std::format(".{}.tmp", std::chrono::steady_clock::now().time_since_epoch().count());
+        {
+            std::ofstream file(staged, std::ios::binary);
+            file << "home = " << mcpp::libs::toml::escape_string(spelling(selected.effective)) << '\n';
+            if (!selected.previous.empty())
+                file << "previous_home = " << mcpp::libs::toml::escape_string(spelling(selected.previous)) << '\n';
+            file.close();
+            if (!file) {
+                std::filesystem::remove(staged, ec);
+                return std::unexpected(std::format("cannot write home locator '{}'; the previous default was retained", spelling(locator)));
+            }
+        }
+        mcpp::platform::fs::replace_file(staged, locator, ec);
+        if (ec) { std::error_code ignored; std::filesystem::remove(staged, ignored); }
+    }
+    if (ec) return std::unexpected(std::format("cannot save home locator '{}': {}", spelling(locator), ec.message()));
+    use(selected);
+    return {};
 }
 
 std::filesystem::path system_config_file() {

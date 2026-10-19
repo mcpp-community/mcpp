@@ -165,13 +165,31 @@ find_fixincludes_banners(const std::filesystem::path& payloadRoot) {
     return out;
 }
 
+namespace {
+void report_home(const mcpp::config::GlobalConfig& cfg) {
+    const auto home = mcpp::home::selection();
+    mcpp::ui::status("Home", mcpp::home::spelling(home.effective));
+    if (home.redirected) {
+        mcpp::ui::status("Original", std::format("{} ({})", mcpp::home::spelling(home.original), home.source));
+        mcpp::ui::status("Locator", mcpp::home::spelling(home.original / "home.toml"));
+    }
+    if (!home.previous.empty() && home.previous != home.effective
+        && mcpp::home::initialized(home.previous)) {
+        const bool upstream = std::ranges::find(cfg.upstreams, home.previous) != cfg.upstreams.end();
+        mcpp::ui::status("Previous", std::format("{} ({})", mcpp::home::spelling(home.previous),
+            upstream ? "retained; reused as an upstream" : "data retained; not migrated"));
+    }
+}
+}
+
 // `mcpp self env`.
 export int env_report() {
-    auto cfg = mcpp::config::load_or_init(/*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
+    auto cfg = mcpp::config::load_or_init(true, {}, {}, mcpp::config::Initialization::ReadOnly);
 
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
 
     mcpp::config::print_env(*cfg);
+    report_home(*cfg);
 
     auto tc = mcpp::toolchain::detect();
     if (tc) {
@@ -192,7 +210,8 @@ export int doctor_report() {
     auto warn = [&](std::string_view m) { mcpp::ui::warning(m); ++warns; };
     auto err   = [&](std::string_view m) { mcpp::ui::error(m);   ++errors; };
 
-    auto cfg = mcpp::config::load_or_init(/*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
+    auto cfg = mcpp::config::load_or_init(true, {}, {}, mcpp::config::Initialization::ReadOnly);
+    if (cfg) report_home(*cfg);
 
     // ONE PREPARE, READ-ONLY, AND THE SECTIONS BELOW REPORT ON IT (design
     // 2026-10-17 D7).
@@ -1635,7 +1654,7 @@ export int why_report(const std::string& topic, const std::string& features,
         // refreshes on a resolution miss, so "why did I get this version"
         // frequently has "because that is the newest one your local index
         // knows" as its answer — which is unguessable without this line.
-        if (auto cfgW = mcpp::config::load_or_init(/*quiet=*/true)) {
+        if (auto cfgW = mcpp::config::load_or_init(true, {}, {}, mcpp::config::Initialization::ReadOnly)) {
             std::println("package index: {}",
                 mcpp::pm::staleness_note(mcpp::config::make_xlings_env(*cfgW)));
         }
@@ -1763,8 +1782,39 @@ export int explain_code(std::string_view code) {
 // can share `cmd_doctor` / `cmd_env` between top-level and `mcpp self`.
 
 // `mcpp self init [--force]`.
-export int self_init(bool force) {
-    if (force) {
+export int self_init(bool force, std::string_view target = {}) {
+    if (!target.empty()) {
+        // Hold the original home's lock from conflict inspection through
+        // local initialization and atomic publication, never through a download.
+        auto lock = mcpp::platform::fs::FileLock::try_acquire(mcpp::home::original_root());
+        if (!lock) {
+            mcpp::ui::error("cannot lock the original home for writing; no default was changed");
+            return 1;
+        }
+        auto selected = mcpp::home::choose(mcpp::home::from_utf8(target), force);
+        if (!selected) { mcpp::ui::error(selected.error()); return 1; }
+        const auto previousContext = mcpp::home::inspect(selected->original);
+        mcpp::home::use(*selected);
+        auto local = mcpp::config::load_or_init(false, {}, {}, mcpp::config::Initialization::Local);
+        if (!local) {
+            if (previousContext) mcpp::home::use(*previousContext);
+            mcpp::ui::error(local.error().message);
+            return 1;
+        }
+        auto saved = mcpp::home::save(*selected);
+        if (!saved) {
+            if (previousContext) mcpp::home::use(*previousContext);
+            mcpp::ui::error(saved.error());
+            return 1;
+        }
+        mcpp::ui::status("Home", mcpp::home::spelling(selected->effective));
+        mcpp::ui::status("Default", std::format("Saved from {}", mcpp::home::spelling(selected->original)));
+    } else if (force) {
+        const auto selected = mcpp::home::selection();
+        if (selected.redirected) {
+            mcpp::ui::status("Home", mcpp::home::spelling(selected.effective));
+            mcpp::ui::warning("--force rebuilds this home's registry and caches; its locator and previous home data are retained");
+        }
         // --force: delete registry (sandbox) + caches and re-bootstrap.
         // Preserves: bin/mcpp (self-contained mode), config.toml, log/.
         mcpp::ui::info("Resetting", "mcpp sandbox (registry, caches)");
@@ -1849,26 +1899,19 @@ export int store_dedupe(bool apply) {
 export int self_config(std::string mirror) {
     if (!mirror.empty()) {
         mirror = upper_ascii(std::move(mirror));
-        if (mirror != "CN" && mirror != "GLOBAL") {
+        if (mirror != "CN" && mirror != "GLOBAL" && mirror != "AUTO") {
             mcpp::ui::error(std::format(
-                "invalid mirror '{}'; expected CN or GLOBAL", mirror));
+                "invalid mirror '{}'; expected auto, CN or GLOBAL", mirror));
             return 2;
         }
     }
+    if (mirror == "AUTO") mirror = "auto";
 
-    // When --mirror is given AND this is a fresh MCPP_HOME, seed .xlings.json
-    // with the user's choice on the very first write so the immediately-
-    // following xlings sandbox bootstrap (patchelf / ninja download) uses
-    // their mirror — not the historical CN default that an overseas user
-    // is trying to redirect away from. For an already-initialized MCPP_HOME
-    // the seed is skipped and config_set_mirror below updates the existing
-    // file via xlings.
-    //
-    // TODO(mirror-default): the default "CN" lives in
-    // mcpp::provider::xlings::seed_xlings_json — see the matching note there for the
-    // long-term plan (flip default to GLOBAL, or auto-detect on first init).
+    // Reading configuration is side-effect free; changing it creates only
+    // local configuration. Neither operation bootstraps or invokes a download.
     auto cfg = mcpp::config::load_or_init(
-        /*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback(), mirror);
+        /*quiet=*/false, {}, mirror, mirror.empty() ? mcpp::config::Initialization::ReadOnly
+                                                 : mcpp::config::Initialization::Local);
     if (!cfg) {
         mcpp::ui::error(cfg.error().message);
         return 4;
@@ -1876,6 +1919,7 @@ export int self_config(std::string mirror) {
 
     auto env = mcpp::config::make_xlings_env(*cfg);
     if (mirror.empty()) {
+        report_home(*cfg);
         auto rc = mcpp::provider::open(env)->show_config();
         return rc == 0 ? 0 : 1;
     }

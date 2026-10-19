@@ -49,6 +49,7 @@ enum class Stream { Out, Err };
 
 // Returns true if stdout is connected to a terminal (TTY).
 bool is_tty();
+bool input_is_terminal();
 
 // Whether the stream is a terminal: `isatty` on POSIX, macOS included, and a
 // console on Windows. Until 2026.9.29.5 this was compiled only under
@@ -207,6 +208,17 @@ bool is_terminal(Stream s) {
     return ::isatty(::fileno(file_of(s))) != 0;
 #else
     (void)s;
+    return false;
+#endif
+}
+
+bool input_is_terminal() {
+#if defined(_WIN32)
+    DWORD mode = 0;
+    return GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode) != 0;
+#elif defined(__unix__) || defined(__APPLE__)
+    return ::isatty(::fileno(stdin)) != 0;
+#else
     return false;
 #endif
 }

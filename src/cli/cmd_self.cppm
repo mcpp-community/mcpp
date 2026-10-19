@@ -44,7 +44,8 @@ namespace {
 
 nlohmann::json env_data_readonly() {
     namespace fs = std::filesystem;
-    const auto home = mcpp::home::root();
+    const auto selected = mcpp::home::selection();
+    const auto home = selected.effective;
     std::error_code ec;
 
     const auto registry = home / "registry";
@@ -55,6 +56,9 @@ nlohmann::json env_data_readonly() {
     return nlohmann::json{
         {"initialized",  initialized},
         {"mcppHome",     s(home)},
+        {"originalHome", mcpp::home::spelling(selected.original)},
+        {"homeSource", selected.redirected ? "locator" : selected.source},
+        {"homeLocator", selected.redirected ? mcpp::home::spelling(selected.original / "home.toml") : ""},
         {"registry",     s(registry)},
         {"xlingsHome",   s(registry)},          // registryDir unless overridden
         {"xlingsBinary", s(registry / "bin" /
@@ -149,7 +153,50 @@ export int cmd_self_version(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
 }
 
 export int cmd_self_init(const mcpplibs::cmdline::ParsedArgs& parsed) {
-    return mcpp::doctor::self_init(parsed.is_flag_set("force"));
+    std::string target = parsed.option_or_empty("home").value();
+    if (parsed.value("home") && target.empty()) {
+        std::println(stderr, "error: --home requires a non-empty directory");
+        return 2;
+    }
+    if constexpr (mcpp::platform::is_windows) {
+        const auto origin = mcpp::home::original_root();
+        std::error_code ec;
+        const auto* explicitHome = std::getenv("MCPP_HOME");
+        // Only the user-directory fallback participates. An installed portable
+        // tree and an explicitly selected original home retain their behavior.
+        const auto* user = std::getenv("USERPROFILE");
+        if (!user || !*user) user = std::getenv("HOME");
+        const bool userFallback = user && origin == std::filesystem::path(user) / ".mcpp";
+        if (target.empty() && !(explicitHome && *explicitHome) && userFallback
+            && !mcpp::home::initialized(origin)
+            && !std::filesystem::exists(origin / "home.toml", ec) && !ec
+            && mcpp::platform::terminal::input_is_terminal()
+            && mcpp::platform::terminal::is_terminal(mcpp::platform::terminal::Stream::Err)
+            && mcpp::platform::windows::writable_fixed_drive('D')) {
+            const auto fallback = mcpp::home::spelling(origin);
+            mcpp::platform::terminal::write(mcpp::platform::terminal::Stream::Err,
+                std::format("        Home No existing home found\n"
+                            "       Drive D:\\ is a writable local fixed drive\n\n"
+                            "      Choose the mcpp home:\n\n"
+                            "             1) D:\\mcpp                  [default]\n"
+                            "             2) {}\n\n"
+                            "      Select [1/2, Enter=1]: ", fallback));
+            std::cerr.flush();
+            std::string input;
+            if (!std::getline(std::cin, input)) return 1;
+            const auto first = input.find_first_not_of(" \t\r");
+            input = first == std::string::npos ? ""
+                  : input.substr(first, input.find_last_not_of(" \t\r") - first + 1);
+            if (input.empty() || input == "1") target = "D:/mcpp";
+            else if (input == "2") target = fallback;
+            else {
+                std::println(stderr, "       Error Invalid selection; expected 1 or 2\n"
+                                     "        Hint For a custom path, run: mcpp self init --home <path>");
+                return 2;
+            }
+        }
+    }
+    return mcpp::doctor::self_init(parsed.is_flag_set("force"), target);
 }
 
 export int cmd_self_config(const mcpplibs::cmdline::ParsedArgs& parsed) {

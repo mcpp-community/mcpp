@@ -29,7 +29,9 @@ export int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // treatment any other download here gets, so the user isn't staring at
     // a quiet "Bootstrap…" line during a slow link.
     auto cfg = mcpp::config::load_or_init(/*quiet=*/false,
-        mcpp::fetcher::make_bootstrap_progress_callback());
+        mcpp::fetcher::make_bootstrap_progress_callback(), {},
+        subname == "list" ? mcpp::config::Initialization::ReadOnly
+                          : mcpp::config::Initialization::Bootstrap);
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
 
     // The optional --target axis (install/default/remove): which target's

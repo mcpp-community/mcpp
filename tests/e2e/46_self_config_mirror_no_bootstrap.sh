@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 # requires:
 # 46_self_config_mirror_fresh_seed.sh — `mcpp self config --mirror X` on a
-# fresh MCPP_HOME must seed .xlings.json with X from the very first write,
-# so the immediately-following sandbox bootstrap (patchelf / ninja
-# download) uses the user's chosen mirror instead of the historical CN
-# default.
+# fresh MCPP_HOME seeds .xlings.json with X without bootstrapping a sandbox.
 #
 # This is the user-visible fix for the "fresh-install mirror config hangs
 # on overseas networks" report: previously the seed always wrote
@@ -38,9 +35,14 @@ grep -q '"mirror": "GLOBAL"' "$MCPP_HOME/registry/.xlings.json" || {
     echo "FAIL: .xlings.json mirror should be GLOBAL after fresh-init --mirror"
     exit 1
 }
+if grep -qE 'Initialize|Bootstrap|Fetching' "$TMP/out.log"; then
+    cat "$TMP/out.log"; echo "FAIL: mirror selection attempted bootstrap"; exit 1
+fi
+[[ ! -e "$MCPP_HOME/registry/subos/default" ]] || {
+    echo "FAIL: mirror selection created a sandbox"; exit 1; }
 
 # Round-trip back to CN — also via --mirror — exercises the post-init
-# path (xlings config --mirror) since .xlings.json now exists.
+# path through the adapter's local configuration writer.
 "$MCPP" self config --mirror CN > "$TMP/cn.log" 2>&1 || {
     cat "$TMP/cn.log"; echo "FAIL: switching back to CN failed"; exit 1; }
 grep -q '"mirror": "CN"' "$MCPP_HOME/registry/.xlings.json" || {

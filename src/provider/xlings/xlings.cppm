@@ -2099,20 +2099,40 @@ void seed_xlings_json(const Env& env,
 }
 
 int config_show(const Env& env) {
-    ScopedInvocationEnv scope(env);   // #614
-    auto cmd = std::format("{} config", build_command_prefix(env));
-    return mcpp::platform::process::run_silent(cmd);
+    std::ifstream file(env.home / ".xlings.json", std::ios::binary);
+    if (!file) {
+        std::println("mirror = auto (default; registry configuration is not initialized)");
+        return 0;
+    }
+    std::cout << file.rdbuf();
+    return 0;
 }
 
 int config_set_mirror(const Env& env, std::string_view mirror, bool quiet) {
-    ScopedInvocationEnv scope(env);   // #614
     if (mirror.empty()) return 0;
-    auto cmd = std::format(
-        "{} config --mirror {} {}",
-        build_command_prefix(env),
-        shq(mirror),
-        quiet ? mcpp::platform::shell::silent_redirect : "");
-    return mcpp::platform::process::run_silent(cmd);
+    // Configuration recovery must work before the first provider invocation.
+    // The adapter owns its format; asking the CLI first would bootstrap through
+    // precisely the failed mirror the user is trying to change.
+    const auto path = env.home / ".xlings.json";
+    auto lock = mcpp::platform::fs::FileLock::try_acquire(env.home);
+    if (!lock) return 1;
+    std::ifstream input(path, std::ios::binary);
+    auto doc = nlohmann::json::parse(input, nullptr, false);
+    if (doc.is_discarded() || !doc.is_object()) return 1;
+    doc["mirror"] = mirror;
+    auto staged = path;
+    staged += ".tmp";
+    {
+        std::ofstream output(staged, std::ios::binary);
+        output << doc.dump(2) << '\n';
+        output.close();
+        if (!output) return 1;
+    }
+    std::error_code ec;
+    mcpp::platform::fs::replace_file(staged, path, ec);
+    if (ec) { std::error_code ignored; std::filesystem::remove(staged, ignored); }
+    (void)quiet;
+    return ec ? 1 : 0;
 }
 
 void ensure_init(const Env& env, bool quiet) {

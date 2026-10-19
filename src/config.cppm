@@ -292,6 +292,8 @@ using BootstrapFile             = mcpp::provider::BootstrapFile;
 using BootstrapProgress         = mcpp::provider::BootstrapProgress;
 using BootstrapProgressCallback = mcpp::provider::BootstrapProgressCallback;
 
+enum class Initialization { ReadOnly, Local, Bootstrap };
+
 // `initial_mirror`: when seeding a *fresh* .xlings.json (file did not
 // already exist), use this as the mirror value instead of the default.
 // Empty means "use the default". Used by `mcpp self config --mirror X`
@@ -302,7 +304,8 @@ using BootstrapProgressCallback = mcpp::provider::BootstrapProgressCallback;
 std::expected<GlobalConfig, ConfigError> load_or_init(
     bool quiet = false,
     BootstrapProgressCallback onBootstrapProgress = {},
-    std::string_view initial_mirror = {});
+    std::string_view initial_mirror = {},
+    Initialization initialization = Initialization::Bootstrap);
 
 // Pretty-print resolved config for `mcpp env` command.
 void print_env(const GlobalConfig& cfg);
@@ -366,8 +369,8 @@ void write_file(const std::filesystem::path& p, std::string_view content) {
     os << content;
 }
 
-bool write_default_config_toml(const std::filesystem::path& path) {
-    constexpr auto tmpl = R"(# mcpp global config — auto-generated; safe to edit.
+std::string_view default_config_toml() {
+    return R"(# mcpp global config — auto-generated; safe to edit.
 
 [xlings]
 # binary: "bundled" (use $MCPP_HOME/registry/bin/xlings) | "system" | absolute path
@@ -400,7 +403,10 @@ search_ttl_seconds = 3600
 [build]
 default_jobs    = 0
 )";
-    write_file(path, tmpl);
+}
+
+bool write_default_config_toml(const std::filesystem::path& path) {
+    write_file(path, default_config_toml());
     return std::filesystem::exists(path);
 }
 
@@ -696,7 +702,8 @@ parse_payload_overrides(const mcpp::libs::toml::Document& doc) {
 std::expected<GlobalConfig, ConfigError> load_or_init(
     bool quiet,
     BootstrapProgressCallback onBootstrapProgress,
-    std::string_view initial_mirror)
+    std::string_view initial_mirror,
+    Initialization initialization)
 {
     GlobalConfig cfg;
 
@@ -733,15 +740,13 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
 
     // 2. Create directory tree
     std::error_code ec;
-    for (auto& d : { cfg.binDir, cfg.registryDir, cfg.bmiCacheDir,
-                     cfg.metaCacheDir, cfg.logDir }) {
-        std::filesystem::create_directories(d, ec);
-        if (ec) return std::unexpected(ConfigError{
-            std::format("cannot create '{}': {}", d.string(), ec.message())});
-    }
-
-    // 2b. Initialize logger (early init with defaults; re-init after config load)
-    {
+    if (initialization != Initialization::ReadOnly) {
+        for (auto& d : { cfg.binDir, cfg.registryDir, cfg.bmiCacheDir,
+                         cfg.metaCacheDir, cfg.logDir }) {
+            std::filesystem::create_directories(d, ec);
+            if (ec) return std::unexpected(ConfigError{
+                std::format("cannot create '{}': {}", d.string(), ec.message())});
+        }
         mcpp::log::Config logCfg;
         logCfg.logDir = cfg.logDir;
         mcpp::log::init(logCfg);
@@ -749,11 +754,13 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
 
     // 3. Seed config.toml if missing
     bool fresh_config = !std::filesystem::exists(cfg.configFile);
-    if (fresh_config) write_default_config_toml(cfg.configFile);
-    else mcpp::fallback::migrate_config_toml_index_names(cfg.configFile);
+    if (initialization != Initialization::ReadOnly) {
+        if (fresh_config) write_default_config_toml(cfg.configFile);
+        else mcpp::fallback::migrate_config_toml_index_names(cfg.configFile);
+    }
 
     // 4. Load config.toml
-    auto doc = t::parse_file(cfg.configFile);
+    auto doc = fresh_config ? t::parse(default_config_toml()) : t::parse_file(cfg.configFile);
     if (!doc) {
         return std::unexpected(ConfigError{
             std::format("invalid config.toml: {}", doc.error().message)});
@@ -835,8 +842,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     else
         return std::unexpected(ConfigError{overrides.error()});
 
-    // [log] section — re-initialize logger with config values
-    {
+    // A read-only report must not create its log directory either.
+    if (initialization != Initialization::ReadOnly) {
         mcpp::log::Config logCfg;
         logCfg.logDir = cfg.logDir;
         auto levelStr = doc->get_string("log.level").value_or("off");
@@ -925,6 +932,30 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         r.store = mcpp::provider::layout().own_store(cfg.mcppHome);
     }
 
+    // The path budget (design 2026-10-16 §11): with Windows' long paths off,
+    // a payload whose deepest file (gcc's libstdc++ headers: 140 characters
+    // below <MCPP_HOME>, measured) would pass MAX_PATH cannot be installed.
+    if constexpr (mcpp::platform::is_windows) {
+        constexpr std::size_t kDeepestPayloadSuffix = 140;
+        const auto length = cfg.mcppHome.native().size();
+        if (!mcpp::platform::windows::long_paths_enabled() && length + 1 + kDeepestPayloadSuffix > 259)
+            mcpp::diag::degraded("home/path-budget",
+                std::format("MCPP_HOME is {} characters long and Windows long paths are off", length),
+                "installing a toolchain may fail because a path is too long",
+                "enable long paths (LongPathsEnabled = 1, `mcpp self doctor` shows it) or use a shorter MCPP_HOME");
+    }
+
+    if (initialization == Initialization::ReadOnly) {
+        if (cfg.xlingsBinaryMode == "system") {
+            if (auto binary = mcpp::platform::fs::which(
+                    std::string("xlings") + std::string(mcpp::platform::exe_suffix)))
+                cfg.xlingsBinary = *binary;
+        } else if (cfg.xlingsBinaryMode != "bundled") {
+            cfg.xlingsBinary = mcpp::home::from_utf8(cfg.xlingsBinaryMode);
+        }
+        return cfg;
+    }
+
     // 5. Seed registry/.xlings.json if missing; migrate legacy cached
     // sandboxes in place so CI/user caches move from mcpp-index to mcpplibs
     // without losing xlings' active subos or version bindings.
@@ -945,24 +976,15 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
             if (!r.dir.empty()) owned.push_back({ r.name, r.url, {}, {}, {}, r.dir, r.store });
         mcpp::provider::open(make_xlings_env(cfg))->own_indices(owned);
     }
-    // The path budget (design 2026-10-16 §11): with Windows' long paths off,
-    // a payload whose deepest file (gcc's libstdc++ headers: 140 characters
-    // below <MCPP_HOME>, measured) would pass MAX_PATH cannot be installed.
-    if constexpr (mcpp::platform::is_windows) {
-        constexpr std::size_t kDeepestPayloadSuffix = 140;
-        const auto length = cfg.mcppHome.native().size();
-        if (!mcpp::platform::windows::long_paths_enabled() && length + 1 + kDeepestPayloadSuffix > 259)
-            mcpp::diag::degraded("home/path-budget",
-                std::format("MCPP_HOME is {} characters long and Windows long paths are off", length),
-                "installing a toolchain may fail because a path is too long",
-                "enable long paths (LongPathsEnabled = 1, `mcpp self doctor` shows it) or use a shorter MCPP_HOME");
-    }
+
     {
         std::vector<mcpp::provider::Upstream> upstreams;
         for (auto& dir : cfg.upstreams)
             for (auto& u : mcpp::provider::layout().upstream_of(dir)) upstreams.push_back(std::move(u));
         mcpp::provider::open(make_xlings_env(cfg))->set_upstreams(upstreams);
     }
+
+    if (initialization == Initialization::Local) return cfg;
 
     // 6. Acquire xlings binary if needed
     const auto bundledBinary = cfg.xlingsBinary;

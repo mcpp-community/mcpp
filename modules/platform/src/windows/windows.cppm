@@ -58,8 +58,30 @@ std::optional<std::filesystem::path> env_directory(const char* name);
 // `LongPathsEnabled` = 1. false when it is 0 or absent, and on every other
 // platform, which has no such limit.
 bool long_paths_enabled();
+// Used only by the first-run Windows home suggestion; never creates the
+// actual home. Other platforms answer false without touching a filesystem.
+bool writable_fixed_drive(char drive);
 
 } // namespace mcpp::platform::windows
+
+namespace mcpp::platform::windows {
+bool writable_fixed_drive(char drive) {
+#if defined(_WIN32)
+    const wchar_t root[] = {static_cast<wchar_t>(drive), L':', L'\\', L'\0'};
+    if (GetDriveTypeW(root) != DRIVE_FIXED) return false;
+    const auto probe = std::filesystem::path(root)
+        / std::format(".mcpp-write-{}-{}", GetCurrentProcessId(), GetTickCount64());
+    const auto handle = CreateFileW(probe.c_str(), GENERIC_WRITE, 0, nullptr,
+        CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return false;
+    CloseHandle(handle);
+    return true;
+#else
+    (void)drive;
+    return false;
+#endif
+}
+}
 
 // ─── Implementation ──────────────────────────────────────────────────────
 
