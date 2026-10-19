@@ -676,3 +676,23 @@ authority 检查；该实验不作为已安装客户端的升级证明，也未�
 
 更新 pin 后的 E2E 919、920 及曾失败的 E2E 22 均通过。E2E 22 先检查真正冷 home 的
 doctor 不创建 registry，再单独继承工具链验证 std 缓存及发布 dry-run，保留原有断言。
+
+
+### 12.14 Windows 取消夹具的继承环境
+
+be6fb711 的四平台构建通过，Windows 原生菜单的非法输入和 EOF 均通过，但 Ctrl+C
+等待 20 秒后超时。[Windows 的忽略 Ctrl+C 属性](https://learn.microsoft.com/en-us/windows/console/setconsolectrlhandler)由父进程继承；控制器在子进程创建之后
+才屏蔽自身中断，不能消除 CI shell 已经传下的忽略属性。
+
+临时观测 PR #823 的 [运行 39214421955](https://github.com/mcpp-community/mcpp/actions/runs/39214421955)
+复用 be6fb711 的 Windows 二进制，只在每次创建子进程前让测试控制器取得控制台并恢复
+正常 Ctrl+C 处理。全部菜单场景通过：非法输入退出 2、EOF 退出 1、Ctrl+C 退出
+3221225786，1/2/空行的目录选择与 reparse 排除也通过；未放宽原有退出及零写入断言。
+生产程序不作修改，正式夹具采用相同的启动条件修正。
+
+为优先验证该已失败项，已取消 be6fb711 旧 CI 的剩余作业，不把取消项算作通过。
+其已完成证据保留；最终 gate 必须重新运行修正夹具后的完整 head，包括旧 ACP 专项，
+不能用临时探针或旧 head 的局部绿色替代。
+
+取消之后的 target-matrix 汇总 job 117935724226 也返回失败：扫描作业被取消，下载结果为
+0 个 matrix 产物，未进入目标行为对照。保留此结果，不修改汇总 gate 或减少预期平台。

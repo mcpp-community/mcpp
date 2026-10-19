@@ -56,6 +56,10 @@ kernel.SetConsoleCtrlHandler.argtypes = [c.c_void_p, w.BOOL]
 kernel.SetConsoleCtrlHandler.restype = w.BOOL
 kernel.GenerateConsoleCtrlEvent.argtypes = [w.DWORD, w.DWORD]
 kernel.GenerateConsoleCtrlEvent.restype = w.BOOL
+kernel.GetConsoleCP.argtypes = []
+kernel.GetConsoleCP.restype = w.UINT
+kernel.AllocConsole.argtypes = []
+kernel.AllocConsole.restype = w.BOOL
 
 def opened(name):
     handle = kernel.CreateFileW(name, 0xC0000000, 3, None, 3, 0, None)
@@ -113,6 +117,12 @@ with tempfile.TemporaryDirectory(prefix='mcpp-console-menu-') as temporary:
         env = os.environ.copy()
         env.pop('MCPP_HOME', None)
         env.update(USERPROFILE=str(profile), HOME=str(profile), MCPP_OFFLINE='1')
+        # A CI shell can leave its descendants ignoring Ctrl-C. Give this
+        # native-console fixture an ordinary interactive launch context.
+        if kernel.GetConsoleCP() == 0 and not kernel.AllocConsole():
+            raise c.WinError(c.get_last_error())
+        if not kernel.SetConsoleCtrlHandler(None, False):
+            raise c.WinError(c.get_last_error())
         proc = subprocess.Popen([str(binary), 'self', 'init'], env=env, cwd=root,
                                 creationflags=subprocess.CREATE_NEW_CONSOLE)
         output = stdin = None
