@@ -1,0 +1,79 @@
+name: first-run design probes
+on:
+  pull_request:
+    paths:
+      - 'tests/probes/first_run_home_network.py'
+      - 'tests/probes/transitive_module.py'
+      - '.github/workflows/probe-first-run.yml'
+permissions:
+  contents: read
+jobs:
+  baseline:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            asset: linux-x86_64.tar.gz
+          - os: windows-2025
+            asset: windows-x86_64.zip
+          - os: macos-15
+            asset: macosx-arm64.tar.gz
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch the pinned released baseline
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: mcpp-2026.10.17.1-${{ matrix.asset }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-download" "$RUNNER_TEMP/release-probe"
+          gh release download v2026.10.17.1 --repo mcpp-community/mcpp --pattern "$ASSET" --pattern "$ASSET.sha256" --dir "$RUNNER_TEMP/release-download"
+          python - <<'PY'
+          import hashlib, os, pathlib, shutil
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          archive = root / 'release-download' / os.environ['ASSET']
+          expected = archive.with_name(archive.name + '.sha256').read_text().split()[0]
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == expected
+          shutil.unpack_archive(str(archive), str(root / 'release-probe'))
+          PY
+      - name: Observe home, offline diagnostics and refused proxy behavior
+        shell: bash
+        run: |
+          release=$(find "$RUNNER_TEMP/release-probe" -mindepth 1 -maxdepth 1 -type d | head -1)
+          python tests/probes/first_run_home_network.py --release "$release" --out probe-results
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: first-run-${{ matrix.os }}
+          path: probe-results/
+          retention-days: 7
+  module-control:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-macos-llvm
+        with:
+          image: macos-15
+      - name: Prepare the existing sandbox before offline build probes
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          export MCPP_HOME="$HOME/.mcpp"
+          "$MCPP" self init
+      - name: Compare direct, transitive and header-discovered imports
+        timeout-minutes: 6
+        shell: bash
+        run: python3 tests/probes/transitive_module.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: module-control-macos-15
+          path: module-probe-results/
+          retention-days: 7
