@@ -61,6 +61,22 @@ jobs:
       - uses: ./.github/actions/setup-macos-llvm
         with:
           image: macos-15
+      - name: Select a real pinned mcpp binary rather than a workspace shim
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/module-release"
+          gh release download v2026.10.17.1 --repo mcpp-community/mcpp --pattern mcpp-2026.10.17.1-macosx-arm64.tar.gz --pattern mcpp-2026.10.17.1-macosx-arm64.tar.gz.sha256 --dir "$RUNNER_TEMP/module-release"
+          python3 - <<'PY'
+          import hashlib, os, pathlib, shutil
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'module-release'
+          archive = root / 'mcpp-2026.10.17.1-macosx-arm64.tar.gz'
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == archive.with_name(archive.name + '.sha256').read_text().split()[0]
+          shutil.unpack_archive(str(archive), str(root))
+          PY
+          echo "MCPP=$RUNNER_TEMP/module-release/mcpp-2026.10.17.1-macosx-arm64/bin/mcpp" >> "$GITHUB_ENV"
+          echo "MCPP_TOOLCHAIN=llvm@$MCPP_LLVM_VER" >> "$GITHUB_ENV"
       - name: Prepare the existing sandbox before offline build probes
         timeout-minutes: 4
         shell: bash
