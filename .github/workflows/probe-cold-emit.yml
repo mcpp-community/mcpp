@@ -1,0 +1,43 @@
+name: cold emit Windows probe
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/probe-cold-emit.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  cold-emit:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 04c2aaff
+      - uses: ./.github/actions/bootstrap-mcpp
+      - uses: actions/download-artifact@v4
+        with:
+          name: mcpp-built-windows-x86_64
+          path: ${{ runner.temp }}/mcpp-built
+          run-id: 39192774351
+          github-token: ${{ github.token }}
+      - name: Use the feature candidate
+        shell: bash
+        run: bash .github/actions/use-built-mcpp/use.sh windows-x86_64 GLOBAL
+      - name: Reproduce the cold planning failure with its JSON diagnostics
+        shell: bash
+        run: |
+          "$MCPP" toolchain default llvm@23.1.3
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tests/e2e/688_emit_build_database.sh')
+          s = p.read_text().replace('|| fail "L: emit in a home with a cold std cache" "$OUT/cold.err"', '|| fail "L: emit in a home with a cold std cache" "$OUT/cold.err" "$OUT/cold.json"')
+          p.write_text(s)
+          PY
+          bash tests/e2e/688_emit_build_database.sh 2>&1 | tee "$RUNNER_TEMP/cold-emit.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cold-emit-windows
+          path: ${{ runner.temp }}/cold-emit.log
+          retention-days: 7
