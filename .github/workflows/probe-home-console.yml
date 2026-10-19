@@ -1,0 +1,41 @@
+name: native home cancellation probe
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/probe-home-console.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  console:
+    runs-on: windows-2025
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: be6fb71144c448b9c479bf867b2ee1cad95fb2f6
+      - uses: actions/download-artifact@v4
+        with:
+          name: mcpp-built-windows-x86_64
+          path: ${{ runner.temp }}/mcpp-built
+          run-id: 39213380201
+          github-token: ${{ github.token }}
+      - name: Reset the launcher's inherited Ctrl-C attribute before child creation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('.github/tools/check_windows_home_menu.py')
+          s = p.read_text()
+          needle = '        proc = subprocess.Popen([str(binary),'
+          assert s.count(needle) == 1
+          s = s.replace(needle, '''        # A CI shell can leave its descendants ignoring Ctrl-C. Give this
+                  # native-console fixture an ordinary interactive launch context.
+                  if kernel.GetConsoleCP() == 0 and not kernel.AllocConsole():
+                      raise c.WinError(c.get_last_error())
+                  if not kernel.SetConsoleCtrlHandler(None, False):
+                      raise c.WinError(c.get_last_error())
+                  proc = subprocess.Popen([str(binary),''')
+          p.write_text(s)
+          PY
+          MCPP="$(cygpath -w "$RUNNER_TEMP/mcpp-built/mcpp.exe")" python .github/tools/check_windows_home_menu.py
