@@ -458,9 +458,23 @@ provider 尚未发布和更新 floor，当前不能宣称 T4—T8 完成，未�
 端点查询前先在同一个 5 秒预算内读取 provider handshake。旧 provider 不支持诊断时停止在握手，
 避免未知 capability 被其通用命令入口当成写操作。真实 CLI 联调也暴露 provider 自身会为新查询
 创建 operation journal；前置 PR 增加只读登记，并跳过这些 interface 读取的旧 home 采用和 profile
-升级，加入目录与文件内容不变的对照。此补丁仍待最终 CI，不把此前 6 个网络用例当成新断言已通过。
+升级，加入目录与文件内容不变的对照。最终补丁的 8 个网络用例已通过，另有 12 个 home-context 用例通过；最终 head 的多平台 CI 仍在执行。
 
 独立 install.sh 继续使用其原有 curl 传输，补齐两侧镜像、版本元数据和校验文件的等待保护。
 连接 8 秒；元数据总上限 120 秒；压缩包最终上限 3 小时。curl 的最小非零 low-speed 阈值为
 1 B/s，窗口 30 秒，因此安装器的低速保护与 mcpp/provider 的严格字节 idle 判断并不等同；
 不能用 curl 参数测试替代 provider 连续字节进展的验收。
+
+
+### 12.5 平台分派与离线复核
+
+公共 stdin 检测采用 `if constexpr` 分派，系统 API 的声明与调用留在平台绑定中。
+mcpp `04c2aaff` 的 Windows `test + package` job 已通过，原生控制台步骤已实际覆盖
+布局、非法输入、选项 2 与 Enter 默认选项。完整 CI 尚有未完成任务。
+
+provider `85d321f2` 删除独立后台 HEAD 预取：进度总量来自实际 GET，而 SHA256 已验证缓存
+直接复用。回归测试用本地代理连接数断言缓存命中不触网，并以恢复旧 HEAD 实现为反例，
+确认旧实现会多出一次连接。诊断用例比较 home 中的目录及文件内容，冷 home 的
+payload_status 返回本地 E_NOT_FOUND 也必须保持 home 不变。实际 mcpp doctor 联调已验证
+在线故障能显示诊断且继续本地检查，离线不请求资源；该 E2E 在 provider 发布和 pin 更新后
+才加入正式测试集合。

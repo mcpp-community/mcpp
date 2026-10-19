@@ -49,8 +49,8 @@ import json, os, sys
 doc = json.load(open(sys.argv[1]))
 e = next(r for r in doc["index_repos"] if r["name"] == "mcpplibs")
 home = sys.argv[2]
-assert os.path.normpath(e["dir"]) == os.path.normpath(os.path.join(home, "indices", "mcpplibs")), e
-assert os.path.normpath(e["store"]) == os.path.normpath(os.path.join(home, "xpkgs")), e
+assert os.path.realpath(e["dir"]) == os.path.realpath(os.path.join(home, "indices", "mcpplibs")), e
+assert os.path.realpath(e["store"]) == os.path.realpath(os.path.join(home, "xpkgs")), e
 PY
 echo "ok: A. the index moved once and its place is recorded"
 

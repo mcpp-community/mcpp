@@ -290,7 +290,7 @@ compiled_in_cold_home() {
     export MCPP_HOME="$COLD" MCPP_OFFLINE=1
     source "$HERE/_inherit_toolchain.sh"
     "$MCPP" emit build-database --format json > "$OUT/cold.json" 2> "$OUT/cold.err"
-) || fail "L: emit in a home with a cold std cache" "$OUT/cold.err"
+) || fail "L: emit in a home with a cold std cache" "$OUT/cold.err" "$OUT/cold.json"
 "$PY" - "$OUT/cold.json" <<'EOF' || fail "L: the cold-home document" "$OUT/cold.json"
 import json, sys
 db = json.load(open(sys.argv[1]))["data"]["database"]

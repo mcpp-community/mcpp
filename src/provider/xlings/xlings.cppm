@@ -1735,6 +1735,10 @@ std::optional<Event> parse_event_line(std::string_view line) {
 
 // ─── Subprocess call ────────────────────────────────────────────────
 
+namespace {
+std::optional<BootstrapProgress> download_progress_of(std::string_view line);
+}
+
 std::expected<CallResult, std::string>
 call(const Env& env, std::string_view capability,
      std::string_view argsJson, EventHandler* handler)
@@ -1768,11 +1772,22 @@ call(const Env& env, std::string_view capability,
     const bool installing = capability == "install_packages";
     const bool syncing = capability == "sync_index" || capability == "update_packages";
     InstallDeadline deadline;
+    std::map<std::string, int> sourceAttempts;
     bool timedOut = false;
     int rc = mcpp::platform::process::run_streaming_bounded(cmd,
         [&](std::string_view line) {
             if (line.empty()) return;
-            if (installing) deadline.observe(line);
+            if (installing) {
+                deadline.observe(line);
+                if (!mcpp::ui::is_quiet())
+                    if (const auto progress = download_progress_of(line))
+                        for (const auto& file : progress->files)
+                            if (!file.sourceHost.empty() && sourceAttempts[file.name] != file.sourceAttempt) {
+                                sourceAttempts[file.name] = file.sourceAttempt;
+                                print_status("Source", std::format("{} {} (attempt {})",
+                                    file.name, file.sourceHost, file.sourceAttempt));
+                            }
+            }
 
             auto ev = parse_event_line(line);
             if (!ev) return;

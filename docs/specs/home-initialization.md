@@ -52,7 +52,7 @@ previous_home = "C:/Users/user/.mcpp"
 入口**必须**在本地校验、配置初始化成功后保存，在网络获取前发布。
 网络失败或离线缺资源**必须**返回 init incomplete（退出码 1），保留已保存选择，供下次继续。
 
-## 4. Windows 首次交互（已实现，原生终端验收待完成）
+## 4. Windows 首次交互（已实现，原生终端验收通过）
 
 菜单仅适用于 Windows 首次显式 init：未设置 `MCPP_HOME`、非自包含、无 locator、
 无初始化后的 home、stdin/stderr 均连接终端，且 D 为可写的本地固定磁盘。
