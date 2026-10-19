@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-333 records.
+334 records.
 
 ## By subject
 
@@ -65,6 +65,10 @@ Records that declare one. Everything else is listed by date below.
 - [A dlopen surface no closure walks, and a process with two unwinders](2026-09-09-dlopen-surface-and-two-unwinders.md) — landed
 - [The island boundary's names: one rule for both lanes, and the check that makes it true](2026-09-08-island-boundary-names.md) — active
 - [Implementation plan: the island boundary's names](2026-09-08-island-boundary-names-implementation-plan.md) — active
+
+### home
+
+- [首次初始化、home 重定向与网络诊断优化设计](2026-10-19-first-run-home-and-network-design.md) — active
 
 ### modules
 
@@ -130,6 +134,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-10
 
+- [首次初始化、home 重定向与网络诊断优化设计](2026-10-19-first-run-home-and-network-design.md) — active
 - [升级的连续性：打包修订不在使用路径上替换载荷、替换失败不拆掉可用状态、home 中的悬空记录自愈、真实的升级 lane](2026-10-17-upgrade-continuity-design.md) — active
 - [mcpp 对 xlings 的依赖：Provider 端口、归属与位置、上游复用、系统级安装、payload 不可变、文件系统能力与长路径（#809）](2026-10-16-xlings-provider-port-and-shared-store-design.md) — active
 - [构建依赖的一条管线：配置与产物两轴、包的实例、库接口、兼容系统与工作空间收尾（#797）](2026-10-11-build-dependencies-one-pipeline-design.md) — active
