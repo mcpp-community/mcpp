@@ -68,7 +68,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### home
 
-- [首次初始化、home 重定向与网络诊断优化设计](2026-10-19-first-run-home-and-network-design.md) — active
+- [首次初始化、home 重定向与网络诊断优化设计](2026-10-19-first-run-home-and-network-design.md) — landed
 
 ### modules
 
@@ -134,7 +134,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-10
 
-- [首次初始化、home 重定向与网络诊断优化设计](2026-10-19-first-run-home-and-network-design.md) — active
+- [首次初始化、home 重定向与网络诊断优化设计](2026-10-19-first-run-home-and-network-design.md) — landed
 - [升级的连续性：打包修订不在使用路径上替换载荷、替换失败不拆掉可用状态、home 中的悬空记录自愈、真实的升级 lane](2026-10-17-upgrade-continuity-design.md) — active
 - [mcpp 对 xlings 的依赖：Provider 端口、归属与位置、上游复用、系统级安装、payload 不可变、文件系统能力与长路径（#809）](2026-10-16-xlings-provider-port-and-shared-store-design.md) — active
 - [构建依赖的一条管线：配置与产物两轴、包的实例、库接口、兼容系统与工作空间收尾（#797）](2026-10-11-build-dependencies-one-pipeline-design.md) — active

@@ -1,13 +1,13 @@
 ---
 subject: home
-status: active
+status: landed
 ---
 
 # 首次初始化、home 重定向与网络诊断优化设计
 
-状态：功能已通过最终 head 的完整 CI，并在综合 review 后 squash 合入；发布与生态验收继续记录于第 12 节。R1—R7 的确认语义保持不变。
+状态：功能已随 2026.10.19.1 发布并通过真实索引安装；R1—R7 的确认语义保持不变。验收记录见第 12 节，发布后 bootstrap 与 wheel 验证收尾见 [PR #825](https://github.com/mcpp-community/mcpp/pull/825)。
 
-执行状态：用户已授权完整实现、单功能 PR、全 CI、自我 review 后 squash 合入和发布。以下为实施中的验收账本，不将草稿或发布版探针作为新功能已完成的证据。
+执行状态：功能 PR #824 已完成完整 CI、综合 review、squash 合入和四平台发布。以下保留任务依赖和历史检查点；PR #825 的最终 CI 与主分支 PyPI 发布结果构成发布后收尾证据，不将基线探针或条件跳过计作新功能通过。
 
 | 任务 | 前置依赖 | 完成证据 |
 |---|---|---|
@@ -20,7 +20,7 @@ status: active
 | T7 squash、release 与 GitCode 补齐 | T6 全部通过 | 合入 SHA、tag、四平台 SHA-256 校验资源、GitCode GET 核验 |
 | T8 xlings 生态真实验证 | T7 资源与索引传播 | 精确版本和 latest 安装、冷/暖/离线使用及各分发验证 |
 
-T1 与 T2 为当前实施入口；T3/T4 共享底层但不互相依赖。版本在发布前按当日空闲序号确定，bootstrap pin 不领先于实际已发布并入索引的版本。尽量在一个 mcpp 功能 PR 中完成；如 provider 缺少必要接口，记录证据后处理上游依赖，不伪造 mcpp 已实现下载层能力。
+实施从 T1 与 T2 开始；T3/T4 共享底层但不互相依赖。版本在发布前按当日空闲序号确定，bootstrap pin 不领先于实际已发布并入索引的版本。产品实现集中在一个 mcpp 功能 PR；provider 协议扩展按上游依赖单独验收，bootstrap pin 按发布后的顺序收尾。
 
 读者：实现和评审首次运行、home 选择、网络诊断及跨平台 CLI 行为的维护者。
 
@@ -778,3 +778,38 @@ Homebrew 官方 bump 39228935389 和 Nix 官方 bump 39228946050 成功，已发
 均为 2026.10.19.1，资源摘要与本次 manifest 一致。Homebrew 的 Xcode 27 原生冷安装
 作业 117981996630 已实际通过安装、创建项目及运行；Nix 完整 CI、其余冷安装和
 AUR/PyPI 收敛结果继续按实际作业核验。
+
+### 12.19 索引消费者、分发与 bootstrap 收尾
+
+官方索引 PR #1003 的最终 head `c95be0d6` 通过 18 项检查，1 项条件 gate 跳过。
+全部检查后复核三处唯一 `latest`、四类摘要与旧条目保留，无阻断项，squash 合入
+`fdd5d9b23331cb3a9c076184194b9a2ad532fb28`。发布运行 39229473017 成功；本地
+GLOBAL 首轮仍读取旧组合指针并返回新版不存在，保留为传播失败证据，不修改配方。
+随后客户端读取的组合指针实际更新为该提交，才执行下一轮冷安装验收。
+
+四个独立新 home 分别实际安装 GLOBAL/CN 的 `mcpp@2026.10.19.1` 和裸 `mcpp`，
+均完成下载、校验、安装和激活，实际 payload 与激活入口都返回 2026.10.19.1。
+CN 两例从 gitcode.com 完成传输；GLOBAL 两例使用现有
+`XLINGS_ADAPTIVE_MIRROR=off` 验证 github.com 的直接来源。另保留默认自适应 GLOBAL
+的实测：它按延迟优选具有固定摘要的 GitCode 候选，安装、激活和运行也通过。
+因此镜像区域设置和实际下载源分别记录，不将配置值冒充传输事实。
+
+安装结果给出的 payload 目录为 `data/xpkgs/xim-x-mcpp/<version>`；验收器读取实际
+`install_targets.payload_dir`，不根据配方文件所在字母目录猜测存储名。包内真实二进制
+和激活入口均实测，离线 JSON env 解析到隔离用户的 `~/.mcpp` 且不创建 registry。
+这与原有 xpkgs 安装布局排除 portable home 的规则一致，升级后 home 不随包版本更换。
+独立公开归档的 portable 模式另由第 12.16 节证明，两种模式不互相替代。
+
+AUR 运行 39228956646 成功；报告证明 clean Arch 安装、远端 git 与 RPC 收敛，独立
+RPC 返回 `mcpp-bin 2026.10.19.1-1`，两类 Linux 摘要及 release 提交均一致。
+Nix 完整 CI 39229154872 成功；Homebrew 的两个原生 macOS 冷安装作业均通过。
+
+收尾 PR #825 的 wheel CI 39230052671 在同一 head `f4b1f664` 上通过四个平台的
+实际安装和显式初始化。发布运行 39230334718 再次通过四个平台验证，但仓库 `pypi`
+环境仅允许 main，分支部署在执行任何上传步骤前被拒绝。该拒绝不计作发布成功；保留
+环境规则，待收尾 PR 最终 CI/review/squash 后从 main 发布，结果记录于该 PR。
+
+公开资源、双端镜像、组合指针和精确/latest 真实安装均成立后，收尾 PR 才将
+`.xlings.json` 的 workspace mcpp 从 2026.10.10.2 更新为 2026.10.19.1。
+`ci-fresh-install` 的动态 `MCPP_PIN` 保持由 release 推导；收尾 PR 仍须使用新 pin
+完成自身最终 head 的完整 CI，不能以更新前的绿色替代。
