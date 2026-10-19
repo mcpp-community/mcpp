@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 04c2aaff
+          ref: 04c2aafff599cb650258ddac195a3eb663abbf11
       - uses: ./.github/actions/bootstrap-mcpp
       - uses: actions/download-artifact@v4
         with:
