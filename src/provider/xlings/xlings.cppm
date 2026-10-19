@@ -2118,6 +2118,7 @@ int config_set_mirror(const Env& env, std::string_view mirror, bool quiet) {
     if (!lock) return 1;
     std::ifstream input(path, std::ios::binary);
     auto doc = nlohmann::json::parse(input, nullptr, false);
+    input.close(); // Windows cannot atomically replace a file still held open here.
     if (doc.is_discarded() || !doc.is_object()) return 1;
     doc["mirror"] = mirror;
     auto staged = path;
