@@ -142,7 +142,11 @@ namespace pinned {
     // (`payload_currency`), drops dangling records in every transaction and
     // says so (`scope_repaired`), and summarizes the binding state
     // (`binding_state`) for `mcpp self doctor` (design 2026-10-17).
-    inline constexpr std::string_view kXlingsVersion   = "2026.10.17.1";
+    // Eleventh, at 2026.10.19.1 (openxlings/xlings#684). Resource probes and
+    // download socket budgets share the provider's actual transport. Read-only
+    // queries do not adopt a home or create an operation journal; older custom
+    // providers are queried for metadata only in an isolated temporary home.
+    inline constexpr std::string_view kXlingsVersion   = "2026.10.19.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 
@@ -711,7 +715,8 @@ std::expected<std::string, std::string> run_capture(const std::string& cmd);
 // What the xlings at `binary` is (`xlings interface --version`, protocol
 // 1.10+): its version, protocol, capabilities, features and home layouts;
 // `answered` false for an xlings before the handshake.
-mcpp::provider::ProviderInfo describe(const std::filesystem::path& binary);
+mcpp::provider::ProviderInfo describe(const std::filesystem::path& binary,
+    std::chrono::milliseconds budget = std::chrono::seconds(3));
 
 // Why that xlings cannot serve this mcpp (design 2026-10-16 §12): empty when
 // it can. The pinned version, and every feature mcpp relies on.
@@ -962,26 +967,66 @@ std::optional<std::string> index_revision(const std::filesystem::path& indexDir)
 
 // ─── The handshake ──────────────────────────────────────────────────
 
-mcpp::provider::ProviderInfo describe(const std::filesystem::path& binary) {
+mcpp::provider::ProviderInfo describe(const std::filesystem::path& binary,
+                                    std::chrono::milliseconds budget) {
+    using namespace std::chrono;
+    const auto deadline = steady_clock::now() + budget;
+    // Older clients can adopt or journal a home before answering a query.
+    // The handshake describes the binary, so ask it outside the user's home.
+    static std::mutex mutex;
+    static std::map<std::tuple<std::filesystem::path, std::uintmax_t,
+        std::filesystem::file_time_type>, mcpp::provider::ProviderInfo> cache;
+    std::lock_guard lock(mutex);
     mcpp::provider::ProviderInfo info;
-    auto out = run_capture(std::format("{} interface --version {}", shq(binary.string()),
-                                       mcpp::platform::null_redirect));
-    if (!out) return info;
-    auto j = nlohmann::json::parse(*out, nullptr, false);
-    if (!j.is_object()) return info;
-    const auto strings = [&](const char* key) {
-        std::vector<std::string> v;
-        if (j.contains(key) && j[key].is_array())
-            for (auto& e : j[key]) if (e.is_string()) v.push_back(e.get<std::string>());
-        return v;
-    };
-    info.version = j.value("version", std::string{});
-    info.protocol = j.value("protocol_version", std::string{});
-    info.capabilities = strings("capabilities");
-    info.features = strings("features");
-    if (j.contains("home_layouts") && j["home_layouts"].is_array())
-        for (auto& e : j["home_layouts"]) if (e.is_number_integer()) info.homeLayouts.push_back(e.get<int>());
-    info.answered = !info.version.empty();
+    std::error_code ec;
+    const auto executable = std::filesystem::absolute(binary, ec);
+    if (ec) return info;
+    const auto size = std::filesystem::file_size(executable, ec);
+    if (ec) return info;
+    const auto modified = std::filesystem::last_write_time(executable, ec);
+    if (ec) return info;
+    const auto key = std::tuple{executable, size, modified};
+    if (auto it = cache.find(key); it != cache.end()) return it->second;
+    const auto temporary = std::filesystem::temp_directory_path(ec);
+    if (ec) return info;
+    const auto home = temporary / std::format("mcpp-provider-handshake-{}-{}",
+        steady_clock::now().time_since_epoch().count(), std::random_device{}());
+    if (!std::filesystem::create_directory(home, ec) || ec) return info;
+    struct Cleanup {
+        std::filesystem::path home;
+        ~Cleanup() { std::error_code error; std::filesystem::remove_all(home, error); }
+    } cleanup{home};
+    try {
+        std::vector<std::pair<std::string, std::string>> vars;
+        for (const auto& v : invocation_env(Env{binary, home, {}}))
+            vars.emplace_back(v.name, v.present ? v.value : "");
+        const auto remaining = duration_cast<milliseconds>(deadline - steady_clock::now());
+        if (remaining <= milliseconds::zero()) return info;
+        bool timedOut = false;
+        const auto command = std::format("{} interface --version {}",
+            mcpp::platform::shell::quote_through_shell(mcpp::home::spelling(executable)),
+            mcpp::platform::null_redirect);
+        const auto output = mcpp::platform::process::capture_shell_deadline(
+            command, vars, remaining, &timedOut, mcpp::home::spelling(home));
+        const auto j = !timedOut && output.exit_code == 0
+            ? nlohmann::json::parse(output.output, nullptr, false) : nlohmann::json{};
+        if (j.is_object()) {
+            const auto strings = [&](const char* field) {
+                std::vector<std::string> values;
+                if (j.contains(field) && j[field].is_array())
+                    for (const auto& value : j[field]) if (value.is_string()) values.push_back(value.get<std::string>());
+                return values;
+            };
+            info.version = j.value("version", std::string{});
+            info.protocol = j.value("protocol_version", std::string{});
+            info.capabilities = strings("capabilities");
+            info.features = strings("features");
+            if (j.contains("home_layouts") && j["home_layouts"].is_array())
+                for (const auto& value : j["home_layouts"]) if (value.is_number_integer()) info.homeLayouts.push_back(value.get<int>());
+            info.answered = !info.version.empty();
+        }
+    } catch (const std::exception&) { info = {}; }
+    cache.emplace(key, info);
     return info;
 }
 
@@ -990,7 +1035,8 @@ std::string unmet(const mcpp::provider::ProviderInfo& info) {
     if (mcpp::xpkg_version::compare_keys(info.version, pinned::kXlingsVersion) < 0)
         return std::format("is {}, older than {}", info.version, pinned::kXlingsVersion);
     for (auto feature : {"index_dir", "index_store", "upstreams", "payload_status", "sync_index",
-                         "payload_currency", "binding_state"})
+                         "payload_currency", "binding_state", "network_diagnostics",
+                         "download_socket_budgets", "read_only_queries"})
         if (std::ranges::find(info.features, feature) == info.features.end())
             return std::format("does not offer `{}`", feature);
     if (std::ranges::find(info.capabilities, "install_packages") == info.capabilities.end())
@@ -1743,6 +1789,11 @@ std::expected<CallResult, std::string>
 call(const Env& env, std::string_view capability,
      std::string_view argsJson, EventHandler* handler)
 {
+    if (capability == "system_status" || capability == "payload_status") {
+        const auto info = describe(env.binary);
+        if (std::ranges::find(info.features, "read_only_queries") == info.features.end())
+            return std::unexpected("the provider does not offer read_only_queries; status was not queried");
+    }
     ScopedInvocationEnv scope(env);   // #614
     // STDERR GOES TO A FILE, NOT TO THE NULL DEVICE AND NOT INTO STDOUT (#614).
     // Stdout is parsed line by line as NDJSON, so merging stderr into it could
@@ -2022,18 +2073,18 @@ mcpp::provider::NetworkReport network_check(const Env& env, std::chrono::millise
         if (remaining <= milliseconds::zero()) return std::nullopt;
         args.insert(args.begin(), mcpp::home::spelling(env.binary));
         bool timeout = false;
-        const auto r = mcpp::platform::process::capture_exec_deadline(args, vars, remaining, &timeout);
+        const auto r = mcpp::platform::process::capture_exec_deadline(
+            args, vars, remaining, &timeout, {}, nullptr, /*ownGroup=*/true);
         if (timeout || r.exit_code != 0) return std::nullopt;
         return r.output;
     };
     // Do not run an unknown capability on an older provider: its generic CLI
     // may journal or initialize an operation before returning "unsupported".
-    const auto handshake = run({"interface", "--version"});
-    const auto info = handshake ? json::parse(*handshake, nullptr, false) : json{};
-    bool supported = false;
-    if (info.is_object() && info.contains("features") && info["features"].is_array())
-        for (const auto& feature : info["features"])
-            supported |= feature.is_string() && feature == "network_diagnostics";
+    const auto info = describe(env.binary, duration_cast<milliseconds>(deadline - steady_clock::now()));
+    const auto has = [&](std::string_view feature) {
+        return std::ranges::find(info.features, feature) != info.features.end();
+    };
+    const bool supported = has("network_diagnostics") && has("read_only_queries");
     if (!supported) return {steady_clock::now() >= deadline ? "timeout" : "unsupported", {}};
     auto call = [&](std::string_view operation, const json& args, std::string_view kind) -> json {
         try {

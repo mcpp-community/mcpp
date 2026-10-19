@@ -16,7 +16,7 @@ struct NetworkFixture {
         std::ofstream(env.binary) << R"SH(#!/bin/sh
 touch "$XLINGS_HOME/invoked"
 if [ "$2" = "--version" ]; then
-    echo '{"features":["network_diagnostics"]}'
+    echo '{"version":"9999.1.1.1","features":["network_diagnostics","read_only_queries"]}'
     exit 0
 fi
 )SH" << script;
@@ -120,4 +120,97 @@ TEST(NetworkCheck, IndexPreparationIsBoundedBeforeTheFirstDownloadEvent) {
     EXPECT_TRUE(deadline.expired(start + seconds(120)));
     deadline.observe(R"({"kind":"progress","phase":"extract","percent":0})", start + seconds(119));
     EXPECT_FALSE(deadline.expired(start + minutes(10)));
+}
+
+TEST(NetworkCheck, LegacyStatusAndHandshakeDoNotWriteTheSelectedHome) {
+    const auto dir = std::filesystem::temp_directory_path()
+        / std::format("mcpp-legacy-probe-{}", std::chrono::steady_clock::now().time_since_epoch().count());
+    struct Cleanup {
+        std::filesystem::path dir, previousCwd;
+        ~Cleanup() {
+            std::error_code ec;
+            std::filesystem::current_path(previousCwd, ec);
+            std::filesystem::remove_all(dir, ec);
+        }
+    } cleanup{dir, std::filesystem::current_path()};
+    const auto home = dir / "home";
+    std::filesystem::create_directories(home);
+    const auto binary = dir / (mcpp::platform::is_windows ? "provider.cmd" : "provider");
+    {
+        std::ofstream script(binary, std::ios::binary);
+        if constexpr (mcpp::platform::is_windows)
+            script << "@echo off\r\necho invoked>>\"%XLINGS_HOME%\\invoked\"\r\necho invoked>metadata-cwd\r\n"
+                      "echo {\"version\":\"9999.1.1.1\",\"features\":[]}\r\n";
+        else
+            script << "#!/bin/sh\necho invoked >> \"$XLINGS_HOME/invoked\"\necho invoked > metadata-cwd\n"
+                      "echo '{\"version\":\"9999.1.1.1\",\"features\":[]}'\n";
+    }
+    std::filesystem::permissions(binary, std::filesystem::perms::owner_all);
+    const auto project = dir / "project";
+    std::filesystem::create_directories(project);
+    std::filesystem::current_path(project);
+    mcpp::provider::Location env{binary, home, {}};
+    const auto metadata = mcpp::provider::xlings::describe(std::filesystem::relative(binary, project));
+    ASSERT_TRUE(metadata.answered) << "the legacy handshake fixture never ran";
+    EXPECT_EQ(metadata.version, "9999.1.1.1");
+    for (const auto* capability : {"system_status", "payload_status"}) {
+        const auto result = mcpp::provider::xlings::call(env, capability, "{}");
+        ASSERT_FALSE(result);
+        EXPECT_NE(result.error().find("read_only_queries"), std::string::npos);
+    }
+    mcpp::platform::env::ScopedEnv online("MCPP_OFFLINE", "0");
+    EXPECT_EQ(mcpp::provider::xlings::network_check(env, std::chrono::seconds(1)).status, "unsupported");
+    EXPECT_TRUE(std::filesystem::is_empty(home)) << "legacy metadata or status touched the selected home";
+    EXPECT_TRUE(std::filesystem::is_empty(project)) << "legacy metadata touched the current project";
+}
+
+TEST(NetworkCheck, BootstrapRequiresDownloadBudgetsAndReadOnlyQueries) {
+    mcpp::provider::ProviderInfo info;
+    info.answered = true;
+    info.version = "9999.1.1.1";
+    info.capabilities = {"install_packages"};
+    info.features = {"index_dir", "index_store", "upstreams", "payload_status", "sync_index",
+                     "payload_currency", "binding_state"};
+    for (const auto* feature : {"network_diagnostics", "download_socket_budgets", "read_only_queries"}) {
+        EXPECT_NE(mcpp::provider::xlings::unmet(info).find(feature), std::string::npos);
+        info.features.push_back(feature);
+    }
+    EXPECT_TRUE(mcpp::provider::xlings::unmet(info).empty());
+}
+
+
+TEST(NetworkProcess, MetadataAndResourceDeadlinesStopDescendants) {
+    if constexpr (mcpp::platform::is_windows) GTEST_SKIP() << "POSIX subprocess fixture";
+    const std::string writer = R"SH(
+(file="${0%/*}/ticks"; i=0
+while [ "$i" -lt 50 ]; do
+    printf x >> "$file"
+    sleep 0.05
+    i=$((i+1))
+done) >/dev/null 2>&1 &
+wait
+)SH";
+    mcpp::platform::env::ScopedEnv online("MCPP_OFFLINE", "0");
+    for (bool metadata : {true, false}) {
+        NetworkFixture f("if [ \"$2\" = \"network_endpoints\" ]; then\n"
+            "echo '{\"kind\":\"data\",\"dataKind\":\"network_endpoints\",\"payload\":{\"endpoints\":[{\"url\":\"https://one.invalid\"}]}}'\n"
+            "else\n" + writer + "fi\n");
+        if (metadata) std::ofstream(f.env.binary) << "#!/bin/sh\n" << writer;
+        const auto start = std::chrono::steady_clock::now();
+        if (metadata)
+            EXPECT_FALSE(mcpp::provider::xlings::describe(f.env.binary, std::chrono::milliseconds(500)).answered);
+        else {
+            const auto report = mcpp::provider::xlings::network_check(f.env, std::chrono::milliseconds(500));
+            ASSERT_EQ(report.endpoints.size(), 1u);
+            EXPECT_EQ(report.endpoints.front().status, "timeout");
+        }
+        EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(2));
+        const auto ticks = f.dir / "ticks";
+        ASSERT_TRUE(std::filesystem::exists(ticks)) << "the descendant fixture never ran";
+        const auto before = std::filesystem::file_size(ticks);
+        ASSERT_GT(before, 0u);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        EXPECT_EQ(std::filesystem::file_size(ticks), before)
+            << (metadata ? "metadata" : "resource") << " deadline left a descendant writing";
+    }
 }

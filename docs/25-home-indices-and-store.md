@@ -71,7 +71,8 @@ are refused. Selecting the original directory removes its locator.
 
 On Windows, the first explicit `self init` may offer `D:\mcpp` and the user's
 `.mcpp` when D is a writable local fixed drive and stdin/stderr are terminals.
-Enter selects D; only `1`, `2` and an empty line are accepted. Other input exits
+An existing `D:\mcpp` that is a file or reparse point is not suggested; an explicit
+`--home` still selects a custom path. Enter selects D; only `1`, `2` and an empty line are accepted. Other input exits
 with a `--home` hint. There is no menu on Linux, macOS or noninteractive runs,
 or when an environment, portable installation or saved selection supplies home.
 
@@ -215,3 +216,7 @@ A program's own manifest states whether it is long-path aware:
 ## Current limitations
 
 The home locator follows one hop only. It does not migrate or remove old data, and nested original/target directories are refused. The Windows drive picker is limited to a first explicit terminal initialization; a custom path uses `--home`. Network probes diagnose a resource at that moment and cannot guarantee a later download.
+
+Failure categories depend on the transport details available to the provider. Some TLS handshake failures appear as `connect`; that status does not prove that TCP itself was refused.
+
+Status queries require the provider's `read_only_queries` feature. A custom older provider without it is skipped with a diagnostic warning; local checks continue without installing a replacement. The binary handshake runs in an isolated temporary home.

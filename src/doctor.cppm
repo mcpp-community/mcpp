@@ -329,7 +329,8 @@ export int doctor_report() {
         std::size_t broken = 0, notices = 0;
         std::string example;
         bool answered = false;
-        if (auto r = provider->call("system_status", "{}"); r && r->exitCode == 0) {
+        const auto r = provider->call("system_status", "{}");
+        if (r && r->exitCode == 0) {
             for (const auto& d : r->dataEvents) {
                 if (d.dataKind != "binding_state") continue;
                 auto j = nlohmann::json::parse(d.payloadJson, nullptr, false);
@@ -344,9 +345,13 @@ export int doctor_report() {
                 }
             }
         }
-        if (!answered)
-            ok("(the provider reports no binding state)");
-        else if (broken == 0)
+        if (!answered) {
+            std::error_code binaryError;
+            if (!r && std::filesystem::exists(mcpp::config::make_xlings_env(*cfg).binary, binaryError))
+                warn(std::format("provider status unavailable: {}", r.error()));
+            else
+                ok("(the provider reports no binding state)");
+        } else if (broken == 0)
             ok(notices == 0 ? std::string("consistent")
                             : std::format("consistent ({} notice(s))", notices));
         else
@@ -776,7 +781,7 @@ export int doctor_report() {
         // simply never appear, and the code that consumes them degrades
         // quietly because a missing block is also a legitimate state.
         {
-            auto have = mcpp::fallback::vendored_xlings_version((*cfg).xlingsBinary);
+            const auto have = mcpp::provider::describe(cfg->xlingsBinary).version;
             const auto want = std::string(mcpp::config::kXlingsPinnedVersion);
             if (have.empty()) {
                 warn(std::format("cannot read the vendored xlings version at {}",

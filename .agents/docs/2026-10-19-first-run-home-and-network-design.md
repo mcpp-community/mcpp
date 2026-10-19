@@ -494,3 +494,185 @@ configure-only 对照会实际编译 std。该修正的 Windows CI 验收尚待�
 
 provider 网络测试另以 `if constexpr` 隔离小写代理环境变量设置，避免 Windows 大小写不敏感
 导致测试恢复到被修改后的代理值；修正后 8 个网络用例重新通过。产品接口没有因此改变。
+
+
+### 12.7 补充网络故障实测
+
+待 provider 发布后纳入正式集合的 E2E 920 已在本地扩展并通过：本地 HTTP 403、响应头后
+不发送 body、持续发送少量字节都在探测预算内失败；TLS fixture 验证真实 ClientHello 到达
+后主动发送 fatal handshake_failure。传输库将该 TLS 失败折叠为 connect，因此断言其
+不可达和已执行握手，不伪造更细分类。此边界已在双语 home 文档中说明。
+
+这些用例同时检查 home 文件不变。doctor 的资源请求数与前面的直接探测分别计量，防止
+前置请求使 doctor 的触网断言空过；随后 offline doctor 的请求数必须保持不变。Windows
+临时探针 39194687278 也已复现 E2E 688 相同的缺 provider 二进制诊断；其失败是修正前的
+反例，不能当作 7324eeea 已通过 Windows 验收。
+
+
+### 12.8 旧自定义提供者的只读边界
+
+使用发布版随附的 xlings 2026.10.17.1 显式配置 binary，隔离冷 home 的离线 doctor 返回 0，
+但新增 registry/logs/ops 下的操作日志。只修新提供者不能保护仍显式使用旧 binary 的用户。
+因此增加 `read_only_queries` 能力保证；状态查询缺失该能力时不调用旧 RPC，并在 doctor
+相关检查中报告查询不可用，不获取替代提供者。握手也改为有界、隔离临时 home 执行，按
+二进制路径、大小、修改时间缓存结果，避免旧 main 在返回握手前采用或升级真实 home。
+
+首轮 7 个网络/进程用例通过，包括可写入 home 的旧接口 stub，验证实际选定 home 仍为空；
+补充后的 8 个网络/进程用例通过；旧 stub 的握手必须实际执行并给出预期版本，避免
+以未启动冒充不写入。provider 的 26 个协议用例与 8 个网络用例通过，涵盖 6 类查询的目录
+及文件内容不变。新能力仍需发布后更新 pin，并完成最终 head 的多平台 CI。
+
+
+真实旧 provider 的 CLI 回归已通过：离线 doctor 返回 1，说明只读能力不可用并继续 build
+policy 等本地检查，home 内容与运行前完全一致。新 provider 的 HTTP/TLS 故障和离线 E2E
+也通过。元数据捕获使用子进程环境覆盖与有界 shell 捕获，保留 Windows 批处理包装器，
+不修改父进程环境；对应 8 个网络/进程用例已重新通过，最终 CLI 已重新链接并完成旧版提供者及故障端点联调。
+
+7324eeea 的 Windows E2E 1/3 与 Windows test/package 已通过，确认冷规划修正进入 Windows
+真实执行路径。该 head 的 Android emulator E2E 因设备内 fork Out of memory 失败；
+provider ab2308d2 的 Linux acceptance 因控制台 triple-click 仍保留 word 而非整行失败。
+已保留两项日志，不能将其计作通过；最终 head 必须重新获得对应 gate 的成功证据。
+
+
+### 12.9 最终依赖验收前的 CI 复核
+
+7324eeea 的完整 CI 完成，首次结果 69 项通过、2 项失败。Android emulator 因 guest 内
+fork Out of memory 的失败已在同一 head 新 runner 重跑通过（job 117884405856）。
+另一个失败为 E2E 22：测试在仓库项目目录中用空 home 做 doctor，触发项目显式 default
+SubOS 不存在的真实错误。夹具改在无项目的临时目录验证冷 doctor，再在构建阶段继承工具链，
+并断言 doctor 没有创建 registry；本地整项通过。不能通过把真实项目错误降为 warning 修测试。
+
+本地重新链接的 2026.10.19.1 CLI 通过 E2E 22、688、732、733、734、812、817、920，
+PM 16 个用例通过。provider c9727222 的 Linux acceptance 已通过，先前 triple-click
+失败没有复现；其 Windows、Linux 分片与 ARM64 镜像 gate 仍在运行。此时不合入、不发布，
+等待依赖最终 gate 后按发布、镜像、索引、mcpp pin、最终 CI 的顺序继续。
+
+诊断尾段的 provider 版本核对也统一复用隔离握手，移除直接 `--version` 子进程，避免旧
+提供者在操作日志之外的旧 home 采用/profile 更新路径产生副作用，并复用同一有界缓存。
+
+
+provider c9727222 的最后 Windows 作业通过了单元测试、发布包构建和真实 WSL2 生命周期，
+但 E2E-07 的实时 d2x 配方要求 mcpp 2026.10.17.1，而测试 xim 指向固定 ebf1fbb 快照，
+该依赖不在旧快照中。b6e1f9e1 仅修测试配置，使实时跨索引集成使用当前官方 xim，其他
+bootstrap fixture 保留原 pin，安装与目录断言均保留。隔离 native 客户端确认官方 artifact
+能解析该依赖；最终 head 的完整 CI 已重新启动。诊断版本核对复用隔离握手后的新 CLI，
+通过真实旧提供者 home 不变与 HTTP/TLS 故障、离线 E2E 联调。
+
+隔离握手同时使用临时 home 作为子进程工作目录，避免旧提供者向调用者项目写入相对路径。
+启动前将相对 binary 路径转为绝对路径，保留其路径拼写及符号链接语义。增强后的旧接口
+夹具实际写入 home 与工作目录，8 个网络/进程用例通过；重新链接的 CLI 再次通过 E2E 920
+及真实旧提供者的离线检查，确认 home 与当前项目均不变。
+
+同一工作树的 xlings 集成回归通过 4 个测试程序、70 个用例，文档风格检查通过。
+provider b6e1f9e1 的 Windows 主任务、WSL2、macOS、ARM64 主构建及 Linux acceptance
+已通过。Linux unit 2/6 的控制台三击选择断言再次出现 word/line 差异；其 8 个新增网络
+用例全部通过，失败分片在同一 head 重跑（job 117896332478）。ARM64 镜像启动仍在
+运行。失败证据保留；重跑和镜像 gate 结束前不视为完整 CI 通过。
+
+
+### 12.10 推荐目录的重解析点边界
+
+最终约束复核发现，原有 Windows 驱动器检测仅核验 D 根，不能排除 `D:\mcpp` 已是
+重解析点的情况。推荐资格增加目标自身的属性检查，拒绝文件、重解析点及不可判断的
+目标，不跟随链接探测远程卷。显式 `--home` 路径语义不变。该保守限制也不自动推荐
+本地 junction，避免把潜在网络文件系统等待带入首次离线目录推荐。
+
+系统绑定采用 [GetFileAttributesW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileattributesw)
+读取链接自身属性；CLI 的平台选择仍使用 `if constexpr`。原生终端夹具增加本地 junction
+对照：子进程确有控制台，但应自行完成用户默认目录的本地初始化，不读菜单输入，且
+junction 目标保持为空。此项仍需最终 Windows CI 执行验证，不能用 Python 语法检查代替。
+
+Linux 的 15 个 home 解析/事务用例和重新链接的 CLI 构建通过；新增 Windows 排除条件
+仍待原生 CI，不能据此声称该条件已获得跨平台运行证明。
+
+### 12.11 重跑产物与手势夹具的证据修正
+
+provider b6e1f9e1 的重跑分片 117896332478 已通过，但后续 report 117901034854
+仍读入首次失败的同名产物。API 同时保留 `xdev-linux-unit-1` 的两份产物，按通配符
+下载到同一目录时旧文件覆盖了重跑证据。现按每个 lane 名称选择创建时间最新的产物 ID，
+明确下载所选 ID，保留全部原始产物。实际 API 元数据对照确认选择新 ID 12164244620，
+排除首次失败 ID 12164445489；不依赖 ID 数值递增推断先后，也不删除失败证据。
+
+控制台三击夹具的独立问题是双击之后立即再三击：实现按 400 ms 窗口累计同格点击，
+五次连续点击最终停在 word，快慢帧造成结果不同。夹具在两个独立手势之间等待 500 ms，
+保留双击词、三击行及中键粘贴的全部断言，不修改生产 UI。ecff2f12 仅修此夹具和
+CI 产物选择；完整最终 head CI 已重启，仍须全部通过后再完成最终 review、合入及发布。
+
+Windows 原生菜单夹具另补充已显示菜单后的 Ctrl+Z/Enter（EOF）与 Ctrl+C，检查退出且
+不创建 locator 或本地配置；不是通过管道绕过菜单的取消对照。路径 E2E 改用带空格和
+Unicode 的相对目标，验证真实 argv、持久化及新进程读取；home 单测补充 Unicode locator
+往返，Windows 检查 ACP，UTF-8 ACP 时明确跳过旧代码页证明。新增用例仍待最终跨平台 CI。
+
+增强后的 Linux home 单测 16 项通过；真实 CLI E2E 919 已通过 Unicode 相对目标的保存与
+重启读取、损坏但未选中的用户 locator 隔离、portable 自有 locator、四个并发切换进程与
+独立读取、不可写入口导致失败后旧 locator 字节不变，以及重定向裸 force 的四类清理
+范围与旧数据保留。本地 uid 1000 的权限故障控制确实失败，未走特权账户跳过路径；
+Windows 使用 locator 只读属性制造替换失败，仍需最终 Windows CI 验收。
+
+常规 Windows 单测由根 `[test] windows_code_page = "utf-8"` 固定为 UTF-8，不能把其跳过
+结果当作旧 ACP 验收。新增专项 CI 在完整常规单测之后临时切换为 `legacy`，离线运行
+home 单测，要求 Unicode locator 用例实际给出通过结果；无论结果如何均恢复 manifest。
+常规测试策略与正式二进制的 UTF-8 策略不变。该专项同样等待最终 Windows CI 的真实结果。
+
+网络安装错误的恢复提示改为运行 `self doctor` 检查配置资源，再重试；不再把裸 `--force`
+重建 registry 作为网络故障的默认恢复建议。裸 force 本身仍保持已约定的现有行为。
+
+### 12.12 提供者最终 CI、review 与发布
+
+provider 最终 head ecff2f123ebe5cd4b5376cd2f993c2c6fa2dc896 的 31 项检查通过，2 项
+ASAN 作业按仓库 PR 策略跳过。Linux report 117909583623 已实际通过，覆盖最新产物
+选择与 required requirement 的执行证据；Windows/WSL2、macOS、ARM64 构建、兼容及
+UEFI 镜像 gate 均通过。最终复核层次、平台/C 头绑定、环境读取、隐私、只读启动边界、
+实际传输预算与回退，没有阻断项；所有检查通过后完成 review 记录并 squash 合入
+[openxlings/xlings#684](https://github.com/openxlings/xlings/pull/684)，合入 SHA 为
+`a1c80e3ff2aba87aa78eb1e4545dfc0f60e84982`，内容与验收 head 完全一致。
+
+[2026.10.19.1 provider 发布](https://github.com/openxlings/xlings/actions/runs/39206533262)
+已从该 main 提交启动。按用户授权取消同一 main 提交的重复 CI，以优先发布；不将取消
+计作通过。已启动本地资源监视，公开归档及校验文件出现后即补齐 GitCode，并以完整
+GET 和 SHA256 核验四类 payload。此时新资源尚未发布，mcpp pin 仍未前移；后续仍需
+镜像与索引传播、mcpp 最终 CI/review、合入发布及生态真实验收，不能视为整个目标完成。
+
+### 12.13 已发布资源、索引传播与进程树回收
+
+provider 发布运行 39206533262 已全部成功，v2026.10.19.1 于 06:13 UTC 公开。
+四类 payload 的 24 个归档及校验文件已完成 GitCode 全量 GET 与 SHA256 对照，
+GitHub 资源镜像也与源归档一致。公开 Linux 载荷的握手实际返回 1.13 协议及
+`network_diagnostics`、`download_socket_budgets`、`read_only_queries`。
+
+官方索引 bot PR 补齐同版 luban、luban-os、xdesk 二进制配方，保留旧版本和组合包
+自身版本。最终 head 465bcad3 的 21 项检查通过、1 项条件检查跳过，复核每个平台唯一
+`latest` 和资源校验值后 squash 合入
+[openxlings/xim-pkgindex#1002](https://github.com/openxlings/xim-pkgindex/pull/1002)，
+main 提交为 0a25593cab2beefe8aa12327993e7ea58e5ce8f0。
+
+冷客户端安装揭示传播阶段的区别：单项 release manifest 已更新时，客户端实际读取的
+组合指针仍指向发布时的旧索引，精确安装返回包不存在。因此依赖 pin 的放行证据必须
+包含组合指针及真实安装，不能仅检查单项 manifest 或索引 main 配方。已保留失败日志，
+等待发布运行 39212388579 更新组合指针后重新以独立 home 验证精确版与 latest。
+
+本地故障注入另复现了查询子进程超时后后代继续写文件：doctor 约 3.03 秒返回，
+写入计数仍从 60 增至 66。元数据 shell 查询及网络资源 argv 查询现拥有独立进程组，
+超时回收其后代；普通 argv 调用默认行为不变。9 个网络/进程用例通过，新增用例分别
+确认两个查询阶段确实启动写入者，并验证超时后文件停止变化。仍须新 CLI 的真实
+doctor 复测和最终跨平台 CI，不以局部单测替代完整验收。
+
+重新构建的 CLI 已完成该故障注入：doctor 3.04 秒返回，后代写入计数在返回前后均为
+57，本地检查继续到 build policy。同一新 CLI 的 home E2E 通过，包含实际权限故障下
+旧入口不变；E2E 920 使用公开发布的 provider，通过 HTTP/TLS 故障、共享期限、诊断
+home 不变与离线零请求对照。索引发布运行 39212388579 已成功，组合指针服务端提交
+63882590 指向 0a25593；公开 raw 缓存及实际冷安装仍须核实。
+
+公开 raw 传播后，两个独立 home 按正式发布流程先安装客户端，再分别执行精确版和
+不带版本安装；二者均实际下载 16.8 MB 归档，列出唯一的 xlings 2026.10.19.1，
+从安装载荷读取的握手均返回所需三项能力。验证不继承开发终端的 `XLINGS_PROJECT_DIR`
+等上下文。直接用裸二进制指向空 home 的前一轮实验缺少可更新的自有入口，触发 entry
+authority 检查；该实验不作为已安装客户端的升级证明，也未放宽权限断言。
+
+据此将 mcpp provider floor 与八处 CI/bootstrap 配置中的 xlings pin 统一前移至
+2026.10.19.1。mcpp 自身构建版本为 2026.10.19.1；`.xlings.json` 的 mcpp bootstrap
+仍为已发布的 2026.10.10.2，待 mcpp 新版发布、镜像和索引验收后再收尾。
+版本关系检查及更新 pin 后的新 CLI 构建通过，公开 provider 的网络 E2E 再次通过。
+
+更新 pin 后的 E2E 919、920 及曾失败的 E2E 22 均通过。E2E 22 先检查真正冷 home 的
+doctor 不创建 registry，再单独继承工具链验证 std 缓存及发布 dry-run，保留原有断言。

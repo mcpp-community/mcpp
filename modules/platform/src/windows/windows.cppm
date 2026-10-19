@@ -59,8 +59,10 @@ std::optional<std::filesystem::path> env_directory(const char* name);
 // platform, which has no such limit.
 bool long_paths_enabled();
 // Used only by the first-run Windows home suggestion; never creates the
-// actual home. Other platforms answer false without touching a filesystem.
-bool writable_fixed_drive(char drive);
+// actual home. An existing child must be a plain directory: inspecting its
+// reparse-point attributes avoids following a potentially remote target.
+// Other platforms answer false without touching a filesystem.
+bool writable_fixed_drive(char drive, std::wstring_view child);
 bool input_is_terminal();
 
 } // namespace mcpp::platform::windows
@@ -75,10 +77,17 @@ bool input_is_terminal() {
 #endif
 }
 
-bool writable_fixed_drive(char drive) {
+bool writable_fixed_drive(char drive, std::wstring_view child) {
 #if defined(_WIN32)
     const wchar_t root[] = {static_cast<wchar_t>(drive), L':', L'\\', L'\0'};
     if (GetDriveTypeW(root) != DRIVE_FIXED) return false;
+    const auto candidate = std::filesystem::path(root) / child;
+    const auto attributes = GetFileAttributesW(candidate.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        const auto error = GetLastError();
+        if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) return false;
+    } else if (!(attributes & FILE_ATTRIBUTE_DIRECTORY)
+               || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
     const auto probe = std::filesystem::path(root)
         / std::format(".mcpp-write-{}-{}", GetCurrentProcessId(), GetTickCount64());
     const auto handle = CreateFileW(probe.c_str(), GENERIC_WRITE, 0, nullptr,
@@ -88,6 +97,7 @@ bool writable_fixed_drive(char drive) {
     return true;
 #else
     (void)drive;
+    (void)child;
     return false;
 #endif
 }

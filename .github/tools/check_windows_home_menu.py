@@ -52,6 +52,10 @@ kernel.WriteConsoleInputW.argtypes = [w.HANDLE, c.POINTER(InputRecord), w.DWORD,
                                      c.POINTER(w.DWORD)]
 kernel.WriteConsoleInputW.restype = w.BOOL
 kernel.CloseHandle.argtypes = [w.HANDLE]
+kernel.SetConsoleCtrlHandler.argtypes = [c.c_void_p, w.BOOL]
+kernel.SetConsoleCtrlHandler.restype = w.BOOL
+kernel.GenerateConsoleCtrlEvent.argtypes = [w.DWORD, w.DWORD]
+kernel.GenerateConsoleCtrlEvent.restype = w.BOOL
 
 def opened(name):
     handle = kernel.CreateFileW(name, 0xC0000000, 3, None, 3, 0, None)
@@ -77,8 +81,9 @@ def input_line(handle, value):
         record.type = 1
         record.event.key.down = True
         record.event.key.repeat = 1
-        record.event.key.key = 13 if char == '\r' else ord(char.upper())
+        record.event.key.key = 13 if char == '\r' else ord('Z') if char == '\x1a' else ord(char.upper())
         record.event.key.char.UnicodeChar = char
+        record.event.key.state = 8 if char == '\x1a' else 0  # LEFT_CTRL_PRESSED for EOF
         count = w.DWORD()
         if not kernel.WriteConsoleInputW(handle, c.byref(record), 1, c.byref(count)):
             raise c.WinError(c.get_last_error())
@@ -111,7 +116,16 @@ with tempfile.TemporaryDirectory(prefix='mcpp-console-menu-') as temporary:
         proc = subprocess.Popen([str(binary), 'self', 'init'], env=env, cwd=root,
                                 creationflags=subprocess.CREATE_NEW_CONSOLE)
         output = stdin = None
+        ignored_interrupt = False
         try:
+            if choice is None:
+                # A native console is still attached to the child. The former
+                # drive-only check waits for input here and hits this timeout.
+                code = proc.wait(timeout=10)
+                assert code in (0, 1), code
+                assert (profile / '.mcpp' / 'config.toml').is_file()
+                assert not (profile / '.mcpp' / 'home.toml').exists()
+                return
             kernel.FreeConsole()
             until = time.monotonic() + 10
             while not kernel.AttachConsole(proc.pid):
@@ -127,20 +141,35 @@ with tempfile.TemporaryDirectory(prefix='mcpp-console-menu-') as temporary:
                     raise AssertionError(text or 'No home menu appeared')
                 time.sleep(.02)
             check_layout(text)
-            input_line(stdin, choice)
+            if name == 'interrupt':
+                # The controller shares the child's console; only it ignores
+                # this broadcast. The child was spawned before the ignore flag.
+                if not kernel.SetConsoleCtrlHandler(None, True):
+                    raise c.WinError(c.get_last_error())
+                ignored_interrupt = True
+                if not kernel.GenerateConsoleCtrlEvent(0, 0):  # CTRL_C_EVENT
+                    raise c.WinError(c.get_last_error())
+            else:
+                input_line(stdin, choice)
             code = proc.wait(timeout=20)
             text = screen(output)
             print(name, 'exit', code, '\n' + text, flush=True)
-            if name == 'invalid':
-                assert code == 2 and '--home' in text, text
+            if name in ('invalid', 'eof', 'interrupt'):
+                if name == 'invalid':
+                    assert code == 2 and '--home' in text, text
+                elif name == 'eof':
+                    assert code == 1, (code, text)
+                else:
+                    assert code in (1, -1073741510, 3221225786), (code, text)
                 assert not (profile / '.mcpp' / 'home.toml').exists()
+                assert not (profile / '.mcpp' / 'config.toml').exists()
             else:
                 assert code in (0, 1), text  # offline initialization can lack tools
                 data = subprocess.run([str(binary), 'self', 'env', '--format', 'json'],
                                       env=env, cwd=root, capture_output=True, text=True,
                                       encoding='utf-8', timeout=10, check=True)
                 home = Path(json.loads(data.stdout)['data']['mcppHome'])
-                expected = Path('D:/mcpp') if name == 'default' else profile / '.mcpp'
+                expected = Path('D:/mcpp') if name in ('drive', 'default') else profile / '.mcpp'
                 assert os.path.samefile(home, expected), data.stdout
                 assert (expected / 'config.toml').is_file(), text
         finally:
@@ -151,6 +180,8 @@ with tempfile.TemporaryDirectory(prefix='mcpp-console-menu-') as temporary:
                 if handle is not None:
                     kernel.CloseHandle(handle)
             kernel.FreeConsole()
+            if ignored_interrupt:
+                kernel.SetConsoleCtrlHandler(None, False)
 
     # This check runs on an ephemeral hosted Windows runner. Refuse an existing
     # D:\mcpp rather than touching a home this test did not create.
@@ -161,9 +192,22 @@ with tempfile.TemporaryDirectory(prefix='mcpp-console-menu-') as temporary:
     marker.write_text('owned by this isolated CI test', encoding='utf-8')
     try:
         run_case('invalid', '3')
+        run_case('eof', '\x1a')
+        run_case('interrupt', '')
         run_case('user', '2')
+        run_case('drive', '1')
         run_case('default', '')
+        shutil.rmtree(default)  # this test exclusively reserved the directory
+        target = root / 'junction-target'
+        target.mkdir()
+        subprocess.run(['cmd', '/d', '/c', 'mklink', '/J', str(default), str(target)],
+                       capture_output=True, text=True, check=True, timeout=5)
+        try:
+            run_case('reparse', None)
+            assert not list(target.iterdir()), 'the suggestion followed a reparse point'
+        finally:
+            default.rmdir()  # remove the junction, retaining its target
     finally:
         if marker.is_file():
             shutil.rmtree(default)
-print('PASS: native Windows menu alignment, invalid input, user home, and Enter default')
+print('PASS: native Windows menu layout, input, cancellation, default, and reparse exclusion')

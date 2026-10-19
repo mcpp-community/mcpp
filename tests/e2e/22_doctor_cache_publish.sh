@@ -10,6 +10,8 @@ set -e
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 export MCPP_HOME="$TMP/mcpp-home"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$TMP"
 
 # 0) cache list on a genuinely empty cache: friendly message.
 out=$("$MCPP" cache list 2>&1)
@@ -29,6 +31,12 @@ grep -q 'Doctor result'             doctor.log || { cat doctor.log; echo "no res
 #     builds nothing, so the cache is still empty after it.
 out=$("$MCPP" cache list 2>&1)
 [[ "$out" == *"empty"* ]] || { echo "doctor wrote to the build cache: '$out'"; exit 1; }
+
+[ ! -e "$MCPP_HOME/registry" ] || { echo "doctor bootstrapped the cold home"; exit 1; }
+
+# Only the build needs installed tools. Keep the doctor's cold-home check
+# separate, then share payloads without warming this home's std build cache.
+source "$HERE/_inherit_toolchain.sh"
 
 # 2) after a build, the std module it precompiled must be VISIBLE. std entries
 #    dominate the cache's size, and `cache list` used to walk only dep entries.

@@ -1064,7 +1064,7 @@ std::string install_failure_hint(const std::optional<mcpp::provider::ErrorEvent>
                                  const std::filesystem::path& home) {
     const std::string code = error ? error->code : std::string{};
     if (code == "E_NETWORK")
-        return "check network and retry, or `mcpp self init --force`";
+        return "run `mcpp self doctor` to check the configured sources, then retry";
     if (code == "E_DISK_FULL")
         return std::format("free space on the disk that holds {}, then retry", home.string());
     if (code == "E_PERMISSION")

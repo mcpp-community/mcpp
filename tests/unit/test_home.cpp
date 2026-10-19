@@ -3,6 +3,7 @@
 
 import std;
 import mcpp.home;
+import mcpp.platform;
 import mcpp.toolchain.stdmod;
 import mcpp.config;
 import mcpp.libs.toml;
@@ -220,4 +221,27 @@ TEST_F(HomeSelection, MissingUserDirectoryCannotPublishALocatorInTheWorkingDirec
     const auto selected = mcpp::home::choose(target, true);
     ASSERT_FALSE(selected);
     EXPECT_NE(selected.error().find("user directory"), std::string::npos);
+}
+
+
+TEST_F(HomeSelection, UnicodeLocatorRoundTripDoesNotNarrowTheSelectedPath) {
+    if constexpr (mcpp::platform::is_windows) {
+        const auto acp = mcpp::platform::windows::active_code_page();
+        ASSERT_NE(acp, 0u);
+        if (acp == 65001)
+            GTEST_SKIP() << "UTF-8 ACP cannot prove the legacy-code-page path conversion boundary; "
+                            "the actual CLI Unicode case still runs";
+    }
+    // Devanagari cannot be represented by any legacy Windows ANSI code page.
+    // Explicit UTF-8 code units keep this independent of compiler source encoding.
+    const auto unicode = scratch / std::filesystem::path(
+        std::u8string(u8"selected space \u0915\u0916\u0917 \u65e5\u672c\u8a9e"));
+    std::filesystem::create_directory(unicode);
+    const auto selected = mcpp::home::choose(unicode, true);
+    ASSERT_TRUE(selected) << selected.error();
+    ASSERT_TRUE(mcpp::home::save(*selected));
+    const auto restored = mcpp::home::inspect(original);
+    ASSERT_TRUE(restored) << restored.error();
+    EXPECT_EQ(restored->effective, std::filesystem::weakly_canonical(unicode));
+    EXPECT_EQ(mcpp::home::from_utf8(mcpp::home::spelling(unicode)), unicode);
 }

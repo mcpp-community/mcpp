@@ -158,7 +158,7 @@ export int cmd_self_init(const mcpplibs::cmdline::ParsedArgs& parsed) {
             && !std::filesystem::exists(origin / "home.toml", ec) && !ec
             && mcpp::platform::terminal::input_is_terminal()
             && mcpp::platform::terminal::is_terminal(mcpp::platform::terminal::Stream::Err)
-            && mcpp::platform::windows::writable_fixed_drive('D')) {
+            && mcpp::platform::windows::writable_fixed_drive('D', L"mcpp")) {
             auto fallback = mcpp::home::spelling(origin);
             std::ranges::replace(fallback, '/', '\\');
             mcpp::platform::terminal::write(mcpp::platform::terminal::Stream::Err,

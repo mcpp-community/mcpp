@@ -4,6 +4,42 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.19.1] - 2026-10-19
+
+### Added
+
+- `mcpp self init --home <path>` initializes a home and remembers it through a
+  single-hop locator under the original home. `--force --home` changes that
+  default without moving or deleting either home's data. The environment and
+  portable installation retain their original home-selection precedence.
+- The first interactive Windows initialization offers a writable local D drive
+  and the user directory as two choices. Enter selects the displayed default;
+  `--home` supplies another location without a prompt.
+- `mcpp self doctor` reports resource reachability, HTTP failures and proxy use
+  through the configured provider. Discovery and probes share a five-second
+  deadline; offline diagnosis starts no network requests.
+
+### Fixed
+
+- Local environment/configuration queries, toolchain listing and diagnosis no
+  longer bootstrap the private registry. Mirror recovery writes local settings
+  without waiting for downloads. Planning an installed toolchain does not
+  require the provider's executable or initialize its home. Status queries are
+  skipped when a custom provider lacks the read-only guarantee.
+- First-run installations report their actual download source and candidate
+  attempt. Connect, byte-idle and pre-download budgets bound network waits;
+  heartbeat output cannot keep a stalled transfer alive. Parent cancellation
+  stops the provider's process tree, and network failures are not repeated
+  through a second install frontend.
+
+### Changed
+
+- Bundle xlings 2026.10.19.1 with read-only network diagnostics and configurable
+  download socket budgets. Verified SHA256 cache hits make no background HEAD
+  request; the provider retains ownership of mirror selection and failover.
+- Homebrew and Nix notifications consume the immutable sealed release manifest
+  after all platform assets have been validated.
+
 ## [2026.10.17.1] - 2026-10-17
 
 ### Fixed
