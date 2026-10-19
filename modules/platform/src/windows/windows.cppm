@@ -61,10 +61,20 @@ bool long_paths_enabled();
 // Used only by the first-run Windows home suggestion; never creates the
 // actual home. Other platforms answer false without touching a filesystem.
 bool writable_fixed_drive(char drive);
+bool input_is_terminal();
 
 } // namespace mcpp::platform::windows
 
 namespace mcpp::platform::windows {
+bool input_is_terminal() {
+#if defined(_WIN32)
+    DWORD mode = 0;
+    return GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode) != 0;
+#else
+    return false;
+#endif
+}
+
 bool writable_fixed_drive(char drive) {
 #if defined(_WIN32)
     const wchar_t root[] = {static_cast<wchar_t>(drive), L':', L'\\', L'\0'};

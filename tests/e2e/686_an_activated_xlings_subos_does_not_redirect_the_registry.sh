@@ -23,7 +23,7 @@ fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2
 export MCPP_HOME="$TMP/mcpp-home"
 cd "$TMP"
 SHELL_SUBOS=mcpp-e2e-shell-subos
-XLINGS_ACTIVE_SUBOS=$SHELL_SUBOS "$MCPP" self env > env.log 2>&1 || true
+XLINGS_ACTIVE_SUBOS=$SHELL_SUBOS "$MCPP" self init > env.log 2>&1 || true
 
 SUBOS="$MCPP_HOME/registry/subos"
 [ -d "$SUBOS/default" ] || fail "the registry was not initialised" env.log

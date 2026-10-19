@@ -1304,7 +1304,10 @@ PayloadAction payload_action(PayloadIntent intent, bool present, bool usable, bo
 InstallFailurePolicy install_failure_policy(std::string_view errorCode) {
     if (errorCode == "E_NOT_FOUND") return {.refreshIndex = true, .retry = true};
     if (errorCode.empty()) return {.refreshIndex = true, .retry = true};
-    if (errorCode == "E_NETWORK" || errorCode == "E_INVALID_INPUT") return {.refreshIndex = false, .retry = true};
+    // The provider already exhausted its candidates and transport retries.
+    // Repeating the same download through another frontend cannot repair it.
+    if (errorCode == "E_NETWORK") return {};
+    if (errorCode == "E_INVALID_INPUT") return {.refreshIndex = false, .retry = true};
     return {};
 }
 

@@ -5,7 +5,7 @@ status: active
 
 # 首次初始化、home 重定向与网络诊断优化设计
 
-状态：设计修订，待再次 review；R2、R3、R4、R5、R7 已获用户认可，R1 与 R6 按最新反馈细化。本文中的新命令、配置和输出均为设计，不代表已经实现。
+状态：按最新反馈修订；R2、R3、R4、R5、R7 已获用户认可，R1 与 R6 的两阶段优先级及 Windows 排版已明确。设计语义与实现验收分开记录，具体进展见第 12 节。
 
 执行状态：用户已授权完整实现、单功能 PR、全 CI、自我 review 后 squash 合入和发布。以下为实施中的验收账本，不将草稿或发布版探针作为新功能已完成的证据。
 
@@ -411,3 +411,38 @@ home 来源、locator、旧数据保留、代理是否启用和检测端点归�
 当前 provider 边界、模块 wiring、文件长度与版本 pin 检查通过。尚未运行当前功能 head 的跨平台 CI，也未验证 Windows 原生交互。xlings（provider）的连接超时仍为 30 秒硬编码，已有 low-speed 看门狗；T4 要求补齐可配置连接预算和结构化探测，不用旁路下载器冒充 provider 已支持。
 
 本检查点重新链接后的真实 CLI 验证已通过：`919_a_home_selection_is_remembered_once.sh`；既有 `38_self_config_mirror.sh`、`46_self_config_mirror_no_bootstrap.sh`、`604_offline_skips_sandbox_bootstrap.sh` 按无隐式 bootstrap 的契约更新后通过。它们只证明 Linux 当前基础行为，不替代 Windows 原生交互、网络 T4 或最终全 CI。
+
+
+### 12.3 实施检查点：有界网络诊断与平台选择
+
+mcpp 功能草稿为 [PR #824](https://github.com/mcpp-community/mcpp/pull/824)，提供者前置能力为
+[xlings PR #684](https://github.com/openxlings/xlings/pull/684)。后者新增本地端点发现、
+复用下载传输层的资源探测、可缩短的连接/读取预算、实际来源和候选尝试信息。
+mcpp 通过 provider port 获取结构化结果，端点发现与并发子进程共享 5 秒期限。
+诊断不建立第二套下载器，不根据一次探测永久改写 mirror 配置。
+
+本地 Linux 已有以下证据：
+
+| 验证 | 结果 | 边界 |
+|---|---|---|
+| provider 首轮网络用例 | 5 个通过，随后补实际候选尝试用例后 6 个通过 | 真实 loopback GET/404、拒绝代理、无凭据输出、字节进展与总预算；不是完整公网故障矩阵 |
+| 旧 provider 对照 | 3 个资源诊断断言因缺少新 capability 失败 | 旧版 2026.10.18.1；证明新断言有区分度 |
+| mcpp 网络与进程用例 | 5 个通过；连续 heartbeat 输出下仍在约 225 ms 被测试期限停止 | POSIX 探测 fixture；输出期间取消的进程用例待 Windows CI 复核 |
+| 显式迁移与 home E2E | 10、11、39、151、681、687、846、916、919 全部通过 | Linux 实际重新链接的 CLI；保留文件状态断言 |
+| 文档与层次检查 | 文档样式、干净 worktree 文档结构、provider 边界、模块 wiring 通过 | 原生 Windows 交互仍需实际 runner 证据 |
+
+对下载链的补充 review 发现：socket timeout 不能覆盖所有 DNS/响应头等待，interface heartbeat
+也不能代表字节进展。因此父进程增加进展期限轮询，由平台进程封装在持续输出时仍检查并清理
+整个子进程树。只增加字节数或真正切换候选才能更新进展时间；完成后的解压/配置阶段不沿用
+活动下载的 idle 计时。该层补充不替代 provider 的来源回退与 socket 预算。
+
+本轮新增的可移植平台选择采用 `if constexpr (mcpp::platform::is_windows)`。
+stdin 终端检测由 facade 分派到对应平台绑定；条件编译仅留在系统头和 syscall 绑定边界。
+Windows 原生控制台检查通过独立 console 输入/屏幕缓冲驱动真实 CLI，检查 Choose/Select
+同列、标题空行、非法输入退出、选择 2 与 Enter 默认选择 D。该脚本仅用于可丢弃的 hosted
+Windows runner；已有 D:\mcpp 时拒绝测试，禁止清理未知 home。
+
+基础 CI 已暴露两类需要修正的既有断言：路径规范化后的 /private/var 与 /var（Windows 同类
+拼写差异），以及把 self env 当作初始化入口的 E2E。前者改用目录身份比较，并由原始解析来源
+直接报告 user/portable；后者改为显式初始化或本地配置修改。最终 head 的全 CI 尚未完成，
+provider 尚未发布和更新 floor，当前不能宣称 T4—T8 完成，未合入也未发布 mcpp。

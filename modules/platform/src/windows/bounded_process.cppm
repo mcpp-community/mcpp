@@ -120,6 +120,7 @@ private:
 // keep the child's stdout a console, or console-detecting children drop their
 // colors and every line waits for exit.
 using OutputSink = void (*)(void* ctx, const char* data, unsigned long len);
+using StopPoll = bool (*)(void* ctx);
 
 // `commandLine` is already quoted for CreateProcess (callers pass the output
 // of windows_command_from_argv). `envEntries` is `envCount` NUL-terminated
@@ -142,7 +143,8 @@ DeadlineRun capture_with_deadline(const char*        commandLine,
                                   long long          deadlineMs,
                                   long long          idleMs,
                                   OutputSink         sink,
-                                  void*              ctx);
+                                  void*              ctx,
+                                  StopPoll           stop);
 
 // ─── A child that outlives the call that started it (#496) ───────────────
 //
@@ -321,7 +323,8 @@ DeadlineRun capture_with_deadline(const char*        commandLine,
                                   long long          deadlineMs,
                                   long long          idleMs,
                                   OutputSink         sink,
-                                  void*              ctx)
+                                  void*              ctx,
+                                  StopPoll           stop)
 {
     DeadlineRun out;
     const bool idleBound = idleMs > 0 && sink != nullptr;
@@ -442,6 +445,12 @@ DeadlineRun capture_with_deadline(const char*        commandLine,
     };
 
     for (;;) {
+        // A stream of heartbeats cannot defer a caller's progress deadline.
+        if (!killed && (std::chrono::steady_clock::now() >= until || (stop && stop(ctx)))) {
+            killed = true;
+            if (job.h) job.reset();
+            else ::TerminateProcess(proc.h, 1);
+        }
         if (drain_available()) continue;   // empty the pipe before sleeping
 
         if (::WaitForSingleObject(proc.h, 0) == WAIT_OBJECT_0) {
@@ -731,7 +740,7 @@ int wait_background(unsigned long long process, int* exitCode) {
 #else
 
 DeadlineRun capture_with_deadline(const char*, const char* const*, unsigned long,
-                                  const char*, long long, long long, OutputSink, void*) {
+                                  const char*, long long, long long, OutputSink, void*, StopPoll) {
     // Not Windows: the POSIX launcher in mcpp.platform.process owns this.
     return {};
 }

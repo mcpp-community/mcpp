@@ -162,3 +162,4 @@
   - [SPEC-007 —— 构建插件：配置、施工与校验的分工，运行时与规划期的义务](../specs/build-plugins.md)
   - [SPEC-008 —— 库的接口：公开模块、发布闭包与两种形态的一致](../specs/library-interface.md)
   - [SPEC-009 —— 工具链的支持与维护：版本线、默认值、来源、移动与退役](../specs/toolchain-maintenance.md)
+  - [SPEC-010 —— home 选择与初始化](../specs/home-initialization.md)

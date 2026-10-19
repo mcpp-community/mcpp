@@ -43,6 +43,59 @@ A home created by an earlier mcpp keeps working. Its index data moves to
 built against them keeps running. The markers an earlier mcpp wrote into
 payloads (`.mcpp_ok`, `.mcpp-fixup.json`) are no longer read.
 
+### Selecting the home (2026.10.19.1+)
+
+Choose a directory before the first initialization:
+
+```powershell
+mcpp self init --home D:\mcpp
+```
+
+The selection persists across processes without setting an environment variable.
+The original home is chosen by `MCPP_HOME`, then a portable installation root,
+then the user's `.mcpp`. Its `home.toml` names the effective home; mcpp reads
+that file once. By default the original and effective directories are the same.
+A locator in the target directory is ignored. `MCPP_HOME` is never rewritten.
+
+An existing initialized home requires an explicit switch:
+
+```powershell
+mcpp self init --force --home E:\mcpp
+```
+
+This saves the new default and initializes it. Old data and existing target data
+remain in place. `mcpp self config` and `mcpp self doctor` report the original,
+effective and previous directories when relevant. The previous path is a report,
+not a migration or automatic cleanup instruction. Nested original/target homes
+are refused. Selecting the original directory removes its locator.
+
+On Windows, the first explicit `self init` may offer `D:\mcpp` and the user's
+`.mcpp` when D is a writable local fixed drive and stdin/stderr are terminals.
+Enter selects D; only `1`, `2` and an empty line are accepted. Other input exits
+with a `--home` hint. There is no menu on Linux, macOS or noninteractive runs,
+or when an environment, portable installation or saved selection supplies home.
+
+`self init --force` without `--home` retains its registry/cache reset semantics.
+For a redirected home it names the effective target before resetting it.
+`--system self init --home` is refused. The exact selection and persistence
+rules are in [SPEC-010](specs/home-initialization.md).
+
+### Initialization and network diagnosis (2026.10.19.1+)
+
+`self env`, `self config`, `self doctor` and `toolchain list` read local state
+without installing tools. `self config --mirror auto|CN|GLOBAL` updates only local
+configuration, so it remains usable while the network is broken.
+
+Before a missing bootstrap tool requires network access, initialization displays
+bounded checks of the provider's configured resources. `self doctor` reports the
+same checks as warnings; local errors keep their meaning. `--offline` skips the
+checks and acquisition. Installed tools and cached packages remain usable.
+A failed probe does not disable a source or block local reuse.
+
+The locator is saved after local validation, before acquisition. An incomplete
+offline or failed-network init returns 1 while retaining the chosen directory.
+Rerunning `self init` continues there.
+
 ## 2. Refreshing an index
 
 An index mcpp owns is fetched into a staging directory beside it, checked there
@@ -158,3 +211,7 @@ setting; `mcpp self doctor` reports it.
 
 A program's own manifest states whether it is long-path aware:
 `windows_long_paths` ([04](04-mcpp-toml.md)).
+
+## Current limitations
+
+The home locator follows one hop only. It does not migrate or remove old data, and nested original/target directories are refused. The Windows drive picker is limited to a first explicit terminal initialization; a custom path uses `--home`. Network probes diagnose a resource at that moment and cannot guarantee a later download.

@@ -25,21 +25,9 @@ namespace mcpp::cli {
 
 // `self env --format json`.
 //
-// Deliberately NOT `env_report()` plus a serializer. That path calls
-// `config::load_or_init()`, which on a machine that has never run mcpp
-// creates $MCPP_HOME -- measured: `config.toml`, `registry/`, `cache/`,
-// `bin/`, `build-cache/`, `log/`, six entries, where `mcpp --version`,
-// `xpkg parse` and `cache list` create none. Reporting where things ARE
-// should not be what puts them there.
-//
-// So the machine path computes paths and reads what already exists. When
-// nothing does, it says so (`initialized: false`) and reports the paths mcpp
-// WOULD use, rather than creating them to be able to answer. A client asking
-// "where is your home" on a fresh machine gets an answer and an untouched
-// disk.
-//
-// The human path is unchanged: someone typing `mcpp self env` at a prompt
-// expects mcpp to set itself up, and always has.
+// Both human and machine queries are read-only. This serializer reads paths
+// and existing configuration directly, without toolchain detection; a cold home
+// reports initialized=false and is left untouched.
 namespace {
 
 nlohmann::json env_data_readonly() {
@@ -164,16 +152,15 @@ export int cmd_self_init(const mcpplibs::cmdline::ParsedArgs& parsed) {
         const auto* explicitHome = std::getenv("MCPP_HOME");
         // Only the user-directory fallback participates. An installed portable
         // tree and an explicitly selected original home retain their behavior.
-        const auto* user = std::getenv("USERPROFILE");
-        if (!user || !*user) user = std::getenv("HOME");
-        const bool userFallback = user && origin == std::filesystem::path(user) / ".mcpp";
+        const bool userFallback = mcpp::home::original_source() == "user";
         if (target.empty() && !(explicitHome && *explicitHome) && userFallback
             && !mcpp::home::initialized(origin)
             && !std::filesystem::exists(origin / "home.toml", ec) && !ec
             && mcpp::platform::terminal::input_is_terminal()
             && mcpp::platform::terminal::is_terminal(mcpp::platform::terminal::Stream::Err)
             && mcpp::platform::windows::writable_fixed_drive('D')) {
-            const auto fallback = mcpp::home::spelling(origin);
+            auto fallback = mcpp::home::spelling(origin);
+            std::ranges::replace(fallback, '/', '\\');
             mcpp::platform::terminal::write(mcpp::platform::terminal::Stream::Err,
                 std::format("        Home No existing home found\n"
                             "       Drive D:\\ is a writable local fixed drive\n\n"

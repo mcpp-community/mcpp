@@ -362,6 +362,9 @@ public:
     }
     int show_config() const override { return config_show(env_); }
     int set_mirror(std::string_view mirror, bool quiet) const override { return config_set_mirror(env_, mirror, quiet); }
+    mcpp::provider::NetworkReport check_network(std::chrono::milliseconds budget) const override {
+        return network_check(env_, budget);
+    }
     void ensure_initialized(bool quiet) const override { ensure_init(env_, quiet); }
     void pin_runtime(std::string_view runtimeId, bool relink) const override {
         // `.xlings.json` `runtime: {"glibc": "2.44.3"}` is the pin; set

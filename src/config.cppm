@@ -249,6 +249,30 @@ std::string check_base_init(const GlobalConfig& cfg) {
     return {};  // all ok
 }
 
+// Returns whether diagnosis found a warning. Network failure never prevents
+// reuse of installed tools, and never changes the command's local errors.
+bool report_network(const GlobalConfig& cfg, bool quiet = false) {
+    const auto report = mcpp::provider::open(make_xlings_env(cfg))->check_network();
+    auto line = [&](std::string_view key, std::string_view value) {
+        if (!quiet) std::println(stderr, "{:>12} {}", key, value);
+    };
+    if (report.status == "offline") { line("Network", "Skipped (offline mode)"); return false; }
+    if (report.status != "checked") {
+        line("Network", std::format("Check {} (local operations remain available)", report.status));
+        return true;
+    }
+    bool failed = false;
+    if (report.endpoints.empty()) line("Network", "No remote index sources configured");
+    for (const auto& e : report.endpoints) {
+        line("Network", std::format("{} {} {}: {}{}", e.resource,
+            e.region.empty() ? "custom" : e.region, e.host.empty() ? "endpoint" : e.host,
+            e.status, e.proxy ? " (proxy)" : ""));
+        failed |= !e.reachable;
+    }
+    if (failed) line("Hint", "Check proxy settings or use mcpp self config --mirror auto|CN|GLOBAL");
+    return failed;
+}
+
 // Delete the registry directory (sandbox) for a clean re-init.
 // Preserves: bin/mcpp (self-contained mode), config.toml, log/.
 void reset_registry(const GlobalConfig& cfg) {
@@ -1046,6 +1070,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     const bool bootstrapAllowed = !mcpp::platform::env::offline_mode();
     ensure_sandbox_xlings_binary(cfg, quiet);
     if (bootstrapAllowed) {
+        if (!check_base_init(cfg).empty()) report_network(cfg, quiet);
         ensure_sandbox_init(cfg, quiet);
     } else if (!quiet) {
         // Once per process: the doctor loads the configuration more than once,

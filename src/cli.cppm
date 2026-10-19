@@ -1441,17 +1441,15 @@ int run(int argc, char** argv) {
     // protocol module that knew the command list would mean adding a command
     // in one file and remembering to describe it in another.
     //
-    // `self env` carries `init-mcpp-home` because on a fresh machine it does
-    // create $MCPP_HOME -- measured: six entries, where `xpkg parse` and
-    // `cache list` create none. Naming the effect rather than flagging a
-    // boolean lets an IDE ignore this one and still refuse `exec-build-script`.
+    // Path and toolchain queries read defaults in memory. Only commands
+    // that request initialization or provisioning declare home creation.
     auto protocol_commands = [] {
         using mcpp::wire::Effect;
         return std::vector<mcpp::wire::CommandEffects>{
-            {"self env",       {Effect::InitMcppHome}},
+            {"self env",       {}},
             {"xpkg parse",     {}},
             {"cache list",     {}},
-            {"toolchain list", {Effect::InitMcppHome}},
+            {"toolchain list", {}},
             // `why toolchain` DECLARES MORE THAN IT USUALLY DOES, AND THAT
             // IS THE CORRECT DIRECTION.
             //

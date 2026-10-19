@@ -56,6 +56,7 @@ struct Error : std::runtime_error { using std::runtime_error::runtime_error; };
 std::string spelling(const std::filesystem::path& path);
 std::filesystem::path from_utf8(std::string_view value);
 std::filesystem::path original_root();
+std::string original_source();
 std::expected<Selection, std::string> inspect(const std::filesystem::path& original);
 Selection selection();
 bool initialized(const std::filesystem::path& path);
@@ -111,11 +112,8 @@ std::filesystem::path default_home() {
 //      "in a bin/ dir" shape — so we additionally exclude any path
 //      with a "target" ancestor as mcpp's own dev convention.
 //   3. fallback to $HOME/.mcpp (%USERPROFILE%\.mcpp on Windows).
-std::filesystem::path original_root() {
-    // 1. Explicit $MCPP_HOME takes priority (CI, advanced users).
-    if (auto* e = std::getenv("MCPP_HOME"); e && *e)
-        return std::filesystem::path(e);
-
+namespace {
+std::filesystem::path portable_root() {
     auto exe = mcpp::platform::fs::self_exe_path();
     if (exe.has_parent_path() && exe.parent_path().filename() == "bin") {
         auto candidate = exe.parent_path().parent_path();
@@ -140,7 +138,19 @@ std::filesystem::path original_root() {
             return candidate;
     }
 
-    return default_home();
+    return {};
+}
+} // namespace
+
+std::filesystem::path original_root() {
+    if (auto* e = std::getenv("MCPP_HOME"); e && *e) return std::filesystem::path(e);
+    const auto portable = portable_root();
+    return portable.empty() ? default_home() : portable;
+}
+
+std::string original_source() {
+    if (auto* e = std::getenv("MCPP_HOME"); e && *e) return "environment";
+    return portable_root().empty() ? "user" : "portable";
 }
 
 std::string spelling(const std::filesystem::path& path) {
@@ -167,6 +177,15 @@ bool contains_path(const std::filesystem::path& parent, const std::filesystem::p
     // Case folding matters even for a not-yet-created Windows destination.
     auto p = spelling(parent), c = spelling(child);
     if constexpr (mcpp::platform::is_windows) {
+        // Existing ancestors use filesystem identity, including Unicode case
+        // and directory aliases; ASCII folding alone does not cover those.
+        for (auto ancestor = child; !ancestor.empty();) {
+            std::error_code ec;
+            if (std::filesystem::equivalent(parent, ancestor, ec)) return true;
+            const auto next = ancestor.parent_path();
+            if (next == ancestor) break;
+            ancestor = next;
+        }
         std::ranges::transform(p, p.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
         std::ranges::transform(c, c.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     }
@@ -185,9 +204,7 @@ std::expected<Selection, std::string> inspect(const std::filesystem::path& origi
     auto absolute = absolute_home(original);
     if (!absolute) return std::unexpected(absolute.error());
     Selection result{.original = *absolute, .effective = *absolute};
-    result.source = is_system_home(*absolute) ? "system"
-                  : (std::getenv("MCPP_HOME") && *std::getenv("MCPP_HOME")) ? "environment"
-                  : *absolute == default_home() ? "user" : "portable";
+    result.source = is_system_home(*absolute) ? "system" : original_source();
     if (result.source == "system") return result;
     const auto locator = result.original / "home.toml";
     std::error_code ec;
@@ -237,6 +254,14 @@ bool initialized(const std::filesystem::path& path) {
 
 std::expected<Selection, std::string> choose(const std::filesystem::path& target, bool force) {
     if (target.empty()) return std::unexpected("--home requires a non-empty directory");
+    if (original_source() == "user") {
+        const auto* user = std::getenv("HOME");
+        if constexpr (mcpp::platform::is_windows) {
+            if (const auto* profile = std::getenv("USERPROFILE"); profile && *profile) user = profile;
+        }
+        if (!user || !*user)
+            return std::unexpected("cannot save a default home without a user directory; set MCPP_HOME explicitly");
+    }
     auto original = absolute_home(original_root());
     auto effective = absolute_home(target);
     if (!original) return std::unexpected(original.error());

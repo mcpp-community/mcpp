@@ -123,6 +123,8 @@ struct BootstrapFile {
     double       totalBytes      = 0;
     bool         started         = false;
     bool         finished        = false;
+    std::string  sourceHost;
+    int          sourceAttempt = 0;
 };
 
 struct BootstrapProgress {
@@ -131,6 +133,19 @@ struct BootstrapProgress {
 };
 
 using BootstrapProgressCallback = std::function<void(const BootstrapProgress&)>;
+
+// Network facts from the same sources and transport an install uses. Discovery
+// and all probes share a single caller-owned wall-clock budget.
+struct NetworkEndpoint {
+    std::string resource, region, host, status;
+    int httpStatus = 0;
+    double elapsedSeconds = 0;
+    bool reachable = false, proxy = false;
+};
+struct NetworkReport {
+    std::string status; // checked, offline, unavailable, unsupported, timeout
+    std::vector<NetworkEndpoint> endpoints;
+};
 
 // ─── Indexes ────────────────────────────────────────────────────────
 
@@ -417,6 +432,7 @@ public:
     virtual std::filesystem::path sysroot() const = 0;     // headers and libraries a build targets
     virtual std::filesystem::path bin_dir() const = 0;     // the programs it placed
     virtual bool initialized() const = 0;
+    virtual NetworkReport check_network(std::chrono::milliseconds budget = std::chrono::seconds(5)) const = 0;
     virtual std::filesystem::path data_root() const = 0;   // where its indexes are
     virtual std::filesystem::path config_file() const = 0; // the home's own configuration
 

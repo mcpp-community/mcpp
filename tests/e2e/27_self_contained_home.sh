@@ -24,7 +24,11 @@ out=$(env -u MCPP_HOME "$ROOT/bin/mcpp" self env 2>&1)
 echo "$out" | grep -q "MCPP_HOME *= *$ROOT" || {
     echo "mcpp did not self-locate to $ROOT"; echo "--- output:"; echo "$out"; exit 1; }
 
-# And it must have actually populated the layout there.
+# A read-only query must leave the release tree unchanged.
+[[ ! -e "$ROOT/registry" && ! -e "$ROOT/config.toml" ]] || { echo "self env initialized the home"; exit 1; }
+
+# Explicit initialization populates that same home.
+env -u MCPP_HOME "$ROOT/bin/mcpp" self init > "$TMP/init.log" 2>&1 || { cat "$TMP/init.log"; exit 1; }
 [[ -d "$ROOT/registry" ]]            || { echo "missing registry/"; exit 1; }
 [[ -f "$ROOT/config.toml" ]]         || { echo "missing config.toml"; exit 1; }
 [[ -x "$ROOT/registry/bin/xlings" ]]  || { echo "xlings not acquired into $ROOT/registry/bin"; exit 1; }

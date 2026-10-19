@@ -41,7 +41,7 @@ printf 'ok\n' > "$OLD/.mcpp_ok"
 before=$(cd "$OLD" && find . -type f -exec sha256sum {} + | sort)
 
 cd "$TMP"
-"$MCPP" self env > a.log 2>&1 || fail "A: the first run failed" a.log
+"$MCPP" self config --mirror auto > a.log 2>&1 || fail "A: the first run failed" a.log
 [ -f "$MCPP_HOME/indices/mcpplibs/pkgs/f/fixture.lua" ] || fail "A: the index data did not move"
 [ ! -e "$REG/data/mcpplibs" ] || fail "A: the index data is still at the old place"
 python3 - "$REG/.xlings.json" "$MCPP_HOME" <<'PY' || fail "A: the configuration does not record the index's place" "$REG/.xlings.json"

@@ -47,11 +47,11 @@ cd "$TMP"
 
 VENDORED="$MCPP_HOME/registry/bin/xlings$EXE"
 
-"$MCPP" self env > first.out 2> first.err || true
+"$MCPP" self init > first.out 2> first.err || true
 [ -f "$VENDORED" ] || fail "the first command did not vendor xlings at $VENDORED" first.out first.err
 
 # ── A ──────────────────────────────────────────────────────────────────────
-"$MCPP" self env > second.out 2> second.err || true
+"$MCPP" self init > second.out 2> second.err || true
 if grep -qi 'cannot find the path specified' second.err; then
     fail "A: the version probe reached a shell that could not open its redirect" second.err
 fi
@@ -76,7 +76,7 @@ rm -f "$VENDORED"
 cp "$NINJA" "$VENDORED"
 chmod +x "$VENDORED" 2>/dev/null || true
 
-MCPP_VENDORED_XLINGS="$TMP/real/xlings$EXE" "$MCPP" self env > third.out 2> third.err || true
+MCPP_VENDORED_XLINGS="$TMP/real/xlings$EXE" "$MCPP" self init > third.out 2> third.err || true
 grep -q "vendored xlings $older -> " third.err \
     || fail "B: a vendored xlings answering $older was not replaced" third.out third.err
 "$VENDORED" --version 2>/dev/null | grep -q '^xlings ' \
@@ -98,7 +98,7 @@ C_PATH="/usr/bin:/bin"
 if PATH="$C_PATH" command -v xlings > /dev/null 2>&1; then
     fail "C: an xlings is reachable on $C_PATH, so the criterion cannot tell its sources apart"
 fi
-env -u MCPP_VENDORED_XLINGS PATH="$C_PATH" "$TMP/release/bin/mcpp$EXE" self env > fourth.out 2> fourth.err || true
+env -u MCPP_VENDORED_XLINGS PATH="$C_PATH" "$TMP/release/bin/mcpp$EXE" self init > fourth.out 2> fourth.err || true
 grep -q "vendored xlings $older -> " fourth.err \
     || fail "C: the released xlings did not replace a vendored xlings answering $older" fourth.out fourth.err
 "$VENDORED" --version 2>/dev/null | grep -q '^xlings ' \

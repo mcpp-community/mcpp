@@ -78,6 +78,7 @@ struct DeadlineRun {
 };
 
 using OutputSink = void (*)(void* ctx, const char* data, unsigned long len);
+using StopPoll = bool (*)(void* ctx);
 
 // ─── Starting a child is safe for concurrent callers ─────────────────────
 //
@@ -150,7 +151,8 @@ DeadlineRun capture_with_deadline(const char* const* argvEntries,
                                   long long          idleMs,
                                   int                ownGroup,
                                   OutputSink         sink,
-                                  void*              ctx);
+                                  void*              ctx,
+                                  StopPoll           stop);
 
 // ─── A child that outlives the call that started it (#496) ───────────────
 //
@@ -269,7 +271,8 @@ DeadlineRun capture_with_deadline(const char* const* argvEntries,
                                   long long          idleMs,
                                   int                ownGroup,
                                   OutputSink         sink,
-                                  void*              ctx)
+                                  void*              ctx,
+                                  StopPoll           stop)
 {
     DeadlineRun out;
     const bool idleBound = idleMs > 0 && sink != nullptr;
@@ -365,7 +368,7 @@ DeadlineRun capture_with_deadline(const char* const* argvEntries,
         if (!capture) return false;
         ssize_t n;
         bool any = false;
-        while ((n = ::read(fds[0], buf.data(), buf.size())) > 0) {
+        for (int chunks = 0; chunks < 16 && (n = ::read(fds[0], buf.data(), buf.size())) > 0; ++chunks) {
             sink(ctx, buf.data(), static_cast<unsigned long>(n));
             any = true;
         }
@@ -374,6 +377,12 @@ DeadlineRun capture_with_deadline(const char* const* argvEntries,
     };
 
     for (;;) {
+        // Output can be continuous. Check budgets before draining another batch.
+        if (!killed && (std::chrono::steady_clock::now() >= until || (stop && stop(ctx)))) {
+            if (ownGroup) ::killpg(pid, SIGKILL);
+            else ::kill(pid, SIGKILL);
+            killed = true;
+        }
         if (drain()) continue;
 
         pid_t r = ::waitpid(pid, &status, WNOHANG);
@@ -667,7 +676,7 @@ void install_handlers() {
 DeadlineRun capture_with_deadline(const char* const*, unsigned long,
                                   const char* const*, unsigned long,
                                   const char*, long long, long long, int,
-                                  OutputSink, void*) {
+                                  OutputSink, void*, StopPoll) {
     // Not POSIX: mcpp.platform.windows.bounded_process owns this.
     return {};
 }

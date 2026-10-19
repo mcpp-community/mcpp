@@ -26,14 +26,14 @@ fail() { echo "FAIL: $1"; [ -n "${2:-}" ] && cat "$2"; exit 1; }
 UP="$TMP/upstream"
 export MCPP_HOME="$UP"
 source "$(dirname "$0")/_inherit_toolchain.sh"
-"$MCPP" self env > "$TMP/up.env" 2>&1 || fail "the upstream home does not initialise" "$TMP/up.env"
+"$MCPP" self init > "$TMP/up.env" 2>&1 || fail "the upstream home does not initialise" "$TMP/up.env"
 snapshot() { (cd "$UP/registry/data/xpkgs" && find . -maxdepth 2 -printf '%p %l\n' | sort); }
 snapshot > "$TMP/up.before"
 
 # The home under test: nothing installed, the upstream named.
 export MCPP_HOME="$TMP/home"
 mkdir -p "$MCPP_HOME"
-"$MCPP" self env > /dev/null 2>&1 || true
+"$MCPP" self config --mirror auto > /dev/null 2>&1 || true
 sed -i.bak "s|^\[xlings\]\$|[xlings]\nupstream = [\"$(host_path "$UP")\"]|" "$MCPP_HOME/config.toml"
 grep -q '^upstream = ' "$MCPP_HOME/config.toml" || fail "the test could not name the upstream" "$MCPP_HOME/config.toml"
 

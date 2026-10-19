@@ -167,3 +167,4 @@ downstream tooling.
   - [SPEC-007 — Build plugins: configuration, construction and verification, and the runtime and planning obligations](specs/build-plugins.md)
   - [SPEC-008 — A library's interface: public modules, the published closure, and one interface in both forms](specs/library-interface.md)
   - [SPEC-009 — The support and maintenance of toolchains: lines, defaults, provenance, moves and retirement](specs/toolchain-maintenance.md)
+  - [SPEC-010 — Home selection and initialization](specs/home-initialization.md)

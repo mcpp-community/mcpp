@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # requires:
-# `mcpp env` initializes $MCPP_HOME and prints expected layout.
+# `self env` reads a cold home; explicit offline init creates local layout.
 set -e
 
 TMP=$(mktemp -d)
@@ -8,8 +8,16 @@ trap "rm -rf $TMP" EXIT
 
 export MCPP_HOME="$TMP/mcpp-home"
 
-# First invocation should silently init the directory tree.
+# The first query reports paths without creating the home.
 out=$("$MCPP" self env 2>&1)
+[[ ! -e "$MCPP_HOME" ]] || { echo "self env initialized a cold home"; exit 1; }
+
+set +e
+"$MCPP" --offline self init > "$TMP/init.log" 2>&1
+init_rc=$?
+set -e
+[[ "$init_rc" == 0 || "$init_rc" == 1 ]] || { cat "$TMP/init.log"; exit 1; }
+
 
 # Verify directory tree
 [[ -d "$MCPP_HOME/bin" ]]      || { echo "missing bin/"; exit 1; }

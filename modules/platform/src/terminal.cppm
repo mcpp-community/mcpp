@@ -41,6 +41,9 @@ export module mcpp.platform.terminal;
 
 import std;
 import mcpp.platform.unix.bounded_process;
+import mcpp.platform.unix.terminal;
+import mcpp.platform.windows;
+import mcpp.platform.common;
 
 export namespace mcpp::platform::terminal {
 
@@ -213,14 +216,10 @@ bool is_terminal(Stream s) {
 }
 
 bool input_is_terminal() {
-#if defined(_WIN32)
-    DWORD mode = 0;
-    return GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode) != 0;
-#elif defined(__unix__) || defined(__APPLE__)
-    return ::isatty(::fileno(stdin)) != 0;
-#else
-    return false;
-#endif
+    if constexpr (mcpp::platform::is_windows)
+        return mcpp::platform::windows::input_is_terminal();
+    else
+        return mcpp::platform::unix_terminal::input_is_terminal();
 }
 
 bool is_tty() { return is_terminal(Stream::Out); }

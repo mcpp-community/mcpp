@@ -202,3 +202,22 @@ TEST_F(HomeSelection, ReadOnlyConfigurationDoesNotInitializeOrAcquireAProvider) 
     EXPECT_EQ(config->mcppHome, std::filesystem::weakly_canonical(cold));
     EXPECT_FALSE(std::filesystem::exists(cold));
 }
+
+TEST_F(HomeSelection, UserSourceSurvivesOriginalPathNormalization) {
+    const auto user = mcpp::home::spelling(scratch);
+    ScopedEnv env("MCPP_HOME", nullptr);
+    ScopedEnv posixHome("HOME", user.c_str());
+    ScopedEnv windowsHome("USERPROFILE", user.c_str());
+    const auto selected = mcpp::home::inspect(scratch / ".mcpp");
+    ASSERT_TRUE(selected) << selected.error();
+    EXPECT_EQ(selected->source, "user");
+}
+
+TEST_F(HomeSelection, MissingUserDirectoryCannotPublishALocatorInTheWorkingDirectory) {
+    ScopedEnv explicitHome("MCPP_HOME", nullptr);
+    ScopedEnv posixHome("HOME", nullptr);
+    ScopedEnv windowsHome("USERPROFILE", nullptr);
+    const auto selected = mcpp::home::choose(target, true);
+    ASSERT_FALSE(selected);
+    EXPECT_NE(selected.error().find("user directory"), std::string::npos);
+}

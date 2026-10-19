@@ -33,6 +33,51 @@ mcpp 经由其包提供者 xlings 安装工具链与包。payload（一个包的
 `registry/data/xpkgs` 下的 payload 留在原处且仍能找到，基于它们构建的产物继续可以运行。早期 mcpp 写进 payload
 的标记（`.mcpp_ok`、`.mcpp-fixup.json`）不再被读取。
 
+### 选择 home（2026.10.19.1+）
+
+在首次初始化前指定目录：
+
+```powershell
+mcpp self init --home D:\mcpp
+```
+
+选择会跨进程保留，不需要设置环境变量。原始 home 按 `MCPP_HOME`、自包含安装根目录、
+用户目录下 `.mcpp` 的顺序选择。其 `home.toml` 指向实际使用的 home，mcpp 只读取一次。
+默认情况下原始目录与实际目录相同，目标目录中的 locator 不参与解析。`MCPP_HOME` 不会被改写。
+
+已有初始化后的 home 时，需要显式切换：
+
+```powershell
+mcpp self init --force --home E:\mcpp
+```
+
+该操作保存新默认位置并初始化，旧目录和目标目录已有数据均保留。
+`mcpp self config` 和 `mcpp self doctor` 在相关场景报告原始目录、实际目录与前一目录。
+前一目录是报告信息，不代表迁移或自动清理。原始目录与目标目录互相嵌套时拒绝操作。
+重新选择原始目录会删除其 locator。
+
+Windows 首次显式 `self init` 时，若 D 是可写的本地固定磁盘，且 stdin/stderr 均为终端，
+可以提供 `D:\mcpp` 与用户 `.mcpp` 两项选择。Enter 选择 D；仅接受 `1`、`2` 与空行，
+其他输入退出并提示使用 `--home`。Linux、macOS、非交互运行，以及已有环境变量、
+自包含安装或已保存选择的场景均无菜单。
+
+不带 `--home` 的 `self init --force` 保留原有 registry/cache 重置语义；
+重定向场景会先标明实际目标。`--system self init --home` 被拒绝。
+完整选择与持久化规则见 [SPEC-010](../specs/home-initialization.md)。
+
+### 初始化与网络诊断（2026.10.19.1+）
+
+`self env`、`self config`、`self doctor` 和 `toolchain list` 读取本地状态，不安装工具。
+`self config --mirror auto|CN|GLOBAL` 仅更新本地配置，因此网络故障时仍可使用。
+
+初始化因缺少基础工具而需要联网前，会显示提供者已配置资源的有界检查结果。
+`self doctor` 将同类检查结果作为警告报告，本地错误的语义保持不变。
+`--offline` 跳过检查与获取；已有工具和缓存包仍可使用。
+探测失败不会禁用来源或阻止本地复用。
+
+locator 在本地校验成功后、获取资源之前保存。离线缺资源或联网失败导致初始化未完成时，
+退出码为 1，所选目录仍保留。再次运行 `self init` 会在该目录继续。
+
 ## 2. 刷新索引
 
 mcpp 所有的索引被拉取到它旁边的暂存目录，在那里按其声明的下限（`index.toml` 的 `min_mcpp`）检查，只有当前 mcpp
@@ -121,3 +166,7 @@ Windows 上路径长度限制为 260 个字符，除非系统启用长路径（`
 `MCPP_HOME`。mcpp 不修改该设置；`mcpp self doctor` 报告它。
 
 程序自己的清单陈述它是否支持长路径：`windows_long_paths`（[04](04-mcpp-toml.md)）。
+
+## 当前边界
+
+home locator 仅解析一跳，不迁移或删除旧数据，原始目录与目标目录互相嵌套时拒绝。Windows 磁盘选择仅用于首次显式终端初始化；自定义路径使用 `--home`。网络探测只反映当时的资源状态，不能保证后续下载成功。

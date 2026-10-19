@@ -315,6 +315,11 @@ int run_streaming(std::string_view command,
 // run; a caller that parses stdout redirects stderr in the command itself.
 // Returns -1 when the launcher could not run the command at all.
 //
+// `should_stop`, when supplied, is polled on the owning thread even while
+// output continues. It must not throw. A true result kills the process tree
+// and reports timed_out, just like a deadline; callers can distinguish byte
+// progress from heartbeat output without a second reader or a watcher thread.
+//
 // `split_on_cr` also ends a line at a carriage return that is not part of a
 // CRLF pair. A command that redraws one progress line in place (git with
 // `--progress`) then reaches `on_line` once per redraw, as it happens, rather
@@ -324,7 +329,8 @@ int run_streaming_bounded(std::string_view command,
                           std::chrono::milliseconds total,
                           std::chrono::milliseconds idle,
                           bool* timed_out,
-                          bool split_on_cr = false);
+                          bool split_on_cr = false,
+                          std::function<bool()> should_stop = {});
 
 // Run `command`, passing stdout/stderr through to the terminal.
 // Optionally captures stdout into `output` if non-null.
@@ -1120,7 +1126,8 @@ BoundedOutcome dispatch_bounded(
     std::chrono::milliseconds idle = std::chrono::milliseconds{0},
     bool ownGroup = false,
     const std::function<void(std::string_view)>* on_line = nullptr,
-    bool splitOnCr = false)
+    bool splitOnCr = false,
+    const std::function<bool()>* should_stop = nullptr)
 {
     BoundedOutcome outcome;
 
@@ -1147,7 +1154,11 @@ BoundedOutcome dispatch_bounded(
         std::string*                                     buffer;
         const std::function<void(std::string_view)>*     on_line;
         bool                                             splitOnCr;
-    } streamCtx{ &outcome.output, on_line, splitOnCr };
+        const std::function<bool()>*                      should_stop;
+    } streamCtx{ &outcome.output, on_line, splitOnCr, should_stop };
+    const auto stop = should_stop ? +[](void* ctx) -> bool {
+        return (*static_cast<StreamCtx*>(ctx)->should_stop)();
+    } : nullptr;
     using Sink = void (*)(void*, const char*, unsigned long);
     const Sink sink = !capture ? nullptr
         : on_line == nullptr
@@ -1185,7 +1196,7 @@ BoundedOutcome dispatch_bounded(
                        ? windows_command_from_argv(argv)
                        : std::string(windowsCommandLine);
         auto r = mcpp::platform::winproc::capture_with_deadline(
-            cmd.c_str(), envArg, envCount, cwdArg, ms, idleMs, sink, &streamCtx);
+            cmd.c_str(), envArg, envCount, cwdArg, ms, idleMs, sink, &streamCtx, stop);
         outcome.supported = r.supported;
         outcome.exit_code = r.exit_code;
         outcome.timed_out = r.timed_out;
@@ -1197,7 +1208,7 @@ BoundedOutcome dispatch_bounded(
         auto r = mcpp::platform::unixproc::capture_with_deadline(
             argvPtrs.data(), static_cast<unsigned long>(argvPtrs.size()),
             envArg, envCount, cwdArg, ms, idleMs, ownGroup ? 1 : 0,
-            sink, &streamCtx);
+            sink, &streamCtx, stop);
         outcome.supported = r.supported;
         outcome.exit_code = r.exit_code;
         outcome.timed_out = r.timed_out;
@@ -1287,7 +1298,8 @@ int run_streaming_bounded(std::string_view command,
                           std::chrono::milliseconds total,
                           std::chrono::milliseconds idle,
                           bool* timed_out,
-                          bool split_on_cr)
+                          bool split_on_cr,
+                          std::function<bool()> should_stop)
 {
     if (timed_out) *timed_out = false;
     if (command.empty() || (total.count() <= 0 && idle.count() <= 0)) return -1;
@@ -1299,7 +1311,7 @@ int run_streaming_bounded(std::string_view command,
         on_line ? std::move(on_line) : [](std::string_view) {};
     auto r = dispatch_bounded(argv, {}, {}, total, /*capture=*/true,
                               windows_shell_command_line(sealed), idle,
-                              /*ownGroup=*/true, &sink, split_on_cr);
+                              /*ownGroup=*/true, &sink, split_on_cr, should_stop ? &should_stop : nullptr);
     if (!r.supported) return -1;
     if (timed_out) *timed_out = r.timed_out;
     return r.exit_code;

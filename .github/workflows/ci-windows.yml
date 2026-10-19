@@ -35,6 +35,10 @@ jobs:
           "$MCPP_FRESH" --version
           echo "MCPP_SELF=$MCPP_FRESH" >> "$GITHUB_ENV"
 
+      - name: The first home menu is aligned in a native Windows console
+        shell: bash
+        run: MCPP="$MCPP_SELF" python .github/tools/check_windows_home_menu.py
+
       - name: Unit + integration tests via mcpp test
         shell: bash
         run: |

@@ -52,7 +52,7 @@ cat > "$MCPP_HOME/registry/.xlings.json" <<'JSON'
 }
 JSON
 
-"$MCPP" self env > "$TMP/env.log"
+"$MCPP" self config --mirror auto > "$TMP/env.log"
 
 grep -q 'default = "mcpplibs"' "$MCPP_HOME/config.toml" || {
     cat "$MCPP_HOME/config.toml"; echo "config.toml default index was not migrated"; exit 1; }

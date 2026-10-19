@@ -36,7 +36,7 @@ PYEOF2
 # 1. Fresh init: new org URL + artifact declaration in both files.
 # (xlings' own bootstrap may re-serialize .xlings.json with its writer, so
 # assert on the key/value pairs, not on mcpp's seed line layout.)
-"$MCPP" self env > /dev/null
+"$MCPP" self config --mirror auto > /dev/null
 grep -q "url      = \"$NEW_URL\"" "$CFG"  || { echo "config.toml missing new url"; exit 1; }
 grep -qF "artifact = { GLOBAL = \"$ART\", CN = \"$ART_CN\" }" "$CFG" \
     || { echo "config.toml missing the region artifact"; cat "$CFG"; exit 1; }
@@ -74,7 +74,7 @@ cat > "$XJ" <<EOF
   "mirror": "auto"
 }
 EOF
-"$MCPP" self env > /dev/null
+"$MCPP" self config --mirror auto > /dev/null
 grep -q "url = \"$NEW_URL\"" "$CFG"       || { echo "config.toml url not healed"; cat "$CFG"; exit 1; }
 entry_has "{\"url\": \"$NEW_URL\", \"artifact\": $REGION}" \
     || { echo ".xlings.json not healed"; cat "$XJ"; exit 1; }
@@ -85,13 +85,13 @@ fi
 
 # Idempotent: a second run must not touch either file again.
 cp "$CFG" "$TMP/cfg1"; cp "$XJ" "$TMP/xj1"
-"$MCPP" self env > /dev/null
+"$MCPP" self config --mirror auto > /dev/null
 cmp -s "$CFG" "$TMP/cfg1" || { echo "config.toml heal not idempotent"; exit 1; }
 cmp -s "$XJ" "$TMP/xj1"   || { echo ".xlings.json heal not idempotent"; exit 1; }
 
 # 3. Legacy heal (compact spacing, old index name): xlings-writer format.
 printf '{"index_repos":[{"name":"mcpp-index","url":"%s"}],"mirror":"auto"}' "$OLD_URL" > "$XJ"
-"$MCPP" self env > /dev/null
+"$MCPP" self config --mirror auto > /dev/null
 entry_has '{}'                          || { echo "compact name not healed"; cat "$XJ"; exit 1; }
 grep -q 'xlings-res/mcpp-index' "$XJ"  || { echo "compact artifact not injected"; cat "$XJ"; exit 1; }
 grep -q 'gitcode.com/xlings-res/mcpp-index' "$XJ" || { echo "compact artifact has no CN half"; cat "$XJ"; exit 1; }
@@ -99,9 +99,9 @@ grep -q 'gitcode.com/xlings-res/mcpp-index' "$XJ" || { echo "compact artifact ha
 # 4. A home seeded before the region object (flat GitHub base, both spacings)
 #    gains the CN half, once; a base the user wrote is left alone.
 printf '{\n  "index_repos": [\n    { "name": "mcpplibs", "url": "%s", "artifact": "%s" }\n  ],\n  "mirror": "CN"\n}\n' "$NEW_URL" "$ART" > "$XJ"
-"$MCPP" self env > /dev/null
+"$MCPP" self config --mirror auto > /dev/null
 entry_has "{\"artifact\": $REGION}" || { echo "flat default artifact not upgraded"; cat "$XJ"; exit 1; }
-cp "$XJ" "$TMP/xj4"; "$MCPP" self env > /dev/null
+cp "$XJ" "$TMP/xj4"; "$MCPP" self config --mirror auto > /dev/null
 cmp -s "$XJ" "$TMP/xj4" || { echo "region upgrade not idempotent"; diff "$TMP/xj4" "$XJ"; exit 1; }
 # A base the user states in config.toml owns the entry, and has no CN half.
 cat > "$CFG" <<EOF
@@ -112,7 +112,7 @@ default = "mcpplibs"
 url = "$NEW_URL"
 artifact = "https://mirror.example/idx"
 EOF
-"$MCPP" self env > /dev/null
+"$MCPP" self config --mirror auto > /dev/null
 grep -q 'https://mirror.example/idx' "$XJ" || { echo "a user artifact base was rewritten"; cat "$XJ"; exit 1; }
 if grep -q 'gitcode.com/xlings-res/mcpp-index' "$XJ"; then echo "a user artifact base gained a CN half"; cat "$XJ"; exit 1; fi
 if grep -q 'mcpp-community' "$XJ"; then

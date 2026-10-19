@@ -364,7 +364,7 @@ TEST(PmInstallFailurePolicy, OnlyAMissingPackageRefreshesTheIndex) {
     EXPECT_TRUE(mcpp::pm::install_failure_policy("E_NOT_FOUND").refreshIndex);
     EXPECT_TRUE(mcpp::pm::install_failure_policy("E_NOT_FOUND").retry);
     EXPECT_FALSE(mcpp::pm::install_failure_policy("E_NETWORK").refreshIndex);
-    EXPECT_TRUE(mcpp::pm::install_failure_policy("E_NETWORK").retry);
+    EXPECT_FALSE(mcpp::pm::install_failure_policy("E_NETWORK").retry);
     EXPECT_TRUE(mcpp::pm::install_failure_policy("E_INVALID_INPUT").retry);
     // A provider that said nothing (#238): the old conservative path.
     EXPECT_TRUE(mcpp::pm::install_failure_policy("").refreshIndex);

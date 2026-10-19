@@ -211,7 +211,10 @@ export int doctor_report() {
     auto err   = [&](std::string_view m) { mcpp::ui::error(m);   ++errors; };
 
     auto cfg = mcpp::config::load_or_init(true, {}, {}, mcpp::config::Initialization::ReadOnly);
-    if (cfg) report_home(*cfg);
+    if (cfg) {
+        report_home(*cfg);
+        if (mcpp::config::report_network(*cfg)) ++warns;
+    }
 
     // ONE PREPARE, READ-ONLY, AND THE SECTIONS BELOW REPORT ON IT (design
     // 2026-10-17 D7).

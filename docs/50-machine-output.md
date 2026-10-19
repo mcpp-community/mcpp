@@ -186,7 +186,7 @@ mcpp --protocol-version
   "envelope": { "min": 1, "max": 1 },
   "kinds":    { "mcpp.env": 1, "mcpp.xpkg": 1, "mcpp.cache": 1 },
   "commands": {
-    "self env":   { "effects": ["init-mcpp-home"] },
+    "self env":   { "effects": [] },
     "xpkg parse": { "effects": [] },
     "cache list": { "effects": [] }
   }
@@ -302,6 +302,9 @@ mcpp self env --format json
 {
   "initialized": false,          // is there a config.toml yet?
   "mcppHome":    "/home/u/.mcpp",
+  "originalHome":"/home/u/.mcpp",
+  "homeSource":  "user",
+  "homeLocator": "",
   "registry":    "/home/u/.mcpp/registry",
   "xlingsHome":  "/home/u/.mcpp/registry",
   "xlingsBinary":"/home/u/.mcpp/registry/bin/xlings",
@@ -313,11 +316,11 @@ mcpp self env --format json
 }
 ```
 
-This path is read-only, deliberately. The human `mcpp self env` initialises
-`$MCPP_HOME` if it is missing — someone typing it at a prompt expects that —
-but a client asking *where things are* should not be what puts them there. On
-a machine that has never run mcpp, the output is the paths it **would** use and
-`initialized: false`, and the disk is untouched.
+Both human and machine `self env` queries are read-only (2026.10.19.1+).
+On a cold home they report the paths that would be used and `initialized: false`.
+`originalHome` is the locator directory; `mcppHome` is the effective data home.
+`homeSource` names the original selection and `homeLocator` is empty without a
+redirection. These additive fields do not create any files.
 
 That is why this exists at all: without it a client has to reimplement mcpp's
 home resolution, including the part where the `mcpp` on `PATH` may be an

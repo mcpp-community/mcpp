@@ -9,7 +9,7 @@ trap "rm -rf $TMP" EXIT
 export MCPP_HOME="$TMP/mcpp-home"
 
 # init
-"$MCPP" self env > /dev/null
+"$MCPP" self config --mirror auto > /dev/null
 
 # list should at minimum show mcpplibs (from seeded config)
 out=$("$MCPP" index list 2>&1)

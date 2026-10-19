@@ -404,7 +404,8 @@ TEST(XlingsHomeTool, FindsPayloadUnderNonXimPrefix) {
     mcpp::platform::env::set("MCPP_HOME", oldMcppHome ? oldMcppHome : "");
 
     ASSERT_TRUE(found.has_value());
-    EXPECT_EQ(*found, real);
+    // The original home is normalized; macOS spells /var's target /private/var.
+    EXPECT_TRUE(std::filesystem::equivalent(*found, real));
 
     std::filesystem::remove_all(tmp);
 }

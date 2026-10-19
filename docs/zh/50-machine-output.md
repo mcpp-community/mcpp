@@ -157,7 +157,7 @@ mcpp --protocol-version
   "envelope": { "min": 1, "max": 1 },
   "kinds":    { "mcpp.env": 1, "mcpp.xpkg": 1, "mcpp.cache": 1 },
   "commands": {
-    "self env":   { "effects": ["init-mcpp-home"] },
+    "self env":   { "effects": [] },
     "xpkg parse": { "effects": [] },
     "cache list": { "effects": [] }
   }
@@ -265,6 +265,9 @@ mcpp self env --format json
 {
   "initialized": false,          // is there a config.toml yet?
   "mcppHome":    "/home/u/.mcpp",
+  "originalHome":"/home/u/.mcpp",
+  "homeSource":  "user",
+  "homeLocator": "",
   "registry":    "/home/u/.mcpp/registry",
   "xlingsHome":  "/home/u/.mcpp/registry",
   "xlingsBinary":"/home/u/.mcpp/registry/bin/xlings",
@@ -276,11 +279,11 @@ mcpp self env --format json
 }
 ```
 
-这条命令刻意是只读的。人类使用的 `mcpp self env` 会在 `$MCPP_HOME` 缺失时
-初始化它 —— 在提示符下敲这条命令的人预期它会这样做 —— 但一个客户端**询问
-东西在哪**，不应该成为把东西放到那里的原因。在一台从未运行过 mcpp 的机器
-上，得到的输出是它**将会**使用的那些路径，加上 `initialized: false`，而磁盘
-未被触碰。
+人类和机器使用的 `self env` 查询均为只读（2026.10.19.1+）。
+冷 home 下返回将使用的路径和 `initialized: false`。
+`originalHome` 是 locator 所在目录，`mcppHome` 是实际数据目录；
+`homeSource` 表示原始目录的选择来源，未重定向时 `homeLocator` 为空。
+这些新增字段不会创建文件。
 
 这也是这个 kind 存在的理由：没有它，客户端就得自己重新实现一遍 mcpp 的 home
 解析逻辑 —— 包括「PATH 上的 `mcpp` 可能是一个 xlings shim 而不是真正的

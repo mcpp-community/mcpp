@@ -37,7 +37,7 @@ MCPP_INHERIT_CONFIG=0 source "$(dirname "$0")/_inherit_toolchain.sh"
 cd "$TMP"
 
 VENDORED="$MCPP_HOME/registry/bin/xlings$EXE"
-"$MCPP" self env > setup.out 2> setup.err || true
+"$MCPP" self init > setup.out 2> setup.err || true
 [ -f "$VENDORED" ] || fail "setup: the first command did not vendor xlings at $VENDORED" setup.out setup.err
 "$VENDORED" --version 2>/dev/null | grep -q '^xlings ' \
     || fail "setup: the vendored binary does not answer as xlings" setup.err
@@ -71,7 +71,7 @@ fi
 place() { rm -f "$1"; cp "$2" "$1"; chmod +x "$1" 2>/dev/null || true; }
 run() {   # run <name>: the release-layout mcpp, with the test PATH
     env -u MCPP_VENDORED_XLINGS PATH="$TMP/pathbin:$BASE_PATH" \
-        "$TMP/release/bin/mcpp$EXE" self env > "$1.out" 2> "$1.err" || true
+        "$TMP/release/bin/mcpp$EXE" self init > "$1.out" 2> "$1.err" || true
 }
 count() { grep -c "$1" "$2" || true; }
 

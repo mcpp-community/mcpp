@@ -11,7 +11,7 @@ trap "rm -rf $TMP" EXIT
 export MCPP_HOME="$TMP/mcpp-home"
 
 # init (this is the one place a first run may fetch the index)
-"$MCPP" self env > /dev/null
+"$MCPP" self init > /dev/null
 
 # status: exits 0, prints the table header + both index rows
 out=$("$MCPP" index status 2>&1)
