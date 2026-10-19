@@ -319,7 +319,8 @@ mcpp self env --format json
 Both human and machine `self env` queries are read-only (2026.10.19.1+).
 On a cold home they report the paths that would be used and `initialized: false`.
 `originalHome` is the locator directory; `mcppHome` is the effective data home.
-`homeSource` names the original selection and `homeLocator` is empty without a
+`homeSource` names the effective selection (`locator` when redirected, otherwise
+`environment`, `portable`, `user` or `system`); `homeLocator` is empty without a
 redirection. These additive fields do not create any files.
 
 That is why this exists at all: without it a client has to reimplement mcpp's

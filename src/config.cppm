@@ -1101,7 +1101,10 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
 }
 
 void print_env(const GlobalConfig& cfg) {
-    std::println("MCPP_HOME           = {}", cfg.mcppHome.string());
+    const auto home = mcpp::home::selection();
+    std::println("MCPP_HOME           = {}", mcpp::home::spelling(home.original));
+    if (home.redirected)
+        std::println("mcpp home           = {}", mcpp::home::spelling(cfg.mcppHome));
     std::println("xlings binary       = {}", cfg.xlingsBinary.string());
     std::println("xlings pinned       = {}", kXlingsPinnedVersion);
     std::println("xlings home         = {}", cfg.xlingsHome().string());

@@ -446,3 +446,21 @@ Windows runner；已有 D:\mcpp 时拒绝测试，禁止清理未知 home。
 拼写差异），以及把 self env 当作初始化入口的 E2E。前者改用目录身份比较，并由原始解析来源
 直接报告 user/portable；后者改为显式初始化或本地配置修改。最终 head 的全 CI 尚未完成，
 provider 尚未发布和更新 floor，当前不能宣称 T4—T8 完成，未合入也未发布 mcpp。
+
+
+### 12.4 补充 review：首次请求、只读入口与安装器
+
+安装接口的总保护不能只依赖第一个 download_progress 事件：首次索引获取可能发生在它之前。
+统一的安装期限状态同时覆盖结构化安装入口与 bootstrap 入口：前置资源阶段 120 秒；活动下载
+按字节与候选变化判断 30 秒无进展；进入解压、hook 或配置后交还本地阶段与最终进程期限。
+超时保留先前已报告的本地错误，网络超时作为 E_NETWORK 返回，禁止再通过另一个前端重复下载。
+
+端点查询前先在同一个 5 秒预算内读取 provider handshake。旧 provider 不支持诊断时停止在握手，
+避免未知 capability 被其通用命令入口当成写操作。真实 CLI 联调也暴露 provider 自身会为新查询
+创建 operation journal；前置 PR 增加只读登记，并跳过这些 interface 读取的旧 home 采用和 profile
+升级，加入目录与文件内容不变的对照。此补丁仍待最终 CI，不把此前 6 个网络用例当成新断言已通过。
+
+独立 install.sh 继续使用其原有 curl 传输，补齐两侧镜像、版本元数据和校验文件的等待保护。
+连接 8 秒；元数据总上限 120 秒；压缩包最终上限 3 小时。curl 的最小非零 low-speed 阈值为
+1 B/s，窗口 30 秒，因此安装器的低速保护与 mcpp/provider 的严格字节 idle 判断并不等同；
+不能用 curl 参数测试替代 provider 连续字节进展的验收。

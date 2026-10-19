@@ -282,7 +282,8 @@ mcpp self env --format json
 人类和机器使用的 `self env` 查询均为只读（2026.10.19.1+）。
 冷 home 下返回将使用的路径和 `initialized: false`。
 `originalHome` 是 locator 所在目录，`mcppHome` 是实际数据目录；
-`homeSource` 表示原始目录的选择来源，未重定向时 `homeLocator` 为空。
+`homeSource` 表示实际目录的选择来源（重定向时为 `locator`，否则为
+`environment`、`portable`、`user` 或 `system`），未重定向时 `homeLocator` 为空。
 这些新增字段不会创建文件。
 
 这也是这个 kind 存在的理由：没有它，客户端就得自己重新实现一遍 mcpp 的 home

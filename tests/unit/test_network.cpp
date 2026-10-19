@@ -13,7 +13,13 @@ struct NetworkFixture {
     NetworkFixture(std::string_view script) {
         std::filesystem::create_directories(dir);
         env = {dir / "provider", dir, {}};
-        std::ofstream(env.binary) << "#!/bin/sh\n" << script;
+        std::ofstream(env.binary) << R"SH(#!/bin/sh
+touch "$XLINGS_HOME/invoked"
+if [ "$2" = "--version" ]; then
+    echo '{"features":["network_diagnostics"]}'
+    exit 0
+fi
+)SH" << script;
         std::filesystem::permissions(env.binary, std::filesystem::perms::owner_all);
     }
     ~NetworkFixture() { std::error_code ec; std::filesystem::remove_all(dir, ec); }
@@ -104,4 +110,14 @@ TEST(NetworkProcess, ProgressCancellationIsPolledWhileOutputContinues) {
     EXPECT_TRUE(stopped);
     EXPECT_GT(lines, 0);
     EXPECT_LT(steady_clock::now() - start, seconds(3));
+}
+
+TEST(NetworkCheck, IndexPreparationIsBoundedBeforeTheFirstDownloadEvent) {
+    using namespace std::chrono;
+    const auto start = steady_clock::now();
+    mcpp::provider::xlings::InstallDeadline deadline(seconds(120), seconds(30), start);
+    deadline.observe(R"({"kind":"heartbeat","ts":100})", start + seconds(119));
+    EXPECT_TRUE(deadline.expired(start + seconds(120)));
+    deadline.observe(R"({"kind":"progress","phase":"extract","percent":0})", start + seconds(119));
+    EXPECT_FALSE(deadline.expired(start + minutes(10)));
 }

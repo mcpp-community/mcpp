@@ -141,7 +141,7 @@ with tempfile.TemporaryDirectory(prefix='mcpp-console-menu-') as temporary:
                                       encoding='utf-8', timeout=10, check=True)
                 home = Path(json.loads(data.stdout)['data']['mcppHome'])
                 expected = Path('D:/mcpp') if name == 'default' else profile / '.mcpp'
-                assert os.path.normcase(str(home)) == os.path.normcase(str(expected)), data.stdout
+                assert os.path.samefile(home, expected), data.stdout
                 assert (expected / 'config.toml').is_file(), text
         finally:
             if proc.poll() is None:

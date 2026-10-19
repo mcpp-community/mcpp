@@ -51,7 +51,11 @@ trap 'rm -rf "$WORK"' EXIT
 GH_REL="https://github.com/${REPO}/releases"
 GTC_API="https://api.gitcode.com/api/v5/repos/xlings-res/mcpp"
 GTC_DL="https://gitcode.com/xlings-res/mcpp/releases/download"
-CT=8   # connect timeout (s) for the GitHub probe before falling back
+# curl is the installer's existing transport. Bound both mirrors and metadata;
+# 1 B/s is its smallest nonzero low-speed threshold, over a 30-second window.
+CURL_TRANSFER=(--connect-timeout 8 --speed-limit 1 --speed-time 30)
+CURL_ARCHIVE=("${CURL_TRANSFER[@]}" --max-time 10800)
+CURL_METADATA=("${CURL_TRANSFER[@]}" --max-time 120)
 
 fetch_github() {
     local url
@@ -62,7 +66,7 @@ fetch_github() {
     fi
     echo ":: Trying GitHub: ${url}"
     if curl --fail --location --silent --show-error \
-            --connect-timeout "$CT" -o "$WORK/mcpp.tar.gz" "$url"; then
+            "${CURL_ARCHIVE[@]}" -o "$WORK/mcpp.tar.gz" "$url"; then
         SHA_URL="${url}.sha256"; SOURCE="GitHub"; return 0
     fi
     return 1
@@ -74,7 +78,7 @@ fetch_gitcode() {
         # GitCode has no 'latest' redirect — resolve the highest release tag.
         # per_page=100: the default page (20) lists oldest-first and misses
         # recent versions, so a plain sort would pick a stale release.
-        ver=$(curl --fail --location --silent --connect-timeout "$CT" \
+        ver=$(curl --fail --location --silent "${CURL_METADATA[@]}" \
                 "${GTC_API}/releases?per_page=100" 2>/dev/null \
               | grep -oE '"tag_name":"[^"]+"' | sed 's/.*:"//; s/"$//' \
               | sort -V | tail -1)
@@ -82,7 +86,7 @@ fetch_gitcode() {
     fi
     local url="${GTC_DL}/${ver}/mcpp-${ver}-${PLAT}.tar.gz"
     echo ":: Trying GitCode (CN mirror): ${url}"
-    if curl --fail --location --silent --show-error -o "$WORK/mcpp.tar.gz" "$url"; then
+    if curl --fail --location --silent --show-error "${CURL_ARCHIVE[@]}" -o "$WORK/mcpp.tar.gz" "$url"; then
         SHA_URL="${url}.sha256"; SOURCE="GitCode"; VERSION="$ver"; return 0
     fi
     return 1
@@ -97,7 +101,7 @@ else
 fi
 echo ":: Downloaded from ${SOURCE}"
 # .sha256 sidecar is GitHub-only; GitCode mirror ships tarballs without it.
-curl --fail --location --silent --show-error -o "$WORK/mcpp.sha256" "$SHA_URL" 2>/dev/null || {
+curl --fail --location --silent --show-error "${CURL_METADATA[@]}" -o "$WORK/mcpp.sha256" "$SHA_URL" 2>/dev/null || {
     echo "warning: no .sha256 sidecar (${SOURCE}), skipping verification" >&2
 }
 
