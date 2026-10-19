@@ -478,3 +478,19 @@ provider `85d321f2` 删除独立后台 HEAD 预取：进度总量来自实际 GE
 payload_status 返回本地 E_NOT_FOUND 也必须保持 home 不变。实际 mcpp doctor 联调已验证
 在线故障能显示诊断且继续本地检查，离线不请求资源；该 E2E 在 provider 发布和 pin 更新后
 才加入正式测试集合。
+
+
+### 12.6 完整 CI 发现的规划与路径回归
+
+macOS E2E 916 的迁移位置已正确，但原断言只做 lexical normpath 比较，无法识别
+/var 与 /private/var。改为 realpath 比较后，Linux 符号链接别名 fixture 通过；同一 fixture
+恢复原断言时按预期失败，仍保留索引实际迁移和旧载荷内容不变的检查。
+
+Windows E2E 688 在冷 home 的只读构建数据库规划失败。本地重现的 JSON 明确报告
+registry/bin/xlings 缺失：只读配置正确地没有获取二进制，但规划仍使用实际执行的
+bootstrap 前置检查。修正为仅实际执行要求完整 bootstrap，规划读取已有工具链，所需资源
+仍由各消费者校验。重新链接后 E2E 688 全部通过，包括冷 std 缓存不产生编译输出，以及
+configure-only 对照会实际编译 std。该修正的 Windows CI 验收尚待完成。
+
+provider 网络测试另以 `if constexpr` 隔离小写代理环境变量设置，避免 Windows 大小写不敏感
+导致测试恢复到被修改后的代理值；修正后 8 个网络用例重新通过。产品接口没有因此改变。
