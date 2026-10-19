@@ -172,6 +172,11 @@ jobs:
           if grep -F "MCPP_HOME" env.txt | grep -qF "site-packages"; then
             echo "::error::MCPP_HOME resolved into the Python environment"; exit 1
           fi
+          # Environment queries are read-only. Explicit initialization owns
+          # seeding the bundled provider and acquiring bootstrap tools.
+          [[ ! -e "$home/.mcpp/registry" ]] \
+            || { echo "::error::self env initialized the registry"; exit 1; }
+          "$bin/mcpp" self init
           # On Windows mcpp runs the vendored xlings in place (src/config.cppm,
           # make_xlings_env), so the seeded copy is checked on POSIX only.
           if [[ "$RUNNER_OS" != "Windows" ]]; then

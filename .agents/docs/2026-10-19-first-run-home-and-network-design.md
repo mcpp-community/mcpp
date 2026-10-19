@@ -5,7 +5,7 @@ status: active
 
 # 首次初始化、home 重定向与网络诊断优化设计
 
-状态：按最新反馈修订；R2、R3、R4、R5、R7 已获用户认可，R1 与 R6 的两阶段优先级及 Windows 排版已明确。设计语义与实现验收分开记录，具体进展见第 12 节。
+状态：功能已通过最终 head 的完整 CI，并在综合 review 后 squash 合入；发布与生态验收继续记录于第 12 节。R1—R7 的确认语义保持不变。
 
 执行状态：用户已授权完整实现、单功能 PR、全 CI、自我 review 后 squash 合入和发布。以下为实施中的验收账本，不将草稿或发布版探针作为新功能已完成的证据。
 
@@ -17,7 +17,7 @@ status: active
 | T4 有界资源探测与下载进展/取消 | T2；核实 xlings 现有接口和 low-speed 能力 | 可控端点覆盖 DNS/代理/TLS/停滞/持续进展与进程树清理 |
 | T5 文档、规范、升级与版本 | T1—T4 行为稳定 | 中英文规范/手册一致；版本 pin 与兼容检查 |
 | T6 单 PR 完整 CI 与综合 review | T1—T5、适用单测/E2E 通过 | 当前 PR head 的实际 CI 结果及 review 记录 |
-| T7 squash、release 与 GitCode 补齐 | T6 全部通过 | 合入 SHA、tag、四平台签名校验资源、GitCode GET 核验 |
+| T7 squash、release 与 GitCode 补齐 | T6 全部通过 | 合入 SHA、tag、四平台 SHA-256 校验资源、GitCode GET 核验 |
 | T8 xlings 生态真实验证 | T7 资源与索引传播 | 精确版本和 latest 安装、冷/暖/离线使用及各分发验证 |
 
 T1 与 T2 为当前实施入口；T3/T4 共享底层但不互相依赖。版本在发布前按当日空闲序号确定，bootstrap pin 不领先于实际已发布并入索引的版本。尽量在一个 mcpp 功能 PR 中完成；如 provider 缺少必要接口，记录证据后处理上游依赖，不伪造 mcpp 已实现下载层能力。
@@ -696,3 +696,85 @@ be6fb711 的四平台构建通过，Windows 原生菜单的非法输入和 EOF �
 
 取消之后的 target-matrix 汇总 job 117935724226 也返回失败：扫描作业被取消，下载结果为
 0 个 matrix 产物，未进入目标行为对照。保留此结果，不修改汇总 gate 或减少预期平台。
+
+### 12.15 最终 CI、跨平台验收与合入
+
+最终功能 head 为 `737d2fcec2e145375f7a5b77f875f19983718c22`。
+[完整 CI 39214916663](https://github.com/mcpp-community/mcpp/actions/runs/39214916663)
+的 67 个作业全部成功；独立 ARM64 冷安装运行 39214916512 和 Windows CRT 运行
+39214916640 成功。PR 汇总为 71 项成功、2 项条件跳过，无失败、取消或待运行项。
+跳过项为仅手动候选索引验收和 iOS runner 诊断回退，不替代对应的正式运行证据。
+
+Windows 正式作业 117938043817 通过全部 7 个原生菜单用例、完整单元/集成测试、
+旧 ACP 专项的 16 个 home 用例和打包 smoke。Unicode locator 在旧 ACP 专项中实际
+执行成功；常规 UTF-8 作业的条件跳过不算作这项证据。Windows E2E 作业
+117938043938 和 117938044210 分别实际通过 home 919 与网络 920；macOS Xcode 27
+作业 117937765860 和 117937765975 也分别实际通过这两项。覆盖包括路径/环境优先级、
+并发发布、替换失败保留、force 边界、有界 HTTP/TLS 故障及离线零资源请求。
+
+全部检查完成后，按架构、稳定性、简洁性、交互、兼容升级、平台、文档和发布准备
+逐项自我 review，无阻断发现。home 负责单跳解析和原子指向，CLI 负责交互，provider
+负责真实资源、传输和回退；终端入口使用 `if constexpr`，系统宏限于平台 API 绑定。
+原 home 锁在联网前释放，只读查询不获取工具，显式 force-home 不清理两侧数据。
+TLS 失败可能被传输库归为 connect 的边界在中英文手册和测试中一致说明；#816 和
+benchmark 独立问题仍不在本功能的修复范围内。
+
+[功能 PR #824](https://github.com/mcpp-community/mcpp/pull/824) 于 07:56 UTC squash
+合入，main 提交为 `4f92be639600d2e5562623f000deaab335335ca0`，与验收 head 的
+完整文件树一致。`v2026.10.19.1` 指向该提交；为优先发布，取消同一 main 提交的
+重复 CI，不将取消计作成功，也未跳过上述合入前完整 gate。
+
+### 12.16 公开版首次运行与安装回退实测
+
+[发布运行 39219375110](https://github.com/mcpp-community/mcpp/actions/runs/39219375110)
+的 mcppls 和 xlings canary 分别通过 3/3 和 2/2 条命令；xlings 报告为 165 项测试通过、
+0 项失败。Linux x86_64、Windows x86_64 和 macOS ARM64 已完成构建、打包及包内
+smoke；本次检查时 Linux ARM64 仍在构建，因此此处不声称四平台发布已完成。
+
+首个公开 Linux 静态载荷的 SHA-256 为
+`b9b83298c243a024bf9720f303d4d542958d7d8d9aea604d996039af2546c8a8`。
+以该载荷及其随附 provider 实际运行 home 919、网络 920 和冷/暖/离线 E2E 22，
+全部通过。只读 portable 查询未写入隔离用户目录。GitCode 补齐在资源出现后即执行，
+不等待发布运行结束；截至本节记录，3 个已出平台的归档及 sidecar 共 6 件已逐个完整
+GET 并核对 SHA-256，其余平台和封存 manifest 仍待后续验收。
+
+公开 `install.sh` 在隔离 HOME/PREFIX 中实测：将 GitHub 代理设置为不可连接端点，
+GitCode 保持直连，脚本报告 GitHub 不可用、回退 GitCode、SHA-256 校验通过，安装后
+实际返回 `mcpp 2026.10.19.1`，未修改用户 profile。校验采用 SHA-256 内容摘要，
+不将其描述为代码签名或发布者身份签名。
+
+另在空环境原 home 下执行 `self init --home <中文路径>`。下载前显示 GLOBAL/CN
+的 xim、mcpplibs 可达状态；patchelf 从 GitCode 下载成功，ninja 的 3 次实际源尝试
+依次为 kkgithub.com、gitcode.com、ghfast.top，随后完成。新进程的 JSON env 确认
+`homeSource=locator`、`originalHome` 与 `mcppHome` 各自正确。该记录证明真实首次
+联网初始化和持久选择，不以预置工具链或缓存命中代替下载路径。
+
+### 12.17 PyPI 安装验证的初始化入口
+
+发布后核对发现，原 PyPI smoke 在 `self env` 后立即断言用户 home 中已有 provider。
+公开版在与 launcher 相同的 `MCPP_HOME`、`MCPP_VENDORED_XLINGS` 环境下实际查询
+成功且 registry 不存在；该旧断言依赖查询隐式 bootstrap，与新只读契约冲突。
+收尾变更先断言查询没有创建 registry，再显式执行 `self init`，随后保留原有 POSIX
+provider 复制断言。测试仍安装真实 wheel，校验实际版本、用户 home 位于 Python
+环境外及随附 provider 可用于初始化；其四平台 CI 结果须另行记录。
+
+### 12.18 四平台发布与资源审计完成
+
+发布运行 39219375110 已全部成功，包括四平台打包 smoke、manifest 封存和生态镜像。
+21 个公开资源均独立下载并核对长度与 SHA-256；按封存工具重新计算的 manifest 与
+公开 manifest 一致，4 组版本化归档与无版本别名内容一致，tag 解引用为合入提交
+`4f92be639600d2e5562623f000deaab335335ca0`。公开 Linux 二进制与随附 provider
+的实际运行及只读 portable home 检查通过。8 个版本化归档/sidecar 在发布完成前
+全部经本地补齐及 GitCode 完整 GET/SHA-256 核验；GitHub 镜像的同名 8 件资源的
+长度及服务端 SHA-256 也与源站一致。
+
+公开资源构建的四类 wheel 均生成成功。本地隔离 venv 让 pip 从全部 wheel 中自行
+选择 Linux x86_64 包，版本、home 位于 venv 外、查询只读、显式初始化均通过，
+复制进用户 home 的 provider SHA-256 与公开载荷完全相同。原 PyPI 自动运行
+39228956792 的 Windows 安装通过，3 个 POSIX 作业均在原有隐式初始化断言失败，
+发布步骤跳过；该结果不计作新测试契约已通过，也未上传部分 wheel。
+
+Homebrew 官方 bump 39228935389 和 Nix 官方 bump 39228946050 成功，已发布定义
+均为 2026.10.19.1，资源摘要与本次 manifest 一致。Homebrew 的 Xcode 27 原生冷安装
+作业 117981996630 已实际通过安装、创建项目及运行；Nix 完整 CI、其余冷安装和
+AUR/PyPI 收敛结果继续按实际作业核验。

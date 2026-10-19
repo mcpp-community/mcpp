@@ -51,8 +51,10 @@ the binary as a child process and exits with its status.
 3. runs `twine check --strict`;
 4. installs from the directory of all four wheels on Linux x86_64, Linux
    aarch64, macOS arm64 and Windows x86_64, so pip picks the wheel. It then
-   checks the version, that `MCPP_HOME` is outside the Python environment, and,
-   on POSIX, that the bundled xlings was seeded into the home;
+   checks the version, that `MCPP_HOME` is outside the Python environment, and
+   that the environment query leaves the registry uninitialized. It explicitly
+   runs `mcpp self init` before checking, on POSIX, that the bundled xlings was
+   seeded into the home;
 5. uploads to PyPI through Trusted Publishing, when publishing is enabled.
 
 | Trigger | Publishes |
