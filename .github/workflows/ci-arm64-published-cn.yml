@@ -10,8 +10,8 @@ on:
         description: Native distro backend used only as CI isolation infrastructure
         required: true
         type: choice
-        default: proot
-        options: [proot, bwrap]
+        default: bwrap
+        options: [bwrap, proot]
 permissions:
   contents: read
 concurrency:

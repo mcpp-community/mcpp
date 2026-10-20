@@ -3,7 +3,7 @@
 set -euo pipefail
 version=${1:?exact published mcpp version}
 repo=${2:?checkout holding these tools and the canonical client pin}
-backend=${3:-proot}
+backend=${3:-bwrap}
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 2
 [[ "$(uname -m)" == aarch64 ]] || exit 2
 [[ "$backend" == proot || "$backend" == bwrap ]] || exit 2
@@ -43,17 +43,17 @@ xl="$base/bootstrap/xlings-$xl_version-linux-aarch64/bin/xlings"
 "$xl" update
 cp "$base/data/xim-pkgindex/.xlings-index-cache.json" "$base/reports/outer-published-index.json"
 # Native backend is provided by distro infrastructure, never labeled an xim
-# ARM package. The published bwrap package is x86-only. The client locates the
-# system proot directly; bwrap's current locator needs this explicit private
-# system-backend directory. Record the symlink and actual distro version.
+# ARM package. Record its distro version and use the published client's
+# documented isolation setup, which prepares a root-owned bwrap and a narrow
+# AppArmor profile when needed, without disabling the host's restriction.
 backend_package="$backend"
 [[ "$backend" != bwrap ]] || backend_package=bubblewrap
 dpkg-query -W "$backend_package" | tee "$base/reports/backend-version.txt"
 command -v "$backend" | tee "$base/reports/backend-path.txt"
 sha256sum "$(command -v "$backend")" > "$base/reports/backend.sha256"
 if [[ "$backend" == bwrap ]]; then
-    mkdir -p "$base/data/xpkgs/xim-x-bwrap/ci-system-backend/bin"
-    ln -s /usr/bin/bwrap "$base/data/xpkgs/xim-x-bwrap/ci-system-backend/bin/bwrap"
+    "$xl" self doctor --isolation --fix -y | tee "$base/reports/isolation-doctor.txt"
+    "$xl" self doctor --isolation --json > "$base/reports/isolation-doctor.json"
 fi
 # Independently prove the exact mcpp archive is available through public CN.
 mcpp_archive="mcpp-$version-linux-aarch64.tar.gz"

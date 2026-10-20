@@ -114,6 +114,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 tests/scripts/test_check_workflow_assertions.py
+          python3 tests/scripts/test_release_install_verification.py
           python3 .github/tools/check_workflow_assertions.py --check-open
 
       - name: The release canary runner runs each command under the named bash

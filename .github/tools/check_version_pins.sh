@@ -123,7 +123,7 @@ done
 # literal:
 if grep -qE "MCPP_PIN:[[:space:]]*['\"]?[0-9]" .github/workflows/ci-fresh-install.yml; then
   bad "ci-fresh-install.yml hardcodes MCPP_PIN again — it must stay derived from
-       wait-index's releases-API lookup, or the index guard and the install jobs
+       resolve-version's releases-API lookup, or the index guard and the install jobs
        can once more disagree about which version is under test (#265)"
 fi
 
