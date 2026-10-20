@@ -54,8 +54,20 @@ project="${CN_PROBE_PROJECT:-hello}"
 "$MCPP" new "$project"
 cd "$work/$project"
 "$MCPP" build 2>&1 | tee "$work/native-default-build.log"
-grep -q 'Resolved llvm@23.1.3' "$work/native-default-build.log"
-grep -Eq 'aarch64-(unknown-)?linux-gnu' "$work/native-default-build.log"
+# Cold automatic provisioning and warm resolution have different progress
+# messages. Assert the documented build facts instead of a human log banner.
+"$MCPP" emit build-database --format json > "$work/native-build-database.json"
+python3 - "$work/native-build-database.json" "$project" "$MCPP_HOME" <<'PYDEFAULT'
+import json,pathlib,sys
+envelope=json.load(open(sys.argv[1]))
+assert envelope['kind']=='mcpp.build-database',envelope
+database=envelope['data']['database']
+selected=next(s for s in database['sets'] if s['name']==sys.argv[2])
+toolchain=database['ide']['toolchains'][selected['ide']['toolchain']]
+assert toolchain['family']=='clang' and toolchain['version']=='23.1.3',toolchain
+assert toolchain['target'] in ('aarch64-linux-gnu','aarch64-unknown-linux-gnu'),toolchain
+pathlib.Path(toolchain['driver']).resolve().relative_to(pathlib.Path(sys.argv[3]).resolve())
+PYDEFAULT
 mapfile -t native_bins < <(find target -type f -path "*/bin/$project")
 [[ "${#native_bins[@]}" == 1 ]] || exit 1
 readelf -hW "${native_bins[0]}" | tee "$work/native-header.txt"

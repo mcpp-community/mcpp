@@ -58,6 +58,7 @@ jobs:
             ${{ env.XLINGS_HOME }}/reports/*.sha256
             ${{ env.XLINGS_HOME }}/subos/cn-arm64-published/probes/runs/*/probe.log
             ${{ env.XLINGS_HOME }}/subos/cn-arm64-published/probes/runs/*/*.txt
+            ${{ env.XLINGS_HOME }}/subos/cn-arm64-published/probes/runs/*/*.json
             ${{ env.XLINGS_HOME }}/subos/cn-arm64-published/probes/runs/*/*.sha256
             ${{ env.XLINGS_HOME }}/subos/cn-arm64-published/probes/runs/*/*.log
             ${{ env.XLINGS_HOME }}/subos/cn-arm64-published/probes/runs/*/members.tsv
