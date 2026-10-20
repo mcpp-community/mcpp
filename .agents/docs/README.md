@@ -18,11 +18,15 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-334 records.
+335 records.
 
 ## By subject
 
 Records that declare one. Everything else is listed by date below.
+
+### build
+
+- [依赖 image 的资源归属、模块扫描边界与锁文件稳定写入](2026-10-21-resource-ownership-module-scan-and-lock-write-design.md) — active
 
 ### build-program
 
@@ -134,6 +138,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-10
 
+- [依赖 image 的资源归属、模块扫描边界与锁文件稳定写入](2026-10-21-resource-ownership-module-scan-and-lock-write-design.md) — active
 - [首次初始化、home 重定向与网络诊断优化设计](2026-10-19-first-run-home-and-network-design.md) — landed
 - [升级的连续性：打包修订不在使用路径上替换载荷、替换失败不拆掉可用状态、home 中的悬空记录自愈、真实的升级 lane](2026-10-17-upgrade-continuity-design.md) — active
 - [mcpp 对 xlings 的依赖：Provider 端口、归属与位置、上游复用、系统级安装、payload 不可变、文件系统能力与长路径（#809）](2026-10-16-xlings-provider-port-and-shared-store-design.md) — active
