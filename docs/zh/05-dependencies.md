@@ -78,6 +78,9 @@ widget = { version = "1.0", backend = "glfw_opengl3" }  # Sugar for: features=["
 一族 `backend-*`）。若目标包声明了 `[features]` 但不含所请求的 feature
 （包括 backend 脱糖的结果），默认给出 warning，`mcpp build --strict` 下报错。
 
+构建记录相同的解析结果时，`mcpp.lock` 保留原内容与修改时间（2026.10.21.1+）。
+仅 LF 与 CRLF 行结束形式不同不会触发改写。这不跳过依赖解析，也不改变锁定范围。
+
 **Git 依赖与 `mcpp.lock`**:`tag` 和 `rev` 已经指向历史中的一个固定点，而
 `branch` 是会移动的。首次构建把分支解析成一个 commit 并写进 `mcpp.lock`,
 此后每次构建都重新构建**那个** commit —— lock 是权威来源而不是缓存提示，

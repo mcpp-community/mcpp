@@ -164,7 +164,11 @@ static std::expected<void, std::string> step13_source_packages(PrepareState& sta
                 [&](const BuildContext::SourcePackage& sp) {
                     return sp.root.lexically_normal() == normalized;
                 });
-            if (!known)
+            // Legacy project-local index payloads can lie outside storeRoots.
+            // Their version, not an editable source tree, is the input (#807).
+            const bool versionPayload = i > 0 && i - 1 < state.dep_cache_identities.size()
+                && state.dep_cache_identities[i - 1].sourceKind == "version";
+            if (!known && !versionPayload)
                 ctx.sourcePackages.push_back({qualified(state.packages[i].manifest),
                                               normalized,
                                               state.packages[i].manifest.modules.sources});

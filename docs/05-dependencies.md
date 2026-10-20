@@ -83,6 +83,11 @@ package declares `[features]` but does not include the requested feature (includ
 the result of backend desugaring), a warning is issued by default, and an error
 under `mcpp build --strict`.
 
+An unchanged `mcpp.lock` retains its contents and modification time when a build
+records the same resolution (2026.10.21.1+). LF and CRLF line endings are accepted
+without rewriting an otherwise identical file. This does not skip dependency
+resolution or change which dependencies the lock pins.
+
 **Git dependencies and `mcpp.lock`**: a `tag` or `rev` already names a fixed point
 in history, but a `branch` moves. The first build resolves the branch to a commit
 and records it in `mcpp.lock`, and every later build rebuilds **that** commit — the

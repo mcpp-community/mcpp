@@ -199,7 +199,7 @@ std::expected<void, LockError> write(const Lockfile& lock, const std::filesystem
         if (!in) return std::unexpected(LockError{std::format("cannot read '{}'", path.string())});
         std::string prior;
         for (char c; in.get(c); ) prior.push_back(c);
-        if (!in.eof())
+        if (in.bad() || !in.eof())
             return std::unexpected(LockError{std::format("cannot read '{}'", path.string())});
         std::string normalized;
         normalized.reserve(prior.size());

@@ -5,8 +5,8 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.15 |
-| **最后修改** | 2026-10-11 |
+| **版本** | 1.16 |
+| **最后修改** | 2026-10-21 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`<br>`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md`<br>`.agents/docs/2026-10-10-one-source-one-meaning-design.md`<br>`.agents/docs/2026-10-11-build-dependencies-one-pipeline-design.md` |
@@ -707,6 +707,18 @@ mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 m
 
 **状态:已实现(mcpp 2026.10.11.1,#797)。**
 
+## 13. Windows 资源的归属
+
+1. `[resources]` **必须**只作用于声明包自己拥有的可执行程序与共享库，包括未被直接选择、
+   通过 `artifacts` 构建的程序以及普通依赖共享库。image 的归属按限定包身份决定，
+   **禁止**按 target 名称推断或将根包视为所有 image 的拥有者。
+2. 依赖资源**禁止**传播到消费者 image。静态库没有自己的 PE image，其资源不自动合并进
+   消费者。测试 image 只接收现有测试 manifest 规则所允许的内容。
+3. 声明文件的存在性校验与资源编译分开：校验对所有目标生效；编译只对 PE 目标生效。
+   本次计划未生成的 target 不参与 image 的 manifest 冲突检查。
+
+**已实现**(mcpp >= 2026.10.21.1,#826)。
+
 ## 变更记录
 
 | 版本 | 日期 | 变更 |
@@ -727,3 +739,4 @@ mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 m
 | 1.13 | 2026-10-06 | mcpp 2026.10.5.3:§4.6 陈述架构段的等同拼写,`x86` 即 `i686`;`i386` 至 `i586` 不与 `i686` 相互替代。 |
 | 1.14 | 2026-10-10 | mcpp 2026.10.10.1(#785、#786):§2 陈述键的作用域与来源;§9 新增第 12 条前缀即语义(工作空间层 `[workspace.X]`、按键合并、W7)与第 13 条按位置读取的兼容期;第 7 条发布写出工作空间层;第 8 条改为 `[workspace.xlings]`;第 10 条按求值后的配置分组。 |
 | 1.15 | 2026-10-11 | mcpp 2026.10.11.1(#797):新增 §12 依赖的库与配置(两条轴、实例、一个包一个版本、按配置激活特性、`host-module` 的含义与默认值、构建程序图、构建插件、兼容读法);§9 第 13 条的移除版本改为 mcpp 2027.1,并补依赖位置;新增 §9 第 14 至 16 条(`[xlings.overrides]` 属于构建的根、`[workspace.dependencies]` 的继承、虚拟根旁的 `build.mcpp`)。 |
+| 1.16 | 2026-10-21 | 新增 §13，明确依赖 EXE、DLL 的资源只进入其所属包的 image，且按计划内目标校验 manifest 冲突(#826)。 |

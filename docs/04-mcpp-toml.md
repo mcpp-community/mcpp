@@ -1399,6 +1399,10 @@ set `MCPP_VERIFY_MODGRAPH=1` when generating the build.
 
 ### 2.8.4 What The Default Scanner Reads
 
+The default scanner reads each source file without expanding `#include`. Imports
+that it discovers belong in the scanned source file itself. A header containing
+`import` does not add an edge to this default module graph.
+
 The scanner answers two questions per file — what does this unit provide, and
 what does it require — and nothing else decides them.
 
@@ -1777,6 +1781,11 @@ generates the resource script automatically.
 *inapplicable*: no resource units, no diagnostics, byte-identical build. You do
 **not** need (and cannot use) a `cfg(windows)` predicate — write it once,
 unconditionally.
+
+Resources belong to the package that owns the executable or shared library.
+Dependency-owned executable artifacts and shared libraries embed their own
+resources, including when built through a consumer (2026.10.21.1+). Resources
+do not propagate from a static dependency to its consumer.
 
 **The resource object is the target's.** rc.exe and llvm-rc produce a `.res`,
 which carries no machine and is linked as it is. windres produces a COFF object,

@@ -29,7 +29,7 @@
 
 - [SPEC-005 §2、§6](../../docs/specs/build-database.md)：emit 不写工程目录，
   不写入 watch 列出的文件；inputs-fingerprint 描述输入内容。
-- [SPEC-001](../../docs/specs/manifest-semantics.md)：声明按键的作用域生效，
+- [SPEC-004](../../docs/specs/manifest-semantics.md)：声明按键的作用域生效，
   包的资源描述该包的产物。
 - [资源设计 A3、A5](2026-08-07-windows-resources-and-version-identity-design.md)：
   资源进入所属包的 PE image，依赖资源不传播给消费者。

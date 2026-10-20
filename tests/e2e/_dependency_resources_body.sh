@@ -108,4 +108,45 @@ from pathlib import Path
 files = list(Path('target').glob('*/**/obj/fixture_updater/updater.exe'))
 assert files and all(b'Fixture.Owner.updater.updated' in f.read_bytes() for f in files), files
 PY
+
+# A standalone root must not attach its resource to a dependency DLL either.
+mv mcpp.toml workspace.toml
+mkdir single
+cp app/main.cpp app/owner.rc app/owner.manifest single/
+cat > single/mcpp.toml <<'TOML'
+[package]
+name = "single"
+version = "0.1.0"
+[dependencies]
+"fixture.library" = {path = "../library"}
+[resources]
+files = ["owner.rc"]
+[targets.image]
+kind = "bin"
+main = "main.cpp"
+TOML
+cd single
+"$MCPP" build $RESOURCE_TARGET > single.log 2>&1 || fail 'standalone resources' single.log
+python3 - <<'PYRESOURCE' || fail 'standalone resource ownership' single.log
+from pathlib import Path
+exes = list(Path('target').glob('**/bin/image.exe'))
+dlls = list(Path('target').glob('**/bin/*image.dll'))
+assert exes and dlls, (exes, dlls)
+for f in exes:
+    b = f.read_bytes()
+    assert b'Fixture.Owner.app' in b and b'Fixture.Owner.library' not in b, f
+for f in dlls:
+    b = f.read_bytes()
+    assert b'Fixture.Owner.library' in b and b'Fixture.Owner.app' not in b, f
+PYRESOURCE
+cd ..
+# File existence remains a target-independent fact: even a native non-PE
+# configure must reject an image dependency's missing declared resource.
+rm library/owner.manifest
+mv workspace.toml mcpp.toml
+if "$MCPP" build -p app --configure-only > missing.log 2>&1; then
+    fail 'missing dependency resource was accepted' missing.log
+fi
+grep -q 'owner.manifest' missing.log || fail 'missing resource was not attributed' missing.log
+
 echo 'PASS: dependency EXE and DLL embed only their own resources and rebuild'

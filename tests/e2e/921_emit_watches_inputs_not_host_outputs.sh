@@ -69,6 +69,7 @@ assert 'mcpp.lock' in watch and 'mcpp.toml' in watch and 'build.mcpp' in watch, 
 assert any(p.endswith('editable/mcpp.toml') for p in watch), watch
 assert any(p.endswith('editable/src/lib.cpp') for p in watch), watch
 assert not any('/.build-mcpp/host/' in p for p in watch), watch
+assert not any('fixture-x-lockdep/' in p for p in watch), watch
 for p, (mtime, content) in json.load(open('snapshot.json')).items():
     f = pathlib.Path(p)
     assert f.stat().st_mtime_ns == mtime and f.read_text() == content, p
