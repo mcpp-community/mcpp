@@ -4,6 +4,26 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.21.1] - 2026-10-21
+
+### Fixed
+
+- Dependency-owned executable artifacts and shared libraries embed their own
+  Windows resources. Resource ownership follows package identity, including
+  targets with the same name in different packages; consumer resources no
+  longer enter dependency images.
+- Repeated planning preserves the contents and modification time of unchanged
+  lockfiles, including read-only files and either LF or CRLF line endings.
+  Lockfile read and write failures are reported to the caller.
+- Build-database watch lists and input fingerprints exclude synthesized host
+  manifests and lockfiles while retaining editable build-dependency inputs.
+
+### Documentation
+
+- Clarify that the default module scanner reads source files without expanding
+  includes. Visible imports retain their transitive module mappings; no new
+  implicit-import compatibility mode is introduced.
+
 ## [2026.10.19.1] - 2026-10-19
 
 ### Added
