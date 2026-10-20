@@ -136,7 +136,7 @@ TEST(SchedulePolicy, ZeroJobsStaysZeroRatherThanBecomingNonsense) {
 // strategy that is fine, because ninja's -j is a real bound. Under
 // DetachCodegen it is NOT: a compiler stops holding its ninja slot the moment
 // it publishes a BMI, so the semaphore is the only counter, and a cap of 0
-// turns `acquire_token` into a no-op.
+// disables counting slots when memory allows.
 //
 // This shipped: a plain `mcpp build` with `bmi_schedule = "on"` generated
 // `sched_cap = 0`, i.e. ninja starting compiles as fast as BMIs appeared with

@@ -58,7 +58,31 @@ struct HostCapacity {
     unsigned long long availableBytes = 0;   // falls back to total when unknown
 };
 
+struct MemorySnapshot {
+    unsigned long long availableBytes = 0;
+    bool supported = false;
+};
+
 HostCapacity host_capacity();
+
+// A fresh reading for admission control. Unlike host_capacity(), this is
+// intentionally cheap and has no CPU topology work. `supported == false` means
+// that callers must use their safe fallback rather than treating zero as free
+// memory.
+MemorySnapshot memory_snapshot();
+
+// Round observed available memory up to a 4 GiB bucket (1 GiB if unknown).
+unsigned long long memory_baseline(unsigned long long availableBytes);
+
+// Whether a new compiler may be admitted. The baseline is the available
+// physical memory observed when the build started. `thresholdPercent` is the
+// proportion of that baseline which may be consumed. `hysteresisPercent` is
+// the extra margin required before admitting work again after pressure.
+bool memory_allows(const MemorySnapshot& now,
+                   unsigned long long baselineBytes,
+                   int thresholdPercent,
+                   bool recovering = false,
+                   int hysteresisPercent = 5);
 
 // Job count for `auto`. See the module comment for why this is not `nproc`.
 //
@@ -128,6 +152,11 @@ HostCapacity host_capacity() {
     return cap;
 }
 
+MemorySnapshot memory_snapshot() {
+    const auto cap = host_capacity();
+    return {cap.availableBytes, cap.availableBytes != 0};
+}
+
 #elif defined(__APPLE__)
 
 HostCapacity host_capacity() {
@@ -163,6 +192,11 @@ HostCapacity host_capacity() {
     return cap;
 }
 
+MemorySnapshot memory_snapshot() {
+    const auto cap = host_capacity();
+    return {cap.availableBytes, cap.availableBytes != 0};
+}
+
 #else   // Linux and other POSIX
 
 static bool read_meminfo_kb(const char* key, unsigned long long& out) {
@@ -179,6 +213,35 @@ static bool read_meminfo_kb(const char* key, unsigned long long& out) {
     }
     ::fclose(f);
     return found;
+}
+
+static bool read_file_u64(const char* path, unsigned long long& out) {
+    FILE* f = ::fopen(path, "r");
+    if (!f) return false;
+    char value[128]{};
+    const bool ok = ::fgets(value, sizeof(value), f) != nullptr;
+    ::fclose(f);
+    if (!ok) return false;
+    if (::strcmp(value, "max\n") == 0 || ::strcmp(value, "max") == 0) return false;
+    char* end = nullptr;
+    const auto n = ::strtoull(value, &end, 10);
+    if (end == value) return false;
+    out = n;
+    return true;
+}
+
+static void apply_cgroup_limit(unsigned long long& available) {
+    // cgroup v2 exposes the container's memory ceiling separately from the
+    // host's /proc/meminfo.  A build must not use memory which the container
+    // cannot actually obtain.  Keep this deliberately conservative: if the
+    // hierarchy cannot be discovered, the host reading remains valid.
+    unsigned long long max = 0, current = 0;
+    if (!read_file_u64("/sys/fs/cgroup/memory.max", max)
+        || !read_file_u64("/sys/fs/cgroup/memory.current", current)
+        || max == 0 || current >= max)
+        return;
+    const auto limited = max - current;
+    if (limited < available) available = limited;
 }
 
 static int read_cpuinfo_cores() {
@@ -239,7 +302,15 @@ HostCapacity host_capacity() {
     // page cache and would make every warm machine look starved.
     if (!read_meminfo_kb("MemAvailable:", cap.availableBytes))
         cap.availableBytes = cap.totalBytes;
+    apply_cgroup_limit(cap.availableBytes);
     return cap;
+}
+
+MemorySnapshot memory_snapshot() {
+    unsigned long long available = 0;
+    bool supported = read_meminfo_kb("MemAvailable:", available);
+    if (supported) apply_cgroup_limit(available);
+    return {available, supported && available != 0};
 }
 
 #endif
@@ -267,6 +338,34 @@ int recommended_jobs(const HostCapacity& cap, unsigned long long perJobBytes,
     if (jobs < 1) jobs = 1;
     if (ceiling > 0 && jobs > ceiling) jobs = ceiling;
     return jobs;
+}
+
+unsigned long long memory_baseline(unsigned long long availableBytes) {
+    constexpr unsigned long long gib = 1024ULL * 1024ULL * 1024ULL;
+    constexpr unsigned long long bucket = 4 * gib;
+    if (availableBytes == 0) return gib;
+    const auto remainder = availableBytes % bucket;
+    if (remainder == 0) return availableBytes;
+    const auto increment = bucket - remainder;
+    // Saturate rather than wrap if an observation is near the integer limit.
+    constexpr auto maximum = ~0ULL;
+    return availableBytes > maximum - increment ? maximum : availableBytes + increment;
+}
+
+bool memory_allows(const MemorySnapshot& now, unsigned long long baselineBytes,
+                   int thresholdPercent, bool recovering, int hysteresisPercent) {
+    if (!now.supported || baselineBytes == 0) return false;
+    if (thresholdPercent < 1) thresholdPercent = 1;
+    if (thresholdPercent > 100) thresholdPercent = 100;
+    if (hysteresisPercent < 0) hysteresisPercent = 0;
+    const int margin = recovering
+        ? (thresholdPercent > hysteresisPercent
+            ? thresholdPercent - hysteresisPercent : 1)
+        : thresholdPercent;
+    // `thresholdPercent` is the consumed portion. At 80%, at least 20% of the
+    // startup available memory must remain free.
+    const auto required = baselineBytes * static_cast<unsigned long long>(100 - margin) / 100;
+    return now.availableBytes >= required;
 }
 
 } // namespace mcpp::platform::capacity

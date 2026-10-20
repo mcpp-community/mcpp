@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: python3
 # `bmi_schedule = "on"` end to end, and the token leak that used to hang it.
 source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 #
@@ -43,6 +44,9 @@ case "$MCPP" in /*) ;; *) MCPP="$_root/$MCPP" ;; esac
 [ -x "$MCPP" ] || { echo "FAIL: MCPP=$MCPP is not executable"; exit 1; }
 export MCPP
 
+# Exercise the admission wrapper independently of the selected toolchain.
+python3 "$_root/tests/scripts/test_compile_admit.py"
+
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
@@ -85,9 +89,7 @@ import schedon.mid;
 int main() { std::println("{}", mid_value()); return mid_value() == 8 ? 0 : 1; }
 EOF
 
-# detach-codegen is the GCC strategy. On a machine whose default toolchain
-# resolves to clang the decision is TwoPhase and there is no semaphore at all,
-# so the second contract has nothing to test — say so rather than pass hollowly.
+# Both split strategies use the shared memory-pressure fallback directory.
 say_skip_reason() { echo "SKIP: $1"; exit 0; }
 
 echo "== 1. builds with bmi_schedule = \"on\" =="
@@ -109,7 +111,7 @@ case "$sched_line" in
 this test covers the split strategies" ;;
 esac
 
-BIN=$(ls -t target/*/*/bin/schedon 2>/dev/null | head -1)
+BIN=$(bash "$_root/.github/tools/newest_artifact.sh" target schedon)
 [ -n "$BIN" ] || { echo "FAIL: no binary produced"; exit 1; }
 out=$("$BIN")
 [ "$out" = "8" ] || { echo "FAIL: binary printed '$out', expected 8"; exit 1; }
@@ -125,12 +127,6 @@ echo "== 2. the graph declares its shape =="
 grep -q '^# mcpp:graph=' "$BUILD_DIR/build.ninja" || {
   echo "FAIL: build.ninja carries no '# mcpp:graph=' line"; exit 1; }
 echo "  $(grep -m1 '^# mcpp:graph=' "$BUILD_DIR/build.ninja")"
-
-if [ "$strategy" != detach ]; then
-  echo "== 3. skipped: no semaphore under the $strategy strategy =="
-  echo "234 bmi_schedule OK ($strategy)"
-  exit 0
-fi
 
 echo "== 3. an incremental build still works =="
 touch src/core.cppm
@@ -162,8 +158,14 @@ printf '\nexport int core_extra() { return 1; }\n' >> src/core.cppm
 # `set -e` has to come off for exactly this command: with errexit on, a failing
 # build aborts the script before `rc=$?` runs, which is what pushed the previous
 # version into the `if !` form that then could not read the status at all.
+# Use the suite's process-tree timeout fallback on macOS, where neither GNU
+# timeout nor gtimeout is installed. python3 is a declared capability above.
+TIMEOUT_CMD=(python3 "$_root/tests/e2e/_timeout.py")
+if command -v timeout >/dev/null 2>&1; then TIMEOUT_CMD=(timeout)
+elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_CMD=(gtimeout)
+fi
 set +e
-timeout 600 "$MCPP" build --release > stale.log 2>&1
+"${TIMEOUT_CMD[@]}" 600 "$MCPP" build --release > stale.log 2>&1
 rc=$?
 set -e
 if [ "$rc" != 0 ]; then
@@ -185,8 +187,8 @@ left=$(ls "$SEM" 2>/dev/null | wc -l)
   exit 1; }
 echo "  reclaimed: $planted -> $left"
 
-BIN=$(ls -t target/*/*/bin/schedon 2>/dev/null | head -1)
+BIN=$(bash "$_root/.github/tools/newest_artifact.sh" target schedon)
 out=$("$BIN")
 [ "$out" = "8" ] || { echo "FAIL: binary printed '$out' after the stale-token build"; exit 1; }
 
-echo "234 bmi_schedule OK (detach-codegen, tokens reclaimed)"
+echo "234 bmi_schedule OK ($strategy, tokens reclaimed)"

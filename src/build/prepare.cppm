@@ -480,6 +480,7 @@ export struct BuildContext {
     // parser of one file, and because the two readers must not be able to
     // disagree about the machine.
     int                             globalDefaultJobs = 0;
+    int                             memoryThresholdPercent = 80;
     // --strict: degradations reported through mcpp::diag become errors.
     // Carried on the context because the build's degradations are discovered
     // during backend emission, i.e. after prepare_build has returned — the

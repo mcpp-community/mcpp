@@ -124,6 +124,9 @@ struct GlobalConfig {
 
     // From config.toml [build]
     std::int64_t                    defaultJobs = 0;
+    // Percentage of the memory available when a build starts that the
+    // compiler pool may consume. This is machine policy, not project input.
+    std::int64_t                    memoryThresholdPercent = 80;
 
     // From config.toml [toolchain] (M5.5)
     //   default = "<compiler>@<version>"   e.g. "gcc@15.1.0"
@@ -426,6 +429,7 @@ search_ttl_seconds = 3600
 
 [build]
 default_jobs    = 0
+memory_threshold_percent = 80
 )";
 }
 
@@ -816,6 +820,14 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     mcpp::provider::set_index_refresh_timeout(std::chrono::seconds{cfg.indexRefreshTimeoutSeconds});
     cfg.searchTtlSeconds = doc->get_int("cache.search_ttl_seconds").value_or(3600);
     cfg.defaultJobs    = doc->get_int("build.default_jobs").value_or(0);
+    cfg.memoryThresholdPercent = doc->get_int("build.memory_threshold_percent").value_or(80);
+    if (const char* env = std::getenv("MCPP_MEMORY_THRESHOLD_PERCENT"); env && *env) {
+        char* end = nullptr;
+        const auto value = std::strtol(env, &end, 10);
+        if (end != env && *end == '\0') cfg.memoryThresholdPercent = value;
+    }
+    if (cfg.memoryThresholdPercent < 1 || cfg.memoryThresholdPercent > 100)
+        cfg.memoryThresholdPercent = 80;
     cfg.defaultToolchain = doc->get_string("toolchain.default").value_or("");
     cfg.defaultTarget    = doc->get_string("toolchain.default_target").value_or("");
     // The system-level configuration (design 2026-10-16 §8.1, §9): what an

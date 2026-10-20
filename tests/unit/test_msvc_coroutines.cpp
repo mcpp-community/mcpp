@@ -35,6 +35,25 @@ constexpr std::string_view kCoroutineUseFailure =
     "3 errors generated.\n"
     "ninja: build stopped: subcommand failed.\n";
 
+// The same failure as it reaches a 32-bit MSVC build once mcpp's ordinary
+// compile edges go through the runtime admission wrapper (PR #803, Windows e2e
+// 892 case C, run 38268962914): the driver is one wrapper in from the start of
+// the line, so it is read from where it sits.
+constexpr std::string_view kCoroutineUseFailureUnderTheAdmissionWrapper =
+    "[1/1] D:/a/_temp/mcpp-built/mcpp.exe compile-admit --sem .mcpp-sched --cap 4 "
+    "--mem-threshold 80 -- "
+    "\"C:/Users/runneradmin/.mcpp/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/clang++.exe\" "
+    "@obj/main.o.rsp -std=c++20 -fms-runtime-lib=dll "
+    "\"-fprebuilt-module-path=D:\\a\\_temp\\coro\\pcm.cache\" -O0 -g "
+    "--target=i686-pc-windows-msvc "
+    "-Xmicrosoft-visualc-tools-root \"C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\VC\\Tools\\MSVC\\14.51.36231\" "
+    "-MMD -MF obj/main.o.d -c src/main.cpp -o obj/main.o\n"
+    "FAILED: obj/main.o \n"
+    "D:/a/_temp/coro/src/main.cpp:4:5: error: use of undeclared identifier 'std'\n"
+    "D:/a/_temp/coro/src/main.cpp:8:12: error: std::coroutine_traits type was not found; include <coroutine> before defining a coroutine\n"
+    "3 errors generated.\n"
+    "ninja: build stopped: subcommand failed.\n";
+
 co::ProbeFn answering(bool predefines, int* calls = nullptr) {
     return [=](const co::FailedCommand&) -> std::optional<co::Probe> {
         if (calls) ++*calls;
@@ -121,6 +140,24 @@ TEST(MsvcCoroutines, CoroutineUseNoteDoesNotOfferCxx20) {
     ASSERT_TRUE(cmd.has_value());
     EXPECT_EQ(cmd->standard, "c++20");
     auto note = co::advice(kCoroutineUseFailure, answering(false));
+    ASSERT_FALSE(note.empty());
+    EXPECT_NE(note.find("Code that uses coroutines"), std::string::npos);
+    EXPECT_EQ(note.find("c++20\""), std::string::npos);
+    EXPECT_NE(note.find("llvm@22.1.8"), std::string::npos);
+}
+
+TEST(MsvcCoroutines, CommandBehindTheAdmissionWrapperIsStillRead) {
+    auto cmd = co::failed_command_in(kCoroutineUseFailureUnderTheAdmissionWrapper);
+    ASSERT_TRUE(cmd.has_value());
+    EXPECT_TRUE(cmd->compiler.ends_with("clang++.exe"));
+    EXPECT_EQ(cmd->target, "i686-pc-windows-msvc");
+    EXPECT_EQ(cmd->standard, "c++20");
+}
+
+TEST(MsvcCoroutines, CoroutineUseBehindTheAdmissionWrapperGetsTheNote) {
+    EXPECT_EQ(co::symptom_in(kCoroutineUseFailureUnderTheAdmissionWrapper),
+              co::Symptom::CoroutineUse);
+    auto note = co::advice(kCoroutineUseFailureUnderTheAdmissionWrapper, answering(false));
     ASSERT_FALSE(note.empty());
     EXPECT_NE(note.find("Code that uses coroutines"), std::string::npos);
     EXPECT_EQ(note.find("c++20\""), std::string::npos);

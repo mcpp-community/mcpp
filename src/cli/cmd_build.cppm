@@ -1590,8 +1590,37 @@ export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
     req.self      = std::filesystem::path{opt_value(parsed, "self")};
     req.semaphore = file_path("sem");
     req.maxCompilers = 0;
-    if (const auto cap = opt_value(parsed, "cap"); !cap.empty())
-        std::from_chars(cap.data(), cap.data() + cap.size(), req.maxCompilers);
+    // Omitted values keep their defaults; malformed ones are named rather than
+    // silently collapsed into the same fallback. The emitters are in-repo, so a
+    // malformed value means a bug worth surfacing rather than hiding.
+    auto parse_number = [](std::string_view text, auto& out) -> bool {
+        if (text.empty()) return true;
+        const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), out);
+        return ec == std::errc{} && end == text.data() + text.size();
+    };
+    if (const auto cap = opt_value(parsed, "cap"); !cap.empty()) {
+        if (!parse_number(cap, req.maxCompilers)) {
+            std::println(stderr, "error: bmi-compile: invalid --cap '{}'", cap);
+            return 2;
+        }
+    }
+    if (const auto baseline = opt_value(parsed, "mem-baseline"); !baseline.empty()) {
+        if (!parse_number(baseline, req.memoryBaselineBytes)) {
+            std::println(stderr, "error: bmi-compile: invalid --mem-baseline '{}'", baseline);
+            return 2;
+        }
+    } else if (const char* env = std::getenv("MCPP_MEM_BASELINE"); env && *env) {
+        if (!parse_number(std::string_view{env}, req.memoryBaselineBytes)) {
+            std::println(stderr, "error: bmi-compile: invalid MCPP_MEM_BASELINE '{}'", env);
+            return 2;
+        }
+    }
+    if (const auto threshold = opt_value(parsed, "mem-threshold"); !threshold.empty()) {
+        if (!parse_number(threshold, req.memoryThresholdPercent)) {
+            std::println(stderr, "error: bmi-compile: invalid --mem-threshold '{}'", threshold);
+            return 2;
+        }
+    }
     req.commandFile = file_path("command-file");
     req.depFrom     = file_path("dep-from");
     req.depTo       = file_path("dep-to");

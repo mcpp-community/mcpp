@@ -35,6 +35,7 @@ import mcpp.platform;                // is_windows — the PATH separator of `__
 import mcpp.platform.env;            // --offline → MCPP_OFFLINE
 import mcpp.platform.process;        // __action-stamp runs the checked command
 import mcpp.platform.fs;             // __action-stamp writes its stamps
+import mcpp.build.schedule.detach_codegen;
 import mcpp.build.progress;          // __action reports its start
 import mcpp.platform.runtime_search; // linker-wrapper path-injection opt-out
 import mcpp.ui;
@@ -1090,6 +1091,8 @@ int run(int argc, char** argv) {
             .option(cl::Option("self").takes_value().value_name("PATH").help("path to mcpp, re-invoked as supervisor"))
             .option(cl::Option("sem").takes_value().value_name("DIR").help("concurrency token directory"))
             .option(cl::Option("cap").takes_value().value_name("N").help("max concurrent compilers"))
+            .option(cl::Option("mem-baseline").takes_value().value_name("BYTES").help("memory baseline"))
+            .option(cl::Option("mem-threshold").takes_value().value_name("PERCENT").help("memory threshold"))
             .option(cl::Option("command-file").takes_value().value_name("PATH").help("file holding the compiler command line"))
             .option(cl::Option("dep-from").takes_value().value_name("PATH").help("scanner depfile to adopt"))
             .option(cl::Option("dep-to").takes_value().value_name("PATH").help("where ninja expects this edge's depfile"))
@@ -1218,6 +1221,67 @@ int run(int argc, char** argv) {
         std::error_code ec;
         std::filesystem::remove(std::filesystem::path{raw}, ec);
         return 0;
+    }
+
+    if (std::string_view(argv[1]) == "compile-admit") {
+        std::string sem, capText, baselineText, thresholdText, depRaw, depOut, bmiRestat;
+        int i = 2;
+        for (; i < argc && std::string_view(argv[i]) != "--"; ++i) {
+            const std::string_view a = argv[i];
+            if (i + 1 >= argc) return 2;
+            if (a == "--sem") sem = argv[++i];
+            else if (a == "--cap") capText = argv[++i];
+            else if (a == "--mem-baseline") baselineText = argv[++i];
+            else if (a == "--mem-threshold") thresholdText = argv[++i];
+            else if (a == "--dep-raw") depRaw = argv[++i];
+            else if (a == "--dep-out") depOut = argv[++i];
+            else if (a == "--bmi-restat") bmiRestat = argv[++i];
+            else {
+                std::println(stderr, "error: compile-admit: unknown option '{}'", a);
+                return 2;
+            }
+        }
+        if (i + 1 >= argc || sem.empty()) {
+            std::println(stderr, "error: compile-admit requires --sem and -- <compiler argv...>");
+            return 2;
+        }
+        // An omitted value keeps its default; a MALFORMED one must not be
+        // silently indistinguishable from an omitted one. from_chars leaves
+        // the destination untouched on failure (and reports an empty range),
+        // so every rejection has to be checked and named here.
+        auto parse_number = [](std::string_view text, auto& out) -> bool {
+            if (text.empty()) return true;
+            const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), out);
+            return ec == std::errc{} && end == text.data() + text.size();
+        };
+        int cap = 0, threshold = 80;
+        unsigned long long baseline = 0;
+        if (!parse_number(capText, cap)) {
+            std::println(stderr, "error: compile-admit: invalid --cap '{}'", capText);
+            return 2;
+        }
+        if (!baselineText.empty()) {
+            if (!parse_number(baselineText, baseline)) {
+                std::println(stderr, "error: compile-admit: invalid --mem-baseline '{}'",
+                             baselineText);
+                return 2;
+            }
+        } else if (const char* env = std::getenv("MCPP_MEM_BASELINE"); env && *env) {
+            if (!parse_number(std::string_view{env}, baseline)) {
+                std::println(stderr, "error: compile-admit: invalid MCPP_MEM_BASELINE '{}'", env);
+                return 2;
+            }
+        }
+        if (!parse_number(thresholdText, threshold)) {
+            std::println(stderr, "error: compile-admit: invalid --mem-threshold '{}'", thresholdText);
+            return 2;
+        }
+        std::vector<std::string> command;
+        for (++i; i < argc; ++i) command.emplace_back(argv[i]);
+        return mcpp::build::schedule::detach::run_admitted(
+            command, std::filesystem::path{sem}, cap, baseline, threshold,
+            std::filesystem::path{depRaw}, std::filesystem::path{depOut},
+            std::filesystem::path{bmiRestat});
     }
 
     if (std::string_view(argv[1]) == "__action-stamp"
