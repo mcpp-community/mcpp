@@ -368,6 +368,7 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           bash tests/e2e/198_windows_resources_cross.sh
+          bash tests/e2e/923_cross_dependency_images_keep_their_resources.sh
 
       # Packaging a Windows program FROM LINUX — and this job is the only
       # place that can happen, for the same reason as the two above.

@@ -143,11 +143,9 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
     // ─── Windows resources: [resources] → a tracked link input (mcpp#365) ──
     //
     // Four rules, in this order:
-    //   1. Only the [resources] of the package being built is read: the root,
-    //      or in a workspace plan each selected member, whose resources reach
-    //      that member's images only. A dependency's version resource would
-    //      fight its consumer's for ordinal 1, and a dependency that produces
-    //      no PE image of its own has nothing to embed into.
+    //   1. Resources belong to the package that owns an image, including a
+    //      dependency's shared library or executable artifact (#826). They
+    //      never propagate to a consumer or a different package's image.
     //   2. A DECLARED FILE THAT DOES NOT EXIST IS AN ERROR — on EVERY target.
     //      Whether a path exists is a fact about the working tree, not about
     //      the target; gating it on is_pe() meant a Linux or macOS CI could not
@@ -173,22 +171,27 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
     // A DECLARED `utf-8` beside such a manifest is refused below instead.
     //
     // A SUBJECT is one package whose resources are planned: its manifest, the
-    // directory its paths were written in, and the images it owns. Outside a
-    // workspace plan the root is the only subject and owns every image that
-    // is not a dependency's program, which is the historical rule.
+    // directory its paths were written in, and the images it owns. Selection
+    // decides the graph, not the ownership of an image within that graph.
     struct Subject {
         const mcpp::manifest::Manifest* m;
         std::filesystem::path           dir;
-        std::string                     owner;   // empty: the root
+        std::string                     owner;   // qualified package identity
     };
     std::vector<Subject> subjects;
-    if (!state.workspacePlan()) {
-        subjects.push_back({&*state.m, *state.root, {}});
-    } else {
-        for (auto const& pkg : state.packages)
-            if (pkg.selectedMember)
-                subjects.push_back({&pkg.manifest, pkg.root,
-                                    mcpp::build::qualified_package_name(pkg.manifest)});
+    std::set<std::string> seenSubjects;
+    auto add_subject = [&](const auto& manifest, const auto& root) {
+        auto owner = mcpp::build::qualified_package_name(manifest);
+        if (seenSubjects.insert(owner).second)
+            subjects.push_back({&manifest, root, std::move(owner)});
+    };
+    if (!state.workspacePlan()) add_subject(*state.m, *state.root);
+    for (auto const& pkg : state.packages) {
+        const auto owner = mcpp::build::qualified_package_name(pkg.manifest);
+        const bool ownsImage = std::ranges::any_of(ctx.plan.linkUnits, [&](const auto& lu) {
+            return lu.package == owner && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::SharedLibrary);
+        });
+        if (pkg.selectedMember || ownsImage) add_subject(pkg.manifest, pkg.root);
     }
     const bool hostToolBuild = state.overrides.tool_depth > 0;
     const auto trip = mcpp::toolchain::triple::parse(state.tc->targetTriple)
@@ -198,6 +201,13 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
 
     for (auto const& S : subjects) {
         const auto& M = *S.m;
+        auto owns = [&](const LinkUnit& lu) { return lu.package == S.owner; };
+        auto active_target = [&](const mcpp::manifest::Target& t) {
+            return std::ranges::any_of(ctx.plan.linkUnits, [&](const auto& lu) {
+                return owns(lu) && lu.targetName == t.name
+                    && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary);
+            });
+        };
         const bool ownManifest = hostToolBuild
             && std::ranges::any_of(M.resources.files, [&](const auto& f) {
                    const auto abs = (f.is_absolute() ? f : (S.dir / f)).lexically_normal();
@@ -226,12 +236,12 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
             return codePageOf(t) == "utf-8" || longPathsOf(t);
         };
         const bool anyUtf8Image = std::ranges::any_of(M.targets, [&](const auto& t) {
-            return takesCodePage(t) && manifested(t);
+            return active_target(t) && takesCodePage(t) && manifested(t);
         });
         // Author scripts reach programs and shared libraries, never a test
         // program, so only a program's manifest can collide with one.
         const bool anyUtf8Program = std::ranges::any_of(M.targets, [&](const auto& t) {
-            return t.is_program() && manifested(t);
+            return active_target(t) && t.is_program() && manifested(t);
         });
         if (M.resources.declared() || anyUtf8Image) {
             namespace rsrc = mcpp::build::resources;
@@ -283,7 +293,9 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                 const std::string_view outExt = msvcStyle ? ".res" : ".o";
                 // A member's resources are compiled in a directory of its own, so
                 // two members' scripts and synthesised scripts never share a name.
-                const auto resRel = S.owner.empty() ? std::filesystem::path("res")
+                const bool rootSubject = !state.workspacePlan()
+                    && S.owner == mcpp::build::qualified_package_name(*state.m);
+                const auto resRel = rootSubject ? std::filesystem::path("res")
                                                     : std::filesystem::path("res") / S.owner;
                 const auto resDir = ctx.plan.outputDir / resRel;
                 // Where the resource compiler looks for a script's includes and
@@ -303,21 +315,9 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                 // call, for the opposite reason — see its note above.)
                 // In a workspace plan a member's images are its link units and
                 // its shared libraries, which are linked with the graph's.
-                auto owns = [&](const mcpp::build::LinkUnit& lu) {
-                    if (S.owner.empty()) return true;
-                    if (lu.memberOf == S.owner) return true;
-                    return lu.kind == mcpp::build::LinkUnit::SharedLibrary
-                        && std::ranges::any_of(M.targets, [&](const auto& t) {
-                               return t.kind == mcpp::manifest::Target::SharedLibrary
-                                   && t.name == lu.targetName;
-                           });
-                };
                 std::vector<std::size_t> peUnits;
                 for (std::size_t i = 0; i < ctx.plan.linkUnits.size(); ++i) {
                     auto k = ctx.plan.linkUnits[i].kind;
-                    // A dependency's program (mcpp#711) carries its own package's
-                    // identity, not this one's.
-                    if (!ctx.plan.linkUnits[i].artifactOf.empty()) continue;
                     if (!owns(ctx.plan.linkUnits[i])) continue;
                     if (k == mcpp::build::LinkUnit::Binary ||
                         k == mcpp::build::LinkUnit::SharedLibrary)
@@ -431,7 +431,7 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                 auto targetOf = [&](const mcpp::build::LinkUnit& lu) -> const mcpp::manifest::Target* {
                     if (lu.kind != mcpp::build::LinkUnit::Binary
                         && lu.kind != mcpp::build::LinkUnit::TestBinary) return nullptr;
-                    if (!lu.artifactOf.empty()) return nullptr;
+                    if (!owns(lu)) return nullptr;
                     for (auto const& t : M.targets)
                         if (t.name == lu.targetName && takesCodePage(t)) return &t;
                     return nullptr;
