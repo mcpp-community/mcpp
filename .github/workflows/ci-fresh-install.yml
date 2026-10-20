@@ -654,7 +654,7 @@ jobs:
           brew install mcpp-m                       # short form
           brew uninstall --force mcpp-m
           brew install mcpp-community/mcpp/mcpp     # the `mcpp` alias
-          brew upgrade mcpp-m || true               # no-op when current; must not be refused
+          brew upgrade mcpp-m                       # no-op when current; must not be refused
           test "$(mcpp --version)" = "mcpp $MCPP_PIN"
 
       # ⑤ The only assertion a user actually cares about: it builds and runs.
