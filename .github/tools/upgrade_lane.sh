@@ -103,15 +103,33 @@ new_project() {  # <dir> <bin>
 # ── the previous release builds the home ───────────────────────────────
 run old-env "$W" "$OLD" self env || fail "the previous release does not start"
 if [ "$VARIANT" = snapshot ]; then
+  # self env is read-only since 2026.10.19.1. Establish the old home
+  # explicitly before replacing its index; otherwise tar's empty -C argument
+  # leaves the live index in use and this lane never installs old packaging.
+  run old-init "$W" "$OLD" self init || { fail "the previous release cannot initialize its home"; exit 1; }
   git clone -q --filter=blob:none https://github.com/openxlings/xim-pkgindex "$W/xpi" \
     && git -C "$W/xpi" checkout -q "$SNAPSHOT" || { echo "::error::cannot fetch the snapshot index"; exit 1; }
   idx="$REG/data/xim-pkgindex"
   [ -d "$idx" ] || idx=$(find "$MCPP_HOME" -type d -name xim-pkgindex | head -1)
+  [ -n "$idx" ] && [ -d "$idx/pkgs" ] \
+    || { fail "the previous release created no index directory"; exit 1; }
   find "$idx" -mindepth 1 -maxdepth 1 ! -name .xlings-index-version -exec rm -rf {} +
-  (cd "$W/xpi" && git archive HEAD) | tar x -C "$idx"
+  (cd "$W/xpi" && git archive HEAD) | tar x -C "$idx" \
+    || { fail "the snapshot index was not materialized"; exit 1; }
+  [ -f "$idx/pkgs/l/llvm.lua" ] \
+    || { fail "the snapshot has no LLVM descriptor"; exit 1; }
   echo "llvm.lua revisions now: $(grep -o 'revision = [0-9]*' "$idx/pkgs/l/llvm.lua" | sort -u | tr '\n' ' ')"
 fi
 run old-tc "$W" "$OLD" toolchain install "$TC" || fail "the previous release cannot install $TC"
+if [ "$VARIANT" = snapshot ]; then
+  "$PY" - "$REG/data/xpkgs/xim-x-llvm/23.1.3/.xpkg-install.json" <<'PY' \
+    || { fail "the snapshot did not install LLVM revision zero"; exit 1; }
+import json, sys
+with open(sys.argv[1]) as f:
+    installed = json.load(f)
+assert installed.get("revision", 0) == 0, installed
+PY
+fi
 [ "$VARIANT" = orphan ] && { run old-tc-gcc "$W" "$OLD" toolchain install gcc@16.1.0 || fail "the previous release cannot install gcc"; }
 new_project p-old "$OLD"
 run old-run "$W/p-old" "$OLD" run || fail "the previous release cannot run a new project"

@@ -344,3 +344,14 @@ watch 与 fingerprint 在同一输入收集路径排除生成项；旧式项目�
 
 本记录不将 Linux 本地结果外推为 Windows/macOS 验证；最终 PR head 的完整 CI、合入前综合自审、
 release 四平台与生态安装仍是后续完成门槛。
+
+### 11.1 CI 快照夹具与本地资源约束
+
+2026-10-21 的完整 CI 发现 upgrade snapshot 夹具沿用 `self env` 隐式创建 home 的旧假设；
+上一版已经使该命令只读，导致快照 tar 的目标目录为空、安装实际使用当前索引。
+本 PR 改为显式执行旧版 `self init`，并在索引目录、快照写入或 LLVM revision 0 前置条件
+不成立时立即失败。原有“旧载荷可继续使用、更新后报告新打包”的断言保留。
+
+本地执行按后续用户要求串行：MCPP_JOBS=2，并对重型命令施加 CPUQuota=200%、
+MemoryMax=8G、MemorySwapMax=0 与较低调度优先级；不同时运行大型 canary。
+跨平台和大型生态的整套测试优先使用 CI，避免本机叠加内存与 CPU 压力。
