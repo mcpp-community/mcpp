@@ -96,6 +96,8 @@ check_images first || fail 'resources do not follow their package' app.log
 # Direct selection reuses the same sources and must preserve ownership.
 "$MCPP" build -p updater $RESOURCE_TARGET > direct.log 2>&1 || fail 'direct updater' direct.log
 check_images direct || fail 'direct and dependency images differ' direct.log
+"$MCPP" build --workspace $RESOURCE_TARGET > workspace.log 2>&1 || fail 'workspace resources' workspace.log
+check_images workspace || fail 'workspace selection changed resource ownership' workspace.log
 # A tracked manifest change must reach the linked artifact and deployment.
 python3 - <<'PY'
 from pathlib import Path
