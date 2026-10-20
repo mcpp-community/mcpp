@@ -312,7 +312,8 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
                     return std::unexpected(msg);
                 }
             }
-            (void)mcpp::lockfile::write(lock, lockPath);
+            if (auto written = mcpp::lockfile::write(lock, lockPath); !written)
+                return std::unexpected(written.error().message);
         }
 
         // Same data, second consumer: the "Compiling <dep> v<version>" banner.

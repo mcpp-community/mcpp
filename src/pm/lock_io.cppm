@@ -188,11 +188,36 @@ std::string serialize(const Lockfile& lock) {
 }
 
 std::expected<void, LockError> write(const Lockfile& lock, const std::filesystem::path& path) {
+    const auto text = serialize(lock);
     std::error_code ec;
-    std::filesystem::create_directories(path.parent_path(), ec);
+    const bool exists = std::filesystem::exists(path, ec);
+    if (ec) return std::unexpected(LockError{std::format("cannot inspect '{}'", path.string())});
+    if (exists) {
+        // Reading is enough for an unchanged lock, including a read-only one.
+        // Accept either line ending without rewriting a checkout on another host.
+        std::ifstream in(path, std::ios::binary);
+        if (!in) return std::unexpected(LockError{std::format("cannot read '{}'", path.string())});
+        std::string prior;
+        for (char c; in.get(c); ) prior.push_back(c);
+        if (!in.eof())
+            return std::unexpected(LockError{std::format("cannot read '{}'", path.string())});
+        std::string normalized;
+        normalized.reserve(prior.size());
+        for (std::size_t i = 0; i < prior.size(); ++i) {
+            if (prior[i] == '\r' && i + 1 < prior.size() && prior[i + 1] == '\n') continue;
+            normalized.push_back(prior[i]);
+        }
+        if (normalized == text) return {};
+    }
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path(), ec);
+        if (ec) return std::unexpected(LockError{std::format("cannot create directory for '{}'", path.string())});
+    }
     std::ofstream os(path);
     if (!os) return std::unexpected(LockError{std::format("cannot write '{}'", path.string())});
-    os << serialize(lock);
+    os << text;
+    os.close();
+    if (!os) return std::unexpected(LockError{std::format("cannot write '{}'", path.string())});
     return {};
 }
 

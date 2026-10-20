@@ -119,3 +119,78 @@ TEST(PmLockIo, IndexPackageDigestIsFnv1aOnEveryHost) {
     EXPECT_EQ(mcpp::pm::index_package_digest("acme", "acme.gadget", "2.1.0"),
               "fnv1a:2adea846f70078bc");
 }
+
+
+namespace {
+struct LockDirectory {
+    std::filesystem::path root = std::filesystem::temp_directory_path()
+        / std::format("mcpp_lock_write_{}", std::random_device{}());
+    LockDirectory() { std::filesystem::create_directories(root); }
+    ~LockDirectory() {
+        std::error_code ec;
+        std::filesystem::permissions(root / "mcpp.lock", std::filesystem::perms::owner_all,
+                                     std::filesystem::perm_options::add, ec);
+        std::filesystem::remove_all(root, ec);
+    }
+};
+std::string lock_bytes(const std::filesystem::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    return {std::istreambuf_iterator<char>(in), {}};
+}
+}
+
+TEST(PmLockIo, UnchangedLfAndCrlfLocksKeepTheirBytesAndTimestamp) {
+    LockDirectory t;
+    const auto file = t.root / "mcpp.lock";
+    mcpp::pm::Lockfile lock;
+    lock.packages.push_back({"fixture", "example", "1.0.0", "path", "digest"});
+    const auto text = mcpp::pm::serialize(lock);
+    for (bool crlf : {false, true}) {
+        std::string bytes;
+        for (char c : text) {
+            if (crlf && c == '\n') bytes += '\r';
+            bytes += c;
+        }
+        { std::ofstream out(file, std::ios::binary); out << bytes; }
+        const auto old = std::filesystem::file_time_type::clock::now() - std::chrono::hours(24);
+        std::filesystem::last_write_time(file, old);
+        const auto recorded = std::filesystem::last_write_time(file);
+        ASSERT_TRUE(mcpp::pm::write(lock, file));
+        EXPECT_EQ(lock_bytes(file), bytes);
+        EXPECT_EQ(std::filesystem::last_write_time(file), recorded);
+    }
+}
+
+TEST(PmLockIo, CreatesMissingParentsAndPublishesChangedResolution) {
+    LockDirectory t;
+    const auto file = t.root / "nested" / "mcpp.lock";
+    mcpp::pm::Lockfile lock;
+    lock.packages.push_back({"fixture", "example", "1.0.0", "path", "digest"});
+    ASSERT_TRUE(mcpp::pm::write(lock, file));
+    lock.packages[0].version = "2.0.0";
+    ASSERT_TRUE(mcpp::pm::write(lock, file));
+    auto loaded = mcpp::pm::load(file);
+    ASSERT_TRUE(loaded);
+    ASSERT_EQ(loaded->packages.size(), 1u);
+    EXPECT_EQ(loaded->packages[0].version, "2.0.0");
+}
+
+TEST(PmLockIo, UnchangedReadOnlyLockDoesNotNeedWriteAccess) {
+    LockDirectory t;
+    const auto file = t.root / "mcpp.lock";
+    mcpp::pm::Lockfile lock;
+    ASSERT_TRUE(mcpp::pm::write(lock, file));
+    std::filesystem::permissions(file, std::filesystem::perms::owner_read);
+    const auto recorded = std::filesystem::last_write_time(file);
+    EXPECT_TRUE(mcpp::pm::write(lock, file));
+    EXPECT_EQ(std::filesystem::last_write_time(file), recorded);
+}
+
+TEST(PmLockIo, AnUnreadableFileOrUncreatableParentReturnsAnError) {
+    LockDirectory t;
+    const auto blocker = t.root / "file";
+    { std::ofstream out(blocker); out << "not a directory"; }
+    mcpp::pm::Lockfile lock;
+    EXPECT_FALSE(mcpp::pm::write(lock, blocker / "mcpp.lock"));
+    EXPECT_FALSE(mcpp::pm::write(lock, t.root));
+}

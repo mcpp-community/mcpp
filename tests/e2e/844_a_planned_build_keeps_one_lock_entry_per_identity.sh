@@ -161,10 +161,19 @@ cmp -s lock.before mcpp.lock || {
     fail "(b) the surviving entry is not the one 2026.9.28.3 wrote"
 }
 
-# (c) another planned build leaves it byte-identical.
+# (c) another planned build leaves bytes AND mtime unchanged (#807).
+python3 - <<'PYTIME'
+import os
+os.utime("mcpp.lock", ns=(1000000000000000000, 1000000000000000000))
+open("lock.mtime", "w").write(str(os.stat("mcpp.lock").st_mtime_ns))
+PYTIME
 echo "// touched again" >> src/main.cpp
 "$MCPP" build > build3.log 2>&1 || fail "the third planned build did not succeed" build3.log
 cmp -s lock.before mcpp.lock || fail "(c) a repeated planned build changed the lock" mcpp.lock
+python3 - <<'PYTIME' || fail "(c) a repeated planned build rewrote an unchanged lock"
+import os
+assert os.stat("mcpp.lock").st_mtime_ns == int(open("lock.mtime").read())
+PYTIME
 
 # --locked reads the same identities.
 echo "// and again" >> src/main.cpp

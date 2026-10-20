@@ -539,7 +539,10 @@ inline int cmd_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
         if (auto lock = mcpp::lockfile::load(lockPath); lock) {
             std::erase_if(lock->packages,
                 [&](const auto& p) { return p.name == canonicalSelector; });
-            (void)mcpp::lockfile::write(*lock, lockPath);
+            if (auto written = mcpp::lockfile::write(*lock, lockPath); !written) {
+                mcpp::ui::error(written.error().message);
+                return 1;
+            }
         }
     }
     return 0;
@@ -601,7 +604,10 @@ inline int cmd_update(const mcpplibs::cmdline::ParsedArgs& parsed) {
             if (lock) {
                 std::erase_if(lock->packages,
                     [&](const auto& p) { return p.name == *only; });
-                (void)mcpp::lockfile::write(*lock, lockPath);
+                if (auto written = mcpp::lockfile::write(*lock, lockPath); !written) {
+                    mcpp::ui::error(written.error().message);
+                    return 1;
+                }
             }
         }
         mcpp::ui::status("Updating", std::format("{} in mcpp.lock", *only));
