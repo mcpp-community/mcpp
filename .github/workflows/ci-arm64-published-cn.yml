@@ -91,7 +91,11 @@ jobs:
         run: |
           set -euo pipefail
           cd art
-          sha256sum -c SHA256SUMS
+          if [ "$TARGET_SYSTEM" = macos ]; then
+            shasum -a 256 -c SHA256SUMS
+          else
+            sha256sum -c SHA256SUMS
+          fi
           grep -Eq '^[0-9a-f]{40}$' source-sha.txt
           grep -Eq '^[0-9a-f]{40}$' engine-release-sha.txt
           grep -Eq '^[0-9a-f]{40}$' index-source-sha.txt
