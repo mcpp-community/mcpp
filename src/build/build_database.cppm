@@ -588,8 +588,12 @@ Rendered render(std::span<const Member> members,
             sets.push_back(std::move(setJson));
         }
 
-        watch_file(ctx.projectRoot / "mcpp.lock");
+        // A host graph's root and members are manifests we synthesized, not
+        // editable inputs. Watching their lock makes emit trigger itself (#807).
+        // Keep the real path libraries of that graph: their sources can change.
+        if (!member.buildPrograms) watch_file(ctx.projectRoot / "mcpp.lock");
         for (auto const& sp : ctx.sourcePackages) {
+            if (member.buildPrograms && relative_to(sp.root, ctx.projectRoot)) continue;
             watch_file(sp.root / "mcpp.toml");
             std::error_code ec;
             if (std::filesystem::exists(sp.root / "build.mcpp", ec))
