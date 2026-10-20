@@ -56,11 +56,11 @@ jobs:
             ${{ env.XLINGS_HOME }}/reports/*.json
             ${{ env.XLINGS_HOME }}/reports/*.txt
             ${{ env.XLINGS_HOME }}/reports/*.sha256
-            ${{ env.XLINGS_HOME }}/probes/runs/*/probe.log
-            ${{ env.XLINGS_HOME }}/probes/runs/*/*.txt
-            ${{ env.XLINGS_HOME }}/probes/runs/*/*.sha256
-            ${{ env.XLINGS_HOME }}/probes/runs/*/*.log
-            ${{ env.XLINGS_HOME }}/probes/runs/*/members.tsv
+            ${{ env.XLINGS_HOME }}/subos/cn-arm64-published/probes/runs/*/probe.log
+            ${{ env.XLINGS_HOME }}/subos/cn-arm64-published/probes/runs/*/*.txt
+            ${{ env.XLINGS_HOME }}/subos/cn-arm64-published/probes/runs/*/*.sha256
+            ${{ env.XLINGS_HOME }}/subos/cn-arm64-published/probes/runs/*/*.log
+            ${{ env.XLINGS_HOME }}/subos/cn-arm64-published/probes/runs/*/members.tsv
           if-no-files-found: warn
   target-run:
     needs: consume
