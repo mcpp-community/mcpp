@@ -15,10 +15,11 @@ cat > "$TMP/index/pkgs/f/fixture.lockdep.lua" <<'LUA'
 package = {
     spec = "1", namespace = "fixture", name = "fixture.lockdep",
     description = "Host lock fixture", licenses = {"MIT"}, type = "package",
-    xpm = { linux = { ["1.0.0"] = {
-        url = "https://example.invalid/lockdep.tar.gz",
-        sha256 = "0000000000000000000000000000000000000000000000000000000000000000",
-    } } },
+    xpm = {
+        linux = {["1.0.0"] = {url = "https://example.invalid/lockdep.tar.gz", sha256 = "0000000000000000000000000000000000000000000000000000000000000000"}},
+        windows = {["1.0.0"] = {url = "https://example.invalid/lockdep.zip", sha256 = "0000000000000000000000000000000000000000000000000000000000000000"}},
+        macosx = {["1.0.0"] = {url = "https://example.invalid/lockdep.tar.gz", sha256 = "0000000000000000000000000000000000000000000000000000000000000000"}},
+    },
     mcpp = { language = "c++23", import_std = false,
              sources = {"src/dep.cpp"}, targets = {lockdep = {kind = "lib"}}, deps = {} },
 }

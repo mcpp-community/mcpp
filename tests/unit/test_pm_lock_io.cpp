@@ -194,3 +194,22 @@ TEST(PmLockIo, AnUnreadableFileOrUncreatableParentReturnsAnError) {
     EXPECT_FALSE(mcpp::pm::write(lock, blocker / "mcpp.lock"));
     EXPECT_FALSE(mcpp::pm::write(lock, t.root));
 }
+
+
+TEST(PmLockIo, UpdatingALinkedLockKeepsTheLinkAndUpdatesItsTarget) {
+    LockDirectory t;
+    const auto target = t.root / "target.lock";
+    const auto link = t.root / "mcpp.lock";
+    mcpp::pm::Lockfile lock;
+    ASSERT_TRUE(mcpp::pm::write(lock, target));
+    std::error_code ec;
+    std::filesystem::create_symlink(target, link, ec);
+    if (ec) GTEST_SKIP() << "this host does not permit file symlinks: " << ec.message();
+    lock.packages.push_back({"fixture", "example", "2.0.0", "path", "digest"});
+    ASSERT_TRUE(mcpp::pm::write(lock, link));
+    EXPECT_TRUE(std::filesystem::is_symlink(link));
+    auto loaded = mcpp::pm::load(target);
+    ASSERT_TRUE(loaded);
+    ASSERT_EQ(loaded->packages.size(), 1u);
+    EXPECT_EQ(loaded->packages[0].version, "2.0.0");
+}
