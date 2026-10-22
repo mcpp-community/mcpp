@@ -19,7 +19,9 @@ first="$work/first home"
 second="$work/second home"
 "$MCPP" self init --home "$first" >/dev/null 2>&1 || fail "the first home could not be initialised"
 out="$("$MCPP" self init --home "$second" 2>&1 || true)"
-grep -qF -- "--home '$second'" <<<"$out" || fail "the suggested command does not quote the spaced path"
+# The path as mcpp spells it, which on macOS is the resolved `/private/var/…`
+# form of `$TMPDIR`: what matters is that it arrives as one quoted word.
+grep -q -- "--home '[^']*/second home'" <<<"$out" || fail "the suggested command does not quote the spaced path"
 cmd=$(sed -n "s/.*use \`\(mcpp self init --force --home .*\)\` to select.*/\1/p" <<<"$out")
 [[ -n "$cmd" ]] || fail "no suggested command found"
 eval "\"$MCPP\" ${cmd#mcpp }" >/dev/null 2>&1 || fail "the suggested command, pasted, failed"

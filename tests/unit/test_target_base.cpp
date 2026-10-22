@@ -258,10 +258,15 @@ TEST(TargetBaseLinkModel, MultiarchForADriverThatDoesNotKnowIt) {
     t.base.multiarch = true;
     t.base.multiarchTuple = "x86_64-linux-gnu";
     auto lm = tc::resolve_link_model(t);
-    EXPECT_TRUE(has(lm.compile_tokens(ident), "-idirafter/usr/include/x86_64-linux-gnu"));
+    // Spelled as the host spells a path: the renderer joins with `/`
+    // operators, so a Windows host writes its own separator.
+    namespace fs = std::filesystem;
+    const auto root = fs::path("/");
+    EXPECT_TRUE(has(lm.compile_tokens(ident),
+                    "-idirafter" + (root / "usr" / "include" / "x86_64-linux-gnu").string()));
     auto link = lm.link_tokens(ident);
-    EXPECT_TRUE(has(link, "-B/usr/lib/x86_64-linux-gnu"));
-    EXPECT_TRUE(has(link, "-Wl,-rpath-link,/lib/x86_64-linux-gnu"));
+    EXPECT_TRUE(has(link, "-B" + (root / "usr" / "lib" / "x86_64-linux-gnu").string()));
+    EXPECT_TRUE(has(link, "-Wl,-rpath-link," + (root / "lib" / "x86_64-linux-gnu").string()));
 }
 
 TEST(PasteArg, QuotesOnlyWhatTheShellWouldSplit) {

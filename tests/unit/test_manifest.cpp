@@ -4554,12 +4554,15 @@ version = "0.1.0"
 sysroot = { path = "third_party/sysroot", provides = ["mcpp:c-abi=glibc"] }
 run_under = ["remote-run", "team-mac", "--"]
 )";
-    auto m = mcpp::manifest::parse_string(src, "/work/proj/mcpp.toml");
+    // An absolute origin on this host (a drive letter on Windows).
+    const auto proj = (std::filesystem::temp_directory_path() / "proj").lexically_normal();
+    auto m = mcpp::manifest::parse_string(src, proj / "mcpp.toml");
     ASSERT_TRUE(m.has_value()) << m.error().format();
     auto it = m->targetOverrides.find("x86_64-linux-gnu");
     ASSERT_NE(it, m->targetOverrides.end());
     EXPECT_TRUE(it->second.sysrootDeclared);
-    EXPECT_EQ(it->second.sysroot, "path:/work/proj/third_party/sysroot");
+    EXPECT_EQ(it->second.sysroot,
+              "path:" + (proj / "third_party" / "sysroot").lexically_normal().generic_string());
     ASSERT_EQ(it->second.sysrootProvides.size(), 1u);
     EXPECT_EQ(it->second.runUnder, (std::vector<std::string>{"remote-run", "team-mac", "--"}));
     for (auto const& w : m->schemaWarnings)
