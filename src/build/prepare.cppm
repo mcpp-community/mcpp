@@ -518,6 +518,13 @@ export struct BuildContext {
     // declared but not installed contributes nothing, and the lookup then
     // continues to PATH.
     std::vector<std::filesystem::path> xlingsDepBinDirs;
+    // THE EXECUTION HOST'S WRAPPER (`run_under`, design 2026-10-23 §3.7):
+    // decided once by prepare from the override, the project and this
+    // machine's defaults, and composed in front of the runner by every verb
+    // that executes an artifact. Empty = this machine. `runUnderOrigin` says
+    // where it was stated, for the line that announces it.
+    std::vector<std::string> runUnder;
+    std::string              runUnderOrigin;
     // The payload directory of every `[xlings]` address resolved above, for
     // the fast path's presence check (#716). See BuildCacheEntry::xlingsPayloads.
     std::vector<std::filesystem::path> xlingsPayloads;

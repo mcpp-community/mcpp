@@ -633,6 +633,8 @@ std::optional<std::string> managed_only_refusal(const PrepareState& state) {
     const auto root = state.root ? *state.root : fs::path{};
     for (auto const& d : state.sources) {
         if (source_class_is_default(d.cls)) continue;
+        // Where an artifact is executed is not a source of the build.
+        if (d.subject == "run_under") continue;
         list += std::format("\n         {} ← {}  [{}]", subject_shown(d), d.value,
                             source_tag(d, root));
     }
@@ -648,6 +650,7 @@ std::string sources_summary(const std::vector<SourceDecision>& sources) {
     std::map<SourceClass, std::vector<std::string>> byClass;
     for (auto const& d : sources) {
         if (source_class_is_default(d.cls)) continue;
+        if (d.subject == "run_under") continue;
         // A tool whose source is its payload's is already summarised by that
         // payload: one statement, one entry.
         if (!d.payload.empty() && std::ranges::any_of(sources, [&](auto const& o) {

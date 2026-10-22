@@ -2431,6 +2431,7 @@ std::expected<void, std::string> phase2_define_toolchain_resolver(PrepareState& 
       if (auto r = step2_retarget_for_retargetable_driver(state); !r) return std::unexpected(r.error());
       if (auto r = step2_bind_msvc_toolset(state); !r) return std::unexpected(r.error());
       if (auto r = step2_resolve_base(state); !r) return std::unexpected(r.error());
+      if (auto r = step2_resolve_run_under(state); !r) return std::unexpected(r.error());
       step2_windows_runtime_identity(state);
       if (auto r = step2_msvc_abi_without_msvc_repair(state); !r) return std::unexpected(r.error());
       step2_musl_default_static_linkage(state);

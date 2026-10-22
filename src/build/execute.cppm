@@ -140,13 +140,37 @@ std::string toolchain_request_identity() {
     std::string cli;
     if (const char* e = std::getenv("MCPP_TOOLCHAIN"); e) cli = e;
     std::string machineDefault;
+    // THE TARGET BASE AND THE EXECUTION HOST, FROM WHEREVER THEY CAN BE STATED
+    // OUTSIDE THE MANIFEST (design 2026-10-23 §3.3, §3.7): the overrides and
+    // this machine's `[target.<triple>]` defaults. A fast path replays a build
+    // without resolving its base, so a change to any of them is a miss.
+    std::string targets;
     std::error_code ec;
     const auto configFile = mcpp::home::root() / "config.toml";
+    auto target_table = [&](const std::filesystem::path& file) {
+        auto doc = mcpp::libs::toml::parse_file(file);
+        if (!doc || !doc->get_table("target")) return;
+        std::ifstream is(file, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(is)), std::istreambuf_iterator<char>());
+        std::uint64_t h = 1469598103934665603ull;
+        for (unsigned char c : text) { h ^= c; h *= 1099511628211ull; }
+        targets += std::format("{:016x}", h);
+    };
     if (std::filesystem::exists(configFile, ec)) {
         if (auto doc = mcpp::libs::toml::parse_file(configFile))
             machineDefault = doc->get_string("toolchain.default").value_or("");
+        target_table(configFile);
     }
-    return std::format("cli={};default={}", cli, machineDefault);
+    if (std::filesystem::exists(mcpp::home::system_config_file(), ec))
+        target_table(mcpp::home::system_config_file());
+    std::string overrides;
+    for (auto const& e : mcpp::platform::env::with_prefix("MCPP_TARGET_"))
+        if (e.find("_SYSROOT=") != std::string::npos || e.find("_RUN_UNDER=") != std::string::npos)
+            overrides += e + ";";
+    if (const char* s = std::getenv("MCPP_SYSROOT"); s && *s) overrides += std::format("MCPP_SYSROOT={};", s);
+    if (overrides.empty() && targets.empty())
+        return std::format("cli={};default={}", cli, machineDefault);
+    return std::format("cli={};default={};base={}{}", cli, machineDefault, overrides, targets);
 }
 
 // THE ENGINE THAT WROTE A BUILD RECORD.
@@ -886,6 +910,141 @@ write_runtime_files_list(
     return listPath;
 }
 
+// THE RUNNER CONTRACT (design 2026-10-23 §4.7; SPEC-002 §6).
+//
+// An artifact is executed as `<run_under…> <runner…> <artifact> <args>`. The
+// engine knows no runner and no execution host by name: it hands every one
+// of them the same facts, and a runner that reads none of them is unaffected.
+//
+//   MCPP_RUN_TRIPLE    the target, in mcpp's canonical spelling
+//   MCPP_RUN_KIND      `exe`, or `bundle` for a directory
+//   MCPP_RUN_MODE      `run` or `test`
+//   MCPP_RUN_ID        unique per execution: runners may run concurrently
+//   MCPP_RUN_CLOSURE   a JSON manifest of what the execution needs
+//   MCPP_SYSROOT       the stated target base, when there is one
+//
+// The closure manifest is versioned (`schema`), names the artifact, every
+// file it loads or reads from its own directory (the entries of
+// MCPP_RUNTIME_FILES, which stays for runners written against it), and the
+// base's root -- what a runner that moves the artifact to another machine has
+// to move with it.
+constexpr int kRunClosureSchema = 1;
+
+std::expected<std::filesystem::path, std::string>
+write_run_closure(const mcpp::build::BuildContext& ctx,
+                  const std::filesystem::path& artifact,
+                  const std::vector<std::pair<std::string, std::filesystem::path>>& carried,
+                  std::string_view mode, std::string_view triple) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    auto rel = artifact.lexically_normal().lexically_relative(ctx.outputDir.lexically_normal());
+    if (rel.empty() || *rel.begin() == "..") rel = fs::path("distributable") / artifact.filename();
+    auto path = ctx.outputDir / ".mcpp-runtime-files" / rel;
+    path += ".closure.json";
+    fs::create_directories(path.parent_path(), ec);
+    auto quote = [](std::string_view s) {
+        std::string o = "\"";
+        for (char c : s) {
+            if (c == '"' || c == '\\') { o += '\\'; o += c; }
+            else if (static_cast<unsigned char>(c) < 0x20) o += std::format("\\u{:04x}", static_cast<int>(c));
+            else o += c;
+        }
+        return o + "\"";
+    };
+    std::string j = std::format("{{\n  \"schema\": {},\n  \"triple\": {},\n  \"mode\": {},\n"
+                                "  \"artifact\": {},\n  \"kind\": {},\n  \"files\": [",
+                                kRunClosureSchema, quote(triple), quote(mode),
+                                quote(artifact.generic_string()),
+                                quote(fs::is_directory(artifact, ec) ? "bundle" : "exe"));
+    for (std::size_t i = 0; i < carried.size(); ++i)
+        j += std::format("{}\n    {{ \"dest\": {}, \"source\": {} }}", i ? "," : "",
+                         quote(carried[i].first), quote(carried[i].second.generic_string()));
+    j += std::format("{}],\n  \"sysroot\": {}\n}}\n", carried.empty() ? "" : "\n  ",
+                     quote(ctx.tc.base.stated() ? ctx.tc.base.root.generic_string() : std::string{}));
+    std::ofstream os(path, std::ios::binary | std::ios::trunc);
+    os << j;
+    os.flush();
+    if (!os)
+        return std::unexpected(std::format(
+            "could not write the run closure '{}' a runner receives as MCPP_RUN_CLOSURE",
+            path.string()));
+    return path;
+}
+
+std::vector<std::pair<std::string, std::string>>
+run_contract_env(const mcpp::build::BuildContext& ctx, const std::filesystem::path& artifact,
+                 std::string_view mode, std::string_view triple,
+                 const std::filesystem::path& closure) {
+    static std::atomic<unsigned> counter{0};
+    std::error_code ec;
+    std::vector<std::pair<std::string, std::string>> env{
+        {"MCPP_RUN_TRIPLE", std::string(triple)},
+        {"MCPP_RUN_KIND", std::filesystem::is_directory(artifact, ec) ? "bundle" : "exe"},
+        {"MCPP_RUN_MODE", std::string(mode)},
+        {"MCPP_RUN_ID", std::format("{:x}-{}",
+            static_cast<unsigned long long>(
+                std::chrono::system_clock::now().time_since_epoch().count()),
+            counter.fetch_add(1))},
+        {"MCPP_RUN_CLOSURE", closure.string()},
+    };
+    if (ctx.tc.base.stated() && !ctx.tc.base.root.empty())
+        env.emplace_back("MCPP_SYSROOT", ctx.tc.base.root.string());
+    return env;
+}
+
+// `run_under`, its program located as a runner's is (the payloads the project
+// declared, then PATH). An empty result with an empty error is "this
+// machine".
+struct ExecutionHost {
+    std::vector<std::string> prefix;
+    std::string              error;
+};
+
+ExecutionHost locate_run_under(const mcpp::build::BuildContext& ctx, std::string_view tripleKey) {
+    ExecutionHost h;
+    if (ctx.runUnder.empty()) return h;
+    h.prefix = ctx.runUnder;
+    const char* pathEnv = std::getenv("PATH");
+    auto found = mcpp::build::runner_lookup::locate(h.prefix.front(), ctx.xlingsDepBinDirs,
+                                                     pathEnv ? pathEnv : "");
+    if (!found.program) {
+        h.error = std::format(
+            "{}\n       `run_under` comes from {}. Install the program (for example through "
+            "[xlings.workspace]), override it on this machine with {}=<argv>, or clear it "
+            "with {}=none.",
+            mcpp::build::runner_lookup::not_found_message(tripleKey, h.prefix.front(), found.searched),
+            ctx.runUnderOrigin, std::format("MCPP_TARGET_{}_RUN_UNDER", [&] {
+                std::string s;
+                for (char c : tripleKey)
+                    s += (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
+                       : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
+                return s;
+            }()), "the same variable");
+        h.prefix.clear();
+        return h;
+    }
+    h.prefix.front() = found.program->string();
+    return h;
+}
+
+// THE PHYSICAL BOUNDARY (§3.8): an artifact no path from this machine can
+// execute is refused before anything is spawned, naming the key that adds one.
+// Today that is an Apple artifact on a host that is not macOS: the simulator
+// and the OS run only there. `--no-runner` states that the triple is native
+// here, and is believed.
+std::optional<std::string> unreachable_execution(const mcpp::build::BuildContext& ctx,
+                                                 std::string_view tripleKey, bool noRunner) {
+    if (noRunner || !ctx.runUnder.empty() || mcpp::platform::is_macos) return std::nullopt;
+    auto t = mcpp::toolchain::triple::parse(tripleKey);
+    if (!t || !t->is_apple()) return std::nullopt;
+    return std::format(
+        "cannot run {} artifacts on this host: {} runs only on macOS.\n"
+        "       Name an execution host: [target.{}] run_under = [\"remote-run\", \"<host>\", \"--\"]\n"
+        "       (in mcpp.toml for the team, or ~/.mcpp/config.toml for this machine).",
+        tripleKey, t->is_ios_simulator() ? "the iOS Simulator" : t->is_ios() ? "iOS" : "macOS",
+        tripleKey);
+}
+
 // Compile a prepared BuildContext. Shared between `mcpp build` and `mcpp run`
 // so the latter doesn't call prepare_build twice (and re-print the toolchain
 // resolution banner).
@@ -1159,7 +1318,7 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                           ctx.depSourceRoots,
                           // #544: the run fast path declines an entry whose
                           // target has a runner declared — see the field.
-                          !choose_runner(ctx).tmpl.empty(),
+                          !choose_runner(ctx).tmpl.empty() || !ctx.runUnder.empty(),
                           // …and one written by a build that left a run-tier
                           // tool uninstalled, for the same reason.
                           ctx.runTierPending,
@@ -1924,6 +2083,11 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
         }
     }
     if (!match) return fast_path_declined("build", "no recorded build matches this request");
+    // A STATED TARGET BASE IS A TREE THIS PATH CANNOT SEE CHANGE (design
+    // 2026-10-23 §4.9): its identity is measured by prepare, and a sysroot
+    // rewritten in place is a different base.
+    if (match->runtimeBinding && !match->runtimeBinding->baseIdentity.empty())
+        return fast_path_declined("build", "a stated target base is measured on the full path");
 
     // The gates every fast path shares (see admit_recorded_build); what is left
     // here is the project's own tree.
@@ -2148,6 +2312,8 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     // other door wraps it would make the second `mcpp run` behave differently
     // from the first. The entry records the fact; the fast path declines.
     if (match->runnerDeclared) return fast_path_declined("run", "a runner is declared");
+    if (match->runtimeBinding && !match->runtimeBinding->baseIdentity.empty())
+        return fast_path_declined("run", "a stated target base is measured on the full path");
     // The same reasoning one axis over: this entry was written by a verb that
     // installed less than a run needs, so taking it would execute with a
     // declared tool absent. prepare_build provisions the difference.
@@ -2345,7 +2511,24 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
             format_name, format_name, choice.tripleKey, format_name);
         return 126;
     }
+    if (isRunSlot) {
+        if (auto why = unreachable_execution(ctx, choice.tripleKey, no_runner)) {
+            std::println(stderr, "error: {}", *why);
+            return 2;
+        }
+    }
+    // The execution host's wrapper, in front of everything (§3.7).
+    // `--no-runner` states the triple is native here: neither applies.
+    ExecutionHost host;
+    if (!no_runner) {
+        host = locate_run_under(ctx, choice.tripleKey);
+        if (!host.error.empty()) {
+            std::println(stderr, "error: {}", host.error);
+            return 2;
+        }
+    }
     std::optional<std::filesystem::path> runtimeFilesList;
+    std::vector<std::pair<std::string, std::filesystem::path>> carriedFiles;
     if (!choice.tmpl.empty()) {
         // The program is located by mcpp, not by posix_spawnp: a declared
         // payload's bin/ and then its root, then PATH — see runner_lookup for the shim
@@ -2369,10 +2552,9 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         for (auto& a : passthrough) argv.push_back(a);
         // What the runner has to carry with the artifact. A distributable
         // holds its own files, so its list is empty and still exists.
-        auto listed = write_runtime_files_list(
-            ctx, exe,
-            format_name.empty() ? runtime_files_for(ctx, exe)
-                                : std::vector<std::pair<std::string, std::filesystem::path>>{});
+        carriedFiles = format_name.empty() ? runtime_files_for(ctx, exe)
+                                           : std::vector<std::pair<std::string, std::filesystem::path>>{};
+        auto listed = write_runtime_files_list(ctx, exe, carriedFiles);
         if (!listed) {
             std::println(stderr, "error: {}", listed.error());
             return 1;
@@ -2397,6 +2579,22 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         mcpp::ui::status("Running",
             std::format("`{}`", mcpp::ui::shorten_path(exe, pathCtx)));
     }
+    std::optional<std::filesystem::path> runClosure;
+    if (!host.prefix.empty()) {
+        if (choice.tmpl.empty()) carriedFiles = runtime_files_for(ctx, exe);
+        argv.insert(argv.begin(), host.prefix.begin(), host.prefix.end());
+        std::string shown;
+        for (auto const& a : ctx.runUnder) shown += (shown.empty() ? "" : " ") + a;
+        mcpp::ui::status("Via", std::format("{}  [{}]", shown, ctx.runUnderOrigin));
+    }
+    if (!host.prefix.empty() || !choice.tmpl.empty()) {
+        auto closure = write_run_closure(ctx, exe, carriedFiles, "run", choice.tripleKey);
+        if (!closure) {
+            std::println(stderr, "error: {}", closure.error());
+            return 1;
+        }
+        runClosure = *closure;
+    }
     run_separator();
 
     std::vector<std::pair<std::string, std::string>> childEnv;
@@ -2407,6 +2605,9 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     for (auto& kv : compute_subos_env(ctx.plan)) childEnv.push_back(std::move(kv));
     if (runtimeFilesList)
         childEnv.emplace_back(std::string(kRuntimeFilesEnv), runtimeFilesList->string());
+    if (runClosure)
+        for (auto& kv : run_contract_env(ctx, exe, "run", choice.tripleKey, *runClosure))
+            childEnv.push_back(std::move(kv));
 
     // Direct exec (no /bin/sh): the loader env reaches ONLY the target child,
     // never mcpp or a host shell. Fixes the bundled-glibc-vs-host-libtinfo
@@ -2422,7 +2623,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     const int rc = mcpp::platform::process::run_foreground(argv, childEnv, &spawnErr);
     if (spawnErr != 0) {
         using namespace mcpp::build::runner_lookup;
-        if (!choice.tmpl.empty())
+        if (!choice.tmpl.empty() || !host.prefix.empty())
             std::println(stderr, "error: {}", spawn_failed_message(argv.front(), spawnErr));
         else if (classify(spawnErr) == SpawnClass::Unloadable)
             std::println(stderr, "error: {}",
@@ -2939,6 +3140,8 @@ struct TestBuild {
     // (#544): every test of one build shares a target.
     RunnerChoice                             runnerChoice;
     std::vector<std::string>                 runnerTmpl;
+    // The execution host's wrapper (`run_under`), located once (§3.7).
+    std::vector<std::string>                 runUnderPrefix;
     // Non-empty ⇒ no test is spawned; every one is reported NotRun with it.
     std::string                              invocationNotRunReason;
     // Non-zero: there is nothing to execute the tests with, and this is the
@@ -3144,6 +3347,14 @@ static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool
             mcpp::freestanding::no_runner_message(runnerChoice.tripleKey));
         tb.runnerFatal = 2;
         return;
+    }
+    // Not run, with the reason, as a missing runner is: the tests built.
+    if (auto why = unreachable_execution(*ctx, runnerChoice.tripleKey, testOpts.noRunner))
+        tb.invocationNotRunReason = *why;
+    if (!testOpts.noRunner) {
+        auto host = locate_run_under(*ctx, runnerChoice.tripleKey);
+        if (!host.error.empty()) tb.invocationNotRunReason = host.error;
+        tb.runUnderPrefix = std::move(host.prefix);
     }
     tb.runnerTmpl = runnerChoice.tmpl;
     auto& runnerTmpl = tb.runnerTmpl;
@@ -3498,6 +3709,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         if (runnerTmpl.empty()) argv.push_back(exe.string());
         else                    argv = mcpp::freestanding::expand(runnerTmpl, exe);
         for (auto& a : passthrough) argv.push_back(a);
+        argv.insert(argv.begin(), tb.runUnderPrefix.begin(), tb.runUnderPrefix.end());
 
         std::vector<std::pair<std::string, std::string>> childEnv;
         if (!runtimeEnvKey.empty() && !runtimeEnvValue.empty())
@@ -3509,13 +3721,18 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // ...and, through a runner, the files the test carries with it, as
         // `mcpp run` hands them over (see `runtime_files_for`). Written here,
         // in the single-threaded pass, one list per test program.
-        if (!runnerTmpl.empty()) {
+        if (!runnerTmpl.empty() || !tb.runUnderPrefix.empty()) {
             std::vector<std::pair<std::string, std::filesystem::path>> carried;
             with_member(*ctx, owner, [&] { carried = runtime_files_for(*ctx, exe, owner); });
             if (auto listed = write_runtime_files_list(*ctx, exe, carried))
                 childEnv.emplace_back(std::string(kRuntimeFilesEnv), listed->string());
             else if (invocationNotRunReason.empty())
                 invocationNotRunReason = listed.error();
+            if (auto closure = write_run_closure(*ctx, exe, carried, "test", runnerChoice.tripleKey))
+                for (auto& kv : run_contract_env(*ctx, exe, "test", runnerChoice.tripleKey, *closure))
+                    childEnv.push_back(std::move(kv));
+            else if (invocationNotRunReason.empty())
+                invocationNotRunReason = closure.error();
         }
 
         // Prepend the toolchain's environment's bin to the CHILD PATH so test

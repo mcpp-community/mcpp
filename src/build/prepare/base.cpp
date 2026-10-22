@@ -461,4 +461,64 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
     return {};
 }
 
+// THE EXECUTION HOST'S WRAPPER (§3.7): the same tiers as the base, minus the
+// engine's (an execution host is never a default). In the environment, empty
+// is unset and `none` clears what the project or the machine said.
+std::expected<void, std::string> step2_resolve_run_under(PrepareState& state) {
+    state.runUnder.clear();
+    if (!state.tc || state.overrides.host_target || state.overrides.tool_depth > 0) return {};
+    auto tt = mcpp::toolchain::triple::parse(state.tc->targetTriple);
+    if (!tt) return {};
+    const auto key = tt->str();
+    SourceDecision d;
+    d.subject = "run_under";
+    d.cls = SourceClass::Custom;
+    d.announce = false;   // announced when something is run through it
+    auto decide = [&](std::vector<std::string> argv) {
+        state.runUnder = std::move(argv);
+        if (state.runUnder.empty()) return;
+        std::string shown;
+        for (auto const& a : state.runUnder) shown += (shown.empty() ? "" : " ") + a;
+        d.value = std::move(shown);
+        state.runUnderOrigin = d;
+        record_source(state, std::move(d));
+    };
+    const auto envName = target_env_name(*tt, "RUN_UNDER");
+    if (const char* e = std::getenv(envName.c_str()); e && *e) {
+        std::string_view v(e);
+        if (v == "none") return {};
+        std::vector<std::string> argv;
+        std::string cur;
+        for (char c : v) {
+            if (c == ' ' || c == '\t') { if (!cur.empty()) argv.push_back(std::exchange(cur, {})); }
+            else cur += c;
+        }
+        if (!cur.empty()) argv.push_back(cur);
+        d.originKind = "env";
+        d.originKey = envName;
+        decide(std::move(argv));
+        return {};
+    }
+    if (auto* e = find_target_entry(*state.m, *tt); e && !e->runUnder.empty()) {
+        d.originKind = "manifest";
+        d.originFile = state.m->sourcePath.string();
+        d.originLine = e->runUnderLine;
+        decide(e->runUnder);
+        return {};
+    }
+    if (auto cfg = state.get_cfg(false); cfg) {
+        for (auto const& [k, td] : (*cfg)->targetDefaults) {
+            if (td.runUnder.empty()) continue;
+            auto kt = mcpp::toolchain::triple::parse(k);
+            if (!(kt ? kt->str() == key : k == key)) continue;
+            d.originKind = "config";
+            d.originFile = td.runUnderFile.string();
+            d.originLine = td.runUnderLine;
+            decide(td.runUnder);
+            return {};
+        }
+    }
+    return {};
+}
+
 } // namespace mcpp::build

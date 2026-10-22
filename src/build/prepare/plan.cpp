@@ -1892,6 +1892,12 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     ctx.runtimeSelection = state.runtimeSelection;
     ctx.runtimeBinding = state.targetRuntimeBinding ? *state.targetRuntimeBinding
                                                     : state.runtimeBindingSnapshot;
+    ctx.runUnder = state.runUnder;
+    if (!state.runUnder.empty()) {
+        auto const& o = state.runUnderOrigin;
+        ctx.runUnderOrigin = o.originKind == "env" ? o.originKey
+            : o.originLine > 0 ? std::format("{}:{}", o.originFile, o.originLine) : o.originFile;
+    }
     ctx.profile     = state.effectiveProfile;
     ctx.activeFeatureRequest = state.workspacePlan() ? state.requestedFeatures
                                                      : state.overrides.features;

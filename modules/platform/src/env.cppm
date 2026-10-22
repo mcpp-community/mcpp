@@ -9,6 +9,7 @@ module;
 #include <stdlib.h>    // _putenv_s
 #else
 #include <stdlib.h>    // setenv / unsetenv
+extern char** environ;
 #endif
 
 export module mcpp.platform.env;
@@ -27,6 +28,12 @@ void set(const std::string& key, const std::string& value);
 // `_putenv_s(key, "")`, which the CRT defines as removal, so absent and empty
 // are one state there, and `get` answers nullopt for both on every platform.
 void unset(const std::string& key);
+
+// Every variable whose name starts with `prefix`, as `NAME=value` in the
+// order the process environment holds them, empty values left out. For an
+// identity that has to change when any of a family of variables does
+// (`MCPP_TARGET_<TRIPLE>_SYSROOT`), where the names are not known in advance.
+std::vector<std::string> with_prefix(std::string_view prefix);
 
 // ── Network policy: offline mode ──────────────────────────────────────────
 //
@@ -153,6 +160,24 @@ std::optional<std::string> get(std::string_view key) {
     auto* v = std::getenv(k.c_str());
     if (!v || !*v) return std::nullopt;
     return std::string(v);
+}
+
+std::vector<std::string> with_prefix(std::string_view prefix) {
+    std::vector<std::string> out;
+#if defined(_WIN32)
+    char** env = _environ;
+#else
+    char** env = environ;
+#endif
+    for (; env && *env; ++env) {
+        std::string_view e(*env);
+        if (!e.starts_with(prefix)) continue;
+        auto eq = e.find('=');
+        if (eq == std::string_view::npos || eq + 1 == e.size()) continue;
+        out.emplace_back(e);
+    }
+    std::ranges::sort(out);
+    return out;
 }
 
 void set(const std::string& key, const std::string& value) {
