@@ -309,6 +309,13 @@ struct TargetSide {
     // configuration (`mcpp.toolchain.cenv`).
     std::optional<CAbiDecl> cAbiDecl;
 
+    // THE PAYLOAD'S C++ RUNTIME OVER A PREBUILT BASE, MEASURED TO FIT (design
+    // 2026-10-23 D8). Rule two holds for a base that supplies the C library
+    // the payload's C++ runtime was configured for (glibc under libstdc++) at
+    // a version no lower than that runtime requires -- a fact the base
+    // resolution measured, not one assumed.
+    bool cxxOverBaseMeasured = false;
+
     // What the triple asked the C library to be, empty when it did not ask.
     // Kept beside the resolved value rather than replacing it: the report
     // states the outcome, and this exists so a mismatch can be named.
@@ -597,6 +604,14 @@ struct Inputs {
     // caller from `[target.X].sysroot` over the target table's column.
     bool        sysrootDeclaredEmpty = false;   // `sysroot = ""` — the zero-libc tier
     std::string sysrootXpkg;                    // an xpkg reference, or empty
+    // The C library a base named by path or by a locator was measured to
+    // supply ("glibc"): what the report names it, since there is no package
+    // name to derive it from. Empty for a package.
+    std::string sysrootLibc;
+    // That base supplies the C library the payload's C++ runtime was
+    // configured for, at a version its runtime accepts (measured by the base
+    // resolution's floor check).
+    bool        sysrootFitsPayloadCxx = false;
 
     // What the payload would contribute, for display only.
     std::string payloadSystemRef;
@@ -716,7 +731,9 @@ inline TargetSide resolve(const Inputs& in) {
     else if (in.sysrootDeclaredEmpty)
         ts.cAbi = { Origin::None, {}, {}, false };
     else if (!in.sysrootXpkg.empty())
-        ts.cAbi = { Origin::Xpkg, xpkg_interface(in.sysrootXpkg), in.sysrootXpkg, false };
+        ts.cAbi = { Origin::Xpkg,
+                    in.sysrootLibc.empty() ? xpkg_interface(in.sysrootXpkg) : in.sysrootLibc,
+                    in.sysrootXpkg, false };
     else if (in.freestandingTarget)
         ts.cAbi = { Origin::None, {}, {}, false };
     else
@@ -727,7 +744,8 @@ inline TargetSide resolve(const Inputs& in) {
     if (in.cxxAbi)
         ts.cxx = { Origin::Graph, in.cxxAbi->display_interface(), in.cxxAbi->id(),
                    !in.cxxAbi->hasStdModule };
-    else if (ts.cAbi.origin == Origin::Payload)
+    else if (ts.cAbi.origin == Origin::Payload
+             || (ts.cAbi.origin == Origin::Xpkg && in.sysrootFitsPayloadCxx))
         // THE LAYERING RULE, AS STRUCTURE RATHER THAN AS A LATER CHECK.
         //
         // An implementation must have been configured for the layer beneath it.
@@ -740,6 +758,7 @@ inline TargetSide resolve(const Inputs& in) {
         ts.cxx = { Origin::Payload, in.payloadCxxInterface, in.payloadCxxRef, false };
     else
         ts.cxx = { Origin::None, {}, {}, false };
+    ts.cxxOverBaseMeasured = ts.cAbi.origin == Origin::Xpkg && in.sysrootFitsPayloadCxx;
 
     return ts;
 }
@@ -765,7 +784,7 @@ inline const Layer& layer_of(const TargetSide& ts, CapLayer l) {
 // rule is stated again here for that path.
 inline std::optional<std::string> check_layering(const TargetSide& ts) {
     if (ts.cxx.origin == Origin::Payload && ts.cAbi.origin != Origin::Payload
-        && ts.cAbi.origin != Origin::None)
+        && ts.cAbi.origin != Origin::None && !ts.cxxOverBaseMeasured)
         return std::format(
             "the toolchain payload's C++ runtime cannot be used with a C "
             "library that does not come from the payload.\n"

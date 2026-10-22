@@ -379,9 +379,27 @@ std::filesystem::path write_clean_link_specs(
     if (compilerBin.empty() || outputDir.empty()) return {};
     std::error_code ec;
     auto out = outputDir / "mcpp-clean-link.specs";
+    // THE LINKER IS TOLD THE SYSROOT TOO (SPEC-006 §4.3; design 2026-10-23
+    // §1.2). gcc builds the link line as `%(sysroot_spec)` followed by
+    // `*link:`, and prepends the first to the second BEFORE any `-specs=` file
+    // is read -- so a file that restores the pristine `*link:` body drops it,
+    // and ld never hears `--sysroot`. A sysroot's linker scripts name its
+    // libraries by absolute path (`GROUP ( /lib64/libc.so.6 ... )`), which ld
+    // resolves inside the sysroot only when it was told one: without it, the
+    // HOST's files, or `cannot find /lib64/libm.so.6`. Restored here as the
+    // first token. Measured on the ecosystem's default base: the artifact is
+    // byte-identical with and without it.
+    constexpr std::string_view kSysrootSpec = "%(sysroot_spec) ";
     // Idempotent: the pristine spec is a property of the compiler binary, so
-    // regenerating it every build would spawn a process for a constant.
-    if (std::filesystem::exists(out, ec)) return out;
+    // regenerating it every build would spawn a process for a constant. A
+    // file written before the line above existed is rewritten once.
+    if (std::filesystem::exists(out, ec)) {
+        std::ifstream is(out);
+        std::string head, body;
+        std::getline(is, head);
+        std::getline(is, body);
+        if (body.starts_with(kSysrootSpec)) return out;
+    }
 
     // An argument vector: the command-string form carried `2>/dev/null`, which
     // cmd.exe cannot open, so on a Windows host this probe printed a spurious
@@ -403,7 +421,7 @@ std::filesystem::path write_clean_link_specs(
     std::filesystem::create_directories(outputDir, ec);
     std::ofstream os(out);
     if (!os) return {};
-    os << "*link:\n" << body << "\n\n";
+    os << "*link:\n" << kSysrootSpec << body << "\n\n";
     os.close();
     return out;
 }

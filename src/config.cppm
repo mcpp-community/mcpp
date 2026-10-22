@@ -155,6 +155,22 @@ struct GlobalConfig {
     };
     std::map<std::string, PayloadOverride> payloadOverrides;
 
+    // From config.toml [target.<triple>] (design 2026-10-23 §3.3, §3.7): THIS
+    // MACHINE'S DEFAULTS for a target's base and execution host. A project's
+    // `mcpp.toml` outranks them and the environment overrides both. The
+    // user's file outranks the system's (`/etc/mcpp/config.toml`), key by key.
+    struct TargetDefault {
+        std::string              sysroot;           // canonical text; `path:<abs>` for a table
+        bool                     sysrootDeclared = false;
+        std::vector<std::string> sysrootProvides;
+        int                      sysrootLine = 0;
+        std::vector<std::string> runUnder;
+        int                      runUnderLine = 0;
+        std::filesystem::path    sysrootFile;       // the config.toml that said so
+        std::filesystem::path    runUnderFile;
+    };
+    std::map<std::string, TargetDefault> targetDefaults;
+
     // Resolved xlings home (registryDir unless overridden)
     std::filesystem::path xlingsHome() const {
         return xlingsHomeOverride.empty() ? registryDir : xlingsHomeOverride;
@@ -340,6 +356,15 @@ void print_env(const GlobalConfig& cfg);
 // document, so a test reads it without a home to bootstrap.
 std::expected<std::map<std::string, GlobalConfig::PayloadOverride>, std::string>
 parse_payload_overrides(const mcpp::libs::toml::Document& doc);
+
+// `[target.<triple>]` of a parsed config.toml: `sysroot` (a string, or
+// `{ path, provides }` with `path` relative to the file) and `run_under`.
+// Merged into `into` below what it already holds, so the user's file is read
+// first and the system's fills the gaps.
+std::expected<void, std::string>
+parse_target_defaults(const mcpp::libs::toml::Document& doc,
+                      const std::filesystem::path& file,
+                      std::map<std::string, GlobalConfig::TargetDefault>& into);
 
 // Normalize legacy index naming in a loaded config (exported for tests):
 // org migration mcpp-community/mcpp-index -> mcpplibs/mcpp-index, index name
@@ -686,6 +711,80 @@ void canonicalize_legacy_index_names(GlobalConfig& cfg) {
     cfg.indexRepos = std::move(normalized);
 }
 
+std::expected<void, std::string>
+parse_target_defaults(const mcpp::libs::toml::Document& doc,
+                      const std::filesystem::path& file,
+                      std::map<std::string, GlobalConfig::TargetDefault>& into) {
+    auto* tt = doc.get_table("target");
+    if (!tt) return {};
+    for (auto const& [triple, body] : *tt) {
+        if (!body.is_table())
+            return std::unexpected(std::format(
+                "{} [target.{}] must be a table with `sysroot` and/or `run_under`",
+                file.string(), triple));
+        auto& d = into[triple];
+        for (auto const& [k, v] : body.as_table()) {
+            if (k == "sysroot") {
+                if (d.sysrootDeclared) continue;   // a nearer file said it
+                std::string text;
+                std::vector<std::string> provides;
+                if (v.is_string()) {
+                    text = v.as_string();
+                } else if (v.is_table()) {
+                    std::string path;
+                    for (auto const& [tk, tv] : v.as_table()) {
+                        if (tk == "path" && tv.is_string()) path = tv.as_string();
+                        else if (tk == "provides" && tv.is_array()) {
+                            for (auto const& el : tv.as_array())
+                                if (el.is_string()) provides.push_back(el.as_string());
+                        } else
+                            return std::unexpected(std::format(
+                                "{} [target.{}].sysroot: '{}' is not a key of a sysroot table; "
+                                "the keys are `path` and `provides`", file.string(), triple, tk));
+                    }
+                    if (path.empty())
+                        return std::unexpected(std::format(
+                            "{} [target.{}].sysroot is a table without `path`", file.string(), triple));
+                    std::filesystem::path p(path);
+                    if (path == "~" || path.starts_with("~/"))
+                        if (auto* h = std::getenv(mcpp::platform::is_windows ? "USERPROFILE" : "HOME"); h && *h)
+                            p = std::filesystem::path(h) / (path.size() > 2 ? path.substr(2) : std::string{});
+                    if (p.is_relative()) p = file.parent_path() / p;
+                    text = "path:" + p.lexically_normal().generic_string();
+                } else {
+                    return std::unexpected(std::format(
+                        "{} [target.{}].sysroot must be a string or {{ path = \"<dir>\" }}",
+                        file.string(), triple));
+                }
+                d.sysroot = std::move(text);
+                d.sysrootProvides = std::move(provides);
+                d.sysrootDeclared = true;
+                d.sysrootLine = static_cast<int>(v.position.line);
+                d.sysrootFile = file;
+            } else if (k == "run_under") {
+                if (!d.runUnder.empty()) continue;
+                if (!v.is_array())
+                    return std::unexpected(std::format(
+                        "{} [target.{}].run_under must be an array of strings", file.string(), triple));
+                for (auto const& el : v.as_array()) {
+                    if (!el.is_string())
+                        return std::unexpected(std::format(
+                            "{} [target.{}].run_under must contain only strings", file.string(), triple));
+                    d.runUnder.push_back(el.as_string());
+                }
+                d.runUnderLine = static_cast<int>(v.position.line);
+                d.runUnderFile = file;
+            } else {
+                return std::unexpected(std::format(
+                    "{} [target.{}]: '{}' is not a key of a machine's target defaults; "
+                    "the keys are `sysroot` and `run_under` (everything else about a "
+                    "target belongs in the project's mcpp.toml)", file.string(), triple, k));
+            }
+        }
+    }
+    return {};
+}
+
 std::expected<std::map<std::string, GlobalConfig::PayloadOverride>, std::string>
 parse_payload_overrides(const mcpp::libs::toml::Document& doc) {
     std::map<std::string, GlobalConfig::PayloadOverride> out;
@@ -869,6 +968,13 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         cfg.payloadOverrides = std::move(*overrides);
     else
         return std::unexpected(ConfigError{overrides.error()});
+    // [target.<triple>]: this machine's defaults, the user's first.
+    if (auto r = parse_target_defaults(*doc, cfg.configFile, cfg.targetDefaults); !r)
+        return std::unexpected(ConfigError{r.error()});
+    if (systemDoc)
+        if (auto r = parse_target_defaults(*systemDoc, mcpp::home::system_config_file(),
+                                           cfg.targetDefaults); !r)
+            return std::unexpected(ConfigError{r.error()});
 
     // A read-only report must not create its log directory either.
     if (initialization != Initialization::ReadOnly) {

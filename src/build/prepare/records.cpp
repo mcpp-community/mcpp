@@ -547,17 +547,17 @@ void step13_resolution_json(PrepareState& state, BuildContext& ctx) {
         // THE MSVC SYSROOT OF THE CLANG ROW: which toolset and SDK the build
         // compiled against, and where each came from. Absent on every other
         // row, so a reader can tell "not this row" from "not recorded".
-        if (!ctx.plan.toolchain.msvcToolsDir.empty()) {
+        if (!ctx.plan.toolchain.base.msvc.toolsDir.empty()) {
             const auto& tcr = ctx.plan.toolchain;
             j["msvc_toolset"] = {
-                {"version", tcr.msvcToolsVersion},
-                {"origin",  tcr.msvcOrigin},
-                {"product", tcr.msvcProduct},
-                {"root",    tcr.msvcToolsDir.generic_string()},
+                {"version", tcr.base.msvc.toolsVersion},
+                {"origin",  tcr.base.msvc.origin},
+                {"product", tcr.base.msvc.product},
+                {"root",    tcr.base.msvc.toolsDir.generic_string()},
             };
             j["windows_sdk"] = {
-                {"version", tcr.windowsSdkVersion},
-                {"root",    tcr.windowsSdkRoot.generic_string()},
+                {"version", tcr.base.msvc.sdkVersion},
+                {"root",    tcr.base.msvc.sdkRoot.generic_string()},
             };
         }
         // WHERE EACH SOURCE CAME FROM (mcpp#755): the decision record, one

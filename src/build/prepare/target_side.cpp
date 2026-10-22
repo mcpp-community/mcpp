@@ -281,15 +281,30 @@ step9_gather_target_side_candidates(PrepareState& state) {
                 // On an MSVC-ABI row the key names the MSVC toolset, which the
                 // toolchain binding consumes (`bind_msvc_sysroot`); it is not a
                 // C library package for this model to report as one.
+                //
+                // The statement is the base's (base.cpp): from the project,
+                // an override or this machine's defaults alike. A base named
+                // by path or by a locator is reported by the C library it was
+                // measured to supply.
                 if (tt->is_msvc_env())
                     ;
-                else if (auto const* ovr = sysroot_override(*state.m, *tt); ovr && ovr->empty())
+                else if (auto const* ovr = base_statement_text(state, *tt); ovr && ovr->empty())
                     in.sysrootDeclaredEmpty = true;
-                else
-                    in.sysrootXpkg = mcpp::toolchain::triple::effective_sysroot(
-                        *tt, sysroot_override(*state.m, *tt));
+                else {
+                    in.sysrootXpkg = mcpp::toolchain::triple::effective_sysroot(*tt, ovr);
+                    if (ovr && (ovr->starts_with("path:") || ovr->find(':') == std::string::npos))
+                        in.sysrootLibc = state.tc->base.libc.empty() ? std::string("sysroot")
+                                                                     : state.tc->base.libc;
+                    // A hosted base whose C library is the row's own, measured
+                    // and floor-checked by `step2_resolve_base`.
+                    const auto& b = state.tc->base;
+                    in.sysrootFitsPayloadCxx = b.stated()
+                        && b.address == mcpp::toolchain::base::Address::GnuSysroot
+                        && ((b.libc == "glibc" && tt->env == "gnu")
+                            || (b.libc == "musl" && tt->env == "musl"));
+                }
             }
-            in.payloadLibcRef      = state.tc->targetSysrootPkg;
+            in.payloadLibcRef      = state.tc->base.package;
             in.payloadCxxInterface = state.tc->stdlibId;
             // The compiler is a layer, and it is the one layer no package can
             // supply. It enters here so that a requirement has something to be
@@ -307,7 +322,7 @@ step9_gather_target_side_candidates(PrepareState& state) {
             // said earlier (mcpp#630). The engine never looks in Xcode for the
             // archive: a compiler runtime the payload lacks is a graph
             // package, as it is on the bare rows.
-            if (!state.tc->appleSdkRoot.empty()) {
+            if (!state.tc->base.apple.root.empty()) {
                 if (auto tt = mcpp::toolchain::triple::parse(state.tc->targetTriple);
                     tt && tt->is_ios()) {
                     const std::string archive = std::format(

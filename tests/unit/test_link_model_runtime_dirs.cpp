@@ -67,8 +67,8 @@ struct Payload {
         tc::PayloadPaths pp;
         pp.glibcLib     = glibcLib;
         pp.glibcInclude = glibcLib.parent_path() / "include";
-        t.payloadPaths  = pp;
-        if (withSysroot) t.sysroot = sysroot;
+        t.base.payload  = pp;
+        if (withSysroot) t.base.root = sysroot;
         return t;
     }
 };

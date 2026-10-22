@@ -103,7 +103,7 @@ struct FakeClangWithPayload {
         t.compiler = tc::CompilerId::Clang;
         t.binaryPath = llvm / "bin" / "clang++";
         t.targetTriple = "x86_64-unknown-linux-gnu";
-        t.payloadPaths = tc::PayloadPaths{
+        t.base.payload = tc::PayloadPaths{
             .glibcInclude = glibc / "include",
             .glibcLib = glibcLib,
             .linuxInclude = {},
@@ -150,8 +150,8 @@ TEST(LinkModel, GccSysrootWinsOverPayload) {
     t.compiler = tc::CompilerId::GCC;
     t.binaryPath = dir.path / "bin" / "g++";
     t.targetTriple = "x86_64-linux-gnu";
-    t.sysroot = sysroot;
-    t.payloadPaths = tc::PayloadPaths{
+    t.base.root = sysroot;
+    t.base.payload = tc::PayloadPaths{
         .glibcInclude = dir.path / "glibc" / "include",
         .glibcLib = dir.path / "glibc" / "lib64",
         .linuxInclude = dir.path / "linux" / "include",
@@ -174,8 +174,8 @@ TEST(LinkModel, GccSysrootSupplementsMissingKernelHeaders) {
     tc::Toolchain t;
     t.compiler = tc::CompilerId::GCC;
     t.targetTriple = "x86_64-linux-gnu";
-    t.sysroot = sysroot;
-    t.payloadPaths = tc::PayloadPaths{
+    t.base.root = sysroot;
+    t.base.payload = tc::PayloadPaths{
         .glibcInclude = dir.path / "glibc" / "include",
         .glibcLib = dir.path / "glibc" / "lib64",
         .linuxInclude = dir.path / "linux" / "include",
@@ -193,7 +193,7 @@ TEST(LinkModel, GccPayloadEmitsIdirafterAndItsOwnAddressing) {
     tc::Toolchain t;
     t.compiler = tc::CompilerId::GCC;
     t.targetTriple = "x86_64-linux-gnu";
-    t.payloadPaths = tc::PayloadPaths{
+    t.base.payload = tc::PayloadPaths{
         .glibcInclude = dir.path / "glibc" / "include",
         .glibcLib = glibcLib,
         .linuxInclude = {},
@@ -289,9 +289,9 @@ tc::Toolchain clang_msvc() {
     tc::Toolchain t;
     t.compiler          = tc::CompilerId::Clang;
     t.targetTriple      = "x86_64-pc-windows-msvc";
-    t.msvcToolsDir      = "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207";
-    t.windowsSdkRoot    = "C:/Program Files (x86)/Windows Kits/10";
-    t.windowsSdkVersion = "10.0.26100.0";
+    t.base.msvc.toolsDir      = "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207";
+    t.base.msvc.sdkRoot    = "C:/Program Files (x86)/Windows Kits/10";
+    t.base.msvc.sdkVersion = "10.0.26100.0";
     return t;
 }
 } // namespace
@@ -300,8 +300,8 @@ TEST(LinkModel, ClangOnTheMsvcAbiNamesItsToolsetAndSdk) {
     auto t = clang_msvc();
     auto words = tc::resolve_link_model(t).msvc_driver_tokens(ident);
     const std::vector<std::string> expected = {
-        "-Xmicrosoft-visualc-tools-root", t.msvcToolsDir.string(),
-        "-Xmicrosoft-windows-sdk-root",   t.windowsSdkRoot.string(),
+        "-Xmicrosoft-visualc-tools-root", t.base.msvc.toolsDir.string(),
+        "-Xmicrosoft-windows-sdk-root",   t.base.msvc.sdkRoot.string(),
         "-Xmicrosoft-windows-sdk-version", "10.0.26100.0",
     };
     EXPECT_EQ(words, expected) << "separate words: the driver rejects the `=` form";
@@ -316,20 +316,20 @@ TEST(LinkModel, ClangOnTheMsvcAbiNamesItsToolsetAndSdk) {
 // that saw only the directory served one image's std module to the other.
 TEST(LinkModel, TheCompilerVersionIsSaidWithTheToolset) {
     auto t = clang_msvc();
-    t.msvcCompilerVersion = "19.44.35211";
+    t.base.msvc.compilerVersion = "19.44.35211";
     auto words = tc::resolve_link_model(t).msvc_driver_tokens(ident);
     ASSERT_FALSE(words.empty());
     EXPECT_EQ(words.back(), "-fms-compatibility-version=19.44.35211");
     // A second build of cl.exe under the same directory is a different word.
     auto other = t;
-    other.msvcCompilerVersion = "19.44.35217";
+    other.base.msvc.compilerVersion = "19.44.35217";
     EXPECT_NE(tc::resolve_link_model(other).msvc_driver_tokens(ident), words);
 }
 
 TEST(LinkModel, TheToolsetWithoutAnSdkOmitsTheSdkWords) {
     auto t = clang_msvc();
-    t.windowsSdkRoot.clear();
-    t.windowsSdkVersion.clear();
+    t.base.msvc.sdkRoot.clear();
+    t.base.msvc.sdkVersion.clear();
     auto words = tc::resolve_link_model(t).msvc_driver_tokens(ident);
     ASSERT_EQ(words.size(), 2u);
     EXPECT_EQ(words[0], "-Xmicrosoft-visualc-tools-root");
@@ -347,6 +347,6 @@ TEST(LinkModel, NoOtherRowReceivesMsvcDriverWords) {
     EXPECT_TRUE(tc::resolve_link_model(mingw).msvc_driver_tokens(ident).empty());
 
     auto unbound = clang_msvc();
-    unbound.msvcToolsDir.clear();
+    unbound.base.msvc.toolsDir.clear();
     EXPECT_TRUE(tc::resolve_link_model(unbound).msvc_driver_tokens(ident).empty());
 }

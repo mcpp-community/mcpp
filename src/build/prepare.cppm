@@ -844,6 +844,9 @@ export struct BuildOverrides {
     std::shared_ptr<const mcpp::platform::runtime::RuntimeBinding>
         inherited_runtime_binding;
     std::string target_triple;       // empty = host triple, fall through to [toolchain]
+    // `--sysroot <value>`: the target base for this invocation, above every
+    // other statement (design 2026-10-23 §3.3). Empty = not given.
+    std::string sysroot;
     // --accel: the device backends and architectures this build targets, in
     // the wire form mcpp.pack.abi_tag reads. Overrides `[build] accel`, the
     // same relationship --target has with [toolchain].

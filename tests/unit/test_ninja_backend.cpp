@@ -1683,7 +1683,7 @@ BuildPlan msvc_plan_with_redist(const FakeRedistDir& redist,
     plan.toolchain.binaryPath      = "cl.exe";
     plan.toolchain.targetTriple    = "x86_64-pc-windows-msvc";
     plan.toolchain.linkRuntimeDirs = {redist.path};
-    plan.toolchain.msvcRedistDir   = redist.path;
+    plan.toolchain.base.msvc.redistDir   = redist.path;
     plan.manifest.buildConfig.cxxRuntime = std::string(cxxRuntime);
     plan.linkUnits.push_back({
         .targetName = "app",

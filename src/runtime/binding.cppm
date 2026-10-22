@@ -88,6 +88,12 @@ struct RuntimeBinding {
     // be satisfied, so it is reported rather than degraded.
     bool declared = false;
 
+    // THE TARGET BASE THIS ARTIFACT BINDS, when one was stated (design
+    // 2026-10-23 §4.6, §4.9): its content identity. Empty for the ecosystem's
+    // own base, so a build that states nothing keeps the contract, and the
+    // output directory, it had.
+    std::string baseIdentity;
+
     // Why something degraded. Non-empty ⇒ the caller MUST surface it. Never
     // an error: "it did not happen" and "it succeeded" producing identical
     // output is the property that made mcpp#352 expensive.
@@ -99,7 +105,10 @@ struct RuntimeBinding {
     // payload, the HOST loader's built-in default directories are not part of
     // the search path, and modelling them is how a binary that cannot start
     // was reported as valid.
-    bool hermetic() const { return loader.has_value(); }
+    //
+    // The host's own base (`glibc@system`) names the host's loader, which is
+    // not private: it searches the host's directories, and so must the model.
+    bool hermetic() const { return loader.has_value() && provenance != "host-sysroot"; }
 };
 
 // The PROVIDER half of a runtime identity: "glibc" from "glibc@2.39", "ucrt"
@@ -137,6 +146,26 @@ std::string_view runtime_provider(std::string_view runtimeId) {
 // found still builds (selection UX must work there), it just has nothing to
 // declare.
 void bind_windows_ucrt(RuntimeBinding& binding, std::string_view sdkVersion);
+
+// THE ARTIFACT'S RUNTIME, DERIVED FROM A STATED BASE (design 2026-10-23 §4.2
+// step 6, §4.6) -- the same backward flow `bind_windows_ucrt` is, generalised.
+//
+// The binding resolved before the toolchain answers "what does the COMPILER
+// run on", and that answer stays. A stated base answers "what does the
+// ARTIFACT bind": with `binding` set, its loader and runtime directories
+// replace the ecosystem's and the SubOS farm leaves the artifact's search
+// path (it belongs to the ecosystem's base, not to this one); with it unset
+// (a floor, or a cross target), only the identity is recorded. Either way the
+// identity enters the contract hash, and through it the fingerprint.
+struct TargetBase {
+    std::string                        runtimeId;   // "glibc@2.31"; empty = keep
+    std::filesystem::path              loader;
+    std::vector<std::filesystem::path> libraryDirs;
+    std::string                        identity;
+    bool                               binding = false;
+    bool                               host = false;   // `glibc@system`: the host's loader
+};
+void bind_target_base(RuntimeBinding& binding, const TargetBase& base);
 
 namespace detail {
 
@@ -198,6 +227,10 @@ std::string canonical_contract(const RuntimeBinding& binding) {
         append_field(out, p.generic_string());
     for (auto const& provider : binding.providerBindings)
         append_field(out, provider);
+    // Only when present: a binding with no stated base hashes exactly as it
+    // did before the field existed.
+    if (!binding.baseIdentity.empty())
+        append_field(out, "base=" + binding.baseIdentity);
     for (auto const& d : binding.environment) {
         append_field(out, d.var);
         append_field(out, d.op);
@@ -486,6 +519,27 @@ void bind_windows_ucrt(RuntimeBinding& binding, std::string_view sdkVersion) {
         detail::hash_contract(detail::canonical_contract(binding));
 }
 
+void bind_target_base(RuntimeBinding& binding, const TargetBase& base) {
+    if (base.binding) {
+        if (!base.runtimeId.empty()) {
+            binding.runtimeId = base.runtimeId;
+            binding.libc = base.runtimeId;
+        }
+        if (base.loader.empty()) binding.loader.reset();
+        else binding.loader = base.loader;
+        binding.libraryDirs = base.libraryDirs;
+        binding.searchDirs.clear();
+        // The providers and artifacts the SubOS described are the ecosystem
+        // base's; this artifact loads none of them.
+        binding.runtimeProviders.clear();
+        binding.runtimeArtifacts.clear();
+        binding.provenance = base.host ? "host-sysroot" : "sysroot";
+    }
+    binding.baseIdentity = base.identity;
+    binding.contractHash =
+        detail::hash_contract(detail::canonical_contract(binding));
+}
+
 std::string serialize_runtime_binding(const RuntimeBinding& binding) {
     nlohmann::json j;
     j["schema"] = binding.schema;
@@ -541,6 +595,7 @@ std::string serialize_runtime_binding(const RuntimeBinding& binding) {
         });
     }
     j["provenance"] = binding.provenance;
+    if (!binding.baseIdentity.empty()) j["base_identity"] = binding.baseIdentity;
     j["subos_dir"] = binding.subosDir.generic_string();
     j["selection"] = {
         {"mode", binding.selection.mode
@@ -576,6 +631,7 @@ deserialize_runtime_binding(std::string_view encoded) {
                 out.libraryDirs.emplace_back(v.get<std::string>());
         out.declared = j.value("declared", false);
         out.note = j.value("note", "");
+        out.baseIdentity = j.value("base_identity", "");
         if (auto it = j.find("search_dirs"); it != j.end() && it->is_array())
             for (auto const& v : *it) if (v.is_string())
                 out.searchDirs.emplace_back(v.get<std::string>());

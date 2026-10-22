@@ -264,8 +264,8 @@ step3_define_host_tc_closures_and_refresh_index(PrepareState& state) {
         // fine-grained glibc/linux-headers xpkg directories `resolve_link_model`
         // attaches as explicit `-isystem` rows — from the SECOND argument, and
         // does so only when it is given; passing only `frontend` leaves
-        // `tc.payloadPaths` unset, so `host_base_flags`/`host_compile_tokens`
-        // fell back to `tc.sysroot` alone (from the payload's own
+        // `tc.base.payload` unset, so `host_base_flags`/`host_compile_tokens`
+        // fell back to `tc.base.root` alone (from the payload's own
         // `*sysroot_spec: --sysroot=%R`, `%R` being wherever the fixup pointed
         // it — nothing, on a sandbox with no leaked subos sysroot to fill it
         // in by accident).
@@ -434,9 +434,17 @@ std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state)
         // `bind_msvc_sysroot` locates or installs itself -- an installed
         // toolset of the pinned version must win over a download, and
         // `msvc@system` is not a package at all.
-        if (tt && !tt->is_msvc_env())
-            targetSysroot = mcpp::toolchain::triple::effective_sysroot(
-                *tt, sysroot_override(*state.m, *tt));
+        //
+        // AND ONLY A PACKAGE IS MATERIALISED. A path, a locator and the empty
+        // form name nothing to install (design 2026-10-23 §3.1).
+        if (tt && !tt->is_msvc_env()) {
+            auto stmt = base_statement(state, *tt);
+            if (!stmt) return std::unexpected(stmt.error());
+            if (!stmt->stated()) targetSysroot = mcpp::toolchain::triple::effective_sysroot(*tt, nullptr);
+            else if (stmt->form == mcpp::toolchain::base::Form::Package
+                     && tt->is_freestanding())
+                targetSysroot = stmt->text;
+        }
     }
     const bool materializeRootRuntime =
         !state.overrides.inherited_runtime_binding

@@ -647,7 +647,7 @@ static std::expected<void, std::string> step13_cxx_process_runtime(PrepareState&
                 ? std::optional(dist::msvc_abi_default_contract(
                       mcpp::toolchain::msvc_wants_static_crt(
                           bc.linkage, bc.cxxRuntime),
-                      !state.tc->msvcRedistDir.empty()))
+                      !state.tc->base.msvc.redistDir.empty()))
                 : std::nullopt;
         const auto contracts = dist::role_contracts(
             dist::ContractStatement{
@@ -666,7 +666,7 @@ static std::expected<void, std::string> step13_cxx_process_runtime(PrepareState&
         // cannot be met is an error, never a downgrade with a warning — the
         // same rule `mcpp pack`'s mode contradiction follows.
         if (mcpp::toolchain::is_msvc_target(*state.tc)
-            && state.tc->msvcRedistDir.empty()) {
+            && state.tc->base.msvc.redistDir.empty()) {
             struct { dist::Contract c; bool stated; std::string_view role; } rows[] = {
                 {contracts.program, contracts.programStated, "distributable"},
                 {contracts.tests,   contracts.testsStated,   "test"},
@@ -903,9 +903,12 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
                                                 ctx.plan.scheduleTag, decision.reason));
 
     }
-    ctx.plan.runtimeBinding = state.runtimeBindingSnapshot;
-    mcpp::build::merge_runtime_binding_contract(
-        ctx.plan, state.runtimeBindingSnapshot);
+    // THE ARTIFACT'S RUNTIME: the stated base's, when one re-derived it
+    // (design 2026-10-23 §4.6), else the binding the compiler runs on.
+    const auto& artifactRuntime = state.targetRuntimeBinding
+        ? *state.targetRuntimeBinding : state.runtimeBindingSnapshot;
+    ctx.plan.runtimeBinding = artifactRuntime;
+    mcpp::build::merge_runtime_binding_contract(ctx.plan, artifactRuntime);
     ctx.plan.compileDbPath = state.workRoot / "compile_commands.json";
     // GCC: a clean `*link:` for this build, so the payload's specs cannot
     // inject other homes' rpath entries into the artifact. AFTER the plan is
@@ -1887,7 +1890,8 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     ctx.tc          = *state.tc;
     ctx.fp          = state.fp;
     ctx.runtimeSelection = state.runtimeSelection;
-    ctx.runtimeBinding = state.runtimeBindingSnapshot;
+    ctx.runtimeBinding = state.targetRuntimeBinding ? *state.targetRuntimeBinding
+                                                    : state.runtimeBindingSnapshot;
     ctx.profile     = state.effectiveProfile;
     ctx.activeFeatureRequest = state.workspacePlan() ? state.requestedFeatures
                                                      : state.overrides.features;

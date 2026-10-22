@@ -23,6 +23,7 @@ import mcpp.home;
 import mcpp.manifest;
 import mcpp.platform;
 import mcpp.toolchain.registry;
+import mcpp.toolchain.triple;
 import mcpp.toolchain.post_install;
 import mcpp.ui;
 
@@ -84,6 +85,26 @@ read_statement(const std::vector<std::string>& lines, std::string& spec,
     if (!spec.empty() && !lt.path.empty())
         return std::unexpected(std::string(
             "the toolchain phase stated both `spec` and `path`; a build toolchain is one of them"));
+    // A MANAGED TOOLCHAIN HAS NO TREE TO DESCRIBE. `prefix`, `launcher`,
+    // `tool.<role>` and `family` describe a toolchain named by path, and
+    // stated beside `spec` they were dropped without a word. `sysroot` is the
+    // exception: it is the TARGET's base, which a program may state for a
+    // managed compiler too (design 2026-10-23 §3.5).
+    if (!spec.empty()) {
+        std::vector<std::string> pathOnly;
+        if (!lt.prefix.empty())   pathOnly.push_back("prefix");
+        if (!lt.launcher.empty()) pathOnly.push_back("launcher");
+        if (!lt.family.empty())   pathOnly.push_back("family");
+        for (auto const& [role, _] : lt.tools) pathOnly.push_back("tool." + role);
+        if (!pathOnly.empty()) {
+            std::string names;
+            for (auto const& n : pathOnly) names += (names.empty() ? "" : ", ") + n;
+            return std::unexpected(std::format(
+                "the toolchain phase stated `spec` with {}; those describe a toolchain named by "
+                "`path`, and a managed toolchain ({}) has no tree for them to describe. State "
+                "`path` instead, or drop them (`sysroot` may accompany either)", names, spec));
+        }
+    }
     return lt;
 }
 
@@ -140,6 +161,16 @@ std::expected<void, std::string> step1_local_toolchain(PrepareState& state) {
             state.tcSpec = spec;
             d.cls = SourceClass::Pinned;
             d.value = spec;
+            if (!lt->sysroot.empty()) {
+                // The program stated the target's base beside a managed
+                // compiler: a path relative to the project, or a spelling.
+                auto text = lt->sysroot;
+                if (names_a_file_path(text) && !text.starts_with("path:"))
+                    text = absolute_against(*state.root, text).generic_string();
+                state.programSysroot = std::move(text);
+                state.programSysrootOrigin = d;
+                state.programSysrootOrigin.subject = "sysroot";
+            }
             state.localToolchainOrigin = std::move(d);
             return {};
         }
@@ -254,14 +285,22 @@ step2_use_local_toolchain(PrepareState& state, const mcpp::toolchain::ToolchainS
                     "through clang's `--ld-path`, which gcc has no counterpart for. Either "
                     "name an llvm toolchain, or place a program called `ld` in the tree "
                     "gcc searches", p));
-    if (!lt.sysroot.empty() && !fs::is_directory(lt.sysroot, ec))
-        return refuse(std::format("sysroot '{}' is not a directory", lt.sysroot));
     state.explicit_compiler = driver;
     // THE C LIBRARY A NATIVE BUILD LINKS IS THE ECOSYSTEM'S, AS FOR A MANAGED
     // TOOLCHAIN: the binding's payload, linked by mcpp's own link model. A
-    // toolchain that states its sysroot, or a prefixed (cross) toolchain that
-    // carries one, links what it carries instead.
-    if (lt.sysroot.empty() && lt.prefix.empty()) {
+    // toolchain that states its sysroot, a target whose base is stated
+    // anywhere else, or a prefixed (cross) toolchain that carries one, links
+    // that instead -- and needs no payload of the ecosystem's.
+    const auto tt = state.overrides.target_triple.empty()
+        ? std::optional{mcpp::toolchain::triple::host_triple()}
+        : mcpp::toolchain::triple::parse(state.overrides.target_triple);
+    bool baseStated = !lt.sysroot.empty();
+    if (tt && !baseStated) {
+        auto s = base_statement(state, *tt);
+        if (!s) return std::unexpected(s.error());
+        baseStated = s->stated();
+    }
+    if (!baseStated && lt.prefix.empty()) {
         mcpp::toolchain::XimToolchainPackage pkg;
         pkg.ximName = family;
         pkg.family  = family == "llvm" ? mcpp::toolchain::Family::Llvm : mcpp::toolchain::Family::Gcc;
@@ -302,12 +341,8 @@ std::expected<void, std::string> step2_apply_local_toolchain(PrepareState& state
         }
         tc.launcher = l.generic_string();
     }
-    if (!lt.sysroot.empty()) {
-        // A STATED SYSROOT IS THE C LIBRARY: the link model's sysroot mode,
-        // not the binding's payload.
-        tc.sysroot = lt.sysroot;
-        tc.payloadPaths.reset();
-    }
+    // A stated sysroot is the target's base, resolved with every other
+    // statement of it (base.cpp), not here.
     tc.driverIdent += "\nmcpp-local-toolchain " + local_identity(tc);
     // Announced beside the resolution, with what the probe found.
     auto d = state.localToolchainOrigin;

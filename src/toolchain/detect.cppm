@@ -12,6 +12,7 @@ import mcpp.toolchain.msvc;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.platform;
+import mcpp.fallback.probe_sysroot;
 
 export namespace mcpp::toolchain {
 
@@ -127,17 +128,28 @@ detect(const std::filesystem::path& explicit_compiler,
         mcpp::toolchain::clang::enrich_toolchain(tc, envPrefix);
     }
 
-    tc.sysroot = probe_sysroot(tc.binaryPath, envPrefix);
+    tc.base.root = probe_sysroot(tc.binaryPath, envPrefix);
 
     // Probe fine-grained payload paths from sibling xpkgs (glibc, linux-headers).
     // When available, flags are assembled from these paths instead of --sysroot.
-    tc.payloadPaths = probe_payload_paths(tc.binaryPath, tc.runtimeBinding);
+    tc.base.payload = probe_payload_paths(tc.binaryPath, tc.runtimeBinding);
 
     // For GCC: ensure the probed sysroot has complete headers by symlinking
     // missing content (linux kernel headers, glibc) from payload xpkgs.
     // This makes mcpp self-sufficient — not dependent on xlings subos init.
-    if (tc.payloadPaths && !tc.sysroot.empty())
-        ensure_sysroot_complete(tc.sysroot, *tc.payloadPaths);
+    //
+    // ONLY A VIEW THIS ECOSYSTEM OWNS. A compiler named by path reports the
+    // sysroot it was built with, which is the vendor's tree, and mcpp does not
+    // write into a tree it does not own (SPEC-006 §2.2.1; design 2026-10-23
+    // D10): its headers are completed on the command line instead. The view
+    // is owned when it lives in the same home as the payloads it is completed
+    // from.
+    if (tc.base.payload && !tc.base.root.empty()) {
+        auto store = mcpp::provider::store_of(tc.base.payload->glibcInclude);
+        if (store && mcpp::fallback::path_is_under(
+                         tc.base.root, mcpp::provider::layout().home_of_store(*store)))
+            ensure_sysroot_complete(tc.base.root, *tc.base.payload);
+    }
 
     return tc;
 }

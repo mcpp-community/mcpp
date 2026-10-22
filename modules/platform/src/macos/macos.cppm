@@ -69,6 +69,19 @@ std::string sdk_name_of_root(const std::filesystem::path& p);
 bool sdkroot_answers(const std::filesystem::path& candidate,
                      std::string_view sdk);
 
+// The version an SDK directory says it is, from its own `SDKSettings.json`
+// (`"Version": "18.5"`). Empty when the file is absent or says nothing. Pure
+// file reading, so it answers on every host.
+std::string sdk_settings_version(const std::filesystem::path& sdkRoot);
+
+// Whether an SDK carries a slice for `target` (`x86_64-ios-simulator`,
+// `arm64-macos`), read from the `targets:` list of its `libSystem.tbd`. The
+// slice is what decides whether a row can be built against this SDK; a
+// vendor's hardware roadmap does not (D16). nullopt when the stub cannot be
+// read.
+std::optional<bool> sdk_has_target(const std::filesystem::path& sdkRoot,
+                                   std::string_view target);
+
 // Discover an Apple SDK path via `xcrun --show-sdk-path`.
 // Returns the SDK path if found, or nullopt. The default argument is
 // today's behaviour for today's callers.
@@ -231,13 +244,18 @@ std::optional<std::string> sdk_version(std::string_view sdk) {
 std::optional<std::filesystem::path> sdk_path(std::string_view sdk) {
     auto layout = sdk_layout(sdk);
     if (!layout) return std::nullopt;
-#if defined(__APPLE__)
     // 1. Explicit override wins (matches clang's own SDKROOT handling) -- but
     //    only for a request it answers. See `sdkroot_answers`.
+    //
+    //    ON EVERY HOST. `SDKROOT` is Apple's own convention for naming an SDK,
+    //    and an SDK a developer produced from their own Xcode on Linux is
+    //    named the same way (design 2026-10-23 §4.4, D18). The steps below
+    //    ask Apple's tools, which exist only on an Apple host.
     if (const char* env = std::getenv("SDKROOT"); env && *env) {
         std::filesystem::path p(env);
         if (std::filesystem::exists(p) && sdkroot_answers(p, sdk)) return p;
     }
+#if defined(__APPLE__)
     // 2. xcrun — the canonical query. The named form is the only one that can
     //    answer for a specific SDK; the generic form returns the ACTIVE
     //    default, so it is tried only for the default request, where it is
@@ -273,6 +291,45 @@ std::optional<std::filesystem::path> sdk_path(std::string_view sdk) {
     for (auto const& cand : fixed)
         if (std::filesystem::exists(cand)) return cand;
 #endif
+    return std::nullopt;
+}
+
+std::string sdk_settings_version(const std::filesystem::path& sdkRoot) {
+    std::ifstream is(sdkRoot / "SDKSettings.json", std::ios::binary);
+    if (!is) return {};
+    std::string text((std::istreambuf_iterator<char>(is)), std::istreambuf_iterator<char>());
+    auto key = text.find("\"Version\"");
+    if (key == std::string::npos) return {};
+    auto q1 = text.find('"', text.find(':', key));
+    if (q1 == std::string::npos) return {};
+    auto q2 = text.find('"', q1 + 1);
+    if (q2 == std::string::npos) return {};
+    return text.substr(q1 + 1, q2 - q1 - 1);
+}
+
+std::optional<bool> sdk_has_target(const std::filesystem::path& sdkRoot,
+                                   std::string_view target) {
+    std::ifstream is(sdkRoot / "usr" / "lib" / "libSystem.tbd", std::ios::binary);
+    if (!is) return std::nullopt;
+    std::string line;
+    while (std::getline(is, line)) {
+        if (!line.starts_with("targets:")) continue;
+        // `targets: [ x86_64-ios-simulator, arm64-ios-simulator ]`, possibly
+        // wrapped onto following lines until the closing bracket.
+        std::string list = line;
+        while (list.find(']') == std::string::npos && std::getline(is, line)) list += line;
+        std::size_t pos = 0;
+        while ((pos = list.find(target, pos)) != std::string::npos) {
+            const auto end = pos + target.size();
+            const bool startOk = pos == 0 || !(std::isalnum(static_cast<unsigned char>(list[pos - 1]))
+                                               || list[pos - 1] == '-' || list[pos - 1] == '_');
+            const bool endOk = end >= list.size() || !(std::isalnum(static_cast<unsigned char>(list[end]))
+                                                       || list[end] == '-' || list[end] == '_');
+            if (startOk && endOk) return true;
+            pos = end;
+        }
+        return false;
+    }
     return std::nullopt;
 }
 

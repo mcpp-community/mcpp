@@ -4,6 +4,7 @@ export module mcpp.toolchain.model;
 
 import std;
 import mcpp.toolchain.triple;
+export import mcpp.toolchain.base;
 
 export namespace mcpp::toolchain {
 
@@ -49,11 +50,7 @@ struct EnvVar {
 // ("glibc@2.39"). Resolved before payload probing from the root-selected
 // RuntimeBinding snapshot. Empty means no libc payload applies, and payload
 // resolution then declines rather than guessing.
-struct PayloadPaths {
-    std::filesystem::path glibcInclude;     // glibc headers (features.h, bits/)
-    std::filesystem::path glibcLib;          // glibc runtime (libc.so, crt*.o, ld-linux)
-    std::filesystem::path linuxInclude;      // linux kernel headers (linux/, asm/)
-};
+using PayloadPaths = base::PayloadPaths;
 
 struct Toolchain {
     CompilerId                          compiler        = CompilerId::Unknown;
@@ -189,58 +186,14 @@ struct Toolchain {
     // implementation needs no engine change.
     bool                                 kernelAbiIsOpenkal = false;
 
-    std::filesystem::path               sysroot;            // -print-sysroot output (or empty)
-    std::optional<PayloadPaths>         payloadPaths;        // fine-grained sysroot from xpkgs
-    // The TARGET's C library, for targets whose row in kKnownTargets names one
-    // (today: bare metal). Resolved during prepare, where the config is
-    // already open, rather than in the flag builder — computing it there would
-    // put a config load on a path that runs per build and answers a question
-    // prepare has already answered.
-    //
-    // Empty for every hosted target: they get their libc from the compiler
-    // payload or from PayloadPaths, which is why nobody ever had to write one
-    // down for them.
-    std::filesystem::path               targetSysrootRoot;
-    std::filesystem::path               targetSysrootInclude;
-    // The C library's package NAME (`picolibc-riscv`), recorded beside its
-    // paths so a build program can be told which C library it is without
-    // reverse-engineering the store layout from the path above. Empty on the
-    // zero-libc tier and on hosted targets.
-    std::string                         targetSysrootPkg;
-    std::filesystem::path               targetSysrootLib;
-    // THE APPLE SDK THIS TARGET WAS LOCATED AGAINST, and it is a different
-    // axis from the three paths above.
-    //
-    // `targetSysroot*` name a PACKAGE's directories -- a C library this
-    // ecosystem ships and can therefore version. An Apple SDK is located, not
-    // installed: the iPhoneOS and iPhoneSimulator headers and stub libraries
-    // ship inside Xcode and are not redistributable, so there is nothing for
-    // a package to name and the row carries no `sysroot` entry. What it
-    // carries instead is this, resolved once where the target is known.
-    //
-    // Empty for every non-Apple target AND for a native macOS build, which
-    // needs none: that build reads the payload's own `clang++.cfg`, and
-    // `post_install.cppm` wrote the located macOS SDK into it. An Apple CROSS
-    // target suppresses that cfg (`--no-default-config`) precisely because it
-    // names the wrong platform -- measured 2026-09-11 on macos-15, where an
-    // iOS-simulator link with the right `-isysroot` on the command line still
-    // picked the cfg's SDK:
-    //
-    //   ld64.lld: error: .../MacOSX.sdk/usr/lib/libc++.tbd(...) is
-    //     incompatible with arm64 (iOS Simulator18.0.0)
-    //
-    // so the SDK has to travel explicitly, on the compile side as well as the
-    // link side.
-    std::filesystem::path               appleSdkRoot;
-    // THE C++ HEADERS ARE THE SDK'S, on an Apple cross target whose C++
-    // runtime is the SDK's libc++ and whose graph does not import `std`.
-    // Decided by prepare, read by the compile-flag builder: with no graph
-    // package the runtime is the SDK's by construction, and the headers
-    // follow the runtime. When the graph imports `std` the payload's module
-    // and headers stay in use over the SDK's dylib, which is the pairing
-    // that fails at link on the first inline path the older dylib lacks, and
-    // prepare reports that once rather than refusing what built yesterday.
-    bool                                appleSdkCxxHeaders = false;
+    // THE TARGET BASE: what this build compiles and links against below the
+    // compiler -- the sysroot, the ecosystem's glibc payload, a bare-metal C
+    // library, an Apple SDK or an MSVC toolset and Windows SDK. Resolved once
+    // by prepare (design 2026-10-23, §4) and read by every renderer, the
+    // artifact's runtime, closure validation, the fingerprint and the reports.
+    // These were five groups of fields here, written by seven code paths, and
+    // the defects of mcpp#755's sysroot were at their seams.
+    base::Resolution                    base;
     std::vector<std::filesystem::path>   compilerRuntimeDirs; // LD_LIBRARY_PATH for private tools
     std::vector<std::filesystem::path>   linkRuntimeDirs;     // -L/-rpath dirs for produced binaries
     // Environment the toolchain's tools need when invoked (set on the ninja
@@ -275,47 +228,7 @@ struct Toolchain {
     // GCC/libc++ answer 20; MSVC answers 20 from cl 19.38 (VS 2022 17.8,
     // microsoft/STL#3977) and 23 below that.
     int                                 importStdMinLevel = 0;
-    // The Windows SDK this toolchain compiles and links against
-    // ("10.0.26100.0"), once resolved. Empty everywhere else — and empty on
-    // Windows too when no SDK was found, which detection tolerates so that
-    // toolchain SELECTION still works on an SDK-less box.
-    //
-    // Recorded rather than re-derived because two different questions read it
-    // and they must not be able to disagree: the compile environment
-    // (INCLUDE/LIB) and the runtime identity (`ucrt@<version>`, which enters
-    // the runtime contract hash). Deriving the second from a second search is
-    // how the SDK came to have no identity in the first place.
-    std::string                         windowsSdkVersion;
 
-    // THE MSVC TOOLSET A CLANG `*-windows-msvc` BUILD COMPILES AGAINST, and the
-    // SDK that follows it: the row's sysroot. Chosen once by prepare from
-    // `[target.<triple>].sysroot` (default `msvc@system`) and handed to the
-    // driver explicitly by the link model, so clang does not search the
-    // machine a second time. Empty on every other row, where nothing changes;
-    // the cl.exe row carries the same answer in its own path and envOverrides.
-    std::filesystem::path               msvcToolsDir;       // <vs>/VC/Tools/MSVC/<v>
-    std::string                         msvcToolsVersion;   // "14.44.35207"
-    // The version of that toolset's cl.exe ("19.44.35211"), from its file
-    // version: what clang would otherwise read from the same file itself, and
-    // what a toolset directory name does not determine (mcpp#746).
-    std::string                         msvcCompilerVersion;
-    std::string                         msvcOrigin;         // "system" | "managed"
-    std::string                         msvcProduct;        // for the one printed line
-    std::filesystem::path               windowsSdkRoot;     // <kits>/10 or the payload
-    // THE TOOLSET'S OWN REDISTRIBUTABLE CRT DIRECTORY
-    // (`VC\Redist\MSVC\<ver>\<arch>\Microsoft.VC*.CRT`), on an MSVC-ABI row of
-    // EITHER driver — cl.exe or clang++ targeting `*-windows-msvc`.
-    //
-    // Its own field rather than a reading of `linkRuntimeDirs`, because that
-    // field means something else on the two rows: for cl it happens to hold
-    // exactly this directory, but for clang it holds the LLVM payload's OWN
-    // runtime directories (`discover_link_runtime_dirs`, clang.cppm), and
-    // reading it for staging there would copy LLVM's files into a Windows
-    // program's `bin/`. Empty when the resolved toolset ships no
-    // redistributable (`msvc_abi_default_contract` then defaults to
-    // host-coupled rather than toolchain-coupled, and an explicit
-    // toolchain-coupled contract is refused, naming this field empty).
-    std::filesystem::path               msvcRedistDir;
     // Something about HOW this toolchain was resolved that the user has to be
     // told, but which is not a failure. Non-empty ⇒ the caller MUST surface it.
     //

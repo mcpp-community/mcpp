@@ -561,7 +561,7 @@ step11_package_std_module_source(PrepareState& state) {
             hopt.cfgBypass             = mcpp::toolchain::HostFlagOptions::CfgBypass::Always;
             hopt.cAbiPrebuilt          = true;
             hopt.cxxFromGraph          = true;
-            hopt.appleSdkRoot          = state.tc->appleSdkRoot;
+            hopt.appleSdkRoot          = state.tc->base.apple.root;
             // Target-keyed, not host-keyed (#685) — see `min_platform_version`.
             const bool cAbiTargetIsMacos = [&] {
                 auto cAbiTt = mcpp::toolchain::triple::parse(state.tc->targetTriple);
@@ -609,10 +609,10 @@ step11_apple_sdk_cxx_runtime(PrepareState& state, bool needsStdModule) {
     //     It is REPORTED ONCE rather than refused: refusing would break a
     //     program that built yesterday, and the report names the two lines
     //     that make the hazard disappear.
-    if (state.tc && !state.tc->appleSdkRoot.empty() && state.targetSideResolved
+    if (state.tc && !state.tc->base.apple.root.empty() && state.targetSideResolved
         && !state.resolvedTargetSide.cxx.fromGraph()) {
         if (!needsStdModule) {
-            state.tc->appleSdkCxxHeaders = true;
+            state.tc->base.apple.cxxHeaders = true;
             state.tc->clear_std_modules();
         } else {
             mcpp::diag::degraded("target/cxx-runtime", std::format(

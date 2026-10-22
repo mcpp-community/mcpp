@@ -1769,8 +1769,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // `linkRuntimeDirs` above, so this is a harmless duplicate there) and the
         // LLVM row (where `linkRuntimeDirs` holds LLVM's own directories instead
         // and would otherwise never mention it).
-        if (!tc.msvcRedistDir.empty())
-            append_unique_path(out.runtimeLibraryDirs, tc.msvcRedistDir);
+        if (!tc.base.msvc.redistDir.empty())
+            append_unique_path(out.runtimeLibraryDirs, tc.base.msvc.redistDir);
         // The private glibc payload exists here for ONE reason: a dlopen()'d
         // library, whose own DT_NEEDED closure never consults the main
         // executable's RUNPATH, must still resolve the same libc the executable
@@ -1797,9 +1797,9 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // carries it and the dlopen() it performs, and nothing else.
         if constexpr (mcpp::platform::publishes_via_environment(
                           mcpp::platform::kPrivateLibcSearchScope)) {
-            if (tc.payloadPaths && !out.depRuntimeLibraryDirs.empty()) {
+            if (tc.base.payload && !out.depRuntimeLibraryDirs.empty()) {
                 append_unique_path(out.runtimeLibraryDirs,
-                                   tc.payloadPaths->glibcLib);
+                                   tc.base.payload->glibcLib);
             }
         }
     };

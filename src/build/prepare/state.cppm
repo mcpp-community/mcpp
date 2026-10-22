@@ -40,6 +40,7 @@ import mcpp.toolchain.stdmod;
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.base;
 import mcpp.build.linkage_form;   // #519 — which form each dependency takes
 import mcpp.build.plan;
 import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
@@ -300,6 +301,7 @@ struct PrepareState {
     // ── P0: manifest and workspace resolution ───────────────────────────────
     std::string unservedTargetDiagnosis;
     std::optional<std::filesystem::path> appleSdkLocated;
+    std::optional<mcpp::toolchain::base::AppleSdk> appleSdkFound;
     bool iosFloorFromSdk = false;
     std::string pinReplacedDefault;
     std::optional<std::string> hostSpecBeforeRowPin;
@@ -624,6 +626,21 @@ struct PrepareState {
     // the description the resolver uses, and the decision it is reported as.
     std::optional<mcpp::manifest::LocalToolchain> localToolchain;
     SourceDecision localToolchainOrigin;
+    // A toolchain phase that stated `spec` and `sysroot`: a program stating
+    // the target's base (design 2026-10-23 §3.5), with where it said so.
+    std::string programSysroot;
+    SourceDecision programSysrootOrigin;
+    // THE TARGET BASE STATEMENT, decided once per target (base.cpp) and read
+    // by every site that used to read `[target.<t>].sysroot` itself.
+    std::optional<mcpp::toolchain::base::Statement> baseStatement;
+    std::string baseStatementFor;
+    // The artifact's runtime when a stated base re-derived it (§4.2 step 6).
+    // `runtimeBindingSnapshot` stays what the COMPILER runs on and what a
+    // host sub-build inherits; the plan and the context read this one.
+    std::optional<mcpp::platform::runtime::RuntimeBinding> targetRuntimeBinding;
+    // The execution host's wrapper for this target (§3.7), with its origin.
+    std::vector<std::string> runUnder;
+    SourceDecision runUnderOrigin;
     // `[toolchain] <key> = { configure = "build.mcpp" }` and this is the first
     // pass: the toolchain resolved is the bootstrap, and the root build
     // program runs its toolchain phase once host modules are registered.
@@ -899,18 +916,26 @@ bool graph_or_targets_import(const mcpp::modgraph::Graph& graph,
                              const std::vector<mcpp::modgraph::PackageRoot>& packages,
                              const std::function<bool(std::string_view)>& wanted);
 
+// base.cpp: the target base -- which statement applies, and its resolution
+std::string target_env_name(const mcpp::toolchain::triple::Triple& t, std::string_view key);
+std::expected<mcpp::toolchain::base::Statement, std::string>
+base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t);
+// The statement's canonical text when one applies, nullptr otherwise: what
+// the readers that predate the statement (`effective_sysroot`) take.
+const std::string* base_statement_text(PrepareState& state,
+                                       const mcpp::toolchain::triple::Triple& t);
+std::expected<void, std::string> step2_resolve_base(PrepareState& state);
+// The execution host's wrapper (`run_under`), decided once (§3.7).
+std::expected<void, std::string> step2_resolve_run_under(PrepareState& state);
+
 // toolchain_env.cpp: target rows, sysroots, the MSVC binding, build-program environments
-const std::string*
-sysroot_override(const mcpp::manifest::Manifest& m,
-                 const mcpp::toolchain::triple::Triple& t);
 std::expected<void, std::string>
 bind_msvc_sysroot(mcpp::toolchain::Toolchain& tc,
-                  const mcpp::manifest::Manifest& m,
+                  const std::string* declared,
                   const std::function<std::expected<mcpp::config::GlobalConfig*,
                                                     std::string>()>& cfgOf);
 std::expected<void, std::string>
-check_cl_row_sysroot(const mcpp::toolchain::Toolchain& tc,
-                     const mcpp::manifest::Manifest& m);
+check_cl_row_sysroot(const mcpp::toolchain::Toolchain& tc, const std::string* declared);
 void fill_package_build_env(mcpp::build::BuildProgramEnv& e,
                             const mcpp::manifest::Manifest& m);
 void fill_target_build_env(mcpp::build::BuildProgramEnv& e,

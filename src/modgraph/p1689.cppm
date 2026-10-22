@@ -351,8 +351,8 @@ scan_file(const std::filesystem::path&        source,
     auto obj = base; obj += ".o";
 
     std::string sysroot_flag;
-    if (!tc.sysroot.empty()) {
-        sysroot_flag = std::format(" --sysroot={}", shell_escape(tc.sysroot));
+    if (!tc.base.root.empty()) {
+        sysroot_flag = std::format(" --sysroot={}", shell_escape(tc.base.root));
     }
     std::string std_flag = cppStandardFlag.empty()
         ? std::string("-std=c++23")

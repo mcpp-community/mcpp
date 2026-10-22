@@ -83,6 +83,15 @@ struct ToolchainLinkModel {
     // linux-headers supplement for a sysroot that lacks them).
     std::vector<std::filesystem::path> systemIncludes;
 
+    // DEBIAN MULTIARCH, FOR A DRIVER THAT DOES NOT KNOW IT (design 2026-10-23
+    // §4.3, scenario J). gcc built without multiarch support finds neither
+    // `crt1.o` nor `bits/` in a Debian or Ubuntu root; the measurement records
+    // the tuple and these name its directories. Headers go AFTER the system
+    // directories (`-idirafter`), so libstdc++'s `#include_next` chains are
+    // untouched. Empty unless measured -- clang resolves multiarch itself.
+    std::vector<std::filesystem::path> multiarchIncludes;   // -idirafter
+    std::vector<std::filesystem::path> multiarchLibDirs;    // -B, -L, -rpath-link
+
     // Rendering knobs derived from the toolchain at resolve time.
     // CLANG ON THE MSVC ABI: the toolset and SDK the build compiles against,
     // copied from the toolchain. Rendered by `msvc_driver_tokens`, not by
@@ -120,6 +129,8 @@ struct ToolchainLinkModel {
                             ? "-isystem" : "-idirafter";
         for (auto& inc : systemIncludes)
             out.push_back(incFlag + esc(inc));
+        for (auto& inc : multiarchIncludes)
+            out.push_back("-idirafter" + esc(inc));
         return out;
     }
 
@@ -170,6 +181,11 @@ struct ToolchainLinkModel {
         std::vector<std::string> out;
         if (mode == CLibMode::Sysroot) {
             out.push_back("--sysroot=" + esc(sysroot));
+            for (auto& dir : multiarchLibDirs) {
+                out.push_back("-B" + esc(dir));
+                out.push_back("-L" + esc(dir));
+                out.push_back("-Wl,-rpath-link," + esc(dir));
+            }
             // Sysroot mode still needs the interpreter named explicitly when
             // we know it. mcpp replaces gcc's `*link:` to stop the payload's
             // accumulated rpath entries reaching artifacts, and the pristine
@@ -445,10 +461,10 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
     // cross-compile resolves by what it builds FOR.
     if (is_msvc_target(tc) || is_mingw_target(tc)) {
         if (is_msvc_target(tc) && tc.compiler == CompilerId::Clang) {
-            lm.msvcToolsDir  = tc.msvcToolsDir;
-            lm.winSdkRoot    = tc.windowsSdkRoot;
-            lm.winSdkVersion = tc.windowsSdkVersion;
-            lm.msvcCompilerVersion = tc.msvcCompilerVersion;
+            lm.msvcToolsDir  = tc.base.msvc.toolsDir;
+            lm.winSdkRoot    = tc.base.msvc.sdkRoot;
+            lm.winSdkVersion = tc.base.msvc.sdkVersion;
+            lm.msvcCompilerVersion = tc.base.msvc.compilerVersion;
         }
         return lm;
     }
@@ -499,7 +515,7 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
     };
 
     auto payload_first = [&] {
-        auto& pp = *tc.payloadPaths;
+        auto& pp = *tc.base.payload;
         lm.mode   = CLibMode::PayloadFirst;
         lm.crtDir = pp.glibcLib;
         lm.libDirs.push_back(pp.glibcLib);
@@ -515,6 +531,29 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
     auto sysroot_mode = [&](const std::filesystem::path& root) {
         lm.mode    = CLibMode::Sysroot;
         lm.sysroot = root;
+        // A STATED BASE IS THE C LIBRARY, AND IT SAYS WHAT A BINDING ARTIFACT
+        // LOADS (design 2026-10-23 §4.5-§4.6). Its loader and the directories
+        // that hold its libc, measured where it was resolved, replace the
+        // ecosystem payload's -- which this artifact does not touch. A floor
+        // (a cross target) names neither: the pristine spec's standard loader
+        // path is the right one on the machine the artifact will run on.
+        // #755 reused this branch for a stated sysroot with the payload
+        // pointers cleared, so the artifact got the HOST's loader and the
+        // SubOS farm's libc (scenario D); that is what this replaces.
+        if (tc.base.stated()) {
+            if (tc.base.runtime == base::Runtime::Binding) {
+                lm.loader = tc.base.loader;
+                for (auto const& d : tc.base.runtimeDirs) lm.libDirs.push_back(d);
+            }
+            if (tc.base.multiarch && !tc.base.multiarchTuple.empty()) {
+                lm.multiarchIncludes.push_back(root / "usr" / "include" / tc.base.multiarchTuple);
+                lm.multiarchLibDirs.push_back(root / "usr" / "lib" / tc.base.multiarchTuple);
+                lm.multiarchLibDirs.push_back(root / "lib" / tc.base.multiarchTuple);
+            }
+            add_compiler_runtime_dir();
+            for (auto const& inc : tc.base.addedIncludes) lm.systemIncludes.push_back(inc);
+            return;
+        }
         // Name the interpreter even here: see link_tokens. The payload is the
         // address (R6 — artifacts bind the payload, never the mutable view),
         // and it is known whenever a runtime binding resolved.
@@ -535,35 +574,45 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
         // below already says this about headers; it holds for libraries and
         // the loader too.
         if (!is_musl_target(tc)
-            && tc.payloadPaths && !tc.payloadPaths->glibcLib.empty()) {
-            lm.loader = resolve_loader(tc.payloadPaths->glibcLib, tc.targetTriple);
-            lm.libDirs.push_back(tc.payloadPaths->glibcLib);
+            && tc.base.payload && !tc.base.payload->glibcLib.empty()) {
+            lm.loader = resolve_loader(tc.base.payload->glibcLib, tc.targetTriple);
+            lm.libDirs.push_back(tc.base.payload->glibcLib);
         }
         add_compiler_runtime_dir();
         // Supplement kernel headers when the sysroot lacks them (glibc's
         // local_lim.h needs <linux/limits.h>). Self-contained musl sysroots
         // ship their own; a cross target must not see host-arch headers.
-        if (!is_musl_target(tc) && tc.payloadPaths
-            && !tc.payloadPaths->linuxInclude.empty()
+        if (!is_musl_target(tc) && tc.base.payload
+            && !tc.base.payload->linuxInclude.empty()
             && !std::filesystem::exists(root / "usr" / "include" / "linux" / "limits.h"))
-            lm.systemIncludes.push_back(tc.payloadPaths->linuxInclude);
+            lm.systemIncludes.push_back(tc.base.payload->linuxInclude);
     };
 
     if (lm.clangWithCfg) {
         // Bundled LLVM: payload first (PR #62 principle — the sysroot comes
         // from the toolchain payload, not from an environment directory),
         // then the macOS SDK, then a probed sysroot.
-        if (tc.payloadPaths) payload_first();
-        else if (auto sdk = mcpp::platform::macos::sdk_path()) {
+        if (tc.base.payload) payload_first();
+        else if (tc.base.stated() && tc.base.address == base::Address::AppleIsysroot) {
+            // A stated macOS SDK (`macosx@<version>`, `{ path }`), located
+            // once by the base resolution.
+            lm.mode = CLibMode::Sysroot;
+            lm.sysroot = tc.base.root;
+        }
+        else if (auto sdk = mcpp::platform::is_macos ? mcpp::platform::macos::sdk_path()
+                                                     : std::nullopt) {
+            // `macosx@system`: the SDK `xcrun` answers on an Apple host. Only
+            // there -- `sdk_path` reads `SDKROOT` on every host now, and an
+            // SDK must not become the sysroot of a Linux build.
             lm.mode = CLibMode::Sysroot;
             lm.sysroot = *sdk;
         }
-        else if (!tc.sysroot.empty()) sysroot_mode(tc.sysroot);
-    } else if (!tc.sysroot.empty()) {
+        else if (!tc.base.root.empty()) sysroot_mode(tc.base.root);
+    } else if (!tc.base.root.empty()) {
         // GCC (or clang without cfg): --sysroot is required for GCC's
         // include-fixed headers (stdlib.h wrapper).
-        sysroot_mode(tc.sysroot);
-    } else if (tc.payloadPaths) {
+        sysroot_mode(tc.base.root);
+    } else if (tc.base.payload) {
         payload_first();
     }
     return lm;

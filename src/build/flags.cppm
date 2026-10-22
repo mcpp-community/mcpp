@@ -645,7 +645,7 @@ std::string program_cxx_runtime(const mcpp::manifest::Manifest& m,
         mcpp::toolchain::is_msvc_target(tc)
             ? std::optional(dist::msvc_abi_default_contract(
                   mcpp::toolchain::msvc_wants_static_crt(bc.linkage, bc.cxxRuntime),
-                  !tc.msvcRedistDir.empty()))
+                  !tc.base.msvc.redistDir.empty()))
             : std::nullopt;
     const auto contracts = dist::role_contracts(
         dist::ContractStatement{
@@ -884,7 +884,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // READ, NOT RE-DERIVED. `prepare` located this once, where the target
         // and the machine's Xcode are both known, and refused there if it was
         // absent -- so a second `sdk_path()` call here could only disagree.
-        hopt.appleSdkRoot          = plan.toolchain.appleSdkRoot;
+        hopt.appleSdkRoot          = plan.toolchain.base.apple.root;
         // THE SAME EXPRESSION THE LINK SIDE ASKS, twenty lines further down
         // (`plan.targetSide.cAbi.prebuilt()`). Reading one value at both sites
         // is what makes it impossible for them to disagree — which they did,
@@ -894,7 +894,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // in for. The two differ on a hosted target whose C library is a
         // located SDK while a package supplies libc++ (mcpp#630, §5).
         hopt.cxxFromGraph = plan.targetSide.cxx.fromGraph();
-        hopt.appleSdkCxxHeaders = plan.toolchain.appleSdkCxxHeaders;
+        hopt.appleSdkCxxHeaders = plan.toolchain.base.apple.cxxHeaders;
         compile_toolchain_flags = mcpp::toolchain::render_tokens(
             mcpp::toolchain::host_compile_tokens(plan.toolchain, hopt, ninjaEsc));
         for (auto const& w : mcpp::toolchain::apple_float_macro_words(plan.toolchain))
@@ -1339,7 +1339,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         const std::optional<dist::Contract> msvcAbiDefault =
             mcpp::toolchain::is_msvc_target(plan.toolchain)
                 ? std::optional(dist::msvc_abi_default_contract(
-                      msvcAbiWantsStaticCrt, !plan.toolchain.msvcRedistDir.empty()))
+                      msvcAbiWantsStaticCrt, !plan.toolchain.base.msvc.redistDir.empty()))
                 : std::nullopt;
         const dist::RoleContracts contracts = dist::role_contracts(
             dist::ContractStatement{
@@ -1410,7 +1410,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // this target IS the statement "this is an Apple cross"; deriving it
         // again from the triple here would be a second answer to a question
         // already settled where the machine's Xcode was consulted.
-        mi.appleCrossTarget = !plan.toolchain.appleSdkRoot.empty();
+        mi.appleCrossTarget = !plan.toolchain.base.apple.root.empty();
         mi.format         = format;
         // A SECOND C++ RUNTIME ON THIS LINE.
         //
@@ -1674,11 +1674,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                                      d.origin == Origin::Derived ? rp::Kind::Derived
                                                                  : rp::Kind::Declared});
         if (msvcAbi && policy != rp::CrtPolicy::System
-            && !plan.toolchain.msvcRedistDir.empty()) {
+            && !plan.toolchain.base.msvc.redistDir.empty()) {
             std::vector<std::filesystem::path> sources;
             std::error_code ec;
             for (auto const& e : std::filesystem::directory_iterator(
-                     plan.toolchain.msvcRedistDir, ec)) {
+                     plan.toolchain.base.msvc.redistDir, ec)) {
                 if (!e.is_regular_file(ec)) continue;
                 auto ext = e.path().extension().string();
                 std::ranges::transform(ext, ext.begin(),
@@ -1992,7 +1992,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // which SDK, and which deployment-target flag. `appleSdkRoot` being
         // non-empty is what says the target is the cross one; prepare resolves
         // it and refuses there when the SDK cannot be located.
-        const bool appleCross = !plan.toolchain.appleSdkRoot.empty();
+        const bool appleCross = !plan.toolchain.base.apple.root.empty();
 
         std::string version_min;
         // THE iOS DEPLOYMENT TARGET IS NOT A FLAG HERE, AND THAT IS ONE
@@ -2031,7 +2031,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         std::string macos_sdk;
         if (appleCross) {
             macos_sdk = " -isysroot "
-                      + escape_path(plan.toolchain.appleSdkRoot);
+                      + escape_path(plan.toolchain.base.apple.root);
+        } else if (plan.toolchain.base.stated()
+                   && plan.toolchain.base.address == mcpp::toolchain::base::Address::AppleIsysroot) {
+            macos_sdk = " -isysroot " + escape_path(plan.toolchain.base.root);
         } else if (auto sdk = mcpp::platform::macos::sdk_path()) {
             macos_sdk = " -isysroot " + escape_path(*sdk);
         }
@@ -2333,9 +2336,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             // it goes into LinkInputs below, because the freestanding link
             // line is replaced wholesale and anything added to f.ld here is
             // discarded.
-            if (!plan.toolchain.targetSysrootInclude.empty()) {
+            if (!plan.toolchain.base.multilibInclude.empty()) {
                 const auto flag =
-                    " -isystem " + ninjaEsc(plan.toolchain.targetSysrootInclude);
+                    " -isystem " + ninjaEsc(plan.toolchain.base.multilibInclude);
                 f.cxx += flag; f.cc += flag; f.as += flag;
             }
 
@@ -2345,7 +2348,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             // it, which then dies with 'unrecognised emulation mode'.
             // Reproduced on this toolchain 2026-08-19.
             in.lld = mcpp::freestanding::resolve_lld(plan.toolchain.binaryPath);
-            in.sysrootLib = plan.toolchain.targetSysrootLib;
+            in.sysrootLib = plan.toolchain.base.multilibLib;
             // `--no-default-config` FIRST, and it is not hygiene.
             //
             // The llvm payload ships bin/clang++.cfg with an unconditional

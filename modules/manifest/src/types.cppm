@@ -1489,6 +1489,18 @@ struct TargetEntry {
     // Two plain members carry the same information and instantiate nothing.
     std::string                         sysroot;
     bool                                sysrootDeclared = false;
+    // The table form's `provides` (`{ path = "…", provides = [...] }`): what a
+    // directory supplies when measurement cannot say (design 2026-10-23
+    // §3.4). The path itself is in `sysroot`, absolute, as `path:<dir>`,
+    // because a relative path is relative to the file that wrote it.
+    std::vector<std::string>            sysrootProvides;
+    int                                 sysrootLine = 0;
+    // THE EXECUTION HOST'S WRAPPER (`run_under`, Bazel's word): the argv that
+    // reaches the machine an artifact runs on, prefixed to the runner. Empty
+    // = run here. A project states it for a team; `config.toml` states it for
+    // one machine; `MCPP_TARGET_<TRIPLE>_RUN_UNDER` overrides both.
+    std::vector<std::string>            runUnder;
+    int                                 runUnderLine = 0;
     // THE OLDEST OS RELEASE THIS ARTIFACT MUST RUN ON, for a target whose
     // compiler takes it as part of the triple.
     //

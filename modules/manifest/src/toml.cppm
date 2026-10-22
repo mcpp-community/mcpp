@@ -841,6 +841,24 @@ parse_c_abi_absent(const t::Value& v,
     return std::nullopt;
 }
 
+// A `{ path = "…" }` sysroot, absolute: relative to the directory of the file
+// that wrote it, with `~` standing for the home directory.
+std::filesystem::path absolute_sysroot_path(const std::filesystem::path& origin,
+                                            const std::string& written) {
+    std::filesystem::path p(written);
+    if (written == "~" || written.starts_with("~/")) {
+        const char* h = std::getenv(mcpp::platform::is_windows ? "USERPROFILE" : "HOME");
+        if (h && *h) p = std::filesystem::path(h) / (written.size() > 2 ? written.substr(2) : std::string{});
+    }
+    if (p.is_relative()) {
+        std::error_code ec;
+        auto dir = origin.parent_path();
+        if (dir.is_relative()) dir = std::filesystem::absolute(dir, ec);
+        p = dir / p;
+    }
+    return p.lexically_normal();
+}
+
 // `[target.<triple>].sysroot`: the refusal for a value the row cannot take, or
 // nullopt. Kept out of `parse_string` for the reason the helper above states.
 //
@@ -864,16 +882,22 @@ std::optional<std::string> sysroot_refusal(std::string_view triple, std::string_
         return std::format(
             "[target.{}].sysroot = '{}': on an MSVC-ABI row the sysroot is an "
             "MSVC toolset, written \"msvc@system\", \"msvc@<toolset>\" (an "
-            "installed toolset first, then the package) or "
-            "\"xim:msvc@<toolset>\" (the package only).",
+            "installed toolset first, then the package), "
+            "\"xim:msvc@<toolset>\" (the package only) or, for clang, "
+            "{{ path = \"<dir>\" }}.",
             triple, value);
     }
-    if (!value.empty() && value.find(':') == std::string_view::npos) {
+    // A package (`<ns>:<name>`), a locator (`<family>@system` or
+    // `<family>@<version>`), `path:<dir>`, or "". Whether THIS row takes the
+    // form is decided where the target is known; this only refuses a value
+    // that is no form at all.
+    if (!value.empty() && value.find(':') == std::string_view::npos
+        && value.find('@') == std::string_view::npos) {
         return std::format(
-            "[target.{}].sysroot = '{}' is not an xpkg reference; "
-            "expected `<namespace>:<name>[@<version>]` (e.g. "
-            "\"xim:picolibc-riscv@1.8.12\"), or \"\" for a target "
-            "that takes no prebuilt C library directory.",
+            "[target.{}].sysroot = '{}' is not a sysroot. A sysroot is a package "
+            "(\"xim:glibc@2.39\"), a locator (\"glibc@system\", \"musl@system\", "
+            "\"macosx@system\", \"iphoneos@18.5\", \"msvc@system\"), "
+            "{{ path = \"<dir>\" }}, or \"\" for no prebuilt C library.",
             triple, value);
     }
     return std::nullopt;
@@ -3609,12 +3633,74 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             // the target row) stays distinguishable from "the key is present and
             // empty". Collapsing the two is how a kernel project would silently
             // get picolibc back.
-            if (auto it = body.find("sysroot"); it != body.end() && it->second.is_string()) {
-                std::string s = it->second.as_string();
-                if (auto why = sysroot_refusal(triple, s))
-                    return std::unexpected(error(origin, *why));
-                e.sysroot = std::move(s);
-                e.sysrootDeclared = true;
+            //
+            // THE TABLE FORM NAMES A DIRECTORY (design 2026-10-23 §3.1):
+            // `{ path = "…", provides = [...] }`. A relative path is relative
+            // to this file, so it is made absolute here, where the file is
+            // known, and travels as `path:<dir>` -- the spelling the
+            // environment uses too. Which forms a row accepts is decided where
+            // the target is known (`mcpp.toolchain.base::refusal`); this
+            // parser decides only that the value is a sysroot at all.
+            if (auto it = body.find("sysroot"); it != body.end()) {
+                e.sysrootLine = static_cast<int>(it->second.position.line);
+                if (it->second.is_string()) {
+                    std::string s = it->second.as_string();
+                    if (auto why = sysroot_refusal(triple, s))
+                        return std::unexpected(error(origin, *why));
+                    e.sysroot = std::move(s);
+                    e.sysrootDeclared = true;
+                } else if (it->second.is_table()) {
+                    std::string path;
+                    for (auto& [k, v] : it->second.as_table()) {
+                        if (k == "path" && v.is_string()) {
+                            path = v.as_string();
+                        } else if (k == "provides" && v.is_array()) {
+                            for (auto& el : v.as_array()) {
+                                if (!el.is_string())
+                                    return std::unexpected(error(origin, std::format(
+                                        "[target.{}].sysroot.provides must contain only strings, "
+                                        "e.g. provides = [\"mcpp:c-abi=glibc\"]", triple)));
+                                e.sysrootProvides.push_back(el.as_string());
+                            }
+                        } else {
+                            return std::unexpected(error(origin, std::format(
+                                "[target.{}].sysroot: '{}' is not a key of a sysroot table; "
+                                "the keys are `path` (a string) and `provides` (an array of "
+                                "capabilities)", triple, k)));
+                        }
+                    }
+                    if (path.empty())
+                        return std::unexpected(error(origin, std::format(
+                            "[target.{}].sysroot is a table without `path`; write "
+                            "{{ path = \"<dir>\" }}, or a string for a package or a locator",
+                            triple)));
+                    e.sysroot = "path:" + absolute_sysroot_path(origin, path).generic_string();
+                    e.sysrootDeclared = true;
+                } else {
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].sysroot must be a string or {{ path = \"<dir>\" }}",
+                        triple)));
+                }
+            }
+            // `run_under` -- the wrapper that reaches the execution host
+            // (design 2026-10-23 §3.7). An array, like `runner`, and composed
+            // in front of it: `<run_under…> <runner…> <artifact> <args>`.
+            if (auto it = body.find("run_under"); it != body.end()) {
+                if (!it->second.is_array())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].run_under must be an array of strings, "
+                        "e.g. run_under = [\"remote-run\", \"team-mac\", \"--\"]", triple)));
+                for (auto& el : it->second.as_array()) {
+                    if (!el.is_string())
+                        return std::unexpected(error(origin, std::format(
+                            "[target.{}].run_under must contain only strings", triple)));
+                    e.runUnder.push_back(el.as_string());
+                }
+                if (e.runUnder.empty())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].run_under is empty; leave it out to run on this "
+                        "machine", triple)));
+                e.runUnderLine = static_cast<int>(it->second.position.line);
             }
 
             // `min_api_level` — the oldest OS release the artifact must run
@@ -3742,12 +3828,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             static constexpr std::string_view kKnownTargetScalars[] = {
                 "cxx_runtime", "linkage", "min_api_level", "sysroot", "toolchain",
             };
-            static constexpr std::string_view kKnownTargetArrays[] = { "runner" };
+            static constexpr std::string_view kKnownTargetArrays[] = { "run_under", "runner" };
             static constexpr std::string_view kKnownTargetTables[] = {
                 "abi", "build", "build-dependencies", "dependencies",
                 "dev-dependencies", "feature-deps", "feature-requires-abi",
                 "feature-xlings", "requires_abi", "runners", "runtime",
-                "targets", "xlings",
+                "sysroot", "targets", "xlings",
             };
             for (auto& [key, value] : body) {
                 if (value.is_table()) {
@@ -3771,7 +3857,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 if (std::ranges::find(known, key) != known.end()) continue;
                 m.schemaWarnings.push_back(std::format(
                     "[target.{}] has unsupported key '{}' (ignored). Supported keys: "
-                    "cxx_runtime, linkage, min_api_level, runner, sysroot, toolchain, "
+                    "cxx_runtime, linkage, min_api_level, run_under, runner, sysroot, toolchain, "
                     "plus the [target.<triple>.runners] table for named runners. "
                     "Per-role contracts go in [build].cxx_runtime's table form.",
                     triple, key));

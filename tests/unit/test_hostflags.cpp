@@ -921,9 +921,9 @@ TEST(HostFlags, ClangOnTheMsvcAbiCompilesAndLinksAgainstTheChosenToolset) {
     mcpp::toolchain::Toolchain t;
     t.compiler          = CompilerId::Clang;
     t.targetTriple      = "x86_64-pc-windows-msvc";
-    t.msvcToolsDir      = "C:/VS/VC/Tools/MSVC/14.44.35207";
-    t.windowsSdkRoot    = "C:/Kits/10";
-    t.windowsSdkVersion = "10.0.26100.0";
+    t.base.msvc.toolsDir      = "C:/VS/VC/Tools/MSVC/14.44.35207";
+    t.base.msvc.sdkRoot    = "C:/Kits/10";
+    t.base.msvc.sdkVersion = "10.0.26100.0";
     HostFlagOptions opt;
     auto find_pair = [](const std::vector<std::string>& v, std::string_view flag,
                         std::string_view value) {
@@ -942,7 +942,7 @@ TEST(HostFlags, ClangOnTheMsvcAbiCompilesAndLinksAgainstTheChosenToolset) {
 
     // Without a recorded toolset nothing is said, which is the behaviour of
     // every build before a toolset is bound.
-    t.msvcToolsDir.clear();
+    t.base.msvc.toolsDir.clear();
     for (auto const& w : mcpp::toolchain::host_compile_tokens(t, opt, mcpp::toolchain::no_escape))
         EXPECT_EQ(w.find("-Xmicrosoft"), std::string::npos) << w;
 }

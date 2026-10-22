@@ -245,7 +245,7 @@ nlohmann::json toolchain_json(const mcpp::toolchain::Toolchain& tc,
         {"target",       std::string(compilerTriple)},
         {"config-files", config_files(tc, invocations)},
     };
-    if (!tc.sysroot.empty()) j["sysroot"] = native_string(tc.sysroot);
+    if (!tc.base.root.empty()) j["sysroot"] = native_string(tc.base.root);
     if (!tc.stdlibId.empty()) {
         nlohmann::json stdlib{{"name", std::string(stdlib_name(tc.stdlibId))}};
         if (!tc.stdlibVersion.empty()) stdlib["version"] = tc.stdlibVersion;

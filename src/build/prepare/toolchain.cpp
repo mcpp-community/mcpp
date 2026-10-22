@@ -32,6 +32,8 @@ import mcpp.freestanding.linkline; // the ISA profile, for the std module comman
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.base;
+import mcpp.toolchain.base_probe;
 import mcpp.build.plan;
 import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
 import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
@@ -655,11 +657,46 @@ step1_apple_sdk_check(PrepareState& state, TargetOverrideCtx& ctx) {
     // Declaring a toolchain says which compiler; it says nothing about
     // where the headers and stub libraries are, and every compiler needs
     // them.
+    //
+    // FROM THE BASE STATEMENT (design 2026-10-23 §4.4): `iphoneos@system` by
+    // default, `iphoneos@<version>`, or `{ path }`, located by Apple's own
+    // conventions -- `SDKROOT` on every host, `xcrun` and the developer
+    // directory on an Apple one. A native macOS build that states its SDK is
+    // located the same way; one that states nothing keeps `xcrun`'s answer.
+    if (ctx.parsed && ctx.parsed->os == "macos") {
+        auto stmt = base_statement(state, *ctx.parsed);
+        if (!stmt) return std::unexpected(stmt.error());
+        if (stmt->stated()) {
+            auto sdk = mcpp::toolchain::base::locate_apple(*stmt, mcpp::platform::macos::sdk_macos);
+            if (!sdk) {
+                refusal::record(refusal::Code::AppleSdkAbsent);
+                return std::unexpected(std::format(
+                    "target {} names the macosx SDK {}, which this machine does not provide: {}",
+                    ctx.parsed->str(), stmt->text, sdk.error()));
+            }
+            state.appleSdkLocated = sdk->root;
+            state.appleSdkFound = *sdk;
+        }
+    }
     if (ctx.parsed && ctx.parsed->is_ios()) {
         const auto which = ctx.parsed->is_ios_simulator()
             ? mcpp::platform::macos::sdk_iphonesim
             : mcpp::platform::macos::sdk_iphoneos;
-        state.appleSdkLocated = mcpp::platform::macos::sdk_path(which);
+        auto stmt = base_statement(state, *ctx.parsed);
+        if (!stmt) return std::unexpected(stmt.error());
+        mcpp::toolchain::base::Statement asked = *stmt;
+        if (!asked.stated()) {
+            asked.form = mcpp::toolchain::base::Form::Locator;
+            asked.family = std::string(which);
+            asked.version = "system";
+            asked.text = std::format("{}@system", which);
+        }
+        auto sdk = mcpp::toolchain::base::locate_apple(asked, which);
+        std::string why = sdk ? std::string{} : sdk.error();
+        if (sdk) {
+            state.appleSdkLocated = sdk->root;
+            state.appleSdkFound = *sdk;
+        }
         // AN UNSET FLOOR IS THE LOCATED SDK'S VERSION, READ RATHER THAN
         // LEFT TO THE DRIVER. `docs/20` promised that an unversioned
         // triple meant the SDK's own default; measured on macos-15 with
@@ -671,9 +708,27 @@ step1_apple_sdk_check(PrepareState& state, TargetOverrideCtx& ctx) {
         // that the fingerprint slot, the effective triple and every
         // report read one value.
         if (state.appleSdkLocated && state.m->buildConfig.iosDeploymentTarget.empty()) {
-            if (auto v = mcpp::platform::macos::sdk_version(which)) {
-                state.m->buildConfig.iosDeploymentTarget = *v;
+            if (!state.appleSdkFound->version.empty()) {
+                state.m->buildConfig.iosDeploymentTarget = state.appleSdkFound->version;
                 state.iosFloorFromSdk = true;
+            }
+        }
+        // THE SLICE DECIDES THE ROW (D16). An SDK that no longer carries the
+        // target's architecture is refused naming the slice, not left to fail
+        // at the first link.
+        if (state.appleSdkLocated) {
+            const auto slice = std::format("{}-ios{}",
+                ctx.parsed->arch == "aarch64" ? "arm64" : ctx.parsed->arch,
+                ctx.parsed->is_ios_simulator() ? "-simulator" : "");
+            if (auto has = mcpp::platform::macos::sdk_has_target(*state.appleSdkLocated, slice);
+                has && !*has) {
+                refusal::record(refusal::Code::AppleSdkAbsent);
+                return std::unexpected(std::format(
+                    "target {}: the {} SDK at {} carries no {} slice (its libSystem.tbd "
+                    "does not list it). Name an SDK that does: [target.{}] sysroot = "
+                    "\"{}@<version>\" or {{ path = \"…\" }}.",
+                    ctx.parsed->str(), which, state.appleSdkLocated->string(), slice,
+                    ctx.parsed->str(), which));
             }
         }
         if (!state.appleSdkLocated) {
@@ -682,18 +737,24 @@ step1_apple_sdk_check(PrepareState& state, TargetOverrideCtx& ctx) {
             // which `check_matrix_reasons.sh` refuses on the ground that
             // it freezes an unnamed branch into the expected table.
             refusal::record(refusal::Code::AppleSdkAbsent);
+            if (stmt->stated())
+                return std::unexpected(std::format(
+                    "target {} names the {} SDK {} ({}), which this machine does not "
+                    "provide: {}", ctx.parsed->str(), which, asked.text,
+                    stmt->originFile.empty() ? stmt->originKey : stmt->originFile, why));
             return std::unexpected(std::format(
                 "target {} needs the {} SDK, which this machine does not "
                 "provide.\n"
                 "       It is not redistributable, so mcpp LOCATES it "
-                "rather than installing it: `xcrun --sdk {} "
-                "--show-sdk-path` must answer, which needs Xcode on macOS "
-                "(not the Command Line Tools alone -- those ship the "
-                "macOS SDK only).\n"
-                "       Check `xcode-select -p`, and note that the "
-                "compiler is not what is missing: these rows pin "
+                "rather than installing it. {}.\n"
+                "       On macOS install Xcode (not the Command Line Tools alone -- "
+                "those ship the macOS SDK only) so that `xcrun --sdk {} "
+                "--show-sdk-path` answers. Elsewhere, produce one from your own "
+                "Xcode.xip (e.g. with xtool) and set SDKROOT, or write "
+                "[target.{}] sysroot = {{ path = \"…\" }}.\n"
+                "       The compiler is not what is missing: these rows pin "
                 "`xim:llvm`, which every other Apple row also uses.",
-                ctx.parsed->str(), which, which));
+                ctx.parsed->str(), which, why, which, ctx.parsed->str()));
         }
     }
     return {};
@@ -1980,7 +2041,11 @@ step2_retarget_for_retargetable_driver(PrepareState& state) {
                               "gate that locates it did not run for this "
                               "request", want->str()));
                       }
-                      state.tc->appleSdkRoot = *state.appleSdkLocated;
+                      state.tc->base.apple.root = *state.appleSdkLocated;
+                      if (state.appleSdkFound) {
+                          state.tc->base.apple.name    = state.appleSdkFound->name;
+                          state.tc->base.apple.version = state.appleSdkFound->version;
+                      }
                       auto sdk = state.appleSdkLocated;
                       // AND THE std MODULE'S OWN COMMAND, WHICH IS A SEPARATE
                       // CHANNEL. Same reason the Android rows set it: the
@@ -2038,10 +2103,29 @@ step2_retarget_for_retargetable_driver(PrepareState& state) {
               // on a first pass. What follows would then simply not add the
               // paths, and the link fails naming the missing libc — which is the
               // truthful message either way.
-              if (const std::string want_sysroot =
-                      mcpp::toolchain::triple::effective_sysroot(
-                          *want, sysroot_override(*state.m, *want));
-                  !want_sysroot.empty()) {
+              const std::string want_sysroot =
+                  mcpp::toolchain::triple::effective_sysroot(
+                      *want, base_statement_text(state, *want));
+              // A C library named by path (design 2026-10-23 §3.1): the same
+              // `<root>/{include,lib}/<libdir>` layout, nothing to install.
+              if (want_sysroot.starts_with("path:")) {
+                  const std::filesystem::path dir = want_sysroot.substr(5);
+                  std::error_code ec2;
+                  if (!std::filesystem::is_directory(dir, ec2)) {
+                      refusal::record(refusal::Code::TargetBase);
+                      return std::unexpected(std::format(
+                          "[target.{}].sysroot = {{ path = \"{}\" }} does not exist", want->str(),
+                          dir.generic_string()));
+                  }
+                  if (auto spec = mcpp::freestanding::resolve(*want)) {
+                      state.tc->base.multilibRoot = dir;
+                      state.tc->base.package      = dir.filename().string();
+                      const auto inc = dir / "include" / std::string(spec->libdir);
+                      const auto lib = dir / "lib" / std::string(spec->libdir);
+                      if (std::filesystem::is_directory(inc, ec2)) state.tc->base.multilibInclude = inc;
+                      if (std::filesystem::is_directory(lib, ec2)) state.tc->base.multilibLib = lib;
+                  }
+              } else if (!want_sysroot.empty()) {
                   if (auto cfg3 = state.get_cfg(true); cfg3) {
                       auto ref = mcpp::provider::parse_ref(want_sysroot);
                       auto xl  = mcpp::config::make_xlings_env(**cfg3);
@@ -2086,12 +2170,12 @@ step2_retarget_for_retargetable_driver(PrepareState& state) {
                               const auto lib =
                                   *dir / "lib"     / std::string(spec->libdir);
                               std::error_code ec2;
-                              state.tc->targetSysrootRoot = *dir;
-                              state.tc->targetSysrootPkg  = ref.name;
+                              state.tc->base.multilibRoot = *dir;
+                              state.tc->base.package  = ref.name;
                               if (std::filesystem::is_directory(inc, ec2))
-                                  state.tc->targetSysrootInclude = inc;
+                                  state.tc->base.multilibInclude = inc;
                               if (std::filesystem::is_directory(lib, ec2))
-                                  state.tc->targetSysrootLib = lib;
+                                  state.tc->base.multilibLib = lib;
                           }
                       }
                   }
@@ -2105,12 +2189,17 @@ static std::expected<void, std::string>
 step2_bind_msvc_toolset(PrepareState& state) {
       // THE MSVC TOOLSET OF THE CLANG ROW, chosen once and recorded before the
       // runtime identity below reads its SDK version. See bind_msvc_sysroot.
+      const std::string* declared = nullptr;
+      if (auto tt = mcpp::toolchain::triple::parse(state.tc->targetTriple)) {
+          if (auto s = base_statement(state, *tt); !s) return std::unexpected(s.error());
+          declared = base_statement_text(state, *tt);
+      }
       if (state.tc->compiler == mcpp::toolchain::CompilerId::Clang
           && mcpp::toolchain::is_msvc_target(*state.tc)) {
-          auto bound = bind_msvc_sysroot(*state.tc, *state.m, [&] { return state.get_cfg(true); });
+          auto bound = bind_msvc_sysroot(*state.tc, declared, [&] { return state.get_cfg(true); });
           if (!bound) return std::unexpected(bound.error());
       } else if (state.tc->compiler == mcpp::toolchain::CompilerId::MSVC) {
-          if (auto ok = check_cl_row_sysroot(*state.tc, *state.m); !ok)
+          if (auto ok = check_cl_row_sysroot(*state.tc, declared); !ok)
               return std::unexpected(ok.error());
       }
       return {};
@@ -2129,9 +2218,9 @@ step2_windows_runtime_identity(PrepareState& state) {
       // `ucrt@<v>` is a COMPATIBILITY FLOOR, not a payload binding like
       // `glibc@<v>`: ucrtbase.dll is an OS component and mcpp ships no
       // redistributable for it. See mcpp.runtime.binding.
-      if (!state.tc->windowsSdkVersion.empty()) {
+      if (!state.tc->base.msvc.sdkVersion.empty()) {
           mcpp::platform::runtime::bind_windows_ucrt(
-              state.runtimeBindingSnapshot, state.tc->windowsSdkVersion);
+              state.runtimeBindingSnapshot, state.tc->base.msvc.sdkVersion);
           state.tc->runtimeContractHash = state.runtimeBindingSnapshot.contractHash;
       }
 }
@@ -2341,6 +2430,7 @@ std::expected<void, std::string> phase2_define_toolchain_resolver(PrepareState& 
       if (auto r = step2_apply_local_toolchain(state); !r) return std::unexpected(r.error());
       if (auto r = step2_retarget_for_retargetable_driver(state); !r) return std::unexpected(r.error());
       if (auto r = step2_bind_msvc_toolset(state); !r) return std::unexpected(r.error());
+      if (auto r = step2_resolve_base(state); !r) return std::unexpected(r.error());
       step2_windows_runtime_identity(state);
       if (auto r = step2_msvc_abi_without_msvc_repair(state); !r) return std::unexpected(r.error());
       step2_musl_default_static_linkage(state);

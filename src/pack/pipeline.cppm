@@ -500,8 +500,8 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
             opts.carryToolchainRuntime = false;
         }
         opts.toolchainRuntimeDirs = ctx.plan.toolchain.linkRuntimeDirs;
-        if (!ctx.plan.toolchain.msvcRedistDir.empty())
-            opts.toolchainRuntimeDirs.push_back(ctx.plan.toolchain.msvcRedistDir);
+        if (!ctx.plan.toolchain.base.msvc.redistDir.empty())
+            opts.toolchainRuntimeDirs.push_back(ctx.plan.toolchain.base.msvc.redistDir);
         // Where a third-party dependency's shared library may be found. Both
         // channels, because they answer for different things: the runtime
         // library dirs are what `mcpp run` puts on the loader's path, and the

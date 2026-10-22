@@ -171,6 +171,13 @@ enum class Code {
     PayloadOverride,
     PayloadRequest,
     LocalToolchain,
+    // The target base (`sysroot`) cannot serve this build: a spelling the row
+    // does not take, a path that does not exist, a directory that supplies no
+    // C library, a C library older than the compiler's runtime requires, or a
+    // native base without its loader (design 2026-10-23). Distinct from
+    // LocalToolchain, which is about the compiler: this one is about what it
+    // builds against.
+    TargetBase,
     // A PE shared library whose exports are discovered (`windows_auto_export`
     // stated `true`, or `/GL` written into its sources' flags) would be
     // compiled by cl.exe into `/GL` objects, which hold no symbol table to
@@ -229,6 +236,7 @@ constexpr std::string_view name(Code c) {
         case Code::PayloadOverride:      return "payload-override";
         case Code::PayloadRequest:       return "payload-request";
         case Code::LocalToolchain:       return "local-toolchain";
+        case Code::TargetBase:           return "target-base";
         case Code::LtoExportDiscovery:   return "lto-export-discovery";
         case Code::Other:                return "other";
     }

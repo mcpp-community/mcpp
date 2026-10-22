@@ -367,6 +367,12 @@ void merge_layer_root_position(mcpp::manifest::Manifest& member,
         if (!to.sysrootDeclared && from.sysrootDeclared) {
             to.sysroot = from.sysroot;
             to.sysrootDeclared = true;
+            to.sysrootProvides = from.sysrootProvides;
+            to.sysrootLine = from.sysrootLine;
+        }
+        if (to.runUnder.empty()) {
+            to.runUnder = from.runUnder;
+            to.runUnderLine = from.runUnderLine;
         }
         if (to.minApiLevel == 0)   to.minApiLevel = from.minApiLevel;
         if (to.runner.empty())     to.runner = from.runner;
@@ -1018,12 +1024,14 @@ export std::string root_position_key(
         // this build's target is not this build's.
         const bool written = !e.toolchain.empty() || !e.linkage.empty() || !e.cxxRuntime.empty()
             || e.sysrootDeclared || e.minApiLevel != 0 || !e.runner.empty()
-            || !e.namedRunners.empty();
+            || !e.namedRunners.empty() || !e.runUnder.empty();
         if (!written || (applies && !applies(triple))) continue;
         field("target." + triple + ".toolchain", e.toolchain);
         field("target." + triple + ".linkage", e.linkage);
         field("target." + triple + ".cxx_runtime", e.cxxRuntime);
         field("target." + triple + ".sysroot", e.sysroot);
+        list("target." + triple + ".sysroot.provides", e.sysrootProvides);
+        list("target." + triple + ".run_under", e.runUnder);
         field("target." + triple + ".min_api", std::to_string(e.minApiLevel));
         list("target." + triple + ".runner", e.runner);
         for (auto const& [name, argv] : e.namedRunners)

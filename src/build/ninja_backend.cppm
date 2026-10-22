@@ -2266,8 +2266,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // same across the plans of one build.
         std::string crt = " --crt " + flags.runtimeCrtPolicy;
         if (flags.runtimeCrtPolicy != "system" && flags.runtimeCrtPolicy != "not-applicable"
-            && !plan.toolchain.msvcRedistDir.empty())
-            crt += " --toolset-crt " + ninja_command_word(plan.toolchain.msvcRedistDir.string());
+            && !plan.toolchain.base.msvc.redistDir.empty())
+            crt += " --toolset-crt " + ninja_command_word(plan.toolchain.base.msvc.redistDir.string());
         append("  command = $mcpp place-dlls --output $out --depfile $out.d" + crt
                + " $in" + dirs + "\n");
         append("  depfile = $out.d\n");
@@ -3625,7 +3625,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // host that is not Windows the directory is inert on PATH, and the
         // same graph is then assertable on every host.
         const bool crtOnPath = mcpp::toolchain::is_msvc_target(plan.toolchain)
-                            && !plan.toolchain.msvcRedistDir.empty();
+                            && !plan.toolchain.base.msvc.redistDir.empty();
         const bool named = !a.env.empty() || !a.cwd.empty() || crtOnPath;
         if (stamped || named) {
             // `mcpp_exe_path()`, not `self_exe_path()` directly: this file
@@ -3647,7 +3647,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             for (auto const& e : a.env) wrapped += " --env " + q(e);
             if (!a.cwd.empty()) wrapped += " --cwd " + q(a.cwd);
             if (crtOnPath)
-                wrapped += " --path-prepend " + q(plan.toolchain.msvcRedistDir.string());
+                wrapped += " --path-prepend " + q(plan.toolchain.base.msvc.redistDir.string());
             // Before the stamp list, so the wrapper can tell the flag from a
             // stamp path without an allowlist of extensions. `directives.cppm`
             // refuses a `prepare` action with no `output_dir`, so this is

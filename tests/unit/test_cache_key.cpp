@@ -582,7 +582,7 @@ TEST(CacheKey, TheHeaderSetCarriesNoAbsoluteHome) {
     tc.version      = "16.1.0";
     tc.driverIdent  = "gcc-16.1.0";
     tc.targetTriple = "x86_64-linux-gnu";
-    tc.sysroot      = home / "subos" / "default";
+    tc.base.root      = home / "subos" / "default";
 
     mcpp::manifest::Manifest m;
     m.package.standard = "c++23";
@@ -597,7 +597,7 @@ TEST(CacheKey, TheHeaderSetCarriesNoAbsoluteHome) {
     // Two subos on ONE home are still two keys — the relativization must not
     // flatten the distinction it exists to preserve.
     auto tc2 = tc;
-    tc2.sysroot = home / "subos" / "musl";
+    tc2.base.root = home / "subos" / "musl";
     const auto b = ck::build_axes(tc2, m, "-std=c++23", {}, "", store);
     EXPECT_NE(a.targetHeaderSet, b.targetHeaderSet);
     EXPECT_NE(ck::key_hex(a, pkg()), ck::key_hex(b, pkg()));
@@ -701,9 +701,9 @@ TEST(CacheKey, TheMsvcToolsetOfTheClangRowChangesTheKey) {
     tc.version           = "20.1.7";
     tc.driverIdent       = "clang-20.1.7";
     tc.targetTriple      = "x86_64-pc-windows-msvc";
-    tc.msvcToolsDir      = "C:/VS/VC/Tools/MSVC/14.44.35207";
-    tc.windowsSdkRoot    = "C:/Kits/10";
-    tc.windowsSdkVersion = "10.0.26100.0";
+    tc.base.msvc.toolsDir      = "C:/VS/VC/Tools/MSVC/14.44.35207";
+    tc.base.msvc.sdkRoot    = "C:/Kits/10";
+    tc.base.msvc.sdkVersion = "10.0.26100.0";
 
     mcpp::manifest::Manifest m;
     m.package.standard = "c++23";
@@ -714,12 +714,12 @@ TEST(CacheKey, TheMsvcToolsetOfTheClangRowChangesTheKey) {
     EXPECT_TRUE(present) << "the toolset directory is part of the header set";
 
     auto tc2 = tc;
-    tc2.msvcToolsDir = "C:/VS/VC/Tools/MSVC/14.51.36014";
+    tc2.base.msvc.toolsDir = "C:/VS/VC/Tools/MSVC/14.51.36014";
     EXPECT_NE(ck::key_hex(a, pkg()),
               ck::key_hex(ck::build_axes(tc2, m, "-std=c++23", {}, ""), pkg()));
 
     auto tc3 = tc;
-    tc3.windowsSdkVersion = "10.0.22621.0";
+    tc3.base.msvc.sdkVersion = "10.0.22621.0";
     EXPECT_NE(ck::key_hex(a, pkg()),
               ck::key_hex(ck::build_axes(tc3, m, "-std=c++23", {}, ""), pkg()));
 }

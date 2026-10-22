@@ -300,6 +300,14 @@ struct WindowsSdk {
 std::optional<WindowsSdk> find_windows_sdk(
     std::span<const std::filesystem::path> extraRoots = {});
 
+// The SDK inside ONE root (`<kits>/10`), the highest usable version: what a
+// `/winsysroot` layout's `Windows Kits/10` holds. No search beyond it.
+std::optional<WindowsSdk> sdk_in_root(const std::filesystem::path& root);
+
+// The newest toolset under `<root>/VC/Tools/MSVC`, or nullopt: what a Visual
+// Studio tree or a `/winsysroot` layout named by path holds.
+std::optional<ToolsetChoice> toolset_in_root(const std::filesystem::path& root);
+
 // The machine's Windows SDK roots, in the order step 3 above searches them
 // (D15): the root the SDK installer recorded (`Installed Roots\KitsRoot10`,
 // either registry view), then `Windows Kits\10` under %ProgramFiles(x86)%
@@ -1258,6 +1266,31 @@ std::string declared_sdk_version() {
 
 } // namespace
 
+std::optional<WindowsSdk> sdk_in_root(const std::filesystem::path& root) {
+    return pick_sdk_in(root, {});
+}
+
+std::optional<ToolsetChoice> toolset_in_root(const std::filesystem::path& root) {
+    std::error_code ec;
+    const auto dir = root / "VC" / "Tools" / "MSVC";
+    std::string best;
+    for (auto it = std::filesystem::directory_iterator(dir, ec);
+         !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
+        if (!it->is_directory(ec)) continue;
+        auto v = it->path().filename().string();
+        if (!std::filesystem::exists(it->path() / "include", ec)) continue;
+        if (best.empty() || compare_toolset_versions(v, best) > 0) best = v;
+    }
+    if (best.empty()) return std::nullopt;
+    ToolsetChoice c;
+    c.vsRoot   = root;
+    c.version  = best;
+    c.toolsDir = dir / best;
+    c.product  = "path:" + root.generic_string();
+    c.via      = "path";
+    return c;
+}
+
 std::optional<WindowsSdk> find_windows_sdk(
     std::span<const std::filesystem::path> extraRoots) {
     // Highest version dir under `root/Include` that actually carries the UCRT
@@ -1766,7 +1799,7 @@ std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {
     if (choice.sdk) {
         tc.envOverrides = build_env_for_cl(tc.binaryPath, parsed->second,
                                            *choice.sdk);
-        tc.windowsSdkVersion = choice.sdk->version;
+        tc.base.msvc.sdkVersion = choice.sdk->version;
     }
     if (!choice.note.empty()) tc.resolutionNote = choice.note;
 
@@ -1790,7 +1823,7 @@ std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {
         // staging gate read THIS rather than `linkRuntimeDirs`, which on the
         // LLVM row holds LLVM's own directories instead — one name for "the
         // toolset's redistributable" that means the same thing on both rows.
-        tc.msvcRedistDir = redist;
+        tc.base.msvc.redistDir = redist;
     }
     return {};
 }

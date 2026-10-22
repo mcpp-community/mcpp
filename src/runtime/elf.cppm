@@ -1259,7 +1259,11 @@ RuntimeVerdict validate_runtime_artifact(
         std::filesystem::path{});
     std::filesystem::path expectedLibDir;
     if (!expectedLoader.empty()) expectedLibDir = expectedLoader.parent_path();
-    if (expectedLibDir.empty() && !binding.libraryDirs.empty())
+    // The host's base: `/lib64/ld-linux-x86-64.so.2` is the standard name of a
+    // loader that lives beside the C library somewhere else (Debian multiarch),
+    // so the binding names the C library's directory itself.
+    if ((expectedLibDir.empty() || binding.provenance == "host-sysroot")
+        && !binding.libraryDirs.empty())
         expectedLibDir = binding.libraryDirs.front();
 
     if (!facts.interp.empty()) {

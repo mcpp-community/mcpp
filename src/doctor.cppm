@@ -507,7 +507,7 @@ export int doctor_report() {
         std::error_code cwdEc;
         auto project = std::filesystem::current_path(cwdEc);
         if (mcpp::fallback::sysroot_is_foreign(
-                tc->sysroot, (*cfg).registryDir,
+                tc->base.root, (*cfg).registryDir,
                 cwdEc ? std::filesystem::path{} : project))
             warn(std::format(
                 "sysroot {} belongs to neither this mcpp home ({}) nor "
@@ -515,7 +515,7 @@ export int doctor_report() {
                 "here declared. mcpp remaps a baked sysroot when it can "
                 "find the equivalent under the registry; seeing it here "
                 "means it could not",
-                tc->sysroot.string(), (*cfg).registryDir.string()));
+                tc->base.root.string(), (*cfg).registryDir.string()));
     }
     if (!cfg) {
         err(cfg.error().message);
@@ -1284,9 +1284,9 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
         {"llvm",      ts.llvmTriple},
     };
 
-    // THE C LIBRARY MODEL, NOT `tc.sysroot`.
+    // THE C LIBRARY MODEL, NOT `tc.base.root`.
     //
-    // `tc.sysroot` is what the driver reports for `-print-sysroot`, and it is
+    // `tc.base.root` is what the driver reports for `-print-sysroot`, and it is
     // frequently empty for a toolchain that nonetheless receives an explicit
     // `--sysroot` on every command line. The first version of this reported it
     // and disagreed with the build: the query said `none` while build.ninja
