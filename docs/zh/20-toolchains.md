@@ -796,13 +796,91 @@ iPhoneSimulator 的 SDK：它在 Xcode 里，而且不可再分发。所以 mcpp
 它，通过 `xcrun --sdk <name> --show-sdk-path`，与它一直以来定位 macOS SDK
 的方式完全相同。
 
-这也是这三行不带 `sysroot` 条目的原因。那一列命名的是一个包，而一个被定位的
-目录不是包。
+这也是这三行在目标表中不带 `sysroot` 列条目的原因:那一列命名的是一个包,而一个被定位的
+目录不是包。工程改以该行的 `sysroot` 键点名 SDK:`iphonesimulator@system`(缺省)、
+`iphonesimulator@<版本>` 或 `{ path = "…" }`;`SDKROOT` 在所有宿主上读取,因此开发者在 Linux
+上用自己的 Xcode.xip(例如借助 xtool)生成的 SDK,与 Xcode 中的 SDK 以同样方式被定位。mcpp 只定位,
+从不分发。SDK 自己的 `libSystem.tbd` 说明它带哪些架构,缺少某行切片时,构建被拒绝并点名该切片。
 
 ```bash
 mcpp build --target aarch64-ios        # resolves llvm@23.1.3 + the iPhoneOS SDK
 mcpp build --target aarch64-ios-sim    # resolves llvm@23.1.3 + the Simulator SDK
 ```
+
+## 目标基座:`sysroot`(2026.10.23.1+)
+
+sysroot 不是层。它是目标侧下层([docs/22](22-target-side.md))的**预制供给者**:
+一个按目标驱动约定组织的目录,供给 `c-abi`,通常还有 `kernel-abi`,可能还有 `c++-abi`、
+`compiler-runtime` 与平台库。mcpp 称之为**目标基座**,清单键名仍为 `sysroot`。一个陈述只解析
+一次,所有读者使用同一个结果:编译行与链接行、依赖扫描、`std` 模块、产物的 loader 与运行路径、
+闭包校验、指纹、报告、`mcpp pack` 与运行器。
+
+### 写法
+
+```toml
+[target.x86_64-linux-gnu]
+sysroot = "xim:glibc@2.39"                    # 生态包(团队私有索引的包亦可)
+sysroot = "glibc@system"                      # 本机自己的根
+sysroot = { path = "third_party/sysroot" }    # 一个目录,相对于写它的文件
+sysroot = { path = "/opt/exotic", provides = ["mcpp:c-abi=glibc"] }
+sysroot = ""                                  # 不用预制 C 库
+
+[target.aarch64-ios-sim]
+sysroot = "iphonesimulator@18.5"              # 一个被定位的、指定版本的 SDK
+```
+
+定位器的族名取业界词汇:`glibc`、`musl`、`msvc`,以及 xcrun 的 SDK 名 `macosx`、
+`iphoneos`、`iphonesimulator`。族名必须与目标行一致(`-gnu` 行上写 `musl@system` 会被拒绝,
+拒绝信息列出该行接受的写法)。不带命名空间的 `glibc@<版本>` 即生态包 `xim:glibc@<版本>`。
+`{ path = "/" }` 与 `<C 库>@system` 是同一个陈述。表只有 `path` 与 `provides` 两个键。各目标行
+接受的写法见 [SPEC-006 附录 A](../specs/toolchain-management.md)。
+
+### 陈述的优先级
+
+按四档取第一个:
+
+| 档 | 位置 |
+|---|---|
+| 覆盖 | `--sysroot`;`MCPP_TARGET_<三元组>_SYSROOT`;`MCPP_SYSROOT`(`none` 即 `""`,空值视为未设置) |
+| 工程 | `mcpp.toml` 的 `[target.<三元组>].sysroot`;其次 `[toolchain] { path, sysroot }`,或陈述了 `sysroot` 的工具链阶段 |
+| 机器默认 | `~/.mcpp/config.toml` 的 `[target.<三元组>].sysroot`,其次系统级 `config.toml` |
+| 引擎默认 | 目标行自己的那一列,或生态的缺省基座 |
+
+团队把基座写在 `mcpp.toml` 里。工程点名的 sysroot 由工程负责提供;它缺失时,错误信息说明这一点,
+并列出让它存在的三种办法:作为包发布到团队索引、以该相对路径放在仓库中、约定一个团队共用的路径。
+个别机器需要另一份时,设置 `MCPP_TARGET_<三元组>_SYSROOT`,或写在本机的 `config.toml` 中。
+构建程序与宿主工具在宿主自己的基座上构建,从不读取目标的基座。
+
+### 测量
+
+C 运行时的位置问驱动(`-print-file-name=crt1.o`),C 库的实现与版本问预处理器(`__GLIBC__`、
+`__BIONIC__`、`__PICOLIBC__`、`_NEWLIB_VERSION`、`__EMSCRIPTEN__`;musl 由其 loader 识别)。
+mcpp 持有的唯一布局规则是 Debian multiarch:不支持 multiarch 的 gcc 在 `/usr/lib/<元组>` 中找不到
+`crt1.o`,此时 mcpp 只为该驱动补上该元组的目录。`provides` 用于核对测量,或在无法测量时代替测量;
+两者都没有的目录是库前缀,会被拒绝。
+
+编译器自己的运行库有下限。gcc 16 的 `libstdc++.so.6` 需要 `GLIBC_2.38`,因此 glibc 2.31 的基座
+在编译开始之前即被拒绝:
+
+```
+error: [target.x86_64-linux-gnu].sysroot (mcpp.toml:7): gcc 16.1.0's runtime requires glibc >= 2.38
+       (libstdc++.so.6: GLIBC_2.38), and this sysroot provides glibc 2.31.
+```
+
+### 产物的运行时
+
+本机目标的动态产物**绑定**其基座:PT_INTERP 是基座的 loader,RUNPATH 指向基座的 C 库目录,
+程序运行在它编译时所用的 C 库上。`glibc@system` 经宿主的标准 loader 绑定,不写 RUNPATH。
+交叉目标以及 Apple 与 MSVC 行把基座视为**下限**。基座的身份(陈述、根目录、测量所依据文件的
+大小与修改时间)进入指纹,因此原地改写的 sysroot 会触发重建。`mcpp pack` 报告程序及随包库所需的
+最高 glibc 版本,并写入 `HOST-REQUIREMENTS`。
+
+```
+       Using sysroot glibc 2.31 ← third_party/sysroot  [custom · mcpp.toml:12]
+```
+
+`mcpp why sysroot` 打印完整的解析结果;`resolution.json` 以 `base` 记录。mcpp 从不写入一个
+不是它创建的 sysroot。
 
 ## 每个工具的来源（2026.10.1.3+）
 

@@ -102,6 +102,10 @@ struct ToolchainLinkModel {
     std::string           winSdkVersion;
     std::string           msvcCompilerVersion;
 
+    // The linker is handed `--sysroot` by the driver flag above only on
+    // clang; on gcc a stated base adds it explicitly (`link_tokens`).
+    bool linkerSysroot = false;
+
     bool clangDriver   = false;  // clang: -isystem headers; gcc: -idirafter
                                  // gcc:   -idirafter (…#include_next), -B/-L only
     bool clangWithCfg  = false;  // sibling <driver>.cfg exists (bundled LLVM)
@@ -181,6 +185,13 @@ struct ToolchainLinkModel {
         std::vector<std::string> out;
         if (mode == CLibMode::Sysroot) {
             out.push_back("--sysroot=" + esc(sysroot));
+            // A STATED base tells the linker too (SPEC-006 §4.3). gcc's
+            // clean link specs drop `%(sysroot_spec)`, so without this ld
+            // never hears the sysroot and a sysroot's linker scripts
+            // (`GROUP ( /lib64/libc.so.6 ... )`) resolve on the host, or not
+            // at all (`cannot find /lib64/libm.so.6`, scenario C). clang hands
+            // its `--sysroot` to the linker itself.
+            if (linkerSysroot) out.push_back("-Wl,--sysroot=" + esc(sysroot));
             for (auto& dir : multiarchLibDirs) {
                 out.push_back("-B" + esc(dir));
                 out.push_back("-L" + esc(dir));
@@ -541,6 +552,7 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
         // pointers cleared, so the artifact got the HOST's loader and the
         // SubOS farm's libc (scenario D); that is what this replaces.
         if (tc.base.stated()) {
+            lm.linkerSysroot = !lm.clangDriver;
             if (tc.base.runtime == base::Runtime::Binding) {
                 lm.loader = tc.base.loader;
                 for (auto const& d : tc.base.runtimeDirs) lm.libDirs.push_back(d);

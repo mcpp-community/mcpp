@@ -148,6 +148,22 @@ default_target = "x86_64-linux-gnu"
 
 在 Luban OS 上，系统级配置同时写出 `/xlings`，因此机器上已有的 payload 只存在一份。
 
+`config.toml`(用户级,其次系统级)还可以陈述本机对某个目标的默认值(2026.10.23.1+):它的基座,
+以及它的产物如何到达执行它的机器。工程的 `mcpp.toml` 优先于二者,`MCPP_TARGET_<三元组>_SYSROOT` /
+`_RUN_UNDER` 覆盖三者;相对的 `path` 相对于写它的那个 `config.toml`。
+
+```toml
+# ~/.mcpp/config.toml
+[target.x86_64-ios-sim]
+run_under = ["remote-run", "macvm", "--"]   # 只有这台机器经此到达一台 Mac
+
+[target.x86_64-linux-gnu]
+sysroot = { path = "/opt/acme/sysroot" }    # 团队约定的路径,用于仓库中没有它的机器
+```
+
+该表只接受 `sysroot` 与 `run_under`:目标的其余属性都属于工程。见 [20 —— 工具链管理](20-toolchains.md)
+与 [04 —— mcpp.toml](04-mcpp-toml.md)。
+
 ## 5. 提供者程序
 
 `[xlings] binary` 选择 mcpp 运行的 xlings：`"bundled"`（mcpp 随附的，默认）、`"system"`（`PATH` 上的）或一个路径。

@@ -122,6 +122,16 @@ capability=opengl.glx.driver discovery=rpath-of-dispatch
 satisfying one does not satisfy another. It is written only when there is
 something to say: an empty file would be a *claim* that nothing is needed.
 
+A package that loads the target's own C library (`vendored`, `system`) also
+states the lowest one it runs on (2026.10.23.1+): the highest `GLIBC_x.y` the
+program and the libraries packed with it need, printed as
+`Requires glibc >= 2.38 …` and written as
+`capability=c-abi.glibc>=2.38 discovery=PT_INTERP`. The base the program was
+built against becomes that floor; `self-contained` ships the base's own loader
+and C library instead. The `release` and `dist` profiles that `mcpp pack`
+builds trim the source paths the artifact carries and define `NDEBUG`
+([04 — `[profile]`](04-mcpp-toml.md)).
+
 ### Mode name compatibility
 
 Canonical names are shown above. The old names remain **permanent aliases**:

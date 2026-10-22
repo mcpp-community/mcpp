@@ -1128,15 +1128,24 @@ only what the project and its dependencies supply. `#include <stdio.h>` stops
 resolving. A kernel or a bootloader wants exactly that, and collapsing the two
 cases would silently hand such a project the target's C library back.
 
-The value is an xpkg reference or the empty string; a bare name is rejected when
-the manifest is parsed, because accepting it would install nothing and then fail
-much later naming a missing libc.
+The value is a package reference, a locator (`glibc@system`, `iphoneos@18.5`),
+a table `{ path = "<dir>", provides = [...] }`, or the empty string
+(2026.10.23.1+); a bare name is rejected when the manifest is parsed, because
+accepting it would install nothing and then fail much later naming a missing
+libc. A stated base is a supplier of `c-abi` under rule one: a graph package
+that also provides `mcpp:c-abi` is refused, naming both. The payload's C++
+runtime stays usable over a base measured to supply the C library it was
+configured for, at a version its runtime accepts (rule two's measurable floor).
+[20 — Toolchains](20-toolchains.md) gives the spellings each row takes, their
+precedence and what is measured.
 
 On an MSVC-ABI row (`*-windows-msvc`) the sysroot is the MSVC toolset, and the
 value is an msvc spelling (2026.9.24.1+): `msvc@system` (the default when the
 key is absent), `msvc@<toolset>` (an installed toolset of that version, else
-the payload), or `xim:msvc@<toolset>` (the payload only). Any other value on
-such a row is rejected when the manifest is parsed. See
+the payload), or `xim:msvc@<toolset>` (the payload only). With clang the row
+also takes `{ path = "<dir>" }` (2026.10.23.1+): an unpacked Visual Studio tree
+or clang's `/winsysroot` layout, whose `Windows Kits/10` is used when present.
+Any other value on such a row is rejected. See
 [20 — Clang on the MSVC ABI](20-toolchains.md#clang-on-the-msvc-abi-the-toolset-is-the-sysroot).
 
 A build program can ask which C library **payload** supplies the sysroot:

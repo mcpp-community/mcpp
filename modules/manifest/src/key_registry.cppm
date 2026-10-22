@@ -83,6 +83,7 @@ inline constexpr KeyClass kKeyRegistry[] = {
     {"target.<sel>", "cxx_runtime",      KeyScope::Configuration, KeyMerge::Scalar,  true,  true },
     {"target.<sel>", "linkage",          KeyScope::Configuration, KeyMerge::Scalar,  true,  true },
     {"target.<sel>", "min_api_level",    KeyScope::Configuration, KeyMerge::Scalar,  true,  true },
+    {"target.<sel>", "run_under",        KeyScope::Configuration, KeyMerge::Scalar,  true,  true },
     {"target.<sel>", "runner",           KeyScope::Configuration, KeyMerge::Scalar,  true,  true },
     {"target.<sel>", "sysroot",          KeyScope::Configuration, KeyMerge::Scalar,  true,  true },
     {"target.<sel>", "toolchain",        KeyScope::Configuration, KeyMerge::Scalar,  true,  true },

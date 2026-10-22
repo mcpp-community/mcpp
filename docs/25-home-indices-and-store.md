@@ -183,6 +183,25 @@ the user's that resolves a newer version installs it into the user's home.
 On Luban OS the system configuration names `/xlings` as well, so a payload the
 machine already has exists on it once.
 
+`config.toml` (the user's, then the system's) may also state a machine's
+defaults for one target (2026.10.23.1+): its base and how its artifacts reach
+the machine that runs them. A project's `mcpp.toml` outranks both, and
+`MCPP_TARGET_<TRIPLE>_SYSROOT` / `_RUN_UNDER` override all three; a relative
+`path` is relative to the `config.toml` that writes it.
+
+```toml
+# ~/.mcpp/config.toml
+[target.x86_64-ios-sim]
+run_under = ["remote-run", "macvm", "--"]   # only this machine reaches a Mac this way
+
+[target.x86_64-linux-gnu]
+sysroot = { path = "/opt/acme/sysroot" }    # the team's agreed path, on a machine without it in the repo
+```
+
+The table takes `sysroot` and `run_under` and nothing else: everything else
+about a target belongs to the project. See [20 — Toolchains](20-toolchains.md)
+and [04 — mcpp.toml](04-mcpp-toml.md).
+
 ## 5. The provider program
 
 `[xlings] binary` chooses the xlings mcpp runs: `"bundled"` (the one mcpp

@@ -168,7 +168,7 @@ manifest '
 sysroot = "newlib"'
 if "$MCPP" build > badref.log 2>&1; then
     cat badref.log; echo "a bare sysroot name should have been rejected"; exit 1; fi
-grep -q 'xpkg reference' badref.log || {
+grep -q 'is not a sysroot. A sysroot is a package' badref.log || {
     cat badref.log; echo "rejection did not explain the expected form"; exit 1; }
 
 echo "PASS: [target.X].sysroot override, zero-libc tier, and the three target queries"

@@ -379,26 +379,24 @@ std::filesystem::path write_clean_link_specs(
     if (compilerBin.empty() || outputDir.empty()) return {};
     std::error_code ec;
     auto out = outputDir / "mcpp-clean-link.specs";
-    // THE LINKER IS TOLD THE SYSROOT TOO (SPEC-006 §4.3; design 2026-10-23
-    // §1.2). gcc builds the link line as `%(sysroot_spec)` followed by
-    // `*link:`, and prepends the first to the second BEFORE any `-specs=` file
-    // is read -- so a file that restores the pristine `*link:` body drops it,
-    // and ld never hears `--sysroot`. A sysroot's linker scripts name its
-    // libraries by absolute path (`GROUP ( /lib64/libc.so.6 ... )`), which ld
-    // resolves inside the sysroot only when it was told one: without it, the
-    // HOST's files, or `cannot find /lib64/libm.so.6`. Restored here as the
-    // first token. Measured on the ecosystem's default base: the artifact is
-    // byte-identical with and without it.
-    constexpr std::string_view kSysrootSpec = "%(sysroot_spec) ";
     // Idempotent: the pristine spec is a property of the compiler binary, so
-    // regenerating it every build would spawn a process for a constant. A
-    // file written before the line above existed is rewritten once.
+    // regenerating it every build would spawn a process for a constant.
+    //
+    // `%(sysroot_spec)` IS NOT RESTORED HERE, and that is measured. gcc puts
+    // it before `*link:` ahead of any `-specs=` file, so this file drops it
+    // and ld hears no `--sysroot` from the driver. For the ecosystem's own
+    // view that is what keeps the link working: ld prefixes a sysroot onto the
+    // DT_RUNPATH of every shared library it reads, and a SubOS farm library's
+    // RUNPATH names the payload store by absolute path (e2e 220: libEGL.so's
+    // libGLdispatch, not found). A STATED base hands ld its `--sysroot`
+    // explicitly instead (`ToolchainLinkModel::link_tokens`).
     if (std::filesystem::exists(out, ec)) {
         std::ifstream is(out);
         std::string head, body;
         std::getline(is, head);
         std::getline(is, body);
-        if (body.starts_with(kSysrootSpec)) return out;
+        if (!body.starts_with("%(sysroot_spec) ")) return out;
+        // Written by a pre-release build of 2026.10.23.1; regenerated once.
     }
 
     // An argument vector: the command-string form carried `2>/dev/null`, which
@@ -421,7 +419,7 @@ std::filesystem::path write_clean_link_specs(
     std::filesystem::create_directories(outputDir, ec);
     std::ofstream os(out);
     if (!os) return {};
-    os << "*link:\n" << kSysrootSpec << body << "\n\n";
+    os << "*link:\n" << body << "\n\n";
     os.close();
     return out;
 }

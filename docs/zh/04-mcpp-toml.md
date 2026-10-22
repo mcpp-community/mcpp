@@ -1261,6 +1261,32 @@ error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot exe
 `"status":"not_run"` 与一个 `reason`，摘要记录上则是 `not_run` /
 `not_run_reason`（见[50 —— 机器可读输出](50-machine-output.md)）。
 
+#### 2.7.3.2 `sysroot` 与 `run_under`(2026.10.23.1+)
+
+`[target.<三元组>]` 另有两个键,分别描述目标针对什么构建、产物在哪里执行:
+
+```toml
+[target.x86_64-linux-gnu]
+sysroot = { path = "third_party/sysroot" }   # 或 "xim:glibc@2.39"、"glibc@system"、""
+
+[target.aarch64-ios-sim]
+runner    = ["simctl-run"]
+run_under = ["remote-run", "team-mac", "--"]  # 到达产物执行所在的机器
+```
+
+`sysroot` 点名**目标基座**——预制的 C 库及其相邻的层——写作生态包、定位器、`{ path, provides }`
+或 `""`;语义见 [20 —— 工具链](20-toolchains.md)。`run_under` 是到达**执行宿主**的 argv,组合在
+runner 之前:`<run_under…> <runner…> <产物> <参数>`(Bazel 的 `--run_under`)。两个键也可以写在
+`~/.mcpp/config.toml` 中作为本机的默认值,并可按调用以 `MCPP_TARGET_<三元组>_SYSROOT` /
+`MCPP_TARGET_<三元组>_RUN_UNDER` 覆盖(`none` 表示清除,空值视为未设置)。全员以同一方式执行的团队
+把 `run_under` 写在这里;混合环境的团队写在各自机器的 `config.toml` 中。`--no-runner` 同时去掉
+runner 与 `run_under`。
+
+经此到达的运行器收到 `MCPP_RUN_TRIPLE`、`MCPP_RUN_KIND`(`exe` / `bundle`)、`MCPP_RUN_MODE`
+(`run` / `test`)、`MCPP_RUN_ID`、`MCPP_RUN_CLOSURE`(一份带版本的 JSON,列出产物、它随带的文件与基座),
+以及陈述了基座时的 `MCPP_SYSROOT`;其退出码即程序的退出码。非 macOS 宿主上的 Apple 产物在没有
+`run_under` 时于执行前被拒绝,拒绝信息点名本键。
+
 ### 2.8 `[features]` —— Feature
 
 已移至 [06 —— Feature 与能力](06-features-and-capabilities.md)，连同
@@ -1350,6 +1376,8 @@ opt      = 3              # -O level (a number, or the string "s"/"z")
 debug    = false          # -g
 lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gcc builds ship without the LTO plugin)
 strip    = true           # -s at link time
+ndebug     = true         # 整个图的每个单元 -DNDEBUG(release/dist 默认开)
+trim_paths = true         # 整个图的每个单元 -ffile-prefix-map(release/dist 默认开)
 # passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
@@ -1371,6 +1399,16 @@ ldflags  = []
 - 内置 profile：`release`（-O2）/ `dev`、`debug`（-O0 -g）/ `dist`
   （-O3 + strip；**默认不启用 LTO**）。`[profile.<内置名>]` 可以整体
   覆盖一个内置定义。
+- **`ndebug` 与 `trim_paths`(2026.10.23.1+)** 跟随业界惯例:`release` 与 `dist` 默认开启,
+  `dev`、`debug` 以及未陈述它们的自定义 profile 默认关闭。`ndebug` 为每个单元定义 `NDEBUG`,
+  `assert` 因此不再展开,与 CMake 的 Release、Meson 的 `b_ndebug=if-release` 相同。`trim_paths`
+  把产物会携带的每个绝对前缀——`__FILE__`、`std::source_location`、断言消息与调试信息中的——
+  映射为它所代表的东西:每个包的源码映射为 `<name>@<version>/…`(根包同样如此,报告读作
+  `app@1.2.0/src/main.cpp`),存储、home、构建目录、工具链与 sysroot 分别映射为 `/mcpp/store`、
+  `/mcpp/home`、`/mcpp/build`、`/mcpp/toolchain` 与 `/mcpp/sysroot`。同一棵树的两个检出因此嵌入
+  相同的路径。带调试信息的构建还在输出旁写出 `source-map.gdbinit` 与 `source-map.lldbinit`,
+  供调试器把路径映射回来。cl.exe 没有文档化的等价开关,构建会报告一次。在 profile 下写
+  `ndebug = false` 或 `trim_paths = false` 可保留以前的产物;升级后第一次发布档构建会提示一次。
 - **每个 profile 拥有自己的构建目录。** 解析出的 profile 旋钮参与
   指纹，所以 `target/<triple>/` 下每个 profile 各有一个哈希目录，在
   它们之间切换是增量的，不是一次完整重建。这也意味着磁盘开销随实际

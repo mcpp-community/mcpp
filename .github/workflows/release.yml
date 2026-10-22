@@ -221,6 +221,9 @@ jobs:
           env -u MCPP_HOME "$ROOT/mcpp" --version | grep -q "$VERSION"
           # MCPP_HOME should auto-resolve to the extracted root.
           out=$(env -u MCPP_HOME "$ROOT/bin/mcpp" self env)
+          # R4 (mcpp#832): the binary pack rebuilt with this release's own
+          # engine trims the paths it carries.
+          bash .github/tools/check_release_paths.sh "$ROOT/bin/mcpp"
           echo "$out" | grep -q "MCPP_HOME *= *$ROOT"
 
       - name: Generate source tarball + xpkg.lua via mcpp publish
@@ -612,6 +615,9 @@ jobs:
           tar -xzf "dist/${TARBALL_NAME}" -C "$SMOKE"
           "$SMOKE/$WRAPPER/bin/mcpp" --version
           "$SMOKE/$WRAPPER/mcpp" --version | grep -q "$VERSION"
+          # R4 (mcpp#832): stage 2 is this release's own engine, and it trims
+          # the paths the binary carries.
+          bash .github/tools/check_release_paths.sh "$SMOKE/$WRAPPER/bin/mcpp"
 
       - name: Upload macOS artifacts to release
         uses: softprops/action-gh-release@v2

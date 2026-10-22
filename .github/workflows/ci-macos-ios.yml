@@ -367,12 +367,67 @@ jobs:
           fi
           echo "ok: mcpp run --target aarch64-ios-sim printed 1-2-3 and exited 0"
 
-      # THE THIRD ROW, ON A HOST THAT CANNOT RUN IT. A simulator runs the host's
-      # architecture and this runner is Apple silicon, so the claim is the
-      # artefact alone -- which is exactly the `preview` tier the row carries.
-      - name: "x86_64-ios-sim: the artefact, on a host that cannot run it"
+      # THE THIRD ROW, BUILT HERE AND RUN ELSEWHERE (design 2026-10-23 §2.6,
+      # S15). A simulator runs the host's architecture and this runner is
+      # Apple silicon, so this job proves the artefact and the SDK's slice; the
+      # `ios-intel-run` job below executes it on an Intel Mac. The row can be
+      # built because the SDK carries the slice -- a fact read from the SDK,
+      # not from a vendor's hardware roadmap.
+      - name: "x86_64-ios-sim: the SDK carries the slice, and the artefact is built"
         run: |
           set -euo pipefail
           cd /tmp/iostest
+          sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
+          grep -E '^targets:.*x86_64-ios-simulator' "$sdk/usr/lib/libSystem.tbd" \
+            || { echo "FAIL: the simulator SDK carries no x86_64 slice"; exit 1; }
           "$MCPP_FRESH" build --target x86_64-ios-sim
           /tmp/assert-artefact.sh x86_64-ios-sim x86_64 7 18.0
+          mkdir -p /tmp/ios-x86 && cp /tmp/iostest/target/x86_64-ios-sim/*/bin/iostest /tmp/ios-x86/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x86_64-ios-sim-iostest
+          path: /tmp/ios-x86/iostest
+          retention-days: 3
+
+  # S15: AN ARTEFACT BUILT ON APPLE SILICON RUNS ON AN INTEL MAC'S SIMULATOR.
+  #
+  # "Built here, executed there", with CI's artifact store as the transport.
+  # This job runs no mcpp -- there is no Intel macOS mcpp, and none is needed:
+  # it boots an iOS simulator of the host's architecture and spawns the
+  # program, comparing its own output and exit status. Passing it is what the
+  # row's `verified` tier states.
+  ios-intel-run:
+    name: iOS - x86_64-ios-sim runs on an Intel Mac
+    needs: ios-engine
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: x86_64-ios-sim-iostest
+          path: /tmp/ios-x86
+      - name: "x86_64-ios-sim: the simulator runs the artefact and returns its status"
+        run: |
+          set -euo pipefail
+          art=/tmp/ios-x86/iostest
+          chmod +x "$art"
+          file "$art"
+          udid=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          for runtime, devs in sorted(d.items(), reverse=True):
+              if "iOS-18" not in runtime and "iOS-2" not in runtime: continue
+              for dev in devs:
+                  if dev.get("isAvailable") and "iPhone" in dev["name"]:
+                      print(dev["udid"]); sys.exit(0)
+          sys.exit(1)')
+          echo "device $udid"
+          xcrun simctl boot "$udid" 2>/dev/null || true
+          xcrun simctl bootstatus "$udid" -b
+          set +e
+          out=$(xcrun simctl spawn "$udid" "$art" 2>&1); rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -eq 0 ] || { echo "FAIL: the program exited $rc in the simulator"; exit 1; }
+          grep -qx '1-2-3' <<<"$out" || { echo "FAIL: the program's output line '1-2-3' is absent"; exit 1; }
+          echo "ok: x86_64-ios-sim built on arm64 ran on an Intel simulator and printed 1-2-3"

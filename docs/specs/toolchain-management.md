@@ -4,11 +4,11 @@
 |---|---|
 | 规范编号 | SPEC-006 |
 | 标题 | 工具链管理:身份、来源、选择与载荷契约 |
-| 状态 | 草案 v0.9 |
-| 最后修改 | 2026-10-17 |
+| 状态 | 草案 v0.10 |
+| 最后修改 | 2026-10-23 |
 | 对应实现 | 逐条标注;标为「已实现」的条款对应 mcpp >= 2026.9.24.1。标为「未实现」的条款计划与下一批 LLVM 工具链一同落地,届时按实测修订本规范 |
-| 相关设计文档 | `.agents/docs/2026-09-24-toolchain-selection-and-payload-trust-design.md`、`.agents/docs/2026-09-24-685-687-msvc-stl-and-toolchain-payloads.md`、`.agents/docs/2026-09-28-ecosystem-design-and-optimisation-plan.md`、`.agents/docs/2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md` |
-| 相关 issue | mcpp#685、mcpp#687、mcpp#718、mcpp#755 |
+| 相关设计文档 | `.agents/docs/2026-10-23-target-base-and-execution-host-design.md`、`.agents/docs/2026-09-24-toolchain-selection-and-payload-trust-design.md`、`.agents/docs/2026-09-24-685-687-msvc-stl-and-toolchain-payloads.md`、`.agents/docs/2026-09-28-ecosystem-design-and-optimisation-plan.md`、`.agents/docs/2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md` |
+| 相关 issue | mcpp#685、mcpp#687、mcpp#718、mcpp#755、mcpp#832 |
 | 使用文档 | [docs/20 - 工具链](../zh/20-toolchains.md)、[docs/32 - 编写载荷](../zh/32-authoring-a-payload.md)、[docs/91 - 工具链内部](../zh/91-toolchain-internals.md) |
 
 本规范定义 mcpp 对工具链的命名、选择和使用方式,以及一个工具链载荷在发布前必须满足的条件。
@@ -24,8 +24,9 @@
 |---|---|
 | 工具链 | 执行编译的程序及其随附部分:编译器驱动、编译器运行时(builtins 与展开器)、随编译器发布的 C++ 标准库、汇编器、链接器与归档工具 |
 | 载荷 | 由 xlings 从索引安装的预构建目录树,身份为命名空间、名字与版本 |
-| 来源 | 工具链或 sysroot 的出处:`managed`(生态包)或 `system`(在本机定位) |
-| sysroot | 编译时所针对的目标环境。Linux 目标上是 C 库载荷;MSVC ABI 目标上是 MSVC toolset(STL、vcruntime、CRT)及其 Windows SDK |
+| 来源 | 工具链或目标基座的出处,取 mcpp#755 的出处类别:`managed`、`pinned`、`custom`、`program`、`host` |
+| 目标基座(sysroot) | 目标侧下层的预制供给者:一个按目标驱动约定组织的目录,供给 `c-abi`,通常还有 `kernel-abi`,可能还有 `c++-abi`、`compiler-runtime` 与平台库。它是一种交付形式,不是 [SPEC-002](target-side.md) 的层。清单键名为 `sysroot`。各目标行的含义见附录 A |
+| 执行宿主 | 产物被执行的机器:本机、本机上的虚拟机客体、远程机器或设备。由 `runner` 与 `run_under` 描述(SPEC-002 §6) |
 | 构建环境 | 产出一个载荷的机器或容器,以及其中的 C 库 |
 
 ---
@@ -45,7 +46,8 @@
 ### 2.2.1 按路径命名 已实现
 
 工具链**可以**写成一个表,由路径命名本机已有的一份:
-`[toolchain] <键> = { path = "<目录>", prefix, sysroot, family, launcher, tools }`,
+`[toolchain] <键> = { path = "<目录>", prefix, sysroot, family, launcher, tools }`。
+其中 `sysroot` 是这套工具链携带的目标基座,按 §3.9 的第二档参与基座的解析。
 或 `MCPP_TOOLCHAIN=path:<目录>`。`<目录>/bin` 中的驱动决定族(`<prefix>clang++` 为 llvm,
 `<prefix>g++` 为 gcc);其余属性由探测该驱动得到。
 
@@ -61,7 +63,9 @@
 
 `[toolchain] bootstrap = "<族>@<版本>"` 命名编译并运行构建程序的工具链;未写时按 §3 的
 规则决定。`[toolchain] <键> = { configure = "build.mcpp" }` 把构建工具链的选择交给根构建
-程序的工具链阶段(SPEC-007 R9.9)。
+程序的工具链阶段(SPEC-007 R9.9)。工具链阶段**可以**同时陈述 `spec` 与 `sysroot`,由程序
+陈述托管工具链的目标基座(出处类别 `program`);`spec` 与 `prefix`、`launcher`、`family`、
+`tool.<角色>` 同时出现时**必须**被拒绝,拒绝信息点名这些键。
 
 **状态:已实现**(mcpp 2026.10.1.3,mcpp#755)。
 
@@ -87,7 +91,8 @@
 
 ### 3.1 一次选择 已实现
 
-一次构建中,工具链及其 sysroot **必须**只解析一次;编译、依赖扫描、标准库模块、链接与缓存键**必须**读取同一个结果。
+一次构建中,工具链及其目标基座**必须**只解析一次;编译、依赖扫描、标准库模块、驱动与链接器的链接、
+产物的运行时、运行时闭包校验、hermetic 检查、缓存键与指纹、报告、`mcpp pack` 与运行器**必须**读取同一个结果(§3.9)。
 clang 以 MSVC ABI 为目标时,所选 toolset 与 SDK 以 `-Xmicrosoft-visualc-tools-root`、`-Xmicrosoft-windows-sdk-root`、
 `-Xmicrosoft-windows-sdk-version` 显式交给编译器驱动,`std.ixx` 取自同一个 toolset。
 
@@ -109,7 +114,8 @@ clang 以 MSVC ABI 为目标时,所选 toolset 与 SDK 以 `-Xmicrosoft-visualc-
 程序)**必须**各自以一行陈述,写出它是什么、从哪里来、以及陈述它的位置;`Finished` 行
 **必须**汇总它们;`resolution.json` 的 `sources` 记录每一条。全部来源都是生态缺省时,输出
 **必须**与没有本机制时相同。`--managed-only`(或 `MCPP_MANAGED_ONLY`)**必须**拒绝任何
-非缺省来源,并逐条点名(mcpp#755)。
+非缺省来源,并逐条点名(mcpp#755)。主体 `sysroot` 记录目标基座的陈述(§3.9),主体 `run_under`
+记录执行宿主的包装前缀;后者不是构建的输入,不参与 `Finished` 行的汇总与 `--managed-only`。
 MSVC ABI 目标上:SDK 以 `ucrt@<版本>` 进入运行时身份;clang 行的 toolset 与 SDK 写入 `resolution.json` 的
 `msvc_toolset` 与 `windows_sdk`,toolset 目录与 SDK 版本进入缓存键,`stdlibVersion` 记为 toolset 的版本。
 
@@ -137,8 +143,10 @@ MSVC ABI 目标上:SDK 以 `ucrt@<版本>` 进入运行时身份;clang 行的 to
 在 `*-windows-msvc` 目标上,编译器是工具链,MSVC toolset 是 sysroot。
 
 - `[target.<三元组>].sysroot` 在这些行上**可以**写作 `msvc@system`、`msvc@<版本>` 或 `xim:msvc@<版本>`,含义同 §2。
+- 编译器为 clang 时,**可以**写作 `{ path = "<目录>" }`:toolset 取 `<目录>/VC/Tools/MSVC/<版本>` 中最新的一个;
+  `<目录>/Windows Kits/10` 存在时 SDK 取自其中(clang `/winsysroot` 布局),否则取本机的 SDK。实现**必须**报告取用了哪一个。
 - 未写时**必须**等同于 `msvc@system`。
-- 编译器为 `cl.exe` 时,sysroot **必须**是该编译器所属的 toolset;另写一个不同的 sysroot,**必须**被拒绝。
+- 编译器为 `cl.exe` 时,sysroot **必须**是该编译器所属的 toolset;另写一个不同的 sysroot 或写 `{ path }`,**必须**被拒绝。
 - SDK **必须**跟随 toolset 的来源:生态包 toolset 用随其安装的 `windows-sdk` 载荷,本机 toolset 用本机扫描的结果。
 - 目标侧报告([SPEC-002](target-side.md))中,c-abi 与 c++ 两层记为预制来源;具体的 toolset 与 SDK 记入 `resolution.json`(§3.3)。
 - 该值**禁止**作为 C 库包进入项目环境的安装集合。
@@ -217,6 +225,62 @@ GCC 以 xlings subos 为 `--sysroot`,没有可用 subos 而退回载荷布局时
 当前:clang 一侧由 `ToolchainLinkModel::compile_tokens` 与安装后重新生成的驱动配置文件给出;GCC 的退回路径由同一函数给出
 `-isysroot`(mcpp 2026.10.8.1)。e2e 891 覆盖 clang 一侧的未找到、显式写出与依赖图提示的边界。
 
+### 3.9 目标基座 已实现
+
+本节定义 `sysroot` 在全部目标行上的统一语义。附录 A 给出各行的取值。
+
+**3.9.1 一次解析。** 目标基座**必须**只解析一次,结果是一个记录(下称解析结果),包含四个正交属性:
+来源(出处类别)、地址(`gnu-sysroot`、`apple-isysroot`、`msvc-roots`、`multilib`、`driver-internal` 之一)、
+供给的层与事实(例如 `glibc 2.31`、SDK 版本)、运行时语义(`binding`、`floor`、`none` 之一)。§3.1 所列读者
+**必须**只读取这一结果。
+
+**3.9.2 写法与优先级。** 陈述**可以**是生态包(`xim:glibc@2.39`,团队私有索引的包亦同)、本机定位器
+(`glibc@system`、`musl@system`、`macosx|iphoneos|iphonesimulator@system|<版本>`、`msvc@…`)、
+`{ path = "<目录>", provides = [...] }` 或 `""`(不用预制 C 库)。定位器族名**必须**与目标行一致;
+某行接受哪些写法是目标表的数据,拒绝信息**必须**列出该行接受的写法。`{ path = "/" }` **必须**归一为该行的
+`<C 库>@system`。陈述按四档取第一个:
+
+| 档 | 来源 |
+|---|---|
+| 覆盖 | `--sysroot`;`MCPP_TARGET_<三元组>_SYSROOT`;`MCPP_SYSROOT`。空值视为未设置,`none` 表示 `""` |
+| 工程 | `mcpp.toml` 的 `[target.<三元组>].sysroot`;其次 `[toolchain] { path, sysroot }` 或工具链阶段的陈述 |
+| 机器默认 | `~/.mcpp/config.toml`,其次系统级 `config.toml` 的 `[target.<三元组>].sysroot` |
+| 引擎默认 | 目标表该行的 `sysroot` 列,或生态的缺省基座 |
+
+宿主图(构建程序与宿主工具的子构建)**禁止**读取目标基座。一个工程写明的目录不存在时,诊断**必须**给出文件与
+行号、解析后的绝对路径,以及让它存在的三种办法(生态包、仓库内相对路径、团队约定的路径)和本机覆盖的写法。
+
+**3.9.3 测量与声明。** 布局**必须**问驱动(`-print-file-name=crt1.o`);C 库的实现与版本**必须**由驱动预处理
+一个探针翻译单元得到(`__GLIBC__`、`__BIONIC__`、`__PICOLIBC__`、`_NEWLIB_VERSION`、`__EMSCRIPTEN__`;
+都不是而存在 musl 的 loader 时为 musl)。引擎持有的布局知识**仅限**Debian multiarch:驱动找不到 `crt1.o`
+而存在 `<根>/usr/lib/<元组>` 时,实现**必须**补上该元组的头文件(`-idirafter`)与库目录(`-B`、`-L`、
+`-Wl,-rpath-link`)。`provides` 在测量能回答时用于核对,不一致**必须**拒绝;测量回答不了时作为声明;
+两者都没有时该目录是库前缀而非基座,**必须**拒绝。编译器运行库所需的 glibc 版本(其 `libstdc++.so.6`、
+`libgcc_s.so.1` 等的 version need 中最高的 `GLIBC_x.y`)高于基座的版本时,**必须**在编译前拒绝并说出两个版本。
+
+**3.9.4 不写入。** 实现**禁止**写入或修补任何不由 mcpp 管理的目录树,包括被陈述的基座与按路径命名的工具链
+所报告的 sysroot。
+
+**3.9.5 运行时语义。** 本机目标的动态产物为 `binding`:PT_INTERP 与 RUNPATH **必须**指向基座的 loader 与
+C 库目录,SubOS 的 farm 只在生态缺省基座时追加,运行时闭包校验(rule B)**必须**以基座为参照;
+`glibc@system` 经宿主的标准 loader 绑定,不写 RUNPATH。交叉目标与 Apple、MSVC 行为 `floor`:不改写
+loader,基座是下限。静态产物与裸机为 `none`。被陈述基座的内容身份(陈述、根目录,以及测量所依据文件的
+路径、大小与修改时间)**必须**进入运行时契约哈希,从而进入指纹;生态缺省基座的契约**必须**不变。`mcpp pack`
+**必须**报告产物与随包库所需的最高 glibc 版本,并写入 `HOST-REQUIREMENTS`。
+
+### 3.10 自备输入 已实现
+
+对受厂商许可约束或属于某台机器、某个人的输入(Apple SDK、非生态的 Visual Studio 与 Windows SDK、
+远程执行宿主、签名材料),实现**必须**只按公开标准定位它们(`SDKROOT`、`xcrun`、`/winsysroot` 布局、
+`{ path }`、`config.toml`),记录其身份;**禁止**获取、托管或分发它们,官方索引**禁止**收录;缺失时
+**必须**给出可操作的提示。`SDKROOT` **必须**在所有宿主上读取;`xcrun` 与开发者目录只在 Apple 宿主上询问。
+
+### 3.11 核心知识判据 已实现
+
+引擎**只**持有通用的抽象与契约,以及内置目标行所在平台的官方约定(glibc 的 loader 名与 Debian multiarch、
+Apple 的 `SDKROOT` 与 `xcrun`、微软的 vswhere 与 `/winsysroot` 布局)。第三方生态与工具的知识(例如
+Swift SDK 包、`QEMU_LD_PREFIX`)**禁止**进入引擎,由包与插件经 §3.9 与 SPEC-002 §6 的通用接口接入。
+
 ## 4. 载荷契约
 
 ### 4.1 可重定位 部分实现
@@ -239,6 +303,7 @@ gcc 载荷的 `lib/gcc/<三元组>/<版本>/include-fixed/` **禁止**含带 fix
 | 载荷**必须**只由提供者在安装时写入;此后**禁止**任何程序改写它,包括 mcpp(ELF 头、`specs`、clang 的 `.cfg`、标记文件) | 已实现(mcpp 2026.10.16.1;`check_provider_boundary.py`) |
 | 工具链**必须**运行在提供者安装时为其绑定的运行库上;mcpp 经提供者 home 的运行库钉版本选定该运行库 | 已实现 |
 | 产物的加载器、运行路径与 sysroot **必须**来自构建自己的命令行,不依赖载荷中的配置 | 已实现(gcc:`-specs=` 文件;clang:`--no-default-config`) |
+| 以 gnu-sysroot 寻址的被陈述基座,链接器**必须**收到 `--sysroot`:gcc 在读入 `-specs=` 之前把 `%(sysroot_spec)` 拼在 `*link:` 之前,重写 `*link:` 的文件会丢掉它,因此由构建显式给出 `-Wl,--sysroot`。生态缺省的 SubOS 视图**禁止**这样做:链接器会把 sysroot 前缀加到每个输入共享库的 DT_RUNPATH 上,而 farm 中库的 RUNPATH 以绝对路径指向载荷 | 已实现(mcpp 2026.10.23.1) |
 | 早期 mcpp 改写过的载荷**可以**继续使用;其标记文件不再被读取 | 已实现 |
 
 ### 4.4 完整性 部分实现
@@ -343,4 +408,22 @@ doctor 如实报告这一点。它同时报告 mcpp 的包 home 中指向不存�
 | v0.6 | 2026-10-02 | §7 移入 SPEC-009(工具链的支持与维护):移动默认版本或 C 库绑定的顺序、门与撤销由 SPEC-009 §10 规定,本节改为引用。 |
 | v0.7 | 2026-10-09 | 随 mcpp 2026.10.8.1:新增 §3.8,使用受管 C 库的构建不隐式搜索宿主的系统头文件;需要时由项目显式写出。 |
 | v0.8 | 2026-10-16 | 随 mcpp 2026.10.16.1:§4.3 改为「安装后不改写」,载荷只由提供者写入;工具链运行在提供者按 home 的运行库钉版本绑定的运行库上。 |
+| v0.10 | 2026-10-23 | 随 mcpp 2026.10.23.1:§1 定义目标基座与执行宿主;新增 §3.9 目标基座(一次解析、四档写法与优先级、测量与声明、不写入、运行时语义)、§3.10 自备输入、§3.11 核心知识判据;§2.2.1 工具链阶段可陈述 `spec` 与 `sysroot`,`spec` 与路径专属键同时出现时拒绝;§3.1 补全读者名单;§3.3 增加主体 `sysroot` 与 `run_under`;§3.5 clang 行接受 `{ path }`;§4.3 要求被陈述的 gnu-sysroot 基座把 `--sysroot` 交给链接器;新增附录 A。 |
 | v0.9 | 2026-10-17 | 随 mcpp 2026.10.17.1:新增 §4.7,已安装的修订在构建中继续使用,`floor` 决定是否必须替换,`toolchain install` 取当前修订;§6.4 doctor 只读,报告构建实际使用的工具链与包 home 的一致性。 |
+
+---
+
+## 附录 A(规范性):各目标行的基座
+
+| 目标行 | 基座实物 | 供给的层 | 地址 | 运行时语义 | 可用写法 | 不写时 |
+|---|---|---|---|---|---|---|
+| `*-linux-gnu` | glibc 加内核头文件;宿主的 `/` | kernel-abi、c-abi | gnu-sysroot(加 multiarch) | 本机 binding;交叉 floor | 生态包、`glibc@system`、`{ path }`、`""` | 生态 glibc |
+| `*-linux-musl` | 工具链里的 `<三元组>/`;Alpine 的 `/` | kernel-abi、c-abi | gnu-sysroot | 静态 none;动态本机 binding | 生态包、`musl@system`、`{ path }`、`""` | 工具链携带 |
+| `*-none-*` | picolibc / newlib 的 multilib 目录 | c-abi | multilib | none | 生态包、`{ path }`、`""` | 行的 `sysroot` 列 |
+| `*-macos` | MacOSX SDK | kernel-abi、c-abi、C++ 头文件、frameworks | apple-isysroot | floor | `macosx@system`、`macosx@<版本>`、`{ path }` | `macosx@system` |
+| `*-ios`、`*-ios-sim` | iPhoneOS / iPhoneSimulator SDK | 同上 | apple-isysroot | floor | `iphoneos@…` / `iphonesimulator@…`、`{ path }` | 对应的 `@system` |
+| `*-windows-msvc` | VC toolset 加 Windows SDK | c++-abi、compiler-runtime、c-abi(UCRT)、kernel-abi | msvc-roots | UCRT 为 floor | `msvc@system`、`msvc@<版本>`、`xim:msvc@…`、`{ path }`(仅 clang) | `msvc@system` |
+| `*-windows-gnu`、`*-android`、`wasm32-emscripten` | SDK 工具链内建 | 视 SDK 而定 | driver-internal | floor 或 none | 生态包与 `""` 沿用既有含义,不接受新写法 | 工具链携带 |
+
+Apple 行能否构建由 SDK 中是否有该架构的切片决定(`libSystem.tbd` 的 `targets`),实现**必须**在缺少切片时
+点名拒绝;与厂商的硬件路线无关。

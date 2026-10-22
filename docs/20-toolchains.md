@@ -877,13 +877,108 @@ Xcode and is not redistributable. So mcpp **locates** it, through
 `xcrun --sdk <name> --show-sdk-path`, exactly as it has always located the
 macOS SDK.
 
-That is why these rows carry no `sysroot` entry. That column names a package,
-and a located directory is not one.
+That is why these rows carry no `sysroot` column entry: that column names a
+package, and a located directory is not one. A project names the SDK through
+the row's `sysroot` key instead -- `iphonesimulator@system` (the default),
+`iphonesimulator@<version>`, or `{ path = "..." }` -- and `SDKROOT` is read on
+every host, so an SDK a developer produced from their own Xcode.xip on Linux
+(with xtool, for example) is located the way one inside Xcode is. mcpp locates
+it and never distributes it. The SDK's own `libSystem.tbd` says which
+architectures it carries, and a row whose slice is missing is refused naming it.
 
 ```bash
 mcpp build --target aarch64-ios        # resolves llvm@23.1.3 + the iPhoneOS SDK
 mcpp build --target aarch64-ios-sim    # resolves llvm@23.1.3 + the Simulator SDK
 ```
+
+## The target base: `sysroot` (2026.10.23.1+)
+
+A sysroot is not a layer. It is the **prebuilt supplier** of a target's lower
+layers ([docs/22](22-target-side.md)): a directory organised the way the target's
+driver expects, supplying `c-abi`, usually `kernel-abi`, and possibly `c++-abi`,
+`compiler-runtime` and platform libraries. mcpp calls it the **target base** and
+keeps the key name `sysroot`. One statement of it is resolved once, and every
+reader uses that result: the compile and link lines, the dependency scan, the
+`std` module, the artifact's loader and run path, closure validation, the
+fingerprint, the reports, `mcpp pack` and the runner.
+
+### Spellings
+
+```toml
+[target.x86_64-linux-gnu]
+sysroot = "xim:glibc@2.39"                    # a package (a team's private index works too)
+sysroot = "glibc@system"                      # this machine's own root
+sysroot = { path = "third_party/sysroot" }    # a directory, relative to this file
+sysroot = { path = "/opt/exotic", provides = ["mcpp:c-abi=glibc"] }
+sysroot = ""                                  # no prebuilt C library
+
+[target.aarch64-ios-sim]
+sysroot = "iphonesimulator@18.5"              # a located SDK of a given version
+```
+
+The locator families are the industry's words: `glibc`, `musl`, `msvc`, and
+xcrun's SDK names `macosx`, `iphoneos`, `iphonesimulator`. A family must agree
+with the row (`musl@system` on a `-gnu` row is refused, naming the spellings the
+row accepts). `glibc@<version>` without a namespace is the package
+`xim:glibc@<version>`. `{ path = "/" }` is the same statement as `<libc>@system`.
+The table has two keys, `path` and `provides`. Which spellings each row takes is
+listed in [SPEC-006 appendix A](specs/toolchain-management.md).
+
+### Precedence of statements
+
+The first of four tiers applies:
+
+| Tier | Source |
+|---|---|
+| override | `--sysroot`; `MCPP_TARGET_<TRIPLE>_SYSROOT`; `MCPP_SYSROOT` (`none` = `""`, empty = unset) |
+| project | `[target.<triple>].sysroot` in `mcpp.toml`; then `[toolchain] { path, sysroot }`, or a toolchain phase that states `sysroot` |
+| machine default | `[target.<triple>].sysroot` in `~/.mcpp/config.toml`, then the system `config.toml` |
+| engine default | the target row's own column, or the ecosystem's base |
+
+A team states its base in `mcpp.toml`. A sysroot a project names is the project's
+to provide, and when it is missing the error says so and lists three ways to make
+it exist: publish it as a package in the team's index, keep it in the repository
+at that relative path, or agree on a path for the team. A machine that needs a
+different one sets `MCPP_TARGET_<TRIPLE>_SYSROOT` or writes it in its own
+`config.toml`. Build programs and host tools are built on the host's own base and
+never read a target's.
+
+### Measurement
+
+The driver is asked where the C runtime is (`-print-file-name=crt1.o`), and the
+preprocessor which C library and which version (`__GLIBC__`, `__BIONIC__`,
+`__PICOLIBC__`, `_NEWLIB_VERSION`, `__EMSCRIPTEN__`; musl by its loader). The one
+layout rule mcpp knows is Debian multiarch: a gcc built without multiarch support
+finds no `crt1.o` in `/usr/lib/<tuple>`, and mcpp then supplies the tuple's
+directories to that driver only. `provides` checks a measurement, or stands in for
+one that cannot be made; a directory with neither is a library prefix, and is
+refused.
+
+The compiler's own runtime has a floor. gcc 16's `libstdc++.so.6` needs
+`GLIBC_2.38`, so a glibc 2.31 base is refused before anything compiles:
+
+```
+error: [target.x86_64-linux-gnu].sysroot (mcpp.toml:7): gcc 16.1.0's runtime requires glibc >= 2.38
+       (libstdc++.so.6: GLIBC_2.38), and this sysroot provides glibc 2.31.
+```
+
+### The artifact's runtime
+
+A native, dynamically linked artifact **binds** its base: PT_INTERP is the base's
+loader and RUNPATH names the base's C library directory, so the program runs on
+the C library it was compiled against. `glibc@system` binds through the host's
+standard loader and adds no RUNPATH. A cross target and the Apple and MSVC rows
+treat the base as a **floor**. The base's identity -- its statement, its root and
+the size and time of the files it was measured by -- enters the fingerprint, so a
+sysroot rewritten in place rebuilds. `mcpp pack` reports the highest glibc the
+program and its packed libraries need and writes it to `HOST-REQUIREMENTS`.
+
+```
+       Using sysroot glibc 2.31 ← third_party/sysroot  [custom · mcpp.toml:12]
+```
+
+`mcpp why sysroot` prints the whole resolution; `resolution.json` carries it as
+`base`. mcpp never writes into a sysroot it did not create.
 
 ## The source of each tool (2026.10.1.3+)
 

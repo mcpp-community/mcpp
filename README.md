@@ -458,7 +458,7 @@ list` reports for this machine):
 | `aarch64-linux-android` | the same payload and the same build; ran under qemu-user over the system image's own bionic, which the platform emulator cannot do from an x86_64 host | verified |
 | `aarch64-ios-sim` | llvm 23 plus the machine's iPhoneSimulator SDK, which mcpp locates rather than installs; ran on a simulator through `simctl-run` ³ | verified |
 | `aarch64-ios` | the same split for the device; the artefact names the iOS platform, and running it off a device needs a signature the developer owns ³ | preview |
-| `x86_64-ios-sim` | the same build; nothing ran it, because a simulator runs the host's architecture and the machine measured was Apple silicon ³ | preview |
+| `x86_64-ios-sim` | the same build, on Apple silicon; the artefact ran on an Intel Mac's simulator, handed over by CI ³ | verified |
 
 `verified` an image has been built **and run** for the row, qemu and wine
 included · `preview` it builds and links, and no emulator run has been recorded

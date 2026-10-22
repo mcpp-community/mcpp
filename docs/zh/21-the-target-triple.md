@@ -487,7 +487,7 @@ docs/22。
 | `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | 载荷 | 载荷 | 载荷 | — |
 | `aarch64-ios` | preview | `llvm@23.1.3` | — | — | SDK | — |
 | `aarch64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
-| `x86_64-ios-sim` | preview | `llvm@23.1.3` | — | — | SDK | — |
+| `x86_64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | 载荷 | 载荷 | 载荷 | 载荷 |
 
 `载荷` 这里有工具链 payload 产出它 · `图` 没有 payload，但依赖能供给

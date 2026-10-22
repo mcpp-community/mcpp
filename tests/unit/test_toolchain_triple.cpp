@@ -768,7 +768,7 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
     // NOT contain these three.
     for (auto [name, tier] : {std::pair{"aarch64-ios",     "preview"},
                               std::pair{"aarch64-ios-sim", "verified"},
-                              std::pair{"x86_64-ios-sim",  "preview"}}) {
+                              std::pair{"x86_64-ios-sim",  "verified"}}) {
         auto t = parse(name);
         ASSERT_TRUE(t.has_value()) << name;
         EXPECT_EQ(t->str(), name);

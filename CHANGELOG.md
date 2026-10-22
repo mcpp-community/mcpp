@@ -4,6 +4,74 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.23.1] - 2026-10-23
+
+### Added
+
+- **The target base.** `[target.<triple>].sysroot` takes a package, a locator
+  (`glibc@system`, `musl@system`, `macosx|iphoneos|iphonesimulator@system|<version>`,
+  `msvc@…`), a table `{ path = "<dir>", provides = [...] }` relative to the file
+  that writes it, or `""`. One statement is resolved once and every reader uses
+  it: compile and link lines, the scan, the `std` module, the artifact's loader
+  and run path, closure validation, the fingerprint, the reports, `mcpp pack` and
+  the runner. Statements come from `--sysroot` / `MCPP_TARGET_<TRIPLE>_SYSROOT` /
+  `MCPP_SYSROOT`, then the project, then `[target.<triple>]` in `config.toml`
+  (the user's, then the system's), then the target row.
+- The C library a base supplies is measured: the driver says where the C runtime
+  is, the preprocessor which library and version. Debian multiarch is supplied to
+  a gcc that does not know it, so `glibc@system` builds with gcc and clang alike.
+  A base older than the compiler's runtime requires is refused before compiling,
+  naming both versions (`libstdc++.so.6: GLIBC_2.38` against glibc 2.31).
+- A native artifact binds its base: PT_INTERP and RUNPATH name the base's loader
+  and C library, and closure validation checks against it. The base's identity
+  enters the fingerprint, so a sysroot rewritten in place rebuilds. `mcpp pack`
+  states the highest glibc the program and its packed libraries need and writes
+  it to `HOST-REQUIREMENTS`.
+- `Using sysroot glibc 2.31 ← third_party/sysroot [custom · mcpp.toml:12]`,
+  `mcpp why sysroot`, and `base` / `execution` in `resolution.json`.
+  `--managed-only` names a stated base. A new refusal code, `target-base`.
+- `SDKROOT` names an Apple SDK on every host, so an SDK produced from one's own
+  Xcode on Linux is located as one in Xcode is. An SDK whose `libSystem.tbd`
+  lacks the row's slice is refused naming it. The clang `*-windows-msvc` row
+  takes `{ path }` for an unpacked Visual Studio tree or a `/winsysroot` layout.
+- **The execution host.** `[target.<triple>].run_under` (also in `config.toml`,
+  overridden by `MCPP_TARGET_<TRIPLE>_RUN_UNDER`, `none` clears) is composed in
+  front of the runner. Runners receive `MCPP_RUN_TRIPLE`, `MCPP_RUN_KIND`,
+  `MCPP_RUN_MODE`, `MCPP_RUN_ID`, `MCPP_RUN_CLOSURE` (a versioned JSON closure)
+  and `MCPP_SYSROOT`; their exit status is the program's. An Apple artifact on a
+  host that is not macOS is refused before anything runs, naming `run_under`.
+- A toolchain phase may state `sysroot` beside `spec`.
+- Profile keys `ndebug` and `trim_paths`, on by default for `release` and `dist`.
+  `trim_paths` maps each package's sources to `<name>@<version>/…` and the store,
+  home, build directory, toolchain and sysroot to `/mcpp/…`, and writes
+  `source-map.gdbinit` / `.lldbinit` when there is debug information.
+- `x86_64-ios-sim` is `verified`: CI builds it on Apple silicon and runs it on
+  an Intel Mac's simulator.
+
+### Changed
+
+- **`release` and `dist` define `NDEBUG` and trim source paths.** `assert`
+  compiles out there, and an artifact no longer carries the directories of the
+  machine that built it (mcpp#832). Write `ndebug = false` or `trim_paths =
+  false` under the profile to keep the previous artifact; the first shipping
+  build after the upgrade says so once. Both profiles rebuild once; `dev` does
+  not.
+
+### Fixed
+
+- A stated sysroot hands the linker `--sysroot` (gcc's clean link specs drop
+  the driver's), so a sysroot's linker scripts resolve inside it (`cannot find
+  /lib64/libm.so.6`). The ecosystem's default build is unchanged.
+- A stated sysroot no longer produces an artifact that loads the host's loader
+  and the SubOS farm's C library, and closure validation no longer compares a
+  stated base with the ecosystem's glibc.
+- mcpp no longer writes into a sysroot it does not own (a toolchain named by
+  path reports its vendor's).
+- A toolchain phase that states `spec` with `prefix`, `launcher`, `family` or
+  `tool.<role>` is refused by name; those keys were dropped without a word.
+- A command printed for pasting quotes a path that holds a space
+  (`mcpp self init --force --home '/tmp/mc probe/home'`, mcpp#832).
+
 ## [2026.10.22.1] - 2026-10-22
 
 ### Fixed

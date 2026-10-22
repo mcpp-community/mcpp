@@ -408,7 +408,7 @@ mcpp 的身份模型有两条正交的轴：**工具链**是 `family@version`（
 | `aarch64-linux-android` | 同一个 payload、同样的构建；已在 qemu-user 上配合系统镜像自带的 bionic 运行，平台模拟器无法在 x86_64 宿主上做到这一点 | verified |
 | `aarch64-ios-sim` | llvm 23 加上本机的 iPhoneSimulator SDK（mcpp 定位该 SDK，不安装它）；已通过 `simctl-run` 在模拟器上运行 ³ | verified |
 | `aarch64-ios` | 真机采用同样的分工；产物标记为 iOS 平台，在设备上运行需要开发者自己的签名 ³ | preview |
-| `x86_64-ios-sim` | 同一次构建；尚未运行过，因为模拟器运行宿主的架构，而测量所用的机器是 Apple 芯片 ³ | preview |
+| `x86_64-ios-sim` | 同一次构建，在 Apple 芯片上完成；产物由 CI 交给一台 Intel Mac，在其模拟器上运行 ³ | verified |
 
 `verified`：该行的镜像已构建**并运行**过，qemu 与 wine 均计入 · `preview`：可以构建和链接，尚无模拟器运行记录 · `planned`：已在词表中登记，尚未接通。针对这类目标的构建会被拒绝，而不会被尝试。
 

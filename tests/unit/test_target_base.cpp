@@ -231,6 +231,7 @@ TEST(TargetBaseLinkModel, StatedBindingBaseNamesItsLoaderAndDirs) {
     EXPECT_EQ(lm.mode, tc::CLibMode::Sysroot);
     auto link = lm.link_tokens(ident);
     EXPECT_TRUE(has(link, "--sysroot=/sr"));
+    EXPECT_TRUE(has(link, "-Wl,--sysroot=/sr"));
     EXPECT_TRUE(has(link, "-Wl,--dynamic-linker=/sr/lib64/ld-linux-x86-64.so.2"));
     EXPECT_TRUE(has(link, "-Wl,-rpath,/sr/lib64"));
 

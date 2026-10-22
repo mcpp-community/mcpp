@@ -1352,6 +1352,39 @@ Exit code 1 keeps its meaning — a test ran and failed — and 0 means every te
 ran and passed. `--message-format json` carries `"status":"not_run"` and a
 `reason` on each record, and `not_run` / `not_run_reason` on the summary
 record (see [50 — Machine-Readable Output](50-machine-output.md)).
+#### 2.7.3.2 `sysroot` and `run_under` (2026.10.23.1+)
+
+Two more keys of `[target.<triple>]` describe what the target is built against
+and where its artifacts execute:
+
+```toml
+[target.x86_64-linux-gnu]
+sysroot = { path = "third_party/sysroot" }   # or "xim:glibc@2.39", "glibc@system", ""
+
+[target.aarch64-ios-sim]
+runner    = ["simctl-run"]
+run_under = ["remote-run", "team-mac", "--"]  # reach the machine the artifact runs on
+```
+
+`sysroot` names the **target base** -- the prebuilt C library and its neighbours
+-- as a package, a locator, `{ path, provides }` or `""`; its semantics are in
+[20 — Toolchains](20-toolchains.md). `run_under`
+is the argv that reaches the **execution host**, composed in front of the
+runner: `<run_under…> <runner…> <artifact> <args>` (Bazel's `--run_under`).
+Both keys may also be written in `~/.mcpp/config.toml` as this machine's
+default, and overridden per invocation with `MCPP_TARGET_<TRIPLE>_SYSROOT` /
+`MCPP_TARGET_<TRIPLE>_RUN_UNDER` (`none` clears; an empty value is unset). A
+team that all executes the same way writes `run_under` here; a mixed team
+writes it in each machine's `config.toml`. `--no-runner` drops both the runner
+and `run_under`.
+
+A runner reached this way receives `MCPP_RUN_TRIPLE`, `MCPP_RUN_KIND` (`exe` /
+`bundle`), `MCPP_RUN_MODE` (`run` / `test`), `MCPP_RUN_ID`, `MCPP_RUN_CLOSURE`
+(a versioned JSON naming the artifact, the files it carries and the base) and,
+when a base is stated, `MCPP_SYSROOT`. Its exit status is the program's. An
+Apple artifact on a host that is not macOS, with no `run_under`, is refused
+before anything is spawned, naming this key.
+
 ### 2.8 `[features]` — Features
 
 Moved to [06 — Features and Capabilities](06-features-and-capabilities.md),
@@ -1446,6 +1479,8 @@ opt      = 3              # -O level (a number, or the string "s"/"z")
 debug    = false          # -g
 lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gcc builds ship without the LTO plugin)
 strip    = true           # -s at link time
+ndebug     = true         # -DNDEBUG for every unit of the graph (default: on for release/dist)
+trim_paths = true         # -ffile-prefix-map for every unit (default: on for release/dist)
 # passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
@@ -1465,6 +1500,20 @@ ldflags  = []
 - Built-in profiles: `release` (-O2) / `dev`, `debug` (-O0 -g) / `dist` (-O3 + strip;
   **LTO is not enabled by default**). `[profile.<built-in name>]` can override a
   built-in definition wholesale.
+- **`ndebug` and `trim_paths` (2026.10.23.1+)** follow the industry's convention: on
+  for `release` and `dist`, off for `dev`, `debug` and a custom profile that does not
+  state them. `ndebug` defines `NDEBUG` for every unit, so `assert` compiles out, as in
+  CMake's Release and Meson's `b_ndebug=if-release`. `trim_paths` maps every absolute
+  prefix an artifact would carry -- in `__FILE__`, `std::source_location`, assertion
+  messages and debug information -- to what it is: each package's sources to
+  `<name>@<version>/…` (the root package's too, so a report reads
+  `app@1.2.0/src/main.cpp`), the store, home, build directory, toolchain and sysroot to
+  `/mcpp/store`, `/mcpp/home`, `/mcpp/build`, `/mcpp/toolchain` and `/mcpp/sysroot`. Two
+  checkouts of one tree then embed identical paths. A build with debug information
+  also writes `source-map.gdbinit` and `source-map.lldbinit` beside its outputs, which
+  map the paths back for a debugger. cl.exe has no documented equivalent and the build
+  says so once. Write `ndebug = false` or `trim_paths = false` under the profile to keep
+  the previous artifact; the first shipping build after the upgrade says this once.
 - **Each profile owns its own build directory.** The resolved profile knobs
   participate in the fingerprint, so `target/<triple>/` holds one hash directory
   per profile and switching between them is incremental instead of a full

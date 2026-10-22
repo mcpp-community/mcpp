@@ -155,6 +155,21 @@ sources:
       considered: payload xim:cmake@>=3.31 (not installed: overridden)
 ```
 
+`mcpp why sysroot` reports the target base (2026.10.23.1+): what was stated
+and where, what was measured there, what an artifact loads, and the execution
+host's wrapper when there is one:
+
+```
+$ mcpp why sysroot
+sysroot: path:/work/app/third_party/sysroot
+  address=gnu-sysroot  runtime=binding  root=/work/app/third_party/sysroot
+  c-abi=glibc 2.31
+  loader=/work/app/third_party/sysroot/lib64/ld-linux-x86-64.so.2
+  runtime dir /work/app/third_party/sysroot/lib64
+  identity=3d9bbfa57f6acda6
+  source: custom · mcpp.toml:12
+```
+
 `mcpp why deps` lists the resolved dependency graph before the lines of
 `mcpp.lock` (2026.9.14.2+): every package, the key and the table each request
 was written with, and a library's link form with the reason for it. A `path`

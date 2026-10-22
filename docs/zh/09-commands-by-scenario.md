@@ -137,6 +137,20 @@ sources:
       considered: payload xim:cmake@>=3.31 (not installed: overridden)
 ```
 
+`mcpp why sysroot` 报告目标基座(2026.10.23.1+):陈述了什么、在哪里陈述、在那里测量到什么、产物加载
+什么,以及存在时执行宿主的包装前缀:
+
+```
+$ mcpp why sysroot
+sysroot: path:/work/app/third_party/sysroot
+  address=gnu-sysroot  runtime=binding  root=/work/app/third_party/sysroot
+  c-abi=glibc 2.31
+  loader=/work/app/third_party/sysroot/lib64/ld-linux-x86-64.so.2
+  runtime dir /work/app/third_party/sysroot/lib64
+  identity=3d9bbfa57f6acda6
+  source: custom · mcpp.toml:12
+```
+
 `mcpp why deps` 在 `mcpp.lock` 各行之前列出解析出的依赖图（2026.9.14.2+）:
 每个包、每条请求书写时用的键与所在的表，以及库的链接形态与其原因。锁文件
 不记录的 `path` 依赖同样列出：

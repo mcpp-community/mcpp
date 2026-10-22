@@ -392,7 +392,27 @@ Each entry is `{subject, value, class, origin, decidedFor, considered[]}`:
 ```
 
 Every build writes the same record into
-`target/<triple>/<fingerprint>/resolution.json` under `sources`.
+`target/<triple>/<fingerprint>/resolution.json` under `sources`. The subject
+`sysroot` records the target base's statement; `run_under` records the
+execution host's wrapper. `mcpp why sysroot --format json` is
+`mcpp why sources sysroot` (2026.10.23.1+).
+
+`resolution.json` also carries two objects that describe the target base and
+the execution host (2026.10.23.1+), on every build:
+
+```jsonc
+"base": { "form": "path", "statement": "path:/work/app/third_party/sysroot",
+          "address": "gnu-sysroot", "runtime": "binding",
+          "root": "/work/app/third_party/sysroot",
+          "c_abi": { "impl": "glibc", "version": "2.31" }, "multiarch": "",
+          "loader": "/work/app/third_party/sysroot/lib64/ld-linux-x86-64.so.2",
+          "runtime_dirs": ["/work/app/third_party/sysroot/lib64"],
+          "identity": "3d9bbfa57f6acda6" },
+"execution": { "run_under": ["remote-run", "team-mac", "--"], "origin": "mcpp.toml:15" }
+```
+
+`form` is `default` for the ecosystem's own base, and then the other fields
+describe what the engine resolved by default.
 
 ### `mcpp.why.build-programs` and `mcpp.why.compat` *(mcpp 2026.10.11.1+)*
 
@@ -511,7 +531,8 @@ a program classifying the outcome reads `reason`:
 | `payload-override` | an `[xlings.overrides]` entry names a path that does not exist, a version a requirement refuses, or is stated by a dependency *(2026.10.1.3+)* |
 | `payload-request` | a build program asked for a payload no manifest of this build declares `provision = "on-request"`, or asked again in three consecutive runs *(2026.10.1.3+)* |
 | `lto-export-discovery` | a PE shared library whose exports are discovered would be compiled by cl.exe into `/GL` objects, which hold no symbol table: `windows_auto_export = true` stated under `lto = true`, or `/GL` written into the flags of a package it links *(2026.10.5.2+)* |
-| `local-toolchain` | a toolchain named by path, or stated by a build program's toolchain phase, cannot be used: no driver, a contradicting family, a missing tool or sysroot *(2026.10.1.3+)* |
+| `local-toolchain` | a toolchain named by path, or stated by a build program's toolchain phase, cannot be used: no driver, a contradicting family, a missing tool, or `spec` stated with a key only a toolchain named by path has *(2026.10.1.3+)* |
+| `target-base` | the target base (`sysroot`) cannot serve this build: a spelling the row does not take, a path that does not exist, a directory that supplies no C library, a C library older than the compiler's runtime requires, a native base without its loader, or a second C library supplier in the graph *(2026.10.23.1+)* |
 | `convention-unreplaced` | the convention was overridden and nothing replaced it |
 | `os-mismatch` | the requested and resolved triples name different systems |
 | `layer-requirement` | a package requires a layer the resolution did not give it |

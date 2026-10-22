@@ -518,7 +518,7 @@ other's rows.
 | `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
 | `aarch64-ios` | preview | `llvm@23.1.3` | — | — | SDK | — |
 | `aarch64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
-| `x86_64-ios-sim` | preview | `llvm@23.1.3` | — | — | SDK | — |
+| `x86_64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | payload | payload | payload | payload |
 
 `payload` a toolchain payload here produces it · `graph` no payload, but a

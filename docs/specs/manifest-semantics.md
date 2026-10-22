@@ -5,11 +5,11 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.16 |
-| **最后修改** | 2026-10-21 |
+| **版本** | 1.17 |
+| **最后修改** | 2026-10-23 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
-| **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`<br>`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md`<br>`.agents/docs/2026-10-10-one-source-one-meaning-design.md`<br>`.agents/docs/2026-10-11-build-dependencies-one-pipeline-design.md` |
+| **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`<br>`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md`<br>`.agents/docs/2026-10-10-one-source-one-meaning-design.md`<br>`.agents/docs/2026-10-11-build-dependencies-one-pipeline-design.md`<br>`.agents/docs/2026-10-23-target-base-and-execution-host-design.md` |
 | **相关使用文档** | [docs/04 —— mcpp.toml 字段参考](../04-mcpp-toml.md) |
 
 ## 规范用语
@@ -63,6 +63,12 @@
 (`[workspace.X]`,§9 第 12 条)、引擎默认值。条件(`[target.<selector>]`)是作用在值上的
 谓词,既不改变作用域,也不改变来源。键的类别只陈述一次(`mcpp.manifest.key_registry`),
 解析器的已知键检查从中取得。
+
+**值的层次。** 同一个键的值按四档取第一个:覆盖(命令行与环境变量)、工程(`mcpp.toml`,
+含工作空间层)、机器默认(`~/.mcpp/config.toml`,其次系统级 `config.toml`)、引擎默认。
+`[target.<三元组>].sysroot` 与 `[target.<三元组>].run_under` 两个键**可以**同时出现在工程与
+机器默认中;其余键只属于工程。环境变量中空值视为未设置,`none` 表示显式清除。
+机器默认**禁止**放宽工程的约束:`requires` 与版本下限照样核对。
 
 **库依赖与工具是两个平面,不是一个。** 库有模块与 ABI,参与解析与链接;载荷是可执行
 的工具或被编译对着的输入,不参与模块图。二者的解析规则不同(§4),因此**禁止**把工具
@@ -184,9 +190,16 @@ feature-deps          feature-xlings         ← 限定词是门
 | 顶层 `[xlings]`,值写成平台键对象 `{ linux=…, macosx=…, windows=…, default=… }` | 宿主 | **已实现** |
 | `[target.<selector>.xlings…]` | 目标 | **已实现**(2026.9.6.4) |
 | `[target.<triple>].sysroot` | 目标 | **已实现** |
+| `[target.<triple>].run_under` | 目标(执行宿主) | **已实现**(2026.10.23.1) |
 
 顶层平台键对象**不是**遗留拼法,它是宿主轴**正确**的写法:工具必须能在这台机器上
 执行。`[target.<triple>].sysroot` 是目标轴 xpkg 引用的既有先例。
+
+`sysroot` 的值**可以**是字符串(生态包、定位器或 `""`),也**可以**是表
+`{ path = "<目录>", provides = ["mcpp:c-abi=<实现>"] }`;表只有这两个键,`path` 相对于写它的
+文件,`~` 展开为用户目录。各写法的语义与每行接受的写法见 SPEC-006 §3.9 与附录 A。
+`run_under` 是字符串数组,在 `runner` 之前组合(SPEC-002 §6)。两个键都是配置类键,从构建的根读取;
+宿主轴的子构建**禁止**读取它们。
 
 ### 4.3 两条轴的写法
 
@@ -740,3 +753,4 @@ mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 m
 | 1.14 | 2026-10-10 | mcpp 2026.10.10.1(#785、#786):§2 陈述键的作用域与来源;§9 新增第 12 条前缀即语义(工作空间层 `[workspace.X]`、按键合并、W7)与第 13 条按位置读取的兼容期;第 7 条发布写出工作空间层;第 8 条改为 `[workspace.xlings]`;第 10 条按求值后的配置分组。 |
 | 1.15 | 2026-10-11 | mcpp 2026.10.11.1(#797):新增 §12 依赖的库与配置(两条轴、实例、一个包一个版本、按配置激活特性、`host-module` 的含义与默认值、构建程序图、构建插件、兼容读法);§9 第 13 条的移除版本改为 mcpp 2027.1,并补依赖位置;新增 §9 第 14 至 16 条(`[xlings.overrides]` 属于构建的根、`[workspace.dependencies]` 的继承、虚拟根旁的 `build.mcpp`)。 |
 | 1.16 | 2026-10-21 | 新增 §13，明确依赖 EXE、DLL 的资源只进入其所属包的 image，且按计划内目标校验 manifest 冲突(#826)。 |
+| 1.17 | 2026-10-23 | mcpp 2026.10.23.1:§2 陈述值的四档层次,`sysroot` 与 `run_under` 可出现在工程与机器默认中;§4.2 增加 `run_under`,陈述 `sysroot` 的表写法。 |

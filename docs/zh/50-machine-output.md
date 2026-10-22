@@ -353,7 +353,24 @@ mcpp why sources|tool <name>|payload <ns:name> --format json
 ```
 
 每次构建把同一份记录写入
-`target/<triple>/<fingerprint>/resolution.json` 的 `sources`。
+`target/<triple>/<fingerprint>/resolution.json` 的 `sources`。主体 `sysroot` 记录目标基座的
+陈述,`run_under` 记录执行宿主的包装前缀。`mcpp why sysroot --format json` 等同于
+`mcpp why sources sysroot`(2026.10.23.1+)。
+
+`resolution.json` 还在每次构建中携带描述目标基座与执行宿主的两个对象(2026.10.23.1+):
+
+```jsonc
+"base": { "form": "path", "statement": "path:/work/app/third_party/sysroot",
+          "address": "gnu-sysroot", "runtime": "binding",
+          "root": "/work/app/third_party/sysroot",
+          "c_abi": { "impl": "glibc", "version": "2.31" }, "multiarch": "",
+          "loader": "/work/app/third_party/sysroot/lib64/ld-linux-x86-64.so.2",
+          "runtime_dirs": ["/work/app/third_party/sysroot/lib64"],
+          "identity": "3d9bbfa57f6acda6" },
+"execution": { "run_under": ["remote-run", "team-mac", "--"], "origin": "mcpp.toml:15" }
+```
+
+生态缺省基座的 `form` 为 `default`,其余字段描述引擎缺省解析出的结果。
 
 ### `mcpp.why.build-programs` 与 `mcpp.why.compat` *(mcpp 2026.10.11.1+)*
 
@@ -463,7 +480,8 @@ replaced}` —— `origin` 与构建的状态行使用的是同一句话
 | `payload-override` | 一条 `[xlings.overrides]` 点名的路径不存在、版本被某条要求拒绝，或它由依赖写出 *(2026.10.1.3+)* |
 | `payload-request` | 构建程序请求了本次构建中没有任何清单声明 `provision = "on-request"` 的载荷，或连续三次运行都在请求 *(2026.10.1.3+)* |
 | `lto-export-discovery` | 导出需要被发现的 PE 共享库会被 cl.exe 编译成没有符号表的 `/GL` 对象：在 `lto = true` 下陈述了 `windows_auto_export = true`，或在它所链接的包的 flag 中写了 `/GL` *(2026.10.5.2+)* |
-| `local-toolchain` | 由路径命名的工具链，或构建程序工具链阶段陈述的工具链无法使用：没有驱动、族与驱动矛盾、缺少某个工具或 sysroot *(2026.10.1.3+)* |
+| `local-toolchain` | 由路径命名的工具链，或构建程序工具链阶段陈述的工具链无法使用：没有驱动、族与驱动矛盾、缺少某个工具，或 `spec` 与只属于路径工具链的键一同陈述 *(2026.10.1.3+)* |
+| `target-base` | 目标基座(`sysroot`)无法服务本次构建:该行不接受的写法、不存在的路径、不供给 C 库的目录、低于编译器运行库要求的 C 库、缺少 loader 的本机基座,或依赖图中的第二个 C 库供给者 *(2026.10.23.1+)* |
 | `convention-unreplaced` | 约定被推翻了，而没有任何东西接替它 |
 | `os-mismatch` | 请求的三元组与解析出的三元组命名不同的系统 |
 | `layer-requirement` | 某个包要求的层，解析结果没有提供 |

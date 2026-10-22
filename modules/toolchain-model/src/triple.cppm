@@ -802,8 +802,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // an Intel one needs `x86_64`. A single row would describe a simulator half
     // the machines cannot run.
     //
-    // ONE `verified` AND ONE `preview`, AND THE DIFFERENCE IS THE HOST'S
-    // ARCHITECTURE RATHER THAN ANYTHING ABOUT THE ROWS.
+    // BOTH `verified`, AND THE SECOND ONE WAS RUN ON ANOTHER MACHINE.
     //
     // `aarch64-ios-sim` was built AND RUN. Measured 2026-09-11 on macos-15
     // (Xcode 16.4, iPhoneSimulator 18.5, `ios_deployment_target = "18.0"`):
@@ -816,12 +815,15 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // made `simctl-run` a boot-and-spawn wrapper rather than a bundle builder.
     //
     // `x86_64-ios-sim` builds and its artefact is correct -- Mach-O x86_64,
-    // the same `platform 7`, the same floor -- and nothing ran it, because a
-    // SIMULATOR RUNS THE HOST'S ARCHITECTURE and the runner is Apple silicon.
-    // That is a property of the machine the measurement was taken on, so the
-    // row stays `preview` until an Intel host takes it.
+    // the same `platform 7`, the same floor -- and a SIMULATOR RUNS THE HOST'S
+    // ARCHITECTURE, so the Apple-silicon runner that builds it cannot run it.
+    // ci-macos-ios.yml builds it there and hands the artefact to a
+    // `macos-15-intel` job, which spawns it on that host's simulator and reads
+    // `1-2-3` and status 0 (design 2026-10-23 §2.6, S15). The row can be built
+    // because the SDK carries an x86_64 slice, which is measured; whether the
+    // vendor still sells the hardware is not a property of the row.
     { "aarch64-ios-sim",       "verified",  "",    "llvm@23.1.3","",                            false },
-    { "x86_64-ios-sim",        "preview",   "",    "llvm@23.1.3","",                            false },
+    { "x86_64-ios-sim",        "verified",  "",    "llvm@23.1.3","",                            false },
 
     // WEB IS THE OUTLIER, AND IT IS THE ONLY ONE OF THE THREE THAT CHANGES THE
     // MODEL RATHER THAN EXTENDING A TABLE. A new arch (`wasm32`), a new os
