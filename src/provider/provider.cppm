@@ -377,6 +377,13 @@ public:
     // Whether `name` is one of the provider's own indexes (its default and
     // the ones it adds itself), which stay where the provider keeps them.
     virtual bool is_provider_index(std::string_view name) const = 0;
+    // A system the provider made, as `root` (/, but for a test) says of
+    // itself (xlings design 2026-10-21 §3.7): its compiler's sysroot `/` is
+    // then the system's own declared root, not a tree nothing declared.
+    virtual bool declared_system_root(const std::filesystem::path& root) const = 0;
+    // The home such a system reads its packages from, by its root record;
+    // empty: not one, or its record says nothing usable.
+    virtual std::filesystem::path system_home(const std::filesystem::path& root) const = 0;
 };
 
 // What a provider says of a package's payload without installing anything

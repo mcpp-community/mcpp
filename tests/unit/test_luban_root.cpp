@@ -7,7 +7,8 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.luban;
+import mcpp.provider;
+import mcpp.provider.select;
 import mcpp.fallback.probe_sysroot;
 
 namespace fs = std::filesystem;
@@ -32,13 +33,13 @@ struct Tree {
 
 TEST(LubanRoot, ALubanSystemsRootIsDeclared) {
     Tree t;
-    EXPECT_FALSE(mcpp::luban::is_luban_root(t.dir));
+    EXPECT_FALSE(mcpp::provider::layout().declared_system_root(t.dir));
     t.write("etc/os-release", "NAME=\"Luban\"\nID=luban\nVERSION_ID=2026.10.22.1\n");
-    EXPECT_FALSE(mcpp::luban::is_luban_root(t.dir)) << "its os-release alone is not enough";
+    EXPECT_FALSE(mcpp::provider::layout().declared_system_root(t.dir)) << "its os-release alone is not enough";
     t.write("usr/lib/xlings-abi/README", "");
-    EXPECT_TRUE(mcpp::luban::is_luban_root(t.dir));
+    EXPECT_TRUE(mcpp::provider::layout().declared_system_root(t.dir));
     t.write("etc/os-release", "ID=\"debian\"\n");
-    EXPECT_FALSE(mcpp::luban::is_luban_root(t.dir));
+    EXPECT_FALSE(mcpp::provider::layout().declared_system_root(t.dir));
 }
 
 TEST(LubanRoot, ItsSysrootSlashIsNotForeign) {
@@ -55,12 +56,11 @@ TEST(LubanRoot, ItsStoreIsTheHomeItsRootRecordNames) {
     Tree t;
     t.write("etc/os-release", "ID=luban\n");
     t.write("usr/lib/xlings-abi/README", "");
-    EXPECT_FALSE(mcpp::luban::system_store(t.dir).has_value()) << "no record";
+    EXPECT_TRUE(mcpp::provider::layout().system_home(t.dir).empty()) << "no record";
     const auto home = t.dir / "host-home";
     fs::create_directories(home / "subos" / "box" / "root" / "usr");
     t.write("etc/xlings/usr", (home / "subos" / "box" / "root" / "usr").string() + "\n");
-    ASSERT_TRUE(mcpp::luban::system_store(t.dir).has_value());
-    EXPECT_EQ(*mcpp::luban::system_store(t.dir), home.lexically_normal());
+    EXPECT_EQ(mcpp::provider::layout().system_home(t.dir), home.lexically_normal());
     t.write("etc/xlings/usr", "/somewhere/else/usr\n");
-    EXPECT_FALSE(mcpp::luban::system_store(t.dir).has_value()) << "a record of another shape";
+    EXPECT_TRUE(mcpp::provider::layout().system_home(t.dir).empty()) << "a record of another shape";
 }

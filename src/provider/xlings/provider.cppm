@@ -196,6 +196,36 @@ public:
             return {{dir, {}, {"xim"}}};
         return {};
     }
+    // A Luban system (xlings design 2026-10-21 §3.7): its os-release says
+    // ID=luban and /usr/lib/xlings-abi is the runtime xlings bound; its root
+    // record (/etc/xlings/usr) names its generation, <home>/subos/<name>/root/usr
+    // -- /xlings for one installed on a machine, the path of the home that
+    // made it for one made on a host.
+    bool declared_system_root(const std::filesystem::path& root) const override {
+        std::error_code ec;
+        if (!std::filesystem::exists(root / "usr/lib/xlings-abi", ec)) return false;
+        std::ifstream in(root / "etc/os-release");
+        for (std::string line; std::getline(in, line);) {
+            if (!line.starts_with("ID=")) continue;
+            auto id = line.substr(3);
+            if (id.size() >= 2 && (id.front() == '"' || id.front() == '\'')) id = id.substr(1, id.size() - 2);
+            return id == "luban";
+        }
+        return false;
+    }
+    std::filesystem::path system_home(const std::filesystem::path& root) const override {
+        if (!declared_system_root(root)) return {};
+        std::ifstream in(root / "etc/xlings/usr");
+        std::string line;
+        if (!std::getline(in, line)) return {};
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        const std::filesystem::path usr = std::filesystem::path(line).lexically_normal();
+        const auto rootDir = usr.parent_path(), instance = rootDir.parent_path(), subos = instance.parent_path();
+        if (!usr.is_absolute() || usr.filename() != "usr" || rootDir.filename() != "root" || subos.filename() != "subos") return {};
+        std::error_code ec;
+        const auto home = subos.parent_path();
+        return std::filesystem::is_directory(home, ec) ? home : std::filesystem::path{};
+    }
     bool is_provider_index(std::string_view name) const override {
         // xlings' default index and the ones it adds beside it.
         return name == "xim" || name == "awesome" || name == "scode" || name == "d2x";

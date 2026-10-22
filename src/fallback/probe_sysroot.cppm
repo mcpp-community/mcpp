@@ -15,7 +15,6 @@ import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.platform;
 import mcpp.log;
-import mcpp.luban;
 
 export namespace mcpp::fallback {
 
@@ -108,7 +107,7 @@ bool sysroot_is_foreign(const std::filesystem::path& sysroot,
                         const std::filesystem::path& systemRoot = "/") {
     if (sysroot.empty()) return false;
     // A Luban system's own root: its compiler's `/` is the system it is.
-    if (sysroot.lexically_normal() == "/" && mcpp::luban::is_luban_root(systemRoot)) return false;
+    if (sysroot.lexically_normal() == "/" && mcpp::provider::layout().declared_system_root(systemRoot)) return false;
     return !path_is_under(sysroot, registryRoot)
         && !path_is_under(sysroot, projectRoot);
 }
