@@ -108,7 +108,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### toolchain
 
-- [目标基座与执行宿主：sysroot 的通用模型、运行器契约、自备输入，以及同批的发布产物路径（#832）](2026-10-23-target-base-and-execution-host-design.md) — implemented
+- [目标基座与执行宿主：sysroot 的通用模型、运行器契约、自备输入，以及同批的发布产物路径（#832）](2026-10-23-target-base-and-execution-host-design.md) — landed
 - [LLVM 23.1.3 Part 2：Linux aarch64 默认工具链与 glibc 生态闭环](2026-10-08-llvm-2313-linux-aarch64-ecosystem-part2-design.md) — active
 - [LLVM 23.1.3 全平台统一默认:跨仓库联动方案(mcpp × xim-pkgindex)](2026-10-07-llvm-2313-unified-default-cross-repo-design.md) — active
 
@@ -139,7 +139,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-10
 
-- [目标基座与执行宿主：sysroot 的通用模型、运行器契约、自备输入，以及同批的发布产物路径（#832）](2026-10-23-target-base-and-execution-host-design.md) — implemented
+- [目标基座与执行宿主：sysroot 的通用模型、运行器契约、自备输入，以及同批的发布产物路径（#832）](2026-10-23-target-base-and-execution-host-design.md) — landed
 - [依赖 image 的资源归属、模块扫描边界与锁文件稳定写入](2026-10-21-resource-ownership-module-scan-and-lock-write-design.md) — active
 - [首次初始化、home 重定向与网络诊断优化设计](2026-10-19-first-run-home-and-network-design.md) — landed
 - [升级的连续性：打包修订不在使用路径上替换载荷、替换失败不拆掉可用状态、home 中的悬空记录自愈、真实的升级 lane](2026-10-17-upgrade-continuity-design.md) — active

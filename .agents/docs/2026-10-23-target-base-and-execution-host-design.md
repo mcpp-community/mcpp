@@ -1,6 +1,6 @@
 ---
 subject: toolchain
-status: implemented
+status: landed
 ---
 
 # 目标基座与执行宿主：sysroot 的通用模型、运行器契约、自备输入，以及同批的发布产物路径（#832）
