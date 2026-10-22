@@ -15,6 +15,7 @@ import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.platform;
 import mcpp.log;
+import mcpp.luban;
 
 export namespace mcpp::fallback {
 
@@ -99,10 +100,15 @@ bool sysroot_is_owned(std::string_view reportedPath,
 //
 // Both anchors are required. Registry alone would flag every legitimate
 // project-local tree; project alone would flag every payload sysroot.
+// In a Luban system (`systemRoot`, "/" but for a test) the sysroot `/` is the
+// system's own declared root (xlings design 2026-10-21 §3.7).
 bool sysroot_is_foreign(const std::filesystem::path& sysroot,
                         const std::filesystem::path& registryRoot,
-                        const std::filesystem::path& projectRoot) {
+                        const std::filesystem::path& projectRoot,
+                        const std::filesystem::path& systemRoot = "/") {
     if (sysroot.empty()) return false;
+    // A Luban system's own root: its compiler's `/` is the system it is.
+    if (sysroot.lexically_normal() == "/" && mcpp::luban::is_luban_root(systemRoot)) return false;
     return !path_is_under(sysroot, registryRoot)
         && !path_is_under(sysroot, projectRoot);
 }

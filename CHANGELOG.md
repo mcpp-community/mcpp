@@ -4,6 +4,19 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.22.1] - 2026-10-22
+
+### Fixed
+
+- In a Luban system, the compiler's sysroot `/` is the system's own declared
+  root (`ID=luban` in `/etc/os-release` and `/usr/lib/xlings-abi`): `mcpp self
+  doctor` no longer reports it as belonging to neither the mcpp home nor the
+  project.
+- In a Luban system, `[xlings] upstream = ["/xlings"]` reads the store the
+  system's root record names (`/etc/xlings/usr`) when `/xlings` is not there --
+  a system made on a host keeps its home at the path of the home that made it.
+  Its gcc and glibc are reused rather than reported unreachable.
+
 ## [2026.10.21.1] - 2026-10-21
 
 ### Fixed
