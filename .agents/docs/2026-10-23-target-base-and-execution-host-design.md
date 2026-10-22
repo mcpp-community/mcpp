@@ -21,6 +21,7 @@ status: landed
   - §15.5 R4：检查门匹配构建机的检出目录与 mcpp home（`GITHUB_WORKSPACE`、`MCPP_HOME`、`~/.mcpp`），不用 `/(home|tmp)/`，因为二进制本身含有 `/tmp/`、`/home/` 字面量。它作用于 linux-x86_64（由本次发布的引擎在 pack 时重建）与 macOS（第二阶段自举）；Windows 与 aarch64 由引导用的旧版引擎构建，在引导版本前移后自然得到裁剪。
   - pack 的下限写为 `HOST-REQUIREMENTS` 中的 `capability=c-abi.glibc>=X discovery=PT_INTERP`，并打印 `Requires glibc >= X`。
   - 新增拒绝码 `target-base`。
+  - §15.3：`trim_paths` 不作用于 `mcpp test`（以及与之同面的 configure 过程）。CI 实测：mcpp 自己的单测在 release 默认档下借 `__FILE__` 定位仓库，被裁剪成 `workspace@0.0.0/src` 后全部找不到。测试二进制在构建处运行，不发布；`ndebug` 照常作用于测试（与 Cargo 的 release 关闭 `debug_assertions` 一致）。
   - §4.5：clean specs 不恢复 `%(sysroot_spec)`。回归 e2e 220 实测：链接器拿到 `--sysroot` 后，会把 sysroot 前缀加到每个输入共享库的 DT_RUNPATH 上，SubOS farm 中 `libEGL.so` 的 RUNPATH 以绝对路径指向载荷，于是 `libGLdispatch` 找不到。hello 程序逐字节相同的测量只覆盖了没有这类输入的链接。改为：被陈述的 gnu-sysroot 基座由渲染器给 gcc 显式加上 `-Wl,--sysroot=<root>`（clang 的驱动自己把 `--sysroot` 交给链接器），生态缺省视图不变。SPEC-006 §4.3 按此改写。
 
 关联：mcpp#755（按路径命名的工具链，`sysroot` 键由此引入）、mcpp#378（clean link specs）、

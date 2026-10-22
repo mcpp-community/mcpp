@@ -1509,7 +1509,9 @@ ldflags  = []
   `<name>@<version>/…` (the root package's too, so a report reads
   `app@1.2.0/src/main.cpp`), the store, home, build directory, toolchain and sysroot to
   `/mcpp/store`, `/mcpp/home`, `/mcpp/build`, `/mcpp/toolchain` and `/mcpp/sysroot`. Two
-  checkouts of one tree then embed identical paths. A build with debug information
+  checkouts of one tree then embed identical paths. It applies to what `build`, `run`
+  and `pack` produce, not to `mcpp test`: a test binary runs where it was built and
+  commonly finds its fixtures through `__FILE__`. A build with debug information
   also writes `source-map.gdbinit` and `source-map.lldbinit` beside its outputs, which
   map the paths back for a debugger. cl.exe has no documented equivalent and the build
   says so once. Write `ndebug = false` or `trim_paths = false` under the profile to keep

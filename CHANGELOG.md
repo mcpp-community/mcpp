@@ -44,7 +44,9 @@
 - Profile keys `ndebug` and `trim_paths`, on by default for `release` and `dist`.
   `trim_paths` maps each package's sources to `<name>@<version>/…` and the store,
   home, build directory, toolchain and sysroot to `/mcpp/…`, and writes
-  `source-map.gdbinit` / `.lldbinit` when there is debug information.
+  `source-map.gdbinit` / `.lldbinit` when there is debug information. It
+  applies to what `build`, `run` and `pack` produce; `mcpp test` keeps paths,
+  because a test binary finds its fixtures through `__FILE__`.
 - `x86_64-ios-sim` is `verified`: CI builds it on Apple silicon and runs it on
   an Intel Mac's simulator.
 

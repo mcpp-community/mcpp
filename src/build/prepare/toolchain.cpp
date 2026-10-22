@@ -264,7 +264,14 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         // a developer debugs. A custom profile states what it wants.
         const bool shipping = pname == "release" || pname == "dist";
         state.m->buildConfig.ndebug    = pr.ndebugDeclared ? pr.ndebug : shipping;
-        state.m->buildConfig.trimPaths = pr.trimPathsDeclared ? pr.trimPaths : shipping;
+        // NOT FOR THE TEST SURFACE. A test binary runs where it was built,
+        // is never shipped, and commonly finds its fixtures through
+        // `__FILE__` -- measured on mcpp's own unit tests under its release
+        // default, which then looked for `workspace@0.0.0/src`. What
+        // `mcpp test` (and the configure pass that mirrors it) builds keeps
+        // its paths; what build, run and pack produce is trimmed.
+        state.m->buildConfig.trimPaths = (pr.trimPathsDeclared ? pr.trimPaths : shipping)
+                                         && !state.includeDevDeps;
         // SAID ONCE PER HOME, the first time a shipping profile takes the new
         // defaults without stating them: the artifact changed, and the line
         // that changes it back is one key.

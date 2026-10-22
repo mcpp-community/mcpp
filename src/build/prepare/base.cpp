@@ -243,6 +243,17 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
     if (!stmt->stated()) return {};
     tc.base.form = stmt->form;
     tc.base.text = stmt->text;
+    // A NAMED SubOS AND A STATED BASE ANSWER DIFFERENT QUESTIONS (§3.3): the
+    // SubOS supplies what the compiler and the build's tools run on, the base
+    // what the artifact is built against. Said once, so neither is mistaken
+    // for having been ignored.
+    if (state.runtimeBindingSnapshot.selection.mode
+            == mcpp::provider::runtime::RuntimeSelection::Mode::NamedSubos
+        && row.address == tb::Address::GnuSysroot)
+        mcpp::ui::info("note", std::format(
+            "[xlings] subos '{}' supplies the host's tools; the artifact is built against "
+            "the stated sysroot {}", state.runtimeBindingSnapshot.selection.subosName,
+            stmt->text));
 
     const auto root = state.root ? *state.root : fs::path{};
     SourceDecision d;

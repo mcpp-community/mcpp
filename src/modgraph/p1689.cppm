@@ -26,6 +26,7 @@ import mcpp.platform;
 import mcpp.source_kind;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.model;
+import mcpp.toolchain.linkmodel;
 
 export namespace mcpp::modgraph::p1689 {
 
@@ -351,7 +352,13 @@ scan_file(const std::filesystem::path&        source,
     auto obj = base; obj += ".o";
 
     std::string sysroot_flag;
-    if (!tc.base.root.empty()) {
+    if (tc.base.stated()) {
+        // A stated target base: the compile side the link model renders for
+        // it (its sysroot, multiarch, or payload headers), as every compile
+        // of this build is given.
+        sysroot_flag = mcpp::toolchain::resolve_link_model(tc).compile_flags(
+            [](const std::filesystem::path& p) { return shell_escape(p); });
+    } else if (!tc.base.root.empty()) {
         sysroot_flag = std::format(" --sysroot={}", shell_escape(tc.base.root));
     }
     std::string std_flag = cppStandardFlag.empty()
