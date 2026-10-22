@@ -34,6 +34,7 @@ import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.base;
 import mcpp.toolchain.base_probe;
+import mcpp.home;
 import mcpp.build.plan;
 import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
 import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
@@ -257,6 +258,30 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         state.m->buildConfig.debug    = pr.debug;
         state.m->buildConfig.lto      = pr.lto;
         state.m->buildConfig.strip    = pr.strip;
+        // `ndebug` and `trim_paths` follow the industry's convention for a
+        // profile that does not state them (design 2026-10-23 §15.3-§15.4):
+        // on for the profiles that produce what is shipped, off for the ones
+        // a developer debugs. A custom profile states what it wants.
+        const bool shipping = pname == "release" || pname == "dist";
+        state.m->buildConfig.ndebug    = pr.ndebugDeclared ? pr.ndebug : shipping;
+        state.m->buildConfig.trimPaths = pr.trimPathsDeclared ? pr.trimPaths : shipping;
+        // SAID ONCE PER HOME, the first time a shipping profile takes the new
+        // defaults without stating them: the artifact changed, and the line
+        // that changes it back is one key.
+        if (shipping && !(pr.ndebugDeclared && pr.trimPathsDeclared) && !state.overrides.plan_only
+            && state.overrides.tool_depth == 0 && !state.overrides.host_target) {
+            std::error_code ec;
+            const auto marker = mcpp::home::root() / "cache" / "notes" / "profile-ndebug-trim-paths";
+            if (!std::filesystem::exists(marker, ec)) {
+                mcpp::ui::info("note", std::format(
+                    "the {} profile now defines NDEBUG and trims the source paths an artifact "
+                    "carries (`app@1.2.0/src/main.cpp`). To keep `assert` or absolute paths, write "
+                    "`ndebug = false` or `trim_paths = false` under [profile.{}]. Said once.",
+                    pname, pname));
+                std::filesystem::create_directories(marker.parent_path(), ec);
+                std::ofstream(marker) << "2026.10.23.1\n";
+            }
+        }
         state.m->buildConfig.cflags.insert(state.m->buildConfig.cflags.end(),
                                      pr.cflags.begin(), pr.cflags.end());
         state.m->buildConfig.cxxflags.insert(state.m->buildConfig.cxxflags.end(),

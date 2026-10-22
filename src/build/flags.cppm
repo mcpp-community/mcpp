@@ -1142,6 +1142,26 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // `/LTCG` on the link and the archive; before, it was not spelled at all,
     // and a build with `lto = true` reported `+ lto` while doing none.
     if (prof.lto) opt_flag += isMsvcDialect ? " /GL" : " -flto";
+    // `ndebug` (design 2026-10-23 §15.4): the profiles that produce what is
+    // shipped define NDEBUG for every unit of the graph, as CMake's Release,
+    // Meson's `b_ndebug=if-release` and Cargo's release do.
+    if (prof.ndebug) opt_flag += isMsvcDialect ? " /DNDEBUG" : " -DNDEBUG";
+    // `trim_paths` (§15.3, mcpp#832): every absolute prefix an artifact would
+    // carry -- in `__FILE__`, `std::source_location`, assertion messages and
+    // debug information -- replaced by what it IS. One flag covers all of
+    // them on gcc and clang. cl.exe has no documented equivalent, and a build
+    // that claimed to trim and did not would be worse than one that says so.
+    if (prof.trimPaths && !plan.trimMap.empty()) {
+        if (isMsvcDialect) {
+            mcpp::diag::degraded("build/trim_paths",
+                "trim_paths is on, and cl.exe has no documented switch that maps source paths",
+                "the artifact keeps the absolute paths it was built from; build with clang "
+                "(`*-windows-msvc` with llvm) to trim them");
+        } else {
+            for (auto const& [from, to] : plan.trimMap)
+                opt_flag += " -ffile-prefix-map=" + escape_path(from) + "=" + to;
+        }
+    }
 
     // MSVC baseline: /nologo /EHsc /utf-8 (dialect alwaysFlags) + the CRT
     // model — /MD by default, /MT when either knob asks for the static CRT

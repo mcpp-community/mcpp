@@ -186,6 +186,8 @@ struct BuildAxes {
     bool        debug = false;
     bool        lto   = false;
     bool        strip = false;
+    bool        ndebug = false;
+    bool        trimPaths = false;
     // Position-independent code, and it is here because it was MISSING.
     //
     // `-fPIC` is whole-build: one shared link unit anywhere and every object
@@ -337,6 +339,8 @@ nlohmann::json to_json(const BuildAxes& b, const PackageAxes& p) {
         {"debug", b.debug},
         {"lto", b.lto},
         {"strip", b.strip},
+        {"ndebug", b.ndebug},
+        {"trim_paths", b.trimPaths},
         {"pic", b.pic},
         {"crt", b.crt},
     };
@@ -386,6 +390,9 @@ std::string key_hex(const BuildAxes& b, const PackageAxes& p) {
     put(s, "debug",    b.debug ? "1" : "0");
     put(s, "lto",      b.lto   ? "1" : "0");
     put(s, "strip",    b.strip ? "1" : "0");
+    // Only when on, so a key computed before these existed is unchanged.
+    if (b.ndebug)    put(s, "ndebug", "1");
+    if (b.trimPaths) put(s, "trim", "1");
     put(s, "pic",      b.pic   ? "1" : "0");
     put(s, "crt",      b.crt);
     // D
@@ -550,6 +557,8 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
     b.debug           = rootManifest.buildConfig.debug;
     b.lto             = rootManifest.buildConfig.lto;
     b.strip           = rootManifest.buildConfig.strip;
+    b.ndebug          = rootManifest.buildConfig.ndebug;
+    b.trimPaths       = rootManifest.buildConfig.trimPaths;
     return b;
 }
 

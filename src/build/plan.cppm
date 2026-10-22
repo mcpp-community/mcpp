@@ -26,6 +26,7 @@ import mcpp.platform.runtime_env_contract;
 import mcpp.platform.runtime_search;
 import mcpp.provider;
 import mcpp.provider.select;
+import mcpp.home;
 
 export namespace mcpp::build {
 
@@ -396,6 +397,13 @@ struct BuildPlan {
     // `-L` (openkal-musl's empty archives), and a path dependency's root can
     // be anywhere on the machine, not only under the store.
     std::vector<std::filesystem::path> packageRoots;
+    // THE PATHS AN ARTIFACT CARRIES, MAPPED (`trim_paths`; design 2026-10-23
+    // §15.3, mcpp#832): each package's root to `<name>@<version>`, and the
+    // store, the home, the build directory, the toolchain and the target base
+    // to fixed placeholders. Ordered by prefix length, shortest first, so that
+    // a driver that tries the last-given mapping first takes the longest
+    // match. Empty unless the profile trims.
+    std::vector<std::pair<std::filesystem::path, std::string>> trimMap;
     mcpp::toolchain::Toolchain      toolchain;
     mcpp::toolchain::Fingerprint    fingerprint;
     // Where the target's platform interface, C library and C++ runtime come
@@ -1532,6 +1540,39 @@ std::string exports_without_discovery(const mcpp::manifest::Target& t,
         t.name, package);
 }
 
+// The `trim_paths` map (see `BuildPlan::trimMap`). A package's identity is
+// its name and version -- the root package's too, so a crash report names
+// `app@1.2.0/src/main.cpp` wherever it was built, and two checkouts of one
+// tree embed the same paths.
+std::vector<std::pair<std::filesystem::path, std::string>>
+trim_map(const std::vector<mcpp::modgraph::PackageRoot>& packages,
+         const mcpp::toolchain::Toolchain& tc,
+         const std::filesystem::path& outputDir,
+         const std::vector<std::filesystem::path>& storeRoots) {
+    std::vector<std::pair<std::filesystem::path, std::string>> out;
+    auto add = [&](std::filesystem::path from, std::string to) {
+        if (from.empty() || !from.is_absolute()) return;
+        from = from.lexically_normal();
+        while (from.has_relative_path() && from.filename().empty()) from = from.parent_path();
+        if (from == from.root_path()) return;   // never map `/` itself
+        if (std::ranges::any_of(out, [&](auto const& e) { return e.first == from; })) return;
+        out.emplace_back(std::move(from), std::move(to));
+    };
+    add(mcpp::home::root(), "/mcpp/home");
+    for (auto const& s : storeRoots) add(s, "/mcpp/store");
+    add(tc.localRoot.empty() ? tc.binaryPath.parent_path().parent_path()
+                             : std::filesystem::path(tc.localRoot), "/mcpp/toolchain");
+    if (tc.base.stated()) add(tc.base.root, "/mcpp/sysroot");
+    add(outputDir, "/mcpp/build");
+    for (auto const& p : packages)
+        if (!p.manifest.package.name.empty())
+            add(p.root, std::format("{}@{}", p.manifest.package.name,
+                                    p.manifest.package.version.empty() ? std::string("0")
+                                                                       : p.manifest.package.version));
+    std::ranges::stable_sort(out, {}, [](auto const& e) { return e.first.native().size(); });
+    return out;
+}
+
 std::expected<BuildPlan, std::string>
 make_plan(const mcpp::manifest::Manifest&         manifest,
          const mcpp::toolchain::Toolchain&       tc,
@@ -1550,6 +1591,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     plan.toolchain        = tc;
     plan.fingerprint      = fp;
     for (auto const& p : packages) plan.packageRoots.push_back(p.root);
+    if (manifest.buildConfig.trimPaths)
+        plan.trimMap = trim_map(packages, tc, outputDir, storeRoots);
 
     // The ROOT package's extension table. Only the synthesized entry main
     // needs it — every scanned unit arrives with its kind already set by the

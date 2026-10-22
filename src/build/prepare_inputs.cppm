@@ -562,6 +562,9 @@ std::string canonical_configuration_flags(const mcpp::manifest::Manifest& root,
     s += " debug="; s += root.buildConfig.debug ? "1" : "0";
     s += " lto=";   s += root.buildConfig.lto   ? "1" : "0";
     s += " strip="; s += root.buildConfig.strip ? "1" : "0";
+    // Only when on: a profile that has neither keeps the identity it had.
+    if (root.buildConfig.ndebug)    s += " ndebug=1";
+    if (root.buildConfig.trimPaths) s += " trim_paths=1";
     if (!root.buildConfig.dependencyLinkage.empty()) {
         s += " deplinkage=";
         s += root.buildConfig.dependencyLinkage;

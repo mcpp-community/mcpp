@@ -27,6 +27,13 @@ std::string quote(std::string_view s);
 std::string quote_windows(std::string_view s);
 std::string quote_posix(std::string_view s);
 
+// AN ARGUMENT OF A COMMAND PRINTED FOR A PERSON TO PASTE (mcpp#832). Left as
+// it is when the shell would read it as one word anyway, so the common
+// message reads as it always did; quoted by this host's shell rules when it
+// would not -- a space, a quote, a glob or a shell metacharacter. Every
+// suggested command that carries a path builds the argument with this.
+std::string paste_arg(std::string_view s);
+
 // An argument that must survive TWO parsers: cmd.exe's, and then the child
 // program's own argv parsing.
 //
@@ -114,6 +121,20 @@ std::string quote_windows(std::string_view s) {
     out.append(backslashes * 2, '\\');
     out.push_back('"');
     return out;
+}
+
+std::string paste_arg(std::string_view s) {
+#if defined(_WIN32)
+    constexpr bool is_windows = true;
+#else
+    constexpr bool is_windows = false;
+#endif
+    const bool plain = !s.empty() && std::ranges::all_of(s, [](unsigned char c) {
+        return std::isalnum(c) || c == '/' || c == '.' || c == '_' || c == '-' || c == ':'
+            || c == '@' || c == '+' || c == '=' || c == ',' || c == '%' || c == '~'
+            || (c == '\\' && is_windows) || c >= 0x80;
+    });
+    return plain ? std::string(s) : quote(s);
 }
 
 std::string quote_posix(std::string_view s) {

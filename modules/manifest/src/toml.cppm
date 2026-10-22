@@ -1155,6 +1155,14 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 pr.strip = it->second.as_bool();
                 pr.stripDeclared = true;
             }
+            if (auto it = tt.find("ndebug"); it != tt.end() && it->second.is_bool()) {
+                pr.ndebug = it->second.as_bool();
+                pr.ndebugDeclared = true;
+            }
+            if (auto it = tt.find("trim_paths"); it != tt.end() && it->second.is_bool()) {
+                pr.trimPaths = it->second.as_bool();
+                pr.trimPathsDeclared = true;
+            }
             auto read_list = [&](const char* key, std::vector<std::string>& out) {
                 if (auto it = tt.find(key); it != tt.end() && it->second.is_array())
                     for (auto& v : it->second.as_array())

@@ -921,6 +921,23 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
     if (state.tc->compiler == mcpp::toolchain::CompilerId::GCC && !state.overrides.plan_only)
         ctx.plan.gccCleanSpecs = mcpp::toolchain::write_clean_link_specs(
             state.tc->binaryPath, ctx.outputDir);
+    // THE WAY BACK FROM A TRIMMED PATH (design 2026-10-23 §15.3): a debugger
+    // loads these and finds the sources the debug information names by
+    // `<name>@<version>/…`. Written with the build that produced them, and
+    // only when there is debug information for them to serve.
+    if (!ctx.plan.trimMap.empty() && state.m->buildConfig.debug && !state.overrides.plan_only) {
+        std::error_code ec;
+        std::filesystem::create_directories(ctx.outputDir, ec);
+        std::ofstream gdb(ctx.outputDir / "source-map.gdbinit", std::ios::binary | std::ios::trunc);
+        std::ofstream lldb(ctx.outputDir / "source-map.lldbinit", std::ios::binary | std::ios::trunc);
+        gdb << "# mcpp trim_paths: the trimmed source paths, mapped back. `source <this file>`\n";
+        lldb << "# mcpp trim_paths: the trimmed source paths, mapped back. `command source <this file>`\n";
+        for (auto it = ctx.plan.trimMap.rbegin(); it != ctx.plan.trimMap.rend(); ++it) {
+            gdb  << std::format("set substitute-path {} {}\n", it->second, it->first.generic_string());
+            lldb << std::format("settings append target.source-map {} \"{}\"\n", it->second,
+                                it->first.generic_string());
+        }
+    }
 }
 
 static std::expected<void, std::string> step13_build_graph_actions(PrepareState& state, BuildContext& ctx) {

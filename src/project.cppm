@@ -348,6 +348,11 @@ void merge_layer_root_position(mcpp::manifest::Manifest& member,
         if (!to.debugDeclared && from.debugDeclared) { to.debug = from.debug; to.debugDeclared = true; }
         if (!to.ltoDeclared && from.ltoDeclared) { to.lto = from.lto; to.ltoDeclared = true; }
         if (!to.stripDeclared && from.stripDeclared) { to.strip = from.strip; to.stripDeclared = true; }
+        if (!to.ndebugDeclared && from.ndebugDeclared) { to.ndebug = from.ndebug; to.ndebugDeclared = true; }
+        if (!to.trimPathsDeclared && from.trimPathsDeclared) {
+            to.trimPaths = from.trimPaths;
+            to.trimPathsDeclared = true;
+        }
         if (!to.dependencyLinkageDeclared && from.dependencyLinkageDeclared) {
             to.dependencyLinkage = from.dependencyLinkage;
             to.dependencyLinkageDeclared = true;

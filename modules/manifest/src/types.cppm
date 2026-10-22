@@ -1104,6 +1104,11 @@ struct BuildConfig : BuildInputs {
     // the build summary, which says `+ lto (partial)` rather than `+ lto`.
     bool                                ltoPartial = false;
     bool                                strip    = false; // link -s
+    // `-DNDEBUG` for every unit of the graph (the profile's `ndebug`).
+    bool                                ndebug   = false;
+    // `-ffile-prefix-map` for every unit (the profile's `trim_paths`): the
+    // paths an artifact carries name packages and roles, not this machine.
+    bool                                trimPaths = false;
     // `[build].default-profile` (alias: `profile`) — the project's DEFAULT
     // profile when no --profile/--dev/--release is passed. The global convention
     // default stays "release"; this lets a project opt its plain `mcpp build`
@@ -1981,6 +1986,14 @@ struct Profile {
     bool        debugDeclared = false;
     bool        ltoDeclared   = false;
     bool        stripDeclared = false;
+    // `ndebug` and `trim_paths` (design 2026-10-23 §15.3-§15.4). Their
+    // defaults depend on the profile's NAME -- on for `release` and `dist`,
+    // off for `dev` and `debug` -- so "not written" is kept apart from
+    // either value and the default is applied where the name is known.
+    bool        ndebug           = false;
+    bool        ndebugDeclared   = false;
+    bool        trimPaths        = false;
+    bool        trimPathsDeclared = false;
     // `dependency_linkage`, per profile (#519).
     //
     // DECLARED-OR-NOT IS LOAD-BEARING, and that is why there are two members

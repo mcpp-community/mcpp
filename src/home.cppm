@@ -270,7 +270,10 @@ std::expected<Selection, std::string> choose(const std::filesystem::path& target
     auto before = inspect(*original);
     if (!before && !force) return std::unexpected(before.error());
     if (before && !same_path(before->effective, *effective) && initialized(before->effective) && !force)
-        return std::unexpected(std::format("a home is already initialized at '{}'; use `mcpp self init --force --home {}` to select '{}'", spelling(before->effective), spelling(*effective), spelling(*effective)));
+        // The command is for pasting into a shell, so the path in it is
+        // quoted by the shell's rules (mcpp#832: a home under `/tmp/mc probe`
+        // printed a command that selected `/tmp/mc` and passed `probe` on).
+        return std::unexpected(std::format("a home is already initialized at '{}'; use `mcpp self init --force --home {}` to select '{}'", spelling(before->effective), mcpp::platform::shell::paste_arg(spelling(*effective)), spelling(*effective)));
     if (!same_path(*original, *effective) && (contains_path(*original, *effective) || contains_path(*effective, *original)))
         return std::unexpected("the original and selected home must not contain each other");
     Selection result{.original = *original, .effective = *effective,
