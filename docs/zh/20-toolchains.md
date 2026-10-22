@@ -872,7 +872,7 @@ error: [target.x86_64-linux-gnu].sysroot (mcpp.toml:7): gcc 16.1.0's runtime req
 本机目标的动态产物**绑定**其基座:PT_INTERP 是基座的 loader,RUNPATH 指向基座的 C 库目录,
 程序运行在它编译时所用的 C 库上。`glibc@system` 经宿主的标准 loader 绑定,不写 RUNPATH。
 交叉目标以及 Apple 与 MSVC 行把基座视为**下限**。基座的身份(陈述、根目录、测量所依据文件的
-大小与修改时间)进入指纹,因此原地改写的 sysroot 会触发重建。`mcpp pack` 报告程序及随包库所需的
+大小与修改时间)进入指纹,因此原地改写的 sysroot 会触发重建。对这样的构建,`mcpp pack` 报告程序及随包库所需的
 最高 glibc 版本,并写入 `HOST-REQUIREMENTS`。
 
 ```

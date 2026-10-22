@@ -290,6 +290,11 @@ step9_gather_target_side_candidates(PrepareState& state) {
                     ;
                 else if (auto const* ovr = base_statement_text(state, *tt); ovr && ovr->empty())
                     in.sysrootDeclaredEmpty = true;
+                // A LOCATED Apple SDK is the platform's, not a C library
+                // package: the layers it supplies are reported as they were.
+                else if (tt->is_apple() && ovr
+                         && (ovr->starts_with("path:") || ovr->find(':') == std::string::npos))
+                    ;
                 else {
                     in.sysrootXpkg = mcpp::toolchain::triple::effective_sysroot(*tt, ovr);
                     if (ovr && (ovr->starts_with("path:") || ovr->find(':') == std::string::npos))

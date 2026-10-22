@@ -290,6 +290,14 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
     };
 
     if (row.address == tb::Address::AppleIsysroot) {
+        if (stmt->form != tb::Form::Locator && stmt->form != tb::Form::Path) {
+            // A package or "" on an Apple row: the meaning it always had,
+            // which names no SDK. Stated, so reported; not a located base.
+            tc.base.form = tb::Form::Default;
+            tc.base.text.clear();
+            record_source(state, std::move(d));
+            return {};
+        }
         tc.base.runtime = tb::Runtime::Floor;
         const bool cross = !tc.base.apple.root.empty();
         tc.base.root = cross ? tc.base.apple.root : state.appleSdkLocated.value_or(fs::path{});

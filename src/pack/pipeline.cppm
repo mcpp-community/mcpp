@@ -559,6 +559,7 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
     }
 
     // ─── Build the plan ──────────────────────────────────────────────
+    opts.baseStated = ctx.tc.base.stated();
     auto plan = mcpp::pack::make_plan(ctx.manifest, *run.cfg, opts,
         mainBinary, ctx.projectRoot, ctx.tc.targetTriple,
         // From the RESOLVED graph. `mcpp why runtime` on a real imgui project

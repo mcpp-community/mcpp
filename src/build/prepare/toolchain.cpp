@@ -698,7 +698,8 @@ step1_apple_sdk_check(PrepareState& state, TargetOverrideCtx& ctx) {
     if (ctx.parsed && ctx.parsed->os == "macos") {
         auto stmt = base_statement(state, *ctx.parsed);
         if (!stmt) return std::unexpected(stmt.error());
-        if (stmt->stated()) {
+        if (stmt->form == mcpp::toolchain::base::Form::Locator
+            || stmt->form == mcpp::toolchain::base::Form::Path) {
             auto sdk = mcpp::toolchain::base::locate_apple(*stmt, mcpp::platform::macos::sdk_macos);
             if (!sdk) {
                 refusal::record(refusal::Code::AppleSdkAbsent);
@@ -717,7 +718,10 @@ step1_apple_sdk_check(PrepareState& state, TargetOverrideCtx& ctx) {
         auto stmt = base_statement(state, *ctx.parsed);
         if (!stmt) return std::unexpected(stmt.error());
         mcpp::toolchain::base::Statement asked = *stmt;
-        if (!asked.stated()) {
+        // Only a locator and a path name an SDK; a package or "" keep the
+        // meaning they had on this row, and the SDK is the default one.
+        if (asked.form != mcpp::toolchain::base::Form::Locator
+            && asked.form != mcpp::toolchain::base::Form::Path) {
             asked.form = mcpp::toolchain::base::Form::Locator;
             asked.family = std::string(which);
             asked.version = "system";
@@ -2254,6 +2258,13 @@ step2_windows_runtime_identity(PrepareState& state) {
           mcpp::platform::runtime::bind_windows_ucrt(
               state.runtimeBindingSnapshot, state.tc->base.msvc.sdkVersion);
           state.tc->runtimeContractHash = state.runtimeBindingSnapshot.contractHash;
+          // And the artifact's runtime, when a stated base re-derived it:
+          // the floor and the base's identity are both part of its contract.
+          if (state.targetRuntimeBinding) {
+              mcpp::platform::runtime::bind_windows_ucrt(
+                  *state.targetRuntimeBinding, state.tc->base.msvc.sdkVersion);
+              state.tc->runtimeContractHash = state.targetRuntimeBinding->contractHash;
+          }
       }
 }
 

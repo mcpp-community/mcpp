@@ -212,14 +212,16 @@ inline RowBase row_base(const triple::Triple& t) {
     if (t.is_freestanding())
         return {Address::Multilib, static_cast<std::uint8_t>(pkg | path | empty), {},
                 "a package (\"xim:picolibc-riscv@1.8.12\"), { path = \"<dir>\" } or \"\""};
+    // The Apple rows took a package and "" before they took a locator, and
+    // those spellings keep their meaning (§9).
     if (t.os == "macos")
-        return {Address::AppleIsysroot, static_cast<std::uint8_t>(loc | path), "macosx",
+        return {Address::AppleIsysroot, static_cast<std::uint8_t>(loc | path | pkg | empty), "macosx",
                 "\"macosx@system\", \"macosx@<version>\" or { path = \"<dir>\" }"};
     if (t.is_ios_simulator())
-        return {Address::AppleIsysroot, static_cast<std::uint8_t>(loc | path), "iphonesimulator",
+        return {Address::AppleIsysroot, static_cast<std::uint8_t>(loc | path | pkg | empty), "iphonesimulator",
                 "\"iphonesimulator@system\", \"iphonesimulator@<version>\" or { path = \"<dir>\" }"};
     if (t.is_ios())
-        return {Address::AppleIsysroot, static_cast<std::uint8_t>(loc | path), "iphoneos",
+        return {Address::AppleIsysroot, static_cast<std::uint8_t>(loc | path | pkg | empty), "iphoneos",
                 "\"iphoneos@system\", \"iphoneos@<version>\" or { path = \"<dir>\" }"};
     if (t.os == "windows" && t.is_msvc_env())
         return {Address::MsvcRoots, static_cast<std::uint8_t>(pkg | loc | path), "msvc",

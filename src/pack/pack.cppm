@@ -99,6 +99,9 @@ ClosureUnavailableOutcome closure_unavailable_outcome(Format format) {
 
 struct Options {
     Mode                            mode         = Mode::BundleProject;
+    // The build stated its target base (design 2026-10-23 §4.11): the base it
+    // was built against becomes the C library floor the package states.
+    bool                            baseStated   = false;
     Format                          format       = Format::Tar;
     // The `--format` value when `format == Dispatched`. Empty otherwise.
     //
@@ -2541,7 +2544,12 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     // the program and every library shipped beside it need. Said once on the
     // terminal and written to HOST-REQUIREMENTS, where a reader of the bundle
     // looks for what the target must provide.
-    if (plan.opts.mode == Mode::BundleProject || plan.opts.mode == Mode::None) {
+    //
+    // Only for a build that STATED its base: that is the case whose floor is a
+    // decision someone made (an old glibc, for distributions older than this
+    // machine). The ecosystem's own base packs exactly as it did.
+    if (plan.opts.baseStated
+        && (plan.opts.mode == Mode::BundleProject || plan.opts.mode == Mode::None)) {
         std::vector<std::string> needs;
         auto consider = [&](const std::filesystem::path& p) {
             if (auto f = mcpp::platform::elf::inspect_elf_runtime(p))

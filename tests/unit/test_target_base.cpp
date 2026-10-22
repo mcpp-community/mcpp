@@ -101,7 +101,8 @@ TEST(TargetBaseRows, EachRowTakesItsOwnForms) {
     EXPECT_FALSE(tb::refusal(sim, *tb::parse_text("iphonesimulator@system")));
     EXPECT_FALSE(tb::refusal(sim, *tb::parse_text("path:/sdk")));
     EXPECT_TRUE(tb::refusal(sim, *tb::parse_text("iphoneos@system")));
-    EXPECT_TRUE(tb::refusal(sim, *tb::parse_text("")));
+    // The spellings the row took before it took a locator keep their meaning.
+    EXPECT_FALSE(tb::refusal(sim, *tb::parse_text("")));
 
     auto msvc = *parse("x86_64-windows-msvc");
     EXPECT_FALSE(tb::refusal(msvc, *tb::parse_text("msvc@system")));
@@ -200,8 +201,10 @@ TEST(TargetBaseApple, SdkrootOnEveryHost) {
     EXPECT_EQ(found->root, sdk);
     EXPECT_EQ(found->version, "18.5");
     EXPECT_FALSE(tb::locate_apple(*tb::parse_text("iphonesimulator@17.0"), "iphonesimulator"));
-    // SDKROOT names one SDK and does not answer for another.
-    EXPECT_FALSE(tb::locate_apple(*tb::parse_text("iphoneos@system"), "iphoneos"));
+    // SDKROOT names one SDK and does not answer for another. (On an Apple
+    // host `xcrun` answers next, and Xcode's iPhoneOS SDK is found there.)
+    if (!mcpp::platform::is_macos)
+        EXPECT_FALSE(tb::locate_apple(*tb::parse_text("iphoneos@system"), "iphoneos"));
     EXPECT_EQ(mcpp::platform::macos::sdk_has_target(sdk, "x86_64-ios-simulator"), true);
     EXPECT_EQ(mcpp::platform::macos::sdk_has_target(sdk, "x86_64-ios"), false);
 }

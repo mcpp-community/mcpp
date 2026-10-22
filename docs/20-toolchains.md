@@ -970,7 +970,7 @@ the C library it was compiled against. `glibc@system` binds through the host's
 standard loader and adds no RUNPATH. A cross target and the Apple and MSVC rows
 treat the base as a **floor**. The base's identity -- its statement, its root and
 the size and time of the files it was measured by -- enters the fingerprint, so a
-sysroot rewritten in place rebuilds. `mcpp pack` reports the highest glibc the
+sysroot rewritten in place rebuilds. For such a build `mcpp pack` reports the highest glibc the
 program and its packed libraries need and writes it to `HOST-REQUIREMENTS`.
 
 ```

@@ -24,9 +24,9 @@
   naming both versions (`libstdc++.so.6: GLIBC_2.38` against glibc 2.31).
 - A native artifact binds its base: PT_INTERP and RUNPATH name the base's loader
   and C library, and closure validation checks against it. The base's identity
-  enters the fingerprint, so a sysroot rewritten in place rebuilds. `mcpp pack`
-  states the highest glibc the program and its packed libraries need and writes
-  it to `HOST-REQUIREMENTS`.
+  enters the fingerprint, so a sysroot rewritten in place rebuilds. For such a
+  build `mcpp pack` states the highest glibc the program and its packed
+  libraries need and writes it to `HOST-REQUIREMENTS`.
 - `Using sysroot glibc 2.31 ← third_party/sysroot [custom · mcpp.toml:12]`,
   `mcpp why sysroot`, and `base` / `execution` in `resolution.json`.
   `--managed-only` names a stated base. A new refusal code, `target-base`.
