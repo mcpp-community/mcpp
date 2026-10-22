@@ -138,9 +138,7 @@ base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t) {
     if (state.overrides.host_target || state.overrides.tool_depth > 0)
         return settle(tb::Statement{});
 
-    // 1. Overrides.
-    if (auto v = override_value(state.overrides.sysroot))
-        return settle(stamped(std::move(*v), "env", {}, 0, "--sysroot"));
+    // 1. Overrides (`--sysroot` is `MCPP_SYSROOT`).
     for (auto name : {target_env_name(t, "SYSROOT"), std::string("MCPP_SYSROOT")}) {
         const char* e = std::getenv(name.c_str());
         if (auto v = override_value(e ? std::string_view(e) : std::string_view{}))

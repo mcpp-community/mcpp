@@ -956,6 +956,28 @@ step9_layering_and_requirement_checks(PrepareState& state, TargetSideGather& gat
             refusal::record(refusal::Code::LayerOrdering);
             return std::unexpected(*why);
         }
+        // RULE ONE, FOR A STATED BASE (design 2026-10-23 §2.4, SPEC-002 §3.1):
+        // a base that supplies the C library is a supplier, and a second one
+        // in the graph is two C libraries in one image. The row's own column
+        // stands down for a graph supplier (§3.5 of SPEC-002); a STATED base
+        // does not, so the two are named and the build refused.
+        if (const auto& b = state.tc->base; b.stated() && gather.in.cAbi
+            && (b.form == mcpp::toolchain::base::Form::Path
+                || b.form == mcpp::toolchain::base::Form::Locator
+                || b.form == mcpp::toolchain::base::Form::Package)
+            && b.address != mcpp::toolchain::base::Address::MsvcRoots
+            && b.address != mcpp::toolchain::base::Address::AppleIsysroot) {
+            refusal::record(refusal::Code::TargetBase);
+            return std::unexpected(std::format(
+                "the C library is supplied twice: sysroot {}{} ← {} and graph {} ← {}@{}.\n"
+                "       One image has one C library. Drop the sysroot statement, or the package "
+                "that provides `mcpp:c-abi`.",
+                b.libc.empty() ? std::string("(unmeasured)") : b.libc,
+                b.libcVersion.empty() ? std::string{} : " " + b.libcVersion, b.text,
+                gather.in.cAbi->interfaceName.empty() ? gather.in.cAbi->name
+                                                      : gather.in.cAbi->interfaceName,
+                gather.in.cAbi->name, gather.in.cAbi->version));
+        }
         // REQUIREMENTS ARE CHECKED BEFORE ANYTHING IS COMPILED, WHICH IS THE
         // WHOLE POINT OF DECLARING THEM. The combination this rejects — a C++
         // runtime configured for one compiler family being handed to another —

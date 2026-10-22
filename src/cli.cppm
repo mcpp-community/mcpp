@@ -260,6 +260,14 @@ int run(int argc, char** argv) {
             if (i + 1 < argc) mcpp::platform::env::set("MCPP_TOOLCHAIN", argv[++i]);
         }
         else if (a.starts_with("--toolchain=")) mcpp::platform::env::set("MCPP_TOOLCHAIN", std::string(a.substr(12)));
+        // --sysroot is `MCPP_SYSROOT` for this invocation (design 2026-10-23
+        // §3.3), for the reason --toolchain is: its consumer is the base
+        // statement deep in prepare, and the fast paths read the variable to
+        // know a build's base changed.
+        else if (a == "--sysroot") {
+            if (i + 1 < argc) mcpp::platform::env::set("MCPP_SYSROOT", argv[++i]);
+        }
+        else if (a.starts_with("--sysroot=")) mcpp::platform::env::set("MCPP_SYSROOT", std::string(a.substr(10)));
         else if (a.starts_with("-j") && a.size() > 2)
             mcpp::platform::env::set("MCPP_JOBS", std::string(a.substr(2)));
         // --play-game rides the same channel: its value is optional
@@ -426,6 +434,7 @@ int run(int argc, char** argv) {
         .option(cl::Option("managed-only")
             .help("Fail if a toolchain, payload or plugin tool does not come from the ecosystem")
             .global())
+
         // Answers "what do you speak" without spawning a command that might
         // fail. An optimisation, NOT the client's detection rule: on any mcpp
         // predating it this is itself an unknown option, so a client must
@@ -456,6 +465,8 @@ int run(int argc, char** argv) {
                 .help("Concurrent compiles: a number, or 'auto' to size from cores + free RAM"))
             .option(cl::Option("toolchain").takes_value().value_name("SPEC")
                 .help("Build with this toolchain for one build, e.g. llvm@22.1.8"))
+            .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
+                .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
             .option(cl::Option("no-cache")
                 .help("Deprecated alias for --cache=off (also clears the build dir)"))
             .option(cl::Option("target").takes_value().help(
@@ -524,6 +535,8 @@ int run(int argc, char** argv) {
             // unknown option (#634 A10).
             .option(cl::Option("toolchain").takes_value().value_name("SPEC")
                 .help("Build with this toolchain for one invocation, e.g. llvm@22.1.8"))
+            .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
+                .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
             .option(cl::Option("cache").takes_value().value_name("MODE")
                 .help("Global dependency cache: global (default) | local | off"))
             .option(cl::Option("no-cache")
@@ -620,6 +633,8 @@ int run(int argc, char** argv) {
                 .help("Run the tests of the named workspace member (namespace.name or package name, then directory); repeat to test several"))
             .option(cl::Option("toolchain").takes_value().value_name("SPEC")
                 .help("Build the tests with this toolchain for one invocation, e.g. llvm@22.1.8"))
+            .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
+                .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
             .option(cl::Option("cache").takes_value().value_name("MODE")
                 .help("Global dependency cache: global (default) | local | off"))
             .option(cl::Option("no-cache")
@@ -653,6 +668,8 @@ int run(int argc, char** argv) {
                 .help("Ask about this target instead of the project's default"))
             .option(cl::Option("toolchain").takes_value()
                 .help("Ask about this toolchain, e.g. llvm@22.1.8"))
+            .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
+                .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
             .option(cl::Option("features").takes_value().value_name("LIST")
                 .help("Resolve with these features, as `build --features` does (root features and <dependency>/<feature>)"))
             .option(cl::Option("format").takes_value().value_name("json")
@@ -733,6 +750,8 @@ int run(int argc, char** argv) {
             .option(cl::Option("dev").help("Shorthand for --profile dev"))
             .option(cl::Option("toolchain").takes_value().value_name("SPEC")
                 .help("Build with this toolchain for one invocation, e.g. llvm@22.1.8"))
+            .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
+                .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
             .option(cl::Option("features").takes_value().value_name("LIST")
                 .help("Activate root-package features, and a dependency's as <dependency>/<feature>, for every build pass of the pack (comma-separated)"))
             // `--format` names the PACKAGE format here, so machine output is
@@ -787,6 +806,8 @@ int run(int argc, char** argv) {
                     .help("Describe the build for <triple> (same axis as `mcpp build --target`)"))
                 .option(cl::Option("toolchain").takes_value().value_name("SPEC")
                     .help("Describe the build with this toolchain, e.g. llvm@22.1.8"))
+                .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
+                    .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
                 .option(cl::Option("accel").takes_value().value_name("SPEC")
                     .help("Device backends and architectures (same axis as `mcpp build --accel`)"))
                 .option(cl::Option("no-accel")

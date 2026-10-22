@@ -4540,7 +4540,43 @@ sysroot = "newlib"
 )";
     auto m = mcpp::manifest::parse_string(src);
     ASSERT_FALSE(m.has_value());
-    EXPECT_NE(m.error().format().find("xpkg reference"), std::string::npos);
+    EXPECT_NE(m.error().format().find("is not a sysroot"), std::string::npos);
+}
+
+// The table form names a directory, absolute against the manifest's own
+// directory, and carries what it supplies (design 2026-10-23 §3.1).
+TEST(Manifest, TargetSysrootTableNamesADirectory) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.x86_64-linux-gnu]
+sysroot = { path = "third_party/sysroot", provides = ["mcpp:c-abi=glibc"] }
+run_under = ["remote-run", "team-mac", "--"]
+)";
+    auto m = mcpp::manifest::parse_string(src, "/work/proj/mcpp.toml");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    auto it = m->targetOverrides.find("x86_64-linux-gnu");
+    ASSERT_NE(it, m->targetOverrides.end());
+    EXPECT_TRUE(it->second.sysrootDeclared);
+    EXPECT_EQ(it->second.sysroot, "path:/work/proj/third_party/sysroot");
+    ASSERT_EQ(it->second.sysrootProvides.size(), 1u);
+    EXPECT_EQ(it->second.runUnder, (std::vector<std::string>{"remote-run", "team-mac", "--"}));
+    for (auto const& w : m->schemaWarnings)
+        EXPECT_EQ(w.find("sysroot"), std::string::npos) << w;
+}
+
+TEST(Manifest, TargetSysrootTableRefusesOtherKeys) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.x86_64-linux-gnu]
+sysroot = { path = "/opt/s", libc = "glibc" }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().format().find("`path`"), std::string::npos) << m.error().format();
 }
 
 // The unknown-scalar sweep must not report a key it now honours — the exact
@@ -4604,11 +4640,12 @@ TEST(Manifest, MsvcRowSysrootRefusesWhatIsNotAnMsvcToolset) {
     }
 }
 
-TEST(Manifest, TheMsvcSpellingIsNotASysrootElsewhere) {
-    // On every other row the key keeps its xpkg-reference grammar.
+TEST(Manifest, TheMsvcSpellingIsAcceptedByTheGrammarElsewhere) {
+    // On every other row the spelling is a locator the grammar knows; which
+    // row takes it is decided where the target is known
+    // (`mcpp.toolchain.base::refusal`, tests/unit/test_target_base.cpp).
     auto m = msvc_row("x86_64-windows-gnu", "msvc@14.44.35207");
-    ASSERT_FALSE(m.has_value());
-    EXPECT_NE(m.error().format().find("xpkg reference"), std::string::npos);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
 }
 
 // ── Dependency version requirements are checked where they are written ───────
@@ -5012,7 +5049,7 @@ runnerX = ["qemu-aarch64-static"]
     // tests/unit/test_target_scalar_keys.cpp for the test that keeps this
     // string (and the array beside it) from drifting from the parser again.
     EXPECT_NE(m->schemaWarnings[0].find(
-                  "Supported keys: cxx_runtime, linkage, min_api_level, runner, "
+                  "Supported keys: cxx_runtime, linkage, min_api_level, run_under, runner, "
                   "sysroot, toolchain"),
               std::string::npos) << m->schemaWarnings[0];
 }

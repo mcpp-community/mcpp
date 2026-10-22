@@ -108,6 +108,9 @@ TEST(TargetBaseRows, EachRowTakesItsOwnForms) {
     EXPECT_FALSE(tb::refusal(msvc, *tb::parse_text("xim:msvc@14.44")));
     EXPECT_TRUE(tb::refusal(msvc, *tb::parse_text("acme:vs@1")));
 
+    // The MSVC spelling on a MinGW row names another platform's toolset.
+    EXPECT_TRUE(tb::refusal(*parse("x86_64-windows-gnu"), *tb::parse_text("msvc@14.44.35207")));
+
     // An SDK toolchain's row carries its own system: no new form.
     auto android = *parse("aarch64-linux-android");
     EXPECT_TRUE(tb::refusal(android, *tb::parse_text("path:/ndk")));

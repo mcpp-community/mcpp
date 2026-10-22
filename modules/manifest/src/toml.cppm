@@ -3841,12 +3841,18 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 "abi", "build", "build-dependencies", "dependencies",
                 "dev-dependencies", "feature-deps", "feature-requires-abi",
                 "feature-xlings", "requires_abi", "runners", "runtime",
-                "sysroot", "targets", "xlings",
+                "targets", "xlings",
             };
             for (auto& [key, value] : body) {
                 if (value.is_table()) {
                     if (std::ranges::find(kKnownTargetTables, key)
                         != std::end(kKnownTargetTables))
+                        continue;
+                    // A scalar key whose value may also be written as a table
+                    // (`sysroot = { path = ... }`) is a value, not a section;
+                    // it was parsed, or refused, above.
+                    if (std::ranges::find(kKnownTargetScalars, key)
+                        != std::end(kKnownTargetScalars))
                         continue;
                     std::string tables;
                     for (auto name : kKnownTargetTables) {
