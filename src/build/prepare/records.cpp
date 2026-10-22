@@ -560,6 +560,31 @@ void step13_resolution_json(PrepareState& state, BuildContext& ctx) {
                 {"root",    tcr.base.msvc.sdkRoot.generic_string()},
             };
         }
+        // THE TARGET BASE AND THE EXECUTION HOST (design 2026-10-23 §4.10).
+        // Present on every build, so "the ecosystem's base" is a value a
+        // reader sees rather than an absence it has to interpret.
+        {
+            namespace tb = mcpp::toolchain::base;
+            const auto& b = ctx.plan.toolchain.base;
+            nlohmann::json dirs = nlohmann::json::array();
+            for (auto const& d : b.runtimeDirs) dirs.push_back(d.generic_string());
+            j["base"] = {
+                {"form", std::string(tb::form_name(b.form))},
+                {"statement", b.text},
+                {"address", std::string(tb::address_name(b.address))},
+                {"runtime", std::string(tb::runtime_name(b.runtime))},
+                {"root", b.root.generic_string()},
+                {"c_abi", {{"impl", b.libc}, {"version", b.libcVersion}}},
+                {"multiarch", b.multiarch ? b.multiarchTuple : std::string{}},
+                {"loader", b.loader.generic_string()},
+                {"runtime_dirs", std::move(dirs)},
+                {"identity", b.identity},
+            };
+            j["execution"] = {
+                {"run_under", ctx.runUnder},
+                {"origin", ctx.runUnderOrigin},
+            };
+        }
         // WHERE EACH SOURCE CAME FROM (mcpp#755): the decision record, one
         // entry per subject, as `mcpp why` reads it. Added beside the other
         // keys; no reader keys on `schema_version`.

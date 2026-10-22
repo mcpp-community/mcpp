@@ -1533,12 +1533,12 @@ export int why_report(const std::string& topic, const std::string& features,
                       const std::string& subject = {}) {
     const bool all = topic.empty() || topic == "all";
     static constexpr std::string_view kTopics[] = {
-        "all", "toolchain", "runtime", "deps", "runners", "sources", "tool", "payload",
+        "all", "toolchain", "sysroot", "runtime", "deps", "runners", "sources", "tool", "payload",
         "build-programs", "compat",
     };
     if (!topic.empty() && std::ranges::find(kTopics, std::string_view(topic)) == std::end(kTopics)) {
         std::println(stderr, "error: '{}' is not a topic of `mcpp why`; the topics are "
-                     "toolchain, runtime, deps, runners, sources, tool <name>, "
+                     "toolchain, sysroot, runtime, deps, runners, sources, tool <name>, "
                      "payload <ns:name>, build-programs and compat", topic);
         return 2;
     }
@@ -1592,6 +1592,31 @@ export int why_report(const std::string& topic, const std::string& features,
                 as += a;
             }
             std::println("  declared accelerators: {}  (CI matrix hint)", as);
+        }
+    }
+    // THE TARGET BASE (design 2026-10-23 §4.10): what was stated, where, and
+    // what was measured there -- the one resolution every reader used.
+    if (all || topic == "sysroot") {
+        namespace tb = mcpp::toolchain::base;
+        const auto& b = tc.base;
+        std::println("sysroot: {}", b.stated() ? b.text : std::string("(the ecosystem's default)"));
+        std::println("  address={}  runtime={}{}", tb::address_name(b.address),
+                     tb::runtime_name(b.runtime),
+                     b.root.empty() ? std::string{} : "  root=" + b.root.generic_string());
+        if (!b.libc.empty())
+            std::println("  c-abi={}{}{}", b.libc, b.libcVersion.empty() ? "" : " " + b.libcVersion,
+                         b.multiarch ? "  multiarch=" + b.multiarchTuple : std::string{});
+        if (!b.loader.empty()) std::println("  loader={}", b.loader.generic_string());
+        for (auto const& d : b.runtimeDirs) std::println("  runtime dir {}", d.generic_string());
+        if (!b.identity.empty()) std::println("  identity={}", b.identity);
+        if (auto it = std::ranges::find_if(ctx->sources,
+                [](const mcpp::build::SourceDecision& d) { return d.subject == "sysroot"; });
+            it != ctx->sources.end())
+            std::println("  source: {}", mcpp::build::source_tag(*it, ctx->projectRoot));
+        if (!ctx->runUnder.empty()) {
+            std::string shown;
+            for (auto const& a : ctx->runUnder) shown += (shown.empty() ? "" : " ") + a;
+            std::println("run_under: {}  [{}]", shown, ctx->runUnderOrigin);
         }
     }
     if (all || topic == "sources" || topic == "tool" || topic == "payload")

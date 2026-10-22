@@ -643,7 +643,7 @@ int run(int argc, char** argv) {
             .action(wrap_rc(cmd_clean)))
         .subcommand(cl::App("why")
             .description("Explain how the toolchain / runtime / deps / runners / sources were resolved")
-            .arg(cl::Arg("topic").help("toolchain | runtime | deps | runners | sources | tool | payload | build-programs | compat (default: all)"))
+            .arg(cl::Arg("topic").help("toolchain | sysroot | runtime | deps | runners | sources | tool | payload | build-programs | compat (default: all)"))
             .arg(cl::Arg("subject").help("for `tool` and `payload`: the name to look up"))
             // `--target` / `--toolchain` make this a QUERY rather than a
             // report on the current directory's default: "what would a build

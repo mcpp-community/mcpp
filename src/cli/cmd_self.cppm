@@ -107,6 +107,9 @@ export int cmd_why(const mcpplibs::cmdline::ParsedArgs& parsed) {
             return 2;
         }
         const std::string topic = parsed.positional(0);
+        if (topic == "sysroot")
+            return mcpp::doctor::why_sources_json("sources", "sysroot",
+                                                  parsed.option_or_empty("features").value());
         if (topic == "sources" || topic == "tool" || topic == "payload")
             return mcpp::doctor::why_sources_json(topic, parsed.positional(1),
                                                   parsed.option_or_empty("features").value());

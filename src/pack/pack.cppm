@@ -52,6 +52,9 @@ import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.manifest;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.base;
+import mcpp.ui;
+import mcpp.runtime.elf;
 
 export namespace mcpp::pack {
 
@@ -2531,6 +2534,32 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     // archive was refused before any file was edited.
     if (!unresolvedText.empty())
         return finish_without_closure(plan, unresolvedText, std::move(needs));
+
+    // THE C LIBRARY THE MACHINE THAT RUNS IT MUST HAVE (design 2026-10-23
+    // §4.11). A package that loads the target's own C library binds no base:
+    // the base it was built against becomes a FLOOR, the highest `GLIBC_x.y`
+    // the program and every library shipped beside it need. Said once on the
+    // terminal and written to HOST-REQUIREMENTS, where a reader of the bundle
+    // looks for what the target must provide.
+    if (plan.opts.mode == Mode::BundleProject || plan.opts.mode == Mode::None) {
+        std::vector<std::string> needs;
+        auto consider = [&](const std::filesystem::path& p) {
+            if (auto f = mcpp::platform::elf::inspect_elf_runtime(p))
+                needs.insert(needs.end(), f->requiredGlibcVersions.begin(),
+                             f->requiredGlibcVersions.end());
+        };
+        consider(bundledBinary);
+        for (auto const& [staged, source] : bundledCopies) consider(staged);
+        if (auto floor = mcpp::toolchain::base::highest_glibc(needs); !floor.empty()) {
+            mcpp::ui::info("Requires", std::format(
+                "glibc >= {} on the machine that runs it (the highest GLIBC_ version "
+                "the program and the libraries packed with it need)", floor));
+            auto reqs = plan.hostRequirements;
+            reqs.push_back({std::format("c-abi.glibc>={}", floor), "PT_INTERP", true});
+            std::ofstream out(plan.stagingRoot / std::filesystem::path(kFileName));
+            out << render(reqs);
+        }
+    }
 
     // Output.
     if (plan.opts.format == Format::Tar) {
