@@ -148,7 +148,7 @@ default_target = "x86_64-linux-gnu"
 
 在 Luban OS 上，系统级配置同时写出 `/xlings`，因此机器上已有的 payload 只存在一份。
 
-`config.toml`(用户级,其次系统级)还可以陈述本机对某个目标的默认值(2026.10.23.1+):它的基座,
+`config.toml`(用户级,其次系统级)还可以陈述本机对某个目标的默认值(2026.10.24.1+):它的基座,
 以及它的产物如何到达执行它的机器。工程的 `mcpp.toml` 优先于二者,`MCPP_TARGET_<三元组>_SYSROOT` /
 `_RUN_UNDER` 覆盖三者;相对的 `path` 相对于写它的那个 `config.toml`。
 

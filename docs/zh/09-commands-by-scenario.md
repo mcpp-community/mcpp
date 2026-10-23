@@ -137,7 +137,7 @@ sources:
       considered: payload xim:cmake@>=3.31 (not installed: overridden)
 ```
 
-`mcpp why sysroot` 报告目标基座(2026.10.23.1+):陈述了什么、在哪里陈述、在那里测量到什么、产物加载
+`mcpp why sysroot` 报告目标基座(2026.10.24.1+):陈述了什么、在哪里陈述、在那里测量到什么、产物加载
 什么,以及存在时执行宿主的包装前缀:
 
 ```

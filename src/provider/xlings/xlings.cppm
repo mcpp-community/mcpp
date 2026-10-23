@@ -146,7 +146,14 @@ namespace pinned {
     // download socket budgets share the provider's actual transport. Read-only
     // queries do not adopt a home or create an operation journal; older custom
     // providers are queried for metadata only in an isolated temporary home.
-    inline constexpr std::string_view kXlingsVersion   = "2026.10.19.1";
+    //
+    // Twelfth, at 2026.10.24.1 (openxlings/xlings#699, released through #701).
+    // Below it, a script package's alias was `xlings script <path>` unquoted,
+    // and the shim split it at whitespace: under a home whose path holds a
+    // space a script package's hook could not load (mcpp#832). The index
+    // works around it for gcc (openxlings/xim-pkgindex#1035); this floor
+    // closes it for every script package.
+    inline constexpr std::string_view kXlingsVersion   = "2026.10.24.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 

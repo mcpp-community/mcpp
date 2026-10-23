@@ -1352,7 +1352,7 @@ Exit code 1 keeps its meaning — a test ran and failed — and 0 means every te
 ran and passed. `--message-format json` carries `"status":"not_run"` and a
 `reason` on each record, and `not_run` / `not_run_reason` on the summary
 record (see [50 — Machine-Readable Output](50-machine-output.md)).
-#### 2.7.3.2 `sysroot` and `run_under` (2026.10.23.1+)
+#### 2.7.3.2 `sysroot` and `run_under` (2026.10.24.1+)
 
 Two more keys of `[target.<triple>]` describe what the target is built against
 and where its artifacts execute:
@@ -1500,7 +1500,7 @@ ldflags  = []
 - Built-in profiles: `release` (-O2) / `dev`, `debug` (-O0 -g) / `dist` (-O3 + strip;
   **LTO is not enabled by default**). `[profile.<built-in name>]` can override a
   built-in definition wholesale.
-- **`ndebug` and `trim_paths` (2026.10.23.1+)** follow the industry's convention: on
+- **`ndebug` and `trim_paths` (2026.10.24.1+)** follow the industry's convention: on
   for `release` and `dist`, off for `dev`, `debug` and a custom profile that does not
   state them. `ndebug` defines `NDEBUG` for every unit, so `assert` compiles out, as in
   CMake's Release and Meson's `b_ndebug=if-release`. `trim_paths` maps every absolute

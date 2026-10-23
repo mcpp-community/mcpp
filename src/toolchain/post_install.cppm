@@ -396,7 +396,7 @@ std::filesystem::path write_clean_link_specs(
         std::getline(is, head);
         std::getline(is, body);
         if (!body.starts_with("%(sysroot_spec) ")) return out;
-        // Written by a pre-release build of 2026.10.23.1; regenerated once.
+        // Written by a pre-release build of 2026.10.24.1; regenerated once.
     }
 
     // An argument vector: the command-string form carried `2>/dev/null`, which

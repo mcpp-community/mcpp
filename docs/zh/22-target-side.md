@@ -949,7 +949,7 @@ sysroot = ""                          # no C library at all
 要的正是这一档，而把两种情形合并会让这类工程静默地把目标的 C 库拿回去。
 
 取值是一个包引用、一个定位器(`glibc@system`、`iphoneos@18.5`)、一个表
-`{ path = "<目录>", provides = [...] }` 或空字符串(2026.10.23.1+);裸名在解析清单时即被拒绝,
+`{ path = "<目录>", provides = [...] }` 或空字符串(2026.10.24.1+);裸名在解析清单时即被拒绝,
 因为接受它会导致什么都不安装,然后在很晚的时候以「缺少 libc」失败。被陈述的基座在规则一下是
 `c-abi` 的一个供给者:依赖图中另有包提供 `mcpp:c-abi` 时,构建被拒绝并点名两者。基座被测量为
 供给载荷 C++ 运行时所配置的那种 C 库、且版本不低于该运行时的要求时,载荷的 C++ 运行时仍可使用
@@ -958,7 +958,7 @@ sysroot = ""                          # no C library at all
 在 MSVC ABI 行（`*-windows-msvc`）上，sysroot 是 MSVC toolset，取值是 msvc 的
 写法（2026.9.24.1+）：`msvc@system`（键缺席时的默认）、`msvc@<toolset>`（已安装的
 同版本 toolset，没有时为载荷）或 `xim:msvc@<toolset>`（只要载荷）。这类行上的
-其他取值被拒绝。编译器为 clang 时,该行还接受 `{ path = "<目录>" }`(2026.10.23.1+):
+其他取值被拒绝。编译器为 clang 时,该行还接受 `{ path = "<目录>" }`(2026.10.24.1+):
 一棵解包的 Visual Studio 目录树或 clang 的 `/winsysroot` 布局,其中存在 `Windows Kits/10` 时使用它。见 [20 —— 工具链管理](20-toolchains.md) 中
 「MSVC ABI 上的 clang：toolset 就是 sysroot」一节。
 

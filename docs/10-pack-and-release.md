@@ -124,7 +124,7 @@ something to say: an empty file would be a *claim* that nothing is needed.
 
 A package built against a stated target base that loads the target's own C
 library (`vendored`, `system`) also states the lowest one it runs on
-(2026.10.23.1+): the highest `GLIBC_x.y` the
+(2026.10.24.1+): the highest `GLIBC_x.y` the
 program and the libraries packed with it need, printed as
 `Requires glibc >= 2.38 …` and written as
 `capability=c-abi.glibc>=2.38 discovery=PT_INTERP`. The base the program was

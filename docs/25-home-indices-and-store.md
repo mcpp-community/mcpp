@@ -184,7 +184,7 @@ On Luban OS the system configuration names `/xlings` as well, so a payload the
 machine already has exists on it once.
 
 `config.toml` (the user's, then the system's) may also state a machine's
-defaults for one target (2026.10.23.1+): its base and how its artifacts reach
+defaults for one target (2026.10.24.1+): its base and how its artifacts reach
 the machine that runs them. A project's `mcpp.toml` outranks both, and
 `MCPP_TARGET_<TRIPLE>_SYSROOT` / `_RUN_UNDER` override all three; a relative
 `path` is relative to the `config.toml` that writes it.

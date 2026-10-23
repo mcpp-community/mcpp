@@ -286,7 +286,7 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
                     "`ndebug = false` or `trim_paths = false` under [profile.{}]. Said once.",
                     pname, pname));
                 std::filesystem::create_directories(marker.parent_path(), ec);
-                std::ofstream(marker) << "2026.10.23.1\n";
+                std::ofstream(marker) << "2026.10.24.1\n";
             }
         }
         state.m->buildConfig.cflags.insert(state.m->buildConfig.cflags.end(),

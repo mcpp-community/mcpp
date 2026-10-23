@@ -4,7 +4,7 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
-## [2026.10.23.1] - 2026-10-23
+## [2026.10.24.1] - 2026-10-24
 
 ### Added
 
@@ -58,6 +58,12 @@
   false` under the profile to keep the previous artifact; the first shipping
   build after the upgrade says so once. Both profiles rebuild once; `dev` does
   not.
+- Bundle xlings 2026.10.24.1 and raise the vendored floor to it: a script
+  package's alias quotes its path, so its hook loads under a home whose path
+  holds a space (openxlings/xlings#699, mcpp#832).
+- The getting-started guide, the features page and the usage skill describe
+  package-owned project templates and the `mcpplibs.mwrap` adapter convention
+  (mcpp#835, #836).
 
 ### Fixed
 

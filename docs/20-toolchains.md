@@ -891,7 +891,7 @@ mcpp build --target aarch64-ios        # resolves llvm@23.1.3 + the iPhoneOS SDK
 mcpp build --target aarch64-ios-sim    # resolves llvm@23.1.3 + the Simulator SDK
 ```
 
-## The target base: `sysroot` (2026.10.23.1+)
+## The target base: `sysroot` (2026.10.24.1+)
 
 A sysroot is not a layer. It is the **prebuilt supplier** of a target's lower
 layers ([docs/22](22-target-side.md)): a directory organised the way the target's
@@ -1516,7 +1516,7 @@ error: cannot determine '#include' translation of …/家/…/bits/stdc++.h:
        malformed string 'ERROR 'unrecognized \'INCLUDE-TRANSLATE…
 ```
 
-A path with a space builds. mcpp names the cause after that error (2026.10.23.1+);
+A path with a space builds. mcpp names the cause after that error (2026.10.24.1+);
 the remedies are a home on an ASCII path (`mcpp self init --home <dir>`) or the
 llvm toolchain, whose modules do not use that protocol.
 

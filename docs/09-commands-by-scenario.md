@@ -155,7 +155,7 @@ sources:
       considered: payload xim:cmake@>=3.31 (not installed: overridden)
 ```
 
-`mcpp why sysroot` reports the target base (2026.10.23.1+): what was stated
+`mcpp why sysroot` reports the target base (2026.10.24.1+): what was stated
 and where, what was measured there, what an artifact loads, and the execution
 host's wrapper when there is one:
 

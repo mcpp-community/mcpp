@@ -807,7 +807,7 @@ mcpp build --target aarch64-ios        # resolves llvm@23.1.3 + the iPhoneOS SDK
 mcpp build --target aarch64-ios-sim    # resolves llvm@23.1.3 + the Simulator SDK
 ```
 
-## 目标基座:`sysroot`(2026.10.23.1+)
+## 目标基座:`sysroot`(2026.10.24.1+)
 
 sysroot 不是层。它是目标侧下层([docs/22](22-target-side.md))的**预制供给者**:
 一个按目标驱动约定组织的目录,供给 `c-abi`,通常还有 `kernel-abi`,可能还有 `c++-abi`、
@@ -1371,7 +1371,7 @@ error: cannot determine '#include' translation of …/家/…/bits/stdc++.h:
        malformed string 'ERROR 'unrecognized \'INCLUDE-TRANSLATE…
 ```
 
-含空格的路径可以构建。mcpp 在该错误之后点名原因(2026.10.23.1+);出路是把 home 放在 ASCII 路径上
+含空格的路径可以构建。mcpp 在该错误之后点名原因(2026.10.24.1+);出路是把 home 放在 ASCII 路径上
 (`mcpp self init --home <dir>`),或使用 llvm 工具链,它的模块不经过这一协议。
 
 ## C++ 运行时契约（`cxx_runtime`）

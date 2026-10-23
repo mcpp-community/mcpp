@@ -1261,7 +1261,7 @@ error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot exe
 `"status":"not_run"` 与一个 `reason`，摘要记录上则是 `not_run` /
 `not_run_reason`（见[50 —— 机器可读输出](50-machine-output.md)）。
 
-#### 2.7.3.2 `sysroot` 与 `run_under`(2026.10.23.1+)
+#### 2.7.3.2 `sysroot` 与 `run_under`(2026.10.24.1+)
 
 `[target.<三元组>]` 另有两个键,分别描述目标针对什么构建、产物在哪里执行:
 
@@ -1399,7 +1399,7 @@ ldflags  = []
 - 内置 profile：`release`（-O2）/ `dev`、`debug`（-O0 -g）/ `dist`
   （-O3 + strip；**默认不启用 LTO**）。`[profile.<内置名>]` 可以整体
   覆盖一个内置定义。
-- **`ndebug` 与 `trim_paths`(2026.10.23.1+)** 跟随业界惯例:`release` 与 `dist` 默认开启,
+- **`ndebug` 与 `trim_paths`(2026.10.24.1+)** 跟随业界惯例:`release` 与 `dist` 默认开启,
   `dev`、`debug` 以及未陈述它们的自定义 profile 默认关闭。`ndebug` 为每个单元定义 `NDEBUG`,
   `assert` 因此不再展开,与 CMake 的 Release、Meson 的 `b_ndebug=if-release` 相同。`trim_paths`
   把产物会携带的每个绝对前缀——`__FILE__`、`std::source_location`、断言消息与调试信息中的——

@@ -111,7 +111,7 @@ capability=opengl.glx.driver discovery=rpath-of-dispatch
 文件只在确有内容需要说明时才写出：一个空文件等于**声称**什么都不需要。
 
 针对一个被陈述的目标基座构建、且加载目标自身 C 库的包(`vendored`、`system`)还陈述它能运行的最低
-C 库(2026.10.23.1+):程序与
+C 库(2026.10.24.1+):程序与
 随包库所需的最高 `GLIBC_x.y`,打印为 `Requires glibc >= 2.38 …`,并写为
 `capability=c-abi.glibc>=2.38 discovery=PT_INTERP`。程序构建时所针对的基座即成为这一下限;
 `self-contained` 则随包带上基座自己的 loader 与 C 库。`mcpp pack` 使用的 `release` 与 `dist` 档
