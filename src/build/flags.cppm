@@ -411,9 +411,17 @@ std::filesystem::path staged_std_bmi_path(const BuildPlan& plan) {
     return mcpp::toolchain::staged_std_bmi_path(plan.toolchain, plan.outputDir);
 }
 
-// Escape a path for embedding in ninja rule strings (native separators).
+// One path as one word of a ninja `command = ` line (native separators):
+// quoted for the host when the shell would split or expand it, `$` escaped for
+// ninja. A path the shell reads as it is keeps the old spelling byte for byte;
+// the question is asked of the generic form, so that a Windows separator alone
+// does not quote every path on that host. Until #832 this escaped for ninja
+// alone, and a home under a directory with a space handed gcc `-B/tmp/mc` and
+// `probe/home/…` as two words.
 std::string escape_path(const std::filesystem::path& p) {
-    return escape_ninja_chars(p.string());
+    const auto s = p.string();
+    const auto g = p.generic_string();
+    return shell_quote_arg(g) == g ? escape_ninja_chars(s) : ninja_command_word(s);
 }
 
 // One WORD of the link-flag list, with a package-relative search path made
@@ -773,17 +781,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // --no-default-config and provide everything explicitly.
     const auto dm = mcpp::toolchain::resolve_clang_driver(plan.toolchain);
     const auto lm = mcpp::toolchain::resolve_link_model(plan.toolchain);
-    // ONE WORD PER PATH, QUOTED WHEN IT HAS TO BE. `escape_path` escapes for
-    // ninja and does not quote, so a path with a space reached the command as
-    // two words. No path this line carries on Linux or macOS had one; the MSVC
-    // toolset on the clang row always has one (`C:\Program Files\...`). A
-    // path without whitespace keeps its old spelling byte for byte.
+    // ONE WORD PER PATH, QUOTED WHEN IT HAS TO BE (`escape_path`): the MSVC
+    // toolset on the clang row always has a space (`C:\Program Files\...`),
+    // and a home under such a directory gives every payload path one.
     const mcpp::toolchain::PathEscape ninjaEsc =
-        [](const std::filesystem::path& p) {
-            const auto s = p.string();
-            return s.find_first_of(" \t") == std::string::npos
-                ? escape_path(p) : ninja_command_word(s);
-        };
+        [](const std::filesystem::path& p) { return escape_path(p); };
 
     std::string compile_toolchain_flags;
     std::string link_toolchain_flags;

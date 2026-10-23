@@ -385,6 +385,15 @@ std::string escape_ninja_path(const std::filesystem::path& p) {
     return out;
 }
 
+// A program as the first word of a `command = ` line, bound to a variable
+// (`cxx = …`). The value is not a node name: ninja hands it to the shell (or to
+// CreateProcess) as text, so it is quoted for the host and only `$` is escaped
+// for ninja. `escape_ninja_path` here turned a space into a literal space, and
+// a home at `/tmp/mc probe/home` ran `/tmp/mc` (#832).
+std::string ninja_tool_word(const std::filesystem::path& p) {
+    return ninja_command_word(p.generic_string());
+}
+
 std::string escape_flag_path(const std::filesystem::path& p) {
     // generic_string() for the same reason node names use it (#247): on
     // Windows these -I/-idirafter paths are copied verbatim into a response
@@ -749,9 +758,11 @@ std::vector<std::string> command_prefixes(const CompileFlags& flags,
     std::vector<std::string> prefixes;
     auto add = [&](const std::filesystem::path& p) {
         if (p.empty()) return;
-        auto s = p.string();
-        if (std::find(prefixes.begin(), prefixes.end(), s) == prefixes.end())
-            prefixes.push_back(std::move(s));
+        // The echoed command line spells the program as the graph does,
+        // quoted when the path needs it (`ninja_tool_word`).
+        for (auto s : {p.string(), shell_quote_arg(p.generic_string())})
+            if (std::find(prefixes.begin(), prefixes.end(), s) == prefixes.end())
+                prefixes.push_back(std::move(s));
     };
     add(flags.cxxBinary);
     add(flags.ccBinary);
@@ -1454,7 +1465,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         plan.toolchain.binaryPath, plan.toolchain.targetTriple);
 
     if (!fsObjcopy.empty()) {
-        append("objcopy = " + escape_ninja_path(fsObjcopy) + "\n\n");
+        append("objcopy = " + ninja_tool_word(fsObjcopy) + "\n\n");
         // ── The raw image a flasher takes ──────────────────────────────────
         //
         // A SEPARATE EDGE with the ELF as its input, not a second output of
@@ -1482,7 +1493,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // The launcher (mcpp#755) prefixes the compiler in every rule that runs it;
     // a link through ccache is passed to the compiler unchanged.
     const std::string launch = flags.launcher.empty() ? std::string{}
-        : escape_ninja_path(std::filesystem::path(flags.launcher)) + " ";
+        : ninja_tool_word(std::filesystem::path(flags.launcher)) + " ";
     // D29: THE TOOLCHAIN'S PRIVATE LIBRARIES ARE THE TOOLCHAIN'S. A managed
     // LLVM's library directories used to be put in ninja's environment as
     // LD_LIBRARY_PATH, so every `/bin/sh -c` ninja starts inherited them. A
@@ -1504,11 +1515,11 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         return mcpp::platform::linux_::build_clean_ld_library_path_prefix(
             plan.toolchain.compilerRuntimeDirs);
     }();
-    append(std::format("cxx       = {}{}{}\n", toolEnv, launch, escape_ninja_path(flags.cxxBinary)));
+    append(std::format("cxx       = {}{}{}\n", toolEnv, launch, ninja_tool_word(flags.cxxBinary)));
     // The driver alone, for the dependency scan: `clang-scan-deps` reads its
     // argv[0] as the compiler (and the resource directory beside it), and a
     // launcher there is not one.
-    append(std::format("cxx_driver = {}\n", escape_ninja_path(flags.cxxBinary)));
+    append(std::format("cxx_driver = {}\n", ninja_tool_word(flags.cxxBinary)));
     append(std::format("cxxflags  = {}\n", flags.cxx));
     // ALWAYS emitted, for the reason `c_ldflags` is, 26 lines below — and the
     // two are referenced by the SAME rules. mcpp#426 recorded that reasoning
@@ -1531,7 +1542,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // static case, which goes to `ar` and produces an empty archive with exit
     // 0, it does not touch at all. `check_undefined_ninja_variables` below is
     // what stops the class.
-    append(std::format("cc        = {}{}{}\n", toolEnv, launch, escape_ninja_path(flags.ccBinary)));
+    append(std::format("cc        = {}{}{}\n", toolEnv, launch, ninja_tool_word(flags.ccBinary)));
     if (need_c_rule || need_ios_init_shim) {
         append(std::format("cflags    = {}\n", flags.cc));
     }
@@ -1539,13 +1550,13 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         append(std::format("asmflags  ={}\n", flags.as));
     }
     if (need_nasm_rule) {
-        append(std::format("nasm      = {}\n", escape_ninja_path(plan.nasmPath)));
+        append(std::format("nasm      = {}\n", ninja_tool_word(plan.nasmPath)));
         append(std::format("nasmfmt   = {}\n", plan.nasmFormat));
         append(std::format("nasmflags ={}\n", flags.nasm));
     }
     const bool need_rc_rule = !plan.resourceUnits.empty();
     if (need_rc_rule) {
-        append(std::format("rc        = {}{}\n", toolEnv, escape_ninja_path(plan.rcPath)));
+        append(std::format("rc        = {}{}\n", toolEnv, ninja_tool_word(plan.rcPath)));
         std::string rcf;
         for (auto const& f : plan.rcFlags) { rcf += ' '; rcf += shell_quote_arg(f); }
         append(std::format("rcflags   ={}\n", rcf));
@@ -1559,7 +1570,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
 
     // `ar` for cxx_archive.
     if (!flags.arBinary.empty()) {
-        append(std::format("ar        = {}{}\n", toolEnv, escape_ninja_path(flags.arBinary)));
+        append(std::format("ar        = {}{}\n", toolEnv, ninja_tool_word(flags.arBinary)));
     } else {
         append("ar        = ar\n");
     }
@@ -1569,19 +1580,19 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     if (separateLinker) {
         append(std::format("ld        = {}\n",
             flags.ldBinary.empty() ? std::string("link.exe")
-                                   : escape_ninja_path(flags.ldBinary)));
+                                   : ninja_tool_word(flags.ldBinary)));
     }
     // The linker itself, for a freestanding target whose compiler driver would
     // hand the link to a foreign one. Bound only when set, so a graph that does
     // not use it has no variable naming a tool it never runs.
     if (!flags.ldDriver.empty())
-        append(std::format("ld_driver = {}{}\n", toolEnv, escape_ninja_path(flags.ldDriver)));
+        append(std::format("ld_driver = {}{}\n", toolEnv, ninja_tool_word(flags.ldDriver)));
     // `$mcpp` is needed by stage_file in EVERY configuration (dyndep or not),
     // so the binding cannot live inside the `if (dyndep)` below.
-    append(std::format("mcpp      = {}\n", escape_ninja_path(mcpp_exe_path())));
+    append(std::format("mcpp      = {}\n", ninja_tool_word(mcpp_exe_path())));
     if (dyndep) {
         if (!plan.scanDepsPath.empty()) {
-            append(std::format("scan_deps = {}{}\n", toolEnv, escape_ninja_path(plan.scanDepsPath)));
+            append(std::format("scan_deps = {}{}\n", toolEnv, ninja_tool_word(plan.scanDepsPath)));
         }
     }
     append("\n");

@@ -305,6 +305,18 @@ TEST(ReadEngineBinding, TheEscapedPathIsReadBack) {
     EXPECT_EQ(read_engine_binding(tmp.path / "build.ninja"), "C:/Program Files/mcpp$1/mcpp.exe");
 }
 
+// The binding is a command word, quoted for the host (#832): a POSIX graph
+// writes single quotes, a Windows graph double quotes.
+TEST(ReadEngineBinding, TheQuotedWordIsReadBack) {
+    Tmp tmp;
+    write_file(tmp.path / "build.ninja",
+               "mcpp      = '/tmp/mc probe/it'\\''s/$$1/mcpp'\n");
+    EXPECT_EQ(read_engine_binding(tmp.path / "build.ninja"), "/tmp/mc probe/it's/$1/mcpp");
+    write_file(tmp.path / "build.ninja",
+               "mcpp      = \"C:/Program Files/mcpp/mcpp.exe\"\n");
+    EXPECT_EQ(read_engine_binding(tmp.path / "build.ninja"), "C:/Program Files/mcpp/mcpp.exe");
+}
+
 TEST(ReadEngineBinding, AGraphWithoutTheBindingSaysNothing) {
     Tmp tmp;
     write_file(tmp.path / "build.ninja", "cxx = clang++\nmcpp_extra = x\nrule cxx\n");

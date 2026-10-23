@@ -374,9 +374,11 @@ int run_to_completion(std::string_view command,
     // i.e. `-I` gone, reported as a missing header (#425).
     //
     // ninja concatenates verbatim (`subprocess-win32.cc`), and this edge exists
-    // to run exactly what ninja would have run. Do the same.
-    std::string line = "cmd.exe /c ";
-    line += command;
+    // to run exactly what ninja would have run. Do the same, inside the one
+    // pair of quotes `/s` removes (`windows_shell_command_line`): the command's
+    // first word is quoted when the compiler's path holds a space (#832), and
+    // without `/s` cmd.exe strips the first and the LAST quote of the line.
+    std::string line = mcpp::platform::process::windows_shell_command_line(command);
 
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     // The wide API: an extended-length log path (`bmi-supervise` receives one,

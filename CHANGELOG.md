@@ -74,7 +74,10 @@
 - A command printed for pasting quotes a path that holds a space
   (`mcpp self init --force --home '/tmp/mc probe/home'`, mcpp#832).
 - A fresh home whose path holds a space builds the default project (with
-  openxlings/xim-pkgindex#1032 and #1035). Under a path outside ASCII, gcc's
+  openxlings/xim-pkgindex#1032, #1035 and #1044). The programs a build graph
+  runs (`cxx`, `cc`, `ar`, `mcpp`, …) and the toolchain paths on its command
+  lines (`-B`, `-isysroot`, `-ffile-prefix-map`, …) are quoted for the host;
+  they were escaped for ninja alone and split at the space. Under a path outside ASCII, gcc's
   module mapper cannot precompile `std`; mcpp now names that cause and the two
   ways out after the error.
 

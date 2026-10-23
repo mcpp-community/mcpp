@@ -151,12 +151,26 @@ std::string read_engine_binding(const std::filesystem::path& ninjaPath) {
         while (!value.empty() && value.front() == ' ') value.remove_prefix(1);
         while (!value.empty() && (value.back() == '\r' || value.back() == ' '))
             value.remove_suffix(1);
-        // The inverse of escape_ninja_path: `$$`, `$:` and `$ ` stand for the
-        // character after the dollar.
-        std::string out;
+        // The inverse of the emitter's `ninja_tool_word`: ninja's `$` escape,
+        // then the host's quoting. A graph written before the word was quoted
+        // used `$ ` and `$:`, which the first step reads as well.
+        std::string word;
         for (std::size_t i = 0; i < value.size(); ++i) {
-            if (value[i] == '$' && i + 1 < value.size()) { out += value[++i]; continue; }
-            out += value[i];
+            if (value[i] == '$' && i + 1 < value.size()) { word += value[++i]; continue; }
+            word += value[i];
+        }
+        std::string out;
+        if (word.size() >= 2 && word.front() == '"' && word.back() == '"') {
+            // A Windows word: a generic path carries no `"` and no `\`.
+            out = word.substr(1, word.size() - 2);
+        } else {
+            // A POSIX word: single quotes, an embedded `'` written `'\''`.
+            bool quoted = false;
+            for (std::size_t i = 0; i < word.size(); ++i) {
+                if (word[i] == '\'') { quoted = !quoted; continue; }
+                if (!quoted && word[i] == '\\' && i + 1 < word.size()) { out += word[++i]; continue; }
+                out += word[i];
+            }
         }
         return out;
     }
