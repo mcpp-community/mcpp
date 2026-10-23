@@ -969,6 +969,8 @@ jobs:
           chmod +x .github/tools/bump_index.sh
           # A4: BLOCKING — a missing bump PR means the index never learns the
           # release exists and every post-release install of the new version 404s.
+          # The index's own updater writes the PR (bump_index.sh says why);
+          # it needs the GitCode mirror above to be complete.
           bash .github/tools/bump_index.sh mcpp "${{ steps.version.outputs.version }}"
 
       # Post-release verification (ci-fresh-install) is triggered via its
