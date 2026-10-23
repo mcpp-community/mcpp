@@ -17,7 +17,7 @@ status: landed
   - §4.12：`fallback/sysroot_complete` 没有删除，改为只作用于生态自己的 subos 视图（与载荷同在一个 home 之下）。按路径命名的工具链报告的厂商 sysroot 不再被写入。
   - §3.3：`--sysroot` 是本次调用的 `MCPP_SYSROOT`，在 build、run、test、pack、why 与 emit 上声明，与 `--toolchain` 同形。
   - §15.4：`ndebug = false` 是唯一的改回方式，没有给 `defines` 引入 `!NAME` 语法。`defines` 是集合，增加取反语法会让这一节扩大成清单语法的修改。
-  - §15.3：cl.exe 不做探测，直接如实报告"本次未裁剪"（`diag::degraded`），没有使用未文档化的开关。
+  - §15.3：cl.exe 不做探测，直接如实报告"本次未裁剪"（`diag::note`，不会被 `--strict` 升级为错误，因为构建的行为没有改变），没有使用未文档化的开关。
   - §15.5 R4：检查门匹配构建机的检出目录（`GITHUB_WORKSPACE`），不用 `/(home|tmp)/`：二进制本身含有 `/tmp/`、`/home/` 字面量，动态链接的本地构建的 loader 与运行路径指向工具链存储（那是 pack 改写的对象，不是源码路径）。本地实测：旧发布的二进制命中 `/home/runner/work/mcpp/mcpp/modules/libs/src/json/json.hpp`，新引擎构建的 mcpp 不再含检出目录。它作用于 linux-x86_64（由本次发布的引擎在 pack 时重建）与 macOS（第二阶段自举）；Windows 与 aarch64 由引导用的旧版引擎构建，在引导版本前移后自然得到裁剪。
   - pack 的下限写为 `HOST-REQUIREMENTS` 中的 `capability=c-abi.glibc>=X discovery=PT_INTERP`，并打印 `Requires glibc >= X`。
   - 新增拒绝码 `target-base`。

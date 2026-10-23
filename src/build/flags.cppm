@@ -1153,10 +1153,12 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // that claimed to trim and did not would be worse than one that says so.
     if (prof.trimPaths && !plan.trimMap.empty()) {
         if (isMsvcDialect) {
-            mcpp::diag::degraded("build/trim_paths",
-                "trim_paths is on, and cl.exe has no documented switch that maps source paths",
-                "the artifact keeps the absolute paths it was built from; build with clang "
-                "(`*-windows-msvc` with llvm) to trim them");
+            // A note, not a degradation: nothing the build does changes, and
+            // `--strict` must not start refusing every cl.exe release build.
+            mcpp::diag::note("build/trim_paths",
+                "trim_paths is on, and cl.exe has no documented switch that maps source "
+                "paths: the artifact keeps the absolute paths it was built from (clang on "
+                "`*-windows-msvc` trims them)");
         } else {
             for (auto const& [from, to] : plan.trimMap)
                 opt_flag += " -ffile-prefix-map=" + escape_path(from) + "=" + to;
