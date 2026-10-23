@@ -115,6 +115,11 @@ mcpp new --list-templates ocornut.imgui@1.92.8
 那个唯一的模板。存在多个模板却没有默认值是一个错误，会指向
 `--list-templates`。没有另一套 `--variant` 词汇。
 
+包模板可以使用传统头文件库的模块化封装。模块名与 C++ API namespace 相互独立：
+import 封装模块不会重命名上游类型和函数。选择模板时使用该包已发布的身份与版本。
+[封装规范](https://github.com/mcpplibs/mcpp-index/blob/main/docs/mwrap.md)
+记录了 `mcpplibs.mwrap` 的命名和接口约定。
+
 包身份、版本与模板会在提交目标目录之前全部解析完成。下载、渲染、hook 或
 校验失败时，不会留下一个半成品的工程目录。
 
