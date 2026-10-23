@@ -22,6 +22,7 @@ status: landed
   - pack 的下限写为 `HOST-REQUIREMENTS` 中的 `capability=c-abi.glibc>=X discovery=PT_INTERP`，并打印 `Requires glibc >= X`。
   - 新增拒绝码 `target-base`。
   - §15.2：R3（e2e 932）在 CI 上实测出链路上的第二处缺陷，位于 xlings：脚本类型包的别名写作未加引号的 `xlings script <路径>`，shim 按空白切分它（`failed to load script: package file not found: /tmp/…/mc`）。处理分两处：xim-pkgindex#1035 让 gcc 的 hook 以 argv 形式直接运行 `xlings script <脚本>`，不经别名，对已发布的所有 xlings 都成立，本次发布因此不依赖 xlings 的发布；openxlings/xlings#699 给别名中的路径加引号，修正根因。"不需要改 xlings"这一判断在实测后改为"本次发布不依赖 xlings 的修复，但 xlings 有一个需要修的缺陷"。索引侧另需修复的调用有 53 处，多于 §15.2 原先估计的范围。
+  - §15.5 R3：实测确认，空格路径可以构建；非 ASCII 字符（`家`）使 GCC 16 的 module mapper（libcody）在预编译 std 模块时失败（`malformed string … INCLUDE-TRANSLATE`）。这是上游限制：同一份 gcc 放在仅含空格的目录下可以构建。mcpp 在该错误之后点名原因与出路（ASCII 路径的 home，或 llvm）；R3 改为空格 home 必须能构建，非 ASCII home 要么构建、要么给出这条诊断。docs/20 记为已知工具链限制。
   - §15.3：`trim_paths` 不作用于 `mcpp test`（以及与之同面的 configure 过程）。CI 实测：mcpp 自己的单测在 release 默认档下借 `__FILE__` 定位仓库，被裁剪成 `workspace@0.0.0/src` 后全部找不到。测试二进制在构建处运行，不发布；`ndebug` 照常作用于测试（与 Cargo 的 release 关闭 `debug_assertions` 一致）。
   - §4.5：clean specs 不恢复 `%(sysroot_spec)`。回归 e2e 220 实测：链接器拿到 `--sysroot` 后，会把 sysroot 前缀加到每个输入共享库的 DT_RUNPATH 上，SubOS farm 中 `libEGL.so` 的 RUNPATH 以绝对路径指向载荷，于是 `libGLdispatch` 找不到。hello 程序逐字节相同的测量只覆盖了没有这类输入的链接。改为：被陈述的 gnu-sysroot 基座由渲染器给 gcc 显式加上 `-Wl,--sysroot=<root>`（clang 的驱动自己把 `--sysroot` 交给链接器），生态缺省视图不变。SPEC-006 §4.3 按此改写。
 

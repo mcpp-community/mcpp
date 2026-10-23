@@ -124,9 +124,24 @@ std::expected<std::string, StdModError> run_capture_command(
     if (r.exit_code != 0) {
         // Include the command: its --sysroot/-isystem flags are the first
         // thing needed to diagnose header-resolution failures.
+        std::string note;
+        // GCC'S MODULE MAPPER CANNOT CARRY A NON-ASCII PATH. Its protocol
+        // (libcody) quotes a header's path into an `INCLUDE-TRANSLATE`
+        // request and cannot parse its own encoding of a byte outside ASCII,
+        // so every `#include` of the standard library fails with
+        // `malformed string` when the toolchain lives under such a path --
+        // measured with gcc 16.1.0 under `/tmp/家/` (a path with a space
+        // builds). The cause is the path, and the message says so.
+        if (r.output.find("malformed string") != std::string::npos
+            && r.output.find("INCLUDE-TRANSLATE") != std::string::npos
+            && std::ranges::any_of(cmd, [](char c) { return static_cast<unsigned char>(c) >= 0x80; }))
+            note = "\nnote: gcc's module mapper cannot carry a path outside ASCII, and this "
+                   "toolchain's path has one (the mcpp home, or the tree it was named by).\n"
+                   "      Put the home on an ASCII path (`mcpp self init --home <dir>`), or build "
+                   "with llvm, whose modules do not go through that protocol.";
         return std::unexpected(StdModError{
-            std::format("std module precompile failed (rc={}):\n{}\ncommand: {}",
-                        r.exit_code, r.output, cmd)});
+            std::format("std module precompile failed (rc={}):\n{}\ncommand: {}{}",
+                        r.exit_code, r.output, cmd, note)});
     }
     return r.output;
 }

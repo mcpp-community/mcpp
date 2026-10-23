@@ -1504,6 +1504,22 @@ In `cxxflags` the std module's precompile does not see it.
 `i686-windows-msvc` is not a row of the target table; a project that builds
 for it declares `[target.i686-windows-msvc]`, as for any custom triple.
 
+## Known Toolchain Limitation: GCC Modules Under a Non-ASCII Path (gcc 16)
+
+GCC's module mapper protocol (libcody) cannot parse its own encoding of a byte
+outside ASCII. When the gcc toolchain lives under such a path -- an mcpp home
+under `/home/张三/` or `…/家/` -- every `#include` of the standard library fails
+while the `std` module is precompiled:
+
+```
+error: cannot determine '#include' translation of …/家/…/bits/stdc++.h:
+       malformed string 'ERROR 'unrecognized \'INCLUDE-TRANSLATE…
+```
+
+A path with a space builds. mcpp names the cause after that error (2026.10.23.1+);
+the remedies are a home on an ASCII path (`mcpp self init --home <dir>`) or the
+llvm toolchain, whose modules do not use that protocol.
+
 ## The C++ runtime contract (`cxx_runtime`)
 
 `cxx_runtime` states what the produced artifact promises about the machine that

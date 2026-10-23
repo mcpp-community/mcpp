@@ -73,6 +73,10 @@
   `tool.<role>` is refused by name; those keys were dropped without a word.
 - A command printed for pasting quotes a path that holds a space
   (`mcpp self init --force --home '/tmp/mc probe/home'`, mcpp#832).
+- A fresh home whose path holds a space builds the default project (with
+  openxlings/xim-pkgindex#1032 and #1035). Under a path outside ASCII, gcc's
+  module mapper cannot precompile `std`; mcpp now names that cause and the two
+  ways out after the error.
 
 ## [2026.10.22.1] - 2026-10-22
 

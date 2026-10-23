@@ -1360,6 +1360,20 @@ dialect_cxxflags = ["-D__cpp_impl_coroutine=201902L"]
 `i686-windows-msvc` 不是目标表中的一行；为它构建的项目需要声明
 `[target.i686-windows-msvc]`，与其他自定义三元组相同。
 
+## 已知工具链限制：非 ASCII 路径下的 GCC 模块（gcc 16）
+
+GCC 的 module mapper 协议(libcody)无法解析它自己对 ASCII 以外字节的编码。gcc 工具链位于这样的
+路径下时——mcpp home 在 `/home/张三/` 或 `…/家/` 之下——预编译 `std` 模块时,标准库的每个
+`#include` 都失败:
+
+```
+error: cannot determine '#include' translation of …/家/…/bits/stdc++.h:
+       malformed string 'ERROR 'unrecognized \'INCLUDE-TRANSLATE…
+```
+
+含空格的路径可以构建。mcpp 在该错误之后点名原因(2026.10.23.1+);出路是把 home 放在 ASCII 路径上
+(`mcpp self init --home <dir>`),或使用 llvm 工具链,它的模块不经过这一协议。
+
 ## C++ 运行时契约（`cxx_runtime`）
 
 `cxx_runtime` 声明的是产物对运行它的那台机器做出的承诺。它是**分发**属性，
