@@ -89,8 +89,9 @@ mcpp new --list-templates mcpplibs.mwrap.opencv@5.0.0.1
 包模板中的 `{{self.name}}` 是完整包选择器，应用 `"{{self.name}}"` 作为单个依赖 key，
 不要放到另一层 namespace 表下。模板必须实际创建、构建、运行，而不只做字符串检查。
 
-feature 是加法并集；消费者当前不能关闭依赖包的默认 features。`--features` 增加能力，不代表排除其他能力。
-因此可选大依赖应由包作者显式门控。模块可导入不等于实际后端已启用，窗口/推理/设备能力需分别验证。
+feature 是加法并集；消费者可在依赖声明中使用 `default-features = false` 关闭该边的默认集合，
+显式 features 仍会启用，其他依赖边的请求不会被取消。根项目没有 `--no-default-features` 命令行选项。
+可选大依赖由包作者显式门控。模块可导入不等于实际后端已启用，窗口/推理/设备能力需分别验证。
 宏不能经 import 传递；`.macros` 只提供可保持语义的常量/函数映射，原始宏仍需兼容头。
 
 维护规范与包装流程见 [mcpp-index mwrap 规范](https://github.com/mcpplibs/mcpp-index/blob/main/docs/mwrap.md)。
