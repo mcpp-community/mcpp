@@ -111,9 +111,13 @@ dump_child_logs() {
 }
 
 # --preset names the size instead of spelling it out, which is also the only
-# place the preset code path gets exercised.
+# place the preset code path gets exercised. `--weight 4` after it (a later
+# option refines the preset) keeps `cold` clear of the 2x-noop floor the
+# harness enforces: on the xcode-27 image a release noop costs 1.4s of
+# toolchain resolution, and the weight-1 smoke build measured 2.89s against it
+# (1.98x), a cold build read as one that did not rebuild.
 bench --engines "mcpp=$MCPP" --variants modules --scenarios cold,noop \
-         --preset smoke --runs 1 \
+         --preset smoke --weight 4 --runs 1 \
          --work "$TMP/work" --out "$TMP/report.json" > "$TMP/stdout.txt" \
   || { echo "harness exited non-zero"; dump_child_logs; exit 1; }
 
