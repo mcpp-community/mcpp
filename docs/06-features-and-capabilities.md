@@ -556,10 +556,19 @@ statement: private keeps the headers off a consumer's search path, and
 
 ## Current limitations
 
-**A default feature is turned off in the manifest, not on the command line.**
-There is no `--no-default-features`. `mcpp build --features metrics` activates
-`default ∪ {metrics}`; building without a member of `default` means editing
-`[features] default`. Measured on 2026.9.8.1.
+**The root's default features are changed in its manifest.** There is no
+`--no-default-features` command-line option. `mcpp build --features metrics`
+activates the root's `default ∪ {metrics}`.
+
+A consumer can suppress a dependency's own default set:
+
+```toml
+[dependencies]
+widget = { version = "1.2.3", default-features = false, features = ["metrics"] }
+```
+
+Explicit features still activate. Requests unify across dependency edges: an
+edge opting out does not cancel defaults or features another edge requests.
 
 **A dependency cannot be conditioned on the accelerator.** `accelerator` is
 resolved from the dependency graph, so a dependency chosen by it would decide

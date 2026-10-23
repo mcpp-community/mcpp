@@ -503,10 +503,18 @@ provides = ["platform-sdk"]
 
 ## 当前边界
 
-**默认 feature 在 manifest 里关掉，不在命令行上关掉。** 没有
-`--no-default-features`。`mcpp build --features metrics` 激活的是
-`default ∪ {metrics}`；要在不带 `default` 中某个成员的情况下构建，得改
-`[features] default`。实测于 2026.9.8.1。
+**根项目的默认 feature 在 manifest 中修改。** 没有 `--no-default-features`
+命令行选项。`mcpp build --features metrics` 激活根项目的 `default ∪ {metrics}`。
+
+消费者可以关闭依赖包自身的默认集合：
+
+```toml
+[dependencies]
+widget = { version = "1.2.3", default-features = false, features = ["metrics"] }
+```
+
+显式指定的 feature 仍会激活。不同依赖边的请求取并集：某条边关闭默认项，不会取消
+另一条边要求的默认项或 feature。
 
 **依赖不能以加速器为条件。** `accelerator` 是从依赖图中解析出来的，因此由它
 选择的依赖会决定它自己所问的那个答案。mcpp 会报告该谓词并忽略它。包要么无
