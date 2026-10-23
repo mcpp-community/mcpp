@@ -21,6 +21,7 @@ status: landed
   - §15.5 R4：检查门匹配构建机的检出目录（`GITHUB_WORKSPACE`），不用 `/(home|tmp)/`：二进制本身含有 `/tmp/`、`/home/` 字面量，动态链接的本地构建的 loader 与运行路径指向工具链存储（那是 pack 改写的对象，不是源码路径）。本地实测：旧发布的二进制命中 `/home/runner/work/mcpp/mcpp/modules/libs/src/json/json.hpp`，新引擎构建的 mcpp 不再含检出目录。它作用于 linux-x86_64（由本次发布的引擎在 pack 时重建）与 macOS（第二阶段自举）；Windows 与 aarch64 由引导用的旧版引擎构建，在引导版本前移后自然得到裁剪。
   - pack 的下限写为 `HOST-REQUIREMENTS` 中的 `capability=c-abi.glibc>=X discovery=PT_INTERP`，并打印 `Requires glibc >= X`。
   - 新增拒绝码 `target-base`。
+  - §15.2：R3（e2e 932）在 CI 上实测出链路上的第二处缺陷，位于 xlings：脚本类型包的别名写作未加引号的 `xlings script <路径>`，shim 按空白切分它（`failed to load script: package file not found: /tmp/…/mc`）。处理分两处：xim-pkgindex#1035 让 gcc 的 hook 以 argv 形式直接运行 `xlings script <脚本>`，不经别名，对已发布的所有 xlings 都成立，本次发布因此不依赖 xlings 的发布；openxlings/xlings#699 给别名中的路径加引号，修正根因。"不需要改 xlings"这一判断在实测后改为"本次发布不依赖 xlings 的修复，但 xlings 有一个需要修的缺陷"。索引侧另需修复的调用有 53 处，多于 §15.2 原先估计的范围。
   - §15.3：`trim_paths` 不作用于 `mcpp test`（以及与之同面的 configure 过程）。CI 实测：mcpp 自己的单测在 release 默认档下借 `__FILE__` 定位仓库，被裁剪成 `workspace@0.0.0/src` 后全部找不到。测试二进制在构建处运行，不发布；`ndebug` 照常作用于测试（与 Cargo 的 release 关闭 `debug_assertions` 一致）。
   - §4.5：clean specs 不恢复 `%(sysroot_spec)`。回归 e2e 220 实测：链接器拿到 `--sysroot` 后，会把 sysroot 前缀加到每个输入共享库的 DT_RUNPATH 上，SubOS farm 中 `libEGL.so` 的 RUNPATH 以绝对路径指向载荷，于是 `libGLdispatch` 找不到。hello 程序逐字节相同的测量只覆盖了没有这类输入的链接。改为：被陈述的 gnu-sysroot 基座由渲染器给 gcc 显式加上 `-Wl,--sysroot=<root>`（clang 的驱动自己把 `--sysroot` 交给链接器），生态缺省视图不变。SPEC-006 §4.3 按此改写。
 
@@ -818,7 +819,7 @@ json.hpp 的路径之所以出现，是因为 release 档没有定义 `NDEBUG`�
 | A.15 | Swift SDK 包要不要进核心？ | 不进；`SDKROOT` 跨宿主读取，`{ path }` 兜底，路径辅助由包提供（D18） |
 | A.16 | `x86_64-ios-sim` 有没有真实需求？ | 运行需求低，构建需求真实；用 CI 的 Intel job 低成本验证，纳入本 PR（§2.6、S15） |
 | A.17 | #832 的发布问题有没有放进方案？ | 放进同批（§15）：引号、`trim_paths`、`ndebug`、home 含空格的 e2e |
-| A.18 | 必须改 xlings 吗？ | 不必。`config.toml` 的 `[target.<triple>]` 由 mcpp 自己的 `src/config.cppm` 读取，与 xlings 无关；home 路径含空格只需改 xim-pkgindex（索引已有 `libs/` 共享库机制）；xlings 的 argv 形式 exec 是可以单独做的优化（§15.2） |
+| A.18 | 必须改 xlings 吗？ | 本次发布不依赖（rev 5：实测发现 xlings 脚本别名未加引号的缺陷，由 xlings#699 修正，索引侧 #1035 让本次链路不经别名）。原结论：不必。`config.toml` 的 `[target.<triple>]` 由 mcpp 自己的 `src/config.cppm` 读取，与 xlings 无关；home 路径含空格只需改 xim-pkgindex（索引已有 `libs/` 共享库机制）；xlings 的 argv 形式 exec 是可以单独做的优化（§15.2） |
 | A.19 | `NDEBUG` | 跟随业界惯例（§15.4） |
 | A.20 | 根包映射成 `<name>@<version>` 有什么用？ | 产物不暴露开发者的目录；不同目录、不同机器构建出的路径相同（可复现的前提）；崩溃与断言信息直接指明包和版本；调试时由生成的 source-map 映射回来（§15.3） |
 
