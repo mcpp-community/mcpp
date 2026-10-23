@@ -118,14 +118,12 @@ automatically uses the package's only template when none is explicitly marked.
 Multiple templates without one default are an error that points to
 `--list-templates`. There is no separate `--variant` vocabulary.
 
-Module wrappers for traditional C/C++ header libraries use the
-`mcpplibs.mwrap.<library>` package/module namespace, while preserving the
-upstream API namespace: importing an OpenCV wrapper still gives `cv::Mat`.
-Each newly published or refactored `-m` wrapper ships a runnable package template.
-Look up the package's published version before using its exact template selector;
-a candidate documented in a library PR may not be in the released index yet.
-See the [wrapper specification](https://github.com/mcpplibs/mcpp-index/blob/main/docs/mwrap.md)
-for the naming, version, feature and macro contract.
+A package template can use a module wrapper for a traditional header library.
+The module name and the C++ API namespace are independent: importing a wrapper
+does not rename the upstream types or functions. Use the package's published
+identity and version when selecting its template. The
+[wrapper specification](https://github.com/mcpplibs/mcpp-index/blob/main/docs/mwrap.md)
+documents the `mcpplibs.mwrap` naming and interface contract.
 
 The package identity, version, and template are fully resolved before the
 destination is committed. A failed download, render, hook, or validation leaves
