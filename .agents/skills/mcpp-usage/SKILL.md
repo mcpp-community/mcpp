@@ -72,6 +72,30 @@ license = "Apache-2.0"
 
 ## mcpp.toml 配置
 
+### 传统头文件库的模块化封装
+
+`mcpplibs.mwrap.<库名>` 为传统 C/C++ 库提供模块入口；API namespace 保留上游，例如
+`import mcpplibs.mwrap.opencv.core;` 后仍使用 `cv::Mat`。包版本对齐上游，封装修订最多追加一个数字尾号。
+具体已发布的版本/feature 先查索引，不把文档中的候选库当已发布包。
+
+每个新建或重构的 -m 库提供包自带快捷模板：
+
+```bash
+mcpp new vision --template mcpplibs.mwrap.opencv@5.0.0.1
+mcpp new --list-templates mcpplibs.mwrap.opencv@5.0.0.1
+```
+
+模板语法为 `[namespace.]name[@version][:template]`，只有一个默认模板时可以省略模板名。
+包模板中的 `{{self.name}}` 是完整包选择器，应用 `"{{self.name}}"` 作为单个依赖 key，
+不要放到另一层 namespace 表下。模板必须实际创建、构建、运行，而不只做字符串检查。
+
+feature 是加法并集；消费者当前不能关闭依赖包的默认 features。`--features` 增加能力，不代表排除其他能力。
+因此可选大依赖应由包作者显式门控。模块可导入不等于实际后端已启用，窗口/推理/设备能力需分别验证。
+宏不能经 import 传递；`.macros` 只提供可保持语义的常量/函数映射，原始宏仍需兼容头。
+
+维护规范与包装流程见 [mcpp-index mwrap 规范](https://github.com/mcpplibs/mcpp-index/blob/main/docs/mwrap.md)。
+修改普通消费者项目时按现有包契约使用，不自动替用户迁移其他依赖。
+
 ```toml
 [package]
 name = "myapp"
@@ -88,7 +112,7 @@ gtest = "1.15.2"            # 仅测试使用；SemVer: ^, ~, 范围, 精确
 default = "gcc@16.1.0"
 ```
 
-更多配置：https://github.com/mcpp-community/mcpp/blob/main/docs/05-mcpp-toml.md
+更多配置：https://github.com/mcpp-community/mcpp/blob/main/docs/04-mcpp-toml.md
 
 ## 工具链
 
