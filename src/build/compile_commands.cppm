@@ -798,8 +798,23 @@ void note_unrequested_root_compile_commands(const std::filesystem::path& project
         std::string head(4096, '\0');
         in.read(head.data(), static_cast<std::streamsize>(head.size()));
         head.resize(static_cast<std::size_t>(in.gcount()));
-        // mcpp's entries name the project's target/ as their directory.
-        if (head.find((projectRoot / "target").generic_string()) == std::string::npos) return;
+        // mcpp's entries name the project's target/ as their directory. On
+        // Windows the file spells it with escaped backslashes, and a drive
+        // letter in either case, so both sides are compared in one spelling.
+        auto spelling = [](std::string t) {
+            std::string out;
+            for (std::size_t i = 0; i < t.size(); ++i) {
+                if (t[i] == '\\') {
+                    if (i + 1 < t.size() && t[i + 1] == '\\') ++i;
+                    out.push_back('/');
+                } else {
+                    out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(t[i]))));
+                }
+            }
+            return out;
+        };
+        if (spelling(head).find(spelling((projectRoot / "target").generic_string())) == std::string::npos)
+            return;
     }
     mcpp::ui::note("compile_commands.json at the project root is no longer updated: the "
                    "database is in target/<triple>/<fingerprint>/. To keep a copy here, "

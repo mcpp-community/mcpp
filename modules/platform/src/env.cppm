@@ -68,6 +68,15 @@ void note_effect_refused(std::string_view effect, std::string_view what);
 // "network: install xim:gcc@15.1.0" -- the first refusal of this run, if any.
 std::optional<std::string> effect_refused();
 
+// WHETHER THIS RUN WRITES THE GLOBAL CACHE. Answers kept under the home (a
+// compiler's probe, the provider's handshake) are read by every command and
+// written only by a run whose effects include `write-global-cache`: one that
+// plans or builds (it says so with `note_writes_global_cache`) and was not
+// denied it. A query -- `self doctor`, `self env`, `toolchain list` -- declares
+// no such effect, so it leaves the home exactly as it found it.
+void note_writes_global_cache();
+bool writes_global_cache();
+
 // The older, narrower spelling: MCPP_NO_AUTO_INSTALL gates ONLY the toolchain
 // auto-install, nothing else. Kept working (CI and existing setups export it)
 // and kept next to offline_mode() so the two network knobs cannot drift apart.
@@ -196,6 +205,16 @@ void note_effect_refused(std::string_view effect, std::string_view what) {
 std::optional<std::string> effect_refused() {
     std::lock_guard lock(g_refusedMutex);
     return g_refused;
+}
+
+namespace {
+std::atomic<bool> g_writesGlobalCache{false};
+}
+
+void note_writes_global_cache() { g_writesGlobalCache.store(true); }
+
+bool writes_global_cache() {
+    return g_writesGlobalCache.load() && !effect_denied("write-global-cache");
 }
 
 bool no_auto_install() {

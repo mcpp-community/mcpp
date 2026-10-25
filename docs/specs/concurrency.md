@@ -91,7 +91,8 @@ CI。在 2026.10.24.1 上,同一配置的两次冷构建相隔 0.1–0.5 s 启�
 全局 `MCPP_HOME` 保持既有的细粒度保护:索引刷新使用非阻塞锁,BMI 缓存按条目加锁,
 工具链按版本目录安装。编译器探测缓存(`<home>/cache/probe`)与提供者握手缓存
 (`<home>/cache/provider-handshake`)的条目以写临时文件后改名的方式发布,并发的写入者
-写出相同的内容。
+写出相同的内容。它们只由声明了 `write-global-cache` 的运行(规划或构建)写入,其他命令
+只读取:`self doctor`、`self env`、`toolchain list` 不改变 home。
 
 ## 7. 变更记录
 

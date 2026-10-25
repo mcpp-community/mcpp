@@ -64,8 +64,10 @@
   (`mcpp.toml:6:11: error: [build].sources …`), and envelope diagnostics carry
   that location as `path` and `range`.
 - `cache list` reads each entry's size from its record; compiler probes and the
-  provider handshake are cached under the home. Measured with xlings
-  2026.10.26.1: `emit build-database` 71 ms, `toolchain list` 44 ms.
+  provider handshake are cached under the home, written by a run that plans
+  and read by every command (a query such as `self doctor` leaves the home as it
+  found it). Measured with xlings 2026.10.26.1: `emit build-database` 71 ms,
+  `toolchain list` 44 ms.
 - A provisioning failure passes on xlings' diagnostic and no longer suggests
   `xlings install`.
 

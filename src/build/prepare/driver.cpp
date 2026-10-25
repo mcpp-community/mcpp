@@ -83,6 +83,9 @@ prepare_build(bool print_fingerprint,
               bool includeDevDeps,
               std::vector<mcpp::manifest::Target> extraTargets,
               BuildOverrides overrides) {
+    // A run that plans writes the global cache (its declared effects say so),
+    // including the answers a compiler probe and the provider's handshake keep.
+    mcpp::platform::env::note_writes_global_cache();
     if (!overrides.toolchain_statement.empty())
         return prepare_build_pass(print_fingerprint, includeDevDeps,
                                   std::move(extraTargets), std::move(overrides));
