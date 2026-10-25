@@ -70,6 +70,9 @@
   `toolchain list` 44 ms.
 - A provisioning failure passes on xlings' diagnostic and no longer suggests
   `xlings install`.
+- xlings 2026.10.26.1 is bundled and is the vendored floor: an interface call
+  ends with its capability, `--home` selects one run's home, and a hook in a
+  project's store finds `xlings`.
 
 ### Fixed
 

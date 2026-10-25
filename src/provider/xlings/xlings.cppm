@@ -153,7 +153,14 @@ namespace pinned {
     // space a script package's hook could not load (mcpp#832). The index
     // works around it for gcc (openxlings/xim-pkgindex#1035); this floor
     // closes it for every script package.
-    inline constexpr std::string_view kXlingsVersion   = "2026.10.24.1";
+    //
+    // Thirteenth, at 2026.10.26.1 (openxlings/xlings#707). An interface call
+    // ends when its capability does (`payload_status`, which every query
+    // reads, took 517 ms of fixed waits); an upgraded home's projection links
+    // are proven by its registrations; `--home` selects one run's home; and a
+    // hook in a project's store finds `xlings` in its bin directory, which
+    // `gcc.libstdcxx` (an `xim:gcc` edge) needs.
+    inline constexpr std::string_view kXlingsVersion   = "2026.10.26.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 
