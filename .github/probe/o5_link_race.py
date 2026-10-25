@@ -28,7 +28,10 @@ if win:
 else:
     cxx = os.environ.get("CXX", "c++")
     subprocess.run([cxx, "-c", "-O0", "-g", "big.cpp", "-o", "big.o"], check=True)
-    linkers.append(("bfd", lambda out: [cxx, "-fuse-ld=bfd", "big.o", "-o", out]))
+    if sys.platform == "darwin":
+        linkers.append(("ld64", lambda out: [cxx, "big.o", "-o", out]))
+    else:
+        linkers.append(("bfd", lambda out: [cxx, "-fuse-ld=bfd", "big.o", "-o", out]))
     for ld in ("lld", "gold", "mold"):
         if subprocess.run([cxx, f"-fuse-ld={ld}", "big.o", "-o", "probe-ld"], capture_output=True).returncode == 0:
             linkers.append((ld, lambda out, ld=ld: [cxx, f"-fuse-ld={ld}", "big.o", "-o", out]))
