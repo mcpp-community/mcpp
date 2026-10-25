@@ -39,7 +39,9 @@ f.close()
 
 # Handle inheritance: Python's handles are non-inheritable; mcpp's CreateFileW
 # passes no SECURITY_ATTRIBUTES, so the same holds there.
-print("O5.win os.get_handle_inheritable(lock) =", os.get_handle_inheritable(msvcrt.get_osfhandle(open(lk).fileno())))
+fh = open(lk)
+print("O5.win os.get_handle_inheritable(lock) =", os.get_handle_inheritable(msvcrt.get_osfhandle(fh.fileno())))
+fh.close()
 
 # A running executable: overwrite, rename aside, rename into place, delete.
 src = shutil.which("ping") or r"C:\Windows\System32\PING.EXE"
