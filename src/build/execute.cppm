@@ -1463,7 +1463,8 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         // advice that reads the whole output.
         if (!r.error().reported) mcpp::ui::error(r.error().message);
         mcpp::ui::block(r.error().diagnosticOutput);
-        finish_record(record, false, r.error().diagnosticOutput + "\n" + r.error().message, {});
+        finish_record(record, false,
+                      r.error().rawOutput + "\n" + r.error().diagnosticOutput, {});
         return 1;
     }
 

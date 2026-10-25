@@ -242,7 +242,9 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (rc != 0)
         env.diagnostics.push_back({"MCPP_BUILD_FAILED", mcpp::wire::Severity::Error,
             "mcpp build failed; the compiler diagnostics are in data.diagnostics and the narration on standard error"});
-    mcpp::wire::emit(env);
+    // One line, as every record of the stream is: a reader splits stdout on
+    // newlines and parses each line, the last of which is this envelope.
+    std::println("{}", mcpp::wire::to_json(env).dump());
     return rc;
 }
 

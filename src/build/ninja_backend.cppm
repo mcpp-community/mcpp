@@ -4917,6 +4917,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         BuildError failure{"build failed", plan.outputDir / "build.ninja",
                            std::move(diagnostics)};
         failure.reported = reported;
+        failure.rawOutput = out;
         return std::unexpected(std::move(failure));
     }
     return r;

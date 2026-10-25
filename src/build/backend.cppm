@@ -78,6 +78,10 @@ struct BuildError {
     // failed; `diagnosticOutput` holds only what follows them (the advice
     // that reads the whole output).
     bool                                    reported = false;
+    // Everything ninja wrote, the compilers' diagnostics included, whether or
+    // not they were reported as they failed: what the result record parses
+    // its diagnostics from (design 2026-10-26 §5.2).
+    std::string                             rawOutput;
 };
 
 struct Backend {
