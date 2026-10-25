@@ -1,0 +1,52 @@
+name: probe (O5 O8 O10, do not merge)
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  o5-posix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .github/probe/o5_posix.py 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+      - run: python3 .github/probe/o5_link_race.py 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+  o5-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - shell: pwsh
+        run: python .github/probe/o5_windows.py 2>&1 | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+      - shell: pwsh
+        run: python .github/probe/o5_link_race.py 2>&1 | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+
+  o10-mingw:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash .github/probe/o10_mingw.sh 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+  o8:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    env:
+      MCPP_HOME: /home/runner/.mcpp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - run: |
+          "$MCPP" toolchain install gcc@16.1.0 2>&1 | tail -3
+          "$MCPP" toolchain install llvm@22.1.8 2>&1 | tail -3
+          bash .github/probe/o8_libstdcxx.sh 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
