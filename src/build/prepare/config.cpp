@@ -365,6 +365,14 @@ void merge_conditional_config(mcpp::manifest::Manifest& m,
         // text rides along so the unmet-requirement check can name what
         // asked, the same courtesy `[package] requires_abi` gets by naming
         // "the package" and a feature's entry by naming the feature.
+        // `[target.<sel>] requires` (design 2026-10-26 §6.3): unioned, as
+        // `[package] requires` and every other matching selector's entries
+        // are -- each is a true statement about this target.
+        for (auto const& r : cc.requires_)
+            if (std::ranges::find(m.requires_, r) == m.requires_.end()) m.requires_.push_back(r);
+        for (auto const& r : cc.privateRequires)
+            if (std::ranges::find(m.privateRequires, r) == m.privateRequires.end())
+                m.privateRequires.push_back(r);
         if (cc.requiresAbiThreads)
             m.targetRequiresAbiThreads.push_back(cc.predicate);
         if (cc.requiresAbiExceptions)

@@ -169,6 +169,26 @@ constexpr bool is_vague_linkage_binding(unsigned char binding) {
 std::expected<std::vector<std::string>, std::string>
 defined_object_symbols(const std::filesystem::path& object);
 
+// The names an ELF relocatable object REFERENCES and does not define: GLOBAL
+// and WEAK entries of `.symtab` with section index SHN_UNDEF. What the island
+// check of a C++ runtime reads (design 2026-10-26 §6.3, condition 4): which
+// runtime symbols an object compiled against another runtime will bind to.
+std::expected<std::vector<std::string>, std::string>
+undefined_object_symbols(const std::filesystem::path& object);
+
+// One undefined entry of an image's DYNAMIC symbol table, with the version
+// it was linked against (`GLIBCXX_3.4`, `CXXABI_1.3`; empty for none). The
+// version names the library that answered the reference at link time, which
+// is what the island check reads (condition 5): an image whose own C++
+// runtime is embedded must not import the ABI layer at the other runtime's
+// versions.
+struct VersionedImport {
+    std::string name;
+    std::string version;
+};
+std::expected<std::vector<VersionedImport>, std::string>
+versioned_dynamic_imports(const std::filesystem::path& image);
+
 // What an ELF object's DYNAMIC symbol table says it provides.
 //
 // Deliberately not folded into ElfRuntimeFacts: every caller of
@@ -805,8 +825,98 @@ inspect_dynamic_symbols(const std::filesystem::path& object) {
     return out;
 }
 
+namespace {
+std::expected<std::vector<std::string>, std::string>
+object_symbols(const std::filesystem::path& object, bool defined);
+}
+
 std::expected<std::vector<std::string>, std::string>
 defined_object_symbols(const std::filesystem::path& object) {
+    return object_symbols(object, true);
+}
+
+std::expected<std::vector<std::string>, std::string>
+undefined_object_symbols(const std::filesystem::path& object) {
+    return object_symbols(object, false);
+}
+
+std::expected<std::vector<VersionedImport>, std::string>
+versioned_dynamic_imports(const std::filesystem::path& image) {
+    detail::Reader reader;
+    if (!reader.load(image)) return std::unexpected(std::format(
+        "cannot open ELF image '{}'", image.string()));
+    if (reader.bytes.size() < 0x40 || reader.bytes[0] != 0x7f || reader.bytes[1] != 'E'
+        || reader.bytes[2] != 'L' || reader.bytes[3] != 'F')
+        return std::unexpected(std::format("image '{}' is not ELF", image.string()));
+    if (reader.bytes[4] != 2 || reader.bytes[5] != 1)
+        return std::unexpected(std::format("image '{}' is not ELF64 little-endian", image.string()));
+    auto shoff = reader.u64(0x28);
+    auto shentsize = reader.u16(0x3A);
+    auto shnum = reader.u16(0x3C);
+    if (!shoff || !shentsize || !shnum || *shentsize < 0x40 || *shnum > 65000
+        || !reader.range(*shoff, static_cast<std::uint64_t>(*shentsize) * *shnum))
+        return std::unexpected(std::format("image '{}' has a truncated section table", image.string()));
+    struct Sec { std::uint32_t type = 0; std::uint64_t offset = 0, size = 0; std::uint32_t link = 0; };
+    std::vector<Sec> secs(*shnum);
+    for (std::uint16_t i = 0; i < *shnum; ++i) {
+        const auto at = *shoff + static_cast<std::uint64_t>(i) * *shentsize;
+        secs[i] = {reader.u32(at + 0x04).value_or(0), reader.u64(at + 0x18).value_or(0),
+                   reader.u64(at + 0x20).value_or(0), reader.u32(at + 0x28).value_or(0)};
+    }
+    constexpr std::uint32_t kShtDynsym = 11, kVersym = 0x6fffffff, kVerneed = 0x6ffffffe;
+    const Sec* dynsym = nullptr; const Sec* versym = nullptr; const Sec* verneed = nullptr;
+    for (auto const& sec : secs) {
+        if (sec.type == kShtDynsym) dynsym = &sec;
+        else if (sec.type == kVersym) versym = &sec;
+        else if (sec.type == kVerneed) verneed = &sec;
+    }
+    std::vector<VersionedImport> out;
+    if (!dynsym || dynsym->link >= secs.size()) return out;   // static: no imports
+    const auto& dynstr = secs[dynsym->link];
+    // Version index -> name, from the needed-version records.
+    std::map<std::uint16_t, std::string> versionName;
+    if (verneed && verneed->link < secs.size() && reader.range(verneed->offset, verneed->size)) {
+        const auto& vstr = secs[verneed->link];
+        std::uint64_t at = verneed->offset;
+        for (int guard = 0; guard < 4096; ++guard) {
+            auto cnt = reader.u16(at + 2); auto aux = reader.u32(at + 8); auto next = reader.u32(at + 12);
+            if (!cnt || !aux || !next) break;
+            std::uint64_t a = at + *aux;
+            for (std::uint16_t k = 0; k < *cnt; ++k) {
+                auto other = reader.u16(a + 6); auto nameOff = reader.u32(a + 8); auto anext = reader.u32(a + 12);
+                if (!other || !nameOff || !anext) break;
+                if (*nameOff < vstr.size)
+                    if (auto n = reader.cstr(vstr.offset + *nameOff, vstr.size - *nameOff))
+                        versionName[static_cast<std::uint16_t>(*other & 0x7fff)] = *n;
+                if (*anext == 0) break;
+                a += *anext;
+            }
+            if (*next == 0) break;
+            at += *next;
+        }
+    }
+    const auto count = dynsym->size / detail::kSymEntrySize;
+    for (std::uint64_t i = 1; i < count; ++i) {
+        const auto sym = dynsym->offset + i * detail::kSymEntrySize;
+        auto nameOff = reader.u32(sym);
+        auto shndx = reader.u16(sym + 6);
+        if (!nameOff || !shndx || *shndx != 0) continue;           // defined
+        if (*nameOff >= dynstr.size) continue;
+        auto name = reader.cstr(dynstr.offset + *nameOff, dynstr.size - *nameOff);
+        if (!name || name->empty()) continue;
+        std::string version;
+        if (versym && reader.range(versym->offset + i * 2, 2))
+            if (auto v = reader.u16(versym->offset + i * 2))
+                if (auto it = versionName.find(static_cast<std::uint16_t>(*v & 0x7fff)); it != versionName.end())
+                    version = it->second;
+        out.push_back({std::move(*name), std::move(version)});
+    }
+    return out;
+}
+
+namespace {
+std::expected<std::vector<std::string>, std::string>
+object_symbols(const std::filesystem::path& object, bool defined) {
     detail::Reader reader;
     if (!reader.load(object)) return std::unexpected(std::format(
         "cannot open ELF object '{}'", object.string()));
@@ -856,7 +966,7 @@ defined_object_symbols(const std::filesystem::path& object) {
             auto nameOffset = reader.u32(sym);
             auto shndx      = reader.u16(sym + 6);
             if (!nameOffset || !shndx) break;
-            if (*shndx == 0) continue;                    // SHN_UNDEF
+            if ((*shndx == 0) == defined) continue;       // SHN_UNDEF: wanted only when !defined
             const unsigned char bind =
                 static_cast<unsigned char>(reader.bytes[sym + 4] >> 4);
             if (bind == detail::kStbLocal) continue;
@@ -869,6 +979,7 @@ defined_object_symbols(const std::filesystem::path& object) {
     names.erase(std::ranges::unique(names).begin(), names.end());
     return names;
 }
+}  // namespace
 
 std::expected<ElfRuntimeFacts, std::string>
 inspect_elf_runtime(const std::filesystem::path& artifact) {

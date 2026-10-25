@@ -33,6 +33,7 @@ import mcpp.build.ninja;
 import mcpp.build.dirlock;     // the build directory's lock (mcpp#839)
 import mcpp.build.result;      // the result record and the event stream (design 2026-10-26 §5)
 import mcpp.wire;              // the mcpp.launch envelope
+import mcpp.build.cxx_runtime; // the island, verified after the link (design 2026-10-26 §6.3)
 import mcpp.build.flags;       // profile_descriptor — one answer for the level (#694)
 import mcpp.build.runtime_validation;
 import mcpp.bmi_cache;
@@ -1360,6 +1361,47 @@ void fast_path_end(FastRecord& f, bool ok) {
                   ok ? std::move(f.artifacts) : std::vector<mcpp::build::result::Artifact>{});
 }
 
+// THE C++ ISLAND, VERIFIED ON WHAT THE LINK PRODUCED (design 2026-10-26
+// §6.3, conditions 4–6; mcpp.build.cxx_runtime). Every C++ image of the plan:
+// its objects from the island packages, its dynamic imports, and the
+// libraries it needs. A failed condition is a build error: the image links,
+// and then catches the wrong exceptions or none (mcpp#838).
+std::optional<std::string> verify_cxx_island(const BuildContext& ctx) {
+    namespace rt = mcpp::build::cxx_runtime;
+    const auto& plan = ctx.plan;
+    if (!plan.cxxIsland) return std::nullopt;
+    rt::ImageCheck check;
+    check.own = rt::runtime_of_stdlib(plan.cxxIsland->own);
+    check.foreign = rt::runtime_of_stdlib(plan.cxxIsland->foreign);
+    // The island's objects are what its packages' `role = "object"` actions
+    // produced -- a second compiler's output, built against the other runtime.
+    // Its packages' own sources were compiled by this build's compiler against
+    // this build's headers, and are not.
+    for (auto const& a : plan.actions) {
+        if (a.role != mcpp::manifest::BuildAction::Role::Object) continue;
+        if (std::ranges::find(plan.cxxIsland->packages, a.packageName) == plan.cxxIsland->packages.end())
+            continue;
+        for (auto const& o : a.outputs) {
+            std::filesystem::path p(o);
+            check.islandObjects.push_back(p.is_absolute() ? p : plan.outputDir / p);
+        }
+    }
+    for (auto const& d : plan.runtimeLibraryDirs) check.searchDirs.push_back(d);
+    const auto words = mcpp::manifest::flag_words(plan.manifest.buildConfig.ldflags);
+    for (std::size_t i = 0; i < words.size(); ++i) {
+        if (words[i] == "-L" && i + 1 < words.size()) check.searchDirs.emplace_back(words[++i]);
+        else if (words[i].starts_with("-L") && words[i].size() > 2) check.searchDirs.emplace_back(words[i].substr(2));
+    }
+    std::error_code ec;
+    for (auto const& lu : plan.linkUnits) {
+        if (lu.kind == LinkUnit::StaticLibrary || !mcpp::build::link_unit_holds_cxx(plan, lu)) continue;
+        check.image = plan.outputDir / lu.output;
+        if (!std::filesystem::exists(check.image, ec)) continue;
+        if (auto why = rt::verify_image(check)) return why;
+    }
+    return std::nullopt;
+}
+
 export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                    std::string_view targetOverride = "") {
     // `--cache=off` means a cold build: no global cache, and target/ cleared —
@@ -1422,6 +1464,12 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         if (!r.error().reported) mcpp::ui::error(r.error().message);
         mcpp::ui::block(r.error().diagnosticOutput);
         finish_record(record, false, r.error().diagnosticOutput + "\n" + r.error().message, {});
+        return 1;
+    }
+
+    if (auto why = verify_cxx_island(ctx)) {
+        mcpp::ui::error(*why);
+        finish_record(record, false, *why, {});
         return 1;
     }
 

@@ -77,6 +77,8 @@ the rows of this table (mcpp 2026.10.11.1+).
 |---|---|---|---|
 | `workspace-position`: a workspace root's own `[toolchain]`, `[indices]`, `[profile.<name>]`, `[target.<triple>]` scalars or `[xlings]` reaching members by position | 2026.10.10.1 | 2027.1 | `[workspace.toolchain]`, `[workspace.indices]`, `[workspace.profile.<name>]`, `[workspace.target.<selector>]`, `[workspace.xlings]` |
 | `host-module-in-dependencies`: a `[dependencies]` entry asking for `host-module = true` or for a `rule_module` feature, read as a build dependency | 2026.10.11.1 | 2027.1 | the same entry in `[build-dependencies]` |
+| `abi-capability`: an `abi:` runtime capability (`abi:glibc`, `abi:libc=<c>`, `abi:cxxstdlib=<c++>`), read as a requirement on a target-side layer | 2026.10.26.1 | 2027.1 | `requires = ["mcpp:c-abi=<impl>"]` or `["mcpp:c++-abi=<impl>"]` |
+| `undeclared-cxx-runtime`: a C++ runtime other than the build's own, named on its link line or needed by a library the line names, that no package declares | 2026.10.26.1 | 2027.1 | `requires = [{ layer = "mcpp:c++-abi=<impl>", visibility = "private" }]` in the package that needs it |
 | `plugin-imports-from-build-dependencies`: a build plugin's library importing a package it lists in its own `[build-dependencies]` with `host-module = true` | 2026.10.11.1 | 2027.1 | the package in the plugin's `[dependencies]` |
 
 ## Reproducing a build

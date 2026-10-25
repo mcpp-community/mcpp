@@ -488,6 +488,18 @@ struct Requirement {
     std::string requiredBy;      // package id that stated it, for the diagnostic
     CapLayer    layer;
     std::string interfaceName;   // what that layer must resolve to
+    // `visibility = "private"` (design 2026-10-26 §6.3): the requirement
+    // holds for the package's own code and stops at its boundary, so a graph
+    // that resolves the layer otherwise does not refuse it -- the package is
+    // then an island (`cxx_islands`), verified separately.
+    bool        privateScope = false;
+};
+
+// A package whose private C++ requirement the graph's C++ layer does not
+// meet: its code runs on another C++ runtime, behind its C interface.
+struct Island {
+    std::string requiredBy;
+    std::string interfaceName;
 };
 
 // ── Interface enumeration: the resolution-time half of the capability model ──
@@ -830,6 +842,8 @@ check_requirements(const TargetSide& ts, std::span<const Requirement> reqs,
                    std::string_view compilerStatedBy = {}) {
     constexpr std::string_view kPad = "         ";
     for (auto const& r : reqs) {
+        // A private requirement does not bind the graph (see `cxx_islands`).
+        if (r.privateScope) continue;
         // An entry with no `=<implementation>` asks only that the layer be
         // supplied by someone, which the absence check below still answers.
         auto const& have = layer_of(ts, r.layer);
@@ -1125,6 +1139,19 @@ inline std::string format_report(const TargetSide& ts, std::string_view targetNa
     if (!body.empty() && body.back() == '\n') body.pop_back();
     if (body.empty()) { head.pop_back(); return head; }
     return head + body;
+}
+
+// The islands of a resolved target side: each private C++ requirement the
+// graph's C++ layer does not meet. One it meets is no island -- the graph
+// unifies where it can (U before I, design 2026-10-26 §6.3).
+inline std::vector<Island> cxx_islands(const TargetSide& ts, std::span<const Requirement> reqs) {
+    std::vector<Island> out;
+    for (auto const& r : reqs) {
+        if (!r.privateScope || r.layer != CapLayer::CxxAbi) continue;
+        if (!r.interfaceName.empty() && ts.cxx.interfaceName == r.interfaceName) continue;
+        out.push_back({r.requiredBy, r.interfaceName});
+    }
+    return out;
 }
 
 } // namespace mcpp::targetside

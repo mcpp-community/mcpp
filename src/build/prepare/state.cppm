@@ -797,6 +797,9 @@ struct PrepareState {
     std::set<std::string> programFailedPackages;
     std::function<std::optional<std::string>()> checkVersionFloors;
     mcpp::targetside::TargetSide resolvedTargetSide;
+    // The C++ islands of this build (design 2026-10-26 §6.3): packages whose
+    // private `mcpp:c++-abi` requirement the resolved C++ layer does not meet.
+    std::vector<mcpp::targetside::Island> cxxIslands;
     std::optional<std::size_t> cxxLayerProviderIndex;
     bool targetSideResolved = false;
     mcpp::modgraph::UsageRequirements targetSideUsage;

@@ -66,6 +66,21 @@ inline constexpr Deprecation kDeprecations[] = {
         "the package in the plugin's [dependencies]",
         "manifest/deprecated", "docs/31-authoring-a-rule-package.md",
     },
+    {
+        "abi-capability", "2026.10.26.1", kRemovalFloor,
+        "an `abi:` runtime capability (`abi:glibc`, `abi:libc=<c>`, "
+        "`abi:cxxstdlib=<c++>`), read as a requirement on a target-side layer",
+        "requires = [\"mcpp:c-abi=<impl>\"] or [\"mcpp:c++-abi=<impl>\"]",
+        "manifest/deprecated", "docs/22-target-side.md",
+    },
+    {
+        "undeclared-cxx-runtime", "2026.10.26.1", kRemovalFloor,
+        "a C++ runtime other than the build's own, named on its link line or needed "
+        "by a library the line names, that no package declares",
+        "requires = [{ layer = \"mcpp:c++-abi=<impl>\", visibility = \"private\" }] "
+        "in the package that needs it",
+        "manifest/deprecated", "docs/22-target-side.md",
+    },
 };
 
 // The row named `id`, or null.

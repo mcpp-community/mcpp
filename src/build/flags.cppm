@@ -65,6 +65,9 @@ struct CompileFlags {
     // artifact loaded a different build of a library than it linked against.
     // It reaches the line through `link_line::UnitTail::runtimeFallback`.
     std::string ldRuntimeFallback;
+    // The link words that name the island's C++ runtime (design 2026-10-26
+    // §6.3), placed after the build's own runtime in each C++ unit's tail.
+    std::string ldForeignRuntime;
     // A compile-command prefix stated with a toolchain named by path
     // (`launcher = "ccache"`, mcpp#755): written in front of the compiler in
     // the build graph, and not into the compile database, whose consumers
@@ -685,6 +688,17 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     //   traits — BMI mechanics + module-flag spellings
     auto caps = mcpp::toolchain::capabilities_for(plan.toolchain);
     const auto& d = mcpp::toolchain::dialect_for(plan.toolchain);
+    // THE C++ STANDARD LIBRARY THIS BUILD LINKS, which is the payload's unless
+    // a package supplies the C++ layer (design 2026-10-26 §6.2, D10). A
+    // package that supplies libstdc++ to an llvm build (`provides =
+    // ["mcpp:c++-abi=libstdc++"]`) brings a prebuilt library, so the link takes
+    // the libstdc++ cells of the runtime table with the package's library
+    // directory; a package that supplies libc++ is built from source and its
+    // objects are already on the line (`graphCxxRuntime`). `caps.stdlib_id`
+    // keeps describing the payload; this is what the link is about.
+    const bool graphLibstdcxx = plan.targetSide.cxx.fromGraph()
+                             && plan.targetSide.cxx.interfaceName == "libstdc++";
+    const std::string linkedStdlib = graphLibstdcxx ? std::string("libstdc++") : caps.stdlib_id;
 
     // macOS minimum supported OS version for produced binaries.
     // Precedence: MACOSX_DEPLOYMENT_TARGET env (explicit per-invocation
@@ -974,8 +988,15 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             link_toolchain_flags += lm.link_flags(ninjaEsc);
         link_toolchain_flags_c = link_toolchain_flags
             + std::string(mcpp::toolchain::ClangDriverModel::kLinkDriverFlagsC);
-        link_toolchain_flags +=
-            mcpp::toolchain::ClangDriverModel::kLinkDriverFlags;
+        // A graph-supplied libstdc++ under the payload's clang: the driver
+        // links it (`-lstdc++` from the package's library directory) and
+        // libgcc's unwinder, which libstdc++.so is built against -- one
+        // unwinder per process (mcpp#596). The compiler runtime stays the
+        // payload's compiler-rt, crt objects included; no GCC installation is
+        // consulted (measured: NEEDED = libstdc++, libm, libgcc_s, libc).
+        link_toolchain_flags += graphLibstdcxx
+            ? std::string(" -stdlib=libstdc++ -fuse-ld=lld --rtlib=compiler-rt --unwindlib=libgcc")
+            : std::string(mcpp::toolchain::ClangDriverModel::kLinkDriverFlags);
         }
         f.sysroot = link_toolchain_flags;
     } else if (lm.mode != mcpp::toolchain::CLibMode::None) {
@@ -1192,10 +1213,24 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // host and then escaped for ninja. A `$ORIGIN` therefore reaches the
     // linker as written, and an element that packs several tokens is several
     // words on every host.
+    //
+    // A word that names the OTHER C++ runtime (the island's, design 2026-10-26
+    // §6.3) is taken out of this string and placed after the build's own
+    // runtime in each C++ unit's tail (`ldForeignRuntime`): condition 3. Left
+    // here it preceded the runtime archives, the shared library answered
+    // `__cxa_throw` and the personality first, and libc++abi answered the rest
+    // (mcpp#838, measured: `catch (const std::exception&)` missed).
     std::string user_ldflags;
     for (auto const& word : mcpp::manifest::flag_words(plan.manifest.buildConfig.ldflags)) {
+        const auto rendered = ninja_command_word(normalize_ldflag(plan.projectRoot, word));
+        if (plan.cxxIsland && std::ranges::find(plan.cxxIsland->namedWords, word)
+                                  != plan.cxxIsland->namedWords.end()) {
+            f.ldForeignRuntime += ' ';
+            f.ldForeignRuntime += rendered;
+            continue;
+        }
         user_ldflags += ' ';
-        user_ldflags += ninja_command_word(normalize_ldflag(plan.projectRoot, word));
+        user_ldflags += rendered;
     }
 
     // C standard. The file-level `$cflags` carries the engine default, a
@@ -1418,7 +1453,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         };
 
         dist::MechanismInput mi;
-        mi.stdlibId       = caps.stdlib_id;
+        mi.stdlibId       = linkedStdlib;
         mi.hostIsWindows  = mcpp::platform::is_windows;
         mi.fullStaticLibc = (f.linkage == "static");
         // The CRT model this WHOLE project is being compiled with. Per-role
@@ -1436,23 +1471,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // already settled where the machine's Xcode was consulted.
         mi.appleCrossTarget = !plan.toolchain.base.apple.root.empty();
         mi.format         = format;
-        // A SECOND C++ RUNTIME ON THIS LINE.
-        //
-        // Read off the link flags rather than inferred, because the only way
-        // one gets there is that something wrote it: a rule package whose
-        // second compiler is configured against libstdc++ emits
-        // `-l:libstdc++.so.6` through `mcpp::link_lib`, which lands in
-        // `bc.ldflags`. `mcpp.rules.sycl` and `mcpp.rules.hip` are the two
-        // that do today.
-        //
-        // The substring is `stdc++`, which covers `-lstdc++`,
-        // `-l:libstdc++.so.6` and a spelled-out path. It cannot match this
-        // toolchain's own runtime: the predicate requires libc++, and a
-        // libstdc++ toolchain never reaches the branch that reads this.
-        mi.foreignCxxRuntime =
-            caps.stdlib_id == "libc++"
-            && std::ranges::any_of(bc.ldflags, [](std::string_view flag) {
-                   return flag.find("stdc++") != std::string_view::npos; });
+        // A SECOND C++ RUNTIME BEHIND THIS LINE -- the plan's island (design
+        // 2026-10-26 §6.3), decided once where the graph and the link words
+        // are known: a package's private requirement, a word naming the other
+        // runtime, or a library on the line that needs it. It used to be a
+        // substring search for `stdc++` in these flags, which saw only the
+        // second of the three and nothing of the first or the third.
+        mi.foreignCxxRuntime = plan.cxxIsland.has_value();
         // Bare metal short-circuits the whole table: the archives found below
         // are the HOST's, and linking them into a riscv64 image fails with
         // "incompatible with elf64lriscv". See MechanismInput::freestanding.
@@ -1488,7 +1513,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // (`llvm.libcxx` on the iOS rows, mcpp#630), and asking the C library
         // there answered "payload" and linked the SDK's `-lc++` under objects
         // compiled against the package's headers.
-        mi.graphCxxRuntime = plan.targetSide.cxx.fromGraph();
+        mi.graphCxxRuntime = plan.targetSide.cxx.fromGraph() && !graphLibstdcxx;
 
         // AND THE DRIVER'S HALF, WHICH IS ASKED FIRST (#634 A6).
         //
@@ -1531,7 +1556,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
              || contracts.tests == dist::Contract::SelfContained
              || contracts.intermediate == dist::Contract::SelfContained
              || contracts.shared == dist::Contract::SelfContained)
-            && caps.stdlib_id == "libc++";
+            && linkedStdlib == "libc++";
         // THE ARCHIVES A LINKER SCRIPT OPENS, by file name.
         //
         // A driver may place an archive name on a linker script rather than on

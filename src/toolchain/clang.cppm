@@ -249,10 +249,18 @@ std::filesystem::path staged_std_bmi_path(const std::filesystem::path& outputDir
 // the module purview, which clang reports. One answer for `std` and
 // `std.compat`, decided by the file and not by the machine running the build;
 // a libc++ `.cppm` receives nothing, so its commands are unchanged.
+// The language of a `std` module source clang does not know by its name.
+// `.cppm` (libc++'s) and the other module-interface extensions are
+// recognised; the MSVC STL's `.ixx` and libstdc++'s `bits/std.cc` are not --
+// the second precompiled as an ordinary translation unit, and the object step
+// then answered `unable to load precompiled file` (design 2026-10-26 §6.4: a
+// graph-supplied libstdc++ under clang). The `.ixx` spelling is unchanged, so
+// the std module caches built from it keep their identity.
 static std::string module_source_language_flags(const std::filesystem::path& source) {
-    return source.extension() == ".ixx"
-        ? " -x c++-module -Wno-include-angled-in-module-purview"
-        : "";
+    const auto ext = source.extension().string();
+    if (ext == ".ixx") return " -x c++-module -Wno-include-angled-in-module-purview";
+    if (ext == ".cppm" || ext == ".ccm" || ext == ".cxxm" || ext == ".c++m") return "";
+    return " -x c++-module";
 }
 
 std::vector<std::string> std_module_build_commands(const Toolchain& tc,

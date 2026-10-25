@@ -74,6 +74,14 @@ struct UnitTail {
     //    have always assumed.
     std::string cxxRuntime;
 
+    // 2b. A C++ runtime OTHER than this build's -- an island's (design
+    //     2026-10-26 §6.3) -- named on the line. After (2), so the build's own
+    //     runtime answers the ABI layer first: an archive member is pulled
+    //     only for a symbol still undefined where the archive appears, and a
+    //     shared library named earlier would answer `__cxa_throw` first
+    //     (mcpp#838).
+    std::string foreignCxxRuntime;
+
     // 3. LAST-RESORT run-time search — today the SubOS library view ("the
     //    farm"), a flat symlink tree that `xlings install` rewrites.
     //
@@ -98,7 +106,7 @@ struct UnitTail {
     std::string render() const {
         std::string out;
         for (const std::string* slot :
-             {&dependencies, &cxxRuntime, &runtimeFallback, &loaderTag}) {
+             {&dependencies, &cxxRuntime, &foreignCxxRuntime, &runtimeFallback, &loaderTag}) {
             if (slot->empty()) continue;
             if (!slot->starts_with(' ')) out += ' ';
             out += *slot;
@@ -107,7 +115,7 @@ struct UnitTail {
     }
 
     bool empty() const {
-        return dependencies.empty() && cxxRuntime.empty()
+        return dependencies.empty() && cxxRuntime.empty() && foreignCxxRuntime.empty()
             && runtimeFallback.empty() && loaderTag.empty();
     }
 };

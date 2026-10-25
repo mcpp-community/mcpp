@@ -1635,6 +1635,11 @@ struct ConditionalConfig {
     // renders and where `false` overrides an outer `true`.
     bool                                requiresAbiThreads = false;
     bool                                requiresAbiExceptions = false;
+    // `[target.<sel>] requires = [...]` (design 2026-10-26 §6.3): the
+    // target-axis form of `[package] requires`, its public and private
+    // entries apart; unioned in by `merge_conditional_config`.
+    std::vector<std::string>            requires_;
+    std::vector<std::string>            privateRequires;
     // `[target.<sel>.feature-requires-abi] <feature> = { ... }` -- the
     // per-feature form of the same requirement, on the target axis. Named
     // after `feature-deps`/`feature-xlings` below, the two existing
@@ -1720,6 +1725,7 @@ inline bool is_empty(const ConditionalConfig& c) {
         && c.xlings.empty() && c.xlings.overrides.empty()
         && !c.abiThreadsDeclared && !c.abiExceptionsDeclared
         && !c.requiresAbiThreads && !c.requiresAbiExceptions
+        && c.requires_.empty() && c.privateRequires.empty()
         && c.featureRequiresAbiThreads.empty() && c.featureRequiresAbiExceptions.empty()
         // #717: `dialect_cxxflags` is a member of ConditionalConfig, not of
         // `c.inputs` (BuildInputs), so `is_empty(c.inputs)` above does not see
@@ -2145,6 +2151,15 @@ struct Manifest {
     // through untouched, exactly as they do in `provides`.
     // The spelling is `requires_` because `requires` is a keyword.
     std::vector<std::string>                        requires_;
+    // `requires = [{ layer = "mcpp:c++-abi=<impl>", visibility = "private" }]`
+    // (design 2026-10-26 §6.3, D20): a requirement that holds for THIS
+    // package's own code and stops at its boundary. Where the graph's C++
+    // layer is another implementation, the package's runtime is an island
+    // behind a C interface -- accepted only where the engine can verify the
+    // island conditions (SPEC-002). `private` is accepted for `mcpp:c++-abi`
+    // alone: one image has one C library (openkal's boundary). Unioned from
+    // `[package]` and every matching `[target.<sel>]`, as `requires_` is.
+    std::vector<std::string>                        privateRequires;
     // `requires_abi = { threads = true, exceptions = true }` at package
     // level, and per feature. A statement that the ARTEFACT's ABI has a
     // switch on, compared at resolution with the root's

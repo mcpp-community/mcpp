@@ -3459,6 +3459,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             tail.cxxRuntime   = cxxUnit
                 ? uflags.ldStdlibFor(role_of(lu.kind))
                 : uflags.ldStdlibCFor(role_of(lu.kind));
+            // The island's runtime, after the build's own (design 2026-10-26
+            // §6.3, condition 3). An archive never reads this tail.
+            if (lu.kind != LinkUnit::StaticLibrary) tail.foreignCxxRuntime = uflags.ldForeignRuntime;
             // An archive has no run-time search path of its own: `ar` never
             // reads `$unit_ldflags`, so rpath flags there would be dead bytes
             // in every graph that builds a static library.

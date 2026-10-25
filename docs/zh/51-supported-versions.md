@@ -64,6 +64,8 @@ schema，那是 [50 —— 机器可读输出](50-machine-output.md)。
 |---|---|---|---|
 | `workspace-position`：工作空间根自己的 `[toolchain]`、`[indices]`、`[profile.<name>]`、`[target.<triple>]` 标量或 `[xlings]` 按位置到达成员 | 2026.10.10.1 | 2027.1 | `[workspace.toolchain]`、`[workspace.indices]`、`[workspace.profile.<name>]`、`[workspace.target.<selector>]`、`[workspace.xlings]` |
 | `host-module-in-dependencies`：`[dependencies]` 中请求 `host-module = true` 或 `rule_module` 特性的条目，按构建期依赖读取 | 2026.10.11.1 | 2027.1 | `[build-dependencies]` 中的同一条目 |
+| `abi-capability`：`abi:` 运行时能力（`abi:glibc`、`abi:libc=<c>`、`abi:cxxstdlib=<c++>`），按目标侧某一层的需求读取 | 2026.10.26.1 | 2027.1 | `requires = ["mcpp:c-abi=<impl>"]` 或 `["mcpp:c++-abi=<impl>"]` |
+| `undeclared-cxx-runtime`：链接线点名、或链接线上的库需要的、本构建之外的另一套 C++ 运行时，且没有包声明 | 2026.10.26.1 | 2027.1 | 在需要它的包中写 `requires = [{ layer = "mcpp:c++-abi=<impl>", visibility = "private" }]` |
 | `plugin-imports-from-build-dependencies`：构建插件的库导入其自身 `[build-dependencies]` 中以 `host-module = true` 写出的包 | 2026.10.11.1 | 2027.1 | 插件 `[dependencies]` 中的该包 |
 
 ## 复现一次构建

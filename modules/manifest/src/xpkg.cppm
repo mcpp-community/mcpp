@@ -1504,8 +1504,47 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             }
             cur.skip_ws_and_comments();
             while (!cur.eof() && cur.peek() != '}') {
-                auto s = cur.read_string();
-                if (!s.empty()) dst->push_back(std::move(s));
+                // A `requires` entry may be a table, `{ layer = "...",
+                // visibility = "private" }` (design 2026-10-26 §6.3): the same
+                // two members the TOML form takes, read the same way.
+                if (key == "requires" && cur.peek() == '{') {
+                    cur.consume('{');
+                    std::string layer, visibility = "public";
+                    cur.skip_ws_and_comments();
+                    while (!cur.eof() && cur.peek() != '}') {
+                        auto k = cur.read_key();
+                        cur.skip_ws_and_comments();
+                        if (!cur.consume('='))
+                            return std::unexpected(ManifestError{
+                                "expected '=' in a `requires` entry", m.sourcePath, 0, 0});
+                        auto v = cur.read_string();
+                        if (k == "layer") layer = std::move(v);
+                        else if (k == "visibility") visibility = std::move(v);
+                        else
+                            return std::unexpected(ManifestError{std::format(
+                                "`requires`: `{}` is not a member of a requirement; the members "
+                                "are `layer` and `visibility`", k), m.sourcePath, 0, 0});
+                        cur.skip_ws_and_comments();
+                        cur.consume(',');
+                        cur.skip_ws_and_comments();
+                    }
+                    cur.consume('}');
+                    if (visibility == "private") {
+                        if (!layer.starts_with("mcpp:c++-abi="))
+                            return std::unexpected(ManifestError{std::format(
+                                "`requires`: visibility = \"private\" is for `mcpp:c++-abi=<impl>` "
+                                "only, and `{}` is another layer [requires-private-layer]", layer),
+                                m.sourcePath, 0, 0});
+                        m.privateRequires.push_back(std::move(layer));
+                    } else if (!layer.empty()) {
+                        m.requires_.push_back(std::move(layer));
+                    }
+                } else {
+                    auto s = cur.read_string();
+                    if (!s.empty()) dst->push_back(std::move(s));
+                }
+                cur.skip_ws_and_comments();
+                cur.consume(',');
                 cur.skip_ws_and_comments();
             }
             cur.consume('}');
