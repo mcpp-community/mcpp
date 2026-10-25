@@ -34,7 +34,7 @@ rm compile_commands.json
 
 # C
 cp compile_commands.json keep.json
-sed -i '/^compile_commands = /d' mcpp.toml
+grep -v '^compile_commands = ' mcpp.toml > mcpp.toml.new && mv mcpp.toml.new mcpp.toml   # BSD and GNU sed spell -i differently
 "$MCPP" build > c.log 2>&1 || fail "C: the build failed" c.log
 grep -q "is no longer updated" c.log || fail "C: the left copy was not named" c.log
 touch src/main.cpp

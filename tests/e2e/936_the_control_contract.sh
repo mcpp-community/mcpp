@@ -66,10 +66,11 @@ printf 'import std;\nint main() { std::println("started"); }\n' > src/main.cpp
 "$MCPP" run --print-launch > b.out 2> b.err || fail "B: --print-launch failed" b.err
 grep -q started b.out && fail "B: the program was started" b.out
 $PY - b.out <<'EOF' || fail "B: not an mcpp.launch envelope" b.out
-import json, sys
+import json, sys, os
+same = lambda a, b: os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
 d = json.load(open(sys.argv[1]))
 assert d["kind"] == "mcpp.launch", d["kind"]
-assert d["data"]["argv"] and d["data"]["argv"][0] == d["data"]["program"], d["data"]
+assert d["data"]["argv"] and same(d["data"]["argv"][0], d["data"]["program"]), d["data"]
 assert "env" in d["data"] and "cwd" in d["data"]
 EOF
 
