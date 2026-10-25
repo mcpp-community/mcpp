@@ -19,6 +19,8 @@ import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.platform;
 import mcpp.log;
+import mcpp.home;                    // the probe cache lives under the home's cache
+import mcpp.toolchain.fingerprint;   // hash_string
 import mcpp.fallback.sysroot_complete;
 import mcpp.fallback.probe_sysroot;
 
@@ -99,8 +101,60 @@ std::string env_prefix_for_dirs(const std::vector<std::filesystem::path>& dirs) 
 
 } // namespace
 
+namespace {
+// THE ANSWERS OF A COMPILER'S QUERIES, CACHED (design 2026-10-26 §8). Every
+// plan asked the same compiler `--version`, `-dumpmachine` and `-print-sysroot`
+// through a shell and an `env` -- three processes each, about 20 ms of a 100 ms
+// query -- and a compiler answers them identically until its files change.
+// Keyed by the command text and by the size and modification time of every
+// file the command names (the compiler, its configuration), so a payload
+// replaced in place, a different environment prefix or another compiler is a
+// different key. Only a successful answer is kept; a failed query runs again.
+std::string probe_cache_key(const std::string& cmd) {
+    std::string key = cmd;
+    std::size_t pos = 0;
+    while ((pos = cmd.find('\'', pos)) != std::string::npos) {
+        const auto end = cmd.find('\'', pos + 1);
+        if (end == std::string::npos) break;
+        const std::filesystem::path p(cmd.substr(pos + 1, end - pos - 1));
+        std::error_code ec;
+        if (p.is_absolute() && std::filesystem::is_regular_file(p, ec)) {
+            const auto size = std::filesystem::file_size(p, ec);
+            const auto time = std::filesystem::last_write_time(p, ec);
+            key += std::format("\n{}\t{}\t{}", p.generic_string(),
+                               static_cast<std::uint64_t>(size),
+                               static_cast<std::int64_t>(time.time_since_epoch().count()));
+        }
+        pos = end + 1;
+    }
+    return key;
+}
+std::filesystem::path probe_cache_file(const std::string& key) {
+    return mcpp::home::root() / "cache" / "probe" / (mcpp::toolchain::hash_string(key) + ".out");
+}
+}  // namespace
+
 std::expected<std::string, DetectError> run_capture(const std::string& cmd) {
+    const auto key = probe_cache_key(cmd);
+    const auto cached = probe_cache_file(key);
+    if (std::ifstream in(cached, std::ios::binary); in) {
+        std::string recordedKey;
+        std::getline(in, recordedKey, '\0');
+        if (recordedKey == key) return std::string(std::istreambuf_iterator<char>(in), {});
+    }
     auto r = mcpp::platform::process::capture_host_tool(cmd);
+    if (r.exit_code == 0) {
+        std::error_code ec;
+        std::filesystem::create_directories(cached.parent_path(), ec);
+        auto tmp = cached;
+        tmp += std::format(".{:x}", std::random_device{}());
+        {
+            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            out << key << '\0' << r.output;
+        }
+        std::filesystem::rename(tmp, cached, ec);
+        if (ec) std::filesystem::remove(tmp, ec);
+    }
     if (r.exit_code != 0 && r.output.empty()) {
         return std::unexpected(DetectError{std::format("failed to execute: {}", cmd)});
     }
