@@ -10,10 +10,12 @@ import mcpp.build.prepare_inputs;
 import std;
 import mcpp.diag;
 import mcpp.build.stage;
+import mcpp.build.dirlock;
 import mcpp.build.refusal;
 import mcpp.build.version_floor;
 import mcpp.home;
 import mcpp.platform.axis;
+import mcpp.platform.env;        // --deny write-project
 import mcpp.libs.json;
 import mcpp.log;
 import mcpp.manifest;
@@ -1925,6 +1927,22 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     ctx.cacheMode   = state.cacheMode;
     ctx.projectRoot= *state.root;
     ctx.outputDir  = target_dir(*state.tc, state.fp, state.workRoot);
+    // THE CONFIGURATION'S DIRECTORY IS WRITTEN FROM HERE ON (mcpp#839): build
+    // actions, the dependency BMI cache, resolution.json, build.ninja. The
+    // fingerprint that names it is the scan's last result, so everything
+    // before this line -- the manifest, resolution, the network, the
+    // toolchain, the scan -- ran holding nothing, and a second build of the
+    // same configuration waits here, then finds ninja with little to do. A
+    // pass that only describes (plan_only) plans into its own directory.
+    // `--deny write-project` stops here, before the first write (design
+    // 2026-10-26 §5.5).
+    if (!state.overrides.plan_only && mcpp::platform::env::effect_denied("write-project")) {
+        mcpp::platform::env::note_effect_refused("write-project", ctx.outputDir.generic_string());
+        return std::unexpected(std::format(
+            "effect denied: write-project -- the build writes {}, and the caller denied writing "
+            "the project (--deny write-project)", ctx.outputDir.generic_string()));
+    }
+    if (!state.overrides.plan_only) ctx.buildLock = mcpp::build::dirlock::acquire(ctx.outputDir);
 
     // Each step states its duration under `build/stage` in the log file, as
     // the phases do (build wall-time plan, W9; see prepare_build).

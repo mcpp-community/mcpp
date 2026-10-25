@@ -26,6 +26,8 @@ import mcpp.cli.selection;
 import mcpp.build.build_database;
 import mcpp.build.build_program;
 import mcpp.build.progress;         // the report every building command opens
+import mcpp.build.result;           // `--message-format json`: events and the record (design 2026-10-26 §5)
+import mcpp.build.dirlock;          // the `waiting` event
 import mcpp.build.refusal;          // offline-download-required (#648 A1)
 import mcpp.diag;                   // a member's own diagnostics, in the envelope (WS3)
 import mcpp.dyndep;
@@ -180,7 +182,71 @@ mcpp::build::BuildOverrides overrides_from_selectors(
     return ov;
 }
 
+int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed);
+
+// `mcpp build --message-format json` (design 2026-10-26 §5.1).
+//
+// NDJSON ON STANDARD OUTPUT WHILE IT BUILDS, THEN ONE ENVELOPE. Events are
+// `{"schemaVersion":1,"kind":"mcpp.event","event":…}`: `plan` (a
+// configuration's directory is entered), `waiting` (another build holds it),
+// `progress` (ninja's count), `diagnostic` (a compiler's, from a failed step),
+// `artifact` (each product, with its launch). The last line is the
+// `mcpp.build` envelope; its `data` is the result record the build wrote
+// (`target/<triple>/<fp>/result.json`). Everything human goes to standard
+// error, as for every machine-readable mode.
 export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    std::string messageFormat = parsed.value("message-format").value_or("human");
+    if (messageFormat != "human" && messageFormat != "json") {
+        mcpp::ui::error(std::format("unknown --message-format '{}' (human|json)", messageFormat));
+        return 2;
+    }
+    if (messageFormat == "human") return cmd_build_body(parsed);
+
+    namespace res = mcpp::build::result;
+    res::enable_events(true);
+    mcpp::build::dirlock::set_waiting_observer(
+        [](const mcpp::build::dirlock::Holder& h, std::chrono::milliseconds waited) {
+            res::emit("waiting", {{"holder", {{"pid", h.pid}, {"command", h.command},
+                                              {"client", h.client}, {"startedAt", h.startedAt}}},
+                                  {"waitedMs", waited.count()}});
+        });
+    mcpp::build::progress::set_step_observer([](std::size_t finished, std::size_t total) {
+        res::emit("progress", {{"finished", finished}, {"total", total}});
+    });
+    int rc = 0;
+    {
+        mcpp::platform::terminal::StdoutToStderr narration;
+        rc = cmd_build_body(parsed);
+    }
+    res::enable_events(false);
+
+    using mcpp::wire::Effect;
+    mcpp::wire::Envelope env{.kind = "mcpp.build",
+                             .effects = {Effect::ReadProject, Effect::WriteProject}};
+    env.data = nullptr;
+    std::error_code ec;
+    if (auto root = mcpp::project::find_manifest_root(std::filesystem::current_path(ec))) {
+        std::ifstream in(*root / "target" / ".last-result.json", std::ios::binary);
+        auto last = nlohmann::json::parse(in, nullptr, false);
+        if (!last.is_discarded() && last.contains("data") && last["data"].contains("result")
+            && last["data"]["result"].is_string()) {
+            const std::filesystem::path recordPath = last["data"]["result"].get<std::string>();
+            if (auto record = res::read(recordPath.parent_path());
+                record && record->pid == mcpp::build::dirlock::process_id()) {
+                std::ifstream rin(recordPath, std::ios::binary);
+                auto doc = nlohmann::json::parse(rin, nullptr, false);
+                if (!doc.is_discarded() && doc.contains("data")) env.data = doc["data"];
+            }
+        }
+    }
+    if (rc != 0)
+        env.diagnostics.push_back({"MCPP_BUILD_FAILED", mcpp::wire::Severity::Error,
+            "mcpp build failed; the compiler diagnostics are in data.diagnostics and the narration on standard error"});
+    mcpp::wire::emit(env);
+    return rc;
+}
+
+int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
     bool verbose  = parsed.is_flag_set("verbose") || mcpp::log::is_verbose();
     bool print_fp = parsed.is_flag_set("print-fingerprint");
     bool no_cache = parsed.is_flag_set("no-cache");
@@ -885,6 +951,7 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     if (parsed.is_flag_set("list-runners"))
         return mcpp::build::list_runners(package_filter, cache_mode, no_cache,
                                          target_triple, features, profile, accel);
+    mcpp::build::set_print_launch(parsed.is_flag_set("print-launch"));
     // Closed before the program starts: the program owns the terminal.
     mcpp::build::progress::open(mcpp::log::is_verbose());
     return mcpp::build::build_run_target(targetName, passthrough, package_filter,
@@ -1339,6 +1406,49 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
 // every source is byte-identical and otherwise fails, naming every source
 // and the destination. One source — every invocation before this feature —
 // takes the exact path it always has.
+// `mcpp link-output --output <artifact> -- <linker command…>` (internal:
+// invoked by build.ninja's link edges on Windows; design 2026-10-26 D22).
+//
+// A RUNNING PROGRAM KEEPS ITS FILE; THE NEW ONE TAKES THE NAME.
+//
+// Windows refuses to overwrite an executable or DLL that is running or loaded
+// (error 5), and a relink while `mcpp run` or a test held the old one failed
+// with LNK1104. It does allow the file to be RENAMED. So the artifact is moved
+// aside to `<artifact>.old-<n>` and the linker writes the name afresh; the
+// running program keeps the renamed file, and the previous `.old-*` files that
+// nothing holds any more are deleted here. A process started while the linker
+// writes fails to start (file not found, sharing violation) -- Windows never
+// starts an image that is being written -- rather than running half of one.
+// (POSIX links write `<artifact>.tmp` and rename it over the name in the
+// edge's own shell command: a rename replaces a running program there.)
+export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
+                           std::span<const std::string> command) {
+    namespace fs = std::filesystem;
+    const fs::path out = parsed.option_or_empty("output").value();
+    if (out.empty() || command.empty()) {
+        std::println(stderr, "error: link-output needs --output <artifact> -- <linker command>");
+        return 2;
+    }
+    std::error_code ec;
+    const auto dir = out.parent_path().empty() ? fs::path(".") : out.parent_path();
+    const auto stem = out.filename().string() + ".old-";
+    for (auto it = fs::directory_iterator(dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec))
+        if (it->path().filename().string().starts_with(stem)) {
+            std::error_code rm;
+            fs::remove(it->path(), rm);   // still held by a running program: kept
+        }
+    if (fs::exists(out, ec)) {
+        for (int n = 1; n < 10000; ++n) {
+            auto aside = out;
+            aside += std::format(".old-{}", n);
+            if (fs::exists(aside, ec)) continue;
+            fs::rename(out, aside, ec);
+            break;
+        }
+    }
+    return mcpp::platform::process::run_exec(std::vector<std::string>(command.begin(), command.end()));
+}
+
 export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // `--list FILE` (#734 E4): many placements, one process. Each destination
     // keeps the single-file semantics below -- content comparison, an

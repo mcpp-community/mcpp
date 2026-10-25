@@ -222,6 +222,11 @@ void checking();
 // `Finished` (design §4.5): the whole command's time, and how it was spent.
 // Written once per command; a later call does nothing.
 void finished(std::string_view profile, std::string_view descriptor);
+
+// Called with ninja's count each time a step of a reported build finishes (the
+// `progress` event of `mcpp build --message-format json`). One observer per
+// process; a null function removes it.
+void set_step_observer(std::function<void(std::size_t finished, std::size_t total)> observer);
 // The sources of a build directory that are not the ecosystem's default
 // (mcpp#755), read from `<buildDir>/sources.summary`, which prepare writes.
 // Merged across the configurations of a command and appended to `Finished`;
@@ -1550,7 +1555,19 @@ void Build::pass_begin(PassKind kind) {
     mcpp::ui::touch_region();
 }
 
+namespace {
+std::function<void(std::size_t, std::size_t)>& step_observer() {
+    static std::function<void(std::size_t, std::size_t)> observer;
+    return observer;
+}
+}  // namespace
+
+void set_step_observer(std::function<void(std::size_t, std::size_t)> observer) {
+    step_observer() = std::move(observer);
+}
+
 void Build::status(const StatusLine& line) {
+    if (auto& observe = step_observer()) observe(line.finished, line.total);
     auto& r = report();
     std::vector<std::string> out;
     {

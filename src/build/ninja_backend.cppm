@@ -2132,10 +2132,47 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // choosing an object path. clang/gcc drivers, link.exe, GNU ar and llvm-ar
     // all accept @rspfile, so there is one rule shape everywhere; the response
     // file sits next to the output and `cat`ing it beats reading a 160 KB line.
+    // A LINKED ARTIFACT IS PUBLISHED WHOLE (design 2026-10-26 D22, E23).
+    //
+    // A process that starts a program while it is relinked used to see the
+    // linker's work in progress: GNU ld unlinks and then writes in place, so
+    // the name briefly holds a file that is not yet executable (EACCES,
+    // measured 4 896 times in 25 relinks with four launchers), gold writes in
+    // place (ETXTBSY), and macOS lets a running program's file be overwritten
+    // (ENOEXEC). That is what `mcpp test` meets when another build of the
+    // configuration relinks a test binary, and what makes it safe for an
+    // execution to hold no lock. So, on POSIX, the linker writes
+    // `<out>.tmp` and a rename -- atomic within one directory -- replaces the
+    // name: a starter sees the old file or the new one (0 errors measured on
+    // Linux and macOS). The SONAME and install name are set explicitly from
+    // the final name (`soname_default`, `soname_flag`), so the temporary name
+    // reaches no artifact.
+    //
+    // A PE image names itself after its output file (a DLL's export
+    // directory), so a PE target is linked in place: from a POSIX host nothing
+    // runs it, and on a Windows host `mcpp link-output` first moves the old
+    // artifact aside -- Windows can rename, but not overwrite, a program that
+    // runs (see cmd_link_output).
+    const bool peTarget = [&] {
+        const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+        return t ? t->is_pe() : bool(mcpp::platform::is_windows);
+    }();
+    auto publish_link = [&](std::string cmd) {
+        if constexpr (mcpp::platform::is_windows) {
+            return "$mcpp link-output --output $out -- " + cmd;
+        } else {
+            if (peTarget) return cmd;
+            const auto pos = cmd.find("-o $out");
+            if (pos == std::string::npos) return cmd;
+            cmd.replace(pos, 7, "-o $out.tmp");
+            return cmd + " && mv -f $out.tmp $out";
+        }
+    };
     {
         constexpr bool useRsp = true;
         auto link_rule = [&](std::string_view name, std::string cmd,
                              std::string_view desc) {
+            if (desc != "AR") cmd = publish_link(std::move(cmd));
             append(std::format("rule {}\n", name));
             if (useRsp) {
                 if (auto pos = cmd.find("$in"); pos != std::string::npos)

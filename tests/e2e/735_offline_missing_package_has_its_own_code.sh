@@ -6,7 +6,9 @@
 # The package comes from a local path index, so the descriptor is present and
 # the download is the only thing missing. Criteria:
 #   A. offline, the envelope's code is MCPP_OFFLINE_DOWNLOAD_REQUIRED, its
-#      message names the package and its version, and the exit status is 1;
+#      message names the package and its version, and the exit status is 5:
+#      the run stopped before a denied effect (`--offline` is `--deny network`,
+#      SPEC-003, 2026.10.26.1; it was 1 before);
 #   B. a plan that fails for another reason keeps MCPP_BUILD_DATABASE_PLAN_FAILED.
 set -e
 source "$(dirname "$0")/_host_path.sh"
@@ -53,7 +55,7 @@ set +e
 MCPP_OFFLINE=1 "$MCPP" emit build-database --format json > a.json 2> a.err
 rc=$?
 set -e
-[ "$rc" -eq 1 ] || fail "A: exit status $rc, expected 1" a.err
+[ "$rc" -eq 5 ] || fail "A: exit status $rc, expected 5" a.err
 code_of a.json > a.txt
 sed -n 1p a.txt | grep -qx MCPP_OFFLINE_DOWNLOAD_REQUIRED || fail "A: wrong code" a.txt
 grep -q "widget" a.txt && grep -q "1.0.0" a.txt || fail "A: the message does not name the package and version" a.txt

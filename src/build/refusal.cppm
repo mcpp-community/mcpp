@@ -32,6 +32,7 @@
 export module mcpp.build.refusal;
 
 import std;
+import mcpp.platform.env;   // an offline download is a refused `network` effect (exit 5)
 
 export namespace mcpp::build::refusal {
 
@@ -263,7 +264,14 @@ namespace {
 thread_local Code g_last = Code::None;
 } // namespace
 
-void record(Code c) { g_last = c; }
+void record(Code c) {
+    g_last = c;
+    // Needing a download offline is the run stopping before a denied effect:
+    // `--offline` is `--deny network`, and the process exits 5 (design
+    // 2026-10-26 D23).
+    if (c == Code::OfflineDownloadRequired)
+        mcpp::platform::env::note_effect_refused("network", "a download is required");
+}
 
 Code take() { Code c = g_last; g_last = Code::None; return c; }
 

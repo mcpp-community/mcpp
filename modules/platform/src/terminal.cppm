@@ -169,6 +169,12 @@ private:
 // `emit build-database` held the caller's pipe as its descriptor 3. The copy
 // is therefore close-on-exec on POSIX and not inheritable on Windows, so a
 // child receives only descriptors 0 to 2, and 1 is standard error here.
+// Writes `text` to the process's standard output as it was before any
+// StdoutToStderr took it: a machine-readable stream (the build's NDJSON
+// events) keeps the channel the protocol owns while the narration around it is
+// redirected.
+void write_protocol_stdout(std::string_view text);
+
 class StdoutToStderr {
 public:
     StdoutToStderr();
@@ -511,6 +517,29 @@ std::vector<Key> KeyInput::read() {
     return keys;
 }
 
+namespace {
+std::atomic<int> g_protocolStdout{-1};
+}
+
+void write_protocol_stdout(std::string_view text) {
+    const int fd = g_protocolStdout.load();
+    if (fd < 0) {
+        std::fwrite(text.data(), 1, text.size(), stdout);
+        std::fflush(stdout);
+        return;
+    }
+    std::size_t done = 0;
+    while (done < text.size()) {
+#if defined(_WIN32)
+        const int n = ::_write(fd, text.data() + done, static_cast<unsigned>(text.size() - done));
+#else
+        const auto n = ::write(fd, text.data() + done, text.size() - done);
+#endif
+        if (n <= 0) return;
+        done += static_cast<std::size_t>(n);
+    }
+}
+
 StdoutToStderr::StdoutToStderr() {
     std::fflush(stdout);
 #if defined(_WIN32)
@@ -529,11 +558,17 @@ StdoutToStderr::StdoutToStderr() {
     saved_ = ::fcntl(1, F_DUPFD_CLOEXEC, 3);
     if (saved_ >= 0) ::dup2(2, 1);
 #endif
+    if (saved_ >= 0) {
+        int expected = -1;
+        g_protocolStdout.compare_exchange_strong(expected, saved_);
+    }
 }
 
 StdoutToStderr::~StdoutToStderr() {
     std::fflush(stdout);
     if (saved_ < 0) return;
+    int expected = saved_;
+    g_protocolStdout.compare_exchange_strong(expected, -1);
 #if defined(_WIN32)
     ::_dup2(saved_, 1);
     ::_close(saved_);

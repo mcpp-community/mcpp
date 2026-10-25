@@ -68,7 +68,7 @@ inline constexpr int kEnvelopeVersion = 1;
 // from what comes back.
 struct KindVersion { std::string_view kind; int version; };
 
-inline constexpr std::array<KindVersion, 10> kKinds{{
+inline constexpr std::array<KindVersion, 15> kKinds{{
     {"mcpp.env",             1},
     {"mcpp.xpkg",            1},
     {"mcpp.cache",           1},
@@ -102,6 +102,17 @@ inline constexpr std::array<KindVersion, 10> kKinds{{
     // made from (`data.stage`). `--format` names the package format on that
     // command, hence the `test`-style spelling (docs/50 §3).
     {"mcpp.pack",            1},
+    // `mcpp build --message-format json` (design 2026-10-26 §5.1): the result
+    // record of the build (`data`), after the NDJSON `mcpp.event` lines.
+    {"mcpp.build",           1},
+    // `mcpp run --print-launch --format json` (§5.3): how `mcpp run` would
+    // start the program -- argv, the environment it injects, cwd, the runner.
+    {"mcpp.launch",          1},
+    // `mcpp search --format json` and `mcpp index list --format json` (§5.6).
+    {"mcpp.search",          1},
+    {"mcpp.index",           1},
+    // `mcpp pack --list-formats --format json` (§5.6).
+    {"mcpp.pack.formats",    1},
 }};
 
 // What running a command does, beyond writing to stdout.

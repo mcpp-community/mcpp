@@ -863,6 +863,16 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
 
     // 2. Create directory tree
     std::error_code ec;
+    // `--deny init-mcpp-home` (design 2026-10-26 §5.5): a home that holds no
+    // configuration yet is not set up, and the caller said not to.
+    if (initialization != Initialization::ReadOnly
+        && !std::filesystem::exists(cfg.configFile, ec)
+        && mcpp::platform::env::effect_denied("init-mcpp-home")) {
+        mcpp::platform::env::note_effect_refused("init-mcpp-home", cfg.mcppHome.generic_string());
+        return std::unexpected(ConfigError{std::format(
+            "effect denied: init-mcpp-home -- {} is not set up yet, and the caller denied "
+            "creating it (--deny init-mcpp-home)", cfg.mcppHome.generic_string())});
+    }
     if (initialization != Initialization::ReadOnly) {
         for (auto& d : { cfg.binDir, cfg.registryDir, cfg.bmiCacheDir,
                          cfg.metaCacheDir, cfg.logDir }) {

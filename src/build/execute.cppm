@@ -30,6 +30,9 @@ import mcpp.freestanding.linkline;
 import mcpp.build.graph_shape;    // #407: which mode wrote this build.ninja
 import mcpp.build.backend;
 import mcpp.build.ninja;
+import mcpp.build.dirlock;     // the build directory's lock (mcpp#839)
+import mcpp.build.result;      // the result record and the event stream (design 2026-10-26 §5)
+import mcpp.wire;              // the mcpp.launch envelope
 import mcpp.build.flags;       // profile_descriptor — one answer for the level (#694)
 import mcpp.build.runtime_validation;
 import mcpp.bmi_cache;
@@ -618,10 +621,16 @@ void write_build_cache(const std::filesystem::path& projectRoot,
                        const std::string& group = {}) {
     // The configuration groups of one workspace command build at the same
     // time (workspace design 2026-09-29 §6) and record into one file; the
-    // read, the edit and the write are one step.
+    // read, the edit and the write are one step -- within this process under
+    // the mutex, and across processes under the file's own lock (mcpp#839):
+    // two configurations built at once each read the file, and the second
+    // write dropped the first's entry. Held for one read and one write, never
+    // across a build.
     static std::mutex cacheWrite;
     std::lock_guard lock(cacheWrite);
     auto path = projectRoot / kBuildCacheFile;
+    auto fileLock = mcpp::platform::fs::FileLock::acquire(
+        path.parent_path(), ".build_cache.lock", {}, std::chrono::hours(1), {});
     auto entries = read_build_cache(projectRoot);
 
     // Remove the existing entry for this (target, profile) pair. Keying on the
@@ -667,7 +676,19 @@ void write_build_cache_entries(const std::filesystem::path& path,
                                const std::vector<BuildCacheEntry>& entries) {
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
-    std::ofstream f(path, std::ios::trunc);
+    // Written beside and renamed over, so a fast path reading the record while
+    // it is replaced sees the old file or the new one, never half of either.
+    auto tmp = path;
+    tmp += std::format(".{:x}", std::random_device{}());
+    struct Publish {
+        std::filesystem::path tmp, path;
+        ~Publish() {
+            std::error_code e;
+            std::filesystem::rename(tmp, path, e);
+            if (e) std::filesystem::remove(tmp, e);
+        }
+    } publish{tmp, path};
+    std::ofstream f(tmp, std::ios::trunc);
     if (!f) return;
     for (auto& e : entries) {
         f << "[target=" << e.targetTriple << "]\n";
@@ -1212,6 +1233,116 @@ void report_freestanding_size(const BuildContext& ctx) {
     }
 }
 
+// The raw output of the last failed ninja run of this process, for the
+// diagnostics of the result record (the fast path's failure is reported when
+// it happens, before the record is written).
+std::string& failed_output() {
+    static std::string out;
+    return out;
+}
+
+// THE ARTIFACTS OF A PLAN, AS THE RESULT RECORD STATES THEM (design 2026-10-26
+// §5.2, §5.3). A program of this package carries its launch: the argv and the
+// environment `mcpp run` would give it -- what mcpp injects (the loader path,
+// the subos's declarations), not the caller's environment. A program that a
+// runner or an execution host wraps carries only `via`, and
+// `mcpp run --print-launch --format json` resolves that one.
+std::vector<mcpp::build::result::Artifact> result_artifacts(const BuildContext& ctx) {
+    namespace res = mcpp::build::result;
+    std::vector<res::Artifact> out;
+    const bool wrapped = !choose_runner(ctx).tmpl.empty();
+    std::vector<std::pair<std::string, std::string>> env;
+    if (auto [k, v] = compute_run_env(ctx.plan); !k.empty() && !v.empty()) env.emplace_back(k, v);
+    for (auto& kv : compute_subos_env(ctx.plan)) env.push_back(std::move(kv));
+    for (auto const& lu : ctx.plan.linkUnits) {
+        std::string kind;
+        switch (lu.kind) {
+            case LinkUnit::Binary:        kind = "bin"; break;
+            case LinkUnit::TestBinary:    kind = "test"; break;
+            case LinkUnit::SharedLibrary: kind = "shared"; break;
+            case LinkUnit::StaticLibrary: kind = "static"; break;
+            default: continue;
+        }
+        res::Artifact a{lu.targetName, kind, ctx.outputDir / lu.output, std::nullopt};
+        if (lu.kind == LinkUnit::Binary && lu.artifactOf.empty()) {
+            res::Launch l;
+            l.cwd = ctx.projectRoot.generic_string();
+            if (!ctx.runUnder.empty()) l.via = "run_under";
+            else if (wrapped) l.via = "runner";
+            else {
+                l.argv = {a.path.string()};
+                l.env = env;
+            }
+            a.launch = std::move(l);
+        }
+        out.push_back(std::move(a));
+    }
+    return out;
+}
+
+mcpp::build::result::Record start_record(const BuildContext& ctx) {
+    auto r = mcpp::build::result::begin(ctx.projectRoot, ctx.outputDir);
+    r.command = mcpp::build::dirlock::command();
+    r.pid = mcpp::build::dirlock::process_id();
+    r.triple = ctx.tc.targetTriple;
+    r.profile = ctx.profile;
+    mcpp::build::result::write(r);
+    mcpp::build::result::emit("plan", {{"configuration", {
+        {"triple", r.triple}, {"profile", r.profile}, {"fingerprint", r.fingerprint},
+        {"outputDir", r.outputDir.generic_string()}}}});
+    return r;
+}
+
+// Ends the record: `ok` with the artifacts, or `failed` with the diagnostics
+// read from the failed output. Each artifact and diagnostic is also an event.
+void finish_record(mcpp::build::result::Record& r, bool ok, std::string_view failure,
+                   std::vector<mcpp::build::result::Artifact> artifacts) {
+    namespace res = mcpp::build::result;
+    r.finishedAt = res::now_ms();
+    r.status = ok ? "ok" : "failed";
+    if (ok) r.artifacts = std::move(artifacts);
+    else r.diagnostics = res::parse_compiler_diagnostics(failure);
+    std::error_code ec;
+    if (std::filesystem::exists(r.outputDir / "compile_commands.json", ec))
+        r.compileDatabase = r.outputDir / "compile_commands.json";
+    res::write(r);
+    if (res::events_enabled()) {
+        auto json = res::to_json(r);
+        for (auto const& d : json["diagnostics"]) res::emit("diagnostic", {{"diagnostic", d}});
+        for (auto const& a : json["artifacts"]) res::emit("artifact", {{"artifact", a}});
+    }
+}
+
+// A fast path replays the graph the record's full build planned, so the
+// artifacts are that build's; the record is restated with this run's status.
+struct FastRecord {
+    mcpp::build::result::Record record;
+    std::vector<mcpp::build::result::Artifact> artifacts;
+};
+FastRecord fast_path_begin(const std::filesystem::path& projectRoot,
+                           const std::filesystem::path& outputDir) {
+    namespace res = mcpp::build::result;
+    FastRecord f;
+    auto previous = res::read(outputDir);
+    f.record = res::begin(projectRoot, outputDir);
+    f.record.command = mcpp::build::dirlock::command();
+    f.record.pid = mcpp::build::dirlock::process_id();
+    if (previous) {
+        f.record.triple = previous->triple;
+        f.record.profile = previous->profile;
+        f.artifacts = std::move(previous->artifacts);
+    }
+    res::write(f.record);
+    res::emit("plan", {{"configuration", {
+        {"triple", f.record.triple}, {"profile", f.record.profile},
+        {"fingerprint", f.record.fingerprint}, {"outputDir", f.record.outputDir.generic_string()}}}});
+    return f;
+}
+void fast_path_end(FastRecord& f, bool ok) {
+    finish_record(f.record, ok, ok ? std::string_view{} : std::string_view(failed_output()),
+                  ok ? std::move(f.artifacts) : std::vector<mcpp::build::result::Artifact>{});
+}
+
 export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                    std::string_view targetOverride = "") {
     // `--cache=off` means a cold build: no global cache, and target/ cleared —
@@ -1266,12 +1397,14 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     // drive takes them from the plan and the open report.
     mcpp::build::BuildOptions opts;
     opts.verbose = verbose;
+    auto record = start_record(ctx);
     auto r = be->build(ctx.plan, opts);
     if (!r) {
         // A failed step was reported when it failed; what follows is the
         // advice that reads the whole output.
         if (!r.error().reported) mcpp::ui::error(r.error().message);
         mcpp::ui::block(r.error().diagnosticOutput);
+        finish_record(record, false, r.error().diagnosticOutput + "\n" + r.error().message, {});
         return 1;
     }
 
@@ -1347,7 +1480,11 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     // after the build rather than at the end of prepare_build. Without this
     // call the whole diag channel would report and then be ignored — the
     // exact failure mode it exists to prevent.
-    if (!mcpp::diag::flush(ctx.strict)) return 1;
+    if (!mcpp::diag::flush(ctx.strict)) {
+        finish_record(record, false, {}, {});
+        return 1;
+    }
+    finish_record(record, true, {}, result_artifacts(ctx));
 
     // The descriptor reads the level the compile realised, from the one
     // function `compute_flags` spells it from (#694), and from the plan's
@@ -1627,6 +1764,7 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
     if (status != 0) {
         if (!reported && is_stale_ninja_failure(out))
             return std::nullopt;
+        failed_output() = out;
         // A failed step was reported when it failed (and every line, under
         // --verbose); what remains is the advice below.
         if (!reported) mcpp::ui::error("build failed");
@@ -2056,6 +2194,9 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     if (auto v = mcpp::platform::env::get("MCPP_MANAGED_ONLY"); v && *v != "0")
         return fast_path_declined("build", "MCPP_MANAGED_ONLY asks for the sources to be checked");
 
+    // The full path refuses a denied write and names it (design 2026-10-26 §5.5).
+    if (mcpp::platform::env::effect_denied("write-project"))
+        return fast_path_declined("build", "the caller denied write-project");
     auto want = fast_path_identity(projectRoot);
     if (!want) return fast_path_declined("build", "the manifest or the request could not be read");
 
@@ -2089,6 +2230,12 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     if (match->runtimeBinding && !match->runtimeBinding->baseIdentity.empty())
         return fast_path_declined("build", "a stated target base is measured on the full path");
 
+    // The directory is written by ninja below, under its lock (mcpp#839).
+    // Taken BEFORE admission: a build of this configuration that held it may
+    // have rewritten build.ninja (a test graph, another request) while this
+    // one waited, and the record is judged against what is there now.
+    auto buildLock = mcpp::build::dirlock::acquire(std::filesystem::path(match->outputDir));
+
     // The gates every fast path shares (see admit_recorded_build); what is left
     // here is the project's own tree.
     auto admitted = admit_recorded_build(*match, {
@@ -2113,13 +2260,18 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     // see it back.
     restore_root_compile_commands(projectRoot, outputDir);
     std::chrono::milliseconds elapsed{};
+    auto record = fast_path_begin(projectRoot, outputDir);
     auto rc = run_ninja_fast(admitted->ninjaProgram, outputDir, ninjaPath, verbose,
                              runtimeEnvKey, runtimeEnvValue, &elapsed);
     if (!rc) return fast_path_declined("build", "ninja reported a stale graph");
-    if (*rc != 0) return rc;
+    if (*rc != 0) {
+        fast_path_end(record, false);
+        return rc;
+    }
     if (!mcpp::build::runtime_validation::artifact_snapshot_unchanged(
             validatedBefore))
         return fast_path_declined("build", "ninja relinked an artifact, whose closure the full path validates"); // relinked: full path reconstructs + validates closure
+    fast_path_end(record, true);
 
     // The descriptor the plan recorded (revision 3, §7.3); empty for a record
     // written before it was carried.
@@ -2141,6 +2293,8 @@ export std::optional<int> try_fast_workspace_build(
         const std::vector<std::vector<std::string>>& groups,
         bool verbose, bool no_cache) {
     if (no_cache) return fast_path_declined("workspace", "the build cache is off (--no-cache)");
+    if (mcpp::platform::env::effect_denied("write-project"))
+        return fast_path_declined("workspace", "the caller denied write-project");
     if (mcpp::platform::env::get("MCPP_LOCKED").value_or("") == "1")
         return fast_path_declined("workspace", "MCPP_LOCKED=1 asks for a locked resolution");
     // `--managed-only` is checked against the sources prepare decides, which
@@ -2163,6 +2317,7 @@ export std::optional<int> try_fast_workspace_build(
         mcpp::build::runtime_validation::ArtifactSnapshot validated;
     };
     std::vector<Ready> ready;
+    std::vector<std::shared_ptr<mcpp::platform::fs::FileLock>> locks;
     std::string profile;
     std::error_code ec;
     const auto wsToml = std::filesystem::last_write_time(wsRoot / "mcpp.toml", ec);
@@ -2184,6 +2339,10 @@ export std::optional<int> try_fast_workspace_build(
                 && e.toolchainRecorded && e.toolchainRequest == want->toolchainRequest
                 && e.selection == selection && e.group == group) { match = &e; break; }
         if (!match) return fast_path_declined("workspace", "no recorded build matches this selection");
+        // Each group's directory under its own lock, taken before admission
+        // for the reason try_fast_build gives. Groups are visited in one
+        // order by every command, so two never wait on each other.
+        locks.push_back(mcpp::build::dirlock::acquire(std::filesystem::path(match->outputDir)));
         // The gates every fast path shares (see admit_recorded_build). A
         // workspace has no project tree of its own to sweep: its members are
         // recorded roots, each classified by its own package.
@@ -2257,9 +2416,21 @@ void yield_terminal() {
 // Returns nullopt when there's no usable cache entry (build_run_target
 // falls back to the full prepare_build path, which also refreshes the
 // cache for next time), an exit code otherwise.
+// `mcpp run --print-launch` (design 2026-10-26 §5.3): build, then print how
+// the program would be started -- the `mcpp.launch` envelope -- instead of
+// starting it. Read at the one point where `run` composes the spawn, so the
+// description is the run's own composition, not a second derivation of it.
+bool& print_launch_flag() {
+    static bool on = false;
+    return on;
+}
+export void set_print_launch(bool on) { print_launch_flag() = on; }
+
 std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
                                 const std::optional<std::string>& targetName,
                                 std::span<const std::string> passthrough) {
+    if (print_launch_flag())
+        return fast_path_declined("run", "--print-launch describes the launch the full path composes");
     // Same reason as try_fast_build's: this path skips resolution, and
     // `--locked` is an assertion about resolution.
     if (mcpp::platform::env::get("MCPP_LOCKED").value_or("") == "1")
@@ -2268,6 +2439,8 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     // a fast path does not run (mcpp#755).
     if (auto v = mcpp::platform::env::get("MCPP_MANAGED_ONLY"); v && *v != "0")
         return fast_path_declined("run", "MCPP_MANAGED_ONLY asks for the sources to be checked");
+    if (mcpp::platform::env::effect_denied("write-project"))
+        return fast_path_declined("run", "the caller denied write-project");
     auto want = fast_path_identity(projectRoot);
     if (!want) return fast_path_declined("run", "the manifest or the request could not be read");
 
@@ -2330,6 +2503,11 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     }
     if (!chosen) return fast_path_declined("run", "the requested program is not among the recorded ones");
 
+    // Under the directory's lock while ninja writes it, released before the
+    // program starts: a program that runs for an hour holds nothing, and a
+    // build of the same configuration meanwhile proceeds (mcpp#839).
+    auto buildLock = mcpp::build::dirlock::acquire(std::filesystem::path(match->outputDir));
+
     // The gates every fast path shares (see admit_recorded_build), for the
     // reason `mcpp run` is among the paths that need them: it execs the
     // artifact itself, so an entry that cannot say which engine wrote it, or
@@ -2353,13 +2531,19 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     // Fresh → run ninja (picks up any incremental object/link work) then
     // exec the cached exe path directly. C1, same reason as try_fast_build's.
     restore_root_compile_commands(projectRoot, outputDir);
+    auto record = fast_path_begin(projectRoot, outputDir);
     auto rc = run_ninja_fast(admitted->ninjaProgram, outputDir, ninjaPath, /*verbose=*/false,
                              match->runtimeEnvKey, match->runtimeEnvValue);
     if (!rc) return fast_path_declined("run", "ninja reported a stale graph");
-    if (*rc != 0) return kRunBuildFailed;
+    if (*rc != 0) {
+        fast_path_end(record, false);
+        return kRunBuildFailed;
+    }
     if (!mcpp::build::runtime_validation::artifact_snapshot_unchanged(
             validatedBefore))
         return fast_path_declined("run", "ninja relinked an artifact, whose closure the full path validates"); // never execute an artifact not validated for this binding
+    fast_path_end(record, true);
+    buildLock.reset();
 
     auto exe = outputDir / chosen->second;
     auto pathCtx = mcpp::fetcher::make_path_ctx(/*cfg=*/nullptr, projectRoot);
@@ -2619,6 +2803,22 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     // ENOEXEC is the kernel saying this host cannot load the artifact, and the
     // message carries the key that would change that. Anything else is reported
     // as itself — EACCES is a permission problem, not an absence.
+    // The build directory's lock goes before the program starts (mcpp#839):
+    // exec closes the descriptor on POSIX, but Windows waits for the child.
+    ctx.buildLock.reset();
+    if (print_launch_flag()) {
+        mcpp::build::result::Launch launch{argv, childEnv,
+                                           std::filesystem::current_path().generic_string(),
+                                           !host.prefix.empty() ? "run_under"
+                                           : !choice.tmpl.empty() ? "runner" : ""};
+        mcpp::wire::Envelope env{.kind = "mcpp.launch",
+                                 .effects = {mcpp::wire::Effect::ReadProject,
+                                             mcpp::wire::Effect::WriteProject}};
+        env.data = mcpp::build::result::to_json(launch);
+        env.data["program"] = exe.generic_string();
+        mcpp::wire::emit(env);
+        return 0;
+    }
     int spawnErr = 0;
     const int rc = mcpp::platform::process::run_foreground(argv, childEnv, &spawnErr);
     if (spawnErr != 0) {

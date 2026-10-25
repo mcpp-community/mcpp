@@ -1175,6 +1175,16 @@ std::expected<void, std::string> run_build_program_impl(
     // produces a baffling failure; a build PROGRAM that runs long is usually
     // stuck — waiting on a network read or spinning — and without a bound the
     // whole build hangs with no diagnostic at all.
+    // `--deny exec-build-script` (design 2026-10-26 §5.5): the effect is
+    // running code from the workspace, so the refusal is here, where a program
+    // would start -- a program whose answer is current runs nothing and is
+    // not refused.
+    if (mcpp::platform::env::effect_denied("exec-build-script")) {
+        mcpp::platform::env::note_effect_refused("exec-build-script", std::format("{} build program", who));
+        return std::unexpected(std::format(
+            "effect denied: exec-build-script -- {}'s build program would run, and the caller "
+            "denied running code from the workspace (--deny exec-build-script)", who));
+    }
     mcpp::build::progress::program_running(who, env.requested);
     programReport.runStart = ProgressClock::now();
     bool timedOut = false;

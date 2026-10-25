@@ -82,11 +82,19 @@ std::string_view cache_mode_name(CacheMode m) {
 
 CacheMode resolve_cache_mode(const mcpp::manifest::Manifest& m,
                                     std::string_view override_mode) {
-    if (auto v = parse_cache_mode(override_mode)) return *v;
-    if (const char* e = std::getenv("MCPP_BUILD_CACHE"); e && *e)
-        if (auto v = parse_cache_mode(e)) return *v;
-    if (auto v = parse_cache_mode(m.buildConfig.cacheMode)) return *v;
-    return CacheMode::Global;
+    // `--deny write-global-cache` (design 2026-10-26 §5.5): the build goes on
+    // without the shared dependency cache, as `--cache local` does -- the cache
+    // is an optimisation, and refusing the build would deny more than asked.
+    const auto mode = [&] {
+        if (auto v = parse_cache_mode(override_mode)) return *v;
+        if (const char* e = std::getenv("MCPP_BUILD_CACHE"); e && *e)
+            if (auto v = parse_cache_mode(e)) return *v;
+        if (auto v = parse_cache_mode(m.buildConfig.cacheMode)) return *v;
+        return CacheMode::Global;
+    }();
+    if (mode == CacheMode::Global && mcpp::platform::env::effect_denied("write-global-cache"))
+        return CacheMode::Local;
+    return mode;
 }
 
 std::string resolve_profile_name(const mcpp::manifest::Manifest& m,

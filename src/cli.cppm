@@ -36,6 +36,7 @@ import mcpp.platform.env;            // --offline → MCPP_OFFLINE
 import mcpp.platform.process;        // __action-stamp runs the checked command
 import mcpp.platform.fs;             // __action-stamp writes its stamps
 import mcpp.build.progress;          // __action reports its start
+import mcpp.build.dirlock;           // the build directory lock names this command
 import mcpp.platform.runtime_search; // linker-wrapper path-injection opt-out
 import mcpp.ui;
 import mcpp.log;
@@ -204,6 +205,113 @@ int enter_system_home(int argc, char** argv) {
 int run(int argc, char** argv) {
     namespace cl = mcpplibs::cmdline;
     ReportUnnarrowablePaths reportUnnarrowable_;
+
+    // What a build that waits for this one is told it waits for (mcpp#839):
+    // the command as typed, cut where a long argument list would bury it.
+    {
+        std::string command = "mcpp";
+        for (int i = 1; i < argc && command.size() < 80; ++i) {
+            command += ' ';
+            command += argv[i];
+        }
+        mcpp::build::dirlock::set_command(std::move(command));
+    }
+
+    // ─── --home <dir>: this run's home (design 2026-10-26 §9.1, SPEC-010) ──
+    // Exactly MCPP_HOME for this process: the raw home of the two-step
+    // selection, so its locator is still followed. Taken out of argv before
+    // anything parses it. After `self init` the flag is that command's own --
+    // the home to select persistently -- and stays; a global one naming a
+    // different directory beside it is a usage error, the same one naming the
+    // same directory is that command's flag written twice.
+    std::vector<char*> homeFiltered(argv, argv + argc);
+    {
+        std::optional<std::string> global;
+        std::vector<char*> kept{homeFiltered.front()};
+        std::vector<std::string_view> words;
+        bool initArgs = false;
+        for (std::size_t i = 1; i < homeFiltered.size(); ++i) {
+            const std::string_view a = homeFiltered[i];
+            if (a == "--") { kept.insert(kept.end(), homeFiltered.begin() + static_cast<std::ptrdiff_t>(i), homeFiltered.end()); break; }
+            if (!a.starts_with("-")) {
+                words.push_back(a);
+                initArgs = initArgs || (words.size() == 2 && words[0] == "self" && words[1] == "init");
+            }
+            if (!initArgs && (a == "--home" || a.starts_with("--home="))) {
+                if (a == "--home") {
+                    if (i + 1 >= homeFiltered.size()) {
+                        mcpp::ui::error("--home needs a directory");
+                        return 2;
+                    }
+                    global = std::string(homeFiltered[++i]);
+                } else global = std::string(a.substr(7));
+                continue;
+            }
+            kept.push_back(homeFiltered[i]);
+        }
+        if (global) {
+            std::error_code ec;
+            const auto absolute = std::filesystem::absolute(*global, ec).lexically_normal();
+            for (std::size_t i = 1; initArgs && i < kept.size(); ++i) {
+                const std::string_view a = kept[i];
+                std::string other;
+                if (a == "--home" && i + 1 < kept.size()) other = kept[i + 1];
+                else if (a.starts_with("--home=")) other = std::string(a.substr(7));
+                else continue;
+                if (std::filesystem::absolute(other, ec).lexically_normal() != absolute) {
+                    mcpp::ui::error(std::format("--home names {} and `self init --home` names {}; give one of them",
+                                                absolute.string(), other));
+                    return 2;
+                }
+            }
+            mcpp::platform::env::set("MCPP_HOME", absolute.string());
+            homeFiltered = std::move(kept);
+            argc = static_cast<int>(homeFiltered.size());
+            argv = homeFiltered.data();
+        }
+    }
+
+    // ─── --deny <effects> (design 2026-10-26 §5.5) ───────────────────────
+    // Published as MCPP_DENY_EFFECTS, the union of what the caller's
+    // environment already denies and what the flag adds, for the reason
+    // --offline is an env var: the consumers sit in every subsystem. A name
+    // that is not a deniable effect is a usage error, before anything runs.
+    {
+        auto valid = [](std::string_view list) -> std::optional<std::string> {
+            std::size_t pos = 0;
+            while (pos <= list.size()) {
+                auto comma = list.find(',', pos);
+                auto item = list.substr(pos, comma == std::string_view::npos ? std::string_view::npos : comma - pos);
+                while (!item.empty() && item.front() == ' ') item.remove_prefix(1);
+                while (!item.empty() && item.back() == ' ') item.remove_suffix(1);
+                const auto& names = mcpp::platform::env::deniable_effects();
+                if (!item.empty() && std::ranges::find(names, item) == names.end())
+                    return std::string(item);
+                if (comma == std::string_view::npos) break;
+                pos = comma + 1;
+            }
+            return std::nullopt;
+        };
+        std::string denied = mcpp::platform::env::get("MCPP_DENY_EFFECTS").value_or("");
+        for (int i = 1; i < argc; ++i) {
+            const std::string_view a = argv[i];
+            if (a == "--") break;
+            std::string value;
+            if (a == "--deny") {
+                if (i + 1 >= argc) { mcpp::ui::error("--deny needs a list of effects"); return 2; }
+                value = argv[i + 1];
+            } else if (a.starts_with("--deny=")) value = std::string(a.substr(7));
+            else continue;
+            denied += (denied.empty() ? "" : ",") + value;
+        }
+        if (auto bad = valid(denied)) {
+            mcpp::ui::error(std::format(
+                "--deny / MCPP_DENY_EFFECTS: '{}' is not an effect that can be denied; expected "
+                "init-mcpp-home, write-project, write-global-cache, network, exec-build-script", *bad));
+            return 2;
+        }
+        if (!denied.empty()) mcpp::platform::env::set("MCPP_DENY_EFFECTS", denied);
+    }
 
     // ─── --quiet / --no-color: pre-scan ─────────────────────────────────
     // The cmdline lib propagates global options into nested subcommand
@@ -416,7 +524,10 @@ int run(int argc, char** argv) {
         .option(cl::Option("no-color")
             .help("Disable colored output").global())
         .option(cl::Option("offline")
-            .help("Never touch the network (index refresh, downloads, toolchain install)")
+            .help("Never touch the network (index refresh, downloads, toolchain install); = --deny network")
+            .global())
+        .option(cl::Option("deny").takes_value().value_name("EFFECTS")
+            .help("Stop before any of these effects, exit 5: network, write-project, write-global-cache, exec-build-script, init-mcpp-home (also: MCPP_DENY_EFFECTS)")
             .global())
         .option(cl::Option("system")
             .help("Maintain the machine's system home (self init|doctor|store, toolchain install|remove|default, index update)")
@@ -495,6 +606,8 @@ int run(int argc, char** argv) {
                 .help("With --workspace (or at a virtual workspace root), leave the named member out; repeatable, refused with -p"))
             .option(cl::Option("play-game")
                 .help("Play a game in the status row while it builds: --play-game=snake|stack|runner, or one at random"))
+            .option(cl::Option("message-format").takes_value().value_name("FMT")
+                .help("human (default) | json: NDJSON events on stdout, then the mcpp.build envelope"))
             .action(wrap_rc(cmd_build)))
         .subcommand(cl::App("run")
             .description("Build + run a binary target (after `--`, args are passed to it)")
@@ -594,6 +707,8 @@ int run(int argc, char** argv) {
                       "--no-runner"))
             .option(cl::Option("play-game")
                 .help("Play a game in the status row while it builds: --play-game=snake|stack|runner, or one at random"))
+            .option(cl::Option("print-launch")
+                .help("Build, then print how the program would be started (argv, the environment mcpp adds, cwd, runner) as the mcpp.launch envelope, instead of starting it"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_run(p, std::span<const std::string>(passthrough));
             })))
@@ -1080,6 +1195,12 @@ int run(int argc, char** argv) {
             .option(cl::Option("list").takes_value().value_name("FILE")
                 .help("Place every `<source>\\t<destination>` pair of FILE in one process (#734 E4); several lines naming one destination are its sources"))
             .action(wrap_rc(cmd_stage)))
+        .subcommand(cl::App("link-output")
+            .description("(internal: invoked by ninja on Windows) Move a linked artifact aside, then run the linker command after `--` (a running program keeps its file)")
+            .option(cl::Option("output").takes_value().value_name("PATH").help("the artifact the command links"))
+            .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
+                return cmd_link_output(p, std::span<const std::string>(passthrough));
+            })))
         .subcommand(cl::App("place-dlls")
             .description("(internal: invoked by ninja) Place beside a Windows program the DLLs it imports from its runtime search directories")
             .option(cl::Option("output").takes_value().value_name("PATH").help("the stamp to write"))
@@ -1532,7 +1653,7 @@ int run(int argc, char** argv) {
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
                 "version", "dyndep", "why", "resolve", "stage", "bmi-equal", "coff-def",
-                "place-dlls",
+                "place-dlls", "link-output",
                 "bmi-compile", "bmi-supervise", "bmi-await",
             });
             bool ok = false;
@@ -1572,6 +1693,14 @@ int run(int argc, char** argv) {
     // The run's closing notices come last, after everything the command
     // printed, whatever its exit status (see mcpp::ui::add_closing_notice).
     mcpp::ui::print_closing_notices();
+    // A run that stopped before an effect its caller denied exits 5
+    // (SPEC-003, design 2026-10-26 D23): the caller's constraint, not a
+    // failure of the project, and a script tells the two apart by the status.
+    if (action_rc != 0)
+        if (auto refused = mcpp::platform::env::effect_refused()) {
+            mcpp::ui::note(std::format("stopped before a denied effect ({}); exit status 5", *refused));
+            return 5;
+        }
     return action_rc;
 }
 

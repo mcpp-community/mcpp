@@ -539,6 +539,12 @@ export struct BuildContext {
     // not, which let a plain build serve a featured artefact.
     std::string activeFeatureRequest;
     std::filesystem::path           outputDir;
+    // THE BUILD DIRECTORY'S LOCK (mcpp.build.dirlock, mcpp#839): taken when
+    // the finish phase starts writing `outputDir`, held through ninja, and
+    // dropped (`reset()`) before a program or a test runs. Shared because a
+    // context is copied; the last copy releases it. Null for a planning pass
+    // that describes (plan_only), which works in its own directory.
+    std::shared_ptr<mcpp::platform::fs::FileLock> buildLock;
     std::filesystem::path           stdBmi;
     std::filesystem::path           stdObject;
     // plan_only: what the std module build WOULD be (sources are on the

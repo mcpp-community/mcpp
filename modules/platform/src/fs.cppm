@@ -96,9 +96,32 @@ bool append_atomically(const std::filesystem::path& file, std::string_view bytes
 //   POSIX:   flock(2) on a file descriptor
 class FileLock {
 public:
-    // Try to acquire an exclusive lock on <dir>/.lock.
+    // Try to acquire an exclusive lock on <dir>/.lock (or <dir>/<name>).
     // Returns nullopt if another process holds the lock.
-    static std::optional<FileLock> try_acquire(const std::filesystem::path& dir);
+    static std::optional<FileLock> try_acquire(const std::filesystem::path& dir,
+                                               std::string_view name = ".lock");
+
+    // WAITS for the lock on <dir>/<name>, which `try_acquire` never does.
+    //
+    // Once held, `owner` is published beside the lock as <dir>/<name>.owner
+    // (replaced atomically): who holds it, for a waiter to name. A sidecar
+    // rather than the lock file's own bytes, because a Windows byte-range lock
+    // is mandatory and would refuse that read. While the lock is taken by
+    // another process, `waiting` is called once, after `notice` has passed,
+    // with what the holder published (empty when it published nothing).
+    //
+    // The wait polls with a backoff from 20 ms to 200 ms rather than blocking
+    // in the kernel: a blocking flock/LockFileEx cannot report the wait, and a
+    // waiter killed by a signal holds nothing either way. nullopt only when
+    // the lock file cannot be created at all (an unwritable directory, whose
+    // build fails on its own terms).
+    static std::optional<FileLock> acquire(
+        const std::filesystem::path& dir, std::string_view name, std::string_view owner,
+        std::chrono::milliseconds notice,
+        const std::function<void(std::string_view holder)>& waiting);
+
+    // What the current holder of <dir>/<name> published (see acquire).
+    static std::string holder(const std::filesystem::path& dir, std::string_view name);
 
     ~FileLock();
     FileLock(FileLock&& o) noexcept;
@@ -320,12 +343,54 @@ bool append_atomically(const std::filesystem::path& file, std::string_view bytes
 
 // ── FileLock ──────────────────────────────────────────────────────────────
 
+std::optional<FileLock> FileLock::acquire(
+    const std::filesystem::path& dir, std::string_view name, std::string_view owner,
+    std::chrono::milliseconds notice,
+    const std::function<void(std::string_view holder)>& waiting) {
+    namespace fs = std::filesystem;
+    const auto start = std::chrono::steady_clock::now();
+    auto pause = std::chrono::milliseconds(20);
+    bool told = false;
+    for (;;) {
+        if (auto lock = try_acquire(dir, name)) {
+            if (!owner.empty()) {
+                const auto record = dir / (std::string(name) + ".owner");
+                auto tmp = record;
+                tmp += std::format(".{:x}", std::random_device{}());
+                {
+                    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+                    out << owner;
+                }
+                std::error_code ec;
+                fs::rename(tmp, record, ec);
+                if (ec) fs::remove(tmp, ec);
+            }
+            return lock;
+        }
+        // try_acquire could not even create the file: nothing to wait for.
+        std::error_code ec;
+        if (!fs::exists(dir / std::string(name), ec)) return std::nullopt;
+        if (!told && std::chrono::steady_clock::now() - start >= notice) {
+            told = true;
+            if (waiting) waiting(holder(dir, name));
+        }
+        std::this_thread::sleep_for(pause);
+        pause = std::min(pause * 2, std::chrono::milliseconds(200));
+    }
+}
+
+std::string FileLock::holder(const std::filesystem::path& dir, std::string_view name) {
+    std::ifstream in(dir / (std::string(name) + ".owner"), std::ios::binary);
+    return in ? std::string(std::istreambuf_iterator<char>(in), {}) : std::string{};
+}
+
 #if defined(_WIN32)
 
-std::optional<FileLock> FileLock::try_acquire(const std::filesystem::path& dir) {
+std::optional<FileLock> FileLock::try_acquire(const std::filesystem::path& dir,
+                                              std::string_view name) {
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
-    auto lockPath = dir / ".lock";
+    auto lockPath = dir / std::string(name);
     HANDLE h = CreateFileW(lockPath.wstring().c_str(),
         GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
         NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -366,10 +431,11 @@ FileLock& FileLock::operator=(FileLock&& o) noexcept {
 
 #else // POSIX
 
-std::optional<FileLock> FileLock::try_acquire(const std::filesystem::path& dir) {
+std::optional<FileLock> FileLock::try_acquire(const std::filesystem::path& dir,
+                                              std::string_view name) {
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
-    auto lockPath = dir / ".lock";
+    auto lockPath = dir / std::string(name);
     int fd = ::open(lockPath.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0644);
     if (fd < 0) return std::nullopt;
     if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
