@@ -161,7 +161,7 @@ trap 'rm -f "$OUT"' EXIT
 "$CLANG_TIDY" \
     --checks='-*,readability-function-size' \
     --config="{CheckOptions: {readability-function-size.LineThreshold: '$LINE_THRESHOLD'}}" \
-    -p "$REPO_DIR" \
+    -p "$(dirname "$CDB")" \
     "${FILES[@]}" > "$OUT" 2>&1
 rc=$?
 

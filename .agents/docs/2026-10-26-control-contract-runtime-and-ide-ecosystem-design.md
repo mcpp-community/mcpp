@@ -62,6 +62,16 @@ mcpp-index（mcpplibs）本机快照。
     xatracker）、slang、libllvm、qt；index 描述文件按名链接的只有 `compat.sycl-runtime` 的 `libsycl`（本批声明 `requires`）；
     mesa 的驱动在运行期 dlopen，不在链接行上；其余不被 index 包按名链接。因此 D13 对 index 的新增拒绝只有 llvm 下的
     SYCL，新增警告为 0。
+  - **X4（xlings，新增）**：项目 store（mcpp 为工程索引维护的 `.mcpp/.xlings`）的 subos 只有已安装包的 shim，没有 `xlings`
+    入口；安装 `gcc.libstdcxx` 时 `xim:gcc` 的 config hook 以 `system.bindir()/xlings script` 重写 specs，报
+    `sh: …/subos/_/bin/xlings: not found`。xlings 在为 hook 配置 bin 目录时补上指向 home 入口的链接（与其旁 shim 指向同一
+    二进制）；`tests/e2e/project_hook_runs_xlings_test.sh` 在 2026.10.24.1 上失败。
+  - **`gcc.libstdcxx` 只有一个版本**：描述文件的依赖边按平台而不按版本，一个描述文件只能跟随一个 GCC 发布，取 mcpp 默认
+    gcc 工具链所用的 16.1.0（§12.1 的"按 `xim:gcc` 已有版本各一个"据此修订）。sycl-consumer 与 index 的
+    `sycl-runtime` 成员按条件声明依赖：`--no-accel` 的 CPU 变体仍用 libc++；index 成员在 Linux 上陈述 gcc，llvm 组合由新成员
+    `libstdcxx-llvm` 覆盖。
+  - **mcpp-plugins 的 sycl 规则读环境变量** `MCPP_CXX_ABI_ROOT` 而非 `mcpp::cxx_abi_root()`：后者在旧引擎上不存在，用 gcc 的
+    旧引擎用户因此不受影响；整个插件包的引擎下限不因一个规则提高。
   - **计划等价**（§21.1 第 10 条）：不新增计划格式后，等价性即既有快速路径的正确性，由 #544、#716、#755 与 riscv 的 e2e
     覆盖，不另设语料测试。
 

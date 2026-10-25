@@ -143,7 +143,11 @@ std::expected<std::string, DetectError> run_capture(const std::string& cmd) {
         if (recordedKey == key) return std::string(std::istreambuf_iterator<char>(in), {});
     }
     auto r = mcpp::platform::process::capture_host_tool(cmd);
-    if (r.exit_code == 0) {
+    // Kept only in a home that exists: a diagnostic of a cold home must not
+    // create it (an offline `self doctor` measures the toolchain and leaves no
+    // home behind).
+    std::error_code homeEc;
+    if (r.exit_code == 0 && std::filesystem::is_directory(mcpp::home::root(), homeEc)) {
         std::error_code ec;
         std::filesystem::create_directories(cached.parent_path(), ec);
         auto tmp = cached;

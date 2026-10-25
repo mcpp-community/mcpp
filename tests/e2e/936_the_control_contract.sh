@@ -32,7 +32,8 @@ cd app
 # A
 "$MCPP" build --message-format json > a.out 2> a.err || fail "A: the build failed" a.err
 $PY - a.out <<'EOF' || fail "A: the stream is not as specified" a.out
-import json, sys
+import json, sys, os
+same = lambda a, b: os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
 lines = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
 events = [l for l in lines if l.get("kind") == "mcpp.event"]
 assert any(e["event"] == "plan" for e in events), "no plan event"
@@ -42,7 +43,7 @@ assert env["kind"] == "mcpp.build" and env["schemaVersion"] == 1, env
 data = env["data"]
 assert data["status"] == "ok", data["status"]
 art = [a for a in data["artifacts"] if a["kind"] == "bin"][0]
-assert art["launch"]["argv"][0] == art["path"], art
+assert same(art["launch"]["argv"][0], art["path"]), art
 EOF
 printf 'int main() { return undeclared_name; }\n' > src/main.cpp
 set +e

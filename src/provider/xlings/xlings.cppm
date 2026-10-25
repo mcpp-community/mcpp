@@ -1054,7 +1054,9 @@ mcpp::provider::ProviderInfo describe(const std::filesystem::path& binary,
             ? nlohmann::json::parse(output.output, nullptr, false) : nlohmann::json{};
         if (j.is_object()) {
             parse(j);
-            if (info.answered) {
+            // Kept only in a home that exists, for the reason the probe
+            // cache gives: a diagnostic must not create a cold home.
+            if (info.answered && std::filesystem::is_directory(mcpp::home::root(), ec)) {
                 std::filesystem::create_directories(persisted.parent_path(), ec);
                 auto tmp = persisted;
                 tmp += std::format(".{:x}", std::random_device{}());

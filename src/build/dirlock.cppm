@@ -154,7 +154,21 @@ std::string owner_record() {
                        command_slot(), client);
 }
 
+// HELD ONCE PER PROCESS. One run may enter a configuration's directory more
+// than once -- `mcpp run --format <f>` builds the program and then packs it,
+// and the pack plans the same configuration -- and a second lock on the same
+// file from the same process waits for itself (flock and LockFileEx lock per
+// open file, not per process). The lock is shared while any holder keeps it.
+std::mutex g_heldMutex;
+std::map<std::string, std::weak_ptr<mcpp::platform::fs::FileLock>>& held() {
+    static std::map<std::string, std::weak_ptr<mcpp::platform::fs::FileLock>> m;
+    return m;
+}
+
 std::shared_ptr<mcpp::platform::fs::FileLock> acquire(const std::filesystem::path& outputDir) {
+    const auto key = outputDir.lexically_normal().generic_string();
+    std::lock_guard heldLock(g_heldMutex);
+    if (auto existing = held()[key].lock()) return existing;
     const auto start = std::chrono::steady_clock::now();
     auto lock = mcpp::platform::fs::FileLock::acquire(
         outputDir, kLockName, owner_record(), std::chrono::milliseconds(300),
@@ -167,7 +181,9 @@ std::shared_ptr<mcpp::platform::fs::FileLock> acquire(const std::filesystem::pat
                                     std::chrono::steady_clock::now() - start));
         });
     if (!lock) return nullptr;
-    return std::make_shared<mcpp::platform::fs::FileLock>(std::move(*lock));
+    auto shared = std::make_shared<mcpp::platform::fs::FileLock>(std::move(*lock));
+    held()[key] = shared;
+    return shared;
 }
 
 }  // namespace mcpp::build::dirlock
