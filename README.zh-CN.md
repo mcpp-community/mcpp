@@ -246,7 +246,7 @@ import mcpplibs.cmdline;
 - 三层增量优化：前端脏检查 + 逐文件 P1689 dyndep + BMI copy-if-different restat
 - 带指纹的 BMI 缓存：按编译器、编译标志与标准库计算哈希，跨项目共享
 - Ninja 后端：自动生成 build.ninja，并行编译
-- 自动生成 `compile_commands.json`（可直接供 clangd / ccls 使用）；`mcpp build --configure-only` 可在编译普通源码之前刷新它
+- 为每个配置生成 `compile_commands.json`（位置记录在 `target/.last-result.json`；`[build] compile_commands` 可在工程根目录放一份副本）；`mcpp build --configure-only` 可在编译普通源码之前刷新它
 - C 语言一等支持：自动识别 `.c` 文件，支持 C/C++ 混合项目
 - 用户自定义 cflags / cxxflags / ldflags / c_standard
 
@@ -432,7 +432,7 @@ mcpp 的身份模型有两条正交的轴：**工具链**是 `family@version`（
 | `2x` 工具链与目标 | [20 工具链管理](docs/zh/20-toolchains.md) · [21 目标三元组](docs/zh/21-the-target-triple.md) · [24 基于 openkal 的交叉构建](docs/zh/24-openkal-cross.md) |
 | `3x` 扩展 mcpp | [30 构建程序：`build.mcpp`](docs/zh/30-build-mcpp.md) · [31 编写规则包](docs/zh/31-authoring-a-rule-package.md) · [34 编写板级支持包](docs/zh/34-authoring-a-bsp.md) |
 | `4x` 设备与加速器 | [40 裸机与 freestanding 目标](docs/zh/40-baremetal.md) · [41 在设备上运行](docs/zh/41-devices.md) · [42 异构硬件构建](docs/zh/42-heterogeneous-builds.md) |
-| `5x` 面向程序的契约 | [50 机器可读输出](docs/zh/50-machine-output.md) · [51 受支持的版本与兼容性](docs/zh/51-supported-versions.md) · [规范](docs/specs/README.md) |
+| `5x` 面向程序的契约 | [50 机器可读输出](docs/zh/50-machine-output.md) · [51 受支持的版本与兼容性](docs/zh/51-supported-versions.md) · [52 从程序或 agent 驱动 mcpp](docs/zh/52-driving-mcpp-from-a-program.md) · [规范](docs/specs/README.md) |
 | `9x` mcpp 自身 | [90 从源码构建与参与贡献](docs/zh/90-build-from-source.md) · [92 发布 mcpp](docs/zh/92-release.md) |
 
 [`examples/`](examples/) 下的每个目录都是一个可以构建的项目，[03 —— 示例项目](docs/zh/03-examples.md) 说明每个示例演示什么。任意命令的完整选项可通过 `mcpp <cmd> --help` 查看。

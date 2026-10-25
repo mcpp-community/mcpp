@@ -163,14 +163,18 @@ Run it only in a trusted workspace. The process exit code and the resulting
 `compile_commands.json` are the stable integration contract; stdout remains
 human-readable.
 
-`compile_commands.json` at the project root is a copy of the current
-configuration's own database, written at
+Each configuration's database is written at
 `target/<triple>/<fingerprint>/compile_commands.json` — the directory the
 toolchain, target, profile and features together name, and the directory the
 compiler actually runs in. Every command that plans in that configuration
 (`build`, `test`, `run`, `--configure-only`) merges its fresh plan into that
 one file, so a unit `mcpp test` added stays listed after a plain `mcpp
-build`. The root copy is never merged: it is replaced whole with the
+build`. Its location is in the result record (`compileDatabase` in
+`target/.last-result.json`'s record, [50](50-machine-output.md) §9), which is
+where an editor finds it. A copy at the project root is written only when
+`[build] compile_commands` names one (2026.10.26.1+;
+[04](04-mcpp-toml.md#compile_commands--where-the-projects-compile-database-is-published-mcpp-202610261)).
+That copy is never merged: it is replaced whole with the
 configuration's file, and left untouched when the two already agree, so
 switching `--toolchain` or `--profile` switches the whole root file and
 switching back restores that configuration's entries, test units included. A

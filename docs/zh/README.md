@@ -98,6 +98,7 @@
 
 - [50 —— 机器可读输出](50-machine-output.md)
 - [51 —— 受支持的版本与兼容性](51-supported-versions.md)
+- [52 —— 从程序或 agent 驱动 mcpp](52-driving-mcpp-from-a-program.md)
 
 ### 9x —— mcpp 自身
 
@@ -163,3 +164,5 @@
   - [SPEC-008 —— 库的接口：公开模块、发布闭包与两种形态的一致](../specs/library-interface.md)
   - [SPEC-009 —— 工具链的支持与维护：版本线、默认值、来源、移动与退役](../specs/toolchain-maintenance.md)
   - [SPEC-010 —— home 选择与初始化](../specs/home-initialization.md)
+  - [SPEC-011 —— 并发运行：构建目录锁、整体发布、乐观写入与取消](../specs/concurrency.md)
+  - [SPEC-012 —— 面向人的输出：两条流、两种介质、行的种类与颜色](../specs/human-output.md)

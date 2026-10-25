@@ -408,7 +408,7 @@ warning: dependency `render` declares standard = "c++26", and this graph is
          built at c++23
   impact: a C++ module graph has one standard, so the dependency's declaration
           is not applied and its sources are compiled at the graph's level
-  hint:   raise the consumer's standard to "c++26", or declare it once for
+  help:   raise the consumer's standard to "c++26", or declare it once for
           every member:
 
             [workspace.package]
@@ -644,7 +644,8 @@ member that several members use is compiled once.
   build-database` plan as the build does, one plan per configuration with each
   member's tests, so a package the members share is described once per
   configuration. A command that planned several configurations writes the root
-  `compile_commands.json` once, as the union of their databases (2026.9.29.5+).
+  copy (when `[build] compile_commands` names one) once, as the union of their
+  databases (2026.9.29.5+).
 - **No-op builds.** A command repeated with nothing changed is answered by one
   check per configuration, without planning.
 - **Module names.** A module name is unique within one program, not within one
@@ -701,8 +702,8 @@ myproject/
 - A shared library placed in several product directories is one file with
   several names where the file system supports hard links; elsewhere it is
   copied.
-- `compile_commands.json` at the workspace root covers every member that has
-  been built or configured.
+- The workspace root's compile database, when `[build] compile_commands` names
+  one, covers every member that has been built or configured.
 - `mcpp.lock` at the workspace root records the resolution of every member.
   `mcpp build --workspace` writes the whole record; `mcpp build -p X` updates
   the entries of X's graph.

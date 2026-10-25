@@ -102,6 +102,7 @@ Within a part the order is a reading order, not an alphabet.
 
 - [50 — Machine-Readable Output](50-machine-output.md)
 - [51 — Supported Versions and Compatibility](51-supported-versions.md)
+- [52 — Driving mcpp from a Program or an Agent](52-driving-mcpp-from-a-program.md)
 
 ### 9x — mcpp itself
 
@@ -168,3 +169,5 @@ downstream tooling.
   - [SPEC-008 — A library's interface: public modules, the published closure, and one interface in both forms](specs/library-interface.md)
   - [SPEC-009 — The support and maintenance of toolchains: lines, defaults, provenance, moves and retirement](specs/toolchain-maintenance.md)
   - [SPEC-010 — Home selection and initialization](specs/home-initialization.md)
+  - [SPEC-011 — Concurrent runs: the build directory lock, whole outputs, optimistic writes, cancellation](specs/concurrency.md)
+  - [SPEC-012 — Output for people: two streams, two media, the kinds of line, colour](specs/human-output.md)

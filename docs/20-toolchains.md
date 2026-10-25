@@ -1086,7 +1086,7 @@ build says so:
 ```
 warning: the assembler for this build is the host's ('/usr/bin/nasm'), not the one this engine pins
   impact: two machines can assemble the same source with different assemblers, and the build records only this line
-  hint: run `xlings install nasm` so the pinned copy is used
+  help: run `xlings install nasm` so the pinned copy is used
 ```
 
 **A host tool that reaches a build is not by itself the defect. A host tool

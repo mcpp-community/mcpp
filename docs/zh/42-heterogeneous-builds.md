@@ -591,25 +591,29 @@ CPU 实现，要么是上面那条链接错误。
 选哪个形态是**程序自己的性质**，不是 mcpp 的性质：一个用接缝替换实现的程序，
 想要链接期选择；一个要发到没见过的机器上的程序，想要运行期选择。
 
-## 链接行上出现第二个 C++ 运行时时，只保留一个 unwinder
+## 一套 C++ 运行时，以及可以不同的孤岛（2026.10.26.1+）
 
-一条 lane 的设备编译器，如果是按 libstdc++ 配置的，链接行上就会出现
-libstdc++，而产物本身静态链接 libc++。两者同时出现在镜像里，mcpp 的重复符号
-检查会报出它们共有的那些符号。
+设备运行时建立在 libstdc++ 上的 lane（`libsycl.so`），会遇到自身 C++ 库来自工具链的
+程序。一个进程中的两套 Itanium 运行时共用 ABI 名字 —— `__cxa_throw`、personality
+例程、`std::exception` 的类型信息 —— 跨越两者的带类型 `catch` 不会匹配（mcpp#838：
+`catch (const std::exception&)` 没有接住库抛出的异常，只有 `catch (...)` 接住）。因此
+一个进程只有一套 C++ 运行时（[22 —— 目标侧](22-target-side.md)）：
 
-对其中大多数符号，后果只是「调用了另一份可互换的实现」。对 unwinder 不是。
-静态归档只贡献被引用到的成员，所以这种抢占**按构造是部分的**：在 SYCL lane
-上实测，libgcc 的 18 个 `_Unwind_*` 入口点里，有 10 个来自产物，8 个仍留在
-libgcc_s 里，其中包括 personality 例程要用的那几个访问器。于是 libstdc++ 的
-personality 拿 libgcc 的访问器去读一个 LLVM libunwind 的 context，找不到
-landing pad，越过三帧之上一个本应命中的 handler，直接调用了
-`std::terminate`。在有东西抛出之前，这个程序一直是正确的。
-
-因此，当链接行上出现 libstdc++、而工具链自带的标准库是 libc++ 时，mcpp 改从
-libgcc 取 unwinder（`--unwindlib=libgcc`），不再链载荷的 `libunwind.a`，并用
-`--exclude-libs` 把静态归档的符号挡在动态符号表之外。libgcc_s 本来就在
-进程里——libstdc++ 需要它——所以这一步只是点名一个已有的库，不是新增一个，
-C++ 运行时仍然是内嵌的。链接行上没有第二个运行时的构建，一字节不变。
+- **SYCL 只用一套运行时：libstdc++。** `compat.sycl-runtime` 声明
+  `requires = ["mcpp:c++-abi=libstdc++"]`。gcc 工具链满足它，llvm 加依赖图中的
+  `gcc.libstdcxx` 同样满足；规则读取 `MCPP_CXX_ABI_ROOT`，让设备编译器使用同一个库。
+  没有 libstdc++ 供给者的 llvm 构建在任何编译之前被拒绝，并给出两种补救。实测：设备
+  编译单元捕获 `sycl::exception`，该类型由 `libsycl.so` 定义并在 libstdc++ 上抛出，因此
+  SYCL 单元不可能是孤岛。
+- **孤岛需要声明，并被验证。** C++ 运行时只位于 C 接口之后的组件声明
+  `requires = [{ layer = "mcpp:c++-abi=libstdc++", visibility = "private" }]`。引擎把
+  外来运行时放在程序自身运行时之后，从 libgcc 取展开器（`--unwindlib=libgcc`），用
+  `--exclude-libs` 隐藏静态运行时的符号，并在链接后检查 ABI 层只绑定到一套运行时、
+  没有跨两套运行时的按类型捕获。静态归档只贡献被引用的成员，所以第二个展开器按构造
+  是部分的：此规则之前在 SYCL lane 上实测，libgcc 的 18 个 `_Unwind_*` 入口中 10 个
+  来自产物、8 个留在 libgcc_s，一次在处理器之下三帧的抛出以 `std::terminate` 结束。
+- **HIP 没有第二套运行时。** NVIDIA 平台用工程自己的 clang 编译 `.hip`，
+  `libcudart_static.a` 引用的 C++ ABI 符号只有 `__cxa_atexit`。
 
 ## 两条值得写明的边界
 
@@ -655,11 +659,10 @@ HIP 与 SYCL 两行的 `accel` 值是**两段**，不是一段。第一段命名
 ROCm。`xim:hip-nvidia` 因此不含任何二进制。AMD 平台需要一个本生态尚未发布的
 ROCm 运行时，规则会点名拒绝，而不是产出一个没有东西能链接的目标文件。
 
-**一次 SYCL 构建携带两个 C++ 运行时，而接缝是让这件事安全的机制。**
-`libsycl.so` 是对着 libstdc++ 编译的，而一个 mcpp 产物链接 libc++，于是两者
-都在同一个镜像里，mcpp 的重复符号检查会报出它们共有的那些 unwinder 符号。
-任何东西都不得穿过接缝：一个 SYCL 异常在设备编译单元里被捕获，转成一个返回码，
-因为抛出它的那个运行时，不是调用方会用来展开的那一个。
+**一次 SYCL 构建只携带一套 C++ 运行时：libstdc++。** `libsycl.so` 是对着 libstdc++
+编译的，所以程序也建立在它之上：使用 gcc，或使用 llvm 加依赖图中的 `gcc.libstdcxx`。
+2026.10.26.1 之前，llvm 的 SYCL 构建在它旁边链接 libc++，运行时抛出的 `sycl::exception`
+只有 `catch (...)` 能接住；这样的构建现在被拒绝，并给出两种补救。
 
 ## 每条 lane 能到达的平台
 

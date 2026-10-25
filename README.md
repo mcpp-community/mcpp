@@ -272,8 +272,9 @@ import mcpplibs.cmdline;
 - Three-layer incremental optimization: front-end dirty check + per-file P1689 dyndep + BMI copy-if-different restat
 - Fingerprinted BMI cache: hashed by compiler/flags/standard library, shared across projects
 - Ninja backend: auto-generated build.ninja, parallel compilation
-- `compile_commands.json` generated automatically (ready for clangd / ccls); use
-  `mcpp build --configure-only` to refresh it before ordinary sources compile
+- `compile_commands.json` generated for each configuration (its location in
+  `target/.last-result.json`; a project-root copy with `[build] compile_commands`);
+  `mcpp build --configure-only` refreshes it before ordinary sources compile
 - First-class C support: `.c` files auto-detected, mixed C/C++ projects
 - User-defined cflags / cxxflags / ldflags / c_standard
 
@@ -507,7 +508,7 @@ a command in front of a reader, to the chapter that owns it.
 | `2x` toolchains and targets | [20 Toolchain Management](docs/20-toolchains.md) · [21 The Target Triple](docs/21-the-target-triple.md) · [24 Cross-Compilation Over openkal](docs/24-openkal-cross.md) |
 | `3x` extending mcpp | [30 Build Programs: `build.mcpp`](docs/30-build-mcpp.md) · [31 Authoring a Rule Package](docs/31-authoring-a-rule-package.md) · [34 Authoring a Board-Support Package](docs/34-authoring-a-bsp.md) |
 | `4x` devices and accelerators | [40 Bare-Metal and Freestanding Targets](docs/40-baremetal.md) · [41 Reaching a Device](docs/41-devices.md) · [42 Heterogeneous Builds](docs/42-heterogeneous-builds.md) |
-| `5x` contracts for programs | [50 Machine-Readable Output](docs/50-machine-output.md) · [51 Supported Versions and Compatibility](docs/51-supported-versions.md) · [the specifications](docs/specs/README.md) |
+| `5x` contracts for programs | [50 Machine-Readable Output](docs/50-machine-output.md) · [51 Supported Versions and Compatibility](docs/51-supported-versions.md) · [52 Driving mcpp from a Program or an Agent](docs/52-driving-mcpp-from-a-program.md) · [the specifications](docs/specs/README.md) |
 | `9x` mcpp itself | [90 Building from Source and Contributing](docs/90-build-from-source.md) · [92 Releasing mcpp](docs/92-release.md) |
 
 Every directory under [`examples/`](examples/) is a project that builds, and

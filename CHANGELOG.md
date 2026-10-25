@@ -4,6 +4,90 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.26.1] - 2026-10-26
+
+### Added
+
+- **The build stream and the result record.** `mcpp build --message-format
+  json` writes NDJSON events (`plan`, `waiting`, `progress`, `diagnostic`,
+  `artifact`) and ends with the `mcpp.build` envelope. Every build writes
+  `target/<triple>/<fp>/result.json` (`running`, then `ok`, `failed` or
+  `cancelled`) and `target/.last-result.json`: the command, the caller
+  (`MCPP_CLIENT`), the artifacts with how `mcpp run` starts each one, and the
+  compilers' diagnostics with path and range. `mcpp run --print-launch` prints
+  the `mcpp.launch` envelope instead of starting the program.
+- **`--deny <effects>` and `MCPP_DENY_EFFECTS`.** A run stops before the first
+  effect its caller denied (`init-mcpp-home`, `write-project`,
+  `write-global-cache`, `network`, `exec-build-script`), names it, and exits
+  `5`; a denied `write-global-cache` uses the project's own cache instead.
+  `--offline` counts as `--deny network`.
+- **Queries.** `mcpp search [keyword] --format json` (`mcpp.search`, every
+  package when no keyword is given), `mcpp index list --format json`
+  (`mcpp.index`) and `mcpp pack --list-formats` (`mcpp.pack.formats`).
+- **`mcpp --home <dir>`** runs one command with `<dir>` as its home, as
+  `MCPP_HOME=<dir>` does.
+- **`[build] compile_commands`** names where the project's compile database is
+  published, with `MCPP_COMPILE_COMMANDS` for one run and a `config.toml`
+  default.
+- **A C++ runtime island is declared and verified.** `requires` takes a table,
+  `{ layer = "mcpp:c++-abi=libstdc++", visibility = "private" }` (for the
+  `c++-abi` layer only), and may be written under `[target.<sel>]`. A declared
+  island is linked with the foreign runtime after the program's own and checked
+  after the link (`[cxx-runtime-collision]`); a build with a C++ shared library
+  beside one is refused (`[cxx-runtime-island]`).
+- **llvm with a libstdc++ from the graph.** A package that provides
+  `mcpp:c++-abi=libstdc++` (`gcc.libstdcxx`) gives a clang build its headers,
+  its `std` module and `-stdlib=libstdc++`. Build programs receive the resolved
+  `MCPP_CXX_STDLIB` and `MCPP_CXX_ABI_ROOT`.
+- Colour on a pipe when `CLICOLOR_FORCE` or `FORCE_COLOR` asks for it;
+  `NO_COLOR` and `MCPP_NO_COLOR` still win.
+- Docs: [52 — Driving mcpp from a Program or an Agent](docs/52-driving-mcpp-from-a-program.md),
+  [SPEC-011 concurrency](docs/specs/concurrency.md) and
+  [SPEC-012 human output](docs/specs/human-output.md).
+
+### Changed
+
+- **The project root's `compile_commands.json` is written only when
+  `[build] compile_commands` names it.** Each configuration's database stays in
+  its build directory. A copy an earlier mcpp left is no longer updated, and the
+  first build that finds it says so once.
+- **A foreign C++ runtime is recognised by type.** A runtime library named on
+  the link line, or a shared library on it whose `DT_NEEDED` names one, replaces
+  the search for `stdc++` in the flags. One no package declares is verified as
+  an island: a build that passes proceeds with a warning (`undeclared-cxx-runtime`),
+  one that does not is refused.
+- `abi:glibc` and `abi:cxxstdlib` read the resolved target side, as
+  `requires = ["mcpp:c-abi=glibc"]` and `["mcpp:c++-abi=…"]` do (the
+  compatibility reading `abi-capability`).
+- mcpp's next-step lines read `help:` (they read `hint:`).
+- A manifest's rejection is located at the key it names
+  (`mcpp.toml:6:11: error: [build].sources …`), and envelope diagnostics carry
+  that location as `path` and `range`.
+- `cache list` reads each entry's size from its record; compiler probes and the
+  provider handshake are cached under the home. Measured with xlings
+  2026.10.26.1: `emit build-database` 71 ms, `toolchain list` 44 ms.
+- A provisioning failure passes on xlings' diagnostic and no longer suggests
+  `xlings install`.
+
+### Fixed
+
+- **Two builds of one configuration no longer break each other** (mcpp#839).
+  A build directory has a lock from the moment its configuration is known; the
+  second build waits, says whose run it waits for, and finds little left to do.
+  `mcpp run` releases it before starting the program.
+- **A linked file is replaced whole.** A program started while a build links
+  never runs a partial file (POSIX: link to a temporary name and rename;
+  Windows: the old file is renamed aside).
+- **`catch (const std::exception&)` matches across a second C++ runtime**
+  (mcpp#838): the foreign runtime is linked after the program's own, so the ABI
+  layer binds to one runtime.
+- `target/.build_cache` and `mcpp.lock` are replaced atomically; a lock another
+  run wrote meanwhile is not overwritten (`[lockfile-concurrent]`).
+- A build ended by SIGINT, SIGTERM or SIGHUP leaves its record `cancelled` and
+  exits `128 + N`.
+- A libstdc++ `std` module source named `std.cc` is compiled as a module
+  (`-x c++-module`).
+
 ## [2026.10.24.1] - 2026-10-24
 
 ### Added

@@ -4,12 +4,12 @@
 |---|---|
 | 规范编号 | SPEC-003 |
 | 标题 | mcpp 的进程退出码:分类、语义与稳定性承诺 |
-| 状态 | 评审中 v1.1 |
-| 版本 | 1.1 |
-| 最后修改 | 2026-10-01 |
-| 对应实现 | mcpp >= 2026.9.1.1 |
-| 相关设计文档 | `.agents/docs/2026-08-08-machine-readable-output-protocol-design.md` §R4、`.agents/docs/2026-08-31-issue540-seven-audit-findings.md` §4 |
-| 相关 issue | #379、#540 |
+| 状态 | 评审中 v1.2 |
+| 版本 | 1.2 |
+| 最后修改 | 2026-10-26 |
+| 对应实现 | mcpp >= 2026.9.1.1;`5` 与信号(§3.6、§3.7)mcpp >= 2026.10.26.1 |
+| 相关设计文档 | `.agents/docs/2026-08-08-machine-readable-output-protocol-design.md` §R4、`.agents/docs/2026-08-31-issue540-seven-audit-findings.md` §4、`.agents/docs/2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md` §5.4、§5.5(D23) |
+| 相关 issue | #379、#540、#839 |
 
 ## 0. 这份规范存在的原因
 
@@ -48,9 +48,11 @@ usage / internal 一半(`2`、`70`、`127`),runtime 的一半 —— 也就是�
 | `1` | 运行期失败 | 命令跑了、请求合法、结果是失败 | 人类可读的原因走 stderr |
 | `2` | 用法错误 | 未知选项、不支持的选项值、缺少必需参数 | stderr |
 | `4` | 环境未就绪 | 全局配置加载 / 首次初始化失败(`$MCPP_HOME` 不可写、config.toml 损坏、引导 xlings 失败) | stderr |
+| `5` | 副作用被拒绝 | 运行在调用方拒绝的副作用(`--deny`、`MCPP_DENY_EFFECTS`、`--offline`)之前停下;项目本身没有失败 | stderr 写明副作用与原因 |
 | `70` | 内部错误 | 未捕获异常。`EX_SOFTWARE` | stderr |
 | `101` | 构建失败(仅 `mcpp run`) | `mcpp run` 的规划或构建失败,程序没有启动。Cargo 对 `cargo run` 构建失败给出同一个值 | stderr |
 | `127` | 未知命令 | 第一个位置参数不是一个子命令 | stderr |
+| `128 + N` | 被信号结束(POSIX) | SIGINT(`130`)、SIGTERM(`143`)、SIGHUP(`129`)结束了这次运行;状态由进程死于该信号得到,不是 mcpp 返回的值 | 结果记录写 `cancelled`(§3.7) |
 
 `4` 与 `1` 的分界是**谁需要被修**:`4` 说明 mcpp 自己的家还没有准备好,任何命令都会
 撞上同一堵墙;`1` 说明这一次请求失败了,而 mcpp 是可用的。把二者合并会让「我的工程
@@ -95,9 +97,42 @@ issue;`1` 通常不是。
 
 任何非零退出**必须**在 stderr 上留下至少一行说明。空 stderr 加非零退出是缺陷。
 
+### 3.6 `5`:调用方的约束,不是项目的失败 已实现
+
+调用方用 `--deny <副作用,…>`、`MCPP_DENY_EFFECTS` 或 `--offline`(等价于拒绝
+`network`)约束一次运行可以产生的副作用。副作用的词汇与信封的 `effects` 相同
+(`docs/50-machine-output.md` §4):`init-mcpp-home`、`write-project`、
+`write-global-cache`、`network`、`exec-build-script`;`read-project` 不可拒绝。未知的
+副作用名是用法错误,返回 `2`。
+
+运行在第一个被拒绝的副作用**之前**停下,stderr 写明副作用与它要做的事(例如
+`network: install xim:gcc@16.1.0`),退出码为 `5`。被拒绝的 `write-global-cache` 不
+停下运行:构建改用工程本地的缓存,运行照常完成。
+
+`5` 与 `1` 的分界是**谁的决定挡住了运行**:`5` 说明调用方的约束挡住了一件运行需要做
+的事,去掉约束(或由调用方的宿主审批)后重跑即可;`1` 说明项目或环境本身失败。只有
+shell 的 agent 依靠这一个数就能区分两者。
+
+### 3.7 信号:状态由信号得到,记录由 mcpp 留下 已实现
+
+POSIX 上,SIGINT、SIGTERM、SIGHUP 结束 mcpp 时,mcpp 先结束它启动的进程组(ninja、
+钩子),再按信号的默认动作死去,因此调用方读到的状态是 `128 + N`:`130`、`143`、
+`129`。这些值不是 mcpp 返回的,§3.1 的稳定性承诺对它们的含义是"被该信号结束"。
+
+正在写构建目录的运行(从配置目录确定到构建结束)被信号结束时,结果记录
+`result.json` 与 `target/.last-result.json` 的 `status` 为 `cancelled`
+(`docs/50-machine-output.md` §9)。记录的这一形态在运行开始时预先写好,由信号处理器用
+异步信号安全的调用落盘。SIGKILL 不经过处理器:一份 `status` 仍为 `running`、而 `pid`
+已不存在的记录,说明那次运行被强制结束。构建目录在两种情况下都保持一致,下一次构建
+从中断处继续。
+
+Windows 上,Ctrl-C 与 Ctrl-Break 由控制台处理器结束受管的作业、写下同样的
+`cancelled` 记录,然后交给系统的默认处理;进程的状态是系统给出的
+`STATUS_CONTROL_C_EXIT`(`0xC000013A`)。
+
 ## 4. 当前实现与本规范的差异
 
-无。§2 的码是 `src/` 中出现的全部进程退出码(2026-09-01 核对时是六个;1.1 起增加 `101`,见 `execute.cppm` 的 `kRunBuildFailed`)。
+无。§2 的码是 `src/` 中出现的全部进程退出码(2026-09-01 核对时是六个;1.1 起增加 `101`,见 `execute.cppm` 的 `kRunBuildFailed`;1.2 起增加 `5`,见 `cli.cppm` 末尾按 `env::effect_refused()` 的映射)。`128 + N` 不是 mcpp 返回的值,不在这张核对表中。
 
 2026-09-01 穷举核对,记录方法与读数,因为「我数了一遍」不是判据:
 
@@ -124,5 +159,6 @@ issue;`1` 通常不是。
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 1.2 | 2026-10-26 | 新增 `5`:运行在调用方拒绝的副作用之前停下(§3.6)。新增 `128 + N`:被信号结束,结果记录为 `cancelled`;Windows 为 `STATUS_CONTROL_C_EXIT`(§3.7)。 |
 | 1.1 | 2026-10-01 | 新增 `101`:`mcpp run` 的规划或构建失败(此前为 `1` 或 `2`,与返回同一个值的程序无法区分)。 |
 | 1.0 | 2026-09-01 | 首版。落地 2026-08-08 协议设计文档 §R4 指派而未写的契约;补上 `1` 与 `4`,并说明为什么 `4` 不属于 `docs/11` 那张按信封命令划定的表(#540)。 |

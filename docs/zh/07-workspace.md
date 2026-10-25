@@ -369,7 +369,7 @@ warning: dependency `render` declares standard = "c++26", and this graph is
          built at c++23
   impact: a C++ module graph has one standard, so the dependency's declaration
           is not applied and its sources are compiled at the graph's level
-  hint:   raise the consumer's standard to "c++26", or declare it once for
+  help:   raise the consumer's standard to "c++26", or declare it once for
           every member:
 
             [workspace.package]
@@ -554,7 +554,7 @@ mcpp test --workspace --workspace-timeout 1800   # whole fan-out (default 0 = no
   对一个成员的 `mcpp test` 是该成员的一次规划，一如既往。
 - **编译数据库。** `mcpp build --configure-only` 与 `mcpp emit build-database` 按构建的方式
   规划，每个配置一次规划并包含各成员的测试，因此成员共用的包在每个配置中只描述一次。规划了
-  多个配置的命令只写一次根目录的 `compile_commands.json`，内容为各配置数据库的并集
+  多个配置的命令只写一次根目录的副本(在 `[build] compile_commands` 指定时)，内容为各配置数据库的并集
   （2026.9.29.5+）。
 - **无事可做的构建。** 在没有任何改动时重复执行的命令，每个配置只做一次检查，不重新规划。
 - **模块名。** 模块名在一个程序之内唯一，而不是在一张图之内唯一（2026.9.30.2+）。不共享任何
@@ -605,7 +605,7 @@ myproject/
   放在旁边。两个成员包名相同时使用 `bin/<namespace>.<name>/`。带根包的工作空间中，根包仍使用
   `bin/`。
 - 放入多个产物目录的共享库，在支持硬链接的文件系统上是同一个文件的多个名字，其他情况下被复制。
-- 工作空间根的 `compile_commands.json` 覆盖所有已构建或已配置的成员。
+- 工作空间根的编译数据库(在 `[build] compile_commands` 指定时)覆盖所有已构建或已配置的成员。
 - 工作空间根的 `mcpp.lock` 记录全体成员的解析结果。`mcpp build --workspace` 写入完整记录；
   `mcpp build -p X` 更新 X 所在图中的条目。
 - 成员的构建程序写入 `<member>/target/.build-mcpp/`。各成员的构建程序在 workspace 的构建程序图

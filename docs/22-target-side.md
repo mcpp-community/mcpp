@@ -311,6 +311,96 @@ toolchain values ([32 — Authoring a Payload](32-authoring-a-payload.md)). It
 must not build a different variant into the same store directory, because the
 first consumer would then decide the variant for every later one.
 
+### `requires` as a table, and on a target (mcpp 2026.10.26.1+)
+
+An entry of `requires` may be a table:
+
+```toml
+requires = [{ layer = "mcpp:c++-abi=libstdc++", visibility = "private" }]
+```
+
+A string is the table with `visibility = "public"`. `private` states that the
+requirement holds for this package's own code and does not cross its boundary:
+the package's C++ runtime lives behind a C interface (an island, below). It is
+accepted for the `c++-abi` layer only; on any other layer the manifest is
+refused with `requires-private-layer`, because a second C library in one image
+is two C libraries, not an island.
+
+`requires` may also be written under a target selector, and the requirement set
+is the union of `[package] requires` and every matching selector's, as for
+`requires_abi`:
+
+```toml
+[target.'cfg(os = "linux")']
+requires = [{ layer = "mcpp:c++-abi=libstdc++", visibility = "private" }]
+```
+
+An engine older than 2026.10.26.1 refuses the table form; a package that uses it
+states the floor (`[build-dependencies.mcpp] version = ">= 2026.10.26.1"`, or
+`mcpp = ">= 2026.10.26.1"` in an index descriptor).
+
+### One C++ runtime per process (mcpp 2026.10.26.1+)
+
+Two Itanium C++ runtimes — libstdc++, and libc++ with libc++abi — define the
+same ABI names: `__cxa_*`, `__gxx_personality_v0`, the type information and
+virtual tables of `std::exception` and its family, `operator new` and
+`delete`. In one process's global symbol space they end up each serving half of
+an exception (mcpp#838: thrown by one, caught by the other, and only
+`catch (...)` matches), and `std::runtime_error` has a different layout in each.
+No link line makes several images, two runtimes and exceptions that cross the
+images reliable. So the engine holds a build to one of three modes:
+
+| mode | when | the engine's obligation |
+|---|---|---|
+| **U, unified** (default) | the process has one C++ runtime, the one supplier of `c++-abi` (the compiler's payload, a target base, or a package of the graph) | a `requires` the build does not satisfy is refused before compilation, with the remedy |
+| **I, island** | a component's C++ runtime lives only behind its C interface, and a package declares it with `visibility = "private"` | every condition below is verified; a build that fails one is refused |
+| **H, host decides** | a Python extension, a JNI library, a host's plug-in: the target base states the `c++-abi` | the package follows the base |
+
+An island stands when all of these hold:
+
+1. the build has one C++ image: no C++ shared library among the root's targets,
+   or the plan is refused with `[cxx-runtime-island]`;
+2. one unwinder, `--unwindlib=libgcc`;
+3. the foreign runtime comes after the build's own runtime on the link line —
+   the engine places it there; a rule package does not write it into `ldflags`;
+4. the island's objects reference no layout-dependent member of the collision
+   set (the constructors, destructors and `what` of the `std::exception`
+   family other than `std::exception` itself);
+5. the linked image imports no ABI-layer symbol at a `GLIBCXX_*` or `CXXABI_*`
+   version;
+6. no type information the image references or defines is also exported by a
+   shared library built on the foreign runtime — a typed `catch` across two
+   runtimes never matches.
+
+Conditions 4 to 6 are checked after the link and reported as
+`[cxx-runtime-collision]`, naming the symbols. A foreign runtime is recognised
+by type, never by a substring of the link flags: a runtime library named on the
+link line (`-l:libstdc++.so.6`), or a shared library on it whose `DT_NEEDED`
+names one (`libstdc++.so.*`, `libc++.so.*`, `libc++abi.so.*`). One that no
+package declares is verified as an island; when it stands, the build proceeds
+with a warning (the compatibility reading `undeclared-cxx-runtime`,
+[51](51-supported-versions.md)), and when it does not, the build is refused.
+
+A SYCL program is never an island: its units catch `sycl::exception`, which
+`libsycl.so` defines and throws on libstdc++ (condition 6). It builds in mode U —
+with gcc, or with llvm and a libstdc++ supplied by the graph:
+
+```toml
+[dependencies]
+gcc.libstdcxx = "16.1.0"      # provides mcpp:c++-abi=libstdc++
+
+[toolchain]
+default = "llvm@22.1.8"       # selects the compiler only
+```
+
+With a graph-supplied libstdc++ under clang, the engine compiles with
+`-nostdinc++` and the supplier's headers, precompiles `std` from its
+`std-module`, links with `-stdlib=libstdc++` (the compiler runtime stays
+`compiler-rt`, the unwinder `libgcc`), and gives build programs
+`MCPP_CXX_STDLIB=libstdc++` and `MCPP_CXX_ABI_ROOT`, the supplier's root, so a
+rule package points a second compiler at the same library. The contract is
+[SPEC-002 §7](specs/target-side.md).
+
 ### The C Environment A `c-abi` Package Presents (mcpp 2026.9.18+)
 
 A traditional stack never has to say this: the compiler payload's target

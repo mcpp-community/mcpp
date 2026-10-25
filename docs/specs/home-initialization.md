@@ -4,11 +4,11 @@
 |---|---|
 | 规范编号 | SPEC-010 |
 | 标题 | home 的入口、实际目录、初始化阶段与网络边界 |
-| 状态 | 草案 v0.1 |
-| 最后修改 | 2026-10-19 |
-| 对应实现 | mcpp >= 2026.10.19.1；网络预算依赖提供者能力，逐条标注 |
-| 相关设计文档 | `.agents/docs/2026-10-19-first-run-home-and-network-design.md` |
-| 相关 issue | mcpp#822；openxlings/xlings#683 |
+| 状态 | 草案 v0.2 |
+| 最后修改 | 2026-10-26 |
+| 对应实现 | mcpp >= 2026.10.19.1；网络预算依赖提供者能力，逐条标注；§6 mcpp >= 2026.10.26.1、xlings >= 2026.10.26.1 |
+| 相关设计文档 | `.agents/docs/2026-10-19-first-run-home-and-network-design.md`、`.agents/docs/2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md` §9.1、§10.3（D18） |
+| 相关 issue | mcpp#822；openxlings/xlings#683、openxlings/xlings#707 |
 | 使用文档 | [25 — home、索引与存储](../zh/25-home-indices-and-store.md) |
 
 本规范定义普通用户 home 的选择、保存与初始化边界。系统 home 的管理员权限和共享策略继续按使用文档执行。
@@ -95,8 +95,25 @@ heartbeat 或重复字节值**禁止**更新下载进展时间。小型索引请
 提供者缺失或不支持诊断时**必须**报告 unavailable/unsupported，继续本地检查，
 **禁止**为了 doctor 下载提供者。旧提供者不能满足新下载预算时，应按能力握手选择兼容的随附版本。
 
+## 6. 单次运行的 `--home` 与生态一致性 已实现
+
+1. `mcpp --home <dir> <command>` **必须**与 `MCPP_HOME=<dir> mcpp <command>` 等价：`<dir>`
+   是这一次运行的原始 home，其 `home.toml` 按 §1 第 2 条读取一跳。选择只对这一次运行生效，
+   **禁止**写入任何 locator。
+2. `--home` **可以**写在任何子命令之前或之后。与 `self init --home` 同时出现时，两个值
+   指向同一目录则照常执行；指向不同目录**必须**以用法错误（退出 2）拒绝，**禁止**取其一。
+3. xlings 采用相同的模型：全局 `--home <dir>` 是单次运行的 `XLINGS_HOME`；`self init
+   --home <dir>` 初始化 `<dir>` 并在原始 xlings home 中写入入口文件 `home.json`
+   （`{"home": "<dir>"}`），之后的运行跟随它一跳；`self init --force --home <dir>` 授权改写
+   已有入口；以原始目录为目标时删除入口。入口无法读取或目标不可访问时**必须**显式报错并给出修复命令，**禁止**静默
+   改用原始 home。
+4. 两个 home 互相独立：mcpp 的 home 选择**禁止**改变 xlings 的 home，反之亦然。mcpp 通过
+   提供者调用 xlings 时，按 mcpp home 中记录的提供者位置调用，与用户自己的 xlings home
+   选择无关。
+
 ## 变更记录
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v0.2 | 2026-10-26 | 新增 §6：mcpp 与 xlings 的单次运行 `--home`、与 `self init --home` 的组合规则、xlings 的入口文件 |
 | v0.1 | 2026-10-19 | 定义两阶段单跳 home、非删除切换、Windows 选择与初始化网络边界 |

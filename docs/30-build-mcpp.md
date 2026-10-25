@@ -1181,7 +1181,7 @@ more after an upgrade to the release that introduced them.
 ### Structured diagnostics: `mcpp::report` (protocol 14)
 
 A diagnostic stated with `mcpp::report` is rendered in the engine's form: the
-message, then an `impact:` line and a `hint:` line. It reaches
+message, then an `impact:` line and a `help:` line. It reaches
 `--message-format json` with the same fields, a `degraded` one fails the build
 under `--strict`, and a cached run reports it again. `mcpp::warning(text)` stays,
 and equals a diagnostic with a message only.
@@ -1228,7 +1228,7 @@ feature, the error names the package and the feature:
 ```text
 error: build.mcpp imports 'mcpp.rules.qt'
   provided by: mcpp.plugins, feature "rules-qt" (not enabled)
-  hint: enable it on the dependency edge: mcpp.plugins = { ..., features = ["rules-qt"] }
+  help: enable it on the dependency edge: mcpp.plugins = { ..., features = ["rules-qt"] }
 ```
 
 ### `import mcpp;` is the surface that evolves (mcpp 2026.8.5.1+)

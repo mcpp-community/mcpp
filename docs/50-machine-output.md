@@ -83,6 +83,13 @@ file mcpp read.
 A diagnostic without a location omits `path` and `range` rather than sending
 zeros — `line: 0` would point at a position that does not exist.
 
+A diagnostic whose message begins with a source location — `<path>:<line>:<col>: `,
+`<path>:<line>: ` or `<path>: error: `, the form of every located message mcpp
+writes — carries that location as `path` and `range` (2026.10.26.1+). A
+manifest's rejection is located at the key or the table it names: `[build].sources
+must be …` points at the line `sources` is written on. A command that already
+names the file in `path` keeps its spelling and gains the `range`.
+
 `code` is always present. Parse `code`; never parse `message`.
 
 ## 3. Asking for machine output
@@ -100,7 +107,9 @@ output with `--message-format json` instead, as `mcpp test` does. `mcpp pack
 --format` names the package format (`tar`, `dir`, `msi`), so its report is
 `mcpp pack --message-format json` (2026.9.16.1+). The shape follows the kind:
 `mcpp test` streams a record per test because tests finish over time, and
-`mcpp pack` prints one envelope because a pack has one result.
+`mcpp pack` prints one envelope because a pack has one result. `mcpp build
+--message-format json` (2026.10.26.1+) streams events while it builds and ends
+with one envelope (§9).
 
 ### Unsupported values and unknown options
 
@@ -128,6 +137,7 @@ cannot produce. The full mapping across all of mcpp is
 | 0 | success |
 | 1 | the command ran and failed — see stderr, and `diagnostics` when stdout carries an envelope |
 | 2 | usage error — unknown option, unsupported value |
+| 5 | the run stopped before an effect its caller denied (§10; 2026.10.26.1+) |
 | 70 | internal error (uncaught exception) |
 | 127 | unknown command |
 
@@ -808,6 +818,173 @@ A tree staged by a mode that bundles nothing (`system`, `static`) carries no
 `needs` lines, and neither does a tree staged by an earlier mcpp; a reader that
 places libraries itself reads these lines rather than inferring the closure from
 the files under `lib/`.
+
+## 9. The build stream and the result record *(mcpp 2026.10.26.1+)*
+
+Every chain that builds a project — a person at a terminal, an agent with a
+shell, an IDE, a CI job — ends in a run of mcpp, so what one chain needs to
+learn about another's build is written by mcpp, to disk, in one form.
+
+### `mcpp build --message-format json` — events, then `mcpp.build`
+
+```
+mcpp build [target] [-p <member>] [--release] --message-format json
+```
+
+Standard output is NDJSON. Each line but the last is an event:
+
+```jsonc
+{"schemaVersion":1,"kind":"mcpp.event","event":"plan","configuration":{"triple":"x86_64-linux-gnu","profile":"dev","fingerprint":"c0641c458b2bde43","outputDir":"/…/target/x86_64-linux-gnu/c0641c458b2bde43"}}
+{"schemaVersion":1,"kind":"mcpp.event","event":"progress","finished":12,"total":34}
+{"schemaVersion":1,"kind":"mcpp.event","event":"artifact","artifact":{"name":"app","kind":"bin","path":"/…/bin/app","launch":{…}}}
+```
+
+| event | carries |
+|---|---|
+| `plan` | `configuration`: the configuration whose build directory the build has entered |
+| `waiting` | `holder` (`pid`, `command`, `client`, `startedAt`) and `waitedMs`: another build holds this build directory, and this one waits for it (§11) |
+| `progress` | `finished`, `total`: ninja's count of steps; a build may run more than one ninja pass, and each restarts the count |
+| `diagnostic` | `diagnostic`: one diagnostic of a compiler, from the output of a failed step, in the shape of `diagnostics[]` of the record below |
+| `artifact` | `artifact`: one product, as in `artifacts[]` of the record below |
+
+The last line is the `mcpp.build` envelope, on one line. Its `data` is the
+result record this run wrote (below); a run that failed before it entered a
+build directory omits `data`. Its `diagnostics` are mcpp's own errors, each
+located where its message says (§2), with the code `MCPP_BUILD_FAILED`, or
+`MCPP_EFFECT_DENIED` for a run that stopped before a denied effect. The
+narration goes to standard error, as for every machine-readable mode.
+
+### The result record: `result.json` and `target/.last-result.json`
+
+A build writes `<outputDir>/result.json` (kind `mcpp.result`) when it starts
+writing its build directory, with `"status": "running"`, and again when it
+ends. `target/.last-result.json` (kind `mcpp.last-result`) names the record the
+project's most recent build wrote. Both are replaced atomically. A build in a
+terminal is therefore visible to an IDE that reads the record, and the reverse.
+
+| field of `data` | |
+|---|---|
+| `command` | the command line of the run |
+| `client` | the value of `MCPP_CLIENT` the caller set (§12), or `""` |
+| `pid` | the process that wrote the record |
+| `startedAt`, `finishedAt` | milliseconds since the epoch; `finishedAt` is `null` while `running` and after `cancelled` |
+| `status` | `running`, `ok`, `failed`, or `cancelled` |
+| `configuration` | `triple`, `profile`, `fingerprint`, `outputDir` |
+| `compileDatabase` | the configuration's `compile_commands.json`, or `null` |
+| `artifacts` | `name`, `kind` (`bin`, `test`, `shared`, `static`), `path`, and for a runnable product `launch` |
+| `diagnostics` | the compilers' diagnostics of a failed build: `severity`, `message`, `path`, `range` |
+
+`launch` is how `mcpp run` starts the product: `argv`, `cwd`, `env` and
+`via`. `env` holds only the variables mcpp sets or rewrites for the program
+(its loader's search path, the variables a runtime payload needs), never the
+caller's other variables, so the record holds no secret of the caller's.
+`via` is `null`, `"runner"` (a `[target.<triple>].runner` wraps the program) or
+`"run_under"` (an execution host wraps it). A debugger, an IDE or a CI job that
+starts the program from `launch` starts it as `mcpp run` would.
+
+A run ended by SIGINT, SIGTERM or SIGHUP leaves `cancelled` in both files
+([exit codes](specs/exit-codes.md) §3.7). A record still `running` whose
+`pid` no longer exists belongs to a run that was killed.
+
+`.last-result.json`:
+
+```json
+{"schemaVersion":1,"kind":"mcpp.last-result","kindVersion":1,
+ "data":{"result":"/…/target/x86_64-linux-gnu/c0641c458b2bde43/result.json","status":"ok","finishedAt":1792964065954}}
+```
+
+### `mcpp.launch` — the way `mcpp run` starts the program
+
+```
+mcpp run [target] --print-launch
+```
+
+Builds the program as `mcpp run` does and prints the envelope instead of
+starting it. `data` is `program`, `argv`, `cwd`, `env` and `via`, as
+`launch` above. `--print-launch` takes no `--format`: on `mcpp run`, `--format`
+names a distributable.
+
+## 10. Denying effects — `--deny` *(mcpp 2026.10.26.1+)*
+
+```
+mcpp --deny network,exec-build-script build
+MCPP_DENY_EFFECTS=write-project mcpp build
+```
+
+`--deny` takes effects of §4 separated by commas; `MCPP_DENY_EFFECTS` takes
+the same list, and a run denies the union of the two. `read-project` cannot be
+denied; an unknown name is a usage error (exit 2). `--offline` denies `network`
+and is kept as its spelling.
+
+A run stops before the first effect it would perform and its caller denied,
+names the effect and what it was for on standard error (`effect denied:
+write-project -- the build writes …`; a download a denied `network` would make
+is reported as the offline refusal it always was), ends with `note: stopped
+before a denied effect (…); exit status 5`, and exits **5**. A denied
+`write-global-cache` does not stop a build: it uses the project's own cache
+instead. A denied effect the run does not need is no obstacle — a build whose
+recorded plan is valid runs no build program, so it succeeds under `--deny
+exec-build-script`. The `effects` of an envelope keep reporting what the run
+did.
+
+## 11. Concurrent runs
+
+One configuration's build directory is written by one run at a time. A second
+build of the same configuration waits for the first, reports the holder on
+standard error (`Waiting for the build directory, held by pid 1234 (mcpp
+build, from vscode, 8s)`) and as a `waiting` event, and then finds little left
+to do. Builds of different configurations, queries (`emit build-database`,
+`cache list`, reading the records) and the programs `mcpp run` and `mcpp test`
+start never wait. A linked product is replaced whole, so a program started
+while a build links never runs a partial file. `mcpp.lock` is written
+optimistically: a lock another run wrote while this one resolved is not
+overwritten, and the run stops with `[lockfile-concurrent]`. The contract is
+[docs/specs/concurrency.md](specs/concurrency.md).
+
+## 12. The caller's name, colour, and the home of one run *(mcpp 2026.10.26.1+)*
+
+- `MCPP_CLIENT=<name>` names the caller (an IDE's backend, an agent's host) in
+  the build directory's lock holder and in the result record. It changes
+  nothing else.
+- Colour: `MCPP_NO_COLOR=1` or a non-empty `NO_COLOR` turns colour off; else a
+  non-empty `CLICOLOR_FORCE` other than `0`, or a non-empty `FORCE_COLOR` other
+  than `0` and `false`, turns it on for a pipe; else a terminal has colour and a pipe has none.
+- `mcpp --home <dir> <command>` runs one command with `<dir>` as its mcpp home,
+  as `MCPP_HOME=<dir>` does ([SPEC-010](specs/home-initialization.md)).
+
+## 13. Queries *(mcpp 2026.10.26.1+)*
+
+### `mcpp.search` — the packages the indexes offer
+
+```
+mcpp search [keyword] --format json
+```
+
+`data` is `keyword` (`""` when none was given, which lists every package) and
+`packages`: one record per package, with `id` (`namespace:name`), `namespace`,
+`name`, `index`, `description`, `licenses`, `repo` and `versions` (newest
+first). Each index is read once; the command needs no project.
+
+### `mcpp.index` — the registries and the project's indexes
+
+```
+mcpp index list --format json
+```
+
+`data` is `registries` (`name`, `url`, `default`) and `indices` (the
+project's `[indices]` entries, when run in a project). The packages are
+`mcpp search`'s answer.
+
+### `mcpp.pack.formats` — the formats `mcpp pack --format` accepts
+
+```
+mcpp pack --list-formats
+```
+
+`data.formats` lists the engine's own formats (`tar`, `dir`; `builtin: true`)
+and each format a package of the resolved graph provides (`builtin: false`,
+with `providers`). The graph is planned in a directory of the mcpp home, so
+nothing is written into the project.
 
 ## Current limitations
 

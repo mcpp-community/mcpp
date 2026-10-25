@@ -830,6 +830,29 @@ minos`）里记录的最低系统版本，也就是这个二进制能运行的�
 aarch64-macos` 在 Linux 或 Windows 上和在 Mac 上一样遵从这个字段
 （以及环境变量），非 macOS 目标则永远不会看到它。
 
+### `compile_commands` —— 工程编译数据库的发布位置（mcpp 2026.10.26.1+）
+
+```toml
+[build]
+compile_commands = "compile_commands.json"   # 相对工程根目录的路径
+```
+
+每次构建都写下所在配置的数据库 `target/<triple>/<fingerprint>/compile_commands.json`；
+它的位置记录在结果记录中（`compileDatabase`，[50](50-machine-output.md) §9），也由
+`mcpp emit build-database` 给出。工程根目录的副本只在本键指定时写出。2026.10.26.1 之前，
+每次构建都在根目录写 `compile_commands.json`，IDE 发现它后会把工程作为编译数据库工程接管，
+而对 mcpp 工程这是 mcppls 的职责。
+
+| 来源 | 取值 |
+|---|---|
+| `MCPP_COMPILE_COMMANDS` | 一个路径，或 `off` / `none`：只对本次运行 |
+| `[build] compile_commands` | 一个路径；`""` 表示不要副本 |
+| `config.toml` 的 `[build] compile_commands` | 未作陈述的工程在这台机器上的默认值 |
+| （无） | 不写副本 |
+
+第一个被设置的来源决定取值。更早的 mcpp 留在根目录的副本不再更新；第一次发现它的构建
+提示一次，并点名本键。
+
 ### 在其他章节说明的 `[build]` 键
 
 | 键 | 章节 |
@@ -1018,7 +1041,7 @@ Ninja 1.11 及以后的版本在同样的声明下以 UTF-8 读取 `build.ninja`
   ```text
   warning: '/home/user/pkg/test/data' contains names that have no UTF-8 spelling
     impact: those files take no part in the build
-    hint: The name's bytes are not UTF-8, and build.ninja and compile_commands.json hold UTF-8 text. ...
+    help: The name's bytes are not UTF-8, and build.ninja and compile_commands.json hold UTF-8 text. ...
   ```
 
   报出的路径是最近的、有 UTF-8 拼法的祖先目录。测试数据或文档的名字是无害的；

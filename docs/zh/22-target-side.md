@@ -268,6 +268,84 @@ requires = ["mcpp:c++-abi=libstdc++"]
 另一种变体构建进同一个存储目录，否则第一个消费者就会替之后所有消费者决定
 变体。
 
+### 表形式与按目标的 `requires`（mcpp 2026.10.26.1+）
+
+`requires` 的条目可以是一张表：
+
+```toml
+requires = [{ layer = "mcpp:c++-abi=libstdc++", visibility = "private" }]
+```
+
+字符串等价于 `visibility = "public"` 的表。`private` 陈述该需求只对本包自己的代码
+成立，不越过本包的边界：本包的 C++ 运行时位于一个 C 接口之后（孤岛，见下文）。它
+只用于 `c++-abi` 层；用于其他层时清单以 `requires-private-layer` 被拒绝，因为一个
+映像中的第二个 C 库是两个 C 库，而不是孤岛。
+
+`requires` 也可以写在目标选择器下，需求集合是 `[package] requires` 与所有匹配
+选择器的 `requires` 的并集，与 `requires_abi` 相同：
+
+```toml
+[target.'cfg(os = "linux")']
+requires = [{ layer = "mcpp:c++-abi=libstdc++", visibility = "private" }]
+```
+
+早于 2026.10.26.1 的引擎拒绝表形式；使用它的包声明版本下限
+（`[build-dependencies.mcpp] version = ">= 2026.10.26.1"`，或 index 描述文件中的
+`mcpp = ">= 2026.10.26.1"`）。
+
+### 一个进程一套 C++ 运行时（mcpp 2026.10.26.1+）
+
+两套 Itanium C++ 运行时 —— libstdc++，以及 libc++ 加 libc++abi —— 定义同样的 ABI
+名字：`__cxa_*`、`__gxx_personality_v0`、`std::exception` 一族的类型信息与虚表、
+`operator new` 与 `delete`。在一个进程的全局符号空间里，它们最终各自承担一次异常的
+一半（mcpp#838：一边抛出、另一边捕获，只有 `catch (...)` 能匹配），而
+`std::runtime_error` 在两边的布局不同。没有任何链接写法能让"多个映像、两套运行时、
+异常跨映像"可靠。因此引擎让一次构建处于三种模式之一：
+
+| 模式 | 适用情形 | 引擎的义务 |
+|---|---|---|
+| **U，统一**（默认） | 进程只有一套 C++ 运行时，即 `c++-abi` 的唯一供给者（编译器载荷、目标基座或依赖图中的包） | 构建不满足的 `requires` 在编译前被拒绝，并给出补救 |
+| **I，孤岛** | 某个组件的 C++ 运行时只位于它的 C 接口之后，由一个包以 `visibility = "private"` 声明 | 逐条验证下列条件；不满足任一条的构建被拒绝 |
+| **H，宿主决定** | Python 扩展、JNI 库、宿主插件：目标基座陈述 `c++-abi` | 包服从基座 |
+
+孤岛在以下条件全部成立时成立：
+
+1. 构建只有一个 C++ 映像：根包的目标中没有含 C++ 的共享库，否则规划以
+   `[cxx-runtime-island]` 被拒绝；
+2. 一套展开器，`--unwindlib=libgcc`；
+3. 外来运行时在链接行上位于构建自身的运行时之后 —— 由引擎放置，规则包不把它写进
+   `ldflags`；
+4. 孤岛的目标文件不引用冲突集中与布局相关的成员（`std::exception` 一族中除
+   `std::exception` 本身以外的构造、析构与 `what`）；
+5. 链接后的映像不以 `GLIBCXX_*` 或 `CXXABI_*` 版本导入任何 ABI 层符号；
+6. 映像引用或定义的类型信息，没有同时由一个建立在外来运行时上的共享库导出 ——
+   跨两套运行时的带类型 `catch` 永远不会匹配。
+
+条件 4 至 6 在链接后检查，以 `[cxx-runtime-collision]` 报告并列出符号。外来运行时
+按类型识别，从不在链接参数中搜索子串：链接行上点名的运行时库（`-l:libstdc++.so.6`），
+或链接行上 `DT_NEEDED` 含外来运行时的共享库（`libstdc++.so.*`、`libc++.so.*`、
+`libc++abi.so.*`）。没有任何包声明的外来运行时按孤岛验证：成立时构建继续并给出警告
+（兼容读法 `undeclared-cxx-runtime`，见 [51](51-supported-versions.md)），不成立时
+构建被拒绝。
+
+SYCL 程序永远不是孤岛：它的单元捕获 `sycl::exception`，该类型由 `libsycl.so` 定义并在
+libstdc++ 上抛出（条件 6）。它在 U 模式下构建 —— 使用 gcc，或使用 llvm 加依赖图供给的
+libstdc++：
+
+```toml
+[dependencies]
+gcc.libstdcxx = "16.1.0"      # provides mcpp:c++-abi=libstdc++
+
+[toolchain]
+default = "llvm@22.1.8"       # 只选择编译器
+```
+
+clang 下由依赖图供给 libstdc++ 时，引擎以 `-nostdinc++` 加供给包的头文件编译，以它的
+`std-module` 预编译 `std`，链接带 `-stdlib=libstdc++`（编译器运行库仍为 `compiler-rt`，
+展开器为 `libgcc`），并向构建程序提供 `MCPP_CXX_STDLIB=libstdc++` 与
+`MCPP_CXX_ABI_ROOT`（供给包的根目录），使规则包让第二个编译器使用同一个库。契约见
+[SPEC-002 §7](../specs/target-side.md)。
+
 ### `c-abi` 包陈述它呈现的 C 环境（mcpp 2026.9.18+）
 
 传统技术栈不需要陈述这件事：编译器载荷的目标三元组已经蕴含了 C 程序所编译

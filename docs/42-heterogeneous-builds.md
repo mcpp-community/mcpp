@@ -676,28 +676,39 @@ Which shape to choose is a property of the program, not of mcpp: a seam that
 swaps an implementation wants link-time selection, and a program that ships to
 machines it has not seen wants run-time selection.
 
-## One unwinder, when the link carries a second C++ runtime
+## One C++ runtime, and the island that may differ (2026.10.26.1+)
 
-A lane whose device compiler is configured against libstdc++ puts libstdc++ on
-the link line while the artifact links libc++ statically. Both are then in the
-image, and mcpp's duplicate-symbol check reports what they share.
+A lane whose device runtime is built on libstdc++ (`libsycl.so`) meets a program
+whose own C++ library is the toolchain's. Two Itanium runtimes in one process
+share the ABI names — `__cxa_throw`, the personality routine, the type
+information of `std::exception` — and a typed `catch` across them does not
+match (mcpp#838: `catch (const std::exception&)` missed an exception the
+library threw, and only `catch (...)` caught it). So one process carries one
+C++ runtime ([22 — Target Side](22-target-side.md#one-c-runtime-per-process-mcpp-202610261)):
 
-For most of those symbols the consequence is that one implementation is called
-instead of an interchangeable other. For the unwinder it is not. A static
-archive contributes only the members something references, so the interposition
-is partial by construction: measured on the SYCL lane, ten of libgcc's eighteen
-`_Unwind_*` entry points came from the artifact and eight stayed in libgcc_s,
-including the accessors a personality routine uses. libstdc++'s personality
-then read an LLVM libunwind context through libgcc's accessors, found no
-landing pad, and called `std::terminate` past a handler three frames up. The
-program was correct until something threw.
-
-So when the link line names libstdc++ and the toolchain's own library is
-libc++, mcpp links the unwinder from libgcc (`--unwindlib=libgcc`) instead of
-the payload's `libunwind.a`, and hides the static archives' symbols with
-`--exclude-libs`. libgcc_s is already in the process — libstdc++ needs it — so
-this names a library rather than adding one, and the C++ runtime stays
-embedded. A build with no second runtime on its line is unchanged.
+- **SYCL builds with one runtime, libstdc++.** `compat.sycl-runtime` declares
+  `requires = ["mcpp:c++-abi=libstdc++"]`. A gcc toolchain satisfies it, and so
+  does llvm with `gcc.libstdcxx` in the graph; the rule reads
+  `MCPP_CXX_ABI_ROOT` and points the device compiler at the same library. An
+  llvm build without a libstdc++ supplier is refused before anything compiles,
+  with both remedies. Measured: the device units catch `sycl::exception`, which
+  `libsycl.so` defines and throws on libstdc++, so a SYCL unit can never be an
+  island.
+- **An island is declared and verified.** A component whose C++ runtime stays
+  behind its C interface declares `requires = [{ layer =
+  "mcpp:c++-abi=libstdc++", visibility = "private" }]`. The engine places the
+  foreign runtime after the program's own on the link line, links the unwinder
+  from libgcc (`--unwindlib=libgcc`), hides the static runtime's symbols with
+  `--exclude-libs`, and checks after the link that the ABI layer is bound to one
+  runtime and that no type is caught across the two. A static archive
+  contributes only the members something references, so a second unwinder is
+  partial by construction: measured on the SYCL lane before this rule, ten of
+  libgcc's eighteen `_Unwind_*` entry points came from the artefact and eight
+  stayed in libgcc_s, and a throw three frames below its handler ended in
+  `std::terminate`.
+- **HIP has no second runtime.** The NVIDIA platform compiles `.hip` with the
+  project's own clang, and `libcudart_static.a` references no C++ ABI symbol
+  but `__cxa_atexit`.
 
 ## Two boundaries worth stating
 
@@ -751,12 +762,11 @@ therefore contains no binaries. The AMD platform needs a ROCm runtime this
 ecosystem does not publish yet, and the rule refuses it by name rather than
 producing an object nothing can link.
 
-**A SYCL build carries two C++ runtimes, and the seam is what makes that safe.**
-`libsycl.so` is compiled against libstdc++ while an mcpp artifact links libc++,
-so both are in the image and mcpp's duplicate-symbol check reports the
-unwinder symbols they share. Nothing may cross the seam: a SYCL exception is
-caught in the device translation unit and returned as a code, because the
-runtime that threw it is not the one the caller would unwind with.
+**A SYCL build carries one C++ runtime, libstdc++.** `libsycl.so` is compiled
+against libstdc++, so the program is built on it too: with gcc, or with llvm and
+`gcc.libstdcxx` in the graph. Until 2026.10.26.1 an llvm SYCL build linked libc++
+beside it, and a `sycl::exception` the runtime threw reached only `catch (...)`;
+such a build is now refused, naming the two remedies.
 
 ## The platforms each lane reaches
 

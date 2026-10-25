@@ -156,13 +156,16 @@ toolchain、lock/resolution 元数据以及构建目录元数据都可能被更�
 可信的 workspace 中运行。进程退出码与生成的 `compile_commands.json` 是
 稳定的集成契约；标准输出仍是面向人的文本。
 
-工程根目录下的 `compile_commands.json` 是当前配置自己那份数据库的副本，
-后者写在 `target/<triple>/<fingerprint>/compile_commands.json`——这个目录
+每个配置的数据库写在
+`target/<triple>/<fingerprint>/compile_commands.json`——这个目录
 由 toolchain、target、profile 与 feature 共同命名，也正是编译器实际运行
 所在的目录。每条在这个配置下做规划的命令(`build`、`test`、`run`、
 `--configure-only`)都把新鲜的计划合并进这一份文件，因此 `mcpp test` 加入
-的条目在之后一次普通 `mcpp build` 后仍然留在里面。根目录的这份副本从不
-合并：它整体替换为配置数据库的内容，两者已经一致时保持不变；因此切换
+的条目在之后一次普通 `mcpp build` 后仍然留在里面。它的位置记录在结果记录中
+(`target/.last-result.json` 所指记录的 `compileDatabase`，见
+[50](50-machine-output.md) §9)，编辑器从那里找到它。工程根目录的副本只在
+`[build] compile_commands` 指定时写出(2026.10.26.1+，见 [04](04-mcpp-toml.md))。
+这份副本从不合并：它整体替换为配置数据库的内容，两者已经一致时保持不变；因此切换
 `--toolchain` 或 `--profile` 会整体切换根文件，切回去也会恢复那个配置的
 条目，包括它的测试单元。根目录若是一个符号链接，写入会跟随到链接指向的
 位置。被替换掉的根文件如果持有 mcpp 未写入的条目，会输出一条警告说明

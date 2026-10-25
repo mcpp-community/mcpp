@@ -976,7 +976,7 @@ mcpp 不从那里读任何东西。
 ```
 warning: the assembler for this build is the host's ('/usr/bin/nasm'), not the one this engine pins
   impact: two machines can assemble the same source with different assemblers, and the build records only this line
-  hint: run `xlings install nasm` so the pinned copy is used
+  help: run `xlings install nasm` so the pinned copy is used
 ```
 
 **一个宿主工具到达构建，本身不是缺陷；一个宿主工具静默地到达构建才是。** 这

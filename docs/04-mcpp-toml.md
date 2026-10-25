@@ -887,6 +887,31 @@ machine running mcpp: `mcpp build --target aarch64-macos` honors this field
 (and the environment variable) the same way on Linux or Windows as it does on
 a Mac, and a non-macOS target never sees it.
 
+### `compile_commands` — where the project's compile database is published (mcpp 2026.10.26.1+)
+
+```toml
+[build]
+compile_commands = "compile_commands.json"   # a path relative to the project root
+```
+
+Every build writes its configuration's database,
+`target/<triple>/<fingerprint>/compile_commands.json`; its location is in the
+result record (`compileDatabase`, [50](50-machine-output.md) §9) and in
+`mcpp emit build-database`. A copy at the project root is written only when this
+key names one. Until 2026.10.26.1 every build wrote `compile_commands.json` at
+the root, and an IDE that found it there took the project over as a compilation
+database, which is mcppls's job for an mcpp project.
+
+| source | value |
+|---|---|
+| `MCPP_COMPILE_COMMANDS` | a path, or `off` / `none`: this run only |
+| `[build] compile_commands` | a path; `""` asks for no copy |
+| `config.toml` `[build] compile_commands` | the machine's default for projects that state nothing |
+| (nothing) | no copy |
+
+The first that is set decides. A copy an earlier mcpp left at the root is no
+longer updated; the first build that finds it says so once, naming this key.
+
 ### `[build]` keys described in other chapters
 
 | Key | Chapter |
@@ -1091,7 +1116,7 @@ spells only part of Unicode. On either, some paths have no UTF-8 spelling:
   ```text
   warning: '/home/user/pkg/test/data' contains names that have no UTF-8 spelling
     impact: those files take no part in the build
-    hint: The name's bytes are not UTF-8, and build.ninja and compile_commands.json hold UTF-8 text. ...
+    help: The name's bytes are not UTF-8, and build.ninja and compile_commands.json hold UTF-8 text. ...
   ```
 
   The reported path is the nearest ancestor that has a UTF-8 spelling. Names of

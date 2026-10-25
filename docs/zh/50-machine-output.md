@@ -74,6 +74,12 @@ CI 脚本，以及任何解析 mcpp 输出的程序，都可以依赖本章陈�
 一条没有位置的诊断会省略 `path` 与 `range`，而不是填 0 —— `line: 0` 会把
 读者指向一个不存在的位置。
 
+消息以源码位置开头的诊断 —— `<path>:<line>:<col>: `、`<path>:<line>: ` 或
+`<path>: error: `，即 mcpp 写出的每一条带位置的消息的形式 —— 把这个位置作为
+`path` 与 `range` 携带（2026.10.26.1+）。清单的拒绝定位到它点名的键或表：
+`[build].sources must be …` 指向 `sources` 所在的那一行。已经在 `path` 中写明文件
+的命令保留自己的写法，并补上 `range`。
+
 `code` 永远存在。解析 `code`，永远不要解析 `message`。
 
 ## 3. 请求机器输出
@@ -90,7 +96,8 @@ mcpp <command> --format json
 （`tar`、`dir`、`msi`），所以它的报告方式是
 `mcpp pack --message-format json`（2026.9.16.1+）。具体形状随 kind 而定：
 `mcpp test` 的测试是随时间陆续完成的，所以它按测试逐条输出流式记录；一次
-`mcpp pack` 只有一个结果，所以它输出一个信封。
+`mcpp pack` 只有一个结果，所以它输出一个信封。`mcpp build --message-format json`
+（2026.10.26.1+）在构建过程中输出事件流，以一个信封结束（§9）。
 
 ### 不支持的值与未知选项
 
@@ -117,6 +124,7 @@ $ echo $?
 | 0 | 成功 |
 | 1 | 命令运行了并且失败 —— 见 stderr；当 stdout 携带信封时见 `diagnostics` |
 | 2 | 用法错误 —— 未知选项、不支持的取值 |
+| 5 | 运行在调用方拒绝的副作用之前停下（§10；2026.10.26.1+） |
 | 70 | 内部错误（未捕获的异常） |
 | 127 | 未知命令 |
 
@@ -725,6 +733,156 @@ mcpp test [pattern] [--workspace] --message-format json
 路径都可能包含空格。一棵由不打包任何东西的 mode（`system`、`static`）暂存
 出的树不带 `needs` 行，由更早版本的 mcpp 暂存出的树同样不带；自行放置库的
 读者应当读取这些行，而不是从 `lib/` 下的文件推断闭包。
+
+## 9. 构建事件流与结果记录 *（mcpp 2026.10.26.1+）*
+
+构建一个工程的每条调用链 —— 终端里的人、只有 shell 的 agent、IDE、CI 任务 ——
+都终止于一次 mcpp 运行，因此一条链需要了解另一条链的构建时，由 mcpp 以同一种
+形式写到磁盘上。
+
+### `mcpp build --message-format json` —— 事件，然后是 `mcpp.build`
+
+```
+mcpp build [target] [-p <member>] [--release] --message-format json
+```
+
+标准输出是 NDJSON。除最后一行外，每一行是一个事件：
+
+```jsonc
+{"schemaVersion":1,"kind":"mcpp.event","event":"plan","configuration":{"triple":"x86_64-linux-gnu","profile":"dev","fingerprint":"c0641c458b2bde43","outputDir":"/…/target/x86_64-linux-gnu/c0641c458b2bde43"}}
+{"schemaVersion":1,"kind":"mcpp.event","event":"progress","finished":12,"total":34}
+{"schemaVersion":1,"kind":"mcpp.event","event":"artifact","artifact":{"name":"app","kind":"bin","path":"/…/bin/app","launch":{…}}}
+```
+
+| 事件 | 携带 |
+|---|---|
+| `plan` | `configuration`：构建已进入其构建目录的那个配置 |
+| `waiting` | `holder`（`pid`、`command`、`client`、`startedAt`）与 `waitedMs`：另一次构建持有这个构建目录，本次在等待（§11） |
+| `progress` | `finished`、`total`：ninja 的步骤计数；一次构建可以运行不止一轮 ninja，每轮重新计数 |
+| `diagnostic` | `diagnostic`：失败步骤输出中的一条编译器诊断，形状同下文记录的 `diagnostics[]` |
+| `artifact` | `artifact`：一个产物，形状同下文记录的 `artifacts[]` |
+
+最后一行是 `mcpp.build` 信封，占一行。它的 `data` 是本次运行写下的结果记录（见
+下文）；在进入构建目录之前就失败的运行省略 `data`。它的 `diagnostics` 是 mcpp
+自己的错误，每条按其消息定位（§2），代码为 `MCPP_BUILD_FAILED`；在被拒绝的副作
+用之前停下的运行为 `MCPP_EFFECT_DENIED`。叙述写到标准错误，与每一种机器可读模式
+相同。
+
+### 结果记录：`result.json` 与 `target/.last-result.json`
+
+构建在开始写构建目录时写下 `<outputDir>/result.json`（kind `mcpp.result`），其中
+`"status": "running"`，结束时再写一次。`target/.last-result.json`（kind
+`mcpp.last-result`）指向工程最近一次构建写下的记录。两者都原子替换。因此终端里的
+一次构建对读取记录的 IDE 可见，反之亦然。
+
+| `data` 的字段 | |
+|---|---|
+| `command` | 本次运行的命令行 |
+| `client` | 调用方设置的 `MCPP_CLIENT`（§12），没有时为 `""` |
+| `pid` | 写下记录的进程 |
+| `startedAt`、`finishedAt` | 自纪元起的毫秒数；`running` 期间与 `cancelled` 之后 `finishedAt` 为 `null` |
+| `status` | `running`、`ok`、`failed` 或 `cancelled` |
+| `configuration` | `triple`、`profile`、`fingerprint`、`outputDir` |
+| `compileDatabase` | 该配置的 `compile_commands.json`，或 `null` |
+| `artifacts` | `name`、`kind`（`bin`、`test`、`shared`、`static`）、`path`；可运行的产物另有 `launch` |
+| `diagnostics` | 失败构建的编译器诊断：`severity`、`message`、`path`、`range` |
+
+`launch` 是 `mcpp run` 启动该产物的方式：`argv`、`cwd`、`env` 与 `via`。`env` 只含
+mcpp 为程序设置或改写的变量（加载器的搜索路径、运行时载荷需要的变量），从不包含
+调用方的其余变量，因此记录中不含调用方的机密。`via` 为 `null`、`"runner"`（由
+`[target.<triple>].runner` 包装）或 `"run_under"`（由执行宿主包装）。调试器、IDE 或
+CI 按 `launch` 启动程序，与 `mcpp run` 的启动一致。
+
+被 SIGINT、SIGTERM 或 SIGHUP 结束的运行在两个文件中都留下 `cancelled`
+（[退出码](../specs/exit-codes.md) §3.7）。`status` 仍为 `running`、而 `pid` 已不存在
+的记录属于一次被强制结束的运行。
+
+`.last-result.json`：
+
+```json
+{"schemaVersion":1,"kind":"mcpp.last-result","kindVersion":1,
+ "data":{"result":"/…/target/x86_64-linux-gnu/c0641c458b2bde43/result.json","status":"ok","finishedAt":1792964065954}}
+```
+
+### `mcpp.launch` —— `mcpp run` 启动程序的方式
+
+```
+mcpp run [target] --print-launch
+```
+
+按 `mcpp run` 的方式构建程序，然后打印信封而不启动它。`data` 为 `program`、
+`argv`、`cwd`、`env` 与 `via`，同上文的 `launch`。`--print-launch` 不接受
+`--format`：在 `mcpp run` 上，`--format` 表示可分发物的格式。
+
+## 10. 拒绝副作用 —— `--deny` *（mcpp 2026.10.26.1+）*
+
+```
+mcpp --deny network,exec-build-script build
+MCPP_DENY_EFFECTS=write-project mcpp build
+```
+
+`--deny` 接受 §4 中以逗号分隔的副作用；`MCPP_DENY_EFFECTS` 接受同样的列表，一次
+运行拒绝两者的并集。`read-project` 不可拒绝；未知的名字是用法错误（退出 2）。
+`--offline` 拒绝 `network`，作为它的写法保留。
+
+运行在它将要执行、且被调用方拒绝的第一个副作用之前停下，在标准错误上写明副作用
+及其用途（`effect denied: write-project -- the build writes …`；被拒绝的 `network`
+所需的下载照旧报告为离线拒绝），以 `note: stopped before a denied effect (…);
+exit status 5` 结束，退出 **5**。被拒绝的 `write-global-cache` 不会让构建停下：构建
+改用工程自己的缓存。运行不需要的副作用即使被拒绝也不构成阻碍 —— 记录的计划有效
+的构建不运行构建程序，因此在 `--deny exec-build-script` 下也能成功。信封的
+`effects` 继续报告运行实际做了什么。
+
+## 11. 并发运行
+
+一个配置的构建目录同一时刻只由一次运行写入。同一配置的第二次构建等待第一次，在
+标准错误上报告持有者（`Waiting for the build directory, held by pid 1234 (mcpp
+build, from vscode, 8s)`），并发出 `waiting` 事件，之后几乎无事可做。不同配置的
+构建、查询（`emit build-database`、`cache list`、读取记录），以及 `mcpp run` 与
+`mcpp test` 启动的程序从不等待。链接产物整体替换，因此在链接期间启动的程序不会
+执行半个文件。`mcpp.lock` 以乐观方式写入：本次解析期间被另一次运行写入的锁文件
+不会被覆盖，运行以 `[lockfile-concurrent]` 停下。契约见
+[docs/specs/concurrency.md](../specs/concurrency.md)。
+
+## 12. 调用方的名字、颜色与单次运行的 home *（mcpp 2026.10.26.1+）*
+
+- `MCPP_CLIENT=<name>` 在构建目录锁的持有者与结果记录中写明调用方（IDE 的后端、
+  agent 的宿主），不改变其他任何行为。
+- 颜色：`MCPP_NO_COLOR=1` 或非空的 `NO_COLOR` 关闭颜色；否则 `CLICOLOR_FORCE` 非空且
+  不为 `0`、或 `FORCE_COLOR` 非空且不为 `0`、`false` 时，管道也有颜色；否则终端有颜色，管道没有。
+- `mcpp --home <dir> <command>` 以 `<dir>` 作为一条命令的 mcpp home 运行，与
+  `MCPP_HOME=<dir>` 相同（[SPEC-010](../specs/home-initialization.md)）。
+
+## 13. 查询 *（mcpp 2026.10.26.1+）*
+
+### `mcpp.search` —— 索引提供的包
+
+```
+mcpp search [keyword] --format json
+```
+
+`data` 为 `keyword`（未给出时为 `""`，此时列出全部包）与 `packages`：每个包一条
+记录，含 `id`（`namespace:name`）、`namespace`、`name`、`index`、`description`、
+`licenses`、`repo` 与 `versions`（最新在前）。每个索引只读一次；命令不需要工程。
+
+### `mcpp.index` —— 注册表与工程的索引
+
+```
+mcpp index list --format json
+```
+
+`data` 为 `registries`（`name`、`url`、`default`）与 `indices`（在工程中运行时，
+工程的 `[indices]` 条目）。包的目录由 `mcpp search` 回答。
+
+### `mcpp.pack.formats` —— `mcpp pack --format` 接受的格式
+
+```
+mcpp pack --list-formats
+```
+
+`data.formats` 列出引擎自己的格式（`tar`、`dir`；`builtin: true`）以及已解析依赖
+图中某个包提供的每种格式（`builtin: false`，带 `providers`）。依赖图在 mcpp home 的
+一个目录中规划，因此不向工程写入任何东西。
 
 ## 当前边界
 

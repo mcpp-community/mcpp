@@ -219,7 +219,7 @@ comp = { path = "libs/comp" }
 
 ```
 warning: mcpp.toml names 2 dependencies in namespace acme, and the manifests they reach declare huxdemo; the declared identity is used: acme.fw, acme.comp
-  hint: write them in a [dependencies.huxdemo] table, for example `fw = { path = "libs/fw" }`
+  help: write them in a [dependencies.huxdemo] table, for example `fw = { path = "libs/fw" }`
 ```
 
 Two edges written `fw` and `huxdemo.fw` over one directory are therefore one

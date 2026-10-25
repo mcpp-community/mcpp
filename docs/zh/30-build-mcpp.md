@@ -1001,7 +1001,7 @@ import mcpp.core;   // 与 `import mcpp;` 导出相同的符号
 
 ### 结构化诊断：`mcpp::report`（协议 14）
 
-用 `mcpp::report` 发出的诊断按引擎自己的形式呈现：先是消息，然后是 `impact:` 行与 `hint:`
+用 `mcpp::report` 发出的诊断按引擎自己的形式呈现：先是消息，然后是 `impact:` 行与 `help:`
 行。它以相同的字段进入 `--message-format json`；`degraded` 级别在 `--strict` 下使构建失败；
 缓存命中的运行会再次报告它。`mcpp::warning(text)` 保留，等价于只有消息的诊断。
 
@@ -1043,7 +1043,7 @@ data/b.txt	bin/data/b.txt
 ```text
 error: build.mcpp imports 'mcpp.rules.qt'
   provided by: mcpp.plugins, feature "rules-qt" (not enabled)
-  hint: enable it on the dependency edge: mcpp.plugins = { ..., features = ["rules-qt"] }
+  help: enable it on the dependency edge: mcpp.plugins = { ..., features = ["rules-qt"] }
 ```
 
 ### `import mcpp;` 才是会演进的那一面（mcpp 2026.8.5.1+）

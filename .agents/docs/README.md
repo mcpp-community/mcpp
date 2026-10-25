@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-336 records.
+337 records.
 
 ## By subject
 
@@ -63,6 +63,10 @@ Records that declare one. Everything else is listed by date below.
 - [The documentation as a book: a chapter-by-chapter design](2026-09-08-the-documentation-as-a-book.md) — active
 - [A curriculum for the examples, a reference for the documentation, and a check with a denominator](2026-09-08-examples-curriculum-and-documentation-plan.md) — superseded by [2026-09-08-documentation-architecture-three-trees.md](2026-09-08-documentation-architecture-three-trees.md)
 - [Three documentation trees, three audiences, and the rule for citing between them](2026-09-08-documentation-architecture-three-trees.md) — active
+
+### ecosystem
+
+- [控制契约、并发与性能、单一 C++ 运行时，以及 IDE 生态（生态级，#838、#839）](2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md) — active
 
 ### heterogeneous
 
@@ -139,6 +143,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-10
 
+- [控制契约、并发与性能、单一 C++ 运行时，以及 IDE 生态（生态级，#838、#839）](2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md) — active
 - [目标基座与执行宿主：sysroot 的通用模型、运行器契约、自备输入，以及同批的发布产物路径（#832）](2026-10-23-target-base-and-execution-host-design.md) — landed
 - [依赖 image 的资源归属、模块扫描边界与锁文件稳定写入](2026-10-21-resource-ownership-module-scan-and-lock-write-design.md) — active
 - [首次初始化、home 重定向与网络诊断优化设计](2026-10-19-first-run-home-and-network-design.md) — landed

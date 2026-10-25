@@ -197,7 +197,7 @@ comp = { path = "libs/comp" }
 
 ```
 warning: mcpp.toml names 2 dependencies in namespace acme, and the manifests they reach declare huxdemo; the declared identity is used: acme.fw, acme.comp
-  hint: write them in a [dependencies.huxdemo] table, for example `fw = { path = "libs/fw" }`
+  help: write them in a [dependencies.huxdemo] table, for example `fw = { path = "libs/fw" }`
 ```
 
 因此，同一目录上分别写作 `fw` 与 `huxdemo.fw` 的两条边是同一个包，只编译
