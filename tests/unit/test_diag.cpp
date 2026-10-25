@@ -55,7 +55,7 @@ TEST_F(DiagTest, FormatKeepsWhatOnTheFirstLine) {
     ASSERT_EQ(rs.size(), 1u);
     EXPECT_TRUE(rs[0].format().starts_with("what happened\n"));
     EXPECT_NE(rs[0].format().find("impact: the impact"), std::string::npos);
-    EXPECT_NE(rs[0].format().find("hint: the hint"), std::string::npos);
+    EXPECT_NE(rs[0].format().find("help: the hint"), std::string::npos);
 }
 
 TEST_F(DiagTest, StrictPromotesDegradationsOnly) {

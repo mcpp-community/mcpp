@@ -537,6 +537,13 @@ inline const char* compiler()                     { return env_or("MCPP_COMPILER
 // two must not share a word.
 inline const char* cxx_stdlib()                   { return env_or("MCPP_CXX_STDLIB"); }
 
+// The root of the package of the graph that supplies the C++ library
+// (`gcc.libstdcxx` beside llvm), "" when the compiler's payload supplies it.
+// A rule package that drives a second compiler points it here, so the device
+// half and the host half of one program use one C++ library
+// (design 2026-10-26 §6.4).
+inline const char* cxx_abi_root()                 { return env_or("MCPP_CXX_ABI_ROOT"); }
+
 // Where the TARGET's C library lives, for targets that have one of their own
 // (today: bare metal). Same argument one line up: the libc is a property of
 // the target, mcpp resolves it from the target's own row, and a package that

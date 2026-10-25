@@ -63,7 +63,7 @@ printf 'import mcpp.core;\nimport mcpp.acme.gen;\nint main() { acme::tell(); ret
 "$MCPP" build > d1.log 2>&1 || fail "D1: the build failed" d1.log
 grep -q "the generator found no schema" d1.log || fail "D1: the message is missing" d1.log
 grep -q "impact: no bindings are generated" d1.log || fail "D1: the impact line is missing" d1.log
-grep -q "hint: add schema/\*.proto" d1.log || fail "D1: the hint line is missing" d1.log
+grep -q "help: add schema/\*.proto" d1.log || fail "D1: the help line is missing" d1.log
 grep -q "mcpp.acme.gen'.*mcpp\.\|claims an origin" d1.log && fail "R1: an own-namespace module was warned about" d1.log
 
 # D2. `touch` first, as e2e 139 does: an unmodified build takes the project

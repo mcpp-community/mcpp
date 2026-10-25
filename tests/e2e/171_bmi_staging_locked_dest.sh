@@ -132,7 +132,7 @@ if [[ $rc -eq 0 ]]; then
     cat stage_err.log
     echo "FAIL: staging onto an unusable destination reported success"; exit 1
 fi
-grep -q "hint:" stage_err.log || {
+grep -q "help:" stage_err.log || {
     cat stage_err.log; echo "FAIL: staging failure carried no hint"; exit 1; }
 grep -q "clangd" stage_err.log || {
     cat stage_err.log; echo "FAIL: hint does not name the usual holder (clangd)"; exit 1; }

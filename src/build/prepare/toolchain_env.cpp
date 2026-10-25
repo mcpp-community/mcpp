@@ -31,6 +31,7 @@ import mcpp.freestanding.target;   // the target sysroot layout (libdir)
 import mcpp.freestanding.linkline; // the ISA profile, for the std module command
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
+import mcpp.targetside;   // the graph's c++-abi supplier, for build programs
 import mcpp.toolchain.triple;
 import mcpp.build.plan;
 import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
@@ -458,6 +459,20 @@ build_information(const mcpp::manifest::Manifest& m, const mcpp::toolchain::Tool
 }
 
 } // namespace
+
+void apply_graph_cxx_abi(mcpp::build::BuildProgramEnv& e,
+                         const std::vector<mcpp::modgraph::PackageRoot>& packages) {
+    namespace tsd = mcpp::targetside;
+    for (auto const& pkg : packages)
+        for (auto const& entry : pkg.manifest.provides) {
+            auto parsed = tsd::parse_capability(entry);
+            if (!parsed || !*parsed || (*parsed)->layer != tsd::CapLayer::CxxAbi) continue;
+            if ((*parsed)->interfaceName.empty()) continue;
+            e.cxxStdlib  = (*parsed)->interfaceName;
+            e.cxxAbiRoot = pkg.root.generic_string();
+            return;
+        }
+}
 
 void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
                            const mcpp::manifest::Manifest& m,

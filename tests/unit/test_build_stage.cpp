@@ -185,7 +185,7 @@ TEST(BuildStage, ReadOnlyDestinationOutcomeIsPlatformDefined) {
     auto r = stage_file(src, dst, no_retry());
 #if defined(_WIN32)
     ASSERT_FALSE(r.has_value());
-    EXPECT_NE(r.error().message.find("hint:"), std::string::npos);
+    EXPECT_NE(r.error().message.find("help:"), std::string::npos);
     EXPECT_EQ(read_file(dst), "old");
 #else
     ASSERT_TRUE(r.has_value()) << r.error().message;
@@ -207,7 +207,7 @@ TEST(BuildStage, UnwritableDestinationFailsWithActionableHint) {
 
     auto r = stage_file(src, dst, no_retry());
     ASSERT_FALSE(r.has_value());
-    EXPECT_NE(r.error().message.find("hint:"), std::string::npos);
+    EXPECT_NE(r.error().message.find("help:"), std::string::npos);
     EXPECT_NE(r.error().message.find("clangd"), std::string::npos);
     EXPECT_NE(r.error().message.find(dst.string()), std::string::npos);
 }

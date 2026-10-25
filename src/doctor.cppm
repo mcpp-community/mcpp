@@ -356,7 +356,7 @@ export int doctor_report() {
                             : std::format("consistent ({} notice(s))", notices));
         else
             warn(std::format("{} record(s) in mcpp's package home point at nothing (first: {})\n"
-                             "  hint: `{} self doctor --fix` repairs them",
+                             "  help: `{} self doctor --fix` repairs them",
                              broken, example, provider->command_prefix()));
     }
 

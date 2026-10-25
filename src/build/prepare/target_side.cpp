@@ -1665,6 +1665,7 @@ static std::expected<void, std::string> step9_root_build_program(PrepareState& s
         // and the three answers that keep a board package from naming a
         // toolchain. One call — see fill_target_build_env.
         fill_target_build_env(bpEnv, *state.m, state.tc ? &*state.tc : nullptr, state.cfg_opt ? &*state.cfg_opt : nullptr);
+        apply_graph_cxx_abi(bpEnv, state.packages);
         bpEnv.toolsBin = state.projectSubosBin;
         bpEnv.profile      = state.effectiveProfile;
         bpEnv.accel        = state.resolvedAccel();
@@ -2076,6 +2077,7 @@ static std::expected<void, std::string> step9_member_build_programs(PrepareState
         bpEnv.targetTriple = state.resolvedTargetCanonical;
         fill_target_build_env(bpEnv, *state.m, state.tc ? &*state.tc : nullptr,
                               state.cfg_opt ? &*state.cfg_opt : nullptr);
+        apply_graph_cxx_abi(bpEnv, state.packages);
         bpEnv.toolsBin = state.projectSubosBin;
         bpEnv.profile  = state.effectiveProfile;
         bpEnv.accel    = state.resolvedAccel();

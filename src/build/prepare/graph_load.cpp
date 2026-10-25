@@ -636,7 +636,7 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
                 // answered and how old it is, so the next step is obvious
                 // instead of guessed at.
                 if (auto cfgA = state.get_cfg(true)) {
-                    hint += std::format("\n  index: {}\n  hint: `mcpp index update` "
+                    hint += std::format("\n  index: {}\n  help: `mcpp index update` "
                                         "if it was published recently",
                         mcpp::pm::staleness_note(
                             mcpp::config::make_xlings_env(**cfgA)));

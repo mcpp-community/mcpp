@@ -1264,7 +1264,7 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     if (action == PayloadAction::Refuse) {
         return std::unexpected(CallError{std::format(
             "payload of '{}' is not installed\n"
-            "  hint: `mcpp toolchain install` installs a toolchain; a build installs what it needs",
+            "  help: `mcpp toolchain install` installs a toolchain; a build installs what it needs",
             mcpp::provider::to_string(ref))});
     }
 
@@ -1329,7 +1329,7 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         // said, not stamped over.
         return std::unexpected(CallError{std::format(
             "'{}' reported a successful install, but its payload is not complete\n"
-            "  hint: {}", targets[0], install_failure_hint(inst->error, cfg_.xlingsHome()))});
+            "  help: {}", targets[0], install_failure_hint(inst->error, cfg_.xlingsHome()))});
     }
 
     // The install failed. What happens next depends on why (D5).
@@ -1366,11 +1366,11 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         auto after = here();
         if (!after.dir.empty() && after.usable)
             return std::unexpected(CallError{std::format(
-                "{}\n  packaging revision {} is still installed and in use\n  hint: {}",
+                "{}\n  packaging revision {} is still installed and in use\n  help: {}",
                 installError, after.installed, install_failure_hint(inst->error, cfg_.xlingsHome()))});
     }
     return std::unexpected(CallError{std::format(
-        "{}\n  hint: {}", installError,
+        "{}\n  help: {}", installError,
         install_failure_hint(inst->error, cfg_.xlingsHome()))});
 }
 

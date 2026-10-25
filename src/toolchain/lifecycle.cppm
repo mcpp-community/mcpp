@@ -987,7 +987,7 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         auto bsProblem = mcpp::config::check_base_init(cfg);
         if (!bsProblem.empty()) {
             mcpp::ui::error(std::format(
-                "{}\n  hint: run `mcpp self init --force` to reset and re-initialize",
+                "{}\n  help: run `mcpp self init --force` to reset and re-initialize",
                 bsProblem));
             return 1;
         }

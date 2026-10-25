@@ -143,7 +143,7 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
             auto problem = mcpp::config::check_base_init(*state.cfg_opt);
             if (!problem.empty()) {
                 return std::unexpected(std::format(
-                    "{}\n  hint: run `mcpp self init --force` to reset and re-initialize",
+                    "{}\n  help: run `mcpp self init --force` to reset and re-initialize",
                     problem));
             }
         }

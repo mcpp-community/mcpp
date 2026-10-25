@@ -133,7 +133,7 @@ std::string Record::format() const {
     // before any elaboration.
     std::string out(what);
     if (!impact.empty()) out += std::format("\n  impact: {}", impact);
-    if (!hint.empty())   out += std::format("\n  hint: {}", hint);
+    if (!hint.empty())   out += std::format("\n  help: {}", hint);
     return out;
 }
 

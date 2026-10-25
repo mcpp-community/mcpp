@@ -859,7 +859,7 @@ check_requirements(const TargetSide& ts, std::span<const Requirement> reqs,
             r.layer == CapLayer::Compiler
                 ? (compilerStatedBy.empty()
                     ? std::format(
-                          "       Select that compiler for this project:\n"
+                          "  help: select that compiler for this project:\n"
                           "           [toolchain]\n"
                           "           default = \"{}\"\n"
                           "       or, for one target only:\n"
@@ -876,9 +876,9 @@ check_requirements(const TargetSide& ts, std::span<const Requirement> reqs,
                           "configuration to do it.",
                           compilerStatedBy, r.interfaceName))
                 : std::format(
-                      "       Depend on a package that declares `provides = "
-                      "[\"mcpp:{}={}\"]`,\n"
-                      "       or remove the package that requires it.",
+                      "  help: depend on a package that declares `provides = "
+                      "[\"mcpp:{}={}\"]`\n"
+                      "  help: or remove the package that requires it",
                       name, r.interfaceName);
 
         if (have.absent())

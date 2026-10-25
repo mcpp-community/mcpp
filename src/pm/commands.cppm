@@ -288,7 +288,7 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
                        "namespace:" + hint;
             }
             if (registryInvolved) {
-                hint += "\n  hint: `mcpp index update` if it was published "
+                hint += "\n  help: `mcpp index update` if it was published "
                         "recently";
             }
             if (!selector.candidates.empty()) {

@@ -1254,7 +1254,7 @@ TEST(NinjaBackend, FilterKeepsStagingDiagnosticsAndFailedTarget) {
         "FAILED: [code=1] pcm.cache/std.pcm \n"
         "/opt/mcpp/bin/mcpp stage --output pcm.cache/std.pcm /cache/std.pcm\n"
         "error: cannot stage file into the build directory\n"
-        "hint: another process has this file memory-mapped, loaded or open.\n"
+        "help: another process has this file memory-mapped, loaded or open.\n"
         "ninja: build stopped: subcommand failed.\n";
 
     auto filtered = filter_ninja_output(raw, prefixes);
@@ -1266,7 +1266,7 @@ TEST(NinjaBackend, FilterKeepsStagingDiagnosticsAndFailedTarget) {
     EXPECT_EQ(filtered.find("[code=1]"), std::string::npos) << filtered;
     // The diagnostic survives; the echoed command line does not.
     EXPECT_NE(filtered.find("error: cannot stage file"), std::string::npos) << filtered;
-    EXPECT_NE(filtered.find("hint:"), std::string::npos) << filtered;
+    EXPECT_NE(filtered.find("help:"), std::string::npos) << filtered;
     EXPECT_EQ(filtered.find("stage --output"), std::string::npos) << filtered;
     EXPECT_EQ(filtered.find("ninja: Entering directory"), std::string::npos) << filtered;
 }

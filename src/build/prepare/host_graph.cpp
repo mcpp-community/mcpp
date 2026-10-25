@@ -362,7 +362,7 @@ std::expected<void, std::string> check_program_imports(PrepareState& state, std:
                         return std::unexpected(std::format(
                             "build.mcpp imports '{}'\n"
                             "  provided by: {}, feature \"{}\" (not enabled)\n"
-                            "  hint: enable it on the dependency edge: {} = {{ ..., "
+                            "  help: enable it on the dependency edge: {} = {{ ..., "
                             "features = [\"{}\"] }}",
                             want, qualified(pm), feature, qualified(pm), feature));
                     }

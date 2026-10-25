@@ -1761,6 +1761,7 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
             // package from naming a toolchain. One call, so a new answer
             // reaches every build program at once — see fill_target_build_env.
             fill_target_build_env(bpEnv, *state.m, state.tc ? &*state.tc : nullptr, state.cfg_opt ? &*state.cfg_opt : nullptr);
+            apply_graph_cxx_abi(bpEnv, state.packages);
             bpEnv.toolsBin = state.projectSubosBin;
             bpEnv.profile      = state.effectiveProfile;
             bpEnv.accel        = state.resolvedAccel();

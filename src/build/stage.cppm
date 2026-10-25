@@ -229,7 +229,7 @@ std::string failure_message(const std::filesystem::path& src,
         "  file:  {}\n"
         "  from:  {}\n"
         "  os error: {} ({})\n"
-        "hint: another process has this file memory-mapped, loaded or open.\n"
+        "help: another process has this file memory-mapped, loaded or open.\n"
         "      The usual holder is clangd (mcpp writes staged BMI paths into\n"
         "      compile_commands.json so clangd can resolve `import std;`), an\n"
         "      editor/IDE indexer, antivirus, or — for a .dll — a still-running\n"

@@ -178,7 +178,7 @@ ValidateReport validate(const Graph&                    g,
                         "lib target without conventional lib root '{}'\n"
                         "  impact: `mcpp pack` publishes this library without a module "
                         "interface\n"
-                        "  hint: add '{}' re-exporting the public modules with "
+                        "  help: add '{}' re-exporting the public modules with "
                         "`export import`, or set [lib].path; a library that "
                         "publishes headers only can ignore this",
                         lib_root_rel.string(), lib_root_rel.string())});
