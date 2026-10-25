@@ -518,6 +518,10 @@ struct PrepareState {
     std::vector<PlanNote> planNotes;
     std::map<std::string, mcpp::pm::LockedGitSource> gitLockAnchors;
     std::map<std::string, std::string> packageIdentityLockAnchors;
+    // mcpp.lock as this run read it (design 2026-10-26 §4.1): the write at the
+    // end compares, so a lock another run wrote meanwhile is not overwritten.
+    std::filesystem::path lockReadPath;
+    std::optional<std::string> lockReadText;   // nullopt: there was no file
     CacheMode cacheMode{};
 
     // ── P1: toolchain spec resolution, target axis, L1 cfg merge ────────────
@@ -945,6 +949,13 @@ void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
                            const mcpp::manifest::Manifest& m,
                            const mcpp::toolchain::Toolchain* tc,
                            const mcpp::config::GlobalConfig* cfg);
+// The `c++-abi` a package of the graph supplies, over the payload's: its
+// interface as `cxxStdlib` and its root as `cxxAbiRoot`. Read from the
+// declarations, so it is known to the build programs that run before the
+// target side is resolved; rule one (one supplier per layer) is enforced
+// where the target side is.
+void apply_graph_cxx_abi(mcpp::build::BuildProgramEnv& e,
+                         const std::vector<mcpp::modgraph::PackageRoot>& packages);
 std::string min_platform_version(const mcpp::manifest::Manifest& m,
                                  const mcpp::toolchain::triple::Triple& t,
                                  const std::filesystem::path& compilerPath);

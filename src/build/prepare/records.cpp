@@ -312,6 +312,20 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
                     return std::unexpected(msg);
                 }
             }
+            // OPTIMISTIC: no lock is held while the graph resolves (it may
+            // reach the network). What this run read is compared with what is
+            // there now; a lock another run wrote meanwhile is not
+            // overwritten unless it already says what this one would
+            // (design 2026-10-26 §4.1).
+            if (!state.lockReadPath.empty() && state.lockReadPath == lockPath) {
+                auto now = mcpp::pm::read_text(lockPath);
+                if (now && *now != state.lockReadText && *now != mcpp::lockfile::serialize(lock))
+                    return std::unexpected(std::format(
+                        "[lockfile-concurrent] {} changed while this run resolved its "
+                        "dependencies (another mcpp run wrote it)\n"
+                        "       help: run the command again; it resolves against the lock "
+                        "as it is now", lockPath.string()));
+            }
             if (auto written = mcpp::lockfile::write(lock, lockPath); !written)
                 return std::unexpected(written.error().message);
         }

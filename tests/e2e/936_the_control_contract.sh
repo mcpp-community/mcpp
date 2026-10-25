@@ -15,7 +15,10 @@
 #   E  `--home <dir>` is MCPP_HOME for one run (`self env` reports it);
 #   F  `search --format json` and `index list --format json` answer with their
 #      envelopes; `pack --list-formats` names tar and dir;
-#   G  `--protocol-version` lists the new kinds.
+#   G  `--protocol-version` lists the new kinds;
+#   H  a build ended by SIGTERM while it writes its directory exits 143 and
+#      leaves its record `cancelled` (and `.last-result.json` says so); the
+#      next build completes.
 set -e
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -116,5 +119,36 @@ $PY -c 'import json,sys; d=json.load(open(sys.argv[1])); n=[f["name"] for f in d
 for k in mcpp.build mcpp.launch mcpp.search mcpp.index mcpp.pack.formats; do
     grep -q "\"$k\"" g.out || fail "G: --protocol-version does not list $k" g.out
 done
+
+# H
+mkdir -p "$TMP/h/src"
+cd "$TMP/h"
+printf '[package]\nname = "h"\nversion = "0.1.0"\nstandard = "c++23"\n' > mcpp.toml
+for i in $(seq 1 40); do
+    printf 'export module m%d;\nimport std;\nexport int f%d(){ std::vector<int> v(%d); return (int)v.size(); }\n' $i $i $i > "src/m$i.cppm"
+done
+{ echo 'import std;'; for i in $(seq 1 40); do echo "import m$i;"; done
+  echo 'int main(){ std::println("{}", f1()+f40()); }'; } > src/main.cpp
+"$MCPP" build > h0.log 2>&1 || fail "H: the first build failed" h0.log   # the std module in place
+rm -rf target
+"$MCPP" build > h.log 2>&1 &
+pid=$!
+for _ in $(seq 1 500); do
+    grep -qs '"status": "running"' target/.last-result.json && break
+    sleep 0.02
+done
+kill -TERM $pid
+set +e
+wait $pid; rc=$?
+set -e
+$PY - target/.last-result.json <<'EOF2' || fail "H: the interrupted build left no cancelled record (rc=$rc)" h.log target/.last-result.json
+import json, sys
+last = json.load(open(sys.argv[1]))["data"]
+assert last["status"] == "cancelled", last
+rec = json.load(open(last["result"]))["data"]
+assert rec["status"] == "cancelled", rec["status"]
+EOF2
+[[ $rc -eq 143 ]] || fail "H: SIGTERM exited $rc, expected 143" h.log
+"$MCPP" build > h2.log 2>&1 || fail "H: the build after the interrupted one failed" h2.log
 
 echo "PASS: 936 the control contract"

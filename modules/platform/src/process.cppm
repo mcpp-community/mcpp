@@ -393,6 +393,14 @@ std::string windows_wrap_for_cmd_c(std::string_view cmd);
 // AutoRun so a user's registry-installed shell hook cannot alter it.
 std::string windows_shell_command_line(std::string_view command);
 
+// The files an interrupt leaves (design 2026-10-26 §5.4): when SIGINT, SIGTERM
+// or SIGHUP (Windows: a console control event) ends this process, each
+// `(path, content)` replaces its file -- through a temporary name beside it
+// and a rename -- after the guarded children are stopped. Setting replaces the
+// previous set; at most four files.
+void set_interrupt_files(const std::vector<std::pair<std::filesystem::path, std::string>>& files);
+void clear_interrupt_files();
+
 } // namespace mcpp::platform::process
 
 // ─── Implementation ──────────────────────────────────────────────────────
@@ -418,6 +426,28 @@ std::string windows_shell_command_line(std::string_view command) {
     // One derivation for the outer pair: the same wrap the /c rule above is
     // written against.
     return "cmd.exe /d /s /c " + windows_wrap_for_cmd_c(command);
+}
+
+void set_interrupt_files(const std::vector<std::pair<std::filesystem::path, std::string>>& files) {
+    std::vector<std::string> paths, temps, contents;
+    for (auto const& [path, content] : files) {
+        paths.push_back(path.string());
+        temps.push_back(path.string() + ".interrupted");
+        contents.push_back(content);
+    }
+#if defined(_WIN32)
+    mcpp::platform::winproc::set_interrupt_files(paths, temps, contents);
+#else
+    mcpp::platform::unixproc::set_interrupt_files(paths, temps, contents);
+#endif
+}
+
+void clear_interrupt_files() {
+#if defined(_WIN32)
+    mcpp::platform::winproc::clear_interrupt_files();
+#else
+    mcpp::platform::unixproc::clear_interrupt_files();
+#endif
 }
 
 namespace {

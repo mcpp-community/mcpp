@@ -63,7 +63,12 @@ struct LockError {
 };
 
 std::expected<Lockfile, LockError> load(const std::filesystem::path& path);
+// Replaces the file atomically (a temporary name beside it, then a rename);
+// an unchanged lock is not rewritten.
 std::expected<void, LockError>     write(const Lockfile& lock, const std::filesystem::path& path);
+
+// The file's text with CRLF read as LF; nullopt when there is no file.
+std::expected<std::optional<std::string>, LockError> read_text(const std::filesystem::path& path);
 
 std::string serialize(const Lockfile& lock);
 std::string compute_hash(const Lockfile& lock);
@@ -187,37 +192,70 @@ std::string serialize(const Lockfile& lock) {
     return out;
 }
 
-std::expected<void, LockError> write(const Lockfile& lock, const std::filesystem::path& path) {
-    const auto text = serialize(lock);
+std::expected<std::optional<std::string>, LockError> read_text(const std::filesystem::path& path) {
     std::error_code ec;
     const bool exists = std::filesystem::exists(path, ec);
     if (ec) return std::unexpected(LockError{std::format("cannot inspect '{}'", path.string())});
-    if (exists) {
-        // Reading is enough for an unchanged lock, including a read-only one.
-        // Accept either line ending without rewriting a checkout on another host.
-        std::ifstream in(path, std::ios::binary);
-        if (!in) return std::unexpected(LockError{std::format("cannot read '{}'", path.string())});
-        std::string prior;
-        for (char c; in.get(c); ) prior.push_back(c);
-        if (in.bad() || !in.eof())
-            return std::unexpected(LockError{std::format("cannot read '{}'", path.string())});
-        std::string normalized;
-        normalized.reserve(prior.size());
-        for (std::size_t i = 0; i < prior.size(); ++i) {
-            if (prior[i] == '\r' && i + 1 < prior.size() && prior[i + 1] == '\n') continue;
-            normalized.push_back(prior[i]);
-        }
-        if (normalized == text) return {};
+    if (!exists) return std::optional<std::string>{};
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return std::unexpected(LockError{std::format("cannot read '{}'", path.string())});
+    std::string prior;
+    for (char c; in.get(c); ) prior.push_back(c);
+    if (in.bad() || !in.eof())
+        return std::unexpected(LockError{std::format("cannot read '{}'", path.string())});
+    // Either line ending, so a checkout on another host is not rewritten.
+    std::string normalized;
+    normalized.reserve(prior.size());
+    for (std::size_t i = 0; i < prior.size(); ++i) {
+        if (prior[i] == '\r' && i + 1 < prior.size() && prior[i + 1] == '\n') continue;
+        normalized.push_back(prior[i]);
     }
+    return std::optional<std::string>{std::move(normalized)};
+}
+
+std::expected<void, LockError> write(const Lockfile& lock, const std::filesystem::path& path) {
+    const auto text = serialize(lock);
+    // Reading is enough for an unchanged lock, including a read-only one.
+    auto prior = read_text(path);
+    if (!prior) return std::unexpected(prior.error());
+    if (*prior && **prior == text) return {};
+    std::error_code ec;
     if (!path.parent_path().empty()) {
         std::filesystem::create_directories(path.parent_path(), ec);
         if (ec) return std::unexpected(LockError{std::format("cannot create directory for '{}'", path.string())});
     }
-    std::ofstream os(path);
-    if (!os) return std::unexpected(LockError{std::format("cannot write '{}'", path.string())});
-    os << text;
-    os.close();
-    if (!os) return std::unexpected(LockError{std::format("cannot write '{}'", path.string())});
+    // A linked lock stays a link: the file it names is the one replaced.
+    auto file = path;
+    if (std::filesystem::is_symlink(path, ec)) {
+        auto resolved = std::filesystem::weakly_canonical(path, ec);
+        if (ec) return std::unexpected(LockError{std::format("cannot resolve '{}'", path.string())});
+        file = resolved;
+    }
+    // A read-only lock is refused as writing it in place was: the rename below
+    // would otherwise replace a file its owner made read-only.
+    if (*prior) {
+        const auto perms = std::filesystem::status(file, ec).permissions();
+        if (!ec && (perms & std::filesystem::perms::owner_write) == std::filesystem::perms::none)
+            return std::unexpected(LockError{std::format("cannot write '{}'", path.string())});
+    }
+    // Atomic: a concurrent reader sees the old lock or the new one, never part.
+    auto tmp = file;
+    tmp += std::format(".{:x}.tmp", std::random_device{}());
+    {
+        std::ofstream os(tmp, std::ios::trunc);   // text mode, as before: CRLF on Windows
+        if (!os) return std::unexpected(LockError{std::format("cannot write '{}'", path.string())});
+        os << text;
+        os.close();
+        if (!os) {
+            std::filesystem::remove(tmp, ec);
+            return std::unexpected(LockError{std::format("cannot write '{}'", path.string())});
+        }
+    }
+    std::filesystem::rename(tmp, file, ec);
+    if (ec) {
+        std::filesystem::remove(tmp, ec);
+        return std::unexpected(LockError{std::format("cannot write '{}'", path.string())});
+    }
     return {};
 }
 

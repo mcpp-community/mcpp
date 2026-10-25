@@ -403,7 +403,7 @@ std::expected<void, std::string> check_engine_floors(const PrepareState& state,
             ? m.package.name : m.package.namespace_ + "." + m.package.name;
         return std::unexpected(std::format(
             "package '{}' ({}) requires mcpp >= {}; this is mcpp {}.\n"
-            "       hint: pin \"mcpp\": \"{}\" (or newer) in .xlings.json and run "  // provider-boundary-ok: the project file a person edits to pin mcpp
+            "       help: pin \"mcpp\": \"{}\" (or newer) in .xlings.json and run "  // provider-boundary-ok: the project file a person edits to pin mcpp
             "`xlings install`, or run `xlings install mcpp@{}`",
             who, where, m.package.mcppFloor, mcpp::MCPP_VERSION,
             m.package.mcppFloor, m.package.mcppFloor));
@@ -667,6 +667,10 @@ std::expected<void, std::string> phase0_manifest_and_workspace(PrepareState& sta
                     lockPath = state.runtimeWorkspaceRoot / mp / "mcpp.lock";
                     break;
                 }
+        if (auto text = mcpp::pm::read_text(lockPath)) {
+            state.lockReadPath = lockPath;
+            state.lockReadText = std::move(*text);
+        }
         if (std::filesystem::exists(lockPath)) {
             if (auto lock = mcpp::pm::load(lockPath); lock) {
                 for (auto const& p : lock->packages) {

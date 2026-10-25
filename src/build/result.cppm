@@ -3,10 +3,11 @@
 //
 // THE RECORD. A build of one configuration writes `result.json` in its build
 // directory twice: when it starts writing the directory (`"status":
-// "running"`, with its pid) and when it ends (`ok`, `failed`). A record still
-// `running` whose process is gone is a build that was interrupted -- a signal
-// handler cannot safely write a file, and a SIGKILL runs no handler at all, so
-// the start is recorded and the end is inferred. `target/.last-result.json`
+// "running"`, with its pid) and when it ends (`ok`, `failed`). A build ended by
+// SIGINT, SIGTERM or SIGHUP (Windows: a console control event) leaves
+// `cancelled`: the interrupted form is rendered when the run starts and the
+// handler writes it with async-signal-safe calls. SIGKILL runs no handler, so a
+// record still `running` whose process is gone is a build that was killed. `target/.last-result.json`
 // names the configuration the most recent build of the project wrote. Both are
 // replaced atomically. The record is how an IDE learns what a build in a
 // terminal did, and how an agent learns what the IDE's build did: the chains
@@ -22,13 +23,14 @@
 // start it: `argv`, the environment mcpp adds (only what it injects or
 // rewrites -- the caller's own environment is not copied into target/), and
 // `cwd`. An artifact that a runner or an execution host wraps says so
-// (`via`), and `mcpp run --print-launch --format json` answers for it.
+// (`via`), and `mcpp run --print-launch` answers for it.
 export module mcpp.build.result;
 
 import std;
 import mcpp.libs.json;
 import mcpp.version;                 // MCPP_VERSION
 import mcpp.platform.terminal;       // the protocol's stdout under StdoutToStderr
+import mcpp.platform.process;        // the files an interrupt leaves
 
 export namespace mcpp::build::result {
 
@@ -61,7 +63,7 @@ struct Record {
     long        pid = 0;
     std::int64_t startedAt = 0;    // ms since the epoch
     std::int64_t finishedAt = 0;
-    std::string status;            // running | ok | failed
+    std::string status;            // running | ok | failed | cancelled
     std::string triple;
     std::string profile;
     std::string fingerprint;
@@ -208,7 +210,8 @@ std::optional<Record> read(const std::filesystem::path& outputDir) {
     return r;
 }
 
-void write(const Record& r) {
+namespace {
+std::string render(const Record& r) {
     nlohmann::json doc{
         {"schemaVersion", 1},
         {"kind", "mcpp.result"},
@@ -216,18 +219,38 @@ void write(const Record& r) {
         {"mcpp", {{"version", std::string(mcpp::MCPP_VERSION)}}},
         {"data", to_json(r)},
     };
-    write_atomically(r.outputDir / "result.json", doc.dump(2) + "\n");
-    if (!r.projectRoot.empty()) {
-        nlohmann::json last{
-            {"schemaVersion", 1},
-            {"kind", "mcpp.last-result"},
-            {"kindVersion", 1},
-            {"data", {{"result", (r.outputDir / "result.json").generic_string()},
-                      {"status", r.status},
-                      {"finishedAt", r.finishedAt == 0 ? nlohmann::json(nullptr)
-                                                       : nlohmann::json(r.finishedAt)}}},
-        };
-        write_atomically(r.projectRoot / "target" / ".last-result.json", last.dump(2) + "\n");
+    return doc.dump(2) + "\n";
+}
+std::string render_last(const Record& r) {
+    nlohmann::json last{
+        {"schemaVersion", 1},
+        {"kind", "mcpp.last-result"},
+        {"kindVersion", 1},
+        {"data", {{"result", (r.outputDir / "result.json").generic_string()},
+                  {"status", r.status},
+                  {"finishedAt", r.finishedAt == 0 ? nlohmann::json(nullptr)
+                                                   : nlohmann::json(r.finishedAt)}}},
+    };
+    return last.dump(2) + "\n";
+}
+}  // namespace
+
+void write(const Record& r) {
+    write_atomically(r.outputDir / "result.json", render(r));
+    const auto last = r.projectRoot / "target" / ".last-result.json";
+    if (!r.projectRoot.empty()) write_atomically(last, render_last(r));
+    // A running record is armed with its interrupted form: a signal that ends
+    // the build leaves `cancelled`, not a `running` record whose process is
+    // gone (§5.4). The end of the build disarms it.
+    if (r.status == "running") {
+        auto cancelled = r;
+        cancelled.status = "cancelled";
+        std::vector<std::pair<std::filesystem::path, std::string>> files{
+            {r.outputDir / "result.json", render(cancelled)}};
+        if (!r.projectRoot.empty()) files.emplace_back(last, render_last(cancelled));
+        mcpp::platform::process::set_interrupt_files(files);
+    } else {
+        mcpp::platform::process::clear_interrupt_files();
     }
 }
 

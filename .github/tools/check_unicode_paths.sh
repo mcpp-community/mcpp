@@ -87,7 +87,10 @@ for name in ascii "$CAFE" "$CJK"; do
         if [ "$name" != ascii ]; then
             ninja=$(find target -name build.ninja -newer mcpp.toml | head -1)
             check_bytes "$ninja" "$name" "$label"
-            check_bytes compile_commands.json "$name" "$label"
+            # The configuration's database: the root copy is written only
+            # when [build] compile_commands asks for one (2026.10.26.1+).
+            cdb=$(find target -name compile_commands.json -newer mcpp.toml | head -1)
+            check_bytes "$cdb" "$name" "$label"
         fi
         ok "$label"
     done

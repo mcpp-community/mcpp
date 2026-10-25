@@ -69,8 +69,10 @@ private:
 
 class Document {
 public:
-    explicit Document(Table root, std::set<std::string, std::less<>> explicitTables = {})
-        : root_(std::move(root)), explicitTables_(std::move(explicitTables)) {}
+    explicit Document(Table root, std::set<std::string, std::less<>> explicitTables = {},
+                      std::map<std::string, Position, std::less<>> headers = {})
+        : root_(std::move(root)), explicitTables_(std::move(explicitTables)),
+          headers_(std::move(headers)) {}
 
     const Table& root() const { return root_; }
     Table&       root()       { return root_; }
@@ -97,9 +99,19 @@ public:
         return explicitTables_;
     }
 
+    // Where `dotted_path` is written: a value's own position, or the first
+    // `[header]` / `[[header]]` of a table. nullopt for a table that only a
+    // dotted key or a deeper header created, and for a path that is absent.
+    std::optional<Position> position_of(std::string_view dotted_path) const {
+        if (auto* v = get(dotted_path); v && v->position.line > 0) return v->position;
+        if (auto it = headers_.find(dotted_path); it != headers_.end()) return it->second;
+        return std::nullopt;
+    }
+
 private:
     Table root_;
     std::set<std::string, std::less<>> explicitTables_;
+    std::map<std::string, Position, std::less<>> headers_;
 };
 
 std::expected<Document, ParseError> parse(std::string_view src);
@@ -404,6 +416,7 @@ inline Table* dive(Table& root, const std::vector<std::string>& path, bool creat
         if (it == cur->end()) {
             if (!create_intermediate) return nullptr;
             (*cur)[seg] = Value{Table{}};
+            (*cur)[seg].position = {0, 0};   // written nowhere itself
             cur = &(*cur)[seg].as_table();
         } else if (!it->second.is_table()) {
             return nullptr; // collision: existing non-table
@@ -455,6 +468,7 @@ inline std::expected<Table*, ParseError> open_array_of_tables(
     }
     Array& arr = it->second.as_array();
     arr.push_back(Value{Table{}});
+    arr.back().position = pos;
     return &arr.back().as_table();
 }
 
@@ -535,6 +549,7 @@ std::expected<Document, ParseError> parse(std::string_view src) {
     Lexer L { src };
     Table root;
     std::set<std::string, std::less<>> explicitTables;
+    std::map<std::string, Position, std::less<>> headers;
     Table* current_table = &root;
 
     while (true) {
@@ -542,6 +557,7 @@ std::expected<Document, ParseError> parse(std::string_view src) {
         if (L.eof()) break;
 
         if (L.peek() == '[') {
+            const auto headerAt = L.position();
             L.advance();
             if (L.peek() == '[') {
                 // [[dotted.path]] — array-of-tables (#227). Every occurrence
@@ -557,9 +573,10 @@ std::expected<Document, ParseError> parse(std::string_view src) {
                 }
                 L.advance();
                 L.advance();
-                auto t = open_array_of_tables(root, *path, L.position());
+                auto t = open_array_of_tables(root, *path, headerAt);
                 if (!t) return std::unexpected(t.error());
                 explicitTables.insert(join_path(*path));
+                headers.emplace(join_path(*path), headerAt);
                 current_table = *t;
                 continue;
             }
@@ -576,6 +593,7 @@ std::expected<Document, ParseError> parse(std::string_view src) {
                             join_path(*path)),
                 L.position()});
             explicitTables.insert(join_path(*path));
+            headers.emplace(join_path(*path), headerAt);
             current_table = t;
         } else {
             // key = value
@@ -600,7 +618,7 @@ std::expected<Document, ParseError> parse(std::string_view src) {
         }
     }
 
-    return Document{std::move(root), std::move(explicitTables)};
+    return Document{std::move(root), std::move(explicitTables), std::move(headers)};
 }
 
 std::expected<Document, ParseError> parse_file(const std::filesystem::path& p) {

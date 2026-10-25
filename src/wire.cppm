@@ -190,7 +190,58 @@ inline int kind_version(std::string_view kind) {
     return 0;
 }
 
-inline nlohmann::json to_json(const Diagnostic& d) {
+// The source location a message begins with: `<path>:<line>:<col>: `,
+// `<path>:<line>: ` or `<path>: error: ` -- the form every located message of
+// mcpp's is written in (a manifest's rejections, a compiler's lines). A
+// Windows drive letter's colon belongs to the path.
+struct Located { std::string path; int line = 0; int column = 0; };
+inline std::optional<Located> message_location(std::string_view msg) {
+    auto number = [](std::string_view s, int& v) {
+        return !s.empty() && std::from_chars(s.data(), s.data() + s.size(), v).ec == std::errc{}
+            && v > 0;
+    };
+    const auto end = msg.find(": ");
+    if (end == std::string_view::npos || end == 0) return std::nullopt;
+    auto loc = msg.substr(0, end);
+    if (loc.find(' ') != std::string_view::npos && loc.find('/') == std::string_view::npos
+        && loc.find('\\') == std::string_view::npos)
+        return std::nullopt;
+    Located l;
+    int a = 0, b = 0;
+    auto c2 = loc.rfind(':');
+    if (c2 != std::string_view::npos && c2 > 1 && number(loc.substr(c2 + 1), a)) {
+        auto head = loc.substr(0, c2);
+        auto c1 = head.rfind(':');
+        if (c1 != std::string_view::npos && c1 > 1 && number(head.substr(c1 + 1), b)) {
+            l.path = std::string(head.substr(0, c1)); l.line = b; l.column = a;
+        } else {
+            l.path = std::string(head); l.line = a;
+        }
+        return l;
+    }
+    if (msg.substr(end + 2).starts_with("error: ") || msg.substr(end + 2).starts_with("warning: ")) {
+        l.path = std::string(loc);
+        return l;
+    }
+    return std::nullopt;
+}
+
+// A diagnostic without a range whose message begins with a location carries
+// that location as `path` and `range` (docs/50 §2): a caller that already
+// named the file keeps its spelling of it, and gains the line.
+inline nlohmann::json to_json(const Diagnostic& in) {
+    Diagnostic d = in;
+    if (!d.range) {
+        if (auto l = message_location(d.message);
+            l && (d.path.empty() || std::filesystem::path(l->path).filename()
+                                        == std::filesystem::path(d.path).filename())) {
+            if (d.path.empty()) d.path = l->path;
+            if (l->line > 0) {
+                const int col = std::max(l->column, 1);
+                d.range = Range{{l->line, col}, {l->line, col}};
+            }
+        }
+    }
     nlohmann::json j{
         {"code",     d.code},
         {"severity", std::string(severity_name(d.severity))},

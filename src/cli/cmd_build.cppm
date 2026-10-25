@@ -213,11 +213,16 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     mcpp::build::progress::set_step_observer([](std::size_t finished, std::size_t total) {
         res::emit("progress", {{"finished", finished}, {"total", total}});
     });
+    // mcpp's own errors (a manifest's rejection, a refused requirement) are
+    // the envelope's diagnostics, each located where its message says.
+    std::vector<std::string> errors;
+    mcpp::ui::set_error_observer([&errors](std::string_view m) { errors.emplace_back(m); });
     int rc = 0;
     {
         mcpp::platform::terminal::StdoutToStderr narration;
         rc = cmd_build_body(parsed);
     }
+    mcpp::ui::set_error_observer({});
     res::enable_events(false);
 
     using mcpp::wire::Effect;
@@ -239,9 +244,16 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
             }
         }
     }
-    if (rc != 0)
-        env.diagnostics.push_back({"MCPP_BUILD_FAILED", mcpp::wire::Severity::Error,
-            "mcpp build failed; the compiler diagnostics are in data.diagnostics and the narration on standard error"});
+    if (rc != 0) {
+        const bool denied = mcpp::platform::env::effect_refused().has_value();
+        const std::string code = denied ? "MCPP_EFFECT_DENIED" : "MCPP_BUILD_FAILED";
+        for (auto& e : errors)
+            env.diagnostics.push_back({code, mcpp::wire::Severity::Error, std::move(e)});
+        if (env.diagnostics.empty())
+            env.diagnostics.push_back({code, mcpp::wire::Severity::Error,
+                "mcpp build failed; the compiler diagnostics are in data.diagnostics "
+                "and the narration on standard error"});
+    }
     // One line, as every record of the stream is: a reader splits stdout on
     // newlines and parses each line, the last of which is this envelope.
     std::println("{}", mcpp::wire::to_json(env).dump());

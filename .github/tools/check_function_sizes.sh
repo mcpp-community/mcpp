@@ -29,7 +29,9 @@
 #
 # A compile database that names BMIs explicitly (-fmodule-file=...), which
 # only a build actually produces: `mcpp build --toolchain llvm@23.1.3` writes
-# compile_commands.json at the project root. This script does not build it:
+# the configuration's compile_commands.json, which target/.last-result.json
+# names (a root copy only when [build] compile_commands asks for one, mcpp
+# 2026.10.26.1+). This script does not build it:
 # the caller runs that build first. check_file_lengths.sh needs no such
 # division because it reads the tree.
 #
@@ -57,7 +59,18 @@ cd "$REPO_DIR" || { echo "FAIL: cannot cd to $REPO_DIR" >&2; exit 1; }
 LINE_THRESHOLD=400
 DIR="src/build/prepare"
 PRIMARY="src/build/prepare.cppm"
+# The database the build wrote: the project root's copy when the project asks
+# for one (`[build] compile_commands`), else the configuration's own, which the
+# result record names (mcpp 2026.10.26.1+, design 2026-10-26 D14).
 CDB="compile_commands.json"
+if [ ! -f "$CDB" ] && [ -f target/.last-result.json ]; then
+    CDB=$(python3 - <<'PY'
+import json
+last = json.load(open("target/.last-result.json"))["data"]["result"]
+print(json.load(open(last))["data"].get("compileDatabase") or "compile_commands.json")
+PY
+)
+fi
 
 [ -d "$DIR" ] || { echo "FAIL: $DIR does not exist -- this guard has gone stale" >&2; exit 1; }
 
@@ -68,8 +81,8 @@ FAIL: $CDB does not exist.
   compile database that names every imported module's BMI explicitly.
   Produce one first:
       mcpp build --toolchain llvm@23.1.3
-  (any installed LLVM row works; the database is written at the project
-  root regardless of the row's exact version).
+  (any installed LLVM row works; the database is read from the project
+  root, or from the configuration target/.last-result.json names).
 EOF
     exit 1
 fi

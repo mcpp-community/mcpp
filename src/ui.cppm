@@ -84,6 +84,9 @@ void finished(std::string_view profile, std::chrono::milliseconds elapsed,
 // "warning:" / "error:" prefix lines (yellow / red).
 void warning(std::string_view message);
 void error(std::string_view message);
+// Receives each message `error` prints, while set: an enveloped command
+// carries its errors as diagnostics (design 2026-10-26 §5.6). Empty clears.
+void set_error_observer(std::function<void(std::string_view)> observer);
 // "note:" prefix line (cyan), on stderr like the two above: a statement that
 // changes nothing the build does and that a reader may want to act on.
 void note(std::string_view message);
@@ -806,7 +809,21 @@ void warning(std::string_view message) {
         : std::format("warning: {}\n", message));
 }
 
+namespace {
+std::mutex g_errorObserverMutex;
+std::function<void(std::string_view)> g_errorObserver;
+}  // namespace
+
+void set_error_observer(std::function<void(std::string_view)> observer) {
+    std::lock_guard lock(g_errorObserverMutex);
+    g_errorObserver = std::move(observer);
+}
+
 void error(std::string_view message) {
+    {
+        std::lock_guard lock(g_errorObserverMutex);
+        if (g_errorObserver) g_errorObserver(message);
+    }
     init();
     emit(term::Stream::Err, colored(term::Stream::Err)
         ? std::format("{}{}error:{} {}\n", kBold, kBrightRed, kReset, message)

@@ -618,6 +618,35 @@ ManifestError error(const std::filesystem::path& origin,
     return ManifestError{msg, origin, pos.line, pos.column};
 }
 
+// A rejection that names its key -- `[build].sources must be …`, `[package]
+// needs …`, the convention of these messages -- is located where that key (or
+// that table's header) is written, so a reader of the message, or of the
+// envelope, is taken to the line (design 2026-10-26 §5.6). The first
+// `[table]` or `[table].key` in the message is the one it is about; a table
+// whose name the message elides (`[target.'cfg(...)']`) is not located.
+void locate_named_key(ManifestError& e, const t::Document& doc) {
+    const std::string_view msg = e.message;
+    const auto open = msg.find('[');
+    if (open == std::string_view::npos) return;
+    const auto close = msg.find(']', open);
+    if (close == std::string_view::npos || close == open + 1) return;
+    std::string dotted(msg.substr(open + 1, close - open - 1));
+    std::string table = dotted;
+    std::size_t i = close + 1;
+    if (i + 1 < msg.size() && msg[i] == '.') {
+        std::size_t j = i + 1;
+        while (j < msg.size() && (std::isalnum(static_cast<unsigned char>(msg[j]))
+                                  || msg[j] == '_' || msg[j] == '-'))
+            ++j;
+        if (j > i + 1) dotted += "." + std::string(msg.substr(i + 1, j - i - 1));
+    }
+    auto at = doc.position_of(dotted);
+    if (!at && dotted != table) at = doc.position_of(table);
+    if (!at) return;
+    e.line = at->line;
+    e.column = at->column;
+}
+
 // One `requires` array, of `[package]` or of a `[target.<sel>]` (design
 // 2026-10-26 §6.3, D20): each entry a string, or a table
 // `{ layer = "<capability>", visibility = "public" | "private" }`. A string
@@ -966,7 +995,9 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (!doc) {
         return std::unexpected(error(origin, doc.error().message, doc.error().where));
     }
-    return parse_document(*doc, origin, ctx);
+    auto m = parse_document(*doc, origin, ctx);
+    if (!m && m.error().line == 0) locate_named_key(m.error(), *doc);
+    return m;
 }
 
 namespace {

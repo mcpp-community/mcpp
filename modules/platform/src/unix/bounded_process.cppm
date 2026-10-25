@@ -238,6 +238,18 @@ void guard_terminal_mode(int fd);
 // Restores the saved mode and stops guarding it.
 void unguard_terminal_mode();
 
+// THE FILES A SIGNAL LEAVES (design 2026-10-26 §5.4). A build interrupted while
+// it writes its directory says so in its result record: the interrupted form is
+// rendered beforehand, and the handler -- after it has stopped the guarded
+// groups -- writes each `contents[i]` to `temps[i]` and renames it over
+// `paths[i]` (open, write, close and rename are async-signal-safe). While files
+// are set the handler is installed. Setting replaces the previous set; at most
+// four files.
+void set_interrupt_files(const std::vector<std::string>& paths,
+                         const std::vector<std::string>& temps,
+                         const std::vector<std::string>& contents);
+void clear_interrupt_files();
+
 } // namespace mcpp::platform::unixproc
 
 namespace mcpp::platform::unixproc {
@@ -430,6 +442,39 @@ volatile sig_atomic_t g_guardedGroups[kMaxGuardedGroups] = {};
 // handler never takes it.
 std::mutex g_guardMutex;
 
+// The files a signal leaves. A set is never freed while it may be read: the
+// handler can run on another thread between the read of the pointer and its
+// writes, so every set lives until exit, and `g_interrupt` only moves.
+struct InterruptFiles {
+    std::vector<std::string> paths, temps, contents;
+};
+std::atomic<InterruptFiles*> g_interrupt{nullptr};
+std::vector<std::unique_ptr<InterruptFiles>> g_interruptSets;
+
+void write_interrupt_files() {
+    auto* set = g_interrupt.load();
+    if (!set) return;
+    for (std::size_t i = 0; i < set->paths.size(); ++i) {
+        const int fd = ::open(set->temps[i].c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        if (fd < 0) continue;
+        const char* p = set->contents[i].data();
+        std::size_t left = set->contents[i].size();
+        while (left > 0) {
+            const auto n = ::write(fd, p, left);
+            if (n <= 0) break;
+            p += n;
+            left -= static_cast<std::size_t>(n);
+        }
+        ::close(fd);
+        if (left == 0) ::rename(set->temps[i].c_str(), set->paths[i].c_str());
+        else ::unlink(set->temps[i].c_str());
+    }
+}
+
+// Whether anything still needs the handler: a guarded group, the terminal's
+// mode, or files to leave.
+bool handler_needed();
+
 // The platforms without `pipe2` share one section across every child start.
 std::mutex g_launchMutex;
 
@@ -438,6 +483,7 @@ volatile sig_atomic_t g_terminalFd = -1;
 struct termios g_terminalMode{};
 
 void install_handlers();
+void uninstall_handlers();
 
 extern "C" void background_signal_handler(int sig) {
     // killpg is async-signal-safe. SIGKILL rather than SIGTERM: this is the
@@ -453,6 +499,7 @@ extern "C" void background_signal_handler(int sig) {
         const auto group = g_guardedGroups[i];
         if (group > 0) ::killpg(static_cast<pid_t>(group), SIGKILL);
     }
+    write_interrupt_files();
     if (g_terminalFd >= 0) ::tcsetattr(g_terminalFd, TCSANOW, &g_terminalMode);
     // Die of the signal we were sent, so the exit status is the one the shell
     // and any outer script expect from a Ctrl-C.
@@ -612,27 +659,16 @@ void guard_group_on_signal(long long group) {
 void unguard_group(long long group) {
     if (group <= 0) return;
     std::lock_guard lock(g_guardMutex);
-    bool any = false;
-    for (int i = 0; i < kMaxGuardedGroups; ++i) {
+    for (int i = 0; i < kMaxGuardedGroups; ++i)
         if (g_guardedGroups[i] == static_cast<sig_atomic_t>(group))
             g_guardedGroups[i] = 0;
-        else if (g_guardedGroups[i] != 0)
-            any = true;
-    }
-    if (!any && g_terminalFd < 0) {
-        ::signal(SIGINT,  SIG_DFL);
-        ::signal(SIGTERM, SIG_DFL);
-        ::signal(SIGHUP,  SIG_DFL);
-    }
+    if (!handler_needed()) uninstall_handlers();
 }
 
 void clear_group_guard() {
     std::lock_guard lock(g_guardMutex);
     for (int i = 0; i < kMaxGuardedGroups; ++i) g_guardedGroups[i] = 0;
-    if (g_terminalFd >= 0) return;   // the terminal's guard still needs the handler
-    ::signal(SIGINT,  SIG_DFL);
-    ::signal(SIGTERM, SIG_DFL);
-    ::signal(SIGHUP,  SIG_DFL);
+    if (!handler_needed()) uninstall_handlers();
 }
 
 bool group_guard_idle() {
@@ -654,13 +690,25 @@ void unguard_terminal_mode() {
     if (g_terminalFd < 0) return;
     ::tcsetattr(g_terminalFd, TCSANOW, &g_terminalMode);
     g_terminalFd = -1;
-    bool any = false;
-    for (int i = 0; i < kMaxGuardedGroups; ++i) any = any || g_guardedGroups[i] != 0;
-    if (!any) {
-        ::signal(SIGINT,  SIG_DFL);
-        ::signal(SIGTERM, SIG_DFL);
-        ::signal(SIGHUP,  SIG_DFL);
-    }
+    if (!handler_needed()) uninstall_handlers();
+}
+
+void set_interrupt_files(const std::vector<std::string>& paths,
+                         const std::vector<std::string>& temps,
+                         const std::vector<std::string>& contents) {
+    if (paths.empty() || paths.size() > 4 || temps.size() != paths.size()
+        || contents.size() != paths.size())
+        return;
+    std::lock_guard lock(g_guardMutex);
+    g_interruptSets.push_back(std::make_unique<InterruptFiles>(InterruptFiles{paths, temps, contents}));
+    g_interrupt.store(g_interruptSets.back().get());
+    install_handlers();
+}
+
+void clear_interrupt_files() {
+    std::lock_guard lock(g_guardMutex);
+    g_interrupt.store(nullptr);
+    if (!handler_needed()) uninstall_handlers();
 }
 
 namespace {
@@ -668,6 +716,17 @@ void install_handlers() {
     ::signal(SIGINT,  background_signal_handler);
     ::signal(SIGTERM, background_signal_handler);
     ::signal(SIGHUP,  background_signal_handler);
+}
+void uninstall_handlers() {
+    ::signal(SIGINT,  SIG_DFL);
+    ::signal(SIGTERM, SIG_DFL);
+    ::signal(SIGHUP,  SIG_DFL);
+}
+bool handler_needed() {
+    if (g_terminalFd >= 0 || g_interrupt.load()) return true;
+    for (int i = 0; i < kMaxGuardedGroups; ++i)
+        if (g_guardedGroups[i] != 0) return true;
+    return false;
 }
 } // namespace
 
@@ -697,6 +756,9 @@ void clear_group_guard() {}
 bool group_guard_idle() { return true; }
 void guard_terminal_mode(int) {}
 void unguard_terminal_mode() {}
+void set_interrupt_files(const std::vector<std::string>&, const std::vector<std::string>&,
+                         const std::vector<std::string>&) {}
+void clear_interrupt_files() {}
 
 #endif
 

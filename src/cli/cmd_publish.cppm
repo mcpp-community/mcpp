@@ -268,11 +268,16 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
     mcpp::pack::PackOutcome outcome;
     mcpp::pack::LibraryPackReport library;
     bool libraryRoute = false;
+    // mcpp's own errors are the envelope's diagnostics, each located where
+    // its message says (design 2026-10-26 §5.6).
+    std::vector<std::string> errors;
+    mcpp::ui::set_error_observer([&errors](std::string_view m) { errors.emplace_back(m); });
     int rc = 0;
     {
         mcpp::platform::terminal::StdoutToStderr narration;
         rc = cmd_pack_body(parsed, &outcome, &library, &libraryRoute);
     }
+    mcpp::ui::set_error_observer({});
 
     using mcpp::wire::Effect;
     std::vector<Effect> effects{Effect::ReadProject, Effect::WriteProject,
@@ -283,6 +288,8 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
         env.data = nullptr;
         env.diagnostics.push_back({"MCPP_PACK_FAILED", mcpp::wire::Severity::Error,
             "mcpp pack did not produce a package; the reason is on standard error"});
+        for (auto& e : errors)
+            env.diagnostics.push_back({"MCPP_PACK_FAILED", mcpp::wire::Severity::Error, std::move(e)});
         // A pack of several members names each member that failed, which the
         // code above cannot: the others may have been packed.
         if (outcome.members.size() > 1)

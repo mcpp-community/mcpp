@@ -209,6 +209,15 @@ void guard_job_on_signal(unsigned long long job);
 void unguard_job(unsigned long long job);
 void clear_job_guard();
 
+// The files a Ctrl-C or a Ctrl-Break leaves (the POSIX peer states why): the
+// console handler, after it has ended the guarded jobs, writes each
+// `contents[i]` to `temps[i]` and moves it over `paths[i]`. While files are set
+// the handler is installed. At most four files.
+void set_interrupt_files(const std::vector<std::string>& paths,
+                         const std::vector<std::string>& temps,
+                         const std::vector<std::string>& contents);
+void clear_interrupt_files();
+
 // Wait for a child started by `spawn_background` and return its exit code.
 // Blocking, so an owned run costs no polling latency; `background_running` stays
 // for the supervisor that must not block.
@@ -495,6 +504,39 @@ volatile unsigned long long g_guardedJobs[kMaxGuardedJobs] = {};
 // console handler never takes it.
 std::mutex g_guardMutex;
 
+// The files an interrupt leaves; every set lives until exit (the POSIX peer
+// states why).
+struct InterruptFiles {
+    std::vector<std::string> paths, temps, contents;
+};
+std::atomic<InterruptFiles*> g_interrupt{nullptr};
+std::vector<std::unique_ptr<InterruptFiles>> g_interruptSets;
+
+void write_interrupt_files() {
+    auto* set = g_interrupt.load();
+    if (!set) return;
+    for (std::size_t i = 0; i < set->paths.size(); ++i) {
+        HANDLE f = ::CreateFileA(set->temps[i].c_str(), GENERIC_WRITE, 0, nullptr,
+                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (f == INVALID_HANDLE_VALUE) continue;
+        DWORD written = 0;
+        const BOOL ok = ::WriteFile(f, set->contents[i].data(),
+                                    static_cast<DWORD>(set->contents[i].size()), &written, nullptr);
+        ::CloseHandle(f);
+        if (ok && written == set->contents[i].size())
+            ::MoveFileExA(set->temps[i].c_str(), set->paths[i].c_str(), MOVEFILE_REPLACE_EXISTING);
+        else
+            ::DeleteFileA(set->temps[i].c_str());
+    }
+}
+
+bool handler_needed() {
+    if (g_interrupt.load()) return true;
+    for (int i = 0; i < kMaxGuardedJobs; ++i)
+        if (g_guardedJobs[i] != 0) return true;
+    return false;
+}
+
 BOOL WINAPI background_console_handler(DWORD) {
     // TerminateJobObject, not CloseHandle: this handler races `background_stop`
     // on the normal path, and terminating is idempotent while closing the same
@@ -505,6 +547,7 @@ BOOL WINAPI background_console_handler(DWORD) {
             ::TerminateJobObject(
                 reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(job)), 1);
     }
+    write_interrupt_files();
     return FALSE;   // FALSE = also run the default handler, i.e. still exit
 }
 
@@ -657,18 +700,33 @@ void guard_job_on_signal(unsigned long long job) {
 void unguard_job(unsigned long long job) {
     if (!job) return;
     std::lock_guard lock(g_guardMutex);
-    bool any = false;
-    for (int i = 0; i < kMaxGuardedJobs; ++i) {
+    for (int i = 0; i < kMaxGuardedJobs; ++i)
         if (g_guardedJobs[i] == job) g_guardedJobs[i] = 0;
-        else if (g_guardedJobs[i] != 0) any = true;
-    }
-    if (!any) ::SetConsoleCtrlHandler(background_console_handler, FALSE);
+    if (!handler_needed()) ::SetConsoleCtrlHandler(background_console_handler, FALSE);
 }
 
 void clear_job_guard() {
     std::lock_guard lock(g_guardMutex);
     for (int i = 0; i < kMaxGuardedJobs; ++i) g_guardedJobs[i] = 0;
-    ::SetConsoleCtrlHandler(background_console_handler, FALSE);
+    if (!handler_needed()) ::SetConsoleCtrlHandler(background_console_handler, FALSE);
+}
+
+void set_interrupt_files(const std::vector<std::string>& paths,
+                         const std::vector<std::string>& temps,
+                         const std::vector<std::string>& contents) {
+    if (paths.empty() || paths.size() > 4 || temps.size() != paths.size()
+        || contents.size() != paths.size())
+        return;
+    std::lock_guard lock(g_guardMutex);
+    g_interruptSets.push_back(std::make_unique<InterruptFiles>(InterruptFiles{paths, temps, contents}));
+    g_interrupt.store(g_interruptSets.back().get());
+    ::SetConsoleCtrlHandler(background_console_handler, TRUE);
+}
+
+void clear_interrupt_files() {
+    std::lock_guard lock(g_guardMutex);
+    g_interrupt.store(nullptr);
+    if (!handler_needed()) ::SetConsoleCtrlHandler(background_console_handler, FALSE);
 }
 
 namespace {
@@ -755,6 +813,9 @@ void background_stop(unsigned long long, unsigned long long, long long) {}
 void guard_job_on_signal(unsigned long long) {}
 void unguard_job(unsigned long long) {}
 void clear_job_guard() {}
+void set_interrupt_files(const std::vector<std::string>&, const std::vector<std::string>&,
+                         const std::vector<std::string>&) {}
+void clear_interrupt_files() {}
 int  wait_background(unsigned long long, int*) { return -1; }
 int  run_foreground(const char*, unsigned long*) { return -1; }
 
