@@ -4,6 +4,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 881 -- mcpp#762: PE auto-export accepts LLVM LTO objects while preserving an
 # explicitly annotated surface. Opting out removes the scanner from the graph.
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 source "$(dirname "$0")/_host_path.sh"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

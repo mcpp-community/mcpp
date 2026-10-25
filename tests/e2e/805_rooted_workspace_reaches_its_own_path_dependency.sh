@@ -24,6 +24,9 @@
 # resolution fails loudly (a network fetch of an https://example.invalid URL)
 # rather than silently passing, which is what let 2026.9.26.1 look correct.
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

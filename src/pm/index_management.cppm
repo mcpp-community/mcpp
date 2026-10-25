@@ -20,6 +20,8 @@ import mcpp.pm.index_route;
 import mcpp.ui;
 import mcpp.provider;
 import mcpp.provider.select;
+import mcpp.libs.json;
+import mcpp.wire;   // `--format json` (design 2026-10-26 §5.6)
 
 namespace mcpp::pm {
 
@@ -29,7 +31,13 @@ namespace mcpp::pm {
 // its descriptor's per-OS tables (#487): the latest three by default, all of
 // them under --all-versions. A hit with no readable descriptor prints exactly
 // as before — enrichment is best-effort display, never a failure.
-export int search_packages(const std::string& keyword, bool allVersions) {
+//
+// `--format json` (design 2026-10-26 §5.6): the `mcpp.search` envelope, one
+// record per package with every version and the descriptor's licenses and
+// repository. The keyword may be empty there, which lists the whole catalogue
+// in one call -- what an editor's library browser reads instead of parsing
+// the index's Lua itself.
+export int search_packages(const std::string& keyword, bool allVersions, bool json = false) {
     auto cfg = mcpp::config::load_or_init(/*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
 
@@ -51,6 +59,37 @@ export int search_packages(const std::string& keyword, bool allVersions) {
 
     mcpp::fetcher::Fetcher f(*cfg);
     auto hits = f.search(keyword);
+    if (json) {
+        mcpp::wire::Envelope env{.kind = "mcpp.search",
+                                 .effects = {mcpp::wire::Effect::InitMcppHome}};
+        if (!hits) {
+            env.data = nullptr;
+            env.diagnostics.push_back({"MCPP_SEARCH_FAILED", mcpp::wire::Severity::Error,
+                                       hits.error().message});
+            mcpp::wire::emit(env);
+            return 1;
+        }
+        nlohmann::json packages = nlohmann::json::array();
+        const auto described = f.describe_hits(*hits);
+        for (std::size_t i = 0; i < hits->size(); ++i) {
+            const auto& h = (*hits)[i];
+            const auto colon = h.name.find(':');
+            const auto& catalog = described[i].catalog;
+            packages.push_back({
+                {"id", h.name},
+                {"namespace", colon == std::string::npos ? std::string{} : h.name.substr(0, colon)},
+                {"name", colon == std::string::npos ? h.name : h.name.substr(colon + 1)},
+                {"description", h.description},
+                {"versions", described[i].versions},
+                {"licenses", catalog.licenses},
+                {"repo", catalog.repo},
+                {"index", h.source},
+            });
+        }
+        env.data = {{"keyword", keyword}, {"packages", std::move(packages)}};
+        mcpp::wire::emit(env);
+        return 0;
+    }
     if (!hits) { mcpp::ui::error(hits.error().message); return 1; }
 
     if (hits->empty()) {
@@ -75,13 +114,46 @@ export int search_packages(const std::string& keyword, bool allVersions) {
 }
 
 // `mcpp index list` — global registries + project [indices].
-export int index_list() {
+// `--format json`: the `mcpp.index` envelope -- `registries` (name, url,
+// default) and the project's effective `indices` (name, and a path or a url
+// with its pin, tag or revision).
+export int index_list(bool json = false) {
     auto cfg = mcpp::config::load_or_init(/*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
     mcpp::fetcher::Fetcher f(*cfg);
 
     auto repos = f.list_repos();
     if (!repos) { mcpp::ui::error(repos.error().message); return 1; }
+    if (json) {
+        nlohmann::json registries = nlohmann::json::array();
+        if (repos->empty())
+            for (auto& r : cfg->indexRepos)
+                registries.push_back({{"name", r.name}, {"url", r.url},
+                                      {"default", r.name == cfg->defaultIndex}});
+        else
+            for (auto& r : *repos)
+                registries.push_back({{"name", r.name}, {"url", r.url},
+                                      {"default", r.name == cfg->defaultIndex}});
+        nlohmann::json project = nlohmann::json::array();
+        if (auto root = mcpp::project::find_manifest_root(std::filesystem::current_path()))
+            for (auto& [name, spec] : mcpp::pm::effective_indices(*root)) {
+                nlohmann::json e{{"name", name}};
+                if (spec.is_local()) e["path"] = spec.path.generic_string();
+                else {
+                    e["url"] = spec.url;
+                    if (spec.is_builtin()) e["pin"] = true;
+                    if (!spec.tag.empty()) e["tag"] = spec.tag;
+                    if (!spec.rev.empty()) e["rev"] = spec.rev;
+                }
+                project.push_back(std::move(e));
+            }
+        mcpp::wire::Envelope env{.kind = "mcpp.index",
+                                 .effects = {mcpp::wire::Effect::InitMcppHome,
+                                             mcpp::wire::Effect::ReadProject}};
+        env.data = {{"registries", std::move(registries)}, {"indices", std::move(project)}};
+        mcpp::wire::emit(env);
+        return 0;
+    }
     if (repos->empty()) {
         for (auto& r : cfg->indexRepos) {
             bool isDefault = (r.name == cfg->defaultIndex);

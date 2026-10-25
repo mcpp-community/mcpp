@@ -18,6 +18,9 @@
 #   D. A member of a git-hosted workspace, consumed through `git`, receives its
 #      repository's `[workspace.build]`, as its own checkout does.
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

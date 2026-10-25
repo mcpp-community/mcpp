@@ -10,6 +10,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # (item 2: replaced, never merged across configurations); switching back
 # restores that configuration's entries, its test units included.
 set -euo pipefail
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

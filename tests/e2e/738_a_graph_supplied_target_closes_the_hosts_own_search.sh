@@ -37,6 +37,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # only then can their absence from graph-supplied commands prove isolation.
 # Ordinary suites can still use the distro's host MinGW prefix.
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 MCPP="${MCPP:-mcpp}"
 TMP=$(mktemp -d)

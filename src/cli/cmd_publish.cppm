@@ -25,6 +25,9 @@ import mcpp.manifest;
 import mcpp.publish.pipeline;
 import mcpp.ui;
 import mcpp.wire;
+import mcpp.home;                 // --list-formats plans outside the project
+import mcpp.pack.stage_tree;       // the built-in formats
+import mcpp.toolchain.fingerprint;  // hash_string
 
 namespace mcpp::cli {
 
@@ -192,7 +195,62 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
 // the archive or tree of a built-in format, the terminal outputs of a
 // dispatched one, or the library package. A leg is a `targets` entry of the
 // artifact it went into, not an artifact of its own.
+// `mcpp pack --list-formats` (design 2026-10-26 §5.6): the formats `--format`
+// accepts here -- the engine's own (`tar`, `dir`) and each one a package of
+// the resolved graph declares with `mcpp::provides_pack_format`, with the
+// packages that provide it -- as the `mcpp.pack.formats` envelope. A plan
+// that describes (plan_only) in a directory of the mcpp home, as `emit
+// build-database` plans: the build programs run, because they are what
+// declares a format, and nothing is written into the project.
+int cmd_pack_list_formats(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
+    if (!root) {
+        mcpp::ui::error("no mcpp.toml found in current directory or any parent");
+        return 2;
+    }
+    mcpp::build::BuildOverrides ov;
+    ov.profile = mcpp::build::profile_override_from_flags(
+        parsed.value("profile").value_or(""),
+        parsed.is_flag_set("release"), parsed.is_flag_set("dev"));
+    if (auto v = parsed.value("features")) ov.features = *v;
+    ov.plan_only = true;
+    ov.work_dir = mcpp::home::root() / "cache" / "pack-formats"
+                / mcpp::toolchain::hash_string(root->lexically_normal().generic_string());
+    std::expected<mcpp::build::BuildContext, std::string> ctx = std::unexpected(std::string{});
+    {
+        mcpp::platform::terminal::StdoutToStderr narration;
+        ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false, /*includeDevDeps=*/false,
+                                         {}, ov);
+    }
+    using mcpp::wire::Effect;
+    mcpp::wire::Envelope env{.kind = "mcpp.pack.formats",
+                             .effects = {Effect::InitMcppHome, Effect::ReadProject,
+                                         Effect::WriteGlobalCache, Effect::ExecBuildScript}};
+    if (!ctx) {
+        env.data = nullptr;
+        env.diagnostics.push_back({"MCPP_PACK_FORMATS_PLAN_FAILED", mcpp::wire::Severity::Error,
+                                   ctx.error()});
+        mcpp::wire::emit(env);
+        return 1;
+    }
+    nlohmann::json formats = nlohmann::json::array();
+    for (auto b : mcpp::pack::kBuiltinPackFormats)
+        formats.push_back({{"name", std::string(b)}, {"builtin", true},
+                           {"providers", nlohmann::json::array()}});
+    for (auto const& f : ctx->plan.providedPackFormats) {
+        if (mcpp::pack::is_builtin_pack_format(f)) continue;
+        nlohmann::json providers = nlohmann::json::array();
+        if (auto it = ctx->packFormatProviders.find(f); it != ctx->packFormatProviders.end())
+            for (auto const& p : it->second) providers.push_back(p);
+        formats.push_back({{"name", f}, {"builtin", false}, {"providers", std::move(providers)}});
+    }
+    env.data = {{"formats", std::move(formats)}};
+    mcpp::wire::emit(env);
+    return 0;
+}
+
 export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    if (parsed.is_flag_set("list-formats")) return cmd_pack_list_formats(parsed);
     std::string messageFormat = "human";
     if (auto mf = parsed.value("message-format")) messageFormat = *mf;
     if (messageFormat != "human" && messageFormat != "json") {

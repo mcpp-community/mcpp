@@ -14,17 +14,35 @@ import mcpp.ui;
 
 namespace mcpp::cli {
 
-export int cmd_search(const mcpplibs::cmdline::ParsedArgs& parsed) {
-    std::string keyword = parsed.positional(0);
-    if (keyword.empty()) {
-        std::println(stderr, "error: `mcpp search` requires a keyword");
-        return 2;
+// `--format json` or nothing; anything else is a usage error on stderr with
+// no document on stdout (docs/50 §3).
+std::optional<int> bad_format(const mcpplibs::cmdline::ParsedArgs& parsed, bool& json) {
+    json = false;
+    if (auto f = parsed.value("format")) {
+        if (*f != "json") {
+            std::println(stderr, "error: unsupported --format '{}'; expected: json", *f);
+            return 2;
+        }
+        json = true;
     }
-    return mcpp::pm::search_packages(keyword, parsed.is_flag_set("all-versions"));
+    return std::nullopt;
 }
 
-export int cmd_index_list(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
-    return mcpp::pm::index_list();
+export int cmd_search(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    bool json = false;
+    if (auto rc = bad_format(parsed, json)) return *rc;
+    std::string keyword = parsed.positional_count() > 0 ? parsed.positional(0) : std::string{};
+    if (keyword.empty() && !json) {
+        std::println(stderr, "error: `mcpp search` requires a keyword (with --format json, none lists every package)");
+        return 2;
+    }
+    return mcpp::pm::search_packages(keyword, parsed.is_flag_set("all-versions"), json);
+}
+
+export int cmd_index_list(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    bool json = false;
+    if (auto rc = bad_format(parsed, json)) return *rc;
+    return mcpp::pm::index_list(json);
 }
 
 export int cmd_index_add(const mcpplibs::cmdline::ParsedArgs& parsed) {

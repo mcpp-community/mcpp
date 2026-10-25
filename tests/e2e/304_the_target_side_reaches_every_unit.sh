@@ -29,6 +29,9 @@
 # says what each unit is actually compiled with; a grep over `build.ninja` would
 # also match the global rule and pass for the wrong reason.
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 MCPP="${MCPP:-mcpp}"
 work="$(mktemp -d)"

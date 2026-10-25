@@ -72,6 +72,17 @@ std::vector<std::string> merge_xpkg_versions_desc(
 // find the call sites that only knew three.
 std::vector<std::string> all_xpkg_versions_desc(std::string_view luaContent);
 
+// THE CATALOGUE FIELDS OF A DESCRIPTOR, for `mcpp search --format json`
+// (design 2026-10-26 §5.6): what an editor's library browser shows next to the
+// versions. Read from the text of the `package` table's own keys, as the
+// version reader above reads its tables: a descriptor that states neither
+// yields empty fields, never an error.
+struct XpkgCatalogFields {
+    std::vector<std::string> licenses;
+    std::string              repo;
+};
+XpkgCatalogFields xpkg_catalog_fields(std::string_view luaContent);
+
 // How many versions a display line shows before truncating (#487). The full
 // list is one `mcpp search --all-versions` away; a hint only has to prove the
 // package is alive.
@@ -1182,6 +1193,45 @@ std::string join_versions_desc(const std::vector<std::string>& versions,
     }
     if (shown < versions.size()) joined += ", ...";
     return joined;
+}
+
+XpkgCatalogFields xpkg_catalog_fields(std::string_view lua) {
+    XpkgCatalogFields out;
+    // The first `<key> =` at the start of a line (after indentation): the
+    // package table's own key, not a word inside a string or a nested table
+    // further down, which descriptors indent deeper and place later.
+    const auto key_at = [&](std::string_view key) -> std::size_t {
+        std::size_t pos = 0;
+        while ((pos = lua.find(key, pos)) != std::string_view::npos) {
+            std::size_t b = pos;
+            while (b > 0 && (lua[b - 1] == ' ' || lua[b - 1] == '\t')) --b;
+            std::size_t e = pos + key.size();
+            while (e < lua.size() && (lua[e] == ' ' || lua[e] == '\t')) ++e;
+            if ((b == 0 || lua[b - 1] == '\n') && e < lua.size() && lua[e] == '=') return e + 1;
+            pos += key.size();
+        }
+        return std::string_view::npos;
+    };
+    const auto quoted = [&](std::size_t from, std::size_t until, std::vector<std::string>& into) {
+        for (std::size_t p = from; p < until && p < lua.size(); ++p) {
+            if (lua[p] != '"') continue;
+            auto q = lua.find('"', p + 1);
+            if (q == std::string_view::npos || q > until) break;
+            into.emplace_back(lua.substr(p + 1, q - p - 1));
+            p = q;
+        }
+    };
+    if (auto at = key_at("licenses"); at != std::string_view::npos) {
+        auto open = lua.find('{', at), close = lua.find('}', at);
+        if (open != std::string_view::npos && close != std::string_view::npos && open < close)
+            quoted(open, close, out.licenses);
+    }
+    if (auto at = key_at("repo"); at != std::string_view::npos) {
+        std::vector<std::string> one;
+        quoted(at, lua.find('\n', at), one);
+        if (!one.empty()) out.repo = one.front();
+    }
+    return out;
 }
 
 std::vector<std::string> all_xpkg_versions_desc(std::string_view luaContent) {

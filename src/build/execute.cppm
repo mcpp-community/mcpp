@@ -360,6 +360,14 @@ export struct BuildCacheEntry {
     // empty identity, because an engine whose version is the empty string does
     // not exist and "no record" must not be representable as a value.
     std::optional<EngineIdentity> engine;
+    // Where the build published the project's compile database (`[build]
+    // compile_commands` as resolved, design 2026-10-26 D14), relative to the
+    // project root; empty for none. A fast path publishes to the same place,
+    // without reading the manifest's key or the machine's default again.
+    // Recorded apart from the value because an entry written before the field
+    // must decline once rather than read as "none".
+    std::string rootCompileDb;
+    bool        rootCompileDbRecorded = false;
 };
 
 // One list of extensions as a line of the record carries it: joined by a unit
@@ -559,6 +567,11 @@ export std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path
             e.group = line.substr(6);
             haveNextLine = static_cast<bool>(std::getline(f, line));
         }
+        if (haveNextLine && line.starts_with("compileDb=")) {
+            e.rootCompileDb = line.substr(10);
+            e.rootCompileDbRecorded = true;
+            haveNextLine = static_cast<bool>(std::getline(f, line));
+        }
         // `engine=<version>`, a tab, and the executable's path; see
         // EngineIdentity. The version holds no tab, so the path is everything
         // after the first one. Absent, or without the tab, the entry declines
@@ -618,7 +631,8 @@ void write_build_cache(const std::filesystem::path& projectRoot,
                        const std::string& toolchainRequest = {},
                        std::vector<std::string> xlingsPayloads = {},
                        const std::string& selection = {},
-                       const std::string& group = {}) {
+                       const std::string& group = {},
+                       const std::string& rootCompileDb = {}) {
     // The configuration groups of one workspace command build at the same
     // time (workspace design 2026-09-29 §6) and record into one file; the
     // read, the edit and the write are one step -- within this process under
@@ -660,6 +674,8 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     newEntry.xlingsPayloadsRecorded = true;
     newEntry.selection = selection;
     newEntry.group = group;
+    newEntry.rootCompileDb = rootCompileDb;
+    newEntry.rootCompileDbRecorded = true;
     // The engine that wrote the graph is the one writing the record: both
     // happen in this process, after the graph was emitted.
     newEntry.engine = running_engine();
@@ -738,6 +754,7 @@ void write_build_cache_entries(const std::filesystem::path& path,
             f << "selection=" << e.selection << '\n';
             f << "group=" << e.group << '\n';
         }
+        if (e.rootCompileDbRecorded) f << "compileDb=" << e.rootCompileDb << '\n';
         if (e.engine)
             f << "engine=" << e.engine->version << '\t' << e.engine->exe << '\n';
     }
@@ -1471,7 +1488,8 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                                   v.push_back(p.generic_string());
                               return v;
                           }(),
-                          ctx.workspaceRequest, ctx.workspaceGroup);
+                          ctx.workspaceRequest, ctx.workspaceGroup,
+                          ctx.plan.rootCompileDb);
     }
 
     // The one place the --strict policy is settled. Degradations reported by
@@ -1951,11 +1969,16 @@ export int list_runners(const std::string& package_filter,
 // about (`write_compile_commands`), not a reason to fall back to the full
 // path.
 void restore_root_compile_commands(const std::filesystem::path& projectRoot,
-                                   const std::filesystem::path& outputDir) {
+                                   const std::filesystem::path& outputDir,
+                                   const std::string& rootCompileDb) {
+    if (rootCompileDb.empty()) {
+        mcpp::build::note_unrequested_root_compile_commands(projectRoot);
+        return;
+    }
     auto configPath = outputDir / "compile_commands.json";
     std::error_code ec;
     if (!std::filesystem::exists(configPath, ec) || ec) return;
-    auto rootPath = projectRoot / "compile_commands.json";
+    auto rootPath = (projectRoot / rootCompileDb).lexically_normal();
     auto targetRoot = outputDir.parent_path().parent_path();
     auto result = mcpp::build::publish_root_compile_commands(
         configPath, rootPath, targetRoot, mcpp::home::root());
@@ -1973,7 +1996,12 @@ void restore_root_compile_commands(const std::filesystem::path& projectRoot,
 // group, so the file does not depend on which group's build finished last.
 export void publish_workspace_compile_commands(
         const std::filesystem::path& wsRoot,
-        const std::vector<std::filesystem::path>& outputDirs) {
+        const std::vector<std::filesystem::path>& outputDirs,
+        const std::string& rootCompileDb) {
+    if (rootCompileDb.empty()) {
+        mcpp::build::note_unrequested_root_compile_commands(wsRoot);
+        return;
+    }
     std::vector<std::filesystem::path> databases;
     for (auto const& dir : outputDirs) {
         std::error_code ec;
@@ -1982,7 +2010,7 @@ export void publish_workspace_compile_commands(
     }
     if (databases.empty()) return;
     auto result = mcpp::build::publish_root_compile_commands(
-        databases, wsRoot / "compile_commands.json",
+        databases, (wsRoot / rootCompileDb).lexically_normal(),
         outputDirs.front().parent_path().parent_path(), mcpp::home::root());
     if (!result) {
         mcpp::ui::warning(std::format(
@@ -2153,6 +2181,8 @@ admit_recorded_build(const BuildCacheEntry& e, const ReplayAsk& ask) {
     // exists.
     if (!e.depSourceRootsRecorded)
         return std::unexpected("the recorded build predates the list of path-dependency roots and their extension tables");
+    if (!e.rootCompileDbRecorded)
+        return std::unexpected("the recorded build predates the location of the project's compile database");
     if (dep_sources_newer_than(e.depSourceRoots, ninjaTime))
         return std::unexpected(std::format("{} manifest or source is newer than build.ninja", ask.treesName));
     if (!xlings_payloads_present(e)) return std::unexpected("a recorded xlings payload is missing");
@@ -2258,7 +2288,7 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     // restored here rather than left to whatever a NEXT full build happens to
     // do — a project that never edits a source again would otherwise never
     // see it back.
-    restore_root_compile_commands(projectRoot, outputDir);
+    restore_root_compile_commands(projectRoot, outputDir, match->rootCompileDb);
     std::chrono::milliseconds elapsed{};
     auto record = fast_path_begin(projectRoot, outputDir);
     auto rc = run_ninja_fast(admitted->ninjaProgram, outputDir, ninjaPath, verbose,
@@ -2313,7 +2343,7 @@ export std::optional<int> try_fast_workspace_build(
 
     struct Ready {
         std::filesystem::path outputDir;
-        std::string ninjaProgram, runtimeEnvKey, runtimeEnvValue;
+        std::string ninjaProgram, runtimeEnvKey, runtimeEnvValue, rootCompileDb;
         mcpp::build::runtime_validation::ArtifactSnapshot validated;
     };
     std::vector<Ready> ready;
@@ -2354,19 +2384,19 @@ export std::optional<int> try_fast_workspace_build(
         });
         if (!admitted) return fast_path_declined("workspace", admitted.error());
         ready.push_back({admitted->outputDir, admitted->ninjaProgram, match->runtimeEnvKey,
-                         match->runtimeEnvValue, std::move(admitted->validated)});
+                         match->runtimeEnvValue, match->rootCompileDb, std::move(admitted->validated)});
         profile = want->profile;
     }
 
     if (ready.size() > 1) {
         std::vector<std::filesystem::path> dirs;
         for (auto const& r : ready) dirs.push_back(r.outputDir);
-        publish_workspace_compile_commands(wsRoot, dirs);
+        publish_workspace_compile_commands(wsRoot, dirs, ready.front().rootCompileDb);
     }
     // With more than one configuration, a package's line names its own.
     mcpp::build::progress::configurations(ready.size());
     for (auto& r : ready) {
-        if (ready.size() == 1) restore_root_compile_commands(wsRoot, r.outputDir);
+        if (ready.size() == 1) restore_root_compile_commands(wsRoot, r.outputDir, r.rootCompileDb);
         std::chrono::milliseconds elapsed{};
         auto rc = run_ninja_fast(r.ninjaProgram, r.outputDir, r.outputDir / "build.ninja",
                                  verbose, r.runtimeEnvKey, r.runtimeEnvValue, &elapsed);
@@ -2530,7 +2560,7 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
 
     // Fresh → run ninja (picks up any incremental object/link work) then
     // exec the cached exe path directly. C1, same reason as try_fast_build's.
-    restore_root_compile_commands(projectRoot, outputDir);
+    restore_root_compile_commands(projectRoot, outputDir, match->rootCompileDb);
     auto record = fast_path_begin(projectRoot, outputDir);
     auto rc = run_ninja_fast(admitted->ninjaProgram, outputDir, ninjaPath, /*verbose=*/false,
                              match->runtimeEnvKey, match->runtimeEnvValue);
@@ -4431,7 +4461,7 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
     if (sessions.size() > 1) {
         std::vector<std::filesystem::path> dirs;
         for (auto& s : sessions) dirs.push_back(s->ctx->outputDir);
-        publish_workspace_compile_commands(wsRoot, dirs);
+        publish_workspace_compile_commands(wsRoot, dirs, sessions.front()->ctx->plan.rootCompileDb);
     }
 
     // One record or line per group, before its first member's tests: the

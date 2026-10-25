@@ -13,6 +13,9 @@
 # Asserts: build + run succeed, -std=c++20 reaches every surface (global
 # cxxflags, compile_commands.json, the std BMI prebuild), and no c++23 leaks in.
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT

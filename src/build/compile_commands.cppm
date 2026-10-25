@@ -47,6 +47,7 @@ import mcpp.platform.fs;
 import mcpp.platform;
 import mcpp.manifest.flag_words;
 import mcpp.toolchain.model;
+import mcpp.ui;                 // the one-time note about a root database no longer asked for
 
 export namespace mcpp::build {
 
@@ -194,6 +195,11 @@ write_compile_commands(const BuildPlan& plan, const CompileFlags& flags);
 // fast path) print when the file they replaced held `n` entries mcpp did not
 // write. One function, so the two paths cannot word it differently.
 std::string foreign_entries_warning(std::size_t n);
+
+// A root `compile_commands.json` an earlier mcpp published, in a project that
+// no longer asks for one (`[build] compile_commands`, design 2026-10-26 D14):
+// named once per project, with the key that keeps it.
+void note_unrequested_root_compile_commands(const std::filesystem::path& projectRoot);
 
 }  // namespace mcpp::build
 
@@ -752,7 +758,13 @@ write_compile_commands(const BuildPlan& plan, const CompileFlags& flags) {
     auto configPath = plan.outputDir / "compile_commands.json";
     auto configResult = publish_compile_commands(configPath, fresh, fileExists);
     if (!configResult) return configResult;
-    if (!plan.publishRootCompileDb) return configResult;
+    if (!plan.publishRootCompileDb) {
+        // No copy is asked for (design 2026-10-26 D14): one left by an
+        // earlier mcpp is named once. A plan of several configurations, whose
+        // caller publishes the copy, asked for one and is not this case.
+        if (plan.rootCompileDb.empty()) note_unrequested_root_compile_commands(plan.projectRoot);
+        return configResult;
+    }
 
     // §3.2 items 2-3: the root is a copy of it, replaced whole. `emit`
     // (`mcpp emit build-database`) never reaches this function (SPEC-005
@@ -769,6 +781,31 @@ write_compile_commands(const BuildPlan& plan, const CompileFlags& flags) {
 
     return CompileCommandsWriteResult{
         rootResult->changed, configResult->commandCount, rootResult->foreignEntries};
+}
+
+// A ROOT DATABASE THIS PROJECT NO LONGER ASKS FOR (design 2026-10-26 D14).
+// Until 2026.10.26.1 every build published `compile_commands.json` at the
+// project root; a project that does not name one in `[build]
+// compile_commands` keeps the copy it has, which mcpp no longer updates. Said
+// once per project -- the mark is under target/ -- with the key that keeps it.
+void note_unrequested_root_compile_commands(const std::filesystem::path& projectRoot) {
+    std::error_code ec;
+    const auto root = projectRoot / "compile_commands.json";
+    const auto mark = projectRoot / "target" / ".compile-commands-noted";
+    if (!std::filesystem::exists(root, ec) || std::filesystem::exists(mark, ec)) return;
+    {
+        std::ifstream in(root, std::ios::binary);
+        std::string head(4096, '\0');
+        in.read(head.data(), static_cast<std::streamsize>(head.size()));
+        head.resize(static_cast<std::size_t>(in.gcount()));
+        // mcpp's entries name the project's target/ as their directory.
+        if (head.find((projectRoot / "target").generic_string()) == std::string::npos) return;
+    }
+    mcpp::ui::note("compile_commands.json at the project root is no longer updated: the "
+                   "database is in target/<triple>/<fingerprint>/. To keep a copy here, "
+                   "add `compile_commands = \"compile_commands.json\"` under [build] in mcpp.toml");
+    std::filesystem::create_directories(mark.parent_path(), ec);
+    std::ofstream(mark) << "";
 }
 
 std::string foreign_entries_warning(std::size_t n) {

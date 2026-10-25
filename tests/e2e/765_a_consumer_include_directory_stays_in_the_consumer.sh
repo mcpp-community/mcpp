@@ -23,6 +23,9 @@
 #       now fails, and the output names the root directory that has it, on the
 #       full path and again on the fast path.
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT

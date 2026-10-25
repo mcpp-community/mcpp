@@ -13,6 +13,9 @@
 # No `requires:` capability → runs on all three CI platforms, mirroring the
 # other `mcpp test` e2e tests (15/16/17).
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT

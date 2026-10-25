@@ -286,6 +286,27 @@ std::string now_iso8601() {
     return std::to_string(secs);
 }
 
+// THE ENTRY'S FOOTPRINT, RECORDED WITH IT (design 2026-10-26 §8, E10): its
+// bytes and its file count, the two numbers `mcpp cache list` reports.
+// Computed when the entry is written, because the directory is complete then
+// and already in the page cache; `cache list` used to walk every file of every
+// entry -- 61 265 files for 580 entries, 376 ms -- to say the same thing.
+// The entry.json being written is not counted; it is a few hundred bytes.
+void record_footprint(nlohmann::json& j, const std::filesystem::path& dir) {
+    std::uintmax_t bytes = 0, files = 0;
+    std::error_code ec;
+    for (auto it = std::filesystem::recursive_directory_iterator(dir, ec);
+         !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+        std::error_code fe;
+        if (!it->is_regular_file(fe) || fe) continue;
+        if (it->path().filename() == "entry.json") continue;
+        bytes += it->file_size(fe);
+        ++files;
+    }
+    j["size"] = bytes;
+    j["files"] = files;
+}
+
 std::expected<void, std::string>
 write_entry(const std::filesystem::path& path, const nlohmann::json& j) {
     auto tmp = path;
@@ -361,6 +382,9 @@ void touch_accessed(const CacheKey& key) {
     auto j = read_entry(key.entryFile());
     if (!j) return;
     (*j)["accessed"] = now_iso8601();
+    // An entry written before the footprint was recorded gains it on its
+    // first use, so `cache list` -- which writes nothing -- stops measuring it.
+    if (!j->contains("size") || !j->contains("files")) record_footprint(*j, key.dir());
     (void)write_entry(key.entryFile(), *j);
 }
 
@@ -438,6 +462,7 @@ populate_from(const CacheKey& key,
         j["obj"] = std::move(objs);
     }
     j["accessed"] = now_iso8601();
+    record_footprint(j, cacheDir);
     return write_entry(key.entryFile(), j);
 }
 
@@ -517,6 +542,7 @@ publish_staged(const CacheKey& key,
         j["obj"] = std::move(objs);
     }
     j["accessed"] = now_iso8601();
+    record_footprint(j, staged);
     // entry.json LAST: it is the sentinel, and it is written into the directory
     // before the directory has an address, so the entry is never seen without it.
     if (auto w = write_entry(staged / "entry.json", j); !w) {

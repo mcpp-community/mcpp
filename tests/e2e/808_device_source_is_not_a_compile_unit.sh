@@ -19,6 +19,9 @@
 #   E. The build still succeeds and the kernel still reaches the program: the
 #      fix must not stop the device source from being compiled BY THE RULE.
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 SRC="$(cd "$(dirname "$0")/../.." && pwd)/examples/12-a-new-device-language"
 [[ -d "$SRC" ]] || { echo "FAIL: $SRC is missing"; exit 1; }

@@ -25,6 +25,9 @@
 #   D. With `--cache global`, nothing of the path dependency is written below
 #      the global cache root; the engine interface is.
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)

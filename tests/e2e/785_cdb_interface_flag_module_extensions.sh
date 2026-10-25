@@ -10,6 +10,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # `.ixx` on its own and hands it to the linker with no `-x`, so this is a real
 # failure there, not a cosmetic one. Must FAIL on 2026.9.26.1.
 set -euo pipefail
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

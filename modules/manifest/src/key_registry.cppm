@@ -54,6 +54,7 @@ inline constexpr KeyClass kKeyRegistry[] = {
     {"build", "c_standard",              KeyScope::Package,       KeyMerge::Scalar,  true,  false},
     {"build", "cache",                   KeyScope::Configuration, KeyMerge::Scalar,  false, false},
     {"build", "cflags",                  KeyScope::Package,       KeyMerge::List,    true,  true },
+    {"build", "compile_commands",        KeyScope::Configuration, KeyMerge::Scalar,  true,  false},
     {"build", "cxxflags",                KeyScope::Package,       KeyMerge::List,    true,  true },
     {"build", "cxx_runtime",             KeyScope::Configuration, KeyMerge::Scalar,  true,  false},
     {"build", "default-profile",         KeyScope::Configuration, KeyMerge::Scalar,  false, false},

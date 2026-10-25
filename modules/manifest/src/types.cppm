@@ -1137,6 +1137,13 @@ struct BuildConfig : BuildInputs {
     // error under --strict) rather than here, so parsing a manifest never
     // depends on the build-mode vocabulary.
     std::string                         cacheMode;
+    // `[build] compile_commands` -- where the project's compile database is
+    // published, relative to the project root (design 2026-10-26 D14). Absent:
+    // no copy outside target/ (the configuration's own database is always in
+    // its build directory). `~/.mcpp/config.toml` [build] compile_commands is
+    // the default and MCPP_COMPILE_COMMANDS overrides both. `""` states "none"
+    // over a machine default, which is why absent and empty are told apart.
+    std::optional<std::string>          compileCommands;
     // `[build] platform-dependencies` — "" (default, allowed) | "refuse".
     // design 2026-09-18 §6: the machine-checkable form of "this build is a
     // closure entirely on openkal (or whatever kernel-abi it names) and

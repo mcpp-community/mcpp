@@ -486,6 +486,10 @@ struct BuildPlan {
     // configurations, which publishes the root file itself, once, from all of
     // them (`publish_root_compile_commands` over a list).
     bool                            publishRootCompileDb = true;
+    // `[build] compile_commands` as resolved (resolve_compile_commands):
+    // relative to the project root, empty when no copy is published. Recorded
+    // with the build so a fast path publishes to the same place.
+    std::string                     rootCompileDb;
     // See StdModuleUnit above. Empty when the build does not import `std`.
     std::vector<StdModuleUnit>      stdModuleUnits;
     // GCC only: a specs file that replaces the pristine `*link:`, so the

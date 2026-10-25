@@ -116,6 +116,17 @@ public:
     // carries no `ns:name` prefix or has no readable descriptor — display
     // degrades to the bare line, the search itself never fails on this.
     std::vector<std::string> versions_for_hit(const SearchHit& hit) const;
+    // The descriptor's catalogue fields (licenses, repo); empty as above.
+    mcpp::manifest::XpkgCatalogFields catalog_for_hit(const SearchHit& hit) const;
+    // Every hit's versions and catalogue fields at once: the index roots are
+    // enumerated once and each descriptor is read once, which is what makes a
+    // whole-catalogue listing (`mcpp search --format json` with no keyword) one
+    // pass instead of two reads and one provider lookup per package.
+    struct HitDescription {
+        std::vector<std::string>          versions;
+        mcpp::manifest::XpkgCatalogFields catalog;
+    };
+    std::vector<HitDescription> describe_hits(std::span<const SearchHit> hits) const;
 
     struct PackageInstall {
         std::string name;
@@ -568,6 +579,15 @@ Fetcher::versions_for_hit(const SearchHit& hit) const {
     return mcpp::manifest::all_xpkg_versions_desc(*lua);
 }
 
+mcpp::manifest::XpkgCatalogFields Fetcher::catalog_for_hit(const SearchHit& hit) const {
+    auto colon = hit.name.find(':');
+    if (colon == std::string::npos || colon == 0 || colon + 1 == hit.name.size()) return {};
+    auto lua = read_xpkg_lua(std::string_view(hit.name).substr(0, colon),
+                             std::string_view(hit.name).substr(colon + 1));
+    if (!lua) return {};
+    return mcpp::manifest::xpkg_catalog_fields(*lua);
+}
+
 std::expected<std::vector<Fetcher::PackageInstall>, CallError>
 Fetcher::plan_install(const std::vector<std::string>& targets) {
     auto args = make_targets_args(targets);
@@ -859,6 +879,65 @@ Fetcher::read_xpkg_lua(std::string_view ns, std::string_view shortName) const
         }
     }
     return std::nullopt;
+}
+
+std::vector<Fetcher::HitDescription>
+Fetcher::describe_hits(std::span<const SearchHit> hits) const {
+    // EACH INDEX IS READ ONCE, BY DECLARED IDENTITY. A catalogue listing holds
+    // every package of every xlings index, most of which have no mcpp
+    // descriptor; looked up one by one, read_xpkg_lua's identity-first fallback
+    // scanned the whole index for each of those (267 413 opens for 660 hits,
+    // 8.4 s). One pass over each root's `pkgs/` keyed by the descriptor's own
+    // `namespace:name` answers every hit, whatever the file is called or
+    // wherever it sits (the flat `mwrap/` layout included). Identity is read
+    // from the descriptor's text; a descriptor that declares no namespace is
+    // keyed by its name alone.
+    std::map<std::string, std::string> byIdentity;
+    const auto field = [](std::string_view lua, std::string_view key) -> std::string {
+        std::size_t pos = 0;
+        while ((pos = lua.find(key, pos)) != std::string_view::npos) {
+            const bool lineStart = pos == 0 || lua[pos - 1] == ' ' || lua[pos - 1] == '\t'
+                                || lua[pos - 1] == '\n';
+            std::size_t e = pos + key.size();
+            while (e < lua.size() && (lua[e] == ' ' || lua[e] == '\t')) ++e;
+            if (lineStart && e < lua.size() && lua[e] == '=') {
+                const auto q1 = lua.find('"', e);
+                const auto nl = lua.find('\n', e);
+                if (q1 == std::string_view::npos || (nl != std::string_view::npos && q1 > nl)) return {};
+                const auto q2 = lua.find('"', q1 + 1);
+                if (q2 == std::string_view::npos) return {};
+                return std::string(lua.substr(q1 + 1, q2 - q1 - 1));
+            }
+            pos += key.size();
+        }
+        return {};
+    };
+    for (auto const& root : mcpp::provider::open(location_of(cfg_))->index_roots()) {
+        std::error_code ec;
+        const auto pkgs = root / "pkgs";
+        if (!std::filesystem::is_directory(pkgs, ec)) continue;
+        for (auto it = std::filesystem::recursive_directory_iterator(pkgs, ec);
+             !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+            if (it->path().extension() != ".lua") continue;
+            std::ifstream is(it->path(), std::ios::binary);
+            std::string lua{std::istreambuf_iterator<char>(is), {}};
+            const auto name = field(lua, "name");
+            if (name.empty()) continue;
+            byIdentity.try_emplace(field(lua, "namespace") + ":" + name, std::move(lua));
+        }
+    }
+    std::vector<HitDescription> out(hits.size());
+    for (std::size_t i = 0; i < hits.size(); ++i) {
+        auto it = byIdentity.find(hits[i].name);
+        if (it == byIdentity.end()) {
+            const auto colon = hits[i].name.find(':');
+            if (colon != std::string::npos) it = byIdentity.find(":" + hits[i].name.substr(colon + 1));
+        }
+        if (it == byIdentity.end()) continue;
+        out[i].versions = mcpp::manifest::all_xpkg_versions_desc(it->second);
+        out[i].catalog = mcpp::manifest::xpkg_catalog_fields(it->second);
+    }
+    return out;
 }
 
 // ─── read_xpkg_lua from local path index ────────────────────────────

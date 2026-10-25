@@ -8,6 +8,9 @@
 # reached a compile-database writer, so a deleted database stayed deleted
 # forever (#397 C-1, #677 B1, report §3.6).
 set -euo pipefail
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

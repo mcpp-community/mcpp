@@ -12,6 +12,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # string), and `ide.toolchains.<id>.build-id` is present and stable across two
 # runs (S1 §6, S1-11.2-3).
 set -euo pipefail
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

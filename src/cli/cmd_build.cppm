@@ -267,6 +267,10 @@ int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // `configured`, when given, receives the plan's output directory and the
     // plan leaves the root compile database to the caller, which publishes
     // it once for every configuration it planned.
+    // Where the project's compile database is published, as the last plan
+    // resolved it (`[build] compile_commands`); the caller that publishes the
+    // root copy of several configurations reads it.
+    std::string rootCompileDb;
     auto configure_member = [&](mcpp::build::BuildOverrides memberOv,
                                 std::string_view label,
                                 std::vector<std::filesystem::path>* configured = nullptr) -> int {
@@ -299,6 +303,7 @@ int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
         }
         if (configured) {
             ctx->plan.publishRootCompileDb = false;
+            rootCompileDb = ctx->plan.rootCompileDb;
             configured->push_back(ctx->outputDir);
         }
         return mcpp::build::run_configure_plan(*ctx, verbose);
@@ -356,11 +361,13 @@ int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 if (!ctx && g.size() > 1) { configure_one_by_one(); continue; }
                 if (!ctx) { mcpp::ui::error(std::format("{}: {}", g.front(), ctx.error())); rc = 2; continue; }
                 ctx->plan.publishRootCompileDb = false;
+                rootCompileDb = ctx->plan.rootCompileDb;
                 if (int r = mcpp::build::run_configure_plan(*ctx, verbose); r != 0) rc = r;
                 configured.push_back(ctx->outputDir);
             }
             if (!configured.empty())
-                mcpp::build::publish_workspace_compile_commands((*selection)->root, configured);
+                mcpp::build::publish_workspace_compile_commands((*selection)->root, configured,
+                                                                rootCompileDb);
             return rc;
         }
         const bool plain = !print_fp && ov.target_triple.empty() && !ov.force_static
@@ -430,7 +437,9 @@ int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
             if (r != 0 && rc == 0) rc = r;
         std::vector<std::filesystem::path> dirs;
         for (auto const& c : contexts) dirs.push_back(c.outputDir);
-        mcpp::build::publish_workspace_compile_commands((*selection)->root, dirs);
+        mcpp::build::publish_workspace_compile_commands(
+            (*selection)->root, dirs,
+            contexts.empty() ? std::string{} : contexts.front().plan.rootCompileDb);
         if (rc == 0) mcpp::build::progress::finish_deferred();
         return rc;
     }

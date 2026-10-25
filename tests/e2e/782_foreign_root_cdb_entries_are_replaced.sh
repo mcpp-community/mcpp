@@ -7,6 +7,9 @@
 # When the replaced file held entries mcpp did not write, one warning states
 # how many.
 set -euo pipefail
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

@@ -7,6 +7,9 @@
 # Tail section: standard = "c++latest" regression — it used to reach the GNU
 # driver as the invalid spelling -std=c++latest (design §11-Q5).
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT

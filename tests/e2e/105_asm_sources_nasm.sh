@@ -5,6 +5,9 @@
 # include dirs + %include tracked through the depfile (-MD), excluded from
 # compile_commands.json, and linked into the binary.
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 [[ "$(uname -m)" == "x86_64" ]] || { echo "SKIP: x86-only NASM"; exit 0; }
 

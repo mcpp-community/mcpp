@@ -726,6 +726,14 @@ void with_member(BuildContext& ctx, std::string_view owner, F&& fn) {
     fn();
 }
 
+// WHERE THE PROJECT'S COMPILE DATABASE IS PUBLISHED (design 2026-10-26 D14),
+// relative to the project root; empty when it is not. MCPP_COMPILE_COMMANDS
+// ("off" or "none" for no copy), then `[build] compile_commands` of the
+// manifest ("" for no copy), then the machine's default from config.toml.
+// The configuration's own database is in its build directory either way.
+export std::string resolve_compile_commands(const mcpp::manifest::Manifest& m,
+                                            std::string_view machineDefault);
+
 export CacheMode resolve_cache_mode(const mcpp::manifest::Manifest& m,
                                     std::string_view override_mode);
 

@@ -13,6 +13,9 @@
 #   cdep   declares gnu11  201112L, and no __STRICT_ANSI__ (a GNU dialect)
 #   plain  declares none   201112L with __STRICT_ANSI__: the default, c11
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT

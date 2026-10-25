@@ -812,9 +812,11 @@ int run(int argc, char** argv) {
             .action(wrap_rc(mcpp::pm::commands::cmd_update)))
         .subcommand(cl::App("search")
             .description("Search packages in configured registries")
-            .arg(cl::Arg("keyword").help("Search keyword (substring match)").required())
+            .arg(cl::Arg("keyword").help("Search keyword (substring match); optional with --format json, which then lists every package"))
             .option(cl::Option("all-versions")
                 .help("List every published version instead of the latest few"))
+            .option(cl::Option("format").takes_value().value_name("FMT")
+                .help("json: the mcpp.search envelope (every version, licenses, repo)"))
             .action(wrap_rc(cmd_search)))
         .subcommand(cl::App("publish")
             .description("Publish package to default registry")
@@ -871,6 +873,8 @@ int run(int argc, char** argv) {
                 .help("Activate root-package features, and a dependency's as <dependency>/<feature>, for every build pass of the pack (comma-separated)"))
             // `--format` names the PACKAGE format here, so machine output is
             // asked for the way `mcpp test` asks for it (docs/50 §3).
+            .option(cl::Option("list-formats")
+                .help("Print the formats --format accepts here, the engine's and those the resolved graph provides, as the mcpp.pack.formats envelope"))
             .option(cl::Option("message-format").takes_value().value_name("FMT")
                 .help("Output format: human (default) | json (one mcpp.pack envelope on stdout; narration on stderr)"))
             .option(cl::Option("no-strip")
@@ -1059,7 +1063,9 @@ int run(int argc, char** argv) {
         .subcommand(cl::App("index")
             .description("Manage configured package registries")
             .subcommand(cl::App("list")
-                .description("List configured registries"))
+                .description("List configured registries")
+                .option(cl::Option("format").takes_value().value_name("FMT")
+                    .help("json: the mcpp.index envelope")))
             .subcommand(cl::App("add")
                 .description("Add a custom registry")
                 .arg(cl::Arg("name").help("Registry name").required())
@@ -1623,6 +1629,23 @@ int run(int argc, char** argv) {
             {"pack",           {Effect::InitMcppHome, Effect::ReadProject,
                                 Effect::WriteProject, Effect::Network,
                                 Effect::WriteGlobalCache, Effect::ExecBuildScript}},
+            // `--message-format json` (design 2026-10-26 §5.1): a build, so
+            // everything a build may do.
+            {"build",          {Effect::InitMcppHome, Effect::ReadProject,
+                                Effect::WriteProject, Effect::Network,
+                                Effect::WriteGlobalCache, Effect::ExecBuildScript}},
+            // `--print-launch` builds the program and starts nothing.
+            {"run --print-launch", {Effect::InitMcppHome, Effect::ReadProject,
+                                    Effect::WriteProject, Effect::Network,
+                                    Effect::WriteGlobalCache, Effect::ExecBuildScript}},
+            // The index is refreshed when older than the search TTL.
+            {"search",         {Effect::InitMcppHome, Effect::Network}},
+            {"index list",     {Effect::InitMcppHome, Effect::ReadProject}},
+            // The same planning as `pack`, which runs the build programs that
+            // declare formats; nothing is built.
+            {"pack --list-formats", {Effect::InitMcppHome, Effect::ReadProject,
+                                     Effect::Network, Effect::WriteGlobalCache,
+                                     Effect::ExecBuildScript}},
         };
     };
 

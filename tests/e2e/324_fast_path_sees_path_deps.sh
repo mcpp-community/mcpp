@@ -18,6 +18,9 @@
 # changing") in a directory that fix did not reach. It matters most where it is
 # hardest to notice: workspace members depend on each other by `path`.
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT

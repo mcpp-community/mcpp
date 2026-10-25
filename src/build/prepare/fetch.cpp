@@ -482,15 +482,18 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                     // it is the whole of the actionable content.
                     if (called && r->error && !r->error->hint.empty())
                         why += "\n       " + r->error->hint;
-                    // Shaped like the toolchain failure: say what failed and
-                    // hand back a command the user can run themselves. An
+                    // xlings' own diagnostic, with its hint, IS the report
+                    // (design 2026-10-26 D17). This used to end with "you can
+                    // install them manually with: xlings install …" -- the
+                    // same install, which meets the same refusal, so the one
+                    // line of advice was the one that could not help. An
                     // ambiguous bare name ("mesa" matching two repos) lands
                     // here, and xlings' own message names the candidates.
                     return std::unexpected(std::format(
                         "provisioning {} failed: {}\n"
-                        "       you can install them manually with:\n"
-                        "         xlings install {}",
-                        label, why, join_deps(" ")));
+                        "       the whole failure is in ~/.mcpp/log/mcpp.log; `mcpp self doctor` "
+                        "reports the state of mcpp's package home",
+                        label, why));
                 }
                 // What xlings resolved each address to, where it says so
                 // (protocol 1.1). Recorded per address so every later lookup

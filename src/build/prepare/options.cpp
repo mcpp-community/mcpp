@@ -80,6 +80,16 @@ std::string_view cache_mode_name(CacheMode m) {
     }
 }
 
+std::string resolve_compile_commands(const mcpp::manifest::Manifest& m,
+                                     std::string_view machineDefault) {
+    if (const char* e = std::getenv("MCPP_COMPILE_COMMANDS"); e && *e) {
+        const std::string_view v(e);
+        return v == "off" || v == "none" ? std::string{} : std::string(v);
+    }
+    if (m.buildConfig.compileCommands) return *m.buildConfig.compileCommands;
+    return std::string(machineDefault);
+}
+
 CacheMode resolve_cache_mode(const mcpp::manifest::Manifest& m,
                                     std::string_view override_mode) {
     // `--deny write-global-cache` (design 2026-10-26 §5.5): the build goes on

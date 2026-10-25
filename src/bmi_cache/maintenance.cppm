@@ -148,12 +148,15 @@ std::int64_t dir_mtime_seconds(const std::filesystem::path& p) {
     return (nowSys - age).count();
 }
 
+// Bytes and regular files under the entry, entry.json excepted -- the same
+// two numbers bmi_cache's record_footprint stores when it writes an entry.
 void measure(Entry& e) {
-    e.size = dir_size(e.dir);
     std::error_code ec;
-    for (auto& _ : std::filesystem::recursive_directory_iterator(e.dir, ec)) {
-        (void)_;
-        if (ec) break;
+    for (auto it = std::filesystem::recursive_directory_iterator(e.dir, ec);
+         !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+        std::error_code fe;
+        if (!it->is_regular_file(fe) || fe || it->path().filename() == "entry.json") continue;
+        e.size += it->file_size(fe);
         ++e.fileCount;
     }
 }
@@ -227,7 +230,17 @@ std::vector<Entry> walk_pkg_entries(bool verify = false) {
                     if (verify) check_pkg_files(e, *j);
                 }
                 if (e.accessed == 0) e.accessed = dir_mtime_seconds(e.dir);
-                measure(e);
+                // The footprint the entry recorded when it was written (see
+                // record_footprint); measured only for an entry from before
+                // the field. This command writes nothing, so the answer is not
+                // stored back here -- the entry's next use stores it.
+                if (j && j->contains("size") && (*j)["size"].is_number_unsigned()
+                    && j->contains("files") && (*j)["files"].is_number_unsigned()) {
+                    e.size = (*j)["size"].get<std::uintmax_t>();
+                    e.fileCount = static_cast<decltype(e.fileCount)>((*j)["files"].get<std::uintmax_t>());
+                } else {
+                    measure(e);
+                }
                 out.push_back(std::move(e));
             }
         }

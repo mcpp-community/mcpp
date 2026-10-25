@@ -13,6 +13,9 @@
 # `import std;` compiles and runs, and the runner's cl version is printed so the
 # log records WHICH toolset the claim was verified on.
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 CONF="${MCPP_HOME:-$HOME/.mcpp}/config.toml"
 ORIG_DEFAULT=""

@@ -2789,6 +2789,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
     if (auto v = doc->get_string("build.default-profile")) m.buildConfig.defaultProfile = *v;
     else if (auto v = doc->get_string("build.profile"))   m.buildConfig.defaultProfile = *v;  // accepted alias
     if (auto v = doc->get_string("build.cache"))          m.buildConfig.cacheMode = *v;
+    if (auto v = doc->get_string("build.compile_commands")) m.buildConfig.compileCommands = *v;
     // [build] platform-dependencies — see Manifest::platformDependencies.
     // Validated HERE (unlike `cache`) because the value set is one word and
     // there is nothing build-mode-specific about it to keep out of the

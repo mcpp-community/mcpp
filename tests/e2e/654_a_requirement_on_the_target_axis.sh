@@ -19,6 +19,9 @@
 #      nothing, in both directions -- present or absent, the Linux build is
 #      unaffected by a requirement scoped to a target it is not building.
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT

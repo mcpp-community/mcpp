@@ -911,7 +911,21 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
         ? *state.targetRuntimeBinding : state.runtimeBindingSnapshot;
     ctx.plan.runtimeBinding = artifactRuntime;
     mcpp::build::merge_runtime_binding_contract(ctx.plan, artifactRuntime);
-    ctx.plan.compileDbPath = state.workRoot / "compile_commands.json";
+    // The project's copy of the compile database, where its manifest (or the
+    // machine's default) says; none otherwise, and then `${mcpp.compile_db}`
+    // names the configuration's own (design 2026-10-26 D14).
+    {
+        std::string machineDefault;
+        if (auto c = state.get_cfg(/*requireBootstrap=*/false)) machineDefault = (*c)->compileCommands;
+        const auto rel = resolve_compile_commands(*state.m, machineDefault);
+        ctx.plan.rootCompileDb = rel;
+        if (rel.empty()) {
+            ctx.plan.compileDbPath = ctx.outputDir / "compile_commands.json";
+            ctx.plan.publishRootCompileDb = false;
+        } else {
+            ctx.plan.compileDbPath = (state.workRoot / rel).lexically_normal();
+        }
+    }
     // GCC: a clean `*link:` for this build, so the payload's specs cannot
     // inject other homes' rpath entries into the artifact. AFTER the plan is
     // moved in — an earlier assignment was silently overwritten by that move,

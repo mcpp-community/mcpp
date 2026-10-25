@@ -36,6 +36,9 @@
 #      BMI. The control leg at the end runs `build --configure-only` on a copy
 #      in that home and sees the std module compiled there.
 set -e
+# The project-root copy of the compile database is opt-in since
+# 2026.10.26.1 ([build] compile_commands); this test reads it.
+export MCPP_COMPILE_COMMANDS=compile_commands.json
 
 TMP=$(mktemp -d)   # the measured tree: the project and its dev-dependency
 OUT=$(mktemp -d)   # everything this script writes, outside the measured tree
