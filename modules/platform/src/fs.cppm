@@ -375,7 +375,7 @@ std::optional<FileLock> FileLock::acquire(
             if (waiting) waiting(holder(dir, name));
         }
         std::this_thread::sleep_for(pause);
-        pause = std::min(pause * 2, std::chrono::milliseconds(200));
+        pause = (std::min)(pause * 2, std::chrono::milliseconds(200));   // parenthesised: <windows.h> defines min
     }
 }
 
