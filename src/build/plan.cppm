@@ -530,6 +530,10 @@ struct BuildPlan {
     std::map<std::string, ModuleScope, std::less<>> moduleScopes;
     std::filesystem::path           stdCompatObjectPath; // absolute path to prebuilt std.compat.o
     std::filesystem::path           scanDepsPath;    // clang-scan-deps binary (Clang only)
+    // `okld` for an ok-image target (`<arch>-openkal`): the program of the graph
+    // (or of this machine) that writes each image's requirements note and
+    // checks the convention after the link (mcpp.okimage). Empty elsewhere.
+    std::filesystem::path           okldPath;
     // NASM assembly (.asm sources). Both resolved in prepare AFTER the plan
     // exists — only when the plan actually contains .asm units (lazy, hard
     // failure when unavailable; never a silent skip).

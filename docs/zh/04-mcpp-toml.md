@@ -1218,6 +1218,11 @@ argv（OpenSBI 启动用 `-bios default`，picolibc 镜像用 `-bios none
 -semihosting`）——一个替某一块板子猜一个值的引擎，就是另一块板子必须
 与之对抗的引擎。一个板级支持包通常会提供它。
 
+唯一一个 runner 属于 target 而非板子的 target 是 `<arch>-openkal`
+（2026.10.26.2）：ok 映像在每个系统上都由 `okrun` 运行，因此工程未声明 runner
+时，`okrun` 就是该 target 的 runner。它的查找方式与声明的 runner 程序相同，并
+优先查找依赖图为本机构建的程序（`tools = [...]`）（[24](24-openkal-cross.md)）。
+
 ### 2.7.3 hosted 目标上的 `runner`（2026.9.2.1+）
 
 `[target.<triple>].runner` 适用于每一个精确三元组，不只是裸机。一个

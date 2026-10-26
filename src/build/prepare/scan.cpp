@@ -399,6 +399,12 @@ step11_package_std_module_source(PrepareState& state) {
     // Both are read only from a package that ALSO provides the capability
     // below. A package that named a std module without supplying the
     // library would be describing something it does not have.
+    // AN OK IMAGE'S STANDARD LIBRARY IS THE GRAPH'S OR NONE. The payload's
+    // libc++ was configured for the payload's own operating system; inside an
+    // image it would be a second answer to a question the image's C++
+    // run-time package answers.
+    if (auto ft = mcpp::toolchain::triple::parse(state.tc->targetTriple); ft && ft->is_openkal())
+        state.tc->clear_std_modules();
     for (auto& pkg : state.packages) {
         if (pkg.manifest.stdModule.empty()) continue;
         // Either spelling of the C++ layer (see `provides_cxx_layer`). The
@@ -711,6 +717,21 @@ step11_std_module_availability_gate(PrepareState& state, bool needsStdModule) {
                 "       The target's C library itself comes from the BOARD "
                 "package (riscv-virt-rt\n"
                 "       exports `mcpplibs.riscv_virt_rt`).",
+                state.tc->targetTriple));
+        }
+        if (auto ft = mcpp::toolchain::triple::parse(state.tc->targetTriple);
+            ft && ft->is_openkal())
+        {
+            return std::unexpected(std::format(
+                "`import std;` on '{}' needs a C++ run-time inside the image, and "
+                "the graph supplies none.\n"
+                "       An ok image holds its own C library and C++ run-time, "
+                "above `kal_*`. Depend on\n"
+                "       the packages that provide them for this target:\n"
+                "\n"
+                "           [target.'cfg(os = \"openkal\")'.dependencies]\n"
+                "           openkal-musl         = \"0.22.0\"   # mcpp:c-abi=musl\n"
+                "           openkal-llvm-runtime = \"0.16.0\"   # mcpp:c++-abi=libc++, the std module",
                 state.tc->targetTriple));
         }
         return std::unexpected(std::format(

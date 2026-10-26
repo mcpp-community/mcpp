@@ -6,6 +6,19 @@
 
 ## [2026.10.26.2] - 2026-10-26
 
+### Added
+
+- **`x86_64-openkal` and `aarch64-openkal`: one ok image per architecture**
+  (openkal SPEC clause 12). The image is compiled for no operating system
+  with the convention's flags, linked by `ld.lld` into an ET_DYN entered at
+  `ok_main` (`bin/<name>.oke`, or `lib<name>.okso` for an image another
+  loads), and published only after `okld note` has written its requirements
+  note and `okld check` has checked it. `okrun` runs it on Linux, macOS and
+  Windows and is the target's runner. Both programs come from the dependency
+  graph: `[build-dependencies] openkal-tools = { tools = ["okld", "okrun"] }`.
+  The C library and the C++ run-time inside an image are packages; the
+  payload's libc++ is not offered to an image.
+
 ### Fixed
 
 - **A WebAssembly link writes its `.wasm` again.** 2026.10.26.1 published every

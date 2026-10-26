@@ -1206,6 +1206,7 @@ static void step6_record_tool_provision(PrepareState& state, HostToolCtx& ctx,
                                          const std::filesystem::path& p) {
     for (std::size_t c = 0; c < state.provisionGraph.visible.size(); ++c) {
         if (!state.provisionGraph.visible[c].contains(ctx.want)) continue;
+        if (c == 0) state.rootTools[ctx.toolName] = p;
         auto& v = state.toolEnvByConsumer[c];
         std::vector<std::string> vars;
         for (auto const& n : state.publishedNamesFor(ctx.depIdx, state.bareBindingsFor(c))) {

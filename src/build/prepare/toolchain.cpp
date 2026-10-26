@@ -1061,6 +1061,10 @@ step1_target_row_pin_and_capability_check(PrepareState& state, TargetOverrideCtx
                 ? "A freestanding target has no per-host cross payload: "
                   "clang and lld are\n"
                   "       cross-compilers by construction and gcc is not."
+                : ctx.parsed->is_openkal()
+                ? "An ok image is emitted by clang and lld for every host: "
+                  "the compiler is told\n"
+                  "       no operating system, and gcc has no such target."
                 : ctx.parsed->is_wasm()
                 ? "Nothing but Emscripten emits WebAssembly: `em++` is a "
                   "clang whose target,\n"

@@ -403,6 +403,7 @@ mcpp 的身份模型有两条正交的轴：**工具链**是 `family@version`（
 | `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 23；Cortex-M4/M7 软浮点、M23、M33F/M55F ² | preview |
 | `aarch64-linux-gnu` | `llvm@23.1.3` | preview |
 | `riscv64-linux-musl` · `x86_64-macos` | — | planned |
+| `x86_64-openkal` · `aarch64-openkal` | llvm 23；ok 映像：每种架构一个产物，由 `okrun` 在 Linux、macOS 与 Windows 上运行；映像内的 C 库与 C++ 运行时是包（[24](docs/zh/24-openkal-cross.md)） | preview |
 | `wasm32-emscripten` | `emsdk@6.0.9`；Emscripten 自带 sysroot 与 libc++ 模块接口；`mcpp run` 使用 payload 声明的 `node`（`xim:node`）运行模块，不使用 PATH 上的 `node` | verified |
 | `x86_64-linux-android` | `android-ndk@30.0.16248370`；bionic 来自 NDK，一个 payload 服务两个 ABI；已在 API 24 的 x86_64 模拟器镜像上运行 | verified |
 | `aarch64-linux-android` | 同一个 payload、同样的构建；已在 qemu-user 上配合系统镜像自带的 bionic 运行，平台模拟器无法在 x86_64 宿主上做到这一点 | verified |

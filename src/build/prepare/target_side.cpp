@@ -262,6 +262,7 @@ step9_gather_target_side_candidates(PrepareState& state) {
                 in.targetOs           = tt->os;
                 in.targetEnv          = tt->env;
                 in.freestandingTarget = tt->is_freestanding();
+                in.openkalTarget      = tt->is_openkal();
                 // NOT `tt->envExplicit`. By this line the triple has been
                 // canonicalised, and the canonical form of `x86_64-linux` is
                 // `x86_64-linux-gnu` — re-parsing it reports a segment the
@@ -463,7 +464,10 @@ step9_resolve_and_realise_cabi(PrepareState& state, TargetSideGather& gather) {
             auto tt = mcpp::toolchain::triple::parse(state.tc->targetTriple);
             auto realised = mcpp::toolchain::cenv::realise(
                 *state.resolvedTargetSide.cAbiDecl, tt ? tt->os : std::string{},
-                tt ? tt->arch : std::string{}, tt && tt->is_freestanding());
+                tt ? tt->arch : std::string{},
+                // An ok image is told no operating system, as a bare machine
+                // is: the C library's identity macros are the only ones.
+                tt && (tt->is_freestanding() || tt->is_openkal()));
             if (!realised) {
                 refusal::record(refusal::Code::CEnvUnrealisable);
                 return std::unexpected(realised.error());
@@ -624,7 +628,12 @@ step9_resolve_and_realise_cabi(PrepareState& state, TargetSideGather& gather) {
         // availability check links and runs without the archive; refusing it
         // would trade a diagnosed hazard for a regression. The degradation
         // names the platform, the file and the package that supplies it.
-        if (state.resolvedTargetSide.compilerRuntime.absent() && state.tc) {
+        // An ok image's runtime routines are the image's own by design
+        // (mcpp.okimage), so its absence there is not a gap to report.
+        if (auto okt = state.tc ? mcpp::toolchain::triple::parse(state.tc->targetTriple)
+                                : std::optional<mcpp::toolchain::triple::Triple>{};
+            state.resolvedTargetSide.compilerRuntime.absent() && state.tc
+            && !(okt && okt->is_openkal())) {
             auto tt = mcpp::toolchain::triple::parse(state.tc->targetTriple);
             mcpp::diag::degraded("target/compiler-runtime", std::format(
                 "the toolchain payload carries no compiler runtime for {} "
@@ -1195,8 +1204,11 @@ step9_same_os_check_and_report(PrepareState& state) {
                     "same-OS check: '{}'(os={}) vs '{}'(os={})",
                     reportedTargetName, want ? want->os : "<unparsed>",
                     state.resolvedTargetSide.llvmTriple, got ? got->os : "<unparsed>"));
+            // An ok image is compiled for no operating system by design
+            // (`<arch>-unknown-none-elf`): the loader is its environment.
+            const bool okImage = want && got && want->is_openkal() && got->is_freestanding();
             if (want && got && !want->os.empty() && !got->os.empty()
-                && want->os != got->os) {
+                && want->os != got->os && !okImage) {
                 refusal::record(refusal::Code::OsMismatch);
                 return std::unexpected(std::format(
                     "target '{}' resolved to a toolchain for '{}'.\n"

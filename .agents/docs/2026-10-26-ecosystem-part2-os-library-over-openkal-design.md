@@ -388,6 +388,27 @@ M3 由链接 libokrun、映像段与一个极小的入口（由 `mcpp pack` 生�
 | 打包 | `pack` 增加 M2（映像）与 M3（每个 OS：libokrun + 映像段）格式 |
 | 其他 | 编译数据库与 clangd 的目标参数；文档 21、22、24、50；e2e：同一映像字节在各 OS 运行 |
 
+实现（#842）：
+
+- **三元组**：`os = "openkal"`，`env` 为空；`llvm_triple` 为 `<arch>-unknown-none-elf`；`cfg(unix)`、`cfg(windows)` 为假；
+  产物名 `.oke` / `lib<name>.okso` / `.a`；pin `llvm@23.1.3`，每台宿主可构建。
+- **目标侧**：`kernel-abi openkal (the loader)` 由目标固定；`c-abi`、`c++-abi`、`compiler-runtime` 只来自依赖图，否则为无。
+  载荷的 libc++ 与 std 模块不提供给映像。默认提供者不隐式加入依赖图（依赖图只含清单声明的包）：`import std;` 在依赖图无 C++
+  运行时时于编译前被拒绝，拒绝信息给出 `openkal-musl` 与 `openkal-llvm-runtime` 的声明。无 C 库的映像以 `-ffreestanding` 编译
+  （实测：`--release` 下 `-O2` 合成的 `strlen` 调用被 `okld check` 拒绝）。
+- **链接与收尾**：`ld.lld -shared -z max-page-size=65536 -z now -z noexecstack --hash-style=both`，可执行映像 `-e ok_main`；
+  每个映像链接引擎写出的 note 对象；链接产物为 `<image>.unchecked`，`mcpp okimage-finish` 依次执行 `okld note`、`okld check`
+  （`--with` 所需的 `.okso`），通过后才以映像名发布。`okld` 依次取自依赖图为本机构建的程序、声明的载荷、PATH；缺失时在编译前
+  拒绝并给出 `[build-dependencies] openkal-tools = { tools = ["okld", "okrun"] }`。格式的读取与检查只在 libokld 中实现，mcpp
+  不另行实现。
+- **运行**：`okrun` 是该目标的默认 runner；runner 程序的查找把依赖图为本机构建的程序（`tools`）排在载荷与 PATH 之前。
+- **打包**：`vendored`（默认）为 M2（映像与其 `.okso`），`system` 只含映像，`self-contained` 为 M3：生成入口与映像段
+  （ELF `.oke`、Mach-O `__OKE,__image`、COFF `.oke`），依赖与 `openkal-tools` 同源的 `openkal-run`，再以普通程序打包（Linux 为
+  musl 静态，macOS 与 Windows 只引用系统库）；`static` 拒绝。okrun 采用借用安排（§8.4），宿主 C / C++ 运行时在内，故 M3 在各自
+  系统上打包，不由一台宿主交叉产出三份；这修订了 §8.2"一台 Linux 主机即可交叉产出三个 OS 的 M3"。
+- **验证**：e2e 942（A 两行构建为本架构的 ET_DYN；B okrun 运行；C 导入 `puts` 被拒绝且 `bin/` 中仍为上次发布的映像；D 无 C++
+  运行时的 `import std` 被拒绝；E 第二次构建无编译；F M2 与 M3）；单测 `Triple.OpenkalIsAnImageForNoOperatingSystem`。
+
 ### 8.6 `os` 在 ok 模式下
 
 `<arch>-openkal` 目标上 `os::PLATFORM == os::platform::openkal`，`is_linux` / `is_macos` / `is_windows` 均为 `false`（编译目标

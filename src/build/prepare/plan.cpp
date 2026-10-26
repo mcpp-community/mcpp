@@ -3,6 +3,7 @@
 // resolution.json are written by records.cpp.
 
 module mcpp.build.prepare;
+import mcpp.okimage;
 import :state;
 
 import mcpp.build.prepare_inputs;
@@ -225,6 +226,14 @@ static std::expected<void, std::string> step13_source_packages(PrepareState& sta
 }
 
 static std::expected<void, std::string> step13_runner_and_xlings(PrepareState& state, BuildContext& ctx) {
+    // THE PROGRAMS THE GRAPH BUILT FOR THIS MACHINE COME FIRST. A runner a
+    // dependency's `tools` built (`okrun` from `openkal-tools`) is the one the
+    // project asked for by depending on it, ahead of a payload's and of PATH.
+    for (auto const& [name, path] : state.rootTools) {
+        auto dir = path.parent_path();
+        if (std::ranges::find(ctx.xlingsDepBinDirs, dir) == ctx.xlingsDepBinDirs.end())
+            ctx.xlingsDepBinDirs.push_back(std::move(dir));
+    }
     // Where a runner may find the programs this project declared (#544). The
     // same resolution `fillXpkgDirs` hands to build programs, kept as
     // directories rather than env vars because the reader is mcpp's own
@@ -1474,6 +1483,29 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
 }
 
 static std::expected<void, std::string> step13_assembly_units(PrepareState& state, BuildContext& ctx) {
+    // AN OK IMAGE IS FINISHED BY `okld` (mcpp.okimage): the graph's, a
+    // declared payload's, or this machine's, in that order. Its absence is a
+    // refusal before anything compiles, naming the dependency that supplies
+    // it -- not a link that succeeds and an image no loader accepts.
+    // After `make plan`, which builds the plan these fields belong to.
+    if (auto tt = mcpp::toolchain::triple::parse(state.tc->targetTriple); tt && tt->is_openkal()) {
+        const std::string tool(mcpp::okimage::kTool);
+        if (auto it = state.rootTools.find(tool); it != state.rootTools.end()) {
+            ctx.plan.okldPath = it->second;
+        } else {
+            for (auto const& dir : ctx.xlingsDepBinDirs) {
+                for (auto const& name : { tool, tool + ".exe" }) {
+                    std::error_code ec;
+                    if (std::filesystem::is_regular_file(dir / name, ec)) { ctx.plan.okldPath = dir / name; break; }
+                }
+                if (!ctx.plan.okldPath.empty()) break;
+            }
+            if (ctx.plan.okldPath.empty())
+                if (auto found = mcpp::platform::fs::which(tool)) ctx.plan.okldPath = *found;
+        }
+        if (ctx.plan.okldPath.empty() && !state.overrides.plan_only)
+            return std::unexpected(mcpp::okimage::no_tool_message(tt->str(), tool));
+    }
     // Clang: discover clang-scan-deps for P1689 dyndep scanning.
     if (mcpp::toolchain::is_clang(*state.tc)) {
         if (auto sd = mcpp::toolchain::clang::find_scan_deps(*state.tc)) {

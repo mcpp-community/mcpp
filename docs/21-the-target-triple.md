@@ -104,7 +104,7 @@ what every `else` branch in the tree assumes. So the format is now one answer:
 
 | target | format |
 |---|---|
-| `x86_64-linux-gnu`, `aarch64-linux-android`, `riscv64-none-elf` | ELF |
+| `x86_64-linux-gnu`, `aarch64-linux-android`, `riscv64-none-elf`, `x86_64-openkal` | ELF |
 | `aarch64-macos`, `aarch64-ios` | Mach-O |
 | `x86_64-windows-gnu`, `x86_64-windows-msvc` | PE |
 | `wasm32-emscripten` | wasm |
@@ -520,6 +520,8 @@ other's rows.
 | `aarch64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
 | `x86_64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | payload | payload | payload | payload |
+| `x86_64-openkal` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `aarch64-openkal` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
 
 `payload` a toolchain payload here produces it · `graph` no payload, but a
 dependency can supply the system · `system` located on the machine, not
@@ -537,6 +539,7 @@ installed by mcpp · `SDK` the platform's own · `—` unreachable from this hos
 | `x86_64-windows-musl` | Windows by payload; anywhere by graph | no gcc emits PE+musl, and LLVM cannot spell the triple |
 | `aarch64-macos` | macOS | the SDK is the machine's |
 | `*-none-elf` | every host | clang and lld are cross-compilers by construction |
+| `*-openkal` | every host | the same; the image is compiled for no operating system and runs on every system through `okrun` ([24](24-openkal-cross.md)) |
 | `wasm32-emscripten`, `*-linux-android` | every host | the SDK ships its own sysroot and upstream publishes it per host; one archive serves every guest arch |
 
 **A `—` is about payloads, not about possibility.** `host_can_serve` answers

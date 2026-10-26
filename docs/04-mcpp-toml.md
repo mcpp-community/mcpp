@@ -1308,6 +1308,12 @@ different argv (`-bios default` for an OpenSBI boot, `-bios none -semihosting`
 for a picolibc image) — and an engine that guesses one is an engine the other
 board has to fight. A board-support package normally supplies it.
 
+The one target whose runner is a property of the target rather than of a
+board is `<arch>-openkal` (2026.10.26.2): an ok image is run by `okrun` on every
+system, so `okrun` is that target's runner when the project declares none. It is
+found as a declared runner's program is, with the programs the dependency graph
+built for this machine (`tools = [...]`) searched first ([24](24-openkal-cross.md)).
+
 ### 2.7.3 `runner` on a hosted target (2026.9.2.1+)
 
 `[target.<triple>].runner` applies to every exact triple, not only to bare

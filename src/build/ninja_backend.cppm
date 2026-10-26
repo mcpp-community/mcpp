@@ -44,6 +44,7 @@ import mcpp.toolchain.dialect;
 import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;   // shared_soname_flag decides by TARGET, not host
+import mcpp.okimage;
 import mcpp.toolchain.msvc_coroutines;
 import mcpp.provider;
 import mcpp.provider.select;
@@ -579,6 +580,8 @@ std::string shared_soname_flag(const LinkUnit& lu, const BuildPlan& plan) {
     const std::string name = lu.soname.empty()
         ? lu.output.filename().string() : lu.soname;
     if (macho) return "-Wl,-install_name,@rpath/" + name;
+    // An ok image is linked by `ld.lld` itself, which takes the bare flag.
+    if (t && t->is_openkal()) return lu.soname.empty() ? "" : "-soname " + lu.soname;
     return lu.soname.empty() ? "" : "-Wl,-soname," + lu.soname;
 }
 
@@ -592,6 +595,7 @@ std::string shared_soname_default(const LinkUnit& lu, const BuildPlan& plan) {
     const bool pe    = t ? t->is_pe()     : bool(mcpp::platform::is_windows);
     const bool macho = t ? t->is_mach_o() : bool(mcpp::platform::is_macos);
     if (pe || macho) return "";
+    if (t && t->is_openkal()) return "-soname " + lu.output.filename().string();
     return "-Wl,-soname," + lu.output.filename().string();
 }
 
@@ -1469,6 +1473,36 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             placedFiles.push_back({{pl.source}, pl.dest});
     }
 
+    // ── An ok image: its notes, and the step that finishes it ──────────────
+    //
+    // The notes are one assembly source the engine writes (SPEC 12.4) and one
+    // object every image links. `okimage_finish` runs `okld note` and `okld
+    // check` on the linked image and only then publishes it under its name,
+    // so an image that breaks the convention never reaches `bin/`.
+    const bool okImageTarget = [&] {
+        const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+        return t && t->is_openkal();
+    }();
+    const auto okNoteSource = std::filesystem::path("obj") / "okimage" / "note.S";
+    const auto okNoteObject = std::filesystem::path("obj") / "okimage" / "note.o";
+    if (okImageTarget) {
+        std::error_code mkec;
+        std::filesystem::create_directories((plan.outputDir / okNoteSource).parent_path(), mkec);
+        write_file(plan.outputDir / okNoteSource, mcpp::okimage::note_source());
+        const auto tt = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+        append("rule okimage_note\n");
+        append(std::format("  command = $cc --target={} --no-default-config -c $in -o $out\n",
+                           tt->llvm_triple()));
+        append("  description = NOTE $out\n\n");
+        append(std::format("build {} : okimage_note {}\n\n",
+                           escape_ninja_path(okNoteObject), escape_ninja_path(okNoteSource)));
+        append(std::format("okld      = {}\n", ninja_tool_word(plan.okldPath)));
+        append("okimage_with =\n");
+        append("rule okimage_finish\n");
+        append("  command = $mcpp okimage-finish --okld $okld -- $in $out $okimage_with\n");
+        append("  description = IMAGE $out\n\n");
+    }
+
     // ── The raw image a flasher takes ──────────────────────────────────────
     //
     // Only freestanding targets get this; a hosted binary is loaded by a
@@ -2239,6 +2273,24 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                       "$ld /nologo /DLL /OUT:$out $implib_flag $def_flag "
                       "$in $ldflags $unit_ldflags",
                       "SHARED");
+        } else if (okImageTarget) {
+            // AN OK IMAGE, LINKED BY `ld.lld` ITSELF (SPEC 12.2). An executable
+            // image is ET_DYN with the entry `ok_main`; an image another loads
+            // has its name and no entry. Each edge writes `<image>.unchecked`;
+            // the `okimage_finish` edge below writes the requirements note,
+            // checks the convention and publishes `<image>`.
+            const std::string entry = std::format("-e {}", mcpp::okimage::kEntry);
+            link_rule("cxx_link",
+                      "$ld_driver $ldflags $unit_ldflags " + entry + " -o $out $in", "LINK");
+            link_rule("c_link",
+                      "$ld_driver $c_ldflags $unit_ldflags " + entry + " -o $out $in", "LINK");
+            link_rule("cxx_shared",
+                      "$ld_driver $ldflags $soname_default $soname_flag $unit_ldflags -o $out $in",
+                      "SHARED");
+            link_rule("c_shared",
+                      "$ld_driver $c_ldflags $soname_default $soname_flag $unit_ldflags -o $out $in",
+                      "SHARED");
+            link_rule("cxx_archive", std::string(dial.archiveCmd), "AR");
         } else if (!flags.ldDriver.empty()) {
             // THE LINKER, NOT THE DRIVER, AND THE OBJECTS COME LAST.
             //
@@ -3242,6 +3294,11 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         for (auto& o : lu.objects) {
             ins += " " + escape_ninja_path(o);
         }
+        // An ok image's notes, in every image this plan links; the image is
+        // written beside its name and finished by its own edge (above).
+        const bool okImageUnit = okImageTarget && lu.kind != LinkUnit::StaticLibrary;
+        if (okImageUnit) ins += " " + escape_ninja_path(okNoteObject);
+        auto okUnchecked = lu.output; okUnchecked += ".unchecked";
 
         // mcpp#426. `separateLinker` (link.exe) takes no driver at all, so the
         // question does not arise there and the msvc rules are untouched.
@@ -3395,7 +3452,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // order-only list of the edge.
         if (lu.kind != LinkUnit::StaticLibrary) orderOnly += linkOrderOnly;
         std::string out_line = std::format("build {}{} : {}{}{}{}\n",
-            escape_ninja_path(lu.output), implicitOut, rule, ins,
+            escape_ninja_path(okImageUnit ? okUnchecked : lu.output), implicitOut, rule, ins,
             implicit.empty() ? std::string{} : " |" + implicit,
             orderOnly.empty() ? std::string{} : " ||" + orderOnly);
         if (auto flag = shared_soname_flag(lu, plan); !flag.empty())
@@ -3513,6 +3570,24 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             out_line += "  c_ldflags =" + uflags.ldC + "\n";
         }
         append(std::move(out_line));
+
+        // The finished image: its requirements written and the convention
+        // checked against the images it needs, then published (SPEC 12.4).
+        if (okImageUnit) {
+            std::string with, withInputs;
+            auto add_needed = [&](const std::filesystem::path& p) {
+                if (p.extension() != ".okso") return;
+                with += " " + ninja_command_word(p.generic_string());
+                withInputs += " " + escape_ninja_path(p);
+            };
+            for (auto const& o : lu.objects) add_needed(o);
+            for (auto const& o : lu.implicitInputs) add_needed(o);
+            append(std::format("build {} : okimage_finish {}{}\n",
+                               escape_ninja_path(lu.output), escape_ninja_path(okUnchecked),
+                               withInputs.empty() ? std::string{} : " |" + withInputs));
+            if (!with.empty()) append("  okimage_with =" + with + "\n");
+            append("\n");
+        }
 
         // ── Freestanding artifact set ──────────────────────────────────────
         //

@@ -1472,6 +1472,61 @@ export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
     return mcpp::platform::process::run_exec(std::vector<std::string>(command.begin(), command.end()));
 }
 
+// `mcpp okimage-finish --okld <okld> -- <linked> <image> [<needed.okso>…]`
+// (internal: invoked by build.ninja for the target `<arch>-openkal`; design
+// 2026-10-26 part 2, §8.5).
+//
+// AN IMAGE IS PUBLISHED ONLY ONCE IT MEETS THE CONVENTION. The linked file is
+// copied beside the image's name, `okld note` writes its requirements note from
+// its strong imports, `okld check` checks every clause of SPEC 12.2 against it
+// and the images it needs, and only then does the copy take the name. A check
+// that fails leaves no image behind, and the edge runs again next time.
+export int cmd_okimage_finish(const mcpplibs::cmdline::ParsedArgs& parsed,
+                              std::span<const std::string> rest) {
+    namespace fs = std::filesystem;
+    const std::string okld = parsed.option_or_empty("okld").value();
+    if (okld.empty() || rest.size() < 2) {
+        std::println(stderr, "error: okimage-finish needs --okld <okld> -- <linked> <image> [needed…]");
+        return 2;
+    }
+    const fs::path linked = rest[0], image = rest[1];
+    auto tmp = image; tmp += ".tmp";
+    std::error_code ec;
+    fs::copy_file(linked, tmp, fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        std::println(stderr, "error: cannot copy {} to {}: {}", linked.string(), tmp.string(), ec.message());
+        return 1;
+    }
+    auto run = [&](std::vector<std::string> argv) {
+        int spawnError = 0;
+        auto r = mcpp::platform::process::capture_exec(argv, {}, {}, &spawnError);
+        if (spawnError != 0) {
+            std::println(stderr, "error: cannot start {}: {}", okld,
+                         std::generic_category().message(spawnError));
+            return false;
+        }
+        if (r.exit_code != 0) {
+            std::print(stderr, "{}", r.output);
+            return false;
+        }
+        return true;
+    };
+    std::vector<std::string> check{ okld, "check", tmp.string() };
+    for (std::size_t i = 2; i < rest.size(); ++i) { check.push_back("--with"); check.push_back(rest[i]); }
+    if (!run({ okld, "note", tmp.string() }) || !run(check)) {
+        fs::remove(tmp, ec);
+        std::println(stderr, "error: {} does not meet the ok-image convention (openkal SPEC 12)",
+                     image.filename().string());
+        return 1;
+    }
+    fs::rename(tmp, image, ec);
+    if (ec) {
+        std::println(stderr, "error: cannot publish {}: {}", image.string(), ec.message());
+        return 1;
+    }
+    return 0;
+}
+
 export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // `--list FILE` (#734 E4): many placements, one process. Each destination
     // keeps the single-file semantics below -- content comparison, an

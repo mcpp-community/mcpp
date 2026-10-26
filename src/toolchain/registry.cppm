@@ -1439,6 +1439,9 @@ bool host_can_serve(const triple::Triple& target) {
     // (a libc wrapper package), and saying `false` here would hide it behind
     // "this host cannot build it", which is the wrong diagnosis.
     if (target.is_freestanding()) return true;
+    // An ok image the same way: clang and lld emit it on every host, and what
+    // the image holds above `kal_*` is the graph's.
+    if (target.is_openkal()) return true;
 
     return false;
 }

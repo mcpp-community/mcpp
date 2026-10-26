@@ -21,6 +21,7 @@ import mcpp.diag;
 import mcpp.build.plan;
 import mcpp.toolchain.triple;
 import mcpp.freestanding.runner;
+import mcpp.okimage;
 import mcpp.build.runner_lookup;    // #544: where the runner's program is
 import mcpp.home;                   // config.toml, for the machine's default toolchain
 import mcpp.libs.toml;
@@ -1206,6 +1207,12 @@ RunnerChoice choose_device_action(const BuildContext& ctx,
         c.tmpl = mcpp::toolchain::payload_default_runner(ctx.tc.binaryPath);
         c.fromPayload = !c.tmpl.empty();
     }
+    // AND THE TARGET'S OWN, FOR AN OK IMAGE: the loader is what runs one, on
+    // every system (SPEC 12). `okrun` is found as any runner's program is --
+    // first among the programs the graph built for this machine
+    // (`openkal-tools`), then in declared payloads, then on PATH.
+    if (isDefault && c.tmpl.empty() && ft && ft->is_openkal())
+        c.tmpl = { std::string(mcpp::okimage::kRunner) };
     // `--no-runner` is the operator on THIS host stating a host fact the
     // manifest cannot carry: the triple is native here. On a freestanding
     // target that leaves nothing to execute, and the caller's existing

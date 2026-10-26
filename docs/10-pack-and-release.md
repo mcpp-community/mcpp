@@ -672,6 +672,26 @@ the loader reads it from that path on every machine, whatever the tree carries.
 `kind = "lib"` / `"shared"` target is packaged by the library route, which is
 unaffected.
 
+### ok images (`<arch>-openkal`): the image, or a program that carries it
+
+An ok image runs through `okrun` on every system of its architecture (see
+[24](24-openkal-cross.md)). The mode keeps its meaning — what the machine that
+runs the package must provide:
+
+| Mode | The package holds | The machine provides |
+|---|---|---|
+| `system` | `bin/<name>.oke` | `okrun` and every image it names |
+| `vendored` (default) | `bin/<name>.oke` and the `.okso` images it names | `okrun` |
+| `self-contained` | `bin/<name>` — a program of this machine that carries the image as a section (`.oke`, `__OKE,__image`) and runs it through libokrun — and the `.okso` images beside it | nothing |
+| `static` | refused | — |
+
+The image is not recompiled for `self-contained`: mcpp generates the entry and
+the section, depends on `openkal-run` from the source of the project's
+`openkal-tools`, and packs that program as it packs any other — static (musl)
+on Linux, with only the system's libraries on macOS and Windows. The bytes in
+the section are the `.oke`'s. Another system's program is packed on that
+system.
+
 ### Android: the application object and its closure under `lib/`
 
 ```

@@ -343,6 +343,39 @@ wasm-ld: error: obj/main.o: undefined symbol: kal_process_spawn
 | Windows | `openkal-windows` | 建在 Win32 与对象管理器之上 |
 | Web（Emscripten） | `openkal-emscripten` | 写在一个 C 库**之上**；十五个接口中的十二个 |
 
+## 每个系统一份映像：`<arch>-openkal`（mcpp 2026.10.26.2）
+
+上面每个 target 都是每个操作系统一个产物：源码共享，程序不共享。target
+`<arch>-openkal` 每种**架构**产出一个产物 —— *ok 映像*（openkal SPEC 第 12 章）——
+由加载器在该架构的每个系统上运行。`okrun` 是 Linux、macOS 与 Windows 上的加载器。
+
+```toml
+[build-dependencies]
+openkal-tools = { version = "0.1.0", tools = ["okld", "okrun"] }
+```
+
+```sh
+mcpp build --target x86_64-openkal      # bin/app.oke
+mcpp run   --target x86_64-openkal      # okrun bin/app.oke
+```
+
+| | mcpp 的处理 | 原因 |
+|---|---|---|
+| 编译 | `--target=<arch>-unknown-none-elf -fPIC -femulated-tls`；AArch64 另加 `-ffixed-x18 -mno-outline-atomics` | 映像按“无操作系统”编译；不访问线程指针，不使用两个系统保留的平台寄存器 |
+| 链接 | `ld.lld -shared -z max-page-size=65536 -z now`，入口 `ok_main`；被其他映像加载的映像（`kind = "shared"`）为带名字的 `lib<name>.okso` | ET_DYN，每个段按各系统中最大的保护粒度对齐 |
+| 收尾 | `okld note` 由映像的强导入写入所需接口；`okld check` 对映像及其所需的 `.okso` 检查每一条约定；通过后才发布 `bin/<name>.oke` | 加载器拒绝需要实现所缺接口的映像并指名该接口；违反约定的映像不会被发布 |
+| 运行 | `okrun` 是该 target 的默认 runner，依次在依赖图为本机构建的程序、声明的载荷、PATH 中查找 | 加载器持有 openkal 实现，映像不携带实现 |
+
+**内核接口固定，其上每一层来自依赖图。** 报告显示 `kernel-abi openkal (the
+loader)`。C 库与 C++ 运行时是为该 target 提供 `mcpp:c-abi`、`mcpp:c++-abi` 的包
+（`openkal-musl`、`openkal-llvm-runtime`）；两者都没有的映像也合法：它自行定义
+`ok_main` 并提供 `__emutls_get_address`。载荷的 libc++ 为载荷自身的系统配置，不
+提供给映像；依赖图中没有 C++ 运行时时，`import std;` 在编译之前被拒绝，并指名
+提供它的包。
+
+**缺少 `okld` 是拒绝而非警告。** 没有需求 note 的映像会被每个加载器拒绝；引擎
+转而指出应添加的依赖。
+
 ## 裸机
 
 一个没有操作系统的 target，是同一个模型，只是平台层由固件而非内核供给。

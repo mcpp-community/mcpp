@@ -387,6 +387,44 @@ platform interfaces.
 | Windows | `openkal-windows` | on Win32 and the object manager |
 | Web (Emscripten) | `openkal-emscripten` | written ABOVE a C library; twelve of fifteen interfaces |
 
+## One Image For Every System: `<arch>-openkal` (mcpp 2026.10.26.2)
+
+Every target above produces one artifact per operating system: the source is
+shared and the program is not. The target `<arch>-openkal` produces one
+artifact per **architecture** — an *ok image* (openkal SPEC clause 12) — that a
+loader runs on every system of that architecture. `okrun` is that loader on
+Linux, macOS and Windows.
+
+```toml
+[build-dependencies]
+openkal-tools = { version = "0.1.0", tools = ["okld", "okrun"] }
+```
+
+```sh
+mcpp build --target x86_64-openkal      # bin/app.oke
+mcpp run   --target x86_64-openkal      # okrun bin/app.oke
+```
+
+| | the engine's action | the reason |
+|---|---|---|
+| compile | `--target=<arch>-unknown-none-elf -fPIC -femulated-tls`; on AArch64 also `-ffixed-x18 -mno-outline-atomics` | an image is told no operating system; it does not address the thread pointer and does not use the platform register, which two systems reserve |
+| link | `ld.lld -shared -z max-page-size=65536 -z now`, entry `ok_main`; an image another loads (`kind = "shared"`) is `lib<name>.okso` with its name | ET_DYN, every segment aligned to the largest protection granularity among the systems |
+| finish | `okld note` writes the interfaces the image's strong imports require; `okld check` checks every clause against the image and the `.okso` it needs; only then is `bin/<name>.oke` published | a loader refuses an image that requires an interface the implementation lacks, naming it, and an image that breaks the convention is never published |
+| run | `okrun` is the target's default runner, found among the programs the graph built for this machine, then in declared payloads, then on PATH | the loader holds the openkal implementation; the image carries none |
+
+**The kernel interface is fixed; every layer above it is the graph's.** The
+report reads `kernel-abi openkal (the loader)`. The C library and the C++
+run-time are packages that provide `mcpp:c-abi` and `mcpp:c++-abi` for this
+target (`openkal-musl`, `openkal-llvm-runtime`), and an image with neither is
+legal: it defines `ok_main` itself and supplies `__emutls_get_address`. The
+payload's libc++ is not offered, because it was configured for the payload's
+own system; `import std;` without a C++ run-time in the graph is refused before
+anything compiles, naming the packages.
+
+**Missing `okld` is a refusal, not a warning.** An image linked without its
+requirements note would be refused by every loader; the engine names the
+dependency to add instead.
+
 ## Bare Metal
 
 A target with no operating system is the same model with the platform layer

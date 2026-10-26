@@ -862,6 +862,8 @@ TEST(Triple, ExactlyTheseRowsHaveACapabilityPin) {
         "x86_64-windows-musl",
         "wasm32-emscripten",
         "aarch64-linux-android", "x86_64-linux-android",
+        // Ok images: clang and lld emit them on every host, as for bare metal.
+        "x86_64-openkal", "aarch64-openkal",
     };
     EXPECT_EQ(capability, expected);
 
@@ -1147,4 +1149,33 @@ TEST(Triple, EveryKnownRowHasAnObjectFormatAndNoneFallsThrough) {
     EXPECT_GT(pe, 0u);
     EXPECT_EQ(wasm, 1u) << "wasm32-emscripten is the only wasm row today";
     EXPECT_EQ(elf + macho + pe + wasm, known_targets().size());
+}
+
+// `<arch>-openkal` (design 2026-10-26 part 2, §8.5): an ok image, compiled for
+// no operating system, named after the convention, and neither freestanding
+// nor any system's.
+TEST(Triple, OpenkalIsAnImageForNoOperatingSystem) {
+    using namespace mcpp::toolchain::triple;
+    for (auto spelling : { "x86_64-openkal", "x86_64-unknown-openkal" }) {
+        auto t = parse(spelling);
+        ASSERT_TRUE(t.has_value()) << spelling;
+        EXPECT_EQ(t->str(), "x86_64-openkal");
+        EXPECT_TRUE(t->is_openkal());
+        EXPECT_FALSE(t->is_freestanding());
+        EXPECT_EQ(t->family(), "");
+        EXPECT_EQ(t->llvm_triple(), "x86_64-unknown-none-elf");
+        EXPECT_EQ(t->object_format(), ObjectFormat::Elf);
+    }
+    auto a = parse("aarch64-openkal");
+    ASSERT_TRUE(a.has_value());
+    EXPECT_EQ(a->llvm_triple(), "aarch64-unknown-none-elf");
+    const ArtifactNaming host{ "", "lib", ".a", ".so", false };
+    const auto n = artifact_naming(*a, host);
+    EXPECT_EQ(n.exeSuffix, ".oke");
+    EXPECT_EQ(n.sharedLibExt, ".okso");
+    EXPECT_EQ(n.staticLibExt, ".a");
+    const auto* row = find_known_target(*a);
+    ASSERT_NE(row, nullptr);
+    EXPECT_EQ(row->pin, "llvm@23.1.3");
+    EXPECT_EQ(platform_name(*a), "openkal");
 }

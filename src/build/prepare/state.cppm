@@ -776,6 +776,10 @@ struct PrepareState {
     std::map<ResolvedKey, ResolvedRecord> resolved;
     std::map<std::size_t, std::vector<std::pair<std::string, std::string>>>
         toolEnvByConsumer;
+    // The programs the graph built for this machine at the ROOT's request
+    // (`tools = [...]`), by program name. A runner's program and an ok image's
+    // `okld` are looked up here first.
+    std::map<std::string, std::filesystem::path> rootTools;
     std::function<void(mcpp::modgraph::PackageRoot&, const mcpp::manifest::Manifest&,
                         const mcpp::build::directives::Mark&)>
         foldDirectiveTailIntoPrivateBuild;

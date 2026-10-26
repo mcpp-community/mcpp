@@ -245,5 +245,6 @@ TEST(PlatformName, EveryKnownRowIsInTheVocabulary) {
     }
     EXPECT_TRUE(is_platform_name("emscripten"));
     EXPECT_FALSE(is_platform_name("web"));
-    EXPECT_EQ(platform_names_joined(), "linux | macos | windows | ios | android | emscripten");
+    EXPECT_TRUE(is_platform_name("openkal"));
+    EXPECT_EQ(platform_names_joined(), "linux | macos | windows | ios | android | emscripten | openkal");
 }

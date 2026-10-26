@@ -94,7 +94,7 @@ LLVM 词表里「非 MSVC 那套 ABI」的标签，继承自 MinGW，而 clang �
 
 | 目标 | 格式 |
 |---|---|
-| `x86_64-linux-gnu`、`aarch64-linux-android`、`riscv64-none-elf` | ELF |
+| `x86_64-linux-gnu`、`aarch64-linux-android`、`riscv64-none-elf`、`x86_64-openkal` | ELF |
 | `aarch64-macos`、`aarch64-ios` | Mach-O |
 | `x86_64-windows-gnu`、`x86_64-windows-msvc` | PE |
 | `wasm32-emscripten` | wasm |
@@ -489,6 +489,8 @@ docs/22。
 | `aarch64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
 | `x86_64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `x86_64-openkal` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `aarch64-openkal` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 
 `载荷` 这里有工具链 payload 产出它 · `图` 没有 payload，但依赖能供给
 system · `系统` 在机器上被找到，不是 mcpp 安装的 · `SDK` 平台自己的 ·
@@ -505,6 +507,7 @@ system · `系统` 在机器上被找到，不是 mcpp 安装的 · `SDK` 平台
 | `x86_64-windows-musl` | payload 只在 Windows 上；图则任意宿主 | 没有 gcc 能发出 PE + musl，且 LLVM 拼不出这个三元组 |
 | `aarch64-macos` | macOS | SDK 是那台机器自己的 |
 | `*-none-elf` | 每一台宿主 | clang 与 lld 按构造就是交叉编译器 |
+| `*-openkal` | 每一台宿主 | 同上；映像为“无操作系统”编译，经 `okrun` 在每个系统上运行（[24](24-openkal-cross.md)） |
 | `wasm32-emscripten`、`*-linux-android` | 每一台宿主 | SDK 自带 sysroot，且上游按宿主分别发布；一份归档服务每个 guest 架构 |
 
 **一个 `—` 讲的是 payload，不是可能性。** `host_can_serve` 回答的是

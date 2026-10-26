@@ -454,6 +454,7 @@ list` reports for this machine):
 | `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 23 — Cortex-M4/M7 soft float, M23, M33F/M55F ² | preview |
 | `aarch64-linux-gnu` | `llvm@23.1.3` | preview |
 | `riscv64-linux-musl` · `x86_64-macos` | — | planned |
+| `x86_64-openkal` · `aarch64-openkal` | llvm 23 — an ok image: one artifact per architecture, run by `okrun` on Linux, macOS and Windows; the C library and C++ run-time inside it are packages ([24](docs/24-openkal-cross.md)) | preview |
 | `wasm32-emscripten` | `emsdk@6.0.9` — Emscripten ships its own sysroot and its own libc++ module surface; `mcpp run` executes the module with the `node` the payload declares (`xim:node`), not one found on PATH | verified |
 | `x86_64-linux-android` | `android-ndk@30.0.16248370` — bionic from the NDK, one payload for both ABIs; ran on an API 24 x86_64 emulator image | verified |
 | `aarch64-linux-android` | the same payload and the same build; ran under qemu-user over the system image's own bionic, which the platform emulator cannot do from an x86_64 host | verified |

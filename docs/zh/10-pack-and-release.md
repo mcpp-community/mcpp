@@ -589,6 +589,23 @@ dylib 的消费者，其链接所带的 `@loader_path` rpath 本就会查找的�
 打包任何东西，与 PE 相同。`kind = "lib"` / `"shared"` 的 target 走库打包
 路线，不受影响。
 
+### ok 映像（`<arch>-openkal`）：映像本身，或携带它的程序
+
+ok 映像经 `okrun` 在其架构的每个系统上运行（见 [24](24-openkal-cross.md)）。mode
+的含义不变 —— 运行该包的机器必须提供什么：
+
+| Mode | 包内内容 | 机器需提供 |
+|---|---|---|
+| `system` | `bin/<name>.oke` | `okrun` 与它所需的每个映像 |
+| `vendored`（默认） | `bin/<name>.oke` 与它所需的 `.okso` 映像 | `okrun` |
+| `self-contained` | `bin/<name>`：本机的程序，以段（`.oke`、`__OKE,__image`）携带映像并经 libokrun 运行，旁边是所需的 `.okso` 映像 | 无 |
+| `static` | 拒绝 | — |
+
+`self-contained` 不重新编译映像：mcpp 生成入口与段，依赖与工程的 `openkal-tools`
+同源的 `openkal-run`，再按任何程序的方式打包该程序 —— Linux 上为静态（musl），
+macOS 与 Windows 上只引用系统自带的库。段中的字节即 `.oke` 的字节。其他系统的
+程序在该系统上打包。
+
 ### Android：应用目标文件与它的闭包在 `lib/` 下
 
 ```

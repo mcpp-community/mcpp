@@ -20,6 +20,7 @@ import mcpp.build.refusal;
 import mcpp.diag;
 import mcpp.freestanding.target;
 import mcpp.freestanding.linkline;
+import mcpp.okimage;
 import mcpp.manifest.types;
 import mcpp.manifest.flag_words;
 import mcpp.modgraph.scanner;
@@ -2461,6 +2462,42 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                 for (auto& r : f.ldStdlibCByRole) r.clear();
             }
         }
+    }
+
+    // ── An ok image (`<arch>-openkal`): the convention's flags, and the link
+    //    by `ld.lld` itself ──
+    //
+    // Applied by replacement, after every hosted decision, for the reason the
+    // freestanding block gives: an image has no loader path, no crt files and
+    // no system library, and what it holds above `kal_*` is the graph's,
+    // reached through the graph's own `-L`/`-l`. The compile keeps the hosted
+    // header model of a graph-supplied C library (`-nostdlibinc`, above); the
+    // C++ headers are withheld unless the graph supplies them too, because the
+    // payload's were configured for its own operating system.
+    if (const auto ot = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+        ot && ot->is_openkal()) {
+        std::string image;
+        for (auto const& w : mcpp::okimage::compile_flags(ot->arch)) image += " " + w;
+        if (!plan.targetSide.cxx.fromGraph()) image += " -nostdinc++";
+        // AN IMAGE WITH NO C LIBRARY IS A FREESTANDING C ENVIRONMENT, in the
+        // standard's sense: nothing defines `strlen`, so the compiler must not
+        // turn a loop into a call to it. Measured: `--release` of an image
+        // that defines only `memcpy` and `memset` was refused by `okld check`
+        // for importing `strlen`, which `-O2` had synthesised.
+        if (plan.targetSide.cAbi.absent()) image += " -ffreestanding";
+        f.cxx += image;
+        f.cc  += image;
+        f.as  += image;
+
+        f.ldDriver = mcpp::freestanding::resolve_lld(plan.toolchain.binaryPath);
+        f.ld  = mcpp::okimage::link_flags() + user_ldflags;
+        f.ldC = f.ld;
+        f.sysroot.clear();
+        f.bFlag.clear();
+        f.ldRuntimeFallback.clear();
+        f.linkage = "static";
+        for (auto& r : f.ldStdlibByRole)  r.clear();
+        for (auto& r : f.ldStdlibCByRole) r.clear();
     }
 
     // A LINKER STATED BY ROLE (mcpp#755, `tools = { ld = ... }`), AFTER EVERY

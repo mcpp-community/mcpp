@@ -566,6 +566,10 @@ struct Inputs {
     std::string targetOs;              // mcpp's own OS field, for the payload interface name
     std::string targetEnv;             // mcpp's own ENV field ("musl", "gnu", …)
     bool        freestandingTarget = false;
+    // An ok image (`<arch>-openkal`): its kernel interface is openkal's, held
+    // by the loader that runs it rather than by a package or a payload, and
+    // every layer above it is the graph's or absent.
+    bool        openkalTarget = false;
 
     // The compiler, which is always a payload and never a package (see
     // `layer_is_suppliable_by_package`). Present here so that the layering rule
@@ -717,7 +721,10 @@ inline TargetSide resolve(const Inputs& in) {
         ts.compilerRuntime = { Origin::Graph,
                                in.compilerRuntime->display_interface(),
                                in.compilerRuntime->id(), false };
-    else if (in.payloadCompilerRuntimeAbsent)
+    else if (in.payloadCompilerRuntimeAbsent || in.openkalTarget)
+        // An ok image's runtime routines are the image's own (a C++
+        // run-time package, or the program): the payload's are built for an
+        // operating system the image does not have.
         ts.compilerRuntime = { Origin::None, {}, {}, false };
     else if (!in.compilerFamily.empty())
         ts.compilerRuntime = { Origin::Payload, in.compilerFamily, {}, false };
@@ -726,6 +733,10 @@ inline TargetSide resolve(const Inputs& in) {
     if (in.kernelAbi)
         ts.kernelAbi = { Origin::Graph, in.kernelAbi->display_interface(),
                          in.kernelAbi->id(), false };
+    else if (in.openkalTarget)
+        // Fixed by the target: an ok image calls `kal_*` and nothing else,
+        // and the loader binds them to its implementation (SPEC 12.3).
+        ts.kernelAbi = { Origin::Payload, "openkal", "the loader (okrun)", false };
     else if (in.freestandingTarget)
         // Not a gap. A bare machine has no kernel, and saying so is the
         // information: the same target reads `openkal` when an implementation
@@ -746,7 +757,7 @@ inline TargetSide resolve(const Inputs& in) {
         ts.cAbi = { Origin::Xpkg,
                     in.sysrootLibc.empty() ? xpkg_interface(in.sysrootXpkg) : in.sysrootLibc,
                     in.sysrootXpkg, false };
-    else if (in.freestandingTarget)
+    else if (in.freestandingTarget || in.openkalTarget)
         ts.cAbi = { Origin::None, {}, {}, false };
     else
         ts.cAbi = { Origin::Payload, payload_libc_name(in.targetOs, in.targetEnv),
