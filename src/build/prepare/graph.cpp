@@ -757,7 +757,27 @@ struct WorklistItemCtx {
     std::filesystem::path gitMemberCloneRoot;
     std::filesystem::path dep_root;
     std::optional<mcpp::manifest::Manifest> dep_manifest;
+    // The request is by version for an identity the root declared otherwise.
+    bool rootHeld = false;
 };
+
+// The identity a root declaration already holds for a dependency's request
+// by version, under the request's namespace, or the default namespace and none
+// for a bare name; nothing when the root declares no such package, or the
+// request is the root's own.
+static std::optional<ResolvedKey>
+root_held_identity(PrepareState& state, const WorkItem& item) {
+    if (!item.spec.isVersion() || state.declaredByRoot(item.consumerDepIndex)) return std::nullopt;
+    const std::string shortName = item.spec.shortName.empty() ? item.name : item.spec.shortName;
+    std::vector<std::string> namespaces;
+    if (!item.spec.namespace_.empty()) namespaces.push_back(item.spec.namespace_);
+    else namespaces = { std::string(mcpp::pm::kDefaultNamespace), std::string{} };
+    for (auto const& ns : namespaces)
+        if (auto it = state.resolved.find(ResolvedKey{ ns, shortName });
+            it != state.resolved.end() && it->second.fromRoot && it->second.source != "version")
+            return it->first;
+    return std::nullopt;
+}
 
 static std::expected<void, std::string>
 step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
@@ -775,7 +795,22 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
             }};
         }
 
-        if (auto r = state.selectDependencyCandidate(spec, name); !r) {
+        // A VERSION THE ROOT HAS ALREADY ANSWERED FOR. A dependency's request
+        // by version for an identity the root declared by path or git is
+        // overridden by the root's declaration (row 4 below), whatever the
+        // index holds; it is not the index's to select or pin. Asked of the
+        // index first, a package the index does not carry yet -- the case a
+        // root pins a checkout for, ahead of a release -- refused the build
+        // with "no package found for exact selector" (measured: openkal-musl's
+        // `openkal-ld = "0.1.0"` under `cfg(os = "openkal")` against a root's
+        // git checkout of it). The root's checkout still answers the
+        // requirement, at the conflict below.
+        if (auto held = root_held_identity(state, item)) {
+            spec.namespace_ = held->ns;
+            spec.shortName = held->shortName;
+            spec.candidates = {{ .namespace_ = held->ns, .shortName = held->shortName }};
+            ctx.rootHeld = true;
+        } else if (auto r = state.selectDependencyCandidate(spec, name); !r) {
             return std::unexpected(r.error());
         }
         // A root's declaration (a selected member's included) states the
@@ -834,9 +869,10 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
                 spec.version = "=" + pin->second;
         }
         // Pin SemVer constraint before dedup/fetch.
-        if (auto r = state.resolveSemver(spec, name); !r) {
-            return std::unexpected(r.error());
-        }
+        if (!ctx.rootHeld)
+            if (auto r = state.resolveSemver(spec, name); !r) {
+                return std::unexpected(r.error());
+            }
 
         auto& key = ctx.key;
         key = ResolvedKey{

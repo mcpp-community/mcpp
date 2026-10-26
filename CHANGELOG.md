@@ -53,6 +53,13 @@
   edges away moved to its tip on every build and stopped an `--offline` build
   ("mcpp.lock records no commit for branch"). It is now recorded under the
   package's qualified name and read back as its anchor.
+- **A root's checkout answers a dependency's request by version that no index
+  carries.** The root's path or git declaration of a package overrides a
+  dependency's request for it by version, but the request was first given to
+  the index to select, and a package the index did not carry yet (a root
+  pinning a checkout ahead of a release) refused the build with "no package
+  found for exact selector". The root's checkout now answers it; a
+  requirement the checkout does not satisfy is still refused.
 - **A dependency written `workspace = true` under a target selector or behind
   a feature receives the workspace's source.** Only `[dependencies]`,
   `[dev-dependencies]` and `[build-dependencies]` were merged, so a git or path
