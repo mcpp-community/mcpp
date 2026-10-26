@@ -249,6 +249,23 @@ struct PackageAxes {
     // it) — which is exactly why it is easy to leave out and find later as a
     // wrong cache hit. Cheap to close now.
     std::vector<std::string> moduleExtensions;
+    // How a BMI this package writes spells the paths of the modules it
+    // imports — set by the caller only for a package that provides a module
+    // under a compiler whose BMIs record those paths (GCC), empty otherwise.
+    //
+    // GCC writes into a BMI the path of each module it imports as the
+    // compile's mapper spelt it, and an importer looks for an INDIRECT import
+    // at that path below its own repository. Since 2026.10.26.2 a module map
+    // names the BMI directory as its repository (`$root`, design 2026-10-26
+    // part 2 §10.2) and spells every path below it; a BMI written before
+    // spelt `gcm.cache/<pkg>/<m>.gcm`, which an importer under the new map
+    // reads as `gcm.cache/gcm.cache/...` and cannot find. Measured: the
+    // first build of any project whose module dependency was cached by
+    // 2026.10.26.1. The compiler, the flags and the sources of such an entry
+    // are unchanged, so no other axis moves; this one does, and only for the
+    // packages whose BMIs carry the spelling. A package of object files keeps
+    // its key, and `kCacheEpoch` stays where it is.
+    std::string bmiPathConvention;
     // F — keys of direct dependencies, sorted
     std::vector<std::string> upstreamKeys;
 };
@@ -363,6 +380,8 @@ nlohmann::json to_json(const BuildAxes& b, const PackageAxes& p) {
         {"sources", p.sources},
         {"module_extensions", p.moduleExtensions},
     };
+    if (!p.bmiPathConvention.empty())
+        j["language"]["bmi_path_convention"] = p.bmiPathConvention;
     j["upstream"] = p.upstreamKeys;
     return j;
 }
@@ -412,6 +431,8 @@ std::string key_hex(const BuildAxes& b, const PackageAxes& p) {
     put_list(s, "srcglobs",  p.sourceGlobs);
     put_list(s, "sources",   p.sources);
     put_list(s, "modexts",   p.moduleExtensions);
+    // Only when set, so the key of a package without one is unchanged.
+    if (!p.bmiPathConvention.empty()) put(s, "bmipath", p.bmiPathConvention);
     // F
     put_list(s, "upstream",  p.upstreamKeys);
     return mcpp::toolchain::hash_string(s);

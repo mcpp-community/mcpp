@@ -1421,6 +1421,18 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
 
     // All compile/link flags are computed once via flags.cppm.
     auto flags = compute_flags(plan);
+    // A unit's own flags: its package's, then its package's `trim_paths` map
+    // (mcpp#844), so that nothing outside the package's closure reaches it.
+    auto unit_trim = [&](const CompileUnit& cu) -> std::string_view {
+        auto it = flags.trimByPackage.find(cu.packageName);
+        return it == flags.trimByPackage.end() ? std::string_view{} : std::string_view(it->second);
+    };
+    auto unit_cxx_flags = [&](const CompileUnit& cu) {
+        return join_compile_flags(cu.packageCxxflags) + std::string(unit_trim(cu));
+    };
+    auto unit_c_flags = [&](const CompileUnit& cu) {
+        return join_compile_flags(cu.packageCflags) + std::string(unit_trim(cu));
+    };
 
     // Everything that has to sit beside the artifact: the runtime placement
     // resolver's one answer over the declared deploys, the runtime search
@@ -2849,7 +2861,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                                    : escape_ninja_path(cu.object)));
             if (auto includes = local_include_flags(cu, dial); !includes.empty())
                 append(std::format("  local_includes ={}\n", includes));
-            if (auto flags = join_compile_flags(cu.packageCxxflags); !flags.empty())
+            if (auto flags = unit_cxx_flags(cu); !flags.empty())
                 append(std::format("  unit_cxxflags ={}\n", flags));
             // The scan has the same suffix-recognition problem as the compile:
             // a driver that does not know `.ixx` hands it to the linker and
@@ -2995,7 +3007,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                     e += std::format("  sched_cap = {}\n", plan.scheduleCompilerCap);
                     if (auto inc = local_include_flags(cu, dial); !inc.empty())
                         e += "  local_includes =" + inc + "\n";
-                    if (auto fl = join_compile_flags(cu.packageCxxflags); !fl.empty())
+                    if (auto fl = unit_cxx_flags(cu); !fl.empty())
                         e += "  unit_cxxflags =" + fl + "\n";
                     append(std::move(e));
                     // The join. THE SOURCE IS AN INPUT, and the BMI is only an
@@ -3060,7 +3072,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                         e += "\n  dyndep = " + it->second + "\n";
                         if (auto inc = local_include_flags(cu, dial); !inc.empty())
                             e += "  local_includes =" + inc + "\n";
-                        if (auto fl = join_compile_flags(cu.packageCxxflags); !fl.empty())
+                        if (auto fl = unit_cxx_flags(cu); !fl.empty())
                             e += "  unit_cxxflags =" + fl + "\n";
                         append(std::move(e));
                     };
@@ -3100,10 +3112,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                 if (auto flags = join_compile_flags(unit_asm_flags(cu)); !flags.empty())
                     out_line += "  unit_asmflags =" + flags + "\n";
             } else if (is_c_source(cu)) {
-                if (auto flags = join_compile_flags(cu.packageCflags); !flags.empty())
+                if (auto flags = unit_c_flags(cu); !flags.empty())
                     out_line += "  unit_cflags =" + flags + "\n";
             } else {
-                if (auto flags = join_compile_flags(cu.packageCxxflags); !flags.empty())
+                if (auto flags = unit_cxx_flags(cu); !flags.empty())
                     out_line += "  unit_cxxflags =" + flags + "\n";
             }
             append(std::move(out_line));
@@ -3153,10 +3165,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                 if (auto flags = join_compile_flags(unit_asm_flags(cu)); !flags.empty())
                     out_line += "  unit_asmflags =" + flags + "\n";
             } else if (is_c_source(cu)) {
-                if (auto flags = join_compile_flags(cu.packageCflags); !flags.empty())
+                if (auto flags = unit_c_flags(cu); !flags.empty())
                     out_line += "  unit_cflags =" + flags + "\n";
             } else {
-                if (auto flags = join_compile_flags(cu.packageCxxflags); !flags.empty())
+                if (auto flags = unit_cxx_flags(cu); !flags.empty())
                     out_line += "  unit_cxxflags =" + flags + "\n";
             }
             // Clang needs $bmi_out to emit -fmodule-output=$bmi_out

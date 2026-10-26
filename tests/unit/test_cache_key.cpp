@@ -723,3 +723,21 @@ TEST(CacheKey, TheMsvcToolsetOfTheClangRowChangesTheKey) {
     EXPECT_NE(ck::key_hex(a, pkg()),
               ck::key_hex(ck::build_axes(tc3, m, "-std=c++23", {}, ""), pkg()));
 }
+
+// THE BMI PATH CONVENTION MOVES THE KEY OF A PACKAGE THAT HAS ONE, AND NO
+// OTHER. A GCC BMI records the paths of the modules it imports as its module
+// map spelt them; the map's spelling changed in 2026.10.26.2 (`$root`), and an
+// entry written under the old one cannot be imported under the new. The axis
+// is set only for a package that provides a module, so a package of object
+// files keeps the key it had — the serialization of an unset axis is the
+// serialization from before the axis existed.
+TEST(CacheKey, TheBmiPathConventionMovesOnlyThePackagesThatHaveOne) {
+    auto withModules = pkg();
+    withModules.bmiPathConvention = "$root=bmi-dir";
+    EXPECT_NE(ck::key_hex(axes(), pkg()), ck::key_hex(axes(), withModules));
+
+    const auto j = ck::to_json(axes(), withModules);
+    ASSERT_TRUE(j["language"].contains("bmi_path_convention"));
+    EXPECT_EQ(j["language"]["bmi_path_convention"], "$root=bmi-dir");
+    EXPECT_FALSE(ck::to_json(axes(), pkg())["language"].contains("bmi_path_convention"));
+}

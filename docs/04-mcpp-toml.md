@@ -1505,7 +1505,7 @@ debug    = false          # -g
 lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gcc builds ship without the LTO plugin)
 strip    = true           # -s at link time
 ndebug     = true         # -DNDEBUG for every unit of the graph (default: on for release/dist)
-trim_paths = true         # -ffile-prefix-map for every unit (default: on for release/dist)
+trim_paths = true         # -ffile-prefix-map per unit (default: on for release/dist)
 # passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
@@ -1534,7 +1534,10 @@ ldflags  = []
   `<name>@<version>/…` (the root package's too, so a report reads
   `app@1.2.0/src/main.cpp`), the store, home, build directory, toolchain and sysroot to
   `/mcpp/store`, `/mcpp/home`, `/mcpp/build`, `/mcpp/toolchain` and `/mcpp/sysroot`. Two
-  checkouts of one tree then embed identical paths. It applies to what `build`, `run`
+  checkouts of one tree then embed identical paths. A unit's map holds the fixed roots
+  and the roots of its own package's dependency closure, so a dependency's command line
+  is the same whichever workspace members a build selects (2026.10.26.2+). It applies to
+  what `build`, `run`
   and `pack` produce, not to `mcpp test`: a test binary runs where it was built and
   commonly finds its fixtures through `__FILE__`. A build with debug information
   also writes `source-map.gdbinit` and `source-map.lldbinit` beside its outputs, which

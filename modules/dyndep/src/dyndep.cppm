@@ -63,7 +63,8 @@ struct DyndepOptions {
 // The BMI path `name` takes under `opts`: the module map's, or the flat one.
 std::string bmi_path_for(std::string_view name, const DyndepOptions& opts);
 
-// Parse a module map: `<module name> <BMI path>` per line.
+// Parse a module map: `<module name> <BMI path>` per line. A `$root <dir>`
+// line (GCC's repository) puts every relative path after it below `<dir>`.
 std::map<std::string, std::string, std::less<>> parse_module_map(std::string_view body);
 
 // Parse a single .ddi JSON body to a UnitInfo. Returns unexpected on JSON error.
@@ -206,6 +207,7 @@ std::string bmi_path_for(std::string_view name, const DyndepOptions& opts) {
 
 std::map<std::string, std::string, std::less<>> parse_module_map(std::string_view body) {
     std::map<std::string, std::string, std::less<>> out;
+    std::string_view root;
     while (!body.empty()) {
         auto nl = body.find('\n');
         auto line = body.substr(0, nl);
@@ -213,7 +215,13 @@ std::map<std::string, std::string, std::less<>> parse_module_map(std::string_vie
         while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.remove_suffix(1);
         auto sp = line.find(' ');
         if (sp == std::string_view::npos || sp == 0) continue;
-        out.emplace(std::string(line.substr(0, sp)), std::string(line.substr(sp + 1)));
+        const auto name = line.substr(0, sp);
+        const auto path = line.substr(sp + 1);
+        if (name == "$root") { root = path; continue; }
+        if (root.empty() || path.starts_with('/') || std::filesystem::path(path).is_absolute())
+            out.emplace(std::string(name), std::string(path));
+        else
+            out.emplace(std::string(name), std::string(root) + "/" + std::string(path));
     }
     return out;
 }

@@ -14,6 +14,27 @@
   `app.wasm`, the edge's implicit output was missing, and `mcpp pack` of a
   `wasm32-emscripten` program (mcpp-plugins' `dist-web`) found no stem family.
   A WebAssembly link is in place, as a PE link is.
+- **A module's indirect import is found whatever map its importer has (GCC).**
+  A unit that reaches another package's module is compiled with a module map,
+  and a unit that imports only the root's modules with GCC's own mapper. A BMI
+  records the paths of its imports as its compile's mapper spelt them, and the
+  map named no repository, so a unit with a map that imported a root module
+  compiled without one looked for that module's import beside the build
+  directory (`failed to read compiled module`, `Bad import dependency`). The
+  map now names the BMI directory as its repository (`$root gcm.cache`) and
+  every path below it, as GCC's own mapper does; the dyndep step reads the
+  same form. The same cause failed `import std.compat` in a unit with a map, in
+  any project with a dependency. A dependency's BMI that an earlier mcpp put in
+  the global build cache spells its imports the earlier way, so the cache key
+  of a package that provides a module under GCC carries the spelling: such a
+  package is compiled once more after the upgrade, and a package of object
+  files keeps its entry.
+- **Switching workspace members under `trim_paths` no longer recompiles their
+  shared dependencies** (#844). The prefix map of the whole plan was part of
+  the flags every unit shares, so a dependency's command line named the roots
+  of the members being built, and `--release -p cli` then `-p gui` recompiled
+  the common packages each time. A unit's map is now the fixed roots and the
+  roots of its own package's dependency closure.
 
 ## [2026.10.26.1] - 2026-10-26
 

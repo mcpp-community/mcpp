@@ -445,6 +445,32 @@ static std::expected<void, std::string> step13_make_plan(PrepareState& state, Bu
                                              state.stdBmiPath, state.stdObjectPath, state.storeRoots);
     if (!planResult) return std::unexpected(planResult.error());
     ctx.plan        = std::move(*planResult);
+    // `trim_paths` per package (mcpp#844, design 2026-10-26 part 2 §10.4): a
+    // unit's map is the fixed roots and the roots of its package's dependency
+    // closure, which is every prefix its outputs can hold and does not depend
+    // on the members this plan builds.
+    if (!ctx.plan.trimMap.empty()) {
+        const auto n = state.packages.size();
+        std::vector<std::vector<std::size_t>> deps(n);
+        for (auto const& e : state.dependencyEdges)
+            if (e.consumerPackageIndex < n && e.dependencyPackageIndex < n)
+                deps[e.consumerPackageIndex].push_back(e.dependencyPackageIndex);
+        for (std::size_t i = 0; i < n; ++i) {
+            std::vector<char> closure(n, 0);
+            std::vector<std::size_t> todo{i};
+            while (!todo.empty()) {
+                const auto at = todo.back();
+                todo.pop_back();
+                if (closure[at]) continue;
+                closure[at] = 1;
+                for (auto d : deps[at]) todo.push_back(d);
+            }
+            ctx.plan.packageTrimMaps.try_emplace(
+                mcpp::build::qualified_package_name(state.packages[i].manifest),
+                mcpp::build::trim_map(state.packages, *state.tc, ctx.outputDir,
+                                      state.storeRoots, closure));
+        }
+    }
     note_root_link_words_withheld(state, ctx);
     if (auto r = scope_lto(state, ctx); !r) return std::unexpected(r.error());
     // The request the graph is planned for (§3, §15): the plan's members and
@@ -1601,6 +1627,7 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
 
         // Sources belonging to each package, package-root-relative and sorted.
         std::vector<std::vector<std::string>> pkgSources(state.packages.size());
+        std::vector<char> pkgProvidesModule(state.packages.size(), 0);
         for (auto& cu : ctx.plan.compileUnits) {
             // Longest matching root wins. Package roots can nest — a workspace
             // member lives under the workspace root — and taking the first match
@@ -1623,7 +1650,10 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                     best = p; bestLen = len; bestRel = std::move(rels);
                 }
             }
-            if (best != state.packages.size()) pkgSources[best].push_back(std::move(bestRel));
+            if (best != state.packages.size()) {
+                if (!cu.providesModule.empty()) pkgProvidesModule[best] = 1;
+                pkgSources[best].push_back(std::move(bestRel));
+            }
         }
         for (auto& v : pkgSources) std::ranges::sort(v);
 
@@ -1690,6 +1720,11 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                                     state.storeRoots.empty() ? std::filesystem::path{}
                                                        : state.storeRoots.front());
             pa.sources = pkgSources[idx];
+            // A GCC BMI records its imports' paths as the module map spells
+            // them, and the map names the BMI directory as its repository
+            // (`plan.cppm`, the module scopes). See `bmiPathConvention`.
+            if (pkgProvidesModule[idx] && state.tc->compiler == mcpp::toolchain::CompilerId::GCC)
+                pa.bmiPathConvention = "$root=bmi-dir";
             // What `scope_lto` appended to this package's units is part of
             // their command, so it is part of the entry's identity.
             if (state.ltoWithheld.contains(

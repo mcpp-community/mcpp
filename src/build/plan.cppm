@@ -404,6 +404,15 @@ struct BuildPlan {
     // a driver that tries the last-given mapping first takes the longest
     // match. Empty unless the profile trims.
     std::vector<std::pair<std::filesystem::path, std::string>> trimMap;
+    // THE SAME MAP, PER PACKAGE (mcpp#844, design 2026-10-26 part 2 §10.4),
+    // by `CompileUnit::packageName`: the fixed roots and the roots of the
+    // package and its dependency closure -- every prefix the package's units
+    // can write -- in the order of `trimMap`. A unit's command carries its
+    // package's map and no other, so a package's command line does not
+    // depend on which members the plan builds. Filled by prepare, which owns
+    // the dependency edges.
+    std::map<std::string, std::vector<std::pair<std::filesystem::path, std::string>>,
+             std::less<>> packageTrimMaps;
     mcpp::toolchain::Toolchain      toolchain;
     mcpp::toolchain::Fingerprint    fingerprint;
     // Where the target's platform interface, C library and C++ runtime come
@@ -809,6 +818,16 @@ bool link_unit_holds_cxx(const BuildPlan& plan, const LinkUnit& lu);
 // not a guess about it. The C++ runtime contract of programs and tests reads
 // this (#646 F3a).
 bool image_loads_cxx_shared_library(const BuildPlan& plan, LinkUnit::Kind kind);
+
+// The `trim_paths` map (`BuildPlan::trimMap`) of the packages `keep` marks,
+// `keep[i]` for `packages[i]`; every package when `keep` is empty. The fixed
+// roots are always in it.
+std::vector<std::pair<std::filesystem::path, std::string>>
+trim_map(const std::vector<mcpp::modgraph::PackageRoot>& packages,
+         const mcpp::toolchain::Toolchain& tc,
+         const std::filesystem::path& outputDir,
+         const std::vector<std::filesystem::path>& storeRoots,
+         const std::vector<char>& keep = {});
 
 } // namespace mcpp::build
 
@@ -1567,7 +1586,8 @@ std::vector<std::pair<std::filesystem::path, std::string>>
 trim_map(const std::vector<mcpp::modgraph::PackageRoot>& packages,
          const mcpp::toolchain::Toolchain& tc,
          const std::filesystem::path& outputDir,
-         const std::vector<std::filesystem::path>& storeRoots) {
+         const std::vector<std::filesystem::path>& storeRoots,
+         const std::vector<char>& keep) {
     std::vector<std::pair<std::filesystem::path, std::string>> out;
     auto add = [&](std::filesystem::path from, std::string to) {
         if (from.empty() || !from.is_absolute()) return;
@@ -1583,11 +1603,14 @@ trim_map(const std::vector<mcpp::modgraph::PackageRoot>& packages,
                              : std::filesystem::path(tc.localRoot), "/mcpp/toolchain");
     if (tc.base.stated()) add(tc.base.root, "/mcpp/sysroot");
     add(outputDir, "/mcpp/build");
-    for (auto const& p : packages)
+    for (std::size_t i = 0; i < packages.size(); ++i) {
+        auto const& p = packages[i];
+        if (!keep.empty() && (i >= keep.size() || !keep[i])) continue;
         if (!p.manifest.package.name.empty())
             add(p.root, std::format("{}@{}", p.manifest.package.name,
                                     p.manifest.package.version.empty() ? std::string("0")
                                                                        : p.manifest.package.version));
+    }
     std::ranges::stable_sort(out, {}, [](auto const& e) { return e.first.native().size(); });
     return out;
 }
@@ -3553,8 +3576,20 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 for (auto const* std_name : {"std", "std.compat"})
                     entries.emplace(std_name, std::string(traits.bmiDir) + "/" + basename(std_name));
 
+            // GCC's map names the BMI directory as its repository (`$root`)
+            // and every path below it, as GCC's own mapper does for a unit
+            // given no map. A BMI records the paths of the modules it imports
+            // as its compile's mapper spelt them, and an importer finds an
+            // INDIRECT import at that recorded path below its own repository:
+            // a root unit compiled without a map, imported by one compiled with
+            // a repository other than the BMI directory, would send that
+            // importer to `<name>.gcm` beside the build directory.
             ModuleScope scope;
-            for (auto const& [name, path] : entries) scope.content += name + " " + path + "\n";
+            const std::string root = std::string(traits.bmiDir) + "/";
+            if (gcc) scope.content = "$root " + std::string(traits.bmiDir) + "\n";
+            for (auto const& [name, path] : entries)
+                scope.content += name + " "
+                    + (gcc && path.starts_with(root) ? path.substr(root.size()) : path) + "\n";
             if (!gcc && importsQualified) {
                 // `-fmodule-file=<name>=<path>` (clang) or `/reference
                 // <name>=<path>` (MSVC) for each module the unit imports that

@@ -8,6 +8,7 @@ import mcpp.build.ninja;
 import mcpp.build.plan;
 import mcpp.libs.json;
 import mcpp.manifest;
+import mcpp.modgraph.scanner;   // PackageRoot, for trim_map
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.model;
 import mcpp.toolchain.triple;
@@ -2970,4 +2971,70 @@ TEST(NinjaBackend, PeExportsPatternsAndAConsumerReachTheDefEdge) {
     EXPECT_NE(emit_ninja_string(plan).find("--required"), std::string::npos);
     std::error_code ec;
     std::filesystem::remove_all(plan.outputDir, ec);
+}
+
+// `trim_paths` PER PACKAGE (mcpp#844). The map of the whole plan sat in the
+// flags every unit shares, so a dependency's command line named the roots of
+// whichever members the plan built, and switching members recompiled it. A
+// unit now carries its own package's map, and the shared flags carry none.
+TEST(NinjaBackend, ATrimMapIsTheUnitsPackagesAndNoOther) {
+    auto plan = minimal_plan();
+    plan.manifest.buildConfig.trimPaths = true;
+    const std::filesystem::path build = "/w/target/x";
+    const std::filesystem::path core  = "/w/core";
+    const std::filesystem::path app   = "/w/app";
+    plan.trimMap = {{core, "core@0.1.0"}, {app, "app@0.1.0"}, {build, "/mcpp/build"}};
+    plan.packageTrimMaps["core"] = {{core, "core@0.1.0"}, {build, "/mcpp/build"}};
+    plan.packageTrimMaps["app"]  = {{core, "core@0.1.0"}, {app, "app@0.1.0"}, {build, "/mcpp/build"}};
+    plan.compileUnits.push_back({.source = "/w/core/src/core.cpp", .kind = mcpp::SourceKind::Cxx,
+                                 .object = "obj/core.o", .packageName = "core"});
+    plan.compileUnits.push_back({.source = "/w/app/src/main.cpp", .kind = mcpp::SourceKind::Cxx,
+                                 .object = "obj/main.o", .packageName = "app"});
+
+    const auto flags = compute_flags(plan);
+    EXPECT_EQ(flags.cxx.find("file-prefix-map"), std::string::npos) << flags.cxx;
+    EXPECT_EQ(flags.cc.find("file-prefix-map"), std::string::npos) << flags.cc;
+
+    const auto ninja = emit_ninja_string(plan);
+    auto edge = [&](std::string_view object) {
+        const auto at = ninja.find(std::format("build {} :", object));
+        EXPECT_NE(at, std::string::npos) << ninja;
+        return ninja.substr(at, ninja.find("\nbuild ", at + 1) - at);
+    };
+    const auto coreEdge = edge("obj/core.o");
+    EXPECT_NE(coreEdge.find("-ffile-prefix-map=/w/core=core@0.1.0"), std::string::npos) << coreEdge;
+    EXPECT_NE(coreEdge.find("-ffile-prefix-map=/w/target/x=/mcpp/build"), std::string::npos) << coreEdge;
+    EXPECT_EQ(coreEdge.find("/w/app"), std::string::npos) << "a consumer's root reached its dependency: " << coreEdge;
+    const auto appEdge = edge("obj/main.o");
+    EXPECT_NE(appEdge.find("-ffile-prefix-map=/w/app=app@0.1.0"), std::string::npos) << appEdge;
+    EXPECT_NE(appEdge.find("-ffile-prefix-map=/w/core=core@0.1.0"), std::string::npos) << appEdge;
+}
+
+// The map of a package is the fixed roots and its closure's roots, in the
+// order of the whole plan's map: shortest prefix first, so that a driver
+// trying the last mapping first takes the longest match.
+TEST(NinjaBackend, ATrimMapKeepsTheFixedRootsAndTheMarkedPackages) {
+    mcpp::toolchain::Toolchain tc;
+    tc.binaryPath = "/opt/tc/bin/g++";
+    std::vector<mcpp::modgraph::PackageRoot> packages(3);
+    packages[0].root = "/w/app";  packages[0].manifest.package.name = "app";  packages[0].manifest.package.version = "1.0.0";
+    packages[1].root = "/w/core"; packages[1].manifest.package.name = "core"; packages[1].manifest.package.version = "0.1.0";
+    packages[2].root = "/w/gui";  packages[2].manifest.package.name = "gui";  packages[2].manifest.package.version = "0.2.0";
+
+    const auto all = trim_map(packages, tc, "/w/target/build-dir", {});
+    const auto core = trim_map(packages, tc, "/w/target/build-dir", {}, {0, 1, 0});
+    auto names = [](auto const& m) {
+        std::vector<std::string> out;
+        for (auto const& [from, to] : m) out.push_back(to);
+        return out;
+    };
+    const auto coreNames = names(core);
+    EXPECT_NE(std::ranges::find(coreNames, "core@0.1.0"), coreNames.end());
+    EXPECT_NE(std::ranges::find(coreNames, "/mcpp/toolchain"), coreNames.end());
+    EXPECT_NE(std::ranges::find(coreNames, "/mcpp/build"), coreNames.end());
+    EXPECT_EQ(std::ranges::find(coreNames, "app@1.0.0"), coreNames.end());
+    EXPECT_EQ(std::ranges::find(coreNames, "gui@0.2.0"), coreNames.end());
+    EXPECT_EQ(names(all).size(), coreNames.size() + 2);
+    for (std::size_t i = 1; i < core.size(); ++i)
+        EXPECT_LE(core[i - 1].first.native().size(), core[i].first.native().size());
 }

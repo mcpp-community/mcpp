@@ -1400,7 +1400,7 @@ debug    = false          # -g
 lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gcc builds ship without the LTO plugin)
 strip    = true           # -s at link time
 ndebug     = true         # 整个图的每个单元 -DNDEBUG(release/dist 默认开)
-trim_paths = true         # 整个图的每个单元 -ffile-prefix-map(release/dist 默认开)
+trim_paths = true         # 按单元的 -ffile-prefix-map(release/dist 默认开)
 # passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
@@ -1429,7 +1429,8 @@ ldflags  = []
   映射为它所代表的东西:每个包的源码映射为 `<name>@<version>/…`(根包同样如此,报告读作
   `app@1.2.0/src/main.cpp`),存储、home、构建目录、工具链与 sysroot 分别映射为 `/mcpp/store`、
   `/mcpp/home`、`/mcpp/build`、`/mcpp/toolchain` 与 `/mcpp/sysroot`。同一棵树的两个检出因此嵌入
-  相同的路径。它作用于 `build`、`run` 与 `pack` 的产物,不作用于 `mcpp test`:测试二进制在构建处运行,
+  相同的路径。一个单元的映射只含固定根与它所属包的依赖闭包中各包的根,所以无论构建选择哪些工作空间成员,
+  依赖的命令行都相同(2026.10.26.2+)。它作用于 `build`、`run` 与 `pack` 的产物,不作用于 `mcpp test`:测试二进制在构建处运行,
   且常借 `__FILE__` 找到它的夹具。带调试信息的构建还在输出旁写出 `source-map.gdbinit` 与 `source-map.lldbinit`,
   供调试器把路径映射回来。cl.exe 没有文档化的等价开关,构建会报告一次。在 profile 下写
   `ndebug = false` 或 `trim_paths = false` 可保留以前的产物;升级后第一次发布档构建会提示一次。

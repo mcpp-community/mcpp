@@ -33,6 +33,10 @@
 #      shared member changes exactly that define (docs/06; e2e 851 C).
 #   E. A dependency's module served from the global cache is staged below its
 #      package's directory, and the program that imports it runs.
+#   F. B under `--release`, where `trim_paths` is on: a unit's prefix map is
+#      its package's closure, so no selection recompiles `core` (mcpp#844;
+#      2026.10.26.1 recompiled it on every switch between `-p app` and
+#      `-p tool`).
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/_host_path.sh"
@@ -136,6 +140,20 @@ for sel in "-p core" "-p app" "-p tool" "-p tool2" "-p dso" "-p app" "-p tool2" 
     [ "$n" = 0 ] || { tail -n +"$(( before + 1 ))" "$log"; fail "B: build $sel compiled $n units after --workspace" b.log; }
 done
 echo "ok: B, no selection recompiles what another selection compiled"
+
+# ── F ──────────────────────────────────────────────────────────────────────
+"$MCPP" build --workspace --release > f.log 2>&1 || fail "F: the release workspace did not build" f.log
+rlog=$(ls -t $(find target -name .ninja_log -not -path '*/.build-mcpp/*') | head -1)
+[ -n "$rlog" ] && [ "$rlog" != "$log" ] || fail "F: no release build directory" f.log
+grep -rq "file-prefix-map" "$(dirname "$rlog")/build.ninja" \
+    || fail "F: the release build trims no path, so this criterion measured nothing" f.log
+for sel in "-p app" "-p tool" "-p app" "-p core" "-p tool2" "-p app" "--workspace"; do
+    before=$(wc -l < "$rlog")
+    "$MCPP" build --release $sel > f.log 2>&1 || fail "F: build --release $sel failed" f.log
+    n=$(compiles_after "$rlog" "$before")
+    [ "$n" = 0 ] || { tail -n +"$(( before + 1 ))" "$rlog"; fail "F: build --release $sel compiled $n units after --workspace" f.log; }
+done
+echo "ok: F, under trim_paths no selection recompiles what another selection compiled"
 
 # ── C ──────────────────────────────────────────────────────────────────────
 # compare <db-a> <db-b> <member> [<allowed token substring>]: every source of

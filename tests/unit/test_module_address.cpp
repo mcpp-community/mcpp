@@ -199,9 +199,12 @@ TEST(ModuleAddress, MemberBmisAreQualifiedAndTheMapIsTheUnitsReach) {
     ASSERT_TRUE(gcc) << err;
     auto const& iface = gcc->core.at("core.cppm");
     EXPECT_EQ(iface.bmiFile, "core/corelib.gcm");
-    EXPECT_NE(iface.mapContent.find("corelib gcm.cache/core/corelib.gcm\n"), std::string::npos);
-    EXPECT_NE(iface.mapContent.find("m gcm.cache/core/m.gcm\n"), std::string::npos);
-    EXPECT_NE(iface.mapContent.find("std gcm.cache/std.gcm\n"), std::string::npos);
+    // GCC's map is rooted at the BMI directory, as its default mapper is, so
+    // a BMI records its imports at the same paths whichever mapper made it.
+    EXPECT_TRUE(iface.mapContent.starts_with("$root gcm.cache\n")) << iface.mapContent;
+    EXPECT_NE(iface.mapContent.find("corelib core/corelib.gcm\n"), std::string::npos);
+    EXPECT_NE(iface.mapContent.find("m core/m.gcm\n"), std::string::npos);
+    EXPECT_NE(iface.mapContent.find("std std.gcm\n"), std::string::npos);
     EXPECT_EQ(iface.mapContent.find("tool"), std::string::npos)
         << "the map names a module the unit does not reach:\n" << iface.mapContent;
     ASSERT_FALSE(iface.flags.empty());

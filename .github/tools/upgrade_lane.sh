@@ -131,6 +131,31 @@ assert installed.get("revision", 0) == 0, installed
 PY
 fi
 [ "$VARIANT" = orphan ] && { run old-tc-gcc "$W" "$OLD" toolchain install gcc@16.1.0 || fail "the previous release cannot install gcc"; }
+# modules_project <dir>: `openkal.timeout` imports `openkal.datagram`, an
+# INDIRECT import of the program's unit, found at the path its BMI records.
+modules_project() {
+  mkdir -p "$W/$1/src"
+  cat > "$W/$1/mcpp.toml" <<'TOML'
+[package]
+name = "kp"
+version = "0.1.0"
+
+[dependencies]
+openkal = "0.16.0"
+
+[target.linux.dependencies]
+openkal-linux = "0.17.0"
+
+[toolchain]
+default = "gcc@16.1.0"
+TOML
+  printf 'import openkal.timeout;\nint main() { return 0; }\n' > "$W/$1/src/main.cpp"
+}
+if [ "$VARIANT" = modules ]; then
+  run old-tc-gcc "$W" "$OLD" toolchain install gcc@16.1.0 || fail "the previous release cannot install gcc"
+  modules_project m-old
+  run old-modules "$W/m-old" "$OLD" build || fail "the previous release cannot build the module project"
+fi
 new_project p-old "$OLD"
 run old-run "$W/p-old" "$OLD" run || fail "the previous release cannot run a new project"
 
@@ -191,6 +216,18 @@ if [ "$VARIANT" = snapshot ]; then
   run new-toolchain-list "$W" "$NEW" toolchain list || fail "toolchain list failed"
   grep -q "packaging revision .* available" "$W/new-toolchain-list.log" \
     || fail "toolchain list does not offer the newer packaging"
+fi
+if [ "$VARIANT" = modules ]; then
+  # A BMI of the previous spelling is not read: the dependency is rebuilt
+  # once (its cache key carries the spelling), then served from the cache.
+  modules_project m-new1
+  run new-modules1 "$W/m-new1" "$NEW" build -v || fail "the module project does not build over the previous release's cache"
+  grep -q "STAGE gcm.cache/mcpplibs.openkal/" "$W/new-modules1.log" \
+    && fail "a dependency BMI of the previous spelling was taken from the cache"
+  modules_project m-new2
+  run new-modules2 "$W/m-new2" "$NEW" build -v || fail "the second module project failed"
+  grep -q "STAGE gcm.cache/mcpplibs.openkal/" "$W/new-modules2.log" \
+    || fail "the rebuilt dependency was not served from the cache"
 fi
 if [ "$VARIANT" = orphan ]; then
   run new-provision "$W" "$NEW" toolchain install "$TC" || fail "toolchain install could not replace the payload"

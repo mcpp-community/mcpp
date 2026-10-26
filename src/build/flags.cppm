@@ -68,6 +68,10 @@ struct CompileFlags {
     // The link words that name the island's C++ runtime (design 2026-10-26
     // §6.3), placed after the build's own runtime in each C++ unit's tail.
     std::string ldForeignRuntime;
+    // `trim_paths` (mcpp#844): the rendered prefix map of each package, by
+    // `CompileUnit::packageName`, appended to that package's C and C++ units.
+    // Empty on cl.exe, which has no such switch.
+    std::map<std::string, std::string, std::less<>> trimByPackage;
     // A compile-command prefix stated with a toolchain named by path
     // (`launcher = "ccache"`, mcpp#755): written in front of the compiler in
     // the build graph, and not into the compile database, whose consumers
@@ -1183,8 +1187,16 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                 "paths: the artifact keeps the absolute paths it was built from (clang on "
                 "`*-windows-msvc` trims them)");
         } else {
-            for (auto const& [from, to] : plan.trimMap)
-                opt_flag += " -ffile-prefix-map=" + escape_path(from) + "=" + to;
+            // Per package, not here (mcpp#844): a map of the whole plan in
+            // the flags every unit shares made a dependency's command line
+            // depend on the members the plan builds, and switching members
+            // recompiled it. A unit's map is its package's (`packageTrimMaps`).
+            for (auto const& [package, map] : plan.packageTrimMaps) {
+                std::string rendered;
+                for (auto const& [from, to] : map)
+                    rendered += " -ffile-prefix-map=" + escape_path(from) + "=" + to;
+                f.trimByPackage.emplace(package, std::move(rendered));
+            }
         }
     }
 

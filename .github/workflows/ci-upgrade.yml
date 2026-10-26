@@ -29,6 +29,7 @@ jobs:
           - { host: linux-x86_64,   runs-on: ubuntu-24.04,     variant: plain }
           - { host: linux-x86_64,   runs-on: ubuntu-24.04,     variant: snapshot }
           - { host: linux-x86_64,   runs-on: ubuntu-24.04,     variant: orphan }
+          - { host: linux-x86_64,   runs-on: ubuntu-24.04,     variant: modules }
           - { host: linux-aarch64,  runs-on: ubuntu-24.04-arm, variant: plain }
           - { host: macos-arm64,    runs-on: macos-15,         variant: plain }
           - { host: windows-x86_64, runs-on: windows-latest,   variant: plain }

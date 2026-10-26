@@ -203,3 +203,17 @@ TEST(VerifyUnitExpectations, ExpectNoneMatchesEmptyUnit) {
     auto err = mcpp::dyndep::verify_unit_expectations(u, std::nullopt, {});
     EXPECT_FALSE(err.has_value());
 }
+
+// GCC's map names its repository with `$root`, and every relative path after
+// it lies below that directory: the dyndep step must name the BMI the compiler
+// reads, or ninja orders the compile before the BMI exists.
+TEST(Dyndep, ParseModuleMapRootedAtTheBmiDirectory) {
+    auto m = parse_module_map("$root gcm.cache\na a.gcm\ndep.m dep/dep.m.gcm\nstd std.gcm\n");
+    EXPECT_EQ(m.size(), 3u);
+    EXPECT_FALSE(m.contains("$root"));
+    EXPECT_EQ(m.at("a"), "gcm.cache/a.gcm");
+    EXPECT_EQ(m.at("dep.m"), "gcm.cache/dep/dep.m.gcm");
+    // Without `$root` (clang's and MSVC's maps) a path is taken as written.
+    auto plain = parse_module_map("m pcm.cache/core/m.pcm\n");
+    EXPECT_EQ(plain.at("m"), "pcm.cache/core/m.pcm");
+}
