@@ -1503,7 +1503,12 @@ static std::expected<void, std::string> step13_assembly_units(PrepareState& stat
             if (ctx.plan.okldPath.empty())
                 if (auto found = mcpp::platform::fs::which(tool)) ctx.plan.okldPath = *found;
         }
-        if (ctx.plan.okldPath.empty() && !state.overrides.plan_only)
+        // Only a build that links an image needs it: a library's archive is
+        // objects, and the image that takes them is checked where it is linked.
+        const bool linksAnImage = std::ranges::any_of(ctx.plan.linkUnits, [](auto const& lu) {
+            return lu.kind != mcpp::build::LinkUnit::StaticLibrary;
+        });
+        if (ctx.plan.okldPath.empty() && linksAnImage && !state.overrides.plan_only)
             return std::unexpected(mcpp::okimage::no_tool_message(tt->str(), tool));
     }
     // Clang: discover clang-scan-deps for P1689 dyndep scanning.
