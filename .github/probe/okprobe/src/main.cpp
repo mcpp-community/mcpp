@@ -259,6 +259,57 @@ void probe_fs(const std::vector<Preopen>& pre) {
     std::error_code ec; std::filesystem::remove_all(base, ec);
 }
 
+// Which input a spawn refuses: one dimension added at a time.
+void probe_spawn_inputs(const std::vector<Preopen>& pre) {
+    const auto self = self_path();
+    auto at = locate(pre, self);
+    if (!at) { fact("spawn", "self not under a preopen", self); return; }
+    fact("spawn", "self as openkal names it", at->second);
+    auto attempt = [&](std::string_view label, bool streams, bool env, bool otherWork, std::string arg, bool noEnv = false) {
+        std::vector<std::string> args{self, "child", "sleep", "10"};
+        if (!arg.empty()) args.push_back(arg);
+        std::vector<const char*> argv; std::vector<kal_uintptr> lens;
+        for (auto& a : args) { argv.push_back(a.c_str()); lens.push_back(a.size()); }
+        std::vector<std::string> envs{"PROBE_X=1"};
+        if (noEnv) envs.clear();
+        if (env) {
+            envs.clear();
+            for (kal_uintptr i = 0; i < kal_env_var_count(); ++i) {
+                char b[32768]; const auto n = kal_env_var_at(i, b, sizeof b);
+                if (n > 0) envs.emplace_back(b, static_cast<std::size_t>(n));
+            }
+        }
+        std::vector<const char*> envp; std::vector<kal_uintptr> elens;
+        for (auto& e : envs) { envp.push_back(e.c_str()); elens.push_back(e.size()); }
+        kal_spawn how{}; how.base = at->first; how.work = at->first;
+        if (otherWork) {
+            auto t = locate(pre, std::filesystem::temp_directory_path());
+            kal_dir d{};
+            if (t && kal_fs_open_dir(t->first, t->second.c_str(), t->second.size(), &d) == 0) how.work = d;
+        }
+        kal_stream o{}, ot{};
+        kal_spawn_streams st{};
+        if (streams) { kal_process_channel(&o, &ot); st = {kal_stdin(), ot, kal_stderr()}; }
+        kal_process p{};
+        const int rc = kal_process_spawn(&how, at->second.c_str(), at->second.size(), argv.data(), lens.data(), argv.size(),
+                                         envp.data(), elens.data(), envp.size(), streams ? &st : nullptr, &p);
+        if (streams) { kal_process_channel_close(ot); }
+        int status = -1, term = 0;
+        if (rc == 0) kal_process_wait(p, &status, &term);
+        if (streams) kal_process_channel_close(o);
+        fact("spawn", label, std::format("{} status={} (env entries {})", err(rc), status, envs.size()));
+    };
+    attempt("minimal (one env entry)", false, false, false, "");
+    attempt("+ stdout channel", true, false, false, "");
+    attempt("+ the whole environment", false, true, false, "");
+    attempt("+ another working directory", false, false, true, "");
+    attempt("+ argv with space and quote", false, false, false, "a b \"c\"");
+    attempt("+ argv with backslashes", false, false, false, "x\\y\\");
+    attempt("no environment at all", false, false, false, "", true);
+    char first[512]; const auto n = kal_env_var_at(0, first, sizeof first);
+    fact("spawn", "first environment entry", n > 0 ? std::string(first, static_cast<std::size_t>(std::min<kal_intptr>(n, 40))) : "none");
+}
+
 void probe_process(const std::vector<Preopen>& pre) {
     fact("process", "props", bits(kal_process_props(), {{KAL_PROCESS_PROP_TERMINATE_M, "terminate"}, {KAL_PROCESS_PROP_STREAM_PASSING_M, "streams"},
         {KAL_PROCESS_PROP_EXIT_STATUS_M, "exit-status"}, {KAL_PROCESS_PROP_CHANNEL_M, "channel"}, {KAL_PROCESS_PROP_GRANT_DIR_M, "grant-dir"},
@@ -429,6 +480,7 @@ int main(int argc, char** argv) {
     probe_env(pre);
     probe_self_location();
     probe_fs(pre);
+    probe_spawn_inputs(pre);
     probe_process(pre);
     probe_terminal();
     probe_net();
