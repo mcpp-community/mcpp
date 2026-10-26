@@ -46,8 +46,17 @@ inline constexpr std::string_view kRunner = "okrun";   // `mcpp run`, `mcpp test
 //                      own, so the link can drop what nothing reaches, and the
 //                      requirements note names only the interfaces the program
 //                      uses, not every one its C library could.
+//   -fasynchronous-unwind-tables
+//                      every frame, C's included, can be unwound: a C++
+//                      exception crosses the C of the unwinder itself
+//                      (`_Unwind_RaiseException`) and of the C library. The
+//                      hosted triples default to it; `<arch>-unknown-none-elf`
+//                      does not -- measured, `_Unwind_Backtrace` in an image
+//                      over openkal-llvm-runtime found no frame at all, and
+//                      every `throw` terminated.
 inline std::vector<std::string> compile_flags(std::string_view arch) {
-    std::vector<std::string> out{ "-fPIC", "-femulated-tls", "-fvisibility=hidden" };
+    std::vector<std::string> out{ "-fPIC", "-femulated-tls", "-fvisibility=hidden",
+                                  "-fasynchronous-unwind-tables" };
     if (arch == "aarch64") {
         out.emplace_back("-ffixed-x18");
         out.emplace_back("-mno-outline-atomics");
