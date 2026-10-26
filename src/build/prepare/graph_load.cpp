@@ -463,7 +463,43 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
 
         auto selected = candidates.front();
         bool matched  = false;
-        if (spec.isVersion()) {
+        bool anyLazyGitIndex = false;
+        // A MISS REFRESHES THE INDEX, WHEREVER THE EDGE IS (#315: a build
+        // refreshes on a miss, not on age). The refresh before the walk asks
+        // only about the root's and the selected members' [dependencies], so
+        // a request by version from a path dependency, a package's own
+        // dependency, or a conditional table missed against an index older
+        // than the package and refused the build with no refresh at all
+        // (measured: mcpp's modules/platform naming `os = "0.1.0"` minutes
+        // after the index published it, in a CI sandbox whose index was
+        // "never refreshed"). The miss itself is now the trigger: the policy
+        // (offline, `auto_refresh`, the debounce, one sync per run) decides,
+        // and the selection is made again over the refreshed index.
+        for (int attempt = 0; spec.isVersion() && !matched && attempt < 2; ++attempt) {
+            if (attempt == 1) {
+                auto cfgR = state.get_cfg(true);
+                if (!cfgR) break;
+                // Only a miss the package index can refute (the namespaces
+                // whose identity mcpp defines), in the index a refresh
+                // updates, can be refreshed into an answer: a project's path
+                // index is read as it is, and a foreign namespace never
+                // refutes (#315 INV-3).
+                const auto route = state.index_route(*cfgR);
+                if (std::ranges::none_of(candidates, [&](const mcpp::pm::DependencyCoordinate& c) {
+                        const auto* idx = route.find_for_ns(c.namespace_);
+                        return route.authoritative_for(c.namespace_) && (!idx || idx->is_builtin());
+                    }))
+                    break;
+                const auto env = mcpp::config::make_xlings_env(**cfgR);
+                auto decision = mcpp::pm::decide_for_miss(
+                    mcpp::pm::policy_for(**cfgR), env,
+                    mcpp::pm::format_package_selector(candidates.front()));
+                if (auto r = mcpp::pm::apply(decision, env); !r) {   // says a declined one under -v
+                    mcpp::ui::warning(r.error());
+                    break;
+                }
+                if (!decision.shouldRefresh) break;
+            }
             for (auto& candidate : candidates) {
                 auto lua = state.readStrictLuaForCandidate(candidate);
                 if (!lua) continue;
@@ -584,14 +620,17 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
             // package that would have materialized a moment later. Local path
             // indices and the builtin index are both readable here, so they stay
             // under the strict rule below.
-            bool anyLazyGitIndex = std::ranges::any_of(candidates,
+            anyLazyGitIndex = std::ranges::any_of(candidates,
                 [&](const mcpp::pm::DependencyCoordinate& c) {
                     return state.index_route(nullptr).lazy_git(c.namespace_);
                 });
+            if (anyLazyGitIndex) break;   // a miss there is no evidence; nothing to refresh for
+        }
 
-            // An exact coordinate that a readable index cannot serve fails at
-            // resolution. Never carry it into install-time compatibility
-            // retries, which would reintroduce cross-namespace guessing.
+        // An exact coordinate that a readable index cannot serve fails at
+        // resolution. Never carry it into install-time compatibility
+        // retries, which would reintroduce cross-namespace guessing.
+        if (spec.isVersion()) {
             if (!matched && !anyLazyGitIndex) {
                 std::string tried;
                 for (auto& c : candidates) {

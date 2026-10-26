@@ -65,6 +65,15 @@
   pinning a checkout ahead of a release) refused the build with "no package
   found for exact selector". The root's checkout now answers it; a
   requirement the checkout does not satisfy is still refused.
+- **A request by version the local index cannot answer refreshes the index
+  wherever it is in the graph.** The refresh before the dependency walk asked
+  only about the root's and the selected members' `[dependencies]`, so a
+  version named by a path dependency, by a package's own manifest or in a
+  conditional table, and published after the local index was fetched, refused
+  the build ("no package found for exact selector") with no refresh at all.
+  The miss now asks the refresh policy (offline, `[index] auto_refresh`, the
+  debounce, one sync per run) and the selection is made again; a namespace the
+  index cannot refute still never refreshes.
 - **A dependency written `workspace = true` under a target selector or behind
   a feature receives the workspace's source.** Only `[dependencies]`,
   `[dev-dependencies]` and `[build-dependencies]` were merged, so a git or path
