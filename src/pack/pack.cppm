@@ -2043,6 +2043,12 @@ okimage_build_selfcontained(const Plan& plan, const std::filesystem::path& image
     std::error_code ec;
     fs::create_directories(dir / "src", ec);
     if (ec) return std::unexpected(Error{std::format("cannot create {}: {}", dir.string(), ec.message())});
+    // RESOLVED AS THE BUILD THAT MADE THE IMAGE RESOLVED ITS TOOLS. The
+    // generated project is this pack's, not a project of its own: a lock it
+    // kept from an earlier pack held `openkal-run` at that pack's commit while
+    // the image's tools had moved on, and the program then carried a runner
+    // older than the one the image was checked by.
+    fs::remove(dir / "mcpp.lock", ec);
 
     auto write = [&](const fs::path& p, std::string_view text) -> bool {
         std::ofstream out(p, std::ios::binary | std::ios::trunc);
