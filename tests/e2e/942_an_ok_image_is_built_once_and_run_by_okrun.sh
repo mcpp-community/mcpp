@@ -25,6 +25,9 @@
 #   F. `mcpp pack` stages the image (M2), and `--mode self-contained` stages a
 #      program of this machine that carries it and runs with nothing installed
 #      (M3).
+#   G. A workspace's root package declares the tools as any root does: the
+#      image builds and runs through okrun (the selected package is not the
+#      graph's first, and its tools were not recorded as the root's).
 set -e
 
 TMP=$(mktemp -d)
@@ -190,5 +193,30 @@ fi
 grep -q "needs a C++ run-time inside the image" std.log || fail "D: the refusal's reason" std.log
 grep -q "openkal-llvm-runtime" std.log || fail "D: the refusal does not name the provider" std.log
 echo "ok: import std without a C++ run-time is refused, naming the provider"
+
+# G
+mkdir -p "$TMP/ws/src" "$TMP/ws/m/src"
+cp "$TMP/app/main.c.good" "$TMP/ws/src/main.c"
+cat > "$TMP/ws/mcpp.toml" <<TOML
+[workspace]
+members = ["m"]
+
+[package]
+name    = "wsapp"
+version = "0.1.0"
+
+[targets.wsapp]
+kind = "bin"
+main = "src/main.c"
+
+[build-dependencies]
+$TOOLS
+TOML
+printf '[package]\nname = "m"\nversion = "0.1.0"\n\n[targets.m]\nkind = "lib"\n' > "$TMP/ws/m/mcpp.toml"
+printf 'int m_value(void) { return 0; }\n' > "$TMP/ws/m/src/m.c"
+(cd "$TMP/ws" && "$MCPP" run --target "$HOST_ARCH-openkal" -- one two > run.log 2>&1) \
+    || fail "G: a workspace root's image did not build or run" "$TMP/ws/run.log"
+grep -q "image: three arguments" "$TMP/ws/run.log" || fail "G: the workspace root's image" "$TMP/ws/run.log"
+echo "ok: a workspace root declares the tools as any root does"
 
 echo "PASS: 942 an ok image is built once and run by okrun"

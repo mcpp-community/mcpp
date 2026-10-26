@@ -20,6 +20,8 @@
   payload's libc++ is not offered to an image.
   A build that links an image with no `okld` in the graph is refused with
   the machine-readable reason `image-tool-absent`.
+  The tools a workspace's root package declares are its own, as any root's
+  are.
 
 ### Fixed
 
