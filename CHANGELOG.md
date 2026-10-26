@@ -95,7 +95,10 @@
   selected by the package manifest. `modules/platform` contains no
   preprocessor conditional. `which` no longer starts a shell: a program is
   found on PATH, with PATHEXT's suffixes on Windows, and the current
-  directory is not searched on Windows.
+  directory is not searched on Windows. A list of directories in an
+  environment variable (`PATH`, the run-time library path) is read and
+  written with `mcpplibs.os`'s `split_list` and `join_list`: an empty entry
+  is skipped, and a quoted entry on Windows is unquoted.
 - **A closed reader ends mcpp in order.** `mcpp … | head` stops the guarded
   child process groups, writes the interrupt files and restores the terminal,
   and then ends by SIGPIPE, with the status a shell has always seen (141).
