@@ -123,7 +123,12 @@ for k in mcpp.build mcpp.launch mcpp.search mcpp.index mcpp.pack.formats; do
     grep -q "\"$k\"" g.out || fail "G: --protocol-version does not list $k" g.out
 done
 
-# H
+# H -- POSIX only: a shell's `kill` ends a native Windows process outright,
+# which no handler sees (Windows reaches mcpp's handler by a console control
+# event, SPEC-003 §3.7).
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) echo "PASS: 936 the control contract (H is POSIX)"; exit 0 ;;
+esac
 mkdir -p "$TMP/h/src"
 cd "$TMP/h"
 printf '[package]\nname = "h"\nversion = "0.1.0"\nstandard = "c++23"\n' > mcpp.toml
