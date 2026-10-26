@@ -97,12 +97,13 @@ grep -q $'\033\[' d2.err && fail "D: NO_COLOR did not win" d2.err
 OTHER="$TMP/other-home"
 mkdir -p "$OTHER"
 "$MCPP" --home "$OTHER" self env --format json > e.out 2> e.err || true
-$PY - e.out "$OTHER" <<'EOF' || fail "E: --home did not select the home for the run" e.out e.err
+$PY - e.out <<'EOF' || fail "E: --home did not select the home for the run" e.out e.err
 import json, sys, os
-d = json.load(open(sys.argv[1]))
-want = os.path.realpath(sys.argv[2])
-blob = json.dumps(d["data"])
-assert want in blob or sys.argv[2] in blob, blob[:400]
+d = json.load(open(sys.argv[1]))["data"]
+# By the directory's name: the shell's spelling of $OTHER is not the one a
+# Windows program reports.
+home = os.path.normpath(d["mcppHome"].replace("\\", "/"))
+assert os.path.basename(home) == "other-home", d["mcppHome"]
 EOF
 
 # F
