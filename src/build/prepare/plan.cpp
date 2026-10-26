@@ -1508,8 +1508,10 @@ static std::expected<void, std::string> step13_assembly_units(PrepareState& stat
         const bool linksAnImage = std::ranges::any_of(ctx.plan.linkUnits, [](auto const& lu) {
             return lu.kind != mcpp::build::LinkUnit::StaticLibrary;
         });
-        if (ctx.plan.okldPath.empty() && linksAnImage && !state.overrides.plan_only)
+        if (ctx.plan.okldPath.empty() && linksAnImage && !state.overrides.plan_only) {
+            mcpp::build::refusal::record(mcpp::build::refusal::Code::ImageToolAbsent);
             return std::unexpected(mcpp::okimage::no_tool_message(tt->str(), tool));
+        }
     }
     // Clang: discover clang-scan-deps for P1689 dyndep scanning.
     if (mcpp::toolchain::is_clang(*state.tc)) {

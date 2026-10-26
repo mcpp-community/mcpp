@@ -569,6 +569,7 @@ a program classifying the outcome reads `reason`:
 | `std-module-precompile` | the standard library's module could not be precompiled for this configuration |
 | `msvc-redist-unavailable` | an explicit `cxx_runtime = "toolchain-coupled"` on an MSVC-ABI row whose toolset has no redistributable directory to stage *(2026.9.28.1+)* |
 | `crt-declared-under-host-coupled` | a file of the MSVC C++ runtime is declared beside the program while its contract is host-coupled, under which the system's runtime serves it and no copy is placed *(2026.9.28.2+)* |
+| `image-tool-absent` | a build of `<arch>-openkal` links an image and finds no `okld`, the program of the graph that notes and checks an ok image *(2026.10.26.2+)* |
 | `other` | a refusal whose branch has not been given a token yet |
 
 **One token is also printed by `mcpp build` itself.**

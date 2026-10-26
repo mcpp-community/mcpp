@@ -1535,18 +1535,28 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
                 // history before the checkout. Only a tip just read from
                 // ls-remote is guaranteed present in a depth-1 clone.
                 //
+                // AND ONLY WHILE THE BRANCH STAYS WHERE ls-remote SAW IT. A push
+                // between the two leaves the clone at a newer tip without the
+                // commit the build resolved; the commit is then fetched by its
+                // name, or, from a server that refuses that, the branch's whole
+                // history. Measured in mcpp's own CI: a push to mcpplibs.os
+                // between ls-remote and the clone ended the build with
+                // "unable to read tree (787988c…)".
+                //
                 // `git -C` rather than `cd <dir> &&`: on Windows `cd` does not
                 // change drive without /d, and the cache root routinely lives
                 // on a different one than the project.
+                const auto dir = mcpp::platform::shell::quote(gitRoot.string());
+                const auto rev = mcpp::platform::shell::quote(resolvedGitRev);
                 auto cloneCmd = (spec.gitRefKind == "branch" && !fromLock)
                     ? std::format(
-                        "git clone --progress --depth 1 --branch {} {} {} && "
-                        "git -C {} checkout --quiet {} 2>&1",
+                        "git clone --progress --depth 1 --branch {0} {1} {2} && "
+                        "(git -C {2} checkout --quiet {3} || "
+                        "((git -C {2} fetch --quiet --depth 1 origin {3} || "
+                        "git -C {2} fetch --quiet --unshallow origin) && "
+                        "git -C {2} checkout --quiet {3})) 2>&1",
                         mcpp::platform::shell::quote(spec.gitRev),
-                        mcpp::platform::shell::quote(spec.git),
-                        mcpp::platform::shell::quote(gitRoot.string()),
-                        mcpp::platform::shell::quote(gitRoot.string()),
-                        mcpp::platform::shell::quote(resolvedGitRev))
+                        mcpp::platform::shell::quote(spec.git), dir, rev)
                     : std::format(
                         "git clone --progress {} {} && git -C {} checkout --quiet {} 2>&1",
                         mcpp::platform::shell::quote(spec.git),

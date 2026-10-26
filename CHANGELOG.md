@@ -18,6 +18,8 @@
   graph: `[build-dependencies] openkal-tools = { tools = ["okld", "okrun"] }`.
   The C library and the C++ run-time inside an image are packages; the
   payload's libc++ is not offered to an image.
+  A build that links an image with no `okld` in the graph is refused with
+  the machine-readable reason `image-tool-absent`.
 
 ### Fixed
 
@@ -51,6 +53,11 @@
   edges away moved to its tip on every build and stopped an `--offline` build
   ("mcpp.lock records no commit for branch"). It is now recorded under the
   package's qualified name and read back as its anchor.
+- **A branch pushed to between `git ls-remote` and the clone is still
+  fetched.** The clone of a branch is one commit deep, so a push between the
+  two left it at a newer tip without the commit the build had resolved, and
+  the build stopped at `unable to read tree`. That commit is now fetched by
+  its name, or, from a server that refuses that, with the branch's history.
 - **Switching workspace members under `trim_paths` no longer recompiles their
   shared dependencies** (#844). The prefix map of the whole plan was part of
   the flags every unit shares, so a dependency's command line named the roots

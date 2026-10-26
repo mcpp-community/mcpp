@@ -516,6 +516,7 @@ replaced}` —— `origin` 与构建的状态行使用的是同一句话
 | `std-module-precompile` | 标准库的模块在这个配置下无法被预编译 |
 | `msvc-redist-unavailable` | 在 MSVC ABI 的行上显式写了 `cxx_runtime = "toolchain-coupled"`，而该行的工具集没有可放置的 redistributable 目录 *(2026.9.28.1+)* |
 | `crt-declared-under-host-coupled` | 程序的契约是 host-coupled（由系统的运行时服务、不放置任何副本），而程序旁声明了 MSVC C++ 运行时的文件 *(2026.9.28.2+)* |
+| `image-tool-absent` | 一个 `<arch>-openkal` 的构建要链接一个映像，而找不到 `okld` —— 为 ok 映像写需求注记并检查约定的、图中的程序 *(2026.10.26.2+)* |
 | `other` | 一个尚未被赋予记号的拒绝分支 |
 
 **其中一个记号也由 `mcpp build` 自己打印。** `interface-not-provided` 会
