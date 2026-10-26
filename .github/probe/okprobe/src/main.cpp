@@ -306,6 +306,41 @@ void probe_spawn_inputs(const std::vector<Preopen>& pre) {
     attempt("+ argv with space and quote", false, false, false, "a b \"c\"");
     attempt("+ argv with backslashes", false, false, false, "x\\y\\");
     attempt("no environment at all", false, false, false, "", true);
+    // Each entry of this environment alone, and the running total: which one,
+    // or which size, a spawn refuses.
+    {
+        std::vector<std::string> all;
+        for (kal_uintptr i = 0; i < kal_env_var_count(); ++i) {
+            char b[32768]; const auto n = kal_env_var_at(i, b, sizeof b);
+            if (n > static_cast<kal_intptr>(sizeof b)) { fact("spawn", "entry longer than 32 KiB", std::to_string(n)); continue; }
+            if (n > 0) all.emplace_back(b, static_cast<std::size_t>(n));
+        }
+        std::size_t bytes = 0; int refusedAlone = 0; std::string firstRefusedPrefix;
+        std::size_t prefixOk = 0;
+        for (std::size_t i = 0; i < all.size(); ++i) {
+            auto tryEnv = [&](std::vector<std::string> const& envs) {
+                std::vector<std::string> args{self, "child", "sleep", "1"};
+                std::vector<const char*> argv; std::vector<kal_uintptr> lens;
+                for (auto& a : args) { argv.push_back(a.c_str()); lens.push_back(a.size()); }
+                std::vector<const char*> envp; std::vector<kal_uintptr> elens;
+                for (auto& e : envs) { envp.push_back(e.c_str()); elens.push_back(e.size()); }
+                kal_spawn how{}; how.base = at->first; how.work = at->first;
+                kal_process p{};
+                const int rc = kal_process_spawn(&how, at->second.c_str(), at->second.size(), argv.data(), lens.data(), argv.size(),
+                                                 envp.data(), elens.data(), envp.size(), nullptr, &p);
+                if (rc == 0) { int st = 0, tm = 0; kal_process_wait(p, &st, &tm); }
+                return rc;
+            };
+            if (tryEnv({all[i]}) != 0) {
+                ++refusedAlone;
+                if (firstRefusedPrefix.empty()) firstRefusedPrefix = all[i].substr(0, all[i].find('=')) + std::format(" ({} bytes)", all[i].size());
+            }
+            bytes += all[i].size() + 1;
+            if (prefixOk == i && tryEnv({all.begin(), all.begin() + i + 1}) == 0) prefixOk = i + 1;
+        }
+        fact("spawn", "entries refused alone", std::format("{} first: {}", refusedAlone, firstRefusedPrefix));
+        fact("spawn", "longest accepted prefix", std::format("{} of {} entries, {} bytes in all", prefixOk, all.size(), bytes));
+    }
     char first[512]; const auto n = kal_env_var_at(0, first, sizeof first);
     fact("spawn", "first environment entry", n > 0 ? std::string(first, static_cast<std::size_t>(std::min<kal_intptr>(n, 40))) : "none");
 }
