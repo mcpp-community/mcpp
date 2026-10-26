@@ -421,6 +421,11 @@ jobs:
           MCPP_BOOT="$HOME/.xlings/subos/current/bin/mcpp"
           "$MCPP_BOOT" --version
           "$MCPP_BOOT" self config --mirror GLOBAL
+          # The restored ~/.mcpp holds the package index as it was when that
+          # cache was saved; the commit builds against the index as published
+          # (.github/tools/install_pinned_mcpp.sh says why a miss alone did not
+          # refresh it before 2026.10.26.2).
+          "$MCPP_BOOT" index update
           echo "MCPP_BOOT=$MCPP_BOOT" >> "$GITHUB_ENV"
 
       # This job builds its own mcpp on purpose: the build is part of what it

@@ -39,13 +39,20 @@ std::string join(std::initializer_list<std::string_view> parts) {
     return out;
 }
 
+// An entry the composition writes is in the host's spelling (mcpplibs.os
+// join_list): `\` between components on Windows. An inherited value it leaves
+// alone keeps the spelling it had.
+std::string host(std::string_view p) {
+    return std::filesystem::path(p).make_preferred().string();
+}
+
 }  // namespace
 
 TEST(PlatformEnv, StripPrivateGlibcDropsOnlyPayloadEntries) {
     auto in = join({"/usr/lib", "/home/u/.mcpp/registry/data/xpkgs/xim-x-glibc/2.39/lib64",
                     "/opt/mine"});
     EXPECT_EQ(mcpp::platform::env::strip_private_glibc(in),
-              join({"/usr/lib", "/opt/mine"}));
+              join({host("/usr/lib"), host("/opt/mine")}));
 }
 
 TEST(PlatformEnv, StripPrivateGlibcCanEmptyTheList) {
@@ -69,7 +76,7 @@ TEST(PlatformEnv, PrependPathListSanitizesTheInheritedLoaderTail) {
 
     std::vector<std::filesystem::path> dirs{"/payload/lib"};
     EXPECT_EQ(mcpp::platform::env::prepend_path_list("LD_LIBRARY_PATH", dirs),
-              join({"/payload/lib", "/first", "/last"}));
+              join({host("/payload/lib"), host("/first"), host("/last")}));
 }
 
 // A payload dir the CALLER passed is the entry the sandbox binary needs — it
@@ -81,7 +88,7 @@ TEST(PlatformEnv, PrependPathListKeepsExplicitPayloadDirs) {
         "/home/u/.mcpp/registry/data/xpkgs/xim-x-glibc/2.42/lib64"};
     // Explicit dir kept, inherited (older, mismatched) entry dropped.
     EXPECT_EQ(mcpp::platform::env::prepend_path_list("LD_LIBRARY_PATH", dirs),
-              "/home/u/.mcpp/registry/data/xpkgs/xim-x-glibc/2.42/lib64");
+              host("/home/u/.mcpp/registry/data/xpkgs/xim-x-glibc/2.42/lib64"));
 }
 
 // PATH is not a loader search path: leave its inherited value alone.
@@ -91,12 +98,12 @@ TEST(PlatformEnv, PrependPathListLeavesPathUntouched) {
 
     std::vector<std::filesystem::path> dirs{"/tools/bin"};
     EXPECT_EQ(mcpp::platform::env::prepend_path_list("PATH", dirs),
-              join({"/tools/bin", "/bin", "/x/xpkgs/xim-x-glibc/2.39/lib64"}));
+              join({host("/tools/bin"), "/bin", "/x/xpkgs/xim-x-glibc/2.39/lib64"}));
 }
 
 TEST(PlatformEnv, PrependPathListWithNoInheritedValueIsJustTheDirs) {
     ScopedVar ld("LD_LIBRARY_PATH", nullptr);
     std::vector<std::filesystem::path> dirs{"/a", "/b"};
     EXPECT_EQ(mcpp::platform::env::prepend_path_list("LD_LIBRARY_PATH", dirs),
-              join({"/a", "/b"}));
+              join({host("/a"), host("/b")}));
 }
