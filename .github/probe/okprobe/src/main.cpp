@@ -75,6 +75,14 @@ std::string self_path() {
     return a.string();
 }
 
+// kal_env_var_at answers a NAME; the entry a spawn takes is NAME=value.
+std::string entry(const std::string& name) {
+    std::string value(32768, '\0');
+    const auto n = kal_env_var(name.c_str(), name.size(), value.data(), value.size());
+    value.resize(n > 0 ? static_cast<std::size_t>(n) : 0);
+    return name + "=" + value;
+}
+
 std::string read_all(kal_stream s) {
     std::string out; char buf[4096];
     for (;;) { const auto n = kal_stream_read(s, buf, sizeof buf); if (n <= 0) break; out.append(buf, static_cast<std::size_t>(n)); }
@@ -108,7 +116,7 @@ Child spawn_self(const std::vector<Preopen>& pre, std::vector<std::string> args,
     std::vector<std::string> envs;
     for (kal_uintptr i = 0; i < kal_env_var_count(); ++i) {
         char b[32768]; const auto n = kal_env_var_at(i, b, sizeof b);
-        if (n > 0) envs.emplace_back(b, static_cast<std::size_t>(n));
+        if (n > 0) envs.push_back(entry(std::string(b, static_cast<std::size_t>(n))));
     }
     for (auto& e : env) envs.push_back(e);
     std::vector<const char*> envp; std::vector<kal_uintptr> elens;
@@ -276,7 +284,7 @@ void probe_spawn_inputs(const std::vector<Preopen>& pre) {
             envs.clear();
             for (kal_uintptr i = 0; i < kal_env_var_count(); ++i) {
                 char b[32768]; const auto n = kal_env_var_at(i, b, sizeof b);
-                if (n > 0) envs.emplace_back(b, static_cast<std::size_t>(n));
+                if (n > 0) envs.push_back(entry(std::string(b, static_cast<std::size_t>(n))));
             }
         }
         std::vector<const char*> envp; std::vector<kal_uintptr> elens;
@@ -313,7 +321,7 @@ void probe_spawn_inputs(const std::vector<Preopen>& pre) {
         for (kal_uintptr i = 0; i < kal_env_var_count(); ++i) {
             char b[32768]; const auto n = kal_env_var_at(i, b, sizeof b);
             if (n > static_cast<kal_intptr>(sizeof b)) { fact("spawn", "entry longer than 32 KiB", std::to_string(n)); continue; }
-            if (n > 0) all.emplace_back(b, static_cast<std::size_t>(n));
+            if (n > 0) all.push_back(entry(std::string(b, static_cast<std::size_t>(n))));
         }
         std::size_t bytes = 0; int refusedAlone = 0; std::string firstRefusedPrefix;
         std::size_t prefixOk = 0;
