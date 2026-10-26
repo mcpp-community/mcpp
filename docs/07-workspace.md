@@ -144,6 +144,12 @@ hl = { path = "libs/hl", features = ["x"] }
 hl = { workspace = true, features = ["y"] }    # requests x and y
 ```
 
+The entry inherits wherever the member writes it: `[dependencies]`,
+`[dev-dependencies]`, `[build-dependencies]`, `[feature-deps.<feature>]`, and
+the same tables under a target selector (`[target.'cfg(os = "linux")'.dependencies]`).
+Before 2026.10.26.2 an entry under a target selector or behind a feature kept
+no source and was resolved from the index.
+
 A member can override an inherited version:
 
 ```toml

@@ -144,6 +144,10 @@ hl = { path = "libs/hl", features = ["x"] }
 hl = { workspace = true, features = ["y"] }    # 请求 x 与 y
 ```
 
+条目在成员写下它的任何表里继承：`[dependencies]`、`[dev-dependencies]`、`[build-dependencies]`、
+`[feature-deps.<feature>]`，以及目标选择器下的同名表（`[target.'cfg(os = "linux")'.dependencies]`）。
+2026.10.26.2 之前，写在目标选择器下或特性之后的条目不带来源，并从索引解析。
+
 成员可以覆盖继承来的版本：
 
 ```toml
