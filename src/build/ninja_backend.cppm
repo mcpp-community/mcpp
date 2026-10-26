@@ -2458,11 +2458,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // `CompileUnit::moduleScope`: module name -> BMI path, as the plan resolved
     // it.
     std::map<std::string, std::map<std::string, std::string, std::less<>>, std::less<>> scopeBmis;
-    for (auto const& [key, scope] : plan.moduleScopes) {
-        auto& m = scopeBmis[key];
-        std::istringstream lines(scope.content);
-        for (std::string name, path; lines >> name >> path;) m[name] = path;
-    }
+    // Read as the dyndep step reads them: a GCC map names its repository
+    // (`$root'), and its paths are below that (design 2026-10-26 part 2 §10.2).
+    for (auto const& [key, scope] : plan.moduleScopes)
+        scopeBmis[key] = mcpp::dyndep::parse_module_map(scope.content);
     std::unordered_map<std::string, std::vector<const CompileUnit*>> byModule;
     for (auto& cu : plan.compileUnits)
         if (!cu.providesModule.empty()) byModule[cu.providesModule].push_back(&cu);
