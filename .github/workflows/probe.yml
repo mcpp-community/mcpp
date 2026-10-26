@@ -1,8 +1,10 @@
-name: probe (openkal as the os substrate, do not merge)
+name: probe (ok images and os::host, do not merge)
 
-# What openkal answers inside an ordinary hosted program on each platform and
-# toolchain the os library's first consumers use. The probe prints facts and
-# never asserts; the summary carries every PROBE line.
+# Design 2026-10-26 part 2, probe P: whether one ok-format image runs unchanged
+# on every system of its architecture through a prototype runner (TLS model,
+# the x86_64 Windows convention bridge, aarch64 x18, macOS executable mapping),
+# and whether os::host() can be a constexpr function on every compiler.
+# Prints facts; the summary carries them.
 on:
   pull_request:
   workflow_dispatch:
@@ -11,38 +13,73 @@ env:
   XLINGS_NON_INTERACTIVE: '1'
 
 jobs:
-  probe:
-    name: ${{ matrix.name }}
+  images:
+    name: build the images once (linux)
+    runs-on: ubuntu-24.04
+    defaults: { run: { shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - name: Build app-x86_64.oke and app-aarch64.oke
+        run: |
+          set -euo pipefail
+          "$MCPP" toolchain install llvm@23.1.3 2>&1 | tail -2
+          LLVM=$(dirname "$(find "${MCPP_HOME:-$HOME/.mcpp}" -path '*xim-x-llvm/23.1.3/bin/clang' -type f -o -path '*xim-x-llvm/23.1.3/bin/clang' -type l | head -1)")
+          bash .github/probe/okimage/image/build.sh "$LLVM" "$RUNNER_TEMP/images" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with: { name: ok-images, path: "${{ runner.temp }}/images/*.oke" }
+
+  run:
+    name: run ${{ matrix.name }}
+    needs: images
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: linux-x86_64 gcc dev,      runner: ubuntu-24.04,     args: '' }
-          - { name: linux-x86_64 gcc release,  runner: ubuntu-24.04,     args: '--release' }
-          - { name: linux-x86_64 llvm,         runner: ubuntu-24.04,     args: '--toolchain llvm@23.1.3' }
-          - { name: linux-x86_64 musl static,  runner: ubuntu-24.04,     args: '--target x86_64-linux-musl --release' }
-          - { name: linux-aarch64 default,     runner: ubuntu-24.04-arm, args: '' }
-          - { name: macos-arm64 llvm,          runner: macos-15,         args: '--toolchain llvm@23.1.3' }
-          - { name: macos-arm64 llvm release,  runner: macos-15,         args: '--toolchain llvm@23.1.3 --release' }
-          - { name: windows-x64 llvm (msvc abi), runner: windows-2022,   args: '--toolchain llvm@23.1.3' }
-          - { name: windows-x64 msvc (cl.exe),   runner: windows-2022,   args: '--toolchain msvc' }
-    defaults:
-      run:
-        shell: bash
+          - { name: linux-x86_64,   runner: ubuntu-24.04,     arch: x86_64 }
+          - { name: linux-aarch64,  runner: ubuntu-24.04-arm, arch: aarch64 }
+          - { name: macos-arm64,    runner: macos-15,         arch: aarch64 }
+          - { name: windows-x64,    runner: windows-2022,     arch: x86_64 }
+    defaults: { run: { shell: bash } }
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/bootstrap-mcpp
-      - name: Build the probe
-        working-directory: .github/probe/okprobe
+      - uses: actions/download-artifact@v4
+        with: { name: ok-images, path: images }
+      - name: Build the prototype runner (llvm)
+        working-directory: .github/probe/okimage/runner
         run: |
           set -o pipefail
-          "$MCPP" build ${{ matrix.args }} 2>&1 | tail -40 | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Run the probe
-        working-directory: .github/probe/okprobe
+          "$MCPP" build --toolchain llvm@23.1.3 2>&1 | tail -25 | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Run the same bytes
         run: |
           set -o pipefail
-          B=$(find target -type f \( -name okprobe -o -name okprobe.exe \) -path '*/bin/*' | head -1)
-          echo "binary: $B"
-          { echo '```'; "$B" 2>&1; echo "exit=$?"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+          R=$(find .github/probe/okimage/runner/target -type f \( -name okrunner-probe -o -name okrunner-probe.exe \) -path '*/bin/*' | head -1)
+          { echo '```'; echo "image sha256:"; (sha256sum images/*.oke 2>/dev/null || shasum -a 256 images/*.oke);
+            "$R" "images/app-${{ matrix.arch }}.oke" 2>&1; echo "exit=$?"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  hostconst:
+    name: os::host() constexpr on ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux gcc,      runner: ubuntu-24.04,  tc: '' }
+          - { name: linux llvm,     runner: ubuntu-24.04,  tc: '--toolchain llvm@23.1.3' }
+          - { name: macos llvm,     runner: macos-15,      tc: '--toolchain llvm@23.1.3' }
+          - { name: windows llvm,   runner: windows-2022,  tc: '--toolchain llvm@23.1.3' }
+          - { name: windows msvc,   runner: windows-2022,  tc: '--toolchain msvc' }
+    defaults: { run: { shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - name: positive (must build and run) and negative (must be refused)
+        working-directory: .github/probe/okimage/hostconst
+        run: |
+          { echo '```'
+            echo "== positive"; (cd pos && "$MCPP" run ${{ matrix.tc }} 2>&1 | tail -6); echo "exit=$?"
+            echo "== negative"; (cd neg && "$MCPP" build ${{ matrix.tc }} 2>&1 | grep -iE "error|note|constant|consteval" | head -12); echo
+            echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
