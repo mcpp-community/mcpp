@@ -53,6 +53,13 @@
   edges away moved to its tip on every build and stopped an `--offline` build
   ("mcpp.lock records no commit for branch"). It is now recorded under the
   package's qualified name and read back as its anchor.
+- **A dependency written `workspace = true` under a target selector or behind
+  a feature receives the workspace's source.** Only `[dependencies]`,
+  `[dev-dependencies]` and `[build-dependencies]` were merged, so a git or path
+  dependency of `[workspace.dependencies]` inherited in
+  `[target.'cfg(...)'.dependencies]` or `[feature-deps.<f>]` kept an empty
+  version and resolved from the index. Such an entry no workspace declares is
+  now refused by name, as one in `[dependencies]` is.
 - **A branch pushed to between `git ls-remote` and the clone is still
   fetched.** The clone of a branch is one commit deep, so a push between the
   two left it at a newer tip without the commit the build had resolved, and

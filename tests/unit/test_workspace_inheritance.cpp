@@ -420,3 +420,48 @@ TEST(ResolveMember, NoFilterActsOnRootedRootAndRefusesVirtual) {
 }
 
 } // namespace resolve_member
+
+// A `workspace = true` entry under a target selector, or behind a feature,
+// receives the workspace's source as one in [dependencies] does: a git
+// dependency inherited there resolved from the index before 2026.10.26.2.
+TEST(WorkspaceInheritance, ConditionalAndFeatureTablesInheritTheSource) {
+    auto ws = mcpp::manifest::parse_string(
+        "[workspace]\nmembers = [\"m\"]\n\n"
+        "[workspace.dependencies]\n"
+        "lib = { git = \"https://example.invalid/lib.git\", branch = \"main\" }\n"
+        "tool = { path = \"tools/tool\" }\n");
+    ASSERT_TRUE(ws.has_value()) << ws.error().format();
+    auto m = mcpp::manifest::parse_string(
+        "[package]\nname = \"m\"\nversion = \"0.1.0\"\n\n"
+        "[features]\nextra = []\n\n"
+        "[feature-deps.extra]\ntool.workspace = true\n\n"
+        "[target.'cfg(os = \"linux\")'.dependencies]\nlib.workspace = true\n");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    mcpp::project::merge_workspace_deps(*m, *ws, "/ws");
+    ASSERT_FALSE(m->conditionalConfigs.empty());
+    bool found = false;
+    for (auto const& c : m->conditionalConfigs) {
+        auto it = c.dependencies.find("lib");
+        if (it == c.dependencies.end()) continue;
+        found = true;
+        EXPECT_FALSE(it->second.inheritWorkspace);
+        EXPECT_EQ(it->second.git, "https://example.invalid/lib.git");
+        EXPECT_EQ(it->second.gitRev, "main");
+    }
+    EXPECT_TRUE(found);
+    ASSERT_TRUE(m->featureDeps.contains("extra"));
+    auto const& tool = m->featureDeps.at("extra").at("tool");
+    EXPECT_FALSE(tool.inheritWorkspace);
+    EXPECT_FALSE(tool.path.empty());
+    EXPECT_FALSE(mcpp::project::unresolved_workspace_dependency_error(*m, "/ws/m").has_value());
+}
+
+TEST(WorkspaceInheritance, AnUnresolvedConditionalEntryIsNamed) {
+    auto m = mcpp::manifest::parse_string(
+        "[package]\nname = \"m\"\nversion = \"0.1.0\"\n\n"
+        "[target.'cfg(os = \"linux\")'.dependencies]\nlib.workspace = true\n");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    auto err = mcpp::project::unresolved_workspace_dependency_error(*m, "/m");
+    ASSERT_TRUE(err.has_value());
+    EXPECT_NE(err->find("dependencies] lib"), std::string::npos) << *err;
+}
