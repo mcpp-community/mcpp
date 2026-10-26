@@ -54,9 +54,17 @@ inline constexpr std::string_view kRunner = "okrun";   // `mcpp run`, `mcpp test
 //                      does not -- measured, `_Unwind_Backtrace` in an image
 //                      over openkal-llvm-runtime found no frame at all, and
 //                      every `throw` terminated.
+//   -Xclang -fstack-clash-protection
+//                      a frame larger than a page is probed page by page: one
+//                      system commits a thread's stack as its guard page is
+//                      touched, and a frame that steps over the guard faults --
+//                      measured, an image's 64 KiB buffer ended it on Windows
+//                      and nowhere else. Passed to the front end because the
+//                      driver enables the option for hosted triples only.
 inline std::vector<std::string> compile_flags(std::string_view arch) {
     std::vector<std::string> out{ "-fPIC", "-femulated-tls", "-fvisibility=hidden",
-                                  "-fasynchronous-unwind-tables" };
+                                  "-fasynchronous-unwind-tables",
+                                  "-Xclang", "-fstack-clash-protection" };
     if (arch == "aarch64") {
         out.emplace_back("-ffixed-x18");
         out.emplace_back("-mno-outline-atomics");

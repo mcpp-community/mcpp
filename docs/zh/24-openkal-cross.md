@@ -361,7 +361,7 @@ mcpp run   --target x86_64-openkal      # okrun bin/app.oke
 
 | | mcpp 的处理 | 原因 |
 |---|---|---|
-| 编译 | `--target=<arch>-unknown-none-elf -fPIC -femulated-tls -fvisibility=hidden -fasynchronous-unwind-tables`；AArch64 另加 `-ffixed-x18 -mno-outline-atomics`；依赖图不提供 C 库时加 `-ffreestanding` | 映像按“无操作系统”编译；不访问线程指针，不使用两个系统保留的平台寄存器；只导出源码标注 `visibility("default")` 的名字 |
+| 编译 | `--target=<arch>-unknown-none-elf -fPIC -femulated-tls -fvisibility=hidden -fasynchronous-unwind-tables -Xclang -fstack-clash-protection`；AArch64 另加 `-ffixed-x18 -mno-outline-atomics`；依赖图不提供 C 库时加 `-ffreestanding` | 映像按“无操作系统”编译；不访问线程指针，不使用两个系统保留的平台寄存器；只导出源码标注 `visibility("default")` 的名字 |
 | 链接 | `ld.lld -shared -z max-page-size=65536 -z now --gc-sections --eh-frame-hdr`，入口 `ok_main`；被其他映像加载的映像（`kind = "shared"`）为带名字的 `lib<name>.okso` | ET_DYN，每个段按各系统中最大的保护粒度对齐；丢弃不可达的代码，需求 note 只列出程序实际使用的接口 |
 | 收尾 | `okld note` 由映像的强导入写入所需接口；`okld check` 对映像及其所需的 `.okso` 检查每一条约定；通过后才发布 `bin/<name>.oke` | 加载器拒绝需要实现所缺接口的映像并指名该接口；违反约定的映像不会被发布 |
 | 运行 | `okrun` 是该 target 的默认 runner，依次在依赖图为本机构建的程序、声明的载荷、PATH 中查找 | 加载器持有 openkal 实现，映像不携带实现 |

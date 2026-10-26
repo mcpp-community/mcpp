@@ -576,6 +576,7 @@ os + image ─┬─→ mcpp #842：D11（可在 S1 之前单独完成并跑 CI�
 | B9 | e2e 849：ninja 后端读不出带 `$root` 的 GCC 模块映射 | 后端按行朴素解析映射，未按 dyndep 的解析器 | 改用 `parse_module_map` |
 | B11 | 间接依赖的 git 分支不进 mcpp.lock：每次构建取分支头，`--offline` 在其上停止（mcpp CI：platform → os → openkal） | 锁文件只写根声明的 git 依赖 | 以限定名写入并读回为锚点；e2e 943 |
 | B15 | `mcpp update` 之后的构建仍取旧的分支提交（2026.10.19.1 起即如此） | 快速路径重放旧构建记录，不比较锁文件 | 记录写入时锁文件的摘要，不同则不重放；e2e 943 C |
+| B16 | 映像在 Windows 上：64 KiB 栈缓冲区处崩溃；启动程序全部失败 | 线程栈按触及守护页提交，大帧越过守护页；映像内 libc++ 的路径语义为 POSIX，盘符名被拼到工作目录后 | 映像编译加逐页栈探测（`-Xclang -fstack-clash-protection`，SPEC 12.2 增"栈"一行）；`os::fs::absolute` 按 `host()` 判断绝对名 |
 | B12 | 映像中 `throw` 均以 terminate 结束 | `<arch>-unknown-none-elf` 默认不生成异步展开表，C 帧（libunwind、C 库）不可展开 | 映像编译加 `-fasynchronous-unwind-tables` |
 | B13 | openkal-musl 映像形态：程序的构造函数先于 C 库初始化运行而失败；libc++ 的标准流（优先级 100）先于 C 库初始化 | 初始化数组按链接顺序 | C 库初始化以优先级 1 的构造函数运行 |
 | B14 | C 程序映像在 aarch64 上导入 `__multf3` 等 | 128 位 `long double` 例程不在 C 库中 | `llvm.compiler-rt-builtins` 22.1.8.6 为 openkal 行提供宽浮点例程；openkal-musl 以默认特性 `image-builtins` 依赖之，openkal-llvm-runtime 关闭该特性（一个构建一个编译器运行时） |
