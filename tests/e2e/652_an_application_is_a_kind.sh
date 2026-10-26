@@ -17,8 +17,9 @@
 # (~/.xlings/data/xpkgs/xim-x-mcpp/2026.9.12.2/bin/mcpp) while writing this
 # script: `kind = "app"` is refused, naming three kinds, which is correct --
 # an application manifest is a root, and a root that names a form an older
-# engine cannot produce must not build. The new refusal lists FOUR:
-# 'bin', 'app', 'lib' or 'shared' -- asserted below on the engine under test.
+# engine cannot produce must not build. The refusal lists every kind:
+# 'bin', 'app', 'lib', 'shared' or 'entry' (2026.10.26.2) -- asserted below on
+# the engine under test.
 set -e
 
 TMP=$(mktemp -d)
@@ -52,7 +53,7 @@ cat > src/tool.cpp <<'CPP'
 int main() { std::puts("TOOL-RUN"); return 0; }
 CPP
 
-# ── 1. The refusal, on the engine under test, names four kinds ─────────────
+# ── 1. The refusal, on the engine under test, names every kind ────────────
 cat > bad.toml <<'TOML'
 [package]
 name    = "p"
@@ -65,9 +66,9 @@ mkdir -p bad/src
 cp bad.toml bad/mcpp.toml
 printf 'int main(){}\n' > bad/src/main.cpp
 out=$( cd bad && "$MCPP" build 2>&1 ) && fail "an unrecognized kind must be refused" <(echo "$out")
-grep -q "must be 'bin', 'app', 'lib' or 'shared'" <<<"$out" \
-    || fail "the refusal does not list all four kinds" <(echo "$out")
-echo "unrecognized kind lists four kinds OK"
+grep -q "must be 'bin', 'app', 'lib', 'shared' or 'entry'" <<<"$out" \
+    || fail "the refusal does not list every kind" <(echo "$out")
+echo "unrecognized kind lists every kind OK"
 
 # ── 2. The host build: both targets link, `app` == `bin` off Android ───────
 "$MCPP" build > build.log 2>&1 || fail "the host build failed" build.log
