@@ -1,6 +1,10 @@
 #include "../../shape.hpp"
 #include <cstdio>
+#if !defined(SHAPE_B)
 platform runtime_host() noexcept { return PLATFORM; }
+#else
+platform host_ok() noexcept { return PLATFORM; }
+#endif
 static_assert(host() == PLATFORM);                     // usable at compile time
 int main() {
     if constexpr (host() == platform::windows) std::puts("if constexpr (host() == windows): taken");

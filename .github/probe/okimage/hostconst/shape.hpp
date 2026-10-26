@@ -15,10 +15,18 @@ inline constexpr platform PLATFORM = platform::linux;
 constexpr platform host() noexcept { return PLATFORM; }
 
 // The ok-target form, compiled here on a native target to see what each
-// compiler says about it.
-platform runtime_host() noexcept;                 // asks the environment (G8)
-platform not_known_when_compiling() noexcept;     // never defined: a marker
+// compiler says about it. Two shapes:
+//   A: a constexpr function that branches on `if consteval` and calls a
+//      non-constexpr marker in the constant branch (C++23 P2448 makes such a
+//      function valid while it is not used in a constant expression);
+//   B: a plain (non-constexpr) declaration, defined where the host is asked.
+#if !defined(SHAPE_B)
+platform runtime_host() noexcept;
+platform not_known_when_compiling() noexcept;
 constexpr platform host_ok() noexcept {
     if consteval { return not_known_when_compiling(); }
     else { return runtime_host(); }
 }
+#else
+platform host_ok() noexcept;
+#endif

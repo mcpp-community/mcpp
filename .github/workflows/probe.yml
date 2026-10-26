@@ -76,10 +76,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/bootstrap-mcpp
-      - name: positive (must build and run) and negative (must be refused)
+      - name: positive (must build and run) and negative (must be refused), shapes A and B
         working-directory: .github/probe/okimage/hostconst
         run: |
+          set +e +o pipefail
           { echo '```'
-            echo "== positive"; (cd pos && "$MCPP" run ${{ matrix.tc }} 2>&1 | tail -6); echo "exit=$?"
-            echo "== negative"; (cd neg && "$MCPP" build ${{ matrix.tc }} 2>&1 | grep -iE "error|note|constant|consteval" | head -12); echo
+            for shape in A B; do
+              flag=""; [ $shape = B ] && flag='-DSHAPE_B'
+              for d in pos neg; do printf '[build]\ncxxflags = ["%s"]\n' "$flag" > $d/extra.toml; done
+              for d in pos neg; do cat $d/mcpp.base.toml $d/extra.toml > $d/mcpp.toml; done
+              echo "== shape $shape positive"; (cd pos && "$MCPP" run ${{ matrix.tc }} 2>&1 | tail -5)
+              echo "== shape $shape negative"; (cd neg && "$MCPP" build ${{ matrix.tc }} 2>&1 | grep -iE "error|note|constant|consteval" | head -8)
+            done
             echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
