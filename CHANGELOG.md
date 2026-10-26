@@ -4,6 +4,17 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.26.2] - 2026-10-26
+
+### Fixed
+
+- **A WebAssembly link writes its `.wasm` again.** 2026.10.26.1 published every
+  POSIX link through a temporary name, and Emscripten names the file it writes
+  beside the output after the output: a link to `app.js.tmp` wrote no
+  `app.wasm`, the edge's implicit output was missing, and `mcpp pack` of a
+  `wasm32-emscripten` program (mcpp-plugins' `dist-web`) found no stem family.
+  A WebAssembly link is in place, as a PE link is.
+
 ## [2026.10.26.1] - 2026-10-26
 
 ### Added

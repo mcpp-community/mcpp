@@ -2153,15 +2153,21 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // runs it, and on a Windows host `mcpp link-output` first moves the old
     // artifact aside -- Windows can rename, but not overwrite, a program that
     // runs (see cmd_link_output).
-    const bool peTarget = [&] {
+    //
+    // A WebAssembly link is in place too. Emscripten names the files it writes
+    // beside the output after the output (`app.js` and `app.wasm`), so a link
+    // to `app.js.tmp` wrote no `app.wasm` and the implicit output the edge
+    // declares was missing (mcpp-plugins' web-consumer, 2026.10.26.1). Nothing
+    // on the build machine runs the artifact while it links.
+    const bool inPlaceTarget = [&] {
         const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-        return t ? t->is_pe() : bool(mcpp::platform::is_windows);
+        return t ? (t->is_pe() || t->is_wasm()) : bool(mcpp::platform::is_windows);
     }();
     auto publish_link = [&](std::string cmd) {
         if constexpr (mcpp::platform::is_windows) {
             return "$mcpp link-output --output $out -- " + cmd;
         } else {
-            if (peTarget) return cmd;
+            if (inPlaceTarget) return cmd;
             const auto pos = cmd.find("-o $out");
             if (pos == std::string::npos) return cmd;
             cmd.replace(pos, 7, "-o $out.tmp");
