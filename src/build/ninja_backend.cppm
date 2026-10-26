@@ -2276,8 +2276,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         } else if (okImageTarget) {
             // AN OK IMAGE, LINKED BY `ld.lld` ITSELF (SPEC 12.2). An executable
             // image is ET_DYN with the entry `ok_main`; an image another loads
-            // has its name and no entry. Each edge writes `<image>.unchecked`;
-            // the `okimage_finish` edge below writes the requirements note,
+            // has its name and no entry. Each edge writes
+            // `obj/okimage/<image>.unchecked`; the `okimage_finish` edge below
+            // writes the requirements note,
             // checks the convention and publishes `<image>`.
             const std::string entry = std::format("-e {}", mcpp::okimage::kEntry);
             link_rule("cxx_link",
@@ -3298,7 +3299,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // written beside its name and finished by its own edge (above).
         const bool okImageUnit = okImageTarget && lu.kind != LinkUnit::StaticLibrary;
         if (okImageUnit) ins += " " + escape_ninja_path(okNoteObject);
-        auto okUnchecked = lu.output; okUnchecked += ".unchecked";
+        // Beneath obj/, not beside the name: what bin/ holds is what was
+        // published, and an unchecked image is not.
+        auto okUnchecked = std::filesystem::path("obj/okimage") / lu.output.relative_path();
+        okUnchecked += ".unchecked";
 
         // mcpp#426. `separateLinker` (link.exe) takes no driver at all, so the
         // question does not arise there and the msvc rules are untouched.

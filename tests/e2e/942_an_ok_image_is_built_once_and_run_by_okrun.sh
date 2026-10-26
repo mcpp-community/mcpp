@@ -12,7 +12,8 @@
 #
 # Criteria:
 #   A. Both rows build: `x86_64-openkal` and `aarch64-openkal` each produce
-#      `bin/app.oke`, an ELF shared object of its architecture.
+#      `bin/app.oke`, an ELF shared object of its architecture, and bin/ holds
+#      no unchecked image.
 #   B. `mcpp run` on the row of this machine's architecture runs the image
 #      through okrun: its arguments, a callback into the image, thread-local
 #      storage and a by-value structure all arrive.
@@ -133,6 +134,7 @@ ok = d[:4] == b'\x7fELF' and struct.unpack_from('<H', d, 16)[0] == 3 and struct.
 sys.exit(0 if ok else 1)
 PY
 done
+ls target/*-openkal/*/bin/*.unchecked > /dev/null 2>&1 && fail "A: an unchecked image is in bin/" "build-x86_64.log"
 echo "ok: both rows publish an ELF image of their architecture"
 
 # B
