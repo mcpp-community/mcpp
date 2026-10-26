@@ -45,4 +45,4 @@ jobs:
           set -o pipefail
           B=$(find target -type f \( -name okprobe -o -name okprobe.exe \) -path '*/bin/*' | head -1)
           echo "binary: $B"
-          { echo '```'; timeout 300 "$B" 2>&1; echo "exit=$?"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+          { echo '```'; "$B" 2>&1; echo "exit=$?"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
