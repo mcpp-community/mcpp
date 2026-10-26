@@ -36,12 +36,12 @@ gtest = "1.15.2"
 # part 2, §10.1). Referenced by its pull request's branch until it is
 # published; mcpp.lock then names the version.
 [dependencies.mcpplibs]
-os = { git = "https://github.com/mcpplibs/os.git", branch = "os-0.1.0" }
+os = { git = "https://github.com/mcpplibs/os.git", branch = "os-0.1.0-paths" }
 
 # Every interface is compiled everywhere; implementation units are selected
 # per system, so no source in this package carries a preprocessor conditional.
 [build]
-sources = ["src/*.cppm", "src/*/*.cppm"]
+sources = ["src/*.cppm", "src/*/*.cppm", "src/*.cpp"]
 
 [target.linux.build]
 sources = ["src/linux/*.cpp", "src/posix/*.cpp"]

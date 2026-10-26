@@ -287,10 +287,6 @@ ScopedEnv::~ScopedEnv() {
     }
 }
 
-std::string path_list_separator() {
-    return is_windows ? ";" : ":";
-}
-
 std::string runtime_library_path_key() {
     if constexpr (is_windows) return "PATH";
     // DYLD_LIBRARY_PATH affects every executable launched by ninja, including
@@ -305,57 +301,6 @@ std::string host_tool_runtime_library_path_key() {
     if constexpr (is_macos) return "DYLD_LIBRARY_PATH";
     else if constexpr (is_linux) return "LD_LIBRARY_PATH";
     else return "";
-}
-
-std::string strip_private_glibc(std::string_view paths) {
-    auto sep = path_list_separator();
-    std::string cleaned;
-    std::size_t start = 0;
-    while (start <= paths.size()) {
-        auto end = paths.find(sep, start);
-        if (end == std::string_view::npos) end = paths.size();
-        auto item = paths.substr(start, end - start);
-        if (!item.empty() && item.find("/xim-x-glibc/") == std::string_view::npos
-                          && item.find("\\xim-x-glibc\\") == std::string_view::npos) {
-            if (!cleaned.empty()) cleaned += sep;
-            cleaned += item;
-        }
-        if (end == paths.size()) break;
-        start = end + sep.size();
-    }
-    return cleaned;
-}
-
-std::string prepend_path_list(std::string_view key,
-                              std::span<const std::filesystem::path> dirs) {
-    if (key.empty() || dirs.empty()) return "";
-
-    auto sep = path_list_separator();
-    std::string value;
-    for (auto& dir : dirs) {
-        if (dir.empty()) continue;
-        if (!value.empty()) value += sep;
-        value += dir.string();
-    }
-    if (value.empty()) return "";
-
-    std::string k(key);
-    if (auto* existing = std::getenv(k.c_str()); existing && *existing) {
-        // Loader paths only: the inherited value may carry an OUTER mcpp's
-        // private-glibc entry, and the composed string becomes an EXPLICIT
-        // override — which process.cppm's merged_environ takes verbatim,
-        // skipping the sanitation it applies to inherited variables. Without
-        // this the strip is defeated exactly when it matters (a nested
-        // `mcpp run` → `mcpp test` chain), and the child tool segfaults in the
-        // dynamic linker whenever the payload versions differ.
-        std::string tail = (k == "LD_LIBRARY_PATH" || k == "DYLD_LIBRARY_PATH")
-            ? strip_private_glibc(existing) : std::string(existing);
-        if (!tail.empty()) {
-            value += sep;
-            value += tail;
-        }
-    }
-    return value;
 }
 
 std::string build_env_prefix(

@@ -41,7 +41,7 @@ case "$(uname -m)" in
     *) echo "SKIP: no ok-image row for $(uname -m)"; exit 0 ;;
 esac
 
-TOOLS='openkal-tools = { git = "https://github.com/mcpplibs/openkal-image.git", branch = "openkal-0.17.0", tools = ["okld", "okrun"] }'
+TOOLS='openkal-tools = { version = "0.1.0", tools = ["okld", "okrun"] }'
 
 mkdir -p "$TMP/app/src"
 cd "$TMP/app"
