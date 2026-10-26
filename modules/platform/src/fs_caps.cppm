@@ -7,39 +7,10 @@
 // the flag. Each primitive below asks this table, once per filesystem, and
 // takes the strategy that filesystem allows; none guesses from an errno.
 
-module;
-
-#if defined(_WIN32)
-#  ifndef NOMINMAX
-#    define NOMINMAX
-#  endif
-#  include <windows.h>
-#  include <aclapi.h>
-#  include <sddl.h>
-// GetNamedSecurityInfoW and the token calls live in advapi32.
-#  pragma comment(lib, "advapi32")
-#elif defined(__linux__)
-#  include <cerrno>
-#  include <fcntl.h>
-#  include <sys/stat.h>
-#  include <sys/syscall.h>
-#  include <sys/vfs.h>
-#  include <unistd.h>
-#elif defined(__APPLE__)
-#  include <cerrno>
-#  include <stdio.h>
-#  include <sys/mount.h>
-#  include <sys/param.h>
-#  include <sys/stat.h>
-#  include <unistd.h>
-#else
-#  include <cerrno>
-#  include <sys/stat.h>
-#endif
-
 export module mcpp.platform.fs_caps;
 
 import std;
+import mcpplibs.os.fs;
 
 export namespace mcpp::platform {
 
@@ -101,135 +72,20 @@ bool create_directory_link(const std::filesystem::path& target, const std::files
 
 namespace mcpp::platform::native {
 
-#if defined(_WIN32)
-// MoveFileExW without MOVEFILE_REPLACE_EXISTING refuses an existing name on
-// every Windows filesystem (NTFS, ReFS, FAT, SMB).
-int rename_no_replace(const std::filesystem::path& from, const std::filesystem::path& to) {
-    return ::MoveFileExW(from.wstring().c_str(), to.wstring().c_str(), MOVEFILE_WRITE_THROUGH)
-        ? 0 : static_cast<int>(::GetLastError());
-}
-// Windows has no atomic exchange of two names.
-int exchange(const std::filesystem::path&, const std::filesystem::path&) { return ERROR_NOT_SUPPORTED; }
-bool unsupported(int error) { return error == ERROR_NOT_SUPPORTED || error == ERROR_INVALID_FUNCTION; }
-std::error_category const& category() { return std::system_category(); }
-std::uint64_t device_of(const std::filesystem::path& dir) {
-    wchar_t root[MAX_PATH] {};
-    DWORD serial = 0;
-    if (!::GetVolumePathNameW(dir.wstring().c_str(), root, MAX_PATH)) return 0;
-    if (!::GetVolumeInformationW(root, nullptr, 0, &serial, nullptr, nullptr, nullptr, 0)) return 0;
-    return serial;
-}
-std::string owner_problem(const std::filesystem::path& dir) {
-    PSID owner = nullptr;
-    PSECURITY_DESCRIPTOR sd = nullptr;
-    if (::GetNamedSecurityInfoW(dir.wstring().c_str(), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
-                                &owner, nullptr, nullptr, nullptr, &sd) != ERROR_SUCCESS)
-        return "its owner cannot be read";
-    bool trusted = ::IsWellKnownSid(owner, WinLocalSystemSid) || ::IsWellKnownSid(owner, WinBuiltinAdministratorsSid);
-    HANDLE token = nullptr;
-    if (!trusted && ::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token)) {
-        DWORD size = 0;
-        ::GetTokenInformation(token, TokenUser, nullptr, 0, &size);
-        std::vector<unsigned char> buffer(size);
-        if (::GetTokenInformation(token, TokenUser, buffer.data(), size, &size))
-            trusted = ::EqualSid(owner, reinterpret_cast<TOKEN_USER*>(buffer.data())->User.Sid);
-        ::CloseHandle(token);
-    }
-    ::LocalFree(sd);
-    return trusted ? std::string{} : "it belongs to another user";
-}
-std::string filesystem_type(const std::filesystem::path& dir) {
-    wchar_t root[MAX_PATH] {}, name[MAX_PATH] {};
-    if (!::GetVolumePathNameW(dir.wstring().c_str(), root, MAX_PATH)) return {};
-    if (!::GetVolumeInformationW(root, nullptr, 0, nullptr, nullptr, nullptr, name, MAX_PATH)) return {};
-    return std::filesystem::path(name).string();
-}
-#elif defined(__linux__)
-int rename_no_replace(const std::filesystem::path& from, const std::filesystem::path& to) {
-    constexpr unsigned kNoReplace = 1;   // renameat2 RENAME_NOREPLACE
-    return ::syscall(SYS_renameat2, AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), kNoReplace) == 0 ? 0 : errno;
-}
-int exchange(const std::filesystem::path& a, const std::filesystem::path& b) {
-    constexpr unsigned kExchange = 2;    // renameat2 RENAME_EXCHANGE
-    return ::syscall(SYS_renameat2, AT_FDCWD, a.c_str(), AT_FDCWD, b.c_str(), kExchange) == 0 ? 0 : errno;
-}
-bool unsupported(int error) { return error == EINVAL || error == ENOSYS || error == EOPNOTSUPP; }
-std::error_category const& category() { return std::generic_category(); }
-std::string owner_problem(const std::filesystem::path& dir) {
-    struct stat st {};
-    if (::stat(dir.c_str(), &st) != 0) return "it cannot be read";
-    if (st.st_uid == ::getuid()) return {};
-    if (st.st_uid != 0) return "it belongs to another user";
-    if (::access(dir.c_str(), W_OK) == 0) return "it belongs to root and this user can write it";
-    return {};
-}
+// Each system's own, in linux/, macos/ and windows/ fs_caps.cpp: what
+// mcpplibs.os does not carry, because no other system has it.
 
-std::uint64_t device_of(const std::filesystem::path& dir) {
-    struct stat st {};
-    return ::stat(dir.c_str(), &st) == 0 ? static_cast<std::uint64_t>(st.st_dev) : 0;
-}
-std::string filesystem_type(const std::filesystem::path& dir) {
-    struct statfs st {};
-    if (::statfs(dir.c_str(), &st) != 0) return {};
-    switch (static_cast<unsigned long>(st.f_type)) {
-        case 0xEF53: return "ext4";
-        case 0x58465342: return "xfs";
-        case 0x9123683E: return "btrfs";
-        case 0x01021994: return "tmpfs";
-        case 0x794C7630: return "overlay";
-        case 0x6969: return "nfs";
-        case 0xFF534D42: return "cifs";
-        case 0xFE534D42: return "smb2";
-        case 0x4D44: return "vfat";
-        case 0x2011BAB0: return "exfat";
-        case 0x7366746E: return "ntfs3";
-        case 0x5346544E: return "ntfs";
-        case 0x65735546: return "fuse";
-        case 0x01021997: return "9p";
-        case 0x2FC12FC1: return "zfs";
-        case 0x00C36400: return "ceph";
-        default: return std::format("0x{:x}", static_cast<unsigned long>(st.f_type));
-    }
-}
-#elif defined(__APPLE__)
-int rename_no_replace(const std::filesystem::path& from, const std::filesystem::path& to) {
-    return ::renamex_np(from.c_str(), to.c_str(), RENAME_EXCL) == 0 ? 0 : errno;
-}
-int exchange(const std::filesystem::path& a, const std::filesystem::path& b) {
-    return ::renamex_np(a.c_str(), b.c_str(), RENAME_SWAP) == 0 ? 0 : errno;
-}
-bool unsupported(int error) { return error == EINVAL || error == ENOTSUP || error == EOPNOTSUPP || error == ENOSYS; }
-std::error_category const& category() { return std::generic_category(); }
-std::string owner_problem(const std::filesystem::path& dir) {
-    struct stat st {};
-    if (::stat(dir.c_str(), &st) != 0) return "it cannot be read";
-    if (st.st_uid == ::getuid()) return {};
-    if (st.st_uid != 0) return "it belongs to another user";
-    if (::access(dir.c_str(), W_OK) == 0) return "it belongs to root and this user can write it";
-    return {};
-}
+// `a` and `b` trade places, atomically: 0, else the system's code, which
+// `unsupported` says is the filesystem declining.
+int exchange(const std::filesystem::path& a, const std::filesystem::path& b);
+bool unsupported(int error);
+std::error_category const& category();
 
-std::uint64_t device_of(const std::filesystem::path& dir) {
-    struct stat st {};
-    return ::stat(dir.c_str(), &st) == 0 ? static_cast<std::uint64_t>(st.st_dev) : 0;
-}
-std::string filesystem_type(const std::filesystem::path& dir) {
-    struct statfs st {};
-    return ::statfs(dir.c_str(), &st) == 0 ? std::string(st.f_fstypename) : std::string{};
-}
-#else
-// No native primitive: the strategies below that need none.
-std::string owner_problem(const std::filesystem::path&) { return {}; }
-int rename_no_replace(const std::filesystem::path&, const std::filesystem::path&) { return ENOSYS; }
-int exchange(const std::filesystem::path&, const std::filesystem::path&) { return ENOSYS; }
-bool unsupported(int error) { return error == ENOSYS || error == EINVAL; }
-std::error_category const& category() { return std::generic_category(); }
-std::uint64_t device_of(const std::filesystem::path& dir) {
-    struct stat st {};
-    return ::stat(dir.c_str(), &st) == 0 ? static_cast<std::uint64_t>(st.st_dev) : 0;
-}
-std::string filesystem_type(const std::filesystem::path&) { return {}; }
-#endif
+// Empty when `dir`'s owner is this user or the system; else why not.
+std::string owner_problem(const std::filesystem::path& dir);
+
+// The filesystem's name, as the system reports it ("" unknown).
+std::string filesystem_type(const std::filesystem::path& dir);
 
 } // namespace mcpp::platform::native
 
@@ -250,8 +106,8 @@ FsCaps probe_fs_caps(const stdfs::path& dir) {
     const auto touch = [&](const stdfs::path& p) { std::ofstream(p).put('x'); return stdfs::exists(p, ec); };
     if (touch(scratch / "a") && touch(scratch / "c")) {
         caps.measured = true;
-        if (const int e = native::rename_no_replace(scratch / "a", scratch / "b"); e != 0) {
-            caps.rename_no_replace = !native::unsupported(e);
+        if (const auto r = mcpplibs::os::fs::rename(scratch / "a", scratch / "b", false); !r) {
+            caps.rename_no_replace = r.error().code != mcpplibs::os::errc::not_supported;
             stdfs::rename(scratch / "a", scratch / "b", ec);
         }
         if (const int e = native::exchange(scratch / "b", scratch / "c"); e != 0)
@@ -272,7 +128,8 @@ FsCaps probe_fs_caps(const stdfs::path& dir) {
 FsCaps fs_caps(const stdfs::path& dir) {
     static std::mutex lock;
     static std::map<std::uint64_t, FsCaps> known;
-    const auto device = native::device_of(dir);
+    const auto identity = mcpplibs::os::fs::identity_of(dir);
+    const std::uint64_t device = identity ? identity->volume : 0;
     {
         std::scoped_lock guard(lock);
         if (device != 0)
@@ -293,9 +150,11 @@ std::expected<void, std::string> publish_no_replace(const stdfs::path& from, con
         return std::unexpected(std::format("cannot publish {} as {}: {}", from.string(), to.string(), error.message()));
     };
     if (caps.rename_no_replace) {
-        const int e = native::rename_no_replace(from, to);
-        if (e == 0) return {};
-        if (!native::unsupported(e)) return failed(std::error_code(e, native::category()));
+        const auto r = mcpplibs::os::fs::rename(from, to, false);
+        if (r) return {};
+        if (r.error().code != mcpplibs::os::errc::not_supported)
+            return std::unexpected(std::format("cannot publish {} as {}: {}", from.string(), to.string(),
+                                               mcpplibs::os::describe(r.error().code)));
         // Measured elsewhere on this filesystem, refused here (a mount under
         // the directory probed): the strategies below.
     }
@@ -332,15 +191,7 @@ std::expected<void, std::string> rename_no_replace(const stdfs::path& from, cons
 }
 
 bool create_directory_link(const stdfs::path& target, const stdfs::path& link) {
-    std::error_code ec;
-    stdfs::create_directory_symlink(target, link, ec);
-    if (!ec) return true;
-#if defined(_WIN32)
-    const auto cmd = std::format("cmd /c mklink /J \"{}\" \"{}\" >nul 2>&1", link.string(), target.string());
-    return std::system(cmd.c_str()) == 0;
-#else
-    return false;
-#endif
+    return mcpplibs::os::fs::create_link(target, link, true).has_value();
 }
 
 std::string untrusted_because(const stdfs::path& dir) {

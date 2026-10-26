@@ -6,52 +6,30 @@
 //   2. which()          — find an executable in PATH (was in config.cppm &
 //                         probe.cppm)
 //   3. FileLock         — RAII exclusive file lock (was in bmi_cache.cppm)
-
-module;
-#include <cstdio>
-#include <cstdlib>
-#if defined(_WIN32)
-#include <io.h>
-#include <windows.h>
-#define popen  _popen
-#define pclose _pclose
-#elif defined(__APPLE__)
-#include <mach-o/dyld.h>  // _NSGetExecutablePath
-#else
-#include <fcntl.h>
-#include <sys/file.h>
-#include <unistd.h>
-#endif
-
-// POSIX file locking (shared between macOS and Linux)
-#if !defined(_WIN32)
-#include <fcntl.h>
-#include <sys/file.h>
-#include <unistd.h>
-#endif
+//
+// The first two are mcpplibs.os's; replace_file, append_atomically and the
+// lock are each system's own (posix/fs.cpp, windows/fs.cpp).
 
 export module mcpp.platform.fs;
 
 import std;
 import mcpp.platform.common;
+import mcpplibs.os.env;
 
 export namespace mcpp::platform::fs {
 
 // ── self_exe_path ─────────────────────────────────────────────────────────
 //
-// Returns the absolute path of the currently running executable.
-//   Windows: GetModuleFileNameA
-//   macOS:   _NSGetExecutablePath
-//   Linux:   /proc/self/exe
+// Returns the absolute path of the currently running executable, as the
+// system states it (mcpplibs::os::env::image).
 std::filesystem::path self_exe_path();
 
 // ── which ─────────────────────────────────────────────────────────────────
 //
-// Find an executable by name in PATH.
-//   Windows: `where <name>`
-//   POSIX:   `command -v <name>`
-// A name that the shell answers with a bare word -- a builtin such as `true` --
-// is then looked for in PATH directly, so the program is found where one exists.
+// Find an executable by name in PATH, with PATHEXT's suffixes on Windows
+// (mcpplibs::os::env::find_executable). PATH is read as it is now: mcpp sets
+// variables of its own environment for the programs it starts. A name that is
+// also a shell builtin (`true`) is the program of that name on PATH.
 std::optional<std::filesystem::path> which(std::string_view binary_name);
 
 // ── extended_length ───────────────────────────────────────────────────────
@@ -94,6 +72,10 @@ bool append_atomically(const std::filesystem::path& file, std::string_view bytes
 // RAII exclusive non-blocking file lock.
 //   Windows: LockFileEx on a HANDLE
 //   POSIX:   flock(2) on a file descriptor
+// Not mcpplibs::os::fs::lock, whose POSIX lock is an open file description's
+// (F_OFD_SETLK): an flock and such a lock do not exclude each other, and every
+// release before this one holds these files with flock -- two releases at work
+// in one MCPP_HOME would each hold the lock at once.
 class FileLock {
 public:
     // Try to acquire an exclusive lock on <dir>/.lock (or <dir>/<name>).
@@ -131,13 +113,9 @@ public:
     FileLock& operator=(const FileLock&) = delete;
 
 private:
-#if defined(_WIN32)
-    void* handle_ = reinterpret_cast<void*>(static_cast<std::intptr_t>(-1)); // INVALID_HANDLE_VALUE
-    explicit FileLock(void* h) : handle_(h) {}
-#else
-    int fd_ = -1;
-    explicit FileLock(int fd) : fd_(fd) {}
-#endif
+    // A descriptor, or a HANDLE; -1 is neither (INVALID_HANDLE_VALUE).
+    std::intptr_t native_ = -1;
+    explicit FileLock(std::intptr_t native) : native_(native) {}
 };
 
 } // namespace mcpp::platform::fs
@@ -147,84 +125,18 @@ private:
 namespace mcpp::platform::fs {
 
 std::filesystem::path self_exe_path() {
-    std::error_code ec;
-#if defined(_WIN32)
-    char buf[MAX_PATH];
-    DWORD len = GetModuleFileNameA(NULL, buf, MAX_PATH);
-    if (len > 0 && len < MAX_PATH) {
-        auto p = std::filesystem::canonical(buf, ec);
-        if (!ec) return p;
+    if (auto image = mcpplibs::os::env::image()) {
+        std::error_code ec;
+        auto p = std::filesystem::canonical(*image, ec);
+        return ec ? *image : p;
     }
-#elif defined(__APPLE__)
-    char buf[4096];
-    uint32_t size = sizeof(buf);
-    if (_NSGetExecutablePath(buf, &size) == 0) {
-        auto p = std::filesystem::canonical(buf, ec);
-        if (!ec) return p;
-    }
-#else
-    auto p = std::filesystem::read_symlink("/proc/self/exe", ec);
-    if (!ec) return p;
-#endif
     // Fallback: hope the binary is in PATH
     return "mcpp";
 }
 
 std::optional<std::filesystem::path> which(std::string_view binary_name) {
-    std::string name(binary_name);
-#if defined(_WIN32)
-    std::string cmd = "where " + name + " 2>nul";
-#else
-    std::string cmd = "command -v '" + name + "' 2>/dev/null </dev/null";
-#endif
-    std::array<char, 4096> buf{};
-    std::string out;
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) return std::nullopt;
-    while (std::fgets(buf.data(), static_cast<int>(buf.size()), fp) != nullptr)
-        out += buf.data();
-    int rc = ::pclose(fp);
-
-    // Trim and take first line
-    while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
-        out.pop_back();
-    auto nl = out.find('\n');
-    if (nl != std::string::npos) out.resize(nl);
-
-    // A NAME THAT IS ALSO A SHELL BUILTIN comes back as the bare word: `command
-    // -v true` prints `true`, not `/usr/bin/true`, because the shell answers
-    // with what it would run. The answer is still a name on PATH -- the program
-    // exists -- so PATH is walked here rather than the name reported as missing.
-    // Found while verifying a bare-name payload override (mcpp#755): the
-    // refusal said `'true' is not found on PATH` on a machine carrying
-    // /usr/bin/true, which is the kind of answer that sends a reader to the
-    // wrong place.
-    if (rc == 0 && !out.empty() && !std::filesystem::exists(out)
-        && std::filesystem::path(out).filename() == out) {
-        if (const char* path = std::getenv("PATH")) {
-#if defined(_WIN32)
-            constexpr char sep = ';';
-#else
-            constexpr char sep = ':';
-#endif
-            std::string_view rest(path);
-            while (!rest.empty()) {
-                const auto at = rest.find(sep);
-                const auto dir = rest.substr(0, at);
-                if (!dir.empty()) {
-                    std::error_code ec;
-                    const auto cand = std::filesystem::path(dir) / out;
-                    if (std::filesystem::is_regular_file(cand, ec)) return cand;
-                }
-                if (at == std::string_view::npos) break;
-                rest.remove_prefix(at + 1);
-            }
-        }
-    }
-
-    if (rc != 0 || out.empty()) return std::nullopt;
-    if (!std::filesystem::exists(out)) return std::nullopt;
-    return std::filesystem::path(out);
+    const char* path = std::getenv("PATH");
+    return mcpplibs::os::env::find_executable(binary_name, path ? path : "");
 }
 
 std::string windows_extended_length_spelling(std::string_view in) {
@@ -275,7 +187,7 @@ std::string windows_extended_length_spelling(std::string_view in) {
 }
 
 std::filesystem::path extended_length(const std::filesystem::path& p) {
-#if defined(_WIN32)
+    if constexpr (!is_windows) return p;
     if (p.empty()) return p;
     std::error_code ec;
     auto abs = std::filesystem::absolute(p, ec);
@@ -287,58 +199,6 @@ std::filesystem::path extended_length(const std::filesystem::path& p) {
     const auto spelled = windows_extended_length_spelling(narrow);
     return std::filesystem::path(std::u8string(
         reinterpret_cast<const char8_t*>(spelled.data()), spelled.size()));
-#else
-    return p;
-#endif
-}
-
-bool replace_file(const std::filesystem::path& source,
-                  const std::filesystem::path& destination,
-                  std::error_code& ec) {
-#if defined(_WIN32)
-    // 直接替换已有文件，不能先删除 last-known-good CDB。编辑器或杀毒软件
-    // 可能短暂占用目标文件，sharing violation 仅做有限退避后再报告失败。
-    auto delay = std::chrono::milliseconds{50};
-    for (int attempt = 0; attempt < 4; ++attempt) {
-        if (MoveFileExW(source.wstring().c_str(), destination.wstring().c_str(),
-                        MOVEFILE_REPLACE_EXISTING)) {
-            ec.clear();
-            return true;
-        }
-        const auto error = GetLastError();
-        if (error != ERROR_SHARING_VIOLATION || attempt == 3) {
-            ec = std::error_code(static_cast<int>(error), std::system_category());
-            return false;
-        }
-        std::this_thread::sleep_for(delay);
-        delay *= 3;
-    }
-    return false;
-#else
-    // 临时文件与目标文件位于同一文件系统时，rename 提供原子替换。
-    std::filesystem::rename(source, destination, ec);
-    return !ec;
-#endif
-}
-
-bool append_atomically(const std::filesystem::path& file, std::string_view bytes) {
-#if defined(_WIN32)
-    HANDLE h = CreateFileW(file.wstring().c_str(), FILE_APPEND_DATA,
-                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                           nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    DWORD written = 0;
-    const bool ok = WriteFile(h, bytes.data(), static_cast<DWORD>(bytes.size()),
-                              &written, nullptr) && written == bytes.size();
-    CloseHandle(h);
-    return ok;
-#else
-    const int fd = ::open(file.c_str(), O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0644);
-    if (fd < 0) return false;
-    const auto n = ::write(fd, bytes.data(), bytes.size());
-    ::close(fd);
-    return n == static_cast<decltype(n)>(bytes.size());
-#endif
 }
 
 // ── FileLock ──────────────────────────────────────────────────────────────
@@ -383,91 +243,5 @@ std::string FileLock::holder(const std::filesystem::path& dir, std::string_view 
     std::ifstream in(dir / (std::string(name) + ".owner"), std::ios::binary);
     return in ? std::string(std::istreambuf_iterator<char>(in), {}) : std::string{};
 }
-
-#if defined(_WIN32)
-
-std::optional<FileLock> FileLock::try_acquire(const std::filesystem::path& dir,
-                                              std::string_view name) {
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    auto lockPath = dir / std::string(name);
-    HANDLE h = CreateFileW(lockPath.wstring().c_str(),
-        GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-        NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h == INVALID_HANDLE_VALUE) return std::nullopt;
-    OVERLAPPED ov = {};
-    if (!LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
-                    0, 1, 0, &ov)) {
-        CloseHandle(h);
-        return std::nullopt;
-    }
-    return FileLock{h};
-}
-
-FileLock::~FileLock() {
-    if (handle_ != INVALID_HANDLE_VALUE) {
-        OVERLAPPED ov = {};
-        UnlockFileEx(static_cast<HANDLE>(handle_), 0, 1, 0, &ov);
-        CloseHandle(static_cast<HANDLE>(handle_));
-    }
-}
-
-FileLock::FileLock(FileLock&& o) noexcept : handle_(o.handle_) {
-    o.handle_ = INVALID_HANDLE_VALUE;
-}
-
-FileLock& FileLock::operator=(FileLock&& o) noexcept {
-    if (this != &o) {
-        if (handle_ != INVALID_HANDLE_VALUE) {
-            OVERLAPPED ov = {};
-            UnlockFileEx(static_cast<HANDLE>(handle_), 0, 1, 0, &ov);
-            CloseHandle(static_cast<HANDLE>(handle_));
-        }
-        handle_ = o.handle_;
-        o.handle_ = INVALID_HANDLE_VALUE;
-    }
-    return *this;
-}
-
-#else // POSIX
-
-std::optional<FileLock> FileLock::try_acquire(const std::filesystem::path& dir,
-                                              std::string_view name) {
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    auto lockPath = dir / std::string(name);
-    int fd = ::open(lockPath.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0644);
-    if (fd < 0) return std::nullopt;
-    if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
-        ::close(fd);
-        return std::nullopt;
-    }
-    return FileLock{fd};
-}
-
-FileLock::~FileLock() {
-    if (fd_ >= 0) {
-        ::flock(fd_, LOCK_UN);
-        ::close(fd_);
-    }
-}
-
-FileLock::FileLock(FileLock&& o) noexcept : fd_(o.fd_) {
-    o.fd_ = -1;
-}
-
-FileLock& FileLock::operator=(FileLock&& o) noexcept {
-    if (this != &o) {
-        if (fd_ >= 0) {
-            ::flock(fd_, LOCK_UN);
-            ::close(fd_);
-        }
-        fd_ = o.fd_;
-        o.fd_ = -1;
-    }
-    return *this;
-}
-
-#endif
 
 } // namespace mcpp::platform::fs

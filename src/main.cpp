@@ -5,8 +5,13 @@ import std;
 import mcpp.cli;
 import mcpp.ui;
 import mcpp.home;
+import mcpp.platform;
 
 int main(int argc, char* argv[]) {
+    // Before anything is written: `mcpp … | head` ends mcpp in order, and no
+    // program mcpp starts inherits SIGPIPE ignored (part 2 design, §6.4).
+    mcpp::platform::process::guard_broken_pipe();
+
     // Line-buffer stdout even when it is not a TTY.
     //
     // Without this, progress output is block-buffered and the block SIZE is

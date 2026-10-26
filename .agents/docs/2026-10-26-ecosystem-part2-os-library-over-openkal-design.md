@@ -259,9 +259,13 @@ mcpplibs/os
   另提供按链接解析的 `os::fs::resolve`。
 - **本进程环境不可修改**（与 openkal 一致）；子进程环境由 `spawn` 指定。
 - **结束**：`os::interrupt::requested()` / `wait()` 基于 stop word，处理在普通线程；`os::interrupt::end_as_requested()` 基于 G4。
-  mcpp 的取消：看到 word → 清理、写 `cancelled` 记录 → 按请求结束；POSIX 上父进程看到信号状态（shell 得到 130/143），Windows
-  上为 `STATUS_CONTROL_C_EXIT`（part 1 rev 4）。
-- **EPIPE**：openkal 让写入关闭的管道得到错误而非被结束（E20、K8）；消费方的输出层把它视为正常结束（mcpp 的 `| head`）。
+  取消的可观察语义：清理、写 `cancelled` 记录 → 按请求结束；POSIX 上父进程看到信号状态（shell 得到 130/143），Windows 上为
+  `STATUS_CONTROL_C_EXIT`（part 1 rev 4）。mcpp 以其既有的守护实现该语义（§10.1）；`os::interrupt` 供 mcpp-ide、xlings 等。
+- **SIGPIPE 与 EPIPE**：openkal-linux、openkal-macos 为本程序的写入忽略 SIGPIPE，写入关闭的管道得到错误而非被结束（E20、K8）。
+  忽略的处置跨 `exec` 保留，故 `kal_process_spawn` 启动的程序恢复本程序启动时的处置（K12）。mcpp 在写出任何内容之前为 SIGPIPE
+  安装处理器（处理器跨 `exec` 复位为默认，mcpp 以任何方式启动的程序都以默认处置开始）：读端关闭时按中断的顺序清理（结束受守护
+  的进程组、写中断文件、恢复终端模式），再以 SIGPIPE 的默认处置结束，shell 看到的状态与此前相同（141）。逐处检查 EPIPE 不可行：
+  `std::print` 写入失败抛出 `std::system_error`，mcpp 的输出点逾 470 处。
 - **错误**：`std::expected<T, os::error>`，可移植分类由 `kal_err_*` 映射，保留原生码。
 
 ## 7. openkal 的修改
@@ -280,6 +284,7 @@ mcpplibs/os
 | K8 | openkal-macos | SIGPIPE 结束程序 | 以已实测的 `sigaction` 结构忽略 SIGPIPE；mcppls 删除 WA-PLATFORM-001 | E20 |
 | K9 | openkal-windows | UNC 路径与启动后挂载的卷不可达 | 增加 UNC 根的 preopen；名字未命中时重新枚举卷；实现前实测 | O7 |
 | K10 | openkal-windows | 控制台按代码页解释字节 | 交互式控制台流转为 UTF-16 用 `WriteConsoleW`；实现前实测 | E21 |
+| K12 | openkal-linux、openkal-macos | 为本程序忽略的 SIGPIPE 被启动的程序继承：其 shell 中的 `yes \| head` 报写入错误而不结束，shell 无法撤销启动时的忽略 | 记录启动时的处置；`kal_process_spawn` 的子进程在 `exec` 前恢复之；`tests/sigpipe_not_passed_on.cpp`（启动方为默认 / 忽略两种） | B10 |
 | K11 | openkal-linux | PRoot 下 `execveat` | 实现内已有 ENOSYS 回退；补"已知在翻译器下运行时从第一次起用 `execve`"，mcppls 删除其提前设置 | mcppls |
 
 ### 7.2 新增原子（S1，各实现随之）
@@ -363,6 +368,12 @@ M3 由链接 libokrun、映像段与一个极小的入口（由 `mcpp pack` 生�
 | `okrun`（包 `openkal-tools`） | bin（mcpp + C++ Modules） | libokrun 之上的薄 `main`；不链接宿主 C 库，进程内只有映像里的一套 C / C++ 运行时 |
 | `okld`（包 `openkal-tools`） | bin（构建机工具） | `okld check`（约定检查）、`okld note`（推导所需接口写入 note）、`okld sign`（签名）、`okld inspect`；复用 libokld 的格式定义；不替代链接器；非 mcpp 的工具链也能用 |
 
+实现形态：okrun 以借用安排构建，宿主 C / C++ 运行时在进程内，openkal 实现随之链接。okrun 是 C++ 模块程序，standalone 安排要求
+程序自带入口且不用宿主 C 库，mcpp 不为该安排构建 C++ 程序；映像只导入 kal_*，映像内的运行时与宿主运行时不共享符号，"一个进程一份
+实现"（SPEC 10.1）指 openkal 实现，仍成立。上表"不链接宿主 C 库"由此修订。绑定表由 `run/build.mcpp` 在构建时从 openkal 的
+`SURFACE.txt` 生成（`MCPP_DEP_OPENKAL_DIR` → `MCPP_OUT_DIR`），不提交生成物。macOS 上 G3 以 `__pthread_fchdir`（线程级工作
+目录）实现按目录句柄的绑定与连接。
+
 发布：okrun 的 macOS 版签名并带可执行内存 entitlement、公证；Windows 版 Authenticode；okrun 构建**不启用 CFG**，或在映射映像时登记
 有效调用目标（否则 CFG 拦截进入映像的间接调用）。
 
@@ -403,8 +414,27 @@ PATHEXT、配置目录、可执行后缀）由 G8 与按资源查询决定；平
 
 ### 10.1 接入 `os`
 
-`modules/platform` 中 A / A\* / N / O 的部分改为 `mcpplibs.os`；领域部分保留；`bounded_process` 由 `os::process` 替代；取消路径按
-§6.4；EPIPE 视为正常结束；`axis` 的架构宏改用 `os`；`modules/platform` 中 `#if` 归零。
+`modules/platform` 的平台差异只以两种形式表达：`os` 编译期常量上的 `if constexpr`（两支在各系统都编译），与接口中声明、在按系统
+的实现单元中定义的函数（`src/<system>/*.cpp`，由 `mcpp.toml` 按目标选择；另一系统的函数只能出现在被丢弃的分支中，否则为链接错误）。
+`#if` 为 0。
+
+经 `os` 的部分：平台常量与架构（`common`、`axis`）；本程序映像的名字（`fs::self_exe_path` → `os::env::image`）；PATH 查找
+（`which` → `os::env::find_executable`，PATH 取当前值，因 mcpp 为其启动的程序设置自身环境变量）；目录链接、不覆盖的重命名与卷
+标识（`fs_caps`）；终端（是否终端、尺寸、控制序列、控制台的 UTF-8 输出）。
+
+保留为按系统实现单元的部分与理由：
+
+- **启动器**（`bounded_process`、`process`）。Windows 上用户编写的 shell 命令须以原样命令行交给 `cmd.exe /d /s /c "<command>"`
+  （#425）；openkal 只传递参数向量并按 MSVC 规则引用，`cmd.exe` 不按该规则解析，任何引用都改变含引号的命令。只把参数向量启动换成
+  `os::process` 而保留 shell 启动，会使同一契约（截止时间、空闲时限、进程树、合并输出、中断守护）有两份实现。启动器因此整体保留，
+  `os::process` 不替代 `bounded_process`；这修订了本节 rev 3 的"`bounded_process` 由 `os::process` 替代"。
+- **文件锁**（`FileLock`）。`os::fs::lock` 在 POSIX 上是打开文件描述的锁（`F_OFD_SETLK`），与 `flock` 互不排斥；此前每个版本都以
+  `flock` 持有 home 中的锁文件，两个版本同时工作时将同时持锁。
+- **中断守护**。POSIX 信号处理器（只做异步信号安全的操作）与 Windows 控制台处理器，实现 §6.4 的取消语义。
+- 耐久同步、进程 umask、`linux` / `macos` / `windows` 模块的系统查询。
+
+SIGPIPE 按 §6.4。e2e 941：A，`mcpp run` 启动的程序以默认处置开始 SIGPIPE；B，标准输出无读端时 mcpp 以 SIGPIPE 结束，而非异常、
+中止或正常退出。去掉守护的构建上 A 失败（`pipe=ignored`）。
 
 ### 10.2 GCC 模块映射（D11，替换 `9016c0b1`）
 
@@ -519,6 +549,9 @@ os + image ─┬─→ mcpp #842：D11（可在 S1 之前单独完成并跑 CI�
 | B5 | openkal-windows 不支持链接；stop word 声明与语义 | E10、E16 | K3、K4 |
 | B6 | part 1 实施中修复的问题 | 见 part 1 | 已随 2026.10.26.1 发布 |
 | B7 | release 下切换工作空间成员时公共依赖反复重编（mcpp#844） | 全局参数携带整个计划的 `trim_paths` 映射 | D13 |
+| B8 | openkal-macos：libc 的 `signal()` 之后 stop word 处理器返回时 SIGTRAP | trampoline 未把内核给出的 sigreturn 令牌（x5）传回 `sigreturn`（x2） | trampoline 传回令牌；`tests/stop_word_and_sigpipe.cpp` |
+| B9 | e2e 849：ninja 后端读不出带 `$root` 的 GCC 模块映射 | 后端按行朴素解析映射，未按 dyndep 的解析器 | 改用 `parse_module_map` |
+| B10 | 链接 openkal 后，mcpp 与 openkal 启动的程序都以 SIGPIPE 忽略开始；mcpp 的 `std::print` 写入无读端的标准输出时抛出异常 | openkal 为自身写入忽略 SIGPIPE，忽略跨 `exec` 保留（E20 未计及继承） | K12；mcpp 的 SIGPIPE 守护（§6.4、§10.1）；e2e 941 |
 
 ## 15. 生态级多视角自审（rev 3）
 

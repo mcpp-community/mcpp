@@ -36,6 +36,24 @@
   the common packages each time. A unit's map is now the fixed roots and the
   roots of its own package's dependency closure.
 
+### Changed
+
+- **The operating-system layer is `mcpplibs.os` over openkal.** The platform
+  constants and the architecture, the executable's own name, PATH lookup,
+  directory links, renames that refuse an existing name, volume identities,
+  terminals and console output come from `mcpplibs.os`; what that library
+  does not carry (the launchers and their signal guard, file locks shared with
+  earlier releases, durable sync) is one implementation unit per system,
+  selected by the package manifest. `modules/platform` contains no
+  preprocessor conditional. `which` no longer starts a shell: a program is
+  found on PATH, with PATHEXT's suffixes on Windows, and the current
+  directory is not searched on Windows.
+- **A closed reader ends mcpp in order.** `mcpp … | head` stops the guarded
+  child process groups, writes the interrupt files and restores the terminal,
+  and then ends by SIGPIPE, with the status a shell has always seen (141).
+  Every program mcpp starts begins with SIGPIPE at its default, although
+  openkal ignores it for its own writes.
+
 ## [2026.10.26.1] - 2026-10-26
 
 ### Added

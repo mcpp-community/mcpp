@@ -31,3 +31,23 @@ license     = "Apache-2.0"
 # as the engine consumes them, and the pair is the cross-check.
 [dev-dependencies.compat]
 gtest = "1.15.2"
+
+# The operating-system layer is mcpplibs.os over openkal (design 2026-10-26
+# part 2, §10.1). Referenced by its pull request's branch until it is
+# published; mcpp.lock then names the version.
+[dependencies.mcpplibs]
+os = { git = "https://github.com/mcpplibs/os.git", branch = "os-0.1.0" }
+
+# Every interface is compiled everywhere; implementation units are selected
+# per system, so no source in this package carries a preprocessor conditional.
+[build]
+sources = ["src/*.cppm", "src/*/*.cppm"]
+
+[target.linux.build]
+sources = ["src/linux/*.cpp", "src/posix/*.cpp"]
+
+[target.macos.build]
+sources = ["src/macos/*.cpp", "src/posix/*.cpp"]
+
+[target.windows.build]
+sources = ["src/windows/*.cpp"]

@@ -2,19 +2,16 @@
 //
 // Windows: uses _putenv_s to mutate the calling process environment.
 // POSIX:   supports scoped current-process env mutation for child processes.
-
-module;
-#include <cstdlib>
-#if defined(_WIN32)
-#include <stdlib.h>    // _putenv_s
-#else
-#include <stdlib.h>    // setenv / unsetenv
-extern char** environ;
-#endif
+//
+// The two operations that differ between systems --- the process's own
+// variable table, and writing to it --- are declared below and defined once
+// per system (src/<system>/env.cpp); everything else is one text, dispatching
+// on mcpp.platform.common's constants.
 
 export module mcpp.platform.env;
 
 import std;
+import mcpp.platform.common;
 
 export namespace mcpp::platform::env {
 
@@ -146,7 +143,18 @@ std::string prepend_path_list(std::string_view key,
 std::string build_env_prefix(
     const std::vector<std::pair<std::string, std::string>>& vars);
 
+// The process's own variable table as the system holds it: `NAME=value'
+// entries, null-terminated, current with every `set' and `unset'. For a
+// launcher that passes it on (src/<system>/env.cpp).
+char** environment();
+
 } // namespace mcpp::platform::env
+
+// The per-system primitive (src/<system>/env.cpp). Not exported.
+namespace mcpp::platform::env::detail {
+// Sets `key' to `value', or removes it when `value' is null.
+void put(const std::string& key, const char* value);
+}  // namespace mcpp::platform::env::detail
 
 // ─── Implementation ──────────────────────────────────────────────────────
 
@@ -238,12 +246,7 @@ std::optional<std::string> get(std::string_view key) {
 
 std::vector<std::string> with_prefix(std::string_view prefix) {
     std::vector<std::string> out;
-#if defined(_WIN32)
-    char** env = _environ;
-#else
-    char** env = environ;
-#endif
-    for (; env && *env; ++env) {
+    for (char** env = environment(); env && *env; ++env) {
         std::string_view e(*env);
         if (!e.starts_with(prefix)) continue;
         auto eq = e.find('=');
@@ -255,19 +258,11 @@ std::vector<std::string> with_prefix(std::string_view prefix) {
 }
 
 void set(const std::string& key, const std::string& value) {
-#if defined(_WIN32)
-    _putenv_s(key.c_str(), value.c_str());
-#else
-    setenv(key.c_str(), value.c_str(), 1);
-#endif
+    detail::put(key, value.c_str());
 }
 
 void unset(const std::string& key) {
-#if defined(_WIN32)
-    _putenv_s(key.c_str(), "");
-#else
-    unsetenv(key.c_str());
-#endif
+    detail::put(key, nullptr);
 }
 
 ScopedEnv::ScopedEnv(std::string key, std::optional<std::string> value)
@@ -293,36 +288,23 @@ ScopedEnv::~ScopedEnv() {
 }
 
 std::string path_list_separator() {
-#if defined(_WIN32)
-    return ";";
-#else
-    return ":";
-#endif
+    return is_windows ? ";" : ":";
 }
 
 std::string runtime_library_path_key() {
-#if defined(_WIN32)
-    return "PATH";
-#elif defined(__APPLE__)
+    if constexpr (is_windows) return "PATH";
     // DYLD_LIBRARY_PATH affects every executable launched by ninja, including
     // ninja itself, and can make macOS system frameworks load an incompatible
     // private libc++/libc++abi. Keep macOS on toolchain-provided rpaths.
-    return "";
-#elif defined(__linux__)
-    return "LD_LIBRARY_PATH";
-#else
-    return "";
-#endif
+    else if constexpr (is_macos) return "";
+    else if constexpr (is_linux) return "LD_LIBRARY_PATH";
+    else return "";
 }
 
 std::string host_tool_runtime_library_path_key() {
-#if defined(__APPLE__)
-    return "DYLD_LIBRARY_PATH";
-#elif defined(__linux__)
-    return "LD_LIBRARY_PATH";
-#else
-    return "";
-#endif
+    if constexpr (is_macos) return "DYLD_LIBRARY_PATH";
+    else if constexpr (is_linux) return "LD_LIBRARY_PATH";
+    else return "";
 }
 
 std::string strip_private_glibc(std::string_view paths) {
@@ -379,11 +361,12 @@ std::string prepend_path_list(std::string_view key,
 std::string build_env_prefix(
     const std::vector<std::pair<std::string, std::string>>& vars)
 {
-#if defined(_WIN32)
-    for (auto& [k, v] : vars)
-        _putenv_s(k.c_str(), v.c_str());
-    return "";
-#else
+    // Windows: the variables are set in this process, which every child
+    // started afterwards inherits; there is no prefix a command line carries.
+    if constexpr (is_windows) {
+        for (auto& [k, v] : vars) set(k, v);
+        return "";
+    }
     std::string prefix;
     for (auto& [k, v] : vars) {
         prefix += k;
@@ -397,7 +380,6 @@ std::string build_env_prefix(
         prefix += ' ';
     }
     return prefix;
-#endif
 }
 
 } // namespace mcpp::platform::env

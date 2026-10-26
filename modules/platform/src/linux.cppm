@@ -4,11 +4,10 @@
 //   build_ld_library_path()  — construct LD_LIBRARY_PATH prefix
 //   runtime_lib_dirs()       — Linux toolchain runtime library search paths
 
-module;
-
 export module mcpp.platform.linux;
 
 import std;
+import mcpp.platform.common;
 import mcpp.platform.shell;
 
 export namespace mcpp::platform::linux_ {
@@ -57,59 +56,59 @@ std::string join_dirs(const std::vector<std::filesystem::path>& dirs) {
 
 std::string build_ld_library_path_prefix(
     const std::vector<std::filesystem::path>& dirs) {
-#if defined(__linux__)
-    if (dirs.empty()) return "";
-    auto joined = join_dirs(dirs);
-    return std::format("env LD_LIBRARY_PATH={}${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}} ",
-                       mcpp::platform::shell::quote(joined));
-#else
-    (void)dirs;
-    return "";
-#endif
+    if constexpr (is_linux) {
+        if (dirs.empty()) return "";
+        auto joined = join_dirs(dirs);
+        return std::format("env LD_LIBRARY_PATH={}${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}} ",
+                           mcpp::platform::shell::quote(joined));
+    } else {
+        (void)dirs;
+        return "";
+    }
 }
 
 std::string build_clean_ld_library_path_prefix(
     const std::vector<std::filesystem::path>& dirs) {
-#if defined(__linux__)
-    if (dirs.empty()) return "";
-    auto joined = join_dirs(dirs);
-    return std::format("env LD_LIBRARY_PATH={} ",
-                       mcpp::platform::shell::quote(joined));
-#else
-    (void)dirs;
-    return "";
-#endif
+    if constexpr (is_linux) {
+        if (dirs.empty()) return "";
+        auto joined = join_dirs(dirs);
+        return std::format("env LD_LIBRARY_PATH={} ",
+                           mcpp::platform::shell::quote(joined));
+    } else {
+        (void)dirs;
+        return "";
+    }
 }
 
 std::vector<std::filesystem::path>
 runtime_lib_dirs(const std::filesystem::path& toolchain_root) {
     std::vector<std::filesystem::path> dirs;
-#if defined(__linux__)
-    auto add = [&](const std::filesystem::path& p) {
-        if (std::filesystem::exists(p))
-            dirs.push_back(p);
-    };
-    add(toolchain_root / "lib" / "x86_64-unknown-linux-gnu");
-    add(toolchain_root / "lib" / "aarch64-unknown-linux-gnu");
-    add(toolchain_root / "lib" / "aarch64-linux-gnu");
-#else
-    (void)toolchain_root;
-#endif
+    if constexpr (is_linux) {
+        auto add = [&](const std::filesystem::path& p) {
+            if (std::filesystem::exists(p))
+                dirs.push_back(p);
+        };
+        add(toolchain_root / "lib" / "x86_64-unknown-linux-gnu");
+        add(toolchain_root / "lib" / "aarch64-unknown-linux-gnu");
+        add(toolchain_root / "lib" / "aarch64-linux-gnu");
+    } else {
+        (void)toolchain_root;
+    }
     return dirs;
 }
 
 bool is_android_host() {
-#if defined(__linux__)
-    static const bool android = [] {
-        if (std::getenv("ANDROID_ROOT") && std::getenv("ANDROID_DATA")) return true;
-        std::error_code ec;
-        return std::filesystem::exists("/system/bin/linker64", ec)
-            || std::filesystem::exists("/system/bin/linker", ec);
-    }();
-    return android;
-#else
-    return false;
-#endif
+    if constexpr (is_linux) {
+        static const bool android = [] {
+            if (std::getenv("ANDROID_ROOT") && std::getenv("ANDROID_DATA")) return true;
+            std::error_code ec;
+            return std::filesystem::exists("/system/bin/linker64", ec)
+                || std::filesystem::exists("/system/bin/linker", ec);
+        }();
+        return android;
+    } else {
+        return false;
+    }
 }
 
 } // namespace mcpp::platform::linux_

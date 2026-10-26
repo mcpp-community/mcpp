@@ -11,39 +11,14 @@
 //   KeyInput          — keys read from the terminal while a game plays
 
 module;
-#include <cerrno>
-#include <cstdio>
-#include <cstdlib>
-#if defined(__unix__) || defined(__APPLE__)
-#include <unistd.h>
-#include <sys/ioctl.h>
-#include <sys/stat.h>
-#include <termios.h>
-#endif
-#if defined(_WIN32)
-#include <io.h>        // _dup, _dup2, _close, _get_osfhandle, _fileno
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>   // SetHandleInformation, GetConsoleMode, WriteConsoleW
-#ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING   // older SDK and MinGW headers
-#define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
-#endif
-#else
-#include <unistd.h>    // dup2, close
-#include <fcntl.h>     // fcntl, F_DUPFD_CLOEXEC
-#endif
+#include <cstdio>     // stdout, stderr: macros, which `import std` does not carry
 
 export module mcpp.platform.terminal;
 
 import std;
-import mcpp.platform.unix.bounded_process;
-import mcpp.platform.unix.terminal;
-import mcpp.platform.windows;
 import mcpp.platform.common;
+import mcpplibs.os.terminal;
+import mcpplibs.os.stdio;
 
 export namespace mcpp::platform::terminal {
 
@@ -187,45 +162,47 @@ private:
 
 } // namespace mcpp::platform::terminal
 
+// ─── Each system's own (posix/terminal.cpp, windows/terminal.cpp) ─────────
+//
+// Not exported. Whether a stream is a terminal, its size, its control
+// sequences and UTF-8 text on a console are mcpplibs.os's; what remains is
+// what that library does not carry.
+namespace mcpp::platform::terminal::native {
+// Whether standard output and standard error reach one terminal, both being
+// terminals: the same device on POSIX, consoles on Windows.
+bool same_terminal();
+// The console's output code page; 0 where a stream is not a console, and on
+// every system without one.
+unsigned console_output_code_page(Stream s);
+// Writes all of `text` to the C runtime's descriptor `fd`; false when a write
+// fails.
+bool write_descriptor(int fd, std::string_view text);
+// A descriptor for standard output that a started program does not inherit,
+// standard output then made a copy of standard error; -1 when it cannot be.
+int divert_stdout();
+// Standard output put back from `saved`, which is closed.
+void restore_stdout(int saved);
+}  // namespace mcpp::platform::terminal::native
+
 namespace mcpp::platform::terminal {
+
+namespace os = mcpplibs::os;
 
 namespace {
 
 std::FILE* file_of(Stream s) { return s == Stream::Out ? stdout : stderr; }
-
-#if defined(_WIN32)
-HANDLE handle_of(Stream s) {
-    const auto h = reinterpret_cast<HANDLE>(::_get_osfhandle(::_fileno(file_of(s))));
-    return h == nullptr ? INVALID_HANDLE_VALUE : h;
+os::terminal::stream stream_of(Stream s) {
+    return s == Stream::Out ? os::terminal::stream::out : os::terminal::stream::err;
 }
-
-bool console_of(Stream s, HANDLE* out = nullptr) {
-    const auto h = handle_of(s);
-    DWORD mode = 0;
-    if (h == INVALID_HANDLE_VALUE || !::GetConsoleMode(h, &mode)) return false;
-    if (out) *out = h;
-    return true;
-}
-#endif
 
 } // namespace
 
 bool is_terminal(Stream s) {
-#if defined(_WIN32)
-    return console_of(s);
-#elif defined(__unix__) || defined(__APPLE__)
-    return ::isatty(::fileno(file_of(s))) != 0;
-#else
-    (void)s;
-    return false;
-#endif
+    return os::terminal::interactive(stream_of(s));
 }
 
 bool input_is_terminal() {
-    if constexpr (mcpp::platform::is_windows)
-        return mcpp::platform::windows::input_is_terminal();
-    else
-        return mcpp::platform::unix_terminal::input_is_terminal();
+    return os::terminal::interactive(os::terminal::stream::in);
 }
 
 bool is_tty() { return is_terminal(Stream::Out); }
@@ -234,16 +211,10 @@ bool can_move_cursor(Stream s) {
     if (!is_terminal(s)) return false;
     if (const char* term = std::getenv("TERM"); term && std::string_view(term) == "dumb")
         return false;
-#if defined(_WIN32)
-    HANDLE h;
-    if (!console_of(s, &h)) return false;
-    DWORD mode = 0;
-    if (!::GetConsoleMode(h, &mode)) return false;
-    if (mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) return true;
-    return ::SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
-#else
-    return true;
-#endif
+    // A POSIX terminal is taken to obey them; a console is asked, and is
+    // switched to virtual terminal processing by the asking.
+    if constexpr (mcpp::platform::is_windows) return os::terminal::sequences(stream_of(s));
+    else return true;
 }
 
 namespace {
@@ -256,52 +227,34 @@ std::size_t from_env(const char* name, std::size_t fallback) {
 } // namespace
 
 std::size_t cols(Stream s) {
-#if defined(_WIN32)
-    CONSOLE_SCREEN_BUFFER_INFO info{};
-    if (HANDLE h; console_of(s, &h) && ::GetConsoleScreenBufferInfo(h, &info))
-        return static_cast<std::size_t>(info.srWindow.Right - info.srWindow.Left + 1);
-#elif defined(__unix__) || defined(__APPLE__)
-    struct winsize w{};
-    if (::ioctl(::fileno(file_of(s)), TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
-        return w.ws_col;
-#else
-    (void)s;
-#endif
+    if (const auto size = os::terminal::size(stream_of(s)); size && size->columns > 0)
+        return size->columns;
     return from_env("COLUMNS", 80);
 }
 
 std::size_t rows(Stream s) {
-#if defined(_WIN32)
-    CONSOLE_SCREEN_BUFFER_INFO info{};
-    if (HANDLE h; console_of(s, &h) && ::GetConsoleScreenBufferInfo(h, &info))
-        return static_cast<std::size_t>(info.srWindow.Bottom - info.srWindow.Top + 1);
-#elif defined(__unix__) || defined(__APPLE__)
-    struct winsize w{};
-    if (::ioctl(::fileno(file_of(s)), TIOCGWINSZ, &w) == 0 && w.ws_row > 0)
-        return w.ws_row;
-#else
-    (void)s;
-#endif
+    if (const auto size = os::terminal::size(stream_of(s)); size && size->rows > 0)
+        return size->rows;
     return from_env("LINES", 24);
 }
 
+namespace {
+// The whole of `bytes` to the stream through mcpplibs.os, which gives a
+// console UTF-16 (openkal K10): text outside ASCII appears as written
+// whatever the console's code page is.
+bool write_through_os(Stream s, std::string_view bytes) {
+    return (s == Stream::Out ? os::stdio::write_output(bytes) : os::stdio::write_error(bytes)).has_value();
+}
+} // namespace
+
 void write(Stream s, std::string_view text) {
     if (text.empty()) return;
-#if defined(_WIN32)
-    if (HANDLE h; console_of(s, &h)) {
-        std::fflush(file_of(s));
-        const int n = ::MultiByteToWideChar(CP_UTF8, 0, text.data(),
-                                            static_cast<int>(text.size()), nullptr, 0);
-        if (n > 0) {
-            std::wstring wide(static_cast<std::size_t>(n), L'\0');
-            ::MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
-                                  wide.data(), n);
-            DWORD written = 0;
-            if (::WriteConsoleW(h, wide.data(), static_cast<DWORD>(wide.size()), &written, nullptr))
-                return;
+    if constexpr (mcpp::platform::is_windows) {
+        if (is_terminal(s)) {
+            std::fflush(file_of(s));
+            if (write_through_os(s, text)) return;
         }
     }
-#endif
     std::fwrite(text.data(), 1, text.size(), file_of(s));
 }
 
@@ -309,63 +262,22 @@ void write_frame(Stream s, std::string_view bytes) {
     if (bytes.empty()) return;
     std::fflush(stdout);
     std::fflush(stderr);
-#if defined(_WIN32)
-    if (HANDLE h; console_of(s, &h)) {
-        const int n = ::MultiByteToWideChar(CP_UTF8, 0, bytes.data(),
-                                            static_cast<int>(bytes.size()), nullptr, 0);
-        if (n > 0) {
-            std::wstring wide(static_cast<std::size_t>(n), L'\0');
-            ::MultiByteToWideChar(CP_UTF8, 0, bytes.data(), static_cast<int>(bytes.size()),
-                                  wide.data(), n);
-            DWORD written = 0;
-            if (::WriteConsoleW(h, wide.data(), static_cast<DWORD>(wide.size()), &written, nullptr))
-                return;
-        }
-    }
+    // One write of the whole frame (repeated by the library only for a
+    // partial write or an interruption); on Windows only to a console, the
+    // C runtime's text mode keeping the line ends of anything else.
+    if (!mcpp::platform::is_windows || is_terminal(s))
+        if (write_through_os(s, bytes)) return;
     std::fwrite(bytes.data(), 1, bytes.size(), file_of(s));
     std::fflush(file_of(s));
-#elif defined(__unix__) || defined(__APPLE__)
-    const int fd = ::fileno(file_of(s));
-    const char* p = bytes.data();
-    std::size_t left = bytes.size();
-    while (left > 0) {
-        const auto n = ::write(fd, p, left);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            return;
-        }
-        p += n;
-        left -= static_cast<std::size_t>(n);
-    }
-#else
-    std::fwrite(bytes.data(), 1, bytes.size(), file_of(s));
-    std::fflush(file_of(s));
-#endif
 }
 
 bool same_terminal() {
-#if defined(_WIN32)
-    return console_of(Stream::Out) && console_of(Stream::Err);
-#elif defined(__unix__) || defined(__APPLE__)
-    const int out = ::fileno(stdout), err = ::fileno(stderr);
-    if (::isatty(out) == 0 || ::isatty(err) == 0) return false;
-    struct stat a{}, b{};
-    if (::fstat(out, &a) != 0 || ::fstat(err, &b) != 0) return false;
-    return a.st_rdev == b.st_rdev;
-#else
-    return false;
-#endif
+    return native::same_terminal();
 }
 
 bool ambiguous_wide(Stream s) {
-#if defined(_WIN32)
-    if (console_of(s)) {
-        const UINT cp = ::GetConsoleOutputCP();
-        if (cp == 932 || cp == 936 || cp == 949 || cp == 950) return true;
-    }
-#else
-    (void)s;
-#endif
+    const unsigned cp = native::console_output_code_page(s);
+    if (cp == 932 || cp == 936 || cp == 949 || cp == 950) return true;
     for (const char* name : {"LC_ALL", "LC_CTYPE", "LANG"}) {
         const char* v = std::getenv(name);
         if (!v || !*v) continue;
@@ -376,34 +288,21 @@ bool ambiguous_wide(Stream s) {
 }
 
 bool unicode_capable() {
-#if defined(_WIN32)
-    for (const char* name : {"WT_SESSION", "TERM_PROGRAM"})
-        if (const char* v = std::getenv(name); v && *v) return true;
-    return false;
-#else
-    for (const char* name : {"LC_ALL", "LC_CTYPE", "LANG"}) {
-        const char* v = std::getenv(name);
-        if (!v || !*v) continue;
-        std::string l(v);
-        for (auto& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        return l.find("utf-8") != std::string::npos || l.find("utf8") != std::string::npos;
+    if constexpr (mcpp::platform::is_windows) {
+        for (const char* name : {"WT_SESSION", "TERM_PROGRAM"})
+            if (const char* v = std::getenv(name); v && *v) return true;
+        return false;
+    } else {
+        for (const char* name : {"LC_ALL", "LC_CTYPE", "LANG"}) {
+            const char* v = std::getenv(name);
+            if (!v || !*v) continue;
+            std::string l(v);
+            for (auto& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return l.find("utf-8") != std::string::npos || l.find("utf8") != std::string::npos;
+        }
+        return false;
     }
-    return false;
-#endif
 }
-
-namespace {
-
-#if defined(_WIN32)
-HANDLE g_inputHandle = INVALID_HANDLE_VALUE;
-DWORD  g_inputMode   = 0;
-BOOL WINAPI restore_input_mode(DWORD) {
-    if (g_inputHandle != INVALID_HANDLE_VALUE) ::SetConsoleMode(g_inputHandle, g_inputMode);
-    return FALSE;   // the next handler, then the default action, still run
-}
-#endif
-
-} // namespace
 
 std::vector<Key> decode_keys(std::string& pending) {
     std::vector<Key> keys;
@@ -445,77 +344,7 @@ std::vector<Key> decode_keys(std::string& pending) {
     return keys;
 }
 
-KeyInput::KeyInput(Stream display) {
-    if (!is_terminal(display)) return;
-#if defined(_WIN32)
-    const HANDLE h = ::GetStdHandle(STD_INPUT_HANDLE);
-    DWORD mode = 0;
-    if (h == INVALID_HANDLE_VALUE || !::GetConsoleMode(h, &mode)) return;
-    g_inputHandle = h;
-    g_inputMode   = mode;
-    savedMode_    = mode;
-    ::SetConsoleCtrlHandler(restore_input_mode, TRUE);
-    // ENABLE_PROCESSED_INPUT stays: Ctrl-C still interrupts.
-    if (!::SetConsoleMode(h, mode & ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT))) return;
-    active_ = true;
-#elif defined(__unix__) || defined(__APPLE__)
-    if (::isatty(0) == 0 || ::tcgetpgrp(0) != ::getpgrp()) return;
-    struct termios mode{};
-    if (::tcgetattr(0, &mode) != 0) return;
-    mcpp::platform::unixproc::guard_terminal_mode(0);
-    struct termios raw = mode;
-    raw.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));   // ISIG stays: Ctrl-C interrupts
-    raw.c_cc[VMIN]  = 0;
-    raw.c_cc[VTIME] = 0;
-    if (::tcsetattr(0, TCSANOW, &raw) != 0) {
-        mcpp::platform::unixproc::unguard_terminal_mode();
-        return;
-    }
-    active_ = true;
-#endif
-}
-
-KeyInput::~KeyInput() {
-    if (!active_) return;
-#if defined(_WIN32)
-    ::SetConsoleMode(g_inputHandle, static_cast<DWORD>(savedMode_));
-    ::SetConsoleCtrlHandler(restore_input_mode, FALSE);
-    g_inputHandle = INVALID_HANDLE_VALUE;
-#elif defined(__unix__) || defined(__APPLE__)
-    mcpp::platform::unixproc::unguard_terminal_mode();
-#endif
-}
-
-std::vector<Key> KeyInput::read() {
-    std::vector<Key> keys;
-    if (!active_) return keys;
-#if defined(_WIN32)
-    DWORD n = 0;
-    while (::GetNumberOfConsoleInputEvents(g_inputHandle, &n) && n > 0) {
-        INPUT_RECORD rec{};
-        DWORD got = 0;
-        if (!::ReadConsoleInputW(g_inputHandle, &rec, 1, &got) || got == 0) break;
-        if (rec.EventType != KEY_EVENT || !rec.Event.KeyEvent.bKeyDown) continue;
-        switch (rec.Event.KeyEvent.wVirtualKeyCode) {
-        case VK_UP:    case 'W': keys.push_back(Key::Up);    break;
-        case VK_DOWN:  case 'S': keys.push_back(Key::Down);  break;
-        case VK_LEFT:  case 'A': keys.push_back(Key::Left);  break;
-        case VK_RIGHT: case 'D': keys.push_back(Key::Right); break;
-        case VK_SPACE:           keys.push_back(Key::Space); break;
-        default: break;
-        }
-    }
-#elif defined(__unix__) || defined(__APPLE__)
-    char buf[64];
-    while (true) {
-        const auto n = ::read(0, buf, sizeof buf);   // VMIN 0, VTIME 0: never blocks
-        if (n <= 0) break;
-        pending_.append(buf, static_cast<std::size_t>(n));
-    }
-    keys = decode_keys(pending_);
-#endif
-    return keys;
-}
+// KeyInput's constructor, destructor and read: each system's own.
 
 namespace {
 std::atomic<int> g_protocolStdout{-1};
@@ -528,36 +357,12 @@ void write_protocol_stdout(std::string_view text) {
         std::fflush(stdout);
         return;
     }
-    std::size_t done = 0;
-    while (done < text.size()) {
-#if defined(_WIN32)
-        const int n = ::_write(fd, text.data() + done, static_cast<unsigned>(text.size() - done));
-#else
-        const auto n = ::write(fd, text.data() + done, text.size() - done);
-#endif
-        if (n <= 0) return;
-        done += static_cast<std::size_t>(n);
-    }
+    native::write_descriptor(fd, text);
 }
 
 StdoutToStderr::StdoutToStderr() {
     std::fflush(stdout);
-#if defined(_WIN32)
-    saved_ = ::_dup(1);
-    if (saved_ >= 0) {
-        // `_dup` duplicates the handle as inheritable, and CreateProcess with
-        // handle inheritance (every `_popen` and `system`) passes it on.
-        const auto h = reinterpret_cast<HANDLE>(::_get_osfhandle(saved_));
-        if (h != INVALID_HANDLE_VALUE)
-            ::SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
-        ::_dup2(2, 1);
-    }
-#else
-    // Not `dup`: its copy survives exec. Descriptor 3 or above, as `dup`
-    // would have chosen, so nothing else about the redirection moves.
-    saved_ = ::fcntl(1, F_DUPFD_CLOEXEC, 3);
-    if (saved_ >= 0) ::dup2(2, 1);
-#endif
+    saved_ = native::divert_stdout();
     if (saved_ >= 0) {
         int expected = -1;
         g_protocolStdout.compare_exchange_strong(expected, saved_);
@@ -569,13 +374,7 @@ StdoutToStderr::~StdoutToStderr() {
     if (saved_ < 0) return;
     int expected = saved_;
     g_protocolStdout.compare_exchange_strong(expected, -1);
-#if defined(_WIN32)
-    ::_dup2(saved_, 1);
-    ::_close(saved_);
-#else
-    ::dup2(saved_, 1);
-    ::close(saved_);
-#endif
+    native::restore_stdout(saved_);
 }
 
 } // namespace mcpp::platform::terminal

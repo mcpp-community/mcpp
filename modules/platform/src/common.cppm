@@ -1,114 +1,49 @@
-// mcpp.platform.common — centralized platform-specific constants.
+// mcpp.platform.common — the platform constants mcpp's code dispatches on.
 //
-// Consumers import this module (via mcpp.platform) instead of scattering
-// #if/_WIN32 / __APPLE__ blocks throughout the codebase.  All compile-time
-// branching for platform constants lives here.
-
-module;
+// They are mcpplibs.os's compile-time constants (design 2026-10-26 part 2,
+// R3), spelt as mcpp's code has always read them; nothing here is a macro, and
+// every branch on them is an `if constexpr' that discards the other systems.
 
 export module mcpp.platform.common;
 
 import std;
+import mcpplibs.os.platform;
+
+namespace mcpp::platform {
+namespace os = mcpplibs::os;
+}
 
 export namespace mcpp::platform {
 
 // ── Binary / library name conventions ─────────────────────────────────────
 
-#if defined(_WIN32)
-constexpr std::string_view exe_suffix    = ".exe";
-constexpr std::string_view static_lib_ext = ".lib";
-constexpr std::string_view shared_lib_ext = ".dll";
-constexpr std::string_view lib_prefix    = "";
-#elif defined(__APPLE__)
-constexpr std::string_view exe_suffix    = "";
-constexpr std::string_view static_lib_ext = ".a";
-constexpr std::string_view shared_lib_ext = ".dylib";
-constexpr std::string_view lib_prefix    = "lib";
-#else
-// Linux and other POSIX
-constexpr std::string_view exe_suffix    = "";
-constexpr std::string_view static_lib_ext = ".a";
-constexpr std::string_view shared_lib_ext = ".so";
-constexpr std::string_view lib_prefix    = "lib";
-#endif
+constexpr bool is_windows = os::is_windows;
+constexpr bool is_macos   = os::is_macos;
+constexpr bool is_linux   = os::is_linux;
 
-// ── Shell / process helpers ────────────────────────────────────────────────
+constexpr std::string_view exe_suffix     = os::exe_suffix;
+constexpr std::string_view static_lib_ext = is_windows ? ".lib" : ".a";
+constexpr std::string_view shared_lib_ext = is_windows ? ".dll" : is_macos ? ".dylib" : ".so";
+constexpr std::string_view lib_prefix     = is_windows ? "" : "lib";
 
-#if defined(_WIN32)
-constexpr std::string_view null_redirect = "2>nul";
-#else
-constexpr std::string_view null_redirect = "2>/dev/null";
-#endif
+// ── Shell redirect to null device ─────────────────────────────────────────
 
-// ── Platform identification ────────────────────────────────────────────────
+constexpr std::string_view null_redirect = is_windows ? "2>nul" : "2>/dev/null";
 
-#if defined(_WIN32)
-constexpr bool is_windows = true;
-constexpr bool is_macos   = false;
-constexpr bool is_linux   = false;
-#elif defined(__APPLE__)
-constexpr bool is_windows = false;
-constexpr bool is_macos   = true;
-constexpr bool is_linux   = false;
-#elif defined(__linux__)
-constexpr bool is_windows = false;
-constexpr bool is_macos   = false;
-constexpr bool is_linux   = true;
-#else
-constexpr bool is_windows = false;
-constexpr bool is_macos   = false;
-constexpr bool is_linux   = false;
-#endif
+// ── Platform identification ───────────────────────────────────────────────
 
-// ── Platform name string ───────────────────────────────────────────────────
+constexpr std::string_view name = os::name(os::PLATFORM);
 
-constexpr std::string_view name =
-#if defined(_WIN32)
-    "windows";
-#elif defined(__APPLE__)
-    "macos";
-#elif defined(__linux__)
-    "linux";
-#else
-    "unknown";
-#endif
+// The architecture of THIS build, in the GNU spelling `triple::parse' writes.
+constexpr std::string_view host_arch = os::name(os::ARCH);
 
-// Host CPU architecture. Uses the GNU triple spelling (`aarch64`, not the
-// `arm64` token xlings uses for its release assets) so it composes directly
-// with target triples like `aarch64-linux-musl`. Used to decide native vs.
-// cross toolchain selection (target arch == host_arch → native musl-gcc;
-// otherwise a `<triple>-gcc` cross toolchain).
-constexpr std::string_view host_arch =
-#if defined(__aarch64__) || defined(_M_ARM64)
-    "aarch64";
-#elif defined(__x86_64__) || defined(_M_X64)
-    "x86_64";
-#elif defined(__i386__) || defined(_M_IX86)
-    "i686";   // the GNU spelling; `x86` is MSVC's, and `triple::parse` writes it `i686`
-#elif defined(__riscv) && (__riscv_xlen == 64)
-    "riscv64";
-#else
-    "unknown";
-#endif
+// The platform key xpkg descriptors use: `macosx' where the triple says `macos'.
+constexpr std::string_view xpkg_platform = is_windows ? "windows" : is_macos ? "macosx" : "linux";
 
-// xpkg platform key (used by resolver for xpkg.lua lookups).
-// Note: macOS uses "macosx" (not "macos") for xpkg compatibility.
-constexpr std::string_view xpkg_platform =
-#if defined(_WIN32)
-    "windows";
-#elif defined(__APPLE__)
-    "macosx";
-#elif defined(__linux__)
-    "linux";
-#else
-    "linux";
-#endif
+// ── Feature flags ─────────────────────────────────────────────────────────
 
-// ── Link strategy capabilities ─────────────────────────────────────────
-// Used by build/flags.cppm to avoid #ifdef blocks in linker flag logic.
-
-constexpr bool supports_full_static = is_linux;  // macOS/Windows cannot
+constexpr bool supports_full_static = is_linux;     // macOS/Windows cannot
 constexpr bool supports_rpath       = !is_windows;  // ELF + Mach-O only
-constexpr bool needs_explicit_libcxx = is_macos;  // macOS: -lc++ required
+constexpr bool needs_explicit_libcxx = is_macos;    // macOS: -lc++ required
 
 } // namespace mcpp::platform

@@ -9,11 +9,10 @@
 // Use the raw path string as the first token; quote() is safe for
 // arguments only.
 
-module;
-
 export module mcpp.platform.shell;
 
 import std;
+import mcpplibs.os.platform;
 
 export namespace mcpp::platform::shell {
 
@@ -78,11 +77,7 @@ std::string quote_through_shell(std::string_view s);
 // stdin is NOT touched here; that's the responsibility of
 // mcpp::platform::process::seal_stdin, which is auto-applied by capture /
 // run_silent / run_streaming on all platforms.
-#if defined(_WIN32)
-constexpr std::string_view silent_redirect = ">nul 2>&1";
-#else
-constexpr std::string_view silent_redirect = ">/dev/null 2>&1";
-#endif
+constexpr std::string_view silent_redirect = mcpplibs::os::is_windows ? ">nul 2>&1" : ">/dev/null 2>&1";
 
 } // namespace mcpp::platform::shell
 
@@ -124,11 +119,7 @@ std::string quote_windows(std::string_view s) {
 }
 
 std::string paste_arg(std::string_view s) {
-#if defined(_WIN32)
-    constexpr bool is_windows = true;
-#else
-    constexpr bool is_windows = false;
-#endif
+    constexpr bool is_windows = mcpplibs::os::is_windows;
     const bool plain = !s.empty() && std::ranges::all_of(s, [](unsigned char c) {
         return std::isalnum(c) || c == '/' || c == '.' || c == '_' || c == '-' || c == ':'
             || c == '@' || c == '+' || c == '=' || c == ',' || c == '%' || c == '~'
@@ -177,19 +168,13 @@ std::string quote_windows_through_cmd(std::string_view s) {
 }
 
 std::string quote(std::string_view s) {
-#if defined(_WIN32)
-    return quote_windows(s);
-#else
-    return quote_posix(s);
-#endif
+    if constexpr (mcpplibs::os::is_windows) return quote_windows(s);
+    else return quote_posix(s);
 }
 
 std::string quote_through_shell(std::string_view s) {
-#if defined(_WIN32)
-    return quote_windows_through_cmd(s);
-#else
-    return quote_posix(s);
-#endif
+    if constexpr (mcpplibs::os::is_windows) return quote_windows_through_cmd(s);
+    else return quote_posix(s);
 }
 
 } // namespace mcpp::platform::shell

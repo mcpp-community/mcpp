@@ -7,41 +7,42 @@
 //
 // ─── LAYOUT ────────────────────────────────────────────────────────────────
 //
-//   src/platform/*.cppm        the FACADE and the portable modules. A module
-//                              here answers a question the same way everywhere,
-//                              or dispatches once (see "dispatch" below).
-//   src/platform/unix/         POSIX-only implementations.
-//   src/platform/windows/      Win32-only implementations.
-//   src/platform/linux/        Linux-only.
-//   src/platform/macos/        macOS-only.
+//   src/*.cppm, src/<system>/*.cppm   module interfaces, compiled on every
+//                              system: the same declarations everywhere.
+//   src/linux/*.cpp            implementation units compiled for Linux,
+//   src/macos/*.cpp            for macOS,
+//   src/posix/*.cpp            for both (mcpp.toml selects them per target),
+//   src/windows/*.cpp          and for Windows.
 //
-// A directory does not change a module's NAME — `src/platform/linux/linux.cppm`
-// still declares `mcpp.platform.linux`, so moving a file here costs no importer
-// a single line. The directory is what tells a reader, before opening anything,
-// whether a file can contain platform-specific code at all.
+// The operating system itself is reached through mcpplibs.os (design
+// 2026-10-26 part 2, §10.1): its compile-time constants
+// (mcpp.platform.common), the executable's own name, PATH lookup, links,
+// renames that refuse an existing name, volume identities, terminals and
+// standard streams. What remains in implementation units is what that
+// library does not carry: the launchers and their signal guard, file locks
+// compatible with every earlier mcpp, durable sync, and the system-specific
+// queries of the linux, macos and windows modules.
 //
 // ─── HOW PLATFORM DIFFERENCES ARE EXPRESSED ────────────────────────────────
 //
-// Preferred, in order:
+// No preprocessor conditional appears in this package. A difference is one
+// of:
 //
-//   1. `if constexpr (mcpp::platform::is_windows)` in the facade layer, calling
-//      into one implementation module per platform. Both branches then have to
+//   1. `if constexpr (mcpp::platform::is_windows)` on mcpplibs.os's constants,
+//      where both branches compile everywhere. Both branches then have to
 //      COMPILE everywhere, which is what keeps the unused branch from rotting —
 //      the Windows deadline was dead code for months precisely because nothing
 //      on a Linux CI ever compiled it.
 //
-//      `mcpp.platform.process`'s bounded-run dispatch is the reference example:
-//      two implementation modules behind one signature, one dispatch, and the
-//      only `#if` left is inside each implementation, guarding its own headers.
+//   2. A function declared in an interface and defined in one implementation
+//      unit per system, when the difference is a header or a system call. A
+//      discarded `if constexpr` branch may name another system's function;
+//      a call that is not discarded is a link error, never a silent stub.
+//      `mcpp.platform.process`'s bounded-run dispatch is the reference
+//      example: two launcher modules behind one signature, one dispatch.
 //
-//   2. A per-platform module whose non-matching build is a no-op stub
-//      (`mcpp.platform.macos`, `.linux`, `.windows`). Consumers call them
-//      unconditionally, with no `#ifdef` at the call site.
-//
-//   3. `#if` inside ONE module, when the difference is a header or a syscall
-//      rather than a behaviour. Still the common case for the older portable
-//      modules (`fs`, `env`, `scaffold_fs`); migrating those is incremental
-//      work, not a precondition for adding new code the right way.
+//   3. A module whose non-matching system answers "not here" (`.macos`,
+//      `.linux`, `.windows`): consumers call it unconditionally.
 //
 // A module under a platform directory MUST NOT name a `std` type in its
 // EXPORTED interface if a widely-imported module will import it: under GCC

@@ -19,34 +19,7 @@
 // Callers are responsible for shell-quoting arguments (see platform.shell).
 
 module;
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE        // for posix_spawn_file_actions_addchdir_np (glibc)
-#endif
-#include <cstdio>
-#include <cstdlib>
-#if defined(_WIN32)
-#include <stdlib.h>    // _putenv_s
-#define popen  _popen
-#define pclose _pclose
-#elif defined(__linux__) || defined(__APPLE__)
-// Linux and macOS launchers do a direct exec (see run_exec / capture_exec
-// below); only Windows keeps the std::system shell path (#248).
-#include <unistd.h>    // pipe, dup2, close, read
-#include <cerrno>      // errno after a refused execve (run_foreground)
-#include <fcntl.h>     // O_RDONLY, O_WRONLY for capture_stdout's /dev/null
-#include <sys/wait.h>  // waitpid
-#include <spawn.h>     // posix_spawnp, posix_spawn_file_actions_* (incl. addchdir_np)
-#include <sys/stat.h>  // umask
-// The deadline runners' headers (signal.h, errno, poll.h, fcntl.h, time.h)
-// left with them: bounded runs now live in mcpp.platform.unix.bounded_process
-// and mcpp.platform.windows.bounded_process, and this file only dispatches.
-#if defined(__APPLE__)
-#include <crt_externs.h>  // _NSGetEnviron — direct `environ` is only linkable
-                          // from executables on Apple, not from dylibs
-#else
-extern "C" char **environ;
-#endif
-#endif
+#include <cstdio>     // stdout, stderr: macros, which `import std` does not carry
 
 export module mcpp.platform.process;
 
@@ -63,11 +36,14 @@ export namespace mcpp::platform::process {
 // writable by its owner only (umask 022): what a home shared by every user of
 // a machine is written with. Nothing on Windows, where the ACL inherited from
 // the directory decides.
-inline void set_umask_022() {
-#if !defined(_WIN32)
-    ::umask(022);
-#endif
-}
+void set_umask_022();
+
+// A write to a pipe whose reader is gone (`mcpp … | head`) ends mcpp in
+// order, as an interrupt does, and then with the status a shell has always
+// seen for it (POSIX: mcpp.platform.unix.bounded_process's guard_broken_pipe).
+// Called once, first thing in main. Nothing on Windows, where such a write
+// fails and mcpp goes on, as it always has.
+void guard_broken_pipe();
 
 struct RunResult {
     int         exit_code = 0;
@@ -435,32 +411,65 @@ void set_interrupt_files(const std::vector<std::pair<std::filesystem::path, std:
         temps.push_back(path.string() + ".interrupted");
         contents.push_back(content);
     }
-#if defined(_WIN32)
-    mcpp::platform::winproc::set_interrupt_files(paths, temps, contents);
-#else
-    mcpp::platform::unixproc::set_interrupt_files(paths, temps, contents);
-#endif
+    if constexpr (mcpp::platform::is_windows)
+        mcpp::platform::winproc::set_interrupt_files(paths, temps, contents);
+    else
+        mcpp::platform::unixproc::set_interrupt_files(paths, temps, contents);
+}
+
+void guard_broken_pipe() {
+    if constexpr (!mcpp::platform::is_windows)
+        mcpp::platform::unixproc::guard_broken_pipe();
 }
 
 void clear_interrupt_files() {
-#if defined(_WIN32)
-    mcpp::platform::winproc::clear_interrupt_files();
-#else
-    mcpp::platform::unixproc::clear_interrupt_files();
-#endif
+    if constexpr (mcpp::platform::is_windows)
+        mcpp::platform::winproc::clear_interrupt_files();
+    else
+        mcpp::platform::unixproc::clear_interrupt_files();
 }
 
-namespace {
+// ─── Defined once per system (posix/process.cpp, windows/process.cpp) ────
+//
+// Not exported: the four launchers whose bodies are the system's own
+// (run_exec, run_foreground, capture_exec, capture_stdout) and these
+// primitives are each system's; everything else in this file is one text.
+
+// A wait status, or what `system' and `pclose' return, as the exit code a
+// shell reports: the value itself on Windows; on POSIX the status a program
+// returned, or 128 + the signal that ended it. The raw wait-status word only
+// *happens* to look right when the core-dump bit is set (SIGSEGV+core → 0x8B =
+// 139); without the unwrapping a SIGTERM death would surface as "exit 15".
+int normalize_exit_code(int raw);
+
+// `popen(command, "r")' and its close, in the C library's spelling of each
+// system.
+std::FILE* open_pipe(const std::string& command);
+int close_pipe(std::FILE* pipe);
 
 // The section every child start holds from the creation of its pipe to the
 // parent's close of the write end (see mcpp.platform.unix.bounded_process, which
-// states why). Each platform's module defines a class on every platform and
-// empties the one that does not apply, so the uses below need no branch.
-#if defined(_WIN32)
-using LaunchSection = mcpp::platform::winproc::LaunchSection;
-#else
-using LaunchSection = mcpp::platform::unixproc::LaunchSection;
-#endif
+// states why). Each system's module declares its class everywhere and defines
+// it on its own system.
+using LaunchSection = std::conditional_t<mcpp::platform::is_windows,
+                                         mcpp::platform::winproc::LaunchSection,
+                                         mcpp::platform::unixproc::LaunchSection>;
+
+// The one sentence every launcher prints for a refused spawn. Platform-neutral
+// on purpose: the bounded launchers on both platforms now hand their spawn
+// error up (DeadlineRun::spawn_error), and the wrappers that receive it are
+// compiled everywhere. `error` is an errno on POSIX and a GetLastError() value
+// on Windows; the category below renders each in its own vocabulary.
+std::string spawn_failure(std::string_view program, int error) {
+    if constexpr (mcpp::platform::is_windows)
+        return std::format("CreateProcess('{}') failed (error {}): {}\n",
+                           program, error, std::system_category().message(error));
+    else
+        return std::format("posix_spawnp('{}') failed (error {}): {}\n",
+                           program, error, std::generic_category().message(error));
+}
+
+namespace {
 
 // Append a non-interactive stdin redirect to prevent child processes from
 // blocking on terminal input.
@@ -470,11 +479,7 @@ using LaunchSection = mcpp::platform::unixproc::LaunchSection;
 //                              had to press Enter repeatedly to advance).
 // `cmd.exe` accepts `<NUL` as a redirect for an immediately-EOF stdin.
 std::string seal_stdin(std::string_view cmd) {
-#if defined(_WIN32)
-    return std::string(cmd) + " <NUL";
-#else
-    return std::string(cmd) + " </dev/null";
-#endif
+    return std::string(cmd) + (mcpp::platform::is_windows ? " <NUL" : " </dev/null");
 }
 
 // Everything that reaches _popen / std::system on Windows is run by
@@ -501,11 +506,8 @@ std::string seal_stdin(std::string_view cmd) {
 // redirects appended by seal_stdin / silent_redirect stay inside the wrap
 // where cmd still parses them after stripping.
 std::string wrap_for_cmd_c(std::string_view cmd) {
-#if defined(_WIN32)
-    return windows_wrap_for_cmd_c(cmd);
-#else
-    return std::string(cmd);
-#endif
+    if constexpr (mcpp::platform::is_windows) return windows_wrap_for_cmd_c(cmd);
+    else return std::string(cmd);
 }
 
 // Seal stdin AND wrap. Kept separate from wrap_for_cmd_c because run_exec
@@ -514,116 +516,6 @@ std::string wrap_for_cmd_c(std::string_view cmd) {
 std::string finalize_shell_command(std::string_view cmd) {
     return wrap_for_cmd_c(seal_stdin(cmd));
 }
-
-int normalize_exit_code(int rc) {
-#if defined(_WIN32)
-    return rc;
-#else
-    if (WIFEXITED(rc))
-        return WEXITSTATUS(rc);
-    // Shell convention for signaled children: 128 + signal number. The raw
-    // wait-status word only *happens* to look right when the core-dump bit
-    // is set (SIGSEGV+core → 0x8B = 139); without it a SIGTERM death would
-    // surface as "exit 15" and be indistinguishable from a normal exit code.
-    if (WIFSIGNALED(rc))
-        return 128 + WTERMSIG(rc);
-    return rc;
-#endif
-}
-
-// The one sentence every launcher prints for a refused spawn. Platform-neutral
-// on purpose: the bounded launchers on both platforms now hand their spawn
-// error up (DeadlineRun::spawn_error), and the wrappers that receive it are
-// compiled everywhere. `error` is an errno on POSIX and a GetLastError() value
-// on Windows; the category below renders each in its own vocabulary.
-std::string spawn_failure(std::string_view program, int error) {
-#if defined(_WIN32)
-    return std::format("CreateProcess('{}') failed (error {}): {}\n",
-                       program, error, std::system_category().message(error));
-#else
-    return std::format("posix_spawnp('{}') failed (error {}): {}\n",
-                       program, error, std::generic_category().message(error));
-#endif
-}
-
-#if defined(__linux__) || defined(__APPLE__)
-// Portable accessor for the host environment block. On Apple, `environ` is
-// only linkable from executables (not dylibs), so _NSGetEnviron() is the
-// sanctioned spelling; Linux keeps the plain `environ` symbol.
-char** host_environ() {
-#if defined(__APPLE__)
-    return *::_NSGetEnviron();
-#else
-    return environ;
-#endif
-}
-
-// An outer `mcpp run`/`mcpp test` points LD_LIBRARY_PATH at mcpp's private
-// glibc payload so ITS child (a sandbox-linked user binary) can load. When
-// that child spawns mcpp again (e.g. a course provider driving `mcpp test`),
-// the same value would flow on into the inner mcpp's own children — and the
-// sandbox ninja/gcc (host-glibc binaries) then resolve a MISMATCHED libc and
-// segfault inside the dynamic linker before main (trace signature: a bare
-// `__vdso_time` line). Strip exactly the private-glibc payload entries from
-// inherited loader paths: user-supplied entries survive, and an `extra`
-// override (the correct per-child value) always wins over the inherited var.
-//
-// The predicate itself lives in mcpp.platform.env, because the OTHER half of
-// this guarantee is there: a composed override (dirs + inherited tail) arrives
-// here as `extra` and therefore bypasses the sanitation below, so
-// prepend_path_list has to sanitize the tail it carries.
-using mcpp::platform::env::strip_private_glibc;
-
-// Build a child environment block = the current environ with `extra` overrides
-// applied. Returned vector owns the strings; the caller derives a NUL-terminated
-// char* array from it. Built in the PARENT so the child env never requires a
-// post-fork setenv and mcpp's own environment is never touched.
-std::vector<std::string> merged_environ(
-    const std::vector<std::pair<std::string, std::string>>& extra)
-{
-    std::vector<std::string> out;
-    std::set<std::string> overridden;
-    for (auto& [k, v] : extra) { out.push_back(k + "=" + v); overridden.insert(k); }
-    for (char** e = host_environ(); e && *e; ++e) {
-        std::string_view entry(*e);
-        auto eq = entry.find('=');
-        std::string key(eq == std::string_view::npos ? entry : entry.substr(0, eq));
-        if (overridden.contains(key)) continue;
-        if (eq != std::string_view::npos
-            && (key == "LD_LIBRARY_PATH" || key == "DYLD_LIBRARY_PATH")) {
-            auto cleaned = strip_private_glibc(entry.substr(eq + 1));
-            if (!cleaned.empty()) out.push_back(key + "=" + cleaned);
-            continue;   // nothing legitimate left → drop the var entirely
-        }
-        out.emplace_back(entry);
-    }
-    return out;
-}
-#else
-// Build a shell command line from an argv vector (Windows + residual non-POSIX
-// fallback only; Linux/macOS exec directly, #248). EVERY token is shell-quoted,
-// including the program — a payload under `C:\Program Files\...` or a home
-// directory with a space in the user name is otherwise cut at the first space
-// and reported as `'C:\Program' is not recognized`.
-//
-// argv[0] used to be left raw here to survive cmd.exe's /c quote stripping.
-// That traded one bug for another; finalize_shell_command now feeds cmd the
-// outer quote pair it insists on eating, so the quoting below arrives intact.
-std::string command_from_argv(const std::vector<std::string>& argv) {
-#if defined(_WIN32)
-    // One derivation: the tested, host-independent shaper above.
-    return windows_command_from_argv(argv);
-#else
-    if (argv.empty()) return "";
-    std::string cmd = mcpp::platform::shell::quote(argv[0]);
-    for (std::size_t i = 1; i < argv.size(); ++i) {
-        cmd += ' ';
-        cmd += mcpp::platform::shell::quote(argv[i]);
-    }
-    return cmd;
-#endif
-}
-#endif
 
 } // namespace
 
@@ -640,7 +532,7 @@ RunResult capture(std::string_view command) {
         // `popen` creates the pipe and starts the child in one call, so the
         // section is exactly that call.
         LaunchSection launch;
-        fp = ::popen(cmd.c_str(), "r");
+        fp = open_pipe(cmd);
     }
     if (!fp) {
         result.exit_code = -1;
@@ -651,7 +543,7 @@ RunResult capture(std::string_view command) {
     while (std::fgets(buf.data(), static_cast<int>(buf.size()), fp) != nullptr)
         result.output += buf.data();
 
-    result.exit_code = normalize_exit_code(::pclose(fp));
+    result.exit_code = normalize_exit_code(close_pipe(fp));
     return result;
 }
 
@@ -667,40 +559,40 @@ RunResult capture_with_env(
     std::string_view command,
     const std::vector<std::pair<std::string, std::string>>& env)
 {
-#if defined(_WIN32)
-    // This mutates the calling process's environment, as it always has, and it
-    // is called from several threads at once when a workspace's build programs
-    // are compiled together. A variable is therefore set only when its value
-    // differs, so callers that pass one value (the toolchain's INCLUDE and LIB,
-    // the same for every compile of a build) stop touching the environment block
-    // after the first, and the writes that remain are made under the section the
-    // children are started in.
-    {
-        LaunchSection launch;
+    if constexpr (mcpp::platform::is_windows) {
+        // This mutates the calling process's environment, as it always has, and it
+        // is called from several threads at once when a workspace's build programs
+        // are compiled together. A variable is therefore set only when its value
+        // differs, so callers that pass one value (the toolchain's INCLUDE and LIB,
+        // the same for every compile of a build) stop touching the environment block
+        // after the first, and the writes that remain are made under the section the
+        // children are started in.
+        {
+            LaunchSection launch;
+            for (auto& [k, v] : env) {
+                const char* now = std::getenv(k.c_str());
+                if (now && v == now) continue;
+                mcpp::platform::env::set(k, v);
+            }
+        }
+        return capture(command);
+    } else {
+        std::string prefixed;
         for (auto& [k, v] : env) {
-            const char* now = std::getenv(k.c_str());
-            if (now && v == now) continue;
-            _putenv_s(k.c_str(), v.c_str());
+            prefixed += k;
+            prefixed += '=';
+            // Simple quoting for env values
+            prefixed += '\'';
+            for (char c : v) {
+                if (c == '\'') prefixed += "'\\''";
+                else prefixed += c;
+            }
+            prefixed += '\'';
+            prefixed += ' ';
         }
+        prefixed += command;
+        return capture(prefixed);
     }
-    return capture(command);
-#else
-    std::string prefixed;
-    for (auto& [k, v] : env) {
-        prefixed += k;
-        prefixed += '=';
-        // Simple quoting for env values
-        prefixed += '\'';
-        for (char c : v) {
-            if (c == '\'') prefixed += "'\\''";
-            else prefixed += c;
-        }
-        prefixed += '\'';
-        prefixed += ' ';
-    }
-    prefixed += command;
-    return capture(prefixed);
-#endif
 }
 
 int run_silent(std::string_view command) {
@@ -715,7 +607,7 @@ int run_streaming(std::string_view command,
     std::FILE* fp = nullptr;
     {
         LaunchSection launch;
-        fp = ::popen(cmd.c_str(), "r");
+        fp = open_pipe(cmd);
     }
     if (!fp) return -1;
 
@@ -740,7 +632,7 @@ int run_streaming(std::string_view command,
             line.remove_suffix(1);
         if (!line.empty()) on_line(line);
     }
-    return normalize_exit_code(::pclose(fp));
+    return normalize_exit_code(close_pipe(fp));
 }
 
 int run_passthrough(std::string_view command, std::string* output) {
@@ -748,7 +640,7 @@ int run_passthrough(std::string_view command, std::string* output) {
     std::FILE* fp = nullptr;
     {
         LaunchSection launch;
-        fp = ::popen(cmd.c_str(), "r");
+        fp = open_pipe(cmd);
     }
     if (!fp) return -1;
 
@@ -757,287 +649,7 @@ int run_passthrough(std::string_view command, std::string* output) {
         if (output) *output += buf.data();
         std::fputs(buf.data(), stdout);
     }
-    return normalize_exit_code(::pclose(fp));
-}
-
-// run_exec / capture_exec are split by platform on purpose:
-//
-//   Linux /
-//   macOS   — DIRECT exec via posix_spawn (unified in #248). The extra env goes
-//             into the child's envp ONLY (merged_environ); it never enters
-//             mcpp's own environment nor a host /bin/sh. On Linux that is the
-//             exact fix for the newer-glibc `sh:` crash; on macOS the old shell
-//             path built `KEY='v' cd <cwd> && prog`, where POSIX binds the env
-//             assignments to `cd` alone — the real program (build.mcpp, the
-//             only env+cwd call site) received NO extra env and lost the whole
-//             MCPP_* contract. Direct exec also drops the shell quoting /
-//             signal / injection surface entirely. cwd is applied via
-//             posix_spawn_file_actions_addchdir_np, available on both glibc
-//             and macOS 10.15+ (mcpp's floor is macOS 14).
-//   Windows — KEEP the proven std::system shell path. The env-binding hazard
-//             does not exist here (env goes through _putenv_s, not a prefix),
-//             so we deliberately do not swap the launch primitive on a platform
-//             we cannot iterate on locally.
-//
-// TODO(launcher-unify): Windows is the remaining exception; if it ever needs
-// child-only env isolation, move it onto a CreateProcess/_spawn equivalent and
-// delete the residual shell branch below.
-int run_exec(const std::vector<std::string>& argv,
-             const std::vector<std::pair<std::string, std::string>>& extraEnv,
-             int* spawn_error)
-{
-    if (spawn_error) *spawn_error = 0;
-    if (argv.empty()) return 127;
-#if defined(__linux__) || defined(__APPLE__)
-    auto envStore = merged_environ(extraEnv);
-    std::vector<char*> envp;
-    for (auto& s : envStore) envp.push_back(s.data());
-    envp.push_back(nullptr);
-    std::vector<char*> cargv;
-    for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
-    cargv.push_back(nullptr);
-
-    // THE CHILD GETS ITS OWN PROCESS GROUP, AND mcpp KILLS THAT GROUP IF IT IS
-    // ITSELF KILLED.
-    //
-    // Without this, terminating mcpp leaves the child running. Measured: every
-    // `timeout`-terminated `mcpp run` left an orphaned ninja spinning at 100%
-    // of a core, and one of them outlived the removal of the entire sandbox it
-    // belonged to — its working directory read `(deleted)` and it was still
-    // burning a core half an hour later. Any CI that wraps mcpp in `timeout`
-    // leaks a busy core per timeout.
-    //
-    // The group rather than the pid, because the child starts children of its
-    // own: killing ninja alone would leave its compilers behind.
-    //
-    // A signal is not enough on its own, which is why the guard sends SIGKILL.
-    // ninja records a signal in a flag and acts on it where it waits for a
-    // subprocess; a ninja with no command running never reaches that check, so
-    // a polite signal is recorded and never obeyed.
-    posix_spawnattr_t attr;
-    ::posix_spawnattr_init(&attr);
-    ::posix_spawnattr_setpgroup(&attr, 0);       // 0 ⇒ new group, id == pid
-    ::posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
-
-    pid_t pid = 0;
-    int sp = 0;
-    {
-        // A child with no pipe of its own is still started outside the window
-        // another thread's pipe is open in.
-        LaunchSection launch;
-        sp = ::posix_spawnp(&pid, cargv[0], nullptr, &attr, cargv.data(), envp.data());
-    }
-    ::posix_spawnattr_destroy(&attr);
-    if (sp != 0) {
-        // Reported once: by the caller when it asked for the errno, here
-        // otherwise. Never dropped — the errno in hand at this line is the
-        // whole difference between "Exec format error" and a blank line.
-        if (spawn_error) *spawn_error = sp;
-        else std::fputs(spawn_failure(argv.front(), sp).c_str(), stderr);
-        return 127;
-    }
-    mcpp::platform::unixproc::guard_group_on_signal(pid);
-    int status = 0;
-    while (::waitpid(pid, &status, 0) < 0) { /* EINTR retry */ }
-    mcpp::platform::unixproc::unguard_group(pid);
-    return normalize_exit_code(status);
-#else
-    // THE SAME OWNERSHIP AS THE POSIX BRANCH, EXPRESSED IN THIS PLATFORM'S TERMS.
-    //
-    // `std::system` gave the child away: it runs through a cmd.exe mcpp does not
-    // hold a handle to, so terminating mcpp left the tree running exactly as the
-    // POSIX branch did before its process group. A job object with
-    // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE is the equivalent unit — it takes the
-    // whole tree, which matters here for the same reason the group does there:
-    // the child starts compilers of its own.
-    //
-    // The command line is built by the same `windows_shell_command_line` the
-    // rest of this file uses, so the cmd.exe quoting rule has ONE derivation.
-    // Re-deriving it here is how `/d /s /c` loses an argument.
-    std::string prefix = mcpp::platform::env::build_env_prefix(extraEnv);
-    // wrap only — run_exec inherits stdio on purpose (see finalize_shell_command).
-    std::string cmd = windows_shell_command_line(prefix + command_from_argv(argv));
-    auto child = mcpp::platform::winproc::spawn_background(cmd.c_str(), nullptr, 1);
-    if (!child.ok) {
-        const int refused = static_cast<int>(child.refused);
-        if (spawn_error) *spawn_error = refused;
-        else std::fputs(spawn_failure(argv.front(), refused).c_str(), stderr);
-        return 127;
-    }
-    mcpp::platform::winproc::guard_job_on_signal(child.job);
-    int code = 127;
-    mcpp::platform::winproc::wait_background(child.process, &code);
-    mcpp::platform::winproc::unguard_job(child.job);
-    // Closes both handles; the child has already exited, so this is cleanup
-    // rather than a kill.
-    mcpp::platform::winproc::background_stop(child.job, child.process, 0);
-    return code;
-#endif
-}
-
-int run_foreground(const std::vector<std::string>& argv,
-                   const std::vector<std::pair<std::string, std::string>>& extraEnv,
-                   int* spawn_error)
-{
-    if (spawn_error) *spawn_error = 0;
-    if (argv.empty()) return 127;
-#if defined(__linux__) || defined(__APPLE__)
-    // A guarded group is a child mcpp still owns (ninja, a `during_build`
-    // hook). Replacing mcpp would leave it without an owner, so that is an
-    // internal error and not a silent orphan.
-    if (!mcpp::platform::unixproc::group_guard_idle()) {
-        std::fputs("mcpp: internal: a child of mcpp is still running; the program "
-                   "is not started\n", stderr);
-        return 125;
-    }
-    // The terminal's mode and the signal handlers mcpp installed are restored
-    // here; execve then resets every handled signal to its default.
-    mcpp::platform::unixproc::unguard_terminal_mode();
-    mcpp::platform::unixproc::clear_group_guard();
-
-    auto envStore = merged_environ(extraEnv);
-    std::vector<char*> envp;
-    for (auto& s : envStore) envp.push_back(s.data());
-    envp.push_back(nullptr);
-    std::vector<char*> cargv;
-    for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
-    cargv.push_back(nullptr);
-
-    std::fflush(nullptr);
-    // PATH is searched with mcpp's own PATH, as posix_spawnp searched it for
-    // run_exec, and not with the program's environment.
-    const std::string& file = argv.front();
-    int err = ENOENT;
-    if (file.find('/') != std::string::npos) {
-        ::execve(file.c_str(), cargv.data(), envp.data());
-        err = errno;
-    } else {
-        const char* path = std::getenv("PATH");
-        std::string_view dirs = (path && *path) ? path : "/usr/bin:/bin";
-        bool denied = false;
-        for (auto dir : dirs | std::views::split(':')) {
-            std::string candidate{std::string_view(dir)};
-            if (candidate.empty()) candidate = ".";
-            candidate += '/';
-            candidate += file;
-            ::execve(candidate.c_str(), cargv.data(), envp.data());
-            // The search continues past a directory that cannot hold the
-            // program; any other refusal names the program that was found.
-            if (errno == EACCES) { denied = true; continue; }
-            if (errno != ENOENT && errno != ENOTDIR) { err = errno; denied = false; break; }
-        }
-        if (denied && err == ENOENT) err = EACCES;
-    }
-    if (spawn_error) *spawn_error = err;
-    else std::fputs(spawn_failure(file, err).c_str(), stderr);
-    return 127;
-#else
-    std::string prefix = mcpp::platform::env::build_env_prefix(extraEnv);
-    std::string cmd = windows_shell_command_line(prefix + command_from_argv(argv));
-    unsigned long refused = 0;
-    const int code = mcpp::platform::winproc::run_foreground(cmd.c_str(), &refused);
-    if (code == -1 && refused != 0) {
-        if (spawn_error) *spawn_error = static_cast<int>(refused);
-        else std::fputs(spawn_failure(argv.front(), static_cast<int>(refused)).c_str(), stderr);
-        return 127;
-    }
-    return code;
-#endif
-}
-
-RunResult capture_exec(
-    const std::vector<std::string>& argv,
-    const std::vector<std::pair<std::string, std::string>>& extraEnv,
-    std::string_view cwd,
-    int* spawn_error)
-{
-    RunResult result;
-    if (spawn_error) *spawn_error = 0;
-    if (argv.empty()) { result.exit_code = 127; return result; }
-#if defined(__linux__) || defined(__APPLE__)
-    // posix_spawn + a pipe; stdout and stderr both go to the pipe so the
-    // captured text is combined (replaces the old `2>&1`).
-    auto envStore = merged_environ(extraEnv);
-    std::vector<char*> envp;
-    for (auto& s : envStore) envp.push_back(s.data());
-    envp.push_back(nullptr);
-    std::vector<char*> cargv;
-    for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
-    cargv.push_back(nullptr);
-
-    // Several threads call this at once (a workspace's build programs are
-    // compiled together). The pipe is close-on-exec, so a child another thread
-    // starts while this one is open does not keep it open (see
-    // mcpp.platform.unix.bounded_process for the rule and for what a platform
-    // without `pipe2` does in addition).
-    LaunchSection launch;
-    int fds[2];
-    if (mcpp::platform::unixproc::make_pipe(fds) != 0) {
-        result.exit_code = 127;
-        return result;
-    }
-
-    posix_spawn_file_actions_t fa;
-    ::posix_spawn_file_actions_init(&fa);
-    // Run the child in `cwd` when requested (e.g. build.mcpp, whose relative
-    // file writes must land in the project root regardless of mcpp's own cwd).
-    std::string cwdStore(cwd);
-    if (!cwdStore.empty())
-        ::posix_spawn_file_actions_addchdir_np(&fa, cwdStore.c_str());
-    ::posix_spawn_file_actions_adddup2(&fa, fds[1], 1);  // stdout → pipe
-    ::posix_spawn_file_actions_adddup2(&fa, fds[1], 2);  // stderr → same pipe
-    ::posix_spawn_file_actions_addclose(&fa, fds[0]);
-    ::posix_spawn_file_actions_addclose(&fa, fds[1]);
-
-    // Owned exactly as `run_exec`'s child is, and for the same reason: this is
-    // the launcher a FULL build uses, so a `mcpp build` interrupted here is the
-    // common case rather than the rare one. Fixing only `run_exec` left the
-    // orphan in place — measured, with the two launchers giving opposite
-    // answers to the same test.
-    posix_spawnattr_t attr;
-    ::posix_spawnattr_init(&attr);
-    ::posix_spawnattr_setpgroup(&attr, 0);
-    ::posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
-
-    pid_t pid = 0;
-    int sp = ::posix_spawnp(&pid, cargv[0], &fa, &attr, cargv.data(), envp.data());
-    ::posix_spawnattr_destroy(&attr);
-    ::posix_spawn_file_actions_destroy(&fa);
-    ::close(fds[1]);
-    launch.release();
-    if (sp == 0) mcpp::platform::unixproc::guard_group_on_signal(pid);
-    if (sp != 0) {
-        ::close(fds[0]);
-        result.exit_code = 127;
-        if (spawn_error) *spawn_error = sp;
-        else result.output = spawn_failure(argv.front(), sp);
-        return result;
-    }
-
-    std::array<char, 4096> buf{};
-    ssize_t n;
-    while ((n = ::read(fds[0], buf.data(), buf.size())) > 0)
-        result.output.append(buf.data(), static_cast<size_t>(n));
-    ::close(fds[0]);
-    int status = 0;
-    while (::waitpid(pid, &status, 0) < 0) { /* EINTR retry */ }
-    mcpp::platform::unixproc::unguard_group(pid);
-    result.exit_code = normalize_exit_code(status);
-    return result;
-#else
-    std::string cmd = command_from_argv(argv) + " 2>&1";
-    if (!cwd.empty()) {
-#if defined(_WIN32)
-        // cmd.exe `cd` without /d does not switch drives — a project on a
-        // different drive than mcpp's own cwd would run the child (the
-        // build.mcpp contract's only cwd consumer) in the wrong directory.
-        cmd = "cd /d " + mcpp::platform::shell::quote(cwd) + " && " + cmd;
-#else
-        cmd = "cd " + mcpp::platform::shell::quote(cwd) + " && " + cmd;
-#endif
-    }
-    return capture_with_env(cmd, extraEnv);
-#endif
+    return normalize_exit_code(close_pipe(fp));
 }
 
 // Host-independent (see the declaration): always the Windows shape. The
@@ -1045,77 +657,6 @@ RunResult capture_exec(
 // shaper every Windows launch in this file uses.
 std::string windows_stdout_probe_command(const std::vector<std::string>& argv) {
     return windows_command_from_argv(argv) + " 2>nul";
-}
-
-RunResult capture_stdout(
-    const std::vector<std::string>& argv,
-    const std::vector<std::pair<std::string, std::string>>& extraEnv,
-    int* spawn_error)
-{
-    RunResult result;
-    if (spawn_error) *spawn_error = 0;
-    if (argv.empty()) { result.exit_code = 127; return result; }
-#if defined(__linux__) || defined(__APPLE__)
-    auto envStore = merged_environ(extraEnv);
-    std::vector<char*> envp;
-    for (auto& s : envStore) envp.push_back(s.data());
-    envp.push_back(nullptr);
-    std::vector<char*> cargv;
-    for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
-    cargv.push_back(nullptr);
-
-    // The same rule as capture_exec's.
-    LaunchSection launch;
-    int fds[2];
-    if (mcpp::platform::unixproc::make_pipe(fds) != 0) {
-        result.exit_code = 127;
-        return result;
-    }
-
-    posix_spawn_file_actions_t fa;
-    ::posix_spawn_file_actions_init(&fa);
-    ::posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
-    ::posix_spawn_file_actions_adddup2(&fa, fds[1], 1);   // stdout -> pipe
-    ::posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
-    ::posix_spawn_file_actions_addclose(&fa, fds[0]);
-    ::posix_spawn_file_actions_addclose(&fa, fds[1]);
-
-    // Owned as capture_exec's child is: a probe that outlives an interrupted
-    // mcpp is the same orphan, only smaller.
-    posix_spawnattr_t attr;
-    ::posix_spawnattr_init(&attr);
-    ::posix_spawnattr_setpgroup(&attr, 0);
-    ::posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
-
-    pid_t pid = 0;
-    int sp = ::posix_spawnp(&pid, cargv[0], &fa, &attr, cargv.data(), envp.data());
-    ::posix_spawnattr_destroy(&attr);
-    ::posix_spawn_file_actions_destroy(&fa);
-    ::close(fds[1]);
-    launch.release();
-    if (sp != 0) {
-        ::close(fds[0]);
-        result.exit_code = 127;
-        if (spawn_error) *spawn_error = sp;
-        return result;
-    }
-    mcpp::platform::unixproc::guard_group_on_signal(pid);
-
-    std::array<char, 4096> buf{};
-    ssize_t n;
-    while ((n = ::read(fds[0], buf.data(), buf.size())) > 0)
-        result.output.append(buf.data(), static_cast<size_t>(n));
-    ::close(fds[0]);
-    int status = 0;
-    while (::waitpid(pid, &status, 0) < 0) { /* EINTR retry */ }
-    mcpp::platform::unixproc::unguard_group(pid);
-    result.exit_code = normalize_exit_code(status);
-    return result;
-#else
-    // cmd.exe reports a program it cannot find on stderr, which the redirect
-    // discards, and returns 9009; the output stays empty either way.
-    return capture_with_env(windows_stdout_probe_command(argv), extraEnv);
-#endif
 }
 
 RunResult capture_host_tool_stdout(const std::vector<std::string>& argv) {
