@@ -1,0 +1,15 @@
+[package]
+name = "okprobe"
+version = "0.1.0"
+
+[dependencies]
+openkal = "0.16.0"
+
+[target.linux.dependencies]
+openkal-linux = "0.17.0"
+
+[target.macos.dependencies]
+openkal-macos = "0.14.1"
+
+[target.windows.dependencies]
+openkal-windows = "0.12.0"

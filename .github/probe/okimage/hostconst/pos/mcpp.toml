@@ -1,0 +1,5 @@
+[package]
+name = "hostconst-pos"
+version = "0.1.0"
+[build]
+cxxflags = ["-DSHAPE_B"]

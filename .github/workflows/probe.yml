@@ -1,0 +1,91 @@
+name: probe (ok images and os::host, do not merge)
+
+# Design 2026-10-26 part 2, probe P: whether one ok-format image runs unchanged
+# on every system of its architecture through a prototype runner (TLS model,
+# the x86_64 Windows convention bridge, aarch64 x18, macOS executable mapping),
+# and whether os::host() can be a constexpr function on every compiler.
+# Prints facts; the summary carries them.
+on:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  XLINGS_NON_INTERACTIVE: '1'
+
+jobs:
+  images:
+    name: build the images once (linux)
+    runs-on: ubuntu-24.04
+    defaults: { run: { shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - name: Build app-x86_64.oke and app-aarch64.oke
+        run: |
+          set -euo pipefail
+          "$MCPP" toolchain install llvm@23.1.3 2>&1 | tail -2
+          LLVM=$(dirname "$(find "${MCPP_HOME:-$HOME/.mcpp}" -path '*xim-x-llvm/23.1.3/bin/clang' -type f -o -path '*xim-x-llvm/23.1.3/bin/clang' -type l | head -1)")
+          bash .github/probe/okimage/image/build.sh "$LLVM" "$RUNNER_TEMP/images" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with: { name: ok-images, path: "${{ runner.temp }}/images/*.oke" }
+
+  run:
+    name: run ${{ matrix.name }}
+    needs: images
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64,   runner: ubuntu-24.04,     arch: x86_64 }
+          - { name: linux-aarch64,  runner: ubuntu-24.04-arm, arch: aarch64 }
+          - { name: macos-arm64,    runner: macos-15,         arch: aarch64 }
+          - { name: windows-x64,    runner: windows-2022,     arch: x86_64 }
+    defaults: { run: { shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - uses: actions/download-artifact@v4
+        with: { name: ok-images, path: images }
+      - name: Build the prototype runner (llvm)
+        working-directory: .github/probe/okimage/runner
+        run: |
+          set -o pipefail
+          "$MCPP" build --toolchain llvm@23.1.3 2>&1 | tail -25 | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Run the same bytes
+        run: |
+          set -o pipefail
+          R=$(find .github/probe/okimage/runner/target -type f \( -name okrunner-probe -o -name okrunner-probe.exe \) -path '*/bin/*' | head -1)
+          { echo '```'; echo "image sha256:"; (sha256sum images/*.oke 2>/dev/null || shasum -a 256 images/*.oke);
+            "$R" "images/app-${{ matrix.arch }}.oke" 2>&1; echo "exit=$?"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  hostconst:
+    name: os::host() constexpr on ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux gcc,      runner: ubuntu-24.04,  tc: '' }
+          - { name: linux llvm,     runner: ubuntu-24.04,  tc: '--toolchain llvm@23.1.3' }
+          - { name: macos llvm,     runner: macos-15,      tc: '--toolchain llvm@23.1.3' }
+          - { name: windows llvm,   runner: windows-2022,  tc: '--toolchain llvm@23.1.3' }
+          - { name: windows msvc,   runner: windows-2022,  tc: '--toolchain msvc' }
+    defaults: { run: { shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - name: positive (must build and run) and negative (must be refused), shapes A and B
+        working-directory: .github/probe/okimage/hostconst
+        run: |
+          set +e +o pipefail
+          { echo '```'
+            for shape in A B; do
+              flag=""; [ $shape = B ] && flag='-DSHAPE_B'
+              for d in pos neg; do printf '[build]\ncxxflags = ["%s"]\n' "$flag" > $d/extra.toml; done
+              for d in pos neg; do cat $d/mcpp.base.toml $d/extra.toml > $d/mcpp.toml; done
+              echo "== shape $shape positive"; (cd pos && "$MCPP" run ${{ matrix.tc }} 2>&1 | tail -5)
+              echo "== shape $shape negative"; (cd neg && "$MCPP" build ${{ matrix.tc }} 2>&1 | grep -iE "error|note|constant|consteval" | head -8)
+            done
+            echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
