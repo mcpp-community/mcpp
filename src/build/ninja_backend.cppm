@@ -4479,7 +4479,13 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // which names an internal rule to somebody who wrote `kind = "shared"` in a
     // manifest. Defining the rule would be worse: `ld.lld -shared` succeeds and
     // produces an object nothing on that machine can load.
-    if (!flags.ldDriver.empty()) {
+    // An ok image is the exception: an image another loads (`.okso`) is
+    // placed by the loader (DT_NEEDED) or by `dlopen`, and has its rule.
+    const bool okImageShared = [&] {
+        const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+        return t && t->is_openkal();
+    }();
+    if (!flags.ldDriver.empty() && !okImageShared) {
         for (auto const& lu : plan.linkUnits) {
             if (lu.kind != LinkUnit::SharedLibrary) continue;
             return std::unexpected(BuildError{std::format(

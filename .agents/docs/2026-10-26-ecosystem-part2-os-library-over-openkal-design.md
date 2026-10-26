@@ -396,7 +396,9 @@ M3 由链接 libokrun、映像段与一个极小的入口（由 `mcpp pack` 生�
   载荷的 libc++ 与 std 模块不提供给映像。默认提供者不隐式加入依赖图（依赖图只含清单声明的包）：`import std;` 在依赖图无 C++
   运行时时于编译前被拒绝，拒绝信息给出 `openkal-musl` 与 `openkal-llvm-runtime` 的声明。无 C 库的映像以 `-ffreestanding` 编译
   （实测：`--release` 下 `-O2` 合成的 `strlen` 调用被 `okld check` 拒绝）。
-- **链接与收尾**：`ld.lld -shared -z max-page-size=65536 -z now -z noexecstack --hash-style=both`，可执行映像 `-e ok_main`；
+- **链接与收尾**：`ld.lld -shared -z max-page-size=65536 -z now -z noexecstack --hash-style=both --gc-sections --eh-frame-hdr`，
+  编译加 `-fvisibility=hidden`（映像只导出源码标注的名字；实测：未加时整个 C 库进入映像并被导出，`okld check` 以未调用的复数运算
+  所需的 `__mulxc3` 拒绝之），可执行映像 `-e ok_main`；`kind = "shared"` 产出 `.okso`（引擎对其他无加载器目标的拒绝不适用）；
   每个映像链接引擎写出的 note 对象；链接产物为 `<image>.unchecked`，`mcpp okimage-finish` 依次执行 `okld note`、`okld check`
   （`--with` 所需的 `.okso`），通过后才以映像名发布。`okld` 依次取自依赖图为本机构建的程序、声明的载荷、PATH；缺失时在编译前
   拒绝并给出 `[build-dependencies] openkal-tools = { tools = ["okld", "okrun"] }`。格式的读取与检查只在 libokld 中实现，mcpp

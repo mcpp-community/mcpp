@@ -157,9 +157,11 @@ echo "ok: pack stages the image (M2) and a program that carries it (M3)"
 
 # C
 before=$(cksum < "$(ls target/"$HOST_ARCH"-openkal/*/bin/app.oke | head -1)" )
-cat >> src/main.c <<'C'
+# Reached from the entry: the link discards what nothing reaches.
+cp src/main.c main.c.good
+cat > src/main.c <<'C'
 int puts(const char*);
-void uses_a_c_library(void) { puts("x"); }
+int ok_main(void) { return puts("x"); }
 C
 if "$MCPP" build --target "$HOST_ARCH-openkal" > refuse.log 2>&1; then
     fail "C: an image importing puts was published" refuse.log

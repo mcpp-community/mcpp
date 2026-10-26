@@ -38,9 +38,16 @@ inline constexpr std::string_view kRunner = "okrun";   // `mcpp run`, `mcpp test
 //   -ffixed-x18        (AArch64) two systems reserve the platform register;
 //   -mno-outline-atomics
 //                      (AArch64) the outlined helpers read the processor's
-//                      features through an operating system's interface.
+//                      features through an operating system's interface;
+//   -fvisibility=hidden
+//                      an image exports what its source marks
+//                      `visibility("default")` and nothing else, as the
+//                      reference build does: everything else is the image's
+//                      own, so the link can drop what nothing reaches, and the
+//                      requirements note names only the interfaces the program
+//                      uses, not every one its C library could.
 inline std::vector<std::string> compile_flags(std::string_view arch) {
-    std::vector<std::string> out{ "-fPIC", "-femulated-tls" };
+    std::vector<std::string> out{ "-fPIC", "-femulated-tls", "-fvisibility=hidden" };
     if (arch == "aarch64") {
         out.emplace_back("-ffixed-x18");
         out.emplace_back("-mno-outline-atomics");
@@ -50,10 +57,17 @@ inline std::vector<std::string> compile_flags(std::string_view arch) {
 
 // THE LINK, BY `ld.lld` ITSELF (SPEC 12.2). Position-independent, every
 // loadable segment aligned to 64 KiB (the largest protection granularity among
-// the systems), bound now, no executable stack, and both hash tables, which a
-// loader may use either of.
+// the systems), bound now, no executable stack, both hash tables (a loader may
+// use either), what nothing reaches discarded, and the unwind index an
+// unwinder finds through `dl_iterate_phdr`.
+//
+// Measured, a C program over openkal-musl before `--gc-sections` and hidden
+// visibility: the whole C library was in the image and exported, and `okld
+// check` refused it for importing `__mulxc3` -- from complex arithmetic the
+// program never called.
 inline std::string link_flags() {
-    return " -shared -z max-page-size=65536 -z now -z noexecstack --hash-style=both";
+    return " -shared -z max-page-size=65536 -z now -z noexecstack --hash-style=both"
+           " --gc-sections --eh-frame-hdr";
 }
 
 // The notes every image carries (SPEC 12.4): the requirements, which `okld
