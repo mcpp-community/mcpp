@@ -84,7 +84,8 @@ widget = { version = "1.0", backend = "glfw_opengl3" }  # Sugar for: features=["
 **Git 依赖与 `mcpp.lock`**:`tag` 和 `rev` 已经指向历史中的一个固定点，而
 `branch` 是会移动的。首次构建把分支解析成一个 commit 并写进 `mcpp.lock`,
 此后每次构建都重新构建**那个** commit —— lock 是权威来源而不是缓存提示，
-所以删掉 `~/.mcpp/git` 或换一台机器，都不会静默切换到更新的分支头。要用新的
+所以删掉 `~/.mcpp/git` 或换一台机器，都不会静默切换到更新的分支头。工程经由
+其他包间接依赖的分支同样如此（2026.10.26.2+），以包的限定名记录。要用新的
 分支头，必须显式请求：
 
 ```bash

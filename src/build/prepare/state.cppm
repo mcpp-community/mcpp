@@ -656,6 +656,10 @@ struct PrepareState {
     std::vector<std::unique_ptr<mcpp::manifest::Manifest>> dep_manifests;
     std::vector<DepCacheIdentity> dep_cache_identities;
     std::map<std::string, GitLockIdentity> root_git_lock_identities;
+    // Git dependencies reached through another package, by qualified
+    // identity; written to mcpp.lock beside the root's and read back as their
+    // anchors.
+    std::map<std::string, GitLockIdentity> transitive_git_lock_identities;
     std::vector<DependencyEdge> dependencyEdges;
     std::vector<GraphRequest> graphRequests;
     std::map<std::size_t, DependencyLinkForm> dependencyLinkForms;

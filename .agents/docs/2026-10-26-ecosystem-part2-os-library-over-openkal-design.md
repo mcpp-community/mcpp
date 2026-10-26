@@ -572,6 +572,7 @@ os + image ─┬─→ mcpp #842：D11（可在 S1 之前单独完成并跑 CI�
 | B7 | release 下切换工作空间成员时公共依赖反复重编（mcpp#844） | 全局参数携带整个计划的 `trim_paths` 映射 | D13 |
 | B8 | openkal-macos：libc 的 `signal()` 之后 stop word 处理器返回时 SIGTRAP | trampoline 未把内核给出的 sigreturn 令牌（x5）传回 `sigreturn`（x2） | trampoline 传回令牌；`tests/stop_word_and_sigpipe.cpp` |
 | B9 | e2e 849：ninja 后端读不出带 `$root` 的 GCC 模块映射 | 后端按行朴素解析映射，未按 dyndep 的解析器 | 改用 `parse_module_map` |
+| B11 | 间接依赖的 git 分支不进 mcpp.lock：每次构建取分支头，`--offline` 在其上停止（mcpp CI：platform → os → openkal） | 锁文件只写根声明的 git 依赖 | 以限定名写入并读回为锚点；e2e 943 |
 | B10 | 链接 openkal 后，mcpp 与 openkal 启动的程序都以 SIGPIPE 忽略开始；mcpp 的 `std::print` 写入无读端的标准输出时抛出异常 | openkal 为自身写入忽略 SIGPIPE，忽略跨 `exec` 保留（E20 未计及继承） | K12；mcpp 的 SIGPIPE 守护（§6.4、§10.1）；e2e 941 |
 
 ## 15. 生态级多视角自审（rev 3）

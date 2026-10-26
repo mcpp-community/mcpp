@@ -92,7 +92,9 @@ resolution or change which dependencies the lock pins.
 in history, but a `branch` moves. The first build resolves the branch to a commit
 and records it in `mcpp.lock`, and every later build rebuilds **that** commit — the
 lock is authoritative, not a cache hint, so deleting `~/.mcpp/git` or moving to
-another machine cannot silently move the build to a newer tip. A newer tip must be requested
+another machine cannot silently move the build to a newer tip. This holds for a
+branch the project reaches through another package as for its own (2026.10.26.2+):
+such a branch is recorded under the package's qualified name. A newer tip must be requested
 explicitly:
 
 ```bash

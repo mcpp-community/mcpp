@@ -192,6 +192,22 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             }
             lock.packages.push_back(std::move(lp));
         }
+        // And every git dependency reached through another package, at the
+        // commit this build used: its anchor, read back under the same key.
+        for (auto const& [key, identity] : state.transitive_git_lock_identities) {
+            // A package the root (or a member) declares under its own map key
+            // is that line already, whatever this graph's path to it.
+            if (std::ranges::any_of(lock.packages, [&](auto const& lp) { return lp.source == identity.source; }))
+                continue;
+            if (!gitLocked.insert(key).second) continue;
+            auto parsed = mcpp::pm::parse_git_source(identity.source);
+            mcpp::lockfile::LockedPackage lp;
+            lp.name    = key;
+            lp.version = parsed ? parsed->ref : std::string{};
+            lp.source  = identity.source;
+            lp.hash    = identity.hash;
+            lock.packages.push_back(std::move(lp));
+        }
 
         // Version deps: the whole resolved graph, at the versions actually
         // chosen. `resolved` is an ordered map, so the file is deterministic.

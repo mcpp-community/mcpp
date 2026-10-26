@@ -42,6 +42,11 @@
   of a package that provides a module under GCC carries the spelling: such a
   package is compiled once more after the upgrade, and a package of object
   files keeps its entry.
+- **A git branch reached through another package is locked.** mcpp.lock
+  recorded only the branches the project itself declared, so a branch two
+  edges away moved to its tip on every build and stopped an `--offline` build
+  ("mcpp.lock records no commit for branch"). It is now recorded under the
+  package's qualified name and read back as its anchor.
 - **Switching workspace members under `trim_paths` no longer recompiles their
   shared dependencies** (#844). The prefix map of the whole plan was part of
   the flags every unit shares, so a dependency's command line named the roots

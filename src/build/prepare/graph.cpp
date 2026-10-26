@@ -1442,8 +1442,15 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
             // ── 1. which commit ──
             std::string resolvedGitRev = spec.gitRev;
             bool fromLock = false;
+            // The key a lock line is written under: the declaring manifest's
+            // map key for a dependency the root declares, the qualified
+            // identity for one reached through another package.
+            const bool rootDeclared = state.declaredByRoot(item.consumerDepIndex);
+            const std::string lockKey = rootDeclared ? name
+                : mcpp::pm::compat::qualified_name(
+                      spec.namespace_, spec.shortName.empty() ? name : spec.shortName);
             if (spec.gitRefKind == "branch") {
-                auto it = state.gitLockAnchors.find(name);
+                auto it = state.gitLockAnchors.find(lockKey);
                 if (it != state.gitLockAnchors.end()
                     && it->second.url     == spec.git
                     && it->second.refKind == spec.gitRefKind
@@ -1559,19 +1566,26 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
             }
             // A selected workspace member's own git dependencies are locked
             // as a root's are (workspace design 2026-09-29 §15).
-            if (state.declaredByRoot(item.consumerDepIndex)) {
-                // Only root deps are locked: the writer below walks the root
-                // manifest's [dependencies], so a transitive git branch dep
-                // has no anchor and still resolves over the network.
+            //
+            // AND ONE REACHED THROUGH ANOTHER PACKAGE, under its qualified
+            // identity. Until 2026.10.26.2 only the root's were written, so a
+            // branch two edges away had no anchor: every build asked `git
+            // ls-remote` again, and an offline build stopped at it. Measured
+            // in mcpp's own CI: the platform member depends on mcpplibs.os by
+            // branch, os on openkal by branch, and `--offline test` refused
+            // with "mcpp.lock records no commit for branch 'openkal-0.17.0'".
+            {
                 auto source = std::format("git+{}#{}={}",
                     spec.git, spec.gitRefKind, spec.gitRev);
                 if (spec.gitRefKind == "branch") source += "@" + resolvedGitRev;
-                state.root_git_lock_identities[name] = GitLockIdentity{
+                auto& identities = rootDeclared ? state.root_git_lock_identities
+                                                : state.transitive_git_lock_identities;
+                identities.try_emplace(lockKey, GitLockIdentity{
                     .source = std::move(source),
                     .hash = "fnv1a:" + H(spec.git + "|"
                         + spec.gitRefKind + "|" + spec.gitRev + "|"
                         + resolvedGitRev),
-                };
+                });
             }
             sourceCommit = resolvedGitRev;
             dep_root = gitRoot;
