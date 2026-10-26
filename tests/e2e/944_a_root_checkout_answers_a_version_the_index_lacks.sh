@@ -24,6 +24,8 @@ set -e
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+source "$(dirname "$0")/_host_path.sh"
+TMP_HOST="$(host_path "$TMP")"
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
 
 case "$(uname -s)" in
@@ -67,7 +69,7 @@ kind = "bin"
 main = "src/main.cpp"
 
 [dependencies]
-m944mid = { path = "$TMP/mid" }
+m944mid = { path = "$TMP_HOST/mid" }
 
 [target.'cfg(os = "$OS")'.dependencies]
 m944leaf = $2
@@ -76,19 +78,19 @@ TOML
 }
 
 # A
-app "$TMP/a" "{ path = \"$TMP/ws/m944leaf\" }"
+app "$TMP/a" "{ path = \"$TMP_HOST/ws/m944leaf\" }"
 (cd "$TMP/a" && "$MCPP" build > build.log 2>&1) || fail "A: the root's path checkout did not answer" "$TMP/a/build.log"
 grep -q "no package found" "$TMP/a/build.log" && fail "A: the index was asked" "$TMP/a/build.log"
 echo "ok: a path checkout answers a conditional request by version"
 
 # B
-app "$TMP/b" "{ git = \"file://$TMP/ws\", branch = \"main\" }"
+app "$TMP/b" "{ git = \"file://$TMP_HOST/ws\", branch = \"main\" }"
 (cd "$TMP/b" && "$MCPP" build > build.log 2>&1) || fail "B: the root's git checkout did not answer" "$TMP/b/build.log"
 echo "ok: a git checkout of a member answers it"
 
 # C
 sed -i.bak 's/^m944leaf = "0.1.0"/m944leaf = "0.2.0"/' "$TMP/mid/mcpp.toml"
-app "$TMP/c" "{ path = \"$TMP/ws/m944leaf\" }"
+app "$TMP/c" "{ path = \"$TMP_HOST/ws/m944leaf\" }"
 if (cd "$TMP/c" && "$MCPP" build > build.log 2>&1); then
     fail "C: a requirement the checkout does not satisfy was accepted" "$TMP/c/build.log"
 fi
