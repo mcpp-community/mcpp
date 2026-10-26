@@ -2061,8 +2061,10 @@ okimage_build_selfcontained(const Plan& plan, const std::filesystem::path& image
         "extern \"C\" const unsigned char ok_image_begin[], ok_image_end[];\n"
         "int main(int argc, char** argv) {{\n"
         "    char why[512];\n"
+        "    okrun_options options{{}};\n"
+        "    options.carried = 1;   // the program is the image's name, and what starts it again\n"
         "    okrun_run_bytes(ok_image_begin, static_cast<unsigned long long>(ok_image_end - ok_image_begin),\n"
-        "                    \"{}\", argc, const_cast<const char* const*>(argv), nullptr, why, sizeof why);\n"
+        "                    \"{}\", argc, const_cast<const char* const*>(argv), &options, why, sizeof why);\n"
         "    std::fprintf(stderr, \"{}: %s\\n\", why);\n"
         "    return 127;\n"
         "}}\n",

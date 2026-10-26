@@ -42,6 +42,10 @@
   of a package that provides a module under GCC carries the spelling: such a
   package is compiled once more after the upgrade, and a package of object
   files keeps its entry.
+- **`mcpp update` moves a branch dependency forward again.** The record of
+  the previous build was replayed although mcpp.lock had been cleared, so the
+  next build kept the old commit and wrote it back. A recorded build is now
+  replayed only under the lock it was planned with.
 - **A git branch reached through another package is locked.** mcpp.lock
   recorded only the branches the project itself declared, so a branch two
   edges away moved to its tip on every build and stopped an `--offline` build

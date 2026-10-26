@@ -362,6 +362,14 @@ export struct BuildCacheEntry {
     // empty identity, because an engine whose version is the empty string does
     // not exist and "no record" must not be representable as a value.
     std::optional<EngineIdentity> engine;
+    // THE LOCK THE GRAPH WAS PLANNED UNDER: a digest of the project's mcpp.lock
+    // when the record was written, `absent` when there was none, empty for an
+    // entry that predates the field (it declines once). `mcpp update` deletes
+    // entries from the lock -- or the whole file -- so that the next build
+    // re-resolves a branch; a replay of the old graph would build the old
+    // commit and write it back. Measured on 2026.10.19.1: after `mcpp update`,
+    // `mcpp run` printed the old branch's output on every run.
+    std::string lockDigest;
     // Where the build published the project's compile database (`[build]
     // compile_commands` as resolved, design 2026-10-26 D14), relative to the
     // project root; empty for none. A fast path publishes to the same place,
@@ -397,6 +405,15 @@ std::string join_extensions(const std::vector<std::string>& extensions) {
         out += x;
     }
     return out;
+}
+
+// The digest of a project's mcpp.lock (FNV-1a over its bytes), or `absent`.
+export std::string lock_digest(const std::filesystem::path& projectRoot) {
+    std::ifstream in(projectRoot / "mcpp.lock", std::ios::binary);
+    if (!in) return "absent";
+    std::uint64_t h = 1469598103934665603ull;
+    for (char c; in.get(c);) { h ^= static_cast<unsigned char>(c); h *= 1099511628211ull; }
+    return std::format("{:016x}", h);
 }
 
 export std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& projectRoot) {
@@ -574,6 +591,10 @@ export std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path
             e.rootCompileDbRecorded = true;
             haveNextLine = static_cast<bool>(std::getline(f, line));
         }
+        if (haveNextLine && line.starts_with("lock=")) {
+            e.lockDigest = line.substr(5);
+            haveNextLine = static_cast<bool>(std::getline(f, line));
+        }
         // `engine=<version>`, a tab, and the executable's path; see
         // EngineIdentity. The version holds no tab, so the path is everything
         // after the first one. Absent, or without the tab, the entry declines
@@ -681,6 +702,7 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     // The engine that wrote the graph is the one writing the record: both
     // happen in this process, after the graph was emitted.
     newEntry.engine = running_engine();
+    newEntry.lockDigest = lock_digest(projectRoot);
     entries.insert(entries.begin(), std::move(newEntry));
 
     // Trim to LRU capacity.
@@ -757,6 +779,7 @@ void write_build_cache_entries(const std::filesystem::path& path,
             f << "group=" << e.group << '\n';
         }
         if (e.rootCompileDbRecorded) f << "compileDb=" << e.rootCompileDb << '\n';
+        if (!e.lockDigest.empty()) f << "lock=" << e.lockDigest << '\n';
         if (e.engine)
             f << "engine=" << e.engine->version << '\t' << e.engine->exe << '\n';
     }
@@ -2221,6 +2244,10 @@ admit_recorded_build(const BuildCacheEntry& e, const ReplayAsk& ask) {
     const auto manifestTime = std::filesystem::last_write_time(ask.manifest, ec);
     if (ec || manifestTime > ninjaTime)
         return std::unexpected(std::format("{} is newer than build.ninja", ask.manifestName));
+    if (e.lockDigest.empty())
+        return std::unexpected("the recorded build predates the lock it was planned under");
+    if (e.lockDigest != lock_digest(ask.manifest.parent_path()))
+        return std::unexpected("mcpp.lock is not the one the recorded build was planned under");
 
     // mcpp#225: bounded + vcs/build-dir-excluded walk (see sources_newer_than)
     // instead of a hand-rolled recursive_directory_iterator over src/.

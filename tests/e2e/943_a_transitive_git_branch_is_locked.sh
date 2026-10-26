@@ -19,6 +19,10 @@
 #      the program still prints what the locked commit says. (A `file://`
 #      remote is local, so B rather than `--offline` is what shows the lock line
 #      is read back as the anchor.)
+#   C. `mcpp update` drops the recorded commit, and the next build takes the
+#      branch's tip: the record of the previous build is not replayed under a
+#      lock it was not planned with (2026.10.19.1 printed the old value on every
+#      run after the update).
 set -e
 
 TMP=$(mktemp -d)
@@ -90,5 +94,11 @@ printf 'export module leaf;\nexport int leaf_value() { return 2; }\n' > "$TMP/le
 "$MCPP" run > run.log 2>&1 || fail "B: the program did not run" run.log
 grep -q "value 1" run.log || fail "B: the build moved to the branch's new tip" run.log mcpp.lock
 echo "ok: a later commit on the branch is not taken"
+
+# C
+"$MCPP" update > update.log 2>&1 || fail "C: mcpp update" update.log
+"$MCPP" run > run2.log 2>&1 || fail "C: the program did not run after the update" run2.log
+grep -q "value 2" run2.log || fail "C: the build after mcpp update did not take the branch's tip" run2.log
+echo "ok: after mcpp update the next build takes the branch's tip"
 
 echo "PASS: 943 a transitive git branch is locked"
