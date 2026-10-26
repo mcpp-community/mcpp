@@ -3014,15 +3014,18 @@ TEST(NinjaBackend, ATrimMapIsTheUnitsPackagesAndNoOther) {
 // order of the whole plan's map: shortest prefix first, so that a driver
 // trying the last mapping first takes the longest match.
 TEST(NinjaBackend, ATrimMapKeepsTheFixedRootsAndTheMarkedPackages) {
+    // Absolute on every host: `trim_map` maps absolute prefixes only, and a
+    // path without a volume is not absolute on Windows.
+    const auto w = std::filesystem::current_path().root_path() / "w";
     mcpp::toolchain::Toolchain tc;
-    tc.binaryPath = "/opt/tc/bin/g++";
+    tc.binaryPath = std::filesystem::current_path().root_path() / "opt" / "tc" / "bin" / "g++";
     std::vector<mcpp::modgraph::PackageRoot> packages(3);
-    packages[0].root = "/w/app";  packages[0].manifest.package.name = "app";  packages[0].manifest.package.version = "1.0.0";
-    packages[1].root = "/w/core"; packages[1].manifest.package.name = "core"; packages[1].manifest.package.version = "0.1.0";
-    packages[2].root = "/w/gui";  packages[2].manifest.package.name = "gui";  packages[2].manifest.package.version = "0.2.0";
+    packages[0].root = w / "app";  packages[0].manifest.package.name = "app";  packages[0].manifest.package.version = "1.0.0";
+    packages[1].root = w / "core"; packages[1].manifest.package.name = "core"; packages[1].manifest.package.version = "0.1.0";
+    packages[2].root = w / "gui";  packages[2].manifest.package.name = "gui";  packages[2].manifest.package.version = "0.2.0";
 
-    const auto all = trim_map(packages, tc, "/w/target/build-dir", {});
-    const auto core = trim_map(packages, tc, "/w/target/build-dir", {}, {0, 1, 0});
+    const auto all = trim_map(packages, tc, w / "target" / "build-dir", {});
+    const auto core = trim_map(packages, tc, w / "target" / "build-dir", {}, {0, 1, 0});
     auto names = [](auto const& m) {
         std::vector<std::string> out;
         for (auto const& [from, to] : m) out.push_back(to);

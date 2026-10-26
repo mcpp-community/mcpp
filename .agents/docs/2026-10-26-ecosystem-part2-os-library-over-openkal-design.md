@@ -1,6 +1,6 @@
 ---
 subject: ecosystem
-status: accepted
+status: active
 ---
 
 # 生态设计 part 2：openkal 的最小原子与二进制映像、其上的 `mcpplibs.os`，以及 part 1 的收尾与回归记录
