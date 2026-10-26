@@ -15,8 +15,8 @@
 #      `bin/app.oke`, an ELF shared object of its architecture, and bin/ holds
 #      no unchecked image.
 #   B. `mcpp run` on the row of this machine's architecture runs the image
-#      through okrun: its arguments, a callback into the image, thread-local
-#      storage and a by-value structure all arrive.
+#      through okrun: its arguments, its environment, a callback into the
+#      image, thread-local storage and a by-value structure all arrive.
 #   C. An image that imports a C library's name (`puts`) is refused by the
 #      check, which names the name; the image under `bin/` is still the one the
 #      last successful build published.
@@ -25,7 +25,7 @@
 #   E. A second build is up to date.
 #   F. `mcpp pack` stages the image (M2), and `--mode self-contained` stages a
 #      program of this machine that carries it and runs with nothing installed
-#      (M3).
+#      (M3), its image given the program's arguments and environment.
 #   G. A workspace's root package declares the tools as any root does: the
 #      image builds and runs through okrun (the selected package is not the
 #      graph's first, and its tools were not recorded as the root's).
@@ -68,6 +68,7 @@ struct kal_task { kal_uintptr h; };
 struct kal_stream kal_stdout(void);
 kal_intptr kal_stream_write(struct kal_stream, const void*, kal_uintptr);
 kal_uintptr kal_env_arg_count(void);
+kal_uintptr kal_env_var_count(void);
 int kal_task_start(void (*entry)(void*), void* arg, struct kal_task* out);
 int kal_task_join(struct kal_task);
 kal_uintptr kal_task_current(void);
@@ -111,6 +112,7 @@ static void worker(void* arg) { long* seen = arg; *seen = tl; tl = 99; }
 
 int ok_main(void) {
     put(kal_env_arg_count() == 3 ? "image: three arguments\n" : "image: arguments lost\n");
+    put(kal_env_var_count() > 0 ? "image: an environment\n" : "image: no environment\n");
     tl = 1;
     long seen = 0;
     struct kal_task t;
@@ -141,6 +143,7 @@ echo "ok: both rows publish an ELF image of their architecture"
 "$MCPP" run --target "$HOST_ARCH-openkal" -- one two > run.log 2>&1 \
     || fail "B: the image did not run through okrun" run.log
 grep -q "image: three arguments" run.log || fail "B: the image's arguments" run.log
+grep -q "image: an environment" run.log || fail "B: the image's environment" run.log
 grep -q "image: each context has its own storage" run.log || fail "B: thread-local storage or the callback" run.log
 echo "ok: okrun runs the image of this machine's architecture"
 
@@ -158,6 +161,7 @@ m3=$(ls target/dist/m3/bin/app target/dist/m3/bin/app.exe 2>/dev/null | head -1)
 [ -n "$m3" ] || fail "F: the M3 package has no program" m3.log
 "$m3" one two > m3run.log 2>&1 || fail "F: the M3 program did not run" m3run.log
 grep -q "image: three arguments" m3run.log || fail "F: the M3 program's image" m3run.log
+grep -q "image: an environment" m3run.log || fail "F: the M3 program's image was given no environment" m3run.log
 echo "ok: pack stages the image (M2) and a program that carries it (M3)"
 
 # C

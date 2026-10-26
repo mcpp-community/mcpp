@@ -22,6 +22,9 @@
   the machine-readable reason `image-tool-absent`.
   The tools a workspace's root package declares are its own, as any root's
   are.
+  `mcpp pack --mode self-contained` reads the declaration of openkal-tools a
+  build resolves: after workspace inheritance and in the target's
+  `[target.'cfg(os = "openkal")'.build-dependencies]`.
 
 ### Fixed
 

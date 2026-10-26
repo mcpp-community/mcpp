@@ -784,6 +784,14 @@ load_effective_manifest(const std::filesystem::path& dir) {
     if (wsRoot.empty()) {
         auto m = mcpp::manifest::load(manifestPath);
         if (!m) return std::unexpected(m.error().format());
+        // A workspace root that is a package takes its own
+        // [workspace.dependencies] as the planner's member "." does
+        // (`load_member_manifest`); they were not merged here, so a reader of
+        // the root's effective manifest saw `x.workspace = true` with no source.
+        if (m->workspace.present) {
+            const auto workspace = *m;
+            merge_workspace_deps(*m, workspace, std::filesystem::absolute(dir));
+        }
         inherit_as_root_package(*m, std::filesystem::absolute(dir));
         return EffectiveManifest{ std::move(*m), std::nullopt, {}, false };
     }

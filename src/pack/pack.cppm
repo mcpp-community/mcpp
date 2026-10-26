@@ -51,6 +51,8 @@ import mcpp.platform;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.manifest;
+import mcpp.project;              // the effective manifest a build reads
+import mcpp.build.prepare_inputs;  // cfgpred: the target's conditional tables
 import mcpp.toolchain.triple;
 import mcpp.toolchain.base;
 import mcpp.ui;
@@ -2000,15 +2002,30 @@ okimage_build_selfcontained(const Plan& plan, const std::filesystem::path& image
     // the same repository at the same reference selects its member by key
     // (05 -- Dependencies), and a published version has a sibling of the same
     // version.
-    auto man = mcpp::manifest::load(plan.projectRoot / "mcpp.toml");
-    if (!man) return std::unexpected(Error{std::format(
-        "cannot read {}: {}", (plan.projectRoot / "mcpp.toml").string(), man.error().format())});
-    const mcpp::manifest::DependencySpec* tools = nullptr;
-    for (auto const& [key, spec] : man->buildDependencies)
-        if (spec.shortName == "openkal-tools") { tools = &spec; break; }
+    //
+    // THE DECLARATION THE BUILD RESOLVED: after workspace inheritance, and
+    // with the conditional tables whose predicate the image's target meets
+    // (`[target.'cfg(os = "openkal")'.build-dependencies]`, which is where a
+    // program built for systems as well as images declares it). The raw file's
+    // `[build-dependencies]` alone missed both.
+    auto eff = mcpp::project::load_effective_manifest(plan.projectRoot);
+    if (!eff) return std::unexpected(Error{std::format(
+        "cannot read {}: {}", (plan.projectRoot / "mcpp.toml").string(), eff.error())});
+    const auto& man = eff->manifest;
+    std::optional<mcpp::manifest::DependencySpec> tools;
+    auto find_in = [&](const std::map<std::string, mcpp::manifest::DependencySpec>& deps) {
+        for (auto const& [key, spec] : deps)
+            if (key == "openkal-tools" || spec.shortName == "openkal-tools") tools = spec;
+    };
+    find_in(man.buildDependencies);
+    const auto ctx = mcpp::build::cfgpred::context_for(plan.triple);
+    for (auto const& cc : man.conditionalConfigs)
+        if (!mcpp::build::cfgpred::uses_layer(cc.predicate)
+            && mcpp::build::cfgpred::matches(cc.predicate, ctx))
+            find_in(cc.buildDependencies);
     if (!tools) return std::unexpected(Error{
         "--mode self-contained of an ok image builds a program over `openkal-run` from the "
-        "source of the project's `openkal-tools`, and [build-dependencies] declares none"});
+        "source of the project's `openkal-tools`, and its [build-dependencies] declare none"});
     std::string runSpec;
     if (!tools->git.empty()) {
         runSpec = std::format("{{ git = \"{}\", {} = \"{}\" }}", tools->git,
