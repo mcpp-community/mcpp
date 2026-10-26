@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-337 records.
+338 records.
 
 ## By subject
 
@@ -66,6 +66,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### ecosystem
 
+- [生态设计 part 2：openkal 的最小原子与二进制映像、其上的 `mcpplibs.os`，以及 part 1 的收尾与回归记录](2026-10-26-ecosystem-part2-os-library-over-openkal-design.md) — accepted
 - [控制契约、并发与性能、单一 C++ 运行时，以及 IDE 生态（生态级，#838、#839）](2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md) — active
 
 ### heterogeneous
@@ -143,6 +144,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-10
 
+- [生态设计 part 2：openkal 的最小原子与二进制映像、其上的 `mcpplibs.os`，以及 part 1 的收尾与回归记录](2026-10-26-ecosystem-part2-os-library-over-openkal-design.md) — accepted
 - [控制契约、并发与性能、单一 C++ 运行时，以及 IDE 生态（生态级，#838、#839）](2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md) — active
 - [目标基座与执行宿主：sysroot 的通用模型、运行器契约、自备输入，以及同批的发布产物路径（#832）](2026-10-23-target-base-and-execution-host-design.md) — landed
 - [依赖 image 的资源归属、模块扫描边界与锁文件稳定写入](2026-10-21-resource-ownership-module-scan-and-lock-write-design.md) — active
