@@ -118,7 +118,10 @@ export namespace mcpp::build::program_protocol {
 // `mcpp:decision=` records which tool a plugin runs, `mcpp:toolchain=` states
 // the build toolchain from the root's toolchain phase, and `mcpp::phase()`
 // says which phase is running. No directive of v14 changes spelling.
-inline constexpr int kProtocolVersion = 15;
+// v16 (design 2026-10-26 §24.3): `mcpp:link-start=` -- the symbol every image
+// linked over the package is entered at, the build-program form of a target's
+// `start`. No directive of v15 changes spelling.
+inline constexpr int kProtocolVersion = 16;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //

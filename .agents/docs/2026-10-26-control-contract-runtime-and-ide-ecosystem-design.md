@@ -74,6 +74,8 @@ mcpp-index（mcpplibs）本机快照。
     旧引擎用户因此不受影响；整个插件包的引擎下限不因一个规则提高。
   - **计划等价**（§21.1 第 10 条）：不新增计划格式后，等价性即既有快速路径的正确性，由 #544、#716、#755 与 riscv 的 e2e
     覆盖，不另设语料测试。
+- rev 5（2026-10-27，[mcpp#845](https://github.com/mcpp-community/mcpp/issues/845)）：增加 §24"程序起点与镜像入口"与 D24，
+  在本批 mcpp PR（#842）中实现。原议的 `entry = "<依赖>"` 加 feature 声明的写法不采纳（§24.6）。
 
 关联：**mcpp#838**（sycl lane 下 `std::exception` 匹配不到）、**mcpp#839**（同配置并发构建在同一构建目录竞争、双方失败）、
 mcpp#596（unwinder 被拆成两半）、mcpp#514（两份 libc++ 头文件）、mcpp#544 / #716 / #755（快速路径的拒绝清单）；
@@ -125,6 +127,7 @@ mcpplibs/mcpp-index、Sunrisepeak/mcpp-language-server，以及新建的 mcpp-co
 | D21 | **libstdc++ 提供包名 `gcc.libstdcxx`**，版本"gcc 版本.修订号"，内容借用 `xim:gcc` 载荷（§12.1） |
 | D22 | **链接产物原子发布**：POSIX 先写 `<out>.tmp` 再改名；PE 先把旧产物改名挪开（`<out>.old-<n>`）再原地链接，正在运行的程序保留其文件。执行段因此无需持锁（§4.1、§4.3、E23） |
 | D23 | **退出码**：副作用被拒绝为 `5`；被信号取消为 `128 + 信号`（130、143）；写入 SPEC-003（§5.4、§5.5） |
+| D24 | **入口分两层**：程序起点（L1，`main` 指向的翻译单元及 PE 上的入口函数）属于程序，可由依赖的 `kind = "entry"` 目标提供（`main = { from = "<依赖>/<入口>" }`）；镜像入口（L0，`start` 符号）属于面向启动者的一层，只在没有 C 运行时的镜像上可写，可由目标、入口目标或板级包陈述，不一致即拒绝（§24） |
 
 ## 1. 问题与证据
 
@@ -868,6 +871,128 @@ mcpp PR 合并前按惯例对 mcpp-plugins 跑 `ci.yml -f mcpp_source_ref=<branc
 | 最小核心 | 是否新增了概念 | 没有新概念：副作用约束是 `--offline` 的推广；孤岛复用 `requires` 与 `visibility`；结果记录对称于 `resolution.json`；`[target.<sel>] requires` 对称于 `requires_abi` |
 | 可测性 | 复现脚本里的实验要变成回归测试 | A（#839）、B（#838）、F（llvm + libstdc++）、G（退出码）、I（冲突集）转为 e2e，且必须在上一个发布上失败（§21.2）；D、E 的性能数转为 §21.3 的验收 |
 | 生态 | mcpp-ide 依赖尚未发布的 mcpp 契约 | 发布顺序把 mcpp-ide 放在最后；`protocol/` 的 golden fixture 取自 mcpp 发布分支；后端用 `--protocol-version` 做能力协商，旧 mcpp 上关闭相应功能 |
+
+## 24. 程序起点与镜像入口（mcpp#845）
+
+### 24.1 问题
+
+框架提供程序入口是常见需求：gtest 的 `gtest_main`、SDL3 的 main callbacks、Qt 在 Windows 上的 `qtmain`、
+openmui 的播放器。`main` 只接受本包内的文件，框架只能让模板生成一个由应用维护的样板文件。裸机上同一问题
+表现为另一种形式：启动代码与入口符号由板级包（BSP）或程序自身提供，链接器从链接脚本的 `ENTRY()` 或默认值
+`_start` 得到入口，入口符号缺失时 GNU ld 与 lld 只给出警告并把入口地址设为 0，镜像能链接成功却从错误的地址开始执行。
+
+### 24.2 模型：启动者与两层入口
+
+每个镜像都有一个**启动者**，即把控制权交给镜像的一方：操作系统加载器与 C 运行时、okrun、Android 运行时、
+固件或 ROM、引导协议、模拟器。入口由此分为两层：
+
+| 层 | 含义 | 归属 |
+|---|---|---|
+| L0 镜像入口 | 启动者进入镜像的位置：一个符号（ELF `e_entry`），或由链接脚本放置的向量表 | 面向启动者的一层 |
+| L1 程序起点 | 程序代码开始执行的翻译单元；PE 上另有入口函数的选择（`main`、`wmain`、`WinMain`、`wWinMain`） | 程序 |
+
+| 目标 | 启动者 | L0 | L0 的归属 | L1 |
+|---|---|---|---|---|
+| hosted（Linux、macOS、Windows） | 加载器与 CRT | `_start`、`mainCRTStartup` | 工具链与 C 库 | `main`，PE 上由 `windows_entry` 选择 |
+| Android `app` | ART/JNI | 平台约定的导出 | 程序的入口翻译单元 | 无 `main` |
+| ok 镜像 | okrun | `ok_main`（格式固定） | 镜像内的 C 库；无 C 库时为程序自身 | `main` |
+| 裸机，有 crt0 | ROM、硬件或模拟器 | `_start`、`Reset_Handler` 与向量表 | 板级包（crt0 选择、启动代码、链接脚本） | `main` |
+| 裸机，无 C 库（内核、引导程序） | 硬件或引导协议 | `_start` 等 | 程序自身，或板级包 | 可以没有 |
+
+L1 的可选取值只在 PE 上存在，其余各行固定为 `main` 或由平台约定，因此 `windows_entry` 保持现名与现有范围，
+不推广为跨平台字段。L0 只在镜像没有 C 运行时的行上由构建陈述：hosted 行上改写它会绕过 CRT 初始化，ok 行上它由
+格式固定，Android 行上由平台约定。
+
+### 24.3 清单
+
+所有入口相关的键都按目标寻址（`[targets.<n>]` 及行表 `[target.<sel>.targets.<n>]`），不进入 `[build]`：
+`[build]` 是对每个目标生效、按规则合并的包级配置，入口是单个程序的身份，库没有入口。
+
+| 键 | 位置 | 含义 |
+|---|---|---|
+| `main = "<文件>"` | 程序目标、`kind = "entry"` 目标、行表 | 程序代码开始的翻译单元。有 C 运行时的镜像中它定义 `main`；没有 C 运行时的镜像中它定义 `start` 所指的符号 |
+| `main = { from = "<依赖>/<入口>" }` | 程序目标、行表、`[test]` | 程序起点由所列依赖的一个 `kind = "entry"` 目标提供。`<依赖>` 是本清单中依赖的键（`openmui`、`compat.gtest`），或本包自身的名字 |
+| `kind = "entry"` | 提供方 | 只作为其他程序起点的翻译单元。可陈述 `main`（路径）、`start`、`windows_entry`、`cflags`、`cxxflags`、`defines`、`required_features` |
+| `start = "<符号>"` | 程序目标、入口目标、行表、`[test]` | L0 符号 |
+| `mcpp:link-start=<符号>` | 构建程序指令（协议 16），`LinkGlobal` | 板级包陈述的 L0 符号 |
+
+```toml
+# 提供方
+[targets.player]
+kind = "entry"
+main = "src/entry/player.cpp"
+
+[target.'cfg(os = "android")'.targets.player]
+main = "src/entry/player_android.cpp"
+
+# 使用方
+[dependencies]
+openmui = "0.1"
+
+[targets.notes]
+kind = "app"
+main = { from = "openmui/player" }
+
+# 测试
+[test]
+main = { from = "compat.gtest/main" }
+
+# 无 C 库的内核
+[targets.kernel]
+kind  = "bin"
+main  = "src/start.S"
+start = "_start"
+```
+
+### 24.4 语义
+
+1. **入口翻译单元在提供方的上下文中编译，链入使用方的程序。** 编译使用提供方的头文件目录、模块接口、标志与
+   入口目标自身的 `cflags`、`cxxflags`、`defines`；每个配置编译一次。它不进入提供方的任何产物：入口文件与其他目标的
+   `main` 一样从每个映像的对象集合中排除，只链入选择它的程序。
+2. **契约只经符号与运行时数据。** 入口翻译单元不导入使用方的模块。供使用方实现的回调须在提供方接口中以
+   `extern "C++"` 或 `extern "C"` 声明：附着于命名模块的声明不能在模块之外定义。
+3. **按目标选择，不参与特性合一。** 特性在依赖图上取并集，入口在每个目标上互斥；以特性承载入口时，两个使用方
+   开启不同的入口特性会使"恰好一个"的规则对其中一方失败。入口目标的 `required_features` 是选择它的前提：未开启时
+   拒绝，并给出开启所需特性的依赖写法。
+4. **使用方的入口标志不再适用。** `main = { from }` 与目标的 `cflags`、`cxxflags`、`defines` 同时出现时拒绝：
+   这些标志的作用域是目标自身的入口翻译单元，而该单元已属于提供方。
+5. **`windows_entry` 随入口继承。** 使用方未陈述时取入口目标的值；两者不同时拒绝并指出两处陈述。
+   `windows_subsystem` 由使用方陈述。
+6. **测试。** `[test] main = { from }` 为每个发现的测试程序提供起点，测试文件作为该程序的普通翻译单元链入；
+   `[test] start` 为每个测试镜像陈述 L0。开发依赖中定义 `main` 的对象在测试自身定义 `main` 时不链入的既有规则保留。
+7. **`start` 的合法范围。** 只在独立（freestanding）目标上可写；其他行上拒绝，并说明该行 L0 的归属
+   （C 运行时、okrun 的 `ok_main`、Android 运行时）。
+8. **L0 的唯一性。** 目标（或 `[test]`）、所选入口目标与依赖闭包中的 `mcpp:link-start` 可能各自陈述 `start`；
+   陈述一致时取该值，不一致时拒绝并列出各陈述的来源。没有任何陈述时，链接脚本的 `ENTRY()` 或链接器默认值生效。
+9. **渲染与校验。** ELF 链接渲染为 `-e <符号>` 与 `--require-defined=<符号>`（经驱动时加 `-Wl,`）：后者使未定义的
+   入口符号成为链接错误，而非警告。`start` 优先于链接脚本中的 `ENTRY()`，与命令行优先于脚本的链接器规则一致。
+10. **诊断。** 解析错误指出依赖键或入口名并列出候选；链接因入口符号未定义失败时，附注指出该符号的陈述来源。
+    独立目标构建结束时在 `Size` 行之后给出 `Entry` 行（目标、符号、来源）。结果记录（docs/50）的产物条目增加
+    `entry`：`from`（入口的来源）、`start` 与 `start_from`。
+
+### 24.5 兼容
+
+不使用新键的工程行为不变；`main = "src/start.S"` 的含义不变。`kind = "entry"`、`main` 的表形式、`start` 与
+`[test] main` 为新语法，旧引擎按未知值或未知键拒绝；使用它们的包声明引擎下限 2026.10.26.2。`mcpp:link-start`
+属于构建程序协议 16，旧引擎按未知指令处理。
+
+### 24.6 不采纳的方案
+
+| 方案 | 不采纳的理由 |
+|---|---|
+| `entry = "<依赖>"` 加 `[features.<f>] entry = "<文件>"`（#845 原议） | 特性在全图合一，入口按目标互斥（§24.4 第 3 条）；一件事分写两处并依赖"恰好一个已开启特性"的间接规则；同一包的多个目标无法各选入口 |
+| 库导出 `main`（`gtest_main` 的做法） | Android 与 PE 的入口形式不同；依赖链接顺序与归档成员抽取；无法给出来源诊断 |
+| 由规则包生成入口源文件 | 入口是普通翻译单元，不应依赖构建插件；需要使用方编译期信息的是代码生成问题 |
+| 入口写为函数名，由 mcpp 生成 `main` 调用它 | 需要定义入口 ABI（签名、导入、`wmain`/`WinMain` 到 UTF-8 参数的转换、Android 无参数），mcpp 成为代码生成者并承担各平台入口适配 |
+| 入口在使用方上下文中编译 | 无法缓存；提供方代码受使用方标志影响，契约不透明 |
+| 跨平台的 `entry_function` 字段 | L1 的取值只在 PE 上存在，其余行上只能是 `main` 或被忽略 |
+
+### 24.7 验收
+
+e2e：依赖提供的程序起点（含回调由使用方实现、`windows_entry` 继承与冲突、`required_features` 未开启的拒绝、
+未知依赖与非入口目标的拒绝、使用方入口标志的拒绝）；`[test] main = { from }`；本包自身作为提供方；行表替换入口文件；
+独立目标上 `start` 的渲染、`--require-defined` 使缺失符号成为错误、三方陈述冲突的拒绝、hosted 行上的拒绝；
+`mcpp:link-start` 指令。单元测试：清单解析的接受与拒绝、ELF 渲染。
 
 ## 附录 A：讨论收敛记录（摘要）
 

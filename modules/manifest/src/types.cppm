@@ -149,6 +149,31 @@ inline std::string windows_choice_problem(bool subsystem, std::string_view value
     return accepted ? std::string{} : list;
 }
 
+// `main = { from = "<dependency>/<entry>" }` and `start = "<symbol>"` (design
+// 2026-10-26 §24.3), checked once for `[targets.<n>]`, its rows and `[test]`.
+// Each returns an empty string when the value is accepted, and otherwise the
+// reason, which the caller prefixes with the statement.
+inline std::string main_from_problem(std::string_view value) {
+    const auto slash = value.rfind('/');
+    if (slash == std::string_view::npos || slash == 0 || slash + 1 == value.size())
+        return std::format("`from = \"{}\"` names an entry as \"<dependency>/<entry>\": "
+                           "a key of this manifest's dependency tables (or this package's "
+                           "own name), a slash, and the name of a `kind = \"entry\"` target "
+                           "of that package", value);
+    return {};
+}
+inline std::string start_symbol_problem(std::string_view value) {
+    auto symbolChar = [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+            || c == '_' || c == '.' || c == '$';
+    };
+    if (value.empty() || (value[0] >= '0' && value[0] <= '9')
+        || !std::ranges::all_of(value, symbolChar))
+        return std::format("`start = \"{}\"` is not a symbol name: letters, digits, `_`, "
+                           "`.` and `$`, not beginning with a digit", value);
+    return {};
+}
+
 // The accepted values of `windows_code_page` (#693), which are the vocabulary of
 // the `activeCodePage` element of a Windows application manifest. `utf-8` embeds
 // a manifest that makes the process ANSI code page UTF-8 on Windows 10 1903 and
@@ -169,8 +194,41 @@ struct Target {
     // Android application has. See `toolchain::triple::application_form`,
     // which is the one function that answers this — the manifest carries no
     // predicate for it.
-    enum Kind { Library, Binary, SharedLibrary, TestBinary, Application } kind;
-    std::string                 main;           // for binary / test / app
+    // `Entry` (`kind = "entry"`, design 2026-10-26 §24): a translation unit
+    // that is only ever the beginning of ANOTHER program -- a dependency's,
+    // selected with `main = { from = "<package>/<entry>" }`. It is in no
+    // product of its own package: its `main` is excluded from every image the
+    // way every other target's entry is, and linked only into a program that
+    // selects it.
+    enum Kind { Library, Binary, SharedLibrary, TestBinary, Application, Entry } kind;
+    // The translation unit the program's code begins in (§24.3): the file
+    // that defines `main` under a C runtime, or the symbol `start` names in an
+    // image with none. Empty when `mainFrom` supplies it.
+    std::string                 main;           // for binary / test / app / entry
+    // `main = { from = "<dependency>/<entry>" }`: the beginning is the
+    // `kind = "entry"` target `<entry>` of `<dependency>` (a key of this
+    // manifest's dependency tables, or this package's own name), compiled in
+    // that package's context and linked into this program.
+    std::string                 mainFrom;
+    // `start = "<symbol>"` (§24.4 item 7): the symbol the image is entered at
+    // (ELF `e_entry`), stated only for an image with no C runtime -- a
+    // freestanding target. Empty = the linker script's `ENTRY()` or the
+    // linker's default. `startDeclaredBy` is the statement, for the refusal
+    // that names two statements which disagree.
+    std::string                 start;
+    std::string                 startDeclaredBy;
+    // Where `main` was stated, for diagnostics: `[targets.app] main`, or a
+    // row's header.
+    std::string                 mainDeclaredBy;
+    // The files this target names as `main` on OTHER rows (and the one a
+    // matching row replaced). Each is a beginning, never an ordinary source
+    // of an image, whichever row is built (design 2026-10-26 §24.3).
+    std::vector<std::string>    otherMains;
+    // Of an entry target: the `required_features` that are not active in
+    // this build, set by the feature pass. An entry is not removed for them
+    // as an artifact target is: a program that selects it is refused, naming
+    // the features (design 2026-10-26 §24.4 item 3).
+    std::vector<std::string>    inactiveFeatures;
 
     // Whether this target is a PROGRAM -- something `mcpp run` can be asked
     // for and `mcpp pack` treats as the application pipeline's subject --
@@ -271,6 +329,14 @@ struct RowTargetKind {
     Target::Kind kind = Target::Library;
     std::string  linkage;
     std::string  statement;
+    // Whether the row states the library's form (`kind` or `linkage`) at all.
+    // A row may instead, or also, state a program's or an entry's beginning
+    // (design 2026-10-26 §24.3): `main` (a file or `{ from }`) and `start`.
+    bool         statesForm = false;
+    std::optional<std::string> main;
+    std::optional<std::string> mainFrom;
+    std::optional<std::string> start;
+    std::string  beginningStatement;   // the row's header, for diagnostics
 };
 
 // Why a `linkage` statement cannot stand, or an empty string when it can.
@@ -1289,6 +1355,9 @@ struct LinkIntent {
     std::vector<std::string>           frameworks;
     std::vector<std::filesystem::path> deployFiles;
     std::vector<DeployEntry>           deploy;        // `runtime.deploy` (#615)
+    // `mcpp:link-start=<symbol>` (build-program protocol 16, design 2026-10-26
+    // §24.3): the symbol every image linked over this package is entered at.
+    std::string                        start;
 };
 
 // `[runtime]` — requirements needed when linking/launching built binaries.
@@ -2099,6 +2168,13 @@ struct Manifest {
     std::string                 testWindowsCodePage;
     // `[test] windows_long_paths`: the same for every discovered test program.
     std::optional<bool>         testWindowsLongPaths;
+    // `[test] main = { from = "<dependency>/<entry>" }` and `[test] start`
+    // (design 2026-10-26 §24.4 item 6): the beginning every discovered test
+    // program takes from a dependency's entry target, the test file then
+    // being an ordinary translation unit of it, and the symbol each test
+    // image is entered at.
+    std::string                 testMainFrom;
+    std::string                 testStart;
     // Set once a workspace root's own package has received `[workspace.package]`
     // and `[workspace.build]` (`mcpp::project::inherit_as_root_package`). The
     // manifest is read on two paths before it is planned, and an appended

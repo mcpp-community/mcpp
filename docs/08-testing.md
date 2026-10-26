@@ -57,6 +57,24 @@ A suite compiled from several sources is a package of its own: a workspace
 member whose `[build] sources` carries the suite and whose one test program
 drives it, selected with `mcpp test -p <member>`.
 
+### Where a test program begins
+
+A test framework that supplies `main` declares it as an entry target
+(`kind = "entry"`, docs/04 §2.2), and the package names it once for every test:
+
+```toml
+[dev-dependencies]
+fw = "0.1"
+
+[test]
+main = { from = "fw/main" }
+```
+
+Each test file is then an ordinary translation unit of its program and defines
+no `main`. The package's own name selects its own entry, which is how a framework
+tests its entry with the callbacks a test file defines. On a freestanding target,
+`[test] start` states the symbol every test image is entered at.
+
 ## Running them
 
 ```bash

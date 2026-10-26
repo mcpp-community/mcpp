@@ -267,7 +267,8 @@ No `_start` and no assembly entry point are required, because the board-support
 package selects picolibc's semihosting `crt0` — the C runtime is initialised
 before `main` runs, and the return value reaches the host through semihosting.
 Only a board with no C library at all needs an explicit entry point, declared
-by pointing `main` at the source file that carries `_start`.
+by pointing `main` at the source file that carries `_start`; `start` names the
+symbol when it is not the linker's default (docs/04, `start`).
 
 ## What a freestanding target changes
 
@@ -279,7 +280,7 @@ by pointing `main` at the source file that carries `_start`.
 | C library | The **target's**, resolved by mcpp from the target's own table row exactly as the compiler is. A bare-metal project declares no libc, just as a hosted project declares no glibc. The engine places the sysroot's library directory on the link search path, so a board-support package selects out of it by bare name (`-lc`, `-lcrt0-semihost`). |
 | Exceptions and RTTI | Off on every translation unit in the graph, including a dependency's, **unless a package supplies a C++ runtime built for this target**. There is otherwise no unwinder and no `libc++abi`, so nothing can throw; `std::optional::value()` alone would reference `__cxa_throw` and three further undefined symbols. The setting belongs to the target rather than to a project's `cxxflags` because a BMI records it, and a dependency compiled with exceptions cannot be imported by a unit without them. A package declaring `provides = ["hosted-standard-library"]` reverses the default: exceptions and RTTI are enabled, `-ffreestanding` is dropped, and `-fasynchronous-unwind-tables` is added. |
 | `import std` | Available when a package in the graph provides `hosted-standard-library` and names its own `std` module source; otherwise rejected at configure time with a diagnostic rather than at link time. |
-| Entry point | `int main()` is available whenever something supplies a `crt0`. A board-support package normally does. |
+| Entry point | `int main()` is available whenever something supplies a `crt0`. A board-support package normally does. The image's entry symbol is the linker script's `ENTRY()`, or a `start` the program, its entry or the board states; a stated symbol nothing defines fails the link. |
 | Default linkage | Static, and not as a preference: there is no loader, so there is no other option. |
 
 A project with no dependencies at all still builds, which is the evidence that
@@ -694,6 +695,7 @@ general, and not the cause here. See `mcpp:warning=` in
 | `mcpp:link-lib=<name>` | Adds `-l<name>` to the consumer's link line. Bare names suffice: the target sysroot's library directory is already on the search path. |
 | `mcpp:link-search=<dir>` | Adds `-L<dir>`, for a library the package carries itself. |
 | `mcpp:link-script=<abs path>` | Adds `-T <path>`. A relative path resolves against the package root, so a script belonging to the target's C library must be named absolutely. |
+| `mcpp:link-start=<symbol>` | The symbol every image over the board is entered at (protocol 16). Checked against the program's `start`: one symbol, or a refusal naming both statements. |
 | `mcpp:runner=<token>` | Appends one argv token to the run template. argv is ordered, so the template is built by repetition — one directive line per token. |
 | `mcpp:include-dir=<dir>` | Adds an include directory **for this package only**. |
 

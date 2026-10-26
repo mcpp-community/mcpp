@@ -1900,13 +1900,13 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
                          : std::string{},
         });
         // The engine interface (mcpp#797) is addressed in the dependency cache
-        // as it always was: by the engine's name and version, in the global
-        // cache, because its directory is immutable for that version.
+        // by the engine's name and the version of its text, in the global
+        // cache, because its directory is a function of that text.
         if (sourceKind == "path" && mcpp::build::engine::is_engine_package(ctx.dep_root)) {
             auto& ident = state.dep_cache_identities.back();
             ident.indexName   = std::string(mcpp::build::engine::kCacheIndex);
             ident.packageName = std::string(mcpp::build::engine::kCachePackage);
-            ident.version     = state.dep_manifests.back()->package.version;
+            ident.version     = mcpp::build::engine::cache_version();
             ident.sourceKind  = "version";
             ident.sourceRef.clear();
         }

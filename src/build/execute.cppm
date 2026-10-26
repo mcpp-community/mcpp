@@ -1257,16 +1257,21 @@ RunnerChoice choose_runner(const BuildContext& ctx) {
 // size line that replaced the outcome would be a different kind of message.
 // Silent on every hosted target and whenever the tool is absent — an
 // informational line has no standing to fail a build.
+//
+// The `Entry` line beside it (design 2026-10-26 §24.4 item 10) says where an
+// image is entered and who said so, for an image whose entry was stated.
 void report_freestanding_size(const BuildContext& ctx) {
     auto ft = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
     if (!ft || !ft->is_freestanding()) return;
     auto tool = mcpp::freestanding::resolve_size_tool(ctx.tc.binaryPath);
-    if (tool.empty()) return;
     for (auto const& lu : ctx.plan.linkUnits) {
         if (lu.kind != mcpp::build::LinkUnit::Binary) continue;
         auto art = ctx.outputDir / lu.output;
         std::error_code ec;
         if (!std::filesystem::exists(art, ec)) continue;
+        if (!lu.start.empty())
+            mcpp::ui::info("Entry", std::format("{}  {}  ({})", lu.targetName, lu.start, lu.startFrom));
+        if (tool.empty()) continue;
         // An argument vector rather than a `2>/dev/null` command string,
         // which cmd.exe cannot open on a Windows host.
         auto out = mcpp::platform::process::capture_stdout(
@@ -1311,7 +1316,9 @@ std::vector<mcpp::build::result::Artifact> result_artifacts(const BuildContext& 
             case LinkUnit::StaticLibrary: kind = "static"; break;
             default: continue;
         }
-        res::Artifact a{lu.targetName, kind, ctx.outputDir / lu.output, std::nullopt};
+        res::Artifact a{lu.targetName, kind, ctx.outputDir / lu.output, std::nullopt, std::nullopt};
+        if (!lu.entryFrom.empty() || !lu.start.empty())
+            a.entry = res::Entry{lu.entryFrom, lu.start, lu.startFrom};
         if (lu.kind == LinkUnit::Binary && lu.artifactOf.empty()) {
             res::Launch l;
             l.cwd = ctx.projectRoot.generic_string();
@@ -1871,6 +1878,10 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         // command lines, and a future filter change must not be able to
         // silently remove the advice along with them.
         if (auto advice = mcpp::build::link_failure_advice(out); !advice.empty())
+            mcpp::ui::block(advice);
+        // Design 2026-10-26 §24.4 item 10, the fast-path form: no plan, so the
+        // note names where a `start` may come from rather than where it came.
+        if (auto advice = mcpp::build::start_failure_advice(out, {}); !advice.empty())
             mcpp::ui::block(advice);
         // mcpp#662, the fast-path form: no `BuildPlan` here (the whole point
         // of this path is skipping `prepare`), so whether the C library is the

@@ -416,6 +416,23 @@ void merge_conditional_config(mcpp::manifest::Manifest& m,
         for (auto const& [name, row] : cc.targetKinds) {
             for (auto& t : m.targets) {
                 if (t.name != name) continue;
+                // A program's or an entry's beginning on this row (design
+                // 2026-10-26 §24.3): a file replaces `{ from }` and the reverse,
+                // and `start` replaces the statement it follows.
+                if (!row.statesForm) {
+                    if ((row.main || row.mainFrom) && !t.main.empty())
+                        t.otherMains.push_back(t.main);
+                    if (row.main) { t.main = *row.main; t.mainFrom.clear(); }
+                    if (row.mainFrom) { t.mainFrom = *row.mainFrom; t.main.clear(); }
+                    if (row.main || row.mainFrom)
+                        t.mainDeclaredBy = row.beginningStatement + " main";
+                    if (row.start) {
+                        t.start = *row.start;
+                        t.startDeclaredBy = std::format("{} start = \"{}\"",
+                                                        row.beginningStatement, *row.start);
+                    }
+                    continue;
+                }
                 t.kindDeclaredBy = row.statement;
                 t.kindFromRow = true;
                 if (!row.linkage.empty()) {

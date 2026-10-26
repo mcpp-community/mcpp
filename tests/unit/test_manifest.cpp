@@ -2786,9 +2786,9 @@ kind = "{}"
     }
 }
 
-// The refusal for an unrecognized `kind` lists all four accepted spellings --
-// including the new one -- so a typo's message never falls behind the parser.
-TEST(Manifest, KindRefusalListsAllFourKinds) {
+// The refusal for an unrecognized `kind` lists all five accepted spellings --
+// including the newest -- so a typo's message never falls behind the parser.
+TEST(Manifest, KindRefusalListsAllFiveKinds) {
     constexpr auto src = R"(
 [package]
 name    = "p"
@@ -2798,7 +2798,7 @@ kind = "framework"
 )";
     auto m = mcpp::manifest::parse_string(src);
     ASSERT_FALSE(m.has_value());
-    EXPECT_NE(m.error().message.find("'bin', 'app', 'lib' or 'shared'"),
+    EXPECT_NE(m.error().message.find("'bin', 'app', 'lib', 'shared' or 'entry'"),
               std::string::npos) << m.error().message;
 }
 
@@ -6915,4 +6915,156 @@ package = {
               "tomlplusplus-3.4.0/modules/tomlplusplus.cppm");
     std::error_code ec;
     std::filesystem::remove_all(root, ec);
+}
+
+// Design 2026-10-26 §24.3: an entry target, a program that begins in a
+// dependency's entry, and the symbol an image is entered at.
+TEST(Manifest, ParsesEntryTargetsAndAProgramThatBeginsInOne) {
+    constexpr auto src = R"(
+[package]
+name    = "fw"
+version = "0.1.0"
+[targets.player]
+kind              = "entry"
+main              = "src/entry/player.cpp"
+start             = "_reset"
+windows_entry     = "WinMain"
+defines           = ["PLAYER"]
+required_features = ["player"]
+[targets.notes]
+kind  = "app"
+main  = { from = "openmui/player" }
+start = "_start"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->targets.size(), 2u);
+    auto const& entry = m->targets[0].name == "player" ? m->targets[0] : m->targets[1];
+    auto const& notes = m->targets[0].name == "notes" ? m->targets[0] : m->targets[1];
+    EXPECT_EQ(entry.kind, mcpp::manifest::Target::Entry);
+    EXPECT_FALSE(entry.is_program());
+    EXPECT_EQ(entry.main, "src/entry/player.cpp");
+    EXPECT_EQ(entry.start, "_reset");
+    EXPECT_EQ(entry.windowsEntry, "WinMain");
+    EXPECT_EQ(notes.main, "");
+    EXPECT_EQ(notes.mainFrom, "openmui/player");
+    EXPECT_EQ(notes.start, "_start");
+    EXPECT_EQ(notes.startDeclaredBy, "[targets.notes] start = \"_start\"");
+    EXPECT_TRUE(m->schemaWarnings.empty());
+}
+
+TEST(Manifest, RefusesWhatAnEntryOrABeginningCannotState) {
+    auto refused = [](std::string_view body, std::string_view needle) {
+        auto m = mcpp::manifest::parse_string(
+            std::format("[package]\nname = \"p\"\nversion = \"0.1.0\"\n{}", body));
+        ASSERT_FALSE(m.has_value()) << body;
+        EXPECT_NE(m.error().format().find(needle), std::string::npos)
+            << body << "\n" << m.error().format();
+    };
+    refused("[targets.e]\nkind = \"entry\"\nmain = \"e.cpp\"\nsoname = \"libe.so\"\n",
+            "produces no artifact of its own");
+    refused("[targets.e]\nkind = \"entry\"\nmain = { from = \"fw/x\" }\n",
+            "requires 'main', the file that is the translation unit");
+    refused("[targets.a]\nkind = \"bin\"\nmain = { from = \"fw/x\", path = \"y\" }\n",
+            "and nothing else");
+    refused("[targets.a]\nkind = \"bin\"\nmain = { from = \"fwx\" }\n",
+            "\"<dependency>/<entry>\"");
+    refused("[targets.a]\nkind = \"bin\"\nmain = \"a.cpp\"\nstart = \"1x\"\n",
+            "is not a symbol name");
+    refused("[targets.l]\nkind = \"lib\"\nstart = \"_start\"\n",
+            "a library target is not entered");
+    refused("[targets.a]\nkind = \"bin\"\nmain = { from = \"fw/x\" }\ndefines = [\"X\"]\n",
+            "applies to the target's own entry translation unit");
+    refused("[test]\nmain = \"t.cpp\"\n", "[test] main is `{ from");
+    refused("[test]\nstart = \"9\"\n", "[test] start");
+}
+
+TEST(Manifest, ParsesTestMainFromAndStart) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name    = "p"
+version = "0.1.0"
+[test]
+main  = { from = "compat.gtest/main" }
+start = "_reset"
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->testMainFrom, "compat.gtest/main");
+    EXPECT_EQ(m->testStart, "_reset");
+}
+
+// A row states a program's or an entry's beginning, and only of such a target;
+// every file a target names as `main` on any row is recorded on it.
+TEST(Manifest, ARowStatesABeginningOfAProgramOrAnEntry) {
+    auto tmp = std::filesystem::temp_directory_path() / "mcpp_row_beginning";
+    std::filesystem::create_directories(tmp);
+    auto path = tmp / "mcpp.toml";
+    auto write = [&](std::string_view body) {
+        std::ofstream os(path);
+        os << "[package]\nname = \"p\"\nversion = \"0.1.0\"\n" << body;
+    };
+    write(R"(
+[targets.p]
+kind = "lib"
+[targets.player]
+kind = "entry"
+main = "src/entry/player.cpp"
+[target.'cfg(os = "android")'.targets.player]
+main  = "src/entry/player_android.cpp"
+start = "_reset"
+)");
+    auto m = mcpp::manifest::load(path);
+    ASSERT_TRUE(m) << (m ? "" : m.error().message);
+    auto it = std::ranges::find_if(m->targets, [](auto const& t) { return t.name == "player"; });
+    ASSERT_NE(it, m->targets.end());
+    EXPECT_EQ(it->otherMains, (std::vector<std::string>{"src/entry/player_android.cpp"}));
+    ASSERT_EQ(m->conditionalConfigs.size(), 1u);
+    auto const& row = m->conditionalConfigs[0].targetKinds.at("player");
+    EXPECT_FALSE(row.statesForm);
+    EXPECT_EQ(row.main, std::optional<std::string>("src/entry/player_android.cpp"));
+    EXPECT_EQ(row.start, std::optional<std::string>("_reset"));
+
+    write(R"(
+[targets.p]
+kind = "lib"
+[target.'cfg(os = "android")'.targets.p]
+main = "x.cpp"
+)");
+    auto lib = mcpp::manifest::load(path);
+    ASSERT_FALSE(lib);
+    EXPECT_NE(lib.error().message.find("is a library target"), std::string::npos) << lib.error().message;
+
+    write(R"(
+[targets.p]
+kind = "lib"
+[target.'cfg(os = "android")'.targets.p]
+kind = "shared"
+main = "x.cpp"
+)");
+    auto both = mcpp::manifest::load(path);
+    ASSERT_FALSE(both);
+    EXPECT_NE(both.error().message.find("a target is one or the other"), std::string::npos)
+        << both.error().message;
+    std::error_code ec;
+    std::filesystem::remove_all(tmp, ec);
+}
+
+// A package that declares only entries still has the library its sources
+// infer: an entry is no artifact of its own package.
+TEST(Manifest, OnlyEntryTargetsStillInferTheLibrary) {
+    auto tmp = std::filesystem::temp_directory_path() / "mcpp_entry_infer";
+    std::filesystem::create_directories(tmp / "src" / "entry");
+    { std::ofstream(tmp / "src" / "fw.cppm") << "export module fw;\n"; }
+    {
+        std::ofstream os(tmp / "mcpp.toml");
+        os << "[package]\nname = \"fw\"\nversion = \"0.1.0\"\n"
+              "[targets.player]\nkind = \"entry\"\nmain = \"src/entry/player.cpp\"\n";
+    }
+    auto m = mcpp::manifest::load(tmp / "mcpp.toml");
+    ASSERT_TRUE(m) << (m ? "" : m.error().message);
+    EXPECT_TRUE(std::ranges::any_of(m->targets, [](auto const& t) {
+        return t.name == "fw" && t.kind == mcpp::manifest::Target::Library;
+    }));
+    std::error_code ec;
+    std::filesystem::remove_all(tmp, ec);
 }

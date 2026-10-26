@@ -477,8 +477,16 @@ static std::expected<void, std::string> step6_activate_features(PrepareState& st
             // every consumer — and that is exactly a `shared` or `lib` target.
             // A selected workspace member builds every target, so every one
             // of its targets is gated, as a root's are (§15).
+            for (auto& t : pkg.manifest.targets) {
+                if (t.kind != mcpp::manifest::Target::Entry) continue;
+                t.inactiveFeatures.clear();
+                for (auto const& rf : t.requiredFeatures)
+                    if (std::find(active.begin(), active.end(), rf) == active.end())
+                        t.inactiveFeatures.push_back(rf);
+            }
             std::erase_if(pkg.manifest.targets,
                           [&](const mcpp::manifest::Target& t) {
+                if (t.kind == mcpp::manifest::Target::Entry) return false;
                 if (!pkg.selectedMember
                     && t.kind != mcpp::manifest::Target::Library
                     && t.kind != mcpp::manifest::Target::SharedLibrary)

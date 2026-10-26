@@ -1062,14 +1062,31 @@ TEST(BuildDirectives, DeployRowIsProtocolElevenWithLinkGlobalScopeAndATag) {
     EXPECT_EQ(def->scope, dirs::Scope::LinkGlobal);
     EXPECT_EQ(def->sinceProtocol, 11);
     EXPECT_FALSE(def->tag.empty());
-    EXPECT_EQ(dirs::kProtocolVersion, 15);
+    EXPECT_EQ(dirs::kProtocolVersion, 16);
 }
 
-TEST(BuildDirectives, ProtocolFifteenIsAcceptedAndSixteenIsNot) {
-    auto ok = parse("mcpp:protocol=15\n");
+TEST(BuildDirectives, ProtocolSixteenIsAcceptedAndSeventeenIsNot) {
+    auto ok = parse("mcpp:protocol=16\n");
     EXPECT_FALSE(dirs::protocol_error(ok).has_value());
-    auto no = parse("mcpp:protocol=16\n");
+    auto no = parse("mcpp:protocol=17\n");
     EXPECT_TRUE(dirs::protocol_error(no).has_value());
+}
+
+// Design 2026-10-26 §24.3: a board's image entry symbol reaches the manifest's
+// link intent; a non-symbol and two different symbols are refused.
+TEST(BuildDirectives, LinkStartIsProtocolSixteenAndReachesTheLinkIntent) {
+    auto def = dirs::find_by_wire("link-start");
+    ASSERT_NE(def, nullptr);
+    EXPECT_EQ(def->scope, dirs::Scope::LinkGlobal);
+    EXPECT_EQ(def->sinceProtocol, 16);
+    mcpp::manifest::Manifest m;
+    auto d = parse("mcpp:link-start=_reset\n");
+    EXPECT_EQ(dirs::target_directive_error(m, d), "");
+    dirs::apply(m, d);
+    EXPECT_EQ(m.runtimeConfig.linkIntent.start, "_reset");
+    EXPECT_NE(dirs::target_directive_error(m, parse("mcpp:link-start=1bad\n")), "");
+    EXPECT_NE(dirs::target_directive_error(
+                  m, parse("mcpp:link-start=_reset\nmcpp:link-start=_start\n")), "");
 }
 
 TEST(BuildDirectives, DeployWithAnAbsoluteFromYieldsOneEntryOnTheManifest) {

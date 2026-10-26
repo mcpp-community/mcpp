@@ -6,7 +6,7 @@
 # #748 (B1), mcpp#797. The interface is the engine's own text, written as a
 # package under $MCPP_HOME/engine/<version>/modules, and the build programs'
 # graph depends on it like on any library. Its compiled entry is kept in the
-# global cache under `_engine/mcpp-build-module@<version>`, so `mcpp cache list`,
+# global cache under `_engine/mcpp-build-module@<version>+<digest>`, so `mcpp cache list`,
 # `info`, `verify` and `gc` treat it as they treat a dependency's entry.
 #
 # Criteria:

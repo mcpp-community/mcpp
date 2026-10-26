@@ -2381,7 +2381,16 @@ static std::expected<void, std::string> step9_rerun_input_prepare_dir(PrepareSta
     // required features are active in this build; otherwise it is silently
     // skipped. A pure build-selection knob — it runs before the modgraph/plan
     // so gated-out targets cost nothing.
+    // An entry target is kept and its inactive features recorded: a program
+    // that selects it is refused naming them (design 2026-10-26 §24.4).
+    for (auto& t : state.m->targets) {
+        if (t.kind != mcpp::manifest::Target::Entry) continue;
+        t.inactiveFeatures.clear();
+        for (auto const& rf : t.requiredFeatures)
+            if (!state.activeRootFeatures.contains(rf)) t.inactiveFeatures.push_back(rf);
+    }
     std::erase_if(state.m->targets, [&](const mcpp::manifest::Target& t) {
+        if (t.kind == mcpp::manifest::Target::Entry) return false;
         for (auto const& rf : t.requiredFeatures)
             if (!state.activeRootFeatures.contains(rf)) return true;
         return false;

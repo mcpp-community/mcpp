@@ -79,6 +79,7 @@ std::expected<PackRoute, std::string> route_pack_target(std::string_view request
             case mcpp::manifest::Target::SharedLibrary: return "shared";
             case mcpp::manifest::Target::TestBinary:    return "test";
             case mcpp::manifest::Target::Application:   return "app";
+            case mcpp::manifest::Target::Entry:         return "entry";
         }
         return "?";
     };
@@ -89,6 +90,11 @@ std::expected<PackRoute, std::string> route_pack_target(std::string_view request
             if (t.kind == mcpp::manifest::Target::TestBinary)
                 return std::unexpected(std::format(
                     "target '{}' is a test binary; there is nothing to distribute",
+                    requested));
+            if (t.kind == mcpp::manifest::Target::Entry)
+                return std::unexpected(std::format(
+                    "target '{}' is an entry, the beginning of another package's "
+                    "program; it is distributed in the program that selects it",
                     requested));
             return PackRoute{ t.name, is_library(t),
                               t.kind == mcpp::manifest::Target::Application };

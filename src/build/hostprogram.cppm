@@ -186,6 +186,11 @@ inline void link_script(const char* path)         { std::printf("mcpp:link-scrip
 // `--exclude-libs`. Reaches the consumer's link line, as `[build] ldflags`
 // already does -- see the table row for why a private form is not offered.
 inline void link_flag(const char* flag)           { std::printf("mcpp:link-flag=%s\n", flag); }
+// The symbol every image linked over this package is entered at (protocol
+// 16): what a board's startup code defines. Reaches the consumer's link, as
+// `link_script` does, and is checked there against the symbol the program or
+// its entry states; an image is entered at one symbol.
+inline void link_start(const char* symbol)        { std::printf("mcpp:link-start=%s\n", symbol); }
 // The PE subsystem ("console" | "windows") and the entry function ("main" |
 // "wmain" | "WinMain" | "wWinMain") of an executable target of THIS package,
 // named by `target` (#618). The same fields as `[targets.<name>]

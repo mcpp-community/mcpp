@@ -5,11 +5,11 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.17 |
-| **最后修改** | 2026-10-23 |
+| **版本** | 1.18 |
+| **最后修改** | 2026-10-27 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
-| **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`<br>`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md`<br>`.agents/docs/2026-10-10-one-source-one-meaning-design.md`<br>`.agents/docs/2026-10-11-build-dependencies-one-pipeline-design.md`<br>`.agents/docs/2026-10-23-target-base-and-execution-host-design.md` |
+| **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`<br>`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md`<br>`.agents/docs/2026-10-10-one-source-one-meaning-design.md`<br>`.agents/docs/2026-10-11-build-dependencies-one-pipeline-design.md`<br>`.agents/docs/2026-10-23-target-base-and-execution-host-design.md`<br>`.agents/docs/2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md`(§24) |
 | **相关使用文档** | [docs/04 —— mcpp.toml 字段参考](../04-mcpp-toml.md) |
 
 ## 规范用语
@@ -140,6 +140,11 @@
 被拒绝;按行合并时后命中的陈述替换先前的陈述,无论两者各是 `kind` 还是 `linkage`。
 
 **状态:已实现**(mcpp 2026.9.14.2;`linkage` 为 2026.9.15.2;多个命中的条件表按具体程度生效为 2026.9.28.2,mcpp#728)。
+
+按行形式也可以陈述程序目标或入口目标的起点(§14):`main`(文件或 `{ from }`)与
+`start`。一行要么陈述库的形态(`kind` 或 `linkage`),要么陈述起点,两者并存**必须**被拒绝;
+起点写在库目标上**必须**被拒绝。命中的行替换无条件的 `main` 或 `start`;目标在任一行上
+命名为 `main` 的文件都是起点,**禁止**作为普通源文件链入任何映像。
 
 ### 3.2 门可以嵌进条件
 
@@ -732,6 +737,33 @@ mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 m
 
 **已实现**(mcpp >= 2026.10.21.1,#826)。
 
+## 14. 程序起点与镜像入口
+
+入口分为两层(mcpp 设计 2026-10-26 §24):**程序起点**是程序代码开始执行的翻译单元,
+属于程序;**镜像入口**是启动者进入镜像的符号(ELF `e_entry`),属于面向启动者的一层。
+
+1. `[targets.<n>] kind = "entry"` 声明一个入口目标:一个只作为其他程序起点的翻译单元。
+   它**必须**陈述 `main`(文件);可以陈述 `start`、`windows_entry`、`cflags`、`cxxflags`、
+   `defines`、`required_features`;陈述产物的键(`soname`、`exports`、`linkage`、
+   `windows_auto_export`、`windows_subsystem`、`windows_code_page`、`windows_long_paths`)
+   **必须**被拒绝。入口目标不产生链接单元;它的文件**禁止**链入未选择它的映像。只声明
+   入口目标的包仍按源文件推断库或程序目标。
+2. 程序目标的 `main` 可以写为 `{ from = "<依赖>/<入口>" }`。`<依赖>` 是本清单依赖表中的键
+   (测试另含开发依赖),或本包自身的名字;`<入口>` 是该包的入口目标。入口翻译单元
+   **必须**在提供方的上下文中编译(其头文件目录、模块接口、标志与入口目标自身的标志),
+   并链入选择它的程序。未知依赖、非入口目标、`required_features` 未开启的入口**必须**
+   被拒绝并列出候选或所需写法。`from` 与目标自身的 `cflags`、`cxxflags`、`defines`
+   并存**必须**被拒绝。
+3. 入口目标陈述的 `windows_entry` 由选择它的程序继承;程序陈述不同的值**必须**被拒绝。
+4. `[test] main = { from }` 为所发现的每个测试程序提供起点,测试文件作为其普通翻译单元;
+   `[test] start` 为每个测试镜像陈述入口符号。
+5. `start` 只在没有 C 运行时的镜像(独立目标)上成立;在其他目标上**必须**被拒绝并说明该行
+   入口的归属。目标(或 `[test]`)、所选入口目标与依赖闭包中构建程序的 `mcpp:link-start`
+   (协议 16)可分别陈述 `start`;陈述不一致**必须**被拒绝并列出全部来源。`start` 使入口符号
+   未定义成为链接错误,优先于链接脚本的 `ENTRY()`。
+
+**状态:已实现**(mcpp 2026.10.26.2,mcpp#845)。
+
 ## 变更记录
 
 | 版本 | 日期 | 变更 |
@@ -754,3 +786,4 @@ mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 m
 | 1.15 | 2026-10-11 | mcpp 2026.10.11.1(#797):新增 §12 依赖的库与配置(两条轴、实例、一个包一个版本、按配置激活特性、`host-module` 的含义与默认值、构建程序图、构建插件、兼容读法);§9 第 13 条的移除版本改为 mcpp 2027.1,并补依赖位置;新增 §9 第 14 至 16 条(`[xlings.overrides]` 属于构建的根、`[workspace.dependencies]` 的继承、虚拟根旁的 `build.mcpp`)。 |
 | 1.16 | 2026-10-21 | 新增 §13，明确依赖 EXE、DLL 的资源只进入其所属包的 image，且按计划内目标校验 manifest 冲突(#826)。 |
 | 1.17 | 2026-10-23 | mcpp 2026.10.24.1:§2 陈述值的四档层次,`sysroot` 与 `run_under` 可出现在工程与机器默认中;§4.2 增加 `run_under`,陈述 `sysroot` 的表写法。 |
+| 1.18 | 2026-10-27 | mcpp 2026.10.26.2(mcpp#845):新增 §14 程序起点与镜像入口(`kind = "entry"`、`main = { from }`、`start`、`[test] main` 与 `start`、`mcpp:link-start`);§3.1.1 的按行形式可陈述起点。 |

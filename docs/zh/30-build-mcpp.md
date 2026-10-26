@@ -99,6 +99,7 @@ mcpp build      # compiles + runs build.mcpp, then builds the project
 | `mcpp:deploy=<from>\t<to>` *(2026.9.12.3+,protocol 11)* | 把本程序生成或选中的一个文件放到产物旁边的 `<to>`（相对可执行文件所在目录）——`[runtime] deploy`（docs/04 §2.11）的构建程序形态。`<from>` 可以是绝对路径（某个 action 自己声明的输出），也可以按包根解析；用 TAB 分隔，因为一个绝对的 Windows `<from>` 本身含冒号。**到达消费者**，并入同一个被 `link-lib`/`link-search`/`link-flag` 喂入的 `LinkIntent`——见下 |
 | `mcpp:runtime-search-dir=<dir>` *(protocol 12)* | 把 `<dir>` 加入启动期搜索路径——`runtime_search_dirs`（docs/04 §2.11）的构建程序形态。相对路径按包根解析；该目录在此程序运行时不必存在(一个 `prepare` action 可能之后才把它填充起来)。**到达消费者**，直接并入 `LinkIntent::runtimeSearchDirs`：在 ELF 与 Mach-O 上是 RUNPATH/rpath，绝不是 `-L`，并进入 `mcpp pack` 的闭包搜索——见下 |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | 用这个**链接脚本**链接（`-T`；相对路径按包根解析，发出的是绝对路径，因为链接是在构建目录里跑的）。与 `include-dir` 不同，它**到达消费者** —— 板子的内存布局恰恰是消费者写不出来的那一项 |
+| `mcpp:link-start=<符号>` *(协议 16)* | 链接到本包之上的每个镜像的**入口符号**——板子的启动代码所定义的符号。与 `link-script` 一样**到达消费者**，并在那里与程序或其入口陈述的 `start` 比对：镜像只有一个入口符号，两条不一致的陈述被拒绝并同时点名。只在独立目标上接受（docs/04，`start`） |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | 对用户说一句话并**继续**。唯一一条不改变编译行、链接行与源码集的指令。它**穿过构建缓存** —— 见下 |
 | `mcpp:fact=<name>=<version>` *(2026.9.5.2+)* | 陈述程序**测得的机器事实**(`cuda.driver=12.4`)。在编译任何东西之前与 floor 比较；见下 |
 | `mcpp:floor=<name> >= <version>` *(2026.9.5.2+)* | 陈述本包对该量的**下界**。不满足 ⇒ 构建被拒并给出两侧取值（`version-floor-unmet`）；没有人陈述事实的下界保持沉默 |
@@ -163,6 +164,7 @@ int main() {
 | `mcpp::deploy(from, to)` *(2026.9.12.3+,protocol 11)* | `mcpp:deploy=<from>\t<to>` —— 见下 |
 | `mcpp::runtime_search_dir(dir)` *(protocol 12)* | `mcpp:runtime-search-dir=<dir>` —— 见下 |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
+| `mcpp::link_start(symbol)` *(协议 16)* | `mcpp:link-start=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` —— 见下 |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | `[xlings.workspace]` 里声明的包的载荷目录 —— 本 manifest 声明的，或编进本构建程序的某个依赖声明的（2026.9.6.6+）；没声明或没安装时返回 `""`（见下） |
 | `mcpp::xpkg_source(ns, name)` / `mcpp::xpkg_program(ns, name)` *(协议 15)* | 该载荷从哪里来 —— `payload`、`override`、`pending` 或 `""` —— 以及一条覆盖点名的程序 |

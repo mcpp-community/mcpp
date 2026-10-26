@@ -124,6 +124,15 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
         if (packageManifest) {
             target.windowsCodePage = packageManifest->testWindowsCodePage;
             target.windowsLongPaths = packageManifest->testWindowsLongPaths;
+            // `[test] main = { from }` and `[test] start` (design 2026-10-26
+            // §24.4 item 6): the test file stays `main`, the translation unit
+            // that is this test's own, and the beginning comes from the entry.
+            target.mainFrom = packageManifest->testMainFrom;
+            if (!packageManifest->testMainFrom.empty())
+                target.mainDeclaredBy = "[test] main";
+            target.start = packageManifest->testStart;
+            if (!target.start.empty())
+                target.startDeclaredBy = std::format("[test] start = \"{}\"", target.start);
         }
         for (std::size_t i = 0; i < globFlags.size(); ++i) {
             if (!globHits[i].contains(file)) continue;

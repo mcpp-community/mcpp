@@ -1955,8 +1955,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // 2026.9.12.2 lists three kinds), which is correct: a root that
         // names a form the engine cannot produce must not build.
         else if (kind_s == "app"    || kind_s == "application") t.kind = Target::Application;
+        // Design 2026-10-26 §24.3: the beginning of another program.
+        else if (kind_s == "entry") t.kind = Target::Entry;
         else return std::unexpected(error(origin,
-            std::format("targets.{}.kind must be 'bin', 'app', 'lib' or 'shared'; got '{}'", tname, kind_s)));
+            std::format("targets.{}.kind must be 'bin', 'app', 'lib', 'shared' or 'entry'; got '{}'", tname, kind_s)));
         t.kindDeclaredBy = std::format("[targets.{}] kind = \"{}\"", tname, kind_s);
 
         // `linkage` (#642 E1): the library's default form. Refused beside
@@ -1981,13 +1983,70 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // library (its actual entry is `ANativeActivity_onCreate` or the
         // JNI exports, which is the platform's contract and not mcpp's to
         // rename -- see `is_program()` and `application_form`).
-        if (t.is_program()) {
+        //
+        // A program's beginning may instead be a dependency's entry target,
+        // `main = { from = "<dependency>/<entry>" }` (design 2026-10-26
+        // §24.3). An entry target is itself the translation unit, so it names
+        // a file and never another entry.
+        if (t.is_program() || t.kind == Target::Entry) {
             auto mit = tt.find("main");
-            if (mit == tt.end() || !mit->second.is_string()) {
+            if (mit != tt.end() && mit->second.is_string()) {
+                t.main = mit->second.as_string();
+            } else if (mit != tt.end() && mit->second.is_table() && t.kind != Target::Entry) {
+                auto const& mt = mit->second.as_table();
+                auto fit = mt.find("from");
+                if (fit == mt.end() || !fit->second.is_string() || mt.size() != 1)
+                    return std::unexpected(error(origin, std::format(
+                        "targets.{}.main as a table is `{{ from = \"<dependency>/<entry>\" }}` "
+                        "and nothing else", tname)));
+                if (auto msg = main_from_problem(fit->second.as_string()); !msg.empty())
+                    return std::unexpected(error(origin, std::format(
+                        "targets.{}.main: {}", tname, msg)));
+                t.mainFrom = fit->second.as_string();
+            } else if (t.kind == Target::Entry) {
+                return std::unexpected(error(origin, std::format(
+                    "targets.{} (kind=entry) requires 'main', the file that is the "
+                    "translation unit; `from` names another package's entry and an "
+                    "entry is not one", tname)));
+            } else {
                 return std::unexpected(error(origin,
                     std::format("targets.{} (kind={}) requires 'main' field", tname, kind_s)));
             }
-            t.main = mit->second.as_string();
+            t.mainDeclaredBy = std::format("[targets.{}] main", tname);
+        }
+        // `start` (design 2026-10-26 §24.4): the symbol the image is entered
+        // at. Whether this target's row lets an image choose it is a property
+        // of the target being built and is decided by the plan; a library is
+        // never entered, which is decidable here.
+        if (auto sit = tt.find("start"); sit != tt.end()) {
+            if (!sit->second.is_string())
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.start must be a string, the symbol the image is entered at",
+                    tname)));
+            if (!t.is_program() && t.kind != Target::Entry)
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.start names where an image is entered, and a library "
+                    "target is not entered", tname)));
+            if (auto msg = start_symbol_problem(sit->second.as_string()); !msg.empty())
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.start: {}", tname, msg)));
+            t.start = sit->second.as_string();
+            t.startDeclaredBy = std::format("[targets.{}] start = \"{}\"", tname, t.start);
+        }
+        // An entry target is a translation unit and not an artifact: the keys
+        // that describe an artifact (its ABI name, its exports, its form, its
+        // PE subsystem and manifest) belong to the program that selects it.
+        if (t.kind == Target::Entry) {
+            static constexpr std::string_view kArtifactKeys[] = {
+                "soname", "exports", "linkage", "windows_auto_export",
+                "windows_subsystem", "windows_code_page", "windows_long_paths",
+            };
+            for (auto key : kArtifactKeys)
+                if (tt.contains(std::string(key)))
+                    return std::unexpected(error(origin, std::format(
+                        "targets.{}.{}: a `kind = \"entry\"` target is the beginning of "
+                        "another program and produces no artifact of its own; state `{}` "
+                        "on the program that selects it", tname, key, key)));
         }
         if (auto sit = tt.find("soname"); sit != tt.end()) {
             if (!sit->second.is_string()) {
@@ -2121,7 +2180,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // never meets `application_form`'s SharedObject form in practice) --
         // `is_program()` is "is this the program", which is what the PE
         // subsystem attaches to; `TestBinary` stays refused on purpose.
-        if ((!t.windowsSubsystem.empty() || !t.windowsEntry.empty()
+        // An entry target states the entry FUNCTION its translation unit
+        // defines, which the program selecting it inherits (§24.4 item 5).
+        if ((!t.windowsSubsystem.empty()
+             || (!t.windowsEntry.empty() && t.kind != Target::Entry)
              || !t.windowsCodePage.empty() || t.windowsLongPaths)
             && !t.is_program())
             return std::unexpected(error(origin, std::format(
@@ -2131,6 +2193,18 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 : !t.windowsEntry.empty()   ? "windows_entry"
                 : !t.windowsCodePage.empty() ? "windows_code_page"
                                              : "windows_long_paths")));
+        // A target's `cflags`, `cxxflags` and `defines` are scoped to its own
+        // entry translation unit; with `from` that unit is the dependency's,
+        // compiled in the dependency's context (§24.4 item 4).
+        if (!t.mainFrom.empty()
+            && (!t.cflags.empty() || !t.cxxflags.empty() || !t.defines.empty()))
+            return std::unexpected(error(origin, std::format(
+                "targets.{}.{} applies to the target's own entry translation unit, and "
+                "`main = {{ from = \"{}\" }}` makes that unit the dependency's, compiled "
+                "with its flags. State the flags on the entry target, or on this package "
+                "in [build] for the code that is this package's",
+                tname, !t.cflags.empty() ? "cflags" : !t.cxxflags.empty() ? "cxxflags" : "defines",
+                t.mainFrom)));
         // Guard: -std=... belongs to [package].standard, not per-target flags
         // (same rule as [build].cxxflags). Reject early with a clear message.
         for (auto const& flag : t.cxxflags) {
@@ -2150,6 +2224,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             "kind", "linkage", "main", "soname", "exports", "windows_auto_export",
             "cflags", "cxxflags", "defines", "required_features",
             "windows_entry", "windows_subsystem", "windows_code_page", "windows_long_paths",
+            "start",
         };
         for (auto& [key, _] : tt) {
             bool known = false;
@@ -3442,10 +3517,38 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 m.testWindowsLongPaths = value.as_bool();
                 continue;
             }
+            // Design 2026-10-26 §24.4 item 6: the beginning every discovered
+            // test program takes from a dependency's entry target, and the
+            // symbol each test image is entered at. Each test file still has a
+            // name of its own, so `main` here is only ever `{ from }`.
+            if (key == "main") {
+                const bool accepted = value.is_table() && value.as_table().size() == 1
+                    && value.as_table().contains("from")
+                    && value.as_table().at("from").is_string();
+                if (!accepted)
+                    return std::unexpected(error(origin,
+                        "[test] main is `{ from = \"<dependency>/<entry>\" }`: the entry "
+                        "target of a dependency that every discovered test program begins "
+                        "in, each test file then being an ordinary source of its program"));
+                const std::string from = value.as_table().at("from").as_string();
+                if (auto msg = main_from_problem(from); !msg.empty())
+                    return std::unexpected(error(origin, "[test] main: " + msg));
+                m.testMainFrom = from;
+                continue;
+            }
+            if (key == "start") {
+                if (!value.is_string())
+                    return std::unexpected(error(origin,
+                        "[test] start must be a string, the symbol each test image is entered at"));
+                if (auto msg = start_symbol_problem(value.as_string()); !msg.empty())
+                    return std::unexpected(error(origin, "[test] start: " + msg));
+                m.testStart = value.as_string();
+                continue;
+            }
             if (key != "discover") {
                 m.schemaWarnings.push_back(std::format(
                     "[test] has unsupported key '{}' (ignored). Supported keys: "
-                    "discover, windows_code_page, windows_long_paths.", key));
+                    "discover, main, start, windows_code_page, windows_long_paths.", key));
                 continue;
             }
             bool ok = value.is_array();
@@ -4042,12 +4145,46 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                             "`kind = \"shared\"`", header)));
                     auto& row = tval.as_table();
                     for (auto& [rk, rv] : row)
-                        if (rk != "kind" && rk != "linkage")
+                        if (rk != "kind" && rk != "linkage" && rk != "main" && rk != "start")
                             m.schemaWarnings.push_back(std::format(
                                 "{} has unsupported key '{}' (ignored). A row "
-                                "states only `kind` or `linkage`; every other key "
+                                "states a library's form (`kind` or `linkage`) or a "
+                                "program's beginning (`main`, `start`); every other key "
                                 "of a target is declared once, under [targets.{}].",
                                 header, rk, tname));
+                    RowTargetKind rowTarget;
+                    // A program's or an entry's beginning on this row (design
+                    // 2026-10-26 §24.3): the file, or `{ from }`, and the symbol
+                    // the image is entered at. Whether the name is such a
+                    // target is checked in `load`.
+                    if (auto mit = row.find("main"); mit != row.end()) {
+                        if (mit->second.is_string()) {
+                            rowTarget.main = mit->second.as_string();
+                        } else if (mit->second.is_table() && mit->second.as_table().size() == 1
+                                   && mit->second.as_table().contains("from")
+                                   && mit->second.as_table().at("from").is_string()) {
+                            const std::string from = mit->second.as_table().at("from").as_string();
+                            if (auto msg = main_from_problem(from); !msg.empty())
+                                return std::unexpected(error(origin, std::format(
+                                    "{} main: {}", header, msg)));
+                            rowTarget.mainFrom = from;
+                        } else {
+                            return std::unexpected(error(origin, std::format(
+                                "{} main is a file, or `{{ from = \"<dependency>/<entry>\" }}`",
+                                header)));
+                        }
+                    }
+                    if (auto sit = row.find("start"); sit != row.end()) {
+                        if (!sit->second.is_string())
+                            return std::unexpected(error(origin, std::format(
+                                "{} start must be a string, the symbol the image is entered at",
+                                header)));
+                        if (auto msg = start_symbol_problem(sit->second.as_string()); !msg.empty())
+                            return std::unexpected(error(origin, std::format(
+                                "{} start: {}", header, msg)));
+                        rowTarget.start = sit->second.as_string();
+                    }
+                    rowTarget.beginningStatement = header;
                     auto kit = row.find("kind");
                     auto lit = row.find("linkage");
                     // `linkage` (#642 E1): the row's DEFAULT form. A row states
@@ -4072,30 +4209,39 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                                 header, lit->second.as_string(), Target::Library);
                             !msg.empty())
                             return std::unexpected(error(origin, msg));
-                        RowTargetKind rowDefault;
-                        rowDefault.linkage = lit->second.as_string();
-                        rowDefault.statement = std::format(
-                            "{} linkage = \"{}\"", header, rowDefault.linkage);
-                        cc.targetKinds[std::string(tname)] = std::move(rowDefault);
-                        continue;
+                        rowTarget.statesForm = true;
+                        rowTarget.linkage = lit->second.as_string();
+                        rowTarget.statement = std::format(
+                            "{} linkage = \"{}\"", header, rowTarget.linkage);
+                    } else if (kit != row.end()) {
+                        if (!kit->second.is_string())
+                            return std::unexpected(error(origin, std::format(
+                                "{} must set `kind = \"lib\"`, `kind = \"shared\"` or "
+                                "`linkage = \"static\" | \"shared\"`", header)));
+                        const auto& kindText = kit->second.as_string();
+                        if (kindText == "lib" || kindText == "library")
+                            rowTarget.kind = Target::Library;
+                        else if (kindText == "shared" || kindText == "dylib"
+                              || kindText == "so" || kindText == "shlib")
+                            rowTarget.kind = Target::SharedLibrary;
+                        else
+                            return std::unexpected(error(origin, std::format(
+                                "{} kind = \"{}\": a row chooses between the library "
+                                "forms only, `lib` and `shared`", header, kindText)));
+                        rowTarget.statesForm = true;
+                        rowTarget.statement = std::format("{} kind = \"{}\"", header, kindText);
+                    } else if (!rowTarget.main && !rowTarget.mainFrom && !rowTarget.start) {
+                        return std::unexpected(error(origin, std::format(
+                            "{} must set `kind = \"lib\" | \"shared\"` or "
+                            "`linkage = \"static\" | \"shared\"` for a library, or "
+                            "`main` or `start` for a program or an entry", header)));
                     }
-                    if (kit == row.end() || !kit->second.is_string())
+                    if (rowTarget.statesForm && (rowTarget.main || rowTarget.mainFrom || rowTarget.start))
                         return std::unexpected(error(origin, std::format(
-                            "{} must set `kind = \"lib\"`, `kind = \"shared\"` or "
-                            "`linkage = \"static\" | \"shared\"`", header)));
-                    const auto& kindText = kit->second.as_string();
-                    RowTargetKind rowKind;
-                    if (kindText == "lib" || kindText == "library")
-                        rowKind.kind = Target::Library;
-                    else if (kindText == "shared" || kindText == "dylib"
-                          || kindText == "so" || kindText == "shlib")
-                        rowKind.kind = Target::SharedLibrary;
-                    else
-                        return std::unexpected(error(origin, std::format(
-                            "{} kind = \"{}\": a row chooses between the library "
-                            "forms only, `lib` and `shared`", header, kindText)));
-                    rowKind.statement = std::format("{} kind = \"{}\"", header, kindText);
-                    cc.targetKinds[std::string(tname)] = std::move(rowKind);
+                            "{} states a library's form and a program's beginning; a "
+                            "target is one or the other", header)));
+                    if (rowTarget.statement.empty()) rowTarget.statement = header;
+                    cc.targetKinds[std::string(tname)] = std::move(rowTarget);
                 }
             }
             // `[target.<pred>] requires_abi = { ... }` -- design 2026-09-12
@@ -4976,8 +5122,11 @@ void apply_defaults_and_infer(Manifest& m, const std::filesystem::path& root) {
         }
     }
 
-    // Auto-target inference (only when no [targets] declared).
-    if (m.targets.empty()) {
+    // Auto-target inference (only when no [targets] declared). An entry
+    // target (design 2026-10-26 §24.3) is the beginning of another package's
+    // program and no artifact of this one, so a package that declares only
+    // entries still has the library or program its sources infer.
+    if (std::ranges::all_of(m.targets, [](const Target& t) { return t.kind == Target::Entry; })) {
         std::error_code ec;
         auto mainCpp = root / "src" / "main.cpp";
         bool hasMain   = std::filesystem::exists(mainCpp, ec);
@@ -5167,6 +5316,34 @@ std::expected<Manifest, ManifestError> load(const std::filesystem::path& path,
                     "{} names no target of this package (its targets: {})",
                     row.statement, names.empty() ? std::string("none") : names),
                     path, 0, 0});
+            }
+            // A row states a library's form, or a program's or an entry's
+            // beginning (design 2026-10-26 §24.3), and each only of the
+            // target it describes.
+            if (!row.statesForm) {
+                // Every file a target names as `main` on any row is a
+                // beginning; recorded on the target, whichever row is built.
+                if (row.main)
+                    for (auto& t : m->targets)
+                        if (t.name == name) t.otherMains.push_back(*row.main);
+                if (!target->is_program() && target->kind != Target::Entry)
+                    return std::unexpected(ManifestError{std::format(
+                        "{}: '{}' is a library target, and `main` and `start` describe "
+                        "the beginning of a program or an entry",
+                        row.beginningStatement, name), path, 0, 0});
+                if (row.mainFrom && target->kind == Target::Entry)
+                    return std::unexpected(ManifestError{std::format(
+                        "{}: '{}' is an entry target, which is itself the translation "
+                        "unit; its `main` names a file", row.beginningStatement, name),
+                        path, 0, 0});
+                if (row.mainFrom && (!target->cflags.empty() || !target->cxxflags.empty()
+                                     || !target->defines.empty()))
+                    return std::unexpected(ManifestError{std::format(
+                        "{}: `main = {{ from = \"{}\" }}` makes the entry translation unit "
+                        "the dependency's, and [targets.{}] states flags for the target's "
+                        "own entry", row.beginningStatement, *row.mainFrom, name),
+                        path, 0, 0});
+                continue;
             }
             if (target->kind != Target::Library
                 && target->kind != Target::SharedLibrary)

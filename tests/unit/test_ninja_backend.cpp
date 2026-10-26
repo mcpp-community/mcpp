@@ -3041,3 +3041,27 @@ TEST(NinjaBackend, ATrimMapKeepsTheFixedRootsAndTheMarkedPackages) {
     for (std::size_t i = 1; i < core.size(); ++i)
         EXPECT_LE(core[i - 1].first.native().size(), core[i].first.native().size());
 }
+
+// Design 2026-10-26 §24.4 item 9: the entry symbol of a freestanding image, and
+// the `--defsym` that makes an undefined one a link error, through the driver
+// and to ld.lld itself.
+TEST(NinjaBackend, StartRendersTheEntryAndItsDefinitionCheck) {
+    using mcpp::build::start_link_flags;
+    using Flags = std::vector<std::string>;
+    EXPECT_EQ(start_link_flags("", false), Flags{});
+    EXPECT_EQ(start_link_flags("_reset", false),
+              (Flags{"-Wl,-e,_reset", "-Wl,--defsym=__mcpp_start=_reset"}));
+    EXPECT_EQ(start_link_flags("_reset", true),
+              (Flags{"-e", "_reset", "--defsym=__mcpp_start=_reset"}));
+}
+
+TEST(NinjaBackend, StartFailureAdviceNamesTheStatement) {
+    using mcpp::build::start_failure_advice;
+    const std::string lld = "ld.lld: error: --defsym:1: symbol not found: _missing\n";
+    const auto named = start_failure_advice(lld, {{"_missing", "[targets.k] start = \"_missing\""}});
+    EXPECT_NE(named.find("It was named by [targets.k] start = \"_missing\""), std::string::npos) << named;
+    const auto generic = start_failure_advice(lld, {});
+    EXPECT_NE(generic.find("`_missing`"), std::string::npos) << generic;
+    EXPECT_NE(generic.find("mcpp:link-start"), std::string::npos) << generic;
+    EXPECT_EQ(start_failure_advice("undefined symbol: foo", {}), "");
+}

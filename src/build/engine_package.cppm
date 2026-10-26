@@ -15,11 +15,15 @@
 // is stated by `mcpp env` (`engineModules`) and by the build database's
 // `mcpp:core` collection (SPEC-005).
 //
-// THE DIRECTORY IS IMMUTABLE once written, like a payload in the package
-// store: its content is a function of the mcpp version alone. The dependency
-// cache therefore keeps its compiled entry globally, under the address it has
-// always had (`pkg/_engine/mcpp-build-module@<version>`), and `mcpp cache`
-// lists, verifies and collects it as before.
+// THE DIRECTORY IS A FUNCTION OF ITS TEXT. A released mcpp writes one text
+// per version; a build of mcpp from source between releases carries the same
+// version and may carry another text (a directive added to the protocol), and
+// a compiled entry kept by version alone then served the previous interface:
+// measured, `'link_start' is not a member of 'mcpp'` from a build program
+// compiled against a cached interface of the same version. The dependency
+// cache keeps the compiled entry globally under `cache_version()`, the version
+// and a digest of the text (`pkg/_engine/mcpp-build-module@<version>+<digest>`),
+// and `mcpp cache` lists, verifies and collects it as before.
 
 export module mcpp.build.engine_package;
 
@@ -37,6 +41,10 @@ inline constexpr std::string_view kNamespace    = "mcpp";
 inline constexpr std::string_view kName         = "core";
 inline constexpr std::string_view kCacheIndex   = "_engine";
 inline constexpr std::string_view kCachePackage = "mcpp-build-module";
+
+// The version under which the dependency cache keeps the compiled interface:
+// this mcpp's version and a digest of the text it writes.
+std::string cache_version();
 
 // `$MCPP_HOME/engine`: every version's package lives below it.
 std::filesystem::path root();
@@ -127,6 +135,14 @@ std::pair<std::string, std::string> module_texts() {
     auto alias = substituted(kMcppCoreAliasSource, "@MODULE@", "export module");
     alias = substituted(alias, "@EXPORT@", "export");
     return {std::move(mod), std::move(alias)};
+}
+
+std::string cache_version() {
+    const auto [mod, alias] = module_texts();
+    std::uint64_t h = 1469598103934665603ull;   // FNV-1a, 64 bits
+    for (auto const* text : {&mod, &alias})
+        for (unsigned char c : *text) { h ^= c; h *= 1099511628211ull; }
+    return std::format("{}+{:08x}", mcpp::MCPP_VERSION, static_cast<std::uint32_t>(h ^ (h >> 32)));
 }
 
 std::expected<fs::path, std::string> ensure_package() {

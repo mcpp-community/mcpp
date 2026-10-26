@@ -26,6 +26,22 @@
   build resolves: after workspace inheritance and in the target's
   `[target.'cfg(os = "openkal")'.build-dependencies]`.
 
+- **A program's beginning can be a dependency's entry target, and a
+  freestanding image states the symbol it is entered at** (#845). A framework
+  declares `[targets.<n>] kind = "entry"` with the translation unit that
+  supplies `main`, and a program selects it with
+  `main = { from = "<dependency>/<entry>" }` in place of a file of its own; a
+  test suite does the same with `[test] main`. The entry is compiled in its
+  package's context with its own flags, linked only into the programs that
+  select it, gated by its `required_features`, and its `windows_entry` is
+  inherited. `start = "<symbol>"` on a program, an entry, a row or `[test]`,
+  and `mcpp:link-start` from a board package's build program (protocol 16),
+  name the ELF entry of a freestanding image; statements that disagree are
+  refused naming each, the symbol must be defined (it was a linker warning and
+  an image entered at address 0), and the build reports it on an `Entry` line
+  and in the result record's `entry`. A file a target names as `main` on any
+  row is no longer linked as an ordinary source on the other rows.
+
 ### Fixed
 
 - **A WebAssembly link writes its `.wasm` again.** 2026.10.26.1 published every
@@ -65,6 +81,11 @@
   pinning a checkout ahead of a release) refused the build with "no package
   found for exact selector". The root's checkout now answers it; a
   requirement the checkout does not satisfy is still refused.
+- **A build program compiled against an updated interface of the same mcpp
+  version reads the new interface.** The compiled `mcpp` module of build
+  programs was kept by mcpp's version alone, so a build of mcpp between
+  releases that added a directive served the previous interface. It is kept by
+  the version and a digest of its text.
 - **A request by version the local index cannot answer refreshes the index
   wherever it is in the graph.** The refresh before the dependency walk asked
   only about the root's and the selected members' `[dependencies]`, so a

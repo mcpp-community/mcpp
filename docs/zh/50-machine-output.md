@@ -785,7 +785,7 @@ mcpp build [target] [-p <member>] [--release] --message-format json
 | `status` | `running`、`ok`、`failed` 或 `cancelled` |
 | `configuration` | `triple`、`profile`、`fingerprint`、`outputDir` |
 | `compileDatabase` | 该配置的 `compile_commands.json`，或 `null` |
-| `artifacts` | `name`、`kind`（`bin`、`test`、`shared`、`static`）、`path`；可运行的产物另有 `launch` |
+| `artifacts` | `name`、`kind`（`bin`、`test`、`shared`、`static`）、`path`；可运行的产物另有 `launch`；陈述了程序起点或入口符号时另有 `entry` |
 | `diagnostics` | 失败构建的编译器诊断：`severity`、`message`、`path`、`range` |
 
 `launch` 是 `mcpp run` 启动该产物的方式：`argv`、`cwd`、`env` 与 `via`。`env` 只含
@@ -793,6 +793,10 @@ mcpp 为程序设置或改写的变量（加载器的搜索路径、运行时载
 调用方的其余变量，因此记录中不含调用方的机密。`via` 为 `null`、`"runner"`（由
 `[target.<triple>].runner` 包装）或 `"run_under"`（由执行宿主包装）。调试器、IDE 或
 CI 按 `launch` 启动程序，与 `mcpp run` 的启动一致。
+
+`entry` 说明程序从哪里开始、镜像从哪里进入（docs/04，`kind = "entry"` 与 `start`）：
+`from` 是 `main = { from }` 指名的 `"<依赖>/<入口>"`，`start` 是陈述的入口符号，
+`start_from` 是指名它的陈述。各键只在有陈述时出现。
 
 被 SIGINT、SIGTERM 或 SIGHUP 结束的运行在两个文件中都留下 `cancelled`
 （[退出码](../specs/exit-codes.md) §3.7）。`status` 仍为 `running`、而 `pid` 已不存在

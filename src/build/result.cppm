@@ -41,11 +41,22 @@ struct Launch {
     std::string via;   // "" | "runner" | "run_under"
 };
 
+// Where a program begins and where its image is entered (design 2026-10-26
+// §24.4 item 10): `from` is `<package>/<entry>` when a dependency's entry
+// target is the beginning, `start` the stated entry symbol and `startFrom`
+// the statement that named it. Absent from the record when all are empty.
+struct Entry {
+    std::string from;
+    std::string start;
+    std::string startFrom;
+};
+
 struct Artifact {
     std::string name;
     std::string kind;   // bin | test | shared | static
     std::filesystem::path path;
     std::optional<Launch> launch;
+    std::optional<Entry>  entry;
 };
 
 // A compiler's diagnostic, from the output of a failed step.
@@ -136,6 +147,15 @@ nlohmann::json to_json(const Record& r) {
     for (auto const& a : r.artifacts) {
         nlohmann::json j{{"name", a.name}, {"kind", a.kind}, {"path", a.path.generic_string()}};
         if (a.launch) j["launch"] = to_json(*a.launch);
+        if (a.entry) {
+            nlohmann::json e = nlohmann::json::object();
+            if (!a.entry->from.empty()) e["from"] = a.entry->from;
+            if (!a.entry->start.empty()) {
+                e["start"] = a.entry->start;
+                e["start_from"] = a.entry->startFrom;
+            }
+            j["entry"] = std::move(e);
+        }
         artifacts.push_back(std::move(j));
     }
     nlohmann::json diags = nlohmann::json::array();
@@ -192,7 +212,12 @@ std::optional<Record> read(const std::filesystem::path& outputDir) {
         r.compileDatabase = d["compileDatabase"].get<std::string>();
     if (d.contains("artifacts") && d["artifacts"].is_array())
         for (auto const& a : d["artifacts"]) {
-            Artifact art{a.value("name", ""), a.value("kind", ""), a.value("path", ""), std::nullopt};
+            Artifact art{a.value("name", ""), a.value("kind", ""), a.value("path", ""),
+                         std::nullopt, std::nullopt};
+            if (a.contains("entry") && a["entry"].is_object()) {
+                const auto& e = a["entry"];
+                art.entry = Entry{e.value("from", ""), e.value("start", ""), e.value("start_from", "")};
+            }
             if (a.contains("launch") && a["launch"].is_object()) {
                 const auto& l = a["launch"];
                 Launch launch;

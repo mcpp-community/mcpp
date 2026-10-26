@@ -52,6 +52,23 @@ discover = ["checks/**/*.cpp", "!checks/fixtures/**"]
 `[build] sources` 承载整套套件，其唯一的测试程序驱动套件，用
 `mcpp test -p <member>` 选中。
 
+### 测试程序的起点
+
+提供 `main` 的测试框架把它声明为入口目标（`kind = "entry"`，docs/04 §2.2），包为
+全部测试指名一次：
+
+```toml
+[dev-dependencies]
+fw = "0.1"
+
+[test]
+main = { from = "fw/main" }
+```
+
+每个测试文件随之成为其程序的普通翻译单元，不定义 `main`。本包自身的名字选择本包的入口，
+框架借此以测试文件定义的回调测试它自己的入口。在独立目标上，`[test] start` 陈述每个测试
+镜像的入口符号。
+
 ## 运行测试
 
 ```bash

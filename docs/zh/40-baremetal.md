@@ -233,7 +233,7 @@ extern "C" int main() {
 不需要 `_start`，也不需要汇编入口，因为板级支持包选取了 picolibc 的 semihosting
 `crt0`——C 运行时在 `main` 运行之前就已初始化好，返回值经 semihosting 传回宿主。
 只有完全没有 C 库的板子才需要显式入口点，做法是让 `main` 指向携带 `_start` 的
-那份源文件。
+那份源文件；入口符号不是链接器默认值时由 `start` 指名（docs/04，`start`）。
 
 ## freestanding 目标带来的变化
 
@@ -245,7 +245,7 @@ extern "C" int main() {
 | C 库 | 属于**目标**，由 mcpp 从目标自己的表行解析，方式与解析编译器完全一致。裸机工程不声明 libc，正如 hosted 工程不声明 glibc。引擎把 sysroot 的库目录放进链接搜索路径，板级支持包因此可以按裸名从中选取（`-lc`、`-lcrt0-semihost`）。 |
 | 异常与 RTTI | 在图中每个翻译单元上都关闭，包括依赖的翻译单元，**除非有包提供为该目标构建的 C++ 运行时**。否则既没有 unwinder，也没有 `libc++abi`，任何东西都无法抛出；仅 `std::optional::value()` 一处，就会引用 `__cxa_throw` 以及另外三个未定义符号。该设定属于目标，而不是工程的 `cxxflags`，因为 BMI 会记录它，而带异常编出的依赖无法被不带异常的单元导入。声明了 `provides = ["hosted-standard-library"]` 的包会翻转这个默认：异常和 RTTI 开启，`-ffreestanding` 被去掉，并加上 `-fasynchronous-unwind-tables`。 |
 | `import std` | 当图中有包提供 `hosted-standard-library` 且指明了自己的 `std` 模块源码时可用；否则在配置期以诊断拒绝，而不是在链接期才失败。 |
-| 入口点 | 只要有东西提供 `crt0`，`int main()` 就可用。板级支持包通常会提供它。 |
+| 入口点 | 只要有东西提供 `crt0`，`int main()` 就可用。板级支持包通常会提供它。镜像的入口符号是链接脚本的 `ENTRY()`，或由程序、其入口或板子陈述的 `start`；陈述的符号未被定义时链接失败。 |
 | 默认链接方式 | 静态，而且这不是偏好：没有加载器，因此没有别的选项。 |
 
 一个完全没有依赖的工程仍然构建得出来，这正是「单凭 ISA 表行已经足够」的证据：
@@ -622,6 +622,7 @@ if (const char* dir = mcpp::xpkg_dir("xim", "qemu-riscv"); dir && *dir) {
 | `mcpp:link-lib=<name>` | 向消费者的链接行加入 `-l<name>`。裸名即可：目标 sysroot 的库目录已经在搜索路径上。 |
 | `mcpp:link-search=<dir>` | 加入 `-L<dir>`，用于包自己携带的库。 |
 | `mcpp:link-script=<abs path>` | 加入 `-T <path>`。相对路径按包根解析，因此属于目标 C 库的脚本必须用绝对路径指名。 |
+| `mcpp:link-start=<符号>` | 板子上每个镜像的入口符号（协议 16）。与程序的 `start` 比对：只有一个符号，否则拒绝并同时点名两条陈述。 |
 | `mcpp:runner=<token>` | 向运行模板追加一个 argv 记号。argv 是有序的，模板因此由重复构建——一个记号一行指令。 |
 | `mcpp:include-dir=<dir>` | 加入一个**仅对本包生效**的头文件搜索目录。 |
 

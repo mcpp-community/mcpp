@@ -872,7 +872,7 @@ terminal is therefore visible to an IDE that reads the record, and the reverse.
 | `status` | `running`, `ok`, `failed`, or `cancelled` |
 | `configuration` | `triple`, `profile`, `fingerprint`, `outputDir` |
 | `compileDatabase` | the configuration's `compile_commands.json`, or `null` |
-| `artifacts` | `name`, `kind` (`bin`, `test`, `shared`, `static`), `path`, and for a runnable product `launch` |
+| `artifacts` | `name`, `kind` (`bin`, `test`, `shared`, `static`), `path`, for a runnable product `launch`, and `entry` when the program's beginning or its entry symbol was stated |
 | `diagnostics` | the compilers' diagnostics of a failed build: `severity`, `message`, `path`, `range` |
 
 `launch` is how `mcpp run` starts the product: `argv`, `cwd`, `env` and
@@ -882,6 +882,11 @@ caller's other variables, so the record holds no secret of the caller's.
 `via` is `null`, `"runner"` (a `[target.<triple>].runner` wraps the program) or
 `"run_under"` (an execution host wraps it). A debugger, an IDE or a CI job that
 starts the program from `launch` starts it as `mcpp run` would.
+
+`entry` says where the program begins and where its image is entered (docs/04,
+`kind = "entry"` and `start`): `from` is the `"<dependency>/<entry>"` a
+`main = { from }` named, `start` the stated entry symbol and `start_from` the
+statement that named it. Each key is present only when stated.
 
 A run ended by SIGINT, SIGTERM or SIGHUP leaves `cancelled` in both files
 ([exit codes](specs/exit-codes.md) §3.7). A record still `running` whose

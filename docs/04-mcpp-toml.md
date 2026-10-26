@@ -261,6 +261,79 @@ naming the three kinds it does know:
 targets.myapp.kind must be 'bin', 'lib' or 'shared'; got 'app'
 ```
 
+#### `kind = "entry"` and `main = { from }` — a beginning another package supplies (mcpp 2026.10.26.2+)
+
+A framework that supplies a program's `main` declares the translation unit as an
+**entry target**, and a program selects it in place of a file of its own:
+
+```toml
+# the framework (provider)
+[targets.player]
+kind = "entry"
+main = "src/entry/player.cpp"
+
+[target.'cfg(os = "android")'.targets.player]
+main = "src/entry/player_android.cpp"   # the Android beginning is another file
+
+# the application (consumer)
+[dependencies]
+openmui = "0.1"
+
+[targets.notes]
+kind = "app"
+main = { from = "openmui/player" }     # "<dependency>/<entry>"
+```
+
+- `<dependency>` is a key of this manifest's dependency tables (a test also reads
+  `[dev-dependencies]`), or the package's own name; `<entry>` is a
+  `kind = "entry"` target of that package.
+- The entry's translation unit is compiled in the provider's context — its
+  include directories, its module interfaces, its flags and the entry target's
+  own `cflags`, `cxxflags` and `defines` — and linked into each program that
+  selects it. It is in no other image, its own package's included; a file a
+  target names as `main` on any row is never an ordinary source of an image.
+- The contract between the two is symbols and run-time data. A callback the
+  program defines is declared by the provider with `extern "C++"` or
+  `extern "C"`: a declaration attached to a named module cannot be defined
+  outside it.
+- An entry target states `main` (a file), and may state `start`,
+  `windows_entry`, `cflags`, `cxxflags`, `defines` and `required_features`.
+  Its `windows_entry` is inherited by the program that selects it; a program
+  stating another is refused. Its `required_features` must be active: a
+  selection otherwise is refused with the dependency line that enables them.
+  Keys that describe an artifact (`soname`, `exports`, `linkage`, the
+  `windows_*` keys of a program) belong to the program and are refused here.
+- A program target with `main = { from }` states no `cflags`, `cxxflags` or
+  `defines`: they apply to the target's own entry, which is now the provider's.
+- An entry target is not an artifact of its package: a package that declares
+  only entries still has the library or program its sources infer.
+
+Test programs take the same statement in `[test]` (§2.17).
+
+#### `start` — the symbol an image is entered at (mcpp 2026.10.26.2+)
+
+An image with no C runtime — a freestanding target — is entered where its
+starter jumps: the ELF entry a boot ROM, a loader or an emulator reads.
+
+```toml
+[targets.kernel]
+kind  = "bin"
+main  = "src/start.S"
+start = "_start"
+```
+
+- `start` is accepted on program and entry targets, their rows and `[test]`,
+  and is refused on a target whose image a C runtime enters (every hosted
+  row), on an ok image (`ok_main`) and on Android, naming who enters it there.
+- The program, the entry it begins with and a board package's build program
+  (`mcpp:link-start`, [30 — build.mcpp](30-build-mcpp.md)) may each state it;
+  they must agree, and a disagreement is refused naming every statement.
+- Stated, it is the image's entry over the linker script's `ENTRY()`, and a
+  symbol nothing defines fails the link instead of producing an image that
+  begins at address 0. Unstated, the script's `ENTRY()` or the linker's
+  default applies, as before.
+- The build reports it after `Size`: `Entry  kernel  _start  ([targets.kernel] start = "_start")`.
+
 #### `exports` — the artifact’s published symbol set (mcpp 2026.9.6.5+)
 
 ```toml
@@ -434,7 +507,8 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `cxxflags` / `cflags` | Extra compile flags for this target. Do **not** put `-std=...` here — use `[package].standard`. |
 | `required_features` | The target is emitted only when **every** listed feature is active in the build; otherwise it is silently skipped. A gate only — it does not activate features (use `--features` / `[features].default`). **One exception, and it is not a second rule:** when this target is requested as a host tool (`tools = [...]`, §2.14), the target is what was *asked for*, so its `required_features` become the sub-build's *inputs*. Same field, one meaning — the resolution just runs in the opposite direction. |
 | `windows_subsystem` *(2026.9.12.2+)* | The PE subsystem of an executable: `"console"` (the default) or `"windows"`, a GUI program that starts without a console. Reaches this target's link and no other, and renders nothing on a target that is not PE. See the section above. |
-| `windows_entry` *(2026.9.12.2+)* | The entry function the program defines: `"main"` (the default), `"wmain"`, `"WinMain"` or `"wWinMain"`. See the section above. |
+| `windows_entry` *(2026.9.12.2+)* | The entry function the program defines: `"main"` (the default), `"wmain"`, `"WinMain"` or `"wWinMain"`. See the section above. An entry target states the function its translation unit defines, and the program that selects it inherits it. |
+| `start` *(2026.10.26.2+)* | The symbol the image is entered at, on a freestanding target. See `start` above. |
 | `windows_code_page` *(2026.9.26.1+)* | The ANSI code page of an executable on Windows: `"utf-8"`, embedded as an application manifest that Windows 10 version 1903 and later honour, or `"legacy"`, the system's code page. A program target that writes neither runs in the system's code page, except a program built as a host tool (§2.14), which defaults to `"utf-8"`. Refused on a library target; renders nothing on a target that is not PE. See *Paths and text encoding* in §2.3. |
 | `windows_long_paths` *(2026.10.16.1+)* | `true` embeds `longPathAware` in the executable's application manifest: the process may use paths longer than 260 characters where Windows enables them (`LongPathsEnabled`). `false` embeds nothing. A program target that writes neither embeds nothing, except a program built as a host tool (§2.14), which defaults to `true`. Refused on a library target; renders nothing on a target that is not PE. |
 | `linkage` *(2026.9.15.2+)* | A library target's **default** link form, `"static"` or `"shared"`: the form a consumer that writes no `linkage` receives. Unlike `kind = "shared"` it is not a constraint, so a consumer's explicit statement is honoured. Refused beside `kind = "shared"` and on a program target. See [`dependency_linkage`](#dependency_linkage--static-or-shared-is-the-consumers-decision). |
@@ -1978,6 +2052,8 @@ discover = ["tests/**/*.cpp"]    # the default
 | `discover` | array of globs | every file a glob matches is one test program; a glob beginning with `!` removes the files it matches; `[]` discovers none |
 | `windows_code_page` | `"utf-8"` or `"legacy"` | the ANSI code page of every test program on Windows, in the meaning of the target key of the same name; the default is `"legacy"`, the system's code page *(2026.10.5.2+)* |
 | `windows_long_paths` | `true` or `false` | whether every test program on Windows is long-path aware, in the meaning of the target key of the same name; the default is `false` *(2026.10.16.1+)* |
+| `main` | `{ from = "<dependency>/<entry>" }` | the entry target every test program begins in; each test file is then an ordinary translation unit of its program and defines no `main` (§2.2, `kind = "entry"`) *(2026.10.26.2+)* |
+| `start` | symbol | the symbol every test image is entered at, on a freestanding target (§2.2, `start`) *(2026.10.26.2+)* |
 
 The globs use the vocabulary of `[build] sources`. A test's name is its path
 relative to the fixed directory of the first glob that matched it, without the

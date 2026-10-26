@@ -136,6 +136,17 @@ std::vector<std::string> windows_executable_link_flags(const BuildPlan& plan, bo
                                                        std::string_view subsystem,
                                                        std::string_view entry);
 
+// The link flags an image's `start` symbol renders to (design 2026-10-26
+// §24.4 item 9): the ELF entry, and a definition of `__mcpp_start` AS that
+// symbol, which turns the linkers' "cannot find entry symbol" warning -- an
+// image that links and begins at address 0 -- into an error ("symbol not
+// found"). ld.lld, the linker of every freestanding row, has no
+// `--require-defined`; `--defsym` with an undefined operand is an error in
+// both lld and GNU ld, and costs one absolute alias in the symbol table.
+// `direct` is a link driven by `ld.lld` itself rather than by the compiler
+// driver. Empty for an empty symbol. Exported so each spelling is a unit test.
+std::vector<std::string> start_link_flags(std::string_view start, bool direct);
+
 // Emitter self-check: every ninja rule's command must begin with a program.
 //
 // Exported so the invariant can be stated against hand-written manifests as
@@ -159,6 +170,15 @@ std::optional<std::string> check_rule_commands_name_a_program(
 // manifest line. Measured: `undefined symbol: operator new(unsigned long)`
 // referenced from `__libcpp_allocate` in `__new/allocate.h`.
 std::string link_failure_advice(std::string_view output);
+
+// Design 2026-10-26 §24.4 item 10: the note for a link that failed because an
+// image's entry symbol is defined by nothing it links (`start_link_flags`'s
+// `--defsym` operand). `statements` are the plan's link units' symbols and
+// the statements that named them; empty on the fast path, which then names
+// the three places a `start` may come from instead of the one it came from.
+std::string start_failure_advice(
+    std::string_view output,
+    const std::vector<std::pair<std::string, std::string>>& statements);
 
 // The C library said in its manifest which facilities it does not supply, and
 // the link has just named one of them (design 2026-09-20 §5.7.5). Both
@@ -895,6 +915,46 @@ std::vector<std::string> windows_executable_link_flags(const BuildPlan& plan, bo
     }
     if (gui) out.push_back("-mwindows");
     if (fn == "wmain" || fn == "wWinMain") out.push_back("-municode");
+    return out;
+}
+
+std::vector<std::string> start_link_flags(std::string_view start, bool direct) {
+    if (start.empty()) return {};
+    if (direct)
+        return { "-e", std::string(start), std::format("--defsym=__mcpp_start={}", start) };
+    return { std::format("-Wl,-e,{}", start), std::format("-Wl,--defsym=__mcpp_start={}", start) };
+}
+
+std::string start_failure_advice(
+    std::string_view output,
+    const std::vector<std::pair<std::string, std::string>>& statements) {
+    // lld: "--defsym:1: symbol not found: <sym>"; GNU ld: "--defsym:1:
+    // undefined symbol `<sym>' referenced in expression".
+    auto missing = [&](std::string_view symbol) {
+        return output.find(std::format("symbol not found: {}", symbol)) != std::string_view::npos
+            || output.find(std::format("undefined symbol `{}' referenced in expression", symbol))
+                   != std::string_view::npos;
+    };
+    std::string out;
+    std::set<std::string> said;
+    for (auto const& [symbol, statement] : statements)
+        if (missing(symbol) && said.insert(symbol).second)
+            out += std::format(
+                "\nnote: the image is entered at `{}`, which nothing this program links defines.\n"
+                "      It was named by {}. Define it (the startup code that\n"
+                "      receives control), or state the symbol the startup code defines.\n",
+                symbol, statement);
+    if (!out.empty() || !statements.empty()) return out;
+    constexpr std::string_view kMarker = "symbol not found: ";
+    if (auto at = output.find(kMarker); at != std::string_view::npos
+        && output.find("--defsym") != std::string_view::npos) {
+        auto symbol = output.substr(at + kMarker.size());
+        symbol = symbol.substr(0, symbol.find_first_of("\r\n "));
+        out += std::format(
+            "\nnote: the image is entered at `{}`, which nothing this program links defines.\n"
+            "      It is named by the program's `start`, the `start` of the entry it\n"
+            "      begins with, or a package's `mcpp:link-start`.\n", symbol);
+    }
     return out;
 }
 
@@ -3530,6 +3590,11 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             if (lu.kind == LinkUnit::Binary)
                 tail.dependencies += join_link_flags(windows_executable_link_flags(
                     plan, sepLinker, lu.windowsSubsystem, lu.windowsEntry));
+            // Design 2026-10-26 §24.4 item 9: the image's entry symbol, which
+            // the plan admits only on a freestanding target (an ELF row).
+            if (!lu.start.empty())
+                tail.dependencies += join_link_flags(
+                    start_link_flags(lu.start, !flags.ldDriver.empty()));
             // mcpp#426: a link unit with no C++ in it takes only the part of
             // the contract that is not a statement about the C++ runtime.
             // Swapping the driver is not sufficient by itself — this slot names
@@ -4995,6 +5060,12 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         // build.ninja happened to be up to date — which is exactly the kind of
         // "same decision in two places" this codebase keeps paying for.
         diagnostics += link_failure_advice(out);
+        {
+            std::vector<std::pair<std::string, std::string>> starts;
+            for (auto const& lu : plan.linkUnits)
+                if (!lu.start.empty()) starts.emplace_back(lu.start, lu.startFrom);
+            diagnostics += start_failure_advice(out, starts);
+        }
         // mcpp#662: named precisely here, where `plan.targetSide` is resolved
         // — the fast path (execute.cppm) calls the same function with no name
         // and gets the degraded-but-still-correct form.

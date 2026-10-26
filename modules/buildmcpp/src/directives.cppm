@@ -196,6 +196,11 @@ enum class Slot : std::size_t {
     ToolDecisions,
     XpkgRequests,
     ToolchainStatement,
+    // Protocol 16 (design 2026-10-26 §24.3): the symbol an image of this
+    // board is entered at, stated by the package that faces the image's
+    // starter. Not an ldflag: the engine renders it per linker and refuses
+    // two statements that disagree, which a flag would make two `-e` words.
+    LinkStart,
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
@@ -294,7 +299,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 31> kTable{{
+inline constexpr std::array<Def, 32> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -483,6 +488,10 @@ inline constexpr std::array<Def, 31> kTable{{
     {"decision",            "decision",          Slot::ToolDecisions,    Scope::Advisory,       Transform::Verbatim,      false, "",                           "",                                              15},
     {"xpkg-request",        "xpkg-request",      Slot::XpkgRequests,     Scope::Claim,          Transform::Verbatim,      false, "",                           "",                                              15},
     {"toolchain",           "toolchain",         Slot::ToolchainStatement, Scope::Claim,        Transform::Verbatim,      false, "",                           "",                                              15},
+    // v16 (design 2026-10-26 §24.3): a board's image entry symbol. LinkGlobal,
+    // as `link-script` is: it is a fact of every image linked over the board.
+    // kCacheEpoch is not bumped, for the reason `runtime-search-dir` states.
+    {"link-start",          "link-start",        Slot::LinkStart,        Scope::LinkGlobal,     Transform::Verbatim,      false, "",                           "",                                              16},
 }};
 
 // ── Collected output of one run ────────────────────────────────────────────
@@ -1174,6 +1183,11 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
         m.runtimeConfig.linkIntent.deploy.push_back(
             {std::filesystem::path(entry.substr(0, tab)), entry.substr(tab + 1)});
     }
+
+    // `link-start` (protocol 16). `link_start_directive_error` has refused a
+    // program that states two different symbols, so the last line is the one.
+    for (auto const& symbol : d.at(Slot::LinkStart))
+        m.runtimeConfig.linkIntent.start = symbol;
 }
 
 // The five roles `mcpp::action::role` may name, in the order
@@ -1330,8 +1344,21 @@ std::string target_directive_error(const mcpp::manifest::Manifest& m, const Dire
                                     "windows-subsystem", "windows_subsystem", true);
         !e.empty())
         return e;
-    return named_target_error(m, d.at(Slot::WindowsEntry),
-                              "windows-entry", "windows_entry", false);
+    if (auto e = named_target_error(m, d.at(Slot::WindowsEntry),
+                                    "windows-entry", "windows_entry", false);
+        !e.empty())
+        return e;
+    // `link-start` (protocol 16): a symbol, and one per program.
+    auto const& starts = d.at(Slot::LinkStart);
+    for (auto const& symbol : starts) {
+        if (auto msg = mcpp::manifest::start_symbol_problem(symbol); !msg.empty())
+            return std::format("build.mcpp emitted `mcpp:link-start={}`: {}", symbol, msg);
+        if (symbol != starts.front())
+            return std::format(
+                "build.mcpp emitted `mcpp:link-start` twice, as \"{}\" and as \"{}\"; an "
+                "image is entered at one symbol.", starts.front(), symbol);
+    }
+    return {};
 }
 
 std::string deploy_directive_error(const mcpp::manifest::Manifest& m, const Directives& d) {
