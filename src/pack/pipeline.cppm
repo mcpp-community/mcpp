@@ -403,6 +403,17 @@ bool member_carries(const mcpp::build::BuildContext& ctx, const MemberJob& m,
 //
 // Called inside the member's view (`with_member`): `ctx.manifest`,
 // `ctx.projectRoot` and the plan's link group are the member's.
+// Whether a pack of `ctx`'s target is a universal package (SPEC-014 §3): an
+// image of a platform that states `universal = true`, not refused by the
+// command or `[pack] universal`, in a format other than a single file.
+bool packs_universal(const mcpp::build::BuildContext& ctx, const Options& opts) {
+    auto t = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
+    auto const& P = ctx.plan.platform;
+    return t && t->loader_supplies_os() && P.active && P.fields.universal.set
+        && P.fields.universal.value && opts.universal.value_or(true)
+        && opts.format != mcpp::pack::Format::SingleFile;
+}
+
 std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
     auto& ctx = *g.ctx;
     const bool sharedPlan = ctx.workspaceMembers.size() > 1;
@@ -582,20 +593,7 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
         const bool loaded = t && t->loader_supplies_os();
         if (loaded && opts.mode == mcpp::pack::Mode::Static) opts.mode = mcpp::pack::Mode::BundleAll;
         auto const& P = ctx.plan.platform;
-        const bool universal = loaded && P.active && P.fields.universal.set && P.fields.universal.value
-            && opts.universal.value_or(true) && opts.format != mcpp::pack::Format::SingleFile;
-        if (!universal && !opts.systems.empty() && !(loaded && opts.format == mcpp::pack::Format::SingleFile))
-            return Refusal{2, about(run, m, std::format(
-                "--systems names the systems whose loaders a self-contained universal package "
-                "carries, or for which a single file of an image is made; this pack is neither.\n"
-                "  use: --mode self-contained over a platform that states universal = true, or "
-                "--pkg-format single-file"))};
-        if (universal) {
-            if (!opts.systems.empty() && opts.mode != mcpp::pack::Mode::BundleAll)
-                return Refusal{2, about(run, m, std::format(
-                    "--systems names the systems whose loaders a self-contained package carries, "
-                    "and --mode {} carries none.\n  use: --mode self-contained",
-                    mcpp::pack::mode_cli_name(opts.mode)))};
+        if (packs_universal(ctx, opts)) {
             opts.universalName = mcpp::manifest::platform::platform_name(
                 P.package.substr(P.package.find('.') + 1));
             for (auto const& target : P.fields.targets.value) {
@@ -772,6 +770,27 @@ std::optional<Refusal> prepare_group(PackRun& run, GroupJob& g) {
 std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
     auto const& ctx = *g.ctx;
     const auto& formatName = run.opts.formatName;
+    // ─── `--systems` names the loaders a package carries ─────────────
+    //
+    // A self-contained universal package carries a loader per system, and a
+    // single file of an image is made per system; nothing else is made per
+    // system. Refused here, before the build (SPEC-014 §1.5).
+    if (!run.opts.systems.empty()) {
+        auto t = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
+        const bool loaded = t && t->loader_supplies_os();
+        const bool universal = packs_universal(ctx, run.opts);
+        const bool selfContained = run.opts.mode == mcpp::pack::Mode::BundleAll
+                                || run.opts.mode == mcpp::pack::Mode::Static;
+        if (!(universal && selfContained) && !(loaded && run.opts.format == mcpp::pack::Format::SingleFile))
+            return Refusal{2, universal
+                ? std::format("--systems names the systems whose loaders a self-contained package "
+                              "carries, and --mode {} carries none.\n  use: --mode self-contained",
+                              mcpp::pack::mode_cli_name(run.opts.mode))
+                : std::string("--systems names the systems whose loaders a self-contained universal "
+                              "package carries, or for which a single file of an image is made; this "
+                              "pack is neither.\n  use: --mode self-contained over a platform that "
+                              "states universal = true, or --pkg-format single-file")};
+    }
     // ─── Is the requested format one anything provides? ──────────────
     //
     // BEFORE THE BUILD, because a refusal that arrives after a full compile is

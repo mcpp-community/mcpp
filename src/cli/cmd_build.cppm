@@ -1653,13 +1653,19 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return 1;
     }
     auto const& P = host ? ctx->hostPlatform : ctx->plan.platform;
-    auto const& runner = ctx->plan.platform.fields.runner;
+    auto const& runner = P.fields.runner;
     std::string runnerProgram;
-    if (!host && runner.set && !runner.cmd.empty()) {
-        auto found = mcpp::build::runner_lookup::locate(
-            runner.cmd.front(), ctx->xlingsDepBinDirs,
-            mcpp::invocation::get("PATH").value_or(""));
-        if (found.program) runnerProgram = found.program->generic_string();
+    if (runner.set && !runner.cmd.empty()) {
+        // The platform's own tool when it is one (located by the build that
+        // used it), else the program the runner names on this machine.
+        if (auto it = P.tools.find(runner.cmd.front()); it != P.tools.end()) {
+            runnerProgram = it->second;
+        } else {
+            auto found = mcpp::build::runner_lookup::locate(
+                runner.cmd.front(), ctx->xlingsDepBinDirs,
+                mcpp::invocation::get("PATH").value_or(""));
+            if (found.program) runnerProgram = found.program->generic_string();
+        }
     }
     if (json) {
         nlohmann::json tools = nlohmann::json::object();
@@ -1671,7 +1677,7 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
                            {"origin", ctx->compilerChoice.origin}}},
             {"platform", nlohmann::json::parse(mcpp::platform::to_json(P), nullptr, false)},
             {"tools", std::move(tools)},
-            {"runner", host || !runner.set ? nlohmann::json(nullptr) : nlohmann::json{
+            {"runner", !runner.set ? nlohmann::json(nullptr) : nlohmann::json{
                 {"argv", runner.cmd}, {"host", runner.host}, {"exclusive", runner.exclusive},
                 {"program", runnerProgram.empty() ? nlohmann::json(nullptr) : nlohmann::json(runnerProgram)},
                 {"source", mcpp::platform::origin_text(runner.origin)}}},
@@ -1695,7 +1701,7 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
         std::println("{:<10} {:<17} {}", "", label, value);
     for (auto const& [name, path] : P.tools)
         std::println("{:<10} {:<17} {}", "tool", name, path);
-    if (!host && runner.set) {
+    if (runner.set) {
         std::string argv;
         for (auto const& a : runner.cmd) argv += (argv.empty() ? "" : " ") + a;
         std::println("{:<10} {}  ({}){}", "runner", argv, mcpp::platform::origin_text(runner.origin),

@@ -1085,11 +1085,16 @@ std::expected<fs::path, std::string> merge(const MergeRequest& req) {
     std::ranges::sort(merged.systems);
     if (auto d = describe(out, merged, stated); !d) return std::unexpected(d.error());
 
-    // The container: as asked, else as the first input was written.
+    // The container: as asked, else as the output's name says, else as the
+    // first input was written.
     std::string format = req.format;
-    const auto firstName = req.inputs.front().filename().string();
+    const auto outName = req.output.filename().string();
+    const auto firstName = !req.output.empty() && (outName.ends_with(".zip") || outName.find(".tar") != std::string::npos)
+        ? outName : req.inputs.front().filename().string();
     if (format.empty())
-        format = fs::is_directory(req.inputs.front(), ec) ? "dir" : firstName.ends_with(".zip") ? "zip" : "tar";
+        format = firstName.ends_with(".zip") ? "zip"
+               : firstName.find(".tar") != std::string::npos ? "tar"
+               : fs::is_directory(req.inputs.front(), ec) ? "dir" : "tar";
     auto compression = req.compression;
     if (!compression.stated && format == "tar") {
         using mcpp::pack::compress::Algorithm;

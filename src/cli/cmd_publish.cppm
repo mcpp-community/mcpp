@@ -655,14 +655,27 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
             }
             opts.linkage = mcpp::pack::Linkage::Static;
         }
-        std::string compressText = parsed.value("compress").value_or(packCfg.compress);
+        // `--compress` states the container's compression; `[pack] compress`
+        // is the project's default, which a container it does not fit (a
+        // directory, a zip given zstd, a single file given xz) leaves aside.
+        const auto compressFlag = parsed.value("compress");
+        std::string compressText = compressFlag.value_or(packCfg.compress);
         if (!compressText.empty()) {
             auto c = mcpp::pack::compress::parse(compressText);
-            if (!c) { mcpp::ui::error(std::format("--compress: {}", c.error())); return 2; }
+            if (!c) {
+                mcpp::ui::error(std::format("{}: {}", compressFlag ? "--compress" : "[pack] compress",
+                                            c.error()));
+                return 2;
+            }
             opts.compression = *c;
         }
         using mcpp::pack::compress::Algorithm;
         const auto alg = opts.compression.algorithm;
+        const bool fits =
+            !(opts.format == mcpp::pack::Format::Dir || opts.format == mcpp::pack::Format::Dispatched)
+            && !(opts.format == mcpp::pack::Format::Zip && (alg == Algorithm::Zstd || alg == Algorithm::Xz))
+            && !(opts.format == mcpp::pack::Format::SingleFile && (alg == Algorithm::Gzip || alg == Algorithm::Xz));
+        if (opts.compression.stated && !compressFlag && !fits) opts.compression = {};
         if (opts.compression.stated) {
             if (opts.format == mcpp::pack::Format::Dir || opts.format == mcpp::pack::Format::Dispatched) {
                 mcpp::ui::error(std::format(

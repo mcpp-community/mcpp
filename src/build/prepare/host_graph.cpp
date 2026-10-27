@@ -793,6 +793,10 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
         if (auto it = ctx->plan.platform.tools.find(argv.front()); it != ctx->plan.platform.tools.end())
             argv.front() = it->second;
         state.hostPlatformRunner = std::move(argv);
+        // The tools the host graph's build located, for the report of the
+        // host configuration (`self env --host`).
+        state.hostPlatform.tools = ctx->plan.platform.tools;
+        state.hostPlatform.fields.runner = pr;
     }
     std::map<std::string, fs::path> binaries;
     std::vector<std::string> ninjaGoals;
@@ -1028,6 +1032,13 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
                 std::vector<std::string> runner;
                 if (it->contains("runner") && (*it)["runner"].is_array())
                     for (auto const& a : (*it)["runner"]) runner.push_back(a.get<std::string>());
+                // A program built under the host platform by an earlier run:
+                // its runner as that run located it, for the report.
+                if (!runner.empty() && state.hostPlatformRunner.empty()) {
+                    state.hostPlatformRunner = runner;
+                    auto const& cmd = state.hostPlatform.fields.runner.cmd;
+                    if (!cmd.empty()) state.hostPlatform.tools[cmd.front()] = runner.front();
+                }
                 state.buildProgramBinaries[p.index] = {fs::path(it->value("binary", std::string{})),
                                                        p.identity, {}, std::move(runner)};
                 mcpp::log::verbose("build-program", std::format(
