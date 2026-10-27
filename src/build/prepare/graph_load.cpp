@@ -1058,6 +1058,26 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             mcpp::invocation::ScopedEnv hookVar4(hookVars.at(4).first, hookVars.at(4).second);
             mcpp::invocation::ScopedEnv hookVar5(hookVars.at(5).first, hookVars.at(5).second);
             auto r = install_one(target);
+            // A MISS AT INSTALL REFRESHES THE INDEX, THEN ASKS ONCE MORE. The
+            // walk refreshes when a descriptor is missing, and deliberately not
+            // when a descriptor is present without the version asked for:
+            // version tables are per system, so that absence is not proof. The
+            // provider's "not found" for that version is, and it is the only
+            // place the stale case shows (measured: `openkal-llvm-runtime =
+            // "0.16.3"` against an index synced before 0.16.3, refused until
+            // `mcpp index update`). The policy decides (offline, `auto_refresh`,
+            // the debounce, one sync per run). A project's own index is read as
+            // it is, so it is not refreshed here.
+            if (r && r->exitCode != 0 && !ctx.useProjectEnv
+                && mcpp::pm::install_failure_policy(r->error ? r->error->code : std::string{}).refreshIndex) {
+                const auto env = mcpp::config::make_xlings_env(**cfg);
+                auto decision = mcpp::pm::decide_for_miss(
+                    mcpp::pm::policy_for(**cfg), env, target, mcpp::pm::RefreshReason::InstallMiss);
+                if (auto applied = mcpp::pm::apply(decision, env); !applied)
+                    mcpp::ui::warning(applied.error());
+                else if (decision.shouldRefresh)
+                    r = install_one(target);
+            }
             // The first address's failure is the one about the package; a
             // compat spelling tried after it fails as "not found" whatever
             // the cause was.
@@ -1067,11 +1087,14 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
                 if (r->error)
                     firstError += (firstError.empty() ? "" : "; ") + r->error->message;
             }
-            if (r && r->exitCode != 0 &&
+            if (r && r->exitCode != 0 && !ctx.luaContent &&
                 (ns.empty() || ns == mcpp::pm::kDefaultNamespace)) {
                 // Compat retry for a bare/default-namespace request whose
                 // descriptor could not be read (no `wireAddr` to trust): the
-                // package may still be a `compat` one. Try BOTH spellings — a
+                // package may still be a `compat` one. A descriptor that was
+                // read names the package, and its failure is that package's:
+                // another namespace is not tried and not shown as downloading.
+                // Try BOTH spellings — a
                 // SPEC-001 index keys it `compat:<short>`, a pre-SPEC-001 index
                 // keys it by the literal `compat.<short>`. Sending only the
                 // latter is what left the retry pointing at a name the migrated

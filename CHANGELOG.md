@@ -4,6 +4,26 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.27.1] - 2026-10-27
+
+### Fixed
+
+- **A version the local index lacks is refreshed for when its install is
+  refused.** The walk refreshes the index when a descriptor is missing, and not
+  when a descriptor is present without the version asked for (version tables
+  are per system, so that absence is not proof). The provider's "not found" for
+  the version is, and it now reaches the refresh policy (offline,
+  `[index] auto_refresh`, the debounce, one sync per run); after a refresh the
+  install is asked once more. A dependency on a version published after the
+  index was last synced (`openkal-llvm-runtime = "0.16.3"`) was refused until
+  `mcpp index update`. e2e 949.
+- **A package whose descriptor was read is the only one asked for.** A refused
+  install of a namespace-omitted dependency was tried again as
+  `compat:<name>` and `compat.<name>`, shown as downloading, and reported with
+  three addresses, although the descriptor had named the package in
+  `mcpplibs`. The compat spellings are tried only when no descriptor could be
+  read.
+
 ## [2026.10.26.2] - 2026-10-26
 
 ### Added

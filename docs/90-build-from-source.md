@@ -82,7 +82,7 @@ src/
 
 tests/
 ├── unit/                 154 C++ tests, discovered by `mcpp test`
-└── e2e/                  635 shell scripts against a real binary
+└── e2e/                  636 shell scripts against a real binary
 ```
 
 ## Test Organization
@@ -93,7 +93,7 @@ Two layers, and they answer different questions.
 discovers. They exercise a module's contract with no binary and no filesystem
 state.
 
-**End-to-end tests** (`tests/e2e/NN_<name>.sh`, 635 files) run a real `mcpp`
+**End-to-end tests** (`tests/e2e/NN_<name>.sh`, 636 files) run a real `mcpp`
 binary against a real project. `run_all.sh` is the CI entry point. `mcpp test`
 does **not** run them.
 

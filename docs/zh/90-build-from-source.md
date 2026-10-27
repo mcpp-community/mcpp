@@ -84,7 +84,7 @@ src/
 
 tests/
 ├── unit/                 154 C++ tests, discovered by `mcpp test`
-└── e2e/                  635 shell scripts against a real binary
+└── e2e/                  636 shell scripts against a real binary
 ```
 
 ## 测试组织
@@ -94,7 +94,7 @@ tests/
 **单元测试**（`tests/unit/`，154 个文件）是 `mcpp test` 发现的 C++
 程序。它们检验一个模块的契约，不需要二进制、也不需要文件系统状态。
 
-**端到端测试**（`tests/e2e/NN_<name>.sh`，635 个文件）拿真实的 `mcpp`
+**端到端测试**（`tests/e2e/NN_<name>.sh`，636 个文件）拿真实的 `mcpp`
 二进制跑真实工程。`run_all.sh` 是 CI 的入口。`mcpp test` **不**运行它们。
 
 ```bash

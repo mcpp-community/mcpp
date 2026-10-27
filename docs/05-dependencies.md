@@ -362,9 +362,12 @@ an error, never a directory-order choice. See the normative template rows in
 `mcpp build` / `run` / `test` refresh the package index **only when a dependency
 cannot be resolved from the local copy** — never merely because time has passed.
 Concretely, a refresh happens when there is no local index at all, when a
-dependency's descriptor is missing from it, or when a SemVer constraint matches
-none of the versions it knows. A build whose dependencies all resolve locally
-makes no network request, however old the local index is.
+dependency's descriptor is missing from it, when a SemVer constraint matches
+none of the versions it knows, or when the install of an exact version is
+refused because the index does not carry it (a version published after the
+last sync); after that refresh the install is asked once more. A build whose
+dependencies all resolve locally makes no network request, however old the
+local index is.
 
 The consequence worth knowing: a constraint like `^1.2` resolves against the
 **the versions the local index knows**. A `1.3.0` published upstream after the last refresh
