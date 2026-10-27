@@ -26,6 +26,8 @@
 #      (reported `graph`); a version of the family the platform's group does not
 #      name is refused, naming the group and both remedies.
 #   G. `--platform none` selects no platform for the target.
+#   H. After `mcpp toolchain install --target`, a project for the target
+#      builds and runs with `--offline`.
 set -e
 
 TMP=$(mktemp -d)
@@ -134,5 +136,16 @@ d = json.load(open(sys.argv[1]))["data"]
 assert d["platform"] is None, d["platform"]
 PY
 echo "ok: --platform none selects no platform"
+
+# H
+mkdir -p "$TMP/off/src"
+cd "$TMP/off"
+printf '[package]\nname    = "off"\nversion = "0.1.0"\n' > mcpp.toml
+printf 'import std;\nint main() { std::println("offline image"); }\n' > src/main.cpp
+"$MCPP" toolchain install --target "$T" > install.log 2>&1 || fail "H: toolchain install --target" install.log
+grep -q "Installed openkal-platform" install.log || fail "H: the install does not name the platform" install.log
+"$MCPP" run --offline --target "$T" > off.log 2>&1 || fail "H: run --offline after the install" off.log
+grep -q "offline image" off.log || fail "H: the offline run's output" off.log
+echo "ok: toolchain install --target prepares the target for --offline"
 
 echo "PASS: 951 an ok image needs no declaration"
