@@ -57,14 +57,17 @@ struct Registered {
 std::atomic<bool> g_finishing{false};
 void finish() {
     if (g_finishing.exchange(true)) return;
-    {
-        std::lock_guard g(g_live);
-        for (auto* p : live()) { p->end_unit(); p->kill(); }
-    }
+    // The files first: what the request leaves is the state the build was in
+    // when it arrived. A program ended below wakes the thread that waited on
+    // it, and what that thread then records is not written (`ending`).
     {
         std::lock_guard g(g_files);
         for (auto const& [path, content] : interrupt_files())
             (void)os::fs::write_atomic(path, content);
+    }
+    {
+        std::lock_guard g(g_live);
+        for (auto* p : live()) { p->end_unit(); p->kill(); }
     }
     std::vector<std::function<void()>> todo;
     {
@@ -335,6 +338,8 @@ void install() {
         os::interrupt::end_as_requested();
     }).detach();
 }
+
+bool ending() { return g_finishing.load(); }
 
 void set_interrupt_files(const std::vector<std::pair<std::filesystem::path, std::string>>& files) {
     std::lock_guard g(g_files);

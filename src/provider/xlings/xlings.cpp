@@ -1395,6 +1395,10 @@ mcpp::provider::NetworkReport network_check(const Env& env, std::chrono::millise
         if (remaining <= milliseconds::zero()) return std::nullopt;
         auto inv = invocation(env, std::move(args));
         inv.argv.front() = mcpp::home::spelling(env.binary);
+        // In mcpp's working directory, not the home: started in the home,
+        // xlings reads the home's `.xlings.json` as a project's and leaves
+        // the configured official index out of the endpoints it names.
+        inv.options.cwd.clear();
         inv.options.total = remaining;
         inv.options.report_spawn_failure = false;
         const auto r = mcpp::run::execute(inv.argv, inv.options);

@@ -262,6 +262,8 @@ std::string render_last(const Record& r) {
 }  // namespace
 
 void write(const Record& r) {
+    // mcpp is ending at a request: the record it leaves is already written.
+    if (mcpp::run::ending()) return;
     write_atomically(r.outputDir / "result.json", render(r));
     const auto last = r.projectRoot / "target" / ".last-result.json";
     if (!r.projectRoot.empty()) write_atomically(last, render_last(r));

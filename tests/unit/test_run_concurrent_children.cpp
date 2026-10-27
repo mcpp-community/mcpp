@@ -68,8 +68,8 @@ TEST(ConcurrentChildren, AReaderReturnsWhenItsOwnChildExits) {
         tQuick.join();
         tSlow.join();
 
-        ASSERT_EQ(quick.exit_code, 0) << "round " << round;
-        ASSERT_EQ(slow.exit_code, 0) << "round " << round;
+        ASSERT_EQ(quick.exit_code, 0) << "round " << round << ": " << quick.output;
+        ASSERT_EQ(slow.exit_code, 0) << "round " << round << ": " << slow.output;
         // Each reader is handed its own child's output and nothing else.
         EXPECT_NE(quick.output.find("quick"), std::string::npos) << quick.output;
         // The quick child was gone long before the slow one. Half the slow

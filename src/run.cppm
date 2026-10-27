@@ -43,6 +43,11 @@ void install();
 // beside it and a rename, after the programs mcpp started are ended. Setting
 // replaces the previous set.
 void set_interrupt_files(const std::vector<std::pair<std::filesystem::path, std::string>>& files);
+
+// True once mcpp has begun to end at a request or a closed output. A record
+// written from then on would replace the one the request leaves, so a writer
+// of the files above writes nothing while it is true.
+bool ending();
 void clear_interrupt_files();
 
 // A cleanup the watcher runs before mcpp ends at a request (a terminal's mode
