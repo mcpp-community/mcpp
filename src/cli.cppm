@@ -1226,7 +1226,7 @@ int run(int argc, char** argv) {
                 .description("Show mcpp version"))
             .subcommand(cl::App("explain")
                 .description("Show extended description for an error code")
-                .arg(cl::Arg("code").help("Error code such as E0001").required()))
+                .arg(cl::Arg("code").help("Error code such as E0001, or a refusal's reason token such as platform-version-group").required()))
             .subcommand(cl::App("store")
                 .description("Compare this home's payloads with its upstreams")
                 .subcommand(cl::App("dedupe")
@@ -1249,7 +1249,7 @@ int run(int argc, char** argv) {
         // `mcpp self explain E0001`.
         .subcommand(cl::App("explain")
             .description("Show extended description for an error code")
-            .arg(cl::Arg("code").help("Error code such as E0001").required())
+            .arg(cl::Arg("code").help("Error code such as E0001, or a refusal's reason token such as platform-version-group").required())
             .action(wrap_rc(cmd_explain_action)))
 
         // ─── bareword `version` alias ─────────────────────────────────

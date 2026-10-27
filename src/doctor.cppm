@@ -1801,6 +1801,30 @@ export int explain_code(std::string_view code) {
          "silently misbehave, so resolution stops instead. Upgrade mcpp:\n"
          "  curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/install.sh | bash\n"
          "To bypass for debugging only: MCPP_INDEX_FLOOR=ignore mcpp build"},
+        // The platform's refusals (SPEC-013 §14), by their reason token.
+        {"platform-not-a-platform", "the selected package states no platform",
+         "The package selected as the target's platform (--platform, MCPP_PLATFORM,\n"
+         "[target.<selector>] platform, config.toml, the target table) has no [platform]\n"
+         "section. Select a platform package, or none: --platform none."},
+        {"platform-target-unserved", "the platform does not state this target",
+         "The platform's [platform] targets (and [platform.hosted] targets) do not name\n"
+         "the target being built. Build one of the targets it names, or select another\n"
+         "platform for this target under [target.<selector>] platform."},
+        {"platform-tool-absent", "a tool the platform names is not available",
+         "The platform links or seals with a tool ([platform.tools]) that the graph did\n"
+         "not build and this machine does not have. Name the package that builds it:\n"
+         "  [target.'cfg(platform = \"<name>\")'.tools]\n"
+         "  <tool> = \"<package>@<version>\""},
+        {"platform-version-group", "a family package outside the platform's version group",
+         "The platform's [platform.versions] names one version of each package of its\n"
+         "family, whose pins are exact; the graph holds another version of one. Select\n"
+         "the platform release of that version, or write the group's version where the\n"
+         "package is requested. `mcpp why` names who requested it."},
+        {"platform-phase-directive", "a platform plugin stated what a platform cannot",
+         "A platform's build.mcpp runs in the platform phase (mcpp::phase() == \"platform\")\n"
+         "and states the platform's build, link and runner fields and the package formats\n"
+         "it provides (pack-format, artifact actions). Move any other directive to a\n"
+         "package of the graph."},
     };
     for (auto& e : table) {
         if (e.code == code) {
