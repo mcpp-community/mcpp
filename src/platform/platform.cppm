@@ -304,17 +304,17 @@ void merge(mp::Statement& b, const mp::Statement& o) {
     words(b.targets, o.targets);
     text(b.toolchain, o.toolchain);
     if (o.sysroot.set) { b.sysroot = o.sysroot; b.sysrootProvides = o.sysrootProvides; }
+    // Field by field: an argv-only statement keeps the platform's `host` and
+    // `exclusive`; a table, or a program's `run-host`, states what it states.
     if (o.runner.set) {
-        // Field by field: an argv-only statement keeps the platform's `host`
-        // and `exclusive`; a table states what it states.
         b.runner.cmd = o.runner.cmd;
-        if (!o.runner.host.empty()) b.runner.host = o.runner.host;
-        if (o.runner.exclusiveSet) {
-            b.runner.exclusive = o.runner.exclusive;
-            b.runner.exclusiveSet = true;
-        }
         b.runner.origin = o.runner.origin;
         b.runner.set = true;
+    }
+    if (!o.runner.host.empty()) b.runner.host = o.runner.host;
+    if (o.runner.exclusiveSet) {
+        b.runner.exclusive = o.runner.exclusive;
+        b.runner.exclusiveSet = true;
     }
     for (auto const& [k, v] : o.runners) b.runners[k] = v;
     if (o.carrier.set) b.carrier = o.carrier;

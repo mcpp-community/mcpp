@@ -258,8 +258,6 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
             g_platformRestart = P.root;
             return std::unexpected(std::string("mcpp:platform-restart"));
         }
-        mcpp::ui::info("Platform", std::format("{} ({})", P.display(),
-                       mcpp::platform::origin_text(P.selection.origin)));
     }
 
     // ── The layers the graph lacks (§4.3) ─────────────────────────────────
@@ -460,6 +458,9 @@ void step13_platform_statement(PrepareState& state) {
     // machine → the project → the environment (§4.5) ──────────────────────
     mp::Statement s = P.active ? state.platformData : mp::Statement{};
     mp::Statement program = state.programPlatform;
+    // The root's own program states them as well (applied into its manifest);
+    // it is the last program to run, and it speaks for the project.
+    mcpp::platform::merge(program, state.m->buildConfig.programPlatform);
     // A build program's runner and named runners (`mcpp::runner`), the BSP
     // spelling of the same fields.
     if (!state.m->buildConfig.runner.empty()) {
@@ -553,6 +554,16 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
             P.display(), t.str(), mcpp::platform::origin_text(P.fields.link.driver.origin),
             state.tc->binaryPath.generic_string(),
             P.fields.toolchain.set ? P.fields.toolchain.value : std::string("an llvm toolchain")));
+    }
+    // THE PLATFORM, REPORTED (SPEC-013 §9): which one and why, then what it
+    // contributes beyond the layers the Target lines already showed.
+    if (P.active) {
+        mcpp::ui::info("Platform", std::format("{} ({}{})", P.display(),
+                       mcpp::platform::origin_text(P.selection.origin),
+                       P.selection.hosted ? ", hosted" : ""));
+        for (auto const& [label, value] : mcpp::platform::report_rows(P))
+            if (!mp::is_layer(label))
+                mcpp::ui::info("", std::format("{:<17} {}", label, value));
     }
     ctx.plan.platform = std::move(P);
     return {};

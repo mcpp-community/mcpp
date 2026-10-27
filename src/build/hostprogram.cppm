@@ -191,6 +191,34 @@ inline void link_flag(const char* flag)           { std::printf("mcpp:link-flag=
 // `link_script` does, and is checked there against the symbol the program or
 // its entry states; an image is entered at one symbol.
 inline void link_start(const char* symbol)        { std::printf("mcpp:link-start=%s\n", symbol); }
+// THE PLATFORM'S LINK, STATED BY A PROGRAM (protocol 17, SPEC-013 §4.1): the
+// same fields as `[platform.link]`, for the part a board or a platform plugin
+// computes. Each reaches the consumer's link, as `link_script` does.
+//
+// `link_driver("lld")`: `ld.lld` itself links, with the flags `link_flag`
+// states; "compiler" (the default) leaves the link to the compiler driver.
+inline void link_driver(const char* driver)       { std::printf("mcpp:link-driver=%s\n", driver); }
+// A file linked into every executable and shared library (assembled first when
+// it is a `.S`/`.s`).
+inline void link_input(const char* path)          { std::printf("mcpp:link-input=file:%s\n", path); }
+// The standard output of a program, saved as `as` and linked in the same way;
+// one token of its argv per call, in order (`mcpp::link_input_from("notes.S",
+// "okld")`, then `"note-source"`).
+inline void link_input_from(const char* as, const char* token) {
+    std::printf("mcpp:link-input=from:%s:%s\n", as, token);
+}
+// How an artifact is named: `kind` is "exe" or "shared", `pattern` names it
+// with `{name}` ("{name}.oke", "lib{name}.okso").
+inline void artifact_name(const char* kind, const char* pattern) {
+    std::printf("mcpp:artifact-name=%s:%s\n", kind, pattern);
+}
+// One token of seal step `step` (0, 1, ...): steps run in order on the linked
+// file (`{}`) before it is published, `{needed}` naming the shared artifacts
+// it needs. `mcpp::seal(0, "okld"); mcpp::seal(0, "check"); mcpp::seal(0, "{}");`
+inline void seal(int step, const char* token)     { std::printf("mcpp:seal=%d:%s\n", step, token); }
+// Where the runner runs the artifact: "same-arch" (a machine of its
+// architecture) or "any" (an emulator or a probe reaches it from any machine).
+inline void run_host(const char* where)           { std::printf("mcpp:run-host=%s\n", where); }
 // The PE subsystem ("console" | "windows") and the entry function ("main" |
 // "wmain" | "WinMain" | "wWinMain") of an executable target of THIS package,
 // named by `target` (#618). The same fields as `[targets.<name>]

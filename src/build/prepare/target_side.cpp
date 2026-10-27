@@ -1222,6 +1222,22 @@ step9_same_os_check_and_report(PrepareState& state) {
                     reportedTargetName, reportedTargetName));
             }
         }
+        // A layer whose package the platform added is the platform's in the
+        // report (SPEC-013 §9), whatever else the graph holds.
+        if (state.platform.active) {
+            auto injected = [&](std::string_view impl) {
+                const auto name = impl.substr(0, impl.find('@'));
+                for (auto const& q : state.platformInjected) {
+                    const std::string_view qs = q;
+                    const auto shortName = qs.substr(qs.find('.') == std::string_view::npos ? 0 : qs.find('.') + 1);
+                    if (name == qs || name == shortName) return true;
+                }
+                return false;
+            };
+            for (auto* l : { &state.resolvedTargetSide.compilerRuntime, &state.resolvedTargetSide.kernelAbi,
+                             &state.resolvedTargetSide.cAbi, &state.resolvedTargetSide.cxx })
+                if (l->fromGraph() && injected(l->impl)) l->byPlatform = true;
+        }
         mcpp::ui::info("Target", tsd::format_report(
             state.resolvedTargetSide, reportedTargetName, mcpp::log::is_verbose()));
     return {};

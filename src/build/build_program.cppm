@@ -1305,6 +1305,37 @@ std::expected<void, std::string> run_build_program_impl(
                 "       `mcpp::plugins::toolchain::configure` returns true.",
                 def.wire));
         }
+    } else if (env.phase == "platform") {
+        // THE PLATFORM PHASE STATES THE PLATFORM'S BUILD, LINK AND RUNNER
+        // FIELDS AND NOTHING ELSE (SPEC-013 §4.2): it describes a class of
+        // targets, not a package of sources, and what it states reaches every
+        // unit and every link of the target. Refused rather than dropped,
+        // naming the first directive that does not belong.
+        for (auto const& def : dirs::kTable) {
+            switch (def.slot) {
+                case Slot::CxxFlags: case Slot::CFlags: case Slot::LdFlags:
+                case Slot::Runner: case Slot::NamedRunner: case Slot::RunnerLongLived:
+                case Slot::RunExclusive: case Slot::LinkStart: case Slot::LinkDriver:
+                case Slot::LinkInputs: case Slot::ArtifactNames: case Slot::Seal:
+                case Slot::RunHost: case Slot::RerunFiles: case Slot::RerunEnv:
+                case Slot::RerunGlobs: case Slot::Warnings: case Slot::Diagnostics:
+                    continue;
+                default: break;
+            }
+            if (d.at(def.slot).empty()) continue;
+            mcpp::build::refusal::record(mcpp::build::refusal::Code::PlatformPhaseDirective);
+            return std::unexpected(std::format(
+                "build.mcpp stated `mcpp:{}=` in its platform phase.\n"
+                "       A platform's plugin states the platform's build, link and runner\n"
+                "       fields only (compile and link flags, the link driver, inputs,\n"
+                "       entry, artifact names, seal steps, runners); `mcpp::phase()` is\n"
+                "       \"platform\" there (SPEC-013 §4.2).",
+                def.wire));
+        }
+        if (!d.at(Slot::ToolchainStatement).empty())
+            return std::unexpected(std::string(
+                "build.mcpp stated `mcpp:toolchain=` in its platform phase; a platform's "
+                "toolchain is its `[platform] toolchain`"));
     } else if (!d.at(Slot::ToolchainStatement).empty()) {
         return std::unexpected(std::string(
             "build.mcpp stated `mcpp:toolchain=` outside the toolchain phase.\n"

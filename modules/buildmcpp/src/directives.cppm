@@ -201,6 +201,11 @@ enum class Slot : std::size_t {
     // starter. Not an ldflag: the engine renders it per linker and refuses
     // two statements that disagree, which a flag would make two `-e` words.
     LinkStart,
+    LinkDriver,
+    LinkInputs,
+    ArtifactNames,
+    Seal,
+    RunHost,
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
@@ -299,7 +304,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 32> kTable{{
+inline constexpr std::array<Def, 37> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -492,6 +497,16 @@ inline constexpr std::array<Def, 32> kTable{{
     // as `link-script` is: it is a fact of every image linked over the board.
     // kCacheEpoch is not bumped, for the reason `runtime-search-dir` states.
     {"link-start",          "link-start",        Slot::LinkStart,        Scope::LinkGlobal,     Transform::Verbatim,      false, "",                           "",                                              16},
+    // v17 (SPEC-013 §4.1): the platform's link and runner fields, stated by a
+    // program -- a board's or a platform's plugin. LinkGlobal and RunGlobal as
+    // `link-script` and `runner` are; they become the build's platform
+    // statement at the build-program tier. kCacheEpoch is not bumped, for the
+    // reason `runtime-search-dir` states.
+    {"link-driver",         "link-driver",       Slot::LinkDriver,       Scope::LinkGlobal,     Transform::Verbatim,      false, "",                           "",                                              17},
+    {"link-input",          "link-input",        Slot::LinkInputs,       Scope::LinkGlobal,     Transform::Verbatim,      false, "",                           "",                                              17},
+    {"artifact-name",       "artifact-name",     Slot::ArtifactNames,    Scope::LinkGlobal,     Transform::Verbatim,      false, "",                           "",                                              17},
+    {"seal",                "seal",              Slot::Seal,             Scope::LinkGlobal,     Transform::Verbatim,      false, "",                           "",                                              17},
+    {"run-host",            "run-host",          Slot::RunHost,          Scope::RunGlobal,      Transform::Verbatim,      false, "",                           "",                                              17},
 }};
 
 // ── Collected output of one run ────────────────────────────────────────────
@@ -639,6 +654,12 @@ bool glob_leaves_package(std::string_view pattern);
 // Fold the collected directives into the manifest's buildConfig. The single
 // place that knows which manifest channel each slot feeds.
 void apply(mcpp::manifest::Manifest& m, const Directives& d);
+
+// The platform's fields a program stated (protocol 17: `link-driver`,
+// `link-input`, `artifact-name`, `seal`, `run-host`), as a platform statement
+// at the build-program tier (SPEC-013 §4.1). `apply` calls it; the platform
+// phase reads it for the platform's own program.
+void apply_platform(mcpp::manifest::platform::Statement& s, const Directives& d);
 
 // Decode one `mcpp:action=` JSON payload. nullopt = malformed.
 std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payload);
@@ -1188,6 +1209,10 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     // program that states two different symbols, so the last line is the one.
     for (auto const& symbol : d.at(Slot::LinkStart))
         m.runtimeConfig.linkIntent.start = symbol;
+
+    // The platform's fields (protocol 17), at the build-program tier;
+    // `platform_directive_error` has refused a malformed line.
+    apply_platform(m.buildConfig.programPlatform, d);
 }
 
 // The five roles `mcpp::action::role` may name, in the order
@@ -1339,6 +1364,55 @@ static std::string named_target_error(const mcpp::manifest::Manifest& m,
     return {};
 }
 
+void apply_platform(mcpp::manifest::platform::Statement& s, const Directives& d) {
+    namespace mp = mcpp::manifest::platform;
+    auto origin = [](std::string_view wire) {
+        return mp::Origin{ mp::Tier::Program, {}, 0, std::format("mcpp:{}", wire) };
+    };
+    for (auto const& v : d.at(Slot::LinkDriver))
+        s.link.driver = mp::Text{ v, origin("link-driver"), true };
+    if (!d.at(Slot::LinkInputs).empty()) {
+        std::vector<mp::LinkInput> inputs;
+        for (auto const& v : d.at(Slot::LinkInputs)) {
+            if (v.starts_with("file:")) {
+                inputs.push_back({ .file = v.substr(5) });
+                continue;
+            }
+            const auto colon = v.find(':', 5);
+            const auto as = v.substr(5, colon - 5);
+            const auto token = v.substr(colon + 1);
+            auto it = std::ranges::find_if(inputs, [&](auto const& in) { return in.as == as; });
+            if (it == inputs.end()) inputs.push_back({ .from = { token }, .as = as });
+            else it->from.push_back(token);
+        }
+        s.link.inputs = std::move(inputs);
+        s.link.inputsOrigin = origin("link-input");
+        s.link.inputsSet = true;
+    }
+    for (auto const& v : d.at(Slot::ArtifactNames)) {
+        const auto colon = v.find(':');
+        auto& field = v.substr(0, colon) == "exe" ? s.link.exe : s.link.shared;
+        field = mp::Text{ v.substr(colon + 1), origin("artifact-name"), true };
+    }
+    if (!d.at(Slot::Seal).empty()) {
+        std::map<int, std::vector<std::string>> steps;
+        for (auto const& v : d.at(Slot::Seal)) {
+            const auto colon = v.find(':');
+            int index = 0;
+            std::from_chars(v.data(), v.data() + colon, index);
+            steps[index].push_back(v.substr(colon + 1));
+        }
+        s.link.seal.clear();
+        for (auto& [i, step] : steps) s.link.seal.push_back(std::move(step));
+        s.link.sealOrigin = origin("seal");
+        s.link.sealSet = true;
+    }
+    for (auto const& v : d.at(Slot::RunHost)) {
+        s.runner.host = v;
+        s.runner.origin = origin("run-host");
+    }
+}
+
 std::string target_directive_error(const mcpp::manifest::Manifest& m, const Directives& d) {
     if (auto e = named_target_error(m, d.at(Slot::WindowsSubsystem),
                                     "windows-subsystem", "windows_subsystem", true);
@@ -1348,6 +1422,46 @@ std::string target_directive_error(const mcpp::manifest::Manifest& m, const Dire
                                     "windows-entry", "windows_entry", false);
         !e.empty())
         return e;
+    // The platform's fields (protocol 17).
+    for (auto const& v : d.at(Slot::LinkDriver))
+        if (v != "lld" && v != "compiler")
+            return std::format("build.mcpp emitted `mcpp:link-driver={}`; the drivers are "
+                               "\"lld\" and \"compiler\"", v);
+    for (auto const& v : d.at(Slot::LinkInputs)) {
+        const bool file = v.starts_with("file:") && v.size() > 5;
+        const auto colon = v.find(':', 5);
+        const bool from = v.starts_with("from:") && colon != std::string::npos && colon > 5
+                       && colon + 1 < v.size();
+        if (!file && !from)
+            return std::format("build.mcpp emitted `mcpp:link-input={}`; an input is "
+                               "`file:<path>` or `from:<as>:<token>`", v);
+    }
+    for (auto const& v : d.at(Slot::ArtifactNames)) {
+        const auto colon = v.find(':');
+        const auto kind = v.substr(0, colon);
+        const auto pattern = colon == std::string::npos ? std::string() : v.substr(colon + 1);
+        if ((kind != "exe" && kind != "shared") || pattern.empty())
+            return std::format("build.mcpp emitted `mcpp:artifact-name={}`; write "
+                               "`exe:<pattern>` or `shared:<pattern>`", v);
+        const auto at = pattern.find("{name}");
+        if (at == std::string::npos || pattern.find("{name}", at + 1) != std::string::npos
+            || (kind == "exe" && at != 0))
+            return std::format("build.mcpp emitted `mcpp:artifact-name={}`; the pattern names "
+                               "the artifact as {{name}} once{}", v,
+                               kind == "exe" ? ", at its start" : "");
+    }
+    for (auto const& v : d.at(Slot::Seal)) {
+        const auto colon = v.find(':');
+        const auto index = v.substr(0, colon);
+        if (colon == std::string::npos || index.empty()
+            || !std::ranges::all_of(index, [](char c) { return c >= '0' && c <= '9'; })
+            || colon + 1 >= v.size())
+            return std::format("build.mcpp emitted `mcpp:seal={}`; write `<step>:<token>`", v);
+    }
+    for (auto const& v : d.at(Slot::RunHost))
+        if (v != "same-arch" && v != "any")
+            return std::format("build.mcpp emitted `mcpp:run-host={}`; it is \"same-arch\" "
+                               "or \"any\"", v);
     // `link-start` (protocol 16): a symbol, and one per program.
     auto const& starts = d.at(Slot::LinkStart);
     for (auto const& symbol : starts) {

@@ -1062,14 +1062,53 @@ TEST(BuildDirectives, DeployRowIsProtocolElevenWithLinkGlobalScopeAndATag) {
     EXPECT_EQ(def->scope, dirs::Scope::LinkGlobal);
     EXPECT_EQ(def->sinceProtocol, 11);
     EXPECT_FALSE(def->tag.empty());
-    EXPECT_EQ(dirs::kProtocolVersion, 16);
+    EXPECT_EQ(dirs::kProtocolVersion, 17);
 }
 
-TEST(BuildDirectives, ProtocolSixteenIsAcceptedAndSeventeenIsNot) {
-    auto ok = parse("mcpp:protocol=16\n");
+TEST(BuildDirectives, ProtocolSeventeenIsAcceptedAndEighteenIsNot) {
+    auto ok = parse("mcpp:protocol=17\n");
     EXPECT_FALSE(dirs::protocol_error(ok).has_value());
-    auto no = parse("mcpp:protocol=17\n");
+    auto no = parse("mcpp:protocol=18\n");
     EXPECT_TRUE(dirs::protocol_error(no).has_value());
+}
+
+// SPEC-013 §4.1: the platform's fields a program states (protocol 17) become a
+// platform statement at the build-program tier; malformed lines are refused.
+TEST(BuildDirectives, PlatformFieldsAreProtocolSeventeenAndReachTheStatement) {
+    for (auto wire : {"link-driver", "link-input", "artifact-name", "seal", "run-host"}) {
+        auto def = dirs::find_by_wire(wire);
+        ASSERT_NE(def, nullptr) << wire;
+        EXPECT_EQ(def->sinceProtocol, 17) << wire;
+        EXPECT_FALSE(def->tag.empty()) << wire;
+    }
+    mcpp::manifest::Manifest m;
+    auto d = parse("mcpp:link-driver=lld\n"
+                   "mcpp:link-input=from:notes.S:okld\n"
+                   "mcpp:link-input=from:notes.S:note-source\n"
+                   "mcpp:link-input=file:/opt/crt0.o\n"
+                   "mcpp:artifact-name=exe:{name}.oke\n"
+                   "mcpp:artifact-name=shared:lib{name}.okso\n"
+                   "mcpp:seal=0:okld\nmcpp:seal=0:note\nmcpp:seal=0:{}\n"
+                   "mcpp:seal=1:okld\nmcpp:seal=1:check\nmcpp:seal=1:{}\n"
+                   "mcpp:run-host=same-arch\n");
+    EXPECT_EQ(dirs::target_directive_error(m, d), "");
+    dirs::apply(m, d);
+    auto const& s = m.buildConfig.programPlatform;
+    EXPECT_EQ(s.link.driver.value, "lld");
+    ASSERT_EQ(s.link.inputs.size(), 2u);
+    EXPECT_EQ(s.link.inputs[0].as, "notes.S");
+    EXPECT_EQ(s.link.inputs[0].from, (std::vector<std::string>{"okld", "note-source"}));
+    EXPECT_EQ(s.link.inputs[1].file, "/opt/crt0.o");
+    EXPECT_EQ(s.link.exe.value, "{name}.oke");
+    EXPECT_EQ(s.link.shared.value, "lib{name}.okso");
+    ASSERT_EQ(s.link.seal.size(), 2u);
+    EXPECT_EQ(s.link.seal[1], (std::vector<std::string>{"okld", "check", "{}"}));
+    EXPECT_EQ(s.runner.host, "same-arch");
+    EXPECT_EQ(s.link.driver.origin.tier, mcpp::manifest::platform::Tier::Program);
+    for (auto bad : {"mcpp:link-driver=gold\n", "mcpp:link-input=from:x\n",
+                     "mcpp:artifact-name=exe:lib{name}\n", "mcpp:artifact-name=dll:{name}\n",
+                     "mcpp:seal=x:okld\n", "mcpp:run-host=far\n"})
+        EXPECT_NE(dirs::target_directive_error(m, parse(bad)), "") << bad;
 }
 
 // Design 2026-10-26 §24.3: a board's image entry symbol reaches the manifest's

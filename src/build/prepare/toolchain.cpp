@@ -1572,12 +1572,21 @@ step2_resolve_explicit_spec(PrepareState& state, ToolchainResolveCtx& ctx) {
                         ? std::string{}
                         : std::format(", not your {} — this project only",
                                       state.graphCompilerReplaced));
+            else if (!state.pinReplacedDefault.empty() && state.platformToolchainPin)
+                chosenBy = std::format(
+                    "\n             the platform's ({}), replacing your "
+                    "{} — override with `[target.{}] toolchain`",
+                    state.platform.display(), state.pinReplacedDefault,
+                    state.overrides.target_triple.empty() ? std::string("<triple>")
+                                                          : state.overrides.target_triple);
             else if (!state.pinReplacedDefault.empty())
                 chosenBy = std::format(
                     "\n             target default for {}, replacing your "
                     "{} — override with `[target.{}] toolchain`",
                     state.overrides.target_triple, state.pinReplacedDefault,
                     state.overrides.target_triple);
+            else if (state.platformToolchainPin)
+                chosenBy = std::format("  (the platform's, {})", state.platform.display());
             else if (state.tcOrigin == TcOrigin::TargetPin
                   || state.tcOrigin == TcOrigin::FirstRun)
                 chosenBy = std::format("  ({})", tc_origin_name(state.tcOrigin));

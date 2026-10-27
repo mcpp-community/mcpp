@@ -245,6 +245,9 @@ struct Layer {
     std::string interfaceName;   // openkal / linux / win32 / darwin / musl / glibc / libc++
     std::string impl;            // package@version, or an xpkg reference
     bool        subset = false;  // C++ layer: a freestanding subset, not the whole library
+    // The package was added to the graph by the target's platform (SPEC-013
+    // §4.3): still a graph package, reported as the platform's.
+    bool        byPlatform = false;
 
     bool absent()   const { return origin == Origin::None; }
     bool prebuilt() const { return origin == Origin::Payload || origin == Origin::Xpkg; }
@@ -1082,13 +1085,14 @@ inline std::string format_layers(const TargetSide& ts, bool verbose) {
         std::string suffix = l.subset ? ", subset" : "";
         // One column layout whether or not an implementation is named, so the
         // rows read as a table rather than as a list of sentences.
+        const std::string_view from = l.byPlatform ? std::string_view("platform")
+                                                   : origin_name(l.origin);
         if (l.impl.empty())
             out += std::format("{}{:<17} {:<14} ({}{})\n", kIndent, label,
-                               l.interfaceName, origin_name(l.origin), suffix);
+                               l.interfaceName, from, suffix);
         else
             out += std::format("{}{:<17} {:<14} ({}, {}{})\n", kIndent, label,
-                               l.interfaceName, l.impl, origin_name(l.origin),
-                               suffix);
+                               l.interfaceName, l.impl, from, suffix);
     }
     return out;
 }

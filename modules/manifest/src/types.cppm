@@ -876,6 +876,11 @@ struct BuildConfig : BuildInputs {
     // configuration error, not something to merge: appending would produce an
     // argv that is neither one's, and it would fail at exec time with no
     // indication of which package contributed which token.
+    // The platform's fields a build program stated (protocol 17; SPEC-013
+    // §4.1): its link driver, link inputs, artifact names, seal steps and
+    // runner host, at the build-program tier. Filled by `apply`; prepare
+    // merges every program's into the build's platform statement.
+    mcpp::manifest::platform::Statement programPlatform;
     std::vector<std::string>            runner;
     // NAMED WAYS OF REACHING THE ARTEFACT, AND THE ENGINE KNOWS NONE OF
     // THEIR NAMES.

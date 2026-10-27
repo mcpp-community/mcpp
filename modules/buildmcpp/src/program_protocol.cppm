@@ -122,7 +122,11 @@ export namespace mcpp::build::program_protocol {
 // v16 (design 2026-10-26 §24.3): `mcpp:link-start=` -- the symbol every image
 // linked over the package is entered at, the build-program form of a target's
 // `start`. No directive of v15 changes spelling.
-inline constexpr int kProtocolVersion = 16;
+// v17 (SPEC-013 §4.1): the platform's fields a program states -- `link-driver`,
+// `link-input`, `artifact-name`, `seal`, `run-host` -- and `mcpp::phase()`
+// answering "platform" for a platform's plugin. No directive of v16 changes
+// spelling.
+inline constexpr int kProtocolVersion = 17;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //

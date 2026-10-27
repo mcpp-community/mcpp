@@ -237,6 +237,10 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             // prefix claimed otherwise. `index_package_digest` is FNV-1a on
             // every host.
             lp.hash = mcpp::pm::index_package_digest(sourceIndex, lp.name, lp.version);
+            // The platform's packages say so (SPEC-013 §8.3).
+            if (state.platformInjected.contains(mcpp::pm::compat::qualified_name(
+                    key.ns.empty() ? std::string(mcpp::pm::kDefaultNamespace) : key.ns, key.shortName)))
+                lp.origin = "platform";
             // One entry per identity: a dependency declared by the root and by
             // a member under different spellings is one package.
             if (!versionLocked.insert(lock_identity(lp)).second) continue;
