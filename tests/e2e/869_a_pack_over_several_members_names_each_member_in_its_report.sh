@@ -144,7 +144,7 @@ for s in d["stages"]:
     assert set(s) == {"member", "dir", "manifest", "closure"}, s
     assert s["closure"] in ("walked", "not-walked"), s
 for a in d["artifacts"]:
-    assert set(a) == {"path", "type", "format", "targets", "member"}, a
+    assert set(a) == {"path", "type", "format", "targets", "member", "sha256"}, a
 EOF
 "$MCPP" pack --mode system -p cli --message-format json > o2.json 2> o2.log || fail "O: a pack of one member failed" o2.log
 python3 - <<'EOF' || fail "O: the envelope of one member changed" o2.json
@@ -152,7 +152,7 @@ import json
 d = json.load(open("o2.json"))["data"]
 assert "stages" not in d, d
 assert isinstance(d["stage"], dict) and set(d["stage"]) == {"dir", "manifest", "closure"}, d
-assert len(d["artifacts"]) == 1 and set(d["artifacts"][0]) == {"path", "type", "format", "targets"}, d
+assert len(d["artifacts"]) == 1 and set(d["artifacts"][0]) == {"path", "type", "format", "targets", "sha256"}, d
 EOF
 echo "ok: O, the envelope lists every member's artifacts and keeps the single-member shape"
 
