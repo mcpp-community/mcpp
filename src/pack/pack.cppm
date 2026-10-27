@@ -2212,9 +2212,34 @@ constexpr std::string_view host_system() {
 // macOS or Windows takes this machine's own row; another system's is its
 // conventional row. `single`: the program is the whole package (a single
 // file), so on Windows it takes its C++ run-time from the system.
-struct ProgramRow { std::string triple; std::string mode; };
-ProgramRow program_row(std::string_view system, std::string_view arch, bool single) {
-    if (system == "linux") return { std::format("{}-linux-musl", arch), "static" };
+struct ProgramRow { std::string triple; std::string mode; std::string platform; };
+
+// The platform a generated program of `triple` is built over, as `--platform`
+// names it: the target's platform where its hosted arrangement serves the
+// triple (SPEC-013 §5.4), else none. A Linux program over the hosted
+// arrangement is static on every architecture, its C library and C++ run-time
+// built by the graph with the platform's toolchain; the musl row's own payload
+// is a cross GCC published for an x86_64 host only.
+std::string hosted_platform_for(const mcpp::platform::Resolved* P, std::string_view triple) {
+    if (!P || !P->active || !P->fields.hosted.set) return {};
+    auto t = mcpp::toolchain::triple::parse(triple);
+    if (!t) return {};
+    auto const& targets = P->fields.hosted.targets;
+    const bool listed = !targets.set || std::ranges::any_of(targets.value, [&](std::string const& x) {
+        auto h = mcpp::toolchain::triple::parse(x);
+        return h && h->str() == t->str();
+    });
+    if (!listed) return {};
+    if (!P->selection.ref.spec.path.empty()) return "path:" + P->root.generic_string();
+    return std::format("{}@{}", P->package, P->version);
+}
+
+ProgramRow program_row(std::string_view system, std::string_view arch, bool single,
+                       const mcpp::platform::Resolved* P = nullptr) {
+    if (system == "linux") {
+        const auto triple = std::format("{}-linux-musl", arch);
+        return { triple, "static", hosted_platform_for(P, triple) };
+    }
     const bool here = system == host_system() && arch == mcpp::toolchain::platform::host_arch;
     if (system == "macos") return { here ? std::string() : std::format("{}-macos", arch), "vendored" };
     return { here ? std::string() : std::format("{}-windows-gnu", arch), single ? "system" : "vendored" };
@@ -2261,7 +2286,8 @@ pack_generated_program(const std::filesystem::path& dir, const ProgramRow& row) 
     const auto out = dir / "target" / "dist" / "packed";
     fs::remove_all(out, ec);
     std::vector<std::string> argv{ mcpp::invocation::self_exe_path().string(), "pack",
-                                   "--pkg-format", "dir", "-o", "packed", "--platform", "none",
+                                   "--pkg-format", "dir", "-o", "packed",
+                                   "--platform", row.platform.empty() ? std::string("none") : row.platform,
                                    "--mode", row.mode };
     if (!row.triple.empty()) argv.insert(argv.end(), { "--target", row.triple });
     int spawnError = 0;
@@ -2278,13 +2304,32 @@ pack_generated_program(const std::filesystem::path& dir, const ProgramRow& row) 
 // THE STATIC ROW'S TOOLCHAIN, STATED: the carrier's own graph supplies a
 // kernel interface, which would otherwise cancel the row's convention and
 // leave a compiler without a musl C runtime to link with (L10, measured: clang
-// took the host GCC's `crtbeginT.o`).
-std::string static_row_pin(const ProgramRow& row) {
-    if (!row.triple.ends_with("-linux-musl")) return {};
-    if (auto t = mcpp::toolchain::triple::parse(row.triple))
-        if (auto* k = mcpp::toolchain::triple::find_known_target(*t); k && !k->pin.empty())
-            return std::format("\n[target.{}]\ntoolchain = \"{}\"\n", row.triple, k->pin);
-    return {};
+// took the host GCC's `crtbeginT.o`). The row's own pin on this machine's
+// architecture; for another architecture's row the platform's toolchain,
+// which every host carries (the row's cross GCC is published for an x86_64
+// host only: measured, `x86_64-linux-musl-gcc@16.1.0` has no build for an
+// aarch64 Linux host).
+std::string static_row_pin(const ProgramRow& row, std::string_view platformToolchain = {}) {
+    if (!row.triple.ends_with("-linux-musl") || !row.platform.empty()) return {};
+    auto t = mcpp::toolchain::triple::parse(row.triple);
+    if (!t) return {};
+    std::string pin;
+    if (t->arch != mcpp::toolchain::platform::host_arch && !platformToolchain.empty())
+        pin = std::string(platformToolchain);
+    else if (auto* k = mcpp::toolchain::triple::find_known_target(*t); k && !k->pin.empty())
+        pin = std::string(k->pin);
+    if (pin.empty()) return {};
+    return std::format("\n[target.{}]\ntoolchain = \"{}\"\n", row.triple, pin);
+}
+
+// Whether this mcpp builds programs for `row`: a target the table states as
+// planned is not built (its toolchain is not published).
+bool row_is_built(const ProgramRow& row) {
+    if (row.triple.empty()) return true;   // this machine's own row
+    auto t = mcpp::toolchain::triple::parse(row.triple);
+    if (!t) return false;
+    auto* k = mcpp::toolchain::triple::find_known_target(*t);
+    return !k || k->tier != "planned";
 }
 
 } // namespace
@@ -2316,7 +2361,7 @@ carrier_build(const Plan& plan, const CarrierBuild& b)
             plan.platform.display(), c.main.empty() ? std::string("(none)") : c.main,
             mcpp::platform::origin_text(c.origin))});
 
-    const auto row = program_row(b.system, b.arch, b.single);
+    const auto row = program_row(b.system, b.arch, b.single, &plan.platform);
     const auto dir = plan.projectRoot / "target" / "carrier-pack"
                    / std::format("{}-{}-{}", b.stem, b.system, b.arch);
     fs::create_directories(dir / "src", ec);
@@ -2343,7 +2388,9 @@ carrier_build(const Plan& plan, const CarrierBuild& b)
         b.carried.empty() ? "runs the image it is given" : "carries it and runs it",
         plan.platform.display(), b.stem,
         plan.packageVersion.empty() ? "0.0.0" : plan.packageVersion, b.stem,
-        dependency_entry(c.package), static_row_pin(row));
+        dependency_entry(c.package),
+        static_row_pin(row, plan.platform.fields.toolchain.set ? plan.platform.fields.toolchain.value
+                                                               : std::string()));
     std::string mainText;
     {
         std::ifstream in(c.main, std::ios::binary);
@@ -2473,6 +2520,16 @@ run_loaded(const Plan& plan)
             if (systems.empty()) systems.emplace_back(host_system());
             for (auto const& system : systems)
                 for (auto const& leg : legs) {
+                    // A row this mcpp builds no program for (a planned
+                    // target, `x86_64-macos`) carries no runner: said, and
+                    // the package's metadata lists the systems it carries.
+                    if (!row_is_built(program_row(system, leg.arch, false, &plan.platform))) {
+                        mcpp::ui::warning(std::format(
+                            "no runner for {}-{} in the package: this mcpp builds no program for "
+                            "that system and architecture; the launcher there looks for `{}` on PATH",
+                            system, leg.arch, launch.loader));
+                        continue;
+                    }
                     auto packed = carrier_build(plan, { {}, {}, launch.loader, system, leg.arch, false });
                     if (!packed) return std::unexpected(packed.error());
                     const auto into = plan.stagingRoot / "libexec" / launch.loader

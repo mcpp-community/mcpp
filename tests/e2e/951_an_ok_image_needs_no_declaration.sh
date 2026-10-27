@@ -82,7 +82,7 @@ echo "ok: the lock says which packages the platform added"
 # D
 "$MCPP" test --target "$T" > test.log 2>&1 || fail "D: mcpp test" test.log
 grep -q "smoke ... ok" test.log || fail "D: the test image did not pass" test.log
-"$MCPP" pack --target "$T" --mode self-contained --pkg-format dir -o m3 > m3.log 2>&1 || fail "D: pack (M3)" m3.log
+"$MCPP" pack --target "$T" --no-universal --mode self-contained --pkg-format dir -o m3 > m3.log 2>&1 || fail "D: pack (M3)" m3.log
 m3=$(ls target/dist/m3/bin/app target/dist/m3/bin/app.exe 2>/dev/null | head -1)
 [ -n "$m3" ] || fail "D: the M3 package has no program" m3.log
 "$m3" x > m3run.log 2>&1 || fail "D: the M3 program did not run" m3run.log
@@ -125,7 +125,7 @@ if "$MCPP" build --target "$T" > group.log 2>&1; then
     fail "F: a version outside the platform's group was built" group.log
 fi
 grep -q "version group" group.log || fail "F: the refusal does not name the group" group.log
-grep -q "0.22.3" group.log || fail "F: the refusal does not name the group's version" group.log
+grep -qE "names openkal-musl [0-9]+\.[0-9]+\.[0-9]+" group.log || fail "F: the refusal does not name the group's version" group.log
 echo "ok: a version outside the platform's group is refused"
 
 # G

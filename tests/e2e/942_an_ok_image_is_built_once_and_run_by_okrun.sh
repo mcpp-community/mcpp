@@ -156,9 +156,9 @@ grep -q "Compiling" again.log && fail "E: the second build compiled again" again
 echo "ok: a second build is up to date"
 
 # F
-"$MCPP" pack --target "$HOST_ARCH-openkal" --pkg-format dir -o m2 > m2.log 2>&1 || fail "F: pack (M2)" m2.log
+"$MCPP" pack --target "$HOST_ARCH-openkal" --no-universal --pkg-format dir -o m2 > m2.log 2>&1 || fail "F: pack (M2)" m2.log
 [ -f target/dist/m2/bin/app.oke ] || fail "F: the M2 package has no bin/app.oke" m2.log
-"$MCPP" pack --target "$HOST_ARCH-openkal" --mode self-contained --pkg-format dir -o m3 > m3.log 2>&1 \
+"$MCPP" pack --target "$HOST_ARCH-openkal" --no-universal --mode self-contained --pkg-format dir -o m3 > m3.log 2>&1 \
     || fail "F: pack --mode self-contained (M3)" m3.log
 m3=$(ls target/dist/m3/bin/app target/dist/m3/bin/app.exe 2>/dev/null | head -1)
 [ -n "$m3" ] || fail "F: the M3 package has no program" m3.log

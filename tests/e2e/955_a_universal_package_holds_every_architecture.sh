@@ -74,15 +74,19 @@ echo "ok: the launcher runs this machine's image through the runner"
 
 # C
 "$MCPP" pack --target "$T" --mode self-contained --pkg-format dir -o sc > c.log 2>&1 || fail "C: pack --mode self-contained" c.log
-for a in x86_64 aarch64; do
-    [ -f "target/dist/sc/libexec/okrun/$OS-$a/okrun" ] || fail "C: no runner for $OS-$a" c.log
-done
+# This machine's architecture's runner is always there; the other one is there
+# where this mcpp builds programs for it (not x86_64-macos, a planned row).
+[ -f "target/dist/sc/libexec/okrun/$OS-$HOST_ARCH/okrun" ] || fail "C: no runner for $OS-$HOST_ARCH" c.log
+if [ ! -f "target/dist/sc/libexec/okrun/$OS-$OTHER/okrun" ]; then
+    grep -q "no runner for $OS-$OTHER" c.log || fail "C: the runner for $OS-$OTHER is missing and not said" c.log
+fi
 env -i HOME="$HOME" PATH=/usr/bin:/bin target/dist/sc/bin/uni x > c-run.log 2>&1 || fail "C: the self-contained launcher" c-run.log
 grep -q "universal 2 args" c-run.log || fail "C: the self-contained package's output" c-run.log
 python3 - <<PY || fail "C: systems" target/dist/sc/mcpp-package.json
-import json
+import json, os
 d = json.load(open("target/dist/sc/mcpp-package.json"))
-assert d["mode"] == "self-contained" and d["systems"] == sorted(["$OS-x86_64", "$OS-aarch64"]), d
+carried = sorted(s for s in os.listdir("target/dist/sc/libexec/okrun"))
+assert d["mode"] == "self-contained" and d["systems"] == carried and "$OS-$HOST_ARCH" in carried, d
 PY
 echo "ok: a self-contained universal package carries its runner and needs nothing installed"
 
