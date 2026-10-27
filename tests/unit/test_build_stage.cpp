@@ -92,9 +92,10 @@ TEST(BuildStage, SameSizeDifferentBytesIsCopiedByDefault) {
     EXPECT_EQ(read_file(dst), "AAAA");
 }
 
-// `--verify size` is the opt-in shortcut for callers that know the source is
-// fingerprint-scoped; it accepts the same-size destination as already staged.
-TEST(BuildStage, SameSizeDifferentBytesIsSkippedUnderSizeVerify) {
+// `--verify size` does not make a readable destination the source's: a
+// package's BMI is staged at a path named by the module, so after an upgrade
+// the previous version's BMI is there, often at the same size.
+TEST(BuildStage, SameSizeDifferentBytesIsCopiedUnderSizeVerify) {
     Tmp tmp;
     auto src = tmp.path / "src.bin";
     auto dst = tmp.path / "dst.bin";
@@ -103,6 +104,29 @@ TEST(BuildStage, SameSizeDifferentBytesIsSkippedUnderSizeVerify) {
 
     auto r = stage_file(src, dst, no_retry(Verify::Size));
     ASSERT_TRUE(r.has_value());
+    EXPECT_TRUE(r->copied);
+    EXPECT_EQ(read_file(dst), "AAAA");
+}
+
+// A destination that cannot be opened is taken as staged under `--verify size`
+// when its size is the source's: a holder that denies reading it denies
+// replacing it as well.
+TEST(BuildStage, AnUnreadableSameSizeDestinationIsSkippedUnderSizeVerify) {
+    Tmp tmp;
+    auto src = tmp.path / "src.bin";
+    auto dst = tmp.path / "dst.bin";
+    write_file(src, "AAAA");
+    write_file(dst, "BBBB");
+    std::filesystem::permissions(dst, std::filesystem::perms::none);
+    if (std::ifstream(dst, std::ios::binary).is_open()) {
+        std::filesystem::permissions(dst, std::filesystem::perms::owner_all);
+        GTEST_SKIP() << "permissions do not deny reading here";
+    }
+
+    auto r = stage_file(src, dst, no_retry(Verify::Size));
+    auto content = r.has_value() ? std::string() : r.error().message;
+    std::filesystem::permissions(dst, std::filesystem::perms::owner_all);
+    ASSERT_TRUE(r.has_value()) << content;
     EXPECT_FALSE(r->copied);
     EXPECT_EQ(read_file(dst), "BBBB");
 }

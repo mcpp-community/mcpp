@@ -18,15 +18,19 @@
 //
 //   1. Never write bytes that are already there. Equivalence is decided by
 //      COMPARING CONTENT, which is unconditionally correct — a destination
-//      identical to the source needs no write, whatever the reason. Size alone
-//      is only a heuristic and is available as `--verify size` for the paths
-//      where the caller knows better (a std BMI is fingerprint-scoped: the
-//      cache dir and the build dir share the fp that covers compiler identity,
-//      target triple, stdlib, std source hash and the dialect flags). It is
-//      NOT the default, because staging also carries .dll payloads whose PE
-//      section padding makes "same size, different bytes" ordinary.
-//      Skipping mirrors what the dep BMI cache has always done
-//      (bmi_cache.cppm: "Existing project outputs are left untouched").
+//      identical to the source needs no write, whatever the reason. A
+//      destination that cannot be read is not compared: a holder may deny
+//      opening it (Windows: a MemoryMappedFile opened with FileShare.None),
+//      and then it cannot be replaced either. `--verify size` accepts an equal
+//      size for such a destination, and only for it. A destination that can be
+//      read is compared under every mode: an equal size does not make a staged
+//      file the source's. A package's BMI lands at a path named by the module,
+//      not by the cache entry, so the BMI of the version before an upgrade
+//      sits where the new one goes, and GCC writes an interface whose source
+//      did not change at the same size with a different checksum; importers
+//      then fail with "CRC mismatch". The size-only shortcut is never the
+//      default, because staging also carries .dll payloads whose PE section
+//      padding makes "same size, different bytes" ordinary.
 //   2. When we do write, write out of place and rename — atomic for readers,
 //      and it survives a transient sharing violation (antivirus, indexer)
 //      that an in-place overwrite would lose to.
@@ -53,7 +57,8 @@ export namespace mcpp::build::stage {
 // How hard to look before declaring the destination already-staged.
 enum class Verify {
     Content,    // default: byte-for-byte compare — always correct
-    Size,       // size match only (MCPP_STAGE_VERIFY=size / --verify size)
+    Size,       // also an equal size where the destination cannot be read
+                // (MCPP_STAGE_VERIFY=size / --verify size)
 };
 
 struct StageOptions {
@@ -365,15 +370,16 @@ std::expected<StageOutcome, StageError> stage_file(const std::filesystem::path& 
         }
     }
 
-    // Already staged? Content by default — size is the caller-opt-in shortcut
-    // (see module comment).
+    // Already staged? Equal content; under `Verify::Size` also an equal size
+    // when the destination cannot be read (see module comment).
     std::error_code sec;
     if (std::filesystem::is_regular_file(dst, sec)) {
         std::error_code se1, se2;
         auto sizeDst = std::filesystem::file_size(dst, se1);
         auto sizeSrc = std::filesystem::file_size(src, se2);
         bool equivalent = !se1 && !se2 && sizeDst == sizeSrc
-            && (opts.verify == Verify::Size || same_content(src, dst));
+            && (same_content(src, dst)
+                || (opts.verify == Verify::Size && !std::ifstream(dst, std::ios::binary).is_open()));
         if (equivalent) {
             // Timestamps left untouched on purpose — see module comment.
             return StageOutcome{.copied = false};

@@ -83,7 +83,7 @@ src/
 └── scaffold/             `mcpp new` and templates
 
 tests/
-├── unit/                 152 C++ tests, discovered by `mcpp test`
+├── unit/                 154 C++ tests, discovered by `mcpp test`
 └── e2e/                  635 shell scripts against a real binary
 ```
 
@@ -91,7 +91,7 @@ tests/
 
 两层，回答的是不同的问题。
 
-**单元测试**（`tests/unit/`，152 个文件）是 `mcpp test` 发现的 C++
+**单元测试**（`tests/unit/`，154 个文件）是 `mcpp test` 发现的 C++
 程序。它们检验一个模块的契约，不需要二进制、也不需要文件系统状态。
 
 **端到端测试**（`tests/e2e/NN_<name>.sh`，635 个文件）拿真实的 `mcpp`

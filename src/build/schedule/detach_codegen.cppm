@@ -152,11 +152,19 @@ bool file_exists(const std::filesystem::path& p) {
     return std::filesystem::exists(p, ec);
 }
 
+// The status a supervisor left. `.rc` appears by a rename once its number is
+// written, so one that holds no number is a write that failed (a full disk):
+// the supervisor's status is lost, and the unit is taken as failed rather than
+// waited for until the hard limit.
 std::optional<int> read_rc(const std::filesystem::path& slot) {
     std::ifstream in(suffixed(slot, ".rc"));
     if (!in) return std::nullopt;
     int rc = 0;
-    if (!(in >> rc)) return std::nullopt;
+    if (!(in >> rc)) {
+        std::println(std::cerr, "mcpp: the status of the compiler for {} was not written "
+                                "(is the disk full?)", slot.string());
+        return 1;
+    }
     return rc;
 }
 

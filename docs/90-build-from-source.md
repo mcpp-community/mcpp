@@ -81,7 +81,7 @@ src/
 └── scaffold/             `mcpp new` and templates
 
 tests/
-├── unit/                 152 C++ tests, discovered by `mcpp test`
+├── unit/                 154 C++ tests, discovered by `mcpp test`
 └── e2e/                  635 shell scripts against a real binary
 ```
 
@@ -89,7 +89,7 @@ tests/
 
 Two layers, and they answer different questions.
 
-**Unit tests** (`tests/unit/`, 152 files) are C++ programs `mcpp test`
+**Unit tests** (`tests/unit/`, 154 files) are C++ programs `mcpp test`
 discovers. They exercise a module's contract with no binary and no filesystem
 state.
 

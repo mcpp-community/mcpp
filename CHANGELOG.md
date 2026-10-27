@@ -78,6 +78,21 @@
 
 ### Fixed
 
+- **A dependency upgraded to a cached version replaces the previous version's
+  files.** A package's BMI and objects are staged from the build cache at paths
+  named by the module and the source, not by the cache entry, and staging under
+  `--verify size` took a destination of the source's size as already staged.
+  After an upgrade the previous version's files are at those paths, and a
+  change that keeps their sizes (a constant) left them in place: the program
+  ran the old code, and a unit compiled against the new graph failed with
+  `CRC mismatch` (GCC). A destination that can be read is now compared by
+  content under every mode; an equal size is accepted only for one that cannot
+  be opened (a language server holding it). e2e 948.
+- **A compile whose status could not be written fails at once.** A detached
+  module compile reports its status in `<slot>.rc`, which appears by a rename
+  after the number is written. On a full disk the file appeared empty and the
+  build waited for a number until its two-hour limit; an `.rc` with no number is
+  now a failed unit, said as such.
 - **A WebAssembly link writes its `.wasm` again.** 2026.10.26.1 published every
   POSIX link through a temporary name, and Emscripten names the file it writes
   beside the output after the output: a link to `app.js.tmp` wrote no

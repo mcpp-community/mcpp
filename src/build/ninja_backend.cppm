@@ -1708,17 +1708,16 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // stage must not dirty every importer of the staged BMI.
     // $verify is per-edge: empty (⇒ content comparison, the safe default) for
     // payloads whose bytes can change under an unchanged name — a rebuilt DLL
-    // keeps its size, PE sections are page-padded — and `--verify size` for the
-    // std artifacts, which are fingerprint-scoped: the cache dir and this build
-    // dir share the fp that covers compiler identity, target triple, stdlib,
-    // std source hash and the dialect flags, so equal size IS equivalence.
+    // keeps its size, PE sections are page-padded — and `--verify size` for
+    // BMIs and objects, which a language server may hold open.
     //
-    // That distinction is not a micro-optimization: reading the destination
-    // needs to OPEN it, and a holder may deny even that (Windows CI: a
-    // MemoryMappedFile opened with FileShare.None → ERROR_SHARING_VIOLATION on
-    // open, so content can't be compared and staging fails). Size comes from
-    // directory metadata, which stays readable — so the fingerprint-scoped
-    // edges survive a lock that would otherwise be unsurvivable.
+    // Reading the destination needs to OPEN it, and a holder may deny even that
+    // (Windows CI: a MemoryMappedFile opened with FileShare.None →
+    // ERROR_SHARING_VIOLATION on open, so content can't be compared and the
+    // file can't be replaced either). Size comes from directory metadata, which
+    // stays readable, so under `--verify size` a destination that cannot be
+    // opened and has the source's size is taken as staged. One that can be
+    // opened is compared by content under every mode (mcpp.build.stage).
     append("rule stage_file\n");
     append("  command = $mcpp stage $verify --output $out $in\n");
     append("  description = STAGE $out\n");
@@ -2520,11 +2519,11 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     }
 
     // Stage prebuilt std artifacts into the compiler-specific BMI cache.
-    // These four are fingerprint-scoped (see the stage_file rule comment), so
-    // they carry the size-only equivalence check.
+    // A language server may hold these open, so they carry `--verify size`
+    // (see the stage_file rule comment).
     // (ninja trims trailing whitespace in variable values, hence the space
 //  lives in the rule's command string, not here)
-    static constexpr std::string_view kFpScopedVerify = "  verify = --verify size\n";
+    static constexpr std::string_view kHeldOpenVerify = "  verify = --verify size\n";
     auto std_bmi_dst = mcpp::toolchain::staged_std_bmi_path(plan.toolchain, {});
     auto std_o_dst = std::filesystem::path("obj")
                    / std::format("std{}", dial.objExt);
@@ -2638,10 +2637,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     if (has_std_artifacts) {
         append(std::format("build {} : stage_file {}\n", escape_ninja_path(std_bmi_dst),
                            escape_ninja_path(plan.stdBmiPath)));
-        append(std::string(kFpScopedVerify));
+        append(std::string(kHeldOpenVerify));
         append(std::format("build {} : stage_file {}\n", escape_ninja_path(std_o_dst),
                            escape_ninja_path(plan.stdObjectPath)));
-        append(std::string(kFpScopedVerify));
+        append(std::string(kHeldOpenVerify));
         append("\n");
     }
 
@@ -2659,10 +2658,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         append(std::format("build {} : stage_file {} | {}\n", escape_ninja_path(compat_bmi_dst),
                            escape_ninja_path(plan.stdCompatBmiPath),
                            escape_ninja_path(std_bmi_dst)));
-        append(std::string(kFpScopedVerify));
+        append(std::string(kHeldOpenVerify));
         append(std::format("build {} : stage_file {}\n", escape_ninja_path(compat_o_dst),
                            escape_ninja_path(plan.stdCompatObjectPath)));
-        append(std::string(kFpScopedVerify));
+        append(std::string(kHeldOpenVerify));
         append("\n");
     }
 
@@ -2759,11 +2758,11 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // dir recompiled every one of them while the CLI printed "Cached". Making
     // the staging an edge is what gives ninja a record to compare against.
     //
-    // `--verify size` for the same reason the std artifacts use it: the entry
-    // directory is named by a key covering the toolchain, dialect, profile,
-    // this package's own config and its dependencies' keys, so for a given key
-    // equal size IS equivalence — and size comes from directory metadata, which
-    // stays readable even when a holder denies opening the file.
+    // `--verify size` for the same reason the std artifacts use it: a holder
+    // may deny opening a staged BMI, and its size stays readable. The
+    // destination is named by the module, not by the entry, so a readable one
+    // is still compared by content: after an upgrade it holds the previous
+    // version's BMI, often at the same size.
     //
     // ORDERING. Replacing a package's compile edges with stage edges also
     // removes the ordering those compile edges carried. A module partition is
