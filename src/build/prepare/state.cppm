@@ -1108,6 +1108,8 @@ void step4b_platform_member_edges(PrepareState& state);
 void step5_platform_toolchain(PrepareState& state);
 void step13_platform_statement(PrepareState& state);
 std::expected<void, std::string> step13_finish_platform(PrepareState& state, BuildContext& ctx);
+// retarget.cpp: a retargetable driver told its target, sysroot and multilib.
+std::expected<void, std::string> step2_retarget_for_retargetable_driver(PrepareState& state);
 // The platform root a first pass asks the second to read in P1, once.
 std::optional<std::filesystem::path> take_platform_restart();
 std::expected<void, std::string> load_host_platform(PrepareState& state);

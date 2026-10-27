@@ -1,6 +1,6 @@
 ---
 subject: platform
-status: accepted
+status: active
 ---
 
 # 平台 part 2：打包与分发——三维模型、通用包、单文件、okb、体积，以及 openkal 0.17.2 轮

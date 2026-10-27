@@ -1355,8 +1355,12 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
             {"layer",     std::string(label)},
             {"interface", l.interfaceName},
             {"impl",      l.impl},
+            // `platform` for a layer the target's platform added (SPEC-013
+            // §8), as the report says it.
             {"origin",    l.absent()
                             ? std::string("none")
+                            : l.byPlatform
+                            ? std::string("platform")
                             : std::string(mcpp::targetside::origin_name(l.origin))},
             {"subset",    l.subset},
         };

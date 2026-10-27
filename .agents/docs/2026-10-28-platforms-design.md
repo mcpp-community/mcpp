@@ -1,6 +1,6 @@
 ---
 subject: platform
-status: accepted
+status: active
 ---
 
 # 平台：目标体系的通用扩展；openkal 作为第一个平台包；IDE 一线与 mcppls 的同批升级
