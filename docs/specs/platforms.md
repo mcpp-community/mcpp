@@ -4,8 +4,8 @@
 |---|---|
 | 规范编号 | SPEC-013 |
 | 标题 | 平台:一类目标的可复用配置,其声明、选择、合并、对依赖图的补全、链接与封装、运行器与载体 |
-| 状态 | 评审中 v1.0 |
-| 版本 | 1.0 |
+| 状态 | 评审中 v1.1 |
+| 版本 | 1.1 |
 | 最后修改 | 2026-10-28 |
 | 对应实现 | mcpp >= 2026.10.27.1;逐条标注 |
 | 相关设计文档 | `.agents/docs/2026-10-28-platforms-design.md`、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md` |
@@ -68,6 +68,7 @@ plugin    = "build.mcpp"
 | `runners` | `<name> = [argv]` | 命名的设备动作,每个 argv 非空 |
 | `carrier` | 表 | §11;`package`、`section`、`main` 三键都**必须**给出 |
 | `plugin` | 字符串 | 平台包中的构建程序,在平台阶段运行(§12);路径相对于平台包 |
+| `universal` | 布尔 | `true` 时本平台任一目标的打包缺省为覆盖全部 `targets` 的通用包(SPEC-014 §1.4、§4.2) |
 | `layers` | 表 | §7.2;键只能是 §0 的四个层名 |
 | `tools` | 表 | §7.3 |
 | `build` | 表 | 四个标志列表,以及键形如 `cfg(...)` 的子表(同四个键) |
@@ -301,21 +302,35 @@ plugin    = "build.mcpp"
 
 ## 11. 载体(M3)
 
-`mcpp pack --mode self-contained` 对一个依赖加载器的产物生成一个本机程序工程:依赖 `carrier.package`;入口是
-平台包中的 `carrier.main`;一个汇编文件以 `.incbin` 把产物的字节放进节 `carrier.section`(ELF 写作该名,
-Mach-O 写作 `__<大写名>,__image`,COFF 写作该名并带 `"dr"` 标志),给出符号 `mcpp_carried_begin`、
-`mcpp_carried_end`、`mcpp_carried_name`(产物的名字)。该程序按宿主约定构建(自举边界),不使用平台:Linux 上
-为 `<本机架构>-linux-musl` 行的静态程序,该行的工具链被显式写出;macOS 与 Windows 上只依赖系统库。
-引擎不含任何加载器的调用。平台未声明 `carrier` 时,`--mode self-contained` 被拒绝并写出该键。**已实现**
+对一个依赖加载器的产物,`mcpp pack` 在三处生成一个系统程序的工程(`target/carrier-pack/<name>-<os>-<arch>/`):
+`--mode self-contained` 的单目标包(该程序携带产物)、`self-contained` 通用包的运行器(不携带任何内容,SPEC-014
+§4.4)、映像的单文件(SPEC-014 §5.2)。工程依赖 `carrier.package`;入口是平台包中的 `carrier.main`;一个汇编文件
+以 `.incbin` 把携带的字节放进节 `carrier.section`(ELF 写作该名并带 `"a"` 标志,COFF 写作该名并带 `"dr"` 标志,
+Mach-O 写作 `__<大写名>,__carried`),给出符号 `mcpp_carried_begin`、`mcpp_carried_end`、`mcpp_carried_name`
+(入口的名字)与 `mcpp_carried_digest`(字符串)。
+
+携带的字节**必须**是以下之一,载体的入口按内容区分:
+
+| 携带 | 判别 | 载体的行为 |
+|---|---|---|
+| 无(`mcpp_carried_begin == mcpp_carried_end`) | 长度为 0 | 运行器形式:运行第一个参数所指的映像,其余参数传给它,如同平台的运行器程序 |
+| 一个映像 | 产物本身 | 从内存运行该映像,映像以程序自己的名字为名 |
+| 一组映像 | 以 `PK\x03\x04` 开头的 stored zip,各条目数据按 64 KiB 对齐 | 从内存运行名为 `mcpp_carried_name` 的映像,映像之间按名字相互解析 |
+
+程序按其系统的约定构建(自举边界),不使用平台:Linux 上为 `<arch>-linux-musl` 行的静态程序,该行的工具链被
+显式写出;macOS 上为 `<arch>-macos`、Windows 上为 `<arch>-windows-gnu` 行,系统与架构同本机时取本机的行,只依赖
+系统库(映像的单文件在 Windows 上以 `system` 模式打包)。引擎不含任何加载器的调用。平台未声明 `carrier` 时,
+需要载体的打包被拒绝并写出该键。
 
 ## 12. 平台阶段与协议 17
 
 ### 12.1 平台阶段
 
 平台包的 `plugin` 在**平台阶段**运行:`MCPP_PHASE` 为 `platform`,`mcpp::phase()` 返回 `"platform"`。该阶段只能
-陈述编译与链接标志、`link_script`、`link_start` 与协议 17 的指令、`runner` 与命名运行器、`run_exclusive`,以及
-重跑条件、警告与诊断;其他指令被拒绝(`platform-phase-directive`),消息点名第一条不属于该阶段的指令。
-陈述工具链在平台阶段被拒绝。**已实现**
+陈述编译与链接标志、`link_script`、`link_start` 与协议 17 的指令、`runner` 与命名运行器、`run_exclusive`、平台
+提供的包格式(`pack-format` 与 `role = "artifact"` 的 action,SPEC-014 §6),以及重跑条件、警告与诊断;其他指令
+(含其他角色的 action)被拒绝(`platform-phase-directive`),消息点名第一条不属于该阶段的指令。陈述工具链在平台
+阶段被拒绝。**已实现**
 
 ### 12.2 协议 17 的指令
 
@@ -392,7 +407,7 @@ Mach-O 写作 `__<大写名>,__image`,COFF 写作该名并带 `"dr"` 标志),给
 | `--platform <值>` | `build`、`run`、`test`、`why`、`pack`、`emit build-database`、`self env`、`toolchain install`;即 `MCPP_PLATFORM` |
 | `--host-platform <值>` | `build`、`run`、`test`、`why`、`pack`、`emit build-database`、`self env`;即 `MCPP_HOST_PLATFORM` |
 | `mcpp self env --target <t> [--format json]` | 准备并报告一个配置:三元组、编译器与其来源、平台、工具、运行器与其程序、`run_under`;在工程中为该工程的配置,工程外为家目录缓存中的空程序;工程源码会被拒绝的原因(例:无 C++ 运行时而 `import std`)作为警告报告,配置照常报告 |
-| `mcpp self env --host` | 宿主图的配置 |
+| `mcpp self env --host` | 宿主图的配置;其构建程序已构建过时,报告宿主平台的运行器与其程序、工具 |
 | `mcpp toolchain install --target <t>`(不指定编译器) | 安装该目标的工具链后准备该配置:获取平台包,构建其工具 |
 | `mcpp toolchain list` | 目标行有 PLATFORM 列,JSON 有 `platform` 字段 |
 | `mcpp test`(在平台包中,未给 `--target`) | 对 `targets` 中的每个目标以本包为平台构建测试;`host = "same-arch"` 时只运行本机架构的目标,其余报告为已构建未运行 |
@@ -425,9 +440,14 @@ Mach-O 写作 `__<大写名>,__image`,COFF 写作该名并带 `"dr"` 标志),给
 7. `same-arch` 的运行器不运行其他架构的产物,并给出 `run_under` 的写法。
 8. 平台的工具在任何图中按宿主约定构建。
 9. 锁中平台加入的包带 `origin = "platform"`;报告与 JSON 给出每个字段的来源。
+10. 一个与 openkal 无关的平台包的编译标志、命名、封装与运行器到达程序,`cfg(platform)` 下的覆盖取代对应字段,
+    `--platform none` 不使用平台,没有 `[platform]` 的包被拒绝为平台(e2e 952)。
+11. 宿主图选用平台时构建程序与其库作为映像构建并经平台的运行器运行,平台的工具按宿主约定构建,
+    `--host-platform none` 时构建程序为本机程序(e2e 953)。
 
 ## 变更记录
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
 | 1.0 | 2026-10-28 | 首版(mcpp 2026.10.27.1,mcpp#847):`[platform]` 的七组键与 `versions`、`hosted`;三种写法与层次;目标图与宿主图的选择;`cfg(platform)`;合并;依赖图的补全、版本组与改名边界;工具链;链接、命名与封装;运行器的表形式;载体;平台阶段与协议 17;工作空间;目标表的平台列;锁、报告、机器输出、命令与拒绝码。 |
+| 1.1 | 2026-10-28 | `[platform] universal`;载体的三种携带形式(运行器形式、映像、映像组的 zip)、`mcpp_carried_digest`、Mach-O 节名 `__carried`、按系统的行;平台阶段可声明包格式与 artifact action;`self env --host` 报告运行器与工具;判据 10、11(e2e 952、953)。 |
