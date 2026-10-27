@@ -1112,6 +1112,24 @@ data`、`failed to load pendings for 'std::vector'`）。以最小化的导入�
 2. **其他处理器的映像（openkal-macos 0.15.1）。** EBADARCH 与 EBADMACHO 此前译为输入输出错误，现与 ENOEXEC 同译为
    `kal_err_not_program`；mcpp 的 `runner_lookup` 据此只需识别 ENOEXEC 一种"本机不能装载"。测试
    `foreign_image_not_program`。
+3. **结束字的唤醒（openkal-linux 0.18.2）。** 信号处理器以共享 futex 唤醒结束字，`kal_task_wait` 以私有 futex
+   等待，内核把二者分开记录：等待结束字的线程从未被唤醒，mcpp 的守望线程因此对 SIGINT、SIGTERM 无反应，构建照常
+   以 0 结束（e2e 845 G3、936 H）。0.18.2 以私有唤醒。测试 `stop_word_take_over` 增加无界等待的情形。
+4. **有界生命期程序的有界等待（openkal-windows 0.13.2）。** `kal_timeout_wait_process` 把进程字当作句柄读取，
+   而以有界生命期启动的程序由其记录命名：对它的每次有界等待都失败，`[hooks] timeout_seconds` 在 Windows 上不生效
+   （e2e 317），对运行中程序的轮询也看不到它结束。测试 `bounded_wait_of_a_bound_program`。
+5. **零时限（mcpplibs.os 0.2.0）。** openkal 把零时限读作无时限；`stdio::read_input_for(0)` 因此无限等待按键，
+   `--play-game` 的构建停在第一帧（e2e 845）。os 把零时限读作不等待的询问，与读取子进程输出流一致。
+6. **精确版本固定的连带发布。** openkal 系列按精确版本固定依赖。含 mcpplibs.os 0.2.0 的 ok image 图若同时含
+   openkal-musl 0.22.0（openkal 0.17.0），图中出现两个 openkal，mcpp 改名其中一份，被改名的 openkal-musl 的构建程序
+   生成的头文件不可见。openkal-musl（0.22.1、0.22.2）与 openkal-llvm-runtime（0.16.1、0.16.2）因此随这一轮发布。
+
+### 25.9 结束的顺序（实现中修订）
+
+守望线程先写中断文件，再结束子进程单元，再执行清理：子进程被结束会唤醒等待它的线程，该线程随后写出的记录
+（`failed`）此前会覆盖中断文件写下的 `cancelled`（macOS 的 e2e 936 H）。`mcpp::run::ending()` 在结束开始后为真，
+构建记录的写入方此时不再写。xlings 的网络检查在 mcpp 的工作目录启动：在 home 中启动时，xlings 把 home 的
+`.xlings.json` 当作项目文件读取，不再列出配置的官方索引端点（e2e 920）。
 ## 附录 A：讨论收敛记录（摘要）
 
 | 问题 | 结论 |
