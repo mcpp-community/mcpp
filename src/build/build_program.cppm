@@ -968,7 +968,7 @@ CacheRecord read_cache(const fs::path& bdir) {
 // Why the cached run is not valid, for the log; empty when it is.
 std::string cache_stale_reason(const fs::path& root, const fs::path& bdir, const CacheRecord& c,
                                const std::string& programHash, const std::string& compilerHash,
-                               const std::string& ctxHash) {
+                               const std::string& ctxHash, const fs::path& outDir = {}) {
     if (!c.loaded) return "no record";
     if (c.epoch != dirs::kCacheEpoch) return "record epoch";  // pre-epoch entries rerun once
     if (c.unknownRecord) return "unknown record line";
@@ -994,6 +994,29 @@ std::string cache_stale_reason(const fs::path& root, const fs::path& bdir, const
         if (!def.mustExistAfterRun) continue;
         for (auto const& p : c.directives.at(def.slot))
             if (!fs::exists(abs_against_root(root, p))) return "output " + p;
+    }
+    // WHAT THE PROGRAM WROTE INTO ITS OUTPUT DIRECTORY AND NAMED: an include
+    // directory, a library directory, a file to deploy. A directive that names
+    // a path below `MCPP_OUT_DIR` which is no longer there was written by a
+    // run whose output was deleted since (`rm -rf target/.build-mcpp/out`),
+    // and replaying it hands the build a directory with nothing in it.
+    if (!outDir.empty()) {
+        const std::array<std::string, 2> spellings{ outDir.generic_string(), outDir.string() };
+        // The path a value names below the output directory, when it is gone.
+        auto vanished = [&](const std::string& v) -> std::optional<std::string> {
+            std::error_code ec;
+            for (auto const& text : spellings) {
+                const auto at = v.find(text);
+                if (at == std::string::npos) continue;
+                const auto tab = v.find('\t', at);
+                auto path = v.substr(at, tab == std::string::npos ? std::string::npos : tab - at);
+                if (!fs::exists(path, ec)) return path;
+            }
+            return std::nullopt;
+        };
+        for (auto const& slot : c.directives.slots)
+            for (auto const& v : slot)
+                if (auto path = vanished(v)) return "output " + *path;
     }
     return {};
 }
@@ -1108,7 +1131,8 @@ std::expected<void, std::string> run_build_program_impl(
     // Fast path: declared inputs + contract unchanged → reapply cached
     // directives, no run.
     CacheRecord cache = read_cache(bdir);
-    const auto stale = cache_stale_reason(root, bdir, cache, programHash, compilerHash, ctxHash);
+    const auto stale = cache_stale_reason(root, bdir, cache, programHash, compilerHash, ctxHash,
+                                          outDir);
     if (!stale.empty()) {
         std::string keys;
         if (stale == "environment contract") keys = changed_contract_keys(bdir, contractEnv);
