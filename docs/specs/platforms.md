@@ -181,8 +181,9 @@ plugin    = "build.mcpp"
 ## 5. `cfg(platform = ...)`
 
 `cfg()` 谓词增加键 `platform`。它匹配所选平台的名字(平台包短名去掉结尾的 `-platform`,`openkal-platform`
-的名字是 `openkal`)或平台包的完整短名。其具体程度位于三元组之下、`os` 之上(SPEC-004 §3.1.1)。无平台时,
-`cfg(platform = ...)` 不匹配。**已实现**
+的名字是 `openkal`)或平台包的完整短名。它在具体程度中计一个分量,与 `arch`、`env` 相同,低于 `os`(计
+`os` 与族两个分量)与三元组;`all(...)` 中的分量相加(SPEC-004 §3.1.1)。无平台时,`cfg(platform = ...)`
+不匹配。**已实现**
 
 ## 6. 合并
 
@@ -256,7 +257,8 @@ plugin    = "build.mcpp"
 
 ### 9.1 编译
 
-平台陈述的 `build` 标志加在目标图每个翻译单元的命令行前部,`cfg(...)` 子表按目标求值后追加。**已实现**
+平台陈述的 `build` 标志进入目标图每个翻译单元的命令行(`cflags` 给 C,`cxxflags` 给 C++,`asmflags` 给汇编,
+`ldflags` 给链接,`driver = "lld"` 时位于 `link.flags` 之后、直接给 `ld.lld`),`cfg(...)` 子表按目标求值后追加在无条件的标志之后。**已实现**
 
 ### 9.2 链接
 
