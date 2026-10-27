@@ -181,7 +181,15 @@ base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t) {
             return settle(std::move(s));
         }
     }
-    // 4. The engine's: the row, read where it always was (`effective_sysroot`).
+    // 4. The engine's: the platform's `sysroot` (SPEC-013 §2), then the row,
+    //    read where it always was (`effective_sysroot`).
+    if (state.platformEarly && state.platformData.sysroot.set) {
+        auto const& o = state.platformData.sysroot.origin;
+        auto s = stamped(tb::parse_text(state.platformData.sysroot.value), "platform", o.file,
+                         o.line, "[platform].sysroot");
+        if (s) s->provides = state.platformData.sysrootProvides;
+        return settle(std::move(s));
+    }
     return settle(tb::Statement{});
 }
 

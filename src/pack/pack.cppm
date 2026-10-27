@@ -61,6 +61,7 @@ import mcpp.toolchain.triple;
 import mcpp.toolchain.base;
 import mcpp.ui;
 import mcpp.runtime.elf;
+import mcpp.platform;
 
 export namespace mcpp::pack {
 
@@ -251,10 +252,13 @@ struct Plan {
     // the file `.js` in the first place (see `artifact_naming`), so it is the
     // one fact this format IS recorded under.
     bool                                 targetIsWasm = false;
-    // Is the artifact an ok image (`<arch>-openkal`, openkal SPEC 12)? From the
-    // triple, as for wasm: the file is an ELF shared object that no loader of
-    // this machine runs, and its closure is the images it names.
-    bool                                 targetIsOkImage = false;
+    // Is the artifact one a loader runs (an ok image, `<arch>-openkal`)? From
+    // the triple, as for wasm: the file is an ELF shared object that no loader
+    // of this machine runs, and its closure is the images it names.
+    bool                                 targetIsLoaded = false;
+    // The target's platform (SPEC-013): the carrier a self-contained pack of
+    // a loaded artifact is built over (§4.7).
+    mcpp::platform::Resolved             platform;
     // #622 A3/A10: is `builtBinary` an `Application` target whose link form
     // on THIS row is a shared object (`*-linux-android`,
     // `toolchain::triple::application_form`)? Read from the CALLER, which
@@ -661,7 +665,7 @@ make_plan(const mcpp::manifest::Manifest& manifest,
     if (auto t = mcpp::toolchain::triple::parse(p.triple)) {
         p.targetIsWasm =
             t->object_format() == mcpp::toolchain::triple::ObjectFormat::Wasm;
-        p.targetIsOkImage = t->is_openkal();
+        p.targetIsLoaded = t->loader_supplies_os();
     }
 
     // THE CONTRACT REACHES PACKAGING. Until now it stopped at the compile and
@@ -1973,77 +1977,71 @@ run_wasm(const Plan& plan)
     return make_tarball(plan.stagingRoot, plan.archivePath);
 }
 
-// AN OK IMAGE (`<arch>-openkal`; design 2026-10-26 part 2, §8.2 and §8.5).
+// AN ARTIFACT A LOADER RUNS (an ok image, `<arch>-openkal`; design
+// 2026-10-26 part 2, §8.2 and §8.5; SPEC-013 §4.7).
 //
 // The modes keep their meaning -- what the machine that runs the package must
-// provide -- and on this row they are:
+// provide -- and on such a row they are:
 //
-//   system          the image alone; the machine provides `okrun` and every
-//                   image it names (M2);
-//   vendored        the image and the images it names (`DT_NEEDED`), beside it;
-//                   the machine provides `okrun` (M2, the default);
-//   self-contained  a program of THIS machine that carries the image as a
-//                   section and runs it through libokrun (M3), with the images
-//                   it names beside it; the machine provides nothing. The image
-//                   is not recompiled: the program is a generated entry, the
-//                   image's bytes and `openkal-run`, built by mcpp for this
-//                   machine. Another system's M3 is packed on that system.
-//   static          refused: an image is loaded, never linked into one file
-//                   with its loader by `ld`.
+//   system          the artifact alone; the machine provides the loader and
+//                   every artifact it names (M2);
+//   vendored        the artifact and the artifacts it names (`DT_NEEDED`),
+//                   beside it; the machine provides the loader (M2, the default);
+//   self-contained  a program of THIS machine that carries the artifact as a
+//                   section and runs it through the platform's CARRIER (M3),
+//                   with the artifacts it names beside it; the machine provides
+//                   nothing. The artifact is not recompiled: the program is the
+//                   carrier package, the carrier's entry source and the bytes,
+//                   built by mcpp for this machine with this machine's own
+//                   conventions -- the bootstrap boundary (§6.2), so no platform
+//                   is selected for it. Another system's M3 is packed on that
+//                   system.
+//   static          refused: the artifact is loaded, never linked into one
+//                   file with its loader by `ld`.
+namespace {
+
+// A reference as a dependency entry of the generated manifest.
+std::string dependency_entry(const mcpp::manifest::platform::PackageRef& r) {
+    auto const& sp = r.spec;
+    const std::string ns = sp.namespace_.empty() ? std::string("mcpplibs") : sp.namespace_;
+    std::string value;
+    if (!sp.path.empty())
+        value = std::format("{{ path = \"{}\" }}", sp.path);
+    else if (!sp.git.empty())
+        value = std::format("{{ git = \"{}\", {} = \"{}\" }}", sp.git,
+                            sp.gitRefKind.empty() ? "rev" : sp.gitRefKind, sp.gitRev);
+    else
+        value = std::format("\"{}\"", sp.version);
+    return std::format("[dependencies.{}]\n{} = {}\n", ns, sp.shortName, value);
+}
+
+} // namespace
+
 std::expected<std::filesystem::path, Error>
-okimage_build_selfcontained(const Plan& plan, const std::filesystem::path& image)
+carrier_build_selfcontained(const Plan& plan, const std::filesystem::path& image)
 {
     namespace fs = std::filesystem;
-    // `openkal-run` from the source the project's `openkal-tools` came from:
-    // the same repository at the same reference selects its member by key
-    // (05 -- Dependencies), and a published version has a sibling of the same
-    // version.
-    //
-    // THE DECLARATION THE BUILD RESOLVED: after workspace inheritance, and
-    // with the conditional tables whose predicate the image's target meets
-    // (`[target.'cfg(os = "openkal")'.build-dependencies]`, which is where a
-    // program built for systems as well as images declares it). The raw file's
-    // `[build-dependencies]` alone missed both.
-    auto eff = mcpp::project::load_effective_manifest(plan.projectRoot);
-    if (!eff) return std::unexpected(Error{std::format(
-        "cannot read {}: {}", (plan.projectRoot / "mcpp.toml").string(), eff.error())});
-    const auto& man = eff->manifest;
-    std::optional<mcpp::manifest::DependencySpec> tools;
-    auto find_in = [&](const std::map<std::string, mcpp::manifest::DependencySpec>& deps) {
-        for (auto const& [key, spec] : deps)
-            if (key == "openkal-tools" || spec.shortName == "openkal-tools") tools = spec;
-    };
-    find_in(man.buildDependencies);
-    const auto ctx = mcpp::build::cfgpred::context_for(plan.triple);
-    for (auto const& cc : man.conditionalConfigs)
-        if (!mcpp::build::cfgpred::uses_layer(cc.predicate)
-            && mcpp::build::cfgpred::matches(cc.predicate, ctx))
-            find_in(cc.buildDependencies);
-    if (!tools) return std::unexpected(Error{
-        "--mode self-contained of an ok image builds a program over `openkal-run` from the "
-        "source of the project's `openkal-tools`, and its [build-dependencies] declare none"});
-    std::string runSpec;
-    if (!tools->git.empty()) {
-        runSpec = std::format("{{ git = \"{}\", {} = \"{}\" }}", tools->git,
-                              tools->gitRefKind.empty() ? "rev" : tools->gitRefKind, tools->gitRev);
-    } else if (!tools->path.empty()) {
-        auto root = fs::path(tools->path);
-        if (root.is_relative()) root = plan.projectRoot / root;
-        runSpec = std::format("{{ path = \"{}\" }}", (root.parent_path() / "run").generic_string());
-    } else {
-        runSpec = std::format("\"{}\"", tools->version);
-    }
+    auto const& c = plan.platform.fields.carrier;
+    if (!plan.platform.active || !c.set)
+        return std::unexpected(Error{std::format(
+            "--mode self-contained of {} builds a program of this machine over its platform's "
+            "carrier, and {} states none ([platform] carrier = {{ package, section, main }}).",
+            plan.binaryName, plan.platform.display())});
+    std::error_code ec;
+    if (c.main.empty() || !fs::is_regular_file(c.main, ec))
+        return std::unexpected(Error{std::format(
+            "the carrier of {} names its entry source {}, which is not a file ({})",
+            plan.platform.display(), c.main.empty() ? std::string("(none)") : c.main,
+            mcpp::platform::origin_text(c.origin))});
 
     const auto stem = fs::path(plan.binaryName).stem().string();
-    const auto dir = plan.projectRoot / "target" / "okimage-pack" / stem;
-    std::error_code ec;
+    const auto dir = plan.projectRoot / "target" / "carrier-pack" / stem;
     fs::create_directories(dir / "src", ec);
     if (ec) return std::unexpected(Error{std::format("cannot create {}: {}", dir.string(), ec.message())});
-    // RESOLVED AS THE BUILD THAT MADE THE IMAGE RESOLVED ITS TOOLS. The
+    // RESOLVED AS THE BUILD THAT MADE THE ARTIFACT RESOLVED ITS PLATFORM. The
     // generated project is this pack's, not a project of its own: a lock it
-    // kept from an earlier pack held `openkal-run` at that pack's commit while
-    // the image's tools had moved on, and the program then carried a runner
-    // older than the one the image was checked by.
+    // kept from an earlier pack held the carrier at that pack's commit while
+    // the platform had moved on.
     fs::remove(dir / "mcpp.lock", ec);
 
     auto write = [&](const fs::path& p, std::string_view text) -> bool {
@@ -2051,58 +2049,69 @@ okimage_build_selfcontained(const Plan& plan, const std::filesystem::path& image
         out << text;
         return bool(out);
     };
+    // ON LINUX THE PROGRAM IS STATIC (musl), the one form that runs on every
+    // distribution, linked by the toolchain the target table pins for this
+    // machine's static row -- stated, because the carrier's own graph supplies
+    // a kernel interface, which would otherwise cancel the row's convention and
+    // leave a compiler without a musl C runtime to link with (L10, measured:
+    // clang took the host GCC's `crtbeginT.o`).
+    std::string staticRow;
+    if constexpr (mcpplibs::os::is_linux) {
+        const auto row = std::format("{}-linux-musl", mcpp::toolchain::platform::host_arch);
+        if (auto t = mcpp::toolchain::triple::parse(row))
+            if (auto* k = mcpp::toolchain::triple::find_known_target(*t); k && !k->pin.empty())
+                staticRow = std::format("\n[target.{}]\ntoolchain = \"{}\"\n", row, k->pin);
+    }
     const std::string manifest = std::format(
         "# Generated by `mcpp pack --mode self-contained` for {}: a program of this\n"
-        "# machine that carries the ok image as a section and runs it (M3).\n"
+        "# machine that carries it as a section and runs it through {}'s carrier (M3).\n"
         "[package]\nname    = \"{}\"\nversion = \"{}\"\n\n"
         "[targets.{}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n"
-        "[build]\nsources = [\"src/main.cpp\", \"src/image.S\"]\n\n"
-        "[dependencies]\nopenkal-run = {}\n",
-        plan.binaryName, stem, plan.packageVersion.empty() ? "0.0.0" : plan.packageVersion,
-        stem, runSpec);
+        "[build]\nsources = [\"src/main.cpp\", \"src/carried.S\"]\n\n"
+        "{}{}",
+        plan.binaryName, plan.platform.display(), stem,
+        plan.packageVersion.empty() ? "0.0.0" : plan.packageVersion, stem,
+        dependency_entry(c.package), staticRow);
     // The section, in the syntax of this machine's object format; the symbol
-    // spelling carries Mach-O's leading underscore.
+    // spelling carries Mach-O's leading underscore. The carrier's entry reads
+    // the bytes through `mcpp_carried_begin` / `mcpp_carried_end` and the
+    // artifact's name through `mcpp_carried_name`.
     const bool macho = mcpplibs::os::is_macos;
     const bool coff  = mcpplibs::os::is_windows;
     const std::string sym = macho ? "_" : "";
-    const std::string section = macho ? "\t.section __OKE,__image\n"
-                              : coff  ? "\t.section .oke,\"dr\"\n"
-                                      : "\t.section .oke,\"a\",@progbits\n";
+    std::string bare = c.section;
+    while (!bare.empty() && bare.front() == '.') bare.erase(bare.begin());
+    std::string upper = bare;
+    for (auto& ch : upper) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    const std::string section = macho ? std::format("\t.section __{},__image\n", upper.substr(0, 14))
+                              : coff  ? std::format("\t.section {},\"dr\"\n", c.section)
+                                      : std::format("\t.section {},\"a\",@progbits\n", c.section);
     const std::string assembly = std::format(
-        "# The image's bytes, unchanged (generated by mcpp pack).\n{}"
-        "\t.p2align 4\n\t.globl {}ok_image_begin\n{}ok_image_begin:\n"
-        "\t.incbin \"{}\"\n\t.globl {}ok_image_end\n{}ok_image_end:\n",
-        section, sym, sym, fs::absolute(image).generic_string(), sym, sym);
-    const std::string main = std::format(
-        "// Generated by mcpp pack: runs the image this program carries (M3).\n"
-        "#include <okrun.h>\n"
-        "#include <cstdio>\n"
-        "extern \"C\" const unsigned char ok_image_begin[], ok_image_end[];\n"
-        "int main(int argc, char** argv) {{\n"
-        "    char why[512];\n"
-        "    okrun_options options{{}};\n"
-        "    options.carried = 1;   // the program is the image's name, and what starts it again\n"
-        "    okrun_run_bytes(ok_image_begin, static_cast<unsigned long long>(ok_image_end - ok_image_begin),\n"
-        "                    \"{}\", argc, const_cast<const char* const*>(argv), &options, why, sizeof why);\n"
-        "    std::fprintf(stderr, \"{}: %s\\n\", why);\n"
-        "    return 127;\n"
-        "}}\n",
-        plan.binaryName, stem);
-    if (!write(dir / "mcpp.toml", manifest) || !write(dir / "src" / "image.S", assembly)
-        || !write(dir / "src" / "main.cpp", main))
+        "# The artifact's bytes, unchanged, and its name (generated by mcpp pack).\n{}"
+        "\t.p2align 4\n\t.globl {}mcpp_carried_begin\n{}mcpp_carried_begin:\n"
+        "\t.incbin \"{}\"\n\t.globl {}mcpp_carried_end\n{}mcpp_carried_end:\n"
+        "\t.globl {}mcpp_carried_name\n{}mcpp_carried_name:\n\t.asciz \"{}\"\n",
+        section, sym, sym, fs::absolute(image).generic_string(), sym, sym, sym, sym,
+        plan.binaryName);
+    std::string mainText;
+    {
+        std::ifstream in(c.main, std::ios::binary);
+        mainText.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    if (!write(dir / "mcpp.toml", manifest) || !write(dir / "src" / "carried.S", assembly)
+        || !write(dir / "src" / "main.cpp", mainText))
         return std::unexpected(Error{std::format("cannot write the program's sources under {}", dir.string())});
 
     // PACKED, NOT MERELY BUILT: the program obeys every rule this command
     // keeps for a program -- no build-machine path, its closure beside it. On
-    // Linux it is static (musl), the one form that runs on every distribution;
-    // on macOS and Windows the system's own libraries are the only ones it
-    // names.
-    mcpp::ui::info("Packing", std::format("{} into a program of this machine (okrun, M3)", plan.binaryName));
+    // macOS and Windows the system's own libraries are the only ones it names.
+    mcpp::ui::info("Packing", std::format("{} into a program of this machine ({}'s carrier, M3)",
+                                          plan.binaryName, plan.platform.display()));
     // `-o` with a bare name: the package directory is `target/dist/<name>`.
     const auto out = dir / "target" / "dist" / "packed";
     fs::remove_all(out, ec);
     std::vector<std::string> argv{ mcpp::invocation::self_exe_path().string(), "pack",
-                                   "--format", "dir", "-o", "packed" };
+                                   "--format", "dir", "-o", "packed", "--platform", "none" };
     if constexpr (mcpplibs::os::is_linux) {
         argv.insert(argv.end(), { "--target", std::format("{}-linux-musl", mcpp::toolchain::platform::host_arch),
                                   "--mode", "static" });
@@ -2121,15 +2130,15 @@ okimage_build_selfcontained(const Plan& plan, const std::filesystem::path& image
 }
 
 std::expected<void, Error>
-run_okimage(const Plan& plan)
+run_loaded(const Plan& plan)
 {
     namespace fs = std::filesystem;
     if (plan.opts.mode == Mode::Static)
         return std::unexpected(Error{std::format(
-            "--mode static does not apply to an ok image: an image is loaded, not linked "
-            "with its loader into one file.\n"
+            "--mode static does not apply to {}: it is loaded, not linked with its loader "
+            "into one file.\n"
             "       `--mode self-contained` packs a program of this machine that carries {} "
-            "and needs nothing installed.", plan.binaryName)});
+            "and needs nothing installed.", plan.binaryName, plan.binaryName)});
     std::error_code ec;
     fs::remove_all(plan.stagingRoot, ec);
     fs::create_directories(plan.stagingRoot / "bin", ec);
@@ -2155,7 +2164,7 @@ run_okimage(const Plan& plan)
 
     fs::path staged;
     if (plan.opts.mode == Mode::BundleAll) {
-        auto packed = okimage_build_selfcontained(plan, plan.builtBinary);
+        auto packed = carrier_build_selfcontained(plan, plan.builtBinary);
         if (!packed) return std::unexpected(packed.error());
         fs::copy(*packed, plan.stagingRoot,
                  fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
@@ -2369,8 +2378,8 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
 
     // An ok image: the images it names travel beside it, and under
     // `self-contained` the image is carried inside a program of this machine.
-    if (plan.targetIsOkImage) {
-        if (auto r = detail::run_okimage(plan); !r) return std::unexpected(r.error());
+    if (plan.targetIsLoaded) {
+        if (auto r = detail::run_loaded(plan); !r) return std::unexpected(r.error());
         return ClosureResult{};
     }
 

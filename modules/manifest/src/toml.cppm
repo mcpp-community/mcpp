@@ -5,6 +5,8 @@ export module mcpp.manifest.toml;
 import mcpp.manifest.types;
 import mcpp.manifest.key_registry;
 import mcpp.manifest.cfg_selector;
+import mcpp.manifest.platform;
+import mcpp.manifest.platform_toml;
 import mcpp.targetside;
 import std;
 import mcpp.invocation;
@@ -1043,13 +1045,18 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // every entry. Mixed arrays (strings and tables) never reach here.
         "package.requires",
         "target.*.requires",
+        // `inputs = [{ file = "..." }, { from = [...], as = "..." }]` (SPEC-013
+        // §2.5): the platform reader type-checks every entry.
+        "platform.link.inputs",
+        "target.*.link.inputs",
     };
     if (auto badPath = find_disallowed_array_of_tables(doc->root(), "", kAllowedArraysOfTables)) {
         return std::unexpected(error(origin, std::format(
             "[[{}]] (array-of-tables) is not allowed for section '{}'; "
             "array-of-tables syntax is only supported for [[build.flags]], "
             "[[features.<name>.flags]], [[runtime.requirements]], "
-            "[[runtime.artifacts]], [[runtime.deploy]], and [xlings] deps entries",
+            "[[runtime.artifacts]], [[runtime.deploy]], [[platform.link.inputs]], "
+            "and [xlings] deps entries",
             *badPath, *badPath)));
     }
 
@@ -3735,6 +3742,29 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         }
     }
 
+    // [platform] — the section that makes a package a PLATFORM (SPEC-013;
+    // design 2026-10-28 §4): the configuration of a class of targets, read
+    // by the engine before the toolchain is decided. And [host] — the
+    // platform of the host graph (§6.1).
+    if (auto* pt = doc->get_table("platform")) {
+        mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Platform,
+                                            &m.schemaWarnings};
+        auto st = rd.statement(*pt);
+        if (!st) return std::unexpected(error(origin, st.error()));
+        if (!st->targets.set)
+            return std::unexpected(error(origin,
+                "[platform] names the targets it serves: targets = [\"<triple>\", ...]"));
+        m.platform = std::move(*st);
+        m.platformDeclared = true;
+    }
+    if (auto* ht = doc->get_table("host")) {
+        mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
+                                            &m.schemaWarnings};
+        auto ov = rd.override_(*ht, "");
+        if (!ov) return std::unexpected(error(origin, ov.error()));
+        m.hostPlatform = std::move(*ov);
+    }
+
     // [lib] — library root convention (cargo-style).
     if (auto v = doc->get_string("lib.path")) {
         m.lib.path = *v;
@@ -3927,13 +3957,22 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             // scalar (the unknown-key sweep below skips it by type) nor part
             // of the conditional sub-table channel.
             if (auto it = body.find("runner"); it != body.end()) {
-                if (!it->second.is_array()) {
+                // The table form, `{ cmd = [...], host = "same-arch", exclusive =
+                // true }`, is the platform reader's (SPEC-013 §2.3); its command
+                // is the template here as well.
+                if (!it->second.is_array() && it->second.is_table()) {
+                    mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
+                                                        &m.schemaWarnings};
+                    auto r = rd.runner(it->second, std::format("[target.{}].runner", triple));
+                    if (!r) return std::unexpected(error(origin, r.error()));
+                    e.runner = r->cmd;
+                } else if (!it->second.is_array()) {
                     return std::unexpected(error(origin, std::format(
-                        "[target.{}].runner must be an array of strings, "
-                        "e.g. runner = [\"qemu-system-riscv64\", \"-kernel\"]",
+                        "[target.{}].runner must be an array of strings or {{ cmd = [...], "
+                        "host = \"same-arch\" }}, e.g. runner = [\"qemu-system-riscv64\", \"-kernel\"]",
                         triple)));
                 }
-                for (auto& el : it->second.as_array()) {
+                if (it->second.is_array()) for (auto& el : it->second.as_array()) {
                     if (!el.is_string()) {
                         return std::unexpected(error(origin, std::format(
                             "[target.{}].runner must contain only strings", triple)));
@@ -3986,6 +4025,52 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 }
             }
 
+            // THE PLATFORM KEYS (SPEC-013 §2.3; design 2026-10-28 §5): which
+            // platform this selector's targets use (`platform`), and the fields
+            // of it this table overrides with the platform's own key names
+            // (`layers`, `tools`, `carrier`, `link`, plus `runner` and
+            // `runners` above). One reader, mcpp.manifest.platform_toml, reads
+            // them here, in a platform package's `[platform]` and in `[host]`.
+            bool platformKeys = false;
+            if (auto it = body.find("platform"); it != body.end()) {
+                if (!it->second.is_string() && !it->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].platform must be \"<name>@<version>\", \"none\", or a table "
+                        "such as {{ path = \"<dir>\" }}", triple)));
+                platformKeys = true;
+            }
+            if (auto it = body.find("layers"); it != body.end()) {
+                if (!it->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].layers must be a table, e.g. [target.{}.layers] c-abi = \"<package>@<version>\"", triple, triple)));
+                platformKeys = true;
+            }
+            if (auto it = body.find("tools"); it != body.end()) {
+                if (!it->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].tools must be a table, e.g. [target.{}.tools] okld = {{ path = \"<dir>\" }}", triple, triple)));
+                platformKeys = true;
+            }
+            if (auto it = body.find("carrier"); it != body.end()) {
+                if (!it->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].carrier must be a table, e.g. carrier = {{ package = \"<package>@<version>\", section = \"<name>\" }}", triple)));
+                platformKeys = true;
+            }
+            if (auto it = body.find("link"); it != body.end()) {
+                if (!it->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].link must be a table, e.g. [target.{}.link] start = \"<symbol>\"", triple, triple)));
+                platformKeys = true;
+            }
+            if (platformKeys || body.contains("runner") || body.contains("runners")) {
+                mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
+                                                    &m.schemaWarnings};
+                auto ov = rd.override_(body, canon_triple(triple));
+                if (!ov) return std::unexpected(error(origin, ov.error()));
+                m.platformOverrides.push_back(std::move(*ov));
+            }
+
             // Unsupported scalar and array keys are REPORTED, not dropped.
             // `[targets.<name>]` has done this since #249; this table did not,
             // so a key that looks plausible — `cxx_runtime_tests` was the real
@@ -4024,25 +4109,28 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             // arrays, so a sixth key added to the parser without a matching
             // entry here fails that test instead of shipping silently again.
             static constexpr std::string_view kKnownTargetScalars[] = {
-                "cxx_runtime", "linkage", "min_api_level", "sysroot", "toolchain",
+                "cxx_runtime", "linkage", "min_api_level", "platform", "sysroot", "toolchain",
             };
             static constexpr std::string_view kKnownTargetArrays[] = { "requires", "run_under", "runner" };
             static constexpr std::string_view kKnownTargetTables[] = {
-                "abi", "build", "build-dependencies", "dependencies",
+                "abi", "build", "build-dependencies", "carrier", "dependencies",
                 "dev-dependencies", "feature-deps", "feature-requires-abi",
-                "feature-xlings", "requires_abi", "runners", "runtime",
-                "targets", "xlings",
+                "feature-xlings", "layers", "link", "requires_abi", "runners", "runtime",
+                "targets", "tools", "xlings",
             };
             for (auto& [key, value] : body) {
                 if (value.is_table()) {
                     if (std::ranges::find(kKnownTargetTables, key)
                         != std::end(kKnownTargetTables))
                         continue;
-                    // A scalar key whose value may also be written as a table
-                    // (`sysroot = { path = ... }`) is a value, not a section;
-                    // it was parsed, or refused, above.
+                    // A scalar or an array key whose value may also be written
+                    // as a table (`sysroot = { path = ... }`, `runner = { cmd =
+                    // [...] }`) is a value, not a section; it was parsed, or
+                    // refused, above.
                     if (std::ranges::find(kKnownTargetScalars, key)
-                        != std::end(kKnownTargetScalars))
+                        != std::end(kKnownTargetScalars)
+                        || std::ranges::find(kKnownTargetArrays, key)
+                        != std::end(kKnownTargetArrays))
                         continue;
                     std::string tables;
                     for (auto name : kKnownTargetTables) {
@@ -4061,8 +4149,9 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 if (std::ranges::find(known, key) != known.end()) continue;
                 m.schemaWarnings.push_back(std::format(
                     "[target.{}] has unsupported key '{}' (ignored). Supported keys: "
-                    "cxx_runtime, linkage, min_api_level, run_under, runner, sysroot, toolchain, "
-                    "plus the [target.<triple>.runners] table for named runners. "
+                    "cxx_runtime, linkage, min_api_level, platform, run_under, runner, sysroot, "
+                    "toolchain, plus the [target.<triple>.runners] table for named runners and "
+                    "the platform's layers, tools, carrier and link tables. "
                     "Per-role contracts go in [build].cxx_runtime's table form.",
                     triple, key));
             }

@@ -1064,10 +1064,11 @@ step1_target_row_pin_and_capability_check(PrepareState& state, TargetOverrideCtx
                 ? "A freestanding target has no per-host cross payload: "
                   "clang and lld are\n"
                   "       cross-compilers by construction and gcc is not."
-                : ctx.parsed->is_openkal()
-                ? "An ok image is emitted by clang and lld for every host: "
-                  "the compiler is told\n"
-                  "       no operating system, and gcc has no such target."
+                : ctx.parsed->loader_supplies_os()
+                ? "A target whose loader supplies the system is emitted by "
+                  "clang and lld for\n"
+                  "       every host: the compiler is told no operating system, "
+                  "and gcc has no such target."
                 : ctx.parsed->is_wasm()
                 ? "Nothing but Emscripten emits WebAssembly: `em++` is a "
                   "clang whose target,\n"
@@ -1202,7 +1203,8 @@ static std::expected<void, std::string> step1_device_axis_and_layer_merge(Prepar
     // over these (prepare_inputs::Ctx::layer_matches); before this the field
     // was declared, documented, and never written, so the key matched nothing.
     state.cfgCtx = [&]() {
-        auto c = cfgpred::context_for(state.overrides.target_triple);
+        auto c = cfgpred::context_for(state.overrides.target_triple,
+                                      state.platformPackageShortName);
         for (auto const& set : mcpp::pack::parse_accel(state.resolvedAccel()))
             c.accelerators.push_back(set.backend);
         return c;
@@ -1336,6 +1338,9 @@ std::expected<void, std::string> phase1_toolchain_spec_and_axes(PrepareState& st
             return std::unexpected(r.error());
     if (auto r = step1_define_early_toolchain_closures(state); !r) return std::unexpected(r.error());
     if (auto r = step1_target_and_static_overrides(state); !r) return std::unexpected(r.error());
+    // The platform, once the target is known and before the conditional
+    // tables merge: `cfg(platform = ...)` is one of their keys (SPEC-013 §3).
+    if (auto r = step1_select_platform(state); !r) return std::unexpected(r.error());
     if (auto r = step1_device_axis_and_layer_merge(state); !r) return std::unexpected(r.error());
 
     return {};

@@ -65,6 +65,10 @@ namespace cfgpred {
 // `requires = ["mcpp:compiler=llvm"]` permanently unsatisfiable.
 struct Ctx {
     std::string os, arch, family, env, triple;
+    // The selected platform (SPEC-013 §3): the platform's name (`openkal`)
+    // and its package's (`openkal-platform`); `cfg(platform = ...)` matches
+    // either. Empty when the target uses none.
+    std::string platform, platformPackage;
     bool        layersKnown = false;
     std::string compiler, compilerRuntime, kernelAbi, cAbi, cxxAbi;
     // The first MULTI-VALUED layer. One build can enable several accelerator
@@ -132,9 +136,14 @@ struct Ctx {
 // triple parser — so the cfg vocabulary IS the canonical triple vocabulary
 // (os: linux|macos|windows, arch: GNU spellings, env: gnu|musl|msvc), and
 // alias spellings ("x86_64-w64-mingw32") evaluate identically to canonical.
-inline Ctx context_for(std::string_view targetTriple) {
+inline Ctx context_for(std::string_view targetTriple,
+                       std::string_view platformPackage = {}) {
     namespace triple = mcpp::toolchain::triple;
     Ctx c;
+    if (!platformPackage.empty()) {
+        c.platformPackage = std::string(platformPackage);
+        c.platform = mcpp::manifest::platform::platform_name(platformPackage);
+    }
     auto t = targetTriple.empty()
         ? std::optional<triple::Triple>(triple::host_triple())
         : triple::parse(targetTriple);
@@ -271,6 +280,8 @@ struct Parser {
         if (k == "arch")   return c.arch == v;
         if (k == "family") return c.family == v;
         if (k == "env")    return c.env == v;
+        if (k == "platform")
+            return !c.platform.empty() && (c.platform == v || c.platformPackage == v);
         // `accelerator` is answerable whenever the context carries the build's
         // accel, which is from the first pass onward -- see kCfgEarlyLayerKeys.
         if (is_cfg_early_layer_key(k)) return c.layer_matches(k, v);

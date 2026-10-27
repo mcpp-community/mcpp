@@ -1442,7 +1442,7 @@ bool host_can_serve(const triple::Triple& target) {
     if (target.is_freestanding()) return true;
     // An ok image the same way: clang and lld emit it on every host, and what
     // the image holds above `kal_*` is the graph's.
-    if (target.is_openkal()) return true;
+    if (target.loader_supplies_os()) return true;
 
     return false;
 }

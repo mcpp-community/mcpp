@@ -323,6 +323,13 @@ struct Triple {
     // `cfg(windows)` are both false, and the system it runs on is the
     // loader's, known at run time (`os::host()`).
     bool is_openkal() const { return os == "openkal"; }
+    // THE LOADER SUPPLIES THE SYSTEM. The compiler is told no operating
+    // system, and what lies beneath the program is bound when it is loaded.
+    // The layer rules of such a target are the engine's (a C++ header set
+    // only from the graph, a freestanding C environment when the graph has no
+    // C library); everything else about it -- flags, link, naming, runner --
+    // is its platform's (SPEC-013).
+    bool loader_supplies_os() const { return is_openkal(); }
 
     // WHETHER THIS ROW'S TOOLCHAIN PIN IS A CAPABILITY RATHER THAN A
     // CONVENTION — the distinction that decides whether an author may override
@@ -476,6 +483,13 @@ struct TargetInfo {
     // subset alike to one libc, one ISA and one version.
     std::string_view sysroot;
     bool defaultStatic;           // target's default linkage is static
+    // THE PLATFORM a build of this target uses when nothing selects one
+    // (SPEC-013 §7): a pinned version of a platform package, which is what
+    // "built-in support" for a class of targets is. Empty = the engine's own
+    // conventions for the target (every hosted row). A project selects
+    // another with `[target.<selector>] platform`, a machine in config.toml,
+    // one invocation with `--platform`.
+    std::string_view platform = {};
 };
 
 // (note deliberately excludes "static" — the display layer derives that tag
@@ -886,11 +900,15 @@ inline constexpr TargetInfo kKnownTargets[] = {
     { "wasm32-emscripten",     "verified",  "wasm","emsdk@6.0.9","",                            true  },
     // OK IMAGES (openkal SPEC clause 12; design 2026-10-26 part 2, §8.5). One
     // artifact per architecture, run by `okrun` on Linux, macOS and Windows of
-    // that architecture. clang emits it from one binary for either row; the C
-    // library and the C++ run-time are the graph's (`provides`), and an image
-    // with neither is legal. The two architectures the loader relocates.
-    { "x86_64-openkal",        "preview",   "ok",  "llvm@23.1.3","",                            true  },
-    { "aarch64-openkal",       "preview",   "ok",  "llvm@23.1.3","",                            true  },
+    // that architecture. clang emits it from one binary for either row. What
+    // makes it an ok image -- its flags, its link, its note and check, its
+    // name, its runner, its C library and C++ run-time -- is the platform's,
+    // `openkal-platform` (SPEC-013), pinned here. The two architectures the
+    // loader relocates.
+    { "x86_64-openkal",        "preview",   "ok",  "llvm@23.1.3","",                            true,
+      "mcpplibs.openkal-platform@0.17.1" },
+    { "aarch64-openkal",       "preview",   "ok",  "llvm@23.1.3","",                            true,
+      "mcpplibs.openkal-platform@0.17.1" },
 };
 
 inline std::span<const TargetInfo> known_targets() { return kKnownTargets; }

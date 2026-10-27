@@ -185,13 +185,24 @@ enum class Code {
     // discover them from (2026.10.5.2). Distinct from every other code: both
     // statements are the author's, and one of them has to change.
     LtoExportDiscovery,
-    // A build of `<arch>-openkal` that links an image finds no `okld` -- the
-    // format's tool, which writes the image's requirements note and checks the
-    // convention before the image is published (design 2026-10-26 part 2,
-    // §8.5). Distinct from LldRequiredAbsent, which is about the toolchain's
-    // payload: `okld` is a program of the dependency graph, and declaring
-    // openkal-tools under `[build-dependencies]` supplies it.
-    ImageToolAbsent,
+    // PLATFORMS (SPEC-013). A program a platform's link or seal names --
+    // `okld` for an ok image -- is neither built by the graph nor found on
+    // this machine. Distinct from LldRequiredAbsent, which is about the
+    // toolchain's payload: the tool is the platform's, and its `[platform.tools]`
+    // (or `[target.<selector>.tools]`) says which package builds it. Named
+    // `image-tool-absent` in 2026.10.26.2, before ok images were a platform.
+    PlatformToolAbsent,
+    // The package selected as the platform has no `[platform]` section.
+    PlatformNotAPlatform,
+    // The platform does not serve the target: the triple is not among its
+    // `targets`, and it has no `[platform.hosted]` for a host triple.
+    PlatformTargetUnserved,
+    // A package of the platform's version group is in the graph at another
+    // version (§8.1).
+    PlatformVersionGroup,
+    // A platform's build program stated a directive outside its phase's
+    // vocabulary (build, link, runner, runners).
+    PlatformPhaseDirective,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -246,7 +257,13 @@ constexpr std::string_view name(Code c) {
         case Code::LocalToolchain:       return "local-toolchain";
         case Code::TargetBase:           return "target-base";
         case Code::LtoExportDiscovery:   return "lto-export-discovery";
-        case Code::ImageToolAbsent:      return "image-tool-absent";
+        case Code::PlatformToolAbsent:   return "platform-tool-absent";
+        case Code::PlatformNotAPlatform: return "platform-not-a-platform";
+        case Code::PlatformTargetUnserved:
+                                         return "platform-target-unserved";
+        case Code::PlatformVersionGroup: return "platform-version-group";
+        case Code::PlatformPhaseDirective:
+                                         return "platform-phase-directive";
         case Code::Other:                return "other";
     }
     return "other";

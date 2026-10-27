@@ -971,6 +971,12 @@ export struct BuildOverrides {
     // `prepare_build` itself, never by a caller.
     std::vector<std::string> toolchain_statement;
     std::string              bootstrap_spec;
+    // THE PLATFORM PACKAGE'S DIRECTORY, when this prepare is the second pass
+    // of a build whose platform states a target base (`[platform] sysroot`):
+    // the base is read before the graph exists, so the first pass fetched the
+    // package and the second reads its `[platform]` from here at once
+    // (SPEC-013 §7). Set by `prepare_build` itself, never by a caller.
+    std::filesystem::path    platform_root;
 };
 
 // ── git dependency helpers ──────────────────────────────────────────────────

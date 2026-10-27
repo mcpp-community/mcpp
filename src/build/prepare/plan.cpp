@@ -3,7 +3,6 @@
 // resolution.json are written by records.cpp.
 
 module mcpp.build.prepare;
-import mcpp.okimage;
 import :state;
 
 import mcpp.build.prepare_inputs;
@@ -448,9 +447,12 @@ static std::expected<void, std::string> step13_make_plan(PrepareState& state, Bu
     for (std::size_t i = 1; i < state.packages.size(); ++i)
         state.packages[i].linkUsage.ldflags = normalized_dependency_ldflags(
             state.packages[i].root, state.packages[i].manifest.buildConfig.ldflags);
+    // The platform's statement, final: every build program has run.
+    step13_platform_statement(state);
     auto planResult = mcpp::build::make_plan(*state.m, *state.tc, state.fp, state.scan.graph, state.report.topoOrder,
                                              state.packages, *state.root, ctx.outputDir,
-                                             state.stdBmiPath, state.stdObjectPath, state.storeRoots);
+                                             state.stdBmiPath, state.stdObjectPath, state.storeRoots,
+                                             &state.platform);
     if (!planResult) return std::unexpected(planResult.error());
     ctx.plan        = std::move(*planResult);
     // `trim_paths` per package (mcpp#844, design 2026-10-26 part 2 §10.4): a
@@ -1482,36 +1484,11 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
 }
 
 static std::expected<void, std::string> step13_assembly_units(PrepareState& state, BuildContext& ctx) {
-    // AN OK IMAGE IS FINISHED BY `okld` (mcpp.okimage): the graph's, a
-    // declared payload's, or this machine's, in that order. Its absence is a
-    // refusal before anything compiles, naming the dependency that supplies
-    // it -- not a link that succeeds and an image no loader accepts.
-    // After `make plan`, which builds the plan these fields belong to.
-    if (auto tt = mcpp::toolchain::triple::parse(state.tc->targetTriple); tt && tt->is_openkal()) {
-        const std::string tool(mcpp::okimage::kTool);
-        if (auto it = state.rootTools.find(tool); it != state.rootTools.end()) {
-            ctx.plan.okldPath = it->second;
-        } else {
-            for (auto const& dir : ctx.xlingsDepBinDirs) {
-                for (auto const& name : { tool, tool + ".exe" }) {
-                    std::error_code ec;
-                    if (std::filesystem::is_regular_file(dir / name, ec)) { ctx.plan.okldPath = dir / name; break; }
-                }
-                if (!ctx.plan.okldPath.empty()) break;
-            }
-            if (ctx.plan.okldPath.empty())
-                if (auto found = mcpp::invocation::which(tool)) ctx.plan.okldPath = *found;
-        }
-        // Only a build that links an image needs it: a library's archive is
-        // objects, and the image that takes them is checked where it is linked.
-        const bool linksAnImage = std::ranges::any_of(ctx.plan.linkUnits, [](auto const& lu) {
-            return lu.kind != mcpp::build::LinkUnit::StaticLibrary;
-        });
-        if (ctx.plan.okldPath.empty() && linksAnImage && !state.overrides.plan_only) {
-            mcpp::build::refusal::record(mcpp::build::refusal::Code::ImageToolAbsent);
-            return std::unexpected(mcpp::okimage::no_tool_message(tt->str(), tool));
-        }
-    }
+    // THE PLATFORM, FINISHED (SPEC-013): the statement every reader uses,
+    // with the build programs' directives in it, its flags evaluated for the
+    // target, and the programs its link and seal run located. After `make
+    // plan`, which builds the plan this belongs to.
+    if (auto r = step13_finish_platform(state, ctx); !r) return std::unexpected(r.error());
     // Clang: discover clang-scan-deps for P1689 dyndep scanning.
     if (mcpp::toolchain::is_clang(*state.tc)) {
         if (auto sd = mcpp::toolchain::clang::find_scan_deps(*state.tc)) {

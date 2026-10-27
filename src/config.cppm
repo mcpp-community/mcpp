@@ -24,6 +24,8 @@ import std;
 import mcpp.home;
 import mcpp.modgraph.glob;   // try_narrow: the one UTF-8 spelling of a path
 import mcpp.libs.toml;
+import mcpp.manifest.platform;
+import mcpp.manifest.platform_toml;
 import mcpp.libs.json;
 import mcpp.pm.index_spec;
 import mcpp.provider;
@@ -177,6 +179,12 @@ struct GlobalConfig {
         std::filesystem::path    runUnderFile;
     };
     std::map<std::string, TargetDefault> targetDefaults;
+    // This machine's platform choices and overrides (SPEC-013 §3, §5): the
+    // platform part of each `[target.<selector>]` table, the system file's
+    // before the user's (a later one applies later), and `[host]`, the host
+    // graph's platform. A project's mcpp.toml outranks them.
+    std::vector<mcpp::manifest::platform::Override> platformOverrides;
+    mcpp::manifest::platform::Override               hostPlatform;
 
     // Resolved xlings home (registryDir unless overridden)
     std::filesystem::path xlingsHome() const {
@@ -371,7 +379,9 @@ parse_payload_overrides(const mcpp::libs::toml::Document& doc);
 std::expected<void, std::string>
 parse_target_defaults(const mcpp::libs::toml::Document& doc,
                       const std::filesystem::path& file,
-                      std::map<std::string, GlobalConfig::TargetDefault>& into);
+                      std::map<std::string, GlobalConfig::TargetDefault>& into,
+                      std::vector<mcpp::manifest::platform::Override>* platforms = nullptr,
+                      mcpp::manifest::platform::Override* host = nullptr);
 
 // Normalize legacy index naming in a loaded config (exported for tests):
 // org migration mcpp-community/mcpp-index -> mcpplibs/mcpp-index, index name
@@ -718,16 +728,40 @@ void canonicalize_legacy_index_names(GlobalConfig& cfg) {
 std::expected<void, std::string>
 parse_target_defaults(const mcpp::libs::toml::Document& doc,
                       const std::filesystem::path& file,
-                      std::map<std::string, GlobalConfig::TargetDefault>& into) {
+                      std::map<std::string, GlobalConfig::TargetDefault>& into,
+                      std::vector<mcpp::manifest::platform::Override>* platforms,
+                      mcpp::manifest::platform::Override* host) {
+    namespace mp = mcpp::manifest::platform;
+    const mp::Reader reader{file, mp::Tier::Config, nullptr};
+    // `[host]`: the platform of this machine's host graph (SPEC-013 §6.1). A
+    // nearer file's choice stands.
+    if (auto* ht = doc.get_table("host"); ht && host && !host->platformSet) {
+        auto ov = reader.override_(*ht, "");
+        if (!ov) return std::unexpected(std::format("{} {}", file.string(), ov.error()));
+        *host = std::move(*ov);
+    }
     auto* tt = doc.get_table("target");
     if (!tt) return {};
+    std::vector<mp::Override> ours;
     for (auto const& [triple, body] : *tt) {
         if (!body.is_table())
             return std::unexpected(std::format(
                 "{} [target.{}] must be a table with `sysroot` and/or `run_under`",
                 file.string(), triple));
         auto& d = into[triple];
+        // The platform keys (SPEC-013 §5.2), read by the reader a manifest uses.
+        bool platformKeys = false;
+        for (auto k : mp::kOverrideKeys) platformKeys |= body.as_table().contains(k);
+        platformKeys |= body.as_table().contains("runner") || body.as_table().contains("runners");
+        if (platformKeys && platforms) {
+            auto ov = reader.override_(body.as_table(), triple);
+            if (!ov) return std::unexpected(std::format("{} {}", file.string(), ov.error()));
+            ours.push_back(std::move(*ov));
+        }
         for (auto const& [k, v] : body.as_table()) {
+            if (std::ranges::find(mp::kOverrideKeys, k) != std::end(mp::kOverrideKeys)
+                || k == "runner" || k == "runners")
+                continue;
             if (k == "sysroot") {
                 if (d.sysrootDeclared) continue;   // a nearer file said it
                 std::string text;
@@ -781,11 +815,15 @@ parse_target_defaults(const mcpp::libs::toml::Document& doc,
             } else {
                 return std::unexpected(std::format(
                     "{} [target.{}]: '{}' is not a key of a machine's target defaults; "
-                    "the keys are `sysroot` and `run_under` (everything else about a "
-                    "target belongs in the project's mcpp.toml)", file.string(), triple, k));
+                    "the keys are `sysroot`, `run_under` and the platform's: platform, layers, "
+                    "tools, carrier, link, runner, runners (everything else about a target "
+                    "belongs in the project's mcpp.toml)", file.string(), triple, k));
             }
         }
     }
+    // The file read first is the nearer one; a later override applies later,
+    // so the nearer file's tables go after those already held.
+    if (platforms) platforms->insert(platforms->begin(), ours.begin(), ours.end());
     return {};
 }
 
@@ -984,11 +1022,13 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     else
         return std::unexpected(ConfigError{overrides.error()});
     // [target.<triple>]: this machine's defaults, the user's first.
-    if (auto r = parse_target_defaults(*doc, cfg.configFile, cfg.targetDefaults); !r)
+    if (auto r = parse_target_defaults(*doc, cfg.configFile, cfg.targetDefaults,
+                                       &cfg.platformOverrides, &cfg.hostPlatform); !r)
         return std::unexpected(ConfigError{r.error()});
     if (systemDoc)
         if (auto r = parse_target_defaults(*systemDoc, mcpp::home::system_config_file(),
-                                           cfg.targetDefaults); !r)
+                                           cfg.targetDefaults, &cfg.platformOverrides,
+                                           &cfg.hostPlatform); !r)
             return std::unexpected(ConfigError{r.error()});
 
     // A read-only report must not create its log directory either.

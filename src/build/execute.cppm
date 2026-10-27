@@ -21,7 +21,7 @@ import mcpp.diag;
 import mcpp.build.plan;
 import mcpp.toolchain.triple;
 import mcpp.freestanding.runner;
-import mcpp.okimage;
+import mcpp.platform;
 import mcpp.build.runner_lookup;    // #544: where the runner's program is
 import mcpp.home;                   // config.toml, for the machine's default toolchain
 import mcpp.libs.toml;
@@ -50,6 +50,7 @@ import mcpp.provider.select;
 import mcpp.runtime.binding;
 import mcpp.log;
 import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
 import mcpp.invocation;
 import mcpp.effects;
 import mcpp.runtime.launch_env;
@@ -1098,8 +1099,24 @@ ExecutionHost locate_run_under(const mcpp::build::BuildContext& ctx, std::string
 // here, and is believed.
 std::optional<std::string> unreachable_execution(const mcpp::build::BuildContext& ctx,
                                                  std::string_view tripleKey, bool noRunner) {
-    if (noRunner || !ctx.runUnder.empty() || mcpplibs::os::is_macos) return std::nullopt;
+    if (noRunner || !ctx.runUnder.empty()) return std::nullopt;
     auto t = mcpp::toolchain::triple::parse(tripleKey);
+    // A RUNNER THAT RUNS THE ARTIFACT ON A MACHINE OF ITS ARCHITECTURE
+    // (`runner = { ..., host = "same-arch" }`, SPEC-013): an ok image's loader
+    // is a program of this machine, and an image of another architecture is
+    // not one it can map.
+    if (auto const& r = ctx.plan.platform.fields.runner; t && r.set && r.host == "same-arch"
+        && t->arch != mcpp::toolchain::platform::host_arch)
+        return std::format(
+            "cannot run {} artifacts on this {} host: the runner `{}` ({}) runs an artifact on a "
+            "machine of its architecture.\n"
+            "       Name an execution host of that architecture: [target.{}] run_under = "
+            "[\"remote-run\", \"<host>\", \"--\"]\n"
+            "       (in mcpp.toml for the team, or ~/.mcpp/config.toml for this machine).",
+            tripleKey, mcpp::toolchain::platform::host_arch,
+            r.cmd.empty() ? std::string() : r.cmd.front(),
+            mcpp::platform::origin_text(r.origin), tripleKey);
+    if (mcpplibs::os::is_macos) return std::nullopt;
     if (!t || !t->is_apple()) return std::nullopt;
     return std::format(
         "cannot run {} artifacts on this host: {} runs only on macOS.\n"
@@ -1175,50 +1192,34 @@ RunnerChoice choose_device_action(const BuildContext& ctx,
     const auto ft = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
     if (ft) c.freestanding = ft->is_freestanding();
     c.tripleKey = ft ? ft->str() : ctx.tc.targetTriple;
-    // The graph's answer: the default runner, or a named one a package supplied.
-    if (isDefault) {
-        c.tmpl = ctx.manifest.buildConfig.runner;
-    } else if (auto it = ctx.manifest.buildConfig.namedRunners.find(std::string(which));
-               it != ctx.manifest.buildConfig.namedRunners.end()) {
-        c.tmpl      = it->second.argv;
-        c.longLived = it->second.longLived;
-    }
-    // The row is found as every other `[target.<triple>]` reader finds it
-    // (`find_target_entry`), whichever spelling the section and the toolchain
-    // use. The toolchain's own `targetTriple` is what the driver reported,
-    // which on macOS is `arm64-apple-darwin24.6.0`; an exact lookup of it
-    // matched on Linux and never on macOS (measured on CI, 2026-09-02), and an
-    // exact lookup of the canonical spelling missed a section written
-    // `[target.x86-windows-msvc]`. The raw form is kept as a fallback for a
-    // triple the parser does not know.
-    auto with_slot = [&](const mcpp::manifest::TargetEntry* e) {
-        const mcpp::manifest::TargetEntry* none = nullptr;
-        if (!e) return none;
-        if (isDefault) return e->runner.empty() ? none : e;
-        auto nr = e->namedRunners.find(std::string(which));
-        return (nr != e->namedRunners.end() && !nr->second.empty()) ? e : none;
+    // THE STATEMENT PREPARE MERGED (SPEC-013 §4.5): the platform's runner, a
+    // build program's (`mcpp::runner`), this machine's, the project's
+    // `[target.<selector>]` (a cfg selector as well as a triple, whichever
+    // spelling), the environment's -- the later replacing the earlier. The
+    // project overriding what a dependency supplied is reported.
+    auto const& pf = ctx.plan.platform.fields;
+    auto overrides_program = [&](const mcpp::manifest::platform::Origin& o, bool programHad) {
+        using T = mcpp::manifest::platform::Tier;
+        return programHad && (o.tier == T::Manifest || o.tier == T::Config || o.tier == T::Env);
     };
-    const mcpp::manifest::TargetEntry* entry = nullptr;
-    if (ft) {
-        entry = with_slot(mcpp::build::find_target_entry(ctx.manifest, *ft));
-    } else if (auto it = ctx.manifest.targetOverrides.find(ctx.tc.targetTriple);
-               it != ctx.manifest.targetOverrides.end()) {
-        entry = with_slot(&it->second);
-    }
-    if (entry) {
-        if (isDefault) {
-            c.fromManifest = !ctx.manifest.buildConfig.runner.empty();
-            c.tmpl = entry->runner;
-        } else {
-            c.fromManifest = ctx.manifest.buildConfig.namedRunners.contains(
-                std::string(which));
-            c.tmpl = entry->namedRunners.at(std::string(which));
+    if (isDefault) {
+        if (pf.runner.set) {
+            c.tmpl = pf.runner.cmd;
+            c.fromManifest = overrides_program(pf.runner.origin,
+                                               !ctx.manifest.buildConfig.runner.empty());
         }
+    } else if (auto it = pf.runners.find(std::string(which)); it != pf.runners.end()) {
+        c.tmpl = it->second.value;
+        auto nr = ctx.manifest.buildConfig.namedRunners.find(std::string(which));
+        c.fromManifest = overrides_program(it->second.origin,
+                                           nr != ctx.manifest.buildConfig.namedRunners.end());
+        if (nr != ctx.manifest.buildConfig.namedRunners.end() && !c.fromManifest)
+            c.longLived = nr->second.longLived;
     }
-    // AND THE TOOLCHAIN'S OWN ANSWER, WHEN THE PROJECT AND ITS GRAPH GAVE NONE.
+    // AND THE TOOLCHAIN'S OWN ANSWER, WHEN NOTHING ABOVE GAVE ONE.
     //
-    // The third source and the last. A project's `[target.<triple>] runner`
-    // and a package's `mcpp::runner(...)` both outrank it, because they are
+    // The last source. A project's `[target.<selector>] runner`, a platform's
+    // and a package's `mcpp::runner(...)` all outrank it, because they are
     // statements about THIS program; the payload's is a statement about
     // everything its compiler produces. Measured 2026-09-12 in a sandbox with
     // no `node` on PATH: an Emscripten artefact built correctly and then
@@ -1231,12 +1232,6 @@ RunnerChoice choose_device_action(const BuildContext& ctx,
         c.tmpl = mcpp::toolchain::payload_default_runner(ctx.tc.binaryPath);
         c.fromPayload = !c.tmpl.empty();
     }
-    // AND THE TARGET'S OWN, FOR AN OK IMAGE: the loader is what runs one, on
-    // every system (SPEC 12). `okrun` is found as any runner's program is --
-    // first among the programs the graph built for this machine
-    // (`openkal-tools`), then in declared payloads, then on PATH.
-    if (isDefault && c.tmpl.empty() && ft && ft->is_openkal())
-        c.tmpl = { std::string(mcpp::okimage::kRunner) };
     // `--no-runner` is the operator on THIS host stating a host fact the
     // manifest cannot carry: the triple is native here. On a freestanding
     // target that leaves nothing to execute, and the caller's existing
@@ -2027,22 +2022,28 @@ export int list_runners(const std::string& package_filter,
     if (!ctx) { mcpp::ui::error(ctx.error()); return 2; }
 
     const auto& bc = ctx->manifest.buildConfig;
+    // The runners prepare merged: the platform's, a build program's, this
+    // machine's and the project's, each with where it was stated.
+    const auto& pf = ctx->plan.platform.fields;
     const auto ft  = mcpp::toolchain::triple::parse(ctx->tc.targetTriple);
     const std::string key = ft ? ft->str() : ctx->tc.targetTriple;
     std::println("Target {}", key);
 
-    if (bc.runner.empty() && bc.namedRunners.empty()) {
+    if (!pf.runner.set && pf.runners.empty()) {
         std::println("  (none — this project reaches its artifact by executing it)");
         return 0;
     }
-    if (!bc.runner.empty())
-        std::println("  {:<12} {}", "(default)", bc.runner.front());
-    for (auto const& [name, nr] : bc.namedRunners) {
-        std::println("  {:<12} {}{}", name,
-                     nr.argv.empty() ? std::string("(no argv)") : nr.argv.front(),
-                     nr.longLived ? "   [long-lived]" : "");
+    if (pf.runner.set)
+        std::println("  {:<12} {}   ({})", "(default)", pf.runner.cmd.front(),
+                     mcpp::platform::origin_text(pf.runner.origin));
+    for (auto const& [name, w] : pf.runners) {
+        auto nr = bc.namedRunners.find(name);
+        const bool longLived = nr != bc.namedRunners.end() && nr->second.longLived;
+        std::println("  {:<12} {}   ({}){}", name,
+                     w.value.empty() ? std::string("(no argv)") : w.value.front(),
+                     mcpp::platform::origin_text(w.origin), longLived ? "   [long-lived]" : "");
     }
-    if (bc.runExclusive)
+    if (bc.runExclusive || pf.runner.exclusive)
         std::println("  note: this target's runs cannot overlap; `mcpp test` "
                      "serialises them");
     return 0;
@@ -3819,7 +3820,8 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // Clamped rather than made an error: an exclusive target with one test
         // is an ordinary run, and refusing it would turn a correct
         // configuration into a failure.
-        const bool exclusiveDevice = ctx->manifest.buildConfig.runExclusive
+        const bool exclusiveDevice = (ctx->manifest.buildConfig.runExclusive
+                                      || ctx->plan.platform.fields.runner.exclusive)
                                   && !runnerChoice.tmpl.empty();
         const int runJobsHere = exclusiveDevice ? 1 : runJobs;
         if (exclusiveDevice && runJobs > 1 && list.size() > 1) {

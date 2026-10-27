@@ -20,7 +20,7 @@ import mcpp.build.refusal;
 import mcpp.diag;
 import mcpp.freestanding.target;
 import mcpp.freestanding.linkline;
-import mcpp.okimage;
+import mcpp.platform;
 import mcpp.manifest.types;
 import mcpp.manifest.flag_words;
 import mcpp.modgraph.scanner;
@@ -2467,40 +2467,71 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         }
     }
 
-    // ── An ok image (`<arch>-openkal`): the convention's flags, and the link
-    //    by `ld.lld` itself ──
+    // ── A target whose loader supplies the system: the layer rules ──
     //
-    // Applied by replacement, after every hosted decision, for the reason the
-    // freestanding block gives: an image has no loader path, no crt files and
-    // no system library, and what it holds above `kal_*` is the graph's,
-    // reached through the graph's own `-L`/`-l`. The compile keeps the hosted
-    // header model of a graph-supplied C library (`-nostdlibinc`, above); the
-    // C++ headers are withheld unless the graph supplies them too, because the
-    // payload's were configured for its own operating system.
+    // The compile keeps the hosted header model of a graph-supplied C library
+    // (`-nostdlibinc`, above); the C++ headers are withheld unless the graph
+    // supplies them too, because the payload's were configured for its own
+    // operating system.
     if (const auto ot = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-        ot && ot->is_openkal()) {
-        std::string image;
-        for (auto const& w : mcpp::okimage::compile_flags(ot->arch)) image += " " + w;
-        if (!plan.targetSide.cxx.fromGraph()) image += " -nostdinc++";
-        // AN IMAGE WITH NO C LIBRARY IS A FREESTANDING C ENVIRONMENT, in the
+        ot && ot->loader_supplies_os()) {
+        std::string w;
+        if (!plan.targetSide.cxx.fromGraph()) w += " -nostdinc++";
+        // A PROGRAM WITH NO C LIBRARY IS A FREESTANDING C ENVIRONMENT, in the
         // standard's sense: nothing defines `strlen`, so the compiler must not
         // turn a loop into a call to it. Measured: `--release` of an image
         // that defines only `memcpy` and `memset` was refused by `okld check`
         // for importing `strlen`, which `-O2` had synthesised.
-        if (plan.targetSide.cAbi.absent()) image += " -ffreestanding";
-        f.cxx += image;
-        f.cc  += image;
-        f.as  += image;
+        if (plan.targetSide.cAbi.absent()) w += " -ffreestanding";
+        f.cxx += w;
+        f.cc  += w;
+        f.as  += w;
+    }
 
-        f.ldDriver = mcpp::freestanding::resolve_lld(plan.toolchain.binaryPath);
-        f.ld  = mcpp::okimage::link_flags() + user_ldflags;
-        f.ldC = f.ld;
-        f.sysroot.clear();
-        f.bFlag.clear();
-        f.ldRuntimeFallback.clear();
-        f.linkage = "static";
-        for (auto& r : f.ldStdlibByRole)  r.clear();
-        for (auto& r : f.ldStdlibCByRole) r.clear();
+    // ── THE PLATFORM'S CONVENTIONS (SPEC-013 §2.5, §4.5) ──
+    //
+    // Its flags come before every unit's own, so a package adds to a
+    // convention and cannot remove one. A platform that links with `ld.lld`
+    // itself (`[platform.link] driver = "lld"`, an ok image) gets the link it
+    // states, by replacement, after every hosted decision, for the reason the
+    // freestanding block gives: the artifact has no loader path, no crt files
+    // and no system library of the toolchain's, and what it holds is the
+    // graph's, reached through the graph's own `-L`/`-l`.
+    if (auto const& p = plan.platform; p.active) {
+        auto words = [](const std::vector<std::string>& v) {
+            std::string out;
+            for (auto const& w : v)
+                out += " " + (w.find(' ') == std::string::npos ? w : "\"" + w + "\"");
+            return out;
+        };
+        f.cc  += words(p.flags.cflags);
+        f.cxx += words(p.flags.cxxflags);
+        f.as  += words(p.flags.asmflags);
+        if (p.fields.link.driver.value == "lld") {
+            f.ldDriver = mcpp::freestanding::resolve_lld(plan.toolchain.binaryPath);
+            f.ld  = words(p.fields.link.flags.value) + words(p.flags.ldflags) + user_ldflags;
+            // `lld` by that name is the generic driver, which chooses its
+            // flavour from its name or from `-flavor`; a payload that ships
+            // only it is asked for the ELF linker explicitly.
+            if (f.ldDriver.stem() == "lld") f.ld = " -flavor gnu" + f.ld;
+            f.ldC = f.ld;
+            f.sysroot.clear();
+            f.bFlag.clear();
+            f.ldRuntimeFallback.clear();
+            f.linkage = "static";
+            for (auto& r : f.ldStdlibByRole)  r.clear();
+            for (auto& r : f.ldStdlibCByRole) r.clear();
+        } else {
+            f.ld  += words(p.flags.ldflags);
+            f.ldC += words(p.flags.ldflags);
+        }
+        // A linker script the platform states: `-T` is the linker's own flag,
+        // and both drivers pass it through.
+        if (p.fields.link.script.set) {
+            const auto t = " -T " + escape_path(p.fields.link.script.value);
+            f.ld  += t;
+            f.ldC += t;
+        }
     }
 
     // A LINKER STATED BY ROLE (mcpp#755, `tools = { ld = ... }`), AFTER EVERY

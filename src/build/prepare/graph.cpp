@@ -2364,6 +2364,10 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
                 childSpec.features.push_back(depFeat);
     };
 
+    // The platform package first: its `[platform]` decides what the graph
+    // is completed with once the root's own requests are walked (SPEC-013).
+    step4b_seed_platform(state);
+
     // Seed the worklist from the main manifest. Dev-deps only when the
     // caller wants them; they're never propagated transitively.
     const std::string mainPkgLabel = state.m->package.name;
@@ -2398,25 +2402,40 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
     }
 
 
-    while (!state.worklist.empty()) {
-        WorklistItemCtx ctx;
-        ctx.item = std::move(state.worklist.front());
-        state.worklist.pop_front();
+    auto drain = [&]() -> std::expected<void, std::string> {
+        while (!state.worklist.empty()) {
+            WorklistItemCtx ctx;
+            ctx.item = std::move(state.worklist.front());
+            state.worklist.pop_front();
 
-        if (auto r = step4b_resolve_identity(state, ctx); !r)
-            return std::unexpected(r.error());
-
-        if (auto it = state.resolved.find(ctx.key); it != state.resolved.end()) {
-            if (auto r = step4b_handle_already_resolved(state, ctx, it); !r)
+            if (auto r = step4b_resolve_identity(state, ctx); !r)
                 return std::unexpected(r.error());
-            continue;
-        }
 
-        if (auto r = step4b_acquire_dependency_source(state, ctx); !r)
-            return std::unexpected(r.error());
-        if (auto r = step4b_finalize_dependency(state, ctx); !r)
-            return std::unexpected(r.error());
+            if (auto it = state.resolved.find(ctx.key); it != state.resolved.end()) {
+                if (auto r = step4b_handle_already_resolved(state, ctx, it); !r)
+                    return std::unexpected(r.error());
+                continue;
+            }
+
+            if (auto r = step4b_acquire_dependency_source(state, ctx); !r)
+                return std::unexpected(r.error());
+            if (auto r = step4b_finalize_dependency(state, ctx); !r)
+                return std::unexpected(r.error());
+        }
+        return {};
+    };
+    if (auto r = drain(); !r) return r;
+    // THE PLATFORM COMPLETES THE GRAPH (SPEC-013 §4.3, §4.4): the layers no
+    // package of the graph provides and the tools it does not build are added
+    // as the platform's, and walked like any request. A few rounds at most: the
+    // packages one round adds may provide a layer the next then leaves.
+    for (int round = 0; round < 3; ++round) {
+        auto pushed = step4b_apply_platform(state);
+        if (!pushed) return std::unexpected(pushed.error());
+        if (!*pushed) break;
+        if (auto r = drain(); !r) return r;
     }
+    if (auto r = step4b_check_platform_versions(state); !r) return r;
 
     if (auto r = step4b_cycle_check(state); !r) return std::unexpected(r.error());
 

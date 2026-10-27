@@ -568,6 +568,7 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
         // which appears in the project's own manifest.
         ctx.plan.runtimeRequirements, programIsSharedObject);
     if (!plan) return Refusal{1, about(run, m, plan.error().message)};
+    plan->platform = ctx.plan.platform;
     // `--output <dir>` with several members: each member's archive, or its tree
     // for `--format dir`, is written below the directory under the name it would
     // have by default. The staging tree of an archive, and of a dispatched

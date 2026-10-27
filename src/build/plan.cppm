@@ -28,6 +28,7 @@ import mcpp.runtime.binding;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.home;
+import mcpp.platform;
 
 export namespace mcpp::build {
 
@@ -539,10 +540,11 @@ struct BuildPlan {
     std::map<std::string, ModuleScope, std::less<>> moduleScopes;
     std::filesystem::path           stdCompatObjectPath; // absolute path to prebuilt std.compat.o
     std::filesystem::path           scanDepsPath;    // clang-scan-deps binary (Clang only)
-    // `okld` for an ok-image target (`<arch>-openkal`): the program of the graph
-    // (or of this machine) that writes each image's requirements note and
-    // checks the convention after the link (mcpp.okimage). Empty elsewhere.
-    std::filesystem::path           okldPath;
+    // THE TARGET'S PLATFORM (SPEC-013): the merged statement, its flags for
+    // this target and the programs its link and seal run. `active` is false
+    // for a target that uses none; the runner fields are filled either way,
+    // because a build program and the project state them for any target.
+    mcpp::platform::Resolved        platform;
     // NASM assembly (.asm sources). Both resolved in prepare AFTER the plan
     // exists — only when the plan actually contains .asm units (lazy, hard
     // failure when unavailable; never a silent skip).
@@ -769,7 +771,10 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
          // cache address of a dependency source that lives outside its own
          // package root (a build.mcpp OUT_DIR product). Empty is legal and
          // simply makes those units uncacheable.
-         const std::vector<std::filesystem::path>& storeRoots = {});
+         const std::vector<std::filesystem::path>& storeRoots = {},
+         // The target's platform (SPEC-013): its artifact names, when it
+         // states them, replace the target row's.
+         const mcpp::platform::Resolved*         platform = nullptr);
 
 // Expand one manifest `include_dirs` entry against the project root — the
 // #249 consistency join + the expand_dir_glob the dep path uses. Exported
@@ -1639,7 +1644,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
          const std::filesystem::path&            outputDir,
          const std::filesystem::path&            stdBmiPath,
          const std::filesystem::path&            stdObjectPath,
-         const std::vector<std::filesystem::path>& storeRoots)
+         const std::vector<std::filesystem::path>& storeRoots,
+         const mcpp::platform::Resolved*         platform)
 {
     BuildPlan plan;
     plan.manifest         = manifest;
@@ -1664,7 +1670,26 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         auto t = mcpp::toolchain::triple::parse(tc.targetTriple);
         return t ? *t : mcpp::toolchain::triple::Triple{};
     }();
-    const auto naming = naming_for(tc);
+    auto naming = naming_for(tc);
+    // A PLATFORM NAMES ITS ARTIFACTS (`[platform.link] exe`, `shared`): an
+    // ok image is `<name>.oke`, an image another loads `lib<name>.okso`.
+    // The patterns were checked where they were read.
+    // `ArtifactNaming` holds views; these are views into the platform's own
+    // strings, which outlive the plan's construction.
+    if (platform && platform->active) {
+        constexpr std::string_view kName = "{name}";
+        auto const& l = platform->fields.link;
+        if (l.exe.set && mcpp::platform::split_name_pattern(l.exe.value)) {
+            const std::string_view v = l.exe.value;
+            if (v.starts_with(kName)) naming.exeSuffix = v.substr(kName.size());
+        }
+        if (l.shared.set && mcpp::platform::split_name_pattern(l.shared.value)) {
+            const std::string_view v = l.shared.value;
+            const auto at = v.find(kName);
+            naming.libPrefix    = v.substr(0, at);
+            naming.sharedLibExt = v.substr(at + kName.size());
+        }
+    }
 
     // The loader-tag contract exists only where DT_RPATH/DT_RUNPATH do.
     // Mach-O and PE have neither, so they get no flag rather than a branch in
@@ -3085,8 +3110,9 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                     t.name, all));
             }
         if (!targetTriple.is_freestanding()) {
-            const std::string owner = targetTriple.is_openkal()
-                    ? std::string("okrun, at `ok_main`, which the image's C library defines")
+            const std::string owner = targetTriple.loader_supplies_os()
+                    ? std::string("its loader, at the entry its platform states "
+                                  "(`[platform.link] start`), which the image's C library defines")
                 : targetTriple.is_android()
                     ? std::string("the Android runtime, through the exports the platform names")
                     : std::string("the C runtime (`_start`, `mainCRTStartup`), which initialises "

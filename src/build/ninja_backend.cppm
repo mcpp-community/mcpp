@@ -44,7 +44,7 @@ import mcpp.toolchain.dialect;
 import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;   // shared_soname_flag decides by TARGET, not host
-import mcpp.okimage;
+import mcpp.toolchain.fingerprint;   // hash_string: a platform seal's digest
 import mcpp.toolchain.msvc_coroutines;
 import mcpp.provider;
 import mcpp.provider.select;
@@ -590,6 +590,12 @@ std::string pe_link_flag(const BuildPlan& plan, bool sep,
     return sep ? flag : "-Wl," + flag;
 }
 
+// The platform links with `ld.lld` itself (`[platform.link] driver = "lld"`):
+// a flag is the linker's own spelling, not the driver's `-Wl,` form.
+bool links_with_lld(const BuildPlan& plan) {
+    return plan.platform.active && plan.platform.fields.link.driver.value == "lld";
+}
+
 std::string shared_soname_flag(const LinkUnit& lu, const BuildPlan& plan) {
     if (lu.kind != LinkUnit::SharedLibrary) return "";
     const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
@@ -605,8 +611,8 @@ std::string shared_soname_flag(const LinkUnit& lu, const BuildPlan& plan) {
     const std::string name = lu.soname.empty()
         ? lu.output.filename().string() : lu.soname;
     if (macho) return "-Wl,-install_name,@rpath/" + name;
-    // An ok image is linked by `ld.lld` itself, which takes the bare flag.
-    if (t && t->is_openkal()) return lu.soname.empty() ? "" : "-soname " + lu.soname;
+    // A platform that links with `ld.lld` itself takes the bare flag.
+    if (links_with_lld(plan)) return lu.soname.empty() ? "" : "-soname " + lu.soname;
     return lu.soname.empty() ? "" : "-Wl,-soname," + lu.soname;
 }
 
@@ -620,7 +626,7 @@ std::string shared_soname_default(const LinkUnit& lu, const BuildPlan& plan) {
     const bool pe    = t ? t->is_pe()     : bool(mcpplibs::os::is_windows);
     const bool macho = t ? t->is_mach_o() : bool(mcpplibs::os::is_macos);
     if (pe || macho) return "";
-    if (t && t->is_openkal()) return "-soname " + lu.output.filename().string();
+    if (links_with_lld(plan)) return "-soname " + lu.output.filename().string();
     return "-Wl,-soname," + lu.output.filename().string();
 }
 
@@ -1528,34 +1534,92 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             placedFiles.push_back({{pl.source}, pl.dest});
     }
 
-    // ── An ok image: its notes, and the step that finishes it ──────────────
+    // ── A platform's link inputs and seal (SPEC-013 §4, §4.6) ──────────────
     //
-    // The notes are one assembly source the engine writes (SPEC 12.4) and one
-    // object every image links. `okimage_finish` runs `okld note` and `okld
-    // check` on the linked image and only then publishes it under its name,
-    // so an image that breaks the convention never reaches `bin/`.
-    const bool okImageTarget = [&] {
-        const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-        return t && t->is_openkal();
-    }();
-    const auto okNoteSource = std::filesystem::path("obj") / "okimage" / "note.S";
-    const auto okNoteObject = std::filesystem::path("obj") / "okimage" / "note.o";
-    if (okImageTarget) {
-        std::error_code mkec;
-        std::filesystem::create_directories((plan.outputDir / okNoteSource).parent_path(), mkec);
-        write_file(plan.outputDir / okNoteSource, mcpp::okimage::note_source());
+    // An input the platform names is linked into every executable and shared
+    // library: a file of the platform package, or the standard output of a
+    // program saved under `obj/platform/<as>` by its own edge; an assembly
+    // source is assembled for the target first, by the compiler and nothing
+    // of the project's flags (the notes of an ok image are the case). The
+    // seal steps run on the linked file, written beneath `obj/platform/`, and
+    // only a file every step accepted is published under the artifact's name.
+    auto const& pf = plan.platform;
+    const bool platformLld  = pf.active && pf.fields.link.driver.value == "lld";
+    const bool platformSeal = pf.active && !pf.fields.link.seal.empty();
+    // A program a platform names, as the platform resolved it, or its name for
+    // PATH at build time.
+    auto platform_program = [&](const std::string& name) {
+        auto it = pf.tools.find(name);
+        return it == pf.tools.end() ? name : it->second;
+    };
+    std::vector<std::filesystem::path> platformInputs;
+    if (pf.active && !pf.fields.link.inputs.empty()) {
         const auto tt = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-        append("rule okimage_note\n");
-        append(std::format("  command = $cc --target={} --no-default-config -c $in -o $out\n",
-                           tt->llvm_triple()));
-        append("  description = NOTE $out\n\n");
-        append(std::format("build {} : okimage_note {}\n\n",
-                           escape_ninja_path(okNoteObject), escape_ninja_path(okNoteSource)));
-        append(std::format("okld      = {}\n", ninja_tool_word(plan.okldPath)));
-        append("okimage_with =\n");
-        append("rule okimage_finish\n");
-        append("  command = $mcpp okimage-finish --okld $okld -- $in $out $okimage_with\n");
-        append("  description = IMAGE $out\n\n");
+        const bool clangDriver = plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang;
+        append("rule platform_capture\n");
+        append("  command = $mcpp platform-step capture --out $out -- $argv\n");
+        append("  description = GEN $out\n\n");
+        append("rule platform_asm\n");
+        append(std::format("  command = $cc {}-c $in -o $out\n",
+                           clangDriver && tt ? std::format("--target={} --no-default-config ",
+                                                           tt->llvm_triple())
+                                             : std::string{}));
+        append("  description = AS $out\n\n");
+        for (auto const& in : pf.fields.link.inputs) {
+            std::filesystem::path src;
+            if (!in.from.empty()) {
+                src = std::filesystem::path("obj") / "platform" / in.as;
+                std::string argv, implicitIn;
+                for (std::size_t i = 0; i < in.from.size(); ++i) {
+                    const auto word = i == 0 ? platform_program(in.from[0]) : in.from[i];
+                    argv += " " + ninja_command_word(word);
+                }
+                if (auto it = pf.tools.find(in.from[0]); it != pf.tools.end())
+                    implicitIn = " | " + escape_ninja_path(std::filesystem::path(it->second));
+                append(std::format("build {} : platform_capture{}\n", escape_ninja_path(src), implicitIn));
+                append("  argv =" + argv + "\n\n");
+            } else {
+                src = std::filesystem::path(in.file);
+            }
+            const auto ext = src.extension().string();
+            if (ext == ".S" || ext == ".s") {
+                auto obj = std::filesystem::path("obj") / "platform" / src.filename();
+                obj.replace_extension(".o");
+                append(std::format("build {} : platform_asm {}\n\n",
+                                   escape_ninja_path(obj), escape_ninja_path(src)));
+                platformInputs.push_back(std::move(obj));
+            } else {
+                platformInputs.push_back(std::move(src));
+            }
+        }
+    }
+    // The shared artifacts of this plan, which a seal step's `{needed}` names.
+    std::set<std::filesystem::path> sharedOutputs;
+    for (auto const& lu : plan.linkUnits)
+        if (lu.kind == LinkUnit::SharedLibrary) sharedOutputs.insert(lu.output);
+    if (platformSeal) {
+        // The steps, one per line, words separated by a tab, beside the
+        // configuration; their digest is part of the command, so a changed
+        // step reseals.
+        std::string steps;
+        for (auto const& step : pf.fields.link.seal) {
+            std::string line;
+            for (std::size_t i = 0; i < step.size(); ++i) {
+                if (i) line += '\t';
+                line += i == 0 ? platform_program(step[0]) : step[i];
+            }
+            steps += line + "\n";
+        }
+        const auto stepsFile = std::filesystem::path("obj") / "platform" / "seal.steps";
+        std::error_code mkec;
+        std::filesystem::create_directories((plan.outputDir / stepsFile).parent_path(), mkec);
+        write_file(plan.outputDir / stepsFile, steps);
+        append("seal_with =\n");
+        append("rule platform_seal\n");
+        append(std::format("  command = $mcpp platform-step seal --steps {} --digest {} -- $in $out $seal_with\n",
+                           ninja_command_word(stepsFile.generic_string()),
+                           mcpp::toolchain::hash_string(steps)));
+        append("  description = SEAL $out\n\n");
     }
 
     // ── The raw image a flasher takes ──────────────────────────────────────
@@ -2327,18 +2391,18 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                       "$ld /nologo /DLL /OUT:$out $implib_flag $def_flag "
                       "$in $ldflags $unit_ldflags",
                       "SHARED");
-        } else if (okImageTarget) {
-            // AN OK IMAGE, LINKED BY `ld.lld` ITSELF (SPEC 12.2). An executable
-            // image is ET_DYN with the entry `ok_main`; an image another loads
-            // has its name and no entry. Each edge writes
-            // `obj/okimage/<image>.unchecked`; the `okimage_finish` edge below
-            // writes the requirements note,
-            // checks the convention and publishes `<image>`.
-            const std::string entry = std::format("-e {}", mcpp::okimage::kEntry);
+        } else if (platformLld) {
+            // A PLATFORM THAT LINKS WITH `ld.lld` ITSELF (an ok image, SPEC 12.2):
+            // its flags are the whole line, an executable is entered at the
+            // symbol the platform states, and an artifact another loads has
+            // its name and no entry. When the platform seals, each edge writes
+            // beneath `obj/platform/` and the seal edge below publishes.
+            const std::string entry = pf.fields.link.start.set
+                ? std::format(" -e {}", pf.fields.link.start.value) : std::string{};
             link_rule("cxx_link",
-                      "$ld_driver $ldflags $unit_ldflags " + entry + " -o $out $in", "LINK");
+                      "$ld_driver $ldflags $unit_ldflags" + entry + " -o $out $in", "LINK");
             link_rule("c_link",
-                      "$ld_driver $c_ldflags $unit_ldflags " + entry + " -o $out $in", "LINK");
+                      "$ld_driver $c_ldflags $unit_ldflags" + entry + " -o $out $in", "LINK");
             link_rule("cxx_shared",
                       "$ld_driver $ldflags $soname_default $soname_flag $unit_ldflags -o $out $in",
                       "SHARED");
@@ -3348,14 +3412,16 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         for (auto& o : lu.objects) {
             ins += " " + escape_ninja_path(o);
         }
-        // An ok image's notes, in every image this plan links; the image is
-        // written beside its name and finished by its own edge (above).
-        const bool okImageUnit = okImageTarget && lu.kind != LinkUnit::StaticLibrary;
-        if (okImageUnit) ins += " " + escape_ninja_path(okNoteObject);
-        // Beneath obj/, not beside the name: what bin/ holds is what was
-        // published, and an unchecked image is not.
-        auto okUnchecked = std::filesystem::path("obj/okimage") / lu.output.relative_path();
-        okUnchecked += ".unchecked";
+        // The platform's link inputs, in every executable and shared library
+        // this plan links; with seal steps, the artifact is written beneath
+        // obj/ and published by its own edge (above). Not beside the name:
+        // what bin/ holds is what was published, and an unsealed file is not.
+        const bool platformUnit = pf.active && lu.kind != LinkUnit::StaticLibrary;
+        if (platformUnit)
+            for (auto const& in : platformInputs) ins += " " + escape_ninja_path(in);
+        const bool sealUnit = platformSeal && lu.kind != LinkUnit::StaticLibrary;
+        auto unsealed = std::filesystem::path("obj/platform") / lu.output.relative_path();
+        unsealed += ".unsealed";
 
         // mcpp#426. `separateLinker` (link.exe) takes no driver at all, so the
         // question does not arise there and the msvc rules are untouched.
@@ -3509,7 +3575,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // order-only list of the edge.
         if (lu.kind != LinkUnit::StaticLibrary) orderOnly += linkOrderOnly;
         std::string out_line = std::format("build {}{} : {}{}{}{}\n",
-            escape_ninja_path(okImageUnit ? okUnchecked : lu.output), implicitOut, rule, ins,
+            escape_ninja_path(sealUnit ? unsealed : lu.output), implicitOut, rule, ins,
             implicit.empty() ? std::string{} : " |" + implicit,
             orderOnly.empty() ? std::string{} : " ||" + orderOnly);
         if (auto flag = shared_soname_flag(lu, plan); !flag.empty())
@@ -3633,21 +3699,21 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         }
         append(std::move(out_line));
 
-        // The finished image: its requirements written and the convention
-        // checked against the images it needs, then published (SPEC 12.4).
-        if (okImageUnit) {
+        // The sealed artifact: every step of the platform's seal run on it,
+        // the shared artifacts it needs named to each, then published (§4.6).
+        if (sealUnit) {
             std::string with, withInputs;
             auto add_needed = [&](const std::filesystem::path& p) {
-                if (p.extension() != ".okso") return;
+                if (!sharedOutputs.contains(p)) return;
                 with += " " + ninja_command_word(p.generic_string());
                 withInputs += " " + escape_ninja_path(p);
             };
             for (auto const& o : lu.objects) add_needed(o);
             for (auto const& o : lu.implicitInputs) add_needed(o);
-            append(std::format("build {} : okimage_finish {}{}\n",
-                               escape_ninja_path(lu.output), escape_ninja_path(okUnchecked),
+            append(std::format("build {} : platform_seal {}{}\n",
+                               escape_ninja_path(lu.output), escape_ninja_path(unsealed),
                                withInputs.empty() ? std::string{} : " |" + withInputs));
-            if (!with.empty()) append("  okimage_with =" + with + "\n");
+            if (!with.empty()) append("  seal_with =" + with + "\n");
             append("\n");
         }
 
@@ -4541,13 +4607,12 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // which names an internal rule to somebody who wrote `kind = "shared"` in a
     // manifest. Defining the rule would be worse: `ld.lld -shared` succeeds and
     // produces an object nothing on that machine can load.
-    // An ok image is the exception: an image another loads (`.okso`) is
-    // placed by the loader (DT_NEEDED) or by `dlopen`, and has its rule.
-    const bool okImageShared = [&] {
-        const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-        return t && t->is_openkal();
-    }();
-    if (!flags.ldDriver.empty() && !okImageShared) {
+    // A platform that links with ld.lld itself and names its shared
+    // artifacts is the exception (an ok image's `.okso`, placed by the loader
+    // through DT_NEEDED or by `dlopen`): it has the rule.
+    const bool platformShared = plan.platform.active
+        && plan.platform.fields.link.driver.value == "lld" && plan.platform.fields.link.shared.set;
+    if (!flags.ldDriver.empty() && !platformShared) {
         for (auto const& lu : plan.linkUnits) {
             if (lu.kind != LinkUnit::SharedLibrary) continue;
             return std::unexpected(BuildError{std::format(

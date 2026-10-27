@@ -40,8 +40,11 @@ export namespace mcpp::manifest::cfg {
 // target-side layer and are answerable only after the graph is resolved (see
 // the note on `kCfgLayerKeys` in mcpp.build.prepare_inputs); `accelerator` is
 // an input, known before resolution.
+// `platform` is answered by the platform selection (SPEC-013 §3), which is
+// made from the triple and the configuration before resolution, so it is read
+// in the same pass as the triple's own keys.
 inline constexpr std::string_view kCfgTripleKeys[] = {
-    "arch", "env", "family", "os",
+    "arch", "env", "family", "os", "platform",
 };
 inline constexpr std::string_view kCfgEarlyLayerKeys[] = {
     "accelerator",
@@ -72,13 +75,16 @@ namespace mcpp::manifest::cfg {
 
 namespace {
 
-constexpr unsigned kArch = 1, kOs = 2, kEnv = 4, kFamily = 8;
+constexpr unsigned kArch = 1, kOs = 2, kEnv = 4, kFamily = 8, kPlatform = 16;
 
 unsigned component_of_key(std::string_view key) {
     if (key == "arch")   return kArch;
     if (key == "os")     return kOs | kFamily;
     if (key == "env")    return kEnv;
     if (key == "family") return kFamily;
+    // A platform names a class of targets: one component, less specific than
+    // an operating system (two) and than a triple.
+    if (key == "platform") return kPlatform;
     return 0;   // a layer key, `accelerator`, or an unknown key
 }
 

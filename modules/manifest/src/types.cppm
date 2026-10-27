@@ -11,6 +11,7 @@ import mcpp.pm.compat;       // Legacy dependency-key compatibility helpers
 import mcpp.pm.index_spec;   // IndexSpec for [indices] section
 import mcpp.manifest.flag_words;
 import mcpp.targetside;
+import mcpp.manifest.platform;  // SPEC-013: [platform], the platform keys of [target.<sel>], [host]
 
 export namespace mcpp::manifest {
 
@@ -2440,6 +2441,17 @@ struct Manifest {
 
     // [target.<triple>] tables — empty if user didn't declare any.
     std::map<std::string, TargetEntry> targetOverrides;
+
+    // PLATFORMS (SPEC-013; design 2026-10-28). `platform` is a platform
+    // package's own `[platform]` section, `platformDeclared` whether it has
+    // one. `platformOverrides` holds the platform part of every
+    // `[target.<selector>]` table, in file order (selection and per-field
+    // overrides; the engine orders matching selectors by specificity), and
+    // `hostPlatform` the `[host]` table: the platform of the host graph.
+    mcpp::manifest::platform::Statement              platform;
+    bool                                             platformDeclared = false;
+    std::vector<mcpp::manifest::platform::Override>  platformOverrides;
+    mcpp::manifest::platform::Override               hostPlatform;
 
     // [pack] — `mcpp pack` config (see docs/10-pack-and-release.md).
     PackConfig                         packConfig;

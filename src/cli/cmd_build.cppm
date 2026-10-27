@@ -9,6 +9,7 @@ module;
 export module mcpp.cli.cmd_build;
 
 import std;
+import mcpp.platform;
 import mcpplibs.cmdline;
 import mcpp.build.prepare;
 import mcpp.build.execute;
@@ -1476,59 +1477,113 @@ export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
     return mcpp::run::run_exec(std::vector<std::string>(command.begin(), command.end()));
 }
 
-// `mcpp okimage-finish --okld <okld> -- <linked> <image> [<needed.okso>…]`
-// (internal: invoked by build.ninja for the target `<arch>-openkal`; design
-// 2026-10-26 part 2, §8.5).
+// `mcpp platform-step capture --out <file> -- <argv…>`
+// `mcpp platform-step seal --steps <file> --digest <hex> -- <linked> <artifact> [<needed>…]`
+// (internal: invoked by build.ninja for a platform's link; SPEC-013 §4, §4.6).
 //
-// AN IMAGE IS PUBLISHED ONLY ONCE IT MEETS THE CONVENTION. The linked file is
-// copied beside the image's name, `okld note` writes its requirements note from
-// its strong imports, `okld check` checks every clause of SPEC 12.2 against it
-// and the images it needs, and only then does the copy take the name. A check
-// that fails leaves no image behind, and the edge runs again next time.
-export int cmd_okimage_finish(const mcpplibs::cmdline::ParsedArgs& parsed,
-                              std::span<const std::string> rest) {
+// CAPTURE saves a program's standard output as a link input (an ok image's
+// notes, from `okld note-source`), written beside its name and renamed, so an
+// interrupted run leaves no half file.
+//
+// SEAL PUBLISHES AN ARTIFACT ONLY ONCE EVERY STEP ACCEPTED IT. The linked file
+// is copied beside the artifact's name; each step runs on the copy, `{}` being
+// the copy and `{needed}` the shared artifacts it needs (an option before it
+// repeated for each); only then does the copy take the name. A step that fails
+// leaves the previous artifact in place and no copy behind, names the step
+// and prints what it said; the edge runs again next time.
+export int cmd_platform_step(const mcpplibs::cmdline::ParsedArgs& parsed,
+                             std::span<const std::string> rest) {
     namespace fs = std::filesystem;
-    const std::string okld = parsed.option_or_empty("okld").value();
-    if (okld.empty() || rest.size() < 2) {
-        std::println(stderr, "error: okimage-finish needs --okld <okld> -- <linked> <image> [needed…]");
-        return 2;
-    }
-    const fs::path linked = rest[0], image = rest[1];
-    auto tmp = image; tmp += ".tmp";
-    std::error_code ec;
-    fs::copy_file(linked, tmp, fs::copy_options::overwrite_existing, ec);
-    if (ec) {
-        std::println(stderr, "error: cannot copy {} to {}: {}", linked.string(), tmp.string(), ec.message());
-        return 1;
-    }
-    auto run = [&](std::vector<std::string> argv) {
+    const std::string mode = parsed.positional_count() > 0 ? parsed.positional(0) : std::string();
+    auto run = [&](const std::vector<std::string>& argv, std::string* out) {
         int spawnError = 0;
         auto r = mcpp::run::capture_exec(argv, {}, {}, &spawnError);
         if (spawnError != 0) {
-            std::println(stderr, "error: cannot start {}: {}", okld,
+            std::println(stderr, "error: cannot start {}: {}", argv.front(),
                          std::generic_category().message(spawnError));
             return false;
         }
         if (r.exit_code != 0) {
+            std::string shown;
+            for (auto const& a : argv) shown += (shown.empty() ? "" : " ") + a;
+            std::println(stderr, "error: `{}` exited {}", shown, r.exit_code);
             std::print(stderr, "{}", r.output);
             return false;
         }
+        if (out) *out = std::move(r.output);
         return true;
     };
-    std::vector<std::string> check{ okld, "check", tmp.string() };
-    for (std::size_t i = 2; i < rest.size(); ++i) { check.push_back("--with"); check.push_back(rest[i]); }
-    if (!run({ okld, "note", tmp.string() }) || !run(check)) {
-        fs::remove(tmp, ec);
-        std::println(stderr, "error: {} does not meet the ok-image convention (openkal SPEC 12)",
-                     image.filename().string());
-        return 1;
+    std::error_code ec;
+    if (mode == "capture") {
+        const std::string out = parsed.option_or_empty("out").value();
+        if (out.empty() || rest.empty()) {
+            std::println(stderr, "error: platform-step capture needs --out <file> -- <argv…>");
+            return 2;
+        }
+        std::string text;
+        if (!run(std::vector<std::string>(rest.begin(), rest.end()), &text)) return 1;
+        fs::create_directories(fs::path(out).parent_path(), ec);
+        auto tmp = fs::path(out);
+        tmp += ".tmp";
+        {
+            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+            f << text;
+            if (!f) { std::println(stderr, "error: cannot write {}", tmp.string()); return 1; }
+        }
+        fs::rename(tmp, out, ec);
+        if (ec) { std::println(stderr, "error: cannot publish {}: {}", out, ec.message()); return 1; }
+        return 0;
     }
-    fs::rename(tmp, image, ec);
-    if (ec) {
-        std::println(stderr, "error: cannot publish {}: {}", image.string(), ec.message());
-        return 1;
+    if (mode == "seal") {
+        const std::string stepsFile = parsed.option_or_empty("steps").value();
+        if (stepsFile.empty() || rest.size() < 2) {
+            std::println(stderr, "error: platform-step seal needs --steps <file> -- <linked> <artifact> [needed…]");
+            return 2;
+        }
+        std::vector<std::vector<std::string>> steps;
+        {
+            std::ifstream in(stepsFile, std::ios::binary);
+            std::string line;
+            while (std::getline(in, line)) {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (line.empty()) continue;
+                std::vector<std::string> step;
+                std::size_t from = 0;
+                for (;;) {
+                    auto tab = line.find('\t', from);
+                    step.push_back(line.substr(from, tab == std::string::npos ? std::string::npos : tab - from));
+                    if (tab == std::string::npos) break;
+                    from = tab + 1;
+                }
+                steps.push_back(std::move(step));
+            }
+        }
+        const fs::path linked = rest[0], artifact = rest[1];
+        const std::vector<std::string> needed(rest.begin() + 2, rest.end());
+        auto tmp = artifact;
+        tmp += ".tmp";
+        fs::copy_file(linked, tmp, fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            std::println(stderr, "error: cannot copy {} to {}: {}", linked.string(), tmp.string(), ec.message());
+            return 1;
+        }
+        for (auto const& step : steps) {
+            if (!run(mcpp::platform::expand_step(step, tmp.string(), needed), nullptr)) {
+                fs::remove(tmp, ec);
+                std::println(stderr, "error: {} was not sealed: a step of its platform's "
+                             "[platform.link] seal refused it", artifact.filename().string());
+                return 1;
+            }
+        }
+        fs::rename(tmp, artifact, ec);
+        if (ec) {
+            std::println(stderr, "error: cannot publish {}: {}", artifact.string(), ec.message());
+            return 1;
+        }
+        return 0;
     }
-    return 0;
+    std::println(stderr, "error: platform-step takes `capture` or `seal`");
+    return 2;
 }
 
 export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {

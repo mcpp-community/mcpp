@@ -382,6 +382,19 @@ int run(int argc, char** argv) {
             if (i + 1 < argc) mcpp::invocation::set("MCPP_SYSROOT", argv[++i]);
         }
         else if (a.starts_with("--sysroot=")) mcpp::invocation::set("MCPP_SYSROOT", std::string(a.substr(10)));
+        // --platform and --host-platform are `MCPP_PLATFORM` and
+        // `MCPP_HOST_PLATFORM` for this invocation (SPEC-013 §3, §6.1), for
+        // the reason --sysroot is: the selection is made deep in prepare, and
+        // the fast paths read the variables to know the configuration moved.
+        else if (a == "--platform") {
+            if (i + 1 < argc) mcpp::invocation::set("MCPP_PLATFORM", argv[++i]);
+        }
+        else if (a.starts_with("--platform=")) mcpp::invocation::set("MCPP_PLATFORM", std::string(a.substr(11)));
+        else if (a == "--host-platform") {
+            if (i + 1 < argc) mcpp::invocation::set("MCPP_HOST_PLATFORM", argv[++i]);
+        }
+        else if (a.starts_with("--host-platform="))
+            mcpp::invocation::set("MCPP_HOST_PLATFORM", std::string(a.substr(16)));
         else if (a.starts_with("-j") && a.size() > 2)
             mcpp::invocation::set("MCPP_JOBS", std::string(a.substr(2)));
         // --play-game rides the same channel: its value is optional
@@ -583,6 +596,10 @@ int run(int argc, char** argv) {
                 .help("Build with this toolchain for one build, e.g. llvm@22.1.8"))
             .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
                 .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
+            .option(cl::Option("platform").takes_value().value_name("SPEC")
+                .help("The target's platform for this invocation (= MCPP_PLATFORM): <name>@<version>, path:<dir>, none"))
+            .option(cl::Option("host-platform").takes_value().value_name("SPEC")
+                .help("The host graph's platform for this invocation (= MCPP_HOST_PLATFORM)"))
             .option(cl::Option("no-cache")
                 .help("Deprecated alias for --cache=off (also clears the build dir)"))
             .option(cl::Option("target").takes_value().help(
@@ -655,6 +672,10 @@ int run(int argc, char** argv) {
                 .help("Build with this toolchain for one invocation, e.g. llvm@22.1.8"))
             .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
                 .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
+            .option(cl::Option("platform").takes_value().value_name("SPEC")
+                .help("The target's platform for this invocation (= MCPP_PLATFORM): <name>@<version>, path:<dir>, none"))
+            .option(cl::Option("host-platform").takes_value().value_name("SPEC")
+                .help("The host graph's platform for this invocation (= MCPP_HOST_PLATFORM)"))
             .option(cl::Option("cache").takes_value().value_name("MODE")
                 .help("Global dependency cache: global (default) | local | off"))
             .option(cl::Option("no-cache")
@@ -755,6 +776,10 @@ int run(int argc, char** argv) {
                 .help("Build the tests with this toolchain for one invocation, e.g. llvm@22.1.8"))
             .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
                 .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
+            .option(cl::Option("platform").takes_value().value_name("SPEC")
+                .help("The target's platform for this invocation (= MCPP_PLATFORM): <name>@<version>, path:<dir>, none"))
+            .option(cl::Option("host-platform").takes_value().value_name("SPEC")
+                .help("The host graph's platform for this invocation (= MCPP_HOST_PLATFORM)"))
             .option(cl::Option("cache").takes_value().value_name("MODE")
                 .help("Global dependency cache: global (default) | local | off"))
             .option(cl::Option("no-cache")
@@ -790,6 +815,10 @@ int run(int argc, char** argv) {
                 .help("Ask about this toolchain, e.g. llvm@22.1.8"))
             .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
                 .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
+            .option(cl::Option("platform").takes_value().value_name("SPEC")
+                .help("The target's platform for this invocation (= MCPP_PLATFORM): <name>@<version>, path:<dir>, none"))
+            .option(cl::Option("host-platform").takes_value().value_name("SPEC")
+                .help("The host graph's platform for this invocation (= MCPP_HOST_PLATFORM)"))
             .option(cl::Option("features").takes_value().value_name("LIST")
                 .help("Resolve with these features, as `build --features` does (root features and <dependency>/<feature>)"))
             .option(cl::Option("format").takes_value().value_name("json")
@@ -874,6 +903,10 @@ int run(int argc, char** argv) {
                 .help("Build with this toolchain for one invocation, e.g. llvm@22.1.8"))
             .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
                 .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
+            .option(cl::Option("platform").takes_value().value_name("SPEC")
+                .help("The target's platform for this invocation (= MCPP_PLATFORM): <name>@<version>, path:<dir>, none"))
+            .option(cl::Option("host-platform").takes_value().value_name("SPEC")
+                .help("The host graph's platform for this invocation (= MCPP_HOST_PLATFORM)"))
             .option(cl::Option("features").takes_value().value_name("LIST")
                 .help("Activate root-package features, and a dependency's as <dependency>/<feature>, for every build pass of the pack (comma-separated)"))
             // `--format` names the PACKAGE format here, so machine output is
@@ -932,6 +965,10 @@ int run(int argc, char** argv) {
                     .help("Describe the build with this toolchain, e.g. llvm@22.1.8"))
                 .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
                     .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
+                .option(cl::Option("platform").takes_value().value_name("SPEC")
+                    .help("The target's platform for this invocation (= MCPP_PLATFORM): <name>@<version>, path:<dir>, none"))
+                .option(cl::Option("host-platform").takes_value().value_name("SPEC")
+                    .help("The host graph's platform for this invocation (= MCPP_HOST_PLATFORM)"))
                 .option(cl::Option("accel").takes_value().value_name("SPEC")
                     .help("Device backends and architectures (same axis as `mcpp build --accel`)"))
                 .option(cl::Option("no-accel")
@@ -1212,11 +1249,14 @@ int run(int argc, char** argv) {
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_link_output(p, std::span<const std::string>(passthrough));
             })))
-        .subcommand(cl::App("okimage-finish")
-            .description("(internal: invoked by ninja for <arch>-openkal) Write an ok image's requirements note and check it with okld, then publish it")
-            .option(cl::Option("okld").takes_value().value_name("PATH").help("the okld program"))
+        .subcommand(cl::App("platform-step")
+            .description("(internal: invoked by ninja for a platform's link) `capture --out F -- argv…` saves a program's output; `seal --steps F -- <linked> <artifact> [needed…]` runs the platform's seal steps, then publishes")
+            .arg(cl::Arg("mode").help("capture | seal"))
+            .option(cl::Option("out").takes_value().value_name("PATH").help("capture: the file the output is saved as"))
+            .option(cl::Option("steps").takes_value().value_name("PATH").help("seal: the steps, one per line, words separated by a tab"))
+            .option(cl::Option("digest").takes_value().value_name("HEX").help("seal: the steps' digest (part of the command, so a changed step reseals)"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
-                return cmd_okimage_finish(p, std::span<const std::string>(passthrough));
+                return cmd_platform_step(p, std::span<const std::string>(passthrough));
             })))
         .subcommand(cl::App("place-dlls")
             .description("(internal: invoked by ninja) Place beside a Windows program the DLLs it imports from its runtime search directories")
@@ -1687,7 +1727,7 @@ int run(int argc, char** argv) {
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
                 "version", "dyndep", "why", "resolve", "stage", "bmi-equal", "coff-def",
-                "place-dlls", "link-output", "okimage-finish",
+                "place-dlls", "link-output", "platform-step",
                 "bmi-compile", "bmi-supervise", "bmi-await",
             });
             bool ok = false;

@@ -223,6 +223,9 @@ std::expected<void, std::string> phase5_toolchain_after_graph(PrepareState& stat
         // chosen for a target it cannot produce. Same shape as the four
         // defects 2026.8.25.1 fixed: a predicate spanning two layers deciding
         // something that does not depend on either of them.
+        // The platform's toolchain, when one is selected, stands where the
+        // row's pin stands (SPEC-013 §4.5).
+        step5_platform_toolchain(state);
         if (!state.targetPinCandidate.empty()
             && (!graphSuppliesSystem || state.targetPinIsCapability)) {
             if (state.tcOrigin == TcOrigin::GlobalDefault && state.tcSpec.has_value()

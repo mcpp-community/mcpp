@@ -84,6 +84,8 @@ inline constexpr KeyClass kKeyRegistry[] = {
     {"target.<sel>", "cxx_runtime",      KeyScope::Configuration, KeyMerge::Scalar,  true,  true },
     {"target.<sel>", "linkage",          KeyScope::Configuration, KeyMerge::Scalar,  true,  true },
     {"target.<sel>", "min_api_level",    KeyScope::Configuration, KeyMerge::Scalar,  true,  true },
+    {"target.<sel>", "platform",         KeyScope::Configuration, KeyMerge::Scalar,  true,  true },
+    {"target.<sel>", "carrier",          KeyScope::Configuration, KeyMerge::Scalar,  true,  true },
     {"target.<sel>", "run_under",        KeyScope::Configuration, KeyMerge::Scalar,  true,  true },
     {"target.<sel>", "runner",           KeyScope::Configuration, KeyMerge::Scalar,  true,  true },
     {"target.<sel>", "sysroot",          KeyScope::Configuration, KeyMerge::Scalar,  true,  true },
@@ -94,6 +96,9 @@ inline constexpr KeyClass kKeyRegistry[] = {
     {"target.<sel>.xlings",  "",         KeyScope::Configuration, KeyMerge::Table,   true,  true },
     {"target.<sel>.targets", "",         KeyScope::Package,       KeyMerge::Table,   false, true },
     {"target.<sel>.dependencies", "",    KeyScope::Package,       KeyMerge::Table,   false, true },
+    {"target.<sel>.layers",  "",         KeyScope::Configuration, KeyMerge::Table,   true,  true },
+    {"target.<sel>.tools",   "",         KeyScope::Configuration, KeyMerge::Table,   true,  true },
+    {"target.<sel>.link",    "",         KeyScope::Configuration, KeyMerge::Table,   true,  true },
     // whole tables
     {"toolchain",            "",         KeyScope::Configuration, KeyMerge::Table,   true,  false},
     {"indices",              "",         KeyScope::Configuration, KeyMerge::Table,   true,  false},
@@ -109,6 +114,8 @@ inline constexpr KeyClass kKeyRegistry[] = {
     {"test",                 "",         KeyScope::Package,       KeyMerge::Table,   false, false},
     {"hooks",                "",         KeyScope::Package,       KeyMerge::Table,   false, false},
     {"runtime",              "",         KeyScope::Package,       KeyMerge::Table,   false, false},
+    {"platform",             "",         KeyScope::Package,       KeyMerge::Table,   false, false},
+    {"host",                 "",         KeyScope::Configuration, KeyMerge::Table,   false, false},
 };
 
 // The keys of `table`, in registry order.

@@ -398,11 +398,11 @@ step11_package_std_module_source(PrepareState& state) {
     // Both are read only from a package that ALSO provides the capability
     // below. A package that named a std module without supplying the
     // library would be describing something it does not have.
-    // AN OK IMAGE'S STANDARD LIBRARY IS THE GRAPH'S OR NONE. The payload's
-    // libc++ was configured for the payload's own operating system; inside an
-    // image it would be a second answer to a question the image's C++
-    // run-time package answers.
-    if (auto ft = mcpp::toolchain::triple::parse(state.tc->targetTriple); ft && ft->is_openkal())
+    // THE STANDARD LIBRARY OF A TARGET WHOSE LOADER SUPPLIES THE SYSTEM (an
+    // ok image) IS THE GRAPH'S OR NONE. The payload's libc++ was configured
+    // for the payload's own operating system; inside such a program it would
+    // be a second answer to a question its C++ run-time package answers.
+    if (auto ft = mcpp::toolchain::triple::parse(state.tc->targetTriple); ft && ft->loader_supplies_os())
         state.tc->clear_std_modules();
     for (auto& pkg : state.packages) {
         if (pkg.manifest.stdModule.empty()) continue;
@@ -719,19 +719,34 @@ step11_std_module_availability_gate(PrepareState& state, bool needsStdModule) {
                 state.tc->targetTriple));
         }
         if (auto ft = mcpp::toolchain::triple::parse(state.tc->targetTriple);
-            ft && ft->is_openkal())
+            ft && ft->loader_supplies_os())
         {
+            // Which package the platform names for the layer, and where that
+            // was said, or that no platform names one (SPEC-013 §4.3).
+            std::string why = "No platform names one for it";
+            if (state.platform.active) {
+                auto it = state.platform.fields.layers.find("c++-abi");
+                why = it == state.platform.fields.layers.end()
+                    ? std::format("The platform {} names none", state.platform.display())
+                    : it->second.ref.off
+                    ? std::format("The platform's c++-abi is switched off ({})",
+                                  mcpp::platform::origin_text(it->second.origin))
+                    : std::format("The platform {} names {} ({})", state.platform.display(),
+                                  mcpp::manifest::platform::display(it->second.ref),
+                                  mcpp::platform::origin_text(it->second.origin));
+            }
             return std::unexpected(std::format(
-                "`import std;` on '{}' needs a C++ run-time inside the image, and "
+                "`import std;` on '{}' needs a C++ run-time inside the program, and "
                 "the graph supplies none.\n"
-                "       An ok image holds its own C library and C++ run-time, "
-                "above `kal_*`. Depend on\n"
-                "       the packages that provide them for this target:\n"
+                "       {}. Name the package that provides `mcpp:c++-abi` for this "
+                "target:\n"
                 "\n"
-                "           [target.'cfg(os = \"openkal\")'.dependencies]\n"
-                "           openkal-musl         = \"0.22.0\"   # mcpp:c-abi=musl\n"
-                "           openkal-llvm-runtime = \"0.16.0\"   # mcpp:c++-abi=libc++, the std module",
-                state.tc->targetTriple));
+                "           [target.'cfg(platform = \"{}\")'.layers]\n"
+                "           c++-abi = \"<package>@<version>\"",
+                state.tc->targetTriple, why,
+                state.platformPackageShortName.empty()
+                    ? std::string("<platform>")
+                    : mcpp::manifest::platform::platform_name(state.platformPackageShortName)));
         }
         return std::unexpected(std::format(
             "source imports std but toolchain '{}' provides no std module source",

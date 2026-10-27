@@ -5052,8 +5052,8 @@ runnerX = ["qemu-aarch64-static"]
     // tests/unit/test_target_scalar_keys.cpp for the test that keeps this
     // string (and the array beside it) from drifting from the parser again.
     EXPECT_NE(m->schemaWarnings[0].find(
-                  "Supported keys: cxx_runtime, linkage, min_api_level, run_under, runner, "
-                  "sysroot, toolchain"),
+                  "Supported keys: cxx_runtime, linkage, min_api_level, platform, run_under, "
+                  "runner, sysroot, toolchain"),
               std::string::npos) << m->schemaWarnings[0];
 }
 

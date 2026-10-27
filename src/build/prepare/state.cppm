@@ -22,6 +22,7 @@ import mcpp.toolchain.platform;
 import mcpp.run;
 import mcpp.libs.json;
 import mcpp.manifest;
+import mcpp.platform;
 import mcpp.source_kind;
 import mcpp.modgraph.glob;
 import mcpp.modgraph.graph;
@@ -784,6 +785,30 @@ struct PrepareState {
     // (`tools = [...]`), by program name. A runner's program and an ok image's
     // `okld` are looked up here first.
     std::map<std::string, std::filesystem::path> rootTools;
+
+    // ── PLATFORMS (SPEC-013; design 2026-10-28) ────────────────────────────
+    // The target graph's platform: selected in P1, loaded, merged and applied
+    // to the graph in P4b, its toolchain read in P5, finished in P13
+    // (prepare/platform.cpp).
+    mcpp::platform::Resolved platform;
+    // The platform package's own `[platform]` (or its hosted view), before
+    // any override.
+    mcpp::manifest::platform::Statement platformData;
+    // The package name `cfg(platform = ...)` is answered from, known in P1.
+    std::string platformPackageShortName;
+    // What the platform added to the graph: qualified package names, and
+    // `layer:<key>` / `tool:<name>` markers. A package listed here is locked
+    // with `origin = "platform"` and reported as the platform's.
+    std::set<std::string> platformInjected;
+    // The platform's toolchain is the pin of this build (P5), for the line
+    // that announces the compiler.
+    bool platformToolchainPin = false;
+    // `platformData` was read in P1 (a directory, or a second pass), so the
+    // target base reads the platform's `sysroot` (base.cpp, tier four).
+    bool platformEarly = false;
+    // What build programs stated with the platform's directives (Tier::Program):
+    // a dependency's, the root's, and the platform's plugin.
+    mcpp::manifest::platform::Statement programPlatform;
     std::function<void(mcpp::modgraph::PackageRoot&, const mcpp::manifest::Manifest&,
                         const mcpp::build::directives::Mark&)>
         foldDirectiveTailIntoPrivateBuild;
@@ -1055,6 +1080,17 @@ std::expected<void, std::string>
 step2_use_local_toolchain(PrepareState& state, const mcpp::toolchain::ToolchainSpec& spec);
 std::expected<void, std::string> step2_apply_local_toolchain(PrepareState& state);
 std::expected<void, std::string> step6_toolchain_phase(PrepareState& state);
+// The platform through the phases (prepare/platform.cpp).
+mcpp::build::cfgpred::Ctx platform_cfg_context(const PrepareState& state);
+std::expected<void, std::string> step1_select_platform(PrepareState& state);
+void step4b_seed_platform(PrepareState& state);
+std::expected<bool, std::string> step4b_apply_platform(PrepareState& state);
+std::expected<void, std::string> step4b_check_platform_versions(PrepareState& state);
+void step5_platform_toolchain(PrepareState& state);
+void step13_platform_statement(PrepareState& state);
+std::expected<void, std::string> step13_finish_platform(PrepareState& state, BuildContext& ctx);
+// The platform root a first pass asks the second to read in P1, once.
+std::optional<std::filesystem::path> take_platform_restart();
 // The statement and bootstrap spec of a toolchain phase that asked prepare to
 // start again, taken once.
 std::optional<std::pair<std::vector<std::string>, std::string>> take_toolchain_restart();
