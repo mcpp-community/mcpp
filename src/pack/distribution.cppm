@@ -122,6 +122,25 @@ std::expected<std::string, std::string> tree_payload(const std::filesystem::path
 std::string launcher_manifest(std::string_view name, std::string_view version);
 std::string_view launcher_main();
 
+// ─── the distribution description (SPEC-014 §8) ───────────────────────────
+
+// A package written by `mcpp pack`, as an index entry reads it.
+struct Asset {
+    std::filesystem::path file;
+    Package               pkg;
+    std::string           sha256;
+};
+
+// The xim-pkgindex entry (spec 2) of `assets`, fetched from `<urlPrefix>/<file
+// name>`: a universal package is one asset every system installs, and its
+// runner is a dependency unless the package carries its loaders; packages of
+// one system and architecture each are that system's entry, the architecture
+// in the file name a `${arch}` of one URL. The install moves the archive's
+// one top-level directory into place; the program is registered from its
+// launcher (`bin/<name>`, `bin/<name>.cmd` on Windows) or the program itself.
+std::expected<std::string, std::string> xpkg_descriptor(const std::vector<Asset>& assets,
+                                                        std::string_view urlPrefix);
+
 // ─── --merge (SPEC-014 §4.6) ──────────────────────────────────────────────
 
 struct MergeRequest {
@@ -855,6 +874,145 @@ int main(int argc, char** argv) {
     return fail(std::format("cannot start {}", program.string()));
 }
 )MCPP";
+}
+
+// ─── the distribution description ─────────────────────────────────────────
+
+namespace {
+
+// The xlings system key of a triple's system.
+std::string xlings_system(std::string_view triple) {
+    if (triple.find("-windows") != std::string_view::npos) return "windows";
+    if (triple.find("-macos") != std::string_view::npos || triple.find("-darwin") != std::string_view::npos
+        || triple.find("-apple") != std::string_view::npos)
+        return "macosx";
+    return "linux";
+}
+
+std::string lua_list(const std::vector<std::string>& v) {
+    std::string out = "{";
+    for (std::size_t i = 0; i < v.size(); ++i) out += std::format("{}\"{}\"", i ? ", " : "", v[i]);
+    return out + "}";
+}
+
+}  // namespace
+
+std::expected<std::string, std::string> xpkg_descriptor(const std::vector<Asset>& assets,
+                                                        std::string_view urlPrefix) {
+    if (assets.empty()) return std::unexpected(std::string("no package to describe"));
+    auto const& first = assets.front().pkg;
+    std::string prefix(urlPrefix);
+    while (!prefix.empty() && prefix.back() == '/') prefix.pop_back();
+    if (prefix.empty())
+        return std::unexpected(std::string("--url names where the packages are published"));
+    for (auto const& a : assets)
+        if (a.pkg.name != first.name || a.pkg.version != first.version)
+            return std::unexpected(std::format("{} is {} {}, and {} is {} {}: one entry describes one "
+                                               "package", assets.front().file.filename().string(),
+                                               first.name, first.version, a.file.filename().string(),
+                                               a.pkg.name, a.pkg.version));
+    const bool universal = !first.runner.empty();
+    std::vector<std::string> archs;
+    // system -> block text
+    std::map<std::string, std::string> blocks;
+    if (universal) {
+        if (assets.size() != 1)
+            return std::unexpected(std::string("a universal package is one asset; merge its legs first "
+                                               "(mcpp pack --merge)"));
+        auto const& a = assets.front();
+        for (auto const& [arch, _] : first.entry) archs.push_back(arch);
+        std::string deps;
+        if (first.mode != "self-contained")
+            deps = std::format("            deps = {{ \"{}\" }},\n",
+                               std::filesystem::path(first.runner.front()).stem().string());
+        for (auto system : { "linux", "macosx", "windows" })
+            blocks[system] = std::format(
+                "{0}            [\"latest\"] = {{ ref = \"{1}\" }},\n"
+                "            [\"{1}\"] = {{\n                url = \"{2}/{3}\",\n                sha256 = \"{4}\",\n            }},\n",
+                deps, first.version, prefix, a.file.filename().string(), a.sha256);
+    } else {
+        // system -> (arch -> asset)
+        std::map<std::string, std::map<std::string, const Asset*>> bySystem;
+        for (auto const& a : assets) {
+            if (a.pkg.legs.size() != 1)
+                return std::unexpected(std::format("{} holds {} legs; an entry per system describes "
+                                                   "packages of one leg", a.file.filename().string(),
+                                                   a.pkg.legs.size()));
+            const auto& triple = a.pkg.legs.front();
+            const auto arch = triple.substr(0, triple.find('-'));
+            bySystem[xlings_system(triple)][arch] = &a;
+            if (std::ranges::find(archs, arch) == archs.end()) archs.push_back(arch);
+        }
+        for (auto const& [system, byArch] : bySystem) {
+            // One URL with `${arch}`: the file names may differ by the
+            // architecture alone.
+            std::string tmpl;
+            std::string shas;
+            for (auto const& [arch, a] : byArch) {
+                auto name = a->file.filename().string();
+                if (auto at = name.find(arch); at != std::string::npos) name.replace(at, arch.size(), "${arch}");
+                if (!tmpl.empty() && tmpl != name)
+                    return std::unexpected(std::format("the {} packages' names differ beyond the "
+                                                       "architecture ({} and {})", system, tmpl, name));
+                tmpl = name;
+                shas += std::format("                    {} = \"{}\",\n", arch, a->sha256);
+            }
+            blocks[system] = std::format(
+                "            [\"latest\"] = {{ ref = \"{0}\" }},\n"
+                "            [\"{0}\"] = {{\n                url = \"{1}/{2}\",\n                sha256 = {{\n{3}                }},\n            }},\n",
+                first.version, prefix, tmpl, shas);
+        }
+    }
+    std::ranges::sort(archs);
+    std::string xpm;
+    for (auto const& [system, text] : blocks) xpm += std::format("        {} = {{\n{}        }},\n", system, text);
+
+    // Where the program a person runs lies in the installed tree.
+    std::string bindir = "\"bin\"", alias;
+    if (universal) {
+        alias = std::format("if os.host() == \"windows\" then opts.alias = \"{}.cmd\" end\n    ", first.name);
+    } else {
+        const auto program = std::filesystem::path(first.program);
+        bindir = program.has_parent_path() ? std::format("\"{}\"", program.parent_path().generic_string())
+                                           : std::string("\".\"");
+    }
+    const auto wrapper = std::format("{}-{}-", first.name, first.version);
+    return std::format(
+        "-- Generated by `mcpp emit xpkg --package` from the packages' mcpp-package.json\n"
+        "-- (SPEC-014 §8).\n"
+        "package = {{\n"
+        "    spec = \"2\",\n"
+        "    name = \"{0}\",\n"
+        "    description = \"{0} {1}{2}\",\n"
+        "    type = \"package\",\n"
+        "    archs = {3},\n"
+        "    programs = {{\"{0}\"}},\n"
+        "    xvm_enable = true,\n"
+        "    xpm = {{\n{4}    }},\n"
+        "}}\n\n"
+        "import(\"xim.libxpkg.pkginfo\")\n"
+        "import(\"xim.libxpkg.xvm\")\n\n"
+        "function install()\n"
+        "    -- The archive's one top-level directory is the package.\n"
+        "    os.tryrm(pkginfo.install_dir())\n"
+        "    for _, d in ipairs(os.dirs(\"{5}*\")) do\n"
+        "        os.mv(d, pkginfo.install_dir())\n"
+        "        return true\n"
+        "    end\n"
+        "    return false\n"
+        "end\n\n"
+        "function config()\n"
+        "    local opts = {{ bindir = path.join(pkginfo.install_dir(), {6}) }}\n"
+        "    {7}xvm.add(\"{0}\", opts)\n"
+        "    return true\n"
+        "end\n\n"
+        "function uninstall()\n"
+        "    xvm.remove(\"{0}\")\n"
+        "    return true\n"
+        "end\n",
+        first.name, first.version,
+        universal ? std::format(", one package for every system ({})", first.platform) : std::string(),
+        lua_list(archs), xpm, wrapper, bindir, alias);
 }
 
 // ─── --merge ──────────────────────────────────────────────────────────────

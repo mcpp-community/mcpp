@@ -218,12 +218,21 @@ if [ "$VARIANT" = snapshot ]; then
     || fail "toolchain list does not offer the newer packaging"
 fi
 if [ "$VARIANT" = modules ]; then
-  # A BMI of the previous spelling is not read: the dependency is rebuilt
-  # once (its cache key carries the spelling), then served from the cache.
+  # A BMI of another spelling is not read: the dependency is rebuilt once (its
+  # cache key carries the spelling), then served from the cache. The spelling
+  # moved in 2026.10.26.2 (the module map's `$root`); a previous release from
+  # then on spells as this one, and its entry is served at once.
+  old_version=$("$OLD" --version | grep -Eo '[0-9]{4}\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+  same_spelling=$(printf '%s\n2026.10.26.2\n' "$old_version" | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | head -1)
   modules_project m-new1
   run new-modules1 "$W/m-new1" "$NEW" build -v || fail "the module project does not build over the previous release's cache"
-  grep -q "STAGE gcm.cache/mcpplibs.openkal/" "$W/new-modules1.log" \
-    && fail "a dependency BMI of the previous spelling was taken from the cache"
+  if [ "$same_spelling" = 2026.10.26.2 ]; then
+    grep -q "STAGE gcm.cache/mcpplibs.openkal/" "$W/new-modules1.log" \
+      || fail "a dependency BMI of the same spelling ($old_version) was not served from the cache"
+  else
+    grep -q "STAGE gcm.cache/mcpplibs.openkal/" "$W/new-modules1.log" \
+      && fail "a dependency BMI of the previous spelling ($old_version) was taken from the cache"
+  fi
   modules_project m-new2
   run new-modules2 "$W/m-new2" "$NEW" build -v || fail "the second module project failed"
   grep -q "STAGE gcm.cache/mcpplibs.openkal/" "$W/new-modules2.log" \

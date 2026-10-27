@@ -978,7 +978,12 @@ int run(int argc, char** argv) {
                 .option(cl::Option("namespace").takes_value().value_name("NS")
                     .help("Package namespace for the emitted descriptor "
                           "(overrides [package] namespace). Emits both "
-                          "`namespace` and the fully-qualified `name`")))
+                          "`namespace` and the fully-qualified `name`"))
+                .option(cl::Option("package").takes_value().multiple().value_name("ARCHIVE")
+                    .help("Describe packages `mcpp pack` wrote (repeatable): an xim-pkgindex entry "
+                          "of the program, from their mcpp-package.json"))
+                .option(cl::Option("url").takes_value().value_name("PREFIX")
+                    .help("With --package: where the packages are published (<PREFIX>/<file>)")))
             // `sbom` belongs HERE rather than at the top level: `emit`
             // already means "generate a document describing this project" and
             // already carries `-o`. A separate `mcpp sbom` would be a second

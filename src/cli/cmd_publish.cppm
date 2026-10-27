@@ -38,6 +38,34 @@ namespace mcpp::cli {
 // `mcpp emit xpkg ...` — only one subcommand defined, so the action sits
 // directly on the `emit xpkg` nested subcommand and receives its ParsedArgs.
 export int cmd_emit_xpkg(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    // `--package`: the distribution description of packages `mcpp pack` wrote
+    // (SPEC-014 §8), read from their mcpp-package.json.
+    if (parsed.option("package")) {
+        namespace d = mcpp::pack::distribution;
+        std::vector<d::Asset> assets;
+        std::error_code ec;
+        const auto work = std::filesystem::temp_directory_path(ec) / std::format(
+            "mcpp-emit-{}", std::chrono::steady_clock::now().time_since_epoch().count());
+        for (auto const& p : parsed.option("package")->get().values) {
+            const std::filesystem::path file{p};
+            auto root = d::unpack(file, work / std::to_string(assets.size()));
+            if (!root) { mcpp::ui::error(root.error()); std::filesystem::remove_all(work, ec); return 2; }
+            auto pkg = d::read(*root);
+            if (!pkg) { mcpp::ui::error(pkg.error()); std::filesystem::remove_all(work, ec); return 2; }
+            assets.push_back({ file, std::move(*pkg), d::sha256_file(file) });
+        }
+        std::filesystem::remove_all(work, ec);
+        auto lua = d::xpkg_descriptor(assets, parsed.value("url").value_or(""));
+        if (!lua) { mcpp::ui::error(lua.error()); return 2; }
+        if (auto out = parsed.value("output")) {
+            std::ofstream os(*out, std::ios::binary | std::ios::trunc);
+            os << *lua;
+            if (!os) { mcpp::ui::error(std::format("cannot write '{}'", *out)); return 1; }
+            return 0;
+        }
+        std::print("{}", *lua);
+        return 0;
+    }
     return mcpp::publish::emit_xpkg_to(
         parsed.option_or_empty("version").value(),
         std::filesystem::path{parsed.option_or_empty("output").value()},
