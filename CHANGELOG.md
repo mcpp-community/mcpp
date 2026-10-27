@@ -17,6 +17,15 @@
   install is asked once more. A dependency on a version published after the
   index was last synced (`openkal-llvm-runtime = "0.16.3"`) was refused until
   `mcpp index update`. e2e 949.
+- **A kernel-abi package over the system's C library is placed into the shared
+  image that reaches it.** Every package providing an `mcpp:` layer was a
+  boundary of static placement and went into programs only, which is right for
+  a C library or a C++ runtime. On a hosted target openkal-linux (-macos,
+  -windows) sits on the system's C library and is an ordinary static library
+  under `mcpplibs.os`; a shared image reaching it was left with `kal_*`
+  undefined, and CPython could not load an extension built on `mcpplibs.os`
+  (`undefined symbol: kal_process_close`). A `kernel-abi` provider is now a
+  boundary only when a C library of the graph sits on it. e2e 950.
 - **A package whose descriptor was read is the only one asked for.** A refused
   install of a namespace-omitted dependency was tried again as
   `compat:<name>` and `compat.<name>`, shown as downloading, and reported with

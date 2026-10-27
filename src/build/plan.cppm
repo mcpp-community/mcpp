@@ -2536,10 +2536,28 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // runtime: `provides = ["mcpp:..."]`) is beneath every image, and
         // where its objects go is the runtime contract's decision, which
         // #641 made (`cxx_runtime = { shared = "self-contained" }`).
+        //
+        // A KERNEL-ABI PACKAGE UNDER NO C LIBRARY OF THE GRAPH IS NOT A LAYER.
+        // When the C library is the platform's (glibc, libSystem, the Windows
+        // CRT), openkal-linux (-macos, -windows) is a static library over it
+        // that a package (`mcpplibs.os`) depends on like any other. Treated as
+        // a layer, it went into the programs only, and a shared image that
+        // reached it was left with `kal_*` undefined: ELF linked it, and a
+        // host that had not linked the package -- CPython importing an
+        // extension module -- refused to load it (`undefined symbol:
+        // kal_process_close`); Mach-O and PE refuse the link. It is beneath
+        // every image when a C library of the graph (`mcpp:c-abi`, openkal-
+        // musl) sits on it, and placed like any static package otherwise.
+        const bool graphHasCLibrary = std::ranges::any_of(packages, [](const auto& pkg) {
+            return std::ranges::any_of(pkg.manifest.provides, [](const std::string& p) {
+                return p.starts_with("mcpp:c-abi");
+            });
+        });
         std::set<std::size_t> boundaries;
         for (std::size_t i = 1; i < packages.size(); ++i) {
             auto const& pm = packages[i].manifest;
-            const bool layer = std::ranges::any_of(pm.provides, [](const std::string& p) {
+            const bool layer = std::ranges::any_of(pm.provides, [&](const std::string& p) {
+                if (p.starts_with("mcpp:kernel-abi")) return graphHasCLibrary;
                 return p.starts_with("mcpp:") || p == "hosted-standard-library";
             });
             if (layer || mcpp::pack::is_distribution_package(pm)) boundaries.insert(i);
