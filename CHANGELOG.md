@@ -54,7 +54,12 @@
   platform keys and the Apple SDK in `toolchain-model`, the terminal and key
   input in `src/ui`, the home's lock and trust check in `mcpp.home.files`.
   The one primitive kept per system is the lock every release of mcpp takes
-  (`src/native/posix`, `src/native/windows`).
+  (`src/native/posix`, `src/native/windows`). A program is found on PATH
+  without a shell, with PATHEXT's suffixes on Windows, and the current
+  directory is not searched on Windows. A list of directories in an
+  environment variable (`PATH`, the run-time library path) is read and written
+  with `mcpplibs.os`'s `split_list` and `join_list`: an empty entry is
+  skipped, and a quoted entry on Windows is unquoted.
 - **A program mcpp starts is named by its argument vector.** Compiler probes,
   git, xlings, tar, strip, patchelf, readelf and vswhere are started without a
   command interpreter, with their additions to the environment given to them
@@ -69,7 +74,9 @@
   watcher thread, which ends the units of the running programs, writes the
   interrupt files, restores the terminal and ends mcpp as the request would
   have; the exit codes of §5 are unchanged. A closed standard output ends mcpp
-  in the same order (141 to a shell on POSIX).
+  in the same order (`mcpp … | head`: 141 to a shell on POSIX). Every program
+  mcpp starts begins with SIGPIPE at its default, although openkal ignores it
+  for its own writes.
 - **mcpp does not write its own process environment.** Variables mcpp states
   (its home, `--offline`, a hook's variables, xlings' home and PATH) are this
   invocation's statements, read by every lookup mcpp makes and given to the
@@ -162,27 +169,6 @@
   of the members being built, and `--release -p cli` then `-p gui` recompiled
   the common packages each time. A unit's map is now the fixed roots and the
   roots of its own package's dependency closure.
-
-### Changed
-
-- **The operating-system layer is `mcpplibs.os` over openkal.** The platform
-  constants and the architecture, the executable's own name, PATH lookup,
-  directory links, renames that refuse an existing name, volume identities,
-  terminals and console output come from `mcpplibs.os`; what that library
-  does not carry (the launchers and their signal guard, file locks shared with
-  earlier releases, durable sync) is one implementation unit per system,
-  selected by the package manifest. `modules/platform` contains no
-  preprocessor conditional. `which` no longer starts a shell: a program is
-  found on PATH, with PATHEXT's suffixes on Windows, and the current
-  directory is not searched on Windows. A list of directories in an
-  environment variable (`PATH`, the run-time library path) is read and
-  written with `mcpplibs.os`'s `split_list` and `join_list`: an empty entry
-  is skipped, and a quoted entry on Windows is unquoted.
-- **A closed reader ends mcpp in order.** `mcpp … | head` stops the guarded
-  child process groups, writes the interrupt files and restores the terminal,
-  and then ends by SIGPIPE, with the status a shell has always seen (141).
-  Every program mcpp starts begins with SIGPIPE at its default, although
-  openkal ignores it for its own writes.
 
 ## [2026.10.26.1] - 2026-10-26
 
