@@ -7,6 +7,8 @@ import std;
 import mcpplibs.os.platform;
 import mcpplibs.os.env;
 import mcpp.invocation;
+import mcpp.provider;
+import mcpp.provider.select;
 
 namespace mcpp::runtime::launch_env {
 
@@ -34,8 +36,9 @@ std::string host_tool_runtime_library_path_key() {
 std::string strip_private_glibc(std::string_view paths) {
     std::vector<std::filesystem::path> kept;
     for (auto& item : os::env::split_list(paths)) {
-        const auto text = item.generic_string();
-        if (text.find("/xim-x-glibc/") == std::string::npos) kept.push_back(std::move(item));
+        // A directory of the store's glibc payload, whatever the provider
+        // spells the store: what the provider's layout says the path is.
+        if (mcpp::provider::layout().entry_of(item).name != "glibc") kept.push_back(std::move(item));
     }
     return os::env::join_list(kept);
 }
