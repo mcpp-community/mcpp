@@ -592,7 +592,7 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
     if (P.active && P.fields.link.driver.value == "lld" && !state.overrides.plan_only
         && std::ranges::any_of(ctx.plan.linkUnits, [](auto const& lu) {
                return lu.kind != mcpp::build::LinkUnit::StaticLibrary; })
-        && mcpp::freestanding::resolve_lld(state.tc->binaryPath).empty()) {
+        && mcpp::freestanding::resolve_lld_any(state.tc->binaryPath).empty()) {
         refusal::record(refusal::Code::LldRequiredAbsent);
         return std::unexpected(std::format(
             "the platform {} links {} with ld.lld itself ({}), and the toolchain has no ld.lld "

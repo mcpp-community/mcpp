@@ -185,6 +185,22 @@ inline std::filesystem::path resolve_lld(const std::filesystem::path& driver) {
     return {};
 }
 
+// THE ELF LINKER OF A PAYLOAD, under any of the names lld answers to:
+// `ld.lld`, the generic `lld`, or `lld-link` -- one program that takes its
+// flavour from its name or from a leading `-flavor`. A payload that ships the
+// COFF name alone (the llvm payload for Windows) still links an ELF file with
+// `-flavor gnu`, which the caller adds unless the name is `ld.lld`.
+inline std::filesystem::path resolve_lld_any(const std::filesystem::path& driver) {
+    if (auto p = resolve_lld(driver); !p.empty()) return p;
+    if (driver.empty()) return {};
+    std::error_code ec;
+    for (const char* name : { "lld-link", "lld-link.exe" }) {
+        auto p = driver.parent_path() / name;
+        if (std::filesystem::exists(p, ec)) return p;
+    }
+    return {};
+}
+
 // llvm-objcopy inside the same payload as the driver, for the flat image a
 // flasher takes. Derived from the driver's path for the same reason
 // `resolve_lld` is: a search is how the wrong tool gets picked. Returns "" for

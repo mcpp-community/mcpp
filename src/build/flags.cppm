@@ -2508,12 +2508,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         f.cxx += words(p.flags.cxxflags);
         f.as  += words(p.flags.asmflags);
         if (p.fields.link.driver.value == "lld") {
-            f.ldDriver = mcpp::freestanding::resolve_lld(plan.toolchain.binaryPath);
+            f.ldDriver = mcpp::freestanding::resolve_lld_any(plan.toolchain.binaryPath);
             f.ld  = words(p.fields.link.flags.value) + words(p.flags.ldflags) + user_ldflags;
-            // `lld` by that name is the generic driver, which chooses its
+            // `lld` and `lld-link` are the same program, which chooses its
             // flavour from its name or from `-flavor`; a payload that ships
-            // only it is asked for the ELF linker explicitly.
-            if (f.ldDriver.stem() == "lld") f.ld = " -flavor gnu" + f.ld;
+            // one of them and not `ld.lld` is asked for the ELF linker
+            // explicitly.
+            if (f.ldDriver.stem() != "ld.lld") f.ld = " -flavor gnu" + f.ld;
             f.ldC = f.ld;
             f.sysroot.clear();
             f.bFlag.clear();
