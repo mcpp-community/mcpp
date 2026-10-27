@@ -1029,7 +1029,7 @@ mcpplibs.os。结果是两个操作系统层并存：`modules/platform` 约 6200
 | shell 引号（`quote*`、`paste_arg`、`silent_redirect`、`null_redirect`） | `mcpp.build.command_line`：ninja 规则、钩子命令与供人复制的命令的拼写（`display(argv)`），以及 Windows 命令解释器的参数（`windows_shell_arguments`）。以 shell 字符串启动程序所需的 `windows_command_from_argv`、`windows_wrap_for_cmd_c` 删除 |
 | 终端检测（`is_terminal`、尺寸、颜色） | `mcpplibs::os::terminal`；画面输出、按键解码、`StdoutToStderr`、协议输出、Unicode 判断属于界面，归入 `src/ui`（`mcpp.ui.terminal`） |
 | 文件系统（`self_exe_path`、`which`、`replace_file`、`append_atomically`、`extended_length`、`fs_caps`、无替换改名、交换、目录链接、`sync_*`） | `mcpplibs::os::fs` 与 `os::env`（`image`、`find_executable`） |
-| `FileLock` | `mcpp.home.files`：与早先发布的 mcpp 共用同一把锁（POSIX 上为 `flock`，与 openkal 的记录锁互不排斥），因此是 mcpp 对自身旧版本的兼容契约。按系统选择的实现单元位于 `src/native/posix`、`src/native/windows`（基础 `sources` 排除，由 `[target.<os>.build] sources` 按系统选入）；Windows 上与 `os::fs::lock` 同为 `LockFileEx` |
+| `FileLock` | `mcpp.home.files`：与早先发布的 mcpp 共用同一把锁（POSIX 上为 `flock`，与 openkal 的记录锁互不排斥），因此是 mcpp 对自身旧版本的兼容契约。按系统选择的实现单元位于 `src/native/posix`、`src/native/windows`（`src/**` 选入，每个系统的 `[target.<os>.build] sources` 排除其他系统的目录）；Windows 上与 `os::fs::lock` 同为 `LockFileEx` |
 | 信任检查（`untrusted_because`，目录属主） | `mcpp.home`，基于 `os::fs` 的属主查询 |
 | `capacity` | `mcpplibs::os::machine`（处理器、内存）；并行度策略 `recommended_jobs` 归入 `mcpp.build` |
 | Windows 事实（`active_code_page`、`long_paths_enabled`、注册表路径、`env_directory`、`writable_fixed_drive`） | `mcpplibs::os::windows`（代码页、长路径）；home 的默认位置选择归入 `mcpp.home` |
