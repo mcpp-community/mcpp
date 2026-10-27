@@ -190,14 +190,31 @@ write(const std::filesystem::path& out, const std::vector<Entry>& entries,
         const std::string& body = c.method == 8 ? packed : *data;
         c.packed = static_cast<std::uint32_t>(body.size());
 
-        // The padding that puts a stored member's data on the boundary.
-        std::uint16_t extra = 0;
+        // The padding that puts a stored member's data on the boundary, as
+        // zipalign writes it: an extra field (id 0xD935) holding the alignment
+        // and zero bytes. A gap too short for a field (under six bytes) lies
+        // before the local header instead, where no directory entry names it
+        // and a reader through the central directory never looks.
+        std::string extraField;
         if (options.align > 1 && c.method == 0) {
-            const auto dataAt = blob.size() + 30 + c.name.size();
-            const auto rem = dataAt % options.align;
-            if (rem != 0) extra = static_cast<std::uint16_t>(options.align - rem);
-            // An extra field holds at most 64 KiB - 1 bytes; a boundary of
-            // 64 KiB is reached by at most that many.
+            auto pad_at = [&](std::size_t headerAt) {
+                const auto dataAt = headerAt + 30 + c.name.size();
+                return (options.align - dataAt % options.align) % options.align;
+            };
+            auto need = pad_at(blob.size());
+            if (need != 0 && need < 6) {
+                blob.append(need, '\0');
+                need = pad_at(blob.size());
+                // After the gap the data is on the boundary; nothing more.
+            }
+            if (need >= 6) {
+                detail::put16(extraField, 0xD935);
+                detail::put16(extraField, static_cast<std::uint16_t>(need - 4));
+                detail::put16(extraField, static_cast<std::uint16_t>(
+                    options.align > 0xFFFF ? 0 : options.align));
+                extraField.append(need - 6, '\0');
+            }
+            c.offset = static_cast<std::uint32_t>(blob.size());
         }
 
         detail::put32(blob, 0x04034b50);            // local file header
@@ -210,9 +227,9 @@ write(const std::filesystem::path& out, const std::vector<Entry>& entries,
         detail::put32(blob, c.packed);
         detail::put32(blob, c.size);
         detail::put16(blob, static_cast<std::uint16_t>(c.name.size()));
-        detail::put16(blob, extra);                 // extra field length
+        detail::put16(blob, static_cast<std::uint16_t>(extraField.size()));
         blob += c.name;
-        blob.append(extra, '\0');
+        blob += extraField;
         blob += body;
 
         central.push_back(std::move(c));
