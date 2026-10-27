@@ -129,6 +129,13 @@ void read_build_programs_marker(BuildOverrides& ov) {
         if (eq == std::string::npos) continue;
         const auto key = line.substr(0, eq), value = line.substr(eq + 1);
         if (key == "toolchain" && ov.toolchain.empty()) ov.toolchain = value;
+        // A host graph with a platform (SPEC-013 §6): the programs are built
+        // for its target, by its choice.
+        else if (key == "platform" && ov.platform_choice.empty()) ov.platform_choice = value;
+        else if (key == "target" && ov.target_triple.empty()) {
+            ov.target_triple = value;
+            ov.host_target = false;
+        }
         else if (key == "profile" && ov.profile.empty()) ov.profile = value;
         else if (key == "index-store" && ov.project_index_root.empty()) ov.project_index_root = value;
         else if (key == "pin")

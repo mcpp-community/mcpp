@@ -388,6 +388,7 @@ std::expected<void, std::string> step6_toolchain_phase(PrepareState& state) {
     if (!program) return std::unexpected(std::format("the root build program's toolchain phase: {}",
                                                      program.error()));
     bpEnv.programBinary   = program->path;
+    bpEnv.programRunner   = program->runner;
     bpEnv.programIdentity = program->identity;
     bpEnv.programCompile  = program->compile;
     bpEnv.phase = "toolchain";

@@ -1822,6 +1822,7 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
             if (!program && !state.overrides.plan_only) return std::unexpected(program.error());
             if (program) {
                 bpEnv.programBinary   = program->path;
+                bpEnv.programRunner   = program->runner;
                 bpEnv.programIdentity = program->identity;
                 bpEnv.programCompile  = program->compile;
             } else {

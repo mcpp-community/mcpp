@@ -1740,6 +1740,7 @@ static std::expected<void, std::string> step9_root_build_program(PrepareState& s
         // The program, as the build programs' graph compiled it (mcpp#797).
         if (auto program = build_program_binary(state, 0); program) {
             bpEnv.programBinary   = program->path;
+            bpEnv.programRunner   = program->runner;
             bpEnv.programIdentity = program->identity;
             bpEnv.programCompile  = program->compile;
         } else if (!state.overrides.plan_only) {
@@ -2137,6 +2138,7 @@ static std::expected<void, std::string> step9_member_build_programs(PrepareState
         // The program, as the build programs' graph compiled it (mcpp#797).
         if (auto program = build_program_binary(state, i); program) {
             bpEnv.programBinary   = program->path;
+            bpEnv.programRunner   = program->runner;
             bpEnv.programIdentity = program->identity;
             bpEnv.programCompile  = program->compile;
         } else {

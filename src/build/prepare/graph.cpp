@@ -2436,6 +2436,7 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
         if (auto r = drain(); !r) return r;
     }
     if (auto r = step4b_check_platform_versions(state); !r) return r;
+    step4b_platform_member_edges(state);
 
     if (auto r = step4b_cycle_check(state); !r) return std::unexpected(r.error());
 

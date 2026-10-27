@@ -160,7 +160,8 @@ std::string toolchain_request_identity() {
     const auto configFile = mcpp::home::root() / "config.toml";
     auto target_table = [&](const std::filesystem::path& file) {
         auto doc = mcpp::libs::toml::parse_file(file);
-        if (!doc || !doc->get_table("target")) return;
+        // `[host]` too: the host graph's platform (SPEC-013 §6.1).
+        if (!doc || (!doc->get_table("target") && !doc->get_table("host"))) return;
         std::ifstream is(file, std::ios::binary);
         std::string text((std::istreambuf_iterator<char>(is)), std::istreambuf_iterator<char>());
         std::uint64_t h = 1469598103934665603ull;
@@ -176,9 +177,14 @@ std::string toolchain_request_identity() {
         target_table(mcpp::home::system_config_file());
     std::string overrides;
     for (auto const& e : mcpp::invocation::with_prefix("MCPP_TARGET_"))
-        if (e.find("_SYSROOT=") != std::string::npos || e.find("_RUN_UNDER=") != std::string::npos)
+        if (e.find("_SYSROOT=") != std::string::npos || e.find("_RUN_UNDER=") != std::string::npos
+            || e.find("_PLATFORM=") != std::string::npos || e.find("_RUNNER=") != std::string::npos)
             overrides += e + ";";
     if (auto s = mcpp::invocation::get("MCPP_SYSROOT")) overrides += std::format("MCPP_SYSROOT={};", *s);
+    // The platforms a flag or the environment selects (SPEC-013 §5.1, §6.1).
+    if (auto s = mcpp::invocation::get("MCPP_PLATFORM")) overrides += std::format("MCPP_PLATFORM={};", *s);
+    if (auto s = mcpp::invocation::get("MCPP_HOST_PLATFORM"))
+        overrides += std::format("MCPP_HOST_PLATFORM={};", *s);
     if (overrides.empty() && targets.empty())
         return std::format("cli={};default={}", cli, machineDefault);
     return std::format("cli={};default={};base={}{}", cli, machineDefault, overrides, targets);

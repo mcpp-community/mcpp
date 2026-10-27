@@ -376,6 +376,10 @@ struct BuildProgramEnv {
     std::string               programIdentity;
     std::chrono::milliseconds programCompile{0};
     std::string               programError;
+    // THE ARGV THAT RUNS IT, `{}` the program: the host graph's platform's
+    // runner when the program is one of its images (SPEC-013 §6, `okrun {}`);
+    // empty: the program is run directly.
+    std::vector<std::string>  programRunner;
 };
 
 // The env-var name `hostprogram::xpkg_dir` reads back. One spelling of the
@@ -1201,8 +1205,18 @@ std::expected<void, std::string> run_build_program_impl(
     // the one who knows how long it takes.
     const auto deadline =
         dirs::run_timeout_for(m.buildConfig.buildProgramTimeoutSecs);
+    std::vector<std::string> argv{bin.string()};
+    if (!env.programRunner.empty()) {
+        argv.clear();
+        bool placed = false;
+        for (auto const& a : env.programRunner) {
+            if (a == "{}") { argv.push_back(bin.string()); placed = true; }
+            else argv.push_back(a);
+        }
+        if (!placed) argv.push_back(bin.string());
+    }
     auto rres = mcpp::run::capture_exec_deadline(
-        {bin.string()}, childEnv, deadline, &timedOut, root.string());
+        argv, childEnv, deadline, &timedOut, root.string());
     if (timedOut) {
         // Name the manifest to edit. Without this the user edits their OWN
         // mcpp.toml when a dependency's build program is what timed out, and

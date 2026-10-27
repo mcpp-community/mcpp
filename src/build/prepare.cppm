@@ -982,6 +982,10 @@ export struct BuildOverrides {
     // package and the second reads its `[platform]` from here at once
     // (SPEC-013 §7). Set by `prepare_build` itself, never by a caller.
     std::filesystem::path    platform_root;
+    // THE PLATFORM THIS PREPARE'S TARGET USES, stated by the caller: the
+    // host graph's platform, given to the build programs' sub-build (SPEC-013
+    // §6). Read as the flag tier; empty on every other prepare.
+    std::string              platform_choice;
 };
 
 // ── git dependency helpers ──────────────────────────────────────────────────

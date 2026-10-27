@@ -28,6 +28,7 @@ import mcpp.platform;
 import mcpp.pm.compat;
 import mcpp.targetside;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.platform;
 import mcpp.ui;
 import mcpp.freestanding.linkline;
 
@@ -117,13 +118,27 @@ cfgpred::Ctx platform_cfg_context(const PrepareState& state) {
 
 std::expected<void, std::string> step1_select_platform(PrepareState& state) {
     // A host sub-build (build programs, tools) is the host graph: its platform
-    // is the host conventions until a host platform is selected (§6), and a
-    // platform's own tools are always built so (the bootstrap boundary, §6.2).
-    if (state.overrides.host_target || state.overrides.tool_depth > 0
-        || state.overrides.build_program_graph)
-        return {};
+    // is the one its caller states (the build programs' graph under a host
+    // platform), or the host conventions -- and a platform's own tools are
+    // always built so (the bootstrap boundary, §6.2).
+    const bool nested = state.overrides.host_target || state.overrides.tool_depth > 0
+        || state.overrides.build_program_graph;
+    if (nested && state.overrides.platform_choice.empty()) return {};
+    // THE HOST GRAPH'S PLATFORM, chosen by the outermost prepare (§6.1).
+    if (!nested) {
+        mp::Override config;
+        if (auto cfg = state.get_cfg(false); cfg) config = (*cfg)->hostPlatform;
+        const auto hostFlag = mcpp::invocation::get("MCPP_HOST_PLATFORM").value_or("");
+        mp::Override project = state.m->hostPlatform;
+        if (!project.platformSet && state.m->layer) project = state.m->layer->hostPlatform;
+        auto hs = mcpp::platform::select_host(hostFlag, false, project, config);
+        if (!hs) return std::unexpected(hs.error());
+        state.hostPlatformSel = std::move(*hs);
+    }
     const auto t = target_of(state);
-    const auto flag = mcpp::invocation::get("MCPP_PLATFORM").value_or("");
+    const auto flag = !state.overrides.platform_choice.empty()
+        ? state.overrides.platform_choice
+        : mcpp::invocation::get("MCPP_PLATFORM").value_or("");
     const auto envKey = target_env_name(t, "PLATFORM");
     const auto env = mcpp::invocation::get(envKey).value_or("");
     auto project = project_tables(*state.m);
@@ -313,6 +328,10 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
         item.requestedBy = std::format("{} (platform: {})", state.m->package.name, names);
         item.originalConstraint = item.spec.version;
         item.consumerDepIndex = kMainConsumer;
+        // The root declares it, as it would by hand: every reader of the
+        // root's edges (the link's closure among them) sees it.
+        state.m->dependencies[key] = item.spec;
+        state.platformLayerSpecs[key] = item.spec;
         state.worklist.push_back(std::move(item));
         state.platformInjected.insert("layer:" + key);
         state.platformInjected.insert(mcpp::pm::compat::qualified_name(
@@ -402,6 +421,35 @@ std::expected<void, std::string> step4b_check_platform_versions(PrepareState& st
             P.package.substr(P.package.find('.') + 1), n.shortName, it->second));
     }
     return {};
+}
+
+// A WORKSPACE'S MEMBERS STAND ON THE PLATFORM'S LAYERS AS A ROOT DOES (§4.3).
+// The packages the platform added are the virtual root's dependencies, and a
+// member links its own closure; so each member of the plan is given an edge to
+// each layer provider the platform added, as if it had declared it. (Measured:
+// a build programs' graph under a host platform linked its programs without
+// the C library and the C++ run-time, and `okld check` refused `free`.)
+void step4b_platform_member_edges(PrepareState& state) {
+    if (!state.platform.active || !state.workspacePlan() || state.platformLayerSpecs.empty()) return;
+    for (std::size_t m = 1; m < state.packages.size(); ++m) {
+        if (!state.packages[m].selectedMember) continue;
+        auto& deps = state.packages[m].manifest.dependencies;
+        for (auto const& [key, spec] : state.platformLayerSpecs) {
+            if (deps.contains(key)) continue;
+            deps[key] = spec;
+            for (std::size_t l = 1; l < state.packages.size(); ++l) {
+                auto const& pm = state.packages[l].manifest;
+                auto n = mcpp::pm::compat::resolve_package_name(pm.package.name, pm.package.namespace_);
+                if (n.shortName != spec.shortName) continue;
+                DependencyEdge e;
+                e.consumerPackageIndex = m;
+                e.dependencyPackageIndex = l;
+                e.requestedFeatures = spec.features;
+                e.defaultFeatures = spec.defaultFeatures;
+                state.dependencyEdges.push_back(std::move(e));
+            }
+        }
+    }
 }
 
 void step5_platform_toolchain(PrepareState& state) {
@@ -566,7 +614,87 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
                 mcpp::ui::info("", std::format("{:<17} {}", label, value));
     }
     ctx.plan.platform = std::move(P);
+    // THE HOST GRAPH'S, when the build programs were built under it (§6.1).
+    ctx.hostPlatform = state.hostPlatform;
+    if (ctx.hostPlatform.active)
+        mcpp::ui::info("Host", std::format("platform {} ({}): build programs are {} images run by {}",
+            ctx.hostPlatform.display(), mcpp::platform::origin_text(ctx.hostPlatform.selection.origin),
+            state.hostPlatformTarget,
+            state.hostPlatformRunner.empty() ? std::string("its runner")
+                : std::filesystem::path(state.hostPlatformRunner.front()).filename().string()));
     return {};
+}
+
+} // namespace mcpp::build
+
+namespace mcpp::build {
+
+// THE HOST GRAPH'S PLATFORM, LOADED (SPEC-013 §6): the package, and the
+// target among its own that has this machine's architecture -- what the build
+// programs are compiled for and run as. Read when the build programs are
+// built; the package is fetched as any dependency is.
+std::expected<void, std::string> load_host_platform(PrepareState& state) {
+    auto& H = state.hostPlatform;
+    auto const& sel = state.hostPlatformSel;
+    if (sel.none || H.active) return {};
+    const auto& ref = sel.ref;
+    fs::path root;
+    std::optional<mcpp::manifest::Manifest> m;
+    if (!ref.spec.path.empty()) {
+        root = ref.spec.path;
+        auto r = mcpp::manifest::load(root / "mcpp.toml");
+        if (!r) return std::unexpected(std::format("{}: the host platform {}: {}",
+            mcpp::platform::origin_text(sel.origin), mp::display(ref), r.error().format()));
+        m = std::move(*r);
+    } else if (!ref.spec.version.empty()) {
+        if (!state.loadVersionDep)
+            return std::unexpected("the host platform is read once the graph's loader exists");
+        auto r = state.loadVersionDep(ref.name, ref.spec.namespace_, ref.spec.shortName, ref.spec.version);
+        if (!r) return std::unexpected(std::format("{}: the host platform {}: {}",
+            mcpp::platform::origin_text(sel.origin), mp::display(ref), r.error()));
+        root = r->first;
+        m = std::move(r->second);
+    } else {
+        return std::unexpected(std::format(
+            "{}: the host platform {} is named by a version or a directory",
+            mcpp::platform::origin_text(sel.origin), mp::display(ref)));
+    }
+    if (!m->platformDeclared) {
+        refusal::record(refusal::Code::PlatformNotAPlatform);
+        return std::unexpected(std::format(
+            "{} is selected as the host graph's platform ({}), and its mcpp.toml has no "
+            "[platform] section", qualified(*m), mcpp::platform::origin_text(sel.origin)));
+    }
+    const std::string arch(mcpp::toolchain::platform::host_arch);
+    for (auto const& w : m->platform.targets.value) {
+        auto t = mcpp::toolchain::triple::parse(w);
+        if (t && t->arch == arch) { state.hostPlatformTarget = t->str(); break; }
+    }
+    if (state.hostPlatformTarget.empty()) {
+        refusal::record(refusal::Code::PlatformTargetUnserved);
+        return std::unexpected(std::format(
+            "the host graph's platform {} ({}) serves no {} target, so this machine's build "
+            "programs cannot be built for it; its targets are {}",
+            qualified(*m), mcpp::platform::origin_text(sel.origin), arch,
+            [&] { std::string l; for (auto const& w : m->platform.targets.value)
+                      l += (l.empty() ? "" : ", ") + w; return l; }()));
+    }
+    H.active = true;
+    H.selection = sel;
+    H.package = qualified(*m);
+    H.version = m->package.version;
+    H.root = root;
+    H.fields = m->platform;
+    return {};
+}
+
+// The spelling a sub-build is told the host platform by (`platform_choice`).
+std::string host_platform_choice(const PrepareState& state) {
+    auto const& r = state.hostPlatformSel.ref;
+    if (!r.spec.path.empty()) return "path:" + r.spec.path;
+    return std::format("{}.{}@{}", r.spec.namespace_.empty() ? std::string(mcpp::pm::kDefaultNamespace)
+                                                             : r.spec.namespace_,
+                       r.spec.shortName, r.spec.version);
 }
 
 } // namespace mcpp::build

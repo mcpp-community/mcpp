@@ -210,12 +210,30 @@ std::string features_of(const PrepareState& state, std::size_t d) {
 struct HostToolchain {
     std::string spec;
     std::string identity;
+    // The host graph's platform (SPEC-013 §6): the spelling the sub-build is
+    // told it by and the target of this machine's architecture it serves.
+    // Empty: the build programs are this machine's programs.
+    std::string platform;
+    std::string platformTarget;
 };
 
 std::expected<HostToolchain, std::string> host_toolchain(PrepareState& state) {
+    HostToolchain t;
+    // UNDER A HOST PLATFORM the build programs are images of this machine's
+    // architecture: the platform's toolchain compiles them and its runner
+    // runs them, the same on every system (§6.3). Their identity is the
+    // platform's, with no trace of this machine's compiler.
+    if (!state.hostPlatformSel.none) {
+        if (auto r = load_host_platform(state); !r) return std::unexpected(r.error());
+        t.platform = host_platform_choice(state);
+        t.platformTarget = state.hostPlatformTarget;
+        t.spec = state.hostPlatform.fields.toolchain.value;
+        t.identity = std::format("platform {}|{}|{}", state.hostPlatform.identity(),
+                                 t.platformTarget, t.spec);
+        return t;
+    }
     auto host = state.host_tc_for_build_program();
     if (!host) return std::unexpected(host.error());
-    HostToolchain t;
     t.spec = state.host_spec_for_build_program();
     t.identity = std::format("{}|{}|{}|{}", t.spec, path_text(host->first),
                              host->second.version, host->second.targetTriple);
@@ -606,6 +624,11 @@ void write_group(PrepareState& state, const fs::path& dir, const std::vector<Pro
     {
         std::string marker = std::format("toolchain={}\nprofile=build-program\nindex-store={}\n",
                                          toolchainSpec, path_text(state.projectIndexRoot()));
+        // The host graph's platform, when it has one: what `mcpp build` in this
+        // directory compiles the programs for.
+        if (!state.hostPlatformSel.none)
+            marker += std::format("platform={}\ntarget={}\n", host_platform_choice(state),
+                                  state.hostPlatformTarget);
         for (auto const& [k, v] : resolution_pins(state)) marker += std::format("pin={}={}\n", k, v);
         write_if_changed(dir / ".mcpp-build-programs", marker);
     }
@@ -702,6 +725,14 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
     sub.target_triple = "";
     sub.host_target  = true;
     sub.toolchain    = tc.spec;
+    // Under a host platform: the platform's target of this architecture, and
+    // its toolchain by the platform's own pin.
+    if (!tc.platform.empty()) {
+        sub.target_triple   = tc.platformTarget;
+        sub.host_target     = false;
+        sub.toolchain       = "";
+        sub.platform_choice = tc.platform;
+    }
     sub.profile      = "build-program";
     sub.cache_mode   = state.overrides.cache_mode;
     sub.strict       = state.overrides.strict;
@@ -749,6 +780,20 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
     describe(*ctx);
     if (goals.empty()) return std::map<std::string, fs::path>{};
 
+    // THE RUNNER, under a host platform: the platform's, with its program
+    // as that build located it (§6.1). A platform with none cannot run what
+    // it built, which is said here rather than at the first program's run.
+    if (!tc.platform.empty()) {
+        auto const& pr = ctx->plan.platform.fields.runner;
+        if (!pr.set || pr.cmd.empty())
+            return std::unexpected(std::format(
+                "the host graph's platform {} states no runner, so the build programs it "
+                "builds cannot be run", ctx->plan.platform.display()));
+        std::vector<std::string> argv = pr.cmd;
+        if (auto it = ctx->plan.platform.tools.find(argv.front()); it != ctx->plan.platform.tools.end())
+            argv.front() = it->second;
+        state.hostPlatformRunner = std::move(argv);
+    }
     std::map<std::string, fs::path> binaries;
     std::vector<std::string> ninjaGoals;
     for (auto const& lu : ctx->plan.linkUnits) {
@@ -980,8 +1025,11 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
                 && fs::exists(it->value("binary", std::string{}), ec);
             if (current) {
                 place_program_copy(state, p.index, fs::path(it->value("binary", std::string{})));
+                std::vector<std::string> runner;
+                if (it->contains("runner") && (*it)["runner"].is_array())
+                    for (auto const& a : (*it)["runner"]) runner.push_back(a.get<std::string>());
                 state.buildProgramBinaries[p.index] = {fs::path(it->value("binary", std::string{})),
-                                                       p.identity};
+                                                       p.identity, {}, std::move(runner)};
                 mcpp::log::verbose("build-program", std::format(
                     "{}: identity {} current", qualified(manifest_of(state, p.index)), p.identity));
                 continue;
@@ -1022,11 +1070,12 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
             std::chrono::steady_clock::now() - began);
         for (auto const* p : stale) {
             const auto bin = built->at(p->member);
-            state.buildProgramBinaries[p->index] = {bin, p->identity, took};
+            state.buildProgramBinaries[p->index] = {bin, p->identity, took, state.hostPlatformRunner};
             place_program_copy(state, p->index, bin);
             nlohmann::json row;
             row["identity"] = p->identity;
             row["binary"]   = path_text(bin);
+            if (!state.hostPlatformRunner.empty()) row["runner"] = state.hostPlatformRunner;
             row["package"]  = qualified(manifest_of(state, p->index));
             row["source"]   = p->source.file.empty() ? std::string("synthesised")
                                                      : path_text(p->source.file);
