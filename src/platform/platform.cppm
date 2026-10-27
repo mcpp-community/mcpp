@@ -319,6 +319,7 @@ void merge(mp::Statement& b, const mp::Statement& o) {
     for (auto const& [k, v] : o.runners) b.runners[k] = v;
     if (o.carrier.set) b.carrier = o.carrier;
     text(b.plugin, o.plugin);
+    if (o.universal.set) b.universal = o.universal;
     for (auto const& [k, v] : o.layers) b.layers[k] = v;
     for (auto const& [k, v] : o.tools) b.tools[k] = v;
     append(b.build.cflags, o.build.cflags);

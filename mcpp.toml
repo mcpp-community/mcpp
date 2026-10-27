@@ -93,6 +93,14 @@ mcpplibs.cmdline = "0.0.1"
 [dependencies.mcpplibs]
 os = "0.2.0"
 
+# The codecs of a package's container (SPEC-014 §5): gzip and raw DEFLATE,
+# zstd, xz. The reference libraries, so an archive is written the same way on
+# every host and nothing is looked for on PATH.
+[dependencies.compat]
+zlib = "1.3.2"
+zstd = "1.5.7"
+xz   = "5.8.3"
+
 [target.linux.build]
 sources = ["!src/native/windows/**"]
 

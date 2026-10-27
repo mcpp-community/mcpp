@@ -518,6 +518,10 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
                 return std::unexpected(std::format(
                     "{} must name the platform's build program, for example \"build.mcpp\"", key));
             s.plugin = Text{ absolute(v.as_string()).generic_string(), at(v, key), true };
+        } else if (k == "universal") {
+            if (!v.is_bool())
+                return std::unexpected(std::format("{} must be true or false", key));
+            s.universal = Flag{ v.as_bool(), at(v, key), true };
         } else if (k == "layers") {
             if (auto r = layers(v, "[platform.layers]", s.layers); !r) return std::unexpected(r.error());
         } else if (k == "tools") {

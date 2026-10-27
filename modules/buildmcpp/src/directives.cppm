@@ -668,6 +668,9 @@ std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payloa
 // caller can refuse BEFORE applying anything — a half-applied action set is
 // worse than none.
 std::string action_error(const Directives& d);
+// The role an `mcpp:action=` payload names ("source" when absent), or nothing
+// for a payload that is not JSON.
+std::optional<std::string> action_role_of(std::string_view payload);
 
 // Non-empty when a `windows-subsystem` or `windows-entry` directive names
 // something `apply` cannot honour: a value that is not `<target>:<value>`, a

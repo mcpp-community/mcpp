@@ -139,7 +139,8 @@ export int build_and_pack_library(const std::string& targetName,
 
     LibraryPackPlan plan;
     plan.builtBy      = std::string(mcpp::MCPP_VERSION);
-    plan.writeArchive = opts.format == mcpp::pack::Format::Tar;
+    plan.writeArchive = opts.format == mcpp::pack::Format::Tar
+                     || opts.format == mcpp::pack::Format::Zip;
 
     InterfaceClosure closure;
     bool             haveClosure = false;

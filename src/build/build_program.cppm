@@ -1321,10 +1321,12 @@ std::expected<void, std::string> run_build_program_impl(
         }
     } else if (env.phase == "platform") {
         // THE PLATFORM PHASE STATES THE PLATFORM'S BUILD, LINK AND RUNNER
-        // FIELDS AND NOTHING ELSE (SPEC-013 §4.2): it describes a class of
-        // targets, not a package of sources, and what it states reaches every
-        // unit and every link of the target. Refused rather than dropped,
-        // naming the first directive that does not belong.
+        // FIELDS, AND THE PACKAGE FORMATS IT PROVIDES (SPEC-013 §4.2, SPEC-014
+        // §4): it describes a class of targets, not a package of sources, and
+        // what it states reaches every unit and every link of the target. A
+        // format is provided as any package provides one -- `pack-format` and
+        // the `artifact` actions that produce it from the staged tree. Refused
+        // rather than dropped, naming the first directive that does not belong.
         for (auto const& def : dirs::kTable) {
             switch (def.slot) {
                 case Slot::CxxFlags: case Slot::CFlags: case Slot::LdFlags:
@@ -1333,16 +1335,23 @@ std::expected<void, std::string> run_build_program_impl(
                 case Slot::LinkInputs: case Slot::ArtifactNames: case Slot::Seal:
                 case Slot::RunHost: case Slot::RerunFiles: case Slot::RerunEnv:
                 case Slot::RerunGlobs: case Slot::Warnings: case Slot::Diagnostics:
+                case Slot::PackFormats:
                     continue;
                 default: break;
             }
             if (d.at(def.slot).empty()) continue;
+            if (def.slot == Slot::Actions
+                && std::ranges::all_of(d.at(def.slot), [](std::string const& payload) {
+                       return dirs::action_role_of(payload).value_or("") == "artifact";
+                   }))
+                continue;
             mcpp::build::refusal::record(mcpp::build::refusal::Code::PlatformPhaseDirective);
             return std::unexpected(std::format(
                 "build.mcpp stated `mcpp:{}=` in its platform phase.\n"
                 "       A platform's plugin states the platform's build, link and runner\n"
-                "       fields only (compile and link flags, the link driver, inputs,\n"
-                "       entry, artifact names, seal steps, runners); `mcpp::phase()` is\n"
+                "       fields (compile and link flags, the link driver, inputs, entry,\n"
+                "       artifact names, seal steps, runners) and the package formats it\n"
+                "       provides (`pack-format`, `artifact` actions); `mcpp::phase()` is\n"
                 "       \"platform\" there (SPEC-013 §4.2).",
                 def.wire));
         }

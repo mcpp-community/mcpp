@@ -11,12 +11,11 @@
 // own OS is the thing being fixed; picking an archiver that only exists there
 // would reintroduce it one layer down.
 //
-// WHY STORED, NOT DEFLATED. Entries are written with method 0 (stored). That
-// is a real cost — a release zip is roughly the size of its contents — and it
-// is the honest trade for now: a DEFLATE encoder is the only part of this
-// file that could produce an archive which UNPACKS WRONG rather than failing
-// loudly, and mcpp has no zlib to borrow one from. Adding compression later
-// changes only `write()`; the archive layout below does not move.
+// STORED OR DEFLATED. A member is DEFLATEd (method 8) by zlib, the reference
+// encoder, when the archive asks for it and the member shrinks; otherwise it is
+// stored. A package's zip is deflated by default (SPEC-014 §5); `--compress
+// none` stores every member, and a member whose data is aligned (a mapped
+// image) is stored whatever was asked.
 //
 // Deterministic by construction: no timestamps are read (every entry gets a
 // fixed DOS date), and entries are written in the order given. Two packs of
@@ -26,6 +25,7 @@
 export module mcpp.pack.zip;
 
 import std;
+import mcpp.pack.compress;   // DEFLATE for a member that shrinks
 
 export namespace mcpp::pack::zip {
 
@@ -41,6 +41,24 @@ struct Entry {
     // file — which matters because a Windows artifact is routinely inspected
     // (and cross-tested under wine) from Linux.
     bool                  executable = false;
+    // A symbolic link: the member is the link (Unix mode 0120777) and its data
+    // is the target, as Info-ZIP writes and reads one. `source` is unread.
+    std::string           symlinkTarget;
+};
+
+// How the members are written.
+//
+//   deflate  each member is DEFLATEd (method 8) when that makes it smaller,
+//            and stored otherwise; `level` 0 is zlib's default.
+//   align    a STORED member's data starts at a multiple of this many bytes
+//            from the start of the archive, the local header's extra field
+//            padding the difference (as zipalign does): a reader maps the
+//            member where it lies. 0: no alignment. A member that is aligned
+//            is stored, whatever `deflate` says.
+struct WriteOptions {
+    bool          deflate = false;
+    int           level   = 0;
+    std::uint32_t align   = 0;
 };
 
 // Write `entries` to `out`, creating parent directories as needed.
@@ -51,7 +69,8 @@ struct Entry {
 // clang 20.1.7 (MSVC ABI) segfaulted compiling the consumer — see the note at
 // mcpp.pack's `run_pe`. There is exactly one caller.
 std::expected<void, std::string>
-write(const std::filesystem::path& out, const std::vector<Entry>& entries);
+write(const std::filesystem::path& out, const std::vector<Entry>& entries,
+      const WriteOptions& options = {});
 
 // CRC-32 (IEEE), exposed for tests: an archive whose CRCs are wrong extracts
 // with a warning on some tools and silently on others, so this is worth
@@ -97,8 +116,8 @@ constexpr std::uint16_t kDosDate = 0x0021;   // (1980-1980)<<9 | 1<<5 | 1
 
 // External attributes. The high 16 bits are the Unix mode when the
 // version-made-by byte says Unix (3); the low byte is the DOS attribute set.
-std::uint32_t external_attrs(bool executable) {
-    std::uint32_t mode = executable ? 0100755u : 0100644u;
+std::uint32_t external_attrs(bool executable, bool symlink = false) {
+    std::uint32_t mode = symlink ? 0120777u : executable ? 0100755u : 0100644u;
     return mode << 16;
 }
 
@@ -121,22 +140,25 @@ std::uint32_t crc32(std::string_view data) {
 }
 
 std::expected<void, std::string>
-write(const std::filesystem::path& out, const std::vector<Entry>& entries) {
+write(const std::filesystem::path& out, const std::vector<Entry>& entries,
+      const WriteOptions& options) {
     std::error_code ec;
     if (out.has_parent_path())
         std::filesystem::create_directories(out.parent_path(), ec);
 
     struct Central {
         std::string   name;
-        std::uint32_t crc = 0, size = 0, offset = 0;
-        bool          executable = false;
+        std::uint32_t crc = 0, size = 0, packed = 0, offset = 0;
+        std::uint16_t method = 0;
+        bool          executable = false, symlink = false;
     };
     std::vector<Central> central;
     central.reserve(entries.size());
 
     std::string blob;
     for (auto const& e : entries) {
-        auto data = detail::slurp(e.source);
+        const bool symlink = !e.symlinkTarget.empty();
+        auto data = symlink ? std::optional<std::string>(e.symlinkTarget) : detail::slurp(e.source);
         if (!data)
             return std::unexpected(std::format(
                 "cannot read '{}' for the archive", e.source.string()));
@@ -155,20 +177,43 @@ write(const std::filesystem::path& out, const std::vector<Entry>& entries) {
         c.size       = static_cast<std::uint32_t>(data->size());
         c.offset     = static_cast<std::uint32_t>(blob.size());
         c.executable = e.executable;
+        c.symlink    = symlink;
+
+        // The member's bytes: DEFLATEd when asked and smaller, stored
+        // otherwise, and stored when its data is to be aligned.
+        std::string packed;
+        if (options.deflate && options.align == 0 && !symlink && !data->empty()) {
+            auto d = mcpp::pack::compress::deflate_raw(*data, options.level);
+            if (!d) return std::unexpected(std::format("'{}': {}", e.source.string(), d.error()));
+            if (d->size() < data->size()) { packed = std::move(*d); c.method = 8; }
+        }
+        const std::string& body = c.method == 8 ? packed : *data;
+        c.packed = static_cast<std::uint32_t>(body.size());
+
+        // The padding that puts a stored member's data on the boundary.
+        std::uint16_t extra = 0;
+        if (options.align > 1 && c.method == 0) {
+            const auto dataAt = blob.size() + 30 + c.name.size();
+            const auto rem = dataAt % options.align;
+            if (rem != 0) extra = static_cast<std::uint16_t>(options.align - rem);
+            // An extra field holds at most 64 KiB - 1 bytes; a boundary of
+            // 64 KiB is reached by at most that many.
+        }
 
         detail::put32(blob, 0x04034b50);            // local file header
         detail::put16(blob, 20);                    // version needed (2.0)
         detail::put16(blob, 0);                     // flags — no data descriptor
-        detail::put16(blob, 0);                     // method 0: stored
+        detail::put16(blob, c.method);              // 0 stored, 8 deflated
         detail::put16(blob, detail::kDosTime);
         detail::put16(blob, detail::kDosDate);
         detail::put32(blob, c.crc);
-        detail::put32(blob, c.size);                // compressed == uncompressed
+        detail::put32(blob, c.packed);
         detail::put32(blob, c.size);
         detail::put16(blob, static_cast<std::uint16_t>(c.name.size()));
-        detail::put16(blob, 0);                     // extra field length
+        detail::put16(blob, extra);                 // extra field length
         blob += c.name;
-        blob += *data;
+        blob.append(extra, '\0');
+        blob += body;
 
         central.push_back(std::move(c));
     }
@@ -181,18 +226,18 @@ write(const std::filesystem::path& out, const std::vector<Entry>& entries) {
         detail::put16(blob, (3 << 8) | 20);
         detail::put16(blob, 20);                    // version needed
         detail::put16(blob, 0);
-        detail::put16(blob, 0);                     // stored
+        detail::put16(blob, c.method);
         detail::put16(blob, detail::kDosTime);
         detail::put16(blob, detail::kDosDate);
         detail::put32(blob, c.crc);
-        detail::put32(blob, c.size);
+        detail::put32(blob, c.packed);
         detail::put32(blob, c.size);
         detail::put16(blob, static_cast<std::uint16_t>(c.name.size()));
         detail::put16(blob, 0);                     // extra
         detail::put16(blob, 0);                     // comment
         detail::put16(blob, 0);                     // disk number
         detail::put16(blob, 0);                     // internal attrs
-        detail::put32(blob, detail::external_attrs(c.executable));
+        detail::put32(blob, detail::external_attrs(c.executable, c.symlink));
         detail::put32(blob, c.offset);
         blob += c.name;
     }

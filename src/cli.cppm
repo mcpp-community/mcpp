@@ -897,17 +897,34 @@ int run(int argc, char** argv) {
             // package. Omit it and mcpp picks the only packable target.
             .arg(cl::Arg("target").help("Target name from [targets.*] (optional)"))
             .option(cl::Option("mode").takes_value()
-                .help("system | vendored (default) | self-contained | static"))
+                .help("What the machine that runs it provides: system | vendored (default) | "
+                      "self-contained | static (= --linkage static --mode self-contained)"))
+            .option(cl::Option("linkage").takes_value().value_name("static|shared")
+                .help("The program's libraries in it (static) or beside it (shared); rebuilds "
+                      "with [build] dependency_linkage (default: as the project builds)"))
             .option(cl::Option("target").takes_value().multiple()
                 .help("Triple, e.g. x86_64-linux-musl (repeatable: one leg per triple)"))
+            .option(cl::Option("no-universal")
+                .help("Pack the selected target alone where its platform packs all its targets "
+                      "into one universal package"))
+            .option(cl::Option("systems").takes_value().value_name("LIST")
+                .help("Self-contained universal package: the systems whose loaders it carries "
+                      "(linux,macos,windows; default: this machine's)"))
+            .option(cl::Option("compress").takes_value().value_name("ALG[:LEVEL]")
+                .help("The container's compression: gzip (tar default) | zstd | xz | none; "
+                      "a zip deflates unless none"))
+            .option(cl::Option("merge").takes_value().multiple().value_name("PACKAGE")
+                .help("Merge packages this command wrote (universal legs, systems) into one; "
+                      "repeatable, nothing is built"))
             // "plus any format the resolved graph provides", because the
             // values are no longer a fixed list. A package declares one with
             // `mcpp::provides_pack_format` and `--format <name>` dispatches to
             // it; an unknown value names what IS available rather than a
             // constant, so the help text does not have to enumerate them.
             .option(cl::Option("pkg-format").takes_value().value_name("FORMAT")
-                .help("The package format: tar (default; .zip for a Windows target) | dir | any "
-                      "format the resolved graph provides (e.g. appimage, msi)"))
+                .help("The package format: tar | zip | dir | single-file | any format the "
+                      "resolved graph provides (e.g. appimage, msi, okb); default: zip for a "
+                      "Windows program, tar elsewhere"))
             .option(cl::Option("format").takes_value()
                 .help("Earlier spelling of --pkg-format"))
             .option(cl::Option("output").short_name('o').takes_value()

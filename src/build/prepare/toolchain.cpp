@@ -257,6 +257,10 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         // with the declared profile.
         if (pr.dependencyLinkageDeclared)
             state.m->buildConfig.dependencyLinkage = pr.dependencyLinkage;
+        // `mcpp pack --linkage`: the package's program property, stated for
+        // this build over the project's (SPEC-014 §1).
+        if (!state.overrides.dependency_linkage.empty())
+            state.m->buildConfig.dependencyLinkage = state.overrides.dependency_linkage;
         state.m->buildConfig.optLevel = pr.optLevel;
         state.m->buildConfig.debug    = pr.debug;
         state.m->buildConfig.lto      = pr.lto;

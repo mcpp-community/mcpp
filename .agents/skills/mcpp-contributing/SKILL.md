@@ -121,6 +121,8 @@ git checkout -b <type>/<short-description>
 - 遵循现有代码风格（查看相邻代码）
 - 模块导入用 `import std;` 和 `import mcpp.xxx;`
 - 只改需要改的，不顺手重构不相关代码
+- **循环嵌套不超过两层**：第三层改为具名的辅助函数、一次扁平的遍历（例如带深度的
+  `recursive_directory_iterator`）或先收集再处理；确有必要保留三层时，在该处注释写明理由
 - 平台相关代码放在 `src/platform/` 目录下
 
 **构建验证**

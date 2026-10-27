@@ -3804,6 +3804,24 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         m.packConfig.alsoSkip = *v;
     if (auto v = doc->get_string_array("pack.bundle-project.force_bundle"))
         m.packConfig.forceBundle = *v;
+    // The three axes' defaults, the signer and `universal` (SPEC-014). The
+    // values are checked where the command reads them, with the flags that
+    // take the same words.
+    if (auto v = doc->get_string("pack.linkage")) {
+        if (*v != "static" && *v != "shared")
+            return std::unexpected(error(origin, std::format(
+                "[pack].linkage = '{}' invalid; expected 'static' | 'shared'", *v)));
+        m.packConfig.linkage = *v;
+    }
+    if (auto v = doc->get_string("pack.format"))   m.packConfig.format = *v;
+    if (auto v = doc->get_string("pack.compress")) m.packConfig.compress = *v;
+    if (auto v = doc->get_string_array("pack.sign")) {
+        if (v->empty())
+            return std::unexpected(error(origin, std::string(
+                "[pack].sign is an argv, `{}` the file signed; it is empty")));
+        m.packConfig.sign = *v;
+    }
+    if (auto v = doc->get_bool("pack.universal")) m.packConfig.universal = *v;
 
     // [target.<triple>] — per-target overrides. We accept both GCC
     // (x86_64-linux-musl) and Rust-style (x86_64-unknown-linux-musl)

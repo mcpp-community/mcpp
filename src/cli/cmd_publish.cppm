@@ -28,6 +28,10 @@ import mcpp.wire;
 import mcpp.home;                 // --list-formats plans outside the project
 import mcpp.pack.stage_tree;       // the built-in formats
 import mcpp.toolchain.fingerprint;  // hash_string
+import mcpp.toolchain.platform;     // host_arch: the static row of `--linkage static`
+import mcpp.pack.compress;          // --compress
+import mcpp.pack.distribution;      // --merge
+import mcpplibs.os.platform;
 
 namespace mcpp::cli {
 
@@ -326,11 +330,15 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
         std::error_code ec;
         nlohmann::json t = nlohmann::json::array();
         for (auto const& x : targets) t.push_back(x);
+        const bool dir = std::filesystem::is_directory(p, ec);
         return nlohmann::json{
             {"path", std::filesystem::absolute(p, ec).lexically_normal().string()},
-            {"type", std::filesystem::is_directory(p, ec) ? "directory" : "file"},
+            {"type", dir ? "directory" : "file"},
             {"format", format},
             {"targets", std::move(t)},
+            // SPEC-014 §9: the digest of a file, which a release publishes.
+            {"sha256", dir ? nlohmann::json(nullptr)
+                           : nlohmann::json(mcpp::pack::distribution::sha256_file(p))},
         };
     };
     nlohmann::json artifacts = nlohmann::json::array();
@@ -371,6 +379,16 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
     env.data = nlohmann::json{{"artifacts", std::move(artifacts)}, {"stage", std::move(stage)}};
     if (!stages.is_null()) env.data["stages"] = std::move(stages);
+    // The three axes and the legs the package was made with (SPEC-014 §9).
+    if (!libraryRoute) {
+        auto const& first = outcome.members.empty() ? mcpp::pack::PackOutcome::Member{}
+                                                    : outcome.members.front();
+        env.data["linkage"]   = outcome.linkage.empty() ? first.linkage : outcome.linkage;
+        env.data["mode"]      = outcome.mode.empty() ? first.mode : outcome.mode;
+        env.data["pkgFormat"] = outcome.format;
+        env.data["legs"]      = outcome.targets;
+        env.data["systems"]   = outcome.systems;
+    }
     mcpp::wire::emit(env);
     return 0;
 }
@@ -525,19 +543,153 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
     // exists to remove. The refusal moves to `build_and_pack`, after build
     // programs have declared what they provide and before anything is
     // compiled, where it can name what IS available instead of a fixed list.
-    if (auto v = pack_format_option(parsed)) {
-        if (*v == "tar")      opts.format = mcpp::pack::Format::Tar;
-        else if (*v == "dir") opts.format = mcpp::pack::Format::Dir;
-        else if (v->empty()) {
-            mcpp::ui::error("--pkg-format needs a value: tar | dir | a format the "
-                            "resolved graph provides");
-            return 2;
-        } else {
+    // THE PROJECT'S DEFAULTS OF THE THREE AXES (`[pack]`, SPEC-014 §1), read
+    // from the package this command packs; a flag states over each.
+    mcpp::manifest::PackConfig packCfg;
+    if (auto root = mcpp::project::find_manifest_root(std::filesystem::current_path()))
+        if (auto eff = mcpp::project::load_effective_manifest(*root))
+            packCfg = eff->manifest.packConfig;
+    if (parsed.option("merge")) {
+        std::vector<std::string> inputs;
+        for (auto const& v : parsed.option("merge")->get().values) {
+            std::size_t at = 0;
+            while (at <= v.size()) {
+                auto comma = v.find(',', at);
+                if (comma == std::string::npos) comma = v.size();
+                if (comma > at) inputs.push_back(v.substr(at, comma - at));
+                at = comma + 1;
+            }
+        }
+        mcpp::pack::distribution::MergeRequest req;
+        for (auto const& i : inputs) req.inputs.emplace_back(i);
+        if (auto v = parsed.value("output")) req.output = *v;
+        if (auto f = pack_format_option(parsed)) req.format = *f;
+        else if (!packCfg.format.empty()) req.format = packCfg.format;
+        std::string compressText = parsed.value("compress").value_or(packCfg.compress);
+        if (!compressText.empty()) {
+            auto c = mcpp::pack::compress::parse(compressText);
+            if (!c) { mcpp::ui::error(std::format("--compress: {}", c.error())); return 2; }
+            req.compression = *c;
+        }
+        auto merged = mcpp::pack::distribution::merge(req);
+        if (!merged) { mcpp::ui::error(merged.error()); return 1; }
+        mcpp::ui::status("Packed", merged->string());
+        if (report) {
+            report->rc = 0;
+            report->artifacts.push_back(*merged);
+            report->format = req.format.empty() ? std::string("tar") : req.format;
+        }
+        return 0;
+    }
+
+    std::string formatText;
+    if (auto v = pack_format_option(parsed)) formatText = *v;
+    else formatText = packCfg.format;
+    if (auto v = pack_format_option(parsed); v && v->empty()) {
+        mcpp::ui::error("--pkg-format needs a value: tar | zip | dir | single-file | a format "
+                        "the resolved graph provides");
+        return 2;
+    }
+    if (!formatText.empty()) {
+        opts.formatStated = true;
+        if (formatText == "tar")              opts.format = mcpp::pack::Format::Tar;
+        else if (formatText == "dir")         opts.format = mcpp::pack::Format::Dir;
+        else if (formatText == "zip")         opts.format = mcpp::pack::Format::Zip;
+        else if (formatText == "single-file") opts.format = mcpp::pack::Format::SingleFile;
+        else {
             opts.format     = mcpp::pack::Format::Dispatched;
-            opts.formatName = *v;
+            opts.formatName = formatText;
         }
     }
     if (auto v = parsed.value("output")) opts.output = outputFromUser ? outputFromUser->string() : *v;
+
+    // ─── Linkage, compression, universal, systems, signer ────────────
+    {
+        std::string linkage = parsed.value("linkage").value_or(packCfg.linkage);
+        if (!linkage.empty()) {
+            if (linkage == "static")      opts.linkage = mcpp::pack::Linkage::Static;
+            else if (linkage == "shared") opts.linkage = mcpp::pack::Linkage::Shared;
+            else {
+                mcpp::ui::error(std::format("invalid --linkage '{}'; expected: static | shared",
+                                            linkage));
+                return 2;
+            }
+        }
+        // `--mode static` IS `--linkage static --mode self-contained` (SPEC-014
+        // §1): the program carries its libraries, and the machine provides
+        // nothing.
+        if (opts.mode == mcpp::pack::Mode::Static) {
+            if (opts.linkage == mcpp::pack::Linkage::Shared) {
+                mcpp::ui::error("--mode static is --linkage static --mode self-contained; "
+                                "--linkage shared contradicts it.\n"
+                                "  use: --linkage shared --mode self-contained");
+                return 2;
+            }
+            opts.linkage = mcpp::pack::Linkage::Static;
+        }
+        std::string compressText = parsed.value("compress").value_or(packCfg.compress);
+        if (!compressText.empty()) {
+            auto c = mcpp::pack::compress::parse(compressText);
+            if (!c) { mcpp::ui::error(std::format("--compress: {}", c.error())); return 2; }
+            opts.compression = *c;
+        }
+        using mcpp::pack::compress::Algorithm;
+        const auto alg = opts.compression.algorithm;
+        if (opts.compression.stated) {
+            if (opts.format == mcpp::pack::Format::Dir || opts.format == mcpp::pack::Format::Dispatched) {
+                mcpp::ui::error(std::format(
+                    "--compress {} compresses a container, and --pkg-format {} writes none.\n"
+                    "  use: --pkg-format tar | zip | single-file",
+                    mcpp::pack::compress::name(alg),
+                    opts.format == mcpp::pack::Format::Dir ? std::string("dir") : opts.formatName));
+                return 2;
+            }
+            if (opts.format == mcpp::pack::Format::Zip && (alg == Algorithm::Zstd || alg == Algorithm::Xz)) {
+                mcpp::ui::error(std::format(
+                    "a zip's members are deflated (gzip) or stored (none); --compress {} is a "
+                    "tar's.\n  use: --pkg-format tar --compress {}, or --compress gzip | none",
+                    mcpp::pack::compress::name(alg), mcpp::pack::compress::name(alg)));
+                return 2;
+            }
+            if (opts.format == mcpp::pack::Format::SingleFile
+                && (alg == Algorithm::Gzip || alg == Algorithm::Xz)) {
+                mcpp::ui::error(std::format(
+                    "a single file's payload is zstd (or none): its launcher decompresses one "
+                    "codec.\n  use: --compress zstd[:<level>] | none"));
+                return 2;
+            }
+        } else if (opts.format == mcpp::pack::Format::SingleFile) {
+            opts.compression.algorithm = Algorithm::Zstd;
+        }
+        if (parsed.is_flag_set("no-universal")) opts.universal = false;
+        else opts.universal = packCfg.universal;
+        if (auto v = parsed.value("systems")) {
+            std::size_t at = 0;
+            while (at <= v->size()) {
+                auto comma = v->find(',', at);
+                if (comma == std::string::npos) comma = v->size();
+                auto word = v->substr(at, comma - at);
+                if (!word.empty()) {
+                    if (word != "linux" && word != "macos" && word != "windows") {
+                        mcpp::ui::error(std::format(
+                            "--systems names '{}'; the systems are linux, macos and windows", word));
+                        return 2;
+                    }
+                    if (std::ranges::find(opts.systems, word) == opts.systems.end())
+                        opts.systems.push_back(word);
+                }
+                at = comma + 1;
+            }
+        }
+        opts.sign = packCfg.sign;
+        // A single file carries what it runs: the machine provides nothing.
+        if (opts.format == mcpp::pack::Format::SingleFile && opts.mode == mcpp::pack::Mode::None) {
+            mcpp::ui::error("--pkg-format single-file carries what the program runs, and --mode "
+                            "system leaves it to the machine.\n"
+                            "  use: --mode vendored | self-contained | static");
+            return 2;
+        }
+    }
 
     // `value()`, not `option_or_empty()`, for `profile` — and NOT for
     // anything whose name a positional shares. `ParsedArgs::value()` falls back
@@ -562,7 +714,29 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
     // form is not a shared object.
     std::vector<std::string> triples;
     if (auto o = parsed.option("target")) triples = o->get().values;
+    // `--linkage static` OF A LINUX PROGRAM IS THE MUSL ROW (SPEC-014 §1): a
+    // program with no shared library at all, the C library's included, which
+    // is what `--mode static` has always built. On another system the
+    // libraries of the graph are linked in and the system's stay its own.
+    if (opts.linkage == mcpp::pack::Linkage::Static) {
+        if (triples.empty()) {
+            if constexpr (mcpplibs::os::is_linux)
+                triples.push_back(std::format("{}-linux-musl", mcpp::toolchain::platform::host_arch));
+        } else {
+            for (auto& t : triples)
+                if (auto at = t.find("-linux-gnu"); at != std::string::npos)
+                    t.replace(at, 10, "-linux-musl");
+        }
+    }
     if (!triples.empty()) opts.targetTriple = triples.back();
+    // A program with no shared library is packed whole whatever the mode
+    // asked: there is nothing beside it to vendor, and nothing for the machine
+    // to provide.
+    if (opts.linkage == mcpp::pack::Linkage::Static
+        && opts.targetTriple.find("-linux-musl") != std::string::npos) {
+        opts.mode = mcpp::pack::Mode::Static;
+        modeFromUser = true;
+    }
 
     // ─── Several members ─────────────────────────────────────────────
     //

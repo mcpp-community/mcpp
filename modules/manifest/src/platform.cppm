@@ -100,6 +100,12 @@ struct Words {
     bool                     set = false;
 };
 
+struct Flag {
+    bool   value = false;
+    Origin origin;
+    bool   set = false;
+};
+
 // `runner = ["okrun", "{}"]` or `runner = { cmd = [...], host = "same-arch",
 // exclusive = true }`. `host`: "" (unstated), "same-arch" (the artifact runs
 // on a machine of its architecture), "any" (the runner reaches it from any
@@ -201,6 +207,9 @@ struct Statement {
     std::map<std::string, Words>  runners;
     Carrier                       carrier;
     Text                          plugin;
+    // `universal = true`: `mcpp pack` of any of the targets packs all of them
+    // into one package (SPEC-014 §3).
+    Flag                          universal;
     // [platform.layers], [platform.tools]
     std::map<std::string, LayerEntry> layers;
     std::map<std::string, ToolEntry>  tools;
@@ -218,7 +227,7 @@ struct Statement {
 
     bool empty() const {
         return !targets.set && !toolchain.set && !sysroot.set && !runner.set
-            && runners.empty() && !carrier.set && !plugin.set && layers.empty()
+            && runners.empty() && !carrier.set && !plugin.set && !universal.set && layers.empty()
             && tools.empty() && build.empty() && buildCfg.empty()
             && !link.driver.set && !link.flags.set && !link.start.set && !link.script.set
             && !link.inputsSet && !link.exe.set && !link.shared.set && !link.sealSet
@@ -251,7 +260,7 @@ constexpr bool is_layer(std::string_view k) {
 // list per table, read by the parser's unknown-key sweep and by the tests.
 inline constexpr std::string_view kPlatformKeys[] = {
     "targets", "toolchain", "sysroot", "runner", "runners", "carrier", "plugin",
-    "layers", "tools", "build", "link", "versions", "hosted",
+    "universal", "layers", "tools", "build", "link", "versions", "hosted",
 };
 inline constexpr std::string_view kBuildKeys[] = { "cflags", "cxxflags", "asmflags", "ldflags" };
 inline constexpr std::string_view kLinkKeys[] = {

@@ -879,6 +879,10 @@ export struct BuildOverrides {
     // same relationship --target has with [toolchain].
     std::string accel;
     bool        force_static = false; // --static (or implied by musl target)
+    // `mcpp pack --linkage` (SPEC-014 §1): the whole graph's dependency
+    // linkage for this build, over `[build] dependency_linkage` and the
+    // profile's. Empty: as the project states it.
+    std::string dependency_linkage;
     std::string package_filter;      // -p <name>: only build this workspace member
     // The workspace members this plan builds, as written in `[workspace]
     // members` ("." is a rooted workspace's own package), all of one

@@ -1861,6 +1861,20 @@ struct PackConfig {
     // assumption ("modern desktop Linux").
     std::vector<std::string>            alsoSkip;      // libs to ALSO skip on top of PEP 600
     std::vector<std::string>            forceBundle;   // libs to bundle even if PEP 600 says skip
+    // The three axes' project defaults (SPEC-014 §1): `linkage` ("static" |
+    // "shared"), `format` (the package format, as `--pkg-format` names it),
+    // `compress` (`<algorithm>[:<level>]`, as `--compress` takes it). Empty:
+    // unstated.
+    std::string                         linkage;
+    std::string                         format;
+    std::string                         compress;
+    // The signer (SPEC-014 §4): an argv run on each program, image and library
+    // of the staged tree, and on a single file, before the container is
+    // written; `{}` is the file.
+    std::vector<std::string>            sign;
+    // `false`: a pack of a platform's target packs that target alone, where
+    // the platform states `universal = true` (SPEC-014 §3).
+    std::optional<bool>                 universal;
 };
 
 // `[workspace]` — multi-package workspace support (0.0.11+).
