@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 import std;
+import mcpplibs.os;
 import mcpp.run;
 
 // SUBSYSTEM-LEVEL, and the contract is B2-0 of the member-selection and
@@ -19,19 +20,17 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-#if defined(_WIN32)
-// `hostname` exits at once on every Windows; `ping -n 2` answers the second
+// `cmd /c echo` exits at once on every Windows; `ping -n 2` answers the second
 // time one second after the first, which is the slowest child this needs.
-const std::vector<std::string> kQuick{"hostname"};
-const std::vector<std::string> kSlow{"ping", "-n", "2", "127.0.0.1"};
-constexpr auto kSlowFor = std::chrono::milliseconds(1000);
-constexpr int  kRounds  = 6;
-#else
-const std::vector<std::string> kQuick{"/bin/sh", "-c", "echo quick"};
-const std::vector<std::string> kSlow{"/bin/sh", "-c", "sleep 0.5"};
-constexpr auto kSlowFor = std::chrono::milliseconds(500);
-constexpr int  kRounds  = 12;
-#endif
+constexpr bool kWindows = mcpplibs::os::is_windows;
+const std::vector<std::string> kQuick = kWindows
+    ? std::vector<std::string>{"cmd.exe", "/d", "/c", "echo quick"}
+    : std::vector<std::string>{"/bin/sh", "-c", "echo quick"};
+const std::vector<std::string> kSlow = kWindows
+    ? std::vector<std::string>{"ping", "-n", "2", "127.0.0.1"}
+    : std::vector<std::string>{"/bin/sh", "-c", "sleep 0.5"};
+constexpr auto kSlowFor = std::chrono::milliseconds(kWindows ? 1000 : 500);
+constexpr int  kRounds  = kWindows ? 6 : 12;
 
 struct Outcome {
     Clock::time_point end{};
