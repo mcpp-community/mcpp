@@ -208,11 +208,11 @@ int main() {
     return 0;
 }
 EOF
-"$MCPP" run --format blob > r5.log 2>&1 || fail "mcpp run --format blob failed" r5.log
+"$MCPP" run --pkg-format blob > r5.log 2>&1 || fail "mcpp run --pkg-format blob failed" r5.log
 rec="$TMP/rec/lone.blob.rec"
 [ -f "$rec" ] && ! grep -q '^UNSET$' "$rec" || fail "the distributable's runner did not receive the variable" r5.log "$rec"
 list=$(sed -n 's/^LIST=//p' "$rec")
 [ -f "$list" ] && [ ! -s "$list" ] || fail "the distributable's list is not an existing empty file" "$rec"
-echo "a distributable run with --format receives an empty list OK"
+echo "a distributable run with --pkg-format receives an empty list OK"
 
 echo "PASS: 672_a_runner_receives_the_files_the_artifact_carries"

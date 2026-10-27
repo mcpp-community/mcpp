@@ -74,7 +74,7 @@ fi
 
 # ── 3. pack it ──────────────────────────────────────────────────────────
 rm -rf target
-"$MCPP" pack mathkit --format dir > pack.log 2>&1 || { cat pack.log; echo "pack failed"; exit 1; }
+"$MCPP" pack mathkit --pkg-format dir > pack.log 2>&1 || { cat pack.log; echo "pack failed"; exit 1; }
 pkgrel="$(find target/dist -maxdepth 1 -type d -name 'mathkit-0.1.0*' | head -1)"
 [[ -n "$pkgrel" ]] || { cat pack.log; echo "FAIL: no package"; exit 1; }
 # OUT of the producer's tree, so the next step can delete that tree entirely.

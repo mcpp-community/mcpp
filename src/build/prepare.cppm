@@ -808,6 +808,11 @@ export struct BuildOverrides {
     // project root, as the resolution input it is, while the lock this planning
     // produces is written under `work_dir`. Build programs still run.
     bool        plan_only = false;
+    // THE CONFIGURATION, NOT THE SOURCES (`prepare_configuration`, SPEC-013
+    // §9): what the project's sources would be refused for -- `import std`
+    // with no C++ run-time in the graph -- is a note of the report, and the
+    // configuration is still reported.
+    bool        configuration_only = false;
     // #355 tool provisioning re-enters prepare_build for the tool package. A
     // tool package's own build.mcpp may legitimately want another tool (gRPC's
     // wants protoc), so the depth cannot be 1 — but an unbounded chain is a

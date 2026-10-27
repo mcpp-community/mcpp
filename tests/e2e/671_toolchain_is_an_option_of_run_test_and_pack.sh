@@ -34,7 +34,7 @@ fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2
 cd tcopt
 
 # ── 1. the option is accepted and its value reaches resolution ─────────────
-for spelling in "run" "test" "pack --format dir"; do
+for spelling in "run" "test" "pack --pkg-format dir"; do
     read -ra words <<<"$spelling"
     set +e
     "$MCPP" "${words[@]}" --toolchain nosuch@0.0.1 > c1.log 2>&1

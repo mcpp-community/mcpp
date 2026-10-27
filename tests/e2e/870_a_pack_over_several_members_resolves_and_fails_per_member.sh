@@ -99,7 +99,7 @@ member c ctool c++20
 zap() { ls -d target/.build-mcpp/out/*/"$1"/"$1".zap 2>/dev/null | head -1; }
 
 # ── A ────────────────────────────────────────────────────────────────────────
-"$MCPP" pack --workspace --format zap > a.log 2>&1 || fail "A: the pack failed" a.log
+"$MCPP" pack --workspace --pkg-format zap > a.log 2>&1 || fail "A: the pack failed" a.log
 for m in a b c; do
     [ -x "$(zap $m)" ] || fail "A: no distributable for $m" a.log
     [ "$("$(zap $m)")" = "$m" ] || fail "A: $m's distributable runs '$("$(zap $m)")', not $m's program" a.log
@@ -107,7 +107,7 @@ done
 echo "ok: A, each member's distributable is its own program, although a and b both name the target tool"
 
 # ── B ────────────────────────────────────────────────────────────────────────
-"$MCPP" pack --workspace --format zap --message-format json > b.json 2> b.err \
+"$MCPP" pack --workspace --pkg-format zap --message-format json > b.json 2> b.err \
     || fail "B: the JSON pack failed" b.err b.json
 order=$(python3 -c 'import json,sys
 d = json.load(open(sys.argv[1]))
@@ -118,7 +118,7 @@ echo "ok: B, the stages are listed in [workspace] members order across configura
 # ── C ────────────────────────────────────────────────────────────────────────
 touch fail-b
 rc=0
-"$MCPP" pack --workspace --format zap > c.log 2>&1 || rc=$?
+"$MCPP" pack --workspace --pkg-format zap > c.log 2>&1 || rc=$?
 [ "$rc" -ne 0 ] || fail "C: the pack exited 0 although b's step failed" c.log
 for m in a c; do
     [ -x "$(zap $m)" ] && [ "$("$(zap $m)")" = "$m" ] || fail "C: $m was not packed beside b's failure" c.log

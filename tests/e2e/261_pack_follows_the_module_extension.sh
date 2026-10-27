@@ -62,7 +62,7 @@ kind = "lib"
 EOF
 
 cd mathkit
-"$MCPP" pack mathkit --format dir > pack.log 2>&1 || { cat pack.log; echo "pack failed"; exit 1; }
+"$MCPP" pack mathkit --pkg-format dir > pack.log 2>&1 || { cat pack.log; echo "pack failed"; exit 1; }
 pkg="$TMP/mathkit/$(find target/dist -maxdepth 1 -type d -name 'mathkit-0.1.0-*' | head -1)"
 
 # ── the closure actually started ────────────────────────────────────────
@@ -139,7 +139,7 @@ sources = ["src/*.cppm"]
 [targets.plain]
 kind = "lib"
 EOF
-( cd plain && "$MCPP" pack plain --format dir > pack.log 2>&1 ) || {
+( cd plain && "$MCPP" pack plain --pkg-format dir > pack.log 2>&1 ) || {
     cat plain/pack.log; echo "plain pack failed"; exit 1; }
 plainpkg="$(find plain/target/dist -maxdepth 1 -type d -name 'plain-0.1.0-*' | head -1)"
 grep -q 'module_extensions' "$plainpkg/mcpp.toml" && {

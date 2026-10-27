@@ -67,7 +67,7 @@ linux = "gcc@16.1.0"
 deploy_files = ["share/notes.txt"]
 EOF
 
-"$MCPP" pack --format dir > dir.log 2>&1 || fail "mcpp pack --format dir failed" dir.log
+"$MCPP" pack --pkg-format dir > dir.log 2>&1 || fail "mcpp pack --pkg-format dir failed" dir.log
 
 tree=$(find target/dist -maxdepth 1 -type d -name 'app-0.1.0-*' | head -1)
 [ -n "$tree" ] || fail "no staged directory under target/dist" dir.log
@@ -147,7 +147,7 @@ int main() {
 }
 EOF
 
-"$MCPP" pack --format zap > zap.log 2>&1 || fail "mcpp pack --format zap failed" zap.log
+"$MCPP" pack --pkg-format zap > zap.log 2>&1 || fail "mcpp pack --pkg-format zap failed" zap.log
 Z=$(find target -name 'app.zap' | head -1)
 [ -n "$Z" ] || fail "--format zap produced nothing" zap.log
 

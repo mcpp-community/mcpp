@@ -745,10 +745,12 @@ int run(int argc, char** argv) {
             // given a run-specific spelling, because it is the same request:
             // "produce this distributable", asked from a command that also
             // executes it afterward.
-            .option(cl::Option("format").takes_value()
-                .help("Run the distributable a `--format <name>` pack would produce "
-                      "(same values as `mcpp pack --format`); refused together with "
+            .option(cl::Option("pkg-format").takes_value().value_name("FORMAT")
+                .help("Run the distributable a `--pkg-format <name>` pack would produce "
+                      "(same values as `mcpp pack --pkg-format`); refused together with "
                       "--no-runner"))
+            .option(cl::Option("format").takes_value()
+                .help("Earlier spelling of --pkg-format"))
             .option(cl::Option("play-game")
                 .help("Play a game in the status row while it builds: --play-game=snake|stack|runner, or one at random"))
             .option(cl::Option("print-launch")
@@ -903,9 +905,11 @@ int run(int argc, char** argv) {
             // `mcpp::provides_pack_format` and `--format <name>` dispatches to
             // it; an unknown value names what IS available rather than a
             // constant, so the help text does not have to enumerate them.
-            .option(cl::Option("format").takes_value()
-                .help("tar (default; .zip for a Windows target) | dir | any "
+            .option(cl::Option("pkg-format").takes_value().value_name("FORMAT")
+                .help("The package format: tar (default; .zip for a Windows target) | dir | any "
                       "format the resolved graph provides (e.g. appimage, msi)"))
+            .option(cl::Option("format").takes_value()
+                .help("Earlier spelling of --pkg-format"))
             .option(cl::Option("output").short_name('o').takes_value()
                 .help("Override output path; with several members, the directory each archive or tree is written below"))
             // Packaging builds RELEASE by default — the artifact leaves this
@@ -1055,7 +1059,9 @@ int run(int argc, char** argv) {
                 .arg(cl::Arg("compiler").help("gcc | llvm | msvc | emsdk | android-ndk (or gcc@16.1.0; legacy aliases accepted)"))
                 .arg(cl::Arg("version").help("e.g. 16.1.0, 15, 15.1"))
                 .option(cl::Option("target").takes_value().help(
-                    "Install the toolchain payload for <triple> (e.g. x86_64-windows-gnu)")))
+                    "Install the toolchain payload for <triple> (e.g. x86_64-windows-gnu)"))
+                .option(cl::Option("platform").takes_value().value_name("SPEC")
+                    .help("With --target: the target's platform for this invocation (= MCPP_PLATFORM)")))
             .subcommand(cl::App("default")
                 .description("Set the default toolchain (and optionally the default target)")
                 // Same dual-form as `install`: `gcc@16.1.0` or `gcc 16.1.0`,
@@ -1184,6 +1190,10 @@ int run(int argc, char** argv) {
                     .help("Report this target's configuration (prepared, not built; the project's when run in one)"))
                 .option(cl::Option("host")
                     .help("Report the host graph's configuration: what build programs and tools are built for"))
+                .option(cl::Option("platform").takes_value().value_name("SPEC")
+                    .help("The target's platform for this invocation (= MCPP_PLATFORM): <name>@<version>, path:<dir>, none"))
+                .option(cl::Option("host-platform").takes_value().value_name("SPEC")
+                    .help("The host graph's platform for this invocation (= MCPP_HOST_PLATFORM)"))
                 .option(cl::Option("format").takes_value().value_name("json")
                     .help("Machine-readable output (enveloped; see docs/50-machine-output.md)")))
             .subcommand(cl::App("config")

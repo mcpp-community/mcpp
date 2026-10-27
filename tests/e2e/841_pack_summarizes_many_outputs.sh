@@ -57,7 +57,7 @@ int main() {
 }
 EOF
 
-"$MCPP" pack --format tree > p1.log 2>&1 || fail "pack failed" p1.log
+"$MCPP" pack --pkg-format tree > p1.log 2>&1 || fail "pack failed" p1.log
 
 # P1
 n=$(grep -c "Packed" p1.log)
@@ -67,12 +67,12 @@ grep -qE "Packed .*tree[/\\\\]data \(6 files\)" p1.log || fail "P1: data/ is not
 grep -qE "Packed .*tree[/\\\\]manifest$" p1.log || fail "P1: the single file is not named" p1.log
 
 # P2
-"$MCPP" pack --format tree --verbose > p2.log 2>&1 || fail "pack --verbose failed" p2.log
+"$MCPP" pack --pkg-format tree --verbose > p2.log 2>&1 || fail "pack --verbose failed" p2.log
 n=$(grep -c "Packed" p2.log)
 [ "$n" = 13 ] || fail "P2: $n Packed lines under --verbose, expected 13" p2.log
 
 # P3
-"$MCPP" pack --format tree --message-format json > p3.json 2> p3.err || fail "pack json failed" p3.err
+"$MCPP" pack --pkg-format tree --message-format json > p3.json 2> p3.err || fail "pack json failed" p3.err
 python3 - p3.json <<'EOF' || fail "P3" p3.json
 import json, sys
 a = json.load(open(sys.argv[1]))["data"]["artifacts"]

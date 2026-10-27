@@ -175,7 +175,7 @@ echo "ok: W4 a runtime file declared under host-coupled is refused"
 
 # ── W5 ──────────────────────────────────────────────────────────────────────
 touch marker
-pack_out=$(cd w1 && "$MCPP" pack --format dir 2>&1) || fail "W5: mcpp pack failed" <(echo "$pack_out")
+pack_out=$(cd w1 && "$MCPP" pack --pkg-format dir 2>&1) || fail "W5: mcpp pack failed" <(echo "$pack_out")
 DIST=$(find w1/target/dist -maxdepth 1 -mindepth 1 -newer marker | head -1)
 [[ -d "$DIST" ]] || fail "W5: no package directory" <(echo "$pack_out"; find w1/target/dist)
 packed=0

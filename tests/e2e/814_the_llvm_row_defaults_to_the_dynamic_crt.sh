@@ -144,7 +144,7 @@ echo "ok: switching A, B, A keeps both std BMI identities valid"
 # and not this fixture's row: it never wrote `cxx_runtime` down).
 #
 # `resolution.json` is a property of the BUILD, not of one `pack` invocation,
-# so the observable here is the package's own contents: `--format dir` avoids
+# so the observable here is the package's own contents: `--pkg-format dir` avoids
 # needing an unzip step to look inside.
 MARKER="$TMP/marker"; touch "$MARKER"
 pack_out=$("$MCPP" pack 2>&1) || fail "the default pack failed" <(echo "$pack_out")
@@ -155,7 +155,7 @@ DIST=$(find target/dist -maxdepth 1 -mindepth 1 -newer "$MARKER" | head -1)
     || fail "the default pack did not carry vcruntime140.dll" <(echo "$pack_out"; echo "$DIST")
 
 touch "$MARKER"
-system_out=$("$MCPP" pack --mode system --format dir 2>&1) \
+system_out=$("$MCPP" pack --mode system --pkg-format dir 2>&1) \
     || fail "--mode system refused a defaulted (never-declared) toolchain-coupled contract" \
         <(echo "$system_out")
 SYSTEM_DIST=$(find target/dist -maxdepth 1 -mindepth 1 -newer "$MARKER" | head -1)

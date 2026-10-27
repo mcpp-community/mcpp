@@ -2823,7 +2823,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     if (!format_name.empty() && choice.tmpl.empty()
         && std::filesystem::is_directory(exe, dirEc)) {
         std::println(stderr,
-            "error: --format {} produced a directory, '{}', and no runner reaches it.\n"
+            "error: --pkg-format {} produced a directory, '{}', and no runner reaches it.\n"
             "       A directory is not executed directly: a runner named '{}' runs\n"
             "       it. A package supplies one with `mcpp::runner(\"{}\", …)`, or the\n"
             "       project declares it:\n"
@@ -3023,7 +3023,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // no reading for a file this host was never going to execute on its own.
     if (!format.empty() && no_runner) {
         std::println(stderr,
-            "error: --format and --no-runner cannot be combined: a "
+            "error: --pkg-format and --no-runner cannot be combined: a "
             "distributable is not something this host executes directly.");
         return 2;
     }
@@ -3099,7 +3099,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
             // shape that reports zero artifacts fails LOUDLY here instead of
             // dereferencing past the end of an empty vector below.
             std::println(stderr,
-                "error: --format {} reported success and named no artifact to run", format);
+                "error: --pkg-format {} reported success and named no artifact to run", format);
             return 1;
         }
         // THE RUNNER RESOLUTION NEEDS A BuildContext, AND build_and_pack's OWN
@@ -3132,7 +3132,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
                 names += a.string();
             }
             std::println(stderr,
-                "error: --format {} produced {} distributables ({}); mcpp run needs "
+                "error: --pkg-format {} produced {} distributables ({}); mcpp run needs "
                 "exactly one to hand to the runner", format, outcome.artifacts.size(), names);
             return 1;
         }
@@ -3228,7 +3228,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
             std::println(stderr,
                 "error: '{}' is an application, and on {} an application is "
                 "a shared library that a package installs. Run it through a "
-                "distributable: mcpp run --format <name>, where <name> is "
+                "distributable: mcpp run --pkg-format <name>, where <name> is "
                 "one of: {}",
                 t.name, ctx->tc.targetTriple,
                 formats.empty() ? std::string("none declared") : formats);

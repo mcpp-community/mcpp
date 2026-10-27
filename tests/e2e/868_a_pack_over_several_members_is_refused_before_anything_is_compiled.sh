@@ -113,7 +113,7 @@ printf 'export module zlib;\nexport int f() { return 1; }\n' > lib/src/lib.cppm
 
 # ── E ────────────────────────────────────────────────────────────────────────
 set +e
-"$MCPP" pack --mode system --workspace --format zap > e.log 2>&1
+"$MCPP" pack --mode system --workspace --pkg-format zap > e.log 2>&1
 rc=$?
 set -e
 [ "$rc" -ne 0 ] || fail "E: a member without the format was packed" e.log
@@ -238,13 +238,13 @@ for m in cli2 gui2; do
     program_member $m "prov = { path = \"$PROV_HOST\" }"
 done
 set +e
-"$MCPP" pack --mode system --workspace --format zap > j.log 2>&1
+"$MCPP" pack --mode system --workspace --pkg-format zap > j.log 2>&1
 rc=$?
 set -e
 [ "$rc" -ne 0 ] && grep -q "member 'cli2'" j.log && grep -q "member 'gui2'" j.log && grep -q "prov" j.log \
     || fail "J: members served only by a shared provider were not refused by name" j.log
 compiled_nothing . || fail "J: the refusal arrived after a compile" j.log
-"$MCPP" pack --mode system -p cli2 --format zap > j2.log 2>&1 || fail "J: one member over the same provider was not packed" j2.log
+"$MCPP" pack --mode system -p cli2 --pkg-format zap > j2.log 2>&1 || fail "J: one member over the same provider was not packed" j2.log
 provided=$(find . -name prov.zap | head -1)
 [ -n "$provided" ] && grep -qx "./bin/cli2" "$provided" \
     || fail "J: the provider was not given the member's tree" j2.log
@@ -261,7 +261,7 @@ write_dist .
 program_member cli3 "prov = { path = \"$PROV_HOST\" }"
 program_member gui3 ""
 provider gui3 submit
-"$MCPP" pack --mode system --workspace --format zap > j3.log 2>&1 || fail "J: a provider one member reaches did not serve it beside another member's own" j3.log
+"$MCPP" pack --mode system --workspace --pkg-format zap > j3.log 2>&1 || fail "J: a provider one member reaches did not serve it beside another member's own" j3.log
 provided=$(find . -name prov.zap | head -1)
 [ -n "$provided" ] && grep -qx "./bin/cli3" "$provided" && ! grep -q "gui3" "$provided" \
     || fail "J: the provider was not given cli3's tree alone" j3.log
@@ -283,11 +283,11 @@ provider good submit
 program_member mute ""
 provider mute silent
 set +e
-"$MCPP" pack --mode system --workspace --format zap > k.log 2>&1
+"$MCPP" pack --mode system --workspace --pkg-format zap > k.log 2>&1
 rc=$?
 set -e
 [ "$rc" -ne 0 ] || fail "K: a member that claimed nothing was reported as packed" k.log
-grep -q "member 'mute': no action claimed --format 'zap'" k.log \
+grep -q "member 'mute': no action claimed --pkg-format 'zap'" k.log \
     || fail "K: the failure does not name the member" k.log
 [ -n "$(find target/.build-mcpp/out -path '*/good/good.zap' | head -1)" ] || fail "K: the member that claimed the format was not packed" k.log
 grep -q "Packed .*good.zap" k.log || fail "K: the member that was packed was not reported" k.log

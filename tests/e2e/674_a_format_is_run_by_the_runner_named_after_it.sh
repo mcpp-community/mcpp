@@ -6,8 +6,8 @@
 # spawn (#634 B3).
 #
 # Measured on macos-15 against 2026.9.14.1: with a named runner `app` declared,
-# `mcpp run --format app --runner app` ran the bundle and returned its status,
-# while `mcpp run --format app` alone handed the bundle directory to the kernel:
+# `mcpp run --pkg-format app --runner app` ran the bundle and returned its status,
+# while `mcpp run --pkg-format app` alone handed the bundle directory to the kernel:
 #
 #     ...RApp.app could not be started: Permission denied (error 13)   exit 126
 #
@@ -112,7 +112,7 @@ cp mcpp.toml mcpp.toml.base
 
 # ── 1. the runner named after the format ──────────────────────────────────
 set +e
-"$MCPP" run --format blob > r1.log 2>&1; rc=$?
+"$MCPP" run --pkg-format blob > r1.log 2>&1; rc=$?
 set -e
 grep -q "RUNNER-blob: .*/app\.blob$" r1.log \
     || fail "the runner named 'blob' did not receive the distributable" r1.log
@@ -120,11 +120,11 @@ grep -q "PROGRAM-RAN" r1.log || fail "the program did not run through the runner
 [ "$rc" -eq 7 ] || fail "the program's status 7 did not come back (got $rc)" r1.log
 grep -q "Running \`.*runner-blob.sh" r1.log \
     || fail "the status line does not say Running for the format's runner" r1.log
-echo "mcpp run --format blob runs through the runner named blob OK"
+echo "mcpp run --pkg-format blob runs through the runner named blob OK"
 
 # ── 2. a typed --runner wins ───────────────────────────────────────────────
 set +e
-"$MCPP" run --format blob --runner other > r2.log 2>&1; rc=$?
+"$MCPP" run --pkg-format blob --runner other > r2.log 2>&1; rc=$?
 set -e
 grep -q "RUNNER-other: .*/app\.blob$" r2.log || fail "--runner other did not win" r2.log
 grep -q "RUNNER-blob" r2.log && fail "the format's runner ran although --runner was typed" r2.log
@@ -142,7 +142,7 @@ echo "a plain mcpp run executes the link output directly OK"
 
 # ── 4. a directory no runner reaches ───────────────────────────────────────
 set +e
-"$MCPP" run --format bundle > r4.log 2>&1; rc=$?
+"$MCPP" run --pkg-format bundle > r4.log 2>&1; rc=$?
 set -e
 [ "$rc" -eq 126 ] || fail "the directory without a runner did not exit 126 (got $rc)" r4.log
 grep -q "produced a directory" r4.log || fail "the refusal does not say the distributable is a directory" r4.log
@@ -155,7 +155,7 @@ echo "a directory no runner reaches is refused before the spawn OK"
 # ── 5. a manifest runner named after the format reaches the directory ─────
 printf 'bundle = ["%s"]\n' "$TMP/runner-bundle.sh" >> mcpp.toml
 set +e
-"$MCPP" run --format bundle > r5.log 2>&1; rc=$?
+"$MCPP" run --pkg-format bundle > r5.log 2>&1; rc=$?
 set -e
 grep -q "RUNNER-bundle: .*/app\.bundle$" r5.log || fail "the runner named 'bundle' did not receive the directory" r5.log
 [ "$rc" -eq 7 ] || fail "the bundle's program status did not come back (got $rc)" r5.log
@@ -165,7 +165,7 @@ echo "a manifest runner named bundle runs the directory OK"
 cp mcpp.toml.base mcpp.toml
 printf '\n[target.%s]\nrunner = ["%s"]\n' "$HOST" "$TMP/runner-default.sh" >> mcpp.toml
 set +e
-"$MCPP" run --format bundle > r6.log 2>&1; rc=$?
+"$MCPP" run --pkg-format bundle > r6.log 2>&1; rc=$?
 set -e
 grep -q "RUNNER-default: .*/app\.bundle$" r6.log || fail "the default runner did not receive the directory" r6.log
 grep -q "no runner reaches it" r6.log && fail "a refusal was printed although a default runner exists" r6.log

@@ -77,7 +77,7 @@ named=$(find "$bin" -maxdepth 1 -name 'libnamed.so' -type f | head -1)
 echo "  ok: libfw.so records its file name; a declared soname keeps libnamed.so.1"
 
 # ── 2. A3: the manifest states the closure the tree carries ───────────────
-"$MCPP" pack --format dir > dir.log 2>&1 || fail "mcpp pack --format dir failed" dir.log
+"$MCPP" pack --pkg-format dir > dir.log 2>&1 || fail "mcpp pack --pkg-format dir failed" dir.log
 tree=$(find target/dist -mindepth 1 -maxdepth 1 -type d -name 'app-0.1.0-*' | head -1)
 [ -n "$tree" ] || fail "no staged tree" dir.log
 manifest="$tree.stage-manifest"
@@ -111,12 +111,12 @@ ldflags = ["-L$TMP/ext/lib", "-lext", "-Wl,-rpath,$TMP/ext/lib"]
 EOF
 printf 'int ext_value();\nint main() { return ext_value() == 1 ? 0 : 1; }\n' > extapp/src/main.cpp
 cd extapp
-"$MCPP" pack --format dir > ext.log 2>&1 || fail "the pack with a prebuilt library failed" ext.log
+"$MCPP" pack --pkg-format dir > ext.log 2>&1 || fail "the pack with a prebuilt library failed" ext.log
 etree=$(find target/dist -mindepth 1 -maxdepth 1 -type d -name 'extapp-0.1.0-*' | head -1)
 grep -qxF "needs${TAB}libext.so${TAB}lib/libext.so" "$etree.stage-manifest" \
     || fail "libext.so is not stated as bundled" "$etree.stage-manifest"
 rm "$TMP/ext/lib/libext.so"
-if "$MCPP" pack --format dir > gone.log 2>&1; then
+if "$MCPP" pack --pkg-format dir > gone.log 2>&1; then
     fail "--format dir succeeded with libext.so gone" gone.log
 fi
 grep -q "libext.so: the loader finds no file for it" gone.log \

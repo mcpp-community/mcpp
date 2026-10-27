@@ -46,7 +46,7 @@ printf "resource-1\n" > res.txt
 # empty. Also asserted by 652b for the tarball route; repeated here, against
 # `--format dir`, because THIS is the format the several-triple case below
 # also uses, and the two must be compared under the same format.
-"$MCPP" pack myapp --target aarch64-linux-android --format dir > pack1.log 2>&1 \
+"$MCPP" pack myapp --target aarch64-linux-android --pkg-format dir > pack1.log 2>&1 \
     || fail "single-target Android pack failed" pack1.log
 staged1=$(ls -d target/dist/myapp-0.1.0-*/ 2>/dev/null | head -1)
 [ -n "$staged1" ] || fail "no staged tree for the single-target pack" pack1.log
@@ -61,7 +61,7 @@ echo "one --target stages flat lib/libmyapp.so, unchanged OK"
 # ── 2. two Android triples: one tree, two lib/<abi>/ legs ─────────────────
 rm -rf target/dist
 "$MCPP" pack myapp --target aarch64-linux-android --target x86_64-linux-android \
-        --format dir > pack2.log 2>&1 \
+        --pkg-format dir > pack2.log 2>&1 \
     || fail "two-target Android pack failed" pack2.log
 staged2=$(ls -d target/dist/myapp-0.1.0-*/ 2>/dev/null | head -1)
 [ -n "$staged2" ] || fail "no staged tree for the two-target pack" pack2.log

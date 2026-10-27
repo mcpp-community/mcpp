@@ -1086,9 +1086,12 @@ step9_pin_and_linkage_diagnostics(PrepareState& state) {
             auto tt = mcpp::toolchain::triple::parse(state.resolvedTargetCanonical);
             return tt && tt->pin_is_capability();
         }();
+        // AND NOT WHEN THE PIN IS THE PLATFORM'S (SPEC-013 §4.5): the platform
+        // is what supplies the system here, and its toolchain is part of that
+        // statement, not a row's guess made before the graph was known.
         if (!state.pinReplacedDefault.empty()
             && state.resolvedTargetSide.system_from_graph()
-            && !pinIsCapability) {
+            && !pinIsCapability && !state.platformToolchainPin) {
             mcpp::diag::warning("toolchain", std::format(
                 "this project's target side comes from its dependency graph, so "
                 "{} would have served {}.\n"

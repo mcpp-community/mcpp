@@ -304,6 +304,30 @@ inline std::string display(const PackageRef& r) {
     return std::format("{}@{}", n, r.spec.version);
 }
 
+// What a comparison of root positions keys an override on: its selector and
+// the places its entries were written. One declaration is one key, so two
+// workspace members whose plans an override would tell apart do not share one.
+inline std::string identity(const Override& o) {
+    std::string s = o.selector;
+    auto add = [&](const Origin& g) { s += std::format("|{}:{}:{}", g.file, g.line, g.key); };
+    if (o.platformSet) {
+        s += o.platformNone ? std::string("|none") : "|" + display(o.platform);
+        add(o.platformOrigin);
+    }
+    auto const& f = o.fields;
+    for (auto const& [k, e] : f.layers) add(e.origin);
+    for (auto const& [k, e] : f.tools) add(e.origin);
+    for (auto const& [k, w] : f.runners) add(w.origin);
+    if (f.carrier.set) add(f.carrier.origin);
+    if (f.runner.set) add(f.runner.origin);
+    for (auto const* t : { &f.link.driver, &f.link.start, &f.link.script, &f.link.exe, &f.link.shared })
+        if (t->set) add(t->origin);
+    if (f.link.flags.set) add(f.link.flags.origin);
+    if (f.link.inputsSet) add(f.link.inputsOrigin);
+    if (f.link.sealSet) add(f.link.sealOrigin);
+    return s;
+}
+
 // The name `cfg(platform = "<name>")` matches: the package name with a
 // trailing `-platform` removed, so `openkal-platform` is the platform
 // `openkal`. A selector may also name the package in full.

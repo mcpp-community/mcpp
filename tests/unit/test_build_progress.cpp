@@ -458,7 +458,9 @@ TEST(ProgressModel, AStepWhoseEntriesAreReadInTwoPiecesCountsOnce) {
     mcpp::ui::disable_color();
     Tmp tmp;
     Record rec;
-    rec.packages = {{"lib", true, "lib", 0, 2, "v0.1.0 (lib)", "project"}};
+    // The report is the process's, as it is the command's: a name no other
+    // test of this binary announced.
+    rec.packages = {{"mlib", true, "mlib", 0, 2, "v0.1.0 (mlib)", "project"}};
     rec.owner = {{"obj/lib.m.o", 0}, {"pcm.cache/lib.pcm", 0}, {"bin/lib.a", 0}};
     rec.step  = {{"obj/lib.m.o", 0}, {"pcm.cache/lib.pcm", 0}, {"bin/lib.a", 1}};
     Build b(tmp.path);
@@ -473,7 +475,30 @@ TEST(ProgressModel, AStepWhoseEntriesAreReadInTwoPiecesCountsOnce) {
     b.pass_end();
     b.finish(true);
     auto out = testing::internal::GetCapturedStderr();
-    EXPECT_EQ(count(out, "Compiling lib"), 1u) << out;
+    EXPECT_EQ(count(out, "Compiling mlib"), 1u) << out;
+}
+
+TEST(ProgressModel, APackageTwoConfigurationsShareIsAnnouncedOncePerCommand) {
+    // A workspace builds one plan per configuration; a dependency they share
+    // is the same line in each, and the command writes it once (L6).
+    mcpp::ui::disable_color();
+    testing::internal::CaptureStderr();
+    for (int config = 0; config < 2; ++config) {
+        Tmp tmp;
+        Record rec;
+        rec.packages = {{"shared", true, "shared", 0, 1, "v0.2.0 (shared)", "project"}};
+        rec.owner = {{"obj/s.o", 0}};
+        rec.step  = {{"obj/s.o", 0}};
+        Build b(tmp.path);
+        b.set_record(rec);
+        b.pass_begin();
+        append(tmp.path / ".ninja_log", "# ninja log v6\n1\t10\t0\tobj/s.o\taa\n");
+        b.status({1, 1, 10, {}, {}});
+        b.pass_end();
+        b.finish(true);
+    }
+    auto out = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(count(out, "Compiling shared v0.2.0 (shared)"), 1u) << out;
 }
 
 // `Finished` is written once per command. `mcpp run --format <name>` packs, and

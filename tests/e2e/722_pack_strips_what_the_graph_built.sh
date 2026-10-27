@@ -102,7 +102,7 @@ printf 'int dep_answer();\nint main() { return dep_answer() == 42 ? 0 : 1; }\n' 
 cd hostapp
 
 # ── A ───────────────────────────────────────────────────────────────────────
-"$MCPP" pack --format tar > a.log 2>&1 || fail "A: pack failed" a.log
+"$MCPP" pack --pkg-format tar > a.log 2>&1 || fail "A: pack failed" a.log
 grep -q "Packing hostapp v0.1.0 (vendored, stripped)" a.log || fail "A: the Packing line" a.log
 rm -rf xa && mkdir xa && tar -xzf target/dist/hostapp-0.1.0-x86_64-linux-gnu.tar.gz -C xa
 lib=$(ls xa/*/lib/libdep.so); prog=$(ls xa/*/bin/hostapp)
@@ -116,7 +116,7 @@ case "$fp" in "symtab=0 debug=0 "*) ;; *) fail "A: bin/hostapp is not stripped: 
 echo "ok: A, the program and the graph-built library are stripped and run"
 
 # ── B ───────────────────────────────────────────────────────────────────────
-"$MCPP" pack --format tar --no-strip > b.log 2>&1 || fail "B: pack failed" b.log
+"$MCPP" pack --pkg-format tar --no-strip > b.log 2>&1 || fail "B: pack failed" b.log
 grep -q "Packing hostapp v0.1.0 (vendored)" b.log || fail "B: the Packing line" b.log
 rm -rf xb && mkdir xb && tar -xzf target/dist/hostapp-0.1.0-x86_64-linux-gnu.tar.gz -C xb
 fb=$(elf_facts "$(ls xb/*/lib/libdep.so)")
@@ -125,7 +125,7 @@ case "$fb" in "symtab=1 "*) ;; *) fail "B: --no-strip did not reach lib/libdep.s
 echo "ok: B, --no-strip reaches the graph-built library"
 
 # ── C ───────────────────────────────────────────────────────────────────────
-"$MCPP" pack --format tar --debug-symbols "$TMP/dbg" > c.log 2>&1 || fail "C: pack failed" c.log
+"$MCPP" pack --pkg-format tar --debug-symbols "$TMP/dbg" > c.log 2>&1 || fail "C: pack failed" c.log
 [ -s "$TMP/dbg/libdep.so.debug" ] || fail "C: no libdep.so.debug" c.log
 rm -rf xc && mkdir xc && tar -xzf target/dist/hostapp-0.1.0-x86_64-linux-gnu.tar.gz -C xc
 fc=$(elf_facts "$(ls xc/*/lib/libdep.so)")
@@ -158,10 +158,10 @@ int main() {
 }
 EOF
 
-"$MCPP" pack --format probe --debug-symbols "$TMP/dbg2" > d.log 2>&1 || fail "D: pack failed" d.log
+"$MCPP" pack --pkg-format probe --debug-symbols "$TMP/dbg2" > d.log 2>&1 || fail "D: pack failed" d.log
 probe=$(find target -name probe.txt | head -1)
 [ "$(cat "$probe")" = "strip=1 debug=$TMP/dbg2" ] || fail "D: the program read '$(cat "$probe" 2>/dev/null)'" d.log
-"$MCPP" pack --format probe --no-strip > d2.log 2>&1 || fail "D: pack --no-strip failed" d2.log
+"$MCPP" pack --pkg-format probe --no-strip > d2.log 2>&1 || fail "D: pack --no-strip failed" d2.log
 [ "$(cat "$probe")" = "strip=0 debug=" ] || fail "D: under --no-strip the program read '$(cat "$probe")'" d2.log
 echo "ok: D, a dispatched format's program reads the strip decision"
 
@@ -194,7 +194,7 @@ int dep_answer();
 int main() { return app_entry() == 43 ? 0 : 1; }
 EOF
     cd app
-    "$MCPP" pack --target x86_64-linux-android --format tar > e.log 2>&1 || fail "E: pack failed" e.log
+    "$MCPP" pack --target x86_64-linux-android --pkg-format tar > e.log 2>&1 || fail "E: pack failed" e.log
     grep -q "Packing app v0.1.0 (vendored, stripped)" e.log || fail "E: the Packing line" e.log
     rm -rf xe && mkdir xe && tar -xzf target/dist/app-0.1.0-x86_64-linux-android.tar.gz -C xe
     for f in libapp.so libdep.so libc++_shared.so; do

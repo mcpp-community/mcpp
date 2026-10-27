@@ -716,7 +716,7 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
                 avail += ", " + f;
             }
             return Refusal{2, std::format(
-                "unknown --format '{}'.\n"
+                "unknown --pkg-format '{}'.\n"
                 "  available in this build: {}\n"
                 "  A format past `tar` and `dir` comes from a package in the "
                 "resolved graph, which declares\n"
@@ -758,7 +758,7 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
             }
             if (!missing.empty())
                 return Refusal{2, std::format(
-                    "--format '{}' is not provided for every packed member.{}\n"
+                    "--pkg-format '{}' is not provided for every packed member.{}\n"
                     "  A member is packed into its own staged tree by a provider in its own build "
                     "program, or in a\n"
                     "  package that only that member reaches.{}",
@@ -784,7 +784,7 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
         if (mcpp::pack::is_builtin_pack_format(f))
             mcpp::ui::warning(std::format(
                 "a package in this graph declares `mcpp:pack-format={}`, which "
-                "is one of the archive shapes `mcpp pack` owns; `--format {}` "
+                "is one of the archive shapes `mcpp pack` owns; `--pkg-format {}` "
                 "will always select the built-in and never that package", f, f));
     return std::nullopt;
 }
@@ -880,7 +880,7 @@ std::optional<Refusal> stage_member(PackRun& run, GroupJob& g, MemberJob& m) {
             return Refusal{1, about(run, m, r.error().message)};
         m.stageFailure = r.error().message;
         mcpp::ui::warning(about(run, m, std::format(
-            "no staged tree for --format {}: {}\n"
+            "no staged tree for --pkg-format {}: {}\n"
             "  A format that consumes ${{mcpp.stage_dir}} cannot be produced "
             "here; one that names a\n"
             "  built file with ${{mcpp.target_file:<name>}} is unaffected.",
@@ -1023,7 +1023,7 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
         for (auto& m : g.members) {
             if (m.result.rc != 0 || m.stageFailure.empty()) continue;
             mcpp::ui::error(about(run, m, std::format(
-                "no staged tree for --format {}: {}", run.opts.formatName, m.stageFailure)));
+                "no staged tree for --pkg-format {}: {}", run.opts.formatName, m.stageFailure)));
             m.result.rc = 1;
         }
         if (std::ranges::none_of(g.members, [](const MemberJob& m) { return m.result.rc == 0; }))
@@ -1103,7 +1103,7 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
                 auto [at, fresh] = writer.try_emplace(absolute_of(o), m.name);
                 if (!fresh && at->second != m.name)
                     return Refusal{1, std::format(
-                        "members '{}' and '{}' would both write {} for --format '{}'.\n"
+                        "members '{}' and '{}' would both write {} for --pkg-format '{}'.\n"
                         "  A file has one producer: write each member's output below a "
                         "directory of its own,\n"
                         "  for example under `mcpp::out_dir()`, which is the member's.",
@@ -1125,7 +1125,7 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
         auto it = submitted.find(m.name);
         if (it != submitted.end() && !it->second.outputs.empty()) { any = true; continue; }
         mcpp::ui::error(about(run, m, std::format(
-            "no action claimed --format '{}'.\n"
+            "no action claimed --pkg-format '{}'.\n"
             "  A package declared it provides this format, and no build "
             "program submitted a new\n"
             "  `role = \"artifact\"` action when it was asked for.\n"
@@ -1142,7 +1142,7 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
 
     for (auto const& m : g.members)
         if (m.result.rc == 0)
-            mcpp::ui::info("Distributing", std::format("{} v{} (--format {})",
+            mcpp::ui::info("Distributing", std::format("{} v{} (--pkg-format {})",
                 m.plan->packageName, m.plan->packageVersion, run.opts.formatName));
 
     // NO EXPLICIT GOALS. Everything but the dist edges is already up to
@@ -1196,9 +1196,9 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
                 // A drive that failed says why above; its missing file is
                 // the member's failure, not a success that carried nothing.
                 mcpp::ui::error(about(run, m, driveFailed
-                    ? std::format("--format {} did not produce {}: its step failed",
+                    ? std::format("--pkg-format {} did not produce {}: its step failed",
                                   run.opts.formatName, abs.string())
-                    : std::format("--format {} reported success and produced nothing at {}",
+                    : std::format("--pkg-format {} reported success and produced nothing at {}",
                                   run.opts.formatName, abs.string())));
                 m.result.rc = 1;
                 produced = false;

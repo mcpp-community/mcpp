@@ -100,7 +100,7 @@ packed_answer() {   # $1 = log; runs the program the last pack staged
 tool_entries() { find "$MCPP_HOME/build-cache" -path '*/tool/*' -name 'gen*' -type f 2>/dev/null | wc -l; }
 
 # ── The pack without the feature: no tool, the fallback source ─────────────
-"$MCPP" pack --format dir > p0.log 2>&1 || fail "pack without the feature failed" p0.log
+"$MCPP" pack --pkg-format dir > p0.log 2>&1 || fail "pack without the feature failed" p0.log
 [ "$(packed_answer p0.log)" = "ANSWER=0" ] || fail "pack without the feature: expected 0" p0.log
 [ "$(tool_entries)" -eq 0 ] || fail "a pack without the feature built the host tool" p0.log
 grep -q "host tool" p0.log && fail "a pack without the feature mentioned the host tool" p0.log
@@ -108,7 +108,7 @@ echo "ok: a pack without --features builds no host tool"
 
 # ── The pack with the feature: the tool is built and its output shipped ────
 rm -rf target
-"$MCPP" pack --format dir --features installer > p1.log 2>&1 \
+"$MCPP" pack --pkg-format dir --features installer > p1.log 2>&1 \
     || fail "mcpp pack --features installer failed" p1.log
 grep -q "unknown option" p1.log && fail "pack did not accept --features" p1.log
 grep -q "Building.*host tool" p1.log || fail "the pack with the feature did not build the tool" p1.log

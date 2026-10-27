@@ -22,7 +22,7 @@
 #      on a build.mcpp CACHE HIT (not a re-run) must keep the RUNPATH and keep
 #      `mcpp run` working -- the same replay criterion `mcpp:deploy=` is held
 #      to in 651_a_build_program_deploys_what_it_generated.sh.
-#   4. `mcpp pack --format dir` STAGES IT into the bundle's `lib/` -- the
+#   4. `mcpp pack --pkg-format dir` STAGES IT into the bundle's `lib/` -- the
 #      same closure search `runtime_search_dirs` already feeds. Checked
 #      LAST: `mcpp pack` builds under a different profile and would otherwise
 #      invalidate the `dev`-profile build.mcpp cache the replay check (3)
@@ -129,8 +129,8 @@ grep -F -- "-Wl,-rpath,$RTDIR" "$G2" >/dev/null \
 "$MCPP" run > run2.log 2>&1 \
   || fail "run failed after the directive was replayed from a build.mcpp cache hit" run2.log b2.log
 
-# ── 4. mcpp pack --format dir stages it into the bundle's lib/ ─────────────
-"$MCPP" pack --format dir > pack1.log 2>&1 || fail "pack --format dir failed" pack1.log
+# ── 4. mcpp pack --pkg-format dir stages it into the bundle's lib/ ─────────────
+"$MCPP" pack --pkg-format dir > pack1.log 2>&1 || fail "pack --pkg-format dir failed" pack1.log
 STAGED=$(find target/dist -name 'libruntime_plugin.so' | head -1)
 [ -n "$STAGED" ] || fail "the runtime-search-dir closure was not staged by mcpp pack" pack1.log
 case "$STAGED" in

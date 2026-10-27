@@ -175,6 +175,25 @@ export int cmd_place_dlls(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
 namespace {
 
+// THE PACKAGE FORMAT IS `--pkg-format`. `--format` names the output encoding
+// of a reporting command everywhere else in mcpp (`self env --format json`),
+// and `mcpp pack`'s machine output is `--message-format`; pack's own
+// `--format` is accepted as the earlier spelling and says so.
+std::optional<std::string> pack_format_option(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    auto pkg = parsed.value("pkg-format");
+    auto old = parsed.value("format");
+    if (old) {
+        if (pkg && *pkg != *old) {
+            mcpp::ui::warning(std::format(
+                "--format '{}' and --pkg-format '{}' disagree; --pkg-format is used", *old, *pkg));
+        } else if (!pkg) {
+            mcpp::ui::warning("`mcpp pack --format` is the earlier spelling of --pkg-format, "
+                              "the package format; --format names an output encoding elsewhere");
+        }
+    }
+    return pkg ? pkg : old;
+}
+
 int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
                   mcpp::pack::PackOutcome* report,
                   mcpp::pack::LibraryPackReport* libraryReport,
@@ -318,7 +337,7 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
     nlohmann::json stage = nullptr;
     nlohmann::json stages = nullptr;
     if (libraryRoute) {
-        const auto fmt = parsed.value("format").value_or("tar");
+        const auto fmt = pack_format_option(parsed).value_or("tar");
         artifacts.push_back(artifact_json(library.artifact, fmt, library.targets));
     } else if (outcome.members.size() > 1) {
         // Several members (member selection design 2026-09-30, K1). Fields are
@@ -506,11 +525,11 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
     // exists to remove. The refusal moves to `build_and_pack`, after build
     // programs have declared what they provide and before anything is
     // compiled, where it can name what IS available instead of a fixed list.
-    if (auto v = parsed.value("format")) {
+    if (auto v = pack_format_option(parsed)) {
         if (*v == "tar")      opts.format = mcpp::pack::Format::Tar;
         else if (*v == "dir") opts.format = mcpp::pack::Format::Dir;
         else if (v->empty()) {
-            mcpp::ui::error("--format needs a value: tar | dir | a format the "
+            mcpp::ui::error("--pkg-format needs a value: tar | dir | a format the "
                             "resolved graph provides");
             return 2;
         } else {
@@ -604,12 +623,12 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
         // a library package while the user asked for an installer.
         if (opts.format == mcpp::pack::Format::Dispatched) {
             mcpp::ui::error(std::format(
-                "--format {} is a distributable produced from a program's staged "
+                "--pkg-format {} is a distributable produced from a program's staged "
                 "bundle, and '{}' is a library target.\n"
                 "  A library package ships an interface plus prebuilt binaries "
                 "per triple; there is no\n"
                 "  single staged tree to hand a distribution format.\n"
-                "  use: --format tar | dir, or name a program target",
+                "  use: --pkg-format tar | dir, or name a program target",
                 opts.formatName, route->targetName));
             return 2;
         }

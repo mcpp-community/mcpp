@@ -97,7 +97,7 @@ grep -q "TOOL-RUN" <<<"$out" || fail "mcpp run tool did not print its marker" <(
 echo "mcpp run tool (bin) unaffected OK"
 
 # ── 5. `mcpp pack` treats `app` as the program route, same as `bin` ────────
-"$MCPP" pack --format dir > pack.log 2>&1 || fail "mcpp pack failed" pack.log
+"$MCPP" pack --pkg-format dir > pack.log 2>&1 || fail "mcpp pack failed" pack.log
 staged=$(ls -d target/dist/myapp-0.1.0-*/ 2>/dev/null | head -1)
 [ -n "$staged" ] || fail "no staged tree under target/dist" pack.log
 [ -x "${staged}bin/myapp" ] || fail "the staged tree has no bin/myapp" pack.log

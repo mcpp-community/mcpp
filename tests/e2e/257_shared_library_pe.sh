@@ -92,7 +92,7 @@ grep -qE "^build bin/libmathkit\.dll \| bin/libmathkit\.dll\.a : " "$nj" || {
 
 # ── 2. the package carries both, and names the right one to link ────────
 rm -rf target
-"$MCPP" pack mathkit --target "$TRIPLE" --format dir > pack.log 2>&1 \
+"$MCPP" pack mathkit --target "$TRIPLE" --pkg-format dir > pack.log 2>&1 \
     || { cat pack.log; echo "pack failed"; exit 1; }
 pkg="$TMP/mathkit/$(find target/dist -maxdepth 1 -type d -name 'mathkit-0.1.0*' | head -1)"
 [[ -f "$pkg/lib/$TRIPLE/libmathkit.dll" ]]   || { find "$pkg" -type f; echo "FAIL: no DLL in the package"; exit 1; }

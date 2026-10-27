@@ -2111,7 +2111,7 @@ carrier_build_selfcontained(const Plan& plan, const std::filesystem::path& image
     const auto out = dir / "target" / "dist" / "packed";
     fs::remove_all(out, ec);
     std::vector<std::string> argv{ mcpp::invocation::self_exe_path().string(), "pack",
-                                   "--format", "dir", "-o", "packed", "--platform", "none" };
+                                   "--pkg-format", "dir", "-o", "packed", "--platform", "none" };
     if constexpr (mcpplibs::os::is_linux) {
         argv.insert(argv.end(), { "--target", std::format("{}-linux-musl", mcpp::toolchain::platform::host_arch),
                                   "--mode", "static" });

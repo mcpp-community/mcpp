@@ -3,12 +3,13 @@
 # 942 -- an ok image is built for `<arch>-openkal` and run by okrun (design
 # 2026-10-26 part 2, §8.5; openkal SPEC clause 12).
 #
-# The target compiles for no operating system (`<arch>-unknown-none-elf`) with
-# the convention's flags, links with `ld.lld` into an ET_DYN image entered at
-# `ok_main`, and publishes the image only after `okld note` has written its
-# requirements and `okld check` has checked every clause. `okld` and `okrun` are
-# programs of the graph: `openkal-tools`, built for this machine through
-# `[build-dependencies]`. `okrun` is the target's runner.
+# The target's platform, openkal-platform (SPEC-013), compiles for no operating
+# system (`<arch>-unknown-none-elf`) with the convention's flags, links with
+# `ld.lld` into an ET_DYN image entered at `ok_main`, and publishes the image
+# only after its seal -- `okld note`, then `okld check` -- has accepted it.
+# `okld` and `okrun` are the platform's tools, built for this machine; `okrun`
+# is its runner. The image here has no C library and no C++ run-time: the
+# project switches the platform's layers off.
 #
 # Criteria:
 #   A. Both rows build: `x86_64-openkal` and `aarch64-openkal` each produce
@@ -20,15 +21,14 @@
 #   C. An image that imports a C library's name (`puts`) is refused by the
 #      check, which names the name; the image under `bin/` is still the one the
 #      last successful build published.
-#   D. `import std;` with no C++ run-time in the graph is refused before
-#      anything compiles, naming the packages that provide one.
+#   D. `import std;` with the platform's C++ run-time switched off is refused
+#      before anything compiles, saying it was switched off and where.
 #   E. A second build is up to date.
 #   F. `mcpp pack` stages the image (M2), and `--mode self-contained` stages a
 #      program of this machine that carries it and runs with nothing installed
 #      (M3), its image given the program's arguments and environment.
-#   G. A workspace's root package declares the tools as any root does: the
-#      image builds and runs through okrun (the selected package is not the
-#      graph's first, and its tools were not recorded as the root's).
+#   G. A workspace's root package is built as any root is: the image builds
+#      and runs through okrun (the selected package is not the graph's first).
 set -e
 
 TMP=$(mktemp -d)
@@ -41,7 +41,11 @@ case "$(uname -m)" in
     *) echo "SKIP: no ok-image row for $(uname -m)"; exit 0 ;;
 esac
 
-TOOLS='openkal-tools = { version = "0.1.0", tools = ["okld", "okrun"] }'
+# No C library, no C++ run-time, no compiler run-time: the image is its own.
+NO_LAYERS='[target.'"'"'cfg(platform = "openkal")'"'"'.layers]
+c-abi            = false
+"c++-abi"        = false
+compiler-runtime = false'
 
 mkdir -p "$TMP/app/src"
 cd "$TMP/app"
@@ -54,8 +58,7 @@ version = "0.1.0"
 kind = "bin"
 main = "src/main.c"
 
-[build-dependencies]
-$TOOLS
+$NO_LAYERS
 TOML
 cat > src/main.c <<'C'
 /* An image with no C library: it calls kal_* and supplies the two routines
@@ -153,9 +156,9 @@ grep -q "Compiling" again.log && fail "E: the second build compiled again" again
 echo "ok: a second build is up to date"
 
 # F
-"$MCPP" pack --target "$HOST_ARCH-openkal" --format dir -o m2 > m2.log 2>&1 || fail "F: pack (M2)" m2.log
+"$MCPP" pack --target "$HOST_ARCH-openkal" --pkg-format dir -o m2 > m2.log 2>&1 || fail "F: pack (M2)" m2.log
 [ -f target/dist/m2/bin/app.oke ] || fail "F: the M2 package has no bin/app.oke" m2.log
-"$MCPP" pack --target "$HOST_ARCH-openkal" --mode self-contained --format dir -o m3 > m3.log 2>&1 \
+"$MCPP" pack --target "$HOST_ARCH-openkal" --mode self-contained --pkg-format dir -o m3 > m3.log 2>&1 \
     || fail "F: pack --mode self-contained (M3)" m3.log
 m3=$(ls target/dist/m3/bin/app target/dist/m3/bin/app.exe 2>/dev/null | head -1)
 [ -n "$m3" ] || fail "F: the M3 package has no program" m3.log
@@ -176,7 +179,7 @@ if "$MCPP" build --target "$HOST_ARCH-openkal" > refuse.log 2>&1; then
     fail "C: an image importing puts was published" refuse.log
 fi
 grep -q "puts" refuse.log || fail "C: the refusal does not name the import" refuse.log
-grep -q "ok-image convention" refuse.log || fail "C: the refusal does not name the convention" refuse.log
+grep -q "was not sealed" refuse.log || fail "C: the refusal does not name the seal" refuse.log
 after=$(cksum < "$(ls target/"$HOST_ARCH"-openkal/*/bin/app.oke | head -1)" )
 [ "$before" = "$after" ] || fail "C: the refused image took the name in bin/" refuse.log
 echo "ok: an image that imports a C library's name is refused and not published"
@@ -189,16 +192,19 @@ cat > mcpp.toml <<TOML
 name    = "std-app"
 version = "0.1.0"
 
-[build-dependencies]
-$TOOLS
+# The package of the C++ run-time is also the compiler run-time's: both off.
+[target.'cfg(platform = "openkal")'.layers]
+"c++-abi"        = false
+compiler-runtime = false
 TOML
 printf 'import std;\nint main() { std::println("x"); }\n' > src/main.cpp
 if "$MCPP" build --target "$HOST_ARCH-openkal" > std.log 2>&1; then
     fail "D: import std built without a C++ run-time" std.log
 fi
-grep -q "needs a C++ run-time inside the image" std.log || fail "D: the refusal's reason" std.log
-grep -q "openkal-llvm-runtime" std.log || fail "D: the refusal does not name the provider" std.log
-echo "ok: import std without a C++ run-time is refused, naming the provider"
+grep -q "needs a C++ run-time inside the program" std.log || fail "D: the refusal's reason" std.log
+grep -q "switched off" std.log || fail "D: the refusal does not say the layer was switched off" std.log
+grep -q "mcpp.toml" std.log || fail "D: the refusal does not say where" std.log
+echo "ok: import std with the C++ run-time switched off is refused, saying where"
 
 # G
 mkdir -p "$TMP/ws/src" "$TMP/ws/m/src"
@@ -215,14 +221,13 @@ version = "0.1.0"
 kind = "bin"
 main = "src/main.c"
 
-[build-dependencies]
-$TOOLS
+$NO_LAYERS
 TOML
 printf '[package]\nname = "m"\nversion = "0.1.0"\n\n[targets.m]\nkind = "lib"\n' > "$TMP/ws/m/mcpp.toml"
 printf 'int m_value(void) { return 0; }\n' > "$TMP/ws/m/src/m.c"
 (cd "$TMP/ws" && "$MCPP" run --target "$HOST_ARCH-openkal" -- one two > run.log 2>&1) \
     || fail "G: a workspace root's image did not build or run" "$TMP/ws/run.log"
 grep -q "image: three arguments" "$TMP/ws/run.log" || fail "G: the workspace root's image" "$TMP/ws/run.log"
-echo "ok: a workspace root declares the tools as any root does"
+echo "ok: a workspace root's image is built and run as any root's"
 
 echo "PASS: 942 an ok image is built once and run by okrun"

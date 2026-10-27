@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # requires: gcc
-# 638_pack_format_dispatch.sh — `mcpp pack --format <name>` dispatches to a
+# 638_pack_format_dispatch.sh — `mcpp pack --pkg-format <name>` dispatches to a
 # package, and no distribution format lives in the engine.
 #
 # `tar` and `dir` answer the same question `msi` and `appimage` answer -- what
@@ -125,11 +125,11 @@ G=$(find_graph)
 
 # ── 2. an unknown format is refused, BEFORE the build, naming what exists ──
 set +e
-"$MCPP" pack --format bogus > b2.log 2>&1
+"$MCPP" pack --pkg-format bogus > b2.log 2>&1
 rc=$?
 set -e
 [ "$rc" -ne 0 ] || { cat b2.log; echo "FAIL: --format bogus was accepted"; exit 1; }
-grep -q "unknown --format 'bogus'" b2.log \
+grep -q "unknown --pkg-format 'bogus'" b2.log \
   || { cat b2.log; echo "FAIL: the refusal does not name the value"; exit 1; }
 # THE LIST IS THE POINT. A refusal that named a fixed list would be the
 # coupling this mechanism removes; this one names the graph's own answer.
@@ -146,15 +146,15 @@ grep -q "Compiling app" b2.log \
 # cannot be decided until prepare has run -- and prepare narrates what it
 # resolves. Deciding it later is what broke the contract once.
 set +e
-so=$("$MCPP" pack --format bogus 2>/dev/null); rc=$?
-se=$("$MCPP" pack --format bogus 2>&1 >/dev/null)
+so=$("$MCPP" pack --pkg-format bogus 2>/dev/null); rc=$?
+se=$("$MCPP" pack --pkg-format bogus 2>&1 >/dev/null)
 set -e
 [ -z "$so" ] || { echo "FAIL: the refusal wrote to stdout: $(echo "$so" | head -1)"; exit 1; }
 [ -n "$se" ] || { echo "FAIL: the refusal said nothing on stderr"; exit 1; }
 [ "$rc" = 2 ] || { echo "FAIL: the refusal exited $rc, expected 2"; exit 1; }
 
 # ── 3. the dispatched format produces a file, and it saw the staged tree ───
-"$MCPP" pack --format zap > b3.log 2>&1 || { cat b3.log; echo "FAIL: pack --format zap failed"; exit 1; }
+"$MCPP" pack --pkg-format zap > b3.log 2>&1 || { cat b3.log; echo "FAIL: pack --pkg-format zap failed"; exit 1; }
 Z=$(find target -name 'app.zap' | head -1)
 [ -n "$Z" ] || { cat b3.log; echo "FAIL: --format zap produced nothing"; exit 1; }
 # The engine handed the build program the rest of `[package]`.
@@ -242,7 +242,7 @@ int main() {
 }
 EOF
 set +e
-"$MCPP" pack --format zap > b6.log 2>&1
+"$MCPP" pack --pkg-format zap > b6.log 2>&1
 rc=$?
 set -e
 [ "$rc" -ne 0 ] || { cat b6.log; echo "FAIL: a source action reached the staged tree"; exit 1; }
@@ -261,11 +261,11 @@ import mcpp;
 int main() { mcpp::provides_pack_format("zap"); return 0; }
 EOF
 set +e
-"$MCPP" pack --format zap > b7.log 2>&1
+"$MCPP" pack --pkg-format zap > b7.log 2>&1
 rc=$?
 set -e
 [ "$rc" -ne 0 ] || { cat b7.log; echo "FAIL: a format nothing claimed reported success"; exit 1; }
-grep -q "no action claimed --format 'zap'" b7.log \
+grep -q "no action claimed --pkg-format 'zap'" b7.log \
   || { cat b7.log; echo "FAIL: the refusal does not name the unclaimed format"; exit 1; }
 
 # ── 8. an artifact action that predates the request is not the package ─────
@@ -312,7 +312,7 @@ int main() {
     return 0;
 }
 EOF
-"$MCPP" pack --format zap > b8.log 2>&1 || { cat b8.log; echo "FAIL: a member that reads no staged tree was refused"; exit 1; }
+"$MCPP" pack --pkg-format zap > b8.log 2>&1 || { cat b8.log; echo "FAIL: a member that reads no staged tree was refused"; exit 1; }
 grep -q "app.zap" b8.log \
   || { cat b8.log; echo "FAIL: the gated action was not reported as the package"; exit 1; }
 grep -q "size.stamp" b8.log \
@@ -357,7 +357,7 @@ int main() {
     return 0;
 }
 EOF
-"$MCPP" pack --format zap > b9.log 2>&1 || { cat b9.log; echo "FAIL: a provider that reads no staged tree was refused"; exit 1; }
+"$MCPP" pack --pkg-format zap > b9.log 2>&1 || { cat b9.log; echo "FAIL: a provider that reads no staged tree was refused"; exit 1; }
 grep -q "app.zap" b9.log \
   || { cat b9.log; echo "FAIL: the provider was not reported as the package"; exit 1; }
 # It really did not consume the tree: no stage manifest edge was added, so the

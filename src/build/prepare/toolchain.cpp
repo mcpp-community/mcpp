@@ -1577,8 +1577,9 @@ step2_resolve_explicit_spec(PrepareState& state, ToolchainResolveCtx& ctx) {
                     "\n             the platform's ({}), replacing your "
                     "{} — override with `[target.{}] toolchain`",
                     state.platform.display(), state.pinReplacedDefault,
-                    state.overrides.target_triple.empty() ? std::string("<triple>")
-                                                          : state.overrides.target_triple);
+                    state.overrides.target_triple.empty()
+                        ? mcpp::toolchain::triple::host_triple().str()
+                        : state.overrides.target_triple);
             else if (!state.pinReplacedDefault.empty())
                 chosenBy = std::format(
                     "\n             target default for {}, replacing your "

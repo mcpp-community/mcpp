@@ -753,18 +753,23 @@ step11_std_module_availability_gate(PrepareState& state, bool needsStdModule) {
                                   mcpp::manifest::platform::display(it->second.ref),
                                   mcpp::platform::origin_text(it->second.origin));
             }
+            // The remedy in the form that applies: the platform's layer when
+            // a platform is selected, a dependency of the target otherwise.
+            const std::string remedy = state.platform.active
+                ? std::format("           [target.'cfg(platform = \"{}\")'.layers]\n"
+                              "           \"c++-abi\" = \"<package>@<version>\"",
+                              mcpp::manifest::platform::platform_name(state.platformPackageShortName))
+                : std::format("           [target.{}.dependencies]\n"
+                              "           <package> = \"<version>\"",
+                              state.tc->targetTriple);
             return std::unexpected(std::format(
                 "`import std;` on '{}' needs a C++ run-time inside the program, and "
                 "the graph supplies none.\n"
                 "       {}. Name the package that provides `mcpp:c++-abi` for this "
                 "target:\n"
                 "\n"
-                "           [target.'cfg(platform = \"{}\")'.layers]\n"
-                "           c++-abi = \"<package>@<version>\"",
-                state.tc->targetTriple, why,
-                state.platformPackageShortName.empty()
-                    ? std::string("<platform>")
-                    : mcpp::manifest::platform::platform_name(state.platformPackageShortName)));
+                "{}",
+                state.tc->targetTriple, why, remedy));
         }
         return std::unexpected(std::format(
             "source imports std but toolchain '{}' provides no std module source",
@@ -1072,8 +1077,15 @@ std::expected<void, std::string> phase11_scan(PrepareState& state) {
     if (auto r = step11_apple_sdk_cxx_runtime(state, *needsStdModule); !r)
         return std::unexpected(r.error());
 
-    if (auto r = step11_std_module_availability_gate(state, *needsStdModule); !r)
-        return std::unexpected(r.error());
+    if (auto r = step11_std_module_availability_gate(state, *needsStdModule); !r) {
+        if (!state.overrides.configuration_only) return std::unexpected(r.error());
+        // The configuration is reported; the sources' refusal travels with it.
+        PlanNote note;   // a warning: the document is complete without the sources
+        note.code = "MCPP_CONFIGURATION_SOURCES_REFUSED";
+        note.message = r.error();
+        state.planNotes.push_back(std::move(note));
+        *needsStdModule = false;
+    }
 
     step11_compute_fingerprint(state);
 

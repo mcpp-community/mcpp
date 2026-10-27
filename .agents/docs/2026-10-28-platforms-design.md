@@ -22,6 +22,7 @@ mcpp-vscode 0.8.0；mcpp-plugins [#51](https://github.com/mcpp-community/mcpp-pl
   #846 并入 #847；每仓库一个 PR、commit 作检查点的交付计划（§13）；多视角自审（§15）。
 - **rev 4（本稿）**：第三轮评审——§16 的 1–7 定案；mcpp-clion 以插件依赖的形式依赖 mcppls 的 CLion 插件，语言功能只由 mcppls 提供
   （§11.2）；VS Code 与 JetBrains Marketplace 的发布由维护者上传，交付物为产物路径（§13.3）。§15 按定案重审，§16 改为本轮待确认项。
+- **rev 6**：补充设计 part 2（打包与分发、okb、`.okso` 本机绑定、体积、openkal 0.17.2 轮）定案，以 mcppls 与 mcpp-ide 交叉验证（§17）。
 - **rev 5**：§16 定案（VS Code 以 `extensionPack`、CLion 以 `<depends>` 引入 mcppls；上传交付物为本机验证后的产物目录）；开始实施。
   实施中发现两处缺口，列入同批：os 0.2.0 在宿主三元组上以 openkal-musl 为 C 库时不能编译（L9，os 0.2.1）；M3 载体的链接取到宿主 GCC 的
   `crtbeginT.o`（L10，§4.7）。
@@ -88,8 +89,8 @@ toolchain = "<spec>"                         # 约定的工具链
 sysroot   = …                                # 预构建的目标基（可选；同 [target].sysroot）
 runner    = ["<prog>", "{}"]                 # 或 { cmd = […], host = "same-arch" | "any", exclusive = bool }
 runners   = { <name> = [ … ] }               # 命名的设备动作（flash、monitor…）
-carrier   = { package = "<spec>", section = "<节名>" }   # M3 载体（可选）
-plugin    = "<模块>"                         # 平台阶段的插件代码（可选）
+carrier   = { package = "<spec>", section = "<节名>", main = "<入口源码>" }   # M3 载体（可选）
+plugin    = "build.mcpp"                     # 平台包的构建程序，在平台阶段运行（可选）
 
 [platform.layers]   <layer> = <依赖规格> | false
 [platform.tools]    <name>  = <依赖规格> | { program = "<名字>" }
@@ -101,7 +102,7 @@ plugin    = "<模块>"                         # 平台阶段的插件代码（�
                     exe = "{name}.<ext>";  shared = "lib{name}.<ext>"
                     seal = [ [argv…], … ]
 [platform.versions] <包> = "<版本>"          # 一组相互一致的版本（§8.1）
-[platform.hosted]   toolchain、layers        # 宿主三元组选用本平台时适用的子集（§5.4）
+[platform.hosted]   targets、toolchain、layers   # 宿主三元组选用本平台时适用的子集（§5.4）；targets 限定可用的宿主三元组
 ```
 
 相对 rev 2 的精简：`platform-spec`、`requires-mcpp` 删去，改用 `[package] mcpp`（R9.8，平台规范版本随引擎版本）；`round` /
@@ -146,8 +147,10 @@ plugin    = "<模块>"                         # 平台阶段的插件代码（�
 
 ### 4.7 载体（M3）
 
-`mcpp pack --mode self-contained` 为本机构建 `carrier.package`，以 `.incbin` 把产物放入其 `section` 节（ELF、Mach-O、COFF 三种汇编由引擎生成）。
-取代 `pack.cppm` 中按包名找 `openkal-tools` 的代码；载体版本写入锁。
+`mcpp pack --mode self-contained` 为本机构建 `carrier.package`，以 `.incbin` 把产物放入其 `section` 节（ELF、Mach-O、COFF 三种汇编由引擎生成），
+并给出符号 `mcpp_carried_begin`、`mcpp_carried_end`、`mcpp_carried_name`；程序入口是平台包的 `carrier.main`（引擎不含任何加载器的调用）。
+取代 `pack.cppm` 中按包名找 `openkal-tools` 的代码。载体按宿主约定构建（自举边界）：Linux 上为 `<arch>-linux-musl` 行并显式写出该行的工具链
+（载体的图提供 kernel-abi，否则会取消行的约定，L10）。
 
 ## 5. 目标图：选择与覆盖
 
@@ -282,7 +285,7 @@ mcpp      = ">=<本批 mcpp 版本>"
 targets   = ["x86_64-openkal", "aarch64-openkal"]
 toolchain = "llvm@23.1.3"
 runner    = { cmd = ["okrun", "{}"], host = "same-arch" }
-carrier   = { package = "openkal-run@0.1.1", section = ".oke" }
+carrier   = { package = "openkal-run@0.1.1", section = ".oke", main = "carrier/main.cpp" }
 
 [platform.layers]
 compiler-runtime = "openkal-llvm-runtime@0.16.3"
@@ -307,12 +310,13 @@ flags  = ["-shared", "-z", "max-page-size=65536", "-z", "now", "-z", "noexecstac
 inputs = [{ from = ["okld", "note-source"], as = "ok-notes.S" }]
 exe    = "{name}.oke"
 shared = "lib{name}.okso"
-seal   = [["okld", "note", "{}"], ["okld", "check", "{}"]]
+seal   = [["okld", "note", "{}"], ["okld", "check", "{}", "--with", "{needed}"]]
 
 [platform.hosted]
+targets   = ["x86_64-linux-gnu", "aarch64-linux-gnu", "x86_64-linux-musl", "aarch64-linux-musl",
+             "x86_64-macos", "aarch64-macos", "x86_64-windows-gnu", "x86_64-windows-musl"]
 toolchain = "llvm@23.1.3"
-layers    = { compiler-runtime = "openkal-llvm-runtime@0.16.3", c++-abi = "openkal-llvm-runtime@0.16.3",
-              c-abi = { name = "openkal-musl", version = "0.22.3", default-features = false, features = ["posix"] } }
+[platform.hosted.layers]   # 与 [platform.layers] 相同
 
 [platform.versions]
 openkal = "0.17.1"
@@ -424,7 +428,7 @@ docs/rules.md 增加平台插件一节；CI 使用本批 mcpp。
 |---|---|
 | 引擎的 openkal 代码 | 删除 `src/okimage/`；六处分支改为平台机制的通用调用 |
 | 目标表 | 增加目标平台列与宿主平台列；`toolchain list` 显示 |
-| 板级支持包 | docs/34 改写为"编写平台包"；`examples/13-platform-targets`、e2e 332、336、338 改为平台写法；333 保留指令写法作兼容判据 |
+| 板级支持包 | docs/34 改写为"编写平台包"（板级支持包即平台包，指令写法同义保留）；e2e 952 以一个与 openkal 无关的本地平台包覆盖标志、链接脚本、命名、封装与运行器；332、336、338（目标行的启动）与 333（指令写法）不变，作兼容判据 |
 | 清单 | `[target.<selector>]` 增加 `platform`、`layers.*`、`tools.*`、`link.*`、`carrier`；`[host]`；`cfg(platform = …)`；SPEC-004 已知键表同步 |
 | 引擎接口 | `mcpp.core` 协议 17：`platform` 阶段与 §4.1 的新指令 |
 | 文档 | 新增 docs/35「平台」与 SPEC-013；改写 docs/24、34；增补 docs/04、22、30、41、50；中英文同步 |
@@ -555,3 +559,22 @@ mcpp-ide：后端单元测试与 golden fixture；两端适配层的冒烟测试
 1. mcpp-clion 以 `<depends>` 强依赖 mcppls 的 CLion 插件；VS Code 适配层以 `extensionPack` 引入 mcppls 的扩展（一并安装、可卸载）；后端握手检查 mcppls 的版本。
 2. 两个 Marketplace 由维护者上传；交付物是本机验证后的产物目录；插件 ID `io.github.mcpp-community.mcpp-clion`。
 3. 按 §13 实施；L9、L10 同批解决。
+
+## 17. 补充设计：part 2（打包与分发）
+
+第四、五轮讨论把打包与分发、`.okso` 的本机绑定、体积与新增的 openkal 0.17.2 轮定为本批内容，写在
+[part 2](2026-10-28-platforms-part2-packaging-and-distribution-design.md)。要点：
+
+- `mcpp pack` 的选择拆为链接（`--linkage`）、闭包（`--mode`）、容器（`--pkg-format`）三个正交维度与构建腿；`--mode static` 是简写；
+  `--pkg-format` 取代 pack、run 的 `--format`（旧写法提示）。
+- 平台以 `universal = true` 声明其目标默认打通用包：一个包含全部架构，解压即可在任何系统、任何平台架构上运行；`--systems`、`--merge`
+  产出免安装的多系统包。
+- 单文件是通用容器（原生：启动桩加载荷；openkal：载体从内存加载）；okb 是 openkal 的通用映像包，格式由 openkal-image 定义，由
+  openkal-platform 的插件作为包格式提供。
+- 新规范 SPEC-014（打包与分发）；体积在构建、剥离、容器、去重、共享五处优化并实测。
+- `.okso` 的本机绑定由 openkal 体系的构建插件 `openkal-bind` 完成；openkal 0.17.2 轮（openkal-image 0.1.2、openkal-musl 0.22.4、
+  openkal-llvm-runtime 0.16.4、openkal-platform 0.17.2）在本批最后；APE 单文件为后续（mcpp#849）。
+- 定案（part 2 §14）：`[platform] universal`；okb 由平台插件作为包格式提供；`tar` 默认 gzip、zstd 显式选择；openkal-platform 0.17.1 先行、
+  0.17.2 为最终钉住。
+- 交叉验证（part 2 §15）：mcppls 与 mcpp-ide 逐项采用零声明目标、通用包、okb、单文件、xlings 单资产、宿主图平台与体积优化——
+  编辑器扩展只带一个 okb 与各系统 × 架构的 okrun，一个 vsix 服务全部平台；判据写入两个 CI。

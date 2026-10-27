@@ -11,7 +11,7 @@
 # removed -- a tree that ran only while the build directory existed would pass
 # every check but that one. Measured on macos-15 before the change (the
 # triage record's reading C5): exit 7 staged by hand, exit 134 without the
-# dylib, and `mcpp pack --format dir` refused the program.
+# dylib, and `mcpp pack --pkg-format dir` refused the program.
 set -e
 
 TMP=$(mktemp -d)
@@ -51,7 +51,7 @@ EOF
 cd app
 
 # ── 1. --format dir stages the program and its dylib ──────────────────────
-"$MCPP" pack --format dir > dir.log 2>&1 || fail "mcpp pack --format dir failed" dir.log
+"$MCPP" pack --pkg-format dir > dir.log 2>&1 || fail "mcpp pack --pkg-format dir failed" dir.log
 tree=$(find target/dist -mindepth 1 -maxdepth 1 -type d -name 'app-0.1.0-*' | head -1)
 [ -n "$tree" ] || fail "no staged tree under target/dist" dir.log
 [ -x "$tree/bin/app" ]         || fail "the staged tree has no bin/app" dir.log

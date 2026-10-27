@@ -48,8 +48,8 @@ printf 'import fw;\nint main() { return fw_anchor() == 41 ? 0 : 1; }\n' > app/sr
 cd app
 
 # ── 1. one triple: the closure is staged under lib/ ───────────────────────
-"$MCPP" pack --target x86_64-linux-android --format dir > dir.log 2>&1 \
-    || fail "mcpp pack --format dir failed" dir.log
+"$MCPP" pack --target x86_64-linux-android --pkg-format dir > dir.log 2>&1 \
+    || fail "mcpp pack --pkg-format dir failed" dir.log
 tree=target/dist/app-0.1.0-x86_64-linux-android
 [ -d "$tree" ] || fail "no staged tree at $tree" dir.log
 got=$(cd "$tree/lib" && find . -type f | sort | tr '\n' ' ')
@@ -90,7 +90,7 @@ libraries = ["ext"]
 EOF
 printf 'import fw;\nextern "C" int ext_value();\nint main() { return fw_anchor() == 41 && ext_value() == 1 ? 0 : 1; }\n' > src/main.cpp
 
-"$MCPP" pack --target x86_64-linux-android --format dir > ext.log 2>&1 \
+"$MCPP" pack --target x86_64-linux-android --pkg-format dir > ext.log 2>&1 \
     || fail "the pack with a prebuilt library failed" ext.log
 [ -f "$tree/lib/libext.so" ] || fail "the prebuilt libext.so is not staged" ext.log
 grep -qxF "needs${TAB}libext.so${TAB}lib/libext.so" "$manifest" \
@@ -100,7 +100,7 @@ echo "  ok: a library from [runtime] link_library_dirs is staged"
 # The build is up to date, so the pack does not relink; the file is simply gone.
 rm ext/lib/libext.so
 for fmt in dir tar; do
-    if "$MCPP" pack --target x86_64-linux-android --format "$fmt" > "gone-$fmt.log" 2>&1; then
+    if "$MCPP" pack --target x86_64-linux-android --pkg-format "$fmt" > "gone-$fmt.log" 2>&1; then
         fail "--format $fmt succeeded with libext.so gone" "gone-$fmt.log"
     fi
     grep -q "libext.so: found in none of" "gone-$fmt.log" \
@@ -140,7 +140,7 @@ int main() {
     return 0;
 }
 EOF
-"$MCPP" pack --target x86_64-linux-android --format copy > copy.log 2>&1 \
+"$MCPP" pack --target x86_64-linux-android --pkg-format copy > copy.log 2>&1 \
     || fail "the dispatched format failed" copy.log
 seen=$(find target -name stage.txt | head -1)
 [ -f "$seen" ] || fail "the provider wrote nothing" copy.log
@@ -166,7 +166,7 @@ demo.fw = { path = "../fw", linkage = "shared" }
 EOF
 printf 'import fw;\nint main() { return fw_anchor() == 41 ? 0 : 1; }\n' > src/main.cpp
 rm -rf target/dist
-"$MCPP" pack --target x86_64-linux-android --target aarch64-linux-android --format dir \
+"$MCPP" pack --target x86_64-linux-android --target aarch64-linux-android --pkg-format dir \
     > two.log 2>&1 || fail "the two-triple pack failed" two.log
 tree2=$(find target/dist -mindepth 1 -maxdepth 1 -type d | head -1)
 [ -n "$tree2" ] || fail "no staged tree for two triples" two.log

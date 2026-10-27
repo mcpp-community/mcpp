@@ -66,12 +66,10 @@ std::string known_short_name(const mp::PackageRef& r) {
     return {};
 }
 
-// The project's override tables: the workspace layer's, then the plan root's.
+// The project's override tables: the plan root's, which hold the workspace
+// layer's first (`merge_layer_root_position`).
 std::vector<mp::Override> project_tables(const mcpp::manifest::Manifest& m) {
-    std::vector<mp::Override> out;
-    if (m.layer) out = m.layer->platformOverrides;
-    out.insert(out.end(), m.platformOverrides.begin(), m.platformOverrides.end());
-    return out;
+    return m.platformOverrides;
 }
 
 // Which layers each package of the graph provides, by layer.
@@ -130,7 +128,6 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state) {
         if (auto cfg = state.get_cfg(false); cfg) config = (*cfg)->hostPlatform;
         const auto hostFlag = mcpp::invocation::get("MCPP_HOST_PLATFORM").value_or("");
         mp::Override project = state.m->hostPlatform;
-        if (!project.platformSet && state.m->layer) project = state.m->layer->hostPlatform;
         auto hs = mcpp::platform::select_host(hostFlag, false, project, config);
         if (!hs) return std::unexpected(hs.error());
         state.hostPlatformSel = std::move(*hs);
@@ -395,6 +392,9 @@ std::expected<void, std::string> step4b_check_platform_versions(PrepareState& st
     auto const& P = state.platform;
     if (!P.active || P.fields.versions.empty()) return {};
     for (std::size_t i = 1; i < state.packages.size(); ++i) {
+        // A package built for this machine (a tool's) is not linked with the
+        // target's, and a group's exact pins are about one link.
+        if (state.packages[i].buildTimeOnly) continue;
         auto const& pm = state.packages[i].manifest;
         auto n = mcpp::pm::compat::resolve_package_name(pm.package.name, pm.package.namespace_);
         auto it = P.fields.versions.find(n.shortName);

@@ -72,10 +72,10 @@ echo "bin keeps meaning binary on Android OK"
 # ── 3. `mcpp run` of the app, with no --format, is refused naming it ───────
 out=$("$MCPP" run myapp --target "$TARGET" 2>&1) \
     && fail "mcpp run of an app whose form is a library must be refused" <(echo "$out")
-expected="error: 'myapp' is an application, and on $TARGET an application is a shared library that a package installs. Run it through a distributable: mcpp run --format <name>, where <name> is one of: none declared"
+expected="error: 'myapp' is an application, and on $TARGET an application is a shared library that a package installs. Run it through a distributable: mcpp run --pkg-format <name>, where <name> is one of: none declared"
 grep -qF "$expected" <<<"$out" \
     || fail "the refusal sentence does not match the design record's exact wording" <(echo "$out")
-echo "mcpp run of the app without --format is refused, naming --format OK"
+echo "mcpp run of the app without --pkg-format is refused, naming --pkg-format OK"
 
 # Negative-direction control for (3): `tool` is a real Binary on this same
 # row, so it is not caught by the app-only refusal above.
@@ -144,8 +144,8 @@ int main() {
 }
 EOF
 
-"$MCPP" pack --format blob --target "$TARGET" > pack.log 2>&1 \
-    || fail "mcpp pack --format blob on Android failed" pack.log
+"$MCPP" pack --pkg-format blob --target "$TARGET" > pack.log 2>&1 \
+    || fail "mcpp pack --pkg-format blob on Android failed" pack.log
 staged=$(ls -d target/dist/myapp-0.1.0-*/ 2>/dev/null | head -1)
 [ -n "$staged" ] || fail "no staged tree under target/dist for the Android pack" pack.log
 [ -f "${staged}lib/libmyapp.so" ] \
@@ -154,7 +154,7 @@ staged=$(ls -d target/dist/myapp-0.1.0-*/ 2>/dev/null | head -1)
     || fail "the deploy'd file was not staged under bin/myres/ on the Android row" pack.log
 [ -n "$(find target -name 'myapp.blob' 2>/dev/null)" ] \
     || fail "the reported artifact myapp.blob does not exist" pack.log
-echo "mcpp pack --format blob on Android stages lib/libmyapp.so OK"
+echo "mcpp pack --pkg-format blob on Android stages lib/libmyapp.so OK"
 
 # ── 5. MCPP_TARGET_MIN_PLATFORM_VERSION: numeric on Android, empty on host ─
 # `mcpp::out_dir()` for a build PROGRAM is one directory per configuration and

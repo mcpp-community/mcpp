@@ -156,10 +156,10 @@ grep -qE "^ *build\.mcpp .* cached" b3.log \
 grep -qx "changed resource" "$DEPLOYED" \
   || fail "the restored file does not carry the action's latest output" "$DEPLOYED"
 
-# ── 5. `mcpp pack --format dir` stages the deployed file ────────────────────
-"$MCPP" pack --format dir > b4.log 2>&1 || fail "pack --format dir failed" b4.log
+# ── 5. `mcpp pack --pkg-format dir` stages the deployed file ────────────────────
+"$MCPP" pack --pkg-format dir > b4.log 2>&1 || fail "pack --pkg-format dir failed" b4.log
 STAGED=$(find target/dist -name res.bin | head -1)
-[ -n "$STAGED" ] || fail "mcpp pack --format dir did not stage the deployed file" b4.log
+[ -n "$STAGED" ] || fail "mcpp pack --pkg-format dir did not stage the deployed file" b4.log
 case "$STAGED" in
   */bin/app.resources/res.bin) : ;;
   *) fail "the staged file is not at bin/app.resources/res.bin" b4.log ;;

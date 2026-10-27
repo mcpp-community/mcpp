@@ -11,11 +11,11 @@
 # `mcpp build` given the same line built `dev`.
 #
 # Legs:
-#   A. `pack --format tar --message-format json`: stdout is one `mcpp.pack`
+#   A. `pack --pkg-format tar --message-format json`: stdout is one `mcpp.pack`
 #      envelope and nothing else; the artifact path is absolute and exists, its
 #      type is `file`, its format `tar`, its target the host triple; the staged
 #      tree and its manifest exist, and the closure is `walked`.
-#   B. `pack --format dir --message-format json`: the artifact is a directory.
+#   B. `pack --pkg-format dir --message-format json`: the artifact is a directory.
 #   C. `pack --release` and `pack --dev` are accepted; `--dev` builds `dev`.
 #   D. `run --profile dev --release` builds `dev`, as `build` does.
 #   E. `pack --message-format yaml` is refused with exit 2.
@@ -42,7 +42,7 @@ printf '#include <cstdio>\nint main() { std::puts("app ran"); return 0; }\n' > a
 cd app
 
 # ── A ───────────────────────────────────────────────────────────────────────
-"$MCPP" pack --format tar --message-format json > a.json 2> a.err || fail "A: pack failed" a.err a.json
+"$MCPP" pack --pkg-format tar --message-format json > a.json 2> a.err || fail "A: pack failed" a.err a.json
 python3 - a.json <<'EOF' || fail "A: the envelope" a.json a.err
 import json, os, sys
 text = open(sys.argv[1]).read()
@@ -64,7 +64,7 @@ grep -q "Packed" a.err || fail "A: the human lines did not go to stderr" a.err
 echo "ok: A, one envelope on stdout names the archive, its legs and the staged tree"
 
 # ── B ───────────────────────────────────────────────────────────────────────
-"$MCPP" pack --format dir --message-format json > b.json 2> b.err || fail "B: pack failed" b.err
+"$MCPP" pack --pkg-format dir --message-format json > b.json 2> b.err || fail "B: pack failed" b.err
 python3 - b.json <<'EOF' || fail "B: the envelope" b.json
 import json, os, sys
 a = json.load(open(sys.argv[1]))["data"]["artifacts"][0]
@@ -78,13 +78,13 @@ echo "ok: B, a directory artifact is reported as one"
 # from an empty `target/`, so the one graph there is the one this pack wrote.
 built_dev() { grep -q -- " -O0" "$(ls target/*-linux-gnu/*/build.ninja | head -1)"; }
 rm -rf target
-"$MCPP" pack --release --format tar > c1.log 2>&1 || fail "C: pack --release was refused" c1.log
+"$MCPP" pack --release --pkg-format tar > c1.log 2>&1 || fail "C: pack --release was refused" c1.log
 built_dev && fail "C: pack --release built dev" c1.log
 rm -rf target
-"$MCPP" pack --dev --format tar > c2.log 2>&1 || fail "C: pack --dev was refused" c2.log
+"$MCPP" pack --dev --pkg-format tar > c2.log 2>&1 || fail "C: pack --dev was refused" c2.log
 built_dev || fail "C: pack --dev did not build dev" c2.log
 rm -rf target
-"$MCPP" pack --profile release --dev --format tar > c3.log 2>&1 || fail "C: pack --profile --dev failed" c3.log
+"$MCPP" pack --profile release --dev --pkg-format tar > c3.log 2>&1 || fail "C: pack --profile --dev failed" c3.log
 built_dev && fail "C: --dev won over --profile release on pack" c3.log
 echo "ok: C, pack takes --release and --dev, and --profile wins"
 
@@ -97,7 +97,7 @@ echo "ok: D, run and build resolve --profile over the shorthands alike"
 
 # ── E ───────────────────────────────────────────────────────────────────────
 set +e
-"$MCPP" pack --format tar --message-format yaml > e.out 2> e.err
+"$MCPP" pack --pkg-format tar --message-format yaml > e.out 2> e.err
 rc=$?
 set -e
 [ "$rc" -eq 2 ] || fail "E: --message-format yaml exited $rc" e.err

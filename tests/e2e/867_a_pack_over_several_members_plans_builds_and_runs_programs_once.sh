@@ -17,7 +17,7 @@
 # and the staged tree it was told.
 #
 # Criteria (#749, A to D):
-#   A. `mcpp pack --workspace --format zap` runs `core`'s program once in all, and
+#   A. `mcpp pack --workspace --pkg-format zap` runs `core`'s program once in all, and
 #      each provider's program once for each of the two passes a dispatched
 #      format prepares: once when no format is asked, and once when it is.
 #   B. Each member's packed tree has the same files with the same content as
@@ -144,7 +144,7 @@ stage_of() { ls -d "$1"/target/dist/"$1"-0.1.0-* | grep -v -e '\.stage-manifest$
 objects() { awk -F'\t' '$4 ~ /\.o$/' "$1/.ninja_log" | wc -l | tr -d ' '; }
 
 # ── A ────────────────────────────────────────────────────────────────────────
-"$MCPP" pack --workspace --format zap > a.log 2>&1 || fail "A: the pack failed" a.log
+"$MCPP" pack --workspace --pkg-format zap > a.log 2>&1 || fail "A: the pack failed" a.log
 # `core` is not a program, so it is not packed, and its program ran once in all:
 # in the pass that asks for no format, and never again for a member whose answer
 # does not depend on the request.
@@ -181,7 +181,7 @@ for m in cli gui; do
     cp -R "$(stage_of $m)" multi/$m/tree
     cp "$(stage_of $m).stage-manifest" multi/$m/stage-manifest
     cp $(outdir $m)/$m.zap multi/$m/dist
-    "$MCPP" pack -p $m --format zap > b-$m.log 2>&1 || fail "B: mcpp pack -p $m failed" b-$m.log
+    "$MCPP" pack -p $m --pkg-format zap > b-$m.log 2>&1 || fail "B: mcpp pack -p $m failed" b-$m.log
     cp -R "$(stage_of $m)" single/$m/tree
     cp "$(stage_of $m).stage-manifest" single/$m/stage-manifest
     cp $(outdir $m)/$m.zap single/$m/dist
@@ -196,7 +196,7 @@ dirs=$(find target -name build.ninja -not -path '*/.build-mcpp/*' -exec dirname 
 [ "$(echo "$dirs" | wc -l | tr -d ' ')" = 1 ] || fail "C: expected one build directory, got: $dirs" c-build.log
 before=$(objects "$dirs")
 [ "$before" -gt 0 ] || fail "C: the build compiled nothing" "$dirs/.ninja_log"
-"$MCPP" pack --workspace --format zap > c-pack.log 2>&1 || fail "C: the pack failed" c-pack.log
+"$MCPP" pack --workspace --pkg-format zap > c-pack.log 2>&1 || fail "C: the pack failed" c-pack.log
 [ "$(find target -name build.ninja -not -path '*/.build-mcpp/*' | wc -l | tr -d ' ')" = 1 ] || fail "C: the pack used another build directory" c-pack.log
 after=$(objects "$dirs")
 [ "$after" = "$before" ] || fail "C: the pack compiled $((after - before)) object(s) after the build" "$dirs/.ninja_log" c-pack.log

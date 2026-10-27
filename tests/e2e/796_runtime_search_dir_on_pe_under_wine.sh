@@ -121,7 +121,7 @@ rc=0; out="$("$MCPP" run --target "$TRIPLE" 2>&1)" || rc=$?
 [[ $rc -eq 0 ]] || { echo "FAIL: mcpp run failed (rc=$rc): $out"; exit 1; }
 
 # ── 2. `mcpp pack` places the DLL beside the packed executable ─────────────
-"$MCPP" pack --target "$TRIPLE" --format dir > pack.log 2>&1 || { cat pack.log; echo "FAIL: pack failed"; exit 1; }
+"$MCPP" pack --target "$TRIPLE" --pkg-format dir > pack.log 2>&1 || { cat pack.log; echo "FAIL: pack failed"; exit 1; }
 PACKED_EXE="$(find target/dist -name 'app.exe' | head -1)"
 [[ -n "$PACKED_EXE" ]] || { find target/dist; echo "FAIL: no packed app.exe"; exit 1; }
 [[ -f "$(dirname "$PACKED_EXE")/libmathkit.dll" ]] || {

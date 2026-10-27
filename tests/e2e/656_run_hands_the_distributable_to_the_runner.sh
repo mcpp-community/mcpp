@@ -4,7 +4,7 @@
 # <name>` (#622 A10, design record
 # 2026-09-12-622-a-ui-framework-on-android-ios-and-web.md §2.10).
 #
-# `mcpp run --format <name>` IS `mcpp pack --format <name>` -- the two
+# `mcpp run --pkg-format <name>` IS `mcpp pack --pkg-format <name>` -- the two
 # prepares, the build, the staging, the provider's action -- followed by the
 # ORDINARY run, with the artifact the pack pipeline reported as the operand.
 # Runner resolution is unchanged: this project's `[target.<triple>] runner`.
@@ -124,7 +124,7 @@ HOST=$(ls target | head -1)
 # THE PLAIN GRAPH'S OWN PATH, captured now rather than re-derived at the
 # end. `--format` (a `pack_format` override) resolves to a DIFFERENT
 # fingerprint directory than a plain build -- see mcpp.build.plan's
-# fingerprint inputs -- so once `run --format blob` has run, target/ holds
+# fingerprint inputs -- so once `run --pkg-format blob` has run, target/ holds
 # both a plain and a "blob" build.ninja side by side; a plain build never
 # touches the "blob" one, and `ninja` files already at the byte content
 # being written are not re-touched, so their mtimes do not order the two.
@@ -143,8 +143,8 @@ chmod +x "$TMP/runner.sh"
 
 printf '\n[target.%s]\nrunner = ["%s"]\n' "$HOST" "$TMP/runner.sh" >> mcpp.toml
 
-# ── 1. `mcpp run --format blob` hands the runner the distributable ────────
-out=$("$MCPP" run --format blob 2>&1) || fail "mcpp run --format blob failed" <(echo "$out")
+# ── 1. `mcpp run --pkg-format blob` hands the runner the distributable ────────
+out=$("$MCPP" run --pkg-format blob 2>&1) || fail "mcpp run --pkg-format blob failed" <(echo "$out")
 grep -q "RUNNER: .*/app\.final$" <<<"$out" \
     || fail "the runner's operand was not the terminal artifact app.final" <(echo "$out")
 grep -q "RUNNER: .*/app\.blob$" <<<"$out" \
@@ -155,7 +155,7 @@ grep -q "Packed .*app\.blob" <<<"$out" \
     && fail "the intermediate app.blob was reported as Packed" <(echo "$out")
 grep -q "1-2-3" <<<"$out" \
     || fail "the program's marker did not print through the runner" <(echo "$out")
-echo "mcpp run --format blob hands the runner the distributable OK"
+echo "mcpp run --pkg-format blob hands the runner the distributable OK"
 
 # ── 2. a plain `mcpp run` is unaffected: the operand is the link output ───
 out=$("$MCPP" run 2>&1) || fail "mcpp run failed" <(echo "$out")
@@ -166,31 +166,31 @@ echo "mcpp run alone is unaffected OK"
 
 # ── 3. an unknown format is refused, naming what the graph provides ───────
 set +e
-out=$("$MCPP" run --format bogus 2>&1); rc=$?
+out=$("$MCPP" run --pkg-format bogus 2>&1); rc=$?
 set -e
-[ "$rc" -ne 0 ] || fail "mcpp run --format bogus was accepted" <(echo "$out")
-grep -q "unknown --format 'bogus'" <<<"$out" \
+[ "$rc" -ne 0 ] || fail "mcpp run --pkg-format bogus was accepted" <(echo "$out")
+grep -q "unknown --pkg-format 'bogus'" <<<"$out" \
     || fail "the refusal does not name the value" <(echo "$out")
 grep -q "available in this build:.*blob" <<<"$out" \
     || fail "the refusal does not name what is available" <(echo "$out")
-echo "mcpp run --format bogus is refused, naming blob OK"
+echo "mcpp run --pkg-format bogus is refused, naming blob OK"
 
 # ── 4. --format with --no-runner is refused before anything runs ──────────
 set +e
-out=$("$MCPP" run --format blob --no-runner 2>&1); rc=$?
+out=$("$MCPP" run --pkg-format blob --no-runner 2>&1); rc=$?
 set -e
 [ "$rc" -ne 0 ] || fail "--format with --no-runner was accepted" <(echo "$out")
-grep -q -- "--format and --no-runner cannot be combined" <<<"$out" \
+grep -q -- "--pkg-format and --no-runner cannot be combined" <<<"$out" \
     || fail "the refusal does not name the pairing" <(echo "$out")
 grep -q "1-2-3" <<<"$out" && fail "the program ran despite the refusal" <(echo "$out")
 echo "--format with --no-runner is refused OK"
 
 # ── 5. a plain build afterward has a plain graph, with no blob edge ───────
 find target -name 'app.blob' -delete 2>/dev/null || true
-"$MCPP" build > b5.log 2>&1 || fail "the build after run --format failed" b5.log
+"$MCPP" build > b5.log 2>&1 || fail "the build after run --pkg-format failed" b5.log
 [ -f "$G0" ] || fail "the plain build's own build.ninja disappeared" b5.log
 [ "$(graph_dist "$G0")" = "none" ] \
-    || { sed -n '2p' "$G0"; fail "the graph after run --format is not dist=none" b5.log; }
+    || { sed -n '2p' "$G0"; fail "the graph after run --pkg-format is not dist=none" b5.log; }
 grep -q "blob" "$G0" \
     && fail "a plain build's graph still carries the blob edge" b5.log
 [ -z "$(find target -name 'app.blob' 2>/dev/null)" ] \

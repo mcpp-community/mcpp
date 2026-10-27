@@ -2459,9 +2459,14 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
     // package of the graph provides and the tools it does not build are added
     // as the platform's, and walked like any request. A few rounds at most: the
     // packages one round adds may provide a layer the next then leaves.
+    // The version group is checked before each round's walk as well as after
+    // the last: a package of the family the project pinned outside the group
+    // is refused as such, before the platform's own packages would meet it as
+    // a second version of themselves.
     for (int round = 0; round < 3; ++round) {
         auto pushed = step4b_apply_platform(state);
         if (!pushed) return std::unexpected(pushed.error());
+        if (auto r = step4b_check_platform_versions(state); !r) return r;
         if (!*pushed) break;
         if (auto r = drain(); !r) return r;
     }

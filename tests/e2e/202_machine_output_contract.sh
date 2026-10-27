@@ -9,7 +9,7 @@
 #
 #   mcpp cache list --format json   ->  stdout: "Error: unknown option: --format"
 #                                       stderr: (empty)   rc=1
-#   mcpp pack --format bogus        ->  stderr: "invalid --format ..."  rc=2
+#   mcpp pack --pkg-format bogus        ->  stderr: "invalid --pkg-format ..."  rc=2
 #
 # Two shapes for the same class of mistake, and the first one writes human text
 # into the channel a protocol owns. `mcpp cache list --format json | jq` gets a
@@ -50,7 +50,7 @@ check "unknown option (top level)"  2 "$MCPP" --no-such-option
 # is the branch that answers "I know the option, not that value".
 check "unsupported value (self env)"   2 "$MCPP" self env --format yaml
 check "unsupported value (cache list)" 2 "$MCPP" cache list --format yaml
-check "unsupported value (pack)"       2 "$MCPP" pack --format bogus
+check "unsupported value (pack)"       2 "$MCPP" pack --pkg-format bogus
 
 # And the supported ones must still be JSON on stdout. Asserted here because
 # every check above is about what does NOT happen; without this, deleting the

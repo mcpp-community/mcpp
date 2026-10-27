@@ -10,6 +10,8 @@ export module mcpp.cli.cmd_build;
 
 import std;
 import mcpp.platform;
+import mcpp.toolchain.platform;
+import mcpp.toolchain.triple;
 import mcpp.build.runner_lookup;
 import mcpplibs.cmdline;
 import mcpp.build.prepare;
@@ -976,7 +978,12 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     // pack --format`; `run` only adds the pairing with `--no-runner`, checked
     // in build_run_target where the runner is actually chosen.
     std::string format;
-    if (auto f = parsed.value("format")) format = *f;
+    if (auto f = parsed.value("pkg-format")) format = *f;
+    else if (auto f = parsed.value("format")) {
+        // The earlier spelling (`mcpp pack --pkg-format`'s note says why).
+        mcpp::ui::warning("`mcpp run --format` is the earlier spelling of --pkg-format");
+        format = *f;
+    }
     if (parsed.is_flag_set("list-runners"))
         return mcpp::build::list_runners(package_filter, cache_mode, no_cache,
                                          target_triple, features, profile, accel);
@@ -1285,6 +1292,34 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
         if (!slowest.empty())
             mcpp::ui::plain(std::format("    slowest: {}", slowest));
         return rc;
+    }
+    // A PLATFORM PACKAGE IS TESTED ON THE TARGETS IT SERVES (SPEC-013 §2):
+    // with no --target, its tests are built for each of its `targets` with the
+    // package itself as the platform, and run where its runner can run them
+    // (`host = "same-arch"`: the target of this machine's architecture); the
+    // others are built and reported as not run.
+    if (ov.target_triple.empty() && ov.package_filter.empty()) {
+        std::error_code ec;
+        auto root = mcpp::project::find_manifest_root(std::filesystem::current_path(ec));
+        auto m = root ? mcpp::manifest::load(*root / "mcpp.toml")
+                      : std::expected<mcpp::manifest::Manifest, mcpp::manifest::ManifestError>(
+                            std::unexpected(mcpp::manifest::ManifestError{}));
+        if (m && m->platformDeclared && !m->platform.targets.value.empty()) {
+            mcpp::invocation::set("MCPP_PLATFORM", "path:" + root->generic_string());
+            int rc = 0;
+            for (auto const& t : m->platform.targets.value) {
+                auto tov = ov;
+                tov.target_triple = t;
+                auto tto = to;
+                auto tt = mcpp::toolchain::triple::parse(t);
+                const bool here = tt && tt->arch == mcpp::toolchain::platform::host_arch;
+                if (!here && m->platform.runner.host == "same-arch") tto.noRun = true;
+                mcpp::ui::info("Testing", std::format("platform {} on {}{}", m->package.name, t,
+                                                      tto.noRun ? " (built, not run here)" : ""));
+                if (int r = mcpp::build::run_tests(passthrough, tov, tto); r != 0 && rc == 0) rc = r;
+            }
+            return rc;
+        }
     }
     return mcpp::build::run_tests(passthrough, ov, to);
 }
@@ -1642,9 +1677,14 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 {"source", mcpp::platform::origin_text(runner.origin)}}},
             {"runUnder", ctx->runUnder},
         };
-        mcpp::wire::emit({.kind = "mcpp.env", .effects = {}, .data = std::move(data)});
+        mcpp::wire::Envelope env{.kind = "mcpp.env", .effects = {}};
+        env.data = std::move(data);
+        for (auto const& n : ctx->planNotes)
+            env.diagnostics.push_back({n.code, n.severity, n.message});
+        mcpp::wire::emit(env);
         return 0;
     }
+    for (auto const& n : ctx->planNotes) mcpp::ui::warning(n.message);
     std::println("{:<10} {}", "target", ctx->tc.targetTriple);
     std::println("{:<10} {} ({})", "compiler", ctx->tc.binaryPath.generic_string(),
                  ctx->compilerChoice.origin);

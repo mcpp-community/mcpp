@@ -12,7 +12,7 @@
 # and the open report.
 #
 # Criteria:
-#   A. A cold `mcpp pack --format tar` writes a `Compiling` line for the
+#   A. A cold `mcpp pack --pkg-format tar` writes a `Compiling` line for the
 #      package and `Finished` before `Packing`.
 #   B. Under `--message-format json`, standard output is one JSON document.
 #   C. With `[build] jobs = 1`, no two compile steps overlap in `.ninja_log`
@@ -84,7 +84,7 @@ no_overlap() {
 }
 
 # ── A ──────────────────────────────────────────────────────────────────────
-"$MCPP" pack --format tar > a.log 2>&1 || fail "A: pack failed" a.log
+"$MCPP" pack --pkg-format tar > a.log 2>&1 || fail "A: pack failed" a.log
 grep -q 'Compiling app v0.1.0' a.log || fail "A: the pack's build wrote no Compiling line" a.log
 fin=$(grep -n 'Finished' a.log | head -1 | cut -d: -f1)
 pk=$(grep -n 'Packing' a.log | head -1 | cut -d: -f1)
@@ -94,7 +94,7 @@ echo "ok: A, the pack states its build and Finished precedes Packing"
 
 # ── B ──────────────────────────────────────────────────────────────────────
 rm -rf target
-"$MCPP" pack --format tar --message-format json > b.json 2> b.err || fail "B: pack failed" b.err
+"$MCPP" pack --pkg-format tar --message-format json > b.json 2> b.err || fail "B: pack failed" b.err
 python3 -c 'import json, sys; json.load(open(sys.argv[1]))' b.json \
     || fail "B: standard output is not one JSON document" b.json b.err
 echo "ok: B, the JSON output is one document"
@@ -107,7 +107,7 @@ rm -rf target; touch "$TMP/stamp"; sleep 1
 "$MCPP" test > c2.log 2>&1 || fail "C: test failed" c2.log
 no_overlap "C test"
 rm -rf target; touch "$TMP/stamp"; sleep 1
-"$MCPP" pack --format tar > c3.log 2>&1 || fail "C: pack failed" c3.log
+"$MCPP" pack --pkg-format tar > c3.log 2>&1 || fail "C: pack failed" c3.log
 no_overlap "C pack"
 echo "ok: C, build, test and pack each run one compile at a time under jobs = 1"
 

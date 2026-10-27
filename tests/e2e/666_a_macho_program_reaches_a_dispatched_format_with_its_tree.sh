@@ -63,7 +63,7 @@ int main() {
 EOF
 
 # The built-in archive stages the program: its closure is only the OS's.
-"$MCPP" pack --format dir > dir.log 2>&1 || fail "--format dir of a Mach-O program failed" dir.log
+"$MCPP" pack --pkg-format dir > dir.log 2>&1 || fail "--pkg-format dir of a Mach-O program failed" dir.log
 D=$(find target/dist -mindepth 1 -maxdepth 1 -type d -name 'zapapp-0.1.0-*' | head -1)
 [ -n "$D" ] || fail "--format dir staged no tree" dir.log
 [ -x "$D/bin/zapapp" ] || fail "the staged tree has no bin/zapapp" dir.log
@@ -71,7 +71,7 @@ D=$(find target/dist -mindepth 1 -maxdepth 1 -type d -name 'zapapp-0.1.0-*' | he
     || fail "the dir manifest does not say closure = walked" "$D.stage-manifest"
 echo "  --format dir stages a Mach-O program with closure = walked"
 
-"$MCPP" pack --format zap > zap.log 2>&1 || fail "mcpp pack --format zap failed" zap.log
+"$MCPP" pack --pkg-format zap > zap.log 2>&1 || fail "mcpp pack --pkg-format zap failed" zap.log
 if grep -q 'staged without its dependency closure' zap.log; then
     fail "pack still reports the tree as staged without its closure" zap.log
 fi

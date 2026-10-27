@@ -113,7 +113,7 @@ for m in cli gui; do
         || fail "M: $m's archive is not below the directory --output names" m1.log
 done
 [ "$(find out -maxdepth 1 -name '*.tar.gz' | wc -l | tr -d ' ')" = 2 ] || fail "M: the directory holds more than the two archives" m1.log
-"$MCPP" pack --mode system --workspace --format dir -o out-trees > m2.log 2>&1 || fail "M: --format dir with --output <dir> did not pack" m2.log
+"$MCPP" pack --mode system --workspace --pkg-format dir -o out-trees > m2.log 2>&1 || fail "M: --pkg-format dir with --output <dir> did not pack" m2.log
 for m in cli gui; do
     t=$(find out-trees -maxdepth 1 -type d -name "$m-0.1.0-*" | head -1)
     [ -n "$t" ] && [ -f "$t/bin/$m" ] || fail "M: $m's tree is not below the directory --output names" m2.log

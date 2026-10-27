@@ -114,8 +114,8 @@ echo "  ok: bin/app.js and bin/app.wasm exist, and no bare bin/app does"
 grep -q '^1-2-3$' run.log || fail "mcpp run did not print 1-2-3" run.log
 echo "  ok: mcpp run prints 1-2-3"
 
-"$MCPP" pack --target wasm32-emscripten --format dir > pack.log 2>&1 \
-    || fail "mcpp pack --format dir failed" pack.log
+"$MCPP" pack --target wasm32-emscripten --pkg-format dir > pack.log 2>&1 \
+    || fail "mcpp pack --pkg-format dir failed" pack.log
 staged=$(find target/dist -maxdepth 1 -name 'app-0.1.0-wasm32-emscripten' -type d | head -1)
 [ -n "$staged" ] || fail "no staged directory under target/dist" pack.log
 [ -f "$staged/bin/app.js" ]   || fail "the staged tree has no bin/app.js" pack.log
@@ -124,7 +124,7 @@ manifest="target/dist/$(basename "$staged").stage-manifest"
 [ -f "$manifest" ] || fail "no .stage-manifest sibling of the staged tree" pack.log
 grep -q 'bin/app.js'   "$manifest" || fail "the stage manifest does not list bin/app.js" "$manifest"
 grep -q 'bin/app.wasm' "$manifest" || fail "the stage manifest does not list bin/app.wasm" "$manifest"
-echo "  ok: mcpp pack --format dir stages both files and the manifest lists both"
+echo "  ok: mcpp pack --pkg-format dir stages both files and the manifest lists both"
 
 # `--no-entry` reaches the link line as an ordinary ldflag on this row -- no
 # engine mechanism checks for a `main` symbol (docs/21, docs/22).
