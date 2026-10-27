@@ -28,7 +28,7 @@ versioning  = { path = "../versioning" }
 # state its contract in isolation; the root `tests/unit/` states the facts two
 # layers must agree on.
 [dependencies.mcpplibs]
-os = { git = "https://github.com/mcpplibs/os.git", branch = "os-0.2.0" }
+os = "0.2.0"
 
 [dev-dependencies.compat]
 gtest = "1.15.2"
