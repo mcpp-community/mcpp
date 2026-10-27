@@ -729,7 +729,7 @@ ok 映像的文件为 `target/dist/<name>-<version>-<os>-<arch>`（Windows 上�
 提供的格式、`--merge` 与 `mcpp emit xpkg` 读取它（[SPEC-014](../specs/packaging.md) §4.5）：
 
 ```json
-{"schema": 1, "name": "hello", "version": "0.1.0", "platform": "mcpplibs.openkal-platform@0.17.1",
+{"schema": 1, "name": "hello", "version": "0.1.0", "platform": "openkal-platform@0.17.1",
  "linkage": "shared", "mode": "vendored", "legs": ["x86_64-openkal", "aarch64-openkal"], "systems": [],
  "launch": {"runner": ["okrun", "{}"], "entry": {"x86_64": "lib/x86_64/hello.oke", "aarch64": "lib/aarch64/hello.oke"}},
  "files": [{"path": "lib/x86_64/hello.oke", "role": "image", "leg": "x86_64-openkal", "sha256": "…"}]}
@@ -769,7 +769,7 @@ sign          = ["signtool", "sign", "{}"]   # run on each program, image, libra
 universal     = false               # = --no-universal
 strip         = true                # default. false ships the artifacts as built
 debug_symbols = "dist/debug"        # separate the debug info here instead of discarding it
-include       = ["share/**", "config/*.toml"]   # extra files to bundle
+include       = ["share/**", "config/*.toml"]   # 工程文件，放在包中同样的相对路径下，只放一份
 exclude       = ["debug/**"]
 
 # Fine-tune the vendored filtering policy. The configuration key keeps its

@@ -49,6 +49,7 @@ import mcpp.pack.strip;
 import mcpp.pack.zip;
 import mcpp.pack.compress;
 import mcpp.pack.distribution;
+import mcpp.modgraph.glob;     // [pack] include / exclude
 import mcpplibs.os.platform;
 import mcpp.toolchain.platform;
 import mcpp.invocation;
@@ -1506,11 +1507,43 @@ make_zip(const std::filesystem::path& stagingRoot, const std::filesystem::path& 
 // and loader signed by `[pack] sign`, then every file described in
 // `mcpp-package.json` with its role, its leg and its digest. Before the
 // container, so the archive holds what the document says.
+// `[pack] include`: the project's files the globs name, at the same path
+// below the tree's root, once whatever the legs (a `share/**` is the
+// package's, not an architecture's); `[pack] exclude` drops what it names.
+std::expected<void, Error> stage_included(const Plan& plan) {
+    namespace fs = std::filesystem;
+    if (plan.includeGlobs.empty()) return {};
+    std::vector<fs::path> files;
+    auto excluded = [&](const fs::path& f) {
+        return std::ranges::any_of(plan.excludeGlobs, [&](std::string const& g) {
+            return mcpp::modgraph::path_matches_glob(f, plan.projectRoot, g);
+        });
+    };
+    auto onFile = [&](const fs::path& f) {
+        const bool named = std::ranges::any_of(plan.includeGlobs, [&](std::string const& g) {
+            return mcpp::modgraph::path_matches_glob(f, plan.projectRoot, g);
+        });
+        if (named && !excluded(f)) files.push_back(f);
+    };
+    mcpp::modgraph::walk_glob_tree(plan.projectRoot, plan.projectRoot,
+                                   [](const fs::path&) { return true; }, onFile);
+    std::error_code ec;
+    for (auto const& f : files) {
+        const auto to = plan.stagingRoot / f.lexically_relative(plan.projectRoot);
+        fs::create_directories(to.parent_path(), ec);
+        fs::copy_file(f, to, fs::copy_options::overwrite_existing, ec);
+        if (ec) return std::unexpected(Error{std::format("[pack] include: cannot stage {}: {}",
+                                                         f.string(), ec.message())});
+    }
+    return {};
+}
+
 std::expected<void, Error> finalize_tree(const Plan& plan) {
     namespace fs = std::filesystem;
     namespace d = mcpp::pack::distribution;
     std::error_code ec;
     if (!fs::is_directory(plan.stagingRoot, ec)) return {};
+    if (auto r = stage_included(plan); !r) return r;
     const auto canonical = [](std::string const& t) {
         if (t.empty()) return mcpp::toolchain::triple::host_triple().str();
         auto parsed = mcpp::toolchain::triple::parse(t);

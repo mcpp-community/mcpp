@@ -18,6 +18,8 @@
 #      system; --compress on a directory; zstd in a zip; --systems for a package
 #      that carries no loader.
 #   F. `--format` is the earlier spelling of `--pkg-format`, with a warning.
+#   G. `[pack] include` stages the files it names at their paths, less what
+#      `[pack] exclude` names, and the metadata lists them as resources.
 set -e
 
 TMP=$(mktemp -d)
@@ -117,5 +119,24 @@ echo "ok: impossible combinations are refused before a build"
 "$MCPP" pack --format dir > f.log 2>&1 || fail "F: --format dir" f.log
 grep -q "earlier spelling of --pkg-format" f.log || fail "F: no warning for the earlier spelling" f.log
 echo "ok: --format is the earlier spelling, with a warning"
+
+# G
+mkdir -p share/data
+printf 'kept\n' > share/data/keep.txt
+printf 'dropped\n' > share/data/drop.tmp
+cat >> mcpp.toml <<'TOML'
+include = ["share/**"]
+exclude = ["share/**/*.tmp"]
+TOML
+"$MCPP" pack --pkg-format dir -o inc > g.log 2>&1 || fail "G: pack with [pack] include" g.log
+[ -f target/dist/inc/share/data/keep.txt ] || fail "G: the included file is not staged" g.log
+[ -f target/dist/inc/share/data/drop.tmp ] && fail "G: the excluded file was staged" g.log
+python3 - <<'PY' || fail "G: the metadata" target/dist/inc/mcpp-package.json
+import json
+d = json.load(open("target/dist/inc/mcpp-package.json"))
+roles = {f["path"]: f["role"] for f in d["files"]}
+assert roles.get("share/data/keep.txt") == "resource", roles
+PY
+echo "ok: [pack] include stages what it names, less what exclude names"
 
 echo "PASS: 954 pack has three axes"

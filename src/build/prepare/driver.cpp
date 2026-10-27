@@ -150,8 +150,14 @@ prepare_build_pass(bool print_fingerprint,
                    std::vector<mcpp::manifest::Target> extraTargets,
                    BuildOverrides overrides) {
     read_build_programs_marker(overrides);
-    PrepareState state(print_fingerprint, includeDevDeps,
-                        std::move(extraTargets), std::move(overrides));
+    // ON THE HEAP. The state is over 100 KiB, and a prepare nests: a host
+    // tool's sub-build, then its build programs' graph, each its own prepare.
+    // Three of them on a Windows main thread's 1 MiB stack overflowed it
+    // (measured: openkal-platform's tests on windows-2022 ended with exit 127
+    // and no word, in the host graph of `okld`'s build).
+    auto statePtr = std::make_unique<PrepareState>(print_fingerprint, includeDevDeps,
+                                                   std::move(extraTargets), std::move(overrides));
+    PrepareState& state = *statePtr;
     pending_flag_words_notes().clear();
     g_notesOnFailure.clear();
 

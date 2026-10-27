@@ -117,7 +117,8 @@ openkal 目标上 `static` 为一个 `.oke`、无 `.okso`,`shared` 为 `.oke` �
 | `compress` | 未给 `--compress` 时的压缩(§5.1) |
 | `sign` | 签名步骤的 argv,`{}` 为文件(§7) |
 | `universal` | `false` 时等同 `--no-universal` |
-| `strip`、`debug_symbols`、`include`、`exclude`、`[pack.bundle-project]` | 既有键 |
+| `include`、`exclude` | 工程中按 glob 选出的文件（相对工程根），放在暂存树中同样的相对路径下，一个包只放一份（通用包亦然）；`exclude` 去掉其中匹配的文件；`mcpp-package.json` 中角色为 `resource` |
+| `strip`、`debug_symbols`、`[pack.bundle-project]` | 既有键 |
 
 ## 3. 管线
 
@@ -182,7 +183,7 @@ SDK 载荷时该次构建拒绝,写出该系统与载荷。
   "schema": 1,
   "name": "hello",
   "version": "0.1.0",
-  "platform": "mcpplibs.openkal-platform@0.17.2",
+  "platform": "openkal-platform@0.17.2",
   "linkage": "declared",
   "mode": "vendored",
   "legs": ["x86_64-openkal", "aarch64-openkal"],
