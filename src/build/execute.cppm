@@ -1073,6 +1073,16 @@ struct ExecutionHost {
     std::string              error;
 };
 
+// The platform's own tool by the name a runner gives it (SPEC-013 §10): the
+// program the build located for it, before any search.
+std::optional<std::filesystem::path> platform_tool(const mcpp::build::BuildContext& ctx,
+                                                   std::string_view name) {
+    auto const& tools = ctx.plan.platform.tools;
+    if (auto it = tools.find(std::string(name)); it != tools.end() && !it->second.empty())
+        return std::filesystem::path(it->second);
+    return std::nullopt;
+}
+
 ExecutionHost locate_run_under(const mcpp::build::BuildContext& ctx, std::string_view tripleKey) {
     ExecutionHost h;
     if (ctx.runUnder.empty()) return h;
@@ -2863,6 +2873,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         auto tmpl = choice.tmpl;
         auto found = mcpp::build::runner_lookup::locate(
             tmpl.front(), ctx.xlingsDepBinDirs, mcpp::invocation::get("PATH").value_or(""));
+        if (auto tool = platform_tool(ctx, tmpl.front())) found.program = *tool;
         if (!found.program) {
             std::println(stderr, "error: {}",
                 mcpp::build::runner_lookup::not_found_message(
@@ -3702,6 +3713,7 @@ static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool
     if (!runnerTmpl.empty()) {
         auto found = mcpp::build::runner_lookup::locate(
             runnerTmpl.front(), ctx->xlingsDepBinDirs, mcpp::invocation::get("PATH").value_or(""));
+        if (auto tool = platform_tool(*ctx, runnerTmpl.front())) found.program = *tool;
         if (found.program) runnerTmpl.front() = found.program->string();
         else tb.invocationNotRunReason = mcpp::build::runner_lookup::not_found_message(
             runnerChoice.tripleKey, runnerTmpl.front(), found.searched);

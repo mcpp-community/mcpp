@@ -88,9 +88,20 @@ inline Lookup locate(std::string_view argv0,
         out.searched.push_back(a0.parent_path());
         return out;
     }
+    // A bare name on Windows is a program with the system's suffix, as the
+    // shell finds it: `okrun` is `okrun.exe`.
+    auto in_dir = [&](const std::filesystem::path& d) -> std::optional<std::filesystem::path> {
+        if (auto c = d / a0; detail::executable_file(c)) return c;
+        if constexpr (mcpplibs::os::is_windows) {
+            if (!a0.has_extension())
+                for (auto ext : { ".exe", ".cmd", ".bat" })
+                    if (auto c = d / (a0.string() + ext); detail::executable_file(c)) return c;
+        }
+        return std::nullopt;
+    };
     for (auto const& d : depBinDirs) {
         out.searched.push_back(d);
-        if (auto c = d / a0; detail::executable_file(c)) { out.program = c; return out; }
+        if (auto c = in_dir(d)) { out.program = *c; return out; }
     }
     constexpr char sep = mcpplibs::os::is_windows ? ';' : ':';
     for (auto part : std::views::split(pathEnv, sep)) {
@@ -98,7 +109,7 @@ inline Lookup locate(std::string_view argv0,
         if (sv.empty()) continue;
         std::filesystem::path d(sv);
         out.searched.push_back(d);
-        if (auto c = d / a0; detail::executable_file(c)) { out.program = c; return out; }
+        if (auto c = in_dir(d)) { out.program = *c; return out; }
     }
     return out;
 }
