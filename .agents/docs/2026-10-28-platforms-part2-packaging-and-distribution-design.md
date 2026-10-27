@@ -151,7 +151,7 @@ xim-pkgindex 的包描述可以表达 openkal 程序：
 
 ## 9. 体积
 
-本批全部实施，并在 hello（C++，`import std`）与 mcppls 服务器两个映像、一个原生 hello 上实测前后，表写入本节（实施时填写）。
+本批全部实施，实测见本节末表（hello 映像；mcppls 服务器与 mcpp-ide 后端的数字随其 PR 写入 §15）。
 
 | 处 | 做法 |
 |---|---|
@@ -160,6 +160,25 @@ xim-pkgindex 的包描述可以表达 openkal 程序：
 | 容器 | `--compress zstd\|gzip\|xz\|none[:level]`，`tar` 默认仍为 gzip（兼容），`.tar.zst` 可选；单文件载荷用 zstd；okb 内映像不压缩（为 mmap） |
 | 去重 | 通用包与 okb 中资源只放一份，只有映像按架构；分发矩阵从"系统 × 架构"降为"架构" |
 | 共享 | 共享 `.okso` 作为独立 xlings 包，一个架构装一次，多个程序共用（§7） |
+
+**实测（2026-10-28，x86_64 Linux 主机，`import std` 的 hello，release 构建，已 strip）。**
+
+| 项 | 0.17.1 平台 | 0.17.2 平台 | 变化 |
+|---|---|---|---|
+| x86_64 映像 `hello.oke` | 1 149 944 B | 1 098 872 B | −4.4%（`-ffunction-sections -fdata-sections`、`--icf=safe`） |
+| 同上，`[profile.release] opt = "z"` | — | 998 928 B | 再 −9.1% |
+
+| 容器（通用包：x86_64 与 aarch64 两组映像） | 大小 | 相对 `.tar.gz` |
+|---|---|---|
+| `tar`（gzip，缺省） | 787 266 B | — |
+| `zip`（deflate） | 787 669 B | +0.05% |
+| `tar --compress zstd`（19 级） | 594 457 B | −24.5% |
+| `tar --compress xz`（6 级） | 532 196 B | −32.4% |
+| `okb`（映像 stored、64 KiB 对齐，为原地映射） | 2 475 329 B | 未压缩：分发时由外层容器或传输压缩 |
+| 单文件（openkal，Linux 静态载体加 x86_64 映像） | 1 164 664 B | 一个可执行文件 |
+
+结论：分发矩阵从"系统 × 架构"降为"架构"后，再以 zstd/xz 压缩容器得到最大收益；映像本身的收益来自段级回收与 `-Oz`。
+okb 不压缩是格式的选择（原地加载），其传输体积由外层（xlings 下载的压缩包或 HTTP 压缩）决定。
 
 ## 10. openkal 0.17.2 轮（本批最后）
 
