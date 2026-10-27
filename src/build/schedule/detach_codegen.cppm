@@ -63,25 +63,13 @@
 // which is a spawn, not a fork; the supervisor is `mcpp` itself re-invoked.
 // What is compiler-specific is the PREMISE (atomic BMI publication), not the
 // platform.
-module;
-
-// The global module fragment is the ONLY place a module interface unit may
-// #include. These were briefly written after `module :private;`, which GCC
-// rejects with the unhelpful "module already declared".
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <fcntl.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
-extern char** environ;
-#endif
-
 export module mcpp.build.schedule.detach_codegen;
 
 import std;
-import mcpp.platform.process;
+import mcpplibs.os.fs;
+import mcpplibs.os.process;
+import mcpp.build.command_line;
+import mcpp.run;
 import mcpp.build.stage;
 
 export namespace mcpp::build::schedule::detach {
@@ -126,7 +114,7 @@ struct CompileRequest {
     std::filesystem::path depTo;
     // The BMI as ninja spells it, which is what the copied depfile must name.
     // `bmi` is the path this edge OPENS, and on Windows it is the absolute,
-    // extended-length form (mcpp::platform::fs::extended_length); ninja treats
+    // extended-length form (mcpplibs::os::fs::extended); ninja treats
     // an edge whose depfile names anything but its own output spelling as
     // permanently dirty. Empty means `bmi` is already that spelling.
     std::string bmiTarget;
@@ -329,146 +317,44 @@ void settle_bmi(const std::filesystem::path& bmi) {
         std::filesystem::remove(backup, ec);
 }
 
-#if defined(_WIN32)
-
-std::string join_command(const std::vector<std::string>& argv) {
-    std::string cmd;
-    for (const auto& a : argv) {
-        if (!cmd.empty()) cmd += ' ';
-        const bool quote = a.find_first_of(" \t\"") != std::string::npos;
-        if (!quote) { cmd += a; continue; }
-        cmd += '"';
-        for (char c : a) { if (c == '"') cmd += '\\'; cmd += c; }
-        cmd += '"';
-    }
-    return cmd;
-}
-
+// The supervisor, left running when this edge returns: its streams are the
+// null device (HAZARD 1 applies to it as well -- holding ninja's pipe open
+// would keep the edge alive long after this process exits), and it runs in a
+// unit of its own, so the terminal's interrupt of the build is not delivered
+// to it mid-write.
 bool spawn_detached(const std::vector<std::string>& argv) {
-    auto cmd = join_command(argv);
-    STARTUPINFOA si{}; si.cb = sizeof(si);
-    PROCESS_INFORMATION pi{};
-    const BOOL ok = ::CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE,
-                                     DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
-                                     nullptr, nullptr, &si, &pi);
-    if (!ok) return false;
-    ::CloseHandle(pi.hProcess); ::CloseHandle(pi.hThread);
+    namespace process = mcpplibs::os::process;
+    process::spawn_options o;
+    o.program = argv.front();
+    o.args.assign(argv.begin() + 1, argv.end());
+    o.in = o.out = o.err = process::stdio::null;
+    o.own_unit = true;
+    auto p = process::process::spawn(o);
+    if (!p) return false;
+    p->detach();
     return true;
 }
 
+// `command` as ninja would have run it, through the host's interpreter (the
+// command is ninja's text: `cmd.exe /d /s /c "<command>"` on Windows, inside
+// the one pair of quotes `/s` removes, #425 #832), its output and errors into
+// `logPath`.
 int run_to_completion(std::string_view command,
                       const std::filesystem::path& logPath) {
-    // `cmd.exe /c` DOES NOT USE CreateProcess ARGUMENT QUOTING.
-    //
-    // This built the line with `join_command({"cmd.exe", "/c", command})`, which
-    // treats the whole compiler invocation as ONE argv element: it wraps it in
-    // quotes and escapes every interior `"` as `\"`. cmd.exe parses none of
-    // that — its /c rule is about counting quotes in the raw string — so a
-    // command containing quoted paths came out mangled, and the compiler ran
-    // with flags missing rather than failing outright. On a windows-host cross
-    // build that surfaced as
-    //
-    //     failed: gcm.cache/mcpp.libs.json.gcm
-    //     src/libs/json.cppm:3: fatal error: json.hpp: No such file or directory
-    //
-    // i.e. `-I` gone, reported as a missing header (#425).
-    //
-    // ninja concatenates verbatim (`subprocess-win32.cc`), and this edge exists
-    // to run exactly what ninja would have run. Do the same, inside the one
-    // pair of quotes `/s` removes (`windows_shell_command_line`): the command's
-    // first word is quoted when the compiler's path holds a space (#832), and
-    // without `/s` cmd.exe strips the first and the LAST quote of the line.
-    std::string line = mcpp::platform::process::windows_shell_command_line(command);
-
-    SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
-    // The wide API: an extended-length log path (`bmi-supervise` receives one,
-    // see mcpp::platform::fs::extended_length) is honoured only by it, and a
-    // narrowed spelling would also throw on a name the code page cannot spell.
-    HANDLE log = ::CreateFileW(logPath.c_str(), GENERIC_WRITE,
-                               FILE_SHARE_READ, &sa, CREATE_ALWAYS,
-                               FILE_ATTRIBUTE_NORMAL, nullptr);
-    // The command, in the log, before it runs. Phase 2 replays this file, so a
-    // failure arrives with the exact invocation attached — without it a remote
-    // failure can only be guessed at, which is how #425 cost a CI cycle to even
-    // localise.
-    if (log != INVALID_HANDLE_VALUE) {
-        const std::string banner = "+ " + line + "\r\n";
-        DWORD wrote = 0;
-        ::WriteFile(log, banner.data(), static_cast<DWORD>(banner.size()), &wrote, nullptr);
-    }
-    STARTUPINFOA si{}; si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdOutput = si.hStdError = log;
-    si.hStdInput = ::CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ, &sa,
-                                 OPEN_EXISTING, 0, nullptr);
-    PROCESS_INFORMATION pi{};
-    const BOOL ok = ::CreateProcessA(nullptr, line.data(), nullptr, nullptr, TRUE,
-                                     0, nullptr, nullptr, &si, &pi);
-    if (log != INVALID_HANDLE_VALUE) ::CloseHandle(log);
-    if (si.hStdInput != INVALID_HANDLE_VALUE) ::CloseHandle(si.hStdInput);
-    if (!ok) return 127;
-    ::WaitForSingleObject(pi.hProcess, INFINITE);
-    DWORD code = 1;
-    ::GetExitCodeProcess(pi.hProcess, &code);
-    ::CloseHandle(pi.hProcess); ::CloseHandle(pi.hThread);
-    return static_cast<int>(code);
+    // Created before the compiler starts: its existence is what tells the
+    // waiters that a supervisor started.
+    std::ofstream log(logPath, std::ios::binary | std::ios::trunc);
+    log.flush();
+    auto sh = mcpp::run::shell(command);
+    auto r = mcpp::run::execute(sh.argv, { .one_string = sh.one_string });
+    // A failure carries the command it ran. Phase 2 replays this file, so the
+    // failure arrives with the exact invocation attached -- without it a
+    // remote failure can only be guessed at, which is how #425 cost a CI cycle
+    // to even localise.
+    if (r.exit_code != 0) log << "+ " << command << '\n';
+    log << r.output;
+    return r.exit_code;
 }
-
-#else
-
-std::vector<char*> to_argv(const std::vector<std::string>& argv) {
-    std::vector<char*> out;
-    out.reserve(argv.size() + 1);
-    for (const auto& a : argv) out.push_back(const_cast<char*>(a.c_str()));
-    out.push_back(nullptr);
-    return out;
-}
-
-bool spawn_detached(const std::vector<std::string>& argv) {
-    posix_spawn_file_actions_t fa;
-    ::posix_spawn_file_actions_init(&fa);
-    // HAZARD 1 also applies to the supervisor: holding ninja's pipe open would
-    // keep the edge alive long after this process exits.
-    ::posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
-    ::posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
-    ::posix_spawn_file_actions_adddup2(&fa, 1, 2);
-
-    posix_spawnattr_t at;
-    ::posix_spawnattr_init(&at);
-#ifdef POSIX_SPAWN_SETSID
-    // Its own session, so a Ctrl-C on the build does not take the supervisor
-    // with it mid-write and leave a half-written object behind.
-    ::posix_spawnattr_setflags(&at, POSIX_SPAWN_SETSID);
-#endif
-    auto raw = to_argv(argv);
-    pid_t pid = 0;
-    const int rc = ::posix_spawnp(&pid, raw[0], &fa, &at, raw.data(), environ);
-    ::posix_spawn_file_actions_destroy(&fa);
-    ::posix_spawnattr_destroy(&at);
-    return rc == 0;
-}
-
-int run_to_completion(std::string_view command,
-                      const std::filesystem::path& logPath) {
-    const std::vector<std::string> argv{mcpp::platform::process::posix_shell(), "-c", std::string(command)};
-    posix_spawn_file_actions_t fa;
-    ::posix_spawn_file_actions_init(&fa);
-    ::posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
-    ::posix_spawn_file_actions_addopen(&fa, 1, logPath.c_str(),
-                                       O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    ::posix_spawn_file_actions_adddup2(&fa, 1, 2);
-    auto raw = to_argv(argv);
-    pid_t pid = 0;
-    const int rc = ::posix_spawnp(&pid, raw[0], &fa, nullptr, raw.data(), environ);
-    ::posix_spawn_file_actions_destroy(&fa);
-    if (rc != 0) return 127;
-    int status = 0;
-    ::waitpid(pid, &status, 0);
-    return WIFEXITED(status) ? WEXITSTATUS(status)
-         : 128 + (WIFSIGNALED(status) ? WTERMSIG(status) : 0);
-}
-
-#endif
 
 }  // namespace
 
@@ -503,6 +389,10 @@ int compile_release_at_bmi(const CompileRequest& req) {
             std::filesystem::last_write_time(backup, before.mtime, ec);
         }
     }
+
+    // The BMI this slot publishes, for phase 2 to withdraw if the compile
+    // fails (see `await_unit`).
+    if (!req.bmi.empty()) std::ofstream(suffixed(req.slot, ".bmi"), std::ios::trunc) << req.bmi.string();
 
     const auto token = acquire_token(req.semaphore, req.maxCompilers);
 
@@ -656,11 +546,25 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
         std::ifstream in(suffixed(slot, ".log"));
         if (in) std::cerr << in.rdbuf();
     }
-    if (*rc != 0) return *rc;
+    // A FAILURE IS NOT KEPT. Phase 1 reported success when the BMI was
+    // published, so ninja holds that edge done; were the record of the failed
+    // compile left in place, every later build would replay it here without
+    // compiling again, a failure of the moment (a full disk) included. The
+    // record and the published BMI are withdrawn, and the next build compiles
+    // the unit again.
+    auto withdraw = [&] {
+        std::error_code ec;
+        std::ifstream named(suffixed(slot, ".bmi"));
+        if (std::string bmi; named && std::getline(named, bmi) && !bmi.empty())
+            std::filesystem::remove(bmi, ec);
+        std::filesystem::remove(suffixed(slot, ".rc"), ec);
+    };
+    if (*rc != 0) { withdraw(); return *rc; }
 
     if (!object.empty() && !file_exists(object)) {
         std::println(std::cerr, "mcpp: compiler reported success but {} is missing",
                      object.string());
+        withdraw();
         return 1;
     }
     return 0;

@@ -26,9 +26,12 @@ import mcpp.fallback.xlings_binary;
 import mcpp.fetcher.progress;
 import mcpp.home;
 import mcpp.libs.json;
-import mcpp.platform;
-import mcpp.platform.process;
-import mcpp.platform.env;
+import mcpplibs.os.platform;
+import mcpplibs.os.windows;
+import mcpp.toolchain.platform;
+import mcpp.invocation;
+import mcpp.run;
+import mcpp.home.files;
 import mcpp.runtime.elf;
 import mcpp.pm.index_refresh;   // staleness_note for `mcpp why deps`
 import mcpp.pm.index_contract;  // the floor each index declares
@@ -43,6 +46,7 @@ import mcpp.toolchain.abi;
 import mcpp.ui;
 import mcpp.provider;
 import mcpp.provider.select;
+import mcpplibs.os.fs;
 
 namespace mcpp::doctor {
 
@@ -237,7 +241,7 @@ export int doctor_report() {
     bool prepareWouldInstall = false;
     auto pctx = [&]() -> decltype(mcpp::build::prepare_build(false)) {
         if (!inPackage) return std::unexpected(std::string("not inside a package"));
-        mcpp::platform::env::ScopedEnv offline("MCPP_OFFLINE", "1");
+        mcpp::invocation::ScopedEnv offline("MCPP_OFFLINE", "1");
         const bool wasQuiet = mcpp::ui::is_quiet();
         mcpp::ui::set_quiet(true);
         (void)mcpp::build::refusal::take();
@@ -363,7 +367,7 @@ export int doctor_report() {
     // Windows: report the system MSVC (msvc@system). Absence is a warning,
     // not an error — mcpp works with LLVM/Clang without it, and mcpp never
     // installs MSVC itself.
-    if (mcpp::platform::is_windows) {
+    if (mcpplibs::os::is_windows) {
         mcpp::ui::status("Checking", "msvc (system)");
         if (auto inst = mcpp::toolchain::msvc::detect_installation()) {
             ok(std::format("msvc {}{} (VC tools {})",
@@ -444,7 +448,7 @@ export int doctor_report() {
         // Linux ELF. Same shape as the mingw probe above; the package is named
         // by triple, matching to_xim_package()'s `<triple>-gcc`.
         {
-            auto triple = std::string(mcpp::platform::host_arch) + "-linux-musl";
+            auto triple = std::string(mcpp::toolchain::platform::host_arch) + "-linux-musl";
             auto label  = std::format("linux cross (xim:{}-gcc)", triple);
             mcpp::ui::status("Checking", label);
             auto pkgs = mcpp::provider::layout().tool_in(
@@ -560,17 +564,17 @@ export int doctor_report() {
         if ((*cfg).upstreams.empty())
             ok("self-contained: no upstream ([xlings] upstream)");
         for (auto const& u : (*cfg).upstreams) ok(std::format("upstream {}", u.string()));
-        const auto caps = mcpp::platform::fs_caps((*cfg).mcppHome);
+        const auto caps = mcpplibs::os::fs::measure((*cfg).mcppHome);
         if (caps.native())
             ok(std::format("{} on {}: every write is the filesystem's own",
                            (*cfg).mcppHome.string(), caps.type.empty() ? "this filesystem" : caps.type));
         else
             ok(std::format("{} on {}: {}{}{}", (*cfg).mcppHome.string(), caps.type.empty() ? "this filesystem" : caps.type,
                            caps.rename_no_replace ? "" : "publishes by hard link or a rename to a free name; ",
-                           caps.rename_exchange ? "" : "exchanges by moving aside; ",
-                           caps.symlinks ? "" : "no symbolic links (no reuse from an upstream)"));
-        if constexpr (mcpp::platform::is_windows)
-            ok(std::format("Windows long paths: {}", mcpp::platform::windows::long_paths_enabled()
+                           caps.exchange ? "" : "exchanges by moving aside; ",
+                           caps.symbolic_links ? "" : "no symbolic links (no reuse from an upstream)"));
+        if constexpr (mcpplibs::os::is_windows)
+            ok(std::format("Windows long paths: {}", mcpplibs::os::windows::long_paths_enabled()
                                ? "on (LongPathsEnabled = 1)"
                                : "off (LongPathsEnabled = 0; mcpp does not change it)"));
     }
@@ -598,7 +602,7 @@ export int doctor_report() {
         if (!stored) {
             ok("no linked ELF verdict stored yet (created on the next Linux link)");
         } else {
-            using Status = mcpp::platform::elf::RuntimeVerdict::Status;
+            using Status = mcpp::runtime::elf::RuntimeVerdict::Status;
             auto detail = stored->verdict.explain();
             auto subject = std::format("{} (RuntimeBinding {})",
                 stored->artifact.string(), stored->contractHash);
@@ -685,141 +689,141 @@ export int doctor_report() {
         }
     }
 
-#if !defined(__APPLE__) && !defined(_WIN32)
-    // ─── Toolchain runtime dependencies (Linux/ELF only) ────────────────
-    //
-    // Installed xim toolchains bake absolute RUNPATH entries into their
-    // compiler binaries (e.g. clang++ points at xim-x-zlib/.../lib for
-    // libz.so.1). If the providing xim package is later removed, the
-    // RUNPATH dir vanishes and `<compiler>` dies at runtime with
-    // "libz.so.1: cannot open shared object" (exit 127) — the package
-    // builds fine but the produced binary can't run. We detect the broken
-    // state here before a build mysteriously fails.
-    //
-    // Two symptoms, both stemming from a deleted provider package:
-    //   1. a compiler RUNPATH entry pointing at a now-missing dir, and
-    //   2. dangling symlinks under <xlingsHome>/subos/default/lib
-    //      (std::filesystem::exists follows symlinks → false for dangling).
-    mcpp::ui::status("Checking", "toolchain runtime deps");
-    if (cfg) {
-        auto pkgsDir = mcpp::provider::open(mcpp::config::make_xlings_env(*cfg))->store();
-        std::error_code ec;
-        bool sawAny = false;
-        bool anyMissing = false;
+    if constexpr (!mcpplibs::os::is_macos && !mcpplibs::os::is_windows) {
+        // ─── Toolchain runtime dependencies (Linux/ELF only) ────────────────
+        //
+        // Installed xim toolchains bake absolute RUNPATH entries into their
+        // compiler binaries (e.g. clang++ points at xim-x-zlib/.../lib for
+        // libz.so.1). If the providing xim package is later removed, the
+        // RUNPATH dir vanishes and `<compiler>` dies at runtime with
+        // "libz.so.1: cannot open shared object" (exit 127) — the package
+        // builds fine but the produced binary can't run. We detect the broken
+        // state here before a build mysteriously fails.
+        //
+        // Two symptoms, both stemming from a deleted provider package:
+        //   1. a compiler RUNPATH entry pointing at a now-missing dir, and
+        //   2. dangling symlinks under <xlingsHome>/subos/default/lib
+        //      (std::filesystem::exists follows symlinks → false for dangling).
+        mcpp::ui::status("Checking", "toolchain runtime deps");
+        if (cfg) {
+            auto pkgsDir = mcpp::provider::open(mcpp::config::make_xlings_env(*cfg))->store();
+            std::error_code ec;
+            bool sawAny = false;
+            bool anyMissing = false;
 
-        if (std::filesystem::exists(pkgsDir, ec)) {
-            // Mirror `mcpp toolchain list`: each xim-x-<name>/<version>/bin
-            // holds one installed toolchain frontend (clang++/g++/musl-gcc-…).
-            for (const auto& entry : mcpp::provider::layout().entries(pkgsDir)) {
-                if (entry.ns != "xim") continue;          // toolchains only
-                auto id = mcpp::toolchain::identify_xim_payload(entry.name);
-                if (!id) continue;                                   // not a compiler pkg
+            if (std::filesystem::exists(pkgsDir, ec)) {
+                // Mirror `mcpp toolchain list`: each xim-x-<name>/<version>/bin
+                // holds one installed toolchain frontend (clang++/g++/musl-gcc-…).
+                for (const auto& entry : mcpp::provider::layout().entries(pkgsDir)) {
+                    if (entry.ns != "xim") continue;          // toolchains only
+                    auto id = mcpp::toolchain::identify_xim_payload(entry.name);
+                    if (!id) continue;                                   // not a compiler pkg
 
-                {
-                    const auto& vDir = entry.dir;
-                    mcpp::toolchain::ToolchainSpec s;
-                    s.family  = id->family;
-                    s.version = vDir.filename().string();
-                    s.target  = id->target;
-                    // payload_frontend, not toolchain_frontend(root/"bin"):
-                    // cl.exe is four levels down at
-                    // VC/Tools/MSVC/<ver>/bin/Host<h>/<arch>/, so the `bin/`
-                    // lookup finds nothing and `continue` drops every
-                    // installed msvc toolset. That is the defect #436 fixed
-                    // in `toolchain list`; doctor kept its own copy, so the
-                    // two commands disagreed about the same machine.
-                    auto binR = mcpp::toolchain::payload_frontend(
-                        vDir, mcpp::toolchain::to_xim_package(s));
-                    // DOCTOR IS THE COMMAND FOR EXACTLY THIS. A payload whose
-                    // own description does not parse is a finding, and
-                    // skipping it would make the one command that reports on
-                    // an installation silent about the thing that breaks it.
-                    if (!binR) { warn(binR.error()); continue; }
-                    if (binR->empty()) continue;
-                    const auto& bin = *binR;
-                    sawAny = true;
+                    {
+                        const auto& vDir = entry.dir;
+                        mcpp::toolchain::ToolchainSpec s;
+                        s.family  = id->family;
+                        s.version = vDir.filename().string();
+                        s.target  = id->target;
+                        // payload_frontend, not toolchain_frontend(root/"bin"):
+                        // cl.exe is four levels down at
+                        // VC/Tools/MSVC/<ver>/bin/Host<h>/<arch>/, so the `bin/`
+                        // lookup finds nothing and `continue` drops every
+                        // installed msvc toolset. That is the defect #436 fixed
+                        // in `toolchain list`; doctor kept its own copy, so the
+                        // two commands disagreed about the same machine.
+                        auto binR = mcpp::toolchain::payload_frontend(
+                            vDir, mcpp::toolchain::to_xim_package(s));
+                        // DOCTOR IS THE COMMAND FOR EXACTLY THIS. A payload whose
+                        // own description does not parse is a finding, and
+                        // skipping it would make the one command that reports on
+                        // an installation silent about the thing that breaks it.
+                        if (!binR) { warn(binR.error()); continue; }
+                        if (binR->empty()) continue;
+                        const auto& bin = *binR;
+                        sawAny = true;
 
-                    auto label = s.display();
+                        auto label = s.display();
 
-                    // readelf is part of binutils, always present in our sandbox.
-                    auto cmd = std::format("readelf -d \"{}\"", bin.string());
-                    auto r = mcpp::platform::process::capture(cmd);
-                    if (r.exit_code != 0) {
-                        warn(std::format(
-                            "{}: could not read RUNPATH from '{}' (readelf exit {})",
-                            label, bin.string(), r.exit_code));
-                        continue;
-                    }
-                    for (auto& dir : parse_readelf_runpath(r.output)) {
-                        // Only absolute paths name on-disk dirs we can verify;
-                        // $ORIGIN-relative entries are resolved by the loader.
-                        if (dir.empty() || dir.front() != '/') continue;
-                        if (!std::filesystem::exists(dir, ec)) {
-                            anyMissing = true;
+                        // readelf is part of binutils, always present in our sandbox.
+                        auto r = mcpp::run::execute({ "readelf", "-d", bin.string() },
+                                                    { .streams = mcpp::run::Streams::output_error_shown });
+                        if (r.exit_code != 0) {
                             warn(std::format(
-                                "{}: RUNPATH dir missing: {}  "
-                                "(its providing xim package may have been removed — "
-                                "reinstall the toolchain to repair)",
-                                label, dir));
+                                "{}: could not read RUNPATH from '{}' (readelf exit {})",
+                                label, bin.string(), r.exit_code));
+                            continue;
+                        }
+                        for (auto& dir : parse_readelf_runpath(r.output)) {
+                            // Only absolute paths name on-disk dirs we can verify;
+                            // $ORIGIN-relative entries are resolved by the loader.
+                            if (dir.empty() || dir.front() != '/') continue;
+                            if (!std::filesystem::exists(dir, ec)) {
+                                anyMissing = true;
+                                warn(std::format(
+                                    "{}: RUNPATH dir missing: {}  "
+                                    "(its providing xim package may have been removed — "
+                                    "reinstall the toolchain to repair)",
+                                    label, dir));
+                            }
                         }
                     }
                 }
             }
-        }
-        if (sawAny && !anyMissing)
-            ok("all installed toolchain RUNPATH dirs present");
-        else if (!sawAny)
-            ok("no installed toolchains to check");
+            if (sawAny && !anyMissing)
+                ok("all installed toolchain RUNPATH dirs present");
+            else if (!sawAny)
+                ok("no installed toolchains to check");
 
-        // The vendored xlings, against the version this mcpp expects.
-        //
-        // Nothing else surfaces this. `mcpp self env` prints both numbers and
-        // says nothing about the gap, and a home that acquired its xlings once
-        // never revisited it -- so a machine could sit years behind while every
-        // command looked healthy. What goes missing is silent by nature:
-        // features mcpp reads FROM xlings (the subos_info block, for one)
-        // simply never appear, and the code that consumes them degrades
-        // quietly because a missing block is also a legitimate state.
-        {
-            const auto have = mcpp::provider::describe(cfg->xlingsBinary).version;
-            const auto want = std::string(mcpp::config::kXlingsPinnedVersion);
-            if (have.empty()) {
-                warn(std::format("cannot read the vendored xlings version at {}",
-                                 (*cfg).xlingsBinary.string()));
-            } else if (mcpp::fallback::version_is_older(have, want)) {
-                warn(std::format(
-                    "vendored xlings is {} but this mcpp expects {} — features "
-                    "mcpp reads from xlings may be silently absent (the subos "
-                    "self-description arrived in 2026.8.5.1). It is replaced "
-                    "automatically on the next `mcpp self init`",
-                    have, want));
-            } else {
-                ok(std::format("vendored xlings {} (pinned {})", have, want));
-            }
-        }
-
-        // Dangling symlinks under the provider environment's lib — these
-        // point into payload lib dirs; a removed package leaves them broken.
-        auto subosLib = mcpp::provider::open(mcpp::config::make_xlings_env(*cfg))->sysroot() / "lib";
-        if (std::filesystem::exists(subosLib, ec)) {
-            bool anyDangling = false;
-            for (auto& e : std::filesystem::directory_iterator(subosLib, ec)) {
-                if (!e.is_symlink(ec)) continue;
-                // exists() follows the link → false when the target is gone.
-                if (!std::filesystem::exists(e.path(), ec)) {
-                    anyDangling = true;
-                    auto target = std::filesystem::read_symlink(e.path(), ec);
+            // The vendored xlings, against the version this mcpp expects.
+            //
+            // Nothing else surfaces this. `mcpp self env` prints both numbers and
+            // says nothing about the gap, and a home that acquired its xlings once
+            // never revisited it -- so a machine could sit years behind while every
+            // command looked healthy. What goes missing is silent by nature:
+            // features mcpp reads FROM xlings (the subos_info block, for one)
+            // simply never appear, and the code that consumes them degrades
+            // quietly because a missing block is also a legitimate state.
+            {
+                const auto have = mcpp::provider::describe(cfg->xlingsBinary).version;
+                const auto want = std::string(mcpp::config::kXlingsPinnedVersion);
+                if (have.empty()) {
+                    warn(std::format("cannot read the vendored xlings version at {}",
+                                     (*cfg).xlingsBinary.string()));
+                } else if (mcpp::fallback::version_is_older(have, want)) {
                     warn(std::format(
-                        "dangling subos symlink: {} -> {}  "
-                        "(target's xim package may have been removed)",
-                        e.path().filename().string(), target.string()));
+                        "vendored xlings is {} but this mcpp expects {} — features "
+                        "mcpp reads from xlings may be silently absent (the subos "
+                        "self-description arrived in 2026.8.5.1). It is replaced "
+                        "automatically on the next `mcpp self init`",
+                        have, want));
+                } else {
+                    ok(std::format("vendored xlings {} (pinned {})", have, want));
                 }
             }
-            if (!anyDangling)
-                ok(std::format("subos lib symlinks all resolve ({})", subosLib.string()));
+
+            // Dangling symlinks under the provider environment's lib — these
+            // point into payload lib dirs; a removed package leaves them broken.
+            auto subosLib = mcpp::provider::open(mcpp::config::make_xlings_env(*cfg))->sysroot() / "lib";
+            if (std::filesystem::exists(subosLib, ec)) {
+                bool anyDangling = false;
+                for (auto& e : std::filesystem::directory_iterator(subosLib, ec)) {
+                    if (!e.is_symlink(ec)) continue;
+                    // exists() follows the link → false when the target is gone.
+                    if (!std::filesystem::exists(e.path(), ec)) {
+                        anyDangling = true;
+                        auto target = std::filesystem::read_symlink(e.path(), ec);
+                        warn(std::format(
+                            "dangling subos symlink: {} -> {}  "
+                            "(target's xim package may have been removed)",
+                            e.path().filename().string(), target.string()));
+                    }
+                }
+                if (!anyDangling)
+                    ok(std::format("subos lib symlinks all resolve ({})", subosLib.string()));
+            }
         }
     }
-#endif
 
     // ─── Fixincludes-frozen headers in installed GCC payloads (mcpp#687) ────
     //
@@ -1184,7 +1188,7 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
     // inherit a compiler nobody asked it for.
     // `ScopedEnv` already exists for exactly this and restores the prior
     // value, including "there was none".
-    std::optional<mcpp::platform::env::ScopedEnv> tcGuard;
+    std::optional<mcpp::invocation::ScopedEnv> tcGuard;
     if (!tcSpec.empty())
         tcGuard.emplace("MCPP_TOOLCHAIN", std::string(tcSpec));
 
@@ -1819,7 +1823,7 @@ export int self_init(bool force, std::string_view target = {}) {
     if (!target.empty()) {
         // Hold the original home's lock from conflict inspection through
         // local initialization and atomic publication, never through a download.
-        auto lock = mcpp::platform::fs::FileLock::try_acquire(mcpp::home::original_root());
+        auto lock = mcpp::home::FileLock::try_acquire(mcpp::home::original_root());
         if (!lock) {
             mcpp::ui::error("cannot lock the original home for writing; no default was changed");
             return 1;

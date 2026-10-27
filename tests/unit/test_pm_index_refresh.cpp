@@ -20,7 +20,7 @@ import mcpp.pm.dep_spec;
 import mcpp.pm.index_refresh;
 import mcpp.pm.index_route;
 import mcpp.pm.index_spec;
-import mcpp.platform.axis;
+import mcpp.toolchain.platform;
 import mcpp.provider.xlings;
 
 namespace {
@@ -121,7 +121,7 @@ RefreshReason decide(const mcpp::pm::IndexRoute& route,
                      mcpp::pm::RefreshPolicy policy = {}) {
     return mcpp::pm::decide_for_dependency(
         route, spec.shortName, spec, env,
-        mcpp::platform::TargetPlatform::for_os("linux"), policy).reason;
+        mcpp::toolchain::platform::TargetPlatform::for_os("linux"), policy).reason;
 }
 
 bool refreshes(const mcpp::pm::IndexRoute& route,
@@ -130,7 +130,7 @@ bool refreshes(const mcpp::pm::IndexRoute& route,
                mcpp::pm::RefreshPolicy policy = {}) {
     return mcpp::pm::decide_for_dependency(
         route, spec.shortName, spec, env,
-        mcpp::platform::TargetPlatform::for_os("linux"), policy).shouldRefresh;
+        mcpp::toolchain::platform::TargetPlatform::for_os("linux"), policy).shouldRefresh;
 }
 
 constexpr std::string_view kOneVersion = R"(["1.2.0"] = { url = "u", sha256 = "s" },)";
@@ -381,6 +381,6 @@ TEST(PmIndexRefresh, SubjectEchoesWhatTheUserWrote) {
     auto spec = version_dep("mcpplibs.xim", "nasm", "2.16.03");
     auto d = mcpp::pm::decide_for_dependency(
         route, "xim.nasm", spec, reg.env(),
-        mcpp::platform::TargetPlatform::for_os("linux"), {});
+        mcpp::toolchain::platform::TargetPlatform::for_os("linux"), {});
     EXPECT_EQ(d.subject, "xim.nasm@2.16.03");
 }

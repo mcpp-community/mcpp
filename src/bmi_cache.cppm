@@ -60,7 +60,7 @@ export module mcpp.bmi_cache;
 
 import std;
 import mcpp.libs.json;
-import mcpp.platform;
+import mcpp.home.files;
 
 export namespace mcpp::bmi_cache {
 
@@ -396,7 +396,7 @@ populate_from(const CacheKey& key,
     auto cacheDir = key.dir();
     std::error_code ec;
     std::filesystem::create_directories(cacheDir, ec);
-    auto lock = mcpp::platform::fs::FileLock::try_acquire(cacheDir);
+    auto lock = mcpp::home::FileLock::try_acquire(cacheDir);
     if (!lock) {
         // Another writer holds the lock; it will finish the entry.
         return {};

@@ -8,6 +8,7 @@
 #include <cstdlib>
 
 import std;
+import mcpp.invocation;
 import mcpp.build.schedule.policy;
 import mcpp.toolchain.model;
 import mcpp.manifest;
@@ -29,24 +30,10 @@ Toolchain with(CompilerId id) {
 // shell would decide these tests instead of the code under test.
 class ScopedVar {
 public:
-    ScopedVar(std::string name, const char* value) : name_(std::move(name)) {
-        if (const char* old = std::getenv(name_.c_str()); old) { had_ = true; old_ = old; }
-        apply(value);
-    }
-    ~ScopedVar() { apply(had_ ? old_.c_str() : nullptr); }
-    ScopedVar(const ScopedVar&) = delete;
-    ScopedVar& operator=(const ScopedVar&) = delete;
+    ScopedVar(std::string name, const char* value)
+        : inner_(std::move(name), value ? std::optional<std::string>(value) : std::nullopt) {}
 private:
-    void apply(const char* v) {
-#if defined(_WIN32)
-        ::_putenv_s(name_.c_str(), v ? v : "");
-#else
-        if (v) ::setenv(name_.c_str(), v, 1); else ::unsetenv(name_.c_str());
-#endif
-    }
-    std::string name_;
-    bool had_ = false;
-    std::string old_;
+    mcpp::invocation::ScopedEnv inner_;   // stated for this invocation, as mcpp states its own
 };
 
 mcpp::manifest::Manifest with_schedule(std::string v) {

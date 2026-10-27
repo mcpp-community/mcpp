@@ -7,14 +7,15 @@ import mcpp.manifest.key_registry;
 import mcpp.manifest.cfg_selector;
 import mcpp.targetside;
 import std;
+import mcpp.invocation;
 import mcpp.source_kind;
 import mcpp.libs.toml;
 import mcpp.pm.dep_spec;
 import mcpp.version_req;
 import mcpp.pm.dependency_selector;
 import mcpp.pm.index_spec;
-import mcpp.platform;
-import mcpp.platform.axis;   // the one macos/macosx spelling rule
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
 import mcpp.xpkg_version;    // the release grammar of `mcpp = ">=V"`
 import mcpp.version;         // MCPP_VERSION -- a refused key may be a newer one
 
@@ -227,12 +228,12 @@ struct LoadContext {
 //
 // `macos` AND `macosx` ARE ONE PLATFORM, AND THE RULE IS NOT WRITTEN HERE.
 // mcpp's triple vocabulary says `macos`; a descriptor and xlings' project file
-// say `macosx`. `mcpp::platform::xpkg_platform_key_for` is the one place that
+// say `macosx`. `mcpp::toolchain::platform::xpkg_platform_key_for` is the one place that
 // knows, and `xpkg_platform` is the host in the same vocabulary — an earlier
 // draft of this section hand-rolled both, which is the second copy of a rule
 // this file exists to avoid.
 inline std::string_view host_platform_key() {
-    return mcpp::platform::xpkg_platform;
+    return mcpp::toolchain::platform::xpkg_platform;
 }
 
 // Split `<scope>:<rest>` on the FIRST colon. xlings writes a namespace this
@@ -257,7 +258,7 @@ platform_values(const mcpp::libs::toml::Value& v) {
     for (auto& [k, val] : v.as_table()) {
         auto canon = k == "default"
             ? std::optional<std::string_view>("default")
-            : mcpp::platform::xpkg_platform_key_for(k);
+            : mcpp::toolchain::platform::xpkg_platform_key_for(k);
         if (!canon)
             return std::unexpected(std::format(
                 "unknown platform key '{}'; expected one of linux, macosx "
@@ -277,7 +278,7 @@ value_for_platform(const std::vector<std::pair<std::string, std::string>>& vals,
     // Folded on BOTH sides: a caller may name the host `macos` (mcpp's triple
     // spelling) while the stored key is already canonical.
     const std::string_view want =
-        mcpp::platform::xpkg_platform_key_for(platform).value_or(platform);
+        mcpp::toolchain::platform::xpkg_platform_key_for(platform).value_or(platform);
     auto pick = [&](std::string_view k) -> std::optional<std::string> {
         for (auto const& [key, v] : vals) if (key == k) return v;
         return std::nullopt;
@@ -923,8 +924,8 @@ std::filesystem::path absolute_sysroot_path(const std::filesystem::path& origin,
                                             const std::string& written) {
     std::filesystem::path p(written);
     if (written == "~" || written.starts_with("~/")) {
-        const char* h = std::getenv(mcpp::platform::is_windows ? "USERPROFILE" : "HOME");
-        if (h && *h) p = std::filesystem::path(h) / (written.size() > 2 ? written.substr(2) : std::string{});
+        if (auto h = mcpp::invocation::get(mcpplibs::os::is_windows ? "USERPROFILE" : "HOME"))
+            p = std::filesystem::path(*h) / (written.size() > 2 ? written.substr(2) : std::string{});
     }
     if (p.is_relative()) {
         std::error_code ec;
@@ -2993,7 +2994,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             // Every platform, for the descriptor emitter. Resolved per
             // platform rather than stored raw: the emitter wants the answer,
             // and `default` is part of producing it.
-            for (auto plat : mcpp::platform::xpkg_platforms) {
+            for (auto plat : mcpp::toolchain::platform::xpkg_platforms) {
                 auto v = value_for_platform(*vals, plat);
                 if (!v) continue;
                 auto e = make_xlings_entry(k, *v);

@@ -29,8 +29,9 @@ export module mcpp.build.result;
 import std;
 import mcpp.libs.json;
 import mcpp.version;                 // MCPP_VERSION
-import mcpp.platform.terminal;       // the protocol's stdout under StdoutToStderr
-import mcpp.platform.process;        // the files an interrupt leaves
+import mcpp.run;
+import mcpp.ui.terminal;
+import mcpp.invocation;
 
 export namespace mcpp::build::result {
 
@@ -273,9 +274,9 @@ void write(const Record& r) {
         std::vector<std::pair<std::filesystem::path, std::string>> files{
             {r.outputDir / "result.json", render(cancelled)}};
         if (!r.projectRoot.empty()) files.emplace_back(last, render_last(cancelled));
-        mcpp::platform::process::set_interrupt_files(files);
+        mcpp::run::set_interrupt_files(files);
     } else {
-        mcpp::platform::process::clear_interrupt_files();
+        mcpp::run::clear_interrupt_files();
     }
 }
 
@@ -368,7 +369,7 @@ Record begin(const std::filesystem::path& projectRoot, const std::filesystem::pa
     r.outputDir = outputDir;
     r.projectRoot = projectRoot;
     r.fingerprint = outputDir.filename().string();
-    if (const char* c = std::getenv("MCPP_CLIENT")) r.client = c;
+    if (auto c = mcpp::invocation::get("MCPP_CLIENT")) r.client = *c;
     return r;
 }
 
@@ -380,7 +381,7 @@ void emit(std::string_view event, nlohmann::json fields) {
     nlohmann::json line{{"schemaVersion", 1}, {"kind", "mcpp.event"}, {"event", std::string(event)}};
     for (auto it = fields.begin(); it != fields.end(); ++it) line[it.key()] = it.value();
     std::lock_guard lock(g_emit);
-    mcpp::platform::terminal::write_protocol_stdout(line.dump() + "\n");
+    mcpp::ui::terminal::write_protocol_stdout(line.dump() + "\n");
 }
 
 }  // namespace mcpp::build::result

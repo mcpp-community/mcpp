@@ -20,7 +20,7 @@ import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
 import mcpp.build.build_program;
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
-import mcpp.platform;
+import mcpp.effects;
 import mcpp.log;
 import mcpp.project;
 import mcpp.ui;
@@ -85,7 +85,7 @@ prepare_build(bool print_fingerprint,
               BuildOverrides overrides) {
     // A run that plans writes the global cache (its declared effects say so),
     // including the answers a compiler probe and the provider's handshake keep.
-    mcpp::platform::env::note_writes_global_cache();
+    mcpp::effects::note_writes_global_cache();
     if (!overrides.toolchain_statement.empty())
         return prepare_build_pass(print_fingerprint, includeDevDeps,
                                   std::move(extraTargets), std::move(overrides));

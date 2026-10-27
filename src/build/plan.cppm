@@ -20,10 +20,11 @@ import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.triple;
 import mcpp.pack.prebuilt;   // is_distribution_package — a shipped shared lib is not rebuilt
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
+import mcpp.runtime.search;
+import mcpp.runtime.env_contract;
 import mcpp.runtime.binding;
-import mcpp.platform.runtime_env_contract;
-import mcpp.platform.runtime_search;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.home;
@@ -498,7 +499,7 @@ struct BuildPlan {
     // One immutable snapshot selected before workspace member substitution.
     // Build/run/test and cache fast paths consume this value; none may re-read
     // xlings active/current state.
-    mcpp::platform::runtime::RuntimeBinding runtimeBinding;
+    mcpp::runtime::RuntimeBinding runtimeBinding;
     std::string                     cppStandard = "c++23";
     std::string                     cppStandardFlag = "-std=c++23";
     // Module-graph-global dialect flags (issue #210), pre-joined with a
@@ -589,7 +590,7 @@ struct BuildPlan {
     mcpp::manifest::LinkIntent                      linkIntent;
     // The complete run-time search closure of the artifacts this plan will
     // produce, in loader order and tagged with where each directory came from
-    // (`mcpp.platform.runtime_search`).
+    // (`mcpp.runtime.search`).
     //
     // This is the RECORD — what resolution.json publishes and `mcpp why
     // runtime` explains. Emission is still owned by each origin's existing
@@ -602,7 +603,7 @@ struct BuildPlan {
     // every child process including host binaries — measured to kill
     // `xdg-open`/`notify-send` outright when a private libc is on it. The farm
     // is reachable PER OBJECT (DT_RPATH) and must stay that way.
-    std::vector<mcpp::platform::search::Dir>        runtimeSearch;
+    std::vector<mcpp::runtime::search::Dir>        runtimeSearch;
     // Windows runtime-DLL deployment. On PE (`supports_rpath` is false) a
     // directly-launched .exe cannot RUNPATH-locate a dependency's DLL, so each
     // *.dll found in a dependency's [runtime] library_dir is copied beside the
@@ -719,14 +720,14 @@ void swap_link_group(BuildPlan& plan, BuildPlan::LinkGroup& g) {
 // providers and materialized artifacts before mcpp sees this snapshot.
 void merge_runtime_binding_contract(
     BuildPlan& plan,
-    const mcpp::platform::runtime::RuntimeBinding& binding);
+    const mcpp::runtime::RuntimeBinding& binding);
 
 // The run-time search closure for this plan, in loader order and tagged with
 // provenance. Exported so a test can exercise the guards (cross target, non-ELF
 // format, undeclared SubOS) without linking a binary for each.
-std::vector<mcpp::platform::search::Dir> runtime_search_closure(
+std::vector<mcpp::runtime::search::Dir> runtime_search_closure(
     const BuildPlan& plan,
-    const mcpp::platform::runtime::RuntimeBinding& binding);
+    const mcpp::runtime::RuntimeBinding& binding);
 
 // Is `p` inside one of `roots`, judged LEXICALLY?
 //
@@ -970,11 +971,11 @@ std::vector<std::string> dependency_name_candidates(
 // triple, and never consulted directly when a target triple is present.
 mcpp::toolchain::triple::ArtifactNaming host_artifact_naming() {
     return {
-        .exeSuffix            = mcpp::platform::exe_suffix,
-        .libPrefix            = mcpp::platform::lib_prefix,
-        .staticLibExt         = mcpp::platform::static_lib_ext,
-        .sharedLibExt         = mcpp::platform::shared_lib_ext,
-        .sharedNeedsImportLib = mcpp::platform::is_windows,
+        .exeSuffix            = mcpplibs::os::exe_suffix,
+        .libPrefix            = mcpp::toolchain::platform::lib_prefix,
+        .staticLibExt         = mcpp::toolchain::platform::static_lib_ext,
+        .sharedLibExt         = mcpp::toolchain::platform::shared_lib_ext,
+        .sharedNeedsImportLib = mcpplibs::os::is_windows,
     };
 }
 
@@ -1080,7 +1081,7 @@ std::vector<std::string> shared_library_link_flags(
     // used to answer this and missed iOS, which links with the same ld64 and
     // wants the same `@loader_path` -- `os == "ios"` would otherwise take the
     // ELF branch below and hand `$ORIGIN` to a linker that has no such token.
-    const bool macho = target.empty() ? bool(mcpp::platform::is_macos)
+    const bool macho = target.empty() ? bool(mcpplibs::os::is_macos)
                                       : target.is_mach_o();
     if (pe) {
         flags.push_back(import_library_for(t, n).generic_string());
@@ -1313,11 +1314,11 @@ ResolvedRuntimeContract resolve_runtime_contract(
 // does. Farm-first would let a later install silently change which libc an
 // ALREADY LINKED artifact loads. `search::ordered` is what enforces it, and
 // e2e 219 asserts it on the produced ELF rather than on this code.
-std::vector<mcpp::platform::search::Dir> runtime_search_closure(
+std::vector<mcpp::runtime::search::Dir> runtime_search_closure(
     const BuildPlan& plan,
-    const mcpp::platform::runtime::RuntimeBinding& binding) {
-    using mcpp::platform::search::Dir;
-    using mcpp::platform::search::Origin;
+    const mcpp::runtime::RuntimeBinding& binding) {
+    using mcpp::runtime::search::Dir;
+    using mcpp::runtime::search::Origin;
 
     // PAYLOAD DIRECTORIES COME FROM THE SAME FUNCTION THAT EMITS THEM.
     //
@@ -1365,7 +1366,7 @@ std::vector<mcpp::platform::search::Dir> runtime_search_closure(
     // mechanism neither format has. Asked of `object_format()` directly, the
     // single derivation, instead.
     const bool elfTarget = triple.empty()
-        ? bool(mcpp::platform::is_linux)
+        ? bool(mcpplibs::os::is_linux)
         : (triple.object_format() == mcpp::toolchain::triple::ObjectFormat::Elf);
 
     // THE ARTIFACT'S OWN DIRECTORY — `$ORIGIN` (#415).
@@ -1419,12 +1420,12 @@ std::vector<mcpp::platform::search::Dir> runtime_search_closure(
         for (auto const& dir : binding.searchDirs)
             closure.push_back({dir, Origin::SubosFarm});
 
-    return mcpp::platform::search::ordered(std::move(closure));
+    return mcpp::runtime::search::ordered(std::move(closure));
 }
 
 void merge_runtime_binding_contract(
     BuildPlan& plan,
-    const mcpp::platform::runtime::RuntimeBinding& binding) {
+    const mcpp::runtime::RuntimeBinding& binding) {
     auto package_id = [](const mcpp::provider::runtime_info::PackageIdentity& value) {
         return mcpp::manifest::PackageId{
             .namespace_ = value.namespace_,
@@ -1658,7 +1659,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // Artifact naming and shared-library link shape are properties of the
     // TARGET. Resolved once here from tc.targetTriple (empty = host target, in
     // which case the host constants ARE the right answer) and threaded down,
-    // so nothing below reaches for mcpp::platform to describe an output.
+    // so nothing below reaches for the host to describe an output.
     const auto targetTriple = [&] {
         auto t = mcpp::toolchain::triple::parse(tc.targetTriple);
         return t ? *t : mcpp::toolchain::triple::Triple{};
@@ -1672,7 +1673,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // does not name, which is wrong the same way for iOS and for
     // wasm32-emscripten — see the sibling derivation earlier in this file.
     const bool elfTarget = targetTriple.empty()
-        ? bool(mcpp::platform::is_linux)
+        ? bool(mcpplibs::os::is_linux)
         : (targetTriple.object_format() == mcpp::toolchain::triple::ObjectFormat::Elf);
     auto loader_tag_flag = [&](LinkUnit::Kind kind) -> std::string {
         if (!elfTarget) return {};
@@ -1713,8 +1714,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // the same mechanism, and the answer to both is annotation.
     const bool msvcTarget = [&] {
         const std::string targetOs = targetTriple.empty()
-            ? (mcpp::platform::is_macos   ? "macos"
-             : mcpp::platform::is_windows ? "windows" : "linux")
+            ? (mcpplibs::os::is_macos   ? "macos"
+             : mcpplibs::os::is_windows ? "windows" : "linux")
             : targetTriple.os;
         // The ABI, from the toolchain rather than from `naming`: on a native
         // Windows build the host naming constants are the MSVC ones whatever the
@@ -1799,7 +1800,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // same file reached through two graph edges) is not duplicated.
         // On a PE target a destination is compared without case
         // (DeployFile::is_destination).
-        const bool peTarget = targetTriple.empty() ? bool(mcpp::platform::is_windows)
+        const bool peTarget = targetTriple.empty() ? bool(mcpplibs::os::is_windows)
                                                    : targetTriple.is_pe();
         auto add_deploy = [&](const std::filesystem::path& source,
                               std::string_view toDir = {}) {
@@ -1892,8 +1893,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // target spawns is beyond mcpp's reach. Putting the directory in the
         // artifact's RUNPATH instead is: DT_RUNPATH reaches the object that
         // carries it and the dlopen() it performs, and nothing else.
-        if constexpr (mcpp::platform::publishes_via_environment(
-                          mcpp::platform::kPrivateLibcSearchScope)) {
+        if constexpr (mcpp::runtime::publishes_via_environment(
+                          mcpp::runtime::kPrivateLibcSearchScope)) {
             if (tc.base.payload && !out.depRuntimeLibraryDirs.empty()) {
                 append_unique_path(out.runtimeLibraryDirs,
                                    tc.base.payload->glibcLib);
@@ -2602,7 +2603,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 const auto unitDir = lu.output.parent_path().lexically_normal();
                 if (!naming.sharedNeedsImportLib && !unitDir.empty() && libDir != unitDir) {
                     const auto rel = libDir.lexically_relative(unitDir).generic_string();
-                    const bool macho = targetTriple.empty() ? bool(mcpp::platform::is_macos)
+                    const bool macho = targetTriple.empty() ? bool(mcpplibs::os::is_macos)
                                                             : targetTriple.is_mach_o();
                     if (!rel.empty() && rel != ".")
                         lu.linkFlags.push_back(macho

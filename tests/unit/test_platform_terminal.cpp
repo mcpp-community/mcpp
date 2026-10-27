@@ -1,15 +1,15 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.platform.terminal;
+import mcpp.ui.terminal;
 
 // The keys a game reads from a POSIX terminal
 // (.agents/docs/2026-09-30-build-output-refinement-design.md, §5.14): the
 // decoder turns the bytes the terminal sent into keys, skips a sequence for
 // any other key whole, and keeps an incomplete sequence for the next read.
 
-using mcpp::platform::terminal::Key;
-using mcpp::platform::terminal::decode_keys;
+using mcpp::ui::terminal::Key;
+using mcpp::ui::terminal::decode_keys;
 
 TEST(TerminalKeys, ArrowsInBothModesAndTheSecondSet) {
     std::string in = "\x1b[A\x1b[B\x1bOC\x1bOD wasd";

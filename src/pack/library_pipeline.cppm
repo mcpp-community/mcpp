@@ -40,7 +40,6 @@ import mcpp.pack.interface;
 import mcpp.pack.library;
 import mcpp.pack.strip;
 import mcpp.toolchain.model;
-import mcpp.platform;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;

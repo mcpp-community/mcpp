@@ -2,10 +2,11 @@
 #include <cstdlib>
 
 import std;
-import mcpp.platform;
-import mcpp.platform.macos;
+import mcpp.invocation;
+import mcpplibs.os.platform;
+import mcpp.toolchain.apple_sdk;
 
-namespace mac = mcpp::platform::macos;
+namespace mac = mcpp::toolchain::apple;
 
 namespace {
 
@@ -15,24 +16,10 @@ namespace {
 // one.
 class ScopedDeploymentTargetEnv {
 public:
-    explicit ScopedDeploymentTargetEnv(const char* value) {
-        if (const char* old = std::getenv(kName); old) { had_ = true; old_ = old; }
-        apply(value);
-    }
-    ~ScopedDeploymentTargetEnv() { apply(had_ ? old_.c_str() : nullptr); }
-    ScopedDeploymentTargetEnv(const ScopedDeploymentTargetEnv&) = delete;
-    ScopedDeploymentTargetEnv& operator=(const ScopedDeploymentTargetEnv&) = delete;
+    explicit ScopedDeploymentTargetEnv(const char* value)
+        : inner_("MACOSX_DEPLOYMENT_TARGET", value ? std::optional<std::string>(value) : std::nullopt) {}
 private:
-    static constexpr const char* kName = "MACOSX_DEPLOYMENT_TARGET";
-    void apply(const char* v) {
-#if defined(_WIN32)
-        ::_putenv_s(kName, v ? v : "");
-#else
-        if (v) ::setenv(kName, v, 1); else ::unsetenv(kName);
-#endif
-    }
-    bool had_ = false;
-    std::string old_;
+    mcpp::invocation::ScopedEnv inner_;   // stated for this invocation, as mcpp states its own
 };
 
 }  // namespace
@@ -139,7 +126,7 @@ TEST(AppleSdk, AnUnnamedOverrideAnswersTheDefaultQuestionOnly) {
 // for.
 TEST(AppleSdk, TheDefaultRequestIsTheMacosSdk) {
     EXPECT_EQ(mac::sdk_path(), mac::sdk_path(mac::sdk_macos));
-    if constexpr (!mcpp::platform::is_macos) {
+    if constexpr (!mcpplibs::os::is_macos) {
         EXPECT_FALSE(mac::sdk_path().has_value())
             << "an Apple SDK on a host that has none is a located path that "
                "does not exist";
@@ -155,7 +142,7 @@ TEST(AppleSdk, TheDefaultRequestIsTheMacosSdk) {
 // `macos_deployment_target` entirely. These run on whatever host is building
 // mcpp itself (this repository's CI includes non-Apple runners), which is
 // exactly the property under test: nothing here branches on
-// `mcpp::platform::is_macos`, and a reintroduced `#if defined(__APPLE__)`
+// `mcpplibs::os::is_macos`, and a reintroduced `#if defined(__APPLE__)`
 // guard would make `TargetIsMacosEnvBeatsManifestBeatsDefault` fail on any
 // non-Apple host.
 

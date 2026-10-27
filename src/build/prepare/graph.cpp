@@ -16,7 +16,7 @@ import mcpp.provider.select;
 import mcpp.provider.address_set;
 import mcpp.build.version_floor;
 import mcpp.home;
-import mcpp.platform.axis;
+import mcpp.effects;
 import mcpp.manifest;
 import mcpp.source_kind;
 import mcpp.modgraph.glob;
@@ -46,7 +46,6 @@ import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.config;
 import mcpp.toolchain.post_install;
-import mcpp.platform;
 import mcpp.pm.resolver;
 import mcpp.pm.index_spec;
 import mcpp.pm.index_contract;
@@ -1473,7 +1472,7 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
                     name, need, spec.git, why, verb));
             };
             const bool offline =
-                !remoteIsLocal && mcpp::platform::env::offline_mode();
+                !remoteIsLocal && mcpp::effects::offline_mode();
 
             // ── 1. which commit ──
             std::string resolvedGitRev = spec.gitRev;
@@ -1502,11 +1501,8 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
                             "resolve");
                     // The FIRST network step of a git dependency, and therefore
                     // the one a transient fault is most likely to meet.
-                    auto r = run_with_network_retry(std::format(
-                        "git ls-remote {} {} 2>&1",
-                        mcpp::platform::shell::quote(spec.git),
-                        mcpp::platform::shell::quote(
-                            std::format("refs/heads/{}", spec.gitRev))));
+                    auto r = run_with_network_retry({ "git", "ls-remote", spec.git,
+                                                      std::format("refs/heads/{}", spec.gitRev) });
                     if (r.exit_code != 0)
                         return std::unexpected(std::format(
                             "git ls-remote of '{}' failed:\n{}",
@@ -1579,31 +1575,40 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
                 // between ls-remote and the clone ended the build with
                 // "unable to read tree (787988c…)".
                 //
-                // `git -C` rather than `cd <dir> &&`: on Windows `cd` does not
-                // change drive without /d, and the cache root routinely lives
-                // on a different one than the project.
-                const auto dir = mcpp::platform::shell::quote(gitRoot.string());
-                const auto rev = mcpp::platform::shell::quote(resolvedGitRev);
-                auto cloneCmd = (spec.gitRefKind == "branch" && !fromLock)
-                    ? std::format(
-                        "git clone --progress --depth 1 --branch {0} {1} {2} && "
-                        "(git -C {2} checkout --quiet {3} || "
-                        "((git -C {2} fetch --quiet --depth 1 origin {3} || "
-                        "git -C {2} fetch --quiet --unshallow origin) && "
-                        "git -C {2} checkout --quiet {3})) 2>&1",
-                        mcpp::platform::shell::quote(spec.gitRev),
-                        mcpp::platform::shell::quote(spec.git), dir, rev)
-                    : std::format(
-                        "git clone --progress {} {} && git -C {} checkout --quiet {} 2>&1",
-                        mcpp::platform::shell::quote(spec.git),
-                        mcpp::platform::shell::quote(gitRoot.string()),
-                        mcpp::platform::shell::quote(gitRoot.string()),
-                        mcpp::platform::shell::quote(resolvedGitRev));
+                // `git -C` rather than a working directory: every step names
+                // the clone it acts on.
+                const auto dir = gitRoot.string();
+                auto git_in = [&](std::vector<std::string> args) {
+                    args.insert(args.begin(), { "git", "-C", dir });
+                    return args;
+                };
+                const bool tipJustRead = spec.gitRefKind == "branch" && !fromLock;
+                auto cloneArgv = tipJustRead
+                    ? std::vector<std::string>{ "git", "clone", "--progress", "--depth", "1",
+                                                "--branch", spec.gitRev, spec.git, dir }
+                    : std::vector<std::string>{ "git", "clone", "--progress", spec.git, dir };
                 // See `run_with_network_retry` for why, and for what the
                 // callback is removing between attempts.
-                auto r = run_with_network_retry(cloneCmd, [&] {
+                auto r = run_with_network_retry(cloneArgv, [&] {
                     std::filesystem::remove_all(gitRoot, ec);
                 }, spec.git);
+                if (r.exit_code == 0) {
+                    auto checkout = mcpp::run::execute(git_in({ "checkout", "--quiet", resolvedGitRev }));
+                    if (checkout.exit_code != 0 && tipJustRead) {
+                        // The commit by its name, else the branch's whole history.
+                        auto fetched = run_with_network_retry(
+                            git_in({ "fetch", "--quiet", "--depth", "1", "origin", resolvedGitRev }));
+                        if (fetched.exit_code != 0)
+                            fetched = run_with_network_retry(
+                                git_in({ "fetch", "--quiet", "--unshallow", "origin" }));
+                        if (fetched.exit_code == 0)
+                            checkout = mcpp::run::execute(git_in({ "checkout", "--quiet", resolvedGitRev }));
+                        else
+                            checkout.output += fetched.output;
+                    }
+                    r.exit_code = checkout.exit_code;
+                    r.output += checkout.output;
+                }
                 if (r.exit_code != 0) {
                     std::filesystem::remove_all(gitRoot, ec);
                     return std::unexpected(std::format(

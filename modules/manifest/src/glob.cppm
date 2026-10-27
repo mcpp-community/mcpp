@@ -9,8 +9,8 @@
 export module mcpp.modgraph.glob;
 
 import std;
-import mcpp.platform.common;    // is_windows
-import mcpp.platform.windows;   // active_code_page
+import mcpplibs.os.platform;
+import mcpplibs.os.windows;
 
 export namespace mcpp::modgraph {
 
@@ -356,8 +356,8 @@ std::string escaped_spelling(const std::filesystem::path& p) {
 }
 
 std::string no_utf8_spelling_reason() {
-    if constexpr (mcpp::platform::is_windows) {
-        const unsigned acp = mcpp::platform::windows::active_code_page();
+    if constexpr (mcpplibs::os::is_windows) {
+        const unsigned acp = mcpplibs::os::windows::code_page();
         if (acp != 65001)
             return std::format(
                 "This process runs in the ANSI code page {} rather than UTF-8: "

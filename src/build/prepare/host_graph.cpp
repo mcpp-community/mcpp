@@ -44,13 +44,14 @@ import mcpp.build.tool_store;
 import mcpp.libs.json;
 import mcpp.manifest;
 import mcpp.modgraph.scanner;
-import mcpp.platform.fs;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.home.files;
 import mcpp.pm.mangle;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.triple;
 import mcpp.ui;
 import mcpp.version;
+import mcpp.invocation;
 
 namespace mcpp::build {
 
@@ -512,7 +513,7 @@ std::map<std::string, std::string> resolution_pins(const PrepareState& state);
 static void place_program_copy(const PrepareState& state, std::size_t i, const fs::path& bin) {
     if (state.overrides.plan_only) return;   // a planning pass writes nothing in the project
     const auto dest = build_program_dir(state, i)
-        / (mcpp::platform::is_windows ? "build.mcpp.exe" : "build.mcpp.bin");
+        / (mcpplibs::os::is_windows ? "build.mcpp.exe" : "build.mcpp.bin");
     std::error_code ec;
     const auto src = fs::last_write_time(bin, ec);
     if (ec) return;
@@ -712,7 +713,7 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
     sub.inherited_runtime_selection =
         std::make_shared<const mcpp::provider::runtime::RuntimeSelection>(state.runtimeSelection);
     sub.inherited_runtime_binding =
-        std::make_shared<const mcpp::platform::runtime::RuntimeBinding>(state.runtimeBindingSnapshot);
+        std::make_shared<const mcpp::runtime::RuntimeBinding>(state.runtimeBindingSnapshot);
     sub.resolution_pins = resolution_pins(state);
     sub.build_program_graph = true;
     sub.project_index_root = state.projectIndexRoot();
@@ -775,8 +776,7 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
     mcpp::build::BuildOptions bopt;
     bopt.ninjaTargets = ninjaGoals;
     bopt.report = mcpp::build::BuildOptions::Report::Caller;
-    if (const char* v = std::getenv("MCPP_TOOL_BUILD_VERBOSE");
-        v && *v && std::string_view(v) != "0")
+    if (auto v = mcpp::invocation::get("MCPP_TOOL_BUILD_VERBOSE"); v && *v != "0")
         bopt.verbose = true;
     auto br = be->build(ctx->plan, bopt);
     timer.mark("built");
@@ -964,8 +964,8 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
         fs::create_directories(dir, ec);
         // Two configuration groups of one command may share a host toolchain
         // and a standard: one builds, the other waits and finds it built.
-        std::optional<mcpp::platform::fs::FileLock> lock;
-        for (int waited = 0; !(lock = mcpp::platform::fs::FileLock::try_acquire(dir)); ++waited) {
+        std::optional<mcpp::home::FileLock> lock;
+        for (int waited = 0; !(lock = mcpp::home::FileLock::try_acquire(dir)); ++waited) {
             if (waited == 0)
                 mcpp::log::verbose("host-graph", std::format("waiting for {}", path_text(dir)));
             std::this_thread::sleep_for(std::chrono::milliseconds(50));

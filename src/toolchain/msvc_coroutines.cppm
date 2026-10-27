@@ -35,7 +35,7 @@
 export module mcpp.toolchain.msvc_coroutines;
 
 import std;
-import mcpp.platform;
+import mcpp.run;
 import mcpp.toolchain.triple;
 
 export namespace mcpp::toolchain::msvc_coroutines {
@@ -304,7 +304,7 @@ std::optional<Probe> run_probe(const FailedCommand& cmd) {
     if (!cmd.standard.empty()) argv.push_back("-std=" + cmd.standard);
     for (std::string_view a : {"-dM", "-E", "-x", "c++"}) argv.emplace_back(a);
     argv.push_back(empty.string());
-    auto r = mcpp::platform::process::capture_host_tool_stdout(argv);
+    auto r = mcpp::run::capture_host_tool_stdout(argv);
     std::filesystem::remove(empty, ec);
     if (r.exit_code != 0 || r.output.empty()) return std::nullopt;
 

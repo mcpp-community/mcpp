@@ -1,12 +1,12 @@
 #include <gtest/gtest.h>
 #include <cerrno>
-#include <cstdlib>
 #include <fstream>
 
 import std;
-import mcpp.platform.process;
+import mcpp.run;
+import mcpp.invocation;
 
-using namespace mcpp::platform;
+namespace process = mcpp::run;
 
 // These exercise the POSIX launch path with POSIX program paths (/bin/true,
 // /bin/sh, /bin/echo) — Linux and macOS share the direct posix_spawn path
@@ -16,18 +16,17 @@ using namespace mcpp::platform;
 #if !defined(_WIN32)
 
 // The regression that matters: launching with an injected loader var must NOT
-// mutate the parent (mcpp) environment — that mutation is exactly what leaked
-// into /bin/sh and crashed it on newer-glibc hosts.
+// change mcpp's own environment — that mutation is exactly what leaked into
+// /bin/sh and crashed it on newer-glibc hosts. The addition is the started
+// program's alone; this invocation's statement is what it was.
 TEST(RunExec, DoesNotMutateParentEnvironment) {
-    ::setenv("MCPP_TEST_LEAK", "sentinel", 1);
+    mcpp::invocation::ScopedEnv leak("MCPP_TEST_LEAK", "sentinel");
     // Use /bin/sh (present on Linux AND macOS) — /bin/true lives at
     // /usr/bin/true on macOS, so it is not a portable launch target.
-    int rc = process::run_exec({"/bin/sh", "-c", "exit 0"},
+    int rc = process::run_exec({"/bin/sh", "-c", "[ \"$MCPP_TEST_LEAK\" = injected ]"},
                                {{"MCPP_TEST_LEAK", "injected"}});
     EXPECT_EQ(rc, 0);
-    const char* v = ::getenv("MCPP_TEST_LEAK");
-    ASSERT_NE(v, nullptr);
-    EXPECT_STREQ(v, "sentinel");   // parent unchanged → no leak
+    EXPECT_EQ(mcpp::invocation::get("MCPP_TEST_LEAK"), "sentinel");   // unchanged → no leak
 }
 
 TEST(RunExec, ChildSeesInjectedEnv) {
@@ -266,11 +265,3 @@ TEST(RunExec, WindowsCoveredByIntegration) {
 
 #endif
 
-// Host-independent: the command line capture_stdout gives cmd.exe names cmd's
-// own null device, never a POSIX path cmd would try to open as `\dev\null`.
-TEST(CaptureStdout, WindowsCommandNamesCmdNullDevice) {
-    auto line = process::windows_stdout_probe_command(
-        {"C:\\Program Files\\xlings\\xlings.exe", "--version"});
-    EXPECT_EQ(line, "\"C:\\Program Files\\xlings\\xlings.exe\" \"--version\" 2>nul");
-    EXPECT_EQ(line.find("/dev/null"), std::string::npos) << line;
-}

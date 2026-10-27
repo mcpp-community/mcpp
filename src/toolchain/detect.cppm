@@ -6,12 +6,12 @@ export import mcpp.toolchain.model;
 export import mcpp.toolchain.probe;
 
 import std;
+import mcpplibs.os.platform;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.gcc;
 import mcpp.toolchain.msvc;
 import mcpp.provider;
 import mcpp.provider.select;
-import mcpp.platform;
 import mcpp.fallback.probe_sysroot;
 
 export namespace mcpp::toolchain {
@@ -62,11 +62,9 @@ detect(const std::filesystem::path& explicit_compiler,
     }
 
     tc.compilerRuntimeDirs = discover_compiler_runtime_dirs(tc.binaryPath);
-    auto envPrefix = compiler_env_prefix(tc);
+    const auto env = compiler_env(tc);
 
-    auto ver_r = run_capture(std::format("{}{} --version 2>&1",
-                                         envPrefix,
-                                         mcpp::platform::shell::quote(tc.binaryPath.string())));
+    auto ver_r = run_capture({ tc.binaryPath.string(), "--version" }, env, /*withErrors=*/true);
     if (!ver_r) return std::unexpected(ver_r.error());
 
     const auto& vstr = *ver_r;
@@ -98,37 +96,34 @@ detect(const std::filesystem::path& explicit_compiler,
             std::format("unrecognized compiler output:\n{}", vstr)});
     }
 
-    if (auto triple = probe_target_triple(tc.binaryPath, envPrefix)) {
+    if (auto triple = probe_target_triple(tc.binaryPath, env)) {
         tc.targetTriple = *triple;
     }
 
-#if defined(_WIN32)
-    // On Windows, Clang targeting MSVC auto-detects the MSVC version at
-    // compile time and bakes it into the module AST. The -dumpmachine triple
-    // doesn't include this version, so fingerprints don't change when MSVC
-    // patches (e.g. 19.44.35226 → 35227), causing stale BMI cache hits.
-    // Query the effective triple which includes the actual MSVC version.
-    if (tc.compiler == CompilerId::Clang
-        && is_msvc_target(tc)) {
-        auto vr = run_capture(std::format(
-            "{}{} -print-effective-triple 2>NUL",
-            envPrefix,
-            mcpp::platform::shell::quote(tc.binaryPath.string())));
-        if (vr) {
-            auto effective = trim_line(*vr);
-            if (!effective.empty() && effective != tc.targetTriple)
-                tc.driverIdent += "\neffective-triple: " + effective;
+    if constexpr (mcpplibs::os::is_windows) {
+        // On Windows, Clang targeting MSVC auto-detects the MSVC version at
+        // compile time and bakes it into the module AST. The -dumpmachine triple
+        // doesn't include this version, so fingerprints don't change when MSVC
+        // patches (e.g. 19.44.35226 → 35227), causing stale BMI cache hits.
+        // Query the effective triple which includes the actual MSVC version.
+        if (tc.compiler == CompilerId::Clang
+            && is_msvc_target(tc)) {
+            auto vr = run_capture({ tc.binaryPath.string(), "-print-effective-triple" }, env);
+            if (vr) {
+                auto effective = trim_line(*vr);
+                if (!effective.empty() && effective != tc.targetTriple)
+                    tc.driverIdent += "\neffective-triple: " + effective;
+            }
         }
     }
-#endif
 
     if (tc.compiler == CompilerId::GCC) {
         mcpp::toolchain::gcc::enrich_toolchain(tc);
     } else if (tc.compiler == CompilerId::Clang) {
-        mcpp::toolchain::clang::enrich_toolchain(tc, envPrefix);
+        mcpp::toolchain::clang::enrich_toolchain(tc, env);
     }
 
-    tc.base.root = probe_sysroot(tc.binaryPath, envPrefix);
+    tc.base.root = probe_sysroot(tc.binaryPath, env);
 
     // Probe fine-grained payload paths from sibling xpkgs (glibc, linux-headers).
     // When available, flags are assembled from these paths instead of --sysroot.

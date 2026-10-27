@@ -44,6 +44,7 @@
 export module mcpp.build.tool_store;
 
 import std;
+import mcpp.invocation;
 import mcpp.libs.json;
 import mcpp.manifest;
 import mcpp.toolchain.fingerprint;
@@ -308,8 +309,8 @@ find_override(const mcpp::manifest::Manifest& rootManifest,
         if (name.empty()) continue;
         auto var = "MCPP_TOOL_" + sanitize_env(name) + "_"
                  + sanitize_env(std::string(toolName));
-        if (const char* v = std::getenv(var.c_str()); v && *v)
-            return fs::path(v);
+        if (auto v = mcpp::invocation::get(var))
+            return fs::path(*v);
     }
     // 2. [tools.overrides] in the ROOT manifest. Accepts both the canonical
     //    and the namespace-stripped spelling, matching how `tools = [...]`

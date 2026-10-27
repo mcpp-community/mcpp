@@ -17,8 +17,8 @@ export module mcpp.scaffold;
 import std;
 import mcpp.libs.toml;
 import mcpp.manifest;
-import mcpp.platform.scaffold_fs;
 import mcpp.pm.dependency_selector;
+import mcpplibs.os.fs;
 
 export namespace mcpp::scaffold {
 
@@ -443,19 +443,16 @@ public:
 
     std::expected<void, std::string> commit() {
         if (committed_) return {};
-        if (auto synced = mcpp::platform::sync_directory(stagingPath_);
-            !synced) {
-            return synced;
-        }
-        auto renamed = mcpp::platform::atomic_rename_directory_no_replace(
-            stagingPath_, finalPath_);
-        if (!renamed) return renamed;
+        if (auto synced = mcpplibs::os::fs::sync(stagingPath_); !synced)
+            return std::unexpected(synced.error().message());
+        if (auto placed = mcpplibs::os::fs::place(stagingPath_, finalPath_); !placed)
+            return std::unexpected(placed.error().message());
         committed_ = true;
         // Once the no-replace rename commits, the operation has succeeded.
         // Persist its parent entry where supported; an exotic filesystem that
         // refuses this post-commit sync must not turn a visible project into a
         // reported failure/partial-output contradiction.
-        (void)mcpp::platform::sync_directory(finalPath_.parent_path());
+        (void)mcpplibs::os::fs::sync(finalPath_.parent_path());
         return {};
     }
 };
@@ -478,7 +475,9 @@ write_text_file(const std::filesystem::path& path, std::string_view content) {
         return std::unexpected(std::format(
             "close '{}' failed", path.string()));
     }
-    return mcpp::platform::sync_regular_file(path);
+    if (auto synced = mcpplibs::os::fs::sync(path); !synced)
+        return std::unexpected(synced.error().message());
+    return {};
 }
 
 // Instantiate templateDir into destDir: `.in` files are rendered (suffix
@@ -576,8 +575,8 @@ instantiate(const std::filesystem::path& templateDir,
                 return std::unexpected(std::format(
                     "copy '{}' failed: {}", rel.string(), ec.message()));
             }
-            if (auto synced = mcpp::platform::sync_regular_file(dest); !synced)
-                return synced;
+            if (auto synced = mcpplibs::os::fs::sync(dest); !synced)
+                return std::unexpected(synced.error().message());
         }
         iterator.increment(ec);
         if (ec) {

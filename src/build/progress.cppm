@@ -36,7 +36,9 @@ import std;
 import mcpp.ui;
 import mcpp.ui.dots_screen;
 import mcpp.log;
-import mcpp.platform;
+import mcpp.invocation;
+import mcpplibs.os.fs;
+import mcpp.ui.terminal;
 
 export namespace mcpp::build::progress {
 
@@ -656,14 +658,14 @@ std::vector<ActionStart> parse_starts(std::string_view text, std::size_t* consum
 }
 
 void record_action_start(std::string_view stamp) {
-    const char* file = std::getenv(std::string(kStartsEnv).c_str());
-    if (!file || !*file || stamp.empty()) return;
+    const auto file = mcpp::invocation::get(kStartsEnv);
+    if (!file || stamp.empty()) return;
     const auto now = std::chrono::duration_cast<ms>(
         std::chrono::system_clock::now().time_since_epoch()).count();
     // One line, one write, in append mode: the lines of actions that start at
     // the same time do not interleave.
-    (void)mcpp::platform::fs::append_atomically(
-        std::filesystem::path(file), std::format("{}\t{}\n", field(stamp), now));
+    (void)mcpplibs::os::fs::append(
+        std::filesystem::path(*file), std::format("{}\t{}\n", field(stamp), now));
 }
 
 // ─── The model ───────────────────────────────────────────────────────────
@@ -763,7 +765,7 @@ struct Report {
     // reads. The game is also `animation`'s place on the screen.
     std::unique_ptr<screen::Game> game;
     std::string gameName;
-    std::unique_ptr<mcpp::platform::terminal::KeyInput> keys;
+    std::unique_ptr<mcpp::ui::terminal::KeyInput> keys;
     std::vector<screen::Source> started;   // packages announced since the last frame
     long long   lastFrame = 0;             // ms since command start
     std::size_t lastDone  = 0;
@@ -1133,7 +1135,7 @@ mcpp::ui::Frame frame() {
         r.lastDone  = done;
         // The screen takes 25 columns; a terminal narrower than 60 keeps the
         // counts and the clock instead.
-        if (mcpp::platform::terminal::cols(mcpp::ui::narration_stream()) >= 60) {
+        if (mcpp::ui::terminal::cols(mcpp::ui::narration_stream()) >= 60) {
             screen::Screen sc;
             r.animation->draw(sc);
             cells = sc.render(r.animationColour);
@@ -1151,7 +1153,7 @@ void poll() {
         std::lock_guard lock(r.m);
         if (r.game && r.keys)
             for (auto k : r.keys->read()) {
-                using TK = mcpp::platform::terminal::Key;
+                using TK = mcpp::ui::terminal::Key;
                 r.game->key(k == TK::Up   ? screen::Key::Up
                           : k == TK::Down ? screen::Key::Down
                           : k == TK::Left ? screen::Key::Left
@@ -1169,14 +1171,14 @@ void poll() {
 // an animation's name; `plain` keeps the row without a screen; `off` draws no
 // live row at all. The screen needs a terminal that draws braille.
 std::unique_ptr<screen::Animation> choose_animation() {
-    std::string want = mcpp::platform::env::get("MCPP_PROGRESS").value_or("random");
+    std::string want = mcpp::invocation::get("MCPP_PROGRESS").value_or("random");
     for (auto& c : want) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     if (want == "off") {
         mcpp::ui::set_live_progress(false);
         return nullptr;
     }
     if (want == "plain" || !mcpp::ui::live_progress()
-        || !mcpp::platform::terminal::unicode_capable())
+        || !mcpp::ui::terminal::unicode_capable())
         return nullptr;
     const auto seed = static_cast<std::uint64_t>(
         std::chrono::steady_clock::now().time_since_epoch().count());
@@ -1191,9 +1193,9 @@ std::unique_ptr<screen::Animation> choose_animation() {
 // error) on a terminal, with mcpp in its foreground. Otherwise it is off, and
 // one line says why.
 void choose_game(Report& r, std::vector<std::string>& notes) {
-    auto want = mcpp::platform::env::get("MCPP_PLAY_GAME").value_or("");
+    auto want = mcpp::invocation::get("MCPP_PLAY_GAME").value_or("");
     if (want.empty()) return;
-    mcpp::platform::env::unset("MCPP_PLAY_GAME");   // not inherited by what mcpp runs
+    mcpp::invocation::unset("MCPP_PLAY_GAME");   // not inherited by what mcpp runs
     for (auto& c : want) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     const auto names = screen::game_names();
     if (want != "random" && !screen::make_game(want, 0)) {
@@ -1203,15 +1205,15 @@ void choose_game(Report& r, std::vector<std::string>& notes) {
                                     want, known));
         want = "random";
     }
-    auto progress = mcpp::platform::env::get("MCPP_PROGRESS").value_or("");
+    auto progress = mcpp::invocation::get("MCPP_PROGRESS").value_or("");
     for (auto& c : progress) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     if (mcpp::ui::is_quiet() || !mcpp::ui::live_progress() || progress == "plain" || progress == "off"
-        || !mcpp::platform::terminal::unicode_capable()) {
+        || !mcpp::ui::terminal::unicode_capable()) {
         notes.push_back("--play-game: the status row's screen is off here (a terminal that "
                         "draws braille, without --quiet and MCPP_PROGRESS=plain or off, is needed)");
         return;
     }
-    auto keys = std::make_unique<mcpp::platform::terminal::KeyInput>(
+    auto keys = std::make_unique<mcpp::ui::terminal::KeyInput>(
         mcpp::ui::narration_stream());
     if (!keys->active()) {
         notes.push_back("--play-game: standard input is not a terminal in the foreground, "

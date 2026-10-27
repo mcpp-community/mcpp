@@ -76,6 +76,10 @@ mcpp-index（mcpplibs）本机快照。
     覆盖，不另设语料测试。
 - rev 5（2026-10-27，[mcpp#845](https://github.com/mcpp-community/mcpp/issues/845)）：增加 §24"程序起点与镜像入口"与 D24，
   在本批 mcpp PR（#842）中实现。原议的 `entry = "<依赖>"` 加 feature 声明的写法不采纳（§24.6）。
+- rev 6（2026-10-27）：增加 §25"拆除 `modules/platform`"与 D25，在本批 mcpp PR（#842）中实现，mcpplibs.os 发布 0.2.0。
+- rev 7（2026-10-27，§25 实施收口）：§25.3 的去向按实现修订（`mcpp.invocation` 为独立包 `modules/invocation`，锁的
+  实现单元在 `native/<system>`）；§25.5 第 2 条的命令解释器范围按实现写明（mcpp 以文本组成并记录的命令行同 ninja 规则一样
+  由解释器执行）；增加 §25.7（GCC 16 的模块接口约束，实测）与 §25.8（openkal 补丁发布中实测发现的两处行为）。
 
 关联：**mcpp#838**（sycl lane 下 `std::exception` 匹配不到）、**mcpp#839**（同配置并发构建在同一构建目录竞争、双方失败）、
 mcpp#596（unwinder 被拆成两半）、mcpp#514（两份 libc++ 头文件）、mcpp#544 / #716 / #755（快速路径的拒绝清单）；
@@ -128,6 +132,7 @@ mcpplibs/mcpp-index、Sunrisepeak/mcpp-language-server，以及新建的 mcpp-co
 | D22 | **链接产物原子发布**：POSIX 先写 `<out>.tmp` 再改名；PE 先把旧产物改名挪开（`<out>.old-<n>`）再原地链接，正在运行的程序保留其文件。执行段因此无需持锁（§4.1、§4.3、E23） |
 | D23 | **退出码**：副作用被拒绝为 `5`；被信号取消为 `128 + 信号`（130、143）；写入 SPEC-003（§5.4、§5.5） |
 | D24 | **入口分两层**：程序起点（L1，`main` 指向的翻译单元及 PE 上的入口函数）属于程序，可由依赖的 `kind = "entry"` 目标提供（`main = { from = "<依赖>/<入口>" }`）；镜像入口（L0，`start` 符号）属于面向启动者的一层，只在没有 C 运行时的镜像上可写，可由目标、入口目标或板级包陈述，不一致即拒绝（§24） |
+| D25 | **mcpp 不保留操作系统层**：`modules/platform` 删除。操作系统能力直接调用 mcpplibs.os，缺少的能力加入 mcpplibs.os（0.2.0）；`platform` 名下属于 mcpp 自身语义的代码（副作用约束、调用环境、运行时搜索与加载器环境、命令行拼写、平台键、Apple SDK、脚手架、终端交互）归入各自所属的 mcpp 模块（§25） |
 
 ## 1. 问题与证据
 
@@ -994,6 +999,119 @@ e2e：依赖提供的程序起点（含回调由使用方实现、`windows_entry
 独立目标上 `start` 的渲染、`--require-defined` 使缺失符号成为错误、三方陈述冲突的拒绝、hosted 行上的拒绝；
 `mcpp:link-start` 指令。单元测试：清单解析的接受与拒绝、ELF 渲染。
 
+## 25. 拆除 `modules/platform`
+
+### 25.1 问题
+
+mcpp 2026.10.26.2 把操作系统层换成 mcpplibs.os 时保留了 `modules/platform` 作为外观层：接口不变，内部部分改调
+mcpplibs.os。结果是两个操作系统层并存：`modules/platform` 约 6200 行，142 个文件导入它，其中进程启动与有界进程
+（约 3000 行）、终端检测、文件系统原语、环境变量读取与 mcpplibs.os 重复；其余部分并非操作系统抽象，而是 mcpp 自身的
+语义被放在了 `platform` 名下。
+
+### 25.2 原则
+
+1. 操作系统能力只有一份，在 mcpplibs.os。mcpp 缺少的能力加入 mcpplibs.os，而不是留在 mcpp。
+2. 属于 mcpp 语义的代码归入拥有该语义的模块，模块名与命名空间一致。
+3. 平台差异以 `if constexpr` 与按系统选择的实现单元表达；原生头文件只出现在必须的最小范围内。
+
+### 25.3 去向
+
+| 现内容 | 去向 |
+|---|---|
+| 平台常量（`is_windows`、`host_arch`、`exe_suffix`、`name`） | `mcpplibs::os`（`PLATFORM`、`ARCH`、`is_windows`、`exe_suffix`、`name`） |
+| 平台键与轴（`PlatformKey`、`HostPlatform`、`TargetPlatform`、`xpkg_platform*`）、宿主的产物命名与能力（`static_lib_ext`、`shared_lib_ext`、`lib_prefix`、`supports_rpath`、`supports_full_static`、`needs_explicit_libcxx`） | `modules/toolchain-model`（`mcpp.toolchain.platform`）：它们是工具链模型的词汇 |
+| 环境变量读取 | `mcpplibs::os::env` |
+| 环境变量写入（`set`、`unset`、`ScopedEnv`、`with_prefix`、Windows `prepend_path`） | `mcpp.invocation`（独立包 `modules/invocation`，只依赖 mcpplibs.os）：本次调用的环境陈述。mcpp 各包（含 `log`、`manifest`、`toolchain-model`、`buildmcpp`）的读取先查陈述再查 `os::env`，每个子进程的环境由陈述得出；mcpp 不再改写自身的进程环境。xlings 的调用环境同样按次给出，`ScopedInvocationEnv` 删除 |
+| 副作用约束（`offline_mode`、`effect_denied`、`note_*`、`no_auto_install`、`writes_global_cache`） | `mcpp.effects`（D8） |
+| 加载器环境（`runtime_library_path_key`、`host_tool_runtime_library_path_key`、`strip_private_glibc`、`prepend_path_list`、`build_env_prefix`、`inherited_path`、Linux 的 `build_*ld_library_path_prefix`）、`runtime_search`、`runtime_env_contract` | `src/runtime`（`mcpp.runtime.launch_env`、`mcpp.runtime.search`）；`src/runtime` 中命名空间 `mcpp::platform::{runtime,elf,search}` 改为 `mcpp::runtime::{binding,elf,search}` |
+| 进程（`capture`、`capture_exec*`、`run_*`、`stream_exec`）、有界进程、`unixproc`、`winproc` | `mcpplibs::os::process`。mcpp 的组合（调用环境、宿主工具的加载器路径、取消与中断文件、终端模式恢复）在 `mcpp.run`。以 shell 字符串执行的调用改为参数向量；语义上需要 shell 的（`[hooks]` 命令）显式以 `sh -c` 或 `cmd /d /s /c` 启动 |
+| 取消（信号处理器中结束进程组并写中断文件） | `mcpplibs::os::interrupt`（请求在等待中被读取）加 `os::process` 的单元：等待以有界的 `wait_for` 轮询中断请求，收到后 `end_unit`、写入中断文件、恢复终端，并以请求结束本程序（`end_as_requested`）。§5 的退出码不变 |
+| shell 引号（`quote*`、`paste_arg`、`silent_redirect`、`null_redirect`） | `mcpp.build.command_line`：ninja 规则、钩子命令与供人复制的命令的拼写（`display(argv)`），以及 Windows 命令解释器的参数（`windows_shell_arguments`）。以 shell 字符串启动程序所需的 `windows_command_from_argv`、`windows_wrap_for_cmd_c` 删除 |
+| 终端检测（`is_terminal`、尺寸、颜色） | `mcpplibs::os::terminal`；画面输出、按键解码、`StdoutToStderr`、协议输出、Unicode 判断属于界面，归入 `src/ui`（`mcpp.ui.terminal`） |
+| 文件系统（`self_exe_path`、`which`、`replace_file`、`append_atomically`、`extended_length`、`fs_caps`、无替换改名、交换、目录链接、`sync_*`） | `mcpplibs::os::fs` 与 `os::env`（`image`、`find_executable`） |
+| `FileLock` | `mcpp.home.files`：与早先发布的 mcpp 共用同一把锁（POSIX 上为 `flock`，与 openkal 的记录锁互不排斥），因此是 mcpp 对自身旧版本的兼容契约。按系统选择的实现单元位于 `native/posix`、`native/windows`（`src/` 之外，由 `[target.<os>.build] sources` 选入）；Windows 上与 `os::fs::lock` 同为 `LockFileEx` |
+| 信任检查（`untrusted_because`，目录属主） | `mcpp.home`，基于 `os::fs` 的属主查询 |
+| `capacity` | `mcpplibs::os::machine`（处理器、内存）；并行度策略 `recommended_jobs` 归入 `mcpp.build` |
+| Windows 事实（`active_code_page`、`long_paths_enabled`、注册表路径、`env_directory`、`writable_fixed_drive`） | `mcpplibs::os::windows`（代码页、长路径）；home 的默认位置选择归入 `mcpp.home` |
+| macOS SDK、部署目标 | `src/toolchain`（`mcpp.toolchain.apple_sdk`） |
+| `project_name`、`scaffold_fs` | `src/scaffold` |
+
+### 25.4 mcpplibs.os 0.2.0
+
+| 增加 | 原因 |
+|---|---|
+| `process::exec(options)`：成为该程序；POSIX 上替换映像，其他系统上启动、等待并以其状态结束 | `mcpp run` 的退出码是程序自身的（E16） |
+| `process::stdio::output`：标准错误与标准输出共用一个管道；`spawn_options::one_string` | 诊断按出现顺序收集；命令解释器按自身语法读取命令 |
+| `fs::sync`、`fs::append`、`fs::extended`、`fs::windows_extended` | 原子发布的持久化；多进程追加；越过 `MAX_PATH` 的写法（规则本身在每个主机上可测） |
+| `fs::behaviour`、`fs::measure`、`fs::place`、`fs::exchange` | 文件系统能力的实测与据此选择的无替换发布、交换（原 `fs_caps`） |
+| `fs::owner_of`、`fs::writable` | home 的信任检查 |
+| `machine::processors()`、`machine::memory_available()` | 并行度（原 `capacity`） |
+| `stdio::read_input_for`、`stdio::output_to_error`；`terminal::raw_options`、`terminal::foreground` | 按键输入与协议输出（原终端交互） |
+| `interrupt::end_as_output_closed()` | 读端关闭时按系统的方式结束（§25.5 第 4 条） |
+| `posix::set_creation_mask` | 系统 home 的文件权限（umask 022） |
+| `windows::code_page`、`console_output_code_page`、`long_paths_enabled`、`machine_registry_path`、`writable_fixed_drive` | 控制台输出、长路径声明、Windows SDK 与 home 的默认位置 |
+
+### 25.5 进程、取消与关闭的读端
+
+mcpplibs.os 与 openkal 没有异步信号：结束请求（SIGINT、SIGTERM、SIGHUP，Windows 的控制台事件）被接管后置一个字，
+由程序读取（`os::interrupt`）；向读端已关闭的流写入返回 `errc::closed`，不结束程序。mcpp 由此采用以下模型，
+取代信号处理器：
+
+1. **一个守望线程。** `main` 开始时由 `mcpp.run` 接管结束请求并启动守望线程，线程阻塞于 `os::interrupt::wait`。
+   请求到达时它结束已登记的子进程单元（`end_unit`），以原子替换写入中断文件，执行已登记的清理（恢复终端），
+   然后以请求结束本程序（`end_as_requested`）。主线程无需轮询，等待中的子进程由其单元结束，§5.4 的取消记录与退出码
+   不变。
+2. **子进程。** 由 `mcpp.run` 统一启动：参数向量，`own_unit` 与 `bound_lifetime`，环境由调用覆盖（`mcpp.invocation`）
+   得出；捕获、截止时间、空闲时限、逐行回调、停止条件按调用方给出，以 `os::process` 的有界读与有界等待实现。
+   命令解释器只用于本身就是命令文本的命令：用户书写的命令（`[hooks]`）、MSVC 的环境脚本，以及 mcpp 以文本组成并
+   如此记录的命令行——std 模块的构建命令（记录在其元数据中）、链接标志的 `-###` 检查、P1689 调试扫描、分离代码生成
+   所执行的 ninja 规则文本，它们与 ninja 规则同为一行文本。其余调用（编译器探测、git、xlings、tar、strip、patchelf、
+   readelf、vswhere、`cl` 横幅）均为参数向量加环境追加。POSIX 解释器为 `sh -c`，Windows 为
+   `cmd.exe /d /s /c "<命令>"`，以 `one_string` 原样传递（openkal 0.17.1 `KAL_SPAWN_ONE_STRING`）。
+   通用入口为 `run::execute(argv, Options)`：输入（空或继承）、两个输出流的去向（继承、合并读取、只读标准输出、
+   标准错误分开保留等）、总时限与空闲时限、逐行回调、停止条件、单元、宿主工具的加载器路径；`run_exec`、
+   `capture_exec`、`capture_stdout`、`stream_exec` 等为其常用形式。
+3. **`mcpp run`。** `os::process::exec`：POSIX 上替换映像，退出码与信号即程序自身的。
+4. **关闭的读端。** mcpp 的输出写入失败于 `errc::closed`（或 `EPIPE`）时，按第 1 条的顺序结束子进程、写中断文件、
+   执行清理，然后 `os::interrupt::end_as_output_closed()`：POSIX 上以 SIGPIPE 结束（shell 看到 141），与此前相同；
+   Windows 上写入被拒绝而程序继续，与此前相同。
+5. **openkal 的配套发布。** openkal 0.17.1（`KAL_SPAWN_ONE_STRING`）、openkal-windows 0.13.1（实现它）、
+   openkal-linux 0.18.1 与 openkal-macos 0.15.1（SIGHUP 属于结束请求，以及 §25.8 的两处）；mcpplibs.os 0.2.0
+   以它们为下限。四个仓库的补丁在同名分支 `openkal-0.17.1` 上准备，openkal 的一致性检查按分支名取实现。
+
+### 25.6 验收
+
+`modules/platform` 与 `mcpp.platform*` 模块不存在；`mcpp::platform` 命名空间不存在；`src/` 与 `modules/` 中不出现操作系统原生头文件
+（只在 `native/<system>` 的锁实现单元中），平台差异不以预处理条件表达（`if constexpr` 与按系统选入的实现单元）。全部单元测试与 e2e 通过；取消、退出码、SIGPIPE（941）、并发构建、
+`mcpp run` 退出码、Windows 长路径、宿主工具加载器路径的 e2e 不变地通过。
+
+### 25.7 GCC 16 的模块接口约束（实测）
+
+拆除过程中，GCC 16.1 写出的若干编译后接口在下一个导入者处不可读（`failed to read compiled module cluster N: Bad file
+data`、`failed to load pendings for 'std::vector'`）。以最小化的导入集合逐一定位，触发条件均为两个接口在同一导入者中
+合并时，其中一个接口单元自身携带了 `std` 模板的实例化：
+
+| 定位到的组合 | 处理 |
+|---|---|
+| `mcpp.build.command_line`（实现写在接口单元内）与 `mcpp.provider.xlings.subos_info` | 实现移入 `command_line.cpp` |
+| `mcpp.toolchain.apple_sdk`（接口中的 `deployment_target` 函数体、`std::optional<bool>` 返回值）与 `mcpp.modgraph.graph` | 函数体移入实现单元；`sdk_has_target` 改为三值枚举 `Slice` |
+| `mcpp.toolchain.clang`（实现写在接口单元内）与 `mcpp.modgraph.p1689` | 实现移入 `clang.cpp` |
+| `mcpp.provider.xlings`（2000 行实现写在接口单元内） | 实现移入 `xlings.cpp` |
+| `mcpp.toolchain.platform::is_android_host`（`inline` 且含静态局部 lambda） | 移入实现单元 |
+
+规则：新增或移动的模块，接口单元只含声明与常量，实现放在实现单元；接口不导入只有实现需要的模块（如
+`mcpplibs.os.process`）。
+
+### 25.8 openkal 补丁发布中实测发现的行为
+
+1. **解释器程序的名字（openkal-linux 0.18.1）。** openkal-linux 以打开的描述符启动程序（`execveat(fd, "",
+   AT_EMPTY_PATH)`），需要解释器的程序（`#!` 脚本）因此得到 `$0 = /dev/fd/<n>`，以 `dirname "$0"` 定位同目录文件的
+   脚本找不到它们（mcpp 的单元测试 `NetworkProcess.MetadataAndResourceDeadlinesStopDescendants` 的桩脚本写入
+   `/dev/fd/ticks`）。0.18.1 在内核答 ENOENT（需要解释器）时，若绝对名可知且与描述符是同一文件（设备号与 inode 相同），
+   以绝对名 `execve`；否则保留描述符方式。测试 `script_sees_its_name`。
+2. **其他处理器的映像（openkal-macos 0.15.1）。** EBADARCH 与 EBADMACHO 此前译为输入输出错误，现与 ENOEXEC 同译为
+   `kal_err_not_program`；mcpp 的 `runner_lookup` 据此只需识别 ENOEXEC 一种"本机不能装载"。测试
+   `foreign_image_not_program`。
 ## 附录 A：讨论收敛记录（摘要）
 
 | 问题 | 结论 |

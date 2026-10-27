@@ -18,7 +18,8 @@ import mcpp.build.prepare_inputs;
 import std;
 import mcpp.targetside;
 import mcpp.build.version_floor;
-import mcpp.platform.axis;
+import mcpp.toolchain.platform;
+import mcpp.run;
 import mcpp.libs.json;
 import mcpp.manifest;
 import mcpp.source_kind;
@@ -58,7 +59,6 @@ import mcpp.provider.runtime_selection;
 import mcpp.provider.address_set;
 import mcpp.runtime.binding;
 import mcpp.toolchain.post_install;
-import mcpp.platform;
 import mcpp.pm.resolver;
 import mcpp.pm.index_spec;
 import mcpp.pm.index_contract;
@@ -77,7 +77,7 @@ namespace mcpp::build {
 // so it lives at file scope rather than in PrepareState: nothing about it
 // depends on any phase's state, and every phase that reads it (P1's
 // `tcSpecSource` included) can just name it.
-constexpr std::string_view kCurrentPlatform = mcpp::platform::name;
+constexpr std::string_view kCurrentPlatform = mcpp::toolchain::platform::name;
 
 // Namespace aliases used across several phases (P4's own declarations and
 // P7/P9's reuse of its helpers); hoisted here so every phase function sees
@@ -535,7 +535,7 @@ struct PrepareState {
     std::optional<mcpp::config::GlobalConfig> cfg_opt;
     bool bootstrap_checked = false;
     std::function<std::expected<mcpp::config::GlobalConfig*, std::string>(bool)> get_cfg;
-    mcpp::platform::runtime::RuntimeBinding runtimeBindingSnapshot;
+    mcpp::runtime::RuntimeBinding runtimeBindingSnapshot;
     std::string projectSubosBin;
     std::string runtimePayload;
     std::filesystem::path runtimeLibDir;
@@ -553,7 +553,7 @@ struct PrepareState {
     bool windowsGnuFirstRun = false;
     std::function<std::string()> resolvedAccel;
     std::function<cfgpred::Ctx()> cfgCtx;
-    std::optional<mcpp::platform::TargetPlatform> targetPlatform;
+    std::optional<mcpp::toolchain::platform::TargetPlatform> targetPlatform;
     bool abiThreadsRendered = false;
     std::function<void(std::vector<std::string>&, std::string_view)> add_once;
     std::optional<mcpp::toolchain::Toolchain> tc;
@@ -641,7 +641,7 @@ struct PrepareState {
     // The artifact's runtime when a stated base re-derived it (§4.2 step 6).
     // `runtimeBindingSnapshot` stays what the COMPILER runs on and what a
     // host sub-build inherits; the plan and the context read this one.
-    std::optional<mcpp::platform::runtime::RuntimeBinding> targetRuntimeBinding;
+    std::optional<mcpp::runtime::RuntimeBinding> targetRuntimeBinding;
     // The execution host's wrapper for this target (§3.7), with its origin.
     std::vector<std::string> runUnder;
     SourceDecision runUnderOrigin;
@@ -972,8 +972,8 @@ std::string min_platform_version(const mcpp::manifest::Manifest& m,
 std::string git_cache_head(const std::filesystem::path& gitRoot);
 // `progressLabel`, when given, draws git's `--progress` download phase as
 // one bar labelled with it (W11); the command must pass `--progress`.
-mcpp::platform::process::RunResult run_with_network_retry(
-        std::string_view command,
+mcpp::run::RunResult run_with_network_retry(
+        const std::vector<std::string>& argv,
         const std::function<void()>& between = {},
         std::string_view progressLabel = {});
 std::vector<std::string>

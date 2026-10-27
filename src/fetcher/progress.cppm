@@ -15,6 +15,7 @@ import mcpp.fetcher;
 import mcpp.libs.json;
 import mcpp.log;
 import mcpp.ui;
+import mcpp.invocation;
 
 namespace mcpp::fetcher {
 
@@ -166,7 +167,7 @@ export mcpp::ui::PathContext make_path_ctx(const mcpp::config::GlobalConfig* cfg
     mcpp::ui::PathContext ctx;
     ctx.project_root = std::move(project_root);
     if (cfg) ctx.mcpp_home = cfg->mcppHome;
-    if (auto* h = std::getenv("HOME"); h && *h) ctx.home = h;
+    if (auto h = mcpp::invocation::get("HOME")) ctx.home = *h;
     return ctx;
 }
 

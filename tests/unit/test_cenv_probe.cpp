@@ -37,7 +37,7 @@
 
 import std;
 import mcpp.toolchain.cenv_probe;
-import mcpp.platform;
+import mcpp.run;
 
 namespace cp = mcpp::toolchain::cenv_probe;
 
@@ -79,7 +79,7 @@ std::filesystem::path cxx() {
 // tests below name. A clang that answers for neither is not a smaller version
 // of one that does; it is a different tool for this purpose.
 bool answers_for_a_cross_target(const std::filesystem::path& bin) {
-    auto r = mcpp::platform::process::capture_stdout(
+    auto r = mcpp::run::capture_stdout(
         {bin.string(), "--target=riscv64-none-elf", "-x", "c++", "-E", "-dM", "-"});
     return r.exit_code == 0
         && r.output.find("#define __riscv ") != std::string::npos;

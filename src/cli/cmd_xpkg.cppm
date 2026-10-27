@@ -18,7 +18,7 @@ export module mcpp.cli.cmd_xpkg;
 import std;
 import mcpplibs.cmdline;
 import mcpp.manifest;
-import mcpp.platform.axis;
+import mcpp.toolchain.platform;
 import mcpp.ui;
 import mcpp.wire;
 import mcpp.libs.json;
@@ -178,7 +178,7 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::string anyVersion;
     for (auto plat : kPlatforms) {
         auto v = mcpp::manifest::list_xpkg_versions(
-            lua, mcpp::platform::TargetPlatform::for_lint_of(plat));
+            lua, mcpp::toolchain::platform::TargetPlatform::for_lint_of(plat));
         if (!v.empty() && anyVersion.empty()) anyVersion = v.front();
         versions.emplace(std::string(plat), std::move(v));
     }
@@ -228,7 +228,7 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
             }
             auto pm = mcpp::manifest::synthesize_from_xpkg_lua(
                 lua, fqn, anyVersion,
-                mcpp::platform::TargetPlatform::for_lint_of(plat));
+                mcpp::toolchain::platform::TargetPlatform::for_lint_of(plat));
             if (!pm) {
                 mcpp::ui::error(std::format("{} [{}]: {}", file, plat,
                                             pm.error().format()));
@@ -254,7 +254,7 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // Host axis here: `mcpp xpkg parse` with no --all-os is inspecting what
     // THIS machine would read, which is a diagnostic question about the host.
     auto m = mcpp::manifest::synthesize_from_xpkg_lua(
-        lua, fqn, anyVersion, mcpp::platform::HostPlatform::current());
+        lua, fqn, anyVersion, mcpp::toolchain::platform::HostPlatform::current());
     if (!m) {
         mcpp::ui::error(std::format("{}: {}", file, m.error().format()));
         return 1;

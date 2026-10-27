@@ -197,7 +197,7 @@ intent, search mechanism, and post-link verdict are persisted in
 `resolution.json` schema 2. `mcpp why runtime` only interprets that stored file;
 re-diagnosis belongs to `xlings doctor`.
 
-### 2.3 The run-time search closure (`modules/platform/src/runtime_search.cppm`)
+### 2.3 The run-time search closure (`src/runtime/search.cppm`)
 
 mcpp passes `--sysroot=<subos>` on the compile **and** link lines, so a library
 the SubOS provides — `-lGL`, `-lX11`, `-lwayland-client` — resolves with no

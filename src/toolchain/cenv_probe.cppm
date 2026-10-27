@@ -30,7 +30,7 @@ export module mcpp.toolchain.cenv_probe;
 
 import std;
 import mcpp.home;
-import mcpp.platform;
+import mcpp.run;
 import mcpp.toolchain.fingerprint;   // hash_string — the same 64-bit FNV the std cache keys with
 
 export namespace mcpp::toolchain::cenv_probe {
@@ -238,7 +238,7 @@ std::expected<Result, std::string> verify(
         std::vector<std::string> cmd{ compilerBin.string() };
         cmd.insert(cmd.end(), argv.begin(), argv.end());
         cmd.insert(cmd.end(), { "-x", "c++", "-E", "-dM", "-" });
-        auto r = mcpp::platform::process::capture_stdout(cmd);
+        auto r = mcpp::run::capture_stdout(cmd);
         if (r.exit_code != 0)
             return std::unexpected(std::format(
                 "the [c-abi] verification probe could not be compiled "

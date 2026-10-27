@@ -11,7 +11,7 @@ import mcpp.pack.host_requirements;  // J: one derivation, two projections
 import mcpp.manifest;
 import mcpp.diag;
 import mcpp.modgraph.graph;
-import mcpp.platform;
+import mcpp.run;
 // `cfgpred::os_only_platforms` (#630 item 7) — the standalone half of
 // `mcpp.build.prepare`, carrying no dependency on the rest of it (see that
 // module's header comment), which is what makes it importable from the
@@ -382,7 +382,7 @@ std::string sha256_of_file(const std::filesystem::path& file) {
     if (!std::filesystem::exists(file)) return {};
     // An argument vector rather than a `2>/dev/null` command string, which
     // cmd.exe cannot open on a Windows host.
-    auto r = mcpp::platform::process::capture_host_tool_stdout(
+    auto r = mcpp::run::capture_host_tool_stdout(
         {"sha256sum", file.string()});
     if (r.exit_code != 0) return {};
     // sha256sum format: "<64-hex>  <filename>\n"
@@ -400,14 +400,8 @@ std::string make_release_tarball(const std::filesystem::path& root,
     std::filesystem::create_directories(output.parent_path(), ec);
 
     auto prefix = std::format("{}-{}/", name, version);
-    auto cmd = std::format(
-        "git -C {} archive --format=tar.gz "
-        "--prefix={} "
-        "-o {} HEAD 2>&1",
-        mcpp::platform::shell::quote(root.string()),
-        mcpp::platform::shell::quote(prefix),
-        mcpp::platform::shell::quote(output.string()));
-    auto r = mcpp::platform::process::capture(cmd);
+    auto r = mcpp::run::execute({ "git", "-C", root.string(), "archive", "--format=tar.gz",
+                                  "--prefix=" + prefix, "-o", output.string(), "HEAD" });
     if (r.exit_code != 0) {
         return std::format("git archive failed (rc={}): {}", r.exit_code, r.output);
     }
@@ -425,7 +419,7 @@ std::string make_release_tarball(const std::filesystem::path& root,
                                  const std::vector<ArchiveOverlay>& overlays)
 {
     if (overlays.empty()) return make_release_tarball(root, name, version, output);
-    namespace proc = mcpp::platform::process;
+    namespace proc = mcpp::run;
     using Env = std::vector<std::pair<std::string, std::string>>;
     const std::string dir = root.string();
     auto trim = [](std::string s) {

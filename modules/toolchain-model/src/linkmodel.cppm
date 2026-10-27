@@ -18,7 +18,8 @@
 export module mcpp.toolchain.linkmodel;
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.toolchain.apple_sdk;
 import mcpp.toolchain.model;
 import mcpp.toolchain.triple;
 
@@ -611,7 +612,7 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
             lm.mode = CLibMode::Sysroot;
             lm.sysroot = tc.base.root;
         }
-        else if (auto sdk = mcpp::platform::is_macos ? mcpp::platform::macos::sdk_path()
+        else if (auto sdk = mcpplibs::os::is_macos ? mcpp::toolchain::apple::sdk_path()
                                                      : std::nullopt) {
             // `macosx@system`: the SDK `xcrun` answers on an Apple host. Only
             // there -- `sdk_path` reads `SDKROOT` on every host now, and an

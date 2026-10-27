@@ -141,7 +141,7 @@ bool export_dynamic_requested(std::span<const std::string> flags);
 // machine's COPY relocation type every data symbol would look like a
 // conflict, and answering wrongly is worse than declining.
 std::optional<std::vector<Export>>
-exported_definitions(const mcpp::platform::elf::DynamicSymbols& symbols);
+exported_definitions(const mcpp::runtime::elf::DynamicSymbols& symbols);
 
 // Stage two. `closure` is every object the image's loader will consult.
 std::vector<Conflict> conflicting_exports(std::span<const Export> exports,
@@ -203,7 +203,7 @@ bool export_dynamic_requested(std::span<const std::string> flags) {
 }
 
 std::optional<std::vector<Export>>
-exported_definitions(const mcpp::platform::elf::DynamicSymbols& symbols) {
+exported_definitions(const mcpp::runtime::elf::DynamicSymbols& symbols) {
     if (!symbols.copyRelocationsKnown) return std::nullopt;
     std::vector<Export> out;
     for (auto const& symbol : symbols.defined) {

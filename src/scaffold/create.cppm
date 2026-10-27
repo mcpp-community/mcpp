@@ -15,7 +15,7 @@ import mcpp.manifest;
 import mcpp.pm.dep_spec;
 import mcpp.pm.dependency_selector;
 import mcpp.pm.index_route;
-import mcpp.platform.axis;
+import mcpp.toolchain.platform;
 import mcpp.pm.resolver;
 import mcpp.scaffold;
 import mcpp.scaffold.project_name;
@@ -102,14 +102,14 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
         : std::string{"*"};
     auto resolved = mcpp::pm::resolve_semver(
         ns, shortName, constraint, registryOnly,
-        mcpp::platform::HostPlatform::current());
+        mcpp::toolchain::platform::HostPlatform::current());
     if (!resolved) return std::unexpected(resolved.error());
     std::string version = std::move(*resolved);
 
     std::string payloadDigest;
     bool resolvedAlias = false;
     for (auto const& entry : mcpp::manifest::list_xpkg_version_entries(
-             lua, mcpp::platform::HostPlatform::current())) {
+             lua, mcpp::toolchain::platform::HostPlatform::current())) {
         if (entry.version == version) {
             payloadDigest = entry.sha256;
             resolvedAlias = entry.alias;

@@ -33,7 +33,8 @@ import mcpp.build.build_program;
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.toolchain.post_install;
-import mcpp.platform;
+import mcpp.effects;
+import mcpp.invocation;
 
 namespace mcpp::build {
 
@@ -82,8 +83,8 @@ std::string_view cache_mode_name(CacheMode m) {
 
 std::string resolve_compile_commands(const mcpp::manifest::Manifest& m,
                                      std::string_view machineDefault) {
-    if (const char* e = std::getenv("MCPP_COMPILE_COMMANDS"); e && *e) {
-        const std::string_view v(e);
+    if (auto e = mcpp::invocation::get("MCPP_COMPILE_COMMANDS")) {
+        const std::string_view v(*e);
         return v == "off" || v == "none" ? std::string{} : std::string(v);
     }
     if (m.buildConfig.compileCommands) return *m.buildConfig.compileCommands;
@@ -97,12 +98,12 @@ CacheMode resolve_cache_mode(const mcpp::manifest::Manifest& m,
     // is an optimisation, and refusing the build would deny more than asked.
     const auto mode = [&] {
         if (auto v = parse_cache_mode(override_mode)) return *v;
-        if (const char* e = std::getenv("MCPP_BUILD_CACHE"); e && *e)
-            if (auto v = parse_cache_mode(e)) return *v;
+        if (auto e = mcpp::invocation::get("MCPP_BUILD_CACHE"))
+            if (auto v = parse_cache_mode(*e)) return *v;
         if (auto v = parse_cache_mode(m.buildConfig.cacheMode)) return *v;
         return CacheMode::Global;
     }();
-    if (mode == CacheMode::Global && mcpp::platform::env::effect_denied("write-global-cache"))
+    if (mode == CacheMode::Global && mcpp::effects::effect_denied("write-global-cache"))
         return CacheMode::Local;
     return mode;
 }

@@ -25,12 +25,15 @@ export module mcpp.build.hermetic;
 
 import std;
 import mcpp.log;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.build.command_line;
+import mcpp.run;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.model;
 import mcpp.toolchain.triple;
+import mcpp.invocation;
 
 export namespace mcpp::build {
 
@@ -120,7 +123,7 @@ std::expected<void, std::string> verify_hermetic_link(
     bool isolatedGraphLink,
     const std::vector<std::filesystem::path>& graphRoots)
 {
-    if constexpr (!mcpp::platform::is_linux) return {};
+    if constexpr (!mcpplibs::os::is_linux) return {};
 
     // Provider toolchains only: the compiler must live in a store. A
     // host/system compiler is the user's explicit opt-in to the host world.
@@ -140,7 +143,7 @@ std::expected<void, std::string> verify_hermetic_link(
     }
     if (!tc.base.root.empty()) allowed.push_back(tc.base.root);
 
-    if (const char* e = std::getenv("MCPP_ALLOW_HOST_LIBS"); e && *e && *e != '0')
+    if (auto e = mcpp::invocation::get("MCPP_ALLOW_HOST_LIBS"); e && e->front() != '0')
         allowHostLibs = true;
 
     auto ldflags = unescape_ninja(ldflagsNinja);
@@ -161,9 +164,10 @@ std::expected<void, std::string> verify_hermetic_link(
     }
 
     auto cmd = std::format("{} {} -### -x c++ /dev/null -o /dev/null 2>&1",
-                           mcpp::platform::shell::quote(tc.binaryPath.string()),
+                           mcpp::build::command_line::quote(tc.binaryPath.string()),
                            ldflags);
-    auto r = mcpp::platform::process::capture(cmd);
+    // The flags are the link's as ninja runs them, text a shell reads.
+    auto r = mcpp::run::capture_shell(cmd);
     if (r.exit_code != 0) {
         // The dry-run itself failing is a link-configuration problem the real
         // link will also hit; don't duplicate the diagnosis here.

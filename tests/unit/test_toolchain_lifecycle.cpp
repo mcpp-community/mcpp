@@ -2,7 +2,7 @@
 
 import std;
 import mcpp.config;
-import mcpp.platform;
+import mcpplibs.os.platform;
 import mcpp.runtime.binding;
 import mcpp.toolchain.lifecycle;
 import mcpp.toolchain.post_install;
@@ -164,7 +164,7 @@ mcpp::config::GlobalConfig unreachable_cfg() {
 
 TEST(DeclaredRuntime, ABindingThatLocatesItsPayloadIsLeftAlone) {
     auto cfg = unreachable_cfg();
-    mcpp::platform::runtime::RuntimeBinding binding;
+    mcpp::runtime::RuntimeBinding binding;
     binding.runtimeId = "glibc@2.44.3";
     binding.libraryDirs = {"/store/xim-x-glibc/2.44.3/lib64"};
     const auto before = binding.libraryDirs;
@@ -178,7 +178,7 @@ TEST(DeclaredRuntime, ABindingThatLocatesItsPayloadIsLeftAlone) {
 TEST(DeclaredRuntime, OnlyAGlibcPayloadIsInstalled) {
     auto cfg = unreachable_cfg();
     for (auto id : {"", "ucrt@10.0.26100.0", "macos_sdk@15.0", "glibc"}) {
-        mcpp::platform::runtime::RuntimeBinding binding;
+        mcpp::runtime::RuntimeBinding binding;
         binding.runtimeId = id;
         EXPECT_EQ(ensure_declared_runtime(cfg, binding).value_or(true), false) << id;
         EXPECT_TRUE(binding.libraryDirs.empty()) << id;
@@ -187,10 +187,10 @@ TEST(DeclaredRuntime, OnlyAGlibcPayloadIsInstalled) {
 
 // Off Linux there is no glibc payload to provide, whatever the identity says.
 TEST(DeclaredRuntime, NothingIsInstalledOffLinux) {
-    if constexpr (mcpp::platform::is_linux)
+    if constexpr (mcpplibs::os::is_linux)
         GTEST_SKIP() << "the Linux path is exercised by e2e 700";
     auto cfg = unreachable_cfg();
-    mcpp::platform::runtime::RuntimeBinding binding;
+    mcpp::runtime::RuntimeBinding binding;
     binding.runtimeId = "glibc@2.44.3";
     EXPECT_EQ(ensure_declared_runtime(cfg, binding).value_or(true), false);
 }
@@ -202,7 +202,7 @@ TEST(DeclaredRuntime, OnlyToolchainsOnARuntimePayloadNeedIt) {
     XimToolchainPackage llvm;  llvm.ximName = "llvm";
     XimToolchainPackage musl;  musl.ximName = "musl-gcc";
     XimToolchainPackage msvc;  msvc.ximName = "msvc";
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         for (auto const* p : {&gcc, &llvm, &musl, &msvc})
             EXPECT_TRUE(runtime_payload_kind(*p).empty()) << p->ximName;
     } else {

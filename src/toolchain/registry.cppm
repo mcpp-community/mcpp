@@ -18,7 +18,8 @@ export module mcpp.toolchain.registry;
 
 import std;
 import mcpp.libs.json;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.toolchain.clang;
@@ -471,7 +472,7 @@ bool ends_with(std::string_view s, std::string_view suf) {
 
 
 triple::Triple host_musl_triple() {
-    return { std::string(mcpp::platform::host_arch), "linux", "musl" };
+    return { std::string(mcpp::toolchain::platform::host_arch), "linux", "musl" };
 }
 
 } // namespace
@@ -711,8 +712,8 @@ bool gcc_native_payload_is_musl(std::string_view hostArch, bool isLinux,
 // `windows-x86_64`. Not the target -- a Linux x86_64 machine building for
 // aarch64 still reads `linux-x86_64`.
 std::string ndk_host_tag() {
-    if constexpr (mcpp::platform::is_windows) return "windows-x86_64";
-    else if constexpr (mcpp::platform::is_macos) return "darwin-x86_64";
+    if constexpr (mcpplibs::os::is_windows) return "windows-x86_64";
+    else if constexpr (mcpplibs::os::is_macos) return "darwin-x86_64";
     else return "linux-x86_64";
 }
 
@@ -853,7 +854,7 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
             pkg.ximName = "android-ndk";
             pkg.frontendSubdir = std::format("toolchains/llvm/prebuilt/{}/bin",
                                              ndk_host_tag());
-            if constexpr (mcpp::platform::is_windows) {
+            if constexpr (mcpplibs::os::is_windows) {
                 pkg.frontendCandidates = { "clang++.exe", "clang++" };
             } else {
                 pkg.frontendCandidates = { "clang++", "clang" };
@@ -895,8 +896,8 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
         // arch, else the triple-named cross package. Canonical linux-musl
         // triples coincide with the GNU tool spelling, so `<triple>-g++` is
         // the frontend either way.
-        bool native = mcpp::platform::is_linux
-                   && t.arch == mcpp::platform::host_arch;
+        bool native = mcpplibs::os::is_linux
+                   && t.arch == mcpp::toolchain::platform::host_arch;
         pkg.ximName = native ? "musl-gcc" : t.str() + "-gcc";
         // Frontend candidates are resolved with filesystem::exists, so on a
         // Windows host the bare name never matches — the file on disk is
@@ -905,7 +906,7 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
         // windows-hosted musl payload install fine and then be unusable.
         // `.exe` first: on a case-insensitive filesystem both would match, and
         // the executable is the one we want.
-        if constexpr (mcpp::platform::is_windows) {
+        if constexpr (mcpplibs::os::is_windows) {
             pkg.frontendCandidates = { t.str() + "-g++.exe", t.str() + "-g++",
                                        "g++.exe", "g++" };
         } else {
@@ -915,14 +916,14 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
     }
 
     if (t.is_windows_gnu()
-        || (t.empty() && mcpp::platform::is_windows)) {
+        || (t.empty() && mcpplibs::os::is_windows)) {
         // GCC targeting Windows PE (GNU CRT) — ONE user-facing identity,
         // host-split at the distribution layer only:
         //   Windows host → native winlibs UCRT build (PE frontend g++.exe)
         //   other hosts  → Linux-hosted MSVCRT cross (ELF frontend, triple-
         //                  prefixed so a cross build never silently falls
         //                  back to a native g++)
-        if constexpr (mcpp::platform::is_windows) {
+        if constexpr (mcpplibs::os::is_windows) {
             pkg.ximName = "mingw-gcc";
             pkg.frontendCandidates = {"g++.exe", "g++"};
         } else {
@@ -948,8 +949,8 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
     // its half the same way ("same target, two payload shapes"). The knowledge
     // belongs here rather than in every manifest: a user should not have to
     // encode which architectures a toolchain package was built for.
-    if (gcc_native_payload_is_musl(mcpp::platform::host_arch,
-                                   mcpp::platform::is_linux, t)) {
+    if (gcc_native_payload_is_musl(mcpp::toolchain::platform::host_arch,
+                                   mcpplibs::os::is_linux, t)) {
         const auto mt = host_musl_triple();
         pkg.ximName = "musl-gcc";
         pkg.frontendCandidates = { mt.str() + "-g++", "g++" };
@@ -1316,7 +1317,7 @@ bool host_can_serve(const triple::Triple& target) {
     // The first version returned true unconditionally, which is the same
     // mistake as the branches it sits above: a predicate correct about the
     // objects its author had in mind. It was then narrowed to
-    // `mcpp::platform::is_linux`, because `xim:emsdk` and `xim:android-ndk`
+    // `mcpplibs::os::is_linux`, because `xim:emsdk` and `xim:android-ndk`
     // both declared ONLY an `xpm.linux` table -- so on macOS or Windows there
     // was no payload to install and the honest answer was the same
     // `host-cannot-serve` every other unpublished combination gets. That
@@ -1344,7 +1345,7 @@ bool host_can_serve(const triple::Triple& target) {
     if (target.has_own_sysroot()) return true;
 
     if (target.os == "linux") {
-        if constexpr (mcpp::platform::is_linux) {
+        if constexpr (mcpplibs::os::is_linux) {
             // "SELF-CONTAINED" IS ABOUT THE PAYLOAD'S CONTENTS, NOT ABOUT
             // WHICH HOSTS IT IS PUBLISHED FOR — and this line read it as both.
             //
@@ -1361,9 +1362,9 @@ bool host_can_serve(const triple::Triple& target) {
             //
             // The native row stays reachable on every arch: `musl-gcc`
             // publishes both, which is why `aarch64-linux-musl` is `ok` there.
-            const bool crossArch = target.arch != mcpp::platform::host_arch;
+            const bool crossArch = target.arch != mcpp::toolchain::platform::host_arch;
             if (target.is_musl())
-                return !crossArch || mcpp::platform::host_arch == "x86_64";
+                return !crossArch || mcpp::toolchain::platform::host_arch == "x86_64";
             return !crossArch;
         }
         // Non-Linux host: only the self-contained musl payloads can work at
@@ -1371,18 +1372,18 @@ bool host_can_serve(const triple::Triple& target) {
         // payload exists — the windows-hosted canadian cross, built per host
         // arch — so an arch-crossing combination stays unserviceable until one
         // is published. macOS has no Linux-targeting payload at all.
-        return mcpp::platform::is_windows
+        return mcpplibs::os::is_windows
             && target.is_musl()
-            && target.arch == mcpp::platform::host_arch;
+            && target.arch == mcpp::toolchain::platform::host_arch;
     }
     // THE mingw CROSS IS PUBLISHED FOR ONE HOST ARCH. `mingw-cross-gcc`
     // declares `archs = { "x86_64" }`, so a Linux host that is not x86_64
     // cannot obtain it — measured on ubuntu-24.04-arm, where the row was
     // listed and its refusal carried no reason at all (`unsupported / other`).
     if (target.is_windows_gnu()) {
-        if constexpr (mcpp::platform::is_windows) return true;
-        return mcpp::platform::is_linux
-            && mcpp::platform::host_arch == "x86_64";
+        if constexpr (mcpplibs::os::is_windows) return true;
+        return mcpplibs::os::is_linux
+            && mcpp::toolchain::platform::host_arch == "x86_64";
     }
     // PE + musl HAS NO PAYLOAD ON ANY HOST, INCLUDING WINDOWS.
     //
@@ -1407,7 +1408,7 @@ bool host_can_serve(const triple::Triple& target) {
     // when nothing supplies the target's system, and `graph × windows-musl` is
     // `ok` on both hosts.
     if (target.is_pe() && target.is_musl()) return false;
-    if (target.os == "windows") return bool(mcpp::platform::is_windows);
+    if (target.os == "windows") return bool(mcpplibs::os::is_windows);
     // APPLE, AND ONE ARM FOR BOTH OF ITS PLATFORMS.
     //
     // This read `os == "macos"`, which was the same question while macOS was
@@ -1425,7 +1426,7 @@ bool host_can_serve(const triple::Triple& target) {
     //
     // `is_apple()` is the predicate the table already carries, and until now
     // it had no reader at all.
-    if (target.is_apple())      return bool(mcpp::platform::is_macos);
+    if (target.is_apple())      return bool(mcpplibs::os::is_macos);
 
     // Bare metal: every host can serve it, and that is a property of the
     // toolchain rather than a claim about payload coverage. clang and lld are
@@ -1449,9 +1450,9 @@ bool host_can_serve(const triple::Triple& target) {
 std::vector<AvailableIndex> available_toolchain_indexes() {
     // LLVM payloads are published for Linux x86_64 and aarch64. Other
     // Linux architectures retain the musl GCC default and omit LLVM.
-    const bool linuxWithoutLlvm = mcpp::platform::is_linux
-        && mcpp::platform::host_arch != "x86_64"
-        && mcpp::platform::host_arch != "aarch64";
+    const bool linuxWithoutLlvm = mcpplibs::os::is_linux
+        && mcpp::toolchain::platform::host_arch != "x86_64"
+        && mcpp::toolchain::platform::host_arch != "aarch64";
 
     std::vector<AvailableIndex> out{
         { "gcc",      Family::Gcc },
@@ -1461,7 +1462,7 @@ std::vector<AvailableIndex> available_toolchain_indexes() {
         out.push_back({ mcpp::toolchain::llvm::package_name(), Family::Llvm });
     // The Windows-PE gcc payload is host-split at the distribution layer
     // (§4.3); each host lists the package it would actually install.
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         // Pinned MSVC toolsets. Listing them is what makes the managed origin
         // discoverable at all: without a row here `toolchain list --available`
         // says gcc and llvm can be pinned and msvc cannot, which stopped being
@@ -1471,11 +1472,11 @@ std::vector<AvailableIndex> available_toolchain_indexes() {
         // The windows-hosted canadian cross to Linux. Named by triple, exactly
         // as to_xim_package() derives it (`<triple>-gcc`), so the Available
         // listing and the install path cannot disagree about the package name.
-        out.push_back({ std::string(mcpp::platform::host_arch) + "-linux-musl-gcc",
+        out.push_back({ std::string(mcpp::toolchain::platform::host_arch) + "-linux-musl-gcc",
                         Family::Gcc });
-    } else if constexpr (mcpp::platform::is_linux) {
+    } else if constexpr (mcpplibs::os::is_linux) {
         // Same gate: `mingw-cross-gcc` publishes x86_64 only.
-        if (mcpp::platform::host_arch == "x86_64")
+        if (mcpp::toolchain::platform::host_arch == "x86_64")
             out.push_back({ "mingw-cross-gcc", Family::Gcc });
     }
     return out;
@@ -1501,7 +1502,7 @@ std::filesystem::path binutils_tool(const Toolchain& tc, std::string_view name) 
         for (auto const& cand : {tc.toolPrefix + std::string(name),
                                  std::string("llvm-") + std::string(name),
                                  std::string(name)}) {
-            auto p = dir / (cand + std::string(mcpp::platform::exe_suffix));
+            auto p = dir / (cand + std::string(mcpplibs::os::exe_suffix));
             if (std::filesystem::exists(p, ec)) return p;
         }
         return {};
@@ -1510,7 +1511,7 @@ std::filesystem::path binutils_tool(const Toolchain& tc, std::string_view name) 
     // Clang ships the whole family as `llvm-<name>` beside the frontend.
     if (is_clang(tc)) {
         auto llvmTool = dir / (std::string("llvm-") + std::string(name)
-                               + std::string(mcpp::platform::exe_suffix));
+                               + std::string(mcpplibs::os::exe_suffix));
         if (std::filesystem::exists(llvmTool, ec)) return llvmTool;
         return {};
     }
@@ -1542,7 +1543,7 @@ std::filesystem::path binutils_tool(const Toolchain& tc, std::string_view name) 
     // Same `.exe` reasoning as the frontend candidates above: a windows-hosted
     // musl cross payload ships `<triple>-ar.exe`. Try it first, then the bare
     // name (which is what every ELF host has).
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         auto muslExe = dir / (crossName + ".exe");
         if (std::filesystem::exists(muslExe, ec)) return muslExe;
     }

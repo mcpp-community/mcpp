@@ -5,8 +5,8 @@ export module mcpp.build.pe_exports;
 import std;
 import mcpp.build.coff_exports;
 import mcpp.modgraph.glob;
-import mcpp.platform.fs;
-import mcpp.platform.process;
+import mcpplibs.os.fs;
+import mcpp.run;
 import mcpp.toolchain.triple;
 
 export namespace mcpp::build::pe {
@@ -114,7 +114,7 @@ bool export_directive(std::string text) {
 
 std::expected<std::vector<std::byte>, std::string>
 read_object(const std::filesystem::path& path) {
-    std::ifstream in(mcpp::platform::fs::extended_length(path), std::ios::binary);
+    std::ifstream in(mcpplibs::os::fs::extended(path), std::ios::binary);
     if (!in) return std::unexpected("cannot read object");
     std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     if (in.bad()) return std::unexpected("cannot finish reading object");
@@ -129,7 +129,7 @@ run_tool(const std::filesystem::path& tool, std::vector<std::string> args) {
     auto name = mcpp::modgraph::try_narrow(tool);
     if (!name) return std::unexpected("the selected LLVM tool has no UTF-8 spelling");
     args.insert(args.begin(), *name);
-    auto result = mcpp::platform::process::capture_exec(args);
+    auto result = mcpp::run::capture_exec(args);
     if (result.exit_code != 0)
         return std::unexpected(std::format("{} exited with status {}:\n{}",
             *name, result.exit_code, result.output));

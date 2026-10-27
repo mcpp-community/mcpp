@@ -31,13 +31,16 @@ import mcpp.pm.commands;
 import mcpp.toolchain.fingerprint;   // MCPP_VERSION
 import mcpp.wire;
 import mcpp.cli.cmd_sbom;
-import mcpp.platform;                // is_windows — the PATH separator of `__action --path-prepend`
-import mcpp.platform.env;            // --offline → MCPP_OFFLINE
-import mcpp.platform.process;        // __action-stamp runs the checked command
-import mcpp.platform.fs;             // __action-stamp writes its stamps
+import mcpplibs.os.platform;
+import mcpplibs.os.fs;
+import mcpp.invocation;
+import mcpp.effects;
+import mcpp.runtime.search;
+import mcpp.run;
+import mcpplibs.os.posix;
+import mcpp.home.files;
 import mcpp.build.progress;          // __action reports its start
 import mcpp.build.dirlock;           // the build directory lock names this command
-import mcpp.platform.runtime_search; // linker-wrapper path-injection opt-out
 import mcpp.ui;
 import mcpp.log;
 import mcpp.home;              // --system: the system home
@@ -192,10 +195,13 @@ int enter_system_home(int argc, char** argv) {
         return 4;
     }
     std::filesystem::remove(probe, ec);
-    mcpp::platform::process::set_umask_022();
-    mcpp::platform::env::set("MCPP_HOME", home.string());
-    static std::optional<mcpp::platform::fs::FileLock> held;
-    while (!(held = mcpp::platform::fs::FileLock::try_acquire(home)))
+    // Every file a home shared by the machine's users holds is readable by
+    // everyone and writable by its owner (umask 022); on Windows the ACL
+    // inherited from the directory decides.
+    if constexpr (mcpplibs::os::is_posix) mcpplibs::os::posix::set_creation_mask(022);
+    mcpp::invocation::set("MCPP_HOME", home.string());
+    static std::optional<mcpp::home::FileLock> held;
+    while (!(held = mcpp::home::FileLock::try_acquire(home)))
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     if (!mcpp::home::is_system_home(home))
         std::ofstream(home / std::string(mcpp::home::kHomeMarker)) << "# The machine's mcpp home: written by `mcpp --system`, read by every user.\nmode = \"system\"\n";
@@ -264,7 +270,7 @@ int run(int argc, char** argv) {
                     return 2;
                 }
             }
-            mcpp::platform::env::set("MCPP_HOME", absolute.string());
+            mcpp::invocation::set("MCPP_HOME", absolute.string());
             homeFiltered = std::move(kept);
             argc = static_cast<int>(homeFiltered.size());
             argv = homeFiltered.data();
@@ -284,7 +290,7 @@ int run(int argc, char** argv) {
                 auto item = list.substr(pos, comma == std::string_view::npos ? std::string_view::npos : comma - pos);
                 while (!item.empty() && item.front() == ' ') item.remove_prefix(1);
                 while (!item.empty() && item.back() == ' ') item.remove_suffix(1);
-                const auto& names = mcpp::platform::env::deniable_effects();
+                const auto& names = mcpp::effects::deniable_effects();
                 if (!item.empty() && std::ranges::find(names, item) == names.end())
                     return std::string(item);
                 if (comma == std::string_view::npos) break;
@@ -292,7 +298,7 @@ int run(int argc, char** argv) {
             }
             return std::nullopt;
         };
-        std::string denied = mcpp::platform::env::get("MCPP_DENY_EFFECTS").value_or("");
+        std::string denied = mcpp::invocation::get("MCPP_DENY_EFFECTS").value_or("");
         for (int i = 1; i < argc; ++i) {
             const std::string_view a = argv[i];
             if (a == "--") break;
@@ -310,7 +316,7 @@ int run(int argc, char** argv) {
                 "init-mcpp-home, write-project, write-global-cache, network, exec-build-script", *bad));
             return 2;
         }
-        if (!denied.empty()) mcpp::platform::env::set("MCPP_DENY_EFFECTS", denied);
+        if (!denied.empty()) mcpp::invocation::set("MCPP_DENY_EFFECTS", denied);
     }
 
     // ─── --quiet / --no-color: pre-scan ─────────────────────────────────
@@ -335,7 +341,7 @@ int run(int argc, char** argv) {
         // toolchain auto-install, which sit in three subsystems and would each
         // need a parameter threaded down. Same shape as MCPP_VERBOSE above, and
         // it makes `MCPP_OFFLINE=1` and `--offline` literally the same switch.
-        else if (a == "--offline") mcpp::platform::env::set("MCPP_OFFLINE", "1");
+        else if (a == "--offline") mcpp::invocation::set("MCPP_OFFLINE", "1");
         // `--locked` rides the same side channel, and for the stronger form
         // of the same reason: its consumer is the resolution write point deep
         // in mcpp.build.prepare, and it applies to every command that resolves
@@ -347,46 +353,46 @@ int run(int argc, char** argv) {
         // package that moved. See the check itself for why assertion is the
         // half that reproducibility needs first.
         else if (a == "--locked" || a == "--frozen")
-            mcpp::platform::env::set("MCPP_LOCKED", "1");
+            mcpp::invocation::set("MCPP_LOCKED", "1");
         // `--managed-only` (mcpp#755) rides the same channel: its consumer is
         // the decision record at the end of prepare, for every command that
         // prepares, and the fast paths that would skip that record.
         else if (a == "--managed-only")
-            mcpp::platform::env::set("MCPP_MANAGED_ONLY", "1");
+            mcpp::invocation::set("MCPP_MANAGED_ONLY", "1");
         // --jobs rides the same side channel as --offline, for the same reason
         // recorded there: its consumer is deep in mcpp.build.execute and
         // threading a parameter down would touch every caller in between.
         // Accepts `--jobs N`, `--jobs=N`, `-j N` and `-jN`.
         else if (a == "--jobs" || a == "-j") {
-            if (i + 1 < argc) mcpp::platform::env::set("MCPP_JOBS", argv[++i]);
+            if (i + 1 < argc) mcpp::invocation::set("MCPP_JOBS", argv[++i]);
         }
-        else if (a.starts_with("--jobs=")) mcpp::platform::env::set("MCPP_JOBS", std::string(a.substr(7)));
+        else if (a.starts_with("--jobs=")) mcpp::invocation::set("MCPP_JOBS", std::string(a.substr(7)));
         // --toolchain rides the same channel, for the same reason: its consumer
         // is deep inside prepare's resolution and threading a parameter down
         // would touch every caller in between.
         else if (a == "--toolchain") {
-            if (i + 1 < argc) mcpp::platform::env::set("MCPP_TOOLCHAIN", argv[++i]);
+            if (i + 1 < argc) mcpp::invocation::set("MCPP_TOOLCHAIN", argv[++i]);
         }
-        else if (a.starts_with("--toolchain=")) mcpp::platform::env::set("MCPP_TOOLCHAIN", std::string(a.substr(12)));
+        else if (a.starts_with("--toolchain=")) mcpp::invocation::set("MCPP_TOOLCHAIN", std::string(a.substr(12)));
         // --sysroot is `MCPP_SYSROOT` for this invocation (design 2026-10-23
         // §3.3), for the reason --toolchain is: its consumer is the base
         // statement deep in prepare, and the fast paths read the variable to
         // know a build's base changed.
         else if (a == "--sysroot") {
-            if (i + 1 < argc) mcpp::platform::env::set("MCPP_SYSROOT", argv[++i]);
+            if (i + 1 < argc) mcpp::invocation::set("MCPP_SYSROOT", argv[++i]);
         }
-        else if (a.starts_with("--sysroot=")) mcpp::platform::env::set("MCPP_SYSROOT", std::string(a.substr(10)));
+        else if (a.starts_with("--sysroot=")) mcpp::invocation::set("MCPP_SYSROOT", std::string(a.substr(10)));
         else if (a.starts_with("-j") && a.size() > 2)
-            mcpp::platform::env::set("MCPP_JOBS", std::string(a.substr(2)));
+            mcpp::invocation::set("MCPP_JOBS", std::string(a.substr(2)));
         // --play-game rides the same channel: its value is optional
         // (`--play-game` chooses a game, `--play-game=snake` names one), which
         // the parser's options do not express, and its consumer is the build's
         // report deep in mcpp.build.progress (build output design revision 3,
         // §5.14). The option is also declared on build, run and test below, so
         // that --help lists it and the parser accepts both spellings.
-        else if (a == "--play-game") mcpp::platform::env::set("MCPP_PLAY_GAME", "random");
+        else if (a == "--play-game") mcpp::invocation::set("MCPP_PLAY_GAME", "random");
         else if (a.starts_with("--play-game="))
-            mcpp::platform::env::set("MCPP_PLAY_GAME", std::string(a.substr(12)));
+            mcpp::invocation::set("MCPP_PLAY_GAME", std::string(a.substr(12)));
     }
     // `--system` (design 2026-10-16 §9.2): the maintenance commands act on
     // the machine's system home, whatever the caller's HOME and MCPP_HOME
@@ -420,17 +426,16 @@ int run(int argc, char** argv) {
     // the environment for free. Declared BEFORE the wrapper ships, because
     // "the exit must be declared, not inferred" is the rule that whole
     // negotiation established — today this is a no-op.
-    mcpp::platform::env::set(
-        std::string(mcpp::platform::search::kLinkerPathInjectionOptOut),
-        std::string(mcpp::platform::search::kLinkerPathInjectionOptOutValue));
+    mcpp::invocation::set(
+        std::string(mcpp::runtime::search::kLinkerPathInjectionOptOut),
+        std::string(mcpp::runtime::search::kLinkerPathInjectionOptOutValue));
 
     // Env override (observability, esp. CI): MCPP_VERBOSE=<non-empty, not "0">
     // turns on verbose logging for EVERY mcpp invocation — including the ones
     // nested inside e2e test scripts that call $MCPP without flags. Lets a
     // workflow flip on diagnostics globally with one env var. An explicit
     // --quiet still wins (it is processed above and gates the verbose sinks).
-    if (const char* v = std::getenv("MCPP_VERBOSE");
-        v && *v && std::string_view(v) != "0")
+    if (auto v = mcpp::invocation::get("MCPP_VERBOSE"); v && *v != "0")
         mcpp::log::set_verbose(true);
 
     // ─── top-level --help / -h / --version intercept ────────────────────
@@ -1349,7 +1354,7 @@ int run(int argc, char** argv) {
         std::vector<std::string> cmd;
         for (++i; i < argc; ++i) cmd.emplace_back(argv[i]);
         bool timedOut = false;
-        const int r = mcpp::platform::process::run_exec_deadline(
+        const int r = mcpp::run::run_exec_deadline(
             cmd, {}, std::chrono::milliseconds(0), &timedOut);
         if (r != 0) return r;
         std::string text;
@@ -1433,9 +1438,9 @@ int run(int argc, char** argv) {
         // the inherited one when it does not. On Windows the name is compared
         // without case, as the environment compares it.
         if (!pathPrepend.empty()) {
-            constexpr char sep = mcpp::platform::is_windows ? ';' : ':';
+            constexpr char sep = mcpplibs::os::is_windows ? ';' : ':';
             auto is_path = [](std::string_view k) {
-                if (!mcpp::platform::is_windows) return k == "PATH";
+                if (!mcpplibs::os::is_windows) return k == "PATH";
                 return k.size() == 4
                     && std::ranges::equal(k, std::string_view("path"), [](char x, char y) {
                            return std::tolower(static_cast<unsigned char>(x)) == y; });
@@ -1443,7 +1448,7 @@ int run(int argc, char** argv) {
             std::string current;
             auto declared = std::ranges::find_if(env, [&](auto const& kv) { return is_path(kv.first); });
             if (declared != env.end()) current = declared->second;
-            else if (const char* p = std::getenv("PATH")) current = p;
+            else if (auto p = mcpp::invocation::get("PATH")) current = *p;
             std::string joined;
             for (auto const& d : pathPrepend) joined += d + sep;
             joined += current;
@@ -1461,8 +1466,8 @@ int run(int argc, char** argv) {
         auto declares = [&](std::string_view name) {
             return std::ranges::any_of(env, [&](auto const& kv) { return kv.first == name; });
         };
-        if (const char* ns = std::getenv("NINJA_STATUS");
-            ns && std::string_view(ns).find("@@mcpp") != std::string_view::npos
+        if (auto ns = mcpp::invocation::get("NINJA_STATUS");
+            ns && ns->find("@@mcpp") != std::string_view::npos
             && !declares("NINJA_STATUS"))
             env.emplace_back("NINJA_STATUS", "[%f/%t] ");
         if (!declares(mcpp::build::progress::kStartsEnv))
@@ -1499,7 +1504,7 @@ int run(int argc, char** argv) {
     // `run_exec`: no shell, stdio inherited. The analyser's own output has
         // to reach the terminal unchanged — a check that fails is read by a
         // human, and capturing would either swallow it or reprint it wrapped.
-        const int r = mcpp::platform::process::run_exec(cmd, env);
+        const int r = mcpp::run::run_exec(cmd, env);
         // The stamps are written ONLY on success. Writing them anyway would
         // make ninja consider the edge satisfied, so the next build would skip
         // a check (or a `prepare`) that had never passed.
@@ -1522,11 +1527,11 @@ int run(int argc, char** argv) {
         if (!requireDir.empty()) {
             std::error_code ec;
             const auto dir =
-                mcpp::platform::fs::extended_length(std::filesystem::path{requireDir});
+                mcpplibs::os::fs::extended(std::filesystem::path{requireDir});
             std::vector<std::filesystem::path> stampPaths;
             for (auto const& s : stamps)
                 stampPaths.push_back(std::filesystem::absolute(
-                    mcpp::platform::fs::extended_length(std::filesystem::path{s}), ec)
+                    mcpplibs::os::fs::extended(std::filesystem::path{s}), ec)
                     .lexically_normal());
             bool populated = false;
             if (std::filesystem::is_directory(dir, ec)) {
@@ -1553,7 +1558,7 @@ int run(int argc, char** argv) {
             std::error_code ec;
             // Relative to the build directory, which can be deep enough to
             // take the stamp past the Windows path limit (mcpp#641, item 3).
-            const auto p = mcpp::platform::fs::extended_length(std::filesystem::path{s});
+            const auto p = mcpplibs::os::fs::extended(std::filesystem::path{s});
             if (!p.parent_path().empty())
                 std::filesystem::create_directories(p.parent_path(), ec);
             if (std::filesystem::exists(p, ec)) {
@@ -1726,7 +1731,7 @@ int run(int argc, char** argv) {
     // (SPEC-003, design 2026-10-26 D23): the caller's constraint, not a
     // failure of the project, and a script tells the two apart by the status.
     if (action_rc != 0)
-        if (auto refused = mcpp::platform::env::effect_refused()) {
+        if (auto refused = mcpp::effects::effect_refused()) {
             mcpp::ui::note(std::format("stopped before a denied effect ({}); exit status 5", *refused));
             return 5;
         }

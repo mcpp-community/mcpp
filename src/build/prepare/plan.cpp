@@ -18,8 +18,10 @@ import mcpp.runtime.elf;          // DT_NEEDED of a library the line names
 import mcpp.build.refusal;
 import mcpp.build.version_floor;
 import mcpp.home;
-import mcpp.platform.axis;
-import mcpp.platform.env;        // --deny write-project
+import mcpplibs.os.platform;
+import mcpp.invocation;
+import mcpp.effects;
+import mcpp.build.capacity;
 import mcpp.libs.json;
 import mcpp.log;
 import mcpp.manifest;
@@ -46,7 +48,6 @@ import mcpp.build.plan;
 import mcpp.build.schedule.policy;
 import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
 import mcpp.build.distribution;   // dist::Role / dist::Contract to_string
-import mcpp.platform.capacity;   // the host fallback handed to schedule::decide
 import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
 import mcpp.build.runtime_validation;  // declared artifact -> identity verdict
 import mcpp.build.cache_key;
@@ -63,9 +64,7 @@ import mcpp.config;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.runtime.binding;
-import mcpp.platform.runtime_search;
 import mcpp.toolchain.post_install;
-import mcpp.platform;
 import mcpp.build.runner_lookup;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
@@ -528,7 +527,7 @@ static std::expected<void, std::string> step13_make_plan(PrepareState& state, Bu
             if (source.empty() || commands.empty()) return;
             auto inv = mcpp::build::recover_invocation(
                 commands, source, state.tc->binaryPath, sm.cacheDir,
-                mcpp::platform::is_windows);
+                mcpplibs::os::is_windows);
             if (!inv) {
                 state.planNotes.push_back({"MCPP_BUILD_DATABASE_STD_UNIT_UNDESCRIBED",
                     std::format("no command that builds the {} module names its "
@@ -617,7 +616,7 @@ static std::expected<void, std::string> step13_cxx_islands(PrepareState& state, 
                 if (std::filesystem::exists(d / lib, ec)) { path = d / lib; break; }
         }
         if (path.empty() || !std::filesystem::exists(path, ec)) continue;
-        auto facts = mcpp::platform::elf::inspect_elf_runtime(path);
+        auto facts = mcpp::runtime::elf::inspect_elf_runtime(path);
         if (!facts) continue;
         for (auto const& n : facts->needed)
             if (rt::runtime_of_soname(n) == other) {
@@ -688,8 +687,8 @@ static std::expected<void, std::string> step13_cxx_private_runtime(PrepareState&
         auto const& bc = ctx.plan.manifest.buildConfig;
         const auto format = dist::format_for(
             state.tc->targetTriple,
-            mcpp::platform::is_windows ? dist::Format::Pe
-            : mcpp::platform::is_macos ? dist::Format::MachO
+            mcpplibs::os::is_windows ? dist::Format::Pe
+            : mcpplibs::os::is_macos ? dist::Format::MachO
                                        : dist::Format::Elf);
         const bool privateCopy =
             dist::stated_shared_library_contract(bc.cxxRuntime, bc.cxxRuntimeShared,
@@ -775,8 +774,8 @@ static std::expected<void, std::string> step13_cxx_process_runtime(PrepareState&
         auto const& bc = ctx.plan.manifest.buildConfig;
         const auto format = dist::format_for(
             state.tc->targetTriple,
-            mcpp::platform::is_windows ? dist::Format::Pe
-            : mcpp::platform::is_macos ? dist::Format::MachO
+            mcpplibs::os::is_windows ? dist::Format::Pe
+            : mcpplibs::os::is_macos ? dist::Format::MachO
                                        : dist::Format::Elf);
         const dist::CxxSharedLoad load{
             .program = mcpp::build::image_loads_cxx_shared_library(
@@ -1040,8 +1039,8 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
             // and only when the user gave no job count — without it that
             // strategy ships `sched_cap = 0`, which disables the semaphore that
             // is its ONLY bound on how many compilers run at once.
-            mcpp::platform::capacity::recommended_jobs(
-                mcpp::platform::capacity::host_capacity()));
+            mcpp::build::capacity::recommended_jobs(
+                mcpp::build::capacity::host_capacity()));
         ctx.plan.scheduleTag         = std::string(mcpp::build::schedule::to_string(decision.strategy));
         ctx.plan.scheduleNinjaJobs   = decision.ninjaJobs;
         ctx.plan.scheduleCompilerCap = decision.compilerCap;
@@ -1190,7 +1189,7 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
             // wrapper's: a version change regenerates build.ninja, and a
             // binary moved under an unchanged version leaves a stale path,
             // exactly as it would for the compiler.
-            rep("${mcpp.self}",       mcpp::platform::fs::self_exe_path().generic_string());
+            rep("${mcpp.self}",       mcpp::invocation::self_exe_path().generic_string());
             // ABSOLUTE, unlike `${mcpp.target_file:}` and for the same reason
             // stated the other way round: the staged tree lives outside the
             // build directory and no ninja edge produces it, so there is no
@@ -1501,7 +1500,7 @@ static std::expected<void, std::string> step13_assembly_units(PrepareState& stat
                 if (!ctx.plan.okldPath.empty()) break;
             }
             if (ctx.plan.okldPath.empty())
-                if (auto found = mcpp::platform::fs::which(tool)) ctx.plan.okldPath = *found;
+                if (auto found = mcpp::invocation::which(tool)) ctx.plan.okldPath = *found;
         }
         // Only a build that links an image needs it: a library's archive is
         // objects, and the image that takes them is checked where it is linked.
@@ -2157,8 +2156,8 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     // pass that only describes (plan_only) plans into its own directory.
     // `--deny write-project` stops here, before the first write (design
     // 2026-10-26 §5.5).
-    if (!state.overrides.plan_only && mcpp::platform::env::effect_denied("write-project")) {
-        mcpp::platform::env::note_effect_refused("write-project", ctx.outputDir.generic_string());
+    if (!state.overrides.plan_only && mcpp::effects::effect_denied("write-project")) {
+        mcpp::effects::note_effect_refused("write-project", ctx.outputDir.generic_string());
         return std::unexpected(std::format(
             "effect denied: write-project -- the build writes {}, and the caller denied writing "
             "the project (--deny write-project)", ctx.outputDir.generic_string()));

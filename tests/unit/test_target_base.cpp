@@ -6,8 +6,10 @@ import mcpp.toolchain.base_probe;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.model;
 import mcpp.toolchain.triple;
-import mcpp.platform;
-import mcpp.platform.macos;
+import mcpplibs.os.platform;
+import mcpp.toolchain.apple_sdk;
+import mcpp.invocation;
+import mcpp.build.command_line;
 
 // The target base (design 2026-10-23, "target base and execution host"): the
 // string grammar of `sysroot`, which spellings each row takes, the
@@ -195,7 +197,7 @@ TEST(TargetBaseApple, SdkrootOnEveryHost) {
     touch(sdk / "usr" / "include" / "stdio.h");
     touch(sdk / "usr" / "lib" / "libSystem.tbd",
           "--- !tapi-tbd\ntbd-version: 4\ntargets: [ x86_64-ios-simulator, arm64-ios-simulator ]\n");
-    mcpp::platform::env::ScopedEnv env("SDKROOT", sdk.string());
+    mcpp::invocation::ScopedEnv env("SDKROOT", sdk.string());
     auto found = tb::locate_apple(*tb::parse_text("iphonesimulator@system"), "iphonesimulator");
     ASSERT_TRUE(found) << found.error();
     EXPECT_EQ(found->root, sdk);
@@ -203,10 +205,11 @@ TEST(TargetBaseApple, SdkrootOnEveryHost) {
     EXPECT_FALSE(tb::locate_apple(*tb::parse_text("iphonesimulator@17.0"), "iphonesimulator"));
     // SDKROOT names one SDK and does not answer for another. (On an Apple
     // host `xcrun` answers next, and Xcode's iPhoneOS SDK is found there.)
-    if (!mcpp::platform::is_macos)
+    if (!mcpplibs::os::is_macos)
         EXPECT_FALSE(tb::locate_apple(*tb::parse_text("iphoneos@system"), "iphoneos"));
-    EXPECT_EQ(mcpp::platform::macos::sdk_has_target(sdk, "x86_64-ios-simulator"), true);
-    EXPECT_EQ(mcpp::platform::macos::sdk_has_target(sdk, "x86_64-ios"), false);
+    using mcpp::toolchain::apple::Slice;
+    EXPECT_EQ(mcpp::toolchain::apple::sdk_has_target(sdk, "x86_64-ios-simulator"), Slice::carried);
+    EXPECT_EQ(mcpp::toolchain::apple::sdk_has_target(sdk, "x86_64-ios"), Slice::absent);
 }
 
 TEST(TargetBaseApple, PathMustBeAnSdk) {
@@ -270,7 +273,7 @@ TEST(TargetBaseLinkModel, MultiarchForADriverThatDoesNotKnowIt) {
 }
 
 TEST(PasteArg, QuotesOnlyWhatTheShellWouldSplit) {
-    EXPECT_EQ(mcpp::platform::shell::paste_arg("/tmp/home"), "/tmp/home");
-    EXPECT_NE(mcpp::platform::shell::paste_arg("/tmp/mc probe/home"), "/tmp/mc probe/home");
-    EXPECT_NE(mcpp::platform::shell::paste_arg("/tmp/a'b"), "/tmp/a'b");
+    EXPECT_EQ(mcpp::build::command_line::paste_arg("/tmp/home"), "/tmp/home");
+    EXPECT_NE(mcpp::build::command_line::paste_arg("/tmp/mc probe/home"), "/tmp/mc probe/home");
+    EXPECT_NE(mcpp::build::command_line::paste_arg("/tmp/a'b"), "/tmp/a'b");
 }

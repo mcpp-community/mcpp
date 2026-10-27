@@ -12,7 +12,7 @@ import mcpp.log;
 import mcpp.build.refusal;
 import mcpp.build.version_floor;
 import mcpp.home;
-import mcpp.platform.axis;
+import mcpplibs.os.platform;
 import mcpp.manifest;
 import mcpp.source_kind;
 import mcpp.modgraph.glob;
@@ -50,7 +50,6 @@ import mcpp.provider.select;
 import mcpp.provider.runtime_selection;
 import mcpp.runtime.binding;
 import mcpp.toolchain.post_install;
-import mcpp.platform;
 import mcpp.pm.resolver;
 import mcpp.pm.index_spec;
 import mcpp.pm.index_contract;
@@ -62,6 +61,7 @@ import mcpp.pm.dependency_selector;
 import mcpp.pm.lock_io;
 import mcpp.ui;
 import mcpp.wire;               // Severity, for PlanNote (#699 item 2, E3)
+import mcpp.invocation;
 
 namespace mcpp::build {
 
@@ -1359,8 +1359,8 @@ step6_resolve_tool_key(PrepareState& state, HostToolCtx& ctx) {
     // compiler this build compiles its build programs with. It
     // is handed to the sub-build as an override and recorded in
     // the key, so the two cannot disagree.
-    if (const char* e = std::getenv("MCPP_TOOLCHAIN"); e && *e)
-        ctx.toolTcSpec = e;
+    if (auto e = mcpp::invocation::get("MCPP_TOOLCHAIN"))
+        ctx.toolTcSpec = *e;
     else if (auto own = host_tool_declared_toolchain(
                  depPkg.manifest, depPkg.root, kCurrentPlatform))
         ctx.toolTcSpec = *own;
@@ -1422,7 +1422,7 @@ step6_resolve_tool_key(PrepareState& state, HostToolCtx& ctx) {
 
     ctx.cacheRoot = mcpp::home::cache_root();
     ctx.entry     = mcpp::build::tool_store::entry_dir(ctx.cacheRoot, ctx.key);
-    const auto exeSuffix = std::string(mcpp::platform::exe_suffix);
+    const auto exeSuffix = std::string(mcpplibs::os::exe_suffix);
     ctx.binOut    = mcpp::build::tool_store::bin_path(
         ctx.entry, ctx.toolName, exeSuffix);
 
@@ -1523,7 +1523,7 @@ step6_build_tool(PrepareState& state, HostToolCtx& ctx) {
         const mcpp::provider::runtime::RuntimeSelection>(
             state.runtimeSelection);
     sub.inherited_runtime_binding = std::make_shared<
-        const mcpp::platform::runtime::RuntimeBinding>(
+        const mcpp::runtime::RuntimeBinding>(
             state.runtimeBindingSnapshot);
     sub.tool_chain    = state.overrides.tool_chain.empty()
         ? std::format("root → {}:{}", ctx.depName, ctx.toolName)
@@ -1585,8 +1585,7 @@ step6_build_tool(PrepareState& state, HostToolCtx& ctx) {
     // ninja's own progress and command echoes, which is right
     // for a normal build and wrong when the question is "what
     // did the inner build actually do".
-    if (const char* v = std::getenv("MCPP_TOOL_BUILD_VERBOSE");
-        v && *v && std::string_view(v) != "0")
+    if (auto v = mcpp::invocation::get("MCPP_TOOL_BUILD_VERBOSE"); v && *v != "0")
         bopt.verbose = true;
     auto br = be->build(subCtx->plan, bopt);
     if (!br) {

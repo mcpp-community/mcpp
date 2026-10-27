@@ -18,7 +18,7 @@ export module mcpp.pm.refresh_policy;
 import std;
 import mcpp.config;
 import mcpp.log;
-import mcpp.platform;
+import mcpp.effects;
 import mcpp.pm.index_contract;
 import mcpp.ui;
 import mcpp.provider;
@@ -132,7 +132,7 @@ std::string_view reason_text(RefreshReason r) {
 
 RefreshPolicy policy_for(const mcpp::config::GlobalConfig& cfg) {
     RefreshPolicy p;
-    p.offline     = mcpp::platform::env::offline_mode();
+    p.offline     = mcpp::effects::offline_mode();
     p.autoRefresh = cfg.indexAutoRefresh;
     return p;
 }
@@ -208,7 +208,7 @@ std::expected<void, std::string> apply(const RefreshDecision& d,
 }
 
 std::expected<void, std::string> force_refresh(const mcpp::provider::Location& env) {
-    if (mcpp::platform::env::offline_mode())
+    if (mcpp::effects::offline_mode())
         return std::unexpected(
             "offline mode is on — cannot refresh the package index "
             "(unset MCPP_OFFLINE or drop --offline)");

@@ -17,9 +17,10 @@ import mcpp.diag;   // structured diagnostics of build programs (#734 E11)
 import mcpp.home;      // cache_root — the global home of the engine's compiled module (#748)
 import mcpp.log;       // the compile of a build program is timestamped in the verbose log
 import mcpp.manifest;
-import mcpp.platform;
+import mcpp.effects;
+import mcpp.runtime.launch_env;
+import mcpp.run;
 import mcpp.pm.mangle;        // imported_module_names -- what build.mcpp asks for
-import mcpp.platform.process;
 import mcpp.toolchain.cppfly;        // std_flag (dialect- and c++fly-aware -std= spelling)
 import mcpp.toolchain.dialect;       // CommandDialect — gnu vs cl.exe spellings
 import mcpp.toolchain.fingerprint;   // hash_file / hash_string (FNV-1a, 16 hex)
@@ -37,6 +38,7 @@ import mcpp.toolchain.stdmod;        // ensure_built — the SAME std BMI the ma
 import mcpp.toolchain.triple;        // host_triple (MCPP_HOST contract value)
 import mcpp.ui;
 import mcpp.version;         // MCPP_VERSION — the hint names the engine the reader is on
+import mcpp.invocation;
 
 namespace {
 // #734 E11: a build program's structured diagnostics, in the engine's own form.
@@ -599,8 +601,7 @@ std::string abs_against_root(const fs::path& root, std::string_view p) {
 }
 
 std::string env_value(const std::string& name) {
-    const char* v = std::getenv(name.c_str());
-    return v ? std::string(v) : std::string();
+    return mcpp::invocation::get(name).value_or(std::string());
 }
 
 fs::path build_dir(const fs::path& root, const BuildProgramEnv& env) {
@@ -796,8 +797,8 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
         // replaces a variable outright in the child, so writing only the
         // project's own directory would silently be the substitution this
         // deliberately is not.
-        if (auto const& inherited = mcpp::platform::env::inherited_path(); !inherited.empty()) {
-            path += mcpp::platform::env::path_list_separator();
+        if (auto const& inherited = mcpp::runtime::launch_env::inherited_path(); !inherited.empty()) {
+            path += mcpp::runtime::launch_env::path_list_separator();
             path += inherited;
         }
         e.emplace_back("PATH", path);
@@ -1186,8 +1187,8 @@ std::expected<void, std::string> run_build_program_impl(
     // running code from the workspace, so the refusal is here, where a program
     // would start -- a program whose answer is current runs nothing and is
     // not refused.
-    if (mcpp::platform::env::effect_denied("exec-build-script")) {
-        mcpp::platform::env::note_effect_refused("exec-build-script", std::format("{} build program", who));
+    if (mcpp::effects::effect_denied("exec-build-script")) {
+        mcpp::effects::note_effect_refused("exec-build-script", std::format("{} build program", who));
         return std::unexpected(std::format(
             "effect denied: exec-build-script -- {}'s build program would run, and the caller "
             "denied running code from the workspace (--deny exec-build-script)", who));
@@ -1200,7 +1201,7 @@ std::expected<void, std::string> run_build_program_impl(
     // the one who knows how long it takes.
     const auto deadline =
         dirs::run_timeout_for(m.buildConfig.buildProgramTimeoutSecs);
-    auto rres = mcpp::platform::process::capture_exec_deadline(
+    auto rres = mcpp::run::capture_exec_deadline(
         {bin.string()}, childEnv, deadline, &timedOut, root.string());
     if (timedOut) {
         // Name the manifest to edit. Without this the user edits their OWN

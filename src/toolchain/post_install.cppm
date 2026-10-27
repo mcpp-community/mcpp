@@ -19,7 +19,8 @@ import std;
 import mcpp.config;
 import mcpp.libs.json;
 import mcpp.log;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.run;
 import mcpp.runtime.binding;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.registry;
@@ -142,7 +143,7 @@ select_glibc_payload_lib(const std::filesystem::path& glibcRoot,
         // that this fixup has nothing to do with (there is no ucrt payload to
         // bind to — it is an OS component), and "not a glibc payload
         // identity" reads as "malformed" for it.
-        auto provider = mcpp::platform::runtime::runtime_provider(runtimeId);
+        auto provider = mcpp::runtime::runtime_provider(runtimeId);
         return std::unexpected(provider.empty()
             ? std::format(
                   "selected RuntimeBinding '{}' is not a glibc payload identity "
@@ -189,7 +190,7 @@ select_glibc_payload_lib(const std::filesystem::path& glibcRoot,
 // that once lived here are gone). Empty on every other payload and on
 // Windows, where a PE toolchain has no C runtime payload.
 export std::string_view runtime_payload_kind(const XimToolchainPackage& pkg) {
-    if constexpr (mcpp::platform::is_windows) return {};
+    if constexpr (mcpplibs::os::is_windows) return {};
     if (pkg.needsGccPostInstallFixup) return "gcc";
     if (pkg.ximName == "llvm")        return "llvm";
     return {};
@@ -402,7 +403,7 @@ std::filesystem::path write_clean_link_specs(
     // An argument vector: the command-string form carried `2>/dev/null`, which
     // cmd.exe cannot open, so on a Windows host this probe printed a spurious
     // path error in every prepared GCC build and never produced the file.
-    auto r = mcpp::platform::process::capture_stdout(
+    auto r = mcpp::run::capture_stdout(
         {compilerBin.string(), "-dumpspecs"});
     if (r.exit_code != 0 || r.output.empty()) return {};
 

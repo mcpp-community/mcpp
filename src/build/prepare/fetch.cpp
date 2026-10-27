@@ -16,7 +16,8 @@ import std;
 import mcpp.build.refusal;
 import mcpp.build.version_floor;
 import mcpp.home;
-import mcpp.platform.axis;
+import mcpp.effects;
+import mcpp.run;
 import mcpp.libs.json;
 import mcpp.log;
 import mcpp.manifest;
@@ -33,7 +34,6 @@ import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.config;
 import mcpp.provider;
 import mcpp.provider.select;
-import mcpp.platform;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.pm.resolver;
@@ -79,9 +79,8 @@ bool is_local_git_remote(std::string_view url) {
 // stderr is folded in so a git warning cannot leak to the user's terminal;
 // the last line is taken so such a warning cannot corrupt the sha either.
 std::string git_cache_head(const std::filesystem::path& gitRoot) {
-    auto r = mcpp::platform::process::capture(std::format(
-        "git -C {} rev-parse HEAD 2>&1",
-        mcpp::platform::shell::quote(gitRoot.string())));
+    auto r = mcpp::run::execute({ "git", "-C", gitRoot.string(), "rev-parse", "HEAD" },
+                                { .report_spawn_failure = false });
     if (r.exit_code != 0) return {};
     std::string out = r.output;
     while (!out.empty() && (out.back() == '\n' || out.back() == '\r'
@@ -125,33 +124,34 @@ std::string git_cache_head(const std::filesystem::path& gitRoot) {
 // `between` runs after a failed attempt: the clone needs the partial directory
 // removed, or git's next attempt fails with "already exists and is not an empty
 // directory" — a second, different error that says nothing about the first.
-mcpp::platform::process::RunResult run_with_network_retry(
-        std::string_view command,
+mcpp::run::RunResult run_with_network_retry(
+        const std::vector<std::string>& argv,
         const std::function<void()>& between,
         std::string_view progressLabel) {
-    mcpp::platform::process::RunResult r{};
-    mcpp::platform::env::note_network_access();   // the envelope's `effects` (#648 A4)
+    mcpp::run::RunResult r{};
+    mcpp::effects::note_network_access();   // the envelope's `effects` (#648 A4)
     // A clone runs for as long as the repository takes to arrive, and its
     // output was captured whole, so a large one showed nothing until it
     // finished. With a label, git's download phase is drawn with the renderer
     // every other acquisition uses (W11), each redraw read as it happens; the
     // output is still kept whole for the failure message. A clone that writes
     // nothing for fifteen minutes is stopped as stalled.
-    auto run_once = [&]() -> mcpp::platform::process::RunResult {
-        if (progressLabel.empty()) return mcpp::platform::process::capture(command);
-        mcpp::platform::process::RunResult out;
+    auto run_once = [&]() -> mcpp::run::RunResult {
+        if (progressLabel.empty()) return mcpp::run::execute(argv);
+        std::string output;
         std::optional<mcpp::ui::ProgressBar> bar;
-        bool timedOut = false;
-        out.exit_code = mcpp::platform::process::run_streaming_bounded(command,
-            [&](std::string_view line) {
-                out.output.append(line).push_back('\n');
+        auto out = mcpp::run::execute(argv, {
+            .idle = std::chrono::minutes{15},
+            .on_line = [&](std::string_view line) {
+                output.append(line).push_back('\n');
                 auto g = mcpp::fetcher::parse_git_progress(line);
                 if (!g || g->phase != "Receiving objects") return;
                 if (!bar) bar.emplace("Fetching", progressLabel);
                 bar->update(g->percent);
             },
-            std::chrono::milliseconds{0}, std::chrono::minutes{15}, &timedOut,
-            /*split_on_cr=*/true);
+            .split_on_cr = true });
+        out.output = std::move(output) + out.output;
+        const bool timedOut = out.timed_out;
         if (bar) {
             if (out.exit_code == 0 && !timedOut) bar->finish();
             else                                 bar->finish_failed(progressLabel);
@@ -305,10 +305,10 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                 mcpp::log::verbose("xlings", std::format(
                     "{}: recorded as provisioned in {}, but no payload is "
                     "installed for: {}", label, stamp.string(), list));
-                if (mcpp::platform::env::offline_mode()
-                    || mcpp::platform::env::no_auto_install()) {
+                if (mcpp::effects::offline_mode()
+                    || mcpp::effects::no_auto_install()) {
                     std::string_view release =
-                        mcpp::platform::env::offline_mode()
+                        mcpp::effects::offline_mode()
                         ? "drop --offline / unset MCPP_OFFLINE"
                         : "unset MCPP_NO_AUTO_INSTALL";
                     refusal::record(refusal::Code::OfflineDownloadRequired);
@@ -339,8 +339,8 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                 // not the block: a project whose packages are already
                 // provisioned still builds offline, which is the behaviour
                 // that would otherwise regress.
-                if (mcpp::platform::env::offline_mode()
-                    || mcpp::platform::env::no_auto_install()) {
+                if (mcpp::effects::offline_mode()
+                    || mcpp::effects::no_auto_install()) {
                     // THE ONE PLACE THE LEGACY STAMP IS TRUSTED, and the
                     // reason is that relocating a record must not refuse a
                     // build that worked yesterday. Every project that had
@@ -358,7 +358,7 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                     // verified anything.
                     if (!legacy_stamp_matches()) {
                         std::string_view release =
-                            mcpp::platform::env::offline_mode()
+                            mcpp::effects::offline_mode()
                             ? "drop --offline / unset MCPP_OFFLINE"
                             : "unset MCPP_NO_AUTO_INSTALL";
                         refusal::record(refusal::Code::OfflineDownloadRequired);

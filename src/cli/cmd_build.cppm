@@ -35,8 +35,12 @@ import mcpp.home;
 import mcpp.hooks;
 import mcpp.libs.json;
 import mcpp.log;
-import mcpp.platform;
-import mcpp.platform.terminal;
+import mcpplibs.os.fs;
+import mcpp.invocation;
+import mcpp.effects;
+import mcpp.run;
+import mcpp.home.files;
+import mcpp.ui.terminal;
 import mcpp.project;
 import mcpp.manifest;
 import mcpp.toolchain.fingerprint;
@@ -219,7 +223,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     mcpp::ui::set_error_observer([&errors](std::string_view m) { errors.emplace_back(m); });
     int rc = 0;
     {
-        mcpp::platform::terminal::StdoutToStderr narration;
+        mcpp::ui::terminal::StdoutToStderr narration;
         rc = cmd_build_body(parsed);
     }
     mcpp::ui::set_error_observer({});
@@ -245,7 +249,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
         }
     }
     if (rc != 0) {
-        const bool denied = mcpp::platform::env::effect_refused().has_value();
+        const bool denied = mcpp::effects::effect_refused().has_value();
         const std::string code = denied ? "MCPP_EFFECT_DENIED" : "MCPP_BUILD_FAILED";
         for (auto& e : errors)
             env.diagnostics.push_back({code, mcpp::wire::Severity::Error, std::move(e)});
@@ -565,7 +569,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
             }
         }
         std::error_code ec;
-        if (!mcpp::platform::fs::replace_file(tmp, out, ec)) {
+        if (!mcpp::home::replace_file(tmp, out, ec)) {
             std::filesystem::remove(tmp, ec);
             std::println(stderr, "error: cannot replace '{}'", out.string());
             return 1;
@@ -657,8 +661,8 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
     // recorded by a member that failed cannot relabel a later member's own
     // reason (the per-member analogue of the rule this used to apply once).
     auto plan_failure_code = [&] {
-        const bool offline = mcpp::platform::env::offline_mode()
-                          || mcpp::platform::env::no_auto_install();
+        const bool offline = mcpp::effects::offline_mode()
+                          || mcpp::effects::no_auto_install();
         const bool wasOfflineDownload = mcpp::build::refusal::take()
             == mcpp::build::refusal::Code::OfflineDownloadRequired;
         return std::string(wasOfflineDownload && offline
@@ -693,7 +697,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
         // mcpp narrates on standard error, but planning may start programs
         // that inherit standard output (build programs, installers); the
         // document is printed after this scope, alone.
-        mcpp::platform::terminal::StdoutToStderr narration;
+        mcpp::ui::terminal::StdoutToStderr narration;
         // A group whose plan fails is planned member by member (appended to
         // `requests` and reached by this same loop), so a member's failure
         // still affects that member only (SPEC-005 R5.2).
@@ -864,7 +868,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
     const auto selector = std::format(
         "spec={}\ntarget={}\ntoolchain={}\nprofile={}\nfeatures={}\n"
         "cap={}\naccel={}\nstatic={}\npackage={}\nworkspace={}{}",
-        spec, ov.target_triple, mcpp::platform::env::get("MCPP_TOOLCHAIN").value_or(""),
+        spec, ov.target_triple, mcpp::invocation::get("MCPP_TOOLCHAIN").value_or(""),
         ov.profile, ov.features, ov.capabilities, ov.accel, ov.force_static,
         packages, parsed.is_flag_set("workspace"),
         excludes.empty() ? std::string{} : std::format("\nexclude={}", excludes));
@@ -1333,7 +1337,7 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
     // Every path ninja hands this edge is relative to the build directory,
     // and a deep build directory takes it past the Windows path limit.
-    outPath = mcpp::platform::fs::extended_length(outPath);
+    outPath = mcpplibs::os::fs::extended(outPath);
 
     bool single = parsed.is_flag_set("single");
 
@@ -1349,7 +1353,7 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // directory (pack drive and selection design 2026-10-01, B1).
     std::map<std::string, std::string, std::less<>> moduleMap;
     if (auto mm = parsed.option_or_empty("module-map").value(); !mm.empty()) {
-        std::ifstream is{mcpp::platform::fs::extended_length(std::filesystem::path{mm})};
+        std::ifstream is{mcpplibs::os::fs::extended(std::filesystem::path{mm})};
         if (!is) {
             std::println(stderr, "error: cannot read module map '{}'", mm);
             return 1;
@@ -1373,7 +1377,7 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
         std::string expImports  = parsed.option_or_empty("expect-imports").value();
         if (!expProvides.empty() || !expImports.empty() ||
             parsed.is_flag_set("expect-none")) {
-            std::ifstream is{mcpp::platform::fs::extended_length(
+            std::ifstream is{mcpplibs::os::fs::extended(
                 std::filesystem::path{parsed.positional(0)})};
             std::string ddiBody{std::istreambuf_iterator<char>(is), {}};
             auto unit = mcpp::dyndep::parse_ddi(ddiBody);
@@ -1396,12 +1400,12 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
             }
         }
         body = mcpp::dyndep::emit_dyndep_single(
-            mcpp::platform::fs::extended_length(
+            mcpplibs::os::fs::extended(
                 std::filesystem::path{parsed.positional(0)}), opts);
     } else {
         std::vector<std::filesystem::path> ddis;
         for (std::size_t i = 0; i < parsed.positional_count(); ++i)
-            ddis.emplace_back(mcpp::platform::fs::extended_length(
+            ddis.emplace_back(mcpplibs::os::fs::extended(
                 std::filesystem::path{parsed.positional(i)}));
         body = mcpp::dyndep::emit_dyndep_from_files(ddis, /*stdImports=*/{}, opts);
     }
@@ -1469,7 +1473,7 @@ export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
             break;
         }
     }
-    return mcpp::platform::process::run_exec(std::vector<std::string>(command.begin(), command.end()));
+    return mcpp::run::run_exec(std::vector<std::string>(command.begin(), command.end()));
 }
 
 // `mcpp okimage-finish --okld <okld> -- <linked> <image> [<needed.okso>…]`
@@ -1499,7 +1503,7 @@ export int cmd_okimage_finish(const mcpplibs::cmdline::ParsedArgs& parsed,
     }
     auto run = [&](std::vector<std::string> argv) {
         int spawnError = 0;
-        auto r = mcpp::platform::process::capture_exec(argv, {}, {}, &spawnError);
+        auto r = mcpp::run::capture_exec(argv, {}, {}, &spawnError);
         if (spawnError != 0) {
             std::println(stderr, "error: cannot start {}: {}", okld,
                          std::generic_category().message(spawnError));
@@ -1536,7 +1540,7 @@ export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {
         mcpp::build::stage::StageOptions opts;
         std::string verify = parsed.option_or_empty("verify").value();
         if (verify.empty())
-            if (const char* e = std::getenv("MCPP_STAGE_VERIFY"); e && *e) verify = e;
+            if (auto e = mcpp::invocation::get("MCPP_STAGE_VERIFY")) verify = *e;
         if (!verify.empty()) opts.verify = mcpp::build::stage::parse_verify(verify);
         std::ifstream in(std::filesystem::path{listFile}, std::ios::binary);
         if (!in) {
@@ -1559,13 +1563,13 @@ export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {
             auto [it, fresh] = index.emplace(dst, groups.size());
             if (fresh) { groups.push_back({dst, {}}); spelled.emplace_back(); }
             groups[it->second].second.push_back(
-                mcpp::platform::fs::extended_length(std::filesystem::path{src}));
+                mcpplibs::os::fs::extended(std::filesystem::path{src}));
             spelled[it->second].push_back(src);
         }
         for (std::size_t g = 0; g < groups.size(); ++g) {
             auto const& [dst, srcs] = groups[g];
             auto r = mcpp::build::stage::stage_files(
-                srcs, mcpp::platform::fs::extended_length(std::filesystem::path{dst}), opts);
+                srcs, mcpplibs::os::fs::extended(std::filesystem::path{dst}), opts);
             if (!r) {
                 // One edge places the whole list, so ninja's echo of the
                 // command no longer shows which files were involved; the
@@ -1591,19 +1595,19 @@ export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {
     mcpp::build::stage::StageOptions opts;
     std::string verify = parsed.option_or_empty("verify").value();
     if (verify.empty()) {
-        if (const char* e = std::getenv("MCPP_STAGE_VERIFY"); e && *e)
-            verify = e;
+        if (auto e = mcpp::invocation::get("MCPP_STAGE_VERIFY"))
+            verify = *e;
     }
     if (!verify.empty())
         opts.verify = mcpp::build::stage::parse_verify(verify);
 
     std::vector<std::filesystem::path> sources;
     for (std::size_t i = 0; i < parsed.positional_count(); ++i)
-        sources.push_back(mcpp::platform::fs::extended_length(
+        sources.push_back(mcpplibs::os::fs::extended(
             std::filesystem::path{parsed.positional(i)}));
 
     auto r = mcpp::build::stage::stage_files(
-        sources, mcpp::platform::fs::extended_length(outPath), opts);
+        sources, mcpplibs::os::fs::extended(outPath), opts);
     if (!r) {
         std::println(stderr, "error: {}", r.error().message);
         return 1;
@@ -1623,8 +1627,8 @@ export int cmd_bmi_equal(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return 2;
     }
     const bool same = mcpp::build::stage::bmi_equivalent(
-        mcpp::platform::fs::extended_length(std::filesystem::path{parsed.positional(0)}),
-        mcpp::platform::fs::extended_length(std::filesystem::path{parsed.positional(1)}));
+        mcpplibs::os::fs::extended(std::filesystem::path{parsed.positional(0)}),
+        mcpplibs::os::fs::extended(std::filesystem::path{parsed.positional(1)}));
     // Exit status IS the answer, so it can drive `if ...; then` in the rule
     // exactly the way `cmp -s` did. No output on either path: this runs once per
     // module compile and any chatter would land in the build log.
@@ -1658,7 +1662,7 @@ export int cmd_coff_def(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // `[targets.<n>] exports`, one pattern per line (ninja_backend writes it).
     std::vector<std::string> patterns;
     if (auto v = parsed.value("exports-file")) {
-        std::ifstream in(mcpp::platform::fs::extended_length(std::filesystem::path{*v}));
+        std::ifstream in(mcpplibs::os::fs::extended(std::filesystem::path{*v}));
         if (!in) {
             std::println(stderr, "error: cannot read the exports list '{}'", *v);
             return 1;
@@ -1716,7 +1720,7 @@ export int cmd_coff_def(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
 
     std::error_code ec;
-    const auto outOpen = mcpp::platform::fs::extended_length(out);
+    const auto outOpen = mcpplibs::os::fs::extended(out);
     if (outOpen.has_parent_path())
         std::filesystem::create_directories(outOpen.parent_path(), ec);
     std::ofstream o(outOpen, std::ios::binary | std::ios::trunc);
@@ -1769,7 +1773,7 @@ export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // Every file path this edge opens goes through `file_path`; `--self` does
     // not, because it names an executable to spawn rather than a file to open.
     const auto file_path = [&](std::string_view name) {
-        return mcpp::platform::fs::extended_length(
+        return mcpplibs::os::fs::extended(
             std::filesystem::path{opt_value(parsed, name)});
     };
     req.bmi       = file_path("bmi");
@@ -1797,11 +1801,11 @@ export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
 // The supervisor. Detached by phase 1; never named by a build edge.
 export int cmd_bmi_supervise(const mcpplibs::cmdline::ParsedArgs& parsed) {
-    const auto slot = mcpp::platform::fs::extended_length(
+    const auto slot = mcpplibs::os::fs::extended(
         std::filesystem::path{opt_value(parsed, "slot")});
-    const auto token = mcpp::platform::fs::extended_length(
+    const auto token = mcpplibs::os::fs::extended(
         std::filesystem::path{opt_value(parsed, "token")});
-    const auto command = read_command_file(mcpp::platform::fs::extended_length(
+    const auto command = read_command_file(mcpplibs::os::fs::extended(
         std::filesystem::path{opt_value(parsed, "command-file")}));
     // Only `--slot` is checked here. An empty COMMAND is handed to supervise()
     // on purpose: it is the one place that can record the failure in the file
@@ -1816,9 +1820,9 @@ export int cmd_bmi_supervise(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
 // Phase 2: join the detached compiler before anything reads its object.
 export int cmd_bmi_await(const mcpplibs::cmdline::ParsedArgs& parsed) {
-    const auto slot = mcpp::platform::fs::extended_length(
+    const auto slot = mcpplibs::os::fs::extended(
         std::filesystem::path{opt_value(parsed, "slot")});
-    const auto object = mcpp::platform::fs::extended_length(
+    const auto object = mcpplibs::os::fs::extended(
         std::filesystem::path{opt_value(parsed, "object")});
     if (slot.empty()) {
         std::println(stderr, "error: bmi-await needs --slot");

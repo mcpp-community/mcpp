@@ -13,7 +13,7 @@ export module mcpp.fallback.probe_sysroot;
 import std;
 import mcpp.provider;
 import mcpp.provider.select;
-import mcpp.platform;
+import mcpp.toolchain.apple_sdk;
 import mcpp.log;
 
 export namespace mcpp::fallback {
@@ -140,7 +140,7 @@ parse_clang_cfg_sysroot(const std::filesystem::path& compilerBin) {
 // macOS fallback: use xcrun to discover the SDK path.
 std::optional<std::filesystem::path>
 probe_macos_sdk_sysroot() {
-    auto sdk = mcpp::platform::macos::sdk_path();
+    auto sdk = mcpp::toolchain::apple::sdk_path();
     if (sdk) {
         mcpp::log::verbose("probe", std::format("sysroot (macOS SDK): {}", sdk->string()));
     }

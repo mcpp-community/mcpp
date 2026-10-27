@@ -3,7 +3,8 @@
 import std;
 import mcpp.ui;
 import mcpp.fetcher.progress;
-import mcpp.platform.process;
+import mcpp.run;
+import mcpplibs.os.platform;
 
 // W11: one renderer for every acquisition, with a terminal mode (redrawn in
 // place) and a plain mode; either prints one line per item (#734). The renderer
@@ -89,19 +90,14 @@ TEST(ProgressBarLive, RedrawsInPlace) {
     EXPECT_NE(out.find('\r'), std::string::npos) << out;
 }
 
-#if !defined(_WIN32)
 TEST(StreamingBounded, ACarriageReturnEndsALineOnlyWhenAsked) {
-    const auto cmd = std::string("printf 'a\\rb\\r\\nc\\n'");
+    if constexpr (mcpplibs::os::is_windows) GTEST_SKIP() << "printf is a POSIX program";
+    const std::vector<std::string> argv{ "printf", "a\\rb\\r\\nc\\n" };
     std::vector<std::string> plain, split;
-    bool timedOut = false;
-    mcpp::platform::process::run_streaming_bounded(cmd,
-        [&](std::string_view l) { plain.emplace_back(l); },
-        std::chrono::milliseconds{0}, std::chrono::seconds{30}, &timedOut);
-    mcpp::platform::process::run_streaming_bounded(cmd,
-        [&](std::string_view l) { split.emplace_back(l); },
-        std::chrono::milliseconds{0}, std::chrono::seconds{30}, &timedOut,
-        /*split_on_cr=*/true);
+    (void)mcpp::run::execute(argv, { .idle = std::chrono::seconds{30},
+        .on_line = [&](std::string_view l) { plain.emplace_back(l); } });
+    (void)mcpp::run::execute(argv, { .idle = std::chrono::seconds{30},
+        .on_line = [&](std::string_view l) { split.emplace_back(l); }, .split_on_cr = true });
     EXPECT_EQ(plain, (std::vector<std::string>{"a\rb", "c"}));
     EXPECT_EQ(split, (std::vector<std::string>{"a", "b", "c"}));
 }
-#endif

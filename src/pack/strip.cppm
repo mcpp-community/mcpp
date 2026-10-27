@@ -68,7 +68,8 @@ export module mcpp.pack.strip;
 
 import std;
 import mcpp.pack.binfmt;
-import mcpp.platform;
+import mcpp.build.command_line;
+import mcpp.run;
 
 export namespace mcpp::pack {
 
@@ -129,22 +130,22 @@ namespace mcpp::pack {
 
 namespace {
 
-std::expected<void, std::string> run_tool(const std::string& cmd) {
-    auto r = mcpp::platform::process::capture(cmd + " 2>&1");
+std::expected<void, std::string> run_tool(const std::vector<std::string>& argv) {
+    auto r = mcpp::run::execute(argv);
     if (r.exit_code != 0)
         return std::unexpected(std::format(
-            "  command: {}\n  output : {}", cmd, r.output));
+            "  command: {}\n  output : {}", mcpp::build::command_line::display(argv), r.output));
     return {};
 }
 
-std::string join_quoted(const std::filesystem::path& tool,
-                        const std::vector<std::string>& args,
-                        const std::filesystem::path& file)
+std::vector<std::string> tool_argv(const std::filesystem::path& tool,
+                                   const std::vector<std::string>& args,
+                                   const std::filesystem::path& file)
 {
-    std::string cmd = mcpp::platform::shell::quote(tool.string());
-    for (auto const& a : args) cmd += " " + mcpp::platform::shell::quote(a);
-    cmd += " " + mcpp::platform::shell::quote(file.string());
-    return cmd;
+    std::vector<std::string> argv{ tool.string() };
+    argv.insert(argv.end(), args.begin(), args.end());
+    argv.push_back(file.string());
+    return argv;
 }
 
 std::uintmax_t size_of(const std::filesystem::path& p) {
@@ -241,27 +242,22 @@ strip_artifact(const std::filesystem::path& artifact,
         if (ec) return std::unexpected(std::format(
             "cannot create '{}': {}", debugDir.string(), ec.message()));
         out.debugFile = debugDir / (artifact.filename().string() + ".debug");
-        auto cmd = std::format("{} --only-keep-debug {} {}",
-            mcpp::platform::shell::quote(tools.objcopy.string()),
-            mcpp::platform::shell::quote(artifact.string()),
-            mcpp::platform::shell::quote(out.debugFile.string()));
-        if (auto r = run_tool(cmd); !r) return std::unexpected(std::format(
+        if (auto r = run_tool({ tools.objcopy.string(), "--only-keep-debug", artifact.string(),
+                                out.debugFile.string() }); !r) return std::unexpected(std::format(
             "cannot separate debug information from '{}'.\n{}",
             artifact.string(), r.error()));
     }
 
     // ── strip ─────────────────────────────────────────────────────────
-    if (auto r = run_tool(join_quoted(tools.strip, strip_args(shape), artifact)); !r)
+    if (auto r = run_tool(tool_argv(tools.strip, strip_args(shape), artifact)); !r)
         return std::unexpected(std::format(
             "cannot strip '{}'.\n{}", artifact.string(), r.error()));
 
     // ── and point the stripped artifact back at its symbols ───────────
     if (separate) {
-        auto cmd = std::format("{} --add-gnu-debuglink={} {}",
-            mcpp::platform::shell::quote(tools.objcopy.string()),
-            mcpp::platform::shell::quote(out.debugFile.string()),
-            mcpp::platform::shell::quote(artifact.string()));
-        if (auto r = run_tool(cmd); !r) return std::unexpected(std::format(
+        if (auto r = run_tool({ tools.objcopy.string(),
+                                "--add-gnu-debuglink=" + out.debugFile.string(),
+                                artifact.string() }); !r) return std::unexpected(std::format(
             "cannot add the debug link to '{}'.\n{}", artifact.string(), r.error()));
     }
 

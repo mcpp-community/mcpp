@@ -2,11 +2,10 @@
 
 import std;
 import mcpp.pack.library;
-import mcpp.platform.shell;
 import mcpp.toolchain.dialect;
 
 using mcpp::pack::archive_remove_command;
-using mcpp::platform::shell::quote;
+using Argv = std::vector<std::string>;
 using mcpp::toolchain::gnu_dialect;
 using mcpp::toolchain::msvc_dialect;
 
@@ -26,10 +25,8 @@ using mcpp::toolchain::msvc_dialect;
 // in is a third fact, and it had no test because it had no seam. So the assembly
 // was given one.
 //
-// Host-independent by construction: the expectations are built with the same
-// `quote` these commands are built with, because what is under test is the
-// spelling and the ORDER — shell quoting has its own tests in test_shell.cpp,
-// and duplicating its rules here would only pin them twice, differently.
+// Host-independent by construction: the command is an argument vector, so
+// what is under test is the spelling and the ORDER and nothing else.
 
 namespace {
 
@@ -41,18 +38,14 @@ TEST(ArchiveRemoveCommand, GnuTakesOneVerbThenTheArchiveThenEveryMember) {
     auto cmd = archive_remove_command("/usr/bin/ar", "bin/libmathkit.a", kMembers,
                                       gnu_dialect().archiveRemoveArg,
                                       gnu_dialect().archiveRemoveTakesArchiveFirst);
-    EXPECT_EQ(cmd, quote("/usr/bin/ar") + " d " + quote("bin/libmathkit.a")
-                     + " " + quote("mathkit.m.o") + " " + quote("api.m.o"));
+    EXPECT_EQ(cmd, (Argv{ "/usr/bin/ar", "d", "bin/libmathkit.a", "mathkit.m.o", "api.m.o" }));
 }
 
 TEST(ArchiveRemoveCommand, MsvcTakesOneFlagPerMemberAndTheArchiveLast) {
     auto cmd = archive_remove_command("lib.exe", "bin/mathkit.lib", kMembers,
                                       msvc_dialect().archiveRemoveArg,
                                       msvc_dialect().archiveRemoveTakesArchiveFirst);
-    EXPECT_EQ(cmd, quote("lib.exe")
-                     + " " + quote("/REMOVE:mathkit.m.o")
-                     + " " + quote("/REMOVE:api.m.o")
-                     + " " + quote("bin/mathkit.lib"));
+    EXPECT_EQ(cmd, (Argv{ "lib.exe", "/REMOVE:mathkit.m.o", "/REMOVE:api.m.o", "bin/mathkit.lib" }));
 }
 
 // The two rows in dialect.cppm are the input to the assembly above. Pinned here
@@ -73,8 +66,8 @@ TEST(ArchiveRemoveCommand, TheMsvcFormCarriesNoArVerbAndNoLeadingArchive) {
     auto cmd = archive_remove_command("lib.exe", "bin/mathkit.lib", kMembers,
                                       msvc_dialect().archiveRemoveArg,
                                       msvc_dialect().archiveRemoveTakesArchiveFirst);
-    EXPECT_EQ(cmd.find(" d "), std::string::npos);
-    EXPECT_LT(cmd.find("/REMOVE:mathkit.m.o"), cmd.find("mathkit.lib"));
+    EXPECT_EQ(std::ranges::find(cmd, "d"), cmd.end());
+    EXPECT_LT(std::ranges::find(cmd, "/REMOVE:mathkit.m.o"), std::ranges::find(cmd, "bin/mathkit.lib"));
 }
 
 TEST(ArchiveRemoveCommand, ASingleMemberIsSpelledTheSameWayAsMany) {
@@ -82,9 +75,8 @@ TEST(ArchiveRemoveCommand, ASingleMemberIsSpelledTheSameWayAsMany) {
     // "and-then-the-rest" bug hides.
     auto gnu = archive_remove_command("ar", "libx.a", { "only.m.o" },
                                       gnu_dialect().archiveRemoveArg, true);
-    EXPECT_EQ(gnu, quote("ar") + " d " + quote("libx.a") + " " + quote("only.m.o"));
+    EXPECT_EQ(gnu, (Argv{ "ar", "d", "libx.a", "only.m.o" }));
     auto msvc = archive_remove_command("lib.exe", "x.lib", { "only.m.o" },
                                        msvc_dialect().archiveRemoveArg, false);
-    EXPECT_EQ(msvc, quote("lib.exe") + " " + quote("/REMOVE:only.m.o")
-                      + " " + quote("x.lib"));
+    EXPECT_EQ(msvc, (Argv{ "lib.exe", "/REMOVE:only.m.o", "x.lib" }));
 }

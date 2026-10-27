@@ -12,7 +12,7 @@ export module mcpp.publish.pipeline;
 import std;
 import mcpp.manifest;
 import mcpp.modgraph.scanner;
-import mcpp.platform;
+import mcpp.run;
 import mcpp.project;
 import mcpp.publish.normalize;
 import mcpp.publish.xpkg_emit;
@@ -98,9 +98,7 @@ export int publish_package(bool dry_run, bool allow_dirty) {
 
     // Sanity: working tree clean (best-effort via git status).
     if (!allow_dirty && std::filesystem::exists(*root / ".git")) {
-        auto gitStatus = mcpp::platform::process::capture(
-            std::format("git -C {} status --porcelain 2>&1",
-                        mcpp::platform::shell::quote(root->string())));
+        auto gitStatus = mcpp::run::execute({ "git", "-C", root->string(), "status", "--porcelain" });
         std::string out = gitStatus.output;
         if (!out.empty()) {
             mcpp::ui::error("working tree has uncommitted changes; pass --allow-dirty to skip this check");

@@ -1,4 +1,4 @@
-// mcpp.platform.capacity::recommended_jobs — the `--jobs auto` formula.
+// mcpp.build.capacity::recommended_jobs — the `--jobs auto` formula.
 //
 // Asserted against SYNTHETIC capacities, not the machine running the test: a
 // test that asked the host how many cores it has would assert nothing (it would
@@ -6,10 +6,10 @@
 // runner.
 #include <gtest/gtest.h>
 
-import mcpp.platform.capacity;
+import mcpp.build.capacity;
 
-using mcpp::platform::capacity::HostCapacity;
-using mcpp::platform::capacity::recommended_jobs;
+using mcpp::build::capacity::HostCapacity;
+using mcpp::build::capacity::recommended_jobs;
 
 namespace {
 constexpr unsigned long long GiB = 1024ull * 1024 * 1024;
@@ -75,7 +75,7 @@ TEST(RecommendedJobs, PerJobEstimateIsAParameter) {
 // The real machine must at least produce something sane — a weak assertion on
 // purpose, since the value is host-dependent.
 TEST(RecommendedJobs, HostQueryIsPlausible) {
-    const auto cap = mcpp::platform::capacity::host_capacity();
+    const auto cap = mcpp::build::capacity::host_capacity();
     EXPECT_GE(cap.logicalCores, 1);
     EXPECT_GE(cap.physicalCores, 1);
     EXPECT_LE(cap.physicalCores, cap.logicalCores);

@@ -2,11 +2,12 @@
 
 import std;
 import mcpp.toolchain.model;
+import mcpp.toolchain.platform;
 
 // Whether the produced artifact can be fully statically linked (`-static`) is
 // a property of the TARGET, never of the machine doing the build.
 //
-// mcpp used to answer it with `mcpp::platform::supports_full_static`, a host
+// mcpp used to answer it with `mcpp::toolchain::platform::supports_full_static`, a host
 // constant defined as `is_linux`. On a Linux host that happens to give the
 // right answer for every Linux target, so the bug stayed invisible — it only
 // surfaces once a non-Linux host cross-compiles to Linux, where `-static`

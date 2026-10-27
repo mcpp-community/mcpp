@@ -11,7 +11,8 @@ import mcpp.build.stage;
 import mcpp.build.refusal;
 import mcpp.build.version_floor;
 import mcpp.home;
-import mcpp.platform.axis;
+import mcpp.invocation;
+import mcpp.runtime.search;
 import mcpp.libs.json;
 import mcpp.log;
 import mcpp.manifest;
@@ -38,7 +39,6 @@ import mcpp.build.plan;
 import mcpp.build.schedule.policy;
 import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
 import mcpp.build.distribution;   // dist::Role / dist::Contract to_string
-import mcpp.platform.capacity;   // the host fallback handed to schedule::decide
 import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
 import mcpp.build.runtime_validation;  // declared artifact -> identity verdict
 import mcpp.build.cache_key;
@@ -54,9 +54,7 @@ import mcpp.config;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.runtime.binding;
-import mcpp.platform.runtime_search;
 import mcpp.toolchain.post_install;
-import mcpp.platform;
 import mcpp.build.runner_lookup;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
@@ -291,7 +289,7 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             // THE FAILURE NAMES THE DIFFERENCE. "The lock is out of date" is
             // true and useless; which package moved, from which version to
             // which, is what the reader does something about.
-            if (mcpp::platform::env::get("MCPP_LOCKED").value_or("") == "1") {
+            if (mcpp::invocation::get("MCPP_LOCKED").value_or("") == "1") {
                 auto prior = mcpp::lockfile::load(lockPath);
                 if (!prior) {
                     return std::unexpected(std::format(
@@ -432,7 +430,7 @@ void step13_resolution_json(PrepareState& state, BuildContext& ctx) {
             });
         }
         nlohmann::json binding = nlohmann::json::parse(
-            mcpp::platform::runtime::serialize_runtime_binding(
+            mcpp::runtime::serialize_runtime_binding(
                 ctx.plan.runtimeBinding), nullptr, false);
         if (binding.is_discarded()) binding = nlohmann::json::object();
 
@@ -470,9 +468,9 @@ void step13_resolution_json(PrepareState& state, BuildContext& ctx) {
             closure.push_back({
                 {"path", dir.path.generic_string()},
                 {"origin", std::string(
-                    mcpp::platform::search::to_string(dir.origin))},
+                    mcpp::runtime::search::to_string(dir.origin))},
                 {"machine_local",
-                    mcpp::platform::search::is_machine_local(dir.origin)},
+                    mcpp::runtime::search::is_machine_local(dir.origin)},
             });
         }
         nlohmann::json search = {

@@ -33,8 +33,7 @@ export module mcpp.pm.resolver;
 
 import std;
 import mcpp.manifest;
-import mcpp.platform;
-import mcpp.platform.axis;
+import mcpp.toolchain.platform;
 import mcpp.pm.compat;
 import mcpp.pm.dep_spec;
 import mcpp.pm.index_route;
@@ -45,7 +44,7 @@ export namespace mcpp::pm {
 // xpkg.lua's `xpm.<key>` uses these names. (Distinct from
 // `kCurrentPlatform` in cli.cppm, which is the [toolchain] table key —
 // "macos" vs "macosx".)
-inline constexpr std::string_view kXpkgPlatform = mcpp::platform::xpkg_platform;
+inline constexpr std::string_view kXpkgPlatform = mcpp::toolchain::platform::xpkg_platform;
 
 // Returns true if `v` is a SemVer constraint (caret, tilde, range, glob,
 // `*`, or empty) rather than a literal exact version. Empty counts as
@@ -63,7 +62,7 @@ std::expected<std::string, std::string>
 resolve_semver(std::string_view ns, std::string_view shortName,
                std::string_view constraint,
                const mcpp::pm::IndexRoute& route,
-               const mcpp::platform::PlatformKey& platform);
+               const mcpp::toolchain::platform::PlatformKey& platform);
 
 // Try to AND-merge two version constraints and resolve to a single
 // concrete version satisfying both. Uses structured (ns, shortName).
@@ -72,7 +71,7 @@ try_merge_semver(std::string_view ns, std::string_view shortName,
                  std::string_view a,
                  std::string_view b,
                  const mcpp::pm::IndexRoute& route,
-                 const mcpp::platform::PlatformKey& platform);
+                 const mcpp::toolchain::platform::PlatformKey& platform);
 
 // ─── Legacy overloads (COMPAT(internal:legacy-resolver-api)) ─────────────────────
 
@@ -103,7 +102,7 @@ std::expected<std::string, std::string>
 resolve_semver(std::string_view ns, std::string_view shortName,
                std::string_view constraint,
                const mcpp::pm::IndexRoute& route,
-               const mcpp::platform::PlatformKey& platform)
+               const mcpp::toolchain::platform::PlatformKey& platform)
 {
     namespace vr = mcpp::version_req;
     auto qname = mcpp::pm::compat::qualified_name(ns, shortName);
@@ -261,7 +260,7 @@ try_merge_semver(std::string_view ns, std::string_view shortName,
                  std::string_view a,
                  std::string_view b,
                  const mcpp::pm::IndexRoute& route,
-                 const mcpp::platform::PlatformKey& platform)
+                 const mcpp::toolchain::platform::PlatformKey& platform)
 {
     auto canon = [](std::string_view v) -> std::string {
         if (v.empty() || v == "*") return std::string{};
@@ -299,7 +298,7 @@ resolve_semver(std::string_view name,
     // axis explicitly rather than inheriting a silent default (#254).
     return resolve_semver(resolved.namespace_, resolved.shortName,
                           constraint, route,
-                          mcpp::platform::HostPlatform::current());
+                          mcpp::toolchain::platform::HostPlatform::current());
 }
 
 std::expected<std::string, std::string>
@@ -312,7 +311,7 @@ try_merge_semver(std::string_view name,
     // Legacy overload — see the resolve_semver note above.
     return try_merge_semver(resolved.namespace_, resolved.shortName,
                             a, b, route,
-                            mcpp::platform::HostPlatform::current());
+                            mcpp::toolchain::platform::HostPlatform::current());
 }
 
 } // namespace mcpp::pm

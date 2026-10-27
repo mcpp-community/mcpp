@@ -10,7 +10,7 @@ import mcpp.provider.xlings;
 import mcpp.provider.xlings.subos_info;
 import mcpp.provider.xlings.legacy_dirs;
 import mcpp.libs.json;
-import mcpp.platform;
+import mcpplibs.os.fs;
 
 export namespace mcpp::provider::xlings {
 
@@ -380,11 +380,11 @@ public:
         std::error_code ec;
         auto link = d.local;
         link += std::format(".mcpp-link-{:x}", std::random_device{}());
-        if (!mcpp::platform::create_directory_link(d.upstream, link))
+        if (!mcpplibs::os::fs::create_link(d.upstream, link, true).has_value())
             return std::format("cannot link {} to {}", link.string(), d.upstream.string());
-        if (auto swapped = mcpp::platform::exchange_paths(link, d.local); !swapped) {
+        if (auto swapped = mcpplibs::os::fs::exchange(link, d.local); !swapped) {
             std::filesystem::remove(link, ec);
-            return swapped.error();
+            return swapped.error().message();
         }
         // The copy this home installed, now at the scratch name.
         std::filesystem::remove_all(link, ec);
@@ -414,9 +414,7 @@ public:
             return;
         mcpp::provider::Location global = env_;
         global.projectDir.clear();
-        (void)run_capture(build_command_prefix(global) + " config --runtime "
-                          + mcpp::platform::shell::quote(runtimeId) + " "
-                          + std::string(mcpp::platform::shell::silent_redirect));
+        select_runtime(global, runtimeId);
     }
     void ensure_patchelf(bool quiet, const mcpp::provider::BootstrapProgressCallback& cb) const override {
         xlings::ensure_patchelf(env_, quiet, cb);

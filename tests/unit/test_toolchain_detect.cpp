@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.platform.env;
+import mcpp.invocation;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.probe;
 
@@ -86,7 +86,7 @@ TEST(ToolchainDetect, IgnoresTargetRuntimeLibraryPathDuringProbe) {
     auto hostile = make_hostile_ld_dir();
     TempDirGuard cleanup_ld{hostile};
 
-    mcpp::platform::env::ScopedEnv ld("LD_LIBRARY_PATH", hostile.string());
+    mcpp::invocation::ScopedEnv ld("LD_LIBRARY_PATH", hostile.string());
 
     auto tc = detect(clang);
     ASSERT_TRUE(tc.has_value()) << tc.error().message;

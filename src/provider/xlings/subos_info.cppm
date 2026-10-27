@@ -37,7 +37,7 @@ export module mcpp.provider.xlings.subos_info;
 
 import std;
 import mcpp.libs.json;
-import mcpp.platform;
+import mcpp.runtime.launch_env;
 import mcpp.provider;
 
 export namespace mcpp::provider::xlings::subos {
@@ -277,7 +277,7 @@ resolve_env(const mcpp::provider::runtime_info::Info& info, const std::filesyste
         return v;
     };
 
-    const std::string sep = mcpp::platform::env::path_list_separator();
+    const std::string sep = mcpp::runtime::launch_env::path_list_separator();
 
     // Does the list already contain `value` as a WHOLE element? Compared
     // element-wise rather than by substring: a plain `find` would consider

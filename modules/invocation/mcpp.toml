@@ -1,0 +1,16 @@
+# invocation — the environment of one invocation of mcpp.
+#
+# mcpp states variables for itself and for every program it starts (its home,
+# the constraints of the run, a hook's variables) without writing them into
+# its own process environment. This package is that statement, and every
+# package of mcpp reads the environment through it, so a variable stated for
+# an invocation is the value each of them reads (design 2026-10-26 §25.3).
+[package]
+name        = "invocation"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "The environment of one invocation of mcpp: statements over the started environment"
+license     = "Apache-2.0"
+
+[dependencies.mcpplibs]
+os = { git = "https://github.com/mcpplibs/os.git", branch = "os-0.2.0" }

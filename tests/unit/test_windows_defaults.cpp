@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.registry;
@@ -15,7 +15,7 @@ import mcpp.build.prepare;
 // Windows SDK, so a default that targets the MSVC ABI there can never build.
 
 TEST(WindowsDefaults, HasUsableMsvcIsFalseOffWindows) {
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         GTEST_SKIP() << "windows behavior is covered by e2e 182";
     } else {
         EXPECT_FALSE(mcpp::toolchain::msvc::has_usable_msvc());

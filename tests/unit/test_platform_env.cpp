@@ -2,33 +2,20 @@
 #include <cstdlib>
 
 import std;
-import mcpp.platform.env;
+import mcpp.invocation;
+import mcpp.runtime.launch_env;
 
 namespace {
 
 class ScopedVar {
 public:
-    ScopedVar(std::string name, const char* value) : name_(std::move(name)) {
-        if (const char* old = std::getenv(name_.c_str()); old) { had_ = true; old_ = old; }
-        apply(value);
-    }
-    ~ScopedVar() { apply(had_ ? old_.c_str() : nullptr); }
-    ScopedVar(const ScopedVar&) = delete;
-    ScopedVar& operator=(const ScopedVar&) = delete;
+    ScopedVar(std::string name, const char* value)
+        : inner_(std::move(name), value ? std::optional<std::string>(value) : std::nullopt) {}
 private:
-    void apply(const char* v) {
-#if defined(_WIN32)
-        ::_putenv_s(name_.c_str(), v ? v : "");
-#else
-        if (v) ::setenv(name_.c_str(), v, 1); else ::unsetenv(name_.c_str());
-#endif
-    }
-    std::string name_;
-    bool had_ = false;
-    std::string old_;
+    mcpp::invocation::ScopedEnv inner_;   // stated for this invocation, as mcpp states its own
 };
 
-std::string sep() { return mcpp::platform::env::path_list_separator(); }
+std::string sep() { return mcpp::runtime::launch_env::path_list_separator(); }
 
 std::string join(std::initializer_list<std::string_view> parts) {
     std::string out;
@@ -51,14 +38,14 @@ std::string host(std::string_view p) {
 TEST(PlatformEnv, StripPrivateGlibcDropsOnlyPayloadEntries) {
     auto in = join({"/usr/lib", "/home/u/.mcpp/registry/data/xpkgs/xim-x-glibc/2.39/lib64",
                     "/opt/mine"});
-    EXPECT_EQ(mcpp::platform::env::strip_private_glibc(in),
+    EXPECT_EQ(mcpp::runtime::launch_env::strip_private_glibc(in),
               join({host("/usr/lib"), host("/opt/mine")}));
 }
 
 TEST(PlatformEnv, StripPrivateGlibcCanEmptyTheList) {
-    EXPECT_EQ(mcpp::platform::env::strip_private_glibc(
+    EXPECT_EQ(mcpp::runtime::launch_env::strip_private_glibc(
                   "/x/xpkgs/xim-x-glibc/2.42/lib64"), "");
-    EXPECT_EQ(mcpp::platform::env::strip_private_glibc(""), "");
+    EXPECT_EQ(mcpp::runtime::launch_env::strip_private_glibc(""), "");
 }
 
 // The regression this guards (mcpp#311 investigation): the composed value
@@ -75,7 +62,7 @@ TEST(PlatformEnv, PrependPathListSanitizesTheInheritedLoaderTail) {
     ScopedVar ld("LD_LIBRARY_PATH", inherited.c_str());
 
     std::vector<std::filesystem::path> dirs{"/payload/lib"};
-    EXPECT_EQ(mcpp::platform::env::prepend_path_list("LD_LIBRARY_PATH", dirs),
+    EXPECT_EQ(mcpp::runtime::launch_env::prepend_path_list("LD_LIBRARY_PATH", dirs),
               join({host("/payload/lib"), host("/first"), host("/last")}));
 }
 
@@ -87,7 +74,7 @@ TEST(PlatformEnv, PrependPathListKeepsExplicitPayloadDirs) {
     std::vector<std::filesystem::path> dirs{
         "/home/u/.mcpp/registry/data/xpkgs/xim-x-glibc/2.42/lib64"};
     // Explicit dir kept, inherited (older, mismatched) entry dropped.
-    EXPECT_EQ(mcpp::platform::env::prepend_path_list("LD_LIBRARY_PATH", dirs),
+    EXPECT_EQ(mcpp::runtime::launch_env::prepend_path_list("LD_LIBRARY_PATH", dirs),
               host("/home/u/.mcpp/registry/data/xpkgs/xim-x-glibc/2.42/lib64"));
 }
 
@@ -97,13 +84,13 @@ TEST(PlatformEnv, PrependPathListLeavesPathUntouched) {
     ScopedVar path("PATH", inherited.c_str());
 
     std::vector<std::filesystem::path> dirs{"/tools/bin"};
-    EXPECT_EQ(mcpp::platform::env::prepend_path_list("PATH", dirs),
+    EXPECT_EQ(mcpp::runtime::launch_env::prepend_path_list("PATH", dirs),
               join({host("/tools/bin"), "/bin", "/x/xpkgs/xim-x-glibc/2.39/lib64"}));
 }
 
 TEST(PlatformEnv, PrependPathListWithNoInheritedValueIsJustTheDirs) {
     ScopedVar ld("LD_LIBRARY_PATH", nullptr);
     std::vector<std::filesystem::path> dirs{"/a", "/b"};
-    EXPECT_EQ(mcpp::platform::env::prepend_path_list("LD_LIBRARY_PATH", dirs),
+    EXPECT_EQ(mcpp::runtime::launch_env::prepend_path_list("LD_LIBRARY_PATH", dirs),
               join({host("/a"), host("/b")}));
 }

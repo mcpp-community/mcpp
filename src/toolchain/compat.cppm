@@ -28,7 +28,7 @@ module;
 export module mcpp.toolchain.compat;
 
 import std;
-import mcpp.platform;
+import mcpp.toolchain.platform;
 import mcpp.toolchain.triple;
 
 export namespace mcpp::toolchain::compat {
@@ -78,7 +78,7 @@ std::string_view strip_namespace(std::string_view compiler) {
 
 triple::Triple host_musl_triple() {
     triple::Triple t;
-    t.arch = std::string(mcpp::platform::host_arch);
+    t.arch = std::string(mcpp::toolchain::platform::host_arch);
     t.os   = "linux";
     t.env  = "musl";
     return t;

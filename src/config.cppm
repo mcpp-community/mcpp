@@ -28,7 +28,11 @@ import mcpp.libs.json;
 import mcpp.pm.index_spec;
 import mcpp.provider;
 import mcpp.provider.select;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpplibs.os.windows;
+import mcpp.invocation;
+import mcpp.effects;
+import mcpp.home.files;
 import mcpp.log;
 import mcpp.diag;
 import mcpp.fallback.xlings_binary;
@@ -182,18 +186,18 @@ struct GlobalConfig {
 
 // Create an xlings::Env from the resolved GlobalConfig.
 mcpp::provider::Location make_xlings_env(const GlobalConfig& cfg) {
-#if defined(_WIN32)
-    // On Windows, the copied xlings binary in the sandbox may not function
-    // correctly for large package installs (missing runtime environment).
-    // When MCPP_VENDORED_XLINGS is set, use the original xlings binary
-    // directly — it has the full xlings runtime. The XLINGS_HOME env var
-    // ensures packages are installed into the mcpp sandbox.
-    if (auto* e = std::getenv("MCPP_VENDORED_XLINGS"); e && *e) {
-        std::filesystem::path vendored{e};
-        if (std::filesystem::exists(vendored))
-            return { vendored, cfg.xlingsHome() };
+    if constexpr (mcpplibs::os::is_windows) {
+        // On Windows, the copied xlings binary in the sandbox may not function
+        // correctly for large package installs (missing runtime environment).
+        // When MCPP_VENDORED_XLINGS is set, use the original xlings binary
+        // directly — it has the full xlings runtime. The XLINGS_HOME env var
+        // ensures packages are installed into the mcpp sandbox.
+        if (auto e = mcpp::invocation::get("MCPP_VENDORED_XLINGS")) {
+            std::filesystem::path vendored{*e};
+            if (std::filesystem::exists(vendored))
+                return { vendored, cfg.xlingsHome() };
+        }
     }
-#endif
     return { cfg.xlingsBinary, cfg.xlingsHome() };
 }
 
@@ -238,7 +242,7 @@ std::string check_base_init(const GlobalConfig& cfg) {
 
     auto patchelfBin = mcpp::provider::open(xlEnv)->pinned("patchelf", mcpp::provider::kPatchelfVersion) / "bin" / "patchelf";
     auto ninjaRoot = mcpp::provider::open(xlEnv)->versions("ninja");
-    auto ninja_name = std::string("ninja") + std::string(mcpp::platform::exe_suffix);
+    auto ninja_name = std::string("ninja") + std::string(mcpplibs::os::exe_suffix);
 
     // Check xlings binary
     if (!std::filesystem::exists(cfg.xlingsBinary))
@@ -249,10 +253,10 @@ std::string check_base_init(const GlobalConfig& cfg) {
         return "the provider's environment is not initialized";
 
     // Check patchelf (Linux only)
-#if !defined(__APPLE__) && !defined(_WIN32)
-    if (!std::filesystem::exists(patchelfBin))
-        return std::format("patchelf missing: {}", patchelfBin.string());
-#endif
+    if constexpr (!mcpplibs::os::is_macos && !mcpplibs::os::is_windows) {
+        if (!std::filesystem::exists(patchelfBin))
+            return std::format("patchelf missing: {}", patchelfBin.string());
+    }
 
     // Check ninja
     bool ninjaOk = false;
@@ -405,13 +409,6 @@ void print_status(std::string_view verb, std::string_view msg) {
     } else {
         std::println(stderr, "{}{} {}", std::string(W - verb.size(), ' '), verb, msg);
     }
-}
-
-std::expected<std::string, std::string> run_capture(const std::string& cmd) {
-    auto r = mcpp::platform::process::capture(cmd);
-    if (r.exit_code != 0 && r.output.empty())
-        return std::unexpected("command failed: " + cmd);
-    return r.output;
 }
 
 void write_file(const std::filesystem::path& p, std::string_view content) {
@@ -754,8 +751,8 @@ parse_target_defaults(const mcpp::libs::toml::Document& doc,
                             "{} [target.{}].sysroot is a table without `path`", file.string(), triple));
                     std::filesystem::path p(path);
                     if (path == "~" || path.starts_with("~/"))
-                        if (auto* h = std::getenv(mcpp::platform::is_windows ? "USERPROFILE" : "HOME"); h && *h)
-                            p = std::filesystem::path(h) / (path.size() > 2 ? path.substr(2) : std::string{});
+                        if (auto h = mcpp::invocation::get(mcpplibs::os::is_windows ? "USERPROFILE" : "HOME"))
+                            p = std::filesystem::path(*h) / (path.size() > 2 ? path.substr(2) : std::string{});
                     if (p.is_relative()) p = file.parent_path() / p;
                     text = "path:" + p.lexically_normal().generic_string();
                 } else {
@@ -847,7 +844,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // creation guard (`if fs::exists(homeDir/"bin"/"xlings")`),
     // making ensure_sandbox_xlings_binary() a no-op.
     cfg.xlingsBinary  = cfg.registryDir / "bin" /
-        (std::string("xlings") + std::string(mcpp::platform::exe_suffix));
+        (std::string("xlings") + std::string(mcpplibs::os::exe_suffix));
     cfg.bmiCacheDir   = mcpp::home::cache_root();
     cfg.metaCacheDir  = cfg.mcppHome / "cache";
     cfg.logDir        = cfg.mcppHome / "log";
@@ -874,8 +871,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // configuration yet is not set up, and the caller said not to.
     if (initialization != Initialization::ReadOnly
         && !std::filesystem::exists(cfg.configFile, ec)
-        && mcpp::platform::env::effect_denied("init-mcpp-home")) {
-        mcpp::platform::env::note_effect_refused("init-mcpp-home", cfg.mcppHome.generic_string());
+        && mcpp::effects::effect_denied("init-mcpp-home")) {
+        mcpp::effects::note_effect_refused("init-mcpp-home", cfg.mcppHome.generic_string());
         return std::unexpected(ConfigError{std::format(
             "effect denied: init-mcpp-home -- {} is not set up yet, and the caller denied "
             "creating it (--deny init-mcpp-home)", cfg.mcppHome.generic_string())});
@@ -951,8 +948,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         for (auto entry : declared.value_or(std::vector<std::string>{})) {
             std::filesystem::path dir = entry;
             if (entry == "~" || entry.starts_with("~/"))
-                if (auto* h = std::getenv(mcpp::platform::is_windows ? "USERPROFILE" : "HOME"); h && *h)
-                    dir = std::filesystem::path(h) / (entry.size() > 2 ? entry.substr(2) : std::string{});
+                if (auto h = mcpp::invocation::get(mcpplibs::os::is_windows ? "USERPROFILE" : "HOME"))
+                    dir = std::filesystem::path(*h) / (entry.size() > 2 ? entry.substr(2) : std::string{});
             dir = dir.lexically_normal();
             std::error_code ec;
             // A Luban system's /xlings is its store, wherever its xlings put it
@@ -967,7 +964,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
             }
             // The trust boundary (§8.2): another user's home is code that
             // user can replace at any time.
-            if (auto why = mcpp::platform::untrusted_because(dir); !why.empty())
+            if (auto why = mcpp::home::untrusted_because(dir); !why.empty())
                 return std::unexpected(ConfigError{std::format(
                     "[xlings] upstream {}: not used, {}; an upstream belongs to this user or to the system "
                     "and only its owner can change it", dir.string(), why)});
@@ -1087,10 +1084,10 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // The path budget (design 2026-10-16 §11): with Windows' long paths off,
     // a payload whose deepest file (gcc's libstdc++ headers: 140 characters
     // below <MCPP_HOME>, measured) would pass MAX_PATH cannot be installed.
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         constexpr std::size_t kDeepestPayloadSuffix = 140;
         const auto length = cfg.mcppHome.native().size();
-        if (!mcpp::platform::windows::long_paths_enabled() && length + 1 + kDeepestPayloadSuffix > 259)
+        if (!mcpplibs::os::windows::long_paths_enabled() && length + 1 + kDeepestPayloadSuffix > 259)
             mcpp::diag::degraded("home/path-budget",
                 std::format("MCPP_HOME is {} characters long and Windows long paths are off", length),
                 "installing a toolchain may fail because a path is too long",
@@ -1099,8 +1096,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
 
     if (initialization == Initialization::ReadOnly) {
         if (cfg.xlingsBinaryMode == "system") {
-            if (auto binary = mcpp::platform::fs::which(
-                    std::string("xlings") + std::string(mcpp::platform::exe_suffix)))
+            if (auto binary = mcpp::invocation::which(
+                    std::string("xlings") + std::string(mcpplibs::os::exe_suffix)))
                 cfg.xlingsBinary = *binary;
         } else if (cfg.xlingsBinaryMode != "bundled") {
             cfg.xlingsBinary = mcpp::home::from_utf8(cfg.xlingsBinaryMode);
@@ -1146,8 +1143,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
             cfg.metaCacheDir / "vendored-xlings.versions");
         if (!xbin) return std::unexpected(ConfigError{xbin.error()});
     } else if (cfg.xlingsBinaryMode == "system") {
-        auto sysPath = mcpp::platform::fs::which(
-            std::string("xlings") + std::string(mcpp::platform::exe_suffix));
+        auto sysPath = mcpp::invocation::which(
+            std::string("xlings") + std::string(mcpplibs::os::exe_suffix));
         if (!sysPath)
             return std::unexpected(ConfigError{"system xlings not found in PATH"});
         cfg.xlingsBinary = *sysPath;
@@ -1195,7 +1192,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     //    artefact exists, and the completion markers below are still written
     //    from what is on disk. A fresh home stays un-bootstrapped, and the
     //    commands that need the tools say so through check_base_init().
-    const bool bootstrapAllowed = !mcpp::platform::env::offline_mode();
+    const bool bootstrapAllowed = !mcpp::effects::offline_mode();
     ensure_sandbox_xlings_binary(cfg, quiet);
     if (bootstrapAllowed) {
         if (!check_base_init(cfg).empty()) report_network(cfg, quiet);
@@ -1211,11 +1208,11 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         }
     }
     {
-#if !defined(__APPLE__) && !defined(_WIN32)
-        // patchelf is ELF-only; macOS uses Mach-O and Windows uses PE.
-        if (bootstrapAllowed)
-            ensure_sandbox_patchelf(cfg, quiet, onBootstrapProgress);
-#endif
+    if constexpr (!mcpplibs::os::is_macos && !mcpplibs::os::is_windows) {
+            // patchelf is ELF-only; macOS uses Mach-O and Windows uses PE.
+            if (bootstrapAllowed)
+                ensure_sandbox_patchelf(cfg, quiet, onBootstrapProgress);
+    }
         if (bootstrapAllowed)
             ensure_sandbox_ninja(cfg, quiet, onBootstrapProgress);
     }

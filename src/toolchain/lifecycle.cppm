@@ -13,8 +13,8 @@ import mcpp.config;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.manifest;
-import mcpp.platform;
-import mcpp.platform.axis;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
 import mcpp.project;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.msvc;
@@ -141,7 +141,7 @@ list_available_xpkg_versions(const mcpp::config::GlobalConfig& cfg,
         // and partial-version resolution empty on Windows/macOS for any
         // package, e.g. mingw-gcc has no linux block.)
         return mcpp::manifest::list_xpkg_versions(
-            body, mcpp::platform::HostPlatform::current());
+            body, mcpp::toolchain::platform::HostPlatform::current());
     };
 
     auto data = mcpp::provider::open(mcpp::config::make_xlings_env(cfg))->data_root();
@@ -407,7 +407,7 @@ EffectiveDefault effective_default_toolchain(const mcpp::config::GlobalConfig& c
         // the toolchain the build resolves rather than the global default.
         if (auto e = mcpp::project::load_effective_manifest(mpath.parent_path())) {
             auto const* m = &e->manifest;
-            if (auto t = m->toolchain.for_platform(mcpp::platform::name);
+            if (auto t = m->toolchain.for_platform(mcpp::toolchain::platform::name);
                 t && !t->empty())
                 return { *t, true };
         }
@@ -575,7 +575,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
     // section of its own: to a client, "a compiler I can select" is one list,
     // and where mcpp found it is a property of the entry, not a reason for a
     // second array.
-    if (mcpp::platform::is_windows && json) {
+    if (mcpplibs::os::is_windows && json) {
         if (auto inst = mcpp::toolchain::msvc::detect_installation())
             // `version` MUST BE WHAT `--toolchain` ACCEPTS, AND THIS EMITTED
             // WHAT cl.exe REPORTS.
@@ -600,7 +600,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
                             && defSpec->family == mcpp::toolchain::Family::Msvc},
                 {"source",  "system"},
             });
-    } else if (mcpp::platform::is_windows) {
+    } else if (mcpplibs::os::is_windows) {
         if (auto inst = mcpp::toolchain::msvc::detect_installation()) {
             bool isDefault = defSpec
                 && defSpec->family == mcpp::toolchain::Family::Msvc;
@@ -900,9 +900,9 @@ int attach_target_arg(mcpp::toolchain::ToolchainSpec& spec,
 // changed.
 export std::expected<bool, std::string>
 ensure_declared_runtime(const mcpp::config::GlobalConfig& cfg,
-                        mcpp::platform::runtime::RuntimeBinding& binding) {
-    namespace rt = mcpp::platform::runtime;
-    if constexpr (!mcpp::platform::is_linux) return false;
+                        mcpp::runtime::RuntimeBinding& binding) {
+    namespace rt = mcpp::runtime;
+    if constexpr (!mcpplibs::os::is_linux) return false;
     if (rt::runtime_provider(binding.runtimeId) != "glibc") return false;
     // The toolchains the provider installs run on this runtime (design
     // 2026-10-16 §7.2), not on whatever it installs newest; pinned once its
@@ -967,7 +967,7 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         // (msvc@<toolset> is NOT a system spec and falls through to the xim
         // package path below, like every other family.)
         if (mcpp::toolchain::is_system_toolchain(*spec)) {
-            if (!mcpp::platform::is_windows) return msvc_wrong_host();
+            if (!mcpplibs::os::is_windows) return msvc_wrong_host();
             if (auto inst = mcpp::toolchain::msvc::detect_installation()) {
                 msvc_print_detected(*inst);
                 mcpp::ui::line("");
@@ -1106,7 +1106,7 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         // here, so the selection is mcpp's default environment, which is what
         // `RuntimeSelection{}` means.
         if (!mcpp::toolchain::runtime_payload_kind(pkg).empty()) {
-            if (auto rb = mcpp::platform::runtime::resolve_runtime_binding(
+            if (auto rb = mcpp::runtime::resolve_runtime_binding(
                     mcpp::provider::runtime::RuntimeSelection{}, {}, cfg.xlingsHome()))
                 if (auto provided = ensure_declared_runtime(cfg, *rb); !provided) {
                     mcpp::ui::error(provided.error());
@@ -1153,7 +1153,7 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
         // stable spec (never a concrete version — config survives VS
         // updates). A versioned msvc spec is a payload and falls through.
         if (mcpp::toolchain::is_system_toolchain(*spec)) {
-            if (!mcpp::platform::is_windows) return msvc_wrong_host();
+            if (!mcpplibs::os::is_windows) return msvc_wrong_host();
             auto inst = mcpp::toolchain::msvc::detect_installation();
             if (!inst) {
                 mcpp::ui::error(mcpp::toolchain::msvc::install_guidance());
@@ -1184,7 +1184,7 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
         // A PINNED TOOLSET THIS MACHINE HAS NEEDS NO PACKAGE, which is what the
         // same spelling means to a build (`msvc@<toolset>` takes an installed
         // toolset first). `xim:` asks for the package and skips this.
-        if (mcpp::platform::is_windows
+        if (mcpplibs::os::is_windows
             && spec->family == mcpp::toolchain::Family::Msvc
             && !spec->ecosystemOnly) {
             if (auto inst = mcpp::toolchain::msvc::system_installation_matching(

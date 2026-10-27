@@ -18,7 +18,10 @@ module;
 export module mcpp.home;
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.invocation;
+import mcpp.build.command_line;
+import mcpp.home.files;
 import mcpp.libs.toml;
 
 export namespace mcpp::home {
@@ -92,12 +95,12 @@ namespace {
 
 std::filesystem::path default_home() {
     // Windows: %USERPROFILE%\.mcpp   POSIX: $HOME/.mcpp
-    if constexpr (mcpp::platform::is_windows) {
-        if (auto* e = std::getenv("USERPROFILE"); e && *e)
-            return std::filesystem::path(e) / ".mcpp";
+    if constexpr (mcpplibs::os::is_windows) {
+        if (auto e = mcpp::invocation::get("USERPROFILE"))
+            return std::filesystem::path(*e) / ".mcpp";
     }
-    if (auto* e = std::getenv("HOME"); e && *e)
-        return std::filesystem::path(e) / ".mcpp";
+    if (auto e = mcpp::invocation::get("HOME"))
+        return std::filesystem::path(*e) / ".mcpp";
     return std::filesystem::current_path() / ".mcpp";
 }
 
@@ -114,7 +117,7 @@ std::filesystem::path default_home() {
 //   3. fallback to $HOME/.mcpp (%USERPROFILE%\.mcpp on Windows).
 namespace {
 std::filesystem::path portable_root() {
-    auto exe = mcpp::platform::fs::self_exe_path();
+    auto exe = mcpp::invocation::self_exe_path();
     if (exe.has_parent_path() && exe.parent_path().filename() == "bin") {
         auto candidate = exe.parent_path().parent_path();
 
@@ -143,13 +146,13 @@ std::filesystem::path portable_root() {
 } // namespace
 
 std::filesystem::path original_root() {
-    if (auto* e = std::getenv("MCPP_HOME"); e && *e) return std::filesystem::path(e);
+    if (auto e = mcpp::invocation::get("MCPP_HOME")) return std::filesystem::path(*e);
     const auto portable = portable_root();
     return portable.empty() ? default_home() : portable;
 }
 
 std::string original_source() {
-    if (auto* e = std::getenv("MCPP_HOME"); e && *e) return "environment";
+    if (mcpp::invocation::get("MCPP_HOME")) return "environment";
     return portable_root().empty() ? "user" : "portable";
 }
 
@@ -176,7 +179,7 @@ std::expected<std::filesystem::path, std::string> absolute_home(const std::files
 bool contains_path(const std::filesystem::path& parent, const std::filesystem::path& child) {
     // Case folding matters even for a not-yet-created Windows destination.
     auto p = spelling(parent), c = spelling(child);
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         // Existing ancestors use filesystem identity, including Unicode case
         // and directory aliases; ASCII folding alone does not cover those.
         for (auto ancestor = child; !ancestor.empty();) {
@@ -255,11 +258,11 @@ bool initialized(const std::filesystem::path& path) {
 std::expected<Selection, std::string> choose(const std::filesystem::path& target, bool force) {
     if (target.empty()) return std::unexpected("--home requires a non-empty directory");
     if (original_source() == "user") {
-        const auto* user = std::getenv("HOME");
-        if constexpr (mcpp::platform::is_windows) {
-            if (const auto* profile = std::getenv("USERPROFILE"); profile && *profile) user = profile;
+        auto user = mcpp::invocation::get("HOME");
+        if constexpr (mcpplibs::os::is_windows) {
+            if (auto profile = mcpp::invocation::get("USERPROFILE")) user = profile;
         }
-        if (!user || !*user)
+        if (!user)
             return std::unexpected("cannot save a default home without a user directory; set MCPP_HOME explicitly");
     }
     auto original = absolute_home(original_root());
@@ -273,7 +276,7 @@ std::expected<Selection, std::string> choose(const std::filesystem::path& target
         // The command is for pasting into a shell, so the path in it is
         // quoted by the shell's rules (mcpp#832: a home under `/tmp/mc probe`
         // printed a command that selected `/tmp/mc` and passed `probe` on).
-        return std::unexpected(std::format("a home is already initialized at '{}'; use `mcpp self init --force --home {}` to select '{}'", spelling(before->effective), mcpp::platform::shell::paste_arg(spelling(*effective)), spelling(*effective)));
+        return std::unexpected(std::format("a home is already initialized at '{}'; use `mcpp self init --force --home {}` to select '{}'", spelling(before->effective), mcpp::build::command_line::paste_arg(spelling(*effective)), spelling(*effective)));
     if (!same_path(*original, *effective) && (contains_path(*original, *effective) || contains_path(*effective, *original)))
         return std::unexpected("the original and selected home must not contain each other");
     Selection result{.original = *original, .effective = *effective,
@@ -303,7 +306,7 @@ std::expected<void, std::string> save(const Selection& selected) {
                 return std::unexpected(std::format("cannot write home locator '{}'; the previous default was retained", spelling(locator)));
             }
         }
-        mcpp::platform::fs::replace_file(staged, locator, ec);
+        mcpp::home::replace_file(staged, locator, ec);
         if (ec) { std::error_code ignored; std::filesystem::remove(staged, ignored); }
     }
     if (ec) return std::unexpected(std::format("cannot save home locator '{}': {}", spelling(locator), ec.message()));
@@ -312,10 +315,9 @@ std::expected<void, std::string> save(const Selection& selected) {
 }
 
 std::filesystem::path system_config_file() {
-    if (auto* e = std::getenv("MCPP_SYSTEM_CONFIG"); e && *e) return std::filesystem::path(e);
-    if constexpr (mcpp::platform::is_windows) {
-        auto* data = std::getenv("ProgramData");
-        return std::filesystem::path(data && *data ? data : "C:\\ProgramData") / "mcpp" / "config.toml";
+    if (auto e = mcpp::invocation::get("MCPP_SYSTEM_CONFIG")) return std::filesystem::path(*e);
+    if constexpr (mcpplibs::os::is_windows) {
+        return std::filesystem::path(mcpp::invocation::get("ProgramData").value_or("C:\\ProgramData")) / "mcpp" / "config.toml";
     }
     return "/etc/mcpp/config.toml";
 }
@@ -349,11 +351,10 @@ std::string toml_string(const std::filesystem::path& file, std::string_view tabl
 
 std::filesystem::path system_root() {
     if (auto h = toml_string(system_config_file(), "system", "home"); !h.empty()) return std::filesystem::path(h);
-    if constexpr (mcpp::platform::is_windows) {
-        auto* data = std::getenv("ProgramData");
-        return std::filesystem::path(data && *data ? data : "C:\\ProgramData") / "mcpp";
+    if constexpr (mcpplibs::os::is_windows) {
+        return std::filesystem::path(mcpp::invocation::get("ProgramData").value_or("C:\\ProgramData")) / "mcpp";
     }
-    if constexpr (mcpp::platform::is_macos) return "/Library/Application Support/mcpp";
+    if constexpr (mcpplibs::os::is_macos) return "/Library/Application Support/mcpp";
     return "/var/lib/mcpp";
 }
 

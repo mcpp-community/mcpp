@@ -15,7 +15,7 @@ export module mcpp.pm.package_fetcher;
 import std;
 import mcpp.config;
 import mcpp.log;
-import mcpp.platform;         // env::offline_mode
+import mcpp.effects;
 import mcpp.manifest;        // xpkg_lua_identity_matches — descriptor identity gate
 import mcpp.pm.compat;
 import mcpp.pm.dep_spec;
@@ -1271,7 +1271,7 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     // Offline is checked HERE, after the "already usable" fast path above: a
     // build whose packages are all usable stays functional offline. Only an
     // actual download is refused, naming the package.
-    if (mcpp::platform::env::offline_mode()) {
+    if (mcpp::effects::offline_mode()) {
         mcpp::build::refusal::record(
             mcpp::build::refusal::Code::OfflineDownloadRequired);
         return std::unexpected(CallError{ std::format(

@@ -3,7 +3,7 @@
 import std;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
-import mcpp.platform.env;
+import mcpp.invocation;
 import mcpp.publish.xpkg_emit;
 import mcpp.diag;
 
@@ -136,7 +136,7 @@ TEST(XpkgEmit, Sha256OfFileIgnoresTargetRuntimeLibraryPath) {
     { std::ofstream(p).close(); }
 
     {
-        mcpp::platform::env::ScopedEnv ld("LD_LIBRARY_PATH", hostile.string());
+        mcpp::invocation::ScopedEnv ld("LD_LIBRARY_PATH", hostile.string());
         EXPECT_EQ(sha256_of_file(p),
                   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     }

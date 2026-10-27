@@ -23,17 +23,11 @@
 // A waiter is told who holds it once the wait has lasted 300 ms, which is what
 // the owner record exists for: the process, the command, the caller's label
 // (`MCPP_CLIENT`), and how long ago it started.
-module;
-#if defined(_WIN32)
-#include <process.h>
-#else
-#include <unistd.h>
-#endif
-
 export module mcpp.build.dirlock;
 
 import std;
-import mcpp.platform;
+import mcpp.invocation;
+import mcpp.home.files;
 import mcpp.ui;
 
 export namespace mcpp::build::dirlock {
@@ -72,7 +66,7 @@ void set_waiting_observer(std::function<void(const Holder&, std::chrono::millise
 
 // Waits for the build directory's lock. Shared, because a BuildContext is
 // copied, and the last copy to go releases it; `release` drops it early.
-std::shared_ptr<mcpp::platform::fs::FileLock> acquire(const std::filesystem::path& outputDir);
+std::shared_ptr<mcpp::home::FileLock> acquire(const std::filesystem::path& outputDir);
 
 }  // namespace mcpp::build::dirlock
 
@@ -87,13 +81,7 @@ std::function<void(const Holder&, std::chrono::milliseconds)>& observer_slot() {
     static std::function<void(const Holder&, std::chrono::milliseconds)> observer;
     return observer;
 }
-long current_pid() {
-#if defined(_WIN32)
-    return static_cast<long>(::_getpid());
-#else
-    return static_cast<long>(::getpid());
-#endif
-}
+long current_pid() { return mcpp::invocation::process_id(); }
 std::int64_t now_seconds() {
     return std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
@@ -148,7 +136,7 @@ std::string describe(const Holder& h, std::int64_t now) {
 }
 
 std::string owner_record() {
-    std::string client = mcpp::platform::env::get("MCPP_CLIENT").value_or("");
+    std::string client = mcpp::invocation::get("MCPP_CLIENT").value_or("");
     return std::format("pid={}\nstarted={}\ncommand={}\nclient={}\n",
                        current_pid(), now_seconds(),
                        command_slot(), client);
@@ -160,17 +148,17 @@ std::string owner_record() {
 // file from the same process waits for itself (flock and LockFileEx lock per
 // open file, not per process). The lock is shared while any holder keeps it.
 std::mutex g_heldMutex;
-std::map<std::string, std::weak_ptr<mcpp::platform::fs::FileLock>>& held() {
-    static std::map<std::string, std::weak_ptr<mcpp::platform::fs::FileLock>> m;
+std::map<std::string, std::weak_ptr<mcpp::home::FileLock>>& held() {
+    static std::map<std::string, std::weak_ptr<mcpp::home::FileLock>> m;
     return m;
 }
 
-std::shared_ptr<mcpp::platform::fs::FileLock> acquire(const std::filesystem::path& outputDir) {
+std::shared_ptr<mcpp::home::FileLock> acquire(const std::filesystem::path& outputDir) {
     const auto key = outputDir.lexically_normal().generic_string();
     std::lock_guard heldLock(g_heldMutex);
     if (auto existing = held()[key].lock()) return existing;
     const auto start = std::chrono::steady_clock::now();
-    auto lock = mcpp::platform::fs::FileLock::acquire(
+    auto lock = mcpp::home::FileLock::acquire(
         outputDir, kLockName, owner_record(), std::chrono::milliseconds(300),
         [&](std::string_view record) {
             const auto holder = parse_holder(record);
@@ -181,7 +169,7 @@ std::shared_ptr<mcpp::platform::fs::FileLock> acquire(const std::filesystem::pat
                                     std::chrono::steady_clock::now() - start));
         });
     if (!lock) return nullptr;
-    auto shared = std::make_shared<mcpp::platform::fs::FileLock>(std::move(*lock));
+    auto shared = std::make_shared<mcpp::home::FileLock>(std::move(*lock));
     held()[key] = shared;
     return shared;
 }

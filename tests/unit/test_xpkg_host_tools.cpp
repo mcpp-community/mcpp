@@ -3,8 +3,7 @@
 import std;
 import mcpp.manifest;
 import mcpp.manifest.xpkg;
-import mcpp.platform;
-import mcpp.platform.axis;
+import mcpp.toolchain.platform;
 
 // #355 needed two things from the Form B (xpkg .lua) descriptor parser that it
 // simply did not read, and neither failed loudly:
@@ -24,7 +23,7 @@ namespace {
 
 mcpp::manifest::Manifest parse_or_fail(std::string_view lua) {
     auto m = mcpp::manifest::synthesize_from_xpkg_lua(
-        lua, "compat.demo", "1.0.0", mcpp::platform::HostPlatform::current());
+        lua, "compat.demo", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     EXPECT_TRUE(m.has_value()) << (m ? "" : m.error().message);
     return m.value_or(mcpp::manifest::Manifest{});
 }
@@ -154,7 +153,7 @@ package = {
         },
     },
 }
-)LUA", "compat.demo", "1.0.0", mcpp::platform::HostPlatform::current());
+)LUA", "compat.demo", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_FALSE(refused.has_value());
     EXPECT_NE(refused.error().message.find("states both `kind = \"shared\"`"),
               std::string::npos) << refused.error().message;

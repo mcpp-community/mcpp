@@ -17,6 +17,7 @@
 #include <fstream>
 
 import std;
+import mcpp.invocation;
 import mcpp.fallback.xlings_binary;
 
 namespace fb = mcpp::fallback;
@@ -246,25 +247,10 @@ TEST(XlingsVersionMemo, ANewFileIsAskedAgain) {
 namespace {
 class ScopedEnv {
 public:
-    ScopedEnv(std::string name, const char* value) : name_(std::move(name)) {
-        if (const char* old = std::getenv(name_.c_str()); old) { had_ = true; old_ = old; }
-        apply(value);
-    }
-    ~ScopedEnv() { apply(had_ ? old_.c_str() : nullptr); }
-    ScopedEnv(const ScopedEnv&) = delete;
-    ScopedEnv& operator=(const ScopedEnv&) = delete;
+    ScopedEnv(std::string name, const char* value)
+        : inner_(std::move(name), value ? std::optional<std::string>(value) : std::nullopt) {}
 private:
-    void apply(const char* value) {
-#if defined(_WIN32)
-        ::_putenv_s(name_.c_str(), value ? value : "");
-#else
-        if (value) ::setenv(name_.c_str(), value, 1);
-        else       ::unsetenv(name_.c_str());
-#endif
-    }
-    std::string name_;
-    bool        had_ = false;
-    std::string old_;
+    mcpp::invocation::ScopedEnv inner_;   // stated for this invocation, as mcpp states its own
 };
 }  // namespace
 

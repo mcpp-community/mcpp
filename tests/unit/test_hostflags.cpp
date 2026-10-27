@@ -2,7 +2,7 @@
 #include <fstream>
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.hostflags;
 import mcpp.toolchain.linkmodel;
@@ -256,7 +256,7 @@ TEST(HostFlags, CfgBypassLinuxOnlyDiffersFromAlwaysOffLinux) {
     // Without a real clang payload there is no cfg to bypass, so both are
     // empty here; the assertion that matters is that the option exists and is
     // honoured identically on Linux, where the host helper does bypass.
-    if constexpr (mcpp::platform::is_linux) {
+    if constexpr (mcpplibs::os::is_linux) {
         EXPECT_EQ(mcpp::toolchain::host_compile_tokens(tc, always, mcpp::toolchain::no_escape),
                   mcpp::toolchain::host_compile_tokens(tc, linuxOnly, mcpp::toolchain::no_escape));
     }
@@ -337,7 +337,7 @@ TEST(HostFlags, OnlyTheSpelledOutExitNamesTheToolchainRuntimeDirs) {
 }
 
 // TARGET-KEYED, NOT HOST-KEYED (mcpp#685). This used to read
-// `EXPECT_EQ(found, mcpp::platform::is_macos)` — the flag's presence
+// `EXPECT_EQ(found, mcpplibs::os::is_macos)` — the flag's presence
 // followed the machine RUNNING this test rather than the `Toolchain`'s own
 // `targetTriple`, so it could not distinguish "building for macOS" from
 // "building on macOS" and stayed green while `--target aarch64-macos` from a

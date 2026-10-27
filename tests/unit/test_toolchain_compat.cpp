@@ -1,13 +1,13 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.platform;
+import mcpp.toolchain.platform;
 import mcpp.toolchain.compat;
 
 using namespace mcpp::toolchain::compat;
 
 static std::string host_musl() {
-    return std::string(mcpp::platform::host_arch) + "-linux-musl";
+    return std::string(mcpp::toolchain::platform::host_arch) + "-linux-musl";
 }
 
 // ── canonical spellings pass through unchanged ───────────────────────────────

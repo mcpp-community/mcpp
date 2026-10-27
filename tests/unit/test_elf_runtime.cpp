@@ -1,14 +1,14 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
 import mcpp.runtime.elf;
 import mcpp.runtime.binding;
 import mcpp.toolchain.post_install;
 import mcpp.build.symbol_provision;
 
-namespace elf = mcpp::platform::elf;
-namespace runtime = mcpp::platform::runtime;
+namespace elf = mcpp::runtime::elf;
+namespace runtime = mcpp::runtime;
 namespace tc = mcpp::toolchain;
 
 namespace {
@@ -225,7 +225,7 @@ TEST(RuntimePayload, MissingOrMalformedBindingIsAnError) {
 }
 
 TEST(ElfRuntime, ParsesProgramDynamicAndGnuVersionTablesInternally) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF table inspection is exercised on native Linux";
     Tmp t;
     auto parsed = elf::inspect_elf_runtime(write_elf_fixture(t.path / "fixture"));
@@ -242,7 +242,7 @@ TEST(ElfRuntime, ParsesProgramDynamicAndGnuVersionTablesInternally) {
 }
 
 TEST(ElfRuntime, RejectsUnsupportedOrTruncatedElfWithoutGuessing) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF table inspection is exercised on native Linux";
     Tmp t;
     std::ofstream(t.path / "text") << "not an ELF";
@@ -257,7 +257,7 @@ TEST(ElfRuntime, RejectsUnsupportedOrTruncatedElfWithoutGuessing) {
 }
 
 TEST(ElfRuntime, ReusesAnAlreadyLoadedSonameAcrossDependencyRunpaths) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto payload = t.path / "store";
@@ -305,7 +305,7 @@ TEST(ElfRuntime, ReusesAnAlreadyLoadedSonameAcrossDependencyRunpaths) {
 // seven of them -- failing only on the one that belongs to a driver the
 // machine does not have.
 TEST(ElfRuntime, ADependencyInheritsTheExecutablesRpath) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto payload = t.path / "store";
@@ -338,7 +338,7 @@ TEST(ElfRuntime, ADependencyInheritsTheExecutablesRpath) {
 // so a test with only the leg above would also pass on an implementation that
 // inherited unconditionally.
 TEST(ElfRuntime, ADependencyWithItsOwnRunpathDoesNotInheritOne) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto payload = t.path / "store";
@@ -368,7 +368,7 @@ TEST(ElfRuntime, ADependencyWithItsOwnRunpathDoesNotInheritOne) {
 }
 
 TEST(RuntimePhysics, RuleBRejectsInterpreterAndLibcFromDifferentPayloads) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
@@ -385,7 +385,7 @@ TEST(RuntimePhysics, RuleBRejectsInterpreterAndLibcFromDifferentPayloads) {
 }
 
 TEST(RuntimePhysics, RuleBAcceptsSameSelectedPayload) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
@@ -401,7 +401,7 @@ TEST(RuntimePhysics, RuleBAcceptsSameSelectedPayload) {
 }
 
 TEST(RuntimePhysics, RuleBRejectsTwoLibcsAcrossTheResolvedClosure) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
@@ -422,7 +422,7 @@ TEST(RuntimePhysics, RuleBRejectsTwoLibcsAcrossTheResolvedClosure) {
 }
 
 TEST(RuntimePhysics, RuleARejectsRequiredFloorAboveSelectedLibcExports) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store", "2.39");
@@ -441,7 +441,7 @@ TEST(RuntimePhysics, RuleARejectsRequiredFloorAboveSelectedLibcExports) {
 }
 
 TEST(RuntimePhysics, RuleAAcceptsEqualOrLowerFloor) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
@@ -466,7 +466,7 @@ TEST(RuntimePhysics, RuleAAcceptsEqualOrLowerFloor) {
 // `inconclusive` reports a proven failure as an absence of one, and it is how a
 // GL program that exited 127 was shipped as `validation: pass`.
 TEST(RuntimePhysics, UnresolvedNeededUnderHermeticBindingIsProven) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
@@ -495,7 +495,7 @@ TEST(RuntimePhysics, UnresolvedNeededUnderHermeticBindingIsProven) {
 // it does not block. (Without this, e2e 206's deliberate host-DSO control
 // failed its own build.)
 TEST(RuntimePhysics, AllowHostLibsDowngradesTheProofToAReport) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
@@ -528,7 +528,7 @@ TEST(RuntimePhysics, AllowHostLibsDowngradesTheProofToAReport) {
 // ("not an ELF file") landed in `unresolved`, and the artifact was failed for a
 // missing shared library it could not possibly have. CI caught it; this pins it.
 TEST(RuntimePhysics, CrossBuiltNonElfArtifactIsNotJudgedByElfRules) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
@@ -551,7 +551,7 @@ TEST(RuntimePhysics, CrossBuiltNonElfArtifactIsNotJudgedByElfRules) {
 // CHECK — a check that could not look has proven nothing, so it stays
 // inconclusive no matter how hermetic the binding is.
 TEST(RuntimePhysics, UnreadableObjectIsInconclusiveEvenWhenHermetic) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
@@ -573,7 +573,7 @@ TEST(RuntimePhysics, UnreadableObjectIsInconclusiveEvenWhenHermetic) {
 // deliberately does not parse. There, unresolved really is unknown, and
 // claiming otherwise would fail builds that work.
 TEST(RuntimePhysics, UnresolvedNeededWithoutAPrivateLoaderStaysInconclusive) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
@@ -596,7 +596,7 @@ TEST(RuntimePhysics, UnresolvedNeededWithoutAPrivateLoaderStaysInconclusive) {
 // second as the first sends the reader looking for a runtime they did not
 // select, and quietly counts "unknown" as "fine".
 TEST(RuntimePhysics, UndeclaredBindingIsInconclusiveNotNotApplicable) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
@@ -614,7 +614,7 @@ TEST(RuntimePhysics, UndeclaredBindingIsInconclusiveNotNotApplicable) {
 }
 
 TEST(RuntimePhysics, NonLinuxValidatorIsATypedNoop) {
-    if constexpr (mcpp::platform::is_linux)
+    if constexpr (mcpplibs::os::is_linux)
         GTEST_SKIP() << "the non-Linux boundary is exercised on native runners";
     Tmp t;
     auto b = binding_for(t.path / "store");
@@ -639,7 +639,7 @@ TEST(RuntimePhysics, NonLinuxValidatorIsATypedNoop) {
 // wrong twice before it was measured.
 
 TEST(ElfRuntime, ReadsThisBinarysOwnDynamicSymbols) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF dynamic symbol tables only exist on Linux here";
 
     auto self = std::filesystem::path("/proc/self/exe");
@@ -658,7 +658,7 @@ TEST(ElfRuntime, ReadsThisBinarysOwnDynamicSymbols) {
 }
 
 TEST(ElfRuntime, ThisBinaryExportsNothingOfItsOwn) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF dynamic symbol tables only exist on Linux here";
 
     auto self = std::filesystem::path("/proc/self/exe");
@@ -709,7 +709,7 @@ TEST(ElfRuntime, ThisBinaryExportsNothingOfItsOwn) {
 // driver, and a check that failed there would turn a correct CPU-only
 // configuration into a failed build.
 TEST(DlopenSurface, SeparatesAPackagingGapFromAMachineWithoutTheDriver) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto payload = t.path / "store";
@@ -765,7 +765,7 @@ TEST(DlopenSurface, SeparatesAPackagingGapFromAMachineWithoutTheDriver) {
 // entries reports every finding twice and calls thirteen libraries twenty-six,
 // which is what the first published record did.
 TEST(DlopenSurface, CountsALibraryOnceWhenTwoNamesLinkToIt) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto payload = t.path / "store";

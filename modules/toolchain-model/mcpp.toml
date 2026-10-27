@@ -4,7 +4,7 @@
 #
 #   * WHAT a toolchain is -- the target triple grammar, the Toolchain value,
 #     the command dialect, the standard-flag spelling, the fingerprint, the
-#     link model. Pure vocabulary over `platform`.
+#     link model. Pure vocabulary over mcpplibs.os.
 #   * WHICH toolchain is on this machine -- detection, the registry, the gcc /
 #     clang / msvc / llvm families, installation. Those reach into xlings and
 #     the package index, and they stay in `src/`.
@@ -20,11 +20,14 @@ description = "Toolchain vocabulary: triples, dialects, fingerprints, link model
 license     = "Apache-2.0"
 
 [dependencies.mcpp]
-platform   = { path = "../platform" }
+invocation = { path = "../invocation" }
 versioning = { path = "../versioning" }
 
 # Subsystem-level tests. They see only this package, which is what lets them
 # state its contract in isolation; the root `tests/unit/` states the facts two
 # layers must agree on.
+[dependencies.mcpplibs]
+os = { git = "https://github.com/mcpplibs/os.git", branch = "os-0.2.0" }
+
 [dev-dependencies.compat]
 gtest = "1.15.2"

@@ -29,7 +29,13 @@ module;
 export module mcpp.toolchain.msvc;
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
+import mcpp.invocation;
+import mcpplibs.os.windows;
+import mcpp.runtime.launch_env;
+import mcpp.build.command_line;
+import mcpp.run;
 import mcpp.toolchain.model;
 import mcpp.toolchain.probe;
 import mcpp.toolchain.triple;
@@ -491,16 +497,14 @@ std::string_view msvc_arch_dir(std::string_view archGnu) {
     return arch.empty() ? std::string_view{"x64"} : arch;
 }
 
-#if defined(_WIN32)
-
 // Strategy 1: VSINSTALLDIR — someone SAID which install to use.
 //
 // Set by a developer command prompt, by a CI step that ran vcvarsall, or by
 // a tool that exported an environment on purpose. It is an answer, not a
 // guess, which is why it now outranks vswhere.
 std::optional<std::filesystem::path> find_vs_via_vsinstalldir() {
-    if (auto* dir = std::getenv("VSINSTALLDIR"); dir && *dir) {
-        std::filesystem::path p{dir};
+    if (auto dir = mcpp::invocation::get("VSINSTALLDIR")) {
+        std::filesystem::path p{*dir};
         if (std::filesystem::exists(p / "VC" / "Tools" / "MSVC"))
             return p;
     }
@@ -513,9 +517,9 @@ std::optional<std::filesystem::path> find_vs_via_vsinstalldir() {
 std::optional<std::filesystem::path> find_vs_via_comntools() {
     // VS*COMNTOOLS: VS170COMNTOOLS (2022), VS160COMNTOOLS (2019), VS150COMNTOOLS (2017)
     for (auto* var : {"VS170COMNTOOLS", "VS160COMNTOOLS", "VS150COMNTOOLS"}) {
-        if (auto* val = std::getenv(var); val && *val) {
+        if (auto val = mcpp::invocation::get(var)) {
             // Common7/Tools/ → go up two levels to VS root
-            std::filesystem::path p{val};
+            std::filesystem::path p{*val};
             auto root = p.parent_path().parent_path();
             if (std::filesystem::exists(root / "VC" / "Tools" / "MSVC"))
                 return root;
@@ -530,7 +534,7 @@ std::optional<std::filesystem::path> find_vs_via_paths() {
     // `C:` on every machine (D15).
     std::vector<std::filesystem::path> bases;
     for (const char* var : {"ProgramFiles", "ProgramFiles(x86)"})
-        if (auto b = mcpp::platform::windows::env_directory(var))
+        if (auto b = mcpp::invocation::env_directory(var))
             bases.push_back(*b / "Microsoft Visual Studio");
     bases.emplace_back("C:\\Program Files\\Microsoft Visual Studio");
     bases.emplace_back("C:\\Program Files (x86)\\Microsoft Visual Studio");
@@ -555,8 +559,6 @@ std::optional<std::filesystem::path> find_vs_via_paths() {
     return std::nullopt;
 }
 
-#endif // _WIN32
-
 } // namespace
 
 // The three below answer from the same selection every row uses
@@ -564,7 +566,6 @@ std::optional<std::filesystem::path> find_vs_via_paths() {
 // directory and the `std.ixx` they report are one toolset rather than the
 // results of three searches. `cl` is not required: the clang row reads them
 // too, and a toolset is complete for it without `cl.exe`.
-#if defined(_WIN32)
 namespace {
 std::optional<ToolsetChoice> default_system_choice() {
     ToolsetNeeds needs;
@@ -573,44 +574,43 @@ std::optional<ToolsetChoice> default_system_choice() {
                                  "system", needs);
 }
 } // namespace
-#endif
 
 std::optional<std::filesystem::path> find_vs_install_path() {
-#if defined(_WIN32)
-    if (auto c = default_system_choice()) return c->vsRoot;
-#endif
+    if constexpr (mcpplibs::os::is_windows) {
+        if (auto c = default_system_choice()) return c->vsRoot;
+    }
     return std::nullopt;
 }
 
 std::optional<std::filesystem::path> find_msvc_tools_dir() {
-#if defined(_WIN32)
-    if (auto c = default_system_choice()) return c->toolsDir;
-#endif
+    if constexpr (mcpplibs::os::is_windows) {
+        if (auto c = default_system_choice()) return c->toolsDir;
+    }
     return std::nullopt;
 }
 
 std::optional<std::filesystem::path> find_std_module_source() {
-#if defined(_WIN32)
-    auto tools = find_msvc_tools_dir();
-    if (!tools) return std::nullopt;
+    if constexpr (mcpplibs::os::is_windows) {
+        auto tools = find_msvc_tools_dir();
+        if (!tools) return std::nullopt;
 
-    auto stdIxx = *tools / "modules" / "std.ixx";
-    if (std::filesystem::exists(stdIxx))
-        return stdIxx;
-#endif
+        auto stdIxx = *tools / "modules" / "std.ixx";
+        if (std::filesystem::exists(stdIxx))
+            return stdIxx;
+    }
     return std::nullopt;
 }
 
 std::optional<std::filesystem::path> find_cl() {
-#if defined(_WIN32)
-    auto tools = find_msvc_tools_dir();
-    if (!tools) return std::nullopt;
+    if constexpr (mcpplibs::os::is_windows) {
+        auto tools = find_msvc_tools_dir();
+        if (!tools) return std::nullopt;
 
-    // cl.exe is at <tools>/bin/Hostx64/x64/cl.exe
-    auto cl = *tools / "bin" / "Hostx64" / "x64" / "cl.exe";
-    if (std::filesystem::exists(cl))
-        return cl;
-#endif
+        // cl.exe is at <tools>/bin/Hostx64/x64/cl.exe
+        auto cl = *tools / "bin" / "Hostx64" / "x64" / "cl.exe";
+        if (std::filesystem::exists(cl))
+            return cl;
+    }
     return std::nullopt;
 }
 
@@ -728,9 +728,7 @@ installation_from_tools_dir(const std::filesystem::path& vsRoot,
 // Capture cl.exe's banner. cl prints it (plus a usage complaint) when run
 // bare; the exit status is irrelevant — parse whatever came out.
 std::string capture_cl_banner(const std::filesystem::path& cl) {
-    auto r = mcpp::platform::process::capture(
-        "\"" + cl.string() + "\" 2>&1");
-    return r.output;
+    return mcpp::run::execute({ cl.string() }, { .report_spawn_failure = false }).output;
 }
 
 std::optional<MsvcInstallation>
@@ -745,8 +743,8 @@ installation_from_tools_dir(const std::filesystem::path& vsRoot,
     // Host-native bin dir first (arm64 hosts run arm64 cl; everything else
     // x64), with the remaining pairs as fallback.
     std::vector<std::pair<std::string_view, std::string_view>> pairs;
-    if (mcpp::platform::host_arch == std::string_view("aarch64")
-        || mcpp::platform::host_arch == std::string_view("arm64")) {
+    if (mcpp::toolchain::platform::host_arch == std::string_view("aarch64")
+        || mcpp::toolchain::platform::host_arch == std::string_view("arm64")) {
         pairs = {{"Hostarm64", "arm64"}, {"Hostx64", "x64"}, {"Hostx86", "x86"}};
     } else {
         pairs = {{"Hostx64", "x64"}, {"Hostarm64", "arm64"}, {"Hostx86", "x86"}};
@@ -1089,67 +1087,68 @@ std::vector<VsInstance> parse_vswhere_text(std::string_view text) {
 
 std::vector<VsInstance> enumerate_vs_instances() {
     std::vector<VsInstance> out;
-#if defined(_WIN32)
-    auto add = [&](VsInstance inst) {
-        for (auto const& e : out)
-            if (same_root(e.root, inst.root)) return;
-        out.push_back(std::move(inst));
-    };
-    // Where the Visual Studio Installer keeps it: %ProgramFiles(x86)%, which
-    // is not `C:` on every machine (D15).
-    const std::filesystem::path vswhere =
-        mcpp::platform::windows::env_directory("ProgramFiles(x86)")
-            .value_or(std::filesystem::path("C:\\Program Files (x86)"))
-        / "Microsoft Visual Studio" / "Installer" / "vswhere.exe";
-    bool listed = false;
-    if (std::filesystem::exists(vswhere)) {
-        // `-all -prerelease`: every instance, Insiders included, complete or
-        // not; completeness is judged per toolset below. `-utf8` because an
-        // installation path may carry characters the console code page cannot.
-        auto r = mcpp::platform::process::capture(
-            "\"" + vswhere.string() + "\" -all -prerelease -products * "
-            "-requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 "
-            "-format text -utf8 2>nul");
-        // vswhere ran: an empty list is an answer (no instance has the C++
-        // tools), so the conventional paths are not consulted behind it.
-        if (r.exit_code == 0) {
-            listed = true;
-            for (auto& inst : parse_vswhere_text(r.output)) add(std::move(inst));
+    if constexpr (mcpplibs::os::is_windows) {
+        auto add = [&](VsInstance inst) {
+            for (auto const& e : out)
+                if (same_root(e.root, inst.root)) return;
+            out.push_back(std::move(inst));
+        };
+        // Where the Visual Studio Installer keeps it: %ProgramFiles(x86)%, which
+        // is not `C:` on every machine (D15).
+        const std::filesystem::path vswhere =
+            mcpp::invocation::env_directory("ProgramFiles(x86)")
+                .value_or(std::filesystem::path("C:\\Program Files (x86)"))
+            / "Microsoft Visual Studio" / "Installer" / "vswhere.exe";
+        bool listed = false;
+        if (std::filesystem::exists(vswhere)) {
+            // `-all -prerelease`: every instance, Insiders included, complete or
+            // not; completeness is judged per toolset below. `-utf8` because an
+            // installation path may carry characters the console code page cannot.
+            auto r = mcpp::run::execute(
+                { vswhere.string(), "-all", "-prerelease", "-products", "*",
+                  "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                  "-format", "text", "-utf8" },
+                { .streams = mcpp::run::Streams::output, .report_spawn_failure = false });
+            // vswhere ran: an empty list is an answer (no instance has the C++
+            // tools), so the conventional paths are not consulted behind it.
+            if (r.exit_code == 0) {
+                listed = true;
+                for (auto& inst : parse_vswhere_text(r.output)) add(std::move(inst));
+            }
+        }
+        if (auto p = find_vs_via_vsinstalldir()) add(VsInstance{*p, {}, {}});
+        if (!listed) {
+            if (auto p = find_vs_via_comntools()) add(VsInstance{*p, {}, {}});
+            if (auto p = find_vs_via_paths())     add(VsInstance{*p, {}, {}});
         }
     }
-    if (auto p = find_vs_via_vsinstalldir()) add(VsInstance{*p, {}, {}});
-    if (!listed) {
-        if (auto p = find_vs_via_comntools()) add(VsInstance{*p, {}, {}});
-        if (auto p = find_vs_via_paths())     add(VsInstance{*p, {}, {}});
-    }
-#endif
     return out;
 }
 
 MsvcEnvSnapshot msvc_env_snapshot() {
     MsvcEnvSnapshot env;
-#if defined(_WIN32)
-    if (auto* v = std::getenv("VCToolsInstallDir"); v && *v) env.vcToolsInstallDir = v;
-    if (auto* v = std::getenv("VSINSTALLDIR"); v && *v) {
-        env.vsInstallDir = v;
-    } else if (auto* v2 = std::getenv("VCINSTALLDIR"); v2 && *v2) {
-        env.vsInstallDir = without_trailing_separator(v2).parent_path();
-    }
-    if (auto* path = std::getenv("PATH"); path && *path) {
-        std::string_view rest = path;
-        while (!rest.empty()) {
-            auto semi = rest.find(';');
-            auto dir  = rest.substr(0, semi);
-            if (!dir.empty()) {
-                std::filesystem::path cl = std::filesystem::path(std::string(dir)) / "cl.exe";
-                std::error_code ec;
-                if (std::filesystem::exists(cl, ec)) { env.clOnPath = cl; break; }
+    if constexpr (mcpplibs::os::is_windows) {
+        if (auto v = mcpp::invocation::get("VCToolsInstallDir")) env.vcToolsInstallDir = *v;
+        if (auto v = mcpp::invocation::get("VSINSTALLDIR")) {
+            env.vsInstallDir = *v;
+        } else if (auto v2 = mcpp::invocation::get("VCINSTALLDIR")) {
+            env.vsInstallDir = without_trailing_separator(*v2).parent_path();
+        }
+        if (auto path = mcpp::invocation::get("PATH")) {
+            std::string_view rest = *path;
+            while (!rest.empty()) {
+                auto semi = rest.find(';');
+                auto dir  = rest.substr(0, semi);
+                if (!dir.empty()) {
+                    std::filesystem::path cl = std::filesystem::path(std::string(dir)) / "cl.exe";
+                    std::error_code ec;
+                    if (std::filesystem::exists(cl, ec)) { env.clOnPath = cl; break; }
+                }
+                if (semi == std::string_view::npos) break;
+                rest.remove_prefix(semi + 1);
             }
-            if (semi == std::string_view::npos) break;
-            rest.remove_prefix(semi + 1);
         }
     }
-#endif
     return env;
 }
 
@@ -1164,14 +1163,14 @@ system_installation_matching(std::string_view version, const ToolsetNeeds& needs
 }
 
 std::optional<MsvcInstallation> detect_installation() {
-#if defined(_WIN32)
-    auto choice = select_system_toolset(enumerate_vs_instances(), msvc_env_snapshot(),
-                                        "system", ToolsetNeeds{});
-    if (!choice) return std::nullopt;
-    return installation_from_tools_dir(choice->vsRoot, choice->toolsDir);
-#else
-    return std::nullopt;
-#endif
+    if constexpr (mcpplibs::os::is_windows) {
+        auto choice = select_system_toolset(enumerate_vs_instances(), msvc_env_snapshot(),
+                                            "system", ToolsetNeeds{});
+        if (!choice) return std::nullopt;
+        return installation_from_tools_dir(choice->vsRoot, choice->toolsDir);
+    } else {
+        return std::nullopt;
+    }
 }
 
 std::vector<std::filesystem::path>
@@ -1195,11 +1194,8 @@ sibling_sdk_roots(const std::filesystem::path& clPath) {
 // target: a cross-compiling link is the caller's business (`build_env_for_cl`
 // takes an arch), but a root with no host-arch libs at all is not an SDK this
 // machine can link against. The names are the SDK's own.
-#if defined(_M_ARM64) || defined(__aarch64__)
-constexpr std::string_view sdk_lib_arch = "arm64";
-#else
-constexpr std::string_view sdk_lib_arch = "x64";
-#endif
+constexpr std::string_view sdk_lib_arch =
+    mcpplibs::os::ARCH == mcpplibs::os::architecture::aarch64 ? "arm64" : "x64";
 
 namespace {
 
@@ -1256,8 +1252,8 @@ std::optional<WindowsSdk> pick_sdk_in(const std::filesystem::path& root,
 // is not part of the directory name). Empty when unset.
 std::string declared_sdk_version() {
     std::string want;
-    if (auto* v = std::getenv("WindowsSdkVersion"); v && *v) {
-        want = v;
+    if (auto v = mcpp::invocation::get("WindowsSdkVersion")) {
+        want = *v;
         while (!want.empty() && (want.back() == '\\' || want.back() == '/'))
             want.pop_back();
     }
@@ -1325,8 +1321,8 @@ std::optional<WindowsSdk> find_windows_sdk(
     //    is removed so that one SDK has one spelling, and therefore one cache
     //    key, inside and outside a developer environment.
     const std::string want = declared_sdk_version();
-    if (auto* dir = std::getenv("WindowsSdkDir"); dir && *dir) {
-        std::filesystem::path root{dir};
+    if (auto dir = mcpp::invocation::get("WindowsSdkDir")) {
+        std::filesystem::path root{*dir};
         if (!root.has_filename() && root.has_relative_path()) root = root.parent_path();
         if (auto s = pick_sdk_in(root, want)) return s;
     }
@@ -1350,11 +1346,11 @@ std::vector<std::filesystem::path> machine_sdk_roots() {
             if (e.lexically_normal() == n) return;
         out.push_back(std::move(n));
     };
-    namespace win = mcpp::platform::windows;
-    add(win::machine_registry_path(L"SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots",
-                                   L"KitsRoot10"));
+    if constexpr (mcpplibs::os::is_windows)
+        add(mcpplibs::os::windows::machine_registry_path(L"SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots",
+                                                         L"KitsRoot10"));
     for (const char* var : {"ProgramFiles(x86)", "ProgramFiles"})
-        if (auto base = win::env_directory(var)) add(*base / "Windows Kits" / "10");
+        if (auto base = mcpp::invocation::env_directory(var)) add(*base / "Windows Kits" / "10");
     add(std::filesystem::path("C:\\Program Files (x86)\\Windows Kits\\10"));
     add(std::filesystem::path("C:\\Program Files\\Windows Kits\\10"));
     return out;
@@ -1362,12 +1358,12 @@ std::vector<std::filesystem::path> machine_sdk_roots() {
 
 MsvcProbe probe_msvc() {
     MsvcProbe p;
-#if defined(_WIN32)
-    for (auto const& inst : enumerate_vs_instances()) p.visualStudio.push_back(inst.root);
-    p.stl = find_std_module_source().has_value();
-    p.sdk = find_windows_sdk();
-    p.sdkSearched = machine_sdk_roots();
-#endif
+    if constexpr (mcpplibs::os::is_windows) {
+        for (auto const& inst : enumerate_vs_instances()) p.visualStudio.push_back(inst.root);
+        p.stl = find_std_module_source().has_value();
+        p.sdk = find_windows_sdk();
+        p.sdkSearched = machine_sdk_roots();
+    }
     return p;
 }
 
@@ -1431,16 +1427,16 @@ SdkChoice resolve_sdk_for(const std::filesystem::path& clPath) {
     }
 
     if (out.sdk) {
-        const char* dir = std::getenv("WindowsSdkDir");
-        const char* ver = std::getenv("WindowsSdkVersion");
-        if ((dir && *dir) || (ver && *ver)) {
+        const auto dir = mcpp::invocation::get("WindowsSdkDir");
+        const auto ver = mcpp::invocation::get("WindowsSdkVersion");
+        if (dir || ver) {
             out.note = std::format(
                 "WindowsSdkDir/WindowsSdkVersion in the environment "
                 "({}) is ignored: this build pins a managed MSVC toolset, and "
                 "the Windows SDK it was installed with ({} at {}) is part of "
                 "that pin. Use msvc@system if the machine's SDK is what you "
                 "want.",
-                dir && *dir ? dir : ver,
+                dir ? *dir : *ver,
                 out.sdk->version, out.sdk->root.string());
         }
         return out;
@@ -1462,35 +1458,35 @@ SdkChoice resolve_sdk_for(const std::filesystem::path& clPath) {
 }
 
 bool has_usable_msvc() {
-#if defined(_WIN32)
-    // Both, deliberately — see the declaration for why either half alone is
-    // a trap. Order matters only for cost: the STL probe short-circuits the
-    // SDK directory scan on machines with no Visual Studio at all.
-    return find_std_module_source().has_value() && find_windows_sdk().has_value();
-#else
-    return false;
-#endif
+    if constexpr (mcpplibs::os::is_windows) {
+        // Both, deliberately — see the declaration for why either half alone is
+        // a trap. Order matters only for cost: the STL probe short-circuits the
+        // SDK directory scan on machines with no Visual Studio at all.
+        return find_std_module_source().has_value() && find_windows_sdk().has_value();
+    } else {
+        return false;
+    }
 }
 
 bool msvc_available_here([[maybe_unused]] const std::filesystem::path& pkgsDir) {
-#if defined(_WIN32)
-    if (has_usable_msvc()) return true;
-    // A managed toolset is just as usable, and asking the machine about it
-    // gets the wrong answer. Any installed version whose cl.exe resolves
-    // counts; `installation_at` is the same resolution install and build use.
-    std::error_code ec;
-    auto root = mcpp::provider::layout().tool_in(pkgsDir, "msvc");
-    if (!std::filesystem::is_directory(root, ec)) return false;
-    for (auto& v : std::filesystem::directory_iterator(root, ec)) {
-        if (!v.is_directory(ec)) continue;
-        // identifyVersion=false: this asks IF a toolset is here, never which.
-        if (installation_at(v.path(), v.path().filename().string(),
-                            /*identifyVersion=*/false)) return true;
+    if constexpr (mcpplibs::os::is_windows) {
+        if (has_usable_msvc()) return true;
+        // A managed toolset is just as usable, and asking the machine about it
+        // gets the wrong answer. Any installed version whose cl.exe resolves
+        // counts; `installation_at` is the same resolution install and build use.
+        std::error_code ec;
+        auto root = mcpp::provider::layout().tool_in(pkgsDir, "msvc");
+        if (!std::filesystem::is_directory(root, ec)) return false;
+        for (auto& v : std::filesystem::directory_iterator(root, ec)) {
+            if (!v.is_directory(ec)) continue;
+            // identifyVersion=false: this asks IF a toolset is here, never which.
+            if (installation_at(v.path(), v.path().filename().string(),
+                                /*identifyVersion=*/false)) return true;
+        }
+        return false;
+    } else {
+        return false;
     }
-    return false;
-#else
-    return false;
-#endif
 }
 
 std::vector<EnvVar> build_env_for_cl(const std::filesystem::path& clPath,
@@ -1526,7 +1522,7 @@ std::vector<EnvVar> build_env_for_cl(const std::filesystem::path& clPath,
     // The PATH mcpp was started with: the process's own has been given to the
     // children launched so far, this value among them.
     std::string path = clDir.string();
-    if (auto const& p = mcpp::platform::env::inherited_path(); !p.empty()) {
+    if (auto const& p = mcpp::runtime::launch_env::inherited_path(); !p.empty()) {
         path += ';';
         path += p;
     }
@@ -1582,7 +1578,7 @@ std::string compiler_version_in_tools_dir(const std::filesystem::path& toolsDir,
     // another build, and the version said must be the one the driver would
     // have chosen, or the flag would change what a build compiles for.
     const std::string_view host =
-        mcpp::platform::host_arch == std::string_view("x86_64") ? "Hostx64" : "Hostx86";
+        mcpp::toolchain::platform::host_arch == std::string_view("x86_64") ? "Hostx64" : "Hostx86";
     const auto target = msvc_arch_dir(archGnu);
     const auto cl = toolsDir / "bin" / host / target / "cl.exe";
     std::error_code ec;
@@ -1608,13 +1604,13 @@ std::string cl_stage_command(const Toolchain& tc,
     // cache on C: is the real CI layout).
     return std::format(
         "cd /d {} && {} /nologo {}{} /EHsc /O2 /W0{} /c {} /ifcOutput {} /Fo:{} 2>&1",
-        mcpp::platform::shell::quote(cacheDir.string()),
-        mcpp::platform::shell::quote(tc.binaryPath.string()),
+        mcpp::build::command_line::quote(cacheDir.string()),
+        mcpp::build::command_line::quote(tc.binaryPath.string()),
         cppStandardFlag,
         crtFlag.empty() ? std::string{} : std::format(" {}", crtFlag),
         extraRef,
-        mcpp::platform::shell::quote(source.string()),
-        mcpp::platform::shell::quote(ifcOut.string()),
+        mcpp::build::command_line::quote(source.string()),
+        mcpp::build::command_line::quote(ifcOut.string()),
         objName);
 }
 
@@ -1682,7 +1678,7 @@ std::vector<std::string> std_compat_build_commands(
     std::string_view cppStandardFlag, std::string_view crtFlag) {
     // std.compat imports std — reference the freshly staged std.ifc.
     auto ref = std::format(" /reference std={}",
-                           mcpp::platform::shell::quote(std_bmi_path(cacheDir).string()));
+                           mcpp::build::command_line::quote(std_bmi_path(cacheDir).string()));
     return { cl_stage_command(tc, cacheDir, cppStandardFlag,
                               tc.stdCompatSource,
                               std_compat_bmi_path(cacheDir), "std.compat.obj",

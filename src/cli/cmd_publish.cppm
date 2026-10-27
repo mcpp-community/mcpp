@@ -19,7 +19,7 @@ import mcpp.pack;
 import mcpp.pack.library_pipeline;
 import mcpp.pack.pipeline;
 import mcpp.pack.route;
-import mcpp.platform.terminal;
+import mcpp.ui.terminal;
 import mcpp.project;          // resolve_member_dir, for `pack -p` (#734 E3)
 import mcpp.manifest;
 import mcpp.publish.pipeline;
@@ -218,7 +218,7 @@ int cmd_pack_list_formats(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 / mcpp::toolchain::hash_string(root->lexically_normal().generic_string());
     std::expected<mcpp::build::BuildContext, std::string> ctx = std::unexpected(std::string{});
     {
-        mcpp::platform::terminal::StdoutToStderr narration;
+        mcpp::ui::terminal::StdoutToStderr narration;
         ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false, /*includeDevDeps=*/false,
                                          {}, ov);
     }
@@ -274,7 +274,7 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
     mcpp::ui::set_error_observer([&errors](std::string_view m) { errors.emplace_back(m); });
     int rc = 0;
     {
-        mcpp::platform::terminal::StdoutToStderr narration;
+        mcpp::ui::terminal::StdoutToStderr narration;
         rc = cmd_pack_body(parsed, &outcome, &library, &libraryRoute);
     }
     mcpp::ui::set_error_observer({});

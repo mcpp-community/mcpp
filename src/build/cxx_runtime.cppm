@@ -176,7 +176,7 @@ std::string listed(const std::vector<std::string>& names) {
 }  // namespace
 
 std::optional<std::string> verify_image(const ImageCheck& in) {
-    namespace elf = mcpp::platform::elf;
+    namespace elf = mcpp::runtime::elf;
     const auto foreign = name_of(in.foreign);
     const auto own = name_of(in.own);
 

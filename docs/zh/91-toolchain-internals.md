@@ -181,7 +181,7 @@ edge。精确的 RuntimeBinding、规范身份、link intent、搜索机制与�
 判决都持久化在 `resolution.json` schema 2 中。`mcpp why runtime` 只解释
 这份存储文件；重新诊断的职责属于 `xlings doctor`。
 
-### 2.3 运行期搜索闭包（`modules/platform/src/runtime_search.cppm`）
+### 2.3 运行期搜索闭包（`src/runtime/search.cppm`）
 
 mcpp 在编译**与**链接两条命令行上都传 `--sysroot=<subos>`，因此 SubOS
 提供的库 —— `-lGL`、`-lX11`、`-lwayland-client` —— 不需要用户加任何 flag

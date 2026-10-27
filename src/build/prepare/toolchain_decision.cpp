@@ -33,7 +33,6 @@ import mcpp.build.build_program;
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.toolchain.post_install;
-import mcpp.platform;
 
 namespace mcpp::build {
 

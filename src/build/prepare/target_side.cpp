@@ -12,7 +12,7 @@ import mcpp.diag;
 import mcpp.build.refusal;
 import mcpp.build.version_floor;
 import mcpp.home;
-import mcpp.platform.axis;
+import mcpp.toolchain.platform;
 import mcpp.libs.json;
 import mcpp.log;
 import mcpp.manifest;
@@ -21,7 +21,6 @@ import mcpp.modgraph.glob;
 import mcpp.graph;
 import mcpp.build.progress;   // the members' programs wait in order (design 2026-09-29 §4.2)
 import mcpp.build.schedule.policy;   // resolve_jobs — how many programs compile at once (#748, B2)
-import mcpp.platform.capacity;       // the host fallback when no job count was stated
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.modgraph.validate;
@@ -56,7 +55,6 @@ import mcpp.build.build_program;
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.toolchain.post_install;
-import mcpp.platform;
 import mcpp.ui;
 import mcpp.log;
 import mcpp.wire;               // Severity, for PlanNote (#699 item 2, E3)
@@ -1468,7 +1466,7 @@ static std::expected<void, std::string> step9_dependency_link_forms(PrepareState
         targetFacts.fullStaticLibc =
             state.m->buildConfig.linkage == "static"
             && mcpp::toolchain::target_supports_full_static(
-                   state.tc->targetTriple, mcpp::platform::supports_full_static);
+                   state.tc->targetTriple, mcpp::toolchain::platform::supports_full_static);
 
         for (std::size_t i = 1; i < state.packages.size(); ++i) {
             auto const& pkg = state.packages[i].manifest;

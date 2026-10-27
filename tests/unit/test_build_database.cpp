@@ -10,7 +10,7 @@
 import std;
 import mcpp.build.build_database;
 import mcpp.modgraph.graph;
-import mcpp.platform;
+import mcpplibs.os.platform;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.gcc;
 import mcpp.toolchain.model;
@@ -22,7 +22,7 @@ using namespace mcpp::toolchain;
 
 namespace {
 
-const bool kWindows = mcpp::platform::is_windows;
+const bool kWindows = mcpplibs::os::is_windows;
 
 std::filesystem::path host_path(std::string_view posix, std::string_view windows) {
     return std::filesystem::path{std::string(kWindows ? windows : posix)};

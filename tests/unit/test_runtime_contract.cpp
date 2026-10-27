@@ -6,10 +6,10 @@ import mcpp.manifest.toml;
 import mcpp.manifest.types;
 import mcpp.manifest.xpkg;
 import mcpp.modgraph.scanner;
-import mcpp.platform;
-import mcpp.platform.axis;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
+import mcpp.runtime.search;
 import mcpp.runtime.binding;
-import mcpp.platform.runtime_search;
 import mcpp.provider.xlings.subos_info;
 
 namespace build = mcpp::build;
@@ -133,7 +133,7 @@ package = {
 }
 )";
     auto parsed = mf::synthesize_from_xpkg_lua(
-        lua, "backend", "2.0.0", mcpp::platform::HostPlatform::current());
+        lua, "backend", "2.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(parsed) << parsed.error().format();
     ASSERT_EQ(parsed->runtimeConfig.requirements.size(), 1u);
     EXPECT_EQ(parsed->runtimeConfig.requirements[0].value, "display.present");
@@ -260,7 +260,7 @@ TEST(RuntimeContract, XlingsSelectedFactsPrecedeDescriptorFallbacks) {
         .provider = {.namespace_ = "mcpplibs", .name = "fallback",
                      .version = "1.0.0", .sourceProvenance = "index+mcpplibs"},
     });
-    mcpp::platform::runtime::RuntimeBinding binding;
+    mcpp::runtime::RuntimeBinding binding;
     binding.runtimeProviders.push_back({
         .capability = "render.demo",
         .provider = {.namespace_ = "xim", .name = "selected",
@@ -306,8 +306,8 @@ build::BuildPlan plan_for(std::string targetTriple) {
     return plan;
 }
 
-mcpp::platform::runtime::RuntimeBinding host_binding_with_farm() {
-    mcpp::platform::runtime::RuntimeBinding b;
+mcpp::runtime::RuntimeBinding host_binding_with_farm() {
+    mcpp::runtime::RuntimeBinding b;
     b.platform = "linux";
     b.arch = "x86_64";
     b.declared = true;
@@ -316,9 +316,9 @@ mcpp::platform::runtime::RuntimeBinding host_binding_with_farm() {
     return b;
 }
 
-std::size_t farm_entries(const std::vector<mcpp::platform::search::Dir>& dirs) {
+std::size_t farm_entries(const std::vector<mcpp::runtime::search::Dir>& dirs) {
     return static_cast<std::size_t>(std::ranges::count_if(dirs, [](auto const& d) {
-        return d.origin == mcpp::platform::search::Origin::SubosFarm;
+        return d.origin == mcpp::runtime::search::Origin::SubosFarm;
     }));
 }
 
@@ -333,7 +333,7 @@ TEST(RuntimeSearchClosure, HostTargetGetsTheFarm) {
     // An EMPTY triple means "this host", so the answer is the host's format —
     // and that is the point of the ELF guard, not an exception to it. Asserting
     // 1 unconditionally is what failed on the macOS and Windows runners.
-    const std::size_t expectedForHost = mcpp::platform::is_linux ? 1u : 0u;
+    const std::size_t expectedForHost = mcpplibs::os::is_linux ? 1u : 0u;
     EXPECT_EQ(farm_entries(build::runtime_search_closure(
         plan_for(""), host_binding_with_farm())), expectedForHost)
         << "an empty triple must resolve to this host's format";
@@ -380,7 +380,7 @@ TEST(RuntimeSearchClosure, UndeclaredBindingStillGetsItsOwnFarm) {
 // existing one layer down.
 
 TEST(RuntimeIdentity, ProviderIsDispatchedOnNotPatternMatched) {
-    namespace rt = mcpp::platform::runtime;
+    namespace rt = mcpp::runtime;
     EXPECT_EQ(rt::runtime_provider("glibc@2.39"), "glibc");
     EXPECT_EQ(rt::runtime_provider("ucrt@10.0.26100.0"), "ucrt");
     EXPECT_EQ(rt::runtime_provider("macos_sdk@14.0"), "macos_sdk");
@@ -392,7 +392,7 @@ TEST(RuntimeIdentity, ProviderIsDispatchedOnNotPatternMatched) {
 }
 
 TEST(RuntimeIdentity, TheSdkVersionReachesTheContractHash) {
-    namespace rt = mcpp::platform::runtime;
+    namespace rt = mcpp::runtime;
     rt::RuntimeBinding a;
     a.platform = "windows";
     a.contractHash = "unset";
@@ -410,7 +410,7 @@ TEST(RuntimeIdentity, TheSdkVersionReachesTheContractHash) {
 }
 
 TEST(RuntimeIdentity, BindingUcrtIsIdempotentAndSkipsAnEmptyVersion) {
-    namespace rt = mcpp::platform::runtime;
+    namespace rt = mcpp::runtime;
     rt::RuntimeBinding b;
     b.platform = "windows";
     rt::bind_windows_ucrt(b, "10.0.26100.0");
@@ -438,7 +438,7 @@ TEST(RuntimeIdentity, UcrtIsAFloorDeclarationNotAPrivatePayload) {
     // of ucrt (headers + import libraries). Projecting it into `libc` would
     // send the private-libc machinery looking for a payload that was never
     // supposed to exist.
-    namespace rt = mcpp::platform::runtime;
+    namespace rt = mcpp::runtime;
     rt::RuntimeBinding b;
     b.platform = "windows";
     rt::bind_windows_ucrt(b, "10.0.26100.0");
@@ -470,7 +470,7 @@ package = {
 }
 )";
     auto parsed = mf::synthesize_from_xpkg_lua(
-        lua, "icd", "1.0.0", mcpp::platform::HostPlatform::current());
+        lua, "icd", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(parsed) << parsed.error().format();
     auto const& d = parsed->runtimeConfig.linkIntent.deploy;
     ASSERT_EQ(d.size(), 2u);
@@ -495,7 +495,7 @@ package = {
 }
 )";
     auto parsed = mf::synthesize_from_xpkg_lua(
-        lua, "icd", "1.0.0", mcpp::platform::HostPlatform::current());
+        lua, "icd", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_FALSE(parsed);
     EXPECT_NE(parsed.error().message.find("runtime.deploy[1]: `to` has a `.` or `..` component"),
               std::string::npos) << parsed.error().message;

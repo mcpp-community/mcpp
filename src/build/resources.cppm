@@ -49,7 +49,7 @@ import mcpp.manifest;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.triple;
 import mcpp.version_req;
-import mcpp.platform.process;   // capture_exec: the build program's manifest resource
+import mcpp.run;
 
 export namespace mcpp::build::resources {
 
@@ -390,7 +390,7 @@ compile_utf8_manifest(const mcpp::toolchain::Toolchain& tc,
     // rc.exe resolves through the SDK PATH the toolchain states for itself.
     std::vector<std::pair<std::string, std::string>> env;
     for (auto const& ev : tc.envOverrides) env.emplace_back(ev.key, ev.value);
-    auto r = mcpp::platform::process::capture_exec(argv, env, dir.string());
+    auto r = mcpp::run::capture_exec(argv, env, dir.string());
     if (r.exit_code != 0) {
         std::filesystem::remove(out, ec);
         return std::unexpected(std::format("{} failed (exit {}): {}",

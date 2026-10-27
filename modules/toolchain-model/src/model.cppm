@@ -5,6 +5,7 @@ export module mcpp.toolchain.model;
 import std;
 import mcpp.toolchain.triple;
 export import mcpp.toolchain.base;
+import mcpp.toolchain.platform;
 
 export namespace mcpp::toolchain {
 
@@ -384,15 +385,15 @@ std::vector<std::string> graph_runtime_compile_flags(const Toolchain& tc);
 //
 // This is a property of the TARGET, not of the machine doing the build —
 // a Windows host cross-compiling to x86_64-linux-musl still produces a fully
-// static ELF. `mcpp::platform::supports_full_static` answers a DIFFERENT
+// static ELF. `mcpp::toolchain::platform::supports_full_static` answers a DIFFERENT
 // question ("can THIS machine's own binaries be static"), and using it here
 // silently dropped `-static` from every Windows→Linux cross build.
 //
 // `hostCapability` is threaded in explicitly rather than read from
-// mcpp::platform so the decision is testable on any host: passing false
+// mcpp::toolchain::platform so the decision is testable on any host: passing false
 // models a Windows/macOS host. It is only consulted for the host target
 // (empty triple), where target *is* host. Callers pass
-// mcpp::platform::supports_full_static — keeping that dependency at the call
+// mcpp::toolchain::platform::supports_full_static — keeping that dependency at the call
 // site leaves this module free of any platform import.
 bool target_supports_full_static(std::string_view targetTriple, bool hostCapability);
 

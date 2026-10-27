@@ -2,7 +2,7 @@
 
 import std;
 import mcpp.ui;
-import mcpp.platform;
+import mcpp.ui.terminal;
 
 // Two streams, one rule (output streams plan 2026-10-01, R3): a line that
 // narrates what the command is doing is written to standard error, and a line
@@ -37,7 +37,7 @@ void plain_mode() {
 } // namespace
 
 TEST(UiStreams, NarrationIsStandardError) {
-    EXPECT_EQ(mcpp::ui::narration_stream(), mcpp::platform::terminal::Stream::Err);
+    EXPECT_EQ(mcpp::ui::narration_stream(), mcpp::ui::terminal::Stream::Err);
 }
 
 TEST(UiStreams, AStepIsNarration) {

@@ -3,7 +3,9 @@
 export module mcpp.toolchain.gcc;
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.build.command_line;
+import mcpp.run;
 import mcpp.toolchain.model;
 import mcpp.toolchain.probe;
 import mcpp.provider;
@@ -135,7 +137,7 @@ std::optional<std::filesystem::path> find_std_module_source(
 
     // An argument vector: the command-string form was written for /bin/sh
     // (single quotes and `2>/dev/null`), and cmd.exe reads neither.
-    auto r = mcpp::platform::process::capture_host_tool_stdout(
+    auto r = mcpp::run::capture_host_tool_stdout(
         {cxx_binary.string(), "-print-file-name=libstdc++.so"});
     if (r.exit_code == 0) {
         auto trimmed = mcpp::toolchain::trim_line(r.output);
@@ -211,18 +213,18 @@ static std::string module_source_command(const Toolchain& tc,
                                          std::string_view object) {
     std::string bFlag;
     if (auto binutilsBin = binutils_prefix_dir(tc); !binutilsBin.empty())
-        bFlag = std::format(" -B{}", mcpp::platform::shell::quote(binutilsBin.string()));
-    const char* cd = mcpp::platform::is_windows ? "cd /d" : "cd";
+        bFlag = std::format(" -B{}", mcpp::build::command_line::quote(binutilsBin.string()));
+    const char* cd = mcpplibs::os::is_windows ? "cd /d" : "cd";
     return std::format(
         "{} {} && {}{} {} -fmodules -O2{}{} -c {} -o {} 2>&1",
         cd,
-        mcpp::platform::shell::quote(cacheDir.string()),
+        mcpp::build::command_line::quote(cacheDir.string()),
         mcpp::toolchain::compiler_env_prefix(tc),
-        mcpp::platform::shell::quote(tc.binaryPath.string()),
+        mcpp::build::command_line::quote(tc.binaryPath.string()),
         cppStandardFlag,
         sysrootFlag,
         bFlag,
-        mcpp::platform::shell::quote(source.string()),
+        mcpp::build::command_line::quote(source.string()),
         object);
 }
 
@@ -245,21 +247,21 @@ std::string std_module_build_command(const Toolchain& tc,
                                      std::string_view cppStandardFlag) {
     std::string bFlag;
     if (auto binutilsBin = binutils_prefix_dir(tc); !binutilsBin.empty())
-        bFlag = std::format(" -B{}", mcpp::platform::shell::quote(binutilsBin.string()));
+        bFlag = std::format(" -B{}", mcpp::build::command_line::quote(binutilsBin.string()));
 
     // Windows (MinGW): cmd.exe needs `/d` to change DRIVE (project on D:,
     // BMI cache on C: is the real CI layout — same-drive runs masked this).
-    const char* cd = mcpp::platform::is_windows ? "cd /d" : "cd";
+    const char* cd = mcpplibs::os::is_windows ? "cd /d" : "cd";
     return std::format(
         "{} {} && {}{} {} -fmodules -O2{}{} -c {} -o std.o 2>&1",
         cd,
-        mcpp::platform::shell::quote(cacheDir.string()),
+        mcpp::build::command_line::quote(cacheDir.string()),
         mcpp::toolchain::compiler_env_prefix(tc),
-        mcpp::platform::shell::quote(tc.binaryPath.string()),
+        mcpp::build::command_line::quote(tc.binaryPath.string()),
         cppStandardFlag,
         sysrootFlag,
         bFlag,
-        mcpp::platform::shell::quote(tc.stdModuleSource.string()));
+        mcpp::build::command_line::quote(tc.stdModuleSource.string()));
 }
 
 std::vector<std::string> std_module_build_commands(

@@ -15,8 +15,10 @@
 #include <cstdlib>
 
 import std;
+import mcpp.invocation;
 import mcpp.build.prepare;
 import mcpp.manifest;
+import mcpplibs.os.platform;
 
 namespace {
 
@@ -33,24 +35,10 @@ mcpp::manifest::Manifest base() {
 // already in the environment) cannot leak into a sibling test in this binary.
 class ScopedDeploymentTargetEnv {
 public:
-    explicit ScopedDeploymentTargetEnv(const char* value) {
-        if (const char* old = std::getenv(kName); old) { had_ = true; old_ = old; }
-        apply(value);
-    }
-    ~ScopedDeploymentTargetEnv() { apply(had_ ? old_.c_str() : nullptr); }
-    ScopedDeploymentTargetEnv(const ScopedDeploymentTargetEnv&) = delete;
-    ScopedDeploymentTargetEnv& operator=(const ScopedDeploymentTargetEnv&) = delete;
+    explicit ScopedDeploymentTargetEnv(const char* value)
+        : inner_("MACOSX_DEPLOYMENT_TARGET", value ? std::optional<std::string>(value) : std::nullopt) {}
 private:
-    static constexpr const char* kName = "MACOSX_DEPLOYMENT_TARGET";
-    void apply(const char* v) {
-#if defined(_WIN32)
-        ::_putenv_s(kName, v ? v : "");
-#else
-        if (v) ::setenv(kName, v, 1); else ::unsetenv(kName);
-#endif
-    }
-    bool had_ = false;
-    std::string old_;
+    mcpp::invocation::ScopedEnv inner_;   // stated for this invocation, as mcpp states its own
 };
 
 } // namespace
@@ -148,7 +136,7 @@ TEST(BuildProfile, PackageFlagsAreNotInTheConfiguration) {
 // ── macos_deployment_target: TARGET-keyed, not HOST-keyed (mcpp#685) ────────
 //
 // The fingerprint's flag string used to fold this value in only
-// `if constexpr (mcpp::platform::is_macos)` -- the platform mcpp ITSELF was
+// `if constexpr (mcpplibs::os::is_macos)` -- the platform mcpp ITSELF was
 // built for -- so `mcpp build --target aarch64-macos` on a Linux host kept
 // the exact same fingerprint (hence the exact same `target/<triple>/<fp>/`
 // directory) no matter what `[build] macos_deployment_target` was edited to,

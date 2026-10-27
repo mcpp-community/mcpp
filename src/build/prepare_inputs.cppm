@@ -23,7 +23,7 @@ import mcpp.diag;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
-import mcpp.platform;
+import mcpp.toolchain.apple_sdk;
 import mcpp.toolchain.model;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.triple;
@@ -548,7 +548,7 @@ std::string canonical_configuration_flags(const mcpp::manifest::Manifest& root,
     std::string s;
     s += "-std="; s += root.package.standard;
     s += " -fmodules";
-    if (auto dtv = mcpp::platform::macos::deployment_target(
+    if (auto dtv = mcpp::toolchain::apple::deployment_target(
             targetIsMacos, root.buildConfig.macosDeploymentTarget);
         !dtv.empty()) {
         s += " macos_deployment_target=";

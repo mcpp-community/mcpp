@@ -26,7 +26,7 @@ module;
 export module mcpp.build.runner_lookup;
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
 
 export namespace mcpp::build::runner_lookup {
 
@@ -39,7 +39,7 @@ namespace detail {
 inline bool executable_file(const std::filesystem::path& p) {
     std::error_code ec;
     if (!std::filesystem::is_regular_file(p, ec)) return false;
-    if constexpr (mcpp::platform::is_windows) return true;
+    if constexpr (mcpplibs::os::is_windows) return true;
     auto perms = std::filesystem::status(p, ec).permissions();
     using P = std::filesystem::perms;
     return (perms & (P::owner_exec | P::group_exec | P::others_exec)) != P::none;
@@ -92,7 +92,7 @@ inline Lookup locate(std::string_view argv0,
         out.searched.push_back(d);
         if (auto c = d / a0; detail::executable_file(c)) { out.program = c; return out; }
     }
-    constexpr char sep = mcpp::platform::is_windows ? ';' : ':';
+    constexpr char sep = mcpplibs::os::is_windows ? ';' : ':';
     for (auto part : std::views::split(pathEnv, sep)) {
         std::string_view sv(part.begin(), part.end());
         if (sv.empty()) continue;
@@ -103,17 +103,15 @@ inline Lookup locate(std::string_view argv0,
     return out;
 }
 
-// What the kernel's refusal means. Only ENOEXEC (and EBADARCH where the
-// platform defines it) says "this host cannot load the artifact"; everything
-// else — EACCES, ENOENT on a found program, E2BIG — is reported verbatim and
-// never turned into advice about runners.
+// What the kernel's refusal means. Only ENOEXEC says "this host cannot load
+// the artifact": mcpp.run reports every refusal of that kind under it (a file
+// that is no image, and an image built for another processor, EBADARCH on
+// macOS); everything else — EACCES, ENOENT on a found program — is reported
+// verbatim and never turned into advice about runners.
 enum class SpawnClass { Unloadable, Other };
 
 inline SpawnClass classify(int e) {
     if (e == ENOEXEC) return SpawnClass::Unloadable;
-#if defined(EBADARCH)
-    if (e == EBADARCH) return SpawnClass::Unloadable;
-#endif
     return SpawnClass::Other;
 }
 

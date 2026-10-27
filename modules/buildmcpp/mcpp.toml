@@ -32,6 +32,7 @@ license     = "Apache-2.0"
 # contract change; one that breaks only the global test is a consumer that had
 # been relying on something the contract never promised.
 [dependencies.mcpp]
+invocation      = { path = "../invocation" }
 libs            = { path = "../libs" }
 manifest        = { path = "../manifest" }
 source-kind     = { path = "../source-kind" }

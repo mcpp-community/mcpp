@@ -7,7 +7,7 @@ import mcpp.build.flags;
 import mcpp.build.plan;
 import mcpp.libs.json;
 import mcpp.manifest.flag_words;
-import mcpp.platform;
+import mcpplibs.os.platform;
 import mcpp.toolchain.model;
 
 using namespace mcpp::build;
@@ -295,7 +295,7 @@ bool has_edge_quote(std::string_view s) {
 // The host's own reader: single quotes are quoting for `sh` and literal
 // characters for the MSVCRT rules, so this row holds on POSIX hosts only.
 TEST(CompileCommandsArgs, StripsPosixQuotingFromAToken) {
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         GTEST_SKIP() << "single quotes are literal under the MSVCRT rules";
     }
     auto out = mcpp::build::split_flags("-O2 '-fprebuilt-module-path=/a/b' -g");
@@ -318,7 +318,7 @@ TEST(CompileCommandsArgs, StripsWindowsQuotingFromAToken) {
 TEST(CompileCommandsArgs, AQuotedPathWithASpaceStaysOneToken) {
     // The quotes are the host's: flags.cppm quotes with `'` on POSIX and `"`
     // under the MSVCRT rules.
-    const std::string_view line = mcpp::platform::is_windows
+    const std::string_view line = mcpplibs::os::is_windows
         ? "-O2 \"-fmodule-file=std=/tmp/my$ project/std.pcm\" -g"
         : "-O2 '-fmodule-file=std=/tmp/my$ project/std.pcm' -g";
     auto out = mcpp::build::split_flags(line);
@@ -418,7 +418,7 @@ TEST(CompileCommandsArgs, AWordOnAnEdgeReadsBackAsTheWord) {
 // is available, so the model is checked against it: `/bin/sh` receives the
 // quoted words and prints each one back.
 TEST(CompileCommandsArgs, ShellReceivesTheQuotedWordsAsWritten) {
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         GTEST_SKIP() << "the POSIX shell is the reader measured here";
     }
     TempDir temp;

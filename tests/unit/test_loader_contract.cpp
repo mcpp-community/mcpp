@@ -9,7 +9,7 @@ import mcpp.runtime.elf;
 import mcpp.build.runtime_validation;
 import mcpp.build.plan;
 import mcpp.runtime.binding;
-import mcpp.platform;
+import mcpplibs.os.platform;
 import mcpp.libs.json;
 
 namespace {
@@ -304,7 +304,7 @@ TEST(ArtifactIdentity, VersionMatchIsAPathComponent) {
 // one output directory where the SECOND one is the one that does not apply.
 TEST(DlopenSurfaceRecord, ANonAnswerRepublishesTheAnswerAlreadyOnFile) {
     namespace fs = std::filesystem;
-    if constexpr (!mcpp::platform::is_linux) {
+    if constexpr (!mcpplibs::os::is_linux) {
         SUCCEED() << "the record is ELF-shaped and this host links no ELF";
         return;
     }

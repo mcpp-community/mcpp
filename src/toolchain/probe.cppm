@@ -1,14 +1,8 @@
 // mcpp.toolchain.probe - common compiler probing helpers.
 //
-// NOTE: This file contains its own run_capture() helper that returns
-// std::expected<std::string, DetectError> — a different signature from
-// mcpp::process::run_capture() (which returns RunResult).  Do NOT migrate
-// existing callers here without care.  For new process invocations that do
-// not need DetectError propagation, prefer mcpp::process::run_capture from
-// the mcpp.process module.
-
-module;
-#include <cstdlib>     // getenv
+// A compiler is asked by argument vector, with the environment it needs as
+// additions (mcpp.run): no command interpreter stands between mcpp and the
+// compiler it queries.
 
 export module mcpp.toolchain.probe;
 
@@ -17,7 +11,12 @@ import mcpp.toolchain.model;
 import mcpp.toolchain.triple;
 import mcpp.provider;
 import mcpp.provider.select;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.toolchain.apple_sdk;
+import mcpp.invocation;
+import mcpp.effects;
+import mcpp.build.command_line;
+import mcpp.run;
 import mcpp.log;
 import mcpp.home;                    // the probe cache lives under the home's cache
 import mcpp.toolchain.fingerprint;   // hash_string
@@ -26,7 +25,12 @@ import mcpp.fallback.probe_sysroot;
 
 export namespace mcpp::toolchain {
 
-std::expected<std::string, DetectError> run_capture(const std::string& cmd);
+// A compiler query: `argv` with `env` added, its standard output (with its
+// standard error when `withErrors`), answered from the probe cache when the
+// same query of the same files was answered before.
+std::expected<std::string, DetectError> run_capture(const std::vector<std::string>& argv,
+                                                    const mcpp::run::Env& env = {},
+                                                    bool withErrors = false);
 
 std::string extract_version(std::string_view s);
 std::string first_line_of(std::string_view s);
@@ -41,6 +45,11 @@ std::vector<std::filesystem::path>
 discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
                            std::string_view targetTriple);
 
+// What a compiler of this toolchain needs added to its environment: the
+// directories of its own runtime libraries on the loader search path (Linux).
+mcpp::run::Env compiler_env(const Toolchain& tc);
+// The same, as the prefix of a command line composed as text (a std module's
+// build commands, recorded in its metadata).
 std::string compiler_env_prefix(const Toolchain& tc);
 
 std::expected<std::filesystem::path, DetectError>
@@ -48,11 +57,11 @@ probe_compiler_binary(const std::filesystem::path& explicit_compiler = {});
 
 std::expected<std::string, DetectError>
 probe_target_triple(const std::filesystem::path& compilerBin,
-                    const std::string& envPrefix);
+                    const mcpp::run::Env& env);
 
 std::filesystem::path
 probe_sysroot(const std::filesystem::path& compilerBin,
-              const std::string& envPrefix);
+              const mcpp::run::Env& env);
 
 // Resolve the payload paths for an EXPLICIT runtime binding ("glibc@2.39").
 //
@@ -76,6 +85,25 @@ namespace mcpp::toolchain {
 
 namespace {
 
+// The directories an LLVM payload keeps its runtime libraries in beside lib/:
+// the triple-named ones on Linux, darwin's on macOS.
+std::vector<std::filesystem::path> llvm_runtime_lib_dirs(const std::filesystem::path& root) {
+    std::vector<std::filesystem::path> dirs;
+    std::error_code ec;
+    auto add = [&](const std::filesystem::path& p) {
+        if (std::filesystem::exists(p, ec)) dirs.push_back(p);
+    };
+    if constexpr (mcpplibs::os::is_linux) {
+        add(root / "lib" / "x86_64-unknown-linux-gnu");
+        add(root / "lib" / "aarch64-unknown-linux-gnu");
+        add(root / "lib" / "aarch64-linux-gnu");
+    } else if constexpr (mcpplibs::os::is_macos) {
+        add(root / "lib" / "aarch64-apple-darwin");
+        add(root / "lib" / "darwin");
+    }
+    return dirs;
+}
+
 void append_existing_unique(std::vector<std::filesystem::path>& out,
                             const std::filesystem::path& p) {
     std::error_code ec;
@@ -95,9 +123,6 @@ std::string join_colon_paths(const std::vector<std::filesystem::path>& dirs) {
     return joined;
 }
 
-std::string env_prefix_for_dirs(const std::vector<std::filesystem::path>& dirs) {
-    return mcpp::platform::linux_::build_clean_ld_library_path_prefix(dirs);
-}
 
 } // namespace
 
@@ -110,13 +135,13 @@ namespace {
 // file the command names (the compiler, its configuration), so a payload
 // replaced in place, a different environment prefix or another compiler is a
 // different key. Only a successful answer is kept; a failed query runs again.
-std::string probe_cache_key(const std::string& cmd) {
-    std::string key = cmd;
-    std::size_t pos = 0;
-    while ((pos = cmd.find('\'', pos)) != std::string::npos) {
-        const auto end = cmd.find('\'', pos + 1);
-        if (end == std::string::npos) break;
-        const std::filesystem::path p(cmd.substr(pos + 1, end - pos - 1));
+std::string probe_cache_key(const std::vector<std::string>& argv, const mcpp::run::Env& env,
+                            bool withErrors) {
+    std::string key = withErrors ? "merged" : "output";
+    for (auto const& [k, v] : env) key += std::format("\x1e{}={}", k, v);
+    for (auto const& a : argv) key += "\x1f" + a;
+    for (auto const& a : argv) {
+        const std::filesystem::path p(a);
         std::error_code ec;
         if (p.is_absolute() && std::filesystem::is_regular_file(p, ec)) {
             const auto size = std::filesystem::file_size(p, ec);
@@ -125,7 +150,6 @@ std::string probe_cache_key(const std::string& cmd) {
                                static_cast<std::uint64_t>(size),
                                static_cast<std::int64_t>(time.time_since_epoch().count()));
         }
-        pos = end + 1;
     }
     return key;
 }
@@ -134,20 +158,25 @@ std::filesystem::path probe_cache_file(const std::string& key) {
 }
 }  // namespace
 
-std::expected<std::string, DetectError> run_capture(const std::string& cmd) {
-    const auto key = probe_cache_key(cmd);
+std::expected<std::string, DetectError> run_capture(const std::vector<std::string>& argv,
+                                                    const mcpp::run::Env& env, bool withErrors) {
+    const auto key = probe_cache_key(argv, env, withErrors);
     const auto cached = probe_cache_file(key);
     if (std::ifstream in(cached, std::ios::binary); in) {
         std::string recordedKey;
         std::getline(in, recordedKey, '\0');
         if (recordedKey == key) return std::string(std::istreambuf_iterator<char>(in), {});
     }
-    auto r = mcpp::platform::process::capture_host_tool(cmd);
+    auto r = mcpp::run::execute(argv, { .env = env, .host_tool = true,
+                                        .streams = withErrors ? mcpp::run::Streams::merged
+                                                              : mcpp::run::Streams::output,
+                                        .report_spawn_failure = false });
+    const auto cmd = mcpp::build::command_line::display(argv);
     // Written only by a run that writes the global cache: a query (`self
     // doctor`, `toolchain list`) reads the answer and leaves the home as it
     // found it, and a cold home is never created for it.
     std::error_code homeEc;
-    if (r.exit_code == 0 && mcpp::platform::env::writes_global_cache()
+    if (r.exit_code == 0 && mcpp::effects::writes_global_cache()
         && std::filesystem::is_directory(mcpp::home::root(), homeEc)) {
         std::error_code ec;
         std::filesystem::create_directories(cached.parent_path(), ec);
@@ -256,9 +285,7 @@ discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin) {
                       || exe.find("clang") != std::string::npos;
     if (looksLikeLlvm) {
         append_existing_unique(dirs, root / "lib");
-        for (auto& d : mcpp::platform::linux_::runtime_lib_dirs(root))
-            append_existing_unique(dirs, d);
-        for (auto& d : mcpp::platform::macos::runtime_lib_dirs(root))
+        for (auto& d : llvm_runtime_lib_dirs(root))
             append_existing_unique(dirs, d);
     }
 
@@ -301,13 +328,11 @@ discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
     auto root = compilerBin.parent_path().parent_path();
     if (!targetTriple.empty())
         append_existing_unique(dirs, root / "lib" / std::string(targetTriple));
-    for (auto& d : mcpp::platform::linux_::runtime_lib_dirs(root))
-        append_existing_unique(dirs, d);
-    for (auto& d : mcpp::platform::macos::runtime_lib_dirs(root))
+    for (auto& d : llvm_runtime_lib_dirs(root))
         append_existing_unique(dirs, d);
     append_existing_unique(dirs, root / "lib");
 
-    if constexpr (mcpp::platform::is_linux) {
+    if constexpr (mcpplibs::os::is_linux) {
         if (auto rt = mcpp::provider::beside_tool(compilerBin, "gcc-runtime")) {
             append_existing_unique(dirs, *rt / "lib64");
             append_existing_unique(dirs, *rt / "lib");
@@ -316,8 +341,19 @@ discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
     return dirs;
 }
 
+mcpp::run::Env compiler_env(const Toolchain& tc) {
+    if constexpr (!mcpplibs::os::is_linux) return {};
+    if (tc.compilerRuntimeDirs.empty()) return {};
+    std::string joined;
+    for (auto const& d : tc.compilerRuntimeDirs) {
+        if (!joined.empty()) joined += ':';
+        joined += d.string();
+    }
+    return { { "LD_LIBRARY_PATH", joined } };
+}
+
 std::string compiler_env_prefix(const Toolchain& tc) {
-    return env_prefix_for_dirs(tc.compilerRuntimeDirs);
+    return mcpp::build::command_line::clean_ld_library_path_prefix(tc.compilerRuntimeDirs);
 }
 
 std::expected<std::filesystem::path, DetectError>
@@ -333,13 +369,13 @@ probe_compiler_binary(const std::filesystem::path& explicit_compiler) {
     }
 
     std::string cxx;
-    if (auto* e = std::getenv("CXX"); e && *e) {
-        cxx = e;
+    if (auto e = mcpp::invocation::get("CXX")) {
+        cxx = *e;
     } else {
         cxx = "g++";
     }
 
-    auto found = mcpp::platform::fs::which(cxx);
+    auto found = mcpp::invocation::which(cxx);
     if (!found) {
         return std::unexpected(DetectError{std::format("compiler '{}' not found in PATH", cxx)});
     }
@@ -349,18 +385,15 @@ probe_compiler_binary(const std::filesystem::path& explicit_compiler) {
 
 std::expected<std::string, DetectError>
 probe_target_triple(const std::filesystem::path& compilerBin,
-                    const std::string& envPrefix) {
-    auto triple_r = run_capture(std::format("{}{} -dumpmachine {}",
-                                            envPrefix,
-                                            mcpp::platform::shell::quote(compilerBin.string()),
-                                            mcpp::platform::null_redirect));
+                    const mcpp::run::Env& env) {
+    auto triple_r = run_capture({ compilerBin.string(), "-dumpmachine" }, env);
     if (!triple_r) return std::unexpected(triple_r.error());
     return trim_line(*triple_r);
 }
 
 std::filesystem::path
 probe_sysroot(const std::filesystem::path& compilerBin,
-              const std::string& envPrefix) {
+              const mcpp::run::Env& env) {
     // A sysroot is only usable if it actually carries the C library headers.
     // A merely-existing directory (e.g. a partially-bootstrapped sandbox
     // subos) would silently shadow the payload -isystem fallback and produce
@@ -371,10 +404,7 @@ probe_sysroot(const std::filesystem::path& compilerBin,
     };
 
     // 1. Ask the compiler directly (works for GCC; Clang often doesn't support it).
-    auto r = run_capture(std::format("{}{} -print-sysroot {}",
-                                     envPrefix,
-                                     mcpp::platform::shell::quote(compilerBin.string()),
-                                     mcpp::platform::null_redirect));
+    auto r = run_capture({ compilerBin.string(), "-print-sysroot" }, env);
     if (r) {
         auto s = trim_line(*r);
 

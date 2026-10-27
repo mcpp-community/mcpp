@@ -42,6 +42,40 @@
   and in the result record's `entry`. A file a target names as `main` on any
   row is no longer linked as an ordinary source on the other rows.
 
+### Changed
+
+- **mcpp keeps no operating-system layer of its own.** `modules/platform` is
+  removed; mcpp reaches the operating system through mcpplibs.os 0.2.0, and
+  what was mcpp's own meaning under that name now lives in the module that
+  owns it: the environment of an invocation in the `invocation` package, the
+  constraints of a run in `mcpp.effects`, every program mcpp starts in
+  `mcpp.run`, the loader environment and the run-time search in
+  `src/runtime`, command-line spelling in `mcpp.build.command_line`, the
+  platform keys and the Apple SDK in `toolchain-model`, the terminal and key
+  input in `src/ui`, the home's lock and trust check in `mcpp.home.files`.
+  The one primitive kept per system is the lock every release of mcpp takes
+  (`native/posix`, `native/windows`).
+- **A program mcpp starts is named by its argument vector.** Compiler probes,
+  git, xlings, tar, strip, patchelf, readelf and vswhere are started without a
+  command interpreter, with their additions to the environment given to them
+  alone; the interpreter runs only commands that are text by nature (a
+  `[hooks]` command, an MSVC environment script, and the command lines mcpp
+  composes and records as text, as ninja's rules are). On Windows the
+  interpreter receives `cmd.exe /d /s /c "<command>"` as one string. Every
+  started program reads an empty standard input unless it is the program
+  `mcpp run` becomes, and runs in a unit that ends with mcpp.
+- **No signal handlers.** A request to end (SIGINT, SIGTERM, SIGHUP, a
+  console's control events) is taken over by mcpplibs.os and read by one
+  watcher thread, which ends the units of the running programs, writes the
+  interrupt files, restores the terminal and ends mcpp as the request would
+  have; the exit codes of §5 are unchanged. A closed standard output ends mcpp
+  in the same order (141 to a shell on POSIX).
+- **mcpp does not write its own process environment.** Variables mcpp states
+  (its home, `--offline`, a hook's variables, xlings' home and PATH) are this
+  invocation's statements, read by every lookup mcpp makes and given to the
+  programs it starts; an xlings invocation's environment is the started
+  program's, on Windows as elsewhere.
+
 ### Fixed
 
 - **A WebAssembly link writes its `.wasm` again.** 2026.10.26.1 published every

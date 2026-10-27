@@ -17,7 +17,7 @@ import mcpp.config;
 import mcpp.fetcher.progress;      // bootstrap progress for load_or_init
 import mcpp.manifest;             // kDefaultNamespace alias
 import mcpp.lockfile;             // load / write (still via shim)
-import mcpp.platform.axis;        // HostPlatform for the published-version check
+import mcpp.toolchain.platform;
 import mcpp.pm.dep_spec;          // DependencyCoordinate
 import mcpp.pm.dependency_selector; // same candidates the manifest parser derives
 import mcpp.pm.index_route;       // shared index routing (with mcpp.build.prepare)
@@ -55,7 +55,7 @@ inline void warn_unpublished_version(std::string_view lua,
                                      const std::string& version) {
     if (mcpp::pm::is_version_constraint(version)) return;
     auto versions = mcpp::manifest::list_xpkg_versions(
-        lua, mcpp::platform::HostPlatform::current());
+        lua, mcpp::toolchain::platform::HostPlatform::current());
     if (versions.empty()) return;
     if (std::ranges::find(versions, version) != versions.end()) return;
 

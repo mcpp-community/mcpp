@@ -5,12 +5,13 @@ import std;
 import mcpp.cli;
 import mcpp.ui;
 import mcpp.home;
-import mcpp.platform;
+import mcpp.run;
+import mcpplibs.os.platform;
 
 int main(int argc, char* argv[]) {
-    // Before anything is written: `mcpp … | head` ends mcpp in order, and no
-    // program mcpp starts inherits SIGPIPE ignored (part 2 design, §6.4).
-    mcpp::platform::process::guard_broken_pipe();
+    // Before anything is started or written: the requests to end are taken
+    // over by the watcher that ends mcpp in order (design 2026-10-26 §25.5).
+    mcpp::run::install();
 
     // Line-buffer stdout even when it is not a TTY.
     //
@@ -42,6 +43,13 @@ int main(int argc, char* argv[]) {
     } catch (const mcpp::home::Error& e) {
         mcpp::ui::error(e.what());
         rc = 4;
+    } catch (const std::system_error& e) {
+        // A print to a standard output whose reader is gone: mcpp ends as the
+        // system ends such a program, in the order an interrupt does (design
+        // 2026-10-26 §25.5). Where the system has no such ending, mcpp goes on.
+        if (e.code() == std::errc::broken_pipe) mcpp::run::end_for_closed_output();
+        mcpp::ui::error(std::format("internal: unhandled exception: {}", e.what()));
+        rc = 70;
     } catch (const std::exception& e) {
         // Last-resort boundary: without it an escaped exception is
         // std::terminate — on Windows a silent 0xC0000409 that git-bash
@@ -57,16 +65,16 @@ int main(int argc, char* argv[]) {
     // region on the screen; the shell's prompt must not follow it on the
     // status line.
     mcpp::ui::close_region();
-#ifdef __APPLE__
+    if (mcpp::ui::output_closed()) mcpp::run::end_for_closed_output();
     // With statically linked libc++ (the macOS release linkage since
     // 0.0.50), static destruction can SIGABRT on exit — same issue xlings
     // guards against. A CLI tool needs no destructor-based cleanup; skip
     // static dtors entirely. _Exit bypasses atexit handlers too, so flush
     // the standard streams explicitly first.
-    std::cout.flush();
-    std::cerr.flush();
-    std::_Exit(rc);
-#else
+    if constexpr (mcpplibs::os::is_macos) {
+        std::cout.flush();
+        std::cerr.flush();
+        std::_Exit(rc);
+    }
     return rc;
-#endif
 }

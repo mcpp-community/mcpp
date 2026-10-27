@@ -24,8 +24,10 @@ import mcpp.okimage;
 import mcpp.manifest.types;
 import mcpp.manifest.flag_words;
 import mcpp.modgraph.scanner;
-import mcpp.platform;
-import mcpp.platform.runtime_search;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
+import mcpp.toolchain.apple_sdk;
+import mcpp.runtime.search;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
@@ -261,8 +263,8 @@ LinkShape link_shape(LinkHost host, mcpp::build::dist::Format targetFormat,
 
 // The host this binary was built for, in `link_shape`'s vocabulary.
 constexpr LinkHost current_link_host() {
-    return mcpp::platform::is_windows            ? LinkHost::Windows
-         : mcpp::platform::needs_explicit_libcxx ? LinkHost::MacOS
+    return mcpplibs::os::is_windows            ? LinkHost::Windows
+         : mcpp::toolchain::platform::needs_explicit_libcxx ? LinkHost::MacOS
                                                  : LinkHost::Linux;
 }
 
@@ -497,7 +499,7 @@ std::string shell_quote_arg(std::string_view arg) {
     if (arg.find_first_of(kNeedsQuote) == std::string_view::npos)
         return std::string(arg);
 
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         // MSVCRT argument rules: inside double quotes a run of backslashes is
         // literal unless a `"` follows it, in which case every backslash of
         // the run is doubled and the quote is escaped. The closing quote is
@@ -535,7 +537,7 @@ std::string shell_quote_arg(std::string_view arg) {
 std::string ninja_command_word(std::string_view word) {
     // An empty word is still a word. shell_quote_arg leaves it empty, which is
     // right for its callers that append optional pieces, and wrong here.
-    if (word.empty()) return mcpp::platform::is_windows ? "\"\"" : "''";
+    if (word.empty()) return mcpplibs::os::is_windows ? "\"\"" : "''";
     std::string out;
     for (char c : shell_quote_arg(word)) {
         if (c == '$') out.push_back('$');
@@ -649,8 +651,8 @@ dist::Format target_object_format(const mcpp::toolchain::Toolchain& tc) {
     return mcpp::toolchain::is_mingw_target(tc)
         ? dist::Format::Pe
         : dist::format_for(tc.targetTriple,
-              mcpp::platform::needs_explicit_libcxx ? dist::Format::MachO
-            : mcpp::platform::is_windows            ? dist::Format::Pe
+              mcpp::toolchain::platform::needs_explicit_libcxx ? dist::Format::MachO
+            : mcpplibs::os::is_windows            ? dist::Format::Pe
                                                     : dist::Format::Elf);
 }
 
@@ -721,7 +723,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
         return t && t->os == "macos";
     }();
-    std::string macosDeploymentTarget = mcpp::platform::macos::deployment_target(
+    std::string macosDeploymentTarget = mcpp::toolchain::apple::deployment_target(
         targetIsMacos, plan.manifest.buildConfig.macosDeploymentTarget);
 
     f.cxxBinary = plan.toolchain.binaryPath;
@@ -757,7 +759,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     const bool peTarget = [&] {
         if (auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))
             return t->is_pe();
-        return bool(mcpp::platform::is_windows);
+        return bool(mcpplibs::os::is_windows);
     }();
     // READ, not re-derived. `make_plan` decides this once and the cache key
     // hashes the same bit; a second scan here is how the compiler and the
@@ -1097,9 +1099,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             || triple.find("mingw") != std::string::npos)
             return LinkIntentFlavor::PeGnu;
         if (triple.empty()) {
-            if constexpr (mcpp::platform::is_windows)
+            if constexpr (mcpplibs::os::is_windows)
                 return LinkIntentFlavor::PeGnu;
-            if constexpr (mcpp::platform::needs_explicit_libcxx)
+            if constexpr (mcpp::toolchain::platform::needs_explicit_libcxx)
                 return LinkIntentFlavor::MachO;
         }
         return LinkIntentFlavor::Elf;
@@ -1129,7 +1131,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     std::string farm_ld;
     if (linkIntentFlavor == LinkIntentFlavor::Elf) {
         for (auto const& dir : plan.runtimeSearch) {
-            if (dir.origin != mcpp::platform::search::Origin::SubosFarm) continue;
+            if (dir.origin != mcpp::runtime::search::Origin::SubosFarm) continue;
             farm_ld += ' ';
             farm_ld += shell_quote_arg(escape_ninja_chars(
                 "-Wl,-rpath," + dir.path.string()));
@@ -1358,7 +1360,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // the right answer for a host-target build, so it is threaded in as the
     // fallback rather than discarded.
     const bool full_static_ok = mcpp::toolchain::target_supports_full_static(
-        plan.toolchain.targetTriple, mcpp::platform::supports_full_static);
+        plan.toolchain.targetTriple, mcpp::toolchain::platform::supports_full_static);
     std::string full_static = (full_static_ok && f.linkage == "static") ? " -static" : "";
 
     // ---- C++ runtime distribution contract (issue #336) -------------------
@@ -1467,7 +1469,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
 
         dist::MechanismInput mi;
         mi.stdlibId       = linkedStdlib;
-        mi.hostIsWindows  = mcpp::platform::is_windows;
+        mi.hostIsWindows  = mcpplibs::os::is_windows;
         mi.fullStaticLibc = (f.linkage == "static");
         // The CRT model this WHOLE project is being compiled with. Per-role
         // contracts cannot move it: cl bakes _MSVC_MT / _MSVC_MD into the std
@@ -1550,8 +1552,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         const bool driverPlacesArchives =
             (format == dist::Format::Elf || format == dist::Format::MachO)
             && !mi.freestanding && !mi.graphCxxRuntime && !mi.appleCrossTarget;
-        const std::string driverFlags =
-            crossTarget + (isClangWithCfg ? " --no-default-config" : "");
+        std::vector<std::string> driverFlags;
+        if (!plan.toolchain.crossTargetFlag.empty()) driverFlags.push_back(plan.toolchain.crossTargetFlag);
+        if (isClangWithCfg) driverFlags.push_back("--no-default-config");
         auto find_archive = [&](std::string_view name) -> std::filesystem::path {
             auto searched = search_llvm_root(name);
             if (!driverPlacesArchives) return searched;
@@ -1781,7 +1784,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     }
 
     std::string runtime_dirs;
-    if constexpr (mcpp::platform::supports_rpath) {
+    if constexpr (mcpp::toolchain::platform::supports_rpath) {
         // Toolchain runtime dirs (glibc/gcc) as before...
         for (auto& dir : plan.toolchain.linkRuntimeDirs) {
             runtime_dirs += " -L" + escape_path(dir);
@@ -2097,7 +2100,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         } else if (plan.toolchain.base.stated()
                    && plan.toolchain.base.address == mcpp::toolchain::base::Address::AppleIsysroot) {
             macos_sdk = " -isysroot " + escape_path(plan.toolchain.base.root);
-        } else if (auto sdk = mcpp::platform::macos::sdk_path()) {
+        } else if (auto sdk = mcpp::toolchain::apple::sdk_path()) {
             macos_sdk = " -isysroot " + escape_path(*sdk);
         }
         // AND KEPT, BECAUSE THE GRAPH BRANCH BELOW REPLACES THIS LINE.

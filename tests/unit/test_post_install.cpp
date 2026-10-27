@@ -6,7 +6,6 @@ import mcpp.toolchain.post_install;
 import mcpp.provider.xlings;
 import mcpp.config;
 import mcpp.toolchain.registry;
-import mcpp.platform;
 
 // detect_baked_loader parses gcc SPECS GRAMMAR, not plain text. The baked
 // loader path is embedded inside %-spec conditionals, e.g.

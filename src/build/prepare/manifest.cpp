@@ -33,7 +33,6 @@ import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.provider.runtime_selection;
-import mcpp.platform;
 import mcpp.pm.resolver;
 import mcpp.pm.index_spec;
 import mcpp.pm.index_contract;
@@ -45,6 +44,7 @@ import mcpp.pm.dependency_selector;
 import mcpp.pm.lock_io;
 import mcpp.ui;
 import mcpp.project;
+import mcpp.invocation;
 
 namespace mcpp::build {
 
@@ -705,11 +705,11 @@ std::expected<void, std::string> phase0_manifest_and_workspace(PrepareState& sta
     // the invocation that actually resolves the build.
     state.cacheMode = resolve_cache_mode(*state.m, state.overrides.cache_mode);
     {
-        const char* envMode = std::getenv("MCPP_BUILD_CACHE");
+        const std::string envMode = mcpp::invocation::get("MCPP_BUILD_CACHE").value_or(std::string());
         for (auto [value, origin] : std::initializer_list<
                  std::pair<std::string_view, std::string_view>>{
                  {state.overrides.cache_mode,        "--cache"},
-                 {envMode ? envMode : "",      "MCPP_BUILD_CACHE"},
+                 {envMode,                     "MCPP_BUILD_CACHE"},
                  {state.m->buildConfig.cacheMode,    "[build] cache"}}) {
             if (value.empty() || parse_cache_mode(value)) continue;
             auto msg = std::format(

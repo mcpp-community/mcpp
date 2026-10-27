@@ -1,13 +1,14 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
 import mcpp.toolchain.triple;
 
 // How a built artifact is NAMED is a property of the TARGET, never of the
 // machine doing the build.
 //
-// mcpp used to answer it with mcpp::platform::{exe_suffix,lib_prefix,
+// mcpp used to answer it with the host's {exe_suffix,lib_prefix,
 // static_lib_ext,shared_lib_ext} — host constants selected by
 // `#if defined(_WIN32)/__APPLE__`. On a host build the two questions coincide,
 // which is why this survived; it only diverges once host != target.
@@ -157,17 +158,17 @@ TEST(ArtifactNaming, EmscriptenSharedIsUnsupported) {
 // what the old code produced on this machine.
 TEST(ArtifactNaming, RealHostConstantsRoundTrip) {
     const tr::ArtifactNaming host{
-        .exeSuffix = mcpp::platform::exe_suffix,
-        .libPrefix = mcpp::platform::lib_prefix,
-        .staticLibExt = mcpp::platform::static_lib_ext,
-        .sharedLibExt = mcpp::platform::shared_lib_ext,
-        .sharedNeedsImportLib = mcpp::platform::is_windows,
+        .exeSuffix = mcpplibs::os::exe_suffix,
+        .libPrefix = mcpp::toolchain::platform::lib_prefix,
+        .staticLibExt = mcpp::toolchain::platform::static_lib_ext,
+        .sharedLibExt = mcpp::toolchain::platform::shared_lib_ext,
+        .sharedNeedsImportLib = mcpplibs::os::is_windows,
     };
     auto n = tr::artifact_naming(tr::Triple{}, host);
-    EXPECT_EQ(n.exeSuffix,    mcpp::platform::exe_suffix);
-    EXPECT_EQ(n.libPrefix,    mcpp::platform::lib_prefix);
-    EXPECT_EQ(n.staticLibExt, mcpp::platform::static_lib_ext);
-    EXPECT_EQ(n.sharedLibExt, mcpp::platform::shared_lib_ext);
+    EXPECT_EQ(n.exeSuffix,    mcpplibs::os::exe_suffix);
+    EXPECT_EQ(n.libPrefix,    mcpp::toolchain::platform::lib_prefix);
+    EXPECT_EQ(n.staticLibExt, mcpp::toolchain::platform::static_lib_ext);
+    EXPECT_EQ(n.sharedLibExt, mcpp::toolchain::platform::shared_lib_ext);
 }
 
 // ── #622 A3: the link form of `kind = "app"` is a property of the row ───────

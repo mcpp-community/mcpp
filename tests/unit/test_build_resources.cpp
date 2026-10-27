@@ -3,7 +3,7 @@
 import std;
 import mcpp.manifest;
 import mcpp.build.resources;
-import mcpp.platform;
+import mcpplibs.os.platform;
 import mcpp.toolchain.detect;
 
 namespace res = mcpp::build::resources;
@@ -67,7 +67,7 @@ struct TempDir {
 // ─── Which windres: decided where the tool is found ───────────────────────
 
 TEST(BuildResources, LlvmWindresIsRecognisedThroughTheSymlinkThatNamesIt) {
-    if constexpr (mcpp::platform::is_windows)
+    if constexpr (mcpplibs::os::is_windows)
         GTEST_SKIP() << "creating a symlink needs a privilege a Windows runner may lack";
     TempDir d;
     const auto real = d.write("llvm-rc", "");
@@ -96,7 +96,7 @@ TEST(BuildResources, LlvmWindresIsRecognisedThroughTheSymlinkThatNamesIt) {
 // ─── The build program's manifest object: the command is part of it ───────
 
 TEST(BuildResources, TheManifestObjectIsRemadeWhenItsCommandChanges) {
-    if constexpr (mcpp::platform::is_windows)
+    if constexpr (mcpplibs::os::is_windows)
         GTEST_SKIP() << "the stand-in resource compiler is a POSIX shell script";
     TempDir d;
     // A windres that writes the words it was given into its output.

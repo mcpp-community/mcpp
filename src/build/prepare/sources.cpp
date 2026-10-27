@@ -21,7 +21,8 @@ import mcpp.config;
 import mcpp.diag;
 import mcpp.wire;
 import mcpp.manifest;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.invocation;
 import mcpp.ui;
 import mcpp.provider;
 import mcpp.provider.select;
@@ -45,9 +46,8 @@ std::string origin_place(const SourceDecision& d, const fs::path& relativeTo) {
         if (!ec && !rel.empty() && !rel.generic_string().starts_with(".."))
             shown = rel.generic_string();
     }
-    const char* home = std::getenv(mcpp::platform::is_windows ? "USERPROFILE" : "HOME");
-    if (home && *home) {
-        const auto h = fs::path(home).generic_string();
+    if (auto home = mcpp::invocation::get(mcpplibs::os::is_windows ? "USERPROFILE" : "HOME")) {
+        const auto h = fs::path(*home).generic_string();
         if (shown.starts_with(h + "/")) shown = "~" + shown.substr(h.size());
     }
     return d.originLine > 0 ? std::format("{}:{}", shown, d.originLine) : shown;
@@ -142,8 +142,8 @@ payload_override(PrepareState& state, std::string_view key) {
     };
     std::optional<Stated> stated;
     const auto var = override_env_var(key);
-    if (const char* v = std::getenv(var.c_str()); v && *v) {
-        std::string value(v);
+    if (auto v = mcpp::invocation::get(var)) {
+        std::string value(*v);
         Stated s{.originKind = "env", .originKey = var, .base = fs::current_path()};
         if (value.starts_with("path:")) { s.kind = "program"; value = value.substr(5); }
         s.value = std::move(value);
@@ -212,7 +212,7 @@ payload_override(PrepareState& state, std::string_view key) {
         // later step runs and the one the `Using` line names, so a reader can
         // see which PATH entry served it. Without a stated version it is the
         // one class of source mcpp cannot describe beyond its location.
-        auto found = mcpp::platform::fs::which(stated->value);
+        auto found = mcpp::invocation::which(stated->value);
         if (!found) return refuse(std::format("'{}' is not found on PATH", stated->value));
         out.program = found->generic_string();
         out.root    = root_of_program(*found).generic_string();
@@ -626,8 +626,8 @@ std::expected<void, std::string> step13_sources(PrepareState& state, BuildContex
 }
 
 std::optional<std::string> managed_only_refusal(const PrepareState& state) {
-    const char* env = std::getenv("MCPP_MANAGED_ONLY");
-    const bool on = state.overrides.managed_only || (env && *env && std::string_view(env) != "0");
+    const auto env = mcpp::invocation::get("MCPP_MANAGED_ONLY");
+    const bool on = state.overrides.managed_only || (env && *env != "0");
     if (!on) return std::nullopt;
     std::string list;
     const auto root = state.root ? *state.root : fs::path{};

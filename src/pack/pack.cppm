@@ -47,7 +47,11 @@ import mcpp.pack.relocate;
 import mcpp.pack.stage_tree;
 import mcpp.pack.strip;
 import mcpp.pack.zip;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
+import mcpp.invocation;
+import mcpp.build.command_line;
+import mcpp.run;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.manifest;
@@ -731,20 +735,19 @@ make_plan(const mcpp::manifest::Manifest& manifest,
 
 namespace detail {
 
-// Run a shell command, capturing stdout. Returns the captured text on
+// A program's output and errors together. Returns the captured text on
 // success, or an error message on non-zero exit.
 std::expected<std::string, std::string>
-run_capture(const std::string& cmd) {
-    auto r = mcpp::platform::process::capture(cmd);
+run_capture(const std::vector<std::string>& argv, const mcpp::run::Env& env = {}) {
+    auto r = mcpp::run::execute(argv, { .env = env });
     if (r.exit_code != 0) return std::unexpected(std::format(
-        "command exited with {}: {}", r.exit_code, cmd));
+        "command exited with {}: {}", r.exit_code, mcpp::build::command_line::display(argv)));
     return r.output;
 }
 
-// Run a shell command and discard stdout/stderr; return exit code.
-int run_silent(const std::string& cmd) {
-    auto silent = cmd + " " + std::string(mcpp::platform::shell::silent_redirect);
-    return mcpp::platform::process::run_silent(silent);
+// A program whose output is not read; its exit code.
+int run_silent(const std::vector<std::string>& argv) {
+    return mcpp::run::execute(argv, { .streams = mcpp::run::Streams::discard }).exit_code;
 }
 
 // ─── ldd parsing + manylinux skip-list ──────────────────────────────
@@ -813,9 +816,7 @@ ldd_parse(const std::filesystem::path& binary)
     // executing main(). This routes through the binary's *own*
     // PT_INTERP so it works even when our sandbox's ldd wrapper is
     // broken or missing.
-    auto cmd = std::format(
-        "LD_TRACE_LOADED_OBJECTS=1 '{}' 2>&1", binary.string());
-    auto out = run_capture(cmd);
+    auto out = run_capture({ binary.string() }, { { "LD_TRACE_LOADED_OBJECTS", "1" } });
     if (!out) return std::unexpected(out.error());
 
     LddClosure deps;
@@ -896,13 +897,12 @@ set_search_path(const std::filesystem::path& object,
 {
     if (patchelf.empty() || !std::filesystem::exists(patchelf))
         return std::unexpected("patchelf not available in sandbox");
-    std::string extra;
+    std::vector<std::string> argv{ patchelf.string(), "--set-rpath", std::string(rpath) };
     if (auto flag = mcpp::build::loader::patchelf_flag(
             mcpp::build::loader::required_tag(form)))
-        extra = std::format(" {}", *flag);
-    auto cmd = std::format("'{}' --set-rpath '{}'{} '{}'",
-        patchelf.string(), rpath, extra, object.string());
-    int rc = run_silent(cmd);
+        argv.emplace_back(*flag);
+    argv.push_back(object.string());
+    int rc = run_silent(argv);
     if (rc != 0) return std::unexpected(std::format(
         "patchelf --set-rpath failed (exit {}): {}", rc, object.string()));
     return {};
@@ -918,9 +918,7 @@ set_interpreter(const std::filesystem::path& binary,
 {
     if (patchelf.empty() || !std::filesystem::exists(patchelf))
         return std::unexpected("patchelf not available in sandbox");
-    auto cmd = std::format("'{}' --set-interpreter '{}' '{}'",
-        patchelf.string(), interp, binary.string());
-    int rc = run_silent(cmd);
+    int rc = run_silent({ patchelf.string(), "--set-interpreter", std::string(interp), binary.string() });
     if (rc != 0) return std::unexpected(std::format(
         "patchelf --set-interpreter failed (exit {}): {}", rc, binary.string()));
     return {};
@@ -1412,13 +1410,11 @@ make_tarball(const std::filesystem::path& stagingRoot,
     // observed — a PE target is written as a zip — but it is the same command
     // with the same hazard as the library packer's, and the two should not
     // differ in whether they survive being run on Windows.
-    auto cmd = std::format(
-        "tar {}-czf '{}' -C '{}' '{}'",
-        mcpp::platform::is_windows ? "--force-local " : "",
-        tarballPath.string(),
-        stagingRoot.parent_path().string(),
-        stagingRoot.filename().string());
-    auto r = run_capture(cmd);
+    std::vector<std::string> argv{ "tar" };
+    if constexpr (mcpplibs::os::is_windows) argv.push_back("--force-local");
+    argv.insert(argv.end(), { "-czf", tarballPath.string(), "-C", stagingRoot.parent_path().string(),
+                              stagingRoot.filename().string() });
+    auto r = run_capture(argv);
     if (!r) return std::unexpected(Error{r.error()});
     return {};
 }
@@ -2066,8 +2062,8 @@ okimage_build_selfcontained(const Plan& plan, const std::filesystem::path& image
         stem, runSpec);
     // The section, in the syntax of this machine's object format; the symbol
     // spelling carries Mach-O's leading underscore.
-    const bool macho = mcpp::platform::is_macos;
-    const bool coff  = mcpp::platform::is_windows;
+    const bool macho = mcpplibs::os::is_macos;
+    const bool coff  = mcpplibs::os::is_windows;
     const std::string sym = macho ? "_" : "";
     const std::string section = macho ? "\t.section __OKE,__image\n"
                               : coff  ? "\t.section .oke,\"dr\"\n"
@@ -2105,16 +2101,16 @@ okimage_build_selfcontained(const Plan& plan, const std::filesystem::path& image
     // `-o` with a bare name: the package directory is `target/dist/<name>`.
     const auto out = dir / "target" / "dist" / "packed";
     fs::remove_all(out, ec);
-    std::vector<std::string> argv{ mcpp::platform::fs::self_exe_path().string(), "pack",
+    std::vector<std::string> argv{ mcpp::invocation::self_exe_path().string(), "pack",
                                    "--format", "dir", "-o", "packed" };
-    if constexpr (mcpp::platform::is_linux) {
-        argv.insert(argv.end(), { "--target", std::format("{}-linux-musl", mcpp::platform::host_arch),
+    if constexpr (mcpplibs::os::is_linux) {
+        argv.insert(argv.end(), { "--target", std::format("{}-linux-musl", mcpp::toolchain::platform::host_arch),
                                   "--mode", "static" });
     } else {
         argv.insert(argv.end(), { "--mode", "vendored" });
     }
     int spawnError = 0;
-    auto built = mcpp::platform::process::capture_exec(argv, {}, dir.string(), &spawnError);
+    auto built = mcpp::run::capture_exec(argv, {}, dir.string(), &spawnError);
     if (spawnError != 0 || built.exit_code != 0)
         return std::unexpected(Error{std::format(
             "packing the self-contained program failed (in {}):\n{}", dir.string(), built.output)});
@@ -2143,7 +2139,7 @@ run_okimage(const Plan& plan)
     // The images it names, found where the build placed them.
     std::vector<fs::path> needed;
     if (plan.opts.mode != Mode::None) {
-        auto facts = mcpp::platform::elf::inspect_elf_runtime(plan.builtBinary);
+        auto facts = mcpp::runtime::elf::inspect_elf_runtime(plan.builtBinary);
         if (!facts) return std::unexpected(Error{facts.error()});
         const auto builtDir = plan.builtBinary.parent_path();
         for (auto const& name : facts->needed) {
@@ -2164,7 +2160,7 @@ run_okimage(const Plan& plan)
         fs::copy(*packed, plan.stagingRoot,
                  fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
         staged = plan.stagingRoot / "bin"
-               / (fs::path(plan.binaryName).stem().string() + std::string(mcpp::platform::exe_suffix));
+               / (fs::path(plan.binaryName).stem().string() + std::string(mcpplibs::os::exe_suffix));
     } else {
         staged = plan.stagingRoot / "bin" / plan.binaryName;
         fs::copy_file(plan.builtBinary, staged, fs::copy_options::overwrite_existing, ec);
@@ -2414,7 +2410,7 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
             in.object = plan.builtBinary;
             in.rule   = ClosureRule::MachO;
             auto t = mcpp::toolchain::triple::parse(plan.triple);
-            in.arch   = t ? t->arch : std::string(mcpp::platform::host_arch);
+            in.arch   = t ? t->arch : std::string(mcpp::toolchain::platform::host_arch);
             const auto read = read_closure(in);
             if (auto r = stage_closure(plan, read, plan.stagingRoot / "bin", needs,
                                        unresolved, {}); !r)
@@ -2437,364 +2433,364 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
         return ClosureResult{true, {}, std::move(needs)};
     }
 
-#if defined(_WIN32)
-    // STEP 4, second mechanism: a NON-PE artifact on a Windows host — a cross
-    // build to Linux or macOS. The closure would be resolved by running the
-    // binary under its own dynamic linker, which this machine cannot do — so
-    // say that, rather than reporting a platform limitation that no longer
-    // exists for the case a Windows user is actually likely to hit.
-    //
-    // Also step 4's outcome now, for the same reason the Mach-O branch above
-    // is: the tree from `stage_declared` already exists when a dispatched
-    // format reaches this point.
-    (void)cfg;
-    return finish_without_closure(plan, std::format(
-        "cannot package a {} artifact from a Windows host.\n"
-        "       The dependency closure for that format is resolved by running "
-        "the artifact under\n"
-        "       the target's own dynamic linker, which this machine has no way "
-        "to do. Package it\n"
-        "       on the target OS, or build for Windows (`--target "
-        "x86_64-pc-windows-msvc`), which\n"
-        "       needs no such step.",
-        std::string(mcpp::pack::binfmt::format_name(
-            mcpp::pack::binfmt::identify(plan.builtBinary).format))));
-#else
-    std::error_code ec;
+    if constexpr (mcpplibs::os::is_windows) {
+        // STEP 4, second mechanism: a NON-PE artifact on a Windows host — a cross
+        // build to Linux or macOS. The closure would be resolved by running the
+        // binary under its own dynamic linker, which this machine cannot do — so
+        // say that, rather than reporting a platform limitation that no longer
+        // exists for the case a Windows user is actually likely to hit.
+        //
+        // Also step 4's outcome now, for the same reason the Mach-O branch above
+        // is: the tree from `stage_declared` already exists when a dispatched
+        // format reaches this point.
+        (void)cfg;
+        return finish_without_closure(plan, std::format(
+            "cannot package a {} artifact from a Windows host.\n"
+            "       The dependency closure for that format is resolved by running "
+            "the artifact under\n"
+            "       the target's own dynamic linker, which this machine has no way "
+            "to do. Package it\n"
+            "       on the target OS, or build for Windows (`--target "
+            "x86_64-pc-windows-msvc`), which\n"
+            "       needs no such step.",
+            std::string(mcpp::pack::binfmt::format_name(
+                mcpp::pack::binfmt::identify(plan.builtBinary).format))));
+    } else {
+        std::error_code ec;
 
-    // STEP 4, third mechanism, and STEP 5 (the format tail): library
-    // bundling for non-static modes.
-    //
-    //    BundleProject (default) — drop all manylinux-allowed system libs
-    //    (libc/libstdc++/ld-linux/...) and bundle the rest. The user can
-    //    extend the skip list via [pack.bundle-project].also_skip /
-    //    .force_bundle.
-    //
-    //    BundleAll — ship every dep including the dynamic linker; entry
-    //    point becomes `run.sh` which invokes the bundled ld with
-    //    --library-path → fully portable across glibc versions.
-    // #634 A3: what step 4 resolved, for the stage manifest, and the refusal
-    // text when it is incomplete. Both stay empty under `--mode static`.
-    std::vector<ClosureNeed> needs;
-    std::string unresolvedText;
-    // #649 E5: (staged, source) of every bundled library, for the strip step
-    // at the end, which must see the final images (after the search-path edits).
-    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> bundledCopies;
-    std::string bundledLoader;
-    if (plan.opts.mode != Mode::Static) {
-        // THE BUILT BINARY, NOT THE STAGED COPY, and the difference is
-        // `$ORIGIN`.
+        // STEP 4, third mechanism, and STEP 5 (the format tail): library
+        // bundling for non-static modes.
         //
-        // The closure is resolved by running the artifact under its own
-        // loader. A dependency that mcpp itself built as a shared library
-        // lives beside the artifact in `bin/` and is found through the
-        // `$ORIGIN` in its RUNPATH — but the copy in the staging directory has
-        // an empty `bin/` next to it, so that entry resolves to nothing, the
-        // library never appears in the closure, and it is therefore never
-        // bundled. The bundle builds, packs and uploads without complaint, and
-        // fails on the user's machine with
-        // `error while loading shared libraries: libfoo.so`.
+        //    BundleProject (default) — drop all manylinux-allowed system libs
+        //    (libc/libstdc++/ld-linux/...) and bundle the rest. The user can
+        //    extend the skip list via [pack.bundle-project].also_skip /
+        //    .force_bundle.
         //
-        // Measured on mcpp 2026.8.26.1 with an author-declared
-        // `kind = "shared"` dependency, so this predates the consumer-side
-        // form axis (#519) — but that axis is what makes it reachable for
-        // EVERY package rather than the handful that declare themselves
-        // shared, which is why it is fixed here.
-        //
-        // Tracing the built binary is safe: the staged file is a byte copy of
-        // it and nothing has modified either one at this point (patchelf runs
-        // further down). What changes is only which directory `$ORIGIN`
-        // expands to while the loader is looking.
-        //
-        // A NON-ELF ARTIFACT REACHING THIS POINT ASSUMED ELF BY EXCLUSION.
-        // PE and Mach-O are refused by name above `run()`'s `#else`; nothing
-        // between there and here asks what is LEFT actually is ELF, because
-        // ELF used to be the only format left once those two were excluded.
-        // wasm32-emscripten is the first target where that assumption is
-        // false: `binfmt::identify` reports `Format::Unknown` for a `.wasm`
-        // module (it carries none of the three magics), and `ldd_parse`
-        // below runs the file through the same LD_TRACE_LOADED_OBJECTS
-        // mechanism the Mach-O branch above refuses by name rather than
-        // risk — on a host where `.wasm` is registered in `binfmt_misc`,
-        // that does not fail, it RUNS the module.
-        if (auto fmt = mcpp::pack::binfmt::identify(plan.builtBinary).format;
-            fmt != mcpp::pack::binfmt::Format::Elf) {
-            return finish_without_closure(plan, std::format(
-                "cannot package the {} artifact '{}' yet.\n"
-                "       Its dependency closure is resolved by running the "
-                "artifact under its own\n"
-                "       dynamic linker, and this file is neither ELF, PE nor "
-                "Mach-O -- there is no\n"
-                "       such linker to ask.",
-                mcpp::pack::binfmt::format_name(fmt), plan.binaryName));
-        }
-        auto deps = ldd_parse(plan.builtBinary);
-        if (!deps) return std::unexpected(Error{std::format(
-            "ldd failed on {}: {}", plan.builtBinary.string(), deps.error())});
-
-        auto skipped_by_mode = [&](std::string_view soname) {
-            bool skip = false;
-            if (plan.opts.mode == Mode::None) {
-                skip = true;  // system: host provides every .so, bundle nothing
-            } else if (plan.opts.mode == Mode::BundleProject) {
-                if (is_system_lib(soname))                          skip = true;
-                if (soname_matches(soname, plan.alsoSkipLibs))      skip = true;
-                if (soname_matches(soname, plan.forceBundleLibs))   skip = false;  // override
+        //    BundleAll — ship every dep including the dynamic linker; entry
+        //    point becomes `run.sh` which invokes the bundled ld with
+        //    --library-path → fully portable across glibc versions.
+        // #634 A3: what step 4 resolved, for the stage manifest, and the refusal
+        // text when it is incomplete. Both stay empty under `--mode static`.
+        std::vector<ClosureNeed> needs;
+        std::string unresolvedText;
+        // #649 E5: (staged, source) of every bundled library, for the strip step
+        // at the end, which must see the final images (after the search-path edits).
+        std::vector<std::pair<std::filesystem::path, std::filesystem::path>> bundledCopies;
+        std::string bundledLoader;
+        if (plan.opts.mode != Mode::Static) {
+            // THE BUILT BINARY, NOT THE STAGED COPY, and the difference is
+            // `$ORIGIN`.
+            //
+            // The closure is resolved by running the artifact under its own
+            // loader. A dependency that mcpp itself built as a shared library
+            // lives beside the artifact in `bin/` and is found through the
+            // `$ORIGIN` in its RUNPATH — but the copy in the staging directory has
+            // an empty `bin/` next to it, so that entry resolves to nothing, the
+            // library never appears in the closure, and it is therefore never
+            // bundled. The bundle builds, packs and uploads without complaint, and
+            // fails on the user's machine with
+            // `error while loading shared libraries: libfoo.so`.
+            //
+            // Measured on mcpp 2026.8.26.1 with an author-declared
+            // `kind = "shared"` dependency, so this predates the consumer-side
+            // form axis (#519) — but that axis is what makes it reachable for
+            // EVERY package rather than the handful that declare themselves
+            // shared, which is why it is fixed here.
+            //
+            // Tracing the built binary is safe: the staged file is a byte copy of
+            // it and nothing has modified either one at this point (patchelf runs
+            // further down). What changes is only which directory `$ORIGIN`
+            // expands to while the loader is looking.
+            //
+            // A NON-ELF ARTIFACT REACHING THIS POINT ASSUMED ELF BY EXCLUSION.
+            // PE and Mach-O are refused by name above `run()`'s `#else`; nothing
+            // between there and here asks what is LEFT actually is ELF, because
+            // ELF used to be the only format left once those two were excluded.
+            // wasm32-emscripten is the first target where that assumption is
+            // false: `binfmt::identify` reports `Format::Unknown` for a `.wasm`
+            // module (it carries none of the three magics), and `ldd_parse`
+            // below runs the file through the same LD_TRACE_LOADED_OBJECTS
+            // mechanism the Mach-O branch above refuses by name rather than
+            // risk — on a host where `.wasm` is registered in `binfmt_misc`,
+            // that does not fail, it RUNS the module.
+            if (auto fmt = mcpp::pack::binfmt::identify(plan.builtBinary).format;
+                fmt != mcpp::pack::binfmt::Format::Elf) {
+                return finish_without_closure(plan, std::format(
+                    "cannot package the {} artifact '{}' yet.\n"
+                    "       Its dependency closure is resolved by running the "
+                    "artifact under its own\n"
+                    "       dynamic linker, and this file is neither ELF, PE nor "
+                    "Mach-O -- there is no\n"
+                    "       such linker to ask.",
+                    mcpp::pack::binfmt::format_name(fmt), plan.binaryName));
             }
-            // Mode::BundleAll: skip nothing — we want the loader too.
-            return skip;
-        };
+            auto deps = ldd_parse(plan.builtBinary);
+            if (!deps) return std::unexpected(Error{std::format(
+                "ldd failed on {}: {}", plan.builtBinary.string(), deps.error())});
 
-        // #634 A3: the `needs` lines, from the same decisions that fill the
-        // tree. A mode that bundles nothing states no closure, as on every
-        // other row.
-        const bool bundling = plan.opts.mode != Mode::None;
-        std::vector<ResolvedDep> toBundle;
-        for (auto& d : deps->found) {
-            if (skipped_by_mode(d.soname)) {
-                if (bundling) needs.push_back({d.soname, ClosureNeed::Kind::Platform, {}});
-                continue;
+            auto skipped_by_mode = [&](std::string_view soname) {
+                bool skip = false;
+                if (plan.opts.mode == Mode::None) {
+                    skip = true;  // system: host provides every .so, bundle nothing
+                } else if (plan.opts.mode == Mode::BundleProject) {
+                    if (is_system_lib(soname))                          skip = true;
+                    if (soname_matches(soname, plan.alsoSkipLibs))      skip = true;
+                    if (soname_matches(soname, plan.forceBundleLibs))   skip = false;  // override
+                }
+                // Mode::BundleAll: skip nothing — we want the loader too.
+                return skip;
+            };
+
+            // #634 A3: the `needs` lines, from the same decisions that fill the
+            // tree. A mode that bundles nothing states no closure, as on every
+            // other row.
+            const bool bundling = plan.opts.mode != Mode::None;
+            std::vector<ResolvedDep> toBundle;
+            for (auto& d : deps->found) {
+                if (skipped_by_mode(d.soname)) {
+                    if (bundling) needs.push_back({d.soname, ClosureNeed::Kind::Platform, {}});
+                    continue;
+                }
+                toBundle.push_back(d);
+                needs.push_back({d.soname, ClosureNeed::Kind::Staged, "lib/" + d.soname});
             }
-            toBundle.push_back(d);
-            needs.push_back({d.soname, ClosureNeed::Kind::Staged, "lib/" + d.soname});
-        }
-        // A name the loader found no file for is one the tree cannot carry.
-        // When the mode leaves it to the target anyway it is the target's;
-        // otherwise the closure is incomplete, and an archive that says
-        // `walked` would not start where it is installed.
-        std::vector<std::string> unresolved;
-        for (auto const& name : deps->notFound) {
-            if (!bundling) continue;
-            // `also_skip` names the target's libraries in every bundling mode
-            // here, `self-contained` included: the tree cannot carry a file
-            // this machine does not have.
-            if (skipped_by_mode(name) || (soname_matches(name, plan.alsoSkipLibs)
-                                          && !soname_matches(name, plan.forceBundleLibs))) {
-                needs.push_back({name, ClosureNeed::Kind::Platform, {}});
-                continue;
+            // A name the loader found no file for is one the tree cannot carry.
+            // When the mode leaves it to the target anyway it is the target's;
+            // otherwise the closure is incomplete, and an archive that says
+            // `walked` would not start where it is installed.
+            std::vector<std::string> unresolved;
+            for (auto const& name : deps->notFound) {
+                if (!bundling) continue;
+                // `also_skip` names the target's libraries in every bundling mode
+                // here, `self-contained` included: the tree cannot carry a file
+                // this machine does not have.
+                if (skipped_by_mode(name) || (soname_matches(name, plan.alsoSkipLibs)
+                                              && !soname_matches(name, plan.forceBundleLibs))) {
+                    needs.push_back({name, ClosureNeed::Kind::Platform, {}});
+                    continue;
+                }
+                needs.push_back({name, ClosureNeed::Kind::Unresolved, {}});
+                unresolved.push_back(name + ": the loader finds no file for it");
             }
-            needs.push_back({name, ClosureNeed::Kind::Unresolved, {}});
-            unresolved.push_back(name + ": the loader finds no file for it");
-        }
-        if (!unresolved.empty())
-            unresolvedText = unresolved_reason(plan.binaryName, unresolved,
-                "The loader looks through the program's run-time search path "
-                "(DT_RPATH, DT_RUNPATH) and\n"
-                "       its own default directories.");
-        // An archive refuses before any file is edited; a dispatched format
-        // still receives the tree the resolved names allow.
-        if (!unresolved.empty() && plan.opts.format != Format::Dispatched)
-            return finish_without_closure(plan, unresolvedText, needs);
+            if (!unresolved.empty())
+                unresolvedText = unresolved_reason(plan.binaryName, unresolved,
+                    "The loader looks through the program's run-time search path "
+                    "(DT_RPATH, DT_RUNPATH) and\n"
+                    "       its own default directories.");
+            // An archive refuses before any file is edited; a dispatched format
+            // still receives the tree the resolved names allow.
+            if (!unresolved.empty() && plan.opts.format != Format::Dispatched)
+                return finish_without_closure(plan, unresolvedText, needs);
 
-        if (auto r = bundle_libs(toBundle, plan.stagingRoot); !r)
-            return std::unexpected(Error{r.error()});
-        for (auto const& d : toBundle)
-            bundledCopies.emplace_back(plan.stagingRoot / "lib" / d.soname, d.path);
-        bundledLoader = find_loader_soname(toBundle);
-
-        // Search path: point at bundled libs, or REMOVE THE TAG if there are none.
-        //
-        // The empty case used to be `patchelf --set-rpath ''`, which leaves the
-        // tag present with an empty string — and a present-but-empty DT_RUNPATH
-        // is not inert: it suppresses the inherited DT_RPATH chain exactly like
-        // a stale one does (measured — see mcpp.pack.relocate). Harmless on an
-        // executable, which is the top of that chain, but there is no reason to
-        // write a tag that says nothing.
-        //
-        // OUTSIDE the patchelf guard, because it no longer needs patchelf. That
-        // is the whole point of the in-process editor: `--mode system` on a host
-        // where the sandbox has no patchelf used to leave the build machine's
-        // store in the artifact and say nothing at all.
-        if (toBundle.empty()) {
-            if (auto r = mcpp::pack::relocate::strip_search_paths(bundledBinary); !r)
+            if (auto r = bundle_libs(toBundle, plan.stagingRoot); !r)
                 return std::unexpected(Error{r.error()});
-        }
+            for (auto const& d : toBundle)
+                bundledCopies.emplace_back(plan.stagingRoot / "lib" / d.soname, d.path);
+            bundledLoader = find_loader_soname(toBundle);
 
-        auto patchelf = sandbox_patchelf(cfg);
-        if (!patchelf.empty()) {
-            //   non-empty bundle → "$ORIGIN/../lib" so the binary finds them
-            if (!toBundle.empty()) {
-                if (auto r = set_search_path(bundledBinary, "$ORIGIN/../lib",
-                                             mcpp::build::loader::Form::Executable,
-                                             patchelf); !r)
+            // Search path: point at bundled libs, or REMOVE THE TAG if there are none.
+            //
+            // The empty case used to be `patchelf --set-rpath ''`, which leaves the
+            // tag present with an empty string — and a present-but-empty DT_RUNPATH
+            // is not inert: it suppresses the inherited DT_RPATH chain exactly like
+            // a stale one does (measured — see mcpp.pack.relocate). Harmless on an
+            // executable, which is the top of that chain, but there is no reason to
+            // write a tag that says nothing.
+            //
+            // OUTSIDE the patchelf guard, because it no longer needs patchelf. That
+            // is the whole point of the in-process editor: `--mode system` on a host
+            // where the sandbox has no patchelf used to leave the build machine's
+            // store in the artifact and say nothing at all.
+            if (toBundle.empty()) {
+                if (auto r = mcpp::pack::relocate::strip_search_paths(bundledBinary); !r)
                     return std::unexpected(Error{r.error()});
             }
 
-            // EVERY BUNDLED LIBRARY, not just the executable.
-            //
-            // A bundled .so keeps whatever RUNPATH it was built with, and on
-            // this ecosystem that is a set of ABSOLUTE paths into the BUILD
-            // MACHINE's xlings store. Measured on a graphics artifact:
-            //
-            //   <store>/xim-x-glibc/2.44/lib64 : <store>/xim-x-gcc/16.1.0/lib64
-            //   : <store>/compat-x-glx-runtime/…/lib : $ORIGIN
-            //
-            // Those directories do not exist on the target, and worse, if the
-            // target happens to be another developer's machine they exist with
-            // DIFFERENT contents. "Depends on the xlings ecosystem" would be a
-            // design choice; "depends on this one machine's store" is a defect,
-            // and it is invisible because the bundle runs fine where it was
-            // built. $ORIGIN is where its siblings actually are.
-            //
-            // EXCEPT THE DYNAMIC LOADER. `ld-linux-*.so` is not a shared
-            // library that gets searched for; it is the program that DOES the
-            // searching, and it is loaded by the kernel from an absolute path
-            // (PT_INTERP, or `run.sh`'s explicit invocation). Rewriting its
-            // own search path is meaningless, and patchelf rewriting it is
-            // destructive: Mode `self-contained` then segfaults before main,
-            // because the thing that was supposed to resolve the process's
-            // libraries no longer loads. Found by `30_pack_modes`.
-            auto loaderSoname = find_loader_soname(toBundle);
-            for (auto const& dep : toBundle) {
-                if (!loaderSoname.empty() && dep.soname == loaderSoname) continue;
-                auto staged = plan.stagingRoot / "lib" / dep.soname;
-                std::error_code ec;
-                if (!std::filesystem::is_regular_file(staged, ec)) continue;
-                if (auto r = set_search_path(
-                        staged, "$ORIGIN",
-                        mcpp::build::loader::Form::SharedLibrary, patchelf); !r)
-                    return std::unexpected(Error{r.error()});
-            }
-
-            // PT_INTERP handling differs by mode:
-            //   BundleProject → repoint to the target distro's loader
-            //                   (LSB layout: /lib64/<loader> on x86_64,
-            //                   /lib/<loader> elsewhere), derived from the
-            //                   loader soname ldd resolved for THIS binary —
-            //                   arch-correct without hardcoding a name.
-            //   BundleAll     → leave PT_INTERP alone; the wrapper script
-            //                   ignores it and launches via the bundled
-            //                   loader directly.
-            if (plan.opts.mode == Mode::BundleProject || plan.opts.mode == Mode::None) {
-                if (auto soname = find_loader_soname(deps->found); !soname.empty()) {
-                    auto distroLoader =
-                        (soname == "ld-linux-x86-64.so.2" ? "/lib64/" : "/lib/")
-                        + soname;
-                    if (auto r = set_interpreter(bundledBinary, distroLoader,
+            auto patchelf = sandbox_patchelf(cfg);
+            if (!patchelf.empty()) {
+                //   non-empty bundle → "$ORIGIN/../lib" so the binary finds them
+                if (!toBundle.empty()) {
+                    if (auto r = set_search_path(bundledBinary, "$ORIGIN/../lib",
+                                                 mcpp::build::loader::Form::Executable,
                                                  patchelf); !r)
                         return std::unexpected(Error{r.error()});
                 }
-            }
-        }
 
-        if (plan.opts.mode == Mode::BundleAll) {
-            auto loader = find_loader_soname(toBundle);
-            if (loader.empty()) {
-                // No ld-linux in deps means binary was statically linked,
-                // which the user typically wouldn't combine with --mode
-                // bundle-all. Skip wrapper, ship as-is.
-            } else {
-                // The runtime data of the C library the bundle carries
-                // (openxlings/xlings#621): its compiled locales and its
-                // character-set converters, from the payload the bundled
-                // loader came from (`<payload>/lib64/ld-linux-*` ->
-                // `<payload>/lib/{locale,gconv}`). A payload without them
-                // contributes nothing, and the program runs as before.
-                bool localeData = false, gconvData = false;
-                for (auto const& d : toBundle) {
-                    if (d.soname != loader) continue;
-                    std::error_code dec;
-                    const auto payload =
-                        std::filesystem::canonical(d.path, dec).parent_path().parent_path();
-                    if (dec) break;
-                    auto copy_dir = [&](std::string_view sub) {
-                        const auto from = payload / "lib" / std::string(sub);
-                        std::error_code cec;
-                        if (!std::filesystem::is_directory(from, cec)) return false;
-                        const auto to = plan.stagingRoot / "lib" / std::string(sub);
-                        std::filesystem::create_directories(to, cec);
-                        std::filesystem::copy(from, to,
-                            std::filesystem::copy_options::recursive
-                            | std::filesystem::copy_options::overwrite_existing, cec);
-                        return !cec;
-                    };
-                    localeData = copy_dir("locale");
-                    gconvData  = copy_dir("gconv");
-                    break;
+                // EVERY BUNDLED LIBRARY, not just the executable.
+                //
+                // A bundled .so keeps whatever RUNPATH it was built with, and on
+                // this ecosystem that is a set of ABSOLUTE paths into the BUILD
+                // MACHINE's xlings store. Measured on a graphics artifact:
+                //
+                //   <store>/xim-x-glibc/2.44/lib64 : <store>/xim-x-gcc/16.1.0/lib64
+                //   : <store>/compat-x-glx-runtime/…/lib : $ORIGIN
+                //
+                // Those directories do not exist on the target, and worse, if the
+                // target happens to be another developer's machine they exist with
+                // DIFFERENT contents. "Depends on the xlings ecosystem" would be a
+                // design choice; "depends on this one machine's store" is a defect,
+                // and it is invisible because the bundle runs fine where it was
+                // built. $ORIGIN is where its siblings actually are.
+                //
+                // EXCEPT THE DYNAMIC LOADER. `ld-linux-*.so` is not a shared
+                // library that gets searched for; it is the program that DOES the
+                // searching, and it is loaded by the kernel from an absolute path
+                // (PT_INTERP, or `run.sh`'s explicit invocation). Rewriting its
+                // own search path is meaningless, and patchelf rewriting it is
+                // destructive: Mode `self-contained` then segfaults before main,
+                // because the thing that was supposed to resolve the process's
+                // libraries no longer loads. Found by `30_pack_modes`.
+                auto loaderSoname = find_loader_soname(toBundle);
+                for (auto const& dep : toBundle) {
+                    if (!loaderSoname.empty() && dep.soname == loaderSoname) continue;
+                    auto staged = plan.stagingRoot / "lib" / dep.soname;
+                    std::error_code ec;
+                    if (!std::filesystem::is_regular_file(staged, ec)) continue;
+                    if (auto r = set_search_path(
+                            staged, "$ORIGIN",
+                            mcpp::build::loader::Form::SharedLibrary, patchelf); !r)
+                        return std::unexpected(Error{r.error()});
                 }
-                // Mode B writes BOTH `run.sh` and `<binary_name>` at the
-                // bundle root — same content, different names — so users
-                // can pick whichever entry point they prefer.
-                if (auto r = write_bundle_all_wrappers(plan.stagingRoot,
-                        plan.binaryName, loader, localeData, gconvData); !r)
+
+                // PT_INTERP handling differs by mode:
+                //   BundleProject → repoint to the target distro's loader
+                //                   (LSB layout: /lib64/<loader> on x86_64,
+                //                   /lib/<loader> elsewhere), derived from the
+                //                   loader soname ldd resolved for THIS binary —
+                //                   arch-correct without hardcoding a name.
+                //   BundleAll     → leave PT_INTERP alone; the wrapper script
+                //                   ignores it and launches via the bundled
+                //                   loader directly.
+                if (plan.opts.mode == Mode::BundleProject || plan.opts.mode == Mode::None) {
+                    if (auto soname = find_loader_soname(deps->found); !soname.empty()) {
+                        auto distroLoader =
+                            (soname == "ld-linux-x86-64.so.2" ? "/lib64/" : "/lib/")
+                            + soname;
+                        if (auto r = set_interpreter(bundledBinary, distroLoader,
+                                                     patchelf); !r)
+                            return std::unexpected(Error{r.error()});
+                    }
+                }
+            }
+
+            if (plan.opts.mode == Mode::BundleAll) {
+                auto loader = find_loader_soname(toBundle);
+                if (loader.empty()) {
+                    // No ld-linux in deps means binary was statically linked,
+                    // which the user typically wouldn't combine with --mode
+                    // bundle-all. Skip wrapper, ship as-is.
+                } else {
+                    // The runtime data of the C library the bundle carries
+                    // (openxlings/xlings#621): its compiled locales and its
+                    // character-set converters, from the payload the bundled
+                    // loader came from (`<payload>/lib64/ld-linux-*` ->
+                    // `<payload>/lib/{locale,gconv}`). A payload without them
+                    // contributes nothing, and the program runs as before.
+                    bool localeData = false, gconvData = false;
+                    for (auto const& d : toBundle) {
+                        if (d.soname != loader) continue;
+                        std::error_code dec;
+                        const auto payload =
+                            std::filesystem::canonical(d.path, dec).parent_path().parent_path();
+                        if (dec) break;
+                        auto copy_dir = [&](std::string_view sub) {
+                            const auto from = payload / "lib" / std::string(sub);
+                            std::error_code cec;
+                            if (!std::filesystem::is_directory(from, cec)) return false;
+                            const auto to = plan.stagingRoot / "lib" / std::string(sub);
+                            std::filesystem::create_directories(to, cec);
+                            std::filesystem::copy(from, to,
+                                std::filesystem::copy_options::recursive
+                                | std::filesystem::copy_options::overwrite_existing, cec);
+                            return !cec;
+                        };
+                        localeData = copy_dir("locale");
+                        gconvData  = copy_dir("gconv");
+                        break;
+                    }
+                    // Mode B writes BOTH `run.sh` and `<binary_name>` at the
+                    // bundle root — same content, different names — so users
+                    // can pick whichever entry point they prefer.
+                    if (auto r = write_bundle_all_wrappers(plan.stagingRoot,
+                            plan.binaryName, loader, localeData, gconvData); !r)
+                        return std::unexpected(Error{r.error()});
+                    collect_licenses(toBundle, plan.stagingRoot);
+                }
+            } else {
+                // Static / BundleProject: drop a thin shell wrapper at the
+                // root that exec's bin/<name>, so `./hello` from the
+                // unpacked bundle runs the program directly.
+                if (auto r = write_topentry_wrapper(plan.stagingRoot, plan.binaryName); !r)
                     return std::unexpected(Error{r.error()});
-                collect_licenses(toBundle, plan.stagingRoot);
             }
         } else {
-            // Static / BundleProject: drop a thin shell wrapper at the
-            // root that exec's bin/<name>, so `./hello` from the
-            // unpacked bundle runs the program directly.
+            // Mode::Static — also add the top-level entry-point wrapper.
             if (auto r = write_topentry_wrapper(plan.stagingRoot, plan.binaryName); !r)
                 return std::unexpected(Error{r.error()});
         }
-    } else {
-        // Mode::Static — also add the top-level entry-point wrapper.
-        if (auto r = write_topentry_wrapper(plan.stagingRoot, plan.binaryName); !r)
-            return std::unexpected(Error{r.error()});
-    }
 
-    // The format tail's last two steps, run only because step 4 above
-    // produced a list (an early return took every path where it did not):
-    // debug information does not travel either.
-    //
-    // AFTER every byte-changing step above (patchelf's search path, PT_INTERP)
-    // and before the archive: strip must see the final image, and the archive
-    // must see the stripped one. Same ordering rule the library packer states
-    // at its leg loop.
-    if (auto r = strip_program(plan, bundledBinary); !r) return std::unexpected(r.error());
-    // #649 E5: and the shared libraries this graph built. The dynamic loader
-    // is never one of them and is never edited, for the reason the
-    // search-path loop above gives.
-    for (auto const& [staged, source] : bundledCopies) {
-        if (!bundledLoader.empty() && staged.filename() == bundledLoader) continue;
-        if (!strips_staged_copy(plan, source, plan.graphSharedLibraries)) continue;
-        if (auto r = strip_staged_library(plan, staged, source, plan.debugDir); !r)
-            return std::unexpected(r.error());
-    }
-
-    // A dispatched format reaches this point with an incomplete closure; an
-    // archive was refused before any file was edited.
-    if (!unresolvedText.empty())
-        return finish_without_closure(plan, unresolvedText, std::move(needs));
-
-    // THE C LIBRARY THE MACHINE THAT RUNS IT MUST HAVE (design 2026-10-23
-    // §4.11). A package that loads the target's own C library binds no base:
-    // the base it was built against becomes a FLOOR, the highest `GLIBC_x.y`
-    // the program and every library shipped beside it need. Said once on the
-    // terminal and written to HOST-REQUIREMENTS, where a reader of the bundle
-    // looks for what the target must provide.
-    //
-    // Only for a build that STATED its base: that is the case whose floor is a
-    // decision someone made (an old glibc, for distributions older than this
-    // machine). The ecosystem's own base packs exactly as it did.
-    if (plan.opts.baseStated
-        && (plan.opts.mode == Mode::BundleProject || plan.opts.mode == Mode::None)) {
-        std::vector<std::string> needs;
-        auto consider = [&](const std::filesystem::path& p) {
-            if (auto f = mcpp::platform::elf::inspect_elf_runtime(p))
-                needs.insert(needs.end(), f->requiredGlibcVersions.begin(),
-                             f->requiredGlibcVersions.end());
-        };
-        consider(bundledBinary);
-        for (auto const& [staged, source] : bundledCopies) consider(staged);
-        if (auto floor = mcpp::toolchain::base::highest_glibc(needs); !floor.empty()) {
-            mcpp::ui::info("Requires", std::format(
-                "glibc >= {} on the machine that runs it (the highest GLIBC_ version "
-                "the program and the libraries packed with it need)", floor));
-            auto reqs = plan.hostRequirements;
-            reqs.push_back({std::format("c-abi.glibc>={}", floor), "PT_INTERP", true});
-            std::ofstream out(plan.stagingRoot / std::filesystem::path(kFileName));
-            out << render(reqs);
+        // The format tail's last two steps, run only because step 4 above
+        // produced a list (an early return took every path where it did not):
+        // debug information does not travel either.
+        //
+        // AFTER every byte-changing step above (patchelf's search path, PT_INTERP)
+        // and before the archive: strip must see the final image, and the archive
+        // must see the stripped one. Same ordering rule the library packer states
+        // at its leg loop.
+        if (auto r = strip_program(plan, bundledBinary); !r) return std::unexpected(r.error());
+        // #649 E5: and the shared libraries this graph built. The dynamic loader
+        // is never one of them and is never edited, for the reason the
+        // search-path loop above gives.
+        for (auto const& [staged, source] : bundledCopies) {
+            if (!bundledLoader.empty() && staged.filename() == bundledLoader) continue;
+            if (!strips_staged_copy(plan, source, plan.graphSharedLibraries)) continue;
+            if (auto r = strip_staged_library(plan, staged, source, plan.debugDir); !r)
+                return std::unexpected(r.error());
         }
-    }
 
-    // Output.
-    if (plan.opts.format == Format::Tar) {
-        if (auto r = make_tarball(plan.stagingRoot, plan.archivePath); !r)
-            return std::unexpected(r.error());
+        // A dispatched format reaches this point with an incomplete closure; an
+        // archive was refused before any file was edited.
+        if (!unresolvedText.empty())
+            return finish_without_closure(plan, unresolvedText, std::move(needs));
+
+        // THE C LIBRARY THE MACHINE THAT RUNS IT MUST HAVE (design 2026-10-23
+        // §4.11). A package that loads the target's own C library binds no base:
+        // the base it was built against becomes a FLOOR, the highest `GLIBC_x.y`
+        // the program and every library shipped beside it need. Said once on the
+        // terminal and written to HOST-REQUIREMENTS, where a reader of the bundle
+        // looks for what the target must provide.
+        //
+        // Only for a build that STATED its base: that is the case whose floor is a
+        // decision someone made (an old glibc, for distributions older than this
+        // machine). The ecosystem's own base packs exactly as it did.
+        if (plan.opts.baseStated
+            && (plan.opts.mode == Mode::BundleProject || plan.opts.mode == Mode::None)) {
+            std::vector<std::string> needs;
+            auto consider = [&](const std::filesystem::path& p) {
+                if (auto f = mcpp::runtime::elf::inspect_elf_runtime(p))
+                    needs.insert(needs.end(), f->requiredGlibcVersions.begin(),
+                                 f->requiredGlibcVersions.end());
+            };
+            consider(bundledBinary);
+            for (auto const& [staged, source] : bundledCopies) consider(staged);
+            if (auto floor = mcpp::toolchain::base::highest_glibc(needs); !floor.empty()) {
+                mcpp::ui::info("Requires", std::format(
+                    "glibc >= {} on the machine that runs it (the highest GLIBC_ version "
+                    "the program and the libraries packed with it need)", floor));
+                auto reqs = plan.hostRequirements;
+                reqs.push_back({std::format("c-abi.glibc>={}", floor), "PT_INTERP", true});
+                std::ofstream out(plan.stagingRoot / std::filesystem::path(kFileName));
+                out << render(reqs);
+            }
+        }
+
+        // Output.
+        if (plan.opts.format == Format::Tar) {
+            if (auto r = make_tarball(plan.stagingRoot, plan.archivePath); !r)
+                return std::unexpected(r.error());
+        }
+        return ClosureResult{true, {}, std::move(needs)};
     }
-    return ClosureResult{true, {}, std::move(needs)};
-#endif // !_WIN32
 }
 
 } // namespace mcpp::pack

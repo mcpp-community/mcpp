@@ -20,7 +20,7 @@ export module mcpp.hooks;
 
 import std;
 import mcpp.manifest;
-import mcpp.platform.process;
+import mcpp.run;
 import mcpp.ui;
 
 export namespace mcpp::hooks {
@@ -74,7 +74,7 @@ public:
 private:
     void close();
 
-    mcpp::platform::process::BackgroundCommand child_;
+    mcpp::run::BackgroundCommand child_;
     std::string           command_;
     std::filesystem::path root_;
     bool                  inheritOutput_ = false;
@@ -94,7 +94,7 @@ namespace mcpp::hooks {
 
 namespace {
 
-namespace proc = mcpp::platform::process;
+namespace proc = mcpp::run;
 
 // `loop` restarts a command that ended before its interval did. Two bounds,
 // fixed rather than configurable, because a knob whose wrong value is a spin

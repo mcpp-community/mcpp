@@ -42,7 +42,9 @@ import mcpp.pack.relocate;
 import mcpp.pack.strip;
 import mcpp.source_kind;   // builtin_extension_table — what needs no declaring
 import mcpp.pack.zip;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.build.command_line;
+import mcpp.run;
 import mcpp.ui;
 
 export namespace mcpp::pack {
@@ -138,11 +140,11 @@ std::expected<std::filesystem::path, LibraryPackError> run_library_pack(const Li
 //
 // Pinning the two constants in dialect.cppm is not enough: the order they are
 // assembled in is a third fact, and it lives here.
-std::string archive_remove_command(const std::filesystem::path& tool,
-                                   const std::filesystem::path& archive,
-                                   const std::vector<std::string>& members,
-                                   std::string_view removeArg,
-                                   bool archiveFirst);
+std::vector<std::string> archive_remove_command(const std::filesystem::path& tool,
+                                                const std::filesystem::path& archive,
+                                                const std::vector<std::string>& members,
+                                                std::string_view removeArg,
+                                                bool archiveFirst);
 
 } // namespace mcpp::pack
 
@@ -176,35 +178,33 @@ std::vector<std::filesystem::path> walk(const std::filesystem::path& root) {
 
 } // namespace
 
-std::string archive_remove_command(const std::filesystem::path& tool,
-                                   const std::filesystem::path& archive,
-                                   const std::vector<std::string>& members,
-                                   std::string_view removeArg,
-                                   bool archiveFirst)
+std::vector<std::string> archive_remove_command(const std::filesystem::path& tool,
+                                                const std::filesystem::path& archive,
+                                                const std::vector<std::string>& members,
+                                                std::string_view removeArg,
+                                                bool archiveFirst)
 {
-    std::string cmd = mcpp::platform::shell::quote(tool.string());
+    std::vector<std::string> argv{ tool.string() };
     // `{}` in removeArg means one flag per member (lib.exe /REMOVE:<m>); its
     // absence means one verb followed by every member (ar d <archive> <m>...).
     const bool perMember = removeArg.find("{}") != std::string_view::npos;
-    auto member_words = [&] {
-        std::string w;
+    auto add_members = [&] {
         for (auto const& m : members) {
-            if (!perMember) { w += " " + mcpp::platform::shell::quote(m); continue; }
+            if (!perMember) { argv.push_back(m); continue; }
             std::string arg{ removeArg };
             arg.replace(arg.find("{}"), 2, m);
-            w += " " + mcpp::platform::shell::quote(arg);
+            argv.push_back(std::move(arg));
         }
-        return w;
     };
     if (archiveFirst) {
-        if (!perMember) cmd += " " + std::string(removeArg);
-        cmd += " " + mcpp::platform::shell::quote(archive.string());
-        cmd += member_words();
+        if (!perMember) argv.emplace_back(removeArg);
+        argv.push_back(archive.string());
+        add_members();
     } else {
-        cmd += member_words();
-        cmd += " " + mcpp::platform::shell::quote(archive.string());
+        add_members();
+        argv.push_back(archive.string());
     }
-    return cmd;
+    return argv;
 }
 
 std::expected<std::filesystem::path, LibraryPackError>
@@ -302,10 +302,11 @@ run_library_pack(const LibraryPackPlan& plan)
                 leg.triple, name) });
         }
         if (!leg.shared && !plan.dropObjects.empty()) {
-            const auto cmd = archive_remove_command(
+            const auto argv = archive_remove_command(
                 leg.archiveTool, dst, plan.dropObjects,
                 leg.removeArg, leg.removeArchiveFirst);
-            auto r = mcpp::platform::process::capture(cmd + " 2>&1");
+            const auto cmd = mcpp::build::command_line::display(argv);
+            auto r = mcpp::run::execute(argv);
             if (r.exit_code != 0) {
                 return std::unexpected(LibraryPackError{ std::format(
                     "cannot drop published interface objects from '{}' (rc={}).\n"
@@ -508,12 +509,12 @@ run_library_pack(const LibraryPackPlan& plan)
         // Reached only by a package with more than one leg: a single PE leg is
         // written as a zip, so a Windows host never ran this path until a fat
         // package existed. Same fix, same reason, in pack.cppm's make_tarball.
-        auto cmd = std::format("tar {}-czf {} -C {} {}",
-            mcpp::platform::is_windows ? "--force-local " : "",
-            mcpp::platform::shell::quote(plan.archivePath.string()),
-            mcpp::platform::shell::quote(plan.stagingRoot.parent_path().string()),
-            mcpp::platform::shell::quote(plan.stagingRoot.filename().string()));
-        auto r = mcpp::platform::process::capture(cmd + " 2>&1");
+        std::vector<std::string> argv{ "tar" };
+        if constexpr (mcpplibs::os::is_windows) argv.push_back("--force-local");
+        argv.insert(argv.end(), { "-czf", plan.archivePath.string(),
+                                  "-C", plan.stagingRoot.parent_path().string(),
+                                  plan.stagingRoot.filename().string() });
+        auto r = mcpp::run::execute(argv);
         if (r.exit_code != 0)
             return std::unexpected(LibraryPackError{ std::format(
                 "tar failed (rc={}): {}", r.exit_code, r.output) });

@@ -11,13 +11,15 @@
 export module mcpp.toolchain.base_probe;
 
 import std;
-import mcpp.platform;
-import mcpp.platform.macos;
+import mcpplibs.os.platform;
+import mcpp.run;
 import mcpp.toolchain.base;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.model;
 import mcpp.toolchain.triple;
 import mcpp.runtime.elf;
+import mcpp.toolchain.apple_sdk;
+import mcpp.invocation;
 
 export namespace mcpp::toolchain::base {
 
@@ -68,7 +70,7 @@ inline std::string trim(std::string s) {
 inline fs::path print_file_name(const std::vector<std::string>& base, std::string_view name) {
     auto argv = base;
     argv.push_back(std::format("-print-file-name={}", name));
-    auto r = mcpp::platform::process::capture_stdout(argv);
+    auto r = mcpp::run::capture_stdout(argv);
     if (r.exit_code != 0) return {};
     fs::path p(trim(r.output));
     std::error_code ec;
@@ -149,7 +151,7 @@ inline GnuMeasurement measure_gnu(const std::vector<std::string>& driverBase,
     auto pp = base;
     for (auto const& e : extra) pp.push_back(e);
     pp.insert(pp.end(), {"-E", "-dM", "-x", "c", probe.string()});
-    auto r = mcpp::platform::process::capture_stdout(pp);
+    auto r = mcpp::run::capture_stdout(pp);
     if (r.exit_code == 0) m.fact = classify_macros(parse_defines(r.output));
     if (!m.fact && m.cAbiFound) {
         // musl defines nothing that names it; a musl loader or a `libc.a`
@@ -221,7 +223,7 @@ inline RuntimeFloor compiler_runtime_glibc_floor(const std::vector<std::string>&
         std::error_code ec;
         auto real = fs::canonical(p, ec);
         if (ec) continue;
-        auto facts = mcpp::platform::elf::inspect_elf_runtime(real);
+        auto facts = mcpp::runtime::elf::inspect_elf_runtime(real);
         if (!facts) continue;
         auto v = highest_glibc(facts->requiredGlibcVersions);
         if (!v.empty() && (best.version.empty() || compare_versions(v, best.version) > 0))
@@ -237,7 +239,7 @@ inline RuntimeFloor compiler_runtime_glibc_floor(const std::vector<std::string>&
 // developer directory only exist on an Apple one (inside `sdk_path`).
 inline std::expected<AppleSdk, std::string>
 locate_apple(const Statement& s, std::string_view name) {
-    namespace mac = mcpp::platform::macos;
+    namespace mac = mcpp::toolchain::apple;
     AppleSdk sdk;
     sdk.name = std::string(name);
     std::error_code ec;
@@ -252,10 +254,10 @@ locate_apple(const Statement& s, std::string_view name) {
     } else {
         auto found = mac::sdk_path(name);
         if (!found) {
-            const char* env = std::getenv("SDKROOT");
+            const auto env = mcpp::invocation::get("SDKROOT");
             return std::unexpected(std::format(
-                "looked in: SDKROOT ({}){}", env && *env ? env : "unset",
-                mcpp::platform::is_macos ? ", xcrun, xcode-select and the standard locations" : ""));
+                "looked in: SDKROOT ({}){}", env.value_or("unset"),
+                mcpplibs::os::is_macos ? ", xcrun, xcode-select and the standard locations" : ""));
         }
         sdk.root = *found;
     }

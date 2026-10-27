@@ -5,8 +5,8 @@ import mcpp.manifest;
 import mcpp.targetside;
 import mcpp.libs.toml;
 import mcpp.pm.dep_spec;
-import mcpp.platform.axis;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
 import mcpp.build.prepare;   // merge_conditional_config: a row's statement replaces
 
 TEST(Manifest, PeAutoExportDefaultsOnAndAcceptsAnExplicitOptOut) {
@@ -36,7 +36,7 @@ package = {{
     xpm = {{ windows = {{ ["0.1.0"] = {{ url = "u", sha256 = "h" }} }} }},
     mcpp = {{ sources = {{ "*/api.cpp" }}, targets = {{ ["dll"] = {{ kind = "shared", {} }} }} }},
 }}
-)", declaration), "dll", "0.1.0", mcpp::platform::HostPlatform::current());
+)", declaration), "dll", "0.1.0", mcpp::toolchain::platform::HostPlatform::current());
         ASSERT_TRUE(m.has_value()) << m.error().format();
         ASSERT_EQ(m->targets.size(), 1u);
         EXPECT_EQ(m->targets.front().windows_auto_export(), std::string_view(declaration) != "windows_auto_export = false,");
@@ -48,7 +48,7 @@ package = {
     xpm = { windows = { ["0.1.0"] = { url = "u", sha256 = "h" } } },
     mcpp = { sources = { "*/api.cpp" }, targets = { ["dll"] = { kind = "shared", windows_auto_export = "false" } } },
 }
-)", "dll", "0.1.0", mcpp::platform::HostPlatform::current());
+)", "dll", "0.1.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_FALSE(bad.has_value());
     EXPECT_NE(bad.error().format().find("windows_auto_export must be a boolean"), std::string::npos);
 }
@@ -495,23 +495,23 @@ package = {
     },
 }
 )";
-    auto linux = mcpp::manifest::list_xpkg_versions(src, mcpp::platform::TargetPlatform::for_lint_of("linux"));
+    auto linux = mcpp::manifest::list_xpkg_versions(src, mcpp::toolchain::platform::TargetPlatform::for_lint_of("linux"));
     ASSERT_EQ(linux.size(), 3u);
     EXPECT_EQ(linux[0], "0.1.0");
     EXPECT_EQ(linux[1], "0.2.0");
     EXPECT_EQ(linux[2], "1.0.0");
 
-    auto mac = mcpp::manifest::list_xpkg_versions(src, mcpp::platform::TargetPlatform::for_lint_of("macosx"));
+    auto mac = mcpp::manifest::list_xpkg_versions(src, mcpp::toolchain::platform::TargetPlatform::for_lint_of("macosx"));
     ASSERT_EQ(mac.size(), 1u);
     EXPECT_EQ(mac[0], "0.1.0");
 
-    auto win = mcpp::manifest::list_xpkg_versions(src, mcpp::platform::TargetPlatform::for_lint_of("windows"));
+    auto win = mcpp::manifest::list_xpkg_versions(src, mcpp::toolchain::platform::TargetPlatform::for_lint_of("windows"));
     EXPECT_TRUE(win.empty());
 }
 
 TEST(ListXpkgVersions, MissingXpmReturnsEmpty) {
     constexpr auto src = R"(package = { name = "foo" })";
-    EXPECT_TRUE(mcpp::manifest::list_xpkg_versions(src, mcpp::platform::TargetPlatform::for_lint_of("linux")).empty());
+    EXPECT_TRUE(mcpp::manifest::list_xpkg_versions(src, mcpp::toolchain::platform::TargetPlatform::for_lint_of("linux")).empty());
 }
 
 // #363: `["25.0.4"] = { ref = "25.0.4.7.1" }` is a POINTER at another entry,
@@ -532,7 +532,7 @@ package = {
 }
 )";
     auto e = mcpp::manifest::list_xpkg_version_entries(
-        src, mcpp::platform::TargetPlatform::for_lint_of("linux"));
+        src, mcpp::toolchain::platform::TargetPlatform::for_lint_of("linux"));
     ASSERT_EQ(e.size(), 3u);
     EXPECT_EQ(e[0].version, "latest");      EXPECT_TRUE (e[0].alias);
     EXPECT_EQ(e[1].version, "25.0.4");      EXPECT_TRUE (e[1].alias);
@@ -543,7 +543,7 @@ package = {
 
     // The keys-only view is unchanged for every existing caller.
     auto keys = mcpp::manifest::list_xpkg_versions(
-        src, mcpp::platform::TargetPlatform::for_lint_of("linux"));
+        src, mcpp::toolchain::platform::TargetPlatform::for_lint_of("linux"));
     ASSERT_EQ(keys.size(), 3u);
     EXPECT_EQ(keys[2], "25.0.4.7.1");
 }
@@ -569,7 +569,7 @@ package = {
 }
 )";
     auto e = mcpp::manifest::list_xpkg_version_entries(
-        src, mcpp::platform::TargetPlatform::for_lint_of("linux"));
+        src, mcpp::toolchain::platform::TargetPlatform::for_lint_of("linux"));
     ASSERT_EQ(e.size(), 6u);
     EXPECT_EQ(e[0].revision, 0);   // an alias carries none
     EXPECT_EQ(e[1].revision, 0);
@@ -598,7 +598,7 @@ package = {
 }
 )";
     auto keys = mcpp::manifest::list_xpkg_versions(
-        src, mcpp::platform::TargetPlatform::for_lint_of("linux"));
+        src, mcpp::toolchain::platform::TargetPlatform::for_lint_of("linux"));
     ASSERT_EQ(keys.size(), 2u);
     EXPECT_EQ(keys[0], "1.0.0");
     EXPECT_EQ(keys[1], "1.1.0");
@@ -1265,7 +1265,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "compat.eigen", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "compat.eigen", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
 
     ASSERT_EQ(m->provides.size(), 1u);
@@ -1380,7 +1380,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "compat.opencv", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "compat.opencv", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     EXPECT_TRUE(m->xpkgUnknownKeys.empty());
 
@@ -1407,7 +1407,7 @@ package = {
     },
 }
 )";
-    auto mb = mcpp::manifest::synthesize_from_xpkg_lua(bad, "compat.opencv", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto mb = mcpp::manifest::synthesize_from_xpkg_lua(bad, "compat.opencv", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_FALSE(mb.has_value());
     EXPECT_NE(mb.error().message.find("features.dnn.flags"), std::string::npos)
         << mb.error().message;
@@ -1451,7 +1451,7 @@ package = {
 )";
     // linux leg: neutral payload + linux delta, macosx section invisible.
     auto ml = mcpp::manifest::synthesize_from_xpkg_lua(
-        lua, "compat.opencv", "1.0.0", mcpp::platform::TargetPlatform::for_lint_of("linux"));
+        lua, "compat.opencv", "1.0.0", mcpp::toolchain::platform::TargetPlatform::for_lint_of("linux"));
     ASSERT_TRUE(ml.has_value()) << ml.error().format();
     ASSERT_TRUE(ml->buildConfig.featureSources.contains("dnn"));
     {
@@ -1469,7 +1469,7 @@ package = {
 
     // macosx leg: NEON delta instead, no mlas flags, no vaapi.
     auto mm = mcpp::manifest::synthesize_from_xpkg_lua(
-        lua, "compat.opencv", "1.0.0", mcpp::platform::TargetPlatform::for_lint_of("macosx"));
+        lua, "compat.opencv", "1.0.0", mcpp::toolchain::platform::TargetPlatform::for_lint_of("macosx"));
     ASSERT_TRUE(mm.has_value()) << mm.error().format();
     {
         auto& srcs = mm->buildConfig.featureSources["dnn"];
@@ -1526,7 +1526,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "compat.eigen", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "compat.eigen", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     // implies recorded in featuresMap
     ASSERT_TRUE(m->featuresMap.contains("backend-openblas"));
@@ -1622,7 +1622,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "opencv", "0.0.3", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "opencv", "0.0.3", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     // The forward token left featuresMap for featureForwards.
     EXPECT_TRUE(m->featuresMap["dnn"].empty());
@@ -1660,7 +1660,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "x", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "x", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->xpkgUnknownKeys.size(), 1u);
     EXPECT_EQ(m->xpkgUnknownKeys[0], "dependencies");
@@ -1687,7 +1687,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "x", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "x", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->xpkgUnknownKeys.size(), 1u);
     EXPECT_EQ(m->xpkgUnknownKeys[0], "features.opt.include_dirs");
@@ -1763,7 +1763,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->buildConfig.cflags.size(), 2u);
     EXPECT_EQ(m->buildConfig.cflags[0], "-Wall");
@@ -1789,7 +1789,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyshared", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyshared", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->targets.size(), 1u);
     EXPECT_EQ(m->targets[0].kind, mcpp::manifest::Target::SharedLibrary);
@@ -1814,7 +1814,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "gtestlike", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "gtestlike", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     // base sources keep both (old mcpp ignores `features` → no regression)
     ASSERT_EQ(m->buildConfig.sources.size(), 2u);
@@ -1842,7 +1842,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "glfw", "3.4", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "glfw", "3.4", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->runtimeConfig.libraryDirs.size(), 1u);
     EXPECT_EQ(m->runtimeConfig.libraryDirs[0], "mcpp_generated/runtime/lib");
@@ -1887,19 +1887,19 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
 
     std::string expectedSource = "*/src/linux.c";
     std::string expectedInclude = "*/src/linux";
     std::string expectedCflag = "-DLINUX=1";
     std::string expectedDep = "compat.x11";
-    if constexpr (mcpp::platform::is_macos) {
+    if constexpr (mcpplibs::os::is_macos) {
         expectedSource = "*/src/cocoa.m";
         expectedInclude = "*/src/macos";
         expectedCflag = "-DMACOS=1";
         expectedDep = "compat.cocoa";
-    } else if constexpr (mcpp::platform::is_windows) {
+    } else if constexpr (mcpplibs::os::is_windows) {
         expectedSource = "*/src/win32.c";
         expectedInclude = "*/src/win32";
         expectedCflag = "-DWINDOWS=1";
@@ -1921,7 +1921,7 @@ package = {
     // osOverride seam (`mcpp xpkg parse --all-os`): a foreign OS section is
     // spliced on request, independent of the running host — the build path
     // (empty override) above stays host-selected. Reuses this fixture.
-    auto win = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0", mcpp::platform::TargetPlatform::for_lint_of("windows"));
+    auto win = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0", mcpp::toolchain::platform::TargetPlatform::for_lint_of("windows"));
     ASSERT_TRUE(win.has_value()) << win.error().format();
     ASSERT_EQ(win->modules.sources.size(), 2u);
     EXPECT_EQ(win->modules.sources[1], "*/src/win32.c");
@@ -1946,7 +1946,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->buildConfig.generatedFiles.size(), 1u);
     auto it = m->buildConfig.generatedFiles.find("mcpp_generated/include/config.h");
@@ -1971,7 +1971,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->buildConfig.includeDirs.size(), 1u);
     EXPECT_EQ(m->buildConfig.includeDirs[0], "*/include");
@@ -2171,7 +2171,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "consumer", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "consumer", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->dependencies.size(), 2u);
 
@@ -2203,7 +2203,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "consumer", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "consumer", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->dependencies.size(), 3u);
 
@@ -2248,7 +2248,7 @@ package = {
 }
 )";
     auto m = mcpp::manifest::synthesize_from_xpkg_lua(
-        src, "consumer", "1.0.0", mcpp::platform::HostPlatform::current());
+        src, "consumer", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_FALSE(m.has_value());
     EXPECT_NE(m.error().message.find("invalid package selector"),
               std::string::npos) << m.error().format();
@@ -2918,7 +2918,7 @@ package = {
     },
 }
 )";
-    auto v = mcpp::manifest::list_xpkg_versions(src, mcpp::platform::TargetPlatform::for_lint_of("linux"));
+    auto v = mcpp::manifest::list_xpkg_versions(src, mcpp::toolchain::platform::TargetPlatform::for_lint_of("linux"));
     ASSERT_EQ(v.size(), 1u);
     EXPECT_EQ(v[0], "0.1.0");
 }
@@ -3284,7 +3284,7 @@ int f() { return "x]]y"[0]; }
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "lbtest", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "lbtest", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_TRUE(m->buildConfig.generatedFiles.contains("mcpp_generated/gen.cc"));
     EXPECT_EQ(m->buildConfig.generatedFiles["mcpp_generated/gen.cc"],
@@ -3310,7 +3310,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "cmt", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "cmt", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->modules.sources.size(), 1u);
     EXPECT_EQ(m->modules.sources[0], "src/*.cpp");
@@ -3330,7 +3330,7 @@ TEST(XpkgLongBracket, NoLeadingNewlineKeptVerbatim) {
         "        targets = { [\"nl\"] = { kind = \"lib\" } },\n"
         "    },\n"
         "}\n";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "nl", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "nl", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     EXPECT_EQ(m->buildConfig.generatedFiles["g.cc"], "inline");
     EXPECT_EQ(m->buildConfig.generatedFiles["h.cc"], "crlf");
@@ -3351,7 +3351,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "uk", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "uk", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->xpkgUnknownKeys.size(), 2u);
     EXPECT_EQ(m->xpkgUnknownKeys[0], "bogus_key");
@@ -3378,7 +3378,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "fmtlib.fmt", "12.2.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "fmtlib.fmt", "12.2.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->modules.scanOverrides.size(), 1u);
     auto& ov = m->modules.scanOverrides.at("*/src/fmt.cc");
@@ -3402,7 +3402,7 @@ package = {
     },
 }
 )";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "so", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "so", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_FALSE(m.has_value());
     EXPECT_NE(m.error().message.find("neither provides nor imports"),
               std::string::npos) << m.error().format();
@@ -3513,7 +3513,7 @@ mcpp = {
 )";
     auto mt = mcpp::manifest::parse_string(toml);
     ASSERT_TRUE(mt.has_value()) << mt.error().format();
-    auto mx = mcpp::manifest::synthesize_from_xpkg_lua(lua, "sym", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto mx = mcpp::manifest::synthesize_from_xpkg_lua(lua, "sym", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(mx.has_value()) << mx.error().format();
 
     EXPECT_EQ(mt->buildConfig.featureSources, mx->buildConfig.featureSources);
@@ -3557,7 +3557,7 @@ mcpp = {
     },
 }
 )";
-    auto mx = mcpp::manifest::synthesize_from_xpkg_lua(lua, "condsrc", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto mx = mcpp::manifest::synthesize_from_xpkg_lua(lua, "condsrc", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(mx.has_value()) << mx.error().format();
     ASSERT_EQ(mx->conditionalConfigs.size(), 2u);
     EXPECT_EQ(mx->conditionalConfigs[0].predicate, "cfg(arch = \"x86_64\")");
@@ -3624,7 +3624,7 @@ mcpp = {
     },
 }
 )";
-    auto mx = mcpp::manifest::synthesize_from_xpkg_lua(lua, "globf", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto mx = mcpp::manifest::synthesize_from_xpkg_lua(lua, "globf", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(mx.has_value()) << mx.error().format();
     ASSERT_EQ(mx->buildConfig.globFlags.size(), 2u);
     EXPECT_EQ(mx->buildConfig.globFlags[0].glob, "third_party/**");
@@ -3794,7 +3794,7 @@ mcpp = {
     },
 }
 )LUA";
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "p", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "p", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m) << (m ? "" : m.error().message);
     ASSERT_EQ(m->conditionalConfigs.size(), 1u);
     ASSERT_EQ(m->conditionalConfigs[0].inputs.globFlags.size(), 1u);
@@ -3806,7 +3806,7 @@ mcpp = {
     target_cfg = { ["cfg(windows)"] = { linkage = { "static" } } },
 }
 )LUA";
-    auto bm = mcpp::manifest::synthesize_from_xpkg_lua(bad, "p", "1.0.0", mcpp::platform::HostPlatform::current());
+    auto bm = mcpp::manifest::synthesize_from_xpkg_lua(bad, "p", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     EXPECT_FALSE(bm) << "unknown target_cfg key must stay a hard error";
 }
 
@@ -3817,8 +3817,8 @@ mcpp = {
 // compile-time HOST constant while [target.'cfg(...)'] was evaluated against
 // the resolved TARGET.
 TEST(PlatformAxis, HostAndTargetAreNotInterchangeable) {
-    using mcpp::platform::HostPlatform;
-    using mcpp::platform::TargetPlatform;
+    using mcpp::toolchain::platform::HostPlatform;
+    using mcpp::toolchain::platform::TargetPlatform;
 
     static_assert(!std::is_convertible_v<HostPlatform, TargetPlatform>,
                   "the host axis must not silently become the target axis");
@@ -3862,7 +3862,7 @@ mcpp = {
              {"macos", "macos_only.cpp"},
              {"windows", "windows_only.cpp"}}) {
         auto m = mcpp::manifest::synthesize_from_xpkg_lua(
-            lua, "p", "1.0.0", mcpp::platform::TargetPlatform::for_os(tripleOs));
+            lua, "p", "1.0.0", mcpp::toolchain::platform::TargetPlatform::for_os(tripleOs));
         ASSERT_TRUE(m) << (m ? "" : m.error().message);
         EXPECT_TRUE(has(*m, expected))
             << "target os " << tripleOs << " must splice its own section";
@@ -3889,11 +3889,11 @@ mcpp = {
 }
 )LUA";
     auto host = mcpp::manifest::synthesize_from_xpkg_lua(
-        lua, "p", "1.0.0", mcpp::platform::HostPlatform::current());
+        lua, "p", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
     auto nativeTarget = mcpp::manifest::synthesize_from_xpkg_lua(
         lua, "p", "1.0.0",
-        mcpp::platform::TargetPlatform::for_lint_of(
-            mcpp::platform::HostPlatform::current().key()));
+        mcpp::toolchain::platform::TargetPlatform::for_lint_of(
+            mcpp::toolchain::platform::HostPlatform::current().key()));
     ASSERT_TRUE(host);
     ASSERT_TRUE(nativeTarget);
     EXPECT_EQ(host->modules.sources, nativeTarget->modules.sources);
@@ -5300,7 +5300,7 @@ OPENBLAS_NUM_THREADS = "1"
 
 // `macos` and `macosx` are one platform under two vocabularies — mcpp's triple
 // says the first, a descriptor and xlings' project file say the second. The
-// rule lives in mcpp.platform.axis; this asserts the manifest reaches it,
+// rule lives in mcpp.toolchain.platform; this asserts the manifest reaches it,
 // on every host, by resolving explicitly rather than against this one.
 TEST(Manifest, XlingsWorkspaceAcceptsBothMacosSpellings) {
     auto with_macos = mcpp::manifest::parse_string(R"(
@@ -6793,7 +6793,7 @@ package = {
 }
 )";
     auto m = mcpp::manifest::synthesize_from_xpkg_lua(
-        lua, "openkal-windows", "0.8.0", mcpp::platform::HostPlatform::current());
+        lua, "openkal-windows", "0.8.0", mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     EXPECT_EQ(m->cEnvironment, "platform");
 }
@@ -6902,7 +6902,7 @@ package = {
 }
 )";
     auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tomlpp", "3.4.0",
-                                                      mcpp::platform::HostPlatform::current());
+                                                      mcpp::toolchain::platform::HostPlatform::current());
     ASSERT_TRUE(m.has_value()) << m.error().format();
     EXPECT_EQ(m->lib.path.generic_string(), "*/modules/tomlplusplus.cppm");
     EXPECT_TRUE(m->xpkgUnknownKeys.empty());

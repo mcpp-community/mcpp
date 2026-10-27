@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.platform.fs;
-import mcpp.platform.common;
+import mcpplibs.os.platform;
+import mcpplibs.os.fs;
+import mcpp.invocation;
+import mcpp.home.files;
 
 namespace {
 
@@ -37,7 +39,7 @@ TEST(PlatformFs, ReplaceFileAtomicallyReplacesExistingFile) {
     write_file(destination, "old");
 
     std::error_code ec;
-    EXPECT_TRUE(mcpp::platform::fs::replace_file(source, destination, ec))
+    EXPECT_TRUE(mcpp::home::replace_file(source, destination, ec))
         << ec.message();
     EXPECT_FALSE(std::filesystem::exists(source));
     EXPECT_EQ(read_file(destination), "new");
@@ -49,7 +51,7 @@ TEST(PlatformFs, ReplaceFailureKeepsExistingDestination) {
     write_file(destination, "last-known-good");
 
     std::error_code ec;
-    EXPECT_FALSE(mcpp::platform::fs::replace_file(
+    EXPECT_FALSE(mcpp::home::replace_file(
         temp.path / "missing.tmp", destination, ec));
     EXPECT_TRUE(ec);
     EXPECT_EQ(read_file(destination), "last-known-good");
@@ -62,46 +64,46 @@ TEST(PlatformFs, ReplaceFailureKeepsExistingDestination) {
 // Outside Windows there is no path limit of this kind, so the helper is the
 // identity: a relative path stays relative and nothing is spelled differently.
 TEST(PlatformFs, ExtendedLengthIsTheIdentityOutsideWindows) {
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         GTEST_SKIP() << "the Windows branch is covered by the spelling tests";
     } else {
         const std::filesystem::path rel{"obj/pkg/__pkg/dep/a.cpp.ddi"};
-        EXPECT_EQ(mcpp::platform::fs::extended_length(rel), rel);
+        EXPECT_EQ(mcpplibs::os::fs::extended(rel), rel);
         const std::filesystem::path abs{"/tmp/x/../y"};
-        EXPECT_EQ(mcpp::platform::fs::extended_length(abs), abs);
-        EXPECT_TRUE(mcpp::platform::fs::extended_length({}).empty());
+        EXPECT_EQ(mcpplibs::os::fs::extended(abs), abs);
+        EXPECT_TRUE(mcpplibs::os::fs::extended({}).empty());
     }
 }
 
 // The Windows rule, as a pure function, so every host tests it.
 TEST(PlatformFs, WindowsExtendedLengthSpellsADrivePath) {
-    using mcpp::platform::fs::windows_extended_length_spelling;
-    EXPECT_EQ(windows_extended_length_spelling("C:/Users/runner/.mcpp/obj/a.ddi"),
+    using mcpplibs::os::fs::windows_extended;
+    EXPECT_EQ(mcpplibs::os::fs::windows_extended("C:/Users/runner/.mcpp/obj/a.ddi"),
               "\\\\?\\C:\\Users\\runner\\.mcpp\\obj\\a.ddi");
     // `.` and `..` are resolved lexically, because the prefix turns their
     // processing off; `..` does not climb above the drive.
-    EXPECT_EQ(windows_extended_length_spelling("C:\\a\\.\\b\\..\\c\\"),
+    EXPECT_EQ(mcpplibs::os::fs::windows_extended("C:\\a\\.\\b\\..\\c\\"),
               "\\\\?\\C:\\a\\c");
-    EXPECT_EQ(windows_extended_length_spelling("C:/../../x"), "\\\\?\\C:\\x");
-    EXPECT_EQ(windows_extended_length_spelling("D:/"), "\\\\?\\D:\\");
+    EXPECT_EQ(mcpplibs::os::fs::windows_extended("C:/../../x"), "\\\\?\\C:\\x");
+    EXPECT_EQ(mcpplibs::os::fs::windows_extended("D:/"), "\\\\?\\D:\\");
 }
 
 TEST(PlatformFs, WindowsExtendedLengthSpellsAUncPath) {
-    using mcpp::platform::fs::windows_extended_length_spelling;
-    EXPECT_EQ(windows_extended_length_spelling("//server/share/dir/../f.o"),
+    using mcpplibs::os::fs::windows_extended;
+    EXPECT_EQ(mcpplibs::os::fs::windows_extended("//server/share/dir/../f.o"),
               "\\\\?\\UNC\\server\\share\\f.o");
     // `..` does not climb above the share.
-    EXPECT_EQ(windows_extended_length_spelling("\\\\server\\share\\..\\..\\f"),
+    EXPECT_EQ(mcpplibs::os::fs::windows_extended("\\\\server\\share\\..\\..\\f"),
               "\\\\?\\UNC\\server\\share\\f");
 }
 
 TEST(PlatformFs, WindowsExtendedLengthLeavesPrefixedAndRelativePathsAlone) {
-    using mcpp::platform::fs::windows_extended_length_spelling;
+    using mcpplibs::os::fs::windows_extended;
     // Idempotent: a path handed on to a child process is converted again there.
-    EXPECT_EQ(windows_extended_length_spelling("\\\\?\\C:\\a\\b"), "\\\\?\\C:\\a\\b");
-    EXPECT_EQ(windows_extended_length_spelling("\\\\.\\pipe\\x"), "\\\\.\\pipe\\x");
-    EXPECT_EQ(windows_extended_length_spelling("obj/a.ddi"), "obj/a.ddi");
-    EXPECT_EQ(windows_extended_length_spelling(""), "");
+    EXPECT_EQ(mcpplibs::os::fs::windows_extended("\\\\?\\C:\\a\\b"), "\\\\?\\C:\\a\\b");
+    EXPECT_EQ(mcpplibs::os::fs::windows_extended("\\\\.\\pipe\\x"), "\\\\.\\pipe\\x");
+    EXPECT_EQ(mcpplibs::os::fs::windows_extended("obj/a.ddi"), "obj/a.ddi");
+    EXPECT_EQ(mcpplibs::os::fs::windows_extended(""), "");
 }
 
 // A NAME THE SHELL ANSWERS FOR ITSELF still resolves to the program on PATH.
@@ -117,7 +119,7 @@ TEST(PlatformFs, WhichResolvesANameThatIsAlsoAShellBuiltin) {
     if (!std::filesystem::is_regular_file("/usr/bin/true", ec)
         && !std::filesystem::is_regular_file("/bin/true", ec))
         GTEST_SKIP() << "this host has no `true` program to find";
-    const auto found = mcpp::platform::fs::which("true");
+    const auto found = mcpp::invocation::which("true");
     ASSERT_TRUE(found.has_value());
     EXPECT_EQ(found->filename(), "true");
     EXPECT_TRUE(std::filesystem::is_regular_file(*found, ec)) << found->string();
@@ -125,5 +127,5 @@ TEST(PlatformFs, WhichResolvesANameThatIsAlsoAShellBuiltin) {
 }
 
 TEST(PlatformFs, WhichStillAnswersNothingForANameNoHostHas) {
-    EXPECT_FALSE(mcpp::platform::fs::which("mcpp-no-such-program-7c25d9f6").has_value());
+    EXPECT_FALSE(mcpp::invocation::which("mcpp-no-such-program-7c25d9f6").has_value());
 }

@@ -84,7 +84,7 @@ jobs:
         run: echo 'APPLE_FLOAT_MACROS=-DINFINITY=HUGE_VALF -DNAN=__builtin_nanf("0x7fc00000")' >> "$GITHUB_ENV"
 
       # THE SDK mcpp'S OWN RESOLUTION NAMES: `xcrun --show-sdk-path`
-      # (modules/platform/src/macos/macos.cppm). These raw compiles state the
+      # (modules/toolchain-model/src/apple_sdk.cpp). These raw compiles state the
       # SDK the same way, on purpose.
       #
       # On the 22.1.8 line this was the known-red spot (mcpp#669 has the

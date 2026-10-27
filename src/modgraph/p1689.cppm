@@ -22,9 +22,8 @@ export module mcpp.modgraph.p1689;
 
 import std;
 import mcpp.modgraph.graph;
-import mcpp.platform;
+import mcpp.run;
 import mcpp.source_kind;
-import mcpp.toolchain.detect;
 import mcpp.toolchain.model;
 import mcpp.toolchain.linkmodel;
 
@@ -304,8 +303,10 @@ std::expected<DdiRule, std::string> parse_ddi(std::string_view body) {
 
 namespace {
 
+// The scan command is composed as text, with the flags the link model renders
+// for a shell, as the ninja scan edge is.
 bool run_capturing(const std::string& cmd, std::string& out) {
-    auto r = mcpp::platform::process::capture(cmd);
+    auto r = mcpp::run::capture_shell(cmd);
     out = r.output;
     return r.exit_code == 0;
 }

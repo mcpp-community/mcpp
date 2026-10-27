@@ -10,7 +10,7 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.platform;
+import mcpp.runtime.launch_env;
 import mcpp.provider.xlings.subos_info;
 
 namespace su = mcpp::provider::xlings::subos;
@@ -139,7 +139,7 @@ TEST(SubosInfo, PrependJoinsProvidersInOrder) {
       "b-vendor@1":[{"var":"V","op":"prepend","value":"${subosdir}/two"}]}}})");
     auto env = su::resolve_env(su::read(t.dir), t.dir);
     ASSERT_EQ(env.size(), 1u);
-    const auto sep = mcpp::platform::env::path_list_separator();
+    const auto sep = mcpp::runtime::launch_env::path_list_separator();
     EXPECT_EQ(env[0].second,
               t.dir.string() + "/two" + sep + t.dir.string() + "/one")
         << "both providers must survive, later binding front-most";
@@ -158,7 +158,7 @@ TEST(SubosInfo, PrependDeduplicates) {
     // list separator: keyed on ':' it would cut "C:\\x" apart on Windows,
     // match nothing, and grow the list on every nested invocation.
     EXPECT_EQ(env[0].second, t.dir.string() + "/x");
-    EXPECT_EQ(env[0].second.find(mcpp::platform::env::path_list_separator()),
+    EXPECT_EQ(env[0].second.find(mcpp::runtime::launch_env::path_list_separator()),
               std::string::npos);
 }
 
@@ -306,7 +306,7 @@ TEST(SubosInfo, RealXlingsCapture) {
 
     std::map<std::string, std::string> byVar;
     for (auto& [k, v] : env) byVar[k] = v;
-    const auto sep = mcpp::platform::env::path_list_separator();
+    const auto sep = mcpp::runtime::launch_env::path_list_separator();
     EXPECT_EQ(byVar["LIBGL_DRIVERS_PATH"], t.dir.string() + "/usr/lib/dri");
     EXPECT_EQ(byVar["XDG_DATA_DIRS"],      t.dir.string() + "/share");
     // Both providers name the same vendor directory; de-duplication must
@@ -349,7 +349,7 @@ TEST(SubosResolveEnv, PrependKeepsTheExportedValue) {
             return std::nullopt;
         });
     ASSERT_EQ(out.size(), 1u);
-    const auto sep = mcpp::platform::env::path_list_separator();
+    const auto sep = mcpp::runtime::launch_env::path_list_separator();
     EXPECT_EQ(out[0].second, std::string("/sub/lib") + sep + "/user/lib");
 }
 
@@ -359,7 +359,7 @@ TEST(SubosResolveEnv, PrependIsIdempotentAgainstTheExportedValue) {
     t.write(R"({"workspace":{},"subos_info":{"schema_version":1,"runtime":"glibc@2.39",
         "envs":{"glibc@2.39":[{"var":"LD_LIBRARY_PATH","op":"prepend","value":"/sub/lib"}]}}})");
     auto info = su::read(t.dir);
-    const auto sep = mcpp::platform::env::path_list_separator();
+    const auto sep = mcpp::runtime::launch_env::path_list_separator();
     const auto existing = std::string("/sub/lib") + sep + "/user/lib";
     auto out = su::resolve_env(
         info, t.dir, [&](std::string_view v) -> std::optional<std::string> {

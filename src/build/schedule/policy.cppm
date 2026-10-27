@@ -65,7 +65,8 @@ export module mcpp.build.schedule.policy;
 import std;
 import mcpp.toolchain.model;
 import mcpp.manifest;
-import mcpp.platform.capacity;
+import mcpp.invocation;
+import mcpp.build.capacity;
 
 export namespace mcpp::build::schedule {
 
@@ -263,8 +264,8 @@ int resolve_jobs(const manifest::Manifest& m,
     auto from_text = [&](std::string_view v) -> std::optional<int> {
         if (v.empty()) return std::nullopt;
         if (v == "auto") {
-            const auto cap = platform::capacity::host_capacity();
-            return platform::capacity::recommended_jobs(cap);
+            const auto cap = mcpp::build::capacity::host_capacity();
+            return mcpp::build::capacity::recommended_jobs(cap);
         }
         int n = 0;
         const auto* first = v.data();
@@ -277,8 +278,8 @@ int resolve_jobs(const manifest::Manifest& m,
         if (onInvalid) onInvalid(v);
         return std::nullopt;
     };
-    if (const char* e = std::getenv("MCPP_JOBS"))
-        if (auto n = from_text(e)) return *n;
+    if (auto e = mcpp::invocation::get("MCPP_JOBS"))
+        if (auto n = from_text(*e)) return *n;
     if (auto n = from_text(m.buildConfig.jobs)) return *n;
     // Not through `from_text`: this value has already been parsed as an
     // integer by the config loader, so "auto" and a malformed spelling are not
@@ -292,8 +293,8 @@ int resolve_jobs(const manifest::Manifest& m,
 std::string requested_switch(const manifest::Manifest& m,
                              const std::function<void(std::string_view)>& onInvalid) {
     std::string v;
-    if (const char* e = std::getenv("MCPP_BMI_SCHEDULE"); e && *e)
-        v = e;
+    if (auto e = mcpp::invocation::get("MCPP_BMI_SCHEDULE"))
+        v = *e;
     else if (!m.buildConfig.bmiSchedule.empty())
         v = m.buildConfig.bmiSchedule;
     else

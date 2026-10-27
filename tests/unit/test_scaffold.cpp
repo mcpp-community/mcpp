@@ -1,10 +1,10 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.platform.scaffold_fs;
 import mcpp.scaffold;
 import mcpp.scaffold.project_name;
 import mcpp.pm.dependency_selector;
+import mcpplibs.os.fs;
 
 namespace {
 
@@ -260,16 +260,16 @@ TEST(ScaffoldFilesystem, AtomicRenameNeverReplacesExistingTarget) {
     std::ofstream(source / "payload.txt") << "payload";
     std::ofstream(target / "owner.txt") << "owner";
 
-    auto collision = mcpp::platform::atomic_rename_directory_no_replace(
+    auto collision = mcpplibs::os::fs::place(
         source, target);
     ASSERT_FALSE(collision.has_value());
     EXPECT_TRUE(std::filesystem::exists(source / "payload.txt"));
     EXPECT_TRUE(std::filesystem::exists(target / "owner.txt"));
 
     std::filesystem::remove_all(target);
-    auto committed = mcpp::platform::atomic_rename_directory_no_replace(
+    auto committed = mcpplibs::os::fs::place(
         source, target);
-    ASSERT_TRUE(committed.has_value()) << committed.error();
+    ASSERT_TRUE(committed.has_value()) << committed.error().message();
     EXPECT_FALSE(std::filesystem::exists(source));
     EXPECT_TRUE(std::filesystem::exists(target / "payload.txt"));
     std::filesystem::remove_all(parent);

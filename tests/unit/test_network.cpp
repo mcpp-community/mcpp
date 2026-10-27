@@ -3,7 +3,9 @@
 import std;
 import mcpp.provider;
 import mcpp.provider.xlings;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.invocation;
+import mcpp.run;
 
 namespace {
 struct NetworkFixture {
@@ -27,24 +29,24 @@ fi
 }
 
 TEST(NetworkCheck, OfflineNeverInvokesTheProvider) {
-    if constexpr (mcpp::platform::is_windows) GTEST_SKIP() << "POSIX subprocess fixture";
+    if constexpr (mcpplibs::os::is_windows) GTEST_SKIP() << "POSIX subprocess fixture";
     NetworkFixture f(R"SH(touch "$XLINGS_HOME/invoked"
 exit 1
 )SH");
     {
-        mcpp::platform::env::ScopedEnv online("MCPP_OFFLINE", "0");
+        mcpp::invocation::ScopedEnv online("MCPP_OFFLINE", "0");
         EXPECT_EQ(mcpp::provider::xlings::network_check(f.env, std::chrono::seconds(1)).status, "unsupported");
         ASSERT_TRUE(std::filesystem::exists(f.dir / "invoked"));
         std::filesystem::remove(f.dir / "invoked");
     }
-    mcpp::platform::env::ScopedEnv offline("MCPP_OFFLINE", "1");
+    mcpp::invocation::ScopedEnv offline("MCPP_OFFLINE", "1");
     const auto result = mcpp::provider::xlings::network_check(f.env, std::chrono::milliseconds(100));
     EXPECT_EQ(result.status, "offline");
     EXPECT_FALSE(std::filesystem::exists(f.dir / "invoked"));
 }
 
 TEST(NetworkCheck, DiscoveryAndProbesShareOneDeadline) {
-    if constexpr (mcpp::platform::is_windows) GTEST_SKIP() << "POSIX subprocess fixture";
+    if constexpr (mcpplibs::os::is_windows) GTEST_SKIP() << "POSIX subprocess fixture";
     NetworkFixture f(R"SH(
 if [ "$2" = "network_endpoints" ]; then
     echo '{"kind":"data","dataKind":"network_endpoints","payload":{"endpoints":[{"url":"https://one.invalid"},{"url":"https://two.invalid"},{"url":"https://three.invalid"},{"url":"https://four.invalid"},{"url":"https://five.invalid"}]}}'
@@ -52,7 +54,7 @@ else
     sleep 1000
 fi
 )SH");
-    mcpp::platform::env::ScopedEnv offline("MCPP_OFFLINE", "0");
+    mcpp::invocation::ScopedEnv offline("MCPP_OFFLINE", "0");
     const auto start = std::chrono::steady_clock::now();
     const auto result = mcpp::provider::xlings::network_check(f.env, std::chrono::milliseconds(400));
     EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(2));
@@ -61,7 +63,7 @@ fi
 }
 
 TEST(NetworkCheck, MalformedProviderDataDoesNotEscapeDiagnosis) {
-    if constexpr (mcpp::platform::is_windows) GTEST_SKIP() << "POSIX subprocess fixture";
+    if constexpr (mcpplibs::os::is_windows) GTEST_SKIP() << "POSIX subprocess fixture";
     NetworkFixture f(R"SH(
 if [ "$2" = "network_endpoints" ]; then
     echo '{"kind":"data","dataKind":"network_endpoints","payload":{"endpoints":[{"url":"https://one.invalid"}]}}'
@@ -69,7 +71,7 @@ else
     echo '{"kind":"data","dataKind":"network_probe","payload":{"reachable":"wrong-type"}}'
 fi
 )SH");
-    mcpp::platform::env::ScopedEnv offline("MCPP_OFFLINE", "0");
+    mcpp::invocation::ScopedEnv offline("MCPP_OFFLINE", "0");
     const auto result = mcpp::provider::xlings::network_check(f.env, std::chrono::seconds(1));
     ASSERT_EQ(result.endpoints.size(), 1u);
     EXPECT_EQ(result.endpoints.front().status, "invalid_response");
@@ -99,14 +101,17 @@ TEST(NetworkCheck, HeartbeatsCannotKeepAByteStalledDownloadAlive) {
 TEST(NetworkProcess, ProgressCancellationIsPolledWhileOutputContinues) {
     using namespace std::chrono;
     const auto start = steady_clock::now();
-    const auto cmd = mcpp::platform::is_windows
+    const auto cmd = mcpplibs::os::is_windows
         ? "for /L %i in (1,1,10000000) do @echo heartbeat"
         : "while :; do echo heartbeat; done";
     int lines = 0;
     bool stopped = false;
-    mcpp::platform::process::run_streaming_bounded(cmd,
-        [&](std::string_view) { ++lines; }, seconds(5), seconds(2), &stopped, false,
-        [&] { return steady_clock::now() - start >= milliseconds(200); });
+    const auto sh = mcpp::run::shell(cmd);
+    stopped = mcpp::run::execute(sh.argv, {
+        .total = seconds(5), .idle = seconds(2),
+        .on_line = [&](std::string_view) { ++lines; },
+        .should_stop = [&] { return steady_clock::now() - start >= milliseconds(200); },
+        .one_string = sh.one_string }).timed_out;
     EXPECT_TRUE(stopped);
     EXPECT_GT(lines, 0);
     EXPECT_LT(steady_clock::now() - start, seconds(3));
@@ -135,10 +140,10 @@ TEST(NetworkCheck, LegacyStatusAndHandshakeDoNotWriteTheSelectedHome) {
     } cleanup{dir, std::filesystem::current_path()};
     const auto home = dir / "home";
     std::filesystem::create_directories(home);
-    const auto binary = dir / (mcpp::platform::is_windows ? "provider.cmd" : "provider");
+    const auto binary = dir / (mcpplibs::os::is_windows ? "provider.cmd" : "provider");
     {
         std::ofstream script(binary, std::ios::binary);
-        if constexpr (mcpp::platform::is_windows)
+        if constexpr (mcpplibs::os::is_windows)
             script << "@echo off\r\necho invoked>>\"%XLINGS_HOME%\\invoked\"\r\necho invoked>metadata-cwd\r\n"
                       "echo {\"version\":\"9999.1.1.1\",\"features\":[]}\r\n";
         else
@@ -158,7 +163,7 @@ TEST(NetworkCheck, LegacyStatusAndHandshakeDoNotWriteTheSelectedHome) {
         ASSERT_FALSE(result);
         EXPECT_NE(result.error().find("read_only_queries"), std::string::npos);
     }
-    mcpp::platform::env::ScopedEnv online("MCPP_OFFLINE", "0");
+    mcpp::invocation::ScopedEnv online("MCPP_OFFLINE", "0");
     EXPECT_EQ(mcpp::provider::xlings::network_check(env, std::chrono::seconds(1)).status, "unsupported");
     EXPECT_TRUE(std::filesystem::is_empty(home)) << "legacy metadata or status touched the selected home";
     EXPECT_TRUE(std::filesystem::is_empty(project)) << "legacy metadata touched the current project";
@@ -180,7 +185,7 @@ TEST(NetworkCheck, BootstrapRequiresDownloadBudgetsAndReadOnlyQueries) {
 
 
 TEST(NetworkProcess, MetadataAndResourceDeadlinesStopDescendants) {
-    if constexpr (mcpp::platform::is_windows) GTEST_SKIP() << "POSIX subprocess fixture";
+    if constexpr (mcpplibs::os::is_windows) GTEST_SKIP() << "POSIX subprocess fixture";
     const std::string writer = R"SH(
 (file="${0%/*}/ticks"; i=0
 while [ "$i" -lt 50 ]; do
@@ -190,7 +195,7 @@ while [ "$i" -lt 50 ]; do
 done) >/dev/null 2>&1 &
 wait
 )SH";
-    mcpp::platform::env::ScopedEnv online("MCPP_OFFLINE", "0");
+    mcpp::invocation::ScopedEnv online("MCPP_OFFLINE", "0");
     for (bool metadata : {true, false}) {
         NetworkFixture f("if [ \"$2\" = \"network_endpoints\" ]; then\n"
             "echo '{\"kind\":\"data\",\"dataKind\":\"network_endpoints\",\"payload\":{\"endpoints\":[{\"url\":\"https://one.invalid\"}]}}'\n"

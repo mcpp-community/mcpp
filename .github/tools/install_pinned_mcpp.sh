@@ -99,7 +99,7 @@ echo "bootstrap mcpp: $MCPP ($GOT)" >&2
 # sandbox the caller restored holds the index as it was when that cache was
 # saved, and the pinned mcpp refreshes on a miss only for the root's own
 # [dependencies] (fixed in 2026.10.26.2): a version a path member names --
-# modules/platform's `os = "0.1.0"` -- missed against it with no refresh.
+# a member's `os = "0.1.0"` -- missed against it with no refresh.
 "$MCPP" index update >&2 || echo "::warning::the bootstrap mcpp could not refresh its package index" >&2
 
 echo "$MCPP"

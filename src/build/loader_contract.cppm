@@ -102,8 +102,8 @@ struct TagFinding {
     std::filesystem::path artifact;
     Form form = Form::NotElf;
     RequiredTag required = RequiredTag::NotApplicable;
-    mcpp::platform::elf::SearchPathTag actual =
-        mcpp::platform::elf::SearchPathTag::None;
+    mcpp::runtime::elf::SearchPathTag actual =
+        mcpp::runtime::elf::SearchPathTag::None;
 
     // Three-valued on purpose. `NotChecked` is not `Ok`: an artifact that
     // could not be read, or that carries no search path at all, has not been
@@ -113,7 +113,7 @@ struct TagFinding {
     Status status = Status::NotChecked;
 
     std::string explain() const {
-        using SearchPathTag = mcpp::platform::elf::SearchPathTag;
+        using SearchPathTag = mcpp::runtime::elf::SearchPathTag;
         if (status != Status::Violation) return {};
         return std::format(
             "{}: {} carries {} but the loader contract requires {} — a search "
@@ -122,9 +122,9 @@ struct TagFinding {
             "driver (it never dlopens the vendor itself)",
             artifact.string(),
             form == Form::Executable ? "executable" : "shared library",
-            mcpp::platform::elf::to_string(actual),
+            mcpp::runtime::elf::to_string(actual),
             to_string(required),
-            mcpp::platform::elf::to_string(actual == SearchPathTag::Both
+            mcpp::runtime::elf::to_string(actual == SearchPathTag::Both
                                                ? SearchPathTag::Runpath
                                                : actual));
     }
@@ -133,11 +133,11 @@ struct TagFinding {
 // Rule E, evaluated where the artifact lands rather than in a repository
 // workflow the user's machine never sees.
 TagFinding check_artifact(const std::filesystem::path& artifact) {
-    using SearchPathTag = mcpp::platform::elf::SearchPathTag;
+    using SearchPathTag = mcpp::runtime::elf::SearchPathTag;
     TagFinding out;
     out.artifact = artifact;
 
-    auto facts = mcpp::platform::elf::inspect_elf_runtime(artifact);
+    auto facts = mcpp::runtime::elf::inspect_elf_runtime(artifact);
     if (!facts) return out;                       // not ELF, or unreadable
 
     out.form = facts->is_executable() ? Form::Executable : Form::SharedLibrary;

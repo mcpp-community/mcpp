@@ -43,8 +43,8 @@ import mcpp.build.plan;
 import mcpp.build.flags;
 import mcpp.home;
 import mcpp.libs.json;
-import mcpp.platform.fs;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.home.files;
 import mcpp.manifest.flag_words;
 import mcpp.toolchain.model;
 import mcpp.ui;                 // the one-time note about a root database no longer asked for
@@ -144,7 +144,7 @@ publish_compile_commands(
     const std::filesystem::path& path,
     std::string_view fresh,
     const std::function<bool(const std::filesystem::path&)>& fileExists,
-    ReplaceFile replaceFile = mcpp::platform::fs::replace_file);
+    ReplaceFile replaceFile = mcpp::home::replace_file);
 
 // Copies the configuration database's CURRENT CONTENT on disk at
 // `configDbPath` over the root file at `rootPath` (following a symlink
@@ -167,7 +167,7 @@ publish_root_compile_commands(
     const std::filesystem::path& rootPath,
     const std::filesystem::path& targetRoot,
     const std::filesystem::path& mcppHome,
-    ReplaceFile replaceFile = mcpp::platform::fs::replace_file);
+    ReplaceFile replaceFile = mcpp::home::replace_file);
 
 // The same for a command that planned several configurations (a workspace
 // whose members form more than one configuration group, workspace design
@@ -183,7 +183,7 @@ publish_root_compile_commands(
     const std::filesystem::path& rootPath,
     const std::filesystem::path& targetRoot,
     const std::filesystem::path& mcppHome,
-    ReplaceFile replaceFile = mcpp::platform::fs::replace_file);
+    ReplaceFile replaceFile = mcpp::home::replace_file);
 
 // Writes the configuration's database for `plan`, then publishes the root
 // copy from it. `commandCount` is the configuration database's entry count;
@@ -227,7 +227,7 @@ std::vector<std::string> split_flags(std::string_view s) {
         unescaped.push_back(s[i]);
     }
     return mcpp::manifest::host_command_words(unescaped,
-                                              mcpp::platform::is_windows);
+                                              mcpplibs::os::is_windows);
 }
 
 namespace {

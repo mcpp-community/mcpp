@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
-#include <cstdlib>       // setenv / _putenv_s — not part of `import std;`
 
 import std;
+import mcpp.invocation;
 import mcpp.toolchain.model;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
@@ -256,34 +256,14 @@ struct FakeToolset {
     }
 };
 
-void put_env(const char* name, const std::optional<std::string>& value) {
-#if defined(_WIN32)
-    // An empty value REMOVES the variable on Windows, which is what nullopt
-    // has to mean here.
-    ::_putenv_s(name, value ? value->c_str() : "");
-#else
-    if (value) ::setenv(name, value->c_str(), 1);
-    else       ::unsetenv(name);
-#endif
-}
-
 // RAII for an environment variable. nullopt = unset it.
 //
 // Unsetting matters as much as setting: these tests run on a Windows CI
 // runner that may have vcvars exported, and an ambient WindowsSdkDir would
 // otherwise answer before the fixture ever got a turn — a green test proving
 // nothing about the code under it.
-struct ScopedEnv {
-    const char* name;
-    std::optional<std::string> old;
-    ScopedEnv(const char* n, std::optional<std::string> value) : name(n) {
-        if (auto* v = std::getenv(name)) old = v;
-        put_env(name, value);
-    }
-    ~ScopedEnv() { put_env(name, old); }
-    ScopedEnv(const ScopedEnv&) = delete;
-    ScopedEnv& operator=(const ScopedEnv&) = delete;
-};
+// Stated for this invocation, as mcpp states its own (mcpp.invocation).
+using ScopedEnv = mcpp::invocation::ScopedEnv;
 
 // Every SDK test starts from "nothing declared", then declares what it means
 // to test.

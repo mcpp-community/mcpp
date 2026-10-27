@@ -8,10 +8,11 @@
 export module mcpp.runtime.elf;
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
 import mcpp.runtime.binding;
 
-export namespace mcpp::platform::elf {
+export namespace mcpp::runtime::elf {
 
 // WHICH dynamic tag carried the search path, kept separately from the path
 // list itself.
@@ -225,7 +226,7 @@ inspect_dynamic_symbols(const std::filesystem::path& object);
 
 RuntimeResolution resolve_runtime_closure(
     const std::filesystem::path& artifact,
-    const mcpp::platform::runtime::RuntimeBinding& binding,
+    const mcpp::runtime::RuntimeBinding& binding,
     std::span<const std::filesystem::path> additionalSearchDirs = {});
 
 // `hostLibsAllowed` mirrors `[build] allow_host_libs` (and
@@ -238,7 +239,7 @@ RuntimeResolution resolve_runtime_closure(
 // One declaration, one meaning, both phases.
 RuntimeVerdict validate_runtime_artifact(
     const std::filesystem::path& artifact,
-    const mcpp::platform::runtime::RuntimeBinding& binding,
+    const mcpp::runtime::RuntimeBinding& binding,
     const RuntimeResolution& resolution,
     bool hostLibsAllowed = false);
 
@@ -287,13 +288,13 @@ struct DlopenSurfaceReport {
 // this twice and only the second call saw the alias.
 DlopenSurfaceReport inspect_dlopen_surface(
     std::span<const std::filesystem::path> surfaceDirs,
-    const mcpp::platform::runtime::RuntimeBinding& binding,
+    const mcpp::runtime::RuntimeBinding& binding,
     std::span<const std::filesystem::path> searchDirs,
     std::span<const std::string> alsoProvided = {});
 
-} // namespace mcpp::platform::elf
+} // namespace mcpp::runtime::elf
 
-namespace mcpp::platform::elf {
+namespace mcpp::runtime::elf {
 namespace detail {
 
 constexpr std::uint32_t kPtLoad = 1;
@@ -490,7 +491,7 @@ void append_unique_path(std::vector<std::filesystem::path>& out,
 
 std::vector<std::filesystem::path> host_library_dirs() {
     std::vector<std::filesystem::path> out;
-    const auto arch = std::string(mcpp::platform::host_arch);
+    const auto arch = std::string(mcpp::toolchain::platform::host_arch);
     std::string triple;
     if (arch == "x86_64") triple = "x86_64-linux-gnu";
     else if (arch == "aarch64") triple = "aarch64-linux-gnu";
@@ -508,7 +509,7 @@ std::vector<std::filesystem::path> host_library_dirs() {
 std::optional<std::filesystem::path> resolve_needed(
     std::string_view soname,
     const ElfRuntimeFacts& requester,
-    const mcpp::platform::runtime::RuntimeBinding& binding,
+    const mcpp::runtime::RuntimeBinding& binding,
     std::span<const std::filesystem::path> additionalSearchDirs,
     std::span<const std::string> inheritedRpaths) {
     std::filesystem::path named(soname);
@@ -1186,7 +1187,7 @@ inspect_elf_runtime(const std::filesystem::path& artifact) {
 
 RuntimeResolution resolve_runtime_closure(
     const std::filesystem::path& artifact,
-    const mcpp::platform::runtime::RuntimeBinding& binding,
+    const mcpp::runtime::RuntimeBinding& binding,
     std::span<const std::filesystem::path> additionalSearchDirs) {
     RuntimeResolution resolution;
     auto root = inspect_elf_runtime(artifact);
@@ -1294,7 +1295,7 @@ RuntimeResolution resolve_runtime_closure(
 
 RuntimeVerdict validate_runtime_artifact(
     const std::filesystem::path& artifact,
-    const mcpp::platform::runtime::RuntimeBinding& binding,
+    const mcpp::runtime::RuntimeBinding& binding,
     const RuntimeResolution& resolution,
     bool hostLibsAllowed) {
     RuntimeVerdict verdict;
@@ -1303,8 +1304,8 @@ RuntimeVerdict validate_runtime_artifact(
     // not a glibc that is missing, it is a different provider whose runtime
     // this validator has no rules for.
     const bool isGlibc =
-        mcpp::platform::runtime::runtime_provider(binding.runtimeId) == "glibc";
-    if constexpr (!mcpp::platform::is_linux) {
+        mcpp::runtime::runtime_provider(binding.runtimeId) == "glibc";
+    if constexpr (!mcpplibs::os::is_linux) {
         verdict.diagnostics.push_back(
             "runtime physics: non-Linux platform; ELF/glibc rules are not applicable");
         return verdict;
@@ -1531,7 +1532,7 @@ RuntimeVerdict validate_runtime_artifact(
 
 DlopenSurfaceReport inspect_dlopen_surface(
     std::span<const std::filesystem::path> surfaceDirs,
-    const mcpp::platform::runtime::RuntimeBinding& binding,
+    const mcpp::runtime::RuntimeBinding& binding,
     std::span<const std::filesystem::path> searchDirs,
     std::span<const std::string> alsoProvided) {
     DlopenSurfaceReport report;
@@ -1613,4 +1614,4 @@ DlopenSurfaceReport inspect_dlopen_surface(
     return report;
 }
 
-} // namespace mcpp::platform::elf
+} // namespace mcpp::runtime::elf

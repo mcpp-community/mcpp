@@ -16,7 +16,7 @@ import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.provider.address_set;
 import mcpp.build.version_floor;
-import mcpp.platform.axis;
+import mcpplibs.os.platform;
 import mcpp.manifest;
 import mcpp.source_kind;
 import mcpp.modgraph.glob;
@@ -35,7 +35,6 @@ import mcpp.pack.stage_tree;   // where `${mcpp.stage_dir}` points, and its mani
 import mcpp.build.build_program;
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
-import mcpp.platform;
 import mcpp.ui;
 import mcpp.project;
 
@@ -493,7 +492,7 @@ std::vector<std::string> previous_release_words(std::string element, bool define
         }
         i = j;
     }
-    return mcpp::manifest::host_command_words(line, mcpp::platform::is_windows);
+    return mcpp::manifest::host_command_words(line, mcpplibs::os::is_windows);
 }
 
 void report_flag_words_changes(const mcpp::manifest::Manifest& m) {
@@ -538,7 +537,7 @@ void report_flag_words_changes(const mcpp::manifest::Manifest& m) {
         for (auto const& e : list) {
             auto now = mcpp::manifest::flag_words(e);
             auto before = e.starts_with("-L") || e.starts_with("-Wl,-rpath,")
-                ? mcpp::manifest::host_command_words(e, mcpp::platform::is_windows)
+                ? mcpp::manifest::host_command_words(e, mcpplibs::os::is_windows)
                 : previous_release_words(e, false);
             if (now == before) continue;
             note_change(std::format(

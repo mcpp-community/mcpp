@@ -12,7 +12,11 @@ import mcpp.build.engine_package;
 import mcpp.diag;
 import mcpp.build.refusal;
 import mcpp.build.version_floor;
-import mcpp.platform.axis;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
+import mcpp.toolchain.apple_sdk;
+import mcpp.effects;
+import mcpp.build.command_line;
 import mcpp.manifest;
 import mcpp.source_kind;
 import mcpp.toolchain.hostflags;   // the compile-token producer the package std module reuses
@@ -50,11 +54,10 @@ import mcpp.provider.select;
 import mcpp.provider.runtime_selection;
 import mcpp.runtime.binding;
 import mcpp.toolchain.post_install;
-import mcpp.platform;
-import mcpp.platform.macos;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.ui;
+import mcpp.invocation;
 
 namespace mcpp::build {
 
@@ -159,7 +162,7 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
     } else {
         auto cfgRuntime = state.get_cfg(true);
         if (!cfgRuntime) return std::unexpected(cfgRuntime.error());
-        auto resolved = mcpp::platform::runtime::resolve_runtime_binding(
+        auto resolved = mcpp::runtime::resolve_runtime_binding(
             state.runtimeSelection, {}, (**cfgRuntime).xlingsHome());
         if (!resolved) return std::unexpected(resolved.error());
         state.runtimeBindingSnapshot = std::move(*resolved);
@@ -388,8 +391,8 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
     // What the manifest declared, before the command line replaces it: D11
     // says so when the two differ.
     const auto manifestSpec = state.tcSpec;
-    if (const char* tcEnv = std::getenv("MCPP_TOOLCHAIN"); tcEnv && *tcEnv) {
-        state.tcSpec   = std::string(tcEnv);
+    if (auto tcEnv = mcpp::invocation::get("MCPP_TOOLCHAIN")) {
+        state.tcSpec   = *tcEnv;
         state.tcOrigin = TcOrigin::ManifestToolchain;
         state.tcFromCommandLine = true;
     }
@@ -456,14 +459,14 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
     // mirrors the windows-gnu seed below, which this function's other caller
     // runs after.
     state.native_first_run_spec = [&]() -> std::string {
-        const bool msvcUsable = mcpp::platform::is_windows
+        const bool msvcUsable = mcpplibs::os::is_windows
                              && state.msvc_usable_either_origin();
         return std::string(
             mcpp::toolchain::triple::pins::host_default_toolchain(msvcUsable));
     };
 
     state.windowsGnuFirstRun = false;
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         if (!state.tcSpec.has_value() && state.overrides.target_triple.empty()
             && state.m->buildConfig.target.empty()
             && !state.msvc_usable_either_origin()) {
@@ -700,7 +703,7 @@ step1_apple_sdk_check(PrepareState& state, TargetOverrideCtx& ctx) {
         if (!stmt) return std::unexpected(stmt.error());
         if (stmt->form == mcpp::toolchain::base::Form::Locator
             || stmt->form == mcpp::toolchain::base::Form::Path) {
-            auto sdk = mcpp::toolchain::base::locate_apple(*stmt, mcpp::platform::macos::sdk_macos);
+            auto sdk = mcpp::toolchain::base::locate_apple(*stmt, mcpp::toolchain::apple::sdk_macos);
             if (!sdk) {
                 refusal::record(refusal::Code::AppleSdkAbsent);
                 return std::unexpected(std::format(
@@ -713,8 +716,8 @@ step1_apple_sdk_check(PrepareState& state, TargetOverrideCtx& ctx) {
     }
     if (ctx.parsed && ctx.parsed->is_ios()) {
         const auto which = ctx.parsed->is_ios_simulator()
-            ? mcpp::platform::macos::sdk_iphonesim
-            : mcpp::platform::macos::sdk_iphoneos;
+            ? mcpp::toolchain::apple::sdk_iphonesim
+            : mcpp::toolchain::apple::sdk_iphoneos;
         auto stmt = base_statement(state, *ctx.parsed);
         if (!stmt) return std::unexpected(stmt.error());
         mcpp::toolchain::base::Statement asked = *stmt;
@@ -756,8 +759,8 @@ step1_apple_sdk_check(PrepareState& state, TargetOverrideCtx& ctx) {
             const auto slice = std::format("{}-ios{}",
                 ctx.parsed->arch == "aarch64" ? "arm64" : ctx.parsed->arch,
                 ctx.parsed->is_ios_simulator() ? "-simulator" : "");
-            if (auto has = mcpp::platform::macos::sdk_has_target(*state.appleSdkLocated, slice);
-                has && !*has) {
+            if (mcpp::toolchain::apple::sdk_has_target(*state.appleSdkLocated, slice)
+                == mcpp::toolchain::apple::Slice::absent) {
                 refusal::record(refusal::Code::AppleSdkAbsent);
                 return std::unexpected(std::format(
                     "target {}: the {} SDK at {} carries no {} slice (its libSystem.tbd "
@@ -1204,7 +1207,7 @@ static std::expected<void, std::string> step1_device_axis_and_layer_merge(Prepar
             c.accelerators.push_back(set.backend);
         return c;
     };
-    state.targetPlatform = mcpp::platform::TargetPlatform::for_os(state.cfgCtx().os);
+    state.targetPlatform = mcpp::toolchain::platform::TargetPlatform::for_os(state.cfgCtx().os);
 
     // ── L1: merge conditional [target.'cfg(...)'] sections ───────────────────
     // Evaluated now (target resolved) against the resolved target — the
@@ -1381,7 +1384,7 @@ step2_parse_toolchain_spec(PrepareState& state, ToolchainResolveCtx& ctx) {
       // of that version unpacks the same installer payloads Visual Studio does,
       // so an installed copy is the same toolset without a download. `xim:`
       // opts out: it asks for the package, whose SDK is pinned with it.
-      if constexpr (mcpp::platform::is_windows) {
+      if constexpr (mcpplibs::os::is_windows) {
           if (ctx.parsedSpec && !state.tcSpecIsMsvc
               && ctx.parsedSpec->family == mcpp::toolchain::Family::Msvc
               && !ctx.parsedSpec->ecosystemOnly && !ctx.parsedSpec->version.empty())
@@ -1403,7 +1406,7 @@ step2_use_installed_pin(PrepareState& state, ToolchainResolveCtx& ctx) {
 
 static std::expected<void, std::string>
 step2_use_system_msvc(PrepareState& state) {
-        if (!mcpp::platform::is_windows) {
+        if (!mcpplibs::os::is_windows) {
             return std::unexpected(std::format(
                 "toolchain '{}' is only available on Windows hosts", *state.tcSpec));
         }
@@ -1646,14 +1649,14 @@ step2_offline_refusal(PrepareState& state) {
         // Name the knob that actually fired, not a fixed one: telling a user
         // who passed `--offline` to unset MCPP_NO_AUTO_INSTALL sends them
         // looking for a variable they never set.
-        std::string_view release = mcpp::platform::env::offline_mode()
+        std::string_view release = mcpp::effects::offline_mode()
             ? "or drop --offline / unset MCPP_OFFLINE to let mcpp auto-install."
             : "or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.";
         // Windows without a usable MSVC must not be told to install llvm:
         // that default resolves to clang targeting the MSVC ABI, which is
         // exactly what this machine cannot build. Name the toolchain that
         // will actually work there instead.
-        if (mcpp::platform::is_windows
+        if (mcpplibs::os::is_windows
             && !state.msvc_usable_either_origin()) {
             refusal::record(refusal::Code::OfflineDownloadRequired);
             return std::unexpected(std::format(
@@ -1666,7 +1669,7 @@ step2_offline_refusal(PrepareState& state) {
                 pins::kSuggestGccMingw, pins::kFirstRunWinGnuTarget,
                 pins::kFirstRunWinGnu,  pins::kFirstRunWinGnuTarget, release));
         }
-        if constexpr (mcpp::platform::is_macos || mcpp::platform::is_windows) {
+        if constexpr (mcpplibs::os::is_macos || mcpplibs::os::is_windows) {
             refusal::record(refusal::Code::OfflineDownloadRequired);
             return std::unexpected(std::format(
                 "no toolchain configured.\n"
@@ -1723,7 +1726,7 @@ step2_first_run_auto_install(PrepareState& state) {
         bool muslDefault = defaultParsed->target.is_musl();
         auto defaultPkg = mcpp::toolchain::to_xim_package(*defaultParsed);
 
-        if constexpr (mcpp::platform::is_macos || mcpp::platform::is_windows) {
+        if constexpr (mcpplibs::os::is_macos || mcpplibs::os::is_windows) {
             mcpp::ui::info("First run",
                 std::format("no toolchain configured — installing {} (LLVM/Clang) as default",
                             defaultSpec));
@@ -2104,7 +2107,7 @@ step2_retarget_for_retargetable_driver(PrepareState& state) {
                       // a path with a space in it.
                       state.tc->stdModuleTargetFlags =
                           " " + state.tc->crossTargetFlag
-                          + " -isysroot " + mcpp::platform::shell::quote(sdk->string());
+                          + " -isysroot " + mcpp::build::command_line::quote(sdk->string());
                   }
               }
           }
@@ -2259,13 +2262,13 @@ step2_windows_runtime_identity(PrepareState& state) {
       // `glibc@<v>`: ucrtbase.dll is an OS component and mcpp ships no
       // redistributable for it. See mcpp.runtime.binding.
       if (!state.tc->base.msvc.sdkVersion.empty()) {
-          mcpp::platform::runtime::bind_windows_ucrt(
+          mcpp::runtime::bind_windows_ucrt(
               state.runtimeBindingSnapshot, state.tc->base.msvc.sdkVersion);
           state.tc->runtimeContractHash = state.runtimeBindingSnapshot.contractHash;
           // And the artifact's runtime, when a stated base re-derived it:
           // the floor and the base's identity are both part of its contract.
           if (state.targetRuntimeBinding) {
-              mcpp::platform::runtime::bind_windows_ucrt(
+              mcpp::runtime::bind_windows_ucrt(
                   *state.targetRuntimeBinding, state.tc->base.msvc.sdkVersion);
               state.tc->runtimeContractHash = state.targetRuntimeBinding->contractHash;
           }
@@ -2314,9 +2317,9 @@ step2_msvc_abi_without_msvc_repair(PrepareState& state) {
               !tc_origin_is_user_explicit(state.tcOrigin)
               && tc_origin_may_persist(state.tcOrigin)
               && !userChoseMsvcItself
-              && !mcpp::platform::env::offline_mode()
-              && !mcpp::platform::env::no_auto_install()
-              && mcpp::platform::is_windows;
+              && !mcpp::effects::offline_mode()
+              && !mcpp::effects::no_auto_install()
+              && mcpplibs::os::is_windows;
           if (!mayRepair) {
               return std::unexpected(msvc_unavailable_guidance(*state.tc));
           }
@@ -2422,8 +2425,8 @@ std::expected<void, std::string> phase2_define_toolchain_resolver(PrepareState& 
         if (auto r = step2_resolve_explicit_spec(state, ctx); !r) return std::unexpected(r.error());
       } else if (state.tcSpec.has_value() && *state.tcSpec == "system") {
         if (auto r = step2_system_toolchain_refusal(state); !r) return std::unexpected(r.error());
-      } else if (mcpp::platform::env::offline_mode()
-               || mcpp::platform::env::no_auto_install()) {
+      } else if (mcpp::effects::offline_mode()
+               || mcpp::effects::no_auto_install()) {
         if (auto r = step2_offline_refusal(state); !r) return std::unexpected(r.error());
       } else {
         if (auto r = step2_first_run_auto_install(state); !r) return std::unexpected(r.error());

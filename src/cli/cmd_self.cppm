@@ -15,11 +15,15 @@ import mcpplibs.cmdline;
 import mcpp.doctor;
 import mcpp.toolchain.fingerprint;   // MCPP_VERSION
 import mcpp.home;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpplibs.os.windows;
+import mcpp.ui.terminal;
 import mcpp.toolchain.triple;          // pins::host_default_toolchain (WS8)
 import mcpp.toolchain.msvc;            // msvc_available_here
 import mcpp.wire;
 import mcpp.libs.json;
+import mcpp.toolchain.platform;
+import mcpp.invocation;
 
 namespace mcpp::cli {
 
@@ -50,7 +54,7 @@ nlohmann::json env_data_readonly() {
         {"registry",     s(registry)},
         {"xlingsHome",   s(registry)},          // registryDir unless overridden
         {"xlingsBinary", s(registry / "bin" /
-                           ("xlings" + std::string(mcpp::platform::exe_suffix)))},
+                           ("xlings" + std::string(mcpplibs::os::exe_suffix)))},
         {"config",       s(config)},
         {"buildCache",   s(mcpp::home::cache_root())},
         // The engine interface a build program imports, as a package directory
@@ -66,7 +70,7 @@ nlohmann::json env_data_readonly() {
         // An Android host (Termux): the same default toolchain as GNU/Linux on
         // this architecture; reported because the shell and the loader rules
         // differ (D21, D28).
-        {"android",      mcpp::platform::linux_::is_android_host()},
+        {"android",      mcpp::toolchain::platform::is_android_host()},
     };
 }
 
@@ -149,22 +153,22 @@ export int cmd_self_init(const mcpplibs::cmdline::ParsedArgs& parsed) {
         std::println(stderr, "error: --home requires a non-empty directory");
         return 2;
     }
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         const auto origin = mcpp::home::original_root();
         std::error_code ec;
-        const auto* explicitHome = std::getenv("MCPP_HOME");
+        const auto explicitHome = mcpp::invocation::get("MCPP_HOME");
         // Only the user-directory fallback participates. An installed portable
         // tree and an explicitly selected original home retain their behavior.
         const bool userFallback = mcpp::home::original_source() == "user";
-        if (target.empty() && !(explicitHome && *explicitHome) && userFallback
+        if (target.empty() && !explicitHome && userFallback
             && !mcpp::home::initialized(origin)
             && !std::filesystem::exists(origin / "home.toml", ec) && !ec
-            && mcpp::platform::terminal::input_is_terminal()
-            && mcpp::platform::terminal::is_terminal(mcpp::platform::terminal::Stream::Err)
-            && mcpp::platform::windows::writable_fixed_drive('D', L"mcpp")) {
+            && mcpp::ui::terminal::input_is_terminal()
+            && mcpp::ui::terminal::is_terminal(mcpp::ui::terminal::Stream::Err)
+            && mcpplibs::os::windows::writable_fixed_drive('D', L"mcpp")) {
             auto fallback = mcpp::home::spelling(origin);
             std::ranges::replace(fallback, '/', '\\');
-            mcpp::platform::terminal::write(mcpp::platform::terminal::Stream::Err,
+            mcpp::ui::terminal::write(mcpp::ui::terminal::Stream::Err,
                 std::format("        Home No existing home found\n"
                             "       Drive D:\\ is a writable local fixed drive\n\n"
                             "      Choose the mcpp home:\n\n"

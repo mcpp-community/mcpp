@@ -33,7 +33,9 @@ export module mcpp.toolchain.stdmod;
 import std;
 import mcpp.home;
 import mcpp.libs.json;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.build.command_line;
+import mcpp.run;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.fingerprint;
@@ -118,9 +120,7 @@ namespace {
 std::expected<std::string, StdModError> run_capture_command(
     const std::string& cmd,
     const std::vector<std::pair<std::string, std::string>>& env) {
-    auto r = env.empty()
-        ? mcpp::platform::process::capture(cmd)
-        : mcpp::platform::process::capture_with_env(cmd, env);
+    auto r = mcpp::run::capture_shell(cmd, env);
     if (r.exit_code != 0) {
         // Include the command: its --sysroot/-isystem flags are the first
         // thing needed to diagnose header-resolution failures.
@@ -252,8 +252,8 @@ std::expected<void, StdModError> write_metadata(const std::filesystem::path& pat
 }
 
 // Toolchain-declared env (MSVC's INCLUDE/LIB/PATH) applies to every std
-// module build command; empty for GCC/Clang (their LD_LIBRARY_PATH need is
-// carried as an in-command `env` prefix on POSIX for now).
+// module build command; empty for GCC/Clang, whose LD_LIBRARY_PATH need is
+// part of the recorded command text (an `env` prefix on Linux).
 std::expected<std::string, StdModError> run_commands(
     const std::vector<std::string>& commands, const Toolchain& tc) {
     std::vector<std::pair<std::string, std::string>> env;
@@ -309,8 +309,8 @@ std::expected<StdDerivation, StdModError> derive_std_module(
     // quotes: a path with a space -- the MSVC toolset of the clang row, always
     // under `C:\Program Files` -- has to arrive in double quotes.
     const PathEscape shellEsc = [](const std::filesystem::path& p) {
-        if constexpr (mcpp::platform::is_windows)
-            return mcpp::platform::shell::quote(p.string());
+        if constexpr (mcpplibs::os::is_windows)
+            return mcpp::build::command_line::quote(p.string());
         else
             return std::format("'{}'", p.string());
     };

@@ -48,7 +48,12 @@ import mcpp.okimage;
 import mcpp.toolchain.msvc_coroutines;
 import mcpp.provider;
 import mcpp.provider.select;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpplibs.os.windows;
+import mcpp.invocation;
+import mcpp.runtime.launch_env;
+import mcpp.build.command_line;
+import mcpp.run;
 import mcpp.ui;
 import mcpp.log;
 import mcpp.build.progress;
@@ -333,7 +338,7 @@ std::filesystem::path mcpp_exe_path();
 namespace mcpp::build {
 
 std::filesystem::path mcpp_exe_path() {
-    return mcpp::platform::fs::self_exe_path();
+    return mcpp::invocation::self_exe_path();
 }
 
 namespace {
@@ -592,8 +597,8 @@ std::string shared_soname_flag(const LinkUnit& lu, const BuildPlan& plan) {
     // an `os` string: the prior `os == "macos"` fell through to the ELF
     // branch (`-Wl,-soname`, a GNU ld/BFD flag ld64 does not accept) for
     // iOS, whose `os` is `ios`.
-    const bool pe    = t ? t->is_pe()     : bool(mcpp::platform::is_windows);
-    const bool macho = t ? t->is_mach_o() : bool(mcpp::platform::is_macos);
+    const bool pe    = t ? t->is_pe()     : bool(mcpplibs::os::is_windows);
+    const bool macho = t ? t->is_mach_o() : bool(mcpplibs::os::is_macos);
     // PE records no such name: a DLL is found by the filename in the importing
     // module's import table, and there is nothing to override.
     if (pe) return "";
@@ -612,8 +617,8 @@ std::string shared_soname_flag(const LinkUnit& lu, const BuildPlan& plan) {
 std::string shared_soname_default(const LinkUnit& lu, const BuildPlan& plan) {
     if (lu.kind != LinkUnit::SharedLibrary || !lu.soname.empty()) return "";
     const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-    const bool pe    = t ? t->is_pe()     : bool(mcpp::platform::is_windows);
-    const bool macho = t ? t->is_mach_o() : bool(mcpp::platform::is_macos);
+    const bool pe    = t ? t->is_pe()     : bool(mcpplibs::os::is_windows);
+    const bool macho = t ? t->is_mach_o() : bool(mcpplibs::os::is_macos);
     if (pe || macho) return "";
     if (t && t->is_openkal()) return "-soname " + lu.output.filename().string();
     return "-Wl,-soname," + lu.output.filename().string();
@@ -703,23 +708,13 @@ void write_file(const std::filesystem::path& p, std::string_view content) {
     os << content;
 }
 
-bool run(const std::string& cmd, std::string& output_capture, bool capture_output = true) {
-    output_capture.clear();
-    if (capture_output) {
-        auto r = mcpp::platform::process::capture(cmd);
-        output_capture = r.output;
-        return r.exit_code == 0;
-    }
-    return mcpp::platform::process::run_passthrough(cmd) == 0;
-}
-
 bool dyndep_mode_enabled() {
     // M4 #7: dyndep is now the default. Set MCPP_NINJA_DYNDEP=0 to opt
     // OUT and fall back to the static-deps emission path.
-    const char* v = std::getenv("MCPP_NINJA_DYNDEP");
+    const auto v = mcpp::invocation::get("MCPP_NINJA_DYNDEP");
     if (!v)
         return true;
-    std::string_view sv(v);
+    std::string_view sv(*v);
     return !(sv == "0" || sv == "off" || sv == "false");
 }
 
@@ -820,8 +815,8 @@ bool is_command_line(std::string_view trimmed,
 
 std::optional<std::pair<std::string, std::string>>
 runtime_env_for_dirs(const std::vector<std::filesystem::path>& dirs) {
-    auto key = mcpp::platform::env::runtime_library_path_key();
-    auto value = mcpp::platform::env::prepend_path_list(key, dirs);
+    auto key = mcpp::runtime::launch_env::runtime_library_path_key();
+    auto value = mcpp::runtime::launch_env::prepend_path_list(key, dirs);
     if (key.empty() || value.empty()) return std::nullopt;
     return std::pair{std::move(key), std::move(value)};
 }
@@ -901,7 +896,7 @@ std::vector<std::string> windows_executable_link_flags(const BuildPlan& plan, bo
                                                        std::string_view subsystem,
                                                        std::string_view entry) {
     const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-    const bool pe = t ? t->is_pe() : bool(mcpp::platform::is_windows);
+    const bool pe = t ? t->is_pe() : bool(mcpplibs::os::is_windows);
     if (!pe) return {};
     const bool gui = subsystem == "windows";
     const std::string_view fn = entry.empty() ? std::string_view("main") : entry;
@@ -1405,7 +1400,7 @@ NinjaRun run_ninja_reporting(const std::vector<std::string>& argv,
     };
     // A ninja that cannot be started is reported through `on_line`, into the
     // output the failure report reads.
-    run.exitCode = mcpp::platform::process::stream_exec(argv, env, deadline, on_line,
+    run.exitCode = mcpp::run::stream_exec(argv, env, deadline, on_line,
                                                         &run.timedOut);
     progress.pass_end();
     return run;
@@ -1614,11 +1609,11 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // `env` prefix. macOS keeps no such path at all
     // (`runtime_library_path_key`), Windows keeps its PATH.
     const std::string toolEnv = [&]() -> std::string {
-        if (!mcpp::platform::is_linux || plan.toolchain.compilerRuntimeDirs.empty()) return {};
-        if (auto facts = mcpp::platform::elf::inspect_elf_runtime(flags.cxxBinary);
-            facts && facts->searchPathTag != mcpp::platform::elf::SearchPathTag::None)
+        if (!mcpplibs::os::is_linux || plan.toolchain.compilerRuntimeDirs.empty()) return {};
+        if (auto facts = mcpp::runtime::elf::inspect_elf_runtime(flags.cxxBinary);
+            facts && facts->searchPathTag != mcpp::runtime::elf::SearchPathTag::None)
             return {};
-        return mcpp::platform::linux_::build_clean_ld_library_path_prefix(
+        return mcpp::build::command_line::clean_ld_library_path_prefix(
             plan.toolchain.compilerRuntimeDirs);
     }();
     append(std::format("cxx       = {}{}{}\n", toolEnv, launch, ninja_tool_word(flags.cxxBinary)));
@@ -1882,12 +1877,12 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                                            : "-MMD -MF $out.d ")
                    : "";
     const std::string mmd_filter =
-        (needsGnuModuleFilter && !mcpp::platform::is_windows)
+        (needsGnuModuleFilter && !mcpplibs::os::is_windows)
         ? " && awk 'NR==1{print;next} /^[^ ]/{exit} {print}' "
           "\"$out.d.raw\" > \"$out.d\" && rm -f \"$out.d.raw\""
         : "";
     const std::string win_depfile_filter =
-        (needsGnuModuleFilter && mcpp::platform::is_windows)
+        (needsGnuModuleFilter && mcpplibs::os::is_windows)
         ? "$mcpp depfile-filter --raw $out.d.raw --out $out.d -- "
         : "";
     auto append_cxx_deps = [&] {
@@ -1934,7 +1929,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // makes the response-file shape reachable from a non-Windows test host,
     // the same over-approximation the link rules use (`separateLinker ||
     // is_windows`).
-    const bool useCompileRsp = mcpp::platform::is_windows || msvcDeps;
+    const bool useCompileRsp = mcpplibs::os::is_windows || msvcDeps;
     // THE BYTE ORDER MARK, FOR THE TOOLS THAT NEED ONE TO READ UTF-8 (#693).
     //
     // build.ninja is UTF-8, and Ninja copies `rspfile_content` into the
@@ -1976,7 +1971,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     const std::string module_output_flag = traits.needsExplicitModuleOutput
         ? std::string(traits.moduleOutputPrefix) + "$bmi_out" : "";
     append("rule cxx_module\n");
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         // Windows: skip BMI restat optimization (requires POSIX shell).
         const std::string payload = " $local_includes";
         append(std::format("  command = {}$cxx{} $cxxflags $unit_cxxflags"
@@ -2072,7 +2067,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     if (twoPhase) {
         // Edge A — the BMI, and nothing else. `$out` is the BMI here.
         append("rule cxx_precompile\n");
-        if constexpr (mcpp::platform::is_windows) {
+        if constexpr (mcpplibs::os::is_windows) {
             const std::string payload = " $local_includes";
             append(std::format(
                 "  command = {}$cxx{} $cxxflags $unit_cxxflags{}{} {}$in {}$out\n",
@@ -2104,7 +2099,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // write one file. Identical to cxx_object except for the language flag
         // that tells the driver this source is a module interface.
         append("rule cxx_module_object\n");
-        if constexpr (mcpp::platform::is_windows) {
+        if constexpr (mcpplibs::os::is_windows) {
             const std::string payload = " $local_includes";
             append(std::format("  command = {}$cxx{} $cxxflags $unit_cxxflags{} {}{}\n",
                                win_depfile_filter, rsp_ref(payload), module_src_flags,
@@ -2122,7 +2117,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     }
 
     append("rule cxx_object\n");
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         const std::string payload = " $local_includes";
         append(std::format("  command = {}$cxx{} $cxxflags $unit_cxxflags {}{}\n",
                            win_depfile_filter, rsp_ref(payload), mmd_flag,
@@ -2267,10 +2262,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // on the build machine runs the artifact while it links.
     const bool inPlaceTarget = [&] {
         const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-        return t ? (t->is_pe() || t->is_wasm()) : bool(mcpp::platform::is_windows);
+        return t ? (t->is_pe() || t->is_wasm()) : bool(mcpplibs::os::is_windows);
     }();
     auto publish_link = [&](std::string cmd) {
-        if constexpr (mcpp::platform::is_windows) {
+        if constexpr (mcpplibs::os::is_windows) {
             return "$mcpp link-output --output $out -- " + cmd;
         } else {
             if (inPlaceTarget) return cmd;
@@ -2422,7 +2417,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     const bool placeRuntimeDlls = [&] {
         if (plan.linkIntent.runtimeSearchDirs.empty()) return false;
         const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-        return t ? t->is_pe() : bool(mcpp::platform::is_windows);
+        return t ? t->is_pe() : bool(mcpplibs::os::is_windows);
     }();
     if (placeRuntimeDlls) {
         std::string dirs;
@@ -2455,7 +2450,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     }
 
     append("rule runtime_alias\n");
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         // PE has no soname symlink, so the alias is a copy — and a copy of a
         // just-rebuilt DLL is exactly the hazard #311 is about (a program still
         // running from a previous `mcpp run` holds the old one). Route it
@@ -2467,7 +2462,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         append("  command = mkdir -p $$(dirname $out) && rm -f $out && ln -s $$(basename $in) $out\n");
     }
     append("  description = ALIAS $out\n");
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         append("  restat = 1\n");
     }
     append("\n");
@@ -3018,8 +3013,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // MCPP_VERIFY_MODGRAPH=1 (read at generation time) extends the
         // check to every module unit.
         const bool verifyAll = [] {
-            const char* v = std::getenv("MCPP_VERIFY_MODGRAPH");
-            return v && std::string_view(v) == "1";
+            return mcpp::invocation::get("MCPP_VERIFY_MODGRAPH") == "1";
         }();
         std::map<std::string, std::string> ddi_expect;
         for (auto& cu : plan.compileUnits) {
@@ -3479,7 +3473,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             if (mcpp::toolchain::is_clang(plan.toolchain)) {
                 const auto& compiler = plan.toolchain.binaryPath;
                 const auto nm = compiler.parent_path()
-                    / (mcpp::platform::is_windows ? "llvm-nm.exe" : "llvm-nm");
+                    / (mcpplibs::os::is_windows ? "llvm-nm.exe" : "llvm-nm");
                 auto cxxArg = mcpp::modgraph::try_narrow(compiler);
                 auto nmArg = mcpp::modgraph::try_narrow(nm);
                 if (!cxxArg || !nmArg)
@@ -3534,8 +3528,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         if (lu.kind == LinkUnit::SharedLibrary && !lu.exportPatterns.empty()) {
             const auto tr = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
             const std::string os = tr ? tr->os
-                : (mcpp::platform::is_macos   ? "macos"
-                 : mcpp::platform::is_windows ? "windows" : "linux");
+                : (mcpplibs::os::is_macos   ? "macos"
+                 : mcpplibs::os::is_windows ? "windows" : "linux");
             const auto file = plan.outputDir / "obj"
                             / (lu.targetName + ".exports.gen");
             std::error_code mkec;
@@ -4319,7 +4313,7 @@ std::optional<std::string> check_inline_command_lengths(const std::string& manif
         if (auto lit = literalCommand.find(rule); lit != literalCommand.end())
             measured = lit->second;
         auto over = mcpp::build::cmdlimits::check_inline(
-            measured, mcpp::platform::is_windows, /*needsShell=*/!mcpp::platform::is_windows);
+            measured, mcpplibs::os::is_windows, /*needsShell=*/!mcpplibs::os::is_windows);
         if (!over) continue;
 
         // The edge is named by its FIRST output and the count of the rest:
@@ -4675,15 +4669,15 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // non-ASCII byte, because ASCII is the same text in both encodings; a
     // refusal here comes before the fast-path record is written, so the next
     // run asks again.
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         const bool nonAscii = std::ranges::any_of(manifest, [](char c) {
             return static_cast<unsigned char>(c) >= 0x80;
         });
         if (nonAscii) {
-            auto probe = mcpp::platform::process::capture_stdout(
+            auto probe = mcpp::run::capture_stdout(
                 {ninjaProgram, "-t", "wincodepage"});
             if (auto bad = ninja_encoding_mismatch(
-                    probe.output, mcpp::platform::windows::active_code_page(),
+                    probe.output, mcpplibs::os::windows::code_page(),
                     ninjaProgram))
                 return std::unexpected(BuildError{*bad, ninja_path});
         }
@@ -4704,12 +4698,12 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             if (!joined.empty()) joined += '\x1f';
             joined += k; joined += '='; joined += v;
         };
-        if (!mcpp::platform::is_linux)
+        if (!mcpplibs::os::is_linux)
             if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs))
                 add(runtimeEnv->first, runtimeEnv->second);
         for (auto& ev : plan.toolchain.envOverrides) add(ev.key, ev.value);
         r.runtimeEnvValue = std::move(joined);
-    } else if (auto runtimeEnv = mcpp::platform::is_linux ? std::nullopt
+    } else if (auto runtimeEnv = mcpplibs::os::is_linux ? std::nullopt
                    : runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs)) {
         r.runtimeEnvKey = runtimeEnv->first;
         r.runtimeEnvValue = runtimeEnv->second;
@@ -4743,9 +4737,9 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // Unset by default and unset in CI. It changes nothing but ninja's
     // verbosity, and it is spelled as a topic list rather than a boolean so
     // that `-d stats` and `-d keeprsp` are reachable without another variable.
-    if (const char* topics = std::getenv("MCPP_NINJA_DEBUG"); topics && *topics) {
+    if (auto topics = mcpp::invocation::get("MCPP_NINJA_DEBUG")) {
         nargv.push_back("-d");
-        nargv.push_back(topics);
+        nargv.push_back(*topics);
     }
     if (plan.scheduleNinjaJobs > 0)
         nargv.push_back(std::format("-j{}", plan.scheduleNinjaJobs));
@@ -4767,7 +4761,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     std::vector<std::pair<std::string, std::string>> nenv;
     // On Linux the toolchain's library path prefixes its tools (`$cxx`, ...),
     // never ninja's environment (D29).
-    if (!mcpp::platform::is_linux)
+    if (!mcpplibs::os::is_linux)
         if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs))
             nenv.emplace_back(runtimeEnv->first, runtimeEnv->second);
     for (auto& ev : plan.toolchain.envOverrides)
@@ -4807,7 +4801,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             // even into the file of a build that runs this one (design §6.4).
             auto preEnv = nenv;
             preEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
-            (void)mcpp::platform::process::capture_exec_deadline(pre, preEnv, preDeadline, nullptr);
+            (void)mcpp::run::capture_exec_deadline(pre, preEnv, preDeadline, nullptr);
         }
         stage("ninja-staged-cache");
     }
@@ -4839,9 +4833,9 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         if (!opts.verbose && !report) scan.push_back("--quiet");
         scan.insert(scan.end(), {std::string("-C"), plan.outputDir.string()});
         if (opts.verbose) scan.push_back("-v");
-        if (const char* topics = std::getenv("MCPP_NINJA_DEBUG"); topics && *topics) {
+        if (auto topics = mcpp::invocation::get("MCPP_NINJA_DEBUG")) {
             scan.push_back("-d");
-            scan.push_back(topics);
+            scan.push_back(*topics);
         }
         if (plan.scheduleNinjaJobs > 0)
             scan.push_back(std::format("-j{}", plan.scheduleNinjaJobs));
@@ -4860,7 +4854,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         } else {
             auto scanEnv = nenv;
             scanEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
-            auto cap = mcpp::platform::process::capture_exec_deadline(
+            auto cap = mcpp::run::capture_exec_deadline(
                 scan, scanEnv, scanDeadline, &buildTimedOut);
             if (cap.exit_code != 0 || buildTimedOut) {
                 out = std::move(cap.output);
@@ -4887,7 +4881,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     } else {
         auto quietEnv = nenv;
         quietEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
-        auto cap = mcpp::platform::process::capture_exec_deadline(
+        auto cap = mcpp::run::capture_exec_deadline(
             nargv, quietEnv, deadline, &buildTimedOut);
         out = std::move(cap.output);
         ninjaExit = cap.exit_code;
@@ -4934,7 +4928,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         std::string runtimeFailure;
         std::filesystem::path runtimeFailureArtifact;
         for (auto const& checked : runtimeReport.artifacts) {
-            using Status = mcpp::platform::elf::RuntimeVerdict::Status;
+            using Status = mcpp::runtime::elf::RuntimeVerdict::Status;
             auto explanation = checked.verdict.explain();
             // `blocking()` rather than a state list: a proven payload mismatch
             // and a DT_NEEDED the artifact's own loader will never find are
@@ -5097,7 +5091,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
 }
 
 std::string ninja_program_for(const mcpp::toolchain::Toolchain& tc) {
-    auto ninja_name = std::string("ninja") + std::string(mcpp::platform::exe_suffix);
+    auto ninja_name = std::string("ninja") + std::string(mcpplibs::os::exe_suffix);
     if (auto nb = mcpp::provider::beside_binary(tc.binaryPath, "ninja", ninja_name))
         return nb->string();
     return "ninja";

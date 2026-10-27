@@ -18,13 +18,16 @@ import mcpp.config;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.manifest;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
+import mcpp.run;
 import mcpp.provider;
 import mcpp.runtime.binding;
 import mcpp.toolchain.base;
 import mcpp.toolchain.base_probe;
 import mcpp.toolchain.triple;
 import mcpp.ui;
+import mcpp.invocation;
 
 namespace mcpp::build {
 
@@ -140,8 +143,8 @@ base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t) {
 
     // 1. Overrides (`--sysroot` is `MCPP_SYSROOT`).
     for (auto name : {target_env_name(t, "SYSROOT"), std::string("MCPP_SYSROOT")}) {
-        const char* e = std::getenv(name.c_str());
-        if (auto v = override_value(e ? std::string_view(e) : std::string_view{}))
+        const auto e = mcpp::invocation::get(name);
+        if (auto v = override_value(e ? std::string_view(*e) : std::string_view{}))
             return settle(stamped(std::move(*v), "env", {}, 0, name));
     }
     // 2. The project: the target row, then the toolchain's own statement.
@@ -275,7 +278,7 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
         // host's directories itself: the binding names no private loader, so
         // closure validation models those directories.
         const bool hostBase = !hostDirs.empty();
-        mcpp::platform::runtime::bind_target_base(target, {
+        mcpp::runtime::bind_target_base(target, {
             .runtimeId = tc.base.runtime == tb::Runtime::Binding && tc.base.libc == "glibc"
                              && !tc.base.libcVersion.empty()
                            ? std::format("glibc@{}", tc.base.libcVersion) : std::string{},
@@ -350,8 +353,8 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
         dir = *p;
     }
     const auto ecosystemLinux = tc.base.payload ? tc.base.payload->linuxInclude : fs::path{};
-    const bool native = tt->os == "linux" && tt->arch == mcpp::platform::host_arch
-                        && mcpp::platform::is_linux;
+    const bool native = tt->os == "linux" && tt->arch == mcpp::toolchain::platform::host_arch
+                        && mcpplibs::os::is_linux;
     const bool staticLink = state.m->buildConfig.linkage == "static";
     const auto probeDir = state.workRoot / "target" / ".mcpp-base";
 
@@ -370,7 +373,7 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
         fs::create_directories(probeDir, ec);
         { std::ofstream os(probeDir / "mcpp-base-probe.c"); os << "#include <stdio.h>\n"; }
         v.insert(v.end(), {"-E", "-dM", "-x", "c", (probeDir / "mcpp-base-probe.c").string()});
-        auto r = mcpp::platform::process::capture_stdout(v);
+        auto r = mcpp::run::capture_stdout(v);
         if (r.exit_code == 0)
             if (auto f = tb::classify_macros(tb::parse_defines(r.output))) {
                 tc.base.libc = f->impl;
@@ -501,8 +504,8 @@ std::expected<void, std::string> step2_resolve_run_under(PrepareState& state) {
         record_source(state, std::move(d));
     };
     const auto envName = target_env_name(*tt, "RUN_UNDER");
-    if (const char* e = std::getenv(envName.c_str()); e && *e) {
-        std::string_view v(e);
+    if (auto e = mcpp::invocation::get(envName)) {
+        std::string_view v(*e);
         if (v == "none") return {};
         std::vector<std::string> argv;
         std::string cur;

@@ -21,7 +21,8 @@ import mcpp.build.build_program;
 import mcpp.config;
 import mcpp.home;
 import mcpp.manifest;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.invocation;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.post_install;
@@ -262,7 +263,7 @@ step2_use_local_toolchain(PrepareState& state, const mcpp::toolchain::ToolchainS
     for (auto const& [role, p] : lt.tools) if (role == "cxx") driver = p;
     if (driver.empty())
         driver = root / "bin" / (lt.prefix + (family == "llvm" ? "clang++" : "g++")
-                                 + std::string(mcpp::platform::exe_suffix));
+                                 + std::string(mcpplibs::os::exe_suffix));
     if (!fs::exists(driver, ec))
         return refuse(std::format("no C++ driver at '{}'; a {} toolchain keeps it in "
                                   "`<path>/bin/{}{}`, or names it with `tools = {{ cxx = ... }}`",
@@ -331,7 +332,7 @@ std::expected<void, std::string> step2_apply_local_toolchain(PrepareState& state
     if (!lt.launcher.empty()) {
         fs::path l(lt.launcher);
         if (!l.has_parent_path()) {
-            auto found = mcpp::platform::fs::which(lt.launcher);
+            auto found = mcpp::invocation::which(lt.launcher);
             if (!found) {
                 refusal::record(refusal::Code::LocalToolchain);
                 return std::unexpected(std::format(

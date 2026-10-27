@@ -33,7 +33,6 @@ import mcpp.libs.json;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
-import mcpp.platform;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.model;

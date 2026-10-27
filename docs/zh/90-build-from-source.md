@@ -46,23 +46,31 @@ mcpp build --target x86_64-linux-musl
 
 ## 源码结构
 
-mcpp 是一个**工作空间**。`modules/` 下是引擎 import 的九个包；`src/` 是
-引擎本身。
+mcpp 是一个**工作空间**。`modules/` 下是引擎 import 的十个包；`src/` 是
+引擎本身。操作系统经由 [mcpplibs.os](https://github.com/mcpplibs/os) 访问；
+mcpp 按系统保留的唯一原语（各版本 mcpp 共用的锁）位于 `native/`。
 
 ```
 modules/                  workspace members, imported by src/
+├── invocation/           the environment of one invocation: statements over the started one
 ├── manifest/             manifest and descriptor parsing
-├── platform/             operating-system abstraction
 ├── toolchain-model/      triples, dialects, fingerprints, the link model
 ├── buildmcpp/            the build.mcpp contract: protocol, directives, provisions
 ├── source-kind/          source-file role classification
 ├── versioning/           this binary's version, and SemVer requirements
 ├── dyndep/               ninja dyndep emission
+├── graph/                the generic dependency graph
 ├── libs/                 vendored text-format parsers
 └── log/                  leveled logging
 
+native/                   the lock, per system (flock, LockFileEx)
+
 src/
 ├── main.cpp              entry point
+├── run.cppm  run/        every program mcpp starts, and how mcpp ends at a request
+├── effects.cppm          the constraints of a run (offline, denied effects)
+├── home.cppm  home/      the home, its lock and its trust check
+├── ui.cppm  ui/          output, the terminal, key input
 ├── cli.cppm  cli/        command dispatch and the commands
 ├── build/                build orchestration and the ninja backend
 ├── modgraph/             P1689 module scanning and the dependency graph
@@ -71,23 +79,23 @@ src/
 ├── pack/  publish/       mcpp pack, mcpp publish and xpkg generation
 ├── fetcher/  fallback/   download, installation, fallback resolution
 ├── bmi_cache/            the cross-project BMI cache
-├── runtime/  xlings/     the runtime contract and the xlings bridge
+├── runtime/  provider/  the runtime contract, launch environment and the xlings bridge
 ├── freestanding/         bare-metal targets, link line and runner
 └── scaffold/             `mcpp new` and templates
 
 tests/
-├── unit/                 108 C++ tests, discovered by `mcpp test`
-└── e2e/                  370 shell scripts against a real binary
+├── unit/                 152 C++ tests, discovered by `mcpp test`
+└── e2e/                  635 shell scripts against a real binary
 ```
 
 ## 测试组织
 
 两层，回答的是不同的问题。
 
-**单元测试**（`tests/unit/`，108 个文件）是 `mcpp test` 发现的 C++
+**单元测试**（`tests/unit/`，152 个文件）是 `mcpp test` 发现的 C++
 程序。它们检验一个模块的契约，不需要二进制、也不需要文件系统状态。
 
-**端到端测试**（`tests/e2e/NN_<name>.sh`，370 个文件）拿真实的 `mcpp`
+**端到端测试**（`tests/e2e/NN_<name>.sh`，635 个文件）拿真实的 `mcpp`
 二进制跑真实工程。`run_all.sh` 是 CI 的入口。`mcpp test` **不**运行它们。
 
 ```bash

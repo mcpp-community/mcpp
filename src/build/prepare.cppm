@@ -65,7 +65,7 @@ export import mcpp.build.prepare_inputs;
 
 import std;
 import mcpp.build.version_floor;
-import mcpp.platform.axis;
+import mcpp.home.files;
 import mcpp.manifest;
 import mcpp.source_kind;
 import mcpp.modgraph.glob;
@@ -97,7 +97,6 @@ import mcpp.provider.select;
 import mcpp.provider.runtime_selection;
 import mcpp.runtime.binding;
 import mcpp.toolchain.post_install;
-import mcpp.platform;
 import mcpp.wire;               // Severity, for PlanNote (#699 item 2, E3)
 import mcpp.bmi_cache;
 
@@ -489,7 +488,7 @@ export struct BuildContext {
     mcpp::toolchain::Toolchain      tc;
     mcpp::toolchain::Fingerprint    fp;
     mcpp::provider::runtime::RuntimeSelection runtimeSelection;
-    mcpp::platform::runtime::RuntimeBinding runtimeBinding;
+    mcpp::runtime::RuntimeBinding runtimeBinding;
     std::filesystem::path           projectRoot;
     // THE SOURCE TREES THIS BUILD READ THAT ARE NOT UNDER `projectRoot`.
     //
@@ -544,7 +543,7 @@ export struct BuildContext {
     // dropped (`reset()`) before a program or a test runs. Shared because a
     // context is copied; the last copy releases it. Null for a planning pass
     // that describes (plan_only), which works in its own directory.
-    std::shared_ptr<mcpp::platform::fs::FileLock> buildLock;
+    std::shared_ptr<mcpp::home::FileLock> buildLock;
     std::filesystem::path           stdBmi;
     std::filesystem::path           stdObject;
     // plan_only: what the std module build WOULD be (sources are on the
@@ -862,7 +861,7 @@ export struct BuildOverrides {
     // OS. A dependency's own [xlings].subos is never consulted or propagated.
     std::shared_ptr<const mcpp::provider::runtime::RuntimeSelection>
         inherited_runtime_selection;
-    std::shared_ptr<const mcpp::platform::runtime::RuntimeBinding>
+    std::shared_ptr<const mcpp::runtime::RuntimeBinding>
         inherited_runtime_binding;
     std::string target_triple;       // empty = host triple, fall through to [toolchain]
     // --accel: the device backends and architectures this build targets, in

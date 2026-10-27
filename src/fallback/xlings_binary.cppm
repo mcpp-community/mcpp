@@ -15,7 +15,9 @@ module;
 export module mcpp.fallback.xlings_binary;
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.invocation;
+import mcpp.run;
 
 export namespace mcpp::fallback {
 
@@ -225,7 +227,7 @@ std::string vendored_xlings_version(const std::filesystem::path& bin) {
     // system cannot find the path specified." in every command after the first,
     // did not run xlings, and so returned an empty version, which made the
     // pin comparison in acquire_xlings_binary return early forever.
-    auto r = mcpp::platform::process::capture_stdout({bin.string(), "--version"});
+    auto r = mcpp::run::capture_stdout({bin.string(), "--version"});
     if (r.exit_code != 0) return {};
     // Output carries ANSI colour; take the first dotted-numeric run.
     std::string out;
@@ -280,10 +282,10 @@ bool version_is_older(std::string_view have, std::string_view want) {
 
 
 std::filesystem::path released_xlings_source(const std::filesystem::path& destBin) {
-    auto exe = mcpp::platform::fs::self_exe_path();
+    auto exe = mcpp::invocation::self_exe_path();
     if (exe.empty() || exe.parent_path().filename() != "bin") return {};
     auto released = exe.parent_path().parent_path() / "registry" / "bin"
-        / (std::string("xlings") + std::string(mcpp::platform::exe_suffix));
+        / (std::string("xlings") + std::string(mcpplibs::os::exe_suffix));
     std::error_code ec;
     if (!std::filesystem::is_regular_file(released, ec)) return {};
     if (!destBin.empty() && std::filesystem::equivalent(released, destBin, ec))
@@ -306,8 +308,8 @@ std::optional<XlingsSource> select_xlings_source(const std::filesystem::path& de
                                                  const std::filesystem::path& versionMemo) {
     std::optional<XlingsSource> override_, released, onPath;
     std::error_code ec;
-    if (const char* e = std::getenv("MCPP_VENDORED_XLINGS"); e && *e) {
-        std::filesystem::path p{e};
+    if (auto e = mcpp::invocation::get("MCPP_VENDORED_XLINGS")) {
+        std::filesystem::path p{*e};
         if (std::filesystem::exists(p, ec))
             override_ = XlingsSource{p, known_xlings_version(p, versionMemo), "MCPP_VENDORED_XLINGS"};
     }
@@ -315,8 +317,8 @@ std::optional<XlingsSource> select_xlings_source(const std::filesystem::path& de
         if (auto r = released_xlings_source(destBin); !r.empty())
             released = XlingsSource{r, known_xlings_version(r, versionMemo),
                                     "the release of this mcpp"};
-        if (auto sys = mcpp::platform::fs::which(
-                std::string("xlings") + std::string(mcpp::platform::exe_suffix))) {
+        if (auto sys = mcpp::invocation::which(
+                std::string("xlings") + std::string(mcpplibs::os::exe_suffix))) {
             const bool isDest = !destBin.empty() && std::filesystem::equivalent(*sys, destBin, ec);
             if (!isDest && std::filesystem::exists(*sys, ec))
                 onPath = XlingsSource{*sys, known_xlings_version(*sys, versionMemo), "PATH"};

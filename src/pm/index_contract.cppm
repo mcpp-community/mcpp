@@ -20,8 +20,9 @@
 export module mcpp.pm.index_contract;
 
 import std;
+import mcpplibs.os.platform;
 import mcpp.libs.toml;
-import mcpp.platform.fs;          // self_exe_path (distro-layout detection)
+import mcpp.invocation;
 import mcpp.version_req;
 import mcpp.version;                 // MCPP_VERSION (leaf — see that module)
 
@@ -186,13 +187,13 @@ std::string e0006_message(std::string violation, bool distroManaged)
 // installs keep the binary inside $MCPP_HOME (~/.mcpp) instead.
 bool distro_managed_install()
 {
-#if defined(_WIN32) || defined(__APPLE__)
-    return false;
-#else
-    std::error_code ec;
-    auto self = mcpp::platform::fs::self_exe_path();
-    return self.string().find("/opt/mcpp/") != std::string::npos;
-#endif
+    if constexpr (mcpplibs::os::is_windows || mcpplibs::os::is_macos) {
+        return false;
+    } else {
+        std::error_code ec;
+        auto self = mcpp::invocation::self_exe_path();
+        return self.string().find("/opt/mcpp/") != std::string::npos;
+    }
 }
 
 std::string index_floor_upgrade_advice(std::string_view minMcpp)
@@ -208,8 +209,7 @@ std::string index_floor_upgrade_advice(std::string_view minMcpp)
 
 bool index_usable(const std::filesystem::path& indexRoot)
 {
-    if (const char* v = std::getenv("MCPP_INDEX_FLOOR");
-        v && std::string_view(v) == "ignore")
+    if (mcpp::invocation::get("MCPP_INDEX_FLOOR") == "ignore")
         return true;
     auto c = read_index_contract(indexRoot);
     if (!c) return true;                       // no contract → no constraint
@@ -262,8 +262,7 @@ void reset_unusable_indexes_for_test() { unusable_registry().clear(); }
 std::optional<std::string>
 check_index_floor(const std::filesystem::path& indexRoot)
 {
-    if (const char* v = std::getenv("MCPP_INDEX_FLOOR");
-        v && std::string_view(v) == "ignore")
+    if (mcpp::invocation::get("MCPP_INDEX_FLOOR") == "ignore")
         return std::nullopt;
 
     auto c = read_index_contract(indexRoot);

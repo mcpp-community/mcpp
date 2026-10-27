@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
 import mcpp.toolchain.model;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;
@@ -53,7 +53,7 @@ XimToolchainPackage bin_shaped_pkg() {
 // executable suffix exists -- a test that was about the descriptor failing for
 // a reason that had nothing to do with it.
 std::string host_frontend_name() {
-    return std::string("clang++") + std::string(mcpp::platform::exe_suffix);
+    return std::string("clang++") + std::string(mcpplibs::os::exe_suffix);
 }
 
 } // namespace

@@ -23,12 +23,13 @@ import mcpp.build.plan;
 import mcpp.build.symbol_provision;
 import mcpp.manifest;
 import mcpp.libs.json;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.runtime.search;
 import mcpp.runtime.elf;
 import mcpp.runtime.binding;
 import mcpp.ui;
-import mcpp.platform.runtime_search;
 import mcpp.toolchain.triple;
+import mcpp.invocation;
 
 export namespace mcpp::build::runtime_validation {
 
@@ -44,7 +45,7 @@ using ArtifactSnapshot = std::map<std::filesystem::path, ArtifactStamp>;
 
 struct ValidatedArtifact {
     std::filesystem::path artifact;
-    mcpp::platform::elf::RuntimeVerdict verdict;
+    mcpp::runtime::elf::RuntimeVerdict verdict;
     bool cacheHit = false;
 };
 
@@ -63,7 +64,7 @@ struct ValidationReport {
 
 struct StoredRuntimeSummary {
     std::filesystem::path artifact;
-    mcpp::platform::elf::RuntimeVerdict verdict;
+    mcpp::runtime::elf::RuntimeVerdict verdict;
     std::string contractHash;
 };
 
@@ -83,7 +84,7 @@ latest_stored_verdict(const std::filesystem::path& targetRoot);
 // validates before reporting success/running the program.
 std::optional<ArtifactSnapshot> validated_artifact_snapshot(
     const std::filesystem::path& outputDir,
-    const mcpp::platform::runtime::RuntimeBinding& binding);
+    const mcpp::runtime::RuntimeBinding& binding);
 
 bool artifact_snapshot_unchanged(const ArtifactSnapshot& snapshot);
 
@@ -173,7 +174,7 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
 // dangle on a machine with no driver, and turning a correct CPU-only
 // configuration into a failed build would be a worse defect than the one this
 // reports.
-mcpp::platform::elf::DlopenSurfaceReport
+mcpp::runtime::elf::DlopenSurfaceReport
 check_dlopen_surface(const mcpp::build::BuildPlan& plan);
 
 } // namespace mcpp::build::runtime_validation
@@ -209,8 +210,8 @@ std::string fingerprint(const std::filesystem::path& artifact,
     return std::format("{:016x}", hash);
 }
 
-std::string status_name(mcpp::platform::elf::RuntimeVerdict::Status status) {
-    using Status = mcpp::platform::elf::RuntimeVerdict::Status;
+std::string status_name(mcpp::runtime::elf::RuntimeVerdict::Status status) {
+    using Status = mcpp::runtime::elf::RuntimeVerdict::Status;
     switch (status) {
         case Status::Pass: return "pass";
         case Status::ProvenMismatch: return "proven_mismatch";
@@ -228,16 +229,16 @@ std::string status_name(mcpp::platform::elf::RuntimeVerdict::Status status) {
 // it had not is the worst of both: it links, and mcpp calls it broken.
 bool host_libs_allowed(const mcpp::build::BuildPlan& plan) {
     if (plan.manifest.buildConfig.allowHostLibs) return true;
-    const char* e = std::getenv("MCPP_ALLOW_HOST_LIBS");
-    return e && *e && *e != '0';
+    const auto e = mcpp::invocation::get("MCPP_ALLOW_HOST_LIBS");
+    return e && e->front() != '0';
 }
 
 // How bad each state is, for rolling many artifacts into one summary.
 // `Unresolvable` sits above `Inconclusive` (it is proven, not unknown) and
 // below `ProvenMismatch` (mixing payloads is the more fundamental error, and
 // it is usually the CAUSE of anything unresolvable alongside it).
-int status_severity(mcpp::platform::elf::RuntimeVerdict::Status status) {
-    using Status = mcpp::platform::elf::RuntimeVerdict::Status;
+int status_severity(mcpp::runtime::elf::RuntimeVerdict::Status status) {
+    using Status = mcpp::runtime::elf::RuntimeVerdict::Status;
     switch (status) {
         case Status::Pass:           return 0;
         case Status::Inconclusive:   return 1;
@@ -247,9 +248,9 @@ int status_severity(mcpp::platform::elf::RuntimeVerdict::Status status) {
     return 1;
 }
 
-mcpp::platform::elf::RuntimeVerdict::Status
+mcpp::runtime::elf::RuntimeVerdict::Status
 parse_status(std::string_view value) {
-    using Status = mcpp::platform::elf::RuntimeVerdict::Status;
+    using Status = mcpp::runtime::elf::RuntimeVerdict::Status;
     if (value == "pass") return Status::Pass;
     if (value == "proven_mismatch") return Status::ProvenMismatch;
     if (value == "unresolvable") return Status::Unresolvable;
@@ -485,7 +486,7 @@ runtime_search_dirs(const mcpp::build::BuildPlan& plan) {
     // farm and report a pass the target machine will not honour. The model has
     // to look exactly where the artifact looks.
     for (auto const& dir : plan.runtimeSearch) {
-        if (dir.origin != mcpp::platform::search::Origin::SubosFarm) continue;
+        if (dir.origin != mcpp::runtime::search::Origin::SubosFarm) continue;
         if (dir.path.empty() || std::ranges::find(out, dir.path) != out.end()) continue;
         out.push_back(dir.path);
     }
@@ -539,7 +540,7 @@ void sync_resolution_verdict(const mcpp::build::BuildPlan& plan,
     if (runtime == resolution.end() || !runtime->is_object()) return;
 
     nlohmann::json checked = nlohmann::json::array();
-    using Status = mcpp::platform::elf::RuntimeVerdict::Status;
+    using Status = mcpp::runtime::elf::RuntimeVerdict::Status;
     Status summary = Status::Pass;
     bool any = false;
     if (auto artifacts = cache.find("artifacts");
@@ -632,7 +633,7 @@ void record_without_rules(const mcpp::build::BuildPlan& plan,
                 continue;
         ValidatedArtifact v;
         v.artifact = artifact;
-        v.verdict.status = mcpp::platform::elf::RuntimeVerdict::Status::Pass;
+        v.verdict.status = mcpp::runtime::elf::RuntimeVerdict::Status::Pass;
         store_artifact(doc, key, fp, v);
         changed = true;
     }
@@ -643,12 +644,12 @@ ValidationReport validate_changed_artifacts(
     const mcpp::build::BuildPlan& plan,
     const ArtifactSnapshot& before) {
     ValidationReport report;
-    if constexpr (!mcpp::platform::is_linux) { record_without_rules(plan, before); return report; }
+    if constexpr (!mcpplibs::os::is_linux) { record_without_rules(plan, before); return report; }
     // Provider dispatch (see mcpp.runtime.binding): what follows is
     // ELF/glibc physics, and an identity from another provider — `ucrt@…` on
     // Windows — has no rules here rather than a missing glibc.
     if (plan.runtimeBinding.platform != "linux"
-        || mcpp::platform::runtime::runtime_provider(
+        || mcpp::runtime::runtime_provider(
                plan.runtimeBinding.runtimeId) != "glibc") {
         record_without_rules(plan, before);
         return report;
@@ -755,20 +756,20 @@ ValidationReport validate_changed_artifacts(
             // explaining itself on every invocation.
             if (!(now == oldStamp)
                 || cached->verdict.status
-                    != mcpp::platform::elf::RuntimeVerdict::Status::Pass)
+                    != mcpp::runtime::elf::RuntimeVerdict::Status::Pass)
                 report.artifacts.push_back(std::move(*cached));
             continue;
         }
 
         ValidatedArtifact validated;
         validated.artifact = artifact;
-        auto resolution = mcpp::platform::elf::resolve_runtime_closure(
+        auto resolution = mcpp::runtime::elf::resolve_runtime_closure(
             artifact, plan.runtimeBinding, searchDirs);
         // The SAME opt-out the link-time hermeticity check honours, read the
         // same way (manifest key or environment). A build that declared it is
         // reaching outside the sandbox on purpose has taken responsibility for
         // run-time resolution, so mcpp reports rather than blocks.
-        validated.verdict = mcpp::platform::elf::validate_runtime_artifact(
+        validated.verdict = mcpp::runtime::elf::validate_runtime_artifact(
             artifact, plan.runtimeBinding, resolution, host_libs_allowed(plan));
         store_artifact(doc, key, fp, validated);
         changedCache = true;
@@ -781,7 +782,7 @@ ValidationReport validate_changed_artifacts(
 
 std::optional<ArtifactSnapshot> validated_artifact_snapshot(
     const std::filesystem::path& outputDir,
-    const mcpp::platform::runtime::RuntimeBinding& binding) {
+    const mcpp::runtime::RuntimeBinding& binding) {
     auto doc = read_cache(outputDir);
     if (doc.value("schema", 0) != 1
         || doc.value("contract_hash", "") != binding.contractHash)
@@ -794,7 +795,7 @@ std::optional<ArtifactSnapshot> validated_artifact_snapshot(
     for (auto it = artifacts->begin(); it != artifacts->end(); ++it) {
         if (!it.value().is_object()) return std::nullopt;
         if (parse_status(it.value().value("status", "inconclusive"))
-            != mcpp::platform::elf::RuntimeVerdict::Status::Pass)
+            != mcpp::runtime::elf::RuntimeVerdict::Status::Pass)
             return std::nullopt;
         auto artifact = outputDir / it.key();
         auto current = stamp(artifact);
@@ -861,7 +862,7 @@ check_and_record_loader_tags(const mcpp::build::BuildPlan& plan,
                              const ArtifactSnapshot& before) {
     namespace loader = mcpp::build::loader;
     std::vector<loader::TagFinding> findings;
-    if constexpr (!mcpp::platform::is_linux) return findings;
+    if constexpr (!mcpplibs::os::is_linux) return findings;
 
     const auto key = post_link_key(plan);
     const auto recorded =
@@ -877,7 +878,7 @@ check_and_record_loader_tags(const mcpp::build::BuildPlan& plan,
         return loader::RequiredTag::NotApplicable;
     };
     auto actual_from = [](std::string_view s) {
-        using Tag = mcpp::platform::elf::SearchPathTag;
+        using Tag = mcpp::runtime::elf::SearchPathTag;
         if (s == "DT_RPATH")             return Tag::Rpath;
         if (s == "DT_RUNPATH")           return Tag::Runpath;
         if (s == "DT_RPATH+DT_RUNPATH")  return Tag::Both;
@@ -930,7 +931,7 @@ check_and_record_loader_tags(const mcpp::build::BuildPlan& plan,
                          ? "executable" : "shared_library"},
             {"required", loader::to_string(finding.required)},
             {"actual", std::string(
-                mcpp::platform::elf::to_string(finding.actual))},
+                mcpp::runtime::elf::to_string(finding.actual))},
             {"status", finding.status == loader::TagFinding::Status::Ok
                            ? "ok"
                      : finding.status == loader::TagFinding::Status::Violation
@@ -954,7 +955,7 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
                        const ArtifactSnapshot& before) {
     namespace sp = mcpp::build::symbol_provision;
     std::vector<SymbolProvisionFinding> findings;
-    if constexpr (!mcpp::platform::is_linux) return findings;
+    if constexpr (!mcpplibs::os::is_linux) return findings;
 
     // The flags this build hands the linker, as ONE vector, because the
     // question is whether ANY of them took the export decision away from
@@ -993,7 +994,7 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
         auto it = closureCache.find(object);
         if (it != closureCache.end()) return it->second;
         std::vector<std::string> names;
-        if (auto symbols = mcpp::platform::elf::inspect_dynamic_symbols(object)) {
+        if (auto symbols = mcpp::runtime::elf::inspect_dynamic_symbols(object)) {
             names.reserve(symbols->defined.size());
             for (auto const& symbol : symbols->defined) names.push_back(symbol.name);
             std::ranges::sort(names);
@@ -1022,7 +1023,7 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
         std::vector<std::string> names;
         std::error_code ec;
         if (std::filesystem::exists(object, ec))
-            if (auto symbols = mcpp::platform::elf::defined_object_symbols(object))
+            if (auto symbols = mcpp::runtime::elf::defined_object_symbols(object))
                 names = std::move(*symbols);
         return objectSymbolCache.emplace(object, std::move(names)).first->second;
     };
@@ -1056,7 +1057,7 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
     // that belongs to the toolchain's own installation.
     auto shared_plan_definitions =
         [&](const mcpp::build::LinkUnit& image,
-            const mcpp::platform::elf::RuntimeResolution& resolution) {
+            const mcpp::runtime::elf::RuntimeResolution& resolution) {
         std::map<std::string, std::set<std::string>> out;
         const auto imageObjects = objects_of(image);
         for (auto const& object : resolution.objects) {
@@ -1144,7 +1145,7 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
             if (plan.outputDir / lu.output == artifact) { unit = &lu; break; }
         }
 
-        auto facts = mcpp::platform::elf::inspect_elf_runtime(artifact);
+        auto facts = mcpp::runtime::elf::inspect_elf_runtime(artifact);
         if (!facts) continue;                       // not ELF: no flat namespace
         // PT_INTERP, not the ELF type. A PIE executable is ET_DYN, exactly
         // like a shared library, and whether mcpp's toolchain emits PIE is the
@@ -1163,7 +1164,7 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
             continue;
         }
 
-        auto symbols = mcpp::platform::elf::inspect_dynamic_symbols(artifact);
+        auto symbols = mcpp::runtime::elf::inspect_dynamic_symbols(artifact);
         if (!symbols) {
             findings.push_back({artifact, sp::not_evaluated(symbols.error())});
             continue;
@@ -1191,7 +1192,7 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
 
         // Stage two. Only reached when the image exports something, which a
         // normal build does not.
-        auto resolution = mcpp::platform::elf::resolve_runtime_closure(
+        auto resolution = mcpp::runtime::elf::resolve_runtime_closure(
             artifact, plan.runtimeBinding, searchDirs);
         std::vector<sp::Provider> providers;
         for (auto const& object : resolution.objects) {
@@ -1309,7 +1310,7 @@ latest_stored_verdict(const std::filesystem::path& targetRoot) {
 
     StoredRuntimeSummary summary;
     summary.contractHash = doc.value("contract_hash", "");
-    using Status = mcpp::platform::elf::RuntimeVerdict::Status;
+    using Status = mcpp::runtime::elf::RuntimeVerdict::Status;
     summary.verdict.status = Status::Pass;
     for (auto it = artifacts->begin(); it != artifacts->end(); ++it) {
         if (!it.value().is_object()) continue;
@@ -1327,13 +1328,13 @@ latest_stored_verdict(const std::filesystem::path& targetRoot) {
     return summary;
 }
 
-mcpp::platform::elf::DlopenSurfaceReport
+mcpp::runtime::elf::DlopenSurfaceReport
 check_dlopen_surface(const mcpp::build::BuildPlan& plan) {
-    mcpp::platform::elf::DlopenSurfaceReport report;
+    mcpp::runtime::elf::DlopenSurfaceReport report;
 
     // The record below is ELF-shaped, so a host that links no ELF publishes
     // nothing rather than an empty answer about a format it never produces.
-    if constexpr (!mcpp::platform::is_linux) return report;
+    if constexpr (!mcpplibs::os::is_linux) return report;
 
     // ON LINUX, A NON-ANSWER IS PUBLISHED, NOT OMITTED -- AND NEVER OVER AN
     // ANSWER.
@@ -1497,11 +1498,11 @@ check_dlopen_surface(const mcpp::build::BuildPlan& plan) {
     for (auto const& [artifact, stamp] : artifacts) {
         if (std::ranges::find(sharedOutputs, artifact) == sharedOutputs.end())
             continue;
-        auto facts = mcpp::platform::elf::inspect_elf_runtime(artifact);
+        auto facts = mcpp::runtime::elf::inspect_elf_runtime(artifact);
         if (facts && !facts->soname.empty()) produced.push_back(facts->soname);
     }
 
-    report = mcpp::platform::elf::inspect_dlopen_surface(
+    report = mcpp::runtime::elf::inspect_dlopen_surface(
         plan.depRuntimeLibraryDirs, plan.runtimeBinding, searchDirs, produced);
 
     // THE RECORD, AND BOTH DENOMINATORS IN IT.

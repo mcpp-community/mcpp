@@ -8,8 +8,7 @@ import mcpp.manifest.cfg_selector;
 import std;
 import mcpp.pm.dep_spec;
 import mcpp.pm.dependency_selector;
-import mcpp.platform;
-import mcpp.platform.axis;
+import mcpp.toolchain.platform;
 import mcpp.targetside;
 import mcpp.version_req;
 
@@ -53,13 +52,13 @@ struct XpkgVersionEntry {
 // Returns an empty vector if the platform table is missing or has no entries.
 std::vector<XpkgVersionEntry>
 list_xpkg_version_entries(std::string_view luaContent,
-                          const mcpp::platform::PlatformKey& platform);
+                          const mcpp::toolchain::platform::PlatformKey& platform);
 
 // Keys only, aliases included — the shape every caller that just wants to show
 // or existence-check the published versions wants.
 std::vector<std::string>
 list_xpkg_versions(std::string_view luaContent,
-                   const mcpp::platform::PlatformKey& platform);
+                   const mcpp::toolchain::platform::PlatformKey& platform);
 
 // Union of per-OS version-key lists, semver-descending, deduplicated — the
 // display shape behind `mcpp add` suggestions and `mcpp search` (#487). See
@@ -244,7 +243,7 @@ std::expected<Manifest, ManifestError>
 synthesize_from_xpkg_lua(std::string_view luaContent,
                          std::string_view packageName,
                          std::string_view packageVersion,
-                         const mcpp::platform::PlatformKey& platform);
+                         const mcpp::toolchain::platform::PlatformKey& platform);
 
 // mcpp#237: the mcpp-segment key vocabulary is a CLOSED whitelist (the parse
 // loop's else-if chain). An unrecognised key is collected into
@@ -995,7 +994,7 @@ xpkg_name_form_violation_from_lua(std::string_view luaContent)
 
 std::vector<XpkgVersionEntry>
 list_xpkg_version_entries(std::string_view luaContent,
-                          const mcpp::platform::PlatformKey& platformAxis) {
+                          const mcpp::toolchain::platform::PlatformKey& platformAxis) {
     const std::string_view platform = platformAxis.key();
     // Locate `xpm = { ... <platform> = { ["X.Y.Z"] = {...}, ... } ... }`.
     // We work on a sanitized copy so quoted version keys remain locatable
@@ -1137,7 +1136,7 @@ list_xpkg_version_entries(std::string_view luaContent,
 
 std::vector<std::string>
 list_xpkg_versions(std::string_view luaContent,
-                   const mcpp::platform::PlatformKey& platformAxis) {
+                   const mcpp::toolchain::platform::PlatformKey& platformAxis) {
     std::vector<std::string> out;
     for (auto& e : list_xpkg_version_entries(luaContent, platformAxis))
         out.push_back(std::move(e.version));
@@ -1236,10 +1235,10 @@ XpkgCatalogFields xpkg_catalog_fields(std::string_view lua) {
 
 std::vector<std::string> all_xpkg_versions_desc(std::string_view luaContent) {
     std::vector<std::vector<std::string>> perPlatform;
-    perPlatform.reserve(std::size(mcpp::platform::xpkg_platforms));
-    for (auto os : mcpp::platform::xpkg_platforms)
+    perPlatform.reserve(std::size(mcpp::toolchain::platform::xpkg_platforms));
+    for (auto os : mcpp::toolchain::platform::xpkg_platforms)
         perPlatform.push_back(list_xpkg_versions(
-            luaContent, mcpp::platform::TargetPlatform::for_lint_of(os)));
+            luaContent, mcpp::toolchain::platform::TargetPlatform::for_lint_of(os)));
     return merge_xpkg_versions_desc(perPlatform);
 }
 
@@ -1323,7 +1322,7 @@ std::expected<Manifest, ManifestError>
 synthesize_from_xpkg_lua(std::string_view luaContent,
                          std::string_view packageName,
                          std::string_view packageVersion,
-                         const mcpp::platform::PlatformKey& platform)
+                         const mcpp::toolchain::platform::PlatformKey& platform)
 {
     auto body = extract_mcpp_segment_body(luaContent);
     if (body.empty()) {

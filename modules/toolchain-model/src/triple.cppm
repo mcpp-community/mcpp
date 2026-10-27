@@ -25,7 +25,8 @@
 export module mcpp.toolchain.triple;
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
 
 export namespace mcpp::toolchain::triple {
 
@@ -1063,8 +1064,8 @@ std::optional<std::string> did_you_mean(std::string_view input);
 // user-facing host default, independent of how mcpp itself was linked).
 inline Triple host_triple() {
     Triple t;
-    t.arch = std::string(mcpp::platform::host_arch);
-    t.os   = std::string(mcpp::platform::name);
+    t.arch = std::string(mcpp::toolchain::platform::host_arch);
+    t.os   = std::string(mcpp::toolchain::platform::name);
     // Derived from the machine rather than written by anyone, so it states no
     // request: a host build must not be refused for "contradicting" a C library
     // its own triple never asked for.
@@ -1136,12 +1137,12 @@ namespace pins {
     }
 
     inline std::string_view host_default_toolchain(bool msvcUsable) {
-        if constexpr (mcpp::platform::is_macos) {
+        if constexpr (mcpplibs::os::is_macos) {
             return kFirstRunMac;
-        } else if constexpr (mcpp::platform::is_windows) {
+        } else if constexpr (mcpplibs::os::is_windows) {
             return msvcUsable ? kFirstRunWinMsvc : kFirstRunWinGnu;
         } else {
-            return linux_default_toolchain(mcpp::platform::host_arch);
+            return linux_default_toolchain(mcpp::toolchain::platform::host_arch);
         }
     }
 } // namespace pins
@@ -1149,7 +1150,7 @@ namespace pins {
 // ── Artifact naming conventions ──────────────────────────────────────────────
 //
 // How a built artifact is NAMED is a property of the TARGET, never of the
-// machine doing the build. `mcpp::platform::{exe_suffix,lib_prefix,…}` answer a
+// machine doing the build. `mcpp::toolchain::platform::{lib_prefix,…}` answer a
 // different question — "what does THIS machine call its own binaries" — and
 // using them to name build outputs is wrong the moment host != target.
 //
@@ -1179,7 +1180,7 @@ struct ArtifactNaming {
 
 // Naming for an explicit target triple. An EMPTY triple means "build for this
 // machine", and only then is the host answer the correct one — so the caller
-// passes it in rather than this module reaching for mcpp::platform, which keeps
+// passes it in rather than this module reaching for the host's facts, which keeps
 // the decision testable from any host (and keeps this module dependency-free).
 inline ArtifactNaming artifact_naming(const Triple& t, const ArtifactNaming& hostNaming) {
     if (t.empty()) return hostNaming;

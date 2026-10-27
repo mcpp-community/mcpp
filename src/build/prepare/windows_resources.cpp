@@ -12,7 +12,6 @@ import mcpp.build.stage;
 import mcpp.build.refusal;
 import mcpp.build.version_floor;
 import mcpp.home;
-import mcpp.platform.axis;
 import mcpp.libs.json;
 import mcpp.log;
 import mcpp.manifest;
@@ -36,7 +35,6 @@ import mcpp.build.plan;
 import mcpp.build.schedule.policy;
 import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
 import mcpp.build.distribution;   // dist::Role / dist::Contract to_string
-import mcpp.platform.capacity;   // the host fallback handed to schedule::decide
 import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
 import mcpp.build.runtime_validation;  // declared artifact -> identity verdict
 import mcpp.build.cache_key;
@@ -53,9 +51,7 @@ import mcpp.config;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.runtime.binding;
-import mcpp.platform.runtime_search;
 import mcpp.toolchain.post_install;
-import mcpp.platform;
 import mcpp.build.runner_lookup;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;

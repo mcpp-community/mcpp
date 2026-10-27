@@ -25,8 +25,7 @@ import mcpp.manifest;
 import mcpp.pack;
 import mcpp.pack.stage_tree;
 import mcpp.pack.strip;
-import mcpp.platform;
-import mcpp.platform.env;
+import mcpp.runtime.launch_env;
 import mcpp.toolchain.model;
 import mcpp.toolchain.probe;
 import mcpp.toolchain.registry;
@@ -99,14 +98,17 @@ struct DriverLibraryDirs {
 DriverLibraryDirs driver_library_dirs(const mcpp::toolchain::Toolchain& tc)
 {
     DriverLibraryDirs out;
-    const auto base = std::format("{} {}", mcpp::platform::shell::quote(tc.binaryPath.string()),
-                                  tc.crossTargetFlag);
-    if (auto r = mcpp::toolchain::run_capture(std::format(
-            "{} -print-search-dirs {}", base, mcpp::platform::null_redirect))) {
+    auto query = [&](std::string_view flag) {
+        std::vector<std::string> argv{ tc.binaryPath.string() };
+        if (!tc.crossTargetFlag.empty()) argv.push_back(tc.crossTargetFlag);
+        argv.emplace_back(flag);
+        return mcpp::toolchain::run_capture(argv, mcpp::toolchain::compiler_env(tc));
+    };
+    if (auto r = query("-print-search-dirs")) {
         std::istringstream is{*r};
         std::string line;
         const std::string_view key = "libraries: =";
-        const auto sep = mcpp::platform::env::path_list_separator();
+        const auto sep = mcpp::runtime::launch_env::path_list_separator();
         while (std::getline(is, line)) {
             if (!line.starts_with(key)) continue;
             std::string rest = mcpp::toolchain::trim_line(line.substr(key.size()));
@@ -121,8 +123,7 @@ DriverLibraryDirs driver_library_dirs(const mcpp::toolchain::Toolchain& tc)
             }
         }
     }
-    if (auto r = mcpp::toolchain::run_capture(std::format(
-            "{} -print-file-name=libc.so {}", base, mcpp::platform::null_redirect))) {
+    if (auto r = query("-print-file-name=libc.so")) {
         // A driver that cannot place the library echoes the bare name back.
         std::filesystem::path lib(mcpp::toolchain::trim_line(*r));
         std::error_code ec;

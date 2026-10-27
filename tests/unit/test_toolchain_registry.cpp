@@ -1,7 +1,8 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
 import mcpp.toolchain.lifecycle;
 import mcpp.toolchain.model;
 import mcpp.toolchain.registry;
@@ -10,14 +11,14 @@ import mcpp.toolchain.triple;
 using namespace mcpp::toolchain;
 
 static std::string host_musl() {
-    return std::string(mcpp::platform::host_arch) + "-linux-musl";
+    return std::string(mcpp::toolchain::platform::host_arch) + "-linux-musl";
 }
 
 // The host-native `musl-gcc` package only exists for Linux hosts; on other
 // hosts the payload mapping resolves the triple-named package (a linux-musl
 // target from macOS/Windows is cross by definition).
 static std::string expected_musl_xim() {
-    if constexpr (mcpp::platform::is_linux) return "musl-gcc";
+    if constexpr (mcpplibs::os::is_linux) return "musl-gcc";
     else                                    return host_musl() + "-gcc";
 }
 
@@ -26,7 +27,7 @@ static std::string expected_musl_xim() {
 // disk is `<triple>-g++.exe`. The .exe spelling comes first so it wins on a
 // case-insensitive filesystem where both would match.
 static std::string expected_musl_frontend(const std::string& triple) {
-    if constexpr (mcpp::platform::is_windows) return triple + "-g++.exe";
+    if constexpr (mcpplibs::os::is_windows) return triple + "-g++.exe";
     else                                      return triple + "-g++";
 }
 
@@ -47,8 +48,8 @@ TEST(ToolchainRegistry, MapsGccSpecToGccPackage) {
     EXPECT_EQ(pkg.ximName, "mingw-gcc");
 #else
     ASSERT_FALSE(pkg.frontendCandidates.empty());
-    if constexpr (mcpp::platform::is_linux
-                  && mcpp::platform::host_arch != std::string_view("x86_64")) {
+    if constexpr (mcpplibs::os::is_linux
+                  && mcpp::toolchain::platform::host_arch != std::string_view("x86_64")) {
         // Non-x86 Linux native GCC payloads are musl-backed even when the host
         // process uses glibc. Its driver needs no glibc specs fixup.
         EXPECT_EQ(pkg.ximName, "musl-gcc");
@@ -88,7 +89,7 @@ TEST(ToolchainRegistry, CrossArchMuslTargetPicksTripleNamedPackage) {
     spec.family = Family::Gcc;
     spec.version = "16.1.0";
     spec.target = { "aarch64", "linux", "musl" };
-    if (mcpp::platform::host_arch == std::string_view("aarch64"))
+    if (mcpp::toolchain::platform::host_arch == std::string_view("aarch64"))
         spec.target.arch = "riscv64";                 // stay cross on any host
 
     auto pkg = to_xim_package(spec);
@@ -431,7 +432,7 @@ TEST(SdkPayloads, TheSearchedDirectoryIsAvailableForTheDiagnostic) {
 TEST(SdkPayloads, ServedOnEveryHostTheSdkIsPublishedFor) {
     // THIS ASSERTION USED TO BE TRUE BY ARITHMETIC ON ONE HOST.
     //
-    // It read `EXPECT_EQ(host_can_serve(*wasm), mcpp::platform::is_linux)`,
+    // It read `EXPECT_EQ(host_can_serve(*wasm), mcpplibs::os::is_linux)`,
     // which was the right claim while `xim:emsdk` and `xim:android-ndk`
     // declared only `xpm.linux`. Both now publish for all three hosts, and the
     // engine's constant was the stale half -- but the assertion kept passing
@@ -451,7 +452,7 @@ TEST(SdkPayloads, ServedOnEveryHostTheSdkIsPublishedFor) {
     // paragraph above from being a tautology. macOS's SDK and MSVC are
     // host-only and no package substitutes for either, so a Linux host cannot
     // serve them -- the exclusion this function exists to make.
-    if constexpr (mcpp::platform::is_linux) {
+    if constexpr (mcpplibs::os::is_linux) {
         auto mac = mcpp::toolchain::triple::parse("aarch64-macos");
         ASSERT_TRUE(mac.has_value());
         EXPECT_FALSE(mcpp::toolchain::host_can_serve(*mac));
@@ -478,7 +479,7 @@ TEST(SdkPayloads, ServedOnEveryHostTheSdkIsPublishedFor) {
         ASSERT_TRUE(t.has_value()) << name;
         EXPECT_TRUE(t->is_apple()) << name;
         EXPECT_EQ(mcpp::toolchain::host_can_serve(*t),
-                  bool(mcpp::platform::is_macos)) << name;
+                  bool(mcpplibs::os::is_macos)) << name;
     }
 }
 

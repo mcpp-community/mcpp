@@ -13,12 +13,12 @@
 // Log file: <logDir>/mcpp.log (rotated at max_file_size, keeps max_files)
 
 module;
-#include <ctime>
 #include <cstdio>
 
 export module mcpp.log;
 
 import std;
+import mcpp.invocation;
 
 export namespace mcpp::log {
 
@@ -115,12 +115,14 @@ std::string timestamp() {
     auto tt  = std::chrono::system_clock::to_time_t(now);
     auto ms  = std::chrono::duration_cast<std::chrono::milliseconds>(
                    now.time_since_epoch()) % 1000;
+    // std::localtime shares one result among its callers; the copy is taken
+    // under a lock, which is what localtime_r and localtime_s do per system.
     std::tm tm{};
-#if defined(_WIN32)
-    localtime_s(&tm, &tt);
-#else
-    localtime_r(&tt, &tm);
-#endif
+    {
+        static std::mutex m;
+        std::lock_guard lock(m);
+        if (const std::tm* local = std::localtime(&tt)) tm = *local;
+    }
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%03d",
         tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
@@ -190,8 +192,8 @@ void write_stderr(std::string_view tag, std::string_view message) {
 
 void init(const Config& cfg) {
     // Priority: env var > --verbose > config > default
-    if (auto* e = std::getenv("MCPP_LOG_LEVEL"); e && *e) {
-        g_level = parse_level(e);
+    if (auto e = mcpp::invocation::get("MCPP_LOG_LEVEL")) {
+        g_level = parse_level(e->c_str());
     } else if (g_verbose && cfg.level == Level::off) {
         g_level = Level::info;  // --verbose auto-enables info
     } else {

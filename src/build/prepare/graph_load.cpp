@@ -13,7 +13,8 @@ import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.provider.address_set;
 import mcpp.build.version_floor;
-import mcpp.platform.axis;
+import mcpp.invocation;
+import mcpp.effects;
 import mcpp.log;
 import mcpp.manifest;
 import mcpp.source_kind;
@@ -31,7 +32,6 @@ import mcpp.build.build_program;
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.config;
-import mcpp.platform;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.pm.resolver;
@@ -683,7 +683,7 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
                 // Offline with no local copy of the index at all, the miss says
                 // nothing about the package: nothing has been downloaded to look
                 // in. That is a download the run needs, not a wrong selector.
-                if (mcpp::platform::env::offline_mode()) {
+                if (mcpp::effects::offline_mode()) {
                     if (auto cfgO = state.get_cfg(true);
                         cfgO && !mcpp::provider::open(mcpp::config::make_xlings_env(**cfgO))->default_index_status(0).present) {
                         hint += "\n  offline: the package index has never been fetched; "
@@ -962,7 +962,7 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             // package rather than surfacing a socket error from three layers
             // down. (The toolchain payload path has its own gate; this is the
             // dependency path, which does not go through resolve_xpkg_path.)
-            if (mcpp::platform::env::offline_mode()) {
+            if (mcpp::effects::offline_mode()) {
                 refusal::record(refusal::Code::OfflineDownloadRequired);
                 return std::unexpected(std::format(
                     "offline mode: dependency '{}' v{} is not installed and "
@@ -1051,12 +1051,12 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             hookEnv.targetTriple = state.overrides.target_triple;
             // Six names, fixed by install_hook_env; one guard each.
             const auto hookVars = mcpp::build::install_hook_env(hookEnv);
-            mcpp::platform::env::ScopedEnv hookVar0(hookVars.at(0).first, hookVars.at(0).second);
-            mcpp::platform::env::ScopedEnv hookVar1(hookVars.at(1).first, hookVars.at(1).second);
-            mcpp::platform::env::ScopedEnv hookVar2(hookVars.at(2).first, hookVars.at(2).second);
-            mcpp::platform::env::ScopedEnv hookVar3(hookVars.at(3).first, hookVars.at(3).second);
-            mcpp::platform::env::ScopedEnv hookVar4(hookVars.at(4).first, hookVars.at(4).second);
-            mcpp::platform::env::ScopedEnv hookVar5(hookVars.at(5).first, hookVars.at(5).second);
+            mcpp::invocation::ScopedEnv hookVar0(hookVars.at(0).first, hookVars.at(0).second);
+            mcpp::invocation::ScopedEnv hookVar1(hookVars.at(1).first, hookVars.at(1).second);
+            mcpp::invocation::ScopedEnv hookVar2(hookVars.at(2).first, hookVars.at(2).second);
+            mcpp::invocation::ScopedEnv hookVar3(hookVars.at(3).first, hookVars.at(3).second);
+            mcpp::invocation::ScopedEnv hookVar4(hookVars.at(4).first, hookVars.at(4).second);
+            mcpp::invocation::ScopedEnv hookVar5(hookVars.at(5).first, hookVars.at(5).second);
             auto r = install_one(target);
             // The first address's failure is the one about the package; a
             // compat spelling tried after it fails as "not found" whatever

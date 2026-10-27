@@ -9,9 +9,9 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.platform.runtime_search;
+import mcpp.runtime.search;
 
-namespace search = mcpp::platform::search;
+namespace search = mcpp::runtime::search;
 using search::Origin;
 
 namespace {

@@ -1,8 +1,9 @@
 #include <gtest/gtest.h>
 
 import std;
+import mcpplibs.os.platform;
 import mcpp.provider.xlings;
-import mcpp.platform.env;
+import mcpp.invocation;
 
 namespace {
 
@@ -63,7 +64,7 @@ std::filesystem::path make_fake_nasm(const std::filesystem::path& dir,
 // directory — only remove the entries that would shadow the fake binary
 // under test.
 std::string path_without_real_nasm() {
-    auto path = mcpp::platform::env::get("PATH").value_or("");
+    auto path = mcpp::invocation::get("PATH").value_or("");
     std::vector<std::string> kept;
     std::size_t start = 0;
     while (start <= path.size()) {
@@ -93,7 +94,7 @@ TEST(FindUsableNasm, FindsOnPathWhenVersionIsAdequate) {
     // system nasm ahead of it, but `env`/`bash` must stay resolvable for
     // the fake script's own shebang + the version-check subprocess.
     auto base = path_without_real_nasm();
-    mcpp::platform::env::ScopedEnv path("PATH", pathDir.string() + ":" + base);
+    mcpp::invocation::ScopedEnv path("PATH", pathDir.string() + ":" + base);
 
     auto home = make_tempdir("mcpp-nasm-home");  // no sandbox nasm present
     mcpp::provider::xlings::Env env{.home = home};
@@ -111,7 +112,7 @@ TEST(FindUsableNasm, RejectsPathNasmBelowMinVersionAndFindsNoSandboxFallback) {
     make_fake_nasm(pathDir, "NASM version 2.10.00 compiled on Jan  1 2020");
 
     auto base = path_without_real_nasm();
-    mcpp::platform::env::ScopedEnv path("PATH", pathDir.string() + ":" + base);
+    mcpp::invocation::ScopedEnv path("PATH", pathDir.string() + ":" + base);
 
     auto home = make_tempdir("mcpp-nasm-home-empty");  // no sandbox nasm
     mcpp::provider::xlings::Env env{.home = home};
@@ -125,7 +126,7 @@ TEST(FindUsableNasm, RejectsPathNasmBelowMinVersionAndFindsNoSandboxFallback) {
 TEST(FindUsableNasm, FallsBackToSandboxWhenPathHasNoNasm) {
     // PATH has the usual system directories (so the sandbox script's own
     // shebang still resolves) but none of them contain a real `nasm`.
-    mcpp::platform::env::ScopedEnv path("PATH", path_without_real_nasm());
+    mcpp::invocation::ScopedEnv path("PATH", path_without_real_nasm());
 
     auto home = make_tempdir("mcpp-nasm-home-sandbox");
     auto sandboxDir = home / "data" / "xpkgs" / "xim-x-nasm" / "3.02";
@@ -335,10 +336,11 @@ TEST(XlingsSiblingPackage, MetadataOnlyHuskIsNotContent) {
     touch(husk / ".xpkg.lua", "package = {}");
 
     // Isolate from the host's ~/.xlings fallback.
-    const char* oldHome = std::getenv("HOME");
-    mcpp::platform::env::set("HOME", tmp.string());
-    auto found = mcpp::provider::xlings::paths::find_sibling_package(gccBin, "linux-headers");
-    mcpp::platform::env::set("HOME", oldHome ? oldHome : "");
+    std::optional<std::filesystem::path> found;
+    {
+        mcpp::invocation::ScopedEnv home("HOME", tmp.string());
+        found = mcpp::provider::xlings::paths::find_sibling_package(gccBin, "linux-headers");
+    }
 
     EXPECT_FALSE(found.has_value());
 
@@ -397,11 +399,12 @@ TEST(XlingsHomeTool, FindsPayloadUnderNonXimPrefix) {
     auto real = xpkgs / "scode-x-linux-headers" / "5.11.1";
     touch(real / "include" / "linux" / "limits.h");
 
-    const char* oldMcppHome = std::getenv("MCPP_HOME");
-    mcpp::platform::env::set("MCPP_HOME", tmp.string());
-    auto found = mcpp::provider::xlings::paths::find_home_tool(
-        "linux-headers", "include/linux/limits.h");
-    mcpp::platform::env::set("MCPP_HOME", oldMcppHome ? oldMcppHome : "");
+    std::optional<std::filesystem::path> found;
+    {
+        mcpp::invocation::ScopedEnv home("MCPP_HOME", tmp.string());
+        found = mcpp::provider::xlings::paths::find_home_tool(
+            "linux-headers", "include/linux/limits.h");
+    }
 
     ASSERT_TRUE(found.has_value());
     // The original home is normalized; macOS spells /var's target /private/var.
@@ -649,7 +652,7 @@ TEST(XlingsStderrTail, KeepsTheLastLinesUpToTheLimit) {
               (std::vector<std::string>{"error without a newline"}));
 }
 
-// ─── invocation_env / ScopedInvocationEnv (#614) ──────────────────────
+// ─── invocation_env and the started xlings (#614) ─────────────────────
 //
 // One decision for the environment of an xlings invocation, rendered per
 // platform. Global mode is an absent XLINGS_PROJECT_DIR on both platforms, and
@@ -691,63 +694,59 @@ TEST(XlingsInvocationEnv, GlobalModeIsAnAbsentProjectDirectory) {
     EXPECT_EQ(projectScope.value, project.projectDir.string());
 }
 
-TEST(XlingsInvocationEnv, TheProcessEnvironmentIsUnchangedAfterwards) {
-    namespace env = mcpp::platform::env;
-    env::ScopedEnv keepPath("PATH", env::get("PATH"));
-    env::ScopedEnv keepHome("XLINGS_HOME", env::get("XLINGS_HOME"));
-    env::ScopedEnv prior("XLINGS_PROJECT_DIR", std::string("prior-project"));
-
-    {
-        auto global = xlings_env("");
-        mcpp::provider::xlings::ScopedInvocationEnv scope(global);
-        (void)mcpp::provider::xlings::build_command_prefix(global);
-#if defined(_WIN32)
-        EXPECT_FALSE(env::get("XLINGS_PROJECT_DIR").has_value());
-#endif
-    }
-    EXPECT_EQ(env::get("XLINGS_PROJECT_DIR"), std::optional<std::string>("prior-project"));
-
-    {
-        auto project = xlings_env("proj-dir");
-        mcpp::provider::xlings::ScopedInvocationEnv scope(project);
-        (void)mcpp::provider::xlings::build_command_prefix(project);
-#if defined(_WIN32)
-        EXPECT_EQ(env::get("XLINGS_PROJECT_DIR"),
-                  std::optional<std::string>(project.projectDir.string()));
-#endif
-    }
-    EXPECT_EQ(env::get("XLINGS_PROJECT_DIR"), std::optional<std::string>("prior-project"));
+// What a started xlings receives, recorded by a stub in place of the binary:
+// its working directory, then its environment.
+struct Seen {
+    std::string cwd;
+    std::map<std::string, std::string> env;
+};
+Seen started_with(const mcpp::provider::xlings::Env& e) {
+    std::filesystem::create_directories(e.binary.parent_path());
+    const auto record = e.home / "seen";
+    std::filesystem::remove(record);
+    { std::ofstream(e.binary) << "#!/bin/sh\n{ pwd; env; } > \"" << record.string() << "\"\n"; }
+    std::filesystem::permissions(e.binary, std::filesystem::perms::owner_all);
+    (void)mcpp::provider::xlings::install_direct(e, "nothing", /*quiet=*/true);
+    Seen seen;
+    std::ifstream in(record);
+    std::getline(in, seen.cwd);
+    for (std::string line; std::getline(in, line);)
+        if (auto eq = line.find('='); eq != std::string::npos)
+            seen.env[line.substr(0, eq)] = line.substr(eq + 1);
+    return seen;
 }
 
-// #726: the sandbox's `bin` in front of PATH and XLINGS_HOME reach the xlings
-// child only. They used to stay in the process on Windows, so every action of a
+// #614, #726: the decision reaches the started xlings, in its home, and this
+// invocation's environment is the same afterwards. The sandbox's `bin` in
+// front of PATH used to stay in the process on Windows, so every action of a
 // build that had installed a payload found `xim:llvm`'s `cl`, `link` and `lib`
 // shims in front of MSVC's tools, while a build that installed nothing did not.
-TEST(XlingsInvocationEnv, NeitherPathNorTheHomeOutlivesTheInvocation) {
-    namespace env = mcpp::platform::env;
-    env::ScopedEnv keepPath("PATH", env::get("PATH"));
-    env::ScopedEnv keepHome("XLINGS_HOME", std::string("shell-home"));
+TEST(XlingsInvocationEnv, TheDecisionReachesTheStartedXlingsOnly) {
+    if constexpr (mcpplibs::os::is_windows) GTEST_SKIP() << "a POSIX stub records what xlings received";
+    namespace env = mcpp::invocation;
+    env::ScopedEnv home("XLINGS_HOME", std::string("shell-home"));
+    env::ScopedEnv subos("XLINGS_ACTIVE_SUBOS", std::string("shell-subos"));
+    env::ScopedEnv project("XLINGS_PROJECT_DIR", std::string("prior-project"));
     const auto pathBefore = env::get("PATH");
 
-    auto e = xlings_env("");
-    for (int i = 0; i < 3; ++i) {
-        mcpp::provider::xlings::ScopedInvocationEnv scope(e);
-        (void)mcpp::provider::xlings::build_command_prefix(e);
-#if defined(_WIN32)
-        EXPECT_EQ(env::get("XLINGS_HOME"), std::optional<std::string>(e.home.string()));
-        const auto path = env::get("PATH");
-        ASSERT_TRUE(path.has_value());
-        const auto bin = (e.home / "subos" / "default" / "bin").string();
-        EXPECT_EQ(path->substr(0, bin.size()), bin) << *path;
-#endif
-    }
-    EXPECT_EQ(env::get("PATH"), pathBefore);
-    EXPECT_EQ(env::get("XLINGS_HOME"), std::optional<std::string>("shell-home"));
+    auto global = xlings_env("");
+    auto g = started_with(global);
+    EXPECT_EQ(std::filesystem::path(g.cwd), std::filesystem::weakly_canonical(global.home));
+    EXPECT_EQ(g.env["XLINGS_HOME"], global.home.string());
+    EXPECT_FALSE(g.env.contains("XLINGS_PROJECT_DIR"));
+    EXPECT_FALSE(g.env.contains("XLINGS_ACTIVE_SUBOS"));
+    const auto bin = (global.home / "subos" / "default" / "bin").string();
+    EXPECT_EQ(g.env["PATH"].substr(0, bin.size()), bin) << g.env["PATH"];
 
-    // Building a command alone changes nothing on any platform.
-    (void)mcpp::provider::xlings::build_command_prefix(e);
+    auto inProject = xlings_env("proj-dir");
+    auto p = started_with(inProject);
+    EXPECT_EQ(p.env["XLINGS_PROJECT_DIR"], inProject.projectDir.string());
+    EXPECT_FALSE(p.env.contains("XLINGS_ACTIVE_SUBOS"));
+
     EXPECT_EQ(env::get("PATH"), pathBefore);
     EXPECT_EQ(env::get("XLINGS_HOME"), std::optional<std::string>("shell-home"));
+    EXPECT_EQ(env::get("XLINGS_ACTIVE_SUBOS"), std::optional<std::string>("shell-subos"));
+    EXPECT_EQ(env::get("XLINGS_PROJECT_DIR"), std::optional<std::string>("prior-project"));
 }
 
 // #726: on Windows too the registry's xlings starts in its home, never in the
@@ -762,8 +761,8 @@ TEST(XlingsInvocationEnv, TheWindowsPrefixStartsInTheHome) {
               "\"C:\\Users\\a b\\.mcpp\\registry\\bin\\xlings.exe\"");
 }
 
-#if !defined(_WIN32)
 TEST(XlingsInvocationEnv, ThePosixPrefixRendersTheDecision) {
+    if constexpr (mcpplibs::os::is_windows) GTEST_SKIP() << "the POSIX spelling";
     auto global = mcpp::provider::xlings::build_command_prefix(xlings_env(""));
     EXPECT_NE(global.find("env -u XLINGS_PROJECT_DIR -u XLINGS_ACTIVE_SUBOS PATH="),
               std::string::npos) << global;
@@ -775,7 +774,6 @@ TEST(XlingsInvocationEnv, ThePosixPrefixRendersTheDecision) {
     EXPECT_NE(project.find("XLINGS_PROJECT_DIR="), std::string::npos) << project;
     EXPECT_NE(project.find("/work/proj"), std::string::npos) << project;
 }
-#endif
 
 // A shell that ran `xlings subos use <name>` exports XLINGS_ACTIVE_SUBOS, which
 // names a SubOS of the shell's xlings home and not of mcpp's registry; no
@@ -788,17 +786,4 @@ TEST(XlingsInvocationEnv, TheShellsActiveSubosIsNeverInherited) {
     ASSERT_EQ(project.name, "XLINGS_ACTIVE_SUBOS");
     EXPECT_FALSE(project.present);
 
-    namespace env = mcpp::platform::env;
-    env::ScopedEnv keepPath("PATH", env::get("PATH"));
-    env::ScopedEnv keepHome("XLINGS_HOME", env::get("XLINGS_HOME"));
-    env::ScopedEnv prior("XLINGS_ACTIVE_SUBOS", std::string("shell-subos"));
-    {
-        auto e = xlings_env("");
-        mcpp::provider::xlings::ScopedInvocationEnv scope(e);
-        (void)mcpp::provider::xlings::build_command_prefix(e);
-#if defined(_WIN32)
-        EXPECT_FALSE(env::get("XLINGS_ACTIVE_SUBOS").has_value());
-#endif
-    }
-    EXPECT_EQ(env::get("XLINGS_ACTIVE_SUBOS"), std::optional<std::string>("shell-subos"));
 }

@@ -13,12 +13,13 @@ import std;
 // package manager -- which is what kept `src/platform` from being a package of
 // its own. The caller passes the path; see subos_path.
 import mcpp.libs.json;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.provider.runtime_selection;
 
-export namespace mcpp::platform::runtime {
+export namespace mcpp::runtime {
 
 struct RuntimeBinding {
     int schema = 0;
@@ -62,7 +63,7 @@ struct RuntimeBinding {
     //
     // Deliberately a SECOND field rather than more entries in `libraryDirs`:
     // merging them discards the immutability distinction, and that
-    // distinction is the whole of `mcpp.platform.runtime_search`'s ordering
+    // distinction is the whole of `mcpp.runtime.search`'s ordering
     // rule. A payload directory and a farm directory are not interchangeable
     // even when they currently resolve to the same file.
     std::vector<std::filesystem::path> searchDirs;
@@ -415,8 +416,8 @@ resolve_runtime_binding(
 
     out.schema = info.schema;
     out.providerId = "xlings";
-    out.platform = std::string(mcpp::platform::name);
-    out.arch = std::string(mcpp::platform::host_arch);
+    out.platform = std::string(mcpp::toolchain::platform::name);
+    out.arch = std::string(mcpp::toolchain::platform::host_arch);
     out.runtimeId = info.runtime;
     out.provenance = selection.mode
         == mcpp::provider::runtime::RuntimeSelection::Mode::McppDefault
@@ -424,7 +425,7 @@ resolve_runtime_binding(
 
     // libc/ELF are Linux concepts.  macOS and Windows still carry the same
     // provider/environment contract without inventing a glibc field.
-    if constexpr (mcpp::platform::is_linux) {
+    if constexpr (mcpplibs::os::is_linux) {
         out.libc = info.runtime;
         if (!info.hostGlibc.empty()) out.hostLibc = info.hostGlibc;
 
@@ -733,4 +734,4 @@ resolve_runtime_environment(
     return mcpp::provider::resolve_env(info, binding.subosDir, ambient);
 }
 
-} // namespace mcpp::platform::runtime
+} // namespace mcpp::runtime

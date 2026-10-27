@@ -25,7 +25,8 @@
 export module mcpp.toolchain.hostflags;
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.toolchain.platform;
 import mcpp.toolchain.model;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.registry;
@@ -363,7 +364,7 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     const bool bypassCfg =
         dm.hasCfg && (opt.cfgBypass == HostFlagOptions::CfgBypass::Always
                       || (opt.cfgBypass == HostFlagOptions::CfgBypass::LinuxOnly
-                          && mcpp::platform::is_linux));
+                          && mcpplibs::os::is_linux));
 
     // Trusting the cfg means contributing no include paths, stdlib selection
     // or runtime choices — it already carries them. It does NOT mean
@@ -516,7 +517,7 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // which was the same question while macOS was the only Apple target
     // mcpp could build for AND the only way to reach it was to build ON one.
     // Cross-compiling `aarch64-macos` from Linux (#685) is a macOS TARGET on
-    // a non-Apple HOST, and the old `mcpp::platform::is_macos` (a
+    // a non-Apple HOST, and the old `mcpplibs::os::is_macos` (a
     // compile-time constant naming the machine mcpp itself was built for)
     // answered false there — so the flag, and the deployment target it
     // carries, were silently dropped on every non-Apple host. The
@@ -601,7 +602,7 @@ void append_runtime_lib_dirs(const Toolchain& tc, const HostFlagOptions& opt,
     if (!opt.runtimeLibDirs) return;
     for (auto& d : tc.linkRuntimeDirs) {
         out.push_back("-L" + esc(d));
-        if constexpr (mcpp::platform::supports_rpath)
+        if constexpr (mcpp::toolchain::platform::supports_rpath)
             out.push_back("-Wl,-rpath," + esc(d));
     }
 }
@@ -622,7 +623,7 @@ std::vector<std::string> host_link_tokens(const Toolchain& tc,
     const bool bypassCfg =
         dm.hasCfg && (opt.cfgBypass == HostFlagOptions::CfgBypass::Always
                       || (opt.cfgBypass == HostFlagOptions::CfgBypass::LinuxOnly
-                          && mcpp::platform::is_linux));
+                          && mcpplibs::os::is_linux));
 
     if (bypassCfg) {
         for (auto& t : dm.link_tokens(esc)) out.push_back(t);
@@ -649,7 +650,7 @@ std::vector<std::string> host_link_tokens(const Toolchain& tc,
         //
         // lld ships with the very toolchain doing the compile, so it cannot
         // be diverted to a libc++ it was not built against.
-        if constexpr (mcpp::platform::is_macos) out.push_back("-fuse-ld=lld");
+        if constexpr (mcpplibs::os::is_macos) out.push_back("-fuse-ld=lld");
         // AND DELIBERATELY NOT THE TOOLCHAIN'S RUNTIME DIRECTORIES. THIS WAS
         // TRIED, AND WHAT IT COSTS IS RECORDED HERE RATHER THAN REDISCOVERED.
         //

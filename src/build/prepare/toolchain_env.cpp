@@ -11,7 +11,9 @@ import mcpp.diag;
 
 import std;
 import mcpp.build.version_floor;
-import mcpp.platform.axis;
+import mcpp.toolchain.platform;
+import mcpp.toolchain.apple_sdk;
+import mcpp.runtime.launch_env;
 import mcpp.manifest;
 import mcpp.source_kind;
 import mcpp.toolchain.hostflags;   // the compile-token producer the package std module reuses
@@ -44,8 +46,6 @@ import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.build.resources;   // the resource compiler the row uses (#734 E2)
 import mcpp.toolchain.post_install;
-import mcpp.platform;
-import mcpp.platform.macos;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.ui;
@@ -345,8 +345,8 @@ std::string msvc_arch_of(std::string_view triple) {
 // preferring the host's own architecture as the engine's toolset search does.
 std::filesystem::path msvc_bin_dir(const std::filesystem::path& tools, std::string_view arch) {
     std::error_code ec;
-    const bool armHost = mcpp::platform::host_arch == std::string_view("aarch64")
-                      || mcpp::platform::host_arch == std::string_view("arm64");
+    const bool armHost = mcpp::toolchain::platform::host_arch == std::string_view("aarch64")
+                      || mcpp::toolchain::platform::host_arch == std::string_view("arm64");
     const std::array<std::string_view, 3> hosts = armHost
         ? std::array<std::string_view, 3>{"Hostarm64", "Hostx64", "Hostx86"}
         : std::array<std::string_view, 3>{"Hostx64", "Hostarm64", "Hostx86"};
@@ -484,7 +484,7 @@ void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
     if (cfg) {
         const auto view = mcpp::provider::open(mcpp::config::make_xlings_env(*cfg))->sysroot();
         e.pkgConfigLibdir = (view / "usr" / "lib" / "pkgconfig").generic_string()
-            + mcpp::platform::env::path_list_separator()
+            + mcpp::runtime::launch_env::path_list_separator()
             + (view / "usr" / "share" / "pkgconfig").generic_string();
     }
     e.toolchainDir  = (tc && !tc->binaryPath.empty())
@@ -614,7 +614,7 @@ std::string min_platform_version(const mcpp::manifest::Manifest& m,
     // machine mcpp runs on. A non-Apple target (Linux, Windows, wasm,
     // freestanding) answers empty here, same as it always has.
     if (t.os == "macos")
-        return mcpp::platform::macos::deployment_target(
+        return mcpp::toolchain::apple::deployment_target(
             /*targetIsMacos=*/true, m.buildConfig.macosDeploymentTarget);
     return {};
 }

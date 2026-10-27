@@ -25,13 +25,16 @@
 // when the log has been silent for a minute.
 
 module;
+#include <cerrno>      // EPIPE: a closed standard output
 #include <cstdio>      // fileno, stdout, stderr
 
 export module mcpp.ui;
 
 import std;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpp.ui.terminal;
 import mcpp.log;
+import mcpp.invocation;
 
 export namespace mcpp::ui {
 
@@ -47,7 +50,7 @@ bool is_color_enabled();
 // The stream that narrates: standard error. The live region, the progress
 // bars, the status row and every line below that is not a result are written
 // to it, and the region's terminal test, colour and size follow it.
-mcpp::platform::terminal::Stream narration_stream();
+mcpp::ui::terminal::Stream narration_stream();
 
 // Verb-style status ("Compiling foo v0.1.0" pattern), on the narration stream.
 //   verb        verb word, padded right-aligned in 12-char column
@@ -152,6 +155,10 @@ void plain(std::string_view message);
 // the process is still running: a build that is killed mid-flight is exactly
 // when its last lines matter most.
 void flush();
+
+// Whether mcpp's standard output has lost its reader (`mcpp … | head`): a
+// write to it was refused, and it is a pipe.
+bool output_closed();
 
 // Make stdout line-buffered. Call once, before any output. See main() for why
 // this is not left to the libc default: the default block size is a different
@@ -398,7 +405,7 @@ namespace mcpp::ui {
 
 namespace {
 
-namespace term = mcpp::platform::terminal;
+namespace term = mcpp::ui::terminal;
 
 // Colour is decided per stream, by what that stream is: a line for a pipe must
 // not carry escape sequences because the OTHER stream is a terminal.
@@ -436,8 +443,8 @@ bool colored(term::Stream s) { return color_flag(s); }
 bool narration_colored() { return colored(kNarration); }
 
 bool detect_color(term::Stream s) {
-    if (auto* e = std::getenv("MCPP_NO_COLOR"); e && *e == '1') return false;
-    if (auto* e = std::getenv("NO_COLOR");      e && *e)        return false;
+    if (auto e = mcpp::invocation::get("MCPP_NO_COLOR"); e && e->front() == '1') return false;
+    if (mcpp::invocation::get("NO_COLOR"))                                  return false;
     // On Windows this also turns the console's escape processing on, without
     // which the colour sequences would be printed as text.
     const bool terminal = term::can_move_cursor(s);
@@ -447,9 +454,8 @@ bool detect_color(term::Stream s) {
     // `FORCE_COLOR` (any value but "0" or "false") are the two conventions
     // such hosts set; NO_COLOR and MCPP_NO_COLOR, above, still win. Colour
     // only: the status row needs a terminal and stays off in a pipe.
-    if (auto* e = std::getenv("CLICOLOR_FORCE"); e && *e && std::string_view(e) != "0") return true;
-    if (auto* e = std::getenv("FORCE_COLOR"); e && *e && std::string_view(e) != "0"
-        && std::string_view(e) != "false") return true;
+    if (auto e = mcpp::invocation::get("CLICOLOR_FORCE"); e && *e != "0") return true;
+    if (auto e = mcpp::invocation::get("FORCE_COLOR"); e && *e != "0" && *e != "false") return true;
     return terminal;
 }
 
@@ -735,8 +741,18 @@ void flush() {
     std::fflush(stderr);
 }
 
+bool output_closed() {
+    errno = 0;
+    if (std::fflush(stdout) != 0 && errno == EPIPE) return true;
+    if (!std::ferror(stdout)) return false;
+    // An earlier write failed and its reason is gone with its errno. A write
+    // to a pipe is refused only when the pipe has no reader, so a standard
+    // output that is a pipe and has refused a write has lost its reader.
+    std::error_code ec;
+    return std::filesystem::status("/dev/stdout", ec).type() == std::filesystem::file_type::fifo;
+}
+
 void set_line_buffered() {
-#if defined(_WIN32)
     // Not on Windows, and not as a preference. The UCRT documents setvbuf's
     // size as `2 <= size <= INT_MAX`, and a zero goes through the
     // invalid-parameter handler, whose default action terminates the process:
@@ -749,9 +765,7 @@ void set_line_buffered() {
     // function here calls, so the platform that cannot do this cheaply is also
     // the one that does not need it: its 4096-byte block is the smallest of the
     // three anyway, and `mcpp test` routes its result lines through ui::plain.
-#else
-    std::setvbuf(stdout, nullptr, _IOLBF, 0);
-#endif
+    if constexpr (!mcpplibs::os::is_windows) std::setvbuf(stdout, nullptr, _IOLBF, 0);
 }
 
 void status(std::string_view verb, std::string_view message) {

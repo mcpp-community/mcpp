@@ -38,8 +38,7 @@ export module mcpp.pm.index_refresh;
 import std;
 import mcpp.config;
 import mcpp.log;
-import mcpp.platform;
-import mcpp.platform.axis;
+import mcpp.toolchain.platform;
 import mcpp.pm.dep_spec;
 import mcpp.pm.dependency_selector;   // legacy_bare_candidates
 import mcpp.pm.index_contract;
@@ -58,7 +57,7 @@ RefreshDecision decide_for_dependency(const IndexRoute&               route,
                                       std::string_view                depKey,
                                       const DependencySpec&           spec,
                                       const mcpp::provider::Location&        env,
-                                      const mcpp::platform::PlatformKey& platform,
+                                      const mcpp::toolchain::platform::PlatformKey& platform,
                                       const RefreshPolicy&            policy);
 
 // Is this dependency served by the shared registry (as opposed to a project
@@ -115,7 +114,7 @@ RefreshDecision decide_for_dependency(const IndexRoute&               route,
                                       std::string_view                depKey,
                                       const DependencySpec&           spec,
                                       const mcpp::provider::Location&        env,
-                                      const mcpp::platform::PlatformKey& platform,
+                                      const mcpp::toolchain::platform::PlatformKey& platform,
                                       const RefreshPolicy&            policy)
 {
     RefreshDecision d;

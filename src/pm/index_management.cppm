@@ -14,7 +14,7 @@ import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.lockfile;
 import mcpp.manifest;
-import mcpp.platform;
+import mcpp.effects;
 import mcpp.project;
 import mcpp.pm.index_route;
 import mcpp.ui;
@@ -245,7 +245,7 @@ export int index_update(const std::string& filterName) {
     // Explicit command: offline must refuse audibly rather than no-op. Left to
     // this layer because update_index() itself is a silent skip by design (it
     // is called from paths where proceeding locally is the right answer).
-    if (mcpp::platform::env::offline_mode()) {
+    if (mcpp::effects::offline_mode()) {
         mcpp::ui::error("offline mode is on — cannot update the package index "
                         "(unset MCPP_OFFLINE or drop --offline)");
         return 1;

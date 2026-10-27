@@ -43,23 +43,32 @@ mcpp build --target x86_64-linux-musl
 
 ## Source Layout
 
-mcpp is a **workspace**. `modules/` holds nine packages that the engine imports;
-`src/` is the engine itself.
+mcpp is a **workspace**. `modules/` holds ten packages that the engine imports;
+`src/` is the engine itself. The operating system is reached through
+[mcpplibs.os](https://github.com/mcpplibs/os); the one primitive mcpp keeps
+per system, the lock every release of mcpp takes, is in `native/`.
 
 ```
 modules/                  workspace members, imported by src/
+├── invocation/           the environment of one invocation: statements over the started one
 ├── manifest/             manifest and descriptor parsing
-├── platform/             operating-system abstraction
 ├── toolchain-model/      triples, dialects, fingerprints, the link model
 ├── buildmcpp/            the build.mcpp contract: protocol, directives, provisions
 ├── source-kind/          source-file role classification
 ├── versioning/           this binary's version, and SemVer requirements
 ├── dyndep/               ninja dyndep emission
+├── graph/                the generic dependency graph
 ├── libs/                 vendored text-format parsers
 └── log/                  leveled logging
 
+native/                   the lock, per system (flock, LockFileEx)
+
 src/
 ├── main.cpp              entry point
+├── run.cppm  run/        every program mcpp starts, and how mcpp ends at a request
+├── effects.cppm          the constraints of a run (offline, denied effects)
+├── home.cppm  home/      the home, its lock and its trust check
+├── ui.cppm  ui/          output, the terminal, key input
 ├── cli.cppm  cli/        command dispatch and the commands
 ├── build/                build orchestration and the ninja backend
 ├── modgraph/             P1689 module scanning and the dependency graph
@@ -68,24 +77,24 @@ src/
 ├── pack/  publish/       mcpp pack, mcpp publish and xpkg generation
 ├── fetcher/  fallback/   download, installation, fallback resolution
 ├── bmi_cache/            the cross-project BMI cache
-├── runtime/  xlings/     the runtime contract and the xlings bridge
+├── runtime/  provider/  the runtime contract, launch environment and the xlings bridge
 ├── freestanding/         bare-metal targets, link line and runner
 └── scaffold/             `mcpp new` and templates
 
 tests/
-├── unit/                 108 C++ tests, discovered by `mcpp test`
-└── e2e/                  370 shell scripts against a real binary
+├── unit/                 152 C++ tests, discovered by `mcpp test`
+└── e2e/                  635 shell scripts against a real binary
 ```
 
 ## Test Organization
 
 Two layers, and they answer different questions.
 
-**Unit tests** (`tests/unit/`, 108 files) are C++ programs `mcpp test`
+**Unit tests** (`tests/unit/`, 152 files) are C++ programs `mcpp test`
 discovers. They exercise a module's contract with no binary and no filesystem
 state.
 
-**End-to-end tests** (`tests/e2e/NN_<name>.sh`, 370 files) run a real `mcpp`
+**End-to-end tests** (`tests/e2e/NN_<name>.sh`, 635 files) run a real `mcpp`
 binary against a real project. `run_all.sh` is the CI entry point. `mcpp test`
 does **not** run them.
 

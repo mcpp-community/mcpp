@@ -9,7 +9,6 @@ import std;
 import mcpp.pm.dep_spec;     // M5.x pm/ subsystem refactor: DependencySpec lives here
 import mcpp.pm.compat;       // Legacy dependency-key compatibility helpers
 import mcpp.pm.index_spec;   // IndexSpec for [indices] section
-import mcpp.platform;
 import mcpp.manifest.flag_words;
 import mcpp.targetside;
 

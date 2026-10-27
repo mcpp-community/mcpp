@@ -1,0 +1,557 @@
+// mcpp.toolchain.clang — the implementation, apart from the interface so that its
+// instantiations are not carried by every module that imports it.
+module mcpp.toolchain.clang;
+
+import std;
+import mcpp.toolchain.model;
+import mcpp.toolchain.msvc;
+import mcpp.toolchain.probe;
+import mcpp.provider;
+import mcpp.provider.select;
+import mcpplibs.os.platform;
+import mcpp.build.command_line;
+import mcpp.run;
+
+namespace mcpp::toolchain::clang {
+
+namespace {
+
+std::optional<std::string>
+json_string_value_after(std::string_view body, std::size_t start, std::string_view key) {
+    auto keyToken = std::string{"\""} + std::string(key) + "\"";
+    auto keyPos = body.find(keyToken, start);
+    if (keyPos == std::string_view::npos) return std::nullopt;
+
+    auto colon = body.find(':', keyPos + keyToken.size());
+    if (colon == std::string_view::npos) return std::nullopt;
+
+    auto quote = body.find('"', colon + 1);
+    if (quote == std::string_view::npos) return std::nullopt;
+
+    std::string out;
+    for (std::size_t i = quote + 1; i < body.size(); ++i) {
+        char c = body[i];
+        if (c == '"') return out;
+        if (c == '\\' && i + 1 < body.size()) {
+            out.push_back(body[++i]);
+        } else {
+            out.push_back(c);
+        }
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+bool matches_version_output(std::string_view firstLineLower,
+                            std::string_view fullOutputLower) {
+    return firstLineLower.find("clang version") != std::string::npos
+        || firstLineLower.find("apple clang version") != std::string::npos
+        || fullOutputLower.find("clang") != std::string::npos;
+}
+
+std::optional<std::filesystem::path> find_libcxx_std_module_source(
+    const std::filesystem::path& cxx_binary,
+    const mcpp::run::Env& env)
+{
+    auto manifest_r = mcpp::toolchain::run_capture(
+        { cxx_binary.string(), "-print-library-module-manifest-path" }, env);
+    if (manifest_r) {
+        auto manifestPath = std::filesystem::path(
+            mcpp::toolchain::trim_line(*manifest_r));
+        if (!manifestPath.empty() && std::filesystem::exists(manifestPath)) {
+            std::ifstream is(manifestPath);
+            std::stringstream ss;
+            ss << is.rdbuf();
+            auto body = ss.str();
+
+            std::size_t cursor = 0;
+            while (true) {
+                auto logical = body.find("\"logical-name\"", cursor);
+                if (logical == std::string::npos) break;
+                auto name = json_string_value_after(body, logical, "logical-name");
+                if (name && *name == "std") {
+                    auto src = json_string_value_after(body, logical, "source-path");
+                    if (src) {
+                        std::filesystem::path p = *src;
+                        if (p.is_relative())
+                            p = manifestPath.parent_path() / p;
+                        std::error_code ec;
+                        auto canon = std::filesystem::weakly_canonical(p, ec);
+                        if (!ec) p = canon;
+                        if (std::filesystem::exists(p)) return p;
+                    }
+                }
+                cursor = logical + 1;
+            }
+        }
+    }
+
+    // SECOND PROBE: ASK WHICH libc++ WILL BE LINKED, THEN LOOK BESIDE IT.
+    //
+    // `-print-library-module-manifest-path` is the primary answer and the one
+    // llvm's own payload gives. `em++` does not forward it -- it answers
+    // `em++: error: no input files` -- so a toolchain that ships the surface
+    // was reported as shipping none, and `import std` was refused on a target
+    // where it demonstrably works.
+    //
+    // `--print-file-name=libc++.a` IS forwarded, and what it names is exactly
+    // the library the link will use, so the surface beside it is the surface
+    // that matches. Measured 2026-09-11:
+    //
+    //   xim:llvm 22.1.8  <root>/bin/../lib/x86_64-unknown-linux-gnu/libc++.a
+    //                    surface at <root>/bin/../share/libc++/v1/   (3 up)
+    //   xim:emsdk 6.0.9  <root>/emscripten/cache/sysroot/lib/wasm32-emscripten/libc++.a
+    //                    surface at <root>/.../sysroot/share/libc++/v1/ (2 up)
+    //
+    // THE TWO DEPTHS ARE WHY THIS WALKS RATHER THAN INDEXES. A fixed `up 3`
+    // would have been written against llvm, passed, and then been a guessed
+    // layout for the next payload -- which is the mistake the line this
+    // replaces made with `bin/../share`.
+    if (auto lib_r = mcpp::toolchain::run_capture(
+            { cxx_binary.string(), "--print-file-name=libc++.a" }, env)) {
+        std::filesystem::path lib(mcpp::toolchain::trim_line(*lib_r));
+        // A driver that cannot place the library echoes the bare name back.
+        if (lib.has_parent_path()) {
+            std::error_code ec;
+            auto dir = std::filesystem::weakly_canonical(lib.parent_path(), ec);
+            if (ec) dir = lib.parent_path();
+            for (int up = 0; up < 4 && !dir.empty(); ++up) {
+                auto cand = dir / "share" / "libc++" / "v1" / "std.cppm";
+                if (std::filesystem::exists(cand)) return cand;
+                if (!dir.has_relative_path()) break;
+                dir = dir.parent_path();
+            }
+        }
+    }
+
+    // THIRD: the layout guess, kept for a driver that answers neither probe.
+    auto root = cxx_binary.parent_path().parent_path();
+    auto fallback = root / "share" / "libc++" / "v1" / "std.cppm";
+    if (std::filesystem::exists(fallback)) return fallback;
+    return std::nullopt;
+}
+
+void enrich_toolchain(Toolchain& tc, const mcpp::run::Env& env) {
+    // Clang targeting MSVC uses MSVC STL, not libc++.
+    bool msvTarget = is_msvc_target(tc);
+    tc.stdlibId      = msvTarget ? "msvc-stl" : "libc++";
+    tc.stdlibVersion = tc.version.empty() ? "unknown" : tc.version;
+    tc.linkRuntimeDirs = mcpp::toolchain::discover_link_runtime_dirs(
+        tc.binaryPath, tc.targetTriple);
+
+    if (auto p = find_libcxx_std_module_source(tc.binaryPath, env)) {
+        tc.set_std_modules(*p, find_libcxx_std_compat_source(tc.binaryPath, env)
+                                   .value_or(std::filesystem::path{}));
+        // libc++ documents the std module for C++20 and later, and its
+        // std.cppm carries no __cplusplus guard. Verified on clang 22.1.8 +
+        // libc++ (std and std.compat) at -std=c++20 (design §2.2).
+        tc.importStdMinLevel = 20;
+    }
+
+    if constexpr (mcpplibs::os::is_windows) {
+        // Fallback: if libc++ std.cppm not found, look for MSVC STL's std.ixx.
+        // This is the machine's default toolset by the one selection both rows
+        // use (msvc::select_system_toolset, selector `system`). A build replaces it
+        // with the toolset its row names (`[target.<triple>].sysroot`, see
+        // prepare's bind_msvc_sysroot); this answer serves what only detects, such
+        // as `mcpp toolchain list`.
+        if (!tc.hasImportStd && msvTarget) {
+            if (auto p = mcpp::toolchain::msvc::find_std_module_source()) {
+                // The STL's own pair: `std.compat.ixx` beside `std.ixx`.
+                std::error_code ec;
+                const auto compat = p->parent_path() / "std.compat.ixx";
+                tc.set_std_modules(*p, std::filesystem::exists(compat, ec)
+                                           ? compat : std::filesystem::path{});
+                // This is MSVC STL's std.ixx, so the STL's own C++20 policy
+                // applies rather than libc++'s. `tc.version` is clang's and cannot
+                // answer it -- which is a reason to change the input, not to assume
+                // the worst. The toolset version is in the path of the file just
+                // selected, and that is the STL that will be compiled.
+                tc.importStdMinLevel =
+                    mcpp::toolchain::msvc::std_module_min_level_for_stl(*p);
+            }
+        }
+    }
+}
+
+std::filesystem::path std_bmi_path(const std::filesystem::path& cacheDir) {
+    return cacheDir / "pcm.cache" / "std.pcm";
+}
+
+std::filesystem::path staged_std_bmi_path(const std::filesystem::path& outputDir) {
+    return outputDir / "pcm.cache" / "std.pcm";
+}
+
+// THE LANGUAGE OF A STANDARD LIBRARY MODULE SOURCE, FROM ITS NAME, ON EVERY HOST.
+//
+// MSVC STL names its module sources `.ixx`, which clang does not infer as a
+// module interface: given one without `-x c++-module`, `--precompile` treats
+// it as linker input, writes nothing and exits 0. It also includes headers in
+// the module purview, which clang reports. One answer for `std` and
+// `std.compat`, decided by the file and not by the machine running the build;
+// a libc++ `.cppm` receives nothing, so its commands are unchanged.
+// The language of a `std` module source clang does not know by its name.
+// `.cppm` (libc++'s) and the other module-interface extensions are
+// recognised; the MSVC STL's `.ixx` and libstdc++'s `bits/std.cc` are not --
+// the second precompiled as an ordinary translation unit, and the object step
+// then answered `unable to load precompiled file` (design 2026-10-26 §6.4: a
+// graph-supplied libstdc++ under clang). The `.ixx` spelling is unchanged, so
+// the std module caches built from it keep their identity.
+static std::string module_source_language_flags(const std::filesystem::path& source) {
+    const auto ext = source.extension().string();
+    if (ext == ".ixx") return " -x c++-module -Wno-include-angled-in-module-purview";
+    if (ext == ".cppm" || ext == ".ccm" || ext == ".cxxm" || ext == ".c++m") return "";
+    return " -x c++-module";
+}
+
+std::vector<std::string> std_module_build_commands(const Toolchain& tc,
+                                                   const std::filesystem::path& cacheDir,
+                                                   const std::filesystem::path& bmiPath,
+                                                   std::string_view sysrootFlag,
+                                                   std::string_view cppStandardFlag,
+                                                   std::string_view crtFlag) {
+    auto relBmi = std::filesystem::relative(bmiPath, cacheDir).string();
+    // #718: rendered as its own token, with a leading space, so an empty
+    // `crtFlag` (every non-MSVC-ABI row) leaves both commands byte-identical
+    // to what they were before this parameter existed.
+    const std::string crtToken =
+        crtFlag.empty() ? std::string{} : std::format(" {}", crtFlag);
+    // A PACKAGE-PROVIDED std MODULE REPLACES THE TOOLCHAIN'S SYSROOT FLAGS
+    // RATHER THAN BEING APPENDED TO THEM.
+    //
+    // Those flags describe the standard library the COMPILER ships and the C
+    // library the HOST has, and they lead with `-isystem' — so appending to them
+    // puts the host's headers ahead of the package's, and no later flag can
+    // undo it. Measured: the module then compiles the host C library's
+    // <wchar.h> and stops on names that library expects the host compiler to
+    // have supplied.
+    //
+    // The triple has to be restated for the same reason: it was in the flags
+    // being replaced, and without it the module is built for whatever machine
+    // is doing the building.
+    // The replacement is complete: whoever set stdModuleFlags stated the target
+    // as well, because the triple was in the string being replaced and a module
+    // built without it is built for whatever machine is doing the building.
+    if (!tc.stdModuleFlags.empty()) sysrootFlag = {};
+    const std::string& extraFlags = tc.stdModuleFlags;
+    // The codegen step compiles a BMI, which already carries what the
+    // headers contributed; only the machine has to be restated. See
+    // Toolchain::stdModuleTargetFlags.
+    const std::string& codegenFlags = tc.stdModuleTargetFlags;
+    // AND THE PRECOMPILE NEEDS THE MACHINE TOO, FROM WHICHEVER SOURCE HAS IT.
+    //
+    // `stdModuleTargetFlags` reached only the CODEGEN command, on the reading
+    // that the first step needs headers and the second needs the machine. The
+    // first step needs both: a `--precompile` that does not say which target
+    // resolves the standard library's own `#include <__config>` against the
+    // BUILDING machine.
+    //
+    // It was invisible while exactly two kinds of toolchain existed. A payload
+    // whose compiler IS its target needs no flag, and a PACKAGE-provided module
+    // carries the target inside `stdModuleFlags` -- which is why the comment
+    // above insists that whoever sets that string states the target as well. A
+    // payload whose compiler serves several targets is a third kind, and it has
+    // neither: the NDK's one clang++ compiles for both Android arches and is
+    // told which by `--target` alone. Measured on `aarch64-linux-android`:
+    //
+    //     clang++ -std=c++23 -Wno-reserved-module-identifier \
+    //             --precompile .../share/libc++/v1/std.cppm -o pcm.cache/std.pcm
+    //     std.cppm:16:10: fatal error: '__config' file not found
+    //
+    // Five tokens, and the same error text this file already records from a
+    // Windows host in 2026-08 -- same cause, reached by a different route.
+    //
+    // The two sources are never both needed: `stdModuleFlags` is a SUPERSET of
+    // `stdModuleTargetFlags` when it is set at all (the producer builds the
+    // machine part first and appends the include part), so taking it in
+    // preference keeps `--target` off the command line twice.
+    const std::string& precompileFlags =
+        extraFlags.empty() ? codegenFlags : extraFlags;
+    if constexpr (mcpplibs::os::is_windows) {
+        // Windows: use absolute paths, raw binary path as first token
+        // (cmd.exe strips leading quotes), shq for args with spaces.
+        // -x c++-module is needed for MSVC STL's .ixx files (Clang doesn't
+        // recognize the .ixx extension as a module source by default).
+        auto absBmi = (cacheDir / relBmi).string();
+        std::string ixxFlags = module_source_language_flags(tc.stdModuleSource);
+        // AND THE RESERVED-NAME WARNING UNCONDITIONALLY, WHICH IS WHAT THE OTHER
+        // BRANCH DOES.
+        //
+        // `export module std;` is a reserved identifier and every standard library
+        // that ships one triggers the warning; the non-Windows command has carried
+        // the suppression since it was written. This branch tied it to `.ixx`,
+        // which was correct while the only `std` module a Windows host ever saw was
+        // the MSVC STL's — and stopped being correct when a package could supply
+        // its own. Measured 2026-08-23, a Windows host building the openkal
+        // runtime's `llvm-generated/std.cppm`:
+        //
+        //     std.cppm:167:15: warning: 'std' is a reserved name for a module
+        //       [-Wreserved-module-identifier]
+        //
+        // A warning that is correct, unavoidable, and printed on every build is
+        // noise of the kind that hides the next one.
+        ixxFlags += " -Wno-reserved-module-identifier";
+        // `extraFlags` IS ON BOTH COMMANDS HERE, AND IT WAS ON NEITHER.
+        //
+        // This branch was written when a Windows host built for itself against the
+        // MSVC STL, and `stdModuleFlags` did not exist — so the omission was not
+        // visible: there was nothing to omit. It became a defect when a package
+        // could supply its own `std` module, because that string is where the
+        // package's own headers, `-nostdinc` and the target triple live.
+        //
+        // Measured 2026-08-23, a Windows host cross-building for
+        // `x86_64-linux-gnu` over openkal — the command it produced carried FIVE
+        // tokens:
+        //
+        //     clang++.exe -std=c++23 --precompile "…/std.cppm" -o "…/std.pcm"
+        //     …/llvm-generated/std.cppm:16:10: fatal error: '__config' file not found
+        //
+        // The same build from a Linux host had `--target=`, `--no-default-config`,
+        // `-nostdinc`, `-nostdinc++` and eight `-I`s. The error names a header, and
+        // the cause is a branch keyed on which machine is doing the building.
+        return {
+            std::format(
+                "{} {}{}{}{}{} "
+                "--precompile {} -o {}",
+                tc.binaryPath.string(),
+                cppStandardFlag,
+                crtToken,
+                ixxFlags,
+                sysrootFlag,
+                precompileFlags,
+                mcpp::build::command_line::quote(tc.stdModuleSource.string()),
+                mcpp::build::command_line::quote(absBmi)),
+            std::format(
+                "{} {}{}{}{} "
+                "{} -c -o {}",
+                tc.binaryPath.string(),
+                cppStandardFlag,
+                crtToken,
+                sysrootFlag,
+                codegenFlags,
+                mcpp::build::command_line::quote(absBmi),
+                mcpp::build::command_line::quote((cacheDir / "std.o").string()))
+        };
+    } else {
+        return {
+            std::format(
+                "cd {} && {}{} {}{} -Wno-reserved-module-identifier{}{}{} "
+                "--precompile {} -o {} 2>&1",
+                mcpp::build::command_line::quote(cacheDir.string()),
+                mcpp::toolchain::compiler_env_prefix(tc),
+                mcpp::build::command_line::quote(tc.binaryPath.string()),
+                cppStandardFlag,
+                crtToken,
+                sysrootFlag,
+                precompileFlags,
+                module_source_language_flags(tc.stdModuleSource),
+                mcpp::build::command_line::quote(tc.stdModuleSource.string()),
+                mcpp::build::command_line::quote(relBmi)),
+            std::format(
+                "cd {} && {}{} {}{} -Wno-reserved-module-identifier{}{} "
+                "{} -c -o std.o 2>&1",
+                mcpp::build::command_line::quote(cacheDir.string()),
+                mcpp::toolchain::compiler_env_prefix(tc),
+                mcpp::build::command_line::quote(tc.binaryPath.string()),
+                cppStandardFlag,
+                crtToken,
+                sysrootFlag,
+                codegenFlags,
+                mcpp::build::command_line::quote(relBmi))
+        };
+    }
+}
+
+std::optional<std::filesystem::path> find_scan_deps(const Toolchain& tc) {
+    auto p = tc.binaryPath.parent_path() /
+        (std::string("clang-scan-deps") + std::string(mcpplibs::os::exe_suffix));
+    if (std::filesystem::exists(p)) return p;
+    return std::nullopt;
+}
+
+// THE DRIVER KNOWS WHERE ITS ARCHIVES ARE FOR A TARGET, AND A DIRECTORY
+// SEARCH ONLY KNOWS ONE LAYOUT.
+//
+// The self-contained contract used to look for `libc++.a` under the LLVM
+// payload's `lib/` alone. The Android NDK keeps its archives in the sysroot,
+// per API level, so the search found nothing, the contract degraded to
+// toolchain-coupled, and every test program on an Android row needed
+// `libc++_shared.so`, which a device does not have (#634 A6, measured on an
+// API 34 emulator: `CANNOT LINK EXECUTABLE ... library "libc++_shared.so" not
+// found` for every test). The drivers answer directly, measured 2026-09-14:
+//
+//   xim:android-ndk 30  --target=x86_64-linux-android24
+//                       libc++.a    <sysroot>/usr/lib/x86_64-linux-android/24/libc++.a
+//                                   (a linker script: INPUT(-lc++_static -lc++abi))
+//                       libc++abi.a <sysroot>/usr/lib/x86_64-linux-android/libc++abi.a
+//                       libunwind.a <root>/lib/clang/21/lib/linux/x86_64/libunwind.a
+//   xim:llvm 22.1.8     libc++.a    <root>/bin/../lib/x86_64-unknown-linux-gnu/libc++.a
+//
+// THE TARGET IN THE QUESTION IS THE ONE THE LINK NAMES. The same NDK asked
+// with `--target=x86_64-linux-android`, no API level, answers
+// `<root>/lib/clang/21/../../libc++.a`, a symlink to the HOST's
+// `x86_64-unknown-linux-gnu/libc++.a`. The caller passes the flags its link
+// line carries, API level included.
+//
+// A driver that cannot place a file echoes the bare name back, which is a
+// miss rather than a relative path. The answer is made lexically normal: the
+// `bin/..` in it is a spelling of the driver's, and a link line that spells
+// one file two ways is two commands to ninja.
+std::filesystem::path runtime_archive_path(const Toolchain& tc,
+                                           const std::vector<std::string>& driverFlags,
+                                           std::string_view archive) {
+    static std::mutex mu;
+    static std::map<std::string, std::filesystem::path> answered;
+    std::vector<std::string> argv{ tc.binaryPath.string() };
+    argv.insert(argv.end(), driverFlags.begin(), driverFlags.end());
+    argv.push_back(std::format("--print-file-name={}", archive));
+    std::string key;
+    for (auto const& a : argv) key += a + "\n";
+    {
+        std::scoped_lock lock(mu);
+        if (auto it = answered.find(key); it != answered.end()) return it->second;
+    }
+    std::filesystem::path out;
+    if (auto r = mcpp::toolchain::run_capture(argv, mcpp::toolchain::compiler_env(tc))) {
+        std::filesystem::path lib(mcpp::toolchain::trim_line(*r));
+        std::error_code ec;
+        if (lib.has_parent_path() && lib.is_absolute()
+            && std::filesystem::is_regular_file(lib, ec))
+            out = lib.lexically_normal();
+    }
+    std::scoped_lock lock(mu);
+    answered.emplace(std::move(key), out);
+    return out;
+}
+
+std::optional<std::filesystem::path> find_libcxx_std_compat_source(
+    const std::filesystem::path& cxx_binary,
+    const mcpp::run::Env& env)
+{
+    // DERIVED FROM THE SIBLING, NOT SEARCHED FOR SEPARATELY.
+    //
+    // The comment here used to say "same search strategy as
+    // find_libcxx_std_module_source", and it was not: that function has three
+    // probes and this one had the last of them, so on any payload the layout
+    // guess does not reach -- emsdk, for one -- `std` was found and
+    // `std.compat` was not, from one directory.
+    //
+    // `std.compat.cppm` sits beside `std.cppm` in every libc++ layout, because
+    // the same install rule places both. Deriving it makes the two answers
+    // structurally consistent rather than two searches that can disagree,
+    // which is what the comment claimed all along.
+    if (auto std_src = find_libcxx_std_module_source(cxx_binary, env)) {
+        auto p = std_src->parent_path() / "std.compat.cppm";
+        if (std::filesystem::exists(p)) return p;
+    }
+    return std::nullopt;
+}
+
+std::filesystem::path std_compat_bmi_path(const std::filesystem::path& cacheDir) {
+    return cacheDir / "pcm.cache" / "std.compat.pcm";
+}
+
+std::filesystem::path staged_std_compat_bmi_path(const std::filesystem::path& outputDir) {
+    return outputDir / "pcm.cache" / "std.compat.pcm";
+}
+
+std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
+                                                    const std::filesystem::path& cacheDir,
+                                                    const std::filesystem::path& bmiPath,
+                                                    const std::filesystem::path& stdBmiPath,
+                                                    std::string_view sysrootFlag,
+                                                    std::string_view cppStandardFlag,
+                                                    std::string_view crtFlag)
+{
+    auto relBmi = std::filesystem::relative(bmiPath, cacheDir).string();
+    auto relStdBmi = std::filesystem::relative(stdBmiPath, cacheDir).string();
+    // #718: see `std_module_build_commands` — empty keeps both commands
+    // byte-identical off the MSVC ABI.
+    const std::string crtToken =
+        crtFlag.empty() ? std::string{} : std::format(" {}", crtFlag);
+    // THE SAME REPLACEMENT THE `std` BUILDER MAKES, FOR THE SAME REASON.
+    //
+    // `std.compat` is a second module over the SAME library, and it therefore
+    // needs the same headers, the same target and the same configuration. This
+    // used to take `sysrootFlag` unconditionally while its sibling above
+    // replaced it — so a package-provided pair had one module built against its
+    // own libc++ and the other against the toolchain's.
+    //
+    // It does not fail where the two are chosen. Measured on a macOS cross:
+    //
+    //   error: std module precompile failed (rc=1):
+    //     …/openkal-llvm-runtime/llvm-generated/std.compat.cppm:16
+    //     …/xim-x-llvm/22.1.8/include/c++/v1/__config:13
+    //         fatal error: '__config_site' file not found
+    //
+    // The SOURCE named is the package's; the header it opened is the
+    // toolchain's, whose per-installation configuration was never generated for
+    // this target. Reading that message, the mixture is invisible.
+    if (!tc.stdModuleFlags.empty()) sysrootFlag = {};
+    const std::string& extraFlags = tc.stdModuleFlags;
+    // Same split as the `std` builder above: the second command compiles a BMI
+    // and needs the machine restated, not the include paths.
+    const std::string& codegenFlags = tc.stdModuleTargetFlags;
+    // Same third kind of toolchain as the `std` builder above, same reason.
+    const std::string& precompileFlags =
+        extraFlags.empty() ? codegenFlags : extraFlags;
+    // std.compat depends on std, so we need -fmodule-file=std=<std.pcm>
+    // Note: the path after = must NOT be shell-quoted separately; the
+    // entire -fmodule-file flag is a single token to the compiler.
+    //
+    // ABSOLUTE PATHS AND NO `cd`, AND ONE FORM RATHER THAN TWO.
+    //
+    // This used to be `cd <cacheDir> && … pcm.cache/std.pcm …`. `cd X && …`
+    // DOES NOT CHANGE THE DRIVE in cmd.exe — the build cache lives under the
+    // user's profile and a checkout lives wherever the runner put it, so on CI
+    // those are `C:` and `D:`. The `cd` succeeds, the drive stays where it was,
+    // and every relative path resolves against the wrong root. Measured
+    // 2026-08-23, a Windows host cross-building for `x86_64-linux-gnu`:
+    //
+    //     std.compat.cppm:84:8: fatal error: module file 'pcm.cache\std.pcm'
+    //       not found: module file not found
+    //
+    // — and `std.pcm` had been built successfully one command earlier.
+    //
+    // The obvious repair was a `#if defined(_WIN32)` branch, which is what
+    // the `std` builder above has. It was written and then withdrawn: a branch
+    // that only compiles on one platform is a branch this machine cannot check,
+    // and every defect this session found in the host dimension had exactly
+    // that shape — code shaped by which machine was doing the building. Naming
+    // absolute paths is correct everywhere, so there is one form.
+    auto absBmi    = (cacheDir / relBmi).string();
+    auto absStdBmi = (cacheDir / relStdBmi).string();
+    auto absObj    = (cacheDir / "std.compat.o").string();
+    // Applied when parsing the source, never when compiling the BMI.
+    std::string ixxFlags = module_source_language_flags(tc.stdCompatSource);
+    return {
+        std::format("{}{} {}{} -Wno-reserved-module-identifier{}{}{} "
+                    "-fmodule-file=std={} "
+                    "--precompile {} -o {} 2>&1",
+                    mcpp::toolchain::compiler_env_prefix(tc),
+                    mcpp::build::command_line::quote(tc.binaryPath.string()),
+                    cppStandardFlag,
+                    crtToken,
+                    sysrootFlag,
+                    precompileFlags,
+                    ixxFlags,
+                    absStdBmi,
+                    mcpp::build::command_line::quote(tc.stdCompatSource.string()),
+                    mcpp::build::command_line::quote(absBmi)),
+        std::format("{}{} {}{} -Wno-reserved-module-identifier{}{} "
+                    "-fmodule-file=std={} "
+                    "{} -c -o {} 2>&1",
+                    mcpp::toolchain::compiler_env_prefix(tc),
+                    mcpp::build::command_line::quote(tc.binaryPath.string()),
+                    cppStandardFlag,
+                    crtToken,
+                    sysrootFlag,
+                    codegenFlags,
+                    absStdBmi,
+                    mcpp::build::command_line::quote(absBmi),
+                    mcpp::build::command_line::quote(absObj))
+    };
+}
+
+} // namespace mcpp::toolchain::clang

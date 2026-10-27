@@ -29,7 +29,7 @@ struct BuildOptions {
     // by the CI job timeout — which kills the process and takes its unflushed
     // output with it. This is the knob that turns that into an attributable
     // failure. POSIX only: the deadline runner has no kill-by-handle path on
-    // Windows (see mcpp.platform.process), where the value is ignored.
+    // Windows (see mcpp.run), where the value is ignored.
     unsigned                    buildTimeoutSecs = 0;
     // The report of this build directory (build progress design 2026-09-29).
     // Set, ninja runs without `--quiet` and is read as it runs: the step

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 import std;
+import mcpp.invocation;
 import mcpp.source_kind;
 import mcpp.build.compile_commands;
 import mcpp.build.flags;
@@ -12,8 +13,8 @@ import mcpp.modgraph.scanner;   // PackageRoot, for trim_map
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.model;
 import mcpp.toolchain.triple;
-import mcpp.platform;
-import mcpp.platform.runtime_search;
+import mcpplibs.os.platform;
+import mcpp.runtime.search;
 import mcpp.targetside;
 
 using namespace mcpp::build;
@@ -78,7 +79,7 @@ BuildPlan minimal_plan() {
 
 TEST(NinjaBackend, WindowsDriverLinksRetainTheSelectedTargetForCAndCxx) {
     // This regression covers the Windows-host PE driver link branch.
-    if constexpr (!mcpp::platform::is_windows)
+    if constexpr (!mcpplibs::os::is_windows)
         GTEST_SKIP() << "the PE driver link branch is selected on Windows hosts";
     for (const auto arch : {"i686", "x86_64", "aarch64"}) {
         auto plan = minimal_plan();
@@ -112,7 +113,7 @@ TEST(NinjaBackend, BitcodeExportToolsComeFromTheSelectedLlvmAndAreQuotedAsWords)
     plan.linkUnits.push_back(dll);
     auto text = emit_ninja_string(plan);
     const auto nm = plan.toolchain.binaryPath.parent_path()
-        / (mcpp::platform::is_windows ? "llvm-nm.exe" : "llvm-nm");
+        / (mcpplibs::os::is_windows ? "llvm-nm.exe" : "llvm-nm");
     EXPECT_NE(text.find("--llvm-cxx " + ninja_command_word(plan.toolchain.binaryPath.generic_string())), std::string::npos);
     EXPECT_NE(text.find("--llvm-nm " + ninja_command_word(nm.generic_string())), std::string::npos);
     EXPECT_NE(text.find("--llvm-target x86_64-pc-windows-msvc"), std::string::npos);
@@ -181,7 +182,7 @@ TEST(NinjaBackend, CxxModuleAndCxxObjectRulesTrackHeaderDepsViaGccDepfile) {
         // The raw compiler depfile (with GCC's module-specific reversed
         // rules) must never be bound directly as ninja's depfile.
         EXPECT_EQ(rule.find("depfile = $out.d.raw"), std::string::npos) << ninja;
-        if constexpr (mcpp::platform::is_windows) {
+        if constexpr (mcpplibs::os::is_windows) {
             EXPECT_NE(rule.find("$mcpp depfile-filter --raw $out.d.raw --out $out.d -- "),
                       std::string::npos) << ninja;
             EXPECT_EQ(rule.find("awk"), std::string::npos) << ninja;
@@ -381,7 +382,7 @@ TEST(NinjaBackend, LocalIncludeDirsWithSpacesAreShellQuoted) {
     // The quote character is the host shell's, not a fixed one: POSIX sh
     // wants single quotes, cmd.exe double. Hardcoding `'` passed on Linux
     // and failed on the Windows runner for a difference that is correct.
-    const std::string q = mcpp::platform::is_windows ? "\"" : "'";
+    const std::string q = mcpplibs::os::is_windows ? "\"" : "'";
     EXPECT_NE(line.find(q + "-I/opt/my$ dep/include" + q), std::string::npos) << line;
     EXPECT_NE(line.find(q + "-idirafter/opt/my$ dep/after" + q), std::string::npos) << line;
 }
@@ -405,7 +406,7 @@ TEST(NinjaBackend, LocalIncludeTokensUseGenericSeparators) {
     // True on every host: the generic form never uses the native separator.
     EXPECT_NE(tok.find("src/inc"), std::string::npos) << tok;
 
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         auto abs = mcpp::build::include_token(
             gnu, std::filesystem::path("C:\\src\\inc"), {},
             mcpp::build::PathForm::Generic);
@@ -569,7 +570,7 @@ TEST(NinjaBackend, QuotesFlagValueWithSpace) {
 
     // shell_quote_arg wraps in single quotes on POSIX, double quotes on
     // Windows — assert the platform-appropriate spelling.
-    const std::string quoted = mcpp::platform::is_windows
+    const std::string quoted = mcpplibs::os::is_windows
         ? "unit_cflags = \"-DT=long long\""
         : "unit_cflags = '-DT=long long'";
     EXPECT_NE(ninja.find(quoted), std::string::npos) << ninja;
@@ -608,13 +609,13 @@ TEST(NinjaBackend, PlainFlagsPassThroughUnquoted) {
 // rule expands it), not on either variable alone: checking one of them is what
 // made the original mistake invisible.
 TEST(NinjaBackend, SubosFarmRpathFollowsTheArtifactsOwnDirectory) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "the SubOS farm rpath is emitted for ELF targets only";
 
     const std::string farm = "/tmp/mcpp-ninja-test-farm/subos/default/lib";
     auto plan = minimal_plan();
     plan.runtimeSearch.push_back(
-        {farm, mcpp::platform::search::Origin::SubosFarm});
+        {farm, mcpp::runtime::search::Origin::SubosFarm});
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
         .kind = mcpp::SourceKind::Cxx,
@@ -659,13 +660,13 @@ TEST(NinjaBackend, SubosFarmRpathFollowsTheArtifactsOwnDirectory) {
 // An archive is produced by `ar`, whose rule never expands `$unit_ldflags`.
 // Emitting run-time search flags there would be dead bytes in every graph.
 TEST(NinjaBackend, StaticLibraryCarriesNoRuntimeFallback) {
-    if constexpr (!mcpp::platform::is_linux)
+    if constexpr (!mcpplibs::os::is_linux)
         GTEST_SKIP() << "the SubOS farm rpath is emitted for ELF targets only";
 
     const std::string farm = "/tmp/mcpp-ninja-test-farm/subos/default/lib";
     auto plan = minimal_plan();
     plan.runtimeSearch.push_back(
-        {farm, mcpp::platform::search::Origin::SubosFarm});
+        {farm, mcpp::runtime::search::Origin::SubosFarm});
     plan.compileUnits.push_back({
         .source = "src/lib.cpp",
         .kind = mcpp::SourceKind::Cxx,
@@ -890,7 +891,7 @@ TEST(NinjaBackend, CompileAndScanRulesRouteFlagsThroughRspfileUnderMsvcDialect) 
     // reachable on a Windows host; c_object and cxx_scan have no such
     // compile-time branch and are assertable everywhere.
     std::vector<std::string_view> rules{"rule c_object\n", "rule cxx_scan\n"};
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         rules.push_back("rule cxx_module\n");
         rules.push_back("rule cxx_object\n");
     }
@@ -929,7 +930,7 @@ TEST(NinjaBackend, CompileAndScanRulesRouteFlagsThroughRspfileUnderMsvcDialect) 
 // far easier to re-run by hand. This is the byte-identity guard for the
 // #261 change on the platform where it must be a no-op.
 TEST(NinjaBackend, CompileRulesStayInlineOnPosixDrivers) {
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         GTEST_SKIP() << "inline form is Windows-exempt by design";
     } else {
         auto plan = minimal_plan();  // GCC → gnu dialect, non-msvc deps
@@ -1028,7 +1029,7 @@ TEST(NinjaBackend, CAndAsmRulesAlsoTrackHeaderDeps) {
 // `deps = gcc` treats an absent depfile as an error — so the two cases need
 // separate rules.
 TEST(NinjaBackend, LowercaseAsmHasNoDepfileAndItsOwnRule) {
-    if constexpr (mcpp::platform::is_windows)
+    if constexpr (mcpplibs::os::is_windows)
         GTEST_SKIP() << "POSIX depfile shape only";
 
     auto plan = minimal_plan();
@@ -1101,7 +1102,7 @@ TEST(NinjaBackend, RuntimeAliasCopiesThroughStageOnWindowsAndSymlinksElsewhere) 
     ASSERT_NE(rulePos, std::string::npos) << ninja;
     auto body = ninja.substr(rulePos, ninja.find("\nrule ", rulePos + 1) - rulePos);
 
-    if constexpr (mcpp::platform::is_windows) {
+    if constexpr (mcpplibs::os::is_windows) {
         // PE has no soname symlink: the alias is a copy of a freshly built DLL,
         // the same hazard class as BMI staging.
         EXPECT_NE(body.find("$mcpp stage --output $out $in"), std::string::npos) << body;
@@ -1116,18 +1117,12 @@ TEST(NinjaBackend, RuntimeAliasCopiesThroughStageOnWindowsAndSymlinksElsewhere) 
 
 TEST(NinjaBackend, McppBinaryIsBoundEvenWithoutDyndep) {
     // dyndep off ⇒ no scan/collect rules, but stage_file still needs $mcpp.
-#if defined(_WIN32)
-    ::_putenv_s("MCPP_NINJA_DYNDEP", "0");
-#else
-    ::setenv("MCPP_NINJA_DYNDEP", "0", 1);
-#endif
-    auto plan = minimal_plan();
-    auto ninja = emit_ninja_string(plan);
-#if defined(_WIN32)
-    ::_putenv_s("MCPP_NINJA_DYNDEP", "");
-#else
-    ::unsetenv("MCPP_NINJA_DYNDEP");
-#endif
+    std::string ninja;
+    {
+        mcpp::invocation::ScopedEnv dyndep("MCPP_NINJA_DYNDEP", "0");
+        auto plan = minimal_plan();
+        ninja = emit_ninja_string(plan);
+    }
 
     EXPECT_EQ(ninja.find("rule cxx_scan"), std::string::npos) << ninja;
     EXPECT_NE(ninja.find("\nmcpp      = "), std::string::npos) << ninja;
@@ -1654,7 +1649,7 @@ TEST(Plan, ExpandManifestIncludeEntryNativeSpelling) {
 // exactly what the old flat refusal did.
 //
 // Runs on every host. The format now comes from the TARGET TRIPLE rather than
-// from `mcpp::platform::is_windows`, which is what makes a Windows contract
+// from `mcpplibs::os::is_windows`, which is what makes a Windows contract
 // assertable on the Linux runner that reviews most of these changes.
 namespace {
 
@@ -1896,7 +1891,7 @@ TEST(NinjaBackendPeRuntime, CrtWordIsOneWordEqualOnCompileAndLink) {
             // whatever the plan's TARGET triple says, so the link-line half
             // of this property is checkable only on a Windows-built mcpp —
             // see the Windows e2e leg (814) for that half.
-            if constexpr (mcpp::platform::is_windows) {
+            if constexpr (mcpplibs::os::is_windows) {
                 if (row.compiler == mcpp::toolchain::CompilerId::Clang) {
                     EXPECT_EQ(count_occurrences(flags.ld, want), 1u) << flags.ld;
                     EXPECT_EQ(flags.ld.find(other), std::string::npos);

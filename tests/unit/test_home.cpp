@@ -2,8 +2,10 @@
 #include <cstdlib>
 
 import std;
+import mcpp.invocation;
 import mcpp.home;
-import mcpp.platform;
+import mcpplibs.os.platform;
+import mcpplibs.os.windows;
 import mcpp.toolchain.stdmod;
 import mcpp.config;
 import mcpp.libs.toml;
@@ -13,32 +15,10 @@ namespace {
 // Set/restore an environment variable for the duration of a test.
 class ScopedEnv {
 public:
-    ScopedEnv(std::string name, const char* value) : name_(std::move(name)) {
-        if (const char* old = std::getenv(name_.c_str()); old) {
-            had_ = true;
-            old_ = old;
-        }
-        apply(value);
-    }
-    ~ScopedEnv() { apply(had_ ? old_.c_str() : nullptr); }
-
-    ScopedEnv(const ScopedEnv&) = delete;
-    ScopedEnv& operator=(const ScopedEnv&) = delete;
-
+    ScopedEnv(std::string name, const char* value)
+        : inner_(std::move(name), value ? std::optional<std::string>(value) : std::nullopt) {}
 private:
-    void apply(const char* value) {
-#if defined(_WIN32)
-        // _putenv_s with "" removes the variable on Windows.
-        ::_putenv_s(name_.c_str(), value ? value : "");
-#else
-        if (value) ::setenv(name_.c_str(), value, 1);
-        else       ::unsetenv(name_.c_str());
-#endif
-    }
-
-    std::string name_;
-    bool        had_ = false;
-    std::string old_;
+    mcpp::invocation::ScopedEnv inner_;   // stated for this invocation, as mcpp states its own
 };
 
 }  // namespace
@@ -173,7 +153,7 @@ TEST_F(HomeSelection, ExistingHomeNeedsForceAndChangingItKeepsBothDataTrees) {
     ASSERT_TRUE(mcpp::home::save(*selected));
     EXPECT_TRUE(std::filesystem::exists(original / "config.toml"));
     EXPECT_TRUE(std::filesystem::exists(target / "sentinel"));
-    EXPECT_EQ(std::string(std::getenv("MCPP_HOME")), mcpp::home::spelling(original));
+    EXPECT_EQ(mcpp::invocation::get("MCPP_HOME").value_or(""), mcpp::home::spelling(original));
     const auto restored = mcpp::home::inspect(original);
     ASSERT_TRUE(restored);
     EXPECT_EQ(restored->previous, std::filesystem::weakly_canonical(original));
@@ -225,8 +205,8 @@ TEST_F(HomeSelection, MissingUserDirectoryCannotPublishALocatorInTheWorkingDirec
 
 
 TEST_F(HomeSelection, UnicodeLocatorRoundTripDoesNotNarrowTheSelectedPath) {
-    if constexpr (mcpp::platform::is_windows) {
-        const auto acp = mcpp::platform::windows::active_code_page();
+    if constexpr (mcpplibs::os::is_windows) {
+        const auto acp = mcpplibs::os::windows::code_page();
         ASSERT_NE(acp, 0u);
         if (acp == 65001)
             GTEST_SKIP() << "UTF-8 ACP cannot prove the legacy-code-page path conversion boundary; "
