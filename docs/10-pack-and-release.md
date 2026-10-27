@@ -55,21 +55,34 @@ when glibc is actually required. Read the `/proc/self/exe` note below before
 choosing it: launching through a bundled loader changes what the program sees
 about itself.
 
-## Two axes: target (libc) × mode (bundling depth)
+## Three axes and legs
 
-Distribution is two orthogonal choices:
+A pack is decided by three independent choices and a set of legs (2026.10.27.1+):
 
-- **libc / static** — a *build-target* property: `--target …-linux-gnu` (glibc)
-  vs `--target …-linux-musl` (musl, static). `--target …-musl` implies `static`.
-- **bundling depth** — a *pack* property: how much of the shared-lib closure
-  travels with the artifact. This is what `--mode` selects.
+| Axis | Option | Question | Values |
+|---|---|---|---|
+| linkage | `--linkage` | are the libraries inside the program or beside it | `static`, `shared` |
+| closure | `--mode` | what the machine that runs the package provides | `system`, `vendored` (default), `self-contained` |
+| container | `--pkg-format` | what is delivered | `tar` (default), `dir`, `zip`, `single-file`, a format a package provides |
+| legs | `--target`, repeatable | which targets one package covers | triples |
+
+- **Linkage** is a property of the program, built as `[build] dependency_linkage`
+  states it. On Linux `--linkage static` selects the `<arch>-linux-musl` row and
+  produces a fully static program; `--target …-linux-musl` implies it. On an ok
+  image it is one `.oke` with no `.okso`.
+- **Closure** is a property of the package: how much of the shared-library
+  closure travels with the program. `--mode static` is shorthand for
+  `--linkage static --mode self-contained`.
+- **Container** is the shape of the delivery, described below.
+- **Legs**: each `--target` is one build, staged into the same tree. A platform
+  that declares `universal = true` covers all of its targets by default.
 
 | Mode | Host must provide | Size | Use case |
 |---|---|---|---|
 | `system` | every `.so` (incl. third-party) | smallest | `.deb`/`.rpm`, same-distro fleet (pkg manager declares deps) |
 | `vendored` (default) | libc / libstdc++ / loader | +a few MB | Mainstream distros (Ubuntu 22+, Debian 12+, RHEL 9+) |
 | `self-contained` | nothing | +30–50 MB | Any Linux incl. older glibc; bundles closure + `run.sh` wrapper |
-| `static` | nothing (single file) | +5–10 MB | musl; matching Linux x86_64 or aarch64 host, Docker scratch, Alpine |
+| `static` (`--linkage static --mode self-contained`) | nothing (single file) | +5–10 MB | musl; matching Linux x86_64 or aarch64 host, Docker scratch, Alpine |
 
 How to choose:
 
@@ -87,6 +100,16 @@ platform's standard interpreter. `system` is not "keep whatever the build had";
 it is "the target provides everything", which is a statement about the target
 and cannot be spelled with this machine's absolute paths. e2e 215 sweeps every
 ELF in the bundle for anything under `$MCPP_HOME` and fails on a hit.
+
+A combination that cannot hold is refused before anything compiles, naming both
+choices:
+
+| Combination | Remedy |
+|---|---|
+| `--pkg-format single-file` with `--mode system` | `--mode vendored` or `self-contained`: a single file carries what it runs |
+| several `--target` for an executable outside a universal package | one pack per target, then `--merge` |
+| `--systems` on anything but a self-contained universal package | `--mode self-contained`: only a package that carries its loader differs per system |
+| a dispatched format for a `lib` or `shared` target | the library route, [12](12-binary-distribution.md) |
 
 ### A program that needs the HOST to provide something
 
@@ -144,32 +167,42 @@ follow the rename: `vendored` → no suffix, `self-contained` → `-bundle-all`,
 ## Commands
 
 ```bash
-mcpp pack                          # vendored by default
+mcpp pack                                        # vendored by default
 mcpp pack --mode system
 mcpp pack --mode static
-mcpp pack --mode self-contained        # alias: --mode bundle-all
-mcpp pack --target x86_64-linux-musl   # equivalent to --mode static
-mcpp pack --target aarch64-linux-musl  # ARM64 equivalent
-mcpp pack --format dir                 # output as a directory, no tarball
-mcpp pack --format appimage             # a format a package in the graph provides
-mcpp pack -o myapp.tar.gz              # filename only: lands at target/dist/myapp.tar.gz
-mcpp pack -o /abs/path/myapp.tar.gz    # includes a directory: output to the literal path
-mcpp pack --profile dev                # build with a different profile (default: release)
-mcpp pack --dev                        # the same, as `build` and `run` spell it; --profile wins over it
-mcpp pack --message-format json        # one mcpp.pack envelope on stdout (mcpp 2026.9.16.1+)
-mcpp pack --no-strip                   # ship the artifacts as built
-mcpp pack -p app --format release      # a workspace member, as if run in its directory
-mcpp pack --workspace --format release # every member with a program, planned and built once
-mcpp pack -p cli -p gui -o dist/       # two members, each archive below dist/
-mcpp pack --debug-symbols dbg/         # write the separated *.debug files under dbg/
-mcpp pack --format msi --features installer   # activate root-package features for the pack
+mcpp pack --mode self-contained                  # alias: --mode bundle-all
+mcpp pack --target x86_64-linux-musl             # equivalent to --mode static
+mcpp pack --target aarch64-linux-musl            # ARM64 equivalent
+mcpp pack --pkg-format dir                       # output as a directory, no tarball
+mcpp pack --pkg-format appimage                  # a format a package in the graph provides
+mcpp pack -o myapp.tar.gz                        # filename only: lands at target/dist/myapp.tar.gz
+mcpp pack -o /abs/path/myapp.tar.gz              # includes a directory: output to the literal path
+mcpp pack --profile dev                          # build with a different profile (default: release)
+mcpp pack --dev                                  # the same, as `build` and `run` spell it; --profile wins over it
+mcpp pack --message-format json                  # one mcpp.pack envelope on stdout (mcpp 2026.9.16.1+)
+mcpp pack --no-strip                             # ship the artifacts as built
+mcpp pack -p app --pkg-format release            # a workspace member, as if run in its directory
+mcpp pack --workspace --pkg-format release       # every member with a program, planned and built once
+mcpp pack -p cli -p gui -o dist/                 # two members, each archive below dist/
+mcpp pack --debug-symbols dbg/                   # write the separated *.debug files under dbg/
+mcpp pack --pkg-format msi --features installer  # activate root-package features for the pack
+mcpp pack --linkage static                       # the libraries inside the program
+mcpp pack --pkg-format single-file               # one executable file
+mcpp pack --pkg-format tar --compress zstd       # .tar.zst
+mcpp pack --target x86_64-openkal                # a universal package: every architecture of the platform
+mcpp pack --target x86_64-openkal --mode self-contained --systems linux,macos,windows
+mcpp pack --merge a.zip b.zip -o all.zip         # one tree from packages built on several machines
 ```
+
+`--format` is accepted on `pack` and `run` as the earlier spelling of
+`--pkg-format` and prints a warning (2026.10.27.1+). On every other command
+`--format` is the output encoding (`--format json`).
 
 `--features <LIST>` (mcpp 2026.9.15.2+) activates root-package features for every
 build pass the pack performs: each `--target` leg, and both passes of a dispatched
 format. It is the value `mcpp build --features` takes, so a host tool needed only for
 one distribution is declared under `[feature-deps.<f>]` with `tools = [...]` and built
-only by the pack that names `<f>`. `mcpp run --format <name> --features <LIST>` hands
+only by the pack that names `<f>`. `mcpp run --pkg-format <name> --features <LIST>` hands
 the same features to the pack it performs.
 
 `-p <member>` (mcpp 2026.9.28.3+) packs a workspace member from the workspace
@@ -185,7 +218,7 @@ A pack states the build it performs as `mcpp build` states one (mcpp
 2026.10.1.2+): a line for each package that does work, the status row while it
 runs, and `Finished` before the first `Packing` line. A pack over several
 configurations builds every configuration first and writes one `Finished`. The
-second pass of a dispatched `--format` is stated in the same way, and its
+second pass of a dispatched `--pkg-format` is stated in the same way, and its
 `Distributing` and `Packed` lines follow it. The build runs `[build] jobs`
 compiles at once, as every command that compiles does. Before 2026.10.1.2 the
 build of a pack wrote none of this, and a pack that recompiled for minutes
@@ -199,9 +232,9 @@ planned as one selection and built once, and each is then staged, and packed, in
 a tree of its own:
 
 ```bash
-mcpp pack --workspace --format release          # every member with a program
+mcpp pack --workspace --pkg-format release          # every member with a program
 mcpp pack --workspace --exclude updater         # every such member but one
-mcpp pack -p cli -p gui --format release
+mcpp pack -p cli -p gui --pkg-format release
 ```
 
 Packing each member with its own `mcpp pack -p <member>` plans the graph, runs
@@ -218,7 +251,7 @@ What each member receives is what `mcpp pack -p <member>` gives it:
   packed alone, below its own `target/dist/`. With `--output <dir>` it is written
   below the directory, which is created when it is missing, under the name it has
   by default.
-- **A staged tree of its own.** With a dispatched `--format`, the pack prepares
+- **A staged tree of its own.** With a dispatched `--pkg-format`, the pack prepares
   twice, as above, and the second pass tells each build program the staged tree
   of the member it acts for. `mcpp::pack_stage_dir()` and `${mcpp.stage_dir}`
   answer per member. A program acts for the member it belongs to; a package that
@@ -250,7 +283,7 @@ packs them all.
 | more than one `--target` | a program is built for one target, and the several-target Android pack stages the legs of one member |
 | `--output` that exists as a file | each member's archive or tree is written below the directory |
 | a member named with `-p` that has no program target | there is nothing to pack for it |
-| with a dispatched `--format`, a member no provider acts for | the format is provided by a package the member does not reach, or by a package several members reach |
+| with a dispatched `--pkg-format`, a member no provider acts for | the format is provided by a package the member does not reach, or by a package several members reach |
 | two members that would write one archive or tree | `--output` names one directory, and two packages of one name, version and target share an archive name |
 
 A package with a build program that provides a format for several members cannot
@@ -261,39 +294,38 @@ one at a time.
 `--message-format json` (mcpp 2026.9.16.1+) prints one `mcpp.pack` envelope on
 stdout after the command finishes and sends every human line to stderr. Its
 `data.artifacts` holds each produced file or directory with its absolute path,
-its `type` (`file` or `directory`), the `--format` value and the triples of its
+its `type` (`file` or `directory`), the `--pkg-format` value and the triples of its
 legs; `data.stage` holds the staged tree, its manifest and whether the closure
 was walked ([50 — Machine Output](50-machine-output.md)). A pack of several
 members lists every member's artifacts, each naming its `member`, leaves
 `data.stage` null and names one tree per member in `data.stages`
-(2026.10.1.1+). `--format` names the
+(2026.10.1.1+). `--pkg-format` names the
 package format on this command, so machine output is asked for the way
 `mcpp test` asks for it.
 
-### `--format` owns one axis, and the engine owns two of its values
+### `--pkg-format` owns one axis, and the engine owns four of its values
 
-`tar` and `dir` answer the same question `msi` and `appimage` answer — what
-shape does the output take — so they are values of one flag rather than the
-beginning of a second one. The split between what the engine holds and what a
-package holds is:
+`tar`, `dir`, `zip` and `single-file` answer the same question `msi` and
+`appimage` answer — what shape the output takes — so they are values of one
+flag. The split between what the engine holds and what a package holds is:
 
-> **`mcpp pack` owns the mechanism and the one universal format. Every other
-> format lives in a package, and `mcpp pack` dispatches to it.**
+> **`mcpp pack` owns the mechanism and the formats that need no other release:
+> a tree, an archive and a single file. Every other format lives in a package,
+> and `mcpp pack` dispatches to it.**
 
-The universal format is what it already produces: an archive that extracts and
-runs. It is universal in the only sense that matters here — it needs no
-knowledge of anyone else's release. Everything past it does. dpkg's control
+Those four extract, or start, and run, and need no knowledge of anyone else's
+release. Everything past it does. dpkg's control
 fields, AppImage's runtime, WiX's schema, Apple's notarisation, Android's
 signing scheme: each one bound into the engine would couple an mcpp release to
 a release mcpp does not control. The same argument the project already made for
 languages, where Slang is supported without being named in the engine.
 
-So the value set is open (mcpp 2026.9.11.1+). `--format <name>` finds the
+So the value set is open (mcpp 2026.9.11.1+). `--pkg-format <name>` finds the
 package in the resolved graph that declares `<name>` and hands it the staged
 tree; an unknown value names what *is* available rather than a fixed list:
 
 ```
-error: unknown --format 'bogus'.
+error: unknown --pkg-format 'bogus'.
   available in this build: tar, dir, appimage
   A format past `tar` and `dir` comes from a package in the resolved graph, which declares
   it with `mcpp::provides_pack_format("<name>")` in its build program. Add the package
@@ -311,7 +343,7 @@ A dispatched format applies to a **program** target — `kind = "app"` included,
 on every row, whatever file that row links it to (see
 [04 §2.2](04-mcpp-toml.md)). A library package ships an interface plus
 prebuilt binaries per triple and has no single staged tree, so
-`mcpp pack <lib> --format <name>` is refused rather than ignored.
+`mcpp pack <lib> --pkg-format <name>` is refused rather than ignored.
 
 **A `kind = "app"` target whose artifact is a shared object accepts more than
 one `--target`** (mcpp 2026.9.13.2+): on every Android row an application
@@ -334,18 +366,18 @@ when it includes a directory (relative or absolute), the literal path is used.
 
 For the full set of options, see `mcpp pack --help`.
 
-### `mcpp run --format <name>` (mcpp 2026.9.12.3+)
+### `mcpp run --pkg-format <name>` (mcpp 2026.9.12.3+)
 
 ```bash
-mcpp run --target x86_64-linux-android --format apk
-mcpp run --target aarch64-ios-sim      --format app
+mcpp run --target x86_64-linux-android --pkg-format apk
+mcpp run --target aarch64-ios-sim      --pkg-format app
 ```
 
-`--format` is the same flag `mcpp pack` takes, and reused here for the case a
+`--pkg-format` is the same flag `mcpp pack` takes, and reused here for the case a
 plain `mcpp run` cannot reach: an Android application is a `.apk` and an
 installed iOS application a `.app`, and neither is the link output `mcpp run`
-executes by default. `mcpp run --format <name>` packs the target for `<name>`
-— the same two passes and staged tree as `mcpp pack --format <name>` — and
+executes by default. `mcpp run --pkg-format <name>` packs the target for `<name>`
+— the same two passes and staged tree as `mcpp pack --pkg-format <name>` — and
 then runs the artifact the pack reported, through the runner resolved for a
 program: the project's `[target.<triple>] runner`, then a dependency's
 `mcpp::runner(...)`, then the payload descriptor's.
@@ -355,7 +387,7 @@ The artifact a pack reports is the request's **terminal** one: among the
 action consumes. A provider is often a chain (`dist-apk`: link, add the
 libraries, align, sign), and every output in it is verified to exist, but only
 the last is the distributable and only it is printed as `Packed`. A format
-whose chain ends in two files is refused by `mcpp run --format`, naming both,
+whose chain ends in two files is refused by `mcpp run --pkg-format`, naming both,
 because a runner takes one operand.
 
 A format may report many outputs, one per file of a distribution tree. Up to
@@ -365,10 +397,10 @@ files)`), and `--verbose` prints every one (2026.9.29.5+).
 `--message-format json` lists every output in either case.
 
 An unknown `<name>` is refused naming the format set the resolved graph
-provides, the same set `mcpp pack --format bogus` reports. `--format` together
+provides, the same set `mcpp pack --pkg-format bogus` reports. `--pkg-format` together
 with `--no-runner` is refused — an `.apk` or an installed `.app` cannot be
 executed directly. Running a `kind = "app"` target on a row where its form is
-a library, with no `--format`, is refused naming the flag and that same
+a library, with no `--pkg-format`, is refused naming the flag and that same
 format set. `mcpp test` is unaffected: a test binary is a program on every
 row.
 
@@ -448,7 +480,7 @@ path.
 every library name the closure resolved: the staged path of a library the tree
 carries, `platform` for one the target provides, and `unresolved` for one found
 nowhere (the line format is in [50](50-machine-output.md#the-stage-manifest)).
-When a name is unresolved, `--format tar` and `--format dir` fail naming it,
+When a name is unresolved, `--pkg-format tar` and `--pkg-format dir` fail naming it,
 because a tree without that library does not start where it is installed; a
 dispatched format still receives the tree, with `closure = not-walked`. A
 library the target provides and this machine does not have is named in
@@ -675,7 +707,8 @@ unaffected.
 ### ok images (`<arch>-openkal`): the image, or a program that carries it
 
 An ok image runs through `okrun` on every system of its architecture (see
-[24](24-openkal-cross.md)). The mode keeps its meaning — what the machine that
+[24](24-openkal-cross.md)), and its platform states how it is packed
+([35](35-platforms.md)). The mode keeps its meaning — what the machine that
 runs the package must provide:
 
 | Mode | The package holds | The machine provides |
@@ -683,14 +716,15 @@ runs the package must provide:
 | `system` | `bin/<name>.oke` | `okrun` and every image it names |
 | `vendored` (default) | `bin/<name>.oke` and the `.okso` images it names | `okrun` |
 | `self-contained` | `bin/<name>` — a program of this machine that carries the image as a section (`.oke`, `__OKE,__image`) and runs it through libokrun — and the `.okso` images beside it | nothing |
-| `static` | refused | — |
+| `static` | `bin/<name>`, a program of this machine that carries one static `.oke` | nothing |
 
-The image is not recompiled for `self-contained`: mcpp generates the entry and
-the section, depends on `openkal-run` from the source of the project's
-`openkal-tools`, and packs that program as it packs any other — static (musl)
-on Linux, with only the system's libraries on macOS and Windows. The bytes in
-the section are the `.oke`'s. Another system's program is packed on that
-system.
+`--linkage static` builds the image with no `.okso`. The image is not
+recompiled for `self-contained`: mcpp builds the platform's carrier (`[platform]
+carrier`, a package and its entry source), places the image's bytes in the
+carrier's section, and packs that program as it packs any other — static (musl)
+on Linux, with only the system's libraries on macOS and Windows. Another
+system's program is packed on that system, or by `--systems` in a universal
+package.
 
 ### Android: the application object and its closure under `lib/`
 
@@ -718,6 +752,76 @@ own closure. `--mode` does not apply on this row: the device provides exactly
 the platform libraries, so there is no host set to leave out and no loader to
 carry.
 
+### A universal package (`[platform] universal`)
+
+A platform that declares `universal = true` (openkal-platform does) makes a
+pack of any of its targets cover all of them; `--no-universal` packs the
+selected target alone. One tree serves every system and every architecture of
+the platform:
+
+```
+target/dist/hello-0.1.0-openkal/
+├── bin/hello                    ← POSIX launcher
+├── bin/hello.cmd                ← Windows launcher
+├── lib/x86_64/hello.oke         ← one set of images per architecture
+├── lib/aarch64/hello.oke
+├── libexec/okrun/<os>-<arch>/   ← only with --mode self-contained
+├── share/…                      ← resources, once
+└── mcpp-package.json
+```
+
+The launchers are generated from the platform's `runner`: each picks the
+architecture directory from `uname -m` or `%PROCESSOR_ARCHITECTURE%` and starts
+the runner on the image there, looking first in `libexec/` and then on `PATH`.
+`--systems linux,macos,windows` builds the loader for each system and
+architecture into `libexec/` (the default is this machine's system); a system
+whose SDK payload this machine lacks is refused, naming it. Packages built on
+several machines are joined with `mcpp pack --merge a.zip b.zip …`: legs and
+systems are united, and two files at one path must have the same digest.
+
+### A single-file package
+
+`--pkg-format single-file` delivers one executable file:
+
+| Target and mode | The file | On start |
+|---|---|---|
+| native, `vendored` or `self-contained` | the engine's stub and the staged tree, zstd-compressed | the first run unpacks the tree into the user's cache, and later runs start it from there |
+| native Linux, `--linkage static` | a static stub and the static program | as above, with no system library |
+| ok image, `self-contained` | the platform's carrier and the images of its architecture | the carrier loads the images from memory and writes nothing to disk |
+
+The cache is `$XDG_CACHE_HOME` (else `~/.cache`) on Linux, `~/Library/Caches`
+on macOS and `%LOCALAPPDATA%` on Windows, below a directory named by the
+payload's sha256. The payload's digest is checked before it is unpacked, it is
+unpacked under a temporary name and renamed into place, and an incomplete
+directory is never used.
+
+### `mcpp-package.json`
+
+Every staged tree carries `mcpp-package.json`: the package, its platform, its
+three choices, its legs and systems, how it starts, and each file with its role
+and sha256. A provided format, `--merge` and `mcpp emit xpkg` read it
+([SPEC-014](specs/packaging.md) §4.5):
+
+```json
+{"schema": 1, "name": "hello", "version": "0.1.0", "platform": "mcpplibs.openkal-platform@0.17.1",
+ "linkage": "shared", "mode": "vendored", "legs": ["x86_64-openkal", "aarch64-openkal"], "systems": [],
+ "launch": {"runner": ["okrun", "{}"], "entry": {"x86_64": "lib/x86_64/hello.oke", "aarch64": "lib/aarch64/hello.oke"}},
+ "files": [{"path": "lib/x86_64/hello.oke", "role": "image", "leg": "x86_64-openkal", "sha256": "…"}]}
+```
+
+`mcpp emit xpkg` writes one index entry per system and architecture, or, for a
+universal package, one asset for every system with the loader's package as a
+dependency.
+
+### Compression and signing
+
+`--compress zstd|gzip|xz|none[:level]` (or `[pack] compress`) chooses the
+compression of `tar`; the default is gzip. A `zip` stores its entries
+uncompressed, and the images inside an okb are stored so that the loader maps
+them in place. `[pack] sign = ["<prog>", …, "{}"]` runs once on each program and
+image of the staged tree before the container is written; a failure stops the
+pack.
+
 ## Configuration
 
 Packaging behavior is configured via the `[pack]` section in `mcpp.toml`. The
@@ -726,6 +830,10 @@ common fields are:
 ```toml
 [pack]
 default_mode  = "static"            # override the normal vendored default for bare `mcpp pack`
+linkage       = "shared"            # the default of --linkage
+format        = "tar"               # the default of --pkg-format
+compress      = "zstd"              # the default of --compress
+sign          = ["signtool", "sign", "{}"]   # run on each program and image before the container is written
 strip         = true                # default. false ships the artifacts as built
 debug_symbols = "dist/debug"        # separate the debug info here instead of discarding it
 include       = ["share/**", "config/*.toml"]   # extra files to bundle
@@ -747,15 +855,14 @@ The `static` mode additionally requires a musl toolchain configured under
 `[target.<triple>]`; for the full setup, see the `mcpp.toml` in
 [`examples/03-pack-static`](../examples/03-pack-static/).
 
-## Planned Support
+## Current limitations
 
-Windows DLL bundling beyond the current `.zip` is on the roadmap.
-
-Distribution formats such as `.deb`, `.rpm`, AppImage and `.msi` are **not** on
-this list, and that is a decision rather than an omission: they live in
-packages and reach the user through `--format <name>`, for the reason the
-section above gives. Nothing further needs to join `[pack]`'s built-in modes.
-
-This document evolves alongside the `mcpp pack` implementation; for the latest
-options, refer to `mcpp pack --help`.
+- Distribution formats such as `.deb`, `.rpm`, AppImage and `.msi` come from
+  packages through `--pkg-format <name>`; the engine provides `tar`, `dir`, `zip`
+  and `single-file`.
+- A `zip` stores its entries uncompressed.
+- One file that runs on several systems is not produced; a single-file package
+  serves one system and one architecture.
+- An ELF program's closure is resolved by running its dynamic linker, so a Linux
+  program is not packed from Windows.
 

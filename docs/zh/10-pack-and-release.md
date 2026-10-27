@@ -49,21 +49,32 @@ glibc 专有行为（NSS 查询、`dlopen` 宿主插件）时的首选。
 它之前先读下面 `/proc/self/exe` 一节：经由内置 loader 启动会改变程序对「自己
 在哪」的认知。
 
-## 两条轴：target（libc）× mode（打包深度）
+## 三个维度与构建腿
 
-分发有两项正交的选择：
+一次打包由三个相互独立的选择与一组构建腿决定（2026.10.27.1+）：
 
-- **libc / static** 是一项*构建 target* 属性：`--target …-linux-gnu`（glibc）
-  与 `--target …-linux-musl`（musl，静态）。`--target …-musl` 隐含 `static`。
-- **打包深度** 是一项*pack* 属性：产物随身携带多少共享库闭包，由 `--mode`
-  选择。
+| 维度 | 选项 | 回答的问题 | 取值 |
+|---|---|---|---|
+| 链接 | `--linkage` | 库在程序里，还是在程序旁边 | `static`、`shared` |
+| 闭包 | `--mode` | 运行该包的机器提供什么 | `system`、`vendored`（默认）、`self-contained` |
+| 容器 | `--pkg-format` | 交付成什么 | `tar`（默认）、`dir`、`zip`、`single-file`、某个包提供的格式 |
+| 腿 | `--target`，可重复 | 一个包覆盖哪些目标 | 三元组 |
+
+- **链接**是程序的属性，按 `[build] dependency_linkage` 构建。Linux 上 `--linkage static`
+  选择 `<arch>-linux-musl` 行，产出全静态程序；`--target …-linux-musl` 隐含它。ok 映像上
+  它是一个 `.oke`、没有 `.okso`。
+- **闭包**是包的属性：共享库闭包中有多少随程序携带。`--mode static` 是
+  `--linkage static --mode self-contained` 的简写。
+- **容器**是交付的形状，见下文。
+- **腿**：每个 `--target` 是一次构建，暂存进同一棵树。声明了 `universal = true` 的平台
+  缺省覆盖它的全部目标。
 
 | Mode | 宿主必须提供 | 体积 | 使用场景 |
 |---|---|---|---|
 | `system` | 每一个 `.so`（含第三方） | 最小 | `.deb`/`.rpm`，同发行版机群（由包管理器声明依赖） |
 | `vendored`（默认） | libc / libstdc++ / loader | +几 MB | 主流发行版（Ubuntu 22+、Debian 12+、RHEL 9+） |
 | `self-contained` | 无 | +30–50 MB | 任意 Linux，含较旧的 glibc；携带闭包与 `run.sh` wrapper |
-| `static` | 无（单文件） | +5–10 MB | musl；架构匹配的 Linux x86_64 或 aarch64，Docker scratch，Alpine |
+| `static`（`--linkage static --mode self-contained`） | 无（单文件） | +5–10 MB | musl；架构匹配的 Linux x86_64 或 aarch64，Docker scratch，Alpine |
 
 如何选择：
 
@@ -80,6 +91,15 @@ glibc 专有行为（NSS 查询、`dlopen` 宿主插件）时的首选。
 机会提供一切」这一断言 —— 这是关于目标机的陈述，不可能用本机的绝对路径拼出
 来。e2e 215 会扫描 bundle 里每一个 ELF，查找任何落在 `$MCPP_HOME` 之下的路径，
 命中即失败。
+
+不能成立的组合在任何编译之前被拒绝，消息写出两个选择：
+
+| 组合 | 出路 |
+|---|---|
+| `--pkg-format single-file` 与 `--mode system` | `--mode vendored` 或 `self-contained`：单文件携带它所运行的东西 |
+| 通用包之外、对一个可执行文件给出多个 `--target` | 每个目标打一次，再 `--merge` |
+| 自带加载器的通用包之外使用 `--systems` | `--mode self-contained`：只有携带加载器的包随系统不同 |
+| 对 `lib` 或 `shared` 目标使用被分派的格式 | 库的路线，[12](12-binary-distribution.md) |
 
 ### 需要宿主提供某种能力的程序
 
@@ -128,32 +148,41 @@ wire 格式（由 `install.sh` 消费），**不**跟随改名：`vendored` 无�
 ## 命令
 
 ```bash
-mcpp pack                          # vendored by default
+mcpp pack                                        # vendored by default
 mcpp pack --mode system
 mcpp pack --mode static
-mcpp pack --mode self-contained        # alias: --mode bundle-all
-mcpp pack --target x86_64-linux-musl   # equivalent to --mode static
-mcpp pack --target aarch64-linux-musl  # ARM64 equivalent
-mcpp pack --format dir                 # output as a directory, no tarball
-mcpp pack --format appimage             # a format a package in the graph provides
-mcpp pack -o myapp.tar.gz              # filename only: lands at target/dist/myapp.tar.gz
-mcpp pack -o /abs/path/myapp.tar.gz    # includes a directory: output to the literal path
-mcpp pack --profile dev                # build with a different profile (default: release)
-mcpp pack --dev                        # the same, as `build` and `run` spell it; --profile wins over it
-mcpp pack --message-format json        # one mcpp.pack envelope on stdout (mcpp 2026.9.16.1+)
-mcpp pack --no-strip                   # ship the artifacts as built
-mcpp pack -p app --format release      # a workspace member, as if run in its directory
-mcpp pack --workspace --format release # every member with a program, planned and built once
-mcpp pack -p cli -p gui -o dist/       # two members, each archive below dist/
-mcpp pack --debug-symbols dbg/         # write the separated *.debug files under dbg/
-mcpp pack --format msi --features installer   # activate root-package features for the pack
+mcpp pack --mode self-contained                  # alias: --mode bundle-all
+mcpp pack --target x86_64-linux-musl             # equivalent to --mode static
+mcpp pack --target aarch64-linux-musl            # ARM64 equivalent
+mcpp pack --pkg-format dir                       # output as a directory, no tarball
+mcpp pack --pkg-format appimage                  # a format a package in the graph provides
+mcpp pack -o myapp.tar.gz                        # filename only: lands at target/dist/myapp.tar.gz
+mcpp pack -o /abs/path/myapp.tar.gz              # includes a directory: output to the literal path
+mcpp pack --profile dev                          # build with a different profile (default: release)
+mcpp pack --dev                                  # the same, as `build` and `run` spell it; --profile wins over it
+mcpp pack --message-format json                  # one mcpp.pack envelope on stdout (mcpp 2026.9.16.1+)
+mcpp pack --no-strip                             # ship the artifacts as built
+mcpp pack -p app --pkg-format release            # a workspace member, as if run in its directory
+mcpp pack --workspace --pkg-format release       # every member with a program, planned and built once
+mcpp pack -p cli -p gui -o dist/                 # two members, each archive below dist/
+mcpp pack --debug-symbols dbg/                   # write the separated *.debug files under dbg/
+mcpp pack --pkg-format msi --features installer  # activate root-package features for the pack
+mcpp pack --linkage static                       # the libraries inside the program
+mcpp pack --pkg-format single-file               # one executable file
+mcpp pack --pkg-format tar --compress zstd       # .tar.zst
+mcpp pack --target x86_64-openkal                # a universal package: every architecture of the platform
+mcpp pack --target x86_64-openkal --mode self-contained --systems linux,macos,windows
+mcpp pack --merge a.zip b.zip -o all.zip         # one tree from packages built on several machines
 ```
+
+`pack` 与 `run` 接受 `--format` 作为 `--pkg-format` 的旧写法，并打印一条警告（2026.10.27.1+）。
+其他命令上的 `--format` 是输出编码（`--format json`）。
 
 `--features <LIST>`（mcpp 2026.9.15.2+）为打包所执行的每一次构建启用根包
 feature：每一条 `--target` 腿，以及被分派格式的两遍构建。它接受的取值与
 `mcpp build --features` 相同，因此只为某一种发布才需要的宿主工具，可以声明在
 带 `tools = [...]` 的 `[feature-deps.<f>]` 下，只由点名 `<f>` 的那次打包构建
-出来。`mcpp run --format <name> --features <LIST>` 把同样的 feature 交给它
+出来。`mcpp run --pkg-format <name> --features <LIST>` 把同样的 feature 交给它
 执行的那次打包。
 
 `-p <member>`（mcpp 2026.9.28.3+）在工作区根目录打包某个成员：成员的解析方式与其他 `-p`
@@ -165,7 +194,7 @@ feature：每一条 `--target` 腿，以及被分派格式的两遍构建。它�
 
 打包对它所执行的构建的陈述方式与 `mcpp build` 相同（mcpp 2026.10.1.2+）：每个有工作的包
 一行，运行期间显示状态行，并在第一行 `Packing` 之前写出 `Finished`。跨多个配置的打包先构建
-全部配置，只写一次 `Finished`。由包提供的 `--format` 的第二遍以同样方式陈述，其后是
+全部配置，只写一次 `Finished`。由包提供的 `--pkg-format` 的第二遍以同样方式陈述，其后是
 `Distributing` 与 `Packed` 行。构建同时运行 `[build] jobs` 个编译，与每一条会编译的命令相同。
 2026.10.1.2 之前，打包中的构建不写出上述任何内容，重新编译数分钟的打包只显示 `Planning`。
 
@@ -176,9 +205,9 @@ feature：每一条 `--target` 腿，以及被分派格式的两遍构建。它�
 然后每个成员在各自的暂存树中暂存并打包：
 
 ```bash
-mcpp pack --workspace --format release          # 每个有程序的成员
+mcpp pack --workspace --pkg-format release          # 每个有程序的成员
 mcpp pack --workspace --exclude updater         # 除一个之外的每个这样的成员
-mcpp pack -p cli -p gui --format release
+mcpp pack -p cli -p gui --pkg-format release
 ```
 
 对每个成员分别运行 `mcpp pack -p <member>`，每次都会重新规划图、重新运行构建程序、
@@ -190,7 +219,7 @@ mcpp pack -p cli -p gui --format release
 
 - **产物。** 成员的归档或目录，就是它单独打包时得到的那一份，位于它自己的
   `target/dist/` 之下。给出 `--output <dir>` 时，它写在该目录之下（目录不存在时会创建），使用默认的名字。
-- **自己的暂存树。** 使用被分派的 `--format` 时，打包如上所述准备两次，第二遍告诉每个
+- **自己的暂存树。** 使用被分派的 `--pkg-format` 时，打包如上所述准备两次，第二遍告诉每个
   构建程序它所代表的成员的暂存树。`mcpp::pack_stage_dir()` 与 `${mcpp.stage_dir}`
   按成员回答。一个程序代表它所属的成员；只有一个被打包成员依赖到的包（成员所依赖的
   提供者）代表那个成员；被多个被打包成员依赖到的包不代表其中任何一个，它既不会被告知
@@ -214,7 +243,7 @@ mcpp pack -p cli -p gui --format release
 | 多于一个 `--target` | 一个程序只为一个 target 构建，而多 target 的 Android 打包暂存的是一个成员的各条腿 |
 | 已存在且是文件的 `--output` | 每个成员的归档或目录写在该目录之下 |
 | 用 `-p` 点名、却没有程序 target 的成员 | 它没有可打包的东西 |
-| 使用被分派的 `--format` 时，没有任何提供者代表它的成员 | 该格式由成员依赖不到的包提供，或由被多个成员依赖到的包提供 |
+| 使用被分派的 `--pkg-format` 时，没有任何提供者代表它的成员 | 该格式由成员依赖不到的包提供，或由被多个成员依赖到的包提供 |
 | 两个会写同一个归档或目录的成员 | `--output` 只点名一个目录，而名字、版本与 target 相同的两个包共用同一个归档名 |
 
 一个为多个成员提供格式、带构建程序的包，无法同时服务它们：提供者只会得到一棵暂存树。
@@ -223,35 +252,33 @@ mcpp pack -p cli -p gui --format release
 `--message-format json`（mcpp 2026.9.16.1+）在命令结束后于 stdout 上输出一个
 `mcpp.pack` 信封，所有给人看的行都改走 stderr。它的 `data.artifacts` 列出
 产出的每一个文件或目录，带绝对路径、`type`（`file` 或 `directory`）、
-`--format` 取值以及各条腿的三元组；`data.stage` 给出暂存树、它的 manifest，
+`--pkg-format` 取值以及各条腿的三元组；`data.stage` 给出暂存树、它的 manifest，
 以及闭包是否已经走通（见 [50 —— 机器输出](50-machine-output.md)）。对多个成员的
 打包列出每个成员的产物，每一条点名它的 `member`，`data.stage` 为 null，并在
 `data.stages` 中为每个成员给出一棵树（2026.10.1.1+）。这条命令
-上的 `--format` 表示的是包格式，因此机器输出改用 `mcpp test` 请求它的那种
+上的 `--pkg-format` 表示的是包格式，因此机器输出改用 `mcpp test` 请求它的那种
 方式。
 
-### `--format` 只是一根轴，引擎只拥有它的两个取值
+### `--pkg-format` 只是一根轴，引擎拥有它的四个取值
 
-`tar` 与 `dir` 回答的问题，和 `msi` 与 `appimage` 回答的问题是同一个 ——
-输出取什么形状 —— 所以它们是同一个 flag 的不同取值，而不是第二个 flag 的开端。
-引擎持有什么、包持有什么，分界如下：
+`tar`、`dir`、`zip` 与 `single-file` 回答的问题，和 `msi` 与 `appimage` 回答的问题是同一个 ——
+输出取什么形状 —— 所以它们是同一个 flag 的不同取值。引擎持有什么、包持有什么，分界如下：
 
-> **`mcpp pack` 拥有机制，以及那一种通用格式。其余每一种格式都住在某个包里，
-> 由 `mcpp pack` 分派过去。**
+> **`mcpp pack` 拥有机制，以及不依赖任何其他发布的格式：一棵树、一个归档、一个文件。
+> 其余每一种格式都住在某个包里，由 `mcpp pack` 分派过去。**
 
-那种通用格式就是它已经在产出的东西：一个解开即可运行的归档。它「通用」只在这
-里唯一要紧的那个意义上成立 —— 它不需要了解任何别人的发布方式。此外的一切都
+这四种解开或启动即可运行，不需要了解任何别人的发布方式。此外的一切都
 需要。dpkg 的 control 字段、AppImage 的 runtime、WiX 的 schema、Apple 的
 公证、Android 的签名方案：其中任何一个被绑进引擎，都会把一次 mcpp 的发布耦合
 到一次 mcpp 并不控制的发布上。这与本项目已经为语言做过的论证是同一个 ——
 Slang 被支持，而引擎里没有它的名字。
 
-所以取值集合是开放的（mcpp 2026.9.11.1+）。`--format <name>` 在解析后的图里
+所以取值集合是开放的（mcpp 2026.9.11.1+）。`--pkg-format <name>` 在解析后的图里
 找到声明了 `<name>` 的那个包，并把暂存树交给它；一个未知的取值点名的是
 **当下确实可用**的那些，而不是一份固定清单：
 
 ```
-error: unknown --format 'bogus'.
+error: unknown --pkg-format 'bogus'.
   available in this build: tar, dir, appimage
   A format past `tar` and `dir` comes from a package in the resolved graph, which declares
   it with `mcpp::provides_pack_format("<name>")` in its build program. Add the package
@@ -267,7 +294,7 @@ error: unknown --format 'bogus'.
 被分派的格式作用于一个**程序** target —— `kind = "app"` 也不例外，无论这一行
 把它链接成什么文件（见 [04 §2.2](04-mcpp-toml.md)）。库包发布的是一份接口
 加上按三元组给出的预构建产物，没有单独一棵暂存树，所以
-`mcpp pack <库> --format <name>` 会被拒绝，而不是被忽略。
+`mcpp pack <库> --pkg-format <name>` 会被拒绝，而不是被忽略。
 
 **产物是共享目标文件的 `kind = "app"` target 可以接受一个以上的 `--target`**
 （mcpp 2026.9.13.2+）：在每一行 Android 上，应用*就是*平台加载的那个共享库，
@@ -287,17 +314,17 @@ target，第二个 `--target` 依旧被拒绝：为多个三元组打包同一�
 
 完整选项参见 `mcpp pack --help`。
 
-### `mcpp run --format <name>`（mcpp 2026.9.12.3+）
+### `mcpp run --pkg-format <name>`（mcpp 2026.9.12.3+）
 
 ```bash
-mcpp run --target x86_64-linux-android --format apk
-mcpp run --target aarch64-ios-sim      --format app
+mcpp run --target x86_64-linux-android --pkg-format apk
+mcpp run --target aarch64-ios-sim      --pkg-format app
 ```
 
-`--format` 与 `mcpp pack` 用的是同一个 flag，这里复用它是为了覆盖一种普通
+`--pkg-format` 与 `mcpp pack` 用的是同一个 flag，这里复用它是为了覆盖一种普通
 `mcpp run` 够不到的情形：一个 Android 应用程序是一个 `.apk`，一个已安装的 iOS
 应用程序是一个 `.app`，两者都不是 `mcpp run` 默认执行的链接产物。
-`mcpp run --format <name>` 先为 `<name>` 打包 —— 与 `mcpp pack --format
+`mcpp run --pkg-format <name>` 先为 `<name>` 打包 —— 与 `mcpp pack --pkg-format
 <name>` 相同的两遍构建与暂存树 —— 再经由为一个程序解析出的 runner 运行打包
 报出的那个产物：先看项目的 `[target.<triple>] runner`，其次看依赖的
 `mcpp::runner(...)`，再次看载荷描述文件的。
@@ -306,16 +333,16 @@ mcpp run --target aarch64-ios-sim      --format app
 没有被任何其他被引入的动作当作输入的那一个输出。一个提供者常常是一条链
 （`dist-apk`：链接、加库、对齐、签名），链上每个输出都会被核验存在，但只有
 最后一个是发布物，也只有它以 `Packed` 报出。链的末端产出两个文件的格式会被
-`mcpp run --format` 拒绝并点名两者，因为一个 runner 只接受一个操作数。
+`mcpp run --pkg-format` 拒绝并点名两者，因为一个 runner 只接受一个操作数。
 
 一个格式可能报出很多输出，发布目录中的每个文件各一个。不超过八个时逐行打印；更多时按它们
 在共同目录之下所处的条目打印，并附数量（`Packed Release/app (1309 files)`），`--verbose`
 打印全部（2026.9.29.5+）。`--message-format json` 在两种情况下都列出全部输出。
 
 未知的 `<name>` 会被拒绝，点名已解析图提供的格式集合，与
-`mcpp pack --format bogus` 报出的是同一个集合。`--format` 与 `--no-runner`
+`mcpp pack --pkg-format bogus` 报出的是同一个集合。`--pkg-format` 与 `--no-runner`
 同时出现会被拒绝 —— 一个 `.apk` 或一个已安装的 `.app` 无法被直接执行。在
-`kind = "app"` 的形态是一个库的那一行上、不带 `--format` 运行它，同样会被
+`kind = "app"` 的形态是一个库的那一行上、不带 `--pkg-format` 运行它，同样会被
 拒绝，点名该 flag 与同一个格式集合。`mcpp test` 不受影响：测试二进制在每一行
 上都是一个程序。
 
@@ -384,7 +411,7 @@ tarball 的内容包在一个顶层目录里，该目录的名字与 tarball 文
 暂存树旁边的 `<tree>.stage-manifest` 列出闭包解析过的每一个库名：树里携带的
 库给出其暂存路径，目标机自己提供的库记为 `platform`，哪里都找不到的记为
 `unresolved`（行格式见 [50](50-machine-output.md#暂存清单)）。只要有一个名字
-是 unresolved，`--format tar` 与 `--format dir` 就会失败并点名它，因为一棵
+是 unresolved，`--pkg-format tar` 与 `--pkg-format dir` 就会失败并点名它，因为一棵
 缺了这个库的树在安装处无法启动；被分派的格式仍然会收到这棵树，并带上
 `closure = not-walked`。目标机提供、而本机没有的库，写进
 `[pack.bundle-project] also_skip`。不打包任何东西的 mode（`system`、
@@ -591,20 +618,20 @@ dylib 的消费者，其链接所带的 `@loader_path` rpath 本就会查找的�
 
 ### ok 映像（`<arch>-openkal`）：映像本身，或携带它的程序
 
-ok 映像经 `okrun` 在其架构的每个系统上运行（见 [24](24-openkal-cross.md)）。mode
-的含义不变 —— 运行该包的机器必须提供什么：
+ok 映像经 `okrun` 在其架构的每个系统上运行（见 [24](24-openkal-cross.md)），怎样打包由它的平台陈述
+（[35](35-platforms.md)）。mode 的含义不变 —— 运行该包的机器必须提供什么：
 
 | Mode | 包内内容 | 机器需提供 |
 |---|---|---|
 | `system` | `bin/<name>.oke` | `okrun` 与它所需的每个映像 |
 | `vendored`（默认） | `bin/<name>.oke` 与它所需的 `.okso` 映像 | `okrun` |
 | `self-contained` | `bin/<name>`：本机的程序，以段（`.oke`、`__OKE,__image`）携带映像并经 libokrun 运行，旁边是所需的 `.okso` 映像 | 无 |
-| `static` | 拒绝 | — |
+| `static` | `bin/<name>`：本机的程序，携带一个静态 `.oke` | 无 |
 
-`self-contained` 不重新编译映像：mcpp 生成入口与段，依赖与工程的 `openkal-tools`
-同源的 `openkal-run`，再按任何程序的方式打包该程序 —— Linux 上为静态（musl），
-macOS 与 Windows 上只引用系统自带的库。段中的字节即 `.oke` 的字节。其他系统的
-程序在该系统上打包。
+`--linkage static` 构建不带 `.okso` 的映像。`self-contained` 不重新编译映像：mcpp 构建平台的载体
+（`[platform] carrier`，一个包与它的入口源码），把映像的字节放进载体的段，再按任何程序的方式打包该程序 ——
+Linux 上为静态（musl），macOS 与 Windows 上只引用系统自带的库。其他系统的程序在该系统上打包，或在通用包中
+由 `--systems` 构建。
 
 ### Android：应用目标文件与它的闭包在 `lib/` 下
 
@@ -630,6 +657,61 @@ target/dist/myapp-0.1.0-x86_64-linux-android/
 闭包。`--mode` 不适用于这一行：设备恰好提供了平台库，因此既没有可以留给宿主
 的库集合，也没有需要携带的 loader。
 
+### 通用包（`[platform] universal`）
+
+声明了 `universal = true` 的平台（openkal-platform 即是）使它任一目标的打包覆盖其全部目标；`--no-universal`
+只打所选的目标。一棵树服务该平台的每个系统与每个架构：
+
+```
+target/dist/hello-0.1.0-openkal/
+├── bin/hello                    ← POSIX launcher
+├── bin/hello.cmd                ← Windows launcher
+├── lib/x86_64/hello.oke         ← one set of images per architecture
+├── lib/aarch64/hello.oke
+├── libexec/okrun/<os>-<arch>/   ← only with --mode self-contained
+├── share/…                      ← resources, once
+└── mcpp-package.json
+```
+
+启动器由平台的 `runner` 生成：按 `uname -m` 或 `%PROCESSOR_ARCHITECTURE%` 选择架构目录，以该目录中的映像
+启动运行器，先在 `libexec/` 中、再在 `PATH` 上查找运行器。`--systems linux,macos,windows` 为每个系统与架构构建
+加载器放入 `libexec/`（缺省为本机系统）；本机缺少某个系统的 SDK 载荷时拒绝并点名。多台机器打出的包以
+`mcpp pack --merge a.zip b.zip …` 合并：腿与系统取并集，同一路径上的两个文件摘要必须相同。
+
+### 单文件包
+
+`--pkg-format single-file` 交付一个可执行文件：
+
+| 目标与模式 | 文件 | 启动时 |
+|---|---|---|
+| 原生，`vendored` 或 `self-contained` | 引擎的启动桩加 zstd 压缩的暂存树 | 首次运行把树解到用户缓存，之后从那里启动 |
+| 原生 Linux，`--linkage static` | 静态启动桩加静态程序 | 同上，不依赖任何系统库 |
+| ok 映像，`self-contained` | 平台的载体加本架构的映像 | 载体从内存加载映像，不写盘 |
+
+缓存在 Linux 上为 `$XDG_CACHE_HOME`（否则 `~/.cache`），macOS 上为 `~/Library/Caches`，Windows 上为
+`%LOCALAPPDATA%`，其下以载荷的 sha256 命名目录。解压前校验载荷摘要，以临时名解压后原子改名，不完整的目录
+从不使用。
+
+### `mcpp-package.json`
+
+每棵暂存树都带 `mcpp-package.json`：包、它的平台、三个选择、腿与系统、启动方式，以及每个文件的角色与 sha256。
+提供的格式、`--merge` 与 `mcpp emit xpkg` 读取它（[SPEC-014](../specs/packaging.md) §4.5）：
+
+```json
+{"schema": 1, "name": "hello", "version": "0.1.0", "platform": "mcpplibs.openkal-platform@0.17.1",
+ "linkage": "shared", "mode": "vendored", "legs": ["x86_64-openkal", "aarch64-openkal"], "systems": [],
+ "launch": {"runner": ["okrun", "{}"], "entry": {"x86_64": "lib/x86_64/hello.oke", "aarch64": "lib/aarch64/hello.oke"}},
+ "files": [{"path": "lib/x86_64/hello.oke", "role": "image", "leg": "x86_64-openkal", "sha256": "…"}]}
+```
+
+`mcpp emit xpkg` 为每个系统与架构写一个索引条目；通用包则写一个对应所有系统的资产，并以加载器的包为依赖。
+
+### 压缩与签名
+
+`--compress zstd|gzip|xz|none[:level]`（或 `[pack] compress`）选择 `tar` 的压缩；缺省为 gzip。`zip` 的条目
+不压缩存放；okb 中的映像以 stored 存放，使加载器原地映射。`[pack] sign = ["<prog>", …, "{}"]` 在写容器之前
+对暂存树中的每个程序与映像各运行一次；失败使打包停止。
+
 ## 配置项
 
 打包行为通过 `mcpp.toml` 中的 `[pack]` 节配置，常用字段如下：
@@ -637,6 +719,10 @@ target/dist/myapp-0.1.0-x86_64-linux-android/
 ```toml
 [pack]
 default_mode  = "static"            # override the normal vendored default for bare `mcpp pack`
+linkage       = "shared"            # the default of --linkage
+format        = "tar"               # the default of --pkg-format
+compress      = "zstd"              # the default of --compress
+sign          = ["signtool", "sign", "{}"]   # run on each program and image before the container is written
 strip         = true                # default. false ships the artifacts as built
 debug_symbols = "dist/debug"        # separate the debug info here instead of discarding it
 include       = ["share/**", "config/*.toml"]   # extra files to bundle
@@ -658,12 +744,10 @@ force_bundle = ["libfoo.so"]        # bundle even if matched by the PEP 600 list
 参见 [`examples/03-pack-static`](../../examples/03-pack-static/) 中的
 `mcpp.toml`。
 
-## 待支持
+## 当前边界
 
-当前 `.zip` 之外的 Windows DLL 分发方式在规划中。
-
-`.deb`、`.rpm`、AppImage、`.msi` 这些分发格式**不在**这份清单上，而这是一个
-决定而不是一处遗漏：它们住在各自的包里，经由 `--format <name>` 到达用户，
-理由见上一节。`[pack]` 内建的这几种 mode 不需要再添任何新成员。
-
-本文档随 `mcpp pack` 的实现演进；最新选项以 `mcpp pack --help` 为准。
+- `.deb`、`.rpm`、AppImage、`.msi` 等分发格式经 `--pkg-format <name>` 由包提供；引擎提供 `tar`、`dir`、
+  `zip` 与 `single-file`。
+- `zip` 的条目不压缩存放。
+- 不产出在多个系统上运行的单个文件；一个单文件包服务一个系统与一个架构。
+- ELF 程序的闭包由其动态链接器解析，因此不能在 Windows 上打包 Linux 程序。
