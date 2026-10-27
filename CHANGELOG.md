@@ -37,7 +37,8 @@
 - **The host graph's platform.** With `[host] platform` build programs and
   their libraries are compiled as ok images of this machine's architecture,
   with one toolchain on Linux, macOS and Windows, and run by the platform's
-  runner; a platform's own tools are always built natively.
+  runner; a platform's own tools are always built natively. e2e 953; a
+  platform package unrelated to openkal is e2e 952.
 - **Protocol 17** (SPEC-007 R9.10): `link_driver`, `link_input`,
   `link_input_from`, `artifact_name`, `seal` and `run_host`, stated by a
   platform's plugin in the platform phase (`mcpp::phase()` is `"platform"`)
@@ -52,16 +53,42 @@
   with no `--target`, it builds the tests for each of the platform's targets
   and runs those of this machine's architecture.
 - **Packaging along three axes** (SPEC-014; docs/10): `--linkage
-  static|shared` (the program), `--mode system|vendored|self-contained` (what
-  the machine provides; `--mode static` is `--linkage static --mode
-  self-contained`), `--pkg-format` (what is delivered) and the legs
-  (`--target`, repeatable). A platform with `universal = true` packs every
-  architecture into one tree with generated launchers (`--no-universal`,
-  `--systems`, `--merge`); `--pkg-format single-file` delivers one executable;
-  `--compress zstd|gzip|xz|none`; `[pack] linkage`, `format`, `compress`,
-  `sign`; every staged tree carries `mcpp-package.json`; the `mcpp.pack`
-  envelope gains `linkage`, `mode`, `pkgFormat`, `legs`, `systems` and each
-  artifact's `sha256`.
+  static|shared` (the program's dependency linkage; on Linux `static` is the
+  musl row), `--mode system|vendored|self-contained` (what the machine
+  provides; `--mode static` is `--linkage static --mode self-contained`),
+  `--pkg-format tar|zip|dir|single-file|<provided>` (what is delivered; a
+  format left unstated is a zip for a Windows program and a tar elsewhere) and
+  the legs (`--target`, repeatable). Impossible combinations are refused before
+  the build. `[pack] linkage`, `format`, `compress`, `sign` and `universal` are
+  the project's defaults. e2e 954.
+- **Universal packages.** A platform with `universal = true` (openkal-platform)
+  packs every one of its targets into one package, `<name>-<version>-<platform>`,
+  with `lib/<arch>/` per leg and generated launchers (`bin/<name>`,
+  `bin/<name>.cmd`) that pick the machine's architecture and start the
+  platform's runner; `--mode self-contained` adds the runner of each system of
+  `--systems` and each architecture under `libexec/`; `--no-universal` packs the
+  selected target alone. e2e 955.
+- **Single files.** `--pkg-format single-file` writes one executable: for a
+  native program the engine's launcher carrying the staged tree as a zstd
+  frame, extracted once into the user's cache under the payload's sha256 and
+  run from there; for an ok image the platform's carrier running the image
+  from memory, one file per system of `--systems`. e2e 956.
+- **Compression in mcpp's own codecs.** `--compress gzip|zstd|xz|none[:level]`
+  (`.tar.gz`, `.tar.zst`, `.tar.xz`, `.tar`) with zlib, zstd and liblzma as
+  dependencies of mcpp: no compressor is looked for on `PATH`, and an archive
+  is the same bytes on every host. A zip's entries are deflated (`gzip`) or
+  stored (`none`).
+- **`mcpp-package.json` and what reads it.** Every staged tree describes its
+  package: platform, the three choices, legs, systems, how it starts, and each
+  file with its role, leg and sha256. `mcpp pack --merge a --merge b` joins
+  packages written on several machines (legs and systems united, one digest
+  per path); `mcpp emit xpkg --package <archive> --url <prefix>` writes the
+  xim-pkgindex entry, one asset for every system for a universal package with
+  its runner as a dependency. `[pack] sign = [argv]` signs each program, image,
+  library and loader before the container, and each single file. e2e 957.
+- The `mcpp.pack` envelope gains `linkage`, `mode`, `pkgFormat`, `legs`,
+  `systems` and each file artifact's `sha256`. A platform's plugin may provide
+  package formats (`pack-format`, `artifact` actions) in the platform phase.
 - `mcpp.lock` records the packages a platform added with
   `origin = "platform"`; the `plan` event and `result.json` carry
   `configuration.platform` and `hostPlatform`.
