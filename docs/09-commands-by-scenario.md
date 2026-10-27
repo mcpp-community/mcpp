@@ -115,7 +115,7 @@ which selects the compiler for that invocation and writes nothing:
 ```bash
 mcpp test --toolchain llvm@23.1.3
 mcpp run --toolchain gcc@16.1.0
-mcpp pack --toolchain llvm@23.1.3 --format dir
+mcpp pack --toolchain llvm@23.1.3 --pkg-format dir
 ```
 
 For that invocation the option takes the place of `[toolchain] default` in
@@ -129,6 +129,12 @@ build graph names that executable and starts it. After an upgrade, or once the
 executable has moved or been removed, the next `mcpp build` plans the graph
 again and writes the record anew; nothing under `target/` needs to be deleted
 by hand.
+
+`--platform <spec>` and `--host-platform <spec>` select the target's platform
+and the build programs' platform for one invocation in the same way
+(2026.10.27.1+, [35](35-platforms.md)); `--platform none` builds with the
+target's conventions alone, and `mcpp self env --target <triple>` reports the
+configuration a build would use.
 
 ## Explaining a resolution
 

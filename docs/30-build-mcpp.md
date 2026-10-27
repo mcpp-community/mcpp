@@ -181,11 +181,16 @@ int main() {
 | `mcpp::runtime_search_dir(dir)` *(protocol 12)* | `mcpp:runtime-search-dir=<dir>` — see below |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::link_start(symbol)` *(protocol 16)* | `mcpp:link-start=` |
+| `mcpp::link_driver(d)` *(protocol 17)* | `mcpp:link-driver=` — `"lld"` (`ld.lld` itself links) or `"compiler"`; a platform's `link.driver` ([35](35-platforms.md)) |
+| `mcpp::link_input(path)` / `mcpp::link_input_from(as, token)` *(protocol 17)* | `mcpp:link-input=` — a file the link takes, or the output of a program saved as `as` (one token per call); `link.inputs` |
+| `mcpp::artifact_name(kind, pattern)` *(protocol 17)* | `mcpp:artifact-name=` — `"exe"` or `"shared"` and a pattern with `{name}`; `link.exe`, `link.shared` |
+| `mcpp::seal(step, token)` *(protocol 17)* | `mcpp:seal=` — one token of seal step `step`, run on the linked file (`{}`) before it is published; `link.seal` |
+| `mcpp::run_host(h)` *(protocol 17)* | `mcpp:run-host=` — `"same-arch"` or `"any"`; `runner.host` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` — see below |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | the payload directory of a package declared in `[xlings.workspace]` — by this manifest, or by a dependency compiled into this build program *(2026.9.6.6+)*; `""` when it was not declared or is not installed (see below) |
 | `mcpp::xpkg_source(ns, name)` / `mcpp::xpkg_program(ns, name)` *(protocol 15)* | where that payload comes from — `payload`, `override`, `pending`, or `""` — and the program an override named |
 | `mcpp::xpkg_request(ns, name)` / `mcpp::xpkg_pending()` *(protocol 15)* | the directory of a payload declared `provision = "on-request"`, asking for it when it is not installed yet; `xpkg_pending()` is then true and the program should return (see below) |
-| `mcpp::phase()` *(protocol 15)* | `"toolchain"` while a root program states the build toolchain, `"build"` otherwise |
+| `mcpp::phase()` *(protocol 15)* | `"toolchain"` while a root program states the build toolchain, `"platform"` while a platform's `plugin` runs (protocol 17), `"build"` otherwise |
 | `mcpp::decision(subject, from, value, file, line, payload)` *(protocol 15)* | `mcpp:decision=` — record where a tool came from. `mcpp.plugins.tool` states it for every member |
 | `mcpp::toolchain(key, value)` *(protocol 15)* | `mcpp:toolchain=` — state the build toolchain in the toolchain phase. `mcpp.plugins.toolchain` builds the statement |
 | `mcpp::warning(text)` *(2026.8.21.2+)* | `mcpp:warning=` — see below |
@@ -300,7 +305,7 @@ neither one's.
 whichever library of the program makes the call. A program that
 chooses between two runners chooses before it emits either. A runner named
 after a pack format reaches that format's distributable under `mcpp run
---format <name>` ([41 — Reaching a Device](41-devices.md)).
+--pkg-format <name>` ([41 — Reaching a Device](41-devices.md)).
 
 ### Asking instead of declaring: `toolchain_dir` / `sysroot_dir` (2026.8.19.4+)
 
@@ -980,7 +985,7 @@ usual work and all of them are `artifact`: each consumes **link outputs** and
 produces something a user installs. What the engine adds for them is a
 mechanism and no format at all.
 
-`mcpp pack --format <name>` resolves `<name>` through the resolved graph, the
+`mcpp pack --pkg-format <name>` resolves `<name>` through the resolved graph, the
 same way `--target` reaches a triple the engine did not have to know
 individually. `tar` and `dir` remain the archive shapes `mcpp pack` owns;
 everything past them comes from a package.
@@ -1012,7 +1017,7 @@ int main() {
 ```
 
 **Declare unconditionally, submit conditionally.** The declaration is what lets
-the engine answer a question the requesting build cannot: `--format bogus`
+the engine answer a question the requesting build cannot: `--pkg-format bogus`
 names what *is* available, and `--help` says "any format the resolved graph
 provides". Both read the set collected from a pass that asked for nothing. A
 member that declared only when asked still works for its author — they always
@@ -1020,7 +1025,7 @@ pass their own format — and makes the set unknowable for everyone else. mcpp
 refuses a format nothing submitted for, rather than reporting a pack that
 produced no package.
 
-**`mcpp pack --format <name>` prepares twice.** An `artifact` action is a ninja
+**`mcpp pack --pkg-format <name>` prepares twice.** An `artifact` action is a ninja
 edge and the staged tree is produced by mcpp *after* the link, so the tree
 cannot be an input of the pass that built it. The first pass collects the
 declarations and refuses an unknown format before anything is compiled; the
@@ -1036,7 +1041,7 @@ strip policy, the debug-symbol split and `include`/`exclude`. An AppImage, a
 (`.deb`, `.rpm`) owns the re-layout, because which directory a file belongs in
 is that format's knowledge and not the engine's.
 
-`mcpp pack --format dir` writes the same tree to a path and stops, which is how
+`mcpp pack --pkg-format dir` writes the same tree to a path and stops, which is how
 a person inspects what a member will be handed.
 
 **`mcpp pack` reports the artifact actions the request introduced.** An action
@@ -1061,7 +1066,7 @@ reported as up to date.
 files before it resolves the artifact's dependency closure, so the tree can
 exist without a complete one: a closure with a name that resolves to no file
 the tree can carry (2026.9.14.2+), or a non-PE, non-Mach-O artifact packed from
-a Windows host. `--format tar` and `--format dir` fail the command in that
+a Windows host. `--pkg-format tar` and `--pkg-format dir` fail the command in that
 case, since the archive IS the closure; a dispatched format receives the tree
 regardless, with a second manifest line, `reason = <why>`. The `needs` lines
 that follow the header state each needed name and what satisfies it
@@ -1085,7 +1090,7 @@ none to rely on), and the only interpolations are a closed set:
 | `${mcpp.bin_dir}` | where produced binaries land: `bin/`, or, for an action a workspace member's build program declares, that member's product directory (2026.9.29.4+) |
 | `${mcpp.compile_db}` | path to `compile_commands.json` (what clang-tidy's `-p` wants) |
 | `${mcpp.target_file:<name>}` | the built file of target `<name>` |
-| `${mcpp.stage_dir}` *(2026.9.11.1+)* | the tree `mcpp pack` staged, absolute. `artifact` role only, and only under `mcpp pack --format <name>` |
+| `${mcpp.stage_dir}` *(2026.9.11.1+)* | the tree `mcpp pack` staged, absolute. `artifact` role only, and only under `mcpp pack --pkg-format <name>` |
 | `${mcpp.self}` *(2026.9.13.1+)* | the engine's own executable, absolute. An action's command is an argv with no shell, so a build program has no portable way to copy a file; the engine is present wherever a build runs, and `${mcpp.self} stage --verify content --output <dst> <src>` copies one file, creates the destination's parent, and writes only when the bytes differ. That argument shape is a contract from 2026.9.13.1 on; a build program that names it declares that release as its floor |
 
 Every path a `${mcpp.*}` token expands to is spelled with **forward slashes**.
@@ -1346,7 +1351,7 @@ The running program receives the build context as `MCPP_*` variables
 | `MCPP_PKG_AUTHORS` *(2026.9.11.1+)* | `mcpp::package_authors()` | The `[package] authors`, joined with `;`. Not `,`: an author entry is conventionally `Name <mail@host>` and a name may carry a comma, so a comma-joined list cannot be split back into the entries it was made from |
 | `MCPP_PKG_REPO` *(2026.9.11.1+)* | `mcpp::package_repo()` | The `[package] repo` |
 | `MCPP_TARGET_MIN_PLATFORM_VERSION` *(2026.9.12.3+)* | `mcpp::min_platform_version()` | The project's floor for this triple, in the platform's own words: on macOS, `[build] macos_deployment_target` or the engine's own default `14.0`; on iOS, `[build] ios_deployment_target` verbatim, empty when the project states none; on `*-linux-android`, `[target.<triple>] min_api_level`, or a fallback the resolved NDK payload states; empty on every other row. The value the effective triple carries, and part of the re-run key |
-| `MCPP_PACK_FORMAT` *(2026.9.11.1+)* | `mcpp::pack_format()` | The `--format` value of the `mcpp pack` pass this program is part of; empty for every ordinary build. The empty value is the one that carries the meaning — a member gates its submission on this, so `mcpp build` has the graph it always had |
+| `MCPP_PACK_FORMAT` *(2026.9.11.1+)* | `mcpp::pack_format()` | The `--pkg-format` value of the `mcpp pack` pass this program is part of; empty for every ordinary build. The empty value is the one that carries the meaning — a member gates its submission on this, so `mcpp build` has the graph it always had |
 | `MCPP_PACK_STAGE_DIR` *(2026.9.11.1+)* | `mcpp::pack_stage_dir()` | Where `mcpp pack` has already staged the closure, absolute; empty when this build is not packaging. Read it to decide the shape of the work; write `${mcpp.stage_dir}` into the action, so the path in the graph and the path the program read cannot disagree |
 | `MCPP_PACK_STRIP` *(2026.9.16.1+)* | `mcpp::pack_strip()` | `1` when the `mcpp pack` pass this program is part of strips, `0` under `--no-strip`; empty for every ordinary build. A member that stages libraries of its own follows it, so one switch governs every file in the package |
 | `MCPP_PACK_DEBUG_SYMBOLS_DIR` *(2026.9.16.1+)* | `mcpp::pack_debug_symbols_dir()` | Where `--debug-symbols` sends the separated `*.debug` files, absolute; empty when they are discarded or the build is not packing |
@@ -1501,7 +1506,7 @@ the content is unchanged, so calling it unconditionally costs no rebuild.
 A `dist-*` member fits neither definition. It does not compile a translation
 unit and it does not run while the build program runs: it consumes link outputs
 and produces something a user installs, through an `artifact` action and
-`mcpp pack --format <name>`. The prefix matters because the taxonomy is
+`mcpp pack --pkg-format <name>`. The prefix matters because the taxonomy is
 load-bearing — a consumer reading `rules-wix` would expect a compiler and a
 translation unit, and there is neither.
 

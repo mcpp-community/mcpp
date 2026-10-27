@@ -110,15 +110,16 @@ practice.
 ## What A Project Writes
 
 ```toml
-[dependencies]
-openkal-llvm-runtime = "0.1.1"
-
-[toolchain]
-default = "llvm@23.1.3"
+[target.'cfg(any(linux, macos, windows))']
+platform = "openkal-platform@0.17.1"
 ```
 
-Two lines. The first selects three layers of the target side; the second names
-a compiler and says nothing about where anything else comes from.
+One table (2026.10.27.1+). It selects the openkal platform for the host triples,
+whose hosted part names the compiler and the packages of three layers of the
+target side; the system's openkal implementation provides the fourth
+([35 — Platforms](35-platforms.md)). Naming `openkal-llvm-runtime` as a
+dependency and `llvm@23.1.3` as `[toolchain] default` states the same by hand,
+and remains valid: the platform leaves a layer to the package that provides it.
 
 Targets are given on the command line:
 
@@ -145,7 +146,7 @@ preprocessor directive is required in the source. A worked example is
 | `openkal-musl` | `c-abi` | musl redirected onto openkal, ported once |
 | `openkal-llvm-runtime` | `compiler-runtime`, `c++-abi` | compiler-rt builtins, libunwind, libc++abi and libc++, configured for openkal-musl |
 
-A project names the last of these. The others follow from its dependencies.
+The platform names the last two, or a project names the last; the others follow from their dependencies.
 
 ## The Reason The Compiler Must Be LLVM
 
@@ -396,8 +397,9 @@ loader runs on every system of that architecture. `okrun` is that loader on
 Linux, macOS and Windows.
 
 ```toml
-[build-dependencies]
-openkal-tools = { version = "0.1.0", tools = ["okld", "okrun"] }
+[package]
+name    = "app"
+version = "0.1.0"
 ```
 
 ```sh
@@ -405,25 +407,30 @@ mcpp build --target x86_64-openkal      # bin/app.oke
 mcpp run   --target x86_64-openkal      # okrun bin/app.oke
 ```
 
-| | the engine's action | the reason |
+Nothing else is declared (2026.10.27.1+): the target table selects
+`openkal-platform` for both rows, and the platform states the toolchain, the
+layers, the tools, the conventions below and the runner ([35](35-platforms.md)).
+
+| | the platform's statement | the reason |
 |---|---|---|
 | compile | `--target=<arch>-unknown-none-elf -fPIC -femulated-tls -fvisibility=hidden -fasynchronous-unwind-tables -Xclang -fstack-clash-protection`; on AArch64 also `-ffixed-x18 -mno-outline-atomics`; `-ffreestanding` when the graph supplies no C library | an image is told no operating system; it does not address the thread pointer and does not use the platform register, which two systems reserve; it exports what its source marks `visibility("default")` |
 | link | `ld.lld -shared -z max-page-size=65536 -z now --gc-sections --eh-frame-hdr`, entry `ok_main`; an image another loads (`kind = "shared"`) is `lib<name>.okso` with its name | ET_DYN, every segment aligned to the largest protection granularity among the systems; what nothing reaches is discarded, so the requirements note names only the interfaces the program uses |
 | finish | `okld note` writes the interfaces the image's strong imports require; `okld check` checks every clause against the image and the `.okso` it needs; only then is `bin/<name>.oke` published | a loader refuses an image that requires an interface the implementation lacks, naming it, and an image that breaks the convention is never published |
 | run | `okrun` is the target's default runner, found among the programs the graph built for this machine, then in declared payloads, then on PATH | the loader holds the openkal implementation; the image carries none |
 
-**The kernel interface is fixed; every layer above it is the graph's.** The
-report reads `kernel-abi openkal (the loader)`. The C library and the C++
-run-time are packages that provide `mcpp:c-abi` and `mcpp:c++-abi` for this
-target (`openkal-musl`, `openkal-llvm-runtime`), and an image with neither is
-legal: it defines `ok_main` itself and supplies `__emutls_get_address`. The
+**The kernel interface is fixed; every layer above it is a package.** The C
+library and the C++ run-time are the packages the platform names
+(`openkal-musl`, `openkal-llvm-runtime`), reported `platform`; a package of the
+graph that provides the layer takes the platform's place. An image with neither
+is legal: `[target.'cfg(platform = "openkal")'.layers]` switches them off, and
+the image defines `ok_main` itself and supplies `__emutls_get_address`. The
 payload's libc++ is not offered, because it was configured for the payload's
 own system; `import std;` without a C++ run-time in the graph is refused before
-anything compiles, naming the packages.
+anything compiles, saying where the layer was switched off.
 
 **Missing `okld` is a refusal, not a warning.** An image linked without its
-requirements note would be refused by every loader; the engine names the
-dependency to add instead.
+requirements note would be refused by every loader; the refusal
+(`platform-tool-absent`) names the package that builds it.
 
 ## Bare Metal
 

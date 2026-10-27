@@ -539,7 +539,7 @@ installed by mcpp · `SDK` the platform's own · `—` unreachable from this hos
 | `x86_64-windows-musl` | Windows by payload; anywhere by graph | no gcc emits PE+musl, and LLVM cannot spell the triple |
 | `aarch64-macos` | macOS | the SDK is the machine's |
 | `*-none-elf` | every host | clang and lld are cross-compilers by construction |
-| `*-openkal` | every host | the same; the image is compiled for no operating system and runs on every system through `okrun` ([24](24-openkal-cross.md)) |
+| `*-openkal` | every host | the same; the image is compiled for no operating system and runs on every system through `okrun` ([24](24-openkal-cross.md)); the target table selects `openkal-platform` for both rows ([35](35-platforms.md)) |
 | `wasm32-emscripten`, `*-linux-android` | every host | the SDK ships its own sysroot and upstream publishes it per host; one archive serves every guest arch |
 
 **A `—` is about payloads, not about possibility.** `host_can_serve` answers

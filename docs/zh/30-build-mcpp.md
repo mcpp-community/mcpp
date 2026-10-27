@@ -165,11 +165,16 @@ int main() {
 | `mcpp::runtime_search_dir(dir)` *(protocol 12)* | `mcpp:runtime-search-dir=<dir>` —— 见下 |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::link_start(symbol)` *(协议 16)* | `mcpp:link-start=` |
+| `mcpp::link_driver(d)` *(协议 17)* | `mcpp:link-driver=` —— `"lld"`（由 `ld.lld` 本身链接）或 `"compiler"`；即平台的 `link.driver`（[35](35-platforms.md)） |
+| `mcpp::link_input(path)` / `mcpp::link_input_from(as, token)` *(协议 17)* | `mcpp:link-input=` —— 链接所取的文件，或一个程序的输出、保存为 `as`（每次调用一个 token）；即 `link.inputs` |
+| `mcpp::artifact_name(kind, pattern)` *(协议 17)* | `mcpp:artifact-name=` —— `"exe"` 或 `"shared"` 与带 `{name}` 的模式；即 `link.exe`、`link.shared` |
+| `mcpp::seal(step, token)` *(协议 17)* | `mcpp:seal=` —— 封装步骤 `step` 的一个 token，在链接出的文件（`{}`）发布之前运行；即 `link.seal` |
+| `mcpp::run_host(h)` *(协议 17)* | `mcpp:run-host=` —— `"same-arch"` 或 `"any"`；即 `runner.host` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` —— 见下 |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | `[xlings.workspace]` 里声明的包的载荷目录 —— 本 manifest 声明的，或编进本构建程序的某个依赖声明的（2026.9.6.6+）；没声明或没安装时返回 `""`（见下） |
 | `mcpp::xpkg_source(ns, name)` / `mcpp::xpkg_program(ns, name)` *(协议 15)* | 该载荷从哪里来 —— `payload`、`override`、`pending` 或 `""` —— 以及一条覆盖点名的程序 |
 | `mcpp::xpkg_request(ns, name)` / `mcpp::xpkg_pending()` *(协议 15)* | 一个声明了 `provision = "on-request"` 的载荷的目录；尚未安装时请求它，此时 `xpkg_pending()` 为真，程序应当返回（见下） |
-| `mcpp::phase()` *(协议 15)* | 根程序陈述构建工具链时为 `"toolchain"`，其余为 `"build"` |
+| `mcpp::phase()` *(协议 15)* | 根程序陈述构建工具链时为 `"toolchain"`，平台的 `plugin` 运行时为 `"platform"`（协议 17），其余为 `"build"` |
 | `mcpp::decision(subject, from, value, file, line, payload)` *(协议 15)* | `mcpp:decision=` —— 记录一个工具从哪里来。`mcpp.plugins.tool` 为每个成员陈述它 |
 | `mcpp::toolchain(key, value)` *(协议 15)* | `mcpp:toolchain=` —— 在工具链阶段陈述构建工具链。`mcpp.plugins.toolchain` 构造该陈述 |
 | `mcpp::warning(text)` *(2026.8.21.2+)* | `mcpp:warning=` —— 见下 |
@@ -263,7 +268,7 @@ for (auto a : {"-machine","virt","-nographic","-no-reboot","-kernel"})
 调用追加到默认 runner，每次 `mcpp::runner(name, tok)` 调用追加到名为 `name` 的
 runner，按发出顺序，无论调用来自这个程序的哪个库。要在两个 runner
 之间选择的程序，在发出任何一个之前完成选择。以打包格式命名的 runner 在
-`mcpp run --format <name>` 下抵达该格式的可分发物（[41 —— 抵达一台设备](41-devices.md)）。
+`mcpp run --pkg-format <name>` 下抵达该格式的可分发物（[41 —— 抵达一台设备](41-devices.md)）。
 
 ### 问，而不是声明：`toolchain_dir` / `sysroot_dir`（2026.8.19.4+）
 
@@ -832,7 +837,7 @@ int main() {
 惯常活计，而它们全都是 `artifact`：每一个都消费**链接产物**，产出用户去安装的东西。
 引擎为它们加的是一套机制，而不是任何一种格式。
 
-`mcpp pack --format <name>` 把 `<name>` 交给解析后的图去解决，方式与 `--target`
+`mcpp pack --pkg-format <name>` 把 `<name>` 交给解析后的图去解决，方式与 `--target`
 够到一个引擎不必逐个认识的三元组相同。`tar` 与 `dir` 仍然是 `mcpp pack` 自己拥有的
 归档形状；此外的一切都来自某个包。
 
@@ -863,13 +868,13 @@ int main() {
 ```
 
 **无条件声明，有条件提交。** 声明是让引擎能回答一个发起请求的那次构建自己回答不了的
-问题：`--format bogus` 要点名**当下确实可用**的那些格式，`--help` 要说「解析后的图
+问题：`--pkg-format bogus` 要点名**当下确实可用**的那些格式，`--help` 要说「解析后的图
 提供的任何格式」。两者读的都是一次「什么格式都没要」的 pass 收集到的集合。一个只在被
 问到时才声明的成员，对它的作者仍然照常工作 —— 作者永远传的是自己那个格式 —— 而对其他
 所有人，这个集合变成不可知的。对一个谁都没为之提交的格式，mcpp 会拒绝，而不是报告一次
 「什么包都没产出」的成功打包。
 
-**`mcpp pack --format <name>` 会 prepare 两次。** 一条 `artifact` action 是一条
+**`mcpp pack --pkg-format <name>` 会 prepare 两次。** 一条 `artifact` action 是一条
 ninja 边，而那棵暂存树是 mcpp 在链接**之后**产出的，所以这棵树不可能成为构建出它自己
 那一次 pass 的输入。第一次 pass 收集声明，并在任何东西被编译之前拒绝未知的格式；随后
 才是构建与暂存；第二次 pass 设上 `pack_format` 与 `pack_stage_dir`，并构建提供方提交
@@ -882,7 +887,7 @@ pass 和那次暂存已经回答过的。
 而要一棵 FHS 树的格式（`.deb`、`.rpm`）自己负责重排布局，因为一个文件该落在哪个目录是
 那个格式的知识，不是引擎的。
 
-`mcpp pack --format dir` 把同一棵树写到一个路径上就停下，这是人去查看一个成员将会拿到
+`mcpp pack --pkg-format dir` 把同一棵树写到一个路径上就停下，这是人去查看一个成员将会拿到
 什么的方式。
 
 **`mcpp pack` 报告的是这次请求**引入**的那些 artifact action。** 一条无论有没有人
@@ -901,8 +906,8 @@ mcpp 会写出 `<暂存树>.stage-manifest` —— 一个兄弟文件，永不�
 **这份 manifest 的第一行是 `closure = walked` 或 `closure = not-walked`。**
 `mcpp pack` 会先暂存程序本身与它声明过的运行期文件，再解析该产物的依赖闭包 —— 所以这棵
 树可以在闭包不完整的情况下存在：闭包里有一个名字解析不到树能携带的文件（2026.9.14.2+）,
-或者在 Windows 宿主上打包一个既非 PE 也非 Mach-O 的产物。`--format tar` 与
-`--format dir` 在这种情况下让命令失败，因为归档本身就是闭包；一个被分发出去的格式无论如何
+或者在 Windows 宿主上打包一个既非 PE 也非 Mach-O 的产物。`--pkg-format tar` 与
+`--pkg-format dir` 在这种情况下让命令失败，因为归档本身就是闭包；一个被分发出去的格式无论如何
 都会拿到这棵树，manifest 上多出第二行 `reason = <原因>`。头部之后的 `needs` 行给出每个
 被需要的名字以及满足它的东西（[50 —— 机器输出](50-machine-output.md)），自行放置库的
 提供方读这些行，而不是从 `lib/` 里推断闭包。
@@ -921,7 +926,7 @@ mcpp 会写出 `<暂存树>.stage-manifest` —— 一个兄弟文件，永不�
 | `${mcpp.bin_dir}` | 产出的二进制所在目录:`bin/`;工作区成员的构建程序声明的 action 中为该成员的产物目录(2026.9.29.4+) |
 | `${mcpp.compile_db}` | `compile_commands.json` 的路径（clang-tidy 的 `-p` 要的就是它） |
 | `${mcpp.target_file:<name>}` | target `<name>` 构建出的文件 |
-| `${mcpp.stage_dir}` *(2026.9.11.1+)* | `mcpp pack` 暂存出的那棵树，绝对路径。仅 `artifact` role 可用，且仅在 `mcpp pack --format <name>` 下可用 |
+| `${mcpp.stage_dir}` *(2026.9.11.1+)* | `mcpp pack` 暂存出的那棵树，绝对路径。仅 `artifact` role 可用，且仅在 `mcpp pack --pkg-format <name>` 下可用 |
 | `${mcpp.self}` *(2026.9.13.1+)* | 引擎自己的可执行文件，绝对路径。action 的命令是没有 shell 的 argv，构建程序因此没有可移植的拷贝手段；引擎在构建运行的每台机器上都在，`${mcpp.self} stage --verify content --output <dst> <src>` 拷贝一个文件、创建目标的父目录、只在字节不同时写入。这个参数形状自 2026.9.13.1 起是契约；写下它的构建程序即以该版本为下限 |
 
 `${mcpp.*}` 展开出的每个路径都用**正斜杠**拼写。token 会被拼进构建程序写下的
@@ -1148,7 +1153,7 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来，缓存
 | `MCPP_PKG_AUTHORS` *(2026.9.11.1+)* | `mcpp::package_authors()` | `[package] authors`，以 `;` 连接。不用 `,`：一条 author 的惯例写法是 `Name <mail@host>`，名字里可能带逗号，以逗号连接的列表无法再切回原来的条目 |
 | `MCPP_PKG_REPO` *(2026.9.11.1+)* | `mcpp::package_repo()` | `[package] repo` |
 | `MCPP_TARGET_MIN_PLATFORM_VERSION` *(2026.9.12.3+)* | `mcpp::min_platform_version()` | 项目对这个三元组的下限，用平台自己的措辞：macOS 上是 `[build] macos_deployment_target` 或引擎自带的默认值 `14.0`；iOS 上是 `[build] ios_deployment_target` 原样给出，项目没写就是空；`*-linux-android` 上是 `[target.<triple>] min_api_level`，或已解析 NDK 载荷给出的回落值；其余每一行都是空。取的是有效三元组携带的那个值，并进入重跑键 |
-| `MCPP_PACK_FORMAT` *(2026.9.11.1+)* | `mcpp::pack_format()` | 本程序所处的这次 `mcpp pack` 的 `--format` 取值；任何普通构建下都为空。承载含义的正是这个空值 —— 成员据此为自己的提交加闸，于是 `mcpp build` 拿到的还是它一直以来的那张图 |
+| `MCPP_PACK_FORMAT` *(2026.9.11.1+)* | `mcpp::pack_format()` | 本程序所处的这次 `mcpp pack` 的 `--pkg-format` 取值；任何普通构建下都为空。承载含义的正是这个空值 —— 成员据此为自己的提交加闸，于是 `mcpp build` 拿到的还是它一直以来的那张图 |
 | `MCPP_PACK_STAGE_DIR` *(2026.9.11.1+)* | `mcpp::pack_stage_dir()` | `mcpp pack` 已经把闭包暂存到的位置，绝对路径；本次构建不在打包时为空。读它来判断这次要干的活是什么形状，而把 `${mcpp.stage_dir}` 写进 action —— 这样图里的路径与程序读到的路径不可能不一致 |
 | `MCPP_PACK_STRIP` *(2026.9.16.1+)* | `mcpp::pack_strip()` | 本程序所处的这次 `mcpp pack` 剥离时为 `1`，`--no-strip` 下为 `0`；任何普通构建下都为空。自己暂存库的成员跟随它，于是一个开关管住包里的每个文件 |
 | `MCPP_PACK_DEBUG_SYMBOLS_DIR` *(2026.9.16.1+)* | `mcpp::pack_debug_symbols_dir()` | `--debug-symbols` 放置分离出的 `*.debug` 文件的位置，绝对路径；丢弃调试信息或本次构建不在打包时为空 |

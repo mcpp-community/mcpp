@@ -211,6 +211,10 @@ Interface and implementation are separate columns. `openkal` is an interface
 and `openkal-windows` an implementation of it; collapsing the two would conceal
 why one source reaches several machines.
 
+The source column reads `graph` for a package the project's graph supplied and
+`platform` for one the target's platform added (2026.10.27.1+,
+[35](35-platforms.md)); a platform's report follows on a `Platform` line.
+
 ## Closure Visibility
 
 The five-layer report above answers "where does each layer come from"; it

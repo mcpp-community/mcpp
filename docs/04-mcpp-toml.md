@@ -249,9 +249,9 @@ platform's contract, not a name mcpp assigns. `exports` (above) applies to an
 `windows_entry` (below) accept `app` exactly as they accept `bin`.
 
 `mcpp run` of an `app` target, on a row where its form is a shared library,
-refuses without `--format`, naming the flag and the formats the resolved
-graph provides. `mcpp pack --format apk` stages the library where the
-closure already places a shared object. See `mcpp run --format` in
+refuses without `--pkg-format`, naming the flag and the formats the resolved
+graph provides. `mcpp pack --pkg-format apk` stages the library where the
+closure already places a shared object. See `mcpp run --pkg-format` in
 [10 — Pack and Release](10-pack-and-release.md).
 
 An engine older than 2026.9.12.3 does not know the value and refuses it,
@@ -1382,11 +1382,10 @@ different argv (`-bios default` for an OpenSBI boot, `-bios none -semihosting`
 for a picolibc image) — and an engine that guesses one is an engine the other
 board has to fight. A board-support package normally supplies it.
 
-The one target whose runner is a property of the target rather than of a
-board is `<arch>-openkal` (2026.10.26.2): an ok image is run by `okrun` on every
-system, so `okrun` is that target's runner when the project declares none. It is
-found as a declared runner's program is, with the programs the dependency graph
-built for this machine (`tools = [...]`) searched first ([24](24-openkal-cross.md)).
+A target configured by a platform takes the platform's runner when the project
+declares none: `<arch>-openkal` is run by `okrun` on every system (2026.10.27.1+,
+[35](35-platforms.md)). It is found as a declared runner's program is, with the
+programs the dependency graph built for this machine searched first.
 
 ### 2.7.3 `runner` on a hosted target (2026.9.2.1+)
 
@@ -1489,6 +1488,36 @@ A runner reached this way receives `MCPP_RUN_TRIPLE`, `MCPP_RUN_KIND` (`exe` /
 when a base is stated, `MCPP_SYSROOT`. Its exit status is the program's. An
 Apple artifact on a host that is not macOS, with no `run_under`, is refused
 before anything is spawned, naming this key.
+
+#### 2.7.3.3 The platform keys (2026.10.27.1+)
+
+`[target.<selector>]` also selects and overrides the target's **platform**, with
+the platform's own key names ([35 — Platforms](35-platforms.md)):
+
+```toml
+[target.'cfg(os = "openkal")']
+platform = "openkal-platform@0.17.1"          # or { path = "…" }, or "none"
+
+[target.'cfg(platform = "openkal")'.layers]
+c-abi = { path = "../openkal-musl" }
+
+[target.'cfg(platform = "openkal")']
+runner = { cmd = ["okrun", "{}"], host = "same-arch", exclusive = false }
+```
+
+| Key | Value |
+|---|---|
+| `platform` | the platform package of the selected targets, `none`, or a table with `path` / `git` |
+| `layers.<layer>` | the package that provides `c-abi`, `c++-abi`, `compiler-runtime` or `kernel-abi`, or `false` |
+| `tools.<name>` | the package that builds a tool for this machine, or `{ program = "<name>" }` |
+| `link` | `driver`, `flags`, `start`, `script`, `inputs`, `exe`, `shared`, `seal` |
+| `carrier` | `{ package, section, main }`: the program `--mode self-contained` builds |
+| `runner` | an argv, or `{ cmd, host, exclusive }`: `host = "same-arch"` runs an artifact only on a machine of its architecture |
+
+`cfg(platform = "<name>")` selects by platform; `platform` itself is not
+accepted under such a selector. The same keys are read from
+`~/.mcpp/config.toml`. A package that is a platform states them under
+`[platform]`, and `[host] platform` selects the platform of the build programs.
 
 ### 2.8 `[features]` — Features
 

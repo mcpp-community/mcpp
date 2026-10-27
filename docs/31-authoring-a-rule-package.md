@@ -346,7 +346,7 @@ A `dist-*` member is neither a rule nor a tool. It does not compile a
 translation unit and it does not do its work while the build program runs: it
 consumes **link outputs** and produces something a user installs — an `.msi`, a
 `.deb`, an AppImage, a signed `.app`. The mechanism is an `artifact` action and
-`mcpp pack --format <name>`, documented in
+`mcpp pack --pkg-format <name>`, documented in
 [30 — Producing a distributable](30-build-mcpp.md#producing-a-distributable-pack_format--stage_dir-20269111).
 
 Everything in this chapter applies unchanged. Six things bind harder here, and

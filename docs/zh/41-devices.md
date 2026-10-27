@@ -84,6 +84,17 @@ monitor = ["probe-rs", "attach", "--chip", "STM32L475VG"]
 被默默应用。同一个名字只允许一个依赖提供，出现第二个是一个点名两个包的
 错误。
 
+runner 也可以是一张表（2026.10.27.1+），陈述产物在哪里运行、运行能否重叠：
+
+```toml
+[target.'cfg(platform = "openkal")']
+runner = { cmd = ["okrun", "{}"], host = "same-arch", exclusive = false }
+```
+
+`host = "same-arch"` 只在产物架构的机器上运行它，其他架构的产物被拒绝并点名 `run_under`；`"any"` 表示
+runner 能从任何机器抵达产物。目标的平台提供它的缺省 runner（[35](35-platforms.md)）；依赖的构建程序、本机的
+`config.toml`、工程与 `MCPP_TARGET_<TRIPLE>_RUNNER` 依次替换它，只写 argv 时保留平台的 `host` 与 `exclusive`。
+
 ## runner 收到的内容
 
 runner 收到一段 argv——它自己的 token，产物路径被追加或替换 `{}`——
@@ -103,7 +114,7 @@ libfw.so<TAB>/abs/project/target/<triple>/<fp>/bin/libfw.so
 第一个字段是相对于产物所在目录的目的路径，分隔符为 `/`；对于在子目录中
 发现的测试程序，它以 `../` 开头。第二个字段是该文件在输出树中的绝对
 路径。两者以 TAB 分隔。每次启动 runner 时这个文件都存在，没有需要携带
-的东西时为空；以 `--format` 运行的可分发物收到的是空文件，因为可分发物
+的东西时为空；以 `--pkg-format` 运行的可分发物收到的是空文件，因为可分发物
 自带其文件。
 
 就地执行产物的 runner 会忽略这个变量。把产物移走的 runner——移到设备、
@@ -112,7 +123,7 @@ libfw.so<TAB>/abs/project/target/<triple>/<fp>/bin/libfw.so
 
 ## 运行一个可分发物
 
-`mcpp run --format <f>` 打包可分发物 `<f>` 并运行它。不带 `--runner`
+`mcpp run --pkg-format <f>` 打包可分发物 `<f>` 并运行它。不带 `--runner`
 时，若图或清单提供了名为 `<f>` 的 runner，就由它抵达，否则由默认
 runner 抵达：
 
@@ -121,12 +132,12 @@ mcpp::runner("app", "<tool>");          // a package names a runner after its fo
 ```
 
 ```bash
-mcpp run --format app                   # through the runner named `app`
-mcpp run --format app --runner other    # a typed --runner still wins
+mcpp run --pkg-format app                   # through the runner named `app`
+mcpp run --pkg-format app --runner other    # a typed --runner still wins
 ```
 
 目录形式的可分发物（例如应用包）不会被直接执行。没有 runner 能抵达它
-时，`mcpp run --format <f>` 会在启动任何东西之前拒绝，退出状态为
+时，`mcpp run --pkg-format <f>` 会在启动任何东西之前拒绝，退出状态为
 `126`，并点名能抵达它的 runner `<f>` 以及本该声明它的清单表。
 
 ## 终止由声明决定，不由推断

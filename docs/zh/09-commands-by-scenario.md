@@ -105,13 +105,17 @@ $ mcpp search imgui
 ```bash
 mcpp test --toolchain llvm@23.1.3
 mcpp run --toolchain gcc@16.1.0
-mcpp pack --toolchain llvm@23.1.3 --format dir
+mcpp pack --toolchain llvm@23.1.3 --pkg-format dir
 ```
 
 对这一次调用，这个选项取代 `mcpp.toml` 中的 `[toolchain] default`，优先级
 与 [20 —— 工具链管理](20-toolchains.md) 给 `MCPP_TOOLCHAIN` 的那一级相同。
 每个工具链构建到它自己的输出目录，一次记录下来的构建只为记录它的那个工具链
 请求重放。
+
+`--platform <spec>` 与 `--host-platform <spec>` 以同样方式为一次调用选择目标的平台与构建程序的平台
+（2026.10.27.1+，[35](35-platforms.md)）；`--platform none` 只以目标的约定构建，
+`mcpp self env --target <triple>` 报告一次构建将使用的配置。
 
 ## 解释一次解析
 

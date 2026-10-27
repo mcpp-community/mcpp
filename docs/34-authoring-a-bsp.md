@@ -125,6 +125,31 @@ something else, and neither has to be known to mcpp.
 cannot overlap, and `mcpp test` then serialises them. A project never has to
 remember `-j1`.
 
+## The board as a platform package
+
+The fields a board's build program states — the link script, the entry, the
+runner and the named runners — are platform fields (2026.10.27.1+,
+[35 — Platforms](35-platforms.md)). A BSP may state the fixed ones in its
+manifest instead and keep the build program for what depends on the selected
+feature:
+
+```toml
+[platform]
+targets = ["thumbv7em-none-eabihf"]
+runner  = ["qemu-system-arm", "-machine", "mps2-an386", "-nographic", "-kernel", "{}"]
+runners = { flash = ["probe-rs", "download", "--chip", "STM32L475VG", "{}"] }
+
+[platform.link]
+script = "cortex-m.ld"
+start  = "Reset_Handler"
+```
+
+A project then selects the board as its target's platform
+(`[target.thumbv7em-none-eabihf] platform = "<bsp>@<version>"`) rather than as
+a dependency. Both forms merge into one statement: a value the build program
+states replaces the manifest's, and a project's `[target.<triple>]` keys replace
+both.
+
 ## Current limitations
 
 - A BSP declares its emulator and its probe driver as payloads, so a board

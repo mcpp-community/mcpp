@@ -107,6 +107,18 @@ test's verdict, the output of a test that failed, the `test result` line and, fo
 collects the report, and `mcpp test 2>&1 | tee test.log` collects both
 ([09 — Commands by scenario](09-commands-by-scenario.md#output-streams)).
 
+**A test finds the package's programs by name** (2026.10.27.1+). `mcpp test` builds
+the package's programs first, as `mcpp build` does, and gives each test
+`MCPP_BIN_<NAME>`: the path of program `<name>`, upper-cased, every character
+other than a letter or a digit written `_` (`MCPP_BIN_MY_TOOL` for `my-tool`).
+A test that runs the program it tests reads it from there.
+
+**A platform package is tested on its targets** (2026.10.27.1+). `mcpp test` in a
+package with a `[platform]` section, with no `--target`, builds the tests for
+each of the platform's `targets` with the package itself as the platform. The
+targets its runner can run on this machine are run; the others are built and
+reported as not run ([35](35-platforms.md)).
+
 ### In a workspace
 
 ```bash

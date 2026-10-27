@@ -92,15 +92,13 @@ SDK，或者区分 `linux`/`windows`/`macos`。那些是 C 环境层或平台层
 ## 工程要写的内容
 
 ```toml
-[dependencies]
-openkal-llvm-runtime = "0.1.1"
-
-[toolchain]
-default = "llvm@23.1.3"
+[target.'cfg(any(linux, macos, windows))']
+platform = "openkal-platform@0.17.1"
 ```
 
-两行。第一行选定目标侧的三个层；第二行命名一个编译器，并且对其余一切来自
-何处只字未提。
+一张表（2026.10.27.1+）。它为宿主三元组选择 openkal 平台，平台的宿主部分命名编译器与目标侧三个层的包；
+第四层由系统自己的 openkal 实现提供（[35 —— 平台](35-platforms.md)）。把 `openkal-llvm-runtime` 写成依赖、
+把 `llvm@23.1.3` 写成 `[toolchain] default` 是同一内容的手写形式，仍然有效：平台把一个层让给提供它的包。
 
 target 在命令行上给出：
 
@@ -126,7 +124,7 @@ mcpp build --target x86_64-windows-gnu
 | `openkal-musl` | `c-abi` | 被重定向到 openkal 上的 musl，只移植过一次 |
 | `openkal-llvm-runtime` | `compiler-runtime`、`c++-abi` | compiler-rt 内建函数、libunwind、libc++abi 与 libc++，为 openkal-musl 配置 |
 
-一个工程命名其中最后一个，其余的由它的依赖推出。
+平台命名其中最后两个，或者工程命名最后一个；其余的由它们的依赖推出。
 
 ## 编译器必须是 LLVM 的原因
 
@@ -350,8 +348,9 @@ wasm-ld: error: obj/main.o: undefined symbol: kal_process_spawn
 由加载器在该架构的每个系统上运行。`okrun` 是 Linux、macOS 与 Windows 上的加载器。
 
 ```toml
-[build-dependencies]
-openkal-tools = { version = "0.1.0", tools = ["okld", "okrun"] }
+[package]
+name    = "app"
+version = "0.1.0"
 ```
 
 ```sh
@@ -359,22 +358,24 @@ mcpp build --target x86_64-openkal      # bin/app.oke
 mcpp run   --target x86_64-openkal      # okrun bin/app.oke
 ```
 
-| | mcpp 的处理 | 原因 |
+无需其他声明（2026.10.27.1+）：目标表为两行选择 `openkal-platform`，由平台陈述工具链、各层、工具、下表的约定
+与 runner（[35](35-platforms.md)）。
+
+| | 平台的陈述 | 原因 |
 |---|---|---|
 | 编译 | `--target=<arch>-unknown-none-elf -fPIC -femulated-tls -fvisibility=hidden -fasynchronous-unwind-tables -Xclang -fstack-clash-protection`；AArch64 另加 `-ffixed-x18 -mno-outline-atomics`；依赖图不提供 C 库时加 `-ffreestanding` | 映像按“无操作系统”编译；不访问线程指针，不使用两个系统保留的平台寄存器；只导出源码标注 `visibility("default")` 的名字 |
 | 链接 | `ld.lld -shared -z max-page-size=65536 -z now --gc-sections --eh-frame-hdr`，入口 `ok_main`；被其他映像加载的映像（`kind = "shared"`）为带名字的 `lib<name>.okso` | ET_DYN，每个段按各系统中最大的保护粒度对齐；丢弃不可达的代码，需求 note 只列出程序实际使用的接口 |
 | 收尾 | `okld note` 由映像的强导入写入所需接口；`okld check` 对映像及其所需的 `.okso` 检查每一条约定；通过后才发布 `bin/<name>.oke` | 加载器拒绝需要实现所缺接口的映像并指名该接口；违反约定的映像不会被发布 |
 | 运行 | `okrun` 是该 target 的默认 runner，依次在依赖图为本机构建的程序、声明的载荷、PATH 中查找 | 加载器持有 openkal 实现，映像不携带实现 |
 
-**内核接口固定，其上每一层来自依赖图。** 报告显示 `kernel-abi openkal (the
-loader)`。C 库与 C++ 运行时是为该 target 提供 `mcpp:c-abi`、`mcpp:c++-abi` 的包
-（`openkal-musl`、`openkal-llvm-runtime`）；两者都没有的映像也合法：它自行定义
-`ok_main` 并提供 `__emutls_get_address`。载荷的 libc++ 为载荷自身的系统配置，不
-提供给映像；依赖图中没有 C++ 运行时时，`import std;` 在编译之前被拒绝，并指名
-提供它的包。
+**内核接口固定，其上每一层都是一个包。** C 库与 C++ 运行时是平台命名的包（`openkal-musl`、
+`openkal-llvm-runtime`），报告为 `platform`；依赖图中提供该层的包取代平台的包。两者都没有的映像也合法：
+`[target.'cfg(platform = "openkal")'.layers]` 关闭它们，映像自行定义 `ok_main` 并提供
+`__emutls_get_address`。载荷的 libc++ 为载荷自身的系统配置，不提供给映像；依赖图中没有 C++ 运行时时，
+`import std;` 在编译之前被拒绝，并指出该层在何处被关闭。
 
-**缺少 `okld` 是拒绝而非警告。** 没有需求 note 的映像会被每个加载器拒绝；引擎
-转而指出应添加的依赖。
+**缺少 `okld` 是拒绝而非警告。** 没有需求 note 的映像会被每个加载器拒绝；拒绝（`platform-tool-absent`）
+指名构建它的包。
 
 ## 裸机
 

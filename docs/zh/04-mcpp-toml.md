@@ -251,9 +251,9 @@ main = "src/main.cpp"
 接受 `app` 的方式也与接受 `bin` 完全相同。
 
 在其形式为共享库的那一行上，`mcpp run` 一个 `app` 目标，若不带
-`--format` 会拒绝执行，并点名这个旗标与所解析出的图提供的那些格式。
-`mcpp pack --format apk` 会把这个库放到闭包已经放置共享对象的位置。见
-[10 —— 打包与发布](10-pack-and-release.md)中的 `mcpp run --format`。
+`--pkg-format` 会拒绝执行，并点名这个旗标与所解析出的图提供的那些格式。
+`mcpp pack --pkg-format apk` 会把这个库放到闭包已经放置共享对象的位置。见
+[10 —— 打包与发布](10-pack-and-release.md)中的 `mcpp run --pkg-format`。
 
 早于 2026.9.12.3 的引擎不认识这个取值，会拒绝并点名它认识的三种：
 
@@ -1279,10 +1279,8 @@ argv（OpenSBI 启动用 `-bios default`，picolibc 镜像用 `-bios none
 -semihosting`）——一个替某一块板子猜一个值的引擎，就是另一块板子必须
 与之对抗的引擎。一个板级支持包通常会提供它。
 
-唯一一个 runner 属于 target 而非板子的 target 是 `<arch>-openkal`
-（2026.10.26.2）：ok 映像在每个系统上都由 `okrun` 运行，因此工程未声明 runner
-时，`okrun` 就是该 target 的 runner。它的查找方式与声明的 runner 程序相同，并
-优先查找依赖图为本机构建的程序（`tools = [...]`）（[24](24-openkal-cross.md)）。
+由平台配置的目标在工程未声明 runner 时使用平台的 runner：`<arch>-openkal` 在每个系统上都由 `okrun` 运行
+（2026.10.27.1+，[35](35-platforms.md)）。它的查找方式与声明的 runner 程序相同，并优先查找依赖图为本机构建的程序。
 
 ### 2.7.3 hosted 目标上的 `runner`（2026.9.2.1+）
 
@@ -1375,6 +1373,33 @@ runner 与 `run_under`。
 (`run` / `test`)、`MCPP_RUN_ID`、`MCPP_RUN_CLOSURE`(一份带版本的 JSON,列出产物、它随带的文件与基座),
 以及陈述了基座时的 `MCPP_SYSROOT`;其退出码即程序的退出码。非 macOS 宿主上的 Apple 产物在没有
 `run_under` 时于执行前被拒绝,拒绝信息点名本键。
+
+#### 2.7.3.3 平台键（2026.10.27.1+）
+
+`[target.<selector>]` 还以平台自己的键名选择并覆盖目标的**平台**（[35 —— 平台](35-platforms.md)）：
+
+```toml
+[target.'cfg(os = "openkal")']
+platform = "openkal-platform@0.17.1"          # or { path = "…" }, or "none"
+
+[target.'cfg(platform = "openkal")'.layers]
+c-abi = { path = "../openkal-musl" }
+
+[target.'cfg(platform = "openkal")']
+runner = { cmd = ["okrun", "{}"], host = "same-arch", exclusive = false }
+```
+
+| 键 | 取值 |
+|---|---|
+| `platform` | 所选目标的平台包、`none`，或带 `path` / `git` 的表 |
+| `layers.<layer>` | 提供 `c-abi`、`c++-abi`、`compiler-runtime` 或 `kernel-abi` 的包，或 `false` |
+| `tools.<name>` | 为本机构建一个工具的包，或 `{ program = "<name>" }` |
+| `link` | `driver`、`flags`、`start`、`script`、`inputs`、`exe`、`shared`、`seal` |
+| `carrier` | `{ package, section, main }`：`--mode self-contained` 构建的程序 |
+| `runner` | 一个 argv，或 `{ cmd, host, exclusive }`：`host = "same-arch"` 只在产物架构的机器上运行它 |
+
+`cfg(platform = "<name>")` 按平台选择；`platform` 本身不能写在这样的选择器下。同样的键也从
+`~/.mcpp/config.toml` 读取。平台包在 `[platform]` 下陈述它们，`[host] platform` 选择构建程序的平台。
 
 ### 2.8 `[features]` —— Feature
 

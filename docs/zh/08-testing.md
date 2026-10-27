@@ -99,6 +99,14 @@ mcpp test -- --verbose    # everything after `--` goes to each test binary
 `mcpp test 2>&1 | tee test.log` 两者都收集
 （见 [09 —— 按场景选命令](09-commands-by-scenario.md#输出流)）。
 
+**测试按名字找到包的程序**（2026.10.27.1+）。`mcpp test` 先按 `mcpp build` 的方式构建包的程序，并给每个测试
+`MCPP_BIN_<NAME>`：程序 `<name>` 的路径，名字转为大写，字母与数字之外的字符写作 `_`（`my-tool` 为
+`MCPP_BIN_MY_TOOL`）。运行被测程序的测试从这里读取它。
+
+**平台包在它的目标上测试**（2026.10.27.1+）。在带 `[platform]` 段的包中执行 `mcpp test` 而不给 `--target` 时，
+以该包本身为平台，为平台的每个 `targets` 构建测试。其 runner 能在本机运行的目标被运行；其余已构建、报告为未运行
+（[35](35-platforms.md)）。
+
 ### 在工作空间中
 
 ```bash

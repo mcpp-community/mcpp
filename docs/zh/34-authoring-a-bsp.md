@@ -112,6 +112,25 @@ int main() {
 **一个探针，一个使用者。** `mcpp::run_exclusive()` 声明这个目标的运行不可
 重叠，`mcpp test` 随后把它们串行化。工程方永远不需要记得加 `-j1`。
 
+## 作为平台包的板子
+
+板子的构建程序陈述的字段——链接脚本、入口、runner 与具名 runner——都是平台的字段（2026.10.27.1+，
+[35 —— 平台](35-platforms.md)）。BSP 可以改在清单中陈述其中固定的部分，构建程序只保留随所选 feature 变化的部分：
+
+```toml
+[platform]
+targets = ["thumbv7em-none-eabihf"]
+runner  = ["qemu-system-arm", "-machine", "mps2-an386", "-nographic", "-kernel", "{}"]
+runners = { flash = ["probe-rs", "download", "--chip", "STM32L475VG", "{}"] }
+
+[platform.link]
+script = "cortex-m.ld"
+start  = "Reset_Handler"
+```
+
+工程随后把这块板子选为目标的平台（`[target.thumbv7em-none-eabihf] platform = "<bsp>@<version>"`），而不是作为依赖。
+两种写法合并为一份陈述：构建程序陈述的值替换清单中的值，工程的 `[target.<triple>]` 键替换二者。
+
 ## 当前边界
 
 - BSP 把它的模拟器与探针驱动声明为载荷，因此工具链未在某个平台发布的板子，

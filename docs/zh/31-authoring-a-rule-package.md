@@ -313,7 +313,7 @@ mcpp::floor("cuda.driver", runtime_needs);
 一个 `dist-*` 成员既不是规则也不是工具。它不编译翻译单元，也不在构建程序
 运行期间把活干完：它消费**链接产物**，产出用户要去安装的东西 —— 一个
 `.msi`、一个 `.deb`、一个 AppImage、一个签过名的 `.app`。机制是一条
-`artifact` action 加上 `mcpp pack --format <name>`，见
+`artifact` action 加上 `mcpp pack --pkg-format <name>`，见
 [30 —— 产出可分发物](30-build-mcpp.md#产出可分发物pack_format-与-stage_dir20269111)。
 
 本章其余内容原样适用。有六条在这里绑得更紧，每一条都是这个类别会犯、而

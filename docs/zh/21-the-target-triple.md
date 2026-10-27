@@ -507,7 +507,7 @@ system · `系统` 在机器上被找到，不是 mcpp 安装的 · `SDK` 平台
 | `x86_64-windows-musl` | payload 只在 Windows 上；图则任意宿主 | 没有 gcc 能发出 PE + musl，且 LLVM 拼不出这个三元组 |
 | `aarch64-macos` | macOS | SDK 是那台机器自己的 |
 | `*-none-elf` | 每一台宿主 | clang 与 lld 按构造就是交叉编译器 |
-| `*-openkal` | 每一台宿主 | 同上；映像为“无操作系统”编译，经 `okrun` 在每个系统上运行（[24](24-openkal-cross.md)） |
+| `*-openkal` | 每一台宿主 | 同上；映像为“无操作系统”编译，经 `okrun` 在每个系统上运行（[24](24-openkal-cross.md)）；目标表为两行选择 `openkal-platform`（[35](35-platforms.md)） |
 | `wasm32-emscripten`、`*-linux-android` | 每一台宿主 | SDK 自带 sysroot，且上游按宿主分别发布；一份归档服务每个 guest 架构 |
 
 **一个 `—` 讲的是 payload，不是可能性。** `host_can_serve` 回答的是
