@@ -1122,7 +1122,19 @@ data`、`failed to load pendings for 'std::vector'`）。以最小化的导入�
    `--play-game` 的构建停在第一帧（e2e 845）。os 把零时限读作不等待的询问，与读取子进程输出流一致。
 6. **精确版本固定的连带发布。** openkal 系列按精确版本固定依赖。含 mcpplibs.os 0.2.0 的 ok image 图若同时含
    openkal-musl 0.22.0（openkal 0.17.0），图中出现两个 openkal，mcpp 改名其中一份，被改名的 openkal-musl 的构建程序
-   生成的头文件不可见。openkal-musl（0.22.1、0.22.2）与 openkal-llvm-runtime（0.16.1、0.16.2）因此随这一轮发布。
+   生成的头文件不可见。openkal-musl（0.22.1、0.22.2、0.22.3）与 openkal-llvm-runtime（0.16.1、0.16.2、0.16.3）因此随
+   这一轮发布；openkal-image 的三个包（openkal-ld、openkal-run、openkal-tools）同一归档、同一版本，随之到 0.1.1。
+7. **环境表的首次查询与管道的有界读（openkal-windows 0.13.3）。** 环境表在首次查询时填写，两个执行上下文同时首次
+   查询时，一个标记表已就绪并填写，另一个读到空表，把已设置的 `PATH` 报为不存在（单元测试
+   `ConcurrentChildren.AReaderReturnsWhenItsOwnChildExits` 在 Windows 上的失败）；0.13.3 在一把锁下填写一次。管道的
+   有界读把每次 1 ms 的睡眠计为 1 ms，而默认计时器下一次睡眠约 15.6 ms，100 ms 的时限约等待 1.5 s；0.13.3 以性能
+   计数器计量。测试 `environment_read_from_two_threads`、`bounded_read_of_an_idle_pipe`。
+8. **升级到已缓存版本的依赖（mcpp）。** 包的 BMI 与目标文件从构建缓存暂存到由模块名与源文件命名的路径，而非由缓存
+   条目命名；`--verify size` 把与源同尺寸的目的文件视为已暂存。升级后上一版本的文件位于这些路径，保持尺寸的改动
+   （一个常量）使它们留在原处：程序运行旧代码，按新图编译的单元报 `CRC mismatch`（GCC）。在 mcpp-ide 从 os 0.1.0
+   升级到 0.2.0 时观察到。可读的目的文件现在在任何模式下按内容比较；尺寸相等只对打不开的目的文件（语言服务器持有）
+   成立。e2e 948。同一次观察中磁盘写满，分离编译的状态文件为空，构建等待到两小时上限；无数字的状态文件现在即为
+   失败的单元。
 
 ### 25.9 结束的顺序（实现中修订）
 
