@@ -2251,8 +2251,9 @@ std::string carried_assembly(std::string_view system, std::string_view sectionNa
 }
 
 // A program generated under `dir` (its manifest, entry and carried section)
-// packed for `row` as a directory; returns the directory (`bin/` holds the
-// program and what it needs beside it).
+// packed for `row` as a directory; returns the directory that holds the
+// program and what it needs beside it: the tree's `bin/`, or, for a Windows
+// program, whose tree is flat, the tree itself.
 std::expected<std::filesystem::path, Error>
 pack_generated_program(const std::filesystem::path& dir, const ProgramRow& row) {
     namespace fs = std::filesystem;
@@ -2268,10 +2269,10 @@ pack_generated_program(const std::filesystem::path& dir, const ProgramRow& row) 
     if (spawnError != 0 || built.exit_code != 0)
         return std::unexpected(Error{std::format(
             "packing the program under {} failed:\n{}", dir.string(), built.output)});
-    if (!fs::is_directory(out / "bin", ec))
-        return std::unexpected(Error{std::format("the program's package under {} has no bin/",
-                                                 out.string())});
-    return out;
+    if (fs::is_directory(out / "bin", ec)) return out / "bin";
+    if (fs::is_directory(out, ec)) return out;
+    return std::unexpected(Error{std::format("the program's package under {} was not written",
+                                             out.string())});
 }
 
 // THE STATIC ROW'S TOOLCHAIN, STATED: the carrier's own graph supplies a
@@ -2428,7 +2429,7 @@ run_loaded(const Plan& plan)
                 fs::path(plan.binaryName).stem().string(), std::string(host_system()),
                 std::string(mcpp::toolchain::platform::host_arch), false });
             if (!packed) return std::unexpected(packed.error());
-            fs::copy(*packed, plan.stagingRoot,
+            fs::copy(*packed, plan.stagingRoot / "bin",
                      fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
             staged = plan.stagingRoot / "bin"
                    / (fs::path(plan.binaryName).stem().string() + std::string(mcpplibs::os::exe_suffix));
@@ -2477,7 +2478,7 @@ run_loaded(const Plan& plan)
                     const auto into = plan.stagingRoot / "libexec" / launch.loader
                                     / std::format("{}-{}", system, leg.arch);
                     fs::create_directories(into, ec);
-                    fs::copy(*packed / "bin", into,
+                    fs::copy(*packed, into,
                              fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
                     if (ec) return std::unexpected(Error{std::format(
                         "cannot place the runner for {}-{}: {}", system, leg.arch, ec.message())});
@@ -3155,7 +3156,7 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
             auto packed = detail::carrier_build(plan, { carried, plan.binaryName, stem, system, arch, true });
             if (!packed) return std::unexpected(packed.error());
             const auto suffix = system == "windows" ? std::string(".exe") : std::string();
-            const auto program = *packed / "bin" / (stem + suffix);
+            const auto program = *packed / (stem + suffix);
             if (!fs::is_regular_file(program, ec))
                 return std::unexpected(Error{std::format("the carrier built for {}-{} has no {}",
                                                          system, arch, program.filename().string())});
@@ -3209,7 +3210,7 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
         auto packed = detail::pack_generated_program(dir, row);
         if (!packed) return std::unexpected(packed.error());
         const auto suffix = system == "windows" ? std::string(".exe") : std::string();
-        const auto program = *packed / "bin" / (stem + suffix);
+        const auto program = *packed / (stem + suffix);
         const auto out = output_for(t ? t->str() : plan.triple, suffix);
         fs::create_directories(out.parent_path(), ec);
         fs::copy_file(program, out, fs::copy_options::overwrite_existing, ec);
