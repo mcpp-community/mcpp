@@ -28,11 +28,11 @@ anything a reader needs is written here or in a specification instead.
 | write a program | [01](01-getting-started.md), [04](04-mcpp-toml.md) §1 | [`01-hello`](../examples/01-hello/), [`02-with-deps`](../examples/02-with-deps/) |
 | write a library others import | [11](11-publishing-a-library.md), [06](06-features-and-capabilities.md), [04](04-mcpp-toml.md) §2.4 | [`04-workspace`](../examples/04-workspace/), [`11-features`](../examples/11-features/) |
 | publish it | [10](10-pack-and-release.md), [11](11-publishing-a-library.md), [12](12-binary-distribution.md) | [`03-pack-static`](../examples/03-pack-static/), [`05-lib-distribution`](../examples/05-lib-distribution/) |
-| build for another machine | [21](21-the-target-triple.md), [24](24-openkal-cross.md), [40](40-baremetal.md) | [`06-openkal-cross`](../examples/06-openkal-cross/), `mcpp new … --template riscv-virt-rt` |
+| build for another machine | [21](21-the-target-triple.md), [24](24-openkal-cross.md), [35](35-platforms.md), [40](40-baremetal.md) | [`06-openkal-cross`](../examples/06-openkal-cross/), `mcpp new … --template riscv-virt-rt` |
 | use a GPU or an accelerator | [42](42-heterogeneous-builds.md), [41](41-devices.md) | [`09-heterogeneous`](../examples/09-heterogeneous/), starting at [`boundary/`](../examples/09-heterogeneous/boundary/) |
 | add a rule, a language or a generator | [31](31-authoring-a-rule-package.md), [30](30-build-mcpp.md) | [`08-build-rules`](../examples/08-build-rules/), [`12-a-new-device-language`](../examples/12-a-new-device-language/) |
 | add a package to the index | [11](11-publishing-a-library.md), [SPEC-001](specs/package-identity.md) | [09](09-commands-by-scenario.md) — the publishing scenarios |
-| package a tool, a driver or a board for others | [32](32-authoring-a-payload.md), [33](33-authoring-an-adapter.md), [34](34-authoring-a-bsp.md) | the descriptors in `xim-pkgindex` and `mcpp-index` |
+| package a tool, a driver, a board or a platform for others | [32](32-authoring-a-payload.md), [33](33-authoring-an-adapter.md), [34](34-authoring-a-bsp.md), [35](35-platforms.md) | the descriptors in `xim-pkgindex` and `mcpp-index` |
 | change mcpp itself | [90](90-build-from-source.md), [92](92-release.md), [51](51-supported-versions.md) | — |
 
 Lessons also arrive as project templates, which a package ships and `mcpp new
@@ -91,6 +91,7 @@ Within a part the order is a reading order, not an alphabet.
 - [32 — Authoring a Payload](32-authoring-a-payload.md) — a tool or a prebuilt library mcpp installs
 - [33 — Authoring a Runtime Adapter](33-authoring-an-adapter.md) — reaching a library the host supplies
 - [34 — Authoring a Board-Support Package](34-authoring-a-bsp.md) — a board, and the way in
+- [35 — Platforms](35-platforms.md) — the configuration of a class of targets, as a package
 
 ### 4x — Devices and accelerators
 
@@ -131,6 +132,7 @@ token in front of a reader to the chapter that owns it.
 | `min_api_level` | [04](04-mcpp-toml.md) | `macos_deployment_target` | [04](04-mcpp-toml.md) |
 | `[target.<sel>.targets.<n>] kind` | [22](22-target-side.md) | `[index.repos.<name>]` in `config.toml` | [32](32-authoring-a-payload.md) |
 | `[test] discover` | [04](04-mcpp-toml.md), [08](08-testing.md) | `MCPP_RUNTIME_FILES` | [41](41-devices.md) |
+| `[platform]`, `[host]`, `cfg(platform = …)` | [35](35-platforms.md) | `[target.<sel>] platform`, `layers`, `tools`, `link`, `carrier` | [35](35-platforms.md) |
 
 **Commands**
 
@@ -140,6 +142,7 @@ token in front of a reader to the chapter that owns it.
 | `new`, `new --template` | [01](01-getting-started.md) | `add`, `update`, `why` | [05](05-dependencies.md) |
 | `pack` | [10](10-pack-and-release.md) | `publish`, `emit xpkg`, `xpkg parse` | [11](11-publishing-a-library.md) |
 | `toolchain` | [20](20-toolchains.md) | `clean`, `cache`, `index`, `self …` | [09](09-commands-by-scenario.md) |
+| `--platform`, `--host-platform`, `self env --target` | [35](35-platforms.md) | `pack --pkg-format`, `--linkage`, `--merge` | [10](10-pack-and-release.md) |
 
 **Concepts**
 
@@ -151,6 +154,7 @@ token in front of a reader to the chapter that owns it.
 | an island, a seam, `accel`, `MCPP_EXPORT_C` | [42](42-heterogeneous-builds.md) | a descriptor, an index | [11](11-publishing-a-library.md) |
 | an ABI tag, a prebuilt artifact | [12](12-binary-distribution.md) | exit codes, JSON output | [50](50-machine-output.md) |
 | an `xim:` payload, `[xlings.workspace]` | [32](32-authoring-a-payload.md), [23](23-the-project-environment.md) | a `compat:` adapter, `runtime.library_dirs` | [33](33-authoring-an-adapter.md) |
+| a platform, a platform package, a version group | [35](35-platforms.md) | a universal package, a single-file package, `mcpp-package.json` | [10](10-pack-and-release.md) |
 
 ## Specifications
 
@@ -171,3 +175,5 @@ downstream tooling.
   - [SPEC-010 — Home selection and initialization](specs/home-initialization.md)
   - [SPEC-011 — Concurrent runs: the build directory lock, whole outputs, optimistic writes, cancellation](specs/concurrency.md)
   - [SPEC-012 — Output for people: two streams, two media, the kinds of line, colour](specs/human-output.md)
+  - [SPEC-013 — Platforms: the configuration of a class of targets, its selection, merge, graph completion, link, seal, runner and carrier](specs/platforms.md)
+  - [SPEC-014 — Packaging and distribution: link, closure and container, legs, the staged tree, universal and single-file packages](specs/packaging.md)

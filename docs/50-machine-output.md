@@ -102,10 +102,11 @@ mcpp <command> --format json
 streaming case and is **not** accepted — asking for it is an error, not a
 silent fallback.
 
-A command whose `--format` already names its **product** asks for machine
-output with `--message-format json` instead, as `mcpp test` does. `mcpp pack
---format` names the package format (`tar`, `dir`, `msi`), so its report is
-`mcpp pack --message-format json` (2026.9.16.1+). The shape follows the kind:
+A command that builds asks for machine output with `--message-format json`
+instead, as `mcpp test` does: `build`, `test`, `run` and `pack`. The package
+format of `mcpp pack` and `mcpp run` is `--pkg-format` (`tar`, `dir`, `msi`;
+2026.10.27.1+; `--format` there is the earlier spelling and warns), so the
+report of a pack is `mcpp pack --message-format json` (2026.9.16.1+). The shape follows the kind:
 `mcpp test` streams a record per test because tests finish over time, and
 `mcpp pack` prints one envelope because a pack has one result. `mcpp build
 --message-format json` (2026.10.26.1+) streams events while it builds and ends
@@ -253,8 +254,8 @@ and only the first belongs to the program:
 |---|---|
 | `0`–`124` | the program ran; this is its own status, passed through unchanged. The exception is `101`, below |
 | `101` | `mcpp run` could not build the program: its planning or its build failed, and nothing was started. This is the status Cargo gives a failed `cargo run` build |
-| `125`–`127` | the spawn was attempted and refused — `127` not found, `126` found but not executable, `125` anything else; `126` also answers `mcpp run --format <f>` for a distributable that is a directory and meets no runner, refused before the spawn with the same meaning (2026.9.14.2+) |
-| `2` | mcpp refused the request before building anything, or after building it and before starting anything: a usage error, `--format` with `--no-runner`, a program or a runner that the project does not declare |
+| `125`–`127` | the spawn was attempted and refused — `127` not found, `126` found but not executable, `125` anything else; `126` also answers `mcpp run --pkg-format <f>` for a distributable that is a directory and meets no runner, refused before the spawn with the same meaning (2026.9.14.2+) |
+| `2` | mcpp refused the request before building anything, or after building it and before starting anything: a usage error, `--pkg-format` with `--no-runner`, a program or a runner that the project does not declare |
 
 Until 2026.9.30.2 a failed build exited `1` and a failed planning `2`, so that
 a compile error and a program that returns `1` could not be told apart by a
@@ -336,6 +337,33 @@ redirection. These additive fields do not create any files.
 That is why this exists at all: without it a client has to reimplement mcpp's
 home resolution, including the part where the `mcpp` on `PATH` may be an
 xlings shim rather than the real binary.
+
+**One configuration** *(2026.10.27.1+)*. With `--target <triple>` (or `--host`
+for the host graph) `self env` prepares that configuration, without building,
+and reports it; in a project it is the project's configuration, elsewhere an
+empty program's under the home's cache. `--platform` and `--host-platform`
+select as they do for a build ([35](35-platforms.md)).
+
+```jsonc
+{
+  "triple":    "x86_64-openkal",
+  "graph":     "target",                      // or "host"
+  "toolchain": {"compiler": "/…/xim-x-llvm/23.1.3/bin/clang++", "origin": "platform"},
+  "platform":  {"name": "mcpplibs.openkal-platform", "version": "0.17.1", "source": "built-in",
+                "hosted": false, "fields": {"runner": {"value": ["okrun", "{}"], "source": "platform"}}},
+  "tools":     {"okld": "/…/okld", "okrun": "/…/okrun"},
+  "runner":    {"argv": ["okrun", "{}"], "host": "same-arch", "exclusive": false,
+                "program": "/…/okrun", "source": "platform"},
+  "runUnder":  []
+}
+```
+
+`platform` is `null` when no platform is selected; its shape is the `plan`
+event's (§9). A reason the project's sources would be refused for (an `import
+std` with no C++ run-time in the graph) is a `warning` diagnostic with the code
+`MCPP_CONFIGURATION_SOURCES_REFUSED`, and the configuration is still reported.
+A configuration that cannot be prepared carries `MCPP_CONFIGURATION_FAILED` and
+no `data`.
 
 `defaultToolchain` is the toolchain a build with nothing configured resolves on
 this host: the one answer the first run installs, and the value the tables of
@@ -454,6 +482,8 @@ mcpp toolchain list --format json
 installation, which is located on the machine rather than installed by mcpp. A
 target row is `{target, note, toolchain, pin, status, default}`, and `status` is
 one of `installed` / `available` / `via dependency graph` / `planned`.
+A target row also carries `platform` (2026.10.27.1+): the platform package the
+target table selects for it (`mcpplibs.openkal-platform@0.17.1`), or `null`.
 
 **`toolchain` and `pin` are not the same field twice.** `toolchain` is what
 the row is associated with — the installed payload on an installed row, the
@@ -569,7 +599,11 @@ a program classifying the outcome reads `reason`:
 | `std-module-precompile` | the standard library's module could not be precompiled for this configuration |
 | `msvc-redist-unavailable` | an explicit `cxx_runtime = "toolchain-coupled"` on an MSVC-ABI row whose toolset has no redistributable directory to stage *(2026.9.28.1+)* |
 | `crt-declared-under-host-coupled` | a file of the MSVC C++ runtime is declared beside the program while its contract is host-coupled, under which the system's runtime serves it and no copy is placed *(2026.9.28.2+)* |
-| `image-tool-absent` | a build of `<arch>-openkal` links an image and finds no `okld`, the program of the graph that notes and checks an ok image *(2026.10.26.2+)* |
+| `platform-not-a-platform` | the package selected as the target's platform has no `[platform]` section *(2026.10.27.1+)* |
+| `platform-target-unserved` | the selected platform does not serve the target: the triple is not among its `targets`, and a host triple is not among its `[platform.hosted] targets` *(2026.10.27.1+)* |
+| `platform-tool-absent` | a program the platform's link or seal runs (`okld` for an ok image) is neither built by the graph nor found on this machine *(2026.10.27.1+; `image-tool-absent` in 2026.10.26.2)* |
+| `platform-version-group` | a package of the platform's version group is in the graph at another version *(2026.10.27.1+)* |
+| `platform-phase-directive` | a platform's plugin stated a directive its phase does not take *(2026.10.27.1+)* |
 | `other` | a refusal whose branch has not been given a token yet |
 
 **One token is also printed by `mcpp build` itself.**
@@ -672,7 +706,7 @@ fails there still fails the build.
 ### `mcpp.pack` — the products of a pack *(mcpp 2026.9.16.1+)*
 
 ```
-mcpp pack [target] [--format <f>] [--target <triple>...] --message-format json
+mcpp pack [target] [--pkg-format <f>] [--target <triple>...] --message-format json
 ```
 
 The envelope is printed once, after the command finishes; every human line goes
@@ -681,8 +715,10 @@ to stderr, including what the build programs and tools the pack starts print.
 
 | field | |
 |---|---|
-| `artifacts` | one record per produced artifact: `path` (absolute), `type` (`file` or `directory`), `format` (the `--format` value, `tar` when omitted) and `targets` (the canonical triple of each leg that went into it). A dispatched format reports the terminal outputs of the actions the request introduced; a several-`--target` Android pack reports one artifact whose `targets` lists every leg |
+| `artifacts` | one record per produced artifact: `path` (absolute), `type` (`file` or `directory`), `format` (the `--pkg-format` value, `tar` when omitted), `targets` (the canonical triple of each leg that went into it) and `sha256` (a file's digest; `null` for a directory; 2026.10.27.1+). A dispatched format reports the terminal outputs of the actions the request introduced; a several-`--target` Android pack reports one artifact whose `targets` lists every leg |
 | `stage` | the tree the artifact was made from: `dir`, `manifest` (the stage manifest below) and `closure` (`walked` or `not-walked`); `null` for a library package, when no tree was staged, and for a pack of several members |
+| `linkage`, `mode`, `pkgFormat` *(2026.10.27.1+)* | the three choices of the pack ([10](10-pack-and-release.md)) |
+| `legs`, `systems` *(2026.10.27.1+)* | the canonical triple of each leg, and the systems whose loaders a self-contained universal package carries |
 | `stages` *(2026.10.1.1+)* | present only for a pack of several members (`--workspace`, or `-p` repeated): one record per member in `[workspace] members` order, with `member` (the qualified package name) and the `dir`, `manifest` and `closure` of `stage` |
 
 For a pack of several members `artifacts` lists every member's artifacts, in the
@@ -842,7 +878,7 @@ Standard output is NDJSON. Each line but the last is an event:
 
 | event | carries |
 |---|---|
-| `plan` | `configuration`: the configuration whose build directory the build has entered |
+| `plan` | `configuration`: the configuration whose build directory the build has entered; `platform` and `hostPlatform` (2026.10.27.1+) are the platforms of the target and host graphs, or `null` |
 | `waiting` | `holder` (`pid`, `command`, `client`, `startedAt`) and `waitedMs`: another build holds this build directory, and this one waits for it (§11) |
 | `progress` | `finished`, `total`: ninja's count of steps; a build may run more than one ninja pass, and each restarts the count |
 | `diagnostic` | `diagnostic`: one diagnostic of a compiler, from the output of a failed step, in the shape of `diagnostics[]` of the record below |
@@ -870,7 +906,7 @@ terminal is therefore visible to an IDE that reads the record, and the reverse.
 | `pid` | the process that wrote the record |
 | `startedAt`, `finishedAt` | milliseconds since the epoch; `finishedAt` is `null` while `running` and after `cancelled` |
 | `status` | `running`, `ok`, `failed`, or `cancelled` |
-| `configuration` | `triple`, `profile`, `fingerprint`, `outputDir` |
+| `configuration` | `triple`, `profile`, `fingerprint`, `outputDir`, `platform`, `hostPlatform` (2026.10.27.1+) |
 | `compileDatabase` | the configuration's `compile_commands.json`, or `null` |
 | `artifacts` | `name`, `kind` (`bin`, `test`, `shared`, `static`), `path`, for a runnable product `launch`, and `entry` when the program's beginning or its entry symbol was stated |
 | `diagnostics` | the compilers' diagnostics of a failed build: `severity`, `message`, `path`, `range` |
@@ -907,7 +943,7 @@ mcpp run [target] --print-launch
 
 Builds the program as `mcpp run` does and prints the envelope instead of
 starting it. `data` is `program`, `argv`, `cwd`, `env` and `via`, as
-`launch` above. `--print-launch` takes no `--format`: on `mcpp run`, `--format`
+`launch` above. `--print-launch` takes no `--format`: on `mcpp run`, `--pkg-format`
 names a distributable.
 
 ## 10. Denying effects — `--deny` *(mcpp 2026.10.26.1+)*
@@ -981,7 +1017,7 @@ mcpp index list --format json
 project's `[indices]` entries, when run in a project). The packages are
 `mcpp search`'s answer.
 
-### `mcpp.pack.formats` — the formats `mcpp pack --format` accepts
+### `mcpp.pack.formats` — the formats `mcpp pack --pkg-format` accepts
 
 ```
 mcpp pack --list-formats

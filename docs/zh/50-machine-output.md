@@ -91,10 +91,10 @@ mcpp <command> --format json
 目前只支持 `json`。`ndjson` 为将来真正需要流式的场景保留，**现在不被接受**
 —— 请求它是一个错误，而不是静默地回落到别的格式。
 
-`--format` 已经用来表示某种**产物**的命令，改用 `--message-format json` 来
-请求机器输出，`mcpp test` 就是这样做的。`mcpp pack --format` 表示的是包格式
-（`tar`、`dir`、`msi`），所以它的报告方式是
-`mcpp pack --message-format json`（2026.9.16.1+）。具体形状随 kind 而定：
+构建类命令改用 `--message-format json` 来请求机器输出，`mcpp test` 就是这样做的：
+`build`、`test`、`run` 与 `pack`。`mcpp pack` 与 `mcpp run` 的包格式是 `--pkg-format`
+（`tar`、`dir`、`msi`；2026.10.27.1+；在这两个命令上 `--format` 是旧写法，会给出警告），所以打包的
+报告方式是 `mcpp pack --message-format json`（2026.9.16.1+）。具体形状随 kind 而定：
 `mcpp test` 的测试是随时间陆续完成的，所以它按测试逐条输出流式记录；一次
 `mcpp pack` 只有一个结果，所以它输出一个信封。`mcpp build --message-format json`
 （2026.10.26.1+）在构建过程中输出事件流，以一个信封结束（§9）。
@@ -219,8 +219,8 @@ mcpp cache list --json            ->  {"root": …, "entries": [ … ]}
 |---|---|
 | `0`–`124` | 程序运行过了；这是它自己的状态，原样透传。例外是 `101`，见下一行 |
 | `101` | `mcpp run` 无法构建程序：规划或构建失败，没有启动任何东西。这是 `cargo run` 构建失败时 Cargo 给出的状态 |
-| `125`–`127` | 尝试过启动但被拒绝 —— `127` 是找不到，`126` 是找到了但不可执行，`125` 是其他原因；对 `mcpp run --format <f>` 而言，一个是目录、且没有任何 runner 能到达的分发物同样得到 `126`，它在启动之前就被拒绝，含义相同（2026.9.14.2+） |
-| `2` | mcpp 在构建任何东西之前拒绝了请求，或在构建之后、启动任何东西之前拒绝了请求：用法错误、`--format` 与 `--no-runner` 同用、项目没有声明的程序或 runner |
+| `125`–`127` | 尝试过启动但被拒绝 —— `127` 是找不到，`126` 是找到了但不可执行，`125` 是其他原因；对 `mcpp run --pkg-format <f>` 而言，一个是目录、且没有任何 runner 能到达的分发物同样得到 `126`，它在启动之前就被拒绝，含义相同（2026.9.14.2+） |
+| `2` | mcpp 在构建任何东西之前拒绝了请求，或在构建之后、启动任何东西之前拒绝了请求：用法错误、`--pkg-format` 与 `--no-runner` 同用、项目没有声明的程序或 runner |
 
 在 2026.9.30.2 之前，构建失败退出 `1`，规划失败退出 `2`，脚本因此无法区分
 一次编译错误和一个返回 `1` 的程序。现在构建失败是 `101`；`mcpp build`、
@@ -297,6 +297,28 @@ mcpp self env --format json
 这也是这个 kind 存在的理由：没有它，客户端就得自己重新实现一遍 mcpp 的 home
 解析逻辑 —— 包括「PATH 上的 `mcpp` 可能是一个 xlings shim 而不是真正的
 二进制」这一部分。
+
+**一个配置** *（2026.10.27.1+）*。带 `--target <triple>`（宿主图用 `--host`）时，`self env`
+准备该配置而不构建，并报告它；在工程中是该工程的配置，工程之外是 home 缓存中一个空程序的配置。
+`--platform` 与 `--host-platform` 的选择与构建相同（[35](35-platforms.md)）。
+
+```jsonc
+{
+  "triple":    "x86_64-openkal",
+  "graph":     "target",                      // or "host"
+  "toolchain": {"compiler": "/…/xim-x-llvm/23.1.3/bin/clang++", "origin": "platform"},
+  "platform":  {"name": "mcpplibs.openkal-platform", "version": "0.17.1", "source": "built-in",
+                "hosted": false, "fields": {"runner": {"value": ["okrun", "{}"], "source": "platform"}}},
+  "tools":     {"okld": "/…/okld", "okrun": "/…/okrun"},
+  "runner":    {"argv": ["okrun", "{}"], "host": "same-arch", "exclusive": false,
+                "program": "/…/okrun", "source": "platform"},
+  "runUnder":  []
+}
+```
+
+未选择平台时 `platform` 为 `null`；其形状与 `plan` 事件的相同（§9）。工程源码会被拒绝的原因
+（图中没有 C++ 运行时而 `import std`）是一条代码为 `MCPP_CONFIGURATION_SOURCES_REFUSED` 的
+`warning` 诊断，配置照常报告。无法准备的配置带 `MCPP_CONFIGURATION_FAILED`，没有 `data`。
 
 `defaultToolchain` 是在这台宿主上、什么都没有配置时一次构建所解析的工具链：首次运行
 安装的正是它，各 CI 宿主也以它核对 docs/01 与 docs/20 的表格。在 Windows 上，它取决于
@@ -408,6 +430,8 @@ mcpp toolchain list --format json
 `source: "system"` —— 它是在机器上被定位到的，不是由 mcpp 安装的。一行目标
 的形状是 `{target, note, toolchain, pin, status, default}`，`status` 取
 `installed` / `available` / `via dependency graph` / `planned` 之一。
+目标行另有 `platform`（2026.10.27.1+）：目标表为该目标选择的平台包
+（`mcpplibs.openkal-platform@0.17.1`），或 `null`。
 
 **`toolchain` 与 `pin` 不是把同一个字段写了两遍。** `toolchain` 表示这一行
 关联到什么 —— 已装的行是装好的载荷，词表行是它自己的约定。`pin` 只承载目标
@@ -516,7 +540,11 @@ replaced}` —— `origin` 与构建的状态行使用的是同一句话
 | `std-module-precompile` | 标准库的模块在这个配置下无法被预编译 |
 | `msvc-redist-unavailable` | 在 MSVC ABI 的行上显式写了 `cxx_runtime = "toolchain-coupled"`，而该行的工具集没有可放置的 redistributable 目录 *(2026.9.28.1+)* |
 | `crt-declared-under-host-coupled` | 程序的契约是 host-coupled（由系统的运行时服务、不放置任何副本），而程序旁声明了 MSVC C++ 运行时的文件 *(2026.9.28.2+)* |
-| `image-tool-absent` | 一个 `<arch>-openkal` 的构建要链接一个映像，而找不到 `okld` —— 为 ok 映像写需求注记并检查约定的、图中的程序 *(2026.10.26.2+)* |
+| `platform-not-a-platform` | 被选为该目标平台的包没有 `[platform]` 段 *(2026.10.27.1+)* |
+| `platform-target-unserved` | 所选平台不服务该目标：三元组不在其 `targets` 中，宿主三元组也不在其 `[platform.hosted] targets` 中 *(2026.10.27.1+)* |
+| `platform-tool-absent` | 平台的链接或封装要运行的程序（ok 映像的 `okld`）既不由图构建，也不在本机 *(2026.10.27.1+；2026.10.26.2 中为 `image-tool-absent`)* |
+| `platform-version-group` | 平台版本组中的一个包以另一个版本出现在图中 *(2026.10.27.1+)* |
+| `platform-phase-directive` | 平台插件陈述了其阶段不接受的指令 *(2026.10.27.1+)* |
 | `other` | 一个尚未被赋予记号的拒绝分支 |
 
 **其中一个记号也由 `mcpp build` 自己打印。** `interface-not-provided` 会
@@ -605,7 +633,7 @@ mcpp emit build-database [--spec s1|compile-commands] --format json
 ### `mcpp.pack` —— 一次打包的产物 *(mcpp 2026.9.16.1+)*
 
 ```
-mcpp pack [target] [--format <f>] [--target <triple>...] --message-format json
+mcpp pack [target] [--pkg-format <f>] [--target <triple>...] --message-format json
 ```
 
 信封在命令结束后输出一次；所有给人看的行都改走 stderr，包括打包过程启动的
@@ -613,8 +641,10 @@ mcpp pack [target] [--format <f>] [--target <triple>...] --message-format json
 
 | 字段 | |
 |---|---|
-| `artifacts` | 每个产出的产物一条记录：`path`（绝对路径）、`type`（`file` 或 `directory`）、`format`（`--format` 的取值，省略时为 `tar`），以及 `targets`（进入该产物的每条腿的规范三元组）。被分派的格式报告本次请求引入的那些 action 的终端输出；一个多 `--target` 的 Android 打包报告一个产物，其 `targets` 列出每一条腿 |
+| `artifacts` | 每个产出的产物一条记录：`path`（绝对路径）、`type`（`file` 或 `directory`）、`format`（`--pkg-format` 的取值，省略时为 `tar`）、`targets`（进入该产物的每条腿的规范三元组），以及 `sha256`（文件的摘要；目录为 `null`；2026.10.27.1+）。被分派的格式报告本次请求引入的那些 action 的终端输出；一个多 `--target` 的 Android 打包报告一个产物，其 `targets` 列出每一条腿 |
 | `stage` | 该产物所来自的那棵树：`dir`、`manifest`（即下文的暂存清单）与 `closure`（`walked` 或 `not-walked`）；库包、没有暂存任何树的情形，以及对多个成员的打包，此字段为 `null` |
+| `linkage`、`mode`、`pkgFormat` *（2026.10.27.1+）* | 本次打包的三个选择（[10](10-pack-and-release.md)） |
+| `legs`、`systems` *（2026.10.27.1+）* | 每条腿的规范三元组，以及自带加载器的通用包所携带的加载器所属的系统 |
 | `stages` *（2026.10.1.1+）* | 只在对多个成员的打包（`--workspace`，或重复的 `-p`）中出现：每个成员一条记录，按 `[workspace] members` 的顺序，带 `member`（限定的包名），以及与 `stage` 相同的 `dir`、`manifest`、`closure` |
 
 对多个成员的打包，`artifacts` 按同样的成员顺序列出每个成员的产物，每条记录多出
@@ -757,7 +787,7 @@ mcpp build [target] [-p <member>] [--release] --message-format json
 
 | 事件 | 携带 |
 |---|---|
-| `plan` | `configuration`：构建已进入其构建目录的那个配置 |
+| `plan` | `configuration`：构建已进入其构建目录的那个配置；`platform` 与 `hostPlatform`（2026.10.27.1+）是目标图与宿主图的平台，或 `null` |
 | `waiting` | `holder`（`pid`、`command`、`client`、`startedAt`）与 `waitedMs`：另一次构建持有这个构建目录，本次在等待（§11） |
 | `progress` | `finished`、`total`：ninja 的步骤计数；一次构建可以运行不止一轮 ninja，每轮重新计数 |
 | `diagnostic` | `diagnostic`：失败步骤输出中的一条编译器诊断，形状同下文记录的 `diagnostics[]` |
@@ -783,7 +813,7 @@ mcpp build [target] [-p <member>] [--release] --message-format json
 | `pid` | 写下记录的进程 |
 | `startedAt`、`finishedAt` | 自纪元起的毫秒数；`running` 期间与 `cancelled` 之后 `finishedAt` 为 `null` |
 | `status` | `running`、`ok`、`failed` 或 `cancelled` |
-| `configuration` | `triple`、`profile`、`fingerprint`、`outputDir` |
+| `configuration` | `triple`、`profile`、`fingerprint`、`outputDir`、`platform`、`hostPlatform`（2026.10.27.1+） |
 | `compileDatabase` | 该配置的 `compile_commands.json`，或 `null` |
 | `artifacts` | `name`、`kind`（`bin`、`test`、`shared`、`static`）、`path`；可运行的产物另有 `launch`；陈述了程序起点或入口符号时另有 `entry` |
 | `diagnostics` | 失败构建的编译器诊断：`severity`、`message`、`path`、`range` |
@@ -817,7 +847,7 @@ mcpp run [target] --print-launch
 
 按 `mcpp run` 的方式构建程序，然后打印信封而不启动它。`data` 为 `program`、
 `argv`、`cwd`、`env` 与 `via`，同上文的 `launch`。`--print-launch` 不接受
-`--format`：在 `mcpp run` 上，`--format` 表示可分发物的格式。
+`--format`：在 `mcpp run` 上，`--pkg-format` 表示可分发物的格式。
 
 ## 10. 拒绝副作用 —— `--deny` *（mcpp 2026.10.26.1+）*
 
@@ -879,7 +909,7 @@ mcpp index list --format json
 `data` 为 `registries`（`name`、`url`、`default`）与 `indices`（在工程中运行时，
 工程的 `[indices]` 条目）。包的目录由 `mcpp search` 回答。
 
-### `mcpp.pack.formats` —— `mcpp pack --format` 接受的格式
+### `mcpp.pack.formats` —— `mcpp pack --pkg-format` 接受的格式
 
 ```
 mcpp pack --list-formats

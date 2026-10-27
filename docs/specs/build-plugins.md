@@ -5,9 +5,9 @@
 | 规范编号 | SPEC-007 |
 | 标题 | 构建插件:配置、施工与校验的分工,运行时与规划期的义务 |
 | 状态 | 草案 v0.9 |
-| 版本 | 0.10 |
-| 最后修改 | 2026-10-27 |
-| 对应实现 | 逐条标注。未注明版本的「已实现」条款对应 mcpp >= 2026.9.26.1;注明 mcpp#702 的条款对应 mcpp >= 2026.9.26.2;注明 mcpp#707、#708、#709、#711 的条款对应 mcpp >= 2026.9.27.1;注明 mcpp#723 的条款对应 mcpp >= 2026.9.28.1;注明 mcpp 2026.9.28.2 的条款对应该版本;§9 与注明 mcpp#734 的条款对应 mcpp >= 2026.9.28.3;注明 mcpp#778 的条款对应 mcpp >= 2026.10.10.1;§10 对应 mcpp >= 2026.10.11.1 |
+| 版本 | 0.11 |
+| 最后修改 | 2026-10-28 |
+| 对应实现 | 逐条标注。未注明版本的「已实现」条款对应 mcpp >= 2026.9.26.1;注明 mcpp#702 的条款对应 mcpp >= 2026.9.26.2;注明 mcpp#707、#708、#709、#711 的条款对应 mcpp >= 2026.9.27.1;注明 mcpp#723 的条款对应 mcpp >= 2026.9.28.1;注明 mcpp 2026.9.28.2 的条款对应该版本;§9 与注明 mcpp#734 的条款对应 mcpp >= 2026.9.28.3;注明 mcpp#778 的条款对应 mcpp >= 2026.10.10.1;§10 对应 mcpp >= 2026.10.11.1;R9.10 与协议 17 对应 mcpp >= 2026.10.27.1 |
 | 相关设计文档 | `.agents/docs/2026-09-26-compile-database-and-issue-699-design.md`(§5)、`.agents/docs/2026-09-28-ecosystem-design-and-optimisation-plan.md`(WS1、WS3)、`.agents/docs/2026-09-28-build-cost-foreign-toolsets-and-library-surface-design.md`(§3、§4)、`.agents/docs/2026-10-10-one-source-one-meaning-design.md`(§4)、`.agents/docs/2026-10-11-build-dependencies-one-pipeline-design.md` |
 | 相关 issue | mcpp#699、mcpp#701、mcpp#702、mcpp#703、mcpp#707、mcpp#708、mcpp#709、mcpp#711、mcpp#734、mcpp#755、mcpp#778、mcpp#797 |
 | 使用文档 | [docs/30 - build.mcpp](../30-build-mcpp.md)、[docs/31 - 编写规则包](../31-authoring-a-rule-package.md) |
@@ -258,6 +258,7 @@
   | 14 | 2026.9.28.3 | `mcpp.core`、构建信息(R9.3)、`mcpp::report`(R9.4) |
   | 15 | 2026.10.1.3 | 来源(R6.5、R6.6、R9.9):`xpkg_source`、`xpkg_program`、`xpkg_request`、`xpkg_pending`、`phase`、`decision`、`toolchain` |
   | 16 | 2026.10.26.2 | 镜像入口:`link_start`(`mcpp:link-start=`,docs/04 `start`) |
+  | 17 | 2026.10.27.1 | 平台的链接与运行器字段(SPEC-013 §12):`link_driver`、`link_input`、`link_input_from`、`artifact_name`、`seal`、`run_host`;平台阶段(`mcpp::phase()` 为 `"platform"`) |
 
 - **R9.3** 构建信息以事实陈述解析出的工具链,不针对任何外部构建系统:`tool(role)`(这一行的
   工具)、`abi_tool(role)`(目标 ABI 的原生工具,MSVC ABI 上为工具集的 `cl`、`link`、`lib`、
@@ -288,6 +289,12 @@
   `family`、`launcher`、`tool.<role>`、`origin`),官方通用库 `mcpp.plugins.toolchain`
   提供构造这些陈述的函数。编译并运行构建程序的是 bootstrap 工具链,因此一个无法使用的
   自定义工具链**必须**仍能让构建程序运行并报告原因。(**已实现**,mcpp 2026.10.1.3)
+
+- **R9.10** 平台包的 `[platform] plugin` 在平台阶段运行(`mcpp::phase()` 为 `"platform"`,`MCPP_PHASE=platform`)。
+  该阶段只能陈述编译与链接标志、`link_script`、`link_start`、协议 17 的指令、`runner` 与命名运行器、
+  `run_exclusive`,以及重跑条件、警告与诊断;其他指令**必须**被拒绝(拒绝码 `platform-phase-directive`),
+  消息点名第一条不属于该阶段的指令。陈述的内容在 SPEC-013 的 Program 层次合并;协议 17 的指令也可以由
+  任何构建程序在构建阶段发出。(**已实现**,mcpp 2026.10.27.1)
 
 ## 10. 构建程序的库与构建插件(mcpp#797)
 
@@ -330,3 +337,4 @@
 | 0.2 | 2026-09-26 | 随 mcpp 2026.9.26.2 落地:R1.3 的警告、R2.1 的 `runtime_search_dir`、R2.4、R3.3 的 `prepare`(目录须含文件;链接边等待所有 `prepare`)、R3.5、R3.6、R4.1、R4.3、R5.2、R5.3 标为已实现。 |
 | 0.9 | 2026-10-11 | 随 mcpp 2026.10.11.1(mcpp#797):新增 §10 构建程序的库与构建插件(R10.1–R10.6,P1–P5);变更记录移为 §11。 |
 | 0.10 | 2026-10-27 | 随 mcpp 2026.10.26.2(mcpp#845):R9.2 的协议表增加协议 16(`link_start`,镜像入口)。 |
+| 0.11 | 2026-10-28 | 随 mcpp 2026.10.27.1(mcpp#847):R9.2 的协议表增加协议 17(平台的链接与运行器字段);新增 R9.10 平台阶段(SPEC-013)。 |

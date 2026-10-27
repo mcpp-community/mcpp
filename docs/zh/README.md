@@ -25,11 +25,11 @@
 | 写一个程序 | [01](01-getting-started.md)、[04](04-mcpp-toml.md) §1 | [`01-hello`](../../examples/01-hello/)、[`02-with-deps`](../../examples/02-with-deps/) |
 | 写一个供他人 import 的库 | [11](11-publishing-a-library.md)、[06](06-features-and-capabilities.md)、[04](04-mcpp-toml.md) §2.4 | [`04-workspace`](../../examples/04-workspace/)、[`11-features`](../../examples/11-features/) |
 | 发布它 | [10](10-pack-and-release.md)、[11](11-publishing-a-library.md)、[12](12-binary-distribution.md) | [`03-pack-static`](../../examples/03-pack-static/)、[`05-lib-distribution`](../../examples/05-lib-distribution/) |
-| 为另一台机器构建 | [21](21-the-target-triple.md)、[24](24-openkal-cross.md)、[40](40-baremetal.md) | [`06-openkal-cross`](../../examples/06-openkal-cross/)、`mcpp new … --template riscv-virt-rt` |
+| 为另一台机器构建 | [21](21-the-target-triple.md)、[24](24-openkal-cross.md)、[35](35-platforms.md)、[40](40-baremetal.md) | [`06-openkal-cross`](../../examples/06-openkal-cross/)、`mcpp new … --template riscv-virt-rt` |
 | 使用 GPU 或加速器 | [42](42-heterogeneous-builds.md)、[41](41-devices.md) | [`09-heterogeneous`](../../examples/09-heterogeneous/)，从 [`boundary/`](../../examples/09-heterogeneous/boundary/) 开始 |
 | 增加一条规则、一种语言或一个生成器 | [31](31-authoring-a-rule-package.md)、[30](30-build-mcpp.md) | [`08-build-rules`](../../examples/08-build-rules/)、[`12-a-new-device-language`](../../examples/12-a-new-device-language/) |
 | 向索引添加一个包 | [11](11-publishing-a-library.md)、[SPEC-001](../specs/package-identity.md) | [09](09-commands-by-scenario.md)——发布相关场景 |
-| 为别人打包一个工具、一个驱动或一块板子 | [32](32-authoring-a-payload.md)、[33](33-authoring-an-adapter.md)、[34](34-authoring-a-bsp.md) | `xim-pkgindex` 与 `mcpp-index` 里的描述符 |
+| 为别人打包一个工具、一个驱动、一块板子或一个平台 | [32](32-authoring-a-payload.md)、[33](33-authoring-an-adapter.md)、[34](34-authoring-a-bsp.md)、[35](35-platforms.md) | `xim-pkgindex` 与 `mcpp-index` 里的描述符 |
 | 修改 mcpp 本身 | [90](90-build-from-source.md)、[92](92-release.md)、[51](51-supported-versions.md) | — |
 
 课程也可以以**项目模板**的形式到达：模板由包提供，`mcpp new --template`
@@ -87,6 +87,7 @@
 - [32 —— 编写一个载荷](32-authoring-a-payload.md)——由 mcpp 安装的工具或预编译库
 - [33 —— 编写运行时适配包](33-authoring-an-adapter.md)——够到宿主提供的库
 - [34 —— 编写板级支持包](34-authoring-a-bsp.md)——一块板子，以及抵达它的方式
+- [35 —— 平台](35-platforms.md)——一类目标的配置，作为一个包
 
 ### 4x —— 设备与加速器
 
@@ -127,6 +128,7 @@
 | `min_api_level` | [04](04-mcpp-toml.md) | `macos_deployment_target` | [04](04-mcpp-toml.md) |
 | `[target.<sel>.targets.<n>] kind` | [22](22-target-side.md) | `config.toml` 中的 `[index.repos.<name>]` | [32](32-authoring-a-payload.md) |
 | `[test] discover` | [04](04-mcpp-toml.md)、[08](08-testing.md) | `MCPP_RUNTIME_FILES` | [41](41-devices.md) |
+| `[platform]`、`[host]`、`cfg(platform = …)` | [35](35-platforms.md) | `[target.<sel>] platform`、`layers`、`tools`、`link`、`carrier` | [35](35-platforms.md) |
 
 **命令**
 
@@ -136,6 +138,7 @@
 | `new`、`new --template` | [01](01-getting-started.md) | `add`、`update`、`why` | [05](05-dependencies.md) |
 | `pack` | [10](10-pack-and-release.md) | `publish`、`emit xpkg`、`xpkg parse` | [11](11-publishing-a-library.md) |
 | `toolchain` | [20](20-toolchains.md) | `clean`、`cache`、`index`、`self …` | [09](09-commands-by-scenario.md) |
+| `--platform`、`--host-platform`、`self env --target` | [35](35-platforms.md) | `pack --pkg-format`、`--linkage`、`--merge` | [10](10-pack-and-release.md) |
 
 **概念**
 
@@ -147,6 +150,7 @@
 | 岛、接缝、`accel`、`MCPP_EXPORT_C` | [42](42-heterogeneous-builds.md) | 描述符、索引 | [11](11-publishing-a-library.md) |
 | ABI tag、预建产物 | [12](12-binary-distribution.md) | 退出码、JSON 输出 | [50](50-machine-output.md) |
 | `xim:` 载荷、`[xlings.workspace]` | [32](32-authoring-a-payload.md)、[23](23-the-project-environment.md) | `compat:` 适配包、`runtime.library_dirs` | [33](33-authoring-an-adapter.md) |
+| 平台、平台包、版本组 | [35](35-platforms.md) | 通用包、单文件包、`mcpp-package.json` | [10](10-pack-and-release.md) |
 
 ## 规范文档
 
@@ -166,3 +170,5 @@
   - [SPEC-010 —— home 选择与初始化](../specs/home-initialization.md)
   - [SPEC-011 —— 并发运行：构建目录锁、整体发布、乐观写入与取消](../specs/concurrency.md)
   - [SPEC-012 —— 面向人的输出：两条流、两种介质、行的种类与颜色](../specs/human-output.md)
+  - [SPEC-013 —— 平台：一类目标的配置，其选择、合并、对依赖图的补全、链接、封装、运行器与载体](../specs/platforms.md)
+  - [SPEC-014 —— 打包与分发：链接、闭包与容器，构建腿，暂存树，通用包与单文件包](../specs/packaging.md)
