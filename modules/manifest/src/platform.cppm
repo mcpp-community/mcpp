@@ -181,6 +181,10 @@ struct ToolEntry {
 // `[platform.hosted]`: the part that applies when a HOST triple selects this
 // platform (§5.4).
 struct Hosted {
+    // The host triples the arrangement is for (`x86_64-windows-gnu` and not
+    // `-msvc`: a C library of the graph needs the GNU ABI on Windows). Unset:
+    // every host triple.
+    Words                             targets;
     Text                              toolchain;
     std::map<std::string, LayerEntry> layers;
     bool                              set = false;
@@ -253,7 +257,7 @@ inline constexpr std::string_view kBuildKeys[] = { "cflags", "cxxflags", "asmfla
 inline constexpr std::string_view kLinkKeys[] = {
     "driver", "flags", "start", "script", "inputs", "exe", "shared", "seal",
 };
-inline constexpr std::string_view kHostedKeys[] = { "toolchain", "layers" };
+inline constexpr std::string_view kHostedKeys[] = { "targets", "toolchain", "layers" };
 
 // The `[target.<selector>]` keys a project or config.toml uses to select and
 // override a platform. `runner`, `runners`, `toolchain` and `sysroot` are the

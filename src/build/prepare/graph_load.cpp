@@ -1068,15 +1068,27 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             // `mcpp index update`). The policy decides (offline, `auto_refresh`,
             // the debounce, one sync per run). A project's own index is read as
             // it is, so it is not refreshed here.
-            if (r && r->exitCode != 0 && !ctx.useProjectEnv
-                && mcpp::pm::install_failure_policy(r->error ? r->error->code : std::string{}).refreshIndex) {
+            // What mcpp did about the miss, for the message if it stays one
+            // (L4): the refresh, and why it ran or did not.
+            std::string refreshNote;
+            const bool missedVersion = r && r->exitCode != 0
+                && mcpp::pm::install_failure_policy(r->error ? r->error->code : std::string{}).refreshIndex;
+            if (missedVersion && !ctx.useProjectEnv) {
                 const auto env = mcpp::config::make_xlings_env(**cfg);
                 auto decision = mcpp::pm::decide_for_miss(
                     mcpp::pm::policy_for(**cfg), env, target, mcpp::pm::RefreshReason::InstallMiss);
-                if (auto applied = mcpp::pm::apply(decision, env); !applied)
+                if (auto applied = mcpp::pm::apply(decision, env); !applied) {
                     mcpp::ui::warning(applied.error());
-                else if (decision.shouldRefresh)
+                    refreshNote = std::format("refreshing it failed: {}", applied.error());
+                } else if (decision.shouldRefresh) {
                     r = install_one(target);
+                    refreshNote = "refreshed it now, and the version is still not in it";
+                } else {
+                    refreshNote = std::format("did not refresh it: {}",
+                                              mcpp::pm::reason_text(decision.reason));
+                }
+            } else if (missedVersion) {
+                refreshNote = "did not refresh it: a project's own index is read as it is";
             }
             // The first address's failure is the one about the package; a
             // compat spelling tried after it fails as "not found" whatever
@@ -1136,13 +1148,38 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
                     childErr += r->error->message;
                 }
                 auto target = std::format("{}@{}", depName, version);
-                auto diag = mcpp::pm::format_install_failure_diagnostic(
-                    target, r->exitCode, indexRepos, childErr);
                 std::string tried;
                 for (auto& a : attempted) {
                     if (!tried.empty()) tried += ", ";
                     tried += a;
                 }
+                // A VERSION THE INDEX DOES NOT HAVE IS SAID BY MCPP (L4): which
+                // index, at which revision and how old, and what was done about
+                // it. The provider's own sentence ("the index is current") is
+                // about its index, not mcpp's, and reads as the opposite of the
+                // cause; it stays available with -v.
+                if (missedVersion) {
+                    std::string diag = std::format(
+                        "the package index has no {} to install\n"
+                        "  index: {}\n"
+                        "  mcpp {}\n"
+                        "  if the version was published since, `mcpp index update` fetches it; "
+                        "otherwise the version is not in the index",
+                        target, ctx.useProjectEnv ? std::string("the project's own index")
+                                                  : mcpp::pm::staleness_note(mcpp::config::make_xlings_env(**cfg)),
+                        refreshNote.empty() ? std::string("did not refresh it") : refreshNote);
+                    if (auto hint = mcpp::pm::unusable_index_hint(); !hint.empty()) diag += "\n" + hint;
+                    if (mcpp::log::is_verbose())
+                        diag += "\n  " + mcpp::pm::format_install_failure_diagnostic(
+                            target, r->exitCode, indexRepos, childErr);
+                    else if (!childErr.empty())
+                        diag += "\n  (the provider's own report: run with -v)";
+                    diag += std::format("\n  wire address{} tried: {}",
+                                        attempted.size() == 1 ? "" : "es", tried);
+                    return std::unexpected(std::move(diag));
+                }
+                auto diag = mcpp::pm::format_install_failure_diagnostic(
+                    target, r->exitCode, indexRepos, childErr);
                 diag += std::format("\n  wire address{} tried: {}",
                                     attempted.size() == 1 ? "" : "es", tried);
                 return std::unexpected(std::move(diag));

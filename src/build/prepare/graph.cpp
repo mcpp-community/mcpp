@@ -988,6 +988,36 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                             spec.version));
                     }
 
+                    // THE RENAME'S BOUNDARY (design 2026-10-28 §8.2): it renames
+                    // C++ modules and nothing else, so it separates two versions
+                    // only when their whole interface is named modules. A package
+                    // that exports a header directory, or provides a target-side
+                    // layer, has C names and link symbols the rename cannot touch:
+                    // two of them meet in one link, or in one include path, at a
+                    // place that names neither (measured with two openkal
+                    // releases in one graph). Refused here, naming both requests.
+                    {
+                        const bool headers = !secondaryManifest.buildConfig.includeDirs.empty();
+                        const bool layer = std::ranges::any_of(secondaryManifest.provides,
+                            [](const std::string& c) { return c.starts_with("mcpp:"); });
+                        if (headers || layer)
+                            return std::unexpected(std::format(
+                                "dependency '{}{}{}' has irreconcilable versions:\n"
+                                "  '{}' requested by '{}'\n"
+                                "  '{}' requested by '{}'\n"
+                                "Two versions cannot share one build: the package {}, and a "
+                                "renamed copy keeps those names, so they would collide in the "
+                                "link or in the include path. Align the requests on one version "
+                                "(pin it in your mcpp.toml){}.",
+                                key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                                it->second.version, it->second.requestedBy,
+                                spec.version, item.requestedBy,
+                                layer ? "provides a target-side layer" : "exports a header directory",
+                                state.platform.active
+                                    ? std::format(", or select the release of {} that carries the "
+                                                  "version you need", state.platform.display())
+                                    : std::string()));
+                    }
                     // Module names are authored API and are not required to
                     // mirror package identity. Discover every provided module
                     // root from the secondary's source text, then rewrite the

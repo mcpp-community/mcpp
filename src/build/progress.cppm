@@ -769,6 +769,10 @@ struct Report {
     std::vector<screen::Source> started;   // packages announced since the last frame
     long long   lastFrame = 0;             // ms since command start
     std::size_t lastDone  = 0;
+    // The lines a package was announced with in this command (L6): a
+    // workspace builds several configurations, and a dependency they share
+    // was written once per configuration with the same words.
+    std::set<std::string> announcedLines;
 };
 
 Report& report() {
@@ -888,7 +892,11 @@ void announce(Report& r, Build::Impl& b, std::size_t i, std::vector<std::string>
     const auto& p = b.record->packages[i];
     if (s.announced || p.name == "std" || p.name.empty()) return;
     s.announced = true;
-    out.push_back(package_line(r, b, i));
+    auto line = package_line(r, b, i);
+    // One line per package and per command: the same package, with the same
+    // words, in a second configuration says nothing new.
+    if (!r.announcedLines.insert(line).second) return;
+    out.push_back(std::move(line));
     r.started.push_back(p.cachedUnits > 0 ? screen::Source::Cache : source_of(p.source));
 }
 

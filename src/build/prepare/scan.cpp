@@ -584,6 +584,24 @@ step11_package_std_module_source(PrepareState& state) {
                 if (flags.find(q) == std::string::npos) flags += q;
             }
         }
+        // THE DEPLOYMENT FLOOR WHEN THE C LIBRARY IS THE GRAPH'S. Above, it
+        // comes with the prebuilt C library's tokens; a graph C library (the
+        // hosted arrangement: openkal-musl on macOS, SPEC-013 §5.4) has none,
+        // and the precompile then took the driver's default -- the running
+        // system's version -- while every unit was built for the floor
+        // (measured by mcpplibs.os: std.pcm for 15.0, the units for 14.0, and
+        // each import refused as a configuration mismatch). The value is the
+        // one every unit reads (flags.cppm), and a cross target carries it in
+        // its triple instead.
+        if (!state.tc->cAbiPrebuilt && state.tc->crossTargetFlag.empty()) {
+            auto tt = mcpp::toolchain::triple::parse(state.tc->targetTriple);
+            const auto floor = mcpp::toolchain::apple::deployment_target(
+                tt && tt->os == "macos", state.m->buildConfig.macosDeploymentTarget);
+            if (tt && tt->os == "macos" && !floor.empty()) {
+                const auto q = " -mmacosx-version-min=" + floor;
+                if (flags.find(q) == std::string::npos) flags += q;
+            }
+        }
         // The same words the package's own units receive from this list
         // (mcpp.manifest.flag_words), one quoted word each.
         for (auto& w : mcpp::manifest::flag_words(state.targetSideUsage.cxxflags))

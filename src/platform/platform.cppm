@@ -373,7 +373,29 @@ serves(const mp::Statement& p, std::string_view package, const mcpp::toolchain::
     }
     std::string list;
     for (auto const& w : p.targets.value) { if (!list.empty()) list += ", "; list += w; }
-    if (p.hosted.set) return true;
+    if (p.hosted.set) {
+        if (!p.hosted.targets.set) return true;
+        std::string hosts;
+        for (auto const& w : p.hosted.targets.value) {
+            auto pt = mcpp::toolchain::triple::parse(w);
+            if (pt ? pt->str() == t.str() : w == t.str()) return true;
+            if (!hosts.empty()) hosts += ", ";
+            hosts += w;
+        }
+        // The arrangement is for some host triples and not this one (a C
+        // library of the graph on Windows needs the GNU ABI): name the row of
+        // the same system and architecture it does serve.
+        std::string near;
+        for (auto const& w : p.hosted.targets.value)
+            if (auto pt = mcpp::toolchain::triple::parse(w); pt && pt->arch == t.arch && pt->os == t.os)
+                near = pt->str();
+        return std::unexpected(std::format(
+            "platform {} hosts {} and not {} ([platform.hosted] targets).{}",
+            package, hosts, t.str(),
+            near.empty() ? std::string()
+                         : std::format("\n       Build for {} (--target {}, or [build] target = \"{}\")",
+                                       near, near, near)));
+    }
     return std::unexpected(std::format(
         "platform {} serves {} and not {}: it has no [platform.hosted] table, the part a host "
         "triple may take (SPEC-013 §5.4).\n"

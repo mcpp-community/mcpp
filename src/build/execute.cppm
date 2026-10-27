@@ -3473,6 +3473,9 @@ struct TestBuild {
     bool                                     bulkBuiltEverything = false;
     std::filesystem::path                    ninjaLog;
     std::uintmax_t                           logFrom = 0;
+    // MCPP_BIN_<NAME> for each program of the package, built before the
+    // tests (L5).
+    std::vector<std::pair<std::string, std::string>> programEnv;
 
     // How the test binaries are executed, resolved once for the build
     // (#544): every test of one build shares a target.
@@ -4056,6 +4059,8 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // A GL test that cannot find a driver fails the same way a GL program
         // does, so it must be told the same things.
         for (auto& kv : subosEnv) childEnv.push_back(kv);
+        // ...and where the package's own programs are (L5).
+        for (auto& kv : tb.programEnv) childEnv.push_back(kv);
         // ...and, through a runner, the files the test carries with it, as
         // `mcpp run` hands them over (see `runtime_files_for`). Written here,
         // in the single-threaded pass, one list per test program.
@@ -4275,6 +4280,45 @@ export int run_tests(std::span<const std::string> passthrough,
         }
         return 0;
     }
+    // THE PACKAGE'S PROGRAMS, BUILT BEFORE ITS TESTS AND NAMED TO THEM (L5).
+    // A test that runs the program it tests finds it as MCPP_BIN_<NAME> (the
+    // target's name, upper-cased, every other character `_`), the way a Cargo
+    // integration test finds CARGO_BIN_EXE_<name>. Built by the pass `mcpp
+    // build` runs -- its fast path when nothing changed -- so a program is
+    // never linked against the tests' dev-dependencies. Before this a package
+    // whose tests ran its own executable had to be built first by hand.
+    std::vector<std::pair<std::string, std::string>> programEnv;
+    {
+        bool hasPrograms = false;
+        if (auto m = mcpp::manifest::load(testRoot / "mcpp.toml")) {
+            hasPrograms = std::ranges::any_of(m->targets, [](auto const& t) {
+                return t.kind == mcpp::manifest::Target::Binary
+                    || t.kind == mcpp::manifest::Target::Application;
+            });
+            std::error_code ec;
+            if (m->targets.empty() && std::filesystem::exists(testRoot / "src" / "main.cpp", ec))
+                hasPrograms = true;
+        }
+        if (hasPrograms) {
+            auto binCtx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false, {}, overrides);
+            if (!binCtx) { mcpp::ui::error(binCtx.error()); return 2; }
+            if (std::ranges::any_of(binCtx->plan.linkUnits,
+                                    [](auto const& lu) { return lu.kind == LinkUnit::Binary; })) {
+                if (int rc = run_build_plan(*binCtx, mcpp::log::is_verbose(), false); rc != 0)
+                    return rc;
+                for (auto const& lu : binCtx->plan.linkUnits) {
+                    if (lu.kind != LinkUnit::Binary) continue;
+                    std::string key = "MCPP_BIN_";
+                    for (char c : lu.targetName)
+                        key += (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
+                             : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
+                    programEnv.emplace_back(std::move(key),
+                                            (binCtx->outputDir / lu.output).lexically_normal().string());
+                }
+            }
+        }
+    }
+
     // 3. prepare_build with dev-deps enabled + synthetic targets.
     // A test binary is executed, so the run tier applies here exactly as it
     // does to `mcpp run` — `[xlings.workspace]` has no separate `test` tier
@@ -4286,6 +4330,7 @@ export int run_tests(std::span<const std::string> passthrough,
                                   std::move(overrides));
     if (!prepared) { mcpp::ui::error(prepared.error()); return 2; }
     TestBuild tb;
+    tb.programEnv = std::move(programEnv);
     tb.ctx.emplace(std::move(*prepared));
     tb.backend = mcpp::build::make_ninja_backend();
     tb.ninjaLog = tb.ctx->outputDir / ".ninja_log";

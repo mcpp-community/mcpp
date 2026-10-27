@@ -545,7 +545,11 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
             s.hosted.set = true;
             for (auto const& [hk, hv] : v.as_table()) {
                 auto hkey = std::format("[platform.hosted].{}", hk);
-                if (hk == "toolchain") {
+                if (hk == "targets") {
+                    auto w = strings(hv, hkey);
+                    if (!w) return std::unexpected(w.error());
+                    s.hosted.targets = Words{ std::move(*w), at(hv, hkey), true };
+                } else if (hk == "toolchain") {
                     if (!hv.is_string() || hv.as_string().empty())
                         return std::unexpected(std::format("{} must be a toolchain", hkey));
                     s.hosted.toolchain = Text{ hv.as_string(), at(hv, hkey), true };
