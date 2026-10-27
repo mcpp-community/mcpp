@@ -18,7 +18,18 @@ set -e
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
-export XDG_CACHE_HOME="$TMP/cache"
+# The user's cache, isolated: `$XDG_CACHE_HOME` on Linux; on macOS the cache is
+# `~/Library/Caches`, so the files run with a home of their own (mcpp keeps
+# the real one).
+if [ "$(uname -s)" = Darwin ]; then
+    CACHE="$TMP/home/Library/Caches"
+    mkdir -p "$CACHE"
+    run_file() { HOME="$TMP/home" "$@"; }
+else
+    export XDG_CACHE_HOME="$TMP/cache"
+    CACHE="$XDG_CACHE_HOME"
+    run_file() { "$@"; }
+fi
 
 mkdir -p "$TMP/app/src"
 cd "$TMP/app"
@@ -37,15 +48,15 @@ print(c[0] if c else "")
 PY
 )
 [ -n "$f" ] || fail "A: no single file under target/dist" a.log
-set +e; "$f" alpha beta > run1.log 2>&1; rc=$?; set -e
+set +e; run_file "$f" alpha beta > run1.log 2>&1; rc=$?; set -e
 [ "$rc" = 3 ] || fail "A: the exit status is $rc, not the program's 3" run1.log
 grep -q "one file: 3 args, last beta" run1.log || fail "A: the program's output" run1.log
-dirs=$(ls "$XDG_CACHE_HOME/mcpp/single-file" | grep -v '^\.' | wc -l)
+dirs=$(ls "$CACHE/mcpp/single-file" | grep -v '^\.' | wc -l | tr -d ' ')
 [ "$dirs" = 1 ] || fail "A: the first run left $dirs trees in the cache"
-stamp=$(ls --full-time "$XDG_CACHE_HOME/mcpp/single-file"/*/.mcpp-complete 2>/dev/null || stat "$XDG_CACHE_HOME"/mcpp/single-file/*/.mcpp-complete)
-set +e; "$f" gamma > run2.log 2>&1; set -e
+stamp=$(ls --full-time "$CACHE/mcpp/single-file"/*/.mcpp-complete 2>/dev/null || stat "$CACHE"/mcpp/single-file/*/.mcpp-complete)
+set +e; run_file "$f" gamma > run2.log 2>&1; set -e
 grep -q "last gamma" run2.log || fail "A: the second run" run2.log
-stamp2=$(ls --full-time "$XDG_CACHE_HOME/mcpp/single-file"/*/.mcpp-complete 2>/dev/null || stat "$XDG_CACHE_HOME"/mcpp/single-file/*/.mcpp-complete)
+stamp2=$(ls --full-time "$CACHE/mcpp/single-file"/*/.mcpp-complete 2>/dev/null || stat "$CACHE"/mcpp/single-file/*/.mcpp-complete)
 [ "$stamp" = "$stamp2" ] || fail "A: the second run extracted the tree again"
 echo "ok: a native single file runs, extracting once"
 
@@ -85,10 +96,10 @@ if [ -n "$T" ] && command -v python3 > /dev/null && "$MCPP" toolchain list --for
     printf 'import std;\nint main(int argc, char**) { std::println("image file: {} args", argc); }\n' > src/main.cpp
     "$MCPP" pack --target "$T" --pkg-format single-file > d.log 2>&1 || fail "D: pack" d.log
     g=$(ls target/dist/img-0.1.0-* | head -1)
-    before=$(find "$XDG_CACHE_HOME" -type f | wc -l)
-    "$g" x y > d-run.log 2>&1 || fail "D: the image's single file" d-run.log
+    before=$(find "$CACHE" -type f | wc -l)
+    run_file "$g" x y > d-run.log 2>&1 || fail "D: the image's single file" d-run.log
     grep -q "image file: 3 args" d-run.log || fail "D: the output" d-run.log
-    after=$(find "$XDG_CACHE_HOME" -type f | wc -l)
+    after=$(find "$CACHE" -type f | wc -l)
     [ "$before" = "$after" ] || fail "D: the image's single file wrote into the cache"
     echo "ok: an image's single file runs from memory"
 fi
