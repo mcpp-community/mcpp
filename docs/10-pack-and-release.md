@@ -63,13 +63,16 @@ A pack is decided by three independent choices and a set of legs (2026.10.27.1+)
 |---|---|---|---|
 | linkage | `--linkage` | are the libraries inside the program or beside it | `static`, `shared` |
 | closure | `--mode` | what the machine that runs the package provides | `system`, `vendored` (default), `self-contained` |
-| container | `--pkg-format` | what is delivered | `tar` (default), `dir`, `zip`, `single-file`, a format a package provides |
+| container | `--pkg-format` | what is delivered | `tar`, `zip`, `dir`, `single-file`, a format a package provides; unstated: `zip` for a Windows program, `tar` elsewhere |
 | legs | `--target`, repeatable | which targets one package covers | triples |
 
-- **Linkage** is a property of the program, built as `[build] dependency_linkage`
-  states it. On Linux `--linkage static` selects the `<arch>-linux-musl` row and
-  produces a fully static program; `--target …-linux-musl` implies it. On an ok
-  image it is one `.oke` with no `.okso`.
+- **Linkage** is a property of the program. `--linkage static|shared` (or
+  `[pack] linkage`) is the build's dependency linkage for the pack, over
+  `[build] dependency_linkage` and the profile's; unstated, each library links as
+  it declares itself. On Linux `--linkage static` selects the `<arch>-linux-musl`
+  row (a `-linux-gnu` target becomes its musl row) and packs the fully static
+  program whole, whatever `--mode` says; `--target …-linux-musl` implies it. On
+  an ok image it is one `.oke` with no `.okso`.
 - **Closure** is a property of the package: how much of the shared-library
   closure travels with the program. `--mode static` is shorthand for
   `--linkage static --mode self-contained`.
@@ -107,9 +110,16 @@ choices:
 | Combination | Remedy |
 |---|---|
 | `--pkg-format single-file` with `--mode system` | `--mode vendored` or `self-contained`: a single file carries what it runs |
-| several `--target` for an executable outside a universal package | one pack per target, then `--merge` |
-| `--systems` on anything but a self-contained universal package | `--mode self-contained`: only a package that carries its loader differs per system |
+| `--compress` with `--pkg-format dir` or a provided format | `--pkg-format tar`, `zip` or `single-file`: only a container is compressed |
+| `--compress zstd` or `xz` with `--pkg-format zip` | `--compress gzip` (DEFLATE) or `none`, or `--pkg-format tar` |
+| `--compress gzip` or `xz` with `--pkg-format single-file` | `--compress zstd[:<level>]` or `none`: the launcher decompresses zstd |
+| several `--target` for an executable outside a universal package | one pack per target |
+| `--systems` on anything but a self-contained universal package or a single file of an image | `--mode self-contained` over a platform with `universal = true`, or `--pkg-format single-file` |
+| a universal package of a platform that states no `runner` | `--no-universal` |
 | a dispatched format for a `lib` or `shared` target | the library route, [12](12-binary-distribution.md) |
+
+A `[pack] compress` that does not fit the container (a directory, `zstd` for a
+zip) is left aside for that pack; only the flag is refused.
 
 ### A program that needs the HOST to provide something
 
@@ -191,7 +201,8 @@ mcpp pack --pkg-format single-file               # one executable file
 mcpp pack --pkg-format tar --compress zstd       # .tar.zst
 mcpp pack --target x86_64-openkal                # a universal package: every architecture of the platform
 mcpp pack --target x86_64-openkal --mode self-contained --systems linux,macos,windows
-mcpp pack --merge a.zip b.zip -o all.zip         # one tree from packages built on several machines
+mcpp pack --merge a.zip --merge b.zip -o all.zip # one package from packages built on several machines
+mcpp emit xpkg --package all.zip --url https://example.org/v1.0.0   # its xim-pkgindex entry
 ```
 
 `--format` is accepted on `pack` and `run` as the earlier spelling of
@@ -659,9 +670,10 @@ for the same reason — there is no zip tool present on every host.
 
 Two consequences worth knowing:
 
-- Entries are **stored, not deflated**, so a Windows package is roughly the
-  size of its contents. Compression is a size optimization, not a correctness
-  one, and it is not implemented yet.
+- Entries are **deflated** by zlib when that makes them smaller, and stored
+  otherwise; `--compress gzip:<level>` sets the level, `--compress none` stores
+  every entry. A format left unstated is a zip for a Windows program;
+  `--pkg-format tar` stated writes a tar.
 - The archive is **deterministic**: no timestamps are read, so two packs of
   the same tree are byte-identical and a published checksum means something.
 
@@ -715,16 +727,16 @@ runs the package must provide:
 |---|---|---|
 | `system` | `bin/<name>.oke` | `okrun` and every image it names |
 | `vendored` (default) | `bin/<name>.oke` and the `.okso` images it names | `okrun` |
-| `self-contained` | `bin/<name>` — a program of this machine that carries the image as a section (`.oke`, `__OKE,__image`) and runs it through libokrun — and the `.okso` images beside it | nothing |
-| `static` | `bin/<name>`, a program of this machine that carries one static `.oke` | nothing |
+| `self-contained` | `bin/<name>` — a program of this machine that carries the image in the platform's carrier section (`.oke` on ELF and COFF, `__OKE,__carried` on Mach-O) and runs it through libokrun — and the `.okso` images beside it | nothing |
+| `static` (`--linkage static --mode self-contained`) | `bin/<name>`, a program of this machine that carries one static `.oke` | nothing |
 
-`--linkage static` builds the image with no `.okso`. The image is not
-recompiled for `self-contained`: mcpp builds the platform's carrier (`[platform]
-carrier`, a package and its entry source), places the image's bytes in the
-carrier's section, and packs that program as it packs any other — static (musl)
-on Linux, with only the system's libraries on macOS and Windows. Another
-system's program is packed on that system, or by `--systems` in a universal
-package.
+These are the packages of one target (`--no-universal`, or a platform that is
+not universal). `--linkage static` builds the image with no `.okso`. The image
+is not recompiled for `self-contained`: mcpp builds the platform's carrier
+(`[platform] carrier`, a package and its entry source) as a generated project
+under `target/carrier-pack/<name>-<os>-<arch>/`, places the image's bytes in
+the carrier's section, and packs that program as it packs any other — static
+(musl) on Linux, with only the system's libraries on macOS and Windows.
 
 ### Android: the application object and its closure under `lib/`
 
@@ -770,14 +782,37 @@ target/dist/hello-0.1.0-openkal/
 └── mcpp-package.json
 ```
 
-The launchers are generated from the platform's `runner`: each picks the
-architecture directory from `uname -m` or `%PROCESSOR_ARCHITECTURE%` and starts
-the runner on the image there, looking first in `libexec/` and then on `PATH`.
-`--systems linux,macos,windows` builds the loader for each system and
-architecture into `libexec/` (the default is this machine's system); a system
-whose SDK payload this machine lacks is refused, naming it. Packages built on
-several machines are joined with `mcpp pack --merge a.zip b.zip …`: legs and
-systems are united, and two files at one path must have the same digest.
+The other legs are built during the pack (`Packed leg <triple>`). The
+launchers are generated from the platform's `runner`: each resolves the package
+as the parent of its own directory, picks the architecture directory from
+`uname -m` (`x86_64`, `amd64` → `x86_64`; `aarch64`, `arm64` → `aarch64`) or
+from `%PROCESSOR_ARCHITECTURE%` / `%PROCESSOR_ARCHITEW6432%`, and starts the
+runner on the image there with its own arguments, looking for the runner first
+in `libexec/<runner>/<os>-<arch>/` and then on `PATH`. A machine of an
+architecture the package does not hold gets exit status 126 and a sentence
+naming both. Files `[runtime] deploy` places lie beside each leg's image.
+`[pack] universal = false` is `--no-universal`; a platform that states no
+`runner` cannot make a universal package, and the pack is refused with
+`--no-universal` as the remedy.
+
+Under `--mode self-contained` the runner travels: for each system of
+`--systems linux,macos,windows` (default: this machine's) and each architecture
+of the package, mcpp builds the platform's carrier with nothing carried — a
+program that runs the image its first argument names, as `okrun` does — into
+`libexec/<runner>/<os>-<arch>/`. A Linux runner is static (musl); another
+system's is built for its conventional row (`<arch>-macos`,
+`<arch>-windows-gnu`), and a system whose SDK payload this machine lacks is
+refused by that build, naming it.
+
+Packages built on several machines are joined with
+`mcpp pack --merge a.zip --merge b.zip` (also `--merge a.zip,b.zip`). The inputs
+are package directories or archives (`.zip`, `.tar`, `.tar.gz`, `.tgz`,
+`.tar.zst`, `.tar.xz`) this command wrote; nothing is built. Legs and systems
+are united, each file is taken once, and the result is described anew. Inputs
+of another name, version, platform, linkage or mode are refused, and so is one
+path with two digests, naming the path, both digests and both inputs. The
+container is `--pkg-format`, else the extension of `-o`, else the first
+input's.
 
 ### A single-file package
 
@@ -785,15 +820,32 @@ systems are united, and two files at one path must have the same digest.
 
 | Target and mode | The file | On start |
 |---|---|---|
-| native, `vendored` or `self-contained` | the engine's stub and the staged tree, zstd-compressed | the first run unpacks the tree into the user's cache, and later runs start it from there |
-| native Linux, `--linkage static` | a static stub and the static program | as above, with no system library |
-| ok image, `self-contained` | the platform's carrier and the images of its architecture | the carrier loads the images from memory and writes nothing to disk |
+| native, `vendored` or `self-contained` | the engine's launcher carrying the staged tree as one zstd frame | the first run unpacks the tree into the user's cache, and later runs start it from there |
+| native Linux, `--linkage static` | a static launcher and the static program | as above, with no system library |
+| ok image | the platform's carrier and the image, or a zip of all its images | the carrier loads the images from memory and writes nothing to disk |
 
-The cache is `$XDG_CACHE_HOME` (else `~/.cache`) on Linux, `~/Library/Caches`
-on macOS and `%LOCALAPPDATA%` on Windows, below a directory named by the
-payload's sha256. The payload's digest is checked before it is unpacked, it is
-unpacked under a temporary name and renamed into place, and an incomplete
-directory is never used.
+A native program's file is `target/dist/<name>-<version>-<triple>` (`.exe` on
+Windows); its tree is staged under `target/single-file/stage/`. The launcher is
+a small program whose source mcpp writes with each pack (under
+`target/single-file/<name>/`, over mcpplibs.os and zstd) and builds for the
+target: static (musl) on Linux, with the system's libraries only on macOS and
+Windows. The payload is one zstd frame (`--compress zstd[:<level>]`, the
+default, or `none`) of the tree. The first run unpacks it into
+`<cache>/mcpp/single-file/<sha256 of the payload>/`, where `<cache>` is
+`$XDG_CACHE_HOME` (else `~/.cache`) on Linux, `~/Library/Caches` on macOS and
+`%LOCALAPPDATA%` on Windows: into a name of its own beside it, renamed into
+place without replacing when every file is written (`.mcpp-complete` marks a
+complete tree; the directory is the user's alone on Linux and macOS). The frame
+carries its content's checksum, and a payload that does not match it is never
+unpacked. The launcher then becomes the program — `bin/<name>`, the wrapper at
+the root of a self-contained Linux tree, or `<name>.exe` at the root of a
+Windows tree — with its arguments, and its exit status is the program's.
+
+An ok image's file is `target/dist/<name>-<version>-<os>-<arch>` (`.exe` on
+Windows), one per system of `--systems` (default: this machine's). The carrier
+carries the image alone when it names no other image, and otherwise a stored
+zip of all the images, each aligned to 64 KiB, which the carrier's entry reads
+through openkal-run's bundle interface (openkal-platform 0.17.2).
 
 ### `mcpp-package.json`
 
@@ -809,18 +861,37 @@ and sha256. A provided format, `--merge` and `mcpp emit xpkg` read it
  "files": [{"path": "lib/x86_64/hello.oke", "role": "image", "leg": "x86_64-openkal", "sha256": "…"}]}
 ```
 
-`mcpp emit xpkg` writes one index entry per system and architecture, or, for a
-universal package, one asset for every system with the loader's package as a
-dependency.
+The file is written for every pack, a provided format's included. Each file's
+`role` is `program`, `image`, `library`, `loader`, `launcher`, `resource` or
+`metadata`; in a universal package every file of `lib/<arch>/` is an image of
+that leg. Symbolic links are not listed. `linkage` is `static`, `shared` or
+`declared` (each library as it declares itself); `launch` is `program` for one
+native leg and `runner` with an `entry` per architecture for a universal
+package.
+
+`mcpp emit xpkg --package <archive> [--package …] --url <prefix> [-o <file>]`
+writes the xim-pkgindex entry (spec 2) of packages this command wrote, from
+their `mcpp-package.json`. A universal package is one asset that `linux`,
+`macosx` and `windows` install alike, with the runner as a dependency
+(`deps = { "okrun" }`) unless the package carries it; packages of one system
+and architecture each make that system's entry, one URL with `${arch}` and a
+sha256 per architecture. The install moves the archive's top directory into
+place and registers the program with xvm (the `.cmd` launcher on Windows).
 
 ### Compression and signing
 
 `--compress zstd|gzip|xz|none[:level]` (or `[pack] compress`) chooses the
-compression of `tar`; the default is gzip. A `zip` stores its entries
-uncompressed, and the images inside an okb are stored so that the loader maps
-them in place. `[pack] sign = ["<prog>", …, "{}"]` runs once on each program and
-image of the staged tree before the container is written; a failure stops the
-pack.
+compression of `tar` (`.tar.gz`, the default, `.tar.zst`, `.tar.xz`, `.tar`).
+`tar` writes the archive and mcpp compresses it with its own codecs (zlib, zstd
+and liblzma), so no compressor is looked for on `PATH` and an archive is the
+same bytes on every host. A `zip` deflates its entries (`gzip[:level]`) or
+stores them (`none`); a single file's payload is `zstd` or `none`; the images
+inside an okb are stored so that the loader maps them in place.
+
+`[pack] sign = ["<prog>", …, "{}"]` runs once on each program, image, library
+and loader of the staged tree before the container is written, and on each
+single file; `{}` is the file. A failure stops the pack, naming the argv and its
+output, and `mcpp-package.json` states the digests of the signed files.
 
 ## Configuration
 
@@ -833,7 +904,8 @@ default_mode  = "static"            # override the normal vendored default for b
 linkage       = "shared"            # the default of --linkage
 format        = "tar"               # the default of --pkg-format
 compress      = "zstd"              # the default of --compress
-sign          = ["signtool", "sign", "{}"]   # run on each program and image before the container is written
+sign          = ["signtool", "sign", "{}"]   # run on each program, image, library and loader before the container
+universal     = false               # = --no-universal
 strip         = true                # default. false ships the artifacts as built
 debug_symbols = "dist/debug"        # separate the debug info here instead of discarding it
 include       = ["share/**", "config/*.toml"]   # extra files to bundle
@@ -860,7 +932,6 @@ The `static` mode additionally requires a musl toolchain configured under
 - Distribution formats such as `.deb`, `.rpm`, AppImage and `.msi` come from
   packages through `--pkg-format <name>`; the engine provides `tar`, `dir`, `zip`
   and `single-file`.
-- A `zip` stores its entries uncompressed.
 - One file that runs on several systems is not produced; a single-file package
   serves one system and one architecture.
 - An ELF program's closure is resolved by running its dynamic linker, so a Linux

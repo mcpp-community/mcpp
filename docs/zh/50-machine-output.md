@@ -316,7 +316,9 @@ mcpp self env --format json
 }
 ```
 
-未选择平台时 `platform` 为 `null`；其形状与 `plan` 事件的相同（§9）。工程源码会被拒绝的原因
+未选择平台时 `platform` 为 `null`；其形状与 `plan` 事件的相同（§9）。运行器指名平台自己的工具时
+`runner.program` 为该工具，否则为本机找到的程序。`--host` 时，工程的构建程序已在宿主平台下构建过，才报告宿主平台
+的 `runner` 与 `tools`。工程源码会被拒绝的原因
 （图中没有 C++ 运行时而 `import std`）是一条代码为 `MCPP_CONFIGURATION_SOURCES_REFUSED` 的
 `warning` 诊断，配置照常报告。无法准备的配置带 `MCPP_CONFIGURATION_FAILED`，没有 `data`。
 
@@ -641,10 +643,10 @@ mcpp pack [target] [--pkg-format <f>] [--target <triple>...] --message-format js
 
 | 字段 | |
 |---|---|
-| `artifacts` | 每个产出的产物一条记录：`path`（绝对路径）、`type`（`file` 或 `directory`）、`format`（`--pkg-format` 的取值，省略时为 `tar`）、`targets`（进入该产物的每条腿的规范三元组），以及 `sha256`（文件的摘要；目录为 `null`；2026.10.27.1+）。被分派的格式报告本次请求引入的那些 action 的终端输出；一个多 `--target` 的 Android 打包报告一个产物，其 `targets` 列出每一条腿 |
+| `artifacts` | 每个产出的产物一条记录：`path`（绝对路径）、`type`（`file` 或 `directory`）、`format`（容器：`--pkg-format` 的取值；未给出时 Windows 程序为 `zip`，其余为 `tar`）、`targets`（进入该产物的每条腿的规范三元组），以及 `sha256`（文件的摘要；目录为 `null`；2026.10.27.1+）。被分派的格式报告本次请求引入的那些 action 的终端输出；一个多 `--target` 的 Android 打包报告一个产物，其 `targets` 列出每一条腿 |
 | `stage` | 该产物所来自的那棵树：`dir`、`manifest`（即下文的暂存清单）与 `closure`（`walked` 或 `not-walked`）；库包、没有暂存任何树的情形，以及对多个成员的打包，此字段为 `null` |
-| `linkage`、`mode`、`pkgFormat` *（2026.10.27.1+）* | 本次打包的三个选择（[10](10-pack-and-release.md)） |
-| `legs`、`systems` *（2026.10.27.1+）* | 每条腿的规范三元组，以及自带加载器的通用包所携带的加载器所属的系统 |
+| `linkage`、`mode`、`pkgFormat` *（2026.10.27.1+）* | 本次打包的三个选择（[10](10-pack-and-release.md)）：`linkage` 为 `static`、`shared` 或 `declared`；`pkgFormat` 为产物的 `format`（`tar`、`zip`、`dir`、`single-file` 或提供者的格式） |
+| `legs`、`systems` *（2026.10.27.1+）* | 每条腿的规范三元组（通用包列出其平台的每个目标），以及自带加载器的通用包所携带的每个运行器的 `<os>-<arch>` |
 | `stages` *（2026.10.1.1+）* | 只在对多个成员的打包（`--workspace`，或重复的 `-p`）中出现：每个成员一条记录，按 `[workspace] members` 的顺序，带 `member`（限定的包名），以及与 `stage` 相同的 `dir`、`manifest`、`closure` |
 
 对多个成员的打包，`artifacts` 按同样的成员顺序列出每个成员的产物，每条记录多出

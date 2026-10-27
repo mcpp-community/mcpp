@@ -359,7 +359,10 @@ select as they do for a build ([35](35-platforms.md)).
 ```
 
 `platform` is `null` when no platform is selected; its shape is the `plan`
-event's (§9). A reason the project's sources would be refused for (an `import
+event's (§9). `runner.program` is the platform's own tool when the runner names
+one, else the program found on this machine. For `--host` the host platform's
+`runner` and `tools` are reported once the project's build programs have been
+built under it. A reason the project's sources would be refused for (an `import
 std` with no C++ run-time in the graph) is a `warning` diagnostic with the code
 `MCPP_CONFIGURATION_SOURCES_REFUSED`, and the configuration is still reported.
 A configuration that cannot be prepared carries `MCPP_CONFIGURATION_FAILED` and
@@ -715,10 +718,10 @@ to stderr, including what the build programs and tools the pack starts print.
 
 | field | |
 |---|---|
-| `artifacts` | one record per produced artifact: `path` (absolute), `type` (`file` or `directory`), `format` (the `--pkg-format` value, `tar` when omitted), `targets` (the canonical triple of each leg that went into it) and `sha256` (a file's digest; `null` for a directory; 2026.10.27.1+). A dispatched format reports the terminal outputs of the actions the request introduced; a several-`--target` Android pack reports one artifact whose `targets` lists every leg |
+| `artifacts` | one record per produced artifact: `path` (absolute), `type` (`file` or `directory`), `format` (the container: the `--pkg-format` value; when none is given, `zip` for a Windows program and `tar` otherwise), `targets` (the canonical triple of each leg that went into it) and `sha256` (a file's digest; `null` for a directory; 2026.10.27.1+). A dispatched format reports the terminal outputs of the actions the request introduced; a several-`--target` Android pack reports one artifact whose `targets` lists every leg |
 | `stage` | the tree the artifact was made from: `dir`, `manifest` (the stage manifest below) and `closure` (`walked` or `not-walked`); `null` for a library package, when no tree was staged, and for a pack of several members |
-| `linkage`, `mode`, `pkgFormat` *(2026.10.27.1+)* | the three choices of the pack ([10](10-pack-and-release.md)) |
-| `legs`, `systems` *(2026.10.27.1+)* | the canonical triple of each leg, and the systems whose loaders a self-contained universal package carries |
+| `linkage`, `mode`, `pkgFormat` *(2026.10.27.1+)* | the three choices of the pack ([10](10-pack-and-release.md)): `linkage` is `static`, `shared` or `declared`; `pkgFormat` is the `format` of the artifacts (`tar`, `zip`, `dir`, `single-file`, or a provided format) |
+| `legs`, `systems` *(2026.10.27.1+)* | the canonical triple of each leg (a universal package lists every target of its platform), and the `<os>-<arch>` of each runner a self-contained universal package carries |
 | `stages` *(2026.10.1.1+)* | present only for a pack of several members (`--workspace`, or `-p` repeated): one record per member in `[workspace] members` order, with `member` (the qualified package name) and the `dir`, `manifest` and `closure` of `stage` |
 
 For a pack of several members `artifacts` lists every member's artifacts, in the

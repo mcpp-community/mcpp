@@ -57,12 +57,13 @@ glibc 专有行为（NSS 查询、`dlopen` 宿主插件）时的首选。
 |---|---|---|---|
 | 链接 | `--linkage` | 库在程序里，还是在程序旁边 | `static`、`shared` |
 | 闭包 | `--mode` | 运行该包的机器提供什么 | `system`、`vendored`（默认）、`self-contained` |
-| 容器 | `--pkg-format` | 交付成什么 | `tar`（默认）、`dir`、`zip`、`single-file`、某个包提供的格式 |
+| 容器 | `--pkg-format` | 交付成什么 | `tar`、`zip`、`dir`、`single-file`、某个包提供的格式；未给出时 Windows 程序为 `zip`，其余为 `tar` |
 | 腿 | `--target`，可重复 | 一个包覆盖哪些目标 | 三元组 |
 
-- **链接**是程序的属性，按 `[build] dependency_linkage` 构建。Linux 上 `--linkage static`
-  选择 `<arch>-linux-musl` 行，产出全静态程序；`--target …-linux-musl` 隐含它。ok 映像上
-  它是一个 `.oke`、没有 `.okso`。
+- **链接**是程序的属性。`--linkage static|shared`（或 `[pack] linkage`）是这次打包的构建的依赖链接，
+  优先于 `[build] dependency_linkage` 与构建配置中的值；未给出时每个库按它自己的声明链接。Linux 上
+  `--linkage static` 选择 `<arch>-linux-musl` 行（`-linux-gnu` 目标换成对应的 musl 行），全静态程序
+  不论 `--mode` 为何都整体打包；`--target …-linux-musl` 隐含它。ok 映像上它是一个 `.oke`、没有 `.okso`。
 - **闭包**是包的属性：共享库闭包中有多少随程序携带。`--mode static` 是
   `--linkage static --mode self-contained` 的简写。
 - **容器**是交付的形状，见下文。
@@ -97,9 +98,15 @@ glibc 专有行为（NSS 查询、`dlopen` 宿主插件）时的首选。
 | 组合 | 出路 |
 |---|---|
 | `--pkg-format single-file` 与 `--mode system` | `--mode vendored` 或 `self-contained`：单文件携带它所运行的东西 |
-| 通用包之外、对一个可执行文件给出多个 `--target` | 每个目标打一次，再 `--merge` |
-| 自带加载器的通用包之外使用 `--systems` | `--mode self-contained`：只有携带加载器的包随系统不同 |
+| `--compress` 与 `--pkg-format dir` 或提供者的格式 | `--pkg-format tar`、`zip` 或 `single-file`：只有容器被压缩 |
+| `--compress zstd` 或 `xz` 与 `--pkg-format zip` | `--compress gzip`（DEFLATE）或 `none`，或 `--pkg-format tar` |
+| `--compress gzip` 或 `xz` 与 `--pkg-format single-file` | `--compress zstd[:<level>]` 或 `none`：启动器解压 zstd |
+| 通用包之外、对一个可执行文件给出多个 `--target` | 每个目标打一次 |
+| 自带加载器的通用包与映像的单文件之外使用 `--systems` | 在声明 `universal = true` 的平台上用 `--mode self-contained`，或 `--pkg-format single-file` |
+| 平台未声明 `runner` 时打通用包 | `--no-universal` |
 | 对 `lib` 或 `shared` 目标使用被分派的格式 | 库的路线，[12](12-binary-distribution.md) |
+
+与容器不相容的 `[pack] compress`（目录，或 zip 的 `zstd`）在这次打包中被搁置；只有选项被拒绝。
 
 ### 需要宿主提供某种能力的程序
 
@@ -172,7 +179,8 @@ mcpp pack --pkg-format single-file               # one executable file
 mcpp pack --pkg-format tar --compress zstd       # .tar.zst
 mcpp pack --target x86_64-openkal                # a universal package: every architecture of the platform
 mcpp pack --target x86_64-openkal --mode self-contained --systems linux,macos,windows
-mcpp pack --merge a.zip b.zip -o all.zip         # one tree from packages built on several machines
+mcpp pack --merge a.zip --merge b.zip -o all.zip # one package from packages built on several machines
+mcpp emit xpkg --package all.zip --url https://example.org/v1.0.0   # its xim-pkgindex entry
 ```
 
 `pack` 与 `run` 接受 `--format` 作为 `--pkg-format` 的旧写法，并打印一条警告（2026.10.27.1+）。
@@ -576,8 +584,9 @@ mcpp pack --target x86_64-windows-gnu     # from a Linux host
 
 有两点值得知道：
 
-- 条目是**存储而非压缩**的，因此 Windows 包的体积大致等于其内容之和。压缩是
-  体积上的优化，不是正确性问题，目前尚未实现。
+- 条目在变小时由 zlib **DEFLATE 压缩**，否则存储；`--compress gzip:<level>` 设定级别，
+  `--compress none` 存储全部条目。未给出格式时 Windows 程序写 zip；显式给出 `--pkg-format tar`
+  则写 tar。
 - 压缩包是**确定性的**：不读取任何时间戳，因此同一棵树打两次包字节完全一致，
   公布出去的校验和才有意义。
 
@@ -625,13 +634,13 @@ ok 映像经 `okrun` 在其架构的每个系统上运行（见 [24](24-openkal-
 |---|---|---|
 | `system` | `bin/<name>.oke` | `okrun` 与它所需的每个映像 |
 | `vendored`（默认） | `bin/<name>.oke` 与它所需的 `.okso` 映像 | `okrun` |
-| `self-contained` | `bin/<name>`：本机的程序，以段（`.oke`、`__OKE,__image`）携带映像并经 libokrun 运行，旁边是所需的 `.okso` 映像 | 无 |
-| `static` | `bin/<name>`：本机的程序，携带一个静态 `.oke` | 无 |
+| `self-contained` | `bin/<name>`：本机的程序，以平台载体的段（ELF 与 COFF 上为 `.oke`，Mach-O 上为 `__OKE,__carried`）携带映像并经 libokrun 运行，旁边是所需的 `.okso` 映像 | 无 |
+| `static`（`--linkage static --mode self-contained`） | `bin/<name>`：本机的程序，携带一个静态 `.oke` | 无 |
 
-`--linkage static` 构建不带 `.okso` 的映像。`self-contained` 不重新编译映像：mcpp 构建平台的载体
-（`[platform] carrier`，一个包与它的入口源码），把映像的字节放进载体的段，再按任何程序的方式打包该程序 ——
-Linux 上为静态（musl），macOS 与 Windows 上只引用系统自带的库。其他系统的程序在该系统上打包，或在通用包中
-由 `--systems` 构建。
+以上是单个目标的包（`--no-universal`，或平台不声明通用包）。`--linkage static` 构建不带 `.okso` 的映像。
+`self-contained` 不重新编译映像：mcpp 把平台的载体（`[platform] carrier`，一个包与它的入口源码）生成为
+`target/carrier-pack/<name>-<os>-<arch>/` 下的工程，把映像的字节放进载体的段，再按任何程序的方式打包该程序 ——
+Linux 上为静态（musl），macOS 与 Windows 上只引用系统自带的库。
 
 ### Android：应用目标文件与它的闭包在 `lib/` 下
 
@@ -673,10 +682,22 @@ target/dist/hello-0.1.0-openkal/
 └── mcpp-package.json
 ```
 
-启动器由平台的 `runner` 生成：按 `uname -m` 或 `%PROCESSOR_ARCHITECTURE%` 选择架构目录，以该目录中的映像
-启动运行器，先在 `libexec/` 中、再在 `PATH` 上查找运行器。`--systems linux,macos,windows` 为每个系统与架构构建
-加载器放入 `libexec/`（缺省为本机系统）；本机缺少某个系统的 SDK 载荷时拒绝并点名。多台机器打出的包以
-`mcpp pack --merge a.zip b.zip …` 合并：腿与系统取并集，同一路径上的两个文件摘要必须相同。
+其余的腿在打包过程中构建（`Packed leg <triple>`）。启动器由平台的 `runner` 生成：以自身目录的上一级为包的
+根，按 `uname -m`（`x86_64`、`amd64` → `x86_64`；`aarch64`、`arm64` → `aarch64`）或
+`%PROCESSOR_ARCHITECTURE%` / `%PROCESSOR_ARCHITEW6432%` 选择架构目录，以该目录中的映像与自身的参数启动运行器，
+先在 `libexec/<runner>/<os>-<arch>/` 中、再在 `PATH` 上查找运行器。包中没有本机架构时以状态 126 退出，写出两者。
+`[runtime] deploy` 放置的文件位于每条腿的映像旁边。`[pack] universal = false` 等同 `--no-universal`；平台未声明
+`runner` 时不能打通用包，打包被拒绝，出路为 `--no-universal`。
+
+`--mode self-contained` 时运行器随包携带：对 `--systems linux,macos,windows`（缺省为本机系统）的每个系统与包的
+每个架构，mcpp 构建不携带任何内容的平台载体 —— 一个像 `okrun` 一样运行其第一个参数所指映像的程序 —— 放入
+`libexec/<runner>/<os>-<arch>/`。Linux 的运行器为静态（musl）；其他系统的按其惯常行（`<arch>-macos`、
+`<arch>-windows-gnu`）构建，本机缺少该系统的 SDK 载荷时该次构建拒绝并点名。
+
+多台机器打出的包以 `mcpp pack --merge a.zip --merge b.zip`（也可 `--merge a.zip,b.zip`）合并。输入是本命令写出的
+包目录或归档（`.zip`、`.tar`、`.tar.gz`、`.tgz`、`.tar.zst`、`.tar.xz`），不进行任何构建。腿与系统取并集，每个
+文件只取一份，结果重新描述。名字、版本、平台、链接或模式不同的输入被拒绝；同一路径有两个摘要时也被拒绝，
+写出该路径、两个摘要与两个输入。容器取 `--pkg-format`，否则取 `-o` 的扩展名，否则取第一个输入的容器。
 
 ### 单文件包
 
@@ -684,13 +705,23 @@ target/dist/hello-0.1.0-openkal/
 
 | 目标与模式 | 文件 | 启动时 |
 |---|---|---|
-| 原生，`vendored` 或 `self-contained` | 引擎的启动桩加 zstd 压缩的暂存树 | 首次运行把树解到用户缓存，之后从那里启动 |
-| 原生 Linux，`--linkage static` | 静态启动桩加静态程序 | 同上，不依赖任何系统库 |
-| ok 映像，`self-contained` | 平台的载体加本架构的映像 | 载体从内存加载映像，不写盘 |
+| 原生，`vendored` 或 `self-contained` | 引擎的启动器，以一个 zstd 帧携带暂存树 | 首次运行把树解到用户缓存，之后从那里启动 |
+| 原生 Linux，`--linkage static` | 静态启动器加静态程序 | 同上，不依赖任何系统库 |
+| ok 映像 | 平台的载体加映像，或全部映像的一个 zip | 载体从内存加载映像，不写盘 |
 
-缓存在 Linux 上为 `$XDG_CACHE_HOME`（否则 `~/.cache`），macOS 上为 `~/Library/Caches`，Windows 上为
-`%LOCALAPPDATA%`，其下以载荷的 sha256 命名目录。解压前校验载荷摘要，以临时名解压后原子改名，不完整的目录
-从不使用。
+原生程序的文件为 `target/dist/<name>-<version>-<triple>`（Windows 上带 `.exe`），其树暂存在
+`target/single-file/stage/` 下。启动器是一个小程序，mcpp 每次打包写出它的源码（`target/single-file/<name>/`，
+基于 mcpplibs.os 与 zstd）并为目标构建：Linux 上为静态（musl），macOS 与 Windows 上只引用系统自带的库。载荷是
+树的一个 zstd 帧（`--compress zstd[:<level>]`，缺省，或 `none`）。首次运行把它解到
+`<cache>/mcpp/single-file/<载荷的 sha256>/`，`<cache>` 在 Linux 上为 `$XDG_CACHE_HOME`（否则 `~/.cache`），
+macOS 上为 `~/Library/Caches`，Windows 上为 `%LOCALAPPDATA%`：先解到旁边一个自己的名字，全部文件写完后以不替换
+的方式改名到位（`.mcpp-complete` 标记完整的树；Linux 与 macOS 上该目录只对当前用户可写）。帧携带内容的校验和，
+不符的载荷从不解开。随后启动器成为程序 —— `bin/<name>`、self-contained 的 Linux 树根部的包装脚本，或 Windows
+树根部的 `<name>.exe` —— 带着它的参数，退出状态即程序的退出状态。
+
+ok 映像的文件为 `target/dist/<name>-<version>-<os>-<arch>`（Windows 上带 `.exe`），`--systems` 的每个系统
+（缺省为本机系统）各一个。映像不引用其他映像时载体只携带它，否则携带全部映像的一个 stored zip（每个映像对齐到
+64 KiB），载体的入口经 openkal-run 的 bundle 接口读取（openkal-platform 0.17.2）。
 
 ### `mcpp-package.json`
 
@@ -704,13 +735,25 @@ target/dist/hello-0.1.0-openkal/
  "files": [{"path": "lib/x86_64/hello.oke", "role": "image", "leg": "x86_64-openkal", "sha256": "…"}]}
 ```
 
-`mcpp emit xpkg` 为每个系统与架构写一个索引条目；通用包则写一个对应所有系统的资产，并以加载器的包为依赖。
+每次打包都写出该文件，提供者的格式也不例外。每个文件的 `role` 为 `program`、`image`、`library`、`loader`、
+`launcher`、`resource` 或 `metadata`；通用包中 `lib/<arch>/` 下的每个文件都是该腿的映像。符号链接不列出。
+`linkage` 为 `static`、`shared` 或 `declared`（每个库按它自己的声明）；`launch` 对单个原生腿为 `program`，
+对通用包为 `runner` 加每个架构的 `entry`。
+
+`mcpp emit xpkg --package <归档> [--package …] --url <前缀> [-o <文件>]` 由本命令写出的包的
+`mcpp-package.json` 生成 xim-pkgindex 条目（spec 2）。通用包是 `linux`、`macosx`、`windows` 同样安装的一个资产，
+包不携带运行器时以运行器为依赖（`deps = { "okrun" }`）；各系统各架构一个的包，每个系统一项，一个带 `${arch}` 的
+URL 与每个架构的 sha256。安装把归档的顶层目录移到位，并向 xvm 注册程序（Windows 上为 `.cmd` 启动器）。
 
 ### 压缩与签名
 
-`--compress zstd|gzip|xz|none[:level]`（或 `[pack] compress`）选择 `tar` 的压缩；缺省为 gzip。`zip` 的条目
-不压缩存放；okb 中的映像以 stored 存放，使加载器原地映射。`[pack] sign = ["<prog>", …, "{}"]` 在写容器之前
-对暂存树中的每个程序与映像各运行一次；失败使打包停止。
+`--compress zstd|gzip|xz|none[:level]`（或 `[pack] compress`）选择 `tar` 的压缩（`.tar.gz` 为缺省，另有
+`.tar.zst`、`.tar.xz`、`.tar`）。`tar` 写出归档，mcpp 用自己的编解码器（zlib、zstd、liblzma）压缩，因此不在
+`PATH` 上查找压缩程序，同一归档在每个宿主上字节相同。`zip` 的条目以 DEFLATE 压缩（`gzip[:level]`）或存储
+（`none`）；单文件的载荷为 `zstd` 或 `none`；okb 中的映像以 stored 存放，使加载器原地映射。
+
+`[pack] sign = ["<prog>", …, "{}"]` 在写容器之前对暂存树中的每个程序、映像、库与加载器各运行一次，也对每个单文件
+运行一次；`{}` 为该文件。失败使打包停止，写出 argv 与其输出；`mcpp-package.json` 写出签名后文件的摘要。
 
 ## 配置项
 
@@ -722,7 +765,8 @@ default_mode  = "static"            # override the normal vendored default for b
 linkage       = "shared"            # the default of --linkage
 format        = "tar"               # the default of --pkg-format
 compress      = "zstd"              # the default of --compress
-sign          = ["signtool", "sign", "{}"]   # run on each program and image before the container is written
+sign          = ["signtool", "sign", "{}"]   # run on each program, image, library and loader before the container
+universal     = false               # = --no-universal
 strip         = true                # default. false ships the artifacts as built
 debug_symbols = "dist/debug"        # separate the debug info here instead of discarding it
 include       = ["share/**", "config/*.toml"]   # extra files to bundle
@@ -748,6 +792,5 @@ force_bundle = ["libfoo.so"]        # bundle even if matched by the PEP 600 list
 
 - `.deb`、`.rpm`、AppImage、`.msi` 等分发格式经 `--pkg-format <name>` 由包提供；引擎提供 `tar`、`dir`、
   `zip` 与 `single-file`。
-- `zip` 的条目不压缩存放。
 - 不产出在多个系统上运行的单个文件；一个单文件包服务一个系统与一个架构。
 - ELF 程序的闭包由其动态链接器解析，因此不能在 Windows 上打包 Linux 程序。

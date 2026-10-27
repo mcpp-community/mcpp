@@ -67,7 +67,8 @@ the platform added with `origin = "platform"`.
 | the compile | `[platform.build]`, `[platform.build.'cfg(…)']` | flags for every unit of the target |
 | the link | `[platform.link]` | `driver`, `flags`, `start`, `script`, `inputs`, the names `exe` and `shared`, the `seal` steps |
 | the run | `runner`, `runners` | how `mcpp run` and `mcpp test` start an artifact, and named device actions |
-| the carrier | `carrier` | the program `mcpp pack --mode self-contained` builds around a loaded artifact |
+| the carrier | `carrier` | the program `mcpp pack` builds of a loaded artifact for a system: the self-contained program, a universal package's runner, a single file |
+| the package | `universal` | a pack of any target covers all of them, in one package ([10](10-pack-and-release.md)) |
 | the code | `plugin` | a build program run in the platform phase, for what depends on the graph |
 | the group | `[platform.versions]` | one version of each package of a family |
 | the host part | `[platform.hosted]` | what a host triple takes when it selects the platform |
@@ -224,8 +225,17 @@ seal   = [["okld", "note", "{}"], ["okld", "check", "{}", "--with", "{needed}"]]
   platform phase (`mcpp::phase()` is `"platform"`) and may state flags, link
   fields and runners (`mcpp::link_driver`, `mcpp::link_input_from`,
   `mcpp::artifact_name`, `mcpp::seal`, `mcpp::run_host`); any other directive is
-  refused. A board-support package's build program states the same fields in
-  its build phase ([34](34-authoring-a-bsp.md)).
+  refused, except the package formats the platform provides (`pack-format` and
+  `artifact` actions, which make e.g. an `okb` from the staged tree). A
+  board-support package's build program states the same fields in its build
+  phase ([34](34-authoring-a-bsp.md)).
+- **The carrier's entry reads what it carries.** mcpp places the carried bytes
+  between `mcpp_carried_begin` and `mcpp_carried_end` (the entry's name at
+  `mcpp_carried_name`): nothing, when the program is a universal package's
+  runner and runs the image its first argument names; the image itself; or a
+  stored zip of the images (`PK\x03\x04`, each aligned to 64 KiB) for a
+  single file of an image that names others ([SPEC-013](specs/platforms.md)
+  §11).
 
 During development a project selects the working tree with
 `--platform path:<dir>` or `platform = { path = "<dir>" }`. `mcpp test` in the
@@ -238,7 +248,7 @@ architecture, and reports the others as built and not run.
 ```sh
 mcpp self env --target x86_64-openkal                 # toolchain, platform, tools, runner
 mcpp self env --target x86_64-openkal --format json
-mcpp self env --host                                  # the host graph
+mcpp self env --host                                  # the host graph, its runner and tools once its build programs were built
 mcpp toolchain list                                   # the PLATFORM column
 mcpp toolchain install --target x86_64-openkal        # fetch and build what the target needs
 ```
