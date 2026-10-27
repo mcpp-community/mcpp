@@ -380,19 +380,8 @@ static std::expected<std::set<std::filesystem::path>, std::string> package_sourc
                 mcpp::extension_table_for(depManifest.buildConfig.moduleExtensions,
                                           depManifest.buildConfig.deviceExtensions));
         }
-        // Glob exclusion (same as scan_one_into): `!` prefix removes.
-        std::set<std::filesystem::path> sourceFiles;
-        std::set<std::filesystem::path> excluded;
-        for (auto const& g : globs) {
-            if (!g.empty() && g[0] == '!') {
-                for (auto& p : mcpp::modgraph::expand_glob(srcRoot, g.substr(1)))
-                    excluded.insert(p);
-            } else {
-                for (auto& p : mcpp::modgraph::expand_glob(srcRoot, g))
-                    sourceFiles.insert(p);
-            }
-        }
-        for (auto& p : excluded) sourceFiles.erase(p);
+        // As the scanner selects (`select_sources`).
+        auto sourceFiles = mcpp::modgraph::select_sources(srcRoot, globs);
         if (sourceFiles.empty()) {
             return std::unexpected(std::format(
                 "stage: no source files found under '{}' (globs={})",

@@ -35,8 +35,8 @@ default-profile = "release"
 # Revert is this one line if anything here is ever unexplained.
 bmi_schedule = "on"
 # mcpp's sources. The one primitive each system has of its own -- the lock
-# every release of mcpp takes (native/<system>, design 2026-10-26 §25.3) --
-# lives outside src/ and is selected per system below.
+# every release of mcpp takes (src/native/<system>, design 2026-10-26 §25.3) --
+# is selected per system below, each system's row excluding the others'.
 sources = ["src/**/*.cppm", "src/**/*.cpp"]
 
 # mcpp.exe declares the UTF-8 code page (mcpp#693); see docs/res/mcpp.rc. Only a PE
@@ -94,13 +94,13 @@ mcpplibs.cmdline = "0.0.1"
 os = { git = "https://github.com/mcpplibs/os.git", branch = "os-0.2.0" }
 
 [target.linux.build]
-sources = ["native/posix/*.cpp"]
+sources = ["!src/native/windows/**"]
 
 [target.macos.build]
-sources = ["native/posix/*.cpp"]
+sources = ["!src/native/windows/**"]
 
 [target.windows.build]
-sources = ["native/windows/*.cpp"]
+sources = ["!src/native/posix/**"]
 
 # `modules/` holds what gets linked into this binary; `src/` is what has not
 # been separated yet, and shrinking it is the direction. Each entry is an

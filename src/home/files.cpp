@@ -1,5 +1,5 @@
 // mcpp.home.files: the waiting, the owner record and the trust rule over
-// mcpplibs.os; the lock itself is each system's (native/<system>).
+// mcpplibs.os; the lock itself is each system's (src/native/<system>).
 module mcpp.home.files;
 
 import std;

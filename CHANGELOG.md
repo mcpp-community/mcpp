@@ -54,7 +54,7 @@
   platform keys and the Apple SDK in `toolchain-model`, the terminal and key
   input in `src/ui`, the home's lock and trust check in `mcpp.home.files`.
   The one primitive kept per system is the lock every release of mcpp takes
-  (`native/posix`, `native/windows`).
+  (`src/native/posix`, `src/native/windows`).
 - **A program mcpp starts is named by its argument vector.** Compiler probes,
   git, xlings, tar, strip, patchelf, readelf and vswhere are started without a
   command interpreter, with their additions to the environment given to them

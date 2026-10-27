@@ -975,20 +975,13 @@ static std::expected<void, std::string> step6_device_extensions_and_rules(Prepar
                     pkg.manifest.modules.sources.push_back("!" + g);
                 }
                 // The device-kind files the EFFECTIVE set matches, for the
-                // build program. Exclusions are honoured the way the scanner
-                // honours them: positives first, then `!` entries removed.
+                // build program, selected as the scanner selects them.
                 const auto extTable = mcpp::extension_table_for(bc.moduleExtensions,
                                                                 bc.deviceExtensions);
-                std::set<std::filesystem::path> matched, dropped;
-                for (auto const& g : pkg.manifest.modules.sources) {
-                    if (g.empty()) continue;
-                    if (g[0] == '!') { for (auto& f : mcpp::modgraph::expand_glob(pkg.root, g.substr(1))) dropped.insert(f); }
-                    else if (!std::filesystem::path(g).is_absolute())
-                        for (auto& f : mcpp::modgraph::expand_glob(pkg.root, g)) matched.insert(f);
-                }
+                const auto matched = mcpp::modgraph::select_sources(pkg.root, pkg.manifest.modules.sources,
+                                                                    /*literals=*/false);
                 std::vector<std::string> device;
                 for (auto const& f : matched) {
-                    if (dropped.contains(f)) continue;
                     if (mcpp::classify(f, extTable) != mcpp::SourceKind::Device) continue;
                     device.push_back(f.lexically_relative(pkg.root).generic_string());
                 }

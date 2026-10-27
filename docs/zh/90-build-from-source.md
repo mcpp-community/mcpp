@@ -48,7 +48,7 @@ mcpp build --target x86_64-linux-musl
 
 mcpp 是一个**工作空间**。`modules/` 下是引擎 import 的十个包；`src/` 是
 引擎本身。操作系统经由 [mcpplibs.os](https://github.com/mcpplibs/os) 访问；
-mcpp 按系统保留的唯一原语（各版本 mcpp 共用的锁）位于 `native/`。
+mcpp 按系统保留的唯一原语（各版本 mcpp 共用的锁）位于 `src/native/`。
 
 ```
 modules/                  workspace members, imported by src/
@@ -63,10 +63,9 @@ modules/                  workspace members, imported by src/
 ├── libs/                 vendored text-format parsers
 └── log/                  leveled logging
 
-native/                   the lock, per system (flock, LockFileEx)
-
 src/
 ├── main.cpp              entry point
+├── native/               the lock, per system (flock, LockFileEx)
 ├── run.cppm  run/        every program mcpp starts, and how mcpp ends at a request
 ├── effects.cppm          the constraints of a run (offline, denied effects)
 ├── home.cppm  home/      the home, its lock and its trust check

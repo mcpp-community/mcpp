@@ -18,7 +18,7 @@ export namespace mcpp::home {
 // release of mcpp holds these files with flock -- two releases at work in one
 // MCPP_HOME would each hold the lock at once. The lock is therefore mcpp's
 // contract with its own earlier releases, and its one primitive per system is
-// here (native/<system>/lock.cpp) and nowhere else in mcpp.
+// here (src/native/<system>/lock.cpp) and nowhere else in mcpp.
 class FileLock {
 public:
     // Try to acquire an exclusive lock on <dir>/.lock (or <dir>/<name>).
@@ -76,7 +76,7 @@ std::string untrusted_because(const std::filesystem::path& dir);
 
 }  // namespace mcpp::home
 
-// The one primitive per system (native/<system>/lock.cpp). Not exported.
+// The one primitive per system (src/native/<system>/lock.cpp). Not exported.
 namespace mcpp::home::native {
 // An exclusive lock on the file, taken without waiting: the handle, or -1.
 std::intptr_t lock_file(const std::filesystem::path& file);

@@ -35,6 +35,16 @@ struct ScanError {
 std::vector<std::filesystem::path> expand_glob(const std::filesystem::path& root,
                                                std::string_view glob);
 
+// The files a `sources` list selects: every pattern's files, less the files
+// any `!` pattern matches, whichever pattern selected them (the rows of
+// `[target.<cfg>.build] sources` are appended to the list). An absolute entry
+// is a literal file (a build program's generated source, outside the package)
+// when `literals`, and is skipped otherwise. The one evaluation the scanner,
+// the staging of a dependency and the device sources of a build program share.
+std::set<std::filesystem::path> select_sources(const std::filesystem::path& root,
+                                               const std::vector<std::string>& globs,
+                                               bool literals = true);
+
 // M6.x: same as expand_glob but matches DIRECTORIES (used for include_dirs
 // like "*/include"). Always returns absolute paths under `root`.
 std::vector<std::filesystem::path> expand_dir_glob(const std::filesystem::path& root,
@@ -1103,42 +1113,40 @@ local_include_dirs_after_for(const std::filesystem::path& root,
 
 } // namespace
 
-// The files a package's `sources` select, every one of which becomes a unit.
-//
-// Glob exclusion: patterns starting with `!` remove files from the include set
-// (like .gitignore).
-//   sources = ["src/**/*.cpp", "!src/**/*_test.cpp"]
-// All positive patterns are expanded first, then all `!`-prefixed patterns are
-// expanded and the resulting paths are removed.
+// The files a package's `sources` select (`select_sources`), every one of
+// which becomes a unit.
+std::set<std::filesystem::path> select_sources(const std::filesystem::path& root,
+                                               const std::vector<std::string>& globs,
+                                               bool literals) {
+    std::set<std::filesystem::path> selected, excluded;
+    for (auto const& g : globs) {
+        if (g.empty()) continue;
+        if (g[0] == '!') {
+            for (auto& p : expand_glob(root, std::string_view(g).substr(1))) excluded.insert(p);
+            continue;
+        }
+        // Literal absolute entry — e.g. a dependency build.mcpp's OUT_DIR
+        // generated source, which lives OUTSIDE the (possibly read-only)
+        // package root. No glob expansion; taken as-is when it exists.
+        // Native spelling: a raw `C:/abs/x.cppm` would stay mixed on MSVC
+        // (see native_path_from_generic) and leak into the CDB.
+        auto gp = native_path_from_generic(g);
+        if (gp.is_absolute()) {
+            std::error_code aec;
+            if (literals && std::filesystem::is_regular_file(gp, aec)) selected.insert(gp);
+            continue;
+        }
+        for (auto& p : expand_glob(root, g)) selected.insert(p);
+    }
+    for (auto& p : excluded) selected.erase(p);
+    return selected;
+}
+
 std::set<std::filesystem::path>
 package_source_files(const std::filesystem::path& root,
                      const mcpp::manifest::Manifest& manifest)
 {
-    std::set<std::filesystem::path> all_files;
-    std::set<std::filesystem::path> excluded;
-    for (auto const& g : manifest.modules.sources) {
-        if (!g.empty() && g[0] == '!') {
-            for (auto& p : expand_glob(root, g.substr(1))) {
-                excluded.insert(p);
-            }
-        } else {
-            // Literal absolute entry — e.g. a dependency build.mcpp's OUT_DIR
-            // generated source, which lives OUTSIDE the (possibly read-only)
-            // package root. No glob expansion; taken as-is when it exists.
-            // Native spelling: a raw `C:/abs/x.cppm` would stay mixed on MSVC
-            // (see native_path_from_generic) and leak into the CDB.
-            auto gp = native_path_from_generic(g);
-            if (gp.is_absolute()) {
-                std::error_code aec;
-                if (std::filesystem::is_regular_file(gp, aec)) all_files.insert(gp);
-                continue;
-            }
-            for (auto& p : expand_glob(root, g)) {
-                all_files.insert(p);
-            }
-        }
-    }
-    for (auto& p : excluded) all_files.erase(p);
+    auto all_files = select_sources(root, manifest.modules.sources);
     // A unit an action generates is a source whether or not the action has
     // run yet (D6): it is scanned from its declaration, not read.
     for (auto const& [path, _] : manifest.modules.declaredUnits)

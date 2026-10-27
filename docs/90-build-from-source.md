@@ -46,7 +46,7 @@ mcpp build --target x86_64-linux-musl
 mcpp is a **workspace**. `modules/` holds ten packages that the engine imports;
 `src/` is the engine itself. The operating system is reached through
 [mcpplibs.os](https://github.com/mcpplibs/os); the one primitive mcpp keeps
-per system, the lock every release of mcpp takes, is in `native/`.
+per system, the lock every release of mcpp takes, is in `src/native/`.
 
 ```
 modules/                  workspace members, imported by src/
@@ -61,10 +61,9 @@ modules/                  workspace members, imported by src/
 ├── libs/                 vendored text-format parsers
 └── log/                  leveled logging
 
-native/                   the lock, per system (flock, LockFileEx)
-
 src/
 ├── main.cpp              entry point
+├── native/               the lock, per system (flock, LockFileEx)
 ├── run.cppm  run/        every program mcpp starts, and how mcpp ends at a request
 ├── effects.cppm          the constraints of a run (offline, denied effects)
 ├── home.cppm  home/      the home, its lock and its trust check
