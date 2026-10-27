@@ -87,6 +87,7 @@ import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
 import mcpp.build.plan;
+import mcpp.platform;
 import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
 import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
 import mcpp.build.build_program;
@@ -524,6 +525,10 @@ export struct BuildContext {
     // where it was stated, for the line that announces it.
     std::vector<std::string> runUnder;
     std::string              runUnderOrigin;
+    // THE HOST GRAPH'S PLATFORM (SPEC-013 §6): what the build programs and the
+    // tools of this build are built for. Inactive = the host conventions.
+    // The target's is `plan.platform`.
+    mcpp::platform::Resolved hostPlatform;
     // The payload directory of every `[xlings]` address resolved above, for
     // the fast path's presence check (#716). See BuildCacheEntry::xlingsPayloads.
     std::vector<std::filesystem::path> xlingsPayloads;
@@ -1039,6 +1044,16 @@ export std::expected<BuildContext, std::string>
 prepare_build(bool print_fingerprint, bool includeDevDeps = false,
               std::vector<mcpp::manifest::Target> extraTargets = {},
               BuildOverrides overrides = {});
+
+// ONE CONFIGURATION, PREPARED WITHOUT A BUILD (SPEC-013 §9): what `mcpp self
+// env --target` reports and what `mcpp toolchain install --target` fetches --
+// the toolchain, the platform package, the packages it adds and the tools it
+// builds for this machine -- so a later build of that target works offline.
+// Inside a project the project's own configuration is prepared (its
+// `[target.<selector>]` tables apply); elsewhere an empty program in the
+// home's cache stands for one. Nothing is compiled but the tools.
+export std::expected<BuildContext, std::string>
+prepare_configuration(std::string_view targetTriple);
 
 // The PlanNotes a failed call recorded before the phase that failed it.
 //

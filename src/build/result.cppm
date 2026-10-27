@@ -79,6 +79,10 @@ struct Record {
     std::string triple;
     std::string profile;
     std::string fingerprint;
+    // The configuration's platforms (SPEC-013 §9): the target graph's and the
+    // host graph's, as `mcpp::platform::to_json` writes them; "null" for none.
+    std::string platform = "null";
+    std::string hostPlatform = "null";
     std::filesystem::path outputDir;
     std::filesystem::path projectRoot;
     std::filesystem::path compileDatabase;
@@ -182,6 +186,8 @@ nlohmann::json to_json(const Record& r) {
             {"profile", r.profile},
             {"fingerprint", r.fingerprint},
             {"outputDir", r.outputDir.generic_string()},
+            {"platform", nlohmann::json::parse(r.platform, nullptr, false)},
+            {"hostPlatform", nlohmann::json::parse(r.hostPlatform, nullptr, false)},
         }},
         {"compileDatabase", r.compileDatabase.empty() ? nlohmann::json(nullptr)
                                                       : nlohmann::json(r.compileDatabase.generic_string())},
@@ -208,6 +214,8 @@ std::optional<Record> read(const std::filesystem::path& outputDir) {
         r.profile = c.value("profile", "");
         r.fingerprint = c.value("fingerprint", "");
         r.outputDir = c.value("outputDir", "");
+        if (c.contains("platform")) r.platform = c["platform"].dump();
+        if (c.contains("hostPlatform")) r.hostPlatform = c["hostPlatform"].dump();
     }
     if (d.contains("compileDatabase") && d["compileDatabase"].is_string())
         r.compileDatabase = d["compileDatabase"].get<std::string>();

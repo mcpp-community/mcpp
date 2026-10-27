@@ -208,6 +208,24 @@ int enter_system_home(int argc, char** argv) {
     return 0;
 }
 
+// `mcpp self env` with `--target` or `--host` reports one configuration
+// (SPEC-013 §9), prepared by the build commands' module.
+int cmd_env_any(const mcpplibs::cmdline::ParsedArgs& p) {
+    if (p.value("target") || p.is_flag_set("host")) return cmd_env_configuration(p);
+    return cmd_env(p);
+}
+
+// `mcpp toolchain install --target <t>` with no compiler named installs the
+// target's whole configuration once its toolchain is in (SPEC-013 §7).
+int cmd_toolchain_any(const mcpplibs::cmdline::ParsedArgs& p) {
+    const int rc = cmd_toolchain(p);
+    if (rc != 0 || p.subcommand_name() != "install" || !p.subcommand_matches) return rc;
+    auto const& sub = *p.subcommand_matches;
+    auto target = sub.value("target");
+    if (!target || target->empty() || !sub.positional(0).empty()) return rc;
+    return cmd_install_configuration(*target);
+}
+
 int run(int argc, char** argv) {
     namespace cl = mcpplibs::cmdline;
     ReportUnnarrowablePaths reportUnnarrowable_;
@@ -1058,7 +1076,7 @@ int run(int argc, char** argv) {
                 .arg(cl::Arg("version").help("(optional, alternative to @-form)"))
                 .option(cl::Option("target").takes_value().help(
                     "Remove the payload for <triple> instead of the host one")))
-            .action(wrap_rc(cmd_toolchain)))
+            .action(wrap_rc(cmd_toolchain_any)))
         .subcommand(cl::App("cache")
             .description("Inspect and manage the global build cache")
             .subcommand(cl::App("dir")
@@ -1161,7 +1179,11 @@ int run(int argc, char** argv) {
             .subcommand(cl::App("doctor")
                 .description("Diagnose mcpp environment health"))
             .subcommand(cl::App("env")
-                .description("Print mcpp paths and configuration")
+                .description("Print mcpp paths and configuration; with --target, one configuration: toolchain, platform, tools, runner")
+                .option(cl::Option("target").takes_value().value_name("TRIPLE")
+                    .help("Report this target's configuration (prepared, not built; the project's when run in one)"))
+                .option(cl::Option("host")
+                    .help("Report the host graph's configuration: what build programs and tools are built for"))
                 .option(cl::Option("format").takes_value().value_name("json")
                     .help("Machine-readable output (enveloped; see docs/50-machine-output.md)")))
             .subcommand(cl::App("config")
@@ -1183,7 +1205,7 @@ int run(int argc, char** argv) {
                     {"store",     cmd_self_store},
                     {"init",      cmd_self_init},
                     {"doctor",    cmd_doctor},
-                    {"env",       cmd_env},
+                    {"env",       cmd_env_any},
                     {"config",    cmd_self_config},
                     {"version",   cmd_self_version},
                     {"explain",   cmd_explain_action},

@@ -10,6 +10,7 @@ export module mcpp.cli.cmd_build;
 
 import std;
 import mcpp.platform;
+import mcpp.build.runner_lookup;
 import mcpplibs.cmdline;
 import mcpp.build.prepare;
 import mcpp.build.execute;
@@ -1584,6 +1585,104 @@ export int cmd_platform_step(const mcpplibs::cmdline::ParsedArgs& parsed,
     }
     std::println(stderr, "error: platform-step takes `capture` or `seal`");
     return 2;
+}
+
+// `mcpp self env --target <t>` / `--host` (SPEC-013 §9): one configuration,
+// prepared and not built -- the toolchain, the platform and its source, the
+// tools it builds for this machine, the runner and where its program is.
+export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    bool json = false;
+    if (auto f = parsed.value("format")) {
+        if (!mcpp::wire::parse_format(*f)) {
+            std::println(stderr, "error: {}", mcpp::wire::unsupported_format(*f));
+            return 2;
+        }
+        json = true;
+    }
+    const std::string target = parsed.value("target").value_or("");
+    const bool host = parsed.is_flag_set("host");
+    const bool wasQuiet = mcpp::ui::is_quiet();
+    if (json) mcpp::ui::set_quiet(true);
+    auto ctx = mcpp::build::prepare_configuration(host ? std::string_view{} : std::string_view(target));
+    mcpp::ui::set_quiet(wasQuiet);
+    if (!ctx) {
+        if (json) {
+            mcpp::wire::Envelope env{.kind = "mcpp.env", .effects = {}};
+            env.data = nullptr;
+            env.diagnostics.push_back({"MCPP_CONFIGURATION_FAILED", mcpp::wire::Severity::Error,
+                                       ctx.error()});
+            std::println("{}", mcpp::wire::to_json(env).dump());
+        } else {
+            mcpp::ui::error(ctx.error());
+        }
+        return 1;
+    }
+    auto const& P = host ? ctx->hostPlatform : ctx->plan.platform;
+    auto const& runner = ctx->plan.platform.fields.runner;
+    std::string runnerProgram;
+    if (!host && runner.set && !runner.cmd.empty()) {
+        auto found = mcpp::build::runner_lookup::locate(
+            runner.cmd.front(), ctx->xlingsDepBinDirs,
+            mcpp::invocation::get("PATH").value_or(""));
+        if (found.program) runnerProgram = found.program->generic_string();
+    }
+    if (json) {
+        nlohmann::json tools = nlohmann::json::object();
+        for (auto const& [name, path] : P.tools) tools[name] = path;
+        nlohmann::json data{
+            {"triple", ctx->tc.targetTriple},
+            {"graph", host ? "host" : "target"},
+            {"toolchain", {{"compiler", ctx->tc.binaryPath.generic_string()},
+                           {"origin", ctx->compilerChoice.origin}}},
+            {"platform", nlohmann::json::parse(mcpp::platform::to_json(P), nullptr, false)},
+            {"tools", std::move(tools)},
+            {"runner", host || !runner.set ? nlohmann::json(nullptr) : nlohmann::json{
+                {"argv", runner.cmd}, {"host", runner.host}, {"exclusive", runner.exclusive},
+                {"program", runnerProgram.empty() ? nlohmann::json(nullptr) : nlohmann::json(runnerProgram)},
+                {"source", mcpp::platform::origin_text(runner.origin)}}},
+            {"runUnder", ctx->runUnder},
+        };
+        mcpp::wire::emit({.kind = "mcpp.env", .effects = {}, .data = std::move(data)});
+        return 0;
+    }
+    std::println("{:<10} {}", "target", ctx->tc.targetTriple);
+    std::println("{:<10} {} ({})", "compiler", ctx->tc.binaryPath.generic_string(),
+                 ctx->compilerChoice.origin);
+    std::println("{:<10} {}{}", "platform", P.display(),
+                 P.active ? std::format(" ({})", mcpp::platform::origin_text(P.selection.origin))
+                          : std::string());
+    for (auto const& [label, value] : mcpp::platform::report_rows(P))
+        std::println("{:<10} {:<17} {}", "", label, value);
+    for (auto const& [name, path] : P.tools)
+        std::println("{:<10} {:<17} {}", "tool", name, path);
+    if (!host && runner.set) {
+        std::string argv;
+        for (auto const& a : runner.cmd) argv += (argv.empty() ? "" : " ") + a;
+        std::println("{:<10} {}  ({}){}", "runner", argv, mcpp::platform::origin_text(runner.origin),
+                     runnerProgram.empty() ? std::string("  -- not found on this machine")
+                                           : "  -> " + runnerProgram);
+    }
+    if (!ctx->runUnder.empty()) {
+        std::string argv;
+        for (auto const& a : ctx->runUnder) argv += (argv.empty() ? "" : " ") + a;
+        std::println("{:<10} {}  ({})", "run_under", argv, ctx->runUnderOrigin);
+    }
+    return 0;
+}
+
+
+// `mcpp toolchain install --target <t>` with no compiler named installs THE
+// CONFIGURATION (SPEC-013 §7): the toolchain (already installed by the
+// caller), then the platform package, the packages the platform adds and the
+// tools it builds for this machine, so a build of the target works with
+// `--offline` afterwards.
+export int cmd_install_configuration(std::string_view target) {
+    auto ctx = mcpp::build::prepare_configuration(target);
+    if (!ctx) { mcpp::ui::error(ctx.error()); return 1; }
+    if (ctx->plan.platform.active)
+        mcpp::ui::info("Installed", std::format("{} for {}: {} tool(s) built for this machine",
+            ctx->plan.platform.display(), target, ctx->plan.platform.tools.size()));
+    return 0;
 }
 
 export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {

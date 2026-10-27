@@ -22,6 +22,7 @@ import mcpp.build.plan;
 import mcpp.toolchain.triple;
 import mcpp.freestanding.runner;
 import mcpp.platform;
+import mcpp.libs.json;   // the plan event's platform objects
 import mcpp.build.runner_lookup;    // #544: where the runner's program is
 import mcpp.home;                   // config.toml, for the machine's default toolchain
 import mcpp.libs.toml;
@@ -1337,10 +1338,14 @@ mcpp::build::result::Record start_record(const BuildContext& ctx) {
     r.pid = mcpp::build::dirlock::process_id();
     r.triple = ctx.tc.targetTriple;
     r.profile = ctx.profile;
+    r.platform = mcpp::platform::to_json(ctx.plan.platform);
+    r.hostPlatform = mcpp::platform::to_json(ctx.hostPlatform);
     mcpp::build::result::write(r);
     mcpp::build::result::emit("plan", {{"configuration", {
         {"triple", r.triple}, {"profile", r.profile}, {"fingerprint", r.fingerprint},
-        {"outputDir", r.outputDir.generic_string()}}}});
+        {"outputDir", r.outputDir.generic_string()},
+        {"platform", nlohmann::json::parse(r.platform, nullptr, false)},
+        {"hostPlatform", nlohmann::json::parse(r.hostPlatform, nullptr, false)}}}});
     return r;
 }
 
@@ -1381,12 +1386,16 @@ FastRecord fast_path_begin(const std::filesystem::path& projectRoot,
     if (previous) {
         f.record.triple = previous->triple;
         f.record.profile = previous->profile;
+        f.record.platform = previous->platform;
+        f.record.hostPlatform = previous->hostPlatform;
         f.artifacts = std::move(previous->artifacts);
     }
     res::write(f.record);
     res::emit("plan", {{"configuration", {
         {"triple", f.record.triple}, {"profile", f.record.profile},
-        {"fingerprint", f.record.fingerprint}, {"outputDir", f.record.outputDir.generic_string()}}}});
+        {"fingerprint", f.record.fingerprint}, {"outputDir", f.record.outputDir.generic_string()},
+        {"platform", nlohmann::json::parse(f.record.platform, nullptr, false)},
+        {"hostPlatform", nlohmann::json::parse(f.record.hostPlatform, nullptr, false)}}}});
     return f;
 }
 void fast_path_end(FastRecord& f, bool ok) {

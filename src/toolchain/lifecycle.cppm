@@ -648,6 +648,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         // So the convention travels in its own field, empty when there is
         // none. Same defect family as the release this was written for.
         std::string pin;         // the target table's convention pin, or empty
+        std::string platform;    // the target table's platform column (SPEC-013 §7), or empty
         std::string status;      // installed | available | planned
         bool        isDefault = false;
         int         rank = 0;    // display order: installed < available < planned
@@ -691,7 +692,11 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         r.note      = note_for(t);
         r.toolchain = tcLabel;
         for (auto const& info : mcpp::toolchain::triple::known_targets())
-            if (info.canonical == r.target) { r.pin = std::string(info.pin); break; }
+            if (info.canonical == r.target) {
+                r.pin = std::string(info.pin);
+                r.platform = std::string(info.platform);
+                break;
+            }
         r.status    = "installed";
         r.rank      = 0;
         r.isDefault = defSpec
@@ -770,6 +775,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         if (auto at = pin.find('@'); at != std::string::npos) pin[at] = ' ';
         r.toolchain = pin.empty() ? "—" : pin;
         r.pin       = std::string(info.pin);
+        r.platform  = std::string(info.platform);
         // Three answers, not two. "available" means a payload here produces it;
         // "via dependency graph" means the compiler is here and the system has
         // to come from packages — a different thing to do next, so a different
@@ -793,6 +799,9 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
             {"note",      r.note},
             {"toolchain", r.toolchain},
             {"pin",       r.pin},
+            // The platform a build of the target uses when nothing selects
+            // one (SPEC-013 §7); null: the engine's own conventions.
+            {"platform",  r.platform.empty() ? nlohmann::json(nullptr) : nlohmann::json(r.platform)},
             {"status",    r.status},
             {"default",   r.isDefault},
         });
@@ -811,12 +820,19 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
     if (!targetRows.empty()) {
         std::println("");
         std::println("Targets:");
-        std::println("  {:<3}{:<24}{:<22}{:<18}{}",
-                     "", "TARGET", "NOTE", "TOOLCHAIN", "STATUS");
+        std::println("  {:<3}{:<24}{:<22}{:<18}{:<26}{}",
+                     "", "TARGET", "NOTE", "TOOLCHAIN", "PLATFORM", "STATUS");
         for (auto& r : targetRows) {
-            std::println("  {:<3}{:<24}{:<22}{:<18}{}",
+            // The platform package without its namespace, `name version`.
+            std::string platform = "—";
+            if (!r.platform.empty()) {
+                platform = r.platform.substr(r.platform.find('.') == std::string::npos
+                                                 ? 0 : r.platform.find('.') + 1);
+                if (auto at = platform.find('@'); at != std::string::npos) platform[at] = ' ';
+            }
+            std::println("  {:<3}{:<24}{:<22}{:<18}{:<26}{}",
                 r.isDefault ? "*" : "",
-                r.target, r.note, r.toolchain, r.status);
+                r.target, r.note, r.toolchain, platform, r.status);
         }
     }
 

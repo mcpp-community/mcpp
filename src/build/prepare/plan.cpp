@@ -2117,7 +2117,9 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     ctx.profile     = state.effectiveProfile;
     ctx.activeFeatureRequest = state.workspacePlan() ? state.requestedFeatures
                                                      : state.overrides.features;
-    ctx.compilerChoice = { std::string(tc_origin_name(state.tcOrigin)),
+    ctx.compilerChoice = { state.platformToolchainPin && state.tcOrigin == TcOrigin::TargetPin
+                               ? std::string("platform")
+                               : std::string(tc_origin_name(state.tcOrigin)),
                            state.graphCompilerRequiredBy,
                            state.graphCompilerReplaced.empty() ? state.pinReplacedDefault
                                                          : state.graphCompilerReplaced };
