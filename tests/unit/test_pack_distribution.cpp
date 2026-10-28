@@ -654,5 +654,31 @@ TEST(PackDistribution, XpkgDescriptorNamesTheCommandAndTheArchiveTop) {
     ASSERT_TRUE(r) << r.error();
     EXPECT_NE(r->find("name = \"okrun\""), std::string::npos) << *r;
     EXPECT_NE(r->find("os.dirs(\"okrun-0.1.3-*\")"), std::string::npos) << *r;
-    EXPECT_NE(r->find("description = \"openkal-tools 0.1.3"), std::string::npos) << *r;
+    EXPECT_NE(r->find("path.join(pkginfo.install_dir(), \"bin\")"), std::string::npos) << *r;
+}
+
+// Packages of two systems that place their program apart -- a Windows one at
+// the root, a POSIX one under bin/ -- give each system its own directory.
+TEST(PackDistribution, XpkgDescriptorNamesEachSystemsProgramDirectory) {
+    std::vector<d::Asset> per;
+    for (auto [triple, top, program] :
+         { std::tuple{ "x86_64-linux-musl", "okrun-0.1.3-linux-x86_64", "bin/okrun" },
+           std::tuple{ "aarch64-macos", "okrun-0.1.3-macos-aarch64", "bin/okrun" },
+           std::tuple{ "x86_64-windows-gnu", "okrun-0.1.3-windows-x86_64", "okrun.exe" } }) {
+        d::Asset a;
+        a.file = std::string(top) + ".zip";
+        a.sha256 = std::string(64, 'c');
+        a.top = top;
+        a.pkg.name = "openkal-tools";
+        a.pkg.version = "0.1.3";
+        a.pkg.legs = { triple };
+        a.pkg.program = program;
+        per.push_back(a);
+    }
+    auto r = d::xpkg_descriptor(per, "https://example.org/0.1.3");
+    ASSERT_TRUE(r) << r.error();
+    EXPECT_NE(r->find("local bindir = { linux = \"bin\", macosx = \"bin\", windows = \".\" }"),
+              std::string::npos) << *r;
+    EXPECT_NE(r->find("path.join(pkginfo.install_dir(), bindir[os.host()])"), std::string::npos) << *r;
+    EXPECT_NE(r->find("name = \"okrun\""), std::string::npos) << *r;
 }

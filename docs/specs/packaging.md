@@ -4,8 +4,8 @@
 |---|---|
 | 规范编号 | SPEC-014 |
 | 标题 | 打包与分发:链接、闭包、容器三个维度与构建腿,暂存树与包元数据,通用包、单文件、签名、压缩、合并与分发描述 |
-| 状态 | 评审中 v1.1 |
-| 版本 | 1.1 |
+| 状态 | 评审中 v1.2 |
+| 版本 | 1.2 |
 | 最后修改 | 2026-10-28 |
 | 对应实现 | mcpp >= 2026.10.27.1 |
 | 相关设计文档 | `.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`(§2–§7、§14)、`.agents/docs/2026-10-28-platforms-design.md`(§4.7) |
@@ -298,7 +298,8 @@ openkal 目标的单文件:载体携带映像本身(映像不引用其他映像�
 ## 8. 分发描述
 
 `mcpp emit xpkg --package <归档> [--package ...] --url <前缀> [-o <文件>]` 由本命令写出的包的 `mcpp-package.json`
-生成 xim-pkgindex 条目(spec 2),资产地址为 `<前缀>/<文件名>`:
+生成 xim-pkgindex 条目(spec 2),资产地址为 `<前缀>/<文件名>`。每个归档各以一个 `--package` 给出;其后不带选项的
+词(例如 shell 通配展开的第二个文件)被拒绝,而不是不加描述。
 
 - 通用包是一个资产,`linux`、`macosx`、`windows` 三项的 URL 与 sha256 相同;包不携带运行器(非 `self-contained`)
   时三项各以运行器为依赖(`deps = { "<runner>" }`,`<runner>` 为平台运行器 argv 首项的程序名,即 xim-pkgindex
@@ -306,7 +307,8 @@ openkal 目标的单文件:载体携带映像本身(映像不引用其他映像�
 - 各系统各架构一个的包:每个系统一项,一个以 `${arch}` 代替架构的 URL 与每个架构的 sha256;文件名除架构外不同时
   拒绝。
 - 安装把归档的唯一顶层目录移到安装目录;配置以 xvm 注册程序(通用包为 `bin/<name>`,Windows 上为
-  `bin/<name>.cmd`;单腿原生包为程序所在的目录)。
+  `bin/<name>.cmd`;单腿原生包为程序所在的目录)。各系统的包把程序放在不同目录时(Windows 的程序在包根,POSIX
+  的程序在 `bin/`,包根为便利脚本),条目按系统写出各自的目录(`bindir[os.host()]`)。
 
 不带 `--package` 时 `mcpp emit xpkg` 照旧生成源码包的描述。
 
@@ -339,3 +341,4 @@ openkal 目标的单文件:载体携带映像本身(映像不引用其他映像�
 |---|---|---|
 | 1.0 | 2026-10-28 | 首版(mcpp#847):三个维度与构建腿、组合的合法性、选项的全局用法与 `--pkg-format`、`[pack]` 的新键、管线、单腿与通用包的布局、启动器、`--systems`、`mcpp-package.json`、`--merge`、压缩、单文件、包格式提供者与平台插件、签名、分发描述、`mcpp.pack` 的新字段。 |
 | 1.1 | 2026-10-28 | 与实现对齐:zip 的条目以 DEFLATE 压缩;`[pack] universal`;压缩的拒绝与项目缺省值的搁置;`--systems` 也用于映像的单文件;启动器的根与退出状态;单文件的载荷格式、校验与执行;映像单文件的载体内容;`mcpp-package.json` 的 `linkage` 取值与角色判定;`--merge` 的输入、选项写法与容器;签名的范围;`mcpp emit xpkg --package`;判据对应 e2e 954–957。 |
+| 1.2 | 2026-10-28 | 包名的模式后缀;单文件启动器自身失败的退出状态 127;`--merge` 取 `[pack] format`;`--linkage static` 改为 musl 的行;`mcpp emit xpkg --package` 的每系统程序目录与多余词的拒绝。 |

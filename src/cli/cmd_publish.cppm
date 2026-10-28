@@ -39,6 +39,13 @@ namespace mcpp::cli {
 // `mcpp emit xpkg ...` — only one subcommand defined, so the action sits
 // directly on the `emit xpkg` nested subcommand and receives its ParsedArgs.
 export int cmd_emit_xpkg(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    // Each archive is its own `--package`: a word past one (a shell glob's
+    // second file) would otherwise go undescribed.
+    if (parsed.positional_count() > 0) {
+        mcpp::ui::error(std::format("emit xpkg takes no argument '{}'; each archive is its own --package "
+                                    "(--package a.zip --package b.zip)", parsed.positional(0)));
+        return 2;
+    }
     // `--package`: the distribution description of packages `mcpp pack` wrote
     // (SPEC-014 §8), read from their mcpp-package.json.
     if (parsed.option("package")) {

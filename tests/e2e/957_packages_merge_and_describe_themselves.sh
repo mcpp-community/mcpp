@@ -16,7 +16,8 @@
 #      file and both digests; packages of different versions are refused.
 #   C. `mcpp emit xpkg --package` of a universal package is one asset for
 #      linux, macosx and windows, with the runner as a dependency when the
-#      package does not carry it.
+#      package does not carry it; an archive named without its own --package
+#      (a shell glob's second file) is refused, not left undescribed.
 #   D. An archive merges as the directory it holds does.
 set -e
 
@@ -133,6 +134,11 @@ for system in ("linux", "macosx", "windows"):
     assert 'deps = { "okrun" }' in b, (system, b)
 assert 'xvm.add("mrg"' in text
 PY
+if "$MCPP" emit xpkg --package target/dist/mrg-0.1.0-openkal.zip target/dist/mrg-0.1.0-openkal.zip \
+        --url https://example.org/v0.1.0 > c2.lua 2> c2.err; then
+    fail "C: an archive without its own --package was taken" c2.lua
+fi
+grep -q "each archive is its own --package" c2.err || fail "C: the refusal does not say how" c2.err
 echo "ok: a universal package is one asset for every system"
 
 echo "PASS: 957 packages merge and describe themselves"

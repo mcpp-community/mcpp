@@ -4,6 +4,21 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [Unreleased]
+
+### Fixed
+
+- **`mcpp emit xpkg --package` names each system's program directory.** The
+  packages of one program for several systems may place it apart: a Windows
+  package holds the program at its root, a POSIX one under `bin/` beside the
+  root's convenience script. The entry registered the first package's
+  directory for every system, so on Windows xvm pointed at a `bin/` the
+  package does not have. It now writes `bindir[os.host()]` from a table of
+  each system's directory when they differ (SPEC-014 §8).
+- **`mcpp emit xpkg` refuses a word that is not an option.** Each archive is
+  its own `--package`; `--package a.zip b.zip` (a shell glob's expansion)
+  described `a.zip` alone and left `b.zip` out without a word.
+
 ## [2026.10.27.1] - 2026-10-27
 
 ### Added

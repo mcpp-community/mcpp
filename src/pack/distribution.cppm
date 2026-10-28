@@ -1544,15 +1544,32 @@ std::expected<std::string, std::string> xpkg_descriptor(const std::vector<Asset>
     else if (!first.program.empty())
         command = std::filesystem::path(first.program).stem().string();
     if (command.empty()) command = first.name;
-    // Where the program lies in the installed tree.
-    std::string bindir = "\"bin\"", alias;
+    // Where the program lies in the installed tree. The packages of two
+    // systems may place it apart (a Windows program at the root, a POSIX one
+    // under bin/ beside the root's convenience script); the entry then names
+    // each system's directory.
+    std::string bindir = "\"bin\"", alias, bindirs;
     if (universal) {
         alias = std::format("if os.host() == \"windows\" then opts.alias = \"{}.cmd\" end\n    ",
                             lua_text(command));
     } else {
-        const auto program = std::filesystem::path(first.program);
-        bindir = program.has_parent_path() ? std::format("\"{}\"", lua_text(program.parent_path().generic_string()))
-                                           : std::string("\".\"");
+        std::map<std::string, std::string> dirOf;   // system -> the program's directory
+        for (auto const& a : assets) {
+            const auto program = std::filesystem::path(a.pkg.program);
+            dirOf[xlings_system(a.pkg.legs.front())] =
+                program.has_parent_path() ? program.parent_path().generic_string() : std::string(".");
+        }
+        const auto& one = dirOf.begin()->second;
+        if (std::ranges::all_of(dirOf, [&](auto const& e) { return e.second == one; })) {
+            bindir = std::format("\"{}\"", lua_text(one));
+        } else {
+            bindirs = "    local bindir = {";
+            for (auto const& [system, dir] : dirOf)
+                bindirs += std::format(" {} = \"{}\",", system, lua_text(dir));
+            bindirs.back() = ' ';
+            bindirs += "}\n";
+            bindir = "bindir[os.host()]";
+        }
     }
     // The archives' top-level directory: the one of a single asset, else what
     // the assets' names share (they differ by system and architecture).
@@ -1587,6 +1604,7 @@ std::expected<std::string, std::string> xpkg_descriptor(const std::vector<Asset>
         "    return false\n"
         "end\n\n"
         "function config()\n"
+        "{9}"
         "    local opts = {{ bindir = path.join(pkginfo.install_dir(), {6}) }}\n"
         "    {7}xvm.add(\"{0}\", opts)\n"
         "    return true\n"
@@ -1597,7 +1615,7 @@ std::expected<std::string, std::string> xpkg_descriptor(const std::vector<Asset>
         "end\n",
         lua_text(command), lua_text(first.version),
         universal ? std::format(", one package for every system ({})", lua_text(first.platform)) : std::string(),
-        lua_list(archs), xpm, wrapper, bindir, alias, lua_text(first.name));
+        lua_list(archs), xpm, wrapper, bindir, alias, lua_text(first.name), bindirs);
 }
 
 // ─── --merge ──────────────────────────────────────────────────────────────
