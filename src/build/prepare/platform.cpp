@@ -97,6 +97,13 @@ std::string qualified(const mcpp::manifest::Manifest& m) {
     return mcpp::pm::compat::qualified_name(n.namespace_, n.shortName);
 }
 
+// A package the platform added, as `platformInjected` records it: qualified,
+// the default namespace spelled out (the lock asks in that spelling).
+std::string injected_name(const mcpp::manifest::DependencySpec& spec) {
+    return mcpp::pm::compat::qualified_name(
+        spec.namespace_.empty() ? std::string(mcpp::pm::kDefaultNamespace) : spec.namespace_, spec.shortName);
+}
+
 // The key a worklist item for a reference is written under: its name, or
 // the short name its source gives.
 std::string item_key(const mp::PackageRef& r) {
@@ -335,8 +342,7 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
         state.platformLayerSpecs[key] = item.spec;
         state.worklist.push_back(std::move(item));
         state.platformInjected.insert("layer:" + key);
-        state.platformInjected.insert(mcpp::pm::compat::qualified_name(
-            state.worklist.back().spec.namespace_, state.worklist.back().spec.shortName));
+        state.platformInjected.insert(injected_name(state.worklist.back().spec));
         pushed = true;
     }
 
@@ -384,8 +390,7 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
         // so the tool provisioning pass builds them for this machine.
         state.m->buildDependencies[key] = item.spec;
         for (auto const& n : tools) state.platformInjected.insert("tool:" + n);
-        state.platformInjected.insert(mcpp::pm::compat::qualified_name(item.spec.namespace_,
-                                                                       item.spec.shortName));
+        state.platformInjected.insert(injected_name(item.spec));
         state.worklist.push_back(std::move(item));
         pushed = true;
     }

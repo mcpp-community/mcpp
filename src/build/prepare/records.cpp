@@ -207,6 +207,38 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             lock.packages.push_back(std::move(lp));
         }
 
+        // WHAT THE PROJECT'S OWN GRAPH REACHES (SPEC-013 §15.1): from the
+        // root and the selected members along the edges, never entering a
+        // package the platform added. A package the platform added, and one
+        // only those reach (its layers' implementations, its tools' and its
+        // plugin's libraries), is the platform's.
+        auto qualified_of = [](const mcpp::manifest::Manifest& m) {
+            auto n = mcpp::pm::compat::resolve_package_name(m.package.name, m.package.namespace_);
+            return mcpp::pm::compat::qualified_name(
+                n.namespace_.empty() ? std::string(mcpp::pm::kDefaultNamespace) : n.namespace_, n.shortName);
+        };
+        std::set<std::string> projectReaches;
+        {
+            const auto n = state.packages.size();
+            std::vector<bool> own(n, false);
+            std::vector<std::size_t> stack;
+            for (std::size_t i = 0; i < n; ++i)
+                if (i == 0 || state.packages[i].selectedMember) { own[i] = true; stack.push_back(i); }
+            while (!stack.empty()) {
+                const auto p = stack.back();
+                stack.pop_back();
+                for (auto const& e : state.dependencyEdges) {
+                    const auto d = e.dependencyPackageIndex;
+                    if (e.consumerPackageIndex != p || d >= n || own[d]) continue;
+                    if (state.platformInjected.contains(qualified_of(state.packages[d].manifest))) continue;
+                    own[d] = true;
+                    stack.push_back(d);
+                }
+            }
+            for (std::size_t i = 0; i < n; ++i)
+                if (own[i]) projectReaches.insert(qualified_of(state.packages[i].manifest));
+        }
+
         // Version deps: the whole resolved graph, at the versions actually
         // chosen. `resolved` is an ordered map, so the file is deterministic.
         std::set<std::string> versionLocked;
@@ -237,9 +269,11 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             // prefix claimed otherwise. `index_package_digest` is FNV-1a on
             // every host.
             lp.hash = mcpp::pm::index_package_digest(sourceIndex, lp.name, lp.version);
-            // The platform's packages say so (SPEC-013 §8.3).
-            if (state.platformInjected.contains(mcpp::pm::compat::qualified_name(
-                    key.ns.empty() ? std::string(mcpp::pm::kDefaultNamespace) : key.ns, key.shortName)))
+            // The platform's packages say so (SPEC-013 §15.1).
+            const auto qualified = mcpp::pm::compat::qualified_name(
+                key.ns.empty() ? std::string(mcpp::pm::kDefaultNamespace) : key.ns, key.shortName);
+            if (state.platform.active
+                && (state.platformInjected.contains(qualified) || !projectReaches.contains(qualified)))
                 lp.origin = "platform";
             // One entry per identity: a dependency declared by the root and by
             // a member under different spellings is one package.
@@ -290,6 +324,8 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
                 if (p.origin == "platform" && resolvedHere.insert(lock_identity(p)).second)
                     lock.packages.push_back(p);
         }
+        // One order whichever configuration wrote the file last: by identity.
+        std::ranges::stable_sort(lock.packages, {}, [](auto const& p) { return lock_identity(p); });
         if (!lock.packages.empty() || !lock.indices.empty()) {
             auto lockPath = state.workRoot / "mcpp.lock";
             // `--locked` ASSERTS THAT THIS RESOLUTION IS THE RECORDED ONE.
