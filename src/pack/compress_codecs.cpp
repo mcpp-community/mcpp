@@ -14,14 +14,23 @@ namespace mcpp::pack::compress::codec {
 
 namespace {
 
-// zlib's deflate with `windowBits`: 15 + 16 is a gzip member (no name, no
-// time: deflate writes neither unless a header is set), -15 is raw DEFLATE.
+// zlib's deflate with `windowBits`: 15 + 16 is a gzip member, -15 is raw
+// DEFLATE. A gzip member's header is stated rather than left to zlib, whose own
+// header names the system zlib was built for (3 on Unix, 10 or 11 on Windows):
+// no name, no time, the system 255 (unknown), so the same tree is the same
+// bytes on every host.
 std::expected<std::string, std::string> zlib_deflate(std::string_view in, int level,
                                                      int windowBits) {
     z_stream s{};
-    const int lvl = level == 0 ? Z_DEFAULT_COMPRESSION : level;
+    const int lvl = level < 0 ? Z_DEFAULT_COMPRESSION : level;
     if (deflateInit2(&s, lvl, Z_DEFLATED, windowBits, 8, Z_DEFAULT_STRATEGY) != Z_OK)
         return std::unexpected(std::string("zlib: deflateInit2 failed"));
+    gz_header header{};
+    header.os = 255;
+    if (windowBits > 15 && deflateSetHeader(&s, &header) != Z_OK) {
+        deflateEnd(&s);
+        return std::unexpected(std::string("zlib: deflateSetHeader failed"));
+    }
     std::string out;
     out.resize(deflateBound(&s, static_cast<uLong>(in.size())) + 64);
     s.next_in   = reinterpret_cast<Bytef*>(const_cast<char*>(in.data()));
@@ -53,7 +62,7 @@ std::expected<std::string, std::string> deflate(std::string_view in, int level) 
 std::expected<std::string, std::string> zstd(std::string_view in, int level) {
     ZSTD_CCtx* cx = ZSTD_createCCtx();
     if (!cx) return std::unexpected(std::string("zstd: cannot create a context"));
-    ZSTD_CCtx_setParameter(cx, ZSTD_c_compressionLevel, level == 0 ? 19 : level);
+    ZSTD_CCtx_setParameter(cx, ZSTD_c_compressionLevel, level < 0 ? 19 : level);
     ZSTD_CCtx_setParameter(cx, ZSTD_c_checksumFlag, 1);
     ZSTD_CCtx_setParameter(cx, ZSTD_c_contentSizeFlag, 1);
     std::string out;
@@ -82,7 +91,7 @@ std::expected<std::string, std::string> xz(std::string_view in, int level) {
     out.resize(lzma_stream_buffer_bound(in.size()));
     std::size_t pos = 0;
     const lzma_ret rc = lzma_easy_buffer_encode(
-        static_cast<std::uint32_t>(level == 0 ? 6 : level), LZMA_CHECK_CRC64, nullptr,
+        static_cast<std::uint32_t>(level < 0 ? 6 : level), LZMA_CHECK_CRC64, nullptr,
         reinterpret_cast<const std::uint8_t*>(in.data()), in.size(),
         reinterpret_cast<std::uint8_t*>(out.data()), &pos, out.size());
     if (rc != LZMA_OK) return std::unexpected(std::format("xz: lzma_easy_buffer_encode returned {}",
@@ -93,22 +102,35 @@ std::expected<std::string, std::string> xz(std::string_view in, int level) {
 
 namespace {
 
-// zlib's inflate until the stream ends, growing the output: a gzip member
-// (windowBits 15 + 32 detects the header) or raw DEFLATE (-15).
+// zlib's inflate until the stream ends: a gzip member (windowBits 15 + 32
+// detects the header), its output growing, or raw DEFLATE (-15) of a stated
+// `size`, its output never more than that.
 std::expected<std::string, std::string> zlib_inflate(std::string_view in, int windowBits,
-                                                     std::size_t hint) {
+                                                     std::optional<std::size_t> size) {
+    if (in.size() > std::numeric_limits<uInt>::max())
+        return std::unexpected(std::string("zlib: an input over 4 GiB"));
     z_stream s{};
     if (inflateInit2(&s, windowBits) != Z_OK)
         return std::unexpected(std::string("zlib: inflateInit2 failed"));
     std::string out;
-    out.resize(hint > 0 ? hint : in.size() * 4 + 1024);
+    // One byte past a stated size: a stream that fills it holds more than it
+    // said.
+    out.resize(size ? *size + 1 : in.size() * 4 + 1024);
     s.next_in  = reinterpret_cast<Bytef*>(const_cast<char*>(in.data()));
     s.avail_in = static_cast<uInt>(in.size());
     int rc = Z_OK;
     while (rc == Z_OK) {
-        if (s.total_out >= out.size()) out.resize(out.size() * 2);
+        if (s.total_out >= out.size()) {
+            if (size) {
+                inflateEnd(&s);
+                return std::unexpected(std::format("zlib: the stream holds more than its {} bytes",
+                                                   *size));
+            }
+            out.resize(out.size() * 2);
+        }
         s.next_out  = reinterpret_cast<Bytef*>(out.data() + s.total_out);
-        s.avail_out = static_cast<uInt>(out.size() - s.total_out);
+        s.avail_out = static_cast<uInt>(std::min<std::size_t>(out.size() - s.total_out,
+                                                              std::numeric_limits<uInt>::max()));
         rc = ::inflate(&s, Z_NO_FLUSH);
     }
     const auto written = s.total_out;
@@ -121,11 +143,11 @@ std::expected<std::string, std::string> zlib_inflate(std::string_view in, int wi
 }  // namespace
 
 std::expected<std::string, std::string> gunzip(std::string_view in) {
-    return zlib_inflate(in, 15 + 32, 0);
+    return zlib_inflate(in, 15 + 32, std::nullopt);
 }
 
 std::expected<std::string, std::string> inflate(std::string_view in, std::size_t size) {
-    return zlib_inflate(in, -15, size + 1);
+    return zlib_inflate(in, -15, size);
 }
 
 std::expected<std::string, std::string> unxz(std::string_view in) {

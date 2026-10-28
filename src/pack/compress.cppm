@@ -8,9 +8,10 @@
 // package is written the same way on every host and nothing is looked for on
 // PATH.
 //
-// Deterministic by construction: a gzip member carries no name and no time, a
-// zstd frame states its content size and its checksum, an xz stream checks
-// with CRC64. Two packs of one tree produce the same bytes.
+// Deterministic by construction: a gzip member carries no name, no time and the
+// system byte 255 (unknown) whatever host wrote it, a zstd frame states its
+// content size and its checksum, an xz stream checks with CRC64. Two packs of
+// one tree produce the same bytes, on every host.
 
 export module mcpp.pack.compress;
 
@@ -22,7 +23,9 @@ enum class Algorithm { None, Gzip, Zstd, Xz };
 
 struct Choice {
     Algorithm algorithm = Algorithm::Gzip;
-    int       level     = 0;      // 0: the codec's own default
+    // -1: the codec's own default (gzip 6, zstd 19, xz 6). Any other value is
+    // the level stated, honoured as it is: `xz:0` is xz's fastest preset.
+    int       level     = -1;
     bool      stated    = false;  // written by the user (flag or manifest)
 };
 
@@ -44,18 +47,18 @@ std::expected<void, std::string> file(const std::filesystem::path& in,
 // `in`, compressed under `c`.
 std::expected<std::string, std::string> bytes(std::string_view in, Choice c);
 
-// `in` as raw DEFLATE (a zip member's method 8), at `level` (0: default).
+// `in` as raw DEFLATE (a zip member's method 8), at `level` (-1: zlib's
+// default).
 std::expected<std::string, std::string> deflate_raw(std::string_view in, int level);
-
-// A zstd frame's content, for the readers of what mcpp wrote (the tests, and
-// `--merge`, which reads a package it wrote).
-std::expected<std::string, std::string> zstd_decompress(std::string_view frame);
 
 // What `bytes` compressed under `a`: a gzip member, a zstd frame, an xz
 // stream, or the bytes themselves. `--merge` reads the archives it merges so.
 std::expected<std::string, std::string> decompress(std::string_view in, Algorithm a);
 
 // A raw DEFLATE stream's content, `size` bytes long (a zip member's method 8).
+// A stream that holds more than `size` bytes is refused once it passes them,
+// not inflated to its end: the size is the archive's word for the member, and
+// a reader trusts no more of it than that.
 std::expected<std::string, std::string> inflate_raw(std::string_view in, std::size_t size);
 
 }  // namespace mcpp::pack::compress
@@ -162,10 +165,6 @@ std::expected<void, std::string> file(const std::filesystem::path& in,
 
 std::expected<std::string, std::string> deflate_raw(std::string_view in, int level) {
     return codec::deflate(in, level);
-}
-
-std::expected<std::string, std::string> zstd_decompress(std::string_view frame) {
-    return codec::unzstd(frame);
 }
 
 std::expected<std::string, std::string> decompress(std::string_view in, Algorithm a) {

@@ -49,7 +49,7 @@ struct Entry {
 // How the members are written.
 //
 //   deflate  each member is DEFLATEd (method 8) when that makes it smaller,
-//            and stored otherwise; `level` 0 is zlib's default.
+//            and stored otherwise; `level` -1 is zlib's default.
 //   align    a STORED member's data starts at a multiple of this many bytes
 //            from the start of the archive, the local header's extra field
 //            padding the difference (as zipalign does): a reader maps the
@@ -57,7 +57,7 @@ struct Entry {
 //            is stored, whatever `deflate` says.
 struct WriteOptions {
     bool          deflate = false;
-    int           level   = 0;
+    int           level   = -1;
     std::uint32_t align   = 0;
 };
 
