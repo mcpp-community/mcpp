@@ -137,6 +137,7 @@ struct Options {
     Linkage                         linkage      = Linkage::Unstated;
     bool                            formatStated = false;
     mcpp::pack::compress::Choice    compression;
+    bool                            compressionFromFlag = false;   // --compress, not [pack]
     // Universal packages (SPEC-014 §3). `universal`: nullopt follows the
     // platform's `universal`; false packs the selected target alone. When the
     // pipeline decides a universal package it sets `universalName` (the
@@ -146,6 +147,9 @@ struct Options {
     std::optional<bool>             universal;
     std::string                     universalName;
     std::vector<std::string>        systems;
+    // Several `--target` naming a universal platform's targets: the legs, in
+    // place of the platform's whole `targets` (SPEC-014 §1.4).
+    std::vector<std::string>        legTargets;
     // `[pack] sign`: run on each program, image, library and loader of the
     // staged tree before the container is written, `{}` the file.
     std::vector<std::string>        sign;
@@ -783,6 +787,21 @@ make_plan(const mcpp::manifest::Manifest& manifest,
               : opts.format != Format::Tar ? ArchiveKind::None
               : (p.targetIsPe && !opts.formatStated) ? ArchiveKind::Zip
               : ArchiveKind::Tar;
+    // A zip deflates or stores: a zstd or xz the format left to the artifact
+    // cannot honour is refused when the command stated it, and the project's
+    // default leaves it aside (SPEC-014 §5.1).
+    if (p.archive == ArchiveKind::Zip
+        && (opts.compression.algorithm == mcpp::pack::compress::Algorithm::Zstd
+            || opts.compression.algorithm == mcpp::pack::compress::Algorithm::Xz)) {
+        if (opts.compressionFromFlag)
+            return std::unexpected(Error{std::format(
+                "{} is packed as a zip (a Windows program's archive), whose members are deflated "
+                "or stored; --compress {} is a tar's.\n  use: --pkg-format tar --compress {}, or "
+                "--compress gzip | none", p.binaryName,
+                mcpp::pack::compress::name(opts.compression.algorithm),
+                mcpp::pack::compress::name(opts.compression.algorithm))});
+        p.opts.compression = {};
+    }
     // A universal package is named after its platform, not a triple: it is
     // the same package on every system and architecture of the platform.
     const std::string nameTriple = opts.universalName.empty() ? p.triple : opts.universalName;
@@ -1299,9 +1318,12 @@ void copy_if_exists(const std::filesystem::path& src,
 // every one of them, so a missing file is an error naming it rather than a
 // bundle that silently lacks it.
 std::expected<void, Error>
-stage_runtime_files(const Plan& plan, const std::filesystem::path& stagedExeDir)
+stage_runtime_files(const Plan& plan, const std::filesystem::path& stagedExeDir,
+                    const std::filesystem::path& builtExeDir = {})
 {
-    const auto builtDir = plan.builtBinary.parent_path();
+    // The leg's own build directory: another architecture's leg deployed its
+    // own files beside its own artifact.
+    const auto builtDir = builtExeDir.empty() ? plan.builtBinary.parent_path() : builtExeDir;
     for (auto const& rel : plan.opts.runtimeFiles) {
         const auto src = builtDir / rel;
         const auto dst = stagedExeDir / rel;
@@ -1510,9 +1532,10 @@ make_zip(const std::filesystem::path& stagingRoot, const std::filesystem::path& 
 // `[pack] include`: the project's files the globs name, at the same path
 // below the tree's root, once whatever the legs (a `share/**` is the
 // package's, not an architecture's); `[pack] exclude` drops what it names.
-std::expected<void, Error> stage_included(const Plan& plan) {
+std::expected<std::vector<std::string>, Error> stage_included(const Plan& plan) {
     namespace fs = std::filesystem;
-    if (plan.includeGlobs.empty()) return {};
+    std::vector<std::string> staged;
+    if (plan.includeGlobs.empty()) return staged;
     std::vector<fs::path> files;
     auto excluded = [&](const fs::path& f) {
         return std::ranges::any_of(plan.excludeGlobs, [&](std::string const& g) {
@@ -1534,8 +1557,9 @@ std::expected<void, Error> stage_included(const Plan& plan) {
         fs::copy_file(f, to, fs::copy_options::overwrite_existing, ec);
         if (ec) return std::unexpected(Error{std::format("[pack] include: cannot stage {}: {}",
                                                          f.string(), ec.message())});
+        staged.push_back(f.lexically_relative(plan.projectRoot).generic_string());
     }
-    return {};
+    return staged;
 }
 
 std::expected<void, Error> finalize_tree(const Plan& plan) {
@@ -1543,7 +1567,8 @@ std::expected<void, Error> finalize_tree(const Plan& plan) {
     namespace d = mcpp::pack::distribution;
     std::error_code ec;
     if (!fs::is_directory(plan.stagingRoot, ec)) return {};
-    if (auto r = stage_included(plan); !r) return r;
+    auto included = stage_included(plan);
+    if (!included) return std::unexpected(included.error());
     const auto canonical = [](std::string const& t) {
         if (t.empty()) return mcpp::toolchain::triple::host_triple().str();
         auto parsed = mcpp::toolchain::triple::parse(t);
@@ -1587,7 +1612,10 @@ std::expected<void, Error> finalize_tree(const Plan& plan) {
         if (plan.targetIsLoaded && plan.opts.mode == Mode::BundleAll)
             pkg.program = "bin/" + fs::path(plan.binaryName).stem().string()
                         + std::string(mcpplibs::os::exe_suffix);
+        stated.role[pkg.program] = "program";
     }
+    // What `[pack] include` named is the package's resource, whatever its name.
+    for (auto const& rel : *included) stated.role[rel] = "resource";
     auto described = d::describe(plan.stagingRoot, pkg, stated);
     if (!described) return std::unexpected(Error{described.error()});
     if (plan.opts.sign.empty()) return {};
@@ -2513,7 +2541,7 @@ run_loaded(const Plan& plan)
                 for (auto const& f : *n)
                     if (auto r = copy(f, dir / f.filename()); !r) return r;
             }
-            if (auto r = stage_runtime_files(plan, dir); !r) return r;
+            if (auto r = stage_runtime_files(plan, dir, leg.artifact.parent_path()); !r) return r;
         }
         if (plan.opts.mode == Mode::BundleAll) {
             launch.loader = fs::path(runner.cmd.front()).stem().string();
@@ -3209,6 +3237,11 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
         const std::string arch = t ? t->arch : std::string(mcpp::toolchain::platform::host_arch);
         std::vector<std::string> systems = plan.opts.systems;
         if (systems.empty()) systems.emplace_back(detail::host_system());
+        if (systems.size() > 1 && !plan.opts.output.empty())
+            return std::unexpected(Error{std::format(
+                "--output names one file, and --systems makes one single file per system ({}).\n"
+                "  use: leave --output out; each file is named <name>-<version>-<os>-<arch>",
+                systems.size())});
         for (auto const& system : systems) {
             const auto stem = fs::path(plan.binaryName).stem().string();
             auto packed = detail::carrier_build(plan, { carried, plan.binaryName, stem, system, arch, true });
@@ -3283,8 +3316,10 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
             int spawnError = 0;
             auto r = mcpp::run::capture_exec(argv, {}, {}, &spawnError);
             if (spawnError != 0 || r.exit_code != 0)
-                return std::unexpected(Error{std::format("[pack] sign failed on {} (exit {}):\n{}",
-                                                         f.string(), r.exit_code, r.output)});
+                return std::unexpected(Error{std::format("[pack] sign failed on {} (exit {}): {}\n{}",
+                                                         f.string(), r.exit_code,
+                                                         mcpp::build::command_line::display(argv),
+                                                         r.output)});
         }
     return written;
 }

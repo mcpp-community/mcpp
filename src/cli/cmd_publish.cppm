@@ -30,6 +30,7 @@ import mcpp.pack.stage_tree;       // the built-in formats
 import mcpp.toolchain.fingerprint;  // hash_string
 import mcpp.toolchain.platform;     // host_arch: the static row of `--linkage static`
 import mcpp.pack.compress;          // --compress
+import mcpp.toolchain.triple;       // which --target values are images' rows
 import mcpp.pack.distribution;      // --merge
 import mcpplibs.os.platform;
 
@@ -48,6 +49,13 @@ export int cmd_emit_xpkg(const mcpplibs::cmdline::ParsedArgs& parsed) {
             "mcpp-emit-{}", std::chrono::steady_clock::now().time_since_epoch().count());
         for (auto const& p : parsed.option("package")->get().values) {
             const std::filesystem::path file{p};
+            // An entry names a published file, which a directory is not.
+            if (std::filesystem::is_directory(file, ec)) {
+                mcpp::ui::error(std::format("--package {} is a directory; an index entry names the "
+                                            "archive that is published (--pkg-format zip | tar)", p));
+                std::filesystem::remove_all(work, ec);
+                return 2;
+            }
             auto root = d::unpack(file, work / std::to_string(assets.size()));
             if (!root) { mcpp::ui::error(root.error()); std::filesystem::remove_all(work, ec); return 2; }
             auto pkg = d::read(*root);
@@ -214,7 +222,9 @@ namespace {
 std::optional<std::string> pack_format_option(const mcpplibs::cmdline::ParsedArgs& parsed) {
     auto pkg = parsed.value("pkg-format");
     auto old = parsed.value("format");
-    if (old) {
+    // Said once per command, however often the value is read.
+    static bool warned = false;
+    if (old && !std::exchange(warned, true)) {
         if (pkg && *pkg != *old) {
             mcpp::ui::warning(std::format(
                 "--format '{}' and --pkg-format '{}' disagree; --pkg-format is used", *old, *pkg));
@@ -574,9 +584,12 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
     // THE PROJECT'S DEFAULTS OF THE THREE AXES (`[pack]`, SPEC-014 §1), read
     // from the package this command packs; a flag states over each.
     mcpp::manifest::PackConfig packCfg;
+    std::string projectTarget;   // `[build] target`: the project's own default triple
     if (auto root = mcpp::project::find_manifest_root(std::filesystem::current_path()))
-        if (auto eff = mcpp::project::load_effective_manifest(*root))
+        if (auto eff = mcpp::project::load_effective_manifest(*root)) {
             packCfg = eff->manifest.packConfig;
+            projectTarget = eff->manifest.buildConfig.target;
+        }
     if (parsed.option("merge")) {
         std::vector<std::string> inputs;
         for (auto const& v : parsed.option("merge")->get().values) {
@@ -593,10 +606,26 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
         if (auto v = parsed.value("output")) req.output = *v;
         if (auto f = pack_format_option(parsed)) req.format = *f;
         else if (!packCfg.format.empty()) req.format = packCfg.format;
-        std::string compressText = parsed.value("compress").value_or(packCfg.compress);
-        if (!compressText.empty()) {
-            auto c = mcpp::pack::compress::parse(compressText);
+        // The container: as stated, else as the output's name says. Only the
+        // flag's compression is the command's (a project's `[pack] compress`
+        // describes that project's packs, not a merge of packages).
+        std::string container = req.format;
+        const auto outName = req.output.filename().string();
+        if (container.empty() && outName.ends_with(".zip")) container = "zip";
+        else if (container.empty() && outName.find(".tar") != std::string::npos) container = "tar";
+        if (auto text = parsed.value("compress")) {
+            auto c = mcpp::pack::compress::parse(*text);
             if (!c) { mcpp::ui::error(std::format("--compress: {}", c.error())); return 2; }
+            using mcpp::pack::compress::Algorithm;
+            if (container == "dir") {
+                mcpp::ui::error("--compress compresses a container, and the merge writes a directory");
+                return 2;
+            }
+            if (container == "zip" && (c->algorithm == Algorithm::Zstd || c->algorithm == Algorithm::Xz)) {
+                mcpp::ui::error(std::format("a zip's members are deflated (gzip) or stored (none); "
+                                            "--compress {} is a tar's", mcpp::pack::compress::name(c->algorithm)));
+                return 2;
+            }
             req.compression = *c;
         }
         auto merged = mcpp::pack::distribution::merge(req);
@@ -605,7 +634,21 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
         if (report) {
             report->rc = 0;
             report->artifacts.push_back(*merged);
-            report->format = req.format.empty() ? std::string("tar") : req.format;
+            std::error_code mec;
+            const auto name = merged->filename().string();
+            report->format = std::filesystem::is_directory(*merged, mec) ? std::string("dir")
+                           : name.ends_with(".zip") ? std::string("zip") : std::string("tar");
+            // What the merged package says of itself.
+            const auto work = std::filesystem::temp_directory_path(mec)
+                / std::format("mcpp-merged-{}", std::chrono::steady_clock::now().time_since_epoch().count());
+            if (auto root = mcpp::pack::distribution::unpack(*merged, work))
+                if (auto pkg = mcpp::pack::distribution::read(*root)) {
+                    report->targets = pkg->legs;
+                    report->systems = pkg->systems;
+                    report->linkage = pkg->linkage;
+                    report->mode    = pkg->mode;
+                }
+            std::filesystem::remove_all(work, mec);
         }
         return 0;
     }
@@ -668,6 +711,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
                 return 2;
             }
             opts.compression = *c;
+            opts.compressionFromFlag = compressFlag.has_value();
         }
         using mcpp::pack::compress::Algorithm;
         const auto alg = opts.compression.algorithm;
@@ -760,7 +804,8 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
     // is what `--mode static` has always built. On another system the
     // libraries of the graph are linked in and the system's stay its own.
     if (opts.linkage == mcpp::pack::Linkage::Static) {
-        if (triples.empty()) {
+        // This machine's row only when the project names no target of its own.
+        if (triples.empty() && projectTarget.empty()) {
             if constexpr (mcpplibs::os::is_linux)
                 triples.push_back(std::format("{}-linux-musl", mcpp::toolchain::platform::host_arch));
         } else {
@@ -855,6 +900,19 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
         if (libraryRoute) *libraryRoute = true;
         return mcpp::pack::build_and_pack_library(route->targetName, triples, opts,
                                                   libraryReport);
+    }
+    // SEVERAL IMAGES' TARGETS ARE ONE UNIVERSAL PACKAGE'S LEGS (SPEC-014
+    // §1.4): the pack builds the first and the others as its legs; whether the
+    // platform packs them into one package is decided once it is known.
+    if (triples.size() > 1 && std::ranges::all_of(triples, [](std::string const& t) {
+            auto p = mcpp::toolchain::triple::parse(t);
+            return p && p->loader_supplies_os();
+        })) {
+        opts.legTargets = triples;
+        opts.targetTriple = triples.front();
+        auto out = mcpp::pack::build_and_pack(std::move(opts), modeFromUser, route->targetName);
+        if (report) *report = out;
+        return out.rc;
     }
     if (triples.size() > 1) {
         // #630 A9: THE ROUTE IS CHOSEN BY THE ARTIFACT'S FORM, NOT BY THE

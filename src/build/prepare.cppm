@@ -529,6 +529,13 @@ export struct BuildContext {
     // tools of this build are built for. Inactive = the host conventions.
     // The target's is `plan.platform`.
     mcpp::platform::Resolved hostPlatform;
+    // The host graph's triple and compiler, prepared for `mcpp self env --host`
+    // only: under a host platform, the platform's target of this machine's
+    // architecture and the platform's toolchain; else the toolchain the build
+    // programs are compiled with.
+    std::string hostTriple;
+    std::string hostCompiler;
+    std::string hostCompilerOrigin;
     // The payload directory of every `[xlings]` address resolved above, for
     // the fast path's presence check (#716). See BuildCacheEntry::xlingsPayloads.
     std::vector<std::filesystem::path> xlingsPayloads;

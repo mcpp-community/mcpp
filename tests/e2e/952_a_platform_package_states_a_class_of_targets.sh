@@ -19,6 +19,8 @@
 #   D. `--platform none` builds the project without the platform: the default
 #      name, no flag, no seal, no runner.
 #   E. A platform package without `[platform]` is refused, naming the package.
+#   F. A flag with `$`, quotes and a space reaches the compile as written.
+#   G. With the objects removed, the program is linked and sealed again, once.
 set -e
 
 TMP=$(mktemp -d)
@@ -36,7 +38,7 @@ targets = ["x86_64-linux-gnu", "aarch64-linux-gnu", "aarch64-macos", "x86_64-mac
 runner  = ["env", "DEMO_PLATFORM_RUNNER=yes", "{}"]
 
 [platform.build]
-cxxflags = ["-DDEMO_PLATFORM=1"]
+cxxflags = ["-DDEMO_PLATFORM=1", "-DDEMO_TAG=\"a$b c\""]
 
 [platform.link]
 exe  = "{name}.demo"
@@ -61,8 +63,13 @@ int main() {
 #else
     const char* flag = "no-flag";
 #endif
+#ifdef DEMO_TAG
+    const char* tag = DEMO_TAG;
+#else
+    const char* tag = "none";
+#endif
     const char* runner = std::getenv("DEMO_PLATFORM_RUNNER");
-    std::printf("demo: %s, runner %s\n", flag, runner ? runner : "none");
+    std::printf("demo: %s, runner %s, tag [%s]\n", flag, runner ? runner : "none", tag);
     return 0;
 }
 CPP
@@ -121,5 +128,20 @@ fi
 grep -q "has no \[platform\] section" notplat.log || fail "E: the refusal does not say why" notplat.log
 grep -q "notplat" notplat.log || fail "E: the refusal does not name the package" notplat.log
 echo "ok: a package without [platform] is refused as a platform"
+
+# F
+grep -qF 'tag [a$b c]' run.log || fail "F: the flag with \$ did not reach the compile as written" run.log
+echo "ok: a flag with \$, quotes and a space reaches the compile as written"
+
+# G
+"$MCPP" build > g0.log 2>&1 || fail "G: build" g0.log
+prog=$(ls target/*/*/bin/app.over | head -1)
+[ -n "$prog" ] || fail "G: no program" g0.log
+rm -rf "$(dirname "$(dirname "$prog")")/obj"
+"$MCPP" build > g.log 2>&1 || fail "G: build after the objects were removed" g.log
+[ "$(tail -c 11 "$prog")" = "DEMO-SEALED" ] || fail "G: the program was not sealed again" g.log
+[ "$(tail -c 22 "$prog")" = "DEMO-SEALEDDEMO-SEALED" ] && fail "G: the program was sealed twice" g.log
+"$MCPP" run > g-run.log 2>&1 || fail "G: run" g-run.log
+echo "ok: a program linked again is sealed again, once"
 
 echo "PASS: 952 a platform package states a class of targets"

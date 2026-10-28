@@ -36,6 +36,7 @@ import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.toolchain.platform;   // host_arch: the static row
 import mcpp.pack.distribution;    // the package's metadata, for a dispatched format
+import mcpp.platform;             // serves: a leg the platform states
 
 namespace mcpp::pack {
 
@@ -593,16 +594,37 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
         const bool loaded = t && t->loader_supplies_os();
         if (loaded && opts.mode == mcpp::pack::Mode::Static) opts.mode = mcpp::pack::Mode::BundleAll;
         auto const& P = ctx.plan.platform;
+        // A single file carries what it runs, whichever source stated the mode.
+        if (opts.format == mcpp::pack::Format::SingleFile && opts.mode == mcpp::pack::Mode::None)
+            return Refusal{2, about(run, m, std::string(
+                "--pkg-format single-file carries what the program runs, and the mode is system "
+                "([pack] default_mode).\n  use: --mode vendored | self-contained"))};
+        if (!opts.legTargets.empty() && !packs_universal(ctx, opts))
+            return Refusal{2, about(run, m, std::string(
+                "several --target name one package's legs only where the target's platform packs "
+                "them into one universal package (`[platform] universal = true`).\n"
+                "  use: one pack per target"))};
         if (packs_universal(ctx, opts)) {
             opts.universalName = mcpp::manifest::platform::platform_name(
                 P.package.substr(P.package.find('.') + 1));
-            for (auto const& target : P.fields.targets.value) {
+            // The legs: those the command named, else every target of the
+            // platform.
+            auto const& legs = opts.legTargets.empty() ? P.fields.targets.value : opts.legTargets;
+            for (auto const& target : legs) {
                 auto lt = mcpp::toolchain::triple::parse(target);
                 if (!lt || lt->str() == t->str()) continue;
+                if (!mcpp::platform::serves(P.fields, P.package, *lt))
+                    return Refusal{2, about(run, m, std::format(
+                        "--target {} is not a target of {}", lt->str(), P.display()))};
                 mcpp::build::BuildOverrides ov = g.ov;
                 ov.target_triple = lt->str();
+                // The member's own plan, in a workspace; the project's otherwise.
                 ov.workspace_members.clear();
                 ov.workspace_request.clear();
+                if (m.inWorkspace && !m.path.empty()) {
+                    ov.workspace_members = { m.path };
+                    ov.workspace_request = { m.path };
+                }
                 auto legCtx = mcpp::build::prepare_build(false, false, {}, ov);
                 if (!legCtx) return Refusal{1, about(run, m, std::format(
                     "the {} leg of the universal package: {}", lt->str(), legCtx.error()))};
@@ -616,7 +638,8 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
                 std::filesystem::path artifact;
                 for (auto const& lu : legCtx->plan.linkUnits)
                     if (lu.targetName == chosenLu->targetName && lu.kind == chosenLu->kind
-                        && !lu.dependencyOwned && (!sharedPlan || lu.memberOf == m.name)) {
+                        && !lu.dependencyOwned
+                        && (legCtx->workspaceMembers.size() < 2 || lu.memberOf == m.name)) {
                         artifact = legCtx->outputDir / lu.output;
                         break;
                     }
@@ -755,7 +778,7 @@ std::optional<Refusal> prepare_group(PackRun& run, GroupJob& g) {
         // prepare with the same overrides plus two fields -- and a second
         // overrides object left behind here would make that pass differ from
         // this build in a way nothing states.
-        g.ov.target_triple = "x86_64-linux-musl";
+        g.ov.target_triple = std::format("{}-linux-musl", mcpp::toolchain::platform::host_arch);
         // Quiet on the same grounds as the first prepare: this one also runs
         // before `--format` has been validated.
         auto ctx2 = prepare();
@@ -790,6 +813,13 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
                               "package carries, or for which a single file of an image is made; this "
                               "pack is neither.\n  use: --mode self-contained over a platform that "
                               "states universal = true, or --pkg-format single-file")};
+        // A single file is made per system, and `-o` names one file.
+        if (run.opts.format == mcpp::pack::Format::SingleFile && run.opts.systems.size() > 1
+            && !run.opts.output.empty())
+            return Refusal{2, std::format(
+                "--output names one file, and --systems makes one single file per system ({}).\n"
+                "  use: leave --output out; each file is named <name>-<version>-<os>-<arch>",
+                run.opts.systems.size())};
     }
     // ─── Is the requested format one anything provides? ──────────────
     //

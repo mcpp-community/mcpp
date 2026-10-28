@@ -96,4 +96,34 @@ case "$hosted" in
     exit 1 ;;
 esac
 
+# ── Half three: a kernel-abi package over the system's C library ──────────
+#
+# On a hosted target a kernel-abi package (openkal-linux under mcpplibs.os)
+# sits over the system's C library, which the row's payload still supplies:
+# it supplies no system, and the row's convention stands. Measured on
+# linux-aarch64: it cancelled the musl row's convention, and the machine's
+# llvm compiled the musl target against glibc's headers. With a compiler of
+# another family named and nothing in the payload's place, the decision is
+# the refusal half one of e2e 298 states.
+mkdir -p "$work/kabi/src"
+cat > "$work/kabi/mcpp.toml" <<TOML
+[package]
+name     = "kabiprobe"
+version  = "0.1.0"
+provides = ["mcpp:kernel-abi=openkal"]
+
+[toolchain]
+default = "llvm@${LLVM_VERSION}"
+TOML
+printf 'int main() { return 0; }\n' > "$work/kabi/src/main.cpp"
+kabi="$(cd "$work/kabi" && "$MCPP" build --target x86_64-linux-musl 2>&1 || true)"
+case "$kabi" in
+  *"takes its C library from"*)
+    echo "  ok  a kernel-abi package on a hosted target leaves the row's convention standing" ;;
+  *)
+    echo "FAIL: a kernel-abi package over the system's C library cancelled the row's convention"
+    printf '%s\n' "$kabi" | grep -iE 'Resolved|error' | head -4 | sed 's/^/        /'
+    exit 1 ;;
+esac
+
 echo "OK: naming a layer changes the system, not the compiler that emits the target"

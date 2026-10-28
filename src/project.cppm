@@ -399,14 +399,13 @@ void merge_layer_root_position(mcpp::manifest::Manifest& member,
         for (auto const& [n, argv] : from.namedRunners) to.namedRunners.try_emplace(n, argv);
     }
 
-    // The platform part of `[workspace.target.<sel>]` and `[workspace.host]`
-    // (SPEC-013 §4.5): the workspace's tables merge first, so the member's own
-    // come after them and win field by field.
+    // The platform part of `[workspace.target.<sel>]` (SPEC-013 §13): the
+    // workspace's tables merge first, so of two tables of one selector the
+    // member's wins field by field; between selectors the more specific wins,
+    // as for the other keys above. `[host]` is not a workspace table.
     member.platformOverrides.insert(member.platformOverrides.begin(),
                                     layer.platformOverrides.begin(),
                                     layer.platformOverrides.end());
-    if (!member.hostPlatform.platformSet && layer.hostPlatform.platformSet)
-        member.hostPlatform = layer.hostPlatform;
 }
 
 }  // namespace detail

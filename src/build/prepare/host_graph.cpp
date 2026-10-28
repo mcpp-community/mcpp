@@ -1031,7 +1031,7 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
                 place_program_copy(state, p.index, fs::path(it->value("binary", std::string{})));
                 std::vector<std::string> runner;
                 if (it->contains("runner") && (*it)["runner"].is_array())
-                    for (auto const& a : (*it)["runner"]) runner.push_back(a.get<std::string>());
+                    runner = (*it)["runner"].get<std::vector<std::string>>();
                 // A program built under the host platform by an earlier run:
                 // its runner as that run located it, for the report.
                 if (!runner.empty() && state.hostPlatformRunner.empty()) {

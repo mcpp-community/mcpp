@@ -1011,7 +1011,8 @@ std::filesystem::path target_output(const mcpp::manifest::Target& t,
     if (t.kind == mcpp::manifest::Target::SharedLibrary
         || (t.kind == mcpp::manifest::Target::Application && asSharedObject)) {
         return std::filesystem::path("bin") /
-               std::format("{}{}{}", n.libPrefix, t.name, n.sharedLibExt);
+               std::format("{}{}{}", n.sharedLibPrefixSet ? n.sharedLibPrefix : n.libPrefix,
+                           t.name, n.sharedLibExt);
     }
     return std::filesystem::path("bin") /
            std::format("{}{}", t.name, n.exeSuffix);
@@ -1686,8 +1687,9 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         if (l.shared.set && mcpp::platform::split_name_pattern(l.shared.value)) {
             const std::string_view v = l.shared.value;
             const auto at = v.find(kName);
-            naming.libPrefix    = v.substr(0, at);
-            naming.sharedLibExt = v.substr(at + kName.size());
+            naming.sharedLibPrefix    = v.substr(0, at);
+            naming.sharedLibPrefixSet = true;
+            naming.sharedLibExt       = v.substr(at + kName.size());
         }
     }
 

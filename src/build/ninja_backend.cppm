@@ -1610,15 +1610,18 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             }
             steps += line + "\n";
         }
-        const auto stepsFile = std::filesystem::path("obj") / "platform" / "seal.steps";
-        std::error_code mkec;
-        std::filesystem::create_directories((plan.outputDir / stepsFile).parent_path(), mkec);
-        write_file(plan.outputDir / stepsFile, steps);
+        // IN THE COMMAND, HEX-ENCODED, NOT IN A FILE BESIDE IT: a file under
+        // `obj/` is gone after `rm -rf obj`, and a build that does not plan
+        // again (its graph is current) then ran the seal with no steps and
+        // published the artifact unsealed. The command is the steps, so a
+        // changed step reseals by the command's own change.
+        static constexpr char kHex[] = "0123456789abcdef";
+        std::string hex;
+        for (unsigned char ch : steps) { hex += kHex[ch >> 4]; hex += kHex[ch & 15]; }
         append("seal_with =\n");
         append("rule platform_seal\n");
-        append(std::format("  command = $mcpp platform-step seal --steps {} --digest {} -- $in $out $seal_with\n",
-                           ninja_command_word(stepsFile.generic_string()),
-                           mcpp::toolchain::hash_string(steps)));
+        append(std::format("  command = $mcpp platform-step seal --steps-hex {} -- $in $out $seal_with\n",
+                           hex));
         append("  description = SEAL $out\n\n");
     }
 

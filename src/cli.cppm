@@ -1307,8 +1307,7 @@ int run(int argc, char** argv) {
             .description("(internal: invoked by ninja for a platform's link) `capture --out F -- argv…` saves a program's output; `seal --steps F -- <linked> <artifact> [needed…]` runs the platform's seal steps, then publishes")
             .arg(cl::Arg("mode").help("capture | seal"))
             .option(cl::Option("out").takes_value().value_name("PATH").help("capture: the file the output is saved as"))
-            .option(cl::Option("steps").takes_value().value_name("PATH").help("seal: the steps, one per line, words separated by a tab"))
-            .option(cl::Option("digest").takes_value().value_name("HEX").help("seal: the steps' digest (part of the command, so a changed step reseals)"))
+            .option(cl::Option("steps-hex").takes_value().value_name("HEX").help("seal: the steps, one per line, words separated by a tab, hex-encoded (the command is the steps, so a changed step reseals)"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_platform_step(p, std::span<const std::string>(passthrough));
             })))

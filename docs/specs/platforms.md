@@ -67,7 +67,7 @@ plugin    = "build.mcpp"
 | `runner` | 字符串数组或表 | §10 |
 | `runners` | `<name> = [argv]` | 命名的设备动作,每个 argv 非空 |
 | `carrier` | 表 | §11;`package`、`section`、`main` 三键都**必须**给出 |
-| `plugin` | 字符串 | 平台包中的构建程序,在平台阶段运行(§12);路径相对于平台包 |
+| `plugin` | 字符串 | 只能为 `"build.mcpp"`:平台包自身的构建程序(SPEC-007)在平台阶段运行(§12);其他值拒绝 |
 | `universal` | 布尔 | `true` 时本平台任一目标的打包缺省为覆盖全部 `targets` 的通用包(SPEC-014 §1.4、§4.2) |
 | `layers` | 表 | §7.2;键只能是 §0 的四个层名 |
 | `tools` | 表 | §7.3 |
@@ -79,8 +79,8 @@ plugin    = "build.mcpp"
 **包引用。** `layers`、`tools`、`carrier.package` 与选择平台的值都是包引用:字符串
 `"[<namespace>.]<name>@<version>"`,或表。表的键为 `name`、`version`、`path`、`git` 与
 `rev` / `tag` / `branch` 之一、`features`、`default-features`;**必须**恰好给出 `version`、`path`、
-`git` 之一;`version` 与 `name` 同时出现;`path` 相对于写它的文件;`path` 或 `git` 的引用**可以**
-省略 `name`,此时由该包自己的清单命名。`false` 只在 `layers` 中有效;`{ program = "<name>" }` 只在
+`git` 之一;`version` 与 `name` 同时出现;`path` 相对于写它的文件;`git` 的引用同时给出 `name`;`path` 的引用**可以**
+省略 `name`,此时由该目录中包自己的清单命名。`false` 只在 `layers` 中有效;`{ program = "<name>" }` 只在
 `tools` 中有效,且不带其他键。**已实现**
 
 **argv 约定。** argv 中的 `{}` 为产物;程序以名字书写,按"图中为本机构建的程序 → 声明的载荷 →
@@ -349,7 +349,8 @@ Mach-O 写作 `__<大写名>,__carried`),给出符号 `mcpp_carried_begin`、`mc
 ## 13. 工作空间
 
 `[target.<selector>]` 的平台键与 `[host]` 是根位置的键,从计划的根读取。工作空间层的
-`[workspace.target.<selector>]` 先于成员自己的表合并;`[host]` 不是工作空间层的表。虚拟根携带第一个被选中
+`[workspace.target.<selector>]` 先于成员自己的表合并:同一选择器的两张表,成员的字段胜出;不同选择器之间
+按具体度,与 `[target.<selector>]` 其他键的合并相同。`[host]` 不是工作空间层的表。虚拟根携带第一个被选中
 成员的平台键与 `[host]`;根位置的比较键包含适用的平台表与 `[host]`,使二者不同的成员不共用一个计划。
 **已实现**
 
@@ -431,7 +432,7 @@ Mach-O 写作 `__<大写名>,__carried`),给出符号 `mcpp_carried_begin`、`mc
 
 ## 18. 判据
 
-1. `[platform]` 的每个键的类型错误在读清单时拒绝,消息写出键与文件;未知键为警告。
+1. `[platform]` 及其子表、`[host]` 与包引用中每个键的类型错误在读清单时拒绝,消息写出键与文件;未知键为警告并被忽略。
 2. 选择按 §3.1、§4.1 的顺序;`none` 不使用平台;目录形式读取目录中的清单。
 3. `cfg(platform = ...)` 下写 `platform` 被拒绝。
 4. 图已提供某层时平台不加入该层的包,报告为 `graph`;`false` 不加入。

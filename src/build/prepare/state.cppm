@@ -1098,6 +1098,18 @@ std::expected<void, std::string>
 step2_use_local_toolchain(PrepareState& state, const mcpp::toolchain::ToolchainSpec& spec);
 std::expected<void, std::string> step2_apply_local_toolchain(PrepareState& state);
 std::expected<void, std::string> step6_toolchain_phase(PrepareState& state);
+// Which instances each package has, by index (features.cpp): a target instance
+// where ordinary edges reach it from the root, a build-program instance where
+// a `[build-dependencies]` edge reaches it.
+struct PackageInstances {
+    std::vector<bool> target;
+    std::vector<bool> host;
+};
+PackageInstances package_instances(const PrepareState& state);
+// The platform's fields a package's build program stated (protocol 17), at the
+// build-program tier of the build's platform statement, named after `who`.
+void merge_program_platform(PrepareState& state, mcpp::manifest::platform::Statement stated,
+                            std::string_view who);
 // The platform through the phases (prepare/platform.cpp).
 mcpp::build::cfgpred::Ctx platform_cfg_context(const PrepareState& state);
 std::expected<void, std::string> step1_select_platform(PrepareState& state);

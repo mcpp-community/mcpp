@@ -46,6 +46,10 @@ struct Reader {
     std::expected<void, std::string>
     link(const mcpp::libs::toml::Table& t, std::string_view where, Link& out) const;
 
+    // One entry of `link.inputs`: `{ file = "..." }` or `{ from = [...], as = "..." }`.
+    std::expected<LinkInput, std::string>
+    link_input(const mcpp::libs::toml::Value& e, std::string_view key) const;
+
     std::expected<void, std::string>
     layers(const mcpp::libs::toml::Value& v, std::string_view where,
            std::map<std::string, LayerEntry>& out) const;
@@ -197,8 +201,8 @@ Reader::ref(const toml::Value& v, std::string_view where, bool allowOff, bool al
             r.spec.defaultFeatures = val.as_bool();
             r.spec.defaultFeaturesDeclared = true;
         } else {
-            return std::unexpected(std::format(
-                "{}: '{}' is not a key of a package reference; the keys are name, version, "
+            warn(std::format(
+                "{}: '{}' is not a key of a package reference (ignored); the keys are name, version, "
                 "path, git, rev, tag, branch, features, default-features{}",
                 where, k, allowProgram ? ", or program alone" : ""));
         }
@@ -216,6 +220,12 @@ Reader::ref(const toml::Value& v, std::string_view where, bool allowOff, bool al
         return std::unexpected(std::format(
             "{}: a version names the package too: {{ name = \"<name>\", version = \"<version>\" }}, "
             "or \"<name>@<version>\"", where));
+    // A repository is not read before its package is fetched, and its URL does
+    // not say the package's name; a git reference names it.
+    if (!r.spec.git.empty() && r.name.empty())
+        return std::unexpected(std::format(
+            "{}: a git source names the package too: {{ name = \"<name>\", git = \"<url>\", ... }}",
+            where));
     split_name(r);
     return r;
 }
@@ -246,8 +256,9 @@ std::expected<Runner, std::string> Reader::runner(const toml::Value& v, std::str
                 r.exclusive = val.as_bool();
                 r.exclusiveSet = true;
             } else {
-                return std::unexpected(std::format(
-                    "{}: '{}' is not a key of a runner; the keys are cmd, host, exclusive", where, k));
+                warn(std::format(
+                    "{}: '{}' is not a key of a runner (ignored); the keys are cmd, host, exclusive",
+                    where, k));
             }
         }
     } else {
@@ -280,15 +291,56 @@ Reader::flags(const toml::Table& t, std::string_view where, Flags& out,
             : k == "asmflags" ? &out.asmflags
             : k == "ldflags"  ? &out.ldflags
             : nullptr;
-        if (!dst)
-            return std::unexpected(std::format(
-                "{} has no key '{}'; the keys are {}{}", where, k, list_of(kBuildKeys),
+        if (!dst) {
+            warn(std::format(
+                "{} has unsupported key '{}' (ignored); the keys are {}{}", where, k, list_of(kBuildKeys),
                 cfg ? ", and 'cfg(...)' tables of the same keys" : ""));
+            continue;
+        }
         auto s = strings(v, key);
         if (!s) return std::unexpected(s.error());
         dst->insert(dst->end(), s->begin(), s->end());
     }
     return {};
+}
+
+std::expected<LinkInput, std::string>
+Reader::link_input(const toml::Value& e, std::string_view key) const {
+    if (!e.is_table())
+        return std::unexpected(std::format(
+            "{} must contain only tables: {{ file = \"...\" }} or "
+            "{{ from = [...], as = \"...\" }}", key));
+    LinkInput in;
+    for (auto const& [ik, iv] : e.as_table()) {
+        auto ikey = std::format("{}.{}", key, ik);
+        if (ik == "file") {
+            if (!iv.is_string() || iv.as_string().empty())
+                return std::unexpected(std::format("{} must be a path", ikey));
+            in.file = absolute(iv.as_string()).generic_string();
+        } else if (ik == "from") {
+            auto s = strings(iv, ikey);
+            if (!s) return std::unexpected(s.error());
+            if (s->empty())
+                return std::unexpected(std::format("{} is empty; it names a program", ikey));
+            in.from = std::move(*s);
+        } else if (ik == "as") {
+            if (!iv.is_string() || iv.as_string().empty()
+                || iv.as_string().find_first_of("/\\") != std::string::npos)
+                return std::unexpected(std::format("{} must be a file name", ikey));
+            in.as = iv.as_string();
+        } else {
+            warn(std::format(
+                "{}: '{}' is not a key of a link input (ignored); the keys are file, "
+                "or from and as", key, ik));
+        }
+    }
+    if (in.file.empty() == in.from.empty())
+        return std::unexpected(std::format(
+            "{}: an input is {{ file = \"...\" }} or {{ from = [...], as = \"...\" }}", key));
+    if (!in.from.empty() && in.as.empty())
+        return std::unexpected(std::format(
+            "{}: an input made by a program names the file it is saved as (`as`)", key));
+    return in;
 }
 
 std::expected<void, std::string>
@@ -298,10 +350,18 @@ Reader::link(const toml::Table& t, std::string_view where, Link& out) const {
         auto text = [&](Text& dst, bool needsName) -> std::expected<void, std::string> {
             if (!v.is_string() || v.as_string().empty())
                 return std::unexpected(std::format("{} must be a non-empty string", key));
-            if (needsName && v.as_string().find("{name}") == std::string::npos)
+            // A name pattern holds `{name}` exactly once and names no directory
+            // (the rule `mcpp::platform::split_name_pattern` applies).
+            const std::string_view s = v.as_string();
+            const auto first = s.find("{name}");
+            if (needsName && (first == std::string_view::npos
+                              || s.find("{name}", first + 1) != std::string_view::npos))
                 return std::unexpected(std::format(
-                    "{} = \"{}\" names no artifact; write the pattern with {{name}}, "
-                    "for example \"{{name}}.oke\"", key, v.as_string()));
+                    "{} = \"{}\" names the artifact as {{name}} exactly once; "
+                    "for example \"{{name}}.oke\"", key, s));
+            if (needsName && s.find_first_of("/\\") != std::string_view::npos)
+                return std::unexpected(std::format(
+                    "{} = \"{}\" is a file name pattern; it names no directory", key, s));
             dst = Text{ v.as_string(), at(v, key), true };
             return {};
         };
@@ -334,41 +394,9 @@ Reader::link(const toml::Table& t, std::string_view where, Link& out) const {
                     "{} must be an array of {{ file = \"...\" }} or {{ from = [...], as = \"...\" }}", key));
             out.inputs.clear();
             for (auto const& e : v.as_array()) {
-                if (!e.is_table())
-                    return std::unexpected(std::format(
-                        "{} must contain only tables: {{ file = \"...\" }} or "
-                        "{{ from = [...], as = \"...\" }}", key));
-                LinkInput in;
-                for (auto const& [ik, iv] : e.as_table()) {
-                    auto ikey = std::format("{}.{}", key, ik);
-                    if (ik == "file") {
-                        if (!iv.is_string() || iv.as_string().empty())
-                            return std::unexpected(std::format("{} must be a path", ikey));
-                        in.file = absolute(iv.as_string()).generic_string();
-                    } else if (ik == "from") {
-                        auto s = strings(iv, ikey);
-                        if (!s) return std::unexpected(s.error());
-                        if (s->empty())
-                            return std::unexpected(std::format("{} is empty; it names a program", ikey));
-                        in.from = std::move(*s);
-                    } else if (ik == "as") {
-                        if (!iv.is_string() || iv.as_string().empty()
-                            || iv.as_string().find_first_of("/\\") != std::string::npos)
-                            return std::unexpected(std::format("{} must be a file name", ikey));
-                        in.as = iv.as_string();
-                    } else {
-                        return std::unexpected(std::format(
-                            "{}: '{}' is not a key of a link input; the keys are file, or from and as",
-                            key, ik));
-                    }
-                }
-                if (in.file.empty() == in.from.empty())
-                    return std::unexpected(std::format(
-                        "{}: an input is {{ file = \"...\" }} or {{ from = [...], as = \"...\" }}", key));
-                if (!in.from.empty() && in.as.empty())
-                    return std::unexpected(std::format(
-                        "{}: an input made by a program names the file it is saved as (`as`)", key));
-                out.inputs.push_back(std::move(in));
+                auto in = link_input(e, key);
+                if (!in) return std::unexpected(in.error());
+                out.inputs.push_back(std::move(*in));
             }
             out.inputsOrigin = at(v, key);
             out.inputsSet = true;
@@ -388,8 +416,8 @@ Reader::link(const toml::Table& t, std::string_view where, Link& out) const {
             out.sealOrigin = at(v, key);
             out.sealSet = true;
         } else {
-            return std::unexpected(std::format(
-                "{} has no key '{}'; the keys are {}", where, k, list_of(kLinkKeys)));
+            warn(std::format(
+                "{} has unsupported key '{}' (ignored); the keys are {}", where, k, list_of(kLinkKeys)));
         }
     }
     return {};
@@ -451,8 +479,9 @@ std::expected<Carrier, std::string> Reader::carrier(const toml::Value& v, std::s
                 return std::unexpected(std::format("{} must be a source file of the package", key));
             c.main = absolute(val.as_string()).generic_string();
         } else {
-            return std::unexpected(std::format(
-                "{}: '{}' is not a key of a carrier; the keys are package, section, main", where, k));
+            warn(std::format(
+                "{}: '{}' is not a key of a carrier (ignored); the keys are package, section, main",
+                where, k));
         }
     }
     if (c.package.empty() || c.section.empty() || c.main.empty())
@@ -486,8 +515,9 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
                         auto p = strings(sv, key + ".provides");
                         if (!p) return std::unexpected(p.error());
                         s.sysrootProvides = std::move(*p);
-                    } else return std::unexpected(std::format(
-                        "{}: '{}' is not a key of a sysroot table; the keys are path, provides", key, sk));
+                    } else warn(std::format(
+                        "{}: '{}' is not a key of a sysroot table (ignored); the keys are path, provides",
+                        key, sk));
                 }
                 if (path.empty())
                     return std::unexpected(std::format("{} is a table without `path`", key));
@@ -514,9 +544,11 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
             if (!c) return std::unexpected(c.error());
             s.carrier = std::move(*c);
         } else if (k == "plugin") {
-            if (!v.is_string() || v.as_string().empty())
+            // The platform's program is its package's build program, which a
+            // package names `build.mcpp` (SPEC-007); no other file is run.
+            if (!v.is_string() || v.as_string() != "build.mcpp")
                 return std::unexpected(std::format(
-                    "{} must name the platform's build program, for example \"build.mcpp\"", key));
+                    "{} must be \"build.mcpp\": the platform's program is its package's build program", key));
             s.plugin = Text{ absolute(v.as_string()).generic_string(), at(v, key), true };
         } else if (k == "universal") {
             if (!v.is_bool())
@@ -561,9 +593,9 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
                     if (auto r = layers(hv, "[platform.hosted.layers]", s.hosted.layers); !r)
                         return std::unexpected(r.error());
                 } else {
-                    return std::unexpected(std::format(
-                        "[platform.hosted] has no key '{}'; a host triple takes the platform's {} only",
-                        hk, list_of(kHostedKeys)));
+                    warn(std::format(
+                        "[platform.hosted] has unsupported key '{}' (ignored); a host triple takes "
+                        "the platform's {} only", hk, list_of(kHostedKeys)));
                 }
             }
         } else {
@@ -594,8 +626,9 @@ Reader::override_(const toml::Table& t, std::string_view selector) const {
             o.platformSet = true;
         } else if (selector.empty()) {
             // `[host]` selects the host graph's platform and nothing else.
-            return std::unexpected(std::format(
-                "[host] has no key '{}'; it holds `platform`, the host graph's platform", k));
+            warn(std::format(
+                "[host] has unsupported key '{}' (ignored); it holds `platform`, the host graph's platform",
+                k));
         } else if (k == "layers") {
             if (auto r = layers(v, key, o.fields.layers); !r) return std::unexpected(r.error());
         } else if (k == "tools") {

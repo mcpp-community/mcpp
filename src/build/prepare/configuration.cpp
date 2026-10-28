@@ -26,10 +26,15 @@ std::expected<BuildContext, std::string> prepare_configuration(std::string_view 
     // No project here: an empty program in the home's cache stands for one,
     // one directory per target, so its lock and its build directory persist
     // and a second run finds everything on disk.
+    // The directory is named after the triple, which is checked first: the
+    // text names a directory under the home.
     std::string name = "host";
     if (!targetTriple.empty()) {
         auto t = mcpp::toolchain::triple::parse(targetTriple);
-        name = t ? t->str() : std::string(targetTriple);
+        if (!t) return std::unexpected(std::format(
+            "'{}' is not a target triple (<arch>-<os>[-<env>], for example x86_64-openkal)",
+            targetTriple));
+        name = t->str();
     }
     const auto dir = mcpp::home::root() / "cache" / "configurations" / name;
     fs::create_directories(dir / "src", ec);

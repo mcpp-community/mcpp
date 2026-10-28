@@ -1194,6 +1194,11 @@ struct ArtifactNaming {
     // produced artifact. Shared libraries have never been verified end-to-end
     // on PE or Mach-O — every shared-library e2e declares `# requires: elf`.
     bool             sharedNeedsImportLib;
+    // A shared library's own prefix where a platform names it
+    // (`[platform.link] shared = "lib{name}.okso"`); the static library keeps
+    // `libPrefix`.
+    std::string_view sharedLibPrefix    = {};
+    bool             sharedLibPrefixSet = false;
 };
 
 // Naming for an explicit target triple. An EMPTY triple means "build for this

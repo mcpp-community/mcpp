@@ -20,6 +20,8 @@
 #   F. `--format` is the earlier spelling of `--pkg-format`, with a warning.
 #   G. `[pack] include` stages the files it names at their paths, less what
 #      `[pack] exclude` names, and the metadata lists them as resources.
+#   H. `[pack] sign` runs on each program before the container, and the
+#      metadata's digests are those of the signed files.
 set -e
 
 TMP=$(mktemp -d)
@@ -138,5 +140,26 @@ roles = {f["path"]: f["role"] for f in d["files"]}
 assert roles.get("share/data/keep.txt") == "resource", roles
 PY
 echo "ok: [pack] include stages what it names, less what exclude names"
+
+# H
+cat >> mcpp.toml <<'TOML'
+sign = ["sh", "-c", "printf SIGNED >> \"$0\"", "{}"]
+TOML
+"$MCPP" pack --pkg-format dir -o signed > h.log 2>&1 || fail "H: pack with [pack] sign" h.log
+python3 - <<'PY' || fail "H: the signed tree" target/dist/signed/mcpp-package.json
+import hashlib, json, os
+root = "target/dist/signed"
+d = json.load(open(os.path.join(root, "mcpp-package.json")))
+programs = [f for f in d["files"] if f["role"] == "program"]
+assert programs, d["files"]
+for f in programs:
+    data = open(os.path.join(root, f["path"]), "rb").read()
+    assert data.endswith(b"SIGNED"), f["path"] + " was not signed"
+    assert hashlib.sha256(data).hexdigest() == f["sha256"], f["path"] + ": the digest is the unsigned file's"
+for f in d["files"]:
+    if f["role"] in ("resource", "metadata"):
+        assert not open(os.path.join(root, f["path"]), "rb").read().endswith(b"SIGNED"), f["path"]
+PY
+echo "ok: [pack] sign signs each program, and the digests are the signed files'"
 
 echo "PASS: 954 pack has three axes"

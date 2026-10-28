@@ -2222,6 +2222,10 @@ static std::expected<void, std::string> step9_member_build_programs(PrepareState
             who  = pkg.manifest.package.name;
         }
         if (bc.runExclusive && !exclusiveBefore) rootBc.runExclusive = true;
+        // The platform's fields the member's program stated, as a dependency's
+        // program's are (SPEC-013 §4.1).
+        merge_program_platform(state, std::exchange(bc.programPlatform, {}),
+                               pkg.manifest.package.name);
     }
     if (auto err = state.checkVersionFloors(); err) return std::unexpected(*err);
     // What the programs published (an include directory, an interface

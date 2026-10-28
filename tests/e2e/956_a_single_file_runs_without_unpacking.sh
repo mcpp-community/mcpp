@@ -13,6 +13,8 @@
 #   C. Refused before a build: `--compress xz` for a single file.
 #   D. (llvm, an ok-image row) An image's single file runs, and writes nothing
 #      into the cache.
+#   E. (an ok-image row) `-o` with several `--systems` is refused before a
+#      build: one file is made per system.
 set -e
 
 TMP=$(mktemp -d)
@@ -102,6 +104,14 @@ if [ -n "$T" ] && command -v python3 > /dev/null && "$MCPP" toolchain list --for
     after=$(find "$CACHE" -type f | wc -l)
     [ "$before" = "$after" ] || fail "D: the image's single file wrote into the cache"
     echo "ok: an image's single file runs from memory"
+
+    # E
+    if "$MCPP" pack --target "$T" --pkg-format single-file --systems linux,macos -o one-file > e.log 2>&1; then
+        fail "E: -o with two systems was accepted" e.log
+    fi
+    grep -q "one single file per system" e.log || fail "E: the refusal" e.log
+    grep -q "Compiling" e.log && fail "E: refused after compiling" e.log
+    echo "ok: -o with several systems is refused before a build"
 fi
 
 echo "PASS: 956 a single file runs without unpacking"

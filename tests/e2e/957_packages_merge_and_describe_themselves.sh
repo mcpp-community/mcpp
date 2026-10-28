@@ -17,6 +17,7 @@
 #   C. `mcpp emit xpkg --package` of a universal package is one asset for
 #      linux, macosx and windows, with the runner as a dependency when the
 #      package does not carry it.
+#   D. An archive merges as the directory it holds does.
 set -e
 
 TMP=$(mktemp -d)
@@ -70,6 +71,24 @@ for f in d["files"]:
     assert hashlib.sha256(data).hexdigest() == f["sha256"], f["path"]
 PY
 echo "ok: --merge writes the union of the packages"
+
+# D (before B changes the second package)
+python3 - "$TMP/there" "$TMP/there.tar.gz" <<'PY'
+import sys, tarfile
+with tarfile.open(sys.argv[2], "w:gz") as t:
+    t.add(sys.argv[1], arcname="mrg-0.1.0-openkal")
+PY
+"$MCPP" pack --merge target/dist/here --merge "$TMP/there.tar.gz" --pkg-format dir -o "$TMP/merged-dir" > d.log 2>&1 \
+    || fail "D: --merge of a directory and an archive" d.log
+python3 - "$TMP/merged-dir" <<'PY' || fail "D: the merged tree" d.log
+import hashlib, json, os, sys
+root = sys.argv[1]
+d = json.load(open(os.path.join(root, "mcpp-package.json")))
+assert len(d["systems"]) == 4, d["systems"]
+for f in d["files"]:
+    assert hashlib.sha256(open(os.path.join(root, f["path"]), "rb").read()).hexdigest() == f["sha256"], f["path"]
+PY
+echo "ok: an archive merges as its directory does"
 
 # B
 python3 - "$TMP/there" <<'PY'

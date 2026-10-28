@@ -107,6 +107,9 @@
   index, its revision and age, and whether it was refreshed now and why not;
   the provider's own report is printed under `-v`.
 - A package shared by several configurations of one command is announced once.
+- **`--pkg-format tar` writes `.tar.gz` on every host, Windows included**, with
+  mcpp's own zlib; no `tar` or `gzip` program is run. `--compress none` writes
+  `.tar`.
 
 
 - **A version the local index lacks is refreshed for when its install is
@@ -127,6 +130,14 @@
   undefined, and CPython could not load an extension built on `mcpplibs.os`
   (`undefined symbol: kal_process_close`). A `kernel-abi` provider is now a
   boundary only when a C library of the graph sits on it. e2e 950.
+- **A kernel-abi package over the system's C library leaves a hosted row's
+  toolchain in place.** The musl and windows-gnu rows name the payload that
+  supplies the target's C library, and a graph that supplies a C library
+  replaces it; a kernel-abi package counted as one. On linux-aarch64 a project
+  reaching openkal-linux through `mcpplibs.os` then compiled `--linkage
+  static` (the musl row) with the machine's llvm against glibc's headers. A
+  kernel-abi package now supplies the system only on a target that has none of
+  its own (a freestanding or a loader-supplied row). e2e 292.
 - **A package whose descriptor was read is the only one asked for.** A refused
   install of a namespace-omitted dependency was tried again as
   `compat:<name>` and `compat.<name>`, shown as downloading, and reported with

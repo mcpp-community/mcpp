@@ -62,6 +62,7 @@ struct ChoiceInputs {
     std::span<const mcpp::manifest::platform::Override> project;   // the plan root's tables, the workspace layer's first
     std::span<const mcpp::manifest::platform::Override> config;    // config.toml's
     std::string_view              column;    // the target table's platform column
+    std::string                   flagKey = "--platform";   // or MCPP_PLATFORM, from the environment
 };
 
 // The target graph's platform: the flag, the environment, the project, this
@@ -250,7 +251,7 @@ std::vector<const mp::Override*> matching(std::span<const mp::Override> tables,
 
 std::expected<Selection, std::string> select_target(const ChoiceInputs& in, const Matches& matches) {
     if (!in.flag.empty())
-        return parse_choice(in.flag, mp::Origin{mp::Tier::Flag, {}, 0, "--platform"});
+        return parse_choice(in.flag, mp::Origin{mp::Tier::Flag, {}, 0, in.flagKey});
     if (!in.env.empty())
         return parse_choice(in.env, mp::Origin{mp::Tier::Env, {}, 0, in.envKey});
     for (auto span : {in.project, in.config}) {

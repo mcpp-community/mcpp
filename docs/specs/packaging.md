@@ -199,7 +199,7 @@ SDK 载荷时该次构建拒绝,写出该系统与载荷。
 | `name`、`version` | 包的名字与版本 |
 | `platform` | 平台包与版本(`<包>@<版本>`);无平台时为 `null` |
 | `linkage` | `static`、`shared`,或 `declared`(每个库按自己的声明) |
-| `mode` | §1.2 的模式 |
+| `mode` | §1.2 的模式:`system`、`vendored`、`self-contained`;`--mode static` 的原生包为 `static`,映像为 `self-contained` |
 | `legs` | 腿的规范三元组 |
 | `systems` | `libexec/<runner>/` 中加载器的 `<os>-<arch>`;无加载器时为空 |
 | `launch` | 通用包为 `runner`(平台的 argv)与每个架构的 `entry`;单腿原生包为 `program`(程序的相对路径) |
@@ -226,7 +226,7 @@ SDK 载荷时该次构建拒绝,写出该系统与载荷。
 `--compress <zstd|gzip|xz|none>[:<level>]` 与 `[pack] compress` 选择 `tar` 的压缩:`tar` 写出未压缩的归档,mcpp 以
 自带的编解码器(zlib、zstd、liblzma)压缩,产物扩展名为 `.tar.gz`(缺省)、`.tar.zst`、`.tar.xz` 或 `.tar`。级别
 范围:gzip 1–9,zstd 1–22,xz 0–9。`zip` 的条目在变小时以 DEFLATE 压缩(`gzip[:<level>]` 设定级别),否则存储;
-`none` 时全部存储。单文件的载荷为 zstd 或不压缩。okb 中的映像不压缩(SPEC-013 平台插件的格式规定)。同一棵树的
+`none` 时全部存储。单文件的载荷总是一个 zstd 帧(启动器只解 zstd),`none` 取级别 1。okb 中的映像不压缩(SPEC-013 平台插件的格式规定)。同一棵树的
 归档在每个宿主上字节相同:gzip 成员不带名字与时间,zip 条目使用固定日期。
 
 ### 5.2 单文件
@@ -282,7 +282,8 @@ openkal 目标的单文件:载体携带映像本身(映像不引用其他映像�
 生成 xim-pkgindex 条目(spec 2),资产地址为 `<前缀>/<文件名>`:
 
 - 通用包是一个资产,`linux`、`macosx`、`windows` 三项的 URL 与 sha256 相同;包不携带运行器(非 `self-contained`)
-  时三项各以运行器为依赖(`deps = { "<runner>" }`)。
+  时三项各以运行器为依赖(`deps = { "<runner>" }`,`<runner>` 为平台运行器 argv 首项的程序名,即 xim-pkgindex
+  中同名的包;openkal 为 `okrun`)。
 - 各系统各架构一个的包:每个系统一项,一个以 `${arch}` 代替架构的 URL 与每个架构的 sha256;文件名除架构外不同时
   拒绝。
 - 安装把归档的唯一顶层目录移到安装目录;配置以 xvm 注册程序(通用包为 `bin/<name>`,Windows 上为

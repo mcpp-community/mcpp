@@ -135,17 +135,55 @@ TEST(PlatformManifest, RefusalsNameTheKey) {
           "names the package too" },
         { "[platform]\ntargets = [\"x86_64-openkal\"]\n[platform.layers]\nc-abi = { program = \"x\" }\n",
           "for a tool only" },
-        { "[platform]\ntargets = [\"x86_64-openkal\"]\n[platform.hosted]\nrunner = [\"x\"]\n",
-          "a host triple takes" },
+        { "[platform]\ntargets = [\"x86_64-openkal\"]\n[platform.link]\nshared = \"{name}{name}\"\n",
+          "exactly once" },
+        { "[platform]\ntargets = [\"x86_64-openkal\"]\n[platform.link]\nshared = \"lib/{name}.okso\"\n",
+          "names no directory" },
+        { "[platform]\ntargets = [\"x86_64-openkal\"]\nplugin = \"gen.mcpp\"\n",
+          "must be \"build.mcpp\"" },
+        { "[platform]\ntargets = [\"x86_64-openkal\"]\n[platform.layers]\n"
+          "c-abi = { git = \"https://x/y.git\", tag = \"v1\" }\n",
+          "a git source names the package too" },
         { "[target.'cfg(platform = \"openkal\")']\nplatform = \"x@1.0.0\"\n",
           "cannot be selected under a selector" },
         { "[target.x86_64-openkal]\nlayers = \"x\"\n", "must be a table" },
-        { "[host]\nrunner = [\"x\"]\n", "[host] has no key" },
     };
     for (auto const& r : rows) {
         auto e = parse_error(head + r.body);
         EXPECT_NE(e.find(r.says), std::string::npos) << r.body << "\n=> " << e;
     }
+}
+
+// An unknown key, in `[platform]`, its tables or `[host]`, is a warning: a
+// manifest written for a later mcpp still reads (SPEC-013 §18.1).
+TEST(PlatformManifest, UnknownKeysWarn) {
+    auto m = parse(R"(
+[package]
+name = "p"
+version = "1.0.0"
+
+[platform]
+targets = ["x86_64-openkal"]
+runner  = { cmd = ["okrun", "{}"], later = true }
+[platform.hosted]
+runner = ["x"]
+[platform.link]
+exe   = "{name}.oke"
+later = "x"
+[platform.build]
+rustflags = ["-x"]
+
+[host]
+runner = ["x"]
+)");
+    std::string all;
+    for (auto const& w : m.schemaWarnings) all += w + "\n";
+    for (std::string_view key : { "'later' is not a key of a runner", "[platform.hosted] has unsupported key 'runner'",
+                                  "[platform.link] has unsupported key 'later'",
+                                  "[platform.build] has unsupported key 'rustflags'",
+                                  "[host] has unsupported key 'runner'" })
+        EXPECT_NE(all.find(key), std::string::npos) << key << "\n=> " << all;
+    EXPECT_EQ(m.platform.link.exe.value, "{name}.oke");
 }
 
 TEST(PlatformManifest, OverridesAndHostAreRead) {

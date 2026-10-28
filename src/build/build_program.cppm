@@ -965,6 +965,14 @@ CacheRecord read_cache(const fs::path& bdir) {
     return r;
 }
 
+// The first value `vanished` answers for.
+template <class F>
+std::optional<std::string> first_vanished(const std::vector<std::string>& values, F&& vanished) {
+    for (auto const& v : values)
+        if (auto path = vanished(v)) return path;
+    return std::nullopt;
+}
+
 // Why the cached run is not valid, for the log; empty when it is.
 std::string cache_stale_reason(const fs::path& root, const fs::path& bdir, const CacheRecord& c,
                                const std::string& programHash, const std::string& compilerHash,
@@ -1014,12 +1022,15 @@ std::string cache_stale_reason(const fs::path& root, const fs::path& bdir, const
             }
             return std::nullopt;
         };
-        // Not an action's: its outputs are the build's products, made again by
-        // the build whenever they are missing.
-        for (std::size_t i = 0; i < c.directives.slots.size(); ++i) {
-            if (static_cast<Slot>(i) == Slot::Actions) continue;
-            for (auto const& v : c.directives.slots[i])
-                if (auto path = vanished(v)) return "output " + *path;
+        // Only what reaches a compile, a link or a run: a warning or a claim
+        // that mentions a path is text, and an action's outputs are the
+        // build's products, made again by the build whenever they are missing.
+        for (auto const& def : dirs::kTable) {
+            if (def.scope == dirs::Scope::Advisory || def.scope == dirs::Scope::Claim
+                || def.scope == dirs::Scope::RerunKey || def.scope == dirs::Scope::GraphNode)
+                continue;
+            if (auto path = first_vanished(c.directives.at(def.slot), vanished))
+                return "output " + *path;
         }
     }
     return {};

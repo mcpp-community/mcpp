@@ -2498,10 +2498,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // and no system library of the toolchain's, and what it holds is the
     // graph's, reached through the graph's own `-L`/`-l`.
     if (auto const& p = plan.platform; p.active) {
+        // Each element one word, quoted for the shell and `$` doubled for
+        // ninja, as every other word of a command is.
         auto words = [](const std::vector<std::string>& v) {
             std::string out;
-            for (auto const& w : v)
-                out += " " + (w.find(' ') == std::string::npos ? w : "\"" + w + "\"");
+            for (auto const& w : v) out += " " + ninja_command_word(w);
             return out;
         };
         f.cc  += words(p.flags.cflags);

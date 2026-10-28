@@ -19,6 +19,7 @@ import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.linkmodel;
+import mcpp.toolchain.triple;
 // For `resolve_version_match` / `list_installed_versions`: a bare compiler
 // family named by the dependency graph resolves to a concrete version through
 // exactly the path `mcpp toolchain default <family>` uses.
@@ -160,14 +161,28 @@ std::expected<void, std::string> phase5_toolchain_after_graph(PrepareState& stat
                 reqCompilerBy, family, family, family));
         };
 
+        // WHAT "THE GRAPH SUPPLIES THE SYSTEM" MEANS FOR THIS TARGET. A C
+        // library of the graph does, on any target. A kernel-abi package does
+        // only where the target has no system of its own (a freestanding or a
+        // loader-supplied row): on a hosted target it sits over the system's C
+        // library, which the row's payload still supplies. Measured on
+        // linux-aarch64: openkal-tools reaches openkal-linux (kernel-abi over
+        // the system's C library), the musl row's convention was cancelled by
+        // it, and `mcpp pack --linkage static` compiled the musl target with
+        // the machine's llvm against glibc's headers.
+        const auto targetTriple = mcpp::toolchain::triple::parse(
+            state.overrides.target_triple.empty() ? mcpp::toolchain::triple::host_triple().str()
+                                                  : state.overrides.target_triple);
+        const bool targetHasNoSystem = targetTriple
+            && (targetTriple->is_freestanding() || targetTriple->loader_supplies_os());
+        auto supplies_system = [&](mcpp::targetside::CapLayer layer) {
+            return layer == mcpp::targetside::CapLayer::CAbi
+                || (layer == mcpp::targetside::CapLayer::KernelAbi && targetHasNoSystem);
+        };
         for (auto const& pkg : state.packages) {
             for (auto const& entry : pkg.manifest.provides) {
                 auto cap = mcpp::targetside::parse_capability(entry);
-                if (!cap || !*cap) continue;
-                if ((*cap)->layer == mcpp::targetside::CapLayer::KernelAbi
-                 || (*cap)->layer == mcpp::targetside::CapLayer::CAbi) {
-                    graphSuppliesSystem = true;
-                }
+                if (cap && *cap && supplies_system((*cap)->layer)) graphSuppliesSystem = true;
             }
             for (auto const& entry : pkg.manifest.requires_) {
                 auto cap = mcpp::targetside::parse_capability(entry);
@@ -205,9 +220,10 @@ std::expected<void, std::string> phase5_toolchain_after_graph(PrepareState& stat
                 }
             }
         }
-        // AND A FREESTANDING PIN SURVIVES IT. `graphSuppliesSystem` spans
-        // kernel-abi and c-abi, and it correctly cancels a HOSTED row's
-        // convention — that row names the payload the graph is replacing.
+        // AND A FREESTANDING PIN SURVIVES IT. `graphSuppliesSystem` (a C
+        // library of the graph, or a kernel-abi package where the target has no
+        // system) correctly cancels a HOSTED row's convention — that row names
+        // the payload the graph is replacing.
         // A bare-metal row names the only compiler that emits the target.
         //
         // Measured 2026-08-25, on a three-line manifest:

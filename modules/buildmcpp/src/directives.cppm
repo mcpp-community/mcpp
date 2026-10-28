@@ -659,7 +659,8 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d);
 // `link-input`, `artifact-name`, `seal`, `run-host`), as a platform statement
 // at the build-program tier (SPEC-013 §4.1). `apply` calls it; the platform
 // phase reads it for the platform's own program.
-void apply_platform(mcpp::manifest::platform::Statement& s, const Directives& d);
+void apply_platform(mcpp::manifest::platform::Statement& s, const Directives& d,
+                    const std::filesystem::path& root = {});
 
 // Decode one `mcpp:action=` JSON payload. nullopt = malformed.
 std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payload);
@@ -1215,7 +1216,7 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
 
     // The platform's fields (protocol 17), at the build-program tier;
     // `platform_directive_error` has refused a malformed line.
-    apply_platform(m.buildConfig.programPlatform, d);
+    apply_platform(m.buildConfig.programPlatform, d, m.sourcePath.parent_path());
 }
 
 // The five roles `mcpp::action::role` may name, in the order
@@ -1367,7 +1368,8 @@ static std::string named_target_error(const mcpp::manifest::Manifest& m,
     return {};
 }
 
-void apply_platform(mcpp::manifest::platform::Statement& s, const Directives& d) {
+void apply_platform(mcpp::manifest::platform::Statement& s, const Directives& d,
+                    const std::filesystem::path& root) {
     namespace mp = mcpp::manifest::platform;
     auto origin = [](std::string_view wire) {
         return mp::Origin{ mp::Tier::Program, {}, 0, std::format("mcpp:{}", wire) };
@@ -1378,7 +1380,9 @@ void apply_platform(mcpp::manifest::platform::Statement& s, const Directives& d)
         std::vector<mp::LinkInput> inputs;
         for (auto const& v : d.at(Slot::LinkInputs)) {
             if (v.starts_with("file:")) {
-                inputs.push_back({ .file = v.substr(5) });
+                // A relative file is the stating package's own, as in the
+                // TOML form (`[platform.link] inputs`).
+                inputs.push_back({ .file = root.empty() ? v.substr(5) : abs_against(root, v.substr(5)) });
                 continue;
             }
             const auto colon = v.find(':', 5);
@@ -1438,6 +1442,9 @@ std::string target_directive_error(const mcpp::manifest::Manifest& m, const Dire
         if (!file && !from)
             return std::format("build.mcpp emitted `mcpp:link-input={}`; an input is "
                                "`file:<path>` or `from:<as>:<token>`", v);
+        if (from && v.substr(5, colon - 5).find_first_of("/\\") != std::string::npos)
+            return std::format("build.mcpp emitted `mcpp:link-input={}`; `<as>` names the file "
+                               "the output is saved as, without a directory", v);
     }
     for (auto const& v : d.at(Slot::ArtifactNames)) {
         const auto colon = v.find(':');

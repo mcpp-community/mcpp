@@ -46,8 +46,8 @@ mcpp::toolchain::triple::Triple target_of(const PrepareState& state) {
 }
 
 // The package short name a reference names, before the package is fetched:
-// the reference's own name, the `[package]` of a directory, or the last
-// segment of a repository's URL.
+// the reference's own name (a git reference always has one), or the
+// `[package]` of a directory.
 std::string known_short_name(const mp::PackageRef& r) {
     if (!r.spec.shortName.empty()) return r.spec.shortName;
     if (!r.spec.path.empty()) {
@@ -56,14 +56,15 @@ std::string known_short_name(const mp::PackageRef& r) {
                 .shortName;
         return {};
     }
-    if (!r.spec.git.empty()) {
-        std::string_view u = r.spec.git;
-        while (!u.empty() && u.back() == '/') u.remove_suffix(1);
-        if (auto s = u.find_last_of("/:"); s != std::string_view::npos) u = u.substr(s + 1);
-        if (u.ends_with(".git")) u.remove_suffix(4);
-        return std::string(u);
-    }
     return {};
+}
+
+// Whether this invocation's command line stated a variable (`--platform` is
+// `MCPP_PLATFORM` for the invocation), rather than the environment.
+bool stated_on_command_line(std::string_view name) {
+    return std::ranges::any_of(mcpp::invocation::overrides(), [&](auto const& o) {
+        return o.first == name && o.second.has_value();
+    });
 }
 
 // The project's override tables: the plan root's, which hold the workspace
@@ -128,7 +129,8 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state) {
         if (auto cfg = state.get_cfg(false); cfg) config = (*cfg)->hostPlatform;
         const auto hostFlag = mcpp::invocation::get("MCPP_HOST_PLATFORM").value_or("");
         mp::Override project = state.m->hostPlatform;
-        auto hs = mcpp::platform::select_host(hostFlag, false, project, config);
+        auto hs = mcpp::platform::select_host(hostFlag, stated_on_command_line("MCPP_HOST_PLATFORM"),
+                                              project, config);
         if (!hs) return std::unexpected(hs.error());
         state.hostPlatformSel = std::move(*hs);
     }
@@ -144,6 +146,8 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state) {
     std::string column;
     if (auto* row = mcpp::toolchain::triple::find_known_target(t)) column = std::string(row->platform);
     mcpp::platform::ChoiceInputs in{ flag, env, envKey, project, config, column };
+    if (state.overrides.platform_choice.empty() && !stated_on_command_line("MCPP_PLATFORM"))
+        in.flagKey = "MCPP_PLATFORM";
     auto sel = mcpp::platform::select_target(in, matcher(cfgpred::context_for(t.str())));
     if (!sel) return std::unexpected(sel.error());
     state.platform = mcpp::platform::Resolved{};
@@ -391,10 +395,13 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
 std::expected<void, std::string> step4b_check_platform_versions(PrepareState& state) {
     auto const& P = state.platform;
     if (!P.active || P.fields.versions.empty()) return {};
+    // Asked of the edges as they stand: the check runs before each round's
+    // drain, before `buildTimeOnly` is decided.
+    const auto instances = package_instances(state);
     for (std::size_t i = 1; i < state.packages.size(); ++i) {
-        // A package built for this machine (a tool's) is not linked with the
-        // target's, and a group's exact pins are about one link.
-        if (state.packages[i].buildTimeOnly) continue;
+        // A package built for this machine only (a tool's) is not linked with
+        // the target's, and a group's exact pins are about one link.
+        if (!instances.target[i] && instances.host[i]) continue;
         auto const& pm = state.packages[i].manifest;
         auto n = mcpp::pm::compat::resolve_package_name(pm.package.name, pm.package.namespace_);
         auto it = P.fields.versions.find(n.shortName);
@@ -431,24 +438,32 @@ std::expected<void, std::string> step4b_check_platform_versions(PrepareState& st
 // the C library and the C++ run-time, and `okld check` refused `free`.)
 void step4b_platform_member_edges(PrepareState& state) {
     if (!state.platform.active || !state.workspacePlan() || state.platformLayerSpecs.empty()) return;
+    // The packages of the plan by short name, so a member's edge to a layer
+    // provider is a lookup.
+    std::map<std::string, std::vector<std::size_t>, std::less<>> byName;
+    for (std::size_t l = 1; l < state.packages.size(); ++l) {
+        auto const& pm = state.packages[l].manifest;
+        byName[mcpp::pm::compat::resolve_package_name(pm.package.name, pm.package.namespace_)
+                   .shortName].push_back(l);
+    }
+    auto give = [&](std::size_t member, const std::string& key, const mcpp::manifest::DependencySpec& spec) {
+        auto& deps = state.packages[member].manifest.dependencies;
+        if (deps.contains(key)) return;
+        deps[key] = spec;
+        auto it = byName.find(spec.shortName);
+        if (it == byName.end()) return;
+        for (auto const l : it->second) {
+            DependencyEdge e;
+            e.consumerPackageIndex = member;
+            e.dependencyPackageIndex = l;
+            e.requestedFeatures = spec.features;
+            e.defaultFeatures = spec.defaultFeatures;
+            state.dependencyEdges.push_back(std::move(e));
+        }
+    };
     for (std::size_t m = 1; m < state.packages.size(); ++m) {
         if (!state.packages[m].selectedMember) continue;
-        auto& deps = state.packages[m].manifest.dependencies;
-        for (auto const& [key, spec] : state.platformLayerSpecs) {
-            if (deps.contains(key)) continue;
-            deps[key] = spec;
-            for (std::size_t l = 1; l < state.packages.size(); ++l) {
-                auto const& pm = state.packages[l].manifest;
-                auto n = mcpp::pm::compat::resolve_package_name(pm.package.name, pm.package.namespace_);
-                if (n.shortName != spec.shortName) continue;
-                DependencyEdge e;
-                e.consumerPackageIndex = m;
-                e.dependencyPackageIndex = l;
-                e.requestedFeatures = spec.features;
-                e.defaultFeatures = spec.defaultFeatures;
-                state.dependencyEdges.push_back(std::move(e));
-            }
-        }
+        for (auto const& [key, spec] : state.platformLayerSpecs) give(m, key, spec);
     }
 }
 
@@ -622,6 +637,19 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
             state.hostPlatformTarget,
             state.hostPlatformRunner.empty() ? std::string("its runner")
                 : std::filesystem::path(state.hostPlatformRunner.front()).filename().string()));
+    if (state.overrides.configuration_only) {
+        if (ctx.hostPlatform.active) {
+            ctx.hostTriple = state.hostPlatformTarget;
+            ctx.hostCompiler = ctx.hostPlatform.fields.toolchain.value;
+            ctx.hostCompilerOrigin = "platform";
+        } else if (auto h = state.host_tc_for_build_program()) {
+            ctx.hostTriple = h->second.targetTriple;
+            ctx.hostCompiler = h->second.binaryPath.generic_string();
+            ctx.hostCompilerOrigin = "host";
+        } else {
+            return std::unexpected(h.error());
+        }
+    }
     return {};
 }
 

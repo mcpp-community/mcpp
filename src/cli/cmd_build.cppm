@@ -40,6 +40,7 @@ import mcpp.hooks;
 import mcpp.libs.json;
 import mcpp.log;
 import mcpplibs.os.fs;
+import mcpplibs.os.process;   // platform-step: a program's output alone
 import mcpp.invocation;
 import mcpp.effects;
 import mcpp.run;
@@ -1531,22 +1532,30 @@ export int cmd_platform_step(const mcpplibs::cmdline::ParsedArgs& parsed,
                              std::span<const std::string> rest) {
     namespace fs = std::filesystem;
     const std::string mode = parsed.positional_count() > 0 ? parsed.positional(0) : std::string();
+    // The program's standard output, kept apart: its standard error is the
+    // build's, passed on (a warning it writes there is not part of what it
+    // produces, which `capture` saves as a source file).
     auto run = [&](const std::vector<std::string>& argv, std::string* out) {
-        int spawnError = 0;
-        auto r = mcpp::run::capture_exec(argv, {}, {}, &spawnError);
-        if (spawnError != 0) {
-            std::println(stderr, "error: cannot start {}: {}", argv.front(),
-                         std::generic_category().message(spawnError));
+        namespace proc = mcpplibs::os::process;
+        proc::spawn_options o;
+        o.program = argv.front();
+        o.args.assign(argv.begin() + 1, argv.end());
+        std::string shown;
+        for (auto const& a : argv) shown += (shown.empty() ? "" : " ") + a;
+        auto r = proc::run(std::move(o));
+        if (!r) {
+            std::println(stderr, "error: cannot start {}", shown);
             return false;
         }
-        if (r.exit_code != 0) {
-            std::string shown;
-            for (auto const& a : argv) shown += (shown.empty() ? "" : " ") + a;
-            std::println(stderr, "error: `{}` exited {}", shown, r.exit_code);
-            std::print(stderr, "{}", r.output);
+        std::print(stderr, "{}", r->err);
+        if (!r->status.success()) {
+            // What a refusing step wrote is its reason (`okld check` names the
+            // import it refused), on either stream.
+            std::print(stderr, "{}", r->out);
+            std::println(stderr, "error: `{}` exited {}", shown, r->status.shell_code());
             return false;
         }
-        if (out) *out = std::move(r.output);
+        if (out) *out = std::move(r->out);
         return true;
     };
     std::error_code ec;
@@ -1571,14 +1580,24 @@ export int cmd_platform_step(const mcpplibs::cmdline::ParsedArgs& parsed,
         return 0;
     }
     if (mode == "seal") {
-        const std::string stepsFile = parsed.option_or_empty("steps").value();
-        if (stepsFile.empty() || rest.size() < 2) {
-            std::println(stderr, "error: platform-step seal needs --steps <file> -- <linked> <artifact> [needed…]");
+        const std::string hex = parsed.option_or_empty("steps-hex").value();
+        if (hex.empty() || hex.size() % 2 != 0 || rest.size() < 2) {
+            std::println(stderr, "error: platform-step seal needs --steps-hex <steps> -- <linked> <artifact> [needed…]");
             return 2;
+        }
+        std::string text;
+        for (std::size_t i = 0; i < hex.size(); i += 2) {
+            unsigned v = 0;
+            auto [p, e] = std::from_chars(hex.data() + i, hex.data() + i + 2, v, 16);
+            if (e != std::errc{} || p != hex.data() + i + 2) {
+                std::println(stderr, "error: platform-step seal: the steps are not hexadecimal");
+                return 2;
+            }
+            text.push_back(static_cast<char>(v));
         }
         std::vector<std::vector<std::string>> steps;
         {
-            std::ifstream in(stepsFile, std::ios::binary);
+            std::istringstream in(text);
             std::string line;
             while (std::getline(in, line)) {
                 if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -1593,6 +1612,11 @@ export int cmd_platform_step(const mcpplibs::cmdline::ParsedArgs& parsed,
                 }
                 steps.push_back(std::move(step));
             }
+        }
+        // A seal with no step would publish what it was asked to seal.
+        if (steps.empty()) {
+            std::println(stderr, "error: platform-step seal was given no step");
+            return 2;
         }
         const fs::path linked = rest[0], artifact = rest[1];
         const std::vector<std::string> needed(rest.begin() + 2, rest.end());
@@ -1653,6 +1677,10 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return 1;
     }
     auto const& P = host ? ctx->hostPlatform : ctx->plan.platform;
+    // The graph reported: the host graph's triple and compiler with --host.
+    const std::string triple = host ? ctx->hostTriple : ctx->tc.targetTriple;
+    const std::string compiler = host ? ctx->hostCompiler : ctx->tc.binaryPath.generic_string();
+    const std::string compilerOrigin = host ? ctx->hostCompilerOrigin : ctx->compilerChoice.origin;
     auto const& runner = P.fields.runner;
     std::string runnerProgram;
     if (runner.set && !runner.cmd.empty()) {
@@ -1671,10 +1699,9 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
         nlohmann::json tools = nlohmann::json::object();
         for (auto const& [name, path] : P.tools) tools[name] = path;
         nlohmann::json data{
-            {"triple", ctx->tc.targetTriple},
+            {"triple", triple},
             {"graph", host ? "host" : "target"},
-            {"toolchain", {{"compiler", ctx->tc.binaryPath.generic_string()},
-                           {"origin", ctx->compilerChoice.origin}}},
+            {"toolchain", {{"compiler", compiler}, {"origin", compilerOrigin}}},
             {"platform", nlohmann::json::parse(mcpp::platform::to_json(P), nullptr, false)},
             {"tools", std::move(tools)},
             {"runner", !runner.set ? nlohmann::json(nullptr) : nlohmann::json{
@@ -1691,9 +1718,8 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return 0;
     }
     for (auto const& n : ctx->planNotes) mcpp::ui::warning(n.message);
-    std::println("{:<10} {}", "target", ctx->tc.targetTriple);
-    std::println("{:<10} {} ({})", "compiler", ctx->tc.binaryPath.generic_string(),
-                 ctx->compilerChoice.origin);
+    std::println("{:<10} {}", host ? "host" : "target", triple);
+    std::println("{:<10} {} ({})", "compiler", compiler, compilerOrigin);
     std::println("{:<10} {}{}", "platform", P.display(),
                  P.active ? std::format(" ({})", mcpp::platform::origin_text(P.selection.origin))
                           : std::string());
