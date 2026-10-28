@@ -213,3 +213,34 @@ TEST(PmLockIo, UpdatingALinkedLockKeepsTheLinkAndUpdatesItsTarget) {
     ASSERT_EQ(loaded->packages.size(), 1u);
     EXPECT_EQ(loaded->packages[0].version, "2.0.0");
 }
+
+// An entry names the configurations that resolve it, and reads back as written
+// (SPEC-013 §15.1); a lock written before the field reads with none.
+TEST(PmLockIo, TargetsRoundTrip) {
+    const auto dir = std::filesystem::temp_directory_path() / std::format("mcpp-lock-{}",
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    std::filesystem::create_directories(dir);
+    mcpp::pm::Lockfile lock;
+    lock.schemaVersion = 2;
+    mcpp::pm::LockedPackage p;
+    p.name = "openkal-musl";
+    p.namespace_ = "mcpplibs";
+    p.version = "0.22.6";
+    p.source = "index+mcpplibs@0.22.6";
+    p.hash = "fnv1a:0";
+    p.origin = "platform";
+    p.targets = { "aarch64-openkal", "x86_64-openkal" };
+    lock.packages.push_back(p);
+    ASSERT_TRUE(mcpp::pm::write(lock, dir / "mcpp.lock"));
+    auto back = mcpp::pm::load(dir / "mcpp.lock");
+    ASSERT_TRUE(back);
+    ASSERT_EQ(back->packages.size(), 1u);
+    EXPECT_EQ(back->packages[0].targets, p.targets);
+    EXPECT_EQ(back->packages[0].origin, "platform");
+    std::ofstream(dir / "old.lock") << "version = 2\n\n[package.\"x\"]\nnamespace = \"mcpplibs\"\nversion = \"1\"\n";
+    auto old = mcpp::pm::load(dir / "old.lock");
+    ASSERT_TRUE(old);
+    EXPECT_TRUE(old->packages.at(0).targets.empty());
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}

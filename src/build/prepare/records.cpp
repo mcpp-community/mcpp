@@ -294,6 +294,53 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             for (auto const& mp : state.overrides.workspace_request) planned.insert(mp);
             partialWorkspace = !std::ranges::includes(planned, all);
         }
+        // EACH ENTRY NAMES THE CONFIGURATIONS THAT RESOLVE IT (SPEC-013
+        // §15.1): this one's target is added to what it resolved, and taken
+        // from what it did not; an entry no configuration resolves any more is
+        // dropped. A build for this machine and a pack for an ok image then
+        // leave each other's entries as they were. An entry of this machine's
+        // own configuration alone says nothing (`targets` absent), so the lock
+        // of a project built only natively reads as it always has. (A partial
+        // workspace plan keeps the entries it did not resolve whole, below.)
+        {
+            const auto native = mcpp::toolchain::triple::host_triple().str();
+            const auto here = [&] {
+                auto t = mcpp::toolchain::triple::parse(state.overrides.target_triple);
+                return t ? t->str() : native;
+            }();
+            auto targets_of = [&](const mcpp::lockfile::LockedPackage& p) {
+                return p.targets.empty() ? std::vector<std::string>{ native } : p.targets;
+            };
+            std::map<std::string, mcpp::lockfile::LockedPackage> was;
+            if (auto prior = mcpp::lockfile::load(state.workRoot / "mcpp.lock"))
+                for (auto const& p : prior->packages) was.emplace(lock_identity(p), p);
+            std::set<std::string> listed;
+            for (auto& p : lock.packages) {
+                const auto id = lock_identity(p);
+                listed.insert(id);
+                auto it = was.find(id);
+                if (it == was.end() || it->second.version != p.version) { p.targets = { here }; continue; }
+                p.targets = targets_of(it->second);
+                // The platform's only where every configuration that resolves
+                // it says so: one whose project reaches it (`os` on Linux
+                // reaches openkal) keeps it the project's.
+                const bool others = std::ranges::any_of(p.targets, [&](auto const& t) { return t != here; });
+                if (others && it->second.origin != "platform") p.origin.clear();
+                if (std::ranges::find(p.targets, here) == p.targets.end()) p.targets.push_back(here);
+            }
+            for (auto& [id, p] : was) {
+                if (partialWorkspace || listed.contains(id)) continue;
+                auto kept = p;
+                kept.targets = targets_of(p);
+                std::erase(kept.targets, here);
+                if (!kept.targets.empty()) lock.packages.push_back(std::move(kept));
+            }
+            for (auto& p : lock.packages) {
+                std::ranges::sort(p.targets);
+                if (p.targets == std::vector<std::string>{ native }) p.targets.clear();
+            }
+
+        }
         if (partialWorkspace) {
             if (auto prior = mcpp::lockfile::load(state.workRoot / "mcpp.lock")) {
                 // By identity, not by spelling: a prior entry that names a
@@ -311,18 +358,6 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
                 for (auto const& i : prior->indices)
                     if (!indicesHere.contains(i.name)) lock.indices.push_back(i);
             }
-        }
-        // A PACKAGE A PLATFORM ADDED BELONGS TO THE CONFIGURATIONS OF THAT
-        // PLATFORM'S TARGETS (SPEC-013 §15.1): a configuration that does not
-        // resolve it keeps the prior lock's entry, so `mcpp build` for this machine
-        // and `mcpp pack --target x86_64-openkal` do not rewrite each other's
-        // lock. One that resolves the package replaces the entry.
-        if (auto prior = mcpp::lockfile::load(state.workRoot / "mcpp.lock")) {
-            std::set<std::string> resolvedHere;
-            for (auto const& p : lock.packages) resolvedHere.insert(lock_identity(p));
-            for (auto const& p : prior->packages)
-                if (p.origin == "platform" && resolvedHere.insert(lock_identity(p)).second)
-                    lock.packages.push_back(p);
         }
         // One order whichever configuration wrote the file last: by identity.
         std::ranges::stable_sort(lock.packages, {}, [](auto const& p) { return lock_identity(p); });

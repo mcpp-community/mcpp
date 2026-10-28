@@ -91,9 +91,13 @@
 - The `mcpp.pack` envelope gains `linkage`, `mode`, `pkgFormat`, `legs`,
   `systems` and each file artifact's `sha256`. A platform's plugin may provide
   package formats (`pack-format`, `artifact` actions) in the platform phase.
-- `mcpp.lock` records the packages a platform added with
-  `origin = "platform"`; the `plan` event and `result.json` carry
-  `configuration.platform` and `hostPlatform`.
+- `mcpp.lock` records the packages a platform added, and those only they
+  reach, with `origin = "platform"`, and names each entry's configurations in
+  `targets` (absent for an entry of this machine's native configuration alone,
+  so a lock of a natively built project is unchanged): a build for this machine
+  and a build or pack for an ok image leave each other's entries as they were.
+  The `plan` event and `result.json` carry `configuration.platform` and
+  `hostPlatform`.
 
 ### Changed
 
