@@ -749,8 +749,10 @@ ok 映像的文件为 `target/dist/<name>-<version>-<os>-<arch>`（Windows 上�
 
 `mcpp emit xpkg --package <归档> [--package …] --url <前缀> [-o <文件>]` 由本命令写出的包的
 `mcpp-package.json` 生成 xim-pkgindex 条目（spec 2）。通用包是 `linux`、`macosx`、`windows` 同样安装的一个资产，
-包不携带运行器时以运行器为依赖（`deps = { "okrun" }`）；各系统各架构一个的包，每个系统一项，一个带 `${arch}` 的
-URL 与每个架构的 sha256。安装把归档的顶层目录移到位，并向 xvm 注册程序（Windows 上为 `.cmd` 启动器）。
+包不携带运行器时以运行器为依赖（`deps = { "xim:okrun" }`）；各系统各架构一个的包，每个系统一项，一个带 `${arch}` 的
+URL 与每个架构的 sha256。安装把归档的顶层目录移到位，并向 xvm 注册程序（Windows 上为 `.cmd` 启动器）；各系统的包
+把程序放在不同目录时（Windows 的程序在包根，POSIX 的程序在 `bin/`），按系统注册各自的目录。每个归档各以一个
+`--package` 给出。
 
 ### 压缩与签名
 

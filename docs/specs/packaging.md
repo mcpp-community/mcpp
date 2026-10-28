@@ -302,8 +302,9 @@ openkal 目标的单文件:载体携带映像本身(映像不引用其他映像�
 词(例如 shell 通配展开的第二个文件)被拒绝,而不是不加描述。
 
 - 通用包是一个资产,`linux`、`macosx`、`windows` 三项的 URL 与 sha256 相同;包不携带运行器(非 `self-contained`)
-  时三项各以运行器为依赖(`deps = { "<runner>" }`,`<runner>` 为平台运行器 argv 首项的程序名,即 xim-pkgindex
-  中同名的包;openkal 为 `okrun`)。
+  时三项各以运行器为依赖(`deps = { "xim:<runner>" }`,`<runner>` 为平台运行器 argv 首项的程序名,即 xim-pkgindex
+  中同名的包;openkal 为 `okrun`)。依赖带命名空间:不带命名空间的名字在家目录列出的第二个索引也有同名包时有歧义,
+  xim-pkgindex 拒绝它。
 - 各系统各架构一个的包:每个系统一项,一个以 `${arch}` 代替架构的 URL 与每个架构的 sha256;文件名除架构外不同时
   拒绝。
 - 安装把归档的唯一顶层目录移到安装目录;配置以 xvm 注册程序(通用包为 `bin/<name>`,Windows 上为
@@ -341,4 +342,4 @@ openkal 目标的单文件:载体携带映像本身(映像不引用其他映像�
 |---|---|---|
 | 1.0 | 2026-10-28 | 首版(mcpp#847):三个维度与构建腿、组合的合法性、选项的全局用法与 `--pkg-format`、`[pack]` 的新键、管线、单腿与通用包的布局、启动器、`--systems`、`mcpp-package.json`、`--merge`、压缩、单文件、包格式提供者与平台插件、签名、分发描述、`mcpp.pack` 的新字段。 |
 | 1.1 | 2026-10-28 | 与实现对齐:zip 的条目以 DEFLATE 压缩;`[pack] universal`;压缩的拒绝与项目缺省值的搁置;`--systems` 也用于映像的单文件;启动器的根与退出状态;单文件的载荷格式、校验与执行;映像单文件的载体内容;`mcpp-package.json` 的 `linkage` 取值与角色判定;`--merge` 的输入、选项写法与容器;签名的范围;`mcpp emit xpkg --package`;判据对应 e2e 954–957。 |
-| 1.2 | 2026-10-28 | 包名的模式后缀;单文件启动器自身失败的退出状态 127;`--merge` 取 `[pack] format`;`--linkage static` 改为 musl 的行;`mcpp emit xpkg --package` 的每系统程序目录与多余词的拒绝。 |
+| 1.2 | 2026-10-28 | 包名的模式后缀;单文件启动器自身失败的退出状态 127;`--merge` 取 `[pack] format`;`--linkage static` 改为 musl 的行;`mcpp emit xpkg --package` 的每系统程序目录、带命名空间的运行器依赖与多余词的拒绝。 |

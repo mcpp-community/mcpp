@@ -1486,9 +1486,12 @@ std::expected<std::string, std::string> xpkg_descriptor(const std::vector<Asset>
                                                "(mcpp pack --merge)"));
         auto const& a = assets.front();
         for (auto const& [arch, _] : first.entry) archs.push_back(arch);
+        // The runner is a package of the index's own namespace; a bare name
+        // turns ambiguous as soon as a second index the home lists has one
+        // (xim-pkgindex refuses it: check-dep-namespace).
         std::string deps;
         if (first.mode != "self-contained")
-            deps = std::format("            deps = {{ \"{}\" }},\n",
+            deps = std::format("            deps = {{ \"xim:{}\" }},\n",
                                lua_text(std::filesystem::path(first.runner.front()).stem().string()));
         for (auto system : { "linux", "macosx", "windows" })
             blocks[system] = std::format(

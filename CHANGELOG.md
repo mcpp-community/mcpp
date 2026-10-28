@@ -15,6 +15,10 @@
   directory for every system, so on Windows xvm pointed at a `bin/` the
   package does not have. It now writes `bindir[os.host()]` from a table of
   each system's directory when they differ (SPEC-014 §8).
+- **`mcpp emit xpkg --package` states the runner dependency with its
+  namespace** (`deps = { "xim:okrun" }`). A bare name turns ambiguous once a
+  second index the home lists has a package of that name, and xim-pkgindex's
+  `check-dep-namespace` refuses it for a published package.
 - **`mcpp emit xpkg` refuses a word that is not an option.** Each archive is
   its own `--package`; `--package a.zip b.zip` (a shell glob's expansion)
   described `a.zip` alone and left `b.zip` out without a word.

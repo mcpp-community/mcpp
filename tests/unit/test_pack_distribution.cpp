@@ -596,7 +596,7 @@ TEST(PackDistribution, XpkgDescriptorWritesMetadataAsStrings) {
     ASSERT_TRUE(text) << text.error();
     EXPECT_NE(text->find("description = \"ev\\\"il\\010os.exit() 1.0"), std::string::npos) << *text;
     EXPECT_EQ(text->find("\nos.exit()"), std::string::npos) << *text;
-    EXPECT_NE(text->find("deps = { \"okrun\" }"), std::string::npos) << *text;
+    EXPECT_NE(text->find("deps = { \"xim:okrun\" }"), std::string::npos) << *text;
 }
 
 // The compression fits the container the merge writes and the name it is

@@ -131,7 +131,7 @@ for system in ("linux", "macosx", "windows"):
     assert block, system
     b = block.group(1)
     assert "https://example.org/v0.1.0/mrg-0.1.0-openkal.zip" in b and sha in b, (system, b)
-    assert 'deps = { "okrun" }' in b, (system, b)
+    assert 'deps = { "xim:okrun" }' in b, (system, b)
 assert 'xvm.add("mrg"' in text
 PY
 if "$MCPP" emit xpkg --package target/dist/mrg-0.1.0-openkal.zip target/dist/mrg-0.1.0-openkal.zip \

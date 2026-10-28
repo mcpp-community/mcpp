@@ -881,10 +881,13 @@ package.
 writes the xim-pkgindex entry (spec 2) of packages this command wrote, from
 their `mcpp-package.json`. A universal package is one asset that `linux`,
 `macosx` and `windows` install alike, with the runner as a dependency
-(`deps = { "okrun" }`) unless the package carries it; packages of one system
+(`deps = { "xim:okrun" }`) unless the package carries it; packages of one system
 and architecture each make that system's entry, one URL with `${arch}` and a
 sha256 per architecture. The install moves the archive's top directory into
-place and registers the program with xvm (the `.cmd` launcher on Windows).
+place and registers the program with xvm (the `.cmd` launcher on Windows),
+from each system's own directory when the packages place the program apart
+(a Windows program at the root, a POSIX one under `bin/`). Each archive is its
+own `--package`.
 
 ### Compression and signing
 
