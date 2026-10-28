@@ -15,8 +15,6 @@ import std;
 import mcpp.libs.json;
 import mcpp.pack.compress;
 import mcpp.pack.zip;
-import mcpp.run;
-import mcpplibs.os.platform;
 
 export namespace mcpp::pack::distribution {
 
@@ -29,7 +27,8 @@ std::string sha256_file(const std::filesystem::path& file);
 // ─── containers ───────────────────────────────────────────────────────────
 
 // `root` (a staged tree) as a tar whose one top-level directory is
-// `root.filename()`, compressed as `c` says.
+// `root.filename()`, compressed as `c` says. The tar is written here, the same
+// bytes for the same tree on every host (see `tar_bytes`).
 std::expected<void, std::string> write_tar(const std::filesystem::path& root,
                                            const std::filesystem::path& archive,
                                            mcpp::pack::compress::Choice c);
@@ -42,7 +41,14 @@ std::expected<void, std::string> write_zip(const std::filesystem::path& root,
 
 // A package this command wrote, as a tree under `into`: a directory as it is,
 // an archive (`.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.zst`, `.tar.xz`)
-// extracted. Returns the tree's root, the archive's one top-level directory.
+// extracted into `into`, which is new or empty. Returns the tree's root, the
+// archive's one top-level directory.
+//
+// An archive is read here, not by a program on PATH, and creates nothing
+// outside `into`: every header is read within the archive, every zip member's
+// CRC-32 checked; a member whose path is absolute or holds `..`, one that lies
+// under a link member, and a link whose target leaves the tree are refused,
+// before anything is written; the links are made after every file.
 std::expected<std::filesystem::path, std::string>
 unpack(const std::filesystem::path& package, const std::filesystem::path& into);
 
@@ -50,18 +56,24 @@ unpack(const std::filesystem::path& package, const std::filesystem::path& into);
 
 struct Launch {
     std::string                        name;     // bin/<name>, bin/<name>.cmd
-    std::vector<std::string>           runner;   // the platform's `runner.cmd`, `{}` the image
+    // The platform's `runner.cmd`, expanded as `mcpp run` expands it: the
+    // first `{}` of a word is the image (`{}`, `--image={}`), and the image is
+    // appended when no word holds one.
+    std::vector<std::string>           runner;
     std::map<std::string, std::string> entry;    // arch -> the entry image's file name
     // The loader a self-contained package carries under
     // `libexec/<loader>/<os>-<arch>/`; empty when it carries none.
     std::string                        loader;
 };
 
+// Whether both launchers can state `l`: a `.cmd` keeps a word literal inside
+// double quotes, so a word holding a double quote or a line break cannot be
+// written in one. Checked before a launcher is written; `windows_launcher` of
+// a `Launch` this refuses is a `.cmd` that says so and runs nothing.
+std::expected<void, std::string> launchable(const Launch& l);
+
 std::string posix_launcher(const Launch& l);
 std::string windows_launcher(const Launch& l);
-
-// The architecture directory a machine name selects, as the launchers map it.
-std::string_view arch_dir(std::string_view machine);
 
 // ─── mcpp-package.json (SPEC-014 §4.5) ────────────────────────────────────
 
@@ -99,6 +111,8 @@ struct Stated {
 std::expected<Package, std::string> describe(const std::filesystem::path& root, Package pkg,
                                              const Stated& stated);
 std::string to_json(const Package& p);
+// `root/mcpp-package.json`, every path it names (`files[].path`, the entries,
+// the program) checked to be a normalised path inside the package.
 std::expected<Package, std::string> read(const std::filesystem::path& root);
 
 // The `<os>-<arch>` directories of `root/libexec/<loader>/`: the systems whose
@@ -118,7 +132,8 @@ std::expected<std::string, std::string> tree_payload(const std::filesystem::path
 // carried payload (`mcpp_carried_begin` .. `mcpp_carried_end`, a zstd frame
 // of `tree_payload`), extracts it once into the user's cache under the
 // payload's sha256 (`mcpp_carried_digest`), and executes the program at
-// `mcpp_carried_name` with its own arguments.
+// `mcpp_carried_name` with its own arguments. On POSIX it runs nothing from a
+// cache directory another user owns.
 std::string launcher_manifest(std::string_view name, std::string_view version);
 std::string_view launcher_main();
 
@@ -150,6 +165,9 @@ struct MergeRequest {
     mcpp::pack::compress::Choice       compression;
 };
 
+// The inputs' trees as one package. Every file is checked against the digest
+// its package states before it is copied; the output is new, or an archive
+// that is a package and none of the inputs (`dir` writes a new directory only).
 std::expected<std::filesystem::path, std::string> merge(const MergeRequest& req);
 
 }  // namespace mcpp::pack::distribution
@@ -244,6 +262,45 @@ bool executable_file(const fs::path& p) {
     return (perms & fs::perms::owner_exec) != fs::perms::none;
 }
 
+// One entry of a staged tree: its path under the root (`/`-separated), what it
+// is (`d` a directory, `f` a file, `x` an executable file, `l` a link) and a
+// link's target.
+struct Node {
+    std::string path;
+    char        kind = 'f';
+    std::string target;
+};
+
+// Every entry under `root`, links not followed, in path order (bytewise: a
+// directory before what it holds). Whatever cannot be read is an error, not
+// an entry left out.
+std::expected<std::vector<Node>, std::string> walk(const fs::path& root) {
+    std::vector<Node> out;
+    std::error_code ec;
+    for (auto it = fs::recursive_directory_iterator(root, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        std::error_code entry;
+        const auto st = it->symlink_status(entry);
+        Node n;
+        n.path = it->path().lexically_relative(root).generic_string();
+        if (fs::is_symlink(st)) {
+            n.kind = 'l';
+            n.target = fs::read_symlink(it->path(), entry).generic_string();
+        } else if (fs::is_directory(st)) {
+            n.kind = 'd';
+        } else if (fs::is_regular_file(st)) {
+            n.kind = executable_file(it->path()) ? 'x' : 'f';
+        } else if (!entry) {
+            continue;   // a socket, a device: nothing a package holds
+        }
+        if (entry) return std::unexpected(std::format("cannot read '{}': {}", it->path().string(), entry.message()));
+        out.push_back(std::move(n));
+    }
+    if (ec) return std::unexpected(std::format("cannot walk '{}': {}", root.string(), ec.message()));
+    std::sort(out.begin(), out.end(), [](const Node& a, const Node& b) { return a.path < b.path; });
+    return out;
+}
+
 }  // namespace
 
 std::string sha256(std::string_view bytes) {
@@ -266,68 +323,134 @@ std::string sha256_file(const fs::path& file) {
 
 // ─── containers ───────────────────────────────────────────────────────────
 
+namespace {
+
+// ── the tar mcpp writes ──
+//
+// POSIX ustar, written here rather than by a `tar` on PATH, whose bytes are
+// its own: GNU tar records the owner, the group and the times of the files,
+// and the order the file system lists a directory in, so two packs of one
+// tree differed. These bytes are the same on every host: the entries in path
+// order, every owner 0 and unnamed, every time 0, the mode 0755 (a directory,
+// an executable file), 0644 (another file) or 0777 (a link). A name or a link
+// target over the 100 bytes of its field, or a size over the 8 GiB of its, is
+// stated in a pax extended header ahead of the entry (POSIX.1-2001), which
+// every tar reads.
+
+constexpr std::size_t kBlock = 512;
+
+std::size_t padding(std::size_t n) { return (kBlock - n % kBlock) % kBlock; }
+
+// `v` in octal, `width - 1` digits and a NUL.
+void octal(char* field, std::size_t width, std::uint64_t v) {
+    for (std::size_t i = width - 1; i-- > 0; v >>= 3) field[i] = static_cast<char>('0' + (v & 7));
+    field[width - 1] = '\0';
+}
+
+void tar_header(std::string& out, std::string_view name, char type, unsigned mode,
+                std::uint64_t size, std::string_view link) {
+    std::array<char, kBlock> h{};
+    std::copy_n(name.data(), std::min<std::size_t>(name.size(), 100), h.data());
+    octal(h.data() + 100, 8, mode);
+    octal(h.data() + 108, 8, 0);     // uid
+    octal(h.data() + 116, 8, 0);     // gid
+    octal(h.data() + 124, 12, size <= 077777777777ull ? size : 0);
+    octal(h.data() + 136, 12, 0);    // mtime
+    std::fill_n(h.data() + 148, 8, ' ');
+    h[156] = type;
+    std::copy_n(link.data(), std::min<std::size_t>(link.size(), 100), h.data() + 157);
+    std::copy_n("ustar\0" "00", 8, h.data() + 257);
+    octal(h.data() + 329, 8, 0);     // devmajor
+    octal(h.data() + 337, 8, 0);     // devminor
+    unsigned sum = 0;
+    for (char ch : h) sum += static_cast<unsigned char>(ch);
+    octal(h.data() + 148, 7, sum);   // six digits and a NUL; the space stays
+    out.append(h.data(), h.size());
+}
+
+// One pax record: "<length> <key>=<value>\n", the length counting its own
+// digits.
+std::string pax_record(std::string_view key, std::string_view value) {
+    const auto rest = key.size() + value.size() + 3;
+    auto length = rest + 1;
+    while (length != rest + std::to_string(length).size()) length = rest + std::to_string(length).size();
+    return std::format("{} {}={}\n", length, key, value);
+}
+
+void tar_entry(std::string& out, std::string_view name, char type, unsigned mode,
+               std::string_view data, std::string_view link) {
+    std::string pax;
+    if (name.size() > 100) pax += pax_record("path", name);
+    if (link.size() > 100) pax += pax_record("linkpath", link);
+    if (data.size() > 077777777777ull) pax += pax_record("size", std::to_string(data.size()));
+    if (!pax.empty()) {
+        tar_header(out, "././@PaxHeader", 'x', 0644, pax.size(), {});
+        out += pax;
+        out.append(padding(pax.size()), '\0');
+    }
+    tar_header(out, name, type, mode, data.size(), link);
+    out += data;
+    out.append(padding(data.size()), '\0');
+}
+
+// The tar of `root`: its directory, then every entry under it.
+std::expected<std::string, std::string> tar_bytes(const fs::path& root) {
+    auto nodes = walk(root);
+    if (!nodes) return std::unexpected(nodes.error());
+    const auto top = (root.has_filename() ? root : root.parent_path()).filename().generic_string();
+    std::string out;
+    tar_entry(out, top + "/", '5', 0755, {}, {});
+    for (auto const& n : *nodes) {
+        const auto name = top + "/" + n.path;
+        if (n.kind == 'd') { tar_entry(out, name + "/", '5', 0755, {}, {}); continue; }
+        if (n.kind == 'l') { tar_entry(out, name, '2', 0777, {}, n.target); continue; }
+        auto data = slurp(root / fs::path(n.path));
+        if (!data) return std::unexpected(std::format("cannot read '{}'", (root / n.path).string()));
+        tar_entry(out, name, '0', n.kind == 'x' ? 0755 : 0644, *data, {});
+    }
+    out.append(2 * kBlock, '\0');
+    return out;
+}
+
+}  // namespace
+
 std::expected<void, std::string> write_tar(const fs::path& root, const fs::path& archive,
                                            mcpp::pack::compress::Choice c) {
-    std::error_code ec;
-    if (archive.has_parent_path()) fs::create_directories(archive.parent_path(), ec);
-    // Written uncompressed by tar, compressed by mcpp's codec: `.tar.zst` and
-    // `.tar.xz` need no program on PATH, and a `.tar.gz` is the same bytes on
-    // every host. `--force-local` on Windows: GNU tar reads `C:/x.tar` as the
-    // rsh form `host:path`.
-    auto plain = archive;
-    plain += ".mcpp-tar";
-    std::vector<std::string> argv{"tar"};
-    if constexpr (mcpplibs::os::is_windows) argv.push_back("--force-local");
-    argv.insert(argv.end(), {"-cf", plain.string(), "-C", root.parent_path().string(),
-                             root.filename().string()});
-    auto r = mcpp::run::execute(argv);
-    if (r.exit_code != 0) {
-        fs::remove(plain, ec);
-        return std::unexpected(std::format("tar exited with {}: {}", r.exit_code, r.output));
-    }
-    auto packed = mcpp::pack::compress::file(plain, archive, c);
-    fs::remove(plain, ec);
-    if (!packed) return std::unexpected(packed.error());
+    auto tar = tar_bytes(root);
+    if (!tar) return std::unexpected(tar.error());
+    auto packed = mcpp::pack::compress::bytes(*tar, c);
+    if (!packed) return std::unexpected(std::format("{}: {}", archive.string(), packed.error()));
+    if (!spit(archive, *packed)) return std::unexpected(std::format("cannot write '{}'", archive.string()));
     return {};
 }
 
 std::expected<void, std::string> write_zip(const fs::path& root, const fs::path& archive,
                                            mcpp::pack::compress::Choice c,
                                            std::string_view program) {
-    std::error_code ec;
+    auto nodes = walk(root);
+    if (!nodes) return std::unexpected(nodes.error());
+    const auto top = (root.has_filename() ? root : root.parent_path()).filename().generic_string();
+    // In path order, as `walk` returns the tree.
     std::vector<mcpp::pack::zip::Entry> entries;
-    const auto wrapper = root.filename().string();
-    for (auto it = fs::recursive_directory_iterator(root, ec);
-         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        const auto& e = *it;
+    for (auto const& n : *nodes) {
+        if (n.kind == 'd' || (n.kind == 'l' && n.target.empty())) continue;
         mcpp::pack::zip::Entry entry;
-        entry.name = wrapper + "/" + e.path().lexically_relative(root).generic_string();
-        entry.source = e.path();
-        if (e.is_symlink(ec)) {
-            entry.symlinkTarget = fs::read_symlink(e.path(), ec).generic_string();
-            if (entry.symlinkTarget.empty()) continue;
-            if (e.is_directory(ec)) it.disable_recursion_pending();
-        } else if (!e.is_regular_file(ec)) {
-            continue;
-        } else {
-            entry.executable = executable_file(e.path())
-                || (!program.empty() && e.path().filename() == program);
-        }
+        entry.name = top + "/" + n.path;
+        entry.source = root / fs::path(n.path);
+        entry.symlinkTarget = n.target;
+        entry.executable = n.kind == 'x'
+            || (n.kind == 'f' && !program.empty() && entry.source.filename() == program);
         entries.push_back(std::move(entry));
     }
-    // Deterministic order; a comparator rather than a projection onto an
-    // imported type's member (mcpp.pack's run_pe says why).
-    std::sort(entries.begin(), entries.end(),
-              [](const mcpp::pack::zip::Entry& a, const mcpp::pack::zip::Entry& b) {
-                  return a.name < b.name;
-              });
     mcpp::pack::zip::WriteOptions o;
     o.deflate = c.algorithm != mcpp::pack::compress::Algorithm::None;
-    o.level   = c.algorithm == mcpp::pack::compress::Algorithm::Gzip ? c.level : 0;
+    o.level   = c.algorithm == mcpp::pack::compress::Algorithm::Gzip ? c.level : -1;
     return mcpp::pack::zip::write(archive, entries, o);
 }
 
 namespace {
+
+// ── what an archive holds ──
 
 std::uint16_t get16(std::string_view b, std::size_t at) {
     return static_cast<std::uint16_t>(static_cast<unsigned char>(b[at])
@@ -337,69 +460,349 @@ std::uint32_t get32(std::string_view b, std::size_t at) {
     return static_cast<std::uint32_t>(get16(b, at)) | (static_cast<std::uint32_t>(get16(b, at + 2)) << 16);
 }
 
-// A relative, `/`-separated name with no `..`: what an archive may create.
-bool safe_member(std::string_view name) {
-    if (name.empty() || name.front() == '/' || name.find('\\') != std::string_view::npos
-        || (name.size() > 1 && name[1] == ':'))
-        return false;
-    std::size_t at = 0;
-    while (at <= name.size()) {
-        auto slash = name.find('/', at);
-        if (slash == std::string_view::npos) slash = name.size();
-        if (name.substr(at, slash - at) == "..") return false;
+// `s` split at every `/`, empty parts kept.
+std::vector<std::string_view> parts(std::string_view s) {
+    std::vector<std::string_view> out;
+    for (std::size_t at = 0; at <= s.size();) {
+        auto slash = s.find('/', at);
+        if (slash == std::string_view::npos) slash = s.size();
+        out.push_back(s.substr(at, slash - at));
         at = slash + 1;
+    }
+    return out;
+}
+
+// What can never be a path inside a tree on every system: empty, absolute
+// (`/x`, `C:`), with a backslash or a NUL.
+bool foreign(std::string_view p) {
+    return p.empty() || p.front() == '/' || p.find('\\') != std::string_view::npos
+        || p.find('\0') != std::string_view::npos || (p.size() > 1 && p[1] == ':');
+}
+
+// The path inside the extraction root a member's name names, normalised:
+// relative, `/`-separated, without `.` or empty parts or a trailing `/`; empty
+// for the root itself (`./`, which `tar -C dir .` writes). None when it would
+// leave the root. A `..` is refused wherever it is, `a/../b` too, which stays
+// inside as words: through a link member `a` it would not, and no archive mcpp
+// writes holds one.
+std::optional<std::string> member_path(std::string_view name) {
+    if (foreign(name)) return std::nullopt;
+    std::string out;
+    for (auto part : parts(name)) {
+        if (part.empty() || part == ".") continue;
+        if (part == "..") return std::nullopt;
+        if (!out.empty()) out += '/';
+        out += part;
+    }
+    return out;
+}
+
+// Whether the link member at `path` whose target is `target` resolves inside
+// the extraction root: the target is relative and, walked from the link's
+// directory, never climbs above the root and goes on from no link member (one
+// may be where it ends: that link's own target is checked the same way).
+bool link_inside(std::string_view path, std::string_view target, const std::set<std::string>& links) {
+    if (foreign(target)) return false;
+    // Where the walk is, a path under the root (empty: the root itself); the
+    // link's directory first.
+    const auto slash = path.rfind('/');
+    std::string here(slash == std::string_view::npos ? std::string_view() : path.substr(0, slash));
+    for (auto part : parts(target)) {
+        if (part.empty() || part == ".") continue;
+        if (!here.empty() && links.contains(here)) return false;
+        if (part == "..") {
+            if (here.empty()) return false;
+            const auto up = here.rfind('/');
+            here.resize(up == std::string::npos ? 0 : up);
+        } else {
+            here += (here.empty() ? "" : "/") + std::string(part);
+        }
     }
     return true;
 }
 
+// One member of an archive: its path (`member_path`) and what it is. A file's
+// bytes are as stored (`method` 8: DEFLATEd); a link's target is read at once.
+struct Member {
+    std::string                  path;
+    char                         kind = 'f';    // 'd' directory, 'f' file, 'l' link
+    bool                         executable = false;
+    std::string_view             stored;
+    std::uint16_t                method = 0;
+    std::uint64_t                size = 0;
+    std::optional<std::uint32_t> crc;           // a zip member's CRC-32
+    std::string                  target;
+};
+
+// A file member's content: inflated if it was deflated, its length and its
+// CRC-32 (a zip's) checked against the archive's.
+std::expected<std::string, std::string> contents(const Member& m) {
+    std::string data;
+    if (m.method == 8) {
+        auto d = mcpp::pack::compress::inflate_raw(m.stored, static_cast<std::size_t>(m.size));
+        if (!d) return std::unexpected(std::format("'{}': {}", m.path, d.error()));
+        data = std::move(*d);
+    } else {
+        data.assign(m.stored);
+    }
+    if (data.size() != m.size)
+        return std::unexpected(std::format("'{}' holds {} bytes; the archive states {}", m.path,
+                                           data.size(), m.size));
+    if (m.crc && mcpp::pack::zip::crc32(data) != *m.crc)
+        return std::unexpected(std::format("'{}' fails its CRC-32: {:08x}, and the archive states {:08x}",
+                                           m.path, mcpp::pack::zip::crc32(data), *m.crc));
+    return data;
+}
+
 // The members of a zip, read through its central directory (stored and
-// deflated, as mcpp writes them).
-std::expected<void, std::string> unzip(std::string_view b, const fs::path& into) {
+// deflated, as mcpp writes them). Every field is read within the archive: an
+// offset or a length that points past it is refused, never followed.
+std::expected<std::vector<Member>, std::string> zip_members(std::string_view b) {
+    auto within = [&](std::uint64_t at, std::uint64_t n) { return at <= b.size() && n <= b.size() - at; };
+    if (b.size() < 22) return std::unexpected(std::string("not a zip: shorter than its end record"));
+    // The end of the central directory: the last 22 bytes, or as far before
+    // them as its comment (65535 bytes at most) reaches.
     std::size_t eocd = std::string_view::npos;
-    for (std::size_t i = b.size() >= 22 ? b.size() - 22 : 0; ; --i) {
-        if (get32(b, i) == 0x06054b50) { eocd = i; break; }
-        if (i == 0 || b.size() - i > 22 + 65535) break;
+    const std::size_t lowest = b.size() - 22 > 65535 ? b.size() - 22 - 65535 : 0;
+    for (std::size_t i = b.size() - 22;; --i) {
+        if (get32(b, i) == 0x06054b50 && within(i + 22, get16(b, i + 20))) { eocd = i; break; }
+        if (i == lowest) break;
     }
     if (eocd == std::string_view::npos) return std::unexpected(std::string("not a zip: no end of central directory"));
     const auto count = get16(b, eocd + 10);
     std::size_t at = get32(b, eocd + 16);
+    if (count == 0xFFFF || at == 0xFFFFFFFF)
+        return std::unexpected(std::string("a ZIP64 archive, which mcpp neither writes nor reads"));
+    std::vector<Member> out;
     for (std::uint16_t n = 0; n < count; ++n) {
-        if (at + 46 > b.size() || get32(b, at) != 0x02014b50)
-            return std::unexpected(std::string("a zip's central directory is malformed"));
-        const auto method = get16(b, at + 10);
-        const auto packed = get32(b, at + 20);
-        const auto size   = get32(b, at + 24);
+        if (!within(at, 46) || get32(b, at) != 0x02014b50)
+            return std::unexpected(std::format("the central directory is malformed at {}", at));
+        const auto flags = get16(b, at + 8), method = get16(b, at + 10);
+        const auto crc = get32(b, at + 16), packed = get32(b, at + 20), size = get32(b, at + 24);
         const auto nameLen = get16(b, at + 28), extraLen = get16(b, at + 30), commentLen = get16(b, at + 32);
-        const auto attrs = get32(b, at + 38);
+        const auto mode = get32(b, at + 38) >> 16;
         const auto local = get32(b, at + 42);
-        const std::string name(b.substr(at + 46, nameLen));
-        at += 46 + nameLen + extraLen + commentLen;
-        if (!safe_member(name)) return std::unexpected(std::format("a zip member names '{}'", name));
-        if (name.ends_with('/')) { std::error_code ec; fs::create_directories(into / name, ec); continue; }
-        const auto lnameLen = get16(b, local + 26), lextraLen = get16(b, local + 28);
-        const auto dataAt = static_cast<std::size_t>(local) + 30 + lnameLen + lextraLen;
-        if (dataAt + packed > b.size()) return std::unexpected(std::format("zip member '{}' is truncated", name));
-        std::string data(b.substr(dataAt, packed));
-        if (method == 8) {
-            auto d = mcpp::pack::compress::inflate_raw(data, size);
-            if (!d) return std::unexpected(std::format("zip member '{}': {}", name, d.error()));
-            data = std::move(*d);
-        } else if (method != 0) {
-            return std::unexpected(std::format("zip member '{}' uses method {}", name, method));
-        }
-        const auto mode = attrs >> 16;
-        const auto target = into / fs::path(name);
-        std::error_code ec;
-        fs::create_directories(target.parent_path(), ec);
-        if ((mode & 0170000u) == 0120000u) {
-            fs::create_symlink(data, target, ec);
-            if (ec) return std::unexpected(std::format("cannot link '{}': {}", target.string(), ec.message()));
+        if (!within(at + 46, std::uint64_t(nameLen) + extraLen + commentLen))
+            return std::unexpected(std::string("the central directory is truncated"));
+        const auto name = b.substr(at + 46, nameLen);
+        at += 46 + std::size_t(nameLen) + extraLen + commentLen;
+        const bool dir = name.ends_with('/') || (mode & 0170000u) == 0040000u;
+        auto path = member_path(name);
+        if (!path || (path->empty() && !dir))
+            return std::unexpected(std::format("a member names '{}', which is not a path inside the archive",
+                                               name));
+        if (path->empty()) continue;   // the root, there already
+        if (flags & 1) return std::unexpected(std::format("'{}' is encrypted", name));
+        if (method != 0 && method != 8)
+            return std::unexpected(std::format("'{}' uses method {}", name, method));
+        if (packed == 0xFFFFFFFF || size == 0xFFFFFFFF || local == 0xFFFFFFFF)
+            return std::unexpected(std::format("'{}' is a ZIP64 member, which mcpp neither writes nor reads",
+                                               name));
+        Member m;
+        m.path = std::move(*path);
+        if (dir) {
+            m.kind = 'd';
+            out.push_back(std::move(m));
             continue;
         }
-        if (!spit(target, data)) return std::unexpected(std::format("cannot write '{}'", target.string()));
-        if (mode & 0100u)
+        if (!within(local, 30) || get32(b, local) != 0x04034b50)
+            return std::unexpected(std::format("'{}' has no local header at {}", name, local));
+        const std::uint64_t dataAt = std::uint64_t(local) + 30 + get16(b, local + 26) + get16(b, local + 28);
+        if (!within(dataAt, packed)) return std::unexpected(std::format("'{}' is truncated", name));
+        m.stored = b.substr(static_cast<std::size_t>(dataAt), packed);
+        m.method = method;
+        m.size = size;
+        m.crc = crc;
+        m.executable = (mode & 0100u) != 0;
+        if ((mode & 0170000u) == 0120000u) {
+            auto target = contents(m);
+            if (!target) return std::unexpected(target.error());
+            m.kind = 'l';
+            m.target = std::move(*target);
+            m.stored = {};
+        }
+        out.push_back(std::move(m));
+    }
+    return out;
+}
+
+// A numeric field of a tar header: octal digits (after spaces, ended by a
+// space or a NUL), or base-256 when the first byte's high bit is set.
+std::optional<std::uint64_t> tar_number(std::string_view f) {
+    std::uint64_t v = 0;
+    if (!f.empty() && (static_cast<unsigned char>(f.front()) & 0x80)) {
+        if (static_cast<unsigned char>(f.front()) != 0x80) return std::nullopt;   // negative, or too large
+        for (char ch : f.substr(1)) {
+            if (v >> 56) return std::nullopt;
+            v = v << 8 | static_cast<unsigned char>(ch);
+        }
+        return v;
+    }
+    std::size_t i = f.find_first_not_of(' ');
+    if (i == std::string_view::npos) return 0;
+    for (; i < f.size() && f[i] >= '0' && f[i] <= '7'; ++i) {
+        if (v >> 60) return std::nullopt;
+        v = v * 8 + static_cast<std::uint64_t>(f[i] - '0');
+    }
+    if (i < f.size() && f[i] != ' ' && f[i] != '\0') return std::nullopt;
+    return v;
+}
+
+// A text field of a tar header, up to its first NUL.
+std::string_view tar_text(std::string_view f) { return f.substr(0, f.find('\0')); }
+
+// The records of a pax extended header that name the next entry: its path,
+// its link's target, its size. The others (times, owners) are read past.
+std::expected<void, std::string> pax_records(std::string_view data, std::string& path, std::string& link,
+                                             std::optional<std::uint64_t>& size) {
+    while (!data.empty()) {
+        const auto space = data.find(' ');
+        std::uint64_t length = 0;
+        if (space == std::string_view::npos
+            || std::from_chars(data.data(), data.data() + space, length).ec != std::errc{}
+            || length <= space + 1 || length > data.size() || data[length - 1] != '\n')
+            return std::unexpected(std::string("a pax header is malformed"));
+        const auto record = data.substr(space + 1, length - space - 2);
+        data.remove_prefix(length);
+        const auto eq = record.find('=');
+        if (eq == std::string_view::npos) return std::unexpected(std::string("a pax record has no '='"));
+        const auto key = record.substr(0, eq), value = record.substr(eq + 1);
+        if (key == "path") path = value;
+        else if (key == "linkpath") link = value;
+        else if (key == "size") {
+            std::uint64_t v = 0;
+            if (std::from_chars(value.data(), value.data() + value.size(), v).ec != std::errc{})
+                return std::unexpected(std::format("a pax size '{}' is not a number", value));
+            size = v;
+        }
+    }
+    return {};
+}
+
+// The members of a tar: ustar, its pax extended headers and GNU's long names
+// (the archives earlier releases wrote through GNU tar). Every header's
+// checksum is checked and every length read within the archive.
+std::expected<std::vector<Member>, std::string> tar_members(std::string_view b) {
+    std::vector<Member> out;
+    std::string longName, longLink;                // the next entry's, from a pax or GNU header
+    std::optional<std::uint64_t> longSize;
+    std::size_t at = 0;
+    while (true) {
+        if (at == b.size()) break;   // no end blocks: as GNU tar, the end of the archive
+        if (b.size() - at < kBlock) return std::unexpected(std::string("the tar ends inside a header"));
+        const auto h = b.substr(at, kBlock);
+        if (h.find_first_not_of('\0') == std::string_view::npos) break;   // the end of the archive
+        unsigned sum = 0;
+        int signedSum = 0;
+        for (std::size_t i = 0; i < kBlock; ++i) {
+            const char ch = i >= 148 && i < 156 ? ' ' : h[i];
+            sum += static_cast<unsigned char>(ch);
+            signedSum += static_cast<signed char>(ch);
+        }
+        const auto stated = tar_number(h.substr(148, 8));
+        if (!stated || (*stated != sum && *stated != static_cast<std::uint64_t>(signedSum)))
+            return std::unexpected(std::format("the tar header at {} fails its checksum", at));
+        const char type = h[156];
+        const bool meta = type == 'x' || type == 'g' || type == 'L' || type == 'K';
+        auto size = tar_number(h.substr(124, 12));
+        if (!size) return std::unexpected(std::format("the tar header at {} states no size", at));
+        if (longSize && !meta) size = longSize;
+        at += kBlock;
+        if (*size > b.size() - at || padding(static_cast<std::size_t>(*size)) > b.size() - at - *size)
+            return std::unexpected(std::format("the tar entry at {} is truncated", at - kBlock));
+        const auto data = b.substr(at, static_cast<std::size_t>(*size));
+        at += static_cast<std::size_t>(*size) + padding(static_cast<std::size_t>(*size));
+        if (type == 'g') continue;
+        if (type == 'x') {
+            if (auto r = pax_records(data, longName, longLink, longSize); !r) return std::unexpected(r.error());
+            continue;
+        }
+        if (type == 'L') { longName = tar_text(data); continue; }
+        if (type == 'K') { longLink = tar_text(data); continue; }
+        std::string name(longName);
+        if (name.empty()) {
+            name = tar_text(h.substr(0, 100));
+            // POSIX ustar's prefix; GNU's own magic ("ustar  ") puts other
+            // things there.
+            if (const auto prefix = tar_text(h.substr(345, 155)); h.substr(257, 6) == std::string_view("ustar\0", 6)
+                                                                 && !prefix.empty())
+                name = std::string(prefix) + "/" + name;
+        }
+        const std::string link = longLink.empty() ? std::string(tar_text(h.substr(157, 100))) : longLink;
+        longName.clear();
+        longLink.clear();
+        longSize.reset();
+        const bool dir = type == '5' || ((type == '0' || type == '\0') && name.ends_with('/'));
+        auto path = member_path(name);
+        if (!path || (path->empty() && !dir))
+            return std::unexpected(std::format("a member names '{}', which is not a path inside the archive",
+                                               name));
+        if (path->empty()) continue;   // the root, there already
+        Member m;
+        m.path = std::move(*path);
+        if (dir) {
+            m.kind = 'd';
+        } else if (type == '0' || type == '\0' || type == '7') {
+            m.stored = data;
+            m.size = data.size();
+            m.executable = (tar_number(h.substr(100, 8)).value_or(0) & 0100u) != 0;
+        } else if (type == '2') {
+            m.kind = 'l';
+            m.target = link;
+        } else if (type == '1') {
+            return std::unexpected(std::format("'{}' is a hard link, which mcpp does not write", name));
+        } else {
+            return std::unexpected(std::format("'{}' is a tar entry of type '{}', which a package does not "
+                                               "hold", name, type));
+        }
+        out.push_back(std::move(m));
+    }
+    return out;
+}
+
+// The members created under `into`, and nothing outside it. Every path is
+// checked before anything is written: none twice, none under a link member,
+// no link whose target leaves the tree. Then the directories and the files
+// are written, and the links made last, so no member is written through one.
+std::expected<void, std::string> place(const std::vector<Member>& members, const fs::path& into) {
+    std::set<std::string> paths, links;
+    for (auto const& m : members) {
+        if (!paths.insert(m.path).second) return std::unexpected(std::format("'{}' is in the archive twice", m.path));
+        if (m.kind == 'l') links.insert(m.path);
+    }
+    for (auto const& m : members) {
+        for (auto slash = m.path.find('/'); slash != std::string::npos; slash = m.path.find('/', slash + 1))
+            if (links.contains(m.path.substr(0, slash)))
+                return std::unexpected(std::format("'{}' lies under the link '{}'", m.path, m.path.substr(0, slash)));
+        if (m.kind == 'l' && !link_inside(m.path, m.target, links))
+            return std::unexpected(std::format("the link '{}' points to '{}', outside the package", m.path,
+                                               m.target));
+    }
+    std::error_code ec;
+    for (auto const& m : members) {
+        const auto target = into / fs::path(m.path);
+        if (m.kind == 'd') {
+            fs::create_directories(target, ec);
+            if (ec) return std::unexpected(std::format("cannot create '{}': {}", target.string(), ec.message()));
+            continue;
+        }
+        if (m.kind != 'f') continue;
+        auto data = contents(m);
+        if (!data) return std::unexpected(data.error());
+        if (!spit(target, *data)) return std::unexpected(std::format("cannot write '{}'", target.string()));
+        if (m.executable)
             fs::permissions(target, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
                             fs::perm_options::add, ec);
+    }
+    for (auto const& m : members) {
+        if (m.kind != 'l') continue;
+        const auto link = into / fs::path(m.path);
+        fs::create_directories(link.parent_path(), ec);
+        if (fs::is_directory(link.parent_path() / fs::path(m.target), ec))
+            fs::create_directory_symlink(fs::path(m.target), link, ec);
+        else
+            fs::create_symlink(fs::path(m.target), link, ec);
+        if (ec) return std::unexpected(std::format("cannot link '{}': {}", link.string(), ec.message()));
     }
     return {};
 }
@@ -412,39 +815,42 @@ std::expected<fs::path, std::string> unpack(const fs::path& package, const fs::p
     if (!fs::is_regular_file(package, ec))
         return std::unexpected(std::format("'{}' is neither a package directory nor an archive",
                                            package.string()));
-    fs::create_directories(into, ec);
     const auto name = package.filename().string();
+    using mcpp::pack::compress::Algorithm;
+    const bool zip = name.ends_with(".zip");
+    const std::optional<Algorithm> a = name.ends_with(".tar.gz") || name.ends_with(".tgz") ? Algorithm::Gzip
+                                     : name.ends_with(".tar.zst") ? Algorithm::Zstd
+                                     : name.ends_with(".tar.xz") ? Algorithm::Xz
+                                     : name.ends_with(".tar") ? std::optional(Algorithm::None)
+                                                              : std::nullopt;
+    if (!zip && !a)
+        return std::unexpected(std::format(
+            "'{}' is not a package this command writes (.zip, .tar, .tar.gz, .tar.zst, .tar.xz, "
+            "or a directory)", name));
+    if (fs::exists(fs::symlink_status(into, ec)) && !(fs::is_directory(fs::symlink_status(into, ec))
+                                                      && fs::is_empty(into, ec)))
+        return std::unexpected(std::format("'{}' is not an empty directory to unpack {} into",
+                                           into.string(), name));
+    fs::create_directories(into, ec);
     auto bytes = slurp(package);
     if (!bytes) return std::unexpected(std::format("cannot read '{}'", package.string()));
-    if (name.ends_with(".zip")) {
-        if (auto r = unzip(*bytes, into); !r) return std::unexpected(std::format("{}: {}", name, r.error()));
+    // The members point into the archive's bytes, or into its tar.
+    std::string plain;
+    std::expected<std::vector<Member>, std::string> members;
+    if (zip) {
+        members = zip_members(*bytes);
     } else {
-        using mcpp::pack::compress::Algorithm;
-        Algorithm a = name.ends_with(".tar.gz") || name.ends_with(".tgz") ? Algorithm::Gzip
-                    : name.ends_with(".tar.zst") ? Algorithm::Zstd
-                    : name.ends_with(".tar.xz") ? Algorithm::Xz
-                    : name.ends_with(".tar") ? Algorithm::None
-                    : static_cast<Algorithm>(-1);
-        if (static_cast<int>(a) == -1)
-            return std::unexpected(std::format(
-                "'{}' is not a package this command writes (.zip, .tar, .tar.gz, .tar.zst, .tar.xz, "
-                "or a directory)", name));
-        auto plain = mcpp::pack::compress::decompress(*bytes, a);
-        if (!plain) return std::unexpected(std::format("{}: {}", name, plain.error()));
-        const auto tarFile = into / ".mcpp-merge.tar";
-        if (!spit(tarFile, *plain)) return std::unexpected(std::format("cannot write '{}'", tarFile.string()));
-        std::vector<std::string> argv{"tar"};
-        if constexpr (mcpplibs::os::is_windows) argv.push_back("--force-local");
-        argv.insert(argv.end(), {"-xf", tarFile.string(), "-C", into.string()});
-        auto r = mcpp::run::execute(argv);
-        fs::remove(tarFile, ec);
-        if (r.exit_code != 0) return std::unexpected(std::format("tar -xf {} exited with {}: {}", name,
-                                                                 r.exit_code, r.output));
+        auto t = mcpp::pack::compress::decompress(*bytes, *a);
+        if (!t) return std::unexpected(std::format("{}: {}", name, t.error()));
+        plain = std::move(*t);
+        members = tar_members(plain);
     }
-    // The archive's one top-level directory.
+    if (!members) return std::unexpected(std::format("{}: {}", name, members.error()));
+    if (auto r = place(*members, into); !r) return std::unexpected(std::format("{}: {}", name, r.error()));
+    // The archive's one top-level directory (a link there is none).
     std::vector<fs::path> tops;
     for (auto const& e : fs::directory_iterator(into, ec))
-        if (e.is_directory(ec)) tops.push_back(e.path());
+        if (fs::is_directory(e.symlink_status(ec))) tops.push_back(e.path());
     if (tops.size() != 1)
         return std::unexpected(std::format("'{}' has {} top-level directories; a package has one",
                                            name, tops.size()));
@@ -452,12 +858,6 @@ std::expected<fs::path, std::string> unpack(const fs::path& package, const fs::p
 }
 
 // ─── launchers ────────────────────────────────────────────────────────────
-
-std::string_view arch_dir(std::string_view machine) {
-    if (machine == "x86_64" || machine == "amd64" || machine == "AMD64") return "x86_64";
-    if (machine == "aarch64" || machine == "arm64" || machine == "ARM64") return "aarch64";
-    return {};
-}
 
 namespace {
 
@@ -472,32 +872,118 @@ std::string sh_word(std::string_view w) {
     return out;
 }
 
-}  // namespace
+// Text of a .cmd inside double quotes: `%` doubled, the one character a batch
+// file reads there.
+std::string cmd_quoted(std::string_view w) {
+    std::string out;
+    for (char ch : w) {
+        if (ch == '%') out += "%%";
+        else out.push_back(ch);
+    }
+    return out;
+}
 
-std::string posix_launcher(const Launch& l) {
+// Text of a .cmd outside quotes (an `echo`): `%` doubled and every character
+// the command line reads escaped with `^`.
+std::string cmd_bare(std::string_view w) {
+    std::string out;
+    for (char ch : w) {
+        if (ch == '%') out += "%%";
+        else if (std::string_view("&|<>^()").find(ch) != std::string_view::npos) out += {'^', ch};
+        else out.push_back(ch);
+    }
+    return out;
+}
+
+// How a launcher's language writes the runner's words: `literal` a piece of
+// a word as text, `image` the image's variable, `around` what encloses each
+// word.
+struct Quoting {
+    std::string      (*literal)(std::string_view);
+    std::string_view image;
+    std::string_view around;
+};
+
+// The runner's arguments, its words after the program, by `mcpp run`'s rule
+// (mcpp.freestanding's `expand`): a word's first `{}` is the image, in
+// `--image={}` as well as in `{}`, and the image is appended when no word
+// holds one.
+std::string runner_args(const std::vector<std::string>& runner, const Quoting& q) {
+    std::string out;
+    bool placed = false;
+    for (std::size_t i = 1; i < runner.size(); ++i) {
+        const std::string_view w = runner[i];
+        out += std::format(" {}", q.around);
+        if (const auto at = w.find("{}"); at == std::string_view::npos) {
+            out += q.literal(w);
+        } else {
+            placed = true;
+            if (at > 0) out += q.literal(w.substr(0, at));
+            out += q.image;
+            if (at + 2 < w.size()) out += q.literal(w.substr(at + 2));
+        }
+        out += q.around;
+    }
+    if (!placed) out += std::format(" {0}{1}{0}", q.around, q.image);
+    return out;
+}
+
+std::string arch_list(const Launch& l) {
     std::string arches;
     for (auto const& [arch, _] : l.entry) arches += (arches.empty() ? "" : " ") + arch;
+    return arches;
+}
+
+}  // namespace
+
+std::expected<void, std::string> launchable(const Launch& l) {
+    std::vector<std::string_view> words{l.name, l.loader};
+    words.insert(words.end(), l.runner.begin(), l.runner.end());
+    for (auto const& [arch, file] : l.entry) words.insert(words.end(), {arch, file});
+    for (auto w : words)
+        if (w.find_first_of(std::string_view("\"\r\n\0", 4)) != std::string_view::npos)
+            return std::unexpected(std::format(
+                "the launcher of {} cannot state '{}': a word of a .cmd holds no double quote and no "
+                "line break", l.name, w));
+    return {};
+}
+
+std::string posix_launcher(const Launch& l) {
     std::string cases;
     for (auto const& [arch, file] : l.entry)
-        cases += std::format("  {}) image=\"$top/lib/{}/{}\" ;;\n", arch, arch, file);
-    // The runner's argv: its program found in the package, then on PATH; `{}`
-    // the image; every other word as written.
-    std::string args;
-    for (std::size_t i = 1; i < l.runner.size(); ++i)
-        args += l.runner[i] == "{}" ? std::string(" \"$image\"") : " " + sh_word(l.runner[i]);
-    const std::string program = l.runner.empty() ? std::string("{}") : l.runner.front();
-    std::string find;
-    if (!l.loader.empty())
-        find = std::format(
-            "runner=\"$top/libexec/{0}/$os-$arch/{0}\"\n"
-            "[ -x \"$runner\" ] || runner={1}\n", l.loader, sh_word(program));
-    else
-        find = std::format("runner={}\n", sh_word(program));
+        cases += std::format("  {}) entry={} ;;\n", sh_word(arch), sh_word(file));
+    // The runner: its program found in the package, then on PATH; none, the
+    // image itself.
+    std::string find, args = " \"$@\"";
+    if (l.runner.empty()) {
+        find = "runner=$image\n";
+    } else {
+        args = runner_args(l.runner, { sh_word, "\"$image\"", "" }) + args;
+        find = std::format("runner={}\n", sh_word(l.runner.front()));
+        if (!l.loader.empty())
+            find = std::format(
+                "loader={0}\n"
+                "runner=\"$top/libexec/$loader/$os-$arch/$loader\"\n"
+                "[ -x \"$runner\" ] || runner={1}\n", sh_word(l.loader), sh_word(l.runner.front()));
+    }
     return std::format(
         "#!/bin/sh\n"
-        "# Generated by mcpp pack (SPEC-014 §4.3): runs {0} on this machine's\n"
-        "# architecture through the platform's runner.\n"
-        "top=$(CDPATH= cd -- \"$(dirname -- \"$0\")/..\" && pwd)\n"
+        "# Generated by mcpp pack (SPEC-014 §4.3): runs the package's program on this\n"
+        "# machine's architecture through the platform's runner.\n"
+        "#\n"
+        "# The package's directory is found through the links a person may have made\n"
+        "# to this file, by `readlink` without -f, which not every system has.\n"
+        "self=$0\n"
+        "n=0\n"
+        "while [ -h \"$self\" ] && [ \"$n\" -lt 40 ]; do\n"
+        "  link=$(readlink -- \"$self\") || break\n"
+        "  case $link in\n"
+        "    /*) self=$link ;;\n"
+        "    *) self=$(dirname -- \"$self\")/$link ;;\n"
+        "  esac\n"
+        "  n=$((n + 1))\n"
+        "done\n"
+        "top=$(CDPATH= cd -- \"$(dirname -- \"$self\")/..\" && pwd)\n"
         "case \"$(uname -m)\" in\n"
         "  x86_64|amd64|AMD64) arch=x86_64 ;;\n"
         "  aarch64|arm64|ARM64) arch=aarch64 ;;\n"
@@ -510,32 +996,38 @@ std::string posix_launcher(const Launch& l) {
         "esac\n"
         "case \"$arch\" in\n"
         "{1}"
-        "  *) echo \"{0}: this machine is $arch; the package holds {2}\" >&2; exit 126 ;;\n"
+        "  *) printf '%s: this machine is %s; the package holds %s\\n' {0} \"$arch\" {2} >&2; exit 126 ;;\n"
         "esac\n"
+        "image=\"$top/lib/$arch/$entry\"\n"
         "{3}"
-        "exec \"$runner\"{4} \"$@\"\n",
-        l.name, cases, arches, find, args);
+        "exec \"$runner\"{4}\n",
+        sh_word(l.name), cases, sh_word(arch_list(l)), find, args);
 }
 
 std::string windows_launcher(const Launch& l) {
-    std::string arches;
-    for (auto const& [arch, _] : l.entry) arches += (arches.empty() ? "" : " ") + arch;
+    if (!launchable(l))
+        return "@echo off\r\n"
+               "rem Generated by mcpp pack (SPEC-014 §4.3).\r\n"
+               "echo This package's runner has a word a .cmd cannot state; run it from a POSIX shell. 1>&2\r\n"
+               "exit /b 126\r\n";
     std::string picks;
     for (auto const& [arch, file] : l.entry)
-        picks += std::format("if \"%arch%\"==\"{0}\" set \"image=%top%\\lib\\{0}\\{1}\"\r\n", arch, file);
-    std::string args;
-    for (std::size_t i = 1; i < l.runner.size(); ++i)
-        args += l.runner[i] == "{}" ? std::string(" \"%image%\"") : " \"" + l.runner[i] + "\"";
-    const std::string program = l.runner.empty() ? std::string("{}") : l.runner.front();
-    std::string find = std::format("set \"runner={}\"\r\n", program);
-    if (!l.loader.empty())
-        find = std::format(
-            "set \"runner=%top%\\libexec\\{0}\\windows-%arch%\\{0}.exe\"\r\n"
-            "if not exist \"%runner%\" set \"runner={1}\"\r\n", l.loader, program);
+        picks += std::format("if \"%arch%\"==\"{0}\" set \"image=%top%\\lib\\{0}\\{1}\"\r\n",
+                             cmd_quoted(arch), cmd_quoted(file));
+    std::string find = "set \"runner=%image%\"\r\n", args;
+    if (!l.runner.empty()) {
+        args = runner_args(l.runner, { cmd_quoted, "%image%", "\"" });
+        const auto program = cmd_quoted(l.runner.front());
+        find = std::format("set \"runner={}\"\r\n", program);
+        if (!l.loader.empty())
+            find = std::format(
+                "set \"runner=%top%\\libexec\\{0}\\windows-%arch%\\{0}.exe\"\r\n"
+                "if not exist \"%runner%\" set \"runner={1}\"\r\n", cmd_quoted(l.loader), program);
+    }
     return std::format(
         "@echo off\r\n"
-        "rem Generated by mcpp pack (SPEC-014 §4.3): runs {0} on this machine's\r\n"
-        "rem architecture through the platform's runner.\r\n"
+        "rem Generated by mcpp pack (SPEC-014 §4.3): runs the package's program on this\r\n"
+        "rem machine's architecture through the platform's runner.\r\n"
         "setlocal\r\n"
         "for %%I in (\"%~dp0..\") do set \"top=%%~fI\"\r\n"
         "set \"machine=%PROCESSOR_ARCHITECTURE%\"\r\n"
@@ -552,12 +1044,22 @@ std::string windows_launcher(const Launch& l) {
         "{3}"
         "\"%runner%\"{4} %*\r\n"
         "exit /b %ERRORLEVEL%\r\n",
-        l.name, picks, arches, find, args);
+        cmd_bare(l.name), picks, cmd_bare(arch_list(l)), find, args);
 }
 
 // ─── mcpp-package.json ────────────────────────────────────────────────────
 
 namespace {
+
+// A shared object's name: `.so`, or `.so.` and a version of digits and dots
+// (`libz.so.1.3`); not a name that merely holds `.so` (`notes.sol`).
+bool shared_object(std::string_view file) {
+    const auto at = file.rfind(".so");
+    if (at == std::string_view::npos) return false;
+    const auto rest = file.substr(at + 3);
+    return rest.empty()
+        || (rest.size() > 1 && rest.front() == '.' && rest.find_first_not_of("0123456789.") == std::string_view::npos);
+}
 
 std::string role_of(std::string_view path, bool executable) {
     auto ends = [&](std::string_view s) { return path.ends_with(s); };
@@ -566,8 +1068,7 @@ std::string role_of(std::string_view path, bool executable) {
     if (file.starts_with("README") || file.starts_with("LICENSE") || file == "HOST-REQUIREMENTS"
         || path.starts_with("share/licenses/"))
         return "metadata";
-    if (ends(".dll") || ends(".dylib") || path.find(".so") != std::string_view::npos
-        || ends(".okso"))
+    if (ends(".dll") || ends(".dylib") || shared_object(file) || ends(".okso"))
         return "library";
     if (ends(".oke")) return "image";
     if (path.starts_with("bin/") && (executable || ends(".exe") || ends(".js") || ends(".wasm")))
@@ -610,26 +1111,21 @@ std::string to_json(const Package& p) {
 }
 
 std::expected<Package, std::string> describe(const fs::path& root, Package pkg, const Stated& stated) {
-    std::error_code ec;
     pkg.files.clear();
-    for (auto it = fs::recursive_directory_iterator(root, ec);
-         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        const auto& e = *it;
-        if (e.is_symlink(ec)) { if (e.is_directory(ec)) it.disable_recursion_pending(); continue; }
-        if (!e.is_regular_file(ec)) continue;
-        const auto rel = e.path().lexically_relative(root).generic_string();
-        if (rel == kFileName) continue;
+    auto nodes = walk(root);
+    if (!nodes) return std::unexpected(nodes.error());
+    // The files, in path order; a link is not a file of the package.
+    for (auto const& n : *nodes) {
+        if ((n.kind != 'f' && n.kind != 'x') || n.path == kFileName) continue;
         File f;
-        f.path = rel;
-        if (auto r = stated.role.find(rel); r != stated.role.end()) f.role = r->second;
-        else f.role = role_of(rel, executable_file(e.path()));
-        if (auto l = stated.leg.find(rel); l != stated.leg.end()) f.leg = l->second;
+        f.path = n.path;
+        if (auto r = stated.role.find(n.path); r != stated.role.end()) f.role = r->second;
+        else f.role = role_of(n.path, n.kind == 'x');
+        if (auto l = stated.leg.find(n.path); l != stated.leg.end()) f.leg = l->second;
         else if (pkg.legs.size() == 1 && f.role != "metadata" && f.role != "resource") f.leg = pkg.legs.front();
-        f.sha256 = sha256_file(e.path());
+        f.sha256 = sha256_file(root / fs::path(n.path));
         pkg.files.push_back(std::move(f));
     }
-    std::sort(pkg.files.begin(), pkg.files.end(),
-              [](const File& a, const File& b) { return a.path < b.path; });
     if (!spit(root / kFileName, to_json(pkg)))
         return std::unexpected(std::format("cannot write '{}'", (root / kFileName).string()));
     return pkg;
@@ -671,6 +1167,16 @@ std::expected<Package, std::string> read(const fs::path& root) {
     if (p.schema != 1)
         return std::unexpected(std::format("{} states schema {}; this mcpp reads schema 1",
                                            (root / kFileName).string(), p.schema));
+    // Every path it names is one inside the package, written as `describe`
+    // writes it: what reads the package (--merge, the index entry) opens them.
+    std::vector<std::string_view> named;
+    for (auto const& f : p.files) named.push_back(f.path);
+    for (auto const& [_, e] : p.entry) named.push_back(e);
+    if (!p.program.empty()) named.push_back(p.program);
+    for (auto n : named)
+        if (n.empty() || member_path(n) != n)
+            return std::unexpected(std::format("{} names '{}', which is not a path inside the package",
+                                               (root / kFileName).string(), n));
     return p;
 }
 
@@ -694,42 +1200,24 @@ std::vector<std::string> loader_systems(const fs::path& root) {
 // ─── a single file ────────────────────────────────────────────────────────
 
 std::expected<std::string, std::string> tree_payload(const fs::path& root) {
-    struct Item { std::string path; char kind; std::string data; };
-    std::vector<Item> items;
-    std::error_code ec;
-    for (auto it = fs::recursive_directory_iterator(root, ec);
-         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        const auto& e = *it;
-        Item item;
-        item.path = e.path().lexically_relative(root).generic_string();
-        if (e.is_symlink(ec)) {
-            item.kind = 'l';
-            item.data = fs::read_symlink(e.path(), ec).generic_string();
-            if (e.is_directory(ec)) it.disable_recursion_pending();
-        } else if (e.is_directory(ec)) {
-            item.kind = 'd';
-        } else if (e.is_regular_file(ec)) {
-            item.kind = executable_file(e.path()) ? 'x' : 'f';
-            auto data = slurp(e.path());
-            if (!data) return std::unexpected(std::format("cannot read '{}'", e.path().string()));
-            item.data = std::move(*data);
-        } else {
-            continue;
-        }
-        items.push_back(std::move(item));
-    }
-    if (ec) return std::unexpected(std::format("cannot walk '{}': {}", root.string(), ec.message()));
-    std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.path < b.path; });
+    auto nodes = walk(root);
+    if (!nodes) return std::unexpected(nodes.error());
     std::string out = "MCPPTREE1\n";
     auto put = [&](std::uint64_t v, int bytes) {
         for (int i = 0; i < bytes; ++i) out.push_back(static_cast<char>((v >> (8 * i)) & 0xff));
     };
-    for (auto const& i : items) {
-        out.push_back(i.kind);
-        put(i.path.size(), 4);
-        out += i.path;
-        put(i.data.size(), 8);
-        out += i.data;
+    for (auto const& n : *nodes) {
+        std::string data = n.target;
+        if (n.kind == 'f' || n.kind == 'x') {
+            auto bytes = slurp(root / fs::path(n.path));
+            if (!bytes) return std::unexpected(std::format("cannot read '{}'", (root / n.path).string()));
+            data = std::move(*bytes);
+        }
+        out.push_back(n.kind);
+        put(n.path.size(), 4);
+        out += n.path;
+        put(data.size(), 8);
+        out += data;
     }
     return out;
 }
@@ -756,6 +1244,11 @@ std::string_view launcher_main() {
 // file is written, so a directory that is there is complete. Every later run
 // executes the program at once. The frame carries its content's checksum, and
 // zstd refuses a payload that does not match it.
+//
+// Nothing runs from a directory another user owns. On POSIX the cache's
+// directories this program makes (`mcpp/`, `single-file/`) and the tree it runs
+// from are this user's and no links, or the program refuses: another user who
+// owned one could have put a program of theirs under the payload's name.
 #include <zstd.h>
 
 import std;
@@ -841,6 +1334,18 @@ std::optional<std::string> extract(const fs::path& into) {
     return std::nullopt;
 }
 
+// Whether `dir` is a directory, not a link, and (on POSIX) this user's.
+bool own(const fs::path& dir) {
+    std::error_code ec;
+    if (!fs::is_directory(fs::symlink_status(dir, ec))) return false;
+    if constexpr (os::is_posix) return os::fs::owner_of(dir) == os::fs::owner::this_user;
+    else return true;
+}
+
+int foreign(const fs::path& dir) {
+    return fail(std::format("{} is not a directory of this user's; nothing is run from it", dir.string()));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -849,8 +1354,10 @@ int main(int argc, char** argv) {
     const fs::path base = *cache / "mcpp" / "single-file";
     const fs::path root = base / std::string(kDigest);
     std::error_code ec;
+    fs::create_directories(base, ec);
+    if (!own(base.parent_path())) return foreign(base.parent_path());
+    if (!own(base)) return foreign(base);
     if (!fs::exists(root / ".mcpp-complete", ec)) {
-        fs::create_directories(base, ec);
         if constexpr (os::is_posix)
             fs::permissions(base, fs::perms::owner_all, fs::perm_options::replace, ec);
         const auto self = os::process::self();
@@ -865,6 +1372,7 @@ int main(int argc, char** argv) {
                 return fail(std::format("cannot place the program under {}", root.string()));
         }
     }
+    if (!own(root)) return foreign(root);
     const fs::path program = root / fs::path(std::string(kName));
     os::process::spawn_options o;
     o.program = program;
@@ -1017,6 +1525,19 @@ std::expected<std::string, std::string> xpkg_descriptor(const std::vector<Asset>
 
 // ─── --merge ──────────────────────────────────────────────────────────────
 
+namespace {
+
+// `p` absolute, normalised, and with a name: `pkg/` is `pkg`, `.` the current
+// directory.
+fs::path named(const fs::path& p) {
+    std::error_code ec;
+    auto out = fs::absolute(p, ec).lexically_normal();
+    if (!out.has_filename() && out.has_relative_path()) out = out.parent_path();
+    return out;
+}
+
+}  // namespace
+
 std::expected<fs::path, std::string> merge(const MergeRequest& req) {
     if (req.inputs.size() < 2)
         return std::unexpected(std::string("--merge reads two packages or more"));
@@ -1026,9 +1547,11 @@ std::expected<fs::path, std::string> merge(const MergeRequest& req) {
     fs::create_directories(work, ec);
     struct Cleanup { fs::path p; ~Cleanup() { std::error_code e; fs::remove_all(p, e); } } cleanup{work};
 
+    std::vector<fs::path> inputs;
+    for (auto const& i : req.inputs) inputs.push_back(named(i));
     std::vector<std::pair<fs::path, Package>> trees;
-    for (std::size_t i = 0; i < req.inputs.size(); ++i) {
-        auto root = unpack(req.inputs[i], work / std::format("in{}", i));
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+        auto root = unpack(inputs[i], work / std::format("in{}", i));
         if (!root) return std::unexpected(root.error());
         auto pkg = read(*root);
         if (!pkg) return std::unexpected(pkg.error());
@@ -1049,6 +1572,51 @@ std::expected<fs::path, std::string> merge(const MergeRequest& req) {
             if (r) return std::unexpected(*r);
     }
     const auto wrapper = trees.front().first.filename();
+
+    // The container: as asked, else as the output's name says, else as the
+    // first input was written.
+    std::string format = req.format;
+    const auto outName = req.output.filename().string();
+    const auto firstName = !req.output.empty() && (outName.ends_with(".zip") || outName.find(".tar") != std::string::npos)
+        ? outName : inputs.front().filename().string();
+    if (format.empty())
+        format = firstName.ends_with(".zip") ? "zip"
+               : firstName.find(".tar") != std::string::npos ? "tar"
+               : fs::is_directory(inputs.front(), ec) ? "dir" : "tar";
+    if (format != "tar" && format != "zip" && format != "dir")
+        return std::unexpected(std::format("--merge writes tar, zip or dir; '{}' is a format a package "
+                                           "provides, which reads a staged tree: merge to dir first",
+                                           format));
+    auto compression = req.compression;
+    if (!compression.stated && format == "tar") {
+        using mcpp::pack::compress::Algorithm;
+        compression.algorithm = firstName.ends_with(".tar.zst") ? Algorithm::Zstd
+                              : firstName.ends_with(".tar.xz")  ? Algorithm::Xz
+                              : firstName.ends_with(".tar")     ? Algorithm::None
+                                                                : Algorithm::Gzip;
+    }
+    const auto ext = format == "zip" ? std::string(".zip") : format == "dir" ? std::string()
+                   : std::string(mcpp::pack::compress::tar_extension(compression.algorithm));
+    const fs::path dest = named(req.output.empty() ? fs::path(wrapper.string() + ext) : req.output);
+
+    // What is there already is replaced only when it is an archive this
+    // command wrote and none of the inputs: --merge never removes a directory,
+    // nor a file it cannot read as a package.
+    for (std::size_t i = 0; i < inputs.size(); ++i)
+        if (dest == inputs[i] || fs::equivalent(dest, inputs[i], ec))
+            return std::unexpected(std::format("--merge: the output {} is the input {}", dest.string(),
+                                               req.inputs[i].string()));
+    if (const auto st = fs::symlink_status(dest, ec); fs::exists(st)) {
+        if (format == "dir")
+            return std::unexpected(std::format("--merge: {} exists; a merged directory is written as a new "
+                                               "one", dest.string()));
+        auto old = fs::is_regular_file(st) ? unpack(dest, work / "existing")
+                                           : std::unexpected(std::string("not a file"));
+        if (!old || !read(*old))
+            return std::unexpected(std::format("--merge: {} exists and is not a package; it is not replaced",
+                                               dest.string()));
+    }
+
     const auto out = work / "merged" / wrapper;
     fs::create_directories(out, ec);
     Package merged = first;
@@ -1064,16 +1632,25 @@ std::expected<fs::path, std::string> merge(const MergeRequest& req) {
         for (auto const& s : pkg.systems)
             if (std::ranges::find(merged.systems, s) == merged.systems.end()) merged.systems.push_back(s);
         for (auto const& [arch, e] : pkg.entry) merged.entry[arch] = e;
+        // Each file as it is, not as its package says: a file changed after the
+        // package was written is refused, and two inputs agree on a file when
+        // its bytes do.
         for (auto const& f : pkg.files) {
+            const auto digest = sha256_file(root / fs::path(f.path));
+            if (digest != f.sha256)
+                return std::unexpected(std::format(
+                    "--merge: '{}' in {} has sha256 {}, and its {} states {}", f.path,
+                    req.inputs[i].string(), digest.empty() ? std::string("(no such file)") : digest, kFileName,
+                    f.sha256));
             if (auto it = seen.find(f.path); it != seen.end()) {
-                if (it->second.first != f.sha256)
+                if (it->second.first != digest)
                     return std::unexpected(std::format(
                         "--merge: '{}' is in {} with sha256 {} and in {} with sha256 {}; one package "
                         "holds one of each file", f.path, it->second.second, it->second.first,
-                        req.inputs[i].string(), f.sha256));
+                        req.inputs[i].string(), digest));
                 continue;
             }
-            seen[f.path] = {f.sha256, req.inputs[i].string()};
+            seen[f.path] = {digest, req.inputs[i].string()};
             stated.role[f.path] = f.role;
             if (!f.leg.empty()) stated.leg[f.path] = f.leg;
             fs::create_directories((out / f.path).parent_path(), ec);
@@ -1085,39 +1662,12 @@ std::expected<fs::path, std::string> merge(const MergeRequest& req) {
     std::ranges::sort(merged.systems);
     if (auto d = describe(out, merged, stated); !d) return std::unexpected(d.error());
 
-    // The container: as asked, else as the output's name says, else as the
-    // first input was written.
-    std::string format = req.format;
-    const auto outName = req.output.filename().string();
-    const auto firstName = !req.output.empty() && (outName.ends_with(".zip") || outName.find(".tar") != std::string::npos)
-        ? outName : req.inputs.front().filename().string();
-    if (format.empty())
-        format = firstName.ends_with(".zip") ? "zip"
-               : firstName.find(".tar") != std::string::npos ? "tar"
-               : fs::is_directory(req.inputs.front(), ec) ? "dir" : "tar";
-    auto compression = req.compression;
-    if (!compression.stated && format == "tar") {
-        using mcpp::pack::compress::Algorithm;
-        compression.algorithm = firstName.ends_with(".tar.zst") ? Algorithm::Zstd
-                              : firstName.ends_with(".tar.xz")  ? Algorithm::Xz
-                              : firstName.ends_with(".tar")     ? Algorithm::None
-                                                                : Algorithm::Gzip;
-    }
-    fs::path dest = req.output;
-    const auto ext = format == "zip" ? std::string(".zip") : format == "dir" ? std::string()
-                   : std::string(mcpp::pack::compress::tar_extension(compression.algorithm));
-    if (dest.empty()) dest = fs::current_path(ec) / (wrapper.string() + ext);
     if (format == "dir") {
-        fs::remove_all(dest, ec);
         fs::create_directories(dest.parent_path(), ec);
         fs::copy(out, dest, fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
         if (ec) return std::unexpected(std::format("cannot write '{}': {}", dest.string(), ec.message()));
         return dest;
     }
-    if (format != "tar" && format != "zip")
-        return std::unexpected(std::format("--merge writes tar, zip or dir; '{}' is a format a package "
-                                           "provides, which reads a staged tree: merge to dir first",
-                                           format));
     auto r = format == "zip" ? write_zip(out, dest, compression) : write_tar(out, dest, compression);
     if (!r) return std::unexpected(r.error());
     return dest;
