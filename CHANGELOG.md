@@ -19,6 +19,10 @@
   namespace** (`deps = { "xim:okrun" }`). A bare name turns ambiguous once a
   second index the home lists has a package of that name, and xim-pkgindex's
   `check-dep-namespace` refuses it for a published package.
+- **The install of an `emit xpkg --package` entry follows the installed
+  version.** It moved `<name>-0.1.3-*` into place, a name that no longer
+  matches once the index appends 0.1.4 to the entry; the version in the
+  directory's name is now `pkginfo.version()`.
 - **`mcpp emit xpkg` refuses a word that is not an option.** Each archive is
   its own `--package`; `--package a.zip b.zip` (a shell glob's expansion)
   described `a.zip` alone and left `b.zip` out without a word.

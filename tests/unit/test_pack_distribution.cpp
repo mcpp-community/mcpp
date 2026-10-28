@@ -635,7 +635,7 @@ TEST(PackDistribution, XpkgDescriptorNamesTheCommandAndTheArchiveTop) {
     EXPECT_NE(u->find("name = \"mcppls\""), std::string::npos) << *u;
     EXPECT_NE(u->find("xvm.add(\"mcppls\", opts)"), std::string::npos) << *u;
     EXPECT_NE(u->find("opts.alias = \"mcppls.cmd\""), std::string::npos) << *u;
-    EXPECT_NE(u->find("os.dirs(\"mcppls-0.0.18-openkal\")"), std::string::npos) << *u;
+    EXPECT_NE(u->find("os.dirs(\"mcppls-\" .. pkginfo.version() .. \"-openkal\")"), std::string::npos) << *u;
 
     std::vector<d::Asset> per;
     for (auto [triple, top] : { std::pair{ "x86_64-linux-musl", "okrun-0.1.3-linux-x86_64" },
@@ -653,7 +653,7 @@ TEST(PackDistribution, XpkgDescriptorNamesTheCommandAndTheArchiveTop) {
     auto r = d::xpkg_descriptor(per, "https://example.org/0.1.3");
     ASSERT_TRUE(r) << r.error();
     EXPECT_NE(r->find("name = \"okrun\""), std::string::npos) << *r;
-    EXPECT_NE(r->find("os.dirs(\"okrun-0.1.3-*\")"), std::string::npos) << *r;
+    EXPECT_NE(r->find("os.dirs(\"okrun-\" .. pkginfo.version() .. \"-*\")"), std::string::npos) << *r;
     EXPECT_NE(r->find("path.join(pkginfo.install_dir(), \"bin\")"), std::string::npos) << *r;
 }
 
