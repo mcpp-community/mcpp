@@ -1,6 +1,6 @@
 ---
 subject: platform
-status: active
+status: landed
 ---
 
 # 平台 part 2：打包与分发——三维模型、通用包、单文件、okb、体积，以及 openkal 0.17.2 轮
@@ -14,6 +14,7 @@ SPEC-012（输出）、SPEC-013（平台）、新增 SPEC-014（打包与分发�
 - rev 1：定案——三维模型与 `--pkg-format`；okb v1 由 openkal-image 定义；体积优化本批实施并实测；`.okso` 本机绑定由
   openkal 体系的构建插件完成；APE 单文件记为后续（mcpp#849）。
 - rev 2（本稿）：§14 的四项定案；新增 §15，以 mcppls 与 mcpp-ide 交叉验证 openkal 体系的独有特性。
+- 落地（2026-10-29）：mcpp 2026.10.27.1（#847）与 2026.10.28.1（#854）；openkal-platform 0.17.3、openkal-musl 0.22.6、openkal-llvm-runtime 0.16.6、mcpplibs.os 0.2.1、openkal-image 0.1.3（okrun/okld 各系统程序）、mcpp-ide 0.1.0、mcppls 0.0.18；xim-pkgindex 收录 okrun、okld、mcpp-ide 与 mcppls 0.0.18（#1085）。
 
 ## 0. 摘要
 

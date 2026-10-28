@@ -1,6 +1,6 @@
 ---
 subject: platform
-status: active
+status: landed
 ---
 
 # 平台：目标体系的通用扩展；openkal 作为第一个平台包；IDE 一线与 mcppls 的同批升级
@@ -26,6 +26,7 @@ mcpp-vscode 0.8.0；mcpp-plugins [#51](https://github.com/mcpp-community/mcpp-pl
 - **rev 5**：§16 定案（VS Code 以 `extensionPack`、CLion 以 `<depends>` 引入 mcppls；上传交付物为本机验证后的产物目录）；开始实施。
   实施中发现两处缺口，列入同批：os 0.2.0 在宿主三元组上以 openkal-musl 为 C 库时不能编译（L9，os 0.2.1）；M3 载体的链接取到宿主 GCC 的
   `crtbeginT.o`（L10，§4.7）。
+- 落地（2026-10-29）：mcpp 2026.10.27.1（#847）与 2026.10.28.1（#854）；openkal-platform 0.17.3、openkal-musl 0.22.6、openkal-llvm-runtime 0.16.6、mcpplibs.os 0.2.1、openkal-image 0.1.3（okrun/okld 各系统程序）、mcpp-ide 0.1.0、mcppls 0.0.18；xim-pkgindex 收录 okrun、okld、mcpp-ide 与 mcppls 0.0.18（#1085）。
 
 ## 0. 摘要
 

@@ -93,8 +93,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### platform
 
-- [平台 part 2：打包与分发——三维模型、通用包、单文件、okb、体积，以及 openkal 0.17.2 轮](2026-10-28-platforms-part2-packaging-and-distribution-design.md) — active
-- [平台：目标体系的通用扩展；openkal 作为第一个平台包；IDE 一线与 mcppls 的同批升级](2026-10-28-platforms-design.md) — active
+- [平台 part 2：打包与分发——三维模型、通用包、单文件、okb、体积，以及 openkal 0.17.2 轮](2026-10-28-platforms-part2-packaging-and-distribution-design.md) — landed
+- [平台：目标体系的通用扩展；openkal 作为第一个平台包；IDE 一线与 mcppls 的同批升级](2026-10-28-platforms-design.md) — landed
 
 ### plugins
 
@@ -149,8 +149,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-10
 
-- [平台 part 2：打包与分发——三维模型、通用包、单文件、okb、体积，以及 openkal 0.17.2 轮](2026-10-28-platforms-part2-packaging-and-distribution-design.md) — active
-- [平台：目标体系的通用扩展；openkal 作为第一个平台包；IDE 一线与 mcppls 的同批升级](2026-10-28-platforms-design.md) — active
+- [平台 part 2：打包与分发——三维模型、通用包、单文件、okb、体积，以及 openkal 0.17.2 轮](2026-10-28-platforms-part2-packaging-and-distribution-design.md) — landed
+- [平台：目标体系的通用扩展；openkal 作为第一个平台包；IDE 一线与 mcppls 的同批升级](2026-10-28-platforms-design.md) — landed
 - [生态设计 part 2：openkal 的最小原子与二进制映像、其上的 `mcpplibs.os`，以及 part 1 的收尾与回归记录](2026-10-26-ecosystem-part2-os-library-over-openkal-design.md) — active
 - [控制契约、并发与性能、单一 C++ 运行时，以及 IDE 生态（生态级，#838、#839）](2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md) — active
 - [目标基座与执行宿主：sysroot 的通用模型、运行器契约、自备输入，以及同批的发布产物路径（#832）](2026-10-23-target-base-and-execution-host-design.md) — landed
