@@ -40,12 +40,12 @@ mcpp run --target x86_64-openkal
 
 ```
     Resolved llvm@23.1.3 → x86_64-openkal → …/xim-x-llvm/23.1.3/bin/clang++
-             the platform's (openkal-platform 0.17.2), replacing your gcc@16.1.0 — override with `[target.x86_64-openkal] toolchain`
+             the platform's (openkal-platform 0.17.3), replacing your gcc@16.1.0 — override with `[target.x86_64-openkal] toolchain`
       Target x86_64-openkal → x86_64-unknown-none-elf
-             compiler-runtime  compiler-rt    (openkal-llvm-runtime@0.16.5, platform)
-             c-abi             musl           (openkal-musl@0.22.5, platform)
-             c++-abi           libc++         (openkal-llvm-runtime@0.16.5, platform)
-    Platform openkal-platform 0.17.2 (built-in)
+             compiler-runtime  compiler-rt    (openkal-llvm-runtime@0.16.6, platform)
+             c-abi             musl           (openkal-musl@0.22.6, platform)
+             c++-abi           libc++         (openkal-llvm-runtime@0.16.6, platform)
+    Platform openkal-platform 0.17.3 (built-in)
              tools             okld, okrun (openkal-tools@0.1.3, platform)
              runner            okrun (platform)
              link              lld, start ok_main (platform)
@@ -109,9 +109,9 @@ The first of these that answers selects the target's platform:
 
 | Source | Spelling |
 |---|---|
-| the command line | `--platform openkal-platform@0.17.2`, `--platform path:../openkal-platform`, `--platform none` |
+| the command line | `--platform openkal-platform@0.17.3`, `--platform path:../openkal-platform`, `--platform none` |
 | the environment | `MCPP_TARGET_X86_64_OPENKAL_PLATFORM=…` |
-| the project | `[target.<selector>] platform = "openkal-platform@0.17.2"`, or `{ path = "…" }` |
+| the project | `[target.<selector>] platform = "openkal-platform@0.17.3"`, or `{ path = "…" }` |
 | this machine | the same key in `~/.mcpp/config.toml` |
 | the target table | the platform column (`mcpp toolchain list`) |
 
@@ -125,11 +125,11 @@ its own conventions. `[host] platform` selects a platform for them instead:
 
 ```toml
 [host]
-platform = "openkal-platform@0.17.2"
+platform = "openkal-platform@0.17.3"
 ```
 
 ```
-        Host platform openkal-platform 0.17.2 (mcpp.toml:2): build programs are x86_64-openkal images run by okrun
+        Host platform openkal-platform 0.17.3 (mcpp.toml:2): build programs are x86_64-openkal images run by okrun
 ```
 
 Every build program then compiles as an ok image of this machine's
@@ -147,7 +147,7 @@ implementation:
 
 ```toml
 [target.'cfg(any(linux, macos, windows))']
-platform = "openkal-platform@0.17.2"
+platform = "openkal-platform@0.17.3"
 ```
 
 On Windows the arrangement is the GNU ABI's row (`--target x86_64-windows-gnu`);
@@ -161,12 +161,12 @@ packages pin one another exactly. A graph that holds another version of one of
 them is refused before anything compiles:
 
 ```
-error: openkal-musl 0.22.2 is in this build, and the platform openkal-platform 0.17.2 is a version group that names openkal-musl 0.22.5.
+error: openkal-musl 0.22.2 is in this build, and the platform openkal-platform 0.17.3 is a version group that names openkal-musl 0.22.6.
        requested by: own
        The family's packages pin one another exactly, so two versions of one of
        them cannot be linked into one program. Either select the platform release
        of that version ([target.<selector>] platform = "openkal-platform@<version>"), or write
-       openkal-musl = "0.22.5" where it is requested.
+       openkal-musl = "0.22.6" where it is requested.
 ```
 
 A package taken from a directory or a repository is not bound by the group.
@@ -180,7 +180,7 @@ abridged:
 [package]
 namespace = "mcpplibs"
 name      = "openkal-platform"
-version   = "0.17.2"
+version   = "0.17.3"
 mcpp      = ">=2026.10.27.1"
 
 [platform]
@@ -192,9 +192,9 @@ universal = true
 plugin    = "build.mcpp"
 
 [platform.layers]
-compiler-runtime = "openkal-llvm-runtime@0.16.5"
-"c++-abi"        = "openkal-llvm-runtime@0.16.5"
-c-abi            = { name = "openkal-musl", version = "0.22.5", default-features = false, features = ["posix"] }
+compiler-runtime = "openkal-llvm-runtime@0.16.6"
+"c++-abi"        = "openkal-llvm-runtime@0.16.6"
+c-abi            = { name = "openkal-musl", version = "0.22.6", default-features = false, features = ["posix"] }
 
 [platform.tools]
 okld  = "openkal-tools@0.1.3"

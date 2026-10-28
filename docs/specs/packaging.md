@@ -190,7 +190,7 @@ WebAssembly 的同名文件族,ok 映像的 `bin/`),规定见 docs/10。
   "schema": 1,
   "name": "hello",
   "version": "0.1.0",
-  "platform": "openkal-platform@0.17.2",
+  "platform": "openkal-platform@0.17.3",
   "linkage": "declared",
   "mode": "vendored",
   "legs": ["x86_64-openkal", "aarch64-openkal"],

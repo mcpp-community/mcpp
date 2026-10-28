@@ -721,7 +721,7 @@ macOS 上为 `~/Library/Caches`，Windows 上为 `%LOCALAPPDATA%`：先解到旁
 
 ok 映像的文件为 `target/dist/<name>-<version>-<os>-<arch>`（Windows 上带 `.exe`），`--systems` 的每个系统
 （缺省为本机系统）各一个。映像不引用其他映像时载体只携带它，否则携带全部映像的一个 stored zip（每个映像对齐到
-64 KiB），载体的入口经 openkal-run 的 bundle 接口读取（openkal-platform 0.17.2）。
+64 KiB），载体的入口经 openkal-run 的 bundle 接口读取（openkal-platform 0.17.2 起）。
 
 ### `mcpp-package.json`
 
@@ -729,7 +729,7 @@ ok 映像的文件为 `target/dist/<name>-<version>-<os>-<arch>`（Windows 上�
 提供的格式、`--merge` 与 `mcpp emit xpkg` 读取它（[SPEC-014](../specs/packaging.md) §4.5）：
 
 ```json
-{"schema": 1, "name": "hello", "version": "0.1.0", "platform": "openkal-platform@0.17.2",
+{"schema": 1, "name": "hello", "version": "0.1.0", "platform": "openkal-platform@0.17.3",
  "linkage": "shared", "mode": "vendored", "legs": ["x86_64-openkal", "aarch64-openkal"], "systems": [],
  "launch": {"runner": ["okrun", "{}"], "entry": {"x86_64": "lib/x86_64/hello.oke", "aarch64": "lib/aarch64/hello.oke"}},
  "files": [{"path": "lib/x86_64/hello.oke", "role": "image", "leg": "x86_64-openkal", "sha256": "…"}]}

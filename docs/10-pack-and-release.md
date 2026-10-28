@@ -845,7 +845,7 @@ An ok image's file is `target/dist/<name>-<version>-<os>-<arch>` (`.exe` on
 Windows), one per system of `--systems` (default: this machine's). The carrier
 carries the image alone when it names no other image, and otherwise a stored
 zip of all the images, each aligned to 64 KiB, which the carrier's entry reads
-through openkal-run's bundle interface (openkal-platform 0.17.2).
+through openkal-run's bundle interface (openkal-platform 0.17.2 and later).
 
 ### `mcpp-package.json`
 
@@ -855,7 +855,7 @@ and sha256. A provided format, `--merge` and `mcpp emit xpkg` read it
 ([SPEC-014](specs/packaging.md) §4.5):
 
 ```json
-{"schema": 1, "name": "hello", "version": "0.1.0", "platform": "openkal-platform@0.17.2",
+{"schema": 1, "name": "hello", "version": "0.1.0", "platform": "openkal-platform@0.17.3",
  "linkage": "shared", "mode": "vendored", "legs": ["x86_64-openkal", "aarch64-openkal"], "systems": [],
  "launch": {"runner": ["okrun", "{}"], "entry": {"x86_64": "lib/x86_64/hello.oke", "aarch64": "lib/aarch64/hello.oke"}},
  "files": [{"path": "lib/x86_64/hello.oke", "role": "image", "leg": "x86_64-openkal", "sha256": "…"}]}

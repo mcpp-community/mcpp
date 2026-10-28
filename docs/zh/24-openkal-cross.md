@@ -93,7 +93,7 @@ SDK，或者区分 `linux`/`windows`/`macos`。那些是 C 环境层或平台层
 
 ```toml
 [target.'cfg(any(linux, macos, windows))']
-platform = "openkal-platform@0.17.2"
+platform = "openkal-platform@0.17.3"
 ```
 
 一张表（2026.10.27.1+）。它为宿主三元组选择 openkal 平台，平台的宿主部分命名编译器与目标侧三个层的包；

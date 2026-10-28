@@ -32,12 +32,12 @@ mcpp run --target x86_64-openkal
 
 ```
     Resolved llvm@23.1.3 → x86_64-openkal → …/xim-x-llvm/23.1.3/bin/clang++
-             the platform's (openkal-platform 0.17.2), replacing your gcc@16.1.0 — override with `[target.x86_64-openkal] toolchain`
+             the platform's (openkal-platform 0.17.3), replacing your gcc@16.1.0 — override with `[target.x86_64-openkal] toolchain`
       Target x86_64-openkal → x86_64-unknown-none-elf
-             compiler-runtime  compiler-rt    (openkal-llvm-runtime@0.16.5, platform)
-             c-abi             musl           (openkal-musl@0.22.5, platform)
-             c++-abi           libc++         (openkal-llvm-runtime@0.16.5, platform)
-    Platform openkal-platform 0.17.2 (built-in)
+             compiler-runtime  compiler-rt    (openkal-llvm-runtime@0.16.6, platform)
+             c-abi             musl           (openkal-musl@0.22.6, platform)
+             c++-abi           libc++         (openkal-llvm-runtime@0.16.6, platform)
+    Platform openkal-platform 0.17.3 (built-in)
              tools             okld, okrun (openkal-tools@0.1.3, platform)
              runner            okrun (platform)
              link              lld, start ok_main (platform)
@@ -96,9 +96,9 @@ C++ 运行时的包同时提供编译器运行时,因此 `"c++-abi" = false` 只
 
 | 来源 | 写法 |
 |---|---|
-| 命令行 | `--platform openkal-platform@0.17.2`、`--platform path:../openkal-platform`、`--platform none` |
+| 命令行 | `--platform openkal-platform@0.17.3`、`--platform path:../openkal-platform`、`--platform none` |
 | 环境变量 | `MCPP_TARGET_X86_64_OPENKAL_PLATFORM=…` |
-| 工程 | `[target.<selector>] platform = "openkal-platform@0.17.2"`,或 `{ path = "…" }` |
+| 工程 | `[target.<selector>] platform = "openkal-platform@0.17.3"`,或 `{ path = "…" }` |
 | 本机 | `~/.mcpp/config.toml` 中的同一个键 |
 | 目标表 | 平台列(`mcpp toolchain list`) |
 
@@ -110,11 +110,11 @@ C++ 运行时的包同时提供编译器运行时,因此 `"c++-abi" = false` 只
 
 ```toml
 [host]
-platform = "openkal-platform@0.17.2"
+platform = "openkal-platform@0.17.3"
 ```
 
 ```
-        Host platform openkal-platform 0.17.2 (mcpp.toml:2): build programs are x86_64-openkal images run by okrun
+        Host platform openkal-platform 0.17.3 (mcpp.toml:2): build programs are x86_64-openkal images run by okrun
 ```
 
 此后每个构建程序都编译为本机架构的 ok 映像,在 Linux、macOS 与 Windows 上使用同一个工具链,经平台的运行器
@@ -128,7 +128,7 @@ platform = "openkal-platform@0.17.2"
 
 ```toml
 [target.'cfg(any(linux, macos, windows))']
-platform = "openkal-platform@0.17.2"
+platform = "openkal-platform@0.17.3"
 ```
 
 Windows 上这一安排对应 GNU ABI 的行(`--target x86_64-windows-gnu`);`[platform.hosted] targets` 之外的
@@ -140,12 +140,12 @@ Windows 上这一安排对应 GNU ABI 的行(`--target x86_64-windows-gnu`);`[pl
 另一个版本时,在任何编译之前拒绝:
 
 ```
-error: openkal-musl 0.22.2 is in this build, and the platform openkal-platform 0.17.2 is a version group that names openkal-musl 0.22.5.
+error: openkal-musl 0.22.2 is in this build, and the platform openkal-platform 0.17.3 is a version group that names openkal-musl 0.22.6.
        requested by: own
        The family's packages pin one another exactly, so two versions of one of
        them cannot be linked into one program. Either select the platform release
        of that version ([target.<selector>] platform = "openkal-platform@<version>"), or write
-       openkal-musl = "0.22.5" where it is requested.
+       openkal-musl = "0.22.6" where it is requested.
 ```
 
 从目录或仓库取得的包不受版本组约束。
@@ -158,7 +158,7 @@ error: openkal-musl 0.22.2 is in this build, and the platform openkal-platform 0
 [package]
 namespace = "mcpplibs"
 name      = "openkal-platform"
-version   = "0.17.2"
+version   = "0.17.3"
 mcpp      = ">=2026.10.27.1"
 
 [platform]
@@ -170,9 +170,9 @@ universal = true
 plugin    = "build.mcpp"
 
 [platform.layers]
-compiler-runtime = "openkal-llvm-runtime@0.16.5"
-"c++-abi"        = "openkal-llvm-runtime@0.16.5"
-c-abi            = { name = "openkal-musl", version = "0.22.5", default-features = false, features = ["posix"] }
+compiler-runtime = "openkal-llvm-runtime@0.16.6"
+"c++-abi"        = "openkal-llvm-runtime@0.16.6"
+c-abi            = { name = "openkal-musl", version = "0.22.6", default-features = false, features = ["posix"] }
 
 [platform.tools]
 okld  = "openkal-tools@0.1.3"
