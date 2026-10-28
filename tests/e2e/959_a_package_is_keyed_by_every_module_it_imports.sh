@@ -20,6 +20,7 @@
 #      builds: ex.lib is compiled again against the interface it imports, and
 #      the entry compiled against 0.1.0 is not served.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -27,6 +28,7 @@ fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2
 
 export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
+TMP_HOST="$(host_path "$TMP")"
 
 descriptor() {  # <name> <versions...>: a package served from a seeded payload
     local name=$1; shift
@@ -46,6 +48,8 @@ package = {
         linux   = {
 $rows        },
         macosx  = {
+$rows        },
+        windows = {
 $rows        },
     },
     mcpp = {
@@ -98,7 +102,7 @@ cxxflags = ["-DEXPECT=$2"]
 "ex.lib" = "=0.1.0"
 
 [indices]
-ex = { path = "$TMP/index" }
+ex = { path = "$TMP_HOST/index" }
 EOF
 }
 
