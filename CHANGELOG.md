@@ -66,8 +66,10 @@
   with `lib/<arch>/` per leg and generated launchers (`bin/<name>`,
   `bin/<name>.cmd`) that pick the machine's architecture and start the
   platform's runner; `--mode self-contained` adds the runner of each system of
-  `--systems` and each architecture under `libexec/`; `--no-universal` packs the
-  selected target alone. e2e 955.
+  `--systems` and each architecture under `libexec/`, built over the platform's
+  hosted arrangement on any machine (a macOS or Windows runner is packed on
+  Linux with no SDK and no C run-time of that system); `--no-universal` packs
+  the selected target alone. e2e 955.
 - **Single files.** `--pkg-format single-file` writes one executable: for a
   native program the engine's launcher carrying the staged tree as a zstd
   frame, extracted once into the user's cache under the payload's sha256 and
@@ -107,6 +109,10 @@
   index, its revision and age, and whether it was refreshed now and why not;
   the provider's own report is printed under `-v`.
 - A package shared by several configurations of one command is announced once.
+- **With `trim_paths`, clang names a source with the target's separator**
+  (`-ffile-reproducible`, clang 17 and later): an artifact built on Windows
+  named `…/src\demangle/…` in `__FILE__` and was not the bytes of the one
+  built on Linux or macOS.
 - **`--pkg-format tar` writes `.tar.gz` on every host, Windows included**, with
   mcpp's own zlib; no `tar` or `gzip` program is run. `--compress none` writes
   `.tar`.
