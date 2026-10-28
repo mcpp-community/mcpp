@@ -255,3 +255,30 @@ e2e：三维组合与拒绝；`--pkg-format` 与旧写法；通用包两架构�
 
 判据：两个 CI 各有一条"扩展包内只有一个 okb、每个系统 × 架构的 okrun 都能启动它"的检查；vsix 与 CLion 插件 zip 的体积在本方案
 记录前后对比。交付给维护者上传的产物目录（part 1 §13.3）中的 vsix 与 zip 即为采用 okb 后的版本。
+
+### 15.1 实施中的修正与实测
+
+- **运行器在任何机器上以平台的托管安排构建。** 每个系统的运行器与载体在其行（`<arch>-linux-musl`、`<arch>-macos`、
+  `<arch>-windows-gnu`）上以 openkal-platform 的托管安排构建，Linux 上一次打包即得四个 okrun（Linux 两个架构、macOS
+  arm64、Windows x64），Windows 的 okrun 不再带 VCRUNTIME140.dll。mcpp-ide 因此去掉了各系统分别打包与 `--merge` 的作业；
+  mcppls 保留 Linux 与 macOS 两份的合并，以继续交叉验证 `--merge`。
+- **Windows 主机上的映像字节不同（mcpp#850，上游）。** clang 在 Windows 主机上拼接包含路径时用 `\`，`-ffile-reproducible`
+  对 POSIX 目标不改；libc++abi 的 `__FILE__` 因此不同，合并正确地拒绝。Linux 与 macOS 构建的映像逐字节相同，通用包在二者
+  之一上打包。
+- **macOS 托管安排的参数（openkal-musl 0.22.6）。** Mach-O 的构造函数顺序取决于链接载入对象的顺序；musl 的构造函数早于
+  openkal-macos 记录参数时，`main` 得到 argc 0。mcppls 的 CI 测得；0.17.3 轮修复，平台的 hosted 检查断言参数。
+- **mcppls 的 xlings 包仍按系统。** 其载荷带每个系统的 clangd 与语义套件，载荷中的服务器为同一个 okb 与该系统的 okrun；
+  "一个资产对应三系统"适用于 mcpp-ide 的后端包与 okrun 之外的纯映像程序。
+
+**mcpp-ide 实测（CI run 40640226458，openkal-platform 0.17.3）。**
+
+| 产物 | 采用 okb 之前 | 0.17.2 平台 | 0.17.3 平台（运行器以托管安排构建） |
+|---|---|---|---|
+| vsix | 4 686 866 B | 2 965 783 B | 3 217 042 B |
+| CLion 插件 zip | 4 605 498 B | 2 924 975 B | 3 172 459 B |
+| `mcpp-ide.okb`（两个架构） | — | 5 731 095 B | 5 731 231 B |
+| okrun linux-x86_64 / linux-aarch64 | — | 682 944 / 655 096 B | 683 024 / 655 128 B |
+| okrun macos-aarch64 | — | 1 398 448 B | 1 237 392 B |
+| okrun windows-x86_64 | — | 462 336 B + VCRUNTIME140.dll | 828 416 B |
+
+扩展包由"每平台一个包"变为"一个包服务所有平台"；0.17.3 的增长来自 Windows 的 okrun 改为静态的托管安排程序。
