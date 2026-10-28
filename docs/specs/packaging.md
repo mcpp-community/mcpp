@@ -174,9 +174,11 @@ WebAssembly 的同名文件族,ok 映像的 `bin/`),规定见 docs/10。
 
 `--systems <os>[,<os>...]`(`linux`、`macos`、`windows`;缺省为本机系统)对 `self-contained` 的通用包,为每个系统 ×
 包的每个架构构建平台的载体(不携带任何内容,即运行器形式,SPEC-013 §11)并放入
-`libexec/<runner>/<os>-<arch>/`;对映像的单文件,为每个系统写一个文件(§5.2)。Linux 的程序为静态(musl);其他
-系统的按其惯常行(`<arch>-macos`、`<arch>-windows-gnu`)构建,与本机系统和架构相同时取本机的行;缺少某个系统的
-SDK 载荷时该次构建拒绝,写出该系统与载荷。
+`libexec/<runner>/<os>-<arch>/`;对映像的单文件,为每个系统写一个文件(§5.2)。每个系统的程序在其行
+(`<arch>-linux-musl`、`<arch>-macos`、`<arch>-windows-gnu`)上构建;平台的托管安排(SPEC-013 §5.4)服务该行时以它
+构建,于是同一程序在任何打包的机器上相同,不需要该系统的 SDK 与 C 运行时;Linux 的程序为静态。托管安排不服务该行时
+按惯常行构建,与本机系统和架构相同时取本机的行。本 mcpp 不构建程序的行(目标表标为 planned 或未列出)不放入包,并
+写出该系统与行。
 
 ### 4.5 `mcpp-package.json`
 

@@ -635,8 +635,10 @@ std::string wrapper_dirname_from_archive(const std::filesystem::path& archive) {
                         std::string_view{".tar"}, std::string_view{".zip"}}) {
         if (name.ends_with(suffix)) return name.substr(0, name.size() - suffix.size());
     }
-    // No recognised compression suffix — fall back to the bare stem.
-    return archive.stem().string();
+    // No archive's suffix: the name as written (`-o app-0.1.0-openkal` with
+    // `--pkg-format dir` is that directory; a stem would cut at the version's
+    // last dot and write `app-0.1`).
+    return name;
 }
 
 } // namespace detail
@@ -2274,9 +2276,17 @@ ProgramRow program_row(std::string_view system, std::string_view arch, bool sing
         const auto triple = std::format("{}-linux-musl", arch);
         return { triple, "static", hosted_platform_for(P, triple) };
     }
+    // Another system's program is built over the platform's hosted arrangement
+    // where it serves the row, as Linux's is: the same program whichever
+    // machine packs it, needing no SDK and no C run-time of that system.
+    // Measured without it: on Linux an aarch64-macos runner needed the macOS
+    // SDK no payload carries, and a runner packed on Windows took the MSVC
+    // row and VCRUNTIME140.dll with it.
+    const auto triple = std::format("{}-{}", arch, system == "macos" ? "macos" : "windows-gnu");
+    const auto mode = system == "macos" || !single ? "vendored" : "system";
+    if (auto hosted = hosted_platform_for(P, triple); !hosted.empty()) return { triple, mode, hosted };
     const bool here = system == host_system() && arch == mcpp::toolchain::platform::host_arch;
-    if (system == "macos") return { here ? std::string() : std::format("{}-macos", arch), "vendored" };
-    return { here ? std::string() : std::format("{}-windows-gnu", arch), single ? "system" : "vendored" };
+    return { here ? std::string() : triple, mode };
 }
 
 // The bytes of `carried` as a section of a program of `system`, with the
@@ -2330,7 +2340,13 @@ pack_generated_program(const std::filesystem::path& dir, const ProgramRow& row) 
         return std::unexpected(Error{std::format(
             "packing the program under {} failed:\n{}", dir.string(), built.output)});
     if (fs::is_directory(out / "bin", ec)) return out / "bin";
-    if (fs::is_directory(out, ec)) return out;
+    // A flat tree (PE) holds the generated program's own description beside
+    // it; what is placed from here is the program, and the package it is
+    // placed into describes itself.
+    if (fs::is_directory(out, ec)) {
+        fs::remove(out / "mcpp-package.json", ec);
+        return out;
+    }
     return std::unexpected(Error{std::format("the program's package under {} was not written",
                                              out.string())});
 }

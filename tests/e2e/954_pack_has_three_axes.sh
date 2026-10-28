@@ -161,5 +161,8 @@ for f in d["files"]:
         assert not open(os.path.join(root, f["path"]), "rb").read().endswith(b"SIGNED"), f["path"]
 PY
 echo "ok: [pack] sign signs each program, and the digests are the signed files'"
+"$MCPP" pack --pkg-format dir -o axes-0.1.0-named > h2.log 2>&1 || fail "H: pack -o with dots" h2.log
+[ -d target/dist/axes-0.1.0-named ] || fail "H: -o axes-0.1.0-named did not name the directory" h2.log
+echo "ok: a directory is named as -o writes it"
 
 echo "PASS: 954 pack has three axes"

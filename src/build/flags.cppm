@@ -1194,10 +1194,22 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             // the flags every unit shares made a dependency's command line
             // depend on the members the plan builds, and switching members
             // recompiled it. A unit's map is its package's (`packageTrimMaps`).
+            //
+            // AND THE SEPARATOR IS THE TARGET'S (clang 17 and later,
+            // `-ffile-reproducible`). What follows a mapped prefix is the path
+            // the preprocessor joined, with the host's separator: an ok image
+            // built on Windows named `…/libcxxabi/src\demangle/ItaniumDemangle.h`
+            // and was not the bytes the same image built on Linux is.
+            int major = 0;
+            const auto& v = plan.toolchain.version;
+            std::from_chars(v.data(), v.data() + v.size(), major);
+            const char* reproducible =
+                mcpp::toolchain::is_clang(plan.toolchain) && major >= 17 ? " -ffile-reproducible" : "";
             for (auto const& [package, map] : plan.packageTrimMaps) {
                 std::string rendered;
                 for (auto const& [from, to] : map)
                     rendered += " -ffile-prefix-map=" + escape_path(from) + "=" + to;
+                rendered += reproducible;
                 f.trimByPackage.emplace(package, std::move(rendered));
             }
         }

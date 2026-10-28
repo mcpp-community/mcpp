@@ -278,6 +278,18 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
                     if (!indicesHere.contains(i.name)) lock.indices.push_back(i);
             }
         }
+        // A PACKAGE A PLATFORM ADDED BELONGS TO THE CONFIGURATIONS OF THAT
+        // PLATFORM'S TARGETS (SPEC-013 §15.1): a configuration that does not
+        // resolve it keeps the prior lock's entry, so `mcpp build` for this machine
+        // and `mcpp pack --target x86_64-openkal` do not rewrite each other's
+        // lock. One that resolves the package replaces the entry.
+        if (auto prior = mcpp::lockfile::load(state.workRoot / "mcpp.lock")) {
+            std::set<std::string> resolvedHere;
+            for (auto const& p : lock.packages) resolvedHere.insert(lock_identity(p));
+            for (auto const& p : prior->packages)
+                if (p.origin == "platform" && resolvedHere.insert(lock_identity(p)).second)
+                    lock.packages.push_back(p);
+        }
         if (!lock.packages.empty() || !lock.indices.empty()) {
             auto lockPath = state.workRoot / "mcpp.lock";
             // `--locked` ASSERTS THAT THIS RESOLUTION IS THE RECORDED ONE.

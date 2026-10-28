@@ -15,6 +15,10 @@
 #      each architecture under `libexec/<runner>/<os>-<arch>/`, and the launcher
 #      runs with no runner on PATH.
 #   D. `--no-universal` packs the selected target alone.
+#   E. (Linux) `--systems linux,macos,windows` carries the runner of each
+#      system this mcpp builds one for, made here over the platform's hosted
+#      arrangement: a Mach-O for macos-aarch64, a PE for windows-x86_64, and
+#      none of them with the runner's own package description beside it.
 set -e
 
 TMP=$(mktemp -d)
@@ -95,5 +99,22 @@ echo "ok: a self-contained universal package carries its runner and needs nothin
 [ -f target/dist/one/bin/uni.oke ] || fail "D: --no-universal did not pack the target alone" d.log
 [ -d target/dist/one/lib/$OTHER ] && fail "D: --no-universal packed the other architecture" d.log
 echo "ok: --no-universal packs the selected target alone"
+
+# E
+if [ "$OS" = linux ]; then
+    "$MCPP" pack --target "$T" --mode self-contained --systems linux,macos,windows --pkg-format dir -o uni-0.1.0-all \
+        > e.log 2>&1 || fail "E: --systems linux,macos,windows" e.log
+    python3 - target/dist/uni-0.1.0-all <<'PY' || fail "E: the runners" e.log
+import os, sys
+root = os.path.join(sys.argv[1], "libexec", "okrun")
+def head(p): return open(p, "rb").read(4)
+assert head(os.path.join(root, "macos-aarch64", "okrun")) == b"\xcf\xfa\xed\xfe", "macos-aarch64 is not a Mach-O"
+assert head(os.path.join(root, "windows-x86_64", "okrun.exe"))[:2] == b"MZ", "windows-x86_64 is not a PE"
+for d, _, files in os.walk(root):
+    assert "mcpp-package.json" not in files, d
+PY
+    grep -q "no runner for macos-x86_64" e.log || fail "E: the planned row is not said" e.log
+    echo "ok: the runners of other systems are made here, over the hosted arrangement"
+fi
 
 echo "PASS: 955 a universal package holds every architecture"

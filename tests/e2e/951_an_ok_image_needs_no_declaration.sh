@@ -16,7 +16,7 @@
 #   B. The report names the platform and its source, marks the layers it added
 #      `platform`, and the toolchain line says the toolchain is the platform's.
 #   C. mcpp.lock records the packages the platform added with
-#      `origin = "platform"`.
+#      `origin = "platform"`, and a build for this machine keeps them.
 #   D. `mcpp test` builds and runs a test image; `mcpp pack` stages the image
 #      and its loader-run program (M3).
 #   E. `mcpp self env --target … --format json` names the platform, its fields'
@@ -77,7 +77,9 @@ echo "ok: the report names the platform and what it added"
 # C
 grep -A5 '"openkal-musl"' mcpp.lock | grep -q 'origin  = "platform"' || fail "C: openkal-musl is not locked as the platform's" mcpp.lock
 grep -A5 '"openkal-llvm-runtime"' mcpp.lock | grep -q 'origin  = "platform"' || fail "C: openkal-llvm-runtime is not locked as the platform's" mcpp.lock
-echo "ok: the lock says which packages the platform added"
+"$MCPP" build > c-host.log 2>&1 || fail "C: the build for this machine" c-host.log
+grep -A5 '"openkal-musl"' mcpp.lock | grep -q 'origin  = "platform"' || fail "C: the build for this machine dropped the platform's entries" mcpp.lock
+echo "ok: the lock says which packages the platform added, whichever configuration wrote it last"
 
 # D
 "$MCPP" test --target "$T" > test.log 2>&1 || fail "D: mcpp test" test.log
