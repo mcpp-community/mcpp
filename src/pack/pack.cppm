@@ -2531,6 +2531,9 @@ run_loaded(const Plan& plan)
         mcpp::pack::distribution::Launch launch;
         launch.name = fs::path(plan.binaryName).stem().string();
         launch.runner = runner.cmd;
+        // A word a `.cmd` cannot hold is refused now, before anything is staged.
+        if (auto ok = mcpp::pack::distribution::launchable(launch); !ok)
+            return std::unexpected(Error{ok.error()});
         for (auto const& leg : legs) {
             const auto dir = plan.stagingRoot / "lib" / leg.arch;
             if (auto r = copy(leg.artifact, dir / leg.artifact.filename()); !r) return r;

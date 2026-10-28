@@ -162,8 +162,11 @@ WebAssembly 的同名文件族,ok 映像的 `bin/`),规定见 docs/10。
 - 架构目录按 `uname -m`(POSIX)或 `%PROCESSOR_ARCHITEW6432%`、`%PROCESSOR_ARCHITECTURE%`(Windows)选择;映射为
   `x86_64`、`amd64`、`AMD64` → `x86_64`,`aarch64`、`arm64`、`ARM64` → `aarch64`;没有对应目录时以状态 126 退出,
   写出本机架构与包含的架构。
-- 运行 `runner.cmd`,`{}` 替换为所选架构目录中的入口映像,其余参数原样传递,随后是启动器自己的参数;运行器先在
-  `libexec/<runner>/<os>-<arch>/` 中找,再找 `PATH`。
+- 运行 `runner.cmd`,与 `mcpp run` 的展开相同:含 `{}` 的词中 `{}` 替换为所选架构目录中的入口映像,没有词含 `{}`
+  时映像追加在末尾;其余词原样传递,随后是启动器自己的参数;运行器先在 `libexec/<runner>/<os>-<arch>/` 中找,
+  再找 `PATH`。
+- POSIX 启动器把每个词写成单引号字符串,沿符号链接找到自身的位置(不依赖 `readlink -f`);`.cmd` 启动器中 `%`
+  写成 `%%`。`.cmd` 的词不能含双引号与换行:含有它们的运行器在打包时拒绝。
 
 ### 4.4 `--systems`
 
@@ -207,7 +210,7 @@ SDK 载荷时该次构建拒绝,写出该系统与载荷。
 
 `role` 取 `program`、`image`、`library`、`loader`、`launcher`、`resource`、`metadata` 之一:通用包中 `lib/<arch>/`
 下的文件为该腿的 `image`,生成的启动器为 `launcher`;其余按位置与名字判定 —— `libexec/` 下为 `loader`;
-`README*`、`LICENSE*`、`HOST-REQUIREMENTS`、`share/licenses/` 为 `metadata`;`.so*`、`.dylib`、`.dll`、`.okso` 为
+`README*`、`LICENSE*`、`HOST-REQUIREMENTS`、`share/licenses/` 为 `metadata`;`.so` 与 `.so.<版本>`、`.dylib`、`.dll`、`.okso` 为
 `library`;`.oke` 为 `image`;`bin/` 下的可执行文件为 `program`;`.cmd`、`.sh` 与树根的可执行文件为 `launcher`;
 其他为 `resource`。
 
@@ -215,7 +218,10 @@ SDK 载荷时该次构建拒绝,写出该系统与载荷。
 
 `mcpp pack --merge <a> --merge <b> ...`(也可 `--merge <a>,<b>`)读入至少两个本命令写出的包(目录,或 `.zip`、
 `.tar`、`.tar.gz`、`.tgz`、`.tar.zst`、`.tar.xz` 归档),按 `mcpp-package.json` 合并为一棵树:名字、版本、平台、
-链接与模式**必须**相同;腿与系统取并集;同一路径的文件摘要**必须**相同,每个文件只取一份;合并后的树重新描述。
+链接与模式**必须**相同;腿与系统取并集;每个文件在复制前计算摘要并与记录的摘要比较,不符时拒绝并写出文件、输入
+与两个摘要;同一路径的文件摘要**必须**相同,每个文件只取一份;合并后的树重新描述。`mcpp-package.json` 中的每个
+路径**必须**是包内的规范相对路径。输出**必须**是新的路径,或一个已有的、不是输入之一的本命令写出的归档;目录输出
+只写新目录。
 容器取 `--pkg-format`,否则取 `-o` 的扩展名,否则取第一个输入的容器;`-o` 缺省为当前目录下与树同名的文件。
 不进行任何构建。
 
@@ -223,11 +229,16 @@ SDK 载荷时该次构建拒绝,写出该系统与载荷。
 
 ### 5.1 压缩
 
-`--compress <zstd|gzip|xz|none>[:<level>]` 与 `[pack] compress` 选择 `tar` 的压缩:`tar` 写出未压缩的归档,mcpp 以
-自带的编解码器(zlib、zstd、liblzma)压缩,产物扩展名为 `.tar.gz`(缺省)、`.tar.zst`、`.tar.xz` 或 `.tar`。级别
-范围:gzip 1–9,zstd 1–22,xz 0–9。`zip` 的条目在变小时以 DEFLATE 压缩(`gzip[:<level>]` 设定级别),否则存储;
+`--compress <zstd|gzip|xz|none>[:<level>]` 与 `[pack] compress` 选择 `tar` 的压缩:mcpp 自己写出 ustar 归档(按
+路径排序;长名与链接目标用 pax 头;属主为 0,时间为 0,模式 0755、0644、0777),以自带的编解码器(zlib、zstd、
+liblzma)压缩,不调用 `tar` 等外部程序;产物扩展名为 `.tar.gz`(缺省)、`.tar.zst`、`.tar.xz` 或 `.tar`。级别
+范围:gzip 1–9,zstd 1–22,xz 0–9;写出的级别照用(含 `xz:0`、`zstd:1`),未写时取编解码器的缺省。`zip` 的条目在变小时以 DEFLATE 压缩(`gzip[:<level>]` 设定级别),否则存储;
 `none` 时全部存储。单文件的载荷总是一个 zstd 帧(启动器只解 zstd),`none` 取级别 1。okb 中的映像不压缩(SPEC-013 平台插件的格式规定)。同一棵树的
-归档在每个宿主上字节相同:gzip 成员不带名字与时间,zip 条目使用固定日期。
+归档在每个宿主上字节相同:gzip 成员不带名字与时间、系统字节为 255,zip 条目使用固定日期。
+
+**读取归档**(`--merge`、`mcpp emit xpkg --package`)在进程内完成,读取 ustar、pax 与 GNU 长名及首项为 `./` 的
+归档,zip 的每个条目校验 CRC-32。写出任何文件之前拒绝:绝对路径或含 `..` 的条目、位于链接条目之下的条目、重复的
+条目、指向树外的链接(链接目标逐段解析);链接在全部文件之后创建;目标目录必须不存在或为空。
 
 ### 5.2 单文件
 
@@ -248,7 +259,8 @@ SDK 载荷时该次构建拒绝,写出该系统与载荷。
    (Windows);其下为 `mcpp/single-file/<载荷的 sha256>/`,该摘要由 mcpp 打包时写入启动器。
 4. 解压时**必须**校验帧的内容校验和,不符时不解开;解到同一目录下的临时名(`.<摘要>-<进程号>`),全部文件写完后
    写入 `.mcpp-complete` 并以不替换的方式改名到位;**禁止**使用没有 `.mcpp-complete` 的目录;另一次运行先改名到位时
-   使用它的结果;缓存目录在 POSIX 上只对当前用户可写。
+   使用它的结果;缓存目录在 POSIX 上只对当前用户可写,`mcpp/`、`single-file/` 或摘要目录为符号链接或属于其他
+   用户时启动器拒绝运行。
 5. 以原有的参数执行树中的程序(`bin/<name>`;self-contained 的 Linux 树为根部的包装脚本;Windows 树为根部的
    `<name>.exe`),退出状态即程序的退出状态。
 

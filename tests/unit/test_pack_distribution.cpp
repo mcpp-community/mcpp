@@ -578,3 +578,20 @@ TEST(PackMerge, TheOutputIsNewOrAPackage) {
     auto replaced = d::merge(req);
     ASSERT_TRUE(replaced) << replaced.error();
 }
+
+// What the metadata states reaches the generated Lua as strings: a quote or a
+// line break in a name is escaped, never code.
+TEST(PackDistribution, XpkgDescriptorWritesMetadataAsStrings) {
+    d::Asset a;
+    a.file = "evil-1.0-openkal.zip";
+    a.sha256 = std::string(64, 'a');
+    a.pkg.name = "ev\"il\nos.exit()";
+    a.pkg.version = "1.0";
+    a.pkg.runner = { "okrun", "{}" };
+    a.pkg.entry = { { "x86_64", "lib/x86_64/evil.oke" } };
+    auto text = d::xpkg_descriptor({ a }, "https://example.org/v1.0");
+    ASSERT_TRUE(text) << text.error();
+    EXPECT_NE(text->find("name = \"ev\\\"il\\010os.exit()\""), std::string::npos) << *text;
+    EXPECT_EQ(text->find("\nos.exit()"), std::string::npos) << *text;
+    EXPECT_NE(text->find("deps = { \"okrun\" }"), std::string::npos) << *text;
+}
