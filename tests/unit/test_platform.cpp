@@ -287,7 +287,8 @@ TEST(PlatformSelect, TheHostGraph) {
 TEST(PlatformSelect, ADirectoryIsAPath) {
     auto s = pf::parse_choice("path:/opt/board", {});
     ASSERT_TRUE(s);
-    EXPECT_EQ(s->ref.spec.path, "/opt/board");
+    // Absolute on this machine: `D:/opt/board` on a Windows one.
+    EXPECT_TRUE(s->ref.spec.path.ends_with("/opt/board")) << s->ref.spec.path;
     s = pf::parse_choice("../board", {});
     ASSERT_TRUE(s);
     EXPECT_FALSE(s->ref.spec.path.empty());

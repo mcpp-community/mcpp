@@ -1008,15 +1008,19 @@ std::string cache_stale_reason(const fs::path& root, const fs::path& bdir, const
             for (auto const& text : spellings) {
                 const auto at = v.find(text);
                 if (at == std::string::npos) continue;
-                const auto tab = v.find('\t', at);
-                auto path = v.substr(at, tab == std::string::npos ? std::string::npos : tab - at);
+                const auto end = v.find_first_of("\t\"", at);
+                auto path = v.substr(at, end == std::string::npos ? std::string::npos : end - at);
                 if (!fs::exists(path, ec)) return path;
             }
             return std::nullopt;
         };
-        for (auto const& slot : c.directives.slots)
-            for (auto const& v : slot)
+        // Not an action's: its outputs are the build's products, made again by
+        // the build whenever they are missing.
+        for (std::size_t i = 0; i < c.directives.slots.size(); ++i) {
+            if (static_cast<Slot>(i) == Slot::Actions) continue;
+            for (auto const& v : c.directives.slots[i])
                 if (auto path = vanished(v)) return "output " + *path;
+        }
     }
     return {};
 }

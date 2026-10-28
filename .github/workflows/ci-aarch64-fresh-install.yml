@@ -168,7 +168,11 @@ jobs:
           # leg was written separately and never got it.
           rm -f .xlings.json
           mcpp self config --mirror GLOBAL 2>/dev/null || true
-          mcpp build --target aarch64-linux-musl
+          # Two compiles at a time: the runner (4 vCPU, 16 GB) received a
+          # shutdown signal twice at 656/689, with four of the engine's largest
+          # module units compiling at once with debug information
+          # (2026-10-28). The build is the same; only its width is not.
+          MCPP_JOBS=2 mcpp build --target aarch64-linux-musl
           # Absolute: it is used again after `cd /tmp/xlings-src` below.
           m=$(find "$PWD/target/aarch64-linux-musl" -type f -path '*/bin/mcpp' | head -1)
           file "$m" | grep -q "ARM aarch64" || { echo "expected aarch64 mcpp"; exit 1; }
@@ -239,7 +243,8 @@ jobs:
           # selects one that does not exist. Same removal as the self-host step
           # above, same reason as install_released_mcpp.sh point 1.
           rm -f .xlings.json
-          mcpp build --target aarch64-linux-musl
+          # Two compiles at a time, for the reason of the self-host step above.
+          MCPP_JOBS=2 mcpp build --target aarch64-linux-musl
           self=$(find target/aarch64-linux-musl -type f -path '*/bin/mcpp' | head -1)
           test -x "$self"
           self=$(realpath "$self")

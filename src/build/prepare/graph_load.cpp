@@ -682,8 +682,14 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
                 }
                 // Offline with no local copy of the index at all, the miss says
                 // nothing about the package: nothing has been downloaded to look
-                // in. That is a download the run needs, not a wrong selector.
-                if (mcpp::effects::offline_mode()) {
+                // in. That is a download the run needs, not a wrong selector --
+                // unless every candidate's namespace is served by an index of
+                // the project's own (`[indices]`), which is on disk and answered.
+                const bool servedByProjectIndex = std::ranges::all_of(candidates,
+                    [&](const mcpp::pm::DependencyCoordinate& c) {
+                        return state.index_route(nullptr).find_for_ns(c.namespace_) != nullptr;
+                    });
+                if (mcpp::effects::offline_mode() && !servedByProjectIndex) {
                     if (auto cfgO = state.get_cfg(true);
                         cfgO && !mcpp::provider::open(mcpp::config::make_xlings_env(**cfgO))->default_index_status(0).present) {
                         hint += "\n  offline: the package index has never been fetched; "
