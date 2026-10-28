@@ -539,6 +539,12 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg);
 // tree as a zstd frame. Returns the files written.
 std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan& plan);
 
+// The row a program of `system` (linux | macos | windows) and `arch` is built
+// on -- an image's single file, a universal package's runner -- when this mcpp
+// builds no program for it: a row its table states as planned (`x86_64-macos`)
+// or does not state (`aarch64-windows-gnu`). Empty when it builds one.
+std::string unbuilt_row(std::string_view system, std::string_view arch);
+
 // The tree made a package: signed and described (`mcpp-package.json`). `run`
 // does it before writing a container; a dispatched format whose tree was
 // staged without its closure is finalized by the caller.
@@ -3200,6 +3206,11 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
 
 std::expected<void, Error> finalize_staged(const Plan& plan) {
     return detail::finalize_tree(plan);
+}
+
+std::string unbuilt_row(std::string_view system, std::string_view arch) {
+    const auto row = detail::program_row(system, arch, true);
+    return detail::row_is_built(row) ? std::string() : row.triple;
 }
 
 std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan& plan) {

@@ -85,6 +85,8 @@ openkal 目标上 `static` 为一个 `.oke`、无 `.okso`,`shared` 为 `.oke` �
 | `cxx_runtime = "toolchain-coupled"` 与 `--mode system` | 拒绝 |
 | 产物为可执行文件、非通用包,且多条 `--target` | 拒绝:一个可执行文件属于一个目标 |
 | `--systems` 而非 `--mode self-contained` 的通用包或映像的单文件 | 拒绝:只有携带加载器的包与映像的单文件按系统区分 |
+| 映像的单文件,`--systems` 中某系统在映像架构上的行为本 mcpp 不构建的行(目标表标为 planned,如 `x86_64-macos`;或未列出,如 `aarch64-windows-gnu`) | 拒绝,写出该系统与行;出路为其余系统组成的 `--systems` |
+| 映像的单文件,多个 `--systems` 与 `-o` | 拒绝:每个系统一个文件,`-o` 只能命名一个 |
 | 平台未声明 `runner` 时打通用包 | 拒绝:启动器经平台的运行器启动映像;出路 `--no-universal` |
 | `--merge` 的输入缺少 `mcpp-package.json`,或名字、版本、平台、链接、模式不同 | 拒绝,写出不一致的字段 |
 | `--merge` 的两个输入在同一路径上有摘要不同的文件 | 拒绝,写出该路径、两个摘要与两个输入 |

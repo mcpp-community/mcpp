@@ -14,7 +14,8 @@
 #   D. (llvm, an ok-image row) An image's single file runs, and writes nothing
 #      into the cache.
 #   E. (an ok-image row) `-o` with several `--systems` is refused before a
-#      build: one file is made per system.
+#      build: one file is made per system; so is a system whose row this mcpp
+#      builds no program for (`x86_64-macos`, a planned row).
 set -e
 
 TMP=$(mktemp -d)
@@ -111,7 +112,12 @@ if [ -n "$T" ] && command -v python3 > /dev/null && "$MCPP" toolchain list --for
     fi
     grep -q "one single file per system" e.log || fail "E: the refusal" e.log
     grep -q "Compiling" e.log && fail "E: refused after compiling" e.log
-    echo "ok: -o with several systems is refused before a build"
+    if "$MCPP" pack --target x86_64-openkal --pkg-format single-file --systems linux,macos > e2.log 2>&1; then
+        fail "E: a single file for x86_64-macos was accepted" e2.log
+    fi
+    grep -q "x86_64-macos" e2.log || fail "E: the refusal does not name the row" e2.log
+    grep -q -- "--systems linux" e2.log || fail "E: the refusal does not give the systems that are built" e2.log
+    echo "ok: -o with several systems, and a system of an unbuilt row, are refused before a build"
 fi
 
 echo "PASS: 956 a single file runs without unpacking"

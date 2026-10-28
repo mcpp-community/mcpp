@@ -820,6 +820,25 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
                 "--output names one file, and --systems makes one single file per system ({}).\n"
                 "  use: leave --output out; each file is named <name>-<version>-<os>-<arch>",
                 run.opts.systems.size())};
+        // A single file of an image is made for each system on this mcpp's
+        // row of it; a row it builds no program for is refused before the build.
+        if (loaded && run.opts.format == mcpp::pack::Format::SingleFile) {
+            std::vector<std::string> unbuilt, built;
+            for (auto const& system : run.opts.systems) {
+                auto row = mcpp::pack::unbuilt_row(system, t->arch);
+                (row.empty() ? built : unbuilt).push_back(row.empty() ? system : std::format("{} ({})", system, row));
+            }
+            if (!unbuilt.empty()) {
+                std::string say, use;
+                for (auto const& u : unbuilt) say += (say.empty() ? "" : ", ") + u;
+                for (auto const& b : built) use += (use.empty() ? "" : ",") + b;
+                return Refusal{2, std::format(
+                    "--systems: this mcpp builds no program for {}, so no single file of the {} "
+                    "image is made there.\n  use: {}", say, t->str(),
+                    use.empty() ? std::string("--systems naming a system this mcpp builds for")
+                                : "--systems " + use)};
+            }
+        }
     }
     // ─── Is the requested format one anything provides? ──────────────
     //
