@@ -585,5 +585,6 @@
 956_a_single_file_runs_without_unpacking.sh	117250
 957_packages_merge_and_describe_themselves.sh	93760
 958_a_build_program_runs_again_when_its_output_is_gone.sh	1260
+959_a_package_is_keyed_by_every_module_it_imports.sh	25000
 96_msvc_unavailable_nonwindows.sh	38
 98_reflection_import_std.sh	7170

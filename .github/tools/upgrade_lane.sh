@@ -17,6 +17,13 @@
 #             revisions (llvm revision 0, gcc 16.1.0 before -r1).
 #   orphan    every payload recorded at another revision, and `c++` active at
 #             gcc's version whose registration is gone (a reported home).
+#   modules   a module dependency the previous release compiled is served from
+#             its cache when the spelling of its BMI has not moved.
+#   programs  the previous release builds an ok image, whose platform's build
+#             program imports mcpp.plugins over the engine interface (`mcpp`);
+#             this commit's mcpp builds it again over that cache, and no
+#             library compiled against another interface is served ("CRC
+#             mismatch").
 #
 # Asserted, every variant: the first `mcpp new && mcpp run` of the new mcpp
 # succeeds and downloads nothing; a second run likewise; `mcpp self doctor`
@@ -158,6 +165,12 @@ if [ "$VARIANT" = modules ]; then
 fi
 new_project p-old "$OLD"
 run old-run "$W/p-old" "$OLD" run || fail "the previous release cannot run a new project"
+case "$PLAT" in linux-x86_64) OK_TARGET=x86_64-openkal ;; *) OK_TARGET=aarch64-openkal ;; esac
+if [ "$VARIANT" = programs ]; then
+  new_project k-old "$OLD"
+  run old-programs "$W/k-old" "$OLD" build --target "$OK_TARGET" \
+    || fail "the previous release cannot build an ok image"
+fi
 
 if [ "$VARIANT" = orphan ]; then
   "$PY" - "$REG" <<'PY' || fail "could not shape the orphan home"
@@ -237,6 +250,12 @@ if [ "$VARIANT" = modules ]; then
   run new-modules2 "$W/m-new2" "$NEW" build -v || fail "the second module project failed"
   grep -q "STAGE gcm.cache/mcpplibs.openkal/" "$W/new-modules2.log" \
     || fail "the rebuilt dependency was not served from the cache"
+fi
+if [ "$VARIANT" = programs ]; then
+  run new-programs "$W/k-old" "$NEW" build --target "$OK_TARGET" \
+    || fail "the ok image the previous release built does not build over its cache"
+  grep -q "CRC mismatch" "$W/new-programs.log" \
+    && fail "a build program's library compiled against the previous engine interface was served"
 fi
 if [ "$VARIANT" = orphan ]; then
   run new-provision "$W" "$NEW" toolchain install "$TC" || fail "toolchain install could not replace the payload"

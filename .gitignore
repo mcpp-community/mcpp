@@ -56,3 +56,7 @@ examples/*/target/
 
 # Local review reports (not part of the design record).
 /.agents/reviews/
+
+# The logs .github/tools/upgrade_lane.sh copies beside the workspace (CI uploads
+# them as an artifact; a local run leaves them here).
+/upgrade-lane-logs/

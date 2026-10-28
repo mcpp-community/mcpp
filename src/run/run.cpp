@@ -55,10 +55,13 @@ struct Registered {
 
 // Everything mcpp owes before it ends at a request or a closed output, once.
 // A second caller returns when the first has finished: what it ends then is
-// the state the request left.
+// the state the request left. A cleanup that reaches it again from within (a
+// terminal's mode restored onto an output with no reader) returns at once.
 std::atomic<bool> g_finishing{false};
 std::once_flag g_finished;
+thread_local bool t_finishing = false;
 void finish_once() {
+    t_finishing = true;
     g_finishing.store(true);
     // The files first: what the request leaves is the state the build was in
     // when it arrived. A program ended below wakes the thread that waited on
@@ -79,7 +82,10 @@ void finish_once() {
     }
     for (auto& f : todo) f();
 }
-void finish() { std::call_once(g_finished, finish_once); }
+void finish() {
+    if (t_finishing) return;
+    std::call_once(g_finished, finish_once);
+}
 
 // ─── The launcher ────────────────────────────────────────────────────────
 

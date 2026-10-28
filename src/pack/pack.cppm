@@ -629,16 +629,7 @@ std::string default_archive_name(std::string_view name, std::string_view version
 // archive — keeping the two in lock-step makes click-to-extract behave the
 // way users expect (and on Windows, Explorer's "extract here" too).
 std::string wrapper_dirname_from_archive(const std::filesystem::path& archive) {
-    auto name = archive.filename().string();
-    for (auto suffix : {std::string_view{".tar.gz"}, std::string_view{".tgz"},
-                        std::string_view{".tar.zst"}, std::string_view{".tar.xz"},
-                        std::string_view{".tar"}, std::string_view{".zip"}}) {
-        if (name.ends_with(suffix)) return name.substr(0, name.size() - suffix.size());
-    }
-    // No archive's suffix: the name as written (`-o app-0.1.0-openkal` with
-    // `--pkg-format dir` is that directory; a stem would cut at the version's
-    // last dot and write `app-0.1`).
-    return name;
+    return mcpp::pack::distribution::archive_directory(archive);
 }
 
 } // namespace detail

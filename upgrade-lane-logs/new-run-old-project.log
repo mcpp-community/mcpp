@@ -1,4 +1,0 @@
-     Running `target/x86_64-linux-gnu/6fca180a97c5f98c/bin/p-old`
-
-Hello from p-old!
-Built with import std + std::println on modular C++23.

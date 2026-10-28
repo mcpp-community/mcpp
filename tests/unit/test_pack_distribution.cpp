@@ -687,6 +687,14 @@ TEST(PackDistribution, XpkgDescriptorInstallsTheDirectoryNamedAfterTheArchive) {
     ASSERT_FALSE(refused);
     EXPECT_NE(refused.error().find("named after the archive"), std::string::npos) << refused.error();
 
+    d::Asset tgz = a;
+    tgz.file = "tool-1.0-linux-x86_64.tgz";
+    auto t = d::xpkg_descriptor({ tgz }, "https://example.org/1.0");
+    ASSERT_TRUE(t) << t.error();
+    EXPECT_NE(t->find("for _, ext in ipairs({ \".tgz\" }) do"), std::string::npos) << *t;
+    EXPECT_EQ(d::archive_directory("app-1.0-openkal.tar.zst"), "app-1.0-openkal");
+    EXPECT_EQ(d::archive_directory("app-1.0-openkal"), "app-1.0-openkal");
+
     d::Asset okb = a;
     okb.file = "tool-1.0-linux-x86_64.okb";
     auto notArchive = d::xpkg_descriptor({ okb }, "https://example.org/1.0");

@@ -1643,6 +1643,10 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
         // Sources belonging to each package, package-root-relative and sorted.
         std::vector<std::vector<std::string>> pkgSources(state.packages.size());
         std::vector<char> pkgProvidesModule(state.packages.size(), 0);
+        // The package each unit is filed under, and the package that provides
+        // each module: the import edges below read both.
+        std::vector<std::size_t> unitPackage;
+        std::map<std::string, std::size_t> moduleProvider;
         for (auto& cu : ctx.plan.compileUnits) {
             // Longest matching root wins. Package roots can nest — a workspace
             // member lives under the workspace root — and taking the first match
@@ -1665,12 +1669,32 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                     best = p; bestLen = len; bestRel = std::move(rels);
                 }
             }
+            unitPackage.push_back(best);
             if (best != state.packages.size()) {
-                if (!cu.providesModule.empty()) pkgProvidesModule[best] = 1;
+                if (!cu.providesModule.empty()) {
+                    pkgProvidesModule[best] = 1;
+                    moduleProvider.emplace(cu.providesModule, best);
+                }
                 pkgSources[best].push_back(std::move(bestRel));
             }
         }
         for (auto& v : pkgSources) std::ranges::sort(v);
+
+        // A package whose unit imports another package's module reads that
+        // package's BMI, whether a manifest states the edge or not: the engine
+        // interface (`mcpp`) the libraries of a build program import is named
+        // by none of theirs. Its key is an upstream as a declared
+        // dependency's is; without it an entry compiled against another mcpp
+        // version's interface was served and failed with "import 'mcpp' has
+        // CRC mismatch" (2026.10.27.1 -> 2026.10.28.1, mcpp.plugins).
+        std::vector<std::set<std::size_t>> importedFrom(state.packages.size());
+        for (std::size_t u = 0; u < unitPackage.size(); ++u) {
+            const auto p = unitPackage[u];
+            if (p == state.packages.size()) continue;
+            for (auto const& m : ctx.plan.compileUnits[u].imports)
+                if (auto it = moduleProvider.find(m); it != moduleProvider.end() && it->second != p)
+                    importedFrom[p].insert(it->second);
+        }
 
         std::vector<std::string>    pkgKeys(state.packages.size());
         std::vector<nlohmann::json> pkgInputs(state.packages.size(),
@@ -1701,6 +1725,19 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
         for (auto& e : state.dependencyEdges)
             if (e.consumerPackageIndex < pkgDeps.size())
                 pkgDeps[e.consumerPackageIndex].push_back(e.dependencyPackageIndex);
+        // An import a declared edge already covers adds nothing. One that a
+        // declared path runs the other way is a module this build generates
+        // for the importer below its consumer's root, filed under the
+        // consumer by its path (e2e 849): not an upstream, and left out
+        // rather than closing a cycle.
+        for (std::size_t p = 0; p < importedFrom.size(); ++p)
+            std::erase_if(importedFrom[p], [&](std::size_t q) {
+                if (std::ranges::find(pkgDeps[p], q) != pkgDeps[p].end()) return true;
+                const auto above = mcpp::graph::closure(pkgDeps, std::array{q}, /*include_roots=*/false);
+                return std::ranges::find(above, p) != above.end();
+            });
+        for (std::size_t p = 0; p < importedFrom.size(); ++p)
+            pkgDeps[p].insert(pkgDeps[p].end(), importedFrom[p].begin(), importedFrom[p].end());
         auto keyOrder = mcpp::graph::topological_order(pkgDeps);
         if (!keyOrder) {
             keyCycleError = std::format(
@@ -1759,6 +1796,10 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                 if (!up.empty()) pa.upstreamKeys.push_back(up);
                 if (localTaint[e.dependencyPackageIndex]) localTaint[idx] = 1;
                 for (auto& f : e.requestedFeatures) pa.features.push_back(f);
+            }
+            for (auto q : importedFrom[idx]) {
+                if (!pkgKeys[q].empty()) pa.upstreamKeys.push_back(pkgKeys[q]);
+                if (localTaint[q]) localTaint[idx] = 1;
             }
             std::ranges::sort(pa.upstreamKeys);
             pa.upstreamKeys.erase(std::unique(pa.upstreamKeys.begin(),

@@ -25,7 +25,10 @@
 //   D identity    index name, package FQN, version
 //   E own config  features, cflags/cxxflags/asmflags/ldflags, per-glob flags,
 //                 defines, generated files, include dirs, source list
-//   F upstream    the KEY of each direct dependency, recursively (Merkle)
+//   F upstream    the KEY of each direct dependency and of each package whose
+//                 module the package imports, a declared edge or not (the
+//                 engine interface a build program's libraries import),
+//                 recursively (Merkle)
 //   G epoch       kCacheEpoch — cache-format compatibility, decoupled from the
 //                 mcpp release number
 //

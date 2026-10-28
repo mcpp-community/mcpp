@@ -11,7 +11,8 @@
 #
 # Criteria:
 #   A. `--merge a --merge b` writes one package whose legs and systems are the
-#      union, every file of both, and a `mcpp-package.json` that describes it.
+#      union, every file of both, and a `mcpp-package.json` that describes it;
+#      its directory is named after the output, as `mcpp pack -o` names one.
 #   B. A file both packages hold with different digests is refused, naming the
 #      file and both digests; packages of different versions are refused.
 #   C. `mcpp emit xpkg --package` of a universal package is one asset for
@@ -64,6 +65,8 @@ import hashlib, json, sys, zipfile
 z = zipfile.ZipFile(sys.argv[1])
 names = z.namelist()
 top = names[0].split("/")[0]
+# Named after the output, as `mcpp pack -o` names a package's directory.
+assert top == "merged" and all(n.startswith("merged/") for n in names), names[:3]
 d = json.loads(z.read(f"{top}/mcpp-package.json"))
 assert len(d["systems"]) == 4 and any(s.startswith("other-") for s in d["systems"]), d["systems"]
 assert sorted(d["legs"]) == ["aarch64-openkal", "x86_64-openkal"], d["legs"]
