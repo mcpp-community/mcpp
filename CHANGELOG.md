@@ -4,7 +4,7 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
-## [Unreleased]
+## [2026.10.28.1] - 2026-10-28
 
 ### Fixed
 
@@ -36,6 +36,20 @@
 - **`mcpp emit xpkg` refuses a word that is not an option.** Each archive is
   its own `--package`; `--package a.zip b.zip` (a shell glob's expansion)
   described `a.zip` alone and left `b.zip` out without a word.
+- **The release proposes its index bump again.** `bump_index.sh` waited for
+  `auto/bump-xim-mcpp-<version>`, and the index's updater opens
+  `auto/bump-xim-mcpp`; the proposal is now found by the marker in its body.
+  A dispatch the token is refused for (it needs Actions: write on
+  openxlings/xim-pkgindex) names the permission and the command a maintainer
+  runs.
+
+### Changed
+
+- **SPEC-014 1.2** states what 2026.10.27.1 already does: a package's name
+  carries its mode's suffix, a single file's launcher exits 127 on its own
+  failure, `--merge` takes its container from `[pack] format` before `-o`, and
+  `--linkage static` moves this machine's row and each `-linux-gnu` `--target`
+  to musl while a project's own `[build] target` is packed as it is.
 
 ## [2026.10.27.1] - 2026-10-27
 

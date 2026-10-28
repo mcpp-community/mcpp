@@ -7,7 +7,7 @@
 | 状态 | 评审中 v1.2 |
 | 版本 | 1.2 |
 | 最后修改 | 2026-10-28 |
-| 对应实现 | mcpp >= 2026.10.27.1 |
+| 对应实现 | mcpp >= 2026.10.28.1 |
 | 相关设计文档 | `.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`(§2–§7、§14)、`.agents/docs/2026-10-28-platforms-design.md`(§4.7) |
 | 相关 issue | mcpp#847、mcpp#849 |
 | 相关规范 | [SPEC-007](build-plugins.md)(包格式提供者、artifact action)、[SPEC-011](concurrency.md)(原子发布)、[SPEC-013](platforms.md)(平台、载体) |
