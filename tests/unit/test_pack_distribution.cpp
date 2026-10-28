@@ -261,7 +261,10 @@ TEST(PackDistribution, APosixLauncherRunsThroughALink) {
                                             (t.path / "path").string(), (t.path / "elsewhere/hello").string(),
                                             out.string()).c_str());
     EXPECT_EQ(rc, 0) << slurp(out);
-    EXPECT_EQ(slurp(out), std::format("--image={}|a b|c|", (pkg / "lib" / arch / "hello.oke").string()));
+    // The physical path: the launcher follows links to the directories too
+    // (macOS's temporary directory is under a link, /var -> /private/var).
+    EXPECT_EQ(slurp(out), std::format("--image={}|a b|c|",
+                                      (fs::canonical(pkg) / "lib" / arch / "hello.oke").string()));
 }
 
 // A shared object is `.so` or `.so.<version>`; a name that merely holds `.so`
