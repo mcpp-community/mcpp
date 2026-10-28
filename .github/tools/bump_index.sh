@@ -17,11 +17,17 @@
 # This opens a PR only -- a maintainer reviews and merges it. It runs after
 # the binaries are mirrored, because the updater requires both hosts.
 #
+# The request is a repository_dispatch of type `xpkgindex-update` naming
+# `xim:<project>`; the index's xpkgindex-update-request.yml passes it on to the
+# updater as a workflow_dispatch with the index's own token. Starting the
+# updater from here would be a workflow_dispatch, which needs Actions: write;
+# PKGINDEX_TOKEN holds Contents and Pull requests (measured 2026-10-28:
+# repository_dispatch 204, workflow_dispatch 403).
+#
 # Usage: bump_index.sh <project> <version>       # e.g. mcpp 2026.10.24.1
 # Auth:
-#   PKGINDEX_TOKEN (required) -- a token with Actions: write on
-#   openxlings/xim-pkgindex (a workflow dispatch needs that permission;
-#   Contents and Pull requests do not grant it)
+#   PKGINDEX_TOKEN (required) -- a token with Contents: write on
+#   openxlings/xim-pkgindex
 set -euo pipefail
 
 PROJ="${1:?usage: bump_index.sh <project> <version>}"
@@ -45,9 +51,10 @@ if url="$(pr_url)" && [[ -n "$url" ]]; then
   exit 0
 fi
 
-info "dispatching xpkgindex-update.yml for xim:$PROJ"
-if ! gh workflow run xpkgindex-update.yml -R "$INDEX_REPO" --ref main -f "package=xim:$PROJ"; then
-  echo "[bump] PKGINDEX_TOKEN cannot dispatch on $INDEX_REPO (it needs Actions: write);" \
+info "requesting the update proposal of xim:$PROJ"
+if ! gh api -X POST "repos/$INDEX_REPO/dispatches" \
+       -f event_type=xpkgindex-update -f "client_payload[package]=xim:$PROJ" > /dev/null; then
+  echo "[bump] PKGINDEX_TOKEN cannot send a repository_dispatch to $INDEX_REPO (it needs Contents: write);" \
        "a maintainer runs: gh workflow run xpkgindex-update.yml -R $INDEX_REPO --ref main -f package=xim:$PROJ" >&2
   exit 1
 fi

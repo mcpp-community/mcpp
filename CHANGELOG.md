@@ -4,6 +4,18 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [Unreleased]
+
+### Fixed
+
+- **The release requests its index bump with the permissions its token has.**
+  `bump_index.sh` started the index's updater with a workflow_dispatch, which
+  needs Actions: write; the release's token holds Contents and Pull requests
+  (measured: a workflow_dispatch 403, a repository_dispatch 204). It now sends a
+  repository_dispatch of type `xpkgindex-update` naming `xim:mcpp`, which the
+  index's `xpkgindex-update-request.yml` passes on to the updater
+  (openxlings/xim-pkgindex#1087).
+
 ## [2026.10.28.1] - 2026-10-28
 
 ### Fixed
