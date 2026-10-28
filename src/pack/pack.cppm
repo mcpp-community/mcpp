@@ -2531,13 +2531,14 @@ run_loaded(const Plan& plan)
         mcpp::pack::distribution::Launch launch;
         launch.name = fs::path(plan.binaryName).stem().string();
         launch.runner = runner.cmd;
+        for (auto const& leg : legs) launch.entry[leg.arch] = leg.artifact.filename().string();
+        if (plan.opts.mode == Mode::BundleAll) launch.loader = fs::path(runner.cmd.front()).stem().string();
         // A word a `.cmd` cannot hold is refused now, before anything is staged.
         if (auto ok = mcpp::pack::distribution::launchable(launch); !ok)
             return std::unexpected(Error{ok.error()});
         for (auto const& leg : legs) {
             const auto dir = plan.stagingRoot / "lib" / leg.arch;
             if (auto r = copy(leg.artifact, dir / leg.artifact.filename()); !r) return r;
-            launch.entry[leg.arch] = leg.artifact.filename().string();
             if (bundles) {
                 auto n = needed_images(leg.artifact, plan.binaryName);
                 if (!n) return std::unexpected(n.error());
@@ -2547,7 +2548,6 @@ run_loaded(const Plan& plan)
             if (auto r = stage_runtime_files(plan, dir, leg.artifact.parent_path()); !r) return r;
         }
         if (plan.opts.mode == Mode::BundleAll) {
-            launch.loader = fs::path(runner.cmd.front()).stem().string();
             std::vector<std::string> systems = plan.opts.systems;
             if (systems.empty()) systems.emplace_back(host_system());
             for (auto const& system : systems)

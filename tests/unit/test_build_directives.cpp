@@ -1107,6 +1107,7 @@ TEST(BuildDirectives, PlatformFieldsAreProtocolSeventeenAndReachTheStatement) {
     EXPECT_EQ(s.link.driver.origin.tier, mcpp::manifest::platform::Tier::Program);
     for (auto bad : {"mcpp:link-driver=gold\n", "mcpp:link-input=from:x\n",
                      "mcpp:artifact-name=exe:lib{name}\n", "mcpp:artifact-name=dll:{name}\n",
+                     "mcpp:artifact-name=shared:lib/{name}.okso\n",
                      "mcpp:seal=x:okld\n", "mcpp:run-host=far\n"})
         EXPECT_NE(dirs::target_directive_error(m, parse(bad)), "") << bad;
 }

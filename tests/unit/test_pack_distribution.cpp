@@ -595,3 +595,23 @@ TEST(PackDistribution, XpkgDescriptorWritesMetadataAsStrings) {
     EXPECT_EQ(text->find("\nos.exit()"), std::string::npos) << *text;
     EXPECT_NE(text->find("deps = { \"okrun\" }"), std::string::npos) << *text;
 }
+
+// The compression fits the container the merge writes and the name it is
+// given: zstd in a .tar.gz, or in a zip the first input decided, is refused.
+TEST(PackMerge, TheCompressionFitsTheContainer) {
+    Tmp t;
+    const auto a = leg_package(t.path / "a", "x86_64-openkal", "x86_64");
+    const auto b = leg_package(t.path / "b", "aarch64-openkal", "aarch64");
+    d::MergeRequest req;
+    req.inputs = { a, b };
+    req.compression = *c::parse("zstd");
+    req.output = t.path / "out.tar.gz";
+    auto named = d::merge(req);
+    ASSERT_FALSE(named);
+    EXPECT_NE(named.error().find(".tar.zst"), std::string::npos) << named.error();
+    req.output = t.path / "out.zip";
+    ASSERT_FALSE(d::merge(req));
+    req.output = t.path / "out.tar.zst";
+    auto fits = d::merge(req);
+    ASSERT_TRUE(fits) << fits.error();
+}

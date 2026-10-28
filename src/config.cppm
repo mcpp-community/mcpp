@@ -732,7 +732,21 @@ parse_target_defaults(const mcpp::libs::toml::Document& doc,
                       std::vector<mcpp::manifest::platform::Override>* platforms,
                       mcpp::manifest::platform::Override* host) {
     namespace mp = mcpp::manifest::platform;
-    const mp::Reader reader{file, mp::Tier::Config, nullptr};
+    // What the reader warns of (an unknown key, SPEC-013 §18.1), said once
+    // per process for each file: the configuration is read by every prepare.
+    struct Said {
+        const std::filesystem::path& file;
+        std::vector<std::string> warnings;
+        ~Said() {
+            static std::mutex m;
+            static std::set<std::string> said;
+            std::lock_guard lock(m);
+            for (auto const& w : warnings)
+                if (said.insert(file.string() + '\n' + w).second)
+                    std::println(stderr, "warning: {}: {}", file.string(), w);
+        }
+    } said{ file, {} };
+    const mp::Reader reader{file, mp::Tier::Config, &said.warnings};
     // `[host]`: the platform of this machine's host graph (SPEC-013 §6.1). A
     // nearer file's choice stands.
     if (auto* ht = doc.get_table("host"); ht && host && !host->platformSet) {

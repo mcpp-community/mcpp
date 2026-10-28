@@ -45,8 +45,9 @@ export int cmd_emit_xpkg(const mcpplibs::cmdline::ParsedArgs& parsed) {
         namespace d = mcpp::pack::distribution;
         std::vector<d::Asset> assets;
         std::error_code ec;
-        const auto work = std::filesystem::temp_directory_path(ec) / std::format(
-            "mcpp-emit-{}", std::chrono::steady_clock::now().time_since_epoch().count());
+        auto made = d::work_directory("emit");
+        if (!made) { mcpp::ui::error(made.error()); return 1; }
+        const auto work = *made;
         for (auto const& p : parsed.option("package")->get().values) {
             const std::filesystem::path file{p};
             // An entry names a published file, which a directory is not.
@@ -606,26 +607,13 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
         if (auto v = parsed.value("output")) req.output = *v;
         if (auto f = pack_format_option(parsed)) req.format = *f;
         else if (!packCfg.format.empty()) req.format = packCfg.format;
-        // The container: as stated, else as the output's name says. Only the
-        // flag's compression is the command's (a project's `[pack] compress`
-        // describes that project's packs, not a merge of packages).
-        std::string container = req.format;
-        const auto outName = req.output.filename().string();
-        if (container.empty() && outName.ends_with(".zip")) container = "zip";
-        else if (container.empty() && outName.find(".tar") != std::string::npos) container = "tar";
+        // Only the flag's compression is the command's (a project's `[pack]
+        // compress` describes that project's packs, not a merge of packages);
+        // `merge` decides the container and refuses a compression that does
+        // not fit it.
         if (auto text = parsed.value("compress")) {
             auto c = mcpp::pack::compress::parse(*text);
             if (!c) { mcpp::ui::error(std::format("--compress: {}", c.error())); return 2; }
-            using mcpp::pack::compress::Algorithm;
-            if (container == "dir") {
-                mcpp::ui::error("--compress compresses a container, and the merge writes a directory");
-                return 2;
-            }
-            if (container == "zip" && (c->algorithm == Algorithm::Zstd || c->algorithm == Algorithm::Xz)) {
-                mcpp::ui::error(std::format("a zip's members are deflated (gzip) or stored (none); "
-                                            "--compress {} is a tar's", mcpp::pack::compress::name(c->algorithm)));
-                return 2;
-            }
             req.compression = *c;
         }
         auto merged = mcpp::pack::distribution::merge(req);
@@ -639,16 +627,16 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
             report->format = std::filesystem::is_directory(*merged, mec) ? std::string("dir")
                            : name.ends_with(".zip") ? std::string("zip") : std::string("tar");
             // What the merged package says of itself.
-            const auto work = std::filesystem::temp_directory_path(mec)
-                / std::format("mcpp-merged-{}", std::chrono::steady_clock::now().time_since_epoch().count());
-            if (auto root = mcpp::pack::distribution::unpack(*merged, work))
-                if (auto pkg = mcpp::pack::distribution::read(*root)) {
-                    report->targets = pkg->legs;
-                    report->systems = pkg->systems;
-                    report->linkage = pkg->linkage;
-                    report->mode    = pkg->mode;
-                }
-            std::filesystem::remove_all(work, mec);
+            if (auto work = mcpp::pack::distribution::work_directory("merged")) {
+                if (auto root = mcpp::pack::distribution::unpack(*merged, *work / "tree"))
+                    if (auto pkg = mcpp::pack::distribution::read(*root)) {
+                        report->targets = pkg->legs;
+                        report->systems = pkg->systems;
+                        report->linkage = pkg->linkage;
+                        report->mode    = pkg->mode;
+                    }
+                std::filesystem::remove_all(*work, mec);
+            }
         }
         return 0;
     }

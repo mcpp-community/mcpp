@@ -1459,6 +1459,9 @@ std::string target_directive_error(const mcpp::manifest::Manifest& m, const Dire
             return std::format("build.mcpp emitted `mcpp:artifact-name={}`; the pattern names "
                                "the artifact as {{name}} once{}", v,
                                kind == "exe" ? ", at its start" : "");
+        if (pattern.find_first_of("/\\") != std::string::npos)
+            return std::format("build.mcpp emitted `mcpp:artifact-name={}`; the pattern is a file "
+                               "name, without a directory", v);
     }
     for (auto const& v : d.at(Slot::Seal)) {
         const auto colon = v.find(':');

@@ -109,6 +109,12 @@ std::expected<std::string, std::string> zlib_inflate(std::string_view in, int wi
                                                      std::optional<std::size_t> size) {
     if (in.size() > std::numeric_limits<uInt>::max())
         return std::unexpected(std::string("zlib: an input over 4 GiB"));
+    // DEFLATE expands at most 1032 times (a run of one byte): a stated size
+    // beyond that is a lie, refused before anything is allocated, and a stream
+    // that grows past it is refused as it grows.
+    const std::size_t most = in.size() * 1032 + 64;
+    if (size && *size > most)
+        return std::unexpected(std::format("zlib: {} bytes cannot hold the {} it states", in.size(), *size));
     z_stream s{};
     if (inflateInit2(&s, windowBits) != Z_OK)
         return std::unexpected(std::string("zlib: inflateInit2 failed"));
@@ -126,7 +132,11 @@ std::expected<std::string, std::string> zlib_inflate(std::string_view in, int wi
                 return std::unexpected(std::format("zlib: the stream holds more than its {} bytes",
                                                    *size));
             }
-            out.resize(out.size() * 2);
+            if (out.size() > most) {
+                inflateEnd(&s);
+                return std::unexpected(std::string("zlib: the stream expands beyond what DEFLATE can"));
+            }
+            out.resize(std::min(out.size() * 2, most + 1));
         }
         s.next_out  = reinterpret_cast<Bytef*>(out.data() + s.total_out);
         s.avail_out = static_cast<uInt>(std::min<std::size_t>(out.size() - s.total_out,
