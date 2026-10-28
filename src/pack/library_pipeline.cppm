@@ -38,6 +38,7 @@ import mcpp.pack;
 import mcpp.pack.abi_tag;
 import mcpp.pack.interface;
 import mcpp.pack.library;
+import mcpp.pack.compress;
 import mcpp.pack.strip;
 import mcpp.toolchain.model;
 import mcpp.toolchain.dialect;
@@ -137,10 +138,19 @@ export int build_and_pack_library(const std::string& targetName,
         mcpp::build::progress::defer_finished();
     }
 
+    // A library's package is a tree, a tar or a zip; a single file runs a
+    // program, and a library has none.
+    if (opts.format == mcpp::pack::Format::SingleFile) {
+        mcpp::ui::error(std::format(
+            "--pkg-format single-file packs a program, and '{}' is a library.\n"
+            "  use: --pkg-format tar | zip | dir", targetName));
+        return 2;
+    }
     LibraryPackPlan plan;
     plan.builtBy      = std::string(mcpp::MCPP_VERSION);
     plan.writeArchive = opts.format == mcpp::pack::Format::Tar
                      || opts.format == mcpp::pack::Format::Zip;
+    plan.compression  = opts.compression;
 
     InterfaceClosure closure;
     bool             haveClosure = false;
@@ -530,15 +540,20 @@ export int build_and_pack_library(const std::string& targetName,
     }
 
     // ── where it lands ────────────────────────────────────────────────
-    const bool zip = plan.legs.size() == 1
-                  && plan.legs[0].triple.find("windows") != std::string::npos;
+    // The container: as stated, else a zip for a Windows leg and a tar
+    // elsewhere, as a program's is.
+    const bool zip = opts.format == mcpp::pack::Format::Zip
+                  || (!opts.formatStated && plan.legs.size() == 1
+                      && plan.legs[0].triple.find("windows") != std::string::npos);
     auto dirName = plan.legs.size() == 1
         ? std::format("{}-{}-{}", plan.packageName, plan.packageVersion, plan.legs[0].abiTag)
         : std::format("{}-{}", plan.packageName, plan.packageVersion);
     plan.zip         = zip;
     plan.stagingRoot = plan.projectRoot / "target" / "dist" / dirName;
     plan.archivePath = plan.projectRoot / "target" / "dist"
-                     / (dirName + (zip ? ".zip" : ".tar.gz"));
+                     / (dirName + (zip ? std::string(".zip")
+                                       : std::string(mcpp::pack::compress::tar_extension(
+                                             plan.compression.algorithm))));
     if (!opts.output.empty()) {
         auto o = std::filesystem::path(opts.output);
         plan.archivePath = o.has_parent_path() ? o

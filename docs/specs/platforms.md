@@ -274,8 +274,8 @@ plugin    = "build.mcpp"
 | `shared` | 共享产物的名字模式,`{name}` 恰好一次,不含目录 |
 | `seal` | 封装步骤,每步一个 argv(§9.3) |
 
-`driver = "lld"` 而工具链载荷中没有 `ld.lld` 时拒绝(`lld-required-absent`),消息写出平台的工具链。程序名为
-`lld` 时引擎加 `-flavor gnu`。链接或封装命名的程序既非图中为本机构建、也不在本机可找到时拒绝
+`driver = "lld"` 时引擎在编译器旁依次查找 `ld.lld`、`lld`、`lld-link`(Windows 载荷只带 `lld-link`);都没有时拒绝
+(`lld-required-absent`),消息写出平台的工具链。程序名不是 `ld.lld` 时引擎加 `-flavor gnu`。链接或封装命名的程序既非图中为本机构建、也不在本机可找到时拒绝
 (`platform-tool-absent`),消息写出负责构建它的包,或写出 `[target.'cfg(platform = "<name>")'.tools]` 的写法。
 **已实现**
 
@@ -365,11 +365,12 @@ Mach-O 写作 `__<大写名>,__carried`),给出符号 `mcpp_carried_begin`、`mc
 
 ### 15.1 锁
 
-平台加入的包在 `mcpp.lock` 中带 `origin = "platform"`;无 `origin` 的条目视为工程声明。引擎升级不替换已锁定的
-版本。平台加入的包,以及只经由它们到达的包(层的实现、工具与插件的库),带 `origin = "platform"`(当解析它的每个配置
-都这样看时)。每个条目以 `targets` 写出解析它的配置(目标三元组,排序);只属于本机原生配置的条目不写 `targets`,
-因此只在本机构建的工程的锁照旧。一次配置把自己的目标加入它解析到的条目、从没有解析到的条目中去掉;不再被任何配置
-解析的条目被删除;条目按身份排序。为本机的构建与为 `x86_64-openkal` 的构建、打包因此不互相改写锁。**已实现**
+平台加入的包,以及只经由它们到达的包(层的实现、工具与插件的库),在 `mcpp.lock` 中带 `origin = "platform"`(当解析
+它的每个配置都这样看时);无 `origin` 的条目属于工程。每个条目以 `targets` 写出解析它的配置(目标三元组,排序);原生
+配置——不带 `--target` 的构建解析到的目标,即 `[build] target`、本机的缺省目标或本机三元组——独有的条目不写
+`targets`,读取时无 `targets` 的条目属于写锁的机器的原生配置。一次配置把自己的目标加入它解析到的条目、从没有解析到的
+条目中去掉,不再被任何配置解析的条目被删除;一个条目的版本改变时其 `targets` 只剩这次的配置;条目按身份排序。为本机的
+构建与为 `x86_64-openkal` 的构建、打包因此不互相改写锁。**已实现**
 
 ### 15.2 身份
 
@@ -396,7 +397,7 @@ Mach-O 写作 `__<大写名>,__carried`),给出符号 `mcpp_carried_begin`、`mc
 `null`;对象形式:
 
 ```json
-{"name": "mcpplibs.openkal-platform", "version": "0.17.1", "source": "built-in", "hosted": false,
+{"name": "mcpplibs.openkal-platform", "version": "0.17.3", "source": "built-in", "hosted": false,
  "fields": {"toolchain": {"value": "llvm@23.1.3", "source": "platform"},
             "layers.c-abi": {"value": "openkal-musl@0.22.6", "source": "platform"}}}
 ```

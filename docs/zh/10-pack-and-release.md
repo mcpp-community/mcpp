@@ -103,8 +103,12 @@ glibc 专有行为（NSS 查询、`dlopen` 宿主插件）时的首选。
 | `--compress gzip` 或 `xz` 与 `--pkg-format single-file` | `--compress zstd[:<level>]` 或 `none`：启动器解压 zstd |
 | 通用包之外、对一个可执行文件给出多个 `--target` | 每个目标打一次 |
 | 自带加载器的通用包与映像的单文件之外使用 `--systems` | 在声明 `universal = true` 的平台上用 `--mode self-contained`，或 `--pkg-format single-file` |
+| 映像的单文件，`--systems` 中某系统的行本 mcpp 不构建程序（`x86_64-macos`、`aarch64-windows-gnu`） | 只列出会构建的系统的 `--systems` |
+| 映像的单文件，多个 `--systems` 与 `-o` 同用 | 去掉 `-o`：每个系统一个文件 |
 | 平台未声明 `runner` 时打通用包 | `--no-universal` |
+| 通用包中给出平台 `targets` 之外的 `--target` | 平台服务的目标 |
 | 对 `lib` 或 `shared` 目标使用被分派的格式 | 库的路线，[12](12-binary-distribution.md) |
+| 对 `lib` 或 `shared` 目标使用 `--pkg-format single-file` | `tar`、`zip` 或 `dir` |
 
 与容器不相容的 `[pack] compress`（目录，或 zip 的 `zstd`）在这次打包中被搁置；只有选项被拒绝。
 
@@ -691,8 +695,11 @@ target/dist/hello-0.1.0-openkal/
 
 `--mode self-contained` 时运行器随包携带：对 `--systems linux,macos,windows`（缺省为本机系统）的每个系统与包的
 每个架构，mcpp 构建不携带任何内容的平台载体 —— 一个像 `okrun` 一样运行其第一个参数所指映像的程序 —— 放入
-`libexec/<runner>/<os>-<arch>/`。Linux 的运行器为静态（musl）；其他系统的按其惯常行（`<arch>-macos`、
-`<arch>-windows-gnu`）构建，本机缺少该系统的 SDK 载荷时该次构建拒绝并点名。
+`libexec/<runner>/<os>-<arch>/`。每个运行器在其行（`<arch>-linux-musl`、`<arch>-macos`、`<arch>-windows-gnu`）上
+以平台的托管安排构建，因此无论在哪台机器上打包结果都是同一个程序，不需要该系统的 SDK 与 C 运行时；Linux 的运行器
+为静态。本 mcpp 不构建程序的行（`x86_64-macos` 为 planned；`aarch64-windows-gnu` 不在目标表中）不放入包并给出警告，
+启动器在那里从 `PATH` 查找运行器。在 Windows 主机上构建的映像与其他主机上的字节不同（#850）：通用包在 Linux 或
+macOS 上打包。
 
 多台机器打出的包以 `mcpp pack --merge a.zip --merge b.zip`（也可 `--merge a.zip,b.zip`）合并。输入是本命令写出的
 包目录或归档（`.zip`、`.tar`、`.tar.gz`、`.tgz`、`.tar.zst`、`.tar.xz`），不进行任何构建。腿与系统取并集，每个

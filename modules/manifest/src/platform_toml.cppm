@@ -429,7 +429,7 @@ Reader::layers(const toml::Value& v, std::string_view where,
     if (!v.is_table())
         return std::unexpected(std::format(
             "{} must be a table of <layer> = <package> | false, for example "
-            "c-abi = \"openkal-musl@0.22.3\"", where));
+            "c-abi = \"openkal-musl@0.22.6\"", where));
     for (auto const& [k, val] : v.as_table()) {
         auto key = std::format("{}.{}", where, k);
         if (!is_layer(k))

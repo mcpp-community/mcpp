@@ -209,13 +209,13 @@ bool write_stage_manifest(const std::filesystem::path& stagingRoot,
     return static_cast<bool>(os);
 }
 
-// The two names `--format` answers for without consulting the graph.
+// The names `--pkg-format` answers for without consulting the graph.
 //
 // Held here rather than in the CLI because two layers need the same list: the
 // parser decides whether a value is a built-in or a dispatch, and the
 // declaration check refuses a package that claims one of them. A package
 // claiming `tar` would be silently unreachable, since the built-in wins.
-constexpr std::array<std::string_view, 2> kBuiltinPackFormats{"tar", "dir"};
+constexpr std::array<std::string_view, 4> kBuiltinPackFormats{"tar", "zip", "dir", "single-file"};
 
 bool is_builtin_pack_format(std::string_view name) {
     return std::ranges::find(kBuiltinPackFormats, name) != kBuiltinPackFormats.end();

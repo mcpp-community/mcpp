@@ -303,11 +303,21 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
         // of a project built only natively reads as it always has. (A partial
         // workspace plan keeps the entries it did not resolve whole, below.)
         {
-            const auto native = mcpp::toolchain::triple::host_triple().str();
-            const auto here = [&] {
-                auto t = mcpp::toolchain::triple::parse(state.overrides.target_triple);
-                return t ? t->str() : native;
+            // The native configuration is the one a build without --target
+            // resolves to: the project's `[build] target`, this machine's
+            // default target, or this machine's triple.
+            const auto canonical = [](const std::string& text) -> std::optional<std::string> {
+                auto t = mcpp::toolchain::triple::parse(text);
+                if (text.empty() || !t) return std::nullopt;
+                return t->str();
+            };
+            const auto native = [&] {
+                if (auto t = canonical(state.m->buildConfig.target)) return *t;
+                if (auto cfg = state.get_cfg(false); cfg)
+                    if (auto t = canonical((*cfg)->defaultTarget)) return *t;
+                return mcpp::toolchain::triple::host_triple().str();
             }();
+            const auto here = canonical(state.overrides.target_triple).value_or(native);
             auto targets_of = [&](const mcpp::lockfile::LockedPackage& p) {
                 return p.targets.empty() ? std::vector<std::string>{ native } : p.targets;
             };

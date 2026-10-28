@@ -104,7 +104,7 @@ silent fallback.
 
 A command that builds asks for machine output with `--message-format json`
 instead, as `mcpp test` does: `build`, `test`, `run` and `pack`. The package
-format of `mcpp pack` and `mcpp run` is `--pkg-format` (`tar`, `dir`, `msi`;
+format of `mcpp pack` and `mcpp run` is `--pkg-format` (`tar`, `zip`, `dir`, `single-file`, `msi`;
 2026.10.27.1+; `--format` there is the earlier spelling and warns), so the
 report of a pack is `mcpp pack --message-format json` (2026.9.16.1+). The shape follows the kind:
 `mcpp test` streams a record per test because tests finish over time, and
@@ -349,7 +349,7 @@ select as they do for a build ([35](35-platforms.md)).
   "triple":    "x86_64-openkal",
   "graph":     "target",                      // or "host"
   "toolchain": {"compiler": "/…/xim-x-llvm/23.1.3/bin/clang++", "origin": "platform"},
-  "platform":  {"name": "mcpplibs.openkal-platform", "version": "0.17.1", "source": "built-in",
+  "platform":  {"name": "mcpplibs.openkal-platform", "version": "0.17.3", "source": "built-in",
                 "hosted": false, "fields": {"runner": {"value": ["okrun", "{}"], "source": "platform"}}},
   "tools":     {"okld": "/…/okld", "okrun": "/…/okrun"},
   "runner":    {"argv": ["okrun", "{}"], "host": "same-arch", "exclusive": false,
@@ -1026,7 +1026,7 @@ project's `[indices]` entries, when run in a project). The packages are
 mcpp pack --list-formats
 ```
 
-`data.formats` lists the engine's own formats (`tar`, `dir`; `builtin: true`)
+`data.formats` lists the engine's own formats (`tar`, `zip`, `dir`, `single-file`; `builtin: true`)
 and each format a package of the resolved graph provides (`builtin: false`,
 with `providers`). The graph is planned in a directory of the mcpp home, so
 nothing is written into the project.

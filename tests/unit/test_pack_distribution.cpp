@@ -594,7 +594,7 @@ TEST(PackDistribution, XpkgDescriptorWritesMetadataAsStrings) {
     a.pkg.entry = { { "x86_64", "lib/x86_64/evil.oke" } };
     auto text = d::xpkg_descriptor({ a }, "https://example.org/v1.0");
     ASSERT_TRUE(text) << text.error();
-    EXPECT_NE(text->find("name = \"ev\\\"il\\010os.exit()\""), std::string::npos) << *text;
+    EXPECT_NE(text->find("description = \"ev\\\"il\\010os.exit() 1.0"), std::string::npos) << *text;
     EXPECT_EQ(text->find("\nos.exit()"), std::string::npos) << *text;
     EXPECT_NE(text->find("deps = { \"okrun\" }"), std::string::npos) << *text;
 }
@@ -617,4 +617,42 @@ TEST(PackMerge, TheCompressionFitsTheContainer) {
     req.output = t.path / "out.tar.zst";
     auto fits = d::merge(req);
     ASSERT_TRUE(fits) << fits.error();
+}
+
+// The entry is named after the command a person runs, not the package, and
+// moves the archive's own top-level directory into place.
+TEST(PackDistribution, XpkgDescriptorNamesTheCommandAndTheArchiveTop) {
+    d::Asset uni;
+    uni.file = "mcppls-0.0.18-openkal.zip";
+    uni.sha256 = std::string(64, 'a');
+    uni.top = "mcppls-0.0.18-openkal";
+    uni.pkg.name = "mcpp-language-server";
+    uni.pkg.version = "0.0.18";
+    uni.pkg.runner = { "okrun", "{}" };
+    uni.pkg.entry = { { "x86_64", "lib/x86_64/mcppls.oke" }, { "aarch64", "lib/aarch64/mcppls.oke" } };
+    auto u = d::xpkg_descriptor({ uni }, "https://example.org/v0.0.18");
+    ASSERT_TRUE(u) << u.error();
+    EXPECT_NE(u->find("name = \"mcppls\""), std::string::npos) << *u;
+    EXPECT_NE(u->find("xvm.add(\"mcppls\", opts)"), std::string::npos) << *u;
+    EXPECT_NE(u->find("opts.alias = \"mcppls.cmd\""), std::string::npos) << *u;
+    EXPECT_NE(u->find("os.dirs(\"mcppls-0.0.18-openkal\")"), std::string::npos) << *u;
+
+    std::vector<d::Asset> per;
+    for (auto [triple, top] : { std::pair{ "x86_64-linux-musl", "okrun-0.1.3-linux-x86_64" },
+                                std::pair{ "aarch64-macos", "okrun-0.1.3-macos-aarch64" } }) {
+        d::Asset a;
+        a.file = std::string(top) + ".zip";
+        a.sha256 = std::string(64, 'b');
+        a.top = top;
+        a.pkg.name = "openkal-tools";
+        a.pkg.version = "0.1.3";
+        a.pkg.legs = { triple };
+        a.pkg.program = "bin/okrun";
+        per.push_back(a);
+    }
+    auto r = d::xpkg_descriptor(per, "https://example.org/0.1.3");
+    ASSERT_TRUE(r) << r.error();
+    EXPECT_NE(r->find("name = \"okrun\""), std::string::npos) << *r;
+    EXPECT_NE(r->find("os.dirs(\"okrun-0.1.3-*\")"), std::string::npos) << *r;
+    EXPECT_NE(r->find("description = \"openkal-tools 0.1.3"), std::string::npos) << *r;
 }

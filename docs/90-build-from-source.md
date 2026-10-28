@@ -81,19 +81,19 @@ src/
 └── scaffold/             `mcpp new` and templates
 
 tests/
-├── unit/                 155 C++ tests, discovered by `mcpp test`
-└── e2e/                  644 shell scripts against a real binary
+├── unit/                 156 C++ tests, discovered by `mcpp test`
+└── e2e/                  645 shell scripts against a real binary
 ```
 
 ## Test Organization
 
 Two layers, and they answer different questions.
 
-**Unit tests** (`tests/unit/`, 155 files) are C++ programs `mcpp test`
+**Unit tests** (`tests/unit/`, 156 files) are C++ programs `mcpp test`
 discovers. They exercise a module's contract with no binary and no filesystem
 state.
 
-**End-to-end tests** (`tests/e2e/NN_<name>.sh`, 644 files) run a real `mcpp`
+**End-to-end tests** (`tests/e2e/NN_<name>.sh`, 645 files) run a real `mcpp`
 binary against a real project. `run_all.sh` is the CI entry point. `mcpp test`
 does **not** run them.
 

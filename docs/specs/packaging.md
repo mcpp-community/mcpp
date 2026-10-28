@@ -237,7 +237,7 @@ WebAssembly 的同名文件族,ok 映像的 `bin/`),规定见 docs/10。
 `--compress <zstd|gzip|xz|none>[:<level>]` 与 `[pack] compress` 选择 `tar` 的压缩:mcpp 自己写出 ustar 归档(按
 路径排序;长名与链接目标用 pax 头;属主为 0,时间为 0,模式 0755、0644、0777),以自带的编解码器(zlib、zstd、
 liblzma)压缩,不调用 `tar` 等外部程序;产物扩展名为 `.tar.gz`(缺省)、`.tar.zst`、`.tar.xz` 或 `.tar`。级别
-范围:gzip 1–9,zstd 1–22,xz 0–9;写出的级别照用(含 `xz:0`、`zstd:1`),未写时取编解码器的缺省。`zip` 的条目在变小时以 DEFLATE 压缩(`gzip[:<level>]` 设定级别),否则存储;
+范围:gzip 1–9,zstd 1–22,xz 0–9;写出的级别照用(含 `xz:0`、`zstd:1`),未写时为 gzip 的缺省(6)、zstd 19、xz 6。`zip` 的条目在变小时以 DEFLATE 压缩(`gzip[:<level>]` 设定级别),否则存储;
 `none` 时全部存储。单文件的载荷总是一个 zstd 帧(启动器只解 zstd),`none` 取级别 1。okb 中的映像不压缩(SPEC-013 平台插件的格式规定)。同一棵树的
 归档在每个宿主上字节相同:gzip 成员不带名字与时间、系统字节为 255,zip 条目使用固定日期。
 

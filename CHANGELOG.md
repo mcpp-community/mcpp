@@ -120,9 +120,19 @@
   path with for a POSIX target (#850, upstream), and `mcpp pack --merge`
   refuses its images beside the others.
 - **`--pkg-format tar` writes `.tar.gz` on every host, Windows included**, with
-  mcpp's own zlib; no `tar` or `gzip` program is run. `--compress none` writes
-  `.tar`.
+  mcpp's own zlib, for a program's package and a library's alike; no `tar` or
+  `gzip` program is run. `--compress none` writes `.tar`.
+- `x86_64-openkal` and `aarch64-openkal` select openkal-platform 0.17.3
+  (openkal-musl 0.22.6, openkal-llvm-runtime 0.16.6): the C library takes a
+  program's arguments when it is entered, which a hosted program on macOS did
+  not receive.
+- A platform's link with `ld.lld` itself finds the linker as `ld.lld`, `lld`
+  or `lld-link` beside the compiler (a Windows payload ships `lld-link`, run
+  with `-flavor gnu`); `mcpp explain <reason>` explains each `platform-*`
+  reason. A build program's cached run is replayed only while what it named
+  below its output directory is there (e2e 958).
 
+### Fixed
 
 - **A version the local index lacks is refreshed for when its install is
   refused.** The walk refreshes the index when a descriptor is missing, and not

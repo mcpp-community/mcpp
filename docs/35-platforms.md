@@ -55,7 +55,9 @@ mcpp run --target x86_64-openkal
 
 Every value is reported with its source. `mcpp test`, `mcpp pack` and
 `--target aarch64-openkal` need nothing more. `mcpp.lock` records the packages
-the platform added with `origin = "platform"`.
+the platform added with `origin = "platform"`, and each entry's configurations
+in `targets` (absent for this machine's native configuration alone), so a build
+for this machine and one for an ok image leave each other's entries in place.
 
 ## What a platform states
 

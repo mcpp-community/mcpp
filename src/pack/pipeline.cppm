@@ -415,6 +415,31 @@ bool packs_universal(const mcpp::build::BuildContext& ctx, const Options& opts) 
         && opts.format != mcpp::pack::Format::SingleFile;
 }
 
+// The combinations of a member's pack refused before anything is built
+// (SPEC-014 §1.5): what its options and the plan's platform already decide.
+std::optional<std::string> refused_combination(const mcpp::build::BuildContext& ctx, const Options& opts) {
+    // A single file carries what it runs, whichever source stated the mode.
+    if (opts.format == mcpp::pack::Format::SingleFile && opts.mode == mcpp::pack::Mode::None)
+        return std::string("--pkg-format single-file carries what the program runs, and the mode is "
+                           "system ([pack] default_mode).\n  use: --mode vendored | self-contained");
+    if (!opts.legTargets.empty() && !packs_universal(ctx, opts))
+        return std::string("several --target name one package's legs only where the target's platform "
+                           "packs them into one universal package (`[platform] universal = true`).\n"
+                           "  use: one pack per target");
+    if (!packs_universal(ctx, opts)) return std::nullopt;
+    auto const& P = ctx.plan.platform;
+    if (!P.fields.runner.set || P.fields.runner.cmd.empty())
+        return std::format("a universal package starts its images through the platform's runner, and "
+                           "{} states none.\n  use: --no-universal", P.display());
+    auto t = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
+    for (auto const& target : opts.legTargets) {
+        auto lt = mcpp::toolchain::triple::parse(target);
+        if (lt && t && lt->str() != t->str() && !mcpp::platform::serves(P.fields, P.package, *lt))
+            return std::format("--target {} is not a target of {}", lt->str(), P.display());
+    }
+    return std::nullopt;
+}
+
 std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
     auto& ctx = *g.ctx;
     const bool sharedPlan = ctx.workspaceMembers.size() > 1;
@@ -594,16 +619,7 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
         const bool loaded = t && t->loader_supplies_os();
         if (loaded && opts.mode == mcpp::pack::Mode::Static) opts.mode = mcpp::pack::Mode::BundleAll;
         auto const& P = ctx.plan.platform;
-        // A single file carries what it runs, whichever source stated the mode.
-        if (opts.format == mcpp::pack::Format::SingleFile && opts.mode == mcpp::pack::Mode::None)
-            return Refusal{2, about(run, m, std::string(
-                "--pkg-format single-file carries what the program runs, and the mode is system "
-                "([pack] default_mode).\n  use: --mode vendored | self-contained"))};
-        if (!opts.legTargets.empty() && !packs_universal(ctx, opts))
-            return Refusal{2, about(run, m, std::string(
-                "several --target name one package's legs only where the target's platform packs "
-                "them into one universal package (`[platform] universal = true`).\n"
-                "  use: one pack per target"))};
+        if (auto why = refused_combination(ctx, opts)) return Refusal{2, about(run, m, *why)};
         if (packs_universal(ctx, opts)) {
             opts.universalName = mcpp::manifest::platform::platform_name(
                 P.package.substr(P.package.find('.') + 1));
@@ -613,9 +629,6 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
             for (auto const& target : legs) {
                 auto lt = mcpp::toolchain::triple::parse(target);
                 if (!lt || lt->str() == t->str()) continue;
-                if (!mcpp::platform::serves(P.fields, P.package, *lt))
-                    return Refusal{2, about(run, m, std::format(
-                        "--target {} is not a target of {}", lt->str(), P.display()))};
                 mcpp::build::BuildOverrides ov = g.ov;
                 ov.target_triple = lt->str();
                 // The member's own plan, in a workspace; the project's otherwise.
@@ -793,6 +806,14 @@ std::optional<Refusal> prepare_group(PackRun& run, GroupJob& g) {
 std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
     auto const& ctx = *g.ctx;
     const auto& formatName = run.opts.formatName;
+    // What each member's options and the platform decide.
+    for (auto const& m : g.members) {
+        std::optional<std::string> why;
+        mcpp::build::with_member(*g.ctx, m.inWorkspace ? m.name : std::string_view{}, [&] {
+            why = refused_combination(ctx, m.request);
+        });
+        if (why) return Refusal{2, about(run, m, *why)};
+    }
     // ─── `--systems` names the loaders a package carries ─────────────
     //
     // A self-contained universal package carries a loader per system, and a
@@ -863,7 +884,7 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
             return Refusal{2, std::format(
                 "unknown --pkg-format '{}'.\n"
                 "  available in this build: {}\n"
-                "  A format past `tar` and `dir` comes from a package in the "
+                "  A format past the built-in ones comes from a package in the "
                 "resolved graph, which declares\n"
                 "  it with `mcpp::provides_pack_format(\"<name>\")` in its build "
                 "program. Add the package\n"

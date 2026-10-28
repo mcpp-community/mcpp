@@ -65,6 +65,20 @@ EOF
 cd mathkit
 "$MCPP" pack mathkit > pack.log 2>&1 || { cat pack.log; echo "pack failed"; exit 1; }
 
+# The container as stated, compressed by mcpp itself; a single file is a
+# program's, not a library's.
+"$MCPP" pack mathkit --compress zstd > pack-zst.log 2>&1 || { cat pack-zst.log; echo "pack --compress zstd failed"; exit 1; }
+zst="$(find target/dist -maxdepth 1 -type f -name 'mathkit-0.1.0-*.tar.zst' | head -1)"
+[[ -n "$zst" ]] || { cat pack-zst.log; ls target/dist; echo "no .tar.zst for --compress zstd"; exit 1; }
+[[ "$(head -c 4 "$zst" | od -An -tx1 | tr -d ' \n')" == "28b52ffd" ]] || { echo "$zst is not a zstd frame"; exit 1; }
+"$MCPP" pack mathkit --pkg-format zip > pack-zip.log 2>&1 || { cat pack-zip.log; echo "pack --pkg-format zip failed"; exit 1; }
+ls target/dist/mathkit-0.1.0-*.zip > /dev/null 2>&1 || { cat pack-zip.log; ls target/dist; echo "no zip for --pkg-format zip"; exit 1; }
+if "$MCPP" pack mathkit --pkg-format single-file > pack-sf.log 2>&1; then
+    cat pack-sf.log; echo "a library was packed as a single file"; exit 1
+fi
+grep -q "is a library" pack-sf.log || { cat pack-sf.log; echo "the single-file refusal does not say why"; exit 1; }
+"$MCPP" pack mathkit > pack.log 2>&1 || { cat pack.log; echo "pack failed"; exit 1; }
+
 pkg="$(find target/dist -maxdepth 1 -type d -name 'mathkit-0.1.0-*' | head -1)"
 # The manifest below is FILE CONTENT: on Git Bash a shell-spelled
 # /tmp/... path is read by a native mcpp.exe as "root of the current

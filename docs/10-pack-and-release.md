@@ -115,8 +115,12 @@ choices:
 | `--compress gzip` or `xz` with `--pkg-format single-file` | `--compress zstd[:<level>]` or `none`: the launcher decompresses zstd |
 | several `--target` for an executable outside a universal package | one pack per target |
 | `--systems` on anything but a self-contained universal package or a single file of an image | `--mode self-contained` over a platform with `universal = true`, or `--pkg-format single-file` |
+| an image's single file for a system whose row this mcpp builds no program for (`x86_64-macos`, `aarch64-windows-gnu`) | `--systems` naming the systems that are built |
+| an image's single file for several `--systems` with `-o` | leave `-o` out: one file per system |
 | a universal package of a platform that states no `runner` | `--no-universal` |
+| `--target` outside the platform's `targets` in a universal package | a target the platform serves |
 | a dispatched format for a `lib` or `shared` target | the library route, [12](12-binary-distribution.md) |
+| `--pkg-format single-file` for a `lib` or `shared` target | `tar`, `zip` or `dir` |
 
 A `[pack] compress` that does not fit the container (a directory, `zstd` for a
 zip) is left aside for that pack; only the flag is refused.
@@ -799,10 +803,14 @@ Under `--mode self-contained` the runner travels: for each system of
 `--systems linux,macos,windows` (default: this machine's) and each architecture
 of the package, mcpp builds the platform's carrier with nothing carried — a
 program that runs the image its first argument names, as `okrun` does — into
-`libexec/<runner>/<os>-<arch>/`. A Linux runner is static (musl); another
-system's is built for its conventional row (`<arch>-macos`,
-`<arch>-windows-gnu`), and a system whose SDK payload this machine lacks is
-refused by that build, naming it.
+`libexec/<runner>/<os>-<arch>/`. Each runner is built on its row
+(`<arch>-linux-musl`, `<arch>-macos`, `<arch>-windows-gnu`) over the platform's
+hosted arrangement, so the same program results whichever machine packs, with
+no SDK or C run-time of that system; a Linux runner is static. A row this mcpp
+builds no program for (`x86_64-macos`, planned; `aarch64-windows-gnu`, not in
+its table) is left out with a warning, and the launcher there looks for the
+runner on `PATH`. An image built on a Windows host is not the bytes of one
+built elsewhere (#850): pack universal packages on Linux or macOS.
 
 Packages built on several machines are joined with
 `mcpp pack --merge a.zip --merge b.zip` (also `--merge a.zip,b.zip`). The inputs

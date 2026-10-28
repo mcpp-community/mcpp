@@ -93,7 +93,7 @@ mcpp <command> --format json
 
 构建类命令改用 `--message-format json` 来请求机器输出，`mcpp test` 就是这样做的：
 `build`、`test`、`run` 与 `pack`。`mcpp pack` 与 `mcpp run` 的包格式是 `--pkg-format`
-（`tar`、`dir`、`msi`；2026.10.27.1+；在这两个命令上 `--format` 是旧写法，会给出警告），所以打包的
+（`tar`、`zip`、`dir`、`single-file`、`msi`；2026.10.27.1+；在这两个命令上 `--format` 是旧写法，会给出警告），所以打包的
 报告方式是 `mcpp pack --message-format json`（2026.9.16.1+）。具体形状随 kind 而定：
 `mcpp test` 的测试是随时间陆续完成的，所以它按测试逐条输出流式记录；一次
 `mcpp pack` 只有一个结果，所以它输出一个信封。`mcpp build --message-format json`
@@ -307,7 +307,7 @@ mcpp self env --format json
   "triple":    "x86_64-openkal",
   "graph":     "target",                      // or "host"
   "toolchain": {"compiler": "/…/xim-x-llvm/23.1.3/bin/clang++", "origin": "platform"},
-  "platform":  {"name": "mcpplibs.openkal-platform", "version": "0.17.1", "source": "built-in",
+  "platform":  {"name": "mcpplibs.openkal-platform", "version": "0.17.3", "source": "built-in",
                 "hosted": false, "fields": {"runner": {"value": ["okrun", "{}"], "source": "platform"}}},
   "tools":     {"okld": "/…/okld", "okrun": "/…/okrun"},
   "runner":    {"argv": ["okrun", "{}"], "host": "same-arch", "exclusive": false,
@@ -917,7 +917,7 @@ mcpp index list --format json
 mcpp pack --list-formats
 ```
 
-`data.formats` 列出引擎自己的格式（`tar`、`dir`；`builtin: true`）以及已解析依赖
+`data.formats` 列出引擎自己的格式（`tar`、`zip`、`dir`、`single-file`；`builtin: true`）以及已解析依赖
 图中某个包提供的每种格式（`builtin: false`，带 `providers`）。依赖图在 mcpp home 的
 一个目录中规划，因此不向工程写入任何东西。
 

@@ -133,7 +133,7 @@ grep -q "unknown --pkg-format 'bogus'" b2.log \
   || { cat b2.log; echo "FAIL: the refusal does not name the value"; exit 1; }
 # THE LIST IS THE POINT. A refusal that named a fixed list would be the
 # coupling this mechanism removes; this one names the graph's own answer.
-grep -q "available in this build: tar, dir, zap" b2.log \
+grep -q "available in this build: tar, zip, dir, single-file, zap" b2.log \
   || { cat b2.log; echo "FAIL: the refusal does not name what is available"; exit 1; }
 # Nothing was compiled to find that out.
 grep -q "Compiling app" b2.log \

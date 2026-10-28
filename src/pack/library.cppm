@@ -42,6 +42,8 @@ import mcpp.pack.relocate;
 import mcpp.pack.strip;
 import mcpp.source_kind;   // builtin_extension_table — what needs no declaring
 import mcpp.pack.zip;
+import mcpp.pack.compress;
+import mcpp.pack.distribution;
 import mcpplibs.os.platform;
 import mcpp.build.command_line;
 import mcpp.run;
@@ -89,6 +91,8 @@ struct LibraryPackPlan {
     std::filesystem::path archivePath;    // …/<dirname>.tar.gz | .zip
     bool                  writeArchive = true;   // false = `--format dir`
     bool                  zip = false;           // PE targets get a .zip
+    mcpp::pack::compress::Choice compression;    // the tar's, or the zip's members'
+
 
     std::string namespace_, packageName, packageVersion, builtBy;
     std::string targetName;
@@ -497,27 +501,15 @@ run_library_pack(const LibraryPackPlan& plan)
                 .source = plan.stagingRoot / rel,
             });
         }
-        if (auto r = zip::write(plan.archivePath, entries); !r)
+        zip::WriteOptions zo;
+        zo.deflate = plan.compression.algorithm != mcpp::pack::compress::Algorithm::None;
+        if (plan.compression.algorithm == mcpp::pack::compress::Algorithm::Gzip) zo.level = plan.compression.level;
+        if (auto r = zip::write(plan.archivePath, entries, zo); !r)
             return std::unexpected(LibraryPackError{ r.error() });
     } else {
-        // `--force-local` on Windows, and it is not optional there: GNU tar
-        // reads `C:/path/x.tar.gz` as the rsh form `host:path`, tries to resolve
-        // a machine called `C`, and fails with
-        //   tar (child): Cannot connect to C: resolve failed
-        // which names neither tar's argument nor the drive letter as the cause.
-        //
-        // Reached only by a package with more than one leg: a single PE leg is
-        // written as a zip, so a Windows host never ran this path until a fat
-        // package existed. Same fix, same reason, in pack.cppm's make_tarball.
-        std::vector<std::string> argv{ "tar" };
-        if constexpr (mcpplibs::os::is_windows) argv.push_back("--force-local");
-        argv.insert(argv.end(), { "-czf", plan.archivePath.string(),
-                                  "-C", plan.stagingRoot.parent_path().string(),
-                                  plan.stagingRoot.filename().string() });
-        auto r = mcpp::run::execute(argv);
-        if (r.exit_code != 0)
-            return std::unexpected(LibraryPackError{ std::format(
-                "tar failed (rc={}): {}", r.exit_code, r.output) });
+        // Written by mcpp, as a program's tar is: the same bytes on every host.
+        if (auto r = mcpp::pack::distribution::write_tar(plan.stagingRoot, plan.archivePath, plan.compression); !r)
+            return std::unexpected(LibraryPackError{ r.error() });
     }
     return plan.archivePath;
 }

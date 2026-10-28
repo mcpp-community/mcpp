@@ -46,7 +46,8 @@ mcpp run --target x86_64-openkal
 ```
 
 每个值都带来源报告。`mcpp test`、`mcpp pack` 与 `--target aarch64-openkal` 无需更多声明。`mcpp.lock` 以
-`origin = "platform"` 记录平台加入的包。
+`origin = "platform"` 记录平台加入的包,并以 `targets` 写出每个条目的配置(只属于本机原生配置的条目不写),
+因此为本机的构建与为 ok 映像的构建不互相改写对方的条目。
 
 ## 平台陈述的内容
 

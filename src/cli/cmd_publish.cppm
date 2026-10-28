@@ -61,7 +61,7 @@ export int cmd_emit_xpkg(const mcpplibs::cmdline::ParsedArgs& parsed) {
             if (!root) { mcpp::ui::error(root.error()); std::filesystem::remove_all(work, ec); return 2; }
             auto pkg = d::read(*root);
             if (!pkg) { mcpp::ui::error(pkg.error()); std::filesystem::remove_all(work, ec); return 2; }
-            assets.push_back({ file, std::move(*pkg), d::sha256_file(file) });
+            assets.push_back({ file, std::move(*pkg), d::sha256_file(file), root->filename().string() });
         }
         std::filesystem::remove_all(work, ec);
         auto lua = d::xpkg_descriptor(assets, parsed.value("url").value_or(""));
