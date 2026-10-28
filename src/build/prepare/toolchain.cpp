@@ -426,6 +426,17 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
     // every later reader parses: a managed spec, or `path:<absolute dir>`.
     if (auto r = step1_local_toolchain(state); !r) return std::unexpected(r.error());
 
+    // `[target.<triple>]`'s build-shaping keys, applied the same way whichever
+    // path found the row (#704). The section's toolchain is a statement about
+    // this row the author wrote down, so it replaces `[toolchain]` and the
+    // global default; `--toolchain` and a consumer's decision for a host tool
+    // are statements about THIS invocation and keep precedence over it.
+    return {};
+}
+
+// The closures that answer "is MSVC usable here" and "what would a native
+// build pick", and the Windows first run that seeds the GNU target from them.
+static void step1_define_host_default_closures(PrepareState& state) {
     // ─── Windows first run without Visual Studio ────────────────────────
     // The host triple on Windows is MSVC-ABI, so the historical default
     // (llvm) resolves to clang targeting MSVC — which uses the MSVC STL and
@@ -482,13 +493,6 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
             }
         }
     }
-
-    // `[target.<triple>]`'s build-shaping keys, applied the same way whichever
-    // path found the row (#704). The section's toolchain is a statement about
-    // this row the author wrote down, so it replaces `[toolchain]` and the
-    // global default; `--toolchain` and a consumer's decision for a host tool
-    // are statements about THIS invocation and keep precedence over it.
-    return {};
 }
 
 // A phase-local struct passed by reference to the steps that resolve one
@@ -1341,6 +1345,7 @@ std::expected<void, std::string> phase1_toolchain_spec_and_axes(PrepareState& st
             !r)
             return std::unexpected(r.error());
     if (auto r = step1_define_early_toolchain_closures(state); !r) return std::unexpected(r.error());
+    step1_define_host_default_closures(state);
     if (auto r = step1_target_and_static_overrides(state); !r) return std::unexpected(r.error());
     // The platform, once the target is known and before the conditional
     // tables merge: `cfg(platform = ...)` is one of their keys (SPEC-013 §3).

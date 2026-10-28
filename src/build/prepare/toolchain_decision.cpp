@@ -37,6 +37,35 @@ import mcpp.toolchain.post_install;
 
 namespace mcpp::build {
 
+namespace {
+
+// WHAT "THE GRAPH SUPPLIES THE SYSTEM" MEANS FOR THIS TARGET. A C library of
+// the graph does, on any target. A kernel-abi package does only where the
+// target has no system of its own (a freestanding or a loader-supplied row):
+// on a hosted target it sits over the system's C library, which the row's
+// payload still supplies. Measured on linux-aarch64: openkal-tools reaches
+// openkal-linux (kernel-abi over the system's C library), the musl row's
+// convention was cancelled by it, and `mcpp pack --linkage static` compiled the
+// musl target with the machine's llvm against glibc's headers.
+bool graph_supplies_system(const PrepareState& state) {
+    const auto targetTriple = mcpp::toolchain::triple::parse(
+        state.overrides.target_triple.empty() ? mcpp::toolchain::triple::host_triple().str()
+                                              : state.overrides.target_triple);
+    const bool targetHasNoSystem = targetTriple
+        && (targetTriple->is_freestanding() || targetTriple->loader_supplies_os());
+    auto supplies_system = [&](const std::string& entry) {
+        auto cap = mcpp::targetside::parse_capability(entry);
+        if (!cap || !*cap) return false;
+        return (*cap)->layer == mcpp::targetside::CapLayer::CAbi
+            || ((*cap)->layer == mcpp::targetside::CapLayer::KernelAbi && targetHasNoSystem);
+    };
+    return std::ranges::any_of(state.packages, [&](auto const& pkg) {
+        return std::ranges::any_of(pkg.manifest.provides, supplies_system);
+    });
+}
+
+}  // namespace
+
 std::expected<void, std::string> phase5_toolchain_after_graph(PrepareState& state) {
 
     // ─── The toolchain, resolved now that the graph exists ──────────────────
@@ -161,29 +190,8 @@ std::expected<void, std::string> phase5_toolchain_after_graph(PrepareState& stat
                 reqCompilerBy, family, family, family));
         };
 
-        // WHAT "THE GRAPH SUPPLIES THE SYSTEM" MEANS FOR THIS TARGET. A C
-        // library of the graph does, on any target. A kernel-abi package does
-        // only where the target has no system of its own (a freestanding or a
-        // loader-supplied row): on a hosted target it sits over the system's C
-        // library, which the row's payload still supplies. Measured on
-        // linux-aarch64: openkal-tools reaches openkal-linux (kernel-abi over
-        // the system's C library), the musl row's convention was cancelled by
-        // it, and `mcpp pack --linkage static` compiled the musl target with
-        // the machine's llvm against glibc's headers.
-        const auto targetTriple = mcpp::toolchain::triple::parse(
-            state.overrides.target_triple.empty() ? mcpp::toolchain::triple::host_triple().str()
-                                                  : state.overrides.target_triple);
-        const bool targetHasNoSystem = targetTriple
-            && (targetTriple->is_freestanding() || targetTriple->loader_supplies_os());
-        auto supplies_system = [&](mcpp::targetside::CapLayer layer) {
-            return layer == mcpp::targetside::CapLayer::CAbi
-                || (layer == mcpp::targetside::CapLayer::KernelAbi && targetHasNoSystem);
-        };
+        graphSuppliesSystem = graph_supplies_system(state);
         for (auto const& pkg : state.packages) {
-            for (auto const& entry : pkg.manifest.provides) {
-                auto cap = mcpp::targetside::parse_capability(entry);
-                if (cap && *cap && supplies_system((*cap)->layer)) graphSuppliesSystem = true;
-            }
             for (auto const& entry : pkg.manifest.requires_) {
                 auto cap = mcpp::targetside::parse_capability(entry);
                 if (!cap || !*cap) continue;

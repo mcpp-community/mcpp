@@ -109,10 +109,12 @@
   index, its revision and age, and whether it was refreshed now and why not;
   the provider's own report is printed under `-v`.
 - A package shared by several configurations of one command is announced once.
-- **With `trim_paths`, clang names a source with the target's separator**
-  (`-ffile-reproducible`, clang 17 and later): an artifact built on Windows
-  named `…/src\demangle/…` in `__FILE__` and was not the bytes of the one
-  built on Linux or macOS.
+- **With `trim_paths`, clang is given `-ffile-reproducible`** (clang 17 and
+  later): `__FILE__` takes the target's separator where clang applies it. An ok
+  image built on Linux and one built on macOS are the same bytes; one built on
+  a Windows host is not, because clang keeps the `\` it joined an included
+  path with for a POSIX target (#850, upstream), and `mcpp pack --merge`
+  refuses its images beside the others.
 - **`--pkg-format tar` writes `.tar.gz` on every host, Windows included**, with
   mcpp's own zlib; no `tar` or `gzip` program is run. `--compress none` writes
   `.tar`.
