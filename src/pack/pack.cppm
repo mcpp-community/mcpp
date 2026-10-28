@@ -2322,14 +2322,15 @@ std::string static_row_pin(const ProgramRow& row, std::string_view platformToolc
     return std::format("\n[target.{}]\ntoolchain = \"{}\"\n", row.triple, pin);
 }
 
-// Whether this mcpp builds programs for `row`: a target the table states as
-// planned is not built (its toolchain is not published).
+// Whether this mcpp builds programs for `row`: a target its table does not
+// state (`aarch64-windows-gnu`), or states as planned (`x86_64-macos`, its
+// toolchain not published), is not built.
 bool row_is_built(const ProgramRow& row) {
     if (row.triple.empty()) return true;   // this machine's own row
     auto t = mcpp::toolchain::triple::parse(row.triple);
     if (!t) return false;
     auto* k = mcpp::toolchain::triple::find_known_target(*t);
-    return !k || k->tier != "planned";
+    return k && k->tier != "planned";
 }
 
 } // namespace
