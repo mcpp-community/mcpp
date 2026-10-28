@@ -906,9 +906,9 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // `openkal-platform` (SPEC-013), pinned here. The two architectures the
     // loader relocates.
     { "x86_64-openkal",        "preview",   "ok",  "llvm@23.1.3","",                            true,
-      "mcpplibs.openkal-platform@0.17.1" },
+      "mcpplibs.openkal-platform@0.17.2" },
     { "aarch64-openkal",       "preview",   "ok",  "llvm@23.1.3","",                            true,
-      "mcpplibs.openkal-platform@0.17.1" },
+      "mcpplibs.openkal-platform@0.17.2" },
 };
 
 inline std::span<const TargetInfo> known_targets() { return kKnownTargets; }

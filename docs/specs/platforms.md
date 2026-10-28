@@ -377,8 +377,8 @@ Mach-O 写作 `__<大写名>,__carried`),给出符号 `mcpp_carried_begin`、`mc
 目标报告中,平台加入的层的来源写作 `platform`,图已提供的写作 `graph`。层之后为平台块:
 
 ```
-    Platform openkal-platform 0.17.1 (built-in)
-             tools             okld, okrun (openkal-tools@0.1.1, platform)
+    Platform openkal-platform 0.17.2 (built-in)
+             tools             okld, okrun (openkal-tools@0.1.3, platform)
              runner            okrun (platform)
              link              lld, start ok_main (platform)
 ```
@@ -394,7 +394,7 @@ Mach-O 写作 `__<大写名>,__carried`),给出符号 `mcpp_carried_begin`、`mc
 ```json
 {"name": "mcpplibs.openkal-platform", "version": "0.17.1", "source": "built-in", "hosted": false,
  "fields": {"toolchain": {"value": "llvm@23.1.3", "source": "platform"},
-            "layers.c-abi": {"value": "openkal-musl@0.22.3", "source": "platform"}}}
+            "layers.c-abi": {"value": "openkal-musl@0.22.5", "source": "platform"}}}
 ```
 
 `fields` 的键为 `toolchain`、`runner`、`runners.<name>`、`layers.<layer>`、`tools.<name>`(值为所用程序的路径)、
