@@ -35,7 +35,8 @@
 
 `--linkage`(未给出时取 `[pack] linkage`)是这次打包的构建的依赖链接,优先于 `[build] dependency_linkage`
 与构建配置中的值;都未给出时每个库按它自己的声明链接,包元数据记为 `declared`。原生 Linux 目标上 `static`
-选择 `<arch>-linux-musl` 行(`-linux-gnu` 目标换成对应的 musl 行),全静态程序不论 `--mode` 为何都整体打包;
+选择 `<arch>-linux-musl` 行:未给出目标且工程没有 `[build] target` 时为本机架构的 musl 行,`--target` 的 `-linux-gnu`
+目标换成对应的 musl 行,工程自己的 `[build] target` 照原样打包;全静态程序不论 `--mode` 为何都整体打包;
 openkal 目标上 `static` 为一个 `.oke`、无 `.okso`,`shared` 为 `.oke` 加其所需的 `.okso`。
 
 ### 1.2 闭包
@@ -154,7 +155,8 @@ WebAssembly 的同名文件族,ok 映像的 `bin/`),规定见 docs/10。
   mcpp-package.json
 ```
 
-包名带平台名(平台包名去掉 `-platform`),不带系统与架构。`[runtime] deploy` 放置的文件位于每条腿的映像旁边。
+包名带平台名(平台包名去掉 `-platform`),不带系统与架构;模式不是 `vendored` 时带模式的后缀(`-system`、`-static`、
+`self-contained` 为 `-bundle-all`),与原生包的命名相同。`[runtime] deploy` 放置的文件位于每条腿的映像旁边。
 
 ### 4.3 启动器
 
@@ -227,7 +229,7 @@ WebAssembly 的同名文件族,ok 映像的 `bin/`),规定见 docs/10。
 与两个摘要;同一路径的文件摘要**必须**相同,每个文件只取一份;合并后的树重新描述。`mcpp-package.json` 中的每个
 路径**必须**是包内的规范相对路径。输出**必须**是新的路径,或一个已有的、不是输入之一的本命令写出的归档;目录输出
 只写新目录。
-容器取 `--pkg-format`,否则取 `-o` 的扩展名,否则取第一个输入的容器;`-o` 缺省为当前目录下与树同名的文件。
+容器取 `--pkg-format`,否则取 `[pack] format`,否则取 `-o` 的扩展名,否则取第一个输入的容器;`-o` 缺省为当前目录下与树同名的文件。
 不进行任何构建。
 
 ## 5. 容器
@@ -267,7 +269,7 @@ liblzma)压缩,不调用 `tar` 等外部程序;产物扩展名为 `.tar.gz`(缺�
    使用它的结果;缓存目录在 POSIX 上只对当前用户可写,`mcpp/`、`single-file/` 或摘要目录为符号链接或属于其他
    用户时启动器拒绝运行。
 5. 以原有的参数执行树中的程序(`bin/<name>`;self-contained 的 Linux 树为根部的包装脚本;Windows 树为根部的
-   `<name>.exe`),退出状态即程序的退出状态。
+   `<name>.exe`),退出状态即程序的退出状态;启动器自身失败(载荷不可读、校验不符、无法执行)时写出原因并以 127 退出。
 
 openkal 目标的单文件:载体携带映像本身(映像不引用其他映像时),否则携带全部映像的一个 stored zip,各映像数据按
 64 KiB 对齐,`mcpp_carried_name` 为入口映像(SPEC-013 §11);`--systems` 的每个系统(缺省为本机系统)各写一个文件
