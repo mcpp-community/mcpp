@@ -587,6 +587,7 @@ TEST(PackMerge, TheOutputIsNewOrAPackage) {
 TEST(PackDistribution, XpkgDescriptorWritesMetadataAsStrings) {
     d::Asset a;
     a.file = "evil-1.0-openkal.zip";
+    a.top = "evil-1.0-openkal";
     a.sha256 = std::string(64, 'a');
     a.pkg.name = "ev\"il\nos.exit()";
     a.pkg.version = "1.0";
@@ -635,7 +636,9 @@ TEST(PackDistribution, XpkgDescriptorNamesTheCommandAndTheArchiveTop) {
     EXPECT_NE(u->find("name = \"mcppls\""), std::string::npos) << *u;
     EXPECT_NE(u->find("xvm.add(\"mcppls\", opts)"), std::string::npos) << *u;
     EXPECT_NE(u->find("opts.alias = \"mcppls.cmd\""), std::string::npos) << *u;
-    EXPECT_NE(u->find("os.dirs(\"mcppls-\" .. pkginfo.version() .. \"-openkal\")"), std::string::npos) << *u;
+    EXPECT_NE(u->find("for _, ext in ipairs({ \".zip\" }) do"), std::string::npos) << *u;
+    EXPECT_NE(u->find("local top = pkginfo.install_file()"), std::string::npos) << *u;
+    EXPECT_NE(u->find("os.mv(top, pkginfo.install_dir())"), std::string::npos) << *u;
 
     std::vector<d::Asset> per;
     for (auto [triple, top] : { std::pair{ "x86_64-linux-musl", "okrun-0.1.3-linux-x86_64" },
@@ -653,8 +656,42 @@ TEST(PackDistribution, XpkgDescriptorNamesTheCommandAndTheArchiveTop) {
     auto r = d::xpkg_descriptor(per, "https://example.org/0.1.3");
     ASSERT_TRUE(r) << r.error();
     EXPECT_NE(r->find("name = \"okrun\""), std::string::npos) << *r;
-    EXPECT_NE(r->find("os.dirs(\"okrun-\" .. pkginfo.version() .. \"-*\")"), std::string::npos) << *r;
+    EXPECT_NE(r->find("for _, ext in ipairs({ \".zip\" }) do"), std::string::npos) << *r;
     EXPECT_NE(r->find("path.join(pkginfo.install_dir(), \"bin\")"), std::string::npos) << *r;
+}
+
+// The install takes the package's directory from the downloaded archive's
+// name, which is what `mcpp pack` names it after; an archive renamed since
+// is refused, and so is a file xim does not unpack.
+TEST(PackDistribution, XpkgDescriptorInstallsTheDirectoryNamedAfterTheArchive) {
+    d::Asset a;
+    a.file = "tool-1.0-linux-x86_64.tar.gz";
+    a.top = "tool-1.0-linux-x86_64";
+    a.sha256 = std::string(64, 'd');
+    a.pkg.name = "tool";
+    a.pkg.version = "1.0";
+    a.pkg.legs = { "x86_64-linux-gnu" };
+    a.pkg.program = "bin/tool";
+    d::Asset w = a;
+    w.file = "tool-1.0-windows-x86_64.zip";
+    w.top = "tool-1.0-windows-x86_64";
+    w.pkg.legs = { "x86_64-windows-gnu" };
+    w.pkg.program = "tool.exe";
+    auto r = d::xpkg_descriptor({ a, w }, "https://example.org/1.0");
+    ASSERT_TRUE(r) << r.error();
+    EXPECT_NE(r->find("for _, ext in ipairs({ \".tar.gz\", \".zip\" }) do"), std::string::npos) << *r;
+
+    d::Asset renamed = a;
+    renamed.file = "tool.tar.gz";
+    auto refused = d::xpkg_descriptor({ renamed }, "https://example.org/1.0");
+    ASSERT_FALSE(refused);
+    EXPECT_NE(refused.error().find("named after the archive"), std::string::npos) << refused.error();
+
+    d::Asset okb = a;
+    okb.file = "tool-1.0-linux-x86_64.okb";
+    auto notArchive = d::xpkg_descriptor({ okb }, "https://example.org/1.0");
+    ASSERT_FALSE(notArchive);
+    EXPECT_NE(notArchive.error().find("not an archive xim unpacks"), std::string::npos) << notArchive.error();
 }
 
 // Packages of two systems that place their program apart -- a Windows one at
