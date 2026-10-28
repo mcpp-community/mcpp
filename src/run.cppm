@@ -50,6 +50,12 @@ void set_interrupt_files(const std::vector<std::pair<std::filesystem::path, std:
 bool ending();
 void clear_interrupt_files();
 
+// The end of main: a request that arrived while the command ran ends mcpp as
+// the request asks (130, 143 to a shell), once the watcher has finished --
+// not with the command's own status, which is often the failure of the
+// programs the watcher ended. Returns when there was no request.
+void end_if_requested();
+
 // A cleanup the watcher runs before mcpp ends at a request (a terminal's mode
 // restored). Returns its handle for `remove_cleanup`.
 int add_cleanup(std::function<void()> cleanup);

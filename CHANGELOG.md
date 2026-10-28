@@ -8,6 +8,12 @@
 
 ### Fixed
 
+- **A build ended by SIGTERM exits 143 however the race falls.** The watcher
+  that takes a request to end over ends the programs mcpp runs, writes the
+  cancelled record, runs the cleanups and then ends mcpp as asked; the main
+  thread, woken by its compiler's end, could return from `main` first with
+  the build's own failure (exit 1, seen once on CI in e2e 936 H). The end of
+  `main` now ends mcpp as the request asks, after the watcher has finished.
 - **`mcpp emit xpkg --package` names each system's program directory.** The
   packages of one program for several systems may place it apart: a Windows
   package holds the program at its root, a POSIX one under `bin/` beside the

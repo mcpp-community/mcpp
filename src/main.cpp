@@ -66,6 +66,10 @@ int main(int argc, char* argv[]) {
     // status line.
     mcpp::ui::close_region();
     if (mcpp::ui::output_closed()) mcpp::run::end_for_closed_output();
+    // A request to end that the command ran into ends mcpp as it asks; the
+    // watcher may still be ending it, and the command's status is not the one
+    // a shell is owed.
+    mcpp::run::end_if_requested();
     // With statically linked libc++ (the macOS release linkage since
     // 0.0.50), static destruction can SIGABRT on exit — same issue xlings
     // guards against. A CLI tool needs no destructor-based cleanup; skip
