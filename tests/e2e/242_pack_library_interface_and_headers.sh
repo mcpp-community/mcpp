@@ -67,7 +67,7 @@ cd mathkit
 
 # The container as stated, compressed by mcpp itself; a single file is a
 # program's, not a library's.
-"$MCPP" pack mathkit --compress zstd > pack-zst.log 2>&1 || { cat pack-zst.log; echo "pack --compress zstd failed"; exit 1; }
+"$MCPP" pack mathkit --pkg-format tar --compress zstd > pack-zst.log 2>&1 || { cat pack-zst.log; echo "pack --compress zstd failed"; exit 1; }
 zst="$(find target/dist -maxdepth 1 -type f -name 'mathkit-0.1.0-*.tar.zst' | head -1)"
 [[ -n "$zst" ]] || { cat pack-zst.log; ls target/dist; echo "no .tar.zst for --compress zstd"; exit 1; }
 [[ "$(head -c 4 "$zst" | od -An -tx1 | tr -d ' \n')" == "28b52ffd" ]] || { echo "$zst is not a zstd frame"; exit 1; }

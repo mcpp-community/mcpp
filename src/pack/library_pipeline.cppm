@@ -549,6 +549,20 @@ export int build_and_pack_library(const std::string& targetName,
         ? std::format("{}-{}-{}", plan.packageName, plan.packageVersion, plan.legs[0].abiTag)
         : std::format("{}-{}", plan.packageName, plan.packageVersion);
     plan.zip         = zip;
+    // A zip deflates or stores, as a program's does (SPEC-014 §5.1): a zstd or
+    // xz the command stated is refused, the project's default left aside.
+    if (zip && (plan.compression.algorithm == mcpp::pack::compress::Algorithm::Zstd
+                || plan.compression.algorithm == mcpp::pack::compress::Algorithm::Xz)) {
+        if (opts.compressionFromFlag) {
+            mcpp::ui::error(std::format(
+                "'{}' is packed as a zip, whose members are deflated or stored; --compress {} is a "
+                "tar's.\n  use: --pkg-format tar --compress {}, or --compress gzip | none", targetName,
+                mcpp::pack::compress::name(plan.compression.algorithm),
+                mcpp::pack::compress::name(plan.compression.algorithm)));
+            return 2;
+        }
+        plan.compression = {};
+    }
     plan.stagingRoot = plan.projectRoot / "target" / "dist" / dirName;
     plan.archivePath = plan.projectRoot / "target" / "dist"
                      / (dirName + (zip ? std::string(".zip")
