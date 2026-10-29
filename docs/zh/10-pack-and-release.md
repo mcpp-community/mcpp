@@ -727,8 +727,8 @@ Cygwin 的 shell 交给 `bin/<name>.exe`，以该目录中的映像与自身的�
  Not covered macos-x86_64 (no runner row: this mcpp builds no program for x86_64-macos)
 ```
 
-在任何地方都不能运行的树（不携带运行器，平台也未写出运行器存在的组合）被拒绝；平台未声明 `runner.hosts` 时改为
-一条提示。
+平台未声明 `runner.hosts` 时按每个系统 × 每个架构读取。在任何地方都不能运行的树（不携带运行器，平台的运行器组合
+也不含它的架构）被拒绝。
 
 多台机器打出的包以 `mcpp pack --merge a.zip --merge b.zip`（也可 `--merge a.zip,b.zip`）合并。输入是本命令写出的
 包目录或归档（`.zip`、`.tar`、`.tar.gz`、`.tgz`、`.tar.zst`、`.tar.xz`），不进行任何构建。腿、系统与 `runs_on`

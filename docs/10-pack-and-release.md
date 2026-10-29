@@ -844,8 +844,9 @@ has the runner (the legs' architectures × the platform's `runner.hosts`).
  Not covered macos-x86_64 (no runner row: this mcpp builds no program for x86_64-macos)
 ```
 
-A tree that runs nowhere — no runner carried and none the platform names — is
-refused; over a platform that states no `runner.hosts` this is a note instead.
+A platform that states no `runner.hosts` is read as every system of each
+architecture. A tree that runs nowhere — no runner carried and none of the
+platform's runner pairs of its architectures — is refused.
 
 Packages built on several machines are joined with
 `mcpp pack --merge a.zip --merge b.zip` (also `--merge a.zip,b.zip`). The inputs

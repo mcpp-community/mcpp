@@ -1684,21 +1684,15 @@ std::expected<void, Error> finalize_tree(const Plan& plan) {
     }
     // A TREE THAT RUNS NOWHERE IS NOT A PACKAGE (design 2026-10-29 §4.4): it
     // carries no runner a system can start, and the platform names no
-    // system its runner exists for. A platform that states no
-    // `runner.hosts` says nothing either way, which is said, not refused.
+    // system of its legs' architectures its runner exists for.
     if (plan.opts.tree && pkg.runsOnSelf.empty() && pkg.runsOnWith.empty()) {
         auto const& runner = plan.platform.fields.runner;
-        if (runner.hostsSet || plan.opts.mode == Mode::BundleAll)
-            return std::unexpected(Error{std::format(
-                "{} runs on no system: it carries no runner built here{}, and {} names no "
-                "system its runner `{}` exists for (runner.hosts).\n  use: --mode self-contained "
-                "--systems <a system this mcpp builds for>",
-                plan.binaryName, plan.opts.mode == Mode::BundleAll ? "" : " (--mode vendored)",
-                plan.platform.display(), runner.cmd.empty() ? std::string() : runner.cmd.front())});
-        mcpp::ui::note(std::format(
-            "{} states no runner.hosts, so the package names no system it runs on "
-            "(mcpp-package.json runs_on is empty); an index entry cannot be written for it",
-            plan.platform.display()));
+        return std::unexpected(Error{std::format(
+            "{} runs on no system: it carries no runner built here{}, and {} names no system of "
+            "its architectures its runner `{}` exists for (runner.hosts).\n  use: --mode "
+            "self-contained --systems <a system this mcpp builds for>",
+            plan.binaryName, plan.opts.mode == Mode::BundleAll ? "" : " (--mode vendored)",
+            plan.platform.display(), runner.cmd.empty() ? std::string() : runner.cmd.front())});
     }
     // What `[pack] include` named is the package's resource, whatever its name.
     for (auto const& rel : *included) stated.role[rel] = "resource";

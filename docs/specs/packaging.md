@@ -115,7 +115,7 @@ openkal 目标上 `static` 为一个 `.oke`、无 `.okso`,`shared` 为 `.oke` �
 | 目标集合展开为空,或候选选到不同平台 | 拒绝(SPEC-015 §1) |
 | `--pkg-format` 列表含 `dir` 或 `single-file`;列表与命名一个文件的 `-o`;`mcpp run --pkg-format` 的列表 | 拒绝(§5.4) |
 | `self-contained` 的树而格式只有 `okb` | 拒绝:okb v1 只含映像,运行器会被丢弃;出路 `--pkg-format tar,okb` |
-| 树的 `runs_on` 为空(`self` 与 `with` 都空,§4.7) | 拒绝;平台未声明 `runner.hosts` 而模式不是 `self-contained` 时写出提示,不拒绝 |
+| 树的 `runs_on` 为空(`self` 与 `with` 都空,§4.7) | 拒绝 |
 | `--merge` 的输入缺少 `mcpp-package.json`,或名字、版本、平台、链接、模式不同 | 拒绝,写出不一致的字段 |
 | `--merge` 的两个输入在同一路径上有摘要不同的文件 | 拒绝,写出该路径、两个摘要与两个输入 |
 | 库目标(`lib`、`shared`)与提供者格式 | 拒绝:库包没有单一暂存树 |
@@ -291,7 +291,8 @@ clang 在 `__FILE__` 中保留它拼接包含路径时用的 `\`,其映像不同
 | 单文件 | 每个文件各自的 `<os>-<arch>` | 空 |
 | WebAssembly、Android、iOS、裸机 | 空 | 空 |
 
-`runner.host = "any"` 时 `hosts` 列出运行器程序存在的组合,覆盖与腿的架构无关。树中没有 Windows 启动器时 `runs_on`
+`runner.host = "any"` 时 `hosts` 列出运行器程序存在的组合,覆盖与腿的架构无关;平台未声明 `hosts` 时按每个系统 ×
+腿的每个架构读取(未知不等于无处)。树中没有 Windows 启动器时 `runs_on`
 不含 Windows 的组合。`self` 与 `with` 都为空的树被拒绝(§1.5)。`Packed` 之后写出 `Runs on <组合>; with <runner>:
 <组合>`;所请求而未覆盖的组合各写一行 `Not covered <组合> (<原因>)`(本 mcpp 不构建该行、没有 Windows 启动器、
 不在平台的 `runner.hosts` 中)。`mcpp emit xpkg`、`--merge`、`mcpp.pack` 的 `runsOn` 读这里,不再计算。
