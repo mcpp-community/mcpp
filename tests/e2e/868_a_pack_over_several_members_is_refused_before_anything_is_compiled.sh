@@ -12,7 +12,8 @@
 #   E. A selected member without the requested `--format` is refused by name.
 #      `plain` provides nothing; `cli` provides `zap`.
 #   F. A target name is refused with several members: it names a target of one
-#      package. `--target` given twice is refused too.
+#      package. (`--target` given twice is two legs of every member since
+#      2026.10.30.1, SPEC-014 §1.4, and is no longer refused.)
 #   G. `--output` with several members must be a directory, and a path that exists
 #      as a file is refused.
 #   H. A member with no program target is refused by name when `-p` names it, and
@@ -127,15 +128,11 @@ echo "ok: E, a member without the format is refused by name, before the build"
 set +e
 "$MCPP" pack --mode system -p cli -p plain cli > f1.log 2>&1
 rc1=$?
-"$MCPP" pack --mode system -p cli -p plain --target x86_64-linux-gnu --target aarch64-linux-gnu > f2.log 2>&1
-rc2=$?
 set -e
 [ "$rc1" -ne 0 ] && grep -q "target name" f1.log && grep -q "'cli'" f1.log \
     || fail "F: a target name with several members was not refused, naming it" f1.log
-[ "$rc2" -ne 0 ] && grep -q -- "--target may be given once" f2.log \
-    || fail "F: two --target with several members were not refused" f2.log
-compiled_nothing . || fail "F: a refusal arrived after a compile" f1.log f2.log
-echo "ok: F, a target name and two --target are refused with several members"
+compiled_nothing . || fail "F: a refusal arrived after a compile" f1.log
+echo "ok: F, a target name is refused with several members"
 
 # ── G ────────────────────────────────────────────────────────────────────────
 : > a-file
