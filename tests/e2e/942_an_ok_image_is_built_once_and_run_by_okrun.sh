@@ -24,9 +24,11 @@
 #   D. `import std;` with the platform's C++ run-time switched off is refused
 #      before anything compiles, saying it was switched off and where.
 #   E. A second build is up to date.
-#   F. `mcpp pack` stages the image (M2), and `--mode self-contained` stages a
-#      program of this machine that carries it and runs with nothing installed
-#      (M3), its image given the program's arguments and environment.
+#   F. `mcpp pack` stages the image in the tree of its platform (`lib/<arch>/`,
+#      the launchers in `bin/`), and `--mode self-contained` adds the runner,
+#      so the launcher runs with nothing installed; `--pkg-format single-file`
+#      is a program of this machine that carries the image (M3). Each gives
+#      the image the arguments and the environment.
 #   G. A workspace's root package is built as any root is: the image builds
 #      and runs through okrun (the selected package is not the graph's first).
 set -e
@@ -156,16 +158,20 @@ grep -q "Compiling" again.log && fail "E: the second build compiled again" again
 echo "ok: a second build is up to date"
 
 # F
-"$MCPP" pack --target "$HOST_ARCH-openkal" --no-universal --pkg-format dir -o m2 > m2.log 2>&1 || fail "F: pack (M2)" m2.log
-[ -f target/dist/m2/bin/app.oke ] || fail "F: the M2 package has no bin/app.oke" m2.log
-"$MCPP" pack --target "$HOST_ARCH-openkal" --no-universal --mode self-contained --pkg-format dir -o m3 > m3.log 2>&1 \
-    || fail "F: pack --mode self-contained (M3)" m3.log
-m3=$(ls target/dist/m3/bin/app target/dist/m3/bin/app.exe 2>/dev/null | head -1)
-[ -n "$m3" ] || fail "F: the M3 package has no program" m3.log
-"$m3" one two > m3run.log 2>&1 || fail "F: the M3 program did not run" m3run.log
-grep -q "image: three arguments" m3run.log || fail "F: the M3 program's image" m3run.log
-grep -q "image: an environment" m3run.log || fail "F: the M3 program's image was given no environment" m3run.log
-echo "ok: pack stages the image (M2) and a program that carries it (M3)"
+"$MCPP" pack --target "$HOST_ARCH-openkal" --pkg-format dir -o m2 > m2.log 2>&1 || fail "F: pack" m2.log
+[ -f "target/dist/m2/lib/$HOST_ARCH/app.oke" ] || fail "F: the package has no lib/$HOST_ARCH/app.oke" m2.log
+[ -x target/dist/m2/bin/app ] || fail "F: the package has no launcher" m2.log
+"$MCPP" pack --target "$HOST_ARCH-openkal" --mode self-contained --pkg-format dir -o m3 > m3.log 2>&1 \
+    || fail "F: pack --mode self-contained" m3.log
+env -i HOME="$HOME" PATH=/usr/bin:/bin target/dist/m3/bin/app one two > m3run.log 2>&1 \
+    || fail "F: the self-contained launcher did not run" m3run.log
+grep -q "image: three arguments" m3run.log || fail "F: the self-contained package's image" m3run.log
+grep -q "image: an environment" m3run.log || fail "F: the self-contained package's image was given no environment" m3run.log
+"$MCPP" pack --target "$HOST_ARCH-openkal" --pkg-format single-file -o m3-file > sf.log 2>&1 \
+    || fail "F: pack --pkg-format single-file" sf.log
+target/dist/m3-file one two > sfrun.log 2>&1 || fail "F: the single file did not run" sfrun.log
+grep -q "image: three arguments" sfrun.log || fail "F: the single file's image" sfrun.log
+echo "ok: pack stages the image in its tree, carries the runner, and a single file carries the image (M3)"
 
 # C
 before=$(cksum < "$(ls target/"$HOST_ARCH"-openkal/*/bin/app.oke | head -1)" )

@@ -3,7 +3,7 @@
 # 957 -- packages written on several machines merge into one (SPEC-014 §4.6),
 # and a package describes its own distribution entry (§8).
 #
-# A self-contained universal package carries the runner of the systems it was
+# A self-contained package of `--target openkal` carries the runner of the systems it was
 # packed for. One packed on Linux and one packed on macOS hold the same images
 # and different runners; `--merge` makes the package for both. Here the second
 # is the first with its runner moved to another system's directory, which is
@@ -15,10 +15,12 @@
 #      its directory is named after the output, as `mcpp pack -o` names one.
 #   B. A file both packages hold with different digests is refused, naming the
 #      file and both digests; packages of different versions are refused.
-#   C. `mcpp emit xpkg --package` of a universal package is one asset for
-#      linux, macosx and windows, with the runner as a dependency when the
-#      package does not carry it; an archive named without its own --package
-#      (a shell glob's second file) is refused, not left undescribed.
+#   C. `mcpp emit xpkg --package` of a package of images is one asset for
+#      each system its `runs_on` names, with the runner as a dependency when
+#      the package does not carry it; a package whose `runs_on` is empty (a
+#      platform that states no `runner.hosts`) is refused, saying so; an
+#      archive named without its own --package (a shell glob's second file)
+#      is refused, not left undescribed.
 #   D. An archive merges as the directory it holds does.
 set -e
 
@@ -36,7 +38,7 @@ mkdir -p "$TMP/app/src"
 cd "$TMP/app"
 printf '[package]\nname    = "mrg"\nversion = "0.1.0"\n' > mcpp.toml
 printf 'import std;\nint main() { std::println("merged"); }\n' > src/main.cpp
-"$MCPP" pack --target "$T" --mode self-contained --pkg-format dir -o here > pack.log 2>&1 || fail "pack" pack.log
+"$MCPP" pack --target openkal --mode self-contained --pkg-format dir -o here > pack.log 2>&1 || fail "pack" pack.log
 
 # The same package as another system packs it: its runner in that system's
 # directory, and the metadata saying so.
@@ -122,19 +124,31 @@ grep -q "version" b2.log || fail "B: the refusal does not name the version" b2.l
 echo "ok: --merge refuses what is not one package"
 
 # C
-"$MCPP" pack --target "$T" --pkg-format zip -o mrg-0.1.0-openkal.zip > c.log 2>&1 || fail "C: pack" c.log
-"$MCPP" emit xpkg --package target/dist/mrg-0.1.0-openkal.zip --url https://example.org/v0.1.0 > xpkg.lua 2> c.err \
-    || fail "C: emit xpkg" c.err
-python3 - xpkg.lua <<'PY' || fail "C: the entry" xpkg.lua
-import hashlib, re, sys
-text = open(sys.argv[1]).read()
+"$MCPP" pack --target openkal --pkg-format zip -o mrg-0.1.0-openkal.zip > c.log 2>&1 || fail "C: pack" c.log
+rc=0
+"$MCPP" emit xpkg --package target/dist/mrg-0.1.0-openkal.zip --url https://example.org/v0.1.0 > xpkg.lua 2> c.err || rc=$?
+python3 - xpkg.lua "$rc" c.err <<'PY' || fail "C: the entry" xpkg.lua c.err
+import hashlib, json, re, sys, zipfile
+text, rc, err = open(sys.argv[1]).read(), int(sys.argv[2]), open(sys.argv[3]).read()
+z = zipfile.ZipFile("target/dist/mrg-0.1.0-openkal.zip")
+d = json.loads(z.read("mrg-0.1.0-openkal/mcpp-package.json"))
+pairs = d["runs_on"]["with"].get("okrun", [])
+if not pairs:
+    assert rc != 0 and "runs_on is empty" in err, (rc, err)
+    sys.exit(0)
+assert rc == 0, err
 sha = hashlib.sha256(open("target/dist/mrg-0.1.0-openkal.zip", "rb").read()).hexdigest()
-for system in ("linux", "macosx", "windows"):
-    block = re.search(system + r" = \{(.*?)\n        \},", text, re.S)
-    assert block, system
+for system, key in (("linux", "linux"), ("macos", "macosx"), ("windows", "windows")):
+    archs = sorted(p.split("-", 1)[1] for p in pairs if p.startswith(system + "-"))
+    block = re.search(key + r" = \{(.*?)\n        \},", text, re.S)
+    if not archs:
+        assert not block, (system, text)
+        continue
     b = block.group(1)
     assert "https://example.org/v0.1.0/mrg-0.1.0-openkal.zip" in b and sha in b, (system, b)
     assert 'deps = { "xim:okrun" }' in b, (system, b)
+    for a in archs:
+        assert f'["{a}"]' in b, (system, a, b)
 assert 'xvm.add("mrg"' in text
 assert 'local top = pkginfo.install_file()' in text and '{ ".zip" }' in text, text
 PY
@@ -143,6 +157,6 @@ if "$MCPP" emit xpkg --package target/dist/mrg-0.1.0-openkal.zip target/dist/mrg
     fail "C: an archive without its own --package was taken" c2.lua
 fi
 grep -q "each archive is its own --package" c2.err || fail "C: the refusal does not say how" c2.err
-echo "ok: a universal package is one asset for every system"
+echo "ok: a package of images is one asset for every system it runs on"
 
 echo "PASS: 957 packages merge and describe themselves"

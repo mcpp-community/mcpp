@@ -727,10 +727,12 @@ to stderr, including what the build programs and tools the pack starts print.
 
 | field | |
 |---|---|
-| `artifacts` | one record per produced artifact: `path` (absolute), `type` (`file` or `directory`), `format` (the container: the `--pkg-format` value; when none is given, `zip` for a Windows program and `tar` otherwise), `targets` (the canonical triple of each leg that went into it) and `sha256` (a file's digest; `null` for a directory; 2026.10.27.1+). A dispatched format reports the terminal outputs of the actions the request introduced; a several-`--target` Android pack reports one artifact whose `targets` lists every leg |
+| `artifacts` | one record per produced artifact: `path` (absolute), `type` (`file` or `directory`), `format` (the container: the `--pkg-format` value; when none is given, `zip` for a Windows program and `tar` otherwise), `targets` (the canonical triple of each leg that went into it) and `sha256` (a file's digest; `null` for a directory; 2026.10.27.1+). A dispatched format reports the terminal outputs of the actions the request introduced; a several-`--target` Android pack reports one artifact whose `targets` lists every leg; a pack of a package per leg (2026.10.30.1+) reports each package with its own leg |
 | `stage` | the tree the artifact was made from: `dir`, `manifest` (the stage manifest below) and `closure` (`walked` or `not-walked`); `null` for a library package, when no tree was staged, and for a pack of several members |
 | `linkage`, `mode`, `pkgFormat` *(2026.10.27.1+)* | the three choices of the pack ([10](10-pack-and-release.md)): `linkage` is `static`, `shared` or `declared`; `pkgFormat` is the `format` of the artifacts (`tar`, `zip`, `dir`, `single-file`, or a provided format) |
-| `legs`, `systems` *(2026.10.27.1+)* | the canonical triple of each leg (a universal package lists every target of its platform), and the `<os>-<arch>` of each runner a self-contained universal package carries, or of the carrier that is the program of a self-contained package of one ok image (2026.10.29.1+) |
+| `legs`, `systems` *(2026.10.27.1+)* | the canonical triple of each leg the command named (a target set expanded; 2026.10.30.1+), and the `<os>-<arch>` of each runner a self-contained tree of images carries |
+| `pkgFormats` *(2026.10.30.1+)* | every container written, in the order `--pkg-format` named them; `pkgFormat` is the first |
+| `runsOn` *(2026.10.30.1+)* | where the package runs, as its `mcpp-package.json` `runs_on` says: `{"self": ["linux-x86_64", …], "with": {"okrun": […]}}`; a single file's pairs are its files' |
 | `stages` *(2026.10.1.1+)* | present only for a pack of several members (`--workspace`, or `-p` repeated): one record per member in `[workspace] members` order, with `member` (the qualified package name) and the `dir`, `manifest` and `closure` of `stage` |
 
 For a pack of several members `artifacts` lists every member's artifacts, in the

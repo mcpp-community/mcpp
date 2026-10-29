@@ -439,8 +439,8 @@ machine of another architecture `mcpp run` and `mcpp test` refuse the image and
 name `run_under`, the key that states the execution host. With one named, the
 runner runs there, and its program is the platform's runner for the image's
 architecture: mcpp builds the platform's carrier with nothing carried, for this
-system and that architecture, which is the program a self-contained universal
-package carries under `libexec/okrun/<os>-<arch>/`. A user-mode emulator is an
+system and that architecture, which is the program a self-contained package of
+images carries under `libexec/okrun/<os>-<arch>/`. A user-mode emulator is an
 execution host; on an x86_64 Linux machine with `qemu-aarch64`:
 
 ```toml
@@ -464,9 +464,10 @@ $ mcpp run --target aarch64-openkal
 for one run, and `[target.aarch64-openkal] run_under` in `~/.mcpp/config.toml`
 for one machine. `mcpp self env --target aarch64-openkal` reports the runner's
 program and its architecture and the execution host's program, or why runs
-are refused on this machine. A self-contained package of one image
-(`--no-universal --mode self-contained`) is a program of this system and the
-image's architecture ([10](10-pack-and-release.md)).
+are refused on this machine. A single file of one image
+(`--pkg-format single-file`) is a program of this system and the image's
+architecture; a self-contained package of it is the image's tree with that
+runner ([10](10-pack-and-release.md)).
 
 ### ok Images And The Web
 

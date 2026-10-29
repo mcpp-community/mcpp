@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # requires: llvm python3 unix-shell
-# 955 -- a universal package (SPEC-014 §3, §4.2): the platform of the ok-image
-# targets states `universal = true`, so `mcpp pack` of either target packs both
-# into one package, named after the platform, with a launcher that picks this
-# machine's architecture and starts the platform's runner.
+# 955 -- the `openkal` target set is one tree of every architecture (SPEC-014
+# §3, §4.2; design 2026-10-29 rev 2 §4.2, §4.3): `mcpp pack --target openkal`
+# packs both ok-image targets into one package, named after the platform, with
+# a launcher that picks this machine's architecture and starts the platform's
+# runner.
 #
 # Criteria:
 #   A. `<name>-<version>-openkal/` holds `lib/x86_64/` and `lib/aarch64/` (each
@@ -14,7 +15,7 @@
 #   C. `--mode self-contained` adds the runner's program for this system and
 #      each architecture under `libexec/<runner>/<os>-<arch>/`, and the launcher
 #      runs with no runner on PATH.
-#   D. `--no-universal` packs the selected target alone.
+#   D. `--target <arch>-openkal` packs that target alone, in the same layout.
 #   E. (Linux) `--systems linux,macos,windows` carries the runner of each
 #      system this mcpp builds one for, made here over the platform's hosted
 #      arrangement: a Mach-O for macos-aarch64, a PE for windows-x86_64, and
@@ -46,7 +47,7 @@ int main(int argc, char** argv) {
 CPP
 
 # A
-"$MCPP" pack --target "$T" --pkg-format dir > a.log 2>&1 || fail "A: pack" a.log
+"$MCPP" pack --target openkal --pkg-format dir > a.log 2>&1 || fail "A: pack" a.log
 P=target/dist/uni-0.1.0-openkal
 for f in "lib/x86_64/uni.oke" "lib/aarch64/uni.oke" "bin/uni" "bin/uni.exe" "mcpp-package.json"; do
     [ -f "$P/$f" ] || fail "A: the package has no $f" a.log
@@ -77,7 +78,7 @@ grep -q "universal 3 args" b.log || fail "B: the image's output through the laun
 echo "ok: the launcher runs this machine's image through the runner"
 
 # C
-"$MCPP" pack --target "$T" --mode self-contained --pkg-format dir -o sc > c.log 2>&1 || fail "C: pack --mode self-contained" c.log
+"$MCPP" pack --target openkal --mode self-contained --pkg-format dir -o sc > c.log 2>&1 || fail "C: pack --mode self-contained" c.log
 # This machine's architecture's runner is always there; the other one is there
 # where this mcpp builds programs for it (not x86_64-macos, a planned row).
 [ -f "target/dist/sc/libexec/okrun/$OS-$HOST_ARCH/okrun" ] || fail "C: no runner for $OS-$HOST_ARCH" c.log
@@ -92,17 +93,18 @@ d = json.load(open("target/dist/sc/mcpp-package.json"))
 carried = sorted(s for s in os.listdir("target/dist/sc/libexec/okrun"))
 assert d["mode"] == "self-contained" and d["systems"] == carried and "$OS-$HOST_ARCH" in carried, d
 PY
-echo "ok: a self-contained universal package carries its runner and needs nothing installed"
+echo "ok: a self-contained tree carries its runner and needs nothing installed"
 
 # D
-"$MCPP" pack --target "$T" --no-universal --pkg-format dir -o one > d.log 2>&1 || fail "D: --no-universal" d.log
-[ -f target/dist/one/bin/uni.oke ] || fail "D: --no-universal did not pack the target alone" d.log
-[ -d target/dist/one/lib/$OTHER ] && fail "D: --no-universal packed the other architecture" d.log
-echo "ok: --no-universal packs the selected target alone"
+"$MCPP" pack --target "$T" --pkg-format dir -o one > d.log 2>&1 || fail "D: one target" d.log
+[ -f "target/dist/one/lib/$HOST_ARCH/uni.oke" ] || fail "D: the target's leg is not in lib/$HOST_ARCH/" d.log
+[ -f target/dist/one/bin/uni ] || fail "D: the one-leg package has no launcher" d.log
+[ -d "target/dist/one/lib/$OTHER" ] && fail "D: one target packed the other architecture" d.log
+echo "ok: one target is packed alone, in the same layout"
 
 # E
 if [ "$OS" = linux ]; then
-    "$MCPP" pack --target "$T" --mode self-contained --systems linux,macos,windows --pkg-format dir -o uni-0.1.0-all \
+    "$MCPP" pack --target openkal --mode self-contained --systems linux,macos,windows --pkg-format dir -o uni-0.1.0-all \
         > e.log 2>&1 || fail "E: --systems linux,macos,windows" e.log
     python3 - target/dist/uni-0.1.0-all <<'PY' || fail "E: the runners" e.log
 import os, sys
@@ -117,4 +119,4 @@ PY
     echo "ok: the runners of other systems are made here, over the hosted arrangement"
 fi
 
-echo "PASS: 955 a universal package holds every architecture"
+echo "PASS: 955 the openkal set is one tree of every architecture"

@@ -1,11 +1,11 @@
 // mcpp.pack.distribution — what a package is beyond its staged files
 // (SPEC-014 §4, §5): the containers, the package's metadata
-// (`mcpp-package.json`), the launchers of a universal package, the payload and
+// (`mcpp-package.json`), the launchers of a tree of images, the payload and
 // the launcher program of a single file, and `--merge`.
 //
 // THE ENGINE KNOWS NO PLATFORM HERE. A launcher is generated from the
-// platform's `runner` and the legs; a loader of a self-contained universal
-// package is the platform's carrier with nothing carried; a single file's
+// platform's `runner` and the legs; a loader of a self-contained tree is the
+// platform's carrier with nothing carried; a single file's
 // launcher is the engine's own program, written below as source and built for
 // the target at pack time like any program.
 
@@ -102,7 +102,7 @@ struct Package {
     std::vector<std::string>           legs;       // canonical triples
     std::vector<std::string>           systems;    // `<os>-<arch>` of the loaders under libexec/
     std::vector<std::string>           runner;     // empty for a native package
-    std::map<std::string, std::string> entry;      // arch -> path of the entry (universal)
+    std::map<std::string, std::string> entry;      // arch -> path of the entry (a tree of images)
     std::string                        program;    // the program's path (one native leg)
     // WHERE THE PACKAGE RUNS (design 2026-10-29 §4.4), computed once when it
     // is packed: `self` the `<os>-<arch>` pairs it runs on with what it
@@ -145,7 +145,7 @@ std::string to_json(const Package& p);
 std::expected<Package, std::string> read(const std::filesystem::path& root);
 
 // The `<os>-<arch>` directories of `root/libexec/<loader>/`: the systems whose
-// loaders a self-contained universal package carries, sorted.
+// loaders a self-contained tree carries, sorted.
 std::vector<std::string> loader_systems(const std::filesystem::path& root);
 
 // ─── a single file (SPEC-014 §5.2) ────────────────────────────────────────
@@ -189,7 +189,7 @@ struct Asset {
 };
 
 // The xim-pkgindex entry (spec 2) of `assets`, fetched from `<urlPrefix>/<file
-// name>`: a universal package is one asset every system installs, and its
+// name>`: a tree of images is one asset every system it runs on installs, and its
 // runner is a dependency unless the package carries its loaders; packages of
 // one system and architecture each are that system's entry, the architecture
 // in the file name a `${arch}` of one URL. The install moves the archive's
@@ -1068,8 +1068,12 @@ std::string exe_launcher_main(const Launch& l) {
     auto cxx = [](std::string_view w) {   // a C++ raw string of `w`
         return std::format("R\"mcpp({})mcpp\"", w);
     };
-    std::string entries, words;
-    for (auto const& [arch, file] : l.entry) entries += std::format("    {{ {}, {} }},\n", cxx(arch), cxx(file));
+    // ONE PROGRAM FOR EVERY SET OF LEGS: the entry is the image of one name
+    // under each `lib/<arch>/` (each leg's build of the one target), and the
+    // architectures are the directories the package holds -- so the program
+    // of a one-leg package is the program of the tree `--merge` makes of it.
+    std::string words;
+    const std::string entry = l.entry.empty() ? std::string() : l.entry.begin()->second;
     for (auto const& w : l.runner) words += std::format("    {},\n", cxx(w));
     return std::format(R"MCPP(// The Windows launcher of {0} (design 2026-10-29 §4.3), written by mcpp pack.
 import std;
@@ -1080,8 +1084,7 @@ namespace fs = std::filesystem;
 
 constexpr std::string_view kName = {1};
 constexpr std::string_view kLoader = {2};
-constexpr std::pair<std::string_view, std::string_view> kEntries[] = {{
-{3}}};
+constexpr std::string_view kEntry = {3};
 constexpr std::string_view kRunner[] = {{
 {4}    std::string_view{{}},
 }};
@@ -1096,16 +1099,16 @@ int main(int argc, char** argv) {{
     for (auto& c : machine) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     const std::string arch = machine == "AMD64" || machine == "X86_64" ? "x86_64"
                            : machine == "ARM64" || machine == "AARCH64" ? "aarch64" : machine;
-    std::string_view entry;
-    for (auto const& [a, file] : kEntries)
-        if (a == arch) entry = file;
-    if (entry.empty()) {{
+    std::error_code dec;
+    if (!fs::is_directory(top / "lib" / arch, dec)) {{
         std::string all;
-        for (auto const& [a, file] : kEntries) all += (all.empty() ? "" : ", ") + std::string(a);
-        std::println(std::cerr, "{{}}: this machine is {{}}; the package holds {{}}", kName, arch, all);
+        for (auto const& d : fs::directory_iterator(top / "lib", dec))
+            if (d.is_directory(dec)) all += (all.empty() ? "" : ", ") + d.path().filename().string();
+        std::println(std::cerr, "{{}}: this machine is {{}}; the package holds {{}}", kName, arch,
+                     all.empty() ? std::string("no architecture") : all);
         return 126;
     }}
-    const fs::path image = top / "lib" / arch / std::string(entry);
+    const fs::path image = top / "lib" / arch / std::string(kEntry);
     if (!fs::exists(image)) {{
         std::println(std::cerr, "{{}}: the package has no {{}}", kName, image.string());
         return 126;
@@ -1142,7 +1145,7 @@ int main(int argc, char** argv) {{
     std::println(std::cerr, "{{}}: cannot start {{}}", kName, program);
     return 127;
 }}
-)MCPP", l.name, cxx(l.name), cxx(l.loader), entries, words);
+)MCPP", l.name, cxx(l.name), cxx(l.loader), cxx(entry), words);
 }
 
 // ─── mcpp-package.json ────────────────────────────────────────────────────
@@ -1184,6 +1187,21 @@ std::optional<std::string> host_pair_of(std::string_view triple) {
     if (!t || t->env == "android") return std::nullopt;
     if (t->os != "linux" && t->os != "macos" && t->os != "windows") return std::nullopt;
     return std::format("{}-{}", t->os, t->arch);
+}
+
+// The pairs a package written before `runs_on` existed is taken to run on:
+// every system, every architecture of its images.
+std::vector<std::string> every_pair(const Package& p) {
+    std::vector<std::string> every;
+    for (auto system : { "linux", "macos", "windows" })
+        for (auto const& [arch, _] : p.entry) every.push_back(std::format("{}-{}", system, arch));
+    return every;
+}
+
+// `from`'s pairs added to `to`, each once.
+void add_pairs(std::vector<std::string>& to, std::vector<std::string> const& from) {
+    for (auto const& p : from)
+        if (std::ranges::find(to, p) == to.end()) to.push_back(p);
 }
 
 void compute_runs_on(Package& p, const std::vector<std::string>& runnerHosts, bool runnerAnyArch) {
@@ -1583,9 +1601,9 @@ std::string distributed_instead(std::string_view triple) {
     if (t && t->is_wasm())
         return "a page for the web, mcpp pack --pkg-format dist-web (mcpp-plugins)";
     if (t && t->os == "openkal")
-        return "the platform's universal package (mcpp pack without --no-universal), which every "
-               "system installs, or a package that carries the image in its carrier (--mode "
-               "self-contained)";
+        return "the tree of the platform's legs (mcpp pack --target openkal), which every system "
+               "its runner reaches installs, or a single file that carries the image in its carrier "
+               "(--pkg-format single-file)";
     return "the package of a Linux, macOS or Windows target";
 }
 
@@ -1630,13 +1648,13 @@ std::expected<std::string, std::string> xpkg_descriptor(const std::vector<Asset>
                                                "package", assets.front().file.filename().string(),
                                                first.name, first.version, a.file.filename().string(),
                                                a.pkg.name, a.pkg.version));
-    const bool universal = !first.runner.empty();
+    const bool tree = !first.runner.empty();
     std::vector<std::string> archs;
     // system -> block text
     std::map<std::string, std::string> blocks;
-    if (universal) {
+    if (tree) {
         if (assets.size() != 1)
-            return std::unexpected(std::string("a universal package is one asset; merge its legs first "
+            return std::unexpected(std::string("a tree of images is one asset; merge its legs first "
                                                "(mcpp pack --merge)"));
         auto const& a = assets.front();
         // WHERE IT RUNS IS WHAT IT SAYS (design 2026-10-29 §4.4, #860): a
@@ -1646,12 +1664,7 @@ std::expected<std::string, std::string> xpkg_descriptor(const std::vector<Asset>
         // first through `systems`, and the second not at all: every system,
         // every architecture of its images.
         Package pkg = first;
-        if (!pkg.runsOnSet) {
-            std::vector<std::string> every;
-            for (auto system : { "linux", "macos", "windows" })
-                for (auto const& [arch, _] : pkg.entry) every.push_back(std::format("{}-{}", system, arch));
-            compute_runs_on(pkg, every, false);
-        }
+        if (!pkg.runsOnSet) compute_runs_on(pkg, every_pair(pkg), false);
         const bool carried = pkg.mode == "self-contained";
         std::vector<std::string> pairs = carried ? pkg.runsOnSelf : std::vector<std::string>{};
         if (!carried)
@@ -1729,11 +1742,11 @@ std::expected<std::string, std::string> xpkg_descriptor(const std::vector<Asset>
     for (auto const& [system, text] : blocks) xpm += std::format("        {} = {{\n{}        }},\n", system, text);
 
     // The command a person runs, and the entry's name: the launcher of a
-    // universal package (named after its images, `bin/<name>`), else the
+    // tree of images (named after its images, `bin/<name>`), else the
     // program -- not the package, which may be named otherwise
     // (`mcpp-language-server` runs as `mcppls`).
     std::string command;
-    if (universal && !first.entry.empty())
+    if (tree && !first.entry.empty())
         command = std::filesystem::path(first.entry.begin()->second).stem().string();
     else if (!first.program.empty())
         command = std::filesystem::path(first.program).stem().string();
@@ -1743,7 +1756,7 @@ std::expected<std::string, std::string> xpkg_descriptor(const std::vector<Asset>
     // under bin/ beside the root's convenience script); the entry then names
     // each system's directory.
     std::string bindir = "\"bin\"", alias, bindirs;
-    if (universal) {
+    if (tree) {
         alias = std::format("if os.host() == \"windows\" then opts.alias = \"{}.exe\" end\n    ",
                             lua_text(command));
     } else {
@@ -1823,7 +1836,7 @@ std::expected<std::string, std::string> xpkg_descriptor(const std::vector<Asset>
         "    return true\n"
         "end\n",
         lua_text(command), lua_text(first.version),
-        universal ? std::format(", one package for every system ({})", lua_text(first.platform)) : std::string(),
+        tree ? std::format(", one package for every system ({})", lua_text(first.platform)) : std::string(),
         lua_list(archs), xpm, exts, bindir, alias, lua_text(first.name), bindirs);
 }
 
@@ -1893,9 +1906,19 @@ std::expected<fs::path, std::string> merge(const MergeRequest& req) {
             if (r) return std::unexpected(*r);
     }
     // The merged package's directory: named after the output, as `mcpp pack
-    // -o` names it, else the first input's.
-    const fs::path wrapper = req.output.empty() ? trees.front().first.filename()
-                                                : fs::path(archive_directory(req.output));
+    // -o` names it; else the first input's, where a tree of a platform's legs
+    // takes the platform's name in place of the first leg's triple (design
+    // 2026-10-29 §4.2: `hello-1.0-x86_64-openkal` -> `hello-1.0-openkal`).
+    fs::path wrapper = req.output.empty() ? trees.front().first.filename()
+                                          : fs::path(archive_directory(req.output));
+    if (req.output.empty() && !first.runner.empty() && !first.platform.empty() && !first.legs.empty()) {
+        std::string platform = first.platform.substr(0, first.platform.find('@'));
+        platform = platform.substr(platform.find('.') + 1);
+        if (platform.ends_with("-platform")) platform.resize(platform.size() - 9);
+        std::string name = wrapper.string();
+        if (auto at = name.find(first.legs.front()); at != std::string::npos && !platform.empty())
+            wrapper = name.replace(at, first.legs.front().size(), platform);
+    }
 
     // The container: as asked, else as the output's name says, else as the
     // first input was written.
@@ -1969,19 +1992,20 @@ std::expected<fs::path, std::string> merge(const MergeRequest& req) {
     merged.entry.clear();
     Stated stated;
     std::map<std::string, std::pair<std::string, std::string>> seen;   // path -> (digest, input)
+    std::string launcherName;
     for (std::size_t i = 0; i < trees.size(); ++i) {
-        auto const& [root, pkg] = trees[i];
+        auto const& root = trees[i].first;
+        Package pkg = trees[i].second;
+        // A package written before `runs_on` says where it runs through
+        // `systems` and its images: every system of their architectures.
+        if (!pkg.runsOnSet) compute_runs_on(pkg, every_pair(pkg), false);
         for (auto const& l : pkg.legs)
             if (std::ranges::find(merged.legs, l) == merged.legs.end()) merged.legs.push_back(l);
         for (auto const& s : pkg.systems)
             if (std::ranges::find(merged.systems, s) == merged.systems.end()) merged.systems.push_back(s);
         // Where the merged package runs is where any of its inputs ran.
-        for (auto const& s : pkg.runsOnSelf)
-            if (std::ranges::find(merged.runsOnSelf, s) == merged.runsOnSelf.end()) merged.runsOnSelf.push_back(s);
-        for (auto const& [r, pairs] : pkg.runsOnWith)
-            for (auto const& h : pairs)
-                if (std::ranges::find(merged.runsOnWith[r], h) == merged.runsOnWith[r].end())
-                    merged.runsOnWith[r].push_back(h);
+        add_pairs(merged.runsOnSelf, pkg.runsOnSelf);
+        for (auto const& [r, pairs] : pkg.runsOnWith) add_pairs(merged.runsOnWith[r], pairs);
         merged.runsOnSet = merged.runsOnSet || pkg.runsOnSet;
         for (auto const& [arch, e] : pkg.entry) merged.entry[arch] = e;
         // Each file as it is, not as its package says: a file changed after the
@@ -1989,6 +2013,15 @@ std::expected<fs::path, std::string> merge(const MergeRequest& req) {
         // its bytes do.
         for (auto const& f : pkg.files) {
             const auto digest = sha256_file(root / fs::path(f.path));
+            // THE LAUNCHERS ARE DERIVED (design 2026-10-29 §4.3): written
+            // again below from the merged package, so two inputs' launchers
+            // never disagree.
+            if (f.role == "launcher" && !f.path.ends_with(".exe") && f.path.starts_with("bin/")) {
+                launcherName = f.path.substr(4);
+                stated.role[f.path] = f.role;
+                continue;
+            }
+            if (f.role == "launcher" && seen.contains(f.path)) continue;
             if (digest != f.sha256)
                 return std::unexpected(std::format(
                     "--merge: '{}' in {} has sha256 {}, and its {} states {}", f.path,
@@ -2016,6 +2049,25 @@ std::expected<fs::path, std::string> merge(const MergeRequest& req) {
     for (auto& [r, pairs] : merged.runsOnWith) {
         std::ranges::sort(pairs);
         std::erase_if(pairs, [&](std::string const& h) { return std::ranges::find(merged.runsOnSelf, h) != merged.runsOnSelf.end(); });
+    }
+    std::erase_if(merged.runsOnWith, [](auto const& kv) { return kv.second.empty(); });
+    merged.runsOnSet = true;
+    // The POSIX launcher of the merged legs; the Windows launcher is one
+    // program for every set of legs (`exe_launcher_main`).
+    if (!merged.runner.empty() && !launcherName.empty()) {
+        Launch launch;
+        launch.name = launcherName;
+        launch.runner = merged.runner;
+        // The package states each entry's path; the launcher names its file.
+        for (auto const& [arch, path] : merged.entry) launch.entry[arch] = fs::path(path).filename().string();
+        if (merged.mode == "self-contained") launch.loader = fs::path(merged.runner.front()).stem().string();
+        const auto script = out / "bin" / launcherName;
+        fs::create_directories(script.parent_path(), ec);
+        if (!spit(script, posix_launcher(launch)))
+            return std::unexpected(std::format("cannot write '{}'", script.string()));
+        fs::permissions(script, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec
+                                | fs::perms::others_read | fs::perms::others_exec,
+                        fs::perm_options::replace, ec);
     }
     if (auto d = describe(out, merged, stated); !d) return std::unexpected(d.error());
 

@@ -227,6 +227,30 @@ namespace {
 // of a reporting command everywhere else in mcpp (`self env --format json`),
 // and `mcpp pack`'s machine output is `--message-format`; pack's own
 // `--format` is accepted as the earlier spelling and says so.
+// The words of a comma-separated value (`tar,okb`, `linux,macos-aarch64`),
+// empty words dropped.
+std::vector<std::string> split_list(std::string_view v) {
+    std::vector<std::string> out;
+    std::size_t at = 0;
+    while (at <= v.size()) {
+        auto comma = v.find(',', at);
+        if (comma == std::string_view::npos) comma = v.size();
+        if (comma > at) out.emplace_back(v.substr(at, comma - at));
+        at = comma + 1;
+    }
+    return out;
+}
+
+// Where a pack of several packages runs: where any of them does.
+void unite_runs_on(mcpp::pack::PackOutcome& into, const mcpp::pack::PackOutcome& from) {
+    auto add = [](std::vector<std::string>& to, std::vector<std::string> const& pairs) {
+        for (auto const& p : pairs)
+            if (std::ranges::find(to, p) == to.end()) to.push_back(p);
+    };
+    add(into.runsOnSelf, from.runsOnSelf);
+    for (auto const& [runner, pairs] : from.runsOnWith) add(into.runsOnWith[runner], pairs);
+}
+
 std::optional<std::string> pack_format_option(const mcpplibs::cmdline::ParsedArgs& parsed) {
     auto pkg = parsed.value("pkg-format");
     auto old = parsed.value("format");
@@ -419,8 +443,9 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 });
         }
     } else {
-        for (auto const& a : outcome.artifacts)
-            artifacts.push_back(artifact_json(a, outcome.format, outcome.targets));
+        for (std::size_t i = 0; i < outcome.artifacts.size(); ++i)
+            artifacts.push_back(artifact_json(outcome.artifacts[i], outcome.format,
+                i < outcome.artifactTargets.size() ? outcome.artifactTargets[i] : outcome.targets));
         if (!outcome.stageDir.empty())
             stage = nlohmann::json{
                 {"dir", outcome.stageDir.lexically_normal().string()},
@@ -439,6 +464,13 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
         env.data["pkgFormat"] = outcome.format;
         env.data["legs"]      = outcome.targets;
         env.data["systems"]   = outcome.systems;
+        // Every container, the first being `pkgFormat`, and where the package
+        // runs (design 2026-10-29 §3.5, §4.4): added fields, none redefined.
+        env.data["pkgFormats"] = outcome.formats.empty() ? std::vector<std::string>{ outcome.format }
+                                                         : outcome.formats;
+        nlohmann::json with = nlohmann::json::object();
+        for (auto const& [runner, pairs] : outcome.runsOnWith) with[runner] = pairs;
+        env.data["runsOn"] = nlohmann::json{{"self", outcome.runsOnSelf}, {"with", std::move(with)}};
     }
     mcpp::wire::emit(env);
     return 0;
@@ -618,7 +650,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
         for (auto const& i : inputs) req.inputs.emplace_back(i);
         if (auto v = parsed.value("output")) req.output = *v;
         if (auto f = pack_format_option(parsed)) req.format = *f;
-        else if (!packCfg.format.empty()) req.format = packCfg.format;
+        else if (!packCfg.format.empty()) req.format = packCfg.format.front();
         // Only the flag's compression is the command's (a project's `[pack]
         // compress` describes that project's packs, not a merge of packages);
         // `merge` decides the container and refuses a compression that does
@@ -653,14 +685,46 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
         return 0;
     }
 
-    std::string formatText;
-    if (auto v = pack_format_option(parsed)) formatText = *v;
-    else formatText = packCfg.format;
-    if (auto v = pack_format_option(parsed); v && v->empty()) {
-        mcpp::ui::error("--pkg-format needs a value: tar | zip | dir | single-file | a format "
-                        "the resolved graph provides");
-        return 2;
+    // `--pkg-format` OR `[pack] format`: one format, or a list of the
+    // containers of one staged tree (design 2026-10-29 §4.6) -- `tar`, `zip`
+    // and a provider's format -- each written from the one build.
+    std::vector<std::string> formatList;
+    if (auto v = pack_format_option(parsed)) {
+        if (v->empty()) {
+            mcpp::ui::error("--pkg-format needs a value: tar | zip | dir | single-file | a format "
+                            "the resolved graph provides, or a list of containers (tar,okb)");
+            return 2;
+        }
+        formatList = split_list(*v);
+    } else {
+        for (auto const& f : packCfg.format)
+            for (auto& w : split_list(f)) formatList.push_back(std::move(w));
     }
+    {
+        std::vector<std::string> once;
+        for (auto& f : formatList)
+            if (std::ranges::find(once, f) == once.end()) once.push_back(std::move(f));
+        formatList = std::move(once);
+    }
+    if (formatList.size() > 1) {
+        for (auto const& f : formatList)
+            if (f == "dir" || f == "single-file") {
+                mcpp::ui::error(std::format(
+                    "--pkg-format lists the containers of one staged tree (tar, zip, a provider's "
+                    "format), and {} is not one: {}.\n  use: --pkg-format {} alone",
+                    f, f == "dir" ? "it is the staged tree itself" : "it carries the tree in a program",
+                    f));
+                return 2;
+            }
+        if (auto o = parsed.value("output"); o && !mcpp::pack::output_names_directory(*o)) {
+            mcpp::ui::error(std::format(
+                "--pkg-format names {} containers, and --output names one file.\n"
+                "  use: -o <directory>/ (each container under its own name)", formatList.size()));
+            return 2;
+        }
+        opts.formats = formatList;
+    }
+    std::string formatText = formatList.empty() ? std::string() : formatList.front();
     if (!formatText.empty()) {
         opts.formatStated = true;
         if (formatText == "tar")              opts.format = mcpp::pack::Format::Tar;
@@ -715,13 +779,21 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
         }
         using mcpp::pack::compress::Algorithm;
         const auto alg = opts.compression.algorithm;
-        const bool fits =
-            !(opts.format == mcpp::pack::Format::Dir || opts.format == mcpp::pack::Format::Dispatched)
-            && !(opts.format == mcpp::pack::Format::Zip && (alg == Algorithm::Zstd || alg == Algorithm::Xz))
+        // A list's compression is its engine containers' (design 2026-10-29
+        // §4.6): checked against those, the provider's formats aside.
+        const bool listsEngine = std::ranges::any_of(formatList, [](std::string const& f) {
+            return f == "tar" || f == "zip"; });
+        const bool listsZip = std::ranges::find(formatList, "zip") != formatList.end();
+        const bool writesNone = opts.formats.empty()
+            ? (opts.format == mcpp::pack::Format::Dir || opts.format == mcpp::pack::Format::Dispatched)
+            : !listsEngine;
+        const bool zipped = opts.format == mcpp::pack::Format::Zip || (!opts.formats.empty() && listsZip);
+        const bool fits = !writesNone
+            && !(zipped && (alg == Algorithm::Zstd || alg == Algorithm::Xz))
             && !(opts.format == mcpp::pack::Format::SingleFile && (alg == Algorithm::Gzip || alg == Algorithm::Xz));
         if (opts.compression.stated && !compressFlag && !fits) opts.compression = {};
         if (opts.compression.stated) {
-            if (opts.format == mcpp::pack::Format::Dir || opts.format == mcpp::pack::Format::Dispatched) {
+            if (writesNone) {
                 mcpp::ui::error(std::format(
                     "--compress {} compresses a container, and --pkg-format {} writes none.\n"
                     "  use: --pkg-format tar | zip | single-file",
@@ -729,7 +801,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
                     opts.format == mcpp::pack::Format::Dir ? std::string("dir") : opts.formatName));
                 return 2;
             }
-            if (opts.format == mcpp::pack::Format::Zip && (alg == Algorithm::Zstd || alg == Algorithm::Xz)) {
+            if (zipped && (alg == Algorithm::Zstd || alg == Algorithm::Xz)) {
                 mcpp::ui::error(std::format(
                     "a zip's members are deflated (gzip) or stored (none); --compress {} is a "
                     "tar's.\n  use: --pkg-format tar --compress {}, or --compress gzip | none",
@@ -746,25 +818,26 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
         } else if (opts.format == mcpp::pack::Format::SingleFile) {
             opts.compression.algorithm = Algorithm::Zstd;
         }
-        if (parsed.is_flag_set("no-universal")) opts.universal = false;
-        else opts.universal = packCfg.universal;
-        if (auto v = parsed.value("systems")) {
-            std::size_t at = 0;
-            while (at <= v->size()) {
-                auto comma = v->find(',', at);
-                if (comma == std::string::npos) comma = v->size();
-                auto word = v->substr(at, comma - at);
-                if (!word.empty()) {
-                    if (word != "linux" && word != "macos" && word != "windows") {
-                        mcpp::ui::error(std::format(
-                            "--systems names '{}'; the systems are linux, macos and windows", word));
-                        return 2;
-                    }
-                    if (std::ranges::find(opts.systems, word) == opts.systems.end())
-                        opts.systems.push_back(word);
-                }
-                at = comma + 1;
+        // `--systems` OR `[pack] systems` (design 2026-10-29 §4.1): `<os>`
+        // (every architecture of the legs), `<os>-<arch>`, or `all`.
+        std::vector<std::string> systemWords;
+        if (auto o = parsed.option("systems"))
+            for (auto const& v : o->get().values)
+                for (auto& w : split_list(v)) systemWords.push_back(std::move(w));
+        else {
+            systemWords = packCfg.systems;
+            opts.systemsFromManifest = !systemWords.empty();
+        }
+        for (auto const& word : systemWords) {
+            if (word != "all" && word != "linux" && word != "macos" && word != "windows"
+                && !mcpp::manifest::platform::is_host_pair(word)) {
+                mcpp::ui::error(std::format(
+                    "{} names '{}'; a system is linux, macos or windows, alone (every architecture "
+                    "of the legs), as <os>-<arch> (linux-aarch64), or all",
+                    opts.systemsFromManifest ? "[pack] systems" : "--systems", word));
+                return 2;
             }
+            if (std::ranges::find(opts.systems, word) == opts.systems.end()) opts.systems.push_back(word);
         }
         opts.sign = packCfg.sign;
         // A single file carries what it runs: the machine provides nothing.
@@ -790,15 +863,57 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
     if (auto v = parsed.value("debug-symbols")) opts.debugSymbols = *v;
     if (auto v = parsed.value("features")) opts.features = *v;
 
-    // `--target` is repeatable: one leg per triple, which is how a library
-    // package ships for several targets at once. The application path takes
-    // exactly one triple UNLESS the target is a `kind = "app"` whose form is
-    // a shared object on every requested row (#630 A9, below) — packing an
-    // executable for several triples would need several executables, and
-    // that refusal still stands for a `bin` target and for any row whose
-    // form is not a shared object.
+    // THE LEGS (design 2026-10-29 §4.2): every `--target`, else `[pack]
+    // targets`, a set (`openkal`, `linux-musl`) expanded to the target
+    // table's rows of the platform its members select; else the build's
+    // target. A platform is never a reason to pack more than was named.
+    std::vector<std::string> requests;
+    if (auto o = parsed.option("target")) requests = o->get().values;
+    if (requests.empty()) requests = packCfg.targets;
     std::vector<std::string> triples;
-    if (auto o = parsed.option("target")) triples = o->get().values;
+    bool fromSet = false;
+    if (!requests.empty()) {
+        mcpp::build::BuildOverrides selection;
+        selection.profile  = opts.profile;
+        selection.features = opts.features;
+        auto legs = mcpp::toolchain::target_set::resolve(requests,
+            [&](const mcpp::toolchain::triple::Triple& t) {
+                return mcpp::build::platform_selection_for(t, selection);
+            });
+        if (!legs) { mcpp::ui::error(legs.error()); return 2; }
+        for (auto const& l : *legs) {
+            triples.push_back(l.triple);
+            fromSet = fromSet || !l.fromSet.empty();
+        }
+    }
+    // MIGRATION (design 2026-10-29 §13.2): a pack's targets are its legs.
+    // COMPAT(no-universal-flag)
+    if (parsed.is_flag_set("no-universal")) {
+        mcpp::pm::compat::record_use("no-universal-flag", "the command line", "--no-universal", true);
+        if (fromSet) {
+            mcpp::ui::error("--no-universal packs one target, and the target set names several: they "
+                            "contradict.\n  use: --target <arch>-<os> for one leg, or leave "
+                            "--no-universal out");
+            return 2;
+        }
+        mcpp::ui::note(std::format(
+            "--no-universal is what a pack of one target does ({}); an image of a platform with a "
+            "runner is packed as its tree (bin/<name>, bin/<name>.exe, lib/<arch>/), and one program "
+            "carrying the image is --pkg-format single-file",
+            mcpp::pm::compat::deprecation_clause(*mcpp::pm::compat::find_deprecation("no-universal-flag"))));
+    }
+    // COMPAT(pack-universal)
+    if (packCfg.universal) {
+        mcpp::pm::compat::record_use("pack-universal", "mcpp.toml", "[pack] universal", true);
+        if (*packCfg.universal) {
+            mcpp::ui::error("[pack] universal = true no longer decides what a pack holds: a pack's "
+                            "targets are its legs.\n  use: [pack] targets = [\"openkal\"]");
+            return 2;
+        }
+        mcpp::ui::note(std::format(
+            "[pack] universal = false is what a pack of one target does; it is ignored ({})",
+            mcpp::pm::compat::deprecation_clause(*mcpp::pm::compat::find_deprecation("pack-universal"))));
+    }
     // `--linkage static` OF A LINUX PROGRAM IS THE MUSL ROW (SPEC-014 §1): a
     // program with no shared library at all, the C library's included, which
     // is what `--mode static` has always built. On another system the
@@ -814,21 +929,14 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
                     t.replace(at, 10, "-linux-musl");
         }
     }
-    if (!triples.empty()) opts.targetTriple = triples.back();
-    // A program with no shared library is packed whole whatever the mode
-    // asked: there is nothing beside it to vendor, and nothing for the machine
-    // to provide.
-    if (opts.linkage == mcpp::pack::Linkage::Static
-        && opts.targetTriple.find("-linux-musl") != std::string::npos) {
-        opts.mode = mcpp::pack::Mode::Static;
-        modeFromUser = true;
-    }
 
-    // ─── Several members ─────────────────────────────────────────────
+    // ─── Which target, and therefore which kind of package ───────────
     //
-    // Each is refused before anything is planned, let alone compiled: the
-    // command names one thing where several members are packed, and the
-    // members cannot share it.
+    // The positional is a target NAME. Its `kind` decides everything: a
+    // program becomes an application bundle (the four --mode depths), a
+    // library becomes a library package. Reading the answer out of the
+    // manifest is the whole reason there is no --lib flag. Several members
+    // pack programs.
     if (members.several) {
         if (const auto name = parsed.positional(0); !name.empty()) {
             mcpp::ui::error(std::format(
@@ -838,50 +946,21 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
                 name, name));
             return 2;
         }
-        if (triples.size() > 1) {
-            mcpp::ui::error(
-                "--target may be given once when several members are packed: each member's "
-                "program is built for one target,\n"
-                "  and a pack for several targets stages one member's legs into one tree.\n"
-                "  use: pack that member alone with -p <member>");
-            return 2;
-        }
-        opts.output.clear();
-        if (typedOutput) {
-            std::error_code ec;
-            if (std::filesystem::exists(*typedOutput, ec)
-                && !std::filesystem::is_directory(*typedOutput, ec)) {
-                mcpp::ui::error(std::format(
-                    "--output names a file, '{}', and several members are packed.\n"
-                    "  Each member's archive or tree is written below the directory --output "
-                    "names, under the name\n"
-                    "  it has by default. use: --output <directory>", typedOutput->string()));
-                return 2;
-            }
-            members.several->outputDir = *typedOutput;
-        }
-        auto out = mcpp::pack::build_and_pack_members(std::move(opts), modeFromUser,
-                                                      *members.several);
-        if (report) *report = out;
-        return out.rc;
     }
-
-    // ─── Which target, and therefore which kind of package ───────────
-    //
-    // The positional is a target NAME. Its `kind` decides everything: a
-    // program becomes an application bundle (the four --mode depths), a
-    // library becomes a library package. Reading the answer out of the
-    // manifest is the whole reason there is no --lib flag.
-    auto route = mcpp::pack::route_pack_target(parsed.positional(0));
-    if (!route) { mcpp::ui::error(route.error()); return 2; }
-    if (route->library) {
+    std::optional<mcpp::pack::PackRoute> route;
+    if (!members.several) {
+        auto r = mcpp::pack::route_pack_target(parsed.positional(0));
+        if (!r) { mcpp::ui::error(r.error()); return 2; }
+        route = std::move(*r);
+    }
+    if (route && route->library) {
         // A DISPATCHED FORMAT IS AN APPLICATION-BUNDLE OUTPUT, and a library
         // package has no bundle: `mcpp pack <lib>` produces an interface plus
         // prebuilt binaries for one or more triples, and there is no single
         // staged tree for a member to turn into an installer. Refused rather
         // than ignored, because ignoring it would report `Packed` and hand back
         // a library package while the user asked for an installer.
-        if (opts.format == mcpp::pack::Format::Dispatched) {
+        if (opts.format == mcpp::pack::Format::Dispatched || !opts.formats.empty()) {
             mcpp::ui::error(std::format(
                 "--pkg-format {} is a distributable produced from a program's staged "
                 "bundle, and '{}' is a library target.\n"
@@ -889,7 +968,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
                 "per triple; there is no\n"
                 "  single staged tree to hand a distribution format.\n"
                 "  use: --pkg-format tar | dir, or name a program target",
-                opts.formatName, route->targetName));
+                opts.formats.empty() ? opts.formatName : formatText, route->targetName));
             return 2;
         }
         if (modeFromUser) {
@@ -898,60 +977,114 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
                 "library target '{}' yet; ignoring it", route->targetName));
         }
         if (libraryRoute) *libraryRoute = true;
+        if (!triples.empty()) opts.targetTriple = triples.back();
         return mcpp::pack::build_and_pack_library(route->targetName, triples, opts,
                                                   libraryReport);
     }
-    // SEVERAL IMAGES' TARGETS ARE ONE UNIVERSAL PACKAGE'S LEGS (SPEC-014
-    // §1.4): the pack builds the first and the others as its legs; whether the
-    // platform packs them into one package is decided once it is known.
-    if (triples.size() > 1 && std::ranges::all_of(triples, [](std::string const& t) {
+
+    // THE PACKAGES (design 2026-10-29 §4.2): the images' legs are one tree
+    // (or one single file per leg and system), Android's rows one APK, and
+    // every other leg a package of its own, named by its triple.
+    std::vector<std::vector<std::string>> packs;
+    {
+        auto loaded = [](std::string const& t) {
             auto p = mcpp::toolchain::triple::parse(t);
             return p && p->loader_supplies_os();
-        })) {
-        opts.legTargets = triples;
-        opts.targetTriple = triples.front();
-        auto out = mcpp::pack::build_and_pack(std::move(opts), modeFromUser, route->targetName);
-        if (report) *report = out;
-        return out.rc;
+        };
+        std::vector<std::string> images;
+        for (auto const& t : triples) if (loaded(t)) images.push_back(t);
+        const bool apk = route && triples.size() > 1 && mcpp::pack::accepts_several_targets(*route, triples);
+        if (apk) packs.push_back(triples);
+        else
+            for (auto const& t : triples) {
+                if (!loaded(t)) packs.push_back({ t });
+                else if (t == images.front()) packs.push_back(images);
+            }
+        if (packs.empty()) packs.push_back({});
     }
-    if (triples.size() > 1) {
-        // #630 A9: THE ROUTE IS CHOSEN BY THE ARTIFACT'S FORM, NOT BY THE
-        // TARGET'S KIND. An `app` whose resolved link form is a shared
-        // object on EVERY requested row (Android) takes the several-triple
-        // path a library target already has: the other legs are built first
-        // (`build_extra_android_legs`, the same leg-loop shape
-        // `build_and_pack_library` uses) and staged as `lib/<abi>/` beside
-        // the primary leg's own `lib/<abi>/`, into ONE tree, behind ONE
-        // dispatch. A `bin` target, or any row whose form is an executable,
-        // keeps today's refusal — packing an executable for several triples
-        // would need several executables, and there is no "universal
-        // executable" mechanism the way there is a universal shared object
-        // (that is `lipo`, a different tool, and out of scope here).
-        if (!mcpp::pack::accepts_several_targets(*route, triples)) {
-            mcpp::ui::error(
-                "--target may be given once when packing a program: an application "
-                "bundle wraps one executable, and one executable has one target.");
-            return 2;
+    if (packs.size() > 1 && opts.format == mcpp::pack::Format::Dir) {
+        mcpp::ui::error(std::format(
+            "this pack makes {} packages (one per leg), and --pkg-format dir names one tree.\n"
+            "  use: --pkg-format tar | zip, or one --target", packs.size()));
+        return 2;
+    }
+    if (packs.size() > 1 && !opts.output.empty() && !mcpp::pack::output_names_directory(opts.output)) {
+        mcpp::ui::error(std::format(
+            "this pack makes {} packages (one per leg), and --output names one file.\n"
+            "  use: -o <directory>/ (each package under its own name)", packs.size()));
+        return 2;
+    }
+
+    mcpp::pack::PackOutcome all;
+    for (auto const& legs : packs) {
+        auto one = opts;
+        bool oneFromUser = modeFromUser;
+        if (!legs.empty()) one.targetTriple = legs.front();
+        // A program with no shared library is packed whole whatever the mode
+        // asked: there is nothing beside it to vendor, and nothing for the
+        // machine to provide.
+        if (one.linkage == mcpp::pack::Linkage::Static
+            && one.targetTriple.find("-linux-musl") != std::string::npos) {
+            one.mode = mcpp::pack::Mode::Static;
+            oneFromUser = true;
         }
-        auto extraLegs = mcpp::pack::build_extra_android_legs(
-            route->targetName,
-            std::span<const std::string>(triples).first(triples.size() - 1),
-            opts.profile, opts.features);
-        if (!extraLegs) return 1;   // build_extra_android_legs already printed why
-        // #622 A10: `build_and_pack` now reports the artifact(s) it packed, for
-        // `mcpp run --format` to take as its operand -- `mcpp pack` itself only
-        // ever needed the exit code.
-        auto out = mcpp::pack::build_and_pack(std::move(opts), modeFromUser,
-                                              route->targetName, std::move(*extraLegs));
-        if (report) *report = out;
-        return out.rc;
+        mcpp::pack::PackOutcome out;
+        if (members.several) {
+            // Each member's package is written below the directory --output names.
+            one.output.clear();
+            if (typedOutput) {
+                std::error_code ec;
+                if (std::filesystem::exists(*typedOutput, ec)
+                    && !std::filesystem::is_directory(*typedOutput, ec)) {
+                    mcpp::ui::error(std::format(
+                        "--output names a file, '{}', and several members are packed.\n"
+                        "  Each member's archive or tree is written below the directory --output "
+                        "names, under the name\n"
+                        "  it has by default. use: --output <directory>", typedOutput->string()));
+                    return 2;
+                }
+                members.several->outputDir = *typedOutput;
+            }
+            if (legs.size() > 1) one.legTargets = legs;
+            out = mcpp::pack::build_and_pack_members(std::move(one), oneFromUser, *members.several);
+        } else if (legs.size() > 1 && mcpp::pack::accepts_several_targets(*route, legs)) {
+            // #630 A9: THE ROUTE IS CHOSEN BY THE ARTIFACT'S FORM, NOT BY THE
+            // TARGET'S KIND. An `app` whose resolved link form is a shared
+            // object on EVERY requested row (Android): the other legs are built
+            // first and staged as `lib/<abi>/` beside the primary leg's own,
+            // into ONE tree, behind ONE dispatch.
+            one.targetTriple = legs.back();
+            auto extraLegs = mcpp::pack::build_extra_android_legs(
+                route->targetName, std::span<const std::string>(legs).first(legs.size() - 1),
+                one.profile, one.features);
+            if (!extraLegs) return 1;   // build_extra_android_legs already printed why
+            out = mcpp::pack::build_and_pack(std::move(one), oneFromUser, route->targetName,
+                                             std::move(*extraLegs));
+        } else {
+            if (legs.size() > 1) one.legTargets = legs;
+            out = mcpp::pack::build_and_pack(std::move(one), oneFromUser, route->targetName);
+        }
+        // Each package's artifacts with its own legs; the fields that name
+        // one tree are the first package's.
+        if (packs.size() > 1 && !members.several)
+            for (std::size_t i = 0; i < out.artifacts.size(); ++i) all.artifactTargets.push_back(out.targets);
+        if (&legs == &packs.front()) {
+            auto keep = std::move(all.artifactTargets);
+            all = out;
+            all.artifactTargets = std::move(keep);
+        } else {
+            all.rc = all.rc != 0 ? all.rc : out.rc;
+            all.ranBuildPrograms = all.ranBuildPrograms || out.ranBuildPrograms;
+            all.artifacts.insert(all.artifacts.end(), out.artifacts.begin(), out.artifacts.end());
+            all.targets.insert(all.targets.end(), out.targets.begin(), out.targets.end());
+            if (members.several)
+                all.members.insert(all.members.end(), out.members.begin(), out.members.end());
+            unite_runs_on(all, out);
+        }
+        if (out.rc != 0) break;
     }
-    // #622 A10: `build_and_pack` now reports the artifact(s) it packed, for
-    // `mcpp run --format` to take as its operand -- `mcpp pack` itself only
-    // ever needed the exit code.
-    auto out = mcpp::pack::build_and_pack(std::move(opts), modeFromUser, route->targetName);
-    if (report) *report = out;
-    return out.rc;
+    if (report) *report = all;
+    return all.rc;
 }
 
 } // namespace

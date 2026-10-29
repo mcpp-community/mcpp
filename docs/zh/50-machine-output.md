@@ -648,10 +648,12 @@ mcpp pack [target] [--pkg-format <f>] [--target <triple>...] --message-format js
 
 | 字段 | |
 |---|---|
-| `artifacts` | 每个产出的产物一条记录：`path`（绝对路径）、`type`（`file` 或 `directory`）、`format`（容器：`--pkg-format` 的取值；未给出时 Windows 程序为 `zip`，其余为 `tar`）、`targets`（进入该产物的每条腿的规范三元组），以及 `sha256`（文件的摘要；目录为 `null`；2026.10.27.1+）。被分派的格式报告本次请求引入的那些 action 的终端输出；一个多 `--target` 的 Android 打包报告一个产物，其 `targets` 列出每一条腿 |
+| `artifacts` | 每个产出的产物一条记录：`path`（绝对路径）、`type`（`file` 或 `directory`）、`format`（容器：`--pkg-format` 的取值；未给出时 Windows 程序为 `zip`，其余为 `tar`）、`targets`（进入该产物的每条腿的规范三元组），以及 `sha256`（文件的摘要；目录为 `null`；2026.10.27.1+）。被分派的格式报告本次请求引入的那些 action 的终端输出；一个多 `--target` 的 Android 打包报告一个产物，其 `targets` 列出每一条腿；每腿一个包的打包（2026.10.30.1+）报告每个包及其自己的腿 |
 | `stage` | 该产物所来自的那棵树：`dir`、`manifest`（即下文的暂存清单）与 `closure`（`walked` 或 `not-walked`）；库包、没有暂存任何树的情形，以及对多个成员的打包，此字段为 `null` |
 | `linkage`、`mode`、`pkgFormat` *（2026.10.27.1+）* | 本次打包的三个选择（[10](10-pack-and-release.md)）：`linkage` 为 `static`、`shared` 或 `declared`；`pkgFormat` 为产物的 `format`（`tar`、`zip`、`dir`、`single-file` 或提供者的格式） |
-| `legs`、`systems` *（2026.10.27.1+）* | 每条腿的规范三元组（通用包列出其平台的每个目标），以及自带加载器的通用包所携带的每个运行器的 `<os>-<arch>`，或单个 ok 映像的 self-contained 包中作为程序的载体的 `<os>-<arch>`（2026.10.29.1+） |
+| `legs`、`systems` *（2026.10.27.1+）* | 命令命名的每条腿的规范三元组（目标集合已展开；2026.10.30.1+），以及自带运行器的映像树所携带的每个运行器的 `<os>-<arch>` |
+| `pkgFormats` *（2026.10.30.1+）* | 写出的全部容器，按 `--pkg-format` 命名的顺序；`pkgFormat` 为第一个 |
+| `runsOn` *（2026.10.30.1+）* | 包在哪里运行，同其 `mcpp-package.json` 的 `runs_on`：`{"self": ["linux-x86_64", …], "with": {"okrun": […]}}`；单文件为各文件的组合 |
 | `stages` *（2026.10.1.1+）* | 只在对多个成员的打包（`--workspace`，或重复的 `-p`）中出现：每个成员一条记录，按 `[workspace] members` 的顺序，带 `member`（限定的包名），以及与 `stage` 相同的 `dir`、`manifest`、`closure` |
 
 对多个成员的打包，`artifacts` 按同样的成员顺序列出每个成员的产物，每条记录多出

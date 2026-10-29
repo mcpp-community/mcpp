@@ -18,8 +18,9 @@
 #   C. mcpp.lock records the packages the platform added, and those only they
 #      reach, with `origin = "platform"`; a build for this machine leaves the
 #      file as it is.
-#   D. `mcpp test` builds and runs a test image; `mcpp pack` stages the image
-#      and its loader-run program (M3).
+#   D. `mcpp test` builds and runs a test image; `mcpp pack --mode
+#      self-contained` stages the image's tree with its runner, and the
+#      launcher runs with nothing installed.
 #   E. `mcpp self env --target … --format json` names the platform, its fields'
 #      sources and the runner's program; `mcpp toolchain list --format json`
 #      gives the row's platform.
@@ -87,11 +88,10 @@ echo "ok: the lock says which packages the platform added, whichever configurati
 # D
 "$MCPP" test --target "$T" > test.log 2>&1 || fail "D: mcpp test" test.log
 grep -q "smoke ... ok" test.log || fail "D: the test image did not pass" test.log
-"$MCPP" pack --target "$T" --no-universal --mode self-contained --pkg-format dir -o m3 > m3.log 2>&1 || fail "D: pack (M3)" m3.log
-m3=$(ls target/dist/m3/bin/app target/dist/m3/bin/app.exe 2>/dev/null | head -1)
-[ -n "$m3" ] || fail "D: the M3 package has no program" m3.log
-"$m3" x > m3run.log 2>&1 || fail "D: the M3 program did not run" m3run.log
-grep -q "image: caught (2 args)" m3run.log || fail "D: the M3 program's image" m3run.log
+"$MCPP" pack --target "$T" --mode self-contained --pkg-format dir -o m3 > m3.log 2>&1 || fail "D: pack" m3.log
+[ -x target/dist/m3/bin/app ] || fail "D: the package has no launcher" m3.log
+env -i HOME="$HOME" PATH=/usr/bin:/bin target/dist/m3/bin/app x > m3run.log 2>&1 || fail "D: the launcher did not run" m3run.log
+grep -q "image: caught (2 args)" m3run.log || fail "D: the package's image" m3run.log
 echo "ok: test and pack work with no declaration"
 
 # E

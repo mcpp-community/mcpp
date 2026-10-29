@@ -67,6 +67,9 @@ schema，那是 [50 —— 机器可读输出](50-machine-output.md)。
 | `abi-capability`：`abi:` 运行时能力（`abi:glibc`、`abi:libc=<c>`、`abi:cxxstdlib=<c++>`），按目标侧某一层的需求读取 | 2026.10.26.1 | 2027.1 | `requires = ["mcpp:c-abi=<impl>"]` 或 `["mcpp:c++-abi=<impl>"]` |
 | `undeclared-cxx-runtime`：链接线点名、或链接线上的库需要的、本构建之外的另一套 C++ 运行时，且没有包声明 | 2026.10.26.1 | 2027.1 | 在需要它的包中写 `requires = [{ layer = "mcpp:c++-abi=<impl>", visibility = "private" }]` |
 | `plugin-imports-from-build-dependencies`：构建插件的库导入其自身 `[build-dependencies]` 中以 `host-module = true` 写出的包 | 2026.10.11.1 | 2027.1 | 插件 `[dependencies]` 中的该包 |
+| `pack-universal`：`[pack] universal`——`true` 被拒绝，`false` 被忽略；打包的目标即其腿 | 2026.10.30.1 | 2027.1 | `[pack] targets = ["openkal"]`（全部架构），或一个 `--target` |
+| `platform-universal`：平台的 `[platform] universal`，被忽略；打包的目标即其腿 | 2026.10.30.1 | 2027.1 | 平台中不写；由打包命名目标（`--target openkal`） |
+| `no-universal-flag`：`mcpp pack --no-universal`，单目标打包不再需要它（与目标集合同用时拒绝） | 2026.10.30.1 | 2027.1 | `--target <arch>-<os>`（一条腿） |
 
 ## 复现一次构建
 

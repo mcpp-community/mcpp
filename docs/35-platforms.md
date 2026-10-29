@@ -71,8 +71,8 @@ for this machine and one for an ok image leave each other's entries in place.
 | the compile | `[platform.build]`, `[platform.build.'cfg(…)']` | flags for every unit of the target |
 | the link | `[platform.link]` | `driver`, `flags`, `start`, `script`, `inputs`, the names `exe` and `shared`, the `seal` steps |
 | the run | `runner`, `runners` | how `mcpp run` and `mcpp test` start an artifact, and named device actions |
-| the carrier | `carrier` | the program `mcpp pack` builds of a loaded artifact for a system: the self-contained program, a universal package's runner, a single file |
-| the package | `universal` | a pack of any target covers all of them, in one package ([10](10-pack-and-release.md)) |
+| the carrier | `carrier` | the program `mcpp pack` builds of a loaded artifact for a system: a self-contained tree's runner, a single file; a table or a list of tables, each serving the `<os>-<arch>` pairs of its `hosts` |
+| where the runner exists | `runner.hosts` | the `<os>-<arch>` pairs the runner's program exists for: where a package that needs it runs (`runs_on.with`, [10](10-pack-and-release.md)) |
 | the code | `plugin` | a build program run in the platform phase, for what depends on the graph |
 | the group | `[platform.versions]` | one version of each package of a family |
 | the host part | `[platform.hosted]` | what a host triple takes when it selects the platform |
@@ -192,7 +192,6 @@ targets   = ["x86_64-openkal", "aarch64-openkal"]
 toolchain = "llvm@23.1.3"
 runner    = { cmd = ["okrun", "{}"], host = "same-arch" }
 carrier   = { package = "openkal-run@0.1.3", section = ".oke", main = "carrier/main.cpp" }
-universal = true
 plugin    = "build.mcpp"
 
 [platform.layers]
@@ -237,7 +236,7 @@ seal   = [["okld", "note", "{}"], ["okld", "check", "{}", "--with", "{needed}"]]
   phase ([34](34-authoring-a-bsp.md)).
 - **The carrier's entry reads what it carries.** mcpp places the carried bytes
   between `mcpp_carried_begin` and `mcpp_carried_end` (the entry's name at
-  `mcpp_carried_name`): nothing, when the program is a universal package's
+  `mcpp_carried_name`): nothing, when the program is a self-contained tree's
   runner and runs the image its first argument names; the image itself; or a
   stored zip of the images (`PK\x03\x04`, each aligned to 64 KiB) for a
   single file of an image that names others ([SPEC-013](specs/platforms.md)

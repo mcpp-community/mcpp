@@ -52,3 +52,23 @@ TEST(PackClosureUnavailableOutcome, DispatchedFormatStagesWithoutIt) {
     EXPECT_EQ(closure_unavailable_outcome(Format::Dispatched),
               ClosureUnavailableOutcome::StageWithoutClosure);
 }
+
+// `--systems` (design 2026-10-29 §4.1): `<os>` for every architecture of the
+// legs, `<os>-<arch>` for one, `all` for the three systems; unstated, this
+// machine's.
+TEST(PackSystems, TheWordsNameSystemsForAnArchitecture) {
+    using V = std::vector<std::string>;
+    EXPECT_EQ(mcpp::pack::systems_for({ "linux", "macos-aarch64" }, "x86_64"), V{ "linux" });
+    EXPECT_EQ(mcpp::pack::systems_for({ "linux", "macos-aarch64" }, "aarch64"), (V{ "linux", "macos" }));
+    EXPECT_EQ(mcpp::pack::systems_for({ "all", "linux" }, "x86_64"), (V{ "linux", "macos", "windows" }));
+    EXPECT_EQ(mcpp::pack::systems_for({}, "x86_64").size(), 1u);
+}
+
+// `-o` names a directory when it ends in a separator or is one (design
+// 2026-10-29 §4.2).
+TEST(PackSystems, AnOutputEndingInASeparatorIsADirectory) {
+    EXPECT_TRUE(mcpp::pack::output_names_directory("dist/"));
+    EXPECT_FALSE(mcpp::pack::output_names_directory("dist/app.tar.gz"));
+    EXPECT_FALSE(mcpp::pack::output_names_directory(""));
+    EXPECT_TRUE(mcpp::pack::output_names_directory(std::filesystem::temp_directory_path()));
+}

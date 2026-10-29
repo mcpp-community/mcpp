@@ -80,6 +80,9 @@ the rows of this table (mcpp 2026.10.11.1+).
 | `abi-capability`: an `abi:` runtime capability (`abi:glibc`, `abi:libc=<c>`, `abi:cxxstdlib=<c++>`), read as a requirement on a target-side layer | 2026.10.26.1 | 2027.1 | `requires = ["mcpp:c-abi=<impl>"]` or `["mcpp:c++-abi=<impl>"]` |
 | `undeclared-cxx-runtime`: a C++ runtime other than the build's own, named on its link line or needed by a library the line names, that no package declares | 2026.10.26.1 | 2027.1 | `requires = [{ layer = "mcpp:c++-abi=<impl>", visibility = "private" }]` in the package that needs it |
 | `plugin-imports-from-build-dependencies`: a build plugin's library importing a package it lists in its own `[build-dependencies]` with `host-module = true` | 2026.10.11.1 | 2027.1 | the package in the plugin's `[dependencies]` |
+| `pack-universal`: `[pack] universal` -- `true` refused, `false` ignored; a pack's targets are its legs | 2026.10.30.1 | 2027.1 | `[pack] targets = ["openkal"]` (every architecture), or one `--target` |
+| `platform-universal`: a platform's `[platform] universal`, ignored; a pack's targets are its legs | 2026.10.30.1 | 2027.1 | nothing in the platform; the pack names its targets (`--target openkal`) |
+| `no-universal-flag`: `mcpp pack --no-universal`, which a pack of one target no longer needs (refused with a target set) | 2026.10.30.1 | 2027.1 | `--target <arch>-<os>` (one leg) |
 
 ## Reproducing a build
 

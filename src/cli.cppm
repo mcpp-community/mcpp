@@ -112,6 +112,49 @@ void print_usage() {
     std::println("Docs: https://github.com/mcpp-community/mcpp/tree/main/docs");
 }
 
+// `mcpp pack --help`, IN TWO GROUPS (design 2026-10-29 §4.8): the options a
+// pack is usually written with -- which targets, what the machine provides,
+// the format, the runners or systems, the linkage, where -- and then the
+// rest. cmdline lists options in one block in declaration order.
+void print_pack_usage() {
+    std::println("Build + package: a program becomes a bundle, a library an interface + prebuilt binaries");
+    std::println("");
+    std::println("Usage: mcpp pack [target] [options]");
+    std::println("");
+    std::println("Options:");
+    std::println("  --target <T>             A target (x86_64-linux-gnu) or a target set (openkal, linux-musl);");
+    std::println("                           repeatable: the legs (default: [pack] targets, else [build] target)");
+    std::println("  --mode <M>               What the machine provides: system | vendored (default) |");
+    std::println("                           self-contained | static (= --linkage static --mode self-contained)");
+    std::println("  --pkg-format <F>         tar | zip | dir | single-file | a format the resolved graph provides");
+    std::println("                           (okb, appimage, msi); a list of containers of one tree: tar,okb");
+    std::println("  --systems <S>            The runners a self-contained package carries, or the systems single");
+    std::println("                           files are made for: linux | linux-aarch64 | all (comma-separated)");
+    std::println("  --linkage <L>            static | shared: the program's libraries in it or beside it");
+    std::println("  -o, --output <PATH>      The package's path; a directory (ending in /) when it writes several");
+    std::println("");
+    std::println("Advanced options:");
+    std::println("  --compress <ALG[:LEVEL]> The engine containers' compression: gzip | zstd | xz | none");
+    std::println("  --merge <PACKAGE>        Merge packages this command wrote (legs, systems) into one; repeatable");
+    std::println("  --profile <NAME>         Build profile (default: [build] default-profile, else release)");
+    std::println("  --release, --dev         Shorthands for --profile release | dev");
+    std::println("  --features <LIST>        Features of the root package, <dependency>/<feature> of a dependency");
+    std::println("  --no-strip               Ship the artifacts as built (default: strip debug info)");
+    std::println("  --debug-symbols <DIR>    Write the separated *.debug files here");
+    std::println("  --toolchain <SPEC>       Build with this toolchain for one invocation (llvm@22.1.8)");
+    std::println("  --sysroot <SYSROOT>      The target's base for this invocation (= MCPP_SYSROOT)");
+    std::println("  --platform <SPEC>        The target's platform for this invocation (= MCPP_PLATFORM)");
+    std::println("  --host-platform <SPEC>   The host graph's platform for this invocation");
+    std::println("  -p, --package <NAME>     Pack the named workspace member; repeatable");
+    std::println("  --workspace              Pack every workspace member that has a program target");
+    std::println("  --exclude <NAME>         With --workspace, leave the named member out");
+    std::println("  --list-formats           Print the formats --pkg-format accepts here (mcpp.pack.formats)");
+    std::println("  --message-format <FMT>   human (default) | json (one mcpp.pack envelope on stdout)");
+    std::println("  --no-universal           Deprecated: a pack of one target packs that target alone");
+    std::println("");
+    std::println("Docs: docs/10-pack-and-release.md");
+}
+
 // The ONE place this run's "has no UTF-8 spelling" records are reported: a
 // name that is not UTF-8 on POSIX, or one the process code page cannot spell
 // on a Windows host that ignores the UTF-8 code page mcpp.exe declares (#693).
@@ -477,6 +520,14 @@ int run(int argc, char** argv) {
     if (argc >= 2) {
         std::string_view a = argv[1];
         if (a == "--help" || a == "-h") { print_usage(); return 0; }
+        if (a == "pack")
+            for (int i = 2; i < argc; ++i)
+                if (std::string_view h = argv[i]; h == "--help" || h == "-h") {
+                    print_pack_usage();
+                    return 0;
+                } else if (h == "--") {
+                    break;
+                }
         if (a == "--version" || a == "-V") {
             std::println("mcpp {}", mcpp::toolchain::MCPP_VERSION);
             return 0;
@@ -908,18 +959,18 @@ int run(int argc, char** argv) {
                 .help("The program's libraries in it (static) or beside it (shared); rebuilds "
                       "with [build] dependency_linkage (default: as the project builds)"))
             .option(cl::Option("target").takes_value().multiple()
-                .help("Triple, e.g. x86_64-linux-musl (repeatable: one leg per triple)"))
+                .help("A target (x86_64-linux-gnu) or a target set (openkal, linux-musl); "
+                      "repeatable: the legs"))
             .option(cl::Option("no-universal")
-                .help("Pack the selected target alone where its platform packs all its targets "
-                      "into one universal package"))
-            .option(cl::Option("systems").takes_value().value_name("LIST")
-                .help("Self-contained universal package: the systems whose loaders it carries "
-                      "(linux,macos,windows; default: this machine's)"))
+                .help("Deprecated: a pack of one target packs that target alone"))
+            .option(cl::Option("systems").takes_value().multiple().value_name("LIST")
+                .help("The runners a self-contained package carries, or the systems single files "
+                      "are made for: <os>, <os>-<arch>, all (default: this machine's)"))
             .option(cl::Option("compress").takes_value().value_name("ALG[:LEVEL]")
                 .help("The container's compression: gzip (tar default) | zstd | xz | none; "
                       "a zip deflates unless none"))
             .option(cl::Option("merge").takes_value().multiple().value_name("PACKAGE")
-                .help("Merge packages this command wrote (universal legs, systems) into one; "
+                .help("Merge packages this command wrote (legs, systems) into one; "
                       "repeatable, nothing is built"))
             // "plus any format the resolved graph provides", because the
             // values are no longer a fixed list. A package declares one with
@@ -928,12 +979,12 @@ int run(int argc, char** argv) {
             // constant, so the help text does not have to enumerate them.
             .option(cl::Option("pkg-format").takes_value().value_name("FORMAT")
                 .help("The package format: tar | zip | dir | single-file | any format the "
-                      "resolved graph provides (e.g. appimage, msi, okb); default: zip for a "
-                      "Windows program, tar elsewhere"))
+                      "resolved graph provides (e.g. appimage, msi, okb), or a list of containers "
+                      "of one tree (tar,okb); default: zip for a Windows program, tar elsewhere"))
             .option(cl::Option("format").takes_value()
                 .help("Earlier spelling of --pkg-format"))
             .option(cl::Option("output").short_name('o').takes_value()
-                .help("Override output path; with several members, the directory each archive or tree is written below"))
+                .help("Override output path; a directory (ending in /) when the pack writes several files"))
             // Packaging builds RELEASE by default — the artifact leaves this
             // machine. `[build] default-profile` still wins when it is set;
             // this only replaces the "dev" fallback every other command uses.

@@ -381,7 +381,7 @@ mcpp run   --target x86_64-openkal      # okrun bin/app.oke
 
 `okrun` 运行其自身架构的映像（`host = "same-arch"`）。在另一架构的机器上，`mcpp run` 与 `mcpp test`
 拒绝该映像，并指出 `run_under` —— 陈述执行宿主的键。给出执行宿主后，runner 在那里运行，其程序是平台为映像
-架构准备的 runner：mcpp 为本机系统与该架构构建不携带任何内容的平台载体，即 self-contained 通用包放在
+架构准备的 runner：mcpp 为本机系统与该架构构建不携带任何内容的平台载体，即 self-contained 的映像树放在
 `libexec/okrun/<os>-<arch>/` 中的程序。用户态模拟器就是一种执行宿主；在装有 `qemu-aarch64` 的 x86_64 Linux 上：
 
 ```toml
@@ -403,8 +403,8 @@ $ mcpp run --target aarch64-openkal
 `mcpp test --target aarch64-openkal` 以同样的方式运行测试。`MCPP_TARGET_AARCH64_OPENKAL_RUN_UNDER=qemu-aarch64`
 为一次运行指定执行宿主，`~/.mcpp/config.toml` 中的 `[target.aarch64-openkal] run_under` 为一台机器指定。
 `mcpp self env --target aarch64-openkal` 报告 runner 的程序与其架构、执行宿主的程序，或本机拒绝运行的原因。
-一个映像的 self-contained 包（`--no-universal --mode self-contained`）是本机系统、映像架构的程序
-（[10](10-pack-and-release.md)）。
+一个映像的单文件（`--pkg-format single-file`）是本机系统、映像架构的程序；它的 self-contained 包是带该运行器的
+映像树（[10](10-pack-and-release.md)）。
 
 ### ok 映像与 Web
 

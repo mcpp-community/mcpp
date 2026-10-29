@@ -69,6 +69,15 @@ export struct PackOutcome {
     std::string                         linkage;
     std::string                         mode;
     std::vector<std::string>            systems;
+    // Every container written, in the order `--pkg-format` named them (`format`
+    // is the first), and where the package runs (design 2026-10-29 §3.5, §4.4):
+    // its `runs_on`, or a single file's own pairs.
+    std::vector<std::string>                        formats;
+    std::vector<std::string>                        runsOnSelf;
+    std::map<std::string, std::vector<std::string>> runsOnWith;
+    // A pack of a package per leg (design 2026-10-29 §4.2): each artifact's
+    // legs, beside `artifacts`; empty when every artifact holds `targets`.
+    std::vector<std::vector<std::string>>           artifactTargets;
     // Whether a build program ran in this pack, for the envelope's `effects`.
     bool                                ranBuildPrograms = false;
     // What one packed member answered (member selection design 2026-09-30,
@@ -88,6 +97,14 @@ export struct PackOutcome {
         std::string                         linkage;
         std::string                         mode;
         std::vector<std::string>            systems;
+        std::vector<std::string>                        formats;
+        std::vector<std::string>                        runsOnSelf;
+        std::map<std::string, std::vector<std::string>> runsOnWith;
+        // What the summary says after `Packed` (design 2026-10-29 §4.4,
+        // §4.8): the pairs a requested system or architecture is not covered
+        // on, each with its reason, and the hint of a one-leg tree.
+        std::vector<std::string>            notCovered;
+        std::string                         hint;
     };
     std::vector<Member>                 members;
 };
@@ -417,19 +434,19 @@ bool member_carries(const mcpp::build::BuildContext& ctx, const MemberJob& m,
 //
 // Called inside the member's view (`with_member`): `ctx.manifest`,
 // `ctx.projectRoot` and the plan's link group are the member's.
-// Whether a pack of `ctx`'s target is a universal package (SPEC-014 §3): an
-// image of a platform that states `universal = true`, not refused by the
-// command or `[pack] universal`, in a format other than a single file.
-bool packs_universal(const mcpp::build::BuildContext& ctx, const Options& opts) {
+// Whether a pack of `ctx`'s target stages the tree of a platform with a runner
+// (design 2026-10-29 §4.2, §4.3): an image of a platform that states a
+// runner, in a format other than a single file, whatever the number of legs.
+bool packs_tree(const mcpp::build::BuildContext& ctx, const Options& opts) {
     auto t = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
     auto const& P = ctx.plan.platform;
-    return t && t->loader_supplies_os() && P.active && P.fields.universal.set
-        && P.fields.universal.value && opts.universal.value_or(true)
+    return t && t->loader_supplies_os() && P.active && P.fields.runner.set && !P.fields.runner.cmd.empty()
         && opts.format != mcpp::pack::Format::SingleFile;
 }
 
 // The combinations of a member's pack refused before anything is built
-// (SPEC-014 §1.5): what its options and the plan's platform already decide.
+// (SPEC-014 §1.5, design 2026-10-29 §4.7): what its options and the plan's
+// platform already decide.
 std::optional<std::string> refused_combination(const mcpp::build::BuildContext& ctx, const Options& opts) {
     // A single file carries what it runs, whichever source stated the mode.
     if (opts.format == mcpp::pack::Format::SingleFile && opts.mode == mcpp::pack::Mode::None)
@@ -439,27 +456,32 @@ std::optional<std::string> refused_combination(const mcpp::build::BuildContext& 
     // the platform's carrier); a WebAssembly module is no program of a system,
     // and no launcher of `wasm32-linux-musl` (the row this would have tried)
     // exists. The web is reached through a provider's page.
-    if (auto t = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
-        opts.format == mcpp::pack::Format::SingleFile && t && t->is_wasm())
+    auto t = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
+    if (opts.format == mcpp::pack::Format::SingleFile && t && t->is_wasm())
         return std::format("--pkg-format single-file makes an executable of one system, and {} "
                            "builds a WebAssembly module a JavaScript engine runs.\n"
                            "  use: --pkg-format tar | zip | dir, or a provider's format "
                            "(dist-web of mcpp-plugins writes a page)", t->str());
-    if (!opts.legTargets.empty() && !packs_universal(ctx, opts))
-        return std::string("several --target name one package's legs only where the target's platform "
-                           "packs them into one universal package (`[platform] universal = true`).\n"
-                           "  use: one pack per target");
-    if (!packs_universal(ctx, opts)) return std::nullopt;
     auto const& P = ctx.plan.platform;
-    if (!P.fields.runner.set || P.fields.runner.cmd.empty())
-        return std::format("a universal package starts its images through the platform's runner, and "
-                           "{} states none.\n  use: --no-universal", P.display());
-    auto t = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
+    // Several images are one package's legs where the platform's runner
+    // starts them (the tree's launchers), or as single files.
+    if (opts.legTargets.size() > 1 && !packs_tree(ctx, opts) && opts.format != mcpp::pack::Format::SingleFile)
+        return std::format("several images are one package's legs where the platform starts them through "
+                           "its runner, and {} states none.\n  use: one pack per target, or "
+                           "--pkg-format single-file", P.active ? P.display() : std::string("the target"));
     for (auto const& target : opts.legTargets) {
         auto lt = mcpp::toolchain::triple::parse(target);
         if (lt && t && lt->str() != t->str() && !mcpp::platform::serves(P.fields, P.package, *lt))
             return std::format("--target {} is not a target of {}", lt->str(), P.display());
     }
+    // okb holds the images alone (okb v1): a self-contained tree's runner
+    // would be dropped (design 2026-10-29 §4.6).
+    const bool selfContained = opts.mode == mcpp::pack::Mode::BundleAll || opts.mode == mcpp::pack::Mode::Static;
+    const auto& named = opts.formats.empty() ? std::vector<std::string>{ opts.formatName } : opts.formats;
+    if (packs_tree(ctx, opts) && selfContained
+        && std::ranges::all_of(named, [](std::string const& f) { return f == "okb"; }))
+        return std::string("--mode self-contained carries the runner under libexec/, and okb holds the "
+                           "images alone; the runner would be dropped.\n  use: --pkg-format tar,okb");
     return std::nullopt;
 }
 
@@ -629,13 +651,14 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
         }
     }
 
-    // ─── A loaded artifact: the static row, and the universal package ──
+    // ─── A loaded artifact: the static row, the tree and its legs ─────
     //
     // `--mode static` of an image is `--linkage static --mode self-contained`
-    // (SPEC-014 §1.2): one `.oke`, carried. A platform that states `universal
-    // = true` packs every one of its targets into one package unless the
-    // command or `[pack] universal` says otherwise (§3); a single file is one
-    // system's and one architecture's, so it is never universal.
+    // (SPEC-014 §1.2). An image of a platform that states a runner is packed
+    // as its tree whatever the number of legs (design 2026-10-29 §4.3); the
+    // legs are the targets the command named, a set expanded (§4.2), and a
+    // tree of several is named after the platform. A single file is made per
+    // leg and system.
     std::vector<mcpp::pack::LoadedLeg> loadedLegs;
     {
         auto t = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
@@ -643,15 +666,26 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
         if (loaded && opts.mode == mcpp::pack::Mode::Static) opts.mode = mcpp::pack::Mode::BundleAll;
         auto const& P = ctx.plan.platform;
         if (auto why = refused_combination(ctx, opts)) return Refusal{2, about(run, m, *why)};
-        if (packs_universal(ctx, opts)) {
+        // COMPAT(platform-universal): `[platform] universal` decides nothing.
+        static bool saidUniversal = false;
+        if (loaded && P.active && P.fields.universal.set && !std::exchange(saidUniversal, true)) {
+            mcpp::pm::compat::record_use("platform-universal", P.package, "[platform] universal", true);
+            mcpp::ui::note(std::format(
+                "{} states `universal`, which no longer decides what a pack holds: the legs are the "
+                "targets the command names ({}); `--target {}` packs every architecture",
+                P.display(), mcpp::pm::compat::deprecation_clause(
+                    *mcpp::pm::compat::find_deprecation("platform-universal")),
+                mcpp::manifest::platform::platform_name(P.package.substr(P.package.find('.') + 1))));
+        }
+        opts.tree = packs_tree(ctx, opts);
+        if (opts.tree && opts.legTargets.size() > 1)
             opts.universalName = mcpp::manifest::platform::platform_name(
                 P.package.substr(P.package.find('.') + 1));
-            // The legs: those the command named, else every target of the
-            // platform. The other legs are planned one after another and
-            // built at once (mcpp.build.legs); this leg is the pack's own.
-            auto const& legs = opts.legTargets.empty() ? P.fields.targets.value : opts.legTargets;
+        if (loaded && opts.legTargets.size() > 1) {
+            // The other legs are planned one after another and built at once
+            // (mcpp.build.legs); this leg is the pack's own.
             std::vector<mcpp::build::legs::Spec> specs;
-            for (auto const& target : legs) {
+            for (auto const& target : opts.legTargets) {
                 auto lt = mcpp::toolchain::triple::parse(target);
                 if (!lt || lt->str() == t->str()) continue;
                 mcpp::build::legs::Spec spec{g.ov};
@@ -693,7 +727,7 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
                         break;
                     }
                 if (artifact.empty()) return Refusal{1, about(run, m, std::format(
-                    "the {} leg of the universal package built no '{}'", leg.triple, chosenLu->targetName))};
+                    "the {} leg built no '{}'", leg.triple, chosenLu->targetName))};
                 auto lt = mcpp::toolchain::triple::parse(leg.triple);
                 mcpp::ui::status("Packed leg", leg.triple);
                 loadedLegs.push_back({ leg.triple, lt ? lt->arch : std::string{}, artifact });
@@ -842,7 +876,6 @@ std::optional<Refusal> prepare_group(PackRun& run, GroupJob& g) {
 // refusals of a dispatched `--format`, before the build.
 std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
     auto const& ctx = *g.ctx;
-    const auto& formatName = run.opts.formatName;
     // What each member's options and the platform decide.
     for (auto const& m : g.members) {
         std::optional<std::string> why;
@@ -851,64 +884,94 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
         });
         if (why) return Refusal{2, about(run, m, *why)};
     }
-    // ─── `--systems` names the loaders a package carries ─────────────
+    // ─── `--systems` names the runners a package carries ─────────────
     //
-    // A self-contained universal package carries a loader per system, and a
-    // single file of an image is made per system; nothing else is made per
-    // system. Refused here, before the build (SPEC-014 §1.5).
+    // A self-contained tree carries a runner per system and architecture of
+    // its legs, and a single file of an image is made per leg and system;
+    // nothing else is made per system. Refused here, before the build
+    // (SPEC-014 §1.5, design 2026-10-29 §4.7); `[pack] systems` that does not
+    // fit the pack is said and left aside, as `[pack] compress` is.
     if (!run.opts.systems.empty()) {
         auto t = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
         const bool loaded = t && t->loader_supplies_os();
-        const bool universal = packs_universal(ctx, run.opts);
+        const bool tree = packs_tree(ctx, run.opts);
         const bool selfContained = run.opts.mode == mcpp::pack::Mode::BundleAll
                                 || run.opts.mode == mcpp::pack::Mode::Static;
-        if (!(universal && selfContained) && !(loaded && run.opts.format == mcpp::pack::Format::SingleFile))
-            return Refusal{2, universal
-                ? std::format("--systems names the systems whose loaders a self-contained package "
-                              "carries, and --mode {} carries none.\n  use: --mode self-contained",
-                              mcpp::pack::mode_cli_name(run.opts.mode))
-                : std::string("--systems names the systems whose loaders a self-contained universal "
-                              "package carries, or for which a single file of an image is made; this "
-                              "pack is neither.\n  use: --mode self-contained over a platform that "
-                              "states universal = true, or --pkg-format single-file")};
-        // A single file is made per system, and `-o` names one file.
-        if (run.opts.format == mcpp::pack::Format::SingleFile && run.opts.systems.size() > 1
-            && !run.opts.output.empty())
-            return Refusal{2, std::format(
-                "--output names one file, and --systems makes one single file per system ({}).\n"
-                "  use: leave --output out; each file is named <name>-<version>-<os>-<arch>",
-                run.opts.systems.size())};
-        // A single file of an image is made for each system on this mcpp's
-        // row of it; a row it builds no program for is refused before the build.
-        if (loaded && run.opts.format == mcpp::pack::Format::SingleFile) {
-            std::vector<std::string> unbuilt, built;
-            for (auto const& system : run.opts.systems) {
-                auto row = mcpp::pack::unbuilt_row(system, t->arch);
-                (row.empty() ? built : unbuilt).push_back(row.empty() ? system : std::format("{} ({})", system, row));
+        const bool singleFile = loaded && run.opts.format == mcpp::pack::Format::SingleFile;
+        if (!(tree && selfContained) && !singleFile) {
+            if (run.opts.systemsFromManifest) {
+                mcpp::ui::note(std::format(
+                    "[pack] systems names the runners a self-contained tree carries, or the systems "
+                    "single files of an image are made for; this pack is neither (--mode {}), so it "
+                    "is left aside", mcpp::pack::mode_cli_name(run.opts.mode)));
+                for (auto& m : g.members) m.request.systems.clear();
+                run.opts.systems.clear();
+            } else {
+                return Refusal{2, tree
+                    ? std::format("--systems names the runners a self-contained package carries, and "
+                                  "--mode {} carries none.\n  use: --mode self-contained",
+                                  mcpp::pack::mode_cli_name(run.opts.mode))
+                    : std::string("--systems names the runners a self-contained package of images "
+                                  "carries, or the systems single files of an image are made for; this "
+                                  "pack is neither.\n  use: --mode self-contained over a platform that "
+                                  "states a runner, or --pkg-format single-file")};
             }
+        }
+    }
+    if (!run.opts.systems.empty()) {
+        auto t = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
+        const bool loaded = t && t->loader_supplies_os();
+        std::vector<std::string> archs;
+        for (auto const& l : run.opts.legTargets)
+            if (auto lt = mcpp::toolchain::triple::parse(l)) archs.push_back(lt->arch);
+        if (archs.empty() && t) archs.push_back(t->arch);
+        // An `<os>-<arch>` of no leg's architecture names nothing the pack makes.
+        for (auto const& e : run.opts.systems) {
+            const auto dash = e.find('-');
+            if (dash == std::string::npos) continue;
+            if (std::ranges::find(archs, e.substr(dash + 1)) == archs.end())
+                return Refusal{2, std::format(
+                    "--systems names {}, and no leg of this pack is of {}", e, e.substr(dash + 1))};
+        }
+        // A single file of an image is made for each leg and system on this
+        // mcpp's row of it; a row it builds no program for, named, is refused
+        // before the build (`all` names the rows there are, and says the rest).
+        if (loaded && run.opts.format == mcpp::pack::Format::SingleFile) {
+            std::size_t files = 0;
+            std::vector<std::string> unbuilt, built;
+            const bool all = std::ranges::find(run.opts.systems, "all") != run.opts.systems.end();
+            for (auto const& arch : archs)
+                for (auto const& system : mcpp::pack::systems_for(run.opts.systems, arch)) {
+                    auto row = mcpp::pack::unbuilt_row(system, arch);
+                    if (row.empty()) built.push_back(std::format("{}-{}", system, arch));
+                    else if (!all) unbuilt.push_back(std::format("{}-{} ({})", system, arch, row));
+                    if (row.empty() || !all) ++files;
+                }
+            if (files > 1 && !run.opts.output.empty())
+                return Refusal{2, std::format(
+                    "--output names one file, and this pack makes {} single files (one per leg and "
+                    "system).\n  use: -o <directory>/ (each file is named <name>-<version>-<os>-<arch>)",
+                    files)};
             if (!unbuilt.empty()) {
                 std::string say, use;
                 for (auto const& u : unbuilt) say += (say.empty() ? "" : ", ") + u;
                 for (auto const& b : built) use += (use.empty() ? "" : ",") + b;
                 return Refusal{2, std::format(
-                    "--systems: this mcpp builds no program for {}, so no single file of the {} "
-                    "image is made there.\n  use: {}", say, t->str(),
+                    "--systems: this mcpp builds no program for {}, so no single file is made there.\n"
+                    "  use: {}", say,
                     use.empty() ? std::string("--systems naming a system this mcpp builds for")
                                 : "--systems " + use)};
             }
         }
     }
-    // ─── Is the requested format one anything provides? ──────────────
-    //
-    // BEFORE THE BUILD, because a refusal that arrives after a full compile is
-    // a worse refusal, and because this is the earliest point at which it can be
-    // exact: build programs have now run and declared what they provide.
-    //
-    // The set is read from a pass that asked for NOTHING. That is what the
-    // "declare unconditionally, submit conditionally" rule buys -- a member
-    // that declared only when asked would leave this list empty exactly when a
-    // user names a format, and the refusal would name nothing.
-    if (run.opts.format == mcpp::pack::Format::Dispatched) {
+    // Every format a `--pkg-format` list names past the engine's is checked
+    // here, before the one build (design 2026-10-29 §4.6).
+    std::vector<std::string> dispatched;
+    if (run.opts.format == mcpp::pack::Format::Dispatched) dispatched.push_back(run.opts.formatName);
+    for (auto const& f : run.opts.formats)
+        if (!mcpp::pack::is_builtin_pack_format(f) && std::ranges::find(dispatched, f) == dispatched.end())
+            dispatched.push_back(f);
+    for (auto const& formatName : dispatched) {
         auto const& provided = ctx.plan.providedPackFormats;
         if (std::ranges::find(provided, formatName) == provided.end()) {
             std::string avail;
@@ -1141,6 +1204,53 @@ std::optional<Refusal> stage_member(PackRun& run, GroupJob& g, MemberJob& m) {
     for (auto const& leg : plan->extraSharedLegs) out.targets.push_back(leg.triple);
     for (auto const& leg : plan->loadedLegs) out.targets.push_back(leg.triple);
     out.systems = mcpp::pack::carried_systems(*plan);
+    out.formats = opts.formats.empty() ? std::vector<std::string>{ out.format } : opts.formats;
+    // Where it runs (design 2026-10-29 §4.4): the package's `runs_on`, or a
+    // single file's pairs; and what a requested pair is not covered on.
+    if (opts.format == mcpp::pack::Format::SingleFile && plan->targetIsLoaded) {
+        for (auto const& r : mcpp::pack::single_file_rows(*plan)) {
+            const auto pair = std::format("{}-{}", r.system, r.arch);
+            if (r.skipped.empty()) out.runsOnSelf.push_back(pair);
+            else out.notCovered.push_back(std::format("{} ({})", pair, r.skipped));
+        }
+    } else if (auto pkg = mcpp::pack::distribution::read(plan->stagingRoot)) {
+        out.runsOnSelf = pkg->runsOnSelf;
+        out.runsOnWith = pkg->runsOnWith;
+    }
+    if (opts.tree) {
+        auto covered = [&](std::string const& pair) {
+            if (std::ranges::find(out.runsOnSelf, pair) != out.runsOnSelf.end()) return true;
+            for (auto const& [r, pairs] : out.runsOnWith)
+                if (std::ranges::find(pairs, pair) != pairs.end()) return true;
+            return false;
+        };
+        std::vector<std::string> archs;
+        for (auto const& triple : out.targets)
+            if (auto lt = mcpp::toolchain::triple::parse(triple)) archs.push_back(lt->arch);
+        const bool carries = opts.mode == mcpp::pack::Mode::BundleAll;
+        const auto stem = std::filesystem::path(plan->binaryName).stem().string();
+        std::error_code xec;
+        const bool windowsLauncher = std::filesystem::is_regular_file(plan->stagingRoot / "bin" / (stem + ".exe"), xec);
+        for (auto const& arch : archs)
+            for (auto const& system : carries ? mcpp::pack::systems_for(opts.systems, arch)
+                                              : std::vector<std::string>{}) {
+                const auto pair = std::format("{}-{}", system, arch);
+                if (covered(pair)) continue;
+                const auto row = mcpp::pack::unbuilt_row(system, arch);
+                out.notCovered.push_back(std::format("{} ({})", pair,
+                    !row.empty() ? std::format("no runner row: this mcpp builds no program for {}", row)
+                    : system == "windows" && !windowsLauncher ? std::string("no Windows launcher")
+                    : std::string("not in the platform's runner.hosts")));
+            }
+        // ONE LEG OF A PLATFORM OF SEVERAL (design 2026-10-29 §4.8): said, with
+        // the spelling that packs them all.
+        auto const& P = ctx.plan.platform;
+        if (out.targets.size() == 1 && P.active && P.fields.targets.value.size() > 1 && !archs.empty()) {
+            const auto set = mcpp::manifest::platform::platform_name(P.package.substr(P.package.find('.') + 1));
+            out.hint = std::format("only {}; `--target {}` or `[pack] targets = [\"{}\"]` packs every "
+                                   "architecture of {}", archs.front(), set, set, P.display());
+        }
+    }
     if (m.stageFailure.empty()) {
         out.stageDir      = plan->stagingRoot;
         out.stageManifest = mcpp::pack::stage_manifest_path(plan->stagingRoot);
@@ -1433,11 +1543,25 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
             reported.push_back(std::move(abs));
         }
         if (!produced) continue;
+        // `-o <directory>/`: the distributable below it, under its own name.
+        if (!run.opts.outputDir.empty())
+            for (auto& r : reported) {
+                const auto into = run.opts.outputDir / r.filename();
+                std::filesystem::remove_all(into, ec);
+                std::filesystem::copy(r, into, std::filesystem::copy_options::recursive, ec);
+                if (ec) {
+                    mcpp::ui::error(about(run, m, std::format("cannot write {}: {}", into.string(), ec.message())));
+                    m.result.rc = 1;
+                    break;
+                }
+                r = into;
+            }
+        if (m.result.rc != 0) continue;
         report_packed(reported, m.pathCtx);
         // Every output consumed by another: a cycle a provider should not
         // write, reported as all outputs rather than as nothing.
         if (reported.empty()) reported = std::move(intermediate);
-        m.result.artifacts = std::move(reported);
+        m.result.artifacts.insert(m.result.artifacts.end(), reported.begin(), reported.end());
     }
     return std::nullopt;
 }
@@ -1475,6 +1599,36 @@ std::optional<Refusal> check_destinations(PackRun& run, std::vector<GroupJob>& g
         }
     }
     return std::nullopt;
+}
+
+// The dispatch pass of each group for the format `run.opts` names; a refusal
+// fails the members of its group (P3), and the command when one member is
+// packed: the exit code is returned then.
+std::optional<int> dispatch_each_group(PackRun& run, std::vector<GroupJob>& groups, mcpp::build::Backend& be) {
+    for (auto& g : groups) {
+        if (g.rc != 0) continue;
+        auto refused = dispatch_group(run, g, be);
+        if (!refused) continue;
+        // A failed drive was reported where it failed.
+        if (!refused->message.empty()) mcpp::ui::error(refused->message);
+        for (auto& m : g.members)
+            if (m.result.rc == 0) m.result.rc = refused->rc;
+        if (!run.several) return refused->rc;
+    }
+    return std::nullopt;
+}
+
+// Where a packed member runs, as the summary says it (design 2026-10-29
+// §4.4): `self`'s pairs, then each runner's.
+std::string runs_on_text(const PackOutcome::Member& r) {
+    std::string runs;
+    for (auto const& p : r.runsOnSelf) runs += (runs.empty() ? "" : ", ") + p;
+    for (auto const& [runner, pairs] : r.runsOnWith) {
+        std::string with;
+        for (auto const& p : pairs) with += (with.empty() ? "" : ", ") + p;
+        runs += std::format("{}with {}: {}", runs.empty() ? "" : "; ", runner, with);
+    }
+    return runs;
 }
 
 // The pack: the plan of each configuration group and what is refused from it,
@@ -1618,6 +1772,46 @@ PackOutcome run_pack(PackRun run) {
         }
     }
 
+    // ─── The other containers of a `--pkg-format` list ───────────────
+    //
+    // Written from the tree each member staged above, in the order named
+    // (design 2026-10-29 §4.6): an engine container beside the first, a
+    // provider's format by its dispatch pass.
+    std::vector<MemberJob*> staged;
+    for (auto& g : groups)
+        if (g.rc == 0)
+            for (auto& m : g.members) staged.push_back(&m);
+    for (std::size_t k = 1; k < run.opts.formats.size(); ++k) {
+        auto const& f = run.opts.formats[k];
+        if (f != "tar" && f != "zip") {
+            run.opts.format = mcpp::pack::Format::Dispatched;
+            run.opts.formatName = f;
+            if (auto refused = dispatch_each_group(run, groups, *be)) return PackOutcome{*refused};
+            continue;
+        }
+        for (auto* m : staged) {
+            if (m->result.rc != 0 || !m->plan) continue;
+            auto written = mcpp::pack::write_another_container(
+                *m->plan, f == "zip" ? mcpp::pack::ArchiveKind::Zip : mcpp::pack::ArchiveKind::Tar);
+            if (!written) {
+                mcpp::ui::error(about(run, *m, written.error().message));
+                m->result.rc = 1;
+                if (!run.several) return PackOutcome{1};
+                continue;
+            }
+            mcpp::ui::status("Packed", mcpp::ui::shorten_path(*written, m->pathCtx));
+            m->result.artifacts.push_back(std::move(*written));
+        }
+    }
+
+    // ─── Where it runs (design 2026-10-29 §4.4, §4.8) ────────────────
+    for (auto* m : staged) {
+        if (m->result.rc != 0) continue;
+        if (auto runs = runs_on_text(m->result); !runs.empty()) mcpp::ui::info("Runs on", about(run, *m, runs));
+        for (auto const& n : m->result.notCovered) mcpp::ui::info("Not covered", about(run, *m, n));
+        if (!m->result.hint.empty()) mcpp::ui::note(about(run, *m, m->result.hint));
+    }
+
     // ─── What was packed ─────────────────────────────────────────────
     //
     // A failing member is reported and the others continue (P3): the status is
@@ -1657,6 +1851,9 @@ PackOutcome run_pack(PackRun run) {
     out.linkage       = first.linkage;
     out.mode          = first.mode;
     out.systems       = first.systems;
+    out.formats       = first.formats;
+    out.runsOnSelf    = first.runsOnSelf;
+    out.runsOnWith    = first.runsOnWith;
     return out;
 }
 
@@ -1690,6 +1887,14 @@ export PackOutcome build_and_pack(Options opts, bool modeFromUser,
         modeFromUser  = true;   // user-equivalent intent — block manifest override
     }
     PackRun run;
+    // `-o <directory>/` (design 2026-10-29 §4.2, §4.6): each file under its
+    // default name below it. A `dir` pack's `-o` names the tree itself.
+    if (opts.format != mcpp::pack::Format::Dir && mcpp::pack::output_names_directory(opts.output)) {
+        opts.outputDir = opts.output;
+        opts.output.clear();
+        std::error_code dec;
+        std::filesystem::create_directories(opts.outputDir, dec);
+    }
     run.opts         = std::move(opts);
     run.modeFromUser = modeFromUser;
     run.wantTarget   = wantTarget;

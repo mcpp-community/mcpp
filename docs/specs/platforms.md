@@ -4,10 +4,10 @@
 |---|---|
 | 规范编号 | SPEC-013 |
 | 标题 | 平台:一类目标的可复用配置,其声明、选择、合并、对依赖图的补全、链接与封装、运行器与载体 |
-| 状态 | 评审中 v1.2 |
-| 版本 | 1.2 |
-| 最后修改 | 2026-10-29 |
-| 对应实现 | mcpp >= 2026.10.27.1;§10 的执行宿主与 §11 的载体架构 mcpp >= 2026.10.29.1;逐条标注 |
+| 状态 | 评审中 v1.3 |
+| 版本 | 1.3 |
+| 最后修改 | 2026-10-30 |
+| 对应实现 | mcpp >= 2026.10.27.1;§10 的执行宿主与 §11 的载体架构 mcpp >= 2026.10.29.1;`runner.hosts`、载体列表、`descriptor_keys` 与 `universal` 的弃用 mcpp >= 2026.10.30.1;逐条标注 |
 | 相关设计文档 | `.agents/docs/2026-10-28-platforms-design.md`、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md` |
 | 相关 issue | mcpp#846、mcpp#847、mcpp#848 |
 | 相关规范 | [SPEC-002](target-side.md)(目标侧的层)、[SPEC-004](manifest-semantics.md)(条件化形状)、[SPEC-006](toolchain-management.md)(工具链选择)、[SPEC-007](build-plugins.md)(构建程序与协议)、[SPEC-011](concurrency.md)(原子发布)、[SPEC-014](packaging.md)(打包) |
@@ -70,7 +70,7 @@ plugin    = "build.mcpp"
 | `carrier` | 表或表的数组 | §11;每项的 `package`、`section`、`main` 三键都**必须**给出;`hosts` 为该项服务的 `<os>-<arch>`(省略:服务每一对);`build` 为载体程序的构建模型,缺省 `"row"`(每个 `<os>-<arch>` 一个程序,经平台的 hosted 安排构建),本 mcpp 不认识的模型的项被跳过并警告。**mcpp >= 2026.10.30.1**;更早的 mcpp 读到数组即拒绝,写数组的平台**必须**声明相应的 `mcpp` 下限 |
 | `descriptor_keys` | 非空字符串数组 | 平台目标读取描述符的哪些按平台块及其顺序(第一个存在的块被读取),取值为 `linux`、`macosx`、`windows`、`android`、`ios`、`emscripten`、`openkal`、`none`;未声明时为目标行自己的键(§14)。**mcpp >= 2026.10.30.1** |
 | `plugin` | 字符串 | 只能为 `"build.mcpp"`:平台包自身的构建程序(SPEC-007)在平台阶段运行(§12);其他值拒绝 |
-| `universal` | 布尔 | `true` 时本平台任一目标的打包缺省为覆盖全部 `targets` 的通用包(SPEC-014 §1.4、§4.2) |
+| `universal` | 布尔 | 已弃用,不起作用(docs/51 的 `platform-universal`):打包的腿只是命令命名的目标(SPEC-014 §1.4);读到时写出提示。**mcpp >= 2026.10.30.1** |
 | `layers` | 表 | §7.2;键只能是 §0 的四个层名 |
 | `tools` | 表 | §7.3 |
 | `build` | 表 | 四个标志列表,以及键形如 `cfg(...)` 的子表(同四个键) |
@@ -307,7 +307,7 @@ plugin    = "build.mcpp"
 的运行器在产物架构的机器上运行,因此产物的架构不是本机架构、且给出了执行宿主(`run_under`,含
 `MCPP_TARGET_<三元组>_RUN_UNDER`;SPEC-002 §6)而未给 `--no-runner` 时,首项为平台工具的运行器的程序**必须**是产物架构的:
 平台的载体以运行器形式(§11,不携带任何内容)为本机系统与产物架构构建的程序,构建于
-`target/carrier-pack/<首项>-<os>-<arch>/`,与 `self-contained` 通用包放在 `libexec/<首项>/<os>-<arch>/` 中的程序相同。
+`target/carrier-pack/<首项>-<os>-<arch>/`,与 `self-contained` 的树放在 `libexec/<首项>/<os>-<arch>/` 中的程序相同。
 平台未声明 `carrier`,或本 mcpp 不为该系统与架构构建程序(SPEC-014 §4.4)时,运行**必须**被拒绝并写出原因,**禁止**改用
 本机的工具。`host = "any"` 的运行器从本机到达产物,其程序是本机的。`mcpp test` 为一次构建构建一次该程序,不运行测试时
 (`--no-run`、已确定的拒绝)不构建。**已实现**(2026.10.29.1)
@@ -326,10 +326,10 @@ run_under = ["qemu-aarch64"]
 
 ## 11. 载体(M3)
 
-对一个依赖加载器的产物,`mcpp pack` 在三处生成一个系统程序的工程(`target/carrier-pack/<name>-<os>-<arch>/`):
-`--mode self-contained` 的单目标包(该程序携带产物)、`self-contained` 通用包的运行器(不携带任何内容,SPEC-014
-§4.4)、映像的单文件(SPEC-014 §5.2);`mcpp run` 与 `mcpp test` 为执行宿主构建另一架构的运行器(§10)时亦然。
-单目标包与单文件的程序的架构为产物的架构,系统为本机系统(单文件另按 `--systems`)。工程依赖 `carrier.package`;
+对一个依赖加载器的产物,`mcpp pack` 在两处生成一个系统程序的工程(`target/carrier-pack/<name>-<os>-<arch>/`):
+`self-contained` 的树的运行器(不携带任何内容,SPEC-014 §4.4)与映像的单文件(该程序携带产物,SPEC-014 §5.2);
+`mcpp run` 与 `mcpp test` 为执行宿主构建另一架构的运行器(§10)时亦然。携带映像的程序(M3)只属于单文件
+(2026.10.30.1)。单文件的程序的架构为该腿的架构,系统按 `--systems`(缺省为本机系统)。工程依赖 `carrier.package`;
 入口是平台包中的 `carrier.main`;一个汇编文件以 `.incbin` 把携带的字节放进节 `carrier.section`(ELF 写作该名并带
 `"a"` 标志,COFF 写作该名并带 `"dr"` 标志,Mach-O 写作 `__<大写名>,__carried`),给出符号 `mcpp_carried_begin`、`mcpp_carried_end`、`mcpp_carried_name`
 (入口的名字)与 `mcpp_carried_digest`(字符串)。
@@ -499,7 +499,7 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
     `--host-platform none` 时构建程序为本机程序(e2e 953)。
 12. 给出执行宿主时,`mcpp run` 与 `mcpp test` 交给它的运行器程序是产物架构的 ELF;本机有该架构的 qemu 时映像经它运行、
     测试通过;`mcpp self env` 报告拒绝的原因,给出执行宿主时报告另一架构的运行器(e2e 960)。
-13. `--mode self-contained` 的单目标包的载体是映像架构的程序(e2e 961)。
+13. 映像的单文件的载体是映像架构的程序;`--mode self-contained` 的单目标包是树,携带该架构的运行器(e2e 961)。
 
 ## 变更记录
 
@@ -508,3 +508,4 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 | 1.0 | 2026-10-28 | 首版(mcpp 2026.10.27.1,mcpp#847):`[platform]` 的七组键与 `versions`、`hosted`;三种写法与层次;目标图与宿主图的选择;`cfg(platform)`;合并;依赖图的补全、版本组与改名边界;工具链;链接、命名与封装;运行器的表形式;载体;平台阶段与协议 17;工作空间;目标表的平台列;锁、报告、机器输出、命令与拒绝码。 |
 | 1.1 | 2026-10-28 | `[platform] universal`;载体的三种携带形式(运行器形式、映像、映像组的 zip)、`mcpp_carried_digest`、Mach-O 节名 `__carried`、按系统的行;平台阶段可声明包格式与 artifact action;`self env --host` 报告运行器与工具;判据 10、11(e2e 952、953)。 |
 | 1.2 | 2026-10-29 | mcpp 2026.10.29.1:§10 给出执行宿主时 `same-arch` 运行器的程序为产物架构的载体运行器形式,`mcpp test` 写出完整的拒绝原因一次;§11 单目标包与单文件的程序为产物架构的,不构建的行在生成工程之前被拒绝;§14 ok 映像与 Web;§16 `self env` 报告运行器程序的架构、执行宿主与拒绝,平台包的 `mcpp test` 运行给出执行宿主的目标;判据 7、12、13(e2e 960、961)。 |
+| 1.3 | 2026-10-30 | mcpp 2026.10.30.1(设计 2026-10-29 §4.3–§4.5、§13.3):§1.1 `universal` 弃用、不起作用;`runner.hosts`;`carrier` 接受列表,每项的 `hosts` 与 `build`;`descriptor_keys`;§10 执行宿主的运行器程序按 `hosts` 选择载体项;§11 携带映像的载体只属于单文件,树携带运行器形式;判据 13 改写(e2e 961)。 |

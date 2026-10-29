@@ -63,8 +63,9 @@ A pack is decided by three independent choices and a set of legs (2026.10.27.1+)
 |---|---|---|---|
 | linkage | `--linkage` | are the libraries inside the program or beside it | `static`, `shared` |
 | closure | `--mode` | what the machine that runs the package provides | `system`, `vendored` (default), `self-contained` |
-| container | `--pkg-format` | what is delivered | `tar`, `zip`, `dir`, `single-file`, a format a package provides; unstated: `zip` for a Windows program, `tar` elsewhere |
-| legs | `--target`, repeatable | which targets one package covers | triples |
+| container | `--pkg-format` | what is delivered | `tar`, `zip`, `dir`, `single-file`, a format a package provides, or a list of containers of one tree (`tar,okb`); unstated: `zip` for a Windows program, `tar` elsewhere |
+| legs | `--target`, repeatable | which targets the pack covers | targets and target sets (`x86_64-openkal`, `openkal`, `linux-musl`) |
+| systems | `--systems` | which systems a self-contained package's runners, or single files, are for | `linux`, `linux-aarch64`, `all` |
 
 - **Linkage** is a property of the program. `--linkage static|shared` (or
   `[pack] linkage`) is the build's dependency linkage for the pack, over
@@ -77,8 +78,23 @@ A pack is decided by three independent choices and a set of legs (2026.10.27.1+)
   closure travels with the program. `--mode static` is shorthand for
   `--linkage static --mode self-contained`.
 - **Container** is the shape of the delivery, described below.
-- **Legs**: each `--target` is one build, staged into the same tree. A platform
-  that declares `universal = true` covers all of its targets by default.
+- **Legs** are the targets the command names (2026.10.30.1+): every `--target`,
+  else `[pack] targets`, else the build's target. A target set (`openkal`,
+  `linux-musl`) names the target table's rows of its system that the selected
+  platform serves. A platform never adds a leg. The legs are merged by what the
+  target is:
+
+  | Target | Several legs |
+  |---|---|
+  | `lib`, `shared` | one library package ([12](12-binary-distribution.md)) |
+  | a program of a platform that states a runner (openkal) | one tree named after the platform, `<name>-<version>-openkal` |
+  | an Android application | one APK tree, `lib/<abi>/` per leg |
+  | any other program | one package per leg, each named by its triple |
+
+  A pack that writes more than one file takes a directory for `-o`: a path
+  ending in `/`, or an existing directory, below which each file keeps its
+  default name. One openkal leg is said after `Packed`: `only x86_64;
+  --target openkal or [pack] targets = ["openkal"] packs every architecture`.
 
 | Mode | Host must provide | Size | Use case |
 |---|---|---|---|
@@ -113,12 +129,15 @@ choices:
 | `--compress` with `--pkg-format dir` or a provided format | `--pkg-format tar`, `zip` or `single-file`: only a container is compressed |
 | `--compress zstd` or `xz` with `--pkg-format zip` | `--compress gzip` (DEFLATE) or `none`, or `--pkg-format tar` |
 | `--compress gzip` or `xz` with `--pkg-format single-file` | `--compress zstd[:<level>]` or `none`: the launcher decompresses zstd |
-| several `--target` for an executable outside a universal package | one pack per target |
-| `--systems` on anything but a self-contained universal package or a single file of an image | `--mode self-contained` over a platform with `universal = true`, or `--pkg-format single-file` |
-| an image's single file for a system whose row this mcpp builds no program for (`x86_64-macos`, `aarch64-windows-gnu`) | `--systems` naming the systems that are built |
-| an image's single file for several `--systems` with `-o` | leave `-o` out: one file per system |
-| a universal package of a platform that states no `runner` | `--no-universal` |
-| `--target` outside the platform's `targets` in a universal package | a target the platform serves |
+| `--systems` on anything but a self-contained tree of images or a single file of an image | `--mode self-contained`, or `--pkg-format single-file`; `[pack] systems` that does not fit is noted and left aside |
+| an image's single file for a system named whose row this mcpp builds no program for (`x86_64-macos`, `aarch64-windows-gnu`) | `--systems` naming the pairs that are built; `--systems all` takes those and says the rest |
+| more than one file (a package per leg, several single files) with `-o` naming one file | `-o <directory>/` |
+| several images of a platform that states no `runner`, not as single files | one pack per target, or `--pkg-format single-file` |
+| `--target` outside the platform's targets | a target the platform serves |
+| a target set that expands to nothing, or whose rows select different platforms | a target, or another set |
+| `dir` or `single-file` in a `--pkg-format` list; a list with `-o` naming one file; a list on `mcpp run` | one format, or `-o <directory>/` |
+| `--mode self-contained` of an image with `okb` as the only format | `--pkg-format tar,okb`: okb holds the images alone, and the runner would be dropped |
+| a tree that runs nowhere (`runs_on` empty) | `--mode self-contained --systems <a system this mcpp builds for>` |
 | a dispatched format for a `lib` or `shared` target | the library route, [12](12-binary-distribution.md) |
 | `--pkg-format single-file` for a `lib` or `shared` target | `tar`, `zip` or `dir` |
 
@@ -203,8 +222,10 @@ mcpp pack --pkg-format msi --features installer  # activate root-package feature
 mcpp pack --linkage static                       # the libraries inside the program
 mcpp pack --pkg-format single-file               # one executable file
 mcpp pack --pkg-format tar --compress zstd       # .tar.zst
-mcpp pack --target x86_64-openkal                # a universal package: every architecture of the platform
-mcpp pack --target x86_64-openkal --mode self-contained --systems linux,macos,windows
+mcpp pack --target x86_64-openkal                # one leg: the image's tree for x86_64
+mcpp pack --target openkal                       # every architecture of the platform, one tree
+mcpp pack --target openkal --mode self-contained --systems all --pkg-format tar,okb -o dist/
+mcpp pack --target linux-musl -o dist/           # a static package per architecture
 mcpp pack --merge a.zip --merge b.zip -o all.zip # one package from packages built on several machines
 mcpp emit xpkg --package all.zip --url https://example.org/v1.0.0   # its xim-pkgindex entry
 ```
@@ -729,22 +750,16 @@ runs the package must provide:
 
 | Mode | The package holds | The machine provides |
 |---|---|---|
-| `system` | `bin/<name>.oke` | `okrun` and every image it names |
-| `vendored` (default) | `bin/<name>.oke` and the `.okso` images it names | `okrun` |
-| `self-contained` | `bin/<name>` — a program of this machine's system and the image's architecture that carries the image in the platform's carrier section (`.oke` on ELF and COFF, `__OKE,__carried` on Mach-O) and runs it through libokrun — and the `.okso` images beside it | nothing |
-| `static` (`--linkage static --mode self-contained`) | `bin/<name>`, a program of this machine's system and the image's architecture that carries one static `.oke` | nothing |
+| `system` | the tree below: `lib/<arch>/<name>.oke` and the launchers | `okrun` and every image it names |
+| `vendored` (default) | the tree with the `.okso` images the image names | `okrun` |
+| `self-contained` | the tree with the runner of each system of `--systems` and each architecture under `libexec/okrun/<os>-<arch>/` | nothing |
+| `static` (`--linkage static --mode self-contained`) | the self-contained tree of one static `.oke` per architecture | nothing |
 
-These are the packages of one target (`--no-universal`, or a platform that is
-not universal). `--linkage static` builds the image with no `.okso`. The image
-is not recompiled for `self-contained`: mcpp builds the platform's carrier
-(`[platform] carrier`, a package and its entry source) as a generated project
-under `target/carrier-pack/<name>-<os>-<arch>/`, places the image's bytes in
-the carrier's section, and packs that program as it packs any other — static
-(musl) on Linux, with only the system's libraries on macOS and Windows. The
-program is of the image's architecture (2026.10.29.1+): on x86_64 Linux,
-`--target aarch64-openkal` packs an aarch64 Linux program. A system and
-architecture this mcpp builds no program for (`aarch64-windows-gnu`, on a
-Windows machine) is refused, naming the row.
+The layout is the same for one leg and for several (2026.10.30.1+).
+`--linkage static` builds the image with no `.okso`. A program of this
+machine that carries the image in the platform's carrier section (`.oke` on ELF
+and COFF, `__OKE,__carried` on Mach-O) is the single file
+(`--pkg-format single-file`, below), and only the single file.
 
 ### Android: the application object and its closure under `lib/`
 
@@ -772,59 +787,86 @@ own closure. `--mode` does not apply on this row: the device provides exactly
 the platform libraries, so there is no host set to leave out and no loader to
 carry.
 
-### A universal package (`[platform] universal`)
+### The tree of a platform's images
 
-A platform that declares `universal = true` (openkal-platform does) makes a
-pack of any of its targets cover all of them; `--no-universal` packs the
-selected target alone. One tree serves every system and every architecture of
-the platform:
+An image of a platform that states a runner (openkal-platform does) is packed
+as one tree, whatever the number of legs: `--target x86_64-openkal` is the tree
+of one leg, `hello-0.1.0-x86_64-openkal/`; `--target openkal` is the tree of
+both, named after the platform. One tree serves every system and every
+architecture it holds:
 
 ```
 target/dist/hello-0.1.0-openkal/
 ├── bin/hello                    ← POSIX launcher
-├── bin/hello.cmd                ← Windows launcher
-├── lib/x86_64/hello.oke         ← one set of images per architecture
+├── bin/hello.exe                ← Windows launcher (a program)
+├── lib/x86_64/hello.oke         ← one set of images per leg
 ├── lib/aarch64/hello.oke
 ├── libexec/okrun/<os>-<arch>/   ← only with --mode self-contained
 ├── share/…                      ← resources, once
 └── mcpp-package.json
 ```
 
-The other legs are built during the pack (`Packed leg <triple>`). The
-launchers are generated from the platform's `runner`: each resolves the package
-as the parent of its own directory, picks the architecture directory from
-`uname -m` (`x86_64`, `amd64` → `x86_64`; `aarch64`, `arm64` → `aarch64`) or
-from `%PROCESSOR_ARCHITECTURE%` / `%PROCESSOR_ARCHITEW6432%`, and starts the
-runner on the image there with its own arguments, looking for the runner first
-in `libexec/<runner>/<os>-<arch>/` and then on `PATH`. A machine of an
-architecture the package does not hold gets exit status 126 and a sentence
-naming both. Files `[runtime] deploy` places lie beside each leg's image.
-`[pack] universal = false` is `--no-universal`; a platform that states no
-`runner` cannot make a universal package, and the pack is refused with
-`--no-universal` as the remedy.
+The other legs are planned one after another and built at once
+(`Packed leg <triple>`). The launchers are generated from the platform's
+`runner`: the POSIX script resolves the package as the parent of its own
+directory, picks the architecture directory from `uname -m` (`x86_64`, `amd64`
+→ `x86_64`; `aarch64`, `arm64` → `aarch64`), hands a Git Bash, MSYS or Cygwin
+shell to `bin/<name>.exe`, and starts the runner on the image there with its
+own arguments, looking for the runner first in `libexec/<runner>/<os>-<arch>/`
+and then on `PATH`. The Windows launcher is the engine's program built for
+`x86_64-windows-gnu`: it finds the package from its own path, picks the image
+of the machine's architecture, and starts the runner the same way; no `.cmd` is
+written. A machine of an architecture the package does not hold gets exit
+status 126 and a sentence naming both. Files `[runtime] deploy` places lie
+beside each leg's image.
 
 Under `--mode self-contained` the runner travels: for each system of
-`--systems linux,macos,windows` (default: this machine's) and each architecture
-of the package, mcpp builds the platform's carrier with nothing carried — a
-program that runs the image its first argument names, as `okrun` does — into
-`libexec/<runner>/<os>-<arch>/`. Each runner is built on its row
-(`<arch>-linux-musl`, `<arch>-macos`, `<arch>-windows-gnu`) over the platform's
-hosted arrangement, so the same program results whichever machine packs, with
-no SDK or C run-time of that system; a Linux runner is static. A row this mcpp
-builds no program for (`x86_64-macos`, planned; `aarch64-windows-gnu`, not in
-its table) is left out with a warning, and the launcher there looks for the
-runner on `PATH`. An image built on a Windows host is not the bytes of one
-built elsewhere (#850): pack universal packages on Linux or macOS.
+`--systems` (`linux`, `macos`, `windows`, each for every architecture of the
+legs; `linux-aarch64` for one pair; `all`; default: this machine's) mcpp builds
+the platform's carrier with nothing carried — a program that runs the image its
+first argument names, as `okrun` does — into `libexec/<runner>/<os>-<arch>/`.
+Each runner is built on its row (`<arch>-linux-musl`, `<arch>-macos`,
+`<arch>-windows-gnu`) over the platform's hosted arrangement, so the same
+program results whichever machine packs, with no SDK or C run-time of that
+system; a Linux runner is static. A row this mcpp builds no program for
+(`x86_64-macos`, planned; `aarch64-windows-gnu`, not in its table) is left out
+with a warning. An image built on a Windows host is not the bytes of one built
+elsewhere (#850): pack trees on Linux or macOS.
+
+**Where it runs.** The pack writes `runs_on` into `mcpp-package.json` and says
+it after `Packed`: `self`, the `<os>-<arch>` pairs the package runs on with
+what it carries, and `with.<runner>`, the pairs it runs on where the machine
+has the runner (the legs' architectures × the platform's `runner.hosts`).
+
+```
+      Packed target/dist/hello-0.1.0-openkal-bundle-all
+     Runs on linux-aarch64, linux-x86_64, macos-aarch64, windows-x86_64
+ Not covered macos-x86_64 (no runner row: this mcpp builds no program for x86_64-macos)
+```
+
+A tree that runs nowhere — no runner carried and none the platform names — is
+refused; over a platform that states no `runner.hosts` this is a note instead.
 
 Packages built on several machines are joined with
 `mcpp pack --merge a.zip --merge b.zip` (also `--merge a.zip,b.zip`). The inputs
 are package directories or archives (`.zip`, `.tar`, `.tar.gz`, `.tgz`,
 `.tar.zst`, `.tar.xz`) this command wrote; nothing is built. Legs and systems
-are united, each file is taken once, and the result is described anew. Inputs
-of another name, version, platform, linkage or mode are refused, and so is one
+and `runs_on` are united, each file is taken once, and the result is described
+anew. The launchers are derived: written again for the merged legs, so two
+one-leg trees merge into the tree of both, named after the platform when `-o`
+is left out (`hello-0.1.0-x86_64-openkal` → `hello-0.1.0-openkal`). Inputs of
+another name, version, platform, linkage or mode are refused, and so is one
 path with two digests, naming the path, both digests and both inputs. The
 container is `--pkg-format`, else the extension of `-o`, else the first
 input's.
+
+**A list of containers.** `--pkg-format tar,okb` (or `[pack] format = ["tar",
+"okb"]`) builds once, stages one tree and writes each container from it, in the
+order named. A list holds the containers of one tree — `tar`, `zip` and a
+provider's format — never `dir` or `single-file`; it takes a directory for `-o`;
+`--compress` applies to its engine containers. okb holds the images alone, so a
+self-contained tree whose only format is okb is refused (`--pkg-format
+tar,okb`). `mcpp run --pkg-format` takes one format.
 
 ### A single-file package
 
@@ -854,7 +896,11 @@ the root of a self-contained Linux tree, or `<name>.exe` at the root of a
 Windows tree — with its arguments, and its exit status is the program's.
 
 An ok image's file is `target/dist/<name>-<version>-<os>-<arch>` (`.exe` on
-Windows), one per system of `--systems` (default: this machine's). The carrier
+Windows), one per leg and system of the leg's architecture (`--systems`;
+default: this machine's): `--target openkal --pkg-format single-file -o dist/`
+writes one per architecture. `--systems all` makes the file of each row this
+mcpp builds a program for and says the others (`Not covered`); more than one
+file takes a directory for `-o`. The carrier
 carries the image alone when it names no other image, and otherwise a stored
 zip of all the images, each aligned to 64 KiB, which the carrier's entry reads
 through openkal-run's bundle interface (openkal-platform 0.17.2 and later).
@@ -879,31 +925,30 @@ and sha256. A provided format, `--merge` and `mcpp emit xpkg` read it
 
 The file is written for every pack, a provided format's included. Each file's
 `role` is `program`, `image`, `library`, `loader`, `launcher`, `resource` or
-`metadata`; in a universal package every file of `lib/<arch>/` is an image of
-that leg. Symbolic links are not listed. `linkage` is `static`, `shared` or
-`declared` (each library as it declares itself); `launch` is `program` for one
-native leg and `runner` with an `entry` per architecture for a universal
-package.
+`metadata`; in a tree every file of `lib/<arch>/` is an image of that leg.
+Symbolic links are not listed. `linkage` is `static`, `shared` or `declared`
+(each library as it declares itself); `launch` is `program` for one native leg
+and `runner` with an `entry` per architecture for a tree; `runs_on` is where the
+package runs (`{"self": [...], "with": {"okrun": [...]}}`), and `systems` the
+runners it carries.
 
 `mcpp emit xpkg --package <archive> [--package …] --url <prefix> [-o <file>]`
 writes the xim-pkgindex entry (spec 2) of packages this command wrote, from
-their `mcpp-package.json`. A universal package is one asset that `linux`,
-`macosx` and `windows` install alike, with the runner as a dependency
-(`deps = { "xim:okrun" }`) unless the package carries it; packages of one system
+their `mcpp-package.json`. A tree is one asset; each system's block names the
+architectures its `runs_on` covers, with the runner as a dependency
+(`deps = { "xim:okrun" }`) unless the package carries it, and a tree whose
+`runs_on` is empty is refused; packages of one system
 and architecture each make that system's entry, one URL with `${arch}` and a
 sha256 per architecture. The install moves the archive's top directory into
-place and registers the program with xvm (the `.cmd` launcher on Windows),
+place and registers the program with xvm (`bin/<name>.exe` on Windows),
 from each system's own directory when the packages place the program apart
 (a Windows program at the root, a POSIX one under `bin/`). Each archive is its
-own `--package`. A package of one leg is described for the system and
-architecture its program runs on (2026.10.29.1+): the triple's for a Linux,
-macOS or Windows target, and for an ok image packed with its carrier
-(`--no-universal --mode self-contained`) the carrier's, which the package
-records in `systems` (`"systems": ["linux-aarch64"]` for an aarch64 image packed
-on Linux). A package whose program is no program of a system is refused, naming
-the route that distributes it: a `wasm32-emscripten` package is published as a
-page (`dist-web`), an ok image without its carrier as its platform's universal
-package, and an Android, iOS or bare-metal package has no entry.
+own `--package`. A package of one leg of a Linux, macOS or Windows target is
+described for the triple's system and architecture. A package whose program is
+no program of a system is refused, naming the route that distributes it: a
+`wasm32-emscripten` package is published as a page (`dist-web`), an ok image as
+its platform's tree (`--target openkal`) or a single file, and an Android, iOS
+or bare-metal package has no entry.
 
 ### Compression and signing
 
@@ -916,7 +961,8 @@ stores them (`none`); a single file's payload is `zstd` or `none`; the images
 inside an okb are stored so that the loader maps them in place.
 
 `[pack] sign = ["<prog>", …, "{}"]` runs once on each program, image, library
-and loader of the staged tree before the container is written, and on each
+and loader of the staged tree and on the Windows launcher before the container
+is written, and on each
 single file; `{}` is the file. A failure stops the pack, naming the argv and its
 output, and `mcpp-package.json` states the digests of the signed files.
 
@@ -929,10 +975,11 @@ common fields are:
 [pack]
 default_mode  = "static"            # override the normal vendored default for bare `mcpp pack`
 linkage       = "shared"            # the default of --linkage
-format        = "tar"               # the default of --pkg-format
+format        = "tar"               # the default of --pkg-format; a list: ["tar", "okb"]
+targets       = ["openkal"]         # the default of --target: targets and target sets
+systems       = ["linux", "macos"]  # the default of --systems
 compress      = "zstd"              # the default of --compress
 sign          = ["signtool", "sign", "{}"]   # run on each program, image, library and loader before the container
-universal     = false               # = --no-universal
 strip         = true                # default. false ships the artifacts as built
 debug_symbols = "dist/debug"        # separate the debug info here instead of discarding it
 include       = ["share/**", "config/*.toml"]   # project files staged at the same path, once
@@ -945,10 +992,15 @@ also_skip    = ["libcustom.so"]     # libraries assumed to exist on the target s
 force_bundle = ["libfoo.so"]        # bundle even if matched by the PEP 600 list
 ```
 
-`[pack].default_mode` currently accepts the established manifest spellings
-`static`, `bundle-project`, and `bundle-all`; the `system` mode is selected
-explicitly with `mcpp pack --mode system`. CLI input accepts both the canonical
-and compatibility names described above.
+`[pack].default_mode` accepts the canonical names `system`, `vendored`,
+`self-contained` and `static` (2026.10.30.1+) and the established spellings
+`bundle-project` and `bundle-all`.
+
+`[pack] universal`, `[platform] universal` and `--no-universal` no longer decide
+what a pack holds (2026.10.30.1+; [51](51-supported-versions.md)):
+`[pack] universal = true` is refused with `[pack] targets = ["openkal"]` as the
+remedy; `false` and `[platform] universal` are noted and ignored;
+`--no-universal` with one target is noted, and with a target set refused.
 
 The `static` mode additionally requires a musl toolchain configured under
 `[target.<triple>]`; for the full setup, see the `mcpp.toml` in

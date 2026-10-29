@@ -1135,6 +1135,12 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
         mcpp::ui::warning("`mcpp run --format` is the earlier spelling of --pkg-format");
         format = *f;
     }
+    // One format runs: a list is `mcpp pack`'s (design 2026-10-29 §4.6).
+    if (format.find(',') != std::string::npos) {
+        mcpp::ui::error(std::format("mcpp run --pkg-format names one format, and '{}' is a list.\n"
+                                    "  use: --pkg-format {}", format, format.substr(0, format.find(','))));
+        return 2;
+    }
     if (parsed.is_flag_set("list-runners"))
         return mcpp::build::list_runners(package_filter, cache_mode, no_cache,
                                          target_triple, features, profile, accel);

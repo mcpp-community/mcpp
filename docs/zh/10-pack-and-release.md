@@ -57,8 +57,9 @@ glibc 专有行为（NSS 查询、`dlopen` 宿主插件）时的首选。
 |---|---|---|---|
 | 链接 | `--linkage` | 库在程序里，还是在程序旁边 | `static`、`shared` |
 | 闭包 | `--mode` | 运行该包的机器提供什么 | `system`、`vendored`（默认）、`self-contained` |
-| 容器 | `--pkg-format` | 交付成什么 | `tar`、`zip`、`dir`、`single-file`、某个包提供的格式；未给出时 Windows 程序为 `zip`，其余为 `tar` |
-| 腿 | `--target`，可重复 | 一个包覆盖哪些目标 | 三元组 |
+| 容器 | `--pkg-format` | 交付成什么 | `tar`、`zip`、`dir`、`single-file`、某个包提供的格式，或一棵树的容器列表（`tar,okb`）；未给出时 Windows 程序为 `zip`，其余为 `tar` |
+| 腿 | `--target`，可重复 | 打包覆盖哪些目标 | 目标与目标集合（`x86_64-openkal`、`openkal`、`linux-musl`） |
+| 系统 | `--systems` | 自带的运行器或单文件为哪些系统而做 | `linux`、`linux-aarch64`、`all` |
 
 - **链接**是程序的属性。`--linkage static|shared`（或 `[pack] linkage`）是这次打包的构建的依赖链接，
   优先于 `[build] dependency_linkage` 与构建配置中的值；未给出时每个库按它自己的声明链接。Linux 上
@@ -67,8 +68,20 @@ glibc 专有行为（NSS 查询、`dlopen` 宿主插件）时的首选。
 - **闭包**是包的属性：共享库闭包中有多少随程序携带。`--mode static` 是
   `--linkage static --mode self-contained` 的简写。
 - **容器**是交付的形状，见下文。
-- **腿**：每个 `--target` 是一次构建，暂存进同一棵树。声明了 `universal = true` 的平台
-  缺省覆盖它的全部目标。
+- **腿**是命令命名的目标（2026.10.30.1+）：每个 `--target`，未给出时为 `[pack] targets`，再未给出时为构建的
+  目标。目标集合（`openkal`、`linux-musl`）为目标表中该系统、所选平台服务的行。平台不增加腿。多条腿按目标的种类
+  合并：
+
+  | 目标 | 多条腿 |
+  |---|---|
+  | `lib`、`shared` | 一个库包（[12](12-binary-distribution.md)） |
+  | 声明运行器的平台（openkal）的程序 | 一棵以平台命名的树，`<name>-<version>-openkal` |
+  | Android 应用 | 一个 APK 树，每条腿一个 `lib/<abi>/` |
+  | 其他程序 | 每条腿一个包，各以三元组命名 |
+
+  写出多于一个文件的打包要求 `-o` 为目录：以 `/` 结尾的路径或已存在的目录，每个文件以缺省名写在其下。一条 openkal
+  腿的打包在 `Packed` 之后写出：`only x86_64; --target openkal or [pack] targets = ["openkal"] packs every
+  architecture`。
 
 | Mode | 宿主必须提供 | 体积 | 使用场景 |
 |---|---|---|---|
@@ -101,12 +114,15 @@ glibc 专有行为（NSS 查询、`dlopen` 宿主插件）时的首选。
 | `--compress` 与 `--pkg-format dir` 或提供者的格式 | `--pkg-format tar`、`zip` 或 `single-file`：只有容器被压缩 |
 | `--compress zstd` 或 `xz` 与 `--pkg-format zip` | `--compress gzip`（DEFLATE）或 `none`，或 `--pkg-format tar` |
 | `--compress gzip` 或 `xz` 与 `--pkg-format single-file` | `--compress zstd[:<level>]` 或 `none`：启动器解压 zstd |
-| 通用包之外、对一个可执行文件给出多个 `--target` | 每个目标打一次 |
-| 自带加载器的通用包与映像的单文件之外使用 `--systems` | 在声明 `universal = true` 的平台上用 `--mode self-contained`，或 `--pkg-format single-file` |
-| 映像的单文件，`--systems` 中某系统的行本 mcpp 不构建程序（`x86_64-macos`、`aarch64-windows-gnu`） | 只列出会构建的系统的 `--systems` |
-| 映像的单文件，多个 `--systems` 与 `-o` 同用 | 去掉 `-o`：每个系统一个文件 |
-| 平台未声明 `runner` 时打通用包 | `--no-universal` |
-| 通用包中给出平台 `targets` 之外的 `--target` | 平台服务的目标 |
+| 自带运行器的映像树与映像的单文件之外使用 `--systems` | `--mode self-contained`，或 `--pkg-format single-file`；不相容的 `[pack] systems` 写出提示后搁置 |
+| 映像的单文件，`--systems` 中写出的系统的行本 mcpp 不构建程序（`x86_64-macos`、`aarch64-windows-gnu`） | 只列出会构建的组合的 `--systems`；`--systems all` 取这些并写出其余 |
+| 结果多于一个文件（每腿一个包、多个单文件）而 `-o` 命名一个文件 | `-o <目录>/` |
+| 未声明 `runner` 的平台的多条映像腿，且不是单文件 | 每个目标打一次，或 `--pkg-format single-file` |
+| 平台目标之外的 `--target` | 平台服务的目标 |
+| 展开为空的目标集合，或其行选到不同平台 | 一个目标，或另一个集合 |
+| `--pkg-format` 列表含 `dir` 或 `single-file`；列表与命名一个文件的 `-o`；`mcpp run` 的列表 | 一个格式，或 `-o <目录>/` |
+| 映像的 `--mode self-contained` 而格式只有 `okb` | `--pkg-format tar,okb`：okb 只含映像，运行器会被丢弃 |
+| 在任何地方都不能运行的树（`runs_on` 为空） | `--mode self-contained --systems <本 mcpp 构建的系统>` |
 | 对 `lib` 或 `shared` 目标使用被分派的格式 | 库的路线，[12](12-binary-distribution.md) |
 | 对 `lib` 或 `shared` 目标使用 `--pkg-format single-file` | `tar`、`zip` 或 `dir` |
 
@@ -181,8 +197,10 @@ mcpp pack --pkg-format msi --features installer  # activate root-package feature
 mcpp pack --linkage static                       # the libraries inside the program
 mcpp pack --pkg-format single-file               # one executable file
 mcpp pack --pkg-format tar --compress zstd       # .tar.zst
-mcpp pack --target x86_64-openkal                # a universal package: every architecture of the platform
-mcpp pack --target x86_64-openkal --mode self-contained --systems linux,macos,windows
+mcpp pack --target x86_64-openkal                # one leg: the image's tree for x86_64
+mcpp pack --target openkal                       # every architecture of the platform, one tree
+mcpp pack --target openkal --mode self-contained --systems all --pkg-format tar,okb -o dist/
+mcpp pack --target linux-musl -o dist/           # a static package per architecture
 mcpp pack --merge a.zip --merge b.zip -o all.zip # one package from packages built on several machines
 mcpp emit xpkg --package all.zip --url https://example.org/v1.0.0   # its xim-pkgindex entry
 ```
@@ -636,17 +654,14 @@ ok 映像经 `okrun` 在其架构的每个系统上运行（见 [24](24-openkal-
 
 | Mode | 包内内容 | 机器需提供 |
 |---|---|---|
-| `system` | `bin/<name>.oke` | `okrun` 与它所需的每个映像 |
-| `vendored`（默认） | `bin/<name>.oke` 与它所需的 `.okso` 映像 | `okrun` |
-| `self-contained` | `bin/<name>`：本机系统、映像架构的程序，以平台载体的段（ELF 与 COFF 上为 `.oke`，Mach-O 上为 `__OKE,__carried`）携带映像并经 libokrun 运行，旁边是所需的 `.okso` 映像 | 无 |
-| `static`（`--linkage static --mode self-contained`） | `bin/<name>`：本机系统、映像架构的程序，携带一个静态 `.oke` | 无 |
+| `system` | 下文的树：`lib/<arch>/<name>.oke` 与启动器 | `okrun` 与它所需的每个映像 |
+| `vendored`（默认） | 树，带映像所需的 `.okso` 映像 | `okrun` |
+| `self-contained` | 树，带 `--systems` 的每个系统与每个架构的运行器，位于 `libexec/okrun/<os>-<arch>/` | 无 |
+| `static`（`--linkage static --mode self-contained`） | 每个架构一个静态 `.oke` 的 self-contained 树 | 无 |
 
-以上是单个目标的包（`--no-universal`，或平台不声明通用包）。`--linkage static` 构建不带 `.okso` 的映像。
-`self-contained` 不重新编译映像：mcpp 把平台的载体（`[platform] carrier`，一个包与它的入口源码）生成为
-`target/carrier-pack/<name>-<os>-<arch>/` 下的工程，把映像的字节放进载体的段，再按任何程序的方式打包该程序 ——
-Linux 上为静态（musl），macOS 与 Windows 上只引用系统自带的库。该程序的架构为映像的架构（2026.10.29.1+）：在
-x86_64 Linux 上，`--target aarch64-openkal` 打出 aarch64 的 Linux 程序。本 mcpp 不为其构建程序的系统与架构（在
-Windows 机器上为 `aarch64-windows-gnu`）被拒绝，并写出该行。
+一条腿与多条腿的布局相同（2026.10.30.1+）。`--linkage static` 构建不带 `.okso` 的映像。以平台载体的段（ELF 与
+COFF 上为 `.oke`，Mach-O 上为 `__OKE,__carried`）携带映像的本机程序是单文件（`--pkg-format single-file`，见下文），
+且只是单文件。
 
 ### Android：应用目标文件与它的闭包在 `lib/` 下
 
@@ -672,41 +687,59 @@ target/dist/myapp-0.1.0-x86_64-linux-android/
 闭包。`--mode` 不适用于这一行：设备恰好提供了平台库，因此既没有可以留给宿主
 的库集合，也没有需要携带的 loader。
 
-### 通用包（`[platform] universal`）
+### 平台的映像树
 
-声明了 `universal = true` 的平台（openkal-platform 即是）使它任一目标的打包覆盖其全部目标；`--no-universal`
-只打所选的目标。一棵树服务该平台的每个系统与每个架构：
+声明运行器的平台（openkal-platform 即是）的映像打成一棵树，腿数不论：`--target x86_64-openkal` 是一条腿的树
+`hello-0.1.0-x86_64-openkal/`；`--target openkal` 是两条腿的树，以平台命名。一棵树服务它所含的每个系统与每个架构：
 
 ```
 target/dist/hello-0.1.0-openkal/
 ├── bin/hello                    ← POSIX launcher
-├── bin/hello.cmd                ← Windows launcher
-├── lib/x86_64/hello.oke         ← one set of images per architecture
+├── bin/hello.exe                ← Windows launcher (a program)
+├── lib/x86_64/hello.oke         ← one set of images per leg
 ├── lib/aarch64/hello.oke
 ├── libexec/okrun/<os>-<arch>/   ← only with --mode self-contained
 ├── share/…                      ← resources, once
 └── mcpp-package.json
 ```
 
-其余的腿在打包过程中构建（`Packed leg <triple>`）。启动器由平台的 `runner` 生成：以自身目录的上一级为包的
-根，按 `uname -m`（`x86_64`、`amd64` → `x86_64`；`aarch64`、`arm64` → `aarch64`）或
-`%PROCESSOR_ARCHITECTURE%` / `%PROCESSOR_ARCHITEW6432%` 选择架构目录，以该目录中的映像与自身的参数启动运行器，
-先在 `libexec/<runner>/<os>-<arch>/` 中、再在 `PATH` 上查找运行器。包中没有本机架构时以状态 126 退出，写出两者。
-`[runtime] deploy` 放置的文件位于每条腿的映像旁边。`[pack] universal = false` 等同 `--no-universal`；平台未声明
-`runner` 时不能打通用包，打包被拒绝，出路为 `--no-universal`。
+其余的腿逐条规划、一起构建（`Packed leg <triple>`）。启动器由平台的 `runner` 生成：POSIX 脚本以自身目录的上一级为
+包的根，按 `uname -m`（`x86_64`、`amd64` → `x86_64`；`aarch64`、`arm64` → `aarch64`）选择架构目录，Git Bash、MSYS 与
+Cygwin 的 shell 交给 `bin/<name>.exe`，以该目录中的映像与自身的参数启动运行器，先在 `libexec/<runner>/<os>-<arch>/`
+中、再在 `PATH` 上查找运行器。Windows 启动器是为 `x86_64-windows-gnu` 构建的引擎的程序：从自身路径找到包，选本机
+架构的映像，以同样的方式启动运行器；不生成 `.cmd`。包中没有本机架构时以状态 126 退出，写出两者。
+`[runtime] deploy` 放置的文件位于每条腿的映像旁边。
 
-`--mode self-contained` 时运行器随包携带：对 `--systems linux,macos,windows`（缺省为本机系统）的每个系统与包的
-每个架构，mcpp 构建不携带任何内容的平台载体 —— 一个像 `okrun` 一样运行其第一个参数所指映像的程序 —— 放入
-`libexec/<runner>/<os>-<arch>/`。每个运行器在其行（`<arch>-linux-musl`、`<arch>-macos`、`<arch>-windows-gnu`）上
-以平台的托管安排构建，因此无论在哪台机器上打包结果都是同一个程序，不需要该系统的 SDK 与 C 运行时；Linux 的运行器
-为静态。本 mcpp 不构建程序的行（`x86_64-macos` 为 planned；`aarch64-windows-gnu` 不在目标表中）不放入包并给出警告，
-启动器在那里从 `PATH` 查找运行器。在 Windows 主机上构建的映像与其他主机上的字节不同（#850）：通用包在 Linux 或
-macOS 上打包。
+`--mode self-contained` 时运行器随包携带：对 `--systems` 的每个系统（`linux`、`macos`、`windows` 取腿的全部架构；
+`linux-aarch64` 取一个组合；`all`；缺省为本机系统），mcpp 构建不携带任何内容的平台载体 —— 一个像 `okrun` 一样运行
+其第一个参数所指映像的程序 —— 放入 `libexec/<runner>/<os>-<arch>/`。每个运行器在其行（`<arch>-linux-musl`、
+`<arch>-macos`、`<arch>-windows-gnu`）上以平台的托管安排构建，因此无论在哪台机器上打包结果都是同一个程序，不需要
+该系统的 SDK 与 C 运行时；Linux 的运行器为静态。本 mcpp 不构建程序的行（`x86_64-macos` 为 planned；
+`aarch64-windows-gnu` 不在目标表中）不放入包并给出警告。在 Windows 主机上构建的映像与其他主机上的字节不同
+（#850）：树在 Linux 或 macOS 上打包。
+
+**在哪里运行。** 打包把 `runs_on` 写进 `mcpp-package.json`，并在 `Packed` 之后写出：`self` 为凭包内携带的东西即可
+运行的 `<os>-<arch>`，`with.<runner>` 为机器装有该运行器时可运行的组合（腿的架构 × 平台的 `runner.hosts`）。
+
+```
+      Packed target/dist/hello-0.1.0-openkal-bundle-all
+     Runs on linux-aarch64, linux-x86_64, macos-aarch64, windows-x86_64
+ Not covered macos-x86_64 (no runner row: this mcpp builds no program for x86_64-macos)
+```
+
+在任何地方都不能运行的树（不携带运行器，平台也未写出运行器存在的组合）被拒绝；平台未声明 `runner.hosts` 时改为
+一条提示。
 
 多台机器打出的包以 `mcpp pack --merge a.zip --merge b.zip`（也可 `--merge a.zip,b.zip`）合并。输入是本命令写出的
-包目录或归档（`.zip`、`.tar`、`.tar.gz`、`.tgz`、`.tar.zst`、`.tar.xz`），不进行任何构建。腿与系统取并集，每个
-文件只取一份，结果重新描述。名字、版本、平台、链接或模式不同的输入被拒绝；同一路径有两个摘要时也被拒绝，
+包目录或归档（`.zip`、`.tar`、`.tar.gz`、`.tgz`、`.tar.zst`、`.tar.xz`），不进行任何构建。腿、系统与 `runs_on`
+取并集，每个文件只取一份，结果重新描述。启动器是派生文件：为合并后的腿重新写出，因此两棵单腿的树合并为两条腿
+的树，不带 `-o` 时以平台命名（`hello-0.1.0-x86_64-openkal` → `hello-0.1.0-openkal`）。名字、版本、平台、链接或模式不同的输入被拒绝；同一路径有两个摘要时也被拒绝，
 写出该路径、两个摘要与两个输入。容器取 `--pkg-format`，否则取 `-o` 的扩展名，否则取第一个输入的容器。
+
+**容器列表。** `--pkg-format tar,okb`（或 `[pack] format = ["tar", "okb"]`）构建一次、暂存一棵树，按命名的顺序
+从它写出各容器。列表只含同一棵树的容器 —— `tar`、`zip` 与提供者的格式 —— 不含 `dir` 与 `single-file`；列表要求
+`-o` 为目录；`--compress` 作用于其中的引擎容器。okb 只含映像，因此格式只有 okb 的 self-contained 树被拒绝
+（`--pkg-format tar,okb`）。`mcpp run --pkg-format` 只接受一个格式。
 
 ### 单文件包
 
@@ -728,8 +761,9 @@ macOS 上为 `~/Library/Caches`，Windows 上为 `%LOCALAPPDATA%`：先解到旁
 不符的载荷从不解开。随后启动器成为程序 —— `bin/<name>`、self-contained 的 Linux 树根部的包装脚本，或 Windows
 树根部的 `<name>.exe` —— 带着它的参数，退出状态即程序的退出状态。
 
-ok 映像的文件为 `target/dist/<name>-<version>-<os>-<arch>`（Windows 上带 `.exe`），`--systems` 的每个系统
-（缺省为本机系统）各一个。映像不引用其他映像时载体只携带它，否则携带全部映像的一个 stored zip（每个映像对齐到
+ok 映像的文件为 `target/dist/<name>-<version>-<os>-<arch>`（Windows 上带 `.exe`），每条腿与该腿架构上
+`--systems` 的每个系统（缺省为本机系统）各一个：`--target openkal --pkg-format single-file -o dist/` 每个架构写一个。
+`--systems all` 为本 mcpp 构建程序的每个行写出文件，并写出其余（`Not covered`）；多于一个文件时 `-o` 只能是目录。映像不引用其他映像时载体只携带它，否则携带全部映像的一个 stored zip（每个映像对齐到
 64 KiB），载体的入口经 openkal-run 的 bundle 接口读取（openkal-platform 0.17.2 起）。
 
 WebAssembly 目标没有单文件：`--pkg-format single-file` 与 `--target wasm32-emscripten` 在任何编译之前被拒绝
@@ -748,20 +782,19 @@ WebAssembly 目标没有单文件：`--pkg-format single-file` 与 `--target was
 ```
 
 每次打包都写出该文件，提供者的格式也不例外。每个文件的 `role` 为 `program`、`image`、`library`、`loader`、
-`launcher`、`resource` 或 `metadata`；通用包中 `lib/<arch>/` 下的每个文件都是该腿的映像。符号链接不列出。
+`launcher`、`resource` 或 `metadata`；树中 `lib/<arch>/` 下的每个文件都是该腿的映像。符号链接不列出。
 `linkage` 为 `static`、`shared` 或 `declared`（每个库按它自己的声明）；`launch` 对单个原生腿为 `program`，
-对通用包为 `runner` 加每个架构的 `entry`。
+对树为 `runner` 加每个架构的 `entry`；`runs_on` 为包在哪里运行（`{"self": [...], "with": {"okrun": [...]}}`），
+`systems` 为它携带的运行器。
 
 `mcpp emit xpkg --package <归档> [--package …] --url <前缀> [-o <文件>]` 由本命令写出的包的
-`mcpp-package.json` 生成 xim-pkgindex 条目（spec 2）。通用包是 `linux`、`macosx`、`windows` 同样安装的一个资产，
-包不携带运行器时以运行器为依赖（`deps = { "xim:okrun" }`）；各系统各架构一个的包，每个系统一项，一个带 `${arch}` 的
-URL 与每个架构的 sha256。安装把归档的顶层目录移到位，并向 xvm 注册程序（Windows 上为 `.cmd` 启动器）；各系统的包
+`mcpp-package.json` 生成 xim-pkgindex 条目（spec 2）。树是一个资产，每个系统一项只写 `runs_on` 覆盖到的架构，
+包不携带运行器时以运行器为依赖（`deps = { "xim:okrun" }`），`runs_on` 为空的树被拒绝；各系统各架构一个的包，每个系统一项，一个带 `${arch}` 的
+URL 与每个架构的 sha256。安装把归档的顶层目录移到位，并向 xvm 注册程序（Windows 上为 `bin/<name>.exe`）；各系统的包
 把程序放在不同目录时（Windows 的程序在包根，POSIX 的程序在 `bin/`），按系统注册各自的目录。每个归档各以一个
-`--package` 给出。单腿包按其程序运行的系统与架构描述（2026.10.29.1+）：Linux、macOS 或 Windows 目标为三元组的
-系统与架构；带载体打包的 ok 映像（`--no-universal --mode self-contained`）为载体的系统与架构，包把它记录在 `systems`
-中（在 Linux 上打包的 aarch64 映像为 `"systems": ["linux-aarch64"]`）。程序不是任何系统的程序的包被拒绝，并写出
-分发它的途径：`wasm32-emscripten` 的包发布为页面（`dist-web`），不带载体的 ok 映像以平台的通用包发布，Android、iOS
-与裸机的包没有条目。
+`--package` 给出。Linux、macOS 或 Windows 目标的单腿包按三元组的系统与架构描述。程序不是任何系统的程序的包被
+拒绝，并写出分发它的途径：`wasm32-emscripten` 的包发布为页面（`dist-web`），ok 映像以平台的树（`--target openkal`）
+或单文件发布，Android、iOS 与裸机的包没有条目。
 
 ### 压缩与签名
 
@@ -770,7 +803,7 @@ URL 与每个架构的 sha256。安装把归档的顶层目录移到位，并向
 `PATH` 上查找压缩程序，同一归档在每个宿主上字节相同。`zip` 的条目以 DEFLATE 压缩（`gzip[:level]`）或存储
 （`none`）；单文件的载荷为 `zstd` 或 `none`；okb 中的映像以 stored 存放，使加载器原地映射。
 
-`[pack] sign = ["<prog>", …, "{}"]` 在写容器之前对暂存树中的每个程序、映像、库与加载器各运行一次，也对每个单文件
+`[pack] sign = ["<prog>", …, "{}"]` 在写容器之前对暂存树中的每个程序、映像、库、加载器与 Windows 启动器各运行一次，也对每个单文件
 运行一次；`{}` 为该文件。失败使打包停止，写出 argv 与其输出；`mcpp-package.json` 写出签名后文件的摘要。
 
 ## 配置项
@@ -781,10 +814,11 @@ URL 与每个架构的 sha256。安装把归档的顶层目录移到位，并向
 [pack]
 default_mode  = "static"            # override the normal vendored default for bare `mcpp pack`
 linkage       = "shared"            # the default of --linkage
-format        = "tar"               # the default of --pkg-format
+format        = "tar"               # the default of --pkg-format; a list: ["tar", "okb"]
+targets       = ["openkal"]         # the default of --target: targets and target sets
+systems       = ["linux", "macos"]  # the default of --systems
 compress      = "zstd"              # the default of --compress
 sign          = ["signtool", "sign", "{}"]   # run on each program, image, library and loader before the container
-universal     = false               # = --no-universal
 strip         = true                # default. false ships the artifacts as built
 debug_symbols = "dist/debug"        # separate the debug info here instead of discarding it
 include       = ["share/**", "config/*.toml"]   # 工程文件，放在包中同样的相对路径下，只放一份
@@ -797,10 +831,12 @@ also_skip    = ["libcustom.so"]     # libraries assumed to exist on the target s
 force_bundle = ["libfoo.so"]        # bundle even if matched by the PEP 600 list
 ```
 
-`[pack].default_mode` 当前接受既有的 manifest 拼写 `static`、
-`bundle-project` 与 `bundle-all`；`system` 这一 mode 只能通过
-`mcpp pack --mode system` 显式选择。CLI 输入同时接受上文的规范名称与兼容
-名称。
+`[pack].default_mode` 接受规范名 `system`、`vendored`、`self-contained`、`static`（2026.10.30.1+）与既有拼写
+`bundle-project`、`bundle-all`。
+
+`[pack] universal`、`[platform] universal` 与 `--no-universal` 不再决定打包的内容（2026.10.30.1+；
+[51](51-supported-versions.md)）：`[pack] universal = true` 被拒绝，出路为 `[pack] targets = ["openkal"]`；`false` 与
+`[platform] universal` 写出提示后忽略；`--no-universal` 与一个目标同用时写出提示，与目标集合同用时被拒绝。
 
 `static` mode 还需要在 `[target.<triple>]` 下配置一套 musl 工具链；完整写法
 参见 [`examples/03-pack-static`](../../examples/03-pack-static/) 中的

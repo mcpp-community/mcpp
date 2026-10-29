@@ -7093,6 +7093,33 @@ targets = "linux-musl"
     EXPECT_EQ(one->packConfig.targets, (std::vector<std::string>{"linux-musl"}));
 }
 
+// `[pack] format` and `[pack] systems` are a string or a list, and
+// `default_mode` takes the canonical names (design 2026-10-29 §4.1, §4.6).
+TEST(Manifest, PackFormatAndSystemsAreAStringOrAList) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "p"
+version = "0.1.0"
+[pack]
+default_mode = "self-contained"
+format = ["tar", "okb"]
+systems = "linux-aarch64"
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->packConfig.defaultMode, "self-contained");
+    EXPECT_EQ(m->packConfig.format, (std::vector<std::string>{"tar", "okb"}));
+    EXPECT_EQ(m->packConfig.systems, (std::vector<std::string>{"linux-aarch64"}));
+    auto one = mcpp::manifest::parse_string(R"(
+[package]
+name = "p"
+version = "0.1.0"
+[pack]
+format = "zip"
+)");
+    ASSERT_TRUE(one.has_value()) << one.error().format();
+    EXPECT_EQ(one->packConfig.format, (std::vector<std::string>{"zip"}));
+}
+
 TEST(Manifest, PackTargetsRefuseWhatIsNeitherATargetNorASet) {
     auto m = mcpp::manifest::parse_string(R"(
 [package]

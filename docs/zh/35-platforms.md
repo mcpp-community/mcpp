@@ -60,8 +60,8 @@ mcpp run --target x86_64-openkal
 | 编译 | `[platform.build]`、`[platform.build.'cfg(…)']` | 目标每个翻译单元的标志 |
 | 链接 | `[platform.link]` | `driver`、`flags`、`start`、`script`、`inputs`、名字 `exe` 与 `shared`、封装步骤 `seal` |
 | 运行 | `runner`、`runners` | `mcpp run` 与 `mcpp test` 怎样启动产物,以及具名的设备动作 |
-| 载体 | `carrier` | `mcpp pack` 为依赖加载器的产物按系统构建的程序:self-contained 的程序、通用包的运行器、单文件 |
-| 包 | `universal` | 任一目标的打包覆盖全部目标,成为一个包([10](10-pack-and-release.md)) |
+| 载体 | `carrier` | `mcpp pack` 为依赖加载器的产物按系统构建的程序:self-contained 树的运行器、单文件;一个表或表的列表,每项服务其 `hosts` 中的 `<os>-<arch>` |
+| 运行器存在之处 | `runner.hosts` | 运行器程序存在的 `<os>-<arch>`:需要它的包在哪里运行(`runs_on.with`,[10](10-pack-and-release.md)) |
 | 代码 | `plugin` | 在平台阶段运行的构建程序,陈述随依赖图而变的部分 |
 | 版本组 | `[platform.versions]` | 一个家族中每个包的一个版本 |
 | 宿主部分 | `[platform.hosted]` | 宿主三元组选用该平台时适用的部分 |
@@ -168,7 +168,6 @@ targets   = ["x86_64-openkal", "aarch64-openkal"]
 toolchain = "llvm@23.1.3"
 runner    = { cmd = ["okrun", "{}"], host = "same-arch" }
 carrier   = { package = "openkal-run@0.1.3", section = ".oke", main = "carrier/main.cpp" }
-universal = true
 plugin    = "build.mcpp"
 
 [platform.layers]
@@ -205,7 +204,7 @@ seal   = [["okld", "note", "{}"], ["okld", "check", "{}", "--with", "{needed}"]]
   action,例如由暂存树生成 `okb`)。板级支持包的构建程序在构建阶段陈述同样的字段
   ([34](34-authoring-a-bsp.md))。
 - **载体的入口读取它携带的内容。** mcpp 把携带的字节放在 `mcpp_carried_begin` 与 `mcpp_carried_end` 之间
-  (入口的名字在 `mcpp_carried_name`):程序为通用包的运行器时不携带任何内容,运行其第一个参数所指的映像;
+  (入口的名字在 `mcpp_carried_name`):程序为 self-contained 树的运行器时不携带任何内容,运行其第一个参数所指的映像;
   或映像本身;或映像引用其他映像时的单文件所携带的全部映像的一个 stored zip(`PK\x03\x04`,每个映像对齐到
   64 KiB)([SPEC-013](../specs/platforms.md) §11)。
 

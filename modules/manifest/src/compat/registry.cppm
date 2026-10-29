@@ -81,6 +81,25 @@ inline constexpr Deprecation kDeprecations[] = {
         "in the package that needs it",
         "manifest/deprecated", "docs/22-target-side.md",
     },
+    {
+        "pack-universal", "2026.10.30.1", kRemovalFloor,
+        "`[pack] universal`: `true` refused, `false` ignored -- a pack's targets are its legs",
+        "[pack] targets = [\"openkal\"] (every architecture), or one --target",
+        "manifest/deprecated", "docs/10-pack-and-release.md",
+    },
+    {
+        "platform-universal", "2026.10.30.1", kRemovalFloor,
+        "a platform's `[platform] universal`, ignored -- a pack's targets are its legs",
+        "nothing in the platform; the pack names its targets (`--target openkal`)",
+        "manifest/deprecated", "docs/35-platforms.md",
+    },
+    {
+        "no-universal-flag", "2026.10.30.1", kRemovalFloor,
+        "`mcpp pack --no-universal`, which a pack of one target no longer needs (refused with a "
+        "target set)",
+        "--target <arch>-<os> (one leg)",
+        "manifest/deprecated", "docs/10-pack-and-release.md",
+    },
 };
 
 // The row named `id`, or null.

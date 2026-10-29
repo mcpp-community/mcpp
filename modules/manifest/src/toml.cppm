@@ -3799,10 +3799,11 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
     // [pack] — `mcpp pack` configuration. See docs/10-pack-and-release.md.
     if (auto v = doc->get_string("pack.default_mode")) {
         const auto& s = *v;
-        if (s != "static" && s != "bundle-project" && s != "bundle-all") {
+        if (s != "system" && s != "vendored" && s != "self-contained" && s != "static"
+            && s != "bundle-project" && s != "bundle-all") {
             return std::unexpected(error(origin, std::format(
-                "[pack].default_mode = '{}' invalid; expected "
-                "'static' | 'bundle-project' | 'bundle-all'", s)));
+                "[pack].default_mode = '{}' invalid; expected 'system' | 'vendored' | "
+                "'self-contained' | 'static' (aliases: 'bundle-project', 'bundle-all')", s)));
         }
         m.packConfig.defaultMode = s;
     }
@@ -3828,7 +3829,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 "[pack].linkage = '{}' invalid; expected 'static' | 'shared'", *v)));
         m.packConfig.linkage = *v;
     }
-    if (auto v = doc->get_string("pack.format"))   m.packConfig.format = *v;
+    // `[pack] format` and `[pack] systems`: a string or a list (design
+    // 2026-10-29 §4.1, §4.6), checked with the flags that take the same words.
+    if (auto v = doc->get_string("pack.format")) m.packConfig.format = { *v };
+    else if (auto a = doc->get_string_array("pack.format")) m.packConfig.format = *a;
+    if (auto v = doc->get_string("pack.systems")) m.packConfig.systems = { *v };
+    else if (auto a = doc->get_string_array("pack.systems")) m.packConfig.systems = *a;
     if (auto v = doc->get_string("pack.compress")) m.packConfig.compress = *v;
     if (auto v = doc->get_string_array("pack.sign")) {
         if (v->empty())

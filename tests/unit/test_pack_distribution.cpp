@@ -218,7 +218,11 @@ TEST(PackDistribution, TheWindowsLauncherIsAProgram) {
     EXPECT_NE(src.find("os::env::image()"), std::string::npos) << src;
     EXPECT_NE(src.find("PROCESSOR_ARCHITEW6432"), std::string::npos) << src;
     EXPECT_NE(src.find("R\"mcpp(--say=\"50%\")mcpp\""), std::string::npos) << src;
-    EXPECT_NE(src.find("R\"mcpp(aarch64)mcpp\""), std::string::npos) << src;
+    // One program for every set of legs: the entry's name, the architectures
+    // the directories under `lib/`.
+    EXPECT_NE(src.find("kEntry = R\"mcpp(hello.oke)mcpp\""), std::string::npos) << src;
+    EXPECT_EQ(src.find("R\"mcpp(aarch64)mcpp\""), std::string::npos) << src;
+    EXPECT_NE(src.find("fs::directory_iterator(top / \"lib\""), std::string::npos) << src;
     EXPECT_NE(src.find("(\"windows-\" + arch)"), std::string::npos) << src;
     EXPECT_NE(src.find("os::process::exec"), std::string::npos) << src;
     const auto manifest = d::exe_launcher_manifest("hello", "1.0.0");
@@ -541,6 +545,73 @@ TEST(PackMerge, AFileThatIsNotItsDigestIsRefused) {
     EXPECT_FALSE(fs::exists(t.path / "out"));
 }
 
+// THE LAUNCHERS ARE DERIVED (design 2026-10-29 §4.3): two one-leg trees whose
+// POSIX launchers differ merge into the tree of both, its launcher written for
+// both legs; the Windows launcher, one program for every set of legs, is taken
+// once. A package written before `runs_on` existed is given its pairs.
+TEST(PackMerge, TheLaunchersAreWrittenForTheMergedLegs) {
+    Tmp t;
+    auto a = leg_package(t.path / "a", "x86_64-openkal", "x86_64");
+    auto b = leg_package(t.path / "b", "aarch64-openkal", "aarch64");
+    for (auto const& [root, arch] : { std::pair{ a, "x86_64" }, std::pair{ b, "aarch64" } }) {
+        write(root / "bin/app", std::format("#!/bin/sh\n# the launcher of {}\n", arch));
+        write(root / "bin/app.exe", std::format("MZ the program of {}", arch));
+        auto pkg = d::read(root);
+        ASSERT_TRUE(pkg) << pkg.error();
+        d::Stated stated;
+        stated.role["bin/app"] = "launcher";
+        stated.role["bin/app.exe"] = "launcher";
+        ASSERT_TRUE(d::describe(root, *pkg, stated));
+    }
+    d::MergeRequest req;
+    req.inputs = { a, b };
+    req.format = "dir";
+    req.output = t.path / "out";
+    auto r = d::merge(req);
+    ASSERT_TRUE(r) << r.error();
+    const auto script = slurp(*r / "bin/app");
+    EXPECT_NE(script.find("'x86_64') entry='app.oke'"), std::string::npos) << script;
+    EXPECT_NE(script.find("'aarch64') entry='app.oke'"), std::string::npos) << script;
+    EXPECT_EQ(slurp(*r / "bin/app.exe"), "MZ the program of x86_64");
+    auto merged = d::read(*r);
+    ASSERT_TRUE(merged) << merged.error();
+    ASSERT_TRUE(merged->runsOnSet);
+    ASSERT_TRUE(merged->runsOnWith.contains("okrun"));
+    EXPECT_NE(std::ranges::find(merged->runsOnWith["okrun"], "macos-aarch64"), merged->runsOnWith["okrun"].end());
+    for (auto const& f : merged->files)
+        EXPECT_EQ(d::sha256_file(*r / f.path), f.sha256) << f.path;
+}
+
+// Merged without `-o`, a tree of a platform's legs is named after the platform
+// (design 2026-10-29 §4.2).
+TEST(PackMerge, AMergedTreeIsNamedAfterThePlatform) {
+    Tmp t;
+    std::vector<fs::path> inputs;
+    for (auto [leg, arch] : { std::pair{ "x86_64-openkal", "x86_64" }, std::pair{ "aarch64-openkal", "aarch64" } }) {
+        const auto root = t.path / arch / std::format("app-1.0-{}", leg);
+        write(root / "lib" / arch / "app.oke", std::format("image of {}", arch));
+        d::Package p;
+        p.name = "app";
+        p.version = "1.0";
+        p.platform = "mcpplibs.openkal-platform@0.17.3";
+        p.legs = { leg };
+        p.runner = { "okrun", "{}" };
+        p.entry = { { arch, std::format("lib/{}/app.oke", arch) } };
+        ASSERT_TRUE(d::describe(root, p, {}));
+        inputs.push_back(root);
+    }
+    std::error_code ec;
+    const auto cwd = fs::current_path();
+    fs::current_path(t.path, ec);
+    d::MergeRequest req;
+    req.inputs = inputs;
+    req.format = "dir";
+    auto r = d::merge(req);
+    fs::current_path(cwd, ec);
+    ASSERT_TRUE(r) << r.error();
+    EXPECT_EQ(r->filename(), "app-1.0-openkal");
+}
+
 // The legs merge into a new directory; an output that exists, or is an input,
 // is refused, and an input written with a trailing separator is its directory.
 TEST(PackMerge, TheOutputIsNewOrAPackage) {
@@ -617,7 +688,7 @@ TEST(PackMerge, TheCompressionFitsTheContainer) {
     ASSERT_TRUE(fits) << fits.error();
 }
 
-// #860 (design 2026-10-29 §4.4): a self-contained universal package runs where
+// #860 (design 2026-10-29 §4.4): a self-contained tree of images runs where
 // it carries a runner, and its entry names exactly those pairs -- macOS aarch64
 // only, Windows x86_64 only -- with no runner to install. A package that needs
 // the machine's runner names the pairs the platform's runner exists for.
@@ -801,7 +872,7 @@ TEST(PackDistribution, XpkgDescriptorDescribesProgramsOfASystem) {
     for (auto [triple, says] : { Row{ "wasm32-emscripten", "dist-web" },
                                  Row{ "aarch64-linux-android", "Linux, macOS or Windows target" },
                                  Row{ "riscv64-none-elf", "Linux, macOS or Windows target" },
-                                 Row{ "x86_64-openkal", "universal package" } }) {
+                                 Row{ "x86_64-openkal", "--target openkal" } }) {
         auto r = d::xpkg_descriptor({ one(triple, std::format("web-0.1.0-{}", triple), "bin/web.js") },
                                     "https://example.org/0.1.0");
         ASSERT_FALSE(r) << triple << ": " << *r;

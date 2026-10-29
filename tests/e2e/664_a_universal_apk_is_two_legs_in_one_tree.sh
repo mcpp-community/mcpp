@@ -87,24 +87,25 @@ depcount=$(find "${staged2}bin" -name res.txt | wc -l)
     || fail "the deploy'd file was staged $depcount times, not once" pack2.log
 echo "the deploy'd file is staged once across both legs OK"
 
-# ── 3. negative direction: an executable-form row refuses a second triple ─
+# ── 3. other rows: one package per leg (design 2026-10-29 §4.2) ──────────
 #
 # `x86_64-linux-gnu` is not Android: `application_form` answers `Executable`
-# there, so `accepts_several_targets` must refuse this request exactly as it
-# refused before #630 A9 existed.
-out=$("$MCPP" pack myapp --target x86_64-linux-gnu --target x86_64-linux-gnu 2>&1) \
-    && fail "packing an app for two executable-form triples must be refused" <(echo "$out")
-expected="--target may be given once when packing a program: an application bundle wraps one executable, and one executable has one target."
-grep -qF -- "$expected" <<<"$out" \
-    || fail "the refusal message does not match today's wording" <(echo "$out")
-echo "two executable-form triples are refused with today's message OK"
+# there, so the rows are not one APK. A target named twice is one leg; an
+# Android row and an executable row are a package each, named by its triple,
+# and `-o` naming one file is refused.
+"$MCPP" pack myapp --target x86_64-linux-gnu --target x86_64-linux-gnu --pkg-format dir > pack3.log 2>&1 \
+    || fail "a target named twice is one leg" pack3.log
+[ -d target/dist/myapp-0.1.0-x86_64-linux-gnu ] || fail "the one leg's package is not named by its triple" pack3.log
+echo "a target named twice is one leg OK"
 
-# Mixed direction: one Android (shared-object) row and one host (executable)
-# row is not "every row is a shared object" either.
-out=$("$MCPP" pack myapp --target aarch64-linux-android --target x86_64-linux-gnu 2>&1) \
-    && fail "mixing a shared-object row with an executable row must be refused" <(echo "$out")
-grep -qF -- "$expected" <<<"$out" \
-    || fail "the mixed-row refusal message does not match today's wording" <(echo "$out")
-echo "a shared-object row mixed with an executable row is refused OK"
+"$MCPP" pack myapp --target aarch64-linux-android --target x86_64-linux-gnu > pack4.log 2>&1 \
+    || fail "an Android row and an executable row are a package each" pack4.log
+ls target/dist/myapp-0.1.0-x86_64-linux-gnu*.tar.gz > /dev/null 2>&1 \
+    || fail "the executable row's package is not named by its triple" pack4.log
+if "$MCPP" pack myapp --target aarch64-linux-android --target x86_64-linux-gnu -o one.tar.gz > pack5.log 2>&1; then
+    fail "-o naming one file was accepted for two packages" pack5.log
+fi
+grep -q "use: -o <directory>/" pack5.log || fail "the refusal names no directory" pack5.log
+echo "an Android row and an executable row are a package each OK"
 
 echo "664: the universal APK is the library route applied to an app OK"

@@ -13,9 +13,10 @@
 #   C. Refused before a build: `--compress xz` for a single file.
 #   D. (llvm, an ok-image row) An image's single file runs, and writes nothing
 #      into the cache.
-#   E. (an ok-image row) `-o` with several `--systems` is refused before a
-#      build: one file is made per system; so is a system whose row this mcpp
-#      builds no program for (`x86_64-macos`, a planned row).
+#   E. (an ok-image row) `-o` naming one file with several `--systems` is
+#      refused before a build: one file is made per leg and system; so is a
+#      system named whose row this mcpp builds no program for (`x86_64-macos`,
+#      a planned row).
 set -e
 
 TMP=$(mktemp -d)
@@ -110,7 +111,7 @@ if [ -n "$T" ] && command -v python3 > /dev/null && "$MCPP" toolchain list --for
     if "$MCPP" pack --target "$T" --pkg-format single-file --systems linux,macos -o one-file > e.log 2>&1; then
         fail "E: -o with two systems was accepted" e.log
     fi
-    grep -q "one single file per system" e.log || fail "E: the refusal" e.log
+    grep -q "single files (one per leg and system)" e.log || fail "E: the refusal" e.log
     grep -q "Compiling" e.log && fail "E: refused after compiling" e.log
     if "$MCPP" pack --target x86_64-openkal --pkg-format single-file --systems linux,macos > e2.log 2>&1; then
         fail "E: a single file for x86_64-macos was accepted" e2.log
