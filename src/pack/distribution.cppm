@@ -1091,9 +1091,14 @@ constexpr std::string_view kRunner[] = {{
 
 int main(int argc, char** argv) {{
     // The package is the parent of the directory this program is in, found
-    // from the program's own path and not from argv[0].
+    // from the program's own path and not from argv[0]. The path is taken with
+    // `/` between its names: the program is built over the platform's hosted
+    // arrangement, whose paths are POSIX's, and Windows names a program with
+    // `\`, which such a path does not split (its parent would be empty).
     const auto self = os::env::image();
-    const fs::path top = self ? self->parent_path().parent_path() : fs::current_path();
+    std::string me = self ? self->string() : std::string();
+    std::ranges::replace(me, '\\', '/');
+    const fs::path top = self ? fs::path(me).parent_path().parent_path() : fs::current_path();
     std::string machine = os::env::get("PROCESSOR_ARCHITEW6432").value_or(
                           os::env::get("PROCESSOR_ARCHITECTURE").value_or(""));
     for (auto& c : machine) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
