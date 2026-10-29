@@ -17,6 +17,10 @@ jobs:
         run: |
           W="$RUNNER_TEMP/p857"; mkdir -p "$W"
           gcc -static -O2 -Wall -o "$W/exec_probe" .github/probe/exec_probe.c
+          curl -fsSL --retry 3 -o /tmp/strace.tar.xz https://github.com/strace/strace/releases/download/v6.11/strace-6.11.tar.xz
+          tar -xJf /tmp/strace.tar.xz -C /tmp
+          (cd /tmp/strace-6.11 && ./configure --enable-mpers=no LDFLAGS=-static >/dev/null && make -j"$(nproc)" >/dev/null)
+          cp /tmp/strace-6.11/src/strace "$W/strace" && file "$W/strace"
           "$W/exec_probe" /usr/bin true
           curl -fsSL --retry 3 -o "$W/termux.apk" \
             "https://github.com/termux/termux-app/releases/download/v0.118.3/termux-app_v0.118.3+github-debug_x86_64.apk"

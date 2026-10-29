@@ -9,12 +9,12 @@ adb wait-for-device
 adb install -r "$WORK/termux.apk" >/dev/null
 adb shell am start -n com.termux/com.termux.app.TermuxActivity >/dev/null
 for _ in $(seq 1 60); do adb shell run-as com.termux ls "$A/usr/bin/sh" >/dev/null 2>&1 && break; sleep 5; done
-for f in mcpp.tar.gz exec_probe; do
+for f in mcpp.tar.gz exec_probe strace; do
     adb push "$WORK/$f" /data/local/tmp/ >/dev/null
     adb shell chmod 644 "/data/local/tmp/$f"
     adb shell run-as com.termux cp "/data/local/tmp/$f" "$A/$f"
 done
-adb shell run-as com.termux chmod 755 "$A/exec_probe"
+adb shell run-as com.termux chmod 755 "$A/exec_probe" "$A/strace"
 adb logcat -c
 run() { adb shell run-as com.termux "$@" 2>&1 | tr -d '\r'; }
 {
@@ -42,6 +42,17 @@ run "$A/exec_probe" "$A/home" exec_probe_copy
 echo; echo "### mcpp 2026.10.29.1 under run-as (the failing case)"
 run /system/bin/env HOME="$A/home" TMPDIR="$A/home/tmp" "$D/bin/mcpp" --version 2>&1 | head -5
 run /system/bin/env HOME="$A/home" TMPDIR="$A/home/tmp" "$D/bin/mcpp" self env 2>&1 | head -20
+echo; echo "### the failing case reproduced: mcpp new + mcpp build, traced"
+run mkdir -p "$A/home/tmp"
+E="/system/bin/env HOME=$A/home TMPDIR=$A/home/tmp"
+run $E "$D/bin/mcpp" new hello 2>&1 | tail -5
+run $E "$A/strace" -f -e trace=execve,execveat,openat,open,fchdir,clone,clone3,readlinkat,newfstatat,statx -o "$A/home/trace.log" \
+    "$D/bin/mcpp" build 2>&1 | tail -15
+echo "--- trace: failing calls (ENOENT / EACCES / EPERM) ---"
+run /system/bin/grep -E "ENOENT|EACCES|EPERM|EBADF" "$A/home/trace.log" | grep -v "/proc/sys\|\.so\|locale\|zoneinfo" | tail -60
+echo "--- trace: every exec ---"
+run /system/bin/grep -E "execve|execveat" "$A/home/trace.log" | tail -30
+
 echo; echo "### avc denials"
 adb logcat -d -b all 2>/dev/null | tr -d '\r' | grep -i 'avc' | tail -40
 } | tee "$WORK/probe.log"
