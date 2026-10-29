@@ -22,7 +22,8 @@ echo "SELinux: $(adb shell getenforce | tr -d '\r'); context: $(run cat /proc/se
 echo "kernel: $(adb shell uname -a | tr -d '\r')"
 run mkdir -p "$A/home/dist"
 run /system/bin/tar -xzf "$A/mcpp.tar.gz" -C "$A/home/dist"
-D=$(run /system/bin/sh -c "ls -d $A/home/dist/mcpp-*")
+run /system/bin/ls -la "$A/home/dist"
+D="$A/home/dist/$(run /system/bin/ls "$A/home/dist" | head -1)"
 echo "release: $D"
 echo; echo "### the bundled xlings (static ELF)"
 run "$A/exec_probe" "$D/registry/bin" xlings --version
