@@ -97,7 +97,8 @@
   since 2026.10.26.2. A static strace showed one failing call, before any
   process was created: the root directory opened for reading, which the
   domain may search but not read. openkal-linux 0.18.3 opens every directory
-  handle with `O_PATH`.
+  handle with `O_PATH`; mcpp is built on mcpplibs.os 0.2.3, which pins it, and
+  openkal-platform 0.18.0 carries it to every ok image and hosted program.
 
 ## [2026.10.29.1] - 2026-10-29
 

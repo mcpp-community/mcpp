@@ -91,7 +91,7 @@ mcpplibs.cmdline = "0.0.1"
 # The operating system is mcpplibs.os's (design 2026-10-26 §25): mcpp keeps no
 # layer of its own.
 [dependencies.mcpplibs]
-os = "0.2.0"
+os = "0.2.3"
 
 # The codecs of a package's container (SPEC-014 §5): gzip and raw DEFLATE,
 # zstd, xz. The reference libraries, so an archive is written the same way on

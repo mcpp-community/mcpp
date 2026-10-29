@@ -13,4 +13,4 @@ description = "The environment of one invocation of mcpp: statements over the st
 license     = "Apache-2.0"
 
 [dependencies.mcpplibs]
-os = "0.2.0"
+os = "0.2.3"
