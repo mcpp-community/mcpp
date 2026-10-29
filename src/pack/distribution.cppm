@@ -117,7 +117,8 @@ struct Package {
 
 // `runs_on` for `p`, from its legs, the runners it carries (`systems`), its
 // mode, and the platform's statement of where its runner exists (`runnerHosts`;
-// `runnerAnyArch` for a runner that reaches an artifact from any machine).
+// `runnerAnyArch` for a runner that reaches an artifact from any machine). A
+// platform that states no hosts is read as every system of each architecture.
 // A native package of one leg runs where its triple's program runs; a
 // WebAssembly, Android, iOS or bare-metal package is no program of a system and
 // runs nowhere an index entry could name.
@@ -1206,8 +1207,15 @@ void compute_runs_on(Package& p, const std::vector<std::string>& runnerHosts, bo
     if (p.mode == "self-contained")
         for (auto const& s : p.systems)
             if (archs.contains(arch_of_pair(s))) p.runsOnSelf.push_back(s);
+    // A platform that does not state where its runner exists is read as
+    // before runs_on existed: every system, for each architecture of the
+    // images. Unknown is not "nowhere".
+    std::vector<std::string> every;
+    if (runnerHosts.empty())
+        for (auto system : { "linux", "macos", "windows" })
+            for (auto const& arch : archs) every.push_back(std::format("{}-{}", system, arch));
     std::vector<std::string> with;
-    for (auto const& h : runnerHosts)
+    for (auto const& h : runnerHosts.empty() ? every : runnerHosts)
         if ((runnerAnyArch || archs.contains(arch_of_pair(h)))
             && std::ranges::find(p.runsOnSelf, h) == p.runsOnSelf.end())
             with.push_back(h);

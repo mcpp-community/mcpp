@@ -660,6 +660,11 @@ TEST(PackDistribution, AnEntryNamesWhereThePackageRuns) {
     ASSERT_TRUE(v) << v.error();
     EXPECT_NE(v->find("deps = { \"xim:okrun\" }"), std::string::npos) << *v;
 
+    // A platform that states no hosts for its runner is read as every system
+    // of each architecture, as before runs_on existed.
+    d::compute_runs_on(a.pkg, {}, false);
+    EXPECT_EQ(a.pkg.runsOnWith.at("okrun").size(), 6u);
+
     // The document carries it, and a reader takes it back.
     auto j = d::to_json(a.pkg);
     EXPECT_NE(j.find("\"runs_on\""), std::string::npos) << j;
