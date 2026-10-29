@@ -452,7 +452,23 @@ mcppls-clangd 的 draft PR #11（分支 `probe/clangd-openkal-image`，run 40908
   jar 核对后定。
 - `plugin.xml`：261 上 test runner 属于平台核心，optional 依赖只在其存在的版本声明，注释中的"2025.2"改正。
 
-### 10.4 其他
+### 10.4 图标：一个 logo
+
+mcpp 的编辑器集成只有一个图标：mcpp 的 logo（MC++ 图，`mcpp-vscode/media/logo.png`，与 mcppls 的
+`docs/imgs/mcpp-logo.png`、`editors/vscode/icon.png` 字节相同）。文字图标不是 mcpp 的图标。
+
+| 位置 | 今天 | 本设计 |
+|---|---|---|
+| mcpp-ide VS Code 扩展 `icon`、活动栏 | `media/logo.png`、`media/activity-bar.png`，与 0.9.0 字节相同 | 不变 |
+| mcpp-ide CLion 插件 `META-INF/pluginIcon.svg` | 蓝底白字 `m++` | logo，按 mcppls 的做法展平（一个裁剪的嵌入图，无 `symbol`/`use`、无 DOCTYPE，IntelliJ 的每个 SVG 渲染器都显示），与 mcppls 的 `pluginIcon.svg` 字节相同；不另设 `pluginIcon_dark.svg`（logo 自带深色底） |
+| mcpp-ide CLion 工具窗口 `icons/mcpp.svg`、`mcpp_dark.svg` | 蓝底白字 `m+` | logo 的 16×16 版本，同样展平 |
+| mcppls CLion 插件、VS Code 扩展 | logo | 不变 |
+
+- mcpp-ide 的 CI 检查：VS Code 的 `logo.png` 与 0.9.0 字节相同；CLion 的 `pluginIcon.svg` 与工具窗口图标嵌入的图解码后来自
+  同一 logo，且不含 `<text>`。
+- JetBrains Marketplace 与 VS Code Marketplace 的列表图由上面的文件给出，发布后两处显示同一 logo。
+
+### 10.5 其他
 
 - 目标选择器显示集合的一行（§3.2）。
 - Open VSX 发布 1.0.x 之后的版本；mcpp-vscode 仓库在 Open VSX 同步后归档。
@@ -468,7 +484,7 @@ mcppls-clangd 的 draft PR #11（分支 `probe/clangd-openkal-image`，run 40908
 - 不回落：描述符键表的每一行；wasm 构建在三种宿主上读同一段；openkal 映像在 Linux 与 macOS 宿主上字节相同；#852 的两个 rules。
 - #857：probe 的逐步记录；Termux 应用沙箱 job 恢复通过。
 - 外部构建：一个 CMake 静态库经 `deps-cmake` 与契约链接成 ok 映像并在三系统运行；宿主工具的 CMake 项目。
-- 编辑器：§10.1 的三道门。
+- 编辑器：§10.1 的三道门；§10.4 的图标检查。
 
 ## 12. 交付（一轮）与级联
 
@@ -488,7 +504,7 @@ mcppls-clangd 的 draft PR #11（分支 `probe/clangd-openkal-image`，run 40908
 | 9 | mcpp-plugins | `deps-cmake` 读契约；`dep_dir` 的歧义失败 |
 | 10 | mcppls-clangd | 无改动（§9.4：本轮 clangd 保持原生）；probe PR #11 关闭 |
 | 11 | mcppls | 单包、S4 修订、kit 流程、CI 改用 `--archive` |
-| 12 | mcpp-ide | VS Code（§10.1）、组件库、CLion API、CI 迁移（§13.1） |
+| 12 | mcpp-ide | VS Code（§10.1）、组件库、CLion API、图标（§10.4）、CI 迁移（§13.1） |
 | 13 | xim-pkgindex | mcpp-ide、mcppls、okrun 的条目重新生成 |
 | 14 | mcpp-vscode | Open VSX 同步后归档 |
 
