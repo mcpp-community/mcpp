@@ -1,0 +1,39 @@
+name: probe-857
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Build the probe, fetch Termux and the failing release
+        run: |
+          W="$RUNNER_TEMP/p857"; mkdir -p "$W"
+          gcc -static -O2 -Wall -o "$W/exec_probe" .github/probe/exec_probe.c
+          "$W/exec_probe" /usr/bin true
+          curl -fsSL --retry 3 -o "$W/termux.apk" \
+            "https://github.com/termux/termux-app/releases/download/v0.118.3/termux-app_v0.118.3+github-debug_x86_64.apk"
+          curl -fsSL --retry 3 -o "$W/mcpp.tar.gz" \
+            "https://github.com/mcpp-community/mcpp/releases/download/v2026.10.29.1/mcpp-2026.10.29.1-linux-x86_64.tar.gz"
+      - name: Probe under run-as
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disk-size: 14G
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash .github/probe/run_857.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-857
+          path: ${{ runner.temp }}/p857/probe.log
