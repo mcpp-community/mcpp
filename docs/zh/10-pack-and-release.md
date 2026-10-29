@@ -757,8 +757,10 @@ WebAssembly 目标没有单文件：`--pkg-format single-file` 与 `--target was
 包不携带运行器时以运行器为依赖（`deps = { "xim:okrun" }`）；各系统各架构一个的包，每个系统一项，一个带 `${arch}` 的
 URL 与每个架构的 sha256。安装把归档的顶层目录移到位，并向 xvm 注册程序（Windows 上为 `.cmd` 启动器）；各系统的包
 把程序放在不同目录时（Windows 的程序在包根，POSIX 的程序在 `bin/`），按系统注册各自的目录。每个归档各以一个
-`--package` 给出。单腿包按其三元组的系统（Linux、macOS 或 Windows）描述；其他目标的包被拒绝，并写出分发它的
-途径（2026.10.29.1+）：`wasm32-emscripten` 的包发布为页面（`dist-web`），ok 映像以平台的通用包发布，Android、iOS
+`--package` 给出。单腿包按其程序运行的系统与架构描述（2026.10.29.1+）：Linux、macOS 或 Windows 目标为三元组的
+系统与架构；带载体打包的 ok 映像（`--no-universal --mode self-contained`）为载体的系统与架构，包把它记录在 `systems`
+中（在 Linux 上打包的 aarch64 映像为 `"systems": ["linux-aarch64"]`）。程序不是任何系统的程序的包被拒绝，并写出
+分发它的途径：`wasm32-emscripten` 的包发布为页面（`dist-web`），不带载体的 ok 映像以平台的通用包发布，Android、iOS
 与裸机的包没有条目。
 
 ### 压缩与签名

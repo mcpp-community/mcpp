@@ -10,7 +10,10 @@ status: active
 
 **修订记录**
 
-- rev 1（本稿）：七项的实测与定案；一个发布 PR。
+- rev 1：七项的实测与定案；一个发布 PR（#859）。
+- rev 2（本稿，评审）：§2.6 的 `emit xpkg` 规则改为按**程序**运行的系统描述。带载体的单腿 ok 映像包（M3）是载体所属系统的
+  程序，rev 1 把它一并拒绝，对在 Linux 上打出、此前可用的条目是回归；包现在在 `systems` 中记录其载体的 `<os>-<arch>`，条目
+  读这一事实，只拒绝不带载体的 ok 映像包。
 
 ## 0. 摘要
 
@@ -83,9 +86,10 @@ F5 的对照：把运行器手工改为 `cmd = ["qemu-aarch64", "<aarch64 的 ok
 包（`xpm.<system>` 安装该系统的程序，`archs` 为机器架构）。`wasm32-emscripten` 的包两者都不是：它没有启动器，`bin/<name>.js` 由
 JavaScript 引擎或浏览器执行，`wasm32` 不是任何系统的机器架构，xvm 注册的 `bin/<name>` 不存在。把它描述成系统无关的条目需要为 wasm
 生成启动器并在条目中写运行器前缀，即一个新形状，而 Web 的分发路径是 `dist-web` 产出的页面，不是 xlings。规则按模型写成一般形式：
-单腿包按其腿的三元组的系统描述，三元组不是 Linux（非 Android）、macOS 或 Windows 程序时拒绝。同一条规则也拒绝其他不属于这三个系统
-的单腿包（Android、iOS、裸机，以及 `--no-universal` 的 ok 映像包——xlings 经通用包安装 ok 映像）；此前它们都被写成 `linux`
-或 `macosx`。
+单腿包按其**程序**运行的系统与架构描述。腿为 Linux（非 Android）、macOS 或 Windows 的三元组时取三元组的；腿为 ok 映像而包携带
+载体（`self-contained`、`static`）时，程序是载体，为本机系统、映像架构的程序，包在 `systems` 中记录它（`<os>-<arch>`，与通用包
+记录 `libexec/` 中加载器的字段相同），条目读这一记录而不推测。程序不是任何系统的程序时拒绝：WebAssembly、Android、iOS、裸机，
+以及不带载体的 ok 映像包（一个 `.oke` 需要运行器，出路为通用包）；此前它们都被写成 `linux` 或 `macosx`。
 
 **`--pkg-format single-file`：拒绝。** 单文件是一个系统执行的可执行文件（原生启动器或载体）；WebAssembly 模块不是。拒绝在
 `refused_combination` 中，任何构建之前，写出两个选择与出路（`tar`、`zip`、`dir` 或提供者的格式，页面为 `dist-web`）。
@@ -105,7 +109,7 @@ ok 映像是 x86_64 与 aarch64 上位置无关的 ELF，只导入 `kal_*`，需
 | F5 | `PlatformRun.TheRunnerReachesTheArtifactsArchitecture`（`runner_reach` 的表） | 960 D：记录 argv 的执行宿主收到的运行器程序是另一架构的 ELF；本机有该架构的 qemu 时真实运行 `run` 与 `test` |
 | F6 | — | 960 C：人类输出给出拒绝；JSON 的 `runner.refusal`、`runner.arch`；给出执行宿主时为另一架构 |
 | F2、F3 | — | 961：载体为映像架构的 ELF（有 qemu 时运行它）；`--target <t>-openkal --list-formats` 含 `okb`，本机目标不含 |
-| F7a | `XpkgDescriptorDescribesProgramsOfASystem` | 962 A：合成的 wasm32-emscripten 包被拒绝，消息写出三元组与出路 |
+| F7a | `XpkgDescriptorDescribesProgramsOfASystem`（含 Linux 与 macOS 上打出的带载体包、不带载体的包） | 962 A：合成的 wasm32-emscripten 包被拒绝，消息写出三元组与出路；961 C：带载体的包的 `systems` 与条目，不带载体的包被拒绝 |
 | F7b | — | 962 B：有 emsdk 载荷时 `--pkg-format single-file --target wasm32-emscripten` 在编译前被拒绝 |
 
 ## 4. 文档

@@ -14,6 +14,11 @@
 #      this machine has that architecture's qemu, it runs the image.
 #   B. `mcpp pack --target <t>-openkal --list-formats` lists `okb`, provided by
 #      the platform; `mcpp pack --list-formats` for this machine does not.
+#   C. The package records its carrier as the loader it carries (`systems`:
+#      this system and the image's architecture), and `mcpp emit xpkg`
+#      describes it under this system for that architecture; a one-target
+#      package of the image without its carrier (`--mode vendored`) is no
+#      program of a system and is refused, naming the universal package.
 set -e
 
 TMP=$(mktemp -d)
@@ -24,6 +29,11 @@ case "$(uname -m)" in
     x86_64|amd64)  OTHER=aarch64 ;;
     aarch64|arm64) OTHER=x86_64 ;;
     *) echo "SKIP: no ok-image row for $(uname -m)"; exit 0 ;;
+esac
+case "$(uname -s)" in
+    Darwin) SYSTEM=macos; XSYSTEM=macosx ;;
+    MINGW*|MSYS*|CYGWIN*) SYSTEM=windows; XSYSTEM=windows ;;
+    *) SYSTEM=linux; XSYSTEM=linux ;;
 esac
 OT="$OTHER-openkal"
 
@@ -71,5 +81,26 @@ assert any(p.endswith("openkal-platform") for p in target["okb"]["providers"]), 
 assert "okb" not in host, sorted(host)
 PY
 echo "ok: --list-formats lists the target's formats"
+
+# C
+python3 - target/dist/m3/mcpp-package.json "$SYSTEM-$OTHER" <<'PY' || fail "C: the package's systems" target/dist/m3/mcpp-package.json
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["systems"] == [sys.argv[2]], d["systems"]
+assert d["launch"] == {"program": "bin/app"}, d["launch"]
+PY
+tar czf m3.tar.gz -C target/dist m3
+"$MCPP" emit xpkg --package m3.tar.gz --url https://example.org/v0.1.0 > c.lua 2> c.err \
+    || fail "C: emit xpkg of the carrier package" c.err
+grep -q "^        $XSYSTEM = {" c.lua || fail "C: the entry is not under $XSYSTEM" c.lua
+grep -qF "archs = {\"$OTHER\"}" c.lua || fail "C: the entry's architecture is not $OTHER" c.lua
+[ "$(grep -cE '^        (linux|macosx|windows) = [{]' c.lua)" = 1 ] || fail "C: the entry names more than one system" c.lua
+"$MCPP" pack --target "$OT" --no-universal -o bare.tar.gz > c2.log 2>&1 || fail "C: the image's vendored package" c2.log
+rc=0
+"$MCPP" emit xpkg --package target/dist/bare.tar.gz --url https://example.org/v0.1.0 > c2.lua 2> c2.err || rc=$?
+[ "$rc" = 2 ] || fail "C: emit xpkg of an image without its carrier exited $rc, not 2" c2.err c2.lua
+grep -q "is a package of $OT, which is no program of Linux, macOS or Windows" c2.err || fail "C: the refusal" c2.err
+grep -q "universal package" c2.err || fail "C: the refusal names no route" c2.err
+echo "ok: the carrier package is described for its system and architecture; the bare image is refused"
 
 echo "PASS: 961 a one-target package carries the image in a program of its architecture"

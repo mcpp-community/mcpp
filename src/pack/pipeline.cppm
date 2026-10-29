@@ -1113,7 +1113,7 @@ std::optional<Refusal> stage_member(PackRun& run, GroupJob& g, MemberJob& m) {
     out.targets.push_back(canonical(plan->triple));
     for (auto const& leg : plan->extraSharedLegs) out.targets.push_back(leg.triple);
     for (auto const& leg : plan->loadedLegs) out.targets.push_back(leg.triple);
-    out.systems = mcpp::pack::distribution::loader_systems(plan->stagingRoot);
+    out.systems = mcpp::pack::carried_systems(*plan);
     if (m.stageFailure.empty()) {
         out.stageDir      = plan->stagingRoot;
         out.stageManifest = mcpp::pack::stage_manifest_path(plan->stagingRoot);

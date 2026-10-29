@@ -215,7 +215,7 @@ WebAssembly 的同名文件族,ok 映像的 `bin/`),规定见 docs/10。
 | `linkage` | `static`、`shared`,或 `declared`(每个库按自己的声明) |
 | `mode` | §1.2 的模式:`system`、`vendored`、`self-contained`;`--mode static` 的原生包为 `static`,映像为 `self-contained` |
 | `legs` | 腿的规范三元组 |
-| `systems` | `libexec/<runner>/` 中加载器的 `<os>-<arch>`;无加载器时为空 |
+| `systems` | 包携带的加载器的 `<os>-<arch>`:通用包为 `libexec/<runner>/` 中的;单腿 `self-contained` 的 ok 映像包为其载体,即程序所属的系统与映像的架构(2026.10.29.1);无加载器时为空 |
 | `launch` | 通用包为 `runner`(平台的 argv)与每个架构的 `entry`;单腿原生包为 `program`(程序的相对路径) |
 | `files` | 树中每个文件(符号链接除外):`path`(相对于树根,`/` 分隔)、`role`、`leg`(所属的腿,共用文件为 `null`)、`sha256` |
 
@@ -317,11 +317,13 @@ openkal 目标的单文件:载体携带映像本身(映像不引用其他映像�
   中同名的包;openkal 为 `okrun`)。依赖带命名空间:不带命名空间的名字在家目录列出的第二个索引也有同名包时有歧义,
   xim-pkgindex 拒绝它。
 - 各系统各架构一个的包:每个系统一项,一个以 `${arch}` 代替架构的 URL 与每个架构的 sha256;文件名除架构外不同时
-  拒绝。单腿包的系统由其腿的三元组决定:Linux(Android 除外)为 `linux`,macOS 为 `macosx`,Windows 为 `windows`。
-  腿不是这三个系统之一的程序时(WebAssembly 包、Android 与 iOS 应用、裸机映像、单腿的 ok 映像包),条目**必须**被拒绝,
-  消息写出包、三元组与出路:WebAssembly 包以 `dist-web` 发布为页面,ok 映像以平台的通用包(不带 `--no-universal` 的
-  打包)描述。原因:条目的 `xpm.<系统>` 安装该系统的程序,`archs` 为机器架构;WebAssembly 包没有启动器,其程序由
-  JavaScript 引擎运行,`wasm32` 不是任何系统的机器架构(2026.10.29.1)。
+  拒绝。单腿包按其**程序**运行的系统与架构描述:腿为 Linux(Android 除外)、macOS 或 Windows 的三元组时,为该三元组的
+  系统(`linux`、`macosx`、`windows`)与架构;腿为 ok 映像而包携带其载体(`self-contained`,含 `--mode static`)时,
+  程序是载体,为包在 `systems` 中记录的唯一 `<os>-<arch>`(§4.5)。程序不是任何系统的程序时(WebAssembly 包、Android
+  与 iOS 应用、裸机映像、不带载体的 ok 映像包),条目**必须**被拒绝,消息写出包、三元组与出路:WebAssembly 包以
+  `dist-web` 发布为页面,不带载体的 ok 映像以平台的通用包(不带 `--no-universal` 的打包)或带载体的包描述。原因:条目的
+  `xpm.<系统>` 安装该系统的程序,`archs` 为机器架构;WebAssembly 包没有启动器,其程序由 JavaScript 引擎运行,
+  `wasm32` 不是任何系统的机器架构;一个 `.oke` 需要运行器(2026.10.29.1)。
 - 安装把归档的唯一顶层目录移到安装目录。该目录以归档命名(`mcpp pack` 的写法),安装取下载文件的名字去掉扩展名,
   对每个系统、架构与索引日后追加的版本都成立;打包后改名的归档与 xim 不解开的文件(非 `.tar.gz`、`.tar.zst`、
   `.tar.xz`、`.tar`、`.zip`)在写出条目时被拒绝;配置以 xvm 注册程序(通用包为 `bin/<name>`,Windows 上为
@@ -354,7 +356,8 @@ openkal 目标的单文件:载体携带映像本身(映像不引用其他映像�
 7. 通用包的 `mcpp emit xpkg` 条目在三个系统上为同一资产,并以运行器为依赖(e2e 957)。
 8. `mcpp emit xpkg` 拒绝 `wasm32-emscripten` 的包,写出包、三元组与 `dist-web`;`--pkg-format single-file` 在 WebAssembly
    目标上于任何编译之前被拒绝(e2e 962)。
-9. 单腿的 `self-contained` ok 映像包的程序是映像架构的;`mcpp pack --target <t> --list-formats` 列出该目标的平台提供的格式
+9. 单腿的 `self-contained` ok 映像包的程序是映像架构的,`systems` 记录其载体的 `<os>-<arch>`,`mcpp emit xpkg` 以该系统
+   与架构描述它,不带载体的单腿 ok 映像包被拒绝;`mcpp pack --target <t> --list-formats` 列出该目标的平台提供的格式
    (`okb`),本机目标的列表不含它(e2e 961)。
 
 ## 变更记录
@@ -364,4 +367,4 @@ openkal 目标的单文件:载体携带映像本身(映像不引用其他映像�
 | 1.0 | 2026-10-28 | 首版(mcpp#847):三个维度与构建腿、组合的合法性、选项的全局用法与 `--pkg-format`、`[pack]` 的新键、管线、单腿与通用包的布局、启动器、`--systems`、`mcpp-package.json`、`--merge`、压缩、单文件、包格式提供者与平台插件、签名、分发描述、`mcpp.pack` 的新字段。 |
 | 1.1 | 2026-10-28 | 与实现对齐:zip 的条目以 DEFLATE 压缩;`[pack] universal`;压缩的拒绝与项目缺省值的搁置;`--systems` 也用于映像的单文件;启动器的根与退出状态;单文件的载荷格式、校验与执行;映像单文件的载体内容;`mcpp-package.json` 的 `linkage` 取值与角色判定;`--merge` 的输入、选项写法与容器;签名的范围;`mcpp emit xpkg --package`;判据对应 e2e 954–957。 |
 | 1.2 | 2026-10-28 | 包名的模式后缀;单文件启动器自身失败的退出状态 127;`--merge` 取 `[pack] format`,合并后的目录以输出命名;`--linkage static` 改为 musl 的行;`mcpp emit xpkg --package` 的每系统程序目录、带命名空间的运行器依赖、以归档名定位的顶层目录与多余词的拒绝。 |
-| 1.3 | 2026-10-29 | mcpp 2026.10.29.1:§0 ok 映像与 Web;§1.2 单腿 `self-contained` 包的载体为映像架构的程序;§1.5、§5.2 WebAssembly 目标上的单文件被拒绝;§6 `--list-formats` 规划所选目标;§8 单腿包的系统由三元组决定,不属于 Linux、macOS、Windows 的腿被拒绝;判据 8、9(e2e 961、962)。 |
+| 1.3 | 2026-10-29 | mcpp 2026.10.29.1:§0 ok 映像与 Web;§1.2 单腿 `self-contained` 包的载体为映像架构的程序;§1.5、§5.2 WebAssembly 目标上的单文件被拒绝;§4.5 单腿 `self-contained` ok 映像包的 `systems` 记录其载体;§6 `--list-formats` 规划所选目标;§8 单腿包按其程序运行的系统与架构描述(系统的三元组,或 ok 映像的载体),程序不是任何系统的程序的被拒绝;判据 8、9(e2e 961、962)。 |

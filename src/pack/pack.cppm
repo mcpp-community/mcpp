@@ -545,6 +545,14 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
 // or does not state (`aarch64-windows-gnu`). Empty when it builds one.
 std::string unbuilt_row(std::string_view system, std::string_view arch);
 
+// The `<os>-<arch>` of the loaders a package carries (`systems` of its
+// `mcpp-package.json` and of the `mcpp.pack` envelope, SPEC-014 §4.5): a
+// self-contained universal package's under `libexec/<runner>/`, and for a
+// self-contained package of one image its carrier, which is the program -- of
+// this machine's system and the image's architecture. `mcpp emit xpkg` reads
+// it as the system the carrier runs on (§8).
+std::vector<std::string> carried_systems(const Plan& plan);
+
 // THE PLATFORM'S RUNNER FOR ANOTHER ARCHITECTURE (SPEC-013 §10, §11): the
 // carrier built with nothing carried, for this machine's system and `arch`,
 // named `name` -- the program a self-contained universal package carries under
@@ -1625,6 +1633,9 @@ std::expected<void, Error> finalize_tree(const Plan& plan) {
             pkg.program = "bin/" + fs::path(plan.binaryName).stem().string()
                         + std::string(mcpplibs::os::exe_suffix);
         stated.role[pkg.program] = "program";
+        // The carrier that is the program says which system it is a program
+        // of; an index entry reads it there (SPEC-014 §8).
+        pkg.systems = carried_systems(plan);
     }
     // What `[pack] include` named is the package's resource, whatever its name.
     for (auto const& rel : *included) stated.role[rel] = "resource";
@@ -3270,6 +3281,15 @@ std::expected<void, Error> finalize_staged(const Plan& plan) {
 std::string unbuilt_row(std::string_view system, std::string_view arch) {
     const auto row = detail::program_row(system, arch, true);
     return detail::row_is_built(row) ? std::string() : row.triple;
+}
+
+std::vector<std::string> carried_systems(const Plan& plan) {
+    // The one-leg tree of a single file holds the images, not the carrier
+    // (`run_loaded`): the carrier is the file, made per system of `--systems`.
+    if (plan.opts.universalName.empty() && plan.targetIsLoaded && plan.opts.mode == Mode::BundleAll
+        && plan.opts.format != Format::SingleFile)
+        return { std::format("{}-{}", detail::host_system(), detail::arch_of(plan.triple)) };
+    return mcpp::pack::distribution::loader_systems(plan.stagingRoot);
 }
 
 std::expected<std::filesystem::path, Error>

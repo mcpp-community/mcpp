@@ -59,11 +59,16 @@
   Every triple that was not Windows or macOS was written `linux`: a
   `wasm32-emscripten` package became a Linux entry with `archs = {"wasm32"}`.
   An entry's `xpm.<system>` installs a program of that system for machine
-  architectures, and a WebAssembly package has no launcher, no system and no
-  machine architecture, so a package of one leg that is no Linux (other than
-  Android), macOS or Windows program is refused, naming the route that
-  distributes it: a page through `dist-web`, or for an ok image its
-  platform's universal package (SPEC-014 §8; e2e 962).
+  architectures. A package of one leg is now described for the system and
+  architecture of its program: the triple's for a Linux (other than Android),
+  macOS or Windows target, and for an ok image packed with its carrier
+  (`--no-universal --mode self-contained` or `static`) the carrier's, which
+  the package now records in `mcpp-package.json` `systems` (and the `mcpp.pack`
+  envelope's), e.g. `["linux-aarch64"]`. A package whose program is no program
+  of a system -- a WebAssembly module, an Android or iOS application, a
+  bare-metal image, an ok image without its carrier -- is refused, naming the
+  route that distributes it: a page through `dist-web`, or the platform's
+  universal package (SPEC-014 §4.5, §8; e2e 961, 962).
 - **`--pkg-format single-file` is refused on a WebAssembly target.** A single
   file is an executable of one system; the pack tried a `wasm32-linux-musl`
   launcher. The refusal comes before anything compiles and names `tar`,

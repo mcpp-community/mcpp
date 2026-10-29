@@ -895,11 +895,15 @@ sha256 per architecture. The install moves the archive's top directory into
 place and registers the program with xvm (the `.cmd` launcher on Windows),
 from each system's own directory when the packages place the program apart
 (a Windows program at the root, a POSIX one under `bin/`). Each archive is its
-own `--package`. A package of one leg is described for the system of its triple
-(Linux, macOS or Windows); one of another target is refused, naming the route
-that distributes it (2026.10.29.1+): a `wasm32-emscripten` package is published
-as a page (`dist-web`), an ok image as its platform's universal package, and an
-Android, iOS or bare-metal package has no entry.
+own `--package`. A package of one leg is described for the system and
+architecture its program runs on (2026.10.29.1+): the triple's for a Linux,
+macOS or Windows target, and for an ok image packed with its carrier
+(`--no-universal --mode self-contained`) the carrier's, which the package
+records in `systems` (`"systems": ["linux-aarch64"]` for an aarch64 image packed
+on Linux). A package whose program is no program of a system is refused, naming
+the route that distributes it: a `wasm32-emscripten` package is published as a
+page (`dist-web`), an ok image without its carrier as its platform's universal
+package, and an Android, iOS or bare-metal package has no entry.
 
 ### Compression and signing
 
