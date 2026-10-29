@@ -45,7 +45,8 @@ mcpp run --target x86_64-openkal
      Running `okrun … target/x86_64-openkal/…/bin/app.oke`
 ```
 
-每个值都带来源报告。`mcpp test`、`mcpp pack` 与 `--target aarch64-openkal` 无需更多声明。`mcpp.lock` 以
+每个值都带来源报告。`mcpp test`、`mcpp pack` 与 `--target aarch64-openkal` 无需更多声明；与本机架构不同的
+映像经执行宿主运行（[24](24-openkal-cross.md)）。`mcpp.lock` 以
 `origin = "platform"` 记录平台加入的包,并以 `targets` 写出每个条目的配置(只属于本机原生配置的条目不写),
 因此为本机的构建与为 ok 映像的构建不互相改写对方的条目。
 
@@ -209,13 +210,13 @@ seal   = [["okld", "note", "{}"], ["okld", "check", "{}", "--with", "{needed}"]]
   64 KiB)([SPEC-013](../specs/platforms.md) §11)。
 
 开发期间,工程以 `--platform path:<dir>` 或 `platform = { path = "<dir>" }` 选择工作树。在平台包中执行
-`mcpp test` 而不给 `--target` 时,以该包为平台为其每个 `targets` 构建测试,运行本机架构的那些,其余报告为
-已构建、未运行。
+`mcpp test` 而不给 `--target` 时,以该包为平台为其每个 `targets` 构建测试,运行本机架构的那些与给出了执行宿主的
+那些(2026.10.29.1+),其余报告为已构建、未运行。
 
 ## 查看一个配置
 
 ```sh
-mcpp self env --target x86_64-openkal                 # toolchain, platform, tools, runner
+mcpp self env --target x86_64-openkal                 # toolchain, platform, tools, runner, and why runs are refused here
 mcpp self env --target x86_64-openkal --format json
 mcpp self env --host                                  # the host graph, its runner and tools once its build programs were built
 mcpp toolchain list                                   # the PLATFORM column

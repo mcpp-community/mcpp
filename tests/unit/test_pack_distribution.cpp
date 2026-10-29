@@ -727,3 +727,43 @@ TEST(PackDistribution, XpkgDescriptorNamesEachSystemsProgramDirectory) {
     EXPECT_NE(r->find("path.join(pkginfo.install_dir(), bindir[os.host()])"), std::string::npos) << *r;
     EXPECT_NE(r->find("name = \"okrun\""), std::string::npos) << *r;
 }
+
+// An entry describes packages of one leg for the system their program runs on
+// (SPEC-014 §8): a Linux, macOS or Windows program. A leg of no such system --
+// a WebAssembly module, an Android application, a bare-metal image, an ok image
+// of one leg -- is refused, naming the package, the triple and the route that
+// distributes it; it was written `linux` before.
+TEST(PackDistribution, XpkgDescriptorDescribesProgramsOfASystem) {
+    auto one = [](std::string triple, std::string top, std::string program) {
+        d::Asset a;
+        a.file = top + ".tar.gz";
+        a.top = top;
+        a.sha256 = std::string(64, 'e');
+        a.pkg.name = "web";
+        a.pkg.version = "0.1.0";
+        a.pkg.legs = { triple };
+        a.pkg.program = program;
+        return a;
+    };
+    struct Row { const char* triple; const char* says; };
+    for (auto [triple, says] : { Row{ "wasm32-emscripten", "dist-web" },
+                                 Row{ "aarch64-linux-android", "Linux, macOS or Windows target" },
+                                 Row{ "riscv64-none-elf", "Linux, macOS or Windows target" },
+                                 Row{ "x86_64-openkal", "universal package" } }) {
+        auto r = d::xpkg_descriptor({ one(triple, std::format("web-0.1.0-{}", triple), "bin/web.js") },
+                                    "https://example.org/0.1.0");
+        ASSERT_FALSE(r) << triple << ": " << *r;
+        EXPECT_NE(r.error().find(std::format("is a package of {}, which is no program of Linux, "
+                                             "macOS or Windows", triple)), std::string::npos) << r.error();
+        EXPECT_NE(r.error().find(says), std::string::npos) << r.error();
+    }
+    for (auto [triple, system] : { std::pair{ "x86_64-linux-gnu", "linux" },
+                                   std::pair{ "aarch64-linux-musl", "linux" },
+                                   std::pair{ "aarch64-macos", "macosx" },
+                                   std::pair{ "x86_64-windows-msvc", "windows" } }) {
+        auto r = d::xpkg_descriptor({ one(triple, std::format("tool-0.1.0-{}", triple), "bin/tool") },
+                                    "https://example.org/0.1.0");
+        ASSERT_TRUE(r) << triple << ": " << r.error();
+        EXPECT_NE(r->find(std::format("        {} = {{", system)), std::string::npos) << *r;
+    }
+}

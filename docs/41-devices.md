@@ -104,7 +104,11 @@ runner = { cmd = ["okrun", "{}"], host = "same-arch", exclusive = false }
 
 `host = "same-arch"` runs an artifact only on a machine of its architecture, and
 an artifact of another architecture is refused naming `run_under`; `"any"` is a
-runner that reaches the artifact from any machine. A target's platform supplies
+runner that reaches the artifact from any machine. With an execution host named
+(`run_under`), a `same-arch` runner runs on it, and a runner that is the
+platform's tool is given as the platform's runner for the artifact's
+architecture, which mcpp builds from the platform's carrier (2026.10.29.1+;
+`run_under = ["qemu-aarch64"]` in [24](24-openkal-cross.md)). A target's platform supplies
 its default runner ([35](35-platforms.md)); a dependency's build program, this
 machine's `config.toml`, the project and `MCPP_TARGET_<TRIPLE>_RUNNER` each
 replace it in that order, and an argv alone keeps the platform's `host` and

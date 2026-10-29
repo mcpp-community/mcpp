@@ -311,13 +311,18 @@ mcpp self env --format json
                 "hosted": false, "fields": {"runner": {"value": ["okrun", "{}"], "source": "platform"}}},
   "tools":     {"okld": "/…/okld", "okrun": "/…/okrun"},
   "runner":    {"argv": ["okrun", "{}"], "host": "same-arch", "exclusive": false,
-                "program": "/…/okrun", "source": "platform"},
-  "runUnder":  []
+                "program": "/…/okrun", "arch": "x86_64", "built": true, "refusal": null,
+                "source": "platform"},
+  "runUnder":  [],
+  "runUnderProgram": null
 }
 ```
 
 未选择平台时 `platform` 为 `null`；其形状与 `plan` 事件的相同（§9）。运行器指名平台自己的工具时
-`runner.program` 为该工具，否则为本机找到的程序。`--host` 时，工程的构建程序已在宿主平台下构建过，才报告宿主平台
+`runner.program` 为该工具，否则为本机找到的程序。对目标图（2026.10.29.1+），该程序就是 `mcpp run` 与
+`mcpp test` 会启动的程序：`runner.arch` 为其架构；产物属于另一架构、运行器为 `same-arch` 且给出了执行宿主时，
+它是平台为该架构准备的运行器，报告第一次运行构建它的位置（此前 `built: false`；`self env` 不构建任何东西）。
+`runUnderProgram` 为执行宿主的程序，`runner.refusal` 为本机拒绝运行的原因（不拒绝时为 `null`）。`--host` 时，工程的构建程序已在宿主平台下构建过，才报告宿主平台
 的 `runner` 与 `tools`。工程源码会被拒绝的原因
 （图中没有 C++ 运行时而 `import std`）是一条代码为 `MCPP_CONFIGURATION_SOURCES_REFUSED` 的
 `warning` 诊断，配置照常报告。无法准备的配置带 `MCPP_CONFIGURATION_FAILED`，没有 `data`。
@@ -919,7 +924,9 @@ mcpp pack --list-formats
 
 `data.formats` 列出引擎自己的格式（`tar`、`zip`、`dir`、`single-file`；`builtin: true`）以及已解析依赖
 图中某个包提供的每种格式（`builtin: false`，带 `providers`）。依赖图在 mcpp home 的
-一个目录中规划，因此不向工程写入任何东西。
+一个目录中规划，因此不向工程写入任何东西。带 `--target <triple>` 时（2026.10.29.1+；多次给出时取最后一个），
+规划的是该目标的依赖图，并列出其平台的格式：`mcpp pack --target x86_64-openkal --list-formats` 列出
+`okb`，由 `mcpplibs.openkal-platform` 提供。
 
 ## 当前边界
 

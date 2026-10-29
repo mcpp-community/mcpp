@@ -270,7 +270,10 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
 // packages that provide it -- as the `mcpp.pack.formats` envelope. A plan
 // that describes (plan_only) in a directory of the mcpp home, as `emit
 // build-database` plans: the build programs run, because they are what
-// declares a format, and nothing is written into the project.
+// declares a format, and nothing is written into the project. The plan is
+// the target's the pack would build (`--target`, the last when repeated, as
+// the pack takes it): a platform's plugin declares its formats for its own
+// targets (`okb` of `<arch>-openkal`), and the host's plan lists none of them.
 int cmd_pack_list_formats(const mcpplibs::cmdline::ParsedArgs& parsed) {
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) {
@@ -282,6 +285,8 @@ int cmd_pack_list_formats(const mcpplibs::cmdline::ParsedArgs& parsed) {
         parsed.value("profile").value_or(""),
         parsed.is_flag_set("release"), parsed.is_flag_set("dev"));
     if (auto v = parsed.value("features")) ov.features = *v;
+    if (auto o = parsed.option("target"); o && !o->get().values.empty())
+        ov.target_triple = o->get().values.back();
     ov.plan_only = true;
     ov.work_dir = mcpp::home::root() / "cache" / "pack-formats"
                 / mcpp::toolchain::hash_string(root->lexically_normal().generic_string());

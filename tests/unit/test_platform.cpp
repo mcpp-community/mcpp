@@ -426,6 +426,42 @@ TEST(PlatformLink, SealSteps) {
               (std::vector<std::string>{"sign", "--image=x", "a.okso", "b.okso"}));
 }
 
+// ── The run (§10) ───────────────────────────────────────────────────────────
+
+// A `same-arch` runner runs an artifact on a machine of its architecture:
+// this one when they agree; the execution host, with that architecture's
+// program, when one is named; refused otherwise. `--no-runner` and every
+// other runner are this machine's.
+TEST(PlatformRun, TheRunnerReachesTheArtifactsArchitecture) {
+    using R = pf::RunnerReach;
+    mp::Runner same;
+    same.set = true;
+    same.cmd = {"okrun", "{}"};
+    same.host = "same-arch";
+    mp::Runner any = same;
+    any.host = "any";
+    mp::Runner bare = same;
+    bare.host.clear();
+    mp::Runner none;
+    struct Row { const mp::Runner* runner; const char* target; bool executionHost; bool noRunner; R want; };
+    const Row rows[] = {
+        { &same, "x86_64",  false, false, R::Here },
+        { &same, "x86_64",  true,  false, R::Here },
+        { &same, "aarch64", false, false, R::Refused },
+        { &same, "aarch64", true,  false, R::TargetArchitecture },
+        { &same, "aarch64", true,  true,  R::Here },
+        { &same, "aarch64", false, true,  R::Here },
+        { &any,  "aarch64", true,  false, R::Here },
+        { &any,  "aarch64", false, false, R::Here },
+        { &bare, "aarch64", true,  false, R::Here },
+        { &none, "aarch64", true,  false, R::Here },
+    };
+    for (auto const& r : rows)
+        EXPECT_EQ(pf::runner_reach(*r.runner, r.target, "x86_64", r.executionHost, r.noRunner), r.want)
+            << r.runner->host << " " << r.target << " executionHost=" << r.executionHost
+            << " noRunner=" << r.noRunner;
+}
+
 // ── The report ──────────────────────────────────────────────────────────────
 
 TEST(PlatformReport, SourcesAndJson) {

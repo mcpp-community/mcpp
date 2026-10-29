@@ -353,14 +353,23 @@ select as they do for a build ([35](35-platforms.md)).
                 "hosted": false, "fields": {"runner": {"value": ["okrun", "{}"], "source": "platform"}}},
   "tools":     {"okld": "/…/okld", "okrun": "/…/okrun"},
   "runner":    {"argv": ["okrun", "{}"], "host": "same-arch", "exclusive": false,
-                "program": "/…/okrun", "source": "platform"},
-  "runUnder":  []
+                "program": "/…/okrun", "arch": "x86_64", "built": true, "refusal": null,
+                "source": "platform"},
+  "runUnder":  [],
+  "runUnderProgram": null
 }
 ```
 
 `platform` is `null` when no platform is selected; its shape is the `plan`
 event's (§9). `runner.program` is the platform's own tool when the runner names
-one, else the program found on this machine. For `--host` the host platform's
+one, else the program found on this machine. For the target graph
+(2026.10.29.1+) the program is the one `mcpp run` and `mcpp test` would start:
+`runner.arch` is its architecture; with an execution host named for an artifact
+of another architecture and a `same-arch` runner, it is the platform's runner
+for that architecture, located where the first run builds it (`built: false`
+until then; `self env` builds nothing). `runUnderProgram` is the execution
+host's program, and `runner.refusal` the reason runs are refused on this
+machine (`null` when they are not). For `--host` the host platform's
 `runner` and `tools` are reported once the project's build programs have been
 built under it. A reason the project's sources would be refused for (an `import
 std` with no C++ run-time in the graph) is a `warning` diagnostic with the code
@@ -1029,7 +1038,10 @@ mcpp pack --list-formats
 `data.formats` lists the engine's own formats (`tar`, `zip`, `dir`, `single-file`; `builtin: true`)
 and each format a package of the resolved graph provides (`builtin: false`,
 with `providers`). The graph is planned in a directory of the mcpp home, so
-nothing is written into the project.
+nothing is written into the project. With `--target <triple>` (2026.10.29.1+;
+the last one when repeated) the graph is that target's, and the formats of its
+platform are listed: `mcpp pack --target x86_64-openkal --list-formats` names
+`okb`, provided by `mcpplibs.openkal-platform`.
 
 ## Current limitations
 

@@ -545,6 +545,19 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
 // or does not state (`aarch64-windows-gnu`). Empty when it builds one.
 std::string unbuilt_row(std::string_view system, std::string_view arch);
 
+// THE PLATFORM'S RUNNER FOR ANOTHER ARCHITECTURE (SPEC-013 §10, §11): the
+// carrier built with nothing carried, for this machine's system and `arch`,
+// named `name` -- the program a self-contained universal package carries under
+// `libexec/<name>/<os>-<arch>/`, and the one `mcpp run` and `mcpp test` hand an
+// execution host of that architecture. Built under
+// `<projectRoot>/target/carrier-pack/<name>-<os>-<arch>/`; returns the program.
+// Refused when the platform states no carrier or this mcpp builds no program
+// for that system and architecture. `build = false` builds nothing and returns
+// where the program is placed (what `mcpp self env` reports).
+std::expected<std::filesystem::path, Error>
+runner_program(const mcpp::platform::Resolved& platform, const std::filesystem::path& projectRoot,
+               std::string_view name, std::string_view arch, bool build = true);
+
 // The tree made a package: signed and described (`mcpp-package.json`). `run`
 // does it before writing a container; a dispatched format whose tree was
 // staged without its closure is finalized by the caller.
@@ -2191,7 +2204,8 @@ run_wasm(const Plan& plan)
 //                   every artifact it names (M2);
 //   vendored        the artifact and the artifacts it names (`DT_NEEDED`),
 //                   beside it; the machine provides the loader (M2, the default);
-//   self-contained  a program of THIS machine that carries the artifact as a
+//   self-contained  a program of THIS machine's system and the artifact's
+//                   architecture that carries the artifact as a
 //                   section and runs it through the platform's CARRIER (M3),
 //                   with the artifacts it names beside it; the machine provides
 //                   nothing. The artifact is not recompiled: the program is the
@@ -2310,6 +2324,24 @@ std::string carried_assembly(std::string_view system, std::string_view sectionNa
     return text;
 }
 
+// Where a program generated under `dir` is packed: the tree, and the program
+// in it -- under the tree's `bin/`, or, for a Windows program, whose tree is
+// flat, at its root.
+std::filesystem::path packed_tree(const std::filesystem::path& dir) {
+    return dir / "target" / "dist" / "packed";
+}
+std::filesystem::path packed_program(const std::filesystem::path& dir, std::string_view stem,
+                                     std::string_view system) {
+    if (system == "windows") return packed_tree(dir) / (std::string(stem) + ".exe");
+    return packed_tree(dir) / "bin" / std::string(stem);
+}
+
+// The generated project of the carrier named `stem` for `system` and `arch`.
+std::filesystem::path carrier_dir(const std::filesystem::path& projectRoot, std::string_view stem,
+                                  std::string_view system, std::string_view arch) {
+    return projectRoot / "target" / "carrier-pack" / std::format("{}-{}-{}", stem, system, arch);
+}
+
 // A program generated under `dir` (its manifest, entry and carried section)
 // packed for `row` as a directory; returns the directory that holds the
 // program and what it needs beside it: the tree's `bin/`, or, for a Windows
@@ -2318,7 +2350,7 @@ std::expected<std::filesystem::path, Error>
 pack_generated_program(const std::filesystem::path& dir, const ProgramRow& row) {
     namespace fs = std::filesystem;
     std::error_code ec;
-    const auto out = dir / "target" / "dist" / "packed";
+    const auto out = packed_tree(dir);
     fs::remove_all(out, ec);
     std::vector<std::string> argv{ mcpp::invocation::self_exe_path().string(), "pack",
                                    "--pkg-format", "dir", "-o", "packed",
@@ -2384,7 +2416,22 @@ struct CarrierBuild {
     std::string           system;        // linux | macos | windows
     std::string           arch;
     bool                  single = false;
+    // What the runner's form is for, as the `Packing` line says it.
+    std::string_view      role = "the runner of the package";
 };
+
+// A carrier for a row this mcpp builds no program for, refused before a
+// project is generated for it and naming the row: a Windows machine packing an
+// aarch64 image's carrier (`aarch64-windows-gnu`) otherwise failed inside the
+// generated project's pack. nullopt: the row is built.
+std::optional<std::string> unbuilt_carrier(const mcpp::platform::Resolved& platform,
+                                           std::string_view system, std::string_view arch,
+                                           bool single) {
+    const auto row = program_row(system, arch, single, &platform);
+    if (row_is_built(row)) return std::nullopt;
+    return std::format("{}'s carrier is built as a program of {}-{} ({}), and this mcpp builds "
+                       "no program for that row", platform.display(), system, arch, row.triple);
+}
 
 std::expected<std::filesystem::path, Error>
 carrier_build(const Plan& plan, const CarrierBuild& b)
@@ -2404,8 +2451,9 @@ carrier_build(const Plan& plan, const CarrierBuild& b)
             mcpp::platform::origin_text(c.origin))});
 
     const auto row = program_row(b.system, b.arch, b.single, &plan.platform);
-    const auto dir = plan.projectRoot / "target" / "carrier-pack"
-                   / std::format("{}-{}-{}", b.stem, b.system, b.arch);
+    if (auto why = unbuilt_carrier(plan.platform, b.system, b.arch, b.single))
+        return std::unexpected(Error{*why});
+    const auto dir = carrier_dir(plan.projectRoot, b.stem, b.system, b.arch);
     fs::create_directories(dir / "src", ec);
     if (ec) return std::unexpected(Error{std::format("cannot create {}: {}", dir.string(), ec.message())});
     // RESOLVED AS THE BUILD THAT MADE THE ARTIFACT RESOLVED ITS PLATFORM. The
@@ -2448,8 +2496,8 @@ carrier_build(const Plan& plan, const CarrierBuild& b)
     // keeps for a program -- no build-machine path, its closure beside it. On
     // macOS and Windows the system's own libraries are the only ones it names.
     mcpp::ui::info("Packing", b.carried.empty()
-        ? std::format("{} for {}-{} ({}'s carrier, the runner of the package)", b.stem,
-                      b.system, b.arch, plan.platform.display())
+        ? std::format("{} for {}-{} ({}'s carrier, {})", b.stem,
+                      b.system, b.arch, plan.platform.display(), b.role)
         : std::format("{} into a program of {}-{} ({}'s carrier, M3)", plan.binaryName,
                       b.system, b.arch, plan.platform.display()));
     return pack_generated_program(dir, row);
@@ -2512,11 +2560,15 @@ run_loaded(const Plan& plan)
         }
         fs::path staged;
         // A single file is made from the images (`single_file`); the tree
-        // holds them as `vendored` does.
+        // holds them as `vendored` does. The carrier is a program of this
+        // machine's system and the IMAGE'S architecture, as a single file's
+        // is: one of this machine's architecture cannot map an image of
+        // another (measured on 2026.10.28.1: an x86-64 program carrying an
+        // aarch64 image, runnable on no machine).
         if (plan.opts.mode == Mode::BundleAll && plan.opts.format != Format::SingleFile) {
             auto packed = carrier_build(plan, { plan.builtBinary, plan.binaryName,
                 fs::path(plan.binaryName).stem().string(), std::string(host_system()),
-                std::string(mcpp::toolchain::platform::host_arch), false });
+                arch_of(plan.triple), false });
             if (!packed) return std::unexpected(packed.error());
             fs::copy(*packed, plan.stagingRoot / "bin",
                      fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
@@ -3218,6 +3270,35 @@ std::expected<void, Error> finalize_staged(const Plan& plan) {
 std::string unbuilt_row(std::string_view system, std::string_view arch) {
     const auto row = detail::program_row(system, arch, true);
     return detail::row_is_built(row) ? std::string() : row.triple;
+}
+
+std::expected<std::filesystem::path, Error>
+runner_program(const mcpp::platform::Resolved& platform, const std::filesystem::path& projectRoot,
+               std::string_view name, std::string_view arch, bool build) {
+    if (!platform.active || !platform.fields.carrier.set)
+        return std::unexpected(Error{std::format(
+            "the runner `{}` of {} runs on a machine of the artifact's architecture, {}, and its "
+            "program for that architecture is the platform's carrier, which {} does not state "
+            "([platform] carrier = {{ package, section, main }})",
+            name, platform.display(), arch, platform.display())});
+    const std::string system(detail::host_system());
+    if (auto why = detail::unbuilt_carrier(platform, system, arch, false))
+        return std::unexpected(Error{*why});
+    const auto program = detail::packed_program(detail::carrier_dir(projectRoot, name, system, arch),
+                                                name, system);
+    if (!build) return program;
+    Plan plan;
+    plan.platform = platform;
+    plan.projectRoot = projectRoot;
+    plan.binaryName = std::string(name);
+    auto packed = detail::carrier_build(plan, { {}, {}, std::string(name), system, std::string(arch),
+                                                false, "the runner on the execution host" });
+    if (!packed) return std::unexpected(packed.error());
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(program, ec))
+        return std::unexpected(Error{std::format("the carrier built for {}-{} has no {}", system, arch,
+                                                 program.filename().string())});
+    return program;
 }
 
 std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan& plan) {

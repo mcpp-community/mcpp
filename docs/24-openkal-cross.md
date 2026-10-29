@@ -432,6 +432,50 @@ anything compiles, saying where the layer was switched off.
 requirements note would be refused by every loader; the refusal
 (`platform-tool-absent`) names the package that builds it.
 
+### An Image Of Another Architecture (mcpp 2026.10.29.1)
+
+`okrun` runs an image of its own architecture (`host = "same-arch"`). On a
+machine of another architecture `mcpp run` and `mcpp test` refuse the image and
+name `run_under`, the key that states the execution host. With one named, the
+runner runs there, and its program is the platform's runner for the image's
+architecture: mcpp builds the platform's carrier with nothing carried, for this
+system and that architecture, which is the program a self-contained universal
+package carries under `libexec/okrun/<os>-<arch>/`. A user-mode emulator is an
+execution host; on an x86_64 Linux machine with `qemu-aarch64`:
+
+```toml
+[package]
+name    = "app"
+version = "0.1.0"
+
+[target.aarch64-openkal]
+run_under = ["qemu-aarch64"]
+```
+
+```
+$ mcpp run --target aarch64-openkal
+     Packing okrun for linux-aarch64 (openkal-platform 0.17.3's carrier, the runner on the execution host)
+     Running `okrun … target/aarch64-openkal/…/bin/app.oke`
+         Via qemu-aarch64  [/…/app/mcpp.toml:6]
+```
+
+`mcpp test --target aarch64-openkal` runs the tests the same way.
+`MCPP_TARGET_AARCH64_OPENKAL_RUN_UNDER=qemu-aarch64` names the execution host
+for one run, and `[target.aarch64-openkal] run_under` in `~/.mcpp/config.toml`
+for one machine. `mcpp self env --target aarch64-openkal` reports the runner's
+program and its architecture and the execution host's program, or why runs
+are refused on this machine. A self-contained package of one image
+(`--no-universal --mode self-contained`) is a program of this system and the
+image's architecture ([10](10-pack-and-release.md)).
+
+### ok Images And The Web
+
+An ok image is position-independent ELF for x86_64 and aarch64 that imports
+only `kal_*` and runs in executable memory its loader publishes; an okb holds
+ok images only. The web is reached through the `wasm32-emscripten` target, whose
+package the `dist-web` provider writes as a page; code written against the
+openkal API reaches it through `openkal-emscripten` (above).
+
 ## Bare Metal
 
 A target with no operating system is the same model with the platform layer

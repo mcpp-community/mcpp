@@ -1083,6 +1083,37 @@ std::optional<std::filesystem::path> platform_tool(const mcpp::build::BuildConte
     return std::nullopt;
 }
 
+// THE RUNNER'S PROGRAM WHEN IT IS THE PLATFORM'S TOOL (SPEC-013 §10). The tool
+// the build located is a program of this machine. A `same-arch` runner reached
+// through an execution host on another architecture runs THERE, on a machine
+// of the artifact's architecture, so its program is the platform's runner for
+// that architecture: the carrier with nothing carried (§11), for this
+// machine's system -- the program a self-contained universal package carries
+// under `libexec/<runner>/<os>-<arch>/`. Measured on 2026.10.28.1 before this:
+// `run_under = ["qemu-aarch64"]` was handed the x86_64 okrun, and qemu said
+// "Invalid ELF image for this architecture". `build = false` locates it
+// without building it (`mcpp self env`). nullopt: the word is no platform
+// tool, and is looked up as any runner's program is.
+struct RunnerTool {
+    std::filesystem::path program;
+    std::string           arch;   // the architecture it is built for
+};
+std::expected<std::optional<RunnerTool>, std::string>
+runner_tool(const mcpp::build::BuildContext& ctx, std::string_view word, std::string_view tripleKey,
+            bool noRunner, bool build = true) {
+    auto tool = platform_tool(ctx, word);
+    if (!tool) return std::nullopt;
+    auto t = mcpp::toolchain::triple::parse(tripleKey);
+    if (!t || mcpp::platform::runner_reach(ctx.plan.platform.fields.runner, t->arch,
+                                           mcpp::toolchain::platform::host_arch,
+                                           !ctx.runUnder.empty(), noRunner)
+                  != mcpp::platform::RunnerReach::TargetArchitecture)
+        return RunnerTool{ *tool, std::string(mcpp::toolchain::platform::host_arch) };
+    auto program = mcpp::pack::runner_program(ctx.plan.platform, ctx.projectRoot, word, t->arch, build);
+    if (!program) return std::unexpected(program.error().message);
+    return RunnerTool{ std::move(*program), t->arch };
+}
+
 ExecutionHost locate_run_under(const mcpp::build::BuildContext& ctx, std::string_view tripleKey) {
     ExecutionHost h;
     if (ctx.runUnder.empty()) return h;
@@ -1122,8 +1153,10 @@ std::optional<std::string> unreachable_execution(const mcpp::build::BuildContext
     // (`runner = { ..., host = "same-arch" }`, SPEC-013): an ok image's loader
     // is a program of this machine, and an image of another architecture is
     // not one it can map.
-    if (auto const& r = ctx.plan.platform.fields.runner; t && r.set && r.host == "same-arch"
-        && t->arch != mcpp::toolchain::platform::host_arch)
+    if (auto const& r = ctx.plan.platform.fields.runner; t
+        && mcpp::platform::runner_reach(r, t->arch, mcpp::toolchain::platform::host_arch,
+                                        !ctx.runUnder.empty(), noRunner)
+               == mcpp::platform::RunnerReach::Refused)
         return std::format(
             "cannot run {} artifacts on this {} host: the runner `{}` ({}) runs an artifact on a "
             "machine of its architecture.\n"
@@ -1262,6 +1295,48 @@ RunnerChoice choose_runner(const BuildContext& ctx, bool noRunner) {
 }
 RunnerChoice choose_runner(const BuildContext& ctx) {
     return choose_device_action(ctx, std::string_view{}, false);
+}
+
+// HOW `mcpp run` AND `mcpp test` WOULD START THE TARGET'S ARTIFACT HERE, as
+// `mcpp self env --target` reports it (SPEC-013 §10, §16), read from the
+// helpers the two commands use and building nothing: the program the runner's
+// first word resolves to and its architecture (another architecture's runner,
+// for an execution host, is located where the first run builds it), the
+// execution host's program, and the reason runs are refused on this machine.
+export struct RunnerOnThisMachine {
+    std::string program;           // empty: not found
+    std::string arch;              // the architecture `program` is built for
+    bool        built = true;      // false: built by the first run
+    std::string runUnderProgram;   // `run_under`'s program; empty: none, or not found
+    std::string refusal;           // non-empty: runs are refused here, and why
+};
+
+export RunnerOnThisMachine runner_on_this_machine(const BuildContext& ctx) {
+    RunnerOnThisMachine out;
+    const auto choice = choose_runner(ctx);
+    out.arch = std::string(mcpp::toolchain::platform::host_arch);
+    if (auto why = unreachable_execution(ctx, choice.tripleKey, false)) out.refusal = *why;
+    if (!ctx.runUnder.empty()) {
+        auto host = locate_run_under(ctx, choice.tripleKey);
+        if (!host.error.empty()) out.refusal = host.error;
+        else out.runUnderProgram = host.prefix.front();
+    }
+    if (choice.tmpl.empty()) return out;
+    auto found = mcpp::build::runner_lookup::locate(
+        choice.tmpl.front(), ctx.xlingsDepBinDirs, mcpp::invocation::get("PATH").value_or(""));
+    auto tool = runner_tool(ctx, choice.tmpl.front(), choice.tripleKey, false, /*build=*/false);
+    if (!tool) {
+        out.refusal = tool.error();
+        return out;
+    }
+    if (*tool) {
+        found.program = (*tool)->program;
+        out.arch = (*tool)->arch;
+        std::error_code ec;
+        out.built = std::filesystem::is_regular_file((*tool)->program, ec);
+    }
+    if (found.program) out.program = found.program->generic_string();
+    return out;
 }
 
 // The capacity number, printed because capacity is the constraint.
@@ -2873,7 +2948,12 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         auto tmpl = choice.tmpl;
         auto found = mcpp::build::runner_lookup::locate(
             tmpl.front(), ctx.xlingsDepBinDirs, mcpp::invocation::get("PATH").value_or(""));
-        if (auto tool = platform_tool(ctx, tmpl.front())) found.program = *tool;
+        auto tool = runner_tool(ctx, tmpl.front(), choice.tripleKey, no_runner);
+        if (!tool) {
+            std::println(stderr, "error: {}", tool.error());
+            return 2;
+        }
+        if (*tool) found.program = (*tool)->program;
         if (!found.program) {
             std::println(stderr, "error: {}",
                 mcpp::build::runner_lookup::not_found_message(
@@ -3280,6 +3360,13 @@ export struct TestOptions {
     // `--no-run` makes the narrower claim available as its own answer: every
     // selected test compiled and linked for the target, and none was executed.
     bool               noRun = false;
+    // A target this machine's runner cannot reach -- a `same-arch` runner on
+    // another architecture with no execution host named -- is reported built
+    // and not run, as `--no-run` reports, rather than not run: `mcpp test` in
+    // a platform package tests every target the package serves (SPEC-013
+    // §16), and one of another architecture runs where an execution host is
+    // named for it.
+    bool               unreachableIsBuilt = false;
     // Per-test RUN deadline. The default is deliberately non-zero: `mcpp test`
     // is something CI runs unattended, and an unbounded default makes a single
     // hung test able to consume the whole job with nothing to show for it.
@@ -3496,9 +3583,14 @@ struct TestBuild {
     std::vector<std::string>                 runUnderPrefix;
     // Non-empty ⇒ no test is spawned; every one is reported NotRun with it.
     std::string                              invocationNotRunReason;
+    // The reason is printed once per build, in full, before the first test it
+    // leaves not run; the summary of each member repeats its first line.
+    bool                                     invocationReasonPrinted = false;
     // Non-zero: there is nothing to execute the tests with, and this is the
     // exit status every member of the build returns.
     int                                      runnerFatal = 0;
+    // The tests are reported built and not run (`unreachableIsBuilt`).
+    bool                                     builtNotRunHere = false;
     // Set by the first worker whose spawn the kernel refused; every worker
     // checks it before spawning. Workers already past the check may be
     // refused the same way — harmless, a refused spawn has no side effects —
@@ -3700,9 +3792,16 @@ static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool
         tb.runnerFatal = 2;
         return;
     }
-    // Not run, with the reason, as a missing runner is: the tests built.
-    if (auto why = unreachable_execution(*ctx, runnerChoice.tripleKey, testOpts.noRunner))
+    // Not run, with the reason, as a missing runner is: the tests built. Or,
+    // where the caller asks, built and not run (a platform package's targets).
+    if (auto why = unreachable_execution(*ctx, runnerChoice.tripleKey, testOpts.noRunner)) {
+        if (testOpts.unreachableIsBuilt) {
+            tb.builtNotRunHere = true;
+            if (!json) mcpp::ui::info("note", std::format("built, not run on this host: {}", *why));
+            return;
+        }
         tb.invocationNotRunReason = *why;
+    }
     if (!testOpts.noRunner) {
         auto host = locate_run_under(*ctx, runnerChoice.tripleKey);
         if (!host.error.empty()) tb.invocationNotRunReason = host.error;
@@ -3713,10 +3812,18 @@ static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool
     if (!runnerTmpl.empty()) {
         auto found = mcpp::build::runner_lookup::locate(
             runnerTmpl.front(), ctx->xlingsDepBinDirs, mcpp::invocation::get("PATH").value_or(""));
-        if (auto tool = platform_tool(*ctx, runnerTmpl.front())) found.program = *tool;
-        if (found.program) runnerTmpl.front() = found.program->string();
-        else tb.invocationNotRunReason = mcpp::build::runner_lookup::not_found_message(
-            runnerChoice.tripleKey, runnerTmpl.front(), found.searched);
+        // The program the execution host runs is built once for the build
+        // when it is another architecture's, and only when the tests run.
+        auto tool = runner_tool(*ctx, runnerTmpl.front(), runnerChoice.tripleKey, testOpts.noRunner,
+                                /*build=*/tb.invocationNotRunReason.empty() && !testOpts.noRun);
+        if (!tool) {
+            tb.invocationNotRunReason = tool.error();
+        } else {
+            if (*tool) found.program = (*tool)->program;
+            if (found.program) runnerTmpl.front() = found.program->string();
+            else tb.invocationNotRunReason = mcpp::build::runner_lookup::not_found_message(
+                runnerChoice.tripleKey, runnerTmpl.front(), found.searched);
+        }
     }
 }
 
@@ -4114,11 +4221,18 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     // `runnable` compiled and linked; a test that did not is already a
     // `CompileFail` in `results` and keeps that status, so this path reports
     // what was built without also reporting anything about what it does.
-    if (testOpts.noRun) {
+    if (testOpts.noRun || tb.builtNotRunHere) {
         for (auto& r : runnable)
             results.push_back({r.name, TestResult::St::Built, 0, {}, {}, 0,
                                false, {}, r.buildMs});
     } else {
+        // THE FULL REASON, ONCE (SPEC-013 §18, criterion 7). It carries the key
+        // that changes it (`run_under`); it was recorded silently and the
+        // summary printed its first line alone, so the hint never reached a
+        // person (measured on 2026.10.28.1). `mcpp run` prints the same text.
+        if (!json && !invocationNotRunReason.empty() && !runnable.empty()
+            && !std::exchange(tb.invocationReasonPrinted, true))
+            mcpp::ui::warning(invocationNotRunReason);
         run_tests_now(runnable);
     }
     summary.elapsedMs = carriedMs + std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -4181,7 +4295,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
 
     // The count is in the summary line at the same weight as failures, with
     // its reason: a quiet skip is read as a pass. First line of the reason
-    // only — the full text was printed when it was established.
+    // only — the full text was printed once, before the tests it left not run.
     auto counts = std::format("{} passed; {} failed", passed, failed);
     if (built) counts += std::format("; {} built, not run", built);
     if (notRun) {
@@ -4316,7 +4430,12 @@ export int run_tests(std::span<const std::string> passthrough,
             if (!binCtx) { mcpp::ui::error(binCtx.error()); return 2; }
             if (std::ranges::any_of(binCtx->plan.linkUnits,
                                     [](auto const& lu) { return lu.kind == LinkUnit::Binary; })) {
-                if (int rc = run_build_plan(*binCtx, mcpp::log::is_verbose(), false); rc != 0)
+                // The target is the cache entry's `[target=]` key, as for
+                // `mcpp run` (see `build_run_target`): without it this build
+                // of another target was recorded as the host's, and the next
+                // bare `mcpp run` warned "fingerprint changed" and rebuilt.
+                if (int rc = run_build_plan(*binCtx, mcpp::log::is_verbose(), false,
+                                            overrides.target_triple); rc != 0)
                     return rc;
                 for (auto const& lu : binCtx->plan.linkUnits) {
                     if (lu.kind != LinkUnit::Binary) continue;

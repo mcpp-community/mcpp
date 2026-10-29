@@ -54,7 +54,9 @@ mcpp run --target x86_64-openkal
 ```
 
 Every value is reported with its source. `mcpp test`, `mcpp pack` and
-`--target aarch64-openkal` need nothing more. `mcpp.lock` records the packages
+`--target aarch64-openkal` need nothing more; an image of another architecture
+than this machine's runs through an execution host
+([24](24-openkal-cross.md)). `mcpp.lock` records the packages
 the platform added with `origin = "platform"`, and each entry's configurations
 in `targets` (absent for this machine's native configuration alone), so a build
 for this machine and one for an ok image leave each other's entries in place.
@@ -245,12 +247,13 @@ During development a project selects the working tree with
 `--platform path:<dir>` or `platform = { path = "<dir>" }`. `mcpp test` in the
 platform package, with no `--target`, builds its tests for each of its
 `targets` with the package as the platform, runs those of this machine's
-architecture, and reports the others as built and not run.
+architecture and those an execution host is named for (2026.10.29.1+), and
+reports the others as built and not run.
 
 ## Inspecting a configuration
 
 ```sh
-mcpp self env --target x86_64-openkal                 # toolchain, platform, tools, runner
+mcpp self env --target x86_64-openkal                 # toolchain, platform, tools, runner, and why runs are refused here
 mcpp self env --target x86_64-openkal --format json
 mcpp self env --host                                  # the host graph, its runner and tools once its build programs were built
 mcpp toolchain list                                   # the PLATFORM column

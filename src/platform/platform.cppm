@@ -117,6 +117,19 @@ std::vector<std::string> expand_step(const std::vector<std::string>& step,
                                      std::string_view artifact,
                                      std::span<const std::string> needed);
 
+// ── The run (§10) ───────────────────────────────────────────────────────────
+
+// Where the runner's program comes from when `mcpp run` and `mcpp test` start
+// an artifact of `targetArch` on a machine of `hostArch`. A `same-arch` runner
+// runs the artifact on a machine of its architecture: here when the two
+// agree; on the execution host (`run_under`) otherwise, whose architecture is
+// the artifact's, so the program is that architecture's; refused when no
+// execution host is named. `--no-runner` states the triple is native here.
+// Every other runner reaches the artifact from this machine.
+enum class RunnerReach { Here, TargetArchitecture, Refused };
+RunnerReach runner_reach(const mcpp::manifest::platform::Runner& runner, std::string_view targetArch,
+                         std::string_view hostArch, bool executionHostNamed, bool noRunner);
+
 // ── What the build uses (§9) ────────────────────────────────────────────────
 
 // The platform of one graph after every tier has spoken: what the flags, the
@@ -460,6 +473,13 @@ std::vector<std::string> expand_step(const std::vector<std::string>& step,
         out.push_back(std::move(v));
     }
     return out;
+}
+
+RunnerReach runner_reach(const mp::Runner& runner, std::string_view targetArch,
+                         std::string_view hostArch, bool executionHostNamed, bool noRunner) {
+    if (noRunner || !runner.set || runner.host != "same-arch" || targetArch == hostArch)
+        return RunnerReach::Here;
+    return executionHostNamed ? RunnerReach::TargetArchitecture : RunnerReach::Refused;
 }
 
 std::string Resolved::identity() const {

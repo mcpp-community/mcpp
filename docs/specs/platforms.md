@@ -4,11 +4,11 @@
 |---|---|
 | 规范编号 | SPEC-013 |
 | 标题 | 平台:一类目标的可复用配置,其声明、选择、合并、对依赖图的补全、链接与封装、运行器与载体 |
-| 状态 | 评审中 v1.1 |
-| 版本 | 1.1 |
-| 最后修改 | 2026-10-28 |
-| 对应实现 | mcpp >= 2026.10.27.1;逐条标注 |
-| 相关设计文档 | `.agents/docs/2026-10-28-platforms-design.md`、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md` |
+| 状态 | 评审中 v1.2 |
+| 版本 | 1.2 |
+| 最后修改 | 2026-10-29 |
+| 对应实现 | mcpp >= 2026.10.27.1;§10 的执行宿主与 §11 的载体架构 mcpp >= 2026.10.29.1;逐条标注 |
+| 相关设计文档 | `.agents/docs/2026-10-28-platforms-design.md`、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md` |
 | 相关 issue | mcpp#846、mcpp#847、mcpp#848 |
 | 相关规范 | [SPEC-002](target-side.md)(目标侧的层)、[SPEC-004](manifest-semantics.md)(条件化形状)、[SPEC-006](toolchain-management.md)(工具链选择)、[SPEC-007](build-plugins.md)(构建程序与协议)、[SPEC-011](concurrency.md)(原子发布)、[SPEC-014](packaging.md)(打包) |
 | 使用文档 | [35 —— 平台](../zh/35-platforms.md) |
@@ -300,13 +300,35 @@ plugin    = "build.mcpp"
 `[target.<triple>] run_under` 的写法;`run_under` 存在或给出 `--no-runner` 时不拒绝。运行器的合并顺序与 §6
 相同;`mcpp run` 与 `mcpp test` 读合并后的值。**已实现**
 
+运行器的程序是 `cmd` 首项所命名的程序;首项是平台的工具(§7.3)时,为构建为本机定位的该工具。`host = "same-arch"`
+的运行器在产物架构的机器上运行,因此产物的架构不是本机架构、且给出了执行宿主(`run_under`,含
+`MCPP_TARGET_<三元组>_RUN_UNDER`;SPEC-002 §6)而未给 `--no-runner` 时,首项为平台工具的运行器的程序**必须**是产物架构的:
+平台的载体以运行器形式(§11,不携带任何内容)为本机系统与产物架构构建的程序,构建于
+`target/carrier-pack/<首项>-<os>-<arch>/`,与 `self-contained` 通用包放在 `libexec/<首项>/<os>-<arch>/` 中的程序相同。
+平台未声明 `carrier`,或本 mcpp 不为该系统与架构构建程序(SPEC-014 §4.4)时,运行**必须**被拒绝并写出原因,**禁止**改用
+本机的工具。`host = "any"` 的运行器从本机到达产物,其程序是本机的。`mcpp test` 为一次构建构建一次该程序,不运行测试时
+(`--no-run`、已确定的拒绝)不构建。**已实现**(2026.10.29.1)
+
+例:x86_64 Linux 上以用户态模拟器作为执行宿主运行 `aarch64-openkal` 的映像:
+
+```toml
+[target.aarch64-openkal]
+run_under = ["qemu-aarch64"]
+```
+
+`mcpp run --target aarch64-openkal` 执行 `qemu-aarch64 <aarch64 的运行器> <映像> <参数>`。
+
+`mcpp test` 的人类输出在第一个因拒绝而未运行的测试之前以警告写出一次完整的原因(每次构建一次),摘要行写出其第一行。
+**已实现**(2026.10.29.1)
+
 ## 11. 载体(M3)
 
 对一个依赖加载器的产物,`mcpp pack` 在三处生成一个系统程序的工程(`target/carrier-pack/<name>-<os>-<arch>/`):
 `--mode self-contained` 的单目标包(该程序携带产物)、`self-contained` 通用包的运行器(不携带任何内容,SPEC-014
-§4.4)、映像的单文件(SPEC-014 §5.2)。工程依赖 `carrier.package`;入口是平台包中的 `carrier.main`;一个汇编文件
-以 `.incbin` 把携带的字节放进节 `carrier.section`(ELF 写作该名并带 `"a"` 标志,COFF 写作该名并带 `"dr"` 标志,
-Mach-O 写作 `__<大写名>,__carried`),给出符号 `mcpp_carried_begin`、`mcpp_carried_end`、`mcpp_carried_name`
+§4.4)、映像的单文件(SPEC-014 §5.2);`mcpp run` 与 `mcpp test` 为执行宿主构建另一架构的运行器(§10)时亦然。
+单目标包与单文件的程序的架构为产物的架构,系统为本机系统(单文件另按 `--systems`)。工程依赖 `carrier.package`;
+入口是平台包中的 `carrier.main`;一个汇编文件以 `.incbin` 把携带的字节放进节 `carrier.section`(ELF 写作该名并带
+`"a"` 标志,COFF 写作该名并带 `"dr"` 标志,Mach-O 写作 `__<大写名>,__carried`),给出符号 `mcpp_carried_begin`、`mcpp_carried_end`、`mcpp_carried_name`
 (入口的名字)与 `mcpp_carried_digest`(字符串)。
 
 携带的字节**必须**是以下之一,载体的入口按内容区分:
@@ -320,7 +342,8 @@ Mach-O 写作 `__<大写名>,__carried`),给出符号 `mcpp_carried_begin`、`mc
 程序按其系统的约定构建(自举边界),不使用平台:Linux 上为 `<arch>-linux-musl` 行的静态程序,该行的工具链被
 显式写出;macOS 上为 `<arch>-macos`、Windows 上为 `<arch>-windows-gnu` 行,系统与架构同本机时取本机的行,只依赖
 系统库(映像的单文件在 Windows 上以 `system` 模式打包)。引擎不含任何加载器的调用。平台未声明 `carrier` 时,
-需要载体的打包被拒绝并写出该键。
+需要载体的打包被拒绝并写出该键;本 mcpp 不构建程序的行(SPEC-014 §4.4)上的载体在生成工程之前被拒绝,写出系统、架构与行
+(2026.10.29.1)。
 
 ## 12. 平台阶段与协议 17
 
@@ -360,6 +383,10 @@ Mach-O 写作 `__<大写名>,__carried`),给出符号 `mcpp_carried_begin`、`mc
 `x86_64-openkal`、`aarch64-openkal` 的值为 `mcpplibs.openkal-platform@<version>`,即这两个目标的内置支持;
 选择来源报告为 `built-in`。项目可以不等引擎更新,以 `[target.<selector>] platform` 选择另一个版本。
 **已实现**
+
+ok 映像是 x86_64 与 aarch64 上位置无关的 ELF,只导入 `kal_*`,运行时需要加载器发布的可执行内存;okb 只装 ok 映像。
+openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscripten` 目标(宿主目标,无平台包)到达,打包为
+页面经 `dist-web` 提供者;以 openkal API 写的代码经 openkal 的 Emscripten 实现(openkal-emscripten)到达 Web。
 
 ## 15. 锁、身份与报告
 
@@ -411,11 +438,11 @@ Mach-O 写作 `__<大写名>,__carried`),给出符号 `mcpp_carried_begin`、`mc
 |---|---|
 | `--platform <值>` | `build`、`run`、`test`、`why`、`pack`、`emit build-database`、`self env`、`toolchain install`;即 `MCPP_PLATFORM` |
 | `--host-platform <值>` | `build`、`run`、`test`、`why`、`pack`、`emit build-database`、`self env`;即 `MCPP_HOST_PLATFORM` |
-| `mcpp self env --target <t> [--format json]` | 准备并报告一个配置:三元组、编译器与其来源、平台、工具、运行器与其程序、`run_under`;在工程中为该工程的配置,工程外为家目录缓存中的空程序;工程源码会被拒绝的原因(例:无 C++ 运行时而 `import std`)作为警告报告,配置照常报告 |
+| `mcpp self env --target <t> [--format json]` | 准备并报告一个配置:三元组、编译器与其来源、平台、工具、运行器与其程序、`run_under`;在工程中为该工程的配置,工程外为家目录缓存中的空程序;工程源码会被拒绝的原因(例:无 C++ 运行时而 `import std`)作为警告报告,配置照常报告。运行器的程序按 §10 的规则报告:其架构(JSON `runner.arch`),另一架构的运行器是否已构建(`runner.built`,不为报告而构建),执行宿主的程序(`runUnderProgram`),以及本机拒绝运行时的原因(人类输出的 `run` 行,JSON `runner.refusal`)(2026.10.29.1) |
 | `mcpp self env --host` | 宿主图的配置;其构建程序已构建过时,报告宿主平台的运行器与其程序、工具 |
 | `mcpp toolchain install --target <t>`(不指定编译器) | 安装该目标的工具链后准备该配置:获取平台包,构建其工具 |
 | `mcpp toolchain list` | 目标行有 PLATFORM 列,JSON 有 `platform` 字段 |
-| `mcpp test`(在平台包中,未给 `--target`) | 对 `targets` 中的每个目标以本包为平台构建测试;`host = "same-arch"` 时只运行本机架构的目标,其余报告为已构建未运行 |
+| `mcpp test`(在平台包中,未给 `--target`) | 对 `targets` 中的每个目标以本包为平台构建测试;`host = "same-arch"` 时运行本机架构的目标与给出执行宿主的目标(§10),其余报告为已构建未运行 |
 
 **已实现**
 
@@ -442,13 +469,16 @@ Mach-O 写作 `__<大写名>,__carried`),给出符号 `mcpp_carried_begin`、`mc
 4. 图已提供某层时平台不加入该层的包,报告为 `graph`;`false` 不加入。
 5. 版本组冲突在任何链接之前拒绝,消息给出两条出路。
 6. 封装失败不发布产物,保留上一次的产物。
-7. `same-arch` 的运行器不运行其他架构的产物,并给出 `run_under` 的写法。
+7. `same-arch` 的运行器不运行其他架构的产物,并给出 `run_under` 的写法;`mcpp test` 的人类输出给出完整的原因恰好一次(e2e 960)。
 8. 平台的工具在任何图中按宿主约定构建。
 9. 锁中平台加入的包带 `origin = "platform"`;报告与 JSON 给出每个字段的来源。
 10. 一个与 openkal 无关的平台包的编译标志、命名、封装与运行器到达程序,`cfg(platform)` 下的覆盖取代对应字段,
     `--platform none` 不使用平台,没有 `[platform]` 的包被拒绝为平台(e2e 952)。
 11. 宿主图选用平台时构建程序与其库作为映像构建并经平台的运行器运行,平台的工具按宿主约定构建,
     `--host-platform none` 时构建程序为本机程序(e2e 953)。
+12. 给出执行宿主时,`mcpp run` 与 `mcpp test` 交给它的运行器程序是产物架构的 ELF;本机有该架构的 qemu 时映像经它运行、
+    测试通过;`mcpp self env` 报告拒绝的原因,给出执行宿主时报告另一架构的运行器(e2e 960)。
+13. `--mode self-contained` 的单目标包的载体是映像架构的程序(e2e 961)。
 
 ## 变更记录
 
@@ -456,3 +486,4 @@ Mach-O 写作 `__<大写名>,__carried`),给出符号 `mcpp_carried_begin`、`mc
 |---|---|---|
 | 1.0 | 2026-10-28 | 首版(mcpp 2026.10.27.1,mcpp#847):`[platform]` 的七组键与 `versions`、`hosted`;三种写法与层次;目标图与宿主图的选择;`cfg(platform)`;合并;依赖图的补全、版本组与改名边界;工具链;链接、命名与封装;运行器的表形式;载体;平台阶段与协议 17;工作空间;目标表的平台列;锁、报告、机器输出、命令与拒绝码。 |
 | 1.1 | 2026-10-28 | `[platform] universal`;载体的三种携带形式(运行器形式、映像、映像组的 zip)、`mcpp_carried_digest`、Mach-O 节名 `__carried`、按系统的行;平台阶段可声明包格式与 artifact action;`self env --host` 报告运行器与工具;判据 10、11(e2e 952、953)。 |
+| 1.2 | 2026-10-29 | mcpp 2026.10.29.1:§10 给出执行宿主时 `same-arch` 运行器的程序为产物架构的载体运行器形式,`mcpp test` 写出完整的拒绝原因一次;§11 单目标包与单文件的程序为产物架构的,不构建的行在生成工程之前被拒绝;§14 ok 映像与 Web;§16 `self env` 报告运行器程序的架构、执行宿主与拒绝,平台包的 `mcpp test` 运行给出执行宿主的目标;判据 7、12、13(e2e 960、961)。 |

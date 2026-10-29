@@ -638,13 +638,15 @@ ok 映像经 `okrun` 在其架构的每个系统上运行（见 [24](24-openkal-
 |---|---|---|
 | `system` | `bin/<name>.oke` | `okrun` 与它所需的每个映像 |
 | `vendored`（默认） | `bin/<name>.oke` 与它所需的 `.okso` 映像 | `okrun` |
-| `self-contained` | `bin/<name>`：本机的程序，以平台载体的段（ELF 与 COFF 上为 `.oke`，Mach-O 上为 `__OKE,__carried`）携带映像并经 libokrun 运行，旁边是所需的 `.okso` 映像 | 无 |
-| `static`（`--linkage static --mode self-contained`） | `bin/<name>`：本机的程序，携带一个静态 `.oke` | 无 |
+| `self-contained` | `bin/<name>`：本机系统、映像架构的程序，以平台载体的段（ELF 与 COFF 上为 `.oke`，Mach-O 上为 `__OKE,__carried`）携带映像并经 libokrun 运行，旁边是所需的 `.okso` 映像 | 无 |
+| `static`（`--linkage static --mode self-contained`） | `bin/<name>`：本机系统、映像架构的程序，携带一个静态 `.oke` | 无 |
 
 以上是单个目标的包（`--no-universal`，或平台不声明通用包）。`--linkage static` 构建不带 `.okso` 的映像。
 `self-contained` 不重新编译映像：mcpp 把平台的载体（`[platform] carrier`，一个包与它的入口源码）生成为
 `target/carrier-pack/<name>-<os>-<arch>/` 下的工程，把映像的字节放进载体的段，再按任何程序的方式打包该程序 ——
-Linux 上为静态（musl），macOS 与 Windows 上只引用系统自带的库。
+Linux 上为静态（musl），macOS 与 Windows 上只引用系统自带的库。该程序的架构为映像的架构（2026.10.29.1+）：在
+x86_64 Linux 上，`--target aarch64-openkal` 打出 aarch64 的 Linux 程序。本 mcpp 不为其构建程序的系统与架构（在
+Windows 机器上为 `aarch64-windows-gnu`）被拒绝，并写出该行。
 
 ### Android：应用目标文件与它的闭包在 `lib/` 下
 
@@ -730,6 +732,9 @@ ok 映像的文件为 `target/dist/<name>-<version>-<os>-<arch>`（Windows 上�
 （缺省为本机系统）各一个。映像不引用其他映像时载体只携带它，否则携带全部映像的一个 stored zip（每个映像对齐到
 64 KiB），载体的入口经 openkal-run 的 bundle 接口读取（openkal-platform 0.17.2 起）。
 
+WebAssembly 目标没有单文件：`--pkg-format single-file` 与 `--target wasm32-emscripten` 在任何编译之前被拒绝
+（2026.10.29.1+），它的页面是 `dist-web` 提供者的格式。
+
 ### `mcpp-package.json`
 
 每棵暂存树都带 `mcpp-package.json`：包、它的平台、三个选择、腿与系统、启动方式，以及每个文件的角色与 sha256。
@@ -752,7 +757,9 @@ ok 映像的文件为 `target/dist/<name>-<version>-<os>-<arch>`（Windows 上�
 包不携带运行器时以运行器为依赖（`deps = { "xim:okrun" }`）；各系统各架构一个的包，每个系统一项，一个带 `${arch}` 的
 URL 与每个架构的 sha256。安装把归档的顶层目录移到位，并向 xvm 注册程序（Windows 上为 `.cmd` 启动器）；各系统的包
 把程序放在不同目录时（Windows 的程序在包根，POSIX 的程序在 `bin/`），按系统注册各自的目录。每个归档各以一个
-`--package` 给出。
+`--package` 给出。单腿包按其三元组的系统（Linux、macOS 或 Windows）描述；其他目标的包被拒绝，并写出分发它的
+途径（2026.10.29.1+）：`wasm32-emscripten` 的包发布为页面（`dist-web`），ok 映像以平台的通用包发布，Android、iOS
+与裸机的包没有条目。
 
 ### 压缩与签名
 
@@ -802,4 +809,5 @@ force_bundle = ["libfoo.so"]        # bundle even if matched by the PEP 600 list
 - `.deb`、`.rpm`、AppImage、`.msi` 等分发格式经 `--pkg-format <name>` 由包提供；引擎提供 `tar`、`dir`、
   `zip` 与 `single-file`。
 - 不产出在多个系统上运行的单个文件；一个单文件包服务一个系统与一个架构。
+- WebAssembly 包既不是单文件，也不是 xlings 条目；它的页面是提供者的格式（`dist-web`）。
 - ELF 程序的闭包由其动态链接器解析，因此不能在 Windows 上打包 Linux 程序。

@@ -15,6 +15,7 @@ import std;
 import mcpp.libs.json;
 import mcpp.pack.compress;
 import mcpp.pack.zip;
+import mcpp.toolchain.triple;   // the system of a package's leg (§8)
 import mcpplibs.os;
 
 export namespace mcpp::pack::distribution {
@@ -1445,13 +1446,31 @@ int main(int argc, char** argv) {
 
 namespace {
 
-// The xlings system key of a triple's system.
-std::string xlings_system(std::string_view triple) {
-    if (triple.find("-windows") != std::string_view::npos) return "windows";
-    if (triple.find("-macos") != std::string_view::npos || triple.find("-darwin") != std::string_view::npos
-        || triple.find("-apple") != std::string_view::npos)
-        return "macosx";
-    return "linux";
+// The xlings system a package of one leg installs on: the system its program
+// runs on (SPEC-014 §8). An entry's `xpm.<system>` installs a program of that
+// system and its `archs` are machine architectures; a leg that is no program
+// of Linux, macOS or Windows -- a WebAssembly module, an Android or iOS
+// application, a bare-metal image, an ok image -- has neither. Every triple
+// that was not Windows or macOS used to be written `linux` (a wasm32-emscripten
+// package: `archs = {"wasm32"}` under `linux`).
+std::optional<std::string> xlings_system(std::string_view triple) {
+    auto t = mcpp::toolchain::triple::parse(triple);
+    if (!t) return std::nullopt;
+    if (t->os == "windows") return "windows";
+    if (t->os == "macos") return "macosx";
+    if (t->os == "linux" && t->env != "android") return "linux";
+    return std::nullopt;
+}
+
+// The route that distributes a package of `triple` when no entry describes it.
+std::string distributed_instead(std::string_view triple) {
+    auto t = mcpp::toolchain::triple::parse(triple);
+    if (t && t->is_wasm())
+        return "a page for the web, mcpp pack --pkg-format dist-web (mcpp-plugins)";
+    if (t && t->os == "openkal")
+        return "the platform's universal package (mcpp pack without --no-universal), which every "
+               "system installs";
+    return "the package of a Linux, macOS or Windows target";
 }
 
 // A text inside a Lua double-quoted literal: what the metadata states is
@@ -1527,8 +1546,14 @@ std::expected<std::string, std::string> xpkg_descriptor(const std::vector<Asset>
                                                    "packages of one leg", a.file.filename().string(),
                                                    a.pkg.legs.size()));
             const auto& triple = a.pkg.legs.front();
+            const auto system = xlings_system(triple);
+            if (!system)
+                return std::unexpected(std::format(
+                    "{} is a package of {}, which is no program of Linux, macOS or Windows: an "
+                    "xlings entry installs a program of the system it runs on.\n  use: {}",
+                    a.file.filename().string(), triple, distributed_instead(triple)));
             const auto arch = triple.substr(0, triple.find('-'));
-            bySystem[xlings_system(triple)][arch] = &a;
+            bySystem[*system][arch] = &a;
             if (std::ranges::find(archs, arch) == archs.end()) archs.push_back(arch);
         }
         for (auto const& [system, byArch] : bySystem) {
@@ -1578,7 +1603,7 @@ std::expected<std::string, std::string> xpkg_descriptor(const std::vector<Asset>
         std::map<std::string, std::string> dirOf;   // system -> the program's directory
         for (auto const& a : assets) {
             const auto program = std::filesystem::path(a.pkg.program);
-            dirOf[xlings_system(a.pkg.legs.front())] =
+            dirOf[*xlings_system(a.pkg.legs.front())] =   // each leg has one: checked above
                 program.has_parent_path() ? program.parent_path().generic_string() : std::string(".");
         }
         const auto& one = dirOf.begin()->second;

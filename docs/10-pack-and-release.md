@@ -731,8 +731,8 @@ runs the package must provide:
 |---|---|---|
 | `system` | `bin/<name>.oke` | `okrun` and every image it names |
 | `vendored` (default) | `bin/<name>.oke` and the `.okso` images it names | `okrun` |
-| `self-contained` | `bin/<name>` — a program of this machine that carries the image in the platform's carrier section (`.oke` on ELF and COFF, `__OKE,__carried` on Mach-O) and runs it through libokrun — and the `.okso` images beside it | nothing |
-| `static` (`--linkage static --mode self-contained`) | `bin/<name>`, a program of this machine that carries one static `.oke` | nothing |
+| `self-contained` | `bin/<name>` — a program of this machine's system and the image's architecture that carries the image in the platform's carrier section (`.oke` on ELF and COFF, `__OKE,__carried` on Mach-O) and runs it through libokrun — and the `.okso` images beside it | nothing |
+| `static` (`--linkage static --mode self-contained`) | `bin/<name>`, a program of this machine's system and the image's architecture that carries one static `.oke` | nothing |
 
 These are the packages of one target (`--no-universal`, or a platform that is
 not universal). `--linkage static` builds the image with no `.okso`. The image
@@ -740,7 +740,11 @@ is not recompiled for `self-contained`: mcpp builds the platform's carrier
 (`[platform] carrier`, a package and its entry source) as a generated project
 under `target/carrier-pack/<name>-<os>-<arch>/`, places the image's bytes in
 the carrier's section, and packs that program as it packs any other — static
-(musl) on Linux, with only the system's libraries on macOS and Windows.
+(musl) on Linux, with only the system's libraries on macOS and Windows. The
+program is of the image's architecture (2026.10.29.1+): on x86_64 Linux,
+`--target aarch64-openkal` packs an aarch64 Linux program. A system and
+architecture this mcpp builds no program for (`aarch64-windows-gnu`, on a
+Windows machine) is refused, naming the row.
 
 ### Android: the application object and its closure under `lib/`
 
@@ -855,6 +859,10 @@ carries the image alone when it names no other image, and otherwise a stored
 zip of all the images, each aligned to 64 KiB, which the carrier's entry reads
 through openkal-run's bundle interface (openkal-platform 0.17.2 and later).
 
+A WebAssembly target has no single file: `--pkg-format single-file` with
+`--target wasm32-emscripten` is refused before anything compiles
+(2026.10.29.1+), and its page is the `dist-web` provider's format.
+
 ### `mcpp-package.json`
 
 Every staged tree carries `mcpp-package.json`: the package, its platform, its
@@ -887,7 +895,11 @@ sha256 per architecture. The install moves the archive's top directory into
 place and registers the program with xvm (the `.cmd` launcher on Windows),
 from each system's own directory when the packages place the program apart
 (a Windows program at the root, a POSIX one under `bin/`). Each archive is its
-own `--package`.
+own `--package`. A package of one leg is described for the system of its triple
+(Linux, macOS or Windows); one of another target is refused, naming the route
+that distributes it (2026.10.29.1+): a `wasm32-emscripten` package is published
+as a page (`dist-web`), an ok image as its platform's universal package, and an
+Android, iOS or bare-metal package has no entry.
 
 ### Compression and signing
 
@@ -945,6 +957,8 @@ The `static` mode additionally requires a musl toolchain configured under
   and `single-file`.
 - One file that runs on several systems is not produced; a single-file package
   serves one system and one architecture.
+- A WebAssembly package is neither a single file nor an xlings entry; its page is
+  a provider's format (`dist-web`).
 - An ELF program's closure is resolved by running its dynamic linker, so a Linux
   program is not packed from Windows.
 

@@ -377,6 +377,41 @@ mcpp run   --target x86_64-openkal      # okrun bin/app.oke
 **缺少 `okld` 是拒绝而非警告。** 没有需求 note 的映像会被每个加载器拒绝；拒绝（`platform-tool-absent`）
 指名构建它的包。
 
+### 另一架构的映像（mcpp 2026.10.29.1）
+
+`okrun` 运行其自身架构的映像（`host = "same-arch"`）。在另一架构的机器上，`mcpp run` 与 `mcpp test`
+拒绝该映像，并指出 `run_under` —— 陈述执行宿主的键。给出执行宿主后，runner 在那里运行，其程序是平台为映像
+架构准备的 runner：mcpp 为本机系统与该架构构建不携带任何内容的平台载体，即 self-contained 通用包放在
+`libexec/okrun/<os>-<arch>/` 中的程序。用户态模拟器就是一种执行宿主；在装有 `qemu-aarch64` 的 x86_64 Linux 上：
+
+```toml
+[package]
+name    = "app"
+version = "0.1.0"
+
+[target.aarch64-openkal]
+run_under = ["qemu-aarch64"]
+```
+
+```
+$ mcpp run --target aarch64-openkal
+     Packing okrun for linux-aarch64 (openkal-platform 0.17.3's carrier, the runner on the execution host)
+     Running `okrun … target/aarch64-openkal/…/bin/app.oke`
+         Via qemu-aarch64  [/…/app/mcpp.toml:6]
+```
+
+`mcpp test --target aarch64-openkal` 以同样的方式运行测试。`MCPP_TARGET_AARCH64_OPENKAL_RUN_UNDER=qemu-aarch64`
+为一次运行指定执行宿主，`~/.mcpp/config.toml` 中的 `[target.aarch64-openkal] run_under` 为一台机器指定。
+`mcpp self env --target aarch64-openkal` 报告 runner 的程序与其架构、执行宿主的程序，或本机拒绝运行的原因。
+一个映像的 self-contained 包（`--no-universal --mode self-contained`）是本机系统、映像架构的程序
+（[10](10-pack-and-release.md)）。
+
+### ok 映像与 Web
+
+ok 映像是 x86_64 与 aarch64 上位置无关的 ELF，只导入 `kal_*`，在其加载器发布的可执行内存中运行；okb 只装 ok 映像。
+Web 经 `wasm32-emscripten` 目标到达，其包由 `dist-web` 提供者写成页面；以 openkal API 写的代码经
+`openkal-emscripten`（见上文）到达 Web。
+
 ## 裸机
 
 一个没有操作系统的 target，是同一个模型，只是平台层由固件而非内核供给。

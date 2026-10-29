@@ -92,7 +92,9 @@ runner = { cmd = ["okrun", "{}"], host = "same-arch", exclusive = false }
 ```
 
 `host = "same-arch"` 只在产物架构的机器上运行它，其他架构的产物被拒绝并点名 `run_under`；`"any"` 表示
-runner 能从任何机器抵达产物。目标的平台提供它的缺省 runner（[35](35-platforms.md)）；依赖的构建程序、本机的
+runner 能从任何机器抵达产物。给出执行宿主（`run_under`）时，`same-arch` 的 runner 在执行宿主上运行；runner
+是平台的工具时，交给执行宿主的是平台为产物架构准备的 runner，由 mcpp 从平台的载体构建（2026.10.29.1+；
+[24](24-openkal-cross.md) 中的 `run_under = ["qemu-aarch64"]`）。目标的平台提供它的缺省 runner（[35](35-platforms.md)）；依赖的构建程序、本机的
 `config.toml`、工程与 `MCPP_TARGET_<TRIPLE>_RUNNER` 依次替换它，只写 argv 时保留平台的 `host` 与 `exclusive`。
 
 ## runner 收到的内容

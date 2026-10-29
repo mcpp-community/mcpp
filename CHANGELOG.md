@@ -4,10 +4,70 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
-## [Unreleased]
+## [2026.10.29.1] - 2026-10-29
 
 ### Fixed
 
+- **An image of another architecture runs through its execution host.**
+  openkal-platform's runner is `{ cmd = ["okrun", "{}"], host = "same-arch" }`,
+  and its first word resolved to the `okrun` built for this machine whatever
+  the execution host: `run_under = ["qemu-aarch64"]` for `aarch64-openkal` on
+  x86_64 handed qemu the x86_64 okrun ("Invalid ELF image for this
+  architecture"). A `same-arch` runner runs on a machine of the artifact's
+  architecture, so with an execution host named (`[target.<t>] run_under`, or
+  `MCPP_TARGET_<T>_RUN_UNDER`) a runner that is the platform's tool is now the
+  platform's runner for that architecture: the carrier with nothing carried,
+  built for this system, the program a self-contained universal package
+  carries under `libexec/<runner>/<os>-<arch>/` (SPEC-013 §10). `mcpp run` and
+  `mcpp test` of `aarch64-openkal` pass under `qemu-aarch64` on x86_64 Linux
+  (e2e 960). With nothing named the refusal stays; `--no-runner` keeps its
+  meaning; a platform with no carrier, or a system and architecture this mcpp
+  builds no program for, is refused rather than handed this machine's tool. In
+  a platform package, `mcpp test` with no `--target` runs a target of another
+  architecture an execution host is named for, and reports the others built
+  and not run, as before (measured on a copy of openkal-platform 0.17.3).
+- **`mcpp test` prints the refusal in full, once.** The reason a target is
+  not run here was recorded silently and the summary printed its first line,
+  so the `run_under` line it carries never reached a person (SPEC-013 §18,
+  criterion 7). It is printed as a warning before the first test it leaves
+  not run, once per build; the summary keeps the first line (e2e 960).
+- **`mcpp self env --target` states how the target runs here.** It reported
+  the runner resolving to this machine's `okrun` for `aarch64-openkal` and
+  said nothing of the refusal. It now prints the refusal on a `run` line
+  (JSON `runner.refusal`), the architecture of the runner's program
+  (`runner.arch`), and, with an execution host named, the other architecture's
+  runner, whether the first run has built it (`runner.built`; `self env`
+  builds nothing) and the execution host's program (`runUnderProgram`)
+  (e2e 960).
+- **`mcpp test --target` records its program build under the target.** The
+  package's programs, built before its tests, were recorded in the build cache
+  as this machine's build, so the next bare `mcpp run` printed `fingerprint
+  changed (… → …), full rebuild`; `mcpp run --target` was fixed for the same
+  defect earlier (e2e 960).
+- **A self-contained package of one ok image is a program of the image's
+  architecture.** `mcpp pack --target aarch64-openkal --no-universal --mode
+  self-contained` built the carrier for this machine's architecture: an x86-64
+  program carrying an aarch64 image, which runs on no machine. The carrier is
+  now this system's program of the image's architecture, as a single file's
+  is; a row this mcpp builds no program for is refused before the generated
+  project is packed, naming the row (SPEC-014 §1.2; e2e 961).
+- **`mcpp pack --target <t> --list-formats` lists that target's formats.** The
+  plan ignored `--target` and listed this machine's; for an ok-image target
+  it now lists `okb`, which the platform's plugin provides (SPEC-014 §6;
+  e2e 961).
+- **`mcpp emit xpkg` describes a package for the system its program runs on.**
+  Every triple that was not Windows or macOS was written `linux`: a
+  `wasm32-emscripten` package became a Linux entry with `archs = {"wasm32"}`.
+  An entry's `xpm.<system>` installs a program of that system for machine
+  architectures, and a WebAssembly package has no launcher, no system and no
+  machine architecture, so a package of one leg that is no Linux (other than
+  Android), macOS or Windows program is refused, naming the route that
+  distributes it: a page through `dist-web`, or for an ok image its
+  platform's universal package (SPEC-014 §8; e2e 962).
+- **`--pkg-format single-file` is refused on a WebAssembly target.** A single
+  file is an executable of one system; the pack tried a `wasm32-linux-musl`
+  launcher. The refusal comes before anything compiles and names `tar`,
+  `zip`, `dir` and a provider's format (SPEC-014 §1.5; e2e 962).
 - **The release requests its index bump with the permissions its token has.**
   `bump_index.sh` started the index's updater with a workflow_dispatch, which
   needs Actions: write; the release's token holds Contents and Pull requests
@@ -15,6 +75,15 @@
   repository_dispatch of type `xpkgindex-update` naming `xim:mcpp`, which the
   index's `xpkgindex-update-request.yml` passes on to the updater
   (openxlings/xim-pkgindex#1087).
+
+### Changed
+
+- **SPEC-013 1.2 and SPEC-014 1.3** state the rules above, and how ok images
+  relate to the web: an ok image is position-independent ELF for x86_64 and
+  aarch64 that imports only `kal_*` and runs in executable memory its loader
+  publishes, an okb holds ok images only, and the web is reached through the
+  `wasm32-emscripten` target and the `dist-web` provider, openkal API code
+  through openkal-emscripten.
 
 ## [2026.10.28.1] - 2026-10-28
 

@@ -1294,11 +1294,12 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
             mcpp::ui::plain(std::format("    slowest: {}", slowest));
         return rc;
     }
-    // A PLATFORM PACKAGE IS TESTED ON THE TARGETS IT SERVES (SPEC-013 §2):
+    // A PLATFORM PACKAGE IS TESTED ON THE TARGETS IT SERVES (SPEC-013 §16):
     // with no --target, its tests are built for each of its `targets` with the
     // package itself as the platform, and run where its runner can run them
-    // (`host = "same-arch"`: the target of this machine's architecture); the
-    // others are built and reported as not run.
+    // (`host = "same-arch"`: the target of this machine's architecture, or one
+    // an execution host is named for); the others are built and reported as
+    // not run, as `run_tests` decides by the rule of §10.
     if (ov.target_triple.empty() && ov.package_filter.empty()) {
         std::error_code ec;
         auto root = mcpp::project::find_manifest_root(std::filesystem::current_path(ec));
@@ -1312,11 +1313,8 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
                 auto tov = ov;
                 tov.target_triple = t;
                 auto tto = to;
-                auto tt = mcpp::toolchain::triple::parse(t);
-                const bool here = tt && tt->arch == mcpp::toolchain::platform::host_arch;
-                if (!here && m->platform.runner.host == "same-arch") tto.noRun = true;
-                mcpp::ui::info("Testing", std::format("platform {} on {}{}", m->package.name, t,
-                                                      tto.noRun ? " (built, not run here)" : ""));
+                tto.unreachableIsBuilt = true;
+                mcpp::ui::info("Testing", std::format("platform {} on {}", m->package.name, t));
                 if (int r = mcpp::build::run_tests(passthrough, tov, tto); r != 0 && rc == 0) rc = r;
             }
             return rc;
@@ -1683,7 +1681,15 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
     const std::string compilerOrigin = host ? ctx->hostCompilerOrigin : ctx->compilerChoice.origin;
     auto const& runner = P.fields.runner;
     std::string runnerProgram;
-    if (runner.set && !runner.cmd.empty()) {
+    // The target's: what `mcpp run` and `mcpp test` would start here, by
+    // their own rule (SPEC-013 §10) -- the runner's program and its
+    // architecture, the execution host's program, or why runs are refused.
+    mcpp::build::RunnerOnThisMachine reach;
+    reach.arch = std::string(mcpp::toolchain::platform::host_arch);
+    if (!host) {
+        reach = mcpp::build::runner_on_this_machine(*ctx);
+        runnerProgram = reach.program;
+    } else if (runner.set && !runner.cmd.empty()) {
         // The platform's own tool when it is one (located by the build that
         // used it), else the program the runner names on this machine.
         if (auto it = P.tools.find(runner.cmd.front()); it != P.tools.end()) {
@@ -1695,6 +1701,7 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
             if (found.program) runnerProgram = found.program->generic_string();
         }
     }
+    auto or_null = [](const std::string& v) { return v.empty() ? nlohmann::json(nullptr) : nlohmann::json(v); };
     if (json) {
         nlohmann::json tools = nlohmann::json::object();
         for (auto const& [name, path] : P.tools) tools[name] = path;
@@ -1706,9 +1713,12 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
             {"tools", std::move(tools)},
             {"runner", !runner.set ? nlohmann::json(nullptr) : nlohmann::json{
                 {"argv", runner.cmd}, {"host", runner.host}, {"exclusive", runner.exclusive},
-                {"program", runnerProgram.empty() ? nlohmann::json(nullptr) : nlohmann::json(runnerProgram)},
+                {"program", or_null(runnerProgram)},
+                {"arch", reach.arch}, {"built", reach.built},
+                {"refusal", or_null(reach.refusal)},
                 {"source", mcpp::platform::origin_text(runner.origin)}}},
             {"runUnder", ctx->runUnder},
+            {"runUnderProgram", or_null(reach.runUnderProgram)},
         };
         mcpp::wire::Envelope env{.kind = "mcpp.env", .effects = {}};
         env.data = std::move(data);
@@ -1730,14 +1740,28 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (runner.set) {
         std::string argv;
         for (auto const& a : runner.cmd) argv += (argv.empty() ? "" : " ") + a;
-        std::println("{:<10} {}  ({}){}", "runner", argv, mcpp::platform::origin_text(runner.origin),
+        // Another architecture's program (for an execution host) says so.
+        std::string arch;
+        if (reach.arch != mcpp::toolchain::platform::host_arch)
+            arch = std::format("  ({}{})", reach.arch, reach.built ? "" : "; built by the first run");
+        std::println("{:<10} {}  ({}){}{}", "runner", argv, mcpp::platform::origin_text(runner.origin),
                      runnerProgram.empty() ? std::string("  -- not found on this machine")
-                                           : "  -> " + runnerProgram);
+                                           : "  -> " + runnerProgram, arch);
     }
     if (!ctx->runUnder.empty()) {
         std::string argv;
         for (auto const& a : ctx->runUnder) argv += (argv.empty() ? "" : " ") + a;
-        std::println("{:<10} {}  ({})", "run_under", argv, ctx->runUnderOrigin);
+        std::println("{:<10} {}  ({}){}", "run_under", argv, ctx->runUnderOrigin,
+                     reach.runUnderProgram.empty() ? std::string()
+                                                   : "  -> " + reach.runUnderProgram);
+    }
+    // Runs refused on this machine are said here, with the key that changes
+    // it, as `mcpp run` would say it.
+    if (!reach.refusal.empty()) {
+        std::string text = reach.refusal;
+        for (std::size_t at = text.find('\n'); at != std::string::npos; at = text.find('\n', at + 12))
+            text.insert(at + 1, std::string(11, ' '));
+        std::println("{:<10} refused on this machine: {}", "run", text);
     }
     return 0;
 }
