@@ -3835,9 +3835,10 @@ TEST(PlatformAxis, HostAndTargetAreNotInterchangeable) {
     EXPECT_EQ(TargetPlatform::for_os("macosx").key(), "macosx");
     EXPECT_EQ(TargetPlatform::for_os("windows").key(), "windows");
     EXPECT_EQ(TargetPlatform::for_os("linux").key(), "linux");
-    // An absent/unknown os token keeps the pre-#254 behaviour: host.
-    EXPECT_EQ(TargetPlatform::for_os("").key(),
-              HostPlatform::current().key());
+    // A token naming none of the three reads its own block, never the
+    // host's (design 2026-10-29 §5.1, #851).
+    EXPECT_EQ(TargetPlatform::for_os("emscripten").key(), "emscripten");
+    EXPECT_EQ(TargetPlatform::for_os("none").key(), "none");
 }
 
 // The behaviour half: a descriptor's per-OS section must be spliced for the

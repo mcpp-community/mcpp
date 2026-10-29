@@ -805,10 +805,12 @@ inline const char* dep_dir(const char* name) {
     unsigned long a = 19;
     for (unsigned long i = 9; i < o && a + 1 < sizeof ambiguous; ++i, ++a) ambiguous[a] = buf[i];
     ambiguous[a] = 0;
+    // Said on standard output, which the engine prints when the program exits
+    // non-zero; `std::fprintf(stderr, ...)` here would bind `FILE` in this
+    // module and collide with a build program's own <cstdio>.
     if (const char* which = std::getenv(ambiguous)) {
-        std::fprintf(stderr,
-            "build.mcpp: dep_dir(\"%s\") names more than one dependency (%s); ask by one of "
-            "those names\n", name, which);
+        std::printf("build.mcpp: dep_dir(\"%s\") names more than one dependency (%s); ask by one of "
+                    "those names\n", name, which);
         std::exit(2);
     }
     buf[o++] = '_'; buf[o++] = 'D'; buf[o++] = 'I'; buf[o++] = 'R'; buf[o] = 0;

@@ -1609,7 +1609,7 @@ std::expected<void, Error> finalize_tree(const Plan& plan) {
         pkg.runner = plan.platform.fields.runner.cmd;
         const auto stem = fs::path(plan.binaryName).stem().string();
         stated.role["bin/" + stem] = "launcher";
-        stated.role["bin/" + stem + ".cmd"] = "launcher";
+        stated.role["bin/" + stem + ".exe"] = "launcher";
         std::vector<std::pair<std::string, std::string>> legs{
             { canonical(plan.triple), [&] { auto t = mcpp::toolchain::triple::parse(plan.triple);
                                             return t ? t->arch : plan.triple; }() } };
@@ -1636,6 +1636,18 @@ std::expected<void, Error> finalize_tree(const Plan& plan) {
         // The carrier that is the program says which system it is a program
         // of; an index entry reads it there (SPEC-014 §8).
         pkg.systems = carried_systems(plan);
+    }
+    // Where it runs, once (design 2026-10-29 §4.4): every reader of the
+    // package -- an index entry, a merge, the summary -- asks here.
+    d::compute_runs_on(pkg, plan.platform.active ? plan.platform.fields.runner.hosts : std::vector<std::string>{},
+                       plan.platform.active && plan.platform.fields.runner.host == "any");
+    // A package of images starts on Windows through its `.exe`; without one
+    // it does not run there.
+    if (!pkg.runner.empty()
+        && !fs::is_regular_file(plan.stagingRoot / "bin" / (fs::path(plan.binaryName).stem().string() + ".exe"), ec)) {
+        auto windows = [](std::string const& p) { return p.starts_with("windows-"); };
+        std::erase_if(pkg.runsOnSelf, windows);
+        for (auto& [r, pairs] : pkg.runsOnWith) std::erase_if(pairs, windows);
     }
     // What `[pack] include` named is the package's resource, whatever its name.
     for (auto const& rel : *included) stated.role[rel] = "resource";
@@ -2614,9 +2626,6 @@ run_loaded(const Plan& plan)
         launch.runner = runner.cmd;
         for (auto const& leg : legs) launch.entry[leg.arch] = leg.artifact.filename().string();
         if (plan.opts.mode == Mode::BundleAll) launch.loader = fs::path(runner.cmd.front()).stem().string();
-        // A word a `.cmd` cannot hold is refused now, before anything is staged.
-        if (auto ok = mcpp::pack::distribution::launchable(launch); !ok)
-            return std::unexpected(Error{ok.error()});
         for (auto const& leg : legs) {
             const auto dir = plan.stagingRoot / "lib" / leg.arch;
             if (auto r = copy(leg.artifact, dir / leg.artifact.filename()); !r) return r;
@@ -2662,8 +2671,40 @@ run_loaded(const Plan& plan)
         fs::permissions(posix, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec
                                | fs::perms::others_read | fs::perms::others_exec,
                         fs::perm_options::replace, ec);
-        std::ofstream(plan.stagingRoot / "bin" / (launch.name + ".cmd"), std::ios::binary | std::ios::trunc)
-            << mcpp::pack::distribution::windows_launcher(launch);
+        // The Windows launcher, a program (design 2026-10-29 §4.3): built for
+        // x86_64 Windows, which an arm64 Windows machine also runs. A host
+        // that builds no program for that row leaves it out, says so, and
+        // the package's `runs_on` names no Windows pair.
+        // Over the platform's hosted arrangement where it serves the row, as
+        // the runners are: the same program whichever machine packs it.
+        const auto row = program_row("windows", "x86_64", true, &plan.platform);
+        if (!row_is_built(row)) {
+            mcpp::ui::warning(std::format(
+                "no Windows launcher in the package: this mcpp builds no program for {}; the package "
+                "does not run on Windows", row.triple));
+        } else {
+            const auto dir = plan.projectRoot / "target" / "launcher-pack" / launch.name;
+            fs::create_directories(dir / "src", ec);
+            fs::remove(dir / "mcpp.lock", ec);
+            auto write = [&](const fs::path& p, std::string_view text) -> bool {
+                std::ofstream out(p, std::ios::binary | std::ios::trunc);
+                out.write(text.data(), static_cast<std::streamsize>(text.size()));
+                return bool(out);
+            };
+            if (!write(dir / "mcpp.toml", mcpp::pack::distribution::exe_launcher_manifest(
+                           launch.name, plan.packageVersion)
+                           + static_row_pin(row, plan.platform.fields.toolchain.set
+                                                     ? plan.platform.fields.toolchain.value : std::string()))
+                || !write(dir / "src" / "main.cpp", mcpp::pack::distribution::exe_launcher_main(launch)))
+                return std::unexpected(Error{std::format("cannot write the launcher's sources under {}",
+                                                         dir.string())});
+            auto packed = pack_generated_program(dir, row);
+            if (!packed) return std::unexpected(packed.error());
+            fs::copy_file(*packed / (launch.name + ".exe"), plan.stagingRoot / "bin" / (launch.name + ".exe"),
+                          fs::copy_options::overwrite_existing, ec);
+            if (ec) return std::unexpected(Error{std::format("cannot place the Windows launcher: {}",
+                                                             ec.message())});
+        }
     }
 
     copy_if_exists(plan.projectRoot / "README.md", plan.stagingRoot);

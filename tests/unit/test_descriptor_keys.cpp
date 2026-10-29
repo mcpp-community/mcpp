@@ -22,6 +22,7 @@ package = {
     },
 }
 mcpp = {
+    sources = { "src/*.cpp" },
     cxxflags = { "-DCOMMON" },
     linux = { cxxflags = { "-pthread" } },
     emscripten = { cxxflags = { "-DWEB" } },
@@ -34,6 +35,7 @@ package = {
     xpm = { linux = { ["4.1.0"] = { url = "https://example.org/linux.tar.gz" } } },
 }
 mcpp = {
+    sources = { "src/*.cpp" },
     cxxflags = { "-DCOMMON" },
     linux = { cxxflags = { "-pthread" } },
 }

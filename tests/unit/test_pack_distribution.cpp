@@ -620,6 +620,54 @@ TEST(PackMerge, TheCompressionFitsTheContainer) {
     ASSERT_TRUE(fits) << fits.error();
 }
 
+// #860 (design 2026-10-29 §4.4): a self-contained universal package runs where
+// it carries a runner, and its entry names exactly those pairs -- macOS aarch64
+// only, Windows x86_64 only -- with no runner to install. A package that needs
+// the machine's runner names the pairs the platform's runner exists for.
+TEST(PackDistribution, AnEntryNamesWhereThePackageRuns) {
+    d::Asset a;
+    a.file = "mcpp-ide-0.1.1-openkal.tar.gz";
+    a.sha256 = std::string(64, 'c');
+    a.top = "mcpp-ide-0.1.1-openkal";
+    a.pkg.name = "mcpp-ide";
+    a.pkg.version = "0.1.1";
+    a.pkg.mode = "self-contained";
+    a.pkg.runner = { "okrun", "{}" };
+    a.pkg.legs = { "x86_64-openkal", "aarch64-openkal" };
+    a.pkg.entry = { { "x86_64", "lib/x86_64/mcpp-ide.oke" }, { "aarch64", "lib/aarch64/mcpp-ide.oke" } };
+    a.pkg.systems = { "linux-aarch64", "linux-x86_64", "macos-aarch64", "windows-x86_64" };
+    const std::vector<std::string> hosts = { "linux-x86_64", "linux-aarch64", "macos-aarch64",
+                                             "macos-x86_64", "windows-x86_64" };
+    d::compute_runs_on(a.pkg, hosts, false);
+    EXPECT_EQ(a.pkg.runsOnSelf, a.pkg.systems);
+    ASSERT_TRUE(a.pkg.runsOnWith.contains("okrun"));
+    EXPECT_EQ(a.pkg.runsOnWith.at("okrun"), (std::vector<std::string>{"macos-x86_64"}));
+    auto r = d::xpkg_descriptor({ a }, "https://example.org/v0.1.1");
+    ASSERT_TRUE(r) << r.error();
+    auto block = [&](std::string_view system) {
+        const auto at = r->find(std::format("        {} = {{", system));
+        return at == std::string::npos ? std::string() : r->substr(at, r->find("        },", at) - at);
+    };
+    EXPECT_NE(block("macosx").find("[\"aarch64\"]"), std::string::npos) << *r;
+    EXPECT_EQ(block("macosx").find("[\"x86_64\"]"), std::string::npos) << *r;
+    EXPECT_NE(block("windows").find("[\"x86_64\"]"), std::string::npos) << *r;
+    EXPECT_EQ(block("windows").find("[\"aarch64\"]"), std::string::npos) << *r;
+    EXPECT_EQ(r->find("deps = {"), std::string::npos) << *r;
+
+    a.pkg.mode = "vendored";
+    a.pkg.systems.clear();
+    d::compute_runs_on(a.pkg, hosts, false);
+    EXPECT_TRUE(a.pkg.runsOnSelf.empty());
+    EXPECT_EQ(a.pkg.runsOnWith.at("okrun").size(), hosts.size());
+    auto v = d::xpkg_descriptor({ a }, "https://example.org/v0.1.1");
+    ASSERT_TRUE(v) << v.error();
+    EXPECT_NE(v->find("deps = { \"xim:okrun\" }"), std::string::npos) << *v;
+
+    // The document carries it, and a reader takes it back.
+    auto j = d::to_json(a.pkg);
+    EXPECT_NE(j.find("\"runs_on\""), std::string::npos) << j;
+}
+
 // The entry is named after the command a person runs, not the package, and
 // moves the archive's own top-level directory into place.
 TEST(PackDistribution, XpkgDescriptorNamesTheCommandAndTheArchiveTop) {
@@ -635,7 +683,7 @@ TEST(PackDistribution, XpkgDescriptorNamesTheCommandAndTheArchiveTop) {
     ASSERT_TRUE(u) << u.error();
     EXPECT_NE(u->find("name = \"mcppls\""), std::string::npos) << *u;
     EXPECT_NE(u->find("xvm.add(\"mcppls\", opts)"), std::string::npos) << *u;
-    EXPECT_NE(u->find("opts.alias = \"mcppls.cmd\""), std::string::npos) << *u;
+    EXPECT_NE(u->find("opts.alias = \"mcppls.exe\""), std::string::npos) << *u;
     EXPECT_NE(u->find("for _, ext in ipairs({ \".zip\" }) do"), std::string::npos) << *u;
     EXPECT_NE(u->find("local top = pkginfo.install_file()"), std::string::npos) << *u;
     EXPECT_NE(u->find("os.mv(top, pkginfo.install_dir())"), std::string::npos) << *u;

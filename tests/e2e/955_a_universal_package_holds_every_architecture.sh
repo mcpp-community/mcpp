@@ -7,7 +7,7 @@
 #
 # Criteria:
 #   A. `<name>-<version>-openkal/` holds `lib/x86_64/` and `lib/aarch64/` (each
-#      the image of its architecture), `bin/<name>` and `bin/<name>.cmd`, and
+#      the image of its architecture), `bin/<name>` and `bin/<name>.exe`, and
 #      `mcpp-package.json` naming both legs, the runner and each entry.
 #   B. `bin/<name>` runs the image of this machine's architecture through the
 #      runner found on PATH, with its arguments.
@@ -48,7 +48,7 @@ CPP
 # A
 "$MCPP" pack --target "$T" --pkg-format dir > a.log 2>&1 || fail "A: pack" a.log
 P=target/dist/uni-0.1.0-openkal
-for f in "lib/x86_64/uni.oke" "lib/aarch64/uni.oke" "bin/uni" "bin/uni.cmd" "mcpp-package.json"; do
+for f in "lib/x86_64/uni.oke" "lib/aarch64/uni.oke" "bin/uni" "bin/uni.exe" "mcpp-package.json"; do
     [ -f "$P/$f" ] || fail "A: the package has no $f" a.log
 done
 python3 - "$P" <<'PY' || fail "A: the package's metadata" "$P/mcpp-package.json"

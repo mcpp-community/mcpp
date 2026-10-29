@@ -189,7 +189,7 @@ exceptions = 1
 )";
     auto m = mcpp::manifest::parse_string(src);
     ASSERT_FALSE(m.has_value());
-    EXPECT_NE(m.error().message.find(".exceptions must be true or false"),
+    EXPECT_NE(m.error().message.find(".exceptions must be true, false, \"wasm\" or \"js\""),
               std::string::npos) << m.error().message;
 }
 
