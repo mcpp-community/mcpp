@@ -176,4 +176,5 @@ downstream tooling.
   - [SPEC-011 — Concurrent runs: the build directory lock, whole outputs, optimistic writes, cancellation](specs/concurrency.md)
   - [SPEC-012 — Output for people: two streams, two media, the kinds of line, colour](specs/human-output.md)
   - [SPEC-013 — Platforms: the configuration of a class of targets, its selection, merge, graph completion, link, seal, runner and carrier](specs/platforms.md)
-  - [SPEC-014 — Packaging and distribution: link, closure and container, legs, the staged tree, universal and single-file packages](specs/packaging.md)
+  - [SPEC-014 — Packaging and distribution: link, closure and container, legs, the staged tree, the platform's tree, run coverage and single-file packages](specs/packaging.md)
+  - [SPEC-015 — Target sets and legs: spelling and expansion, commands over several legs, test archives](specs/target-sets.md)

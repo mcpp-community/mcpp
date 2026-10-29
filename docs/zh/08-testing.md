@@ -173,6 +173,21 @@ test result ok. 0 passed; 0 failed; 2 built, not run
 runner 本身、具名 runner，以及一块板子声明了什么，见
 [41 —— 抵达一台设备](41-devices.md)。
 
+### 构建一次，各处运行（mcpp 2026.10.30.1+）
+
+ok 映像在每个系统上是同样的字节；在 Linux 上为 `x86_64-windows-gnu` 构建的测试
+在 Windows 上运行。`--archive` 把两半分开：
+
+```bash
+mcpp test --target openkal --no-run --archive tests.tar.gz   # 构建各腿的测试并写出
+mcpp test --archive tests.tar.gz                             # 在检出中运行本机能到达的部分
+```
+
+归档含各腿的测试程序与 `mcpp-tests.json`（每个测试的腿、参数与工作目录）。读取
+时不构建；测试在检出中经本机的运行器或系统运行，报告与 `mcpp test` 相同。有测试
+失败时退出码为 1，一个测试都没运行的归档也是 1。本机到达不了的腿报告为未运行
+（[SPEC-015 §4](../specs/target-sets.md)）。
+
 ## 不能彼此并排运行的测试
 
 `mcpp test` 在一个工作池上运行测试程序。一块接了一个探针的板子、一块 GPU、一个串口，

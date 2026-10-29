@@ -848,6 +848,13 @@ CI 按 `launch` 启动程序，与 `mcpp run` 的启动一致。
  "data":{"result":"/…/target/x86_64-linux-gnu/c0641c458b2bde43/result.json","status":"ok","finishedAt":1792964065954}}
 ```
 
+**多条腿** *（2026.10.30.1+）*。对目标集合或多个 `--target` 的命令每个目标构建一条腿
+（[SPEC-015](../specs/target-sets.md)），每条腿写自己的 `result.json`。`mcpp.build` 信封的 `data`
+为第一条腿的记录，`status` 汇总全部腿，`legs` 含每条腿的记录；每个 `artifact` 与 `diagnostic`
+事件带其腿的 `triple`。`.last-result.json` 指向第一条腿的记录，并增加 `legs`，每条腿一项
+`{triple, result, status}`。只有一条腿时信封、事件与两个文件与此前相同。`self env --target <集合>`
+在 `mcpp.env` 中增加 `legs`，每条腿一份报告，顶层字段取第一条腿。
+
 ### `mcpp.launch` —— `mcpp run` 启动程序的方式
 
 ```

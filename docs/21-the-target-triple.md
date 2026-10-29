@@ -196,6 +196,30 @@ different artefacts. Writing the segment is how that choice is made.
 default fill, and `msvc` is a different object ABI rather than a different C
 library, so the segment is meaningful there in both systems.
 
+## Target Sets (mcpp 2026.10.30.1+)
+
+A `--target` whose first segment is a system word — `linux`, `macos`,
+`windows`, `openkal`, `emscripten`, `ios`, `android`, `none` — names a **target
+set**: every row of the target table with that system and environment that
+this mcpp builds. The environment is completed as above (`linux` is
+`linux-gnu`, `windows` is `windows-gnu`); `none` has no default and is refused.
+
+| Set | Members (2026.10.30.1, openkal-platform 0.18.0) |
+|---|---|
+| `openkal` | `x86_64-openkal`, `aarch64-openkal` |
+| `linux-musl` | `x86_64-linux-musl`, `aarch64-linux-musl` |
+| `linux` | `x86_64-linux-gnu`, `aarch64-linux-gnu` |
+
+Every member must select the same platform; a set whose members select
+different platforms is refused, and the message lists each member's. A command
+acts once per member, each member a **leg**: `build` builds every leg, `run`
+runs the first leg this machine reaches (its own architecture first), `test`
+runs the legs it reaches and fails when none ran, and `pack` packs the legs
+as [10](10-pack-and-release.md) describes. Reports and machine output name the
+members, never the set. `[build] target` takes one target; a set belongs on the
+command line and in `[pack] targets`. The rules are
+[SPEC-015](specs/target-sets.md).
+
 ## The Build Report
 
 The report heads with the target as written and resolves it to the compiler's

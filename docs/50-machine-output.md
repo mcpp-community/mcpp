@@ -949,6 +949,16 @@ A run ended by SIGINT, SIGTERM or SIGHUP leaves `cancelled` in both files
  "data":{"result":"/…/target/x86_64-linux-gnu/c0641c458b2bde43/result.json","status":"ok","finishedAt":1792964065954}}
 ```
 
+**Several legs** *(2026.10.30.1+)*. A command over a target set, or over more
+than one `--target`, builds a leg per target ([SPEC-015](specs/target-sets.md)).
+Every leg writes its own `result.json`. The `mcpp.build` envelope's `data` is the
+first leg's record, its `status` is the legs' together, and `legs` holds every
+leg's record; each `artifact` and `diagnostic` event carries the `triple` of its
+leg. `.last-result.json` names the first leg's record and adds `legs`, one
+`{triple, result, status}` per leg. With one leg the envelope, the events and
+both files are as before. `self env --target <set>` adds `legs` to `mcpp.env`,
+one report per leg, the top-level fields being the first leg's.
+
 ### `mcpp.launch` — the way `mcpp run` starts the program
 
 ```

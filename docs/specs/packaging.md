@@ -10,7 +10,7 @@
 | 对应实现 | mcpp >= 2026.10.30.1 |
 | 相关设计文档 | `.agents/docs/2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md`(§4、§13)、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`(§2–§7、§14)、`.agents/docs/2026-10-28-platforms-design.md`(§4.7)、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md`(§2.2、§2.6) |
 | 相关 issue | mcpp#847、mcpp#849、mcpp#860 |
-| 相关规范 | [SPEC-007](build-plugins.md)(包格式提供者、artifact action)、[SPEC-011](concurrency.md)(原子发布)、[SPEC-013](platforms.md)(平台、运行器、载体)、SPEC-015(目标集合与腿) |
+| 相关规范 | [SPEC-007](build-plugins.md)(包格式提供者、artifact action)、[SPEC-011](concurrency.md)(原子发布)、[SPEC-013](platforms.md)(平台、运行器、载体)、[SPEC-015](target-sets.md)(目标集合与腿) |
 | 使用文档 | [10 —— 发布打包](../zh/10-pack-and-release.md) |
 
 用语按 RFC 2119:**必须 / 禁止**为强制,**应当**为建议,**可以**为可选。

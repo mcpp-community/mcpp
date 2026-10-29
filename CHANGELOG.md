@@ -8,6 +8,18 @@
 
 ### Added
 
+- **Target sets (SPEC-015).** A `--target` whose first segment is a system
+  word names every row of the target table with that system and environment:
+  `openkal` is `x86_64-openkal` and `aarch64-openkal`, `linux-musl` the musl
+  rows this mcpp builds. Each member is a leg. `build` builds every leg (planned
+  one after another, built at once); `run` runs the first leg this machine
+  reaches, its own architecture first; `test` runs the legs it reaches, reports
+  the others built and not run, and fails when no test ran. The `mcpp.build`
+  envelope adds `legs`, the events their `triple`; `self env` adds `legs`
+  (e2e 963). `[build] target` takes one target.
+- **Tests built once, run elsewhere.** `mcpp test --no-run --archive <file>`
+  writes every leg's tests with `mcpp-tests.json`; `mcpp test --archive <file>`
+  in a checkout runs what this machine reaches and builds nothing (e2e 964).
 - **The build's contract, `${mcpp.contract}`.** Every configuration writes
   `mcpp-contract.json` beside its compile database: the compiler of each
   language with the words every unit is compiled with (target, sysroot,
@@ -28,6 +40,26 @@
 
 ### Changed
 
+- **A pack holds the legs it names (SPEC-014 2.0).** `--target
+  x86_64-openkal` packs that architecture; `--target openkal` packs both into
+  one tree. The platform no longer widens a pack: `[platform] universal`,
+  `[pack] universal` and `--no-universal` lose their effect, with a message
+  that names the new spelling (`[pack] targets = ["openkal"]`; docs/51).
+  Images of a platform with a runner have one layout whatever the number of
+  legs: `bin/<name>`, `bin/<name>.exe`, `lib/<arch>/`, and with
+  `--mode self-contained` `libexec/<runner>/<os>-<arch>/`. The image embedded
+  in a carrier belongs to `--pkg-format single-file` only. A set of native
+  programs is a package per leg (e2e 955, 983, 984).
+- **The Windows launcher is a program.** `bin/<name>.exe` replaces
+  `bin/<name>.cmd`: no "Terminate batch job" prompt, and the process is named
+  after the package. The POSIX launcher hands over to it under Git Bash, MSYS
+  and Cygwin.
+- **`--systems` takes `<os>`, `<os>-<arch>` and `all`, and `[pack] systems`.**
+  `--pkg-format` takes a list of containers of one staged tree (`tar,okb`),
+  built once (e2e 985). Single files cover legs × systems (e2e 986).
+- **The pack summary names where the package runs.** `Runs on` and one `Not
+  covered` line per pair the package does not reach; `mcpp.pack` adds
+  `pkgFormats` and `runsOn`. A tree that runs nowhere is refused.
 - **A target reads the descriptor blocks its row names, never the build
   machine's (#851).** A target that is not Linux, macOS or Windows read the
   block of the system mcpp ran on, so a Web build took a dependency's `linux`

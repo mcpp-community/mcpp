@@ -180,6 +180,26 @@ LLVM 23.1.3 与 glibc。`aarch64-linux-musl` 仍是静态 musl 产物的显式
 而 `msvc` 是不同的对象 ABI 而非不同的 C 库，因此那一段在两套体系下都
 有意义。
 
+## 目标集合（mcpp 2026.10.30.1+）
+
+首段是系统词的 `--target`（`linux`、`macos`、`windows`、`openkal`、`emscripten`、
+`ios`、`android`、`none`）是一个**目标集合**：目标表中系统与环境相同、且本
+mcpp 构建的全部行。环境按上一节补全（`linux` 即 `linux-gnu`，`windows` 即
+`windows-gnu`）；`none` 没有缺省环境，被拒绝。
+
+| 集合 | 成员（2026.10.30.1，openkal-platform 0.18.0） |
+|---|---|
+| `openkal` | `x86_64-openkal`、`aarch64-openkal` |
+| `linux-musl` | `x86_64-linux-musl`、`aarch64-linux-musl` |
+| `linux` | `x86_64-linux-gnu`、`aarch64-linux-gnu` |
+
+全部成员必须选到同一个平台；成员选到不同平台时命令被拒绝，消息写出每个成员
+的平台。命令对每个成员各执行一次，每个成员是一条**腿**：`build` 构建全部腿，
+`run` 运行本机能到达的第一条腿（本机架构优先），`test` 运行能到达的腿、一个都
+没运行时失败，`pack` 按 [10](10-pack-and-release.md) 打包。报告与机器输出写成员，
+不写集合。`[build] target` 只接受一个目标；集合写在命令行与 `[pack] targets`。
+规则见 [SPEC-015](../specs/target-sets.md)。
+
 ## 构建报告
 
 报告以写下的目标为标题，并把它解析成编译器自己的拼法：

@@ -197,6 +197,24 @@ otherwise, so it needs no `libc++_shared.so` on the device.
 The runner itself, named runners, and what a board declares are
 [41 — Reaching a Device](41-devices.md).
 
+### Built once, run elsewhere (mcpp 2026.10.30.1+)
+
+An ok image is the same bytes on every system, and a test built for
+`x86_64-windows-gnu` on Linux runs on Windows. `--archive` separates the two
+halves:
+
+```bash
+mcpp test --target openkal --no-run --archive tests.tar.gz   # build every leg's tests, write them
+mcpp test --archive tests.tar.gz                             # in a checkout: run what this machine reaches
+```
+
+The archive holds each leg's test programs and `mcpp-tests.json`, which names
+each test's leg, arguments and working directory. Reading it builds nothing;
+the tests run in the checkout, through this machine's runner or system, and the
+report is `mcpp test`'s. A failed test exits 1, and so does an archive of which
+no test ran. Legs this machine does not reach are reported as not run
+([SPEC-015 §4](specs/target-sets.md)).
+
 ## Tests that cannot run beside each other
 
 `mcpp test` runs test programs on a worker pool. One board on one probe, one
