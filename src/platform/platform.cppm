@@ -330,8 +330,13 @@ void merge(mp::Statement& b, const mp::Statement& o) {
         b.runner.exclusive = o.runner.exclusive;
         b.runner.exclusiveSet = true;
     }
+    if (o.runner.hostsSet) {
+        b.runner.hosts = o.runner.hosts;
+        b.runner.hostsSet = true;
+    }
     for (auto const& [k, v] : o.runners) b.runners[k] = v;
-    if (o.carrier.set) b.carrier = o.carrier;
+    if (!o.carriers.empty()) b.carriers = o.carriers;
+    words(b.descriptorKeys, o.descriptorKeys);
     text(b.plugin, o.plugin);
     if (o.universal.set) b.universal = o.universal;
     for (auto const& [k, v] : o.layers) b.layers[k] = v;
@@ -580,7 +585,14 @@ std::string to_json(const Resolved& r) {
     if (f.link.start.set) field("link.start", q(f.link.start.value), f.link.start.origin);
     if (f.link.exe.set) field("link.exe", q(f.link.exe.value), f.link.exe.origin);
     if (f.link.shared.set) field("link.shared", q(f.link.shared.value), f.link.shared.origin);
-    if (f.carrier.set) field("carrier", q(mp::display(f.carrier.package)), f.carrier.origin);
+    for (auto const& c : f.carriers)
+        field(c.hosts.empty() ? std::string("carrier")
+                              : std::format("carrier[{}]", [&] {
+                                    std::string j;
+                                    for (auto const& h : c.hosts) j += (j.empty() ? "" : ",") + h;
+                                    return j;
+                                }()),
+              q(mp::display(c.package)), c.origin);
     o += "}}";
     return o;
 }

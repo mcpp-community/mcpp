@@ -1049,6 +1049,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // §2.5): the platform reader type-checks every entry.
         "platform.link.inputs",
         "target.*.link.inputs",
+        // `carrier = [{ package, section, main, hosts }, ...]` (design
+        // 2026-10-29 §4.5): the platform reader type-checks every entry.
+        "platform.carrier",
+        "target.*.carrier",
     };
     if (auto badPath = find_disallowed_array_of_tables(doc->root(), "", kAllowedArraysOfTables)) {
         return std::unexpected(error(origin, std::format(
@@ -1056,7 +1060,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             "array-of-tables syntax is only supported for [[build.flags]], "
             "[[features.<name>.flags]], [[runtime.requirements]], "
             "[[runtime.artifacts]], [[runtime.deploy]], [[platform.link.inputs]], "
-            "and [xlings] deps entries",
+            "[[platform.carrier]] and [xlings] deps entries",
             *badPath, *badPath)));
     }
 
@@ -4217,14 +4221,21 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                         return std::unexpected(error(origin, std::format(
                             "[target.{}.abi] has no member '{}'; the members are: "
                             "threads, exceptions", triple, ak)));
-                    if (!av.is_bool())
-                        return std::unexpected(error(origin, std::format(
-                            "[target.{}.abi].{} must be true or false", triple, ak)));
+                    // `exceptions` also takes the model on Emscripten (design
+                    // 2026-10-29 §6): "wasm" or "js"; `true` keeps "js".
+                    const bool model = ak == "exceptions" && av.is_string()
+                        && (av.as_string() == "wasm" || av.as_string() == "js");
+                    if (!av.is_bool() && !model)
+                        return std::unexpected(error(origin, ak == "exceptions"
+                            ? std::format("[target.{}.abi].exceptions must be true, false, "
+                                          "\"wasm\" or \"js\"", triple)
+                            : std::format("[target.{}.abi].{} must be true or false", triple, ak)));
                     if (ak == "threads") {
                         cc.abiThreads = av.as_bool();
                         cc.abiThreadsDeclared = true;
                     } else {
-                        cc.abiExceptions = av.as_bool();
+                        cc.abiExceptions = model || av.as_bool();
+                        cc.abiExceptionsModel = model ? av.as_string() : std::string();
                         cc.abiExceptionsDeclared = true;
                     }
                 }

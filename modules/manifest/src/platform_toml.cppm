@@ -59,6 +59,12 @@ struct Reader {
           std::map<std::string, ToolEntry>& out) const;
 
     std::expected<Carrier, std::string> carrier(const mcpp::libs::toml::Value& v, std::string_view where) const;
+    std::expected<std::vector<Carrier>, std::string>
+    carriers(const mcpp::libs::toml::Value& v, std::string_view where) const;
+
+    // A list of `<os>-<arch>` pairs (`runner.hosts`, `carrier.hosts`).
+    std::expected<std::vector<std::string>, std::string>
+    host_pairs(const mcpp::libs::toml::Value& v, std::string_view where) const;
 
     // `[platform]` of a platform package.
     std::expected<Statement, std::string> statement(const mcpp::libs::toml::Table& t) const;
@@ -255,9 +261,14 @@ std::expected<Runner, std::string> Reader::runner(const toml::Value& v, std::str
                 if (!val.is_bool()) return std::unexpected(std::format("{} must be true or false", key));
                 r.exclusive = val.as_bool();
                 r.exclusiveSet = true;
+            } else if (k == "hosts") {
+                auto h = host_pairs(val, key);
+                if (!h) return std::unexpected(h.error());
+                r.hosts = std::move(*h);
+                r.hostsSet = true;
             } else {
                 warn(std::format(
-                    "{}: '{}' is not a key of a runner (ignored); the keys are cmd, host, exclusive",
+                    "{}: '{}' is not a key of a runner (ignored); the keys are cmd, host, hosts, exclusive",
                     where, k));
             }
         }
@@ -457,6 +468,46 @@ Reader::tools(const toml::Value& v, std::string_view where,
     return {};
 }
 
+std::expected<std::vector<std::string>, std::string>
+Reader::host_pairs(const toml::Value& v, std::string_view where) const {
+    auto w = strings(v, where);
+    if (!w) return std::unexpected(w.error());
+    for (auto const& p : *w)
+        if (!mcpp::manifest::platform::is_host_pair(p))
+            return std::unexpected(std::format(
+                "{}: '{}' is not a system and an architecture; write \"<os>-<arch>\" with "
+                "<os> one of linux, macos, windows, for example \"linux-x86_64\"", where, p));
+    return w;
+}
+
+// `carrier` is one table or an array of them (design 2026-10-29 §4.5).
+std::expected<std::vector<Carrier>, std::string>
+Reader::carriers(const toml::Value& v, std::string_view where) const {
+    std::vector<Carrier> out;
+    if (v.is_table()) {
+        auto c = carrier(v, where);
+        if (!c) return std::unexpected(c.error());
+        out.push_back(std::move(*c));
+        return out;
+    }
+    if (!v.is_array())
+        return std::unexpected(std::format(
+            "{} must be a table {{ package, section, main }} or an array of them", where));
+    std::size_t i = 0;
+    for (auto const& e : v.as_array()) {
+        auto c = carrier(e, std::format("{}[{}]", where, i++));
+        if (!c) return std::unexpected(c.error());
+        if (c->build != "row") {
+            warn(std::format(
+                "{}[{}]: build = \"{}\" is a carrier model this mcpp does not build (skipped); "
+                "it builds \"row\"", where, i - 1, c->build));
+            continue;
+        }
+        out.push_back(std::move(*c));
+    }
+    return out;
+}
+
 std::expected<Carrier, std::string> Reader::carrier(const toml::Value& v, std::string_view where) const {
     if (!v.is_table())
         return std::unexpected(std::format(
@@ -478,10 +529,18 @@ std::expected<Carrier, std::string> Reader::carrier(const toml::Value& v, std::s
             if (!val.is_string() || val.as_string().empty())
                 return std::unexpected(std::format("{} must be a source file of the package", key));
             c.main = absolute(val.as_string()).generic_string();
+        } else if (k == "hosts") {
+            auto h = host_pairs(val, key);
+            if (!h) return std::unexpected(h.error());
+            c.hosts = std::move(*h);
+        } else if (k == "build") {
+            if (!val.is_string() || val.as_string().empty())
+                return std::unexpected(std::format("{} must name a carrier model, for example \"row\"", key));
+            c.build = val.as_string();
         } else {
             warn(std::format(
-                "{}: '{}' is not a key of a carrier (ignored); the keys are package, section, main",
-                where, k));
+                "{}: '{}' is not a key of a carrier (ignored); the keys are package, section, main, "
+                "hosts, build", where, k));
         }
     }
     if (c.package.empty() || c.section.empty() || c.main.empty())
@@ -540,9 +599,19 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
                 s.runners[rk] = Words{ std::move(*w), at(rv, rkey), true };
             }
         } else if (k == "carrier") {
-            auto c = carrier(v, key);
+            auto c = carriers(v, key);
             if (!c) return std::unexpected(c.error());
-            s.carrier = std::move(*c);
+            s.carriers = std::move(*c);
+        } else if (k == "descriptor_keys") {
+            auto w = strings(v, key);
+            if (!w) return std::unexpected(w.error());
+            if (w->empty()) return std::unexpected(std::format("{} names no key", key));
+            for (auto const& d : *w)
+                if (std::ranges::find(kDescriptorKeys, std::string_view(d)) == std::end(kDescriptorKeys))
+                    return std::unexpected(std::format(
+                        "{}: '{}' is not a descriptor platform; the keys are {}", key, d,
+                        list_of(kDescriptorKeys)));
+            s.descriptorKeys = Words{ std::move(*w), at(v, key), true };
         } else if (k == "plugin") {
             // The platform's program is its package's build program, which a
             // package names `build.mcpp` (SPEC-007); no other file is run.
@@ -634,9 +703,9 @@ Reader::override_(const toml::Table& t, std::string_view selector) const {
         } else if (k == "tools") {
             if (auto r = tools(v, key, o.fields.tools); !r) return std::unexpected(r.error());
         } else if (k == "carrier") {
-            auto c = carrier(v, key);
+            auto c = carriers(v, key);
             if (!c) return std::unexpected(c.error());
-            o.fields.carrier = std::move(*c);
+            o.fields.carriers = std::move(*c);
         } else if (k == "link") {
             if (!v.is_table()) return std::unexpected(std::format("{} must be a table", key));
             if (auto r = link(v.as_table(), key, o.fields.link); !r) return std::unexpected(r.error());

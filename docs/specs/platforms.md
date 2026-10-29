@@ -43,9 +43,10 @@
 targets   = ["<triple>", ...]
 toolchain = "<spec>"
 sysroot   = "<spec>" | { path = "<dir>", provides = [...] }
-runner    = ["<prog>", "{}"] | { cmd = [...], host = "same-arch" | "any", exclusive = <bool> }
+runner    = ["<prog>", "{}"] | { cmd = [...], host = "same-arch" | "any", hosts = ["<os>-<arch>", ...], exclusive = <bool> }
 runners   = { <name> = ["<prog>", ...] }
-carrier   = { package = "<spec>", section = "<name>", main = "<file>" }
+carrier   = { package = "<spec>", section = "<name>", main = "<file>", hosts = [...], build = "row" } | [ {...}, ... ]
+descriptor_keys = ["<key>", ...]
 plugin    = "build.mcpp"
 
 [platform.layers]   <layer> = <package> | false
@@ -66,7 +67,8 @@ plugin    = "build.mcpp"
 | `sysroot` | 字符串或 `{ path, provides }` | 预构建的目标基,写法同 `[target.<triple>].sysroot`;`path` 相对于平台包 |
 | `runner` | 字符串数组或表 | §10 |
 | `runners` | `<name> = [argv]` | 命名的设备动作,每个 argv 非空 |
-| `carrier` | 表 | §11;`package`、`section`、`main` 三键都**必须**给出 |
+| `carrier` | 表或表的数组 | §11;每项的 `package`、`section`、`main` 三键都**必须**给出;`hosts` 为该项服务的 `<os>-<arch>`(省略:服务每一对);`build` 为载体程序的构建模型,缺省 `"row"`(每个 `<os>-<arch>` 一个程序,经平台的 hosted 安排构建),本 mcpp 不认识的模型的项被跳过并警告。**mcpp >= 2026.10.30.1**;更早的 mcpp 读到数组即拒绝,写数组的平台**必须**声明相应的 `mcpp` 下限 |
+| `descriptor_keys` | 非空字符串数组 | 平台目标读取描述符的哪些按平台块及其顺序(第一个存在的块被读取),取值为 `linux`、`macosx`、`windows`、`android`、`ios`、`emscripten`、`openkal`、`none`;未声明时为目标行自己的键(§14)。**mcpp >= 2026.10.30.1** |
 | `plugin` | 字符串 | 只能为 `"build.mcpp"`:平台包自身的构建程序(SPEC-007)在平台阶段运行(§12);其他值拒绝 |
 | `universal` | 布尔 | `true` 时本平台任一目标的打包缺省为覆盖全部 `targets` 的通用包(SPEC-014 §1.4、§4.2) |
 | `layers` | 表 | §7.2;键只能是 §0 的四个层名 |
@@ -295,6 +297,7 @@ plugin    = "build.mcpp"
 | `cmd` | argv,非空;`{}` 为产物 |
 | `host` | `"same-arch"`:产物只在其架构的机器上运行;`"any"`:运行器可以从任何机器到达产物(模拟器、探针) |
 | `exclusive` | 为真时该目标的运行不重叠,`mcpp test` 串行运行 |
+| `hosts` | 运行器程序存在的 `<os>-<arch>`(`os` 为 `linux`、`macos`、`windows`):需要该运行器的包能在哪里运行(SPEC-014 §4.4 的 `runs_on.with`)。`host = "any"` 时与产物的架构无关。**mcpp >= 2026.10.30.1** |
 
 `host = "same-arch"` 而产物的架构不是本机架构时,`mcpp run` 与 `mcpp test` 拒绝运行,消息给出
 `[target.<triple>] run_under` 的写法;`run_under` 存在或给出 `--no-runner` 时不拒绝。运行器的合并顺序与 §6
@@ -345,6 +348,10 @@ run_under = ["qemu-aarch64"]
 需要载体的打包被拒绝并写出该键;本 mcpp 不构建程序的行(SPEC-014 §4.4)上的载体在生成工程之前被拒绝,写出系统、架构与行
 (2026.10.29.1)。
 
+**载体项的选择(mcpp >= 2026.10.30.1)。** 为 `<os>-<arch>` 构建载体程序时(上述三处与 §10 的执行宿主),所用的是
+`hosts` 列出该对的第一项,否则为第一个未写 `hosts` 的项;两者都没有时,如同平台未声明 `carrier`,打包或运行被拒绝,写出
+该对。`build` 不是 `"row"` 的项留给将来的构建模型(一个文件服务多个系统与架构的载体,mcpp#849),本 mcpp 读到时跳过并警告。
+
 ## 12. 平台阶段与协议 17
 
 ### 12.1 平台阶段
@@ -383,6 +390,20 @@ run_under = ["qemu-aarch64"]
 `x86_64-openkal`、`aarch64-openkal` 的值为 `mcpplibs.openkal-platform@<version>`,即这两个目标的内置支持;
 选择来源报告为 `built-in`。项目可以不等引擎更新,以 `[target.<selector>] platform` 选择另一个版本。
 **已实现**
+
+**描述符键(mcpp >= 2026.10.30.1)。** 每个目标行声明它读取依赖描述符的哪些按平台块及其顺序,第一个存在的块被读取;
+`xpm` 下的版本与 `mcpp` 段的按平台表都按此读取,构建机不参与:
+
+| 目标 | 依次读取的块 |
+|---|---|
+| Linux(含 Android 与 musl)、macOS、Windows | `linux`、`macosx`、`windows` 分别 |
+| `wasm32-emscripten` | `emscripten`,其次 `linux` |
+| `<arch>-openkal` | `openkal`,其次 `linux`;平台的 `descriptor_keys`(§1.1)取代之 |
+| iOS | `ios`,其次 `macosx` |
+| 裸机(`os = none`) | `none` |
+
+平台在首次准备时尚未读到(须先取得平台包)而又声明了 `descriptor_keys` 时,准备以读到的平台重新开始,与 `sysroot`
+相同。宿主工具(宿主图)按宿主的键安装。此前,不是三者之一的目标读构建机的块(mcpp#851)。
 
 ok 映像是 x86_64 与 aarch64 上位置无关的 ELF,只导入 `kal_*`,运行时需要加载器发布的可执行内存;okb 只装 ok 映像。
 openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscripten` 目标(宿主目标,无平台包)到达,打包为

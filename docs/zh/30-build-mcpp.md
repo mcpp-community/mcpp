@@ -925,6 +925,7 @@ mcpp 会写出 `<暂存树>.stage-manifest` —— 一个兄弟文件，永不�
 | `${mcpp.out_dir}` | 构建输出目录 |
 | `${mcpp.bin_dir}` | 产出的二进制所在目录:`bin/`;工作区成员的构建程序声明的 action 中为该成员的产物目录(2026.9.29.4+) |
 | `${mcpp.compile_db}` | `compile_commands.json` 的路径（clang-tidy 的 `-p` 要的就是它） |
+| `${mcpp.contract}` *(2026.10.30.1+)* | 配置的契约 `mcpp-contract.json` 的路径，与该配置的编译数据库同目录：每种语言的编译器与每个单元都带的词（目标、sysroot、目标侧的头文件、平台与 profile 的标志），以及链接驱动、它的词与归档工具。外部构建系统读它，以引擎的方式为目标编译；包自己的包含目录不在其中，引擎为自己的单元选择的 C++ 方言与模块词（`-std=`、`-fmodules`）也不在其中 |
 | `${mcpp.target_file:<name>}` | target `<name>` 构建出的文件 |
 | `${mcpp.stage_dir}` *(2026.9.11.1+)* | `mcpp pack` 暂存出的那棵树，绝对路径。仅 `artifact` role 可用，且仅在 `mcpp pack --pkg-format <name>` 下可用 |
 | `${mcpp.self}` *(2026.9.13.1+)* | 引擎自己的可执行文件，绝对路径。action 的命令是没有 shell 的 argv，构建程序因此没有可移植的拷贝手段；引擎在构建运行的每台机器上都在，`${mcpp.self} stage --verify content --output <dst> <src>` 拷贝一个文件、创建目标的父目录、只在字节不同时写入。这个参数形状自 2026.9.13.1 起是契约；写下它的构建程序即以该版本为下限 |
@@ -1614,6 +1615,9 @@ int main() { return grpcgen::generate_all() ? 0 : 1; }
   因此把 `namespace = "spike"` 与 `name = "installer"` 分开写的包，既是
   `dep_bin("installer", ...)`，也是 `dep_bin("spike.installer", ...)`（mcpp 2026.9.16.1+;
   此前它的工具只以 `installer` 发布）。
+- **两个依赖共有的名字不属于任何一个包**（2026.10.30.1+）。清单都写 `rules` 的两个包（`openmui.rules`、
+  `gongfu.rules`）各以限定名寻址；`rules` 本身不为任何一个发布，`MCPP_DEP_AMBIGUOUS_RULES` 列出两个限定名。
+  `dep_dir("rules")` 结束程序，并写出这两个名字。2026.10.30.1 之前，这个名字归两者之一，且每次构建都警告。
 
 #### 旧版 mcpp 读到用了这些键的 manifest
 

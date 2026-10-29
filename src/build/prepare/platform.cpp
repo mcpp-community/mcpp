@@ -275,9 +275,11 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
             mcpp::platform::merge(P.fields, o->fields);
         P.active = true;
         state.platformInjected.insert(P.package);
-        // A base the platform states, which this pass decided without: the
-        // next pass reads the package before deciding it (§7).
-        if (P.fields.sysroot.set && !state.platformEarly && P.fields.sysroot.origin.tier == mp::Tier::Platform) {
+        // A base, or descriptor keys, the platform states, which this pass
+        // decided without: the next pass reads the package before deciding
+        // them (§7; design 2026-10-29 §5.1).
+        const auto platformStated = [](auto const& f) { return f.set && f.origin.tier == mp::Tier::Platform; };
+        if ((platformStated(P.fields.sysroot) || platformStated(P.fields.descriptorKeys)) && !state.platformEarly) {
             g_platformRestart = P.root;
             return std::unexpected(std::string("mcpp:platform-restart"));
         }

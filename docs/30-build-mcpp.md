@@ -1089,6 +1089,7 @@ none to rely on), and the only interpolations are a closed set:
 | `${mcpp.out_dir}` | the build output directory |
 | `${mcpp.bin_dir}` | where produced binaries land: `bin/`, or, for an action a workspace member's build program declares, that member's product directory (2026.9.29.4+) |
 | `${mcpp.compile_db}` | path to `compile_commands.json` (what clang-tidy's `-p` wants) |
+| `${mcpp.contract}` *(2026.10.30.1+)* | path to the configuration's contract, `mcpp-contract.json`, beside its compile database: the compiler of each language with the words every unit is compiled with (target, sysroot, target-side headers, platform and profile flags), and the link driver, its words and the archiver. A foreign build system reads it to compile for the target as the engine does; a package's own include directories are not in it, nor the engine's C++ dialect and module words (`-std=`, `-fmodules`), which are its choice for its own units |
 | `${mcpp.target_file:<name>}` | the built file of target `<name>` |
 | `${mcpp.stage_dir}` *(2026.9.11.1+)* | the tree `mcpp pack` staged, absolute. `artifact` role only, and only under `mcpp pack --pkg-format <name>` |
 | `${mcpp.self}` *(2026.9.13.1+)* | the engine's own executable, absolute. An action's command is an argv with no shell, so a build program has no portable way to copy a file; the engine is present wherever a build runs, and `${mcpp.self} stage --verify content --output <dst> <src>` copies one file, creates the destination's parent, and writes only when the bytes differ. That argument shape is a contract from 2026.9.13.1 on; a build program that names it declares that release as its floor |
@@ -1937,6 +1938,12 @@ int main() { return grpcgen::generate_all() ? 0 : 1; }
   `dep_bin("spike.installer", ...)` as well as `dep_bin("installer", ...)`
   (mcpp 2026.9.16.1+; before that release its tool was published under
   `installer` alone).
+- **A name two dependencies answer to is no package's** (2026.10.30.1+). Two
+  packages whose manifests both say `rules` (`openmui.rules`, `gongfu.rules`)
+  are each addressed by their qualified name; `rules` itself is published for
+  neither, and `MCPP_DEP_AMBIGUOUS_RULES` lists the qualified names.
+  `dep_dir("rules")` ends the program with a message naming them. Before
+  2026.10.30.1 the name went to one of the two and every build warned.
 
 #### Older mcpp reading a manifest that uses this
 

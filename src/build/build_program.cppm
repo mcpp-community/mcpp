@@ -307,6 +307,12 @@ struct BuildProgramEnv {
     // only: the root decides every dependency's form, and a dependency's
     // program runs before facts that decide it are known (see prepare.cppm).
     std::vector<std::pair<std::string, std::string>> depLinkages;
+    // #852: a name that more than one visible dependency answers to (two
+    // packages whose manifests both say `rules`), with the qualified names of
+    // those packages, comma-separated. Such a name is in neither list above:
+    // no package can be it, so none is published under it, and the program
+    // reads MCPP_DEP_AMBIGUOUS_<SANITIZED_NAME> to say which names to use.
+    std::vector<std::pair<std::string, std::string>> depAmbiguous;
     // Payload dirs of the packages this build declared in `[xlings] deps`,
     // as (env var name → dir). Resolved by the caller through the xlings path
     // helpers, so a build.mcpp asks `xpkg_dir("xim", "picolibc-riscv")`
@@ -757,6 +763,8 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
                 it->second, dir.string()));
         }
     }
+    for (auto const& [name, which] : env.depAmbiguous)
+        e.emplace_back("MCPP_DEP_AMBIGUOUS_" + sanitize_feature_env(name), which);
     // #642 E2: the form each dependency takes, beside its directory and under
     // the same sanitised name. Its own collision map, because the variable
     // names differ from the `_DIR` ones; the rule is the same: keep the first,

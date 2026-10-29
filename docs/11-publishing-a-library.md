@@ -90,6 +90,25 @@ tarball is the same bytes on every platform, and an entry present in only one
 of them fails on the others as "no such version", which reads like a typo in
 the consumer's manifest.
 
+A target that is none of the three reads the blocks its row names, in order,
+and never the build machine's (2026.10.30.1+):
+
+| Target | Blocks, in order |
+|---|---|
+| Linux (Android and musl included), macOS, Windows | `linux`, `macosx`, `windows` respectively |
+| `wasm32-emscripten` | `emscripten`, then `linux` |
+| `<arch>-openkal` | `openkal`, then `linux` (a platform may state its own: `[platform] descriptor_keys`) |
+| iOS | `ios`, then `macosx` |
+| bare metal (`<arch>-none-<abi>`) | `none` |
+
+The first block present is the one read, both for the versions under `xpm`
+and for the per-platform table of the `mcpp` segment. A library that builds
+differently for the Web — without the `-pthread` its Linux block adds, say —
+gives it an `emscripten` block; one that builds for bare metal gives it a
+`none` block, and without one it has no version there. Before 2026.10.30.1 such
+a target read the build machine's block, so the same project took different
+flags on a Linux and on a Windows machine.
+
 ## 4. Wait for the artifact
 
 **The index is an artifact, not a git clone.** Merging to `main` is not

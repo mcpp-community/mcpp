@@ -82,6 +82,20 @@ cmp cn.tar.gz pkg-0.0.48.tar.gz      # must be identical, not merely present
 同样的字节；只写在其中一个平台块里，会在另外两个平台上以 `no such version` 失败，
 读起来像是消费方 manifest 里打错了字。
 
+不属于这三者的目标，按其目标行列出的块依次读取，与构建机无关（2026.10.30.1+）：
+
+| 目标 | 依次读取的块 |
+|---|---|
+| Linux（含 Android 与 musl）、macOS、Windows | 分别为 `linux`、`macosx`、`windows` |
+| `wasm32-emscripten` | `emscripten`，其次 `linux` |
+| `<arch>-openkal` | `openkal`，其次 `linux`（平台可声明自己的：`[platform] descriptor_keys`） |
+| iOS | `ios`，其次 `macosx` |
+| 裸机（`<arch>-none-<abi>`） | `none` |
+
+读取的是第一个存在的块，`xpm` 下的版本与 `mcpp` 段的按平台表都如此。一个为 Web 构建时有所不同的库——例如不要
+Linux 块添加的 `-pthread`——写一个 `emscripten` 块；为裸机构建的库写一个 `none` 块，没有它就在裸机上没有版本。
+2026.10.30.1 之前，这类目标读构建机的块，同一个项目在 Linux 与 Windows 机器上会得到不同的标志。
+
 ## 4. 等待 artifact
 
 **索引是一个 artifact，不是一次 git clone。** 合进 `main` 还不够：必须等

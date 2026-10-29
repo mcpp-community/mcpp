@@ -339,6 +339,7 @@ void merge_conditional_config(mcpp::manifest::Manifest& m,
         }
         if (cc.abiExceptionsDeclared) {
             m.buildConfig.abiExceptions = cc.abiExceptions;
+            m.buildConfig.abiExceptionsModel = cc.abiExceptionsModel;
             m.buildConfig.abiExceptionsDeclared = true;
         }
         // `[target.<sel>.build] dialect_cxxflags` (#717): recorded for every

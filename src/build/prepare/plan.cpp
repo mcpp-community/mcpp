@@ -1180,6 +1180,9 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
             rep("${mcpp.out_dir}",    ctx.plan.outputDir.generic_string());
             rep("${mcpp.bin_dir}",    binDir.generic_string());
             rep("${mcpp.compile_db}", ctx.plan.compileDbPath.generic_string());
+            // The build's contract (design 2026-10-29 §8.1), beside the
+            // configuration's compile database; see `write_build_contract`.
+            rep("${mcpp.contract}",   (ctx.plan.outputDir / "mcpp-contract.json").generic_string());
             // The engine's own executable, absolute (2026.9.13.1+). An action
             // whose command is an argv with no shell has no portable way to
             // copy, touch or compare a file, and the engine is the one

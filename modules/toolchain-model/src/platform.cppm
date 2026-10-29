@@ -65,9 +65,9 @@ export namespace mcpp::toolchain::platform {
 // descriptor and xlings' own project file say `macosx`. Every place that has
 // to accept both — a target's `os` token, a `[xlings.workspace]` platform
 // table, a descriptor's per-OS section — asks here, so the alias cannot be
-// half-known. `nullopt` means the token names no platform at all, which the
-// caller decides how to treat: `for_os` falls back to the host, a manifest
-// parser reports it.
+// half-known. `nullopt` means the token names none of the three, which the
+// caller decides how to treat: `descriptor_keys_for_os` gives the row's own
+// keys, a manifest parser reports it.
 inline std::optional<std::string_view> xpkg_platform_key_for(std::string_view os) {
     if (os == "macos" || os == "macosx") return "macosx";
     if (os == "windows")                 return "windows";
@@ -78,45 +78,69 @@ inline std::optional<std::string_view> xpkg_platform_key_for(std::string_view os
 // The three keys a descriptor has a block for, in that vocabulary.
 inline constexpr std::string_view xpkg_platforms[] = {"linux", "macosx", "windows"};
 
-// A resolved xpkg platform key. Only obtainable through one of the axis
-// types below, so possession of one implies somebody decided which axis it
-// came from.
+// A resolved xpkg platform axis: the descriptor blocks a build reads, in the
+// order it reads them. Only obtainable through one of the axis types below, so
+// possession of one implies somebody decided which axis it came from.
+//
+// A descriptor is read through the FIRST of `keys()` it has a block for. The
+// primary key, `key()`, is the one messages name.
 class PlatformKey {
 public:
-    std::string_view key() const { return key_; }
+    std::string_view key() const { return keys_.front(); }
+    std::span<const std::string> keys() const { return keys_; }
 
-    bool operator==(const PlatformKey& other) const { return key_ == other.key_; }
+    bool operator==(const PlatformKey& other) const { return keys_ == other.keys_; }
 
 protected:
-    explicit PlatformKey(std::string key) : key_(std::move(key)) {}
+    explicit PlatformKey(std::vector<std::string> keys) : keys_(std::move(keys)) {}
 
 private:
-    std::string key_;
+    std::vector<std::string> keys_;
 };
 
 // The machine mcpp itself is running on.
 class HostPlatform : public PlatformKey {
 public:
     static HostPlatform current() {
-        return HostPlatform(std::string(xpkg_platform));
+        return HostPlatform({std::string(xpkg_platform)});
     }
 
 private:
-    explicit HostPlatform(std::string key) : PlatformKey(std::move(key)) {}
+    explicit HostPlatform(std::vector<std::string> keys) : PlatformKey(std::move(keys)) {}
 };
+
+// The descriptor blocks a target's row reads (design 2026-10-29 §5.1), from
+// the triple's `os` token. The build machine takes no part: before 2026.10.30.1
+// a token naming no descriptor platform fell back to the HOST's block, so a
+// WebAssembly build read `linux` on Linux and `windows` on Windows (#851) and
+// an ok image read whichever system it was built on.
+//
+//   linux (incl. android, musl)  linux        macos  macosx     windows  windows
+//   emscripten   emscripten, linux            ios    ios, macosx
+//   openkal      openkal, linux (a platform may state its own: descriptor_keys)
+//   none         none                         any other token: itself alone
+inline std::vector<std::string> descriptor_keys_for_os(std::string_view os) {
+    if (auto k = xpkg_platform_key_for(os)) return {std::string(*k)};
+    if (os == "emscripten") return {"emscripten", "linux"};
+    if (os == "ios")        return {"ios", "macosx"};
+    if (os == "openkal")    return {"openkal", "linux"};
+    return {std::string(os)};
+}
 
 // The platform the artifacts being produced will run on.
 class TargetPlatform : public PlatformKey {
 public:
-    // From a resolved triple's `os` token. The triple vocabulary says
-    // "macos" where xpkg descriptors say "macosx"; that translation lives
-    // here so no caller has to remember it.
+    // From a resolved triple's `os` token, through the row's descriptor keys.
+    // The triple vocabulary says "macos" where xpkg descriptors say "macosx";
+    // that translation lives here so no caller has to remember it.
     static TargetPlatform for_os(std::string_view tripleOs) {
-        // Unknown/absent os token: fall back to the host, which is what the
-        // whole code base did unconditionally before #254.
-        return TargetPlatform(std::string(
-            xpkg_platform_key_for(tripleOs)
-                .value_or(xpkg_platform)));
+        return TargetPlatform(descriptor_keys_for_os(tripleOs));
+    }
+
+    // The keys a platform package states (`[platform] descriptor_keys`),
+    // which replace its rows' built-in ones.
+    static TargetPlatform with_keys(std::vector<std::string> keys) {
+        return TargetPlatform(std::move(keys));
     }
 
     // For tooling that walks platforms it is not running on and is not
@@ -124,11 +148,11 @@ public:
     // Named awkwardly on purpose: it should be obvious at the call site that
     // this is neither axis.
     static TargetPlatform for_lint_of(std::string_view xpkgKey) {
-        return TargetPlatform(std::string(xpkgKey));
+        return TargetPlatform({std::string(xpkgKey)});
     }
 
 private:
-    explicit TargetPlatform(std::string key) : PlatformKey(std::move(key)) {}
+    explicit TargetPlatform(std::vector<std::string> keys) : PlatformKey(std::move(keys)) {}
 };
 
 } // namespace mcpp::toolchain::platform

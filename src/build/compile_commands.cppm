@@ -47,6 +47,7 @@ import mcpplibs.os.platform;
 import mcpp.home.files;
 import mcpp.manifest.flag_words;
 import mcpp.toolchain.model;
+import mcpp.toolchain.dialect;
 import mcpp.ui;                 // the one-time note about a root database no longer asked for
 
 export namespace mcpp::build {
@@ -190,6 +191,24 @@ publish_root_compile_commands(
 // `foreignEntries` is the root publish's (see publish_root_compile_commands).
 std::expected<CompileCommandsWriteResult, CompileCommandsWriteError>
 write_compile_commands(const BuildPlan& plan, const CompileFlags& flags);
+
+// THE BUILD'S CONTRACT (design 2026-10-29 §8.1): what a foreign build system
+// needs to compile and link for this configuration as the engine does --
+// the compiler, archiver and link driver, and the words every unit of the
+// build is compiled and linked with (target, sysroot, target-side headers,
+// platform and profile flags). A package's own include directories are not
+// in it: a foreign build states its own; nor are the engine's C++ dialect and
+// module words (`-std=`, `-fmodules`), which are its choice for its own units. Written beside the configuration's
+// compile database as `mcpp-contract.json` and named by `${mcpp.contract}`
+// in a build program's action, which reads it while ninja runs; no action
+// calls mcpp back. A tool for the host is built in the host graph, whose
+// configuration has its own contract.
+//
+//   {"schema": 1, "target": "<triple>", "dialect": "<gcc|clang|msvc>",
+//    "compile": {"c": {"program", "args"}, "cxx": {...}, "asm": {...}},
+//    "link":    {"program", "args", "archiver"}}
+std::filesystem::path contract_path(const BuildPlan& plan);
+std::expected<void, std::string> write_build_contract(const BuildPlan& plan, const CompileFlags& flags);
 
 // The one sentence both publishers of the root file (the full build and the
 // fast path) print when the file they replaced held `n` entries mcpp did not
@@ -827,6 +846,48 @@ std::string foreign_entries_warning(std::size_t n) {
     return std::format(
         "compile_commands.json held {} entr{} mcpp did not write; "
         "the file now holds mcpp's configuration", n, n == 1 ? "y" : "ies");
+}
+
+std::filesystem::path contract_path(const BuildPlan& plan) {
+    return plan.outputDir / "mcpp-contract.json";
+}
+
+std::expected<void, std::string> write_build_contract(const BuildPlan& plan, const CompileFlags& flags) {
+    // The engine's own C++ dialect and module words are its choice for ITS
+    // units, not the target's: a foreign build chooses its own standard, and
+    // `-fmodules` names Clang modules to clang. Everything else -- target,
+    // sysroot, target-side headers, platform and profile flags -- is what
+    // compiling for this configuration means, and stays.
+    auto engine_only = [](std::string_view w) {
+        return w.starts_with("-std=") || w.starts_with("/std:") || w == "-fmodules"
+            || w == "-fmodules-ts" || w.starts_with("-fmodule-") || w.starts_with("-fprebuilt-module-path")
+            || w.starts_with("/experimental:module");
+    };
+    auto tool = [&](const std::filesystem::path& program, std::string_view words, bool compile) {
+        nlohmann::json t;
+        t["program"] = program.generic_string();
+        auto args = split_flags(words);
+        if (compile) std::erase_if(args, [&](const std::string& w) { return engine_only(w); });
+        t["args"] = std::move(args);
+        return t;
+    };
+    nlohmann::json doc;
+    doc["schema"] = 1;
+    doc["target"] = plan.toolchain.targetTriple;
+    doc["dialect"] = std::string(mcpp::toolchain::dialect_for(plan.toolchain).id);
+    doc["compile"]["c"] = tool(flags.ccBinary, flags.cc, true);
+    doc["compile"]["cxx"] = tool(flags.cxxBinary, flags.cxx, true);
+    doc["compile"]["asm"] = tool(flags.ccBinary, flags.as, true);
+    auto link = tool(flags.ldDriver.empty() ? flags.cxxBinary : flags.ldDriver, flags.ld, false);
+    link["archiver"] = flags.arBinary.generic_string();
+    doc["link"] = std::move(link);
+    const auto path = contract_path(plan);
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) return std::unexpected(std::format("cannot write {}", path.string()));
+    out << doc.dump(2) << '\n';
+    return {};
 }
 
 }  // namespace mcpp::build

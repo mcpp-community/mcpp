@@ -2448,12 +2448,17 @@ std::expected<std::filesystem::path, Error>
 carrier_build(const Plan& plan, const CarrierBuild& b)
 {
     namespace fs = std::filesystem;
-    auto const& c = plan.platform.fields.carrier;
-    if (!plan.platform.active || !c.set)
+    // The carrier entry serving this program's system and architecture
+    // (design 2026-10-29 §4.5).
+    const auto* entry = plan.platform.active
+        ? mcpp::manifest::platform::carrier_for(plan.platform.fields, std::format("{}-{}", b.system, b.arch))
+        : nullptr;
+    if (!entry)
         return std::unexpected(Error{std::format(
-            "--mode self-contained of {} builds a program of the machine over its platform's "
-            "carrier, and {} states none ([platform] carrier = {{ package, section, main }}).",
-            plan.binaryName, plan.platform.display())});
+            "--mode self-contained of {} builds a program of {}-{} over its platform's carrier, and "
+            "{} states none for it ([platform] carrier = {{ package, section, main, hosts }}).",
+            plan.binaryName, b.system, b.arch, plan.platform.display())});
+    auto const& c = *entry;
     std::error_code ec;
     if (c.main.empty() || !fs::is_regular_file(c.main, ec))
         return std::unexpected(Error{std::format(
@@ -3295,13 +3300,14 @@ std::vector<std::string> carried_systems(const Plan& plan) {
 std::expected<std::filesystem::path, Error>
 runner_program(const mcpp::platform::Resolved& platform, const std::filesystem::path& projectRoot,
                std::string_view name, std::string_view arch, bool build) {
-    if (!platform.active || !platform.fields.carrier.set)
+    const std::string system(detail::host_system());
+    if (!platform.active
+        || !mcpp::manifest::platform::carrier_for(platform.fields, std::format("{}-{}", system, arch)))
         return std::unexpected(Error{std::format(
             "the runner `{}` of {} runs on a machine of the artifact's architecture, {}, and its "
-            "program for that architecture is the platform's carrier, which {} does not state "
-            "([platform] carrier = {{ package, section, main }})",
-            name, platform.display(), arch, platform.display())});
-    const std::string system(detail::host_system());
+            "program for that architecture is the platform's carrier, which {} does not state for "
+            "{}-{} ([platform] carrier = {{ package, section, main, hosts }})",
+            name, platform.display(), arch, platform.display(), system, arch)});
     if (auto why = detail::unbuilt_carrier(platform, system, arch, false))
         return std::unexpected(Error{*why});
     const auto program = detail::packed_program(detail::carrier_dir(projectRoot, name, system, arch),

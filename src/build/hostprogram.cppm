@@ -787,6 +787,12 @@ inline bool has_feature(const char* name) {
 // mcpp#241: resolved install dir of a declared dependency (by its package
 // name), or "" if not found. Same sanitize as has_feature; wraps
 // MCPP_DEP_<SANITIZED_NAME>_DIR.
+//
+// #852: a name two visible dependencies answer to (two packages whose
+// manifests both say `rules`) is no package's, and the engine publishes it as
+// MCPP_DEP_AMBIGUOUS_<SANITIZED_NAME> with the qualified names instead. Asking
+// for it ends the program, naming them: the answer otherwise would be one of
+// the two packages' directories or none, and either is a wrong build.
 inline const char* dep_dir(const char* name) {
     char buf[256] = "MCPP_DEP_";
     unsigned long o = 9;
@@ -794,6 +800,16 @@ inline const char* dep_dir(const char* name) {
         char c = *p;
         buf[o] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
                : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
+    }
+    char ambiguous[288] = "MCPP_DEP_AMBIGUOUS_";
+    unsigned long a = 19;
+    for (unsigned long i = 9; i < o && a + 1 < sizeof ambiguous; ++i, ++a) ambiguous[a] = buf[i];
+    ambiguous[a] = 0;
+    if (const char* which = std::getenv(ambiguous)) {
+        std::fprintf(stderr,
+            "build.mcpp: dep_dir(\"%s\") names more than one dependency (%s); ask by one of "
+            "those names\n", name, which);
+        std::exit(2);
     }
     buf[o++] = '_'; buf[o++] = 'D'; buf[o++] = 'I'; buf[o++] = 'R'; buf[o] = 0;
     return env_or(buf);

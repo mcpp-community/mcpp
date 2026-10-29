@@ -1217,7 +1217,12 @@ static std::expected<void, std::string> step1_device_axis_and_layer_merge(Prepar
             c.accelerators.push_back(set.backend);
         return c;
     };
-    state.targetPlatform = mcpp::toolchain::platform::TargetPlatform::for_os(state.cfgCtx().os);
+    // The descriptor blocks the target reads (design 2026-10-29 §5.1): the
+    // row's own, or those the platform states when it was read early (a
+    // platform fetched in the first pass restarts the prepare so that it is).
+    state.targetPlatform = state.platformEarly && state.platformData.descriptorKeys.set
+        ? mcpp::toolchain::platform::TargetPlatform::with_keys(state.platformData.descriptorKeys.value)
+        : mcpp::toolchain::platform::TargetPlatform::for_os(state.cfgCtx().os);
 
     // ── L1: merge conditional [target.'cfg(...)'] sections ───────────────────
     // Evaluated now (target resolved) against the resolved target — the
@@ -1275,12 +1280,29 @@ static std::expected<void, std::string> step1_device_axis_and_layer_merge(Prepar
     // already link with exceptions on, so a host build with the member
     // declared is byte-identical to one without -- the same property
     // `threads` has on PE.
-    const bool abiExceptionsRendered = state.m->buildConfig.abiExceptions
-                                     && state.cfgCtx().os == "emscripten";
+    //
+    // The MODEL (design 2026-10-29 §6): "wasm" is WebAssembly's own exception
+    // handling (`-fwasm-exceptions`: smaller and faster, and it needs Safari
+    // 15.2 / Node 17 or later); "js" and `true` are the JavaScript-based model
+    // `true` has meant since 2026.9.12.3. The flag is in the dialect set, so the
+    // model is part of every cache key.
+    const bool emscripten = state.cfgCtx().os == "emscripten";
+    const bool abiExceptionsRendered = state.m->buildConfig.abiExceptions && emscripten;
     if (abiExceptionsRendered) {
-        state.add_once(state.m->buildConfig.dialectCxxflags, "-fexceptions");
-        state.add_once(state.m->buildConfig.ldflags, "-fexceptions");
-        state.add_once(state.m->buildConfig.graphLdflags, "-fexceptions");
+        const char* flag = state.m->buildConfig.abiExceptionsModel == "wasm"
+            ? "-fwasm-exceptions" : "-fexceptions";
+        state.add_once(state.m->buildConfig.dialectCxxflags, flag);
+        state.add_once(state.m->buildConfig.ldflags, flag);
+        state.add_once(state.m->buildConfig.graphLdflags, flag);
+    }
+    // #851: emcc runs wasm-opt and minifies the JavaScript launcher AT THE
+    // LINK, from the optimisation level the link is given; a link without
+    // one is -O0 whatever the compiles were. The profile's level reaches it.
+    if (emscripten) {
+        const auto& lvl = state.m->buildConfig.optLevel;
+        const std::string opt = "-O" + (lvl.empty() ? std::string("0") : lvl);
+        state.add_once(state.m->buildConfig.ldflags, opt);
+        state.add_once(state.m->buildConfig.graphLdflags, opt);
     }
     // `[build].defines` must reach the scanner (P1689) and the compile edge,
     // and must participate in the fingerprint. Fold before dependency

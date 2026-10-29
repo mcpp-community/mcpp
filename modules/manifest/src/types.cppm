@@ -1128,6 +1128,10 @@ struct BuildConfig : BuildInputs {
     // a statement.
     bool                               abiExceptions = false;
     bool                               abiExceptionsDeclared = false;
+    // The model `exceptions` names on Emscripten (design 2026-10-29 §6):
+    // "wasm" (`-fwasm-exceptions`), "js" (`-fexceptions`), or empty for
+    // `exceptions = true`, which keeps its meaning since 2026.9.12.3: "js".
+    std::string                        abiExceptionsModel;
     std::string                         cStandard;
     // Escape hatch for the hermetic link check: a sandbox toolchain whose
     // CRT/loader resolve OUTSIDE the sandbox is a hard error by default
@@ -1683,6 +1687,7 @@ struct ConditionalConfig {
     // `[target.<sel>.abi] exceptions` -- see BuildConfig::abiExceptions.
     bool                                abiExceptions = false;
     bool                                abiExceptionsDeclared = false;
+    std::string                         abiExceptionsModel;
     // `[target.<sel>.build] dialect_cxxflags` -- a GRAPH-WIDE switch under a
     // target condition (issue #717, design 2026-09-27 §6). Like `abiThreads`/
     // `abiExceptions` above, only the ROOT's value is rendered; unlike them it

@@ -113,6 +113,11 @@ struct Flag {
 struct Runner {
     std::vector<std::string> cmd;
     std::string              host;
+    // The `<os>-<arch>` pairs the runner program exists for (design 2026-10-29
+    // §4.4): where a package that needs it can run. Unset: unknown, and a
+    // package's coverage names no pair through the runner.
+    std::vector<std::string> hosts;
+    bool                     hostsSet = false;
     bool                     exclusive    = false;
     bool                     exclusiveSet = false;
     Origin                   origin;
@@ -166,12 +171,38 @@ struct Link {
 // the section the carried artifact is placed in, and the source of the
 // program's entry, a file of the stating package that runs the artifact it
 // finds between `mcpp_carried_begin` and `mcpp_carried_end`.
+//
+// A platform may state several (an array of such tables), each for the
+// `<os>-<arch>` pairs in its `hosts`; an entry without `hosts` serves every
+// pair (design 2026-10-29 §4.5). `build` names how the carrier program is
+// built: "row" (the default), one program per `<os>-<arch>` over the
+// platform's hosted arrangement. An entry of a model this mcpp does not know
+// is skipped with a warning, so a platform can add one without breaking an
+// older mcpp.
 struct Carrier {
     PackageRef  package;
     std::string section;
     std::string main;     // absolute
+    std::vector<std::string> hosts;
+    std::string build = "row";
     Origin      origin;
     bool        set = false;
+};
+
+// The `<os>-<arch>` vocabulary of `runner.hosts`, `carrier.hosts` and a
+// package's coverage: a system mcpp builds programs for, and an architecture.
+inline bool is_host_pair(std::string_view s) {
+    const auto dash = s.find('-');
+    if (dash == std::string_view::npos || dash + 1 == s.size()) return false;
+    const auto os = s.substr(0, dash);
+    return (os == "linux" || os == "macos" || os == "windows")
+        && s.find('-', dash + 1) == std::string_view::npos;
+}
+
+// The keys of a descriptor's per-platform blocks that `descriptor_keys` may
+// name (the xpkg vocabulary, `macosx` for macOS).
+inline constexpr std::string_view kDescriptorKeys[] = {
+    "linux", "macosx", "windows", "android", "ios", "emscripten", "openkal", "none",
 };
 
 struct LayerEntry {
@@ -205,7 +236,11 @@ struct Statement {
     std::vector<std::string>      sysrootProvides;
     Runner                        runner;
     std::map<std::string, Words>  runners;
-    Carrier                       carrier;
+    // Every carrier entry, in the order stated; `carrier_for` picks one.
+    std::vector<Carrier>          carriers;
+    // The descriptor blocks the platform's targets read, in order (design
+    // 2026-10-29 §5.1); unset: the rows' own.
+    Words                         descriptorKeys;
     Text                          plugin;
     // `universal = true`: `mcpp pack` of any of the targets packs all of them
     // into one package (SPEC-014 §3).
@@ -227,7 +262,7 @@ struct Statement {
 
     bool empty() const {
         return !targets.set && !toolchain.set && !sysroot.set && !runner.set
-            && runners.empty() && !carrier.set && !plugin.set && !universal.set && layers.empty()
+            && runners.empty() && carriers.empty() && !descriptorKeys.set && !plugin.set && !universal.set && layers.empty()
             && tools.empty() && build.empty() && buildCfg.empty()
             && !link.driver.set && !link.flags.set && !link.start.set && !link.script.set
             && !link.inputsSet && !link.exe.set && !link.shared.set && !link.sealSet
@@ -260,7 +295,7 @@ constexpr bool is_layer(std::string_view k) {
 // list per table, read by the parser's unknown-key sweep and by the tests.
 inline constexpr std::string_view kPlatformKeys[] = {
     "targets", "toolchain", "sysroot", "runner", "runners", "carrier", "plugin",
-    "universal", "layers", "tools", "build", "link", "versions", "hosted",
+    "universal", "descriptor_keys", "layers", "tools", "build", "link", "versions", "hosted",
 };
 inline constexpr std::string_view kBuildKeys[] = { "cflags", "cxxflags", "asmflags", "ldflags" };
 inline constexpr std::string_view kLinkKeys[] = {
@@ -274,6 +309,17 @@ inline constexpr std::string_view kHostedKeys[] = { "targets", "toolchain", "lay
 inline constexpr std::string_view kOverrideKeys[] = {
     "platform", "layers", "tools", "carrier", "link",
 };
+
+// The carrier entry of `s` that serves `pair` (`<os>-<arch>`): the first whose
+// `hosts` names it, else the first without `hosts`. Null when none does.
+inline const Carrier* carrier_for(const Statement& s, std::string_view pair) {
+    const Carrier* open = nullptr;
+    for (auto const& c : s.carriers) {
+        if (c.hosts.empty()) { if (!open) open = &c; continue; }
+        if (std::ranges::find(c.hosts, pair) != c.hosts.end()) return &c;
+    }
+    return open;
+}
 
 // `"[<namespace>.]<name>@<version>"` -> the ref; the error names what is
 // missing. `none` is not a ref; callers test for it first.
@@ -327,7 +373,8 @@ inline std::string identity(const Override& o) {
     for (auto const& [k, e] : f.layers) add(e.origin);
     for (auto const& [k, e] : f.tools) add(e.origin);
     for (auto const& [k, w] : f.runners) add(w.origin);
-    if (f.carrier.set) add(f.carrier.origin);
+    for (auto const& c : f.carriers) add(c.origin);
+    if (f.descriptorKeys.set) add(f.descriptorKeys.origin);
     if (f.runner.set) add(f.runner.origin);
     for (auto const* t : { &f.link.driver, &f.link.start, &f.link.script, &f.link.exe, &f.link.shared })
         if (t->set) add(t->origin);

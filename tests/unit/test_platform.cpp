@@ -89,9 +89,9 @@ TEST(PlatformManifest, EveryGroupIsRead) {
     EXPECT_EQ(p.toolchain.value, "llvm@23.1.3");
     EXPECT_EQ(p.runner.cmd, (std::vector<std::string>{"okrun", "{}"}));
     EXPECT_EQ(p.runner.host, "same-arch");
-    EXPECT_EQ(p.carrier.package.spec.shortName, "openkal-run");
-    EXPECT_EQ(p.carrier.section, ".oke");
-    EXPECT_TRUE(p.carrier.main.ends_with("carrier/main.cpp"));
+    EXPECT_EQ(p.carriers.at(0).package.spec.shortName, "openkal-run");
+    EXPECT_EQ(p.carriers.at(0).section, ".oke");
+    EXPECT_TRUE(p.carriers.at(0).main.ends_with("carrier/main.cpp"));
     ASSERT_TRUE(p.layers.contains("c++-abi"));
     EXPECT_EQ(p.layers.at("c++-abi").ref.spec.version, "0.16.3");
     EXPECT_EQ(p.layers.at("c-abi").ref.spec.shortName, "openkal-musl");
@@ -486,4 +486,76 @@ TEST(PlatformReport, SourcesAndJson) {
     EXPECT_NE(json.find("\"source\":\"built-in\""), std::string::npos);
     EXPECT_NE(json.find("\"layers.c++-abi\""), std::string::npos);
     EXPECT_EQ(pf::to_json(pf::Resolved{}), "null");
+}
+
+// ── Runner hosts, carrier entries, descriptor keys (design 2026-10-29) ──────
+
+TEST(PlatformManifest, RunnerHostsCarrierEntriesAndDescriptorKeysAreRead) {
+    auto m = parse(R"(
+[package]
+name = "p"
+version = "1.0.0"
+
+[platform]
+targets = ["x86_64-openkal"]
+runner  = { cmd = ["okrun", "{}"], host = "same-arch", hosts = ["linux-x86_64", "macos-aarch64"] }
+carrier = [
+  { package = "openkal-run@0.1.3", section = ".oke", main = "carrier/main.cpp", hosts = ["linux-x86_64"] },
+  { package = "openkal-run@0.1.3", section = ".oke", main = "carrier/main.cpp" },
+  { package = "openkal-cosmo@0.1.0", section = ".oke", main = "carrier/ape.cpp", build = "ape" },
+]
+descriptor_keys = ["openkal", "linux"]
+)");
+    auto const& p = m.platform;
+    EXPECT_TRUE(p.runner.hostsSet);
+    EXPECT_EQ(p.runner.hosts, (std::vector<std::string>{"linux-x86_64", "macos-aarch64"}));
+    // The entry of a model this mcpp does not build is skipped, not refused.
+    ASSERT_EQ(p.carriers.size(), 2u);
+    EXPECT_EQ(p.carriers[0].hosts, (std::vector<std::string>{"linux-x86_64"}));
+    EXPECT_EQ(p.carriers[0].build, "row");
+    EXPECT_EQ(p.descriptorKeys.value, (std::vector<std::string>{"openkal", "linux"}));
+    // The entry naming the pair serves it; another pair takes the open entry.
+    EXPECT_EQ(mp::carrier_for(p, "linux-x86_64"), &p.carriers[0]);
+    EXPECT_EQ(mp::carrier_for(p, "windows-x86_64"), &p.carriers[1]);
+}
+
+TEST(PlatformManifest, ACarrierWithoutHostsServesEveryPairAndNoneServesNothing) {
+    auto m = parse(kPlatform);
+    EXPECT_EQ(mp::carrier_for(m.platform, "macos-aarch64"), &m.platform.carriers.at(0));
+    mp::Statement none;
+    EXPECT_EQ(mp::carrier_for(none, "linux-x86_64"), nullptr);
+}
+
+TEST(PlatformManifest, HostPairsAndDescriptorKeysAreAClosedVocabulary) {
+    const auto base = std::string(R"(
+[package]
+name = "p"
+version = "1.0.0"
+[platform]
+targets = ["x86_64-openkal"]
+)");
+    EXPECT_NE(parse_error(base + R"(runner = { cmd = ["okrun"], hosts = ["linux"] })" "\n"), "");
+    EXPECT_NE(parse_error(base + R"(runner = { cmd = ["okrun"], hosts = ["freebsd-x86_64"] })" "\n"), "");
+    EXPECT_NE(parse_error(base + R"(descriptor_keys = ["macos"])" "\n").find("macosx"), std::string::npos);
+    EXPECT_NE(parse_error(base + R"(descriptor_keys = [])" "\n"), "");
+    EXPECT_EQ(parse_error(base + R"(descriptor_keys = ["openkal", "linux"])" "\n"), "");
+}
+
+TEST(PlatformMerge, AnOverrideReplacesHostsCarriersAndDescriptorKeys) {
+    auto m = parse(kPlatform);
+    mp::Statement over;
+    over.runner.hosts = {"windows-x86_64"};
+    over.runner.hostsSet = true;
+    over.descriptorKeys = mp::Words{{"openkal"}, {}, true};
+    mp::Carrier c;
+    c.section = ".x";
+    c.set = true;
+    over.carriers = {c};
+    auto merged = m.platform;
+    pf::merge(merged, over);
+    EXPECT_EQ(merged.runner.hosts, (std::vector<std::string>{"windows-x86_64"}));
+    EXPECT_EQ(merged.runner.cmd, m.platform.runner.cmd);
+    ASSERT_EQ(merged.carriers.size(), 1u);
+    EXPECT_EQ(merged.carriers[0].section, ".x");
+    EXPECT_EQ(merged.descriptorKeys.value, (std::vector<std::string>{"openkal"}));
 }

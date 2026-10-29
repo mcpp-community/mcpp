@@ -1,6 +1,6 @@
 ---
 subject: platform
-status: review
+status: active
 ---
 
 # 生态设计：目标集合与腿、打包模型 rev、运行覆盖、不回落、外部构建接入、mcppls 单包与编辑器
@@ -41,7 +41,7 @@ mcppls S4；新增 SPEC-015（目标集合与腿）。
 - **运行覆盖。** 打包时计算一次 `runs_on`，分发条目、启动器、合并、摘要与 CI 都读它；单文件定义为"最少的载体覆盖腿 × 系统"，
   APE 载体到来时命令不变。
 - **不回落。** 名字只解析到它确切指代的东西；显式声明的别名与展开不是回落；改变行为的地方逐条写出。
-- **外部构建接入。** 引擎在计划阶段写出目标的编译、链接、宿主三段契约；mcpp-plugins 的 `deps-cmake` 读它；静态库经 `link_flag`
+- **外部构建接入。** 引擎为每个配置写出编译、链接两段契约（宿主工具在宿主图构建）；mcpp-plugins 的 `deps-cmake` 读它；静态库经 `link_flag`
   进入 mcpp 的链接与映像收尾。clangd 因此可以成为 ok 映像，mcppls 收敛为一个包。
 - **编辑器。** VS Code 扩展的界面与交互以 mcpp-vscode 0.9.0 为准，一致性定义在渲染结果上；数据经 mcpp-ide 后端的逐视图适配层
   获得；0.9.0 的页面成为 VS Code 与 CLion 共用的组件库。
@@ -302,43 +302,54 @@ mcppls S4；新增 SPEC-015（目标集合与腿）。
 - profile 的优化级别进入 emcc 的**链接**（wasm-opt 在链接时运行）。issue 实测：hello world 的 wasm 367 420 → 312 657 B，JS 65 920 →
   13 137 B。
 - `[target.<sel>.abi] exceptions` 增加取值 `"wasm"`（`-fwasm-exceptions`）与 `"js"`；`true` 保留原义（JS 模型，2026.9.12.3 起，
-  docs/22:1281），并在 `mcpp why compat` 中建议 `"wasm"`。异常模型进入指纹；构建报告写出实际的模型。wasm 异常的运行环境要求
-  （Safari ≥ 15.2、Node ≥ 17）写入文档。`mcpp new` 的 emscripten 模板写 `"wasm"`。
+  docs/22:1281）。`true` 不是弃用的写法，所以不进 `mcpp why compat` 的弃用表；文档建议新项目写 `"wasm"`。标志在方言标志集中，
+  模型因此进入每个缓存键。wasm 异常的运行环境要求（Safari ≥ 15.2、Node ≥ 17）写入文档。依赖的 `requires_abi` 仍是布尔：
+  依赖要求的是"有异常"，模型由根决定。
 - 栈与堆：文档给出 `ldflags = ["-sALLOW_MEMORY_GROWTH=1", "-sSTACK_SIZE=1048576"]` 的配方，不增加核心键。
 
 ## 7. 程序的启动（#857）
 
-openkal-linux 0.18.2 的启动（`src/process.cpp:684–712`）：`openat(base, name, O_PATH | O_CLOEXEC)`，再
-`execveat(exe, "", AT_EMPTY_PATH)`；ENOENT 且绝对名可得（`named`，来自 `/proc/self/fd` 的 readlink）且与 `exe` 是同一文件
-（`same_file`）时改用 `execve(绝对名)`；仍 ENOENT 时清除 CLOEXEC 再试；ENOSYS 且 `named` 时 `execve`。所以 run-as 下的 ENOENT 只能
-来自：`openat` 本身、`named` 或 `same_file` 为假（readlink 或 `newfstatat` 被拒）、或 `execve` 本身。
+**实测（probe PR #861，run 40908273317，Android 14 x86_64 模拟器，`run-as com.termux`，SELinux `runas_app`，静态 strace）。**
+逐步直接调用 openkal-linux 0.18.2 启动程序的每一步——`openat(O_PATH)`、readlink `/proc/self/fd`、`fstatat`、
+`execveat(AT_EMPTY_PATH)`、`execve`——对发布包内的 `xlings`、`mcpp` 与 app 自己写的静态程序全部成功（run 40904947962）。
+失败的 `mcpp build` 在 strace 下只有一个失败的调用，而且发生在任何子进程创建之前：
 
-- **probe 前置且是决定性的**：模拟器 job 中，一个静态程序在 `run-as com.termux` 下走真实路径的每一步（`openat O_PATH`、readlink
-  `/proc/self/fd/N`、`newfstatat`、`execveat AT_EMPTY_PATH`、`execve`），记录每步的 errno 与 `logcat -b events` 的 avc。修复按测得的那
-  一步设计。
-- **不变的约束**：任何改用 `execve` 的重试都保留 `same_file` 守卫（`execve` 按名重新解析，rename、符号链接、命名空间、
-  `(deleted)` 后缀都可能启动另一个文件）；守卫不成立时报告 `execveat` 的 errno。
-- **绝对名的来源**：调用方以路径给出程序时，绝对名由调用方的路径直接得到，不经 `/proc` 的 readlink（预计这正是 run-as 下 `named`
-  为假的原因，待 probe 确认）。
-- **管道协议**：子进程由 `clone(SIGCHLD)` 创建，不共享地址空间，无法设置父进程的状态。管道改为带标签的消息：子进程在改用
-  `execve` 之前写"已改用"，失败时写 errno；父进程据此记住此后直接用 `execve`。`:347` 的注释改为与实现一致。
-- 级联见 §12。
+```
+openat(AT_FDCWD, "/", O_RDONLY|O_CLOEXEC|O_DIRECTORY) = -1 EACCES (Permission denied)
+```
+
+app 的 SELinux 域不允许**读** `/`。openkal-linux 以只读方式打开预开放目录（`.` 与 `/`）与每个 `kal_dir`，根目录的句柄因此
+不存在，以绝对名启动的每个程序在根下解析名字时失败，报告为"找不到"。#857 与 `execveat` 无关；rev 1、rev 2 的推测均被实测否定。
+
+**修复（openkal-linux 0.18.3）。** 目录句柄只用于命名：在其下解析名字（`*at`）、在其中启动程序（`fchdir`）、描述它
+（`fstat`、`fstatfs`），都不读目录。句柄改以 `O_PATH | O_DIRECTORY | O_CLOEXEC` 打开，不要求读权限；列举目录时
+`kal_fs_list_begin` 本就经句柄另开一个可读的描述符，读权限只在列举时需要。新测试 `tests/search_only_base.cpp` 以
+0111 权限的目录复现同一情形（可搜索不可读的目录作为基准目录：打开其中的文件、在其中启动程序成功；列举被拒绝）。
+
+`process.cpp` 中"首次 ENOSYS 之后改用 execve"的注释与实现不符（子进程由 `clone` 复制、不共享内存，所学不传回父进程）：
+改为如实陈述——每次遇到 ENOSYS 的启动在子进程中各自回退，代价是每次多一个被拒绝的系统调用。rev 2 设想的带标签管道协议
+因此不需要。
+
+级联见 §12。
 
 ## 8. 外部构建系统接入
 
 ### 8.1 核心：计划阶段写出契约文件
 
-- 引擎在计划阶段为每条腿写出 `${mcpp.contract}`（与 `${mcpp.compile_db}` 同一机制，供 SPEC-007 动作读取），三段：
-  - **编译**：每种语言的编译器程序、参数、包含目录（含目标侧包与层的头文件）、宏。
-  - **链接**：链接驱动、参数、目标侧的库（供 CMake 的 try-compile；或由插件设 `CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY`）。
-  - **宿主**：宿主图的编译器与参数，供需要宿主工具的项目（LLVM 的 `llvm-tblgen`、`clang-tblgen`）。
-- 动作在构建中读这个文件，不嵌套调用 mcpp（`self env --target` 会走完整的 `prepare_build`、取构建目录锁，嵌套会与父构建争锁）。
+- 引擎为每个配置写出 `mcpp-contract.json`（与配置的编译数据库同目录、同时写出），构建程序的动作以 `${mcpp.contract}` 引用它：
+  - **编译**：C、C++、汇编各自的编译器程序与参数——构建中每个单元都带的词（目标、sysroot、目标侧的头文件、平台与 profile 的
+    标志）。包自己的包含目录不在其中：外部构建写它自己的。
+  - **链接**：链接驱动、参数、归档工具（供 CMake 的 try-compile；或由插件设 `CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY`）。
+- **宿主工具**（LLVM 的 `llvm-tblgen`、`clang-tblgen`）在宿主图中构建：一个包把它作为 `[build-dependencies]` 的工具引用，工具包
+  的构建在宿主图的配置里，读的是那个配置自己的契约。契约因此只有本配置的两段，没有"宿主段"。
+- 动作在 ninja 运行中读这个文件，不嵌套调用 mcpp（`self env --target` 会走完整的 `prepare_build`、取构建目录锁，嵌套会与父构建
+  争锁）。
 - 核心不认识任何构建系统。
 
 ### 8.2 插件：扩展 mcpp-plugins 的 `deps-cmake`
 
-- `deps-cmake`（`deps/cmake.cppm:380–559`）读契约生成 toolchain 文件：平台标志与层的头文件（今天只传编译器路径）、链接段、宿主段
-  （宿主工具先为宿主构建）；缓存键 `toolset_identity` 加入契约的摘要。
+- `deps-cmake`（`deps/cmake.cppm:380–559`）读契约生成 toolchain 文件：平台标志与层的头文件（今天只传编译器路径）与链接段；
+  宿主工具由宿主图中的工具包提供（§8.1）；缓存键 `toolset_identity` 加入契约的摘要。
 - 产出的静态库在 `build.mcpp` 中经 `mcpp::link_flag` 给出（先例：`deps/deps.cppm:156–180`；`ldflags` 不展开 `${mcpp.out_dir}`）；一个
   `bin` 目标链接它们，mcpp 完成链接与平台的收尾（`okld note`、`okld check`、封装）。
 - openkal-musl 的 `features.h` 在 C++ 模式下对 `restrict` 的处理需要 `-Drestrict=restrict` 才能编过 LLVM（手工实验所得）：在
@@ -454,8 +465,8 @@ mcppls-clangd 的 draft PR（分支 `probe/clangd-openkal-image`），LLVM 源�
 
 | 步 | 仓库 | 内容 |
 |---|---|---|
-| 0 | openkal-linux（probe） | #857 的逐步 probe（§7），决定修复 |
-| 1 | openkal-linux | #857 的修复、管道协议 |
+| 0 | mcpp（probe PR #861） | #857 的逐步 probe 与 strace（§7） |
+| 1 | openkal-linux 0.18.3 | 目录句柄以 `O_PATH` 打开；注释改正 |
 | 2 | openkal-musl | 钉 openkal-linux（`mcpp.toml:181`）；`restrict` 修复（§8.2） |
 | 3 | openkal-llvm-runtime | 钉 openkal-musl |
 | 4 | xim-pkgindex | 以上的索引条目（openkal-image 与 mcpplibs.os 的 CI 之前） |
@@ -541,7 +552,7 @@ mcppls-clangd 的 draft PR（分支 `probe/clangd-openkal-image`），LLVM 源�
 | `test --archive/--from` 命名、okb、假绿 | §3.4：`--no-run --archive` 写、`--archive` 读、引擎 tar、无测试运行即失败 |
 | `exceptions = true` 改义的风险 | §6：保留原义，新增取值 |
 | `[pack] mode`、`[build] target` 的集合、`--systems` 的粒度、`run` 的选腿、工作空间、库目标 | §4.1、§3.1、§3.2、§4.2 |
-| #857：代码已有带守卫的 ENOENT 重试；`clone` 不共享状态；`execve` 不等价 | §7 重写：probe 前置并决定修复、守卫保留、绝对名来源、带标签的管道协议 |
+| #857：代码已有带守卫的 ENOENT 重试；`clone` 不共享状态；`execve` 不等价 | §7：probe 前置；strace 测得真因（根目录句柄的读权限），修复为目录句柄改用 `O_PATH` |
 | `self env` 会构建、取锁；`ldflags` 不展开输出目录；缺链接与宿主契约；已有 `deps-cmake` | §8 重写 |
 | 0.9.0 没有数据接缝；webview 是 VS Code 专用；三道门不现实 | §10.1、§10.2 重写：一致性定义在结果上、逐视图适配层、HTML 生成移入页面、门的重定义 |
 | kit 的"默认行为不变"不成立；按目标选 kit 是新代码 | §9.2：如实写出离线语义；S4 修订与要改的文件 |
@@ -560,8 +571,8 @@ mcppls-clangd 的 draft PR（分支 `probe/clangd-openkal-image`），LLVM 源�
 9. `--pkg-format` 列表的规则（§4.6）。
 10. 描述符键表的每一行，尤其 emscripten 的 `emscripten, linux` 与 openkal 先实测（§5.1）。
 11. `exceptions` 保留 `true` 的原义、新增 `"wasm"`（§6）。
-12. #857：probe 决定修复，守卫保留，带标签的管道协议（§7）。
-13. 契约文件三段 + 扩展 `deps-cmake`（§8）。
+12. #857：实测为根目录句柄的读权限；目录句柄改用 `O_PATH`（§7）。
+13. 契约文件两段（编译、链接；宿主工具在宿主图构建）+ 扩展 `deps-cmake`（§8）。
 14. kit 的离线语义（§9.2）。
 15. VS Code 的一致性定义、逐视图适配层、HTML 生成移入页面、三道门（§10.1、§10.2）。
 16. 交付顺序与平台、mcpp 同轮发布（§12）。

@@ -25,3 +25,26 @@ TEST(PlatformAxis, TwoKeysCompareByValue) {
     auto b = mcpp::toolchain::platform::HostPlatform::current();
     EXPECT_TRUE(a == b);
 }
+
+TEST(PlatformAxis, ATargetReadsItsRowsBlocksAndNeverTheHosts) {
+    // Design 2026-10-29 §5.1. Before 2026.10.30.1 a token naming none of the
+    // three fell back to the HOST's block (#851).
+    using mcpp::toolchain::platform::TargetPlatform;
+    auto keys = [](std::string_view os) {
+        auto t = TargetPlatform::for_os(os);
+        return std::vector<std::string>(t.keys().begin(), t.keys().end());
+    };
+    EXPECT_EQ(keys("linux"),      (std::vector<std::string>{"linux"}));
+    EXPECT_EQ(keys("macos"),      (std::vector<std::string>{"macosx"}));
+    EXPECT_EQ(keys("windows"),    (std::vector<std::string>{"windows"}));
+    EXPECT_EQ(keys("emscripten"), (std::vector<std::string>{"emscripten", "linux"}));
+    EXPECT_EQ(keys("ios"),        (std::vector<std::string>{"ios", "macosx"}));
+    EXPECT_EQ(keys("openkal"),    (std::vector<std::string>{"openkal", "linux"}));
+    EXPECT_EQ(keys("none"),       (std::vector<std::string>{"none"}));
+    // The primary key is the one messages name.
+    EXPECT_EQ(TargetPlatform::for_os("emscripten").key(), "emscripten");
+    // A platform's own keys replace the row's.
+    auto stated = TargetPlatform::with_keys({"openkal"});
+    EXPECT_EQ(stated.key(), "openkal");
+    EXPECT_FALSE(stated == TargetPlatform::for_os("openkal"));
+}

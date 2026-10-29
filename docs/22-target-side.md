@@ -1278,12 +1278,19 @@ package needs.
 | Member | Type | Renders as | Reaches |
 |---|---|---|---|
 | `threads` | boolean | `-pthread` on a target that is neither PE nor freestanding; nothing on PE and on freestanding targets | the standard library module prebuild, the dependency scan, every C and C++ translation unit of every package, and the link |
-| `exceptions` *(mcpp 2026.9.12.3+)* | boolean | `-fexceptions`, on `os = "emscripten"` only, on the compile line through the dialect flags and on the link; nothing on every other target, where exceptions are already the default | the same set `threads` reaches |
+| `exceptions` *(mcpp 2026.9.12.3+)* | boolean, or `"wasm"` / `"js"` *(2026.10.30.1+)* | on `os = "emscripten"` only, on the compile line through the dialect flags and on the link: `"wasm"` is `-fwasm-exceptions`, WebAssembly's own exception handling; `"js"` and `true` are `-fexceptions`, the JavaScript-based model. Nothing on every other target, where exceptions are already the default | the same set `threads` reaches |
 
 Both members enter the dependency cache key through the dialect flags, so a
-dependency built without one is never reused by a build with it. An unknown
-member, and a member that is not a boolean, are refused naming both `threads`
-and `exceptions`.
+dependency built without one is never reused by a build with it, and one built
+with one exception model is never reused by a build with the other. An unknown
+member, and a value outside the table, are refused naming the values.
+
+**`"wasm"` is the model to choose for a new program.** Its code is smaller and
+faster than the JavaScript model's, and it needs a host with WebAssembly
+exception handling: Safari 15.2, Firefox 100, Chrome 95, Node 17 or later.
+`true` keeps the meaning it has had since 2026.9.12.3, the JavaScript model. A
+dependency's `requires_abi = { exceptions = true }` asks for exceptions and not
+for a model; the root's choice serves it.
 
 **Without `exceptions`, the observed failure is at run time, not at link.** A
 Web program that throws across an `import std` boundary builds and links with

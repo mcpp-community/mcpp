@@ -4580,6 +4580,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     stage("compute-flags");
     auto cdb = write_compile_commands(plan, flags);
     stage("compile-commands");
+    if (auto c = write_build_contract(plan, flags); !c)
+        return std::unexpected(BuildError{c.error(), contract_path(plan)});
     if (!cdb) {
         if (opts.requireCompileDatabase) {
             return std::unexpected(BuildError{

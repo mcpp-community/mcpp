@@ -94,7 +94,7 @@ Records that declare one. Everything else is listed by date below.
 ### platform
 
 - [另一架构的 ok 映像的运行、测试与打包，以及 ok 映像与 Web 的关系（2026.10.29.1）](2026-10-29-openkal-run-test-pack-design.md) — active
-- [生态设计：目标集合与腿、打包模型 rev、运行覆盖、不回落、外部构建接入、mcppls 单包与编辑器](2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md) — review
+- [生态设计：目标集合与腿、打包模型 rev、运行覆盖、不回落、外部构建接入、mcppls 单包与编辑器](2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md) — active
 - [平台 part 2：打包与分发——三维模型、通用包、单文件、okb、体积，以及 openkal 0.17.2 轮](2026-10-28-platforms-part2-packaging-and-distribution-design.md) — landed
 - [平台：目标体系的通用扩展；openkal 作为第一个平台包；IDE 一线与 mcppls 的同批升级](2026-10-28-platforms-design.md) — landed
 
@@ -152,7 +152,7 @@ Records that declare one. Everything else is listed by date below.
 ### 2026-10
 
 - [另一架构的 ok 映像的运行、测试与打包，以及 ok 映像与 Web 的关系（2026.10.29.1）](2026-10-29-openkal-run-test-pack-design.md) — active
-- [生态设计：目标集合与腿、打包模型 rev、运行覆盖、不回落、外部构建接入、mcppls 单包与编辑器](2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md) — review
+- [生态设计：目标集合与腿、打包模型 rev、运行覆盖、不回落、外部构建接入、mcppls 单包与编辑器](2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md) — active
 - [平台 part 2：打包与分发——三维模型、通用包、单文件、okb、体积，以及 openkal 0.17.2 轮](2026-10-28-platforms-part2-packaging-and-distribution-design.md) — landed
 - [平台：目标体系的通用扩展；openkal 作为第一个平台包；IDE 一线与 mcppls 的同批升级](2026-10-28-platforms-design.md) — landed
 - [生态设计 part 2：openkal 的最小原子与二进制映像、其上的 `mcpplibs.os`，以及 part 1 的收尾与回归记录](2026-10-26-ecosystem-part2-os-library-over-openkal-design.md) — active

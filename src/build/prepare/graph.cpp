@@ -2116,23 +2116,38 @@ step4b_define_provisioning_closures(PrepareState& state) {
             if (auto note = prov::contest_note(tail, b); !note.empty())
                 mcpp::diag::warning("provisions/ambiguous", note);
         }
+        // Every spelling of `publishedNamesFor`: the manifest's name, the
+        // qualified name a manifest writing `namespace = "ns"` and
+        // `name = "fw"` is addressed by (#642: the framework's rule asks
+        // `dep_linkage("huxerui.huxerui")`), and the bound tail. A spelling two
+        // providers share (#852: `openmui.rules` and `gongfu.rules` are both
+        // `rules` by their manifests' names) is no package's: it is published
+        // as ambiguous, with the qualified names that do work.
+        std::map<std::string, std::vector<std::size_t>> byName;
         for (auto const& pr : state.provisionGraph.visible[consumer]) {
-            if (pr.kind != prov::Kind::DepDir) continue;
-            if (pr.provider >= state.packages.size()) continue;
-            auto const& depPkg = state.packages[pr.provider];
-            auto const& canon  = depPkg.manifest.package.name;
-            const std::string* form = nullptr;
-            if (linkForms)
-                if (auto f = linkForms->find(pr.provider); f != linkForms->end())
-                    form = &f->second;
-            // Every spelling of `publishedNamesFor`: the manifest's name, the
-            // qualified name a manifest writing `namespace = "ns"` and
-            // `name = "fw"` is addressed by (#642: the framework's rule asks
-            // `dep_linkage("huxerui.huxerui")`), and the bound tail.
+            if (pr.kind != prov::Kind::DepDir || pr.provider >= state.packages.size()) continue;
             for (auto const& n : state.publishedNamesFor(pr.provider, bind)) {
-                e.depDirs.emplace_back(n, depPkg.root);
-                if (form) e.depLinkages.emplace_back(n, *form);
+                auto& who = byName[n];
+                if (std::ranges::find(who, pr.provider) == who.end()) who.push_back(pr.provider);
             }
+        }
+        for (auto const& [n, who] : byName) {
+            if (who.size() > 1) {
+                std::string which;
+                for (auto p : who) {
+                    auto const& pk = state.packages[p].manifest.package;
+                    const bool qualified = pk.namespace_.empty() || pk.name.starts_with(pk.namespace_ + ".");
+                    which += (which.empty() ? "" : ",")
+                        + (qualified ? pk.name : pk.namespace_ + "." + pk.name);
+                }
+                e.depAmbiguous.emplace_back(n, std::move(which));
+                continue;
+            }
+            const auto provider = who.front();
+            e.depDirs.emplace_back(n, state.packages[provider].root);
+            if (linkForms)
+                if (auto f = linkForms->find(provider); f != linkForms->end())
+                    e.depLinkages.emplace_back(n, f->second);
         }
     };
 

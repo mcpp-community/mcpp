@@ -1074,11 +1074,15 @@ WebAssembly 上，每个目标文件、预编译的标准库模块与链接必�
 | 成员 | 类型 | 渲染为 | 到达 |
 |---|---|---|---|
 | `threads` | 布尔 | 在既非 PE 也非 freestanding 的目标上为 `-pthread`；在 PE 与 freestanding 目标上不产生任何 flag | 标准库模块的预构建、依赖扫描、所有包的每个 C 与 C++ 翻译单元，以及链接 |
-| `exceptions` *(mcpp 2026.9.12.3+)* | 布尔 | `-fexceptions`，只在 `os = "emscripten"` 上，经方言 flag 进入编译行，也进入链接行；在其余每个目标上什么都不产生，因为那里异常本来就是默认开启的 | 与 `threads` 相同的那一套 |
+| `exceptions` *(mcpp 2026.9.12.3+)* | 布尔，或 `"wasm"` / `"js"` *(2026.10.30.1+)* | 只在 `os = "emscripten"` 上，经方言 flag 进入编译行，也进入链接行：`"wasm"` 为 `-fwasm-exceptions`，即 WebAssembly 自身的异常处理；`"js"` 与 `true` 为 `-fexceptions`，即基于 JavaScript 的模型。在其余每个目标上什么都不产生，因为那里异常本来就是默认开启的 | 与 `threads` 相同的那一套 |
 
 两个成员都经由方言 flag 进入依赖缓存键，因此没有启用某个成员的构建，不会
-被启用它的构建复用。未知成员，以及不是布尔值的成员，都会被拒绝，并同时
-列出 `threads` 与 `exceptions`。
+被启用它的构建复用，以一种异常模型构建的依赖也不会被另一种模型的构建复用。
+未知成员，以及表外的取值，都会被拒绝，并列出可取的值。
+
+**新程序应选 `"wasm"`。** 它的代码比 JavaScript 模型更小、更快，要求宿主支持 WebAssembly 异常处理：Safari 15.2、
+Firefox 100、Chrome 95、Node 17 及以上。`true` 保持自 2026.9.12.3 起的含义，即 JavaScript 模型。依赖的
+`requires_abi = { exceptions = true }` 要求的是"有异常"而不是某种模型，由根的选择满足。
 
 **没有 `exceptions`，观察到的失败在运行时，不在链接时。** 一个跨
 `import std` 边界抛出异常的 Web 程序能正常编译并链接——Emscripten 的

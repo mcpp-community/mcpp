@@ -1093,7 +1093,8 @@ export std::string root_position_key(
     auto const& b = m.buildConfig;
     auto dialect = b.dialectCxxflags;
     auto abiThreads = b.abiThreadsDeclared ? (b.abiThreads ? "1" : "0") : "-";
-    auto abiExceptions = b.abiExceptionsDeclared ? (b.abiExceptions ? "1" : "0") : "-";
+    std::string abiExceptions = b.abiExceptionsDeclared
+        ? (b.abiExceptions ? "1" + b.abiExceptionsModel : "0") : "-";
     if (applies)
         for (auto const& cc : m.conditionalConfigs) {
             if (cc.dialectCxxflags.empty() && !cc.abiThreadsDeclared && !cc.abiExceptionsDeclared)
@@ -1101,7 +1102,7 @@ export std::string root_position_key(
             if (!applies(cc.predicate)) continue;
             dialect.insert(dialect.end(), cc.dialectCxxflags.begin(), cc.dialectCxxflags.end());
             if (cc.abiThreadsDeclared) abiThreads = cc.abiThreads ? "1" : "0";
-            if (cc.abiExceptionsDeclared) abiExceptions = cc.abiExceptions ? "1" : "0";
+            if (cc.abiExceptionsDeclared) abiExceptions = cc.abiExceptions ? "1" + cc.abiExceptionsModel : "0";
         }
     list("dialect_cxxflags", dialect);
     field("cxx_runtime", b.cxxRuntime);
@@ -1193,6 +1194,7 @@ virtual_workspace_root(const mcpp::manifest::Manifest& workspace,
     b.abiThreads = f.abiThreads;
     b.abiThreadsDeclared = f.abiThreadsDeclared;
     b.abiExceptions = f.abiExceptions;
+    b.abiExceptionsModel = f.abiExceptionsModel;
     b.abiExceptionsDeclared = f.abiExceptionsDeclared;
     b.allowHostLibs = f.allowHostLibs;
     b.macosDeploymentTarget = f.macosDeploymentTarget;
@@ -1216,6 +1218,7 @@ virtual_workspace_root(const mcpp::manifest::Manifest& workspace,
         row.abiThreads = cc.abiThreads;
         row.abiThreadsDeclared = cc.abiThreadsDeclared;
         row.abiExceptions = cc.abiExceptions;
+        row.abiExceptionsModel = cc.abiExceptionsModel;
         row.abiExceptionsDeclared = cc.abiExceptionsDeclared;
         v.conditionalConfigs.push_back(std::move(row));
     }

@@ -273,6 +273,15 @@ inline constexpr std::string_view kKnownXpkgKeys[] = {
     "linux", "macosx", "modules", "provides", "requires", "runtime",
     "scan_overrides",
     "schema", "sources", "target_cfg", "targets", "windows",
+    // The per-platform blocks of the rows that read their own (design
+    // 2026-10-29 §5.1): the Web, Apple's phones, ok images, bare metal.
+    "android", "emscripten", "ios", "openkal", "none",
+};
+
+// The keys of a segment's per-platform blocks: the three systems and the rows
+// that read a block of their own (TargetPlatform::for_os).
+inline constexpr std::string_view kDescriptorPlatformKeys[] = {
+    "linux", "macosx", "windows", "android", "emscripten", "ios", "openkal", "none",
 };
 
 // Well-known confusables an edit-distance metric cannot bridge (the intended
@@ -995,8 +1004,8 @@ xpkg_name_form_violation_from_lua(std::string_view luaContent)
 std::vector<XpkgVersionEntry>
 list_xpkg_version_entries(std::string_view luaContent,
                           const mcpp::toolchain::platform::PlatformKey& platformAxis) {
-    const std::string_view platform = platformAxis.key();
-    // Locate `xpm = { ... <platform> = { ["X.Y.Z"] = {...}, ... } ... }`.
+    // Locate `xpm = { ... <platform> = { ["X.Y.Z"] = {...}, ... } ... }`, the
+    // platform being the first of the axis's keys the table has a block for.
     // We work on a sanitized copy so quoted version keys remain locatable
     // by their offsets in the original text.
     auto sanitized = strip_lua_comments_and_strings(luaContent);
@@ -1052,8 +1061,13 @@ list_xpkg_version_entries(std::string_view luaContent,
     auto xpm_end = find_table_end(xpm_open);
     if (xpm_end == std::string_view::npos) return versions;
 
-    auto plat_pos = find_word_at_lhs(platform, xpm_open + 1);
-    if (plat_pos == std::string_view::npos || plat_pos >= xpm_end) return versions;
+    auto plat_pos = std::string_view::npos;
+    for (auto const& key : platformAxis.keys()) {
+        plat_pos = find_word_at_lhs(key, xpm_open + 1);
+        if (plat_pos != std::string_view::npos && plat_pos < xpm_end) break;
+        plat_pos = std::string_view::npos;
+    }
+    if (plat_pos == std::string_view::npos) return versions;
     auto plat_open = skip_to_open_brace(plat_pos);
     if (plat_open == std::string_view::npos || plat_open >= xpm_end) return versions;
     auto plat_end = find_table_end(plat_open);
@@ -1334,12 +1348,16 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             std::format("xpkg-lua of {}@{}", packageName, packageVersion),
             0, 0});
     }
-    const std::string_view osKey = platform.key();
-    if (auto platformBody = top_level_table_body_for_key(body, osKey);
-        !platformBody.empty()) {
-        body += "\n";
-        body += platformBody;
-    }
+    // The first of the axis's keys the segment has a table for (design
+    // 2026-10-29 §5.1): a target reads the blocks its row names, in order, and
+    // never the build machine's.
+    for (auto const& osKey : platform.keys())
+        if (auto platformBody = top_level_table_body_for_key(body, osKey);
+            !platformBody.empty()) {
+            body += "\n";
+            body += platformBody;
+            break;
+        }
 
     Manifest m;
     m.sourcePath  = std::format("xpkg-lua://{}@{}", packageName, packageVersion);
@@ -2418,7 +2436,7 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             }
             cur.consume('}');
         }
-        else if (key == "linux" || key == "macosx" || key == "windows") {
+        else if (std::ranges::find(kDescriptorPlatformKeys, key) != std::end(kDescriptorPlatformKeys)) {
             // Per-platform sub-table. The CURRENT platform's body was already
             // appended to the segment before this loop (see above), so every
             // spelling here is a known key: skip the table itself.
