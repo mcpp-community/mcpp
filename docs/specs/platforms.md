@@ -430,7 +430,7 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 目标报告中,平台加入的层的来源写作 `platform`,图已提供的写作 `graph`。层之后为平台块:
 
 ```
-    Platform openkal-platform 0.17.3 (built-in)
+    Platform openkal-platform 0.18.0 (built-in)
              tools             okld, okrun (openkal-tools@0.1.3, platform)
              runner            okrun (platform)
              link              lld, start ok_main (platform)
@@ -445,7 +445,7 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 `null`;对象形式:
 
 ```json
-{"name": "mcpplibs.openkal-platform", "version": "0.17.3", "source": "built-in", "hosted": false,
+{"name": "mcpplibs.openkal-platform", "version": "0.18.0", "source": "built-in", "hosted": false,
  "fields": {"toolchain": {"value": "llvm@23.1.3", "source": "platform"},
             "layers.c-abi": {"value": "openkal-musl@0.22.6", "source": "platform"}}}
 ```

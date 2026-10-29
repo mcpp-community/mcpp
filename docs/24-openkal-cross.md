@@ -111,7 +111,7 @@ practice.
 
 ```toml
 [target.'cfg(any(linux, macos, windows))']
-platform = "openkal-platform@0.17.3"
+platform = "openkal-platform@0.18.0"
 ```
 
 One table (2026.10.27.1+). It selects the openkal platform for the host triples,
@@ -454,7 +454,7 @@ run_under = ["qemu-aarch64"]
 
 ```
 $ mcpp run --target aarch64-openkal
-     Packing okrun for linux-aarch64 (openkal-platform 0.17.3's carrier, the runner on the execution host)
+     Packing okrun for linux-aarch64 (openkal-platform 0.18.0's carrier, the runner on the execution host)
      Running `okrun … target/aarch64-openkal/…/bin/app.oke`
          Via qemu-aarch64  [/…/app/mcpp.toml:6]
 ```

@@ -34,7 +34,7 @@ name    = "hostgraph"
 version = "0.1.0"
 
 [host]
-platform = "openkal-platform@0.17.3"
+platform = "openkal-platform@0.18.0"
 
 [build-dependencies]
 helper = { path = "helper" }

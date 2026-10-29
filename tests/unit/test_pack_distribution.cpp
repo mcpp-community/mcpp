@@ -593,7 +593,7 @@ TEST(PackMerge, AMergedTreeIsNamedAfterThePlatform) {
         d::Package p;
         p.name = "app";
         p.version = "1.0";
-        p.platform = "mcpplibs.openkal-platform@0.17.3";
+        p.platform = "mcpplibs.openkal-platform@0.18.0";
         p.legs = { leg };
         p.runner = { "okrun", "{}" };
         p.entry = { { arch, std::format("lib/{}/app.oke", arch) } };

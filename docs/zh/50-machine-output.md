@@ -307,7 +307,7 @@ mcpp self env --format json
   "triple":    "x86_64-openkal",
   "graph":     "target",                      // or "host"
   "toolchain": {"compiler": "/…/xim-x-llvm/23.1.3/bin/clang++", "origin": "platform"},
-  "platform":  {"name": "mcpplibs.openkal-platform", "version": "0.17.3", "source": "built-in",
+  "platform":  {"name": "mcpplibs.openkal-platform", "version": "0.18.0", "source": "built-in",
                 "hosted": false, "fields": {"runner": {"value": ["okrun", "{}"], "source": "platform"}}},
   "tools":     {"okld": "/…/okld", "okrun": "/…/okrun"},
   "runner":    {"argv": ["okrun", "{}"], "host": "same-arch", "exclusive": false,
@@ -438,7 +438,7 @@ mcpp toolchain list --format json
 的形状是 `{target, note, toolchain, pin, status, default}`，`status` 取
 `installed` / `available` / `via dependency graph` / `planned` 之一。
 目标行另有 `platform`（2026.10.27.1+）：目标表为该目标选择的平台包
-（`mcpplibs.openkal-platform@0.17.3`），或 `null`。
+（`mcpplibs.openkal-platform@0.18.0`），或 `null`。
 
 **`toolchain` 与 `pin` 不是把同一个字段写了两遍。** `toolchain` 表示这一行
 关联到什么 —— 已装的行是装好的载荷，词表行是它自己的约定。`pin` 只承载目标

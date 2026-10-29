@@ -1380,7 +1380,7 @@ runner 与 `run_under`。
 
 ```toml
 [target.'cfg(os = "openkal")']
-platform = "openkal-platform@0.17.3"          # or { path = "…" }, or "none"
+platform = "openkal-platform@0.18.0"          # or { path = "…" }, or "none"
 
 [target.'cfg(platform = "openkal")'.layers]
 c-abi = { path = "../openkal-musl" }

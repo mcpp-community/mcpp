@@ -233,7 +233,7 @@ openkal 目标上 `static` 为一个 `.oke`、无 `.okso`,`shared` 为 `.oke` �
   "schema": 1,
   "name": "hello",
   "version": "0.1.0",
-  "platform": "openkal-platform@0.17.3",
+  "platform": "openkal-platform@0.18.0",
   "linkage": "declared",
   "mode": "vendored",
   "legs": ["x86_64-openkal", "aarch64-openkal"],

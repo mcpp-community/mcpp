@@ -349,7 +349,7 @@ select as they do for a build ([35](35-platforms.md)).
   "triple":    "x86_64-openkal",
   "graph":     "target",                      // or "host"
   "toolchain": {"compiler": "/…/xim-x-llvm/23.1.3/bin/clang++", "origin": "platform"},
-  "platform":  {"name": "mcpplibs.openkal-platform", "version": "0.17.3", "source": "built-in",
+  "platform":  {"name": "mcpplibs.openkal-platform", "version": "0.18.0", "source": "built-in",
                 "hosted": false, "fields": {"runner": {"value": ["okrun", "{}"], "source": "platform"}}},
   "tools":     {"okld": "/…/okld", "okrun": "/…/okrun"},
   "runner":    {"argv": ["okrun", "{}"], "host": "same-arch", "exclusive": false,
@@ -495,7 +495,7 @@ installation, which is located on the machine rather than installed by mcpp. A
 target row is `{target, note, toolchain, pin, status, default}`, and `status` is
 one of `installed` / `available` / `via dependency graph` / `planned`.
 A target row also carries `platform` (2026.10.27.1+): the platform package the
-target table selects for it (`mcpplibs.openkal-platform@0.17.3`), or `null`.
+target table selects for it (`mcpplibs.openkal-platform@0.18.0`), or `null`.
 
 **`toolchain` and `pin` are not the same field twice.** `toolchain` is what
 the row is associated with — the installed payload on an installed row, the
