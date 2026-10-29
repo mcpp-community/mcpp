@@ -1546,7 +1546,11 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
         // `-o <directory>/`: the distributable below it, under its own name.
         if (!run.opts.outputDir.empty())
             for (auto& r : reported) {
-                const auto into = run.opts.outputDir / r.filename();
+                const auto into = std::filesystem::absolute(run.opts.outputDir / r.filename(), ec).lexically_normal();
+                // A provider may have written it there already (the okb is
+                // written beside the staged tree, in target/dist/): removing
+                // the destination would remove the product.
+                if (into == r.lexically_normal()) continue;
                 std::filesystem::remove_all(into, ec);
                 std::filesystem::copy(r, into, std::filesystem::copy_options::recursive, ec);
                 if (ec) {

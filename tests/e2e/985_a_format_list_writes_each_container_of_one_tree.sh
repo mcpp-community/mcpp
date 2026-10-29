@@ -18,6 +18,8 @@
 #   C. `--target openkal --mode self-contained --pkg-format tar,okb` writes the
 #      tree's tar and the platform's okb; `--pkg-format okb` alone is refused
 #      under `self-contained`, saying the runner would be dropped.
+#   D. `-o target/dist/`, the directory the containers are written in anyway,
+#      keeps them: the okb is not removed as the destination of its own copy.
 set -e
 
 TMP=$(mktemp -d)
@@ -75,5 +77,12 @@ fi
 grep -q "the runner would be dropped" c2.log || fail "C: the refusal" c2.log
 grep -q "use: --pkg-format tar,okb" c2.log || fail "C: the refusal names no remedy" c2.log
 echo "ok: tar,okb writes both; okb alone does not drop a self-contained package's runner"
+
+# D
+"$MCPP" pack --target openkal --mode self-contained --systems all --pkg-format tar,okb -o target/dist/ \
+    > d.log 2>&1 || fail "D: -o target/dist/" d.log
+ls target/dist/lst-0.1.0-openkal-bundle-all.tar.gz > /dev/null 2>&1 || fail "D: no tar in target/dist/" d.log
+ls target/dist/lst-0.1.0.okb > /dev/null 2>&1 || fail "D: no okb in target/dist/" d.log
+echo "ok: -o target/dist/ keeps what is already written there"
 
 echo "PASS: 985 a format list writes each container of one tree"
