@@ -175,7 +175,6 @@ TEST(PackDistribution, LaunchersPickTheArchitectureAndTheRunner) {
     l.runner = { "okrun", "{}" };
     l.entry = { { "x86_64", "hello.oke" }, { "aarch64", "hello.oke" } };
     l.loader = "okrun";
-    ASSERT_TRUE(d::launchable(l));
     const auto sh = d::posix_launcher(l);
     EXPECT_TRUE(sh.starts_with("#!/bin/sh\n"));
     EXPECT_NE(sh.find("x86_64|amd64|AMD64) arch=x86_64"), std::string::npos);
@@ -186,10 +185,8 @@ TEST(PackDistribution, LaunchersPickTheArchitectureAndTheRunner) {
     // The package is found through a link to the launcher, without readlink -f.
     EXPECT_NE(sh.find("readlink -- \"$self\""), std::string::npos);
     EXPECT_EQ(sh.find("readlink -f"), std::string::npos);
-    const auto cmd = d::windows_launcher(l);
-    EXPECT_NE(cmd.find("PROCESSOR_ARCHITEW6432"), std::string::npos);
-    EXPECT_NE(cmd.find("libexec\\okrun\\windows-%arch%\\okrun.exe"), std::string::npos);
-    EXPECT_NE(cmd.find("\"%runner%\" \"%image%\" %*"), std::string::npos);
+    // A POSIX shell on Windows hands over to the program of the same name.
+    EXPECT_NE(sh.find("MINGW*|MSYS*|CYGWIN*) exec \"$top/bin/\"'hello'.exe \"$@\""), std::string::npos) << sh;
 }
 
 // The runner's words expand as `mcpp run` expands them: a word's `{}` is the
@@ -201,32 +198,32 @@ TEST(PackDistribution, LaunchersExpandTheRunnerAsMcppRunDoes) {
     l.runner = { "okrun", "--image={}", "it's" };
     EXPECT_NE(d::posix_launcher(l).find("exec \"$runner\" '--image='\"$image\" 'it'\\''s' \"$@\""),
               std::string::npos) << d::posix_launcher(l);
-    EXPECT_NE(d::windows_launcher(l).find("\"%runner%\" \"--image=%image%\" \"it's\" %*"), std::string::npos)
-        << d::windows_launcher(l);
     l.runner = { "okrun", "--quiet" };
     EXPECT_NE(d::posix_launcher(l).find("exec \"$runner\" '--quiet' \"$image\" \"$@\""), std::string::npos)
         << d::posix_launcher(l);
-    EXPECT_NE(d::windows_launcher(l).find("\"%runner%\" \"--quiet\" \"%image%\" %*"), std::string::npos)
-        << d::windows_launcher(l);
 }
 
-// A .cmd doubles `%` in what it states literally, and a word it cannot state
-// (a double quote) is refused: the .cmd written for it runs nothing.
-TEST(PackDistribution, AWindowsLauncherEscapesWhatItStates) {
+// The Windows launcher is a program (design 2026-10-29 §4.3): its source states
+// the launch as constants, finds the package from its own path, reads the
+// machine's architecture, and expands the runner's words as `mcpp run` does.
+// Any word is stated, quotes and percent signs included: a raw string holds it.
+TEST(PackDistribution, TheWindowsLauncherIsAProgram) {
     d::Launch l;
     l.name = "hello";
-    l.entry = { { "x86_64", "hello.oke" } };
-    l.runner = { "ok%run", "--load=50%", "{}" };
-    const auto cmd = d::windows_launcher(l);
-    EXPECT_NE(cmd.find("set \"runner=ok%%run\""), std::string::npos) << cmd;
-    EXPECT_NE(cmd.find("\"%runner%\" \"--load=50%%\" \"%image%\" %*"), std::string::npos) << cmd;
-    l.runner = { "okrun", "--say=\"hi\"", "{}" };
-    auto ok = d::launchable(l);
-    ASSERT_FALSE(ok);
-    EXPECT_NE(ok.error().find("double quote"), std::string::npos) << ok.error();
-    const auto refused = d::windows_launcher(l);
-    EXPECT_EQ(refused.find("%runner%"), std::string::npos) << refused;
-    EXPECT_NE(refused.find("exit /b 126"), std::string::npos) << refused;
+    l.entry = { { "x86_64", "hello.oke" }, { "aarch64", "hello.oke" } };
+    l.runner = { "okrun", "--say=\"50%\"", "{}" };
+    l.loader = "okrun";
+    const auto src = d::exe_launcher_main(l);
+    EXPECT_NE(src.find("import mcpplibs.os;"), std::string::npos) << src;
+    EXPECT_NE(src.find("os::env::image()"), std::string::npos) << src;
+    EXPECT_NE(src.find("PROCESSOR_ARCHITEW6432"), std::string::npos) << src;
+    EXPECT_NE(src.find("R\"mcpp(--say=\"50%\")mcpp\""), std::string::npos) << src;
+    EXPECT_NE(src.find("R\"mcpp(aarch64)mcpp\""), std::string::npos) << src;
+    EXPECT_NE(src.find("(\"windows-\" + arch)"), std::string::npos) << src;
+    EXPECT_NE(src.find("os::process::exec"), std::string::npos) << src;
+    const auto manifest = d::exe_launcher_manifest("hello", "1.0.0");
+    EXPECT_NE(manifest.find("os = \"0.2.1\""), std::string::npos) << manifest;
+    EXPECT_NE(manifest.find("[targets.hello]"), std::string::npos) << manifest;
 }
 
 // The POSIX launcher, run through a link to it from another directory, finds
