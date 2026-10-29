@@ -363,7 +363,7 @@ app 的 SELinux 域不允许**读** `/`。openkal-linux 以只读方式打开预
 |---|---|---|
 | 服务器 | `mcppls.okb`（已统一） | 不变 |
 | okrun | 本系统的一个 | `runner.hosts` 的全部 |
-| clangd | 每系统原生（Ubuntu 20.04 + Clang 12、macOS 14、Windows + MSVC） | `clangd.okb`：两个架构的映像（§8 构建；§9.4 的 probe 决定） |
+| clangd | 每系统原生（Ubuntu 20.04 + Clang 12、macOS 14、Windows + MSVC） | 每系统原生，放进同一个包（§9.4：本轮映像不可用） |
 | kit | 按宿主选一个 | 包内 openkal kit；目标 kit 按需（§9.2） |
 
 ### 9.2 kit 按目标（S4 修订）
@@ -392,17 +392,28 @@ app 的 SELinux 域不允许**读** `/`。openkal-linux 以只读方式打开预
 | xlings | 每系统一项 | 一个资产三系统，可装范围取自 `runs_on` |
 | 构建 | 4 种主机与工具链 | 一台 Linux；测试在四个系统上（§3.4 的 `--archive`） |
 
-- 覆盖随 okrun 扩大：musl 系统、Alpine、Termux（#857 之后）可用，clangd 不再要求 glibc 2.31；Intel Mac、Windows arm64 在平台加入
-  对应运行器行后可用。
-- 体积（待实测）：vsix 约 50–60 MB（0.0.19 每平台 30–40 MB），前提是 clangd 映像的压缩率与原生相近；okb 以 stored 存放，安装后
-  含另一架构的 clangd（约 75 MB）。
+- 覆盖：服务器随 okrun 扩大；clangd 是每系统原生（§9.4），所以整个包的覆盖是"原生 clangd 的系统 ∩ 运行器的宿主"，与今天的四个
+  平台相同。
+- 体积（待实测）：一个 vsix 含四个原生 clangd，约为今天四个平台包之和减去重复的服务器与 kit。
 
-### 9.4 clangd 映像的 probe（进行中）
+### 9.4 clangd 映像的 probe（结论）
 
-mcppls-clangd 的 draft PR（分支 `probe/clangd-openkal-image`），LLVM 源码经 xlings-res 的 GitCode 镜像获取。测量：编译错误清单、
-四个系统上 `clangd --check`、Windows 的路径风格（openkal 在 Windows 上给出原生名字；LLVM 的 `Style::native` 在编译期决定，需要
-补丁改为运行时读 `kal_env_system`）、与原生 clangd 的耗时与内存（musl 分配器的风险，必要时链接 mimalloc 或 scudo）、映像与 okb
-大小。结论写入本节。
+mcppls-clangd 的 draft PR #11（分支 `probe/clangd-openkal-image`，run 40908632199）。两个架构的 2848 个目标文件编译通过，映像
+链接并封装成功。`clangd --check` 的结果（3 次取中位数）：
+
+| 系统 | `--version` | 无头文件 | `import m` | 系统 C++ 标准库 |
+|---|---|---|---|---|
+| Linux x86_64 | 通过 | 2.49 s / 232 MiB（原生 2.23 s / 122 MiB） | 0.40 s / 141 MiB（原生 0.13 s / 50 MiB） | SIGSEGV |
+| Linux aarch64 | 通过 | 2.00 s / 231 MiB（原生 1.88 s / 122 MiB） | 0.33 s / 145 MiB（原生 0.14 s / 49 MiB） | SIGSEGV |
+| macOS arm64 | 通过 | 1.56 s / 245 MiB（原生 1.10 s / 153 MiB） | 0.46 s / 165 MiB（原生 0.25 s / 40 MiB） | 1.43 s / 258 MiB（原生 1.11 s / 171 MiB） |
+| Windows x64 | 通过 | 失败 | 失败 | 失败 |
+
+- Linux 上解析系统标准库头文件时崩溃，原因未定位。Windows 上 LLVM 的路径风格在编译期为 POSIX，`C:/…` 被当作相对路径，读文件
+  返回 `EINVAL`。常驻内存比原生多约 90–125 MiB，与映像大小相当（文件 `mmap` 在 openkal 上返回 `ENOSYS`，映像页不共享）。
+- **结论：本轮 mcppls 的 clangd 保持每系统原生，四个原生 clangd 与 `mcppls.okb`、全部运行器放进同一个包**（§9.1、§9.3 的"一个
+  包"不变，体积以原生 clangd 计）。clangd 映像在上面四项解决后替换包内的原生 clangd，包的形状不变。
+- probe 发现的两个栈内缺陷在本轮修复：`__cxa_thread_atexit` 在 ok 映像上未导出（openkal-llvm-runtime 0.16.9）；`pread`、`pwrite`
+  返回 `ENOSYS`（openkal-musl 0.22.9）。文件映射（规范层面）、Windows 的 `EINVAL`、Linux 的崩溃另立 issue。
 
 ## 10. 编辑器
 
@@ -475,7 +486,7 @@ mcppls-clangd 的 draft PR（分支 `probe/clangd-openkal-image`），LLVM 源�
 | 7 | mcpplibs.os | 钉新版本组 |
 | 8 | mcpp | SPEC-015、SPEC-014 rev、§5、§6、§8.1；同时接受平台的新旧两种写法；`triple.cppm:909` 钉 openkal-platform 新版 |
 | 9 | mcpp-plugins | `deps-cmake` 读契约；`dep_dir` 的歧义失败 |
-| 10 | mcppls-clangd | clangd 映像（§9.4 决定）、路径风格补丁、宿主 tblgen |
+| 10 | mcppls-clangd | 无改动（§9.4：本轮 clangd 保持原生）；probe PR #11 关闭 |
 | 11 | mcppls | 单包、S4 修订、kit 流程、CI 改用 `--archive` |
 | 12 | mcpp-ide | VS Code（§10.1）、组件库、CLion API、CI 迁移（§13.1） |
 | 13 | xim-pkgindex | mcpp-ide、mcppls、okrun 的条目重新生成 |
