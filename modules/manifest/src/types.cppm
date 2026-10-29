@@ -1880,6 +1880,10 @@ struct PackConfig {
     // `false`: a pack of a platform's target packs that target alone, where
     // the platform states `universal = true` (SPEC-014 §3).
     std::optional<bool>                 universal;
+    // The targets `mcpp pack` acts on when the command names none (SPEC-015
+    // §3.3): targets and target sets, as `--target` takes them (`openkal`,
+    // `x86_64-linux-musl`). Empty: unstated, the build's target.
+    std::vector<std::string>            targets;
 };
 
 // `[workspace]` — multi-package workspace support (0.0.11+).

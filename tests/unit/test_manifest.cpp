@@ -7069,3 +7069,58 @@ TEST(Manifest, OnlyEntryTargetsStillInferTheLibrary) {
     std::error_code ec;
     std::filesystem::remove_all(tmp, ec);
 }
+
+// ── [pack] targets and [build] target (SPEC-015 §3.3) ────────────────────────
+
+TEST(Manifest, PackTargetsTakeTargetsAndSets) {
+    auto list = mcpp::manifest::parse_string(R"(
+[package]
+name = "p"
+version = "0.1.0"
+[pack]
+targets = ["openkal", "x86_64-linux-musl"]
+)");
+    ASSERT_TRUE(list.has_value()) << list.error().format();
+    EXPECT_EQ(list->packConfig.targets, (std::vector<std::string>{"openkal", "x86_64-linux-musl"}));
+    auto one = mcpp::manifest::parse_string(R"(
+[package]
+name = "p"
+version = "0.1.0"
+[pack]
+targets = "linux-musl"
+)");
+    ASSERT_TRUE(one.has_value()) << one.error().format();
+    EXPECT_EQ(one->packConfig.targets, (std::vector<std::string>{"linux-musl"}));
+}
+
+TEST(Manifest, PackTargetsRefuseWhatIsNeitherATargetNorASet) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "p"
+version = "0.1.0"
+[pack]
+targets = ["not a target"]
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().format().find("neither a target"), std::string::npos);
+}
+
+TEST(Manifest, BuildTargetIsOneTarget) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "p"
+version = "0.1.0"
+[build]
+target = "openkal"
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().format().find("names a target set"), std::string::npos);
+    auto ok = mcpp::manifest::parse_string(R"(
+[package]
+name = "p"
+version = "0.1.0"
+[build]
+target = "x86_64-openkal"
+)");
+    ASSERT_TRUE(ok.has_value()) << ok.error().format();
+}

@@ -16,10 +16,13 @@ import mcpp.build.compile_commands; // C1: the fast path restores a deleted root
 import mcpp.build.prepare;
 import mcpp.pack;                  // #622 A10: mcpp::pack::Options / Format
 import mcpp.pack.pipeline;         // #622 A10: build_and_pack, for `run --format`
+import mcpp.pack.compress;         // the test archive's tar (SPEC-015 §4)
+import mcpp.pack.distribution;     // its writer and reader
 import mcpp.build.test_targets;
 import mcpp.diag;
 import mcpp.build.plan;
 import mcpp.toolchain.triple;
+import mcpp.build.refusal;         // a set member its platform does not serve
 import mcpp.freestanding.runner;
 import mcpp.platform;
 import mcpp.libs.json;   // the plan event's platform objects
@@ -63,6 +66,204 @@ import mcpp.project;
 import mcpp.ui;
 import mcpp.toolchain.msvc_coroutines;
 import mcpp.build.progress;
+
+// THE TEST ARCHIVE — tests built once and run elsewhere (SPEC-015 §4).
+//
+// `mcpp test --no-run --archive <file>` builds the tests of every leg and
+// writes them as one archive; `mcpp test --archive <file>`, in a checkout of
+// the same project on another machine, runs the tests that machine reaches
+// without building anything. An ok image is the same bytes on every system
+// (openkal), and a native cross build is the same bytes as a build on the
+// target's own system, so a CI that builds once on one machine and runs on the
+// others measures the bytes it ships rather than a rebuild of them.
+//
+// THE ARCHIVE is the engine's own tar (written by the packer's writer, the same
+// bytes on every host), with one top-level directory holding:
+//
+//   mcpp-tests.json                       what follows, and how to run it
+//   legs/<triple>/tests/<test>/<program>  each test program, and beside it the
+//                                         files it loads from its own directory
+//                                         (the runtime files `mcpp run` hands a
+//                                         runner: shared libraries, deployed
+//                                         files)
+//   legs/<triple>/programs/<program>      the package's own programs, which a
+//                                         test finds as MCPP_BIN_<NAME> (L5)
+//
+// `mcpp-tests.json` (schema 1): `package`, `cwd` (the directory the tests run
+// in, relative to the project root: the package's own), and `legs`, each with
+// its `triple`, `programs` (environment name to path) and `tests` (`name`,
+// `program`, the `files` beside it). Paths are relative to the archive's
+// directory and use `/`.
+export namespace mcpp::build::test_archive {
+
+inline constexpr int kSchema = 1;
+inline constexpr std::string_view kManifestName = "mcpp-tests.json";
+
+struct Test {
+    std::string              name;
+    std::string              program;   // relative to the archive's directory
+    std::vector<std::string> files;     // beside it, relative to the archive's directory
+};
+
+struct Leg {
+    std::string                                      triple;
+    std::vector<std::pair<std::string, std::string>> programs;   // MCPP_BIN_<NAME> -> path
+    std::vector<Test>                                tests;
+};
+
+struct Manifest {
+    std::string      package;
+    std::string      cwd;     // relative to the project root; "" is the root
+    std::vector<Leg> legs;
+};
+
+// A file the archive carries: where it is now, and where it goes.
+struct Copy {
+    std::filesystem::path source;
+    std::string           dest;   // relative to the archive's directory
+};
+
+// Where each test of a leg goes, and the program a test finds.
+std::string test_dest(std::string_view triple, std::string_view test, std::string_view file);
+std::string program_dest(std::string_view triple, std::string_view file);
+
+// Copies `copies` into a fresh tree under `stage`, writes the manifest beside
+// them and the tree as `archive` (gzip-compressed tar).
+std::expected<void, std::string> write(const Manifest& m, const std::vector<Copy>& copies,
+                                       const std::filesystem::path& stage,
+                                       const std::filesystem::path& archive);
+
+struct Opened {
+    std::filesystem::path root;   // the archive's directory, extracted
+    Manifest              manifest;
+};
+
+// Extracts `archive` into `into` (new or emptied) and reads its manifest.
+std::expected<Opened, std::string> open(const std::filesystem::path& archive,
+                                        const std::filesystem::path& into);
+
+} // namespace mcpp::build::test_archive
+
+// ── implementation ──────────────────────────────────────────────────────────
+
+namespace mcpp::build::test_archive {
+
+namespace fs = std::filesystem;
+
+std::string test_dest(std::string_view triple, std::string_view test, std::string_view file) {
+    return std::format("legs/{}/tests/{}/{}", triple, test, file);
+}
+
+std::string program_dest(std::string_view triple, std::string_view file) {
+    return std::format("legs/{}/programs/{}", triple, file);
+}
+
+namespace {
+
+nlohmann::json to_json(const Manifest& m) {
+    nlohmann::json legs = nlohmann::json::array();
+    for (auto const& l : m.legs) {
+        nlohmann::json programs = nlohmann::json::object();
+        for (auto const& [env, path] : l.programs) programs[env] = path;
+        nlohmann::json tests = nlohmann::json::array();
+        for (auto const& t : l.tests)
+            tests.push_back({{"name", t.name}, {"program", t.program}, {"files", t.files}});
+        legs.push_back({{"triple", l.triple}, {"programs", std::move(programs)},
+                        {"tests", std::move(tests)}});
+    }
+    return {{"schema", kSchema}, {"mcpp", std::string(mcpp::MCPP_VERSION)},
+            {"package", m.package}, {"cwd", m.cwd}, {"legs", std::move(legs)}};
+}
+
+std::expected<Manifest, std::string> from_json(const nlohmann::json& d) {
+    if (!d.is_object() || d.value("schema", 0) != kSchema)
+        return std::unexpected(std::format("{} is not a schema-{} test archive manifest",
+                                           kManifestName, kSchema));
+    Manifest m;
+    m.package = d.value("package", "");
+    m.cwd = d.value("cwd", "");
+    if (!d.contains("legs") || !d["legs"].is_array())
+        return std::unexpected(std::format("{} names no legs", kManifestName));
+    for (auto const& jl : d["legs"]) {
+        Leg l;
+        l.triple = jl.value("triple", "");
+        if (jl.contains("programs") && jl["programs"].is_object())
+            for (auto it = jl["programs"].begin(); it != jl["programs"].end(); ++it)
+                l.programs.emplace_back(it.key(), it.value().get<std::string>());
+        if (jl.contains("tests") && jl["tests"].is_array())
+            for (auto const& jt : jl["tests"]) {
+                Test t{jt.value("name", ""), jt.value("program", ""), {}};
+                if (jt.contains("files") && jt["files"].is_array())
+                    for (auto const& f : jt["files"]) t.files.push_back(f.get<std::string>());
+                l.tests.push_back(std::move(t));
+            }
+        m.legs.push_back(std::move(l));
+    }
+    return m;
+}
+
+// A destination stays inside the archive's directory.
+bool contained(std::string_view dest) {
+    if (dest.empty() || dest.front() == '/' || dest.find(':') != std::string_view::npos) return false;
+    for (auto const& part : fs::path(dest)) if (part == "..") return false;
+    return true;
+}
+
+} // namespace
+
+std::expected<void, std::string> write(const Manifest& m, const std::vector<Copy>& copies,
+                                       const fs::path& stage, const fs::path& archive) {
+    std::error_code ec;
+    fs::remove_all(stage, ec);
+    auto stem = archive.filename().string();
+    for (std::string_view ext : {".tar.gz", ".tgz", ".tar"})
+        if (stem.ends_with(ext)) { stem.resize(stem.size() - ext.size()); break; }
+    if (stem.empty()) stem = "mcpp-tests";
+    const auto root = stage / stem;
+    fs::create_directories(root, ec);
+    if (ec) return std::unexpected(std::format("cannot create {}: {}", root.string(), ec.message()));
+    for (auto const& c : copies) {
+        if (!contained(c.dest))
+            return std::unexpected(std::format("'{}' leaves the test archive", c.dest));
+        const auto to = root / c.dest;
+        fs::create_directories(to.parent_path(), ec);
+        fs::copy_file(c.source, to, fs::copy_options::overwrite_existing, ec);
+        if (ec) return std::unexpected(std::format("cannot copy {} into the test archive: {}",
+                                                   c.source.string(), ec.message()));
+    }
+    {
+        std::ofstream out(root / std::string(kManifestName), std::ios::binary | std::ios::trunc);
+        out << to_json(m).dump(2) << '\n';
+        if (!out) return std::unexpected(std::format("cannot write {}", kManifestName));
+    }
+    if (archive.has_parent_path()) fs::create_directories(archive.parent_path(), ec);
+    auto choice = mcpp::pack::compress::parse("gzip");
+    if (!choice) return std::unexpected(choice.error());
+    return mcpp::pack::distribution::write_tar(root, archive, *choice);
+}
+
+std::expected<Opened, std::string> open(const fs::path& archive, const fs::path& into) {
+    std::error_code ec;
+    if (!fs::is_regular_file(archive, ec))
+        return std::unexpected(std::format("no test archive at {}", archive.string()));
+    fs::remove_all(into, ec);
+    fs::create_directories(into, ec);
+    auto root = mcpp::pack::distribution::unpack(archive, into);
+    if (!root) return std::unexpected(root.error());
+    std::ifstream in(*root / std::string(kManifestName), std::ios::binary);
+    auto doc = nlohmann::json::parse(in, nullptr, false);
+    if (doc.is_discarded())
+        return std::unexpected(std::format("{} has no readable {}", archive.string(), kManifestName));
+    auto m = from_json(doc);
+    if (!m) return std::unexpected(m.error());
+    for (auto const& l : m->legs)
+        for (auto const& t : l.tests)
+            if (!contained(t.program))
+                return std::unexpected(std::format("'{}' leaves the test archive", t.program));
+    return Opened{*root, std::move(*m)};
+}
+
+} // namespace mcpp::build::test_archive
 
 namespace mcpp::build {
 
@@ -1455,8 +1656,13 @@ void finish_record(mcpp::build::result::Record& r, bool ok, std::string_view fai
     res::write(r);
     if (res::events_enabled()) {
         auto json = res::to_json(r);
-        for (auto const& d : json["diagnostics"]) res::emit("diagnostic", {{"diagnostic", d}});
-        for (auto const& a : json["artifacts"]) res::emit("artifact", {{"artifact", a}});
+        // Several legs at once: each event names its leg (SPEC-015 §3.5).
+        auto with_leg = [&](nlohmann::json fields) {
+            if (res::legs()) fields["triple"] = r.triple;
+            return fields;
+        };
+        for (auto const& d : json["diagnostics"]) res::emit("diagnostic", with_leg({{"diagnostic", d}}));
+        for (auto const& a : json["artifacts"]) res::emit("artifact", with_leg({{"artifact", a}}));
     }
 }
 
@@ -3071,6 +3277,56 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
 // coherent "run"). Threaded straight to prepare_build's BuildOverrides,
 // which already does the member switch (basename OR member path — the same
 // rule mcpp::project::resolve_member_dir documents for build/test).
+// THE LEG `mcpp run` RUNS (SPEC-015 §3.2). One program runs, so of several
+// legs one is chosen: the first this machine reaches -- by the rule `mcpp
+// run` refuses an unreachable target with (`unreachable_execution`) --
+// trying this machine's architecture first. Each leg is planned to be asked,
+// and only the chosen one is kept and built. A member of a set its platform
+// does not serve is passed over, as the build of the set leaves it out.
+struct ChosenLeg {
+    std::string  triple;
+    BuildContext ctx;
+};
+std::optional<ChosenLeg> choose_run_leg(std::span<const mcpp::toolchain::target_set::Leg> legs,
+                                        const BuildOverrides& base, bool noRunner) {
+    std::vector<const mcpp::toolchain::target_set::Leg*> order;
+    for (int pass = 0; pass < 2; ++pass)
+        for (auto const& l : legs) {
+            auto t = mcpp::toolchain::triple::parse(l.triple);
+            const bool native = t && t->arch == mcpp::toolchain::triple::host_triple().arch;
+            if (native == (pass == 0)) order.push_back(&l);
+        }
+    std::vector<std::string> passed;
+    for (auto const* leg : order) {
+        BuildOverrides o = base;
+        o.target_triple = leg->triple;
+        o.will_run = true;
+        (void)refusal::take();
+        auto ctx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false, {}, o);
+        if (!ctx) {
+            if (!leg->fromSet.empty() && refusal::take() == refusal::Code::PlatformTargetUnserved) {
+                passed.push_back(std::format("{}: its platform does not serve it", leg->triple));
+                continue;
+            }
+            mcpp::ui::error(std::format("the {} leg: {}", leg->triple, ctx.error()));
+            return std::nullopt;
+        }
+        const auto key = choose_runner(*ctx, noRunner).tripleKey;
+        if (auto why = unreachable_execution(*ctx, key, noRunner)) {
+            passed.push_back(std::format("{}: {}", leg->triple, why->substr(0, why->find('\n'))));
+            continue;
+        }
+        for (auto const& p : passed) mcpp::ui::note(std::format("not run here -- {}", p));
+        mcpp::ui::info("Leg", std::format("{} (of {} targets)", leg->triple, legs.size()));
+        return ChosenLeg{leg->triple, std::move(*ctx)};
+    }
+    std::string why;
+    for (auto const& p : passed) why += "\n    " + p;
+    mcpp::ui::error(std::format("no leg of this run is reached on this {} machine:{}",
+                                mcpp::toolchain::platform::host_arch, why));
+    return std::nullopt;
+}
+
 export int build_run_target(const std::optional<std::string>& targetName,
                             std::span<const std::string> passthrough,
                             const std::string& package_filter = {},
@@ -3107,7 +3363,11 @@ export int build_run_target(const std::optional<std::string>& targetName,
                             // --format` — same value space, same refusal
                             // naming what the resolved graph provides. Empty
                             // is the ordinary run of the link output.
-                            const std::string& format = {}) {
+                            const std::string& format = {},
+                            // SEVERAL LEGS (SPEC-015 §3.2): `--target` named
+                            // more than one target, or a set. One is chosen
+                            // and run; `target_triple` is then ignored.
+                            std::span<const mcpp::toolchain::target_set::Leg> legs = {}) {
     // --format WITH --no-runner: refused before anything is built. A
     // distributable (an `.apk`, an `.msi`, this record's own `blob` fixture)
     // is not the link output, and "run it directly, ignoring the runner" has
@@ -3117,6 +3377,23 @@ export int build_run_target(const std::optional<std::string>& targetName,
             "error: --pkg-format and --no-runner cannot be combined: a "
             "distributable is not something this host executes directly.");
         return 2;
+    }
+
+    std::string target = target_triple;
+    std::optional<BuildContext> legCtx;
+    if (legs.size() > 1) {
+        BuildOverrides base;
+        base.package_filter = package_filter;
+        base.cache_mode     = cache_mode;
+        base.features       = features;
+        base.profile        = profile;
+        base.accel          = accel;
+        auto chosen = choose_run_leg(legs, base, no_runner);
+        if (!chosen) return kRunBuildFailed;
+        target = chosen->triple;
+        // A pack plans the leg again, in the same directory: its lock is not
+        // held across that plan.
+        if (format.empty()) legCtx.emplace(std::move(chosen->ctx));
     }
 
     // mcpp#225 (E2): reuse the resolved build cache when it's still fresh,
@@ -3134,7 +3411,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // so with the flag there is nothing for it to ignore — and it has no
     // manifest to print the note against.
     if (package_filter.empty() && cache_mode.empty() && !no_cache
-        && target_triple.empty() && !no_runner
+        && target.empty() && !no_runner
         // AND NEITHER NEW AXIS IS SET. The cached entry was written for
         // whichever feature set and profile the last build used; taking it
         // here would silently ignore the flag, which is the same reason
@@ -3172,7 +3449,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // the request.
     if (!format.empty()) {
         mcpp::pack::Options popts;
-        popts.targetTriple = target_triple;
+        popts.targetTriple = target;
         popts.profile      = profile;
         popts.format       = mcpp::pack::Format::Dispatched;
         popts.formatName   = format;
@@ -3202,7 +3479,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
         mcpp::build::BuildOverrides ov2;
         ov2.package_filter = package_filter;
         ov2.cache_mode     = cache_mode;
-        ov2.target_triple  = target_triple;
+        ov2.target_triple  = target;
         ov2.features       = features;
         ov2.profile        = profile;
         ov2.accel          = accel;
@@ -3210,7 +3487,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
         auto ctx2 = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false,
                                   /*extraTargets=*/{}, ov2);
         if (!ctx2) { mcpp::ui::error(std::format("{}", ctx2.error())); return kRunBuildFailed; }
-        if (run_build_plan(*ctx2, /*verbose=*/false, no_cache, target_triple) != 0)
+        if (run_build_plan(*ctx2, /*verbose=*/false, no_cache, target) != 0)
             return kRunBuildFailed;
         // ONE DISTRIBUTABLE, OR A SENTENCE. The pack pipeline reports the
         // terminal artifacts of the request (outputs no other introduced
@@ -3253,7 +3530,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
     mcpp::build::BuildOverrides ov;
     ov.package_filter = package_filter;
     ov.cache_mode     = cache_mode;
-    ov.target_triple  = target_triple;
+    ov.target_triple  = target;
     ov.features       = features;
     ov.profile        = profile;
     ov.accel          = accel;
@@ -3261,8 +3538,10 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // part of what has to exist. `mcpp build` does not set it, which is the
     // whole of the difference the tier buys.
     ov.will_run       = true;
-    auto ctx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false,
-                             /*extraTargets=*/{}, ov);
+    // The chosen leg was planned to be chosen; it is not planned twice.
+    auto ctx = legCtx ? std::expected<BuildContext, std::string>(std::move(*legCtx))
+                      : prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false,
+                                      /*extraTargets=*/{}, ov);
     if (!ctx) { mcpp::ui::error(std::format("{}", ctx.error())); return kRunBuildFailed; }
     // `target_triple` IS PASSED, AND OMITTING IT WROTE A CROSS BUILD INTO
     // THE HOST'S CACHE SLOT.
@@ -3282,7 +3561,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // The comment on `try_fast_run` records the same defect reached through the
     // MANIFEST's default target, and guards that door alone. This is the other
     // door: the flag. Measured on 2026.8.24.3, from a clean `target/`.
-    if (run_build_plan(*ctx, /*verbose=*/false, no_cache, target_triple) != 0)
+    if (run_build_plan(*ctx, /*verbose=*/false, no_cache, target) != 0)
         return kRunBuildFailed;
     // The program run is the selected member's (workspace design 2026-09-29
     // §15), with its closure's runtime.
@@ -3385,6 +3664,10 @@ export struct TestOptions {
     // property of the project, so the project says it; mcpp only has to make
     // saying it possible, which is what was missing.
     int                buildTimeoutSecs = 0;
+    // `--archive <file>` (SPEC-015 §4). With `--no-run`: the tests built are
+    // written to it, with what each needs beside it. Without: nothing is
+    // built, and the tests it holds run here.
+    std::filesystem::path archive;
 };
 
 // What one member's `run_tests` actually did. `--workspace` fans out over
@@ -4322,6 +4605,206 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     return rc;
 }
 
+// ─── the test archive (SPEC-015 §4) ─────────────────────────────────────────
+
+// One leg's built tests, for the archive.
+struct ArchiveLeg {
+    std::string                                             triple;
+    const BuildContext*                                     ctx = nullptr;
+    const std::vector<std::pair<std::string, std::string>>* programEnv = nullptr;
+};
+
+// THE TESTS OF THE LEGS, WRITTEN AS ONE ARCHIVE (`mcpp test --no-run
+// --archive`). Every test program that built, with the files it loads from its
+// own directory -- the runtime files `mcpp run` hands a runner -- beside it, and
+// the package's programs a test finds as MCPP_BIN_<NAME>. The directory the
+// tests run in is the one this command was run in, relative to the project.
+int write_test_archive(const TestOptions& o, std::span<const ArchiveLeg> legs) {
+    namespace ta = mcpp::build::test_archive;
+    namespace fs = std::filesystem;
+    if (legs.empty()) return 0;
+    auto const& first = *legs.front().ctx;
+    ta::Manifest m;
+    m.package = first.manifest.package.name;
+    std::error_code ec;
+    auto cwd = fs::current_path(ec).lexically_normal();
+    auto rel = cwd.lexically_relative(first.projectRoot.lexically_normal());
+    if (!rel.empty() && *rel.begin() != ".." && rel != ".") m.cwd = rel.generic_string();
+    std::vector<ta::Copy> copies;
+    std::size_t count = 0;
+    for (auto const& l : legs) {
+        ta::Leg leg;
+        leg.triple = l.triple;
+        for (auto const& lu : l.ctx->plan.linkUnits) {
+            if (lu.kind != LinkUnit::TestBinary) continue;
+            if (!o.filter.empty() && lu.targetName.find(o.filter) == std::string::npos) continue;
+            const auto exe = l.ctx->outputDir / lu.output;
+            if (!fs::is_regular_file(exe, ec)) continue;
+            ta::Test t{lu.targetName, ta::test_dest(l.triple, lu.targetName, exe.filename().string()), {}};
+            copies.push_back({exe, t.program});
+            for (auto const& [dest, source] : runtime_files_for(*l.ctx, exe)) {
+                // A file the program reads above its own directory goes beside
+                // it under its own name: the archive keeps one directory per test.
+                const bool above = dest.starts_with("../");
+                const auto where = above ? fs::path(dest).filename().generic_string() : dest;
+                t.files.push_back(ta::test_dest(l.triple, lu.targetName, where));
+                copies.push_back({source, t.files.back()});
+            }
+            leg.tests.push_back(std::move(t));
+            ++count;
+        }
+        if (l.programEnv)
+            for (auto const& [env, path] : *l.programEnv) {
+                auto dest = ta::program_dest(l.triple, fs::path(path).filename().string());
+                copies.push_back({path, dest});
+                leg.programs.emplace_back(env, dest);
+            }
+        m.legs.push_back(std::move(leg));
+    }
+    const auto archive = fs::absolute(o.archive, ec).lexically_normal();
+    const auto stage = first.projectRoot / "target" / ".test-archive" / "stage";
+    if (auto w = ta::write(m, copies, stage, archive); !w) {
+        mcpp::ui::error(std::format("--archive {}: {}", o.archive.string(), w.error()));
+        return 1;
+    }
+    fs::remove_all(stage, ec);
+    mcpp::ui::info("Archived", std::format("{} test(s) of {} leg(s) -> {}", count, legs.size(),
+                                           archive.generic_string()));
+    return 0;
+}
+
+// THE TESTS OF AN ARCHIVE, RUN HERE (`mcpp test --archive`). Nothing is built:
+// each leg's configuration is prepared to find how this machine starts its
+// programs (the runner, the execution host) by the rule `mcpp test` uses, and
+// the tests of a leg this machine does not reach are reported not run, with the
+// reason. They run in the directory the archive names, inside this checkout of
+// the project. No test run on any leg is a failure.
+export int run_test_archive(std::span<const std::string> passthrough, BuildOverrides base,
+                            TestOptions testOpts) {
+    namespace ta = mcpp::build::test_archive;
+    namespace fs = std::filesystem;
+    const bool json = testOpts.format == TestMessageFormat::Json;
+    if (json) mcpp::ui::set_quiet(true);
+    auto root = mcpp::project::find_manifest_root(fs::current_path());
+    if (!root) {
+        mcpp::ui::error("mcpp test --archive runs in a checkout of the project the archive was built from: "
+                        "no mcpp.toml found in the current directory or any parent");
+        return 2;
+    }
+    std::error_code ec;
+    const auto into = *root / "target" / ".test-archive" / "run";
+    auto opened = ta::open(fs::absolute(testOpts.archive, ec), into);
+    if (!opened) { mcpp::ui::error(std::format("--archive {}: {}", testOpts.archive.string(), opened.error())); return 2; }
+    const auto cwd = opened->manifest.cwd.empty() ? *root : *root / opened->manifest.cwd;
+    int passed = 0, failed = 0, notRun = 0, notReached = 0;
+    std::vector<std::string> reasons;
+    const auto deadline = std::chrono::milliseconds(static_cast<long long>(testOpts.timeoutSecs) * 1000);
+    for (auto const& leg : opened->manifest.legs) {
+        if (json) std::println("{{\"leg\":{{\"triple\":\"{}\"}}}}", test_json_escape(leg.triple));
+        else mcpp::ui::info("Testing", std::format("on {} (from {})", leg.triple, testOpts.archive.string()));
+        auto ctx = prepare_configuration(leg.triple);
+        if (!ctx) {
+            reasons.push_back(std::format("{}: {}", leg.triple, ctx.error().substr(0, ctx.error().find('\n'))));
+            notRun += static_cast<int>(leg.tests.size());
+            mcpp::ui::error(std::format("the {} leg: {}", leg.triple, ctx.error()));
+            continue;
+        }
+        TestBuild tb;
+        tb.ctx.emplace(std::move(*ctx));
+        auto o = testOpts;
+        o.unreachableIsBuilt = true;
+        test_resolve_runner(tb, o, json);
+        // A leg this machine does not reach is another machine's to run, as
+        // `mcpp test` reports a leg it does not reach built and not run; a
+        // runner that is missing is an answer not established (exit 2).
+        if (tb.runnerFatal || tb.builtNotRunHere || !tb.invocationNotRunReason.empty()) {
+            const auto why = tb.builtNotRunHere ? std::format("not reached on this {} machine",
+                                                              mcpp::toolchain::platform::host_arch)
+                                                : tb.invocationNotRunReason;
+            reasons.push_back(std::format("{}: {}", leg.triple, why.substr(0, why.find('\n'))));
+            (tb.builtNotRunHere ? notReached : notRun) += static_cast<int>(leg.tests.size());
+            if (!json) mcpp::ui::note(std::format("the tests of {} are not run here: {}", leg.triple, why));
+            continue;
+        }
+        std::vector<std::pair<std::string, std::string>> legEnv;
+        for (auto const& [env, path] : leg.programs)
+            legEnv.emplace_back(env, (opened->root / path).lexically_normal().string());
+        legEnv.emplace_back("MCPP_RUN_TRIPLE", tb.runnerChoice.tripleKey);
+        legEnv.emplace_back("MCPP_RUN_MODE", "test");
+        for (auto const& t : leg.tests) {
+            if (!testOpts.filter.empty() && t.name.find(testOpts.filter) == std::string::npos) continue;
+            const auto exe = (opened->root / t.program).lexically_normal();
+            std::vector<std::string> argv;
+            if (tb.runnerTmpl.empty()) argv.push_back(exe.string());
+            else                       argv = mcpp::freestanding::expand(tb.runnerTmpl, exe);
+            for (auto const& a : passthrough) argv.push_back(a);
+            argv.insert(argv.begin(), tb.runUnderPrefix.begin(), tb.runUnderPrefix.end());
+            auto env = legEnv;
+            // The files beside the program are its own: the loader searches its
+            // directory, and a runner reads the list it is handed.
+            std::array<fs::path, 1> dir{exe.parent_path()};
+            env.emplace_back(mcpp::runtime::launch_env::runtime_library_path_key(),
+                             mcpp::runtime::launch_env::prepend_path_list(
+                                 mcpp::runtime::launch_env::runtime_library_path_key(), dir));
+            {
+                const auto list = exe.parent_path() / ".mcpp-runtime-files.tsv";
+                std::ofstream os(list, std::ios::binary | std::ios::trunc);
+                for (auto const& f : t.files)
+                    os << fs::path(f).filename().generic_string() << '\t'
+                       << (opened->root / f).lexically_normal().string() << '\n';
+                env.emplace_back(std::string(kRuntimeFilesEnv), list.string());
+            }
+            const auto t0 = std::chrono::steady_clock::now();
+            bool timedOut = false;
+            int spawnErr = 0;
+            const auto cwdText = cwd.string();
+            auto rr = mcpp::run::capture_exec_deadline(argv, env, deadline, &timedOut, cwdText, &spawnErr);
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0).count();
+            const bool ok = spawnErr == 0 && !timedOut && rr.exit_code == 0;
+            if (spawnErr != 0) {
+                ++notRun;
+                reasons.push_back(std::format("{}: {}", leg.triple,
+                    mcpp::build::runner_lookup::spawn_failed_message(argv.front(), spawnErr)));
+            } else if (ok) {
+                ++passed;
+            } else {
+                ++failed;
+            }
+            if (json) {
+                std::println("{{\"test\":\"{}\",\"triple\":\"{}\",\"status\":\"{}\",\"ms\":{}}}",
+                             test_json_escape(t.name), test_json_escape(leg.triple),
+                             spawnErr ? "not_run" : ok ? "pass" : timedOut ? "timeout" : "fail", ms);
+            } else {
+                mcpp::ui::plain(std::format("{} ... {} ({:.2f}s)", t.name,
+                    spawnErr ? "NOT RUN" : ok ? "ok" : timedOut
+                        ? std::format("FAIL (timeout after {}s)", testOpts.timeoutSecs)
+                        : std::format("FAIL (exit {})", rr.exit_code),
+                    static_cast<double>(ms) / 1000.0));
+                if (!ok && spawnErr == 0 && !rr.output.empty()) mcpp::ui::block(rr.output);
+            }
+        }
+    }
+    if (json) {
+        std::println("{{\"archive_summary\":{{\"passed\":{},\"failed\":{},\"not_run\":{},"
+                     "\"not_reached\":{}}}}}", passed, failed, notRun, notReached);
+        std::fflush(stdout);
+    }
+    if (passed + failed == 0) {
+        std::string why;
+        for (auto const& r : reasons) why += "\n    " + r;
+        mcpp::ui::error(std::format("no test of {} ran on this machine{}{}", testOpts.archive.string(),
+                                    why.empty() ? std::string{} : ":", why));
+        return 1;
+    }
+    const auto counts = std::format("{} passed; {} failed{}{}", passed, failed,
+                                    notReached ? std::format("; {} not run here", notReached) : std::string{},
+                                    notRun ? std::format("; {} not run", notRun) : std::string{});
+    if (failed) { mcpp::ui::error(std::format("test result: FAILED. {}", counts)); return 1; }
+    if (!json) mcpp::ui::result("test result", std::format("ok. {}", counts));
+    return notRun ? 2 : 0;
+}
+
 // `mcpp test` driver: discover tests/**/*.cpp, synthesize targets, build
 // with dev-deps, run each test binary, summarize.
 export int run_tests(std::span<const std::string> passthrough,
@@ -4455,6 +4938,13 @@ export int run_tests(std::span<const std::string> passthrough,
     // does to `mcpp run` — `[xlings.workspace]` has no separate `test` tier
     // because there is no separate need.
     overrides.will_run = true;
+    // The leg an archive records: the target as its canonical name, the host's
+    // when none was asked for.
+    const std::string legTriple = [&] {
+        if (overrides.target_triple.empty()) return mcpp::toolchain::triple::host_triple().str();
+        auto t = mcpp::toolchain::triple::parse(overrides.target_triple);
+        return t ? t->str() : overrides.target_triple;
+    }();
     auto prepared = prepare_build(/*print_fp=*/false,
                                   /*includeDevDeps=*/true,
                                   std::move(testTargets),
@@ -4530,8 +5020,241 @@ export int run_tests(std::span<const std::string> passthrough,
     test_bulk(tb, testOpts, filter_match);
     test_resolve_runner(tb, testOpts, json);
     summary.buildMs = tb.buildMs;
-    return test_run_member(tb, testOpts, passthrough, json, memberName, /*owner=*/"",
-                           member_ms(), summary);
+    const int rc = test_run_member(tb, testOpts, passthrough, json, memberName, /*owner=*/"",
+                                   member_ms(), summary);
+    if (rc != 0 || testOpts.archive.empty()) return rc;
+    const ArchiveLeg leg{legTriple, ctx, &tb.programEnv};
+    return write_test_archive(testOpts, std::span<const ArchiveLeg>(&leg, 1));
+}
+
+// `mcpp test` OVER SEVERAL LEGS (SPEC-015 §3.2): a target set, several
+// `--target`, or a platform package's own targets (SPEC-013 §16).
+//
+// Every leg is planned first, one after another -- the package's programs
+// (L5) and then its tests with the dev-dependencies -- and the legs are then
+// built at the same time, each leg on its own thread (mcpp.build.legs): the
+// programs, the package's own build (Phase A) and the keep-going pass over
+// the test goals. The tests then run leg by leg. A leg this machine does not
+// reach is built and reported not run, with the reason, once; a set member
+// its platform does not serve is left out. A command whose legs ran no test at
+// all fails: a green exit that executed nothing is the false pass #544
+// records, and `--no-run` is how a build-only result is asked for.
+export struct TestLeg {
+    std::string triple;
+    std::string fromSet;   // empty: named on its own, or the platform's own target
+};
+
+export int run_test_legs(std::span<const std::string> passthrough,
+                         BuildOverrides base, TestOptions testOpts,
+                         std::vector<TestLeg> requested) {
+    const bool json = (testOpts.format == TestMessageFormat::Json);
+    if (json) mcpp::ui::set_quiet(true);
+    mcpp::build::progress::open(mcpp::log::is_verbose());
+    const std::string memberName = base.package_filter;
+    auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
+    if (!root) {
+        mcpp::ui::error("no mcpp.toml found in current directory or any parent");
+        return 2;
+    }
+    auto discovered = mcpp::build::discover_test_targets(*root, base.package_filter);
+    if (!discovered) { mcpp::ui::error(discovered.error()); return 2; }
+    // Nothing to build, a listing, or a filter that selects nothing: the
+    // answer does not depend on the target, and is the one-leg answer.
+    const bool anyMatch = testOpts.filter.empty()
+        || std::ranges::any_of(discovered->targets, [&](auto const& t) {
+               return t.name.find(testOpts.filter) != std::string::npos; });
+    if (discovered->targets.empty() || testOpts.list || !anyMatch) {
+        base.target_triple = requested.front().triple;
+        return run_tests(passthrough, std::move(base), testOpts);
+    }
+    bool hasPrograms = false;
+    if (auto m = mcpp::manifest::load(discovered->packageRoot / "mcpp.toml")) {
+        hasPrograms = std::ranges::any_of(m->targets, [](auto const& t) {
+            return t.kind == mcpp::manifest::Target::Binary
+                || t.kind == mcpp::manifest::Target::Application;
+        });
+        std::error_code ec;
+        if (m->targets.empty() && std::filesystem::exists(discovered->packageRoot / "src" / "main.cpp", ec))
+            hasPrograms = true;
+    }
+
+    struct Leg {
+        std::string                 triple;
+        std::optional<BuildContext> programs;
+        std::vector<std::pair<std::string, std::string>> programEnv;
+        TestBuild                   tb;
+        std::optional<BuildError>   packageError;
+        bool                        programsFailed = false;
+        TestRunSummary              summary;
+    };
+    std::vector<std::unique_ptr<Leg>> legs;
+    std::vector<std::string> leftOut;
+
+    // ── planned, one leg after another ──
+    for (auto const& r : requested) {
+        auto leg = std::make_unique<Leg>();
+        leg->triple = r.triple;
+        BuildOverrides o = base;
+        o.target_triple = r.triple;
+        auto refused = [&](const std::string& why) -> int {
+            if (!r.fromSet.empty() && refusal::take() == refusal::Code::PlatformTargetUnserved) {
+                leftOut.push_back(std::format("{}: {}", r.triple, why));
+                return 0;
+            }
+            mcpp::ui::error(std::format("the {} leg: {}", r.triple, why));
+            return 2;
+        };
+        (void)refusal::take();
+        if (hasPrograms) {
+            auto bin = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false, {}, o);
+            if (!bin) { if (int rc = refused(bin.error())) return rc; continue; }
+            if (std::ranges::any_of(bin->plan.linkUnits,
+                                    [](auto const& lu) { return lu.kind == LinkUnit::Binary; }))
+                leg->programs.emplace(std::move(*bin));
+        }
+        o.will_run = true;
+        auto prepared = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/true,
+                                      discovered->targets, std::move(o));
+        if (!prepared) { if (int rc = refused(prepared.error())) return rc; continue; }
+        leg->tb.ctx.emplace(std::move(*prepared));
+        leg->tb.backend = mcpp::build::make_ninja_backend();
+        leg->tb.ninjaLog = leg->tb.ctx->outputDir / ".ninja_log";
+        std::error_code ec;
+        leg->tb.logFrom = std::filesystem::file_size(leg->tb.ninjaLog, ec);
+        if (ec) leg->tb.logFrom = 0;
+        legs.push_back(std::move(leg));
+    }
+    for (auto const& why : leftOut)
+        mcpp::ui::note(std::format("left out of the target set, its platform does not serve it -- {}", why));
+    if (legs.empty()) {
+        mcpp::ui::error("no member of the target set is served by its platform");
+        return 2;
+    }
+
+    auto filter_match = [&](const mcpp::build::LinkUnit& lu) {
+        return lu.kind == mcpp::build::LinkUnit::TestBinary
+            && (testOpts.filter.empty()
+                || lu.targetName.find(testOpts.filter) != std::string::npos);
+    };
+
+    // ── built at the same time, a thread per leg ──
+    for (auto& l : legs) test_announce(*l->tb.ctx);
+    mcpp::build::progress::programs_done();
+    const bool reporting = mcpp::build::progress::is_open() && legs.size() > 1;
+    if (reporting) {
+        mcpp::build::progress::configurations(legs.size());
+        mcpp::build::progress::defer_finished();
+    }
+    std::vector<std::filesystem::path> dirs;
+    for (auto& l : legs) dirs.push_back(l->tb.ctx->outputDir);
+    const std::size_t distinct = std::set<std::filesystem::path>(dirs.begin(), dirs.end()).size();
+    for (auto& l : legs) {
+        l->tb.ctx->plan.publishRootCompileDb = false;
+        mcpp::build::legs::share_jobs(*l->tb.ctx, distinct);
+        if (l->programs) mcpp::build::legs::share_jobs(*l->programs, distinct);
+    }
+    auto built = mcpp::build::legs::run_by_directory(dirs, [&](std::size_t i) -> int {
+        auto& l = *legs[i];
+        if (l.programs) {
+            if (run_build_plan(*l.programs, mcpp::log::is_verbose(), false, l.triple) != 0) {
+                l.programsFailed = true;
+                return 1;
+            }
+            for (auto const& lu : l.programs->plan.linkUnits) {
+                if (lu.kind != LinkUnit::Binary) continue;
+                std::string key = "MCPP_BIN_";
+                for (char c : lu.targetName)
+                    key += (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
+                         : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
+                l.programEnv.emplace_back(std::move(key),
+                                          (l.programs->outputDir / lu.output).lexically_normal().string());
+            }
+        }
+        if (auto a = test_phase_a(l.tb, testOpts, json)) {
+            l.packageError = std::move(*a);
+            return 1;
+        }
+        test_bulk(l.tb, testOpts, filter_match);
+        return 0;
+    });
+    if (reporting && mcpp::build::legs::first_failure(built) == 0)
+        mcpp::build::progress::finish_deferred();
+    mcpp::build::progress::close();
+    mcpp::build::publish_workspace_compile_commands(*root, {legs.front()->tb.ctx->outputDir},
+                                                    legs.front()->tb.ctx->plan.rootCompileDb);
+
+    // ── run, one leg after another ──
+    int rc = 0;
+    int passed = 0, failed = 0, notRun = 0, builtNotRun = 0;
+    std::vector<std::string> reasons;
+    auto worse = [&](int r) {
+        // 1 (a test failed) outranks 2 (an answer not established), which
+        // outranks 0.
+        if (r == 1 || (r != 0 && rc == 0)) rc = r;
+    };
+    auto legOpts = testOpts;
+    legOpts.unreachableIsBuilt = true;
+    for (auto& lp : legs) {
+        auto& l = *lp;
+        if (json) std::println("{{\"leg\":{{\"triple\":\"{}\"}}}}", test_json_escape(l.triple));
+        else mcpp::ui::info("Testing", std::format("on {}", l.triple));
+        if (l.programsFailed) {
+            mcpp::ui::error(std::format("the {} leg: the package's programs did not build", l.triple));
+            worse(1);
+            continue;
+        }
+        if (l.packageError) {
+            if (json)
+                std::println("{{\"error\":\"package\",\"compile_output\":\"{}\"}}",
+                             test_json_escape(l.packageError->diagnosticOutput));
+            if (!l.packageError->reported) mcpp::ui::error(l.packageError->message);
+            mcpp::ui::block(l.packageError->diagnosticOutput);
+            worse(1);
+            continue;
+        }
+        l.tb.programEnv = std::move(l.programEnv);
+        test_resolve_runner(l.tb, legOpts, json);
+        if (l.tb.builtNotRunHere) {
+            reasons.push_back(std::format("{}: built, not run on this {} machine",
+                                          l.triple, mcpp::toolchain::platform::host_arch));
+        }
+        worse(test_run_member(l.tb, legOpts, passthrough, json, memberName, /*owner=*/"",
+                              l.tb.buildMs, l.summary));
+        passed += l.summary.passed;
+        failed += l.summary.failed;
+        notRun += l.summary.notRun;
+        builtNotRun += l.summary.built;
+        if (l.summary.notRun)
+            reasons.push_back(std::format("{}: {}", l.triple,
+                l.summary.notRunReason.substr(0, l.summary.notRunReason.find('\n'))));
+    }
+    // NO TEST RAN ON ANY LEG: a failure, unless a build was all that was asked.
+    const bool noneRan = !testOpts.noRun && passed + failed == 0 && rc != 1;
+    if (json) {
+        std::println("{{\"legs_summary\":{{\"legs\":{},\"passed\":{},\"failed\":{},"
+                     "\"not_run\":{},\"built\":{},\"none_ran\":{}}}}}",
+                     legs.size(), passed, failed, notRun, builtNotRun, noneRan ? "true" : "false");
+        std::fflush(stdout);
+    }
+    if (noneRan) {
+        std::string why;
+        for (auto const& r : reasons) why += "\n    " + r;
+        mcpp::ui::error(std::format("no test ran on any of the {} legs{}{}", legs.size(),
+                                    why.empty() ? std::string{} : ":", why));
+        return 1;
+    }
+    if (!json)
+        mcpp::ui::result("legs result", std::format("{} legs; {} passed; {} failed{}{}",
+            legs.size(), passed, failed,
+            builtNotRun ? std::format("; {} built, not run", builtNotRun) : std::string{},
+            notRun ? std::format("; {} not run", notRun) : std::string{}));
+    if (rc != 0 || testOpts.archive.empty()) return rc;
+    std::vector<ArchiveLeg> archived;
+    for (auto& l : legs) {
+        auto t = mcpp::toolchain::triple::parse(l->triple);
+        archived.push_back({t ? t->str() : l->triple, &*l->tb.ctx, &l->tb.programEnv});
+    }
+    return write_test_archive(testOpts, archived);
 }
 
 // `mcpp test` over several members: the members are planned once per

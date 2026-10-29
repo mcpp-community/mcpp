@@ -1584,3 +1584,218 @@ std::optional<std::string> did_you_mean(std::string_view input) {
 }
 
 } // namespace mcpp::toolchain::triple
+
+// ── target sets (SPEC-015) ──────────────────────────────────────────────────
+//
+// A `--target` value is either a target or a set of targets. A target is a
+// triple and means what it always meant. A SET is written by leaving the
+// architecture out: `openkal`, `linux-musl`, `none-eabihf`. It names every row
+// of the target table whose system and environment are the ones written, and
+// a command over a set acts once per member, each member being one LEG.
+//
+// THE SET IS RECOGNISED BY ITS FIRST SEGMENT, NOT BY A FAILED PARSE. The
+// triple parser does not validate the architecture: `unknown-linux-gnu` parses
+// as a triple whose architecture is `unknown`, and the four-segment GNU forms
+// put a vendor first. A spelling is a set exactly when its first segment is
+// one of the system words below; everything else is a triple, refused or
+// accepted where triples always were.
+//
+// THE ENVIRONMENT IS FILLED AS A WRITTEN TRIPLE FILLS IT. `linux` is
+// `linux-gnu` and `windows` is `windows-gnu`, the fills docs/21 states for
+// `<arch>-linux` and `<arch>-windows`; a system without an environment segment
+// (`macos`, `openkal`, `emscripten`, `ios`) has nothing to fill. Bare metal has
+// no default environment, so `none` alone names no set and the refusal lists
+// the environments that do.
+//
+// WHICH PLATFORM SERVES THE MEMBERS IS ASKED, NOT ASSUMED. Each candidate is
+// put to the platform selection the build uses (the flag, the environment,
+// the project, this machine's configuration, the target table), through the
+// callback the caller passes. A set whose members select different platforms
+// is refused, naming the split: one command acting on two platforms at once
+// is not what a set was written to mean. Whether the selected platform serves
+// every member is a fact of the platform package, which is read when a leg is
+// planned; a member it does not serve is left out there, and the leaving out
+// is reported.
+
+export namespace mcpp::toolchain::target_set {
+
+// The words a set begins with. `android` is the one word that is an
+// environment rather than a system (`<arch>-linux-android`); it is a word here
+// because a user names the platform by it.
+inline constexpr std::string_view kSystemWords[] = {
+    "linux", "macos", "windows", "openkal", "emscripten", "ios", "android", "none",
+};
+
+// Whether `spelling` names a set: its first segment is a system word.
+bool is_set_spelling(std::string_view spelling);
+
+// The platform a candidate selects, as one comparable string ("" = the
+// engine's own conventions), or the selection's own error.
+using PlatformOf =
+    std::function<std::expected<std::string, std::string>(const mcpp::toolchain::triple::Triple&)>;
+
+struct Leg {
+    std::string triple;     // canonical for a set's member; as written for a target
+    std::string fromSet;    // the set spelling it came from; empty for a target
+};
+
+struct Expansion {
+    std::vector<std::string> members;   // canonical triples, in target-table order
+    std::string              platform;  // the platform every member selected
+};
+
+// The members of one set spelling.
+std::expected<Expansion, std::string> expand_set(std::string_view spelling,
+                                                 const PlatformOf& platformOf);
+
+// Every `--target` of one command: sets expanded, targets kept as written, the
+// union in target-table order (targets the table does not hold keep the order
+// they were written in, after the table's), a target named twice once.
+std::expected<std::vector<Leg>, std::string> resolve(std::span<const std::string> requests,
+                                                     const PlatformOf& platformOf);
+
+} // namespace mcpp::toolchain::target_set
+
+// ── implementation ──────────────────────────────────────────────────────────
+
+namespace mcpp::toolchain::target_set {
+
+namespace tt = mcpp::toolchain::triple;
+
+namespace {
+
+std::string_view first_segment(std::string_view s) {
+    auto d = s.find('-');
+    return d == std::string_view::npos ? s : s.substr(0, d);
+}
+
+// The table row index of a canonical triple; the table's size when absent.
+std::size_t table_rank(std::string_view canonical) {
+    auto rows = tt::known_targets();
+    for (std::size_t i = 0; i < rows.size(); ++i)
+        if (rows[i].canonical == canonical) return i;
+    return rows.size();
+}
+
+struct Wanted {
+    std::string os;
+    std::string env;
+};
+
+std::expected<Wanted, std::string> wanted_of(std::string_view spelling) {
+    std::vector<std::string_view> seg;
+    for (std::size_t b = 0; b <= spelling.size();) {
+        auto d = spelling.find('-', b);
+        seg.push_back(spelling.substr(b, d == std::string_view::npos ? std::string_view::npos : d - b));
+        if (d == std::string_view::npos) break;
+        b = d + 1;
+    }
+    const auto word = seg.front();
+    if (seg.size() > 2 || (seg.size() == 2 && seg[1].empty()))
+        return std::unexpected(std::format(
+            "'{}' is not a target set: a set is a system and at most one environment "
+            "(`openkal`, `linux-musl`, `none-eabihf`)", spelling));
+    const std::string written = seg.size() == 2 ? std::string(seg[1]) : std::string{};
+    if (word == "android") {
+        if (!written.empty())
+            return std::unexpected(std::format(
+                "'{}' is not a target set: `android` is the environment of `<arch>-linux-android` "
+                "and takes no further segment", spelling));
+        return Wanted{"linux", "android"};
+    }
+    if (word == "linux" || word == "windows")
+        return Wanted{std::string(word), written.empty() ? std::string("gnu") : written};
+    if (word == "none") {
+        if (written.empty())
+            return std::unexpected(
+                "`none` names no target set: bare metal has no default environment.\n"
+                "  use: none-elf | none-eabi | none-eabihf");
+        return Wanted{"none", written};
+    }
+    if (word == "ios") return Wanted{"ios", written};
+    if (!written.empty())
+        return std::unexpected(std::format(
+            "'{}' is not a target set: `{}` has no environment segment", spelling, word));
+    return Wanted{std::string(word), {}};
+}
+
+} // namespace
+
+bool is_set_spelling(std::string_view spelling) {
+    const auto w = first_segment(spelling);
+    return std::ranges::find(kSystemWords, w) != std::end(kSystemWords);
+}
+
+std::expected<Expansion, std::string> expand_set(std::string_view spelling,
+                                                 const PlatformOf& platformOf) {
+    auto want = wanted_of(spelling);
+    if (!want) return std::unexpected(want.error());
+
+    Expansion out;
+    std::vector<std::pair<std::string, std::string>> chosen;   // member, platform
+    std::vector<std::string_view> planned;
+    for (auto const& row : tt::known_targets()) {
+        auto t = tt::parse(row.canonical);
+        if (!t || t->os != want->os || t->env != want->env) continue;
+        if (row.tier == "planned") { planned.push_back(row.canonical); continue; }
+        auto p = platformOf ? platformOf(*t) : std::expected<std::string, std::string>{};
+        if (!p) return std::unexpected(std::format("{}: {}", row.canonical, p.error()));
+        chosen.emplace_back(std::string(row.canonical), *p);
+    }
+    if (chosen.empty()) {
+        std::string rows;
+        for (auto r : planned) rows += std::format("{}{}", rows.empty() ? "" : ", ", r);
+        return std::unexpected(std::format(
+            "the target set '{}' names no target this mcpp builds{}.\n"
+            "  `mcpp toolchain list` lists the targets", spelling,
+            rows.empty() ? std::string{} : std::format(" (planned, not yet built: {})", rows)));
+    }
+    for (auto const& [member, platform] : chosen) {
+        if (platform == chosen.front().second) continue;
+        std::string split;
+        for (auto const& [m, p] : chosen)
+            split += std::format("\n    {}  {}", m, p.empty() ? "(the engine's conventions)" : p);
+        return std::unexpected(std::format(
+            "the members of the target set '{}' select different platforms:{}\n"
+            "  a set acts on one platform; name the targets one by one, or select one "
+            "platform for all of them ([target.<selector>] platform, --platform)",
+            spelling, split));
+    }
+    out.platform = chosen.front().second;
+    for (auto& [member, platform] : chosen) out.members.push_back(std::move(member));
+    return out;
+}
+
+std::expected<std::vector<Leg>, std::string> resolve(std::span<const std::string> requests,
+                                                     const PlatformOf& platformOf) {
+    struct Ranked { std::size_t rank; std::size_t order; Leg leg; std::string key; };
+    std::vector<Ranked> all;
+    std::set<std::string> seen;
+    auto add = [&](Leg leg, std::string key) {
+        if (!seen.insert(key).second) return;
+        all.push_back({table_rank(key), all.size(), std::move(leg), std::move(key)});
+    };
+    for (auto const& r : requests) {
+        if (is_set_spelling(r)) {
+            auto e = expand_set(r, platformOf);
+            if (!e) return std::unexpected(e.error());
+            for (auto& m : e->members) {
+                std::string key = m;
+                add(Leg{std::move(m), r}, std::move(key));
+            }
+            continue;
+        }
+        // A target keeps its spelling: the leg is planned as the command
+        // would have planned it alone, completion and report included.
+        auto t = tt::parse(r);
+        add(Leg{r, {}}, t ? t->str() : r);
+    }
+    std::ranges::stable_sort(all, [](Ranked const& a, Ranked const& b) {
+        return a.rank != b.rank ? a.rank < b.rank : a.order < b.order;
+    });
+    std::vector<Leg> legs;
+    for (auto& r : all) legs.push_back(std::move(r.leg));
+    return legs;
+}
+
+} // namespace mcpp::toolchain::target_set

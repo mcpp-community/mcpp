@@ -620,8 +620,9 @@ int run(int argc, char** argv) {
                 .help("The host graph's platform for this invocation (= MCPP_HOST_PLATFORM)"))
             .option(cl::Option("no-cache")
                 .help("Deprecated alias for --cache=off (also clears the build dir)"))
-            .option(cl::Option("target").takes_value().help(
-                "Build for <triple> (e.g. x86_64-linux-musl); looks up [target.<triple>] in mcpp.toml"))
+            .option(cl::Option("target").takes_value().multiple().help(
+                "Build for <triple> (e.g. x86_64-linux-musl), or for a target set (e.g. openkal, "
+                "linux-musl); repeatable: one leg per target"))
             .option(cl::Option("accel").takes_value().value_name("SPEC")
                 .help("Device backends and architectures, e.g. 'cuda12.8+{sm_89}'; overrides [build] accel"))
             .option(cl::Option("no-accel")
@@ -668,8 +669,9 @@ int run(int argc, char** argv) {
             // lets `run` spell the flag `--target` like every other
             // subcommand, instead of being the one command that cannot.
             .arg(cl::Arg("bin").help("Binary name (optional)"))
-            .option(cl::Option("target").takes_value().value_name("TRIPLE")
-                .help("Cross target triple (same axis as `mcpp build --target`)"))
+            .option(cl::Option("target").takes_value().multiple().value_name("TRIPLE")
+                .help("Cross target triple or target set (same axis as `mcpp build --target`); "
+                      "of several, the first this host reaches, its own architecture first"))
             .option(cl::Option("accel").takes_value().value_name("SPEC")
                 .help("Device backends and architectures (same axis as `mcpp build --accel`)"))
             .option(cl::Option("no-accel")
@@ -762,8 +764,9 @@ int run(int argc, char** argv) {
             .description("Build + run all tests/**/*.cpp (after `--`, args go to each test binary)")
             .arg(cl::Arg("pattern")
                 .help("Run only tests whose name contains PATTERN (optional)"))
-            .option(cl::Option("target").takes_value().value_name("TRIPLE")
-                .help("Cross target triple (same axis as `mcpp build --target`)"))
+            .option(cl::Option("target").takes_value().multiple().value_name("TRIPLE")
+                .help("Cross target triple or target set (same axis as `mcpp build --target`); "
+                      "repeatable: every leg is built, and run where this host reaches it"))
             .option(cl::Option("accel").takes_value().value_name("SPEC")
                 .help("Device backends and architectures (same axis as `mcpp build --accel`)"))
             .option(cl::Option("no-accel")
@@ -776,6 +779,8 @@ int run(int argc, char** argv) {
                 .help("Run test binaries directly, ignoring any [target.<triple>].runner (a host that runs them natively)"))
             .option(cl::Option("no-run")
                 .help("Build the tests for --target and stop; a build that succeeds is the result (for a target this host cannot execute)"))
+            .option(cl::Option("archive").takes_value().value_name("FILE")
+                .help("With --no-run: write the built tests to FILE. Without: run the tests FILE holds, building nothing (in a checkout of the same project)"))
             .option(cl::Option("timeout").takes_value().value_name("SECS")
                 .help("Kill a test still RUNNING after SECS seconds (default 300; 0 = no limit)"))
             .option(cl::Option("build-timeout").takes_value().value_name("SECS")
@@ -1208,8 +1213,9 @@ int run(int argc, char** argv) {
                 .description("Diagnose mcpp environment health"))
             .subcommand(cl::App("env")
                 .description("Print mcpp paths and configuration; with --target, one configuration: toolchain, platform, tools, runner")
-                .option(cl::Option("target").takes_value().value_name("TRIPLE")
-                    .help("Report this target's configuration (prepared, not built; the project's when run in one)"))
+                .option(cl::Option("target").takes_value().multiple().value_name("TRIPLE")
+                    .help("Report this target's configuration (prepared, not built; the project's when run in one); "
+                          "a target set or several reports each leg"))
                 .option(cl::Option("host")
                     .help("Report the host graph's configuration: what build programs and tools are built for"))
                 .option(cl::Option("platform").takes_value().value_name("SPEC")

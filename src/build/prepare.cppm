@@ -1075,6 +1075,16 @@ prepare_build(bool print_fingerprint, bool includeDevDeps = false,
 export std::expected<BuildContext, std::string>
 prepare_configuration(std::string_view targetTriple);
 
+// THE PLATFORM A TARGET SELECTS, ASKED WITHOUT PREPARING IT (SPEC-015 §1): the
+// selection the first phase makes -- `--platform`, the target's environment
+// variable, the project's `[target.<selector>]` tables, this machine's
+// configuration, the target table's column -- put to one target, so the
+// members of a target set can be checked to select one platform before any
+// of them is planned. "" when no platform is selected.
+export std::expected<std::string, std::string>
+platform_selection_for(const mcpp::toolchain::triple::Triple& target,
+                       const BuildOverrides& overrides);
+
 // The PlanNotes a failed call recorded before the phase that failed it.
 //
 // On success, `prepare_build` copies `PrepareState::planNotes` into
@@ -1108,3 +1118,85 @@ export std::vector<PlanNote> take_notes_on_failure();
 export void populate_dependency_cache(BuildContext& ctx);
 
 } // namespace mcpp::build
+
+// THE LEGS OF ONE COMMAND, PLANNED AND BUILT (SPEC-015 §3; legs.cpp).
+//
+// A command over several targets acts once per target; each is a LEG. The
+// legs of a command are planned one after another and then built at the same
+// time, as the configuration groups of a workspace are (workspace design
+// 2026-09-29 §15), and by the same machinery:
+//
+//   PLANNING IS SERIAL. `prepare_build` resolves dependencies, may write
+//   `mcpp.lock` (SPEC-011 §4 writes it optimistically and refuses a second
+//   writer), runs build programs and narrates what it resolves. One leg at a
+//   time keeps the lock file one writer's, the narration readable, and the
+//   build directories' locks taken in one order -- the legs' order, which is
+//   the target table's -- so two commands over overlapping legs cannot each
+//   hold the lock the other waits for.
+//
+//   BUILDING IS CONCURRENT ACROSS BUILD DIRECTORIES. Each leg's plan names its
+//   own directory (`target/<triple>/<fingerprint>`); the builds run on one
+//   thread per directory, each with a static share of the jobs one build
+//   would use, and one `Finished` follows them all. Two legs that resolve to
+//   one directory (one target spelled two ways) are built one after the other
+//   in it, since one ninja owns a directory.
+//
+// A LEG THAT CAME FROM A SET MAY BE LEFT OUT. A target set names the target
+// table's rows of a system; whether the platform those rows select serves each
+// of them is a fact of the platform package, which is read when the leg is
+// planned. A member the platform does not serve is left out and reported; a
+// target named on its own is refused, as it always was.
+export namespace mcpp::build::legs {
+
+// One leg to plan: the overrides `prepare_build` takes for it
+// (`target_triple` is the leg), and what the command plans besides the
+// package's own targets.
+struct Spec {
+    BuildOverrides                       overrides;
+    bool                                 includeDevDeps = false;
+    std::vector<mcpp::manifest::Target>  extraTargets;
+    // The set the leg is a member of; empty for a target named on its own.
+    std::string                          fromSet;
+};
+
+struct Planned {
+    std::string  triple;    // as the leg was requested
+    std::string  fromSet;
+    BuildContext ctx;
+};
+
+struct Plan {
+    std::vector<Planned>     legs;
+    // Members of a set the selected platform does not serve: "<triple>: <why>".
+    std::vector<std::string> leftOut;
+};
+
+// Plans every leg, in order; the first leg that cannot be planned ends it,
+// its error naming the leg (a leg of the host, unnamed, is not prefixed).
+std::expected<Plan, std::string> plan(std::vector<Spec> specs, bool printFingerprint = false);
+
+// Builds the contexts concurrently across their build directories, each with
+// `buildOne`, which returns the exit status of its build. One context is
+// built on the calling thread with nothing changed. Returns each context's
+// status, in order; the deferred `Finished` is stated when every one is 0.
+std::vector<int> build(std::span<BuildContext* const> contexts,
+                       const std::function<int(BuildContext&)>& buildOne);
+
+// Runs `work(i)` for every index, concurrently across distinct directories
+// and one after another within a directory; returns each status, in order.
+// The primitive `build` is made of, for a command whose leg is more than one
+// build (`mcpp test`: the package's programs, then its tests).
+std::vector<int> run_by_directory(std::span<const std::filesystem::path> directories,
+                                  const std::function<int(std::size_t)>& work);
+
+// Gives each build plan a static share of the jobs one build would use, for
+// `n` directories built at the same time.
+void share_jobs(BuildContext& ctx, std::size_t n);
+
+// The first non-zero status, or 0.
+int first_failure(std::span<const int> statuses);
+
+// The legs' order: native architecture first, the rest as they were.
+std::vector<std::string> native_first(std::span<const std::string> triples);
+
+} // namespace mcpp::build::legs

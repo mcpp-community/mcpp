@@ -165,8 +165,11 @@ build_extra_android_legs(const std::string& targetName,
                          const std::string& features)
 {
     std::vector<SharedLeg> out;
+    // Planned one after another, then built at once (mcpp.build.legs).
+    std::vector<mcpp::build::legs::Spec> specs;
     for (auto const& triple : triples) {
-        mcpp::build::BuildOverrides ov;
+        mcpp::build::legs::Spec spec;
+        auto& ov = spec.overrides;
         ov.target_triple    = triple;
         // A packaged artifact leaves this machine — same fallback as every
         // other pack leg (`build_and_pack_library`, and the primary leg
@@ -174,17 +177,27 @@ build_extra_android_legs(const std::string& targetName,
         ov.profile          = profile;
         ov.profile_fallback = "release";
         ov.features         = features;
-        auto ctx = mcpp::build::prepare_build(false, false, {}, ov);
-        if (!ctx) { mcpp::ui::error(ctx.error()); return std::nullopt; }
-
+        specs.push_back(std::move(spec));
+    }
+    auto planned = mcpp::build::legs::plan(std::move(specs));
+    if (!planned) { mcpp::ui::error(planned.error()); return std::nullopt; }
+    std::vector<mcpp::build::BuildContext*> contexts;
+    for (auto& l : planned->legs) contexts.push_back(&l.ctx);
+    mcpp::build::progress::programs_done();
+    auto built = mcpp::build::legs::build(contexts, [](mcpp::build::BuildContext& c) {
         auto be = mcpp::build::make_ninja_backend();
-        mcpp::build::progress::programs_done();
         mcpp::build::BuildOptions bo;
-        if (auto br = be->build(ctx->plan, bo); !br) {
+        if (auto br = be->build(c.plan, bo); !br) {
             mcpp::build::report_failed_drive(br.error());
-            return std::nullopt;
+            return 1;
         }
-        mcpp::build::populate_dependency_cache(*ctx);
+        mcpp::build::populate_dependency_cache(c);
+        return 0;
+    });
+    if (mcpp::build::legs::first_failure(built) != 0) return std::nullopt;
+    for (auto& planned_leg : planned->legs) {
+        const auto& triple = planned_leg.triple;
+        auto* ctx = &planned_leg.ctx;
 
         // FROM THE PLAN, never a glob — see the function comment. A
         // dependency's own `shared` target also contributes a `SharedLibrary`
@@ -634,12 +647,15 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
             opts.universalName = mcpp::manifest::platform::platform_name(
                 P.package.substr(P.package.find('.') + 1));
             // The legs: those the command named, else every target of the
-            // platform.
+            // platform. The other legs are planned one after another and
+            // built at once (mcpp.build.legs); this leg is the pack's own.
             auto const& legs = opts.legTargets.empty() ? P.fields.targets.value : opts.legTargets;
+            std::vector<mcpp::build::legs::Spec> specs;
             for (auto const& target : legs) {
                 auto lt = mcpp::toolchain::triple::parse(target);
                 if (!lt || lt->str() == t->str()) continue;
-                mcpp::build::BuildOverrides ov = g.ov;
+                mcpp::build::legs::Spec spec{g.ov};
+                auto& ov = spec.overrides;
                 ov.target_triple = lt->str();
                 // The member's own plan, in a workspace; the project's otherwise.
                 ov.workspace_members.clear();
@@ -648,28 +664,39 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
                     ov.workspace_members = { m.path };
                     ov.workspace_request = { m.path };
                 }
-                auto legCtx = mcpp::build::prepare_build(false, false, {}, ov);
-                if (!legCtx) return Refusal{1, about(run, m, std::format(
-                    "the {} leg of the universal package: {}", lt->str(), legCtx.error()))};
+                specs.push_back(std::move(spec));
+            }
+            auto planned = mcpp::build::legs::plan(std::move(specs));
+            if (!planned) return Refusal{1, about(run, m, planned.error())};
+            std::vector<mcpp::build::BuildContext*> contexts;
+            for (auto& l : planned->legs) contexts.push_back(&l.ctx);
+            auto built = mcpp::build::legs::build(contexts, [](mcpp::build::BuildContext& c) {
                 auto be = mcpp::build::make_ninja_backend();
                 mcpp::build::BuildOptions bo;
-                if (auto br = be->build(legCtx->plan, bo); !br) {
+                if (auto br = be->build(c.plan, bo); !br) {
                     mcpp::build::report_failed_drive(br.error());
-                    return Refusal{1, about(run, m, std::format("the {} leg did not build", lt->str()))};
+                    return 1;
                 }
-                mcpp::build::populate_dependency_cache(*legCtx);
+                mcpp::build::populate_dependency_cache(c);
+                return 0;
+            });
+            for (std::size_t i = 0; i < planned->legs.size(); ++i) {
+                auto const& leg = planned->legs[i];
+                if (built[i] != 0)
+                    return Refusal{1, about(run, m, std::format("the {} leg did not build", leg.triple))};
                 std::filesystem::path artifact;
-                for (auto const& lu : legCtx->plan.linkUnits)
+                for (auto const& lu : leg.ctx.plan.linkUnits)
                     if (lu.targetName == chosenLu->targetName && lu.kind == chosenLu->kind
                         && !lu.dependencyOwned
-                        && (legCtx->workspaceMembers.size() < 2 || lu.memberOf == m.name)) {
-                        artifact = legCtx->outputDir / lu.output;
+                        && (leg.ctx.workspaceMembers.size() < 2 || lu.memberOf == m.name)) {
+                        artifact = leg.ctx.outputDir / lu.output;
                         break;
                     }
                 if (artifact.empty()) return Refusal{1, about(run, m, std::format(
-                    "the {} leg of the universal package built no '{}'", lt->str(), chosenLu->targetName))};
-                mcpp::ui::status("Packed leg", lt->str());
-                loadedLegs.push_back({ lt->str(), lt->arch, artifact });
+                    "the {} leg of the universal package built no '{}'", leg.triple, chosenLu->targetName))};
+                auto lt = mcpp::toolchain::triple::parse(leg.triple);
+                mcpp::ui::status("Packed leg", leg.triple);
+                loadedLegs.push_back({ leg.triple, lt ? lt->arch : std::string{}, artifact });
             }
         }
     }

@@ -111,6 +111,21 @@ bool events_enabled();
 // One NDJSON line on stdout: {"schemaVersion":1,"kind":"mcpp.event","event":<name>, ...fields}.
 void emit(std::string_view event, nlohmann::json fields = nlohmann::json::object());
 
+// ── several legs (SPEC-015 §3.5) ──
+//
+// A command over several targets builds them at the same time, so its
+// `artifact` and `diagnostic` events carry the target they belong to. One
+// leg's stream is unchanged: the field is written only while this is on.
+void set_legs(bool on);
+bool legs();
+
+// After the legs of one command: `target/.last-result.json` names the first
+// leg's record, as it names the one record of a single build, states the
+// legs' status together (`failed` if any failed, else `cancelled` if any was,
+// else `ok`), and lists every leg's record under `legs`.
+void write_last_of_legs(const std::filesystem::path& projectRoot,
+                        std::span<const std::filesystem::path> outputDirs);
+
 }  // namespace mcpp::build::result
 
 namespace mcpp::build::result {
@@ -385,6 +400,40 @@ Record begin(const std::filesystem::path& projectRoot, const std::filesystem::pa
 
 void enable_events(bool on) { g_events.store(on); }
 bool events_enabled() { return g_events.load(); }
+
+namespace {
+std::atomic<bool> g_legs{false};
+}  // namespace
+void set_legs(bool on) { g_legs.store(on); }
+bool legs() { return g_legs.load(); }
+
+void write_last_of_legs(const std::filesystem::path& projectRoot,
+                        std::span<const std::filesystem::path> outputDirs) {
+    if (projectRoot.empty() || outputDirs.empty()) return;
+    nlohmann::json legs = nlohmann::json::array();
+    std::string status = "ok";
+    std::int64_t finishedAt = 0;
+    for (auto const& dir : outputDirs) {
+        auto r = read(dir);
+        const std::string s = r ? r->status : std::string("failed");
+        if (s == "failed" || (s == "cancelled" && status != "failed") || (s == "running" && status == "ok"))
+            status = s;
+        if (r) finishedAt = std::max(finishedAt, r->finishedAt);
+        legs.push_back({{"triple", r ? r->triple : std::string{}},
+                        {"result", (dir / "result.json").generic_string()},
+                        {"status", s}});
+    }
+    nlohmann::json last{
+        {"schemaVersion", 1},
+        {"kind", "mcpp.last-result"},
+        {"kindVersion", 1},
+        {"data", {{"result", (outputDirs.front() / "result.json").generic_string()},
+                  {"status", status},
+                  {"finishedAt", finishedAt == 0 ? nlohmann::json(nullptr) : nlohmann::json(finishedAt)},
+                  {"legs", std::move(legs)}}},
+    };
+    write_atomically(projectRoot / "target" / ".last-result.json", last.dump(2) + "\n");
+}
 
 void emit(std::string_view event, nlohmann::json fields) {
     if (!events_enabled()) return;

@@ -12,6 +12,7 @@ import std;
 import mcpp.invocation;
 import mcpp.source_kind;
 import mcpp.libs.toml;
+import mcpp.toolchain.triple;
 import mcpp.pm.dep_spec;
 import mcpp.version_req;
 import mcpp.pm.dependency_selector;
@@ -2950,7 +2951,17 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         m.buildConfig.buildProgramTimeoutSecs = static_cast<int>(secs);
     }
     if (auto v = doc->get_string("build.c_standard"))     m.buildConfig.cStandard = *v;
-    if (auto v = doc->get_string("build.target"))         m.buildConfig.target = *v;
+    if (auto v = doc->get_string("build.target")) {
+        // One target: `build`, `run` and `test` act on it by default, and a
+        // default that built every architecture would charge each build for
+        // all of them (SPEC-015 §3.3).
+        if (mcpp::toolchain::target_set::is_set_spelling(*v))
+            return std::unexpected(error(origin, std::format(
+                "[build].target = '{}' names a target set; [build] target names one target "
+                "(`x86_64-openkal`). A set is written in [pack] targets, or as `--target {}`",
+                *v, *v)));
+        m.buildConfig.target = *v;
+    }
     // `jobs` accepts a number or "auto"; both arrive as text and are validated
     // where they are used, so a bad value warns at build time instead of making
     // the whole manifest unloadable. (A published package carrying an unknown
@@ -3826,6 +3837,23 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         m.packConfig.sign = *v;
     }
     if (auto v = doc->get_bool("pack.universal")) m.packConfig.universal = *v;
+    // `[pack] targets` (SPEC-015 §3.3): a string or a list; each a target or a
+    // target set. A set's members are known only with the platform the
+    // command selects, so a set is checked for its form here and expanded
+    // where the command reads it.
+    {
+        std::vector<std::string> targets;
+        if (auto v = doc->get_string("pack.targets")) targets.push_back(*v);
+        else if (auto a = doc->get_string_array("pack.targets")) targets = *a;
+        for (auto const& t : targets) {
+            if (mcpp::toolchain::target_set::is_set_spelling(t) || mcpp::toolchain::triple::parse(t))
+                continue;
+            return std::unexpected(error(origin, std::format(
+                "[pack].targets: '{}' is neither a target (`x86_64-linux-musl`) nor a target set "
+                "(`openkal`, `linux-musl`)", t)));
+        }
+        m.packConfig.targets = std::move(targets);
+    }
 
     // [target.<triple>] — per-target overrides. We accept both GCC
     // (x86_64-linux-musl) and Rust-style (x86_64-unknown-linux-musl)

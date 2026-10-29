@@ -26,6 +26,7 @@ import mcpp.invocation;
 import mcpp.manifest;
 import mcpp.platform;
 import mcpp.pm.compat;
+import mcpp.project;
 import mcpp.targetside;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.platform;
@@ -117,6 +118,36 @@ mcpp::platform::Matches matcher(cfgpred::Ctx c) {
 }
 
 } // namespace
+
+std::expected<std::string, std::string>
+platform_selection_for(const mcpp::toolchain::triple::Triple& t, const BuildOverrides& overrides) {
+    const auto flag = !overrides.platform_choice.empty()
+        ? overrides.platform_choice
+        : mcpp::invocation::get("MCPP_PLATFORM").value_or("");
+    const auto envKey = target_env_name(t, "PLATFORM");
+    const auto env = mcpp::invocation::get(envKey).value_or("");
+    std::vector<mp::Override> project;
+    std::error_code ec;
+    auto root = !overrides.project_root.empty()
+        ? std::optional<fs::path>(overrides.project_root)
+        : mcpp::project::find_manifest_root(fs::current_path(ec));
+    if (root)
+        if (auto m = mcpp::manifest::load(*root / "mcpp.toml")) project = project_tables(*m);
+    // Read, never initialised: asking which platform a target selects writes
+    // nothing, and a machine without a configuration has no tables to apply.
+    std::vector<mp::Override> config;
+    if (auto c = mcpp::config::load_or_init(/*quiet=*/true, {}, {},
+                                            mcpp::config::Initialization::ReadOnly))
+        config = c->platformOverrides;
+    std::string column;
+    if (auto* row = mcpp::toolchain::triple::find_known_target(t)) column = std::string(row->platform);
+    mcpp::platform::ChoiceInputs in{ flag, env, envKey, project, config, column };
+    if (overrides.platform_choice.empty() && !stated_on_command_line("MCPP_PLATFORM"))
+        in.flagKey = "MCPP_PLATFORM";
+    auto sel = mcpp::platform::select_target(in, matcher(cfgpred::context_for(t.str())));
+    if (!sel) return std::unexpected(sel.error());
+    return sel->none ? std::string{} : mp::display(sel->ref);
+}
 
 cfgpred::Ctx platform_cfg_context(const PrepareState& state) {
     return cfgpred::context_for(target_of(state).str(), state.platformPackageShortName);

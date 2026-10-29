@@ -133,10 +133,6 @@ export int build_and_pack_library(const std::string& targetName,
     // packages' lines and the status row as it runs, and one `Finished` for
     // the legs together, after the last of them.
     const bool reporting = mcpp::build::progress::is_open();
-    if (reporting && legs.size() > 1) {
-        mcpp::build::progress::configurations(legs.size());
-        mcpp::build::progress::defer_finished();
-    }
 
     // A library's package is a tree, a tar or a zip; a single file runs a
     // program, and a library has none.
@@ -161,8 +157,12 @@ export int build_and_pack_library(const std::string& targetName,
     // are printable.
     std::vector<std::string> declaredPlatforms;
 
+    // EVERY LEG IS PLANNED, ONE AFTER ANOTHER, AND THEN BUILT AT ONCE
+    // (mcpp.build.legs); each leg's artifact is then taken from its plan.
+    std::vector<mcpp::build::legs::Spec> specs;
     for (auto const& want : legs) {
-        mcpp::build::BuildOverrides ov;
+        mcpp::build::legs::Spec spec;
+        auto& ov = spec.overrides;
         ov.target_triple = want;
         // A packaged artifact leaves this machine, so the fallback is release
         // rather than the interactive "dev". `[build] default-profile` still
@@ -171,18 +171,59 @@ export int build_and_pack_library(const std::string& targetName,
         ov.no_lto_in_archives = true;
         ov.profile_fallback = "release";
         ov.features         = opts.features;
-        auto ctx = mcpp::build::prepare_build(false, /*includeDevDeps=*/false, {}, ov);
-        if (!ctx) { mcpp::ui::error(ctx.error()); return 2; }
-        // P5 (mcpp#797): a build plugin is distributed as source; its BMIs
-        // are the build program's toolchain's and travel nowhere.
-        if (ctx->buildPluginRoot) {
-            mcpp::ui::error(std::format(
-                "'{}' is a build plugin (its library imports mcpp.core) and is distributed as "
-                "source: build programs compile it with their own toolchain. Publish it "
-                "(`mcpp publish`) instead of packing it.", ctx->manifest.package.name));
+        specs.push_back(std::move(spec));
+    }
+    auto planned = mcpp::build::legs::plan(std::move(specs));
+    if (!planned) { mcpp::ui::error(planned.error()); return 2; }
+    // P5 (mcpp#797): a build plugin is distributed as source; its BMIs
+    // are the build program's toolchain's and travel nowhere.
+    if (auto const& first = planned->legs.front().ctx; first.buildPluginRoot) {
+        mcpp::ui::error(std::format(
+            "'{}' is a build plugin (its library imports mcpp.core) and is distributed as "
+            "source: build programs compile it with their own toolchain. Publish it "
+            "(`mcpp publish`) instead of packing it.", first.manifest.package.name));
+        return 2;
+    }
+    // The target is named before anything is built: a name the package does
+    // not have is refused as the package's, not after a build of every leg.
+    {
+        auto const& first = planned->legs.front().ctx;
+        const auto& subject = first.workspaceMembers.size() == 1
+            ? first.workspaceMembers.front().manifest : first.manifest;
+        if (std::ranges::none_of(subject.targets, [&](auto const& t) { return t.name == targetName; })) {
+            std::string names;
+            for (auto const& t : subject.targets) names += std::format("{}{}", names.empty() ? "" : ", ", t.name);
+            mcpp::ui::error(std::format("no target named '{}' in this package{}{}",
+                                        targetName, names.empty() ? "" : "; available: ", names));
             return 2;
         }
+    }
+    {
+        std::vector<mcpp::build::BuildContext*> contexts;
+        for (auto& l : planned->legs) contexts.push_back(&l.ctx);
+        mcpp::build::progress::programs_done();
+        auto built = mcpp::build::legs::build(contexts, [&](mcpp::build::BuildContext& c) {
+            auto be = mcpp::build::make_ninja_backend();
+            mcpp::build::BuildOptions bo;
+            if (auto br = be->build(c.plan, bo); !br) {
+                // The compiler's own output, not just "build failed". `mcpp
+                // build` has always printed this; `mcpp pack` dropped it, so a
+                // failure inside the packer's build arrived as three words and
+                // CI logs had nothing to go on.
+                mcpp::build::report_failed_drive(br.error());
+                return 1;
+            }
+            mcpp::build::populate_dependency_cache(c);
+            if (reporting)
+                mcpp::build::progress::finished(
+                    c.profile, mcpp::build::profile_descriptor(c.plan.manifest.buildConfig));
+            return 0;
+        });
+        if (int r = mcpp::build::legs::first_failure(built)) return r;
+    }
 
+    for (auto& plannedLeg : planned->legs) {
+        auto* ctx = &plannedLeg.ctx;
         // ── the target, and what its kind means here ──────────────────
         // In a workspace plan the package is its one selected member
         // (workspace design 2026-09-29 §15).
@@ -211,26 +252,11 @@ export int build_and_pack_library(const std::string& targetName,
                   return t ? t->str() : ctx->tc.targetTriple;
               }();
 
-        // ── build, then take the artifact FROM THE PLAN ───────────────
+        // ── the artifact, FROM THE PLAN ───────────────────────────────
         //
         // Never a glob over `target/`: that directory holds one subtree per
         // fingerprint, and picking one by name or by mtime silently selects a
         // stale binary. The link unit knows its own output.
-        auto be = mcpp::build::make_ninja_backend();
-        mcpp::build::progress::programs_done();
-        mcpp::build::BuildOptions bo;
-        if (auto br = be->build(ctx->plan, bo); !br) {
-            // The compiler's own output, not just "build failed". `mcpp build`
-            // has always printed this; `mcpp pack` dropped it, so a failure
-            // inside the packer's build arrived as three words and CI logs had
-            // nothing to go on.
-            mcpp::build::report_failed_drive(br.error());
-            return 1;
-        }
-        mcpp::build::populate_dependency_cache(*ctx);
-        if (reporting)
-            mcpp::build::progress::finished(
-                ctx->profile, mcpp::build::profile_descriptor(ctx->plan.manifest.buildConfig));
         // Everything below reads the package being packed.
         const auto kept = *target;
         mcpp::build::focus_on_member(*ctx);
@@ -462,7 +488,6 @@ export int build_and_pack_library(const std::string& targetName,
         });
         mcpp::ui::status("Packed leg", std::format("{}  [{}]", triple, tag.str()));
     }
-    if (reporting && legs.size() > 1) mcpp::build::progress::finish_deferred();
 
     // ── does the package cover what it claims? ─────────────────────────
     //

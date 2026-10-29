@@ -191,6 +191,28 @@ mcpp::build::BuildOverrides overrides_from_selectors(
     return ov;
 }
 
+// THE LEGS `--target` NAMES (SPEC-015 §1): every value of the option, a set
+// (`openkal`, `linux-musl`) expanded to the target table's rows, a target
+// kept as written, the union in the table's order. Empty without `--target`:
+// the host, as always. `run` passes `alsoTargetTriple`: it also accepts
+// `--target-triple`.
+namespace {
+std::expected<std::vector<mcpp::toolchain::target_set::Leg>, std::string>
+target_legs(const mcpplibs::cmdline::ParsedArgs& parsed, const mcpp::build::BuildOverrides& ov,
+            bool alsoTargetTriple = false) {
+    std::vector<std::string> requests;
+    if (auto o = parsed.option("target"))
+        for (auto const& v : o->get().values) requests.push_back(v);
+    if (alsoTargetTriple)
+        if (auto o = parsed.option("target-triple"))
+            for (auto const& v : o->get().values) requests.push_back(v);
+    if (requests.empty()) return std::vector<mcpp::toolchain::target_set::Leg>{};
+    return mcpp::toolchain::target_set::resolve(requests, [&](const mcpp::toolchain::triple::Triple& t) {
+        return mcpp::build::platform_selection_for(t, ov);
+    });
+}
+} // namespace
+
 int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed);
 
 // `mcpp build --message-format json` (design 2026-10-26 §5.1).
@@ -242,14 +264,28 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto root = mcpp::project::find_manifest_root(std::filesystem::current_path(ec))) {
         std::ifstream in(*root / "target" / ".last-result.json", std::ios::binary);
         auto last = nlohmann::json::parse(in, nullptr, false);
-        if (!last.is_discarded() && last.contains("data") && last["data"].contains("result")
-            && last["data"]["result"].is_string()) {
-            const std::filesystem::path recordPath = last["data"]["result"].get<std::string>();
+        // The record this process wrote, at `path`; null otherwise.
+        auto record_of = [](const std::filesystem::path& recordPath) -> nlohmann::json {
             if (auto record = res::read(recordPath.parent_path());
                 record && record->pid == mcpp::build::dirlock::process_id()) {
                 std::ifstream rin(recordPath, std::ios::binary);
                 auto doc = nlohmann::json::parse(rin, nullptr, false);
-                if (!doc.is_discarded() && doc.contains("data")) env.data = doc["data"];
+                if (!doc.is_discarded() && doc.contains("data")) return doc["data"];
+            }
+            return nullptr;
+        };
+        if (!last.is_discarded() && last.contains("data") && last["data"].contains("result")
+            && last["data"]["result"].is_string()) {
+            env.data = record_of(last["data"]["result"].get<std::string>());
+            // SEVERAL LEGS (SPEC-015 §3.5): the first leg's record, the legs'
+            // status together, and every leg's record under `legs`.
+            if (last["data"].contains("legs") && last["data"]["legs"].is_array() && !env.data.is_null()) {
+                nlohmann::json legs = nlohmann::json::array();
+                for (auto const& l : last["data"]["legs"])
+                    if (l.contains("result") && l["result"].is_string())
+                        legs.push_back(record_of(l["result"].get<std::string>()));
+                env.data["status"] = last["data"].value("status", "failed");
+                env.data["legs"] = std::move(legs);
             }
         }
     }
@@ -269,6 +305,103 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     return rc;
 }
 
+// `mcpp build` OVER SEVERAL LEGS (SPEC-015 §3). Every leg is planned, one after
+// another, as the build of that one target would be planned -- in a
+// workspace, each leg's configuration groups -- and then every plan is built
+// at once (mcpp.build.legs). The root compile database is the first leg's: an
+// editor reads one target's view of the sources. `target/.last-result.json`
+// names the first leg's record and lists every leg's.
+namespace {
+int build_several_legs(const mcpplibs::cmdline::ParsedArgs& parsed,
+                       const mcpp::build::BuildOverrides& ov,
+                       const std::vector<mcpp::toolchain::target_set::Leg>& legs,
+                       bool verbose, bool print_fp, bool no_cache, bool configure_only) {
+    namespace L = mcpp::build::legs;
+    auto selection = mcpp::cli::select_members(member_request(parsed));
+    if (!selection) { mcpp::ui::error(std::format("{}", selection.error())); return 2; }
+    std::error_code ec;
+    std::filesystem::path root;
+    if (*selection) root = (*selection)->root;
+    else if (auto r = mcpp::project::find_manifest_root(std::filesystem::current_path(ec))) root = *r;
+    else { mcpp::ui::error("no mcpp.toml found in current directory or any parent"); return 2; }
+
+    // The specs: one per leg, or in a workspace one per configuration group
+    // of each leg.
+    std::vector<L::Spec> specs;
+    for (auto const& leg : legs) {
+        if (*selection) {
+            auto const& members = (*selection)->members;
+            auto groups = workspace_groups(root, members, leg.triple);
+            if (!groups) { mcpp::ui::error(std::format("{}", groups.error())); return 2; }
+            std::vector<std::string> request;
+            for (auto const& g : *groups)
+                for (auto const& mp : g) request.push_back(mp);
+            for (auto const& g : *groups) {
+                L::Spec spec{ov};
+                spec.fromSet = leg.fromSet;
+                auto& mo = spec.overrides;
+                mo.target_triple = leg.triple;
+                mo.package_filter.clear();
+                mo.project_root = root;
+                mo.workspace_members = g;
+                mo.workspace_request = request;
+                if (configure_only) {
+                    auto tests = group_tests(root, g);
+                    if (!tests) { mcpp::ui::error(std::format("{}", tests.error())); return 2; }
+                    spec.includeDevDeps = !tests->targets.empty();
+                    mo.member_targets = std::move(tests->targets);
+                }
+                specs.push_back(std::move(spec));
+            }
+            continue;
+        }
+        L::Spec spec{ov};
+        spec.fromSet = leg.fromSet;
+        spec.overrides.target_triple = leg.triple;
+        if (configure_only) {
+            // The surface an editor needs, as for one target: the tests and
+            // the dev-dependencies.
+            auto discovered = mcpp::build::discover_test_targets(root, ov.package_filter);
+            if (!discovered) { mcpp::ui::error(discovered.error()); return 2; }
+            spec.includeDevDeps = !discovered->targets.empty();
+            spec.extraTargets = std::move(discovered->targets);
+        }
+        specs.push_back(std::move(spec));
+    }
+    auto planned = L::plan(std::move(specs), print_fp);
+    if (!planned) { mcpp::ui::error(planned.error()); return 2; }
+    std::vector<mcpp::build::BuildContext*> contexts;
+    for (auto& p : planned->legs) contexts.push_back(&p.ctx);
+    const auto firstTriple = planned->legs.front().triple;
+    std::vector<std::filesystem::path> firstDirs;
+    for (auto& p : planned->legs)
+        if (p.triple == firstTriple) firstDirs.push_back(p.ctx.outputDir);
+    const std::string rootDb = contexts.front()->plan.rootCompileDb;
+
+    int rc = 0;
+    if (configure_only) {
+        for (auto* c : contexts) {
+            c->plan.publishRootCompileDb = false;
+            if (int r = mcpp::build::run_configure_plan(*c, verbose); r != 0 && rc == 0) rc = r;
+        }
+    } else {
+        std::map<const mcpp::build::BuildContext*, std::string> tripleOf;
+        for (auto& p : planned->legs) tripleOf[&p.ctx] = p.triple;
+        mcpp::build::result::set_legs(true);
+        auto results = L::build(contexts, [&](mcpp::build::BuildContext& c) {
+            return run_build_with_hooks(c, verbose, no_cache, tripleOf[&c]);
+        });
+        mcpp::build::result::set_legs(false);
+        rc = L::first_failure(results);
+        std::vector<std::filesystem::path> dirs;
+        for (auto* c : contexts) dirs.push_back(c->outputDir);
+        mcpp::build::result::write_last_of_legs(contexts.front()->projectRoot, dirs);
+    }
+    mcpp::build::publish_workspace_compile_commands(root, firstDirs, rootDb);
+    return rc;
+}
+} // namespace
+
 int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
     bool verbose  = parsed.is_flag_set("verbose") || mcpp::log::is_verbose();
     bool print_fp = parsed.is_flag_set("print-fingerprint");
@@ -284,6 +417,15 @@ int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // it is expressed in terms of the new one rather than kept as a second axis.
     if (auto c = parsed.value("cache")) ov.cache_mode = *c;
     else if (no_cache)                  ov.cache_mode = "off";
+
+    // THE LEGS `--target` NAMES (SPEC-015 §3). One leg is the build it always
+    // was, spelled as written; several are planned one after another and
+    // built at once.
+    auto legs = target_legs(parsed, ov);
+    if (!legs) { mcpp::ui::error(legs.error()); return 2; }
+    if (legs->size() == 1) ov.target_triple = legs->front().triple;
+    if (legs->size() > 1)
+        return build_several_legs(parsed, ov, *legs, verbose, print_fp, no_cache, configure_only);
 
     // Fan-out prefixes every diagnostic with the member it came from; the
     // single-package path has nothing to disambiguate and passes "".
@@ -956,6 +1098,14 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     std::string target_triple;
     if (auto tt = parsed.value("target"))        target_triple = *tt;
     if (auto tt = parsed.value("target-triple")) target_triple = *tt;
+    // SEVERAL TARGETS, OR A SET (SPEC-015 §3.2): one leg runs, chosen in
+    // build_run_target; one leg is the target as written.
+    mcpp::build::BuildOverrides legOv;
+    legOv.package_filter = package_filter;
+    auto legs = target_legs(parsed, legOv, /*alsoTargetTriple=*/true);
+    if (!legs) { mcpp::ui::error(legs.error()); return 2; }
+    if (!legs->empty()) target_triple = legs->front().triple;
+    if (legs->size() < 2) legs->clear();
     // --no-runner: "this host can execute the artifact" is a fact about the
     // host, and the manifest has no host axis to state it on (#544, D3).
     const bool no_runner = parsed.is_flag_set("no-runner");
@@ -994,7 +1144,7 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     return mcpp::build::build_run_target(targetName, passthrough, package_filter,
                                          cache_mode, no_cache, target_triple,
                                          no_runner, runner_name, features,
-                                         profile, accel, format);
+                                         profile, accel, format, *legs);
 }
 
 export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
@@ -1016,6 +1166,14 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     if (auto tt = parsed.value("target")) ov.target_triple = *tt;
     if (parsed.is_flag_set("no-accel"))       ov.accel = "(none)";
     else if (auto a = parsed.value("accel"))  ov.accel = *a;
+    // THE LEGS `--target` NAMES (SPEC-015 §3.2). One leg is the test run it
+    // always was; several are planned, built at once, and run leg by leg.
+    auto legs = target_legs(parsed, ov);
+    if (!legs) { mcpp::ui::error(legs.error()); return 2; }
+    if (legs->size() == 1) ov.target_triple = legs->front().triple;
+    std::vector<mcpp::build::TestLeg> testLegs;
+    if (legs->size() > 1)
+        for (auto const& l : *legs) testLegs.push_back({l.triple, l.fromSet});
 
     mcpp::build::TestOptions to;
     if (parsed.positional_count() > 0) to.filter = parsed.positional(0);
@@ -1031,6 +1189,11 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
                         "--no-run does not run them.");
         return 2;
     }
+    // BUILT ONCE, RUN ELSEWHERE (SPEC-015 §4): `--no-run --archive` writes the
+    // tests it built; `--archive` alone runs an archive's tests, building
+    // nothing.
+    if (auto a = parsed.value("archive")) to.archive = *a;
+    const bool runArchive = !to.archive.empty() && !to.noRun;
     // The three deadlines share one parser: they differ only in what they
     // bound, not in how they are spelled. 0 always means "no limit" — for
     // --timeout that now has to be asked for rather than being the default.
@@ -1057,6 +1220,14 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
             return 2;
         }
     }
+    if (runArchive) {
+        if (!testLegs.empty() || !ov.target_triple.empty()) {
+            mcpp::ui::error("mcpp test --archive runs the legs the archive holds; --target "
+                            "chooses legs when the archive is written (--no-run --archive)");
+            return 2;
+        }
+        return mcpp::build::run_test_archive(passthrough, ov, to);
+    }
 
     // The members this command tests, by the one selection every command reads
     // (`mcpp::cli::select_members`). A selection of one member, named or implied
@@ -1068,231 +1239,250 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     // selection design 2026-09-30, S4).
     auto selection = mcpp::cli::select_members(member_request(parsed));
     if (!selection) { mcpp::ui::error(std::format("{}", selection.error())); return 2; }
+    if (*selection && ((*selection)->whole || (*selection)->members.size() > 1)
+        && !to.archive.empty()) {
+        mcpp::ui::error("--archive holds the tests of one package: select one member (-p)");
+        return 2;
+    }
     if (*selection && ((*selection)->whole || (*selection)->members.size() > 1)) {
-        auto const& sel = **selection;
-        auto const& members = sel.members;
-        const bool json = (to.format == mcpp::build::TestMessageFormat::Json);
-        // Silence the ui BEFORE the first member, not inside run_tests. The
-        // quiet flag used to be set by run_tests itself, so the fan-out's own
-        // "testing member" line escaped for member #1 and was suppressed from
-        // #2 on — one stdout stream, two behaviors, and the stray line broke
-        // NDJSON for any consumer that parsed it strictly.
-        if (json) mcpp::ui::set_quiet(true);
+        // The members, tested on each leg in turn: a leg's members are planned
+        // by its configuration groups and built once, as for one target.
+        auto test_members = [&](mcpp::build::BuildOverrides ov) -> int {
+            auto const& sel = **selection;
+            auto const& members = sel.members;
+            const bool json = (to.format == mcpp::build::TestMessageFormat::Json);
+            // Silence the ui BEFORE the first member, not inside run_tests. The
+            // quiet flag used to be set by run_tests itself, so the fan-out's own
+            // "testing member" line escaped for member #1 and was suppressed from
+            // #2 on — one stdout stream, two behaviors, and the stray line broke
+            // NDJSON for any consumer that parsed it strictly.
+            if (json) mcpp::ui::set_quiet(true);
 
-        int rc = 0;
-        std::vector<std::string> failed;
-        std::vector<std::string> notRun;        // --workspace-timeout reached
-        std::vector<std::string> unrunnable;    // tests built, none executed (#544)
-        std::vector<std::pair<std::string, long long>> memberTimes;
-        int totalPassed = 0, totalFailed = 0, totalNotRun = 0;
-        // Carried for the same reason `totalNotRun` is: without it a
-        // `--no-run` workspace reports "0 passed; 0 failed", which is
-        // what a workspace with no tests at all reports.
-        int totalBuilt = 0;
-        auto tWs = std::chrono::steady_clock::now();
-        auto ws_ms = [&tWs] {
-            return std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - tWs).count();
-        };
-        const long long wsDeadlineMs =
-            static_cast<long long>(workspaceTimeoutSecs) * 1000;
+            int rc = 0;
+            std::vector<std::string> failed;
+            std::vector<std::string> notRun;        // --workspace-timeout reached
+            std::vector<std::string> unrunnable;    // tests built, none executed (#544)
+            std::vector<std::pair<std::string, long long>> memberTimes;
+            int totalPassed = 0, totalFailed = 0, totalNotRun = 0;
+            // Carried for the same reason `totalNotRun` is: without it a
+            // `--no-run` workspace reports "0 passed; 0 failed", which is
+            // what a workspace with no tests at all reports.
+            int totalBuilt = 0;
+            auto tWs = std::chrono::steady_clock::now();
+            auto ws_ms = [&tWs] {
+                return std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - tWs).count();
+            };
+            const long long wsDeadlineMs =
+                static_cast<long long>(workspaceTimeoutSecs) * 1000;
 
-        // Asked before a member's tests start. The deadline is checked BEFORE
-        // starting a member rather than after: stopping mid-member would leave
-        // a half-tested member reported as neither run nor skipped. It is
-        // measured from the start of the command, so the build the members
-        // share counts against it, and a member not started by then is listed
-        // as not run; the build itself is bounded by --build-timeout.
-        auto member_begin = [&](std::size_t i, const std::string& mp) -> bool {
-            if (wsDeadlineMs > 0 && ws_ms() >= wsDeadlineMs) {
-                notRun.push_back(mp);
-                return false;
-            }
-            mcpp::ui::status("Workspace",
-                std::format("testing member '{}' ({}/{})", mp, i + 1, members.size()));
-            return true;
-        };
-        // The member's line: how it ended, and how long its own tests ran. The
-        // build is the group's, stated once by the group's line, so a member's
-        // line does not state it again.
-        auto member_end = [&](std::size_t i, const std::string& mp, int r,
-                              const mcpp::build::TestRunSummary& sum) {
-            const auto idx = i + 1;
-            totalPassed += sum.passed;
-            totalFailed += sum.failed;
-            totalNotRun += sum.notRun;
-            totalBuilt  += sum.built;
-            // Ranked by its run, which is the member's own: a build a group
-            // shares belongs to no one member.
-            memberTimes.emplace_back(mp, sum.buildGroup >= 0 ? sum.runMs : sum.elapsedMs);
-            auto secs = static_cast<double>(sum.buildGroup >= 0 ? sum.runMs : sum.elapsedMs) / 1000.0;
-            const char* took = sum.buildGroup >= 0 ? "run " : "";
-            const char* in   = sum.buildGroup >= 0 ? ", " : " in ";
-            if (r == 2 && sum.failed == 0 && sum.notRun > 0) {
-                // Built and not executed (#544): the member did not fail, and
-                // it did not pass. 2 outranks 0 and yields to 1, as it does
-                // for a single member.
-                if (rc == 0) rc = 2;
-                unrunnable.push_back(mp);
+            // Asked before a member's tests start. The deadline is checked BEFORE
+            // starting a member rather than after: stopping mid-member would leave
+            // a half-tested member reported as neither run nor skipped. It is
+            // measured from the start of the command, so the build the members
+            // share counts against it, and a member not started by then is listed
+            // as not run; the build itself is bounded by --build-timeout.
+            auto member_begin = [&](std::size_t i, const std::string& mp) -> bool {
+                if (wsDeadlineMs > 0 && ws_ms() >= wsDeadlineMs) {
+                    notRun.push_back(mp);
+                    return false;
+                }
                 mcpp::ui::status("Workspace",
-                    std::format("member '{}' ({}/{}) NOT RUN — {} passed, {} not run{}{}{:.2f}s",
-                                mp, idx, members.size(), sum.passed, sum.notRun, in, took, secs));
-            } else if (r != 0) {
-                rc = r;
-                failed.push_back(mp);
-                mcpp::ui::status("Workspace",
-                    std::format("member '{}' ({}/{}) FAILED — {} passed, {} failed{}{}{:.2f}s",
-                                mp, idx, members.size(), sum.passed, sum.failed, in, took, secs));
-            } else {
-                // Under `--no-run` nothing passed and nothing was meant to:
-                // reporting "0 passed" for a member whose tests all built is
-                // the same sentence a member with no tests would produce.
-                mcpp::ui::status("Workspace",
-                    sum.built
-                        ? std::format("member '{}' ({}/{}) ok — {} built, not run{}{}{:.2f}s",
-                                      mp, idx, members.size(), sum.built, in, took, secs)
-                        : std::format("member '{}' ({}/{}) ok — {} passed{}{}{:.2f}s",
-                                      mp, idx, members.size(), sum.passed, in, took, secs));
-            }
-        };
-
-        if (to.list) {
-            // A listing builds nothing, so there is nothing to plan once: each
-            // member lists its own tests.
-            for (std::size_t i = 0; i < members.size(); ++i) {
-                if (!member_begin(i, members[i])) continue;
-                mcpp::build::BuildOverrides mo = ov;
-                mo.package_filter = members[i];
-                mcpp::build::TestRunSummary sum;
-                int r = mcpp::build::run_tests(passthrough, mo, to, &sum);
-                member_end(i, members[i], r, sum);
-            }
-        } else {
-            // Each member's own tests, discovered from the member's own
-            // directory: two members may each have a `tests/main.cpp`.
-            std::vector<mcpp::build::WorkspaceTestMember> inputs;
-            for (auto const& mp : members) {
-                mcpp::build::WorkspaceTestMember wm;
-                wm.path = mp;
-                auto d = discover_member_tests(sel.root, mp);
-                if (!d) {
-                    wm.error = std::format("{}: {}", mp, d.error());
+                    std::format("testing member '{}' ({}/{})", mp, i + 1, members.size()));
+                return true;
+            };
+            // The member's line: how it ended, and how long its own tests ran. The
+            // build is the group's, stated once by the group's line, so a member's
+            // line does not state it again.
+            auto member_end = [&](std::size_t i, const std::string& mp, int r,
+                                  const mcpp::build::TestRunSummary& sum) {
+                const auto idx = i + 1;
+                totalPassed += sum.passed;
+                totalFailed += sum.failed;
+                totalNotRun += sum.notRun;
+                totalBuilt  += sum.built;
+                // Ranked by its run, which is the member's own: a build a group
+                // shares belongs to no one member.
+                memberTimes.emplace_back(mp, sum.buildGroup >= 0 ? sum.runMs : sum.elapsedMs);
+                auto secs = static_cast<double>(sum.buildGroup >= 0 ? sum.runMs : sum.elapsedMs) / 1000.0;
+                const char* took = sum.buildGroup >= 0 ? "run " : "";
+                const char* in   = sum.buildGroup >= 0 ? ", " : " in ";
+                if (r == 2 && sum.failed == 0 && sum.notRun > 0) {
+                    // Built and not executed (#544): the member did not fail, and
+                    // it did not pass. 2 outranks 0 and yields to 1, as it does
+                    // for a single member.
+                    if (rc == 0) rc = 2;
+                    unrunnable.push_back(mp);
+                    mcpp::ui::status("Workspace",
+                        std::format("member '{}' ({}/{}) NOT RUN — {} passed, {} not run{}{}{:.2f}s",
+                                    mp, idx, members.size(), sum.passed, sum.notRun, in, took, secs));
+                } else if (r != 0) {
+                    rc = r;
+                    failed.push_back(mp);
+                    mcpp::ui::status("Workspace",
+                        std::format("member '{}' ({}/{}) FAILED — {} passed, {} failed{}{}{:.2f}s",
+                                    mp, idx, members.size(), sum.passed, sum.failed, in, took, secs));
                 } else {
-                    wm.targets = std::move(d->targets);
-                    if (wm.targets.empty()) {
-                        // Names where it looked when the manifest chose the
-                        // place, so that a glob that matches nothing is not
-                        // read as a project without tests.
-                        if (d->discoverDeclared) {
-                            std::string globs;
-                            for (auto const& g : d->discover)
-                                globs += std::format("{}\"{}\"", globs.empty() ? "" : ", ", g);
-                            wm.noTests = std::format("no tests found ([test] discover = [{}])", globs);
-                        } else {
-                            wm.noTests = "no tests found in tests/";
+                    // Under `--no-run` nothing passed and nothing was meant to:
+                    // reporting "0 passed" for a member whose tests all built is
+                    // the same sentence a member with no tests would produce.
+                    mcpp::ui::status("Workspace",
+                        sum.built
+                            ? std::format("member '{}' ({}/{}) ok — {} built, not run{}{}{:.2f}s",
+                                          mp, idx, members.size(), sum.built, in, took, secs)
+                            : std::format("member '{}' ({}/{}) ok — {} passed{}{}{:.2f}s",
+                                          mp, idx, members.size(), sum.passed, in, took, secs));
+                }
+            };
+
+            if (to.list) {
+                // A listing builds nothing, so there is nothing to plan once: each
+                // member lists its own tests.
+                for (std::size_t i = 0; i < members.size(); ++i) {
+                    if (!member_begin(i, members[i])) continue;
+                    mcpp::build::BuildOverrides mo = ov;
+                    mo.package_filter = members[i];
+                    mcpp::build::TestRunSummary sum;
+                    int r = mcpp::build::run_tests(passthrough, mo, to, &sum);
+                    member_end(i, members[i], r, sum);
+                }
+            } else {
+                // Each member's own tests, discovered from the member's own
+                // directory: two members may each have a `tests/main.cpp`.
+                std::vector<mcpp::build::WorkspaceTestMember> inputs;
+                for (auto const& mp : members) {
+                    mcpp::build::WorkspaceTestMember wm;
+                    wm.path = mp;
+                    auto d = discover_member_tests(sel.root, mp);
+                    if (!d) {
+                        wm.error = std::format("{}: {}", mp, d.error());
+                    } else {
+                        wm.targets = std::move(d->targets);
+                        if (wm.targets.empty()) {
+                            // Names where it looked when the manifest chose the
+                            // place, so that a glob that matches nothing is not
+                            // read as a project without tests.
+                            if (d->discoverDeclared) {
+                                std::string globs;
+                                for (auto const& g : d->discover)
+                                    globs += std::format("{}\"{}\"", globs.empty() ? "" : ", ", g);
+                                wm.noTests = std::format("no tests found ([test] discover = [{}])", globs);
+                            } else {
+                                wm.noTests = "no tests found in tests/";
+                            }
                         }
                     }
+                    inputs.push_back(std::move(wm));
                 }
-                inputs.push_back(std::move(wm));
+                // Members whose root-position values are equal are planned together,
+                // as `mcpp build` plans them. A member whose manifest cannot be read
+                // has no configuration: each member is then its own group, and it
+                // fails alone when it is planned.
+                std::vector<std::vector<std::string>> groups;
+                if (auto g = workspace_groups(sel.root, members, ov.target_triple)) groups = std::move(*g);
+                else for (auto const& mp : members) groups.push_back({mp});
+
+                mcpp::build::WorkspaceTestHooks hooks;
+                hooks.begin = member_begin;
+                hooks.end = member_end;
+                mcpp::build::run_workspace_tests(passthrough, ov, to, sel.root, groups,
+                                                 std::move(inputs), hooks);
             }
-            // Members whose root-position values are equal are planned together,
-            // as `mcpp build` plans them. A member whose manifest cannot be read
-            // has no configuration: each member is then its own group, and it
-            // fails alone when it is planned.
-            std::vector<std::vector<std::string>> groups;
-            if (auto g = workspace_groups(sel.root, members, ov.target_triple)) groups = std::move(*g);
-            else for (auto const& mp : members) groups.push_back({mp});
 
-            mcpp::build::WorkspaceTestHooks hooks;
-            hooks.begin = member_begin;
-            hooks.end = member_end;
-            mcpp::build::run_workspace_tests(passthrough, ov, to, sel.root, groups,
-                                             std::move(inputs), hooks);
-        }
+            auto wsElapsed = ws_ms();
+            if (!notRun.empty()) rc = rc ? rc : 1;
 
-        auto wsElapsed = ws_ms();
-        if (!notRun.empty()) rc = rc ? rc : 1;
-
-        if (json) {
-            // Member paths are manifest-authored strings, so escape rather
-            // than assume: one backslash in a member path would otherwise emit
-            // a stream that is not JSON at all.
-            auto join = [](const std::vector<std::string>& v) {
-                std::string s;
-                for (auto& x : v) {
-                    if (!s.empty()) s += ',';
-                    s += '"';
-                    for (char c : x) {
-                        if (c == '"' || c == '\\') s += '\\';
-                        s += c;
+            if (json) {
+                // Member paths are manifest-authored strings, so escape rather
+                // than assume: one backslash in a member path would otherwise emit
+                // a stream that is not JSON at all.
+                auto join = [](const std::vector<std::string>& v) {
+                    std::string s;
+                    for (auto& x : v) {
+                        if (!s.empty()) s += ',';
+                        s += '"';
+                        for (char c : x) {
+                            if (c == '"' || c == '\\') s += '\\';
+                            s += c;
+                        }
+                        s += '"';
                     }
-                    s += '"';
-                }
+                    return s;
+                };
+                // `not_run` keeps its meaning (members the --workspace-timeout
+                // stopped before they started); `tests_not_run` and
+                // `unrunnable_members` are #544's — tests that were built and not
+                // executed, and the members all of whose tests were.
+                std::println("{{\"workspace_summary\":{{\"members\":{},\"passed\":{},\"failed\":{},"
+                             "\"tests_not_run\":{},\"tests_built\":{},"
+                             "\"failed_members\":[{}],\"unrunnable_members\":[{}],"
+                             "\"not_run\":[{}],\"elapsed_ms\":{}}}}}",
+                             members.size(), totalPassed, totalFailed, totalNotRun,
+                             totalBuilt,
+                             join(failed), join(unrunnable), join(notRun), wsElapsed);
+                std::fflush(stdout);
+                return rc;
+            }
+
+            // Slowest members, printed unconditionally rather than only on failure:
+            // "which member ate the wall clock" is the question a green-but-slow CI
+            // run raises, and answering it used to mean reverse-engineering log
+            // timestamps.
+            std::ranges::sort(memberTimes, [](auto& a, auto& b) { return a.second > b.second; });
+            std::string slowest;
+            for (std::size_t i = 0; i < memberTimes.size() && i < 3; ++i) {
+                if (memberTimes[i].second < 1000) break;
+                if (!slowest.empty()) slowest += ", ";
+                slowest += std::format("{} {:.1f}s", memberTimes[i].first,
+                                       static_cast<double>(memberTimes[i].second) / 1000.0);
+            }
+
+            auto join_names = [](const std::vector<std::string>& v) {
+                std::string s;
+                for (auto& f : v) { if (!s.empty()) s += ", "; s += f; }
                 return s;
             };
-            // `not_run` keeps its meaning (members the --workspace-timeout
-            // stopped before they started); `tests_not_run` and
-            // `unrunnable_members` are #544's — tests that were built and not
-            // executed, and the members all of whose tests were.
-            std::println("{{\"workspace_summary\":{{\"members\":{},\"passed\":{},\"failed\":{},"
-                         "\"tests_not_run\":{},\"tests_built\":{},"
-                         "\"failed_members\":[{}],\"unrunnable_members\":[{}],"
-                         "\"not_run\":[{}],\"elapsed_ms\":{}}}}}",
-                         members.size(), totalPassed, totalFailed, totalNotRun,
-                         totalBuilt,
-                         join(failed), join(unrunnable), join(notRun), wsElapsed);
-            std::fflush(stdout);
+            // The not-run count is in the line whenever it is non-zero, at the
+            // same weight as the failure count (#544): a member whose tests were
+            // built and not executed must not read as a passing member.
+            std::string notRunCounts = totalNotRun
+                ? std::format("; {} not run", totalNotRun) : std::string{};
+            if (totalBuilt)
+                notRunCounts += std::format("; {} built, not run", totalBuilt);
+            if (failed.empty() && notRun.empty() && unrunnable.empty())
+                mcpp::ui::result("workspace result",
+                    std::format("ok. {} member(s); {} passed; 0 failed{}; finished in {:.2f}s",
+                                members.size(), totalPassed, notRunCounts,
+                                static_cast<double>(wsElapsed) / 1000.0));
+            else
+                mcpp::ui::error(std::format(
+                    "workspace test: {}/{} member(s) failed; {} passed; {} failed{}; "
+                    "finished in {:.2f}s",
+                    failed.size(), members.size(), totalPassed, totalFailed, notRunCounts,
+                    static_cast<double>(wsElapsed) / 1000.0));
+            if (!failed.empty())
+                mcpp::ui::plain(std::format("    failed members: {}", join_names(failed)));
+            if (!unrunnable.empty())
+                mcpp::ui::plain(std::format("    not run (no runner on this host): {}",
+                                            join_names(unrunnable)));
+            if (!notRun.empty())
+                mcpp::ui::plain(std::format(
+                    "    not run (--workspace-timeout {}s reached): {}",
+                    workspaceTimeoutSecs, join_names(notRun)));
+            if (!slowest.empty())
+                mcpp::ui::plain(std::format("    slowest: {}", slowest));
             return rc;
+            };
+        if (testLegs.empty()) return test_members(ov);
+        int legsRc = 0;
+        for (auto const& l : testLegs) {
+            auto lov = ov;
+            lov.target_triple = l.triple;
+            mcpp::ui::info("Testing", std::format("on {}", l.triple));
+            const int r = test_members(std::move(lov));
+            if (r == 1 || (r != 0 && legsRc == 0)) legsRc = r;
         }
-
-        // Slowest members, printed unconditionally rather than only on failure:
-        // "which member ate the wall clock" is the question a green-but-slow CI
-        // run raises, and answering it used to mean reverse-engineering log
-        // timestamps.
-        std::ranges::sort(memberTimes, [](auto& a, auto& b) { return a.second > b.second; });
-        std::string slowest;
-        for (std::size_t i = 0; i < memberTimes.size() && i < 3; ++i) {
-            if (memberTimes[i].second < 1000) break;
-            if (!slowest.empty()) slowest += ", ";
-            slowest += std::format("{} {:.1f}s", memberTimes[i].first,
-                                   static_cast<double>(memberTimes[i].second) / 1000.0);
-        }
-
-        auto join_names = [](const std::vector<std::string>& v) {
-            std::string s;
-            for (auto& f : v) { if (!s.empty()) s += ", "; s += f; }
-            return s;
-        };
-        // The not-run count is in the line whenever it is non-zero, at the
-        // same weight as the failure count (#544): a member whose tests were
-        // built and not executed must not read as a passing member.
-        std::string notRunCounts = totalNotRun
-            ? std::format("; {} not run", totalNotRun) : std::string{};
-        if (totalBuilt)
-            notRunCounts += std::format("; {} built, not run", totalBuilt);
-        if (failed.empty() && notRun.empty() && unrunnable.empty())
-            mcpp::ui::result("workspace result",
-                std::format("ok. {} member(s); {} passed; 0 failed{}; finished in {:.2f}s",
-                            members.size(), totalPassed, notRunCounts,
-                            static_cast<double>(wsElapsed) / 1000.0));
-        else
-            mcpp::ui::error(std::format(
-                "workspace test: {}/{} member(s) failed; {} passed; {} failed{}; "
-                "finished in {:.2f}s",
-                failed.size(), members.size(), totalPassed, totalFailed, notRunCounts,
-                static_cast<double>(wsElapsed) / 1000.0));
-        if (!failed.empty())
-            mcpp::ui::plain(std::format("    failed members: {}", join_names(failed)));
-        if (!unrunnable.empty())
-            mcpp::ui::plain(std::format("    not run (no runner on this host): {}",
-                                        join_names(unrunnable)));
-        if (!notRun.empty())
-            mcpp::ui::plain(std::format(
-                "    not run (--workspace-timeout {}s reached): {}",
-                workspaceTimeoutSecs, join_names(notRun)));
-        if (!slowest.empty())
-            mcpp::ui::plain(std::format("    slowest: {}", slowest));
-        return rc;
+        return legsRc;
     }
     // A PLATFORM PACKAGE IS TESTED ON THE TARGETS IT SERVES (SPEC-013 §16):
     // with no --target, its tests are built for each of its `targets` with the
@@ -1308,18 +1498,18 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
                             std::unexpected(mcpp::manifest::ManifestError{}));
         if (m && m->platformDeclared && !m->platform.targets.value.empty()) {
             mcpp::invocation::set("MCPP_PLATFORM", "path:" + root->generic_string());
-            int rc = 0;
-            for (auto const& t : m->platform.targets.value) {
-                auto tov = ov;
-                tov.target_triple = t;
-                auto tto = to;
-                tto.unreachableIsBuilt = true;
-                mcpp::ui::info("Testing", std::format("platform {} on {}", m->package.name, t));
-                if (int r = mcpp::build::run_tests(passthrough, tov, tto); r != 0 && rc == 0) rc = r;
-            }
-            return rc;
+            mcpp::ui::info("Testing", std::format("platform {} on {} target(s)", m->package.name,
+                                                  m->platform.targets.value.size()));
+            std::vector<mcpp::build::TestLeg> own;
+            for (auto const& t : m->platform.targets.value) own.push_back({t, {}});
+            if (own.size() > 1) return mcpp::build::run_test_legs(passthrough, ov, to, std::move(own));
+            ov.target_triple = own.front().triple;
+            to.unreachableIsBuilt = true;
+            return mcpp::build::run_tests(passthrough, ov, to);
         }
     }
+    if (!testLegs.empty())
+        return mcpp::build::run_test_legs(passthrough, ov, to, std::move(testLegs));
     return mcpp::build::run_tests(passthrough, ov, to);
 }
 
@@ -1647,6 +1837,14 @@ export int cmd_platform_step(const mcpplibs::cmdline::ParsedArgs& parsed,
 // `mcpp self env --target <t>` / `--host` (SPEC-013 §9): one configuration,
 // prepared and not built -- the toolchain, the platform and its source, the
 // tools it builds for this machine, the runner and where its program is.
+namespace {
+
+// One configuration of `self env --target`: its JSON object, or its lines.
+nlohmann::json env_data(const mcpp::build::BuildContext& ctx, bool host);
+void env_print(const mcpp::build::BuildContext& ctx, bool host);
+
+} // namespace
+
 export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
     bool json = false;
     if (auto f = parsed.value("format")) {
@@ -1656,78 +1854,126 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
         }
         json = true;
     }
-    const std::string target = parsed.value("target").value_or("");
     const bool host = parsed.is_flag_set("host");
+    // THE LEGS (SPEC-015 §3.2): one configuration per leg; several are
+    // reported in order, the first at the top of the object as one is.
+    std::vector<std::string> targets;
+    if (!host) {
+        auto legs = target_legs(parsed, {});
+        if (!legs) { mcpp::ui::error(legs.error()); return 2; }
+        for (auto const& l : *legs) targets.push_back(l.triple);
+    }
+    if (targets.empty()) targets.push_back({});
     const bool wasQuiet = mcpp::ui::is_quiet();
     if (json) mcpp::ui::set_quiet(true);
-    auto ctx = mcpp::build::prepare_configuration(host ? std::string_view{} : std::string_view(target));
+    std::vector<mcpp::build::BuildContext> contexts;
+    std::string failure;
+    for (auto const& t : targets) {
+        auto ctx = mcpp::build::prepare_configuration(host ? std::string_view{} : std::string_view(t));
+        if (!ctx) {
+            failure = targets.size() > 1 ? std::format("the {} leg: {}", t, ctx.error()) : ctx.error();
+            break;
+        }
+        contexts.push_back(std::move(*ctx));
+    }
     mcpp::ui::set_quiet(wasQuiet);
-    if (!ctx) {
+    if (!failure.empty()) {
         if (json) {
             mcpp::wire::Envelope env{.kind = "mcpp.env", .effects = {}};
             env.data = nullptr;
             env.diagnostics.push_back({"MCPP_CONFIGURATION_FAILED", mcpp::wire::Severity::Error,
-                                       ctx.error()});
+                                       failure});
             std::println("{}", mcpp::wire::to_json(env).dump());
         } else {
-            mcpp::ui::error(ctx.error());
+            mcpp::ui::error(failure);
         }
         return 1;
     }
-    auto const& P = host ? ctx->hostPlatform : ctx->plan.platform;
-    // The graph reported: the host graph's triple and compiler with --host.
-    const std::string triple = host ? ctx->hostTriple : ctx->tc.targetTriple;
-    const std::string compiler = host ? ctx->hostCompiler : ctx->tc.binaryPath.generic_string();
-    const std::string compilerOrigin = host ? ctx->hostCompilerOrigin : ctx->compilerChoice.origin;
-    auto const& runner = P.fields.runner;
-    std::string runnerProgram;
-    // The target's: what `mcpp run` and `mcpp test` would start here, by
-    // their own rule (SPEC-013 §10) -- the runner's program and its
-    // architecture, the execution host's program, or why runs are refused.
-    mcpp::build::RunnerOnThisMachine reach;
-    reach.arch = std::string(mcpp::toolchain::platform::host_arch);
-    if (!host) {
-        reach = mcpp::build::runner_on_this_machine(*ctx);
-        runnerProgram = reach.program;
-    } else if (runner.set && !runner.cmd.empty()) {
-        // The platform's own tool when it is one (located by the build that
-        // used it), else the program the runner names on this machine.
-        if (auto it = P.tools.find(runner.cmd.front()); it != P.tools.end()) {
-            runnerProgram = it->second;
-        } else {
-            auto found = mcpp::build::runner_lookup::locate(
-                runner.cmd.front(), ctx->xlingsDepBinDirs,
-                mcpp::invocation::get("PATH").value_or(""));
-            if (found.program) runnerProgram = found.program->generic_string();
-        }
-    }
-    auto or_null = [](const std::string& v) { return v.empty() ? nlohmann::json(nullptr) : nlohmann::json(v); };
     if (json) {
-        nlohmann::json tools = nlohmann::json::object();
-        for (auto const& [name, path] : P.tools) tools[name] = path;
-        nlohmann::json data{
-            {"triple", triple},
-            {"graph", host ? "host" : "target"},
-            {"toolchain", {{"compiler", compiler}, {"origin", compilerOrigin}}},
-            {"platform", nlohmann::json::parse(mcpp::platform::to_json(P), nullptr, false)},
-            {"tools", std::move(tools)},
-            {"runner", !runner.set ? nlohmann::json(nullptr) : nlohmann::json{
-                {"argv", runner.cmd}, {"host", runner.host}, {"exclusive", runner.exclusive},
-                {"program", or_null(runnerProgram)},
-                {"arch", reach.arch}, {"built", reach.built},
-                {"refusal", or_null(reach.refusal)},
-                {"source", mcpp::platform::origin_text(runner.origin)}}},
-            {"runUnder", ctx->runUnder},
-            {"runUnderProgram", or_null(reach.runUnderProgram)},
-        };
         mcpp::wire::Envelope env{.kind = "mcpp.env", .effects = {}};
-        env.data = std::move(data);
-        for (auto const& n : ctx->planNotes)
-            env.diagnostics.push_back({n.code, n.severity, n.message});
+        env.data = env_data(contexts.front(), host);
+        if (contexts.size() > 1) {
+            nlohmann::json legs = nlohmann::json::array();
+            for (auto const& c : contexts) legs.push_back(env_data(c, host));
+            env.data["legs"] = std::move(legs);
+        }
+        for (auto const& c : contexts)
+            for (auto const& n : c.planNotes)
+                env.diagnostics.push_back({n.code, n.severity, n.message});
         mcpp::wire::emit(env);
         return 0;
     }
-    for (auto const& n : ctx->planNotes) mcpp::ui::warning(n.message);
+    for (std::size_t i = 0; i < contexts.size(); ++i) {
+        if (i > 0) std::println("");
+        env_print(contexts[i], host);
+    }
+    return 0;
+}
+
+namespace {
+
+// The target's: what `mcpp run` and `mcpp test` would start here, by their
+// own rule (SPEC-013 §10) -- the runner's program and its architecture, the
+// execution host's program, or why runs are refused. With --host, the
+// platform's own tool when it is one, else the program the runner names.
+struct EnvReach {
+    mcpp::build::RunnerOnThisMachine reach;
+    std::string runnerProgram;
+};
+EnvReach env_reach(const mcpp::build::BuildContext& ctx, bool host) {
+    EnvReach out;
+    auto const& P = host ? ctx.hostPlatform : ctx.plan.platform;
+    auto const& runner = P.fields.runner;
+    out.reach.arch = std::string(mcpp::toolchain::platform::host_arch);
+    if (!host) {
+        out.reach = mcpp::build::runner_on_this_machine(ctx);
+        out.runnerProgram = out.reach.program;
+    } else if (runner.set && !runner.cmd.empty()) {
+        if (auto it = P.tools.find(runner.cmd.front()); it != P.tools.end()) {
+            out.runnerProgram = it->second;
+        } else {
+            auto found = mcpp::build::runner_lookup::locate(
+                runner.cmd.front(), ctx.xlingsDepBinDirs,
+                mcpp::invocation::get("PATH").value_or(""));
+            if (found.program) out.runnerProgram = found.program->generic_string();
+        }
+    }
+    return out;
+}
+
+nlohmann::json env_data(const mcpp::build::BuildContext& ctx, bool host) {
+    auto const& P = host ? ctx.hostPlatform : ctx.plan.platform;
+    auto const& runner = P.fields.runner;
+    const auto r = env_reach(ctx, host);
+    auto or_null = [](const std::string& v) { return v.empty() ? nlohmann::json(nullptr) : nlohmann::json(v); };
+    nlohmann::json tools = nlohmann::json::object();
+    for (auto const& [name, path] : P.tools) tools[name] = path;
+    return nlohmann::json{
+        {"triple", host ? ctx.hostTriple : ctx.tc.targetTriple},
+        {"graph", host ? "host" : "target"},
+        {"toolchain", {{"compiler", host ? ctx.hostCompiler : ctx.tc.binaryPath.generic_string()},
+                       {"origin", host ? ctx.hostCompilerOrigin : ctx.compilerChoice.origin}}},
+        {"platform", nlohmann::json::parse(mcpp::platform::to_json(P), nullptr, false)},
+        {"tools", std::move(tools)},
+        {"runner", !runner.set ? nlohmann::json(nullptr) : nlohmann::json{
+            {"argv", runner.cmd}, {"host", runner.host}, {"exclusive", runner.exclusive},
+            {"program", or_null(r.runnerProgram)},
+            {"arch", r.reach.arch}, {"built", r.reach.built},
+            {"refusal", or_null(r.reach.refusal)},
+            {"source", mcpp::platform::origin_text(runner.origin)}}},
+        {"runUnder", ctx.runUnder},
+        {"runUnderProgram", or_null(r.reach.runUnderProgram)},
+    };
+}
+
+void env_print(const mcpp::build::BuildContext& ctx, bool host) {
+    auto const& P = host ? ctx.hostPlatform : ctx.plan.platform;
+    auto const& runner = P.fields.runner;
+    const auto r = env_reach(ctx, host);
+    const std::string triple = host ? ctx.hostTriple : ctx.tc.targetTriple;
+    const std::string compiler = host ? ctx.hostCompiler : ctx.tc.binaryPath.generic_string();
+    const std::string compilerOrigin = host ? ctx.hostCompilerOrigin : ctx.compilerChoice.origin;
+    for (auto const& n : ctx.planNotes) mcpp::ui::warning(n.message);
     std::println("{:<10} {}", host ? "host" : "target", triple);
     std::println("{:<10} {} ({})", "compiler", compiler, compilerOrigin);
     std::println("{:<10} {}{}", "platform", P.display(),
@@ -1742,30 +1988,30 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
         for (auto const& a : runner.cmd) argv += (argv.empty() ? "" : " ") + a;
         // Another architecture's program (for an execution host) says so.
         std::string arch;
-        if (reach.arch != mcpp::toolchain::platform::host_arch)
-            arch = std::format("  ({}{})", reach.arch, reach.built ? "" : "; built by the first run");
+        if (r.reach.arch != mcpp::toolchain::platform::host_arch)
+            arch = std::format("  ({}{})", r.reach.arch, r.reach.built ? "" : "; built by the first run");
         std::println("{:<10} {}  ({}){}{}", "runner", argv, mcpp::platform::origin_text(runner.origin),
-                     runnerProgram.empty() ? std::string("  -- not found on this machine")
-                                           : "  -> " + runnerProgram, arch);
+                     r.runnerProgram.empty() ? std::string("  -- not found on this machine")
+                                             : "  -> " + r.runnerProgram, arch);
     }
-    if (!ctx->runUnder.empty()) {
+    if (!ctx.runUnder.empty()) {
         std::string argv;
-        for (auto const& a : ctx->runUnder) argv += (argv.empty() ? "" : " ") + a;
-        std::println("{:<10} {}  ({}){}", "run_under", argv, ctx->runUnderOrigin,
-                     reach.runUnderProgram.empty() ? std::string()
-                                                   : "  -> " + reach.runUnderProgram);
+        for (auto const& a : ctx.runUnder) argv += (argv.empty() ? "" : " ") + a;
+        std::println("{:<10} {}  ({}){}", "run_under", argv, ctx.runUnderOrigin,
+                     r.reach.runUnderProgram.empty() ? std::string()
+                                                     : "  -> " + r.reach.runUnderProgram);
     }
     // Runs refused on this machine are said here, with the key that changes
     // it, as `mcpp run` would say it.
-    if (!reach.refusal.empty()) {
-        std::string text = reach.refusal;
+    if (!r.reach.refusal.empty()) {
+        std::string text = r.reach.refusal;
         for (std::size_t at = text.find('\n'); at != std::string::npos; at = text.find('\n', at + 12))
             text.insert(at + 1, std::string(11, ' '));
         std::println("{:<10} refused on this machine: {}", "run", text);
     }
-    return 0;
 }
 
+} // namespace
 
 // `mcpp toolchain install --target <t>` with no compiler named installs THE
 // CONFIGURATION (SPEC-013 §7): the toolchain (already installed by the
