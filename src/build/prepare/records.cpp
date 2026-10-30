@@ -16,7 +16,6 @@ import mcpp.runtime.search;
 import mcpp.libs.json;
 import mcpp.log;
 import mcpp.manifest;
-import mcpp.project;   // load_member_manifest: every member's spelling of a dependency (#868)
 import mcpp.source_kind;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.hostflags;   // the compile-token producer the package std module reuses
@@ -147,9 +146,13 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
         std::vector<mcpp::manifest::Manifest> memberManifests;
         if (state.wsManifest && !state.runtimeWorkspaceRoot.empty()) {
             memberManifests.reserve(state.wsManifest->workspace.members.size());
+            // Each member's manifest as written, the way `workspace_members`
+            // reads it: the spelling is the member's own key, and the
+            // inheritance a planned member receives (with its notes) is not
+            // this question's.
             for (auto const& mp : state.wsManifest->workspace.members)
-                if (auto mm = mcpp::project::load_member_manifest(
-                        *state.wsManifest, state.runtimeWorkspaceRoot, mp))
+                if (auto mm = mcpp::manifest::load(state.runtimeWorkspaceRoot / mp / "mcpp.toml",
+                                                   {.insideWorkspace = true}))
                     memberManifests.push_back(std::move(*mm));
             declaring.push_back(&*state.wsManifest);
             for (auto const& mm : memberManifests) declaring.push_back(&mm);
