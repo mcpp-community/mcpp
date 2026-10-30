@@ -611,7 +611,8 @@ myproject/
 - 放入多个产物目录的共享库，在支持硬链接的文件系统上是同一个文件的多个名字，其他情况下被复制。
 - 工作空间根的编译数据库(在 `[build] compile_commands` 指定时)覆盖所有已构建或已配置的成员。
 - 工作空间根的 `mcpp.lock` 记录全体成员的解析结果。`mcpp build --workspace` 写入完整记录；
-  `mcpp build -p X` 更新 X 所在图中的条目。
+  `mcpp build -p X` 更新 X 所在图中的条目。条目的键取工作空间声明该依赖时的写法：先看自身的 `[dependencies]`，再看
+  `[workspace.dependencies]`，再按 `members` 列出的顺序看各成员，无论命令是否选中它。键与其散列因此不随命令规划哪些成员而变。
 - 成员的构建程序写入 `<member>/target/.build-mcpp/`。各成员的构建程序在 workspace 的构建程序图
   `target/.build-mcpp/host/` 中编译，多个程序 import 的库只编一次。
 - 早期版本的 mcpp 在成员自己的 `target/` 下留下的构建目录不再被读取；`mcpp clean --stale`

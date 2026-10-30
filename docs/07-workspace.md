@@ -712,7 +712,11 @@ myproject/
   one, covers every member that has been built or configured.
 - `mcpp.lock` at the workspace root records the resolution of every member.
   `mcpp build --workspace` writes the whole record; `mcpp build -p X` updates
-  the entries of X's graph.
+  the entries of X's graph. An entry's key is the spelling under which the
+  workspace declares the dependency: its own `[dependencies]`, then
+  `[workspace.dependencies]`, then each member in the order `members` lists
+  them, whether the command selects it or not. The key and its hash therefore
+  do not depend on which members a command plans.
 - A member's build program writes to `<member>/target/.build-mcpp/`. The
   members' build programs are compiled in the workspace's build programs'
   graph, `target/.build-mcpp/host/`, and a library several of them import is

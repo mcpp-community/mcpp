@@ -20,6 +20,15 @@
   runs mcpp for a project: in its root, by the name on `PATH` or a set path,
   with `XLINGS_PROJECT_DIR` removed (design 2026-10-30 part 2 §4.0).
 
+### Fixed
+
+- **A workspace's lock entry is keyed the same way whatever members a command
+  plans** (#868). Two members spelling one dependency two ways
+  (`tinyhttps.workspace = true`, `[dependencies.mcpplibs] tinyhttps.workspace =
+  true`) made `-p` of each write its own key and hash. The key is the
+  workspace's spelling: its `[dependencies]`, `[workspace.dependencies]`, then
+  the members in the order `members` lists them (docs/07, e2e 990).
+
 ## [2026.10.30.1] - 2026-10-30
 
 ### Added
