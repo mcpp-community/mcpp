@@ -4,6 +4,20 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.31.3] - 2026-10-31
+
+### Fixed
+
+- **An ok image whose graph declares a `prepare` action builds** (SPEC-013
+  §4.6, mcpp#702). Every link edge waits for the phony of each package with a
+  `prepare` action, and the ordering guard checks that it does. Under a platform
+  with seal steps the link writes beneath `obj/platform/` and a `platform_seal`
+  edge publishes the artifact's name; the guard took that edge for the link and
+  refused every such build as an emitter defect (mcppls-clangd's `clangd.okb`,
+  whose libraries a `prepare` action builds). The emitter and the guard now name
+  the link edge's output by one function. e2e 996 builds and runs such an image
+  and finds the link edge waiting for the action.
+
 ## [2026.10.31.2] - 2026-10-31
 
 ### Added

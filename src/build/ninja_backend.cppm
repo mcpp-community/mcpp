@@ -871,6 +871,21 @@ std::string action_phony_name(std::string_view pkg) {
 // declaring package's. File-scope for the same reason
 // `action_precedes_compilation`/`action_phony_name` are: the emitter and
 // `check_action_ordering` ask the identical question.
+// What a unit's LINK edge writes. Under a platform with seal steps (SPEC-013
+// §4.6) the link writes beneath `obj/platform/` and a `platform_seal` edge
+// publishes the artifact's own name; that edge reads no `$ldflags` and is not a
+// link. File-scope because the emitter and `check_action_ordering` must name the
+// same edge: the guard once took the seal edge for the link and refused every ok
+// image whose graph declares a `prepare` action.
+std::filesystem::path link_edge_output(const BuildPlan& plan, const LinkUnit& lu) {
+    if (!plan.platform.active || plan.platform.fields.link.seal.empty()
+        || lu.kind == LinkUnit::StaticLibrary)
+        return lu.output;
+    auto unsealed = std::filesystem::path("obj/platform") / lu.output.relative_path();
+    unsealed += ".unsealed";
+    return unsealed;
+}
+
 std::set<std::string> packages_with_prepare_actions(const BuildPlan& plan) {
     std::set<std::string> pkgs;
     for (auto const& a : plan.actions)
@@ -3423,8 +3438,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         if (platformUnit)
             for (auto const& in : platformInputs) ins += " " + escape_ninja_path(in);
         const bool sealUnit = platformSeal && lu.kind != LinkUnit::StaticLibrary;
-        auto unsealed = std::filesystem::path("obj/platform") / lu.output.relative_path();
-        unsealed += ".unsealed";
+        const auto unsealed = link_edge_output(plan, lu);
 
         // mcpp#426. `separateLinker` (link.exe) takes no driver at all, so the
         // question does not arise there and the msvc rules are untouched.
@@ -3581,7 +3595,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // order-only list of the edge.
         if (lu.kind != LinkUnit::StaticLibrary) orderOnly += linkOrderOnly;
         std::string out_line = std::format("build {}{} : {}{}{}{}\n",
-            escape_ninja_path(sealUnit ? unsealed : lu.output), implicitOut, rule, ins,
+            escape_ninja_path(link_edge_output(plan, lu)), implicitOut, rule, ins,
             implicit.empty() ? std::string{} : " |" + implicit,
             orderOnly.empty() ? std::string{} : " ||" + orderOnly);
         if (auto flag = shared_soname_flag(lu, plan); !flag.empty())
@@ -4166,7 +4180,7 @@ std::optional<std::string> check_action_ordering(const std::string& manifest,
         std::set<std::string> linkOutputs;
         for (auto const& lu : plan.linkUnits) {
             if (lu.kind == LinkUnit::StaticLibrary) continue;
-            linkOutputs.insert(escape_ninja_path(lu.output));
+            linkOutputs.insert(escape_ninja_path(link_edge_output(plan, lu)));
         }
         std::map<std::string, int> seenLinks;         // link output -> edges checked
         for (auto line : manifest | std::views::split('\n')) {

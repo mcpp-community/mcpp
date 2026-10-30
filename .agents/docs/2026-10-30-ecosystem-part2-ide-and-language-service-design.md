@@ -5,7 +5,7 @@ status: active
 
 # 生态设计 part 2：mcpp 插件与 mcppls 的分层、入口、测试、版本感知与分发
 
-日期：2026-10-30（rev 9，实施）。基线：mcpp 2026.10.30.1（`13e2da04`）、mcpp-ide #3（0.2.0，`734d856` + `49ae757`）、
+日期：2026-10-31（rev 10，实施）。基线：mcpp 2026.10.30.1（`13e2da04`）、mcpp-ide #3（0.2.0，`734d856` + `49ae757`）、
 mcppls #75（0.0.20，`4660eb6`）。前文：[part 1](2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md)（§9 mcppls 单包、
 §10 编辑器）。相关 issue：mcpp#868（锁文件键）、Sunrisepeak/mcppls-clangd#12（clangd 映像）。相关规范：mcpp SPEC-015 §4、docs/08、
 docs/50；mcppls S3、S4；mcpp-ide protocol。
@@ -819,12 +819,13 @@ openkal 的接口整体提供或整体不提供（§3），`openkal.space` 的�
 |---|---|---|---|
 | M | mcpp（#869，2026.10.31.1） | 检查点 ① `features` 与 `program`；② mcpp#868；③ §17；④ §11 与 docs/50 的 §4.0；⑤ `polyglot`；⑥ C1（§25.3） | — |
 | M2 | mcpp（2026.10.31.2） | `mcpp test <name> --print-launch`（`test-launch`，§7.4）；构建契约的目标侧（C2）；Windows 启动器的平台（K5 的发现）；本文 rev 8、rev 9 | M |
+| M3 | mcpp（2026.10.31.3） | 有封装步骤的平台上，链接边的输出由一个函数给出，排序检查不再把封装边当作链接（C 的发现）；本文 rev 10 | M2 |
 | K1 | openkal（0.18.0） | `openkal.map`：SPEC 条款、头文件与模块、`SURFACE.txt`、一致性测试 | — |
 | K2 | openkal-linux、openkal-macos、openkal-windows | 实现 `openkal.map`；§25.3 定位到实现的修复 | K1 |
 | K3 | openkal-image | okrun 以 `openkal.map` 读入映像与 okb（§25.3 B1） | K2 |
 | K4 | openkal-musl | 文件 `mmap`、`munmap`、`msync` 经 `openkal.map`；§25.3 定位到 musl 的修复 | K1、K3（musl 钉住 openkal-ld） |
 | K5 | openkal-llvm-runtime、openkal-platform、mcpplibs.os | 钉住新版本；platform 的版本组 | K4 |
-| C | mcppls-clangd（0.0.18） | clangd 的 `x86_64-openkal`、`aarch64-openkal` 映像与 `clangd.okb`（§25.3） | K5；补丁与隔离实验不依赖，先行 |
+| C | mcppls-clangd（0.0.18） | clangd 的 `x86_64-openkal`、`aarch64-openkal` 映像与 `clangd.okb`（§25.3） | K5、M3；补丁与隔离实验不依赖，先行 |
 | L | mcppls #75（0.0.20） | §5.2 `status`；§4.6；§10 D3–D8；引擎改为 `clangd.okb`（§25.3 的验收） | C |
 | I | mcpp-ide #3（0.2.0） | §14 的检查点 ①–⑥；mcppls 0.0.20 单包依赖 | L 的发布（CLion 的 mcppls 依赖）；开发不依赖 |
 | X | mcpp-index、xim-pkgindex | openkal 家族的条目随级联逐个进入 mcpp-index（下游 CI 从已发布的索引解析，故不能合为一个 PR）；xim-pkgindex 一个 PR：okrun、mcppls、mcppls-nvim、mcpp-ide、mcpp-ide-nvim | 各自的发布 |
@@ -878,4 +879,15 @@ mcpp 新建、构建、运行、`--pkg-format polyglot`；mcppls 在四种编辑
 | L | `status` 的动作表扩充为 mcppls 的全部动作（S3-8-7） |
 | M2 | 版本定为 2026.10.31.2：`test-launch`、构建契约的目标侧（C2 的前提）、Windows 启动器的平台 |
 | I | 检查点 ①–⑤ 已推送：⑤ 为规则层移入后端（LSP，协议 2）、三个编辑器的接入、F15 的降级模式及其 CI 任务；⑥ CLion 原生界面在进行 |
+
+### 25.7 进度（rev 10）
+
+| 任务 | 状态 |
+|---|---|
+| M2 | 已合入并发布 2026.10.31.2，GitCode 已补，xim-pkgindex 的 mcpp 条目已合入 |
+| K5 | mcpplibs.os 0.2.4 已发布，其 CI 的 ok 映像任务以 openkal-platform 0.19.0 构建；openkal-emscripten 0.7.0 随 openkal 0.18.0 发布（0.6.0 钉 openkal 0.17.1，os 的 emscripten 任务因此失败）；openkal-image 的 release-binaries 接受 `platform`，okrun 0.1.5 的二进制以 platform 0.19.0 构建 |
+| C | B2、B3、B4 的修复与 Windows 的内存前导名（`getInMemoryPreamblePath` 在 `LLVM_ON_UNIX` 下为 POSIX 路径，Windows 上读 PCH 失败；`__OPENKAL__` 下按系统的路径风格命名）合为一个补丁。只为 ok 映像适配 LLVM 的补丁放在 `openkal/patches/`，有自己的 series 与台账，仅在构建 ok 映像时于主 series 与 overlay 之后应用（`apply.sh --openkal`）；原生引擎不带它。`clangd.okb` 的身份覆盖两个 series。映像任务在 mcpp 2026.10.31.2 上被排序检查拒绝：`prepare` 动作构建 clangd 的库，检查要求每条链接边等待它，却把发布 `bin/clangd.oke` 的封装边当作链接；M3 修复 |
+| L | 引擎条目可为 ok 映像：`engines.clangd` 的 `path` 指向 `clangd.okb`、`runner` 指向 okrun，身份的平台为 `openkal`（S4-4-12）；锁文件行 `clangd = "mcppls-clangd-openkal"` 选择它；工作区平台升至 openkal-platform 0.19.0、os 0.2.4 |
+| X | xim-pkgindex 的 CI 计划以引用的坐标与精确版本计算受影响的包：精确钉住的版本只在该版本条目或配方其余部分改变时成为依赖边；一次 mcpp 版本更新从 71 个包、10 个任务降为 4 个包、6 个任务 |
+| 未覆盖 | openkal-opensbi（钉 openkal 0.16.0）与 openkal-uefi（0.14.1）落后于规范；二者为裸机实现，不在 os 与本轮的依赖中 |
 

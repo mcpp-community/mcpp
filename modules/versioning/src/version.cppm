@@ -31,6 +31,6 @@ import std;
 
 export namespace mcpp {
 
-inline constexpr std::string_view MCPP_VERSION = "2026.10.31.2";
+inline constexpr std::string_view MCPP_VERSION = "2026.10.31.3";
 
 } // namespace mcpp

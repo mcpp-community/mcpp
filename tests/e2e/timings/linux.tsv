@@ -608,3 +608,4 @@
 993_a_test_describes_its_launch.sh	30000
 994_the_contract_names_the_target_side.sh	60000
 995_the_windows_launcher_builds_over_any_platform_release.sh	240000
+996_an_ok_image_waits_for_a_prepare_action.sh	15000
