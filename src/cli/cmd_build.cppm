@@ -1235,6 +1235,20 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
                                     ".tar.zst, .tar.xz)", to.archive.string()));
         return 2;
     }
+    // ONE TEST'S LAUNCH (`--print-launch`): the program a debugger starts, so one test of one
+    // package on one target, built and not run, and nothing else on stdout.
+    if (parsed.is_flag_set("print-launch")) {
+        std::string refused;
+        if (to.filter.empty()) refused = "names no test: --print-launch describes the one test PATTERN names";
+        else if (to.list || to.noRun || !to.archive.empty()) refused = "describes a test to run; --list, --no-run and --archive do not run one";
+        else if (to.format == mcpp::build::TestMessageFormat::Json) refused = "prints the mcpp.launch envelope; --message-format json prints records";
+        else if (!testLegs.empty()) refused = "describes one test on one target, and --target names several legs";
+        if (!refused.empty()) {
+            mcpp::ui::error(std::format("mcpp test --print-launch {}", refused));
+            return 2;
+        }
+        mcpp::build::set_print_launch(true);
+    }
     if (runArchive) {
         if (!testLegs.empty() || !ov.target_triple.empty()) {
             mcpp::ui::error("mcpp test --archive runs the legs the archive holds; --target "
@@ -1257,6 +1271,10 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     if (*selection && ((*selection)->whole || (*selection)->members.size() > 1)
         && !to.archive.empty()) {
         mcpp::ui::error("--archive holds the tests of one package: select one member (-p)");
+        return 2;
+    }
+    if (*selection && ((*selection)->whole || (*selection)->members.size() > 1) && parsed.is_flag_set("print-launch")) {
+        mcpp::ui::error("mcpp test --print-launch describes one test of one package: select one member (-p)");
         return 2;
     }
     if (*selection && ((*selection)->whole || (*selection)->members.size() > 1)) {

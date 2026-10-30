@@ -148,6 +148,7 @@ TEST(WireProtocol, NamesTheFeaturesAClientGatesOn) {
     for (auto const& f : j["features"]) names.push_back(f.get<std::string>());
     EXPECT_NE(std::ranges::find(names, "target-sets"), names.end());
     EXPECT_NE(std::ranges::find(names, "pkg-format-list"), names.end());
+    EXPECT_NE(std::ranges::find(names, "test-launch"), names.end());
 }
 
 TEST(WireProtocol, IsItselfSelfIdentifying) {

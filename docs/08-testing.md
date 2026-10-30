@@ -236,6 +236,14 @@ One NDJSON record per test, for a CI job or an editor. The schema and its
 version are [50 — Machine-Readable Output](50-machine-output.md); what belongs
 here is only that the flag exists and that the human format is the default.
 
+```bash
+mcpp test unit/math --print-launch -- --gtest_filter=Math.Adds
+```
+
+Builds the one test the pattern names and prints how `mcpp test` would start it
+(the `mcpp.launch` envelope, mcpp 2026.11.1.1+), for a debugger to start: the
+runner, the environment the run adds and the arguments after `--` are in it.
+
 ## Current limitations
 
 - A test is one `.cpp` producing one program. mcpp does not discover cases

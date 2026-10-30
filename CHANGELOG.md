@@ -4,6 +4,20 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.1.1] - 2026-11-01
+
+### Added
+
+- **`mcpp test <name> --print-launch`** (feature `test-launch`, docs/50 §9):
+  the one test the pattern names, built as `mcpp test` builds it and described
+  as `mcpp test` would start it -- its runner, the environment the run adds, the
+  arguments after `--` -- in the `mcpp.launch` envelope `mcpp run
+  --print-launch` prints, with `test` naming it. A debugger starts what it
+  describes (an IDE debugging a test or one of its cases, design 2026-10-30
+  part 2 §7.4). A pattern several tests contain resolves to the test named
+  exactly; one naming several, `--list`, `--no-run`, `--archive`,
+  `--message-format json`, several legs and several members are refused.
+
 ## [2026.10.31.1] - 2026-10-31
 
 ### Added

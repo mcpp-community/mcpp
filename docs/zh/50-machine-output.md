@@ -207,6 +207,7 @@ effects 采用具名的方式而不是一个 `destructive: true|false`，因为�
 |---|---|---|---|
 | `target-sets` | 2026.10.31.1（语义自 2026.10.30.1） | `--target openkal` 等集合展开为其腿（SPEC-015 §1） | IDE 的 target 选择 |
 | `pkg-format-list` | 2026.10.31.1（语义自 2026.10.30.1） | `--pkg-format tar,okb` 写出一棵树的各个容器（SPEC-014 §5.4） | IDE 的打包界面 |
+| `test-launch` | 2026.11.1.1 | `mcpp test <name> --print-launch` 打印一个测试的 `mcpp.launch`（见下） | 调试测试的 IDE |
 
 ### 工具为项目运行 mcpp 的方式
 
@@ -888,6 +889,15 @@ mcpp run [target] --print-launch
 按 `mcpp run` 的方式构建程序，然后打印信封而不启动它。`data` 为 `program`、
 `argv`、`cwd`、`env` 与 `via`，同上文的 `launch`。`--print-launch` 不接受
 `--format`：在 `mcpp run` 上，`--pkg-format` 表示可分发物的格式。
+
+```
+mcpp test <name> --print-launch [-- <参数>]
+```
+
+对一个测试作同样的描述（特性 `test-launch`，2026.11.1.1）：`<name>` 指定的测试按 `mcpp test`
+的方式构建，并按 `mcpp test` 启动它的方式描述——它的运行器、运行所加的环境、`--` 之后的参数——`data`
+另以 `test` 给出测试名。多个测试名包含该模式时取名字完全相同的那个；仍指向多个测试时拒绝，`--list`、
+`--no-run`、`--archive`、`--message-format json`、多条腿与多个成员同样拒绝。调试器启动信封描述的程序。
 
 ## 10. 拒绝副作用 —— `--deny` *（mcpp 2026.10.26.1+）*
 

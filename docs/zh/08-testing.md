@@ -208,6 +208,13 @@ mcpp test --message-format json
 [50 —— 机器可读输出](50-machine-output.md)；本章只交代这个旗标存在，以及人类可读
 格式是默认值。
 
+```bash
+mcpp test unit/math --print-launch -- --gtest_filter=Math.Adds
+```
+
+构建该模式指定的一个测试，并打印 `mcpp test` 启动它的方式（`mcpp.launch` 信封，mcpp 2026.11.1.1+），
+供调试器启动：其中包括运行器、运行所加的环境与 `--` 之后的参数。
+
 ## 当前边界
 
 - 一个测试是一个 `.cpp` 产出一个程序。mcpp 不发现文件内部的用例，因此框架的逐用例

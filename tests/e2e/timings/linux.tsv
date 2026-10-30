@@ -605,3 +605,4 @@
 990_a_lock_key_does_not_depend_on_the_selected_members.sh	20000
 991_a_prebuilt_archive_in_ldflags_is_a_link_input.sh	30000
 992_a_polyglot_file_runs_on_every_system_it_holds.sh	240000
+993_a_test_describes_its_launch.sh	30000

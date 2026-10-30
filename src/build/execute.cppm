@@ -4265,6 +4265,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         std::vector<std::string> argv;
         std::vector<std::pair<std::string, std::string>> env;
         long long buildMs = 0;   // this test's own edges in .ninja_log
+        std::filesystem::path program;   // the test's own artifact
     };
     std::vector<Runnable> runnable;
 
@@ -4551,7 +4552,39 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         }
 
         runnable.push_back({lu.targetName, std::move(argv), std::move(childEnv),
-                            buildMsOfTest});
+                            buildMsOfTest, exe});
+    }
+    // `mcpp test <name> --print-launch` (design 2026-10-30 part 2 §7.4): the one test the pattern
+    // names, built, described as `mcpp run --print-launch` describes a program -- the `mcpp.launch`
+    // envelope, composed here where the run composes it -- and not started. A debugger starts it.
+    if (print_launch_flag()) {
+        const Runnable* chosen = nullptr;
+        for (auto const& r : runnable)
+            if (r.name == testOpts.filter) chosen = &r;
+        if (!chosen && runnable.size() == 1) chosen = &runnable.front();
+        if (!chosen) {
+            mcpp::ui::error(runnable.empty()
+                ? std::format("--print-launch: no test that built is named '{}'", testOpts.filter)
+                : std::format("--print-launch describes one test, and '{}' names {}: name one", testOpts.filter, runnable.size()));
+            return 2;
+        }
+        if (!invocationNotRunReason.empty()) {
+            mcpp::ui::error(invocationNotRunReason);
+            return 2;
+        }
+        ctx->buildLock.reset();
+        mcpp::build::result::Launch launch{chosen->argv, chosen->env,
+                                           std::filesystem::current_path().generic_string(),
+                                           !tb.runUnderPrefix.empty() ? "run_under"
+                                           : !runnerTmpl.empty() ? "runner" : ""};
+        mcpp::wire::Envelope env{.kind = "mcpp.launch",
+                                 .effects = {mcpp::wire::Effect::ReadProject,
+                                             mcpp::wire::Effect::WriteProject}};
+        env.data = mcpp::build::result::to_json(launch);
+        env.data["program"] = chosen->program.generic_string();
+        env.data["test"] = chosen->name;
+        mcpp::wire::emit(env);
+        return 0;
     }
     // Pass 2: run them. Concurrently unless there is exactly one — see
     // `runJobs` for why the single-test case is deliberately different.

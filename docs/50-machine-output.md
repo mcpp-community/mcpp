@@ -244,6 +244,7 @@ envelope says when either has changed since.
 |---|---|---|---|
 | `target-sets` | 2026.10.31.1 (meaning from 2026.10.30.1) | `--target openkal` and the other sets expand to their legs (SPEC-015 §1) | an IDE's target picker |
 | `pkg-format-list` | 2026.10.31.1 (meaning from 2026.10.30.1) | `--pkg-format tar,okb` writes each container of one tree (SPEC-014 §5.4) | an IDE's pack form |
+| `test-launch` | 2026.11.1.1 | `mcpp test <name> --print-launch` prints the `mcpp.launch` of one test (below) | an IDE debugging a test |
 
 ### How a tool runs mcpp for a project
 
@@ -1000,6 +1001,18 @@ Builds the program as `mcpp run` does and prints the envelope instead of
 starting it. `data` is `program`, `argv`, `cwd`, `env` and `via`, as
 `launch` above. `--print-launch` takes no `--format`: on `mcpp run`, `--pkg-format`
 names a distributable.
+
+```
+mcpp test <name> --print-launch [-- <arguments>]
+```
+
+The same for one test (feature `test-launch`, 2026.11.1.1): the test `<name>` names is
+built as `mcpp test` builds it and described as `mcpp test` would start it --
+its runner, the environment the run adds, and the arguments after `--` -- with
+`test` in `data` naming it. A name that several tests contain is resolved to
+the one named exactly; a pattern that names several is refused, as are
+`--list`, `--no-run`, `--archive`, `--message-format json`, several legs and
+several members. A debugger starts what the envelope describes.
 
 ## 10. Denying effects — `--deny` *(mcpp 2026.10.26.1+)*
 
