@@ -293,13 +293,22 @@ conformance 夹具固定（§13）。两者仍不一致时（例如 mcppls 设�
 
 ### 6.2 命令表声明位置
 
-`spec/commands.json` 每行新增 `placements`（`title`、`context`、`statusMenu`、`gutter`）。两个插件按表生成原生入口；新增命令时
-两边同时出现。VS Code 的清单由命令表生成（`mcpp-ide-dev gen vscode`），0.9.0 的一致性门禁允许新增、不允许改变：0.9.0 已有的条目
-（例如 `editor/title` 的 Run、Test 及其 `when` 中的 `mcpp.editorTitleButtons`）逐字保留，新增的入口另起条目。
+`spec/commands.json` 每行新增 `placements`，一个以位置为键、以次序为值的对象（`{"title": 3, "context": 2, "gutter": 2}`；
+位置为 `title`、`context`、`gutter`，快速菜单仍由 `quickMenu` 表示）。两个插件按表生成原生入口：VS Code 的 `editor/title`
+与 `editor/context`，CLion 编辑器右键菜单中的一组引用（`EditorPopupMenu`）；新增命令时两边同时出现。VS Code 的清单由命令表生成（`mcpp-ide-dev gen vscode`），0.9.0 的一致性门禁允许新增、不允许改变：0.9.0 已有的条目
+（例如 `editor/title` 的 Run、Test 及其 `when` 中的 `mcpp.editorTitleButtons`）逐字保留，新增的入口另起条目。`mcpp.build`
+在 0.9.0 的清单中没有图标，标题栏需要图标，因此标题栏的构建是新命令 `mcpp.editor.build`（只在 VS Code，不进命令面板），
+`mcpp.build` 的条目不变。
+
+CLion 的快捷键以两个随插件提供的 keymap 表示（`mcpp`，父为 `$default`；`mcpp (macOS)`，父为 macOS 的 keymap），由命令表的
+`keybinding` 生成：CLion 自带的 keymap 中这些组合键已有绑定（`Ctrl+Alt+B` 是 Go to Implementation），不覆盖；需要 VS Code
+组合键的人在 Settings | Keymap 中选择。锤子（Build | Build Project）经 `ProjectTaskRunner` 对含 `mcpp.toml` 的项目执行
+`mcpp build` 作业。
 
 ### 6.3 `main` 的判定
 
-`main` 的位置来自正在服务这个文件的语言服务：CLion 用 PSI，VS Code 用当前语言服务器（mcppls）给出的文档符号。mcppls 的命令行
+`main` 的位置来自正在服务这个文件的语言服务：CLion 用 PSI（▶ 落在后端读出的那一行上名为 `main` 的 PSI 元素），VS Code 用
+当前语言服务器（mcppls）给出的文档符号（`vscode.executeDocumentSymbolProvider` 中顶层名为 `main` 的函数）。mcppls 的命令行
 查询（`query`）要启动引擎，不适合在打开文件时调用，不采用。后端新增 `source/entries`（文件 → 程序还是测试、测试名、框架），只回答
 种类，不回答位置。CLion 的正则（F12）与 VS Code 的第 0 行（F11）都改为"位置取自语言服务、种类取自后端"。语言服务不在
 （mcppls 被禁用）时，位置取自后端的文本扫描（与 §7.3 的扫描同一实现），并在提示中标注为近似。
@@ -341,8 +350,9 @@ Boost.Test）不适配，其测试按程序级运行。
 - **用例的标识**：（项目、测试程序、框架、全名），全名取框架的写法（gtest 的 `Suite.Name`，Catch2 与 doctest 的测试名）。动态列举
   的用例按全名挂到静态节点上：gtest 的参数化用例去掉实例前缀与参数后缀（`Inst/Suite.Name/0` → `Suite.Name`）后匹配；匹配不到的
   挂在测试程序节点下。同一程序中重名的用例以出现顺序区分。
-- **过滤参数**按框架的语法转义：gtest 的 `:`、`*`、`?`、`-`，Catch2 测试名中的 `,`、`[`、`]`、`\`，doctest 的 `,`；参数以 argv
-  传递，不经 shell。报告文件写在每次运行独立的临时目录，运行结束后删除。
+- **过滤参数**按框架的语法转义：Catch2 测试名中的 `,`、`[`、`]`、`*`、`\`，doctest 的 `,`；gtest 的全名是两个标识符，不含其
+  过滤语法的特殊字符，不转义。只来自源文件（未经列举）的 gtest 用例名同时匹配其实例：`S.N` 展开为 `S.N`、`*/S.N/*`（`TEST_P`）
+  与 `S/*.N`（`TYPED_TEST`）。参数以 argv 传递，不经 shell。报告文件写在每次运行独立的临时目录，运行结束后删除。
 - 列举与运行都执行项目的程序，只在受信任的工作区进行。
 - 后端方法：`test/cases`（文件或程序 → 用例、位置、来源）、`test/runCases`（程序与用例 → job，结果按用例映射）。
 
@@ -353,6 +363,10 @@ Boost.Test）不适配，其测试按程序级运行。
 | 用例节点 | Testing API 的子项，位置为宏所在行；▶ 与 ✓/✗ 由 VS Code 显示 | 每个宏一个 `RunLineMarkerContributor`；上次结果来自 `TestStateStorage` |
 | 结果树 | Testing 视图 | SMTestRunner，后端事件转为 TeamCity service message |
 | 调试一个用例 | 同一组参数，调试类型 `mcpp` | 同一组参数，CLion 调试器 |
+
+调试需要测试程序的启动描述：mcpp 2026.11.1.1 增加 `mcpp test <name> --print-launch`（特性 `test-launch`，docs/50），输出与
+`mcpp run --print-launch` 相同的 `mcpp.launch` 信封，`--` 之后是框架的过滤参数。这是 F17 之外 mcpp 核心唯一的变化：测试的
+判定（退出码）与参数透传不变，只增加描述启动的方式。项目的 mcpp 没有 `test-launch` 时，测试只提供运行。
 | 无框架的测试 | 粒度为程序，▶ 在 `main` 行 | 同左 |
 
 ## 8. 清单与构建程序的规则层
@@ -778,7 +792,7 @@ openkal 的接口整体提供或整体不提供（§3），`openkal.space` 的�
 | 10 | 可读性 | 文档按评审轮次累积，已定的条款分散 | §22、§23 汇总已定与待定；实现时以 §23.1 为规范清单 |
 
 
-## 25. 实施计划与任务依赖（rev 7）
+## 25. 实施计划与任务依赖（rev 8）
 
 ### 25.1 各视角对计划的约束
 
@@ -796,7 +810,8 @@ openkal 的接口整体提供或整体不提供（§3），`openkal.space` 的�
 
 | 任务 | 仓库（PR） | 内容 | 依赖 |
 |---|---|---|---|
-| M | mcpp（新 PR，2026.10.31.1） | 检查点 ① `features` 与 `program`；② mcpp#868；③ §17；④ §11 与 docs/50 的 §4.0；⑤ `polyglot`；⑥ C1（§25.3） | — |
+| M | mcpp（#869，2026.10.31.1） | 检查点 ① `features` 与 `program`；② mcpp#868；③ §17；④ §11 与 docs/50 的 §4.0；⑤ `polyglot`；⑥ C1（§25.3） | — |
+| M2 | mcpp（2026.11.1.1） | `mcpp test <name> --print-launch`（`test-launch`，§7.4）；本文 rev 8 | M |
 | K1 | openkal（0.18.0） | `openkal.map`：SPEC 条款、头文件与模块、`SURFACE.txt`、一致性测试 | — |
 | K2 | openkal-linux、openkal-macos、openkal-windows | 实现 `openkal.map`；§25.3 定位到实现的修复 | K1 |
 | K3 | openkal-image | okrun 以 `openkal.map` 读入映像与 okb（§25.3 B1） | K2 |
@@ -816,8 +831,8 @@ openkal 的接口整体提供或整体不提供（§3），`openkal.space` 的�
 | # | 阻塞项 | 事实 | 所属 | 做法 | 依赖 |
 |---|---|---|---|---|---|
 | B1 | 文件 mmap 与常驻内存（多 90–125 MiB） | (a) LLVM 对文件的 `mmap` 得到 `ENOSYS`，回退为读入；(b) okrun 的 `read_all` 以倍增读入整个文件（71.5 MB 的映像占 128 MiB 缓冲），映像运行期间不释放；(c) 映像的段复制进 `kal_exec` 区域 | (a) openkal 规范 → 三个实现 → openkal-musl；(b) openkal-image；(c) 不改，代码只经 `kal_exec_*` | (a) `openkal.map`，musl 的文件 `mmap` 经它；(b) okrun 映射映像文件，okb 中未压缩的成员直接在映射中装入，压缩成员解压到恰好大小的缓冲，装入后解除映射或释放；(c) 计入验收的基线 | K1 → K2 → K3、K4 |
-| B2 | Windows 路径 | probe 第 8 条：路径风格在编译时决定，`C:\`、`C:/` 被当作相对名，资源目录找不到；第 12 条：默认三元组在编译时决定；第 9 条：形式正确的 `C:/…` 读取得到 `EINVAL`，发生在 LLVM 之下（openkal-musl 的 `root_length` 已认盘符） | 第 8、12 条：LLVM 补丁（mcppls-clangd）；第 9 条：openkal-musl 或 openkal-windows | 补丁：`Style::native` 与默认三元组在运行时由 `kal_env_system` 决定；第 9 条以 probe 的 llvmprobe 映像在 Windows 上逐步（`open`、`fstat`、`read`、`lseek`、`MemoryBuffer::getFile`）隔离，修在所属仓库并加一致性测试 | 补丁无依赖；第 9 条的修复进入 K2 或 K4 |
-| B3 | Linux 的 SIGSEGV | 两个架构都在解析 libstdc++ 头文件时崩溃；同一份 aarch64 映像在 macOS（SDK 的 libc++ 头文件）通过；openkal-linux 按请求的大小给任务栈（`stack_for`） | 未定：openkal-linux 或 okrun 的 Linux 部分；或与系统无关的一层（LLVM 补丁、openkal-musl、openkal-llvm-runtime） | 判别实验：在 macOS 上让同一映像解析 Linux 的 libstdc++ 头文件，崩溃则与系统无关，否则在 Linux 一侧；okrun 报告故障地址、所在任务与其栈界；修在所属仓库并加回归测试 | 修复进入 K2、K4 或 C |
+| B2 | Windows 路径 | probe 第 8 条：路径风格在编译时决定，`C:\`、`C:/` 被当作相对名，资源目录找不到；第 12 条：默认三元组在编译时决定；第 9 条（隔离结果，mcppls-clangd run 41040892276）：`open`、`fstat`、`read`、`lseek`、`MemoryBuffer::getFile` 对 `D:/…`、`D:\…`、相对名全部成功，`EINVAL` 不在 LLVM 之下，而是 `is_absolute` 为假使 `make_absolute` 把当前目录接在 `D:/…` 之前 | LLVM 补丁（mcppls-clangd） | 补丁：`is_style_posix`、`is_style_windows` 在 `__OPENKAL__` 下于运行时由 `kal_env_system` 决定（`Style::native`）；clangd 的 `absoluteParent` 与大小写折叠同样按系统；默认三元组在运行时决定 | — |
+| B3 | Linux 的 SIGSEGV | 两个架构都在解析 libstdc++ 头文件时崩溃；同一份 aarch64 映像在 macOS（SDK 的 libc++ 头文件）通过。在 openkal-platform 0.18.0（openkal-musl 0.22.9，`pread` 与 `__cxa_thread_atexit`）上重建的映像不再崩溃（gdb 下运行至结束），余下的是 7 个错误：`stddef.h` 找不到。映像的自身名（`kal_env_image`）是 okrun 收到的相对名，资源目录随之为相对路径，clangd 按编译命令的目录解析它 | LLVM 补丁（mcppls-clangd） | `getMainExecutable` 在 `__OPENKAL__` 下把映像名以启动时的当前目录变为绝对路径（openkal 规定该名按程序得到的外部名使用）；回归：Linux 上 `--check` 解析 libstdc++ 的标准库用例为 0 个错误 | — |
 | B4 | 模块 worker | probe 第 11 条：worker 直接运行 `.oke` 而崩溃；`getrlimit`、`setrlimit` 不可用 | LLVM 补丁（series 0017） | worker 经 `kal_env_loader` 以"加载器 + 映像"启动；openkal 没有地址空间上限，worker 的内存上限在 ok 映像上由监督方按常驻内存执行 | — |
 | C1 | 链接输入 | probe 第 13 条：`[build] ldflags` 中的预构建归档不是链接输入，改动它不重新链接 | mcpp | 链接参数中存在的文件记为链接步骤的隐式输入 | — |
 | C2 | 构建途径 | probe 第 14 条：约定从编译命令读出，工具链文件由 Python 生成 | mcppls-clangd | 约定取自 `${mcpp.contract}`；生成器是一个小的 mcpp 项目 | — |
@@ -844,3 +859,15 @@ mcpplibs.os 不直接涉及：clangd 映像只用 openkal-musl 与 libc++；os �
 GitCode、mcpp-index 条目）→ C → L → I → xim-pkgindex PR。之后在干净的 xlings 环境中验证：裸 `xlings install` 解析到新版本；
 mcpp 新建、构建、运行、`--pkg-format polyglot`；mcppls 在四种编辑器入口中可用，`mcppls status` 的输出；mcpp-ide 的按项目版本
 感知（锁定版本的项目与未锁定的项目）。
+
+### 25.6 进度（rev 8）
+
+| 任务 | 状态 |
+|---|---|
+| M | 已合入并发布 2026.10.31.1 |
+| K1–K4 | openkal 0.18.0、openkal-linux 0.19.0、openkal-macos 0.16.0、openkal-windows 0.14.0、openkal-image 0.1.5、openkal-musl 0.23.0 已发布；一致性套件的副本改在套件自身目录运行（wine 经 binfmt 以全路径启动时，副本按卷根运行，无法创建文件） |
+| K5 | openkal-llvm-runtime 0.16.10（钉 musl 0.23.0），随后 platform 与 mcpplibs.os |
+| C | B2、B3 定位到 LLVM 补丁（上表），补丁在 probe 分支验证 |
+| L | `status` 的动作表扩充为 mcppls 的全部动作（S3-8-7） |
+| I | 检查点 ①–④ 已推送；⑤ 规则层、⑥ CLion 原生界面在进行 |
+
