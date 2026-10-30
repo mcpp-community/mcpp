@@ -96,6 +96,24 @@ TEST(VersionReq, PartialCaretBoundsFollowTheWrittenSegments) {
     EXPECT_FALSE(matches(*zeroFive, *parse_version("0.6.0")));
 }
 
+// A bare requirement is a caret (#866's follow-up), so a bare partial spelling
+// takes the same wildcard bounds: "0" is <1.0.0 and "0.0" is <0.1.0, where
+// before #866 both matched 0.0.0 alone.
+TEST(VersionReq, BarePartialRequirementsAreCarets) {
+    for (auto [bare, caret] : {std::pair{"0", "^0"}, std::pair{"0.0", "^0.0"},
+                               std::pair{"1", "^1"}, std::pair{"1.2", "^1.2"}}) {
+        auto b = parse_req(bare);  ASSERT_TRUE(b) << bare;
+        auto c = parse_req(caret); ASSERT_TRUE(c) << caret;
+        for (auto v : {"0.0.0", "0.0.7", "0.1.0", "0.9.3", "1.0.0", "1.2.0", "1.2.9", "1.3.0", "2.0.0"})
+            EXPECT_EQ(matches(*b, *parse_version(v)), matches(*c, *parse_version(v)))
+                << bare << " against " << v;
+    }
+    EXPECT_TRUE (matches(*parse_req("0"), *parse_version("0.9.3")));
+    EXPECT_FALSE(matches(*parse_req("0"), *parse_version("1.0.0")));
+    EXPECT_TRUE (matches(*parse_req("0.0"), *parse_version("0.0.7")));
+    EXPECT_FALSE(matches(*parse_req("0.0"), *parse_version("0.1.0")));
+}
+
 TEST(VersionReq, PartialTildeWithOnlyAMajorHoldsTheMajor) {
     auto r = parse_req("~1");   ASSERT_TRUE(r);
     EXPECT_TRUE (matches(*r, *parse_version("1.0.0")));

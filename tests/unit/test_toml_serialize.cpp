@@ -125,6 +125,32 @@ version = "0.1.0"
 )", "implicit container");
 }
 
+// The reader accepts every TOML 1.0 escape (#867), so a value may hold any
+// control character; the writer escapes each one, so the text it produces is
+// TOML and reads back as the same value. `\0` is this reader's extension and
+// not TOML 1.0, so it is written as `\u0000`.
+TEST(TomlSerialize, ControlCharactersAreEscaped) {
+    expect_round_trip(R"(
+[package]
+name = "p"
+version = "0.1.0"
+description = "b\b f\f t\t n\n r\r e\u001B d\u007F z\u0000 nul\0 ué"
+)", "control characters");
+
+    std::string all;
+    for (int c = 0; c < 0x20; ++c) all.push_back(static_cast<char>(c));
+    all.push_back('\x7F');
+    const auto text = t::escape_string(all);
+    for (char c : text) {
+        const auto u = static_cast<unsigned char>(c);
+        EXPECT_FALSE(u < 0x20 || u == 0x7F) << "an unescaped control character in " << text;
+    }
+    EXPECT_EQ(text.find("\\0"), std::string::npos) << "\\0 is not TOML 1.0: " << text;
+    auto back = t::parse("v = " + text + "\n");
+    ASSERT_TRUE(back.has_value()) << back.error().message << "\n" << text;
+    EXPECT_EQ(back->root().at("v").as_string(), all);
+}
+
 TEST(TomlSerialize, RepositoryManifestsRoundTrip) {
     // Every manifest in the repository's examples, and the project's own. The
     // repository is located from this file's own path rather than from the

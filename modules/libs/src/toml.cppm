@@ -841,16 +841,28 @@ std::string serialize(const Document& doc) {
     return w.out;
 }
 
+// A basic string TOML 1.0 reads back as `raw`. Every control character
+// (U+0000-U+001F, U+007F) is escaped, since TOML forbids them unescaped in a
+// basic string: the reader accepts `\b`, `\f` and `\uXXXX` (#867), so a value
+// may hold one, and `serialize` (the normalised manifest of `mcpp publish`)
+// would otherwise write a document no TOML reader accepts. The short forms are
+// used where TOML has one, `\uXXXX` elsewhere; `\0`, which this reader also
+// accepts, is not TOML 1.0 and is never written.
 std::string escape_string(std::string_view raw) {
     std::string out = "\"";
     for (char c : raw) {
+        const auto u = static_cast<unsigned char>(c);
         switch (c) {
             case '"':  out += "\\\""; break;
             case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n";  break;
+            case '\b': out += "\\b";  break;
             case '\t': out += "\\t";  break;
+            case '\n': out += "\\n";  break;
+            case '\f': out += "\\f";  break;
             case '\r': out += "\\r";  break;
-            default:   out.push_back(c);
+            default:
+                if (u < 0x20 || u == 0x7F) out += std::format("\\u{:04X}", static_cast<unsigned>(u));
+                else out.push_back(c);
         }
     }
     out += '"';

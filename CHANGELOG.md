@@ -28,6 +28,15 @@
   true`) made `-p` of each write its own key and hash. The key is the
   workspace's spelling: its `[dependencies]`, `[workspace.dependencies]`, then
   the members in the order `members` lists them (docs/07, e2e 990).
+- **A partial caret or tilde requirement treats unwritten segments as
+  wildcards** (#866, NopeCharon): `^0` is `< 1.0.0`, `^0.0` is `< 0.1.0`, `~1` is
+  `< 2.0.0`. A bare requirement is a caret, so the bare partial spellings `"0"`
+  and `"0.0"` take the same bounds; before, they matched 0.0.0 alone (docs/05).
+- **The TOML reader accepts every escape TOML 1.0 defines** (#867, NopeCharon):
+  `\b`, `\f`, `\uXXXX` and `\UXXXXXXXX`. The writer escapes every control
+  character in turn (`\uXXXX` where TOML has no short form), so a normalised
+  manifest that holds one is still TOML; `\0` is this reader's extension and is
+  never written.
 
 ## [2026.10.30.1] - 2026-10-30
 

@@ -121,6 +121,13 @@ baz = "=1.2.3"      # Exact match
 qux = ">=1.0, <2.0" # Range combination
 ```
 
+A bare requirement is a caret: `foo = "1.2.3"` is `^1.2.3`, except that a bare
+version equal to a published key addresses that key exactly. A bare partial
+spelling follows the caret's wildcard rule as well: `"0"` is `>= 0.0.0, < 1.0.0`
+and `"0.0"` is `>= 0.0.0, < 0.1.0` (before 2026.10.31.1 both matched 0.0.0
+alone). The dependency conflict check and the address check of `--locked` read
+requirements the same way.
+
 ### `visibility` — whether a dependency's usage crosses this package's own boundary
 
 ```toml
