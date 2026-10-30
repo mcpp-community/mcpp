@@ -313,8 +313,10 @@ TEST(BmiCache, ProbeReportsNoLayoutMismatchWhenTheEntryItselfIsInvalid) {
 }
 
 // touch_accessed is what makes `cache gc` an LRU rather than "drop what was
-// populated long ago". It must move the stamp and leave the artifacts alone —
-// their mtimes participate in ninja's restat handling.
+// populated long ago". A use sets the time of the entry's record (mcpp::home::
+// mark_used, design 2026-10-31 §4.6): the record's content and the artifacts
+// stay as they are -- the artifacts' mtimes participate in ninja's restat
+// handling -- and a second use within 12 hours writes nothing.
 TEST(BmiCache, TouchAccessedMovesTheStampAndNotTheArtifacts) {
     Tmp t;
     auto home    = t.path / "home";
@@ -324,23 +326,27 @@ TEST(BmiCache, TouchAccessedMovesTheStampAndNotTheArtifacts) {
     auto k = makeKey(home);
     ASSERT_TRUE(populate_from(k, project, oneOfEach()));
 
-    auto j0 = readJson(k.entryFile());
-    auto created0  = j0.value("created", std::string{});
+    const auto content0 = readJson(k.entryFile()).dump();
     auto objTime0  = std::filesystem::last_write_time(k.objDir() / "lib.m.o");
     auto bmiTime0  = std::filesystem::last_write_time(k.bmiDir() / "lib.gcm");
 
-    // Rewrite the stamp to something clearly old, then touch.
-    j0["accessed"] = "1000";
-    std::ofstream(k.entryFile()) << j0.dump(2);
+    // The record last used two days ago, then a use.
+    const auto old = std::filesystem::file_time_type::clock::now() - std::chrono::hours(48);
+    std::filesystem::last_write_time(k.entryFile(), old);
     touch_accessed(k);
 
-    auto j1 = readJson(k.entryFile());
-    EXPECT_NE(j1.value("accessed", std::string{}), "1000");
-    EXPECT_EQ(j1.value("created", std::string{}), created0)
-        << "touch must not reset the creation stamp";
+    const auto used = std::filesystem::last_write_time(k.entryFile());
+    EXPECT_GT(used, old + std::chrono::hours(47)) << "a use must move the record's time";
+    EXPECT_EQ(readJson(k.entryFile()).dump(), content0) << "a use must not rewrite the record";
     EXPECT_EQ(std::filesystem::last_write_time(k.objDir() / "lib.m.o"), objTime0);
     EXPECT_EQ(std::filesystem::last_write_time(k.bmiDir() / "lib.gcm"), bmiTime0);
     EXPECT_TRUE(is_cached(k, oneOfEach())) << "touching must not invalidate the entry";
+
+    // Within 12 hours a second use writes nothing.
+    const auto recent = std::filesystem::file_time_type::clock::now() - std::chrono::hours(1);
+    std::filesystem::last_write_time(k.entryFile(), recent);
+    touch_accessed(k);
+    EXPECT_EQ(std::filesystem::last_write_time(k.entryFile()), recent);
 }
 
 TEST(BmiCache, RepopulatePreservesCreatedStamp) {
