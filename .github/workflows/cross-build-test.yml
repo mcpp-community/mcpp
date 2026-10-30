@@ -443,6 +443,17 @@ jobs:
           grep -qxF "PASS: 988 the Windows launcher finds its package from a Windows path" "$log" \
             || { echo "::error::988 did not print its PASS line"; exit 1; }
 
+      # A polyglot file (SPEC-014 §5.3) is the Windows program as it is: its
+      # criterion H runs the file under wine, which only this job has.
+      - name: "e2e: a polyglot file runs on every system it holds (992)"
+        run: |
+          set -o pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          log="$RUNNER_TEMP/992.log"
+          bash tests/e2e/992_a_polyglot_file_runs_on_every_system_it_holds.sh 2>&1 | tee "$log"
+          grep -qxF "ok: the file is a Windows program" "$log" \
+            || { echo "::error::992 did not run the file under wine"; exit 1; }
+
       # 257 needs a Linux-hosted MinGW compiler AND wine, which only this job
       # has; on the shards it skipped, and it had run on no runner (finding F9
       # of the 2026-10-02 CI record).
