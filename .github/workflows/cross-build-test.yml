@@ -431,6 +431,18 @@ jobs:
             grep -qxF "$line" "$log" || { echo "::error::797 did not print: $line"; exit 1; }
           done
 
+      # The Windows launcher of an ok-image tree (`bin/<name>.exe`, built over
+      # the platform's hosted arrangement) finds its package from a Windows
+      # path. The shards have no wine; this job does.
+      - name: "e2e: the Windows launcher finds its package from a Windows path (988)"
+        run: |
+          set -o pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          log="$RUNNER_TEMP/988.log"
+          bash tests/e2e/988_the_windows_launcher_finds_its_package_from_a_windows_path.sh 2>&1 | tee "$log"
+          grep -qxF "PASS: 988 the Windows launcher finds its package from a Windows path" "$log" \
+            || { echo "::error::988 did not print its PASS line"; exit 1; }
+
       # 257 needs a Linux-hosted MinGW compiler AND wine, which only this job
       # has; on the shards it skipped, and it had run on no runner (finding F9
       # of the 2026-10-02 CI record).

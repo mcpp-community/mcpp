@@ -44,8 +44,23 @@ echo 'int main() { return 0; }' > "$TMP/app/src/main.cpp"
 cd "$TMP/app"
 MCPP_OFFLINE=1 "$MCPP" emit build-database --format json -v > out.json 2> err.txt || true
 
-grep -q "resolved to 'compat.$DESC' through the deprecated bare-name search" err.txt \
-    || fail "A: the resolver did not take the bare-name rung for $DESC" err.txt
+# What the shared home held when the rung was not taken: the test passes on a
+# fresh home and failed only after other tests of its shard, so the state of
+# the home is the evidence.
+home_state() {
+    local h="${MCPP_HOME:-$HOME/.mcpp}"
+    echo "--- home: $h ---"
+    ls -la "$h/indices" 2>&1
+    for d in "$h"/indices/*/; do
+        echo "index $d: $(git -C "$d" log -1 --format='%h %cI' 2>/dev/null || echo 'no git')"
+        ls "$d/pkgs/c" 2>/dev/null | grep -i "$DESC" | sed 's/^/    /'
+    done
+    echo "--- $h/config.toml ---"; cat "$h/config.toml" 2>&1
+}
+if ! grep -q "resolved to 'compat.$DESC' through the deprecated bare-name search" err.txt; then
+    home_state
+    fail "A: the resolver did not take the bare-name rung for $DESC" err.txt
+fi
 if grep -a "index: $DESC@$VER: offline mode" err.txt; then
     fail "B: the refresh decision asked for a network refresh of a dependency the resolver found" err.txt
 fi

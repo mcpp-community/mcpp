@@ -420,6 +420,14 @@ jobs:
             exit 1
           fi
           echo "ok: wasm32-emscripten ran through the payload's runner; the decoy node was never run"
+          # #851 (e2e 981) needs the emsdk payload this step has just installed;
+          # the shards have none and skip it, so it runs here, in that home.
+          MCPP="$MCPP_UNDER_TEST" bash tests/e2e/981_a_web_link_has_the_profiles_level_and_the_wasm_exception_model.sh 2>&1 \
+            | tee "$RUNNER_TEMP/981.log"
+          if grep -q '^SKIP' "$RUNNER_TEMP/981.log" || ! grep -qx 'PASS: 981' "$RUNNER_TEMP/981.log"; then
+            echo "::error::e2e 981 did not run to its PASS line over the installed emsdk"
+            exit 1
+          fi
 
   coverage:
     # THE DENOMINATOR. Every check above is per host, and no per-host check
