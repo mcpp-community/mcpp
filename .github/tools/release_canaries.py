@@ -5,6 +5,7 @@ ecosystem design), read by .github/workflows/release-canaries.yml.
     release_canaries.py matrix              the GitHub Actions matrix, as `matrix=<json>`
     release_canaries.py unpin <checkout>    remove the project's own mcpp pin from its checkout
     release_canaries.py run <name>          run a canary's commands in the current directory
+    release_canaries.py steps [<dir>]       the longest build steps of the builds under <dir>
 
 `run` reads the candidate from `$MCPP`. Each command runs under bash with
 `set -eo pipefail`, so a failure is the command's own; a command listed under
@@ -16,6 +17,11 @@ Windows program that starts `bash` by name gets `System32\bash.exe`, the WSL
 launcher, because the loader searches the system directory before PATH (the
 first release run of these canaries printed "Windows Subsystem for Linux has
 no installed distributions" for every command).
+
+After its commands, `run` prints the longest steps (compile or link, and the
+output) of every build the canary made, read from each `.ninja_log` beneath the
+current directory: a canary's time is mostly its project's build, and the steps
+say where (design 2026-10-30 part 2 §11).
 """
 from __future__ import annotations
 
@@ -79,6 +85,46 @@ def shell_argv(command: str) -> list[str]:
     return [shell, "-c", f"set -eo pipefail\n{command}"]
 
 
+def longest_steps(root: Path, count: int = 20) -> list[tuple[int, str, str]]:
+    """(milliseconds, build directory, output) of the longest steps in every
+    `.ninja_log` beneath `root`. A log holds every build of its directory; the
+    last line for an output is its latest step."""
+    steps: list[tuple[int, str, str]] = []
+    for log in root.rglob(".ninja_log"):
+        latest: dict[str, int] = {}
+        try:
+            lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if line.startswith("#"):
+                continue
+            fields = line.split("\t")
+            if len(fields) < 4 or not fields[0].isdigit() or not fields[1].isdigit():
+                continue
+            latest[fields[3]] = int(fields[1]) - int(fields[0])
+        where = str(log.parent.relative_to(root)) if log.parent != root else "."
+        steps += [(ms, where, out) for out, ms in latest.items()]
+    steps.sort(key=lambda s: s[0], reverse=True)
+    return steps[:count]
+
+
+def print_steps(root: Path) -> None:
+    steps = longest_steps(root)
+    if not steps:
+        print(f"no .ninja_log beneath {root}")
+        return
+    print("::group::the longest build steps", flush=True)
+    for ms, where, out in steps:
+        print(f"{ms / 1000:9.1f} s  {where}  {out}")
+    print("::endgroup::", flush=True)
+
+
+def cmd_steps(root: str) -> int:
+    print_steps(Path(root).resolve())
+    return 0
+
+
 def cmd_run(name: str) -> int:
     mcpp = os.environ.get("MCPP", "")
     if not mcpp:
@@ -103,6 +149,7 @@ def cmd_run(name: str) -> int:
         want = expect.get(command)
         if want and want not in proc.stdout + proc.stderr:
             failed.append(f"`{command}` did not print `{want}`")
+    print_steps(Path.cwd())
     for f in failed:
         print(f"::error::canary {name}: {f}")
     print(f"canary {name}: {len(c['commands']) - len(failed)} of {len(c['commands'])} command(s) held")
@@ -119,6 +166,8 @@ def main(argv: list[str]) -> int:
         return cmd_unpin(argv[1])
     if argv[0] == "run" and len(argv) == 2:
         return cmd_run(argv[1])
+    if argv[0] == "steps" and len(argv) <= 2:
+        return cmd_steps(argv[1] if len(argv) == 2 else ".")
     print(__doc__)
     return 2
 
