@@ -168,6 +168,24 @@ std::filesystem::path probe_cache_file(const std::string& key) {
 }  // namespace
 
 bool compresses_debug_sections(const std::filesystem::path& compiler, const mcpp::run::Env& env) {
+    // An LLVM toolchain links with its own lld, which is what refuses the
+    // option without zlib -- its clang may not even warn (measured on the
+    // Windows-hosted LLVM 23.1.3). lld checks the value while it reads its
+    // options, before `--version` returns, and exits 1 when it cannot honour it.
+    if (compiler.filename().string().find("clang") != std::string::npos) {
+        const auto dir = compiler.parent_path();
+        for (std::string_view name : {"ld.lld", "ld.lld.exe", "lld", "lld.exe"}) {
+            const auto lld = dir / name;
+            std::error_code lec;
+            if (!std::filesystem::exists(lld, lec)) continue;
+            std::vector<std::string> argv{lld.string()};
+            if (name.starts_with("lld")) { argv.push_back("-flavor"); argv.push_back("gnu"); }
+            argv.push_back("--compress-debug-sections=zlib");
+            argv.push_back("--version");
+            if (!run_capture(argv, env, /*withErrors=*/true)) return false;
+            break;
+        }
+    }
     // An empty C file the driver may name: `-###` reads no input, but a driver
     // checks that it exists.
     const auto empty = mcpp::home::root() / "cache" / "probe" / "empty.c";

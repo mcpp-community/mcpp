@@ -46,9 +46,11 @@ design 2026-10-31, workspace space and reuse). Measured on mcppls (6 members,
 - **Debug information is compressed on ELF** (`-gz=zlib` on the compile and the
   link; `--compress-debug-sections=zlib` on an ok image's `ld.lld` link): a test
   program of mcppls 96.0 -> 35.7 MiB, with no measurable cost in compile time.
-  Only with a toolchain built to write and read them, asked of its driver once
-  (`-gz=zlib -###`) and kept in the probe cache: the Windows-hosted LLVM of the
-  xim index has no zlib, warns at `-gz` and its `ld.lld` refuses the link.
+  Only with a toolchain built to write and read them: an LLVM toolchain's
+  `ld.lld` is asked (`--compress-debug-sections=zlib --version`), a GCC's driver
+  (`-gz=zlib -###`), once, and the answer kept in the probe cache. The
+  Windows-hosted LLVM of the xim index has no zlib: its clang says nothing and
+  its `ld.lld` refuses the link.
   Mach-O, PDB, MinGW, WebAssembly and freestanding targets are unchanged;
   `-gz=none` in a package's flags turns it off.
 - **A static library holds its own package's objects** (docs/12): a member's
