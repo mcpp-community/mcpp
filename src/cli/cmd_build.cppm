@@ -48,6 +48,7 @@ import mcpp.home.files;
 import mcpp.ui.terminal;
 import mcpp.project;
 import mcpp.manifest;
+import mcpp.pack.compress;         // the compression a test archive's name states
 import mcpp.toolchain.fingerprint;
 import mcpp.ui;
 import mcpp.wire;
@@ -1225,6 +1226,14 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
             mcpp::ui::error(std::format("unknown --message-format '{}' (human|json)", *mf));
             return 2;
         }
+    }
+    // The archive is a tar compressed as its name states, written and read so:
+    // a name that states none is refused before anything is built.
+    if (!to.archive.empty()
+        && !mcpp::pack::compress::tar_algorithm(to.archive.filename().string())) {
+        mcpp::ui::error(std::format("--archive {}: the name states no tar archive (.tar, .tar.gz, .tgz, "
+                                    ".tar.zst, .tar.xz)", to.archive.string()));
+        return 2;
     }
     if (runArchive) {
         if (!testLegs.empty() || !ov.target_triple.empty()) {

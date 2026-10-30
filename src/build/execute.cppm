@@ -128,7 +128,8 @@ std::string test_dest(std::string_view triple, std::string_view test, std::strin
 std::string program_dest(std::string_view triple, std::string_view file);
 
 // Copies `copies` into a fresh tree under `stage`, writes the manifest beside
-// them and the tree as `archive` (gzip-compressed tar).
+// them and the tree as `archive`: a tar compressed as its name states
+// (`.tar.gz`/`.tgz`, `.tar.zst`, `.tar.xz`, `.tar`); another name is refused.
 std::expected<void, std::string> write(const Manifest& m, const std::vector<Copy>& copies,
                                        const std::filesystem::path& stage,
                                        const std::filesystem::path& archive);
@@ -215,8 +216,13 @@ std::expected<void, std::string> write(const Manifest& m, const std::vector<Copy
                                        const fs::path& stage, const fs::path& archive) {
     std::error_code ec;
     fs::remove_all(stage, ec);
+    // The compression is the one the name states, as reading it takes it.
     auto stem = archive.filename().string();
-    for (std::string_view ext : {".tar.gz", ".tgz", ".tar"})
+    const auto algorithm = mcpp::pack::compress::tar_algorithm(stem);
+    if (!algorithm)
+        return std::unexpected(std::format("'{}' names no tar archive (.tar, .tar.gz, .tgz, .tar.zst, "
+                                           ".tar.xz)", stem));
+    for (std::string_view ext : {".tgz", ".tar.gz", ".tar.zst", ".tar.xz", ".tar"})
         if (stem.ends_with(ext)) { stem.resize(stem.size() - ext.size()); break; }
     if (stem.empty()) stem = "mcpp-tests";
     const auto root = stage / stem;
@@ -237,9 +243,9 @@ std::expected<void, std::string> write(const Manifest& m, const std::vector<Copy
         if (!out) return std::unexpected(std::format("cannot write {}", kManifestName));
     }
     if (archive.has_parent_path()) fs::create_directories(archive.parent_path(), ec);
-    auto choice = mcpp::pack::compress::parse("gzip");
-    if (!choice) return std::unexpected(choice.error());
-    return mcpp::pack::distribution::write_tar(root, archive, *choice);
+    mcpp::pack::compress::Choice choice;
+    choice.algorithm = *algorithm;
+    return mcpp::pack::distribution::write_tar(root, archive, choice);
 }
 
 std::expected<Opened, std::string> open(const fs::path& archive, const fs::path& into) {
@@ -4291,12 +4297,14 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 bool timedOut = false;
                 int exitCode = 0;
                 int spawnErr = 0;
+                std::string spawnDetail;
                 std::string runOutput;
                 if (capture) {
                     auto rr = mcpp::run::capture_exec_deadline(
                         r.argv, r.env, deadline, &timedOut, {}, &spawnErr);
                     exitCode  = rr.exit_code;
                     runOutput = std::move(rr.output);
+                    spawnDetail = std::move(rr.spawn_detail);
                 } else {
                     mcpp::ui::status("Running", std::format("bin/{}", r.name));
                     exitCode = mcpp::run::run_exec_deadline(
@@ -4315,7 +4323,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     using namespace mcpp::build::runner_lookup;
                     std::string reason;
                     if (!runnerTmpl.empty())
-                        reason = spawn_failed_message(r.argv.front(), spawnErr);
+                        reason = spawn_failed_message(r.argv.front(), spawnErr, spawnDetail);
                     else if (classify(spawnErr) == SpawnClass::Unloadable)
                         reason = std::format(
                             "this host cannot execute {} artifacts: {} (error {}); "
@@ -4324,7 +4332,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                             runnerChoice.tripleKey, errno_text(spawnErr), spawnErr,
                             runnerChoice.tripleKey);
                     else
-                        reason = spawn_failed_message(r.argv.front(), spawnErr);
+                        reason = spawn_failed_message(r.argv.front(), spawnErr, spawnDetail);
                     if (!hostCannotRun.exchange(true)) {
                         hostCannotRunReason = reason;
                         if (!json) mcpp::ui::warning(reason);
@@ -4765,7 +4773,8 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
             if (spawnErr != 0) {
                 ++notRun;
                 reasons.push_back(std::format("{}: {}", leg.triple,
-                    mcpp::build::runner_lookup::spawn_failed_message(argv.front(), spawnErr)));
+                    mcpp::build::runner_lookup::spawn_failed_message(argv.front(), spawnErr,
+                                                                     rr.spawn_detail)));
             } else if (ok) {
                 ++passed;
             } else {

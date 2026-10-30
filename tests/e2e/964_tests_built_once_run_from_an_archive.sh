@@ -20,6 +20,10 @@
 #   C. A test that fails in the archive fails the run (exit 1).
 #   D. An archive none of whose legs this machine reaches runs nothing and
 #      exits 1, saying so.
+#   E. The archive is compressed as its name states (`.tar.zst` is a zstd
+#      frame and runs as `.tar.gz` does); a name that states no tar archive is
+#      refused before anything is built (exit 2). 2026.10.30.1's first build
+#      wrote gzip whatever the name, and read by the name.
 set -e
 
 TMP=$(mktemp -d)
@@ -88,5 +92,19 @@ rc=0; "$MCPP" test --archive "$TMP/d.tar.gz" > d2.log 2>&1 || rc=$?
 [ "$rc" = 1 ] || fail "D: an archive this machine reaches no leg of exited $rc, not 1" d2.log
 grep -q "no test of .* ran on this machine" d2.log || fail "D: the failure does not say so" d2.log
 echo "ok: an archive run that runs nothing fails"
+
+# E
+cd "$TMP/app"
+"$MCPP" test --target "$HOST_ARCH-openkal" --no-run --archive "$TMP/e.tar.zst" > e1.log 2>&1 \
+    || fail "E: --archive e.tar.zst" e1.log
+[ "$(head -c4 "$TMP/e.tar.zst" | od -An -tx1 | tr -d ' \n')" = "28b52ffd" ] || fail "E: e.tar.zst is no zstd frame" e1.log
+cd "$TMP/co"
+"$MCPP" test --archive "$TMP/e.tar.zst" > e2.log 2>&1 || fail "E: mcpp test --archive e.tar.zst" e2.log
+cd "$TMP/app" && rm -rf target
+rc=0; "$MCPP" test --no-run --archive "$TMP/e.zip" > e3.log 2>&1 || rc=$?
+[ "$rc" = 2 ] || fail "E: --archive e.zip exited $rc, not 2" e3.log
+grep -q "states no tar archive" e3.log || fail "E: the refusal does not say why" e3.log
+[ ! -d target ] || fail "E: something was built before the name was refused" e3.log
+echo "ok: the archive is compressed as its name states"
 
 echo "PASS: 964 tests built once run from an archive"

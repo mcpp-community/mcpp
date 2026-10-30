@@ -144,9 +144,12 @@ inline std::string not_found_message(std::string_view triple, std::string_view a
         argv0, triple, dirs);
 }
 
-inline std::string spawn_failed_message(std::string_view program, int e) {
-    return std::format("'{}' could not be started: {} (error {})",
-                       program, errno_text(e), e);
+// `detail` is the system's own account (`RunResult::spawn_detail`), which
+// names what the classification `e` does not.
+inline std::string spawn_failed_message(std::string_view program, int e,
+                                        std::string_view detail = {}) {
+    return std::format("'{}' could not be started: {} (error {}){}{}",
+                       program, errno_text(e), e, detail.empty() ? "" : "; ", detail);
 }
 
 // The hosted sibling of mcpp::freestanding::no_runner_message. It reports what

@@ -30,6 +30,7 @@ struct RunResult {
     std::string error_output;        // Streams::output_error_kept: its standard error
     bool        timed_out = false;   // a bound or `should_stop` ended it
     int         spawn_error = 0;     // errno-style when it could not be started, else 0
+    std::string spawn_detail;        // then the system's own account, beside the classification
 };
 
 // ─── This process ────────────────────────────────────────────────────────
@@ -71,8 +72,10 @@ void end_for_closed_output();
 //
 // A SPAWN FAILURE IS REPORTED EXACTLY ONCE AND NEVER DROPPED (#544). When the
 // program could not be started a launcher returns 127 and either stores an
-// errno-style code in `*spawn_error` (ENOENT, EACCES, ENOEXEC, EIO) and prints
-// nothing, because a caller that asked owns the report, or, with
+// errno-style code in `*spawn_error` (ENOENT, EACCES, ENOEXEC, EINVAL, ENOMEM,
+// EISDIR, ENOTDIR, ENOTSUP, E2BIG, else EIO) -- the system's own account in a
+// captured result's `spawn_detail` -- and prints nothing, because a caller that
+// asked owns the report, or, with
 // `spawn_error == nullptr`, reports it itself -- on stderr for the launchers
 // that inherit it, into `output` for the capturing ones. `*spawn_error` is 0
 // whenever the program was started, whatever it then did.

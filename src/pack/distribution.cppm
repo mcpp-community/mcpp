@@ -901,11 +901,7 @@ std::expected<fs::path, std::string> unpack(const fs::path& package, const fs::p
     const auto name = package.filename().string();
     using mcpp::pack::compress::Algorithm;
     const bool zip = name.ends_with(".zip");
-    const std::optional<Algorithm> a = name.ends_with(".tar.gz") || name.ends_with(".tgz") ? Algorithm::Gzip
-                                     : name.ends_with(".tar.zst") ? Algorithm::Zstd
-                                     : name.ends_with(".tar.xz") ? Algorithm::Xz
-                                     : name.ends_with(".tar") ? std::optional(Algorithm::None)
-                                                              : std::nullopt;
+    const std::optional<Algorithm> a = mcpp::pack::compress::tar_algorithm(name);
     if (!zip && !a)
         return std::unexpected(std::format(
             "'{}' is not a package this command writes (.zip, .tar, .tar.gz, .tar.zst, .tar.xz, "
@@ -1942,10 +1938,7 @@ std::expected<fs::path, std::string> merge(const MergeRequest& req) {
     auto compression = req.compression;
     if (!compression.stated && format == "tar") {
         using mcpp::pack::compress::Algorithm;
-        compression.algorithm = firstName.ends_with(".tar.zst") ? Algorithm::Zstd
-                              : firstName.ends_with(".tar.xz")  ? Algorithm::Xz
-                              : firstName.ends_with(".tar")     ? Algorithm::None
-                                                                : Algorithm::Gzip;
+        compression.algorithm = mcpp::pack::compress::tar_algorithm(firstName).value_or(Algorithm::Gzip);
     }
     // The compression fits the container and the name the output is given.
     {

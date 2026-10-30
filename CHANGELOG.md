@@ -19,7 +19,9 @@
   (e2e 963). `[build] target` takes one target.
 - **Tests built once, run elsewhere.** `mcpp test --no-run --archive <file>`
   writes every leg's tests with `mcpp-tests.json`; `mcpp test --archive <file>`
-  in a checkout runs what this machine reaches and builds nothing (e2e 964).
+  in a checkout runs what this machine reaches and builds nothing. The archive
+  is a tar compressed as its name states (`.tar.gz`, `.tgz`, `.tar.zst`,
+  `.tar.xz`, `.tar`); another name is refused before the build (e2e 964).
 - **The build's contract, `${mcpp.contract}`.** Every configuration writes
   `mcpp-contract.json` beside its compile database: the compiler of each
   language with the words every unit is compiled with (target, sysroot,
@@ -99,6 +101,16 @@
   domain may search but not read. openkal-linux 0.18.3 opens every directory
   handle with `O_PATH`; mcpp is built on mcpplibs.os 0.2.3, which pins it, and
   openkal-platform 0.18.0 carries it to every ok image and hosted program.
+- **A gzip stream over 4 GiB.** zlib counts in 32 bits, and mcpp handed it the
+  whole tree at once: a `.tar.gz` of more than 4 GiB was refused as "an input
+  over 4 GiB", by `mcpp pack` and by a test archive alike. Input and output
+  now pass in pieces of 1 GiB, so such a tree is one gzip member as any other.
+- **A program that cannot be started is reported with the system's account.**
+  Every condition beyond not found, permission and not a program was reported
+  as "error 5" (EIO), the system's own message dropped. The classification now
+  covers invalid, no memory, directory, not supported and too large, and the
+  report of `mcpp test` and `mcpp test --archive` carries what was being done
+  and the kernel layer's value.
 
 ## [2026.10.29.1] - 2026-10-29
 

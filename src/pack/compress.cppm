@@ -39,6 +39,11 @@ std::string_view name(Algorithm a);
 // `.tar`.
 std::string_view tar_extension(Algorithm a);
 
+// The compression a tar archive's file name states, the inverse of
+// `tar_extension` (`.tgz` is `.tar.gz`); none for a name that is no tar
+// archive's. Writers and readers of an archive by name take it from here.
+std::optional<Algorithm> tar_algorithm(std::string_view filename);
+
 // The whole of `in`, compressed to `out` under `c` (a gzip member, a zstd
 // frame, an xz stream; a copy for None).
 std::expected<void, std::string> file(const std::filesystem::path& in,
@@ -96,6 +101,13 @@ std::string_view tar_extension(Algorithm a) {
         case Algorithm::Xz:   return ".tar.xz";
     }
     return ".tar.gz";
+}
+
+std::optional<Algorithm> tar_algorithm(std::string_view filename) {
+    if (filename.ends_with(".tgz")) return Algorithm::Gzip;
+    for (auto a : {Algorithm::Gzip, Algorithm::Zstd, Algorithm::Xz, Algorithm::None})
+        if (filename.ends_with(tar_extension(a))) return a;
+    return std::nullopt;
 }
 
 std::expected<Choice, std::string> parse(std::string_view text) {

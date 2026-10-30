@@ -186,7 +186,8 @@ mcpp test --archive tests.tar.gz                             # 在检出中运�
 归档含各腿的测试程序与 `mcpp-tests.json`（每个测试的腿、参数与工作目录）。读取
 时不构建；测试在检出中经本机的运行器或系统运行，报告与 `mcpp test` 相同。有测试
 失败时退出码为 1，一个测试都没运行的归档也是 1。本机到达不了的腿报告为未运行
-（[SPEC-015 §4](../specs/target-sets.md)）。
+（[SPEC-015 §4](../specs/target-sets.md)）。归档是 tar，压缩方式由文件名决定：`.tar.gz`（或
+`.tgz`）、`.tar.zst`、`.tar.xz` 或 `.tar`；其他名称在构建前即被拒绝。
 
 ## 不能彼此并排运行的测试
 

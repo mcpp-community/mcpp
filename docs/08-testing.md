@@ -213,7 +213,9 @@ each test's leg, arguments and working directory. Reading it builds nothing;
 the tests run in the checkout, through this machine's runner or system, and the
 report is `mcpp test`'s. A failed test exits 1, and so does an archive of which
 no test ran. Legs this machine does not reach are reported as not run
-([SPEC-015 §4](specs/target-sets.md)).
+([SPEC-015 §4](specs/target-sets.md)). The archive is a tar compressed as its
+name states: `.tar.gz` (or `.tgz`), `.tar.zst`, `.tar.xz` or `.tar`; another
+name is refused before anything is built.
 
 ## Tests that cannot run beside each other
 

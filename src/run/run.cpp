@@ -113,21 +113,35 @@ struct Outcome {
     bool timed_out = false;
     int spawn_error = 0;            // errno-style; 0 when started
     std::string spawn_message;
+    std::string spawn_detail;       // the system's own account: what was done, and its code
 };
 
 // The errno a caller classifies a refused start by (ENOENT, EACCES, ENOEXEC).
 int errno_of(os::errc c) {
     switch (c) {
-        case os::errc::not_found:   return 2;
-        case os::errc::permission:  return 13;
-        case os::errc::not_program: return 8;
-        default:                    return 5;
+        case os::errc::not_found:     return static_cast<int>(std::errc::no_such_file_or_directory);
+        case os::errc::permission:    return static_cast<int>(std::errc::permission_denied);
+        case os::errc::not_program:   return static_cast<int>(std::errc::executable_format_error);
+        case os::errc::invalid:       return static_cast<int>(std::errc::invalid_argument);
+        case os::errc::no_memory:     return static_cast<int>(std::errc::not_enough_memory);
+        case os::errc::is_directory:  return static_cast<int>(std::errc::is_a_directory);
+        case os::errc::not_directory: return static_cast<int>(std::errc::not_a_directory);
+        case os::errc::not_supported: return static_cast<int>(std::errc::not_supported);
+        case os::errc::too_large:     return static_cast<int>(std::errc::argument_list_too_long);
+        default:                      return static_cast<int>(std::errc::io_error);
     }
 }
 
-std::string spawn_failure(std::string_view program, int error) {
-    return std::format("cannot start '{}' (error {}): {}\n", program, error,
-                       std::generic_category().message(error));
+// What the system said, beside the classification: the operation and the
+// object (`context`) and the kernel layer's own value, which a classification
+// of "error 5" (EIO) would otherwise hide.
+std::string detail_of(const os::error& e) {
+    return e.native != 0 ? std::format("{} (native {})", e.message(), e.native) : e.message();
+}
+
+std::string spawn_failure(std::string_view program, int error, std::string_view detail = {}) {
+    return std::format("cannot start '{}' (error {}): {}{}{}\n", program, error,
+                       std::generic_category().message(error), detail.empty() ? "" : "; ", detail);
 }
 
 // The environment a started program receives: this invocation's statements,
@@ -217,7 +231,8 @@ Outcome launch(const Spec& s) {
     auto p = Process::spawn(o);
     if (!p) {
         out.spawn_error = errno_of(p.error().code);
-        out.spawn_message = spawn_failure(s.argv.front(), out.spawn_error);
+        out.spawn_detail = detail_of(p.error());
+        out.spawn_message = spawn_failure(s.argv.front(), out.spawn_error, out.spawn_detail);
         return out;
     }
     Registered guard(&*p);
@@ -304,6 +319,7 @@ RunResult result_of(Outcome&& o, int* spawn_error, bool messageIntoOutput) {
     r.output = std::move(o.output);
     if (o.spawn_error != 0) {
         r.exit_code = 127;
+        r.spawn_detail = std::move(o.spawn_detail);
         if (spawn_error) *spawn_error = o.spawn_error;
         else if (messageIntoOutput) r.output = o.spawn_message;
     }
@@ -397,6 +413,7 @@ int run_foreground(const std::vector<std::string>& argv, const Env& extraEnv, in
     if (argv.empty()) return 127;
     const auto program = program_of(argv.front());
     int error = 2;
+    std::string detail;
     if (program) {
         os::process::spawn_options o;
         o.program = *program;
@@ -407,10 +424,11 @@ int run_foreground(const std::vector<std::string>& argv, const Env& extraEnv, in
         std::fflush(stdout);
         std::fflush(stderr);
         auto r = os::process::exec(o);   // returns only when the program could not be started
-        error = r ? 5 : errno_of(r.error().code);
+        error = r ? static_cast<int>(std::errc::io_error) : errno_of(r.error().code);
+        if (!r) detail = detail_of(r.error());
     }
     if (spawn_error) *spawn_error = error;
-    else std::fputs(spawn_failure(argv.front(), error).c_str(), stderr);
+    else std::fputs(spawn_failure(argv.front(), error, detail).c_str(), stderr);
     return 127;
 }
 

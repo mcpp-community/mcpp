@@ -116,6 +116,34 @@ TEST(PackCompress, EveryCodecRoundTrips) {
     EXPECT_EQ(*back, text);
 }
 
+// The name of a tar archive states its compression, the inverse of
+// tar_extension; a test archive is written and read by it.
+TEST(PackCompress, ATarNameStatesItsCompression) {
+    for (auto a : { c::Algorithm::Gzip, c::Algorithm::Zstd, c::Algorithm::Xz, c::Algorithm::None })
+        EXPECT_EQ(c::tar_algorithm(std::format("t{}", c::tar_extension(a))), a) << c::name(a);
+    EXPECT_EQ(c::tar_algorithm("t.tgz"), c::Algorithm::Gzip);
+    EXPECT_FALSE(c::tar_algorithm("t.zip"));
+    EXPECT_FALSE(c::tar_algorithm("t.gz"));
+    EXPECT_FALSE(c::tar_algorithm("tests"));
+}
+
+// zlib counts in 32 bits; the input is handed over in pieces, so one gzip
+// member holds more than one piece (1 GiB) and comes back whole. A member cut
+// short is refused, not waited on.
+TEST(PackCompress, AGzipMemberLargerThanOnePieceRoundTrips) {
+    std::string big((std::size_t{1} << 30) + 4096, '\0');
+    big.replace(big.size() - 7, 7, "the end");
+    auto packed = c::bytes(big, *c::parse("gzip:1"));
+    ASSERT_TRUE(packed) << packed.error();
+    auto back = c::decompress(*packed, c::Algorithm::Gzip);
+    ASSERT_TRUE(back) << back.error();
+    EXPECT_EQ(back->size(), big.size());
+    EXPECT_TRUE(back->ends_with("the end"));
+    big = {};
+    back = {};
+    EXPECT_FALSE(c::decompress(std::string_view(*packed).substr(0, packed->size() / 2), c::Algorithm::Gzip));
+}
+
 TEST(PackDistribution, Sha256OfKnownVectors) {
     EXPECT_EQ(d::sha256(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     EXPECT_EQ(d::sha256("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");

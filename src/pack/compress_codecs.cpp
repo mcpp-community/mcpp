@@ -14,6 +14,11 @@ namespace mcpp::pack::compress::codec {
 
 namespace {
 
+// zlib's counters are `uInt` (32 bits) and `uLong` (32 bits on Windows): the
+// input is handed over and the output taken in pieces of at most `kZlibPiece`,
+// positions are kept here, so a tree over 4 GiB is one gzip member as any other.
+constexpr std::size_t kZlibPiece = std::size_t{1} << 30;
+
 // zlib's deflate with `windowBits`: 15 + 16 is a gzip member, -15 is raw
 // DEFLATE. A gzip member's header is stated rather than left to zlib, whose own
 // header names the system zlib was built for (3 on Unix, 10 or 11 on Windows):
@@ -32,15 +37,28 @@ std::expected<std::string, std::string> zlib_deflate(std::string_view in, int le
         return std::unexpected(std::string("zlib: deflateSetHeader failed"));
     }
     std::string out;
-    out.resize(deflateBound(&s, static_cast<uLong>(in.size())) + 64);
-    s.next_in   = reinterpret_cast<Bytef*>(const_cast<char*>(in.data()));
-    s.avail_in  = static_cast<uInt>(in.size());
-    s.next_out  = reinterpret_cast<Bytef*>(out.data());
-    s.avail_out = static_cast<uInt>(out.size());
-    const int rc = ::deflate(&s, Z_FINISH);
-    const auto written = s.total_out;
+    out.resize(std::min(in.size(), kZlibPiece) + in.size() / 1000 + 1024);
+    std::size_t fed = 0, written = 0;
+    int rc = Z_OK;
+    while (rc != Z_STREAM_END) {
+        if (s.avail_in == 0 && fed < in.size()) {
+            const auto piece = std::min(in.size() - fed, kZlibPiece);
+            s.next_in  = reinterpret_cast<Bytef*>(const_cast<char*>(in.data() + fed));
+            s.avail_in = static_cast<uInt>(piece);
+            fed += piece;
+        }
+        if (written == out.size()) out.resize(out.size() + std::max(out.size() / 2, std::size_t{1024}));
+        const auto room = std::min(out.size() - written, kZlibPiece);
+        s.next_out  = reinterpret_cast<Bytef*>(out.data() + written);
+        s.avail_out = static_cast<uInt>(room);
+        rc = ::deflate(&s, fed == in.size() ? Z_FINISH : Z_NO_FLUSH);
+        written += room - s.avail_out;
+        if (rc != Z_OK && rc != Z_STREAM_END && rc != Z_BUF_ERROR) {
+            deflateEnd(&s);
+            return std::unexpected(std::format("zlib: deflate returned {}", rc));
+        }
+    }
     deflateEnd(&s);
-    if (rc != Z_STREAM_END) return std::unexpected(std::format("zlib: deflate returned {}", rc));
     out.resize(written);
     return out;
 }
@@ -48,14 +66,10 @@ std::expected<std::string, std::string> zlib_deflate(std::string_view in, int le
 }  // namespace
 
 std::expected<std::string, std::string> gzip(std::string_view in, int level) {
-    if (in.size() > std::numeric_limits<uInt>::max())
-        return std::unexpected(std::string("gzip: an input over 4 GiB"));
     return zlib_deflate(in, level, 15 + 16);
 }
 
 std::expected<std::string, std::string> deflate(std::string_view in, int level) {
-    if (in.size() > std::numeric_limits<uInt>::max())
-        return std::unexpected(std::string("deflate: an input over 4 GiB"));
     return zlib_deflate(in, level, -15);
 }
 
@@ -104,11 +118,10 @@ namespace {
 
 // zlib's inflate until the stream ends: a gzip member (windowBits 15 + 32
 // detects the header), its output growing, or raw DEFLATE (-15) of a stated
-// `size`, its output never more than that.
+// `size`, its output never more than that. Input and output pass in pieces
+// (`kZlibPiece`), as for deflate.
 std::expected<std::string, std::string> zlib_inflate(std::string_view in, int windowBits,
                                                      std::optional<std::size_t> size) {
-    if (in.size() > std::numeric_limits<uInt>::max())
-        return std::unexpected(std::string("zlib: an input over 4 GiB"));
     // DEFLATE expands at most 1032 times (a run of one byte): a stated size
     // beyond that is a lie, refused before anything is allocated, and a stream
     // that grows past it is refused as it grows.
@@ -122,11 +135,18 @@ std::expected<std::string, std::string> zlib_inflate(std::string_view in, int wi
     // One byte past a stated size: a stream that fills it holds more than it
     // said.
     out.resize(size ? *size + 1 : in.size() * 4 + 1024);
-    s.next_in  = reinterpret_cast<Bytef*>(const_cast<char*>(in.data()));
-    s.avail_in = static_cast<uInt>(in.size());
+    std::size_t fed = 0, written = 0;
     int rc = Z_OK;
-    while (rc == Z_OK) {
-        if (s.total_out >= out.size()) {
+    while (rc == Z_OK || rc == Z_BUF_ERROR) {
+        if (s.avail_in == 0 && fed < in.size()) {
+            const auto piece = std::min(in.size() - fed, kZlibPiece);
+            s.next_in  = reinterpret_cast<Bytef*>(const_cast<char*>(in.data() + fed));
+            s.avail_in = static_cast<uInt>(piece);
+            fed += piece;
+        } else if (rc == Z_BUF_ERROR && s.avail_in == 0 && written < out.size()) {
+            break;   // the input ended before the stream did
+        }
+        if (written >= out.size()) {
             if (size) {
                 inflateEnd(&s);
                 return std::unexpected(std::format("zlib: the stream holds more than its {} bytes",
@@ -138,12 +158,12 @@ std::expected<std::string, std::string> zlib_inflate(std::string_view in, int wi
             }
             out.resize(std::min(out.size() * 2, most + 1));
         }
-        s.next_out  = reinterpret_cast<Bytef*>(out.data() + s.total_out);
-        s.avail_out = static_cast<uInt>(std::min<std::size_t>(out.size() - s.total_out,
-                                                              std::numeric_limits<uInt>::max()));
+        const auto room = std::min(out.size() - written, kZlibPiece);
+        s.next_out  = reinterpret_cast<Bytef*>(out.data() + written);
+        s.avail_out = static_cast<uInt>(room);
         rc = ::inflate(&s, Z_NO_FLUSH);
+        written += room - s.avail_out;
     }
-    const auto written = s.total_out;
     inflateEnd(&s);
     if (rc != Z_STREAM_END) return std::unexpected(std::format("zlib: inflate returned {}", rc));
     out.resize(written);
