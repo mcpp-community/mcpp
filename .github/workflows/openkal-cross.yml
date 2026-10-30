@@ -177,7 +177,7 @@ jobs:
         include:
           - { host: linux,         runner: ubuntu-24.04,     artifact: linux-x86_64   }
           - { host: linux-aarch64, runner: ubuntu-24.04-arm, artifact: linux-aarch64  }
-          - { host: macos,         runner: macos-14,         artifact: macos-aarch64  }
+          - { host: macos,         runner: macos-15,         artifact: macos-arm64    }
           - { host: windows,       runner: windows-2022,     artifact: windows-x86_64 }
     defaults:
       run:
@@ -204,82 +204,18 @@ jobs:
       # was wrong within a day of being written.
       - uses: ./.github/actions/bootstrap-mcpp
 
-      # THE mcpp UNDER TEST. Everything after this uses the binary this step
-      # produces; the bootstrapped one above is only what compiles it.
+      # THE mcpp UNDER TEST. Everything after this uses this commit's binary;
+      # the bootstrapped one above only restores the sandbox.
       # This commit's mcpp: the one build.yml produced (use-built-mcpp, rule R1
-      # of the 2026-10-02 CI record), except on the macOS leg. That leg runs on
-      # macos-14 and the macOS artifact is built on macos-15; whether it runs on
-      # macos-14 is not measured (the record's Part VII), so the leg builds its
-      # own until it is.
-      - if: matrix.host != 'macos'
-        uses: ./.github/actions/use-built-mcpp
+      # of the 2026-10-02 CI record). Every leg runs on the image its artifact
+      # was built on; the macOS leg moved to macos-15 when GitHub retired
+      # macos-14 (2026-11-02), and with it the reason it built its own.
+      - uses: ./.github/actions/use-built-mcpp
         with:
           host: ${{ matrix.artifact }}
 
       - name: Name this commit's mcpp MCPP_UNDER_TEST
-        if: matrix.host != 'macos'
         run: echo "MCPP_UNDER_TEST=$MCPP_FRESH" >> "$GITHUB_ENV"
-
-      - name: Build the mcpp in this pull request
-        if: matrix.host == 'macos'  # ci-lint: allow-r1: the macOS leg builds its own mcpp until the artifact is measured on macos-14
-        run: |
-          set -euo pipefail
-          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
-          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
-          # `--dev` and not `--release`. What is under test is a set of
-          # decisions about compile and link flags; an optimisation level
-          # changes none of them and a release self-build is most of the budget
-          # of a job on a two-core runner.
-          # REMOVE ANY mcpp ALREADY UNDER `target/` FIRST, so that after the
-          # build there is exactly ONE and it is the one this step produced.
-          #
-          # `target/` is a RESTORED CACHE whose key hashes `src/**`. A source
-          # change misses the key, `restore-keys` hands back the nearest older
-          # tree anyway — that is the point of the layered restore — and the
-          # build then writes its output into a NEW `<triple>/<fingerprint>/`
-          # directory beside the ones already there. `find … | head -1` returns
-          # whichever directory the walk reaches first, which is not the newest
-          # and is not this build's.
-          #
-          # MEASURED, LOCALLY AND ON CI. On this developer's own tree the
-          # command picks `007bc0f2b78f7fa5` while the build just wrote
-          # `148448dec6c4a7a7`. On CI it picked a stale binary whose ELF
-          # interpreter names a glibc payload the runner no longer has:
-          #
-          #     …/bin/mcpp: cannot execute: required file not found     (exit 127)
-          #
-          # — which reads as a broken build of THIS commit and is nothing of the
-          # kind. Two runs, same stale fingerprint, after seven green ones: the
-          # trigger is simply a source change large enough to leave two
-          # directories in the restored tree.
-          #
-          # mtime CANNOT BE THE CRITERION HERE. A cache restore writes every
-          # file at extraction time, so "newest" is meaningless on exactly the
-          # tree where this goes wrong — `ls -t | head -1` has picked a stale
-          # fingerprint in this repository before. Absence can't be faked:
-          # delete them, and whatever exists afterwards was linked just now.
-          #
-          # The objects and BMIs stay cached — this costs one link.
-          find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) -delete 2>/dev/null || true
-          "$MCPP" build --dev
-          # EXACTLY ONE, not "at least one". Two would mean the delete above
-          # missed a tree and the ambiguity this step exists to remove is back.
-          #
-          # NO `mapfile`. This job also runs on macos, whose `/bin/bash` is
-          # 3.2 and has no such builtin — a bashism here would fail on one row
-          # of the matrix for a reason unrelated to what the row tests.
-          find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) > /tmp/mcpp-built.txt
-          COUNT=$(wc -l < /tmp/mcpp-built.txt | tr -d ' ')
-          if [ "$COUNT" -ne 1 ]; then
-            echo "::error::expected exactly one built mcpp, found $COUNT"
-            sed 's/^/        /' /tmp/mcpp-built.txt
-            exit 1
-          fi
-          BUILT=$(cat /tmp/mcpp-built.txt)
-          BUILT=$(cd "$(dirname "$BUILT")" && pwd)/$(basename "$BUILT")
-          echo "MCPP_UNDER_TEST=$BUILT" >> "$GITHUB_ENV"
-          "$BUILT" --version
 
       - name: Select the toolchain the openkal packages ask for
         run: |
@@ -530,7 +466,7 @@ jobs:
       matrix:
         include:
           - { system: linux,   runner: ubuntu-24.04, file: linux       }
-          - { system: macos,   runner: macos-14,     file: macos       }
+          - { system: macos,   runner: macos-15,     file: macos       }
           - { system: windows, runner: windows-2022, file: windows.exe }
     defaults:
       run:

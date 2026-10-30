@@ -34,7 +34,7 @@ jobs:
           # `linux` key would have them overwrite each other in expected.tsv.
           - { host: linux-x86_64,   runner: ubuntu-24.04     }
           - { host: linux-aarch64,  runner: ubuntu-24.04-arm }
-          - { host: macos-arm64,    runner: macos-14         }
+          - { host: macos-arm64,    runner: macos-15         }
           - { host: windows-x86_64, runner: windows-2022     }
     defaults:
       run:
@@ -44,35 +44,15 @@ jobs:
       - uses: ./.github/actions/bootstrap-mcpp
 
       # This commit's mcpp: the one build.yml produced (use-built-mcpp, rule R1
-      # of the 2026-10-02 CI record), except on the macOS leg. That leg runs on
-      # macos-14 and the macOS artifact is built on macos-15; whether it runs on
-      # macos-14 is not measured (the record's Part VII), so the leg builds its
-      # own until it is.
-      - if: matrix.host != 'macos-arm64'
-        uses: ./.github/actions/use-built-mcpp
+      # of the 2026-10-02 CI record). Every leg runs on the image its artifact
+      # was built on; the macOS leg moved to macos-15 when GitHub retired
+      # macos-14 (2026-11-02), and with it the reason it built its own.
+      - uses: ./.github/actions/use-built-mcpp
         with:
           host: ${{ matrix.host }}
 
       - name: Name this commit's mcpp MCPP_UNDER_TEST
-        if: matrix.host != 'macos-arm64'
         run: echo "MCPP_UNDER_TEST=$MCPP_FRESH" >> "$GITHUB_ENV"
-
-      - name: Build the mcpp in this pull request
-        if: matrix.host == 'macos-arm64'  # ci-lint: allow-r1: the macOS leg builds its own mcpp until the artifact is measured on macos-14
-        run: |
-          set -euo pipefail
-          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
-          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
-          "$MCPP" build --dev
-          # 两种拼写,且按 mtime 取最新 —— target/ 是缓存恢复的,`head -1`
-          # 会挑到上一次推送留下的二进制,版本号一样而代码是旧的。
-          BUILT=$(find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) \
-                  -newer mcpp.toml | head -1)
-          [ -n "$BUILT" ] || { echo "::error::mcpp did not build"; exit 1; }
-          BUILT=$(cd "$(dirname "$BUILT")" && pwd)/$(basename "$BUILT")
-          echo "MCPP_UNDER_TEST=$BUILT" >> "$GITHUB_ENV"
-          "$BUILT" --version
 
       - name: The invariants
         run: |
@@ -249,7 +229,7 @@ jobs:
           # `linux` key would have them overwrite each other in expected.tsv.
           - { host: linux-x86_64,   runner: ubuntu-24.04     }
           - { host: linux-aarch64,  runner: ubuntu-24.04-arm }
-          - { host: macos-arm64,    runner: macos-14         }
+          - { host: macos-arm64,    runner: macos-15         }
           - { host: windows-x86_64, runner: windows-2022     }
     defaults:
       run:
@@ -259,39 +239,16 @@ jobs:
       - uses: ./.github/actions/bootstrap-mcpp
 
       # This commit's mcpp: the one build.yml produced (use-built-mcpp, rule R1
-      # of the 2026-10-02 CI record), except on the macOS leg. That leg runs on
-      # macos-14 and the macOS artifact is built on macos-15; whether it runs on
-      # macos-14 is not measured (the record's Part VII), so the leg builds its
-      # own until it is.
-      - if: matrix.host != 'macos-arm64'
-        uses: ./.github/actions/use-built-mcpp
+      # of the 2026-10-02 CI record). Every leg runs on the image its artifact
+      # was built on; the macOS leg moved to macos-15 when GitHub retired
+      # macos-14 (2026-11-02), and with it the reason it built its own.
+      - uses: ./.github/actions/use-built-mcpp
         with:
           host: ${{ matrix.host }}
 
       - name: Name this commit's mcpp MCPP_UNDER_TEST
-        if: matrix.host != 'macos-arm64'
         run: echo "MCPP_UNDER_TEST=$MCPP_FRESH" >> "$GITHUB_ENV"
 
-      - name: Build the mcpp in this pull request
-        if: matrix.host == 'macos-arm64'  # ci-lint: allow-r1: the macOS leg builds its own mcpp until the artifact is measured on macos-14
-        run: |
-          set -euo pipefail
-          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
-          "$MCPP" build --dev
-          BUILT=$(find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) \
-                  -newer mcpp.toml | head -1)
-          [ -n "$BUILT" ] || { echo "::error::mcpp did not build"; exit 1; }
-          echo "MCPP_UNDER_TEST=$(cd "$(dirname "$BUILT")" && pwd)/$(basename "$BUILT")" >> "$GITHUB_ENV"
-
-      # 格数不能是缓存状态的函数。
-      #
-      # 实测:同一台 ubuntu-24.04,一轮装了 gcc+llvm(扫 40 格),下一轮只有 gcc
-      # (扫 20 格)。`expected.tsv` 声明的是前者,于是后者会把所有 llvm 行报成
-      # 「期望表说有而扫描没跑到」—— 而那句报错是对的,问题在于覆盖面**漂移**了。
-      #
-      # 矩阵要声明它扫哪些工具链,并把它们装上。装不上就红在这里,而不是
-      # 变成一屏「没跑到」。
       - name: Install the toolchains this matrix declares
         run: |
           set -uo pipefail

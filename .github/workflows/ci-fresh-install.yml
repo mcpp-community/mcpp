@@ -425,10 +425,10 @@ jobs:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     # Two images, the two ends of the supported range.
     #
-    # macos-14: the support floor (mcpp ≥0.0.50 / xlings ≥0.4.50 ship
-    # minos=14.0 static-libc++ binaries). A fresh install passing here
-    # is the continuous proof of the macOS 14 floor — and of host-tool
-    # independence (this image has no sha256sum; macos-15 does).
+    # macos-15: the oldest image GitHub serves (macos-14 was retired on
+    # 2026-11-02). The support floor is macOS 14: the released binaries carry
+    # minos=14.0 with a static libc++ (release.yml asserts it where they are
+    # built), and the install below asserts it of what it installed.
     #
     # xcode-27: macOS 27, the newest release, served under the preview label
     # `xcode-27` (actions/runner-images#14404; there is no `macos-27` label).
@@ -439,7 +439,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: macos-14
+          - image: macos-15
           - image: xcode-27
     runs-on: ${{ matrix.image }}
     # While the line was on LLVM 22.1.8 the xcode-27 leg was known red (#669,
@@ -489,6 +489,12 @@ jobs:
           echo "mcpp debug info:"
           which mcpp
           cat $HOME/.xlings/.xlings.json
+
+      - name: The installed mcpp declares the macOS 14 floor
+        run: |
+          bin=$(mcpp self env --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["program"])')
+          otool -l "$bin" | grep -A4 LC_BUILD_VERSION | grep -q "minos 14.0" \
+            || { otool -l "$bin" | grep -A4 LC_BUILD_VERSION; echo "::error::$bin does not declare minos 14.0"; exit 1; }
 
       - name: "LLVM: mcpp new → run"
         run: |
@@ -551,13 +557,13 @@ jobs:
     env:
       MCPP_PIN: ${{ needs.resolve-version.outputs.version }}
     # Same two images as macos-fresh: the formula declares `depends_on macos:
-    # :sonoma` + arm64, macos-14 is the oldest image satisfying it, and
-    # xcode-27 is macOS 27, the newest release.
+    # :sonoma` + arm64, macos-15 is the oldest image GitHub serves that
+    # satisfies it, and xcode-27 is macOS 27, the newest release.
     strategy:
       fail-fast: false
       matrix:
         include:
-          - image: macos-14
+          - image: macos-15
           - image: xcode-27
     runs-on: ${{ matrix.image }}
     # While the line was on LLVM 22.1.8 the xcode-27 leg was known red (#669,

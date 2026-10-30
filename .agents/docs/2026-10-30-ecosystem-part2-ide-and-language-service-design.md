@@ -889,5 +889,6 @@ mcpp 新建、构建、运行、`--pkg-format polyglot`；mcppls 在四种编辑
 | C | B2、B3、B4 的修复与 Windows 的内存前导名（`getInMemoryPreamblePath` 在 `LLVM_ON_UNIX` 下为 POSIX 路径，Windows 上读 PCH 失败；`__OPENKAL__` 下按系统的路径风格命名）合为一个补丁。只为 ok 映像适配 LLVM 的补丁放在 `openkal/patches/`，有自己的 series 与台账，仅在构建 ok 映像时于主 series 与 overlay 之后应用（`apply.sh --openkal`）；原生引擎不带它。`clangd.okb` 的身份覆盖两个 series。映像任务在 mcpp 2026.10.31.2 上被排序检查拒绝：`prepare` 动作构建 clangd 的库，检查要求每条链接边等待它，却把发布 `bin/clangd.oke` 的封装边当作链接；M3 修复 |
 | L | 引擎条目可为 ok 映像：`engines.clangd` 的 `path` 指向 `clangd.okb`、`runner` 指向 okrun，身份的平台为 `openkal`（S4-4-12）；锁文件行 `clangd = "mcppls-clangd-openkal"` 选择它；工作区平台升至 openkal-platform 0.19.0、os 0.2.4 |
 | X | xim-pkgindex 的 CI 计划以引用的坐标与精确版本计算受影响的包：精确钉住的版本只在该版本条目或配方其余部分改变时成为依赖边；一次 mcpp 版本更新从 71 个包、10 个任务降为 4 个包、6 个任务 |
+| CI | GitHub 于 2026-11-02 停用 macos-14，此前按计划使其任务失败（actions/runner-images#13518）。本轮各仓库的 macOS 任务改用 macos-15；构建 macOS 产物的任务写明 `MACOSX_DEPLOYMENT_TARGET=14.0`，支持下限仍为 macOS 14，由产物的 `minos` 断言。mcpp 的 ci-target-matrix 与 openkal-cross 的 macOS 任务随之改用 build.yml 的产物，不再自行构建 |
 | 未覆盖 | openkal-opensbi（钉 openkal 0.16.0）与 openkal-uefi（0.14.1）落后于规范；二者为裸机实现，不在 os 与本轮的依赖中 |
 

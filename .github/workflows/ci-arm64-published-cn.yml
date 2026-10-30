@@ -71,7 +71,7 @@ jobs:
       matrix:
         include:
           - {system: linux, runner: ubuntu-24.04, file: linux}
-          - {system: macos, runner: macos-14, file: macos}
+          - {system: macos, runner: macos-15, file: macos}
           - {system: windows, runner: windows-2022, file: windows.exe}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
