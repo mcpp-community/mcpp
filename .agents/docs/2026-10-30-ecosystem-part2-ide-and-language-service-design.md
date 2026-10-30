@@ -1,6 +1,6 @@
 ---
 subject: editors
-status: accepted
+status: active
 ---
 
 # 生态设计 part 2：mcpp 插件与 mcppls 的分层、入口、测试、版本感知与分发

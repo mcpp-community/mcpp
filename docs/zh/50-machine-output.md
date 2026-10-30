@@ -208,7 +208,7 @@ effects 采用具名的方式而不是一个 `destructive: true|false`，因为�
 | `target-sets` | 2026.10.31.1（语义自 2026.10.30.1） | `--target openkal` 等集合展开为其腿（SPEC-015 §1） | IDE 的 target 选择 |
 | `pkg-format-list` | 2026.10.31.1（语义自 2026.10.30.1） | `--pkg-format tar,okb` 写出一棵树的各个容器（SPEC-014 §5.4） | IDE 的打包界面 |
 
-### 工具怎样为一个项目运行 mcpp
+### 工具为项目运行 mcpp 的方式
 
 为某个项目运行 mcpp 的工具（IDE 后端、语言服务器、CI 脚本）在项目根目录中运行它，程序名为 `PATH` 上的
 `mcpp`（版本管理器的 shim）或用户设置的路径，并从环境中去掉 `XLINGS_PROJECT_DIR`。这样应答的就是该项目使用的

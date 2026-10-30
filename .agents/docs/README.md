@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-342 records.
+343 records.
 
 ## By subject
 
@@ -68,6 +68,10 @@ Records that declare one. Everything else is listed by date below.
 
 - [生态设计 part 2：openkal 的最小原子与二进制映像、其上的 `mcpplibs.os`，以及 part 1 的收尾与回归记录](2026-10-26-ecosystem-part2-os-library-over-openkal-design.md) — active
 - [控制契约、并发与性能、单一 C++ 运行时，以及 IDE 生态（生态级，#838、#839）](2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md) — active
+
+### editors
+
+- [生态设计 part 2：mcpp 插件与 mcppls 的分层、入口、测试、版本感知与分发](2026-10-30-ecosystem-part2-ide-and-language-service-design.md) — active
 
 ### heterogeneous
 
@@ -151,6 +155,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-10
 
+- [生态设计 part 2：mcpp 插件与 mcppls 的分层、入口、测试、版本感知与分发](2026-10-30-ecosystem-part2-ide-and-language-service-design.md) — active
 - [另一架构的 ok 映像的运行、测试与打包，以及 ok 映像与 Web 的关系（2026.10.29.1）](2026-10-29-openkal-run-test-pack-design.md) — active
 - [生态设计：目标集合与腿、打包模型 rev、运行覆盖、不回落、外部构建接入、mcppls 单包与编辑器](2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md) — active
 - [平台 part 2：打包与分发——三维模型、通用包、单文件、okb、体积，以及 openkal 0.17.2 轮](2026-10-28-platforms-part2-packaging-and-distribution-design.md) — landed
