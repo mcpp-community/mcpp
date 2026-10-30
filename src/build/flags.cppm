@@ -36,6 +36,7 @@ import mcpp.toolchain.hostflags;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.model;
 import mcpp.toolchain.provider;
+import mcpp.toolchain.probe;      // compresses_debug_sections
 import mcpp.toolchain.registry;
 
 export namespace mcpp::build {
@@ -1184,9 +1185,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // its sections compressed by that link (measured: okld seals it and okrun
     // runs it). gdb and lldb read compressed sections; `-gz=none` in a
     // package's flags comes after this and turns it off.
+    // And only with a toolchain built to write and read them (`-gz=zlib` is a
+    // warning without zlib, and `ld.lld` then refuses the link).
     const bool compressDebug = prof.debug && !isMsvcDialect
         && targetObjectFormat == mcpp::build::dist::Format::Elf
-        && !isFreestandingTarget;
+        && !isFreestandingTarget
+        && mcpp::toolchain::compresses_debug_sections(plan.toolchain.binaryPath,
+                                                      mcpp::toolchain::compiler_env(plan.toolchain));
     if (compressDebug) opt_flag += " -gz=zlib";
     // LTO ON EVERY COMPILER (2026.10.5.2). cl.exe spells it `/GL` here and
     // `/LTCG` on the link and the archive; before, it was not spelled at all,

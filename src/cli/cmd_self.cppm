@@ -202,7 +202,13 @@ export int cmd_self_init(const mcpplibs::cmdline::ParsedArgs& parsed) {
 }
 
 export int cmd_self_config(const mcpplibs::cmdline::ParsedArgs& parsed) {
-    return mcpp::doctor::self_config(parsed.option_or_empty("mirror").value());
+    auto days = [&](const char* name) -> std::optional<std::int64_t> {
+        auto v = parsed.value(name);
+        if (!v) return std::nullopt;
+        try { return std::stoll(*v); } catch (...) { return -1; }   // refused as not a count
+    };
+    return mcpp::doctor::self_config(parsed.option_or_empty("mirror").value(),
+                                     days("cache-unused-days"), days("keep-days"));
 }
 
 // `mcpp self store dedupe [--apply]`.

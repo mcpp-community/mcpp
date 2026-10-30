@@ -113,6 +113,12 @@ struct GlobalConfig {
     // Whether a build refreshes is decided by mcpp.pm.index_refresh from local
     // resolvability, not from a clock.
     std::int64_t                    searchTtlSeconds = 3600;
+    // [cache] unused_days: the build cache's entries no build used for this
+    // many days are collected after a build (design 2026-10-31 §4.6; 0 keeps).
+    std::int64_t                    cacheUnusedDays = 30;
+    // [build] keep_days: a project's build directories no configuration used
+    // for this many days are swept after a build (§8.4; 0 keeps).
+    std::int64_t                    buildKeepDays = 3;
 
     // From config.toml [index] auto_refresh
     // Machine-level opt-out from the automatic on-miss index refresh. Distinct
@@ -392,6 +398,12 @@ void canonicalize_legacy_index_names(GlobalConfig& cfg);
 // M5.5: persist [toolchain].default to config.toml.
 std::expected<void, ConfigError>
 write_default_toolchain(const GlobalConfig& cfg, std::string_view spec);
+
+// One `<key> = <literal>` under `[<section>]` of config.toml, the other lines
+// as they were (`mcpp self config --cache-unused-days`, `--keep-days`).
+std::expected<void, ConfigError>
+write_config_value(const GlobalConfig& cfg, std::string_view section, std::string_view key,
+                   std::string_view literal);
 
 // Persist [toolchain].default_target ("" = host / clear).
 std::expected<void, ConfigError>
@@ -986,6 +998,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         cfg.indexRefreshTimeoutSeconds = *t;
     mcpp::provider::set_index_refresh_timeout(std::chrono::seconds{cfg.indexRefreshTimeoutSeconds});
     cfg.searchTtlSeconds = doc->get_int("cache.search_ttl_seconds").value_or(3600);
+    cfg.cacheUnusedDays  = doc->get_int("cache.unused_days").value_or(30);
+    cfg.buildKeepDays    = doc->get_int("build.keep_days").value_or(3);
     cfg.defaultJobs    = doc->get_int("build.default_jobs").value_or(0);
     cfg.compileCommands = doc->get_string("build.compile_commands").value_or("");
     cfg.defaultToolchain = doc->get_string("toolchain.default").value_or("");
@@ -1415,26 +1429,35 @@ bool ensure_project_index_dir(
     return true;
 }
 
-// M5.5: persist [toolchain].default into config.toml without disturbing
+// M5.5: persist one key of a section into config.toml without disturbing
 // other fields. Naive: read text, replace/insert one line.
 std::expected<void, ConfigError>
-write_toolchain_key(const GlobalConfig& cfg, std::string_view key,
-                    std::string_view value) {
+write_config_value(const GlobalConfig& cfg, std::string_view section, std::string_view key,
+                   std::string_view literal) {
     std::ifstream is(cfg.configFile);
     if (!is) return std::unexpected(ConfigError{
         std::format("cannot open '{}'", cfg.configFile.string())});
     std::stringstream ss; ss << is.rdbuf();
     std::string text = ss.str();
 
-    std::string line = std::format("{} = \"{}\"\n", key, value);
+    std::string line = std::format("{} = {}\n", key, literal);
+    const auto header = std::format("[{}]", section);
 
-    auto sectionPos = text.find("[toolchain]");
+    // The header at the start of a line, so `[toolchain]` is not found inside
+    // `[toolchain.x]` or a comment.
+    auto sectionPos = std::string::npos;
+    for (auto p = text.find(header); p != std::string::npos; p = text.find(header, p + 1))
+        if ((p == 0 || text[p - 1] == '\n')
+            && (p + header.size() == text.size() || text[p + header.size()] == '\n')) {
+            sectionPos = p;
+            break;
+        }
     if (sectionPos == std::string::npos) {
-        // Append a [toolchain] block at end.
+        // Append the section's block at end.
         if (!text.empty() && text.back() != '\n') text += '\n';
-        text += std::format("\n[toolchain]\n{}", line);
+        text += std::format("\n{}\n{}", header, line);
     } else {
-        // Locate an existing `<key> = ...` line within [toolchain]. Match at
+        // Locate an existing `<key> = ...` line within the section. Match at
         // line starts with a word boundary after the key, so `default` never
         // matches the `default_target` line (and vice versa).
         auto eol = text.find('\n', sectionPos);
@@ -1475,6 +1498,11 @@ write_toolchain_key(const GlobalConfig& cfg, std::string_view key,
         std::format("cannot write '{}'", cfg.configFile.string())});
     os << text;
     return {};
+}
+
+std::expected<void, ConfigError>
+write_toolchain_key(const GlobalConfig& cfg, std::string_view key, std::string_view value) {
+    return write_config_value(cfg, "toolchain", key, std::format("\"{}\"", value));
 }
 
 std::expected<void, ConfigError>

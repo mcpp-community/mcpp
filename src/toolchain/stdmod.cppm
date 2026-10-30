@@ -32,6 +32,7 @@ export module mcpp.toolchain.stdmod;
 
 import std;
 import mcpp.home;
+import mcpp.home.files;   // mark_used
 import mcpp.libs.json;
 import mcpplibs.os.platform;
 import mcpp.build.command_line;
@@ -477,12 +478,8 @@ std::expected<StdModule, StdModError> ensure_built(
                    && std::filesystem::exists(sm.objectPath)
                    && metadata_matches(metaPath, metadata);
     bool rebuiltStd = false;
-    // A hit is a use: the directory's time is the last use `mcpp cache`
-    // collects by (mcpp#874).
-    if (std_cached) {
-        std::error_code tec;
-        std::filesystem::last_write_time(sm.cacheDir, std::filesystem::file_time_type::clock::now(), tec);
-    }
+    // A hit is a use, stated on the record (mcpp::home::mark_used).
+    if (std_cached) mcpp::home::mark_used(metaPath);
 
     if (!std_cached) {
         std::error_code ec;

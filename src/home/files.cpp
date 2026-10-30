@@ -106,4 +106,13 @@ std::string untrusted_because(const std::filesystem::path& dir) {
     return {};
 }
 
+void mark_used(const std::filesystem::path& recordFile) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const auto now = fs::file_time_type::clock::now();
+    const auto was = fs::last_write_time(recordFile, ec);
+    if (ec || now - was < std::chrono::hours(12)) return;
+    fs::last_write_time(recordFile, now, ec);
+}
+
 }  // namespace mcpp::home

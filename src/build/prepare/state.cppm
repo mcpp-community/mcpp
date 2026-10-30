@@ -700,6 +700,10 @@ struct PrepareState {
     // the `.build-mcpp/host/<group>` of the build programs it built.
     std::set<std::string> usedProgramOut;
     std::set<std::string> usedHostGroups;
+    // The record files of the build-cache entries this configuration used (a
+    // package's, a host tool's), so that a build that replays the graph without
+    // planning still counts as their use (design 2026-10-31 §4.6).
+    std::set<std::string> usedCacheRecords;
     std::function<void(mcpp::build::BuildProgramEnv&, const mcpp::manifest::Manifest&,
                         std::size_t)> fillXpkgDirs;
     std::function<void(mcpp::build::BuildProgramEnv&, std::size_t,

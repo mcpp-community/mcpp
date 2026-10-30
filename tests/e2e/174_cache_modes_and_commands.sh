@@ -15,7 +15,8 @@
 # reclaim is a cache nobody can trust. `prune` in particular used to rank
 # entries by the directory's mtime, which only records when an entry was
 # WRITTEN — so a dependency that hit on every build looked as stale as one
-# nobody had touched in a month. `gc` reads entry.json's `accessed` stamp.
+# nobody had touched in a month. `gc` reads the later of entry.json's
+# `accessed` stamp and entry.json's time, which a use sets (2026.10.31.3).
 set -e
 source "$(dirname "$0")/_host_path.sh"
 
@@ -313,6 +314,7 @@ d = json.load(open(p))
 d["accessed"] = "1000"          # 1970-ish
 json.dump(d, open(p, "w"), indent=2)
 PYEOF
+touch -d '@1000' "$entry"       # and the record's time, which a use sets
 "$MCPP" cache gc --older-than 1s > gc.log 2>&1 || { cat gc.log; exit 1; }
 [[ "$(entry_count)" -eq 0 ]] || {
     echo "FAIL: gc did not collect a long-unused entry"

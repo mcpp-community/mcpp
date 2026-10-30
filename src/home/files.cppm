@@ -74,6 +74,14 @@ bool replace_file(const std::filesystem::path& source, const std::filesystem::pa
 // that person can replace at any time.
 std::string untrusted_because(const std::filesystem::path& dir);
 
+// THE LAST USE OF A STORED ENTRY THAT NEVER CHANGES (design 2026-10-31 §4.6):
+// a build cache entry, a host tool, a std module. Its files keep the time they
+// were written, and a file system mounted `noatime` or `relatime` does not keep
+// reads, so a use is stated: the time of the entry's record file is set to
+// now, at most once in 12 hours, so a use costs one `stat`. `mcpp cache` and
+// the collection after a build read this time.
+void mark_used(const std::filesystem::path& recordFile);
+
 }  // namespace mcpp::home
 
 // The one primitive per system (src/native/<system>/lock.cpp). Not exported.

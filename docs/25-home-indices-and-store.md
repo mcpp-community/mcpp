@@ -87,6 +87,27 @@ rules are in [SPEC-010](specs/home-initialization.md).
 without installing tools. `self config --mirror auto|CN|GLOBAL` updates only local
 configuration, so it remains usable while the network is broken.
 
+### Retention of build outputs (2026.10.31.3+)
+
+The build cache under `build-cache/v1/` is shared by every project of the home;
+a project's `target/` is its own. Each has a retention, in config.toml:
+
+| key | default | removed |
+|---|---|---|
+| `[cache] unused_days` | 30 | after a build, at most once a day: cache entries (packages, `std` modules, host tools) no build used for that many days |
+| `[build] keep_days` | 3 | after `mcpp build` or `mcpp test`, at most once a day per project: build directories no configuration used for that many days |
+
+`0` keeps everything. `mcpp self config --cache-unused-days <N>` and
+`--keep-days <N>` write them; `mcpp self config` shows them.
+
+A cache entry's files never change after they are written, and a file system
+mounted `noatime` or `relatime` does not record reads, so mcpp states a use: it
+sets the time of the entry's record file (`entry.json`, `std-module.json`) to
+now when a build uses the entry, at most once in 12 hours, so a use costs one
+`stat`. A build that replays its graph without planning does not reach the
+cache; each configuration directory names the entries it used in `uses.list`,
+and the sweep after a build marks them used.
+
 Before a missing bootstrap tool requires network access, initialization displays
 bounded checks of the provider's configured resources. `self doctor` reports the
 same checks as warnings; local errors keep their meaning. `--offline` skips the

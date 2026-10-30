@@ -27,7 +27,13 @@ design 2026-10-31, workspace space and reuse). Measured on mcppls (6 members,
   `gc` and `verify`.
 - **Collection by last use after a build**: at most once a day, the build
   cache's package, host tool and `std` entries unused for `[cache] unused_days`
-  (config.toml; default 30, `0` keeps all) are removed. A hit marks an entry used.
+  (config.toml; default 30, `0` keeps all) are removed. A use sets the time of
+  the entry's record file, at most once in 12 hours (an entry's files never
+  change, and `noatime` mounts keep no reads); a package hit no longer rewrites
+  its `entry.json`. A build that replays its graph without planning marks the
+  entries its configuration names in `uses.list` through the sweep after it.
+- **`mcpp self config --cache-unused-days <N> --keep-days <N>`** writes the two
+  retentions into config.toml; `mcpp self config` shows them (docs/25).
 - **A warning before a build** when the file system it writes to has less than
   2 GiB free.
 - **The sweep after a build**: after `mcpp build` or `mcpp test` succeeds, at
@@ -40,6 +46,9 @@ design 2026-10-31, workspace space and reuse). Measured on mcppls (6 members,
 - **Debug information is compressed on ELF** (`-gz=zlib` on the compile and the
   link; `--compress-debug-sections=zlib` on an ok image's `ld.lld` link): a test
   program of mcppls 96.0 -> 35.7 MiB, with no measurable cost in compile time.
+  Only with a toolchain built to write and read them, asked of its driver once
+  (`-gz=zlib -###`) and kept in the probe cache: the Windows-hosted LLVM of the
+  xim index has no zlib, warns at `-gz` and its `ld.lld` refuses the link.
   Mach-O, PDB, MinGW, WebAssembly and freestanding targets are unchanged;
   `-gz=none` in a package's flags turns it off.
 - **A static library holds its own package's objects** (docs/12): a member's

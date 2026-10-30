@@ -102,12 +102,20 @@ void record_build_dir(const PrepareState& state, const std::filesystem::path& ou
     std::string uses;
     for (auto const& h : state.usedProgramOut) uses += "out " + h + "\n";
     for (auto const& g : state.usedHostGroups) uses += "host " + g + "\n";
+    // The build-cache entries it used: the sweep after a build marks them used
+    // for a build that replays this graph without planning.
+    auto records = state.usedCacheRecords;
+    if (state.describedStdModule)
+        records.insert((state.describedStdModule->cacheDir / "std-module.json").string());
+    for (auto const& r : records) uses += "cache " + r + "\n";
     std::error_code uec;
     std::filesystem::create_directories(outputDir, uec);
     std::ifstream in(outputDir / "uses.list", std::ios::binary);
     const std::string was{std::istreambuf_iterator<char>(in), {}};
     in.close();
-    if (was != uses) std::ofstream(outputDir / "uses.list", std::ios::binary) << uses;
+    // Written when it is absent too: an empty list states that nothing is used.
+    if (was != uses || !std::filesystem::exists(outputDir / "uses.list", uec))
+        std::ofstream(outputDir / "uses.list", std::ios::binary) << uses;
     for (auto const& [name, text] : {std::pair{"lineage", lineage_text(state.fp)},
                                       std::pair{"toolchain", toolchain_text(state.fp)}})
         if (read_small(outputDir / name) != text)

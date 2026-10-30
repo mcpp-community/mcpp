@@ -1961,7 +1961,35 @@ export int store_dedupe(bool apply) {
 }
 
 // `mcpp self config [--mirror CN|GLOBAL]` (mirror = raw option value).
-export int self_config(std::string mirror) {
+// `--cache-unused-days` and `--keep-days` (design 2026-10-31 §4.6, §8.4): the
+// retention of the shared build cache and of a project's build directories,
+// in config.toml. Negative values are refused; 0 keeps everything.
+export int self_config(std::string mirror, std::optional<std::int64_t> cacheUnusedDays = {},
+                       std::optional<std::int64_t> keepDays = {}) {
+    if (cacheUnusedDays || keepDays) {
+        auto cfg = mcpp::config::load_or_init(/*quiet=*/false, {}, {},
+                                              mcpp::config::Initialization::Local);
+        if (!cfg) {
+            mcpp::ui::error(cfg.error().message);
+            return 4;
+        }
+        for (auto const& [value, section, key] : {std::tuple{cacheUnusedDays, "cache", "unused_days"},
+                                                  std::tuple{keepDays, "build", "keep_days"}}) {
+            if (!value) continue;
+            if (*value < 0) {
+                mcpp::ui::error(std::format("{}.{} = {}: expected a number of days, 0 or more",
+                                            section, key, *value));
+                return 2;
+            }
+            if (auto w = mcpp::config::write_config_value(*cfg, section, key, std::to_string(*value)); !w) {
+                mcpp::ui::error(w.error().message);
+                return 1;
+            }
+            mcpp::ui::status("Configured", std::format("{}.{} = {}{}", section, key, *value,
+                                                       *value == 0 ? " (keep all)" : " days"));
+        }
+        if (mirror.empty()) return 0;
+    }
     if (!mirror.empty()) {
         mirror = upper_ascii(std::move(mirror));
         if (mirror != "CN" && mirror != "GLOBAL" && mirror != "AUTO") {
@@ -1985,6 +2013,10 @@ export int self_config(std::string mirror) {
     auto env = mcpp::config::make_xlings_env(*cfg);
     if (mirror.empty()) {
         report_home(*cfg);
+        mcpp::ui::status("Retention", std::format(
+            "build cache: entries unused for {} days ([cache] unused_days); a project's build "
+            "directories: unused for {} days ([build] keep_days)", cfg->cacheUnusedDays,
+            cfg->buildKeepDays));
         auto rc = mcpp::provider::open(env)->show_config();
         return rc == 0 ? 0 : 1;
     }

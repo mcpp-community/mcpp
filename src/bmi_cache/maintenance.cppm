@@ -233,6 +233,9 @@ std::vector<Entry> walk_pkg_entries(bool verify = false) {
                     e.accessed = stamp_of(*j, "accessed");
                     if (verify) check_pkg_files(e, *j);
                 }
+                // The later of the stamp an entry was written with and its
+                // record's time, which a use sets (mcpp::home::mark_used).
+                e.accessed = std::max(e.accessed, dir_mtime_seconds(e.dir / "entry.json"));
                 if (e.accessed == 0) e.accessed = dir_mtime_seconds(e.dir);
                 // The footprint the entry recorded when it was written (see
                 // record_footprint); measured only for an entry from before
@@ -275,7 +278,8 @@ std::vector<Entry> walk_std_entries() {
                                   j->value("cpp_standard", std::string{"?"}),
                                   j->value("stdlib", std::string{"?"}));
         }
-        e.accessed = dir_mtime_seconds(e.dir);
+        // A use sets the record's time (mcpp::home::mark_used).
+        e.accessed = std::max(dir_mtime_seconds(e.dir), dir_mtime_seconds(e.dir / "std-module.json"));
         measure(e);
         out.push_back(std::move(e));
     }

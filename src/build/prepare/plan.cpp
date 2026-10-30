@@ -1958,6 +1958,7 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                     }
                 }
                 mcpp::bmi_cache::touch_accessed(key);
+                state.usedCacheRecords.insert(key.entryFile().string());
                 ctx.cachedDeps.push_back({depName, depVer, unitIdx.size()});
                 continue;       // no populate task; it is already cached
             }
@@ -2217,7 +2218,6 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     }
     if (!state.overrides.plan_only) adopt_predecessor_dir(state, ctx.outputDir);
     if (!state.overrides.plan_only) ctx.buildLock = mcpp::build::dirlock::acquire(ctx.outputDir);
-    if (!state.overrides.plan_only) record_build_dir(state, ctx.outputDir);
 
     // Each step states its duration under `build/stage` in the log file, as
     // the phases do (build wall-time plan, W9; see prepare_build).
@@ -2270,7 +2270,8 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     if (auto r = timed("empty link check", [&] { return step13_empty_link_check(state, ctx); }); !r)
         return std::unexpected(r.error());
     timed("report packages", [&] { step13_report_packages(state, ctx); return 0; });
-
+    // Last: what the plan used is known only now (the dependency cache's hits).
+    if (!state.overrides.plan_only) record_build_dir(state, ctx.outputDir);
 
     ctx.planNotes = std::move(state.planNotes);
     return ctx;

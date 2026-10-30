@@ -335,9 +335,15 @@ void write_entry(const fs::path& entryDir, const Key& k, const fs::path& source)
     }
 }
 
+// The rule of mcpp::home::mark_used, which this module cannot import: the
+// record's time, at most once in 12 hours.
 void touch(const fs::path& entryDir) {
     std::error_code ec;
-    fs::last_write_time(entryDir / "entry.json", fs::file_time_type::clock::now(), ec);
+    const auto record = entryDir / "entry.json";
+    const auto now = fs::file_time_type::clock::now();
+    const auto was = fs::last_write_time(record, ec);
+    if (ec || now - was < std::chrono::hours(12)) return;
+    fs::last_write_time(record, now, ec);
 }
 
 std::optional<fs::path>

@@ -71,6 +71,24 @@ Windows 首次显式 `self init` 时，若 D 是可写的本地固定磁盘，�
 `self env`、`self config`、`self doctor` 和 `toolchain list` 读取本地状态，不安装工具。
 `self config --mirror auto|CN|GLOBAL` 仅更新本地配置，因此网络故障时仍可使用。
 
+### 构建产物的保留期（2026.10.31.3+）
+
+`build-cache/v1/` 下的构建缓存由 home 中所有工程共享；工程的 `target/` 属于工程自身。两者各有保留期，
+写在 config.toml 中：
+
+| 键 | 默认 | 移除的内容 |
+|---|---|---|
+| `[cache] unused_days` | 30 | 构建后每天至多一次：该天数内没有构建使用过的缓存条目（包、`std` 模块、host 工具） |
+| `[build] keep_days` | 3 | `mcpp build` 或 `mcpp test` 后，每个工程每天至多一次：该天数内没有配置使用过的构建目录 |
+
+`0` 表示全部保留。`mcpp self config --cache-unused-days <N>` 与 `--keep-days <N>` 写入它们，
+`mcpp self config` 显示它们。
+
+缓存条目的文件写入后不再改变，以 `noatime` 或 `relatime` 挂载的文件系统也不记录读取，因此由 mcpp
+记录使用：构建使用一个条目时，把条目记录文件（`entry.json`、`std-module.json`）的时间设为当前时间，
+每个条目 12 小时内至多一次，一次使用的代价是一次 `stat`。不经规划、直接重放构建图的构建不访问缓存；
+每个配置目录在 `uses.list` 中记录它用过的条目，构建后的回收把它们记为已使用。
+
 初始化因缺少基础工具而需要联网前，会显示提供者已配置资源的有界检查结果。
 `self doctor` 将同类检查结果作为警告报告，本地错误的语义保持不变。
 `--offline` 跳过检查与获取；已有工具和缓存包仍可使用。

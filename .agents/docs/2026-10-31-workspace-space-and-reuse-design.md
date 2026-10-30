@@ -94,7 +94,10 @@ libarchive 等，以压缩的形式留在段内，见 §4.1 (c)）。链接时�
 | clang 23.1.3（mcppls 三个最大翻译单元，3 次） | 6.68 s | 6.66 s | 21.6 → 12.8 MiB |
 | gcc 16.1.0（`import std` 与容器的 dev 翻译单元，8 次） | 3.19 s | 2.82 s | 程序 11.94 → 5.72 MiB |
 
-压缩不增加可测的编译 CPU（两种编译器的差异都在 ±10% 的测量波动内），链接时间下降约 28%。gcc 的对象中调试重定位（`.rela.debug_info`）不压缩，对象缩小有限；链接后重定位消失，程序缩小 52%。gdb 与 lldb 读取压缩段。ok 映像：x86_64 映像
+是否启用还取决于工具链的构建：没有 zlib 的 LLVM 对 `-gz` 只给警告并写出未压缩的段，其 `ld.lld` 拒绝
+`--compress-debug-sections`（实测：xim 索引中 Windows 主机的 LLVM 23.1.3，CI 的 openkal-cross windows 任务）；
+不支持压缩段的 GCC 拒绝 `-gz`。因此向编译器驱动询问一次（`-gz=zlib -###`，两种情况都以 0 退出，结果进入探测缓存），
+支持时才启用。压缩不增加可测的编译 CPU（两种编译器的差异都在 ±10% 的测量波动内），链接时间下降约 28%。gcc 的对象中调试重定位（`.rela.debug_info`）不压缩，对象缩小有限；链接后重定位消失，程序缩小 52%。gdb 与 lldb 读取压缩段。ok 映像：x86_64 映像
 8.07 MiB → 3.93 MiB，okld 封装与 okrun 运行不受影响。
 
 **(b) 本地单元的调试信息留在对象旁（`split_debuginfo`，新增 profile 键）。** profile 键 `split_debuginfo = "unpacked" | "off"`，
@@ -153,9 +156,17 @@ libarchive 等，以压缩的形式留在段内，见 §4.1 (c)）。链接时�
 ### 4.6 全局缓存（已实现）
 
 - `cache list/prune/gc/clean/verify` 覆盖 `tool/`；`clean --tools`。
-- tool 条目命中时更新记录时间；path 工具写入新条目时删除同一源树的旧 `+path.<stamp>` 条目。
-- std 条目命中时更新目录时间。
-- 构建成功后至多每天一次，回收 `[cache] unused_days`（config.toml，默认 30，0 关闭）内未使用的 pkg、tool 与 std 条目。
+- path 工具写入新条目时删除同一源树的旧 `+path.<stamp>` 条目。
+- **最后使用时间。** 条目写入后文件不再改变，文件时间只记录写入；`noatime`/`relatime` 挂载不记录读取。因此由 mcpp
+  陈述使用：构建使用一个条目时，把条目记录文件（pkg 与 tool 的 `entry.json`、std 的 `std-module.json`）的时间设为
+  当前时间（`mcpp::home::mark_used`），12 小时内至多一次，一次使用的代价是一次 `stat`。pkg 命中此前每次解析并重写
+  `entry.json`，现在不再写内容。回收读取记录文件时间与 `accessed` 字段中较晚者。
+- **重放构建也计为使用。** 快速路径不经规划、不访问缓存；每个配置目录的 `uses.list` 记录它用过的条目
+  （`cache <记录文件>`），构建后的回收（§8.4，每项目每天一次）把它们记为已使用。
+- **保留期。** 全局缓存由多个项目共用，默认 30 天（config.toml `[cache] unused_days`）；项目内构建目录默认 3 天
+  （`[build] keep_days`）。`mcpp self config --cache-unused-days <N> --keep-days <N>` 写入，`mcpp self config` 显示；
+  0 关闭。
+- 构建成功后至多每天一次，回收 `[cache] unused_days` 内未使用的 pkg、tool 与 std 条目。
 
 ### 4.7 重复构建（已实现）
 

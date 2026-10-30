@@ -5794,6 +5794,15 @@ export void sweep_after_build() {
     if (!fs::is_directory(*root / "target", ec)) return;
     std::ofstream(stamp, std::ios::trunc) << "swept\n";
     clean_stale(false, days * 86400, true);
+    // The build-cache entries the remaining configurations use are used today,
+    // whether this build planned or replayed its graph (design 2026-10-31 §4.6).
+    for (fs::recursive_directory_iterator it(*root / "target", ec), end; it != end; it.increment(ec)) {
+        if (it.depth() >= 2) it.disable_recursion_pending();
+        if (it->path().filename() != "uses.list") continue;
+        std::ifstream in(it->path());
+        for (std::string l; std::getline(in, l);)
+            if (l.starts_with("cache ")) mcpp::home::mark_used(l.substr(6));
+    }
 }
 
 export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
@@ -5958,8 +5967,12 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
         std::ifstream in(fpDir / "uses.list");
         if (!in) return;
         usesKnown = true;
-        for (std::string kind, name; in >> kind >> name;)
-            (kind == "out" ? usedOut : usedHost).insert(name);
+        for (std::string l; std::getline(in, l);) {
+            const auto sp = l.find(' ');
+            if (sp == std::string::npos) continue;
+            if (l.starts_with("out ")) usedOut.insert(l.substr(sp + 1));
+            else if (l.starts_with("host ")) usedHost.insert(l.substr(sp + 1));
+        }
     };
     {
         std::error_code uec;

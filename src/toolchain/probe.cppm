@@ -32,6 +32,15 @@ std::expected<std::string, DetectError> run_capture(const std::vector<std::strin
                                                     const mcpp::run::Env& env = {},
                                                     bool withErrors = false);
 
+// Whether the compiler writes compressed debug sections (`-gz=zlib`), and the
+// linker of its toolchain reads them -- a property of how the toolchain was
+// built: an LLVM built without zlib warns and writes them uncompressed, and its
+// `ld.lld` refuses `--compress-debug-sections` (measured: the Windows-hosted
+// LLVM 23.1.3 of the xim index); a GCC configured without support refuses
+// `-gz`. Asked of the driver alone (`-###`), which exits 0 either way, so the
+// answer is kept in the probe cache (design 2026-10-31 §4.1).
+bool compresses_debug_sections(const std::filesystem::path& compiler, const mcpp::run::Env& env = {});
+
 std::string extract_version(std::string_view s);
 std::string first_line_of(std::string_view s);
 std::string lower_copy(std::string_view s);
@@ -157,6 +166,24 @@ std::filesystem::path probe_cache_file(const std::string& key) {
     return mcpp::home::root() / "cache" / "probe" / (mcpp::toolchain::hash_string(key) + ".out");
 }
 }  // namespace
+
+bool compresses_debug_sections(const std::filesystem::path& compiler, const mcpp::run::Env& env) {
+    // An empty C file the driver may name: `-###` reads no input, but a driver
+    // checks that it exists.
+    const auto empty = mcpp::home::root() / "cache" / "probe" / "empty.c";
+    std::error_code ec;
+    if (!std::filesystem::exists(empty, ec)) {
+        std::filesystem::create_directories(empty.parent_path(), ec);
+        std::ofstream(empty, std::ios::binary).flush();
+    }
+    auto r = run_capture({compiler.string(), "-gz=zlib", "-###", "-c", "-x", "c",
+                          empty.string(), "-o", (empty.parent_path() / "empty.o").string()},
+                         env, /*withErrors=*/true);
+    if (!r) return false;
+    return r->find("cannot compress debug sections") == std::string::npos
+        && r->find("-gz is not supported") == std::string::npos
+        && r->find("unsupported option '-gz") == std::string::npos;
+}
 
 std::expected<std::string, DetectError> run_capture(const std::vector<std::string>& argv,
                                                     const mcpp::run::Env& env, bool withErrors) {

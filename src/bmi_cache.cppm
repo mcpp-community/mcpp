@@ -195,6 +195,7 @@ std::expected<DepArtifacts, std::string> resolve_cached(const CacheKey& key);
 // dependency that hit on every build looked stale.
 void touch_accessed(const CacheKey& key);
 
+
 // Copy fresh build outputs from projectTarget/{bmiDirName,obj} into the entry,
 // then write entry.json last as the sentinel.
 std::expected<void, std::string>
@@ -379,13 +380,10 @@ std::expected<DepArtifacts, std::string> resolve_cached(const CacheKey& key) {
 }
 
 void touch_accessed(const CacheKey& key) {
-    auto j = read_entry(key.entryFile());
-    if (!j) return;
-    (*j)["accessed"] = now_iso8601();
-    // An entry written before the footprint was recorded gains it on its
-    // first use, so `cache list` -- which writes nothing -- stops measuring it.
-    if (!j->contains("size") || !j->contains("files")) record_footprint(*j, key.dir());
-    (void)write_entry(key.entryFile(), *j);
+    // The record's time, not its content (mcpp::home::mark_used): rewriting
+    // entry.json on every hit cost a parse and a write per cached package per
+    // build.
+    mcpp::home::mark_used(key.entryFile());
 }
 
 std::expected<void, std::string>

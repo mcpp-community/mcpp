@@ -1486,6 +1486,7 @@ step6_resolve_tool_key(PrepareState& state, HostToolCtx& ctx) {
     if (mcpp::build::tool_store::entry_valid(ctx.entry, ctx.key, ctx.toolName,
                                              exeSuffix)) {
         mcpp::build::tool_store::touch(ctx.entry);
+        state.usedCacheRecords.insert((ctx.entry / "entry.json").string());
         step6_record_tool_provision(state, ctx, ctx.binOut);
         return true;
     }
@@ -1713,6 +1714,7 @@ step6_publish_tool(PrepareState& state, HostToolCtx& ctx) {
                                           : std::filesystem::path(id.sourceRef);
     }
     mcpp::build::tool_store::write_entry(ctx.entry, ctx.key, toolSource);
+    state.usedCacheRecords.insert((ctx.entry / "entry.json").string());
     // The sub-build tree is large (protoc is several hundred
     // objects) and the key covers every input, so a hit never
     // needs it again. Removes only THIS consumer's scratch.
