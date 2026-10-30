@@ -169,21 +169,52 @@ std::filesystem::path probe_cache_file(const std::string& key) {
 
 bool compresses_debug_sections(const std::filesystem::path& compiler, const mcpp::run::Env& env) {
     // An LLVM toolchain links with its own lld, which is what refuses the
-    // option without zlib -- its clang may not even warn (measured on the
-    // Windows-hosted LLVM 23.1.3). lld checks the value while it reads its
-    // options, before `--version` returns, and exits 1 when it cannot honour it.
+    // option without zlib -- its clang does not even warn (measured on the
+    // Windows-hosted LLVM 23.1.3). Asked by one real link: an empty unit with
+    // debug information, compiled for an ELF target and linked compressed. The
+    // answer, either way, is kept beside the probe cache under the identity of
+    // that lld (its path, size and time).
     if (compiler.filename().string().find("clang") != std::string::npos) {
         const auto dir = compiler.parent_path();
         for (std::string_view name : {"ld.lld", "ld.lld.exe", "lld", "lld.exe"}) {
             const auto lld = dir / name;
             std::error_code lec;
             if (!std::filesystem::exists(lld, lec)) continue;
-            std::vector<std::string> argv{lld.string()};
-            if (name.starts_with("lld")) { argv.push_back("-flavor"); argv.push_back("gnu"); }
-            argv.push_back("--compress-debug-sections=zlib");
-            argv.push_back("--version");
-            if (!run_capture(argv, env, /*withErrors=*/true)) return false;
-            break;
+            const auto work = mcpp::home::root() / "cache" / "probe" / "debug-compression";
+            const auto identity = std::format("{}|{}|{}", lld.generic_string(),
+                std::filesystem::file_size(lld, lec),
+                std::filesystem::last_write_time(lld, lec).time_since_epoch().count());
+            const auto answer = work / (mcpp::toolchain::hash_string(identity) + ".answer");
+            if (std::ifstream in(answer); in) {
+                std::string v;
+                in >> v;
+                if (v == "yes" || v == "no") return v == "yes";
+            }
+            std::filesystem::create_directories(work, lec);
+            const auto src = work / "empty.c";
+            if (!std::filesystem::exists(src, lec)) std::ofstream(src, std::ios::binary).flush();
+            const auto obj = work / "empty.o";
+            const auto out = work / "empty.so";
+            auto compiled = mcpp::run::execute(
+                {compiler.string(), "--target=x86_64-unknown-linux-gnu", "-g", "-c", "-x", "c",
+                 src.string(), "-o", obj.string()},
+                {.env = env, .host_tool = true, .streams = mcpp::run::Streams::merged,
+                 .report_spawn_failure = false});
+            if (compiled.exit_code != 0) return false;   // not asked; nothing kept
+            std::vector<std::string> link{lld.string()};
+            if (name.starts_with("lld")) { link.push_back("-flavor"); link.push_back("gnu"); }
+            for (auto const& a : {std::string("--compress-debug-sections=zlib"), std::string("-shared"),
+                                  obj.string(), std::string("-o"), out.string()})
+                link.push_back(a);
+            auto linked = mcpp::run::execute(link, {.env = env, .host_tool = true,
+                                                    .streams = mcpp::run::Streams::merged,
+                                                    .report_spawn_failure = false});
+            const bool yes = linked.exit_code == 0;
+            mcpp::log::verbose("toolchain", std::format("{} writes compressed debug sections: {}{}",
+                               lld.string(), yes ? "yes" : "no",
+                               yes ? std::string{} : " (" + first_line_of(linked.output) + ")"));
+            if (mcpp::effects::writes_global_cache()) std::ofstream(answer) << (yes ? "yes\n" : "no\n");
+            return yes;
         }
     }
     // An empty C file the driver may name: `-###` reads no input, but a driver
