@@ -4,6 +4,22 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.10.31.1] - 2026-10-31
+
+### Added
+
+- **`features` in `mcpp --protocol-version`.** A client gates on a feature
+  rather than on a version number: `target-sets` and `pkg-format-list` name the
+  meanings 2026.10.30.1 introduced. A name is added when a client gates on it,
+  and is never renamed or removed (docs/50 §4). Every envelope's `mcpp` field
+  carries the same list beside the version, so one `self env` gives a client
+  both, and a job's envelope says when either has changed.
+- **`program` in `mcpp self env --format json`**: the file that is running. A
+  tool that ran `mcpp` through a version manager's shim in a project's directory
+  reads which mcpp the shim chose for that project. docs/50 states how a tool
+  runs mcpp for a project: in its root, by the name on `PATH` or a set path,
+  with `XLINGS_PROJECT_DIR` removed (design 2026-10-30 part 2 §4.0).
+
 ## [2026.10.30.1] - 2026-10-30
 
 ### Added

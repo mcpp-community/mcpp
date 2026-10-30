@@ -258,6 +258,26 @@ inline nlohmann::json to_json(const Diagnostic& in) {
     return j;
 }
 
+// THE FEATURES A CLIENT GATES ON (docs/50 §4, design 2026-10-30 part 2 §4.3).
+// `kinds` say which schemas the output follows and `commands` which commands
+// exist and what they do; a feature is a meaning inside commands that already
+// exist, which a client turns something on or off by. A name is added when a
+// client gates on it, is never renamed and never removed; docs/50 names the
+// release that added it and the client that reads it.
+inline constexpr std::array<std::string_view, 2> kFeatures{{
+    "target-sets",       // SPEC-015 §1: `--target openkal` is the set's legs (an IDE's target picker)
+    "pkg-format-list",   // SPEC-014 §5.4: `--pkg-format tar,okb` writes each container (an IDE's pack form)
+}};
+
+// The same list as JSON: `--protocol-version` and every envelope's `mcpp` field
+// carry it, so a client's one `self env` learns the version and the features
+// together (design 2026-10-30 part 2 §4.3).
+inline nlohmann::json features_json() {
+    nlohmann::json f = nlohmann::json::array();
+    for (auto n : kFeatures) f.push_back(std::string(n));
+    return f;
+}
+
 inline nlohmann::json to_json(const Envelope& e) {
     nlohmann::json effects = nlohmann::json::array();
     for (auto f : e.effects) effects.push_back(std::string(effect_name(f)));
@@ -279,6 +299,7 @@ inline nlohmann::json to_json(const Envelope& e) {
         {"mcpp", {
             {"version", std::string(mcpp::MCPP_VERSION)},
             {"protocol", {{"min", kEnvelopeVersion}, {"max", kEnvelopeVersion}}},
+            {"features", features_json()},
         }},
     };
     if (!e.data.is_null()) out["data"] = e.data;
@@ -324,6 +345,7 @@ inline nlohmann::json protocol_document(
         {"envelope",      {{"min", kEnvelopeVersion}, {"max", kEnvelopeVersion}}},
         {"kinds",         std::move(kinds)},
         {"commands",      std::move(cmds)},
+        {"features",      features_json()},
     };
 }
 

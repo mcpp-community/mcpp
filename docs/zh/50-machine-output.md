@@ -36,7 +36,8 @@ CI 脚本，以及任何解析 mcpp 输出的程序，都可以依赖本章陈�
   "effects": [],               // what running the command did — see §4
   "mcpp": {
     "version": "2026.8.8.3",
-    "protocol": { "min": 1, "max": 1 }
+    "protocol": { "min": 1, "max": 1 },
+    "features": ["target-sets", "pkg-format-list"]   // 自 2026.10.31.1 起 —— 见 §4
   },
   "data": { /* specific to `kind` */ },
   "diagnostics": []
@@ -168,7 +169,8 @@ mcpp --protocol-version
     "self env":   { "effects": [] },
     "xpkg parse": { "effects": [] },
     "cache list": { "effects": [] }
-  }
+  },
+  "features": ["target-sets", "pkg-format-list"]
 }
 ```
 
@@ -191,6 +193,27 @@ effects 采用具名的方式而不是一个 `destructive: true|false`，因为�
 事，其中 `network` 按实际观测记录，而不是按声明：只要本次运行启动过索引
 刷新、安装，或者一次 git 远程操作，就会被列出，包括失败了的或被期限终止的
 那一次；在 `--offline` 下运行时永远不会列出。
+
+### 特性（features）
+
+`kinds` 说明输出遵循哪些 schema，`commands` 说明有哪些命令以及它们做什么；`features` 是已有命令中的语义能力，
+客户端据以开关某项功能。客户端按特性判断，而不是比较版本号。一个名字在有客户端依据它开关功能时才加入，
+永不改名、永不删除。早于该列表的 mcpp 没有 `features`；客户端为此之前的已发布版本保留一张对照表，之后的版本不再需要。
+
+同一列表也在每个信封的 `mcpp` 字段中（§2）：客户端为一个项目执行一次 `self env`，即同时得知版本与特性；任何 job 的信封
+都说明两者是否已变。
+
+| 特性 | 起始 | 含义 | 使用方 |
+|---|---|---|---|
+| `target-sets` | 2026.10.31.1（语义自 2026.10.30.1） | `--target openkal` 等集合展开为其腿（SPEC-015 §1） | IDE 的 target 选择 |
+| `pkg-format-list` | 2026.10.31.1（语义自 2026.10.30.1） | `--pkg-format tar,okb` 写出一棵树的各个容器（SPEC-014 §5.4） | IDE 的打包界面 |
+
+### 工具怎样为一个项目运行 mcpp
+
+为某个项目运行 mcpp 的工具（IDE 后端、语言服务器、CI 脚本）在项目根目录中运行它，程序名为 `PATH` 上的
+`mcpp`（版本管理器的 shim）或用户设置的路径，并从环境中去掉 `XLINGS_PROJECT_DIR`。这样应答的就是该项目使用的
+mcpp：锁定了版本的项目由其目录选定版本，任何工具都不读取锁定文件。`mcpp self env --format json` 报告该 mcpp
+的 `mcppVersion` 与 `program`（正在运行的文件）。
 
 ## 5. `--json` 不等于 `--format json`
 
@@ -282,6 +305,7 @@ mcpp self env --format json
   "config":      "/home/u/.mcpp/config.toml",
   "buildCache":  "/home/u/.mcpp/build-cache/v1",
   "mcppVersion": "2026.8.8.3",
+  "program":     "/home/u/.mcpp/registry/data/xpkgs/xim-x-mcpp/2026.10.31.1/bin/mcpp",   // 2026.10.31.1+
   "defaultToolchain": "gcc@16.1.0",  // 2026.9.28.2+
   "engineModules": "/home/u/.mcpp/engine/2026.10.11.1/modules"   // 2026.10.11.1+
 }

@@ -102,6 +102,15 @@ TEST(WireEnvelope, ReportsMcppVersionAndProtocolWindow) {
     EXPECT_EQ(j["mcpp"]["protocol"]["max"], w::kEnvelopeVersion);
 }
 
+// Every envelope carries the features beside the version, so a client's one
+// `self env` (or any job's envelope) says what the project's mcpp can do
+// (design 2026-10-30 part 2 §4.3); the list is the protocol document's.
+TEST(WireEnvelope, CarriesTheFeaturesOfTheProtocolDocument) {
+    auto j = w::to_json(w::Envelope{.kind = "mcpp.env"});
+    ASSERT_TRUE(j["mcpp"].contains("features") && j["mcpp"]["features"].is_array());
+    EXPECT_EQ(j["mcpp"]["features"], w::protocol_document({})["features"]);
+}
+
 // ── Negotiation ────────────────────────────────────────────────────────────
 
 TEST(WireProtocol, ListsKindsAndTheirVersions) {
@@ -128,6 +137,17 @@ TEST(WireProtocol, DeclaresEffectsPerCommandStatically) {
     EXPECT_EQ(j["commands"]["self env"]["effects"][0], "init-mcpp-home");
     EXPECT_TRUE(j["commands"]["xpkg parse"]["effects"].empty())
         << "measured on a fresh MCPP_HOME: it creates nothing";
+}
+
+// A client gates on a feature, not on a version number (design 2026-10-30
+// part 2 §4.3): the list is present, and the names are the stable ones.
+TEST(WireProtocol, NamesTheFeaturesAClientGatesOn) {
+    auto j = w::protocol_document({});
+    ASSERT_TRUE(j.contains("features") && j["features"].is_array());
+    std::vector<std::string> names;
+    for (auto const& f : j["features"]) names.push_back(f.get<std::string>());
+    EXPECT_NE(std::ranges::find(names, "target-sets"), names.end());
+    EXPECT_NE(std::ranges::find(names, "pkg-format-list"), names.end());
 }
 
 TEST(WireProtocol, IsItselfSelfIdentifying) {
@@ -188,7 +208,7 @@ TEST(WireGolden, EnvelopeKeySet) {
     auto j = w::to_json(w::Envelope{.kind = "mcpp.env"});
     expect_has_keys(j, {"schemaVersion", "kind", "kindVersion", "effects",
                         "mcpp", "data", "diagnostics"}, "the envelope");
-    expect_has_keys(j["mcpp"], {"version", "protocol"}, "envelope.mcpp");
+    expect_has_keys(j["mcpp"], {"version", "protocol", "features"}, "envelope.mcpp");
     expect_has_keys(j["mcpp"]["protocol"], {"min", "max"}, "envelope.mcpp.protocol");
 }
 
@@ -208,7 +228,7 @@ TEST(WireGolden, DiagnosticKeySet) {
 TEST(WireGolden, ProtocolDocumentKeySet) {
     auto j = w::protocol_document({{"self env", {w::Effect::InitMcppHome}}});
     expect_has_keys(j, {"schemaVersion", "kind", "mcpp", "envelope", "kinds",
-                        "commands"}, "the protocol document");
+                        "commands", "features"}, "the protocol document");
     expect_has_keys(j["envelope"], {"min", "max"}, "protocol.envelope");
     expect_has_keys(j["commands"]["self env"], {"effects"}, "a command entry");
 }

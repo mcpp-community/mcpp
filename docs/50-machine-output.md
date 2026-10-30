@@ -45,7 +45,8 @@ Every enveloped response has this shape:
   "effects": [],               // what running the command did — see §4
   "mcpp": {
     "version": "2026.8.8.3",
-    "protocol": { "min": 1, "max": 1 }
+    "protocol": { "min": 1, "max": 1 },
+    "features": ["target-sets", "pkg-format-list"]   // since 2026.10.31.1 — see §4
   },
   "data": { /* specific to `kind` */ },
   "diagnostics": []
@@ -200,7 +201,8 @@ mcpp --protocol-version
     "self env":   { "effects": [] },
     "xpkg parse": { "effects": [] },
     "cache list": { "effects": [] }
-  }
+  },
+  "features": ["target-sets", "pkg-format-list"]
 }
 ```
 
@@ -224,6 +226,34 @@ what the run **did**, and `network` is observed rather than declared: it is
 listed whenever the run started an index refresh, an install or a git remote
 operation, including one that failed or was stopped by its bound, and never
 for a run under `--offline`.
+
+### Features
+
+`kinds` say which schemas the output follows and `commands` which commands exist
+and what they do. `features` name meanings inside commands that already exist,
+which a client turns something on or off by. A client gates on a feature rather
+than on a version number. A name is added when a client gates on it, and it is
+never renamed or removed. A mcpp older than the list has no `features`; a client
+holds a table of the released versions before it, and nothing after it.
+
+The same list is in every envelope's `mcpp` field (§2). A client that runs one
+`self env` for a project learns its version and its features at once, and a job's
+envelope says when either has changed since.
+
+| feature | since | meaning | read by |
+|---|---|---|---|
+| `target-sets` | 2026.10.31.1 (meaning from 2026.10.30.1) | `--target openkal` and the other sets expand to their legs (SPEC-015 §1) | an IDE's target picker |
+| `pkg-format-list` | 2026.10.31.1 (meaning from 2026.10.30.1) | `--pkg-format tar,okb` writes each container of one tree (SPEC-014 §5.4) | an IDE's pack form |
+
+### How a tool runs mcpp for a project
+
+A tool that runs mcpp for a project (an IDE backend, a language server, a CI
+script) runs it in the project's root directory, by the name `mcpp` found on
+`PATH` (a version manager's shim) or by a path the user set, with
+`XLINGS_PROJECT_DIR` removed from its environment. The mcpp that answers is then
+the one the project uses: a project that pins a version selects it by its
+directory, and no tool reads the pin itself. `mcpp self env --format json`
+reports that mcpp's `mcppVersion` and its `program`, the file that is running.
 
 ## 5. `--json` is not `--format json`
 
@@ -322,6 +352,7 @@ mcpp self env --format json
   "config":      "/home/u/.mcpp/config.toml",
   "buildCache":  "/home/u/.mcpp/build-cache/v1",
   "mcppVersion": "2026.8.8.3",
+  "program":     "/home/u/.mcpp/registry/data/xpkgs/xim-x-mcpp/2026.10.31.1/bin/mcpp",   // 2026.10.31.1+
   "defaultToolchain": "gcc@16.1.0",  // 2026.9.28.2+
   "engineModules": "/home/u/.mcpp/engine/2026.10.11.1/modules"   // 2026.10.11.1+
 }

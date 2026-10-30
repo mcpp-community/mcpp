@@ -16,6 +16,7 @@ import mcpp.doctor;
 import mcpp.toolchain.fingerprint;   // MCPP_VERSION
 import mcpp.home;
 import mcpplibs.os.platform;
+import mcpplibs.os.env;            // image(): the program that is running
 import mcpplibs.os.windows;
 import mcpp.ui.terminal;
 import mcpp.toolchain.triple;          // pins::host_default_toolchain (WS8)
@@ -62,6 +63,13 @@ nlohmann::json env_data_readonly() {
         // by an editor (`mcpp:core` in the build database).
         {"engineModules", s(mcpp::build::engine::package_dir())},
         {"mcppVersion",  std::string(mcpp::toolchain::MCPP_VERSION)},
+        // The program that is running, whatever started it: a client that ran
+        // `mcpp` through a version manager's shim reads which mcpp the shim
+        // chose for the directory (design 2026-10-30 part 2 §4.2).
+        {"program",      [] {
+            auto self = mcpplibs::os::env::image();
+            return self ? self->generic_string() : std::string();
+        }()},
         // What a build with nothing configured resolves on this host (WS8):
         // the one function the first run uses. Probing for a usable MSVC is
         // read-only, as the rest of this path is.
