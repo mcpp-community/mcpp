@@ -4749,11 +4749,13 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
             argv.insert(argv.begin(), tb.runUnderPrefix.begin(), tb.runUnderPrefix.end());
             auto env = legEnv;
             // The files beside the program are its own: the loader searches its
-            // directory, and a runner reads the list it is handed.
+            // directory, and a runner reads the list it is handed. macOS names
+            // no such variable (its programs keep their rpaths); an entry of an
+            // empty name is refused by the system, and every program of a macOS
+            // leg was "invalid argument" (e2e 989).
             std::array<fs::path, 1> dir{exe.parent_path()};
-            env.emplace_back(mcpp::runtime::launch_env::runtime_library_path_key(),
-                             mcpp::runtime::launch_env::prepend_path_list(
-                                 mcpp::runtime::launch_env::runtime_library_path_key(), dir));
+            if (const auto key = mcpp::runtime::launch_env::runtime_library_path_key(); !key.empty())
+                env.emplace_back(key, mcpp::runtime::launch_env::prepend_path_list(key, dir));
             {
                 const auto list = exe.parent_path() / ".mcpp-runtime-files.tsv";
                 std::ofstream os(list, std::ios::binary | std::ios::trunc);

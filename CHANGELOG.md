@@ -21,7 +21,10 @@
   writes every leg's tests with `mcpp-tests.json`; `mcpp test --archive <file>`
   in a checkout runs what this machine reaches and builds nothing. The archive
   is a tar compressed as its name states (`.tar.gz`, `.tgz`, `.tar.zst`,
-  `.tar.xz`, `.tar`); another name is refused before the build (e2e 964).
+  `.tar.xz`, `.tar`); another name is refused before the build (e2e 964). A
+  leg of the host's own system runs from an archive as an openkal leg does
+  (e2e 989, on every system); on macOS the first build of this release started
+  none of them, giving each an environment entry of an empty name.
 - **The build's contract, `${mcpp.contract}`.** Every configuration writes
   `mcpp-contract.json` beside its compile database: the compiler of each
   language with the words every unit is compiled with (target, sysroot,
