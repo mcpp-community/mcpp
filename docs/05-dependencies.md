@@ -128,6 +128,11 @@ and `"0.0"` is `>= 0.0.0, < 0.1.0` (before 2026.10.31.1 both matched 0.0.0
 alone). The dependency conflict check and the address check of `--locked` read
 requirements the same way.
 
+A range matches a pre-release key (`1.0.0-rc.1`) only when it names a
+pre-release of the same version, so `*` or `^0.0` reaches none of the keys of a
+package that publishes only pre-releases (`compat.glad` publishes
+`0.0.0-651a425`). The error then names the exact pin to write.
+
 ### `visibility` — whether a dependency's usage crosses this package's own boundary
 
 ```toml

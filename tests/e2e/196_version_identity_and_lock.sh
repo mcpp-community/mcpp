@@ -54,6 +54,11 @@ mk_pkg jdk '{ ["latest"] = { ref = "25.0.4.7.1" },
 # khistory's shape: the only real release has an unorderable key.
 mk_pkg kh  '{ ["latest"] = { ref = "pre-v0.0.5" },
               ["pre-v0.0.5"] = { url = "u", sha256 = "0" } }'
+# compat.glad's shape: the only key is a pre-release (mcpp#370).
+mk_pkg pre '{ ["0.0.0-651a425"] = { url = "u", sha256 = "0" } }'
+# Only pre-releases, more than one: the pin offered is the highest.
+mk_pkg rc  '{ ["1.0.0-rc.1"] = { url = "u", sha256 = "0" },
+              ["1.0.0-rc.2"] = { url = "u", sha256 = "0" } }'
 # jdk-temurin's shape, but with two REAL entries: a genuine precedence tie.
 mk_pkg tie '{ ["1.0.0+a"] = { url = "u", sha256 = "0" },
               ["1.0.0+b"] = { url = "u", sha256 = "0" } }'
@@ -138,6 +143,39 @@ use_dep kh '=pre-v0.0.5'
 "$MCPP" build > b5b.log 2>&1 && fail "expected the unseeded payload to fail" b5b.log
 grep -qE 'invalid version constraint|not ordered versions' b5b.log \
     && fail "'=<unorderable key>' must resolve to that key" b5b.log
+
+# ── 4b. Only pre-releases: no range reaches them, so the error says what does ──
+# The keys are orderable, so this is not the unorderable branch above, but a
+# range still sees a pre-release only when it names one (mcpp#370).
+for c in '*' '^0.0'; do
+    use_dep pre "$c"
+    "$MCPP" build > b4c.log 2>&1 && fail "'$c' must not reach a pre-release" b4c.log
+    grep -q 'matches none of' b4c.log || fail "expected '$c' to match none" b4c.log
+    grep -q 'These keys are pre-releases' b4c.log \
+        || fail "expected the error to say why '$c' matches none" b4c.log
+    grep -q 'acme.pre = "0.0.0-651a425"' b4c.log \
+        || fail "the error for '$c' must show the exact pin that works" b4c.log
+done
+
+use_dep rc '^1.0'
+"$MCPP" build > b4d.log 2>&1 && fail "'^1.0' must not reach a pre-release" b4d.log
+grep -q 'acme.rc = "1.0.0-rc.2"' b4d.log \
+    || fail "the pin offered must be the highest pre-release" b4d.log
+
+# The pin offered resolves (and fails later, at install, for want of a payload).
+use_dep pre '0.0.0-651a425'
+"$MCPP" build > b4f.log 2>&1 && fail "expected the unseeded payload to fail" b4f.log
+grep -q 'matches none of' b4f.log \
+    && fail "the exact pre-release pin the error offers must resolve" b4f.log
+grep -q '0\.0\.0-651a425' b4f.log || fail "the exact key must be addressed literally" b4f.log
+
+# A release among the keys can be reached by a range, so a miss there is an
+# ordinary one and carries no pin.
+use_dep im '^2'
+"$MCPP" build > b4e.log 2>&1 && fail "'^2' must match none of im's keys" b4e.log
+grep -q 'matches none of' b4e.log || fail "expected '^2' to match none" b4e.log
+grep -q 'pre-releases' b4e.log \
+    && fail "a package that publishes a release must not get the pre-release pin" b4e.log
 
 # ── 5. A genuine precedence tie is refused, not guessed ───────────────────
 use_dep tie '^1.0'

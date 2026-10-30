@@ -228,6 +228,18 @@ resolve_semver(std::string_view ns, std::string_view shortName,
         auto msg = std::format(
             "dependency '{}': constraint '{}' matches none of: [{}]",
             qname, constraint, join(literals));
+        // A range sees a pre-release only when it names one at the same numbers,
+        // so when every orderable key is a pre-release (`compat.glad` publishes
+        // `0.0.0-651a425` alone) no `*` or `^0.0` can reach any of them: the
+        // remedy is the same exact pin as for an unorderable key (mcpp#370).
+        if (std::ranges::all_of(parsed, &vr::Version::isPrerelease)) {
+            const auto highest = std::ranges::max_element(parsed) - parsed.begin();
+            msg += std::format(
+                "\n  These keys are pre-releases, which a range matches only when "
+                "it names a pre-release of the same version — pin one exactly:"
+                "\n    {} = \"{}\"",
+                qname, literals[static_cast<std::size_t>(highest)]);
+        }
         if (!unorderable.empty())
             msg += std::format("\n  (also published, but not orderable: [{}]){}",
                                join(unorderable), pin_hint(unorderable));
