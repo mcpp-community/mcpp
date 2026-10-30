@@ -3460,6 +3460,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         for (auto& input : lu.implicitInputs) {
             implicit += " " + escape_ninja_path(input);
         }
+        if (lu.kind != LinkUnit::StaticLibrary)
+            for (auto const& input : uflags.ldFileInputs)
+                implicit += " " + escape_ninja_path(input);
         // Windows runtime-DLL deployment: an executable takes an ORDER-ONLY
         // dependency on each staged dep DLL (bin/<dll>), so ninja copies them
         // beside the .exe whenever the .exe is built. Order-only rather than

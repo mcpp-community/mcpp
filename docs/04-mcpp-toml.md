@@ -594,6 +594,12 @@ jobs         = "auto"             # Concurrent compiles: a positive number, or "
 bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | off (§ below)
 ```
 
+A word of `[build] ldflags` that names an existing file by absolute path (a
+prebuilt archive, an object) is an input of every link that carries it: a
+changed file relinks (mcpp 2026.10.31.1+). A relative word is read by the
+linker against the build directory and is not tracked.
+
+
 #### Compile-flag syntax *(mcpp 2026.9.17.1+)*
 
 An element of `cflags`, `cxxflags` or `asmflags` stands for one or more compiler

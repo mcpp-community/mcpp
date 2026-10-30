@@ -28,6 +28,9 @@
   true`) made `-p` of each write its own key and hash. The key is the
   workspace's spelling: its `[dependencies]`, `[workspace.dependencies]`, then
   the members in the order `members` lists them (docs/07, e2e 990).
+- **A file `[build] ldflags` names by absolute path is a link input.** A
+  replaced prebuilt archive did not relink the program that names it; now every
+  link that carries the word depends on the file (docs/04, e2e 991).
 - **A partial caret or tilde requirement treats unwritten segments as
   wildcards** (#866, NopeCharon): `^0` is `< 1.0.0`, `^0.0` is `< 0.1.0`, `~1` is
   `< 2.0.0`. A bare requirement is a caret, so the bare partial spellings `"0"`

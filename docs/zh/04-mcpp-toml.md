@@ -565,6 +565,10 @@ jobs         = "auto"             # Concurrent compiles: a positive number, or "
 bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | off (§ below)
 ```
 
+`[build] ldflags` 中以绝对路径指向一个已存在文件的词（预构建的归档、目标文件）是带有它的每次链接的输入：文件改变即重新
+链接（mcpp 2026.10.31.1+）。相对路径的词由链接器相对构建目录读取，不跟踪。
+
+
 #### 编译 flag 的写法 *(mcpp 2026.9.17.1+)*
 
 `cflags`、`cxxflags` 或 `asmflags` 里的一个元素代表一个或多个编译器

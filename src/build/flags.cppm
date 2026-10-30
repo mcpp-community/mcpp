@@ -71,6 +71,11 @@ struct CompileFlags {
     // The link words that name the island's C++ runtime (design 2026-10-26
     // §6.3), placed after the build's own runtime in each C++ unit's tail.
     std::string ldForeignRuntime;
+    // The files the user's link flags name by absolute path (a prebuilt
+    // archive, an object): inputs of every link that carries the flags, so a
+    // changed archive relinks (design 2026-10-30 part 2 §25.3 C1; it did not,
+    // and the clangd probe deleted its image to take a new archive).
+    std::vector<std::filesystem::path> ldFileInputs;
     // `trim_paths` (mcpp#844): the rendered prefix map of each package, by
     // `CompileUnit::packageName`, appended to that package's C and C++ units.
     // Empty on cl.exe, which has no such switch.
@@ -1258,6 +1263,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         }
         user_ldflags += ' ';
         user_ldflags += rendered;
+        // A word that names an existing file by absolute path is a link
+        // input. A relative word is read by the linker against the build
+        // directory, and an option is no file.
+        if (!word.starts_with('-') && std::filesystem::path(word).is_absolute()) {
+            std::error_code ec;
+            if (std::filesystem::is_regular_file(word, ec)) f.ldFileInputs.emplace_back(word);
+        }
     }
 
     // C standard. The file-level `$cflags` carries the engine default, a
