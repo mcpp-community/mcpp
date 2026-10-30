@@ -1663,9 +1663,9 @@ ldflags  = []
 - **Debug information (2026.10.31.3+).** On an ELF target with debug information
   (Linux, a cross Linux target, an ok image), the compile and the link compress
   it (`-gz=zlib`; an ok image's `ld.lld` link, `--compress-debug-sections=zlib`)
-  when the toolchain was built to (asked once, by one compressed link through an
-  LLVM toolchain's `ld.lld` or of a GCC's driver, and kept: the Windows-hosted LLVM of the xim index has no
-  zlib, and its builds stay uncompressed).
+  when the toolchain's link reads them (asked once, by one compressed link
+  through the `ld.lld` an LLVM driver runs, or of a GCC's driver, and kept: a
+  Windows host whose `ld.lld` has no zlib stays uncompressed).
   `split_debuginfo = "unpacked"`, the default of `dev` and `debug`, also leaves
   the debug information of the units compiled in the build directory -- the
   project's, its workspace members' and its `path` and `git` dependencies' --

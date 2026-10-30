@@ -32,13 +32,13 @@ std::expected<std::string, DetectError> run_capture(const std::vector<std::strin
                                                     const mcpp::run::Env& env = {},
                                                     bool withErrors = false);
 
-// Whether the compiler writes compressed debug sections (`-gz=zlib`), and the
-// linker of its toolchain reads them -- a property of how the toolchain was
-// built: an LLVM built without zlib warns and writes them uncompressed, and its
-// `ld.lld` refuses `--compress-debug-sections` (measured: the Windows-hosted
-// LLVM 23.1.3 of the xim index); a GCC configured without support refuses
-// `-gz`. Asked of the driver alone (`-###`), which exits 0 either way, so the
-// answer is kept in the probe cache (design 2026-10-31 §4.1).
+// Whether a build with this compiler can write compressed debug sections
+// (`-gz=zlib`): the linker its driver runs must read them. An `ld.lld` built
+// without zlib refuses `--compress-debug-sections` while clang says nothing
+// (measured on windows-2022, where the xim LLVM 23.1.3 has no ld.lld and its
+// driver runs the image's own); a GCC configured without support refuses `-gz`.
+// An LLVM toolchain is asked by one real link, a GCC by its driver (`-###`);
+// the answer is kept (design 2026-10-31 §4.1).
 bool compresses_debug_sections(const std::filesystem::path& compiler, const mcpp::run::Env& env = {});
 
 std::string extract_version(std::string_view s);
@@ -168,18 +168,26 @@ std::filesystem::path probe_cache_file(const std::string& key) {
 }  // namespace
 
 bool compresses_debug_sections(const std::filesystem::path& compiler, const mcpp::run::Env& env) {
-    // An LLVM toolchain links with its own lld, which is what refuses the
-    // option without zlib -- its clang does not even warn (measured on the
-    // Windows-hosted LLVM 23.1.3). Asked by one real link: an empty unit with
-    // debug information, compiled for an ELF target and linked compressed. The
-    // answer, either way, is kept beside the probe cache under the identity of
-    // that lld (its path, size and time).
+    // An LLVM toolchain's ELF link is lld's, and lld is what refuses the
+    // option without zlib -- clang does not even warn. Asked by one real link:
+    // an empty unit with debug information, compiled for an ELF target and
+    // linked compressed. The answer, either way, is kept beside the probe cache
+    // under the identity of that lld (its path, size and time).
     if (compiler.filename().string().find("clang") != std::string::npos) {
-        const auto dir = compiler.parent_path();
-        for (std::string_view name : {"ld.lld", "ld.lld.exe", "lld", "lld.exe"}) {
-            const auto lld = dir / name;
+        // The linker the driver runs for an ELF target, found the way it finds
+        // it (`-print-prog-name`): the Windows-hosted LLVM 23.1.3 has no ld.lld
+        // of its own, and its driver runs the one on PATH -- on a CI image,
+        // another LLVM's, built without zlib.
+        std::filesystem::path lld;
+        if (auto r = run_capture({compiler.string(), "-print-prog-name=ld.lld"}, env)) {
+            const auto named = std::filesystem::path(trim_line(first_line_of(*r)));
+            std::error_code fec;
+            if (named.is_absolute() && std::filesystem::exists(named, fec)) lld = named;
+        }
+        if (lld.empty()) return false;   // no ELF linker to compress with
+        {
+            const auto name = lld.filename().string();
             std::error_code lec;
-            if (!std::filesystem::exists(lld, lec)) continue;
             const auto work = mcpp::home::root() / "cache" / "probe" / "debug-compression";
             const auto identity = std::format("{}|{}|{}", lld.generic_string(),
                 std::filesystem::file_size(lld, lec),

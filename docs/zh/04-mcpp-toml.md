@@ -1532,8 +1532,8 @@ ldflags  = []
   `ndebug = false` 或 `trim_paths = false` 可保留以前的产物;升级后第一次发布档构建会提示一次。
 - **调试信息(2026.10.31.3+)。** 带调试信息、目标为 ELF 时(Linux、交叉 Linux 目标、ok 映像),
   在工具链构建时支持的前提下,编译与链接都压缩调试信息(`-gz=zlib`;ok 映像的 `ld.lld` 链接为
-  `--compress-debug-sections=zlib`)。是否支持询问一次并缓存(LLVM 工具链经其 `ld.lld` 做一次压缩链接,GCC 问其驱动):xim 索引中 Windows 主机的
-  LLVM 不含 zlib,其构建保持不压缩。
+  `--compress-debug-sections=zlib`)。是否支持询问一次并缓存(LLVM 工具链经其驱动实际运行的 `ld.lld` 做一次压缩链接,GCC 问其驱动):链接器不含 zlib 的 Windows 主机
+  保持不压缩。
   `split_debuginfo = "unpacked"` 是 `dev` 与 `debug` 的默认值:在构建目录中编译的单元——本工程、其工作空间成员
   以及 `path`、`git` 依赖的单元——的调试信息留在对象旁(`-gsplit-dwarf`),每个程序只携带指向它们的骨架,
   测试程序因此不再复制其闭包的调试信息。索引包的单元保留在对象内:它们的对象进入构建缓存,由其他工程取用。

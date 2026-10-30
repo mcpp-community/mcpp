@@ -96,9 +96,11 @@ libarchive 等，以压缩的形式留在段内，见 §4.1 (c)）。链接时�
 
 是否启用还取决于工具链的构建：没有 zlib 的 LLVM 对 `-gz` 只给警告并写出未压缩的段，其 `ld.lld` 拒绝
 `--compress-debug-sections`（实测：xim 索引中 Windows 主机的 LLVM 23.1.3，CI 的 openkal-cross windows 任务）；
-不支持压缩段的 GCC 拒绝 `-gz`。因此询问一次并缓存结果：LLVM 工具链做一次真实的压缩链接——空单元以 `-g` 编译为 ELF 对象，经其
-`ld.lld --compress-debug-sections=zlib -shared` 链接，成功与否即答案（该 clang 对 `-gz` 不报警告，`--version`
-式的询问在 Windows 上没有拒绝），答案按 lld 的路径、大小与时间保存；GCC 问其驱动（`-gz=zlib -###`）。支持时才启用。压缩不增加可测的编译 CPU（两种编译器的差异都在 ±10% 的测量波动内），链接时间下降约 28%。gcc 的对象中调试重定位（`.rela.debug_info`）不压缩，对象缩小有限；链接后重定位消失，程序缩小 52%。gdb 与 lldb 读取压缩段。ok 映像：x86_64 映像
+不支持压缩段的 GCC 拒绝 `-gz`。因此询问一次并缓存结果：LLVM 工具链做一次真实的压缩链接——空单元以 `-g` 编译为 ELF 对象，经其驱动实际运行的
+链接器（`-print-prog-name=ld.lld`）以 `--compress-debug-sections=zlib -shared` 链接，成功与否即答案，答案按该链接器的
+路径、大小与时间保存；GCC 问其驱动（`-gz=zlib -###`）。支持时才启用。windows-2022 上的实测（临时 probe 工作流）：xim 的
+LLVM 23.1.3 不带 `ld.lld`，其驱动经 PATH 运行镜像自带的 LLVM（`C:\Program Files\LLVM\bin\ld.lld.exe`），后者不含 zlib；
+该 clang 对 `-gz` 不报警告。压缩不增加可测的编译 CPU（两种编译器的差异都在 ±10% 的测量波动内），链接时间下降约 28%。gcc 的对象中调试重定位（`.rela.debug_info`）不压缩，对象缩小有限；链接后重定位消失，程序缩小 52%。gdb 与 lldb 读取压缩段。ok 映像：x86_64 映像
 8.07 MiB → 3.93 MiB，okld 封装与 okrun 运行不受影响。
 
 **(b) 本地单元的调试信息留在对象旁（`split_debuginfo`，新增 profile 键）。** profile 键 `split_debuginfo = "unpacked" | "off"`，
