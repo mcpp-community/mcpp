@@ -1060,6 +1060,11 @@ std::string posix_launcher(const Launch& l) {
         "esac\n"
         "image=\"$top/lib/$arch/$entry\"\n"
         "{3}"
+        "# A package a browser downloaded carries macOS's quarantine mark on every\n"
+        "# file, and macOS refuses to start a runner so marked that is not signed.\n"
+        "if [ \"$os\" = macos ] && xattr -p com.apple.quarantine \"$runner\" >/dev/null 2>&1; then\n"
+        "  printf '%s: %s carries com.apple.quarantine (a browser downloaded it), and macOS may refuse to start it; remove the mark with: xattr -dr com.apple.quarantine %s\\n' {0} \"$runner\" \"$top\" >&2\n"
+        "fi\n"
         "exec \"$runner\"{4}\n",
         sh_word(l.name), cases, sh_word(arch_list(l)), find, args);
 }

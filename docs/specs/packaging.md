@@ -209,7 +209,8 @@ openkal 目标上 `static` 为一个 `.oke`、无 `.okso`,`shared` 为 `.oke` �
   时映像追加在末尾;其余词原样传递,随后是启动器自己的参数;运行器先在 `libexec/<runner>/<os>-<arch>/` 中找,
   再找 `PATH`。
 - POSIX 启动器把每个词写成单引号字符串,沿符号链接找到自身的位置(不依赖 `readlink -f`);`uname -s` 为 `MINGW*`、
-  `MSYS*`、`CYGWIN*` 时交给 `bin/<name>.exe`。
+  `MSYS*`、`CYGWIN*` 时交给 `bin/<name>.exe`。macOS 上运行器带有 `com.apple.quarantine`(浏览器下载的包)时,启动器在启动它之前写出
+  这一点与去除标记的命令(`xattr -dr com.apple.quarantine <包>`)(2026.10.31.1)。
 - Windows 启动器是一个程序:源码随引擎提供,写明运行器的词与入口映像的名字,在打包时为 `x86_64-windows-gnu`
   构建(平台的托管安排服务该行时以它构建);它从自身路径(`GetModuleFileNameW`)找到包,按本机架构选
   `lib/<arch>/`,包内没有该架构时写出包含的架构。它不含腿的列表,因而对任一组腿相同。本 mcpp 不构建该行时包中
@@ -476,4 +477,4 @@ openkal 目标的单文件:载体携带一条腿的映像本身(映像不引用�
 | 1.2 | 2026-10-28 | 包名的模式后缀;单文件启动器自身失败的退出状态 127;`--merge` 取 `[pack] format`,合并后的目录以输出命名;`--linkage static` 改为 musl 的行;`mcpp emit xpkg --package` 的每系统程序目录、带命名空间的运行器依赖、以归档名定位的顶层目录与多余词的拒绝。 |
 | 1.3 | 2026-10-29 | mcpp 2026.10.29.1:§0 ok 映像与 Web;§1.2 单腿 `self-contained` 包的载体为映像架构的程序;§1.5、§5.2 WebAssembly 目标上的单文件被拒绝;§4.5 单腿 `self-contained` ok 映像包的 `systems` 记录其载体;§6 `--list-formats` 规划所选目标;§8 单腿包按其程序运行的系统与架构描述(系统的三元组,或 ok 映像的载体),程序不是任何系统的程序的被拒绝;判据 8、9(e2e 961、962)。 |
 | 2.0 | 2026-10-30 | mcpp 2026.10.30.1(设计 2026-10-29 §4、§13):§1.4 腿只是命令命名的目标(目标集合按 SPEC-015 展开),腿按目标的种类与平台合并,原生程序每腿一个包,`-o <目录>/`;删除通用包与 `[platform] universal`、`[pack] universal`、`--no-universal` 的作用(迁移见 §2、docs/51);§1.2、§4.2 声明运行器的平台的映像只有一种布局(树),M3 只属于单文件,`--mode static` 为静态树;§4.3 Windows 启动器为引擎的程序,不再生成 `.cmd`,启动器为派生文件;§4.4 `--systems` 接受 `<os>`、`<os>-<arch>`、`all` 与 `[pack] systems`;§4.6 合并重新生成启动器、合并 `runs_on`、树以平台名命名;§4.7 运行覆盖 `runs_on` 与 `Runs on`、未覆盖的摘要,空覆盖被拒绝;§5.2 单文件覆盖腿 × 系统;§5.4 容器列表;§7 签名含 Windows 启动器;§8 条目按 `runs_on` 描述;§9 `pkgFormats`、`runsOn`;判据 3、4、7、9 改写,判据 10–13(e2e 983–987)。 |
-| 2.1 | 2026-10-31 | mcpp 2026.10.31.1(设计 2026-10-30 part 2 §19.6):§5.3 载体模型 `row` 与 `polyglot`,`--pkg-format polyglot` 的范围、布局、启动、缓存、签名与其他选项;§1.3、§1.5、§5.4、§7、§8 相应条目;`mcpp run --pkg-format` 直接运行 `single-file` 与 `polyglot`、拒绝 `tar`、`zip`、`dir`;判据 14(e2e 992)。 |
+| 2.1 | 2026-10-31 | mcpp 2026.10.31.1(设计 2026-10-30 part 2 §19.6):§5.3 载体模型 `row` 与 `polyglot`,`--pkg-format polyglot` 的范围、布局、启动、缓存、签名与其他选项;§1.3、§1.5、§5.4、§7、§8 相应条目;`mcpp run --pkg-format` 直接运行 `single-file` 与 `polyglot`、拒绝 `tar`、`zip`、`dir`;§4.3 macOS 上带 quarantine 标记的运行器;判据 14(e2e 992)。 |

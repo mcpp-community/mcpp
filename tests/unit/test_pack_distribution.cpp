@@ -215,6 +215,13 @@ TEST(PackDistribution, LaunchersPickTheArchitectureAndTheRunner) {
     EXPECT_EQ(sh.find("readlink -f"), std::string::npos);
     // A POSIX shell on Windows hands over to the program of the same name.
     EXPECT_NE(sh.find("MINGW*|MSYS*|CYGWIN*) exec \"$top/bin/\"'hello'.exe \"$@\""), std::string::npos) << sh;
+    // On macOS a runner carrying the quarantine mark of a browser's download is
+    // named, with the command that removes the mark (mcpp design 2026-10-30
+    // part 2 §10 D6), before it is started.
+    const auto mark = sh.find("xattr -p com.apple.quarantine \"$runner\"");
+    EXPECT_NE(mark, std::string::npos) << sh;
+    EXPECT_NE(sh.find("xattr -dr com.apple.quarantine"), std::string::npos) << sh;
+    EXPECT_LT(mark, sh.find("exec \"$runner\"")) << sh;
 }
 
 // The runner's words expand as `mcpp run` expands them: a word's `{}` is the

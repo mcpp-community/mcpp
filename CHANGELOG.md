@@ -33,6 +33,11 @@
   refused as an unknown format. `tar`, `zip` and `dir` are refused as containers
   that are not programs.
 
+- **A tree's POSIX launcher names macOS's quarantine mark.** A package a browser
+  downloaded carries `com.apple.quarantine` on every file, and macOS refuses to
+  start an unsigned runner so marked; the launcher says so before it starts the
+  runner, with `xattr -dr com.apple.quarantine <package>` (SPEC-014 §4.3).
+
 ### Fixed
 
 - **A workspace's lock entry is keyed the same way whatever members a command
