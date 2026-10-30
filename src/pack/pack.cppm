@@ -2469,6 +2469,14 @@ std::string static_row_pin(const ProgramRow& row, std::string_view platformToolc
     return std::format("\n[target.{}]\ntoolchain = \"{}\"\n", row.triple, pin);
 }
 
+// The platform the Windows launcher is built over: the one mcpp's openkal
+// rows pin, which the launcher's `mcpplibs.os` release was released against.
+std::string_view launcher_platform() {
+    auto t = mcpp::toolchain::triple::parse("x86_64-openkal");
+    auto* k = t ? mcpp::toolchain::triple::find_known_target(*t) : nullptr;
+    return k ? std::string_view(k->platform) : std::string_view();
+}
+
 // Whether this mcpp builds programs for `row`: a target its table does not
 // state (`aarch64-windows-gnu`), or states as planned (`x86_64-macos`, its
 // toolchain not published), is not built.
@@ -2724,9 +2732,16 @@ run_loaded(const Plan& plan)
         // x86_64 Windows, which an arm64 Windows machine also runs. A host
         // that builds no program for that row leaves it out, says so, and
         // the package's `runs_on` names no Windows pair.
-        // Over the platform's hosted arrangement where it serves the row, as
-        // the runners are: the same program whichever machine packs it.
-        const auto row = program_row("windows", "x86_64", true, &plan.platform);
+        // Over a platform's hosted arrangement where the build's platform
+        // serves the row, as the runners are: the same program whichever
+        // machine packs it. The launcher is mcpp's program and not the
+        // project's: its `mcpplibs.os` pins one openkal release, which only the
+        // platform mcpp's own openkal rows name agrees with, so it is built
+        // over that platform whichever release the project selected (a newer
+        // version group named another openkal, and the launcher's graph held
+        // two; openkal-platform 0.19.0's CI, 2026-10-30).
+        auto row = program_row("windows", "x86_64", true, &plan.platform);
+        if (!row.platform.empty()) row.platform = std::string(launcher_platform());
         if (!row_is_built(row)) {
             mcpp::ui::warning(std::format(
                 "no Windows launcher in the package: this mcpp builds no program for {}; the package "

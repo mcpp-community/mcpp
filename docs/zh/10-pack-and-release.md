@@ -709,7 +709,8 @@ target/dist/hello-0.1.0-openkal/
 包的根，按 `uname -m`（`x86_64`、`amd64` → `x86_64`；`aarch64`、`arm64` → `aarch64`）选择架构目录，Git Bash、MSYS 与
 Cygwin 的 shell 交给 `bin/<name>.exe`，以该目录中的映像与自身的参数启动运行器，先在 `libexec/<runner>/<os>-<arch>/`
 中、再在 `PATH` 上查找运行器。Windows 启动器是为 `x86_64-windows-gnu` 构建的引擎的程序：从自身路径找到包，选本机
-架构的映像，以同样的方式启动运行器；不生成 `.cmd`。包中没有本机架构时以状态 126 退出，写出两者。
+架构的映像，以同样的方式启动运行器；不生成 `.cmd`。构建的平台为该行提供宿主安排时，启动器在 mcpp 的 openkal 行固定的
+平台上构建，而不是项目选择的平台上，因为它使用的 `mcpplibs.os` 版本固定了该平台的 openkal。包中没有本机架构时以状态 126 退出，写出两者。
 `[runtime] deploy` 放置的文件位于每条腿的映像旁边。
 
 `--mode self-contained` 时运行器随包携带：对 `--systems` 的每个系统（`linux`、`macos`、`windows` 取腿的全部架构；

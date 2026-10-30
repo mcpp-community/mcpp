@@ -28,6 +28,13 @@
   platform's layers' include directories and flags, the engine's predefines
   (`__MCPP_TARGET_<OS>__`, `__OPENKAL__`) and the realised C environment. e2e 994
   compiles a C and a C++ unit for the target with the contract alone.
+- **A package's Windows launcher builds whichever openkal-platform release the
+  project selects** (SPEC-014 §4.3). The launcher (`bin/<name>.exe`) is mcpp's
+  program, and its `mcpplibs.os` pins one openkal release; it was built over the
+  project's platform, so a platform whose version group names a newer openkal
+  (openkal-platform 0.19.0) gave its graph two openkal releases and `mcpp pack`
+  stopped. It is now built over the platform mcpp's openkal rows pin, the one
+  its `mcpplibs.os` was released against.
 
 ## [2026.10.31.1] - 2026-10-31
 

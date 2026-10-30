@@ -818,7 +818,9 @@ own arguments, looking for the runner first in `libexec/<runner>/<os>-<arch>/`
 and then on `PATH`. The Windows launcher is the engine's program built for
 `x86_64-windows-gnu`: it finds the package from its own path, picks the image
 of the machine's architecture, and starts the runner the same way; no `.cmd` is
-written. A machine of an architecture the package does not hold gets exit
+written. Where the build's platform has a hosted arrangement for that row, the
+launcher is built over the platform mcpp's openkal rows pin rather than the
+project's, since the `mcpplibs.os` release it uses pins that platform's openkal. A machine of an architecture the package does not hold gets exit
 status 126 and a sentence naming both. Files `[runtime] deploy` places lie
 beside each leg's image.
 
