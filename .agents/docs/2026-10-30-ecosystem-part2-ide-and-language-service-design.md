@@ -232,18 +232,23 @@ conformance 夹具固定（§13）。两者仍不一致时（例如 mcppls 设�
     "mcpp": { "version": "2026.10.30.1", "program": "<path>" },
     "problems": [{ "code": "kit-missing", "message": "…" }]
   },
-  "otherCppFeatures": [{ "extension": "ms-vscode.cpptools", "active": true }]
+  "instances": [{ "pid": 4242, "editor": "vscode", "state": "ready", "since": "…" }],
+  "actions": [{ "id": "openLogDirectory", "title": "…", "vscode": "mcppls.revealCacheDirectory", "vscodeArguments": ["logs"] }]
 }
 ```
+
+其他 C++ 语言服务是否启用是编辑器的事实（VS Code 读取已安装扩展及其设置），命令行的 `status` 无从得知，不在文档中。
 
 - 运行中的服务器在工作区缓存目录维护自己的状态，`status` 读取它并补上静态事实（版本、payload、kit 的解析）；状态文件是 mcppls
   的实现细节，契约是命令的输出。没有服务器在运行时 `state` 为 `none`。
 - 同一工作区可能有多个服务器（两个编辑器同时打开）：输出 `instances[]`（`pid`、`editor`、`state`、`since`），进程已不存在的实例
   忽略；`workspace.state` 取存活实例中最好的一个。
 - `actions[]`：mcppls 声明自己的动作及其在各编辑器中的 id（`{"id": "restart", "vscode": "mcppls.restartServer", "jetbrains":
-  "…", "nvim": "…"}`）。动作 id 归 mcppls，mcpp-ide 不保存另一个产品的 id。
-- 后端的 `languageService/status` 改为执行 `mcppls status`（经后端已有的 mcppls 定位），返回版本、能力、状态与可用动作；三个
-  IDE 显示同一份信息。VS Code 不再读 mcppls 扩展的 API 对象（F7）。
+  "…", "nvim": "…"}`），VS Code 命令的参数为 `vscodeArguments`。动作 id 由 mcppls S3-8-7 列出；`installKit` 只在工作区的
+  kit 缺失时出现，参数与命令行都写明目标。动作 id 归 mcppls，mcpp-ide 不保存另一个产品的 id。
+- 后端的 `languageService/status` 改为执行 `mcppls status`（经后端已有的 mcppls 定位，限时 5 s），返回版本、能力、状态与可用
+  动作（`statusSource` 为 `status`、`frozen` 或 `none`）；三个 IDE 显示同一份信息。结果与上次不同（程序、版本、动作或工作区
+  状态）时后端发出一次 `languageService/changed`。VS Code 不再读 mcppls 扩展的 API 对象（F7）。
 - 刷新由事件驱动：job 结束、窗口获得焦点、面板打开时执行一次；面板可见时另有不短于 30 s 的轮询，不可见时不轮询。一次执行包括
   okrun 启动 okb，预算 200 ms 以内；实测 okrun 启动 15 MB 的 `mcppls.okb` 执行一条轻量命令约 35 ms（Linux x64，§20 D3）。
 - `--root` 的比较按系统规范化：Windows 上盘符与分隔符统一、Windows 与 macOS 上不区分大小写；后端与 mcppls 用同一规则（S3 写明）。
@@ -254,15 +259,20 @@ conformance 夹具固定（§13）。两者仍不一致时（例如 mcppls 设�
 |---|---|---|---|
 | 重启、重启引擎、重置缓存、导出诊断包、显示日志 | 能力表转发 mcppls 命令（已有） | `ActionManager` 按 id 调用 mcppls 插件的 action；不在时隐藏 | 调用 mcppls-nvim 的命令 |
 | 安装 kit | 转发 `mcppls.installKit` | mcppls 插件的安装 action | `xlings install …` |
-| 关闭其他 C++ 服务 | 转发（已有） | 不适用 | 不适用 |
+| 关闭其他 C++ 服务 | 转发（已有） | mcppls 插件的 `UseMcpplsOnly` 与 `RestoreClionEngine` | 不适用 |
 
-转发项的目标 id 来自 `mcppls status` 的 `actions[]`（§5.2）；VS Code 现有的能力表（`contract.ts`）改为读这份数据，确认等级
-（`danger`）仍由 mcpp-ide 决定。没有 `status` 的 mcppls（0.0.18–0.0.19）用当前的能力表作为冻结数据。CLion 不再回答"本 IDE 不可用"，
-没有对应 action 的行不出现在菜单中（F14）。
+命令表（`spec/commands.json`）的转发行写 mcppls 的动作 id（`{"kind": "forward", "mcppls": "restart"}`），后端的 `commands/list`
+按编辑器取出该动作在此编辑器中的 id（`action.command`，VS Code 另带 `arguments`），mcppls 没有给出 id 的行不列出；收到
+`languageService/changed` 的编辑器重新取命令表。VS Code 的能力表（`contract.ts`）以 mcppls 的动作 id 为键，只保存标题、确认
+等级（`danger`）与缺失时的说明，命令 id 与参数来自 `languageService/status` 的 `serverActions`。没有 `status` 的 mcppls
+（0.0.18–0.0.19）由后端的冻结表给出这两个版本的动作 id。CLion 不再回答"本 IDE 不可用"，没有对应 action 的行不出现在菜单中
+（F14）；Neovim 只列出 mcppls-nvim 已定义的命令。
 
 ### 5.4 升级规则
 
-1. 契约版本化（`schema` 加 `capabilities`），后端按能力启用功能；未知能力忽略，缺失能力隐藏对应功能。
+1. 契约版本化（`schema` 加 `capabilities`），后端按能力启用功能；未知能力忽略，缺失能力隐藏对应功能。构建后的刷新
+   （`mcpp.languageService.refreshAfterBuild` 的 `auto`）不再转发：0.0.18 起 mcppls 读取结果记录后自行刷新；`reload` 与
+   `restart` 仍转发对应动作。
 2. 后端不持有 mcppls 进程，只在调用时执行；mcppls 升级、重启、路径改变不影响 mcpp 插件，路径变化经 VS Code
    `extensions.onDidChange` 与 CLion 的插件状态监听重新定位。
 3. mcppls 被禁用或未安装时，mcpp 插件的构建、运行、测试、项目页面照常工作；面板显示"C++ 语言服务未启用"与启用或安装动作。
