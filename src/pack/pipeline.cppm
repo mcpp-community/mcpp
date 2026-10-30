@@ -894,6 +894,13 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
     if (!run.opts.systems.empty()) {
         auto t = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
         const bool loaded = t && t->loader_supplies_os();
+        // A polyglot file holds an image's single files of several systems; a
+        // program of one system has one (SPEC-014 §5.3).
+        if (run.opts.polyglot && !loaded)
+            return Refusal{2, std::format(
+                "--pkg-format polyglot holds the single files of an ok image for several systems, and "
+                "{} is a program of one system.\n  use: --pkg-format single-file, or --target openkal",
+                t ? t->str() : ctx.tc.targetTriple)};
         const bool tree = packs_tree(ctx, run.opts);
         const bool selfContained = run.opts.mode == mcpp::pack::Mode::BundleAll
                                 || run.opts.mode == mcpp::pack::Mode::Static;
@@ -947,7 +954,7 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
                     else if (!all) unbuilt.push_back(std::format("{}-{} ({})", system, arch, row));
                     if (row.empty() || !all) ++files;
                 }
-            if (files > 1 && !run.opts.output.empty())
+            if (files > 1 && !run.opts.output.empty() && !run.opts.polyglot)
                 return Refusal{2, std::format(
                     "--output names one file, and this pack makes {} single files (one per leg and "
                     "system).\n  use: -o <directory>/ (each file is named <name>-<version>-<os>-<arch>)",
@@ -1191,7 +1198,8 @@ std::optional<Refusal> stage_member(PackRun& run, GroupJob& g, MemberJob& m) {
                    ? (plan->archive == mcpp::pack::ArchiveKind::Zip ? std::string("zip") : std::string("tar"))
                : opts.format == mcpp::pack::Format::Dir ? std::string("dir")
                : opts.format == mcpp::pack::Format::Zip ? std::string("zip")
-               : opts.format == mcpp::pack::Format::SingleFile ? std::string("single-file")
+               : opts.format == mcpp::pack::Format::SingleFile
+                   ? std::string(opts.polyglot ? "polyglot" : "single-file")
                : opts.formatName;
     out.linkage = plan->linkageName;
     out.mode = std::string(mcpp::pack::mode_cli_name(opts.mode));

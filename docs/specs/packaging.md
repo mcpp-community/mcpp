@@ -4,11 +4,11 @@
 |---|---|
 | 规范编号 | SPEC-014 |
 | 标题 | 打包与分发:链接、闭包、容器三个维度与构建腿,腿的合并,暂存树与包元数据,运行覆盖、单文件、容器列表、签名、压缩、合并与分发描述 |
-| 状态 | 评审中 v2.0 |
-| 版本 | 2.0 |
-| 最后修改 | 2026-10-30 |
-| 对应实现 | mcpp >= 2026.10.30.1 |
-| 相关设计文档 | `.agents/docs/2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md`(§4、§13)、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`(§2–§7、§14)、`.agents/docs/2026-10-28-platforms-design.md`(§4.7)、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md`(§2.2、§2.6) |
+| 状态 | 评审中 v2.1 |
+| 版本 | 2.1 |
+| 最后修改 | 2026-10-31 |
+| 对应实现 | mcpp >= 2026.10.31.1 |
+| 相关设计文档 | `.agents/docs/2026-10-30-ecosystem-part2-ide-and-language-service-design.md`(§19.6)、`.agents/docs/2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md`(§4、§13)、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`(§2–§7、§14)、`.agents/docs/2026-10-28-platforms-design.md`(§4.7)、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md`(§2.2、§2.6) |
 | 相关 issue | mcpp#847、mcpp#849、mcpp#860 |
 | 相关规范 | [SPEC-007](build-plugins.md)(包格式提供者、artifact action)、[SPEC-011](concurrency.md)(原子发布)、[SPEC-013](platforms.md)(平台、运行器、载体)、[SPEC-015](target-sets.md)(目标集合与腿) |
 | 使用文档 | [10 —— 发布打包](../zh/10-pack-and-release.md) |
@@ -32,7 +32,7 @@ ok 映像是 x86_64 与 aarch64 上位置无关的 ELF,只导入 `kal_*`,运行�
 |---|---|---|---|
 | 链接 `--linkage` | `static`、`shared` | 库在程序里,还是在程序旁边 | 程序属性 |
 | 闭包 `--mode` | `system`、`vendored`、`self-contained` | 运行的机器要提供什么 | 打包属性 |
-| 容器 `--pkg-format` | `dir`、`tar`、`zip`、`single-file`,提供者的格式,或一棵树的容器列表(§5.4) | 交付成什么 | 打包属性 |
+| 容器 `--pkg-format` | `dir`、`tar`、`zip`、`single-file`、`polyglot`,提供者的格式,或一棵树的容器列表(§5.4) | 交付成什么 | 打包属性 |
 | 腿 `--target`(可重复) | 目标或目标集合(SPEC-015) | 一次打包覆盖哪些目标 | 打包属性 |
 | 系统 `--systems` | `<os>`、`<os>-<arch>`、`all` | 自带的运行器与单文件为哪些系统而做 | 打包属性 |
 
@@ -68,6 +68,7 @@ openkal 目标上 `static` 为一个 `.oke`、无 `.okso`,`shared` 为 `.oke` �
 | `tar` | 一个归档,单一顶层目录与归档同名;缺省压缩为 gzip(§5.1) |
 | `zip` | 一个 ZIP 归档,单一顶层目录;条目以 DEFLATE 压缩,`--compress none` 时存储(§5.1) |
 | `single-file` | 一个可执行文件(§5.2) |
+| `polyglot` | 映像的各系统单文件组装成的一个文件(§5.3) |
 | 其他名字 | 依赖图中的提供者以 `pack-format` 声明的格式(§6) |
 | 逗号分隔的列表 | 同一棵暂存树的各个容器,依次写出(§5.4) |
 
@@ -113,7 +114,9 @@ openkal 目标上 `static` 为一个 `.oke`、无 `.okso`,`shared` 为 `.oke` �
 | 平台未声明 `runner` 的映像,多条腿,且不是单文件 | 拒绝:多条映像腿合并为一个包只经平台的运行器;出路每腿一次打包,或 `--pkg-format single-file` |
 | 腿不是所选平台的目标 | 拒绝 |
 | 目标集合展开为空,或候选选到不同平台 | 拒绝(SPEC-015 §1) |
-| `--pkg-format` 列表含 `dir` 或 `single-file`;列表与命名一个文件的 `-o`;`mcpp run --pkg-format` 的列表 | 拒绝(§5.4) |
+| `--pkg-format` 列表含 `dir`、`single-file` 或 `polyglot`;列表与命名一个文件的 `-o`;`mcpp run --pkg-format` 的列表 | 拒绝(§5.4) |
+| `--pkg-format polyglot` 而目标不是 ok 映像(一个系统的程序) | 拒绝:其单文件只属于一个系统;出路 `--pkg-format single-file` 或 `--target openkal` |
+| `mcpp run --pkg-format` 为 `tar`、`zip` 或 `dir` | 拒绝:它们不是程序;出路 `single-file`、`polyglot` 或提供者的格式 |
 | `self-contained` 的树而格式只有 `okb` | 拒绝:okb v1 只含映像,运行器会被丢弃;出路 `--pkg-format tar,okb` |
 | 树的 `runs_on` 为空(`self` 与 `with` 都空,§4.7) | 拒绝 |
 | `--merge` 的输入缺少 `mcpp-package.json`,或名字、版本、平台、链接、模式不同 | 拒绝,写出不一致的字段 |
@@ -342,18 +345,38 @@ openkal 目标的单文件:载体携带一条腿的映像本身(映像不引用�
 系统(缺省为本机系统)各写一个文件 `<name>-<version>-<os>-<arch>`(Windows 上带 `.exe`),即覆盖"腿 × 系统"的最少
 载体文件;多于一个文件时 `-o` 只能是目录。`--systems all` 略去本 mcpp 不构建的行,各写为未覆盖。运行时不写盘。
 
-### 5.3 一个文件在多个系统上运行
+### 5.3 一个文件在多个系统上运行(`polyglot`)
 
-一个文件同时在多个系统与架构上运行(APE)不在本规范内(mcpp#849)。
+单文件的载体模型(SPEC-013 §11)有两种:`row`(§5.2,每个 `<os>-<arch>` 一个原生程序,运行时不写盘,能被直接 execve)
+为缺省;`polyglot` 以 `--pkg-format polyglot`(或 `[pack] format`)选择(mcpp#849)。
+
+1. **范围**:只用于 ok 映像的目标;它把 §5.2 的映像单文件(每条腿 × `--systems` 的每个系统;未给出 `--systems` 与
+   `[pack] systems` 时为 `all`)组装为一个文件 `<name>-<version>.exe`;不含 Windows 程序时为 `<name>-<version>`。
+   `runs_on.self` 为各单文件的 `<os>-<arch>` 之并;本 mcpp 不构建的行写为未覆盖(§4.7)。
+2. **布局**:至多一个 Windows 程序(PE32+,未签名)在前:其 DOS 头写为 `MZqFpD='` 开头的 shell 赋值,PE 头按文件对齐
+   后移,节表、`SizeOfHeaders`、符号表与调试目录中的文件偏移随之修正,PE 本身的字节不变;其余系统的单文件原样依次附在
+   PE 之后;最后是 POSIX 脚本。头部的脚本只读取文件末尾的脚本并求值。不含 Windows 程序时文件以 `#!/bin/sh` 开头,其余相同。
+3. **启动**:Windows 把文件作为 PE 启动。POSIX 上文件**不能**被直接 execve(ENOEXEC),经 `sh <文件>` 启动,或由把被拒绝的
+   文件作为脚本运行的 shell 启动。脚本按 `uname -s`、`uname -m` 选出本系统的程序;文件不含它时以状态 126 退出并写出所含的
+   系统。
+4. **缓存**:脚本把本系统的程序写入 §5.2 第 3、4 条的缓存目录 `<缓存根>/mcpp/single-file/<程序的 sha256>/`,规则相同:
+   临时名 `.<摘要>-<进程号>`、写完后写入 `.mcpp-complete`、不替换地改名到位、另一次运行先到位时使用它的结果、
+   `mcpp/` 与 `single-file/` 与摘要目录为符号链接或不属于当前用户时拒绝、`single-file/` 只对当前用户可写。写入后**必须**
+   以 `sha256sum`、`shasum -a 256` 或 `openssl dgst -sha256` 校验,不符或无校验工具时不放置。之后的运行直接执行缓存中的
+   程序。脚本自身失败时写出原因并以 127 退出。`row` 的"运行时不写盘"不变。
+5. **签名**(§7):各系统的程序在组装前各自签名(Windows 程序除外),组装后的文件最后签名;Authenticode 把证书附在文件末尾,
+   之前的字节与偏移不变,POSIX 上照常运行。
+6. **与其他选项**:`polyglot` 不进 `--pkg-format` 列表(§5.4);`--compress` 与 `--mode` 的规则同 `single-file`;
+   `mcpp run --pkg-format polyglot` 在 POSIX 上经 `sh` 启动它;`mcpp emit xpkg` 拒绝它(§8)。
 
 ### 5.4 容器列表
 
 `--pkg-format`(与 `[pack] format`)可以是逗号分隔的列表,如 `tar,okb`:一次构建、一棵暂存树,依次写出各容器。
 
-- 列表只能含读同一棵暂存树的容器:`tar`、`zip` 与提供者的格式;`dir`、`single-file` 不进列表。
+- 列表只能含读同一棵暂存树的容器:`tar`、`zip` 与提供者的格式;`dir`、`single-file`、`polyglot` 不进列表。
 - 列表时 `-o` 只能是目录(§1.4)。`--compress` 只作用于列表中的引擎容器;列表中没有引擎容器时拒绝。
 - `self-contained` 的树而列表只有 `okb` 时拒绝(okb v1 只含映像)。okb 含哪些架构由腿决定。
-- `mcpp run --pkg-format` 不接受列表。
+- `mcpp run --pkg-format` 不接受列表;`single-file` 与 `polyglot` 直接运行(`polyglot` 在 POSIX 上经 `sh`),`tar`、`zip`、`dir` 被拒绝。
 
 ## 6. 包格式提供者
 
@@ -371,7 +394,7 @@ openkal 目标的单文件:载体携带一条腿的映像本身(映像不引用�
 ## 7. 签名
 
 `[pack] sign = ["<prog>", ..., "{}"]` 在写容器之前对暂存树中角色为 `program`、`image`、`library`、`loader` 的每个
-文件与 Windows 启动器(`bin/<name>.exe`)运行一次,也对每个单文件运行一次,`{}` 为文件路径;一个包格式提供者或构建插件**可以**代替它签名。任一次失败
+文件与 Windows 启动器(`bin/<name>.exe`)运行一次,也对每个单文件运行一次,`{}` 为文件路径;`polyglot` 的顺序见 §5.3 第 5 条;一个包格式提供者或构建插件**可以**代替它签名。任一次失败
 使打包失败,写出 argv 与输出。签名后 `mcpp-package.json` 重新计算摘要。
 
 ## 8. 分发描述
@@ -396,6 +419,9 @@ openkal 目标的单文件:载体携带一条腿的映像本身(映像不引用�
   `.tar.xz`、`.tar`、`.zip`)在写出条目时被拒绝;配置以 xvm 注册程序(树为 `bin/<name>`,Windows 上为
   `bin/<name>.exe`;单腿原生包为程序所在的目录)。各系统的包把程序放在不同目录时(Windows 的程序在包根,POSIX
   的程序在 `bin/`,包根为便利脚本),条目按系统写出各自的目录(`bindir[os.host()]`)。
+
+- `polyglot` 文件(§5.3)被拒绝,消息写出它是 polyglot 文件与出路(树或单文件):条目安装一个系统的包,xlings 直接启动
+  所安装的程序,POSIX 系统不直接执行该文件。
 
 不带 `--package` 时 `mcpp emit xpkg` 照旧生成源码包的描述。
 
@@ -436,6 +462,10 @@ openkal 目标的单文件:载体携带一条腿的映像本身(映像不引用�
     `self-contained` 只配 `okb` 被拒绝(e2e 985)。
 12. 映像的单文件覆盖腿 × 系统;`--systems all` 写出未覆盖的组合;多个文件与一个文件的 `-o` 被拒绝(e2e 986)。
 13. `--no-universal`、`[pack] universal`、`[platform] universal` 按 §2 迁移;`mcpp pack --help` 分组(e2e 987)。
+14. `--target openkal --pkg-format polyglot` 写出一个 PE,经 `sh` 运行本机的程序;首次运行放置一个程序与
+    `.mcpp-complete`,之后不再放置;损坏的文件与作为链接的缓存目录以 127 拒绝;不含 Windows 时为可直接执行的脚本;
+    `mcpp run --pkg-format polyglot` 经 `sh` 运行;列表中的 `polyglot`、原生目标、`mcpp run --pkg-format tar`、
+    `mcpp emit xpkg` 被拒绝;有 wine 时同一文件作为 Windows 程序运行(e2e 992)。
 
 ## 变更记录
 
@@ -446,3 +476,4 @@ openkal 目标的单文件:载体携带一条腿的映像本身(映像不引用�
 | 1.2 | 2026-10-28 | 包名的模式后缀;单文件启动器自身失败的退出状态 127;`--merge` 取 `[pack] format`,合并后的目录以输出命名;`--linkage static` 改为 musl 的行;`mcpp emit xpkg --package` 的每系统程序目录、带命名空间的运行器依赖、以归档名定位的顶层目录与多余词的拒绝。 |
 | 1.3 | 2026-10-29 | mcpp 2026.10.29.1:§0 ok 映像与 Web;§1.2 单腿 `self-contained` 包的载体为映像架构的程序;§1.5、§5.2 WebAssembly 目标上的单文件被拒绝;§4.5 单腿 `self-contained` ok 映像包的 `systems` 记录其载体;§6 `--list-formats` 规划所选目标;§8 单腿包按其程序运行的系统与架构描述(系统的三元组,或 ok 映像的载体),程序不是任何系统的程序的被拒绝;判据 8、9(e2e 961、962)。 |
 | 2.0 | 2026-10-30 | mcpp 2026.10.30.1(设计 2026-10-29 §4、§13):§1.4 腿只是命令命名的目标(目标集合按 SPEC-015 展开),腿按目标的种类与平台合并,原生程序每腿一个包,`-o <目录>/`;删除通用包与 `[platform] universal`、`[pack] universal`、`--no-universal` 的作用(迁移见 §2、docs/51);§1.2、§4.2 声明运行器的平台的映像只有一种布局(树),M3 只属于单文件,`--mode static` 为静态树;§4.3 Windows 启动器为引擎的程序,不再生成 `.cmd`,启动器为派生文件;§4.4 `--systems` 接受 `<os>`、`<os>-<arch>`、`all` 与 `[pack] systems`;§4.6 合并重新生成启动器、合并 `runs_on`、树以平台名命名;§4.7 运行覆盖 `runs_on` 与 `Runs on`、未覆盖的摘要,空覆盖被拒绝;§5.2 单文件覆盖腿 × 系统;§5.4 容器列表;§7 签名含 Windows 启动器;§8 条目按 `runs_on` 描述;§9 `pkgFormats`、`runsOn`;判据 3、4、7、9 改写,判据 10–13(e2e 983–987)。 |
+| 2.1 | 2026-10-31 | mcpp 2026.10.31.1(设计 2026-10-30 part 2 §19.6):§5.3 载体模型 `row` 与 `polyglot`,`--pkg-format polyglot` 的范围、布局、启动、缓存、签名与其他选项;§1.3、§1.5、§5.4、§7、§8 相应条目;`mcpp run --pkg-format` 直接运行 `single-file` 与 `polyglot`、拒绝 `tar`、`zip`、`dir`;判据 14(e2e 992)。 |

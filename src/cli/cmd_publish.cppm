@@ -691,8 +691,8 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
     std::vector<std::string> formatList;
     if (auto v = pack_format_option(parsed)) {
         if (v->empty()) {
-            mcpp::ui::error("--pkg-format needs a value: tar | zip | dir | single-file | a format "
-                            "the resolved graph provides, or a list of containers (tar,okb)");
+            mcpp::ui::error("--pkg-format needs a value: tar | zip | dir | single-file | polyglot | a "
+                            "format the resolved graph provides, or a list of containers (tar,okb)");
             return 2;
         }
         formatList = split_list(*v);
@@ -708,11 +708,13 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
     }
     if (formatList.size() > 1) {
         for (auto const& f : formatList)
-            if (f == "dir" || f == "single-file") {
+            if (f == "dir" || f == "single-file" || f == "polyglot") {
                 mcpp::ui::error(std::format(
                     "--pkg-format lists the containers of one staged tree (tar, zip, a provider's "
                     "format), and {} is not one: {}.\n  use: --pkg-format {} alone",
-                    f, f == "dir" ? "it is the staged tree itself" : "it carries the tree in a program",
+                    f, f == "dir" ? "it is the staged tree itself"
+                       : f == "polyglot" ? "it carries the programs of several systems in one file"
+                       : "it carries the tree in a program",
                     f));
                 return 2;
             }
@@ -731,7 +733,12 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
         else if (formatText == "dir")         opts.format = mcpp::pack::Format::Dir;
         else if (formatText == "zip")         opts.format = mcpp::pack::Format::Zip;
         else if (formatText == "single-file") opts.format = mcpp::pack::Format::SingleFile;
-        else {
+        else if (formatText == "polyglot") {
+            // The single files of an image's legs and systems, in one file
+            // (SPEC-014 §5.3): every system unless `--systems` says which.
+            opts.format   = mcpp::pack::Format::SingleFile;
+            opts.polyglot = true;
+        } else {
             opts.format     = mcpp::pack::Format::Dispatched;
             opts.formatName = formatText;
         }
@@ -839,12 +846,14 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
             }
             if (std::ranges::find(opts.systems, word) == opts.systems.end()) opts.systems.push_back(word);
         }
+        if (opts.polyglot && opts.systems.empty()) opts.systems.push_back("all");
         opts.sign = packCfg.sign;
         // A single file carries what it runs: the machine provides nothing.
         if (opts.format == mcpp::pack::Format::SingleFile && opts.mode == mcpp::pack::Mode::None) {
-            mcpp::ui::error("--pkg-format single-file carries what the program runs, and --mode "
+            mcpp::ui::error(std::format("--pkg-format {} carries what the program runs, and --mode "
                             "system leaves it to the machine.\n"
-                            "  use: --mode vendored | self-contained | static");
+                            "  use: --mode vendored | self-contained | static",
+                            opts.polyglot ? "polyglot" : "single-file"));
             return 2;
         }
     }

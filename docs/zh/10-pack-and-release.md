@@ -57,7 +57,7 @@ glibc 专有行为（NSS 查询、`dlopen` 宿主插件）时的首选。
 |---|---|---|---|
 | 链接 | `--linkage` | 库在程序里，还是在程序旁边 | `static`、`shared` |
 | 闭包 | `--mode` | 运行该包的机器提供什么 | `system`、`vendored`（默认）、`self-contained` |
-| 容器 | `--pkg-format` | 交付成什么 | `tar`、`zip`、`dir`、`single-file`、某个包提供的格式，或一棵树的容器列表（`tar,okb`）；未给出时 Windows 程序为 `zip`，其余为 `tar` |
+| 容器 | `--pkg-format` | 交付成什么 | `tar`、`zip`、`dir`、`single-file`、`polyglot`、某个包提供的格式，或一棵树的容器列表（`tar,okb`）；未给出时 Windows 程序为 `zip`，其余为 `tar` |
 | 腿 | `--target`，可重复 | 打包覆盖哪些目标 | 目标与目标集合（`x86_64-openkal`、`openkal`、`linux-musl`） |
 | 系统 | `--systems` | 自带的运行器或单文件为哪些系统而做 | `linux`、`linux-aarch64`、`all` |
 
@@ -120,7 +120,9 @@ glibc 专有行为（NSS 查询、`dlopen` 宿主插件）时的首选。
 | 未声明 `runner` 的平台的多条映像腿，且不是单文件 | 每个目标打一次，或 `--pkg-format single-file` |
 | 平台目标之外的 `--target` | 平台服务的目标 |
 | 展开为空的目标集合，或其行选到不同平台 | 一个目标，或另一个集合 |
-| `--pkg-format` 列表含 `dir` 或 `single-file`；列表与命名一个文件的 `-o`；`mcpp run` 的列表 | 一个格式，或 `-o <目录>/` |
+| `--pkg-format` 列表含 `dir`、`single-file` 或 `polyglot`；列表与命名一个文件的 `-o`；`mcpp run` 的列表 | 一个格式，或 `-o <目录>/` |
+| 一个系统的程序（原生目标）使用 `--pkg-format polyglot` | `--pkg-format single-file`，或 `--target openkal` |
+| `mcpp run --pkg-format tar`、`zip` 或 `dir` | `--pkg-format single-file` 或 `polyglot`，或某个包提供的格式 |
 | 映像的 `--mode self-contained` 而格式只有 `okb` | `--pkg-format tar,okb`：okb 只含映像，运行器会被丢弃 |
 | 在任何地方都不能运行的树（`runs_on` 为空） | `--mode self-contained --systems <本 mcpp 构建的系统>` |
 | 对 `lib` 或 `shared` 目标使用被分派的格式 | 库的路线，[12](12-binary-distribution.md) |
@@ -769,6 +771,27 @@ ok 映像的文件为 `target/dist/<name>-<version>-<os>-<arch>`（Windows 上�
 WebAssembly 目标没有单文件：`--pkg-format single-file` 与 `--target wasm32-emscripten` 在任何编译之前被拒绝
 （2026.10.29.1+），它的页面是 `dist-web` 提供者的格式。
 
+### 一个文件对应多个系统（`polyglot`，mcpp 2026.10.31.1+）
+
+`--pkg-format polyglot` 把映像的每条腿与每个系统的单文件（未给 `--systems` 时为 `all`）组装成一个文件
+`target/dist/<name>-<version>.exe`：
+
+```bash
+mcpp pack --target openkal --pkg-format polyglot -o dist/
+# Runs on linux-x86_64, windows-x86_64, linux-aarch64, macos-aarch64
+```
+
+Windows 程序在前，其 DOS 头中是一段 POSIX shell 脚本；其余系统的程序原样附在其后。Windows 把该文件作为程序本身启动，
+Authenticode 可以签名它。Linux 与 macOS 经 shell 启动它：`sh pg-0.1.0.exe`，或在 shell 中输入 `./pg-0.1.0.exe`（shell
+把内核拒绝执行的文件作为脚本运行）；直接以 `execve` 启动它的程序得到 `Exec format error`。脚本把本系统的程序复制到单文件
+缓存 `<cache>/mcpp/single-file/<程序的 sha256>/`，规则与原生单文件相同（独立的临时名、`.mcpp-complete`、不替换的改名、
+只用本用户的目录），在缓存中校验其 sha256（`sha256sum`、`shasum` 或 `openssl`）后执行；之后的运行从缓存启动。文件中没有
+本系统的程序时以状态 126 退出，并写出它包含的系统。`--systems` 不含 `windows` 时文件是一个脚本（`#!/bin/sh`），系统可直接
+执行，文件名不带 `.exe`。
+
+`polyglot` 是供人下载运行的形式：它不进 `--pkg-format` 列表；原生目标被拒绝（其单文件只属于一个系统）；`mcpp run
+--pkg-format polyglot` 经 `sh` 启动它；`mcpp emit xpkg` 拒绝它（xlings 的条目安装一个系统的包，即树或单文件）。
+
 ### `mcpp-package.json`
 
 每棵暂存树都带 `mcpp-package.json`：包、它的平台、三个选择、腿与系统、启动方式，以及每个文件的角色与 sha256。
@@ -804,7 +827,8 @@ URL 与每个架构的 sha256。安装把归档的顶层目录移到位，并向
 （`none`）；单文件的载荷为 `zstd` 或 `none`；okb 中的映像以 stored 存放，使加载器原地映射。
 
 `[pack] sign = ["<prog>", …, "{}"]` 在写容器之前对暂存树中的每个程序、映像、库、加载器与 Windows 启动器各运行一次，也对每个单文件
-运行一次；`{}` 为该文件。失败使打包停止，写出 argv 与其输出；`mcpp-package.json` 写出签名后文件的摘要。
+运行一次；`{}` 为该文件。polyglot 文件的各程序在组装前逐个签名（Windows 程序除外），组装后的文件最后签名：Authenticode
+把证书附在文件末尾，之前的字节与偏移不变。失败使打包停止，写出 argv 与其输出；`mcpp-package.json` 写出签名后文件的摘要。
 
 ## 配置项
 
@@ -846,6 +870,7 @@ force_bundle = ["libfoo.so"]        # bundle even if matched by the PEP 600 list
 
 - `.deb`、`.rpm`、AppImage、`.msi` 等分发格式经 `--pkg-format <name>` 由包提供；引擎提供 `tar`、`dir`、
   `zip` 与 `single-file`。
-- 不产出在多个系统上运行的单个文件；一个单文件包服务一个系统与一个架构。
+- polyglot 文件只包含本 mcpp 能构建单文件的系统与架构（今天为 Linux x86_64 与 aarch64、macOS aarch64、Windows x86_64），
+  且只用于 ok 映像；POSIX 系统经 shell 启动它。
 - WebAssembly 包既不是单文件，也不是 xlings 条目；它的页面是提供者的格式（`dist-web`）。
 - ELF 程序的闭包由其动态链接器解析，因此不能在 Windows 上打包 Linux 程序。

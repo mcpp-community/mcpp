@@ -115,20 +115,20 @@ TEST(PackStageTree, TheOrderOfADirectoryWalkIsNotAPromise) {
               read_file(mcpp::pack::stage_manifest_path(b.path / "s")));
 }
 
-TEST(PackStageTree, TheEngineOwnsFourFormatNames) {
-    // `tar`, `zip`, `dir` and `single-file` are the shapes `mcpp pack` owns
+TEST(PackStageTree, TheEngineOwnsFiveFormatNames) {
+    // `tar`, `zip`, `dir`, `single-file` and `polyglot` are the shapes `mcpp pack` owns
     // (SPEC-014 §1.3); every other value of `--pkg-format` is a name a
     // package provides. The list lives beside the staged tree because two
     // layers need the same answer -- the listing and the refusal of an
     // unknown name, and the declaration check, which warns of a package that
     // claims one of them and would therefore be silently unreachable.
-    for (auto name : { "tar", "zip", "dir", "single-file" })
+    for (auto name : { "tar", "zip", "dir", "single-file", "polyglot" })
         EXPECT_TRUE(mcpp::pack::is_builtin_pack_format(name)) << name;
     EXPECT_FALSE(mcpp::pack::is_builtin_pack_format("appimage"));
     EXPECT_FALSE(mcpp::pack::is_builtin_pack_format("okb"));
     EXPECT_FALSE(mcpp::pack::is_builtin_pack_format("msi"));
     EXPECT_FALSE(mcpp::pack::is_builtin_pack_format(""));
-    EXPECT_EQ(mcpp::pack::kBuiltinPackFormats.size(), 4u);
+    EXPECT_EQ(mcpp::pack::kBuiltinPackFormats.size(), 5u);
 }
 
 // ── #630 §3: the `closure` field ─────────────────────────────────────────

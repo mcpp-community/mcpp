@@ -15,6 +15,7 @@ import std;
 import mcpp.libs.json;
 import mcpp.pack.compress;
 import mcpp.pack.zip;
+import mcpp.pack.polyglot;      // a polyglot file is refused by name (§8)
 import mcpp.toolchain.triple;   // the system of a package's leg (§8)
 import mcpplibs.os;
 
@@ -902,10 +903,24 @@ std::expected<fs::path, std::string> unpack(const fs::path& package, const fs::p
     using mcpp::pack::compress::Algorithm;
     const bool zip = name.ends_with(".zip");
     const std::optional<Algorithm> a = mcpp::pack::compress::tar_algorithm(name);
-    if (!zip && !a)
+    if (!zip && !a) {
+        // A POLYGLOT FILE (SPEC-014 §5.3, §8) is a download for a person: an
+        // entry installs one system's package, and xlings starts what it
+        // installs directly, which a POSIX system does not do with this file.
+        std::string head(16, '\0');
+        std::ifstream in(package, std::ios::binary);
+        in.read(head.data(), static_cast<std::streamsize>(head.size()));
+        head.resize(static_cast<std::size_t>(std::max<std::streamsize>(in.gcount(), 0)));
+        if (mcpp::pack::polyglot::is_polyglot(head))
+            return std::unexpected(std::format(
+                "'{}' is a polyglot file, a download that holds the programs of several systems; an "
+                "entry installs one system's package, and a POSIX system does not execute this file "
+                "directly.\n  use: the tree (mcpp pack --target openkal) or the single files "
+                "(--pkg-format single-file)", name));
         return std::unexpected(std::format(
             "'{}' is not a package this command writes (.zip, .tar, .tar.gz, .tar.zst, .tar.xz, "
             "or a directory)", name));
+    }
     if (fs::exists(fs::symlink_status(into, ec)) && !(fs::is_directory(fs::symlink_status(into, ec))
                                                       && fs::is_empty(into, ec)))
         return std::unexpected(std::format("'{}' is not an empty directory to unpack {} into",

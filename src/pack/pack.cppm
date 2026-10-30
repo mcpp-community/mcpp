@@ -47,6 +47,7 @@ import mcpp.pack.relocate;
 import mcpp.pack.stage_tree;
 import mcpp.pack.strip;
 import mcpp.pack.zip;
+import mcpp.pack.polyglot;
 import mcpp.pack.compress;
 import mcpp.pack.distribution;
 import mcpp.modgraph.glob;     // [pack] include / exclude
@@ -160,6 +161,9 @@ struct Options {
     // was built against becomes the C library floor the package states.
     bool                            baseStated   = false;
     Format                          format       = Format::Tar;
+    // `--pkg-format polyglot` (SPEC-014 §5.3): the single files of an image's
+    // legs and systems (`format` is `SingleFile`), assembled into one file.
+    bool                            polyglot     = false;
     // The `--format` value when `format == Dispatched`. Empty otherwise.
     //
     // Not validated by the CLI, and deliberately: the set of valid values is a
@@ -3478,10 +3482,16 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
     auto output_for = [&](std::string_view qualifier, std::string_view suffix) {
         if (plan.opts.output.empty())
             return (plan.opts.outputDir.empty() ? distDir : plan.opts.outputDir)
-                 / std::format("{}-{}-{}{}", plan.packageName, plan.packageVersion, qualifier, suffix);
+                 / std::format("{}-{}{}{}{}", plan.packageName, plan.packageVersion,
+                               qualifier.empty() ? "" : "-", qualifier, suffix);
         if (!plan.opts.output.has_parent_path()) return distDir / plan.opts.output;
         return plan.opts.output;
     };
+    // A polyglot file's programs are written beside the build, not as the
+    // pack's products: the file is (SPEC-014 §5.3).
+    const auto polyglotDir = plan.projectRoot / "target" / "polyglot"
+                           / fs::path(plan.binaryName).stem().string();
+    std::vector<polyglot::Program> carried;
     std::vector<fs::path> written;
     if (plan.targetIsLoaded) {
         // THE IMAGE, OR THE IMAGES AS ONE STORED ZIP: what the carrier's
@@ -3531,7 +3541,7 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
             return std::unexpected(Error{std::string(
                 "--systems names no system this mcpp makes a single file for, of the legs' "
                 "architectures")});
-        if (files.size() > 1 && !plan.opts.output.empty())
+        if (files.size() > 1 && !plan.opts.output.empty() && !plan.opts.polyglot)
             return std::unexpected(Error{std::format(
                 "--output names one file, and this pack makes {} single files (one per leg and "
                 "system).\n  use: -o <directory>/ (each file is named <name>-<version>-<os>-<arch>)",
@@ -3545,13 +3555,63 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
             if (!fs::is_regular_file(program, ec))
                 return std::unexpected(Error{std::format("the carrier built for {}-{} has no {}",
                                                          f.system, f.arch, program.filename().string())});
+            if (plan.opts.polyglot) {
+                std::ifstream in(program, std::ios::binary);
+                std::string bytes{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+                if (!in && !in.eof())
+                    return std::unexpected(Error{std::format("cannot read {}", program.string())});
+                const auto kept = polyglotDir / std::format("{}-{}-{}{}", stem, f.system, f.arch, suffix);
+                fs::create_directories(polyglotDir, ec);
+                fs::copy_file(program, kept, fs::copy_options::overwrite_existing, ec);
+                // Each system's program is signed as the row's file is, before
+                // the file is assembled; the Windows program is not, since the
+                // assembled file is it and is signed whole (SPEC-014 §7).
+                if (f.system != "windows" && !plan.opts.sign.empty()) {
+                    std::vector<std::string> argv;
+                    for (auto const& a : plan.opts.sign) argv.push_back(a == "{}" ? kept.string() : a);
+                    int spawnError = 0;
+                    auto r = mcpp::run::capture_exec(argv, {}, {}, &spawnError);
+                    if (spawnError != 0 || r.exit_code != 0)
+                        return std::unexpected(Error{std::format("[pack] sign failed on {} (exit {}): {}\n{}",
+                                                                 kept.string(), r.exit_code,
+                                                                 mcpp::build::command_line::display(argv), r.output)});
+                    std::ifstream again(kept, std::ios::binary);
+                    bytes.assign(std::istreambuf_iterator<char>(again), std::istreambuf_iterator<char>());
+                }
+                const auto digest = d::sha256(bytes);
+                carried.push_back({ f.system, f.arch, std::move(bytes), digest });
+                continue;
+            }
             const auto out = output_for(std::format("{}-{}", f.system, f.arch), suffix);
             fs::create_directories(out.parent_path(), ec);
             fs::copy_file(program, out, fs::copy_options::overwrite_existing, ec);
             if (ec) return std::unexpected(Error{std::format("cannot write {}: {}", out.string(), ec.message())});
             written.push_back(out);
         }
+        if (plan.opts.polyglot) {
+            const auto stem = fs::path(plan.binaryName).stem().string();
+            auto file = polyglot::assemble(stem, carried);
+            if (!file) return std::unexpected(Error{file.error()});
+            const bool windows = std::ranges::any_of(carried, [](auto const& p) { return p.system == "windows"; });
+            const auto out = output_for({}, windows ? ".exe" : "");
+            fs::create_directories(out.parent_path(), ec);
+            {
+                std::ofstream o(out, std::ios::binary | std::ios::trunc);
+                o.write(file->data(), static_cast<std::streamsize>(file->size()));
+                if (!o) return std::unexpected(Error{std::format("cannot write {}", out.string())});
+            }
+            fs::permissions(out, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
+                            fs::perm_options::add, ec);
+            std::string held;
+            for (auto const& p : carried) held += (held.empty() ? "" : ", ") + std::format("{}-{}", p.system, p.arch);
+            mcpp::ui::info("Assembled", std::format("{} programs into one file ({})", carried.size(), held));
+            written.push_back(out);
+        }
     } else {
+        if (plan.opts.polyglot)
+            return std::unexpected(Error{std::string(
+                "--pkg-format polyglot holds the single files of an ok image for several systems, and "
+                "this target is a program of one system.\n  use: --pkg-format single-file")});
         // THE ENGINE'S LAUNCHER CARRYING THE TREE. The entry: the program a
         // person runs from the unpacked tree -- a Windows program at the root,
         // a self-contained Linux tree's wrapper at the root, `bin/<name>`

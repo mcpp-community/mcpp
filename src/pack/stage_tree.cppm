@@ -215,7 +215,7 @@ bool write_stage_manifest(const std::filesystem::path& stagingRoot,
 // parser decides whether a value is a built-in or a dispatch, and the
 // declaration check refuses a package that claims one of them. A package
 // claiming `tar` would be silently unreachable, since the built-in wins.
-constexpr std::array<std::string_view, 4> kBuiltinPackFormats{"tar", "zip", "dir", "single-file"};
+constexpr std::array<std::string_view, 5> kBuiltinPackFormats{"tar", "zip", "dir", "single-file", "polyglot"};
 
 bool is_builtin_pack_format(std::string_view name) {
     return std::ranges::find(kBuiltinPackFormats, name) != kBuiltinPackFormats.end();

@@ -3453,6 +3453,54 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // `build_and_pack` naming what is available, exactly as `mcpp pack
     // --format bogus` is), the build, the staged tree, which action claimed
     // the request.
+    // A SINGLE FILE IS A PROGRAM OF THIS SYSTEM, RUN AS IT IS (SPEC-014 §5.2,
+    // §5.3): packed by the engine's own containers, not dispatched to a
+    // provider, and started directly -- its runner, if the target has one, is
+    // inside it. A polyglot file is started by `sh` on a POSIX system, which
+    // does not execute it (ENOEXEC). The containers that are not programs are
+    // not run.
+    if (format == "single-file" || format == "polyglot") {
+        mcpp::pack::Options popts;
+        popts.targetTriple = target;
+        popts.profile      = profile;
+        popts.features     = features;
+        popts.format       = mcpp::pack::Format::SingleFile;
+        popts.formatStated = true;
+        popts.polyglot     = format == "polyglot";
+        popts.compression.algorithm = mcpp::pack::compress::Algorithm::Zstd;
+        if (popts.polyglot) popts.systems = {"all"};
+        auto outcome = mcpp::pack::build_and_pack(
+            std::move(popts), /*modeFromUser=*/false, targetName.value_or(std::string{}));
+        if (outcome.rc != 0) return kRunBuildFailed;
+        if (outcome.artifacts.size() != 1) {
+            std::println(stderr, "error: --pkg-format {} produced {} files; mcpp run runs one", format,
+                         outcome.artifacts.size());
+            return 1;
+        }
+        const auto file = outcome.artifacts.front();
+        std::vector<std::string> argv;
+        if (format == "polyglot" && !mcpplibs::os::is_windows) argv.push_back("sh");
+        argv.push_back(file.string());
+        for (auto const& a : passthrough) argv.push_back(a);
+        yield_terminal();
+        mcpp::ui::status("Running", std::format("`{}{}`", argv.front() == "sh" ? "sh " : "",
+            mcpp::ui::shorten_path(file, mcpp::fetcher::make_path_ctx(nullptr, std::filesystem::current_path()))));
+        run_separator();
+        int spawnErr = 0;
+        const int rc = mcpp::run::run_foreground(argv, {}, &spawnErr);
+        if (spawnErr != 0) {
+            std::println(stderr, "error: {}",
+                         mcpp::build::runner_lookup::spawn_failed_message(argv.front(), spawnErr));
+            return launcher_status(spawnErr);
+        }
+        return rc;
+    }
+    if (format == "tar" || format == "zip" || format == "dir") {
+        std::println(stderr,
+            "error: mcpp run --pkg-format runs a program, and {} is a container of one.\n"
+            "       use: --pkg-format single-file | polyglot, or a format a package provides", format);
+        return 2;
+    }
     if (!format.empty()) {
         mcpp::pack::Options popts;
         popts.targetTriple = target;

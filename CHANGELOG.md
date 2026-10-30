@@ -20,6 +20,19 @@
   runs mcpp for a project: in its root, by the name on `PATH` or a set path,
   with `XLINGS_PROJECT_DIR` removed (design 2026-10-30 part 2 §4.0).
 
+- **One file for several systems: `--pkg-format polyglot`** (SPEC-014 §5.3,
+  #849). An ok image's single files of every leg and system are assembled into
+  one `<name>-<version>.exe`: the Windows program leads with a POSIX shell
+  script in its DOS header, the other systems' programs follow unchanged.
+  Windows starts it as itself (Authenticode signs it); Linux and macOS start it
+  through `sh`, which copies the system's program to the single-file cache once,
+  checks its sha256 and executes it. `mcpp run --pkg-format polyglot` starts it
+  through `sh`; `mcpp emit xpkg` refuses it; it is not in a `--pkg-format` list
+  (e2e 992).
+- **`mcpp run --pkg-format single-file`** runs the single file directly; it was
+  refused as an unknown format. `tar`, `zip` and `dir` are refused as containers
+  that are not programs.
+
 ### Fixed
 
 - **A workspace's lock entry is keyed the same way whatever members a command

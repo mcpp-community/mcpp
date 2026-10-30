@@ -63,7 +63,7 @@ A pack is decided by three independent choices and a set of legs (2026.10.27.1+)
 |---|---|---|---|
 | linkage | `--linkage` | are the libraries inside the program or beside it | `static`, `shared` |
 | closure | `--mode` | what the machine that runs the package provides | `system`, `vendored` (default), `self-contained` |
-| container | `--pkg-format` | what is delivered | `tar`, `zip`, `dir`, `single-file`, a format a package provides, or a list of containers of one tree (`tar,okb`); unstated: `zip` for a Windows program, `tar` elsewhere |
+| container | `--pkg-format` | what is delivered | `tar`, `zip`, `dir`, `single-file`, `polyglot`, a format a package provides, or a list of containers of one tree (`tar,okb`); unstated: `zip` for a Windows program, `tar` elsewhere |
 | legs | `--target`, repeatable | which targets the pack covers | targets and target sets (`x86_64-openkal`, `openkal`, `linux-musl`) |
 | systems | `--systems` | which systems a self-contained package's runners, or single files, are for | `linux`, `linux-aarch64`, `all` |
 
@@ -135,7 +135,9 @@ choices:
 | several images of a platform that states no `runner`, not as single files | one pack per target, or `--pkg-format single-file` |
 | `--target` outside the platform's targets | a target the platform serves |
 | a target set that expands to nothing, or whose rows select different platforms | a target, or another set |
-| `dir` or `single-file` in a `--pkg-format` list; a list with `-o` naming one file; a list on `mcpp run` | one format, or `-o <directory>/` |
+| `dir`, `single-file` or `polyglot` in a `--pkg-format` list; a list with `-o` naming one file; a list on `mcpp run` | one format, or `-o <directory>/` |
+| `--pkg-format polyglot` for a program of one system (a native target) | `--pkg-format single-file`, or `--target openkal` |
+| `mcpp run --pkg-format tar`, `zip` or `dir` | `--pkg-format single-file` or `polyglot`, or a format a package provides |
 | `--mode self-contained` of an image with `okb` as the only format | `--pkg-format tar,okb`: okb holds the images alone, and the runner would be dropped |
 | a tree that runs nowhere (`runs_on` empty) | `--mode self-contained --systems <a system this mcpp builds for>` |
 | a dispatched format for a `lib` or `shared` target | the library route, [12](12-binary-distribution.md) |
@@ -910,6 +912,36 @@ A WebAssembly target has no single file: `--pkg-format single-file` with
 `--target wasm32-emscripten` is refused before anything compiles
 (2026.10.29.1+), and its page is the `dist-web` provider's format.
 
+### One file for several systems (`polyglot`, mcpp 2026.10.31.1+)
+
+`--pkg-format polyglot` assembles an image's single files of every leg and
+system (`--systems all` unless `--systems` says otherwise) into one file,
+`target/dist/<name>-<version>.exe`:
+
+```bash
+mcpp pack --target openkal --pkg-format polyglot -o dist/
+# Runs on linux-x86_64, windows-x86_64, linux-aarch64, macos-aarch64
+```
+
+The Windows program leads, with a POSIX shell script in its DOS header; the
+other systems' programs follow it unchanged. Windows starts the file as the
+program it is, and Authenticode signs it. A Linux or macOS system starts it
+through a shell — `sh pg-0.1.0.exe`, or `./pg-0.1.0.exe` typed in a shell, which
+runs a file the kernel refuses as a script; a program that calls `execve` on it
+directly gets `Exec format error`. The script copies this system's program to
+the single-file cache, `<cache>/mcpp/single-file/<sha256 of the program>/`,
+with the rules of a native single file (a name of its own, `.mcpp-complete`,
+rename without replacing, the user's directories only), checks its sha256 there
+(`sha256sum`, `shasum` or `openssl`), and executes it; later runs start it from
+the cache. A system the file holds no program for exits with status 126 and
+names the systems it holds. Without `windows` among `--systems` the file is a
+script (`#!/bin/sh`) the system executes directly, named without `.exe`.
+
+`polyglot` is for a download a person runs. It is not in a `--pkg-format` list,
+a native target is refused (its single file is one system's), `mcpp run
+--pkg-format polyglot` starts it through `sh`, and `mcpp emit xpkg` refuses it:
+an xlings entry installs one system's package, the tree or the single files.
+
 ### `mcpp-package.json`
 
 Every staged tree carries `mcpp-package.json`: the package, its platform, its
@@ -964,7 +996,10 @@ inside an okb are stored so that the loader maps them in place.
 `[pack] sign = ["<prog>", …, "{}"]` runs once on each program, image, library
 and loader of the staged tree and on the Windows launcher before the container
 is written, and on each
-single file; `{}` is the file. A failure stops the pack, naming the argv and its
+single file; `{}` is the file. A polyglot file's programs are signed one by one
+before they are assembled, except the Windows program, and the assembled file
+is signed last: Authenticode appends its certificate, which leaves every byte
+and offset before it as it was. A failure stops the pack, naming the argv and its
 output, and `mcpp-package.json` states the digests of the signed files.
 
 ## Configuration
@@ -1012,8 +1047,9 @@ The `static` mode additionally requires a musl toolchain configured under
 - Distribution formats such as `.deb`, `.rpm`, AppImage and `.msi` come from
   packages through `--pkg-format <name>`; the engine provides `tar`, `dir`, `zip`
   and `single-file`.
-- One file that runs on several systems is not produced; a single-file package
-  serves one system and one architecture.
+- A polyglot file holds the systems and architectures this mcpp builds a
+  single file for (today Linux x86_64 and aarch64, macOS aarch64, Windows
+  x86_64), and only for ok images; a POSIX system starts it through a shell.
 - A WebAssembly package is neither a single file nor an xlings entry; its page is
   a provider's format (`dist-web`).
 - An ELF program's closure is resolved by running its dynamic linker, so a Linux

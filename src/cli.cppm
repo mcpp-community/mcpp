@@ -126,7 +126,7 @@ void print_pack_usage() {
     std::println("                           repeatable: the legs (default: [pack] targets, else [build] target)");
     std::println("  --mode <M>               What the machine provides: system | vendored (default) |");
     std::println("                           self-contained | static (= --linkage static --mode self-contained)");
-    std::println("  --pkg-format <F>         tar | zip | dir | single-file | a format the resolved graph provides");
+    std::println("  --pkg-format <F>         tar | zip | dir | single-file | polyglot | a format the resolved graph provides");
     std::println("                           (okb, appimage, msi); a list of containers of one tree: tar,okb");
     std::println("  --systems <S>            The runners a self-contained package carries, or the systems single");
     std::println("                           files are made for: linux | linux-aarch64 | all (comma-separated)");
@@ -978,7 +978,7 @@ int run(int argc, char** argv) {
             // it; an unknown value names what IS available rather than a
             // constant, so the help text does not have to enumerate them.
             .option(cl::Option("pkg-format").takes_value().value_name("FORMAT")
-                .help("The package format: tar | zip | dir | single-file | any format the "
+                .help("The package format: tar | zip | dir | single-file | polyglot | any format the "
                       "resolved graph provides (e.g. appimage, msi, okb), or a list of containers "
                       "of one tree (tar,okb); default: zip for a Windows program, tar elsewhere"))
             .option(cl::Option("format").takes_value()
