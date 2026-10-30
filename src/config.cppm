@@ -458,9 +458,15 @@ artifact = { GLOBAL = "https://github.com/xlings-res/mcpp-index", CN = "https://
 # Bounds `mcpp search` and the age shown by `mcpp index status`. It is NOT
 # what decides whether a build refreshes the index — see [index] auto_refresh.
 search_ttl_seconds = 3600
+# After a build, at most once a day, the build cache's entries (packages,
+# std modules, host tools) unused for this many days are removed. 0 keeps all.
+unused_days = 30
 
 [build]
 default_jobs    = 0
+# After a build, at most once a day, the build directories of this project that
+# no configuration used for this many days are removed. 0 keeps all.
+keep_days       = 3
 # Publish each project's compile database at this path under its root, for a
 # project whose mcpp.toml does not say ([build] compile_commands). Unset: the
 # database stays in the build directory (target/<triple>/<fp>/).

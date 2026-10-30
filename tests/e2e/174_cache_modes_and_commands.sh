@@ -350,9 +350,9 @@ rc=0
     cat gcsize.log
     exit 1
 }
-grep -q 'package entries now' gcsize.log || {
+grep -q 'package and tool entries now' gcsize.log || {
     cat gcsize.log
-    echo "FAIL: gc summary must scope its figure to package entries"
+    echo "FAIL: gc summary must scope its figure to package and tool entries"
     exit 1
 }
 

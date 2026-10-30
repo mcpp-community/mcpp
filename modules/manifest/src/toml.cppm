@@ -1260,6 +1260,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 pr.trimPaths = it->second.as_bool();
                 pr.trimPathsDeclared = true;
             }
+            if (auto it = tt.find("split_debuginfo"); it != tt.end() && it->second.is_string()) {
+                pr.splitDebuginfo = it->second.as_string();
+                pr.splitDebuginfoDeclared = true;
+            }
             auto read_list = [&](const char* key, std::vector<std::string>& out) {
                 if (auto it = tt.find(key); it != tt.end() && it->second.is_array())
                     for (auto& v : it->second.as_array())

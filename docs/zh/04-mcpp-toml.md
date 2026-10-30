@@ -1496,6 +1496,7 @@ lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gc
 strip    = true           # -s at link time
 ndebug     = true         # 整个图的每个单元 -DNDEBUG(release/dist 默认开)
 trim_paths = true         # 按单元的 -ffile-prefix-map(release/dist 默认开)
+split_debuginfo = "off"   # "unpacked":调试信息留在对象旁(dev/debug 默认)
 # passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
@@ -1529,10 +1530,23 @@ ldflags  = []
   且常借 `__FILE__` 找到它的夹具。带调试信息的构建还在输出旁写出 `source-map.gdbinit` 与 `source-map.lldbinit`,
   供调试器把路径映射回来。cl.exe 没有文档化的等价开关,构建会报告一次。在 profile 下写
   `ndebug = false` 或 `trim_paths = false` 可保留以前的产物;升级后第一次发布档构建会提示一次。
+- **调试信息(2026.10.31.3+)。** 带调试信息、目标为 ELF 时(Linux、交叉 Linux 目标、ok 映像),
+  编译与链接都压缩调试信息(`-gz=zlib`;ok 映像的 `ld.lld` 链接为 `--compress-debug-sections=zlib`)。
+  `split_debuginfo = "unpacked"` 是 `dev` 与 `debug` 的默认值:在构建目录中编译的单元——本工程、其工作空间成员
+  以及 `path`、`git` 依赖的单元——的调试信息留在对象旁(`-gsplit-dwarf`),每个程序只携带指向它们的骨架,
+  测试程序因此不再复制其闭包的调试信息。索引包的单元保留在对象内:它们的对象进入构建缓存,由其他工程取用。
+  它只在 `trim_paths` 关闭时生效,因为调试器经骨架所记的构建目录查找单元的 `.dwo`。`"off"` 把全部调试信息
+  留在产物中。Mach-O(debug map)、PDB、MinGW、WebAssembly 与裸机目标不变。在包的 flags 中写 `-gz=none`
+  可关闭压缩。
 - **每个 profile 拥有自己的构建目录。** 解析出的 profile 旋钮参与
   指纹，所以 `target/<triple>/` 下每个 profile 各有一个哈希目录，在
   它们之间切换是增量的，不是一次完整重建。这也意味着磁盘开销随实际
   用到的 profile 数量而增长。
+- **一个配置在时间上只占一个目录(2026.10.31.3+)。** 指纹中开发者在其间切换的部分——编译器族、目标、
+  标准库族、语言标准与配置级选项——是目录的谱系;编译器版本、mcpp 版本、std 模块与运行时契约随时间演进。
+  同一谱系的新指纹接管该谱系最近使用的目录,由 ninja 重建命令变化的边:编译选项不变的 mcpp 升级之后,
+  没有单元被重新编译。编译器构建不同的前驱则被删除(其中的对象不可复用)。构建或测试成功后,每天至多一次,
+  删除 `[build] keep_days` 天(config.toml;默认 3,`0` 全部保留)内没有配置使用过的目录。
 
 ### 2.10 `[build] cache` —— 依赖的全局构建缓存
 
@@ -1576,9 +1590,9 @@ mcpp cache dir                      # where the cache lives
 mcpp cache list [--json]            # entries, sizes, last use
 mcpp cache info <pkg>@<ver>         # one entry, including the key inputs it was built with
 mcpp cache verify                   # every entry's file list against the disk
-mcpp cache gc --max-size 5GiB       # LRU-collect package entries to a budget
+mcpp cache gc --max-size 5GiB       # LRU-collect package and host tool entries to a budget
 mcpp cache gc --older-than 30d      # ...or by how long since they were last used
-mcpp cache clean [--deps|--std|--all|--legacy]
+mcpp cache clean [--deps|--std|--tools|--all|--legacy]
 ```
 
 磁盘上的条目布局是版本化的。一个改变了它的 mcpp 发布版，会一次性

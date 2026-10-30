@@ -381,6 +381,22 @@ std::expected<StageOutcome, StageError> stage_file(const std::filesystem::path& 
             && (same_content(src, dst)
                 || (opts.verify == Verify::Size && !std::ifstream(dst, std::ios::binary).is_open()));
         if (equivalent) {
+            // A shared library staged as a copy -- by a release before
+            // placements were linked, or where a link once failed -- is placed
+            // again by a link, so a library every member's directory loads is
+            // one file and not one per member (mcpp#874: 650 MB of copies
+            // across 27 product directories). A link that cannot be made
+            // leaves the equal copy where it is.
+            std::error_code qec;
+            if (links_on_placement(src) && !std::filesystem::equivalent(src, dst, qec) && !qec) {
+                auto tmp = temp_sibling(dst);
+                std::error_code lec, rec;
+                std::filesystem::create_hard_link(src, tmp, lec);
+                if (!lec) {
+                    std::filesystem::rename(tmp, dst, rec);
+                    if (rec) std::filesystem::remove(tmp, rec);
+                }
+            }
             // Timestamps left untouched on purpose — see module comment.
             return StageOutcome{.copied = false};
         }

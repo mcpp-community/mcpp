@@ -865,6 +865,12 @@ export struct BuildOverrides {
     // not apply to them.
     std::map<std::string, std::string> resolution_pins;
     bool build_program_graph = false;
+    // Where the build programs of this chain live: the host directory of the
+    // build that started it. Empty = this build's own. A build programs' graph
+    // whose libraries have build programs of their own builds them beside its
+    // own group there, and not in a copy of the host workspace under its own
+    // `target/` (mcpp#874).
+    std::filesystem::path host_programs_root;
     // The build targets the machine doing it: a sub-build of build programs
     // or of a host tool. Neither `[build] target` nor the configured default
     // target applies, since both name the target of the build that asked.

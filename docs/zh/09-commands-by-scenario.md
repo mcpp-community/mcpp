@@ -27,11 +27,16 @@
 
 | 存储 | 作用域 | 增长时机 | 清空方式 |
 |---|---|---|---|
-| `target/<三元组>/<指纹>/` | 单个工程 | 一个配置指纹变化，开出一个新目录 | `mcpp clean`、`mcpp clean --stale` |
-| 构建缓存（`mcpp cache dir`） | 整台机器 | 任何工程编译一个依赖、一个 `std` 模块，或构建一个 host 工具，或编译其构建程序 import 的 `mcpp` 模块 | `mcpp cache gc`、`mcpp cache prune`、`mcpp cache clean` |
+| `target/<三元组>/<指纹>/`、`target/.build-mcpp/{out,host}/` | 单个工程 | 一个配置指纹变化，开出一个新目录；构建程序的输出与构建程序按配置保存 | `mcpp clean`、`mcpp clean --stale` |
+| 构建缓存（`mcpp cache dir`） | 整台机器 | 任何工程编译一个依赖、一个 `std` 模块，或构建一个 host 工具，或编译其构建程序 import 的 `mcpp` 模块 | 构建后回收 `[cache] unused_days` 内未使用的条目；`mcpp cache gc`、`mcpp cache prune`、`mcpp cache clean` |
 
 `mcpp clean` 整个删掉 `target/`，下次构建重编一切。`mcpp clean --stale`
-只删已无构建记录使用的指纹目录，在用的配置保留：
+只删已无构建记录使用的指纹目录，在用的配置保留。每个配置目录在 `uses.list` 中
+写明它使用的生成源码目录（`.build-mcpp/out/<hash>`）与构建程序组
+（`.build-mcpp/host/<group>`）；`--stale` 同时删除保留的配置都未写明的这两类目录
+（2026.10.31.3+）。一个配置的新指纹接管其谱系的目录，不另开目录（docs/04 §2.9）；构建或测试成功后，每天至多
+一次，`--stale` 以 `[build] keep_days`（config.toml；默认 3 天）为窗口自动执行。`mcpp clean --report` 给出每个配置的对象、BMI 与产物以及
+`.build-mcpp` 各区的大小，不删除任何东西：
 
 ```
 $ mcpp clean --stale --dry-run
@@ -66,10 +71,15 @@ key               kind          size       last used  package
 9234eed9ef786c13  std          0.0 B          2d ago  std  (incomplete)
 ```
 
-`mcpp cache gc` 要求给出 `--max-size`、`--older-than` 或两者，并且只驱逐
-包条目。一份 `std` BMI 被机器上每个工程共享，实现以"重建它是用大量时间
+`mcpp cache gc` 要求给出 `--max-size`、`--older-than` 或两者，驱逐包条目与
+host 工具条目。一份 `std` BMI 被机器上每个工程共享，实现以"重建它是用大量时间
 换少量磁盘"为由，把它排除在按体积驱逐之外。`mcpp cache clean --std` 仍是
 显式移除它的做法。
+
+构建成功后，每天至多一次，移除 `[cache] unused_days` 天（config.toml；默认 30，
+`0` 关闭）内没有构建使用过的条目，包、host 工具与 `std` 均在其列；命中即记为使用。
+`path` host 工具的源树变化时，写入新条目的同时移除同一源树在旧 stamp 下的条目
+（2026.10.31.3+）。构建前，若所写入的文件系统可用空间不足 2 GiB，mcpp 给出警告。
 
 ## 一个包已发布的版本
 

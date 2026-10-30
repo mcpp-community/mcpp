@@ -694,6 +694,12 @@ struct PrepareState {
     std::function<std::filesystem::path(const std::filesystem::path&,
                                         const mcpp::manifest::Manifest&,
                                         const std::vector<std::string>&)> programOutDir;
+    // What this configuration uses outside its own directory, written into it
+    // as `uses.list` so that `mcpp clean --stale` keeps these and collects the
+    // rest (mcpp#874): the `.build-mcpp/out/<hash>` of each program it ran and
+    // the `.build-mcpp/host/<group>` of the build programs it built.
+    std::set<std::string> usedProgramOut;
+    std::set<std::string> usedHostGroups;
     std::function<void(mcpp::build::BuildProgramEnv&, const mcpp::manifest::Manifest&,
                         std::size_t)> fillXpkgDirs;
     std::function<void(mcpp::build::BuildProgramEnv&, std::size_t,
@@ -1032,6 +1038,13 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                            const std::filesystem::path& legacyStampRoot,
                            std::string_view label);
 std::string with_index_cause(std::string msg);
+
+// ── A configuration's build directory over time, defined in build_dir.cpp ──
+// A new fingerprint of a lineage takes over its predecessor's directory, or
+// removes it when the toolchain changed (design 2026-10-31 §8.2).
+void adopt_predecessor_dir(const PrepareState& state, const std::filesystem::path& outputDir);
+// `uses.list`, `lineage` and `toolchain` in the directory.
+void record_build_dir(const PrepareState& state, const std::filesystem::path& outputDir);
 
 // ── The build programs' graph (mcpp#797), defined in host_graph.cpp ───────
 // Compile, in one build of the build programs' graph, every program of

@@ -2173,8 +2173,8 @@ step4b_define_provisioning_closures(PrepareState& state) {
             ? pm.package.name : pm.package.namespace_ + "." + pm.package.name;
         for (auto& c : name)
             if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '-' && c != '_') c = '_';
-        return base / "target" / ".build-mcpp" / "out"
-             / mcpp::toolchain::hash_string(id) / (name.empty() ? std::string("root") : name);
+        return base / "target" / ".build-mcpp" / "out"    // named in `uses.list` (mcpp#874)
+             / *state.usedProgramOut.insert(mcpp::toolchain::hash_string(id)).first / (name.empty() ? std::string("root") : name);
     };
 
     state.adoptActionOutputs = [](mcpp::manifest::Manifest& mm,

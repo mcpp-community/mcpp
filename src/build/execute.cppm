@@ -1756,6 +1756,18 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         std::error_code ec;
         std::filesystem::remove_all(ctx.outputDir, ec);
     }
+    // Said before the build rather than as a link that fails for want of
+    // space (mcpp#874: `final link failed: No space left on device`).
+    {
+        std::error_code sec;
+        const auto free = std::filesystem::space(ctx.outputDir.parent_path(), sec).available;
+        if (!sec && free < (2ull << 30))
+            mcpp::ui::warning(std::format(
+                "{} free where this build writes ({}). `mcpp clean --stale` removes the build "
+                "directories no configuration uses, and `mcpp cache gc --older-than 30d` the "
+                "cache entries none has used",
+                mcpp::bmi_cache::human_bytes(free), ctx.outputDir.parent_path().string()));
+    }
 
     // The generated `*link:` spec lives in the output directory, and the line
     // above is allowed to delete that directory. prepare wrote the file before
@@ -1907,6 +1919,7 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     mcpp::build::progress::finished(
         ctx.profile, mcpp::build::profile_descriptor(ctx.plan.manifest.buildConfig));
     report_freestanding_size(ctx);
+    mcpp::bmi_cache::collect_unused_entries();
     return 0;
 }
 
@@ -5711,7 +5724,82 @@ export int clean_project(bool wipe_bmi) {
 // `target/` before that: none of them is read by a workspace build. A
 // member's `target/.build-mcpp/`, where its build program's outputs are, is
 // kept.
-export int clean_stale(bool dryRun, std::int64_t keepWithinSecs) {
+// `mcpp clean --report` (mcpp#874): where target/ holds its bytes. Per
+// configuration directory, its objects, its BMIs and its products; then the
+// configuration-independent `.build-mcpp` (build programs' groups, generated
+// sources, dependencies' build-program copies). Removes nothing; `--stale
+// --dry-run` says what of it is unused.
+export int clean_report() {
+    namespace fs = std::filesystem;
+    auto root = mcpp::project::find_manifest_root(fs::current_path());
+    if (!root) { std::println(stderr, "error: not in an mcpp package"); return 2; }
+    if (auto ws = mcpp::project::find_workspace_root(*root); !ws.empty()) root = ws;
+    const fs::path target = *root / "target";
+    using mcpp::bmi_cache::dir_size, mcpp::bmi_cache::human_bytes;
+    std::uintmax_t total = 0;
+    std::println("{:<44} {:>10} {:>10} {:>10} {:>10}", "configuration", "obj", "bmi", "bin", "total");
+    std::error_code ec;
+    for (fs::directory_iterator t(target, ec), end; t != end; t.increment(ec)) {
+        const auto triple = t->path().filename().string();
+        std::error_code fec;
+        if (triple.starts_with(".") || !t->is_directory(fec)) continue;
+        for (fs::directory_iterator f(t->path(), fec), fend; f != fend; f.increment(fec)) {
+            if (!f->is_directory()) continue;
+            const auto obj = dir_size(f->path() / "obj");
+            const auto bmi = dir_size(f->path() / "gcm.cache") + dir_size(f->path() / "pcm.cache");
+            const auto bin = dir_size(f->path() / "bin");
+            const auto all = dir_size(f->path());
+            total += all;
+            std::println("{:<44} {:>10} {:>10} {:>10} {:>10}",
+                         triple + "/" + f->path().filename().string(), human_bytes(obj),
+                         human_bytes(bmi), human_bytes(bin), human_bytes(all));
+        }
+    }
+    const auto bm = target / ".build-mcpp";
+    std::println("");
+    for (auto const* area : {"host", "out", "deps"}) {
+        const auto n = dir_size(bm / area);
+        total += n;
+        std::println("{:<44} {:>10}", std::format(".build-mcpp/{}", area), human_bytes(n));
+    }
+    std::println("");
+    std::println("{:<44} {:>10}", "target/", human_bytes(total));
+    return 0;
+}
+
+// After a successful `mcpp build` or `mcpp test`, at most once a day per
+// project (design 2026-10-31 §8.3): `clean --stale` with the window
+// `[build] keep_days` (config.toml; default 3, 0 keeps all), said in one line.
+// A configuration's evolution reuses its directory (§8.2), so what this finds
+// is a configuration nobody built for that long.
+export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet = false);
+export void sweep_after_build() {
+    namespace fs = std::filesystem;
+    std::int64_t days = 3;
+    std::error_code ec;
+    const auto config = mcpp::home::root() / "config.toml";
+    if (fs::exists(config, ec))
+        if (auto doc = mcpp::libs::toml::parse_file(config))
+            days = doc->get_int("build.keep_days").value_or(days);
+    if (days <= 0) return;
+    auto root = mcpp::project::find_manifest_root(fs::current_path());
+    if (!root) return;
+    if (auto ws = mcpp::project::find_workspace_root(*root); !ws.empty()) root = ws;
+    const auto stamp = *root / "target" / ".mcpp-swept";
+    if (fs::exists(stamp, ec)) {
+        const auto age = std::chrono::duration_cast<std::chrono::hours>(
+            fs::file_time_type::clock::now() - fs::last_write_time(stamp, ec)).count();
+        if (!ec && age < 24) return;
+    }
+    if (!fs::is_directory(*root / "target", ec)) return;
+    std::ofstream(stamp, std::ios::trunc) << "swept\n";
+    clean_stale(false, days * 86400, true);
+}
+
+export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
+    // Quiet: the sweep after a build (design 2026-10-31 §8.3) says one line
+    // when it removed something, and nothing about what it kept.
+    auto line = [quiet](const std::string& text) { if (!quiet) std::println("{}", text); };
     namespace fs = std::filesystem;
     auto root = mcpp::project::find_manifest_root(fs::current_path());
     if (!root) { std::println(stderr, "error: not in an mcpp package"); return 2; }
@@ -5746,6 +5834,7 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs) {
             if (!fp.empty()) current[triple].insert(fp);
     }
     if (current.empty()) {
+        if (quiet) return 0;
         std::println(stderr, "error: {} has no build record, so nothing is known to be current; "
                              "run `mcpp build` once, then retry",
                      (*root / kBuildCacheFile).string());
@@ -5754,6 +5843,7 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs) {
 
     std::uintmax_t bytes = 0;
     std::size_t removed = 0, failed = 0;
+    std::set<fs::path> swept;   // removed, or would be under --dry-run
     std::error_code ec;
     for (fs::directory_iterator tripleIt(target, ec), end; tripleIt != end; tripleIt.increment(ec)) {
         std::error_code tec;
@@ -5779,13 +5869,14 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs) {
                     const std::string ago = age < 3600 ? std::format("{}m", std::max<std::int64_t>(age / 60, 1))
                                           : age < 86400 ? std::format("{}h", age / 3600)
                                                         : std::format("{}d", age / 86400);
-                    std::println("kept    {}  (not in the record, but written {} ago; see --older-than)", shown, ago);
+                    line(std::format("kept    {}  (not in the record, but written {} ago; see --older-than)", shown, ago));
                     continue;
                 }
             }
             const auto size = mcpp::bmi_cache::dir_size(dir);
+            swept.insert(dir);
             if (dryRun) {
-                std::println("would remove {}  ({})", shown, mcpp::bmi_cache::human_bytes(size));
+                line(std::format("would remove {}  ({})", shown, mcpp::bmi_cache::human_bytes(size)));
             } else {
                 std::error_code rec;
                 fs::remove_all(dir, rec);
@@ -5794,7 +5885,7 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs) {
                     ++failed;
                     continue;
                 }
-                std::println("removed {}  ({})", shown, mcpp::bmi_cache::human_bytes(size));
+                line(std::format("removed {}  ({})", shown, mcpp::bmi_cache::human_bytes(size)));
             }
             bytes += size;
             ++removed;
@@ -5834,8 +5925,8 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs) {
                 const std::string shown = dir.lexically_relative(*root).generic_string();
                 const auto size = mcpp::bmi_cache::dir_size(dir);
                 if (dryRun) {
-                    std::println("would remove {}  ({}; the workspace builds in {})", shown,
-                                 mcpp::bmi_cache::human_bytes(size), target.string());
+                    line(std::format("would remove {}  ({}; the workspace builds in {})", shown,
+                                 mcpp::bmi_cache::human_bytes(size), target.string()));
                 } else {
                     std::error_code rec;
                     fs::remove_all(dir, rec);
@@ -5844,8 +5935,8 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs) {
                         ++failed;
                         continue;
                     }
-                    std::println("removed {}  ({}; the workspace builds in {})", shown,
-                                 mcpp::bmi_cache::human_bytes(size), target.string());
+                    line(std::format("removed {}  ({}; the workspace builds in {})", shown,
+                                 mcpp::bmi_cache::human_bytes(size), target.string()));
                 }
                 bytes += size;
                 ++removed;
@@ -5853,12 +5944,90 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs) {
         }
     }
 
-    if (removed == 0 && failed == 0) {
-        std::println("Nothing stale under {}: every fingerprint directory is recorded as current",
-                     target.string());
+    // WHAT THE CONFIGURATIONS USE BESIDE THEIR DIRECTORIES (mcpp#874): the
+    // generated sources of `.build-mcpp/out/<hash>` and the build programs'
+    // `.build-mcpp/host/<group>`. Each fingerprint directory names what it
+    // used (`uses.list`); one that is kept keeps what it names, recorded or
+    // not, since `mcpp test` builds without a record entry. With no list
+    // anywhere -- directories an earlier release wrote -- nothing is known to
+    // be unused and nothing here is removed.
+    std::set<std::string> usedOut, usedHost;
+    bool usesKnown = false;
+    auto readUses = [&](const fs::path& fpDir) {
+        if (swept.contains(fpDir)) return;
+        std::ifstream in(fpDir / "uses.list");
+        if (!in) return;
+        usesKnown = true;
+        for (std::string kind, name; in >> kind >> name;)
+            (kind == "out" ? usedOut : usedHost).insert(name);
+    };
+    {
+        std::error_code uec;
+        for (fs::directory_iterator t(target, uec), end; t != end; t.increment(uec)) {
+            std::error_code fec;
+            if (!t->is_directory(fec) || fec) continue;
+            for (fs::directory_iterator f(t->path(), fec), fend; f != fend; f.increment(fec))
+                readUses(f->path());
+        }
+    }
+    auto collect = [&](const fs::path& dir, const std::string& shown) {
+        std::error_code aec;
+        const auto age = std::chrono::duration_cast<std::chrono::seconds>(
+            fs::file_time_type::clock::now() - fs::last_write_time(dir, aec)).count();
+        if (!aec && age < keepWithinSecs) {
+            line(std::format("kept    {}  (used by no configuration, but written recently; see --older-than)", shown));
+            return;
+        }
+        const auto size = mcpp::bmi_cache::dir_size(dir);
+        if (!dryRun) {
+            std::error_code rec;
+            fs::remove_all(dir, rec);
+            if (rec) {
+                std::println(stderr, "error: cannot remove {}: {}", shown, rec.message());
+                ++failed;
+                return;
+            }
+        }
+        line(std::format("{} {}  ({}; used by no configuration)", dryRun ? "would remove" : "removed",
+                     shown, mcpp::bmi_cache::human_bytes(size)));
+        bytes += size;
+        ++removed;
+    };
+    if (usesKnown) {
+        std::vector<fs::path> bases{*root};
+        bases.insert(bases.end(), memberDirs.begin(), memberDirs.end());
+        for (auto const& base : bases) {
+            std::error_code oec;
+            for (fs::directory_iterator o(base / "target" / ".build-mcpp" / "out", oec), end; o != end;
+                 o.increment(oec))
+                if (!usedOut.contains(o->path().filename().string()))
+                    collect(o->path(), o->path().lexically_relative(*root).generic_string());
+        }
+        // A group the build programs' graph needed is `<group>.<depth>`, kept
+        // with its group; `digests` is the shared source-digest cache.
+        std::error_code hec;
+        for (fs::directory_iterator h(target / ".build-mcpp" / "host", hec), end; h != end;
+             h.increment(hec)) {
+            const auto name = h->path().filename().string();
+            if (name == "digests" || !h->is_directory()) continue;
+            if (!usedHost.contains(name.substr(0, name.find('.'))))
+                collect(h->path(), h->path().lexically_relative(*root).generic_string());
+        }
     } else {
-        std::println("{} {} director{} ({})", dryRun ? "Would remove" : "Removed", removed,
-                     removed == 1 ? "y" : "ies", mcpp::bmi_cache::human_bytes(bytes));
+        line(std::format("note: no build directory names what it uses (built by an earlier release); "
+                     "`.build-mcpp/out` and `.build-mcpp/host` are left as they are"));
+    }
+
+    if (removed == 0 && failed == 0) {
+        line(std::format("Nothing stale under {}: every fingerprint directory is recorded as current{}",
+                     target.string(), usesKnown
+                         ? ", and every generated-source and build-program directory is in use" : ""));
+    } else {
+        if (quiet)
+            mcpp::ui::status("Swept", std::format("{} build director{} no configuration used for {} days ({}; [build] keep_days in config.toml)",
+                removed, removed == 1 ? "y" : "ies", keepWithinSecs / 86400, mcpp::bmi_cache::human_bytes(bytes)));
+        line(std::format("{} {} director{} ({})", dryRun ? "Would remove" : "Removed", removed,
+                     removed == 1 ? "y" : "ies", mcpp::bmi_cache::human_bytes(bytes)));
     }
     return failed ? 1 : 0;
 }

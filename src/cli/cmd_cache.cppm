@@ -63,6 +63,7 @@ export int cmd_cache_gc(const mcpplibs::cmdline::ParsedArgs& parsed) {
 export int cmd_cache_clean(const mcpplibs::cmdline::ParsedArgs& parsed) {
     return mcpp::bmi_cache::cache_clean(parsed.is_flag_set("deps"),
                                         parsed.is_flag_set("std"),
+                                        parsed.is_flag_set("tools"),
                                         parsed.is_flag_set("all"),
                                         parsed.is_flag_set("legacy"));
 }

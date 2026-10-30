@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-343 records.
+344 records.
 
 ## By subject
 
@@ -26,6 +26,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### build
 
+- [大型工作区的构建空间与复用（mcpp#874）](2026-10-31-workspace-space-and-reuse-design.md) — active
 - [依赖 image 的资源归属、模块扫描边界与锁文件稳定写入](2026-10-21-resource-ownership-module-scan-and-lock-write-design.md) — active
 
 ### build-program
@@ -155,6 +156,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-10
 
+- [大型工作区的构建空间与复用（mcpp#874）](2026-10-31-workspace-space-and-reuse-design.md) — active
 - [生态设计 part 2：mcpp 插件与 mcppls 的分层、入口、测试、版本感知与分发](2026-10-30-ecosystem-part2-ide-and-language-service-design.md) — active
 - [另一架构的 ok 映像的运行、测试与打包，以及 ok 映像与 Web 的关系（2026.10.29.1）](2026-10-29-openkal-run-test-pack-design.md) — active
 - [生态设计：目标集合与腿、打包模型 rev、运行覆盖、不回落、外部构建接入、mcppls 单包与编辑器](2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md) — active

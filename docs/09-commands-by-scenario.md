@@ -30,12 +30,20 @@ them. Confusing them costs a full rebuild.
 
 | Store | Scope | Growth trigger | Emptied by |
 |---|---|---|---|
-| `target/<triple>/<fingerprint>/` | one project | a configuration fingerprint changes and opens a new directory | `mcpp clean`, `mcpp clean --stale` |
-| the build cache (`mcpp cache dir`) | the whole machine | any project compiles a dependency or a `std` module, or builds a host tool, or compiles the `mcpp` module its build program imports | `mcpp cache gc`, `mcpp cache prune`, `mcpp cache clean` |
+| `target/<triple>/<fingerprint>/`, `target/.build-mcpp/{out,host}/` | one project | a configuration fingerprint changes and opens a new directory; a build program's outputs and the build programs are kept per configuration | `mcpp clean`, `mcpp clean --stale` |
+| the build cache (`mcpp cache dir`) | the whole machine | any project compiles a dependency or a `std` module, or builds a host tool, or compiles the `mcpp` module its build program imports | collected after a build when unused for `[cache] unused_days`; `mcpp cache gc`, `mcpp cache prune`, `mcpp cache clean` |
 
 `mcpp clean` removes `target/` entirely, and the next build recompiles
 everything. `mcpp clean --stale` removes only the fingerprint directories that
-no recorded build still uses, so the configurations in use survive:
+no recorded build still uses, so the configurations in use survive. Each
+configuration directory names in `uses.list` the generated-source directories
+(`.build-mcpp/out/<hash>`) and build-program groups (`.build-mcpp/host/<group>`)
+it uses; `--stale` also removes those no kept configuration names
+(2026.10.31.3+). A configuration's new fingerprint takes over the directory of
+its lineage instead of opening another (docs/04 §2.9), and after a build or a
+test run, at most once a day, `--stale` runs by itself with the window `[build]
+keep_days` (config.toml; default 3 days). `mcpp clean --report` gives the size of each configuration's
+objects, BMIs and products and of each `.build-mcpp` area, and removes nothing:
 
 ```
 $ mcpp clean --stale --dry-run
@@ -74,10 +82,18 @@ key               kind          size       last used  package
 ```
 
 `mcpp cache gc` requires `--max-size`, `--older-than`, or both, and evicts
-package entries only. A `std` BMI is shared by every project on the machine, and
-the implementation excludes it from size-driven eviction on the grounds that
-rebuilding one trades a lot of time for a little disk. `mcpp cache clean --std`
-remains the explicit way to remove it.
+package and host tool entries. A `std` BMI is shared by every project on the
+machine, and the implementation excludes it from size-driven eviction on the
+grounds that rebuilding one trades a lot of time for a little disk. `mcpp cache
+clean --std` remains the explicit way to remove it.
+
+After a successful build, at most once a day, every entry -- package, host tool
+or `std` -- that no build has used for `[cache] unused_days` days (config.toml;
+default 30, `0` turns it off) is removed. A hit marks an entry used. A `path`
+host tool's entry is replaced when its tree changes: the entry built from the
+same tree under the previous stamp is removed as the new one is written
+(2026.10.31.3+). Before a build, mcpp warns when the file system it writes to
+has less than 2 GiB free.
 
 ## The versions a package publishes
 

@@ -148,7 +148,18 @@ std::filesystem::path bin_path(const std::filesystem::path& entryDir,
 bool entry_valid(const std::filesystem::path& entryDir, const Key& k,
                  std::string_view toolName, std::string_view exeSuffix);
 
-void write_entry(const std::filesystem::path& entryDir, const Key& k);
+// Writes the entry's record. `source` is the tree a `path` package was
+// built from: written beside the record, and an entry of the same package
+// from the same tree under another stamp (`<version>+path.<stamp>`) is
+// superseded and removed -- a path package's every edit was a new key, and
+// none was ever collected (mcpp#874).
+void write_entry(const std::filesystem::path& entryDir, const Key& k,
+                 const std::filesystem::path& source = {});
+
+// Marks the entry used now: `mcpp cache` collects by last use, and the
+// record's time is that use (the record's content is the key, compared
+// field by field, and does not change).
+void touch(const std::filesystem::path& entryDir);
 
 // ── Overrides (the escape hatch every comparable system provides) ──────────
 //
@@ -292,11 +303,41 @@ bool entry_valid(const fs::path& entryDir, const Key& k,
     }
 }
 
-void write_entry(const fs::path& entryDir, const Key& k) {
+void write_entry(const fs::path& entryDir, const Key& k, const fs::path& source) {
     std::error_code ec;
     fs::create_directories(entryDir, ec);
-    std::ofstream os(entryDir / "entry.json", std::ios::trunc);
-    if (os) os << to_json(k).dump(2) << '\n';
+    {
+        std::ofstream os(entryDir / "entry.json", std::ios::trunc);
+        if (os) os << to_json(k).dump(2) << '\n';
+    }
+    const auto plus = k.version.find("+path.");
+    if (source.empty() || plus == std::string::npos) return;
+    const auto origin = source.lexically_normal().generic_u8string();
+    const std::string text(origin.begin(), origin.end());
+    std::ofstream(entryDir / "source", std::ios::trunc) << text;
+    // `<index>/<package>@<version>+path.<stamp>/<key>/`: the siblings of this
+    // version directory that differ only in the stamp.
+    const auto versionDir = entryDir.parent_path();
+    const auto prefix = std::format("{}@{}", k.packageName, k.version.substr(0, plus + 6));
+    auto same_source = [&](const fs::path& keyDir) {
+        std::ifstream in(keyDir / "source");
+        if (!in) return false;
+        const std::string was{std::istreambuf_iterator<char>(in), {}};
+        return was == text;
+    };
+    for (auto const& v : fs::directory_iterator(versionDir.parent_path(), ec)) {
+        const auto name = v.path().filename().string();
+        if (v.path() == versionDir || !name.starts_with(prefix)) continue;
+        std::error_code kec;
+        for (auto const& key : fs::directory_iterator(v.path(), kec))
+            if (same_source(key.path())) fs::remove_all(key.path(), kec);
+        fs::remove(v.path(), kec);   // only when nothing else is left in it
+    }
+}
+
+void touch(const fs::path& entryDir) {
+    std::error_code ec;
+    fs::last_write_time(entryDir / "entry.json", fs::file_time_type::clock::now(), ec);
 }
 
 std::optional<fs::path>

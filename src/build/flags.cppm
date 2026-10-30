@@ -1173,6 +1173,21 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         ? " /Od"    // MSVC's no-opt spelling (there is no /O0)
         : std::format(" {}{}", d.optPrefix, optLevel);
     if (prof.debug) opt_flag += std::format(" {}", d.debugFlags);
+    // DEBUG INFORMATION IS COMPRESSED where the linker copies it into every
+    // artifact (mcpp#874): on ELF each program of a member, every test among
+    // them, carries the DWARF of its whole closure, and zlib halves it (a
+    // workspace's 315 MB test program to 149 MB). The objects are written
+    // compressed and the driver link keeps them so (`-gz=zlib` on both). Not on
+    // Mach-O, whose debug map leaves the DWARF in the objects; not with cl.exe,
+    // whose PDB holds it once; not on a freestanding target, whose boards'
+    // debuggers may read neither. An ok image, linked by `ld.lld` itself, has
+    // its sections compressed by that link (measured: okld seals it and okrun
+    // runs it). gdb and lldb read compressed sections; `-gz=none` in a
+    // package's flags comes after this and turns it off.
+    const bool compressDebug = prof.debug && !isMsvcDialect
+        && targetObjectFormat == mcpp::build::dist::Format::Elf
+        && !isFreestandingTarget;
+    if (compressDebug) opt_flag += " -gz=zlib";
     // LTO ON EVERY COMPILER (2026.10.5.2). cl.exe spells it `/GL` here and
     // `/LTCG` on the link and the archive; before, it was not spelled at all,
     // and a build with `lto = true` reported `+ lto` while doing none.
@@ -1890,6 +1905,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
 
     std::string link_extra;
     if (prof.lto)   link_extra += " -flto";
+    if (compressDebug) link_extra += " -gz=zlib";
     if (prof.strip) link_extra += " -s";
 
     // MinGW PE link — keyed on the TARGET (is_mingw_target), NOT the host: a
@@ -2540,6 +2556,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             // one of them and not `ld.lld` is asked for the ELF linker
             // explicitly.
             if (f.ldDriver.stem() != "ld.lld") f.ld = " -flavor gnu" + f.ld;
+            if (compressDebug) f.ld += " --compress-debug-sections=zlib";
             f.ldC = f.ld;
             f.sysroot.clear();
             f.bFlag.clear();

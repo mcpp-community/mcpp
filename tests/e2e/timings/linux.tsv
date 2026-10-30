@@ -609,3 +609,7 @@
 994_the_contract_names_the_target_side.sh	60000
 995_the_windows_launcher_builds_over_any_platform_release.sh	240000
 996_an_ok_image_waits_for_a_prepare_action.sh	15000
+997_a_members_dev_dependencies_stay_out_of_a_host_tool.sh	60000
+998_a_build_keeps_its_bytes_once.sh	120000
+999_debug_information_is_stored_once.sh	30000
+1000_a_configuration_keeps_one_directory.sh	40000

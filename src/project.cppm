@@ -368,6 +368,10 @@ void merge_layer_root_position(mcpp::manifest::Manifest& member,
             to.trimPaths = from.trimPaths;
             to.trimPathsDeclared = true;
         }
+        if (!to.splitDebuginfoDeclared && from.splitDebuginfoDeclared) {
+            to.splitDebuginfo = from.splitDebuginfo;
+            to.splitDebuginfoDeclared = true;
+        }
         if (!to.dependencyLinkageDeclared && from.dependencyLinkageDeclared) {
             to.dependencyLinkage = from.dependencyLinkage;
             to.dependencyLinkageDeclared = true;

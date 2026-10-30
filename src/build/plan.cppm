@@ -4042,6 +4042,25 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         }
     }
 
+    // A STATIC LIBRARY HOLDS ITS OWN PACKAGE'S OBJECTS (docs/12, "a static
+    // archive does not carry its dependencies' code"). Each dependency's code
+    // is its own package's, which a consumer's graph resolves; a program of
+    // this plan links objects and never reads an archive. Collected as every
+    // unit's objects, a workspace's member archives held its closure: 11 433
+    // members for 2 666 objects, 5.3 GB (mcpp#874). An object that is not a
+    // compile unit's -- an `object` action's -- is the package's own and stays.
+    {
+        std::map<std::filesystem::path, std::string> ownerOfObject;
+        for (auto const& cu : plan.compileUnits) ownerOfObject.emplace(cu.object, cu.packageName);
+        for (auto& lu : plan.linkUnits) {
+            if (lu.kind != LinkUnit::StaticLibrary) continue;
+            std::erase_if(lu.objects, [&](const std::filesystem::path& o) {
+                auto it = ownerOfObject.find(o);
+                return it != ownerOfObject.end() && it->second != lu.package;
+            });
+        }
+    }
+
     return plan;
 }
 

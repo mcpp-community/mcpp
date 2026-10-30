@@ -477,6 +477,12 @@ std::expected<StdModule, StdModError> ensure_built(
                    && std::filesystem::exists(sm.objectPath)
                    && metadata_matches(metaPath, metadata);
     bool rebuiltStd = false;
+    // A hit is a use: the directory's time is the last use `mcpp cache`
+    // collects by (mcpp#874).
+    if (std_cached) {
+        std::error_code tec;
+        std::filesystem::last_write_time(sm.cacheDir, std::filesystem::file_time_type::clock::now(), tec);
+    }
 
     if (!std_cached) {
         std::error_code ec;

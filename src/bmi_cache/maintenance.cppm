@@ -4,6 +4,8 @@
 // Layout walked here (see bmi_cache.cppm):
 //   $MCPP_HOME/build-cache/v1/pkg/<index>/<pkg>@<ver>/<key16>/entry.json
 //   $MCPP_HOME/build-cache/v1/std/<identity>/std-module.json
+//   $MCPP_HOME/build-cache/v1/tool/<index>/<pkg>@<ver>/<key>/entry.json
+//     (a host tool, mcpp.build.tool_store; last use = the record's time)
 //
 // Two things this file did wrong before the layout change and that the new
 // entry.json fixes:
@@ -26,6 +28,7 @@ export module mcpp.bmi_cache.maintenance;
 import std;
 import mcpp.home;
 import mcpp.libs.json;
+import mcpp.libs.toml;
 import mcpp.ui;
 
 namespace mcpp::bmi_cache {
@@ -97,10 +100,11 @@ namespace {
 
 std::filesystem::path pkg_root()    { return mcpp::home::cache_root() / "pkg"; }
 std::filesystem::path std_root()    { return mcpp::home::cache_root() / "std"; }
+std::filesystem::path tool_root()   { return mcpp::home::cache_root() / "tool"; }
 
 struct Entry {
     std::filesystem::path dir;
-    std::string           kind;        // "pkg" | "std"
+    std::string           kind;        // "pkg" | "std" | "tool"
     std::string           label;       // "<index>/<pkg>@<ver>" | "std"
     std::string           key;
     std::uintmax_t        size = 0;
@@ -278,6 +282,47 @@ std::vector<Entry> walk_std_entries() {
     return out;
 }
 
+// Host tools (mcpp#874). An entry's last use is its record's time, which a
+// hit refreshes (tool_store::touch); `.build/` holds the sub-builds in flight.
+std::vector<Entry> walk_tool_entries() {
+    std::vector<Entry> out;
+    std::error_code ec;
+    auto root = tool_root();
+    if (!std::filesystem::exists(root, ec)) return out;
+    for (auto& idx : std::filesystem::directory_iterator(root, ec)) {
+        if (!idx.is_directory() || idx.path().filename() == ".build") continue;
+        for (auto& pkg : std::filesystem::directory_iterator(idx.path(), ec)) {
+            if (!pkg.is_directory()) continue;
+            for (auto& key : std::filesystem::directory_iterator(pkg.path(), ec)) {
+                if (!key.is_directory()) continue;
+                Entry e;
+                e.dir   = key.path();
+                e.kind  = "tool";
+                e.key   = key.path().filename().string();
+                e.label = idx.path().filename().string() + "/" + pkg.path().filename().string();
+                std::error_code fe;
+                if (!std::filesystem::is_regular_file(e.dir / "entry.json", fe)) {
+                    e.complete = false;
+                    e.problem  = "no entry.json";
+                    e.accessed = dir_mtime_seconds(e.dir);
+                } else {
+                    e.accessed = dir_mtime_seconds(e.dir / "entry.json");
+                }
+                measure(e);
+                out.push_back(std::move(e));
+            }
+        }
+    }
+    return out;
+}
+
+// Package and tool entries: what `prune` and `gc` collect by last use.
+std::vector<Entry> walk_collectable() {
+    auto out = walk_pkg_entries();
+    for (auto& e : walk_tool_entries()) out.push_back(std::move(e));
+    return out;
+}
+
 std::string format_age(std::int64_t stampSeconds) {
     if (stampSeconds == 0) return "unknown";
     auto now = std::chrono::duration_cast<std::chrono::seconds>(
@@ -330,7 +375,7 @@ export int cache_dir() {
 // repository's e2e asserts those keys, so it keeps that shape for ever --
 // but they must always describe the same cache.
 export nlohmann::json cache_list_json() {
-    auto entries = walk_pkg_entries();
+    auto entries = walk_collectable();
     auto stds    = walk_std_entries();
     nlohmann::json j;
     j["root"] = mcpp::home::cache_root().string();
@@ -359,7 +404,7 @@ export int cache_list(bool asJson) {
         std::println("{}", cache_list_json().dump(2));
         return 0;
     }
-    auto entries = walk_pkg_entries();
+    auto entries = walk_collectable();
     auto stds    = walk_std_entries();
 
     if (entries.empty() && stds.empty()) {
@@ -429,7 +474,7 @@ export int cache_prune(const std::string& v) {
 
     int removed = 0;
     std::uintmax_t freed = 0;
-    for (auto& e : walk_pkg_entries()) {
+    for (auto& e : walk_collectable()) {
         if (e.accessed != 0 && e.accessed >= cutoff) continue;
         auto n = remove_entry(e);
         if (n || !std::filesystem::exists(e.dir)) {
@@ -472,10 +517,11 @@ export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanA
         }
     }
 
-    // Package entries only. A std BMI is shared by every project on the machine
-    // and costs ~30 s to rebuild; evicting one to hit a size target trades a lot
-    // of time for a little disk. `cache clean --std` remains the explicit way.
-    auto entries = walk_pkg_entries();
+    // Package and tool entries. A std BMI is shared by every project on the
+    // machine and costs ~30 s to rebuild; evicting one to hit a size target
+    // trades a lot of time for a little disk. `cache clean --std` remains the
+    // explicit way, and the collection by last use after a build covers it.
+    auto entries = walk_collectable();
     std::ranges::sort(entries, [](const Entry& a, const Entry& b) {
         return a.accessed < b.accessed;      // oldest first
     });
@@ -506,14 +552,14 @@ export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanA
     // because std entries are deliberately out of scope here. Reporting it as
     // the cache size would read as "the cache is now empty" while tens of MB of
     // std BMIs sit right next to it.
-    std::println("Collected {} entries, freed {} (package entries now {})",
+    std::println("Collected {} entries, freed {} (package and tool entries now {})",
                  removed, human_bytes(freed), human_bytes(live));
     if (maxSize && live > *maxSize) {
         // Say it rather than silently under-delivering: a size target that
         // cannot be met without evicting std BMIs is a real outcome, and a
         // caller that thinks the budget held would be misled.
         mcpp::ui::warning(std::format(
-            "still {} over the {} budget: package entries are exhausted. "
+            "still {} over the {} budget: package and tool entries are exhausted. "
             "std BMIs are excluded from gc; use `mcpp cache clean --std`",
             human_bytes(live - *maxSize), human_bytes(*maxSize)));
     }
@@ -521,9 +567,9 @@ export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanA
 }
 
 // `mcpp cache clean [--deps] [--std] [--all] [--legacy]`.
-export int cache_clean(bool deps, bool stds, bool all, bool legacy) {
-    if (all) { deps = true; stds = true; }
-    if (!deps && !stds && !legacy) deps = true;   // bare `clean` = dep entries
+export int cache_clean(bool deps, bool stds, bool tools, bool all, bool legacy) {
+    if (all) { deps = true; stds = true; tools = true; }
+    if (!deps && !stds && !tools && !legacy) deps = true;   // bare `clean` = dep entries
 
     std::error_code ec;
     if (deps) {
@@ -535,6 +581,11 @@ export int cache_clean(bool deps, bool stds, bool all, bool legacy) {
         auto n = dir_size(std_root());
         std::filesystem::remove_all(std_root(), ec);
         std::println("Cleaned std module entries ({})", human_bytes(n));
+    }
+    if (tools) {
+        auto n = dir_size(tool_root());
+        std::filesystem::remove_all(tool_root(), ec);
+        std::println("Cleaned host tool entries ({})", human_bytes(n));
     }
     if (legacy) {
         auto legacyRoot = mcpp::home::legacy_bmi_root();
@@ -550,9 +601,48 @@ export int cache_clean(bool deps, bool stds, bool all, bool legacy) {
     return 0;
 }
 
+// COLLECTION BY LAST USE, AFTER A BUILD (mcpp#874). Nothing collected the
+// cache unless a user ran `gc`: superseded package versions, every std
+// module a toolchain ever built and every variant of every host tool stayed.
+// After a successful build, at most once a day, an entry of any kind not used
+// for `[cache] unused_days` (config.toml; default 30, 0 turns it off) is
+// removed -- the same entries `cache prune --older-than <N>d` removes, std
+// modules included, each of which a hit marks used.
+export void collect_unused_entries() {
+    std::int64_t days = 30;
+    std::error_code ec;
+    const auto config = mcpp::home::root() / "config.toml";
+    if (std::filesystem::exists(config, ec))
+        if (auto doc = mcpp::libs::toml::parse_file(config))
+            days = doc->get_int("cache.unused_days").value_or(days);
+    if (days <= 0) return;
+    const auto stamp = mcpp::home::cache_root() / ".collected";
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    if (std::filesystem::exists(stamp, ec) && now - dir_mtime_seconds(stamp) < 86400) return;
+    std::filesystem::create_directories(stamp.parent_path(), ec);
+    std::ofstream(stamp, std::ios::trunc) << now << '\n';
+    const auto cutoff = now - days * 86400;
+    auto entries = walk_collectable();
+    for (auto& e : walk_std_entries()) entries.push_back(std::move(e));
+    std::size_t removed = 0;
+    std::uintmax_t freed = 0;
+    for (auto const& e : entries) {
+        if (e.accessed == 0 || e.accessed >= cutoff) continue;
+        remove_entry(e);
+        ++removed;
+        freed += e.size;
+    }
+    if (removed)
+        mcpp::ui::status("Collected", std::format(
+            "{} cache entr{} unused for {} days ({}; [cache] unused_days in config.toml)",
+            removed, removed == 1 ? "y" : "ies", days, human_bytes(freed)));
+}
+
 // `mcpp cache verify` — entry.json against the disk, for every entry.
 export int cache_verify() {
     auto entries = walk_pkg_entries(/*verify=*/true);
+    for (auto& e : walk_tool_entries()) entries.push_back(std::move(e));
     auto stds    = walk_std_entries();
     int bad = 0;
     for (auto* set : {&entries, &stds}) {

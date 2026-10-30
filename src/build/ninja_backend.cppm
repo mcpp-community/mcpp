@@ -3960,6 +3960,13 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
           : a.role == mcpp::manifest::BuildAction::Role::Object   ? "OBJECT"
                                                                   : "GENERATE",
             a.description.empty() ? a.id : a.description));
+        // A generator that leaves an output as it was -- it writes only when
+        // the content changed -- ends the rebuild there: ninja compares the
+        // outputs' mtimes after the command and prunes what depends on an
+        // unchanged one. Without it every run of an action dirtied the scan,
+        // the module and every importer below it (mcpp#874). A stamped action
+        // writes its stamp each run and is unaffected.
+        append("  restat = 1\n");
         // The command's OWN emitted dependency file, when it declared one.
         // `a.inputs` is FIXED AT SUBMISSION, before the command has run; a
         // device-source compiler (glslangValidator, glslc, slangc, nvcc/clang)

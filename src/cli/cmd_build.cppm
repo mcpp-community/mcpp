@@ -1553,6 +1553,7 @@ export int cmd_clean(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // under target/, silently, which is the outcome `--stale` exists to avoid.
     const bool dryRun = parsed.is_flag_set("dry-run");
     const auto olderThan = parsed.value("older-than");
+    if (parsed.is_flag_set("report")) return mcpp::build::clean_report();
     if (parsed.is_flag_set("stale") || dryRun || olderThan) {
         if (parsed.is_flag_set("bmi-cache")) {
             std::println(stderr, "error: --stale/--dry-run/--older-than cannot be combined with "

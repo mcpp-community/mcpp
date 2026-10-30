@@ -819,7 +819,7 @@ openkal 的接口整体提供或整体不提供（§3），`openkal.space` 的�
 |---|---|---|---|
 | M | mcpp（#869，2026.10.31.1） | 检查点 ① `features` 与 `program`；② mcpp#868；③ §17；④ §11 与 docs/50 的 §4.0；⑤ `polyglot`；⑥ C1（§25.3） | — |
 | M2 | mcpp（2026.10.31.2） | `mcpp test <name> --print-launch`（`test-launch`，§7.4）；构建契约的目标侧（C2）；Windows 启动器的平台（K5 的发现）；本文 rev 8、rev 9 | M |
-| M3 | mcpp（2026.10.31.3） | 有封装步骤的平台上，链接边的输出由一个函数给出，排序检查不再把封装边当作链接（C 的发现）；本文 rev 10 | M2 |
+| M3 | mcpp（2026.10.31.3） | 有封装步骤的平台上，链接边的输出由一个函数给出，排序检查不再把封装边当作链接（C 的发现）；大型工作区的构建空间与复用（mcpp#874，[设计](2026-10-31-workspace-space-and-reuse-design.md)）；本文 rev 10 | M2 |
 | K1 | openkal（0.18.0） | `openkal.map`：SPEC 条款、头文件与模块、`SURFACE.txt`、一致性测试 | — |
 | K2 | openkal-linux、openkal-macos、openkal-windows | 实现 `openkal.map`；§25.3 定位到实现的修复 | K1 |
 | K3 | openkal-image | okrun 以 `openkal.map` 读入映像与 okb（§25.3 B1） | K2 |

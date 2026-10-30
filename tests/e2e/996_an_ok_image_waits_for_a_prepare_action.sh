@@ -10,6 +10,9 @@
 #   A. `mcpp run --target <host-arch>-openkal` builds and runs a program whose
 #      build.mcpp declares a `prepare` action writing a directory.
 #   B. In the manifest, the link edge waits for the package's action phony.
+#   C. The image's debug information is compressed by its `ld.lld` link and
+#      its unit's is beside the object (`split_debuginfo`, design 2026-10-31
+#      §4.1): okld seals such an image and okrun runs it (A).
 set -e
 
 TMP=$(mktemp -d)
@@ -51,5 +54,13 @@ grep -q "internal:" run.log && fail "A: the ordering guard refused the build" ru
 manifest=$(find target/"$T" -name build.ninja -not -path "*/.build-mcpp/*" | head -1)
 grep -E "^build obj/platform/bin/app\.oke\.unsealed[ :].*\|\|.*mcpp-actions-app" "$manifest" > /dev/null \
     || fail "B: the link edge does not wait for the action" "$manifest"
+
+# C
+image=$(find target/"$T" -name app.oke | head -1)
+if command -v readelf > /dev/null; then
+    readelf -S -W "$image" | grep -E '\.debug_info' | grep -q ' C ' \
+        || fail "C: the image's debug information is not compressed" <(readelf -S -W "$image")
+fi
+find target/"$T" -name 'main*.dwo' | grep -q . || fail "C: the image's unit has no .dwo" <(find target/"$T" -name '*.dwo')
 
 echo "OK"

@@ -6,7 +6,75 @@
 
 ## [2026.10.31.3] - 2026-10-31
 
+A large workspace keeps its bytes once and builds each output once (mcpp#874;
+design 2026-10-31, workspace space and reuse). Measured on mcppls (6 members,
+61 test programs, clang): `bin/` 4 914 MiB -> 1 217 MiB, the tests' links
+75 s -> 32 s.
+
+### Added
+
+- **`split_debuginfo` under `[profile.<name>]`** (`"unpacked"` | `"off"`,
+  docs/04 §2.9). `"unpacked"`, the default of `dev` and `debug`, leaves the
+  debug information of the units compiled in the build directory beside their
+  objects (`-gsplit-dwarf`) on an ELF target with a loader, ok images included;
+  each program holds a skeleton that names it, and a test no longer carries a
+  copy of its closure's debug information. An index package's units keep it in
+  the object, since their objects enter the build cache. It applies with
+  `trim_paths` off. e2e 999.
+- **`mcpp clean --report`**: the bytes of each configuration's objects, BMIs and
+  products and of each `.build-mcpp` area.
+- **`mcpp cache clean --tools`** and host tool entries in `cache list`, `prune`,
+  `gc` and `verify`.
+- **Collection by last use after a build**: at most once a day, the build
+  cache's package, host tool and `std` entries unused for `[cache] unused_days`
+  (config.toml; default 30, `0` keeps all) are removed. A hit marks an entry used.
+- **A warning before a build** when the file system it writes to has less than
+  2 GiB free.
+- **The sweep after a build**: after `mcpp build` or `mcpp test` succeeds, at
+  most once a day, the build directories of the project that no configuration
+  used for `[build] keep_days` days (config.toml; default 3, `0` keeps all) are
+  removed, with the generated-source and build-program directories none uses.
+
+### Changed
+
+- **Debug information is compressed on ELF** (`-gz=zlib` on the compile and the
+  link; `--compress-debug-sections=zlib` on an ok image's `ld.lld` link): a test
+  program of mcppls 96.0 -> 35.7 MiB, with no measurable cost in compile time.
+  Mach-O, PDB, MinGW, WebAssembly and freestanding targets are unchanged;
+  `-gz=none` in a package's flags turns it off.
+- **A static library holds its own package's objects** (docs/12): a member's
+  `lib<target>.a` held the objects of its whole closure (mui: 11 433 archive
+  members for 2 666 objects, 5.3 GB). Programs of the build link objects and are
+  unaffected; a consumer outside mcpp links each dependency's archive.
+- **A configuration keeps one build directory over time** (design 2026-10-31
+  §8). A new fingerprint of a lineage (compiler family, target, standard
+  library family, standard, configuration flags) takes over the directory the
+  lineage used last, and ninja rebuilds the edges whose commands changed: an
+  mcpp upgrade that leaves the flags as they were compiles no unit again, where
+  it opened a full new directory and rebuilt everything (mcppls: 2.9 GB per
+  configuration per upgrade). A predecessor of another compiler build is
+  removed. e2e 1000.
+- **`mcpp clean --stale` also removes `.build-mcpp/out/<hash>` and
+  `.build-mcpp/host/<group>`** that no kept configuration names in its
+  `uses.list`.
+
 ### Fixed
+
+- **A host tool has one store key whatever the command and the member.** Its
+  dependency closure is read from the tool package's manifests, as its build
+  resolves them; it was read from the graph the command had walked -- empty
+  under `mcpp test --workspace`, complete under `mcpp build`, and holding the
+  dev-dependencies of the member under test -- so the tool's path changed and
+  every action that ran it ran again (69 of 99.6 compile-minutes repeated in
+  mui's run). e2e 997.
+- **An action that leaves its output as it was rebuilds nothing below it**
+  (`restat = 1` on action rules). e2e 998 G.
+- **A shared library staged as an equal copy is placed again by a link**, and a
+  build program beside its record is a link to its group's binary.
+- **The build programs' graph builds its own build programs beside its group**
+  (`<group>.<depth>`), not in a copy of the host workspace under its `target/`.
+- **A path host tool's superseded entries are removed** when its tree changes.
+- e2e 998 covers these and the archive, the placement and the collection.
 
 - **An ok image whose graph declares a `prepare` action builds** (SPEC-013
   §4.6, mcpp#702). Every link edge waits for the phony of each package with a

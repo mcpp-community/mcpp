@@ -1621,6 +1621,7 @@ lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gc
 strip    = true           # -s at link time
 ndebug     = true         # -DNDEBUG for every unit of the graph (default: on for release/dist)
 trim_paths = true         # -ffile-prefix-map per unit (default: on for release/dist)
+split_debuginfo = "off"   # "unpacked": debug information beside the objects (default: dev/debug)
 # passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
@@ -1659,11 +1660,36 @@ ldflags  = []
   map the paths back for a debugger. cl.exe has no documented equivalent and the build
   says so once. Write `ndebug = false` or `trim_paths = false` under the profile to keep
   the previous artifact; the first shipping build after the upgrade says this once.
+- **Debug information (2026.10.31.3+).** On an ELF target with debug information
+  (Linux, a cross Linux target, an ok image), the compile and the link compress
+  it (`-gz=zlib`; an ok image's `ld.lld` link, `--compress-debug-sections=zlib`).
+  `split_debuginfo = "unpacked"`, the default of `dev` and `debug`, also leaves
+  the debug information of the units compiled in the build directory -- the
+  project's, its workspace members' and its `path` and `git` dependencies' --
+  beside their objects (`-gsplit-dwarf`), and each program holds a skeleton that
+  names them, so a test does not carry a copy of its closure's debug
+  information. An index package's units keep theirs in the object: their
+  objects enter the build cache, which other projects stage. It applies only
+  with `trim_paths` off, since a debugger finds a unit's `.dwo` through the
+  build directory the skeleton names. `"off"` keeps all of it in the artifact.
+  Mach-O (the debug map), PDB, MinGW, WebAssembly and freestanding targets are
+  unchanged. `-gz=none` in a package's flags turns compression off.
 - **Each profile owns its own build directory.** The resolved profile knobs
   participate in the fingerprint, so `target/<triple>/` holds one hash directory
   per profile and switching between them is incremental instead of a full
   rebuild. It also means the disk cost scales with the number of profiles
   actually use.
+- **A configuration keeps one directory over time (2026.10.31.3+).** The part of
+  the fingerprint a developer switches between -- the compiler family, the
+  target, the standard library's family, the standard and the configuration's
+  flags -- is the directory's lineage; the compiler's version, mcpp's version,
+  the std module and the runtime contract evolve. A new fingerprint of a lineage
+  takes over the directory that lineage used last, and ninja rebuilds the edges
+  whose commands changed: after an mcpp upgrade that leaves the flags as they
+  were, no unit is compiled again. A predecessor of another compiler build is
+  removed instead (its objects are not reusable). After a build or a test run,
+  at most once a day, the directories no configuration used for `[build]
+  keep_days` days (config.toml; default 3, `0` keeps all) are removed.
 
 ### 2.10 `[build] cache` — The Global Dependency Cache
 
@@ -1710,9 +1736,9 @@ mcpp cache dir                      # where the cache lives
 mcpp cache list [--json]            # entries, sizes, last use
 mcpp cache info <pkg>@<ver>         # one entry, including the key inputs it was built with
 mcpp cache verify                   # every entry's file list against the disk
-mcpp cache gc --max-size 5GiB       # LRU-collect package entries to a budget
+mcpp cache gc --max-size 5GiB       # LRU-collect package and host tool entries to a budget
 mcpp cache gc --older-than 30d      # ...or by how long since they were last used
-mcpp cache clean [--deps|--std|--all|--legacy]
+mcpp cache clean [--deps|--std|--tools|--all|--legacy]
 ```
 
 The on-disk entry layout is versioned. An mcpp release that changes it retires

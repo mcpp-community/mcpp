@@ -279,6 +279,16 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         // its paths; what build, run and pack produce is trimmed.
         state.m->buildConfig.trimPaths = (pr.trimPathsDeclared ? pr.trimPaths : shipping)
                                          && !state.includeDevDeps;
+        // `split_debuginfo` (design 2026-10-31 §4.1 (b)): unpacked for the
+        // profiles a developer debugs. A debugger finds a unit's `.dwo` through
+        // the build directory the skeleton names, which `trim_paths` replaces.
+        if (pr.splitDebuginfoDeclared && pr.splitDebuginfo != "unpacked" && pr.splitDebuginfo != "off")
+            return std::unexpected(std::format(
+                "[profile.{}] split_debuginfo = \"{}\": expected \"unpacked\" or \"off\"",
+                pname, pr.splitDebuginfo));
+        const bool unpacked = pr.splitDebuginfoDeclared ? pr.splitDebuginfo == "unpacked"
+                                                        : (pname == "dev" || pname == "debug");
+        state.m->buildConfig.splitDebuginfo = unpacked && pr.debug && !state.m->buildConfig.trimPaths;
         // SAID ONCE PER HOME, the first time a shipping profile takes the new
         // defaults without stating them: the artifact changed, and the line
         // that changes it back is one key.

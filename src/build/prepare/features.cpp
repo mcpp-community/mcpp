@@ -1348,6 +1348,42 @@ step6_check_tool_self_request(PrepareState& state, HostToolCtx& ctx) {
     return {};
 }
 
+// The dependency closure a host tool's own build resolves (mcpp#874): its
+// package's `[dependencies]`, transitively, read from the manifests. A path
+// package is its version and its tree's stamp, and is walked into; a git or
+// index package is what the manifest asks for. Dev-dependencies are never in
+// it: the tool's build builds no tests.
+static std::vector<std::string> tool_upstream_keys(const std::filesystem::path& root,
+                                                   const mcpp::manifest::Manifest& manifest) {
+    namespace fs = std::filesystem;
+    std::vector<std::string> keys;
+    std::error_code ec;
+    std::set<fs::path> seen{fs::weakly_canonical(root, ec)};
+    std::vector<std::pair<fs::path, mcpp::manifest::Manifest>> work{{root, manifest}};
+    while (!work.empty()) {
+        auto [dir, m] = std::move(work.back());
+        work.pop_back();
+        for (auto const& [name, spec] : m.dependencies) {
+            if (!spec.git.empty()) {
+                keys.push_back(std::format("{}@git.{}#{}", name, spec.git, spec.gitRev));
+                continue;
+            }
+            if (spec.path.empty()) {
+                keys.push_back(std::format("{}@{}", name, spec.version));
+                continue;
+            }
+            const auto at = fs::weakly_canonical(dir / spec.path, ec);
+            auto dm = mcpp::manifest::load(at / "mcpp.toml", {.insideWorkspace = true});
+            keys.push_back(std::format("{}@{}+path.{}", name, dm ? dm->package.version : std::string{},
+                                       mcpp::build::tool_store::tree_stamp(at)));
+            if (dm && seen.insert(at).second) work.emplace_back(at, std::move(*dm));
+        }
+    }
+    std::ranges::sort(keys);
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+    return keys;
+}
+
 // Returns true when the tool is already resolved (a valid store entry, or a
 // plan-only deferral), in which case the caller's per-tool work is done.
 static std::expected<bool, std::string>
@@ -1428,10 +1464,17 @@ step6_resolve_tool_key(PrepareState& state, HostToolCtx& ctx) {
     // but a path dependency can: bump something two levels down
     // and the tool's direct list is unchanged, so a stale binary
     // stays in the store — a silently wrong artifact.
-    for (auto up : dg::transitive_dependencies(state.dependencyEdges, ctx.depIdx))
-        ctx.key.upstreamKeys.push_back(std::format("{}@{}",
-            state.packages[up].manifest.package.name,
-            source_keyed_version(up)));
+    //
+    // Read from the manifests, as the tool's own build resolves them, and
+    // not from this graph (mcpp#874). How much of the tool package's closure
+    // this graph walked depends on the command and the member it serves: a
+    // package only a build dependency's `tools` reach is not walked at all
+    // (the closure was empty under `mcpp test --workspace` and complete under
+    // `mcpp build`), and a root's dev-dependencies are walked while its tests
+    // are built. Either way the key changed between commands, the tool's path
+    // with it, and every action that ran the tool ran again.
+    ctx.key.upstreamKeys = tool_upstream_keys(state.packages[ctx.depIdx].root,
+                                              state.packages[ctx.depIdx].manifest);
     std::ranges::sort(ctx.key.upstreamKeys);
 
     ctx.cacheRoot = mcpp::home::cache_root();
@@ -1442,6 +1485,7 @@ step6_resolve_tool_key(PrepareState& state, HostToolCtx& ctx) {
 
     if (mcpp::build::tool_store::entry_valid(ctx.entry, ctx.key, ctx.toolName,
                                              exeSuffix)) {
+        mcpp::build::tool_store::touch(ctx.entry);
         step6_record_tool_provision(state, ctx, ctx.binOut);
         return true;
     }
@@ -1660,7 +1704,15 @@ step6_publish_tool(PrepareState& state, HostToolCtx& ctx) {
             "publishing host tool '{}:{}' failed: {}",
             ctx.depName, ctx.toolName, cpEc.message()));
     }
-    mcpp::build::tool_store::write_entry(ctx.entry, ctx.key);
+    // A path package's tree, so that its superseded entries are collected.
+    std::filesystem::path toolSource;
+    if (ctx.depIdx >= 1 && ctx.depIdx - 1 < state.dep_cache_identities.size()
+        && state.dep_cache_identities[ctx.depIdx - 1].sourceKind == "path") {
+        const auto& id = state.dep_cache_identities[ctx.depIdx - 1];
+        toolSource = id.sourceRef.empty() ? state.packages[ctx.depIdx].root
+                                          : std::filesystem::path(id.sourceRef);
+    }
+    mcpp::build::tool_store::write_entry(ctx.entry, ctx.key, toolSource);
     // The sub-build tree is large (protoc is several hundred
     // objects) and the key covers every input, so a hit never
     // needs it again. Removes only THIS consumer's scratch.

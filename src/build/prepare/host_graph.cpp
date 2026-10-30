@@ -241,6 +241,7 @@ std::expected<HostToolchain, std::string> host_toolchain(PrepareState& state) {
 }
 
 fs::path host_root(const PrepareState& state) {
+    if (!state.overrides.host_programs_root.empty()) return state.overrides.host_programs_root;
     return state.workRoot / "target" / ".build-mcpp" / "host";
 }
 
@@ -537,7 +538,11 @@ static void place_program_copy(const PrepareState& state, std::size_t i, const f
     if (ec) return;
     if (std::error_code dc; fs::last_write_time(dest, dc) == src && !dc) return;
     fs::create_directories(dest.parent_path(), ec);
-    fs::copy_file(bin, dest, fs::copy_options::overwrite_existing, ec);
+    // A link where the file system allows one: the program is the host
+    // group's binary, and a copy beside every record doubled each one (mcpp#874).
+    fs::remove(dest, ec);
+    fs::create_hard_link(bin, dest, ec);
+    if (ec) fs::copy_file(bin, dest, fs::copy_options::overwrite_existing, ec);
     if (!ec) fs::last_write_time(dest, src, ec);
     if (ec) mcpp::log::verbose("build-program", std::format(
         "cannot place {} beside its record: {}", path_text(dest), ec.message()));
@@ -747,6 +752,7 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
         std::make_shared<const mcpp::runtime::RuntimeBinding>(state.runtimeBindingSnapshot);
     sub.resolution_pins = resolution_pins(state);
     sub.build_program_graph = true;
+    sub.host_programs_root = host_root(state);
     sub.project_index_root = state.projectIndexRoot();
     for (auto const& p : all) sub.workspace_members.push_back(p.member);
 
@@ -1008,7 +1014,13 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
     }
 
     for (auto& [standard, programs] : groups) {
-        const auto dir = host_root(state) / programs.front().group;
+        // A group the build programs' graph needs is its sibling, named by its
+        // depth: the group that asked holds its own directory's lock while it
+        // builds.
+        const auto dir = host_root(state) / (state.overrides.build_program_graph
+            ? std::format("{}.{}", programs.front().group, state.overrides.tool_depth)
+            : programs.front().group);
+        state.usedHostGroups.insert(programs.front().group);
         std::error_code ec;
         fs::create_directories(dir, ec);
         // Two configuration groups of one command may share a host toolchain

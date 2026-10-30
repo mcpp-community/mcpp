@@ -1984,6 +1984,35 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
     return {};
 }
 
+// `split_debuginfo = "unpacked"` (design 2026-10-31 §4.1 (b)): a unit
+// compiled in this build directory keeps its debug information beside its
+// object (`-gsplit-dwarf`), and the artifacts carry a skeleton that names it,
+// so a closure's DWARF is no longer copied into every program and test. An
+// index package's units are excluded: their objects enter the global cache and
+// are staged by other projects, whose skeletons would name this build
+// directory -- compilers apply no prefix map to the name of a `.dwo`. On ELF
+// targets with a loader, ok images included; a freestanding image keeps it in
+// band for the debuggers of its boards.
+static void step13_split_debuginfo(PrepareState& state, BuildContext& ctx) {
+    if (!state.m->buildConfig.splitDebuginfo || !state.tc) return;
+    const auto t = mcpp::toolchain::triple::parse(state.tc->targetTriple);
+    const auto target = t ? *t : mcpp::toolchain::triple::host_triple();
+    if (target.object_format() != mcpp::toolchain::triple::ObjectFormat::Elf
+        || target.is_freestanding())
+        return;
+    std::set<std::string> fromIndex;
+    for (std::size_t i = 1; i < state.packages.size(); ++i)
+        if (i - 1 < state.dep_cache_identities.size()
+            && state.dep_cache_identities[i - 1].sourceKind == "version")
+            fromIndex.insert(mcpp::build::qualified_package_name(state.packages[i].manifest));
+    const auto split = mcpp::manifest::flag_element("-gsplit-dwarf");
+    for (auto& cu : ctx.plan.compileUnits) {
+        if (cu.servedFromCache || fromIndex.contains(cu.packageName)) continue;
+        cu.packageCflags.push_back(split);
+        cu.packageCxxflags.push_back(split);
+    }
+}
+
 static std::expected<void, std::string> step13_runtime_provider_overrides(PrepareState& state, BuildContext& ctx) {
     // Apply [runtime.<capability>] provider = "<pkg>" overrides. Canonical
     // identity wins; the old short spelling is accepted only when it denotes
@@ -2186,7 +2215,9 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
             "effect denied: write-project -- the build writes {}, and the caller denied writing "
             "the project (--deny write-project)", ctx.outputDir.generic_string()));
     }
+    if (!state.overrides.plan_only) adopt_predecessor_dir(state, ctx.outputDir);
     if (!state.overrides.plan_only) ctx.buildLock = mcpp::build::dirlock::acquire(ctx.outputDir);
+    if (!state.overrides.plan_only) record_build_dir(state, ctx.outputDir);
 
     // Each step states its duration under `build/stage` in the log file, as
     // the phases do (build wall-time plan, W9; see prepare_build).
@@ -2226,6 +2257,7 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
         return std::unexpected(r.error());
     if (auto r = timed("windows resources", [&] { return step13_windows_resources(state, ctx); }); !r)
         return std::unexpected(r.error());
+    timed("split debuginfo", [&] { step13_split_debuginfo(state, ctx); return 0; });
     if (auto r = timed("dependency cache", [&] { return step13_dependency_cache(state, ctx); }); !r)
         return std::unexpected(r.error());
     if (auto r = timed("lockfile", [&] { return step13_lockfile(state, ctx); }); !r)

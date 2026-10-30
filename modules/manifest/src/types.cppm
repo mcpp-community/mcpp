@@ -1184,6 +1184,9 @@ struct BuildConfig : BuildInputs {
     // `-ffile-prefix-map` for every unit (the profile's `trim_paths`): the
     // paths an artifact carries name packages and roles, not this machine.
     bool                                trimPaths = false;
+    // The units compiled in the build directory keep their debug information
+    // beside their objects (`split_debuginfo = "unpacked"`, resolved).
+    bool                                splitDebuginfo = false;
     // `[build].default-profile` (alias: `profile`) — the project's DEFAULT
     // profile when no --profile/--dev/--release is passed. The global convention
     // default stays "release"; this lets a project opt its plain `mcpp build`
@@ -2108,6 +2111,12 @@ struct Profile {
     bool        ndebugDeclared   = false;
     bool        trimPaths        = false;
     bool        trimPathsDeclared = false;
+    // `split_debuginfo` (design 2026-10-31 §4.1): "unpacked" leaves the
+    // debug information of the units compiled in the build directory beside
+    // their objects, "off" puts it in the artifact. Default by the profile's
+    // name, as `trim_paths`: unpacked for `dev` and `debug`.
+    std::string splitDebuginfo;
+    bool        splitDebuginfoDeclared = false;
     // `dependency_linkage`, per profile (#519).
     //
     // DECLARED-OR-NOT IS LOAD-BEARING, and that is why there are two members

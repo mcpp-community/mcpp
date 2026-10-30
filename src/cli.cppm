@@ -41,6 +41,7 @@ import mcpplibs.os.posix;
 import mcpp.home.files;
 import mcpp.build.progress;          // __action reports its start
 import mcpp.build.dirlock;           // the build directory lock names this command
+import mcpp.build.execute;           // the sweep after a build (design 2026-10-31 §8.3)
 import mcpp.ui;
 import mcpp.log;
 import mcpp.home;              // --system: the system home
@@ -700,7 +701,11 @@ int run(int argc, char** argv) {
                 .help("Play a game in the status row while it builds: --play-game=snake|stack|runner, or one at random"))
             .option(cl::Option("message-format").takes_value().value_name("FMT")
                 .help("human (default) | json: NDJSON events on stdout, then the mcpp.build envelope"))
-            .action(wrap_rc(cmd_build)))
+            .action(wrap_rc([](const cl::ParsedArgs& p) {
+                const int rc = cmd_build(p);
+                if (rc == 0) mcpp::build::sweep_after_build();
+                return rc;
+            })))
         .subcommand(cl::App("run")
             .description("Build + run a binary target (after `--`, args are passed to it)")
             // Named `bin`, NOT `target`, and the rename is load-bearing.
@@ -869,13 +874,16 @@ int run(int argc, char** argv) {
             .option(cl::Option("play-game")
                 .help("Play a game in the status row while it builds: --play-game=snake|stack|runner, or one at random"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
-                return cmd_test(p, std::span<const std::string>(passthrough));
+                const int rc = cmd_test(p, std::span<const std::string>(passthrough));
+                if (rc == 0) mcpp::build::sweep_after_build();
+                return rc;
             })))
         .subcommand(cl::App("clean")
-            .description("Remove target/, or with --stale only the fingerprint directories under it that no recorded build still uses")
+            .description("Remove target/, or with --stale only what no configuration still uses: fingerprint directories, generated sources, build-program groups")
             .option(cl::Option("bmi-cache").help("Also wipe the global build cache (see `mcpp cache clean`)"))
             .option(cl::Option("stale").help("Only remove target/<triple>/<fingerprint>/ directories that no recorded build considers current"))
             .option(cl::Option("dry-run").help("List what would be removed and delete nothing (implies --stale)"))
+            .option(cl::Option("report").help("Show where target/ holds its bytes, per configuration and area; removes nothing"))
             .option(cl::Option("older-than").takes_value().value_name("DURATION")
                 .help("Keep unrecorded directories written more recently than this, e.g. 12h, 3d (default 1d; 0 keeps none; implies --stale)"))
             .action(wrap_rc(cmd_clean)))
@@ -1181,7 +1189,7 @@ int run(int argc, char** argv) {
                 .option(cl::Option("older-than").takes_value().value_name("N{s|m|h|d}")
                     .help("Age threshold (e.g. 30d)")))
             .subcommand(cl::App("gc")
-                .description("LRU-collect package entries to a size and/or age budget")
+                .description("LRU-collect package and host tool entries to a size and/or age budget")
                 .option(cl::Option("max-size").takes_value().value_name("N{MiB|GiB}")
                     .help("Keep the package cache under this size (e.g. 5GiB)"))
                 .option(cl::Option("older-than").takes_value().value_name("N{s|m|h|d}")
@@ -1190,7 +1198,8 @@ int run(int argc, char** argv) {
                 .description("Drop cache entries (default: package entries only)")
                 .option(cl::Option("deps").help("Drop package entries (default)"))
                 .option(cl::Option("std").help("Drop std module entries"))
-                .option(cl::Option("all").help("Drop both"))
+                .option(cl::Option("tools").help("Drop host tool entries"))
+                .option(cl::Option("all").help("Drop every kind of entry"))
                 .option(cl::Option("legacy")
                     .help("Remove the unused pre-v1 cache at $MCPP_HOME/bmi")))
             .subcommand(cl::App("verify")
