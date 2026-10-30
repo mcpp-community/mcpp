@@ -34,7 +34,8 @@
   project's platform, so a platform whose version group names a newer openkal
   (openkal-platform 0.19.0) gave its graph two openkal releases and `mcpp pack`
   stopped. It is now built over the platform mcpp's openkal rows pin, the one
-  its `mcpplibs.os` was released against.
+  its `mcpplibs.os` was released against. e2e 995 packs a project that selects
+  openkal-platform 0.19.0 with its Windows launcher.
 
 ## [2026.10.31.1] - 2026-10-31
 
