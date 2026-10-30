@@ -364,7 +364,7 @@ Boost.Test）不适配，其测试按程序级运行。
 | 结果树 | Testing 视图 | SMTestRunner，后端事件转为 TeamCity service message |
 | 调试一个用例 | 同一组参数，调试类型 `mcpp` | 同一组参数，CLion 调试器 |
 
-调试需要测试程序的启动描述：mcpp 2026.11.1.1 增加 `mcpp test <name> --print-launch`（特性 `test-launch`，docs/50），输出与
+调试需要测试程序的启动描述：mcpp 2026.10.31.2 增加 `mcpp test <name> --print-launch`（特性 `test-launch`，docs/50），输出与
 `mcpp run --print-launch` 相同的 `mcpp.launch` 信封，`--` 之后是框架的过滤参数。这是 F17 之外 mcpp 核心唯一的变化：测试的
 判定（退出码）与参数透传不变，只增加描述启动的方式。项目的 mcpp 没有 `test-launch` 时，测试只提供运行。
 | 无框架的测试 | 粒度为程序，▶ 在 `main` 行 | 同左 |
@@ -811,7 +811,7 @@ openkal 的接口整体提供或整体不提供（§3），`openkal.space` 的�
 | 任务 | 仓库（PR） | 内容 | 依赖 |
 |---|---|---|---|
 | M | mcpp（#869，2026.10.31.1） | 检查点 ① `features` 与 `program`；② mcpp#868；③ §17；④ §11 与 docs/50 的 §4.0；⑤ `polyglot`；⑥ C1（§25.3） | — |
-| M2 | mcpp（2026.11.1.1） | `mcpp test <name> --print-launch`（`test-launch`，§7.4）；本文 rev 8 | M |
+| M2 | mcpp（2026.10.31.2） | `mcpp test <name> --print-launch`（`test-launch`，§7.4）；本文 rev 8 | M |
 | K1 | openkal（0.18.0） | `openkal.map`：SPEC 条款、头文件与模块、`SURFACE.txt`、一致性测试 | — |
 | K2 | openkal-linux、openkal-macos、openkal-windows | 实现 `openkal.map`；§25.3 定位到实现的修复 | K1 |
 | K3 | openkal-image | okrun 以 `openkal.map` 读入映像与 okb（§25.3 B1） | K2 |

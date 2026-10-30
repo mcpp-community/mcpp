@@ -241,7 +241,7 @@ mcpp test unit/math --print-launch -- --gtest_filter=Math.Adds
 ```
 
 Builds the one test the pattern names and prints how `mcpp test` would start it
-(the `mcpp.launch` envelope, mcpp 2026.11.1.1+), for a debugger to start: the
+(the `mcpp.launch` envelope, mcpp 2026.10.31.2+), for a debugger to start: the
 runner, the environment the run adds and the arguments after `--` are in it.
 
 ## Current limitations

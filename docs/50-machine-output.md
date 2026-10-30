@@ -244,7 +244,7 @@ envelope says when either has changed since.
 |---|---|---|---|
 | `target-sets` | 2026.10.31.1 (meaning from 2026.10.30.1) | `--target openkal` and the other sets expand to their legs (SPEC-015 §1) | an IDE's target picker |
 | `pkg-format-list` | 2026.10.31.1 (meaning from 2026.10.30.1) | `--pkg-format tar,okb` writes each container of one tree (SPEC-014 §5.4) | an IDE's pack form |
-| `test-launch` | 2026.11.1.1 | `mcpp test <name> --print-launch` prints the `mcpp.launch` of one test (below) | an IDE debugging a test |
+| `test-launch` | 2026.10.31.2 | `mcpp test <name> --print-launch` prints the `mcpp.launch` of one test (below) | an IDE debugging a test |
 
 ### How a tool runs mcpp for a project
 
@@ -1006,7 +1006,7 @@ names a distributable.
 mcpp test <name> --print-launch [-- <arguments>]
 ```
 
-The same for one test (feature `test-launch`, 2026.11.1.1): the test `<name>` names is
+The same for one test (feature `test-launch`, 2026.10.31.2): the test `<name>` names is
 built as `mcpp test` builds it and described as `mcpp test` would start it --
 its runner, the environment the run adds, and the arguments after `--` -- with
 `test` in `data` naming it. A name that several tests contain is resolved to

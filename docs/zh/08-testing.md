@@ -212,7 +212,7 @@ mcpp test --message-format json
 mcpp test unit/math --print-launch -- --gtest_filter=Math.Adds
 ```
 
-构建该模式指定的一个测试，并打印 `mcpp test` 启动它的方式（`mcpp.launch` 信封，mcpp 2026.11.1.1+），
+构建该模式指定的一个测试，并打印 `mcpp test` 启动它的方式（`mcpp.launch` 信封，mcpp 2026.10.31.2+），
 供调试器启动：其中包括运行器、运行所加的环境与 `--` 之后的参数。
 
 ## 当前边界

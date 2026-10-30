@@ -4,7 +4,7 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
-## [2026.11.1.1] - 2026-11-01
+## [2026.10.31.2] - 2026-10-31
 
 ### Added
 
