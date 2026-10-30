@@ -819,6 +819,26 @@ step9_target_side_include_broadcast(PrepareState& state, TargetSideGather& gathe
             }
         }
 
+        // THE CONTRACT'S TARGET SIDE: everything above that every unit receives,
+        // in one set, for `${mcpp.contract}` (a foreign build compiling for the
+        // target reads it there; docs/30). The C environment is the default
+        // one: `c-environment = "platform"` is a package's own exception.
+        state.contractTargetSide = state.targetSideUsage;
+        if (state.tc) {
+            std::string contractOs;
+            if (auto ttOs = mcpp::toolchain::triple::parse(state.tc->targetTriple))
+                contractOs = ttOs->os;
+            const auto defines = mcpp::toolchain::predefines::define_tokens(
+                contractOs, state.tc->kernelAbiIsOpenkal);
+            for (auto* words : {&state.contractTargetSide.cflags, &state.contractTargetSide.cxxflags}) {
+                state.appendUniqueFlags(*words, defines);
+                state.appendUniqueFlags(*words, state.tc->cEnvTokens);
+                state.appendUniqueFlags(*words, state.tc->cEnvBuiltinsTokens);
+            }
+            state.appendUniqueFlags(state.contractTargetSide.asmflags, state.tc->cEnvTokens);
+            state.appendUniqueFlags(state.contractTargetSide.asmflags, state.tc->cEnvBuiltinsTokens);
+        }
+
         if (state.tc && (state.tc->kernelAbiIsOpenkal || !state.tc->cEnvTokens.empty()
                    || !state.tc->cEnvBuiltinsTokens.empty())) {
             for (auto& p : state.packages) {

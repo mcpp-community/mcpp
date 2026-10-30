@@ -510,6 +510,7 @@ static std::expected<void, std::string> step13_make_plan(PrepareState& state, Bu
     // that function does depends on it: the flag assembly that does reads the
     // plan, and every reader of `compute_flags` runs after this line.
     ctx.plan.targetSide = state.resolvedTargetSide;
+    ctx.plan.contractTargetSide = state.contractTargetSide;
 
     // C5 / D5a-b (design 2026-09-26 §3.5): the standard-library units this
     // configuration's build compiles, when it imports `std`. Recovered here,

@@ -871,13 +871,36 @@ std::expected<void, std::string> write_build_contract(const BuildPlan& plan, con
         t["args"] = std::move(args);
         return t;
     };
+    // The target side every unit receives from beneath it (the platform's
+    // layers' headers and flags, the engine's predefines, the realised C
+    // environment), after the configuration's own words, as on a unit's line.
+    auto target_side = [&](nlohmann::json& t, const std::vector<std::string>& words, bool assembly) {
+        auto& args = t["args"];
+        for (auto const& d : plan.contractTargetSide.includeDirs) {
+            args.push_back("-isystem");
+            args.push_back(d.generic_string());
+        }
+        for (auto const& d : plan.contractTargetSide.includeDirsAfter) {
+            args.push_back("-idirafter");
+            args.push_back(d.generic_string());
+        }
+        for (auto const& w : words) {
+            // An assembler unit takes the C words' -D, -U and -I only, as a unit's line does.
+            if (assembly && !(w.starts_with("-D") || w.starts_with("-U") || w.starts_with("-I"))) continue;
+            args.push_back(w);
+        }
+    };
     nlohmann::json doc;
     doc["schema"] = 1;
     doc["target"] = plan.toolchain.targetTriple;
     doc["dialect"] = std::string(mcpp::toolchain::dialect_for(plan.toolchain).id);
     doc["compile"]["c"] = tool(flags.ccBinary, flags.cc, true);
+    target_side(doc["compile"]["c"], plan.contractTargetSide.cflags, false);
     doc["compile"]["cxx"] = tool(flags.cxxBinary, flags.cxx, true);
+    target_side(doc["compile"]["cxx"], plan.contractTargetSide.cxxflags, false);
     doc["compile"]["asm"] = tool(flags.ccBinary, flags.as, true);
+    target_side(doc["compile"]["asm"], plan.contractTargetSide.cflags, true);
+    for (auto const& w : plan.contractTargetSide.asmflags) doc["compile"]["asm"]["args"].push_back(w);
     auto link = tool(flags.ldDriver.empty() ? flags.cxxBinary : flags.ldDriver, flags.ld, false);
     link["archiver"] = flags.arBinary.generic_string();
     doc["link"] = std::move(link);

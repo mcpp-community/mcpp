@@ -18,6 +18,17 @@
   exactly; one naming several, `--list`, `--no-run`, `--archive`,
   `--message-format json`, several legs and several members are refused.
 
+### Fixed
+
+- **The build's contract states the target side** (`${mcpp.contract}`,
+  docs/30). Its words held the configuration's own flags only: a foreign build
+  reading it for an ok image (`<arch>-openkal`) had neither the C library's and
+  the C++ runtime's headers nor `__OPENKAL__`, and could not compile
+  `<stdio.h>`. They now end with what every unit receives from beneath it: the
+  platform's layers' include directories and flags, the engine's predefines
+  (`__MCPP_TARGET_<OS>__`, `__OPENKAL__`) and the realised C environment. e2e 994
+  compiles a C and a C++ unit for the target with the contract alone.
+
 ## [2026.10.31.1] - 2026-10-31
 
 ### Added

@@ -858,6 +858,9 @@ struct PrepareState {
     std::optional<std::size_t> cxxLayerProviderIndex;
     bool targetSideResolved = false;
     mcpp::modgraph::UsageRequirements targetSideUsage;
+    // The same, with the engine's predefines and the realised C environment:
+    // what the build's contract states (BuildPlan::contractTargetSide).
+    mcpp::modgraph::UsageRequirements contractTargetSide;
 
     // ── P9/P11: the module scan, its validation, and the fingerprint they
     // feed; read again by P13 (the plan, resolution.json) ───────────────────

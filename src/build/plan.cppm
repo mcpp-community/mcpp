@@ -435,6 +435,11 @@ struct BuildPlan {
     // `openkal-llvm` family name, which had to be invented to carry a fact
     // about the dependency graph on an object that describes a compiler.
     mcpp::targetside::TargetSide    targetSide;
+    // What every unit of this build receives from beneath it -- the target
+    // side's include directories and flags, the engine's predefines, the
+    // realised C environment -- as the build's contract states it for a
+    // foreign build compiling for the target (`write_build_contract`).
+    mcpp::modgraph::UsageRequirements contractTargetSide;
     // THE C++ ISLAND OF THIS BUILD, when it has one (design 2026-10-26 §6.3):
     // a C++ runtime other than the build's own reaches the link -- declared by
     // packages' private `mcpp:c++-abi` requirements, named on the link line,
