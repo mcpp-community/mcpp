@@ -5,7 +5,7 @@ status: active
 
 # 生态设计 part 2：mcpp 插件与 mcppls 的分层、入口、测试、版本感知与分发
 
-日期：2026-10-30（rev 7，实施）。基线：mcpp 2026.10.30.1（`13e2da04`）、mcpp-ide #3（0.2.0，`734d856` + `49ae757`）、
+日期：2026-10-30（rev 9，实施）。基线：mcpp 2026.10.30.1（`13e2da04`）、mcpp-ide #3（0.2.0，`734d856` + `49ae757`）、
 mcppls #75（0.0.20，`4660eb6`）。前文：[part 1](2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md)（§9 mcppls 单包、
 §10 编辑器）。相关 issue：mcpp#868（锁文件键）、Sunrisepeak/mcppls-clangd#12（clangd 映像）。相关规范：mcpp SPEC-015 §4、docs/08、
 docs/50；mcppls S3、S4；mcpp-ide protocol。
@@ -386,6 +386,13 @@ Boost.Test）不适配，其测试按程序级运行。
 - **迁移验收**：以现有 TS 实现在固定样例集（`mcpp.toml`、`build.mcpp` 各一组，覆盖 7 类规则与全部补全位置）上生成黄金输出（诊断、
   补全项、hover 文本、跳转位置），后端输出逐项一致后删除 TS 实现；设置开关（`mcpp.buildScript.*`、严重度）原样保留，作为参数
   传给后端。
+- **实现（rev 9）**：VS Code 以 languageclient 连接（打包进 `dist/vendor`，VSIX 不带 node_modules）；Neovim 以 `vim.lsp`
+  连接并附着到 `mcpp.toml`、`build.mcpp` 的缓冲区；CLion 的平台 LSP API 总是自行启动它所连接的服务器进程，与"同一进程"
+  冲突，故 CLion 经会话已有的连接发送 `textDocument/*`，以补全贡献者、外部标注器、文档提供者与跳转处理器呈现结果。规则层
+  合并时取两份实现中较完整者：表名经 schema 解读（`workspace.<表>` 即其镜像的表，选择器下的平台表即 `platform.<表>`，命名
+  条目取最长的已知前缀），只在选择器下出现的表带选择器给出，schema 自身的数组表不报错，依赖版本取自 `mcpp search --format
+  json` 的目录。黄金输出由 TS 实现在样例集的每个位置生成（含扫描器的结构与光标上下文、其解析器测试的全部文档），后端逐项一致
+  后删除 TS 规则层；`src/toml/parser.ts` 只保留供项目页读取声明的结构读取。
 - **无后端时（F15）**：后端经 okrun 运行，okrun 覆盖 Linux x86_64 与 aarch64、macOS arm64、Windows x86_64；VS Code 还运行在
   macOS x86_64、Windows arm64、Linux armhf 上。回退保留，定义为声明的降级模式：界面显示"后端不可用（本平台）"，只提供构建、运行、
   测试与项目页面，CI 有一个任务专门以无后端方式运行 Extension Host 测试。okrun 覆盖新平台后，降级模式在该平台自动不再出现。
@@ -811,7 +818,7 @@ openkal 的接口整体提供或整体不提供（§3），`openkal.space` 的�
 | 任务 | 仓库（PR） | 内容 | 依赖 |
 |---|---|---|---|
 | M | mcpp（#869，2026.10.31.1） | 检查点 ① `features` 与 `program`；② mcpp#868；③ §17；④ §11 与 docs/50 的 §4.0；⑤ `polyglot`；⑥ C1（§25.3） | — |
-| M2 | mcpp（2026.10.31.2） | `mcpp test <name> --print-launch`（`test-launch`，§7.4）；本文 rev 8 | M |
+| M2 | mcpp（2026.10.31.2） | `mcpp test <name> --print-launch`（`test-launch`，§7.4）；构建契约的目标侧（C2）；Windows 启动器的平台（K5 的发现）；本文 rev 8、rev 9 | M |
 | K1 | openkal（0.18.0） | `openkal.map`：SPEC 条款、头文件与模块、`SURFACE.txt`、一致性测试 | — |
 | K2 | openkal-linux、openkal-macos、openkal-windows | 实现 `openkal.map`；§25.3 定位到实现的修复 | K1 |
 | K3 | openkal-image | okrun 以 `openkal.map` 读入映像与 okb（§25.3 B1） | K2 |
@@ -860,14 +867,15 @@ GitCode、mcpp-index 条目）→ C → L → I → xim-pkgindex PR。之后在�
 mcpp 新建、构建、运行、`--pkg-format polyglot`；mcppls 在四种编辑器入口中可用，`mcppls status` 的输出；mcpp-ide 的按项目版本
 感知（锁定版本的项目与未锁定的项目）。
 
-### 25.6 进度（rev 8）
+### 25.6 进度（rev 9）
 
 | 任务 | 状态 |
 |---|---|
 | M | 已合入并发布 2026.10.31.1 |
 | K1–K4 | openkal 0.18.0、openkal-linux 0.19.0、openkal-macos 0.16.0、openkal-windows 0.14.0、openkal-image 0.1.5、openkal-musl 0.23.0 已发布；一致性套件的副本改在套件自身目录运行（wine 经 binfmt 以全路径启动时，副本按卷根运行，无法创建文件） |
-| K5 | openkal-llvm-runtime 0.16.10（钉 musl 0.23.0），随后 platform 与 mcpplibs.os |
+| K5 | openkal-llvm-runtime 0.16.10、openkal-platform 0.19.0 已发布，mcpplibs.os 0.2.4 随索引发布进行。platform 0.19.0 的 CI 暴露 mcpp 2026.10.31.1 的缺陷：包的 Windows 启动器钉 `mcpplibs.os` 0.2.1（openkal 0.17.1）却建在项目所选的平台上，版本组指名 openkal 0.18.0 时图中有两个 openkal；M2 改为在 mcpp 的 openkal 行所钉的平台上构建启动器，platform 的 CI 以 M2 的分支在四个系统上通过 |
 | C | B2、B3 定位到 LLVM 补丁（上表），补丁在 probe 分支验证 |
 | L | `status` 的动作表扩充为 mcppls 的全部动作（S3-8-7） |
-| I | 检查点 ①–④ 已推送；⑤ 规则层、⑥ CLion 原生界面在进行 |
+| M2 | 版本定为 2026.10.31.2：`test-launch`、构建契约的目标侧（C2 的前提）、Windows 启动器的平台 |
+| I | 检查点 ①–⑤ 已推送：⑤ 为规则层移入后端（LSP，协议 2）、三个编辑器的接入、F15 的降级模式及其 CI 任务；⑥ CLion 原生界面在进行 |
 
