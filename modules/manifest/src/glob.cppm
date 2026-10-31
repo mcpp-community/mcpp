@@ -198,13 +198,19 @@ bool relative_path_matches_glob(std::string_view relative, std::string_view glob
             [&](std::size_t si, std::size_t pi) -> bool {
             while (pi < p.size()) {
                 if (p[pi] == '*' && pi + 1 < p.size() && p[pi + 1] == '*') {
-                    // ** : skip zero or more chars/segments
+                    // `**/` : zero or more WHOLE directories, so the rest of
+                    // the pattern resumes where it stands or just after a `/`.
+                    // Resuming inside a name made `**/main.cpp` match
+                    // `src/domain.cpp`. A `**` not followed by `/` skips any
+                    // characters, segments included.
                     pi += 2;
-                    if (pi < p.size() && p[pi] == '/') ++pi;
+                    const bool wholeDirs = pi < p.size() && p[pi] == '/';
+                    if (wholeDirs) ++pi;
                     if (pi >= p.size()) return true;
-                    while (si <= s.size()) {
+                    const std::size_t from = si;
+                    for (; si <= s.size(); ++si) {
+                        if (wholeDirs && si != from && s[si - 1] != '/') continue;
                         if (rec(si, pi)) return true;
-                        ++si;
                     }
                     return false;
                 } else if (p[pi] == '*') {
