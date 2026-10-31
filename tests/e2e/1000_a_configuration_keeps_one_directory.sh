@@ -19,6 +19,9 @@
 #   E. The configuration names the build-cache entries it used (`uses.list`),
 #      and a build that replays its graph without planning still marks them
 #      used: an entry last used 40 days ago is used today after the sweep.
+#   F. In a rooted workspace (`members = ["."]`), `clean --stale` keeps the
+#      configuration in use: the workspace's own directory is no member's
+#      leftover.
 set -e
 
 TMP=$(mktemp -d)
@@ -81,5 +84,14 @@ touch -d '40 days ago' "$record"
 rm -f target/.mcpp-swept
 "$MCPP" build > e1.log 2>&1 || fail "the build that sweeps failed" e1.log
 [ -n "$(find "$record" -mtime -1)" ] || fail "a replayed build did not mark its cache entry used" <(stat "$record")
+
+# F
+mkdir -p "$TMP/ws/src" && cd "$TMP/ws"
+printf '[package]\nname    = "ws"\nversion = "0.1.0"\n\n[workspace]\nmembers = ["."]\n' > mcpp.toml
+printf 'int main() { return 0; }\n' > src/main.cpp
+"$MCPP" build > f0.log 2>&1 || fail "the rooted workspace did not build" f0.log
+current=$(ls -d target/*/*/ | grep -E '/[0-9a-f]{16}/$' | head -1)
+"$MCPP" clean --stale > f1.log 2>&1 || fail "clean --stale failed" f1.log
+[ -d "$current" ] || fail "clean --stale removed the rooted workspace's own build" f1.log
 
 echo "OK"

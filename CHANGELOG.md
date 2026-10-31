@@ -85,6 +85,10 @@ design 2026-10-31, workspace space and reuse). Measured on mcppls (6 members,
   build program beside its record is a link to its group's binary.
 - **The build programs' graph builds its own build programs beside its group**
   (`<group>.<depth>`), not in a copy of the host workspace under its `target/`.
+- **`mcpp clean --stale` keeps a rooted workspace's own build.** It removed the
+  members' build directories from before the workspace was the unit of build,
+  and a workspace that lists itself (`members = ["."]`) had its own
+  configuration directory removed as one of them. e2e 1000 F.
 - **A path host tool's superseded entries are removed** when its tree changes.
 - e2e 998 covers these and the archive, the placement and the collection.
 

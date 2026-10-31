@@ -5916,8 +5916,12 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
             return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
         });
     };
+    // Not the sweep after a build, which collects only by age; and never the
+    // workspace's own directory, which a rooted workspace lists as `"."`.
     for (auto const& memberDir : memberDirs) {
+        if (quiet) break;
         std::error_code mec;
+        if (fs::equivalent(memberDir, *root, mec)) continue;
         const auto memberTarget = memberDir / "target";
         if (!fs::is_directory(memberTarget, mec)) continue;
         for (fs::directory_iterator tripleIt(memberTarget, mec), end; tripleIt != end;

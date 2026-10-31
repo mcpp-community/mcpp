@@ -42,6 +42,10 @@ EOF
 echo 'int main() { return 0; }' > "$TMP/app/src/main.cpp"
 
 cd "$TMP/app"
+# The package itself, installed online first: the criteria are about the
+# refresh decision of an offline plan, not about which earlier test of the
+# shard happened to install it (the shards follow the timings, and moved).
+"$MCPP" emit build-database --format json > /dev/null 2> install.txt || true
 MCPP_OFFLINE=1 "$MCPP" emit build-database --format json -v > out.json 2> err.txt || true
 
 # What the shared home held when the rung was not taken: the test passes on a
