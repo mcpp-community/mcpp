@@ -1945,11 +1945,37 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
 // sweep with the built-in table while the project classifies with a wider one
 // — the exact shape of the bug this converge is removing, reintroduced as a
 // parameter default. Callers must say where their table came from.
+// A PATCH IS AN INPUT OF THE GRAPH (design 2026-11-02 §14.1): a changed patch
+// is another variant, with another source tree, so the graph a recorded build
+// replays is not the graph it asks for. The patches a manifest's dependency
+// edges carry are compared with the build file, as the manifest itself is; a
+// manifest that names no patch costs a read of its text and nothing more.
+bool patches_newer_than(const std::filesystem::path& manifestPath,
+                        std::filesystem::file_time_type ninjaTime) {
+    std::error_code ec;
+    {
+        std::ifstream in(manifestPath, std::ios::binary);
+        if (!in) return false;
+        const std::string text((std::istreambuf_iterator<char>(in)), {});
+        if (text.find("patches") == std::string::npos) return false;
+    }
+    auto m = mcpp::manifest::load(manifestPath, {.insideWorkspace = true});
+    if (!m) return true;   // prepare_build reports it
+    for (auto const* deps : {&m->dependencies, &m->devDependencies, &m->buildDependencies})
+        for (auto const& [name, spec] : *deps)
+            for (auto const& patch : spec.patches) {
+                auto ft = std::filesystem::last_write_time(patch, ec);
+                if (ec || ft > ninjaTime) return true;
+            }
+    return false;
+}
+
 bool sources_newer_than(const std::filesystem::path& projectRoot,
                         std::filesystem::file_time_type ninjaTime,
                         const std::vector<std::filesystem::path>& resourceScripts,
                         const mcpp::ExtensionTable& extTable) {
     std::error_code ec;
+    if (patches_newer_than(projectRoot / "mcpp.toml", ninjaTime)) return true;
     // The root build.mcpp is a build input too — its directives shape
     // build.ninja (flags, generated/selected sources). A changed program must
     // abandon the fast path and fall through to prepare_build, where the
@@ -2050,6 +2076,7 @@ export bool dep_sources_newer_than(const std::vector<DepSourceRoot>& depSourceRo
         auto tomlTime = std::filesystem::last_write_time(depRoot / "mcpp.toml", ec);
         if (ec) { ec.clear(); return true; }
         if (tomlTime > ninjaTime) return true;
+        if (patches_newer_than(depRoot / "mcpp.toml", ninjaTime)) return true;
         // THE WHOLE TREE, NOT `src/`. A dependency's units outside `src/` --
         // a feature's `rules/x.cppm`, a `[build] sources` glob elsewhere --
         // are as much its sources as those under it, and a host module among
@@ -5773,7 +5800,10 @@ export int clean_report() {
 // A configuration's evolution reuses its directory (§8.2), so what this finds
 // is a configuration nobody built for that long.
 export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet = false);
-export void sweep_after_build() {
+// `[build] keep_days` of config.toml (default 3): the one window of "recent"
+// both the sweep after a build and `clean --stale` keep (mcpp#881). Zero or
+// less: the sweep keeps everything; `clean --stale` reads it as the default.
+export std::int64_t configured_keep_days() {
     namespace fs = std::filesystem;
     std::int64_t days = 3;
     std::error_code ec;
@@ -5781,6 +5811,12 @@ export void sweep_after_build() {
     if (fs::exists(config, ec))
         if (auto doc = mcpp::libs::toml::parse_file(config))
             days = doc->get_int("build.keep_days").value_or(days);
+    return days;
+}
+export void sweep_after_build() {
+    namespace fs = std::filesystem;
+    const std::int64_t days = configured_keep_days();
+    std::error_code ec;
     if (days <= 0) return;
     auto root = mcpp::project::find_manifest_root(fs::current_path());
     if (!root) return;
@@ -5851,7 +5887,11 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
     }
 
     std::uintmax_t bytes = 0;
-    std::size_t removed = 0, failed = 0;
+    // `kept': unrecorded directories left because they are newer than the
+    // window. Counted apart, so that the summary is true when it kept one
+    // (mcpp#881): it had said every directory was recorded as current under a
+    // line that had just said one was not.
+    std::size_t removed = 0, failed = 0, kept = 0;
     std::set<fs::path> swept;   // removed, or would be under --dry-run
     std::error_code ec;
     for (fs::directory_iterator tripleIt(target, ec), end; tripleIt != end; tripleIt.increment(ec)) {
@@ -5879,6 +5919,7 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
                                           : age < 86400 ? std::format("{}h", age / 3600)
                                                         : std::format("{}d", age / 86400);
                     line(std::format("kept    {}  (not in the record, but written {} ago; see --older-than)", shown, ago));
+                    ++kept;
                     continue;
                 }
             }
@@ -5993,6 +6034,7 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
             fs::file_time_type::clock::now() - fs::last_write_time(dir, aec)).count();
         if (!aec && age < keepWithinSecs) {
             line(std::format("kept    {}  (used by no configuration, but written recently; see --older-than)", shown));
+            ++kept;
             return;
         }
         const auto size = mcpp::bmi_cache::dir_size(dir);
@@ -6035,10 +6077,19 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
                      "`.build-mcpp/out` and `.build-mcpp/host` are left as they are"));
     }
 
-    if (removed == 0 && failed == 0) {
+    const auto window = [&] {
+        return keepWithinSecs % 86400 == 0 ? std::format("{}d", keepWithinSecs / 86400)
+             : keepWithinSecs % 3600 == 0  ? std::format("{}h", keepWithinSecs / 3600)
+                                           : std::format("{}s", keepWithinSecs);
+    };
+    if (removed == 0 && failed == 0 && kept == 0) {
         line(std::format("Nothing stale under {}: every fingerprint directory is recorded as current{}",
                      target.string(), usesKnown
                          ? ", and every generated-source and build-program directory is in use" : ""));
+    } else if (removed == 0 && failed == 0) {
+        line(std::format("Nothing removed under {}: {} director{} not in use kept, written within "
+                         "the last {} (--older-than); every other directory is in use",
+                     target.string(), kept, kept == 1 ? "y" : "ies", window()));
     } else {
         if (quiet)
             mcpp::ui::status("Swept", std::format("{} build director{} no configuration used for {} days ({}; [build] keep_days in config.toml)",

@@ -152,6 +152,10 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         bool buildTable = false;
         bool wantsLibrary = false;
         bool reexport = false;
+        // `embed = true` and its `exclude` (design 2026-11-02 §14.1): the
+        // dependency's sources are compiled into the consumer.
+        bool embed = false;
+        std::vector<std::string> exclude;
     };
 
     struct GraphRequest {
@@ -172,6 +176,10 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
     struct ResolvedKey {
         std::string ns;
         std::string shortName;
+        // The patch set's digest, for a variant (design 2026-11-02 §14.1):
+        // a patched library is another library, so two patch sets of one
+        // package are two identities, resolved, built and cached apart.
+        std::string variant;
         auto operator<=>(const ResolvedKey&) const = default;
     };
 
@@ -212,6 +220,9 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         bool        devOnly = false;
         std::size_t depIndex = 0;       // index into dep_manifests/packages-1 (for in-place re-fetch)
         std::vector<std::string> linkFlagsAdded;  // entries appended to m->buildConfig.ldflags by this dep
+        // A variant's patches, as its edge stated them (absolute paths), for
+        // the lock (design 2026-11-02 §14.1).
+        std::vector<std::string> patches;
     };
 
     struct WorkItem {
@@ -790,6 +801,14 @@ struct PrepareState {
                                  std::string>(const std::string&, const std::string&,
                                               const std::string&, const std::string&)>
         loadVersionDep;
+    // The same for an edge that carries patches: the verified source is
+    // copied to the variant's own tree and patched before the package's
+    // description is read from it (design 2026-11-02 §14.1).
+    std::function<std::expected<std::pair<std::filesystem::path, mcpp::manifest::Manifest>,
+                                 std::string>(const std::string&, const std::string&,
+                                              const std::string&, const std::string&,
+                                              const std::vector<std::string>&, const std::string&)>
+        loadVersionDepVariant;
 
     std::map<ResolvedKey, ResolvedRecord> resolved;
     std::map<std::size_t, std::vector<std::pair<std::string, std::string>>>
@@ -920,6 +939,12 @@ std::expected<void, std::string> phase1_toolchain_spec_and_axes(PrepareState& st
 std::expected<void, std::string> phase2_define_toolchain_resolver(PrepareState& state);
 std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state);
 std::expected<void, std::string> phase4a_graph_load(PrepareState& state);
+// graph_edges.cpp: the edge one request adds to the graph, or the one it
+// merges with.
+void recordDependencyEdge(PrepareState& state, std::size_t consumerDepIndex,
+                          std::size_t dependencyPackageIndex,
+                          const mcpp::manifest::DependencySpec& spec, bool buildTable,
+                          const std::string& writtenKey);
 std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state);
 // The lookups the later phases ask of the graph (graph_closures.cpp).
 void step4b_define_lookup_closures(PrepareState& state);

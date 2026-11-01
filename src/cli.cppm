@@ -885,7 +885,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("dry-run").help("List what would be removed and delete nothing (implies --stale)"))
             .option(cl::Option("report").help("Show where target/ holds its bytes, per configuration and area; removes nothing"))
             .option(cl::Option("older-than").takes_value().value_name("DURATION")
-                .help("Keep unrecorded directories written more recently than this, e.g. 12h, 3d (default 1d; 0 keeps none; implies --stale)"))
+                .help("Keep unrecorded directories written more recently than this, e.g. 12h, 3d (default [build] keep_days, 3d; 0 keeps none; implies --stale)"))
             .action(wrap_rc(cmd_clean)))
         .subcommand(cl::App("why")
             .description("Explain how the toolchain / runtime / deps / runners / sources were resolved")

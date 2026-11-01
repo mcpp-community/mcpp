@@ -1369,6 +1369,7 @@ void scan_one_into(ScanResult& result,
         }
     }
     for (std::size_t i = 0; i < globFlagHits.size(); ++i) {
+        if (manifest.buildConfig.globFlags[i].embedded) continue;
         if (globFlagHits[i] == 0) {
             // Zero scanned-source hits is not yet a dead glob: the entry may
             // target files that are real but not scanned sources — notably

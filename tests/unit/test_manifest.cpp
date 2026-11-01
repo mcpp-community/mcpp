@@ -4029,7 +4029,7 @@ name = "depspeckeys"
 version = "0.1.0"
 
 [dependencies.compat]
-everything = { version = "1.0.0", features = ["x"], default-features = false, visibility = "private", backend = "openblas", tools = ["t"], artifacts = ["a"], host-module = true, reexport = true, linkage = "shared" }
+everything = { version = "1.0.0", features = ["x"], default-features = false, visibility = "private", backend = "openblas", tools = ["t"], artifacts = ["a"], host-module = true, reexport = true, linkage = "shared", patches = ["p/one.patch"], embed = true, exclude = ["src/prim.c"] }
 bygit      = { git = "https://example.invalid/x.git", tag = "v1", visibility = "interface" }
 bypath     = { path = "../sibling" }
 )";
@@ -4054,6 +4054,31 @@ bypath     = { path = "../sibling" }
     EXPECT_NE(std::find(all->features.begin(), all->features.end(), "backend-openblas"),
               all->features.end());
     EXPECT_EQ(all->linkage, "shared");
+    // design 2026-11-02 §14.1: a patch is named relative to the manifest that
+    // carries it, and read as an absolute path.
+    ASSERT_EQ(all->patches.size(), 1u);
+    EXPECT_EQ(std::filesystem::path(all->patches[0]),
+              (tmp / "p" / "one.patch").lexically_normal());
+    EXPECT_TRUE(all->embed);
+    ASSERT_EQ(all->exclude.size(), 1u);
+    EXPECT_EQ(all->exclude[0], "src/prim.c");
+}
+
+// design 2026-11-02 §14.1: `exclude` without `embed` would change what a
+// library built on its own compiles for every consumer, which is a patch's to
+// state; the manifest is refused, naming the edge.
+TEST(Manifest, ExcludeWithoutEmbedIsRefused) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "x"
+version = "0.1.0"
+
+[dependencies]
+"compat.zlib" = { version = "1.3.2", exclude = ["gzlib.c"] }
+)");
+    ASSERT_FALSE(m);
+    EXPECT_NE(m.error().message.find("exclude is allowed only with embed"), std::string::npos)
+        << m.error().message;
 }
 
 // ── #519: the dependency-form axis ────────────────────────────────────────

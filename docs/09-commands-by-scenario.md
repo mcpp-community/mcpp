@@ -56,9 +56,12 @@ the fast paths read. Three consequences follow from that definition:
 
 - A directory no record names is not deleted merely for that. `mcpp test`
   builds through a path that writes no record, and so does a `--no-cache`
-  build. An unrecorded directory written within `--older-than` (one day by
-  default) is kept; older than that it goes, and the cost of being wrong is one
-  rebuild of a configuration nothing has touched since.
+  build. An unrecorded directory written within `--older-than` is kept; older
+  than that it goes, and the cost of being wrong is one rebuild of a
+  configuration nothing has touched since. The default window is `[build]
+  keep_days` of `config.toml` (3 days), the window the sweep after a build
+  uses, so the two agree on what is recent (2026.11). When it kept a
+  directory, the summary says how many and within what window.
 - With no record at all the command refuses rather than guess. One
   `mcpp build` establishes what is current.
 - Directories under `target/` that are not fingerprint directories — `dist/`

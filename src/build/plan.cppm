@@ -6,6 +6,7 @@
 export module mcpp.build.plan;
 
 import std;
+import mcpp.pm.patch;          // a variant's name (design 2026-11-02 §14.1)
 import mcpp.build.graph_shape;
 import mcpp.targetside;
 import mcpp.build.loader_contract;
@@ -968,10 +969,21 @@ std::vector<std::string> dependency_name_candidates(
             out.push_back(std::move(value));
     };
 
-    push(depName);
-    if (!spec.shortName.empty()) push(spec.shortName);
+    // A VARIANT IS NAMED AS ANOTHER PACKAGE (design 2026-11-02 §14.1): an edge
+    // that carries patches reaches `<package>+p<digest>', and only that --- the
+    // package without patches is another package, which this edge does not
+    // reach.
+    std::string variant;
+    if (!spec.patches.empty()) {
+        auto digest = spec.patchesDigest.empty() ? mcpp::pm::patch::set_digest(spec.patches)
+                                                 : std::expected<std::string, std::string>(spec.patchesDigest);
+        if (digest && !digest->empty()) variant = "+p" + digest->substr(0, 12);
+        else return out;   // a patch that cannot be read reaches nothing; resolution said why
+    }
+    push(depName + variant);
+    if (!spec.shortName.empty()) push(spec.shortName + variant);
     if (!spec.namespace_.empty() && !spec.shortName.empty()) {
-        push(spec.namespace_ + "." + spec.shortName);
+        push(spec.namespace_ + "." + spec.shortName + variant);
     }
     return out;
 }

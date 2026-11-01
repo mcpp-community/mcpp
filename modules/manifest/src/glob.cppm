@@ -177,6 +177,18 @@ bool path_matches_glob(const std::filesystem::path& candidate,
                        const std::filesystem::path& root,
                        std::string_view             glob)
 {
+    // AN ABSOLUTE GLOB NAMES FILES WHEREVER THEY ARE: the flags an embedded
+    // dependency's own files are compiled with name that dependency's tree,
+    // which is not beneath the consumer's root (design 2026-11-02 §14.1).
+    if (glob.starts_with('/') || (glob.size() > 2 && glob[1] == ':' && (glob[2] == '/' || glob[2] == '\\'))) {
+        auto whole = try_narrow(candidate.lexically_normal());
+        if (!whole) { note_unnarrowable_path(candidate); return false; }
+        std::string generic = *whole;
+        std::ranges::replace(generic, '\\', '/');
+        std::string pattern(glob);
+        std::ranges::replace(pattern, '\\', '/');
+        return relative_path_matches_glob(generic, pattern);
+    }
     // lexically_relative is pure path arithmetic and cannot throw; the
     // narrowing is the part that can, so it is the part that goes through
     // try_narrow.

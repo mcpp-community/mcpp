@@ -66,6 +66,61 @@ static std::expected<bool, std::string> step11_scan_sources(PrepareState& state)
     // signal the e2e test asserts on (tests/e2e/114_run_scan_scope.sh).
     mcpp::log::verbose("scan", "scanning module sources");
 
+    // EMBEDDED DEPENDENCIES (design 2026-11-02 §14.1). A dependency an edge
+    // embeds is compiled into its consumer: its sources, as its description
+    // selects them and less the edge's `exclude', become literal sources of the
+    // consumer, compiled with the consumer's flags and, for those files alone,
+    // the dependency's include directories and compile flags (its macros are
+    // folded into them). The dependency itself then compiles nothing: every
+    // other edge to it, in any program, takes its interface only, and the
+    // embedder supplies its definitions there. The consumers' closures (below)
+    // say whether a program that reaches the dependency holds its supplier.
+    std::map<std::size_t, std::vector<std::size_t>> embeddersOf;
+    for (auto const& e : state.dependencyEdges) {
+        if (!e.embed || e.buildTable) continue;
+        auto& who = embeddersOf[e.dependencyPackageIndex];
+        if (std::ranges::find(who, e.consumerPackageIndex) == who.end())
+            who.push_back(e.consumerPackageIndex);
+    }
+    for (auto const& [d, consumers] : embeddersOf) {
+        auto& dep = state.packages[d];
+        const auto files = mcpp::modgraph::package_source_files(dep.root, dep.manifest);
+        if (files.empty())
+            return std::unexpected(std::format(
+                "'{}' is embedded and its description selects no source under '{}'",
+                dep.manifest.package.name, dep.root.generic_string()));
+        for (auto c : consumers) {
+            std::set<std::filesystem::path> excluded;
+            for (auto const& e : state.dependencyEdges) {
+                if (!e.embed || e.consumerPackageIndex != c || e.dependencyPackageIndex != d) continue;
+                for (auto const& x : e.exclude) {
+                    auto hit = mcpp::modgraph::expand_glob(dep.root, x);
+                    if (hit.empty())
+                        mcpp::diag::warning("embed", std::format(
+                            "'{}' embeds '{}' excluding '{}', which names no file of it",
+                            state.packages[c].manifest.package.name, dep.manifest.package.name, x));
+                    for (auto const& h : hit) excluded.insert(h);
+                }
+            }
+            auto& consumer = state.packages[c].manifest;
+            for (auto const& f : files)
+                if (!excluded.contains(f)) consumer.modules.sources.push_back(f.generic_string());
+            mcpp::manifest::GlobFlags gf;
+            gf.embedded = true;
+            gf.glob = (dep.root.lexically_normal().generic_string()) + "/**";
+            for (auto const& inc : dep.privateBuild.includeDirs) {
+                gf.cflags.push_back("-I" + inc.generic_string());
+                gf.cxxflags.push_back("-I" + inc.generic_string());
+            }
+            for (auto const& f : dep.manifest.buildConfig.cflags)   gf.cflags.push_back(f);
+            for (auto const& f : dep.manifest.buildConfig.cxxflags) gf.cxxflags.push_back(f);
+            consumer.buildConfig.globFlags.push_back(std::move(gf));
+        }
+        dep.manifest.modules.sources.clear();
+        dep.manifest.modules.declaredUnits.clear();
+        dep.manifest.buildConfig.sourcesDeclared = true;
+    }
+
     // Modgraph: regex scanner by default; opt-in to compiler-driven P1689
     // scanner via env var MCPP_SCANNER=p1689 (see docs/27).
     //
@@ -111,6 +166,59 @@ static std::expected<bool, std::string> step11_scan_sources(PrepareState& state)
                         if (seen.insert(j).second) work.push_back(j);
             }
             closures[qualified(state.packages[i].manifest)] = std::move(names);
+        }
+        // ONE PROGRAM, ONE VARIANT OF A PACKAGE (design 2026-11-02 §14.1). A
+        // variant is named `<package>+p<digest>` from resolution on, so two
+        // variants of one package --- or a variant and the package itself ---
+        // are two packages that export the same module names and define the
+        // same symbols. Two programs of one configuration may each hold one;
+        // one closure may not hold two.
+        auto base_of = [](const std::string& q) {
+            const auto at = q.rfind("+p");
+            return at == std::string::npos ? q : q.substr(0, at);
+        };
+        // A PROGRAM THAT REACHES AN EMBEDDED PACKAGE HOLDS ITS SUPPLIER. The
+        // embedded package compiles nothing of its own, so a program whose
+        // closure has it and none of its embedders has its declarations and
+        // no definitions; refused here, naming both, rather than at the link.
+        for (auto const& [d, consumers] : embeddersOf) {
+            const auto embedded = qualified(state.packages[d].manifest);
+            for (std::size_t i = 0; i < state.packages.size(); ++i) {
+                if (!state.compilesHere(i) || (i == 0 && state.m->package.virtualRoot)) continue;
+                const bool program = i == 0 || std::ranges::any_of(state.packages[i].manifest.targets,
+                    [](auto const& t) { return t.kind == mcpp::manifest::Target::Binary
+                                            || t.kind == mcpp::manifest::Target::Application; });
+                if (!program) continue;
+                auto it = closures.find(qualified(state.packages[i].manifest));
+                if (it == closures.end() || !it->second.contains(embedded)) continue;
+                const bool supplied = std::ranges::any_of(consumers, [&](std::size_t c) {
+                    return it->second.contains(qualified(state.packages[c].manifest)); });
+                if (supplied) continue;
+                return std::unexpected(std::format(
+                    "'{}' reaches '{}', which '{}' embeds, and not '{}': the embedded package "
+                    "compiles nothing of its own, so this program would have its declarations "
+                    "and no definitions. Depend on the embedder, or on '{}' without `embed`.",
+                    qualified(state.packages[i].manifest), embedded,
+                    qualified(state.packages[consumers.front()].manifest),
+                    qualified(state.packages[consumers.front()].manifest), embedded));
+            }
+        }
+        for (auto const& [owner, names] : closures) {
+            std::map<std::string, std::vector<std::string>> byBase;
+            for (auto const& n : names) byBase[base_of(n)].push_back(n);
+            for (auto const& [base, variants] : byBase) {
+                if (variants.size() < 2) continue;
+                std::string listed;
+                for (auto const& v : variants)
+                    listed += std::format("\n         {}{}", v,
+                        v == base ? " (the package without patches)" : "");
+                return std::unexpected(std::format(
+                    "'{}' reaches two variants of '{}':{}\n"
+                    "       A patched library is another library that provides the same modules and "
+                    "symbols, so one program holds one of them. Give every edge to '{}' in this "
+                    "program the same `patches`, or none.",
+                    owner, base, listed, base));
+            }
         }
     }
 

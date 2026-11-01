@@ -321,9 +321,44 @@ std::vector<Entry> walk_tool_entries() {
 }
 
 // Package and tool entries: what `prune` and `gc` collect by last use.
+// THE PATCHED SOURCE TREES OF VARIANTS (design 2026-11-02 §14.1): one per
+// package, version and patch set, under the home's `cache/src`, each last used
+// when a build last asked for it (its `.mcpp-variant' record is touched then).
+// Collected as the cache's entries are: by `gc`, `prune`, and after a build
+// once unused for `[cache] unused_days`.
+std::vector<Entry> walk_variant_entries() {
+    std::vector<Entry> out;
+    std::error_code ec;
+    const auto root = mcpp::home::root() / "cache" / "src";
+    if (!std::filesystem::exists(root, ec)) return out;
+    for (auto& pkg : std::filesystem::directory_iterator(root, ec)) {
+        if (!pkg.is_directory()) continue;
+        for (auto& v : std::filesystem::directory_iterator(pkg.path(), ec)) {
+            if (!v.is_directory()) continue;
+            Entry e;
+            e.dir   = v.path();
+            e.kind  = "source";
+            e.key   = v.path().filename().string();
+            e.label = std::format("{}@{} (patched source)", pkg.path().filename().string(), e.key);
+            std::error_code fe;
+            if (std::filesystem::is_regular_file(e.dir / ".mcpp-variant", fe)) {
+                e.accessed = dir_mtime_seconds(e.dir / ".mcpp-variant");
+            } else {
+                e.complete = false;
+                e.problem  = "no .mcpp-variant record (an interrupted patching)";
+                e.accessed = dir_mtime_seconds(e.dir);
+            }
+            measure(e);
+            out.push_back(std::move(e));
+        }
+    }
+    return out;
+}
+
 std::vector<Entry> walk_collectable() {
     auto out = walk_pkg_entries();
     for (auto& e : walk_tool_entries()) out.push_back(std::move(e));
+    for (auto& e : walk_variant_entries()) out.push_back(std::move(e));
     return out;
 }
 

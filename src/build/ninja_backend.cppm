@@ -91,6 +91,7 @@ void write_module_maps(const BuildPlan& plan);
 // toolchain when there is one, else `ninja` from PATH. One answer for the
 // engine's own builds and for the build information (#734 E2).
 std::string ninja_program_for(const mcpp::toolchain::Toolchain& tc);
+std::string ninja_not_found_advice(const mcpp::toolchain::Toolchain& tc);
 
 // Helper exposed for testing / debugging
 std::string emit_ninja_string(const BuildPlan& plan);
@@ -4754,6 +4755,9 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // exec'd directly via capture_exec/execvp, which take argv (not a shell
     // string). Shell-using call sites must quote it locally.
     std::string ninjaProgram = ninja_program_for(plan.toolchain);
+    if (ninjaProgram == "ninja" && !mcpp::invocation::which(
+            std::string("ninja") + std::string(mcpplibs::os::exe_suffix)))
+        return std::unexpected(BuildError{ninja_not_found_advice(plan.toolchain), ninja_path});
 
     // THE BUILD FILE IN THE ENCODING NINJA READS IT IN (#693, M4). Ninja reads
     // UTF-8 when it declares the UTF-8 code page and the host honours it, and
@@ -5183,11 +5187,38 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     return r;
 }
 
+// WHICH NINJA A BUILD RUNS (mcpp#875). The one beside the compiler's provider
+// package, where the toolchain came from a provider; else the one mcpp
+// installed into its own home when it was first initialised; else whichever
+// PATH holds. The second was not asked before 2026.11, so a toolchain named by
+// a path outside every provider (`MCPP_TOOLCHAIN=path:...`, MSYS2's GCC) fell
+// through to PATH, and a machine whose PATH held no ninja failed with "cannot
+// start 'ninja'" while mcpp's own sat installed. `MCPP_NINJA`, which a build
+// program sees, is this function's answer too.
 std::string ninja_program_for(const mcpp::toolchain::Toolchain& tc) {
     auto ninja_name = std::string("ninja") + std::string(mcpplibs::os::exe_suffix);
     if (auto nb = mcpp::provider::beside_binary(tc.binaryPath, "ninja", ninja_name))
         return nb->string();
+    if (auto home = mcpp::provider::in_home_store("ninja", ninja_name)) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(*home / ninja_name, ec)) return (*home / ninja_name).string();
+    }
     return "ninja";
+}
+
+// The places `ninja_program_for` looked, for the sentence that says none of
+// them held a ninja (mcpp#875).
+std::string ninja_not_found_advice(const mcpp::toolchain::Toolchain& tc) {
+    std::string where = std::format("\n         beside the compiler's provider package ({})",
+                                    tc.binaryPath.parent_path().generic_string());
+    if (auto store = mcpp::provider::home_store())
+        where += std::format("\n         in mcpp's home ({})", store->generic_string());
+    where += "\n         on PATH";
+    return std::format(
+        "no ninja was found; it was looked for{}\n"
+        "       mcpp installs one into its home whenever it runs online, so a run "
+        "without --offline installs it; or put a ninja on PATH",
+        where);
 }
 
 std::unique_ptr<Backend> make_ninja_backend() {

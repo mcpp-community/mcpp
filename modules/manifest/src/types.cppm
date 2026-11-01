@@ -455,6 +455,11 @@ struct GlobFlags {
     // of the fingerprint — the active feature set is already fingerprinted via
     // the -DMCPP_FEATURE_* cflags.
     std::string              featureOrigin;
+    // Set on the entry `embed' gives an embedded dependency's files (design
+    // 2026-11-02 §14.1). The entry is the engine's, not the author's, so a plan
+    // that compiles none of those files (the package's build program) has no
+    // typo to report. Not part of the fingerprint: the flags are.
+    bool                     embedded = false;
 };
 
 // The additive build inputs — the ONLY things any conditional axis may

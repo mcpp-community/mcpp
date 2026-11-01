@@ -88,11 +88,13 @@ mcpp::provider::runtime_info::Info read(const std::filesystem::path& subosDir) {
         info.note = std::format(
             "subos '{}' does not describe itself (no `{}` block), so programs "
             "run from here get no environment it declares — a GL application "
-            "will not find its drivers. Run `xlings self doctor --fix` from "
-            "inside this SubOS to have it described (xlings 2026.8.17.1 or "
+            "will not find its drivers. Run `XLINGS_HOME={} xlings self doctor --fix` "
+            "from inside this SubOS to have it described (xlings 2026.8.17.1 or "
             "newer records what the SubOS actually runs; older ones record the "
-            "built-in default, which may not be what is installed here)",
-            subosDir.string(), kBlock);
+            "built-in default, which may not be what is installed here). The home "
+            "is named because an xlings run without it uses the system's own home "
+            "on a machine that has one, and repairs that one instead (mcpp#881)",
+            subosDir.string(), kBlock, subosDir.parent_path().parent_path().string());
         return info;
     }
 

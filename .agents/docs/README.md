@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-344 records.
+345 records.
 
 ## By subject
 
@@ -88,6 +88,10 @@ Records that declare one. Everything else is listed by date below.
 
 - [Two answers and two silences: the scanner's second grammar, and the manifest keys nothing reads](2026-09-09-two-answers-and-two-silences.md) — active
 
+### openkal-performance
+
+- [生态设计 part 3：ok 映像的性能对等——引擎路径、openkal 运行时与观测](2026-11-02-ecosystem-part3-ok-image-performance-parity-design.md) — active
+
 ### plan
 
 - [Eight reports after 2026.9.27.1: implementation plan](2026-09-27-eight-reports-implementation-plan.md) — active
@@ -154,6 +158,9 @@ Records that declare one. Everything else is listed by date below.
 
 ## By date
 
+### 2026-11
+
+- [生态设计 part 3：ok 映像的性能对等——引擎路径、openkal 运行时与观测](2026-11-02-ecosystem-part3-ok-image-performance-parity-design.md) — active
 ### 2026-10
 
 - [大型工作区的构建空间与复用（mcpp#874）](2026-10-31-workspace-space-and-reuse-design.md) — active

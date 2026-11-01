@@ -37,7 +37,7 @@ echo stale > "target/$triple/deadbeefdeadbeef/bin/leftover"
 touch -t 200001010000 "target/$triple/deadbeefdeadbeef" "target/$triple/deadbeefdeadbeef/bin/leftover"
 
 # An unrecorded directory written just now (what a `mcpp test` build looks
-# like to the record): kept by the default --older-than 1d.
+# like to the record): kept by the default window ([build] keep_days, 3 days).
 mkdir -p "target/$triple/cafef00dcafef00d"
 echo latest > "target/$triple/cafef00dcafef00d/build.ninja"
 
