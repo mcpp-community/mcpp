@@ -9,7 +9,9 @@
 #   B. On ELF, a program's debug information is compressed.
 #   C. A shared library staged as an equal copy is placed again by a link.
 #   D. `mcpp clean --stale` removes a `.build-mcpp/out/<hash>` no configuration
-#      names in its `uses.list`, and keeps the one the build used.
+#      names in its `uses.list` and that is older than the window (`[build]
+#      keep_days`, 3 days by default since 2026.11.2.1), and keeps the one the
+#      build used.
 #   E. `mcpp clean --report` names the areas and the total.
 #   F. A path tool's edit supersedes its store entry: one entry remains, and
 #      `mcpp cache list` shows it as a tool.
@@ -126,7 +128,7 @@ cp stage/libx.so stage/placed.so
 used=$(sed -n 's/^out //p' target/*/*/uses.list | head -1)
 [ -n "$used" ] || fail "the build names no generated-source directory" $(ls target/*/*/uses.list)
 mkdir -p target/.build-mcpp/out/0000000000000000/app
-touch -d '2 days ago' target/.build-mcpp/out/0000000000000000
+touch -d '4 days ago' target/.build-mcpp/out/0000000000000000
 "$MCPP" clean --stale > clean.log 2>&1 || fail "clean --stale failed" clean.log
 [ -d target/.build-mcpp/out/0000000000000000 ] && fail "an unused generated-source directory was kept" clean.log
 [ -d "target/.build-mcpp/out/$used" ] || fail "the generated-source directory in use was removed" clean.log
