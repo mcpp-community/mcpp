@@ -58,6 +58,7 @@ import mcpp.toolchain.post_install;
 import mcpp.build.runner_lookup;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
+import mcpp.pm.patch;
 import mcpp.pm.resolver;
 import mcpp.pm.index_spec;
 import mcpp.pm.index_contract;
@@ -276,6 +277,21 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             lp.name       = lock_name_for(key);
             lp.namespace_ = key.ns;
             lp.version    = rec.version;
+            // A variant is its own entry, and says which patches made it
+            // (design 2026-11-02 §14.1): each by its path, relative to the
+            // project where it is inside it, and its SHA-256.
+            if (!key.variant.empty()) {
+                lp.name += "+p" + key.variant.substr(0, 12);
+                lp.variant = key.variant;
+                for (auto const& p : rec.patches) {
+                    std::filesystem::path path(p);
+                    auto rel = path.lexically_relative(*state.root);
+                    const auto shown = (!rel.empty() && !rel.generic_string().starts_with(".."))
+                        ? rel.generic_string() : path.generic_string();
+                    lp.patches.push_back(std::format("{}#sha256:{}", shown,
+                        mcpp::pm::patch::file_sha256(path).value_or("unreadable")));
+                }
+            }
             // Use the namespace and resolved version as the source identifier.
             // For custom indices, include the index name for traceability.
             auto sourceIndex = lp.namespace_.empty()

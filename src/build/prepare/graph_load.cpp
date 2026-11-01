@@ -44,6 +44,7 @@ import mcpp.pm.compat;
 import mcpp.pm.dep_spec;
 import mcpp.pm.dependency_selector;
 import mcpp.pm.lock_io;
+import mcpp.pm.patch;
 import mcpp.ui;
 import mcpp.log;
 import mcpp.project;
@@ -213,7 +214,8 @@ static void step4a_define_split_and_identity_closures(PrepareState& state) {
         return std::nullopt;
     };
     state.qualifiedKey = [](const ResolvedKey& k) {
-        return k.ns.empty() ? k.shortName : std::format("{}.{}", k.ns, k.shortName);
+        const auto base = k.ns.empty() ? k.shortName : std::format("{}.{}", k.ns, k.shortName);
+        return k.variant.empty() ? base : std::format("{}+p{}", base, k.variant.substr(0, 12));
     };
     // A root edge that adopted an identity states it on the root's own
     // declaration too, which is what every later reader of the root manifest
@@ -1369,6 +1371,41 @@ std::expected<void, std::string> phase4a_graph_load(PrepareState& state) {
             return std::unexpected(r.error());
         if (auto r = step4a_load_version_dep_fetch(state, ctx); !r)
             return std::unexpected(r.error());
+        return step4a_load_version_dep_read_manifest(state, ctx);
+    };
+    state.loadVersionDepVariant = [&](const std::string& depName,
+                                      const std::string& ns,
+                                      const std::string& shortName,
+                                      const std::string& version,
+                                      const std::vector<std::string>& patches,
+                                      const std::string& digest)
+        -> std::expected<LoadedDep, std::string>
+    {
+        auto cfg = state.get_cfg(true);
+        if (!cfg) return std::unexpected(cfg.error());
+
+        LoadVersionDepCtx ctx;
+        ctx.depName   = depName;
+        ctx.ns        = ns;
+        ctx.shortName = shortName;
+        ctx.version   = version;
+
+        if (auto r = step4a_load_version_dep_locate(state, ctx); !r)
+            return std::unexpected(r.error());
+        if (auto r = step4a_load_version_dep_fetch(state, ctx); !r)
+            return std::unexpected(r.error());
+        // THE VARIANT'S OWN TREE (design 2026-11-02 §14.1): the verified
+        // source copied under the mcpp home and patched, before anything is
+        // read from it, so that a patch to the package's own description takes
+        // effect as a patch to its sources does.
+        std::string exact = version;
+        while (!exact.empty() && (exact.front() == '=' || exact.front() == ' ')) exact.erase(0, 1);
+        const auto qualified = ns.empty() ? shortName : ns + "." + shortName;
+        const auto variant = (*cfg)->metaCacheDir / "src" / qualified
+                           / mcpp::pm::patch::variant_dir_name(exact, digest);
+        if (auto r = mcpp::pm::patch::materialize(*ctx.installed, patches, digest, variant); !r)
+            return std::unexpected(std::format("dependency '{}': {}", depName, r.error()));
+        ctx.installed = variant;
         return step4a_load_version_dep_read_manifest(state, ctx);
     };
     return {};

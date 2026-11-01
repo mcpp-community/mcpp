@@ -161,12 +161,38 @@ int cmd_sbom(const mcpplibs::cmdline::ParsedArgs& parsed) {
         // as a property rather than as a `hashes` entry — claiming a weak
         // digest is a cryptographic hash is the kind of statement an SBOM is
         // read to trust.
+        std::vector<std::pair<std::string, std::string>> properties;
         if (d.hash.starts_with("sha256:")) {
             out += "      \"hashes\": [ { \"alg\": \"SHA-256\", \"content\": \""
                  + esc(d.hash.substr(7)) + "\" } ],\n";
         } else if (!d.hash.empty()) {
-            out += "      \"properties\": [ { \"name\": \"mcpp:resolution-digest\","
-                   " \"value\": \"" + esc(d.hash) + "\" } ],\n";
+            properties.emplace_back("mcpp:resolution-digest", d.hash);
+        }
+        // A VARIANT STATES ITS PEDIGREE (design 2026-11-02 §14.1): the
+        // component is the package changed by these patches, in this order,
+        // and each patch is named with its SHA-256, so that what was changed
+        // in a third party's source is part of what the bill of materials
+        // says rather than something a reader has to find.
+        if (!d.variant.empty()) {
+            out += "      \"pedigree\": { \"patches\": [";
+            bool firstPatch = true;
+            for (auto const& patch : d.patches) {
+                const auto at = patch.rfind("#sha256:");
+                const auto path = at == std::string::npos ? patch : patch.substr(0, at);
+                out += std::format("{} {{ \"type\": \"unofficial\", \"diff\": {{ \"url\": \"{}\" }} }}",
+                                   firstPatch ? "" : ",", esc(path));
+                firstPatch = false;
+                properties.emplace_back("mcpp:patch", patch);
+            }
+            out += " ] },\n";
+            properties.emplace_back("mcpp:variant", d.variant);
+        }
+        if (!properties.empty()) {
+            out += "      \"properties\": [";
+            for (std::size_t i = 0; i < properties.size(); ++i)
+                out += std::format("{} {{ \"name\": \"{}\", \"value\": \"{}\" }}", i ? "," : "",
+                                   esc(properties[i].first), esc(properties[i].second));
+            out += " ],\n";
         }
         if (!d.source.empty())
             out += "      \"externalReferences\": [ { \"type\": \"distribution\","

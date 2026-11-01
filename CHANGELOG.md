@@ -4,6 +4,56 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.2.1] - 2026-11-02
+
+A dependency's source is used without being copied: a dependency edge carries
+patches, and a dependency is compiled into its consumer (design 2026-11-02,
+part 3 §14). With them, mcpp#875 and mcpp#881.
+
+### Added
+
+- **`patches = [...]` on a dependency edge** (docs/05). Unified diffs, named
+  relative to the declaring manifest, applied in order to the verified source by
+  mcpp's own exact applier (no fuzz, no search, no conversion of line endings;
+  one leading directory of each path removed; renames, copies and binary changes
+  refused). A patched library is another library, a variant: its identity is
+  (package, version, patch set), its source a tree of its own under the mcpp
+  home (`cache/src/<package>/<version>+p<digest>`), and its build, BMIs and
+  cache entries its own. Version and git dependencies; a `path` dependency with
+  patches is refused. `mcpp.lock` records the variant and each patch's path and
+  SHA-256 (`variant`, `patches`); `mcpp emit sbom` states them as the component's
+  pedigree. A variant's tree is collected by `cache gc`, `prune` and after a
+  build as the cache's entries are. e2e 1001.
+- **`embed = true` and `exclude = [...]` on a dependency edge** (docs/05). The
+  dependency's sources, less `exclude`, are compiled into the consumer with the
+  consumer's flags and, for those files, the dependency's include directories
+  and compile flags; the dependency builds nothing of its own in that
+  configuration, and a program that reaches it without its embedder is refused
+  naming both. `exclude` without `embed` is refused at the manifest. e2e 1002.
+- **One program, one variant of a package**: two programs of one configuration
+  may each use their own patch set; a program that reaches two variants of a
+  package, or a variant and the package without patches, is refused naming
+  them. e2e 1003.
+
+### Fixed
+
+- **A build with a toolchain outside every provider found no ninja** (mcpp#875):
+  the ninja mcpp installed into its own home is used after the one beside the
+  compiler's provider and before PATH, and `MCPP_NINJA` names the same one. With
+  none, the build is refused naming where it looked, instead of "cannot start
+  'ninja'". e2e 1004.
+- **`clean --stale` said every directory was current after keeping one**
+  (mcpp#881): directories kept for being newer than the window are counted, and
+  the summary says how many and within what window. The default window of
+  `--older-than` is `[build] keep_days` (3 days), the window of the sweep after a
+  build, instead of one day. The SubOS remedies name the home:
+  `XLINGS_HOME=<registry> xlings self doctor --fix`. e2e 1005.
+
+### Design
+
+- Design 2026-11-02 part 3 (ok image performance parity), approved; part 2
+  rev 11 and 12 corrections.
+
 ## [2026.10.31.3] - 2026-10-31
 
 A large workspace keeps its bytes once and builds each output once (mcpp#874;
@@ -2906,7 +2956,7 @@ C 库来自依赖图的链接此前没有 `--sysroot`,clang 会从宿主推导 `
 
 ### 成员清单只有一种读法
 
-`mcpp publish`、`mcpp pack`、`mcpp emit xpkg`、`mcpp toolchain list`、`mcpp sbom`、`mcpp index list`/`update`、
+`mcpp publish`、`mcpp pack`、`mcpp emit xpkg`、`mcpp toolchain list`、`mcpp emit sbom`、`mcpp index list`/`update`、
 `mcpp update` 的索引刷新、快路径的身份判定与测试发现,此前直接读取成员目录中的原始清单:省略
 `version` 的成员被拒绝,未写 `[toolchain]` 的成员在 `toolchain list` 中显示全局默认工具链,而同一
 目录下的 `mcpp build` 用的是工作空间的工具链。现在它们与 `prepare_build` 经同一个函数读取继承后的

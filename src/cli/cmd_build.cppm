@@ -1561,7 +1561,14 @@ export int cmd_clean(const mcpplibs::cmdline::ParsedArgs& parsed) {
                                  "use `mcpp cache gc`)");
             return 2;
         }
-        std::int64_t keepWithinSecs = 24 * 3600;
+        // THE WINDOW IS `[build] keep_days` UNLESS IT IS GIVEN (mcpp#881): the
+        // sweep after a build keeps what is younger than that, and `clean
+        // --stale` kept what was younger than one day --- two answers to one
+        // question. One answer now, the configured one (default 3 days).
+        // `keep_days = 0` turns the sweep off; a `clean --stale` was asked for
+        // nonetheless, and keeps what is younger than the default.
+        const std::int64_t keepDays = mcpp::build::configured_keep_days();
+        std::int64_t keepWithinSecs = (keepDays > 0 ? keepDays : 3) * 86400;
         if (olderThan) {
             // `parse_duration` wants a unit, so bare `0` reaches it as a
             // one-character string and is rejected; it also returns whatever

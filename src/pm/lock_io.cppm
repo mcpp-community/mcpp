@@ -42,6 +42,11 @@ struct LockedPackage {
     // for one target rewrites its own and keeps the others' (SPEC-013 §15.1).
     // Empty in a lock written before the field.
     std::vector<std::string> targets;
+    // A variant (design 2026-11-02 §14.1): the patch set's digest, and each
+    // patch as `<path>#sha256:<hex>`, in order. Empty for an unpatched
+    // package and in a lock written before the fields.
+    std::string              variant;
+    std::vector<std::string> patches;
 };
 
 // Parsed form of a git source string as written to mcpp.lock.
@@ -151,6 +156,10 @@ std::expected<Lockfile, LockError> load(const std::filesystem::path& path) {
             if (auto it = tt.find("targets"); it != tt.end() && it->second.is_array())
                 for (auto const& e : it->second.as_array())
                     if (e.is_string()) lp.targets.push_back(e.as_string());
+            if (auto it = tt.find("variant"); it != tt.end() && it->second.is_string()) lp.variant = it->second.as_string();
+            if (auto it = tt.find("patches"); it != tt.end() && it->second.is_array())
+                for (auto const& e : it->second.as_array())
+                    if (e.is_string()) lp.patches.push_back(e.as_string());
 
             // v1 → v2 migration: default namespace to "mcpplibs".
             if (fileVersion < 2 && lp.namespace_.empty()) {
@@ -207,6 +216,12 @@ std::string serialize(const Lockfile& lock) {
             std::string list;
             for (auto const& t : p.targets) list += (list.empty() ? "" : ", ") + t::escape_string(t);
             out += std::format("targets = [{}]\n", list);
+        }
+        if (!p.variant.empty()) {
+            out += std::format("variant = {}\n", t::escape_string(p.variant));
+            std::string list;
+            for (auto const& e : p.patches) list += (list.empty() ? "" : ", ") + t::escape_string(e);
+            out += std::format("patches = [{}]\n", list);
         }
         out += "\n";
     }

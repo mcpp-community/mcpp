@@ -2297,7 +2297,8 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             || k == "workspace" || k == "visibility"
             || k == "backend"  || k == "tools" || k == "artifacts"
             || k == "host-module" || k == "reexport"
-            || k == "linkage";
+            || k == "linkage"
+            || k == "patches" || k == "embed" || k == "exclude";
     };
     // What makes a table an inline dep spec is that it names a SOURCE. This
     // used to be "every key is known", which quietly coupled two unrelated
@@ -2491,6 +2492,48 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         if (auto it = sub.find("reexport"); it != sub.end() && it->second.is_bool()) {
             spec.reexport = it->second.as_bool();
         }
+        // design 2026-11-02 §14.1: `patches`, `embed`, `exclude`.
+        if (auto it = sub.find("patches"); it != sub.end()) {
+            if (!it->second.is_array())
+                return std::unexpected(error(origin, std::format(
+                    "[{}.\"{}\"] patches must be an array of paths", section, fqName)));
+            for (auto& pv : it->second.as_array()) {
+                if (!pv.is_string() || pv.as_string().empty())
+                    return std::unexpected(error(origin, std::format(
+                        "[{}.\"{}\"] patches must be an array of paths", section, fqName)));
+                std::filesystem::path pp(pv.as_string());
+                if (pp.is_relative()) {
+                    std::error_code ec;
+                    auto dir = origin.parent_path();
+                    if (dir.is_relative()) dir = std::filesystem::absolute(dir, ec);
+                    pp = dir / pp;
+                }
+                spec.patches.push_back(pp.lexically_normal().generic_string());
+            }
+        }
+        if (auto it = sub.find("embed"); it != sub.end()) {
+            if (!it->second.is_bool())
+                return std::unexpected(error(origin, std::format(
+                    "[{}.\"{}\"] embed must be true or false", section, fqName)));
+            spec.embed = it->second.as_bool();
+        }
+        if (auto it = sub.find("exclude"); it != sub.end()) {
+            if (!it->second.is_array())
+                return std::unexpected(error(origin, std::format(
+                    "[{}.\"{}\"] exclude must be an array of globs", section, fqName)));
+            for (auto& ev : it->second.as_array())
+                if (ev.is_string()) spec.exclude.push_back(ev.as_string());
+        }
+        // `exclude' changes what a dependency compiles, which for a library
+        // built on its own would change the library its other consumers get
+        // without a patch saying so; under `embed' the sources become the
+        // consumer's, and choosing among them is the consumer's to do.
+        if (!spec.exclude.empty() && !spec.embed)
+            return std::unexpected(error(origin, std::format(
+                "[{}.\"{}\"] exclude is allowed only with embed = true: a dependency "
+                "built as a library of its own changes for every consumer when its "
+                "sources change, which is a patch's to state",
+                section, fqName)));
         // `backend = "<impl>"` — sugar for requesting the dependency's
         // `backend-<impl>` feature (library-level backend selection knob).
         if (auto it = sub.find("backend"); it != sub.end() && it->second.is_string()) {

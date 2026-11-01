@@ -46,6 +46,7 @@ import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.config;
 import mcpp.toolchain.post_install;
+import mcpp.pm.patch;
 import mcpp.pm.resolver;
 import mcpp.pm.index_spec;
 import mcpp.pm.index_contract;
@@ -69,19 +70,6 @@ namespace mcpp::build {
 // `PrepareState& state` parameter where the body used to capture it).
 // Internal linkage: these names belong to this file, not to
 // mcpp.build.prepare's surface.
-
-static mcpp::modgraph::DependencyVisibility parseVisibility(std::string_view visibility) {
-        if (visibility == "private")
-            return mcpp::modgraph::DependencyVisibility::Private;
-        if (visibility == "interface")
-            return mcpp::modgraph::DependencyVisibility::Interface;
-        return mcpp::modgraph::DependencyVisibility::Public;
-}
-
-static std::size_t packageIndexForConsumer(std::size_t consumerDepIndex) {
-        if (consumerDepIndex == kMainConsumer) return std::size_t{0};
-        return consumerDepIndex + 1;
-}
 
 static std::vector<std::filesystem::path> expandIncludeDirs(
         PrepareState& state,
@@ -239,108 +227,6 @@ static std::expected<mcpp::modgraph::PackageRoot, std::string> makePackageRoot(
         pkg.publicUsage.includeDirsAfter = pkg.privateBuild.includeDirsAfter;
         pkg.linkUsage.ldflags = manifest.buildConfig.ldflags;
         return pkg;
-}
-
-static void recordDependencyEdge(
-        PrepareState& state,
-        std::size_t consumerDepIndex,
-        std::size_t dependencyPackageIndex,
-        const mcpp::manifest::DependencySpec& spec,
-        bool buildTable,
-        const std::string& writtenKey)
-{
-        const auto consumerPackageIndex = packageIndexForConsumer(consumerDepIndex);
-        if (consumerPackageIndex >= state.packages.size()
-            || dependencyPackageIndex >= state.packages.size()) {
-            return;
-        }
-        if (std::ranges::none_of(state.graphRequests, [&](const GraphRequest& r) {
-                return r.consumerPackageIndex == consumerPackageIndex
-                    && r.dependencyPackageIndex == dependencyPackageIndex
-                    && r.key == writtenKey && r.table == spec.declaredIn;
-            }))
-            state.graphRequests.push_back(GraphRequest{
-                .consumerPackageIndex = consumerPackageIndex,
-                .dependencyPackageIndex = dependencyPackageIndex,
-                .key = writtenKey,
-                .table = spec.declaredIn,
-            });
-
-        // A REQUESTED FEATURE THAT IS A BUILD RULE IMPLIES THE LIBRARY.
-        //
-        // A feature declaring `rule_module` is usable only by a build program,
-        // so requesting it asks for the dependency's library there. Requiring
-        // `host-module` beside it was a second spelling of one fact.
-        bool ruleFeature = false;
-        {
-            auto const& depManifest = state.packages[dependencyPackageIndex].manifest;
-            for (auto const& f : spec.features)
-                if (depManifest.featureRuleModule.contains(f)) { ruleFeature = true; break; }
-        }
-        // COMPAT(host-module-in-dependencies): a `[dependencies]` entry asking
-        // for `host-module = true`, or for a rule feature, served the build
-        // program and not the target before the section decided the
-        // configuration (mcpp#797). It keeps that meaning, reported where the
-        // manifest can be edited.
-        // Not in the build programs' graph: every package there is a build-program
-        // instance already, and a library's rule features are what its edge asks.
-        if (!buildTable && !state.overrides.build_program_graph
-            && ((spec.hostModuleDeclared && spec.hostModule) || ruleFeature)) {
-            buildTable = true;
-            state.reportCompatUse("host-module-in-dependencies", consumerPackageIndex,
-                                  std::format("[dependencies] {}", writtenKey));
-        }
-        const bool wantsLibrary = buildTable
-            && (ruleFeature
-                || (spec.hostModuleDeclared ? spec.hostModule
-                                            : spec.tools.empty() && spec.artifacts.empty()));
-
-        // One edge per (consumer, dependency, visibility, configuration). The
-        // same package written in [dependencies] and [build-dependencies] of
-        // one consumer is two edges and two instances (mcpp#797, R2): merging
-        // them made the build-program request read as "not in the target".
-        const auto visibility = parseVisibility(spec.visibility);
-        auto same = [&](const DependencyEdge& edge) {
-            return edge.consumerPackageIndex == consumerPackageIndex
-                && edge.dependencyPackageIndex == dependencyPackageIndex
-                && edge.visibility == visibility
-                && edge.buildTable == buildTable;
-        };
-        auto it = std::find_if(state.dependencyEdges.begin(), state.dependencyEdges.end(), same);
-        if (it != state.dependencyEdges.end()) {
-            // One consumer restating one dependency in one table (an
-            // unconditional entry and a `[target.<sel>.*]` or `[feature-deps]`
-            // row): every declaration's requests are requested of the one edge
-            // (#649 E7). Additive fields union, `default-features` stays on
-            // unless every declaration opts out.
-            for (auto const& t : spec.tools)
-                if (std::ranges::find(it->requestedTools, t) == it->requestedTools.end())
-                    it->requestedTools.push_back(t);
-            for (auto const& a : spec.artifacts)
-                if (std::ranges::find(it->requestedArtifacts, a)
-                    == it->requestedArtifacts.end())
-                    it->requestedArtifacts.push_back(a);
-            for (auto const& f : spec.features)
-                if (std::ranges::find(it->requestedFeatures, f)
-                    == it->requestedFeatures.end())
-                    it->requestedFeatures.push_back(f);
-            it->defaultFeatures = it->defaultFeatures || spec.defaultFeatures;
-            it->wantsLibrary = it->wantsLibrary || wantsLibrary;
-            it->reexport = it->reexport || spec.reexport;
-            return;
-        }
-        state.dependencyEdges.push_back(DependencyEdge{
-            .consumerPackageIndex = consumerPackageIndex,
-            .dependencyPackageIndex = dependencyPackageIndex,
-            .visibility = visibility,
-            .requestedFeatures = spec.features,
-            .defaultFeatures = spec.defaultFeatures,
-            .requestedTools = spec.tools,
-            .requestedArtifacts = spec.artifacts,
-            .buildTable = buildTable,
-            .wantsLibrary = wantsLibrary,
-            .reexport = spec.reexport,
-        });
 }
 
 static std::vector<std::string> propagateLinkFlags(
@@ -867,6 +753,22 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
             spec.namespace_,
             spec.shortName.empty() ? name : spec.shortName,
         };
+        // A PATCHED LIBRARY IS ANOTHER LIBRARY (design 2026-11-02 §14.1): the
+        // patch set is part of the identity, so its source, build and cache are
+        // its own, and an edge without patches is the unpatched package.
+        if (!spec.patches.empty()) {
+            if (spec.isPath())
+                return std::unexpected(std::format(
+                    "dependency '{}' (requested by {}) is a path and carries patches: a "
+                    "path dependency is a tree its consumer already owns, so a change to "
+                    "it is made in the tree", name, item.requestedBy));
+            auto digest = mcpp::pm::patch::set_digest(spec.patches);
+            if (!digest)
+                return std::unexpected(std::format("dependency '{}' (requested by {}): {}",
+                                                   name, item.requestedBy, digest.error()));
+            spec.patchesDigest = *digest;
+            key.variant = *digest;
+        }
         auto& sourceKind = ctx.sourceKind;
         sourceKind =
             spec.isPath()    ? "path"
@@ -1667,6 +1569,19 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
                 gitMemberCloneRoot = gitRoot;
                 dep_root = gitRoot / *member;
             }
+            // A git dependency's variant: the checkout copied and patched under
+            // the mcpp home, and read from there (design 2026-11-02 §14.1).
+            if (!spec.patches.empty()) {
+                auto cfg = state.get_cfg(true);
+                if (!cfg) return std::unexpected(cfg.error());
+                const auto variant = (*cfg)->metaCacheDir / "src"
+                    / (key.ns.empty() ? key.shortName : key.ns + "." + key.shortName)
+                    / mcpp::pm::patch::variant_dir_name(resolvedGitRev.substr(0, 12), spec.patchesDigest);
+                if (auto r = mcpp::pm::patch::materialize(dep_root, spec.patches,
+                                                          spec.patchesDigest, variant); !r)
+                    return std::unexpected(std::format("dependency '{}': {}", name, r.error()));
+                dep_root = variant;
+            }
         }
         // (version-source: dep_root + manifest are loaded together via
         // loadVersionDep below since the index entry drives both.)
@@ -1763,7 +1678,10 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
             // units here, as it does for a version dependency.
             if (state.abiThreadsRendered) state.add_once(dep_manifest->buildConfig.cflags, "-pthread");
         } else {
-            auto loaded = state.loadVersionDep(name, key.ns, key.shortName, spec.version);
+            auto loaded = spec.patches.empty()
+                ? state.loadVersionDep(name, key.ns, key.shortName, spec.version)
+                : state.loadVersionDepVariant(name, key.ns, key.shortName, spec.version,
+                                              spec.patches, spec.patchesDigest);
             if (!loaded) return std::unexpected(loaded.error());
             dep_root     = std::move(loaded->first);
             dep_manifest = std::move(loaded->second);
@@ -1908,6 +1826,14 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
             ? std::vector<std::string>{}
             : propagateLinkFlags(state, ctx.dep_root, *ctx.dep_manifest);
 
+        // A VARIANT IS NAMED AS ANOTHER PACKAGE from here on (design
+        // 2026-11-02 §14.1): every reader that keys a package by its name ---
+        // its build directory, its closure, its cache entry --- keeps two
+        // variants of one package apart, and the names its sources declare
+        // (its modules) are untouched. Two variants of one package meeting in
+        // one program are refused where closures are known (scan).
+        if (!key.variant.empty())
+            ctx.dep_manifest->package.name += "+p" + key.variant.substr(0, 12);
         // Move the manifest into stable storage so we can later look it up
         // by depIndex (the SemVer merger needs to overwrite the slot).
         state.dep_manifests.push_back(
@@ -1923,6 +1849,11 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
                          : sourceKind == "path" ? ctx.dep_root.string()
                          : std::string{},
         });
+        // A variant's cache entry is its own (design 2026-11-02 §14.1).
+        if (!key.variant.empty()) {
+            state.dep_cache_identities.back().version += "+p" + key.variant.substr(0, 12);
+            state.dep_cache_identities.back().sourceRef = ctx.dep_root.generic_string();
+        }
         // The engine interface (mcpp#797) is addressed in the dependency cache
         // by the engine's name and the version of its text, in the global
         // cache, because its directory is a function of that text.
@@ -1973,6 +1904,7 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
             .devOnly           = item.devOnly,
             .depIndex          = state.dep_manifests.size() - 1,
             .linkFlagsAdded    = std::move(linkFlagsAdded),
+            .patches           = spec.patches,
         };
 
         // Recurse: the dep's own [dependencies] become new worklist items.

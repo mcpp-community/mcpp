@@ -610,6 +610,61 @@ each of them may have its own module of one name.
 A module that several programs share is best provided by one package that the
 others depend on; it is then compiled once.
 
+### A dependency's patches, and a dependency embedded in its consumer (mcpp 2026.11+)
+
+Two fields of a dependency edge use a package's source without copying it.
+
+```toml
+[dependencies]
+"compat.zlib" = { version = "1.3.2", patches = ["patches/0001-fix.patch"] }
+"compat.mimalloc" = { version = "3.6.1", embed = true, exclude = ["*/src/prim/prim.c"] }
+```
+
+**`patches`** are unified diffs (`diff -u`, `git format-patch`), named relative
+to the manifest that declares them and applied in order to the package's
+verified source.
+
+- A patched library is another library, a **variant**: its identity is the
+  package, its version and the patch set, named by the SHA-256 over each
+  patch's SHA-256 in order (not by the files' names). Its source is a tree of
+  its own, `cache/src/<package>/<version>+p<digest>` under the mcpp home, and
+  its build, its BMIs and its cache entries are its own. One patch set carried
+  by two packages is one variant.
+- The applier is mcpp's and is exact: a hunk applies where its header says,
+  every line of context and every line it removes byte for byte, or the build
+  is refused naming the patch, the file, the hunk and the line. Nothing is
+  searched for elsewhere and no line ending is converted. Paths in a patch
+  carry one leading directory (`a/`, `b/`), which is removed. Renames, copies
+  and binary changes are refused.
+- Version and git dependencies may carry patches; a `path` dependency is a tree
+  its consumer owns and is refused with them.
+- `mcpp.lock` names the variant and each patch by its path and SHA-256;
+  `mcpp emit sbom` states them as the component's pedigree.
+- One program holds one variant of a package. Two programs of one
+  configuration (members of a workspace) may each use their own; a program
+  that reaches two variants of one package, or a variant and the package
+  without patches, is refused, naming them.
+- The variant's tree is collected as the cache's entries are: by `mcpp cache
+  gc` and `prune`, and after a build once unused for `[cache] unused_days`.
+
+**`embed = true`** compiles the dependency into its consumer.
+
+- The dependency's sources, as its description selects them and less
+  `exclude` (globs relative to the dependency's root), are compiled as the
+  consumer's, with the consumer's flags and, for those files, the
+  dependency's include directories and compile flags.
+- The dependency builds nothing of its own in that configuration: every other
+  edge to it takes its interface, and the embedder supplies its definitions.
+  A program that reaches it without its embedder is refused, naming both.
+- `exclude` is allowed only with `embed`: a library built on its own that
+  compiled fewer files would change for every consumer, which is a patch's to
+  state.
+
+A C library uses `embed` to carry an allocator or another dependency that would
+otherwise need the C library itself to be built. A package that uses either
+field states `mcpp = ">=2026.11"` in `[package]`, so that an older mcpp refuses
+it rather than building it without its patches.
+
 ## Current limitations
 
 - **Two things need the network, and only two:** resolving a branch that has no

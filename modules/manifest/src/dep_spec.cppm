@@ -113,6 +113,26 @@ struct DependencySpec {
     // into publicUsage unconditionally. Only build.mcpp-INJECTED include dirs
     // are private-only.)
     bool                        reexport = false;
+    // design 2026-11-02 (part 3) §14: a patched dependency is another
+    // library. `patches` are unified diffs applied in order to the verified
+    // source; the edge's dependency becomes the VARIANT (package, version,
+    // patch set), with a source tree, a build and a cache of its own. Each path
+    // is absolute here --- the reader resolves it against the directory of the
+    // manifest that declared it, so the patch belongs to the package that
+    // carries it --- and `patchesDigest` names the set: the SHA-256 over each
+    // patch's own SHA-256, in order (empty for no patches). Version and git
+    // edges only: a `path` dependency is a tree its consumer already owns.
+    std::vector<std::string>    patches;
+    std::string                 patchesDigest;
+    // `embed = true`: the dependency's sources (as its description selects
+    // them, less `exclude`) are compiled INTO this consumer with the
+    // consumer's flags and the dependency's include directories and macros,
+    // and the dependency is not built as a library of its own. The embedder is
+    // the dependency's supplier in every program it is in; other edges to the
+    // same package there take its interface only. `exclude` (globs relative to
+    // the dependency's root) is allowed only with `embed`.
+    bool                        embed = false;
+    std::vector<std::string>    exclude;
     bool                        defaultFeatures = true; // consumer opt-out: `default-features = false`
     bool                        defaultFeaturesDeclared = false;
     // A member edge (workspace design 2026-09-29 §15): the edge from a

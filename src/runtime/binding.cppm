@@ -392,10 +392,12 @@ resolve_runtime_binding(
             "       Where the C runtime comes from a payload, there is now no "
             "declared runtime to bind to — mcpp declines to guess a version, so "
             "the link falls back to the host and the hermeticity check will say "
-            "so. Run `xlings self doctor --fix` from inside this SubOS to have "
-            "it described (openxlings/xlings#547).",
+            "so. Run `XLINGS_HOME={} xlings self doctor --fix` from inside this "
+            "SubOS to have it described (openxlings/xlings#547); without the home, "
+            "an xlings run uses the system's own home where there is one (mcpp#881).",
             selection.subosName,
-            info.note.empty() ? "no `subos_info` block" : info.note));
+            info.note.empty() ? "no `subos_info` block" : info.note,
+            out.subosDir.parent_path().parent_path().string()));
     } else if (info.schema > mcpp::provider::runtime_info::kSupportedSchema) {
         // Mirrors `subos_info::read`, which already reads a HIGHER schema and
         // says so. A consumer stricter than its own reader is a time bomb:
