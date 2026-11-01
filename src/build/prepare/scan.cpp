@@ -106,6 +106,7 @@ static std::expected<bool, std::string> step11_scan_sources(PrepareState& state)
             for (auto const& f : files)
                 if (!excluded.contains(f)) consumer.modules.sources.push_back(f.generic_string());
             mcpp::manifest::GlobFlags gf;
+            gf.embedded = true;
             gf.glob = (dep.root.lexically_normal().generic_string()) + "/**";
             for (auto const& inc : dep.privateBuild.includeDirs) {
                 gf.cflags.push_back("-I" + inc.generic_string());

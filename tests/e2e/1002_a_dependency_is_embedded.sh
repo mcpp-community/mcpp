@@ -14,6 +14,9 @@
 #   C. `exclude` without `embed` is refused at the manifest.
 #   D. A program that reaches the embedded package without its embedder is
 #      refused, naming both.
+#   E. An embedder with a build program builds without a warning about the
+#      flags `embed' gives the dependency's files: the build program's own plan
+#      compiles none of them, and the entry is the engine's, not a typo.
 set -e
 
 TMP=$(mktemp -d)
@@ -53,9 +56,17 @@ import zip;
 int main() { std::println("{} {}", zip_version(), zip_bound(100) > 100); }
 EOF
 
+cat > zip/build.mcpp <<'EOF'
+import std;
+int main() { return 0; }
+EOF
+
 # A
 cd app
 "$MCPP" run > a.log 2>&1 || fail "the program with an embedded zlib did not run" a.log
+
+# E
+! grep -q 'matched no source file' a.log || fail "the flags embed gives were reported as a glob that matched nothing" a.log
 grep -q '^1.3.2 true' a.log || fail "the program did not call the embedded zlib" a.log
 dir=$(ls -d target/*/*/ | grep -E '/[0-9a-f]{16}/$' | head -1)
 db=$(find "$dir" -name compile_commands.json | head -1)
