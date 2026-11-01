@@ -5,7 +5,7 @@ status: active
 
 # 生态设计 part 2：mcpp 插件与 mcppls 的分层、入口、测试、版本感知与分发
 
-日期：2026-10-31（rev 10，实施）。基线：mcpp 2026.10.30.1（`13e2da04`）、mcpp-ide #3（0.2.0，`734d856` + `49ae757`）、
+日期：2026-10-31（rev 11，实施）。基线：mcpp 2026.10.30.1（`13e2da04`）、mcpp-ide #3（0.2.0，`734d856` + `49ae757`）、
 mcppls #75（0.0.20，`4660eb6`）。前文：[part 1](2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md)（§9 mcppls 单包、
 §10 编辑器）。相关 issue：mcpp#868（锁文件键）、Sunrisepeak/mcppls-clangd#12（clangd 映像）。相关规范：mcpp SPEC-015 §4、docs/08、
 docs/50；mcppls S3、S4；mcpp-ide protocol。
@@ -37,6 +37,8 @@ docs/50；mcppls S3、S4；mcpp-ide protocol。
   最小接口（§23.2）、`polyglot` 与 `--pkg-format` 列表、`mcpp run`、`mcpp emit xpkg` 的关系（§19.6.2）。
 - rev 7（本稿）：评审通过（`mcpp.path` 优先、文件映射的最小接口、`polyglot` 的三条边界）。clangd 的 ok 映像进入本轮
   （mcppls-clangd#12，§12、§25.3）；文件映射成为独立的可选接口 `openkal.map`（§23.2）；实施计划与任务依赖（§25）。
+- rev 11：clangd 映像的验收测量（§25.3 B5）：差距是运行器的固定开销，定位到 openkal-image 并修复（0.1.6、0.1.7），家族级联至
+  openkal-platform 0.19.2；验收的解析时间按准则扣除进程启动；进度见 §25.8。
 
 ## 0. 摘要
 
@@ -844,13 +846,22 @@ openkal 的接口整体提供或整体不提供（§3），`openkal.space` 的�
 | B4 | 模块 worker | probe 第 11 条：worker 直接运行 `.oke` 而崩溃；`getrlimit`、`setrlimit` 不可用 | LLVM 补丁（series 0017） | worker 经 `kal_env_loader` 以"加载器 + 映像"启动；openkal 没有地址空间上限，worker 的内存上限在 ok 映像上由监督方按常驻内存执行 | — |
 | C1 | 链接输入 | probe 第 13 条：`[build] ldflags` 中的预构建归档不是链接输入，改动它不重新链接 | mcpp | 链接参数中存在的文件记为链接步骤的隐式输入 | — |
 | C2 | 构建途径 | probe 第 14 条：约定从编译命令读出，工具链文件由 Python 生成 | mcppls-clangd | 约定取自 `${mcpp.contract}`；生成器是一个小的 mcpp 项目 | — |
+| B5 | 运行器的固定开销（rev 11） | mcppls-clangd 0.0.18 首次发布运行（41179052941，发布前取消）：四列全部通过，四个系统都差一个与工作量无关的常数：每个用例 +0.3–0.46 s、约 +110 MiB（`import m`：Linux x64 原生 0.116 s、32 MiB，映像 0.412 s、143 MiB）。原因三条，都在 okrun 与 libokld：(a) 接纳时读过映像的每一页，okb 的映射在整个运行期间保留，映像以文件与副本两份常驻；(b) 接纳的 SHA-256 为逐轮的可移植实现，68 MB 在 CI 机器上 0.3 s 以上；(c) 装入时先清零整个跨度，再逐字节复制各段 | openkal-image | 0.1.6：映像装入后释放所运行的文件（加载器不保留指向字节的指针，`okld.h` 写明）；x86_64 用 SHA 扩展（CPUID），ARMv8 在编译目标保证时用 SHA-256 指令；各段只写一次（文件字节后接零），按 8 字节写。0.1.7：Linux aarch64 读 `ID_AA64ISAR0_EL1`（Linux 自 4.11 模拟对标识寄存器的 `mrs`，先以 `uname` 读内核版本）。级联：openkal-musl 0.23.1/0.23.2、openkal-llvm-runtime 0.16.11/0.16.12、openkal-platform 0.19.1/0.19.2 | K5 |
+| B6 | mcppls 给映像的引擎参数（rev 11） | mcppls#75 的 bench-validate：Linux x64 上 warm 阶段补全不到导入模块的成员。探测（同一 payload，保留日志）：冷热两阶段都是 "Module worker configuration failed: Worker payload bounds require worker isolation"，随后所有前置模块构建失败。mcppls 在 Linux 主机上给任何已验证引擎 `--modules-builder-owned-cache-payload-mib`；隔离 worker 只编进原生 Linux 引擎，映像在预处理器看来不是 Linux，与 macOS、Windows 一样进程内构建 | mcppls | `owned_cache_payload_bound()` 按主机与引擎的 runner 决定（有 runner 即 ok 映像，不给界限），单元测试覆盖四种组合；clangd 不变 | L |
+| B8 | 能力对等（rev 11） | 把 Linux 两行也切到 `clangd.okb` 后，mcppls 的 ux 阶段测得验收的单次 `--check` 测不到的差距：每个会话重建全部模块（ux-mcpp 176/176），首次就绪 33 s（预算 12 s），锁故障用例找不到磁盘上的模块文件。原生 Linux 引擎以隔离 worker 构建模块并在自有模块缓存中跨会话保留；映像在预处理器看来不是 Linux，与 macOS、Windows 上的所有引擎一样没有这两项 | mcppls、openkal、openkal-musl、LLVM 的 openkal series | 选择条件增加一条：映像具备 mcppls 在该系统上用到的原生引擎的能力。差距的原因见 §25.9：模块准备 `limit=1`（H1）与锁文件的所有者都指向读取者（H3），两者都不是隔离 worker 与自有缓存（映像构建与复用模块比原生快）；按层修正后四个系统都选 `clangd.okb`，以 mcppls 的完整 CI 与 ux 阶段验证。conformance 运行器以映像的 runner 启动引擎（completion-baseline、WA-CLANGD-009、崩溃替身） | L |
+| B7 | 映像启动的余量（rev 11，方案） | 0.1.7 之后启动开销只剩接纳的 SHA-256：有 SHA 指令的机器上 68 MB 约 0.03 s；没有的（CI 的 x64 机器、2021 年以前的 Intel 桌面处理器）约 0.14 s（Linux x64 `--version` 原生 0.013 s、映像 0.154 s）。单个 SHA-256 不能拆到多核 | openkal-image | okb.json 的成员可带分块摘要 `chunks = { size = 1 MiB, sha256 = [...] }`，由 `okld bundle` 写出、由清单签名覆盖；okrun 以 kal_task 并行校验各块，未带分块的 okb 照旧校验整体摘要（"Unknown keys are ignored"，两向兼容）；`okld bundle check` 校验两者且一致。预期：4 核无 SHA 指令的机器上接纳由约 0.14 s 降到约 0.04 s。收益须重新打包 okb，故随 clangd 下一次发布一起做（clangd.okb 由新的 okld 写出），并在验收中报告启动时间 | B5 |
 
 mcpplibs.os 不直接涉及：clangd 映像只用 openkal-musl 与 libc++；os 因精确钉住随 K5 升版本，mcppls 随之升级 os。
 
 **验收**（mcppls-clangd#12 的完成条件，量化）：四个系统（Linux x64、Linux arm64、macOS arm64、Windows x64）× 四列
 （`--version`、无头文件、`import m`、系统的 C++ 标准库）全部通过；解析时间不超过原生的 1.3 倍；常驻内存与原生之差不超过映像
 装入的段的大小（B1(c) 的固有代价）。mcppls 的包中，满足验收的系统使用 `clangd.okb`，引擎的选择按系统写在包的清单中；
-不满足的系统保留原生 clangd 并在 mcppls 的文档中写明差距，不阻塞其余系统。
+不满足的系统保留原生 clangd 并在 mcppls 的文档中写明差距，不阻塞其余系统。映像还须具备 mcppls 在该系统上用到的原生引擎的能力（B8）。
+
+解析时间按准则测量（rev 11）：每个用例与 `--version` 各运行五次，用例的中位数减去 `--version` 的中位数（进程启动：映像的
+接纳与装入，语言服务每次启动付一次，而非每个文件付一次）为解析时间；两者的启动时间与解析时间都写入
+`openkal-acceptance.json`。此前按整个进程计时，映像的启动被计入每次解析：没有 SHA 扩展的 x64 机器上，`--version` 原生
+0.013 s、映像 0.153 s。
 
 ### 25.4 并行
 
@@ -892,3 +903,132 @@ mcpp 新建、构建、运行、`--pkg-format polyglot`；mcppls 在四种编辑
 | CI | GitHub 于 2026-11-02 停用 macos-14，此前按计划使其任务失败（actions/runner-images#13518）。本轮各仓库的 macOS 任务改用 macos-15；构建 macOS 产物的任务写明 `MACOSX_DEPLOYMENT_TARGET=14.0`，支持下限仍为 macOS 14，由产物的 `minos` 断言。mcpp 的 ci-target-matrix 与 openkal-cross 的 macOS 任务随之改用 build.yml 的产物，不再自行构建 |
 | 未覆盖 | openkal-opensbi（钉 openkal 0.16.0）与 openkal-uefi（0.14.1）落后于规范；二者为裸机实现，不在 os 与本轮的依赖中 |
 
+
+### 25.8 进度（rev 11）
+
+| 任务 | 状态 |
+|---|---|
+| M3 | 已合入并发布 2026.10.31.3（mcpp#873），GitCode 已补，xim-pkgindex 的 mcpp 条目已合入 |
+| B5 | openkal-image 0.1.6（#12）、0.1.7（#13）已发布；openkal-musl 0.23.1、0.23.2，openkal-llvm-runtime 0.16.11、0.16.12，openkal-platform 0.19.1、0.19.2 随之发布，均已入 mcpp-index 并补 GitCode。platform 的 CI 改用 mcpp 2026.10.31.3：2026.10.30.1 把集合的 Windows 启动器建在项目所选的平台上，os 0.2.1 与版本组的 openkal 0.18.0 冲突（M2 已修） |
+| C | mcppls-clangd 0.0.18（#13、#14）：ok 映像建在 openkal-platform 0.19.2 上。发布运行的验收（解析时间扣除进程启动，五次取中位数）四个系统全部通过：Linux x64 1.02×／1.09×、Linux arm64 0.96×／1.02×、macOS arm64 1.05×／0.97×、Windows x64 0.72×／0.72×（无头文件／标准库）；常驻内存之差 +7 至 +53 MiB，界限为映像大小 68–71 MiB。macOS 的无头文件用例在此前四次运行中为 1.25–1.38×，离界限最近 |
+| L | mcppls 0.0.20（#75）：工作区平台 openkal-platform 0.19.2；锁文件 macOS arm64 与 Windows x64 两行选 `mcppls-clangd-openkal`，Linux 两行保留原生引擎（B8），glibc 下限保留；B6 的引擎参数修复；conformance 以 runner 启动映像引擎 |
+| I | mcpp-ide 0.2.0（#3）：ok 映像的平台 openkal-platform 0.19.2；CI 全绿，待 mcppls 0.0.20 发布后改钉其单包 |
+| X | xim-pkgindex 一个 PR：okrun 0.1.4–0.1.7、mcppls、mcppls-nvim、mcpp-ide、mcpp-ide-nvim；机器人建的版本更新 PR 不触发 CI，需手动派发 |
+
+### 25.9 openkal 0.19：处理器与任务优先级（rev 11，已定）
+
+依据：clangd.okb 在 Linux 上的 ux 重启 33 s 对原生 4–5 s（§25.3 B6–B8 之后的测量）。映像对模块的复用比原生快（40 个模块的
+工程：冷 1.78 s 对 3.15 s，热 0.63 s 对 1.0 s），差距全部来自 LLVM 在编译时按宿主决定、映像的目标 `<arch>-openkal` 一个也
+不匹配的三项：
+
+| # | 项 | 映像中的表现 | 层 |
+|---|---|---|---|
+| H1 | 处理器数 | `get_physical_cores()` 对未知目标为 -1，重量级线程池（模块准备、后台索引）退化为 1 个线程（`limit=1` 对原生 2–4） | openkal：规范无此接口 |
+| H2 | 任务优先级 | `set_thread_priority` 没有映像的分支，后台工作不降到空闲优先级（原生 Linux 为 SCHED_IDLE，macOS 为 QoS） | openkal：规范无此接口 |
+| H3 | 进程标识 | openkal-musl 的 `getpid()` 在每个程序中为 1，`getsid`/`kill(pid, 0)` 只认自身：锁文件的所有者都指向读取者，死去的所有者的锁不被打破 | openkal-musl：规范已有 `kal_process_self`/`kal_process_info`/`kal_process_open_id` |
+| H4 | 上下文标识的代价（macOS） | openkal-macos 的 `kal_task_current` 每次调用发一次 `thread_selfid` 系统调用；openkal-musl 取 `errno`、线程指针、线程私有数据与映像中每个（模拟的）线程局部变量都经它，一次 `clangd --check`（4000 个声明的无头文件用例）调用 158 万次。macOS arm64 上映像的解析时间为原生的 1.25–1.96 倍（六次运行），同一 aarch64 映像在 Linux arm64 上为 1.02 倍（openkal-linux 按线程缓存）；在 Linux 上强制每次系统调用，中位数 851 ms → 985 ms | openkal-macos（实现，不动规范）：`pthread_threadid_np` 从系统库为线程保存的记录读同一个内核标识，0.17.1 |
+| H5 | macOS SDK | clangd 的 `CommandMangler` 在 `__APPLE__` 下以 `xcrun --show-sdk-path` 为未指明 SDK 的命令补 `-isysroot`（`xcrun --find clang` 同理）；映像中这段被编译掉，未指明 SDK 的命令找不到系统头文件，`std` 模块编译失败（"We don't know how to get the definition of mbstate_t"），mcppls 的 macOS conformance 三个夹具因此失败 | LLVM 的 openkal series：`kal_env_system` 为 `macos` 时照原生行为询问 `xcrun` |
+| H6 | 线程一起分配（C 库） | mcppls 的 ux 阶段，已有缓存的新会话映像 32 s 就绪、原生 5 s；冷启动、打字、补全与原生相近。CI 上的 perf 采样（映像符号取自 clangd.oke）：映像在 4 核上平均只用 0.85 核，279k 次 futex；mallocng 以一把锁服务每次分配（此配置下 `rdlock` 为独占），ok 映像中一次 malloc+free 在 1／2／4 线程下为 38.5／194／521 ns。单文件、单线程的验收用例测不到 | openkal-musl 0.25.0：有第二个线程后，每个线程保留它释放的小尺寸类槽（≤ 2032 B，每类至多 16 个），无锁取回；空时在服务它的那次加锁中多取 8 个；线程结束时交还（TSD 析构之后、线程表锁之前，与 fork 的加锁顺序一致）。缓存中的槽在 mallocng 看来仍在使用，字节与 mallocng 自身 free 后相同，取回即 mallocng 对已释放槽的 `enframe`。实测 31／41／61 ns |
+| H7 | 字符串比较（C 库） | 同一采样中 `strlen` 8.7 %、`memcmp` 5.7 %，主要在 LLVM 选项表的匹配：musl 的 `memcmp` 逐字节，`strlen` 逐字节走到对齐处 | openkal-musl 0.25.0：`memcmp` 每次 8 字节（XOR 与 ctz 定位首个差异），`strlen` 在 x86_64 上以 SSE2 每次 16 字节、其余以对齐字；每次读取都按其大小对齐，不越过字符串未到达的页。mcppls-clangd 的验收增加 `parallel-index`（四个 worker 同时为 12 个文件建索引，映像与原生之比 ≤ 1.3）：0.0.19 的映像为 1.88× |
+| H8 | 提供者索引的重复 mangle（clangd fork） | musl 0.25.0 之后 ux 仍为 30 s：完整的 info 级日志显示服务端一次预热一个单元、6 ms 内送出下一个，引擎每个单元 156 ms（原生约 25 ms），其中 125 ms 在模块规划。CI 上的 perf（映像符号取自 clangd.oke，内存布局在引擎启动几秒后采得）：三分之一的时间是 `CompileCommandsProjectModules::indexProducerCommands` 把数据库的 481 条命令全部重新 mangle（`OptTable::ParseArgs`、`strlen`、`matchOption`），每个单元两次，之后 `getIndex` 才发现索引未变。原生做同样的事，只是更快 | mcppls-clangd 补丁 0038（UP-03，主 series，原生同样受益）：命令缓存保留它索引过的清单快照与首条命令的 mangle 结果；同一 mangler 给出相同首条命令即复用索引（mangle 一条而非 481 条），另一 mangler 或带配置的逐文件旗标编辑照旧全部 mangle，按其他命令重建索引时清除所保留的。引擎版本 23.1.0-mcppls.8 |
+
+做法按层：规范补足操作系统无关的能力，C 库以它实现 POSIX 的语义，LLVM 走它原有的 POSIX 路径，不在 clangd 中为映像
+另写宿主逻辑。
+
+- **openkal 0.19.0**（`openkal/task.h`，第 11 条第 41 项）：
+  - `kal_uintptr kal_task_cores(void)`：本程序可运行于其上的处理器的物理核数，0 为环境不能回答，不大于
+    `kal_task_parallelism()`。可运行的处理器数已由 `kal_task_parallelism` 回答，故只增一个数，不增结构；
+  - `int kal_task_set_priority(kal_uintptr priority)`，调用者所在上下文：`KAL_TASK_PRIORITY_DEFAULT`、`KAL_TASK_PRIORITY_LOW`、
+    `KAL_TASK_PRIORITY_BACKGROUND`（0、1、2）；能做到的环境声明属性位 `KAL_TASK_PROP_PRIORITY`，不能的返回
+    `kal_err_not_supported`；降低后被拒绝升回为 `kal_err_permission`；
+  - 三个实现：Linux 以亲和集合中各处理器的 sysfs 拓扑（`physical_package_id`、`core_id`）与 `sched_setscheduler` 的
+    SCHED_OTHER/BATCH/IDLE；macOS 以 `hw.physicalcpu` 与 QoS 类（`pthread_set_qos_class_self_np`）；Windows 以
+    `GetLogicalProcessorInformationEx` 的核心关系与线程的后台模式（不被接受时为空闲优先级）；openkal-emscripten 两者都答
+    "不能回答／不支持"。一致性测试、`SURFACE.txt` 与 okrun 的绑定随之。
+- **openkal-musl 0.24.0**：`getpid()` 为环境给本程序的标识，子程序的标识为其环境标识；`kill(pid, 0)`、`getsid`、`getpgid`
+  对他人程序经 `kal_process_open_id`；`sched_setscheduler`（`pthread_setschedparam`）的 SCHED_OTHER/BATCH/IDLE 与
+  `setpriority` 经 `kal_task_set_priority`；`flock` 与 `F_OFD_SETLK[W]` 经 `kal_fs_lock`。`sysconf(_SC_NPROCESSORS_*)` 与
+  `sched_getaffinity` 已取自 `kal_task_parallelism`，不变。
+- **LLVM 的 openkal series**：`computeHostNumPhysicalCores` 取 `kal_task_cores()`，为 0 时取 `kal_task_parallelism()`；
+  `set_thread_priority` 按 LLVM 的三档映射到 `kal_task_set_priority`（只改 `Unix/Threading.inc` 一处）。锁文件所有者的进程
+  标识由 C 库的 `getpid` 给出，LLVM 的 `Process.inc` 与 `LockFileManager` 不改。
+- **openkal-image 0.1.8**：新接口的绑定；okb 的分块摘要（B7）：本机 68 MB 的 okb 启动由 0.10–0.12 s 降到 0.04–0.07 s。
+- **级联**：openkal 0.19.0 → 三个实现与 openkal-emscripten → openkal-image 0.1.8 → openkal-musl 0.24.0 → openkal-llvm-runtime
+  → openkal-platform 0.20.0（openkal 0.19 的版本组）→ mcpplibs.os → mcppls-clangd 0.0.19（验收含 `module-parallelism`：映像
+  同时构建的模块数不少于原生）→ mcppls 0.0.20 四个系统都用 `clangd.okb`，以 mcppls 的完整 CI 与 ux 阶段验证 → mcpp-ide 0.2.0。
+
+**本轮范围与 openkal 变动的约束（rev 11，已定）。**
+
+- 本轮做 openkal 规范与基础设施（§25.9 的 openkal 0.19、三个实现、openkal-emscripten、openkal-image、openkal-musl、
+  openkal-llvm-runtime、openkal-platform、mcpplibs.os），并以此收敛 clangd（mcppls-clangd 0.0.19）与 mcppls part 2 方案
+  （mcppls 0.0.20、mcpp-ide 0.2.0）。
+- LLVM 与 clang、lld 本身作为 ok 映像（`clang.okb`、`lld.okb`，跨操作系统分发工具链）不在本轮，记录为 mcpp 的 Issue。
+  其前提依次为：映像文件一段的共享可执行映射（不复制段，进程间共享代码页；okb 的 64 KiB 对齐为此预留）、driver 中在编译时
+  决定的宿主逻辑改为运行时决定、派生进程经加载器启动；验收以同版本原生 clang 逐字节相同的目标文件、编译耗时与 `-j N` 下的
+  常驻内存为准。
+- **openkal 是核心规范，一般不动。** 只在两项都成立时增补：确有消费者需要、组合不出来（clause 3、clause 6 的准入）；
+  符合通用 kernel ABI 与 openkal 的设计规范（clause 7：无表、以属性位声明能力、零值语义、版本条目）。每次变动：规范、
+  一致性测试、三个实现与 openkal-emscripten 的 CI 全部通过后，再做一次深度自我评审（必要性、与既有条款的一致性、各系统
+  的语义差异是否写明、是否可由 C 库或上层组合），评审结论写入规范第 11 条的版本条目与 PR 描述，然后才发布。
+- 本轮的两项增补按此审视：`kal_task_cores` —— 物理核数各系统都在一次调用中给出，C 库无处可问，LLVM 等以物理核为重型任务
+  定额的消费者得到"未知"即退化为 1；`kal_task_set_priority` —— 各系统都能降低线程的调度地位，映像内的后台工作无法表达，
+  原生程序都这样做。进程标识（H3）不动规范：规范已有 `kal_process_self`/`kal_process_info`/`kal_process_open_id`，缺口在
+  openkal-musl 的 `getpid` 语义，由 C 库修正。
+
+**分层归属（rev 11，已定）。** mcpplibs.os、openkal-musl、openkal 各有自己的规范：openkal 是最底层、最核心的 kernel ABI，
+只收"只有系统能回答、上层组合不出来"的能力；openkal-musl 在它之上给出 POSIX 的语义；mcpplibs.os 是 mcpp 程序的 C++ 操作
+系统库，按消费者的需要增长。本轮各项的归属：
+
+| 能力 | 层 | 理由 |
+|---|---|---|
+| 物理核数 `kal_task_cores` | openkal | 拓扑只有系统知道（Linux sysfs、macOS `hw.physicalcpu`、Windows 处理器关系表），C 库与 os 都无处可问 |
+| 任务优先级 `kal_task_set_priority` | openkal | 线程的调度地位只有系统能改；三个系统各一次调用 |
+| `getpid` 为环境给程序的标识，`kill(pid, 0)`/`getsid` 问他人程序 | openkal-musl | 规范已有 `kal_process_self`/`kal_process_info`/`kal_process_open_id`，缺的是 C 库的 POSIX 语义 |
+| `sysconf(_SC_NPROCESSORS_*)`、`sched_getaffinity` | openkal-musl（不变） | 已取自既有的 `kal_task_parallelism` |
+| `pthread_setschedparam(SCHED_IDLE/SCHED_BATCH)`、`setpriority` | openkal-musl | 以 `kal_task_set_priority` 实现 POSIX 的调度语义 |
+| `flock`、`F_OFD_SETLK` | openkal-musl | 规范的 `kal_fs_lock` 已是"由打开的文件持有"，缺的是 C 库的两种拼写 |
+| LLVM 的物理核数与线程优先级 | LLVM 的 openkal series | 物理核数经 POSIX 不可表达，直接问 `kal_task_cores`；优先级按 LLVM 的三档直接映射到 `kal_task_set_priority` |
+| C++ 的处理器与优先级接口 | mcpplibs.os：本轮不增 | 本轮无消费者（mcppls 的服务端不需要）；os 只把 openkal 钉到 0.19.0（0.2.5） |
+
+### 25.10 openkal 的边界（rev 11，已定；规范文本见 openkal SPEC §1.1）
+
+openkal 同时是三份规定：以 C 陈述的接口（clause 4）、clause 4.4 各边界上的二进制接口（S 静态、L 延迟绑定、X 跨越），以及
+ok 映像与绑定它的加载器之间运行时的二进制接口（clause 12）。三者共同的规则写入 SPEC §1.1：
+
+- **下层的东西不向上穿透。** 使用者观察到的值、布局、错误、名字与行为都是规范定义的；实现把环境的回答翻译成规范的
+  词（错误为 §5.2 的值，能力为 §6.2 的属性），环境给出规范没有对应词的回答时，报告规范陈述的最近结果或拒绝该操作，不把
+  环境自己的回答传上去。环境给的标识（程序的、上下文的）作为不透明值穿过，含义是规范陈述的，不是环境的。
+- **实现之间在下层可以不同，在上层不能不同。** 调内核、调 C 库、由其他操作组合或模拟都可以，代价可以不同；使用者能观察到的
+  不能不同，规范留下的余地都有名字：实现声明或不声明的属性位（§6.2），操作陈述的几个结果之一（如降低后的优先级被拒绝升回，
+  第 11 条第 41 项）。
+- **使用者绕过 openkal，就绑定了它所绕到的东西。** 程序可以直接调用环境（系统库、系统调用），规范不禁止也不观察；这样的
+  程序在其余部分可移植，绕到的部分由它自己负责在别处提供。ok 映像不能绕过：它只导入规范声明的名字与其他映像导出的名字
+  （§12.2），这正是同一份字节能在加载器服务的每个系统上运行的原因。
+
+本轮的增补按此核对：`kal_task_cores` 是数目，不带拓扑的系统细节；`kal_task_set_priority` 是三个抽象的档位，各系统的
+策略、QoS 类、后台模式只在实现内部；升回被拒绝是规范陈述的结果（`kal_err_permission`），不是环境错误的透传；openkal-musl 的
+`getpid` 是环境给的不透明标识；Windows 在后台模式被拒绝时退到空闲优先级，属于实现内部的差异，上层观察到的仍是"降到后台"。
+
+**okrun 与 okld 支持的几种情形，与边界的关系。**
+
+| 情形 | 载体 | 边界 |
+|---|---|---|
+| 运行一个映像或 okb | `okrun app.oke`、`okrun app.okb`（两个架构一个文件，docs/okb.md） | 映像只导入 `kal_*` 与其他映像的导出（§12.2） |
+| 程序自带映像 | 自包含（`mcpp pack --mode self-contained`，载体程序在段中携带映像经 libokrun 运行）、单文件、polyglot | 载体是各系统的原生程序；映像不变 |
+| 映像需要的库 | okso：okb 内、旁边、`lib/<arch>/`、`OKRUN_PATH`；C 库的 `dlopen` 经 libokld | 仍是映像，仍只导入 `kal_*` |
+| 原生程序使用映像的库 | `okrun_open_library`、openkal-bind 生成的绑定 | 原生一侧绑定了它的系统，映像一侧不变 |
+| 映像使用主机的设备（GPU 等） | §19.8：R0 原生目标经 openhal 直接用主机库；R1 映像经 openbus（`kal_net_connect_at` 连本机路由、共享区域）；R2 加载器提供的具名扩展接口（C 头文件定义、带版本、映像的 note 声明，缺少即加载时拒绝） | 设备能力归 openhal，openkal 不增加 `kal_gpu_*`；R1、R2 都不让主机库的名字进入映像 |
+
+GPU 与 openkal 的关系由此确定：openkal 不承载设备语义；映像经 openbus 或经规范化的扩展接口使用设备，原生程序经 openhal
+直接使用，后者是开发者主动绑定平台。
+
+### 25.11 进度（rev 12）
+
+| 任务 | 状态 |
+|---|---|
+| K（openkal 0.19） | openkal 0.19.0、openkal-linux 0.20.0、openkal-macos 0.17.0、openkal-windows 0.15.0、openkal-emscripten 0.8.0 已发布（mcpp-index #647）；openkal-image 0.1.8（okb 分块摘要）、openkal-musl 0.24.0（H3、flock 与 OFD 锁、调度占用）、openkal-llvm-runtime 0.16.13（#648）、openkal-platform 0.20.0（#649）、mcpplibs.os 0.2.5（#650）已发布。os 的 `checks/hosted` 一并改用 0.20.0 的版本组（漏改时 CI 报两个 openkal） |
+| H4 | openkal-macos 0.17.1（#651）、openkal-image 0.1.9、openkal-musl 0.24.1、openkal-llvm-runtime 0.16.14（#652）、openkal-platform 0.20.1（#653）、mcpplibs.os 0.2.6（#654）已发布；`_pthread_threadid_np` 进入 openkal-macos 允许的导入与 musl 的交叉链接名单（十七个）；okrun 0.1.8、0.1.9 的二进制已补 GitCode |
+| C | mcppls-clangd 0.0.19 已发布：openkal series 增加 H1、H2、H5；验收增加 `module-parallelism`（四个系统映像与原生都为 `limit=2`）与 macOS 的 `check-std-host`。发布运行的验收四个系统全部通过，解析时间为原生的 0.60–1.10 倍（macOS arm64 1.00／0.90，此前 1.25–1.96） |
+| H6、H7 | mcppls 以 0.0.19 的映像跑完整 CI：macOS 三个夹具通过（H5），U9 通过；ux 的已有缓存新会话仍为 23–32 s（原生 5 s）。以 nightly 的 `payload-run` 在 CI 机器上重放 ux-mcpp，perf 采样定位到 C 库（H6、H7）。openkal-musl 0.25.0、openkal-llvm-runtime 0.16.15（#655）、openkal-platform 0.20.2（#656）已发布；mcppls-clangd 0.0.20（#16，同一引擎源码，映像建在 0.20.2 上，验收增加 `parallel-index`）在 CI |
+| L | mcppls 0.0.20（#75）：四个系统都选 `clangd.okb`；conformance 的运行器按 runner 的参数识别映像引擎（U9）；平台 0.20.2；以 clangd 0.0.20 的 PR 构建为候选引擎（`packaging/engine-candidate.json`）跑完整 CI 与 ux，通过后发布引擎并切换锁 |
+| I | mcpp-ide 0.2.0（#3）：openkal-platform 0.20.2、os 0.2.6 |
