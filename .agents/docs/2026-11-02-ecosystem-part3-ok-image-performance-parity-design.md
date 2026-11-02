@@ -616,6 +616,13 @@ mcpp 在首次初始化时已把 Ninja 装进自己的 home（`ensure_ninja`，`
   取自运行时。
 - **统计。** 计数器的名字表在共用文件中；hosted 的程序不引用 `openkal.prof` 的任何名字（Mach-O 不允许未定义符号），映像在
   启动时注册。
+- **分配器的两个 fork 名字。** `__malloc_atfork` 与 `__bump_lockptr` 在 musl 中由 fork.c 以弱别名给出默认定义；本移植在
+  Mach-O 与 PE 上不从占位定义生成名字，由提供分配器的源文件定义。mallocng 与 lite_malloc.c 定义了它们，mimalloc 的粘合层
+  原先没有，macOS 上链接 fork 的程序失败；现由粘合层按 musl 的默认定义给出。
+- **`thread_local` 的析构读到自己的变量。** PE 与 Mach-O 上变量是 compiler-rt emutls 的块，释放它们的 key 早于运行
+  `thread_local` 析构的 key 创建，musl 按 key 的顺序调用析构，析构读的是已释放的内存：mallocng 不改已释放块的字节，mimalloc
+  在其中写入空闲链表。openkal-llvm-runtime 0.17 的 emutls 在 musl 的最后一轮才释放块（ok 映像的 emutls 在 openkal-musl 中，
+  同样处理）。
 - **裸机的分配器。** `os = "none"` 上 openkal-llvm-runtime 选 `malloc-mallocng`：mimalloc 按 arena 预留地址空间，在 OpenSBI 的
   内存上返回 `ENOMEM`。目标依赖替换通用依赖，两条目标依赖各自列出 `posix`。
 - **嵌入的依赖的链接要求。** `compat.mimalloc` 为 Windows 声明 `psapi`、`user32`、`advapi32` 等库；嵌入 openkal-musl 并以
