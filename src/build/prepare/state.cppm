@@ -457,6 +457,7 @@ struct PrepareState {
             env.packStageDir        = stage->dir;
             env.packStrip           = stage->strip;
             env.packDebugSymbolsDir = stage->debugSymbolsDir;
+            env.packCompress        = stage->compress;
         }
     }
     // `--features` as the command gave it. A workspace plan hands the tokens to

@@ -111,7 +111,8 @@ glibc 专有行为（NSS 查询、`dlopen` 宿主插件）时的首选。
 | 组合 | 出路 |
 |---|---|
 | `--pkg-format single-file` 与 `--mode system` | `--mode vendored` 或 `self-contained`：单文件携带它所运行的东西 |
-| `--compress` 与 `--pkg-format dir` 或提供者的格式 | `--pkg-format tar`、`zip` 或 `single-file`：只有容器被压缩 |
+| `--compress` 与 `--pkg-format dir` | `--pkg-format tar`、`zip`、`single-file` 或提供者的格式：只有容器被压缩 |
+| 提供者的格式不写的压缩（`--pkg-format okb --compress zstd`） | 它写的那一种（`okb`：`gzip`，映像压缩存放；或 `none`） |
 | `--compress zstd` 或 `xz` 与 `--pkg-format zip` | `--compress gzip`（DEFLATE）或 `none`，或 `--pkg-format tar` |
 | `--compress gzip` 或 `xz` 与 `--pkg-format single-file` | `--compress zstd[:<level>]` 或 `none`：启动器解压 zstd |
 | 自带运行器的映像树与映像的单文件之外使用 `--systems` | `--mode self-contained`，或 `--pkg-format single-file`；不相容的 `[pack] systems` 写出提示后搁置 |
@@ -741,7 +742,8 @@ Cygwin 的 shell 交给 `bin/<name>.exe`，以该目录中的映像与自身的�
 
 **容器列表。** `--pkg-format tar,okb`（或 `[pack] format = ["tar", "okb"]`）构建一次、暂存一棵树，按命名的顺序
 从它写出各容器。列表只含同一棵树的容器 —— `tar`、`zip` 与提供者的格式 —— 不含 `dir` 与 `single-file`；列表要求
-`-o` 为目录；`--compress` 作用于其中的引擎容器。okb 只含映像，因此格式只有 okb 的 self-contained 树被拒绝
+`-o` 为目录；`--compress` 作用于其中的引擎容器，并以 `MCPP_PACK_COMPRESS` 传给提供者的格式（2026.11.2.3）：openkal-platform 的 `okb`
+在 `gzip` 下压缩存放其映像——磁盘上小的 okb，okrun 首次运行时展开到缓存——其余情况原样存放。okb 只含映像，因此格式只有 okb 的 self-contained 树被拒绝
 （`--pkg-format tar,okb`）。`mcpp run --pkg-format` 只接受一个格式。
 
 ### 单文件包

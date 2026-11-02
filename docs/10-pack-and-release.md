@@ -126,7 +126,8 @@ choices:
 | Combination | Remedy |
 |---|---|
 | `--pkg-format single-file` with `--mode system` | `--mode vendored` or `self-contained`: a single file carries what it runs |
-| `--compress` with `--pkg-format dir` or a provided format | `--pkg-format tar`, `zip` or `single-file`: only a container is compressed |
+| `--compress` with `--pkg-format dir` | `--pkg-format tar`, `zip`, `single-file` or a provided format: only a container is compressed |
+| a compression a provided format does not write (`--pkg-format okb --compress zstd`) | the one it writes (`okb`: `gzip`, its images stored compressed, or `none`) |
 | `--compress zstd` or `xz` with `--pkg-format zip` | `--compress gzip` (DEFLATE) or `none`, or `--pkg-format tar` |
 | `--compress gzip` or `xz` with `--pkg-format single-file` | `--compress zstd[:<level>]` or `none`: the launcher decompresses zstd |
 | `--systems` on anything but a self-contained tree of images or a single file of an image | `--mode self-contained`, or `--pkg-format single-file`; `[pack] systems` that does not fit is noted and left aside |
@@ -869,7 +870,10 @@ input's.
 "okb"]`) builds once, stages one tree and writes each container from it, in the
 order named. A list holds the containers of one tree — `tar`, `zip` and a
 provider's format — never `dir` or `single-file`; it takes a directory for `-o`;
-`--compress` applies to its engine containers. okb holds the images alone, so a
+`--compress` applies to its engine containers and reaches a provider's format as
+`MCPP_PACK_COMPRESS` (2026.11.2.3): openkal-platform's `okb` stores its images
+compressed under `gzip` --- an okb kept small on disk, which okrun expands into
+its cache when it first runs it --- and as they are otherwise. okb holds the images alone, so a
 self-contained tree whose only format is okb is refused (`--pkg-format
 tar,okb`). `mcpp run --pkg-format` takes one format.
 

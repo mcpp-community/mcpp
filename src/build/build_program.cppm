@@ -251,6 +251,9 @@ struct BuildProgramEnv {
     // engine's.
     std::string packStrip;
     std::filesystem::path packDebugSymbolsDir;
+    // The compression the packaging pass stated (`--compress`, `[pack]
+    // compress`), as the flag spells it; empty when unstated or not packing.
+    std::string packCompress;
     // #647 E1: the graph document offered to the ROOT package's program, and
     // the digest of its text. Empty for a dependency's program. The digest
     // joins the re-run key (see `run_build_program`), so a change to what the
@@ -736,6 +739,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     e.emplace_back("MCPP_PACK_STAGE_DIR", env.packStageDir.string());
     e.emplace_back("MCPP_PACK_STRIP", env.packStrip);
     e.emplace_back("MCPP_PACK_DEBUG_SYMBOLS_DIR", env.packDebugSymbolsDir.string());
+    e.emplace_back("MCPP_PACK_COMPRESS", env.packCompress);
     e.emplace_back("MCPP_GRAPH_FILE", env.graphFile.string());
     std::string csv;
     for (auto const& f : env.features) {

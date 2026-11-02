@@ -758,6 +758,12 @@ inline const char* pack_strip()                   { return env_or("MCPP_PACK_STR
 // when they are discarded or this build is not packing (#649 E5).
 inline const char* pack_debug_symbols_dir()       { return env_or("MCPP_PACK_DEBUG_SYMBOLS_DIR"); }
 
+// THE COMPRESSION THIS PACKAGING PASS STATED, as `--compress` spells it
+// (`gzip`, `zstd:19`, `none`); "" when the command and `[pack] compress` state
+// none, or this build is not packing (2026.11.2.3). A package format a package
+// provides decides what its container does with it.
+inline const char* pack_compress()                { return env_or("MCPP_PACK_COMPRESS"); }
+
 // THE RESOLVED DEPENDENCY GRAPH, as a JSON document; "" for a dependency's
 // program and under an older engine (#647 E1).
 //

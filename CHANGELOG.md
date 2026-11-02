@@ -19,6 +19,18 @@ is left for the next one; a requirement a layer decides is checked; design
   paid by each program an okb starts (a language server's 176 module workers
   in a cold build).
 
+### Added
+
+- **A format a package provides is told the compression stated** (docs/10,
+  docs/30). `--compress` and `[pack] compress` reach a provided format's
+  program as `MCPP_PACK_COMPRESS` (`mcpp::pack_compress()`), spelled as the
+  flag takes it, and the provider decides what its container does with it.
+  `--compress` was refused with every provided format, so openkal-platform's
+  `okb` could not be asked for its compressed form: its images stored
+  compressed under `gzip`, an okb kept small on disk that okrun expands into
+  its cache when it first runs it (design 2026-11-03 part 4 §16). A directory
+  is still refused.
+
 ### Fixed
 
 - **A requirement a layer decides is checked** (docs/22, docs/specs/target-side.md
