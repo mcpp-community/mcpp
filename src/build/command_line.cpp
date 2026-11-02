@@ -102,6 +102,47 @@ std::string quote_through_shell(std::string_view s) {
 }
 
 
+namespace {
+
+std::vector<std::string> split(std::string_view text, bool responseFile) {
+    std::vector<std::string> words;
+    std::string cur;
+    bool any = false;
+    char quote = 0;
+    auto escapes = [&](char next) {
+        if (responseFile || quote == 0) return true;
+        return quote == '"' && (next == '$' || next == '`' || next == '"' || next == '\\' || next == '\n');
+    };
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        if (c == '\\' && i + 1 < text.size() && escapes(text[i + 1])) {
+            // A shell removes a backslash and the newline after it.
+            const char next = text[++i];
+            if (responseFile || next != '\n') { cur.push_back(next); any = true; }
+        } else if (quote) {
+            if (c == quote) quote = 0;
+            else cur.push_back(c);
+        } else if (c == '\'' || c == '"') {
+            quote = c;
+            any = true;
+        } else if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            if (any) words.push_back(std::move(cur));
+            cur.clear();
+            any = false;
+        } else {
+            cur.push_back(c);
+            any = true;
+        }
+    }
+    if (any) words.push_back(std::move(cur));
+    return words;
+}
+
+}  // namespace
+
+std::vector<std::string> shell_words(std::string_view text) { return split(text, false); }
+std::vector<std::string> response_file_words(std::string_view text) { return split(text, true); }
+
 std::string display(const std::vector<std::string>& argv) {
     std::string out;
     for (auto const& a : argv) {

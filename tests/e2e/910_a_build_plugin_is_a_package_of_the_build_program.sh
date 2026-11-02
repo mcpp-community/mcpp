@@ -6,7 +6,9 @@
 #   A  a plugin built on another plugin and on an ordinary library, each named
 #      in its [dependencies], serves a consumer's build program (S1, S2);
 #   B  P3: the plugin builds as the root of a build, in the build-program
-#      configuration, and its tests run;
+#      configuration, and its tests run; the engine package's cache entry is
+#      filled there, its `mcpp.core` interface built though the plugin imports
+#      `mcpp` alone;
 #   C  P3: `--target` for another machine is refused, naming the plugin;
 #   D  P1: a plugin reached through [dependencies] of a target is refused,
 #      naming the chain and [build-dependencies];
@@ -69,6 +71,9 @@ printf 'import mcpp;\nimport acme.rule;\nint main() { return acme::rule::value()
 cd "$TMP/rule"
 "$MCPP" build > b1.log 2>&1 || fail "B: the plugin did not build as the root of a build" b1.log
 grep -q "build-program" b1.log || fail "B: the build does not state its configuration" b1.log
+! grep -q "populate failed" b1.log || fail "B: the engine package's cache entry was not filled" b1.log
+ls "$MCPP_HOME"/build-cache/v1/pkg/_engine/*/*/bmi/mcpp.core.* > /dev/null 2>&1 \
+    || fail "B: the engine package's entry lacks mcpp.core" b1.log
 "$MCPP" test > b2.log 2>&1 || fail "B: the plugin's tests did not run" b2.log
 grep -q "1 passed" b2.log || fail "B: the test did not pass" b2.log
 

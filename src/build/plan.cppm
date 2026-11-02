@@ -110,6 +110,12 @@ struct CompileUnit {
     bool                            servedFromCache = false;
     std::filesystem::path           cachedObject;   // absolute, inside the cache
     std::filesystem::path           cachedBmi;      // absolute; empty if no module
+    // This unit's outputs fill a global-cache entry after the build: the
+    // entry holds its package's every BMI and object, so the backend builds
+    // the unit even where nothing in this build imports or links it (the
+    // engine package's `mcpp.core' in a build plugin's configuration, where
+    // the plugin imports `mcpp' alone).
+    bool                            fillsCache = false;
     // mcpp#344: this object's address INSIDE a global-cache entry — relative to
     // `<entry>/obj/`, and a pure function of the owning package (its source's
     // path relative to its own package root). Distinct from `object`, which is

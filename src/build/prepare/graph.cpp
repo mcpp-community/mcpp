@@ -251,6 +251,11 @@ static void removeLinkFlags(PrepareState& state, const std::vector<std::string>&
         }
 }
 
+void withdraw_link_flags(PrepareState& state, std::size_t p) {
+        for (auto const& [key, rec] : state.resolved)
+            if (rec.depIndex + 1 == p) removeLinkFlags(state, rec.linkFlagsAdded);
+}
+
 static std::expected<std::set<std::filesystem::path>, std::string> package_source_files(
         const std::filesystem::path& srcRoot,
         const mcpp::manifest::Manifest& depManifest)

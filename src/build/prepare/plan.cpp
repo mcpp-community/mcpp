@@ -1978,6 +1978,7 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                     arts.bmiFiles.size() + arts.objFiles.size(),
                     probe.layoutMismatch.front()));
             }
+            for (auto u : unitIdx) ctx.plan.compileUnits[u].fillsCache = true;
             ctx.depsToPopulate.push_back({ std::move(key), std::move(arts) });
         }
     }

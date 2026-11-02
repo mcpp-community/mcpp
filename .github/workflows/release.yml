@@ -837,6 +837,15 @@ jobs:
             > "$AUDIT_ROOT/release.json"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --dir "$AUDIT_ROOT/assets"
+          # SHA256SUMS names every archive of the release, the four builds
+          # and the source: the Linux job wrote it before the others had
+          # uploaded theirs, so it named Linux x86_64 alone.
+          (cd "$AUDIT_ROOT/assets" && ls mcpp-*.tar.gz mcpp-*.zip 2>/dev/null | LC_ALL=C sort \
+             | xargs sha256sum > "$AUDIT_ROOT/SHA256SUMS")
+          cat "$AUDIT_ROOT/SHA256SUMS"
+          if ! cmp -s "$AUDIT_ROOT/SHA256SUMS" "$AUDIT_ROOT/assets/SHA256SUMS"; then
+            gh release upload "$TAG" "$AUDIT_ROOT/SHA256SUMS" --clobber --repo "$GITHUB_REPOSITORY"
+          fi
           python3 tools/release/generate_manifest.py \
             --release-json "$AUDIT_ROOT/release.json" \
             --assets-dir "$AUDIT_ROOT/assets" \

@@ -119,6 +119,19 @@ static std::expected<bool, std::string> step11_scan_sources(PrepareState& state)
         dep.manifest.modules.sources.clear();
         dep.manifest.modules.declaredUnits.clear();
         dep.manifest.buildConfig.sourcesDeclared = true;
+        // ITS LINK REQUIREMENTS ARE THE EMBEDDER'S. The dependency's link
+        // flags and libraries describe the library it builds on its own;
+        // embedded, its definitions are the embedder's, over the
+        // operating-system layer the embedder chose (a C library excludes the
+        // dependency's and supplies its own), and what they link against is
+        // what the embedder states.
+        withdraw_link_flags(state, d);
+        dep.manifest.buildConfig.ldflags.clear();
+        dep.linkUsage.ldflags.clear();
+        auto& intent = dep.manifest.runtimeConfig.linkIntent;
+        intent.libraries.clear();
+        intent.frameworks.clear();
+        intent.linkLibraryDirs.clear();
     }
 
     // Modgraph: regex scanner by default; opt-in to compiler-driven P1689

@@ -246,14 +246,8 @@ static void step6_instances(PrepareState& state) {
             target[d] ? "target" : "", host[d] ? (target[d] ? " + build-program" : "build-program")
                                                : ""));
     }
-    for (auto const& [key, rec] : state.resolved) {
-        const auto p = rec.depIndex + 1;
-        if (p >= n || !state.packages[p].buildTimeOnly) continue;
-        auto& ldflags = state.m->buildConfig.ldflags;
-        for (auto const& flag : rec.linkFlagsAdded)
-            if (auto pos = std::ranges::find(ldflags, flag); pos != ldflags.end())
-                ldflags.erase(pos);
-    }
+    for (std::size_t d = 1; d < n; ++d)
+        if (state.packages[d].buildTimeOnly) withdraw_link_flags(state, d);
 }
 
 static void step6_check_version_floors_closure(PrepareState& state) {

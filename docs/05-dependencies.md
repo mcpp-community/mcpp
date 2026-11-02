@@ -656,6 +656,9 @@ verified source.
 - The dependency builds nothing of its own in that configuration: every other
   edge to it takes its interface, and the embedder supplies its definitions.
   A program that reaches it without its embedder is refused, naming both.
+- Its link flags and libraries are not the program's: the embedder supplies
+  the definitions, over the operating-system layer it chose, and states what
+  they link against.
 - `exclude` is allowed only with `embed`: a library built on its own that
   compiled fewer files would change for every consumer, which is a patch's to
   state.

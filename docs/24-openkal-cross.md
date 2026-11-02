@@ -111,7 +111,7 @@ practice.
 
 ```toml
 [target.'cfg(any(linux, macos, windows))']
-platform = "openkal-platform@0.18.0"
+platform = "openkal-platform@0.21.0"
 ```
 
 One table (2026.10.27.1+). It selects the openkal platform for the host triples,

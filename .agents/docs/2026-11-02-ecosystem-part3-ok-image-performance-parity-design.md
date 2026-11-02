@@ -5,7 +5,7 @@ status: active
 
 # 生态设计 part 3：ok 映像的性能对等——引擎路径、openkal 运行时与观测
 
-日期：2026-11-02（rev 3，评审通过）。基线：mcppls-clangd #16（`6336bf1`，引擎 23.1.0-mcppls.8）、mcppls #75（0.0.20）、
+日期：2026-11-02（rev 4，实施记录）。基线：mcppls-clangd #16（`6336bf1`，引擎 23.1.0-mcppls.8）、mcppls #75（0.0.20）、
 openkal-platform 0.20.2（openkal 0.19.0、openkal-linux 0.20.0、openkal-macos 0.17.1、openkal-windows 0.15.0、openkal-musl 0.25.0、
 openkal-llvm-runtime 0.16.15、openkal-image 0.1.9）。前文：[part 2](2026-10-30-ecosystem-part2-ide-and-language-service-design.md)
 §25.3（B4–B8）、§25.9（H1–H8）、§25.10（openkal 的边界）。
@@ -24,6 +24,8 @@ openkal-llvm-runtime 0.16.15、openkal-image 0.1.9）。前文：[part 2](2026-1
   在 openkal-musl。mcpp 增加依赖的补丁与嵌入（§14）：打过补丁的库是一个新的库（变体），唯一性按程序而不按工作区判定；同一个
   mcpp 版本修正 mcpp#875（外部工具链找不到 mcpp 安装的 Ninja）与 mcpp#881（`clean --stale` 的报告自相矛盾）及其附带的两处
   不一致。第三轮自我评审 17 条（§15.3），待评审项见 §16.4；四项均采纳（§16.5），本文定稿，按 §12 实施。
+- rev 4：实施中的两项决定（§16.6）与修订（§17）：冷阶段的差距来自装入时复制映像的全部段，openkal 0.21 增加从文件映射指令的
+  可选操作；L1 改为报告，门禁在 L2、L3。
 
 ## 1. 问题与结论
 
@@ -435,7 +437,8 @@ C 库这一类包要用上游的源码而不拷贝它：在源码上加几处改
 **嵌入（`embed = true`）。** 依赖的源文件（按它的构建描述与 feature 选出，再减去 `exclude`）以使用者的编译参数、include 目录与宏
 （再加上依赖自己的 include 目录与宏）编入使用者，不另成一个库；依赖不为目标单独构建，因此不需要目标的 C 库——C 库可以嵌入
 它所需的代码而不成环。嵌入者即为该变体在程序中的供给者：同一程序中其他边依赖同一变体时，只编译接口、不再链接实现；依赖
-另一变体时按上表报错。`exclude` 只在 `embed` 下允许（普通依赖去掉源文件会改变它的公开行为，那应当是一个补丁）。
+另一变体时按上表报错。`exclude` 只在 `embed` 下允许（普通依赖去掉源文件会改变它的公开行为，那应当是一个补丁）。依赖的链接
+参数与库不进入程序：定义由嵌入者提供，建立在嵌入者选定的操作系统层之上，链接什么由嵌入者陈述（rev 4，§17.2）。
 
 **与已有机制的关系。** `provides` 的能力选择不变；变体是包身份的扩展，不是新的能力。xim 的安装钩子与描述中的
 `generated_files` 在补丁之后执行。先例：vcpkg 的 portfile 补丁、Conan 的 `patches`、Nix 的 `patches`、Spack 的 `patch()`；Cargo 的
@@ -578,3 +581,75 @@ mcpp 在首次初始化时已把 Ninja 装进自己的 home（`ensure_ninja`，`
 2. `embed` 的语义：采纳（§14.1）。
 3. mcpp 的这一版本进入本轮、排在 openkal-musl 之前；musl 留在 openkal-musl：采纳（§12、§14）。
 4. "新"的定义统一为 `[build] keep_days`：采纳（§14.3）。
+
+### 16.6 实施中的待决项与决定（2026-11-02）
+
+1. warm-prime 的冷阶段（176 个模块，每个模块一个 worker）映像就绪为原生的 1.63 倍（7.82 s 对 4.80 s），每个 worker 多约 26 ms，
+   与模块大小无关：okld 把映像的全部段复制进 `kal_exec_alloc` 的区域，每次启动写入并驻留 54 MB、约 14 000 次缺页。决定：
+   openkal 0.21 增加可选操作 `kal_exec_map_part`，实现提供，加载器从文件映射不可写的段（§17.1）。
+2. L1 在 Linux x64 上 69 行中 hosted 仍有 5 行、映像 16 行超过 1.15（§17.4），多为纳秒级的字符串函数；L2、L3 达标。决定：L1 在
+   CI 中照常运行并报告比值，不作门禁；门禁在 L2、L3。
+
+## 17. 实现中的修订
+
+### 17.1 openkal 0.21 与三个实现
+
+| 项 | 内容 |
+|---|---|
+| 规范 | `openkal.exec` 增加 `kal_exec_map_part(region, offset, size, file, at, how)`：把区域的一部分换成文件的字节，只读或只读且可执行（`KAL_EXEC_MAP_EXECUTE`），永不可写，随区域由 `kal_exec_free` 释放；文件偏移是 `KAL_MAP_ALIGNMENT` 的倍数，区域内的偏移与长度是 `kal_exec_granularity` 的倍数；失败时区域不变。属性位 `KAL_EXEC_PROP_FILE`（11 条 46、12.2、12.3）。结束的程序的 `cpu_ns` 在句柄释放前可读，与峰值内存相同。设计见 openkal 仓库 `.agents/docs/2026-11-02-openkal-0.21-design.md` |
+| openkal-linux 0.22 | `mmap(MAP_FIXED)` 换入文件页；结束的程序的处理器时间取自 `waitid(WNOWAIT)` 的记录。另有三项实现修正：程序以 `CLONE_VM \| CLONE_VFORK` 在独立的 64 KiB 栈上启动，不复制启动者的地址空间，父进程在此期间屏蔽全部信号，子进程把已捕获的信号恢复为默认后再 `execve`；`kal_alloc` 按发出的块切分大块，对齐宽于页时直接映射；名字的校验与终止一次完成，卷属性缓存以序列锁无锁读取 |
+| openkal-macos 0.19 | 文件映射在可执行内存可用时声明；处理器时间取自 `proc_pid_rusage`；`kal_alloc` 同 Linux。启动程序保持 `fork`：`vfork` 在 CI 的 macOS 上以 SIGSYS 结束子进程 |
+| openkal-windows 0.17 | 回答 `kal_err_not_supported`，不声明该位：保留区中拆出的部分只有在整个保留以占位方式建立时才能换成文件视图，区域会成为需逐个释放的片段表（7.1）。加载器照旧复制 |
+| openkal-image 0.3 | okld 从文件映射满足四个条件的段：不可写、文件大小等于内存大小、文件偏移与地址模 64 KiB 同余、独占所在粒度；其余段复制。每个重定位只写入可写段。okrun 在映像运行期间保持文件打开 |
+
+§5.2 的单元按 worker 建立：每个 worker 以 `kal_process_job_enter` 形成自己的单元，以 `kal_process_job_limit` 的内存限额取代
+`RLIMIT_AS`（openkal 不陈述地址空间上限）；worker 组的预算仍按 `kal_process_props` 的回答选择。
+
+### 17.2 openkal-musl 0.26 与 openkal-llvm-runtime 0.17
+
+- **互斥锁。** 普通互斥锁按 glibc 的形式等待：`a_swap` 置为"已占用且有等待者"后 futex 等待，解锁时只在有等待者时唤醒。
+- **字符串。** AVX2 的 `strlen` 先单独检查第一个向量，再三个一组，之后每次 128 字节；`strcmp` 的逐向量比较以 `min(a, a == b)`
+  合并两项检查，按左操作数对齐，在页尾逐字推进；`memcmp` 一次合并至多 256 字节的比较。
+- **stat。** 目录的 `fstat` 经 `okm_fs_info(".")` 回答目录的身份（设备号与节点号），引擎测定缓存目录时以它对照 `stat` 的结果
+  （§17.3）。`fill_kstat` 先整体清零。描述符的上限等于 `OKM_MAX_FD`。
+- **页大小。** x86_64 不再定义常量 `PAGESIZE`：Windows 的分配粒度是 64 KiB，常量 4096 使"映射两页、释放第二页"失败；页大小
+  取自运行时。
+- **统计。** 计数器的名字表在共用文件中；hosted 的程序不引用 `openkal.prof` 的任何名字（Mach-O 不允许未定义符号），映像在
+  启动时注册。
+- **分配器的两个 fork 名字。** `__malloc_atfork` 与 `__bump_lockptr` 在 musl 中由 fork.c 以弱别名给出默认定义；本移植在
+  Mach-O 与 PE 上不从占位定义生成名字，由提供分配器的源文件定义。mallocng 与 lite_malloc.c 定义了它们，mimalloc 的粘合层
+  原先没有，macOS 上链接 fork 的程序失败；现由粘合层按 musl 的默认定义给出。
+- **`thread_local` 的析构读到自己的变量。** PE 与 Mach-O 上变量是 compiler-rt emutls 的块，释放它们的 key 早于运行
+  `thread_local` 析构的 key 创建，musl 按 key 的顺序调用析构，析构读的是已释放的内存：mallocng 不改已释放块的字节，mimalloc
+  在其中写入空闲链表。openkal-llvm-runtime 0.17 的 emutls 在 musl 的最后一轮才释放块（ok 映像的 emutls 在 openkal-musl 中，
+  同样处理）。
+- **裸机的分配器。** `os = "none"` 上 openkal-llvm-runtime 选 `malloc-mallocng`：mimalloc 按 arena 预留地址空间，在 OpenSBI 的
+  内存上返回 `ENOMEM`。目标依赖替换通用依赖，两条目标依赖各自列出 `posix`。
+- **嵌入的依赖的链接要求。** `compat.mimalloc` 为 Windows 声明 `psapi`、`user32`、`advapi32` 等库；嵌入 openkal-musl 并以
+  `exclude` 去掉 `prim.c` 之后，这些库描述的是不再编译的操作系统层，Linux 上交叉构建 Windows 程序时链接失败。mcpp 2026.11.2.2
+  规定嵌入的依赖的链接参数与库属于嵌入者（§14.1 增补；docs/05）。
+
+### 17.3 引擎
+
+| 项 | 修订 |
+|---|---|
+| 能力的测定（§9.1、§9.2） | 不读 `kal_fs_props`，而在缓存目录经 C 库实测一次：创建、`flock`、按打开文件的锁、相对目录操作、打开时删除。映像中这些调用由 openkal-musl 落到 openkal，测到的就是 openkal 的回答；原生与映像共用一条代码路径。目录的身份以 `fstat(目录句柄)` 对照 `stat(路径)` |
+| 根标记的发布 | 以不替换的改名（`renameat2(RENAME_NOREPLACE)`）发布，不建立硬链接：openkal 不为文件建立第二个名字 |
+| 打开的缓存 | 同一个根的租约共用一个已打开的缓存（每租约一个缓存在 macOS 上超过 256 个打开文件，在映像上超过 64 个打开目录）；进程可打开的文件数提高到系统上限 |
+| 0040 | 自有缓存中的模块在其发布处、凭自身的租约读取，不再为每个读者复制 |
+| 0041 | worker 结束即被看到：所有者监视以条件变量等待，worker 退出时通知；父进程查看运行中的 worker 前 50 次间隔 1 ms，此后 10 ms。冷阶段 176 个模块的就绪由 4.9 s 降为 3.4 s，worker 的中位时长由 20 ms 降为 9 ms |
+| okgen | 工具链文件变化时删除 `CMakeCache.txt` 与 `CMakeFiles` 后重新配置 |
+
+### 17.4 验收的形态与结果
+
+- **warm-prime 的工作区**（§9.4）：由 ux-mcpp 的 `mcpp emit build-database` 生成，304 个单元、176 个模块（另有 std）。处理器时间
+  与缺页在 Linux 上取 `/proc/<pid>/stat` 的 `utime`、`stime`、`cutime`、`cstime` 与对应的缺页字段，其他系统为引擎自身的时间
+  加 worker 日志中各 worker 的时间。门禁在 Linux 与 macOS（两个引擎都走自有缓存与 worker）；Windows 原生走可移植路径，只记录。
+- **L3（Linux x64）**：映像对原生，冷阶段就绪 1.04、CPU 1.08、缺页 1.12；已有缓存的阶段 1.04、1.09、1.12。
+- **L2**：Linux x64 的 hosted 与映像全部 ≤ 1.15。CI 的映像对比交替运行两侧各五次、逐行取最小值：同一侧连续运行时，共享
+  机器的一段干扰只落在一侧（macOS arm64 的 options/command 一次为 1.22，重跑为 0.85）。
+- **L1（报告）**：Linux x64，对 glibc。hosted（GCC 编译）69 行中 5 行超过 1.15：线程私有数据 1.20、stat 1.16、clock 1.21（多一层
+  openkal 调用，约 2 ns）、4 线程的 open-close 1.16、memcmp/64/7 1.19。映像（Clang 编译）16 行超过，集中在字符串函数
+  （memchr/4096 1.46、memcpy/4096 1.34、strcmp/64 1.29），另有 clock、stat 与线程私有数据；同一份源码以 Clang 编成 hosted 时为
+  9 行，映像多出的部分大半来自编译器而不是映像。这些差距在 L2 的工作负载中不显现。
+
