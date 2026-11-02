@@ -16,7 +16,8 @@ of the link (design 2026-11-02, part 3 rev 4).
   (docs/35): openkal 0.21, whose loader maps an image's instructions from its
   file (`kal_exec_map_part`); openkal-linux 0.22, openkal-macos 0.19,
   openkal-windows 0.17; openkal-musl 0.26 with mimalloc; openkal-llvm-runtime
-  0.17; openkal-image 0.3.
+  0.17; openkal-image 0.3. The Windows launcher `mcpp pack` builds over it
+  depends on mcpplibs.os 0.2.7, the release written against openkal 0.21.
 - **An embedded dependency's link flags and libraries are its embedder's**
   (docs/05). The embedder supplies the definitions, over the operating-system
   layer it chose, and states what they link against; the dependency's
