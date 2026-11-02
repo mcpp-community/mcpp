@@ -4,6 +4,26 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.2.3] - 2026-11-02
+
+The built-in openkal platform is 0.21.1; design 2026-11-02 part 3 landed.
+
+### Changed
+
+- **The built-in `<arch>-openkal` platform is `mcpplibs.openkal-platform@0.21.1`**
+  (docs/35): openkal-image 0.3.1, whose runner admits an okb member it has
+  compared before, on the same file, by its shape alone. 0.3.0 computed the
+  member's CRC-32 on every start: 0.1 s of processor time for a 71 MB image,
+  paid by each program an okb starts (a language server's 176 module workers
+  in a cold build).
+
+### Design
+
+- Design 2026-11-02 part 3 (ok image performance parity) landed: the engine's
+  revisions measured on macOS (a worker's ceiling watched, an open directory's
+  count of names on APFS, one opening of a cache root), L2 on every system and
+  L3 on every system.
+
 ## [2026.11.2.2] - 2026-11-02
 
 The built-in openkal platform is 0.21.0; an embedded dependency's link

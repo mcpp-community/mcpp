@@ -601,6 +601,7 @@ mcpp 在首次初始化时已把 Ninja 装进自己的 home（`ensure_ninja`，`
 | openkal-macos 0.19 | 文件映射在可执行内存可用时声明；处理器时间取自 `proc_pid_rusage`；`kal_alloc` 同 Linux。启动程序保持 `fork`：`vfork` 在 CI 的 macOS 上以 SIGSYS 结束子进程 |
 | openkal-windows 0.17 | 回答 `kal_err_not_supported`，不声明该位：保留区中拆出的部分只有在整个保留以占位方式建立时才能换成文件视图，区域会成为需逐个释放的片段表（7.1）。加载器照旧复制 |
 | openkal-image 0.3 | okld 从文件映射满足四个条件的段：不可写、文件大小等于内存大小、文件偏移与地址模 64 KiB 同余、独占所在粒度；其余段复制。每个重定位只写入可写段。okrun 在映像运行期间保持文件打开 |
+| openkal-image 0.3.1（openkal-platform 0.21.1） | 记住的 okb 准入不再读取成员：okrun 对此前在同一文件上比对过的成员只按形状准入（`okld_okb_admit_layout`）。0.2、0.3 在此计算归档声明的 CRC-32，每次启动遍历整个成员，clangd 的 71 MB 映像约 0.1 s 处理器时间；warm-prime 冷阶段启动 176 个 worker，CI 上映像因此为原生的 2.4–3.5 倍（本地以 `.oke` 测量，不经过 okb，未显现） |
 
 §5.2 的单元按 worker 建立：每个 worker 以 `kal_process_job_enter` 形成自己的单元，以 `kal_process_job_limit` 的内存限额取代
 `RLIMIT_AS`（openkal 不陈述地址空间上限）；worker 组的预算仍按 `kal_process_props` 的回答选择。
@@ -639,6 +640,9 @@ mcpp 在首次初始化时已把 Ninja 装进自己的 home（`ensure_ninja`，`
 | 0040 | 自有缓存中的模块在其发布处、凭自身的租约读取，不再为每个读者复制 |
 | 0041 | worker 结束即被看到：所有者监视以条件变量等待，worker 退出时通知；父进程查看运行中的 worker 前 50 次间隔 1 ms，此后 10 ms。冷阶段 176 个模块的就绪由 4.9 s 降为 3.4 s，worker 的中位时长由 20 ms 降为 9 ms |
 | okgen | 工具链文件变化时删除 `CMakeCache.txt` 与 `CMakeFiles` 后重新配置 |
+| worker 的上限（0042） | 每个 worker 的地址空间份额，在系统能为进程设上限的地方由 worker 自设（`RLIMIT_AS`），在 macOS 上由 clangd 监视 worker 的物理占用（`proc_pid_rusage` 的 `ri_phys_footprint`），超过份额即结束它。macOS 的进程在 main 之前已映射数百 GiB（macOS 15 上 392 GiB）：低于此值的上限被拒绝（EINVAL），原生引擎的每个 worker 因此失败；高于此值的上限不约束任何分配（上限比已映射量高 1 GiB 时，2 GiB 的分配仍成功） |
+| 已删除名字的目录 | APFS 对名字已删除、仍打开的目录报告原有的名字数（2），文件则为 0；macOS 上目录只有一个名字，删除它即无名字 |
+| 一个根只打开一次 | 一个根的前几个模块同时构建，各自测定根目录并打开其账本时，macOS 上其中一个因 ENOENT 失败；现由其中一个测定并打开，其余等待并取用其结果 |
 
 ### 17.4 验收的形态与结果
 
@@ -646,8 +650,22 @@ mcpp 在首次初始化时已把 Ninja 装进自己的 home（`ensure_ninja`，`
   与缺页在 Linux 上取 `/proc/<pid>/stat` 的 `utime`、`stime`、`cutime`、`cstime` 与对应的缺页字段，其他系统为引擎自身的时间
   加 worker 日志中各 worker 的时间。门禁在 Linux 与 macOS（两个引擎都走自有缓存与 worker）；Windows 原生走可移植路径，只记录。
 - **L3（Linux x64）**：映像对原生，冷阶段就绪 1.04、CPU 1.08、缺页 1.12；已有缓存的阶段 1.04、1.09、1.12。
-- **L2**：Linux x64 的 hosted 与映像全部 ≤ 1.15。CI 的映像对比交替运行两侧各五次、逐行取最小值：同一侧连续运行时，共享
-  机器的一段干扰只落在一侧（macOS arm64 的 options/command 一次为 1.22，重跑为 0.85）。
+- **L2**：CI 的映像对比交替运行两侧各五次、逐行取最小值：同一侧连续运行时，共享机器的一段干扰只落在一侧（macOS arm64 的
+  options/command 一次为 1.22，重跑为 0.85）。系统一侧以 `clang++` 编译（门禁）并以系统默认的 `c++` 编译（报告）：两侧的编译器
+  相同时，比值只反映运行时。Linux arm64 的 index/symbol 以 GCC 与 libstdc++ 为 220 ns，以 Clang 与同一个 libstdc++ 为 261 ns，
+  hosted 与映像均为 237 ns；比值 1.15–1.18 来自编译器而不是运行时。openkal-llvm-runtime 0.17.1 的 main CI（mcpp 2026.11.2.2），
+  映像对系统的运行时（门禁一侧；括号内为对系统默认编译器的报告值）：
+
+  | 工作负载 | Linux x64 | Linux arm64 | macOS arm64 | Linux x64 hosted |
+  |---|---|---|---|---|
+  | options/command | 0.80（0.82） | 0.92（1.00） | 0.78（0.98） | 0.78（0.80） |
+  | stringmap/element | 0.70（0.70） | 0.66（0.67） | 0.89（1.07） | 0.64（0.65） |
+  | densemap/element | 1.00（0.98） | 0.98（0.90） | 0.86（0.92） | 0.98（0.96） |
+  | bitstream/field | 0.97（0.95） | 1.03（1.06） | 0.74（0.76） | 0.98（0.95） |
+  | index/symbol | 0.86（0.91） | 0.96（1.18） | 1.00（1.12） | 0.83（0.86） |
+
+  macOS 上 `c++` 与 `clang++` 同为 Apple Clang，两列是同一个编译器的两次构建，其差（options/command 0.78 与 0.98）是共享机器
+  上交替运行之后仍余下的波动。Windows 没有系统的 C++ 编译器，只记录映像的数值。
 - **L1（报告）**：Linux x64，对 glibc。hosted（GCC 编译）69 行中 5 行超过 1.15：线程私有数据 1.20、stat 1.16、clock 1.21（多一层
   openkal 调用，约 2 ns）、4 线程的 open-close 1.16、memcmp/64/7 1.19。映像（Clang 编译）16 行超过，集中在字符串函数
   （memchr/4096 1.46、memcpy/4096 1.34、strcmp/64 1.29），另有 clock、stat 与线程私有数据；同一份源码以 Clang 编成 hosted 时为
