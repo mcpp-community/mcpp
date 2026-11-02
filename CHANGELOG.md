@@ -6,7 +6,8 @@
 
 ## [2026.11.2.3] - 2026-11-02
 
-The built-in openkal platform is 0.21.1; design 2026-11-02 part 3 landed.
+The built-in openkal platform is 0.21.1; a download source that sends nothing
+is left for the next one; design 2026-11-02 part 3 landed.
 
 ### Changed
 
@@ -16,6 +17,16 @@ The built-in openkal platform is 0.21.1; design 2026-11-02 part 3 landed.
   member's CRC-32 on every start: 0.1 s of processor time for a 71 MB image,
   paid by each program an okb starts (a language server's 176 module workers
   in a cold build).
+
+### Fixed
+
+- **A download source that connects and sends nothing no longer stops the
+  install** (docs/specs/home-initialization.md §5). xlings leaves such a source
+  after 30 seconds without a byte and tries the next; mcpp stopped the install
+  after 30 seconds without a byte or a new source, so the next source was never
+  reached (CI, 2026-11-02: a GitHub proxy that accepted the connection,
+  attempt 1). mcpp's own bound is now 45 seconds; a source's bounds, 8 seconds
+  to connect and 30 without a byte, are unchanged.
 
 ### Design
 

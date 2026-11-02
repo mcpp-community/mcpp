@@ -98,6 +98,28 @@ TEST(NetworkCheck, HeartbeatsCannotKeepAByteStalledDownloadAlive) {
     EXPECT_FALSE(watchdog.expired(start + hours(3)));
 }
 
+// xlings leaves a source that sent no byte for kSourceIdleTimeout and reports
+// the next one; mcpp's own bound is longer, so the next source is reached.
+// With the two equal, a source that connected and then sent nothing stopped the
+// install at attempt 1 (CI, 2026-11-02).
+TEST(NetworkCheck, ASilentSourceIsLeftBeforeTheInstallStops) {
+    using namespace std::chrono;
+    namespace x = mcpp::provider::xlings;
+    static_assert(x::kSourceConnectTimeout < x::kSourceIdleTimeout);
+    static_assert(x::kSourceIdleTimeout < x::kDownloadStallTimeout);
+    x::DownloadWatchdog watchdog;
+    const auto start = steady_clock::now();
+    const auto left = start + x::kSourceIdleTimeout + seconds(1);
+    mcpp::provider::BootstrapProgress p;
+    p.files.push_back({.name = "pkg", .started = true, .sourceAttempt = 1});
+    watchdog.observe(p, start);
+    EXPECT_FALSE(watchdog.expired(left));
+    p.files.front().sourceAttempt = 2;
+    watchdog.observe(p, left);
+    EXPECT_FALSE(watchdog.expired(left + x::kSourceIdleTimeout));
+    EXPECT_TRUE(watchdog.expired(left + x::kDownloadStallTimeout));
+}
+
 TEST(NetworkProcess, ProgressCancellationIsPolledWhileOutputContinues) {
     using namespace std::chrono;
     const auto start = steady_clock::now();
