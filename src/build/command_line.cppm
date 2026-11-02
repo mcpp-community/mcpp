@@ -79,6 +79,17 @@ std::string quote_through_shell(std::string_view s);
 // for the host's shell, so the text can be pasted to run the same program.
 std::string display(const std::vector<std::string>& argv);
 
+// The words of a command as a POSIX shell reads them: separated by white
+// space, a part in single quotes taken as it is, a backslash taking the next
+// character outside quotes and, inside double quotes, before `$`, a backquote,
+// `"`, `\` or a newline.
+std::vector<std::string> shell_words(std::string_view text);
+
+// The words of a response file (`@<file>`) as GCC, Clang and their linkers
+// read one: separated by white space, a part in single or double quotes taken
+// as it is, and a backslash taking the next character, inside quotes or not.
+std::vector<std::string> response_file_words(std::string_view text);
+
 // Silent redirect — stdout + stderr → /dev/null (or NUL on Windows), and the
 // error stream alone, for a command a shell reads.
 constexpr std::string_view silent_redirect = mcpplibs::os::is_windows ? ">nul 2>&1" : ">/dev/null 2>&1";

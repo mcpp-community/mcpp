@@ -113,6 +113,31 @@ std::vector<std::string> tokenize(std::string_view out) {
     return toks;
 }
 
+// THE WORDS OF EACH RESPONSE FILE THE FLAGS NAME, IN ITS PLACE. A response
+// file on the driver's command line makes it hand the linker its arguments in
+// a response file of its own, which `-###` names and does not write: the
+// dynamic linker and the runtime objects were not seen, and a link that names
+// its archives in one (`link_flag("@<file>")`) was refused as taking the
+// system's C library.
+std::string expand_response_files(const std::string& flags) {
+    std::string out;
+    for (auto const& word : mcpp::build::command_line::shell_words(flags)) {
+        std::vector<std::string> expanded { word };
+        if (word.size() > 1 && word.front() == '@') {
+            std::ifstream in(word.substr(1), std::ios::binary);
+            if (in) {
+                const std::string text { std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
+                expanded = mcpp::build::command_line::response_file_words(text);
+            }
+        }
+        for (auto const& w : expanded) {
+            out += ' ';
+            out += mcpp::build::command_line::quote(w);
+        }
+    }
+    return out;
+}
+
 }  // namespace
 
 std::expected<void, std::string> verify_hermetic_link(
@@ -165,7 +190,7 @@ std::expected<void, std::string> verify_hermetic_link(
 
     auto cmd = std::format("{} {} -### -x c++ /dev/null -o /dev/null 2>&1",
                            mcpp::build::command_line::quote(tc.binaryPath.string()),
-                           ldflags);
+                           expand_response_files(ldflags));
     // The flags are the link's as ninja runs them, text a shell reads.
     auto r = mcpp::run::capture_shell(cmd);
     if (r.exit_code != 0) {

@@ -4,6 +4,45 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.2.2] - 2026-11-02
+
+The built-in openkal platform is 0.21.0; an embedded dependency's link
+requirements are its embedder's; a response file a link flag names is an input
+of the link (design 2026-11-02, part 3 rev 4).
+
+### Changed
+
+- **The built-in `<arch>-openkal` platform is `mcpplibs.openkal-platform@0.21.0`**
+  (docs/35): openkal 0.21, whose loader maps an image's instructions from its
+  file (`kal_exec_map_part`); openkal-linux 0.22, openkal-macos 0.19,
+  openkal-windows 0.17; openkal-musl 0.26 with mimalloc; openkal-llvm-runtime
+  0.17; openkal-image 0.3.
+- **An embedded dependency's link flags and libraries are its embedder's**
+  (docs/05). The embedder supplies the definitions, over the operating-system
+  layer it chose, and states what they link against; the dependency's
+  `[build] ldflags` and `[runtime] libraries` described the library it builds
+  on its own. openkal-musl embeds `compat.mimalloc` without its `prim.c`, and a
+  Windows program built on Linux was linked against `psapi`, `user32` and
+  `advapi32`, which no sysroot of that build has. e2e 1002.
+
+### Fixed
+
+- **A response file a link flag names (`@<file>`), and every file it names,
+  are inputs of the link.** A build program that lists the archives a
+  `prepare` action makes in one (`link_flag("@<file>")`) left the link up to
+  date over rebuilt archives. The hermetic link check reads such a file in
+  place: with one on its command line the driver handed the linker a response
+  file of its own, which `-###` names and does not write, and the check refused
+  the link as taking the system's C library. e2e 1006.
+- **The cache entry of a package whose units this build does not all need is
+  filled** (`bmi cache populate failed ... expected build output missing`). The
+  engine package's `mcpp.core` was compiled only where something imported it,
+  and a build plugin importing `mcpp` alone left its entry unfilled on every
+  build. A unit whose outputs fill an entry is built whether or not a link or
+  an importer of this build asks for it. e2e 910.
+- **A release's `SHA256SUMS` names every archive**, the four builds and the
+  source; it named Linux x86_64 alone.
+
 ## [2026.11.2.1] - 2026-11-02
 
 A dependency's source is used without being copied: a dependency edge carries

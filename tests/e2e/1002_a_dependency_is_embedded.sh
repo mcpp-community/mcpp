@@ -17,6 +17,8 @@
 #   E. An embedder with a build program builds without a warning about the
 #      flags `embed' gives the dependency's files: the build program's own plan
 #      compiles none of them, and the entry is the engine's, not a typo.
+#   F. The embedded package's link flags and libraries are not the program's:
+#      a dependency naming libraries no system has links when embedded.
 set -e
 
 TMP=$(mktemp -d)
@@ -104,6 +106,15 @@ printf '[package]\nname = "plain"\nversion = "0.1.0"\n\n[dependencies]\n"compat.
 printf '#include <zlib.h>\nint main() { return zlibVersion()[0] == 0; }\n' > plain/src/main.cpp
 if "$MCPP" build --workspace > d.log 2>&1; then fail "a program without the embedder was accepted" d.log; fi
 grep -q "which 'zip' embeds" d.log || fail "the refusal does not name the embedder" d.log
+cd ..
+
+# F
+mkdir -p lk/src lkapp/src && cd lkapp
+printf '[package]\nname = "lk"\nversion = "0.1.0"\n\n[build]\nldflags = ["-lmcpp-no-such-library"]\n\n[runtime]\nlibraries = ["mcpp-no-such-runtime-library"]\n' > ../lk/mcpp.toml
+printf 'int lk_answer(void) { return 42; }\n' > ../lk/src/lk.c
+printf '[package]\nname = "lkapp"\nversion = "0.1.0"\n\n[dependencies]\nlk = { path = "../lk", embed = true }\n' > mcpp.toml
+printf 'extern "C" int lk_answer();\nint main() { return lk_answer() == 42 ? 0 : 1; }\n' > src/main.cpp
+"$MCPP" run > f.log 2>&1 || fail "the embedded package's link flags or libraries reached the program's link" f.log
 cd ..
 
 echo "OK"

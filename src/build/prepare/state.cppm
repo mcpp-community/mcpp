@@ -946,6 +946,9 @@ void recordDependencyEdge(PrepareState& state, std::size_t consumerDepIndex,
                           const mcpp::manifest::DependencySpec& spec, bool buildTable,
                           const std::string& writtenKey);
 std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state);
+// graph.cpp: takes the link flags package `p` added to the root's pooled list
+// back out of it (a package that serves the build alone; an embedded one).
+void withdraw_link_flags(PrepareState& state, std::size_t p);
 // The lookups the later phases ask of the graph (graph_closures.cpp).
 void step4b_define_lookup_closures(PrepareState& state);
 // Where the build program of package `i` keeps its files: its cache, its

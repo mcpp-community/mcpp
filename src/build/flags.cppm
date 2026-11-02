@@ -12,6 +12,7 @@ module;
 export module mcpp.build.flags;
 
 import std;
+import mcpp.build.command_line;
 import mcpp.build.distribution;
 import mcpp.build.plan;
 import mcpp.build.runtime_placement;
@@ -467,6 +468,21 @@ std::string normalize_ldflag(const std::filesystem::path& root, const std::strin
 }
 
 }  // namespace
+
+// The absolute paths of existing files a response file names.
+std::vector<std::filesystem::path> response_file_paths(const std::filesystem::path& rsp) {
+    std::vector<std::filesystem::path> out;
+    std::ifstream in(rsp, std::ios::binary);
+    if (!in) return out;
+    const std::string text { std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
+    for (auto const& word : mcpp::build::command_line::response_file_words(text)) {
+        std::error_code ec;
+        if (!word.starts_with('-') && std::filesystem::path(word).is_absolute()
+            && std::filesystem::is_regular_file(word, ec))
+            out.emplace_back(word);
+    }
+    return out;
+}
 
 std::string atomic_link_flag(const std::vector<std::filesystem::path>& linkDirs,
                              bool staticLink) {
@@ -1286,9 +1302,24 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // A word that names an existing file by absolute path is a link
         // input. A relative word is read by the linker against the build
         // directory, and an option is no file.
-        if (!word.starts_with('-') && std::filesystem::path(word).is_absolute()) {
+        if (!word.starts_with('-') && !word.starts_with('@')
+            && std::filesystem::path(word).is_absolute()) {
             std::error_code ec;
             if (std::filesystem::is_regular_file(word, ec)) f.ldFileInputs.emplace_back(word);
+        }
+        // A RESPONSE FILE IS AN INPUT, AND SO IS EVERY FILE IT NAMES. A build
+        // program that lists the archives a `prepare` action makes in one
+        // (`link_flag("@<file>")`) rewrites nothing when the action rebuilds
+        // them, so the link stayed up to date over new archives (clangd's ok
+        // image, 2026-11-02: a stale image after its libraries changed).
+        if (word.starts_with('@')) {
+            const std::filesystem::path rsp { word.substr(1) };
+            std::error_code ec;
+            if (rsp.is_absolute() && std::filesystem::is_regular_file(rsp, ec)) {
+                f.ldFileInputs.push_back(rsp);
+                for (auto const& named : response_file_paths(rsp))
+                    f.ldFileInputs.push_back(named);
+            }
         }
     }
 

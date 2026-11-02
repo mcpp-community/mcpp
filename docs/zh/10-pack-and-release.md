@@ -799,7 +799,7 @@ Authenticode 可以签名它。Linux 与 macOS 经 shell 启动它：`sh pg-0.1.
 提供的格式、`--merge` 与 `mcpp emit xpkg` 读取它（[SPEC-014](../specs/packaging.md) §4.5）：
 
 ```json
-{"schema": 1, "name": "hello", "version": "0.1.0", "platform": "openkal-platform@0.18.0",
+{"schema": 1, "name": "hello", "version": "0.1.0", "platform": "openkal-platform@0.21.0",
  "linkage": "shared", "mode": "vendored", "legs": ["x86_64-openkal", "aarch64-openkal"], "systems": [],
  "launch": {"runner": ["okrun", "{}"], "entry": {"x86_64": "lib/x86_64/hello.oke", "aarch64": "lib/aarch64/hello.oke"}},
  "files": [{"path": "lib/x86_64/hello.oke", "role": "image", "leg": "x86_64-openkal", "sha256": "…"}]}
