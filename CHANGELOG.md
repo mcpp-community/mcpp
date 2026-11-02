@@ -7,7 +7,8 @@
 ## [2026.11.2.3] - 2026-11-02
 
 The built-in openkal platform is 0.21.1; a download source that sends nothing
-is left for the next one; design 2026-11-02 part 3 landed.
+is left for the next one; a requirement a layer decides is checked; design
+2026-11-02 part 3 landed.
 
 ### Changed
 
@@ -20,6 +21,15 @@ is left for the next one; design 2026-11-02 part 3 landed.
 
 ### Fixed
 
+- **A requirement a layer decides is checked** (docs/22, docs/specs/target-side.md
+  §2.2). `[target.'cfg(all(windows, compiler = "llvm"))'] requires =
+  ["mcpp:compiler-runtime=compiler-rt"]` names a layer in its selector, and
+  such a table's requirement was dropped without a word: the requirements were
+  gathered before any layer resolved. It is now checked once the layers are
+  resolved and before anything is compiled, with the refusal a `[package]`
+  requirement gets. openkal-musl 0.27.0 states this one: on PE under clang its
+  link names no runtime, and a graph without compiler-rt (openkal-llvm-runtime)
+  reached the link with `___chkstk_ms` undefined.
 - **A download source that connects and sends nothing no longer stops the
   install** (docs/specs/home-initialization.md §5). xlings leaves such a source
   after 30 seconds without a byte and tries the next; mcpp stopped the install

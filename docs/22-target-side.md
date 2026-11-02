@@ -343,6 +343,16 @@ An engine older than 2026.10.26.1 refuses the table form; a package that uses it
 states the floor (`[build-dependencies.mcpp] version = ">= 2026.10.26.1"`, or
 `mcpp = ">= 2026.10.26.1"` in an index descriptor).
 
+A selector may name a layer, and the requirement then holds where that layer
+resolved as named. It is checked once the layers are resolved and before
+anything is compiled (mcpp 2026.11.2.3; an older engine does not check it):
+
+```toml
+# the compiler's runtime on PE under clang is the graph's (openkal-musl)
+[target.'cfg(all(windows, compiler = "llvm"))']
+requires = ["mcpp:compiler-runtime=compiler-rt"]
+```
+
 ### One C++ runtime per process (mcpp 2026.10.26.1+)
 
 Two Itanium C++ runtimes — libstdc++, and libc++ with libc++abi — define the

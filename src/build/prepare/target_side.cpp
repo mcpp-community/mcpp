@@ -1376,6 +1376,40 @@ static std::expected<void, std::string> step9_layer_conditional_config(PrepareSt
         layerCtx.kernelAbi       = state.resolvedTargetSide.kernelAbi.interfaceName;
         layerCtx.cAbi            = state.resolvedTargetSide.cAbi.interfaceName;
         layerCtx.cxxAbi          = state.resolvedTargetSide.cxx.interfaceName;
+        // A REQUIREMENT A LAYER DECIDES IS CHECKED NOW, WHEN THE LAYERS ARE
+        // KNOWN. `[target.'cfg(all(windows, compiler = "llvm"))'] requires =
+        // ["mcpp:compiler-runtime=compiler-rt"]` states what one compiler needs
+        // beneath it; the requirements above were gathered before any layer
+        // resolved, and this table's was dropped without a word, so a graph
+        // without the layer reached the link (`___chkstk_ms' undefined) rather
+        // than this refusal naming the layer and its supplier.
+        {
+            namespace tsd = mcpp::targetside;
+            std::vector<tsd::Requirement> layerRequirements;
+            auto gather_from = [&](const mcpp::manifest::Manifest& pm) {
+                const auto id = pm.package.version.empty()
+                    ? pm.package.name
+                    : std::format("{}@{}", pm.package.name, pm.package.version);
+                for (auto const& entry : layer_conditional_requires(pm, layerCtx)) {
+                    auto parsed = tsd::parse_capability(entry);
+                    if (!parsed || !*parsed) continue;
+                    tsd::Requirement r{ id, (*parsed)->layer, (*parsed)->interfaceName };
+                    if (std::ranges::none_of(layerRequirements, [&](auto const& q) {
+                            return q.requiredBy == r.requiredBy && q.layer == r.layer
+                                && q.interfaceName == r.interfaceName; }))
+                        layerRequirements.push_back(std::move(r));
+                }
+            };
+            gather_from(*state.m);
+            for (auto const& pkg : state.packages) gather_from(pkg.manifest);
+            if (auto why = tsd::check_requirements(
+                    state.resolvedTargetSide, layerRequirements,
+                    tc_origin_is_user_explicit(state.tcOrigin) ? tc_origin_name(state.tcOrigin)
+                                                         : std::string_view{})) {
+                refusal::record(refusal::Code::LayerRequirement);
+                return std::unexpected(*why);
+            }
+        }
         // The root manifest and its snapshots are both read by the plan, so a
         // contribution reaching the snapshots but not `*m` would reach some of
         // the root's commands and not others.

@@ -997,6 +997,11 @@ workspace_listing(const std::filesystem::path& memberDir,
                   const std::filesystem::path& bound);
 bool merge_layer_conditional_config(mcpp::manifest::Manifest& m,
                                     const cfgpred::Ctx& ctx);
+// The `requires` of the layer-predicated tables `ctx` matches
+// (`[target.'cfg(compiler = "llvm")'] requires = [...]`): answerable only once
+// the layers are resolved, and checked then.
+std::vector<std::string> layer_conditional_requires(const mcpp::manifest::Manifest& m,
+                                                    const cfgpred::Ctx& ctx);
 std::vector<std::string> feature_closure(const mcpp::manifest::Manifest& pm,
                                          const std::vector<std::string>& requested,
                                          bool seedDefault = true);
