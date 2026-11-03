@@ -73,7 +73,7 @@ rm -rf target
 grep -qE "Platform +openkal-platform [0-9.]+ \((built-in|MCPP_TARGET_[A-Z0-9_]+_PLATFORM)\)" fresh.log || fail "B: no Platform line naming the source" fresh.log
 grep -qE "c-abi +musl +\(openkal-musl@[0-9.]+, platform\)" fresh.log || fail "B: the C library is not reported as the platform's" fresh.log
 grep -qE "c\+\+-abi +libc\+\+ +\(openkal-llvm-runtime@[0-9.]+, platform\)" fresh.log || fail "B: the C++ run-time is not the platform's" fresh.log
-grep -qE "tools +okld, okrun" fresh.log || fail "B: the tools are not reported" fresh.log
+grep -qE "tools +okld, okprof, okrun \(openkal-tools@" fresh.log || fail "B: the tools are not reported" fresh.log
 echo "ok: the report names the platform and what it added"
 
 # C
