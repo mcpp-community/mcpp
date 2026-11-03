@@ -6,18 +6,30 @@
 
 ## [2026.11.2.3] - 2026-11-02
 
-The built-in openkal platform is 0.21.1; a download source that sends nothing
-is left for the next one; a requirement a layer decides is checked; design
-2026-11-02 part 3 landed.
+The built-in openkal platform is 0.23.0 (openkal 0.23: an image at a base of
+each boot, a snapshot of its initialisers, hardening); a format a package
+provides is told the compression stated; `mcpp cache gc` reclaims the runner's
+cache; a download source that sends nothing is left for the next one; a
+requirement a layer decides is checked; design 2026-11-02 part 3 landed, and
+design 2026-11-03 part 4.
 
 ### Changed
 
-- **The built-in `<arch>-openkal` platform is `mcpplibs.openkal-platform@0.21.1`**
-  (docs/35): openkal-image 0.3.1, whose runner admits an okb member it has
-  compared before, on the same file, by its shape alone. 0.3.0 computed the
-  member's CRC-32 on every start: 0.1 s of processor time for a 71 MB image,
-  paid by each program an okb starts (a language server's 176 module workers
-  in a cold build).
+- **The built-in `<arch>-openkal` platform is `mcpplibs.openkal-platform@0.23.0`**
+  (docs/35; design 2026-11-03 part 4), the version group of openkal 0.23:
+  openkal-image 0.4.1, openkal-musl 0.27.0, openkal-llvm-runtime 0.18.0.
+  An image is sealed at a base (`okld place`), and the runner moves it to a
+  base chosen once each boot, its data kept as a prepared copy; the first start
+  of a boot has a snapshot of the image's initialisers made, which later starts
+  map instead of running them (clangd `--version`: 311 page faults against
+  442, 15 % less processor time). What a start spends follows the program's
+  resource preference. An image is built with frame pointers, a global stack
+  guard, zeroed locals, libc++'s fast hardening, CET or PAC/BTI marks and a
+  build-id; okprof is among the platform's tools. The Windows launcher `mcpp
+  pack` writes for an openkal set is built over mcpplibs.os 0.2.8. Against
+  2026.11.2.2's 0.21.0, the runner also admits an okb member it has compared
+  before by its shape alone (openkal-image 0.3.1): 0.3.0 computed the
+  member's CRC-32 at every start, 0.1 s of processor time for a 71 MB image.
 
 ### Added
 
