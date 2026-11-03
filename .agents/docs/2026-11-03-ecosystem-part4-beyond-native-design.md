@@ -692,6 +692,17 @@ aarch64 用 `-mbranch-protection=pac-ret+bti`，不用 §9.1 的 `standard`：cl
 （定义 `__ARM_FEATURE_GCS_DEFAULT`），libunwind 因此按 GCS 展开并包含 C 库的 `<arm_acle.h>`，映像的构建在 aarch64 上失败；
 GCS 还需要系统为程序启用该栈，映像没有这一环节。返回地址签名与 BTI 标记不变。
 
+加固选项在平台的 CI 中暴露了两处下层缺陷，各在其所属的层修正：
+
+1. **compiler-rt 的 outline atomics（openkal-llvm-runtime 0.18.1）**：生成的 125 个 `oa_*.S` 先按自身路径包含 compiler-rt 的
+   `assembly.h`，`lse.S` 再以 `"assembly.h"` 查找，包含路径给出 libunwind 的同名头文件，它把 `GNU_PROPERTY` 重定义为数字；
+   有分支保护时 compiler-rt 写出的属性 note 无法汇编。各文件在包含 `lse.S` 前声明 libunwind 头文件的守卫；目标文件带有映像
+   加载器强制 BTI 前所读的 `aarch64 feature: BTI, PAC`。
+2. **std 模块的编译选项（mcpp 2026.11.2.3）**：平台的 `[platform.build]` 选项原先到达每个翻译单元而不到达 std 模块；clang 把
+   `-fcf-protection` 记入 BMI，x86_64 上每个 `import std` 的单元都被拒绝。平台的选项现在进入 std 模块的两条命令与其 BMI 的缓存
+   键，无论 std 模块由工具链还是图中的包提供（e2e 1010）。openkal-platform 0.23.0 因此声明 `mcpp >= 2026.11.2.3`，其 CI 在 mcpp
+   发布前以发布分支验证（`MCPP_SOURCE_REF`）。
+
 ### 18.7 交付（实际版本）
 
 | 仓库 | 版本 |
@@ -699,7 +710,7 @@ GCS 还需要系统为程序启用该栈，映像没有这一环节。返回地�
 | openkal | 0.23.0 |
 | openkal-linux / -macos / -windows / -emscripten | 0.24.0 / 0.21.2 / 0.19.0 / 0.12.0 |
 | openkal-image（ld、run、tools、bind） | 0.4.1（0.4.0 之后以 openkal-macos 0.21.2 重建） |
-| openkal-musl / openkal-llvm-runtime / openkal-platform | 0.27.0 / 0.18.0 / 0.23.0 |
+| openkal-musl / openkal-llvm-runtime / openkal-platform | 0.27.0 / 0.18.1 / 0.23.0 |
 | mcpplibs.os | 0.2.8 |
 | mcppls-clangd / mcppls | 0.0.20 / 0.0.20 |
 | mcpp | 2026.11.2.3 |
