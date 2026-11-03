@@ -4036,11 +4036,13 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     }
     if (!actionOutputsByPackage.empty()) append("\n");
 
-    // A unit whose outputs fill a cache entry is built whether or not a link
-    // or an importer here asks for it: the entry is its package's every
-    // artifact or nothing.
+    // Without a link target, building the package means compiling its objects
+    // (for example a C ABI provider). Once cache fills or build actions emit
+    // an explicit `default`, ninja no longer selects the other terminal edges.
+    // A cache fill must also finish even when no link or importer asks for it:
+    // the entry is its package's every artifact or nothing.
     for (auto const& cu : plan.compileUnits)
-        if (cu.fillsCache && !cu.servedFromCache)
+        if (plan.linkUnits.empty() || (cu.fillsCache && !cu.servedFromCache))
             actionDefaults += " " + escape_ninja_path(cu.object);
 
     if (!plan.linkUnits.empty() || !actionDefaults.empty()) {

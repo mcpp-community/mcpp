@@ -1369,6 +1369,30 @@ TEST(NinjaBackend, NoStageEdgesWithoutCachedUnits) {
               std::string::npos) << ninja;
 }
 
+TEST(NinjaBackend, ObjectOnlyPackageBuildsOwnObjectsAlongsideCacheFills) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/provider.c",
+        .kind = mcpp::SourceKind::C,
+        .object = "obj/provider.o",
+        .packageName = "objc_rule_test",
+    });
+    plan.compileUnits.push_back({
+        .source = "/store/dep/src/dep.c",
+        .kind = mcpp::SourceKind::C,
+        .object = "obj/dep.o",
+        .packageName = "dep",
+        .fillsCache = true,
+    });
+
+    auto ninja = emit_ninja_string(plan);
+    auto at = ninja.rfind("\ndefault ");
+    ASSERT_NE(at, std::string::npos) << ninja;
+    auto defaults = ninja.substr(at, ninja.find('\n', at + 1) - at);
+    EXPECT_NE(defaults.find(" obj/provider.o"), std::string::npos) << defaults;
+    EXPECT_EQ(count_occurrences(defaults, " obj/dep.o"), 1u) << defaults;
+}
+
 // A cached unit whose cachedObject was never filled in is a bug upstream, not a
 // reason to emit a stage edge with an empty input — it must fall back to being
 // compiled rather than producing an unbuildable graph.
