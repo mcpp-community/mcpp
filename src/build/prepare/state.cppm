@@ -1164,6 +1164,10 @@ PackageInstances package_instances(const PrepareState& state);
 // build-program tier of the build's platform statement, named after `who`.
 void merge_program_platform(PrepareState& state, mcpp::manifest::platform::Statement stated,
                             std::string_view who);
+// P9's build programs (prepare/build_programs.cpp): the root's, then each
+// member's, once the target side is resolved.
+std::expected<void, std::string> step9_root_build_program(PrepareState& state);
+std::expected<void, std::string> step9_member_build_programs(PrepareState& state);
 // The platform through the phases (prepare/platform.cpp).
 mcpp::build::cfgpred::Ctx platform_cfg_context(const PrepareState& state);
 std::expected<void, std::string> step1_select_platform(PrepareState& state);
