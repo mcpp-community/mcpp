@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-345 records.
+346 records.
 
 ## By subject
 
@@ -90,6 +90,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### openkal-performance
 
+- [生态设计 part 4：超越原生——openkal 之上与之下的优化、可观测性与安全](2026-11-03-ecosystem-part4-beyond-native-design.md) — active
 - [生态设计 part 3：ok 映像的性能对等——引擎路径、openkal 运行时与观测](2026-11-02-ecosystem-part3-ok-image-performance-parity-design.md) — active
 
 ### plan
@@ -160,6 +161,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [生态设计 part 4：超越原生——openkal 之上与之下的优化、可观测性与安全](2026-11-03-ecosystem-part4-beyond-native-design.md) — active
 - [生态设计 part 3：ok 映像的性能对等——引擎路径、openkal 运行时与观测](2026-11-02-ecosystem-part3-ok-image-performance-parity-design.md) — active
 ### 2026-10
 
