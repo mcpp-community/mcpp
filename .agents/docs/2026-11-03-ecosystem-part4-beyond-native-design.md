@@ -718,3 +718,32 @@ GCS 还需要系统为程序启用该栈，映像没有这一环节。返回地�
 | mcpplibs.os | 0.2.8 |
 | mcppls-clangd / mcppls | 0.0.20 / 0.0.20 |
 | mcpp | 2026.11.2.3 |
+
+## 19. 发布版本组的更正（2026-11-03）
+
+os 的公开索引映像验收发现了 §18.7 所列组合中尚未一致的一条边：openkal-musl 0.27.1 的
+`[target.'cfg(os = "openkal")'.dependencies]` 仍固定 `openkal-ld = "0.4.1"`，而
+openkal-platform 0.23.1 的 `[platform.versions]` 固定 openkal-ld 0.4.2。mcpp 在编译之前
+按版本组拒绝这个组合。证据为 [os CI 41578080022 的映像作业](https://github.com/mcpplibs/os/actions/runs/41578080022/job/125763510224)，
+报错同时列出 0.4.1、0.4.2 和请求者 openkal-musl 0.27.1。
+
+hosted 构建未经过这条条件依赖。该组合的 hosted macOS `process_test` 已通过，日志没有
+“不能授予目录”的跳过分支；本地 hosted 的七个测试程序也全部通过。这些证据只覆盖
+hosted 行为。运行时包的分支图验收以工作树代入依赖，也没有证明公开索引中整组版本的
+固定关系一致。
+
+既有发布的标签、归档和摘要保持不变。后续修正使用以下版本：
+
+| 包 | 修正版本 | 修正内容 |
+| --- | --- | --- |
+| openkal-musl | 0.27.2 | 映像依赖固定 openkal-ld 0.4.2；候选为 [PR #78](https://github.com/mcpplibs/openkal-musl/pull/78) |
+| openkal-llvm-runtime | 0.18.3 | 固定 openkal-musl 0.27.2 |
+| openkal-platform | 0.23.2 | 固定上述两个修正版本，其余实现与 openkal-image 版本不变 |
+
+尚未发布的 os 0.2.8、mcpp 2026.11.2.3 和三个消费者随之固定平台 0.23.2。公开版本组的
+交付仍以 os 消费索引包的映像矩阵、平台验收和 mcpp 的完整 CI 为门禁。
+
+局部回归已验证：在 openkal-musl 0.27.2 候选的 `examples/image-early-constructor` 中执行
+`mcpp run --target x86_64-openkal --platform openkal-platform@0.23.1`，解析到索引中的
+openkal-ld 0.4.2，程序输出 `early 42 path` 和 `the C library was up before the constructor`。
+该结果覆盖修正后的依赖边和初始化顺序；修正版的完整发布验收尚未完成。
