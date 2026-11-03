@@ -30,6 +30,7 @@ import mcpp.home;
 import mcpp.libs.json;
 import mcpp.libs.toml;
 import mcpp.ui;
+import mcpplibs.os.fs;
 import mcpplibs.os.process;
 
 namespace mcpp::bmi_cache {
@@ -541,7 +542,9 @@ std::filesystem::path newest_runner() {
         std::vector<int> out;
         for (auto part : std::views::split(v, '.')) {
             int n = 0;
-            std::from_chars(part.data(), part.data() + part.size(), n);
+            const auto [end, ec] = std::from_chars(part.data(), part.data() + part.size(), n);
+            if (ec != std::errc{} || end != part.data() + part.size() || n < 0)
+                return std::vector<int>{};
             out.push_back(n);
         }
         return out;
@@ -550,17 +553,20 @@ std::filesystem::path newest_runner() {
     std::vector<int> bestVersion;
     std::error_code ec;
     for (auto& pkg : std::filesystem::directory_iterator(tool_root() / "mcpplibs", ec)) {
-        const auto name = pkg.path().filename().string();
+        const auto name = mcpplibs::os::fs::generic_utf8(pkg.path().filename());
         if (!name.starts_with("openkal-tools@")) continue;
         const auto version = parts(std::string_view(name).substr(14));
+        if (version.empty()) continue;
         if (!best.empty() && version <= bestVersion) continue;
         std::error_code ke;
         for (auto& key : std::filesystem::directory_iterator(pkg.path(), ke)) {
-            for (const char* program : {"okrun", "okrun.exe"}) {
-                const auto candidate = key.path() / "bin" / program;
+            const auto programs = {key.path() / "bin" / "okrun", key.path() / "bin" / "okrun.exe"};
+            const auto found = std::ranges::find_if(programs, [](const auto& candidate) {
                 std::error_code fe;
-                if (!std::filesystem::is_regular_file(candidate, fe)) continue;
-                best = candidate;
+                return std::filesystem::is_regular_file(candidate, fe);
+            });
+            if (found != programs.end()) {
+                best = *found;
                 bestVersion = version;
             }
         }
@@ -573,12 +579,12 @@ void reclaim_runner_cache() {
     if (okrun.empty()) return;
     namespace proc = mcpplibs::os::process;
     proc::spawn_options o;
-    o.program = okrun.string();
+    o.program = okrun;
     o.args = {"cache", "gc"};
     auto r = proc::run(std::move(o));
     if (!r || !r->status.success()) {
         mcpp::ui::warning(std::format("`{} cache gc` did not reclaim the runner's cache{}",
-                                      okrun.string(), r ? ": " + r->err : std::string()));
+                                      mcpplibs::os::fs::generic_utf8(okrun), r ? ": " + r->err : std::string()));
         return;
     }
     std::string said = r->out.empty() ? r->err : r->out;

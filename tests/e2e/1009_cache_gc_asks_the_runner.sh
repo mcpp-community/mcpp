@@ -34,15 +34,22 @@ SH
 runner 0.3.2 aaaa "okrun: the older runner"
 runner 0.4.1 bbbb "okrun: removed 7 bytes prepared for another boot"
 runner 0.4.0 cccc "okrun: the middle runner"
+# Numeric version order, and cache entries that cannot name a released version.
+runner 0.10.1 dddd "okrun: removed 9 bytes prepared for another boot"
+runner 0.99broken eeee "okrun: not a version"
+runner 999999999999999999999999 ffff "okrun: overflowing version"
 
 "$MCPP" cache gc --older-than 3650d > gc.log 2>&1 || { cat gc.log; exit 1; }
-[[ "$(cat "$TMP/asked-0.4.1" 2>/dev/null)" == "cache gc" ]] || {
+[[ "$(cat "$TMP/asked-0.10.1" 2>/dev/null)" == "cache gc" ]] || {
     echo "FAIL: the newest okrun was not asked \`cache gc\`"; cat gc.log; exit 1
 }
-[[ ! -e "$TMP/asked-0.3.2" && ! -e "$TMP/asked-0.4.0" ]] || {
+[[ ! -e "$TMP/asked-0.3.2" && ! -e "$TMP/asked-0.4.0" && ! -e "$TMP/asked-0.4.1" ]] || {
     echo "FAIL: an older okrun was asked"; cat gc.log; exit 1
 }
-grep -q 'Reclaimed.*removed 7 bytes prepared for another boot' gc.log || {
+[[ ! -e "$TMP/asked-0.99broken" && ! -e "$TMP/asked-999999999999999999999999" ]] || {
+    echo "FAIL: an invalid version was asked"; cat gc.log; exit 1
+}
+grep -q 'Reclaimed.*removed 9 bytes prepared for another boot' gc.log || {
     echo "FAIL: what the runner reclaimed is not reported"; cat gc.log; exit 1
 }
 echo "OK"
