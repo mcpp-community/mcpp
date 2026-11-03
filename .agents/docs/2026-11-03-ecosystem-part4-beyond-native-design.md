@@ -740,8 +740,10 @@ hosted 行为。运行时包的分支图验收以工作树代入依赖，也没�
 | openkal-llvm-runtime | 0.18.3 | 固定 openkal-musl 0.27.2 |
 | openkal-platform | 0.23.2 | 固定上述两个修正版本，其余实现与 openkal-image 版本不变 |
 
-尚未发布的 os 0.2.8、mcpp 2026.11.3.1 和三个消费者随之固定平台 0.23.2。公开版本组的
-交付仍以 os 消费索引包的映像矩阵、平台验收和 mcpp 的完整 CI 为门禁。
+os 0.2.8 固定平台 0.23.2，其完整 CI 的 20 项检查均已通过，包括四个宿主运行相同映像、
+hosted macOS 的只读目录授权正向用例。该版本已发布、镜像并进入公开索引（[PR #692](https://github.com/mcpplibs/mcpp-index/pull/692)）。
+mcpp 2026.11.3.1 和三个消费者随之固定平台 0.23.2；平台验收和 mcpp 的完整 CI 仍为
+后续交付门禁。
 
 局部回归已验证：在 openkal-musl 0.27.2 候选的 `examples/image-early-constructor` 中执行
 `mcpp run --target x86_64-openkal --platform openkal-platform@0.23.1`，解析到索引中的
