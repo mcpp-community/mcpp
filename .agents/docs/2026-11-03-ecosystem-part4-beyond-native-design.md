@@ -599,7 +599,8 @@ balanced 按 `kal_memory_info` 与缓存目录的余量自适应：资源充足�
 
 1. **生成**：运行器在当次开机第一次以本机放置启动映像、而缓存中没有 `<digest>-<base>.oksnap` 时，独占创建
    `<digest>-<base>.sealing`，以 `OKRUN_SNAPSHOT=start` 重新启动自身（同一参数与环境，标准流为空设备）；该进程以
-   `OKRUN_SNAPSHOT=make` 再启动一个进程后立即结束，原进程只等待前者，生成快照的进程不比任何父进程活得久。标记文件记录结果
+   `OKRUN_SNAPSHOT=make` 再启动一个进程后立即结束，原进程只等待中间进程。生成进程独立完成，可能在原程序退出后仍运行；
+   统计整次启动的资源消耗须等待并计入这部分工作。标记文件记录结果
    （`made` 或 `refused: <原因>`），同一次开机不再尝试。`--seal-local` 未采用。
 2. **C 库的入口**：映像的 C 库导出记录 `__okrun_snapshot {arena, size, phase, reserved, context}` 与入口
    `__okrun_snapshot_start`，代替 §6.4 的 `__okm_snapshot_arena` 与 `__okm_libc_start`：名字属于运行器的协议而不属于某个 C 库。
