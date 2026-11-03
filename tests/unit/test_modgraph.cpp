@@ -1444,12 +1444,14 @@ TEST(ModuleResolution, OneFileReachedTwiceIsNamedAsSuchWhateverItsSpelling) {
 
 // A kept walk matched by the literal tail of a glob: `**/` also matches no
 // directory, so `**/main.cpp` matches a `main.cpp` at the root as well as one
-// below it, as the per-pattern walk did.
+// below it, as the per-pattern walk did. `domain.cpp` ends with the same tail
+// and is still not a `main.cpp`.
 TEST(Scanner, ADoubleStarSlashTailMatchesAtTheRoot) {
     auto dir = make_tempdir("mcpp-glob-tail");
     write(dir / "main.cpp", "int main() {}\n");
     write(dir / "sub" / "main.cpp", "int main() {}\n");
     write(dir / "sub" / "other.cpp", "int x;\n");
+    write(dir / "sub" / "domain.cpp", "int y;\n");
     auto files = expand_glob(dir, "**/main.cpp");
     ASSERT_EQ(files.size(), 2u);
     EXPECT_EQ(files[0], dir / "main.cpp");
@@ -1457,3 +1459,31 @@ TEST(Scanner, ADoubleStarSlashTailMatchesAtTheRoot) {
     std::filesystem::remove_all(dir);
 }
 
+// `**/` stands for zero or more whole directories: what follows it starts a
+// path segment. It used to resume at any character, so `**/main.cpp` named
+// `src/domain.cpp` and `tests/**/test_*.cpp` named `tests/mytest_a.cpp`.
+// A `**` not followed by `/` still crosses segments and names.
+TEST(Glob, ADoubleStarSlashStandsForWholeDirectories) {
+    EXPECT_TRUE(relative_path_matches_glob("main.cpp", "**/main.cpp"));
+    EXPECT_TRUE(relative_path_matches_glob("src/main.cpp", "**/main.cpp"));
+    EXPECT_TRUE(relative_path_matches_glob("src/a/b/main.cpp", "**/main.cpp"));
+    EXPECT_FALSE(relative_path_matches_glob("domain.cpp", "**/main.cpp"));
+    EXPECT_FALSE(relative_path_matches_glob("src/domain.cpp", "**/main.cpp"));
+    EXPECT_FALSE(relative_path_matches_glob("src/a/domain.cpp", "**/main.cpp"));
+
+    EXPECT_TRUE(relative_path_matches_glob("tests/test_a.cpp", "tests/**/test_*.cpp"));
+    EXPECT_TRUE(relative_path_matches_glob("tests/x/test_a.cpp", "tests/**/test_*.cpp"));
+    EXPECT_FALSE(relative_path_matches_glob("tests/mytest_a.cpp", "tests/**/test_*.cpp"));
+    EXPECT_FALSE(relative_path_matches_glob("tests/x/mytest_a.cpp", "tests/**/test_*.cpp"));
+
+    const std::string_view dnn = "**/modules/dnn/**/*.avx2.cpp";
+    EXPECT_TRUE(relative_path_matches_glob("modules/dnn/l.avx2.cpp", dnn));
+    EXPECT_TRUE(relative_path_matches_glob("a/modules/dnn/b/l.avx2.cpp", dnn));
+    EXPECT_FALSE(relative_path_matches_glob("a/submodules/dnn/l.avx2.cpp", dnn));
+    EXPECT_FALSE(relative_path_matches_glob("modules/xdnn/l.avx2.cpp", dnn));
+
+    EXPECT_TRUE(relative_path_matches_glob("src/a/b.cpp", "src/**"));
+    EXPECT_TRUE(relative_path_matches_glob("src/a/b.cpp", "src/**.cpp"));
+    EXPECT_TRUE(relative_path_matches_glob("src/a/b.cpp", "**"));
+    EXPECT_FALSE(relative_path_matches_glob("srcx/a.cpp", "src/**/*.cpp"));
+}

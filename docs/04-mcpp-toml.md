@@ -557,6 +557,11 @@ the package/feature boundary, not on an individual target.
 > mcpp 2026.8.18.1 the two were byte-identical, so there was no spelling for
 > "nothing" and any file left under `src/` was swept in.
 
+> **`**/` stands for whole directories.** In `sources` and every glob that
+> shares its grammar, `**/` matches zero or more directories and what follows
+> it starts a path segment: `**/main.cpp` names every `main.cpp` and not
+> `src/domain.cpp`. A `*` matches within one segment.
+
 > **A `sources` entry may carry the accelerator it is for** (2026.9.5.2+):
 > `{ glob = "src/kernels/**/*.cu", accel = "cuda12.9+{sm_89}" }`. The glob
 > joins the list like any other; the constraint decides whether it applies to a
