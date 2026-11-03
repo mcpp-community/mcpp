@@ -6,7 +6,7 @@
 
 ## [2026.11.2.3] - 2026-11-02
 
-The built-in openkal platform is 0.23.0 (openkal 0.23: an image at a base of
+The built-in openkal platform is 0.23.1 (openkal 0.23: an image at a base of
 each boot, a snapshot of its initialisers, hardening); a format a package
 provides is told the compression stated; `mcpp cache gc` reclaims the runner's
 cache; a download source that sends nothing is left for the next one; a
@@ -15,9 +15,10 @@ design 2026-11-03 part 4.
 
 ### Changed
 
-- **The built-in `<arch>-openkal` platform is `mcpplibs.openkal-platform@0.23.0`**
+- **The built-in `<arch>-openkal` platform is `mcpplibs.openkal-platform@0.23.1`**
   (docs/35; design 2026-11-03 part 4), the version group of openkal 0.23:
-  openkal-image 0.4.1, openkal-musl 0.27.0, openkal-llvm-runtime 0.18.0.
+  openkal-image 0.4.2, openkal-musl 0.27.1, openkal-llvm-runtime 0.18.2,
+  openkal-macos 0.21.3.
   An image is sealed at a base (`okld place`), and the runner moves it to a
   base chosen once each boot, its data kept as a prepared copy; the first start
   of a boot has a snapshot of the image's initialisers made, which later starts

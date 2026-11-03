@@ -643,6 +643,10 @@ balanced 按 `kal_memory_info` 与缓存目录的余量自适应：资源充足�
      后重试；睡眠的字位于栈上。
    - openkal-macos 0.21.2：单调时钟粒度原为每次启动测得（41、42 ns 或更大），快照的事实字因此在两次启动间不同，macOS 上的
      快照被间歇拒绝。粒度改取 `mach_timebase_info` 的计时单位向上取整。
+   - openkal-macos 0.21.3：该格式按链接顺序运行初始化函数，平台的 hosted 安排把 C 库链接在实现之前，C 库的初始化函数读取
+     程序的目录时实现尚未记录环境，启动者授予的目录（及其权限）被实现的默认目录（整个文件系统、可写）取代（mcpplibs.os 的
+     hosted macOS 测试：被授予只读目录的程序在其中创建了文件）。实现在尚未记录时从加载器的记录（`_NSGetArgc`、`_NSGetArgv`、
+     `_NSGetEnviron`）取参数与环境；一致性测试从链接在实现之前的初始化函数提问。
    - openkal-musl 0.27.0：Windows 上以卷开头的名字与持有目录的名字逐字节比较，`c:\Users\...` 到达不了名为 `C:` 或
      `C:/Users/...` 的目录。卷下的名字改为不区分大小写、两种分隔符等价（`examples/image-names`）。
 
@@ -708,9 +712,9 @@ GCS 还需要系统为程序启用该栈，映像没有这一环节。返回地�
 | 仓库 | 版本 |
 | --- | --- |
 | openkal | 0.23.0 |
-| openkal-linux / -macos / -windows / -emscripten | 0.24.0 / 0.21.2 / 0.19.0 / 0.12.0 |
-| openkal-image（ld、run、tools、bind） | 0.4.1（0.4.0 之后以 openkal-macos 0.21.2 重建） |
-| openkal-musl / openkal-llvm-runtime / openkal-platform | 0.27.0 / 0.18.1 / 0.23.0 |
+| openkal-linux / -macos / -windows / -emscripten | 0.24.0 / 0.21.3 / 0.19.0 / 0.12.0 |
+| openkal-image（ld、run、tools、bind） | 0.4.2（0.4.0 之后两次以新的 openkal-macos 重建） |
+| openkal-musl / openkal-llvm-runtime / openkal-platform | 0.27.1 / 0.18.2 / 0.23.1 |
 | mcpplibs.os | 0.2.8 |
 | mcppls-clangd / mcppls | 0.0.20 / 0.0.20 |
 | mcpp | 2026.11.2.3 |

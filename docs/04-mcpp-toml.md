@@ -1502,7 +1502,7 @@ the platform's own key names ([35 — Platforms](35-platforms.md)):
 
 ```toml
 [target.'cfg(os = "openkal")']
-platform = "openkal-platform@0.23.0"          # or { path = "…" }, or "none"
+platform = "openkal-platform@0.23.1"          # or { path = "…" }, or "none"
 
 [target.'cfg(platform = "openkal")'.layers]
 c-abi = { path = "../openkal-musl" }
