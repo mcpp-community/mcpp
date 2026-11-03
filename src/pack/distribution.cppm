@@ -1075,7 +1075,7 @@ std::string exe_launcher_manifest(std::string_view name, std::string_view versio
         "[package]\nname    = \"{0}\"\nversion = \"{1}\"\n\n"
         "[targets.{0}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n"
         "# 0.2.8: the release written against openkal 0.23, the openkal the\n"
-        "# platform of mcpp's openkal rows names (openkal-platform 0.23.1), which\n"
+        "# platform of mcpp's openkal rows names (openkal-platform 0.23.2), which\n"
         "# the launcher is built over.\n"
         "[dependencies.mcpplibs]\nos = \"0.2.8\"\n",
         name, version.empty() ? std::string_view("0.0.0") : version);

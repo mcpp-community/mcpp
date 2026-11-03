@@ -98,9 +98,9 @@ C++ 运行时的包同时提供编译器运行时,因此 `"c++-abi" = false` 只
 
 | 来源 | 写法 |
 |---|---|
-| 命令行 | `--platform openkal-platform@0.23.1`、`--platform path:../openkal-platform`、`--platform none` |
+| 命令行 | `--platform openkal-platform@0.23.2`、`--platform path:../openkal-platform`、`--platform none` |
 | 环境变量 | `MCPP_TARGET_X86_64_OPENKAL_PLATFORM=…` |
-| 工程 | `[target.<selector>] platform = "openkal-platform@0.23.1"`,或 `{ path = "…" }` |
+| 工程 | `[target.<selector>] platform = "openkal-platform@0.23.2"`,或 `{ path = "…" }` |
 | 本机 | `~/.mcpp/config.toml` 中的同一个键 |
 | 目标表 | 平台列(`mcpp toolchain list`) |
 
@@ -112,7 +112,7 @@ C++ 运行时的包同时提供编译器运行时,因此 `"c++-abi" = false` 只
 
 ```toml
 [host]
-platform = "openkal-platform@0.23.1"
+platform = "openkal-platform@0.23.2"
 ```
 
 ```
@@ -130,7 +130,7 @@ platform = "openkal-platform@0.23.1"
 
 ```toml
 [target.'cfg(any(linux, macos, windows))']
-platform = "openkal-platform@0.23.1"
+platform = "openkal-platform@0.23.2"
 ```
 
 Windows 上这一安排对应 GNU ABI 的行(`--target x86_64-windows-gnu`);`[platform.hosted] targets` 之外的

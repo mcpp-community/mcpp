@@ -113,9 +113,9 @@ The first of these that answers selects the target's platform:
 
 | Source | Spelling |
 |---|---|
-| the command line | `--platform openkal-platform@0.23.1`, `--platform path:../openkal-platform`, `--platform none` |
+| the command line | `--platform openkal-platform@0.23.2`, `--platform path:../openkal-platform`, `--platform none` |
 | the environment | `MCPP_TARGET_X86_64_OPENKAL_PLATFORM=…` |
-| the project | `[target.<selector>] platform = "openkal-platform@0.23.1"`, or `{ path = "…" }` |
+| the project | `[target.<selector>] platform = "openkal-platform@0.23.2"`, or `{ path = "…" }` |
 | this machine | the same key in `~/.mcpp/config.toml` |
 | the target table | the platform column (`mcpp toolchain list`) |
 
@@ -129,7 +129,7 @@ its own conventions. `[host] platform` selects a platform for them instead:
 
 ```toml
 [host]
-platform = "openkal-platform@0.23.1"
+platform = "openkal-platform@0.23.2"
 ```
 
 ```
@@ -151,7 +151,7 @@ implementation:
 
 ```toml
 [target.'cfg(any(linux, macos, windows))']
-platform = "openkal-platform@0.23.1"
+platform = "openkal-platform@0.23.2"
 ```
 
 On Windows the arrangement is the GNU ABI's row (`--target x86_64-windows-gnu`);

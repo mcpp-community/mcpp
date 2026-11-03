@@ -714,14 +714,14 @@ GCS 还需要系统为程序启用该栈，映像没有这一环节。返回地�
 | openkal | 0.23.0 |
 | openkal-linux / -macos / -windows / -emscripten | 0.24.0 / 0.21.3 / 0.19.0 / 0.12.0 |
 | openkal-image（ld、run、tools、bind） | 0.4.2（0.4.0 之后两次以新的 openkal-macos 重建） |
-| openkal-musl / openkal-llvm-runtime / openkal-platform | 0.27.1 / 0.18.2 / 0.23.1 |
+| openkal-musl / openkal-llvm-runtime / openkal-platform | 0.27.2 / 0.18.3 / 0.23.2 |
 | mcpplibs.os | 0.2.8 |
 | mcppls-clangd / mcppls | 0.0.20 / 0.0.20 |
 | mcpp | 2026.11.3.1 |
 
 ## 19. 发布版本组的更正（2026-11-03）
 
-os 的公开索引映像验收发现了 §18.7 所列组合中尚未一致的一条边：openkal-musl 0.27.1 的
+os 的公开索引映像验收发现了原定版本组中尚未一致的一条边：openkal-musl 0.27.1 的
 `[target.'cfg(os = "openkal")'.dependencies]` 仍固定 `openkal-ld = "0.4.1"`，而
 openkal-platform 0.23.1 的 `[platform.versions]` 固定 openkal-ld 0.4.2。mcpp 在编译之前
 按版本组拒绝这个组合。证据为 [os CI 41578080022 的映像作业](https://github.com/mcpplibs/os/actions/runs/41578080022/job/125763510224)，
@@ -732,11 +732,11 @@ hosted 构建未经过这条条件依赖。该组合的 hosted macOS `process_te
 hosted 行为。运行时包的分支图验收以工作树代入依赖，也没有证明公开索引中整组版本的
 固定关系一致。
 
-既有发布的标签、归档和摘要保持不变。后续修正使用以下版本：
+既有发布的标签、归档和摘要保持不变。修正使用以下版本：
 
 | 包 | 修正版本 | 修正内容 |
 | --- | --- | --- |
-| openkal-musl | 0.27.2 | 映像依赖固定 openkal-ld 0.4.2；候选为 [PR #78](https://github.com/mcpplibs/openkal-musl/pull/78) |
+| openkal-musl | 0.27.2 | 映像依赖固定 openkal-ld 0.4.2；已发布（[PR #78](https://github.com/mcpplibs/openkal-musl/pull/78)） |
 | openkal-llvm-runtime | 0.18.3 | 固定 openkal-musl 0.27.2 |
 | openkal-platform | 0.23.2 | 固定上述两个修正版本，其余实现与 openkal-image 版本不变 |
 
