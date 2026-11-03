@@ -30,6 +30,11 @@ is left for the next one; a requirement a layer decides is checked; design
   compressed under `gzip`, an okb kept small on disk that okrun expands into
   its cache when it first runs it (design 2026-11-03 part 4 §16). A directory
   is still refused.
+- **`mcpp cache gc` reclaims the ok-image runner's cache too** (docs/09). It
+  asks the newest `okrun` among the host tools it built to run `okrun cache
+  gc`: the prepared copies and snapshots openkal-image 0.4 keeps for an image
+  in the user's runtime or cache directory, of another boot. The layout is the
+  runner's, and so is its reclaiming (design 2026-11-03 part 4 §16).
 
 ### Fixed
 

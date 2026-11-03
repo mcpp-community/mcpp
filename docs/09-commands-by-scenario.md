@@ -88,7 +88,10 @@ key               kind          size       last used  package
 package and host tool entries. A `std` BMI is shared by every project on the
 machine, and the implementation excludes it from size-driven eviction on the
 grounds that rebuilding one trades a lot of time for a little disk. `mcpp cache
-clean --std` remains the explicit way to remove it.
+clean --std` remains the explicit way to remove it. It then asks the newest
+`okrun` among the host tools it built to reclaim the runner's own cache (`okrun
+cache gc`): an ok image's prepared copies and snapshots for another boot
+(openkal-image 0.4, 2026.11.2.3+).
 
 After a successful build, at most once a day, every entry -- package, host tool
 or `std` -- that no build has used for `[cache] unused_days` days (config.toml;
