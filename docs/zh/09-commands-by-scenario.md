@@ -76,7 +76,9 @@ key               kind          size       last used  package
 `mcpp cache gc` 要求给出 `--max-size`、`--older-than` 或两者，驱逐包条目与
 host 工具条目。一份 `std` BMI 被机器上每个工程共享，实现以"重建它是用大量时间
 换少量磁盘"为由，把它排除在按体积驱逐之外。`mcpp cache clean --std` 仍是
-显式移除它的做法。
+显式移除它的做法。随后它请它构建过的 host 工具中最新的 `okrun` 回收运行器自己的
+缓存（`okrun cache gc`）：ok 映像为其他开机准备的副本与快照（openkal-image 0.4，
+2026.11.3.1+）。
 
 构建成功后，每天至多一次，移除 `[cache] unused_days` 天（config.toml；默认 30，
 `0` 关闭）内没有构建使用过的条目，包、host 工具与 `std` 均在其列；命中即记为使用。

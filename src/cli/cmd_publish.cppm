@@ -791,9 +791,15 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
         const bool listsEngine = std::ranges::any_of(formatList, [](std::string const& f) {
             return f == "tar" || f == "zip"; });
         const bool listsZip = std::ranges::find(formatList, "zip") != formatList.end();
+        // A FORMAT A PACKAGE PROVIDES decides what its container does with the
+        // compression stated, which reaches its program as MCPP_PACK_COMPRESS
+        // (2026.11.3.1): openkal-platform's `okb` stores its images compressed
+        // under gzip, and refuses what it cannot write.
+        const bool listsProvided = std::ranges::any_of(formatList, [](std::string const& f) {
+            return f != "tar" && f != "zip" && f != "dir" && f != "single-file" && f != "polyglot"; });
         const bool writesNone = opts.formats.empty()
-            ? (opts.format == mcpp::pack::Format::Dir || opts.format == mcpp::pack::Format::Dispatched)
-            : !listsEngine;
+            ? opts.format == mcpp::pack::Format::Dir
+            : !listsEngine && !listsProvided;
         const bool zipped = opts.format == mcpp::pack::Format::Zip || (!opts.formats.empty() && listsZip);
         const bool fits = !writesNone
             && !(zipped && (alg == Algorithm::Zstd || alg == Algorithm::Xz))
@@ -803,7 +809,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
             if (writesNone) {
                 mcpp::ui::error(std::format(
                     "--compress {} compresses a container, and --pkg-format {} writes none.\n"
-                    "  use: --pkg-format tar | zip | single-file",
+                    "  use: --pkg-format tar | zip | single-file, or a format a package provides",
                     mcpp::pack::compress::name(alg),
                     opts.format == mcpp::pack::Format::Dir ? std::string("dir") : opts.formatName));
                 return 2;

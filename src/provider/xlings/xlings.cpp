@@ -925,8 +925,8 @@ std::vector<InvocationVar> invocation_env(const Env& env) {
         {"XLINGS_HOME", env.home.string(), true},
         {"XLINGS_PROJECT_DIR", env.projectDir.string(), !env.projectDir.empty()},
         {"XLINGS_ACTIVE_SUBOS", "", false},
-        {"XLINGS_DOWNLOAD_CONNECT_TIMEOUT", cap("XLINGS_DOWNLOAD_CONNECT_TIMEOUT", 8), true},
-        {"XLINGS_DOWNLOAD_IDLE_TIMEOUT", cap("XLINGS_DOWNLOAD_IDLE_TIMEOUT", 30), true},
+        {"XLINGS_DOWNLOAD_CONNECT_TIMEOUT", cap("XLINGS_DOWNLOAD_CONNECT_TIMEOUT", static_cast<int>(kSourceConnectTimeout.count())), true},
+        {"XLINGS_DOWNLOAD_IDLE_TIMEOUT", cap("XLINGS_DOWNLOAD_IDLE_TIMEOUT", static_cast<int>(kSourceIdleTimeout.count())), true},
         {"XLINGS_DOWNLOAD_LOW_SPEED", mcpp::invocation::get("XLINGS_DOWNLOAD_LOW_SPEED").value_or("off"), true},
     };
 }

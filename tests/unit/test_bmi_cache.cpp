@@ -7,9 +7,47 @@
 
 import std;
 import mcpp.bmi_cache;
+import mcpp.bmi_cache.maintenance;
+import mcpp.home;
+import mcpp.invocation;
 import mcpp.libs.json;
+import mcpplibs.os.env;
+import mcpplibs.os.platform;
+import mcpplibs.os.windows;
 
 using namespace mcpp::bmi_cache;
+
+TEST(BMICacheMaintenance, RunnerCachePathDoesNotUseTheWindowsAnsiCodePage) {
+    if constexpr (!mcpplibs::os::is_windows) {
+        GTEST_SKIP() << "path::string() only converts through an ANSI code page on Windows";
+    } else {
+        const auto acp = mcpplibs::os::windows::code_page(); // GetACP, including a UTF-8 process manifest.
+        if (acp == 65001) GTEST_SKIP() << "UTF-8 ACP can represent every path";
+        const std::filesystem::path name(std::wstring{wchar_t(0x0915), wchar_t(0x0916), wchar_t(0x0917)});
+        bool narrowing_throws = false;
+        try { (void)name.string(); }
+        catch (const std::exception&) { narrowing_throws = true; }
+        ASSERT_TRUE(narrowing_throws) << "the fixture must be unrepresentable in ACP " << acp;
+
+        const auto scratch = std::filesystem::temp_directory_path()
+            / std::format("mcpp-runner-cache-{}", std::random_device{}());
+        struct Cleanup {
+            std::filesystem::path path;
+            ~Cleanup() { std::error_code ec; std::filesystem::remove_all(path, ec); }
+        } cleanup{scratch};
+        const auto home = scratch / name;
+        const auto bin = home / "build-cache/v1/tool/mcpplibs/openkal-tools@0.4.2/key/bin";
+        std::filesystem::create_directories(bin);
+        // A real, bounded Windows program, invoked as `cache gc`. It can fail
+        // to find these names: gc still reports that outcome without throwing
+        // while preparing the native executable path or its diagnostic.
+        const auto where = mcpplibs::os::env::find_executable("where.exe");
+        ASSERT_TRUE(where.has_value());
+        std::filesystem::copy_file(*where, bin / "okrun.exe");
+        mcpp::invocation::ScopedEnv selected("MCPP_HOME", mcpp::home::spelling(home));
+        EXPECT_NO_THROW({ EXPECT_EQ(cache_gc("", "3650d"), 0); });
+    }
+}
 
 namespace {
 

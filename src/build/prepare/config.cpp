@@ -727,6 +727,17 @@ workspace_listing(const std::filesystem::path& memberDir,
 // [build] sections only"). Dependencies are excluded by construction — they are
 // already resolved by now — and a section that tries is reported rather than
 // silently ignored; see `warn_layer_predicate_dependencies`.
+std::vector<std::string> layer_conditional_requires(const mcpp::manifest::Manifest& m,
+                                                    const cfgpred::Ctx& ctx) {
+    std::vector<std::string> out;
+    for (auto const& cc : m.conditionalConfigs) {
+        if (!cfgpred::uses_layer(cc.predicate) || !cfgpred::matches(cc.predicate, ctx)) continue;
+        for (auto const& r : cc.requires_)
+            if (std::ranges::find(out, r) == out.end()) out.push_back(r);
+    }
+    return out;
+}
+
 bool merge_layer_conditional_config(mcpp::manifest::Manifest& m,
                                     const cfgpred::Ctx& ctx) {
     bool any = false;

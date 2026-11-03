@@ -25,6 +25,7 @@ import mcpp.manifest;
 import mcpp.pack;
 import mcpp.pack.stage_tree;
 import mcpp.pack.strip;
+import mcpp.pack.compress;
 import mcpp.runtime.launch_env;
 import mcpp.toolchain.model;
 import mcpp.toolchain.probe;
@@ -1341,6 +1342,10 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
             // switch `--no-strip` and `--debug-symbols` set for this tree.
             stage.strip           = m.plan->strip ? "1" : "0";
             stage.debugSymbolsDir = m.plan->debugDir;
+            if (run.opts.compression.stated) {
+                stage.compress = std::string(mcpp::pack::compress::name(run.opts.compression.algorithm));
+                if (run.opts.compression.level >= 0) stage.compress += std::format(":{}", run.opts.compression.level);
+            }
             g.ov.pack_stages[m.name] = std::move(stage);
         }
     };

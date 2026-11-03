@@ -68,7 +68,7 @@ for this machine and one for an ok image leave each other's entries in place.
 | the targets | `targets`, `toolchain`, `sysroot` | which triples it serves, the toolchain they use, a prebuilt target base |
 | the layers | `[platform.layers]` | the package for `c-abi`, `c++-abi`, `compiler-runtime`, `kernel-abi`, or `false` |
 | the tools | `[platform.tools]` | programs built for this machine, or found (`{ program = "<name>" }`) |
-| the compile | `[platform.build]`, `[platform.build.'cfg(…)']` | flags for every unit of the target |
+| the compile | `[platform.build]`, `[platform.build.'cfg(…)']` | flags for every unit of the target, the std module included (2026.11.3.1) |
 | the link | `[platform.link]` | `driver`, `flags`, `start`, `script`, `inputs`, the names `exe` and `shared`, the `seal` steps |
 | the run | `runner`, `runners` | how `mcpp run` and `mcpp test` start an artifact, and named device actions |
 | the carrier | `carrier` | the program `mcpp pack` builds of a loaded artifact for a system: a self-contained tree's runner, a single file; a table or a list of tables, each serving the `<os>-<arch>` pairs of its `hosts` |
@@ -113,9 +113,9 @@ The first of these that answers selects the target's platform:
 
 | Source | Spelling |
 |---|---|
-| the command line | `--platform openkal-platform@0.21.0`, `--platform path:../openkal-platform`, `--platform none` |
+| the command line | `--platform openkal-platform@0.23.3`, `--platform path:../openkal-platform`, `--platform none` |
 | the environment | `MCPP_TARGET_X86_64_OPENKAL_PLATFORM=…` |
-| the project | `[target.<selector>] platform = "openkal-platform@0.21.0"`, or `{ path = "…" }` |
+| the project | `[target.<selector>] platform = "openkal-platform@0.23.3"`, or `{ path = "…" }` |
 | this machine | the same key in `~/.mcpp/config.toml` |
 | the target table | the platform column (`mcpp toolchain list`) |
 
@@ -129,7 +129,7 @@ its own conventions. `[host] platform` selects a platform for them instead:
 
 ```toml
 [host]
-platform = "openkal-platform@0.21.0"
+platform = "openkal-platform@0.23.3"
 ```
 
 ```
@@ -151,7 +151,7 @@ implementation:
 
 ```toml
 [target.'cfg(any(linux, macos, windows))']
-platform = "openkal-platform@0.21.0"
+platform = "openkal-platform@0.23.3"
 ```
 
 On Windows the arrangement is the GNU ABI's row (`--target x86_64-windows-gnu`);

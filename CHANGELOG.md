@@ -4,6 +4,101 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.3.1] - 2026-11-03
+
+The built-in openkal platform is 0.23.3 (openkal 0.23: an image at a base of
+each boot, a snapshot of its initialisers, hardening); a format a package
+provides is told the compression stated; `mcpp cache gc` reclaims the runner's
+cache; a download source that sends nothing is left for the next one; a
+requirement a layer decides is checked; design 2026-11-02 part 3 landed, and
+design 2026-11-03 part 4.
+
+### Changed
+
+- **The built-in `<arch>-openkal` platform is `mcpplibs.openkal-platform@0.23.3`**
+  (docs/35; design 2026-11-03 part 4), the version group of openkal 0.23:
+  openkal-image 0.4.3, openkal-musl 0.27.3, openkal-llvm-runtime 0.18.4,
+  openkal-linux 0.24.1 and openkal-macos 0.21.3.
+  An image is sealed at a base (`okld place`), and the runner moves it to a
+  base chosen once each boot, its data kept as a prepared copy. The runner
+  can start a background process to snapshot eligible initialisers; later
+  starts can map the completed snapshot. What a start spends follows the
+  program's resource preference. An image is built with frame pointers, a global stack
+  guard, zeroed locals, libc++'s fast hardening, CET or PAC/BTI marks and a
+  build-id; okprof is among the platform's tools. The Windows launcher `mcpp
+  pack` writes for an openkal set is built over mcpplibs.os 0.2.9. Against
+  2026.11.2.2's 0.21.0, the runner also admits an okb member it has compared
+  before by its shape alone (openkal-image 0.3.1): 0.3.0 computed the
+  member's CRC-32 at every start, 0.1 s of processor time for a 71 MB image.
+
+### Added
+
+- **A format a package provides is told the compression stated** (docs/10,
+  docs/30). `--compress` and `[pack] compress` reach a provided format's
+  program as `MCPP_PACK_COMPRESS` (`mcpp::pack_compress()`), spelled as the
+  flag takes it, and the provider decides what its container does with it.
+  `--compress` was refused with every provided format, so openkal-platform's
+  `okb` could not be asked for its compressed form: its images stored
+  compressed under `gzip`, an okb kept small on disk that okrun expands into
+  its cache when it first runs it (design 2026-11-03 part 4 §16). A directory
+  is still refused.
+- **`mcpp cache gc` reclaims the ok-image runner's cache too** (docs/09). It
+  asks the newest `okrun` among the host tools it built to run `okrun cache
+  gc`: the prepared copies and snapshots openkal-image 0.4 keeps for an image
+  in the user's runtime or cache directory, of another boot. The layout is the
+  runner's, and so is its reclaiming (design 2026-11-03 part 4 §16).
+
+### Fixed
+
+- **The platform group carries the corrected Linux read-only confinement.**
+  Linux 0.24.1 requires Landlock ABI 3 before reporting confinement support;
+  earlier ABIs do not constrain file truncation within a read-only grant.
+  Its ABI probe cache uses atomic accesses. Image 0.4.3 builds the native
+  runner with the same corrected backend.
+- **An object-only package builds all its objects alongside cache fills.**
+  Explicit Ninja defaults for dependency cache fills previously omitted the
+  package's own terminal compile edges when it had no link target. The musl
+  producer build selected 69 dependency and embedded objects while omitting
+  its 1,332 own C objects. All compile objects are now default goals for a
+  package without link targets.
+- **Runner cache collection selects valid versions and preserves native paths.**
+  Malformed or overflowing runner versions are ignored. Cache paths and the
+  selected runner's executable path retain their native representation, so
+  Windows names outside the active ANSI code page do not abort collection.
+- **The std module is compiled with the platform's compile words** (docs/35,
+  SPEC-013 §2.5): `[platform.build]` and its `cfg` tables reach the std
+  module's two commands and the key its BMI is kept under, as they reach every
+  other unit of the target, whichever library supplies the module.
+  openkal-platform 0.23.0 compiles every unit on x86_64 with
+  `-fcf-protection=full`, which clang records in a BMI, and a std module built
+  without it was refused by every importer ("Control-Flow Branch Protection
+  enabled was disabled in precompiled file"); its `-D_LIBCPP_HARDENING_MODE`
+  is the library's own code inside the module. e2e 1010 states the flag in a
+  platform of this machine's triple and imports std.
+- **A requirement a layer decides is checked** (docs/22, docs/specs/target-side.md
+  §2.2). `[target.'cfg(all(windows, compiler = "llvm"))'] requires =
+  ["mcpp:compiler-runtime=compiler-rt"]` names a layer in its selector, and
+  such a table's requirement was dropped without a word: the requirements were
+  gathered before any layer resolved. It is now checked once the layers are
+  resolved and before anything is compiled, with the refusal a `[package]`
+  requirement gets. openkal-musl 0.27.0 states this one: on PE under clang its
+  link names no runtime, and a graph without compiler-rt (openkal-llvm-runtime)
+  reached the link with `___chkstk_ms` undefined.
+- **A download source that connects and sends nothing no longer stops the
+  install** (docs/specs/home-initialization.md §5). xlings leaves such a source
+  after 30 seconds without a byte and tries the next; mcpp stopped the install
+  after 30 seconds without a byte or a new source, so the next source was never
+  reached (CI, 2026-11-02: a GitHub proxy that accepted the connection,
+  attempt 1). mcpp's own bound is now 45 seconds; a source's bounds, 8 seconds
+  to connect and 30 without a byte, are unchanged.
+
+### Design
+
+- Design 2026-11-02 part 3 (ok image performance parity) landed: the engine's
+  revisions measured on macOS (a worker's ceiling watched, an open directory's
+  count of names on APFS, one opening of a cache root), L2 on every system and
+  L3 on every system.
+
 ## [2026.11.2.2] - 2026-11-02
 
 The built-in openkal platform is 0.21.0; an embedded dependency's link

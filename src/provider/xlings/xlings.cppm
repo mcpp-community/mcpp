@@ -478,6 +478,17 @@ using BootstrapProgress = mcpp::provider::BootstrapProgress;
 
 using BootstrapProgressCallback = mcpp::provider::BootstrapProgressCallback;
 
+// A download's bounds (design 2026-10-19 §6.2, R5). xlings gives each source
+// kSourceConnectTimeout to connect and kSourceIdleTimeout without a byte, then
+// tries the next source; mcpp stops the install when a file has had neither a
+// byte nor a new source for kDownloadStallTimeout. The parent's bound is the
+// longer one: were they equal, a source that connects and then sends nothing
+// would stop the install at the moment xlings gives the source up, and no
+// install would reach its second source.
+inline constexpr std::chrono::seconds kSourceConnectTimeout{8};
+inline constexpr std::chrono::seconds kSourceIdleTimeout{30};
+inline constexpr std::chrono::seconds kDownloadStallTimeout{kSourceIdleTimeout + std::chrono::seconds(15)};
+
 // Parent-owned byte progress protection, independent of provider heartbeats
 // and socket reads (DNS or a trickle of headers may produce neither body bytes
 // nor a socket timeout). Time is injectable for the state-machine tests.
@@ -491,7 +502,7 @@ class DownloadWatchdog {
     std::map<std::string, File> files_;
     std::chrono::milliseconds idle_;
 public:
-    explicit DownloadWatchdog(std::chrono::milliseconds idle = std::chrono::seconds(30)) : idle_(idle) {}
+    explicit DownloadWatchdog(std::chrono::milliseconds idle = kDownloadStallTimeout) : idle_(idle) {}
     void observe(const BootstrapProgress& progress,
                  std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) {
         for (const auto& f : progress.files) {
@@ -518,7 +529,7 @@ class InstallDeadline {
     bool downloadSeen_ = false, localWork_ = false;
 public:
     explicit InstallDeadline(std::chrono::milliseconds preparation = std::chrono::seconds(120),
-        std::chrono::milliseconds idle = std::chrono::seconds(30),
+        std::chrono::milliseconds idle = kDownloadStallTimeout,
         std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now())
         : downloads_(idle), started_(start), preparation_(preparation) {}
     void observe(std::string_view line,

@@ -63,8 +63,8 @@ main = "src/main.c"
 $NO_LAYERS
 TOML
 cat > src/main.c <<'C'
-/* An image with no C library: it calls kal_* and supplies the two routines
- * the compiler may emit, and the emulated thread-local storage the
+/* An image with no C library: it calls kal_* and supplies the memory routines,
+ * stack guard and emulated thread-local storage the platform's compile
  * convention requires (SPEC 12.2). */
 typedef unsigned long kal_uintptr;
 typedef long kal_intptr;
@@ -78,6 +78,10 @@ int kal_task_start(void (*entry)(void*), void* arg, struct kal_task* out);
 int kal_task_join(struct kal_task);
 kal_uintptr kal_task_current(void);
 void* kal_alloc(kal_uintptr size, kal_uintptr align);
+int kal_random_fill(void*, kal_uintptr);
+
+unsigned long __stack_chk_guard;
+__attribute__((noreturn)) void __stack_chk_fail(void) { __builtin_trap(); }
 
 void* memcpy(void* d, const void* s, unsigned long n) {
     unsigned char* a = d; const unsigned char* b = s; while (n--) *a++ = *b++; return d;
@@ -115,7 +119,7 @@ static void put(const char* s) { unsigned long n = 0; while (s[n]) ++n; kal_stre
 static __thread long tl = 7;
 static void worker(void* arg) { long* seen = arg; *seen = tl; tl = 99; }
 
-int ok_main(void) {
+__attribute__((noinline)) static int image_main(void) {
     put(kal_env_arg_count() == 3 ? "image: three arguments\n" : "image: arguments lost\n");
     put(kal_env_var_count() > 0 ? "image: an environment\n" : "image: no environment\n");
     tl = 1;
@@ -124,6 +128,13 @@ int ok_main(void) {
     if (kal_task_start(worker, &seen, &t) == 0) kal_task_join(t);
     put(seen == 7 && tl == 1 ? "image: each context has its own storage\n" : "image: storage shared\n");
     return 0;
+}
+
+/* Seed before entering a protected frame. The image supplies its own C ABI
+ * hooks because it deliberately disabled the platform's C library. */
+__attribute__((no_stack_protector)) int ok_main(void) {
+    if (kal_random_fill(&__stack_chk_guard, sizeof __stack_chk_guard) != 0) return 99;
+    return image_main();
 }
 C
 

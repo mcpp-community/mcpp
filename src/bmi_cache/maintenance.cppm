@@ -30,6 +30,8 @@ import mcpp.home;
 import mcpp.libs.json;
 import mcpp.libs.toml;
 import mcpp.ui;
+import mcpplibs.os.fs;
+import mcpplibs.os.process;
 
 namespace mcpp::bmi_cache {
 
@@ -528,6 +530,68 @@ export int cache_prune(const std::string& v) {
     return 0;
 }
 
+// THE RUNNER'S OWN CACHE (design 2026-11-03 part 4 §16): an ok image's
+// prepared copies and snapshots for this boot, and the okb members it expanded,
+// which okrun keeps beside the user's runtime or cache directory
+// (openkal-image 0.4, `okrun cache`). Its layout is the runner's, so the runner
+// reclaims it --- what another boot prepared, and snapshots over their bound ---
+// and mcpp asks the newest okrun among the host tools it built. Where it built
+// none there is nothing of the runner's that mcpp put on this machine.
+std::filesystem::path newest_runner() {
+    auto parts = [](std::string_view v) {
+        std::vector<int> out;
+        for (auto part : std::views::split(v, '.')) {
+            int n = 0;
+            const auto [end, ec] = std::from_chars(part.data(), part.data() + part.size(), n);
+            if (ec != std::errc{} || end != part.data() + part.size() || n < 0)
+                return std::vector<int>{};
+            out.push_back(n);
+        }
+        return out;
+    };
+    std::filesystem::path best;
+    std::vector<int> bestVersion;
+    std::error_code ec;
+    for (auto& pkg : std::filesystem::directory_iterator(tool_root() / "mcpplibs", ec)) {
+        const auto name = mcpplibs::os::fs::generic_utf8(pkg.path().filename());
+        if (!name.starts_with("openkal-tools@")) continue;
+        const auto version = parts(std::string_view(name).substr(14));
+        if (version.empty()) continue;
+        if (!best.empty() && version <= bestVersion) continue;
+        std::error_code ke;
+        for (auto& key : std::filesystem::directory_iterator(pkg.path(), ke)) {
+            const auto programs = {key.path() / "bin" / "okrun", key.path() / "bin" / "okrun.exe"};
+            const auto found = std::ranges::find_if(programs, [](const auto& candidate) {
+                std::error_code fe;
+                return std::filesystem::is_regular_file(candidate, fe);
+            });
+            if (found != programs.end()) {
+                best = *found;
+                bestVersion = version;
+            }
+        }
+    }
+    return best;
+}
+
+void reclaim_runner_cache() {
+    const auto okrun = newest_runner();
+    if (okrun.empty()) return;
+    namespace proc = mcpplibs::os::process;
+    proc::spawn_options o;
+    o.program = okrun;
+    o.args = {"cache", "gc"};
+    auto r = proc::run(std::move(o));
+    if (!r || !r->status.success()) {
+        mcpp::ui::warning(std::format("`{} cache gc` did not reclaim the runner's cache{}",
+                                      mcpplibs::os::fs::generic_utf8(okrun), r ? ": " + r->err : std::string()));
+        return;
+    }
+    std::string said = r->out.empty() ? r->err : r->out;
+    while (!said.empty() && (said.back() == '\n' || said.back() == '\r')) said.pop_back();
+    mcpp::ui::status("Reclaimed", said.empty() ? std::string("the ok-image runner's cache") : said);
+}
+
 // `mcpp cache gc [--max-size N] [--older-than N]` — real LRU, driven by
 // entry.json's `accessed` stamp.
 export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanArg) {
@@ -593,6 +657,7 @@ export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanA
     // std BMIs sit right next to it.
     std::println("Collected {} entries, freed {} (package and tool entries now {})",
                  removed, human_bytes(freed), human_bytes(live));
+    reclaim_runner_cache();
     if (maxSize && live > *maxSize) {
         // Say it rather than silently under-delivering: a size target that
         // cannot be met without evicting std BMIs is a real outcome, and a

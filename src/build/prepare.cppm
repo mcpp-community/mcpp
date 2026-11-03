@@ -976,6 +976,11 @@ export struct BuildOverrides {
         // files as it reaches the engine's.
         std::string           strip;
         std::filesystem::path debugSymbolsDir;
+        // The compression the command or `[pack] compress` STATED, as
+        // `--compress` spells it (`gzip`, `zstd:19`, `none`); empty when
+        // nothing was stated. A format a package provides decides what its
+        // container does with it (an okb compresses its images under `gzip`).
+        std::string           compress;
     };
     // The packed members' stages, by qualified package name. One entry is what a
     // pack of one member sets, and then every program of the plan receives it,

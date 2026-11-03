@@ -57,7 +57,7 @@ mcpp run --target x86_64-openkal
 | 目标 | `targets`、`toolchain`、`sysroot` | 服务哪些三元组、它们使用的工具链、预构建的目标基 |
 | 层 | `[platform.layers]` | `c-abi`、`c++-abi`、`compiler-runtime`、`kernel-abi` 的提供包,或 `false` |
 | 工具 | `[platform.tools]` | 为本机构建的程序,或查找到的程序(`{ program = "<name>" }`) |
-| 编译 | `[platform.build]`、`[platform.build.'cfg(…)']` | 目标每个翻译单元的标志 |
+| 编译 | `[platform.build]`、`[platform.build.'cfg(…)']` | 目标每个翻译单元的标志，含 std 模块（2026.11.3.1） |
 | 链接 | `[platform.link]` | `driver`、`flags`、`start`、`script`、`inputs`、名字 `exe` 与 `shared`、封装步骤 `seal` |
 | 运行 | `runner`、`runners` | `mcpp run` 与 `mcpp test` 怎样启动产物,以及具名的设备动作 |
 | 载体 | `carrier` | `mcpp pack` 为依赖加载器的产物按系统构建的程序:self-contained 树的运行器、单文件;一个表或表的列表,每项服务其 `hosts` 中的 `<os>-<arch>` |
@@ -98,9 +98,9 @@ C++ 运行时的包同时提供编译器运行时,因此 `"c++-abi" = false` 只
 
 | 来源 | 写法 |
 |---|---|
-| 命令行 | `--platform openkal-platform@0.21.0`、`--platform path:../openkal-platform`、`--platform none` |
+| 命令行 | `--platform openkal-platform@0.23.3`、`--platform path:../openkal-platform`、`--platform none` |
 | 环境变量 | `MCPP_TARGET_X86_64_OPENKAL_PLATFORM=…` |
-| 工程 | `[target.<selector>] platform = "openkal-platform@0.21.0"`,或 `{ path = "…" }` |
+| 工程 | `[target.<selector>] platform = "openkal-platform@0.23.3"`,或 `{ path = "…" }` |
 | 本机 | `~/.mcpp/config.toml` 中的同一个键 |
 | 目标表 | 平台列(`mcpp toolchain list`) |
 
@@ -112,7 +112,7 @@ C++ 运行时的包同时提供编译器运行时,因此 `"c++-abi" = false` 只
 
 ```toml
 [host]
-platform = "openkal-platform@0.21.0"
+platform = "openkal-platform@0.23.3"
 ```
 
 ```
@@ -130,7 +130,7 @@ platform = "openkal-platform@0.21.0"
 
 ```toml
 [target.'cfg(any(linux, macos, windows))']
-platform = "openkal-platform@0.21.0"
+platform = "openkal-platform@0.23.3"
 ```
 
 Windows 上这一安排对应 GNU ABI 的行(`--target x86_64-windows-gnu`);`[platform.hosted] targets` 之外的

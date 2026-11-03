@@ -457,6 +457,7 @@ struct PrepareState {
             env.packStageDir        = stage->dir;
             env.packStrip           = stage->strip;
             env.packDebugSymbolsDir = stage->debugSymbolsDir;
+            env.packCompress        = stage->compress;
         }
     }
     // `--features` as the command gave it. A workspace plan hands the tokens to
@@ -997,6 +998,11 @@ workspace_listing(const std::filesystem::path& memberDir,
                   const std::filesystem::path& bound);
 bool merge_layer_conditional_config(mcpp::manifest::Manifest& m,
                                     const cfgpred::Ctx& ctx);
+// The `requires` of the layer-predicated tables `ctx` matches
+// (`[target.'cfg(compiler = "llvm")'] requires = [...]`): answerable only once
+// the layers are resolved, and checked then.
+std::vector<std::string> layer_conditional_requires(const mcpp::manifest::Manifest& m,
+                                                    const cfgpred::Ctx& ctx);
 std::vector<std::string> feature_closure(const mcpp::manifest::Manifest& pm,
                                          const std::vector<std::string>& requested,
                                          bool seedDefault = true);
@@ -1158,6 +1164,10 @@ PackageInstances package_instances(const PrepareState& state);
 // build-program tier of the build's platform statement, named after `who`.
 void merge_program_platform(PrepareState& state, mcpp::manifest::platform::Statement stated,
                             std::string_view who);
+// P9's build programs (prepare/build_programs.cpp): the root's, then each
+// member's, once the target side is resolved.
+std::expected<void, std::string> step9_root_build_program(PrepareState& state);
+std::expected<void, std::string> step9_member_build_programs(PrepareState& state);
 // The platform through the phases (prepare/platform.cpp).
 mcpp::build::cfgpred::Ctx platform_cfg_context(const PrepareState& state);
 std::expected<void, std::string> step1_select_platform(PrepareState& state);
@@ -1167,6 +1177,10 @@ std::expected<void, std::string> step4b_check_platform_versions(PrepareState& st
 void step4b_platform_member_edges(PrepareState& state);
 void step5_platform_toolchain(PrepareState& state);
 void step13_platform_statement(PrepareState& state);
+// The platform's statement and the compile words it states for a unit of C++,
+// as they stand now (the std module's are asked for before step 13).
+mcpp::manifest::platform::Statement platform_statement(const PrepareState& state);
+std::vector<std::string> platform_unit_cxxflags(const PrepareState& state);
 std::expected<void, std::string> step13_finish_platform(PrepareState& state, BuildContext& ctx);
 // retarget.cpp: a retargetable driver told its target, sysroot and multilib.
 std::expected<void, std::string> step2_retarget_for_retargetable_driver(PrepareState& state);
