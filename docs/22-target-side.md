@@ -345,7 +345,7 @@ states the floor (`[build-dependencies.mcpp] version = ">= 2026.10.26.1"`, or
 
 A selector may name a layer, and the requirement then holds where that layer
 resolved as named. It is checked once the layers are resolved and before
-anything is compiled (mcpp 2026.11.2.3; an older engine does not check it):
+anything is compiled (mcpp 2026.11.3.1; an older engine does not check it):
 
 ```toml
 # the compiler's runtime on PE under clang is the graph's (openkal-musl)

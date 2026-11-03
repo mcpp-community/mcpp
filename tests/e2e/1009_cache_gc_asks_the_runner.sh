@@ -2,7 +2,7 @@
 # requires: unix-shell
 # 1009 -- `mcpp cache gc` asks the newest okrun among the host tools it built
 # to reclaim the runner's own cache (`okrun cache gc`, openkal-image 0.4;
-# design 2026-11-03 part 4 §16; 2026.11.2.3).
+# design 2026-11-03 part 4 §16; 2026.11.3.1).
 #
 # The prepared copies and snapshots an ok image's runner keeps are laid out by
 # the runner, so the runner reclaims them. Two openkal-tools entries stand in

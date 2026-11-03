@@ -793,7 +793,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
         const bool listsZip = std::ranges::find(formatList, "zip") != formatList.end();
         // A FORMAT A PACKAGE PROVIDES decides what its container does with the
         // compression stated, which reaches its program as MCPP_PACK_COMPRESS
-        // (2026.11.2.3): openkal-platform's `okb` stores its images compressed
+        // (2026.11.3.1): openkal-platform's `okb` stores its images compressed
         // under gzip, and refuses what it cannot write.
         const bool listsProvided = std::ranges::any_of(formatList, [](std::string const& f) {
             return f != "tar" && f != "zip" && f != "dir" && f != "single-file" && f != "polyglot"; });

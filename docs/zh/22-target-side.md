@@ -297,7 +297,7 @@ requires = [{ layer = "mcpp:c++-abi=libstdc++", visibility = "private" }]
 `mcpp = ">= 2026.10.26.1"`）。
 
 选择器可以引用层，此时需求在该层解析为所写的实现时成立。它在层解析之后、任何编译开始之前检查
-（mcpp 2026.11.2.3；更早的引擎不检查）：
+（mcpp 2026.11.3.1；更早的引擎不检查）：
 
 ```toml
 # PE 上 clang 的编译器运行库来自依赖图（openkal-musl）

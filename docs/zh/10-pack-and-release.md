@@ -742,7 +742,7 @@ Cygwin 的 shell 交给 `bin/<name>.exe`，以该目录中的映像与自身的�
 
 **容器列表。** `--pkg-format tar,okb`（或 `[pack] format = ["tar", "okb"]`）构建一次、暂存一棵树，按命名的顺序
 从它写出各容器。列表只含同一棵树的容器 —— `tar`、`zip` 与提供者的格式 —— 不含 `dir` 与 `single-file`；列表要求
-`-o` 为目录；`--compress` 作用于其中的引擎容器，并以 `MCPP_PACK_COMPRESS` 传给提供者的格式（2026.11.2.3）：openkal-platform 的 `okb`
+`-o` 为目录；`--compress` 作用于其中的引擎容器，并以 `MCPP_PACK_COMPRESS` 传给提供者的格式（2026.11.3.1）：openkal-platform 的 `okb`
 在 `gzip` 下压缩存放其映像——磁盘上小的 okb，okrun 首次运行时展开到缓存——其余情况原样存放。okb 只含映像，因此格式只有 okb 的 self-contained 树被拒绝
 （`--pkg-format tar,okb`）。`mcpp run --pkg-format` 只接受一个格式。
 

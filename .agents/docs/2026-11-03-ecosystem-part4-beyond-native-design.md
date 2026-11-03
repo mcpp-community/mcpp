@@ -543,7 +543,7 @@ CI 增加触页训练：以 `OKRUN_PROF=touch` 运行 warm-prime 的冷阶段（
 | mcpplibs.os | 0.2.8 | 新 PR |
 | mcppls-clangd | 0.0.20 | #16 |
 | mcppls | 0.0.20 | #75 |
-| mcpp | 2026.11.2.3 | #884 |
+| mcpp | 2026.11.3.1 | #884 |
 
 依赖顺序与 part 3 的版本组级联相同：openkal 与实现 → 索引 → image → musl → llvm-runtime → platform → os → 引擎 → mcppls →
 mcpp-ide → mcpp。openkal 的改动在 CI 通过后做多角度的规范评审（规范、ABI、设计意图、架构）。
@@ -702,7 +702,7 @@ GCS 还需要系统为程序启用该栈，映像没有这一环节。返回地�
    `assembly.h`，`lse.S` 再以 `"assembly.h"` 查找，包含路径给出 libunwind 的同名头文件，它把 `GNU_PROPERTY` 重定义为数字；
    有分支保护时 compiler-rt 写出的属性 note 无法汇编。各文件在包含 `lse.S` 前声明 libunwind 头文件的守卫；目标文件带有映像
    加载器强制 BTI 前所读的 `aarch64 feature: BTI, PAC`。
-2. **std 模块的编译选项（mcpp 2026.11.2.3）**：平台的 `[platform.build]` 选项原先到达每个翻译单元而不到达 std 模块；clang 把
+2. **std 模块的编译选项（mcpp 2026.11.3.1）**：平台的 `[platform.build]` 选项原先到达每个翻译单元而不到达 std 模块；clang 把
    `-fcf-protection` 记入 BMI，x86_64 上每个 `import std` 的单元都被拒绝。平台的选项现在进入 std 模块的两条命令与其 BMI 的缓存
    键，无论 std 模块由工具链还是图中的包提供（e2e 1010）。openkal-platform 0.23.0 因此声明 `mcpp >= 2026.11.2.3`，其 CI 在 mcpp
    发布前以发布分支验证（`MCPP_SOURCE_REF`）。
@@ -717,7 +717,7 @@ GCS 还需要系统为程序启用该栈，映像没有这一环节。返回地�
 | openkal-musl / openkal-llvm-runtime / openkal-platform | 0.27.1 / 0.18.2 / 0.23.1 |
 | mcpplibs.os | 0.2.8 |
 | mcppls-clangd / mcppls | 0.0.20 / 0.0.20 |
-| mcpp | 2026.11.2.3 |
+| mcpp | 2026.11.3.1 |
 
 ## 19. 发布版本组的更正（2026-11-03）
 
@@ -740,7 +740,7 @@ hosted 行为。运行时包的分支图验收以工作树代入依赖，也没�
 | openkal-llvm-runtime | 0.18.3 | 固定 openkal-musl 0.27.2 |
 | openkal-platform | 0.23.2 | 固定上述两个修正版本，其余实现与 openkal-image 版本不变 |
 
-尚未发布的 os 0.2.8、mcpp 2026.11.2.3 和三个消费者随之固定平台 0.23.2。公开版本组的
+尚未发布的 os 0.2.8、mcpp 2026.11.3.1 和三个消费者随之固定平台 0.23.2。公开版本组的
 交付仍以 os 消费索引包的映像矩阵、平台验收和 mcpp 的完整 CI 为门禁。
 
 局部回归已验证：在 openkal-musl 0.27.2 候选的 `examples/image-early-constructor` 中执行

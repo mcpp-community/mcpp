@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # requires: llvm unix-shell
 # 1010 -- the std module is compiled with the compile words the platform states
-# for every unit (SPEC-013 §2.5; 2026.11.2.3).
+# for every unit (SPEC-013 §2.5; 2026.11.3.1).
 #
 # openkal-platform 0.23.0 compiles every unit on x86_64 with
 # `-fcf-protection=full`, which clang records in a BMI and checks when a unit

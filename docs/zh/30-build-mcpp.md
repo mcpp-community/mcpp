@@ -1158,7 +1158,7 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来，缓存
 | `MCPP_PACK_STAGE_DIR` *(2026.9.11.1+)* | `mcpp::pack_stage_dir()` | `mcpp pack` 已经把闭包暂存到的位置，绝对路径；本次构建不在打包时为空。读它来判断这次要干的活是什么形状，而把 `${mcpp.stage_dir}` 写进 action —— 这样图里的路径与程序读到的路径不可能不一致 |
 | `MCPP_PACK_STRIP` *(2026.9.16.1+)* | `mcpp::pack_strip()` | 本程序所处的这次 `mcpp pack` 剥离时为 `1`，`--no-strip` 下为 `0`；任何普通构建下都为空。自己暂存库的成员跟随它，于是一个开关管住包里的每个文件 |
 | `MCPP_PACK_DEBUG_SYMBOLS_DIR` *(2026.9.16.1+)* | `mcpp::pack_debug_symbols_dir()` | `--debug-symbols` 放置分离出的 `*.debug` 文件的位置，绝对路径；丢弃调试信息或本次构建不在打包时为空 |
-| `MCPP_PACK_COMPRESS` *(2026.11.2.3+)* | `mcpp::pack_compress()` | 命令（`--compress`）或 `[pack] compress` 陈述的压缩，拼写同该选项（`gzip`、`zstd:19`、`none`）；两者都未陈述或本次构建不在打包时为空。包提供的格式自行决定其容器如何处理它：openkal-platform 的 `okb` 在 `gzip` 下压缩存放其映像 |
+| `MCPP_PACK_COMPRESS` *(2026.11.3.1+)* | `mcpp::pack_compress()` | 命令（`--compress`）或 `[pack] compress` 陈述的压缩，拼写同该选项（`gzip`、`zstd:19`、`none`）；两者都未陈述或本次构建不在打包时为空。包提供的格式自行决定其容器如何处理它：openkal-platform 的 `okb` 在 `gzip` 下压缩存放其映像 |
 | `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | 本包有效 `sources` 匹配到的设备类源文件（`.cu`、`.hip`…），相对包根，一行一个；没有时为空串。引擎一个都不编译 —— 由本程序引入的规则包把每一个变成一条 `mcpp::action`。已经过收窄：构建未覆盖的 `{ glob, accel }` 条目贡献为空，因此 `--no-accel` 得到空列表 |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | mcpp 提供的可写输出目录，按配置（目标、profile、工具链、加速器、该包的 features）与包各一个，位于构建的根之下：`target/.build-mcpp/out/<配置>/<包>`（2026.10.10.1+）。构建之外的脚本从 `resolution.json` 的 `graph.packages[].outDir` 读取它 |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | 包根（= CWD） |

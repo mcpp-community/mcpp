@@ -871,7 +871,7 @@ input's.
 order named. A list holds the containers of one tree — `tar`, `zip` and a
 provider's format — never `dir` or `single-file`; it takes a directory for `-o`;
 `--compress` applies to its engine containers and reaches a provider's format as
-`MCPP_PACK_COMPRESS` (2026.11.2.3): openkal-platform's `okb` stores its images
+`MCPP_PACK_COMPRESS` (2026.11.3.1): openkal-platform's `okb` stores its images
 compressed under `gzip` --- an okb kept small on disk, which okrun expands into
 its cache when it first runs it --- and as they are otherwise. okb holds the images alone, so a
 self-contained tree whose only format is okb is refused (`--pkg-format

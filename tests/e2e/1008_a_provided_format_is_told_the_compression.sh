@@ -2,7 +2,7 @@
 # requires: pack
 # 1008 -- a format a package provides is told the compression the command or
 # `[pack] compress` stated (MCPP_PACK_COMPRESS, `mcpp::pack_compress()`), and
-# decides what its container does with it (2026.11.2.3).
+# decides what its container does with it (2026.11.3.1).
 #
 # `--compress` was refused with every provided format ("writes none"), so a
 # provider whose container can be compressed --- openkal-platform's okb, which

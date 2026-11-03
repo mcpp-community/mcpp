@@ -4,7 +4,7 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
-## [2026.11.2.3] - 2026-11-02
+## [2026.11.3.1] - 2026-11-03
 
 The built-in openkal platform is 0.23.1 (openkal 0.23: an image at a base of
 each boot, a snapshot of its initialisers, hardening); a format a package
@@ -51,6 +51,16 @@ design 2026-11-03 part 4.
 
 ### Fixed
 
+- **An object-only package builds all its objects alongside cache fills.**
+  Explicit Ninja defaults for dependency cache fills previously omitted the
+  package's own terminal compile edges when it had no link target. The musl
+  producer build selected 69 dependency and embedded objects while omitting
+  its 1,332 own C objects. All compile objects are now default goals for a
+  package without link targets.
+- **Runner cache collection selects valid versions and preserves native paths.**
+  Malformed or overflowing runner versions are ignored. Cache paths and the
+  selected runner's executable path retain their native representation, so
+  Windows names outside the active ANSI code page do not abort collection.
 - **The std module is compiled with the platform's compile words** (docs/35,
   SPEC-013 §2.5): `[platform.build]` and its `cfg` tables reach the std
   module's two commands and the key its BMI is kept under, as they reach every

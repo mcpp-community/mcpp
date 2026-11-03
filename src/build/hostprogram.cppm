@@ -760,7 +760,7 @@ inline const char* pack_debug_symbols_dir()       { return env_or("MCPP_PACK_DEB
 
 // THE COMPRESSION THIS PACKAGING PASS STATED, as `--compress` spells it
 // (`gzip`, `zstd:19`, `none`); "" when the command and `[pack] compress` state
-// none, or this build is not packing (2026.11.2.3). A package format a package
+// none, or this build is not packing (2026.11.3.1). A package format a package
 // provides decides what its container does with it.
 inline const char* pack_compress()                { return env_or("MCPP_PACK_COMPRESS"); }
 
