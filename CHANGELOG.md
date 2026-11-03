@@ -22,8 +22,7 @@ design 2026-11-03 part 4.
   An image is sealed at a base (`okld place`), and the runner moves it to a
   base chosen once each boot, its data kept as a prepared copy; the first start
   of a boot has a snapshot of the image's initialisers made, which later starts
-  map instead of running them (clangd `--version`: 311 page faults against
-  442, 15 % less processor time). What a start spends follows the program's
+  map instead of running them. What a start spends follows the program's
   resource preference. An image is built with frame pointers, a global stack
   guard, zeroed locals, libc++'s fast hardening, CET or PAC/BTI marks and a
   build-id; okprof is among the platform's tools. The Windows launcher `mcpp
