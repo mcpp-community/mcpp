@@ -711,14 +711,18 @@ GCS 还需要系统为程序启用该栈，映像没有这一环节。返回地�
 
 ### 18.7 交付（实际版本）
 
+表中列出本轮各源码包的版本。公开依赖组的验证记录见 §19、§20；编译器与编辑器的
+完整交付还需其各自的发布验收。
+
 | 仓库 | 版本 |
 | --- | --- |
 | openkal | 0.23.0 |
-| openkal-linux / -macos / -windows / -emscripten | 0.24.0 / 0.21.3 / 0.19.0 / 0.12.0 |
-| openkal-image（ld、run、tools、bind） | 0.4.2（0.4.0 之后两次以新的 openkal-macos 重建） |
-| openkal-musl / openkal-llvm-runtime / openkal-platform | 0.27.2 / 0.18.3 / 0.23.2 |
-| mcpplibs.os | 0.2.8 |
+| openkal-linux / -macos / -windows / -emscripten | 0.24.1 / 0.21.3 / 0.19.0 / 0.12.0 |
+| openkal-image（ld、run、tools、bind） | 0.4.3（Linux 只读隔离修正，见 §20） |
+| openkal-musl / openkal-llvm-runtime / openkal-platform | 0.27.3 / 0.18.4 / 0.23.3 |
+| mcpplibs.os | 0.2.9 |
 | mcppls-clangd / mcppls | 0.0.20 / 0.0.20 |
+| mcpp-ide | 0.2.0 |
 | mcpp | 2026.11.3.1 |
 
 ## 19. 发布版本组的更正（2026-11-03）
@@ -758,3 +762,60 @@ Ninja `default` 后，Ninja 不再自动选择其余终端边；本包的 C 编�
 对象列入默认目标；存在链接单元时仍只额外列入缓存填充目标。相同工作树随后生成了
 本包的 1,332 个 C 对象，总数 1,401，原 CI 的符号检查通过：可选接口保持弱引用，
 `kal_time_sleep` 保持未定义强引用。该检查未修改，也未将依赖包的对象计作本包对象。
+
+
+## 20. Linux 只读隔离的修正（2026-11-03）
+
+全局审查发现，Landlock ABI 1、2 不能约束文件截断；只处理 `WRITE_FILE` 不能维持只读
+授予的承诺。`TRUNCATE` 从 ABI 3 起才可处理，见
+[内核 Landlock 文档](https://docs.kernel.org/userspace-api/landlock.html#truncating-files)。
+隔离的可用性必须以这一能力为前提，不能仅以 Landlock 是否存在作答。
+
+受控探针在实际 ABI 4 的内核上分别安装旧的 ABI 1 权限掩码和包含 `TRUNCATE` 的 ABI 3
+掩码，操作探针自己创建的 10 字节文件。前者允许 `truncate`，文件变为 0 字节；后者以
+`EACCES` 拒绝，仍为 10 字节。这是旧权限掩码的复现，不是旧内核启动测试，也不是当前
+ABI 4 完整策略被绕过的证据。
+
+openkal-linux 0.24.1 统一以 ABI 3 作为属性声明、子进程隔离和本进程隔离的门槛；较早
+ABI 对隔离请求返回不支持。ABI 查询缓存改为原子读写，并发首次查询可重复取得稳定的
+内核能力而不竞争普通静态变量。现有行为测试加入原始 `truncate` 与 `O_RDONLY | O_TRUNC`
+的拒绝断言，并验证原文件长度不变。[PR #49](https://github.com/mcpplibs/openkal-linux/pull/49)
+的 GCC 16 与 LLVM 22 完整验收均通过。ThreadSanitizer 探针未能在本机启动，因此这里
+不把静态审查发现的竞争写作经 ThreadSanitizer 证实的报告。
+
+原生运行器静态链接系统实现，单独前移 musl 不能修正已经发布的 okrun。因此继续以新版本
+传播修正，既有标签、归档和摘要保持不变：
+
+| 包 | 修正版本 | 依赖关系 |
+| --- | --- | --- |
+| openkal-linux | 0.24.1 | 只读隔离要求 ABI 3；ABI 缓存使用原子访问 |
+| openkal-image（ld、run、tools、bind） | 0.4.3 | 原生 Linux 运行器使用 Linux 0.24.1 |
+| openkal-musl | 0.27.3 | Linux 0.24.1；映像加载器 0.4.3 |
+| openkal-llvm-runtime | 0.18.4 | 两种分配器安排均使用 musl 0.27.3 |
+| openkal-platform | 0.23.3 | hosted 与映像层、工具和版本表固定同一组 |
+| mcpplibs.os | 0.2.9 | Linux 0.24.1；平台验收使用 0.23.3 |
+
+Linux、image 源码、musl 和 C++ 运行时的生产者 CI 已通过；image 在四个宿主上执行同一
+映像，musl 的原有符号门禁检查 1,332 个本包对象并通过，运行时的十项检查均通过。
+平台 0.23.3 已发布、镜像并进入公开索引；GitHub 与 GitCode 的索引归档摘要一致。
+
+os 0.2.9 的[完整二十项检查](https://github.com/mcpplibs/os/actions/runs/41634299142)
+全部通过，覆盖原生、hosted、Emscripten 和四个宿主运行相同映像。其依赖由公开索引
+解析，不以生产者工作树代入。hosted macOS 的只读授予与可写授予两条正向断言均实际执行
+并通过，七个测试程序全部通过，没有使用“不支持授予”的跳过分支。os 0.2.9 已发布、
+镜像并进入公开索引（[PR #698](https://github.com/mcpplibs/mcpp-index/pull/698)）；GitHub
+与 GitCode 的索引归档均通过摘要核对。编译器的最终公开组打包回归在此之后执行。
+
+工具 0.4.3 的[四个平台二进制发布检查](https://github.com/mcpplibs/openkal-image/actions/runs/41634324479)
+全部通过；十二个程序归档与一个调试脚本归档已下载并计算摘要，十二个程序包的版本与
+可执行入口已核对。三个工具仓库中的十五份 GitCode 副本均与 GitHub 下载字节一致。
+普通安装索引的前移仍需其独立 CI 与发布。
+
+平台的[第一轮四宿主 CI](https://github.com/mcpplibs/openkal-platform/actions/runs/41632882783)
+全部通过；其中的候选 mcpp 仍内置平台 0.23.2。mcpp 的默认平台前移到 0.23.3、Windows
+launcher 固定 os 0.2.9 后，平台 CI 还须完整重跑。mcpp 的本地新二进制报告 2026.11.3.1，
+两个内置目标固定平台 0.23.3；全新工程不写平台覆盖即可构建并运行 `import std` 映像，
+根包与 toolchain-model 共 164 个测试程序通过、0 失败。公开版本组上的 E2E 942、951
+完整通过，覆盖两种架构的映像、std、拒绝路径、self-contained、single-file、okb 与
+工作区。编译器完整 CI、发布、编辑器交付及最终资源实测尚未全部完成；这里不以生产者
+或本地结果替代这些门禁。

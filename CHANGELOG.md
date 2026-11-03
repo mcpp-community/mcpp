@@ -6,7 +6,7 @@
 
 ## [2026.11.3.1] - 2026-11-03
 
-The built-in openkal platform is 0.23.2 (openkal 0.23: an image at a base of
+The built-in openkal platform is 0.23.3 (openkal 0.23: an image at a base of
 each boot, a snapshot of its initialisers, hardening); a format a package
 provides is told the compression stated; `mcpp cache gc` reclaims the runner's
 cache; a download source that sends nothing is left for the next one; a
@@ -15,18 +15,18 @@ design 2026-11-03 part 4.
 
 ### Changed
 
-- **The built-in `<arch>-openkal` platform is `mcpplibs.openkal-platform@0.23.2`**
+- **The built-in `<arch>-openkal` platform is `mcpplibs.openkal-platform@0.23.3`**
   (docs/35; design 2026-11-03 part 4), the version group of openkal 0.23:
-  openkal-image 0.4.2, openkal-musl 0.27.2, openkal-llvm-runtime 0.18.3,
-  openkal-macos 0.21.3.
+  openkal-image 0.4.3, openkal-musl 0.27.3, openkal-llvm-runtime 0.18.4,
+  openkal-linux 0.24.1 and openkal-macos 0.21.3.
   An image is sealed at a base (`okld place`), and the runner moves it to a
-  base chosen once each boot, its data kept as a prepared copy; the first start
-  of a boot has a snapshot of the image's initialisers made, which later starts
-  map instead of running them. What a start spends follows the program's
-  resource preference. An image is built with frame pointers, a global stack
+  base chosen once each boot, its data kept as a prepared copy. The runner
+  can start a background process to snapshot eligible initialisers; later
+  starts can map the completed snapshot. What a start spends follows the
+  program's resource preference. An image is built with frame pointers, a global stack
   guard, zeroed locals, libc++'s fast hardening, CET or PAC/BTI marks and a
   build-id; okprof is among the platform's tools. The Windows launcher `mcpp
-  pack` writes for an openkal set is built over mcpplibs.os 0.2.8. Against
+  pack` writes for an openkal set is built over mcpplibs.os 0.2.9. Against
   2026.11.2.2's 0.21.0, the runner also admits an okb member it has compared
   before by its shape alone (openkal-image 0.3.1): 0.3.0 computed the
   member's CRC-32 at every start, 0.1 s of processor time for a 71 MB image.
@@ -50,6 +50,11 @@ design 2026-11-03 part 4.
 
 ### Fixed
 
+- **The platform group carries the corrected Linux read-only confinement.**
+  Linux 0.24.1 requires Landlock ABI 3 before reporting confinement support;
+  earlier ABIs do not constrain file truncation within a read-only grant.
+  Its ABI probe cache uses atomic accesses. Image 0.4.3 builds the native
+  runner with the same corrected backend.
 - **An object-only package builds all its objects alongside cache fills.**
   Explicit Ninja defaults for dependency cache fills previously omitted the
   package's own terminal compile edges when it had no link target. The musl
