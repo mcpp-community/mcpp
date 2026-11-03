@@ -50,6 +50,16 @@ design 2026-11-03 part 4.
 
 ### Fixed
 
+- **The std module is compiled with the platform's compile words** (docs/35,
+  SPEC-013 §2.5): `[platform.build]` and its `cfg` tables reach the std
+  module's two commands and the key its BMI is kept under, as they reach every
+  other unit of the target, whichever library supplies the module.
+  openkal-platform 0.23.0 compiles every unit on x86_64 with
+  `-fcf-protection=full`, which clang records in a BMI, and a std module built
+  without it was refused by every importer ("Control-Flow Branch Protection
+  enabled was disabled in precompiled file"); its `-D_LIBCPP_HARDENING_MODE`
+  is the library's own code inside the module. e2e 1010 states the flag in a
+  platform of this machine's triple and imports std.
 - **A requirement a layer decides is checked** (docs/22, docs/specs/target-side.md
   §2.2). `[target.'cfg(all(windows, compiler = "llvm"))'] requires =
   ["mcpp:compiler-runtime=compiler-rt"]` names a layer in its selector, and

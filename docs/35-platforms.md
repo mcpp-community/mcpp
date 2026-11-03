@@ -68,7 +68,7 @@ for this machine and one for an ok image leave each other's entries in place.
 | the targets | `targets`, `toolchain`, `sysroot` | which triples it serves, the toolchain they use, a prebuilt target base |
 | the layers | `[platform.layers]` | the package for `c-abi`, `c++-abi`, `compiler-runtime`, `kernel-abi`, or `false` |
 | the tools | `[platform.tools]` | programs built for this machine, or found (`{ program = "<name>" }`) |
-| the compile | `[platform.build]`, `[platform.build.'cfg(…)']` | flags for every unit of the target |
+| the compile | `[platform.build]`, `[platform.build.'cfg(…)']` | flags for every unit of the target, the std module included (2026.11.2.3) |
 | the link | `[platform.link]` | `driver`, `flags`, `start`, `script`, `inputs`, the names `exe` and `shared`, the `seal` steps |
 | the run | `runner`, `runners` | how `mcpp run` and `mcpp test` start an artifact, and named device actions |
 | the carrier | `carrier` | the program `mcpp pack` builds of a loaded artifact for a system: a self-contained tree's runner, a single file; a table or a list of tables, each serving the `<os>-<arch>` pairs of its `hosts` |

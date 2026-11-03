@@ -11,6 +11,7 @@ import mcpp.targetside;
 import mcpp.diag;
 import mcpp.build.refusal;
 import mcpp.build.version_floor;
+import mcpp.build.command_line;
 import mcpp.home;
 import mcpp.toolchain.platform;
 import mcpp.libs.json;
@@ -2504,6 +2505,19 @@ static std::expected<void, std::string> step9_rerun_input_prepare_dir(PrepareSta
              mcpp::manifest::dialect_flags(state.m->buildConfig))) {
         state.stdFlagAndDialect += ' ';
         state.stdFlagAndDialect += f;
+    }
+    // AND THE PLATFORM'S CONVENTIONS (SPEC-013 §2.5), which come before every
+    // unit's own: the std module is a unit of the target side, whichever
+    // library supplies it. A flag of them that clang records in a BMI decides
+    // whether a unit may import it --- openkal-platform 0.23.0's
+    // `-fcf-protection=full` on x86_64, and a std module compiled without it was
+    // refused by every importer ("Control-Flow Branch Protection enabled was
+    // disabled in precompiled file"); `-D_LIBCPP_HARDENING_MODE` selects the
+    // library's own code inside the module. The words reach both of the
+    // module's commands and the key its BMI is kept under.
+    for (auto const& w : platform_unit_cxxflags(state)) {
+        state.stdFlagAndDialect += ' ';
+        state.stdFlagAndDialect += mcpp::build::command_line::quote(w);
     }
     return {};
 }

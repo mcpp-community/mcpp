@@ -550,13 +550,12 @@ std::vector<std::string> split_words(std::string_view v) {
 
 } // namespace
 
-void step13_platform_statement(PrepareState& state) {
-    auto& P = state.platform;
+// ── The statement every reader uses: platform → build programs → this
+// machine → the project → the environment (§4.5) ──────────────────────────
+mp::Statement platform_statement(const PrepareState& state) {
+    auto const& P = state.platform;
     const auto t = target_of(state);
     const auto cfgCtx = platform_cfg_context(state);
-
-    // ── The statement every reader uses: platform → build programs → this
-    // machine → the project → the environment (§4.5) ──────────────────────
     mp::Statement s = P.active ? state.platformData : mp::Statement{};
     mp::Statement program = state.programPlatform;
     // The root's own program states them as well (applied into its manifest);
@@ -595,8 +594,21 @@ void step13_platform_statement(PrepareState& state) {
             s.runner.set = !s.runner.cmd.empty();
         }
     }
-    P.fields = std::move(s);
-    P.flags = mcpp::platform::evaluate_flags(P.fields, matcher(cfgCtx));
+    return s;
+}
+
+void step13_platform_statement(PrepareState& state) {
+    auto& P = state.platform;
+    P.fields = platform_statement(state);
+    P.flags = mcpp::platform::evaluate_flags(P.fields, matcher(platform_cfg_context(state)));
+}
+
+// A unit's compile words the platform states (`[platform.build]` and its cfg
+// tables), as they stand when they are asked for: the std module is compiled
+// before the statement is final, and is a unit like any other.
+std::vector<std::string> platform_unit_cxxflags(const PrepareState& state) {
+    if (!state.platform.active) return {};
+    return mcpp::platform::evaluate_flags(platform_statement(state), matcher(platform_cfg_context(state))).cxxflags;
 }
 
 std::expected<void, std::string> step13_finish_platform(PrepareState& state, BuildContext& ctx) {
