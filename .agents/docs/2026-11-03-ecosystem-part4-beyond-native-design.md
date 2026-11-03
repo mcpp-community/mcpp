@@ -686,7 +686,13 @@ balanced 在可得内存低于总量 15% 或缓存目录所在设备余量低于
    and is present now`；四个平台的验收各运行一次（`ci/module_inputs_canary.py --absent-names-only`）。
 3. **故障报告**：mcppls 把实现的故障报告（`openkal: fault: ...` 与 `openkal:   #N ...`）作为崩溃上下文保存，不受日志限流。
 
-### 18.6 交付（实际版本）
+### 18.6 平台的编译选项
+
+aarch64 用 `-mbranch-protection=pac-ret+bti`，不用 §9.1 的 `standard`：clang 23 的 `standard` 含受保护的控制栈
+（定义 `__ARM_FEATURE_GCS_DEFAULT`），libunwind 因此按 GCS 展开并包含 C 库的 `<arm_acle.h>`，映像的构建在 aarch64 上失败；
+GCS 还需要系统为程序启用该栈，映像没有这一环节。返回地址签名与 BTI 标记不变。
+
+### 18.7 交付（实际版本）
 
 | 仓库 | 版本 |
 | --- | --- |
