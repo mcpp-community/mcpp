@@ -816,6 +816,5 @@ os 0.2.9 的[完整二十项检查](https://github.com/mcpplibs/os/actions/runs/
 launcher 固定 os 0.2.9 后，平台 CI 还须完整重跑。mcpp 的本地新二进制报告 2026.11.3.1，
 两个内置目标固定平台 0.23.3；全新工程不写平台覆盖即可构建并运行 `import std` 映像，
 根包与 toolchain-model 共 164 个测试程序通过、0 失败。公开版本组上的 E2E 942、951
-完整通过，覆盖两种架构的映像、std、拒绝路径、self-contained、single-file、okb 与
-工作区。编译器完整 CI、发布、编辑器交付及最终资源实测尚未全部完成；这里不以生产者
+完整通过，覆盖两种架构的映像、std、拒绝路径、self-contained、single-file 与工作区。编译器完整 CI、发布、编辑器交付及最终资源实测尚未全部完成；这里不以生产者
 或本地结果替代这些门禁。
