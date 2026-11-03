@@ -26,6 +26,9 @@ openkal-llvm-runtime 0.16.15、openkal-image 0.1.9）。前文：[part 2](2026-1
   不一致。第三轮自我评审 17 条（§15.3），待评审项见 §16.4；四项均采纳（§16.5），本文定稿，按 §12 实施。
 - rev 4：实施中的两项决定（§16.6）与修订（§17）：冷阶段的差距来自装入时复制映像的全部段，openkal 0.21 增加从文件映射指令的
   可选操作；L1 改为报告，门禁在 L2、L3。
+- rev 5：Windows 上的映像以 worker 构建模块时全部失败：worker 的标准输入、输出被重定向到 `/dev/null`，映像的 C 库找不到这个名字。
+  决定（§16.7）：空设备是环境的资源，openkal 0.22 在启动的程序的位置上提供它；`/dev/null` 这个名字与进程内的空设备属于 C 库
+  （openkal-musl 0.27）。版本组见 §17.5。
 
 ## 1. 问题与结论
 
@@ -589,6 +592,17 @@ mcpp 在首次初始化时已把 Ninja 装进自己的 home（`ensure_ninja`，`
    openkal 0.21 增加可选操作 `kal_exec_map_part`，实现提供，加载器从文件映射不可写的段（§17.1）。
 2. L1 在 Linux x64 上 69 行中 hosted 仍有 5 行、映像 16 行超过 1.15（§17.4），多为纳秒级的字符串函数；L2、L3 达标。决定：L1 在
    CI 中照常运行并报告比值，不作门禁；门禁在 L2、L3。
+
+### 16.7 实施中的待决项与决定（2026-11-03）
+
+1. 引擎自 0039 起按实测的能力选择路径，Windows 上的映像因此第一次以 worker 构建模块，每个 worker 的启动都以 `ENOENT` 失败
+   （warm-prime win32 的映像会话全部未就绪；mcppls 的 VS Code、Neovim 与 clean machine 在 Windows 上的模块功能全部失败）。LLVM 的
+   `ExecuteNoWait` 把空路径的重定向写成 `/dev/null`；映像的 C 库按 preopen 解析名字，Windows 的 preopen 是卷，没有 `/`。
+   决定：两层各做自己才能做的事。空设备是每个启动程序的环境都有的资源（Linux、macOS 为 `/dev/null`，Windows 为 `NUL`）；
+   交给启动的程序时需要环境的句柄，C 库只能以调用者持续读空的通道近似它（调用者先结束时写入失败，每个字节经过管道，每个位置
+   占用一个任务，程序看到的是管道），mcpplibs.os 0.2.7 的 `stdio::null` 即是这样近似的。openkal 0.22 以启动的标志
+   `KAL_SPAWN_NULL_IN/OUT/ERR` 在位置上给出空设备；openkal-musl 0.27 把 POSIX 的名字 `/dev/null` 解析为进程内的空描述符，
+   并在 `posix_spawn` 中把它映射为这些标志。openkal 的改动在 CI 通过后另做一轮多角度评审：规范、ABI、设计意图与架构不被破坏。
 
 ## 17. 实现中的修订
 
