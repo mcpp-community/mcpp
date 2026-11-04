@@ -86,3 +86,31 @@ TLS 段，转为 `__emutls_get_address` 与 emulated storage。
 `/tmp/mcpp-885-thinlto-tls-fix/results.json`。它不等于 clangd 完整资格通过。
 该约定属于映像平台的链接/codegen 契约，优先在平台数据中补齐，使其他 LTO
 消费者同样受益；不在通用 mcpp 核心增加 openkal TLS 分支。
+
+## 5. 实现检查点（2026-11-05）：请求、消费上下文及平台
+
+I1 已在同一核心 PR #888 提交。新二进制通过 23 项 accelerator 单测和 E2E 1011。
+I3 第一批实现将 provider/requirement/exclusive 的身份改为包索引，按所选消费包的
+普通依赖闭包验证；宿主构建边不进入目标上下文。库 requirement 在最终消费者内
+绑定，应用可以通过兄弟依赖供给。工作空间根 pin、成员 pin、CLI pin 依次覆盖，
+短名只有唯一匹配时可用，同短名跨 namespace 可以使用完整 `namespace:name`。
+绑定仍只验证，普通依赖继续决定编译和链接输入，没有借 pin 删除其他实现。
+
+新二进制的 E2E 1012 通过独立 exclusive、应用供给、缺失供给、同程序互斥、成员
+与 CLI pin、跨 namespace 同短名和完整身份控制。原 E2E 81、601 同样通过。
+共享库、测试与宿主工具的进一步控制以及完整核心 CI 仍待完成，不据此宣布 I3
+全部验收。I4/I5 的可选进度尚未实现。
+
+插件实际实现复用 #52（提交 `8d4b150`），保留原 CMake cross contract。46 项
+plugin-logic、真实 musl CMake cross build/run、真实 SYCL 旧写法、独占 NVIDIA、
+双 NVIDIA 与 SPIR-V/NVIDIA 混合构建通过。规则设备链接命令的中间产物已核验
+双 NVIDIA fatbin 与混合 SPIR-V/NVIDIA 镜像。当前驱动返回 CUDA 803，GPU 执行
+未获资格。多目标静态归档的 SDK 流程仍待定位。
+
+平台修复 PR #19 的四种宿主完整 CI `41922140543` 全部通过，已发布 0.23.6。
+GitHub/GitCode 源码一致，SHA256 为
+`51903d50b436e81047b74b460ea1e7e23be25704ab601438b160b9370a7017c2`。
+索引 PR #709 的候选与消费者检查通过并合入，发布任务已触发。引擎 PR #16 的
+平台选择已更新到该版本，须待公开索引可安装后重跑完整资格。原性能、seal 和
+补丁台账门槛保留。服务器 PR #75 第三次尝试的独立 macOS job 已通过，目前失败
+只剩严格引擎候选门槛，服务器最终发布仍等待合格引擎。
