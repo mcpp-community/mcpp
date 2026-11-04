@@ -33,6 +33,8 @@ module;
 export module mcpp.build.progress;
 
 import std;
+import mcpp.run;
+import mcpp.build.action_progress;
 import mcpp.ui;
 import mcpp.ui.dots_screen;
 import mcpp.log;
@@ -693,10 +695,13 @@ struct Running {
     std::string label;
     std::string stamp;
     long long   since = 0;   // ms since command start
+    std::optional<action_progress::Snapshot> snapshot;
 };
 
 struct Build::Impl {
     std::filesystem::path dir;
+    std::filesystem::path progressDir;
+    int progressCleanup = -1;
     std::vector<PackageInfo> declared;
     std::optional<Record> record;
     bool recordTried = false;
@@ -1025,6 +1030,18 @@ void read_starts(Report& r, Build::Impl& b, std::vector<std::string>& out) {
     }
 }
 
+// Read only active graph actions. Snapshot counts never complete an action;
+// the ninja log removes it from running only after the command has finished.
+void read_action_progress(Build::Impl& build) {
+    if (build.progressDir.empty()) return;
+    for (auto& action : build.running) {
+        auto snapshot = action_progress::read(
+            action_progress::channel(build.progressDir, action.stamp));
+        if (snapshot && (!action.snapshot || snapshot->seq > action.snapshot->seq))
+            action.snapshot = std::move(snapshot);
+    }
+}
+
 // The builds whose Build object is alive: the frame, the poll and the status
 // line read these. `Finished` reads every build of the command.
 std::vector<std::shared_ptr<Build::Impl>> live_builds(Report& r) {
@@ -1062,6 +1079,7 @@ std::string phase_status(Report& r, std::string_view cells) {
                 oldest  = a.since;
                 current = std::format("{}: {} {}", b->record->packages[a.package].subject, a.label,
                                       mcpp::ui::format_clock(ms(now_ms() - a.since)));
+                if (a.snapshot) current += " · " + action_progress::describe(*a.snapshot);
             }
     }
     std::string counts;
@@ -1170,6 +1188,7 @@ void poll() {
         for (auto const& b : live_builds(r)) {
             read_starts(r, *b, out);
             read_log(r, *b, out);
+            read_action_progress(*b);
         }
     }
     write_lines(out);
@@ -1480,6 +1499,14 @@ void finished(std::string_view profile, std::string_view descriptor) {
 
 Build::Build(const std::filesystem::path& dir) : impl_(std::make_shared<Impl>()) {
     impl_->dir = dir;
+    impl_->progressDir = action_progress::make_directory(dir);
+    if (!impl_->progressDir.empty()) {
+        const auto path = impl_->progressDir;
+        impl_->progressCleanup = mcpp::run::add_cleanup([path] {
+            std::error_code ec;
+            std::filesystem::remove_all(path, ec);
+        });
+    }
     auto& r = report();
     std::lock_guard lock(r.m);
     r.builds.push_back(impl_);
@@ -1491,6 +1518,9 @@ Build::~Build() {
     auto& r = report();
     std::lock_guard lock(r.m);
     impl_->closed = true;
+    if (impl_->progressCleanup >= 0) mcpp::run::remove_cleanup(impl_->progressCleanup);
+    std::error_code ec;
+    if (!impl_->progressDir.empty()) std::filesystem::remove_all(impl_->progressDir, ec);
 }
 
 void Build::declare(std::vector<PackageInfo> packages) {
@@ -1521,7 +1551,9 @@ std::vector<std::pair<std::string, std::string>> Build::environment() const {
     // nested ninja's (see kStatusFormat).
     return {{"NINJA_STATUS", std::string(kStatusFormat)},
             {"CLICOLOR_FORCE", "0"},
-            {std::string(kStartsEnv), (impl_->dir / kStartsFile).string()}};
+            {std::string(kStartsEnv), (impl_->dir / kStartsFile).string()},
+            {std::string(action_progress::kRootEnv), impl_->progressDir.string()},
+            {std::string(action_progress::kFileEnv), ""}};
 }
 
 void Build::pass_begin(PassKind kind) {

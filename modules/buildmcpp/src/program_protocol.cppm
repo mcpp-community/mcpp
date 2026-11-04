@@ -126,7 +126,9 @@ export namespace mcpp::build::program_protocol {
 // `link-input`, `artifact-name`, `seal`, `run-host` -- and `mcpp::phase()`
 // answering "platform" for a platform's plugin. No directive of v16 changes
 // spelling.
-inline constexpr int kProtocolVersion = 17;
+// v18: optional action.progress; runtime snapshots carry no graph inputs.
+// Old action payloads default to progress=false.
+inline constexpr int kProtocolVersion = 18;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //

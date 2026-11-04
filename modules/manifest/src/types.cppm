@@ -709,6 +709,7 @@ struct BuildAction {
     std::vector<std::string>           imports;
     // Check only: make compilation wait for this to pass. Off by default.
     bool                               blocking = false;
+    bool                               progress = false; // optional runtime telemetry
     // Prepare only: the directory the command populates (mcpp#702). Absolute
     // once `prepare_actions` has run, exactly as `outputs`/`depfile` are.
     // Empty for every other role. The post-condition it carries -- the

@@ -93,7 +93,7 @@ SDK，或者区分 `linux`/`windows`/`macos`。那些是 C 环境层或平台层
 
 ```toml
 [target.'cfg(any(linux, macos, windows))']
-platform = "openkal-platform@0.23.3"
+platform = "openkal-platform@0.23.6"
 ```
 
 一张表（2026.10.27.1+）。它为宿主三元组选择 openkal 平台，平台的宿主部分命名编译器与目标侧三个层的包；
@@ -360,6 +360,8 @@ mcpp run   --target x86_64-openkal      # okrun bin/app.oke
 
 无需其他声明（2026.10.27.1+）：目标表为两行选择 `openkal-platform`，由平台陈述工具链、各层、工具、下表的约定
 与 runner（[35](35-platforms.md)）。
+
+mcpp 2026.11.5.1 的两个内置 openkal 目标默认选择平台 0.23.6。显式 `platform` 配置可覆盖默认选择；该平台的最终 ThinLTO 链接保持 emulated TLS 约定。
 
 | | 平台的陈述 | 原因 |
 |---|---|---|

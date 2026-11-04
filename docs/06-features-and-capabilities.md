@@ -190,6 +190,10 @@ resolver binds exactly one provider from the dependency graph. This is how a bui
 one of several interchangeable backends (OpenBLAS / MKL / …) without baking a choice
 into the library.
 
+
+From 2026.11.5.1, requirements bind within each selected consumer's ordinary dependency closure. A library can require a capability supplied by a sibling dependency of its application. Independent workspace products can use different providers; a provider belonging only to another product cannot satisfy a missing requirement. Build-time tool edges are excluded from the target context. Workspace root pins, member pins and `--cap` apply in that order. A short provider name is accepted only when it identifies one candidate; `namespace:name` distinguishes equal short names. Exclusive providers are checked within that same consumer closure, including linked shared libraries. A pin does not remove another provider from the link.
+
+
 ```toml
 # A provider package satisfies a capability for any dependent that requires it.
 [package]
@@ -307,19 +311,12 @@ provides  = ["gpu-blas"]
 exclusive = ["gpu-blas"]
 ```
 
-Two packages that both provide `gpu-blas`, where at least one declares it
+Two packages in one consumer closure that both provide `gpu-blas`, where at least one declares it
 exclusive, are refused when capabilities are bound — before anything is
 compiled, naming the capability and both providers:
 
 ```
-error: capability 'gpu-blas' is provided by more than one package, and they
-       declare it EXCLUSIVE.
-         providers: [compat.cublas, compat.rocblas]
-         exclusive: [compat.cublas, compat.rocblas]
-       Two implementations of one interface define the same symbols, so the
-       link would resolve every call to whichever archive it reached first.
-       Keep one of them — a `[capabilities]` pin selects a provider for a
-       REQUIREMENT and cannot make two definitions of one symbol safe.
+error: capability 'gpu-blas' is EXCLUSIVE in consumer 'app'; providers: [compat.cublas, compat.rocblas]; exclusive: [compat.cublas, compat.rocblas]. A [capabilities] pin selects a provider for a requirement and cannot make two definitions of one symbol safe.
 ```
 
 The refusal reports `exclusive-capability` in `--format json` (chapter 11).

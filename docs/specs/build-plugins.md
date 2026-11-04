@@ -4,10 +4,10 @@
 |---|---|
 | 规范编号 | SPEC-007 |
 | 标题 | 构建插件:配置、施工与校验的分工,运行时与规划期的义务 |
-| 状态 | 草案 v0.9 |
-| 版本 | 0.11 |
-| 最后修改 | 2026-10-28 |
-| 对应实现 | 逐条标注。未注明版本的「已实现」条款对应 mcpp >= 2026.9.26.1;注明 mcpp#702 的条款对应 mcpp >= 2026.9.26.2;注明 mcpp#707、#708、#709、#711 的条款对应 mcpp >= 2026.9.27.1;注明 mcpp#723 的条款对应 mcpp >= 2026.9.28.1;注明 mcpp 2026.9.28.2 的条款对应该版本;§9 与注明 mcpp#734 的条款对应 mcpp >= 2026.9.28.3;注明 mcpp#778 的条款对应 mcpp >= 2026.10.10.1;§10 对应 mcpp >= 2026.10.11.1;R9.10 与协议 17 对应 mcpp >= 2026.10.27.1 |
+| 状态 | 草案 v0.12 |
+| 版本 | 0.12 |
+| 最后修改 | 2026-11-05 |
+| 对应实现 | 逐条标注。未注明版本的「已实现」条款对应 mcpp >= 2026.9.26.1;注明 mcpp#702 的条款对应 mcpp >= 2026.9.26.2;注明 mcpp#707、#708、#709、#711 的条款对应 mcpp >= 2026.9.27.1;注明 mcpp#723 的条款对应 mcpp >= 2026.9.28.1;注明 mcpp 2026.9.28.2 的条款对应该版本;§9 与注明 mcpp#734 的条款对应 mcpp >= 2026.9.28.3;注明 mcpp#778 的条款对应 mcpp >= 2026.10.10.1;§10 对应 mcpp >= 2026.10.11.1;R9.10 与协议 17 对应 mcpp >= 2026.10.27.1;§3.1 与协议 18 对应 mcpp >= 2026.11.5.1 |
 | 相关设计文档 | `.agents/docs/2026-09-26-compile-database-and-issue-699-design.md`(§5)、`.agents/docs/2026-09-28-ecosystem-design-and-optimisation-plan.md`(WS1、WS3)、`.agents/docs/2026-09-28-build-cost-foreign-toolsets-and-library-surface-design.md`(§3、§4)、`.agents/docs/2026-10-10-one-source-one-meaning-design.md`(§4)、`.agents/docs/2026-10-11-build-dependencies-one-pipeline-design.md` |
 | 相关 issue | mcpp#699、mcpp#701、mcpp#702、mcpp#703、mcpp#707、mcpp#708、mcpp#709、mcpp#711、mcpp#734、mcpp#755、mcpp#778、mcpp#797 |
 | 使用文档 | [docs/30 - build.mcpp](../30-build-mcpp.md)、[docs/31 - 编写规则包](../31-authoring-a-rule-package.md) |
@@ -145,6 +145,16 @@
   `graph.packages[].outDir` 取得它,**禁止**拼写其路径。构建程序的二进制与缓存不按配置分开。
   `${mcpp.out_dir}`(构建目录)不变。(**已实现**,mcpp#778)
 
+### 3.1 可选 action 进度（协议 18）
+
+以下条款对应 mcpp 2026.11.5.1+。
+
+- **R3.11** `action.progress` 是默认 `false` 的布尔字段，适用于五种角色。类型化 API 在 `false` 时省略该 JSON 字段；解码旧载荷按 `false` 处理。
+- **R3.12** 引擎按运行分配私有目录，按图中 action 分配快照文件，以 `MCPP_ACTION_PROGRESS_FILE` 交给命令。关闭或没有报告通道时该变量缺失或为空，工作程序须继续正常执行。文件名、随机运行目录和快照内容不得作为图输入或构建身份。嵌套构建不得继承外层写入通道。
+- **R3.13** 快照为一个 UTF-8 JSON 对象：`v` 为 `1`，`seq` 为非负递增整数，`phase` 为非空字符串；`done`、`total` 为可选非负整数，`detail` 为可选字符串。两种计数同时存在时 `done <= total`。`phase` 最多 128 字节，`detail` 最多 1024 字节；两者不得含 ASCII 控制字符。action 身份由引擎通道确定，不从快照接受。
+- **R3.14** 引擎在 JSON 解析前最多读取 8193 字节，超过 8192 字节即忽略快照；非法、缺失、重复或倒退序号均不改变最新有效状态，不使构建失败。写入方使用单写者原子替换，每秒最多五次，保留最新状态，不追加无界日志。
+- **R3.15** 快照和内部完成计数不能声明 action 成功，不改变外层完成项。退出码、输出和 `prepare` 后置条件仍是成功依据。`object`、`source`、`artifact` 的真实输出不得作为 stamp 写入。运行通道在执行结束后清理。
+
 ## 4. 运行时:程序依赖的共享库的查找
 
 - **R4.1** 一个目录中的共享库由施工产生(`prepare`)或文件名不定时,插件**必须**用
@@ -259,6 +269,7 @@
   | 15 | 2026.10.1.3 | 来源(R6.5、R6.6、R9.9):`xpkg_source`、`xpkg_program`、`xpkg_request`、`xpkg_pending`、`phase`、`decision`、`toolchain` |
   | 16 | 2026.10.26.2 | 镜像入口:`link_start`(`mcpp:link-start=`,docs/04 `start`) |
   | 17 | 2026.10.27.1 | 平台的链接与运行器字段(SPEC-013 §12):`link_driver`、`link_input`、`link_input_from`、`artifact_name`、`seal`、`run_host`;平台阶段(`mcpp::phase()` 为 `"platform"`) |
+  | 18 | 2026.11.5.1 | `action.progress` 与可选运行期快照通道（§3.1）；旧载荷默认关闭 |
 
 - **R9.3** 构建信息以事实陈述解析出的工具链,不针对任何外部构建系统:`tool(role)`(这一行的
   工具)、`abi_tool(role)`(目标 ABI 的原生工具,MSVC ABI 上为工具集的 `cl`、`link`、`lib`、
@@ -339,3 +350,4 @@
 | 0.9 | 2026-10-11 | 随 mcpp 2026.10.11.1(mcpp#797):新增 §10 构建程序的库与构建插件(R10.1–R10.6,P1–P5);变更记录移为 §11。 |
 | 0.10 | 2026-10-27 | 随 mcpp 2026.10.26.2(mcpp#845):R9.2 的协议表增加协议 16(`link_start`,镜像入口)。 |
 | 0.11 | 2026-10-28 | 随 mcpp 2026.10.27.1(mcpp#847):R9.2 的协议表增加协议 17(平台的链接与运行器字段);新增 R9.10 平台阶段(SPEC-013),平台阶段可声明包格式与 artifact action(SPEC-014 §6)。 |
+| 0.12 | 2026-11-05 | 随 mcpp 2026.11.5.1：新增 §3.1 可选 action 进度（协议 18），规定通道、限额、序号、关闭与失败/取消行为。 |

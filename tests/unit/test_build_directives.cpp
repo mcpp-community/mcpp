@@ -1062,13 +1062,13 @@ TEST(BuildDirectives, DeployRowIsProtocolElevenWithLinkGlobalScopeAndATag) {
     EXPECT_EQ(def->scope, dirs::Scope::LinkGlobal);
     EXPECT_EQ(def->sinceProtocol, 11);
     EXPECT_FALSE(def->tag.empty());
-    EXPECT_EQ(dirs::kProtocolVersion, 17);
+    EXPECT_EQ(dirs::kProtocolVersion, 18);
 }
 
-TEST(BuildDirectives, ProtocolSeventeenIsAcceptedAndEighteenIsNot) {
-    auto ok = parse("mcpp:protocol=17\n");
+TEST(BuildDirectives, ProtocolEighteenIsAcceptedAndNineteenIsNot) {
+    auto ok = parse("mcpp:protocol=18\n");
     EXPECT_FALSE(dirs::protocol_error(ok).has_value());
-    auto no = parse("mcpp:protocol=18\n");
+    auto no = parse("mcpp:protocol=19\n");
     EXPECT_TRUE(dirs::protocol_error(no).has_value());
 }
 
@@ -1296,4 +1296,13 @@ TEST(BuildDirectives, RuntimeSearchDirIsPersistedAndRoundTrips) {
     dirs::apply(m, replayed);
     ASSERT_EQ(m.runtimeConfig.linkIntent.runtimeSearchDirs.size(), 1u);
     EXPECT_EQ(m.runtimeConfig.linkIntent.runtimeSearchDirs[0].string(), under_root("rtlib"));
+}
+
+TEST(BuildDirectives, OptionalActionProgressDefaultsOffAndRejectsWrongType) {
+    const std::string prefix=R"({"id":"work","role":"object","command":["worker"],"outputs":["result.o"])";
+    const auto old=dirs::decode_action(prefix+"}");
+    ASSERT_TRUE(old); EXPECT_FALSE(old->progress);
+    const auto opted=dirs::decode_action(prefix+R"(,"progress":true})");
+    ASSERT_TRUE(opted); EXPECT_TRUE(opted->progress);
+    EXPECT_FALSE(dirs::decode_action(prefix+R"(,"progress":"true"})"));
 }

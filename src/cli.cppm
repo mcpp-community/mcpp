@@ -39,6 +39,7 @@ import mcpp.runtime.search;
 import mcpp.run;
 import mcpplibs.os.posix;
 import mcpp.home.files;
+import mcpp.build.action_progress;
 import mcpp.build.progress;          // __action reports its start
 import mcpp.build.dirlock;           // the build directory lock names this command
 import mcpp.build.execute;           // the sweep after a build (design 2026-10-31 §8.3)
@@ -1552,6 +1553,7 @@ int run(int argc, char** argv) {
         // (`mcpp::action::output_dir`). A flag in both spellings, so it cannot
         // be mistaken for a positional stamp path.
         std::string requireDir;
+        std::string progressOutput;
         std::string cwd;
         std::vector<std::pair<std::string, std::string>> env;
         std::vector<std::string> stamps;
@@ -1560,7 +1562,7 @@ int run(int argc, char** argv) {
             const std::string_view a = argv[i];
             const bool takesValue = a == "--require-dir"
                 || (named && (a == "--env" || a == "--cwd" || a == "--stamp"
-                              || a == "--path-prepend"));
+                              || a == "--path-prepend" || a == "--progress"));
             if (!takesValue) {
                 if (named) {
                     std::println(stderr, "error: __action: unknown option '{}'", a);
@@ -1575,6 +1577,7 @@ int run(int argc, char** argv) {
             }
             const std::string v = argv[++i];
             if (a == "--require-dir") requireDir = v;
+            else if (a == "--progress") progressOutput = v;
             else if (a == "--cwd")    cwd = v;
             else if (a == "--stamp")  stamps.push_back(v);
             else if (a == "--path-prepend") pathPrepend.push_back(v);
@@ -1624,7 +1627,21 @@ int run(int argc, char** argv) {
         // design 2026-09-29, §6.4), by its first stamp as build.ninja spells
         // it: the step's first output. Nothing is written when the build that
         // runs it reads no progress.
-        if (!stamps.empty()) mcpp::build::progress::record_action_start(stamps.front());
+        if (!progressOutput.empty())
+            mcpp::build::progress::record_action_start(progressOutput);
+        else if (!stamps.empty()) mcpp::build::progress::record_action_start(stamps.front());
+        namespace telemetry = mcpp::build::action_progress;
+        std::string progressFile;
+        if (!progressOutput.empty()) {
+            if (auto root = mcpp::invocation::get(telemetry::kRootEnv); root && !root->empty())
+                progressFile = telemetry::channel(*root, progressOutput).string();
+        }
+        // A command cannot inherit a parent's channel or allocate siblings.
+        std::erase_if(env, [](const auto& entry) {
+            return entry.first == telemetry::kFileEnv || entry.first == telemetry::kRootEnv;
+        });
+        env.emplace_back(std::string(telemetry::kFileEnv), std::move(progressFile));
+        env.emplace_back(std::string(telemetry::kRootEnv), "");
         // The command's own ninja, if it runs one (a CMake or vcpkg build),
         // prints ninja's usual status and reports into no file of this
         // build. An action that declares either variable keeps its value.

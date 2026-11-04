@@ -55,12 +55,31 @@ echo 'int helper_anchor(void){return 0;}' > helper/src/anchor.c
 "$MCPP" run -p app-a > out.log 2>&1 || fail 'app-a did not run'
 "$MCPP" run -p app-b > out.log 2>&1 || fail 'app-b did not run'
 
+# Test link units and a shared provider keep the same per-consumer boundary.
+for suffix in a b; do
+    mkdir -p "app-$suffix/tests"
+    echo 'int main(){return 0;}' > "app-$suffix/tests/context.cpp"
+done
+sed 's/kind = "lib"/kind = "shared"/' provider-a/mcpp.toml > changed.toml
+mv changed.toml provider-a/mcpp.toml
+"$MCPP" test --workspace > out.log 2>&1 || fail 'test/shared contexts crossed independent products'
+"$MCPP" run -p app-a > out.log 2>&1 || fail 'shared provider consumer did not run'
+
 # A provider elsewhere in the workspace cannot satisfy a missing dependency.
 cp app-a/mcpp.toml app-a/saved.toml
 sed '/^provider-a =/d' app-a/saved.toml > app-a/mcpp.toml
 if "$MCPP" build --workspace > out.log 2>&1; then fail 'another product supplied a missing provider'; fi
 grep -q "no package provides capability 'probe-interface'" out.log || fail 'wrong missing-provider diagnosis'
 grep -q "consumer 'app-a'" out.log || fail 'missing consumer context'
+# Host-only providers cannot satisfy the missing target-side requirement.
+cat >> app-a/mcpp.toml <<'TOML'
+[build-dependencies]
+provider-a = { path = "../provider-a" }
+TOML
+echo 'int main(){return 0;}' > app-a/build.mcpp
+if "$MCPP" build --workspace > out.log 2>&1; then fail 'a host-only provider satisfied a target requirement'; fi
+grep -q "no package provides capability 'probe-interface'" out.log || fail 'wrong host/target scope diagnosis'
+rm app-a/build.mcpp
 cp app-a/saved.toml app-a/mcpp.toml
 
 # A pin cannot remove the second implementation from one actual link closure.

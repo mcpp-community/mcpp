@@ -693,6 +693,14 @@ a.arg("cp").arg("${mcpp.artifact:updater/updater}").arg(out.c_str())
 
 占位符不对应任何 `artifacts` 条目时，规划失败，错误中点名该占位符。
 
+#### 可选 action 进度（2026.11.5.1+，协议 18）
+
+在 build.mcpp 中设置 `a.progress = true`，即可为该 action 启用进度报告。默认值为 `false`，五种角色均支持。可以报告时，命令收到 `MCPP_ACTION_PROGRESS_FILE`；变量缺失或为空时按关闭处理。
+
+工作程序以原子替换方式写入最新 JSON 快照，例如 `{"v":1,"seq":2,"phase":"compile","done":3,"total":9}`。不知道总量时可以只报告 `phase`。构建状态在 action 执行期间显示最新有效快照。计数描述 action 内部的工作，不计入外层 Ninja 完成项；成功仍由命令退出状态与产物检查决定。
+
+运行通道为本次执行分配，不是声明的输入或输出。修改构建程序启用报告仍可能重新规划构建。现有 NDJSON 构建事件的含义保持不变。快照字段、限额和次序见 [SPEC-007 §3.1](../specs/build-plugins.md#31-可选-action-进度协议-18)。
+
 ### 部署程序生成的东西：`deploy`（2026.9.12.3+,protocol 11）
 
 `[runtime] deploy`（docs/04 §2.11）把包里已经存在的一个文件，放到相对可执行
