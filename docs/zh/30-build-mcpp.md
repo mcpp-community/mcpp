@@ -1453,6 +1453,8 @@ MCPP_TOOL_PROTOBUF_PROTOC=/usr/bin/protoc mcpp build
 
 ### 构建程序的库：`[build-dependencies]`（mcpp 2026.10.11.1+）
 
+仅供构建使用的库向构建程序的子构建供给层和需求，不选择最终产物的 ABI；经传递依赖到达时同样如此（2026.11.5.1+）。同一包也被普通依赖引用时，仍保留其目标实例。
+
 一条规则（例如"对这些 `.proto` 文件运行 protoc"）只写一次，作为普通的 mcpp 库包发布；
 构建程序需要的任何库（TOML 解析器、格式化库）也是如此。构建程序使用其包在
 `[build-dependencies]` 中写出的库：

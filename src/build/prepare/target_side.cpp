@@ -163,6 +163,10 @@ step9_gather_target_side_candidates(PrepareState& state) {
                         : why.error()));
             }
 
+            // Build-program-only packages supply the host sub-build's layers.
+            // Their declarations must not select or constrain this artifact.
+            if (pkg.buildTimeOnly) continue;
+
             for (auto const& entry : pkg.manifest.provides) {
                 std::optional<tsd::CapDecl> decl;
                 if (auto parsed = tsd::parse_capability(entry); parsed && *parsed)
@@ -925,6 +929,7 @@ step9_kernel_abi_interface_enumeration(PrepareState& state) {
         // costs nothing to a graph where the provider does declare.
         std::size_t uncheckedRequirements = 0;
         for (auto& pkg : state.packages) {
+            if (pkg.buildTimeOnly) continue;
             const auto& need = pkg.manifest.kernelAbiRequiresInterfaces;
             if (need.empty()) continue;
             if (providerId.empty()) {
@@ -1402,7 +1407,8 @@ static std::expected<void, std::string> step9_layer_conditional_config(PrepareSt
                 }
             };
             gather_from(*state.m);
-            for (auto const& pkg : state.packages) gather_from(pkg.manifest);
+            for (auto const& pkg : state.packages)
+                if (!pkg.buildTimeOnly) gather_from(pkg.manifest);
             if (auto why = tsd::check_requirements(
                     state.resolvedTargetSide, layerRequirements,
                     tc_origin_is_user_explicit(state.tcOrigin) ? tc_origin_name(state.tcOrigin)

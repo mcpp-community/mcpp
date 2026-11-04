@@ -829,8 +829,11 @@ step11_std_module_availability_gate(PrepareState& state, bool needsStdModule) {
         // A capability rather than a triple, because the fact is a property of
         // the graph and not of the target, and because dependency resolution is
         // the earliest time at which it is known.
-        const bool hostedStdProvided =
-            state.capProviders.find("hosted-standard-library") != state.capProviders.end();
+        const auto hostedProviders = state.capProviders.find("hosted-standard-library");
+        const bool hostedStdProvided = hostedProviders != state.capProviders.end()
+            && std::ranges::any_of(hostedProviders->second, [&](auto i) {
+                return !state.packages[i].buildTimeOnly;
+            });
         if (auto ft = mcpp::toolchain::triple::parse(state.tc->targetTriple);
             ft && ft->is_freestanding() && !hostedStdProvided)
         {

@@ -159,3 +159,39 @@ configure/build-install 阶段，不估计未掌握的编译任务总数。旧�
 中英文核心使用文档、SPEC-007 及其目录、平台默认示例已同步。结构与风格检查
 通过，修改的文档已用 pandoc 渲染并进行第二遍阅读。以上是 CI 前的本地检查；
 用户要求的最终生态 review 仍待最终提交 CI 通过后执行。
+
+## 8. 集成边界检查点（2026-11-05）
+
+新版本 directives 单测 74/74 通过。进度 E2E 另行通过 verbose 与未修改 action
+不重新执行的控制。
+
+插件 writer 的集成定位到一个既有核心缺陷：build-only 库声明的 target-side
+provider 仍参与最终产物的层选择。最小包只在 build.mcpp 中使用
+`provides=["mcpp:kernel-abi=openkal"]` 的库，目标源码却收到 `__OPENKAL__`，
+复现见 `/tmp/mcpp-885-host-layer-probe/before.json`。核心现按 `buildTimeOnly`
+过滤 target-side provider、requirement、条件 requirement、kernel interface
+需求及 hosted 标准库资格；宿主子构建中的实际 target instance 仍照常选择层。
+
+E2E 1014 的直接、传递与同包双角色控制通过。修正后二进制 SHA256 为
+`b440228697715797c80f9e297070ef4ea33f625a5e50f29be827861d298b54cd`。
+其进度正常/verbose/关闭/JSON/失败/取消/增量控制通过；默认公开平台的中性
+ThinLTO native run 和 aarch64 seal 复验通过，证据为
+`/tmp/mcpp-885-core11351-hostfix-default-platform-verified.json`。
+
+插件 #52 的 CI 又检出 object storage 的既有增量缺陷：shader 更新后 `.S` 的
+`.incbin` 路径没有变化，`restat` 剪枝阻断实际 payload 到汇编对象的更新；header
+与 sidecar 控制通过。修正责任在插件 surface body 生成器：在执行期为 assembly
+记录内容校验值，保持接口半部稳定。该修正及等长内容与未变化时间戳控制仍在验证，
+不靠撤销核心 `restat` 掩盖缺失的数据依赖。
+
+SYCL SDK 归档控制确认：多架构直接对象链接通过，同对象组成的多架构 archive
+仍报 `add_seven` 重定义；关闭自动 SPIR-V 或 code split 不改变结果。单架构
+archive 供给多架构 consumer 在样例中通过，但两种架构的 device IR 字节和
+`target-cpu` / `target-features` 实际不同，不能将单份 IR 复用提升为一般等价。
+`__CUDA_ARCH__` 控制在该 SYCL 前端未定义，所得 -1 不能作为架构专化的证据。
+因此保留插件/工具链阶段划分问题，不增加核心后端枚举或岛屿模式；尚无通用
+多架构静态库交付验收。原始记录位于 `/tmp/mcpp-885-sycl-archive-controls/`。
+
+核心 CI 的权威入口是名为 `ci` 的工作流；同提交的 Windows CRT measurement
+是另一工作流。`82fc9b3c` 对应 `ci` run `41930942590`，不是已通过的
+`41930942462` measurement。新增层隔离修正需要以更新后的提交重新完成 CI。

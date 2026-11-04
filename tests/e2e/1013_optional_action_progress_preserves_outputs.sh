@@ -62,23 +62,32 @@ int main(){
 # Human output through a real terminal exercises the UI's asynchronous poll,
 # while ninja is still buffering the command's stdout.
 (app/'build.mcpp').write_text(build_program())
-master,slave=pty.openpty();fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',30,160,0,0))
 env=dict(os.environ,TERM='xterm',MCPP_PROGRESS='plain')
-process=subprocess.Popen([env['MCPP'],'build'],cwd=app,stdout=slave,stderr=slave,env=env);os.close(slave)
-data=bytearray();deadline=time.monotonic()+180
-while process.poll() is None or select.select([master],[],[],0)[0]:
- if time.monotonic()>deadline:process.kill();raise AssertionError('progress build timed out')
- if select.select([master],[],[],.1)[0]:
-  try:chunk=os.read(master,65536)
-  except OSError:break
-  if not chunk:break
-  data.extend(chunk)
-os.close(master);assert process.wait()==0,data.decode(errors='replace')
-text=data.decode(errors='replace');assert 'internal-' in text,text
+def terminal_build(extra=()):
+ master,slave=pty.openpty();fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',30,160,0,0))
+ process=subprocess.Popen([env['MCPP'],'build',*extra],cwd=app,stdout=slave,stderr=slave,env=env);os.close(slave)
+ data=bytearray();deadline=time.monotonic()+180
+ while process.poll() is None or select.select([master],[],[],0)[0]:
+  if time.monotonic()>deadline:process.kill();raise AssertionError('progress build timed out')
+  if select.select([master],[],[],.1)[0]:
+   try:chunk=os.read(master,65536)
+   except OSError:break
+   if not chunk:break
+   data.extend(chunk)
+ os.close(master);assert process.wait()==0,data.decode(errors='replace')
+ return data.decode(errors='replace')
+text=terminal_build()
+assert 'internal-' in text,text
 channels=[(app/('proof-'+role)).read_text() for role in ('check','prepare','source','object','artifact')]
 assert all(channels) and len(set(channels))==5,channels
 assert all(not Path(channel).exists() for channel in channels),'execution channels survived the build'
+proof_times={role:(app/('proof-'+role)).stat().st_mtime_ns for role in ('check','prepare','source','object','artifact')}
 subprocess.run([env['MCPP'],'run'],cwd=app,env=env,check=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+assert all((app/('proof-'+role)).stat().st_mtime_ns==stamp for role,stamp in proof_times.items()),'runtime channels dirtied unchanged actions'
+# Verbose mode also polls the channel while the nested command is running.
+(app/'worker.py').touch()
+verbose_text=terminal_build(('--verbose',))
+assert 'internal-' in verbose_text,verbose_text
 # Turning telemetry off leaves ordinary source/object outputs usable.
 (app/'build.mcpp').write_text(build_program(enabled=False))
 r=subprocess.run([env['MCPP'],'build','--message-format','json'],cwd=app,env=env,capture_output=True,text=True)

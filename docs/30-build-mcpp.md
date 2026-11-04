@@ -1731,6 +1731,8 @@ of the cache key — an override is an escape hatch, not a reproducible input.
 
 ### Libraries of a build program: `[build-dependencies]` (mcpp 2026.10.11.1+)
 
+Build-only libraries supply layers and requirements to the build-program sub-build. They do not select the final artifact’s ABI, including when reached transitively (2026.11.5.1+). A package also reached through an ordinary dependency retains its target instance.
+
 A rule (say "run protoc over these `.proto` files") is written once, as an
 ordinary mcpp library package, and so is any library a build program needs —
 a TOML parser, a formatter. A build program uses a library its package names
