@@ -902,6 +902,10 @@ static std::expected<void, std::string> step6_device_extensions_and_rules(Prepar
                 auto& bc  = pkg.manifest.buildConfig;
                 std::set<std::string> excludedGlobs;
                 for (auto const& sc : bc.sourceConstraints) {
+                    const auto checked = mcpp::pack::parse_accel_request(sc.accel);
+                    if (!checked) return std::unexpected(std::format(
+                        "`{}`: [build] sources entry '{}': {}",
+                        pkg.manifest.package.name, sc.glob, checked.error()));
                     const auto hits = mcpp::modgraph::expand_glob(pkg.root, sc.glob);
                     if (hits.empty()) {
                         return std::unexpected(std::format(
@@ -920,7 +924,7 @@ static std::expected<void, std::string> step6_device_extensions_and_rules(Prepar
                     // optional, and a package that omits it has said nothing to
                     // contradict.
                     if (!pkg.manifest.package.accelerators.empty()) {
-                        for (auto const& w : mcpp::pack::parse_accel(sc.accel)) {
+                        for (auto const& w : *checked) {
                             if (std::ranges::find(pkg.manifest.package.accelerators,
                                                   w.backend)
                                 != pkg.manifest.package.accelerators.end()) continue;
@@ -943,7 +947,7 @@ static std::expected<void, std::string> step6_device_extensions_and_rules(Prepar
                         }
                     }
                     if (buildAccel.empty()) { excludedGlobs.insert(sc.glob); continue; }
-                    const auto want = mcpp::pack::parse_accel(sc.accel);
+                    const auto& want = *checked;
 
                     // A GLOB WHOSE BACKEND THIS BUILD NEVER NAMED IS NOT A
                     // MISMATCH, IT IS ABSENT.
