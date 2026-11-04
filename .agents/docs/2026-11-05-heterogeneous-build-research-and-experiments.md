@@ -1,6 +1,6 @@
 ---
 subject: heterogeneous-build
-status: proposed
+status: active
 ---
 
 # 异构构建补充方案的第二轮调研与实验

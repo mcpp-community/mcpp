@@ -1,6 +1,6 @@
 ---
 subject: heterogeneous-build
-status: proposed
+status: active
 ---
 
 # 异构构建语义与插件边界补充方案（mcpp#885、mcpp#887）

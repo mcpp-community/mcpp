@@ -1,6 +1,6 @@
 ---
 subject: heterogeneous-build
-status: implementing
+status: active
 ---
 
 # 生态 885 与异构构建补充方案的实现依赖
