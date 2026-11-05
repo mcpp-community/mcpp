@@ -56,7 +56,8 @@ permit, so waiting joins cannot form a permit dependency cycle.
 
 The internal executor introduces no user mode and no argument serialization.
 It receives the compiler's actual argv, inherits the existing streams and
-returns its status. Existing response files retain their original owner and
+returns its status. It dispatches before global option scans so child flags
+cannot configure mcpp. Existing response files retain their original owner and
 encoding. Ordinary completion and interrupt cleanup release a permit once;
 release cannot remove a permit already acquired by another compiler.
 Failure to create or acquire the semaphore is reported rather than followed

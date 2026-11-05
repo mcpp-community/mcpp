@@ -147,7 +147,8 @@ def check_cancellation(mcpp, root):
         assert not list(semaphore.iterdir()), "cancellation retained its compiler permit"
         result = subprocess.run([*command, sys.executable, "-c", "raise SystemExit(7)"], cwd=root)
         assert result.returncode == 7 and not list(semaphore.iterdir()), "failure lost its status or leaked a permit"
-        words = ["space value", 'literal "quote"', "back\\slash", "$literal", "", "Ω"]
+        words = ["space value", 'literal "quote"', "back\\slash", "$literal", "", "Ω",
+                 "--system", "--home", "--deny", "--toolchain", "-j200", "--sem", "--cap"]
         result = subprocess.run([*command, sys.executable, "-c", "import json,sys;print(json.dumps(sys.argv[1:]))", *words],
                                 cwd=root, capture_output=True, text=True)
         assert result.returncode == 0 and json.loads(result.stdout) == words, "compiler argument words changed"
