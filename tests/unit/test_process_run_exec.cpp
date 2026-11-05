@@ -19,6 +19,69 @@ namespace process = mcpp::run;
 // change mcpp's own environment — that mutation is exactly what leaked into
 // /bin/sh and crashed it on newer-glibc hosts. The addition is the started
 // program's alone; this invocation's statement is what it was.
+TEST(RunExec, StreamCompletionAndChildWaitKeepTheirBounds) {
+    struct Case {
+        const char* name;
+        const char* command;
+        int total = 0;
+        int idle = 0;
+        bool stop = false;
+        int exit = -1;
+    };
+    const std::vector<Case> cases{
+        {"exit", "exit 7", 0, 0, false, 7},
+        {"signal", "kill -TERM $$", 0, 0, false, 143},
+        {"already-exited-bounded", "exit 7", 3000, 0, true, 7},
+        {"open-stop", "sleep 2", 0, 0, true},
+        {"both-EOF-stop", "exec 1>&- 2>&-; sleep 2", 0, 0, true},
+        {"stdout-EOF-stop", "exec 1>&-; sleep 2", 0, 0, true},
+        {"both-EOF-total", "exec 1>&- 2>&-; sleep 2", 50},
+        {"stdout-EOF-total", "exec 1>&-; sleep 2", 50},
+    };
+    auto exercise = [](process::Streams streams, const Case& test) {
+        SCOPED_TRACE(std::format("stream={} case={}", static_cast<int>(streams), test.name));
+        const auto started = std::chrono::steady_clock::now();
+        process::Options options;
+        options.streams = streams;
+        options.total = std::chrono::milliseconds(test.total);
+        options.idle = std::chrono::milliseconds(test.idle);
+        if (test.stop) options.should_stop = [&] {
+            return std::chrono::steady_clock::now() - started > std::chrono::milliseconds(50);
+        };
+        const auto result = process::execute({"/bin/sh", "-c", test.command}, options);
+        if (test.exit >= 0) {
+            EXPECT_EQ(result.exit_code, test.exit);
+            EXPECT_FALSE(result.timed_out);
+        } else {
+            EXPECT_NE(result.exit_code, 0);
+            EXPECT_TRUE(result.timed_out);
+        }
+        EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(1));
+    };
+    for (const auto streams : {process::Streams::inherit, process::Streams::discard,
+            process::Streams::merged, process::Streams::output,
+            process::Streams::output_error_shown, process::Streams::output_error_kept}) {
+        for (const auto& test : cases) exercise(streams, test);
+        if (streams != process::Streams::inherit && streams != process::Streams::discard)
+            exercise(streams, {"both-EOF-idle", "exec 1>&- 2>&-; sleep 2", 0, 50});
+    }
+    exercise(process::Streams::output_error_kept,
+        {"stderr-activity", "exec 1>&-; for i in 1 2 3 4 5 6 7 8; do printf x >&2; sleep .03; done; exit 7",
+         0, 100, false, 7});
+}
+
+TEST(RunExec, StopPredicateAppliesAfterCapturedStreamsClose) {
+    const auto started = std::chrono::steady_clock::now();
+    const auto result = process::execute({"/bin/sh", "-c", "exec 1>&- 2>&-; sleep 2"}, {
+        .streams = process::Streams::merged,
+        .should_stop = [&] {
+            return std::chrono::steady_clock::now() - started > std::chrono::milliseconds(50);
+        }});
+    EXPECT_TRUE(result.timed_out);
+    EXPECT_NE(result.exit_code, 0);
+    EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(1));
+}
+
 TEST(RunExec, StopPredicateAppliesWithoutCapturedStreams) {
     for (const auto streams : {process::Streams::inherit, process::Streams::discard}) {
         const auto started = std::chrono::steady_clock::now();

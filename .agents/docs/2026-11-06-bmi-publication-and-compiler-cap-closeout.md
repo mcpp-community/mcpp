@@ -199,3 +199,25 @@ small synthetic compiler. The separate GCC mixed workload retains the real
 compiler cap, late failure, recovery, argv and no-op assertions. Selected-object
 controls establish causality; final qualification remains complete current-source
 CI and independent ecosystem review.
+
+### Addendum, 2026-11-06: the final child wait retains its bounds
+
+A final launcher control closes both captured streams before the child sleeps.
+The preceding correction still returned success after 2.002 seconds instead of
+observing the fifty-millisecond stop request: stream EOF had led to an unbounded
+child wait. The same boundary also bypassed an absolute deadline after EOF.
+
+One shared predicate now applies during output reads, remaining error reads and
+the final child wait. It retains the original absolute deadline and stop request;
+observed output retains its idle budget after EOF. Activity on a separately
+captured error stream renews that observed-output budget. Inherited and discarded
+streams retain no inferred idle observation. Child completion is checked during
+the final bounded wait, preserving already completed child statuses.
+
+A finite matrix covers all six stream modes, ordinary and signalled exits,
+completion with bounds configured, stop requests before and after one or both
+streams close, absolute deadlines after closure, captured idle expiry and live
+stderr after stdout closure. Its fifty-three cases pass, together with the
+original launcher tests and the direct EOF regression. Top-level signal behavior
+is additionally covered by the real-Ninja lifecycle control. No budget, compiler
+argument or output stream is changed to make a cancellation succeed.

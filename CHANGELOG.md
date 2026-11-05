@@ -27,7 +27,8 @@
   another generation starts. Stable kernel permits retain live ownership across
   immediate rebuilds; runtime generations leave no-op build identities unchanged.
 - Child stop predicates apply with inherited and discarded streams, including
-  executions without an absolute deadline.
+  executions without an absolute deadline. Captured stream EOF retains stop,
+  absolute and observed-output idle bounds until the child exits.
 - Queued downloads begin their progress budget when a worker starts them,
   rather than inheriting time spent waiting for a slot.
 - Provider progress timeouts identify the stalled download and source attempt,

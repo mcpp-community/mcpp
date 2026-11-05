@@ -241,6 +241,14 @@ Outcome launch(const Spec& s) {
     auto lastOutput = start;
     bool stop = false;
     const bool keepErr = s.out == Output::stdout_err_kept;
+    const bool captured = s.out == Output::merged || s.out == Output::stdout_only
+        || s.out == Output::stdout_err_shown || keepErr;
+    auto should_stop = [&] {
+        const auto now = clock::now();
+        return (s.total.count() > 0 && now - start >= s.total)
+            || (captured && s.idle.count() > 0 && now - lastOutput >= s.idle)
+            || (s.shouldStop && *s.shouldStop && (*s.shouldStop)());
+    };
     bool errDone = !keepErr;
     // The error stream, read as it arrives so that a program writing much of
     // it is never stopped on a full pipe while its output is read.
@@ -250,17 +258,15 @@ Outcome launch(const Spec& s) {
         if (!e) { errDone = true; return; }
         if (!e->has_value()) return;
         if ((*e)->empty()) { errDone = true; return; }
+        lastOutput = clock::now();
         out.error_output += **e;
     };
-    if (s.out == Output::merged || s.out == Output::stdout_only || s.out == Output::stdout_err_shown
-        || keepErr) {
+    if (captured) {
         std::string acc;
         std::optional<clock::time_point> endedAt;
         for (;;) {
             const auto now = clock::now();
-            if ((s.total.count() > 0 && now - start >= s.total)
-                || (s.idle.count() > 0 && now - lastOutput >= s.idle)
-                || (s.shouldStop && *s.shouldStop && (*s.shouldStop)())) {
+            if (should_stop()) {
                 stop = true;
                 break;
             }
@@ -290,7 +296,7 @@ Outcome launch(const Spec& s) {
         // bounds allow.
         while (!stop && !errDone) {
             const auto now = clock::now();
-            if (s.total.count() > 0 && now - start >= s.total) { stop = true; break; }
+            if (should_stop()) { stop = true; break; }
             if (!endedAt) {
                 if (auto w = p->try_wait(); w && w->has_value()) endedAt = now;
             } else if (now - *endedAt > std::chrono::milliseconds(500)) {
@@ -299,22 +305,16 @@ Outcome launch(const Spec& s) {
             }
             drain_error(std::chrono::milliseconds(100));
         }
-    } else if (s.shouldStop && *s.shouldStop) {
-        // Inherited/discarded streams have no read loop. Cancellation still
-        // belongs to the invocation, so poll the child without changing its
-        // streams or waiting for a separate absolute deadline.
+    }
+    if (!stop && (s.total.count() > 0 || (captured && s.idle.count() > 0)
+                  || (s.shouldStop && *s.shouldStop))) {
+        // Stream EOF is independent of child completion. Keep the same bounds
+        // through the final wait, including inherited and discarded streams.
         for (;;) {
-            if ((*s.shouldStop)()
-                || (s.total.count() > 0 && clock::now() - start >= s.total)) {
-                stop = true;
-                break;
-            }
             auto waited = p->wait_for(std::chrono::milliseconds(20));
             if (!waited || waited->has_value()) break;
+            if (should_stop()) { stop = true; break; }
         }
-    } else if (s.total.count() > 0) {
-        auto w = p->wait_for(s.total);
-        if (w && !w->has_value()) stop = true;
     }
     if (stop) {
         p->end_unit();
