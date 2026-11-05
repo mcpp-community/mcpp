@@ -187,3 +187,54 @@ A deterministic cancellation control kills a real wrapper, retains that
 history, then starts a command returning seven without inflating peak one.
 The prior false failure and its dead-process/empty-reservation evidence remain
 part of the experiment record.
+
+## 2026-11-06 publication dependencies and remaining qualification
+
+The source group carries the same four additive C operations through the
+native implementation, C library, C++ runtime, image runner and platform.
+The core consumes the OS composition rather than native process identifiers.
+No runtime generation becomes a dependency version or build-cache identity.
+
+| Package | Candidate version | Review |
+|---|---|---|
+| OpenKal | 0.24.0 | [OpenKal 62](https://github.com/mcpplibs/openkal/pull/62) |
+| Linux implementation | 0.25.0 | [Linux 51](https://github.com/mcpplibs/openkal-linux/pull/51) |
+| macOS implementation | 0.22.0 | [macOS 43](https://github.com/mcpplibs/openkal-macos/pull/43) |
+| Windows implementation | 0.20.0 | [Windows 44](https://github.com/mcpplibs/openkal-windows/pull/44) |
+| Emscripten implementation | 0.13.0 | [Emscripten 15](https://github.com/mcpplibs/openkal-emscripten/pull/15) |
+| Image loader, runner, tools and binding | 0.5.0 | [Image 29](https://github.com/mcpplibs/openkal-image/pull/29) |
+| C library | 0.28.0 | [musl 86](https://github.com/mcpplibs/openkal-musl/pull/86) |
+| C++ runtime | 0.19.0 | [Runtime 66](https://github.com/mcpplibs/openkal-llvm-runtime/pull/66) |
+| Platform | 0.24.0 | Publication follows its public lower dependencies |
+| OS composition | 0.2.10 | [OS 17](https://github.com/mcpplibs/os/pull/17) |
+| Core | 2026.11.5.2 | [mcpp 889](https://github.com/mcpp-community/mcpp/pull/889) |
+
+Emscripten receives dependency metadata alignment; it does not acquire process
+support. The image runner retains its existing generated binding mechanism,
+format, prefetch and cache policies. Its generated table retains all 153 prior
+C names and adds exactly the four declared-unit names, for 157 total. The new
+image consumer calls all four operations through the image convention,
+including the fifth retirement argument and an invalid continuation that
+changes the state output from `empty` to `unknown`.
+
+Source-group controls establish implementation behaviour. They do not establish
+that public versions are installable. Release gates remain full repository CI,
+canonical tag archives, byte-identical CN mirrors, published index entries and
+ordinary GLOBAL/CN consumers. Temporary image source overrides are removed
+before its final exact-head public-dependency CI. Platform and OS qualification
+follow the lower public group; core then updates its OS and default platform
+pins and runs full exact-head CI before independent ecosystem review. Plugins
+PR 52 retains the public 2026.11.5.1 pin until core 2026.11.5.2 is published,
+then runs its actual sidecar integration and final CI.
+
+## Separate Windows build-program defect
+
+The released 2026.11.5.1 engine can try to install `msvc@system` as an indexed
+`xim` package when a Windows host with the MSVC default executes a `build.mcpp`
+for a bare cross target. The specification's ABI-layout fixture exposed this
+path because its build program only supplied an include directory. Declaring
+that directory through the existing `[build].include_dirs` preserves the real
+32/64-bit target-layout assertions and removes that unnecessary host build.
+It does not fix the engine's MSVC host-toolchain selection. This is a core
+build-program/toolchain issue, separate from unit lifetime and recovery, and
+remains an explicit review limitation of this source group.
