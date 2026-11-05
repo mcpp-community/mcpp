@@ -733,7 +733,8 @@ struct Build::Impl {
 namespace {
 
 // The fast path has no plan: it reads the record the plan wrote, when ninja
-// reports its first step, so a build with nothing to do reads nothing.
+// reports its first step or an action writes its start, so a build with
+// nothing to do reads nothing. Ninja may buffer stdout until an action ends.
 void ensure_record(Build::Impl& b) {
     if (b.record || b.recordTried) return;
     b.recordTried = true;
@@ -1004,11 +1005,13 @@ void read_log(Report& r, Build::Impl& b, std::vector<std::string>& out) {
 // Reads the start file of an open pass; model lock held. A check or prepare
 // action that starts names its package: that is work.
 void read_starts(Report& r, Build::Impl& b, std::vector<std::string>& out) {
-    if (!b.inPass || !b.record) return;
+    if (!b.inPass) return;
     std::error_code ec;
     const auto path = b.dir / kStartsFile;
     const auto size = std::filesystem::file_size(path, ec);
     if (ec || size <= b.startsOffset) return;
+    ensure_record(b);
+    if (!b.record) return;
     std::ifstream f(path, std::ios::binary);
     f.seekg(static_cast<std::streamoff>(b.startsOffset));
     std::string text(static_cast<std::size_t>(size - b.startsOffset), '\0');
