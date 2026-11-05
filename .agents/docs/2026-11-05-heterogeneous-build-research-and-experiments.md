@@ -260,6 +260,33 @@ SPIR64 镜像具有 SPIR-V 魔数。不能用四份镜像推断四种硬件目�
 规则不能只让单目标 fixture 通过。验收增加目标集合、TU 数量、归档边界的交叉控制；
 可用组合实际检查镜像，不可用组合应给出明确工具链和阶段诊断，不能静默少生成目标。
 
+### 5.3 实现期追加：SDK archive 的目标身份混合（2026-11-05）
+
+锁定 DPC++ 7.1.0，编译器报告 intel/llvm 提交
+`880399f47228ac92f403e3b2b865cf1d6f0b1382`。直接调用其 bundler 的 archive
+解包路径，分别请求 sm_89、sm_90；两个输出 archive 都包含两种架构的设备成员。
+每个成员的 SHA256 与先前从普通对象精确解出的对应 bitcode 一致，因此重复定义
+并非 mcpp 重复提交链接输入。`excluded-targets` 对照同样未隔离这两个成员。
+
+对应版本的 [OffloadBundler.cpp](https://github.com/intel/llvm/blob/880399f47228ac92f403e3b2b865cf1d6f0b1382/clang/lib/Driver/OffloadBundler.cpp)
+把五段 bundle ID 中的末段作为 triple 的环境，而仅从第六段取得独立 target ID。
+驱动实际产生 `sycl-nvptx64-nvidia-cuda-sm_89` 等五段名字。由代码与实测可推断：
+此处丢失了架构的独立身份，archive 的兼容性匹配把两个设备变体混入每个分区；
+普通对象精确解包不走同一匹配路径。
+
+正向控制只为原有 host/device 字节重新封装名字，在环境位置显式加入 `unknown`，
+形成 `sycl-nvptx64-nvidia-cuda-unknown-sm_89` 和对应 sm_90。相同 SDK 此时将
+archive 分成各含一个成员的两个输出，且设备字节与原始对应架构完全一致。
+这是合成身份控制，不是生产驱动修复、最终设备链接或 GPU 执行验收。
+
+责任收敛为锁定 SDK 的 bundle 身份与 archive 匹配契约；插件仍负责选择受支持的
+阶段和准确诊断。保留两个真实架构，不以删除其中一个变体或复用单份 IR 规避。
+该组合的正式支持需要修正工具链并重跑最终设备链接及跨包控制，或验证显式的
+逐目标 archive 流程；通用核心无需新增厂商目标解析或专属链接模式。
+证据在 `/tmp/mcpp-885-sycl-archive-controls/` 的 `driver-plans/`、
+`archive-unbundle/verified.json`、`archive-unbundle/excluded-controls.json`
+与 `normalized-id-control/verified.json`。
+
 ## 6. E5：组件边界与平台通用性
 
 普通 C++ 组件放在 `component/`，主图源码列表只含 `src/main.cpp`。build.mcpp

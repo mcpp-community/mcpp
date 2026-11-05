@@ -233,3 +233,16 @@ Linux 原生与 bundle 产物已齐备，故先以不可变 artifact ID、SHA256
 原来的工作量、计量方式和阈值，且不代替完整发布接纳或 ledger promotion。
 最终核心提交仍须完整 CI 后再执行用户要求的独立生态 review；核心版本保持
 2026.11.5.1，发布后再推进插件新版集成与原始 engine/server 发布链。
+
+## 10. 多目标 archive 的责任定位（2026-11-05）
+
+已进一步定位 §8 留下的 SYCL archive 失败。锁定 SDK 的独立 bundler 为 sm_89
+和 sm_90 分区解包时，各自都输出两种架构成员；与普通对象精确解出的设备
+bitcode 字节一致。驱动生成的五段 bundle ID 与 archive 匹配器的环境/target ID
+划分不一致，结合相应提交源码可解释该混合。只补全 bundle ID 的环境位置、
+保留原有 payload 字节的合成控制恢复了每个分区一个正确成员。
+
+完整命令、版本、输出成员和 SHA256 已保存，并追加至
+[实验 §5.3](2026-11-05-heterogeneous-build-research-and-experiments.md#53-实现期追加sdk-archive-的目标身份混合2026-11-05)。
+这确定了调查应落在 SDK 身份匹配与插件阶段，不构成生产 SDK 已修复或多目标
+静态库已交付的声明。当前 #52 不隐式删掉架构，也不向核心增加专属链接模式。
