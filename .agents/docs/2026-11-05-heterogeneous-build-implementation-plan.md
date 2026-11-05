@@ -276,3 +276,37 @@ CI 后再进行独立生态 review。
 `/tmp/mcpp-885-engine612-early-parity/`、
 `/tmp/mcpp-885-engine612-cold-perf/` 和
 `/tmp/mcpp-885-engine612-cold-syscalls/`。
+
+## 12. 冷阶段后续定位与发布准备（2026-11-05）
+
+引擎 `6129288` 的完整 CI `41927099461` 已结束：四平台原生构建、两个 Ubuntu
+20.04 下限、两架构映像、bundle、四平台映像运行与另外三个 warm-prime 宿主通过。
+Linux x64 冷 CPU 为 14.66 / 12.35 = 1.187，高于 1.15；该项是唯一失败。
+此前冻结对照的负向结果继续保留，不以其他宿主通过替代它。
+
+实际 syscall 计数中的约 68,000 次 `fstatfs` 定位到 musl realpath 的目录属性预查。
+规范已规定可选 resolved-name 操作在不支持时返回 `kal_err_not_supported`；保留弱
+入口、词法后备、错误与边界检查，直接调用操作即可。musl #84 准备 0.27.6，原生
+GCC/LLVM 的实际 helper 控制与候选 POSIX 工程通过。密封组件在同一输入上交替
+运行 14 次，CPU 中位比为 0.859，syscall 控制的 `fstatfs` 从 222 降到 0；符号链接
+重定向、词法后备与缺失路径语义保持。该数字只属于组件，不是 clangd 达标声明。
+
+新测试遇到的 macOS 宿主头文件类型冲突已限定在测试中处理；Mach-O 上刻意缺失
+弱符号的控制明确允许该单一未绑定名字，并实际运行检查空入口。生产 ELF 映像
+的弱入口规则不变。该控制现已在 macOS CI 通过，完整包矩阵仍待结束。
+
+runtime #65 准备 0.18.7，通过已有同名分支图检验两种分配器都选择 musl 0.27.6；
+platform 0.23.7 的一致版本组已在本地准备，待两个前置公开后执行完整平台验收。
+这些工作不要求核心 #888 的默认平台提前依赖未发布版本；核心仍选公开 0.23.6。
+
+服务器 #75 的 Windows dev 归档已实际通过 43 项服务器与 10 项 devtools 测试，
+随后清理退出程序时遇到 sharing violation 32。现只对共享/锁冲突作最长 10 秒的
+重试，其余错误立即失败；本地瞬时冲突、非共享错误与超时控制通过。同一 PR 的
+最终 CI 已重新启动，候选接纳与性能门槛未放宽。
+
+发布准备补齐 CHANGELOG 的 2026.11.5.1 条目；Release 按该版本标题提取说明，
+缺失条目会拒绝发布。包含本次说明的最终提交仍须完成核心 CI，随后再独立进行
+生态 review。新增证据已逐文件校验并验证归档往返：
+`/home/speak/workspace/mcpp-885-realpath-and-final-core-diagnostic-evidence.tar.gz`，
+152 个文件，SHA256 为
+`4d7b783c27bb25dc75c354af72e98dc4b47037ab75043f792a28dceeeb10083a`。

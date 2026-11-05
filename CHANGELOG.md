@@ -4,6 +4,39 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.5.1] - 2026-11-05
+
+### Added
+
+- Build actions can opt into internal stage reporting with `action.progress`
+  (protocol 18). Each execution supplies a separate UTF-8 snapshot path;
+  bounded, ordered snapshots update the build status. Exit codes and output
+  checks still determine success, and completion or cancellation cleans the
+  channel. Existing actions leave reporting disabled.
+
+### Changed
+
+- Both built-in openkal targets select platform 0.23.6. Its final ThinLTO link
+  retains emulated TLS; the group includes musl 0.27.5, runtime 0.18.6 and
+  loader/tools 0.4.4. Explicit platform selections continue to override the
+  built-in default.
+
+### Fixed
+
+- Accelerator requests and constrained source declarations are validated in
+  full. Unclosed sets, trailing text and repeated implementation members are
+  refused; target and implementation ordering share one canonical identity.
+  Published legacy artifact matching remains compatible.
+- Capability requirements and exclusive providers are checked within each
+  consumer's dependency closure. Independent workspace products can use
+  different providers, and applications can supply library requirements.
+  Selected static libraries do not add duplicate consumer contexts; their own
+  programs, shared libraries, tests and standalone selections retain checks.
+  Provider pins accept qualified identities and preserve all link inputs.
+- Build-only providers and requirements no longer select the final artifact's
+  target ABI. Transitive build dependencies remain in the host graph, while
+  packages also used as ordinary dependencies retain their target instances.
+
 ## [2026.11.3.1] - 2026-11-03
 
 The built-in openkal platform is 0.23.3 (openkal 0.23: an image at a base of
