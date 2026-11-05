@@ -864,11 +864,11 @@ struct PrepareState {
     // ── P6-P8: feature activation, capability/ABI accumulation, target side,
     // host tool provisioning ─────────────────────────────────────────────────
     std::set<std::string> activeRootFeatures;
-    std::map<std::string, std::vector<std::string>> capProviders;
-    std::vector<std::pair<std::string, std::string>> capRequires;
+    std::map<std::string, std::vector<std::size_t>> capProviders;
+    std::vector<std::pair<std::string, std::size_t>> capRequires;
     std::vector<std::pair<std::string, std::string>> abiRequires;
     std::vector<std::pair<std::string, std::string>> abiRequiresExceptions;
-    std::map<std::string, std::vector<std::string>> capExclusive;
+    std::map<std::string, std::vector<std::size_t>> capExclusive;
     std::map<std::string, std::vector<std::string>> deviceSourcesByPackage;
     // Keyed like `deviceSourcesByPackage`, by `pkg.root.string()` (root
     // package included: `packages[0].root == *root`). Holds a package whose

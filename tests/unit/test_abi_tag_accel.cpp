@@ -219,3 +219,49 @@ TEST(AccelOpenGrammar, TheExistingPtxSpellingStillParses) {
     EXPECT_EQ(a[0].ptxFloor, "90");
     EXPECT_EQ(mcpp::pack::accel_str(a), "cuda12.8+{sm_80,sm_90f} ptx>=90");
 }
+
+TEST(AccelRequest, RejectsIncompleteSetsAndUnconsumedInput) {
+    for (auto input : {"sycl+{sm_89", "sycl+{sm_89}garbage", "sycl+sm_89",
+                       "sycl+{sm_89,,sm_90}", "sycl+{,sm_89}", "sycl+{sm_89,}",
+                       "sycl+{{sm_89}}", "sycl,", ",sycl", "sycl ptx>=", "12.8+{sm_89}"}) {
+        const auto parsed = mcpp::pack::parse_accel_request(input);
+        ASSERT_FALSE(parsed) << input;
+        EXPECT_NE(parsed.error().find("byte"), std::string::npos) << input;
+    }
+}
+
+TEST(AccelRequest, DuplicateImplementationsCannotChangeCoverageByTheirOrder) {
+    for (auto input : {"sycl+{sm_89},sycl+{sm_90}", "sycl+{sm_90},sycl+{sm_89}"}) {
+        const auto parsed = mcpp::pack::parse_accel_request(input);
+        ASSERT_FALSE(parsed);
+        EXPECT_NE(parsed.error().find("appears more than once"), std::string::npos);
+        EXPECT_NE(parsed.error().find("sycl"), std::string::npos);
+    }
+}
+
+TEST(AccelRequest, EquivalentSetsHaveOneCanonicalSpelling) {
+    const auto a = mcpp::pack::parse_accel_request(
+        "sycl+{spir64,nvptx64-sm_90,nvptx64-sm_89,spir64}, cuda12.9+{sm_90,sm_89} ptx>=90");
+    const auto b = mcpp::pack::parse_accel_request(
+        "cuda12.9+{sm_89,sm_90} floor>=90, sycl+{nvptx64-sm_89,nvptx64-sm_90,spir64}");
+    ASSERT_TRUE(a);
+    ASSERT_TRUE(b);
+    EXPECT_EQ(mcpp::pack::accel_str(*a), mcpp::pack::accel_str(*b));
+    EXPECT_EQ(mcpp::pack::accel_str(*a),
+        "cuda12.9+{sm_89,sm_90} ptx>=90, sycl+{nvptx64-sm_89,nvptx64-sm_90,spir64}");
+}
+
+TEST(AccelRequest, RetainsEmptyAndUnconstrainedFormsAndOpenTargetVocabulary) {
+    EXPECT_TRUE(mcpp::pack::parse_accel_request("")->empty());
+    EXPECT_TRUE(mcpp::pack::parse_accel_request(" (none) ")->empty());
+    const auto bare = mcpp::pack::parse_accel_request("sycl");
+    ASSERT_TRUE(bare);
+    ASSERT_EQ(bare->size(), 1u);
+    EXPECT_TRUE(bare->front().archs.empty());
+    const auto explicitEmpty = mcpp::pack::parse_accel_request("sycl+{}");
+    ASSERT_TRUE(explicitEmpty);
+    EXPECT_EQ(mcpp::pack::accel_str(*bare), mcpp::pack::accel_str(*explicitEmpty));
+    const auto opaque = mcpp::pack::parse_accel_request("newmodel3.1+{future-device-v2,domain:opaque}");
+    ASSERT_TRUE(opaque);
+    ASSERT_EQ(opaque->front().archs.size(), 2u);
+}

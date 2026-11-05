@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-346 records.
+349 records.
 
 ## By subject
 
@@ -79,6 +79,12 @@ Records that declare one. Everything else is listed by date below.
 - [A dlopen surface no closure walks, and a process with two unwinders](2026-09-09-dlopen-surface-and-two-unwinders.md) — landed
 - [The island boundary's names: one rule for both lanes, and the check that makes it true](2026-09-08-island-boundary-names.md) — active
 - [Implementation plan: the island boundary's names](2026-09-08-island-boundary-names-implementation-plan.md) — active
+
+### heterogeneous-build
+
+- [异构构建语义与插件边界补充方案（mcpp#885、mcpp#887）](2026-11-05-heterogeneous-build-semantics-and-plugin-boundaries-supplement.md) — active
+- [异构构建补充方案的第二轮调研与实验](2026-11-05-heterogeneous-build-research-and-experiments.md) — active
+- [生态 885 与异构构建补充方案的实现依赖](2026-11-05-heterogeneous-build-implementation-plan.md) — active
 
 ### home
 
@@ -161,6 +167,9 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [异构构建语义与插件边界补充方案（mcpp#885、mcpp#887）](2026-11-05-heterogeneous-build-semantics-and-plugin-boundaries-supplement.md) — active
+- [异构构建补充方案的第二轮调研与实验](2026-11-05-heterogeneous-build-research-and-experiments.md) — active
+- [生态 885 与异构构建补充方案的实现依赖](2026-11-05-heterogeneous-build-implementation-plan.md) — active
 - [生态设计 part 4：超越原生——openkal 之上与之下的优化、可观测性与安全](2026-11-03-ecosystem-part4-beyond-native-design.md) — active
 - [生态设计 part 3：ok 映像的性能对等——引擎路径、openkal 运行时与观测](2026-11-02-ecosystem-part3-ok-image-performance-parity-design.md) — active
 ### 2026-10

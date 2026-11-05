@@ -1211,10 +1211,21 @@ static std::expected<void, std::string> step1_device_axis_and_layer_merge(Prepar
     // nothing. Measured 2026-09-05 with a build program that wrote the value to
     // a file, which is the only way to see it -- a program's stdout is shown
     // only when it fails.
-    state.resolvedAccel = [&]() -> std::string {
-        const auto sets = mcpp::pack::parse_accel(
+    const auto validateAccel = [&]() -> std::expected<void, std::string> {
+        const bool overridden = !state.overrides.accel.empty();
+        auto parsed = mcpp::pack::parse_accel_request(
+            overridden ? state.overrides.accel : state.m->buildConfig.accel);
+        if (!parsed) return std::unexpected(std::format("{}: {}",
+            overridden ? "--accel" : "[build] accel", parsed.error()));
+        return {};
+    };
+    if (auto r = validateAccel(); !r) return r;
+    state.resolvedAccel = [&state]() -> std::string {
+        const auto sets = mcpp::pack::parse_accel_request(
             state.overrides.accel.empty() ? state.m->buildConfig.accel : state.overrides.accel);
-        return sets.empty() ? std::string{} : mcpp::pack::accel_str(sets);
+        // Both the initial statement and the conditional merge below are
+        // checked before a consumer can use this closure.
+        return !sets || sets->empty() ? std::string{} : mcpp::pack::accel_str(*sets);
     };
     // The cfg context, with the accelerator layer filled from the resolved
     // accel's backend names. `cfg(accelerator = "cuda")` is a membership test
@@ -1251,6 +1262,7 @@ static std::expected<void, std::string> step1_device_axis_and_layer_merge(Prepar
     if (!state.m->conditionalConfigs.empty()) {
         merge_conditional_config(*state.m, state.cfgCtx());
     }
+    if (auto r = validateAccel(); !r) return r;
     // `[target.<selector>.abi] threads` -- the ROOT's statement, rendered once,
     // into channels that already reach the whole artefact: the graph-global
     // dialect flag set (every C++ translation unit, the std module's own

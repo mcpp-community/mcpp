@@ -56,6 +56,7 @@ import mcpp.build.command_line;
 import mcpp.run;
 import mcpp.ui;
 import mcpp.log;
+import mcpp.build.action_progress;
 import mcpp.build.progress;
 
 export namespace mcpp::build {
@@ -3918,7 +3919,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // same graph is then assertable on every host.
         const bool crtOnPath = mcpp::toolchain::is_msvc_target(plan.toolchain)
                             && !plan.toolchain.base.msvc.redistDir.empty();
-        const bool named = !a.env.empty() || !a.cwd.empty() || crtOnPath;
+        const bool named = !a.env.empty() || !a.cwd.empty() || crtOnPath || a.progress;
         if (stamped || named) {
             // `mcpp_exe_path()`, not `self_exe_path()` directly: this file
             // already has one spelling of "where am I" and a second would be
@@ -3936,6 +3937,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             };
             std::string wrapped = q(mcpp_exe_path().string())
                 + (named ? " __action" : " __action-stamp");
+            if (a.progress) wrapped += " --progress " + q(
+                mcpp::build::progress::normalise(a.outputs.front()));
             for (auto const& e : a.env) wrapped += " --env " + q(e);
             if (!a.cwd.empty()) wrapped += " --cwd " + q(a.cwd);
             if (crtOnPath)
@@ -3997,7 +4000,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         append(std::format("build{} : mcpp_action_{}{}\n", outs, i, ins));
         // A check or prepare action reports its start through the wrapper,
         // by its first output (design §6.4); the record gives it its label.
-        if (attribution && stamped)
+        if (attribution && (stamped || a.progress))
             attribution->action(std::filesystem::path(a.outputs.front()).generic_string(),
                                 a.description.empty() ? a.id : a.description);
         append("\n");
@@ -4907,6 +4910,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             // even into the file of a build that runs this one (design §6.4).
             auto preEnv = nenv;
             preEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
+            preEnv.emplace_back(std::string(mcpp::build::action_progress::kRootEnv), "");
+            preEnv.emplace_back(std::string(mcpp::build::action_progress::kFileEnv), "");
             (void)mcpp::run::capture_exec_deadline(pre, preEnv, preDeadline, nullptr);
         }
         stage("ninja-staged-cache");
@@ -4960,6 +4965,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         } else {
             auto scanEnv = nenv;
             scanEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
+            scanEnv.emplace_back(std::string(mcpp::build::action_progress::kRootEnv), "");
+            scanEnv.emplace_back(std::string(mcpp::build::action_progress::kFileEnv), "");
             auto cap = mcpp::run::capture_exec_deadline(
                 scan, scanEnv, scanDeadline, &buildTimedOut);
             if (cap.exit_code != 0 || buildTimedOut) {
@@ -4987,6 +4994,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     } else {
         auto quietEnv = nenv;
         quietEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
+            quietEnv.emplace_back(std::string(mcpp::build::action_progress::kRootEnv), "");
+            quietEnv.emplace_back(std::string(mcpp::build::action_progress::kFileEnv), "");
         auto cap = mcpp::run::capture_exec_deadline(
             nargv, quietEnv, deadline, &buildTimedOut);
         out = std::move(cap.output);

@@ -394,7 +394,7 @@ static std::expected<void, std::string> step6_activate_features(PrepareState& st
                            bool seedDefault = true) {
             return feature_closure(pm, requested, seedDefault); // single shared implementation
         };
-        auto apply = [&](mcpp::modgraph::PackageRoot& pkg,
+        auto apply = [&](std::size_t packageIndex, mcpp::modgraph::PackageRoot& pkg,
                          const std::vector<std::string>& requested,
                          bool seedDefault = true) {
             auto active = activate(pkg.manifest, requested, seedDefault);
@@ -402,15 +402,15 @@ static std::expected<void, std::string> step6_activate_features(PrepareState& st
             // feature-scoped provides/requires count only when the feature is
             // active. Requirements are bound after all packages are processed.
             const auto& pcap = pkg.manifest.package.name;
-            for (auto& cap : pkg.manifest.provides) state.capProviders[cap].push_back(pcap);
-            for (auto& cap : pkg.manifest.exclusive) state.capExclusive[cap].push_back(pcap);
+            for (auto& cap : pkg.manifest.provides) state.capProviders[cap].push_back(packageIndex);
+            for (auto& cap : pkg.manifest.exclusive) state.capExclusive[cap].push_back(packageIndex);
             for (auto& f : active) {
                 if (auto it = pkg.manifest.featureProvides.find(f);
                     it != pkg.manifest.featureProvides.end())
-                    for (auto& cap : it->second) state.capProviders[cap].push_back(pcap);
+                    for (auto& cap : it->second) state.capProviders[cap].push_back(packageIndex);
                 if (auto it = pkg.manifest.featureRequires.find(f);
                     it != pkg.manifest.featureRequires.end())
-                    for (auto& cap : it->second) state.capRequires.emplace_back(cap, pcap);
+                    for (auto& cap : it->second) state.capRequires.emplace_back(cap, packageIndex);
                 if (auto it = pkg.manifest.featureRequiresAbiThreads.find(f);
                     it != pkg.manifest.featureRequiresAbiThreads.end() && it->second)
                     state.abiRequires.emplace_back(std::format("feature `{}`", f), pcap);
@@ -715,7 +715,7 @@ static std::expected<void, std::string> step6_activate_features(PrepareState& st
                 if (state.overrides.strict) return std::unexpected(msg);
                 mcpp::diag::warning("features/request", msg);
             }
-            apply(state.packages[0], rootReq);
+            apply(0, state.packages[0], rootReq);
             for (auto& f : activate(*state.m, rootReq)) state.activeRootFeatures.insert(f);
         }
         // #242/#243: the feature request for a dependency PACKAGE, aggregated
@@ -752,7 +752,7 @@ static std::expected<void, std::string> step6_activate_features(PrepareState& st
             // feature-gated sources must have those sources dropped by default.
             // depDefaultFeatures carries the consumer's `default-features = false`
             // (#242): when opted out, the dep's [features].default is not seeded.
-            apply(state.packages[i], req, depDefaultFeatures);
+            apply(i, state.packages[i], req, depDefaultFeatures);
             if (state.activeFeaturesByPackage.size() <= i)
                 state.activeFeaturesByPackage.resize(i + 1);
             state.activeFeaturesByPackage[i] =
@@ -902,6 +902,10 @@ static std::expected<void, std::string> step6_device_extensions_and_rules(Prepar
                 auto& bc  = pkg.manifest.buildConfig;
                 std::set<std::string> excludedGlobs;
                 for (auto const& sc : bc.sourceConstraints) {
+                    const auto checked = mcpp::pack::parse_accel_request(sc.accel);
+                    if (!checked) return std::unexpected(std::format(
+                        "`{}`: [build] sources entry '{}': {}",
+                        pkg.manifest.package.name, sc.glob, checked.error()));
                     const auto hits = mcpp::modgraph::expand_glob(pkg.root, sc.glob);
                     if (hits.empty()) {
                         return std::unexpected(std::format(
@@ -920,7 +924,7 @@ static std::expected<void, std::string> step6_device_extensions_and_rules(Prepar
                     // optional, and a package that omits it has said nothing to
                     // contradict.
                     if (!pkg.manifest.package.accelerators.empty()) {
-                        for (auto const& w : mcpp::pack::parse_accel(sc.accel)) {
+                        for (auto const& w : *checked) {
                             if (std::ranges::find(pkg.manifest.package.accelerators,
                                                   w.backend)
                                 != pkg.manifest.package.accelerators.end()) continue;
@@ -943,7 +947,7 @@ static std::expected<void, std::string> step6_device_extensions_and_rules(Prepar
                         }
                     }
                     if (buildAccel.empty()) { excludedGlobs.insert(sc.glob); continue; }
-                    const auto want = mcpp::pack::parse_accel(sc.accel);
+                    const auto& want = *checked;
 
                     // A GLOB WHOSE BACKEND THIS BUILD NEVER NAMED IS NOT A
                     // MISMATCH, IT IS ABSENT.
@@ -2039,6 +2043,147 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
     return {};
 }
 
+// A capability belongs to a consumer's dependency closure, rather than the
+// union of independent workspace products. Requirements of a library bind in
+// that consumer's context too: an application may supply a sibling provider.
+struct CapabilityContext {
+    std::size_t root;
+    std::set<std::size_t> packages;
+};
+
+static std::string capability_package_name(const PrepareState& state, std::size_t i) {
+    const auto& p = state.packages[i].manifest.package;
+    return p.namespace_.empty() ? p.name : p.namespace_ + ":" + p.name;
+}
+
+static std::vector<CapabilityContext> capability_contexts(const PrepareState& state) {
+    std::vector<std::vector<std::size_t>> dependencies(state.packages.size());
+    for (const auto& edge : state.dependencyEdges) {
+        if (edge.buildTable || state.packages[edge.dependencyPackageIndex].buildTimeOnly)
+            continue;
+        dependencies[edge.consumerPackageIndex].push_back(edge.dependencyPackageIndex);
+    }
+    std::vector<std::size_t> roots;
+    for (std::size_t i = 0; i < state.packages.size(); ++i) {
+        if (!state.workspacePlan() ? i == 0
+            : state.packages[i].selectedMember || state.selectedMemberAt(state.packages[i].root))
+            roots.push_back(i);
+    }
+    std::vector<CapabilityContext> contexts;
+    for (auto root : roots) {
+        CapabilityContext context{root, {root}};
+        std::vector<std::size_t> pending{root};
+        // A worklist follows each edge once; cycles cannot grow it indefinitely.
+        for (std::size_t next = 0; next < pending.size(); ++next) {
+            const auto& children = dependencies[pending[next]];
+            std::ranges::copy_if(children, std::back_inserter(pending), [&](auto child) {
+                return context.packages.insert(child).second;
+            });
+        }
+        contexts.push_back(std::move(context));
+    }
+    // A selected static library is also built when it is a workspace member,
+    // but archiving it does not create another final consumer. Its contract
+    // binds in the selected products that reach it. Keep a separate context
+    // for its own programs/shared libraries/tests, and for a standalone root.
+    std::vector<std::size_t> independent;
+    for (std::size_t i = 0; i < contexts.size(); ++i) {
+        const auto& context = contexts[i];
+        const bool links = std::ranges::any_of(
+            state.packages[context.root].manifest.targets, [](const auto& target) {
+                return target.kind != mcpp::manifest::Target::Library
+                    && target.kind != mcpp::manifest::Target::Entry;
+            });
+        const bool consumed = std::ranges::any_of(contexts, [&](const auto& other) {
+            return other.packages.contains(context.root)
+                && !context.packages.contains(other.root);
+        });
+        if (links || !consumed) independent.push_back(i);
+    }
+    std::vector<CapabilityContext> consumers;
+    for (auto i : independent) consumers.push_back(std::move(contexts[i]));
+    return consumers;
+}
+
+static std::vector<std::size_t> capability_candidates(
+        const std::vector<std::size_t>& providers, const CapabilityContext& context) {
+    std::set<std::size_t> unique;
+    for (auto p : providers)
+        if (context.packages.contains(p)) unique.insert(p);
+    return {unique.begin(), unique.end()};
+}
+
+static std::string capability_list(const PrepareState& state,
+                                  const std::vector<std::size_t>& providers) {
+    std::string list;
+    for (auto p : providers)
+        list += (list.empty() ? "" : ", ") + capability_package_name(state, p);
+    return list;
+}
+
+static std::expected<void, std::string> bind_capability_context(
+        PrepareState& state, const CapabilityContext& context) {
+    const auto consumer = capability_package_name(state, context.root);
+    for (const auto& [cap, claimers] : state.capExclusive) {
+        auto claims = capability_candidates(claimers, context);
+        if (claims.empty()) continue;
+        auto it = state.capProviders.find(cap);
+        if (it == state.capProviders.end()) continue;
+        auto providers = capability_candidates(it->second, context);
+        if (providers.size() < 2) continue;
+        refusal::record(refusal::Code::ExclusiveCapability);
+        return std::unexpected(std::format(
+            "capability '{}' is EXCLUSIVE in consumer '{}'; providers: [{}]; "
+            "exclusive: [{}]. A [capabilities] pin selects a provider for a "
+            "requirement and cannot make two definitions of one symbol safe.",
+            cap, consumer, capability_list(state, providers), capability_list(state, claims)));
+    }
+    auto pins = state.m->capabilityPins;
+    for (const auto& [cap, provider] : state.packages[context.root].manifest.capabilityPins)
+        pins[cap] = provider;
+    // The command is the final override, including over a member's own pin.
+    for (std::size_t p = 0; p < state.overrides.capabilities.size();) {
+        auto c = state.overrides.capabilities.find_first_of(", ", p);
+        auto tok = state.overrides.capabilities.substr(
+            p, c == std::string::npos ? std::string::npos : c - p);
+        if (auto eq = tok.find('='); eq != std::string::npos)
+            pins[tok.substr(0, eq)] = tok.substr(eq + 1);
+        if (c == std::string::npos) break;
+        p = c + 1;
+    }
+    std::set<std::pair<std::string, std::size_t>> bound;
+    for (const auto& [cap, requirer] : state.capRequires) {
+        if (!context.packages.contains(requirer) || !bound.emplace(cap, requirer).second)
+            continue;
+        std::vector<std::size_t> candidates;
+        if (auto it = state.capProviders.find(cap); it != state.capProviders.end())
+            candidates = capability_candidates(it->second, context);
+        if (auto pin = pins.find(cap); pin != pins.end()) {
+            auto matches = std::ranges::count_if(candidates, [&](auto p) {
+                return pin->second == capability_package_name(state, p)
+                    || pin->second == state.packages[p].manifest.package.name;
+            });
+            if (matches == 1) continue;
+            return std::unexpected(std::format(
+                "capability '{}' pinned to provider '{}' (via [capabilities]) in "
+                "consumer '{}', but the pin must name exactly one provider; candidates: [{}]",
+                cap, pin->second, consumer, capability_list(state, candidates)));
+        }
+        if (candidates.empty())
+            return std::unexpected(std::format(
+                "no package provides capability '{}' required by '{}' in consumer '{}'; "
+                "add a dependency that declares `provides = [\"{}\"]`",
+                cap, capability_package_name(state, requirer), consumer, cap));
+        if (candidates.size() > 1)
+            return std::unexpected(std::format(
+                "capability '{}' required by '{}' has multiple providers in consumer '{}': [{}]; "
+                "select one with [capabilities] {} = \"<provider>\" or --cap {}=<provider>",
+                cap, capability_package_name(state, requirer), consumer,
+                capability_list(state, candidates), cap, cap));
+    }
+    return {};
+}
+
 static std::expected<void, std::string> step6_capability_binding(PrepareState& state) {
         // ─── Capability binding (Stage 3) ──────────────────────────────────
         // For each required capability, bind exactly one provider from the
@@ -2048,50 +2193,9 @@ static std::expected<void, std::string> step6_capability_binding(PrepareState& s
         // requirements already flow through normal dependency mechanics — this
         // pass is the selection-and-validation layer. See the capability-model
         // design doc.
-        // --cap cap=provider[,cap=provider] overrides [capabilities] pins.
-        for (std::size_t p = 0; p < state.overrides.capabilities.size();) {
-            auto c = state.overrides.capabilities.find_first_of(", ", p);
-            auto tok = state.overrides.capabilities.substr(
-                p, c == std::string::npos ? std::string::npos : c - p);
-            if (auto eq = tok.find('='); eq != std::string::npos)
-                state.m->capabilityPins[tok.substr(0, eq)] = tok.substr(eq + 1);
-            if (c == std::string::npos) break;
-            p = c + 1;
-        }
-
-        // EXCLUSIVE CAPABILITIES, CHECKED BEFORE REQUIREMENTS ARE BOUND.
-        //
-        // Ordering is deliberate. A requirement conflict is reported by naming
-        // the requirement; this one exists whether or not anything requires the
-        // capability, because the defect is that two implementations of one
-        // interface are in the same link. Reporting it first means the message
-        // names the real problem rather than a symptom of it.
-        for (auto const& [cap, claimers] : state.capExclusive) {
-            auto it = state.capProviders.find(cap);
-            if (it == state.capProviders.end()) continue;
-            std::vector<std::string> providers;
-            for (auto const& p : it->second)
-                if (std::find(providers.begin(), providers.end(), p) == providers.end())
-                    providers.push_back(p);
-            if (providers.size() < 2) continue;
-
-            std::string list, claimed;
-            for (auto const& p : providers) list += (list.empty() ? "" : ", ") + p;
-            for (auto const& c : claimers) claimed += (claimed.empty() ? "" : ", ") + c;
-            refusal::record(refusal::Code::ExclusiveCapability);
-            return std::unexpected(std::format(
-                "capability '{}' is provided by more than one package, and {} "
-                "declares it EXCLUSIVE.\n"
-                "         providers: [{}]\n"
-                "         exclusive: [{}]\n"
-                "       Two implementations of one interface define the same "
-                "symbols, so the link would\n"
-                "       resolve every call to whichever archive it reached "
-                "first. Keep one of them —\n"
-                "       a `[capabilities]` pin selects a provider for a "
-                "REQUIREMENT and cannot make two\n"
-                "       definitions of one symbol safe.",
-                cap, claimers.size() == 1 ? "it" : "they", list, claimed));
+        for (const auto& context : capability_contexts(state)) {
+            if (auto result = bind_capability_context(state, context); !result)
+                return std::unexpected(result.error());
         }
 
         // VERSION FLOORS. A package states what it needs of the machine; a
@@ -2136,43 +2240,6 @@ static std::expected<void, std::string> step6_capability_binding(PrepareState& s
         if (auto err = checkAbiRequirement(
                 "exceptions", state.m->buildConfig.abiExceptions, state.abiRequiresExceptions))
             return std::unexpected(*err);
-
-        std::set<std::string> boundCaps;
-        for (auto& [cap, requirer] : state.capRequires) {
-            if (!boundCaps.insert(cap).second) continue;   // one diagnosis per cap
-            auto& pins = state.m->capabilityPins;
-            // Dedup candidates, preserve first-seen order.
-            std::vector<std::string> cands;
-            if (auto it = state.capProviders.find(cap); it != state.capProviders.end())
-                for (auto& p : it->second)
-                    if (std::find(cands.begin(), cands.end(), p) == cands.end())
-                        cands.push_back(p);
-            if (auto pit = pins.find(cap); pit != pins.end()) {
-                const auto& pin = pit->second;
-                if (std::find(cands.begin(), cands.end(), pin) == cands.end()) {
-                    std::string list;
-                    for (auto& c : cands) list += (list.empty() ? "" : ", ") + c;
-                    return std::unexpected(std::format(
-                        "capability '{}' pinned to provider '{}' (via [capabilities]), "
-                        "but no such provider is in the graph; candidates: [{}]",
-                        cap, pin, list));
-                }
-                continue;   // pin satisfied
-            }
-            if (cands.empty())
-                return std::unexpected(std::format(
-                    "no package provides capability '{}' required by '{}'; add a "
-                    "dependency that declares `provides = [\"{}\"]`", cap, requirer, cap));
-            if (cands.size() > 1) {
-                std::string list;
-                for (auto& c : cands) list += (list.empty() ? "" : ", ") + c;
-                return std::unexpected(std::format(
-                    "capability '{}' has multiple providers in the graph: [{}]; select "
-                    "one with [capabilities] {} = \"<provider>\" or --cap {}=<provider>",
-                    cap, list, cap, cap));
-            }
-            // exactly one → bound implicitly.
-        }
 
     // The package that supplies the C++ layer when the graph does, as an index
     // into `packages`. Recorded where the provider is found so that the check

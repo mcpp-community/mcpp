@@ -289,6 +289,7 @@ struct action {
     const char* id          = "";
     const char* role        = roles::source; // one of `roles::{source, check, object, artifact, prepare}`
     const char* description = "";
+    bool        progress    = false;      // optional runtime telemetry, all roles
     bool        blocking    = false;      // check only: gate compilation on it
     // A Make-style dependency file the COMMAND writes as a side effect (gcc/
     // clang `-MD -MF`, glslangValidator `--depfile`, glslc `-MD -MF`, slangc
@@ -346,6 +347,7 @@ struct action {
         // on every action would perturb the cache for every build.mcpp that
         // has nothing to do with depfiles. The decoder's default (empty
         // string) is identical either way, so omission costs nothing on read.
+        if (progress) std::printf(",\"progress\":true");
         if (depfile[0]) { std::printf(",\"depfile\":"); esc(depfile); }
         // Same omission rule as `depfile`, for the same reason: an action
         // that never calls `output_dir()` serialises to the same bytes it did

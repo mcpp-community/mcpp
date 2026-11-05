@@ -470,7 +470,10 @@ say and says nothing, and a probe that reaches no answer invents none.
 accel = "cuda12.8+{sm_80,sm_90f} ptx>=90"
 ```
 
-overridden for one build by `--accel`, which is the relationship `--target`
+From 2026.11.5.1, a build request is read completely: unclosed sets, trailing text and empty target entries are errors. An implementation appears once per request; combine its targets as `sycl+{nvptx64-sm_89,nvptx64-sm_90}`. Implementation and target ordering, and repeated targets within a member, do not allocate different build variants. Target tokens belong to their implementation and are interpreted by its rule; selecting a SYCL NVIDIA target does not itself select CUDA source compilation. Source constraints use the same complete syntax check, including in a CPU-only build.
+
+
+The manifest request is overridden for one build by `--accel`, which is the relationship `--target`
 has with `[toolchain]`. `--no-accel` is not the absence of `--accel`; it is an
 explicit request for no accelerator, which is what selects a CPU-only variant
 of a package that also publishes device builds.

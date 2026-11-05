@@ -693,6 +693,14 @@ a.arg("cp").arg("${mcpp.artifact:updater/updater}").arg(out.c_str())
 
 占位符不对应任何 `artifacts` 条目时，规划失败，错误中点名该占位符。
 
+#### 可选 action 进度（2026.11.5.1+，协议 18）
+
+在 build.mcpp 中设置 `a.progress = true`，即可为该 action 启用进度报告。默认值为 `false`，五种角色均支持。可以报告时，命令收到 `MCPP_ACTION_PROGRESS_FILE`；变量缺失或为空时按关闭处理。该路径在包括 Windows 在内的所有宿主上均以 UTF-8 编码。
+
+工作程序以原子替换方式写入最新 JSON 快照，例如 `{"v":1,"seq":2,"phase":"compile","done":3,"total":9}`。不知道总量时可以只报告 `phase`。构建状态在 action 执行期间显示最新有效快照。计数描述 action 内部的工作，不计入外层 Ninja 完成项；成功仍由命令退出状态与产物检查决定。
+
+运行通道为本次执行分配，不是声明的输入或输出。修改构建程序启用报告仍可能重新规划构建。现有 NDJSON 构建事件的含义保持不变。快照字段、限额和次序见 [SPEC-007 §3.1](../specs/build-plugins.md#31-可选-action-进度协议-18)。
+
 ### 部署程序生成的东西：`deploy`（2026.9.12.3+,protocol 11）
 
 `[runtime] deploy`（docs/04 §2.11）把包里已经存在的一个文件，放到相对可执行
@@ -1444,6 +1452,8 @@ MCPP_TOOL_PROTOBUF_PROTOC=/usr/bin/protoc mcpp build
 逃生舱不是可复现输入。
 
 ### 构建程序的库：`[build-dependencies]`（mcpp 2026.10.11.1+）
+
+仅供构建使用的库向构建程序的子构建供给层和需求，不选择最终产物的 ABI；经传递依赖到达时同样如此（2026.11.5.1+）。同一包也被普通依赖引用时，仍保留其目标实例。
 
 一条规则（例如"对这些 `.proto` 文件运行 protoc"）只写一次，作为普通的 mcpp 库包发布；
 构建程序需要的任何库（TOML 解析器、格式化库）也是如此。构建程序使用其包在

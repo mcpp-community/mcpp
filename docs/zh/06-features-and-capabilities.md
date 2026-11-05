@@ -169,6 +169,12 @@ plugins = { version = "0.3.0", features = ["rules-spirv"] }
 解析器会从依赖图中绑定**恰好一个** provider。这样就能在多个可互换的后端
 （OpenBLAS / MKL / …）之间选出一个，而不必把选择写死进库里。
 
+
+2026.11.5.1 起，requirement 在每个所选消费包的普通依赖闭包内绑定。库的 capability 需求可以由应用的兄弟依赖供给。工作空间内的独立产物可以选择不同 provider；仅属于其他产物的 provider 不能补齐本产物缺失的需求。宿主工具构建边不进入目标上下文。工作空间根 pin、成员 pin、`--cap` 依次覆盖。短 provider 名只有唯一匹配候选时可用；同短名用 `namespace:name` 区分。exclusive 在同一消费者闭包内检查，包括所链接的共享库。pin 不从链接中删除其他 provider。
+
+所选成员只含静态库或 entry target，且已有另一个所选消费者到达它时，不额外产生重复的绑定上下文。库自身的可执行程序、共享库或测试 target 仍保留独立上下文。单独选择该库时，校验它自己的依赖闭包。
+
+
 ```toml
 # A provider package satisfies a capability for any dependent that requires it.
 [package]
@@ -275,18 +281,11 @@ provides  = ["gpu-blas"]
 exclusive = ["gpu-blas"]
 ```
 
-两个都提供 `gpu-blas` 的包，只要其中至少一个声明了独占，就在绑定 capability
+同一消费者闭包内两个都提供 `gpu-blas` 的包，只要其中至少一个声明了独占，就在绑定 capability
 时被拒绝 —— 在任何东西被编译之前，并点名该能力与双方 provider:
 
 ```
-error: capability 'gpu-blas' is provided by more than one package, and they
-       declare it EXCLUSIVE.
-         providers: [compat.cublas, compat.rocblas]
-         exclusive: [compat.cublas, compat.rocblas]
-       Two implementations of one interface define the same symbols, so the
-       link would resolve every call to whichever archive it reached first.
-       Keep one of them — a `[capabilities]` pin selects a provider for a
-       REQUIREMENT and cannot make two definitions of one symbol safe.
+error: capability 'gpu-blas' is EXCLUSIVE in consumer 'app'; providers: [compat.cublas, compat.rocblas]; exclusive: [compat.cublas, compat.rocblas]. A [capabilities] pin selects a provider for a requirement and cannot make two definitions of one symbol safe.
 ```
 
 这个拒绝在 `--format json` 里报 `exclusive-capability`（见第 11 章）。

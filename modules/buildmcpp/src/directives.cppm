@@ -1281,6 +1281,7 @@ std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payloa
         arr("imports", a.imports);
         arr("targets", a.targets);
         a.blocking    = j.value("blocking", false);
+        a.progress    = j.value("progress", false);
         a.depfile     = j.value("depfile", std::string{});
         a.description = j.value("description", std::string{});
         // Omitted by every role but Prepare, exactly as `depfile` is omitted

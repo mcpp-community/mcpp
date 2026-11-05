@@ -820,6 +820,14 @@ a.arg("cp").arg("${mcpp.artifact:updater/updater}").arg(out.c_str())
 A placeholder that names no `artifacts` entry fails planning and is named in the
 error.
 
+#### Optional action progress (2026.11.5.1+, protocol 18)
+
+Set `a.progress = true` in build.mcpp to enable telemetry for that action. The default is `false`; all five roles support it. The command receives `MCPP_ACTION_PROGRESS_FILE` when reporting is available and treats an absent or empty value as disabled. The path is encoded as UTF-8 on every host, including Windows.
+
+The worker atomically replaces the file with its latest JSON snapshot, for example `{"v":1,"seq":2,"phase":"compile","done":3,"total":9}`. `phase` can be reported without a total. The build status displays the latest valid snapshot while the action runs. Counts describe work inside that action and do not contribute to the outer Ninja step count. The command's exit status and output checks determine success.
+
+The runtime channel is allocated for this execution and is not a declared input or output. Editing the build program to enable telemetry can replan the build. Existing NDJSON build events retain their meanings. Snapshot fields, limits and ordering are specified in [SPEC-007 §3.1](specs/build-plugins.md#31-可选-action-进度协议-18).
+
 ### Deploying what the program generated: `deploy` (2026.9.12.3+, protocol 11)
 
 `[runtime] deploy` (docs/04 §2.11) places a file that already exists in the
@@ -1722,6 +1730,8 @@ source on this machine must not be a dead end. It is deliberately **not** part
 of the cache key — an override is an escape hatch, not a reproducible input.
 
 ### Libraries of a build program: `[build-dependencies]` (mcpp 2026.10.11.1+)
+
+Build-only libraries supply layers and requirements to the build-program sub-build. They do not select the final artifact’s ABI, including when reached transitively (2026.11.5.1+). A package also reached through an ordinary dependency retains its target instance.
 
 A rule (say "run protoc over these `.proto` files") is written once, as an
 ordinary mcpp library package, and so is any library a build program needs —
