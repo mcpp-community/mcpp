@@ -11,6 +11,8 @@
 - Cached builds load action ownership when an action starts, so internal progress
   appears while Ninja is still buffering stdout. Idle builds retain lazy loading;
   command results and output checks remain authoritative.
+- New action snapshots request a normal UI frame, so short phases can appear
+  between Ninja status lines without waiting for the clock redraw.
 - The macOS clean bootstrap keeps its stage-one compiler outside the output tree
   removed by the second stage.
 

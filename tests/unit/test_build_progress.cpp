@@ -369,6 +369,40 @@ TEST(ProgressModel, AnActionStartLoadsTheFastPathRecordBeforeNinjaWritesStdout) 
     // No Build::status() or completed ninja-log entry was supplied.
 }
 
+TEST(ProgressModel, ANewSnapshotRedrawsBeforeTheClockHeartbeat) {
+    namespace telemetry = mcpp::build::action_progress;
+    Tmp tmp;
+    Record rec;
+    rec.packages = {{"progress-redraw", true, "r", 0, 1, "", "project"}};
+    rec.owner = {{"gen/redraw.stamp", 0}};
+    rec.actions = {{"gen/redraw.stamp", "a"}};
+    Build build(tmp.path);
+    build.set_record(rec);
+    build.pass_begin();
+    const auto env = build.environment();
+    const auto root = std::ranges::find(env, telemetry::kRootEnv, &decltype(env)::value_type::first);
+    ASSERT_NE(root, env.end());
+    const auto unixMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    append(tmp.path / kStartsFile, std::format("gen/redraw.stamp\t{}\n", unixMs));
+    const bool wasLive = mcpp::ui::live_progress();
+    mcpp::ui::set_live_progress(true);
+    testing::internal::CaptureStderr();
+    open(false);
+    // Let the initial half-second display guard pass. This line then draws
+    // the frame immediately before publication, resetting the clock redraw.
+    std::this_thread::sleep_for(std::chrono::milliseconds(550));
+    mcpp::ui::info("Probe", "before snapshot publication");
+    std::ofstream(telemetry::channel(root->second, "gen/redraw.stamp"))
+        << R"({"v":1,"seq":1,"phase":"snapshot-redraw","done":1,"total":2})";
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    close();
+    const auto out = testing::internal::GetCapturedStderr();
+    mcpp::ui::set_live_progress(wasLive);
+    EXPECT_NE(out.find("snapshot-redraw 1/2"), std::string::npos) << out;
+    // No Ninja stdout, completion or other narration requested a redraw.
+}
+
 TEST(ProgressModel, APackageIsNamedOnceWhenItsFirstStepFinishes) {
     mcpp::ui::disable_color();
     Tmp tmp;

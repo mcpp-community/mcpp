@@ -1035,14 +1035,18 @@ void read_starts(Report& r, Build::Impl& b, std::vector<std::string>& out) {
 
 // Read only active graph actions. Snapshot counts never complete an action;
 // the ninja log removes it from running only after the command has finished.
-void read_action_progress(Build::Impl& build) {
-    if (build.progressDir.empty()) return;
+bool read_action_progress(Build::Impl& build) {
+    if (build.progressDir.empty()) return false;
+    bool changed = false;
     for (auto& action : build.running) {
         auto snapshot = action_progress::read(
             action_progress::channel(build.progressDir, action.stamp));
-        if (snapshot && (!action.snapshot || snapshot->seq > action.snapshot->seq))
+        if (snapshot && (!action.snapshot || snapshot->seq > action.snapshot->seq)) {
             action.snapshot = std::move(snapshot);
+            changed = true;
+        }
     }
+    return changed;
 }
 
 // The builds whose Build object is alive: the frame, the poll and the status
@@ -1178,6 +1182,7 @@ mcpp::ui::Frame frame() {
 void poll() {
     auto& r = report();
     std::vector<std::string> out;
+    bool progressChanged = false;
     {
         std::lock_guard lock(r.m);
         if (r.game && r.keys)
@@ -1191,10 +1196,13 @@ void poll() {
         for (auto const& b : live_builds(r)) {
             read_starts(r, *b, out);
             read_log(r, *b, out);
-            read_action_progress(*b);
+            progressChanged |= read_action_progress(*b);
         }
     }
     write_lines(out);
+    // A snapshot can arrive between Ninja status lines. Wake the normal
+    // frame writer instead of waiting for its one-second clock redraw.
+    if (progressChanged) mcpp::ui::touch_region();
 }
 
 // The status row's screen, as MCPP_PROGRESS asks: `random` (the default) or
