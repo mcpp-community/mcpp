@@ -71,6 +71,11 @@ Windows 首次显式 `self init` 时，若 D 是可写的本地固定磁盘，�
 `self env`、`self config`、`self doctor` 和 `toolchain list` 读取本地状态，不安装工具。
 `self config --mirror auto|CN|GLOBAL` 仅更新本地配置，因此网络故障时仍可使用。
 
+安装过程分别跟踪每个活动下载的字节进度与来源切换，等待下载槽位的时间不消耗该预算。
+其他文件取得进度不会延长停滞文件的预算。
+从 2026.11.5.2 起，下载停滞诊断会标明文件、停滞时长与来源尝试次数；provider 准备阶段与进程超时单独报告。
+镜像选择使用 `mcpp self config --mirror auto`、`CN` 或 `GLOBAL`。
+
 ### 构建产物的保留期（2026.10.31.3+）
 
 `build-cache/v1/` 下的构建缓存由 home 中所有工程共享；工程的 `target/` 属于工程自身。两者各有保留期，

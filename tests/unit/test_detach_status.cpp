@@ -40,3 +40,18 @@ TEST(DetachStatus, AWrittenStatusIsTheUnits) {
     std::ofstream(t.slot.string() + ".rc") << "0\n";
     EXPECT_EQ(detach::await_unit(t.slot, {}), 0);
 }
+
+TEST(DetachStatus, OrdinaryCompilerStartFailureReleasesItsPermit) {
+    Slot s;
+    const auto semaphore = s.dir / "permits";
+    EXPECT_EQ(detach::run_capped({(s.dir / "missing-compiler").string()}, semaphore, 1), 127);
+    EXPECT_TRUE(fs::is_empty(semaphore));
+}
+
+TEST(DetachStatus, AnUnavailableSemaphoreRefusesUnboundedCompilation) {
+    Slot s;
+    const auto semaphore = s.dir / "not-a-directory";
+    std::ofstream(semaphore) << "occupied";
+    EXPECT_NE(detach::run_capped({"unused-compiler"}, semaphore, 1), 0);
+    EXPECT_TRUE(fs::is_regular_file(semaphore));
+}

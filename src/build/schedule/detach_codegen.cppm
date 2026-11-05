@@ -26,9 +26,12 @@
 // BMI to `<name>.gcm~` and rename()s it into place — verified with strace:
 //
 //     openat("gcm.cache/x.gcm~", O_RDWR|O_CREAT|O_TRUNC) = 5
+//     unlink("gcm.cache/x.gcm")                       = 0
 //     rename("gcm.cache/x.gcm~", "gcm.cache/x.gcm")      = 0
 //
-// so the final path is atomically complete-or-absent. Confirmed three further
+// GCC unlinks the previous final path immediately before that rename, so the
+// path can briefly be absent. Only a PRESENT changed identity is publication.
+// Confirmed three further
 // ways: the early snapshot is byte-identical to the finished file, and a real
 // downstream importer compiles against it and exits 0. Clang, by contrast,
 // writes the BMI straight to the final path with O_TRUNC — which is exactly why
@@ -136,6 +139,11 @@ int supervise(const std::filesystem::path& slot,
 // must not pass on.
 int await_unit(const std::filesystem::path& slot, const std::filesystem::path& object);
 
+// Ordinary compiler invocations share the detached compilers' actual bound.
+// Their original argv and streams are retained; no shell is introduced.
+int run_capped(const std::vector<std::string>& argv,
+               const std::filesystem::path& semaphore, int maxCompilers);
+
 }  // namespace mcpp::build::schedule::detach
 
 // ---------------------------------------------------------------------------
@@ -195,21 +203,25 @@ std::filesystem::path acquire_token(const std::filesystem::path& dir, int cap) {
     if (dir.empty() || cap <= 0) return {};
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        std::println(std::cerr, "mcpp: cannot create compiler semaphore {}: {}", dir.string(), ec.message());
+        return {};
+    }
     const auto started = std::chrono::steady_clock::now();
     constexpr auto kLimit = std::chrono::hours(2);
     for (;;) {
         for (int i = 0; i < cap; ++i) {
             const auto tok = dir / std::to_string(i);
             if (std::filesystem::create_directory(tok, ec) && !ec) return tok;
+            if (ec) {
+                std::println(std::cerr, "mcpp: cannot acquire compiler token {}: {}", tok.string(), ec.message());
+                return {};
+            }
         }
         if (std::chrono::steady_clock::now() - started > kLimit) {
-            // Proceeds WITHOUT the cap rather than failing: the semaphore bounds
-            // memory pressure, it is not a correctness property, so an unbounded
-            // compile is a worse build and a failed one is no build at all.
             std::println(std::cerr,
                          "mcpp: no compiler slot became free in 2h — all {} tokens in {} "
-                         "are held by processes that are gone. Continuing without the "
-                         "concurrency cap; remove that directory to restore it.",
+                         "are still occupied; refusing to exceed the concurrency cap.",
                          cap, dir.string());
             return {};
         }
@@ -268,8 +280,9 @@ void copy_first_rule(const std::filesystem::path& from, const std::filesystem::p
 //
 // reproducible at `-j1`, on four of six scenarios of the generated fixture.
 //
-// The previous BMI is now COPIED aside instead, so the file is continuously
-// readable and GCC's own atomic rename is what replaces it. Publication is
+// The previous BMI is now COPIED aside instead, so this adapter does not
+// introduce a missing-file interval. GCC itself unlinks the old path before
+// its rename; that interval must not release importers. Publication is
 // detected by the identity below changing, which is exactly the question the
 // existence check was a poor proxy for.
 struct BmiIdentity {
@@ -403,6 +416,7 @@ int compile_release_at_bmi(const CompileRequest& req) {
     if (!req.bmi.empty()) std::ofstream(suffixed(req.slot, ".bmi"), std::ios::trunc) << req.bmi.string();
 
     const auto token = acquire_token(req.semaphore, req.maxCompilers);
+    if (!req.semaphore.empty() && req.maxCompilers > 0 && token.empty()) return 1;
 
     // The supervisor reads the SAME argv file rather than receiving the command
     // on its own command line: one representation, no re-quoting, and no limit
@@ -411,7 +425,11 @@ int compile_release_at_bmi(const CompileRequest& req) {
                                  "--slot", req.slot.string(),
                                  "--command-file", req.commandFile.string()};
     if (!token.empty()) { sup.push_back("--token"); sup.push_back(token.string()); }
-    if (!spawn_detached(sup)) return 2;
+    if (!spawn_detached(sup)) {
+        std::filesystem::remove(token, ec);
+        restore_backup(req.bmi);
+        return 2;
+    }
 
     // BOUNDED, for the same reason `await_unit` is — and this loop waits on the
     // SAME supervisor. The spawn succeeding only says a process was created; if
@@ -429,9 +447,11 @@ int compile_release_at_bmi(const CompileRequest& req) {
     constexpr auto kHardLimit         = std::chrono::hours(2);
 
     for (;;) {
-        // Published = the file's identity is no longer the one we snapshotted.
-        // For a unit with no previous BMI that reduces to "it now exists".
-        if (!req.bmi.empty() && bmi_identity(req.bmi) != before) {
+        // GCC unlinks an existing BMI immediately before renaming its new
+        // temporary file. Absence is a transition, never publication: treating
+        // it as a changed identity releases importers inside that unlink gap.
+        const auto published = bmi_identity(req.bmi);
+        if (published.present && published != before) {
             settle_bmi(req.bmi);
             copy_first_rule(req.depFrom, req.depTo,
                             req.bmiTarget.empty() ? req.bmi.string() : req.bmiTarget);
@@ -445,6 +465,12 @@ int compile_release_at_bmi(const CompileRequest& req) {
                 // it back rather than leaving the unit with no BMI at all.
                 restore_backup(req.bmi);
             } else {
+                if (!req.bmi.empty() && !file_exists(req.bmi)) {
+                    std::println(std::cerr, "mcpp: compiler reported success but {} is missing",
+                                 req.bmi.string());
+                    restore_backup(req.bmi);
+                    return 1;
+                }
                 // THE COMPILER CAN FINISH BETWEEN THE TWO CHECKS ABOVE.
                 //
                 // The loop tests `file_exists(bmi)` first and `rc` second, so a
@@ -576,6 +602,35 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
         return 1;
     }
     return 0;
+}
+
+int run_capped(const std::vector<std::string>& argv,
+               const std::filesystem::path& semaphore, int maxCompilers) {
+    if (argv.empty()) return 2;
+    struct Lease {
+        std::filesystem::path token;
+        // Completion and interrupt cleanup may race. A second release must
+        // never remove a permit that another compiler has already acquired.
+        std::atomic<bool> released{false};
+        void release() {
+            if (released.exchange(true) || token.empty()) return;
+            std::error_code ec;
+            std::filesystem::remove(token, ec);
+        }
+        ~Lease() { release(); }
+    };
+    auto lease = std::make_shared<Lease>();
+    lease->token = acquire_token(semaphore, maxCompilers);
+    if (!semaphore.empty() && maxCompilers > 0 && lease->token.empty()) return 1;
+    const int cleanup = mcpp::run::add_cleanup([lease] { lease->release(); });
+    struct Cleanup {
+        int handle;
+        std::shared_ptr<Lease> lease;
+        ~Cleanup() { mcpp::run::remove_cleanup(handle); lease->release(); }
+    } guard{cleanup, lease};
+    return mcpp::run::execute(argv, {
+        .input = mcpp::run::Input::inherit,
+        .streams = mcpp::run::Streams::inherit}).exit_code;
 }
 
 }  // namespace mcpp::build::schedule::detach

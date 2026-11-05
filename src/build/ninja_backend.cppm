@@ -1466,6 +1466,12 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // dyndep is a precondition: without it nothing declares BMIs as outputs, so
     // there is no BMI edge for importers to depend on.
     const bool splitBmi = plan.scheduleTag == "detach-codegen" && dyndep;
+    // Ninja has extra slots for BMI publication and join edges. Ordinary
+    // compilers must share the supervisors' semaphore rather than use that
+    // larger slot count as their own concurrency bound.
+    const std::string compilerPrefix = splitBmi
+        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --cap {} -- ", plan.scheduleCompilerCap)
+        : std::string{};
     // The other split shape. Clang publishes no BMI early — it writes the BMI
     // at the end of the compile — so the GCC trick of releasing the file
     // mid-compile has nothing to release. What clang has instead is a driver
@@ -2057,9 +2063,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     if constexpr (mcpplibs::os::is_windows) {
         // Windows: skip BMI restat optimization (requires POSIX shell).
         const std::string payload = " $local_includes";
-        append(std::format("  command = {}$cxx{} $cxxflags $unit_cxxflags"
+        append(std::format("  command = {}{}$cxx{} $cxxflags $unit_cxxflags"
                            " $module_output $module_lang {}{}\n",
-                           win_depfile_filter, rsp_ref(payload), mmd_flag,
+                           win_depfile_filter, compilerPrefix, rsp_ref(payload), mmd_flag,
                            compile_tail));
         append_rspfile(payload);
         append_cxx_deps();
@@ -2071,7 +2077,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                // `-x c++` / `-x c++-module` is POSITIONAL on GNU drivers: it
                // must precede `-c $in` (which compile_tail carries) or it
                // applies to nothing.
-               "$cxx $local_includes $cxxflags $unit_cxxflags"
+               "{}$cxx $local_includes $cxxflags $unit_cxxflags"
                " $module_output $module_lang {}{}{} && "
                // `$mcpp bmi-equal`, not `cmp -s`: GCC stamps a wall clock into
                // the BMI content, so a byte compare NEVER reports "unchanged"
@@ -2083,7 +2089,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                  "mv \"$bmi_out.bak\" \"$bmi_out\"; "
                "else "
                  "rm -f \"$bmi_out.bak\"; "
-               "fi\n", mmd_flag, compile_tail, mmd_filter));
+               "fi\n", compilerPrefix, mmd_flag, compile_tail, mmd_filter));
         append_cxx_deps();
     }
     append("  description = MOD $out\n");
@@ -2202,14 +2208,14 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     append("rule cxx_object\n");
     if constexpr (mcpplibs::os::is_windows) {
         const std::string payload = " $local_includes";
-        append(std::format("  command = {}$cxx{} $cxxflags $unit_cxxflags {}{}\n",
-                           win_depfile_filter, rsp_ref(payload), mmd_flag,
+        append(std::format("  command = {}{}$cxx{} $cxxflags $unit_cxxflags {}{}\n",
+                           win_depfile_filter, compilerPrefix, rsp_ref(payload), mmd_flag,
                            compile_tail));
         append_rspfile(payload);
     } else {
         append(std::format(
-            "  command = $cxx $local_includes $cxxflags $unit_cxxflags {}{}{}\n",
-            mmd_flag, compile_tail, mmd_filter));
+            "  command = {}$cxx $local_includes $cxxflags $unit_cxxflags {}{}{}\n",
+            compilerPrefix, mmd_flag, compile_tail, mmd_filter));
     }
     append("  description = OBJ $out\n");
     append_cxx_deps();
@@ -2220,8 +2226,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     if (need_c_rule) {
         append("rule c_object\n");
         const std::string payload = " $local_includes";
-        append(std::format("  command = $cc{} $cflags $unit_cflags {}{}\n",
-                           rsp_ref(payload), c_mmd_flag, compile_tail));
+        append(std::format("  command = {}$cc{} $cflags $unit_cflags {}{}\n",
+                           compilerPrefix, rsp_ref(payload), c_mmd_flag, compile_tail));
         append_rspfile(payload);
         append("  description = CC $out\n");
         append_cxx_deps();
@@ -2241,16 +2247,16 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // absent depfile as an error. So `.s` keeps the pre-#257 shape.
         const std::string payload = " $local_includes";
         append("rule asm_object\n");     // .S — preprocessed, tracks #include
-        append(std::format("  command = $cc{} $asmflags $unit_asmflags {}{}\n",
-                           rsp_ref(payload), c_mmd_flag, compile_tail));
+        append(std::format("  command = {}$cc{} $asmflags $unit_asmflags {}{}\n",
+                           compilerPrefix, rsp_ref(payload), c_mmd_flag, compile_tail));
         append_rspfile(payload);
         append("  description = AS $out\n");
         append_cxx_deps();
         append("\n");
 
         append("rule asm_object_raw\n");  // .s — not preprocessed, no depfile
-        append(std::format("  command = $cc{} $asmflags $unit_asmflags {}\n",
-                           rsp_ref(payload), compile_tail));
+        append(std::format("  command = {}$cc{} $asmflags $unit_asmflags {}\n",
+                           compilerPrefix, rsp_ref(payload), compile_tail));
         append_rspfile(payload);
         append("  description = AS $out\n\n");
     }
@@ -2259,8 +2265,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // NASM (.asm): its own fixed flag spelling — deliberately outside
         // CommandDialect. -MD/-MQ feed ninja's header tracking for %include.
         append("rule nasm_object\n");
-        append("  command = $nasm -f $nasmfmt $local_includes $nasmflags "
-               "$unit_asmflags -MD $out.d -MQ $out -o $out $in\n");
+        append(std::format("  command = {}$nasm -f $nasmfmt $local_includes $nasmflags "
+               "$unit_asmflags -MD $out.d -MQ $out -o $out $in\n", compilerPrefix));
         append("  deps = gcc\n");
         append("  depfile = $out.d\n");
         append("  description = NASM $out\n\n");
@@ -2278,9 +2284,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // [resources].extra-inputs, and lands on this edge as implicit inputs.
         append("rule rc_object\n");
         if (plan.rcStyle == "msvc")
-            append("  command = $rc /nologo $rcflags /fo $out $in\n");
+            append(std::format("  command = {}$rc /nologo $rcflags /fo $out $in\n", compilerPrefix));
         else
-            append("  command = $rc -O coff $rcflags -o $out $in\n");
+            append(std::format("  command = {}$rc -O coff $rcflags -o $out $in\n", compilerPrefix));
         append("  description = RC $out\n\n");
     }
 
@@ -2562,20 +2568,20 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         if (msvcDeps) {
             // MSVC: compiler-integrated P1689 via /scanDependencies (scan
             // only — no codegen); /TP because our module units are .cppm.
-            append(std::format("  command = $cxx_driver{} $cxxflags $unit_cxxflags "
+            append(std::format("  command = {}$cxx_driver{} $cxxflags $unit_cxxflags "
                    "/scanDependencies $out /TP /c $in /Fo:$compile_target\n",
-                   rsp_ref(scanPayload)));
+                   compilerPrefix, rsp_ref(scanPayload)));
             // No $unit_lang here: /TP above already applies to every input,
             // and cl has no per-suffix recognition problem to fix — a module
             // interface is identified by /interface at COMPILE time, which
             // the scan does not do.
         } else if (plan.scanDepsPath.empty()) {
             // GCC path: compiler-integrated P1689 scanning.
-            append(std::format("  command = $cxx_driver{} $cxxflags $unit_cxxflags -fmodules "
+            append(std::format("  command = {}$cxx_driver{} $cxxflags $unit_cxxflags -fmodules "
                    "-fdeps-format=p1689r5 "
                    "-fdeps-file=$out -fdeps-target=$deps_target "
                    "-M -MM -MF $out.dep $unit_lang -E $in -o $compile_target\n",
-                   rsp_ref(scanPayload)));
+                   compilerPrefix, rsp_ref(scanPayload)));
         } else {
             // Clang path: clang-scan-deps writes the P1689 JSON itself via -o
             // (LLVM 17+), like the GCC and MSVC branches above write theirs
@@ -2585,10 +2591,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             // CreateProcess — which any package with a large include-dir list
             // overruns (#261: 48 -I entries at a deep consumer path).
             append(std::format(
-                   "  command = $scan_deps -format=p1689 -o $out -- "
+                   "  command = {}$scan_deps -format=p1689 -o $out -- "
                    "$cxx_driver{} $cxxflags $unit_cxxflags $unit_lang -c $in "
                    "-o $compile_target\n",
-                   rsp_ref(scanPayload)));
+                   compilerPrefix, rsp_ref(scanPayload)));
         }
         append_rspfile(scanPayload);
         append("  description = SCAN $out\n\n");

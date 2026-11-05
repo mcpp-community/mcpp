@@ -87,6 +87,14 @@ rules are in [SPEC-010](specs/home-initialization.md).
 without installing tools. `self config --mirror auto|CN|GLOBAL` updates only local
 configuration, so it remains usable while the network is broken.
 
+An install tracks byte progress and source changes separately for each active
+download. Time spent waiting for a download slot does not consume that budget.
+Progress on another file does not renew a stalled file's budget.
+From 2026.11.5.2, a stalled-download diagnostic names the file, elapsed interval
+and source attempt. Provider preparation and process timeouts are reported
+separately. Mirror selection
+uses `mcpp self config --mirror auto`, `CN` or `GLOBAL`.
+
 ### Retention of build outputs (2026.10.31.3+)
 
 The build cache under `build-cache/v1/` is shared by every project of the home;

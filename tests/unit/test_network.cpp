@@ -120,6 +120,47 @@ TEST(NetworkCheck, ASilentSourceIsLeftBeforeTheInstallStops) {
     EXPECT_TRUE(watchdog.expired(left + x::kDownloadStallTimeout));
 }
 
+TEST(NetworkCheck, AnotherDownloadCannotRenewAStalledFilesBudget) {
+    using namespace std::chrono;
+    namespace x = mcpp::provider::xlings;
+    const auto start = steady_clock::now();
+    x::InstallDeadline deadline(seconds(120), seconds(45), start);
+    deadline.observe(R"({"kind":"data","dataKind":"download_progress","payload":{"stream":"install:1","files":[{"name":"stalled","started":true,"finished":false,"sourceAttempt":1,"downloadedBytes":0},{"name":"healthy","started":true,"finished":false,"sourceAttempt":1,"downloadedBytes":1}]}})", start);
+    deadline.observe(R"({"kind":"data","dataKind":"download_progress","payload":{"stream":"install:1","files":[{"name":"stalled","started":true,"finished":false,"sourceAttempt":1,"downloadedBytes":0},{"name":"healthy","started":true,"finished":false,"sourceAttempt":1,"downloadedBytes":100}]}})", start + seconds(44));
+    EXPECT_FALSE(deadline.expired(start + seconds(44)));
+    EXPECT_EQ(deadline.failure_reason(start + seconds(45)),
+              "download 'stalled' made no byte progress or source change for 45s (attempt 1)");
+    deadline.observe(R"({"kind":"data","dataKind":"download_progress","payload":{"stream":"install:1","files":[{"name":"stalled","started":true,"finished":false,"sourceAttempt":2,"downloadedBytes":0},{"name":"healthy","started":true,"finished":true,"sourceAttempt":1,"downloadedBytes":100}]}})", start + seconds(46));
+    EXPECT_TRUE(deadline.failure_reason(start + seconds(90)).empty());
+    EXPECT_EQ(deadline.failure_reason(start + seconds(91)),
+              "download 'stalled' made no byte progress or source change for 45s (attempt 2)");
+    deadline.observe(R"({"kind":"data","dataKind":"download_progress","payload":{"stream":"install:1","files":[{"name":"stalled","started":true,"finished":true,"sourceAttempt":2,"downloadedBytes":1}]}})", start + seconds(92));
+    EXPECT_TRUE(deadline.failure_reason(start + hours(1)).empty());
+}
+
+TEST(NetworkCheck, AQueuedFilesBudgetStartsWhenItBecomesActive) {
+    using namespace std::chrono;
+    namespace x = mcpp::provider::xlings;
+    const auto start = steady_clock::now();
+    x::DownloadWatchdog watchdog(seconds(45));
+    mcpp::provider::BootstrapProgress progress;
+    progress.files.push_back({.name = "queued", .started = false});
+    watchdog.observe(progress, start);
+    EXPECT_FALSE(watchdog.expired(start + seconds(96)));
+    // Neither bytes nor sourceAttempt changes when the worker obtains a slot.
+    progress.files.front().started = true;
+    watchdog.observe(progress, start + seconds(96));
+    EXPECT_FALSE(watchdog.expired(start + seconds(140)));
+    EXPECT_EQ(watchdog.failure_reason(start + seconds(141)),
+              "download 'queued' made no byte progress or source change for 45s (attempt 0)");
+    progress.files.front().sourceAttempt = 1;
+    watchdog.observe(progress, start + seconds(142));
+    EXPECT_FALSE(watchdog.expired(start + seconds(186)));
+    progress.files.front().finished = true;
+    watchdog.observe(progress, start + seconds(187));
+    EXPECT_FALSE(watchdog.expired(start + hours(1)));
+}
+
 TEST(NetworkProcess, ProgressCancellationIsPolledWhileOutputContinues) {
     using namespace std::chrono;
     const auto start = steady_clock::now();

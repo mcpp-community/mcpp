@@ -1150,6 +1150,7 @@ call(const Env& env, std::string_view capability,
     const bool installing = capability == "install_packages";
     const bool syncing = capability == "sync_index" || capability == "update_packages";
     InstallDeadline deadline;
+    std::string progressDeadlineReason;
     std::map<std::string, int> sourceAttempts;
     inv.options.streams = mcpp::run::Streams::output_error_kept;
     inv.options.on_line = [&](std::string_view line) {
@@ -1196,14 +1197,19 @@ call(const Env& env, std::string_view capability,
                       : syncing ? std::chrono::duration_cast<std::chrono::milliseconds>(index_refresh_timeout())
                                 : std::chrono::milliseconds{0};
     inv.options.idle = std::chrono::duration_cast<std::chrono::milliseconds>(kInterfaceIdleTimeout);
-    inv.options.should_stop = [&] { return installing && deadline.expired(); };
+    inv.options.should_stop = [&] {
+        if (!installing) return false;
+        progressDeadlineReason = deadline.failure_reason();
+        return !progressDeadlineReason.empty();
+    };
     const auto ran = mcpp::run::execute(inv.argv, inv.options);
     const int rc = ran.exit_code;
     const bool timedOut = ran.timed_out;
     if (timedOut) {
         result.exitCode = result.exitCode != 0 ? result.exitCode : 124;
-        const auto message = std::format(
-            "provider {} exceeded its progress/process deadline and was stopped", capability);
+        const auto message = progressDeadlineReason.empty()
+            ? std::format("provider {} exceeded its process deadline and was stopped", capability)
+            : std::format("provider {} stopped: {}", capability, progressDeadlineReason);
         if (!result.error) result.error = ErrorEvent{
             installing || syncing ? "E_NETWORK" : "E_PROVIDER_TIMEOUT", message,
             installing || syncing ? "check proxy settings or use mcpp self config --mirror auto|CN|GLOBAL"
@@ -1484,6 +1490,7 @@ int install_with_progress(const Env& env, std::string_view target,
     std::map<std::string, int> sourceAttempts;
     mcpp::ui::DownloadProgress download;
     InstallDeadline deadline;
+    std::string progressDeadlineReason;
 
     auto handle_line = [&](std::string_view line) {
         deadline.observe(line);
@@ -1522,7 +1529,10 @@ int install_with_progress(const Env& env, std::string_view target,
     inv.options.on_line = handle_line;
     inv.options.total = std::chrono::duration_cast<std::chrono::milliseconds>(kDirectInstallTimeout);
     inv.options.idle = std::chrono::duration_cast<std::chrono::milliseconds>(kInterfaceIdleTimeout);
-    inv.options.should_stop = [&] { return deadline.expired(); };
+    inv.options.should_stop = [&] {
+        progressDeadlineReason = deadline.failure_reason();
+        return !progressDeadlineReason.empty();
+    };
     const auto ran = mcpp::run::execute(inv.argv, inv.options);
     const bool idleTimedOut = ran.timed_out;
     const int closeRc = ran.exit_code;
@@ -1531,8 +1541,10 @@ int install_with_progress(const Env& env, std::string_view target,
         else download.finish_failed();
     }
     if (idleTimedOut) {
-        mcpp::log::warn("xlings", "package install exceeded its progress/process deadline and was stopped");
-        if (!quiet) print_status("Network", "Download stopped: no byte progress or process deadline exceeded; check proxy/mirror settings");
+        const auto reason = progressDeadlineReason.empty() ? "provider process deadline exceeded"
+                                                         : progressDeadlineReason;
+        mcpp::log::warn("xlings", std::format("package install stopped: {}", reason));
+        if (!quiet) print_status("Network", std::format("Download stopped: {}; check proxy/mirror settings", reason));
         return resultExitCode > 0 ? resultExitCode : 124;
     }
     return (resultExitCode != -1) ? resultExitCode : closeRc;

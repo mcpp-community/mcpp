@@ -18,6 +18,15 @@
   an installation that the same subproject has yet to produce.
 - The macOS clean bootstrap keeps its stage-one compiler outside the output tree
   removed by the second stage.
+- GCC BMI publication requires a present replacement file; its unlink-before-rename
+  interval no longer releases importers. A successful compiler that produces no
+  BMI fails with a diagnostic and restores the previous BMI.
+- Ordinary compiler invocations share the detached GCC compilers' concurrency
+  permits, so the additional Ninja scheduling slots do not exceed `--jobs`.
+- Queued downloads begin their progress budget when a worker starts them,
+  rather than inheriting time spent waiting for a slot.
+- Provider progress timeouts identify the stalled download and source attempt,
+  independently of progress on other files and provider process deadlines.
 
 ### Changed
 

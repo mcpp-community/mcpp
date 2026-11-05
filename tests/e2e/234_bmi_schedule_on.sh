@@ -189,4 +189,47 @@ BIN=$(ls -t target/*/*/bin/schedon 2>/dev/null | head -1)
 out=$("$BIN")
 [ "$out" = "8" ] || { echo "FAIL: binary printed '$out' after the stale-token build"; exit 1; }
 
-echo "234 bmi_schedule OK (detach-codegen, tokens reclaimed)"
+echo "== 5. a BMI removal is not publication =="
+# GCC unlinks the previous .gcm immediately before renaming .gcm~ into place.
+# Amplify only that interval: a polling loop must not release an importer
+# while the module is absent. This deterministic publisher exercises the same
+# supervisor and two-phase join without depending on a microsecond race.
+mkdir publication
+cd publication
+printf 'old BMI' > published.gcm
+cat > publish.sh <<'EOF'
+rm published.gcm
+sleep 0.2
+printf 'new BMI' > next.gcm
+mv next.gcm published.gcm
+sleep 0.05
+printf object > unit.o
+EOF
+printf '"%s" publish.sh\n' "$BASH" > command.txt
+"$MCPP" bmi-compile --bmi published.gcm --slot unit --self "$MCPP" \
+  --command-file command.txt
+published=0
+[ ! -f published.gcm ] || published=1
+# Join even when the assertion will fail, so no publisher survives cleanup.
+"$MCPP" bmi-await --slot unit --object unit.o
+[ "$published" = 1 ] || {
+  echo "FAIL: phase 1 released an importer while the BMI was absent"; exit 1; }
+[ "$(cat published.gcm)" = "new BMI" ] || {
+  echo "FAIL: phase 1 did not wait for the new BMI"; exit 1; }
+echo "  absence withheld; new BMI published and object joined"
+
+printf '"%s" -c "rm published.gcm"\n' "$BASH" > command.txt
+if "$MCPP" bmi-compile --bmi published.gcm --slot unit --self "$MCPP" \
+    --command-file command.txt > missing.log 2>&1; then
+  echo "FAIL: a successful compiler without a BMI was accepted"; exit 1
+fi
+grep -q 'compiler reported success but.*is missing' missing.log || {
+  echo "FAIL: the missing BMI was not diagnosed"; cat missing.log; exit 1; }
+[ "$(cat published.gcm)" = "new BMI" ] || {
+  echo "FAIL: the previous BMI was not restored after missing publication"; exit 1; }
+echo "  missing publication diagnosed and previous BMI restored"
+
+echo "== 6. ordinary and detached compilers share the actual cap =="
+python3 "$_root/tests/e2e/helpers/check_shared_compiler_cap.py" "$MCPP" "$TMP/cap-load"
+
+echo "234 bmi_schedule OK (detach-codegen, tokens reclaimed, publication checked)"

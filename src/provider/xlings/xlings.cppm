@@ -508,17 +508,29 @@ public:
         for (const auto& f : progress.files) {
             auto [it, added] = files_.try_emplace(f.name);
             auto& state = it->second;
-            if (added || f.sourceAttempt != state.attempt || f.downloadedBytes > state.bytes)
+            const bool inactive = f.finished || !f.started;
+            // Queued files appear in the batch before obtaining a download
+            // slot. Their active budget begins when they start, even before
+            // the first source attempt or byte has been reported.
+            if (added || (state.finished && !inactive)
+                || f.sourceAttempt != state.attempt || f.downloadedBytes > state.bytes)
                 state.progress = now;
             state.bytes = f.downloadedBytes;
             state.attempt = f.sourceAttempt;
-            state.finished = f.finished || !f.started;
+            state.finished = inactive;
         }
     }
+    std::string failure_reason(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) const {
+        for (const auto& [name, state] : files_) {
+            if (!state.finished && now - state.progress >= idle_)
+                return std::format("download '{}' made no byte progress or source change for {}s (attempt {})",
+                    name, std::chrono::duration_cast<std::chrono::seconds>(now - state.progress).count(),
+                    state.attempt);
+        }
+        return {};
+    }
     bool expired(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) const {
-        return std::ranges::any_of(files_, [&](const auto& f) {
-            return !f.second.finished && now - f.second.progress >= idle_;
-        });
+        return !failure_reason(now).empty();
     }
 };
 
@@ -534,9 +546,14 @@ public:
         : downloads_(idle), started_(start), preparation_(preparation) {}
     void observe(std::string_view line,
         std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+    std::string failure_reason(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) const {
+        if (auto reason = downloads_.failure_reason(now); !reason.empty()) return reason;
+        if (!downloadSeen_ && !localWork_ && now - started_ >= preparation_)
+            return "provider preparation made no download or local-work progress";
+        return {};
+    }
     bool expired(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) const {
-        return downloads_.expired(now)
-            || (!downloadSeen_ && !localWork_ && now - started_ >= preparation_);
+        return !failure_reason(now).empty();
     }
 };
 

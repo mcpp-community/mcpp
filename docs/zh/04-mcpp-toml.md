@@ -972,6 +972,9 @@ bmi_schedule = "off"     # auto (default, = off) | on | off
 
 `bmi_schedule` 决定 importer 何时被解除阻塞。
 
+使用 GCC 且 `bmi_schedule = "on"` 时，普通编译与分离的代码生成共用同一个 `jobs` 总上限
+（2026.11.5.2+）。额外的调度和等待任务不增加编译器进程数量。
+
 | 取值 | |
 |---|---|
 | `"auto"` | **默认值，目前意味着关闭** |

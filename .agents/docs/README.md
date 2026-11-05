@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-349 records.
+350 records.
 
 ## By subject
 
@@ -33,6 +33,10 @@ Records that declare one. Everything else is listed by date below.
 
 - [构建依赖的一条管线：配置与产物两轴、包的实例、库接口、兼容系统与工作空间收尾（#797）](2026-10-11-build-dependencies-one-pipeline-design.md) — active
 - [Four upstream asks from a UI framework: what each one is under mcpp's design, and the combined plan](2026-09-13-four-upstream-asks-from-a-ui-framework.md) — landed
+
+### build-progress-and-scheduling
+
+- [BMI publication, compiler capacity and active download budgets](2026-11-06-bmi-publication-and-compiler-cap-closeout.md) — active
 
 ### design
 
@@ -167,6 +171,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [BMI publication, compiler capacity and active download budgets](2026-11-06-bmi-publication-and-compiler-cap-closeout.md) — active
 - [异构构建语义与插件边界补充方案（mcpp#885、mcpp#887）](2026-11-05-heterogeneous-build-semantics-and-plugin-boundaries-supplement.md) — active
 - [异构构建补充方案的第二轮调研与实验](2026-11-05-heterogeneous-build-research-and-experiments.md) — active
 - [生态 885 与异构构建补充方案的实现依赖](2026-11-05-heterogeneous-build-implementation-plan.md) — active

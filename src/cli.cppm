@@ -18,6 +18,7 @@ export module mcpp.cli;
 
 import std;
 import mcpp.build.depfile;
+import mcpp.build.schedule.detach_codegen;
 import mcpplibs.cmdline;
 import mcpp.cli.cmd_build;
 import mcpp.cli.cmd_cache;
@@ -1492,6 +1493,30 @@ int run(int argc, char** argv) {
     // check and no `prepare`. On the MSVC ABI the first build after upgrading
     // to 2026.9.28.2 re-runs each action once, because its command line gained
     // the directory.
+    // Internal split-schedule executor. Everything after `--` is the
+    // compiler's argv, including flags with the same names as these options.
+    if (std::string_view(argv[1]) == "__compiler-cap") {
+        std::filesystem::path semaphore;
+        int cap = 0, i = 2;
+        for (; i < argc && std::string_view(argv[i]) != "--"; ++i) {
+            const std::string_view option = argv[i];
+            if ((option != "--sem" && option != "--cap") || i + 1 >= argc) {
+                std::println(stderr, "error: __compiler-cap: expected --sem <dir> --cap <N> -- <compiler>...");
+                return 2;
+            }
+            const std::string_view value = argv[++i];
+            if (option == "--sem") semaphore = value;
+            else {
+                const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), cap);
+                if (ec != std::errc{} || end != value.data() + value.size()) return 2;
+            }
+        }
+        if (semaphore.empty() || cap <= 0 || i + 1 >= argc) return 2;
+        std::vector<std::string> command;
+        for (++i; i < argc; ++i) command.emplace_back(argv[i]);
+        return mcpp::build::schedule::detach::run_capped(command, semaphore, cap);
+    }
+
     // `mcpp depfile-filter --raw <file> --out <file> -- <compiler argv>...`
     // (internal: written into build.ninja for GCC on a Windows host, WS2 of
     // the 2026-09-28 design). Runs the compile with inherited stdio and no

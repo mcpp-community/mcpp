@@ -1048,6 +1048,10 @@ with two behaviours has to be.
 
 `bmi_schedule` decides when importers are unblocked.
 
+With GCC and `bmi_schedule = "on"`, ordinary compilation and detached code
+generation share the same total `jobs` limit (2026.11.5.2+). Additional
+scheduling and join tasks do not increase the number of compiler processes.
+
 | value | |
 |---|---|
 | `"auto"` | **the default, and it currently means OFF** |
