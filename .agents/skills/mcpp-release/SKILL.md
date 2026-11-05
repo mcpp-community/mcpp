@@ -18,7 +18,7 @@ description: Use when releasing a new version of mcpp — bumps version, creates
 
 跨方案的序是单调的：`0.0.109` < `2026.7.27.1`，第一段从 `0` 变 `2026`，不存在回退。
 
-> 比较逻辑见 `src/version_req.cppm`。它支持 4 段；**改动那里时务必保证 `str()` 精确回写**，
+> 比较逻辑见 `modules/versioning/src/version_req.cppm`。它支持 4 段；**改动那里时务必保证 `str()` 精确回写**，
 > `src/pm/resolver.cppm` 用它重建依赖版本串，会流向 lock 文件与 xlings wire 地址。
 > 尤其 `.0` 结尾的版本不能塌成三段。
 
@@ -31,7 +31,7 @@ mcpp 有 **三个持久化版本位置**，以及 `ci-fresh-install` 的一个�
 **第一组：正在构建的版本**（发布时改，走 bump PR）
 
 1. `mcpp.toml` → `[package].version` — 构建系统读取的项目版本，release.yml 由它推导 tag
-2. `src/version.cppm` → `MCPP_VERSION` — 编译期硬编码常量（`--version` 输出、BMI 指纹、E0006 索引底线比较）
+2. `modules/versioning/src/version.cppm` → `MCPP_VERSION` — 编译期硬编码常量（`--version` 输出、BMI 指纹、E0006 索引底线比较）
 
 这两处必须**在同一个 commit 里**一起改：`tests/e2e/01_help_and_version.sh` 交叉比对
 `mcpp.toml` 与 `mcpp --version`，只改一处 CI 立刻红。
@@ -59,7 +59,7 @@ unexpected`。那是调用它的 shell 的问题，不是脚本的缺陷 —— 
 `#!/usr/bin/env bash`，CI 也是用 `bash` 调的。别据此把这条 guard 当成坏的而跳过：
 它是唯一能机器化捕捉 pin 漂移的东西。
 
-也不要通过修改文档或 workflow 绕开动态 `MCPP_PIN` 设计。`src/platform/xlings/xlings.cppm` 的
+也不要通过修改文档或 workflow 绕开动态 `MCPP_PIN` 设计。`src/provider/xlings/xlings.cppm` 的
 `pinned::kXlingsVersion` 仍是 xlings 版本的唯一真源。
 
 ## 发布步骤
@@ -89,7 +89,7 @@ NEW_VERSION="2026.7.27.1"
 git checkout -b "chore/bump-$NEW_VERSION"
 
 sed -i "s/^version.*=.*/version     = \"$NEW_VERSION\"/" mcpp.toml
-sed -i "s/MCPP_VERSION = \".*\"/MCPP_VERSION = \"$NEW_VERSION\"/" src/version.cppm
+sed -i "s/MCPP_VERSION = \".*\"/MCPP_VERSION = \"$NEW_VERSION\"/" modules/versioning/src/version.cppm
 
 # 校验：mcpp.toml 与 MCPP_VERSION 相等，.xlings.json 不领先于正在构建的版本。
 bash .github/tools/check_version_pins.sh
@@ -302,14 +302,14 @@ gh workflow run bump-formula.yml -R mcpp-community/homebrew-mcpp
 
 | 症状 | 原因 | 修复 |
 |------|------|------|
-| `mcpp X.Y.Z-1` 但 tag 是 `vX.Y.Z` | `fingerprint.cppm` 版本未更新 | 更新 `MCPP_VERSION`，重新打 tag |
+| `mcpp X.Y.Z-1` 但 tag 是 `vX.Y.Z` | `modules/versioning/src/version.cppm` 版本未更新 | 在 PR 中同步版本号；已发布版本使用新 tag |
 | bump PR 里**所有** CI job 都红在 bootstrap，报 `package 'mcpp@X.Y.Z' not found` | 把 `.xlings.json` bootstrap pin 一起 bump 了，CI 去装一个还没发布的版本 | 把 `.xlings.json` 回退到上一个已发布版本；不要修改运行时推导的 `MCPP_PIN` |
 | main 上**所有** workflow 都红在 bootstrap，报 `package 'mcpp@X.Y.Z' not found`，而该版本确实已发布并已合入索引 | pin 推得比索引指针稳定早；客户端读 CDN artifact 不读 git 树 | 等 `xim-index-latest.json` 的 `index_version` 等于索引 main 短 SHA 后重跑；不要改 pin |
 | `xlings install mcpp`（不带 `@版本`）装到**上一个**版本，而索引文件里明明有新版本 | 同一平台表里两个 `["latest"]` 键（手写索引 PR 追加而非替换），Lua 后写的赢 | 删掉陈旧的那行，使每个平台表只剩一个 `["latest"]`。**精确 pin 仍可用，所以 mcpp 自己的 CI 不会报这个** |
 | 自查 `--version` 显示旧版本，但源码已改 | `target/<triple>/<指纹>/` 的指纹随版本变，`ls \| head -1` 取到了上一次构建的目录 | 用 `ls -dt … \| head -1` 取最新构建 |
 | Smoke test 输出旧版本 | CI 缓存了旧的 sandbox/target | 删除 GitHub Actions cache 后重跑 |
-| e2e `01_help_and_version.sh` 挂 | 只改了 `mcpp.toml` 没改 `fingerprint.cppm`（它把两者交叉比对） | 同步两处正在构建的版本；注意这个 e2e 只在部分分片里跑，可能表现为"只有某个平台红" |
-| xlings bootstrap 失败 | xlings 版本不兼容 | 改 `src/platform/xlings/xlings.cppm::kXlingsVersion`（唯一真源），再核对引用它的 workflow 与脚本；当前 pin-check 脚本修复前不能依赖它完成扫描 |
+| e2e `01_help_and_version.sh` 挂 | 只改了 `mcpp.toml` 没改 `modules/versioning/src/version.cppm`（它把两者交叉比对） | 同步两处正在构建的版本；注意这个 e2e 只在部分分片里跑，可能表现为"只有某个平台红" |
+| xlings bootstrap 失败 | xlings 版本不兼容 | 改 `src/provider/xlings/xlings.cppm::kXlingsVersion`（唯一真源），再核对引用它的 workflow 与脚本；当前 pin-check 脚本修复前不能依赖它完成扫描 |
 | macOS/Windows 构建失败 | 需要等 Linux job 先完成 | 检查 Linux job 是否成功 |
 | `slim: FAIL: ... still not stripped` | strip 工具没生效／被 pack 覆盖 | 别绕过断言——它就是为了拦住 34.8MB 的 tarball 再次发出去 |
 | mirror leg 报 `missing/unverified` | 资产没传上去或还没传播 | 先 GET 核验（**必须 GET，`curl -I` 会骗你**），gitcode 用 `gitcode.com` 直链而非 `api.` 主机；确认缺件后本地补传再 `gh run rerun --failed`（脚本幂等，已验证的资产会跳过） |
@@ -331,38 +331,30 @@ gh workflow run release.yml --ref "v$NEW_VERSION"
 
 ## 紧急修复发版
 
-如果发版后发现问题需要紧急修复：
+已发布版本的修复仍走 PR 和新补丁版本，不直接推 main，不移动已有 tag，不删除
+已发布资源后用不同字节替换。紧急程度不改变源码与公开安装包的对应关系。
 
-```bash
-# 1. 在 main 上修复
-git checkout main && git pull
-# ... 修改代码 ...
-git commit -m "fix: <what the fix does, in English>"
-git push origin main
+1. 从最新 main 建修复分支，将修正、第一组的两处版本号与新 CHANGELOG 条目提交
+   到 PR。bootstrap 继续使用已发布版本。
+2. 完成实际 required checks 和独立生态审查后合入。只为已验证的新版本创建新 tag，
+   并确认它指向审查后的提交。
+3. 完成原有四平台 release 检查、双端资源校验、索引发布和普通客户端安装验证。
+   GitCode 资源按本地及时补齐流程处理。
+4. 新版发布、镜像与索引均可实际下载后，再通过 PR 前移 bootstrap pin。
 
-# 2. 更新 tag 指向新 commit（包含修复）
-git tag -d "v$NEW_VERSION"
-git tag "v$NEW_VERSION"
-git push origin "v$NEW_VERSION" --force
-
-# 3. 删除旧 release（如果已创建）
-gh release delete "v$NEW_VERSION" --yes
-
-# 4. 重跑 release
-gh workflow run release.yml --ref "v$NEW_VERSION"
-```
-
-**注意**：如果修复涉及版本号变化，应该 bump 到新的 patch 版本而不是覆盖旧 tag。
+若原版本只是构建或上传尚未完成，可以在原 tag 源码不变的前提下恢复失败步骤。
+同名资源仅在字节相同并完成下载校验时视为已存在；不同内容须先查明原因，不能
+以删除重传或重指 tag 绕过冲突。
 
 ## 文件清单
 
 | 文件 | 版本相关内容 |
 |------|-------------|
 | `mcpp.toml` | `version = "X.Y.Z"` — 项目版本，release.yml 由它推导 tag |
-| `src/version.cppm` | `MCPP_VERSION = "X.Y.Z"` — 编译期版本常量 |
+| `modules/versioning/src/version.cppm` | `MCPP_VERSION = "X.Y.Z"` — 编译期版本常量 |
 | `.xlings.json` | `workspace.mcpp` — CI bootstrap 装哪个 mcpp（发布**后**才 bump） |
 | `.github/workflows/ci-fresh-install.yml` | `MCPP_PIN` — 由 `wait-index` 从最新 release 推导，**从不手工 bump** |
-| `src/platform/xlings/xlings.cppm` | `kXlingsVersion` — xlings pin 的**唯一真源** |
+| `src/provider/xlings/xlings.cppm` | `kXlingsVersion` — xlings pin 的**唯一真源** |
 | `.github/tools/check_version_pins.sh` | 版本/pin 校验 guard（**用 `bash` 跑，不能用 `sh`**） |
 | `.github/tools/slim_linux_payload.sh` | linux 载荷 strip + 断言 |
 | `.github/tools/mirror_res.sh` | 双端镜像（并发上传 + leg deadline + 完整性 gate） |
@@ -371,7 +363,7 @@ gh workflow run release.yml --ref "v$NEW_VERSION"
 | `install.sh` | 安装脚本（随 release 发布） |
 | `CHANGELOG.md` | Release notes 来源（按 `## [X.Y.Z]` 提取）；条目、commit 与 release notes 一律用英文（2026.9.28.3 起） |
 
-> **注意版本 bump 的两个阶段**：`mcpp.toml` + `fingerprint.cppm` 在发版**前**改
+> **注意版本 bump 的两个阶段**：`mcpp.toml` + `modules/versioning/src/version.cppm` 在发版**前**改
 > （它们定义要发什么）；`.xlings.json` 只在发版成功、镜像并进索引后才可更新
 > （它指定 bootstrap 使用的已发布版本）。`MCPP_PIN` 是被测版本的运行时推导值，
 > 不属于任何手工 bump 阶段。这些关系由 `bash .github/tools/check_version_pins.sh` 校验。

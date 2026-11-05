@@ -4,6 +4,22 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.5.2] - 2026-11-05
+
+### Fixed
+
+- Cached builds load action ownership when an action starts, so internal progress
+  appears while Ninja is still buffering stdout. Idle builds retain lazy loading;
+  command results and output checks remain authoritative.
+- The macOS clean bootstrap keeps its stage-one compiler outside the output tree
+  removed by the second stage.
+
+### Changed
+
+- CI bootstraps from the published, mirrored and indexed 2026.11.5.1 release.
+- Release guidance preserves published tags and uses a new reviewed patch version
+  for fixes. GitCode assets are supplemented locally as they become available.
+
 ## [2026.11.5.1] - 2026-11-05
 
 ### Added
