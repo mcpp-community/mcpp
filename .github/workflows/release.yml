@@ -538,6 +538,12 @@ jobs:
           "$MCPP" build
           STAGE1=$(find target -path "*/bin/mcpp" | head -1)
           STAGE1=$(cd "$(dirname "$STAGE1")" && pwd)/$(basename "$STAGE1")
+          # --no-cache removes target/, including the stage-1 compiler. Ninja
+          # invokes that compiler again for dependency scanning, so keep the
+          # bootstrap outside the tree the second stage is about to clear.
+          STAGE1_COPY=$(mktemp -d "$RUNNER_TEMP/mcpp-stage1.XXXXXX")/mcpp
+          cp "$STAGE1" "$STAGE1_COPY"
+          STAGE1="$STAGE1_COPY"
           "$STAGE1" --version
 
           # Stage 2: this release's mcpp rebuilds itself — flags.cppm's
