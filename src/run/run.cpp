@@ -104,6 +104,7 @@ struct Spec {
     bool splitOnCr = false;
     const std::function<bool()>* shouldStop = nullptr;
     bool oneString = false;
+    os::process::owned_unit* declaredUnit = nullptr;
 };
 
 struct Outcome {
@@ -225,7 +226,8 @@ Outcome launch(const Spec& s) {
         case Output::stdout_err_kept:  o.out = os::process::stdio::pipe; o.err = os::process::stdio::pipe;    break;
         case Output::discard:     o.out = os::process::stdio::null;    o.err = os::process::stdio::null;    break;
     }
-    o.own_unit = true;
+    o.own_unit = s.declaredUnit == nullptr;
+    o.declared_unit = s.declaredUnit;
     o.bound_lifetime = true;
     o.one_string = s.oneString;
     auto p = Process::spawn(o);
@@ -243,10 +245,10 @@ Outcome launch(const Spec& s) {
     const bool keepErr = s.out == Output::stdout_err_kept;
     const bool captured = s.out == Output::merged || s.out == Output::stdout_only
         || s.out == Output::stdout_err_shown || keepErr;
-    auto should_stop = [&] {
+    auto should_stop = [&](bool check_idle = true) {
         const auto now = clock::now();
         return (s.total.count() > 0 && now - start >= s.total)
-            || (captured && s.idle.count() > 0 && now - lastOutput >= s.idle)
+            || (check_idle && captured && s.idle.count() > 0 && now - lastOutput >= s.idle)
             || (s.shouldStop && *s.shouldStop && (*s.shouldStop)());
     };
     bool errDone = !keepErr;
@@ -264,38 +266,51 @@ Outcome launch(const Spec& s) {
     if (captured) {
         std::string acc;
         std::optional<clock::time_point> endedAt;
+        auto consume_output = [&](std::string_view chunk) {
+            lastOutput = clock::now();
+            if (s.onLine) {
+                acc += chunk;
+                deliver_lines(acc, *s.onLine, s.splitOnCr, false);
+            } else {
+                out.output += chunk;
+            }
+        };
         for (;;) {
             const auto now = clock::now();
-            if (should_stop()) {
-                stop = true;
-                break;
-            }
+            if (should_stop(false)) { stop = true; break; }
             // A program that has ended may leave one behind holding its
             // output open; what arrives in the next moment is read, then the
-            // rest of its unit is ended.
+            // rest of its unit is ended. Check even when output stays ready.
             if (!endedAt) {
                 if (auto w = p->try_wait(); w && w->has_value()) endedAt = now;
             } else if (now - *endedAt > std::chrono::milliseconds(500)) {
                 p->end_unit();
             }
+            // A slow line handler or delayed reader may leave progress queued.
+            // Observe both streams before classifying their silence as idle.
             drain_error(std::chrono::milliseconds(0));
+            auto ready = p->read_output_for(std::chrono::milliseconds(0));
+            if (!ready) break;
+            if (ready->has_value()) {
+                if ((*ready)->empty()) break;
+                consume_output(**ready);
+                continue;
+            }
+            if (should_stop()) { stop = true; break; }
             auto chunk = p->read_output_for(std::chrono::milliseconds(keepErr ? 20 : 100));
             if (!chunk) break;
             if (!chunk->has_value()) continue;
-            if ((*chunk)->empty()) break;   // the end of the output
-            lastOutput = clock::now();
-            if (s.onLine) {
-                acc += **chunk;
-                deliver_lines(acc, *s.onLine, s.splitOnCr, false);
-            } else {
-                out.output += **chunk;
-            }
+            if ((*chunk)->empty()) break;
+            consume_output(**chunk);
         }
         if (s.onLine && !stop) deliver_lines(acc, *s.onLine, s.splitOnCr, true);
         // The rest of the error stream, for as long as the program and the
-        // bounds allow.
+        // bounds allow. Ready stderr also precedes an idle classification.
         while (!stop && !errDone) {
             const auto now = clock::now();
+            if (should_stop(false)) { stop = true; break; }
+            drain_error(std::chrono::milliseconds(0));
+            if (errDone) break;
             if (should_stop()) { stop = true; break; }
             if (!endedAt) {
                 if (auto w = p->try_wait(); w && w->has_value()) endedAt = now;
@@ -508,7 +523,8 @@ RunResult execute(const std::vector<std::string>& argv, const Options& opt) {
     Spec s{ .argv = argv, .env = opt.env, .unset = opt.unset, .hostTool = opt.host_tool, .cwd = opt.cwd,
             .nullInput = opt.input == Input::none, .total = opt.total, .idle = opt.idle,
             .onLine = opt.on_line ? &opt.on_line : nullptr, .splitOnCr = opt.split_on_cr,
-            .shouldStop = opt.should_stop ? &opt.should_stop : nullptr, .oneString = opt.one_string };
+            .shouldStop = opt.should_stop ? &opt.should_stop : nullptr, .oneString = opt.one_string,
+            .declaredUnit = opt.declared_unit };
     switch (opt.streams) {
         case Streams::inherit:            s.out = Output::inherit; break;
         case Streams::merged:             s.out = Output::merged; break;

@@ -2175,6 +2175,7 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         compilerRun->environment(childEnv);
     }
 
+    const auto compilerStopped=[&] {return compilerRun&&compilerRun->failed();};
     auto t0 = std::chrono::steady_clock::now();
     // capture_exec merges stderr into the captured output (replacing `2>&1`),
     // so is_stale_ninja_failure / filter_ninja_output still see ninja errors.
@@ -2200,11 +2201,12 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         if (scanArgv)
             run = mcpp::build::run_ninja_reporting(*scanArgv, childEnv, std::chrono::milliseconds{0},
                                                    report, verbose, prefixes,
-                                                   mcpp::build::progress::PassKind::Scan);
+                                                   mcpp::build::progress::PassKind::Scan,compilerStopped);
         // A failed scan ends the build with its own output.
         if (run.exitCode == 0 && !run.timedOut)
             run = mcpp::build::run_ninja_reporting(argv, childEnv, std::chrono::milliseconds{0},
-                                                   report, verbose, prefixes);
+                                                   report, verbose, prefixes,
+                                                   mcpp::build::progress::PassKind::Work,compilerStopped);
         out = std::move(run.output);
         status = run.exitCode;
         reported = run.reported;
@@ -2217,8 +2219,8 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         // (build progress design 2026-09-29, §6.4).
         childEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
         mcpp::run::RunResult r;
-        if (scanArgv) r = mcpp::run::capture_exec(*scanArgv, childEnv);
-        if (r.exit_code == 0) r = mcpp::run::capture_exec(argv, childEnv);
+        if (scanArgv) r = mcpp::run::execute(*scanArgv,{.env=childEnv,.should_stop=compilerStopped});
+        if (r.exit_code == 0) r = mcpp::run::execute(argv,{.env=childEnv,.should_stop=compilerStopped});
         out = std::move(r.output);
         status = r.exit_code;
     }

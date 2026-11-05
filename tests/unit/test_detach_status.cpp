@@ -118,7 +118,9 @@ int lifetime_driver() {
                 std::this_thread::sleep_for(std::chrono::milliseconds(300));
             });
         }
-        auto result = mcpp::run::execute({"ninja", "-j12"}, {.env = env});
+        auto result = mcpp::run::execute({"ninja", "-j"+lifetime_env("MCPP_TEST_LIFETIME_NINJA_JOBS","12")}, {
+            .env = env, .should_stop = [&] { return run->failed(); }});
+        std::cout<<result.output;
         if (closer.joinable()) closer.join();
         auto done = run->finish();
         return done ? result.exit_code : 2;
@@ -137,15 +139,28 @@ int lifetime_driver() {
     if (role == "await") return detach::await_unit("unit", "module.o");
     if (role == "ordinary")
         return detach::run_capped({"env", "MCPP_TEST_LIFETIME_ROLE=compiler", self.string()},
-                                  "permits", 1, "ordinary.o");
-    if (role == "compiler") {
+                                  "permits", 1, lifetime_env("MCPP_TEST_LIFETIME_OBJECT","ordinary.o"));
+    if (role == "compiler" && lifetime_env("MCPP_TEST_LIFETIME_DESCENDANT") == "1") {
+        const auto who=mcpplibs::os::process::self();
+        std::ofstream("compiler.ready")<<who->id<<' '<<who->started_ns;
+        mcpplibs::os::process::spawn_options options;
+        options.program=self;options.env={{"MCPP_TEST_LIFETIME_ROLE","writer"}};
+        options.out=options.err=mcpplibs::os::process::stdio::inherit;
+        auto writer=mcpplibs::os::process::process::spawn(options);
+        if(!writer)return 2;
+        auto result=writer->wait();return result?result->shell_code():2;
+    }
+    if (role == "compiler" || role == "writer") {
         const auto process = mcpplibs::os::process::self();
-        std::ofstream("compiler.ready") << process->id << ' ' << process->started_ns;
+        std::ofstream(role=="writer"?"writer.ready":"compiler.ready") << process->id << ' ' << process->started_ns;
         std::ofstream("compiler.runs", std::ios::app) << process->id << '\n';
         const bool ordinary = lifetime_env("MCPP_TEST_LIFETIME_KIND") == "ordinary";
-        const auto object = ordinary ? "ordinary.o" : "module.o";
+        const auto object = ordinary ? lifetime_env("MCPP_TEST_LIFETIME_OBJECT","ordinary.o") : "module.o";
         std::ofstream(object) << "partial";
         const int fail = std::stoi(lifetime_env("MCPP_TEST_LIFETIME_FAIL", "0"));
+        const auto publicationGate=lifetime_env("MCPP_TEST_LIFETIME_PUBLICATION_GATE");
+        while(!publicationGate.empty()&&!fs::exists(publicationGate))
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
         if (!ordinary && fail != 19) {
             std::ofstream("published.gcm.new") << "same BMI";
             fs::rename("published.gcm.new", "published.gcm");
@@ -153,6 +168,7 @@ int lifetime_driver() {
         std::this_thread::sleep_for(std::chrono::milliseconds(
             std::stoi(lifetime_env("MCPP_TEST_LIFETIME_DELAY", "20000"))));
         if (!fail) std::ofstream(object) << "complete";
+        if(role=="writer")std::ofstream("writer.finished")<<"committed";
         return fail;
     }
     return 2;
@@ -177,4 +193,30 @@ TEST(DetachLifetime, OwnerCancellationAndImmediateRestart) {
     const auto result = mcpp::run::execute({"python3", helper.string(),
         mcpp::invocation::self_exe_path().string(), temporary.dir.string()});
     EXPECT_EQ(result.exit_code, 0) << result.output;
+}
+
+TEST(DetachLifetime, TransactionRecoveryAtNativeSyscallBoundaries) {
+    if constexpr (!mcpplibs::os::is_linux
+        || mcpplibs::os::ARCH != mcpplibs::os::architecture::x86_64)
+        GTEST_SKIP() << "Linux x86-64 syscall boundary control";
+    Slot temporary;
+    const auto helper=fs::current_path()/"tests/e2e/helpers/check_compiler_transaction_faults.py";
+    ASSERT_TRUE(fs::exists(helper));
+    const auto result=mcpp::run::execute({"python3",helper.string(),
+        mcpp::invocation::self_exe_path().string(),temporary.dir.string()},
+        {.total=std::chrono::seconds(120)});
+    EXPECT_EQ(result.exit_code,0)<<result.output;
+}
+
+TEST(DetachLifetime, ActualGccMixedCapacityUsesOwnedUnits) {
+    if constexpr (!mcpplibs::os::is_linux)GTEST_SKIP()<<"native GCC and Linux counter locks";
+    const auto engine=lifetime_env("MCPP_FRESH",lifetime_env("MCPP"));
+    if(engine.empty())GTEST_SKIP()<<"requires the explicit fresh mcpp supplied by CI";
+    ASSERT_TRUE(fs::is_regular_file(engine));
+    Slot temporary;
+    const auto helper=fs::current_path()/"tests/e2e/helpers/check_shared_compiler_cap.py";
+    const auto result=mcpp::run::execute({"python3",helper.string(),engine,(temporary.dir/"managed-gcc").string(),
+        "--owner-driver",mcpp::invocation::self_exe_path().string()},
+        {.total=std::chrono::seconds(120)});
+    EXPECT_EQ(result.exit_code,0)<<result.output;
 }

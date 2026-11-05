@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <cerrno>
+#include <cstdio>
 #include <fstream>
 
 import std;
@@ -19,6 +20,64 @@ namespace process = mcpp::run;
 // change mcpp's own environment — that mutation is exactly what leaked into
 // /bin/sh and crashed it on newer-glibc hosts. The addition is the started
 // program's alone; this invocation's statement is what it was.
+TEST(RunExec, OutputProducer) {
+    if (mcpp::invocation::get("MCPP_TEST_OUTPUT_PRODUCER") != "1")
+        GTEST_SKIP() << "subprocess producer";
+    std::fputs("mcpp-stderr-ready\n", stdout);
+    std::fflush(stdout);
+    const bool error = mcpp::invocation::get("MCPP_TEST_OUTPUT_STREAM") != "stdout";
+    if (error) std::fclose(stdout);
+    FILE* stream = error ? stderr : stdout;
+    const int count = std::stoi(mcpp::invocation::get("MCPP_TEST_OUTPUT_TICKS").value_or("24"));
+    auto next = std::chrono::steady_clock::now();
+    for (int i = 0; i < count; ++i) {
+        const auto tick = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        std::fprintf(stream, "%lld\n", static_cast<long long>(tick));
+        std::fflush(stream);
+        next += std::chrono::milliseconds(30);
+        std::this_thread::sleep_until(next);
+    }
+    std::_Exit(7);
+}
+
+TEST(RunExec, QueuedOutputRenewsIdleAfterALineHandler) {
+    std::vector<long long> ticks;
+    const auto result = process::execute({mcpp::invocation::self_exe_path().string(),
+        "--gtest_filter=RunExec.OutputProducer"}, {
+        .env = {{"MCPP_TEST_OUTPUT_PRODUCER", "1"}, {"MCPP_TEST_OUTPUT_STREAM", "stdout"}, {"MCPP_TEST_OUTPUT_TICKS", "48"}},
+        .streams = process::Streams::merged,
+        .total = std::chrono::seconds(3), .idle = std::chrono::milliseconds(500),
+        .on_line = [&](std::string_view line) {
+            if (line == "mcpp-stderr-ready")
+                std::this_thread::sleep_for(std::chrono::milliseconds(750));
+            long long tick;
+            if (std::from_chars(line.data(), line.data() + line.size(), tick).ec == std::errc{})
+                ticks.push_back(tick);
+        }});
+    EXPECT_EQ(result.exit_code, 7);
+    EXPECT_FALSE(result.timed_out);
+    EXPECT_EQ(ticks.size(), 48u);
+}
+
+TEST(RunExec, QueuedErrorOutputRenewsIdleAfterALineHandler) {
+    const auto result = process::execute({mcpp::invocation::self_exe_path().string(),
+        "--gtest_filter=RunExec.OutputProducer"}, {
+        .env = {{"MCPP_TEST_OUTPUT_PRODUCER", "1"}, {"MCPP_TEST_OUTPUT_TICKS", "48"}},
+        .streams = process::Streams::output_error_kept,
+        .total = std::chrono::seconds(3), .idle = std::chrono::milliseconds(500),
+        .on_line = [](std::string_view line) {
+            if (line == "mcpp-stderr-ready")
+                std::this_thread::sleep_for(std::chrono::milliseconds(750));
+        }});
+    EXPECT_EQ(result.exit_code, 7) << result.error_output;
+    EXPECT_FALSE(result.timed_out);
+    std::istringstream input(result.error_output);
+    int ticks = 0;
+    for (long long tick; input >> tick;) ++ticks;
+    EXPECT_EQ(ticks, 48);
+}
+
 TEST(RunExec, StreamCompletionAndChildWaitKeepTheirBounds) {
     struct Case {
         const char* name;
@@ -48,7 +107,13 @@ TEST(RunExec, StreamCompletionAndChildWaitKeepTheirBounds) {
         if (test.stop) options.should_stop = [&] {
             return std::chrono::steady_clock::now() - started > std::chrono::milliseconds(50);
         };
-        const auto result = process::execute({"/bin/sh", "-c", test.command}, options);
+        const bool producer = std::string_view(test.command) == "@stderr-producer";
+        if (producer) options.env.emplace_back("MCPP_TEST_OUTPUT_PRODUCER", "1");
+        const std::vector<std::string> argv = producer
+            ? std::vector<std::string>{mcpp::invocation::self_exe_path().string(),
+                                      "--gtest_filter=RunExec.OutputProducer"}
+            : std::vector<std::string>{"/bin/sh", "-c", test.command};
+        const auto result = process::execute(argv, options);
         if (test.exit >= 0) {
             EXPECT_EQ(result.exit_code, test.exit);
             EXPECT_FALSE(result.timed_out);
@@ -56,7 +121,22 @@ TEST(RunExec, StreamCompletionAndChildWaitKeepTheirBounds) {
             EXPECT_NE(result.exit_code, 0);
             EXPECT_TRUE(result.timed_out);
         }
-        EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(1));
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+        if (producer) {
+            // One process emits across the idle window. Forking an external
+            // sleep for every tick would add platform-dependent launch gaps.
+            SCOPED_TRACE(result.error_output);
+            std::istringstream input(result.error_output);
+            std::vector<long long> ticks;
+            for (long long tick; input >> tick;) ticks.push_back(tick);
+            ASSERT_EQ(ticks.size(), 24u);
+            for (std::size_t i = 1; i < ticks.size(); ++i)
+                EXPECT_LT(std::chrono::nanoseconds(ticks[i] - ticks[i - 1]), options.idle);
+            EXPECT_GT(elapsed, options.idle);
+            EXPECT_LT(elapsed, std::chrono::seconds(3));
+        } else {
+            EXPECT_LT(elapsed, std::chrono::seconds(1));
+        }
     };
     for (const auto streams : {process::Streams::inherit, process::Streams::discard,
             process::Streams::merged, process::Streams::output,
@@ -66,8 +146,7 @@ TEST(RunExec, StreamCompletionAndChildWaitKeepTheirBounds) {
             exercise(streams, {"both-EOF-idle", "exec 1>&- 2>&-; sleep 2", 0, 50});
     }
     exercise(process::Streams::output_error_kept,
-        {"stderr-activity", "exec 1>&-; for i in 1 2 3 4 5 6 7 8; do printf x >&2; sleep .03; done; exit 7",
-         0, 100, false, 7});
+        {"stderr-activity", "@stderr-producer", 3000, 500, false, 7});
 }
 
 TEST(RunExec, StopPredicateAppliesAfterCapturedStreamsClose) {

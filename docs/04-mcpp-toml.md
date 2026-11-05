@@ -1053,7 +1053,11 @@ generation share the same total `jobs` limit (2026.11.5.2+). Additional
 scheduling and join tasks do not increase the number of compiler processes.
 Cancelling the build ends its ordinary and detached compilers. An immediately
 following build waits for their cleanup before starting another compiler;
-partial outputs are rebuilt. An unchanged build still performs no compilation.
+partial outputs are rebuilt. A missing object from a completed module is
+recreated by that build. An unchanged build still performs no compilation.
+If a forcibly ended build leaves a compiler unit whose completion cannot be
+verified, the next build reports an occupied or unknown unit and retains its
+outputs; it does not start a replacement compiler in that slot.
 
 | value | |
 |---|---|

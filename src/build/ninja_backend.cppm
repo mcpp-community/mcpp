@@ -124,7 +124,8 @@ NinjaRun run_ninja_reporting(const std::vector<std::string>& argv,
                              bool verbose,
                              std::span<const std::string> commandPrefixes,
                              mcpp::build::progress::PassKind kind =
-                                 mcpp::build::progress::PassKind::Work);
+                                 mcpp::build::progress::PassKind::Work,
+                             const std::function<bool()>& shouldStop = {});
 
 // The goal of the scan pass (build wall-time plan, W2): the dyndep file of
 // every unit whose scan waits on no action. Present in build.ninja when the
@@ -1385,7 +1386,8 @@ NinjaRun run_ninja_reporting(const std::vector<std::string>& argv,
                              mcpp::build::progress::Build& progress,
                              bool verbose,
                              std::span<const std::string> commandPrefixes,
-                             mcpp::build::progress::PassKind kind) {
+                             mcpp::build::progress::PassKind kind,
+                             const std::function<bool()>& shouldStop) {
     NinjaRun run;
     for (auto& kv : progress.environment()) env.push_back(std::move(kv));
     progress.pass_begin(kind);
@@ -1424,8 +1426,8 @@ NinjaRun run_ninja_reporting(const std::vector<std::string>& argv,
     };
     // A ninja that cannot be started is reported through `on_line`, into the
     // output the failure report reads.
-    run.exitCode = mcpp::run::stream_exec(argv, env, deadline, on_line,
-                                                        &run.timedOut);
+    const auto result=mcpp::run::execute(argv,{.env=env,.total=deadline,.on_line=on_line,.should_stop=shouldStop});
+    run.exitCode=result.exit_code;run.timedOut=result.timed_out;
     progress.pass_end();
     return run;
 }
@@ -1471,7 +1473,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // compilers must share the supervisors' semaphore rather than use that
     // larger slot count as their own concurrency bound.
     const std::string compilerPrefix = splitBmi
-        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --cap {} --output $out -- ", plan.scheduleCompilerCap)
+        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --cap {} --output $out --depfile $out.d -- ", plan.scheduleCompilerCap)
         : std::string{};
     // The other split shape. Clang publishes no BMI early — it writes the BMI
     // at the end of the compile — so the GCC trick of releasing the file
@@ -4889,6 +4891,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     for (auto& ev : plan.toolchain.envOverrides)
         nenv.emplace_back(ev.key, ev.value);
     if (compilerRun) compilerRun->environment(nenv);
+    const auto compilerStopped=[&] {return compilerRun&&compilerRun->failed();};
 
     // THE STAGED CACHE IS PLACED BY A PASS OF ITS OWN, before the graph that
     // reads it. ninja 1.12.1 loads a dyndep file whose producer is up to date
@@ -4916,7 +4919,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                                          std::string(kStagedCacheGoal)};
             (void)run_ninja_reporting(pre, nenv, preDeadline, *report, opts.verbose,
                                       command_prefixes(flags, plan),
-                                      mcpp::build::progress::PassKind::Placement);
+                                      mcpp::build::progress::PassKind::Placement,compilerStopped);
         } else {
             std::vector<std::string> pre{ninjaProgram, "--quiet", "-C", plan.outputDir.string(),
                                          std::string(kStagedCacheGoal)};
@@ -4926,7 +4929,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             preEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
             preEnv.emplace_back(std::string(mcpp::build::action_progress::kRootEnv), "");
             preEnv.emplace_back(std::string(mcpp::build::action_progress::kFileEnv), "");
-            (void)mcpp::run::capture_exec_deadline(pre, preEnv, preDeadline, nullptr);
+            (void)mcpp::run::execute(pre,{.env=preEnv,.total=preDeadline,.should_stop=compilerStopped});
         }
         stage("ninja-staged-cache");
     }
@@ -4968,7 +4971,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         if (report) {
             auto run = run_ninja_reporting(scan, nenv, scanDeadline, *report, opts.verbose,
                                            command_prefixes(flags, plan),
-                                           mcpp::build::progress::PassKind::Scan);
+                                           mcpp::build::progress::PassKind::Scan,compilerStopped);
             if (run.exitCode != 0 || run.timedOut) {
                 out = std::move(run.output);
                 ninjaExit = run.exitCode;
@@ -4981,8 +4984,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             scanEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
             scanEnv.emplace_back(std::string(mcpp::build::action_progress::kRootEnv), "");
             scanEnv.emplace_back(std::string(mcpp::build::action_progress::kFileEnv), "");
-            auto cap = mcpp::run::capture_exec_deadline(
-                scan, scanEnv, scanDeadline, &buildTimedOut);
+            auto cap = mcpp::run::execute(scan,{.env=scanEnv,.total=scanDeadline,.should_stop=compilerStopped});
+            buildTimedOut=cap.timed_out;
             if (cap.exit_code != 0 || buildTimedOut) {
                 out = std::move(cap.output);
                 ninjaExit = cap.exit_code;
@@ -5000,7 +5003,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         // `out`, `ninjaExit`, `buildTimedOut` and `reported` are the scan's.
     } else if (report) {
         auto run = run_ninja_reporting(nargv, nenv, deadline, *report, opts.verbose,
-                                       command_prefixes(flags, plan));
+                                       command_prefixes(flags, plan),
+                                       mcpp::build::progress::PassKind::Work,compilerStopped);
         out = std::move(run.output);
         ninjaExit = run.exitCode;
         buildTimedOut = run.timedOut;
@@ -5010,8 +5014,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         quietEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
             quietEnv.emplace_back(std::string(mcpp::build::action_progress::kRootEnv), "");
             quietEnv.emplace_back(std::string(mcpp::build::action_progress::kFileEnv), "");
-        auto cap = mcpp::run::capture_exec_deadline(
-            nargv, quietEnv, deadline, &buildTimedOut);
+        auto cap = mcpp::run::execute(nargv,{.env=quietEnv,.total=deadline,.should_stop=compilerStopped});
+        buildTimedOut=cap.timed_out;
         out = std::move(cap.output);
         ninjaExit = cap.exit_code;
     }

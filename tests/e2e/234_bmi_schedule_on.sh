@@ -260,4 +260,8 @@ assert b".mcpp/compiler-runs" not in graph_before[1]
 print("PASS: normal/quiet cached replay retains graph, objects and BMIs without persisting generations")
 PY_REPLAY
 
+
+echo "== 8. missing cached objects recover before Ninja admission =="
+python3 "$_root/tests/e2e/helpers/check_cached_object_recovery.py" "$MCPP" "$TMP" "$TMP/$BUILD_DIR"
+
 echo "234 bmi_schedule OK (detach-codegen, tokens reclaimed, publication checked)"

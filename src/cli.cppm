@@ -281,16 +281,18 @@ int run(int argc, char** argv) {
     if (argc > 1 && std::string_view(argv[1]) == "__compiler-cap") {
         std::filesystem::path semaphore;
         std::filesystem::path output;
+        std::filesystem::path depfile;
         int cap = 0, i = 2;
         for (; i < argc && std::string_view(argv[i]) != "--"; ++i) {
             const std::string_view option = argv[i];
-            if ((option != "--sem" && option != "--cap" && option != "--output") || i + 1 >= argc) {
+            if ((option != "--sem" && option != "--cap" && option != "--output" && option != "--depfile") || i + 1 >= argc) {
                 std::println(stderr, "error: __compiler-cap: expected --sem <dir> --cap <N> -- <compiler>...");
                 return 2;
             }
             const std::string_view value = argv[++i];
             if (option == "--sem") semaphore = value;
             else if (option == "--output") output = value;
+            else if (option == "--depfile") depfile = value;
             else {
                 const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), cap);
                 if (ec != std::errc{} || end != value.data() + value.size()) return 2;
@@ -299,7 +301,7 @@ int run(int argc, char** argv) {
         if (semaphore.empty() || cap <= 0 || i + 1 >= argc) return 2;
         std::vector<std::string> command;
         for (++i; i < argc; ++i) command.emplace_back(argv[i]);
-        return mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output);
+        return mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output, depfile);
     }
 
     ReportUnnarrowablePaths reportUnnarrowable_;

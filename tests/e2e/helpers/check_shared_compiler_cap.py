@@ -26,9 +26,24 @@ def state(path):
     return json.loads(path.read_text()) if path.exists() else {"active": [], "peak": 0, "calls": 0}
 
 
+def process_birth(pid):
+    try:
+        fields=Path(f"/proc/{pid}/stat").read_text().split(")",1)[1].split()
+        return int(fields[19]) if fields[0]!="Z" else None
+    except (FileNotFoundError,ProcessLookupError):
+        return None
+
+
+def active_originals(record):
+    births=record.get("births",{})
+    if any(str(pid) not in births for pid in record["active"]):
+        raise AssertionError("counter has a PID without its original birth identity")
+    return [pid for pid in record["active"] if process_birth(pid)==births[str(pid)]]
+
+
 def permits_free(semaphore):
     for entry in semaphore.iterdir():
-        if not entry.is_file():
+        if not entry.is_file() or entry.name.endswith(".reservation"):
             return False
         try:
             with entry.open("r+b") as lock:
@@ -41,13 +56,16 @@ def permits_free(semaphore):
 def settled(path, semaphore):
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        if not state(path)["active"] and permits_free(semaphore):
+        if not active_originals(state(path)) and permits_free(semaphore):
             return
         time.sleep(0.02)
-    raise AssertionError("compilers or permits survived the completed workload")
+    details={"counter":state(path),"pid_alive":{str(pid):alive(pid) for pid in state(path)["active"]},
+             "permit_files":[entry.name for entry in semaphore.iterdir()],"kernel_locks_free":permits_free(semaphore)}
+    path.with_name("unsettled-evidence.json").write_text(json.dumps(details,indent=2)+"\n")
+    raise AssertionError("compilers or permits survived the completed workload: "+json.dumps(details))
 
 
-def check_mixed(mcpp, root, cap, ninja):
+def check_mixed(mcpp, root, cap, ninja, owner_driver=None):
     project = root / f"mixed-{cap}"
     (project / "src").mkdir(parents=True)
     (project / "mcpp.toml").write_text('''[package]
@@ -76,11 +94,22 @@ bmi_schedule = "on"
 import fcntl,json,os,subprocess,sys,time
 from pathlib import Path
 counter=Path(os.environ["MCPP_CAP_COUNTER"])
+def born(pid):
+ try:
+  fields=Path(f"/proc/{pid}/stat").read_text().split(")",1)[1].split()
+  return int(fields[19]) if fields[0]!="Z" else None
+ except (FileNotFoundError,ProcessLookupError):return None
 def update(start):
  with counter.with_suffix(".lock").open("a") as lock:
   fcntl.flock(lock,fcntl.LOCK_EX)
   record=json.loads(counter.read_text()) if counter.exists() else {"active":[],"peak":0,"calls":0}
+  births=record.setdefault("births",{})
+  if any(str(pid) not in births for pid in record["active"]):raise RuntimeError("counter birth missing")
+  expired=[pid for pid in record["active"] if born(pid)!=births[str(pid)]]
+  record.setdefault("ended_without_finally",[]).extend({"pid":pid,"birth":births[str(pid)]} for pid in expired)
+  record["active"]=[pid for pid in record["active"] if pid not in expired]
   if start:
+   births[str(os.getpid())]=born(os.getpid())
    record["active"].append(os.getpid());record["calls"]+=1
    record["peak"]=max(record["peak"],len(record["active"]))
   else:record["active"].remove(os.getpid())
@@ -104,8 +133,13 @@ sys.exit(result)
         env = os.environ.copy()
         env["MCPP_CAP_COUNTER"] = str(counter)
         command = [ninja, "-j", str(cap * 6)]
+        if owner_driver:
+            env.update(GTEST_FILTER="DetachLifetime.SubprocessDriver",
+                       MCPP_TEST_LIFETIME_ROLE="root", MCPP_TEST_LIFETIME_OUTPUT=str(build),
+                       MCPP_TEST_LIFETIME_NINJA_JOBS=str(cap*6))
+            command=[str(owner_driver)]
         checked(command, build, log, env)
-        semaphore = build / ".mcpp-sched"
+        semaphore = next((project/".mcpp/compiler-runs").glob("*/slots")) if owner_driver else build/".mcpp-sched"
         settled(counter, semaphore)
         measured = state(counter)
         assert measured["peak"] == cap, f"actual compiler driver peak {measured['peak']} differs from cap {cap}"
@@ -124,7 +158,11 @@ sys.exit(result)
             checked(command, build, log, env)
             settled(counter, semaphore)
             assert state(counter)["peak"] <= cap, "failure recovery exceeded the compiler cap"
-        print(f"PASS: mixed GCC modules/C++/C cap={cap}, joined without deadlock, no-op and both failure recoveries")
+        mode="owned-unit generation" if owner_driver else "standalone permits"
+        (root/f"cap-{cap}.json").write_text(json.dumps({"mode":mode,"cap":cap,"ninja_jobs":cap*6,
+            "peak":state(counter)["peak"],"calls":state(counter)["calls"],"active":state(counter)["active"],
+            "normal_and_late_failure_recovery":True,"unchanged_noop":True},indent=2)+"\n")
+        print(f"PASS: mixed GCC modules/C++/C cap={cap} ({mode}), joined without deadlock, no-op and both failure recoveries")
 
 
 def alive(pid):
@@ -143,7 +181,10 @@ def check_cancellation(mcpp, root):
     command = [mcpp, "__compiler-cap", "--sem", str(semaphore), "--cap", "1", "--"]
     child = [sys.executable, "-c", "import os,time;from pathlib import Path;"
              f"Path({str(pid_file)!r}).write_text(str(os.getpid()));time.sleep(60)"]
-    process = subprocess.Popen([*command, *child], cwd=root)
+    wrapper=root/"mixed-1/compiler-driver"
+    counter=root/"cancel-counter.json"
+    env=dict(os.environ,MCPP_CAP_COUNTER=str(counter))
+    process = subprocess.Popen([*command,str(wrapper),*child],cwd=root,env=env)
     pid = None
     try:
         deadline = time.monotonic() + 5
@@ -151,15 +192,22 @@ def check_cancellation(mcpp, root):
             time.sleep(0.01)
         assert pid_file.exists(), "controlled compiler did not start"
         pid = int(pid_file.read_text())
+        original=state(counter)
+        assert len(original["active"])==1
+        wrapper_pid=original["active"][0];wrapper_birth=original["births"][str(wrapper_pid)]
         process.send_signal(signal.SIGINT)
         assert process.wait(timeout=5) != 0
         deadline = time.monotonic() + 5
         while alive(pid) and time.monotonic() < deadline:
             time.sleep(0.01)
         assert not alive(pid), "cancellation left the compiler alive"
+        settled(counter,semaphore)
         assert permits_free(semaphore), "cancellation retained its compiler permit"
-        result = subprocess.run([*command, sys.executable, "-c", "raise SystemExit(7)"], cwd=root)
+        result = subprocess.run([*command,str(wrapper),sys.executable,"-c","raise SystemExit(7)"],cwd=root,env=env)
         assert result.returncode == 7 and permits_free(semaphore), "failure lost its status or leaked a permit"
+        record=state(counter)
+        assert {"pid":wrapper_pid,"birth":wrapper_birth} in record["ended_without_finally"], "hard-killed counter entry was not retained as history"
+        assert not active_originals(record) and record["peak"]==1, "dead counter history inflated live compiler capacity"
         words = ["space value", 'literal "quote"', "back\\slash", "$literal", "", "Ω",
                  "--system", "--home", "--deny", "--toolchain", "-j200", "--sem", "--cap"]
         result = subprocess.run([*command, sys.executable, "-c", "import json,sys;print(json.dumps(sys.argv[1:]))", *words],
@@ -178,12 +226,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mcpp", type=Path)
     parser.add_argument("fixture", type=Path)
+    parser.add_argument("--owner-driver",type=Path,
+                        help="fresh schedule unit-test driver for owned-generation coverage")
     args = parser.parse_args()
     args.fixture.mkdir(parents=True)
     ninja = shutil.which("ninja")
     assert ninja, "Ninja is required"
     for cap in (1, 2):
-        check_mixed(str(args.mcpp.resolve()), args.fixture.resolve(), cap, ninja)
+        check_mixed(str(args.mcpp.resolve()), args.fixture.resolve(), cap, ninja,
+                    args.owner_driver.resolve() if args.owner_driver else None)
     check_cancellation(str(args.mcpp.resolve()), args.fixture.resolve())
 
 

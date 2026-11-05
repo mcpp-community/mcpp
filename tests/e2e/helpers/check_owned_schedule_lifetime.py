@@ -53,7 +53,10 @@ class Case:
         self.roots = []
         self.logs = []
         word = shlex.quote(str(binary))
-        prefix = "setsid --wait " if extra.get("MCPP_TEST_LIFETIME_BLOCK") else ""
+        # A separate group protects the deliberate state-writer stall from
+        # Ninja cancellation, while preserving the owner's native session.
+        prefix = ("python3 -c 'import os,sys;os.setpgid(0,0);os.execvp(sys.argv[1],sys.argv[1:])' "
+                  if extra.get("MCPP_TEST_LIFETIME_BLOCK") else "")
         (self.out / "compile.command").write_text(f"env MCPP_TEST_LIFETIME_ROLE=compiler {word}")
         if kind == "module":
             graph = (f"rule phase\n  command = {prefix}env MCPP_TEST_LIFETIME_ROLE=phase {word}\n  restat = 1\n"
@@ -98,7 +101,7 @@ class Case:
             if child.poll() is None:
                 child.kill()
             child.wait(timeout=5)
-        for name in ("compiler.ready", "phase.pid"):
+        for name in ("compiler.ready", "writer.ready", "phase.pid"):
             pid = integer(self.out / name)
             if pid and alive(pid):
                 os.kill(pid, signal.SIGKILL)
@@ -150,31 +153,52 @@ def owner_closure(root, binary):
         case.close()
 
 
-def blocked_writer(root, binary, library, restore):
+def blocked_writer(root, binary, restore):
     case = Case(root, "restore-barrier" if restore else "settle-barrier", binary,
-                MCPP_TEST_LIFETIME_BLOCK="1", LD_PRELOAD=str(library))
+                MCPP_TEST_LIFETIME_BLOCK="1", MCPP_TEST_LIFETIME_PUBLICATION_GATE="publish.release")
+    descriptor=None
+    lease_held=False
+    previous_handler=signal.getsignal(signal.SIGIO)
+    breaks=[]
+    signal.signal(signal.SIGIO,lambda *_:breaks.append(time.monotonic()))
     try:
         (case.out / "published.gcm").write_text("same BMI")
-        # Make the source newer than the previously published BMI.
         time.sleep(0.02)
         (case.out / "source").touch()
         old = case.start(delay=20, MCPP_TEST_LIFETIME_FAIL="19" if restore else "0")
         case.ready(old)
-        until(lambda: (case.out / "writer.entered").exists(), "phase1 did not reach controlled rename")
-        compiler = case.compiler()
-        until(lambda: not alive(compiler), "compiler still alive at state-writer control")
-        old.send_signal(signal.SIGINT)
-        new = case.start(delay=30, LD_PRELOAD="", MCPP_TEST_LIFETIME_BLOCK="")
-        time.sleep(0.15)
-        assert integer(case.out / "root.ready") != new.pid, "new generation bypassed old phase1 writer"
-        (case.out / "writer.release").write_text("go")
+        compiler=case.compiler()
+        baseline=next((case.out.parents[2]/".mcpp/compiler-runs").glob("*/run-*/attempts/*/baseline.bmi"))
+        # A kernel write lease delays the real reader, including direct-syscall
+        # OS I/O. No product hook or libc interception changes the state writer.
+        descriptor=os.open(baseline,os.O_RDWR)
+        fcntl.fcntl(descriptor,fcntl.F_SETOWN,os.getpid())
+        fcntl.fcntl(descriptor,fcntl.F_SETLEASE,fcntl.F_WRLCK)
+        lease_held=True
+        (case.out/"publish.release").write_text("go")
+        until(lambda:bool(breaks),"state writer did not reach the certified baseline")
+        until(lambda:not alive(compiler),"compiler still alive at state-writer control")
+        if not restore:
+            old.send_signal(signal.SIGINT)
+        new=case.start(delay=30,MCPP_TEST_LIFETIME_BLOCK="",MCPP_TEST_LIFETIME_PUBLICATION_GATE="")
+        time.sleep(.15)
+        assert integer(case.out/"root.ready")!=new.pid,"new generation bypassed a pending state writer"
+        fcntl.fcntl(descriptor,fcntl.F_SETLEASE,fcntl.F_UNLCK)
+        lease_held=False
         case.ready(new)
         case.success(new)
-        assert not (case.out / "published.gcm.bak").exists()
-        assert (case.out / "unit.rc").read_text().strip() == "0"
-        print("PASS: old phase1 " + ("restore" if restore else "settle") + " writes block next generation after compiler permit release")
+        assert old.wait(timeout=5)!=0
+        assert not (case.out/"published.gcm.bak").exists()
+        assert (case.out/"unit.rc").read_text().strip()=="0"
+        print("PASS: prior "+("generation restore" if restore else "phase1 settle")
+              +" is serialized before the next generation after compiler permit release",flush=True)
     finally:
-        (case.out / "writer.release").write_text("go")
+        if descriptor is not None:
+            try:
+                if lease_held:fcntl.fcntl(descriptor,fcntl.F_SETLEASE,fcntl.F_UNLCK)
+            finally:
+                os.close(descriptor)
+        signal.signal(signal.SIGIO,previous_handler)
         case.close()
 
 
@@ -239,39 +263,86 @@ def late_registration(root, binary, supervisor):
         case.close()
 
 
+
+def record(path, tag):
+    data=path.read_bytes()
+    body,checksum=data[:-18],data[-17:-1]
+    value=0xcbf29ce484222325
+    for byte in body:value=((value^byte)*0x100000001b3)&((1<<64)-1)
+    assert checksum==f"{value:016x}".encode()
+    schema,count,body=body.split(b"\n",2)
+    assert schema.decode()==tag
+    fields=[]
+    for _ in range(int(count)):
+        size,body=body.split(b"\n",1);size=int(size)
+        fields.append(body[:size].decode());body=body[size:]
+    assert not body
+    return fields
+
+
+def hard_controller_loss(root, binary, kind):
+    case=Case(root,"hard-controller-"+kind,binary,kind,
+              MCPP_TEST_LIFETIME_DESCENDANT="1")
+    try:
+        if kind=="ordinary":
+            word=shlex.quote(str(binary))
+            (case.out/"start-second.py").write_text("from pathlib import Path\nimport time\nwhile not Path('writer.ready').exists():time.sleep(.01)\nPath('second.gate').touch()\n")
+            with (case.out/"build.ninja").open("a") as graph:
+                graph.write("rule gate\n  command = python3 start-second.py\n"
+                            "build second.gate: gate\n"
+                            "rule second\n  command = env MCPP_TEST_LIFETIME_ROLE=ordinary "
+                            f"MCPP_TEST_LIFETIME_OBJECT=second.o {word}\n"
+                            "build second.o: second source | second.gate\ndefault ordinary.o second.o\n")
+        old=case.start(delay=1800);case.ready(old);case.compiler()
+        until(lambda:integer(case.out/"writer.ready")!=0,"descendant did not start")
+        writer=integer(case.out/"writer.ready")
+        runtime=case.out.parents[2]/".mcpp/compiler-runs"
+        def admitted():
+            found=list(runtime.glob("*/run-*/attempts/*/admitted"))
+            return next((p.parent for p in found if (p.parent/"unit").exists()),None)
+        until(lambda:admitted() is not None,"unit was not admitted")
+        attempt=admitted();unit=record(attempt/"unit","mcpp-unit-v1")
+        controller=int(unit[1]);os.kill(controller,signal.SIGKILL)
+        reservation=Path(record(attempt/"reservation","mcpp-reservation-pointer-v1")[0])
+        lock=reservation.with_suffix(".lock")
+        time.sleep(.15)
+        with lock.open("a+") as handle:
+            fcntl.lockf(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        assert alive(writer),"descendant control ended too early"
+        assert reservation.exists(),"live descendant lost its logical reservation"
+        obj=case.out/("ordinary.o" if kind=="ordinary" else "module.o")
+        assert obj.read_text()=="partial","output changed before writer completion"
+        assert len((case.out/"compiler.runs").read_text().splitlines())==1,"cap1 admitted a replacement compiler"
+        assert old.wait(timeout=8)!=0,"hard controller loss reported success"
+        assert (case.out/"writer.finished").exists(),"counterexample descendant did not perform its late write"
+        assert not obj.exists(),"quiet orphan result was not invalidated"
+        assert not reservation.exists(),"quiet orphan kept its reservation"
+        if kind=="module":assert not(case.out/"published.gcm").exists()
+        # The actual helper is normal on retry; admission remains capped and
+        # the late writer cannot overwrite this generation's result.
+        case.env.pop("MCPP_TEST_LIFETIME_DESCENDANT")
+        new=case.start(delay=30);case.ready(new);case.success(new)
+        print("PASS:",kind,"hard controller loss retains cap1 while descendant writes; quiet recovery and retry",flush=True)
+    finally:
+        case.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("fixture", type=Path)
     args = parser.parse_args()
-    assert shutil.which("ninja") and shutil.which("setsid"), "Ninja and setsid required"
-    # Extend only the phase1 rename window; the actual C++ helper remains intact.
-    source = args.fixture / "delay-writer.c"
-    source.write_text(r'''#define _GNU_SOURCE
-#include <dlfcn.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <unistd.h>
-int rename(const char *from,const char *to) {
- static int (*next)(const char*,const char*); if(!next) next=dlsym(RTLD_NEXT,"rename");
- if(getenv("MCPP_TEST_LIFETIME_BLOCK") && strstr(from,"published.gcm.bak")) {
-  FILE *f=fopen("writer.entered","w"); if(f){fputs("entered",f);fclose(f);}
-  for(int i=0;i<3000 && access("writer.release",F_OK);++i) usleep(10000);
- }
- return next(from,to);
-}
-''')
-    library = args.fixture / "delay-writer.so"
-    subprocess.run(["/usr/bin/cc", "-shared", "-fPIC", str(source), "-o", str(library), "-ldl"], check=True, timeout=20)
+    assert shutil.which("ninja"), "Ninja required"
     invalid_owner(args.fixture, args.binary)
+    for kind in ("module","ordinary"):
+        hard_controller_loss(args.fixture,args.binary,kind)
     for kind in ("module", "ordinary"):
         for sig in (signal.SIGINT, signal.SIGKILL):
             cancellation(args.fixture, args.binary, sig, kind)
     cancellation(args.fixture, args.binary, signal.SIGKILL, "module", linked=True)
     owner_closure(args.fixture, args.binary)
     for restore in (False, True):
-        blocked_writer(args.fixture, args.binary, library, restore)
+        blocked_writer(args.fixture, args.binary, restore)
     for supervisor in (False, True):
         late_registration(args.fixture, args.binary, supervisor)
 

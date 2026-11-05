@@ -26,6 +26,14 @@
 - Cancelled detached builds stop their compilers and finish state cleanup before
   another generation starts. Stable kernel permits retain live ownership across
   immediate rebuilds; runtime generations leave no-op build identities unchanged.
+- Compiler units retain their concurrency reservation after a supervisor is
+  forcibly ended. Recovery waits for descendants and final state writers;
+  occupied or unknown units retain their outputs and fail within a bound.
+- Missing completed module objects are recovered in the same build before Ninja
+  reads their BMIs. Corrupt completion evidence and redirected cache state refuse
+  recovery without authorizing changes to unrelated outputs.
+- Captured idle bounds consume queued progress from both streams before
+  classifying silence, including progress buffered during a slow line callback.
 - Child stop predicates apply with inherited and discarded streams, including
   executions without an absolute deadline. Captured stream EOF retains stop,
   absolute and observed-output idle bounds until the child exits.

@@ -74,6 +74,7 @@ import mcpplibs.os.process;
 import mcpp.build.command_line;
 import mcpp.run;
 import mcpp.build.stage;
+import mcpp.build.schedule.compiler_transaction;
 import mcpp.home;
 import mcpp.home.files;
 import mcpp.invocation;
@@ -94,6 +95,7 @@ public:
     void environment(std::vector<std::pair<std::string, std::string>>& env) const;
     std::expected<void, std::string> finish();
     const std::filesystem::path& directory() const;
+    bool failed() const;
 private:
     struct State;
     std::unique_ptr<State> state_;
@@ -168,7 +170,8 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
 // Their original argv and streams are retained; no shell is introduced.
 int run_capped(const std::vector<std::string>& argv,
                const std::filesystem::path& semaphore, int maxCompilers,
-               const std::filesystem::path& output = {});
+               const std::filesystem::path& output = {},
+               const std::filesystem::path& depfile = {});
 
 }  // namespace mcpp::build::schedule::detach
 
@@ -176,6 +179,7 @@ int run_capped(const std::vector<std::string>& argv,
 
 namespace mcpp::build::schedule::detach {
 namespace {
+namespace transactions = mcpp::build::schedule::transaction;
 
 std::filesystem::path suffixed(const std::filesystem::path& base, std::string_view s) {
     return std::filesystem::path{base.string() + std::string(s)};
@@ -308,23 +312,24 @@ std::optional<int> read_rc(const std::filesystem::path& slot) {
 
 // Temp file + rename, so a reader never observes half a number. The same
 // guarantee, for the same reason, that makes watching the BMI path sound.
-void write_rc(const std::filesystem::path& slot, int rc) {
-    const auto tmp = suffixed(slot, ".rc.tmp");
-    { std::ofstream out(tmp, std::ios::trunc); out << rc << '\n'; }
-    std::error_code ec;
-    std::filesystem::rename(tmp, suffixed(slot, ".rc"), ec);
+bool write_rc(const std::filesystem::path& slot, int rc) {
+    return transactions::replace_record(suffixed(slot,".rc"),std::to_string(rc)+"\n");
 }
 
 // Stable kernel lock slots, shared by ordinary and detached compilers. The
 // lock ends with its holder even after SIGKILL; its file is never unlinked as
 // a way of reclaiming a live permit. No holder acquires a second permit.
-std::expected<std::optional<mcpplibs::os::fs::lock>, int>
+struct Permit {
+    std::optional<mcpplibs::os::fs::lock> lock;
+    std::filesystem::path reservation;
+};
+std::expected<Permit, int>
 acquire_permit(const Actor& actor, const std::filesystem::path& requested, int cap) {
     const auto dir = actor.owner.permits(requested);
     if (!actor.ready) return std::unexpected(130);
     if (dir.empty() || cap <= 0) {
         if (actor.owner.managed) return std::unexpected(2);
-        return std::optional<mcpplibs::os::fs::lock>{};
+        return Permit{};
     }
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
@@ -336,14 +341,27 @@ acquire_permit(const Actor& actor, const std::filesystem::path& requested, int c
     constexpr auto kLimit = std::chrono::hours(2);
     for (;;) {
         if (!actor.owner.active()) return std::unexpected(130);
+        bool orphan = false;
         for (int i = 0; i < cap; ++i) {
             auto permit = mcpplibs::os::fs::lock::acquire(dir / std::format("slot-{}.lock", i),
                 mcpplibs::os::fs::lock::kind::exclusive, false);
-            if (permit) return std::optional<mcpplibs::os::fs::lock>{std::move(*permit)};
+            if (permit) {
+                const auto reservation = dir / std::format("slot-{}.reservation", i);
+                if (actor.owner.managed) {
+                    const auto available = transactions::reservation_available(reservation);
+                    if (!available) { std::println(std::cerr,"mcpp: {}",available.error()); return std::unexpected(1); }
+                    if (!*available) { orphan = true; continue; }
+                }
+                return Permit{std::optional<mcpplibs::os::fs::lock>{std::move(*permit)},reservation};
+            }
             if (permit.error().code != mcpplibs::os::errc::again) {
                 std::println(std::cerr, "mcpp: {}", permit.error().message());
                 return std::unexpected(1);
             }
+        }
+        if (orphan && std::chrono::steady_clock::now()-started > std::chrono::seconds(5)) {
+            std::println(std::cerr,"mcpp: a previous compiler unit is occupied or unknown; its slot remains reserved");
+            return std::unexpected(1);
         }
         if (std::chrono::steady_clock::now() - started > kLimit) {
             std::println(std::cerr,
@@ -470,15 +488,20 @@ void settle_bmi(const std::filesystem::path& bmi) {
 // would keep the edge alive long after this process exits), and it runs in a
 // unit of its own, so the terminal's interrupt of the build is not delivered
 // to it mid-write.
-bool spawn_detached(const std::vector<std::string>& argv) {
+bool spawn_detached(const std::vector<std::string>& argv, bool declare_inside,
+                    std::optional<mcpplibs::os::process::program>* identity = nullptr) {
     namespace process = mcpplibs::os::process;
     process::spawn_options o;
     o.program = argv.front();
     o.args.assign(argv.begin() + 1, argv.end());
     o.in = o.out = o.err = process::stdio::null;
-    o.own_unit = true;
+    o.own_unit = !declare_inside;
     auto p = process::process::spawn(o);
     if (!p) return false;
+    if(identity) {
+        const auto described=process::describe(p->id());
+        if(described&&described->who.id&&described->who.started_ns)*identity=described->who;
+    }
     p->detach();
     return true;
 }
@@ -488,21 +511,44 @@ bool spawn_detached(const std::vector<std::string>& argv) {
 // the one pair of quotes `/s` removes, #425 #832), its output and errors into
 // `logPath`.
 int run_to_completion(std::string_view command,
-                      const std::filesystem::path& logPath, const Owner& owner) {
+                      const std::filesystem::path& logPath, const Owner& owner,
+                      mcpplibs::os::process::owned_unit* unit=nullptr) {
     // Created before the compiler starts: its existence is what tells the
     // waiters that a supervisor started.
     std::ofstream log(logPath, std::ios::binary | std::ios::trunc);
     log.flush();
+    if(!log)return 2;
+    if(!owner.active())return 130;
     auto sh = mcpp::run::shell(command);
     auto r = mcpp::run::execute(sh.argv, {
-        .should_stop = [&] { return !owner.active(); }, .one_string = sh.one_string });
+        .should_stop = [&] { return !owner.active(); }, .one_string = sh.one_string,
+        .declared_unit = unit });
     // A failure carries the command it ran. Phase 2 replays this file, so the
     // failure arrives with the exact invocation attached -- without it a
     // remote failure can only be guessed at, which is how #425 cost a CI cycle
     // to even localise.
     if (r.exit_code != 0) log << "+ " << command << '\n';
     log << r.output;
+    if(!log)return 2;
     return owner.active() ? r.exit_code : 130;
+}
+
+std::expected<void,std::string> retire_owned(mcpplibs::os::process::owned_unit& unit,const Owner& owner) {
+    const auto limit=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    for(;;) {
+        if(!owner.active()||mcpp::run::ending()) {
+            unit.terminate();
+            return std::unexpected("compiler run ended before unit retirement");
+        }
+        auto state=unit.retire(owner.program);
+        if(!state)return std::unexpected(state.error().message());
+        if(*state==mcpplibs::os::process::unit_state::empty)return {};
+        if(std::chrono::steady_clock::now()>=limit) {
+            unit.terminate();
+            return std::unexpected("compiler descendants did not retire; outputs and reservation retained");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
 }
 
 }  // namespace
@@ -511,6 +557,7 @@ struct RunScope::State {
     std::filesystem::path root, generation;
     std::optional<mcpp::home::FileLock> gate;
     std::optional<mcpplibs::os::fs::lock> owner;
+    std::unique_ptr<transactions::Witnesses> witnesses;
     bool closed = false;
     std::string failure;
     std::expected<void, std::string> close() {
@@ -518,13 +565,21 @@ struct RunScope::State {
                                           : std::unexpected(failure);
         closed = true;
         if (generation.empty()) return {};
+        if (witnesses) witnesses->stop();
         owner.reset();
         if (!drain_actors(generation)) {
             failure = "previous compiler helpers have not stopped; refusing to start another generation";
             return std::unexpected(failure);
         }
+        auto recovered = transactions::recover_generation(generation,witnesses ? &witnesses->observers() : nullptr);
+        if (!recovered) { failure=recovered.error(); return std::unexpected(failure); }
         std::error_code ec;
         std::filesystem::remove_all(generation, ec);
+        if(ec) {failure="cannot retire completed compiler runtime state";return std::unexpected(failure);}
+        if(witnesses&&witnesses->failed()) {
+            failure="a compiler controller ended before completion; incomplete outputs were recovered";
+            return std::unexpected(failure);
+        }
         return {};
     }
     ~State() { (void)close(); }
@@ -572,9 +627,14 @@ std::expected<RunScope, std::string> RunScope::begin(const std::filesystem::path
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         } while (std::chrono::steady_clock::now() < limit);
         if (!free) return std::unexpected("previous compiler helpers are still active; their state was retained");
+        if(auto recovered=transactions::recover_generation(entry.path());!recovered)return std::unexpected(recovered.error());
         std::filesystem::remove_all(entry.path(), ec);
         if (ec) return std::unexpected("cannot retire previous compiler-run state");
     }
+    // Old owners, actors and units are quiet before cached output recovery;
+    // no Ninja reader from this generation has started yet.
+    if(auto admitted=transactions::admit_cached_outputs(canonical);!admitted)
+        return std::unexpected(admitted.error());
     static std::atomic<unsigned long long> sequence{0};
     state->generation = state->root / std::format("run-{}-{}-{}", self->id, self->started_ns, sequence++);
     std::filesystem::create_directories(state->generation, ec);
@@ -583,8 +643,11 @@ std::expected<RunScope, std::string> RunScope::begin(const std::filesystem::path
         mcpplibs::os::fs::lock::kind::exclusive, false);
     if (!owner) return std::unexpected("cannot lock the compiler-run owner: " + owner.error().message());
     state->owner.emplace(std::move(*owner));
+    auto witnesses = transactions::Witnesses::start(state->generation);
+    if (!witnesses) return std::unexpected(witnesses.error());
+    state->witnesses = std::move(*witnesses);
     const auto record = std::format("mcpp-compiler-run-v1\n{} {}\n", self->id, self->started_ns);
-    if (!mcpplibs::os::fs::write_atomic(state->generation / "owner", record))
+    if (!transactions::replace_record(state->generation / "owner", record))
         return std::unexpected("cannot publish compiler-run ownership");
     return RunScope(std::move(state));
 }
@@ -595,6 +658,7 @@ void RunScope::environment(std::vector<std::pair<std::string, std::string>>& env
 }
 std::expected<void, std::string> RunScope::finish() { return state_->close(); }
 const std::filesystem::path& RunScope::directory() const { return state_->generation; }
+bool RunScope::failed() const {return state_->witnesses&&state_->witnesses->failed();}
 
 int compile_release_at_bmi(const CompileRequest& req) {
     if (req.command.empty() || req.self.empty()) return 2;
@@ -602,23 +666,39 @@ int compile_release_at_bmi(const CompileRequest& req) {
     if (!actor.ready) return 130;
 
     std::error_code ec;
-    if (!req.slot.parent_path().empty())
-        std::filesystem::create_directories(req.slot.parent_path(), ec);
-    std::filesystem::remove(suffixed(req.slot, ".rc"), ec);
-    std::filesystem::remove(suffixed(req.slot, ".rc.tmp"), ec);
-    std::filesystem::remove(suffixed(req.slot, ".log"), ec);
+    if(!req.slot.parent_path().empty())std::filesystem::create_directories(req.slot.parent_path(),ec);
+    if(ec)return 1;
+    CompileRequest actual = req;
+    std::optional<transactions::Attempt> attempt;
+    if(actor.owner.managed) {
+        auto prepared=transactions::Attempt::prepare(actor.owner.generation,false,req.bmi,req.object,req.slot,req.depTo);
+        if(!prepared) {std::println(std::cerr,"mcpp: {}",prepared.error());return 1;}
+        attempt.emplace(std::move(*prepared));
+        actual.bmi=attempt->bmi;actual.object=attempt->object;actual.slot=attempt->slot;actual.depTo=attempt->dep;
+        if(auto copied=attempt->prepare_backup();!copied) {std::println(std::cerr,"mcpp: {}",copied.error());return 1;}
+    }
+    std::filesystem::remove(suffixed(actual.slot, ".rc"), ec);
+    if(attempt&&ec)return 1;
+    std::filesystem::remove(suffixed(actual.slot, ".rc.tmp"), ec);
+    if(attempt&&ec)return 1;
+    std::filesystem::remove(suffixed(actual.slot, ".log"), ec);
+    if(attempt&&ec)return 1;
+    if(attempt) {
+        std::filesystem::remove(suffixed(actual.slot,".completed"),ec);
+        if(ec)return 1;
+    }
 
     // Keep the previous BMI for the equivalence check, and LEAVE THE ORIGINAL
     // IN PLACE — see BmiIdentity for why moving it away is what broke importers.
     // Snapshot through the SAME function in both cases, so "no previous BMI"
     // and "the BMI as it is now" are directly comparable.
-    const BmiIdentity before = bmi_identity(req.bmi);
-    if (!req.bmi.empty()) {
-        const auto backup = suffixed(req.bmi, ".bak");
+    const BmiIdentity before = bmi_identity(actual.bmi);
+    if (!attempt && !actual.bmi.empty()) {
+        const auto backup = suffixed(actual.bmi, ".bak");
         std::filesystem::remove(backup, ec);
         if (before.present) {
             std::filesystem::copy_file(
-                req.bmi, backup, std::filesystem::copy_options::overwrite_existing, ec);
+                actual.bmi, backup, std::filesystem::copy_options::overwrite_existing, ec);
             // AND CARRY THE MTIME ACROSS. `copy_file` stamps the copy with
             // the time of the copy, and `settle_bmi` restores this file when the
             // new BMI turns out equivalent — precisely so the mtime does NOT
@@ -633,20 +713,21 @@ int compile_release_at_bmi(const CompileRequest& req) {
 
     // The BMI this slot publishes, for phase 2 to withdraw if the compile
     // fails (see `await_unit`).
-    if (!req.bmi.empty()) std::ofstream(suffixed(req.slot, ".bmi"), std::ios::trunc) << req.bmi.string();
+    if (!actual.bmi.empty()) std::ofstream(suffixed(actual.slot, ".bmi"), std::ios::trunc) << actual.bmi.string();
 
     // The supervisor reads the SAME argv file rather than receiving the command
     // on its own command line: one representation, no re-quoting, and no limit
     // on how long a compiler command may be.
-    std::vector<std::string> sup{req.self.string(), "bmi-supervise",
-                                 "--slot", req.slot.string(),
-                                 "--command-file", req.commandFile.string()};
-    if (!req.semaphore.empty()) { sup.push_back("--sem"); sup.push_back(req.semaphore.string()); }
-    if (req.maxCompilers > 0) { sup.push_back("--cap"); sup.push_back(std::to_string(req.maxCompilers)); }
-    if (!req.object.empty()) { sup.push_back("--object"); sup.push_back(req.object.string()); }
+    std::vector<std::string> sup{actual.self.string(), "bmi-supervise",
+                                 "--slot", actual.slot.string(),
+                                 "--command-file", actual.commandFile.string()};
+    if (!actual.semaphore.empty()) { sup.push_back("--sem"); sup.push_back(actual.semaphore.string()); }
+    if (actual.maxCompilers > 0) { sup.push_back("--cap"); sup.push_back(std::to_string(actual.maxCompilers)); }
+    if (!actual.object.empty()) { sup.push_back("--object"); sup.push_back(actual.object.string()); }
     if (!actor.owner.active()) return 130;
-    if (!spawn_detached(sup)) {
-        restore_backup(req.bmi);
+    std::optional<mcpplibs::os::process::program> supervisor;
+    if (!spawn_detached(sup,actor.owner.managed,&supervisor)) {
+        if(!attempt)restore_backup(actual.bmi);
         return 2;
     }
 
@@ -664,32 +745,37 @@ int compile_release_at_bmi(const CompileRequest& req) {
     const auto  started            = clock::now();
     constexpr auto kNoSupervisorGrace = std::chrono::seconds(10);
     constexpr auto kHardLimit         = std::chrono::hours(2);
+    auto nextControllerCheck=started;
 
     for (;;) {
         if (!actor.owner.active()) return 130;
         // GCC unlinks an existing BMI immediately before renaming its new
         // temporary file. Absence is a transition, never publication: treating
         // it as a changed identity releases importers inside that unlink gap.
-        const auto published = bmi_identity(req.bmi);
+        const auto published = bmi_identity(actual.bmi);
         if (published.present && published != before) {
-            settle_bmi(req.bmi);
-            copy_first_rule(req.depFrom, req.depTo,
-                            req.bmiTarget.empty() ? req.bmi.string() : req.bmiTarget);
+            if(attempt) {
+                if(!attempt->publication())return 1;
+                if(auto settled=attempt->settle();!settled) {std::println(std::cerr,"mcpp: {}",settled.error());return 1;}
+            } else settle_bmi(actual.bmi);
+            copy_first_rule(actual.depFrom, actual.depTo,
+                            actual.bmiTarget.empty() ? actual.bmi.string() : actual.bmiTarget);
             return actor.owner.active() ? 0 : 130; // importers may proceed only in this run
         }
-        if (const auto rc = read_rc(req.slot)) {
+        if (const auto rc = read_rc(actual.slot)) {
             if (*rc != 0) {                 // failed before publishing a BMI
-                std::ifstream in(suffixed(req.slot, ".log"));
+                std::ifstream in(suffixed(actual.slot, ".log"));
                 if (in) std::cerr << in.rdbuf();
                 // Nothing was published, so the previous BMI is the truth. Put
                 // it back rather than leaving the unit with no BMI at all.
-                restore_backup(req.bmi);
+                if(!attempt)restore_backup(actual.bmi);
             } else {
-                if (!req.bmi.empty() && !file_exists(req.bmi)) {
+                if (!actual.bmi.empty() && (!file_exists(actual.bmi)
+                    || (attempt && bmi_identity(actual.bmi)==before))) {
                     std::println(std::cerr, "mcpp: compiler reported success but {} is missing",
-                                 req.bmi.string());
-                    restore_backup(req.bmi);
-                    if (!req.object.empty()) std::filesystem::remove(req.object, ec);
+                                 actual.bmi.string());
+                    if(!attempt)restore_backup(actual.bmi);
+                    if (!attempt && !actual.object.empty()) std::filesystem::remove(actual.object, ec);
                     return 1;
                 }
                 // THE COMPILER CAN FINISH BETWEEN THE TWO CHECKS ABOVE.
@@ -710,30 +796,41 @@ int compile_release_at_bmi(const CompileRequest& req) {
                 //
                 // in an importer — reproducible at `-j1`, so it was never a
                 // race between compilers, only between this loop's two checks.
-                settle_bmi(req.bmi);
-                copy_first_rule(req.depFrom, req.depTo,
-                                req.bmiTarget.empty() ? req.bmi.string() : req.bmiTarget);
+                if(attempt) {
+                    if(!attempt->publication())return 1;
+                    if(auto settled=attempt->settle();!settled) {std::println(std::cerr,"mcpp: {}",settled.error());return 1;}
+                } else settle_bmi(actual.bmi);
+                copy_first_rule(actual.depFrom, actual.depTo,
+                                actual.bmiTarget.empty() ? actual.bmi.string() : actual.bmiTarget);
             }
             return actor.owner.active() ? *rc : 130;
+        }
+        if(attempt && clock::now()>=nextControllerCheck) {
+            nextControllerCheck=clock::now()+std::chrono::milliseconds(50);
+            if(!transactions::controller_alive(*attempt)
+                ||(supervisor&&!mcpplibs::os::process::alive(*supervisor))) {
+                std::println(std::cerr,"mcpp: compiler controller ended without a final status; retaining its outputs until unit recovery");
+                return 1;
+            }
         }
         const auto waited = clock::now() - started;
         // No log file means no supervisor ever opened one. Distinguished from
         // the hard limit because the two need different advice: this one is
         // "the process is not there", not "it is taking too long".
-        if (!file_exists(suffixed(req.slot, ".log")) && waited > kNoSupervisorGrace) {
+        if (!file_exists(suffixed(actual.slot, ".log")) && waited > kNoSupervisorGrace) {
             std::println(std::cerr,
                          "mcpp: the compiler supervisor for {} never started "
                          "(no log after {}s) — restoring the previous BMI",
-                         req.slot.string(),
+                         actual.slot.string(),
                          std::chrono::duration_cast<std::chrono::seconds>(waited).count());
-            restore_backup(req.bmi);
+            if(!attempt)restore_backup(actual.bmi);
             return 1;
         }
         if (waited > kHardLimit) {
             std::println(std::cerr,
                          "mcpp: timed out waiting for {} to publish its BMI",
-                         req.slot.string());
-            restore_backup(req.bmi);
+                         actual.slot.string());
+            if(!attempt)restore_backup(actual.bmi);
             return 1;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -745,6 +842,39 @@ int supervise(const std::filesystem::path& slot,
               const std::filesystem::path& object, std::string_view command) {
     auto actor = std::make_shared<Actor>();
     if (!actor->ready) return 130;
+    if(actor->owner.managed) {
+        auto loaded=transactions::for_slot(actor->owner.generation,slot);
+        if(!loaded||!*loaded) {std::println(std::cerr,"mcpp: missing or invalid prepared compiler attempt");return 2;}
+        auto attempt=std::move(**loaded);
+        const auto who=mcpplibs::os::process::self();
+        if(!who||!who->id||!who->started_ns
+            ||!transactions::publish(attempt.directory/"controller","mcpp-controller-v1",{
+                std::to_string(who->id),std::to_string(who->started_ns),transactions::spelling(actor->path)})) {
+            (void)write_rc(slot,2);return 2;
+        }
+        {std::ofstream started(suffixed(slot,".log"),std::ios::trunc);if(!started){(void)write_rc(slot,2);return 2;}}
+        if(command.empty()) {(void)write_rc(slot,2);return 0;}
+        auto permit=acquire_permit(*actor,semaphore,maxCompilers);
+        if(!permit) {(void)write_rc(slot,permit.error());return permit.error();}
+        auto created=mcpplibs::os::process::owned_unit::create();
+        if(!created) {(void)write_rc(slot,2);return 2;}
+        auto unit=std::make_shared<mcpplibs::os::process::owned_unit>(std::move(*created));
+        InterruptCleanup cleanup{mcpp::run::add_cleanup([actor,unit] {unit->terminate();})};
+        if(auto registered=attempt.register_unit(*unit,actor->path,permit->reservation);!registered) {
+            std::println(std::cerr,"mcpp: {}",registered.error());(void)write_rc(slot,2);return 2;
+        }
+        if(!actor->owner.active())return 130;
+        if(!transactions::publish(attempt.directory/"admitted","mcpp-admitted-v1",{})) {
+            (void)write_rc(slot,2);return 2;
+        }
+        const int rc=run_to_completion(command,suffixed(slot,".log"),actor->owner,unit.get());
+        if(auto retired=retire_owned(*unit,actor->owner);!retired) {
+            std::println(std::cerr,"mcpp: {}",retired.error());return 1;
+        }
+        if(!attempt.retired(rc)||!write_rc(slot,rc))return 1;
+        if(!transactions::release_reservation(permit->reservation,attempt.directory))return 1;
+        return 0;
+    }
     auto settled = std::make_shared<std::atomic<bool>>(false);
     auto settle = [actor, settled, slot, object](int rc) {
         if (settled->exchange(true)) return;
@@ -783,6 +913,27 @@ int supervise(const std::filesystem::path& slot,
 int await_unit(const std::filesystem::path& slot, const std::filesystem::path& object) {
     Actor actor;
     if (!actor.ready) return 130;
+    std::optional<transactions::Attempt> attempt;
+    if(actor.owner.managed) {
+        auto pointer=transactions::read(suffixed(slot,".transaction"),"mcpp-attempt-pointer-v1");
+        if(!pointer) {std::println(std::cerr,"mcpp: {}",pointer.error());return 1;}
+        bool current=false;
+        if(*pointer) {
+            if((**pointer).size()!=1)return 1;
+            current=transactions::named((**pointer)[0]).parent_path()==actor.owner.generation/"attempts";
+        }
+        if(!current) {
+            auto cached=transactions::cached_result(slot,object);
+            if(!cached) {std::println(std::cerr,"mcpp: {}",cached.error());return 1;}
+            if(*cached)return **cached;
+            std::println(std::cerr,"mcpp: no verified completed compiler state for this cached object");
+            return 1;
+        }
+        auto loaded=transactions::for_slot(actor.owner.generation,slot);
+        if(!loaded||!*loaded)return 1;
+        attempt.emplace(std::move(**loaded));
+    }
+
     // BOUNDED. An unbounded wait here turns "phase 1 never started a compiler"
     // into a build that hangs forever with no output — which is strictly worse
     // than a failure, because nothing says what to look at. If no supervisor
@@ -793,8 +944,16 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
     constexpr auto kHardLimit         = std::chrono::hours(2);
 
     std::optional<int> rc;
+    auto nextControllerCheck=started;
     while (!(rc = read_rc(slot))) {
         if (!actor.owner.active()) return 130;
+        if(attempt&&clock::now()>=nextControllerCheck) {
+            nextControllerCheck=clock::now()+std::chrono::milliseconds(50);
+            if(!transactions::controller_alive(*attempt)) {
+                std::println(std::cerr,"mcpp: compiler controller ended without a status; unit recovery will retain or invalidate its outputs");
+                return 1;
+            }
+        }
         const auto waited = clock::now() - started;
         if (!file_exists(suffixed(slot, ".log")) && waited > kNoSupervisorGrace) {
             std::println(std::cerr,
@@ -816,6 +975,18 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
         std::ifstream in(suffixed(slot, ".log"));
         if (in) std::cerr << in.rdbuf();
     }
+    if(attempt) {
+        if(*rc!=0)return *rc;
+        auto retired=transactions::read(attempt->directory/"retired","mcpp-retired-v1");
+        const auto output=transactions::identity(attempt->object);
+        if(!retired||!*retired||(**retired).size()!=3||(**retired)[0]!="0"
+            ||!output||(*output)[0]!=(**retired)[1]||(*output)[1]!=(**retired)[2]) {
+            std::println(std::cerr,"mcpp: compiler result has no matching quiet-unit output proof");
+            return 1;
+        }
+        return 0;
+    }
+
     // A FAILURE IS NOT KEPT. Phase 1 reported success when the BMI was
     // published, so ninja holds that edge done; were the record of the failed
     // compile left in place, every later build would replay it here without
@@ -842,10 +1013,36 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
 
 int run_capped(const std::vector<std::string>& argv,
                const std::filesystem::path& semaphore, int maxCompilers,
-               const std::filesystem::path& output) {
+               const std::filesystem::path& output, const std::filesystem::path& depfile) {
     if (argv.empty()) return 2;
     auto actor = std::make_shared<Actor>();
     if (!actor->ready) return 130;
+    if(actor->owner.managed) {
+        auto prepared=transactions::Attempt::prepare(actor->owner.generation,true,{},output,{},depfile);
+        if(!prepared) {std::println(std::cerr,"mcpp: {}",prepared.error());return 1;}
+        auto attempt=std::move(*prepared);
+        const auto who=mcpplibs::os::process::self();
+        if(!who||!who->id||!who->started_ns
+            ||!transactions::publish(attempt.directory/"controller","mcpp-controller-v1",{
+                std::to_string(who->id),std::to_string(who->started_ns),transactions::spelling(actor->path)}))return 1;
+        auto permit=acquire_permit(*actor,semaphore,maxCompilers);if(!permit)return permit.error();
+        auto created=mcpplibs::os::process::owned_unit::create();
+        if(!created)return 2;
+        auto unit=std::make_shared<mcpplibs::os::process::owned_unit>(std::move(*created));
+        InterruptCleanup cleanup{mcpp::run::add_cleanup([actor,unit] {unit->terminate();})};
+        if(auto registered=attempt.register_unit(*unit,actor->path,permit->reservation);!registered) {
+            std::println(std::cerr,"mcpp: {}",registered.error());return 2;
+        }
+        if(!actor->owner.active())return 130;
+        if(!transactions::publish(attempt.directory/"admitted","mcpp-admitted-v1",{}))return 2;
+        const auto result=mcpp::run::execute(argv,{
+            .input=mcpp::run::Input::inherit,.streams=mcpp::run::Streams::inherit,
+            .should_stop=[&] {return !actor->owner.active();},.declared_unit=unit.get()});
+        if(auto retired=retire_owned(*unit,actor->owner);!retired) {std::println(std::cerr,"mcpp: {}",retired.error());return 1;}
+        if(!attempt.retired(result.exit_code)||!attempt.result(result.exit_code))return 1;
+        if(!transactions::release_reservation(permit->reservation,attempt.directory))return 1;
+        return result.exit_code;
+    }
     InterruptCleanup cleanup{mcpp::run::add_cleanup([actor, output] {
         if (!output.empty()) {
             std::error_code ec;
