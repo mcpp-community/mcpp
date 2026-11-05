@@ -188,6 +188,9 @@ std::string render_link_intent_flags(
     LinkIntentFlavor flavor);
 
 CompileFlags compute_flags(const BuildPlan& plan);
+// A foreign build inherits target configuration, not the consuming
+// package's link inputs (which may be outputs of that foreign build).
+CompileFlags compute_build_contract_flags(const BuildPlan& plan);
 
 // The object format the TARGET produces (#647 E3). One derivation, read by
 // `compute_flags` for the runtime contract table and the link-line shape, and
@@ -707,7 +710,7 @@ std::string program_msvc_crt_linkage(const mcpp::manifest::Manifest& m,
         ? "static" : "dynamic";
 }
 
-CompileFlags compute_flags(const BuildPlan& plan) {
+CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     CompileFlags f;
 
     // Central query points for per-toolchain decisions — prefer these over
@@ -1289,7 +1292,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // `__cxa_throw` and the personality first, and libc++abi answered the rest
     // (mcpp#838, measured: `catch (const std::exception&)` missed).
     std::string user_ldflags;
-    for (auto const& word : mcpp::manifest::flag_words(plan.manifest.buildConfig.ldflags)) {
+    const auto linkWords = packageLinkFlags
+        ? mcpp::manifest::flag_words(plan.manifest.buildConfig.ldflags)
+        : std::vector<std::string>{};
+    for (auto const& word : linkWords) {
         const auto rendered = ninja_command_word(normalize_ldflag(plan.projectRoot, word));
         if (plan.cxxIsland && std::ranges::find(plan.cxxIsland->namedWords, word)
                                   != plan.cxxIsland->namedWords.end()) {
@@ -2635,6 +2641,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         }
 
     return f;
+}
+
+CompileFlags compute_flags(const BuildPlan& plan) {
+    return compute_flags_impl(plan, true);
+}
+
+CompileFlags compute_build_contract_flags(const BuildPlan& plan) {
+    return compute_flags_impl(plan, false);
 }
 
 }  // namespace mcpp::build

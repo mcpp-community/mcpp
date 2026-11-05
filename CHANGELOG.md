@@ -13,6 +13,9 @@
   command results and output checks remain authoritative.
 - New action snapshots request a normal UI frame, so short phases can appear
   between Ninja status lines without waiting for the clock redraw.
+- Foreign-build contracts exclude the consuming package's link flags and
+  libraries. A subproject can link its own executable without depending on
+  an installation that the same subproject has yet to produce.
 - The macOS clean bootstrap keeps its stage-one compiler outside the output tree
   removed by the second stage.
 
