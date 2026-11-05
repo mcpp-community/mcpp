@@ -246,3 +246,33 @@ bitcode 字节一致。驱动生成的五段 bundle ID 与 archive 匹配器的�
 [实验 §5.3](2026-11-05-heterogeneous-build-research-and-experiments.md#53-实现期追加sdk-archive-的目标身份混合2026-11-05)。
 这确定了调查应落在 SDK 身份匹配与插件阶段，不构成生产 SDK 已修复或多目标
 静态库已交付的声明。当前 #52 不隐式删掉架构，也不向核心增加专属链接模式。
+
+## 11. 所选静态库成员的上下文修正（2026-11-05）
+
+集成预检追加了常见布局：helper、provider 与 app 都列入 workspace members，
+helper 声明 requirement，app 同时依赖两库。旧候选把已由 app 覆盖的 helper
+又作为独立消费者检查，实际拒绝构建，见
+`/tmp/mcpp-885-cap-member-library-probe/before.log`。这与应用可供给库需求的
+契约冲突，前一用例只把应用列为成员，没有覆盖这一布局。
+
+修正按现有目标类型和可达关系消除纯静态库/entry 成员的重复上下文；成员自身
+的可执行、共享库或测试目标仍独立检查。库被单独选择时仍检查其自己的闭包。
+不从其他应用借 provider，也不放宽同一产物的 exclusive 冲突。
+
+新二进制 SHA256 为
+`c7717799809941e8f72613a7cc290fc89a342bb1b5e03ccc15f03733e858dc53`。
+最小布局实际构建通过；扩展 E2E 1012 将两应用、helper 与两 provider 全部列为
+成员，构建和运行通过，并验证 helper 单独选择和自有测试不能借应用的 provider。
+原共享库、测试、pin、独立产物、宿主边及限定身份控制均通过；既有 E2E 81、601
+复验通过。中英文手册同步说明该边界。这是 CI 前的集成修正，最终提交仍须完整
+CI 后再进行独立生态 review。
+
+原引擎的精确 Linux 对照 `41938352961` 已收集并按未修改的脚本重算：两宿主
+共 16 个语义会话及就绪、热 CPU、缺页、路径对等控制通过，冷 CPU 分别为
+1.195（x64）和 1.153（ARM64），均高于 1.15。原始 ZIP、输入身份和失败保留；
+不据此发布引擎或提升台账。精确当前产物的冷采样与 syscall 计数已完成，仍是
+定位证据，不是资格替代。采样中的独立 snapshot 后台进程另行标记，不能把其
+样本全部归入原有 readiness CPU。证据目录为
+`/tmp/mcpp-885-engine612-early-parity/`、
+`/tmp/mcpp-885-engine612-cold-perf/` 和
+`/tmp/mcpp-885-engine612-cold-syscalls/`。

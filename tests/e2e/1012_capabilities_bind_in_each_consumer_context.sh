@@ -12,7 +12,7 @@ cd "$work"
 fail() { echo "FAIL: $*"; cat out.log; exit 1; }
 cat > mcpp.toml <<'TOML'
 [workspace]
-members = ["app-a", "app-b"]
+members = ["app-a", "app-b", "helper", "provider-a", "provider-b"]
 TOML
 for suffix in a b; do
     mkdir -p "provider-$suffix/src" "app-$suffix/src"
@@ -54,6 +54,16 @@ echo 'int helper_anchor(void){return 0;}' > helper/src/anchor.c
 "$MCPP" build --workspace > out.log 2>&1 || fail 'independent exclusive providers collided'
 "$MCPP" run -p app-a > out.log 2>&1 || fail 'app-a did not run'
 "$MCPP" run -p app-b > out.log 2>&1 || fail 'app-b did not run'
+
+# A standalone selection still needs its own binding. The enclosing
+# applications do not supply an executable or test owned by the library.
+if "$MCPP" build -p helper > out.log 2>&1; then fail 'standalone library borrowed an unselected consumer'; fi
+grep -q "consumer 'helper'" out.log || fail 'standalone library lost its context'
+mkdir -p helper/tests
+echo 'int main(){return 0;}' > helper/tests/context.cpp
+if "$MCPP" test --workspace > out.log 2>&1; then fail 'library test borrowed an application provider'; fi
+grep -q "consumer 'helper'" out.log || fail 'library test lost its own context'
+rm -rf helper/tests
 
 # Test link units and a shared provider keep the same per-consumer boundary.
 for suffix in a b; do

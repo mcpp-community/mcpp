@@ -193,6 +193,8 @@ into the library.
 
 From 2026.11.5.1, requirements bind within each selected consumer's ordinary dependency closure. A library can require a capability supplied by a sibling dependency of its application. Independent workspace products can use different providers; a provider belonging only to another product cannot satisfy a missing requirement. Build-time tool edges are excluded from the target context. Workspace root pins, member pins and `--cap` apply in that order. A short provider name is accepted only when it identifies one candidate; `namespace:name` distinguishes equal short names. Exclusive providers are checked within that same consumer closure, including linked shared libraries. A pin does not remove another provider from the link.
 
+A selected member containing only static-library or entry targets does not add a duplicate binding context when another selected consumer reaches it. Its own executable, shared-library or test targets retain an independent context. Selecting the library alone validates its own dependency closure.
+
 
 ```toml
 # A provider package satisfies a capability for any dependent that requires it.

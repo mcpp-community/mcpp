@@ -2082,7 +2082,27 @@ static std::vector<CapabilityContext> capability_contexts(const PrepareState& st
         }
         contexts.push_back(std::move(context));
     }
-    return contexts;
+    // A selected static library is also built when it is a workspace member,
+    // but archiving it does not create another final consumer. Its contract
+    // binds in the selected products that reach it. Keep a separate context
+    // for its own programs/shared libraries/tests, and for a standalone root.
+    std::vector<std::size_t> independent;
+    for (std::size_t i = 0; i < contexts.size(); ++i) {
+        const auto& context = contexts[i];
+        const bool links = std::ranges::any_of(
+            state.packages[context.root].manifest.targets, [](const auto& target) {
+                return target.kind != mcpp::manifest::Target::Library
+                    && target.kind != mcpp::manifest::Target::Entry;
+            });
+        const bool consumed = std::ranges::any_of(contexts, [&](const auto& other) {
+            return other.packages.contains(context.root)
+                && !context.packages.contains(other.root);
+        });
+        if (links || !consumed) independent.push_back(i);
+    }
+    std::vector<CapabilityContext> consumers;
+    for (auto i : independent) consumers.push_back(std::move(contexts[i]));
+    return consumers;
 }
 
 static std::vector<std::size_t> capability_candidates(
