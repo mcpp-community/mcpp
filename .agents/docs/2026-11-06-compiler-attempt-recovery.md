@@ -209,8 +209,9 @@ No runtime generation becomes a dependency version or build-cache identity.
 | OS composition | 0.3.0 | [OS 17](https://github.com/mcpplibs/os/pull/17) |
 | Core | 2026.11.5.2 | [mcpp 889](https://github.com/mcpp-community/mcpp/pull/889) |
 
-OS advances to 0.3.0 so an existing 0.2 constraint cannot silently absorb a
-different OpenKal minor group. The core updates all four OS requirements
+OS advances to 0.3.0 so an explicit range such as `^0.2.3` cannot silently
+absorb a different OpenKal minor group. Bare package versions name exact wire
+addresses; `os = "0.2.3"` itself does not automatically upgrade. The core updates all four OS requirements
 together. Platform 0.24 is the corresponding explicit image/hosted boundary.
 
 Emscripten receives dependency metadata alignment; it does not acquire process

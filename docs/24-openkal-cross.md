@@ -415,7 +415,7 @@ Both built-in openkal targets select platform 0.24.0 by default (2026.11.5.2+).
 An explicit `platform` configuration overrides that selection. This platform
 preserves the emulated TLS convention through the final ThinLTO link.
 
-OS 0.3 uses the OpenKal 0.24 dependency group. A project retaining OS 0.2
+OS 0.3 uses the OpenKal 0.24 dependency group. A project retaining OS 0.2.9
 selects a platform from the matching 0.23 group explicitly; incompatible
 OpenKal minor requirements are rejected during dependency resolution.
 
