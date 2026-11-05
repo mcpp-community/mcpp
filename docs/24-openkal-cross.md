@@ -111,7 +111,7 @@ practice.
 
 ```toml
 [target.'cfg(any(linux, macos, windows))']
-platform = "openkal-platform@0.23.6"
+platform = "openkal-platform@0.24.0"
 ```
 
 One table (2026.10.27.1+). It selects the openkal platform for the host triples,
@@ -411,7 +411,13 @@ Nothing else is declared (2026.10.27.1+): the target table selects
 `openkal-platform` for both rows, and the platform states the toolchain, the
 layers, the tools, the conventions below and the runner ([35](35-platforms.md)).
 
-In mcpp 2026.11.5.1, both built-in openkal targets select platform 0.23.6 by default. An explicit `platform` configuration overrides that selection. This platform preserves the emulated TLS convention through the final ThinLTO link.
+Both built-in openkal targets select platform 0.24.0 by default (2026.11.5.2+).
+An explicit `platform` configuration overrides that selection. This platform
+preserves the emulated TLS convention through the final ThinLTO link.
+
+OS 0.3 uses the OpenKal 0.24 dependency group. A project retaining OS 0.2
+selects a platform from the matching 0.23 group explicitly; incompatible
+OpenKal minor requirements are rejected during dependency resolution.
 
 | | the platform's statement | the reason |
 |---|---|---|

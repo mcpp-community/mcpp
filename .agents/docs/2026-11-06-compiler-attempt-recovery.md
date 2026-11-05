@@ -206,8 +206,12 @@ No runtime generation becomes a dependency version or build-cache identity.
 | C library | 0.28.0 | [musl 86](https://github.com/mcpplibs/openkal-musl/pull/86) |
 | C++ runtime | 0.19.0 | [Runtime 66](https://github.com/mcpplibs/openkal-llvm-runtime/pull/66) |
 | Platform | 0.24.0 | Publication follows its public lower dependencies |
-| OS composition | 0.2.10 | [OS 17](https://github.com/mcpplibs/os/pull/17) |
+| OS composition | 0.3.0 | [OS 17](https://github.com/mcpplibs/os/pull/17) |
 | Core | 2026.11.5.2 | [mcpp 889](https://github.com/mcpp-community/mcpp/pull/889) |
+
+OS advances to 0.3.0 so an existing 0.2 constraint cannot silently absorb a
+different OpenKal minor group. The core updates all four OS requirements
+together. Platform 0.24 is the corresponding explicit image/hosted boundary.
 
 Emscripten receives dependency metadata alignment; it does not acquire process
 support. The image runner retains its existing generated binding mechanism,
