@@ -822,7 +822,7 @@ error.
 
 #### Optional action progress (2026.11.5.1+, protocol 18)
 
-Set `a.progress = true` in build.mcpp to enable telemetry for that action. The default is `false`; all five roles support it. The command receives `MCPP_ACTION_PROGRESS_FILE` when reporting is available and treats an absent or empty value as disabled.
+Set `a.progress = true` in build.mcpp to enable telemetry for that action. The default is `false`; all five roles support it. The command receives `MCPP_ACTION_PROGRESS_FILE` when reporting is available and treats an absent or empty value as disabled. The path is encoded as UTF-8 on every host, including Windows.
 
 The worker atomically replaces the file with its latest JSON snapshot, for example `{"v":1,"seq":2,"phase":"compile","done":3,"total":9}`. `phase` can be reported without a total. The build status displays the latest valid snapshot while the action runs. Counts describe work inside that action and do not contribute to the outer Ninja step count. The command's exit status and output checks determine success.
 

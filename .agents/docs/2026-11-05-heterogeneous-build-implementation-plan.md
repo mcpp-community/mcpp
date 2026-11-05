@@ -195,3 +195,41 @@ archive 供给多架构 consumer 在样例中通过，但两种架构的 device 
 核心 CI 的权威入口是名为 `ci` 的工作流；同提交的 Windows CRT measurement
 是另一工作流。`82fc9b3c` 对应 `ci` run `41930942590`，不是已通过的
 `41930942462` measurement。新增层隔离修正需要以更新后的提交重新完成 CI。
+
+## 9. 可移植通道与插件集成检查点（2026-11-05）
+
+进度通道现在复用 os.fs 的有界共享读取，并在环境变量边界显式进行 UTF-8 路径
+转换。E2E 1015 在非 ASCII 工程路径中启动原生 Python worker，验证启用通道、
+有效快照和结束清理；不依赖 PTY 或 Unix 信号，可进入 Windows 与 macOS 的
+现有 E2E 矩阵。本地 Linux 实跑通过，不能替代尚待执行的其他宿主验收。
+新二进制 SHA256 为
+`ee2d7fc270d3cec32d699396c10fde19de507b439f6d13bb337d139a168e87f1`；
+3 项快照单测和 E2E 1013 的正常、verbose、关闭、NDJSON、失败、取消与增量
+控制复验通过。中英文手册及 SPEC-007 同步明确路径编码，内部快照仍只更新
+状态显示，不新增 NDJSON 子任务事件。
+
+插件 object storage 修正已完成验证：旧版 2026.11.3.1 与新核心均通过 50 项
+逻辑测试；真实 shader 的变长及等长内容修改均到达对象和最终二进制；未修改
+内容保留生成 assembly 的时间戳。证据为
+`/tmp/mcpp-885-object-incremental-verified.json` 与
+`/tmp/mcpp-885-object-equal-size/verified.json`。包含该修正的 #52 提交
+`3e9fc36` 的 CI `41934375976` 已通过。
+
+独立 worker 的 `plugins-progress` feature 只包含标准库快照类型和可选 os.fs
+writer，不再隐式引入只能由构建程序导入的 plugins-core。普通可执行 worker
+在已发布 2026.11.3.1 下构建并运行，关闭通道和显式通道两种控制通过；新核心
+通过真实 action 启动 C++ worker、写出快照并运行最终应用，同时确认 host-only
+OS 库未泄露目标 ABI。该修正和 CI fixture 已追加至同一 #52 的 `aa2c16e`，
+其 CI `41937665962` 正在执行。
+
+原始引擎工作已独立推进：platform 0.23.6 修正后的 engine `6129288` 在
+`41927099461` 的两种 Linux 映像、原生 Linux/Windows、Ubuntu 20.04 下限及
+四平台映像运行验收均通过，原生 macOS 仍在编译。server #75 的候选引用已在
+`4ab6263` 切换至该精确生产提交与 run，CI `41937027539` 正在重新接纳；旧的
+macOS 无 runner 取消记录不能作为新候选失败的证据。
+
+Linux 原生与 bundle 产物已齐备，故先以不可变 artifact ID、SHA256、生产提交
+和 run 冻结输入，启动独立对照 `41938352961`，不等待原生 macOS。对照仍使用
+原来的工作量、计量方式和阈值，且不代替完整发布接纳或 ledger promotion。
+最终核心提交仍须完整 CI 后再执行用户要求的独立生态 review；核心版本保持
+2026.11.5.1，发布后再推进插件新版集成与原始 engine/server 发布链。

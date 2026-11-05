@@ -1634,7 +1634,8 @@ int run(int argc, char** argv) {
         std::string progressFile;
         if (!progressOutput.empty()) {
             if (auto root = mcpp::invocation::get(telemetry::kRootEnv); root && !root->empty())
-                progressFile = telemetry::channel(*root, progressOutput).string();
+                progressFile = mcpplibs::os::fs::utf8(telemetry::channel(
+                    mcpplibs::os::fs::from_utf8(*root), progressOutput));
         }
         // A command cannot inherit a parent's channel or allocate siblings.
         std::erase_if(env, [](const auto& entry) {

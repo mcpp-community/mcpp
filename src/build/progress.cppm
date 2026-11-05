@@ -1552,7 +1552,7 @@ std::vector<std::pair<std::string, std::string>> Build::environment() const {
     return {{"NINJA_STATUS", std::string(kStatusFormat)},
             {"CLICOLOR_FORCE", "0"},
             {std::string(kStartsEnv), (impl_->dir / kStartsFile).string()},
-            {std::string(action_progress::kRootEnv), impl_->progressDir.string()},
+            {std::string(action_progress::kRootEnv), mcpplibs::os::fs::utf8(impl_->progressDir)},
             {std::string(action_progress::kFileEnv), ""}};
 }
 

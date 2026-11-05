@@ -3,6 +3,7 @@
 export module mcpp.build.action_progress;
 import std;
 import mcpp.libs.json;
+import mcpplibs.os.fs;
 
 export namespace mcpp::build::action_progress {
 inline constexpr std::string_view kRootEnv = "MCPP_ACTION_PROGRESS_ROOT";
@@ -58,12 +59,9 @@ std::optional<Snapshot> parse(std::string_view text) {
 std::optional<Snapshot> read(const std::filesystem::path& file) {
     // Bound the read before JSON parsing, including files which grow while
     // opened. An invalid or transient snapshot cannot fail a build.
-    std::ifstream input(file, std::ios::binary);
-    std::array<char, kMaxBytes + 1> bytes{};
-    input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-    const auto size = static_cast<std::size_t>(input.gcount());
-    if (size > kMaxBytes) return std::nullopt;
-    return parse(std::string_view(bytes.data(), size));
+    const auto bytes = mcpplibs::os::fs::read(file, kMaxBytes);
+    if (!bytes) return std::nullopt;
+    return parse(*bytes);
 }
 std::filesystem::path channel(const std::filesystem::path& root, std::string_view output) {
     // The identity comes from the graph, never from the telemetry document.
