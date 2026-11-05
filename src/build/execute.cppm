@@ -61,6 +61,7 @@ import mcpp.runtime.launch_env;
 import mcpp.run;
 import mcpp.home.files;
 import mcpp.build.schedule.policy;   // resolve_jobs — one answer to "how many at once"
+import mcpp.build.schedule.detach_codegen;
 import mcpp.fetcher.progress;
 import mcpp.project;
 import mcpp.ui;
@@ -2166,6 +2167,14 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         childEnv.emplace_back(runtimeEnvKey, runtimeEnvValue);
     }
 
+    std::optional<mcpp::build::schedule::detach::RunScope> compilerRun;
+    if (mcpp::build::read_schedule(ninjaPath) == "detach-codegen") {
+        auto opened = mcpp::build::schedule::detach::RunScope::begin(outputDir);
+        if (!opened) { mcpp::ui::error(opened.error()); return 1; }
+        compilerRun.emplace(std::move(*opened));
+        compilerRun->environment(childEnv);
+    }
+
     auto t0 = std::chrono::steady_clock::now();
     // capture_exec merges stderr into the captured output (replacing `2>&1`),
     // so is_stale_ninja_failure / filter_ninja_output still see ninja errors.
@@ -2212,6 +2221,12 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         if (r.exit_code == 0) r = mcpp::run::capture_exec(argv, childEnv);
         out = std::move(r.output);
         status = r.exit_code;
+    }
+    if (compilerRun) {
+        if (auto settled = compilerRun->finish(); !settled) {
+            mcpp::ui::error(settled.error());
+            return 1;
+        }
     }
     if (status != 0) {
         if (!reported && is_stale_ninja_failure(out))

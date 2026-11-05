@@ -280,15 +280,17 @@ int run(int argc, char** argv) {
     // Dispatch before global option scans: child words never configure mcpp.
     if (argc > 1 && std::string_view(argv[1]) == "__compiler-cap") {
         std::filesystem::path semaphore;
+        std::filesystem::path output;
         int cap = 0, i = 2;
         for (; i < argc && std::string_view(argv[i]) != "--"; ++i) {
             const std::string_view option = argv[i];
-            if ((option != "--sem" && option != "--cap") || i + 1 >= argc) {
+            if ((option != "--sem" && option != "--cap" && option != "--output") || i + 1 >= argc) {
                 std::println(stderr, "error: __compiler-cap: expected --sem <dir> --cap <N> -- <compiler>...");
                 return 2;
             }
             const std::string_view value = argv[++i];
             if (option == "--sem") semaphore = value;
+            else if (option == "--output") output = value;
             else {
                 const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), cap);
                 if (ec != std::errc{} || end != value.data() + value.size()) return 2;
@@ -297,7 +299,7 @@ int run(int argc, char** argv) {
         if (semaphore.empty() || cap <= 0 || i + 1 >= argc) return 2;
         std::vector<std::string> command;
         for (++i; i < argc; ++i) command.emplace_back(argv[i]);
-        return mcpp::build::schedule::detach::run_capped(command, semaphore, cap);
+        return mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output);
     }
 
     ReportUnnarrowablePaths reportUnnarrowable_;
@@ -1438,6 +1440,7 @@ int run(int argc, char** argv) {
         .subcommand(cl::App("bmi-compile")
             .description("(internal) Compile a module interface and return when its BMI is published")
             .option(cl::Option("bmi").takes_value().value_name("PATH").help("BMI this unit publishes"))
+            .option(cl::Option("object").takes_value().value_name("PATH"))
             .option(cl::Option("slot").takes_value().value_name("PATH").help("where .log/.rc are kept"))
             .option(cl::Option("self").takes_value().value_name("PATH").help("path to mcpp, re-invoked as supervisor"))
             .option(cl::Option("sem").takes_value().value_name("DIR").help("concurrency token directory"))
@@ -1449,7 +1452,9 @@ int run(int argc, char** argv) {
         .subcommand(cl::App("bmi-supervise")
             .description("(internal) Run a compiler to completion and record its status")
             .option(cl::Option("slot").takes_value().value_name("PATH"))
-            .option(cl::Option("token").takes_value().value_name("PATH"))
+            .option(cl::Option("sem").takes_value().value_name("PATH"))
+            .option(cl::Option("cap").takes_value().value_name("N"))
+            .option(cl::Option("object").takes_value().value_name("PATH"))
             .option(cl::Option("command-file").takes_value().value_name("PATH"))
             .action(wrap_rc(cmd_bmi_supervise)))
         .subcommand(cl::App("bmi-await")

@@ -131,3 +131,71 @@ follow ordinary installation of the new release, in the same plugin PR.
 Public records contain synthetic assertions and aggregate evidence. Raw
 provider streams, user logs, usernames and private paths remain outside the
 repository and pull-request description.
+
+## Correction, 2026-11-06: ownership across cancellation and generations
+
+The shared-cap change exposed an existing lifetime gap. A real Ninja control
+cancelled the top-level build after BMI publication. Its detached compiler
+remained alive 200 milliseconds later. Deleting the previous directory tokens
+at the next build could therefore admit new compilers over the requested cap.
+The correction below supersedes directory-token ownership in the earlier
+shared-permit description.
+
+Each detached-schedule backend drive owns a runtime generation. Normal graph
+execution and cached replay, including quiet replay, open the same scope. Its
+owner has both the operating system's process identity with birth time and an
+exclusive kernel lock. A PID alone, a surviving record, or an absent birth time
+cannot establish ownership. Closing the lock revokes the drive even while its
+process is alive. The generation is passed only in the child environment after
+cache decoding; it never enters an action, build fingerprint or saved graph.
+
+Every phase-one helper, supervisor, join helper and ordinary compiler executor
+registers a kernel-locked actor before modifying build state and rechecks the
+owner after registration. The actor covers status publication, BMI equivalence
+settlement and backup restoration, as well as compiler execution. Interrupt
+callbacks retain that actor until their final write. A delayed helper from a
+closed generation returns cancellation before changing any build state.
+
+A stable gate serializes generations for one canonical output directory. The
+next generation waits for all previous actor locks, including actors that have
+already released a compiler permit. It retains busy state and refuses admission
+if the actors do not drain within the cleanup bound. Runtime locks reside under
+the work directory's `.mcpp/compiler-runs`, outside the target output tree and
+independently of `MCPP_HOME`. Cleaning output files cannot unlink a live permit.
+
+Actual compiler permits are stable kernel-locked files. A supervisor acquires
+its permit itself and holds it until the child has stopped; phase one does not
+transfer a lock or consume a second permit. Ordinary compilation uses the same
+slots. Files left after process death are reused by locking, never reclaimed by
+unlinking. A typed busy result is retried; permission and other failures stop
+the invocation. This also replaces the directory-creation contention path that
+reported access denied in the Windows-host GCC cross-build.
+
+Child cancellation uses the existing launcher stop predicate. A further causal
+control found that inherited or discarded streams skipped that predicate when
+no absolute deadline was set. The launcher now polls child completion in that
+case, retaining its argv, streams, exit status and existing deadline. No timeout
+is increased. Failed or cancelled compiler invocations withdraw partial outputs;
+subsequent ordinary builds recover missing objects and BMIs.
+
+The permanent real-Ninja control checks:
+
+- Module and ordinary compilation under top-level SIGINT and SIGKILL, followed
+  immediately by another generation; the old compiler has stopped before the
+  new drive is admitted.
+- No-op builds across generations, retaining compiler count and object mtime;
+  normal and quiet cached replay retain their graph, objects and BMIs.
+- Changed homes and a symlinked target directory retain the work-directory
+  runtime barrier, independently of the disposable output location.
+- Owner-lock closure while the owner process remains alive.
+- Missing and incorrect process birth identities, rejected before state writes.
+- Delayed phase-one BMI settlement and backup restoration after compiler exit;
+  both still block the next generation until their final state write.
+- Unregistered old phase-one and supervisor processes delayed until after a
+  successful new generation; neither can alter its BMI, object or status.
+
+The controls execute the actual helper and launcher implementations with a
+small synthetic compiler. The separate GCC mixed workload retains the real
+compiler cap, late failure, recovery, argv and no-op assertions. Selected-object
+controls establish causality; final qualification remains complete current-source
+CI and independent ecosystem review.

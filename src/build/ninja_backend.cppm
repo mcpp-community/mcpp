@@ -58,6 +58,7 @@ import mcpp.ui;
 import mcpp.log;
 import mcpp.build.action_progress;
 import mcpp.build.progress;
+import mcpp.build.schedule.detach_codegen;
 
 export namespace mcpp::build {
 
@@ -1470,7 +1471,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // compilers must share the supervisors' semaphore rather than use that
     // larger slot count as their own concurrency bound.
     const std::string compilerPrefix = splitBmi
-        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --cap {} -- ", plan.scheduleCompilerCap)
+        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --cap {} --output $out -- ", plan.scheduleCompilerCap)
         : std::string{};
     // The other split shape. Clang publishes no BMI early — it writes the BMI
     // at the end of the compile — so the GCC trick of releasing the file
@@ -2108,7 +2109,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // wrong in this file before.
         append("rule cxx_module_bmi\n");
         append("  command = $mcpp bmi-compile --bmi $bmi_out --slot $slot"
-               " --self $mcpp --sem $sched_sem --cap $sched_cap"
+               " --self $mcpp --sem $sched_sem --cap $sched_cap --object $obj_out"
                " --command-file $out.cmd --dep-from $scan_dep --dep-to $out.d\n");
         append(std::format(
             "  rspfile = $out.cmd\n"
@@ -4538,6 +4539,12 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         return std::unexpected(BuildError{std::format("cannot create output dir '{}': {}",
                                                       plan.outputDir.string(), ec.message()),
                                           plan.outputDir});
+    std::optional<mcpp::build::schedule::detach::RunScope> compilerRun;
+    if (!opts.dryRun && plan.scheduleTag == "detach-codegen") {
+        auto opened = mcpp::build::schedule::detach::RunScope::begin(plan.outputDir);
+        if (!opened) return std::unexpected(BuildError{opened.error(), plan.outputDir});
+        compilerRun.emplace(std::move(*opened));
+    }
     if (!opts.dryRun && plan.scheduleTag == "detach-codegen")
         reclaim_stale_schedule_tokens(plan.outputDir);
 
@@ -4881,6 +4888,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             nenv.emplace_back(runtimeEnv->first, runtimeEnv->second);
     for (auto& ev : plan.toolchain.envOverrides)
         nenv.emplace_back(ev.key, ev.value);
+    if (compilerRun) compilerRun->environment(nenv);
 
     // THE STAGED CACHE IS PLACED BY A PASS OF ITS OWN, before the graph that
     // reads it. ninja 1.12.1 loads a dyndep file whose producer is up to date
@@ -5008,6 +5016,10 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         ninjaExit = cap.exit_code;
     }
     stage("ninja");
+    if (compilerRun) {
+        if (auto settled = compilerRun->finish(); !settled)
+            return std::unexpected(BuildError{settled.error(), plan.outputDir});
+    }
     bool ok = (ninjaExit == 0) && !buildTimedOut;
     // Every package gets its final line before what the build has to say
     // after ninja: validations, advice, `Finished`.

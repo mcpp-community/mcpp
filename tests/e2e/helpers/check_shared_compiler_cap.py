@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check actual GCC/Ninja mixed compilation and the shared permit lifetime."""
 import argparse
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -25,10 +26,22 @@ def state(path):
     return json.loads(path.read_text()) if path.exists() else {"active": [], "peak": 0, "calls": 0}
 
 
+def permits_free(semaphore):
+    for entry in semaphore.iterdir():
+        if not entry.is_file():
+            return False
+        try:
+            with entry.open("r+b") as lock:
+                fcntl.lockf(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+    return True
+
+
 def settled(path, semaphore):
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        if not state(path)["active"] and not list(semaphore.iterdir()):
+        if not state(path)["active"] and permits_free(semaphore):
             return
         time.sleep(0.02)
     raise AssertionError("compilers or permits survived the completed workload")
@@ -144,9 +157,9 @@ def check_cancellation(mcpp, root):
         while alive(pid) and time.monotonic() < deadline:
             time.sleep(0.01)
         assert not alive(pid), "cancellation left the compiler alive"
-        assert not list(semaphore.iterdir()), "cancellation retained its compiler permit"
+        assert permits_free(semaphore), "cancellation retained its compiler permit"
         result = subprocess.run([*command, sys.executable, "-c", "raise SystemExit(7)"], cwd=root)
-        assert result.returncode == 7 and not list(semaphore.iterdir()), "failure lost its status or leaked a permit"
+        assert result.returncode == 7 and permits_free(semaphore), "failure lost its status or leaked a permit"
         words = ["space value", 'literal "quote"', "back\\slash", "$literal", "", "Ω",
                  "--system", "--home", "--deny", "--toolchain", "-j200", "--sem", "--cap"]
         result = subprocess.run([*command, sys.executable, "-c", "import json,sys;print(json.dumps(sys.argv[1:]))", *words],

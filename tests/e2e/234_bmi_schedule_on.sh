@@ -64,6 +64,7 @@ macos   = "llvm@${LLVM_VERSION}"
 windows = "llvm@${LLVM_VERSION}"
 
 [build]
+default-profile = "release"
 bmi_schedule = "on"
 EOF
 
@@ -231,5 +232,32 @@ echo "  missing publication diagnosed and previous BMI restored"
 
 echo "== 6. ordinary and detached compilers share the actual cap =="
 python3 "$_root/tests/e2e/helpers/check_shared_compiler_cap.py" "$MCPP" "$TMP/cap-load"
+
+echo "== 7. runtime generations preserve normal and quiet cached replay =="
+python3 - "$MCPP" "$TMP" "$TMP/$BUILD_DIR" <<'PY_REPLAY'
+from pathlib import Path
+import hashlib
+import subprocess
+import sys
+mcpp, root, output = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
+graph = output / "build.ninja"
+graph_before = (graph.stat().st_mtime_ns, graph.read_bytes())
+def identity():
+    return {str(path.relative_to(output)): (path.stat().st_mtime_ns,
+            hashlib.sha256(path.read_bytes()).hexdigest())
+            for pattern in ("obj/**/*.o", "gcm.cache/**/*.gcm")
+            for path in output.glob(pattern)}
+before = identity()
+assert before, "no compiler outputs to verify"
+for flags in ([], ["--quiet"]):
+    result = subprocess.run([mcpp, "build", *flags], cwd=root,
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert identity() == before, "cached replay recompiled unchanged inputs"
+    assert (graph.stat().st_mtime_ns, graph.read_bytes()) == graph_before, "cached replay rewrote its graph"
+assert b"MCPP_COMPILER_RUN" not in graph_before[1]
+assert b".mcpp/compiler-runs" not in graph_before[1]
+print("PASS: normal/quiet cached replay retains graph, objects and BMIs without persisting generations")
+PY_REPLAY
 
 echo "234 bmi_schedule OK (detach-codegen, tokens reclaimed, publication checked)"

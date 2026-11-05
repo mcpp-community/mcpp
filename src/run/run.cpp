@@ -299,6 +299,19 @@ Outcome launch(const Spec& s) {
             }
             drain_error(std::chrono::milliseconds(100));
         }
+    } else if (s.shouldStop && *s.shouldStop) {
+        // Inherited/discarded streams have no read loop. Cancellation still
+        // belongs to the invocation, so poll the child without changing its
+        // streams or waiting for a separate absolute deadline.
+        for (;;) {
+            if ((*s.shouldStop)()
+                || (s.total.count() > 0 && clock::now() - start >= s.total)) {
+                stop = true;
+                break;
+            }
+            auto waited = p->wait_for(std::chrono::milliseconds(20));
+            if (!waited || waited->has_value()) break;
+        }
     } else if (s.total.count() > 0) {
         auto w = p->wait_for(s.total);
         if (w && !w->has_value()) stop = true;

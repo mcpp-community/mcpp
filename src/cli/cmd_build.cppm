@@ -2314,6 +2314,7 @@ export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
             std::filesystem::path{opt_value(parsed, name)});
     };
     req.bmi       = file_path("bmi");
+    req.object    = file_path("object");
     req.bmiTarget = opt_value(parsed, "bmi");
     req.slot      = file_path("slot");
     req.self      = std::filesystem::path{opt_value(parsed, "self")};
@@ -2340,8 +2341,13 @@ export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
 export int cmd_bmi_supervise(const mcpplibs::cmdline::ParsedArgs& parsed) {
     const auto slot = mcpplibs::os::fs::extended(
         std::filesystem::path{opt_value(parsed, "slot")});
-    const auto token = mcpplibs::os::fs::extended(
-        std::filesystem::path{opt_value(parsed, "token")});
+    const auto semaphore = mcpplibs::os::fs::extended(
+        std::filesystem::path{opt_value(parsed, "sem")});
+    const auto object = mcpplibs::os::fs::extended(
+        std::filesystem::path{opt_value(parsed, "object")});
+    int cap = 0;
+    if (const auto value = opt_value(parsed, "cap"); !value.empty())
+        std::from_chars(value.data(), value.data() + value.size(), cap);
     const auto command = read_command_file(mcpplibs::os::fs::extended(
         std::filesystem::path{opt_value(parsed, "command-file")}));
     // Only `--slot` is checked here. An empty COMMAND is handed to supervise()
@@ -2352,7 +2358,7 @@ export int cmd_bmi_supervise(const mcpplibs::cmdline::ParsedArgs& parsed) {
         std::println(stderr, "error: bmi-supervise needs --slot");
         return 2;
     }
-    return mcpp::build::schedule::detach::supervise(slot, token, command);
+    return mcpp::build::schedule::detach::supervise(slot, semaphore, cap, object, command);
 }
 
 // Phase 2: join the detached compiler before anything reads its object.

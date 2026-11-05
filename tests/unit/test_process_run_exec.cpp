@@ -19,6 +19,23 @@ namespace process = mcpp::run;
 // change mcpp's own environment — that mutation is exactly what leaked into
 // /bin/sh and crashed it on newer-glibc hosts. The addition is the started
 // program's alone; this invocation's statement is what it was.
+TEST(RunExec, StopPredicateAppliesWithoutCapturedStreams) {
+    for (const auto streams : {process::Streams::inherit, process::Streams::discard}) {
+        const auto started = std::chrono::steady_clock::now();
+        int checks = 0;
+        const auto result = process::execute({"/bin/sh", "-c", "sleep 60"}, {
+            .streams = streams, .total = std::chrono::seconds(3),
+            .should_stop = [&] {
+                ++checks;
+                return std::chrono::steady_clock::now() - started > std::chrono::milliseconds(50);
+            }});
+        EXPECT_GT(checks, 0);
+        EXPECT_TRUE(result.timed_out);
+        EXPECT_NE(result.exit_code, 0);
+        EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(1));
+    }
+}
+
 TEST(RunExec, DoesNotMutateParentEnvironment) {
     mcpp::invocation::ScopedEnv leak("MCPP_TEST_LEAK", "sentinel");
     // Use /bin/sh (present on Linux AND macOS) — /bin/true lives at

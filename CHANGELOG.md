@@ -23,6 +23,11 @@
   BMI fails with a diagnostic and restores the previous BMI.
 - Ordinary compiler invocations share the detached GCC compilers' concurrency
   permits, so the additional Ninja scheduling slots do not exceed `--jobs`.
+- Cancelled detached builds stop their compilers and finish state cleanup before
+  another generation starts. Stable kernel permits retain live ownership across
+  immediate rebuilds; runtime generations leave no-op build identities unchanged.
+- Child stop predicates apply with inherited and discarded streams, including
+  executions without an absolute deadline.
 - Queued downloads begin their progress budget when a worker starts them,
   rather than inheriting time spent waiting for a slot.
 - Provider progress timeouts identify the stalled download and source attempt,

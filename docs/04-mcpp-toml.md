@@ -1051,6 +1051,9 @@ with two behaviours has to be.
 With GCC and `bmi_schedule = "on"`, ordinary compilation and detached code
 generation share the same total `jobs` limit (2026.11.5.2+). Additional
 scheduling and join tasks do not increase the number of compiler processes.
+Cancelling the build ends its ordinary and detached compilers. An immediately
+following build waits for their cleanup before starting another compiler;
+partial outputs are rebuilt. An unchanged build still performs no compilation.
 
 | value | |
 |---|---|

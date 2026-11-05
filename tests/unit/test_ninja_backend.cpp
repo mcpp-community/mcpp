@@ -141,7 +141,7 @@ TEST(NinjaBackend, OrdinaryCompilersShareTheDetachedScheduleBound) {
         return start == std::string::npos ? std::string{} : text.substr(start, text.find("\n\n", start) - start);
     };
     for (const auto name : {"cxx_module", "cxx_object", "c_object", "asm_object", "asm_object_raw", "nasm_object", "cxx_scan"})
-        EXPECT_NE(rule(name).find("__compiler-cap --sem .mcpp-sched --cap 2 -- "), std::string::npos) << name;
+        EXPECT_NE(rule(name).find("__compiler-cap --sem .mcpp-sched --cap 2 --output $out -- "), std::string::npos) << name;
     EXPECT_EQ(rule("cxx_module_bmi").find("__compiler-cap"), std::string::npos)
         << "the BMI supervisor already holds a permit";
     EXPECT_EQ(rule("cxx_module_obj").find("__compiler-cap"), std::string::npos)
