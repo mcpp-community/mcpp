@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-352 records.
+353 records.
 
 ## By subject
 
@@ -75,6 +75,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### ecosystem
 
+- [生态 #885 收尾设计：核心、插件、openkal、语言服务与编辑器的一轮闭合](2026-11-07-ecosystem-885-closeout-design.md) — active
 - [生态设计 part 2：openkal 的最小原子与二进制映像、其上的 `mcpplibs.os`，以及 part 1 的收尾与回归记录](2026-10-26-ecosystem-part2-os-library-over-openkal-design.md) — active
 - [控制契约、并发与性能、单一 C++ 运行时，以及 IDE 生态（生态级，#838、#839）](2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md) — active
 
@@ -176,6 +177,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [生态 #885 收尾设计：核心、插件、openkal、语言服务与编辑器的一轮闭合](2026-11-07-ecosystem-885-closeout-design.md) — active
 - [Launch configuration and named test runners](2026-11-06-launch-configuration-and-named-test-runners.md) — active
 - [Compiler attempt lifetime and output recovery](2026-11-06-compiler-attempt-recovery.md) — active
 - [BMI publication, compiler capacity and active download budgets](2026-11-06-bmi-publication-and-compiler-cap-closeout.md) — active
