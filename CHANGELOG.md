@@ -8,6 +8,12 @@
 
 ### Fixed
 
+- A finished detached compiler is recognized when its final status appears
+  between status and liveness checks. Recovery still validates its output proof.
+- Windows launcher packages use the OS release required by the current default
+  platform, so their generated dependency resolves alongside openkal-platform 0.24.
+- Compiler attempt journals preserve file timestamps on Clang/libc++ when the
+  file clock uses a wider integer representation.
 - Launch descriptions include the selected target, profile, resolved platform
   and available named runners, including the reachable leg of a target set.
   Editor debug launches can retain the configuration that actually built the program.

@@ -809,6 +809,9 @@ int compile_release_at_bmi(const CompileRequest& req) {
             nextControllerCheck=clock::now()+std::chrono::milliseconds(50);
             if(!transactions::controller_alive(*attempt)
                 ||(supervisor&&!mcpplibs::os::process::alive(*supervisor))) {
+                // The final status can be published between the first read and
+                // this liveness observation. The next iteration validates it.
+                if(read_rc(actual.slot))continue;
                 std::println(std::cerr,"mcpp: compiler controller ended without a final status; retaining its outputs until unit recovery");
                 return 1;
             }
@@ -950,6 +953,9 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
         if(attempt&&clock::now()>=nextControllerCheck) {
             nextControllerCheck=clock::now()+std::chrono::milliseconds(50);
             if(!transactions::controller_alive(*attempt)) {
+                // A controller may publish its status and exit after the read
+                // in the loop condition. Let the normal result path inspect it.
+                if((rc=read_rc(slot)))break;
                 std::println(std::cerr,"mcpp: compiler controller ended without a status; unit recovery will retain or invalidate its outputs");
                 return 1;
             }

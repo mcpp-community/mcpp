@@ -32,13 +32,13 @@ mcpp run --target x86_64-openkal
 
 ```
     Resolved llvm@23.1.3 → x86_64-openkal → …/xim-x-llvm/23.1.3/bin/clang++
-             the platform's (openkal-platform 0.18.0), replacing your gcc@16.1.0 — override with `[target.x86_64-openkal] toolchain`
+             the platform's (openkal-platform 0.24.0), replacing your gcc@16.1.0 — override with `[target.x86_64-openkal] toolchain`
       Target x86_64-openkal → x86_64-unknown-none-elf
-             compiler-runtime  compiler-rt    (openkal-llvm-runtime@0.16.6, platform)
-             c-abi             musl           (openkal-musl@0.22.6, platform)
-             c++-abi           libc++         (openkal-llvm-runtime@0.16.6, platform)
-    Platform openkal-platform 0.18.0 (built-in)
-             tools             okld, okrun (openkal-tools@0.1.3, platform)
+             compiler-runtime  compiler-rt    (openkal-llvm-runtime@0.19.0, platform)
+             c-abi             musl           (openkal-musl@0.28.0, platform)
+             c++-abi           libc++         (openkal-llvm-runtime@0.19.0, platform)
+    Platform openkal-platform 0.24.0 (built-in)
+             tools             okld, okprof, okrun (openkal-tools@0.5.0, platform)
              runner            okrun (platform)
              link              lld, start ok_main (platform)
    Compiling app v0.1.0 (.)
@@ -98,9 +98,9 @@ C++ 运行时的包同时提供编译器运行时,因此 `"c++-abi" = false` 只
 
 | 来源 | 写法 |
 |---|---|
-| 命令行 | `--platform openkal-platform@0.23.3`、`--platform path:../openkal-platform`、`--platform none` |
+| 命令行 | `--platform openkal-platform@0.24.0`、`--platform path:../openkal-platform`、`--platform none` |
 | 环境变量 | `MCPP_TARGET_X86_64_OPENKAL_PLATFORM=…` |
-| 工程 | `[target.<selector>] platform = "openkal-platform@0.23.3"`,或 `{ path = "…" }` |
+| 工程 | `[target.<selector>] platform = "openkal-platform@0.24.0"`,或 `{ path = "…" }` |
 | 本机 | `~/.mcpp/config.toml` 中的同一个键 |
 | 目标表 | 平台列(`mcpp toolchain list`) |
 
@@ -112,11 +112,11 @@ C++ 运行时的包同时提供编译器运行时,因此 `"c++-abi" = false` 只
 
 ```toml
 [host]
-platform = "openkal-platform@0.23.3"
+platform = "openkal-platform@0.24.0"
 ```
 
 ```
-        Host platform openkal-platform 0.18.0 (mcpp.toml:2): build programs are x86_64-openkal images run by okrun
+        Host platform openkal-platform 0.24.0 (mcpp.toml:2): build programs are x86_64-openkal images run by okrun
 ```
 
 此后每个构建程序都编译为本机架构的 ok 映像,在 Linux、macOS 与 Windows 上使用同一个工具链,经平台的运行器
@@ -130,7 +130,7 @@ platform = "openkal-platform@0.23.3"
 
 ```toml
 [target.'cfg(any(linux, macos, windows))']
-platform = "openkal-platform@0.23.3"
+platform = "openkal-platform@0.24.0"
 ```
 
 Windows 上这一安排对应 GNU ABI 的行(`--target x86_64-windows-gnu`);`[platform.hosted] targets` 之外的
@@ -142,12 +142,12 @@ Windows 上这一安排对应 GNU ABI 的行(`--target x86_64-windows-gnu`);`[pl
 另一个版本时,在任何编译之前拒绝:
 
 ```
-error: openkal-musl 0.22.2 is in this build, and the platform openkal-platform 0.18.0 is a version group that names openkal-musl 0.22.9.
+error: openkal-musl 0.22.2 is in this build, and the platform openkal-platform 0.24.0 is a version group that names openkal-musl 0.28.0.
        requested by: own
        The family's packages pin one another exactly, so two versions of one of
        them cannot be linked into one program. Either select the platform release
        of that version ([target.<selector>] platform = "openkal-platform@<version>"), or write
-       openkal-musl = "0.22.6" where it is requested.
+       openkal-musl = "0.28.0" where it is requested.
 ```
 
 从目录或仓库取得的包不受版本组约束。
@@ -160,39 +160,40 @@ error: openkal-musl 0.22.2 is in this build, and the platform openkal-platform 0
 [package]
 namespace = "mcpplibs"
 name      = "openkal-platform"
-version   = "0.18.0"
-mcpp      = ">=2026.10.30.1"
+version   = "0.24.0"
+mcpp      = ">=2026.11.3.1"
 
 [platform]
 targets   = ["x86_64-openkal", "aarch64-openkal"]
 toolchain = "llvm@23.1.3"
-runner    = { cmd = ["okrun", "{}"], host = "same-arch" }
-carrier   = { package = "openkal-run@0.1.3", section = ".oke", main = "carrier/main.cpp" }
+runner    = { cmd = ["okrun", "{}"], host = "same-arch", hosts = ["linux-x86_64", "linux-aarch64", "macos-aarch64", "windows-x86_64"] }
+carrier   = { package = "openkal-run@0.5.0", section = ".oke", main = "carrier/main.cpp" }
 plugin    = "build.mcpp"
 
 [platform.layers]
-compiler-runtime = "openkal-llvm-runtime@0.16.6"
-"c++-abi"        = "openkal-llvm-runtime@0.16.6"
-c-abi            = { name = "openkal-musl", version = "0.22.6", default-features = false, features = ["posix"] }
+compiler-runtime = "openkal-llvm-runtime@0.19.0"
+"c++-abi"        = "openkal-llvm-runtime@0.19.0"
+c-abi            = { name = "openkal-musl", version = "0.28.0", default-features = false, features = ["posix", "malloc-mimalloc"] }
 
 [platform.tools]
-okld  = "openkal-tools@0.1.3"
-okrun = "openkal-tools@0.1.3"
+okld  = "openkal-tools@0.5.0"
+okprof = "openkal-tools@0.5.0"
+okrun = "openkal-tools@0.5.0"
 
 [platform.build]
-cxxflags = ["-fPIC", "-femulated-tls", "-fvisibility=hidden", "-fasynchronous-unwind-tables"]
+cxxflags = ["-fPIC", "-femulated-tls", "-fvisibility=hidden", "-fasynchronous-unwind-tables", "-Xclang", "-fstack-clash-protection", "-ffunction-sections", "-fdata-sections", "-fno-omit-frame-pointer", "-mno-omit-leaf-frame-pointer", "-fstack-protector-strong", "-mstack-protector-guard=global", "-ftrivial-auto-var-init=zero", "-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST"]
 
 [platform.build.'cfg(arch = "aarch64")']
-cxxflags = ["-ffixed-x18", "-mno-outline-atomics"]
+cxxflags = ["-ffixed-x18", "-mno-outline-atomics", "-mbranch-protection=pac-ret+bti"]
 
 [platform.link]
 driver = "lld"
 start  = "ok_main"
-flags  = ["-shared", "-z", "max-page-size=65536", "-z", "now", "--gc-sections", "--icf=safe", "--eh-frame-hdr"]
+flags  = ["-shared", "-z", "max-page-size=65536", "-z", "pack-relative-relocs", "-z", "now", "-z", "noexecstack", "--hash-style=both", "--gc-sections", "--icf=safe", "--eh-frame-hdr", "--build-id=sha1", "--emit-relocs", "-mllvm", "-emulated-tls"]
 inputs = [{ from = ["okld", "note-source"], as = "ok-notes.S" }]
 exe    = "{name}.oke"
 shared = "lib{name}.okso"
-seal   = [["okld", "note", "{}"], ["okld", "check", "{}", "--with", "{needed}"]]
+seal   = [["okld", "note", "{}"], ["okld", "place", "{}"], ["okld", "check", "{}", "--with", "{needed}"]]
 ```
 
 - **程序写名字,不写位置。** `inputs` 与 `seal` 中的 `okld` 依次在图为本机构建的程序、声明的载荷、`PATH` 中查找。

@@ -1,3 +1,8 @@
+---
+subject: compiler-scheduling
+status: active
+---
+
 # Compiler attempt lifetime and output recovery
 
 Status: source implementation and focused acceptance in progress. This record
@@ -207,7 +212,7 @@ No runtime generation becomes a dependency version or build-cache identity.
 | C++ runtime | 0.19.0 | [Runtime 66](https://github.com/mcpplibs/openkal-llvm-runtime/pull/66) |
 | Platform | 0.24.0 | Publication follows its public lower dependencies |
 | OS composition | 0.3.0 | [OS 17](https://github.com/mcpplibs/os/pull/17) |
-| Core | 2026.11.5.2 | [mcpp 889](https://github.com/mcpp-community/mcpp/pull/889) |
+| Core | 2026.11.6.1 | [mcpp 889](https://github.com/mcpp-community/mcpp/pull/889) |
 
 OS advances to 0.3.0 so an explicit range such as `^0.2.3` cannot silently
 absorb a different OpenKal minor group. Bare package versions name exact wire
@@ -222,15 +227,43 @@ image consumer calls all four operations through the image convention,
 including the fifth retirement argument and an invalid continuation that
 changes the state output from `empty` to `unknown`.
 
-Source-group controls establish implementation behaviour. They do not establish
-that public versions are installable. Release gates remain full repository CI,
-canonical tag archives, byte-identical CN mirrors, published index entries and
-ordinary GLOBAL/CN consumers. Temporary image source overrides are removed
-before its final exact-head public-dependency CI. Platform and OS qualification
-follow the lower public group; core then updates its OS and default platform
-pins and runs full exact-head CI before independent ecosystem review. Plugins
-PR 52 retains the public 2026.11.5.1 pin until core 2026.11.5.2 is published,
-then runs its actual sidecar integration and final CI.
+Source-group controls establish implementation behaviour. The lower versions,
+including platform 0.24.0 and OS 0.3.0, are now publicly released and indexed;
+their ordinary consumers have been checked. Core 2026.11.6.1 uses those pins
+and still requires full exact-head CI, an independent ecosystem review,
+canonical tag archives, byte-identical CN mirrors, a published index entry and
+ordinary GLOBAL/CN consumers. Plugins PR 52 retains the published
+2026.11.5.1 pin until core 2026.11.6.1 is published, then runs its actual
+sidecar integration and final CI.
+
+## 2026-11-06 final-head CI failure controls
+
+The first 2026.11.6.1 CI run exposed four distinct boundaries. Clang/libc++
+uses a wider file-clock tick representation than `std::to_string` accepts;
+the journal now rejects values outside its signed 64-bit schema and preserves
+in-range ticks. A direct exact-toolchain control compiled the failing expression
+and the corrected one, including a real file identity. Native Clang, ARM and
+bootstrap jobs still require the next full CI run.
+
+An actual split-compiler control held a previously absent `.rc` observation
+until the controller had published status and exited. The earlier engine failed
+with `compiler controller ended without a status`; the corrected engine rereads
+status before treating controller loss as failure. Phase-one, quiet-unit and
+owner-witness observations use the same ordering rule. A real GCC build then
+passed its compiler-cap, cancellation, cached replay and same-invocation
+missing-object recovery controls. A missing status remains a bounded failure.
+
+On Windows, the unit fixture can derive its root from an 8.3 TEMP alias while
+the MSVC filesystem implementation records canonical long paths. Production
+`RunScope` already canonicalizes its root before admission. The fixture now
+does the same before deriving BMI, object and certificate paths; the native
+Windows suite must confirm the negative symlink controls remain intact.
+
+The generated Windows package launcher also named OS 0.2.9, whose OpenKal
+0.23 group conflicts with the current default platform 0.24. It now names
+OS 0.3.0. The older consumer platform selected by the application's own
+target remains independent of the launcher's build platform. The actual
+cross-platform packing control and complete CI remain release gates.
 
 ## Separate Windows build-program defect
 

@@ -2,6 +2,7 @@
 """Recover completed module objects in one actual build, before Ninja reads BMIs."""
 import argparse
 import hashlib
+import difflib
 import json
 from pathlib import Path
 import subprocess
@@ -18,7 +19,9 @@ def main():
     objects=[Path(row['output']) for row in rows if row['file'].endswith(('src/core.cppm','src/mid.cppm'))]
     assert len(objects)==2,'two actual module objects are required'
     def build(success=True):
-        result=subprocess.run([str(mcpp),'build','-j2'],cwd=project,capture_output=True,text=True,timeout=60)
+        # Match the graph's original configuration, including MCPP_JOBS.
+        # Changing the compiler cap changes the generated Ninja commands.
+        result=subprocess.run([str(mcpp),'build'],cwd=project,capture_output=True,text=True,timeout=60)
         assert (result.returncode==0)==success,result.stdout+result.stderr
         return result.stdout+result.stderr
     def identity():
@@ -30,7 +33,7 @@ def main():
         build()
         assert all(path.is_file() for path in objects),'one invocation did not restore missing objects'
         before=identity();build();assert identity()==before,'recovery changed the following no-op'
-        assert (output/'build.ninja').read_bytes()==graph,'recovery replaced its build graph'
+        assert (output/'build.ninja').read_bytes()==graph,'recovery replaced its build graph\n'+''.join(difflib.unified_diff(graph.decode().splitlines(True),(output/'build.ninja').read_text().splitlines(True)))
         print(f'PASS: {len(missing)} missing completed objects recover in one build; following no-op unchanged',flush=True)
     certificate=Path(str(objects[0])+'.sched.completed');original=certificate.read_bytes()
     bmi_before={p:(p.stat().st_mtime_ns,p.read_bytes()) for p in (output/'gcm.cache').rglob('*.gcm')}

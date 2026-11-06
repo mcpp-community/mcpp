@@ -85,11 +85,24 @@ std::expected<fs::path,std::string> output_identity(const fs::path& path) {
 std::string spelling(const fs::path& path) { return mcpp::home::spelling(path); }
 fs::path named(std::string_view path) { return mcpp::home::from_utf8(path); }
 fs::path suffix(const fs::path& path,std::string_view tail) { return named(spelling(path)+std::string(tail)); }
+std::optional<long long> journal_time(fs::file_time_type time) {
+    // libc++ uses a wider file-clock representation. The v1 journal accepts
+    // signed 64-bit ticks; never truncate a timestamp into a different identity.
+    using Rep=fs::file_time_type::duration::rep;
+    const Rep ticks=time.time_since_epoch().count();
+    if constexpr(std::numeric_limits<Rep>::digits>std::numeric_limits<long long>::digits) {
+        if(ticks>static_cast<Rep>(std::numeric_limits<long long>::max()))return {};
+        if constexpr(std::numeric_limits<Rep>::is_signed)
+            if(ticks<static_cast<Rep>(std::numeric_limits<long long>::min()))return {};
+    }
+    return static_cast<long long>(ticks);
+}
 std::optional<Fields> identity(const fs::path& path) {
     if(path.empty())return Fields{"", ""};
     std::error_code ec;const auto size=fs::file_size(path,ec);if(ec)return {};
     const auto time=fs::last_write_time(path,ec);if(ec)return {};
-    return Fields{std::to_string(size),std::to_string(time.time_since_epoch().count())};
+    const auto ticks=journal_time(time);if(!ticks)return {};
+    return Fields{std::to_string(size),std::to_string(*ticks)};
 }
 bool copy_atomic(const fs::path& from,const fs::path& to) {
     std::error_code ec;const auto temp=suffix(to,".mcpp-restore");
@@ -127,6 +140,9 @@ struct Attempt {
             return std::unexpected("missing compiler transaction output identity");
         if(!a.bmi.empty())if(auto old=identity(a.bmi)) {
             a.before_present=true;a.before_size=(*old)[0];a.before_time=(*old)[1];a.before_hash=mcpp::toolchain::hash_file(a.bmi);
+        } else {
+            std::error_code ec;
+            if(fs::exists(a.bmi,ec)||ec)return std::unexpected("cannot identify the previous compiler BMI");
         }
         const auto who=os::process::self();if(!who||!who->id||!who->started_ns)return std::unexpected("cannot identify compiler transaction writer");
         static std::atomic<unsigned long long> sequence{0};
@@ -368,7 +384,15 @@ private:
             if(!retired||(*retired&&(**retired).size()!=3)) {failed_.store(true);++it;continue;}
             if(*retired) {it=held_.erase(it);continue;}
             auto attempt=Attempt::load(directory);
-            if(!attempt||!controller_alive(*attempt))failed_.store(true);
+            if(!attempt) {failed_.store(true);++it;continue;}
+            if(!controller_alive(*attempt)) {
+                // Retirement can be published between the first read and the
+                // controller's exit. Observe it again before reporting loss.
+                retired=read(directory/"retired","mcpp-retired-v1");
+                if(!retired||(*retired&&(**retired).size()!=3))failed_.store(true);
+                else if(*retired) {it=held_.erase(it);continue;}
+                else failed_.store(true);
+            }
             ++it;
         }
     }

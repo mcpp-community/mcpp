@@ -1,3 +1,8 @@
+---
+subject: heterogeneous-build
+status: active
+---
+
 # Launch configuration and named test runners
 
 Status, 2026-11-06: implemented for candidate 2026.11.6.1. Focused local

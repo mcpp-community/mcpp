@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-350 records.
+352 records.
 
 ## By subject
 
@@ -37,6 +37,10 @@ Records that declare one. Everything else is listed by date below.
 ### build-progress-and-scheduling
 
 - [BMI publication, compiler capacity and active download budgets](2026-11-06-bmi-publication-and-compiler-cap-closeout.md) — active
+
+### compiler-scheduling
+
+- [Compiler attempt lifetime and output recovery](2026-11-06-compiler-attempt-recovery.md) — active
 
 ### design
 
@@ -86,6 +90,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### heterogeneous-build
 
+- [Launch configuration and named test runners](2026-11-06-launch-configuration-and-named-test-runners.md) — active
 - [异构构建语义与插件边界补充方案（mcpp#885、mcpp#887）](2026-11-05-heterogeneous-build-semantics-and-plugin-boundaries-supplement.md) — active
 - [异构构建补充方案的第二轮调研与实验](2026-11-05-heterogeneous-build-research-and-experiments.md) — active
 - [生态 885 与异构构建补充方案的实现依赖](2026-11-05-heterogeneous-build-implementation-plan.md) — active
@@ -171,6 +176,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [Launch configuration and named test runners](2026-11-06-launch-configuration-and-named-test-runners.md) — active
+- [Compiler attempt lifetime and output recovery](2026-11-06-compiler-attempt-recovery.md) — active
 - [BMI publication, compiler capacity and active download budgets](2026-11-06-bmi-publication-and-compiler-cap-closeout.md) — active
 - [异构构建语义与插件边界补充方案（mcpp#885、mcpp#887）](2026-11-05-heterogeneous-build-semantics-and-plugin-boundaries-supplement.md) — active
 - [异构构建补充方案的第二轮调研与实验](2026-11-05-heterogeneous-build-research-and-experiments.md) — active

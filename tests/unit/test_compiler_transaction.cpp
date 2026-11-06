@@ -15,6 +15,7 @@ struct Transaction {
     Transaction() {
         root=fs::temp_directory_path()/std::format("mcpp-attempt-{:08x}",std::random_device{}());
         fs::create_directories(root);
+        root=fs::weakly_canonical(root);
         generation=root/"run";bmi=root/"unit.gcm";object=root/"unit.o";
         slot=root/"unit.sched";dep=root/"unit.d";reservation=root/"slot.reservation";
     }
@@ -44,6 +45,34 @@ struct Transaction {
 };
 }
 
+TEST(CompilerTransaction, JournalTimePreservesSignedTicksAtBothBoundaries) {
+    using Duration=fs::file_time_type::duration;
+    using Rep=Duration::rep;
+    for(const auto value:{std::numeric_limits<long long>::min(),-1LL,0LL,1LL,std::numeric_limits<long long>::max()}) {
+        const auto stamp=tx::journal_time(fs::file_time_type{Duration{static_cast<Rep>(value)}});
+        ASSERT_TRUE(stamp);EXPECT_EQ(*stamp,value);
+        EXPECT_TRUE(tx::output_stamp("1",std::to_string(*stamp)));
+    }
+    if constexpr(std::numeric_limits<Rep>::digits>std::numeric_limits<long long>::digits) {
+        auto above=static_cast<Rep>(std::numeric_limits<long long>::max());++above;
+        auto below=static_cast<Rep>(std::numeric_limits<long long>::min());--below;
+        EXPECT_FALSE(tx::journal_time(fs::file_time_type{Duration{above}}));
+        EXPECT_FALSE(tx::journal_time(fs::file_time_type{Duration{below}}));
+    }
+}
+TEST(CompilerTransaction, PreparedIdentityRoundTripsTheActualFileTimestamp) {
+    Transaction t;const auto prepared=t.prepare();
+    const auto ticks=tx::journal_time(fs::last_write_time(t.bmi));ASSERT_TRUE(ticks);
+    EXPECT_EQ(prepared.before_time,std::to_string(*ticks));
+    const auto loaded=tx::Attempt::load(prepared.directory);ASSERT_TRUE(loaded);
+    EXPECT_TRUE(loaded->before_present);EXPECT_EQ(loaded->before_time,prepared.before_time);
+    EXPECT_TRUE(tx::validate(*loaded));
+}
+TEST(CompilerTransaction, UnidentifiableExistingBmiIsNotRecordedAsMissing) {
+    Transaction t;fs::create_directory(t.bmi);
+    EXPECT_FALSE(tx::Attempt::prepare(t.generation,false,t.bmi,t.object,t.slot,t.dep));
+    EXPECT_TRUE(fs::is_directory(t.bmi));EXPECT_FALSE(fs::exists(t.generation));
+}
 TEST(CompilerTransaction, RecordsAreBoundedChecksummedAndSchemaChecked) {
     Transaction t;const auto record=t.root/"record";
     ASSERT_TRUE(tx::publish(record,"schema",{"a\nb", "", "unicode \xc3\xa9"}));

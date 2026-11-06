@@ -264,4 +264,7 @@ PY_REPLAY
 echo "== 8. missing cached objects recover before Ninja admission =="
 python3 "$_root/tests/e2e/helpers/check_cached_object_recovery.py" "$MCPP" "$TMP" "$TMP/$BUILD_DIR"
 
+echo "== 9. final status is reread after controller exit =="
+python3 "$_root/tests/e2e/helpers/check_completion_observation.py" "$MCPP" "$TMP/completion-observation"
+
 echo "234 bmi_schedule OK (detach-codegen, tokens reclaimed, publication checked)"
