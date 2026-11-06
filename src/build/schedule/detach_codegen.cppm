@@ -299,8 +299,8 @@ void withdraw_outputs(const std::filesystem::path& slot,
 // the supervisor's status is lost, and the unit is taken as failed rather than
 // waited for until the hard limit.
 std::optional<int> read_rc(const std::filesystem::path& slot) {
-    std::ifstream in(suffixed(slot, ".rc"));
-    if (!in) return std::nullopt;
+    std::ifstream in;
+    if (transactions::open_settled(in, suffixed(slot, ".rc")) != transactions::Opened::yes) return std::nullopt;
     int rc = 0;
     if (!(in >> rc)) {
         std::println(std::cerr, "mcpp: the status of the compiler for {} was not written "
@@ -546,6 +546,15 @@ void record_supervisor_error(const std::filesystem::path& slot,std::string_view 
     // compiler's ordinary log so either waiter can report why status is absent.
     std::ofstream log(suffixed(slot,".log"),std::ios::app);
     if(log)log << "mcpp: " << reason << '\n';
+}
+
+// What the waiter observed when it concluded that the controller is gone: one
+// line, without a path, so a failure states which observation decided it.
+void report_controller_loss(const std::filesystem::path& slot,transactions::Controller controller,bool supervising) {
+    std::error_code ec;
+    const bool log=std::filesystem::exists(suffixed(slot,".log"),ec);
+    std::println(std::cerr,"mcpp: compiler controller observation: controller {}, supervisor {}, status absent, log {}",
+                 transactions::describe(controller),supervising ? "running" : "ended",log ? "present" : "absent");
 }
 
 void replay_supervisor_log(const std::filesystem::path& slot) {
@@ -827,12 +836,14 @@ int compile_release_at_bmi(const CompileRequest& req) {
         }
         if(attempt && clock::now()>=nextControllerCheck) {
             nextControllerCheck=clock::now()+std::chrono::milliseconds(50);
-            if(!transactions::controller_alive(*attempt)
-                ||(supervisor&&!mcpplibs::os::process::alive(*supervisor))) {
+            const auto controller=transactions::controller_state(*attempt);
+            const bool supervising=!supervisor||mcpplibs::os::process::alive(*supervisor);
+            if(controller==transactions::Controller::ended||!supervising) {
                 // The final status can be published between the first read and
                 // this liveness observation. The next iteration validates it.
                 if(read_rc(actual.slot))continue;
                 replay_supervisor_log(actual.slot);
+                report_controller_loss(actual.slot,controller,supervising);
                 std::println(std::cerr,"mcpp: compiler controller ended without a final status; retaining its outputs until unit recovery");
                 return 1;
             }
@@ -885,9 +896,10 @@ int supervise(const std::filesystem::path& slot,
         auto unit=std::make_shared<mcpplibs::os::process::owned_unit>(std::move(*created));
         InterruptCleanup cleanup{mcpp::run::add_cleanup([actor,unit] {unit->terminate();})};
         if(auto registered=attempt.register_unit(*unit,actor->path,permit->reservation);!registered) {
-            std::println(std::cerr,"mcpp: {}",registered.error());(void)write_rc(slot,2);return 2;
+            record_supervisor_error(slot,registered.error());(void)write_rc(slot,2);return 2;
         }
-        if(!actor->owner.active())return 130;
+        // Every exit leaves a status, a cancelled one included.
+        if(!actor->owner.active()) {(void)write_rc(slot,130);return 130;}
         if(!transactions::publish(attempt.directory/"admitted","mcpp-admitted-v1",{})) {
             (void)write_rc(slot,2);return 2;
         }
@@ -982,11 +994,13 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
         if (!actor.owner.active()) return 130;
         if(attempt&&clock::now()>=nextControllerCheck) {
             nextControllerCheck=clock::now()+std::chrono::milliseconds(50);
-            if(!transactions::controller_alive(*attempt)) {
+            const auto controller=transactions::controller_state(*attempt);
+            if(controller==transactions::Controller::ended) {
                 // A controller may publish its status and exit after the read
                 // in the loop condition. Let the normal result path inspect it.
                 if((rc=read_rc(slot)))break;
                 replay_supervisor_log(slot);
+                report_controller_loss(slot,controller,true);
                 std::println(std::cerr,"mcpp: compiler controller ended without a status; unit recovery will retain or invalidate its outputs");
                 return 1;
             }

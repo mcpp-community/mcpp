@@ -288,6 +288,84 @@ TEST(CompilerTransaction, RecordAppearanceBetweenOpenAndExistsIsNotCorruption) {
     EXPECT_EQ(result.exit_code,0)<<result.output;
     EXPECT_TRUE(fs::exists(t.root/"record-open-interposed"));
 }
+TEST(CompilerTransaction, RecordRefusalDriver) {
+    if(!mcpp::invocation::get("MCPP_TEST_RECORD_REFUSAL_DRIVER"))GTEST_SKIP()<<"subprocess driver";
+    const auto started=std::chrono::steady_clock::now();
+    auto record=tx::read("record","schema");
+    const auto elapsed=std::chrono::steady_clock::now()-started;
+    const bool forever=mcpp::invocation::get("MCPP_TEST_REFUSE_COUNT").value_or("")=="-1";
+    if(forever) {
+        EXPECT_FALSE(record);
+        EXPECT_LT(elapsed,std::chrono::seconds(2));
+    } else {
+        ASSERT_TRUE(record&&*record);
+        EXPECT_EQ((**record)[0],"published");
+    }
+}
+TEST(CompilerTransaction, ControllerRefusalDriver) {
+    if(!mcpp::invocation::get("MCPP_TEST_CONTROLLER_REFUSAL_DRIVER"))GTEST_SKIP()<<"subprocess driver";
+    auto attempt=tx::Attempt::load(fs::path(*mcpp::invocation::get("MCPP_TEST_ATTEMPT")));
+    ASSERT_TRUE(attempt)<<attempt.error();
+    EXPECT_EQ(tx::controller_state(*attempt),tx::Controller::unknown);
+}
+namespace {
+// Runs one driver of this binary with the refusal interposer preloaded.
+std::optional<mcpp::run::RunResult> refused_driver(const fs::path& root,std::string_view filter,
+                                               std::vector<std::pair<std::string,std::string>> env) {
+    const auto library=root/"record-open-refusal.so";
+    const auto source=fs::current_path()/"tests/e2e/helpers/record_open_refusal.c";
+    auto compiled=mcpp::run::execute({"/usr/bin/cc","-shared","-fPIC","-Wall","-Wextra","-Werror",
+        source.string(),"-o",library.string(),"-ldl"},{.total=std::chrono::seconds(10)});
+    if(compiled.exit_code!=0) {ADD_FAILURE()<<compiled.output;return std::nullopt;}
+    env.push_back({"LD_PRELOAD",library.string()});
+    return mcpp::run::execute({mcpp::invocation::self_exe_path().string(),
+        std::format("--gtest_filter=CompilerTransaction.{}",filter)},
+        {.env=env,.cwd=root.string(),.total=std::chrono::seconds(20)});
+}
+bool preloadable() {
+    if constexpr (!mcpplibs::os::is_linux)return false;
+    const auto runtime=mcpp::runtime::elf::inspect_elf_runtime(mcpp::invocation::self_exe_path());
+    return runtime && runtime->interp.find("ld-linux")!=std::string::npos;
+}
+std::size_t refusals(const fs::path& marker) {
+    std::ifstream in(marker);std::size_t n=0;std::string line;
+    while(std::getline(in,line))++n;
+    return n;
+}
+}  // namespace
+TEST(CompilerTransaction, RecordRefusedWhilePublishedIsWaitedOut) {
+    if(!preloadable())GTEST_SKIP()<<"open interposition requires Linux and the dynamic glibc loader";
+    Transaction t;
+    ASSERT_TRUE(tx::publish(t.root/"record","schema",{"published"}));
+    const auto result=refused_driver(t.root,"RecordRefusalDriver",
+        {{"MCPP_TEST_RECORD_REFUSAL_DRIVER","1"},{"MCPP_TEST_REFUSE_NAME","record"},{"MCPP_TEST_REFUSE_COUNT","4"}});
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->exit_code,0)<<result->output;
+    // Four refusals: the reader before 2026.11.7.1 retried once and failed.
+    EXPECT_EQ(refusals(t.root/"record-refused"),4u);
+}
+TEST(CompilerTransaction, PersistentRefusalIsABoundedError) {
+    if(!preloadable())GTEST_SKIP()<<"open interposition requires Linux and the dynamic glibc loader";
+    Transaction t;
+    ASSERT_TRUE(tx::publish(t.root/"record","schema",{"published"}));
+    const auto result=refused_driver(t.root,"RecordRefusalDriver",
+        {{"MCPP_TEST_RECORD_REFUSAL_DRIVER","1"},{"MCPP_TEST_REFUSE_NAME","record"},{"MCPP_TEST_REFUSE_COUNT","-1"}});
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->exit_code,0)<<result->output;
+    EXPECT_GE(refusals(t.root/"record-refused"),2u);
+}
+TEST(CompilerTransaction, UnreadableControllerRecordIsNotAnEndedController) {
+    if(!preloadable())GTEST_SKIP()<<"open interposition requires Linux and the dynamic glibc loader";
+    Transaction t;
+    auto a=t.prepare();
+    ASSERT_TRUE(tx::publish(a.directory/"controller","mcpp-controller-v1",{"1","1",tx::spelling(t.generation/"actors/helper.lock")}));
+    const auto result=refused_driver(t.root,"ControllerRefusalDriver",
+        {{"MCPP_TEST_CONTROLLER_REFUSAL_DRIVER","1"},{"MCPP_TEST_ATTEMPT",a.directory.string()},
+         {"MCPP_TEST_REFUSE_NAME",(a.directory/"controller").string()},
+         {"MCPP_TEST_REFUSE_COUNT","-1"}});
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->exit_code,0)<<result->output;
+}
 TEST(CompilerTransaction, FailedCloseCannotPublishOrAcknowledgeARecord) {
     if constexpr (!mcpplibs::os::is_linux)GTEST_SKIP()<<"Linux libc close failure control";
     const auto runtime=mcpp::runtime::elf::inspect_elf_runtime(mcpp::invocation::self_exe_path());

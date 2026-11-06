@@ -40,18 +40,38 @@ std::string pack(std::string_view tag, const Fields& fields) {
 // Atomic visibility across process loss; storage durability is not promised.
 bool replace_record(const fs::path& path,std::string_view bytes,std::string* diagnostic=nullptr);
 bool publish(const fs::path& path,std::string_view tag,const Fields& fields);
-Record read(const fs::path& path, std::string_view tag) {
-    std::ifstream input(path,std::ios::binary);
-    if (!input) {
+// A RECORD THAT EXISTS AND CANNOT YET BE OPENED IS BEING PUBLISHED. On Windows
+// the name a rename installs can be refused to a reader for a short interval
+// (the rename's own handle, or a scanner holding the new file); a reader that
+// took that refusal as the record's content declared a live compiler lost
+// (mcpp-community/mcpp#889, measured 10 of 40 Windows cross builds). The open
+// is retried with backoff for at most kRecordSettle; a name that is absent is
+// absent at once, and a refusal that outlasts the bound is still an error.
+inline constexpr auto kRecordSettle=std::chrono::milliseconds(250);
+enum class Opened { yes, absent, refused };
+// Opens `path' for reading, waiting out a publication in progress.
+Opened open_settled(std::ifstream& input,const fs::path& path) {
+    input.open(path,std::ios::binary);
+    if(input)return Opened::yes;
+    const auto limit=std::chrono::steady_clock::now()+kRecordSettle;
+    auto pause=std::chrono::milliseconds(1);
+    for(;;) {
         std::error_code ec;
-        if (!fs::exists(path,ec) && !ec) return std::optional<Fields>{};
-        if(ec)return std::unexpected("cannot read compiler transaction record");
-        // An atomic publisher may install the record between the failed open
-        // and the existence probe. Retry once; a persistent refusal still
-        // fails rather than being mistaken for an absent record.
+        const bool present=fs::exists(path,ec);
+        if(!present&&!ec)return Opened::absent;
+        input.clear();
         input.open(path,std::ios::binary);
-        if(!input)return std::unexpected("cannot read compiler transaction record");
+        if(input)return Opened::yes;
+        if(std::chrono::steady_clock::now()>=limit)return Opened::refused;
+        std::this_thread::sleep_for(pause);
+        pause=std::min(pause*2,std::chrono::milliseconds(32));
     }
+}
+Record read(const fs::path& path, std::string_view tag) {
+    std::ifstream input;
+    const auto opened=open_settled(input,path);
+    if(opened==Opened::absent)return std::optional<Fields>{};
+    if(opened==Opened::refused)return std::unexpected("cannot read compiler transaction record");
     std::string bytes(65537,'\0');
     input.read(bytes.data(),bytes.size());bytes.resize(static_cast<std::size_t>(input.gcount()));
     if(input.bad())return std::unexpected("cannot read compiler transaction record");
@@ -118,7 +138,11 @@ bool copy_atomic(const fs::path& from,const fs::path& to) {
     fs::copy_file(from,temp,fs::copy_options::overwrite_existing,ec);if(ec)return false;
     const auto time=fs::last_write_time(from,ec);if(ec)return false;
     fs::last_write_time(temp,time,ec);if(ec)return false;
-    return bool(os::fs::rename(temp,to,true));
+    // The host namespace, as for every record of this module (the copy was
+    // written through it); a name in Windows' long spelling stays valid.
+    fs::rename(temp,to,ec);
+    if(ec) {fs::remove(temp,ec);return false;}
+    return true;
 }
 struct Attempt {
     fs::path directory, bmi, object, slot, dep;
@@ -299,17 +323,26 @@ bool release_reservation(const fs::path& reservation,const fs::path& attempt) {
     if((**current)[0]!=spelling(attempt))return true; // a later, separately locked slot
     std::error_code ec;fs::remove(reservation,ec);return !ec;
 }
-bool controller_alive(const Attempt& attempt) {
+// WHETHER A CONTROLLER IS RUNNING IS A QUESTION ABOUT A PROCESS, NOT ABOUT A
+// FILE. Only an identity that names an ended process answers `ended'; a record
+// that cannot be read yet answers `unknown', and the caller keeps waiting
+// within its own bounds. A record that is absent is the existing startup case.
+enum class Controller { running, ended, unknown };
+Controller controller_state(const Attempt& attempt) {
     auto controller=read(attempt.directory/"controller","mcpp-controller-v1");
-    if(!controller)return false;
-    if(!*controller)return true; // the existing startup bound applies
-    if((**controller).size()!=3)return false;
+    if(!controller)return Controller::unknown;
+    if(!*controller)return Controller::running; // the existing startup bound applies
+    if((**controller).size()!=3)return Controller::ended;
     os::process::program who{};const auto& fields=**controller;
     const auto id=std::from_chars(fields[0].data(),fields[0].data()+fields[0].size(),who.id);
     const auto birth=std::from_chars(fields[1].data(),fields[1].data()+fields[1].size(),who.started_ns);
-    return id.ec==std::errc{}&&id.ptr==fields[0].data()+fields[0].size()
-        &&birth.ec==std::errc{}&&birth.ptr==fields[1].data()+fields[1].size()
-        &&who.id&&who.started_ns&&os::process::alive(who);
+    const bool valid=id.ec==std::errc{}&&id.ptr==fields[0].data()+fields[0].size()
+        &&birth.ec==std::errc{}&&birth.ptr==fields[1].data()+fields[1].size()&&who.id&&who.started_ns;
+    if(!valid)return Controller::ended;
+    return os::process::alive(who) ? Controller::running : Controller::ended;
+}
+std::string_view describe(Controller c) {
+    return c==Controller::running ? "running" : c==Controller::ended ? "ended" : "unknown";
 }
 
 std::expected<std::string,std::string> receive(os::ipc::connection& connection,std::chrono::milliseconds bound) {
@@ -399,7 +432,9 @@ private:
             if(*retired) {it=held_.erase(it);continue;}
             auto attempt=Attempt::load(directory);
             if(!attempt) {fail(attempt.error());++it;continue;}
-            if(!controller_alive(*attempt)) {
+            const auto state=controller_state(*attempt);
+            if(state==Controller::unknown) {++it;continue;}  // asked again at the next audit
+            if(state==Controller::ended) {
                 // Retirement can be published between the first read and the
                 // controller's exit. Observe it again before reporting loss.
                 retired=read(directory/"retired","mcpp-retired-v1");
@@ -430,7 +465,9 @@ private:
             const auto actor=named((**unit)[3]);
             if(actor.parent_path()!=generation_/"actors") {send(connection,"REFUSED");continue;}
             auto lease=os::fs::lock::acquire(actor,os::fs::lock::kind::exclusive,false);
-            if(lease||lease.error().code!=os::errc::again||!controller_alive(*prepared)) {send(connection,"REFUSED");continue;}
+            // The actor's lock is held, so its controller is running; a record
+            // still settling does not refuse the registration.
+            if(lease||lease.error().code!=os::errc::again||controller_state(*prepared)==Controller::ended) {send(connection,"REFUSED");continue;}
             auto retained=os::process::unit_observer::open((**unit)[0]);
             if(!retained) {send(connection,"REFUSED");continue;}
             std::lock_guard guard(admission_);
