@@ -56,13 +56,35 @@ std::string esc(std::string_view s) {
     return o;
 }
 
+// One segment of a package URL: the purl specification percent-encodes all but
+// the unreserved characters and `:`. `+` is the one that occurs here, in a
+// version's build metadata and in a variant's name.
+std::string purl_segment(std::string_view s) {
+    std::string o;
+    o.reserve(s.size());
+    for (char c : s) {
+        const auto u = static_cast<unsigned char>(c);
+        if (std::isalnum(u) || c == '.' || c == '-' || c == '_' || c == '~' || c == ':')
+            o += c;
+        else
+            o += std::format("%{:02X}", static_cast<unsigned>(u));
+    }
+    return o;
+}
+
+std::string purl(std::string_view ns, std::string_view name, std::string_view version) {
+    return std::format("pkg:mcpp/{}/{}@{}", purl_segment(ns.empty() ? "mcpp" : ns),
+                       purl_segment(name), purl_segment(version));
+}
+
 // A package URL for an mcpp package. `pkg:` URLs are how every SBOM consumer
 // correlates a component with an advisory feed, so emitting one is what makes
-// the document useful rather than merely well-formed.
+// the document useful rather than merely well-formed. It therefore states the
+// package's identity, not the spelling of the manifest that declared it: the
+// lock may record `mcpplibs.cmdline` or `cmdline` for one package. A variant
+// keeps its `+p<digest>` in the name: a patched library is another library.
 std::string purl(const mcpp::lockfile::LockedPackage& p) {
-    const std::string ns = p.namespace_.empty() ? std::string("mcpp")
-                                                : p.namespace_;
-    return std::format("pkg:mcpp/{}/{}@{}", ns, p.name, p.version);
+    return purl(p.namespace_, mcpp::pm::short_name(p), p.version);
 }
 
 // AN UNKNOWN LICENCE IS REPORTED AS UNKNOWN, NEVER OMITTED AND NEVER
@@ -119,9 +141,13 @@ int cmd_sbom(const mcpplibs::cmdline::ParsedArgs& parsed) {
             "dependencies, build it once so the resolution is recorded.");
     }
 
+    // One component per package: a lock written by 2026.9.29.1 to .5 can hold
+    // one identity under two spellings, and a bom-ref is unique in a document.
+    std::set<std::string> listed;
+    std::erase_if(pkgs, [&](const auto& d) { return !listed.insert(purl(d)).second; });
+
     const auto& p = man->package;
-    const std::string rootNs = p.namespace_.empty() ? std::string("mcpp")
-                                                    : p.namespace_;
+    const std::string rootPurl = purl(p.namespace_, p.name, p.version);
 
     std::string out;
     out += "{\n";
@@ -133,13 +159,11 @@ int cmd_sbom(const mcpplibs::cmdline::ParsedArgs& parsed) {
          + esc(std::string(mcpp::MCPP_VERSION)) + "\" } ],\n";
     out += "    \"component\": {\n";
     out += "      \"type\": \"application\",\n";
-    out += "      \"bom-ref\": \"" + esc(std::format("pkg:mcpp/{}/{}@{}",
-                rootNs, p.name, p.version)) + "\",\n";
+    out += "      \"bom-ref\": \"" + esc(rootPurl) + "\",\n";
     out += "      \"name\": \"" + esc(p.name) + "\",\n";
     out += "      \"version\": \"" + esc(p.version) + "\",\n";
     out += licence_block(p.license) + "\n";
-    out += "      \"purl\": \"" + esc(std::format("pkg:mcpp/{}/{}@{}",
-                rootNs, p.name, p.version)) + "\"\n";
+    out += "      \"purl\": \"" + esc(rootPurl) + "\"\n";
     out += "    }\n";
     out += "  },\n";
     out += "  \"components\": [";
@@ -151,7 +175,7 @@ int cmd_sbom(const mcpplibs::cmdline::ParsedArgs& parsed) {
         out += "    {\n";
         out += "      \"type\": \"library\",\n";
         out += "      \"bom-ref\": \"" + esc(purl(d)) + "\",\n";
-        out += "      \"name\": \"" + esc(d.name) + "\",\n";
+        out += "      \"name\": \"" + esc(mcpp::pm::short_name(d)) + "\",\n";
         out += "      \"version\": \"" + esc(d.version) + "\",\n";
         if (!d.namespace_.empty())
             out += "      \"group\": \"" + esc(d.namespace_) + "\",\n";

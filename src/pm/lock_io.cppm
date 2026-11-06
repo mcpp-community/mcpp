@@ -67,6 +67,14 @@ struct LockedGitSource {
 
 std::optional<LockedGitSource> parse_git_source(std::string_view source);
 
+// The short name of a lock entry. An index entry is written under the map key
+// its declaring manifest used (`mcpplibs.cmdline` under `[dependencies.mcpplibs]`,
+// `cmdline` under a bare key), so the spelled name may carry its namespace as a
+// prefix; the identity is (namespace, short name) whichever way it was spelled.
+// An entry without a namespace (a git entry, keyed by the root's map key) is its
+// own short name.
+std::string short_name(const LockedPackage& p);
+
 struct Lockfile {
     int                                 schemaVersion = 2;
     std::vector<LockedIndex>            indices;
@@ -106,6 +114,15 @@ std::string index_package_digest(std::string_view indexNamespace,
 namespace mcpp::pm {
 
 namespace t = mcpp::libs::toml;
+
+std::string short_name(const LockedPackage& p) {
+    if (!p.namespace_.empty()) {
+        const std::string prefix = p.namespace_ + ".";
+        if (p.name.size() > prefix.size() && p.name.starts_with(prefix))
+            return p.name.substr(prefix.size());
+    }
+    return p.name;
+}
 
 std::expected<Lockfile, LockError> load(const std::filesystem::path& path) {
     if (!std::filesystem::exists(path)) {

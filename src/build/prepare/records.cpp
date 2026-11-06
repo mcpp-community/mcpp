@@ -81,24 +81,9 @@ namespace mcpp::build {
 // runs, called from it in the same order, and are declared in the `:state`
 // partition (state.cppm) as the phases are.
 
-// The short name of a lock entry. An index entry is written under the map key
-// its declaring manifest used (`mcpplibs.cmdline` under `[dependencies.mcpplibs]`,
-// `cmdline` under a bare key), so the spelled name may carry its namespace as a
-// prefix; the identity is (namespace, short name) whichever way it was spelled.
-// An entry without a namespace (a git entry, keyed by the root's map key) is its
-// own short name.
-static std::string lock_short_name(const mcpp::lockfile::LockedPackage& p) {
-    if (!p.namespace_.empty()) {
-        const std::string prefix = p.namespace_ + ".";
-        if (p.name.size() > prefix.size() && p.name.starts_with(prefix))
-            return p.name.substr(prefix.size());
-    }
-    return p.name;
-}
-
 // The identity two entries of one lock are compared by.
 static std::string lock_identity(const mcpp::lockfile::LockedPackage& p) {
-    return p.namespace_ + "\x1f" + lock_short_name(p);
+    return p.namespace_ + "\x1f" + mcpp::pm::short_name(p);
 }
 
 std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildContext& ctx) {
@@ -435,7 +420,7 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
                         lockPath.string()));
                 }
                 auto key = [](const mcpp::lockfile::LockedPackage& p) {
-                    const std::string sn = lock_short_name(p);
+                    const std::string sn = mcpp::pm::short_name(p);
                     return p.namespace_.empty() ? sn
                                                 : p.namespace_ + "." + sn;
                 };
