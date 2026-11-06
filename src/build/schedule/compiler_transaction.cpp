@@ -48,6 +48,28 @@ bool replace_record(const fs::path& path,std::string_view bytes,std::string* dia
                 }
                 noReplaceCode=static_cast<int>(noReplace.error().code);
             }
+#if defined(_WIN32)
+            // CI-only root-cause probe. Remove before merge: it intentionally
+            // compares the standard library's rename of this exact source to
+            // a distinct diagnostic name, without publishing the status.
+            if(noReplaceCode==static_cast<int>(os::errc::invalid)
+               && std::getenv("MCPP_TEST_NATIVE_RENAME")!=nullptr) {
+                const auto sourceLocation=os::fs::locate(temporary);
+                const auto targetLocation=os::fs::locate(path);
+                const auto readable=os::fs::read(temporary);
+                auto probe=temporary;probe+=".diagnostic";
+                std::error_code nativeError;
+                fs::rename(temporary,probe,nativeError);
+                if(!nativeError) {std::error_code ignored;fs::remove(probe,ignored);}
+                std::println(std::cerr,
+                    "mcpp: CI rename probe source-rel {} target-rel {} same-root {} KAL-read {} std-rename-code {} category {}",
+                    sourceLocation?sourceLocation->relative.size():0,
+                    targetLocation?targetLocation->relative.size():0,
+                    sourceLocation&&targetLocation&&sourceLocation->directory==targetLocation->directory,
+                    readable?0:static_cast<int>(readable.error().code),
+                    nativeError.value(),nativeError.category().name());
+            }
+#endif
             *diagnostic=std::format("rename temporary (condition {}, native {}; source regular {} ec {}; target exists {} ec {}; no-replace condition {})",
                 static_cast<int>(renamed.error().code),renamed.error().native,
                 fs::is_regular_file(source),sourceError.value(),fs::exists(target),targetError.value(),noReplaceCode);
