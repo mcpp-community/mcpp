@@ -11,6 +11,15 @@ permissions:
   contents: read
 
 jobs:
+  ofd-errno:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          clang -O1 -o ofd .github/probe/ofd.c
+          mkdir -p "$RUNNER_TEMP/slots" && ./ofd "$RUNNER_TEMP/slots"
+          ./ofd "$RUNNER_TEMP/slots" | awk -F': ' '{print $2}' | sort | uniq -c
+
   build-macos:
     uses: ./.github/workflows/build.yml
     with:
