@@ -312,6 +312,7 @@ std::optional<int> read_rc(const std::filesystem::path& slot) {
 
 // Temp file + rename, so a reader never observes half a number. The same
 // guarantee, for the same reason, that makes watching the BMI path sound.
+void record_supervisor_error(const std::filesystem::path& slot,std::string_view reason);
 bool write_rc(const std::filesystem::path& slot, int rc,std::string* diagnostic=nullptr) {
     std::string localDiagnostic;
     auto* detail=diagnostic?diagnostic:&localDiagnostic;
@@ -320,7 +321,7 @@ bool write_rc(const std::filesystem::path& slot, int rc,std::string* diagnostic=
     // CI-only: early supervisor failures have no caller-owned diagnostic.
     // Report their status-publication failure without printing private paths.
     if(!written&&!diagnostic)
-        std::println(std::cerr,"mcpp: CI early status publication: {}",localDiagnostic);
+        record_supervisor_error(slot,std::format("CI early status publication: {}",localDiagnostic));
 #endif
     return written;
 }

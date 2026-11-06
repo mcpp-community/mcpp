@@ -32,6 +32,7 @@ bool replace_record(const fs::path& path,std::string_view bytes,std::string* dia
             std::error_code sourceError, targetError;
             const auto source=fs::symlink_status(temporary,sourceError);
             const auto target=fs::symlink_status(path,targetError);
+            std::string probeReport;
             // A final status is a new name. If the replace form itself was
             // refused as invalid while that name is absent, try the atomic
             // no-replace form on the exact same source and destination. Its
@@ -60,8 +61,8 @@ bool replace_record(const fs::path& path,std::string_view bytes,std::string* dia
                 std::error_code nativeError;
                 fs::rename(temporary,probe,nativeError);
                 if(!nativeError) {std::error_code ignored;fs::remove(probe,ignored);}
-                std::println(std::cerr,
-                    "mcpp: CI rename probe source-rel {} target-rel {} same-root {} KAL-read {} std-rename-code {} category {}",
+                probeReport=std::format(
+                    "; CI probe source-rel {} target-rel {} same-root {} KAL-read {} std-rename-code {} category {}",
                     sourceLocation?sourceLocation->relative.size():0,
                     targetLocation?targetLocation->relative.size():0,
                     sourceLocation&&targetLocation&&sourceLocation->directory==targetLocation->directory,
@@ -69,9 +70,9 @@ bool replace_record(const fs::path& path,std::string_view bytes,std::string* dia
                     nativeError.value(),nativeError.category().name());
             }
 #endif
-            *diagnostic=std::format("rename temporary (condition {}, native {}; source regular {} ec {}; target exists {} ec {}; no-replace condition {})",
+            *diagnostic=std::format("rename temporary (condition {}, native {}; source regular {} ec {}; target exists {} ec {}; no-replace condition {}{})",
                 static_cast<int>(renamed.error().code),renamed.error().native,
-                fs::is_regular_file(source),sourceError.value(),fs::exists(target),targetError.value(),noReplaceCode);
+                fs::is_regular_file(source),sourceError.value(),fs::exists(target),targetError.value(),noReplaceCode,probeReport);
         }
     } else if(!written) {
         fail("write/flush temporary");
