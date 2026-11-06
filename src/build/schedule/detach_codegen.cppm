@@ -313,7 +313,16 @@ std::optional<int> read_rc(const std::filesystem::path& slot) {
 // Temp file + rename, so a reader never observes half a number. The same
 // guarantee, for the same reason, that makes watching the BMI path sound.
 bool write_rc(const std::filesystem::path& slot, int rc,std::string* diagnostic=nullptr) {
-    return transactions::replace_record(suffixed(slot,".rc"),std::to_string(rc)+"\n",diagnostic);
+    std::string localDiagnostic;
+    auto* detail=diagnostic?diagnostic:&localDiagnostic;
+    const bool written=transactions::replace_record(suffixed(slot,".rc"),std::to_string(rc)+"\n",detail);
+#if defined(_WIN32)
+    // CI-only: early supervisor failures have no caller-owned diagnostic.
+    // Report their status-publication failure without printing private paths.
+    if(!written&&!diagnostic&&std::getenv("MCPP_TEST_NATIVE_RENAME")!=nullptr)
+        std::println(std::cerr,"mcpp: CI early status publication: {}",localDiagnostic);
+#endif
+    return written;
 }
 
 // Stable kernel lock slots, shared by ordinary and detached compilers. The
