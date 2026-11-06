@@ -812,6 +812,10 @@ struct PrepareState {
         loadVersionDepVariant;
 
     std::map<ResolvedKey, ResolvedRecord> resolved;
+    // The features asked of each resolved dependency so far (by dep_manifests
+    // slot) and whether its default set is seeded: the union of its edges, as
+    // its feature-deps and forwards were walked (mcpp#897).
+    std::map<std::size_t, std::pair<std::vector<std::string>, bool>> depFeatureRequests;
     std::map<std::size_t, std::vector<std::pair<std::string, std::string>>>
         toolEnvByConsumer;
     // The programs the graph built for this machine at the ROOT's request
