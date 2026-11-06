@@ -370,8 +370,7 @@ Pinned toolsets coexist with each other and with a system Visual Studio.
 > refusing to use what is already installed would cost more than it buys:
 > Visual Studio is very often present and cannot always be redistributed.
 > `<family>@system` for any other family is an error that names both things
-> that may have been intended. (The family-less `[toolchain] … = "system"` — the PATH
-> compiler — is a separate and deliberate escape hatch, and is unaffected.)
+> that may have been intended.
 
 ### `[toolchain] … = "system"` — refused
 
