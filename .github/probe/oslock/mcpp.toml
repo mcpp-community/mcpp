@@ -1,0 +1,6 @@
+[package]
+name = "oslock"
+version = "0.1.0"
+
+[dependencies.mcpplibs]
+os = "0.3.0"

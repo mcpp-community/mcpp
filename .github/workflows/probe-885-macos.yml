@@ -40,6 +40,16 @@ jobs:
       - uses: ./.github/actions/use-built-mcpp
         with:
           host: macos-arm64
+      - name: mcpplibs.os lock::acquire under contention
+        run: |
+          cd .github/probe/oslock
+          "$MCPP" build --release > build.log 2>&1 || { tail -30 build.log; exit 1; }
+          bin=$(ls target/*/*/bin/oslock | head -1)
+          mkdir -p "$RUNNER_TEMP/oslots"
+          for p in 1 2 3 4 5 6 7 8; do "$bin" "$RUNNER_TEMP/oslots" > "$RUNNER_TEMP/os-$p.txt" 2>&1 & done
+          wait
+          cat "$RUNNER_TEMP"/os-*.txt | sort | awk -F': ' '{a[$1]+=$2} END {for (k in a) print k": "a[k]}'
+
       - name: The failing tests, instrumented, repeated
         run: |
           export MCPP MCPP_BOOT MCPP_VENDORED_XLINGS
