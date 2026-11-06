@@ -893,6 +893,8 @@ int supervise(const std::filesystem::path& slot,
             record_supervisor_error(slot,std::format("cannot publish compiler final status: {}",status_failure));
             return 1;
         }
+        if(!status_failure.empty())
+            std::println(std::cerr,"mcpp: {}",status_failure);
         if(!transactions::release_reservation(permit->reservation,attempt.directory)) {
             record_supervisor_error(slot,"cannot release compiler reservation");return 1;
         }

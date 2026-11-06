@@ -3,6 +3,7 @@
 export module mcpp.build.schedule.compiler_transaction;
 import std;
 import mcpplibs.os.fs;
+import mcpplibs.os.error;
 import mcpplibs.os.process;
 import mcpplibs.os.ipc;
 import mcpplibs.os.dirs;

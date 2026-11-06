@@ -6,6 +6,7 @@ import mcpp.run;
 import mcpp.invocation;
 import mcpp.runtime.elf;
 import mcpplibs.os.platform;
+import mcpplibs.os.fs;
 
 namespace tx = mcpp::build::schedule::transaction;
 namespace fs = std::filesystem;
@@ -249,6 +250,17 @@ TEST(CompilerTransaction, ReaderHeldTargetKeepsAnAtomicRecord) {
              <<(replaced?"replaced":diagnostic)<<'\n';
     EXPECT_EQ(Transaction::contents(record),replaced?"new":"old");
     EXPECT_EQ(std::string(std::istreambuf_iterator<char>(held),std::istreambuf_iterator<char>()),"old");
+}
+TEST(CompilerTransaction, NoReplacePublishesOnlyAnAbsentRecord) {
+    Transaction t;
+    const auto source=t.root/"new";
+    const auto target=t.root/"status";
+    std::ofstream(source)<<"ready";
+    ASSERT_TRUE(mcpplibs::os::fs::rename(source,target,false));
+    EXPECT_EQ(Transaction::contents(target),"ready");
+    std::ofstream(source)<<"later";
+    EXPECT_FALSE(mcpplibs::os::fs::rename(source,target,false));
+    EXPECT_EQ(Transaction::contents(target),"ready");
 }
 TEST(CompilerTransaction, RecordOpenAppearanceDriver) {
     if(!mcpp::invocation::get("MCPP_TEST_RECORD_OPEN_DRIVER"))GTEST_SKIP()<<"subprocess driver";

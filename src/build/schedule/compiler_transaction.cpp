@@ -32,9 +32,25 @@ bool replace_record(const fs::path& path,std::string_view bytes,std::string* dia
             std::error_code sourceError, targetError;
             const auto source=fs::symlink_status(temporary,sourceError);
             const auto target=fs::symlink_status(path,targetError);
-            *diagnostic=std::format("rename temporary (condition {}, native {}; source regular {} ec {}; target exists {} ec {})",
+            // A final status is a new name. If the replace form itself was
+            // refused as invalid while that name is absent, try the atomic
+            // no-replace form on the exact same source and destination. Its
+            // refusal is preserved as evidence rather than hidden by a loop.
+            int noReplaceCode=0;
+            const bool targetAbsent=target.type()==fs::file_type::not_found
+                || targetError==std::errc::no_such_file_or_directory;
+            if(renamed.error().code==os::errc::invalid && fs::is_regular_file(source)
+               && targetAbsent) {
+                auto noReplace=os::fs::rename(temporary,path,false);
+                if(noReplace) {
+                    *diagnostic="replace form refused absent target; no-replace published";
+                    return true;
+                }
+                noReplaceCode=static_cast<int>(noReplace.error().code);
+            }
+            *diagnostic=std::format("rename temporary (condition {}, native {}; source regular {} ec {}; target exists {} ec {}; no-replace condition {})",
                 static_cast<int>(renamed.error().code),renamed.error().native,
-                fs::is_regular_file(source),sourceError.value(),fs::exists(target),targetError.value());
+                fs::is_regular_file(source),sourceError.value(),fs::exists(target),targetError.value(),noReplaceCode);
         }
     } else if(!written) {
         fail("write/flush temporary");
