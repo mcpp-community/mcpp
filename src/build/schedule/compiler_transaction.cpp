@@ -25,8 +25,17 @@ bool replace_record(const fs::path& path,std::string_view bytes,std::string* dia
     if(written&&closed) {
         auto renamed=os::fs::rename(temporary,path,true);
         if(renamed)return true;
-        if(diagnostic)*diagnostic=std::format("rename temporary (condition {}, native {})",
-            static_cast<int>(renamed.error().code),renamed.error().native);
+        if(diagnostic) {
+            // The OpenKal condition does not retain the Windows NTSTATUS. These
+            // observations distinguish a blocked replacement from a source or
+            // parent failure without exposing private build paths in CI logs.
+            std::error_code sourceError, targetError;
+            const auto source=fs::symlink_status(temporary,sourceError);
+            const auto target=fs::symlink_status(path,targetError);
+            *diagnostic=std::format("rename temporary (condition {}, native {}; source regular {} ec {}; target exists {} ec {})",
+                static_cast<int>(renamed.error().code),renamed.error().native,
+                fs::is_regular_file(source),sourceError.value(),fs::exists(target),targetError.value());
+        }
     } else if(!written) {
         fail("write/flush temporary");
     } else {

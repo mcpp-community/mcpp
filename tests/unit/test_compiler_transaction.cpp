@@ -237,6 +237,19 @@ TEST(CompilerTransaction, FailedRenameReportsTheStageAndPreservesItsTarget) {
     EXPECT_TRUE(diagnostic.starts_with("rename temporary (condition "))<<diagnostic;
     EXPECT_TRUE(fs::is_directory(t.root/"record"));
 }
+TEST(CompilerTransaction, ReaderHeldTargetKeepsAnAtomicRecord) {
+    Transaction t;
+    const auto record=t.root/"record";
+    std::ofstream(record)<<"old";
+    std::ifstream held(record,std::ios::binary);
+    ASSERT_TRUE(held);
+    std::string diagnostic;
+    const bool replaced=tx::replace_record(record,"new",&diagnostic);
+    std::cout<<"READING reader-held record replacement: "
+             <<(replaced?"replaced":diagnostic)<<'\n';
+    EXPECT_EQ(Transaction::contents(record),replaced?"new":"old");
+    EXPECT_EQ(std::string(std::istreambuf_iterator<char>(held),std::istreambuf_iterator<char>()),"old");
+}
 TEST(CompilerTransaction, RecordOpenAppearanceDriver) {
     if(!mcpp::invocation::get("MCPP_TEST_RECORD_OPEN_DRIVER"))GTEST_SKIP()<<"subprocess driver";
     auto record=tx::read("record","schema");

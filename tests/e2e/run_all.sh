@@ -468,8 +468,8 @@ report() {
 }
 if [[ -n "${E2E_REPORT:-}" ]]; then : > "$E2E_REPORT"; fi
 
-# E2E_LIST=1 prints the tests this invocation would run (after E2E_ONLY and the
-# shard, before the capability check) and exits, so a shard's membership can be
+# E2E_LIST=1 prints the tests this invocation would run (after E2E_ONLY,
+# E2E_EXCLUDE and the shard, before the capability check) and exits, so a shard's membership can be
 # read without running it.
 if [[ "${E2E_LIST:-}" == "1" ]]; then
     for test in "$HERE"/[0-9]*.sh; do
@@ -477,6 +477,10 @@ if [[ "${E2E_LIST:-}" == "1" ]]; then
         if [[ -n "${E2E_ONLY:-}" ]]; then
             # shellcheck disable=SC2053 -- glob match is the point
             [[ "$name" == $E2E_ONLY ]] || continue
+        fi
+        if [[ -n "${E2E_EXCLUDE:-}" ]]; then
+            # shellcheck disable=SC2053 -- glob match is the point
+            [[ "$name" == $E2E_EXCLUDE ]] && continue
         fi
         if (( SHARD_TOTAL > 1 )); then in_shard "$name" || continue; fi
         echo "$name"
@@ -495,6 +499,15 @@ for test in "$HERE"/[0-9]*.sh; do
     name="$(basename "$test")"
     if (( SHARD_TOTAL > 1 )); then
         in_shard "$name" || continue
+    fi
+    if [[ -n "${E2E_EXCLUDE:-}" ]]; then
+        # shellcheck disable=SC2053 -- glob match is the point
+        if [[ "$name" == $E2E_EXCLUDE ]]; then
+            echo "SKIP: $name (owned by a dedicated workflow step)"
+            ((SKIP++))
+            report skip "$name" 0 "owned by a dedicated workflow step"
+            continue
+        fi
     fi
     echo
     missing_cap="$(check_requires "$test")"
