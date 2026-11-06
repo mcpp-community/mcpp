@@ -31,14 +31,30 @@ jobs:
       - uses: ./.github/actions/use-built-mcpp
         with:
           host: macos-arm64
-      - name: The failing tests, instrumented
+      - name: The failing tests, instrumented, repeated
         run: |
           export MCPP MCPP_BOOT MCPP_VENDORED_XLINGS
           export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
-          "$MCPP" self config
+          "$MCPP" self config > /dev/null
           "$MCPP" toolchain default "llvm@${MCPP_LLVM_VER}"
-          for t in 128_feature_forwarding 76_compile_commands_generated 924_visible_imports_resolve_transitive_modules 35_workspace; do
-            echo "::group::$t"
-            bash "tests/e2e/$t.sh" 2>&1 | tail -60 || true
-            echo "::endgroup::"
+          fails=0
+          for rep in $(seq 1 15); do
+            for t in 128_feature_forwarding 76_compile_commands_generated 924_visible_imports_resolve_transitive_modules 35_workspace; do
+              if ! bash "tests/e2e/$t.sh" > "$RUNNER_TEMP/$t.$rep.log" 2>&1; then
+                fails=$((fails+1)); echo "::group::FAIL $t rep $rep"; grep -E "probe885|mcpp:|error" "$RUNNER_TEMP/$t.$rep.log" | head -40; echo "::endgroup::"
+              fi
+            done
           done
+          echo "failures: $fails"
+      - name: One e2e shard as CI runs it
+        if: always()
+        env:
+          E2E_SHARD: 1/3
+          E2E_EXCLUDE: 721_*.sh
+          E2E_TIMINGS: tests/e2e/timings/macos.tsv
+        run: |
+          export MCPP MCPP_BOOT MCPP_VENDORED_XLINGS
+          export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
+          XLINGS_HOME="$HOME/.mcpp/registry" "$MCPP_VENDORED_XLINGS" install mcpplibs:cmdline@0.0.1 mcpplibs:cmdline@0.0.2 -y > /dev/null
+          bash tests/e2e/run_all.sh > "$RUNNER_TEMP/shard.log" 2>&1 || true
+          grep -E "probe885|^FAIL|E2E Summary" "$RUNNER_TEMP/shard.log" | head -80
