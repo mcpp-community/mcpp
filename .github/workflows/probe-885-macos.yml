@@ -19,6 +19,8 @@ jobs:
           clang -O1 -o ofd .github/probe/ofd.c
           mkdir -p "$RUNNER_TEMP/slots" && ./ofd "$RUNNER_TEMP/slots"
           ./ofd "$RUNNER_TEMP/slots" | awk -F': ' '{print $2}' | sort | uniq -c
+          clang -O1 -o ofd-first .github/probe/ofd-first.c
+          mkdir -p "$RUNNER_TEMP/first" && ./ofd-first "$RUNNER_TEMP/first"
 
   build-macos:
     uses: ./.github/workflows/build.yml
