@@ -5,7 +5,7 @@ status: active
 
 # Launch configuration and named test runners
 
-Status, 2026-11-06: implemented for candidate 2026.11.6.1. Focused local
+Status, 2026-11-06: implemented for candidate 2026.11.7.1. Focused local
 controls pass; final public-dependency and cross-platform CI remain pending.
 
 A consumer choosing a debugger runner needs the configuration of the program

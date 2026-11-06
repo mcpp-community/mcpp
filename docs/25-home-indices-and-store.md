@@ -90,7 +90,7 @@ configuration, so it remains usable while the network is broken.
 An install tracks byte progress and source changes separately for each active
 download. Time spent waiting for a download slot does not consume that budget.
 Progress on another file does not renew a stalled file's budget.
-From 2026.11.6.1, a stalled-download diagnostic names the file, elapsed interval
+From 2026.11.7.1, a stalled-download diagnostic names the file, elapsed interval
 and source attempt. Provider preparation and process timeouts are reported
 separately. Mirror selection
 uses `mcpp self config --mirror auto`, `CN` or `GLOBAL`.

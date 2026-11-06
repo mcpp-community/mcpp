@@ -170,7 +170,7 @@ or a QEMU exit code is what a bare-metal runner is chosen to produce.
 `--no-runner` exists for a host that can execute the binaries natively and
 should not pay for an emulator.
 
-`--runner <name>` (2026.11.6.1+) selects a named runner instead of the default,
+`--runner <name>` (2026.11.7.1+) selects a named runner instead of the default,
 using the same declarations and argument substitution as `mcpp run --runner`.
 It also applies to `--print-launch` and tests read from an archive. An absent
 runner name is refused; `--runner` and `--no-runner` cannot be combined.

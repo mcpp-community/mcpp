@@ -361,7 +361,7 @@ mcpp run   --target x86_64-openkal      # okrun bin/app.oke
 无需其他声明（2026.10.27.1+）：目标表为两行选择 `openkal-platform`，由平台陈述工具链、各层、工具、下表的约定
 与 runner（[35](35-platforms.md)）。
 
-两个内置 openkal 目标默认选择平台 0.24.0（2026.11.6.1+）。显式 `platform` 配置可覆盖默认选择；
+两个内置 openkal 目标默认选择平台 0.24.0（2026.11.7.1+）。显式 `platform` 配置可覆盖默认选择；
 该平台的最终 ThinLTO 链接保持 emulated TLS 约定。
 
 OS 0.3 使用 OpenKal 0.24 依赖组。保留 OS 0.2.9 的工程显式选择匹配的 0.23 平台组；

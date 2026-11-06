@@ -212,7 +212,7 @@ No runtime generation becomes a dependency version or build-cache identity.
 | C++ runtime | 0.19.0 | [Runtime 66](https://github.com/mcpplibs/openkal-llvm-runtime/pull/66) |
 | Platform | 0.24.0 | Publication follows its public lower dependencies |
 | OS composition | 0.3.0 | [OS 17](https://github.com/mcpplibs/os/pull/17) |
-| Core | 2026.11.6.1 | [mcpp 889](https://github.com/mcpp-community/mcpp/pull/889) |
+| Core | 2026.11.7.1 | [mcpp 889](https://github.com/mcpp-community/mcpp/pull/889) |
 
 OS advances to 0.3.0 so an explicit range such as `^0.2.3` cannot silently
 absorb a different OpenKal minor group. Bare package versions name exact wire
@@ -229,16 +229,16 @@ changes the state output from `empty` to `unknown`.
 
 Source-group controls establish implementation behaviour. The lower versions,
 including platform 0.24.0 and OS 0.3.0, are now publicly released and indexed;
-their ordinary consumers have been checked. Core 2026.11.6.1 uses those pins
+their ordinary consumers have been checked. Core 2026.11.7.1 uses those pins
 and still requires full exact-head CI, an independent ecosystem review,
 canonical tag archives, byte-identical CN mirrors, a published index entry and
 ordinary GLOBAL/CN consumers. Plugins PR 52 retains the published
-2026.11.5.1 pin until core 2026.11.6.1 is published, then runs its actual
+2026.11.5.1 pin until core 2026.11.7.1 is published, then runs its actual
 sidecar integration and final CI.
 
 ## 2026-11-06 final-head CI failure controls
 
-The first 2026.11.6.1 CI run exposed four distinct boundaries. Clang/libc++
+The first 2026.11.7.1 CI run exposed four distinct boundaries. Clang/libc++
 uses a wider file-clock tick representation than `std::to_string` accepts;
 the journal now rejects values outside its signed 64-bit schema and preserves
 in-range ticks. A direct exact-toolchain control compiled the failing expression

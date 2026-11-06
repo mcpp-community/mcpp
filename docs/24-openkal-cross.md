@@ -411,7 +411,7 @@ Nothing else is declared (2026.10.27.1+): the target table selects
 `openkal-platform` for both rows, and the platform states the toolchain, the
 layers, the tools, the conventions below and the runner ([35](35-platforms.md)).
 
-Both built-in openkal targets select platform 0.24.0 by default (2026.11.6.1+).
+Both built-in openkal targets select platform 0.24.0 by default (2026.11.7.1+).
 An explicit `platform` configuration overrides that selection. This platform
 preserves the emulated TLS convention through the final ThinLTO link.
 
