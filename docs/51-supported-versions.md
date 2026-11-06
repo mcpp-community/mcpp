@@ -113,7 +113,10 @@ mcpp emit sbom -o sbom.json
 It reads `mcpp.lock` rather than resolving again, because a document describing
 a different graph from the one that was built is worse than no document. A
 component whose licence mcpp does not know is emitted as `NOASSERTION` rather
-than omitted: an absent field reads as "not examined".
+than omitted: an absent field reads as "not examined". With no `mcpp.lock` the
+document names the root package alone, and a note on standard error says that
+nothing is recorded: that is the whole truth for a project with no dependencies,
+and not for one that has never been built.
 
 ## Offline and air-gapped use
 

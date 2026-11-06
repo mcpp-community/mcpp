@@ -101,6 +101,21 @@ esac
 echo "  ok  --locked names the package that moved and both versions"
 mv mcpp.lock.bak mcpp.lock
 
+# A LOCK THAT IS NOT THERE IS NOT A LOCK THAT DIFFERS. The refusal says what to
+# do about it, and writes no lock for the next run to pass against.
+mv mcpp.lock mcpp.lock.bak
+if out=$("$MCPP" build --locked 2>&1); then
+    echo "FAIL: --locked accepted a project with no mcpp.lock"
+    echo "$out" | tail -3; exit 1
+fi
+case "$out" in
+    *"no readable mcpp.lock"*) ;;
+    *) echo "FAIL: the refusal does not say the lock is missing"; echo "$out"; exit 1 ;;
+esac
+test ! -e mcpp.lock || { echo "FAIL: a refused --locked wrote mcpp.lock"; exit 1; }
+mv mcpp.lock.bak mcpp.lock
+echo "  ok  --locked says a missing lock is missing"
+
 # ── E: the bill of materials describes the RECORDED resolution ─────────────
 "$MCPP" emit sbom -o sbom.json >/dev/null 2>&1 || { echo "FAIL: mcpp emit sbom"; exit 1; }
 python3 - <<'PY' || exit 1
@@ -134,6 +149,18 @@ assert v == ["7.7.7"], f"sbom re-resolved instead of reading the lock: {v}"
 print("  ok  sbom reads the lock rather than re-resolving")
 PY
 mv mcpp.lock.bak mcpp.lock
+
+# NOTHING RECORDED IS SAID ON THE NARRATION STREAM, AND THE DOCUMENT STAYS VALID.
+# A root-only bill of materials is true of a project with no dependencies and
+# false of one that was never built, and only the reader knows which this is.
+mv mcpp.lock mcpp.lock.bak
+"$MCPP" emit sbom > sbom3.json 2> sbom3.err || { echo "FAIL: mcpp emit sbom with no lock"; exit 1; }
+grep -q 'no mcpp.lock' sbom3.err \
+    || { echo "FAIL: sbom did not say that nothing was recorded"; cat sbom3.err; exit 1; }
+python3 -c 'import json; assert json.load(open("sbom3.json"))["components"] == []' \
+    || { echo "FAIL: sbom with no lock is not a root-only document"; exit 1; }
+mv mcpp.lock.bak mcpp.lock
+echo "  ok  sbom says when no lock records the resolution"
 
 # ── B: one board package, two environments, chosen by the consumer ─────────
 #
