@@ -30,6 +30,7 @@ int main(int argc, char** argv) {
             }
             for (int e = 0; e < 128; ++e)
                 if (counts[e]) printf("child %d: %s (%d): %d\n", p, e ? strerror(e) : "acquired", e, counts[e]);
+            fflush(stdout);
             _exit(0);
         }
     }
