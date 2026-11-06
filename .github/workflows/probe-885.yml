@@ -1,0 +1,76 @@
+name: probe-885
+
+# [temp][do not merge] Measures O1/O2 of
+# .agents/docs/2026-11-07-ecosystem-885-closeout-review-and-plan.md:
+# the windows-host linux cross build of mcpp, repeated, on one commit's binary.
+# Each repetition prints and never asserts beyond the original job's own check.
+
+on:
+  pull_request:
+
+concurrency:
+  group: probe-885-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    uses: ./.github/workflows/build.yml
+    with:
+      host: windows-x86_64
+      runs-on: windows-latest
+
+  cross:
+    needs: build-windows
+    name: windows→linux cross-build rep ${{ matrix.rep }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        rep: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - uses: ./.github/actions/use-built-mcpp
+        with:
+          host: windows-x86_64
+      - name: Name this commit's mcpp MCPP_SELF
+        shell: bash
+        run: |
+          "$MCPP_FRESH" --version
+          echo "MCPP_SELF=$MCPP_FRESH" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/okprobe"
+          echo "MCPP_PROBE_885=$RUNNER_TEMP/okprobe" >> "$GITHUB_ENV"
+      - name: Install the linux-musl cross toolchain (windows-hosted canadian)
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP_SELF" toolchain install gcc 16.1.0 --target x86_64-linux-musl
+          "$MCPP_SELF" toolchain list | grep -q "x86_64-linux-musl"
+      - name: "Cross-build mcpp -> x86_64-linux-musl"
+        id: cross
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          start=$(date +%s)
+          set +e
+          "$MCPP_SELF" build --target x86_64-linux-musl 2>&1 | tee "$RUNNER_TEMP/cross.log"
+          rc=${PIPESTATUS[0]}
+          echo "rc=$rc seconds=$(( $(date +%s) - start ))" | tee "$RUNNER_TEMP/cross.rc"
+          exit $rc
+      - name: Summarise
+        if: always()
+        shell: bash
+        run: bash .github/probe/summarise.sh "${{ matrix.rep }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-885-rep-${{ matrix.rep }}
+          path: |
+            ${{ runner.temp }}/okprobe
+            ${{ runner.temp }}/cross.log
+            ${{ runner.temp }}/cross.rc
+          retention-days: 14
