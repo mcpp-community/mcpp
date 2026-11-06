@@ -1049,7 +1049,7 @@ with two behaviours has to be.
 `bmi_schedule` decides when importers are unblocked.
 
 With GCC and `bmi_schedule = "on"`, ordinary compilation and detached code
-generation share the same total `jobs` limit (2026.11.5.2+). Additional
+generation share the same total `jobs` limit (2026.11.6.1+). Additional
 scheduling and join tasks do not increase the number of compiler processes.
 Cancelling the build ends its ordinary and detached compilers. An immediately
 following build waits for their cleanup before starting another compiler;

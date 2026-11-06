@@ -4,10 +4,16 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
-## [2026.11.5.2] - 2026-11-05
+## [2026.11.6.1] - 2026-11-06
 
 ### Fixed
 
+- Launch descriptions include the selected target, profile, resolved platform
+  and available named runners, including the reachable leg of a target set.
+  Editor debug launches can retain the configuration that actually built the program.
+- Tests accept `--runner <name>` with the same runner resolution as `run`,
+  including `--print-launch` and archive execution. Missing names and a
+  simultaneous `--no-runner` are refused.
 - Cached builds load action ownership when an action starts, so internal progress
   appears while Ninja is still buffering stdout. Idle builds retain lazy loading;
   command results and output checks remain authoritative.

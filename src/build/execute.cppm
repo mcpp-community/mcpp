@@ -1519,6 +1519,15 @@ export struct RunnerOnThisMachine {
     std::string refusal;           // non-empty: runs are refused here, and why
 };
 
+nlohmann::json launch_configuration(const BuildContext& ctx) {
+    auto runners = nlohmann::json::array();
+    for (const auto& [name, entry] : ctx.plan.platform.fields.runners)
+        if (!entry.value.empty()) runners.push_back(name);
+    return {{"triple", ctx.tc.targetTriple}, {"profile", ctx.profile},
+            {"platform", nlohmann::json::parse(mcpp::platform::to_json(ctx.plan.platform), nullptr, false)},
+            {"runners", std::move(runners)}};
+}
+
 export RunnerOnThisMachine runner_on_this_machine(const BuildContext& ctx) {
     RunnerOnThisMachine out;
     const auto choice = choose_runner(ctx);
@@ -3314,6 +3323,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
                                              mcpp::wire::Effect::WriteProject}};
         env.data = mcpp::build::result::to_json(launch);
         env.data["program"] = exe.generic_string();
+        env.data["configuration"] = launch_configuration(ctx);
         mcpp::wire::emit(env);
         return 0;
     }
@@ -3734,6 +3744,7 @@ export struct TestOptions {
     // runner — the operator on this host stating that the triple is native
     // here, a fact the manifest has no axis for (#544, D3).
     bool               noRunner = false;
+    std::string        runnerName;  // empty: the default runner, as in `mcpp run`
     // `--no-run`: build the tests for `--target` and stop. THE CLAIM IT MAKES
     // IS NARROWER THAN A PASS, AND IT IS STATED RATHER THAN INFERRED.
     //
@@ -4171,8 +4182,15 @@ static void test_bulk(TestBuild& tb, const TestOptions& testOpts, Keep&& keep) {
 // holds under a runner exactly as it does on the host.
 static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool json) {
     auto* ctx = &*tb.ctx;
-    tb.runnerChoice = choose_runner(*ctx, testOpts.noRunner);
+    tb.runnerChoice = choose_device_action(*ctx, testOpts.runnerName, testOpts.noRunner);
     auto& runnerChoice = tb.runnerChoice;
+    if (!testOpts.runnerName.empty() && runnerChoice.tmpl.empty()) {
+        tb.invocationNotRunReason = std::format("no runner named '{}' for '{}'",
+                                                testOpts.runnerName, runnerChoice.tripleKey);
+        std::println(stderr, "error: {}", tb.invocationNotRunReason);
+        tb.runnerFatal = 2;
+        return;
+    }
     if (runnerChoice.ignored && !json)
         mcpp::ui::info("note", std::format(
             "--no-runner: ignoring the runner declared for {}", runnerChoice.tripleKey));
@@ -4640,6 +4658,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         env.data = mcpp::build::result::to_json(launch);
         env.data["program"] = chosen->program.generic_string();
         env.data["test"] = chosen->name;
+        env.data["configuration"] = launch_configuration(*ctx);
         mcpp::wire::emit(env);
         return 0;
     }

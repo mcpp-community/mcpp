@@ -1002,6 +1002,13 @@ starting it. `data` is `program`, `argv`, `cwd`, `env` and `via`, as
 `launch` above. `--print-launch` takes no `--format`: on `mcpp run`, `--pkg-format`
 names a distributable.
 
+`data.configuration` (2026.11.6.1+) contains the selected program's `triple`,
+`profile` and resolved `platform`, using the same fields as the build record's
+configuration. For a target set it describes the leg selected for this launch.
+`configuration.runners` lists the available named runners, including project
+declarations when `platform` is null. Older engines omit `configuration`;
+consumers check for its presence.
+
 ```
 mcpp test <name> --print-launch [-- <arguments>]
 ```

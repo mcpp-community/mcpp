@@ -1186,6 +1186,11 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     if (parsed.positional_count() > 0) to.filter = parsed.positional(0);
     to.list = parsed.is_flag_set("list");
     to.noRunner = parsed.is_flag_set("no-runner");   // see cmd_run
+    if (auto runner = parsed.value("runner")) to.runnerName = *runner;
+    if (to.noRunner && !to.runnerName.empty()) {
+        mcpp::ui::error("--runner and --no-runner cannot be combined");
+        return 2;
+    }
     to.noRun    = parsed.is_flag_set("no-run");
     // The two read alike and mean opposite things: `--no-runner` says to run
     // the binaries WITHOUT the declared runner, `--no-run` says not to run

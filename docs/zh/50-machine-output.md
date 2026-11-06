@@ -890,6 +890,11 @@ mcpp run [target] --print-launch
 `argv`、`cwd`、`env` 与 `via`，同上文的 `launch`。`--print-launch` 不接受
 `--format`：在 `mcpp run` 上，`--pkg-format` 表示可分发物的格式。
 
+`data.configuration`（2026.11.6.1+）包含所选程序的 `triple`、`profile` 与解析后的
+`platform`，字段与构建记录的 configuration 相同。目标集合中，它描述本次启动所选的
+目标。`configuration.runners` 列出可用的具名运行器，包括 platform 为 null 时
+项目声明的运行器。旧引擎不提供 `configuration`；消费者检查该字段是否存在。
+
 ```
 mcpp test <name> --print-launch [-- <参数>]
 ```

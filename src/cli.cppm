@@ -865,6 +865,8 @@ int run(int argc, char** argv) {
                 .help("List (filtered) tests without building or running them"))
             .option(cl::Option("no-runner")
                 .help("Run test binaries directly, ignoring any [target.<triple>].runner (a host that runs them natively)"))
+            .option(cl::Option("runner").takes_value().value_name("NAME")
+                .help("Run tests through this named runner instead of the default runner"))
             .option(cl::Option("print-launch")
                 .help("Build the one test PATTERN names, then print how it would be started (the mcpp.launch envelope, as `mcpp run --print-launch` prints) instead of running it; arguments after `--` are in its argv"))
             .option(cl::Option("no-run")

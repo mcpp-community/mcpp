@@ -82,6 +82,17 @@ grep -q "image of the set" c.log || fail "C: the program did not run" c.log
 grep -q "Leg.*$HT" c.log || fail "C: the run does not say which leg" c.log
 echo "ok: run runs this machine's leg"
 
+# The launch describes the leg run selected, not the first self-env report.
+"$MCPP" run --target "$OT" --target "$HT" --print-launch > c-launch.json 2> c-launch.err \
+    || fail "C: selected leg launch" c-launch.err
+python3 - c-launch.json "$HT" <<'PY' || fail "C: launch configuration is not the selected leg" c-launch.json
+import json,sys
+data=json.load(open(sys.argv[1]))["data"]
+assert data["configuration"]["triple"] == sys.argv[2], data
+assert data["configuration"]["profile"] == "dev", data
+assert data["configuration"]["platform"], data
+PY
+
 # D
 "$MCPP" test --target openkal > d.log 2>&1 || fail "D: mcpp test --target openkal" d.log
 grep -q "smoke ... ok" d.log || fail "D: this machine's leg did not pass" d.log

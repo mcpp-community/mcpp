@@ -170,6 +170,18 @@ or a QEMU exit code is what a bare-metal runner is chosen to produce.
 `--no-runner` exists for a host that can execute the binaries natively and
 should not pay for an emulator.
 
+`--runner <name>` (2026.11.6.1+) selects a named runner instead of the default,
+using the same declarations and argument substitution as `mcpp run --runner`.
+It also applies to `--print-launch` and tests read from an archive. An absent
+runner name is refused; `--runner` and `--no-runner` cannot be combined.
+
+For a platform that declares `debuggee`, this builds one test and prints the
+command a debugger starts, without starting the test:
+
+```bash
+mcpp test unit/math --runner debuggee --print-launch
+```
+
 `--no-run` makes the narrower claim, and it has to be asked for. Without it, a
 target this host can neither execute nor reach through a runner leaves every
 test not run and the command exits 2: mcpp did not establish whether the tests

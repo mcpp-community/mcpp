@@ -151,6 +151,17 @@ mcpp test --target aarch64-macos --no-run    # build the tests for the target an
 
 `--no-runner` 是为「本机能原生执行这些二进制、不该为模拟器付代价」的宿主准备的。
 
+`--runner <name>`（2026.11.6.1+）选择具名运行器代替默认运行器，声明与参数替换
+规则与 `mcpp run --runner` 相同。该选项同样适用于 `--print-launch` 与从归档读取的
+测试。不存在的运行器名称会被拒绝；`--runner` 与 `--no-runner` 不能同时使用。
+
+对于声明了 `debuggee` 的平台，以下命令构建一个测试，打印调试器要启动的命令，
+但不启动测试：
+
+```bash
+mcpp test unit/math --runner debuggee --print-launch
+```
+
 `--no-run` 做出的是更窄的断言，且必须显式要求。不给它时，一个本机既无法执行、也没有
 runner 可达的目标，会让每个测试都停在「未运行」，命令退出 2：mcpp 没有查明这些测试
 是否通过，把这种情况报成成功，是本仓记录得最多的一种假读数。但 2 同样是 runner
