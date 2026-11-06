@@ -533,6 +533,18 @@ struct PrepareState {
     }
     std::vector<PlanNote> planNotes;
     std::map<std::string, mcpp::pm::LockedGitSource> gitLockAnchors;
+    // The versions mcpp.lock records for the packages the platform put in the
+    // graph (`origin = "platform"`), by qualified name: a platform selected by a
+    // series (`^0.24`) is taken at the recorded release while it satisfies the
+    // series, until `mcpp update` drops the entry (SPEC-013 §14).
+    std::map<std::string, std::string> platformLockAnchors;
+    // THE PLATFORM'S VERSION GROUP AS A CONSTRAINT (SPEC-013 §7.5): its
+    // `[platform.versions]`, read as soon as the platform package is in the
+    // graph, so that each later request of a member resolves to the group's
+    // version or is refused naming both.
+    std::map<std::string, std::string> platformGroup;
+    std::string platformGroupFrom;   // `openkal-platform 0.24.1`, for a refusal
+    bool platformGroupRead = false;
     std::map<std::string, std::string> packageIdentityLockAnchors;
     // mcpp.lock as this run read it (design 2026-10-26 §4.1): the write at the
     // end compares, so a lock another run wrote meanwhile is not overwritten.

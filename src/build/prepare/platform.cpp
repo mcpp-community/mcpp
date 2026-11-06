@@ -31,6 +31,7 @@ import mcpp.targetside;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.platform;
 import mcpp.ui;
+import mcpp.version_req;
 import mcpp.freestanding.linkline;
 
 namespace mcpp::build {
@@ -238,6 +239,23 @@ void step4b_seed_platform(PrepareState& state) {
     item.spec.declaredIn = "the platform";
     item.requestedBy = state.m->package.name + " (platform)";
     item.originalConstraint = item.spec.version;
+    // A SERIES TAKES THE RELEASE THE LOCK RECORDS (SPEC-013 §14): a platform
+    // selected as `^0.24` (the target table's default) resolves to the newest
+    // release of the series once, and mcpp.lock keeps it there until
+    // `mcpp update` drops the entry; a recorded release outside the series is
+    // not taken.
+    if (!item.spec.isPath() && !item.spec.isGit()) {
+        const auto qualified = item.spec.namespace_ + "." + item.spec.shortName;
+        if (auto anchor = state.platformLockAnchors.find(qualified);
+            anchor != state.platformLockAnchors.end())
+            if (auto req = mcpp::version_req::parse_req(item.spec.version))
+                if (auto v = mcpp::version_req::parse_version(anchor->second);
+                    v && mcpp::version_req::matches(*req, *v) && item.spec.version != anchor->second) {
+                    mcpp::ui::info("Platform", std::format("{} {} → v{} (mcpp.lock)",
+                        item.spec.shortName, item.spec.version, anchor->second));
+                    item.spec.version = "=" + anchor->second;
+                }
+    }
     item.consumerDepIndex = kMainConsumer;
     state.worklist.push_front(std::move(item));
 }

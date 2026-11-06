@@ -679,6 +679,12 @@ std::expected<void, std::string> phase0_manifest_and_workspace(PrepareState& sta
                             p.name, p.namespace_);
                     if (auto parsed = mcpp::pm::parse_git_source(p.source); parsed)
                         state.gitLockAnchors.emplace(p.name, std::move(*parsed));
+                    if (p.origin == "platform" && !p.version.empty()) {
+                        const std::string qualified = p.namespace_.empty()
+                                || p.name.starts_with(p.namespace_ + ".")
+                            ? p.name : p.namespace_ + "." + p.name;
+                        state.platformLockAnchors.emplace(qualified, p.version);
+                    }
                 }
             } else {
                 // Degraded, not a plain warning: the engine silently does less

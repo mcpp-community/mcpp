@@ -113,7 +113,7 @@ The first of these that answers selects the target's platform:
 
 | Source | Spelling |
 |---|---|
-| the command line | `--platform openkal-platform@0.24.0`, `--platform path:../openkal-platform`, `--platform none` |
+| the command line | `--platform openkal-platform@0.24.1`, a series `--platform openkal-platform@^0.24`, `--platform path:../openkal-platform`, `--platform none` |
 | the environment | `MCPP_TARGET_X86_64_OPENKAL_PLATFORM=…` |
 | the project | `[target.<selector>] platform = "openkal-platform@0.24.0"`, or `{ path = "…" }` |
 | this machine | the same key in `~/.mcpp/config.toml` |
@@ -160,20 +160,39 @@ same system and architecture that it serves.
 
 ## The version group
 
-`[platform.versions]` names one version of each package of a family whose
-packages pin one another exactly. A graph that holds another version of one of
-them is refused before anything compiles:
+`[platform.versions]` names one version of each package of a family. From mcpp
+2026.11.7.1 the group chooses: the platform is the first package the graph
+resolves, and each later request of a package the group lists, by version,
+resolves to the group's version when its constraint admits it, though the index
+holds a newer patch. openkal's packages name one another by compatible ranges
+(`openkal-musl = "^0.28.0"`), so the group's choice is what a build links. A
+request the group's version does not satisfy is refused before anything
+compiles:
 
 ```
-error: openkal-musl 0.22.2 is in this build, and the platform openkal-platform 0.24.0 is a version group that names openkal-musl 0.28.0.
-       requested by: own
-       The family's packages pin one another exactly, so two versions of one of
-       them cannot be linked into one program. Either select the platform release
-       of that version ([target.<selector>] platform = "openkal-platform@<version>"), or write
-       openkal-musl = "0.28.0" where it is requested.
+error: openkal-musl is requested as '^0.27.0' by app, and the platform openkal-platform 0.24.1 is a version group
+       that names openkal-musl 0.28.1.
+       The group chooses one version of each package of the family for a
+       build. Either select the platform release of the version you need
+       ([target.<selector>] platform = "openkal-platform@<version>"), or admit 0.28.1 where
+       it is requested (openkal-musl = "^0.28.1").
 ```
 
-A package taken from a directory or a repository is not bound by the group.
+A package built for this machine only (a tool's) and a package taken from a
+directory or a repository are not bound by the group. An mcpp before
+2026.11.7.1 checks the group after resolution instead; a family released as one
+index change resolves the same either way.
+
+## The built-in platform is a series
+
+The target table selects `openkal-platform@^0.24` for the two ok-image targets:
+a series. A series takes its newest release whose `[package] mcpp` floor this
+mcpp meets, naming each release it skips for a newer engine, and `mcpp.lock`
+records it; the next build takes the recorded release while the series admits
+it. `mcpp update` (or `mcpp update openkal-platform`) drops the record, and the
+build after it takes the newest release again. A project selects a series of
+its own the same way, `platform = "openkal-platform@^0.24"`, and an exact
+release with a version.
 
 ## Writing a platform package
 
