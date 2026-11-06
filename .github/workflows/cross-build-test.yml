@@ -529,7 +529,6 @@ jobs:
         shell: bash
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          export MCPP_TEST_NATIVE_RENAME=1 # CI-only diagnosis; remove before release
           "$MCPP_SELF" build --target x86_64-linux-musl
           # Scope the search to the TARGET's output tree — target/ also holds the
           # host build from the previous step, and both are named "mcpp*".

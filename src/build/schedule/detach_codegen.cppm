@@ -319,7 +319,7 @@ bool write_rc(const std::filesystem::path& slot, int rc,std::string* diagnostic=
 #if defined(_WIN32)
     // CI-only: early supervisor failures have no caller-owned diagnostic.
     // Report their status-publication failure without printing private paths.
-    if(!written&&!diagnostic&&std::getenv("MCPP_TEST_NATIVE_RENAME")!=nullptr)
+    if(!written&&!diagnostic)
         std::println(std::cerr,"mcpp: CI early status publication: {}",localDiagnostic);
 #endif
     return written;

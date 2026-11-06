@@ -52,8 +52,7 @@ bool replace_record(const fs::path& path,std::string_view bytes,std::string* dia
             // CI-only root-cause probe. Remove before merge: it intentionally
             // compares the standard library's rename of this exact source to
             // a distinct diagnostic name, without publishing the status.
-            if(noReplaceCode==static_cast<int>(os::errc::invalid)
-               && std::getenv("MCPP_TEST_NATIVE_RENAME")!=nullptr) {
+            if(noReplaceCode==static_cast<int>(os::errc::invalid)) {
                 const auto sourceLocation=os::fs::locate(temporary);
                 const auto targetLocation=os::fs::locate(path);
                 const auto readable=os::fs::read(temporary);
