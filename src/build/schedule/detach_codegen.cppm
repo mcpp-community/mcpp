@@ -533,6 +533,18 @@ int run_to_completion(std::string_view command,
     return owner.active() ? r.exit_code : 130;
 }
 
+void record_supervisor_error(const std::filesystem::path& slot,std::string_view reason) {
+    // Detached supervisors have null stdio. Keep the failure beside the
+    // compiler's ordinary log so either waiter can report why status is absent.
+    std::ofstream log(suffixed(slot,".log"),std::ios::app);
+    if(log)log << "mcpp: " << reason << '\n';
+}
+
+void replay_supervisor_log(const std::filesystem::path& slot) {
+    std::ifstream log(suffixed(slot,".log"));
+    if(log)std::cerr << log.rdbuf();
+}
+
 std::expected<void,std::string> retire_owned(mcpplibs::os::process::owned_unit& unit,const Owner& owner) {
     const auto limit=std::chrono::steady_clock::now()+std::chrono::seconds(5);
     for(;;) {
@@ -812,6 +824,7 @@ int compile_release_at_bmi(const CompileRequest& req) {
                 // The final status can be published between the first read and
                 // this liveness observation. The next iteration validates it.
                 if(read_rc(actual.slot))continue;
+                replay_supervisor_log(actual.slot);
                 std::println(std::cerr,"mcpp: compiler controller ended without a final status; retaining its outputs until unit recovery");
                 return 1;
             }
@@ -872,10 +885,13 @@ int supervise(const std::filesystem::path& slot,
         }
         const int rc=run_to_completion(command,suffixed(slot,".log"),actor->owner,unit.get());
         if(auto retired=retire_owned(*unit,actor->owner);!retired) {
-            std::println(std::cerr,"mcpp: {}",retired.error());return 1;
+            record_supervisor_error(slot,retired.error());return 1;
         }
-        if(!attempt.retired(rc)||!write_rc(slot,rc))return 1;
-        if(!transactions::release_reservation(permit->reservation,attempt.directory))return 1;
+        if(!attempt.retired(rc)) {record_supervisor_error(slot,"cannot publish compiler retirement certificate");return 1;}
+        if(!write_rc(slot,rc)) {record_supervisor_error(slot,"cannot publish compiler final status");return 1;}
+        if(!transactions::release_reservation(permit->reservation,attempt.directory)) {
+            record_supervisor_error(slot,"cannot release compiler reservation");return 1;
+        }
         return 0;
     }
     auto settled = std::make_shared<std::atomic<bool>>(false);
@@ -956,6 +972,7 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
                 // A controller may publish its status and exit after the read
                 // in the loop condition. Let the normal result path inspect it.
                 if((rc=read_rc(slot)))break;
+                replay_supervisor_log(slot);
                 std::println(std::cerr,"mcpp: compiler controller ended without a status; unit recovery will retain or invalidate its outputs");
                 return 1;
             }

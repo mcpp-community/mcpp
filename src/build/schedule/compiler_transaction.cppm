@@ -44,7 +44,12 @@ Record read(const fs::path& path, std::string_view tag) {
     if (!input) {
         std::error_code ec;
         if (!fs::exists(path,ec) && !ec) return std::optional<Fields>{};
-        return std::unexpected("cannot read compiler transaction record");
+        if(ec)return std::unexpected("cannot read compiler transaction record");
+        // An atomic publisher may install the record between the failed open
+        // and the existence probe. Retry once; a persistent refusal still
+        // fails rather than being mistaken for an absent record.
+        input.open(path,std::ios::binary);
+        if(!input)return std::unexpected("cannot read compiler transaction record");
     }
     std::string bytes(65537,'\0');
     input.read(bytes.data(),bytes.size());bytes.resize(static_cast<std::size_t>(input.gcount()));
@@ -99,7 +104,10 @@ std::optional<long long> journal_time(fs::file_time_type time) {
 }
 std::optional<Fields> identity(const fs::path& path) {
     if(path.empty())return Fields{"", ""};
-    std::error_code ec;const auto size=fs::file_size(path,ec);if(ec)return {};
+    std::error_code ec;
+    const auto status=fs::symlink_status(path,ec);
+    if(ec||status.type()!=fs::file_type::regular)return {};
+    const auto size=fs::file_size(path,ec);if(ec)return {};
     const auto time=fs::last_write_time(path,ec);if(ec)return {};
     const auto ticks=journal_time(time);if(!ticks)return {};
     return Fields{std::to_string(size),std::to_string(*ticks)};
@@ -377,21 +385,27 @@ private:
     std::atomic<bool> stopping_{false},failed_{false};
     std::mutex admission_;
     ObserverMap held_;
+    void fail(std::string_view reason) {
+        if(!failed_.exchange(true))
+            std::println(std::cerr,"mcpp: compiler witness: {}",reason);
+    }
     void audit() {
         for(auto it=held_.begin();it!=held_.end();) {
             const auto directory=named(it->first);
             auto retired=read(directory/"retired","mcpp-retired-v1");
-            if(!retired||(*retired&&(**retired).size()!=3)) {failed_.store(true);++it;continue;}
+            if(!retired) {fail(retired.error());++it;continue;}
+            if(*retired&&(**retired).size()!=3) {fail("invalid retirement certificate");++it;continue;}
             if(*retired) {it=held_.erase(it);continue;}
             auto attempt=Attempt::load(directory);
-            if(!attempt) {failed_.store(true);++it;continue;}
+            if(!attempt) {fail(attempt.error());++it;continue;}
             if(!controller_alive(*attempt)) {
                 // Retirement can be published between the first read and the
                 // controller's exit. Observe it again before reporting loss.
                 retired=read(directory/"retired","mcpp-retired-v1");
-                if(!retired||(*retired&&(**retired).size()!=3))failed_.store(true);
+                if(!retired)fail(retired.error());
+                else if(*retired&&(**retired).size()!=3)fail("invalid retirement certificate");
                 else if(*retired) {it=held_.erase(it);continue;}
-                else failed_.store(true);
+                else fail("controller ended without retirement certificate");
             }
             ++it;
         }

@@ -245,6 +245,20 @@ in-range ticks. A direct exact-toolchain control compiled the failing expression
 and the corrected one, including a real file identity. Native Clang, ARM and
 bootstrap jobs still require the next full CI run.
 
+The next cold GCC run failed at the owner witness without a branch-specific
+diagnostic. Code review found a separate record-publication observation race:
+a reader's first open can report absence while an atomic publisher installs
+the record before the following existence probe. Treating this pair as a
+corrupt record can falsely fail the owner witness. A libc open-boundary control
+reproduced the old failure and the corrected retry with identical published
+bytes. The reader retries one open; a persistent refusal still fails. Witness
+diagnostics now distinguish an invalid record, an unreadable attempt and a
+controller without retirement so the next CI can test this attribution. The
+native Windows suite also showed that
+`file_size` can report a directory's size; output identity now requires a
+regular leaf before reading size and timestamp. The Windows negative test and
+the cold GCC build remain final-CI gates.
+
 An actual split-compiler control held a previously absent `.rc` observation
 until the controller had published status and exited. The earlier engine failed
 with `compiler controller ended without a status`; the corrected engine rereads
@@ -264,6 +278,15 @@ The generated Windows package launcher also named OS 0.2.9, whose OpenKal
 OS 0.3.0. The older consumer platform selected by the application's own
 target remains independent of the launcher's build platform. The actual
 cross-platform packing control and complete CI remain release gates.
+
+The cross-host Windows→Linux job still reached a missing final status after
+the controller exited. Because detached supervisor stdio was discarded, the
+first CI did not retain whether unit retirement, certificate publication or
+status publication failed. The supervisor now appends a bounded reason to its
+existing compiler log at each of those exits; a waiter replays that log only
+when the controller is gone and status remains absent. This changes the
+diagnostic boundary, not the success criteria. The next Windows cross job must
+identify the cause before any protocol or OS change is attributed to it.
 
 ## Separate Windows build-program defect
 

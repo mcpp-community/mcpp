@@ -14,6 +14,10 @@
   platform, so their generated dependency resolves alongside openkal-platform 0.24.
 - Compiler attempt journals preserve file timestamps on Clang/libc++ when the
   file clock uses a wider integer representation.
+- Compiler journals retry an open that raced with atomic record publication,
+  and BMI/object identity checks require a regular output file on every host.
+  A witness failure identifies its failed observation boundary, and a detached
+  supervisor's failure is available to the waiter even though its stdio is closed.
 - Launch descriptions include the selected target, profile, resolved platform
   and available named runners, including the reachable leg of a target set.
   Editor debug launches can retain the configuration that actually built the program.

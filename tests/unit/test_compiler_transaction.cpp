@@ -227,6 +227,32 @@ TEST(CompilerTransaction, RecordCloseFailureDriver) {
     EXPECT_EQ(Transaction::contents("record"),"previous");
     EXPECT_TRUE(fs::exists("record-close-refused"));
 }
+TEST(CompilerTransaction, RecordOpenAppearanceDriver) {
+    if(!mcpp::invocation::get("MCPP_TEST_RECORD_OPEN_DRIVER"))GTEST_SKIP()<<"subprocess driver";
+    auto record=tx::read("record","schema");
+    EXPECT_TRUE(fs::exists("record-open-interposed"));
+    ASSERT_TRUE(record&&*record);
+    EXPECT_EQ((**record)[0],"published");
+}
+TEST(CompilerTransaction, RecordAppearanceBetweenOpenAndExistsIsNotCorruption) {
+    if constexpr (!mcpplibs::os::is_linux)GTEST_SKIP()<<"Linux libc open interposition";
+    const auto runtime=mcpp::runtime::elf::inspect_elf_runtime(mcpp::invocation::self_exe_path());
+    if(!runtime || runtime->interp.find("ld-linux")==std::string::npos)
+        GTEST_SKIP()<<"open interposition requires the dynamic glibc loader";
+    Transaction t;
+    const auto library=t.root/"record-open-appearance.so";
+    const auto source=fs::current_path()/"tests/e2e/helpers/record_open_appearance.c";
+    auto compiled=mcpp::run::execute({"/usr/bin/cc","-shared","-fPIC","-Wall","-Wextra","-Werror",
+        source.string(),"-o",library.string(),"-ldl"},{.total=std::chrono::seconds(10)});
+    ASSERT_EQ(compiled.exit_code,0)<<compiled.output;
+    ASSERT_TRUE(tx::publish(t.root/"record","schema",{"published"}));
+    const auto result=mcpp::run::execute({mcpp::invocation::self_exe_path().string(),
+        "--gtest_filter=CompilerTransaction.RecordOpenAppearanceDriver"},
+        {.env={{"MCPP_TEST_RECORD_OPEN_DRIVER","1"},{"LD_PRELOAD",library.string()}},
+         .cwd=t.root.string(),.total=std::chrono::seconds(10)});
+    EXPECT_EQ(result.exit_code,0)<<result.output;
+    EXPECT_TRUE(fs::exists(t.root/"record-open-interposed"));
+}
 TEST(CompilerTransaction, FailedCloseCannotPublishOrAcknowledgeARecord) {
     if constexpr (!mcpplibs::os::is_linux)GTEST_SKIP()<<"Linux libc close failure control";
     const auto runtime=mcpp::runtime::elf::inspect_elf_runtime(mcpp::invocation::self_exe_path());
