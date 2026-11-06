@@ -21,6 +21,8 @@ jobs:
           ./ofd "$RUNNER_TEMP/slots" | awk -F': ' '{print $2}' | sort | uniq -c
           clang -O1 -o ofd-first .github/probe/ofd-first.c
           mkdir -p "$RUNNER_TEMP/first" && ./ofd-first "$RUNNER_TEMP/first"
+          clang -O1 -o ofd-exit .github/probe/ofd-exit.c
+          mkdir -p "$RUNNER_TEMP/exit" && ./ofd-exit "$RUNNER_TEMP/exit"
 
   build-macos:
     uses: ./.github/workflows/build.yml
