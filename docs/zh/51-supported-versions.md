@@ -95,6 +95,10 @@ error: --locked was given and this resolution differs from mcpp.lock:
 mcpp emit sbom -o sbom.json
 ```
 
+组件的 `name`、`group` 与 `purl` 表达包的身份，与声明它的 manifest 如何拼写无关：
+`cmdline` 与 `mcpplibs.cmdline` 都是 `pkg:mcpp/mcpplibs/cmdline@<version>`。变体在
+名字里保留其摘要；purl 的各段经过百分号编码，因此 `+` 写作 `%2B`。
+
 它读取 `mcpp.lock` 而不是重新解析，因为一份描述了与实际构建不同的依赖图的
 文档，比没有文档更糟。许可证 mcpp 无法识别的组件会被写成 `NOASSERTION` 而不是
 省略：缺失的字段读起来像「未检查」。
