@@ -1472,7 +1472,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // Ninja has extra slots for BMI publication and join edges. Ordinary
     // compilers must share the supervisors' semaphore rather than use that
     // larger slot count as their own concurrency bound.
-    const std::string compilerPrefix = splitBmi
+    // Every capped graph (2026.11.7.1): the executor also registers each
+    // compiler as a participant of the build's generation.
+    const std::string compilerPrefix = plan.scheduleCompilerCap > 0
         ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --cap {} --output $out --depfile $out.d -- ", plan.scheduleCompilerCap)
         : std::string{};
     // The other split shape. Clang publishes no BMI early — it writes the BMI
@@ -4542,13 +4544,12 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                                                       plan.outputDir.string(), ec.message()),
                                           plan.outputDir});
     std::optional<mcpp::build::schedule::detach::RunScope> compilerRun;
-    if (!opts.dryRun && plan.scheduleTag == "detach-codegen") {
+    if (!opts.dryRun && plan.scheduleCompilerCap > 0) {
         auto opened = mcpp::build::schedule::detach::RunScope::begin(plan.outputDir);
         if (!opened) return std::unexpected(BuildError{opened.error(), plan.outputDir});
         compilerRun.emplace(std::move(*opened));
-    }
-    if (!opts.dryRun && plan.scheduleTag == "detach-codegen")
         reclaim_stale_schedule_tokens(plan.outputDir);
+    }
 
     auto ninja_path = plan.outputDir / "build.ninja";
     // Written beside build.ninja and not into it: the fast path replays the

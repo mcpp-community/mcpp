@@ -2177,7 +2177,14 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
     }
 
     std::optional<mcpp::build::schedule::detach::RunScope> compilerRun;
-    if (mcpp::build::read_schedule(ninjaPath) == "detach-codegen") {
+    // A graph whose compilers run through the capped executor replays inside a
+    // generation, as its first drive did.
+    const bool capped = [&] {
+        std::ifstream in(ninjaPath, std::ios::binary);
+        const std::string text{std::istreambuf_iterator<char>(in), {}};
+        return text.find(" __compiler-cap ") != std::string::npos;
+    }();
+    if (capped) {
         auto opened = mcpp::build::schedule::detach::RunScope::begin(outputDir);
         if (!opened) { mcpp::ui::error(opened.error()); return 1; }
         compilerRun.emplace(std::move(*opened));
