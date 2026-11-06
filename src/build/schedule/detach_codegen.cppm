@@ -363,9 +363,10 @@ acquire_permit(const Actor& actor, const std::filesystem::path& requested, int r
     }
     const auto started = std::chrono::steady_clock::now();
     constexpr auto kLimit = std::chrono::hours(2);
+    std::optional<std::chrono::steady_clock::time_point> unexplainedSince;
     for (;;) {
         if (!actor.owner.active()) return std::unexpected(130);
-        bool orphan = false;
+        bool orphan = false, unexplained = false;
         for (int i = 0; i < cap; ++i) {
             auto permit = mcpplibs::os::fs::lock::acquire(dir / std::format("slot-{}.lock", i),
                 mcpplibs::os::fs::lock::kind::exclusive, false);
@@ -378,10 +379,25 @@ acquire_permit(const Actor& actor, const std::filesystem::path& requested, int r
                 }
                 return Permit{std::optional<mcpplibs::os::fs::lock>{std::move(*permit)},reservation};
             }
+            // On macOS a slot another compiler holds is now and then reported
+            // "not found" from inside this executor, though the directory and
+            // the file exist and the next attempt reports it held (measured on
+            // #889; the kernel itself answers EAGAIN, mcpplibs/openkal-macos#45).
+            // It is treated as held while the directory exists, unless every
+            // round reports it for five seconds.
+            std::error_code dirError;
+            if (permit.error().code == mcpplibs::os::errc::not_found
+                && std::filesystem::is_directory(dir, dirError)) { unexplained = true; continue; }
             if (permit.error().code != mcpplibs::os::errc::again) {
                 std::println(std::cerr, "mcpp: {}", permit.error().message());
                 return std::unexpected(1);
             }
+        }
+        if (!unexplained) unexplainedSince.reset();
+        else if (!unexplainedSince) unexplainedSince = std::chrono::steady_clock::now();
+        else if (std::chrono::steady_clock::now() - *unexplainedSince > std::chrono::seconds(5)) {
+            std::println(std::cerr, "mcpp: the compiler slots in {} have reported themselves missing for 5s", dir.string());
+            return std::unexpected(1);
         }
         if (orphan && std::chrono::steady_clock::now()-started > std::chrono::seconds(5)) {
             std::println(std::cerr,"mcpp: a previous compiler unit is occupied or unknown; its slot remains reserved");
