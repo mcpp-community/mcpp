@@ -127,6 +127,22 @@ TEST(MsvcCoroutines, CoroutineUseNoteDoesNotOfferCxx20) {
     EXPECT_NE(note.find("llvm@22.1.8"), std::string::npos);
 }
 
+// A compile run through the capped executor names its compiler after `--`.
+TEST(MsvcCoroutines, CoroutineUseThroughTheCappedExecutorGetsTheNote) {
+    constexpr std::string_view failure =
+        "FAILED: obj/main.o \n"
+        "C:/mcpp/bin/mcpp.exe __compiler-cap --sem .mcpp-sched --output obj/main.o --depfile obj/main.o.d -- "
+        "C:/Users/runneradmin/.mcpp/registry/data/xpkgs/xim-x-llvm/23.1.3/bin/clang++.exe @obj/main.o.rsp "
+        "-std=c++20 --target=i686-pc-windows-msvc -c D:/a/_temp/src/main.cpp -o obj/main.o\n"
+        "D:/a/_temp/src/main.cpp:2:71: error: use of undeclared identifier 'std'\n"
+        "D:/a/_temp/src/main.cpp:3:9: error: std::coroutine_traits type was not found; include <coroutine> before defining a coroutine\n";
+    auto cmd = co::failed_command_in(failure);
+    ASSERT_TRUE(cmd.has_value());
+    EXPECT_TRUE(cmd->compiler.ends_with("clang++.exe"));
+    EXPECT_EQ(cmd->target, "i686-pc-windows-msvc");
+    EXPECT_FALSE(co::advice(failure, answering(false)).empty());
+}
+
 TEST(MsvcCoroutines, CompilerThatPredefinesTheMacroGetsNoNote) {
     EXPECT_TRUE(co::advice(kStdModuleFailure, answering(true)).empty());
 }

@@ -2185,7 +2185,11 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         return text.find(" __compiler-cap ") != std::string::npos;
     }();
     if (capped) {
-        auto opened = mcpp::build::schedule::detach::RunScope::begin(outputDir);
+        // The graph names no cap; its first drive left it beside build.ninja.
+        // Without it the graph is replanned rather than run unbounded.
+        const int cap = mcpp::build::read_compiler_cap_sidecar(outputDir);
+        if (cap <= 0) return std::nullopt;
+        auto opened = mcpp::build::schedule::detach::RunScope::begin(outputDir, cap);
         if (!opened) { mcpp::ui::error(opened.error()); return 1; }
         compilerRun.emplace(std::move(*opened));
         compilerRun->environment(childEnv);

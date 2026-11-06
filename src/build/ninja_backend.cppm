@@ -318,6 +318,13 @@ void write_consumer_include_sidecar(const std::filesystem::path& outputDir,
 std::vector<std::filesystem::path>
 read_consumer_include_sidecar(const std::filesystem::path& outputDir);
 
+// The compiler cap of the generation a capped graph runs in, beside
+// build.ninja and not in it (e2e 861): the fast path replays the graph
+// without a plan and opens its generation with this cap. Removed when the
+// graph runs no compiler through the capped executor; 0 when absent.
+void write_compiler_cap_sidecar(const std::filesystem::path& outputDir, int cap);
+int read_compiler_cap_sidecar(const std::filesystem::path& outputDir);
+
 // #693 (M4): whether a Ninja reads build.ninja in the encoding mcpp writes it.
 //
 // mcpp writes the file in UTF-8: every path in it has a UTF-8 spelling
@@ -1180,6 +1187,21 @@ void write_consumer_include_sidecar(const std::filesystem::path& outputDir,
     for (auto const& d : dirs) f << d.string() << '\n';
 }
 
+constexpr std::string_view kCompilerCapSidecar = ".mcpp-compiler-cap";
+
+void write_compiler_cap_sidecar(const std::filesystem::path& outputDir, int cap) {
+    const auto path = outputDir / kCompilerCapSidecar;
+    std::error_code ec;
+    if (cap <= 0) { std::filesystem::remove(path, ec); return; }
+    std::ofstream(path, std::ios::binary | std::ios::trunc) << cap << '\n';
+}
+
+int read_compiler_cap_sidecar(const std::filesystem::path& outputDir) {
+    std::ifstream f(outputDir / kCompilerCapSidecar, std::ios::binary);
+    int cap = 0;
+    return f >> cap && cap > 0 ? cap : 0;
+}
+
 std::vector<std::filesystem::path>
 read_consumer_include_sidecar(const std::filesystem::path& outputDir) {
     std::vector<std::filesystem::path> dirs;
@@ -1474,8 +1496,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // larger slot count as their own concurrency bound.
     // Every capped graph (2026.11.7.1): the executor also registers each
     // compiler as a participant of the build's generation.
+    // No number of compilers here: the generation carries the cap, so the
+    // graph is the same whatever the job count (e2e 861).
     const std::string compilerPrefix = plan.scheduleCompilerCap > 0
-        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --cap {} --output $out --depfile $out.d -- ", plan.scheduleCompilerCap)
+        ? std::string("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d -- ")
         : std::string{};
     // The other split shape. Clang publishes no BMI early — it writes the BMI
     // at the end of the compile — so the GCC trick of releasing the file
@@ -2113,7 +2137,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // wrong in this file before.
         append("rule cxx_module_bmi\n");
         append("  command = $mcpp bmi-compile --bmi $bmi_out --slot $slot"
-               " --self $mcpp --sem $sched_sem --cap $sched_cap --object $obj_out"
+               " --self $mcpp --sem $sched_sem --object $obj_out"
                " --command-file $out.cmd --dep-from $scan_dep --dep-to $out.d\n");
         append(std::format(
             "  rspfile = $out.cmd\n"
@@ -3204,7 +3228,6 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                     e += "  slot = " + slot + "\n";
                     e += "  scan_dep = " + escape_ninja_path(ddi) + ".dep\n";
                     e += "  sched_sem = .mcpp-sched\n";
-                    e += std::format("  sched_cap = {}\n", plan.scheduleCompilerCap);
                     if (auto inc = local_include_flags(cu, dial); !inc.empty())
                         e += "  local_includes =" + inc + "\n";
                     if (auto fl = unit_cxx_flags(cu); !fl.empty())
@@ -4545,7 +4568,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                                           plan.outputDir});
     std::optional<mcpp::build::schedule::detach::RunScope> compilerRun;
     if (!opts.dryRun && plan.scheduleCompilerCap > 0) {
-        auto opened = mcpp::build::schedule::detach::RunScope::begin(plan.outputDir);
+        auto opened = mcpp::build::schedule::detach::RunScope::begin(plan.outputDir, plan.scheduleCompilerCap);
         if (!opened) return std::unexpected(BuildError{opened.error(), plan.outputDir});
         compilerRun.emplace(std::move(*opened));
         reclaim_stale_schedule_tokens(plan.outputDir);
@@ -4561,6 +4584,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         plan.targetSide.cAbiDecl ? plan.targetSide.cAbiDecl->absent
                                  : std::vector<mcpp::targetside::CAbiAbsentEntry>{});
     write_consumer_include_sidecar(plan.outputDir, root_include_dirs_of(plan));
+    write_compiler_cap_sidecar(plan.outputDir, plan.scheduleCompilerCap);
     write_graph_c_library_sidecar(plan.outputDir, plan.targetSide.cAbi);
     std::string placements;
     mcpp::build::progress::Attribution attribution;

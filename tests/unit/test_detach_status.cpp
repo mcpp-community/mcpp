@@ -102,7 +102,9 @@ int lifetime_driver() {
             std::stoi(value("--cap")), value("--object"), command);
     }
     if (role == "root") {
-        auto run = detach::RunScope::begin(lifetime_env("MCPP_TEST_LIFETIME_OUTPUT", fs::current_path().string()));
+        // The generation's cap; build.ninja names none (e2e 861).
+        auto run = detach::RunScope::begin(lifetime_env("MCPP_TEST_LIFETIME_OUTPUT", fs::current_path().string()),
+                                           std::stoi(lifetime_env("MCPP_TEST_LIFETIME_CAP", "1")));
         if (!run) { std::println(std::cerr, "{}", run.error()); return 2; }
         std::ofstream("root.ready") << mcpplibs::os::process::self()->id;
         mcpp::run::Env env;

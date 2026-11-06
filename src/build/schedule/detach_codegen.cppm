@@ -83,12 +83,18 @@ import mcpp.toolchain.fingerprint;
 export namespace mcpp::build::schedule::detach {
 
 inline constexpr std::string_view kRunEnv = "MCPP_COMPILER_RUN";
+// The cap of an executor that runs outside a generation (Ninja started by
+// hand), when its command line names none.
+inline constexpr std::string_view kCapEnv = "MCPP_COMPILER_CAP";
 
 // One runtime generation, outside the build identity. Its actor barrier covers
 // every helper that may write state, not only helpers holding compiler slots.
+// The generation carries the compiler cap: build.ninja names no number of
+// compilers, so the graph is the same whatever the job count (e2e 861), and
+// every executor of the generation reads the cap from its owner record.
 class RunScope {
 public:
-    static std::expected<RunScope, std::string> begin(const std::filesystem::path& outputDir);
+    static std::expected<RunScope, std::string> begin(const std::filesystem::path& outputDir, int compilerCap);
     RunScope(RunScope&&) noexcept;
     RunScope& operator=(RunScope&&) noexcept;
     ~RunScope();
@@ -194,6 +200,7 @@ struct Owner {
     bool managed = false;
     std::filesystem::path generation;
     mcpplibs::os::process::program program;
+    int cap = 0;  // the generation's compiler cap
 
     static Owner inherited() {
         Owner owner;
@@ -205,6 +212,7 @@ struct Owner {
         std::string version;
         if (!(record >> version >> owner.program.id >> owner.program.started_ns)
             || version != "mcpp-compiler-run-v1") owner.program = {};
+        else if (!(record >> owner.cap)) owner.cap = 0;
         return owner;
     }
     bool active() const {
@@ -332,8 +340,16 @@ struct Permit {
     std::filesystem::path reservation;
 };
 std::expected<Permit, int>
-acquire_permit(const Actor& actor, const std::filesystem::path& requested, int cap) {
+acquire_permit(const Actor& actor, const std::filesystem::path& requested, int requestedCap) {
     const auto dir = actor.owner.permits(requested);
+    const int cap = [&] {
+        if (actor.owner.managed) return actor.owner.cap;
+        if (requestedCap > 0) return requestedCap;
+        int fromEnv = 0;
+        if (const auto value = mcpp::invocation::get(kCapEnv))
+            std::from_chars(value->data(), value->data() + value->size(), fromEnv);
+        return fromEnv;
+    }();
     if (!actor.ready) return std::unexpected(130);
     if (dir.empty() || cap <= 0) {
         if (actor.owner.managed) return std::unexpected(2);
@@ -619,7 +635,8 @@ RunScope::RunScope(RunScope&&) noexcept = default;
 RunScope& RunScope::operator=(RunScope&&) noexcept = default;
 RunScope::~RunScope() = default;
 
-std::expected<RunScope, std::string> RunScope::begin(const std::filesystem::path& outputDir) {
+std::expected<RunScope, std::string> RunScope::begin(const std::filesystem::path& outputDir, int compilerCap) {
+    if (compilerCap <= 0) return std::unexpected("a compiler-run generation needs a compiler cap");
     const auto self = mcpplibs::os::process::self();
     if (!self || self->id == 0 || self->started_ns == 0)
         return std::unexpected("cannot identify the compiler-run owner and its birth time");
@@ -675,7 +692,7 @@ std::expected<RunScope, std::string> RunScope::begin(const std::filesystem::path
     auto witnesses = transactions::Witnesses::start(state->generation);
     if (!witnesses) return std::unexpected(witnesses.error());
     state->witnesses = std::move(*witnesses);
-    const auto record = std::format("mcpp-compiler-run-v1\n{} {}\n", self->id, self->started_ns);
+    const auto record = std::format("mcpp-compiler-run-v1\n{} {} {}\n", self->id, self->started_ns, compilerCap);
     if (!transactions::replace_record(state->generation / "owner", record))
         return std::unexpected("cannot publish compiler-run ownership");
     return RunScope(std::move(state));

@@ -286,7 +286,7 @@ int run(int argc, char** argv) {
         for (; i < argc && std::string_view(argv[i]) != "--"; ++i) {
             const std::string_view option = argv[i];
             if ((option != "--sem" && option != "--cap" && option != "--output" && option != "--depfile") || i + 1 >= argc) {
-                std::println(stderr, "error: __compiler-cap: expected --sem <dir> --cap <N> -- <compiler>...");
+                std::println(stderr, "error: __compiler-cap: expected --sem <dir> [--cap <N>] -- <compiler>...");
                 return 2;
             }
             const std::string_view value = argv[++i];
@@ -298,7 +298,8 @@ int run(int argc, char** argv) {
                 if (ec != std::errc{} || end != value.data() + value.size()) return 2;
             }
         }
-        if (semaphore.empty() || cap <= 0 || i + 1 >= argc) return 2;
+        // No --cap: the generation's, or MCPP_COMPILER_CAP outside one.
+        if (semaphore.empty() || cap < 0 || i + 1 >= argc) return 2;
         std::vector<std::string> command;
         for (++i; i < argc; ++i) command.emplace_back(argv[i]);
         return mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output, depfile);
