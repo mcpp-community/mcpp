@@ -23,56 +23,20 @@ bool replace_record(const fs::path& path,std::string_view bytes,std::string* dia
     output.close();
     const bool closed=bool(output);
     if(written&&closed) {
-        auto renamed=os::fs::rename(temporary,path,true);
-        if(renamed)return true;
+        // The temporary was created through std::filesystem's host namespace.
+        // Publish it through the same namespace, in this same directory. A
+        // The detached controller's OpenKal lookup rejected this exact file
+        // on Windows even though the host filesystem could rename it.
+        std::error_code renamed;
+        fs::rename(temporary,path,renamed);
+        if(!renamed)return true;
         if(diagnostic) {
-            // The OpenKal condition does not retain the Windows NTSTATUS. These
-            // observations distinguish a blocked replacement from a source or
-            // parent failure without exposing private build paths in CI logs.
             std::error_code sourceError, targetError;
             const auto source=fs::symlink_status(temporary,sourceError);
             const auto target=fs::symlink_status(path,targetError);
-            std::string probeReport;
-            // A final status is a new name. If the replace form itself was
-            // refused as invalid while that name is absent, try the atomic
-            // no-replace form on the exact same source and destination. Its
-            // refusal is preserved as evidence rather than hidden by a loop.
-            int noReplaceCode=0;
-            const bool targetAbsent=target.type()==fs::file_type::not_found
-                || targetError==std::errc::no_such_file_or_directory;
-            if(renamed.error().code==os::errc::invalid && fs::is_regular_file(source)
-               && targetAbsent) {
-                auto noReplace=os::fs::rename(temporary,path,false);
-                if(noReplace) {
-                    *diagnostic="replace form refused absent target; no-replace published";
-                    return true;
-                }
-                noReplaceCode=static_cast<int>(noReplace.error().code);
-            }
-#if defined(_WIN32)
-            // CI-only root-cause probe. Remove before merge: it intentionally
-            // compares the standard library's rename of this exact source to
-            // a distinct diagnostic name, without publishing the status.
-            if(noReplaceCode==static_cast<int>(os::errc::invalid)) {
-                const auto sourceLocation=os::fs::locate(temporary);
-                const auto targetLocation=os::fs::locate(path);
-                const auto readable=os::fs::read(temporary);
-                auto probe=temporary;probe+=".diagnostic";
-                std::error_code nativeError;
-                fs::rename(temporary,probe,nativeError);
-                if(!nativeError) {std::error_code ignored;fs::remove(probe,ignored);}
-                probeReport=std::format(
-                    "; CI probe source-rel {} target-rel {} same-root {} KAL-read {} std-rename-code {} category {}",
-                    sourceLocation?sourceLocation->relative.size():0,
-                    targetLocation?targetLocation->relative.size():0,
-                    sourceLocation&&targetLocation&&sourceLocation->directory==targetLocation->directory,
-                    readable?0:static_cast<int>(readable.error().code),
-                    nativeError.value(),nativeError.category().name());
-            }
-#endif
-            *diagnostic=std::format("rename temporary (condition {}, native {}; source regular {} ec {}; target exists {} ec {}; no-replace condition {}{})",
-                static_cast<int>(renamed.error().code),renamed.error().native,
-                fs::is_regular_file(source),sourceError.value(),fs::exists(target),targetError.value(),noReplaceCode,probeReport);
+            *diagnostic=std::format("rename temporary (system {} {}; source regular {} ec {}; target exists {} ec {})",
+                renamed.value(),renamed.category().name(),
+                fs::is_regular_file(source),sourceError.value(),fs::exists(target),targetError.value());
         }
     } else if(!written) {
         fail("write/flush temporary");

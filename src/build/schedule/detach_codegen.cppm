@@ -317,12 +317,10 @@ bool write_rc(const std::filesystem::path& slot, int rc,std::string* diagnostic=
     std::string localDiagnostic;
     auto* detail=diagnostic?diagnostic:&localDiagnostic;
     const bool written=transactions::replace_record(suffixed(slot,".rc"),std::to_string(rc)+"\n",detail);
-#if defined(_WIN32)
-    // CI-only: early supervisor failures have no caller-owned diagnostic.
-    // Report their status-publication failure without printing private paths.
+    // An early supervisor failure has no caller-owned diagnostic. Keep its
+    // status-publication error beside the compiler log for the waiter.
     if(!written&&!diagnostic)
-        record_supervisor_error(slot,std::format("CI early status publication: {}",localDiagnostic));
-#endif
+        record_supervisor_error(slot,std::format("cannot publish compiler status: {}",localDiagnostic));
     return written;
 }
 

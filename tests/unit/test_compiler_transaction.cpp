@@ -235,7 +235,7 @@ TEST(CompilerTransaction, FailedRenameReportsTheStageAndPreservesItsTarget) {
     fs::create_directory(t.root/"record");
     std::string diagnostic;
     EXPECT_FALSE(tx::replace_record(t.root/"record","replacement",&diagnostic));
-    EXPECT_TRUE(diagnostic.starts_with("rename temporary (condition "))<<diagnostic;
+    EXPECT_TRUE(diagnostic.starts_with("rename temporary (system "))<<diagnostic;
     EXPECT_TRUE(fs::is_directory(t.root/"record"));
 }
 TEST(CompilerTransaction, ReaderHeldTargetKeepsAnAtomicRecord) {
