@@ -20,7 +20,7 @@ import mcpp.targetside;
 import mcpp.build.version_floor;
 import mcpp.toolchain.platform;
 import mcpp.run;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.manifest;
 import mcpp.platform;
 import mcpp.source_kind;
@@ -1190,6 +1190,11 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state);
 void step4b_seed_platform(PrepareState& state);
 std::expected<bool, std::string> step4b_apply_platform(PrepareState& state);
 std::expected<void, std::string> step4b_check_platform_versions(PrepareState& state);
+std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& state, const WorkItem& item,
+                                                              const std::string& name,
+                                                              mcpp::manifest::DependencySpec& spec);
+void step4b_read_platform_group(PrepareState& state, const std::string& resolvedShortName);
+std::expected<void, std::string> step4b_platform_within_engine(PrepareState& state);
 void step4b_platform_member_edges(PrepareState& state);
 void step5_platform_toolchain(PrepareState& state);
 void step13_platform_statement(PrepareState& state);
