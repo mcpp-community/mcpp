@@ -37,7 +37,7 @@ std::string pack(std::string_view tag, const Fields& fields) {
     return body + "\n" + mcpp::toolchain::hash_string(body) + "\n";
 }
 // Atomic visibility across process loss; storage durability is not promised.
-bool replace_record(const fs::path& path,std::string_view bytes);
+bool replace_record(const fs::path& path,std::string_view bytes,std::string* diagnostic=nullptr);
 bool publish(const fs::path& path,std::string_view tag,const Fields& fields);
 Record read(const fs::path& path, std::string_view tag) {
     std::ifstream input(path,std::ios::binary);

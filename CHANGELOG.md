@@ -18,6 +18,8 @@
   and BMI/object identity checks require a regular output file on every host.
   A witness failure identifies its failed observation boundary, and a detached
   supervisor's failure is available to the waiter even though its stdio is closed.
+  Status publication now distinguishes temporary open, write, close and rename
+  failures, including the OpenKal condition of a failed rename.
 - Launch descriptions include the selected target, profile, resolved platform
   and available named runners, including the reachable leg of a target set.
   Editor debug launches can retain the configuration that actually built the program.

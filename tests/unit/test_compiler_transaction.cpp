@@ -223,9 +223,19 @@ TEST(CompilerTransaction, ChangedBmiParentCannotRedirectCertifiedRecovery) {
 
 TEST(CompilerTransaction, RecordCloseFailureDriver) {
     if(!mcpp::invocation::get("MCPP_TEST_RECORD_CLOSE_DRIVER"))GTEST_SKIP()<<"subprocess driver";
-    EXPECT_FALSE(tx::replace_record("record","replacement"));
+    std::string diagnostic;
+    EXPECT_FALSE(tx::replace_record("record","replacement",&diagnostic));
+    EXPECT_EQ(diagnostic,"close temporary");
     EXPECT_EQ(Transaction::contents("record"),"previous");
     EXPECT_TRUE(fs::exists("record-close-refused"));
+}
+TEST(CompilerTransaction, FailedRenameReportsTheStageAndPreservesItsTarget) {
+    Transaction t;
+    fs::create_directory(t.root/"record");
+    std::string diagnostic;
+    EXPECT_FALSE(tx::replace_record(t.root/"record","replacement",&diagnostic));
+    EXPECT_TRUE(diagnostic.starts_with("rename temporary (condition "))<<diagnostic;
+    EXPECT_TRUE(fs::is_directory(t.root/"record"));
 }
 TEST(CompilerTransaction, RecordOpenAppearanceDriver) {
     if(!mcpp::invocation::get("MCPP_TEST_RECORD_OPEN_DRIVER"))GTEST_SKIP()<<"subprocess driver";

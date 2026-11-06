@@ -312,8 +312,8 @@ std::optional<int> read_rc(const std::filesystem::path& slot) {
 
 // Temp file + rename, so a reader never observes half a number. The same
 // guarantee, for the same reason, that makes watching the BMI path sound.
-bool write_rc(const std::filesystem::path& slot, int rc) {
-    return transactions::replace_record(suffixed(slot,".rc"),std::to_string(rc)+"\n");
+bool write_rc(const std::filesystem::path& slot, int rc,std::string* diagnostic=nullptr) {
+    return transactions::replace_record(suffixed(slot,".rc"),std::to_string(rc)+"\n",diagnostic);
 }
 
 // Stable kernel lock slots, shared by ordinary and detached compilers. The
@@ -888,7 +888,11 @@ int supervise(const std::filesystem::path& slot,
             record_supervisor_error(slot,retired.error());return 1;
         }
         if(!attempt.retired(rc)) {record_supervisor_error(slot,"cannot publish compiler retirement certificate");return 1;}
-        if(!write_rc(slot,rc)) {record_supervisor_error(slot,"cannot publish compiler final status");return 1;}
+        std::string status_failure;
+        if(!write_rc(slot,rc,&status_failure)) {
+            record_supervisor_error(slot,std::format("cannot publish compiler final status: {}",status_failure));
+            return 1;
+        }
         if(!transactions::release_reservation(permit->reservation,attempt.directory)) {
             record_supervisor_error(slot,"cannot release compiler reservation");return 1;
         }

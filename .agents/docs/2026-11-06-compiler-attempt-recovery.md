@@ -287,6 +287,14 @@ existing compiler log at each of those exits; a waiter replays that log only
 when the controller is gone and status remains absent. This changes the
 diagnostic boundary, not the success criteria. The next Windows cross job must
 identify the cause before any protocol or OS change is attributed to it.
+The first diagnostic run narrowed this to final-status publication after unit
+retirement. The publisher now reports whether its temporary open, write, close
+or atomic rename failed, with the OS wrapper's OpenKal condition code for the
+rename and without embedding a path or user name. This wrapper does not expose
+the original Windows NTSTATUS. A controlled close failure and a
+directory-target rename refusal exercise the stage classification. The next
+cross-host run must determine the actual condition before any retry policy is
+chosen.
 
 ## Separate Windows build-program defect
 

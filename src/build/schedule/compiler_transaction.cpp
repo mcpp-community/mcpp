@@ -3,22 +3,35 @@ import std;
 
 namespace mcpp::build::schedule::transaction {
 
-bool replace_record(const fs::path& path,std::string_view bytes) {
+bool replace_record(const fs::path& path,std::string_view bytes,std::string* diagnostic) {
     // No process may observe a partial record. This protects process loss,
     // not power loss; do not change the OS library's durable write_atomic.
     static const auto who=os::process::self();
     static std::atomic<unsigned long long> sequence{0};
-    if(!who||!who->id||!who->started_ns)return false;
+    auto fail=[&](std::string_view stage) {
+        if(diagnostic)*diagnostic=stage;
+        return false;
+    };
+    if(!who||!who->id||!who->started_ns)return fail("identify writer");
     const auto temporary=path.parent_path()/named(std::format(".mcpp-record-{}-{}-{}",
         who->id,who->started_ns,sequence++));
     std::ofstream output(temporary,std::ios::binary|std::ios::out|std::ios::noreplace);
-    if(!output)return false; // Never remove a name this invocation did not create.
+    if(!output)return fail("open temporary"); // Never remove a name this invocation did not create.
     output.write(bytes.data(),static_cast<std::streamsize>(bytes.size()));
     output.flush();
     const bool written=bool(output);
     output.close();
     const bool closed=bool(output);
-    if(written&&closed&&os::fs::rename(temporary,path,true))return true;
+    if(written&&closed) {
+        auto renamed=os::fs::rename(temporary,path,true);
+        if(renamed)return true;
+        if(diagnostic)*diagnostic=std::format("rename temporary (condition {}, native {})",
+            static_cast<int>(renamed.error().code),renamed.error().native);
+    } else if(!written) {
+        fail("write/flush temporary");
+    } else {
+        fail("close temporary");
+    }
     std::error_code ec;fs::remove(temporary,ec);return false;
 }
 bool publish(const fs::path& path,std::string_view tag,const Fields& fields) {
