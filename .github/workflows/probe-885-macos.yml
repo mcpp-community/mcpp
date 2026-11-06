@@ -1,0 +1,44 @@
+name: probe-885-macos
+
+# [temp][do not merge] #889 C2 on macOS: `__compiler-cap` reports
+# "locking <generation>/../slots/slot-0.lock: not found" for some edges. The
+# instrumented acquire_permit prints what the failing lock saw.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    uses: ./.github/workflows/build.yml
+    with:
+      host: macos-arm64
+      runs-on: macos-15
+
+  e2e:
+    needs: build-macos
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-macos-llvm
+        with:
+          image: macos-15
+      - uses: ./.github/actions/use-built-mcpp
+        with:
+          host: macos-arm64
+      - name: The failing tests, instrumented
+        run: |
+          export MCPP MCPP_BOOT MCPP_VENDORED_XLINGS
+          export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
+          "$MCPP" self config
+          "$MCPP" toolchain default "llvm@${MCPP_LLVM_VER}"
+          for t in 128_feature_forwarding 76_compile_commands_generated 924_visible_imports_resolve_transitive_modules 35_workspace; do
+            echo "::group::$t"
+            bash "tests/e2e/$t.sh" 2>&1 | tail -60 || true
+            echo "::endgroup::"
+          done

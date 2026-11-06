@@ -364,6 +364,19 @@ acquire_permit(const Actor& actor, const std::filesystem::path& requested, int c
             }
             if (permit.error().code != mcpplibs::os::errc::again) {
                 std::println(std::cerr, "mcpp: {}", permit.error().message());
+                {   // [temp] probe 885 macOS: what the failing lock saw.
+                    std::error_code pec;
+                    const auto lockFile = dir / std::format("slot-{}.lock", i);
+                    std::println(std::cerr, "probe885: dir='{}' exists={} lockexists={} cwd='{}' env='{}'",
+                                 dir.string(), std::filesystem::exists(dir, pec), std::filesystem::exists(lockFile, pec),
+                                 std::filesystem::current_path(pec).string(),
+                                 mcpp::invocation::get(kRunEnv).value_or("<unset>"));
+                    for (const auto& name : mcpplibs::os::fs::preopens()) std::println(std::cerr, "probe885: preopen '{}'", name);
+                    std::ofstream touch(dir / "probe-touch");
+                    std::println(std::cerr, "probe885: ofstream create in dir: {}", touch.good());
+                    auto again = mcpplibs::os::fs::lock::acquire(lockFile, mcpplibs::os::fs::lock::kind::exclusive, false);
+                    std::println(std::cerr, "probe885: second acquire: {}", again ? std::string("ok") : again.error().message());
+                }
                 return std::unexpected(1);
             }
         }
