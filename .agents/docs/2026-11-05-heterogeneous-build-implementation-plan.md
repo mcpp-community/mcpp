@@ -307,7 +307,7 @@ platform 0.23.7 的一致版本组已在本地准备，待两个前置公开后�
 发布准备补齐 CHANGELOG 的 2026.11.5.1 条目；Release 按该版本标题提取说明，
 缺失条目会拒绝发布。包含本次说明的最终提交仍须完成核心 CI，随后再独立进行
 生态 review。新增证据已逐文件校验并验证归档往返：
-`/home/speak/workspace/mcpp-885-realpath-and-final-core-diagnostic-evidence.tar.gz`，
+`mcpp-885-realpath-and-final-core-diagnostic-evidence.tar.gz`，
 152 个文件，SHA256 为
 `4d7b783c27bb25dc75c354af72e98dc4b47037ab75043f792a28dceeeb10083a`。
 

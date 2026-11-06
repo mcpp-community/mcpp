@@ -24,7 +24,7 @@ bool replace_record(const fs::path& path,std::string_view bytes,std::string* dia
     const bool closed=bool(output);
     if(written&&closed) {
         // The temporary was created through std::filesystem's host namespace.
-        // Publish it through the same namespace, in this same directory. A
+        // Publish it through the same namespace, in this same directory.
         // The detached controller's OpenKal lookup rejected this exact file
         // on Windows even though the host filesystem could rename it.
         std::error_code renamed;
