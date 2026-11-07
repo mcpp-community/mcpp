@@ -155,12 +155,22 @@ error: openkal-musl is requested as '^0.27.0' by app, and the platform openkal-p
 只为本机构建的包(工具的)以及从目录或仓库取得的包不受版本组约束。早于 2026.11.7.1 的 mcpp 改为在解析之后检查
 版本组;一个家族以一次索引改动整组发布时,两者结果相同。
 
-## 内置平台是一个系列
+## 内置平台是一个版本
 
-目标表为两个 ok 映像目标选择 `openkal-platform@^0.24`,即一个系列。系列取其中 `[package] mcpp` 下限当前 mcpp 满足的
-最新版本,并写出因需要更新的引擎而跳过的版本;`mcpp.lock` 记录结果,之后的构建在系列容许时采用记录的版本。
-`mcpp update`(或 `mcpp update openkal-platform`)删除这条记录,下一次构建重新取最新版本。工程以同样的写法选择自己的
-系列(`platform = "openkal-platform@^0.24"`),写版本则选择一个确切的版本。
+目标表为两个 ok 映像目标选择一个 openkal-platform 版本,即当前 mcpp 验证过的版本:mcpp 2026.11.7.2 为 0.24.3
+(2026.11.7.1 选择系列 `^0.24`)。不写平台的工程在任何时候、有无 `mcpp.lock` 都构建同一组版本;锁中记录了另一个版本时,
+构建采用默认版本并写出锁中记录的版本。更新的平台不需要新的 mcpp:工程在自己的清单中选择,
+
+```toml
+[target.'cfg(os = "openkal")']
+platform = "openkal-platform@0.24.4"     # 一个版本,或一个系列:"openkal-platform@^0.24"
+```
+
+使用默认平台的构建失败、且已同步的索引中有更新版本时,最后输出一行 `tip:`,写出两个版本与上面这一行。
+
+系列取其中 `[package] mcpp` 下限当前 mcpp 满足的最新版本,并写出因需要更新的引擎而跳过的版本;`mcpp.lock` 记录结果,
+之后的构建在系列容许时采用记录的版本。`mcpp update`(或 `mcpp update openkal-platform`)删除这条记录,下一次构建重新
+取最新版本。
 
 ## 编写平台包
 

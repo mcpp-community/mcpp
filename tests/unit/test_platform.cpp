@@ -559,3 +559,21 @@ TEST(PlatformMerge, AnOverrideReplacesHostsCarriersAndDescriptorKeys) {
     EXPECT_EQ(merged.carriers[0].section, ".x");
     EXPECT_EQ(merged.descriptorKeys.value, (std::vector<std::string>{"openkal"}));
 }
+
+// D20 (design 2026-11-07 §4.10): the target table's default is one release; a
+// failed build names a newer one in the index with the line to write, and says
+// nothing when the project, the configuration or the command line chose.
+TEST(PlatformDefault, ANewerReleaseIsNamedOnlyForTheDefault) {
+    namespace mp = mcpp::manifest::platform;
+    mp::Origin builtIn{}; builtIn.tier = mp::Tier::BuiltIn;
+    auto tip = mcpp::platform::newer_release_tip(builtIn, "openkal-platform", "0.24.3", "0.24.4", "2026.11.7.2");
+    ASSERT_TRUE(tip.has_value());
+    EXPECT_NE(tip->find("openkal-platform 0.24.3, mcpp 2026.11.7.2's default"), std::string::npos) << *tip;
+    EXPECT_NE(tip->find("platform = \"openkal-platform@0.24.4\""), std::string::npos) << *tip;
+    for (auto tier : {mp::Tier::Manifest, mp::Tier::Config, mp::Tier::Env, mp::Tier::Flag}) {
+        mp::Origin chosen{}; chosen.tier = tier;
+        EXPECT_FALSE(mcpp::platform::newer_release_tip(chosen, "openkal-platform", "0.24.3", "0.24.4", "x"));
+    }
+    EXPECT_FALSE(mcpp::platform::newer_release_tip(builtIn, "openkal-platform", "0.24.3", "0.24.3", "x"));
+    EXPECT_FALSE(mcpp::platform::newer_release_tip(builtIn, "openkal-platform", "0.24.3", "", "x"));
+}

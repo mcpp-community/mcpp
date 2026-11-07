@@ -1951,7 +1951,7 @@ int run(int argc, char** argv) {
     app.run(*parsed);
     // The run's closing notices come last, after everything the command
     // printed, whatever its exit status (see mcpp::ui::add_closing_notice).
-    mcpp::ui::print_closing_notices();
+    mcpp::ui::print_closing_notices(action_rc != 0);
     // A run that stopped before an effect its caller denied exits 5
     // (SPEC-003, design 2026-10-26 D23): the caller's constraint, not a
     // failure of the project, and a script tells the two apart by the status.

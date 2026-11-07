@@ -16,6 +16,18 @@
   runner, an execution host or carried files is still described by the full
   path (e2e 1024).
 
+- The built-in platform of the two ok-image targets is one release,
+  openkal-platform 0.24.3, the one this mcpp was qualified with (2026.11.7.1
+  selected the series `^0.24`): a project that states no platform builds the
+  same versions at any time, with or without `mcpp.lock`. A lock that records
+  another release does not decide, and the build says which it recorded. A
+  newer platform needs no new mcpp: a project selects it in its manifest, and a
+  build that fails over the default while the synced index holds a newer
+  release ends with a `tip:` naming it and the line to write (e2e 1025;
+  SPEC-013 1.5).
+- mcpp, its modules and the launchers `mcpp pack` generates name mcpplibs.os
+  `=0.3.1`, so a pack is the same at any later time.
+
 ### Added
 
 - `mcpp run --print-launch --message-format json` streams the build's events

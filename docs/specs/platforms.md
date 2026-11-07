@@ -4,10 +4,10 @@
 |---|---|
 | 规范编号 | SPEC-013 |
 | 标题 | 平台:一类目标的可复用配置,其声明、选择、合并、对依赖图的补全、链接与封装、运行器与载体 |
-| 状态 | 评审中 v1.4 |
-| 版本 | 1.4 |
+| 状态 | 评审中 v1.5 |
+| 版本 | 1.5 |
 | 最后修改 | 2026-11-07 |
-| 对应实现 | mcpp >= 2026.10.27.1;§10 的执行宿主与 §11 的载体架构 mcpp >= 2026.10.29.1;`runner.hosts`、载体列表、`descriptor_keys` 与 `universal` 的弃用 mcpp >= 2026.10.30.1;§7.5 版本组参与解析、§14 平台系列与 §15.1 系列的锁 mcpp >= 2026.11.7.1;逐条标注 |
+| 对应实现 | mcpp >= 2026.10.27.1;§10 的执行宿主与 §11 的载体架构 mcpp >= 2026.10.29.1;`runner.hosts`、载体列表、`descriptor_keys` 与 `universal` 的弃用 mcpp >= 2026.10.30.1;§7.5 版本组参与解析、§14 平台系列与 §15.1 系列的锁 mcpp >= 2026.11.7.1;§14 内置平台为确切版本与提示 mcpp >= 2026.11.7.2;逐条标注 |
 | 相关设计文档 | `.agents/docs/2026-10-28-platforms-design.md`、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md` |
 | 相关 issue | mcpp#846、mcpp#847、mcpp#848 |
 | 相关规范 | [SPEC-002](target-side.md)(目标侧的层)、[SPEC-004](manifest-semantics.md)(条件化形状)、[SPEC-006](toolchain-management.md)(工具链选择)、[SPEC-007](build-plugins.md)(构建程序与协议)、[SPEC-011](concurrency.md)(原子发布)、[SPEC-014](packaging.md)(打包) |
@@ -391,8 +391,10 @@ run_under = ["qemu-aarch64"]
 ## 14. 内置平台与目标表
 
 宿主目标(Linux、macOS、Windows、Android、iOS、Emscripten)的约定留在引擎中,无平台包。目标表有平台列:
-`x86_64-openkal`、`aarch64-openkal` 的值为平台系列 `mcpplibs.openkal-platform@^0.24`,即这两个目标的内置支持;
-选择来源报告为 `built-in`。项目可以以 `[target.<selector>] platform` 选择另一个版本或系列。**已实现**
+`x86_64-openkal`、`aarch64-openkal` 的值为一个确切的平台版本 `mcpplibs.openkal-platform@0.24.3`,即当前引擎验证过的版本,
+也是这两个目标的内置支持;选择来源报告为 `built-in`。项目可以以 `[target.<selector>] platform` 选择另一个版本或系列。
+锁中记录的版本不满足内置版本时不被采用,报告写出采用的版本与锁中记录的版本。使用内置版本的构建失败、且已同步的索引中
+有更新版本时,构建以一条 `tip` 写出两个版本与选择它的写法(mcpp >= 2026.11.7.2;2026.11.7.1 的值为系列 `^0.24`)。**已实现**
 
 **平台系列(mcpp >= 2026.11.7.1)。** 以范围选择的平台是一个系列:
 
@@ -517,6 +519,8 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 13. 映像的单文件的载体是映像架构的程序;`--mode self-contained` 的单目标包是树,携带该架构的运行器(e2e 961)。
 14. 以系列选择的平台取引擎可读的最新版本,跳过下限更高的版本并写出;锁记录的版本在系列内时被采用,`mcpp update` 之后
     取更新的版本(e2e 1021)。
+15. 内置平台为确切版本:不写平台的工程构建该版本并锁定;锁中记录的其他版本不被采用并写出;工程写出的平台照常采用
+    (e2e 1025;提示的条件与内容见单元测试 PlatformDefault)。
 
 ## 变更记录
 
@@ -526,4 +530,5 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 | 1.1 | 2026-10-28 | `[platform] universal`;载体的三种携带形式(运行器形式、映像、映像组的 zip)、`mcpp_carried_digest`、Mach-O 节名 `__carried`、按系统的行;平台阶段可声明包格式与 artifact action;`self env --host` 报告运行器与工具;判据 10、11(e2e 952、953)。 |
 | 1.2 | 2026-10-29 | mcpp 2026.10.29.1:§10 给出执行宿主时 `same-arch` 运行器的程序为产物架构的载体运行器形式,`mcpp test` 写出完整的拒绝原因一次;§11 单目标包与单文件的程序为产物架构的,不构建的行在生成工程之前被拒绝;§14 ok 映像与 Web;§16 `self env` 报告运行器程序的架构、执行宿主与拒绝,平台包的 `mcpp test` 运行给出执行宿主的目标;判据 7、12、13(e2e 960、961)。 |
 | 1.3 | 2026-10-30 | mcpp 2026.10.30.1(设计 2026-10-29 §4.3–§4.5、§13.3):§1.1 `universal` 弃用、不起作用;`runner.hosts`;`carrier` 接受列表,每项的 `hosts` 与 `build`;`descriptor_keys`;§10 执行宿主的运行器程序按 `hosts` 选择载体项;§11 携带映像的载体只属于单文件,树携带运行器形式;判据 13 改写(e2e 961)。 |
+| 1.5 | 2026-11-07 | mcpp 2026.11.7.2(设计 2026-11-07 §4.10,D20):§14 目标表的平台列为确切版本 0.24.3,锁中不满足的记录不被采用并写出;使用内置版本的构建失败且索引有更新版本时给出提示;判据 15 新增(e2e 1025)。 |
 | 1.4 | 2026-11-07 | mcpp 2026.11.7.1(设计 2026-11-07 §4.1.4、§4.2.2 A2/A3):§7.5 版本组参与解析,解析后的检查保留为断言;§3.2 平台引用接受 SemVer 约束;§14 目标表的平台列为系列 `^0.24`,系列取引擎可读的最新版本;§15.1 系列从锁中读回,`mcpp update` 移动它;判据 5 改写、14 新增(e2e 1020、1021)。 |
