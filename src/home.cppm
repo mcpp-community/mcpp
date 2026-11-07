@@ -84,6 +84,13 @@ std::filesystem::path cache_root();
 // hardcoded at the call sites so "where is the old cache" has one answer too.
 std::filesystem::path legacy_bmi_root();
 
+// A project's own state directory (`<project>/.mcpp/`: the indices it names,
+// their payloads, its SubOS, the locks of its compiler runs) is the machine's,
+// never the project's sources. Created by any part of mcpp, it carries a
+// `.gitignore` of `*`, so that it ignores itself in a repository whatever the
+// project's own ignore file says.
+void mark_project_state(const std::filesystem::path& dir);
+
 } // namespace mcpp::home
 
 namespace mcpp::home {
@@ -365,6 +372,14 @@ std::filesystem::path cache_root() {
 
 std::filesystem::path legacy_bmi_root() {
     return root() / "bmi";
+}
+
+void mark_project_state(const std::filesystem::path& dir) {
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const auto ignore = dir / ".gitignore";
+    if (ec || std::filesystem::exists(ignore, ec)) return;
+    std::ofstream(ignore, std::ios::binary) << "# The machine's state of this project (mcpp); never its sources.\n*\n";
 }
 
 } // namespace mcpp::home
