@@ -1716,6 +1716,12 @@ anything compiles.
   removed instead (its objects are not reusable). After a build or a test run,
   at most once a day, the directories no configuration used for `[build]
   keep_days` days (config.toml; default 3, `0` keeps all) are removed.
+- **`[build] target_budget` bounds `target/` (2026.11.8.1+).** A size such as
+  `target_budget = "20GiB"` in `mcpp.toml` (or config.toml): after every build
+  or test run whose `target/` holds more, the directories no configuration
+  records as current are removed whatever their age, and when the directories
+  in use still hold more, the build warns, naming the three largest. Nothing in
+  use is removed (mcpp#874).
 
 ### 2.10 `[build] cache` — The Global Dependency Cache
 

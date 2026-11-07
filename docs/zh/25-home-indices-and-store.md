@@ -22,9 +22,14 @@ mcpp 经由其包提供者 xlings 安装工具链与包。payload（一个包的
   build-cache/  cache/  provisioned/ …
 
 <project>/.mcpp/
+  .gitignore                `*`：目录忽略自身（2026.11.8.1+）
+  compiler-runs/<hash>/     构建所生成源文件的锁
   indices/<name>/           项目自己的 [indices] 的数据
   xpkgs/                    它们所服务的 payload
 ```
+
+`<project>/.mcpp/` 是本机关于该项目的状态，不是项目的源文件。mcpp 在创建或使用它时写入只含一行 `*` 的
+`.gitignore`，所以即使项目自己的忽略文件没有列出它，版本控制也会忽略它。
 
 归属按索引划分。mcpp 所服务的索引，其数据与 payload 在 mcpp 的 home 中；提供者自己的索引（`xim` 及其附带的索引）留在
 `registry/` 下。本地路径索引（`path = "…"`）在原处读取。
@@ -85,8 +90,10 @@ Windows 首次显式 `self init` 时，若 D 是可写的本地固定磁盘，�
 |---|---|---|
 | `[cache] unused_days` | 30 | 构建后每天至多一次：该天数内没有构建使用过的缓存条目（包、`std` 模块、host 工具） |
 | `[build] keep_days` | 3 | `mcpp build` 或 `mcpp test` 后，每个工程每天至多一次：该天数内没有配置使用过的构建目录 |
+| `[build] target_budget` | 无 | 每次 `mcpp build` 或 `mcpp test` 后，`target/` 超过该大小（`"20GiB"`、`"512MiB"`）时：没有任何配置记录为当前的构建目录，不论其年龄（2026.11.8.1+） |
 
-`0` 表示全部保留。`mcpp self config --cache-unused-days <N>` 与 `--keep-days <N>` 写入它们，
+`0` 表示全部保留。`target_budget` 从工程（或工作区根）的 `mcpp.toml` 读取，否则从 config.toml
+读取。仍在使用的目录超过预算时，构建给出警告并列出最大的三个；仍在使用的目录不会被删除。`mcpp self config --cache-unused-days <N>` 与 `--keep-days <N>` 写入它们，
 `mcpp self config` 显示它们。
 
 缓存条目的文件写入后不再改变，以 `noatime` 或 `relatime` 挂载的文件系统也不记录读取，因此由 mcpp
