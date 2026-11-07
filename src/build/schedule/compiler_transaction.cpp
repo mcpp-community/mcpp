@@ -60,7 +60,18 @@ std::expected<void,std::string> admit_completed(const fs::path& certificate,
     const auto name=spelling(certificate);
     const auto slot=named(std::string_view(name).substr(0,name.size()-std::string_view(".completed").size()));
     const auto object=named(std::string_view(name).substr(0,name.size()-std::string_view(".sched.completed").size()));
-    if(named(v[1])!=object)return std::unexpected("cached compiler certificate does not name its own object");
+    if(named(v[1])!=object) {
+        // A certificate of another directory's object: the directory was taken over,
+        // moved or restored elsewhere. It authorizes nothing here, so the slot's
+        // records go and the object is compiled again; nothing it names is touched.
+        std::error_code rec;
+        const auto prefix=spelling(slot.filename())+".";
+        std::vector<fs::path> records;
+        for(const auto& e:fs::directory_iterator(slot.parent_path(),rec))
+            if(spelling(e.path().filename()).starts_with(prefix))records.push_back(e.path());
+        for(const auto& r:records){std::error_code one;fs::remove(r,one);}
+        return {};
+    }
     const auto bmi=named(v[0]);const auto cache=output_directory/"gcm.cache";
     const auto relative=bmi.lexically_relative(cache);
     if(!bmi.is_absolute()||bmi!=bmi.lexically_normal()||relative.empty()||relative.is_absolute()

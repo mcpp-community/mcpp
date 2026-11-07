@@ -40,6 +40,30 @@ std::string toolchain_text(const mcpp::toolchain::Fingerprint& fp) {
     return std::format("compiler {}\ndriver {}\nstdlib {}\n", fp.parts[1], fp.parts[2], fp.parts[4]);
 }
 
+// THE COMPILER RECORDS OF THE PREDECESSOR ARE NOT TAKEN OVER. Beside each object
+// a split compile keeps its slot's records (`<object>.sched.*`, compiler
+// transactions): the attempt's transaction, its completion certificate, its
+// status and the BMI it preserved. They name the predecessor's paths, and a
+// certificate that names another directory's object is refused at the next
+// build's admission ("cached compiler certificate does not name its own
+// object") -- every build of the configuration after an mcpp upgrade failed so.
+// They describe attempts made there, and none is running (the predecessor's
+// lock is held), so they are removed: an object they would have admitted is
+// compiled again.
+void drop_compiler_records(const std::filesystem::path& objects) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    std::vector<fs::path> records;
+    for (fs::recursive_directory_iterator it(objects, ec), end; !ec && it != end; it.increment(ec)) {
+        const auto name = it->path().filename().string();
+        if (name.ends_with(".sched") || name.find(".sched.") != std::string::npos) records.push_back(it->path());
+    }
+    for (const auto& r : records) {
+        std::error_code rec;
+        fs::remove_all(r, rec);
+    }
+}
+
 std::string read_small(const std::filesystem::path& file) {
     std::ifstream in(file, std::ios::binary);
     return {std::istreambuf_iterator<char>(in), {}};
@@ -83,6 +107,7 @@ void adopt_predecessor_dir(const PrepareState& state, const std::filesystem::pat
             fs::remove_all(outputDir / name, mec);
             fs::rename(e.path(), outputDir / name, mec);
         }
+        drop_compiler_records(outputDir / "obj");
         mcpp::log::info("build/dir", std::format("{} continues as {}", shown,
                         outputDir.lexically_relative(state.workRoot).generic_string()));
     }
