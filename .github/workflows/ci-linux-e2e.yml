@@ -1,10 +1,11 @@
 name: ci-linux-e2e
 
 # The e2e suite (tests/e2e/run_all.sh) on Linux, called by ci.yml beside
-# ci-linux.yml after the Linux build. Six shards, assigned by measured
+# ci-linux.yml after the Linux build. Eight shards, assigned by measured
 # duration (tests/e2e/timings/linux.tsv, rule R4 of the 2026-10-02 CI record):
-# the table holds about 72 minutes of tests (2026-10-30, with the target-set
-# and packaging tests of 2026.10.30.1), about 12 a shard,
+# the table holds about 94 minutes of tests (measured by the shards' reports on
+# 2026-11-08, with the test protocol and skeleton tests of 2026.11.8.1), about
+# 12 a shard,
 # each running the one binary build.yml produced (use-built-mcpp, rule R1).
 # Each shard writes a per-test report that the e2e-coverage job of ci.yml reads
 # (rule R5).
@@ -17,15 +18,15 @@ on:
 
 jobs:
   e2e:
-    name: e2e ${{ matrix.shard }}/6 (linux x86_64, self-host)
+    name: e2e ${{ matrix.shard }}/8 (linux x86_64, self-host)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     env:
-      E2E_SHARD: ${{ matrix.shard }}/6
+      E2E_SHARD: ${{ matrix.shard }}/8
       E2E_TIMINGS: tests/e2e/timings/linux.tsv
       E2E_REPORT: ${{ github.workspace }}/e2e-report-linux-${{ matrix.shard }}.tsv
       MCPP_HOME: /home/runner/.mcpp
