@@ -4,6 +4,25 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.7.2] - 2026-11-07
+
+### Changed
+
+- `mcpp run --print-launch` takes the fast path when nothing changed, as `mcpp
+  run` does: 0.01 s in place of 0.1 to 0.3 s for each launch an editor asks for.
+  The full path records the launch it composes in the configuration's directory;
+  the fast path prints that record, with the request's program arguments, only
+  when the launch it composes itself is the recorded one, so a launch through a
+  runner, an execution host or carried files is still described by the full
+  path (e2e 1024).
+
+### Added
+
+- `mcpp run --print-launch --message-format json` streams the build's events
+  (`plan`, `waiting`, `progress`, `artifact`) before the `mcpp.launch` envelope,
+  which is the last line; feature `launch-stream`. An editor shows the build of
+  a Run as it goes (e2e 1024).
+
 ## [2026.11.7.1] - 2026-11-07
 
 ### Fixed

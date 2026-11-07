@@ -668,6 +668,57 @@ IDE 通过 mcppls 的载荷找到语言服务：后端 `languageservice.cppm` �
 6. 更新 #52、#75 的正文；在 #885 发布最终台账，逐项列出“实现提交 / 局部验证 / 最终 CI / 公开发布 / 镜像与索引”。
 7. 流程：exact-head CI 被取消时不得合入（Q13）；家族发布经 A6，自动列出未关闭缺陷。
 
+### 4.9 IDE 中的运行与构建反馈（D19）
+
+**现象（用户实测，CLion）：** 右键 Run 时控制台先出现“mcpp: building…”，约 1 s 后才出现程序输出，代码没有改动时也是如此；构建时看不到 mcpp 的构建信息与进度；侧栏上没有 MC++ 图标。
+
+**测量（Linux x86_64，无改动时）：**
+
+| 命令 | 耗时 |
+|---|---|
+| `mcpp build`、`mcpp run` | 0.00–0.01 s（快速路径） |
+| `mcpp run --print-launch`，单文件工程 | 0.08–0.10 s |
+| `mcpp run --print-launch`，mcpp-ide 工程 | 0.30 s |
+| 后端 `mcpp/availability` 与 `run/launch` | 0 ms 与上一行相同 |
+
+**原因：**
+
+1. `--print-launch` 不走快速路径（`try_fast_run` 以“the launch the full path composes”拒绝），每次都重新解析依赖、工具链并重做规划；`--message-format json` 下也只输出最后的 envelope，没有进度事件。
+2. 后端的 `run/launch` 是一次同步请求，期间既不转发 mcpp 的叙述，也不转发进度；只有失败时才把叙述交给编辑器。CLion 与 Neovim 因此先打印固定的“mcpp: building…”，再静默等待。VS Code 在终端里运行 `mcpp run`，看得到 mcpp 的原始输出。
+3. CLion 的 Build 作业转发了叙述（`job/output`），但没有处理 `job/progress`，看不到 `n/m` 进度；VS Code 与 Neovim 处理了这一通知。
+4. CLion 的工具窗口注册在右侧，新 UI 默认不把第三方工具窗口放上侧栏。
+
+**设计：**
+
+1. **mcpp 2026.11.7.2。**
+   - **原先的限制与取舍。** 2026-10-26 控制契约设计（§5.3、B4）要求启动描述与 `mcpp run` 的启动逐项一致；完整路径
+     组合 runner 前缀、执行宿主、runner 携带的文件与运行契约环境，快速路径只组合程序、loader 环境与 subos 环境，
+     而快速路径的正确性靠一份屡有漏项的拒绝清单（#544、#716、#755、riscv）。因此 `--print-launch` 只走完整路径。
+     这不是必要的限制：没有改动时 `mcpp run` 本身就由快速路径以它组合的 argv 与环境执行程序，缺的只是完整路径
+     才有的 `configuration` 与“两条路径组合相同”的保证。
+   - **记录与比较。** 完整路径输出启动描述时，把它（不含本次的程序参数）记录在该配置的目录中
+     （`launch/<program>.json`）。快速路径照常经过 `mcpp run` 快速路径的全部准入与 ninja，然后把自己组合出的
+     `argv`、`env`、`via`、`program` 与记录逐项比较：相同则输出记录并附上本次的程序参数；不同或没有记录则退回
+     完整路径，由它重写记录。输出因此在构造上就是完整路径的结果，不另设拒绝清单。
+   - `--print-launch --message-format json` 输出 NDJSON：构建的 plan、waiting、progress、artifact 事件，最后一行是
+     `mcpp.launch` 信封；特性名 `launch-stream`。不带 `--print-launch` 的 `run --message-format json` 被拒绝。不带
+     `--message-format json` 时输出不变。
+   - `mcpp test --print-launch` 不变：`mcpp test` 没有快速路径，每次都规划。
+   - 回归 e2e 1024：两条路径的信封逐字段相同，且没有重新解析；改动源文件后重新编译并给出相同描述；被改动的记录
+     不被使用并被重写；流式输出逐行是 JSON、含 progress、末行为信封；`--protocol-version` 列出 `launch-stream`。
+     实测：单文件工程 0.09 s 降到 0.01 s，mcpp-ide 工程 0.30 s 降到 0.01 s。
+2. **mcpp-ide 1.2.0 后端。** 新增作业种类 `launch`：mcpp 具备 `launch-stream` 时以 `--print-launch --message-format json` 执行（否则以 `--print-launch` 执行，只转发叙述），构建期间发出 `job/output`（mcpp 的叙述）与 `job/progress`，`job/finished` 携带 launch。`run/launch` 与 `debug/configuration` 保留，供同系列的旧客户端使用。
+3. **CLion。**
+   - Run 与 Debug 以 `launch` 作业构建：控制台实时显示 mcpp 的叙述，不再打印固定文字；无改动时只有 mcpp 的
+     “Finished … in 0.01s”。Debug 的构建在进度对话框中显示 mcpp 的最后一行叙述与步数比例，随后取调试配置（mcpp
+     走快速路径）。
+   - Build、Test 与 Run 的进度显示在状态栏 widget 上（`<作业> n/m`）。
+   - 在 idea.log 记录各段耗时：作业受理、构建、程序启动。
+   - 工具窗口改为左侧（`anchor="left"`），与 Project 并列；第一次打开 mcpp 项目时把它的按钮放上侧栏（新 UI
+     默认把插件的工具窗口放在“更多工具窗口”中），之后保留用户的调整。项目判定不变：打开的目录有 `mcpp.toml`。
+4. **Neovim。** `:Mcpp run` 以 `launch` 作业构建，叙述写入 `mcpp://output`，进度进入状态行（`<作业> n/m`），与 Build 一致；冒烟测试覆盖。
+5. **VS Code。** Run 仍在终端中运行 `mcpp run`；调试前的构建改用 `launch` 作业，进度进入状态栏。
+
 ## 5. 决定
 
 | 编号 | 决定 | 状态 |
@@ -690,6 +741,7 @@ IDE 通过 mcppls 的载荷找到语言服务：后端 `languageservice.cppm` �
 | D16 | 运行入口与测试结果以同一份后端数据、各编辑器原生的图标呈现；测试输出逐项归属，状态与 mcpp 契约逐值一致；用例切分只在 IDE 后端 | 已批准 |
 | D17 | #896（同名不同命名空间的两个包只链接其一）与 #897（后到的边请求的新特性不被遍历）是 mcpp 的缺陷，并入 #889 修复（4.1.7） | 用户已决定 |
 | D18 | mcppls-clangd、mcppls、mcpp-ide 自本轮版本起只分发 ok 映像，测试也以 ok 映像进行；原生构建保留为测试工具与对比运行，PR、push 与发布的 CI 默认只在 linux-x64 构建原生程序，其余平台的原生构建与测试由手动触发（4.5 第 6 项） | 用户已决定 |
+| D19 | IDE 中的运行与构建反馈与终端一致：`run --print-launch` 走快速路径并可流式报告；后端以作业执行启动构建；CLion 与 Neovim 显示 mcpp 的真实叙述与进度；CLion 工具窗口位于左侧并默认显示（4.9） | 用户已决定 |
 
 ## 6. 执行顺序
 

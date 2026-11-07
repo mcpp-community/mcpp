@@ -845,6 +845,8 @@ int run(int argc, char** argv) {
                 .help("Play a game in the status row while it builds: --play-game=snake|stack|runner, or one at random"))
             .option(cl::Option("print-launch")
                 .help("Build, then print how the program would be started (argv, the environment mcpp adds, cwd, runner) as the mcpp.launch envelope, instead of starting it"))
+            .option(cl::Option("message-format").takes_value().value_name("FMT")
+                .help("With --print-launch: human (default) | json (the build's events as NDJSON, then the envelope as the last line)"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_run(p, std::span<const std::string>(passthrough));
             })))
