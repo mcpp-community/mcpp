@@ -100,7 +100,7 @@ jobs:
       - name: Check modules/ wiring
         run: bash .github/tools/check_modules_wiring.sh
 
-      - name: Check that headers are included only in the system lock files
+      - name: Check that headers and conditional directives appear only in the system lock files
         run: bash .github/tools/check_include_regions.sh
 
       - name: Check src/build/prepare* file lengths
