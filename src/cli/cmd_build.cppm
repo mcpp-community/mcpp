@@ -215,6 +215,26 @@ target_legs(const mcpplibs::cmdline::ParsedArgs& parsed, const mcpp::build::Buil
 
 int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed);
 
+namespace {
+// The build's events on standard output (design 2026-10-26 §5.1): `waiting` while
+// another build holds the directory, `progress` with ninja's count, and what the
+// record adds. `mcpp build --message-format json` and `mcpp run --print-launch
+// --message-format json` stream them before their envelope.
+void stream_build_events() {
+    namespace res = mcpp::build::result;
+    res::enable_events(true);
+    mcpp::build::dirlock::set_waiting_observer(
+        [](const mcpp::build::dirlock::Holder& h, std::chrono::milliseconds waited) {
+            res::emit("waiting", {{"holder", {{"pid", h.pid}, {"command", h.command},
+                                              {"client", h.client}, {"startedAt", h.startedAt}}},
+                                  {"waitedMs", waited.count()}});
+        });
+    mcpp::build::progress::set_step_observer([](std::size_t finished, std::size_t total) {
+        res::emit("progress", {{"finished", finished}, {"total", total}});
+    });
+}
+} // namespace
+
 // `mcpp build --message-format json` (design 2026-10-26 §5.1).
 //
 // NDJSON ON STANDARD OUTPUT WHILE IT BUILDS, THEN ONE ENVELOPE. Events are
@@ -234,16 +254,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (messageFormat == "human") return cmd_build_body(parsed);
 
     namespace res = mcpp::build::result;
-    res::enable_events(true);
-    mcpp::build::dirlock::set_waiting_observer(
-        [](const mcpp::build::dirlock::Holder& h, std::chrono::milliseconds waited) {
-            res::emit("waiting", {{"holder", {{"pid", h.pid}, {"command", h.command},
-                                              {"client", h.client}, {"startedAt", h.startedAt}}},
-                                  {"waitedMs", waited.count()}});
-        });
-    mcpp::build::progress::set_step_observer([](std::size_t finished, std::size_t total) {
-        res::emit("progress", {{"finished", finished}, {"total", total}});
-    });
+    stream_build_events();
     // mcpp's own errors (a manifest's rejection, a refused requirement) are
     // the envelope's diagnostics, each located where its message says.
     std::vector<std::string> errors;
@@ -1145,6 +1156,19 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
         return mcpp::build::list_runners(package_filter, cache_mode, no_cache,
                                          target_triple, features, profile, accel);
     mcpp::build::set_print_launch(parsed.is_flag_set("print-launch"));
+    // A launch asked for as JSON streams the build's events, and its envelope is
+    // the last line (design 2026-11-07 §4.9): an editor shows the build as it goes.
+    if (auto mf = parsed.value("message-format"); mf && *mf != "human" && *mf != "json") {
+        mcpp::ui::error(std::format("unknown --message-format '{}' (human|json)", *mf));
+        return 2;
+    } else if (mf && *mf == "json" && !parsed.is_flag_set("print-launch")) {
+        mcpp::ui::error("mcpp run --message-format json describes a launch: add --print-launch");
+        return 2;
+    }
+    if (parsed.is_flag_set("print-launch") && parsed.value("message-format").value_or("human") == "json") {
+        mcpp::build::set_launch_stream(true);
+        stream_build_events();
+    }
     // Closed before the program starts: the program owns the terminal.
     mcpp::build::progress::open(mcpp::log::is_verbose());
     return mcpp::build::build_run_target(targetName, passthrough, package_filter,

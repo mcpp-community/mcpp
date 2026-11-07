@@ -243,20 +243,31 @@ void step4b_seed_platform(PrepareState& state) {
     item.requestedBy = state.m->package.name + " (platform)";
     item.originalConstraint = item.spec.version;
     // A SERIES TAKES THE RELEASE THE LOCK RECORDS (SPEC-013 §14): a platform
-    // selected as `^0.24` (the target table's default) resolves to the newest
-    // release of the series once, and mcpp.lock keeps it there until
-    // `mcpp update` drops the entry; a recorded release outside the series is
-    // not taken.
+    // selected as `^0.24` resolves to the newest release of the series once,
+    // and mcpp.lock keeps it there until `mcpp update` drops the entry; a
+    // recorded release outside the request is not taken, and the build says
+    // which it takes (the target table's exact default after an mcpp upgrade,
+    // design 2026-11-07 §4.10).
     if (!item.spec.isPath() && !item.spec.isGit()) {
         const auto qualified = item.spec.namespace_ + "." + item.spec.shortName;
         if (auto anchor = state.platformLockAnchors.find(qualified);
             anchor != state.platformLockAnchors.end())
             if (auto req = mcpp::version_req::parse_req(item.spec.version))
-                if (auto v = mcpp::version_req::parse_version(anchor->second);
-                    v && mcpp::version_req::matches(*req, *v) && item.spec.version != anchor->second) {
-                    mcpp::ui::info("Platform", std::format("{} {} → v{} (mcpp.lock)",
-                        item.spec.shortName, item.spec.version, anchor->second));
-                    item.spec.version = "=" + anchor->second;
+                if (auto v = mcpp::version_req::parse_version(anchor->second); v) {
+                    if (mcpp::version_req::matches(*req, *v)) {
+                        if (item.spec.version != anchor->second) {
+                            mcpp::ui::info("Platform", std::format("{} {} → v{} (mcpp.lock)",
+                                item.spec.shortName, item.spec.version, anchor->second));
+                            item.spec.version = "=" + anchor->second;
+                        }
+                    } else {
+                        mcpp::ui::info("Platform", std::format("{} {} ({}; mcpp.lock recorded v{})",
+                            item.spec.shortName, item.spec.version,
+                            state.platform.selection.origin.tier == mcpp::manifest::platform::Tier::BuiltIn
+                                ? std::format("mcpp {}'s default", mcpp::MCPP_VERSION)
+                                : mcpp::platform::origin_text(state.platform.selection.origin),
+                            anchor->second));
+                    }
                 }
     }
     item.consumerDepIndex = kMainConsumer;
@@ -494,8 +505,27 @@ void step4b_read_platform_group(PrepareState& state, const std::string& resolved
         return;
     state.platformGroupRead = true;
     state.platformGroup = state.dep_manifests.back()->platform.versions;
-    state.platformGroupFrom = std::format("{} {}", state.platformPackageShortName,
-                                          state.dep_manifests.back()->package.version);
+    const auto used = state.dep_manifests.back()->package.version;
+    state.platformGroupFrom = std::format("{} {}", state.platformPackageShortName, used);
+    // THE DEFAULT IS A RELEASE, AND A NEWER ONE IS THE PROJECT'S CHOICE (design
+    // 2026-11-07 §4.10). The target table names one platform release, the one
+    // this mcpp was qualified with; a project selects another in its manifest.
+    // When the default is in use and the synced index holds a newer release, a
+    // failed build says so once, with the line to write. It guesses no cause.
+    auto const& sel = state.platform.selection;
+    if (sel.origin.tier != mcpp::manifest::platform::Tier::BuiltIn || sel.ref.spec.isPath()
+        || sel.ref.spec.isGit() || used.empty())
+        return;
+    auto cfg = state.get_cfg(true);
+    if (!cfg) return;
+    auto newer = mcpp::pm::resolve_semver(sel.ref.spec.namespace_.empty() ? std::string("mcpplibs")
+                                                                          : sel.ref.spec.namespace_,
+                                          state.platformPackageShortName, ">" + used,
+                                          state.index_route(*cfg), *state.targetPlatform);
+    if (!newer) return;
+    if (auto tip = mcpp::platform::newer_release_tip(sel.origin, state.platformPackageShortName, used,
+                                                     *newer, mcpp::MCPP_VERSION))
+        mcpp::ui::add_failure_notice("platform-newer", *tip);
 }
 
 // A SERIES TAKES ITS NEWEST RELEASE THIS ENGINE READS (SPEC-013 §14). A

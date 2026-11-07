@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # requires: unix-shell gcc fresh-sandbox
-# A PLATFORM SELECTED AS A SERIES (SPEC-013 §4.6, 2026.11.7.1). The target
-# table's default platform is a series (`openkal-platform@^0.24`), and a
-# project may select one as well (`"<name>@^0"`):
+# A PLATFORM SELECTED AS A SERIES (SPEC-013 §4.6, 2026.11.7.1). A project
+# selects one (`"<name>@^0"`); the target table's default is one release
+# from 2026.11.7.2 (design 2026-11-07 §4.10):
 #
 #   A. The series takes its newest release whose `[package] mcpp` floor this
 #      mcpp meets: a release made for a newer mcpp is skipped and named.

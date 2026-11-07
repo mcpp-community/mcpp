@@ -845,6 +845,8 @@ int run(int argc, char** argv) {
                 .help("Play a game in the status row while it builds: --play-game=snake|stack|runner, or one at random"))
             .option(cl::Option("print-launch")
                 .help("Build, then print how the program would be started (argv, the environment mcpp adds, cwd, runner) as the mcpp.launch envelope, instead of starting it"))
+            .option(cl::Option("message-format").takes_value().value_name("FMT")
+                .help("With --print-launch: human (default) | json (the build's events as NDJSON, then the envelope as the last line)"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_run(p, std::span<const std::string>(passthrough));
             })))
@@ -1949,7 +1951,7 @@ int run(int argc, char** argv) {
     app.run(*parsed);
     // The run's closing notices come last, after everything the command
     // printed, whatever its exit status (see mcpp::ui::add_closing_notice).
-    mcpp::ui::print_closing_notices();
+    mcpp::ui::print_closing_notices(action_rc != 0);
     // A run that stopped before an effect its caller denied exits 5
     // (SPEC-003, design 2026-10-26 D23): the caller's constraint, not a
     // failure of the project, and a script tells the two apart by the status.

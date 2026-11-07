@@ -109,8 +109,12 @@ struct ClosingNotice {
     std::string message;   // one line; no trailing newline
 };
 void add_closing_notice(std::string code, std::string message);
+// A notice that belongs to a failed run only: advice that would be noise after
+// a success (design 2026-11-07 §4.10, a newer platform release in the index).
+void add_failure_notice(std::string code, std::string message);
 std::vector<ClosingNotice> take_closing_notices();
-void print_closing_notices();
+// `failed`: the run is failing, and its failure notices are printed as well.
+void print_closing_notices(bool failed = false);
 
 // Multi-line Rust-style diagnostic (M4 #8.1).
 // Renders as:
@@ -864,7 +868,18 @@ std::vector<ClosingNotice>& closing_notices() {
     static std::vector<ClosingNotice> notices;
     return notices;
 }
+std::vector<ClosingNotice>& failure_notices() {
+    static std::vector<ClosingNotice> notices;
+    return notices;
+}
 } // namespace
+
+void add_failure_notice(std::string code, std::string message) {
+    auto& all = failure_notices();
+    for (auto const& n : all)
+        if (n.message == message) return;
+    all.push_back({std::move(code), std::move(message)});
+}
 
 void add_closing_notice(std::string code, std::string message) {
     auto& all = closing_notices();
@@ -877,8 +892,10 @@ std::vector<ClosingNotice> take_closing_notices() {
     return std::exchange(closing_notices(), {});
 }
 
-void print_closing_notices() {
+void print_closing_notices(bool failed) {
     auto notices = take_closing_notices();
+    auto onFailure = std::exchange(failure_notices(), {});
+    if (failed) notices.insert(notices.end(), onFailure.begin(), onFailure.end());
     if (g_quiet) return;
     init();
     for (auto const& n : notices) {

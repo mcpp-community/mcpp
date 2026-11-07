@@ -4,6 +4,45 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.7.2] - 2026-11-07
+
+### Changed
+
+- `mcpp run --print-launch` takes the fast path when nothing changed, as `mcpp
+  run` does: 0.01 s in place of 0.1 to 0.3 s for each launch an editor asks for.
+  The full path records the launch it composes in the configuration's directory;
+  the fast path prints that record, with the request's program arguments, only
+  when the launch it composes itself is the recorded one, so a launch through a
+  runner, an execution host or carried files is still described by the full
+  path (e2e 1024).
+
+- The built-in platform of the two ok-image targets is one release,
+  openkal-platform 0.24.3, the one this mcpp was qualified with (2026.11.7.1
+  selected the series `^0.24`): a project that states no platform builds the
+  same versions at any time, with or without `mcpp.lock`. A lock that records
+  another release does not decide, and the build says which it recorded. A
+  newer platform needs no new mcpp: a project selects it in its manifest, and a
+  build that fails over the default while the synced index holds a newer
+  release ends with a `tip:` naming it and the line to write (e2e 1025;
+  SPEC-013 1.5).
+- mcpp, its modules and the launchers `mcpp pack` generates name mcpplibs.os
+  `=0.3.1`, so a pack is the same at any later time.
+
+### Added
+
+- `mcpp run --print-launch --message-format json` streams the build's events
+  (`plan`, `waiting`, `progress`, `artifact`) before the `mcpp.launch` envelope,
+  which is the last line; feature `launch-stream`. An editor shows the build of
+  a Run as it goes (e2e 1024).
+
+### Fixed
+
+- `mcpp test -p <member> --no-run --archive` carries the files a workspace
+  member deploys from the member's product directory, where the build placed
+  them; 2026.11.7.1 named them where a plan of one package places them and
+  refused the archive: "cannot copy … into the test archive". A member's test
+  run through a runner names the same files (e2e 1026).
+
 ## [2026.11.7.1] - 2026-11-07
 
 ### Fixed

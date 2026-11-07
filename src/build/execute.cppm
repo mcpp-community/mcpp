@@ -61,6 +61,7 @@ import mcpp.build.schedule.detach_codegen;
 import mcpp.fetcher.progress;
 import mcpp.project;
 import mcpp.ui;
+import mcpp.ui.terminal;   // a streamed launch envelope is the protocol stream's last line
 import mcpp.toolchain.msvc_coroutines;
 import mcpp.build.progress;
 
@@ -2940,11 +2941,69 @@ bool& print_launch_flag() {
 }
 export void set_print_launch(bool on) { print_launch_flag() = on; }
 
+// `--print-launch --message-format json` (design 2026-11-07 §4.9): the build's
+// events stream before the envelope, so the envelope is the stream's last line.
+bool& launch_stream_flag() {
+    static bool on = false;
+    return on;
+}
+export void set_launch_stream(bool on) { launch_stream_flag() = on; }
+
+void emit_launch(const mcpp::wire::Envelope& env) {
+    if (launch_stream_flag()) mcpp::ui::terminal::write_protocol_stdout(mcpp::wire::to_json(env).dump() + "\n");
+    else mcpp::wire::emit(env);
+}
+
+// THE LAUNCH THE FULL PATH COMPOSED, RECORDED FOR THE FAST PATH (design
+// 2026-11-07 §4.9). A launch description is the run's own composition, and only
+// the full path composes all of it: the runner, the execution host, the files
+// a runner carries, the named runners of `configuration`. It is recorded in the
+// configuration's directory, without this request's program arguments. The fast
+// path describes the launch from the record only when the launch it composes
+// itself -- the one `mcpp run` executes there -- is the recorded one, field for
+// field; otherwise the full path describes it and records it again. The
+// description is therefore the full path's by construction, and no list of the
+// cases the fast path cannot compose is kept.
+std::filesystem::path launch_record_path(const std::filesystem::path& outputDir,
+                                         const std::filesystem::path& exe) {
+    return outputDir / "launch" / (exe.filename().string() + ".json");
+}
+
+void record_launch(const std::filesystem::path& outputDir, const std::filesystem::path& exe,
+                   nlohmann::json data, std::size_t arguments) {
+    auto& argv = data["argv"];
+    for (std::size_t i = 0; i < arguments && !argv.empty(); ++i) argv.erase(argv.size() - 1);
+    data.erase("cwd");
+    std::error_code ec;
+    const auto path = launch_record_path(outputDir, exe);
+    std::filesystem::create_directories(path.parent_path(), ec);
+    const auto staged = std::filesystem::path(path.string() + ".tmp");
+    {
+        std::ofstream out(staged, std::ios::binary | std::ios::trunc);
+        out << data.dump();
+        if (!out) return;   // a description without a record: the next one takes the full path
+    }
+    std::filesystem::rename(staged, path, ec);
+}
+
+std::expected<nlohmann::json, std::string>
+recorded_launch(const std::filesystem::path& outputDir, const std::filesystem::path& exe,
+                const nlohmann::json& composed) {
+    std::ifstream in(launch_record_path(outputDir, exe), std::ios::binary);
+    if (!in) return std::unexpected("no launch the full path composed is recorded");
+    auto record = nlohmann::json::parse(in, nullptr, false);
+    if (record.is_discarded() || !record.is_object())
+        return std::unexpected("the recorded launch cannot be read");
+    for (const char* field : {"argv", "env", "via", "program"})
+        if (record.value(field, nlohmann::json()) != composed.value(field, nlohmann::json()))
+            return std::unexpected(std::format("the recorded launch has another {}: {} where this path composes {}",
+                field, record.value(field, nlohmann::json()).dump(), composed.value(field, nlohmann::json()).dump()));
+    return record;
+}
+
 std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
                                 const std::optional<std::string>& targetName,
                                 std::span<const std::string> passthrough) {
-    if (print_launch_flag())
-        return fast_path_declined("run", "--print-launch describes the launch the full path composes");
     // Same reason as try_fast_build's: this path skips resolution, and
     // `--locked` is an assertion about resolution.
     if (mcpp::invocation::get("MCPP_LOCKED").value_or("") == "1")
@@ -3059,16 +3118,11 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     fast_path_end(record, true);
     buildLock.reset();
 
-    auto exe = outputDir / chosen->second;
+    // The cache records the program's path with `/`; the full path spells it
+    // natively (`bin\app.exe` on Windows), and so does this one, so that the
+    // two compose the same argv.
+    auto exe = outputDir / std::filesystem::path(chosen->second).make_preferred();
     auto pathCtx = mcpp::fetcher::make_path_ctx(/*cfg=*/nullptr, projectRoot);
-    yield_terminal();
-    mcpp::ui::status("Running",
-        std::format("`{}`", mcpp::ui::shorten_path(exe, pathCtx)));
-    run_separator();
-    std::vector<std::string> argv;
-    argv.push_back(exe.string());
-    for (auto& a : passthrough) argv.push_back(a);
-
     std::vector<std::pair<std::string, std::string>> childEnv;
     if (!match->runEnvKey.empty() && !match->runEnvValue.empty())
         childEnv.emplace_back(match->runEnvKey, match->runEnvValue);
@@ -3082,6 +3136,35 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
                  return mcpp::invocation::get(v);
              }))
         childEnv.push_back(std::move(kv));
+
+    // `--print-launch`: the recorded launch, when it is the one this path executes.
+    if (print_launch_flag()) {
+        nlohmann::json composed = mcpp::build::result::to_json(
+            mcpp::build::result::Launch{{exe.string()}, childEnv, {}, ""});
+        composed["program"] = exe.generic_string();
+        auto described = recorded_launch(outputDir, exe, composed);
+        if (!described) return fast_path_declined("run", described.error());
+        yield_terminal();
+        mcpp::ui::status("Running",
+            std::format("`{}`", mcpp::ui::shorten_path(exe, pathCtx)));
+        run_separator();
+        mcpp::wire::Envelope env{.kind = "mcpp.launch",
+                                 .effects = {mcpp::wire::Effect::ReadProject,
+                                             mcpp::wire::Effect::WriteProject}};
+        env.data = std::move(*described);
+        for (auto& a : passthrough) env.data["argv"].push_back(a);
+        env.data["cwd"] = std::filesystem::current_path().generic_string();
+        emit_launch(env);
+        return 0;
+    }
+
+    yield_terminal();
+    mcpp::ui::status("Running",
+        std::format("`{}`", mcpp::ui::shorten_path(exe, pathCtx)));
+    run_separator();
+    std::vector<std::string> argv;
+    argv.push_back(exe.string());
+    for (auto& a : passthrough) argv.push_back(a);
 
     // Same contract as the prepare path below: a refused spawn is reported and
     // exits in the 125-127 band, never folded into the artifact's own status.
@@ -3334,7 +3417,8 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         env.data = mcpp::build::result::to_json(launch);
         env.data["program"] = exe.generic_string();
         env.data["configuration"] = launch_configuration(ctx);
-        mcpp::wire::emit(env);
+        record_launch(ctx.outputDir, exe, env.data, passthrough.size());
+        emit_launch(env);
         return 0;
     }
     int spawnErr = 0;
@@ -4614,7 +4698,11 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // in the single-threaded pass, one list per test program.
         if (!runnerTmpl.empty() || !tb.runUnderPrefix.empty()) {
             std::vector<std::pair<std::string, std::filesystem::path>> carried;
-            with_member(*ctx, owner, [&] { carried = runtime_files_for(*ctx, exe, owner); });
+            // The member's files: a plan selected to one member (`-p`) still
+            // holds the member's link group, and its tests sit in the member's
+            // own product directory with that group's deploy set.
+            const std::string_view of = owner.empty() ? std::string_view(lu.memberOf) : owner;
+            with_member(*ctx, of, [&] { carried = runtime_files_for(*ctx, exe, of); });
             if (auto listed = write_runtime_files_list(*ctx, exe, carried))
                 childEnv.emplace_back(std::string(kRuntimeFilesEnv), listed->string());
             else if (invocationNotRunReason.empty())
@@ -4673,7 +4761,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         env.data["program"] = chosen->program.generic_string();
         env.data["test"] = chosen->name;
         env.data["configuration"] = launch_configuration(*ctx);
-        mcpp::wire::emit(env);
+        emit_launch(env);
         return 0;
     }
     // Pass 2: run them. Concurrently unless there is exactly one — see
@@ -4789,7 +4877,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
 // One leg's built tests, for the archive.
 struct ArchiveLeg {
     std::string                                             triple;
-    const BuildContext*                                     ctx = nullptr;
+    BuildContext*                                           ctx = nullptr;
     const std::vector<std::pair<std::string, std::string>>* programEnv = nullptr;
 };
 
@@ -4821,7 +4909,10 @@ int write_test_archive(const TestOptions& o, std::span<const ArchiveLeg> legs) {
             if (!fs::is_regular_file(exe, ec)) continue;
             ta::Test t{lu.targetName, ta::test_dest(l.triple, lu.targetName, exe.filename().string()), {}};
             copies.push_back({exe, t.program});
-            for (auto const& [dest, source] : runtime_files_for(*l.ctx, exe)) {
+            // The files of the test's member, placed in its product directory.
+            std::vector<std::pair<std::string, fs::path>> carried;
+            with_member(*l.ctx, lu.memberOf, [&] { carried = runtime_files_for(*l.ctx, exe, lu.memberOf); });
+            for (auto const& [dest, source] : carried) {
                 // A file the program reads above its own directory goes beside
                 // it under its own name: the archive keeps one directory per test.
                 const bool above = dest.starts_with("../");

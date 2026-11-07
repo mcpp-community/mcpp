@@ -245,6 +245,7 @@ envelope says when either has changed since.
 | `target-sets` | 2026.10.31.1 (meaning from 2026.10.30.1) | `--target openkal` and the other sets expand to their legs (SPEC-015 §1) | an IDE's target picker |
 | `pkg-format-list` | 2026.10.31.1 (meaning from 2026.10.30.1) | `--pkg-format tar,okb` writes each container of one tree (SPEC-014 §5.4) | an IDE's pack form |
 | `test-launch` | 2026.10.31.2 | `mcpp test <name> --print-launch` prints the `mcpp.launch` of one test (below) | an IDE debugging a test |
+| `launch-stream` | 2026.11.7.2 | `mcpp run --print-launch --message-format json` streams the build's events, then the `mcpp.launch` envelope (below) | an IDE's Run, showing the build as it goes |
 
 ### How a tool runs mcpp for a project
 
@@ -527,7 +528,7 @@ installation, which is located on the machine rather than installed by mcpp. A
 target row is `{target, note, toolchain, pin, status, default}`, and `status` is
 one of `installed` / `available` / `via dependency graph` / `planned`.
 A target row also carries `platform` (2026.10.27.1+): the platform package the
-target table selects for it (the series `mcpplibs.openkal-platform@^0.24` from 2026.11.7.1), or `null`.
+target table selects for it (`mcpplibs.openkal-platform@0.24.3` from 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
 
 **`toolchain` and `pin` are not the same field twice.** `toolchain` is what
 the row is associated with — the installed payload on an installed row, the
@@ -1001,6 +1002,19 @@ Builds the program as `mcpp run` does and prints the envelope instead of
 starting it. `data` is `program`, `argv`, `cwd`, `env` and `via`, as
 `launch` above. `--print-launch` takes no `--format`: on `mcpp run`, `--pkg-format`
 names a distributable.
+
+With `--message-format json` (2026.11.7.2+, feature `launch-stream`) standard
+output is NDJSON: the build's events, as `mcpp build --message-format json`
+streams them (`plan`, `waiting`, `progress`, `artifact`), and the `mcpp.launch`
+envelope as the last line. Without `--print-launch`, `mcpp run --message-format
+json` is refused (exit 2).
+
+With nothing changed the description takes the fast path, as `mcpp run` does
+(2026.11.7.2+): the full path records the launch it composes in the
+configuration's directory, and the fast path prints that record, with this
+request's arguments, when the launch it composes itself is the recorded one.
+Any other launch -- a runner, an execution host, the files a runner carries --
+is described by the full path.
 
 `data.configuration` (2026.11.7.1+) contains the selected program's `triple`,
 `profile` and resolved `platform`, using the same fields as the build record's

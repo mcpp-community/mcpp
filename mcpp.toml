@@ -1,6 +1,6 @@
 [package]
 name        = "mcpp"
-version = "2026.11.7.1"
+version = "2026.11.7.2"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
@@ -102,7 +102,7 @@ mcpplibs.cmdline = "0.0.1"
 # The operating system is mcpplibs.os's (design 2026-10-26 §25): mcpp keeps no
 # layer of its own.
 [dependencies.mcpplibs]
-os = "^0.3.1"
+os = "=0.3.1"
 
 
 [target.linux.build]

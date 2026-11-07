@@ -261,7 +261,7 @@ TEST(PackDistribution, TheWindowsLauncherIsAProgram) {
     EXPECT_NE(src.find("(\"windows-\" + arch)"), std::string::npos) << src;
     EXPECT_NE(src.find("os::process::exec"), std::string::npos) << src;
     const auto manifest = d::exe_launcher_manifest("hello", "1.0.0");
-    EXPECT_NE(manifest.find("os = \"^0.3.1\""), std::string::npos) << manifest;
+    EXPECT_NE(manifest.find("os = \"=0.3.1\""), std::string::npos) << manifest;
     EXPECT_NE(manifest.find("[targets.hello]"), std::string::npos) << manifest;
 }
 

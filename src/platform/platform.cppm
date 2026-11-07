@@ -160,6 +160,16 @@ struct Resolved {
 // `config.toml`, `mcpp.toml`, `env`, `flag`, `graph`, `build-program`.
 std::string origin_text(const mcpp::manifest::platform::Origin& o);
 
+// THE DEFAULT IS A RELEASE, AND A NEWER ONE IS THE PROJECT'S CHOICE (design
+// 2026-11-07 §4.10). The tip a failed build prints when the platform is the
+// target table's default (`origin` is built-in) and the index holds a newer
+// release: the release used, this mcpp's, the newer one and the line to write.
+// None for a platform the project, the configuration or the command line chose,
+// or when nothing newer is known.
+std::optional<std::string> newer_release_tip(const mcpp::manifest::platform::Origin& origin,
+                                             std::string_view name, std::string_view used,
+                                             std::string_view newer, std::string_view mcppVersion);
+
 // The lines `Platform …` and its fields, as the target report prints them.
 std::vector<std::pair<std::string, std::string>> report_rows(const Resolved& r);
 
@@ -500,6 +510,17 @@ std::string Resolved::display() const {
     if (!active) return "host conventions";
     auto dot = package.find('.');
     return std::format("{} {}", dot == std::string::npos ? package : package.substr(dot + 1), version);
+}
+
+std::optional<std::string> newer_release_tip(const mp::Origin& origin, std::string_view name,
+                                             std::string_view used, std::string_view newer,
+                                             std::string_view mcppVersion) {
+    if (origin.tier != mp::Tier::BuiltIn || used.empty() || newer.empty() || newer == used)
+        return std::nullopt;
+    return std::format("this build used {} {}, mcpp {}'s default; the index has {} {}. A project "
+                       "selects a release in its mcpp.toml: [target.'cfg(os = \"openkal\")'] "
+                       "platform = \"{}@{}\"",
+                       name, used, mcppVersion, name, newer, name, newer);
 }
 
 std::string origin_text(const mp::Origin& o) {

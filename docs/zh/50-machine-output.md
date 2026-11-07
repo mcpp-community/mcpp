@@ -208,6 +208,7 @@ effects 采用具名的方式而不是一个 `destructive: true|false`，因为�
 | `target-sets` | 2026.10.31.1（语义自 2026.10.30.1） | `--target openkal` 等集合展开为其腿（SPEC-015 §1） | IDE 的 target 选择 |
 | `pkg-format-list` | 2026.10.31.1（语义自 2026.10.30.1） | `--pkg-format tar,okb` 写出一棵树的各个容器（SPEC-014 §5.4） | IDE 的打包界面 |
 | `test-launch` | 2026.10.31.2 | `mcpp test <name> --print-launch` 打印一个测试的 `mcpp.launch`（见下） | 调试测试的 IDE |
+| `launch-stream` | 2026.11.7.2 | `mcpp run --print-launch --message-format json` 先流式输出构建事件，再输出 `mcpp.launch` 信封（见下） | IDE 的运行，边构建边显示 |
 
 ### 工具为项目运行 mcpp 的方式
 
@@ -463,7 +464,7 @@ mcpp toolchain list --format json
 的形状是 `{target, note, toolchain, pin, status, default}`，`status` 取
 `installed` / `available` / `via dependency graph` / `planned` 之一。
 目标行另有 `platform`（2026.10.27.1+）：目标表为该目标选择的平台包
-（2026.11.7.1 起为系列 `mcpplibs.openkal-platform@^0.24`），或 `null`。
+（2026.11.7.2 起为 `mcpplibs.openkal-platform@0.24.3`；2026.11.7.1 为系列 `^0.24`），或 `null`。
 
 **`toolchain` 与 `pin` 不是把同一个字段写了两遍。** `toolchain` 表示这一行
 关联到什么 —— 已装的行是装好的载荷，词表行是它自己的约定。`pin` 只承载目标
@@ -889,6 +890,15 @@ mcpp run [target] --print-launch
 按 `mcpp run` 的方式构建程序，然后打印信封而不启动它。`data` 为 `program`、
 `argv`、`cwd`、`env` 与 `via`，同上文的 `launch`。`--print-launch` 不接受
 `--format`：在 `mcpp run` 上，`--pkg-format` 表示可分发物的格式。
+
+带 `--message-format json`（2026.11.7.2+，特性 `launch-stream`）时，标准输出为 NDJSON：先是与
+`mcpp build --message-format json` 相同的构建事件（`plan`、`waiting`、`progress`、`artifact`），
+最后一行是 `mcpp.launch` 信封。不带 `--print-launch` 的 `mcpp run --message-format json` 被拒绝
+（退出码 2）。
+
+没有改动时，启动描述与 `mcpp run` 一样走快速路径（2026.11.7.2+）：完整路径把它组合出的启动
+记录在该配置的目录中；快速路径自己组合出的启动与记录逐项相同时，输出这份记录，并附上本次的
+程序参数。其他启动（runner、执行宿主、runner 携带的文件）由完整路径描述。
 
 `data.configuration`（2026.11.7.1+）包含所选程序的 `triple`、`profile` 与解析后的
 `platform`，字段与构建记录的 configuration 相同。目标集合中，它描述本次启动所选的

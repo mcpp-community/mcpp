@@ -668,6 +668,99 @@ IDE 通过 mcppls 的载荷找到语言服务：后端 `languageservice.cppm` �
 6. 更新 #52、#75 的正文；在 #885 发布最终台账，逐项列出“实现提交 / 局部验证 / 最终 CI / 公开发布 / 镜像与索引”。
 7. 流程：exact-head CI 被取消时不得合入（Q13）；家族发布经 A6，自动列出未关闭缺陷。
 
+### 4.9 IDE 中的运行与构建反馈（D19）
+
+**现象（用户实测，CLion）：** 右键 Run 时控制台先出现“mcpp: building…”，约 1 s 后才出现程序输出，代码没有改动时也是如此；构建时看不到 mcpp 的构建信息与进度；侧栏上没有 MC++ 图标。
+
+**测量（Linux x86_64，无改动时）：**
+
+| 命令 | 耗时 |
+|---|---|
+| `mcpp build`、`mcpp run` | 0.00–0.01 s（快速路径） |
+| `mcpp run --print-launch`，单文件工程 | 0.08–0.10 s |
+| `mcpp run --print-launch`，mcpp-ide 工程 | 0.30 s |
+| 后端 `mcpp/availability` 与 `run/launch` | 0 ms 与上一行相同 |
+
+**原因：**
+
+1. `--print-launch` 不走快速路径（`try_fast_run` 以“the launch the full path composes”拒绝），每次都重新解析依赖、工具链并重做规划；`--message-format json` 下也只输出最后的 envelope，没有进度事件。
+2. 后端的 `run/launch` 是一次同步请求，期间既不转发 mcpp 的叙述，也不转发进度；只有失败时才把叙述交给编辑器。CLion 与 Neovim 因此先打印固定的“mcpp: building…”，再静默等待。VS Code 在终端里运行 `mcpp run`，看得到 mcpp 的原始输出。
+3. CLion 的 Build 作业转发了叙述（`job/output`），但没有处理 `job/progress`，看不到 `n/m` 进度；VS Code 与 Neovim 处理了这一通知。
+4. CLion 的工具窗口注册在右侧，新 UI 默认不把第三方工具窗口放上侧栏。
+
+**设计：**
+
+1. **mcpp 2026.11.7.2。**
+   - **原先的限制与取舍。** 2026-10-26 控制契约设计（§5.3、B4）要求启动描述与 `mcpp run` 的启动逐项一致；完整路径
+     组合 runner 前缀、执行宿主、runner 携带的文件与运行契约环境，快速路径只组合程序、loader 环境与 subos 环境，
+     而快速路径的正确性靠一份屡有漏项的拒绝清单（#544、#716、#755、riscv）。因此 `--print-launch` 只走完整路径。
+     这不是必要的限制：没有改动时 `mcpp run` 本身就由快速路径以它组合的 argv 与环境执行程序，缺的只是完整路径
+     才有的 `configuration` 与“两条路径组合相同”的保证。
+   - **记录与比较。** 完整路径输出启动描述时，把它（不含本次的程序参数）记录在该配置的目录中
+     （`launch/<program>.json`）。快速路径照常经过 `mcpp run` 快速路径的全部准入与 ninja，然后把自己组合出的
+     `argv`、`env`、`via`、`program` 与记录逐项比较：相同则输出记录并附上本次的程序参数；不同或没有记录则退回
+     完整路径，由它重写记录。输出因此在构造上就是完整路径的结果，不另设拒绝清单。
+   - `--print-launch --message-format json` 输出 NDJSON：构建的 plan、waiting、progress、artifact 事件，最后一行是
+     `mcpp.launch` 信封；特性名 `launch-stream`。不带 `--print-launch` 的 `run --message-format json` 被拒绝。不带
+     `--message-format json` 时输出不变。
+   - `mcpp test --print-launch` 不变：`mcpp test` 没有快速路径，每次都规划。
+   - 回归 e2e 1024：两条路径的信封逐字段相同，且没有重新解析；改动源文件后重新编译并给出相同描述；被改动的记录
+     不被使用并被重写；流式输出逐行是 JSON、含 progress、末行为信封；`--protocol-version` 列出 `launch-stream`。
+     实测：单文件工程 0.09 s 降到 0.01 s，mcpp-ide 工程 0.30 s 降到 0.01 s。
+2. **mcpp-ide 1.2.0 后端。** 新增作业种类 `launch`：mcpp 具备 `launch-stream` 时以 `--print-launch --message-format json` 执行（否则以 `--print-launch` 执行，只转发叙述），构建期间发出 `job/output`（mcpp 的叙述）与 `job/progress`，`job/finished` 携带 launch。`run/launch` 与 `debug/configuration` 保留，供同系列的旧客户端使用。
+3. **CLion。**
+   - Run 与 Debug 以 `launch` 作业构建：控制台实时显示 mcpp 的叙述，不再打印固定文字；无改动时只有 mcpp 的
+     “Finished … in 0.01s”。Debug 的构建在进度对话框中显示 mcpp 的最后一行叙述与步数比例，随后取调试配置（mcpp
+     走快速路径）。
+   - Build、Test 与 Run 的进度显示在状态栏 widget 上（`<作业> n/m`）。
+   - 在 idea.log 记录各段耗时：作业受理、构建、程序启动。
+   - 工具窗口改为左侧（`anchor="left"`），与 Project 并列；第一次打开 mcpp 项目时把它的按钮放上侧栏（新 UI
+     默认把插件的工具窗口放在“更多工具窗口”中），之后保留用户的调整。项目判定不变：打开的目录有 `mcpp.toml`。
+4. **Neovim。** `:Mcpp run` 以 `launch` 作业构建，叙述写入 `mcpp://output`，进度进入状态行（`<作业> n/m`），与 Build 一致；冒烟测试覆盖。
+5. **VS Code。** Run 仍在终端中运行 `mcpp run`；调试前的构建改用 `launch` 作业，进度进入状态栏。
+
+### 4.10 平台与 os 的版本语义（D20）
+
+**取舍。** 2026.11.7.1 的内置平台是系列 `^0.24`：没有锁文件时取索引中最新的补丁，结果写入 `mcpp.lock`。有锁文件时
+构建可以复现；没有锁文件的工程（新建的、不提交锁文件的）在不同时间首次解析会得到不同的补丁，而 mcpp 的 e2e 与发布
+canary 验证的是一个具体的平台版本。本轮的 0.24.1 带入 Windows 路径丢卷，由 0.24.2 修正，说明自动取用补丁也会把未经
+该版 mcpp 验证的改动带给用户。改为精确版本后：
+
+- 同一版 mcpp 在没有锁文件时也构建同一组版本，默认值就是该版 mcpp 验证过的组合；
+- openkal 生态发布补丁或新系列都不要求发布 mcpp：开发者在 `[target.'cfg(os = "openkal")'] platform` 中选择，系列写法
+  （`^0.24`）、版本组与锁文件照常生效；
+- 代价是修正不会自动到达不写平台的工程，由失败提示弥补，严重问题以 mcpp 补丁版本推进默认值。
+
+**设计（mcpp 2026.11.7.2）：**
+
+1. **默认平台。** 两个内置 openkal 目标的默认平台为精确的 openkal-platform 0.24.3（带 openkal-image 0.5.2 的 Windows 主线程栈修正，
+   4.11）。0.24.3 发布并进入索引之后，2026.11.7.2 才发布，已解析到 0.24.2 或 0.24.3 的工程不会被降级。锁文件中的平台不满足
+   精确请求时按请求重新解析，并给出一行说明（锁定版本与所选版本）。开发者写出的平台（精确或系列）照常生效。
+2. **失败提示。** openkal 目标的构建失败、平台来自内置默认值、且已同步的索引中有更新的版本时，输出一行提示：本次使用的
+   平台版本（某版 mcpp 的默认值）、索引中更新的补丁与系列，以及可直接复制的写法
+   `[target.'cfg(os = "openkal")'] platform = "openkal-platform@<版本>"`。不推测失败原因；开发者写出平台时不提示。
+3. **mcpplibs.os。** mcpp 自身的 `mcpp.toml`、`modules/` 的成员与 `mcpp pack` 生成的启动器清单写 `os = "=0.3.1"`，打包产物在不同
+   时间可复现。os 对 openkal 实现的依赖保持兼容区间，避免过度约束下游。
+4. **回归。** e2e 1020/1021 改为验证开发者显式写出的系列（版本组选择、锁定与跳过更新的引擎）；新增 e2e：默认平台是精确的
+   0.24.3，与锁文件冲突时重新解析并说明，构建失败且索引有更新版本时给出提示，显式写平台时不提示。`docs/35-platforms`
+   中英文与 CHANGELOG 写明默认值与覆盖方式。
+5. **生态产品。** mcppls 与 mcpp-ide 的清单改为精确的 `openkal-platform@0.24.3`（取代本轮 A4 的系列写法），发布的载荷对应确定的
+   平台版本；mcpp-plugins 不指定平台，不受影响。
+
+### 4.11 ok 映像在 Windows 上的主线程栈（openkal-image 0.5.2，平台 0.24.3）
+
+**现象。** clangd.okb 的 e2e（4.5 第 6 项）在 windows-2022 上，`compiler_extensions` 的 `windows-mode-off` 用例（`--target=x86_64-pc-windows-msvc
+-fno-ms-extensions`，`--sync`）以 `0xC00000FD STATUS_STACK_OVERFLOW` 结束；原生 clangd 与 Linux 上的映像都通过。
+
+**原因。** 映像在 okrun 的主线程上执行。Windows 主线程的栈是可执行文件的预留值，已发布 okrun.exe 的 PE 头为 1 MiB（链接器默认）；
+openkal-windows 给其他线程至少 8 MiB，Linux 与 macOS 的主线程为 8 MiB。clangd 带 `--sync` 时在主线程上为 MSVC 头文件建立标准库索引，
+错误恢复的递归超出 1 MiB。所有 ok 映像在 Windows 上的主线程都受此限制。
+
+**修正。** openkal-tools 0.5.2 在 Windows 上链接时预留 8 MiB + 256 KiB（openkal-windows 线程默认栈与其保护页余量），按链接器分别写成
+MSVC ABI 的 `/STACK` 与 GNU ABI 的 `--stack`。`examples/stack` 在主线程上递归 6 MiB，CI 在四个系统上运行。本地验证：交叉构建的
+okrun.exe 预留 8650752 字节；wine 下旧 okrun.exe 运行该示例无输出地结束，新 okrun.exe 正常输出。平台 0.24.3 的版本组只把
+openkal-image 改为 0.5.2，经一个索引变更发布（D12）。
+
 ## 5. 决定
 
 | 编号 | 决定 | 状态 |
@@ -690,6 +783,8 @@ IDE 通过 mcppls 的载荷找到语言服务：后端 `languageservice.cppm` �
 | D16 | 运行入口与测试结果以同一份后端数据、各编辑器原生的图标呈现；测试输出逐项归属，状态与 mcpp 契约逐值一致；用例切分只在 IDE 后端 | 已批准 |
 | D17 | #896（同名不同命名空间的两个包只链接其一）与 #897（后到的边请求的新特性不被遍历）是 mcpp 的缺陷，并入 #889 修复（4.1.7） | 用户已决定 |
 | D18 | mcppls-clangd、mcppls、mcpp-ide 自本轮版本起只分发 ok 映像，测试也以 ok 映像进行；原生构建保留为测试工具与对比运行，PR、push 与发布的 CI 默认只在 linux-x64 构建原生程序，其余平台的原生构建与测试由手动触发（4.5 第 6 项） | 用户已决定 |
+| D19 | IDE 中的运行与构建反馈与终端一致：`run --print-launch` 走快速路径并可流式报告；后端以作业执行启动构建；CLion 与 Neovim 显示 mcpp 的真实叙述与进度；CLion 工具窗口位于左侧并默认显示（4.9） | 用户已决定 |
+| D20 | 内置 openkal platform 与 mcpplibs.os 用精确版本：mcpp 2026.11.7.2 的默认平台为 openkal-platform 0.24.3，mcpp 自身与它生成的启动器清单写 os `=0.3.1`；生态更新由开发者在自己的 `mcpp.toml` 中选择，构建失败而索引有更新版本时给出一行提示；mcppls 与 mcpp-ide 的平台写精确的 `@0.24.3`（4.10） | 用户已决定 |
 
 ## 6. 执行顺序
 
