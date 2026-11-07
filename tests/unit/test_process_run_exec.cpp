@@ -86,11 +86,15 @@ TEST(RunExec, StreamCompletionAndChildWaitKeepTheirBounds) {
         int idle = 0;
         bool stop = false;
         int exit = -1;
+        // When `should_stop` begins to answer true. An exited child is waited
+        // for however soon it is asked to stop; the case of one that exits by
+        // itself gives the shell a start no runner is slower than.
+        int stopAfter = 50;
     };
     const std::vector<Case> cases{
         {"exit", "exit 7", 0, 0, false, 7},
         {"signal", "kill -TERM $$", 0, 0, false, 143},
-        {"already-exited-bounded", "exit 7", 3000, 0, true, 7},
+        {"already-exited-bounded", "exit 7", 3000, 0, true, 7, 2000},
         {"open-stop", "sleep 2", 0, 0, true},
         {"both-EOF-stop", "exec 1>&- 2>&-; sleep 2", 0, 0, true},
         {"stdout-EOF-stop", "exec 1>&-; sleep 2", 0, 0, true},
@@ -105,7 +109,7 @@ TEST(RunExec, StreamCompletionAndChildWaitKeepTheirBounds) {
         options.total = std::chrono::milliseconds(test.total);
         options.idle = std::chrono::milliseconds(test.idle);
         if (test.stop) options.should_stop = [&] {
-            return std::chrono::steady_clock::now() - started > std::chrono::milliseconds(50);
+            return std::chrono::steady_clock::now() - started > std::chrono::milliseconds(test.stopAfter);
         };
         const bool producer = std::string_view(test.command) == "@stderr-producer";
         if (producer) options.env.emplace_back("MCPP_TEST_OUTPUT_PRODUCER", "1");
