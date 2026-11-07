@@ -3745,6 +3745,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // dev-dependencies, which are its own and are not walked further
         // than their own dependencies.
         std::set<std::size_t> closureIdx{mi};
+        std::set<std::string> ownDevDeps;
         {
             std::vector<std::size_t> work{mi};
             auto push = [&](std::size_t j) {
@@ -3756,6 +3757,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                         it != packageIndexByName.end() && it->second != mi) {
                         memberDevDepPackages.insert(
                             qualified_package_name(packages[it->second].manifest));
+                        ownDevDeps.insert(qualified_package_name(packages[it->second].manifest));
                         push(it->second);
                         break;
                     }
@@ -3811,6 +3813,13 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             pkg.manifest.buildConfig.moduleExtensions,
             pkg.manifest.buildConfig.deviceExtensions);
         std::vector<LinkUnit> units;
+        // The sources of the member's dev-dependencies that define `main`
+        // (gtest_main.cc): a beginning of a test that defines none.
+        std::set<std::filesystem::path> memberMainSources;
+        for (auto const& cu : plan.compileUnits)
+            if (ownDevDeps.contains(cu.packageName) && is_implementation_source(cu.kind)
+                && source_defines_main(cu.source))
+                memberMainSources.insert(cu.source);
         for (auto const& t : pkg.manifest.targets) {
             if (memberTestMode && t.kind != mcpp::manifest::Target::TestBinary) continue;
             if (t.kind == mcpp::manifest::Target::Entry) continue;   // §24.3
@@ -3922,11 +3931,6 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             // A dependency's entry as this program's beginning (§24.3), as
             // for a root's target.
             std::optional<EntrySelection> selectedEntry;
-            std::set<std::filesystem::path> memberMainSources;
-            for (auto const& cu : plan.compileUnits)
-                if (memberDevDepPackages.contains(cu.packageName) && is_implementation_source(cu.kind)
-                    && source_defines_main(cu.source))
-                    memberMainSources.insert(cu.source);
             auto defaulted = test_main_default(mi, pkg.manifest, t, lu, memberMainSources);
             if (!defaulted) return std::unexpected(defaulted.error());
             const auto& begins = *defaulted ? **defaulted : t;

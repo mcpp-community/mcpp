@@ -19,6 +19,8 @@
 #   H. A test that begins at an entry links no source that defines `main` beneath its
 #      dev-dependency (gtest_main.cc of compat.gtest beneath a GoogleTest adapter).
 #   I. A test links a dev-dependency that is a shared library (mtest's C ABI) by its library.
+#   J. In a workspace, a member's test begins by the member's own dev-dependencies: another
+#      member's dev-dependency that defines `main` is no beginning of it.
 set -e
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -157,5 +159,15 @@ printf 'extern "C" int shlib_answer() { return 42; }\n' > shlib/src/shlib.cpp
 printf '[package]\nname    = "shapp"\nversion = "0.1.0"\n\n[dev-dependencies]\nshlib = { path = "../shlib" }\n' > shapp/mcpp.toml
 printf 'extern "C" int shlib_answer();\nint main() { return shlib_answer() == 42 ? 0 : 1; }\n' > shapp/tests/links.cpp
 (cd shapp && "$MCPP" test > ../i.log 2>&1) || fail "I: a shared dev-dependency is not linked" i.log
+
+# J
+mkdir -p wsj/one/tests wsj/two/tests
+printf '[workspace]\nmembers = ["one", "two"]\n' > wsj/mcpp.toml
+printf '[package]\nname    = "one"\nversion = "0.1.0"\n\n[dev-dependencies]\nhdr = { path = "../../hdr" }\n' > wsj/one/mcpp.toml
+printf 'int uses_headers() { return 0; }\n' > wsj/one/tests/plain.cpp
+printf '[package]\nname    = "two"\nversion = "0.1.0"\n\n[dev-dependencies]\nfw = { path = "../../fw" }\n' > wsj/two/mcpp.toml
+printf 'extern "C++" int run_cases() { return 0; }\n' > wsj/two/tests/begun.cpp
+(cd wsj && "$MCPP" test --workspace > ../j.log 2>&1) || fail "J: a member's test took another member's beginning" j.log
+grep -q "began at hdr" j.log && grep -q "fw main" j.log || fail "J: each member's test did not begin at its own" j.log
 
 echo "PASS: 1037 a skeleton tests with mtest, and a test needs no main"
