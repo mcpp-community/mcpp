@@ -1,0 +1,110 @@
+name: "probe: mcpp#874 in the reporter's workspace"
+
+# Temporary: the re-measure of mcpp#874 with the candidate mcpp in
+# Sunrisepeak/mui (the issue's configuration: Linux x86_64, gcc 16.1.0, dev).
+# It prints and never asserts; the numbers go to the issue.
+
+on:
+  pull_request:
+
+env:
+  XLINGS_NON_INTERACTIVE: '1'
+  MUI_REF: 2ab79868a6d82bb29a7e5cf5788ebe8ee759b40c
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Room on the runner
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af > /dev/null 2>&1 || true
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: The candidate mcpp
+        run: |
+          "$MCPP" build 2>&1 | tail -3
+          cand="$(find "$PWD/target" -path '*/bin/mcpp' -type f | head -1)"
+          "$cand" --version
+          echo "CAND=$cand" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Sunrisepeak/mui
+          ref: ${{ env.MUI_REF }}
+          path: mui
+          submodules: true
+
+      - name: The workspace's tools (as its CI installs them)
+        working-directory: mui
+        run: |
+          "$XLINGS_BIN" install esbuild -y -g || true
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+          "$CAND" toolchain install gcc 16.1.0
+          "$CAND" toolchain default gcc@16.1.0
+          echo "SDL_VIDEO_DRIVER=offscreen" >> "$GITHUB_ENV"
+          PATH="$HOME/.xlings/subos/current/bin:$PATH" tools/ci/gpu.sh || true
+
+      - name: mcpp test --workspace, from nothing
+        id: first
+        working-directory: mui
+        timeout-minutes: 285
+        continue-on-error: true
+        run: |
+          echo "since=$(date +%s)" >> "$GITHUB_OUTPUT"
+          python3 ../.github/probe/874-measure.py --snapshot . > ../base1.json
+          start=$(date +%s)
+          "$CAND" test --workspace --exclude omui.entry.python --exclude omui.reflect > ../first.log 2>&1 || echo "exit $?"
+          echo "wall: $(( $(date +%s) - start )) s" | tee -a ../first.log
+          tail -40 ../first.log
+          df -h /
+
+      - name: Measure the first run
+        if: always()
+        run: |
+          NINJA_BASE=base1.json python3 .github/probe/874-measure.py mui '${{ steps.first.outputs.since }}' "mcpp test --workspace, from nothing"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          (cd mui && "$CAND" clean --report) 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          "$CAND" cache list 2>&1 | tail -15 | tee -a "$GITHUB_STEP_SUMMARY"
+          grep -E "workspace result|^wall:|members? (built|tested)|Building|took" first.log | tail -12 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: mcpp test --workspace, again with nothing changed
+        id: second
+        if: always()
+        working-directory: mui
+        timeout-minutes: 120
+        continue-on-error: true
+        run: |
+          echo "since=$(date +%s)" >> "$GITHUB_OUTPUT"
+          python3 ../.github/probe/874-measure.py --snapshot . > ../base2.json
+          start=$(date +%s)
+          "$CAND" test --workspace --exclude omui.entry.python --exclude omui.reflect > ../second.log 2>&1 || echo "exit $?"
+          echo "wall: $(( $(date +%s) - start )) s" | tee -a ../second.log
+          tail -20 ../second.log
+
+      - name: Measure the second run
+        if: always()
+        run: |
+          NINJA_BASE=base2.json python3 .github/probe/874-measure.py mui '${{ steps.second.outputs.since }}' "mcpp test --workspace, again" | sed -n '/### 4/,/### 5/p'
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E "workspace result|^wall:" second.log | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-874
+          path: |
+            first.log
+            second.log
+          if-no-files-found: ignore
