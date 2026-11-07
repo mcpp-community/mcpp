@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# requires: git
 # 1028 -- a project's state directory ignores itself.
 #
 # A build writes `<project>/.mcpp/` (its compiler runs' locks; a project's own
@@ -11,6 +10,7 @@
 # Criterion: after a build in a repository whose .gitignore names only
 # target/, `git status` lists nothing under .mcpp/, and `.mcpp/.gitignore` is `*`.
 set -e
+command -v git > /dev/null || { echo "SKIP: no git on this machine"; exit 0; }
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
