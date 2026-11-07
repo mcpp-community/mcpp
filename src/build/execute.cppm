@@ -2996,7 +2996,8 @@ recorded_launch(const std::filesystem::path& outputDir, const std::filesystem::p
         return std::unexpected("the recorded launch cannot be read");
     for (const char* field : {"argv", "env", "via", "program"})
         if (record.value(field, nlohmann::json()) != composed.value(field, nlohmann::json()))
-            return std::unexpected(std::format("the recorded launch has another {}", field));
+            return std::unexpected(std::format("the recorded launch has another {}: {} where this path composes {}",
+                field, record.value(field, nlohmann::json()).dump(), composed.value(field, nlohmann::json()).dump()));
     return record;
 }
 
@@ -4694,7 +4695,11 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // in the single-threaded pass, one list per test program.
         if (!runnerTmpl.empty() || !tb.runUnderPrefix.empty()) {
             std::vector<std::pair<std::string, std::filesystem::path>> carried;
-            with_member(*ctx, owner, [&] { carried = runtime_files_for(*ctx, exe, owner); });
+            // The member's files: a plan selected to one member (`-p`) still
+            // holds the member's link group, and its tests sit in the member's
+            // own product directory with that group's deploy set.
+            const std::string_view of = owner.empty() ? std::string_view(lu.memberOf) : owner;
+            with_member(*ctx, of, [&] { carried = runtime_files_for(*ctx, exe, of); });
             if (auto listed = write_runtime_files_list(*ctx, exe, carried))
                 childEnv.emplace_back(std::string(kRuntimeFilesEnv), listed->string());
             else if (invocationNotRunReason.empty())
@@ -4869,7 +4874,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
 // One leg's built tests, for the archive.
 struct ArchiveLeg {
     std::string                                             triple;
-    const BuildContext*                                     ctx = nullptr;
+    BuildContext*                                           ctx = nullptr;
     const std::vector<std::pair<std::string, std::string>>* programEnv = nullptr;
 };
 
@@ -4901,7 +4906,10 @@ int write_test_archive(const TestOptions& o, std::span<const ArchiveLeg> legs) {
             if (!fs::is_regular_file(exe, ec)) continue;
             ta::Test t{lu.targetName, ta::test_dest(l.triple, lu.targetName, exe.filename().string()), {}};
             copies.push_back({exe, t.program});
-            for (auto const& [dest, source] : runtime_files_for(*l.ctx, exe)) {
+            // The files of the test's member, placed in its product directory.
+            std::vector<std::pair<std::string, fs::path>> carried;
+            with_member(*l.ctx, lu.memberOf, [&] { carried = runtime_files_for(*l.ctx, exe, lu.memberOf); });
+            for (auto const& [dest, source] : carried) {
                 // A file the program reads above its own directory goes beside
                 // it under its own name: the archive keeps one directory per test.
                 const bool above = dest.starts_with("../");

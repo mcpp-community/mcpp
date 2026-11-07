@@ -35,6 +35,14 @@
   which is the last line; feature `launch-stream`. An editor shows the build of
   a Run as it goes (e2e 1024).
 
+### Fixed
+
+- `mcpp test -p <member> --no-run --archive` carries the files a workspace
+  member deploys from the member's product directory, where the build placed
+  them; 2026.11.7.1 named them where a plan of one package places them and
+  refused the archive: "cannot copy … into the test archive". A member's test
+  run through a runner names the same files (e2e 1026).
+
 ## [2026.11.7.1] - 2026-11-07
 
 ### Fixed

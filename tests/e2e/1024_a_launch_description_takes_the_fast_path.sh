@@ -34,7 +34,9 @@ fast_here=1
 grep -q 'Resolving' plain.err && fast_here=0
 "$MCPP" run --print-launch -- one two > fast.json 2> fast.err || fail "A: the second description failed" fast.err
 if [[ $fast_here -eq 1 ]] && grep -q 'Resolving' fast.err; then
-    fail "A: the unchanged description resolved again (the full path) where mcpp run does not" fast.err plain.err
+    "$MCPP" run --print-launch --verbose > /dev/null 2> why.err || true
+    grep 'fast-path' why.err > fast.why || true
+    fail "A: the unchanged description resolved again (the full path) where mcpp run does not" fast.why fast.err plain.err
 fi
 $PY - full.json fast.json <<'PY' || fail "A: the fast description is not the full path's" full.json fast.json
 import json, sys
