@@ -956,6 +956,9 @@ std::expected<void, std::string> phase1_toolchain_spec_and_axes(PrepareState& st
 std::expected<void, std::string> phase2_define_toolchain_resolver(PrepareState& state);
 std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state);
 std::expected<void, std::string> phase4a_graph_load(PrepareState& state);
+// graph_edges.cpp: the package index of a work item's consumer
+// (`WorkItem::consumerDepIndex`).
+std::size_t packageIndexForConsumer(std::size_t consumerDepIndex);
 // graph_edges.cpp: the edge one request adds to the graph, or the one it
 // merges with.
 void recordDependencyEdge(PrepareState& state, std::size_t consumerDepIndex,

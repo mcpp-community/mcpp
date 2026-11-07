@@ -70,6 +70,7 @@ schema，那是 [50 —— 机器可读输出](50-machine-output.md)。
 | `pack-universal`：`[pack] universal`——`true` 被拒绝，`false` 被忽略；打包的目标即其腿 | 2026.10.30.1 | 2027.1 | `[pack] targets = ["openkal"]`（全部架构），或一个 `--target` |
 | `platform-universal`：平台的 `[platform] universal`，被忽略；打包的目标即其腿 | 2026.10.30.1 | 2027.1 | 平台中不写；由打包命名目标（`--target openkal`） |
 | `no-universal-flag`：`mcpp pack --no-universal`，单目标打包不再需要它（与目标集合同用时拒绝） | 2026.10.30.1 | 2027.1 | `--target <arch>-<os>`（一条腿） |
+| `quoted-dotted-dependency-key`：带点的加引号依赖键（`"mcpplibs.cmdline" = "0.0.2"`），即一个 TOML 键，按其中的点所拼写的选择器读取 | 2026.11.8.1 | 2027.2 | 不加引号的选择器 `mcpplibs.cmdline = "0.0.2"` |
 
 ## 复现一次构建
 

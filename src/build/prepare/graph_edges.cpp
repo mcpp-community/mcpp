@@ -21,7 +21,7 @@ static mcpp::modgraph::DependencyVisibility parseVisibility(std::string_view vis
         return mcpp::modgraph::DependencyVisibility::Public;
 }
 
-static std::size_t packageIndexForConsumer(std::size_t consumerDepIndex) {
+std::size_t packageIndexForConsumer(std::size_t consumerDepIndex) {
         if (consumerDepIndex == kMainConsumer) return std::size_t{0};
         return consumerDepIndex + 1;
 }

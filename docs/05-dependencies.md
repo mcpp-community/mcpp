@@ -56,6 +56,11 @@ glfw = "3.4"                    # Explicit namespace; no fallback search
 
 </details>
 
+A quoted key with dots, `"mcpplibs.cmdline" = "0.0.2"`, is one TOML key whose
+name contains dots. mcpp reads it as the selector those dots spell, warns that
+the spelling is deprecated (since 2026.11.8.1, removed from 2027.2; docs/51)
+and names the unquoted key that replaces it: `mcpplibs.cmdline = "0.0.2"`.
+
 ```toml
 # Path dependency (local development)
 [dependencies]

@@ -53,6 +53,11 @@ glfw = "3.4"                    # Explicit namespace; no fallback search
 
 </details>
 
+带点的加引号键 `"mcpplibs.cmdline" = "0.0.2"` 是一个名字中含点的 TOML 键。
+mcpp 把它读作这些点所拼写的选择器，警告该拼法已弃用（自 2026.11.8.1 起，
+2027.2 起移除；docs/51），并给出替代它的不加引号的键：
+`mcpplibs.cmdline = "0.0.2"`。
+
 ```toml
 # Path dependency (local development)
 [dependencies]

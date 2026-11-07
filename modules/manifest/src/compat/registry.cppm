@@ -94,6 +94,13 @@ inline constexpr Deprecation kDeprecations[] = {
         "manifest/deprecated", "docs/35-platforms.md",
     },
     {
+        "quoted-dotted-dependency-key", "2026.11.8.1", "2027.2",
+        "a quoted dependency key with dots (`\"mcpplibs.cmdline\" = \"0.0.2\"`): one TOML key, "
+        "read as the selector its dots spell",
+        "the selector unquoted, `mcpplibs.cmdline = \"0.0.2\"`",
+        "manifest/deprecated", "docs/05-dependencies.md",
+    },
+    {
         "no-universal-flag", "2026.10.30.1", kRemovalFloor,
         "`mcpp pack --no-universal`, which a pack of one target no longer needs (refused with a "
         "target set)",
