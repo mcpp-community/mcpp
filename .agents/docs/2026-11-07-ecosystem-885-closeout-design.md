@@ -157,6 +157,15 @@ status: active
   前缀。mcppls 与 mcpp-ide 读取这两份数据；
 - O5：Linux 每条边约多 1 毫秒（附录 A.5）。Windows 以整次构建墙钟时间的变化报告。D8 的批准以此为前提。
 
+**许可数属于代际，不写进 build.ninja。** 最初的实现把许可数写成每条边的 `--cap N`，于是许可数不同的两次构建得到
+不同的 build.ninja，快速路径的字节比较（e2e 861）失败。许可数现由代际记录承载：代际所有者记录为
+`mcpp-compiler-run-v1` 加一行 `<id> <started> <cap>`，执行器从所在代际读取；build.ninja 旁的 `.mcpp-compiler-cap`
+供快速路径复用，缺失时快速路径改为重新规划。不属于任何代际的执行器从 `--cap` 或 `MCPP_COMPILER_CAP` 取得
+许可数。MSVC 协程提示跳过 `__compiler-cap … --` 前缀后再识别编译器（e2e 892）。
+
+**macOS 上短暂“不存在”的许可槽。** macOS 宿主层对正被他人持有的槽偶尔报告 not_found，而内核实际返回 EAGAIN
+（openkal-macos#45）。许可目录仍在时，执行器把它当作“被持有”，连续 5 秒仍无法解释才失败。
+
 #### 4.1.3 C3 Windows `build.mcpp` 的宿主工具链（Q16，D11）
 
 **现象。** 在默认使用 MSVC 的 Windows 宿主上，为裸交叉目标执行 `build.mcpp` 时，构建程序的宿主工具链解析把
@@ -209,6 +218,14 @@ status: active
 
 `nlohmann.json` 已由 mcpp-ide 以 GCC 16.1、由 mcppls 以 LLVM 23 实际构建并使用。
 
+实施记录：
+
+- C 宏以 `namespace libc = mcpplibs::mwrap::libc::macros;` 引用：`libc::stderr()`、`libc::EOF`。`ESRCH`、`EPERM`、
+  `EISDIR` 等同样改用 `std::errc`；`_IOLBF` 是 ISO C 的宏，同样取自 libc-m（`libc::_IOLBF`）。
+- 构建程序的源码模板是原始字符串中的 C++ 文本，其中的 `#include` 属于生成的程序，不属于 mcpp 的单元，不在
+  收敛范围内。
+- 生成的启动器以 `mcpplibs.mwrap.zstd` 解压载荷，清单写 `"mcpplibs.mwrap.zstd" = "1.5.7"`。
+
 验收：
 
 - SPEC-014 §5 的容器往返测试与 pack E2E：gzip、raw DEFLATE、zstd、xz 的写出字节与改动前逐字节一致；
@@ -229,6 +246,12 @@ status: active
 - #839：以附录 A.3 的数据关闭，注明由 #841 修复；强杀残留由 C2 处理。
 - #803：外部贡献，与新的许可设计重叠。审查后给出合并方式，或说明后关闭。
 - #840、#843：过期探针，说明后关闭。
+- #896、#897（D17）：两者都是 mcpp 的缺陷，在本轮修复。
+  - #896：名字相同、命名空间不同的两个包同时进入构建图时，链接计划按裸名字建立的索引让后者覆盖前者，前者的
+    库不被链接。裸名字只在唯一时登记，其余按完整身份查找。回归 e2e 1018。
+  - #897：一个依赖先经不带特性的边定型，之后的边再请求新特性时，新特性带来的依赖不被遍历。解析为每个依赖记录
+    已请求的特性；后来的边带来新特性时，合并新激活的特性依赖，更新该包的依赖表，并把新增或变化的子依赖（含
+    转发）重新放入工作队列。回归 e2e 1019。
 
 #### 4.1.8 分系统审查与跨仓库验证
 
@@ -272,12 +295,12 @@ runtime 约 23/27、musl 约一半、os 约 5/12。
 
 | 编号 | 改动 | 所在 |
 |---|---|---|
-| A1 | 家族包之间改用兼容范围：musl 写 `openkal-linux = "^0.25.0"`，runtime 写 `openkal-musl = "^0.28.0"`，os 写 `openkal = "^0.24.0"`。补丁版本承诺可以直接替换：openkal 的 C ABI 由规范固定；C 库与 C++ 运行时的补丁不得删除或改变已导出的符号。家族现有 CI 只检查规范的数据布局，没有检查导出集合，所以 A1 同时新增导出集合比对：用 `llvm-nm` 比较新旧两版归档的导出符号，补丁版本只允许新增 | 各家族仓库的 0.24.1 PR |
+| A1 | 家族包之间改用兼容范围：musl 写 `openkal-linux = "^0.25.0"`，runtime 写 `openkal-musl = "^0.28.0"`，os 写 `openkal = "^0.24.0"`。补丁版本承诺可以直接替换：openkal 的 C ABI 由规范固定；C 库与 C++ 运行时的补丁不得删除或改变已导出的符号。家族现有 CI 只检查规范的数据布局，没有检查导出集合；导出集合比对由 A6 的 workflow 承担（`tools/family_release.py exports`）：以新旧两个平台补丁构建同一映像，用 `llvm-nm` 比较映像链接的 C 库与 C++ 运行时目标文件的全局符号，补丁版本只允许新增 | 各家族仓库的 0.24.1 PR；比对在 openkal-platform |
 | A2 | 平台版本组参与解析 | mcpp C4 |
 | A3 | 默认平台为版本系列并写入锁文件；启动器以范围依赖 os | mcpp C4 |
 | A4 | 消费方只在一处声明平台：mcppls、mcpp-ide 用系列加锁文件；需要以精确产物做资格的 mcppls-clangd 保留精确版本作为资格身份，但收敛到一处，按自己的节奏升级 | 各消费方 PR（4.5、4.6） |
 | A5 | 一个版本组只开一个索引 PR：组内所有新版本与平台补丁一起提交，用跨命名空间候选测试一次验完，只等一次 CDN | mcpp-index |
-| A6 | 家族发布 workflow（放在 openkal-platform，即版本组的所在）：输入版本组，核对每个成员的标签与 GitCode 镜像，生成 A5 的单一索引 PR，运行新旧两版 mcpp 的候选解析，并把各成员仓库未关闭的缺陷列入发布说明 | openkal-platform |
+| A6 | 家族发布 workflow（放在 openkal-platform，即版本组的所在）：输入版本组，核对每个成员的标签与 GitCode 镜像，生成 A5 的单一索引变更（作为产物保存，由维护者据此开 PR；平台仓库不持有索引仓库的凭据），运行新旧两版 mcpp 的候选解析，对补丁组做导出集合比对，并把各成员仓库未关闭的缺陷列入发布说明 | openkal-platform：`tools/family_release.py`、`.github/workflows/family-release.yml` |
 
 精确版本此后只出现在两处：平台的版本组，以及各项目的锁文件。叶子修复的路径变为“叶子包 + 平台补丁”，两者以
 一个索引 PR 同时发布；musl、runtime、os、mcpp 与各消费方都不必跟着发布。只有当叶子以二进制形式进入别的产物时
@@ -310,7 +333,10 @@ os 0.3.1 是所有 os 消费者的修正。mcppls、mcpp-ide、mcpp-plugins 目�
 ### 4.3 mcpp-plugins 0.21.0（继续使用 #52）
 
 1. 立即更新 PR 正文：当前头 `79f7ba6d`、已验证范围、未验证组合。
-2. `src/plugins.cppm`、`src/tool.cppm` 中为宏引入的 C 标准库头文件改用 `mcpplibs.mwrap.libc` 与 `std::errc`（D10）。
+2. C 标准库头文件（D10）。核对后，插件的单元不使用任何 C 宏：`<cctype>`、`<cstdlib>` 与部分 `<cstdio>` 只为函数
+   而包含，直接删去，函数由 `import std` 提供；保留的只有 ISO C 以外的平台函数所需的头文件（`popen`、`dlopen`、
+   `setenv`），并在包含处注明。`docs/plugin-development.md` §4 写明这一规则，以及需要 C 宏时取自
+   `mcpplibs.mwrap.libc`。插件因此不依赖 libc-m。
 3. 核心 2026.11.7.1 公开后，把正式 CI 的固定版本改为它，并加入“子工程安装静态库并构建独立可执行程序”的
    集成回归。
 4. 最终 CI → 审查 → 合入 → 发布 → 索引 → 实际消费者验证。
@@ -381,6 +407,16 @@ mingw）。mwrap 规范目前只写了 compat 与内置源码两种实现来源�
 
 **测试矩阵。** 覆盖上述每一种 C 库与 libstdc++、libc++、MSVC STL 的组合，检查映射值等于头文件中的宏值，并实际
 写入 `stdout()` / `stderr()`。
+
+**实施记录（17.0.0）。**
+
+- `tools/iso_c.toml` 按头文件列出 ISO C17 附录 B 的 334 个对象宏。每个宏在 `#ifdef` 下映射：在 Linux 上是常量表达式
+  的为 `inline constexpr`，其余为 `constexpr decltype(auto) X()`。可选宏（如 `FE_UPWARD`）只在目标定义时出现。
+- `HUGE_VAL`、`HUGE_VALF`、`HUGE_VALL`、`INFINITY`、`NAN`、`math_errhandling`、`FLT_EVAL_METHOD`、`FLT_ROUNDS` 在某些
+  目标上不是常量，一律取函数形式（`tools/surface.toml` 的 `function`），使同一名字在各目标上形式相同。
+- `<mwrap/libc/macros.hpp>` 包含函数式宏所在的头文件后，取消定义全部 ISO 对象宏：Windows CRT 的 `<stddef.h>` 定义
+  `errno`，macOS 的头文件带入 `MB_CUR_MAX` 与 `NAN`，不取消则同一单元中的 `libc::errno()` 被宏展开。
+- 生成器在 `generated-on`（Linux）上逐字节检查生成文件；在其他宿主上检查“Linux 上的常量在此处也是常量”。
 
 **意义。**
 
@@ -601,6 +637,7 @@ IDE 通过 mcppls 的载荷找到语言服务：后端 `languageservice.cppm` �
 | D14 | 引擎映像启用 zlib；mcppls 为引擎使用自有、按引擎身份区分的索引存储；本轮发布引擎 0.0.21 与对应的 mcppls 版本 | 已批准 |
 | D15 | mcpp-ide 版本为 `X.Y.Z`：`X.Y` 是后端与全部插件共享的系列，同系列即兼容；`Z` 为各组件自己的补丁；首个系列 1.2；系列发布标签 `v1.2.0`，组件补丁标签 `<组件>-v1.2.Z` | 已批准 |
 | D16 | 运行入口与测试结果以同一份后端数据、各编辑器原生的图标呈现；测试输出逐项归属，状态与 mcpp 契约逐值一致；用例切分只在 IDE 后端 | 已批准 |
+| D17 | #896（同名不同命名空间的两个包只链接其一）与 #897（后到的边请求的新特性不被遍历）是 mcpp 的缺陷，并入 #889 修复（4.1.7） | 用户已决定 |
 
 ## 6. 执行顺序
 
@@ -765,8 +802,8 @@ flowchart TD
 |---|---|---|---|---|
 | mcpp | #889（标题改为 2026.11.7.1） | 2026.11.7.1 | C1–C6、第 4 部分实测记录、本设计 | 0.24.1 组与 os 0.3.1（C6）；六个 mwrap 包中 mcpp 用到的四个（C5） |
 | openkal-macos | `openkal-0.24.1` | 0.22.1 | 规则缓冲区容量与错误码；A1 | 无 |
-| openkal-musl | `openkal-0.24.1` | 0.28.1 | musl#83；A1；导出集合比对 | 无（范围下限取已发布版本） |
-| openkal-llvm-runtime | `openkal-0.24.1` | 0.19.1 | runtime#64；A1；导出集合比对 | 无 |
+| openkal-musl | `openkal-0.24.1` | 0.28.1 | musl#83；A1 | 无（范围下限取已发布版本） |
+| openkal-llvm-runtime | `openkal-0.24.1` | 0.19.1 | runtime#64；A1 | 无 |
 | openkal-image | `openkal-0.24.1` | 0.5.1 | 运行器以 macOS 0.22.1 重建；A1 | openkal-macos 0.22.1 已入索引 |
 | openkal-platform | `openkal-0.24.1` | 0.24.1 | 版本组；A6 workflow | 组内各成员的标签 |
 | mcpplibs/os | `openkal-0.24.1` | 0.3.1 | 扩展长度名字的定位；A1 | 无 |
@@ -801,6 +838,17 @@ mcpp-index 与 xim-pkgindex 的 PR 数量由发布依赖决定：一个条目只
 ### 11.3 检查点记录
 
 各检查点完成时在此追加：提交、验证命令与结果、结论。
+
+| 检查点 | 提交 | 验证 | 结论 |
+|---|---|---|---|
+| C1 | `4e01eb88` | #890 同一 workflow 重复 20 次，Windows 交叉构建 20/20 通过，无判定诊断（run `42290667854`） | D1 满足 |
+| C2 | `30b900f4`、`08341b38`、`8f021109` | 本机强杀控制；e2e 861、892、951、952、995、1010；单元测试 `test_detach_status` 以 `MCPP_TEST_LIFETIME_CAP` 覆盖代际许可数 | 许可数随代际；macOS 槽的短暂 not_found 见 openkal-macos#45 |
+| C3 | `dd535308` | e2e 1017：Windows 上以 `msvc@system` 为裸交叉目标构建 openkal 32 位布局探针形态的构建程序 | `msvc@system` 只探测、不安装 |
+| D17 | `74d1df46` | e2e 1018（#896）、1019（#897），以及特性与工作区相关的既有 E2E | 两个缺陷修复 |
+| C4 | `605e9c27`、`ed87e648` | e2e 1020（版本组约束、交集为空的拒绝）、1021（默认系列、下限跳过、锁文件复现）；196、844 的锁文件逐字节不变 | SPEC-013 1.4 |
+| C5 | `d5fd2ec4` | 单元测试 163 项通过；gzip、raw DEFLATE、zstd、xz、zip 的打包字节与改动前一致；json 与 EPIPE 相关 E2E 通过；`check_include_regions.sh` | 头文件只在两个锁文件 |
+| 4.4 | 六个 mwrap 仓库各自的 PR #1；mcpp-index #721 | 各仓库三平台 CI 与上游一致性测试；GitCode 镜像逐字节一致 | 已入索引 |
+| 4.2.3 | macOS 0.22.1（mcpp-index #720）、image 0.5.1、musl 0.28.1、runtime 0.19.1、platform 0.24.1（#22）；mcpp-index #722 | 各家族仓库 CI；mcpp-index 候选测试 | 待 #722 合入后完成 |
 
 ## 附录 A 测量（2026-11-07）
 
