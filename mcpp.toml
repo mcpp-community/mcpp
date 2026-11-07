@@ -101,7 +101,7 @@ mcpplibs.mwrap.xz   = "5.8.3"
 
 # The operating system is mcpplibs.os's (design 2026-10-26 §25): mcpp keeps no
 # layer of its own.
-mcpplibs.os = "0.3.1"
+mcpplibs.os = "0.4.0"
 
 # `modules/` holds what gets linked into this binary; `src/` is what has not
 # been separated yet, and shrinking it is the direction. Each entry is an

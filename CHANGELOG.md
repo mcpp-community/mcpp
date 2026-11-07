@@ -55,7 +55,8 @@
 - The low-space warning's threshold is the larger of 2 GiB and 1.25 times what
   the configuration's last build wrote (#874; e2e 1030).
 - mcpp's own dependencies are named by identity in one table, each by one
-  spelling of an exact release (#904).
+  spelling of an exact release (#904), and so are those of the launchers `mcpp
+  pack` generates; mcpp, its modules and the launchers name mcpplibs.os 0.4.0.
 
 ### Deprecated
 
