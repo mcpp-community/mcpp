@@ -62,7 +62,9 @@
 
 - A quoted dotted dependency key (`"mcpplibs.cmdline" = "0.0.2"`) is the reading
   `quoted-dotted-dependency-key`, reported with the unquoted key that replaces
-  it; removed in 2027.2 (#904; e2e 1032).
+  it; removed in 2027.2. A quoted key that is the only spelling of a package
+  beside its parent or a child of its namespace in one table (`mcpplibs.mtest`
+  and `"mcpplibs.mtest.gtest"`) is not deprecated (#904; e2e 1032).
 
 ### Fixed
 

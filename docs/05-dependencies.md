@@ -60,6 +60,16 @@ A quoted key with dots, `"mcpplibs.cmdline" = "0.0.2"`, is one TOML key whose
 name contains dots. mcpp reads it as the selector those dots spell, warns that
 the spelling is deprecated (since 2026.11.8.1, removed from 2027.2; docs/51)
 and names the unquoted key that replaces it: `mcpplibs.cmdline = "0.0.2"`.
+A package and a package of its namespace in one table, `mcpplibs.mtest` and
+`mcpplibs.mtest.gtest`, cannot both be written unquoted -- one name would be a
+value and a table -- so the quoted key of one of them is their spelling and is
+not deprecated:
+
+```toml
+[dev-dependencies]
+mcpplibs.mtest         = "0.1.0"
+"mcpplibs.mtest.gtest" = "0.1.0"
+```
 
 ```toml
 # Path dependency (local development)

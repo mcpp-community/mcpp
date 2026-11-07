@@ -57,6 +57,14 @@ glfw = "3.4"                    # Explicit namespace; no fallback search
 mcpp 把它读作这些点所拼写的选择器，警告该拼法已弃用（自 2026.11.8.1 起，
 2027.2 起移除；docs/51），并给出替代它的不加引号的键：
 `mcpplibs.cmdline = "0.0.2"`。
+同一张表中的一个包与其命名空间下的包（`mcpplibs.mtest` 与 `mcpplibs.mtest.gtest`）不能都不加引号——一个名字
+会既是值又是表——因此其中一个的加引号键就是这对包的写法，不属于弃用：
+
+```toml
+[dev-dependencies]
+mcpplibs.mtest         = "0.1.0"
+"mcpplibs.mtest.gtest" = "0.1.0"
+```
 
 ```toml
 # Path dependency (local development)

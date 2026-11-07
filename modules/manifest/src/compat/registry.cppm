@@ -96,7 +96,8 @@ inline constexpr Deprecation kDeprecations[] = {
     {
         "quoted-dotted-dependency-key", "2026.11.8.1", "2027.2",
         "a quoted dependency key with dots (`\"mcpplibs.cmdline\" = \"0.0.2\"`): one TOML key, "
-        "read as the selector its dots spell",
+        "read as the selector its dots spell; not where it is the only spelling of a package "
+        "beside its parent or child (docs/05)",
         "the selector unquoted, `mcpplibs.cmdline = \"0.0.2\"`",
         "manifest/deprecated", "docs/05-dependencies.md",
     },

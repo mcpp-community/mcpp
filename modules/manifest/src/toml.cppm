@@ -2849,12 +2849,25 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         }
         return {};
     };
+    // A quoted dotted key that names a package beside its parent or a child of
+    // its namespace in one table is the only spelling of the pair (mcpp#904).
+    auto mark_required_quoting = [](std::map<std::string, DependencySpec>& deps) {
+        for (auto& [key, spec] : deps) {
+            if (!spec.legacyDottedKey) continue;
+            spec.quotingRequired = std::ranges::any_of(deps, [&](auto const& other) {
+                return other.first != key
+                    && (other.first.starts_with(key + ".") || key.starts_with(other.first + "."));
+            });
+        }
+    };
     auto load_deps = [&](std::string_view section, std::map<std::string, DependencySpec>& out)
         -> std::expected<void, ManifestError>
     {
         auto* tt = doc->get_table(section);
         if (!tt) return {};
-        return load_deps_table(section, *tt, out);
+        auto r = load_deps_table(section, *tt, out);
+        if (r) mark_required_quoting(out);
+        return r;
     };
     if (auto r = load_deps("dependencies",       m.dependencies);       !r) return std::unexpected(r.error());
     if (auto r = load_deps("dev-dependencies",   m.devDependencies);    !r) return std::unexpected(r.error());
@@ -4689,10 +4702,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             auto read_deps = [&](const char* key, std::map<std::string, DependencySpec>& out)
                 -> std::expected<void, ManifestError>
             {
-                if (auto f = body.find(key); f != body.end() && f->second.is_table())
-                    return load_deps_table(
+                if (auto f = body.find(key); f != body.end() && f->second.is_table()) {
+                    auto r = load_deps_table(
                         std::format("target.{}.{}", toml_header_key(triple), key),
                         f->second.as_table(), out, key);
+                    if (r) mark_required_quoting(out);
+                    return r;
+                }
                 return {};
             };
             if (auto r = read_deps("dependencies",       cc.dependencies);     !r) return std::unexpected(r.error());

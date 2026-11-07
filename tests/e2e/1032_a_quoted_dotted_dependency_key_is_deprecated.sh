@@ -8,7 +8,9 @@
 #
 # Criterion: the quoted key still resolves and builds; the build warns, naming
 # the key, the releases and the unquoted spelling; `mcpp why compat`
-# lists the use; the unquoted key builds with no such warning.
+# lists the use; the unquoted key builds with no such warning; a quoted key that is the only
+# spelling of a package beside its parent (`acme.lib` and `acme.lib.extra` in one table) builds with
+# no such warning either.
 set -e
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -36,4 +38,15 @@ grep -q 'quoted-dotted-dependency-key: \[dependencies\] "acme.lib"' why.log || f
 printf '[package]\nname    = "app"\nversion = "0.1.0"\n\n[dependencies]\nacme.lib = { path = "../lib" }\n' > mcpp.toml
 "$MCPP" build > unquoted.log 2>&1 || fail "the unquoted key does not build" unquoted.log
 grep -q 'quoted-dotted-dependency-key\|is deprecated since' unquoted.log && fail "the unquoted key is warned about" unquoted.log
+mkdir -p "$TMP/extra/src"
+cat > "$TMP/extra/mcpp.toml" <<'TOML'
+[package]
+namespace = "acme.lib"
+name      = "extra"
+version   = "0.1.0"
+TOML
+printf 'export module acme.lib.extra;\nexport int more() { return 1; }\n' > "$TMP/extra/src/extra.cppm"
+printf '[package]\nname    = "app"\nversion = "0.1.0"\n\n[dependencies]\nacme.lib = { path = "../lib" }\n"acme.lib.extra" = { path = "../extra" }\n' > mcpp.toml
+"$MCPP" build > pair.log 2>&1 || fail "a package beside its parent does not build" pair.log
+grep -q 'quoted-dotted-dependency-key\|is deprecated since' pair.log && fail "the only spelling of the pair is warned about" pair.log
 echo "PASS: 1032 a quoted dotted dependency key is deprecated"
