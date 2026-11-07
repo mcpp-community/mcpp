@@ -30,7 +30,9 @@ myproject/
 没有框架，也不需要注册。测试可以使用一个框架 —— `[dev-dependencies]` 是取到框架的
 途径 —— 但 mcpp 持有的契约只是退出码，这也是为什么为其他框架写的测试不需要适配层。
 
-`mcpp new` 生成 `tests/test_smoke.cpp`，使工程从一开始就带有这个目录。
+`mcpp new` 生成 `tests/test_smoke.cpp`（一个不定义 `main` 的 [mtest](https://github.com/mcpp-community/mtest)
+用例文件）与 dev-dependency `mcpplibs.mtest`（2026.11.8.1+）；`mcpp new <name> --template lib`
+以同样方式生成一个库及其测试（[01](01-getting-started.md)）。
 
 ### 测试的位置
 
@@ -68,6 +70,13 @@ main = { from = "fw/main" }
 每个测试文件随之成为其程序的普通翻译单元，不定义 `main`。本包自身的名字选择本包的入口，
 框架借此以测试文件定义的回调测试它自己的入口。在独立目标上，`[test] start` 陈述每个测试
 镜像的入口符号。
+
+入口可以以 `test-main = true` 提供自己（2026.11.8.1+）：未陈述 `[test] main` 的包中，不定义 `main`
+的测试文件以它为起点，定义了 `main` 的文件保留自己的。mtest 的入口与其 GoogleTest 适配的入口都提供
+自己，测试只需写 dev-dependency。选择以文件为单位：包提供模块的入口，在文件导入其中某个模块时属于该测试，
+一个也未导入时被搁置；因此同一个包中，mtest 用例的文件以 mtest 的入口为起点，GoogleTest 用例的文件以
+GoogleTest 的为起点。依赖中定义 `main` 的源文件（`gtest_main.cc`）照旧作为测试的起点。同一测试仍有两个
+起点时，构建被拒绝并指出它们，由 `[test] main` 选择。
 
 ## 运行测试
 

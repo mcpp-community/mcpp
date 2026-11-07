@@ -3090,6 +3090,93 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         return EntrySelection{ *idx, entry, t.mainFrom };
     };
 
+    // THE DEFAULT BEGINNING OF A TEST (docs/08): a test whose file defines no
+    // `main`, of a package that states no `[test] main`, begins at the entry
+    // a dependency (or the package itself) offers with `test-main = true`. An
+    // offer whose package provides modules none of which the test imports is
+    // not this test's framework and is set aside, so a file of mtest's cases
+    // and a file of GoogleTest's begin each at its own. A dev-dependency's
+    // source that defines `main` (gtest_main.cc) begins a test as it always
+    // has; two beginnings left for one test are refused, naming them.
+    struct offer { std::string spelling; std::size_t idx; };
+    std::set<std::filesystem::path> entryMainFiles;   // an entry's own file is no such source
+    auto test_main_entries = [&](std::size_t idx, const std::string& depKey,
+                                 std::vector<offer>& offers) {
+        auto const& provider = idx == 0 ? manifest : packages[idx].manifest;
+        auto const& providerRoot = idx == 0 ? projectRoot : packages[idx].root;
+        for (auto const& candidate : provider.targets) {
+            if (candidate.kind != mcpp::manifest::Target::Entry) continue;
+            entryMainFiles.insert(providerRoot / candidate.main);
+            if (candidate.testMain) offers.push_back({depKey + "/" + candidate.name, idx});
+        }
+    };
+    // How an offer fits the test: the file imports a module its package
+    // provides (decisive), its package provides none (a header framework's),
+    // or it provides modules the file does not import (not this test's).
+    enum class fit { imported, headers, other };
+    auto offer_fits = [&](const offer& o, const std::vector<std::string>& imports) {
+        const auto owner = qualified_package_name(o.idx == 0 ? manifest : packages[o.idx].manifest);
+        bool provides = false;
+        for (auto const& cu : plan.compileUnits) {
+            if (cu.packageName != owner || cu.providesModule.empty()) continue;
+            provides = true;
+            if (std::ranges::contains(imports, cu.providesModule)) return fit::imported;
+        }
+        return provides ? fit::other : fit::headers;
+    };
+    auto test_main_default = [&](std::size_t consumerIdx, const mcpp::manifest::Manifest& consumer,
+                                 const mcpp::manifest::Target& t, const LinkUnit& lu)
+        -> std::expected<std::optional<mcpp::manifest::Target>, std::string> {
+        if (t.kind != mcpp::manifest::Target::TestBinary || !t.mainFrom.empty() || !lu.entryMain
+            || source_defines_main(*lu.entryMain))
+            return std::nullopt;
+        std::vector<offer> offers;
+        auto look = [&](const std::map<std::string, mcpp::manifest::DependencySpec>& deps) {
+            for (auto const& [depName, spec] : deps) {
+                auto const names = dependency_name_candidates(depName, spec);
+                auto hit = std::ranges::find_if(names, [&](auto const& n) { return packageIndexByName.contains(n); });
+                if (hit != names.end()) test_main_entries(packageIndexByName.at(*hit), depName, offers);
+            }
+        };
+        test_main_entries(consumerIdx, consumer.package.name, offers);
+        look(consumer.devDependencies);
+        look(consumer.dependencies);
+        if (offers.empty()) return std::nullopt;
+        std::vector<std::string> imports;
+        for (auto const& req : mcpp::modgraph::scan_entry_file(*lu.entryMain, qualified_package_name(consumer),
+                                                              rootExtTable).requires_)
+            imports.push_back(req.logicalName);
+        std::erase_if(offers, [&](const offer& o) { return offer_fits(o, imports) == fit::other; });
+        // An offer the file imports from decides; else every remaining
+        // beginning competes.
+        const auto imported = std::ranges::count_if(offers, [&](const offer& o) {
+            return offer_fits(o, imports) == fit::imported;
+        });
+        if (imported == 1)
+            std::erase_if(offers, [&](const offer& o) { return offer_fits(o, imports) != fit::imported; });
+        std::vector<std::string> beginnings;
+        for (auto const& o : offers) beginnings.push_back(std::format("the entry '{}' (test-main)", o.spelling));
+        if (imported != 1)
+            for (auto const& source : depEntryMainSources)
+                if (!entryMainFiles.contains(source))
+                    beginnings.push_back(std::format("{} (a dev-dependency's source that defines `main`)",
+                                                     source.filename().generic_string()));
+        if (offers.empty()) return std::nullopt;
+        if (beginnings.size() > 1) {
+            std::string list;
+            for (auto const& b : beginnings) list += (list.empty() ? "" : "; ") + b;
+            return std::unexpected(std::format(
+                "the test '{}' defines no `main`, and {} could begin it: {}. State one with "
+                "[test] main = {{ from = \"{}\" }}, define `main` in the test, or remove the "
+                "dependency whose beginning it does not use",
+                t.name, beginnings.size(), list, offers.front().spelling));
+        }
+        auto withEntry = t;
+        withEntry.mainFrom = offers.front().spelling;
+        withEntry.mainDeclaredBy = std::format("the test-main entry '{}'", offers.front().spelling);
+        return withEntry;
+    };
+
     // Apply a selected entry to a link unit: its object, the PE entry
     // function its translation unit defines (inherited unless the program
     // states another, which is refused), and where it came from.
@@ -3246,8 +3333,11 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
 
         // The beginning a dependency's entry target supplies (§24.3).
         std::optional<EntrySelection> selectedEntry;
-        if (!t.mainFrom.empty() && lu.kind != LinkUnit::StaticLibrary) {
-            auto sel = select_entry(0, manifest, t);
+        auto defaulted = test_main_default(0, manifest, t, lu);
+        if (!defaulted) return std::unexpected(defaulted.error());
+        const auto& begins = *defaulted ? **defaulted : t;
+        if (!begins.mainFrom.empty() && lu.kind != LinkUnit::StaticLibrary) {
+            auto sel = select_entry(0, manifest, begins);
             if (!sel) return std::unexpected(sel.error());
             selectedEntry = *sel;
         }
@@ -3775,8 +3865,11 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             // A dependency's entry as this program's beginning (§24.3), as
             // for a root's target.
             std::optional<EntrySelection> selectedEntry;
-            if (!t.mainFrom.empty() && lu.kind != LinkUnit::StaticLibrary) {
-                auto sel = select_entry(mi, pkg.manifest, t);
+            auto defaulted = test_main_default(mi, pkg.manifest, t, lu);
+            if (!defaulted) return std::unexpected(defaulted.error());
+            const auto& begins = *defaulted ? **defaulted : t;
+            if (!begins.mainFrom.empty() && lu.kind != LinkUnit::StaticLibrary) {
+                auto sel = select_entry(mi, pkg.manifest, begins);
                 if (!sel) return std::unexpected(sel.error());
                 selectedEntry = *sel;
                 auto object = begin_with_entry(lu, t, *selectedEntry);

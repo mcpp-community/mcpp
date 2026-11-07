@@ -49,6 +49,8 @@ chmod +x "$TMP/ok-runner.sh"
 # ── 1 and 2. test programs ────────────────────────────────────────────────
 "$MCPP" new droid > /dev/null
 cd droid
+# The scaffold's tests use mtest; this test's do not.
+perl -0pi -e 's/\n\[dev-dependencies\]\nmcpplibs\.mtest = "[^"]*"\n//' mcpp.toml
 cat > tests/strings.cpp <<'EOF'
 #include <string>
 #include <cstdio>

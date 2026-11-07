@@ -2064,6 +2064,14 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     "(`test-protocol = 1`)", tname)));
             t.testProtocol = static_cast<int>(pit->second.as_int());
         }
+        // `test-main` (docs/08): this entry begins a test program of a package
+        // that depends on this one when the test's file defines no `main`.
+        if (auto mit = tt.find("test-main"); mit != tt.end()) {
+            if (t.kind != Target::Entry || !mit->second.is_bool())
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.test-main is `true` or `false`, on a `kind = \"entry\"` target", tname)));
+            t.testMain = mit->second.as_bool();
+        }
         // An entry target is a translation unit and not an artifact: the keys
         // that describe an artifact (its ABI name, its exports, its form, its
         // PE subsystem and manifest) belong to the program that selects it.
@@ -2255,7 +2263,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             "kind", "linkage", "main", "soname", "exports", "windows_auto_export",
             "cflags", "cxxflags", "defines", "required_features",
             "windows_entry", "windows_subsystem", "windows_code_page", "windows_long_paths",
-            "start", "test-protocol",
+            "start", "test-protocol", "test-main",
         };
         for (auto& [key, _] : tt) {
             bool known = false;

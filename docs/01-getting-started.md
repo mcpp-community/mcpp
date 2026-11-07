@@ -101,6 +101,40 @@ int main() {
 }
 ```
 
+The test is a file of [mtest](https://github.com/mcpp-community/mtest)'s cases
+with no `main`, and the manifest names it a dev-dependency:
+
+```cpp
+import mcpplibs.mtest;
+using namespace mcpplibs::mtest;
+
+suite smoke{"smoke", [] {
+    "the project builds and its test runs"_test = [] { expect(eq(1 + 1, 2)); };
+}};
+```
+
+### Creating a library
+
+```bash
+mcpp new acme.greeting --template lib
+```
+
+```
+acme.greeting/
+├── mcpp.toml
+├── src/
+│   ├── greeting.cppm    ← export module acme.greeting;  export import :hello;
+│   ├── hello.cppm       ← export module acme.greeting:hello;  the declaration
+│   └── hello.cpp        ← module acme.greeting;  the definition
+└── tests/
+    └── hello.cpp        ← mtest's cases for hello
+```
+
+The module is the package's qualified name, with `-` written `_`; a consumer
+writes `import acme.greeting;`. The partition holds one function's declaration
+and the implementation unit its definition; more functions are more partitions
+the module exports.
+
 ### Creating from a package template
 
 `mcpp new --template` uses the same exact package-selector style as `mcpp add`:

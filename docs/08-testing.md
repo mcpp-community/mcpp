@@ -33,8 +33,10 @@ There is no framework and no registration. A test may use one — `[dev-dependen
 is how it reaches it — but the contract mcpp holds is the exit code, which is
 also why a test written for another framework needs no adapter.
 
-`mcpp new` scaffolds `tests/test_smoke.cpp` so a project starts with the
-directory in place.
+`mcpp new` scaffolds `tests/test_smoke.cpp`, a file of
+[mtest](https://github.com/mcpp-community/mtest)'s cases with no `main`, and the
+dev-dependency `mcpplibs.mtest` (2026.11.8.1+); `mcpp new <name> --template lib`
+scaffolds a library and its test the same way ([01](01-getting-started.md)).
 
 ### Where tests are
 
@@ -74,6 +76,17 @@ Each test file is then an ordinary translation unit of its program and defines
 no `main`. The package's own name selects its own entry, which is how a framework
 tests its entry with the callbacks a test file defines. On a freestanding target,
 `[test] start` states the symbol every test image is entered at.
+
+An entry may offer itself with `test-main = true` (2026.11.8.1+): a test file that
+defines no `main`, of a package that states no `[test] main`, then begins at it,
+and a file that defines `main` keeps its own. mtest's entry and its GoogleTest
+adapter's offer themselves, so a test needs only the dev-dependency. The choice
+is the file's: an offer whose package provides modules is this test's when the
+file imports one of them and is set aside when it imports none, so in one
+package a file of mtest's cases begins at mtest's entry and a file of
+GoogleTest's at GoogleTest's. A dependency's source that defines `main`
+(`gtest_main.cc`) begins a test as it always has. Where two beginnings remain
+for one test, the build is refused, naming them, and `[test] main` chooses.
 
 ## Running them
 

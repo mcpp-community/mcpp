@@ -233,6 +233,10 @@ struct Target {
     // protocol a test program that begins here implements (mtest
     // spec/protocol.md P2.3, docs/08); 0 when the entry states none.
     int                         testProtocol = 0;
+    // Of an entry target: `test-main = true`, the beginning of a test program
+    // of a package that depends on this one and whose file defines no `main`
+    // (docs/08), without `[test] main`.
+    bool                        testMain = false;
 
     // Whether this target is a PROGRAM -- something `mcpp run` can be asked
     // for and `mcpp pack` treats as the application pipeline's subject --

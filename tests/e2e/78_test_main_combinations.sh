@@ -20,6 +20,8 @@ trap "rm -rf $TMP" EXIT
 cd "$TMP"
 "$MCPP" new combo > /dev/null
 cd combo
+# The scaffold's tests use mtest; this test's do not.
+perl -0pi -e 's/\n\[dev-dependencies\]\nmcpplibs\.mtest = "[^"]*"\n//' mcpp.toml
 
 cat >> mcpp.toml <<'EOF'
 

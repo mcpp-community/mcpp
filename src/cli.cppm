@@ -680,7 +680,7 @@ int run(int argc, char** argv) {
             // (cmd_new validates presence for project creation itself).
             .arg(cl::Arg("name").help("Package directory name"))
             .option(cl::Option("template").short_name('t').takes_value().value_name("SPEC")
-                .help("bin (default) | [ns.]pkg[@ver][:template] — exact package template"))
+                .help("bin (default) | lib | [ns.]pkg[@ver][:template] — exact package template"))
             .option(cl::Option("list-templates").takes_value().value_name("PKG")
                 .help("List templates from exact [ns.]pkg[@ver]"))
             .action(wrap_rc(cmd_new)))
