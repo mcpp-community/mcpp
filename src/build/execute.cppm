@@ -4021,7 +4021,11 @@ static void test_announce(const BuildContext& ctx) {
     auto announce = [&](const std::string& name,
                         const mcpp::manifest::DependencySpec& spec,
                         std::string_view suffix) {
-        std::string ver = spec.isPath() ? "(path)" : std::string("v") + spec.version;
+        // The resolved version, as the build's own banner reads it (mcpp#363):
+        // `spec.version` is the constraint as written (`^0.3.1`).
+        const auto resolved = ctx.resolvedVersions.find(name);
+        std::string ver = spec.isPath() ? "(path)"
+            : std::string("v") + (resolved != ctx.resolvedVersions.end() ? resolved->second : spec.version);
         auto it = cachedUnits.find(name);
         if (it == cachedUnits.end()) {
             mcpp::ui::status("Compiling",
