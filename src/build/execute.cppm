@@ -3118,7 +3118,10 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     fast_path_end(record, true);
     buildLock.reset();
 
-    auto exe = outputDir / chosen->second;
+    // The cache records the program's path with `/`; the full path spells it
+    // natively (`bin\app.exe` on Windows), and so does this one, so that the
+    // two compose the same argv.
+    auto exe = outputDir / std::filesystem::path(chosen->second).make_preferred();
     auto pathCtx = mcpp::fetcher::make_path_ctx(/*cfg=*/nullptr, projectRoot);
     std::vector<std::pair<std::string, std::string>> childEnv;
     if (!match->runEnvKey.empty() && !match->runEnvValue.empty())
