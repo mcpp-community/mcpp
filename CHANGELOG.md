@@ -77,6 +77,8 @@
   entry -- links no dependency's source that defines `main`, a direct
   dev-dependency's or one beneath it: `gtest_main.cc` of compat.gtest beneath
   the GoogleTest adapter was linked beside the adapter's `main` (e2e 1037).
+- A test links its package's dev-dependency that is a shared library by the
+  library, as a dependency is; mtest's C ABI was left unresolved (e2e 1037).
 - A dependency's entry that imports `std` builds the std module for the
   program that begins at it, though nothing else of the graph imports it; the
   entry failed with "failed to read compiled module" (e2e 1037).

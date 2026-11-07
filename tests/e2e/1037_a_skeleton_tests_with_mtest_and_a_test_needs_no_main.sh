@@ -18,6 +18,7 @@
 #      run points to it.
 #   H. A test that begins at an entry links no source that defines `main` beneath its
 #      dev-dependency (gtest_main.cc of compat.gtest beneath a GoogleTest adapter).
+#   I. A test links a dev-dependency that is a shared library (mtest's C ABI) by its library.
 set -e
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -148,5 +149,13 @@ printf '[package]\nname    = "deep"\nversion = "0.1.0"\n\n[dev-dependencies]\nfw
 printf 'int uses_fwh() { return 0; }\n' > deep/tests/one.cpp
 (cd deep && "$MCPP" test > ../h.log 2>&1) || fail "H: a main beneath the dev-dependency was linked" h.log
 grep -q "began at fwh" h.log || fail "H: the test did not begin at fwh" h.log
+
+# I
+mkdir -p shlib/src shapp/tests
+printf '[package]\nname    = "shlib"\nversion = "0.1.0"\n\n[targets.shlib]\nkind = "shared"\n' > shlib/mcpp.toml
+printf 'extern "C" int shlib_answer() { return 42; }\n' > shlib/src/shlib.cpp
+printf '[package]\nname    = "shapp"\nversion = "0.1.0"\n\n[dev-dependencies]\nshlib = { path = "../shlib" }\n' > shapp/mcpp.toml
+printf 'extern "C" int shlib_answer();\nint main() { return shlib_answer() == 42 ? 0 : 1; }\n' > shapp/tests/links.cpp
+(cd shapp && "$MCPP" test > ../i.log 2>&1) || fail "I: a shared dev-dependency is not linked" i.log
 
 echo "PASS: 1037 a skeleton tests with mtest, and a test needs no main"

@@ -2579,16 +2579,24 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // edges.
         auto const& edges = i == 0 ? manifest.dependencies
                                    : packages[i].manifest.dependencies;
-        for (auto const& [depName, spec] : edges) {
-            for (auto const& candidate : dependency_name_candidates(depName, spec)) {
-                auto it = packageIndexByName.find(candidate);
-                if (it == packageIndexByName.end() || it->second == i) continue;
+        auto add_edges = [&](const std::map<std::string, mcpp::manifest::DependencySpec>& table) {
+            for (auto const& [depName, spec] : table) {
+                auto const names = dependency_name_candidates(depName, spec);
+                auto hit = std::ranges::find_if(names, [&](auto const& n) {
+                    auto it = packageIndexByName.find(n);
+                    return it != packageIndexByName.end() && it->second != i;
+                });
+                if (hit == names.end()) continue;
                 auto& deps = directPackageDeps[i];
-                if (std::find(deps.begin(), deps.end(), it->second) == deps.end())
-                    deps.push_back(it->second);
-                break;
+                const auto depIndex = packageIndexByName.at(*hit);
+                if (std::find(deps.begin(), deps.end(), depIndex) == deps.end()) deps.push_back(depIndex);
             }
-        }
+        };
+        add_edges(edges);
+        // A test links its package's dev-dependencies: a shared one by its
+        // library, as a dependency is (mcpplibs.mtest.capi's libmtest).
+        if (testPlan && (i == 0 || packages[i].selectedMember))
+            add_edges(i == 0 ? manifest.devDependencies : packages[i].manifest.devDependencies);
     }
 
     // WHERE A STATIC PACKAGE UNDER A SHARED LIBRARY IS LINKED (#646 F1).
