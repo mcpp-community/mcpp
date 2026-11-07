@@ -246,6 +246,14 @@ status: active
 - #839：以附录 A.3 的数据关闭，注明由 #841 修复；强杀残留由 C2 处理。
 - #803：外部贡献，与新的许可设计重叠。审查后给出合并方式，或说明后关闭。
 - #840、#843：过期探针，说明后关闭。
+- 本轮实施中新发现、在 #889 修复的缺陷：
+  - 构建目录接管（design 2026-10-31 §8）后，前任目录中拆分编译的完成证书仍写着前任的对象路径，下一次构建在准入时
+    拒绝（“cached compiler certificate does not name its own object”），直到 `mcpp clean`。mcpp 升级时每个配置都会
+    遇到。现在接管时删除这些记录；准入时遇到其他目录的证书（目录被移动或在别处恢复）视为无记录，重新编译该对象。
+    回归 e2e 1022。
+  - `mcpp test` 的依赖横幅显示约束（`v^0.3.1`），而不是解析出的版本。回归 e2e 196。
+- 清单外新发现、按 D11 建议题的问题：mcpp#898（图中提供 C 库却不提供 C++ ABI 时，错误在 std 模块预编译阶段才出现，
+  规划阶段没有拒绝）。
 - #896、#897（D17）：两者都是 mcpp 的缺陷，在本轮修复。
   - #896：名字相同、命名空间不同的两个包同时进入构建图时，链接计划按裸名字建立的索引让后者覆盖前者，前者的
     库不被链接。裸名字只在唯一时登记，其余按完整身份查找。回归 e2e 1018。
@@ -329,6 +337,28 @@ runtime 约 23/27、musl 约一半、os 约 5/12。
 
 os 0.3.1 是所有 os 消费者的修正。mcppls、mcpp-ide、mcpp-plugins 目前没有显式构造扩展长度名字，但这种名字也可能
 由系统 API 返回，所以它们各自的本轮 PR 都跟进 os `^0.3.1`。
+
+**实施记录：0.24.2 补丁组，即演练的实况。** 0.24.1 公开后，#889 的 e2e 988 在 Windows（wine）上失败：启动器无法
+启动 okrun。原因是 runtime 0.19.1 的修复不完整：`X:` 只有后跟分隔符时才是根名，而 `lexically_normal` 逐段用 `/=`
+重建结果，`D:` 被当作普通名字，随后的根目录 `/` 替换了它（`D:/a/b` 变成 `/a/b`）。`weakly_canonical` 与
+`path("D:/a") / "/b"` 同样丢卷。os 0.3.1 的 Windows 托管行也因此失败。另有两处 os 自身的缺陷：
+
+- `fs::extended` 用 `std::filesystem::absolute`，托管方式下它把 `C:\...` 当作相对名；
+- `locate` 在规范化之后才去掉 `//?/`，而 POSIX 规则的 C++ 库把开头的 `//` 读作 `/`。
+
+修正以新架构发布，即 D12 演练的实况，不再做虚拟演练：
+
+| 步骤 | 内容 | 时间（UTC） |
+|---|---|---|
+| 发现 | e2e 988 在 wine 下复现；对比 0.24.0 与 0.24.1，定位到 runtime | 00:42–00:55 |
+| 叶子 | openkal-llvm-runtime#68、PR #69（`path.cpp` 原地标记，覆盖件 `operator/=` 与 `append` 保留卷；两个探针在 Linux 与 wine 下通过），发布 0.19.2 | 00:55–01:20 |
+| 平台补丁 | openkal-platform#23：版本组只改 runtime；标签与 GitCode 镜像；A6 的 `resolve` 以新旧两版 mcpp 解析候选组，导出集合比对 2553/3622 个符号，无删除 | 01:20–01:31 |
+| 一个索引 PR | mcpp-index #723（`family_release.py index` 写出），合入并发布 | 01:31–01:35 |
+| 下游 | 只有 os 跟进自身的修正（0.3.1，mcpp-index #724）；musl、image、mcpp 都没有为 runtime 发版 | — |
+
+共两个发布（runtime、platform），一个索引 PR，从发现到索引公开约 55 分钟。演练同时暴露了 A6 自身的两个缺陷，已在
+#23 修正：workflow 默认的 `bash -e` 使 `exports | tee` 吞掉失败；比对把 libc++ `_LIBCPP_HIDE_FROM_ABI`（ODR 签名
+ABI 标签）的内联函数算作导出符号。组已入索引时变更为空，`git apply` 失败，也已修正。
 
 ### 4.3 mcpp-plugins 0.21.0（继续使用 #52）
 
@@ -848,7 +878,10 @@ mcpp-index 与 xim-pkgindex 的 PR 数量由发布依赖决定：一个条目只
 | C4 | `605e9c27`、`ed87e648` | e2e 1020（版本组约束、交集为空的拒绝）、1021（默认系列、下限跳过、锁文件复现）；196、844 的锁文件逐字节不变 | SPEC-013 1.4 |
 | C5 | `d5fd2ec4` | 单元测试 163 项通过；gzip、raw DEFLATE、zstd、xz、zip 的打包字节与改动前一致；json 与 EPIPE 相关 E2E 通过；`check_include_regions.sh` | 头文件只在两个锁文件 |
 | 4.4 | 六个 mwrap 仓库各自的 PR #1；mcpp-index #721 | 各仓库三平台 CI 与上游一致性测试；GitCode 镜像逐字节一致 | 已入索引 |
-| 4.2.3 | macOS 0.22.1（mcpp-index #720）、image 0.5.1、musl 0.28.1、runtime 0.19.1、platform 0.24.1（#22）；mcpp-index #722 | 各家族仓库 CI；mcpp-index 候选测试 | 待 #722 合入后完成 |
+| 4.2.3 | macOS 0.22.1（mcpp-index #720）、image 0.5.1、musl 0.28.1、runtime 0.19.1、platform 0.24.1（#22）；mcpp-index #722 | 各家族仓库 CI；mcpp-index 候选测试 | 已发布并入索引 |
+| 0.24.2 | runtime 0.19.2（#69）、platform 0.24.2（#23）；mcpp-index #723 | wine 下的探针与 e2e 988；A6 `resolve` 与导出比对 | D12 演练的实况，见 4.2.3 实施记录 |
+| os | os 0.3.1（#18）；mcpp-index #724 | 23 项 CI 全部通过，含 Windows 托管行与映像行 | 已发布并入索引 |
+| C6 | `3b3240ee`，以及 `49e2bb1f`、`17d9cc1e` | e2e 988、956、961、986、995、1022、1000、196；单元测试 164 项 | 见下 |
 
 ## 附录 A 测量（2026-11-07）
 
