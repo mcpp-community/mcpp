@@ -158,7 +158,7 @@ error: openkal-musl is requested as '^0.27.0' by app, and the platform openkal-p
 
 ## 内置平台是一个版本
 
-目标表为两个 ok 映像目标选择一个 openkal-platform 版本,即当前 mcpp 验证过的版本:mcpp 2026.11.7.2 为 0.24.3
+目标表为两个 ok 映像目标选择一个 openkal-platform 版本,即当前 mcpp 验证过的版本:mcpp 2026.11.8.1 为 0.24.4,2026.11.7.2 为 0.24.3
 (2026.11.7.1 选择系列 `^0.24`)。不写平台的工程在任何时候、有无 `mcpp.lock` 都构建同一组版本;锁中记录了另一个版本时,
 构建采用默认版本并写出锁中记录的版本。更新的平台不需要新的 mcpp:工程在自己的清单中选择,
 
