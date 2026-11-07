@@ -8,6 +8,28 @@
 
 ### Fixed
 
+- A record being published is waited out before it is read, and only a
+  controller whose process has ended counts as lost: a transient refusal to open
+  a record no longer fails a compile on Windows (#885, 20 of 20 Windows-hosted
+  cross builds of mcpp, against 10 failures in 40 before).
+- Every compiler of a build belongs to its generation, so a build killed with
+  `kill -9` leaves no compiler that races the next build (e2e 1016). The
+  generation carries the compiler cap and build.ninja names none, so the graph is
+  the same at every `-j` (e2e 861); the fast path opens its generation with the
+  cap its first drive recorded beside build.ninja.
+- On macOS a compiler slot another compiler holds is now and then reported
+  missing from inside the executor (mcpplibs/openkal-macos#45); it is treated as
+  held while its directory exists, and refused after five seconds of it.
+- The note for clang without coroutines on the 32-bit MSVC ABI finds the
+  compiler after the capped executor's `--` (e2e 892).
+- `msvc@system` is located for a build program of a cross target and never
+  looked for in the package index (e2e 1017).
+- Two packages of one name, `foo` and `ns.foo`, both link into a program that
+  reaches them (#896, e2e 1018).
+- An edge that asks a resolved package for a feature its earlier edges did not
+  ask walks that feature's `[feature-deps]` and forwards, so `-p s -p v` builds
+  what `-p s` builds (#897, e2e 1019).
+
 - A finished detached compiler is recognized when its final status appears
   between status and liveness checks. Recovery still validates its output proof.
 - Windows launcher packages use the OS release required by the current default
@@ -61,6 +83,20 @@
   independently of progress on other files and provider process deadlines.
 
 ### Changed
+
+- A platform's version group takes part in resolution: a request of a member
+  resolves to the group's version when its constraint admits it, though the
+  index holds a newer patch, and is refused naming the request and the group
+  when it does not (SPEC-013 1.4 §7.5, e2e 1020).
+- The ok-image targets' built-in platform is the series
+  `openkal-platform@^0.24`: its newest release whose `mcpp` floor this engine
+  meets, kept in mcpp.lock until `mcpp update` (SPEC-013 §14, §15.1, e2e 1021).
+  A platform patch no longer needs an mcpp release.
+- Headers are included only in the two system lock files
+  (`.github/tools/check_include_regions.sh`): zlib, zstd and xz are their mwrap
+  modules, JSON is nlohmann.json from the index (the copied json.hpp is gone),
+  and the C library's macros come from mcpplibs.mwrap.libc. Package archives
+  are the bytes mcpp wrote before.
 
 - CI bootstraps from the published, mirrored and indexed 2026.11.5.1 release.
 - Release guidance preserves published tags and uses a new reviewed patch version
