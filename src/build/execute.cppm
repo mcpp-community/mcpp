@@ -4090,6 +4090,10 @@ struct TestBuild {
     // MCPP_BIN_<NAME> for each program of the package, built before the
     // tests (L5).
     std::vector<std::pair<std::string, std::string>> programEnv;
+    // In a workspace plan, the same per member (the member's package name):
+    // a member's tests are told its own programs, and two members may each
+    // have a program of one name.
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>> memberProgramEnv;
 
     // How the test binaries are executed, resolved once for the build
     // (#544): every test of one build shares a target.
@@ -4708,8 +4712,11 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // A GL test that cannot find a driver fails the same way a GL program
         // does, so it must be told the same things.
         for (auto& kv : subosEnv) childEnv.push_back(kv);
-        // ...and where the package's own programs are (L5).
+        // ...and where the package's own programs are (L5): a workspace
+        // member's, for a test of that member.
         for (auto& kv : tb.programEnv) childEnv.push_back(kv);
+        if (auto mp = tb.memberProgramEnv.find(lu.memberOf); mp != tb.memberProgramEnv.end())
+            for (auto& kv : mp->second) childEnv.push_back(kv);
         // ...and, through a runner, the files the test carries with it, as
         // `mcpp run` hands them over (see `runtime_files_for`). Written here,
         // in the single-threaded pass, one list per test program.
@@ -5738,6 +5745,47 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
                     slots[i].packageOutput = a->diagnosticOutput;
                     slots[i].packageOutputShown = true;
                 }
+        }
+        // EACH MEMBER'S PROGRAMS, BUILT BEFORE ITS TESTS AND NAMED TO THEM (L5),
+        // as for one package. A workspace's test plan holds a member's test
+        // programs only, so its own programs are built by the member's plan;
+        // without this a member's test found no MCPP_BIN_<NAME> under
+        // `--workspace` and found it under `-p` (found by mtest's conformance
+        // suite).
+        for (auto i : who) {
+            if (slots[i].packageFailed || slots[i].session < 0) continue;
+            auto m = mcpp::manifest::load(wsRoot / members[i].path / "mcpp.toml", {.insideWorkspace = true});
+            if (!m || std::ranges::none_of(m->targets, [](auto const& t) {
+                    return t.kind == mcpp::manifest::Target::Binary
+                        || t.kind == mcpp::manifest::Target::Application; }))
+                continue;
+            BuildOverrides po = base;
+            po.package_filter.clear();
+            po.project_root = wsRoot;
+            po.will_run = false;
+            po.workspace_members = { members[i].path };
+            po.workspace_request = { members[i].path };
+            po.member_targets.clear();
+            auto binCtx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false, {}, std::move(po));
+            if (!binCtx) {
+                slots[i].packageFailed = true;
+                slots[i].packageOutput = binCtx.error();
+                continue;
+            }
+            if (run_build_plan(*binCtx, mcpp::log::is_verbose(), false, base.target_triple) != 0) {
+                slots[i].packageFailed = true;
+                slots[i].packageOutput = std::format("the programs of member '{}' did not build", members[i].path);
+                continue;
+            }
+            auto& env = tb.memberProgramEnv[slots[i].owner];
+            for (auto const& lu : binCtx->plan.linkUnits) {
+                if (lu.kind != LinkUnit::Binary || (!lu.memberOf.empty() && lu.memberOf != slots[i].owner)) continue;
+                std::string key = "MCPP_BIN_";
+                for (char c : lu.targetName)
+                    key += (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
+                         : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
+                env.emplace_back(std::move(key), (binCtx->outputDir / lu.output).lexically_normal().string());
+            }
         }
         // The test goals of the members that can run.
         std::set<std::string> runnable;
