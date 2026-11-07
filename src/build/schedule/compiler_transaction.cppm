@@ -48,6 +48,11 @@ bool publish(const fs::path& path,std::string_view tag,const Fields& fields);
 // is retried with backoff for at most kRecordSettle; a name that is absent is
 // absent at once, and a refusal that outlasts the bound is still an error.
 inline constexpr auto kRecordSettle=std::chrono::milliseconds(250);
+// THE STARTUP GRACE of a compiler's supervision: how long a waiter allows a
+// supervisor that has not opened its log, and how long a controller keeps
+// registering its unit with the generation's owner. One bound for both, so a
+// registration retried within it never outlives the wait for it.
+inline constexpr auto kStartupGrace=std::chrono::seconds(10);
 enum class Opened { yes, absent, refused };
 // Opens `path' for reading, waiting out a publication in progress.
 Opened open_settled(std::ifstream& input,const fs::path& path) {
@@ -377,11 +382,25 @@ std::expected<void,std::string> Attempt::register_unit(os::process::owned_unit& 
     const auto generation=directory.parent_path().parent_path();
     auto transport=read(generation/"transport","mcpp-unit-transport-v1");
     if(!transport||!*transport||(**transport).size()!=2)return std::unexpected("missing compiler-run registration channel");
-    auto connection=os::ipc::connection::connect(named((**transport)[0]),(**transport)[1]);
-    if(!connection||!send(*connection,spelling(directory)))return std::unexpected("cannot register the compiler unit");
-    auto ack=receive(*connection,std::chrono::seconds(2));
-    if(!ack||*ack!="ACK")return std::unexpected(ack ? "compiler-run owner refused unit admission" : ack.error());
-    return {};
+    // THE OWNER ANSWERS ONE REGISTRATION AT A TIME, between its audits of the
+    // units it holds, so under load an answer can take longer than one wait for
+    // it (macOS CI: "compiler registration channel closed or timed out" on a scan
+    // of a two-configuration workspace). A registration the owner accepted the
+    // connection of and did not answer is sent again within the startup grace;
+    // the owner admits a unit under its attempt's name, so a late first answer
+    // and a second registration admit the same unit once. An owner that accepts
+    // no connection has ended (a build killed with its controllers still
+    // starting), and the controller ends at once, as the next build waits for
+    // it. A refusal is final.
+    const auto deadline=std::chrono::steady_clock::now()+kStartupGrace;
+    for(;;) {
+        auto connection=os::ipc::connection::connect(named((**transport)[0]),(**transport)[1]);
+        if(!connection||!send(*connection,spelling(directory)))return std::unexpected("cannot register the compiler unit");
+        auto ack=receive(*connection,std::chrono::seconds(2));
+        if(ack&&*ack=="ACK")return {};
+        if(ack)return std::unexpected("compiler-run owner refused unit admission");
+        if(std::chrono::steady_clock::now()>=deadline)return std::unexpected(ack.error());
+    }
 }
 
 class Witnesses {

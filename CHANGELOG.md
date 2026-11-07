@@ -38,6 +38,11 @@
   the object is compiled again (e2e 1022).
 - `mcpp test` announces a dependency with its resolved version, as the build
   does, not the constraint (`v0.3.1`, not `v^0.3.1`; e2e 196).
+- A compiler that registers with its build's generation is answered within the
+  startup grace: an owner that accepted the registration and did not answer in
+  two seconds (macOS CI, a scan of a two-configuration workspace: "compiler
+  registration channel closed or timed out") is asked again, and an owner that
+  accepts no connection has ended, so the compiler ends at once (e2e 840, 1016).
 
 - A finished detached compiler is recognized when its final status appears
   between status and liveness checks. Recovery still validates its output proof.

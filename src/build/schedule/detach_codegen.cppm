@@ -805,7 +805,7 @@ int compile_release_at_bmi(const CompileRequest& req) {
     // half of the same mechanism.
     using clock = std::chrono::steady_clock;
     const auto  started            = clock::now();
-    constexpr auto kNoSupervisorGrace = std::chrono::seconds(10);
+    constexpr auto kNoSupervisorGrace = transactions::kStartupGrace;
     constexpr auto kHardLimit         = std::chrono::hours(2);
     auto nextControllerCheck=started;
 
@@ -1018,7 +1018,7 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
     // ever opened the log, there is nothing to wait for and this fails at once.
     using clock = std::chrono::steady_clock;
     const auto started = clock::now();
-    constexpr auto kNoSupervisorGrace = std::chrono::seconds(10);
+    constexpr auto kNoSupervisorGrace = transactions::kStartupGrace;
     constexpr auto kHardLimit         = std::chrono::hours(2);
 
     std::optional<int> rc;
