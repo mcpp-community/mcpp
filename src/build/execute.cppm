@@ -5971,14 +5971,70 @@ export std::int64_t configured_keep_days() {
             days = doc->get_int("build.keep_days").value_or(days);
     return days;
 }
+// `[build] target_budget` (mcpp#874): the bytes a project's `target/` may hold,
+// from the project's mcpp.toml (the workspace root's), else config.toml; none
+// when neither states one. `"20GiB"`, `"500MiB"`, or a number of bytes.
+std::optional<std::uintmax_t> target_budget(const std::filesystem::path& root) {
+    for (auto const& file : {root / "mcpp.toml", mcpp::home::root() / "config.toml"}) {
+        std::error_code ec;
+        if (!std::filesystem::exists(file, ec)) continue;
+        auto doc = mcpp::libs::toml::parse_file(file);
+        if (!doc) continue;
+        if (auto v = doc->get_string("build.target_budget"))
+            if (auto n = mcpp::bmi_cache::parse_size(*v)) return n;
+    }
+    return std::nullopt;
+}
+
+std::uintmax_t tree_bytes(const std::filesystem::path& dir) {
+    std::uintmax_t total = 0;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(dir, ec), end; it != end; it.increment(ec)) {
+        std::error_code fe;
+        if (it->is_regular_file(fe) && !it->is_symlink(fe)) total += it->file_size(fe);
+    }
+    return total;
+}
+
+// OVER BUDGET, AFTER EVERY BUILD: the directories no configuration uses go at
+// once, whatever their age; if the ones in use still exceed the budget, the
+// build says so and names the largest. Only when a budget is stated: the
+// measurement walks target/.
+void keep_target_budget(const std::filesystem::path& root) {
+    namespace fs = std::filesystem;
+    const auto budget = target_budget(root);
+    std::error_code ec;
+    if (!budget || !fs::is_directory(root / "target", ec)) return;
+    if (tree_bytes(root / "target") <= *budget) return;
+    clean_stale(false, 0, true);
+    const auto now = tree_bytes(root / "target");
+    if (now <= *budget) return;
+    std::vector<std::pair<std::uintmax_t, std::string>> dirs;
+    for (fs::directory_iterator t(root / "target", ec), end; t != end; t.increment(ec)) {
+        if (!t->is_directory() || t->path().filename().string().starts_with(".")) continue;
+        std::error_code fec;
+        for (fs::directory_iterator f(t->path(), fec), fend; f != fend; f.increment(fec))
+            if (f->is_directory())
+                dirs.emplace_back(tree_bytes(f->path()), f->path().lexically_relative(root).generic_string());
+    }
+    std::ranges::sort(dirs, std::greater{});
+    std::string largest;
+    for (std::size_t i = 0; i < dirs.size() && i < 3; ++i)
+        largest += std::format("{}{} ({})", i ? ", " : "", dirs[i].second, mcpp::bmi_cache::human_bytes(dirs[i].first));
+    mcpp::ui::warning(std::format(
+        "target/ holds {}, over [build] target_budget = {}, in configurations still in use: {}",
+        mcpp::bmi_cache::human_bytes(now), mcpp::bmi_cache::human_bytes(*budget), largest));
+}
+
 export void sweep_after_build() {
     namespace fs = std::filesystem;
     const std::int64_t days = configured_keep_days();
     std::error_code ec;
-    if (days <= 0) return;
     auto root = mcpp::project::find_manifest_root(fs::current_path());
     if (!root) return;
     if (auto ws = mcpp::project::find_workspace_root(*root); !ws.empty()) root = ws;
+    keep_target_budget(*root);
+    if (days <= 0) return;
     const auto stamp = *root / "target" / ".mcpp-swept";
     if (fs::exists(stamp, ec)) {
         const auto age = std::chrono::duration_cast<std::chrono::hours>(
@@ -6250,8 +6306,11 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
                      target.string(), kept, kept == 1 ? "y" : "ies", window()));
     } else {
         if (quiet)
-            mcpp::ui::status("Swept", std::format("{} build director{} no configuration used for {} days ({}; [build] keep_days in config.toml)",
-                removed, removed == 1 ? "y" : "ies", keepWithinSecs / 86400, mcpp::bmi_cache::human_bytes(bytes)));
+            mcpp::ui::status("Swept", keepWithinSecs == 0
+                ? std::format("{} build director{} no configuration uses ({}; over [build] target_budget)",
+                              removed, removed == 1 ? "y" : "ies", mcpp::bmi_cache::human_bytes(bytes))
+                : std::format("{} build director{} no configuration used for {} days ({}; [build] keep_days in config.toml)",
+                              removed, removed == 1 ? "y" : "ies", keepWithinSecs / 86400, mcpp::bmi_cache::human_bytes(bytes)));
         line(std::format("{} {} director{} ({})", dryRun ? "Would remove" : "Removed", removed,
                      removed == 1 ? "y" : "ies", mcpp::bmi_cache::human_bytes(bytes)));
     }
