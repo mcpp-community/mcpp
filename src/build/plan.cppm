@@ -221,6 +221,9 @@ struct LinkUnit {
     // (`test-protocol`, docs/08); 0 when none does. `mcpp test` also reads a
     // program's marker for it (mtest spec/protocol.md P2.3).
     int                             testProtocol = 0;
+    // The package whose entry begins this test, when one does: the framework
+    // whose guide `mcpp test --guide` names (BuildPlan::testFrameworks).
+    std::string                     testFramework;
 };
 
 // One Windows resource script compiled into one linkable resource artifact
@@ -403,6 +406,17 @@ struct ModuleScope {
     std::vector<std::string> arguments;
 };
 
+// A package of the graph whose entry states how its tests are written or run
+// (`test-guide`, `test-protocol`, `test-main`): a test framework.
+struct TestFramework {
+    std::string package;    // qualified name
+    std::string version;
+    std::string entry;      // `<package>/<entry>`
+    int         protocol = 0;
+    std::string guide;      // absolute path of its guide, or empty
+    std::string repo;
+};
+
 struct BuildPlan {
     mcpp::manifest::Manifest        manifest;
     // Every package of the graph, as the report names it; the backend writes
@@ -579,6 +593,8 @@ struct BuildPlan {
 
     std::vector<CompileUnit>        compileUnits;     // topologically sorted
     std::vector<LinkUnit>           linkUnits;
+    // The test frameworks of the graph (docs/08 "Writing a test").
+    std::vector<TestFramework>      testFrameworks;
     // Build-graph nodes declared by build programs (`mcpp:action=`). Paths are
     // absolute and engine variables already substituted by the time they get
     // here, so the backend only has to spell edges.
@@ -3197,6 +3213,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         }
         lu.entryFrom = sel.name;
         lu.testProtocol = sel.target->testProtocol;
+        lu.testFramework = qualified_package_name(sel.packageIndex == 0 ? manifest : packages[sel.packageIndex].manifest);
         return entry_object(sel.packageIndex, entry, *sel.target);
     };
 
@@ -3253,6 +3270,22 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         lu.startFrom = statements.front().second;
         return {};
     };
+
+    // The test frameworks of the graph: each package's entry that states its
+    // guide, its protocol or that it begins a test (docs/08).
+    for (std::size_t i = 0; i < std::max<std::size_t>(packages.size(), 1); ++i) {
+        auto const& m = i == 0 ? manifest : packages[i].manifest;
+        auto const& dir = i == 0 ? projectRoot : packages[i].root;
+        for (auto const& entry : m.targets) {
+            if (entry.kind != mcpp::manifest::Target::Entry) continue;
+            if (entry.testGuide.empty() && !entry.testProtocol && !entry.testMain) continue;
+            plan.testFrameworks.push_back({
+                qualified_package_name(m), m.package.version,
+                std::format("{}/{}", m.package.name, entry.name), entry.testProtocol,
+                entry.testGuide.empty() ? std::string{} : (dir / entry.testGuide).lexically_normal().generic_string(),
+                m.package.repo});
+        }
+    }
 
     // 4. Link units (one per [targets.X])
     // When any TestBinary target exists, skip Binary/Library/SharedLibrary

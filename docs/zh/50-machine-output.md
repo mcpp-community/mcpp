@@ -727,6 +727,7 @@ mcpp test [pattern] [--workspace] --message-format json
 | `cases` | 实现协议并运行过的程序：每个用例的 `id`、`status`（`pass`、`fail`、`skip`、`xfail`、`xpass`、`invalid`）、`duration_ms`、有原因时的 `reason`，以及 `failures`（`file`、`line`、`message`，陈述时还有 `expected` 与 `actual`） *（2026.11.8.1+）* |
 | `missing` | 选择中命名而程序没有对应用例的标识 *（2026.11.8.1+）* |
 | `listed` | `--cases` 时：每个用例的 `id`、`name`、`file`、`line`，陈述时还有 `kind`、`tags`、`expect` *（2026.11.8.1+）* |
+| `guide` | 测试所用框架陈述了指南时，该指南文件 *（2026.11.8.1+）* |
 | `program`、`sources` | 构建而未运行的测试（`--no-run`、`--cases`）：程序，以及它由之编译的文件（它自己的与它链接的库的），供按改动选择测试的运行器使用 *（2026.11.8.1+）* |
 
 汇总记录，`{"summary": {...}}`：
@@ -806,6 +807,10 @@ mcpp test [pattern] [--workspace] --message-format json
 路径都可能包含空格。一棵由不打包任何东西的 mode（`system`、`static`）暂存
 出的树不带 `needs` 行，由更早版本的 mcpp 暂存出的树同样不带；自行放置库的
 读者应当读取这些行，而不是从 `lib/` 下的文件推断闭包。
+
+`mcpp test --guide --message-format json` *（2026.11.8.1+）* 输出一个对象 `{"guide": {...}}`：`frameworks`
+（每项 `package`、`version`、`entry`、`protocol` 或 `null`、`guide` 或 `null`、`repo`）、`commands`（`list`、
+`one`、`records`、`debug`）、`docs`，以及包没有框架时的 `suggest`（mtest 的 dev-dependency 写法与仓库）。
 
 ## 9. 构建事件流与结果记录 *（mcpp 2026.10.26.1+）*
 

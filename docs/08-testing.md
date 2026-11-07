@@ -295,6 +295,21 @@ The records of `--message-format json` carry the protocol, the cases and their
 failures ([50](50-machine-output.md)); `--print-launch` states the protocol
 for a debugger that starts the program.
 
+## Writing a test
+
+```bash
+mcpp test --guide            # the frameworks, their guides, and the commands for cases
+```
+
+A framework states its guide to writing tests on its entry, `test-guide = "<file>"`
+(2026.11.8.1+; the protocol's P2.5): a file of its package, read from the installed
+package and of its version. `mcpp test --guide` names each test framework of the
+package with its guide and repository, and the commands that list, select and
+explain cases; with none, it states the contract above and how to take mtest.
+A failed run ends with `how these tests are written: mcpp test --guide (...)`,
+and a record of `--message-format json` carries `guide`. A person or an agent
+about to write a test, or reading why one failed, starts there.
+
 ## Reporting to a program
 
 ```bash

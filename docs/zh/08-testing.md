@@ -252,6 +252,18 @@ mcpp test --seed 42             # 用例中随机性的种子
 `--message-format json` 的记录带有协议、用例及其失败（[50](50-machine-output.md)）；`--print-launch`
 为启动程序的调试器给出协议。
 
+## 编写测试
+
+```bash
+mcpp test --guide            # 框架、它们的指南，以及用例相关的命令
+```
+
+框架在其入口上陈述编写测试的指南，`test-guide = "<文件>"`（2026.11.8.1+；协议的 P2.5）：包中的一个
+文件，从已安装的包读取，与其版本一致。`mcpp test --guide` 列出本包的每个测试框架及其指南与仓库，以及列出、
+选择、解释用例的命令；没有框架时，给出上文的契约与接入 mtest 的写法。失败的运行以
+`how these tests are written: mcpp test --guide (...)` 结尾，`--message-format json` 的记录带有 `guide`。
+将要编写测试、或要读懂测试为何失败的人或 agent，从这里开始。
+
 ## 报告给程序
 
 ```bash

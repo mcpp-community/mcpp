@@ -2072,6 +2072,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     "targets.{}.test-main is `true` or `false`, on a `kind = \"entry\"` target", tname)));
             t.testMain = mit->second.as_bool();
         }
+        // `test-guide` (docs/08): the framework's guide to writing its tests.
+        if (auto git = tt.find("test-guide"); git != tt.end()) {
+            if (t.kind != Target::Entry || !git->second.is_string() || git->second.as_string().empty())
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.test-guide is a file of the package, on a `kind = \"entry\"` target", tname)));
+            t.testGuide = git->second.as_string();
+        }
         // An entry target is a translation unit and not an artifact: the keys
         // that describe an artifact (its ABI name, its exports, its form, its
         // PE subsystem and manifest) belong to the program that selects it.
@@ -2263,7 +2270,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             "kind", "linkage", "main", "soname", "exports", "windows_auto_export",
             "cflags", "cxxflags", "defines", "required_features",
             "windows_entry", "windows_subsystem", "windows_code_page", "windows_long_paths",
-            "start", "test-protocol", "test-main",
+            "start", "test-protocol", "test-main", "test-guide",
         };
         for (auto& [key, _] : tt) {
             bool known = false;

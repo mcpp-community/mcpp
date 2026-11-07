@@ -3910,6 +3910,11 @@ export struct TestOptions {
     // case's randomness takes (MTEST_SEED).
     std::vector<std::string>      cases;
     bool                          listCases = false;
+    // `--guide`: how this package's tests are written and run -- its test
+    // frameworks, each with its guide and repository, and the commands that
+    // list, select and explain cases -- for a person or an agent about to
+    // write a test (docs/08 "Writing a test"). Plans; builds and runs nothing.
+    bool                          guide = false;
     std::optional<std::uint64_t>  seed;
 };
 
@@ -4022,6 +4027,8 @@ struct TestResult {
     // run (`--no-run`): what a runner that selects by change reads (docs/50).
     std::string                         program;
     std::vector<std::string>            sources;
+    // The guide of the framework the test is written with, when known.
+    std::string                         guide;
 };
 
 // Streaming NDJSON: one record per test, emitted as it finishes — a
@@ -4061,6 +4068,7 @@ static void emit_test_json(const std::string& memberName, const TestResult& r) {
         record["program"] = r.program;
         record["sources"] = r.sources;
     }
+    if (!r.guide.empty()) record["guide"] = r.guide;
     std::println("{}", record.dump(-1, ' ', false, nlohmann::ordered_json::error_handler_t::replace));
     std::fflush(libc::stdout());
 }
@@ -4107,6 +4115,53 @@ static std::vector<NinjaEdge> ninja_edges_since(const std::filesystem::path& log
         edges.push_back({std::string(f[3]), end - start});
     }
     return edges;
+}
+
+// HOW THIS PACKAGE'S TESTS ARE WRITTEN (`mcpp test --guide`, docs/08): its
+// test frameworks with their guides, and the commands a writer of a test
+// uses. With no framework, the contract mcpp holds and how to take one.
+inline constexpr std::string_view kTestingDocs =
+    "https://github.com/mcpp-community/mcpp/blob/main/docs/08-testing.md";
+inline constexpr std::string_view kMtestRepo = "https://github.com/mcpp-community/mtest";
+
+static void print_test_guide(const BuildContext& ctx, bool json) {
+    const auto& frameworks = ctx.plan.testFrameworks;
+    if (json) {
+        nlohmann::ordered_json list = nlohmann::ordered_json::array();
+        for (auto const& f : frameworks)
+            list.push_back({{"package", f.package}, {"version", f.version}, {"entry", f.entry},
+                            {"protocol", f.protocol ? nlohmann::ordered_json(f.protocol) : nlohmann::ordered_json(nullptr)},
+                            {"guide", f.guide.empty() ? nlohmann::ordered_json(nullptr) : nlohmann::ordered_json(f.guide)},
+                            {"repo", f.repo}});
+        nlohmann::ordered_json g = {
+            {"frameworks", list},
+            {"commands", {{"list", "mcpp test --cases"}, {"one", "mcpp test <test> --case <id>"},
+                          {"records", "mcpp test --message-format json"}, {"debug", "mcpp test <test> --print-launch"}}},
+            {"docs", kTestingDocs},
+        };
+        if (frameworks.empty()) g["suggest"] = {{"dev-dependency", "mcpplibs.mtest = \"0.1.0\""}, {"repo", kMtestRepo}};
+        std::println("{}", nlohmann::ordered_json{{"guide", g}}.dump());
+        std::fflush(libc::stdout());
+        return;
+    }
+    if (frameworks.empty()) {
+        std::println("No test framework: a test is a program under tests/, judged by its exit status.");
+        std::println("A framework of cases (mtest): [dev-dependencies] mcpplibs.mtest = \"0.1.0\"  ({})", kMtestRepo);
+    } else {
+        std::println("Test frameworks:");
+        for (auto const& f : frameworks) {
+            std::println("  {} {} ({}{})", f.package, f.version, f.entry,
+                         f.protocol ? std::format(", test protocol {}", f.protocol) : std::string{});
+            if (!f.guide.empty()) std::println("    guide  {}", f.guide);
+            if (!f.repo.empty()) std::println("    repo   {}", f.repo);
+        }
+    }
+    std::println("Commands:");
+    std::println("  mcpp test --cases                  each test's cases");
+    std::println("  mcpp test <test> --case <id>       the cases an identifier or a pattern names");
+    std::println("  mcpp test --message-format json    each case's result, a failure's place and both sides");
+    std::println("  mcpp test <test> --print-launch    how the test starts, for a debugger");
+    std::println("Testing in mcpp: {}", kTestingDocs);
 }
 
 // A planned test build, and what the tests run against it need: the plan, the
@@ -4502,6 +4557,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         std::filesystem::path protocolDir;
         std::optional<std::filesystem::path> select;
         std::vector<std::string> sources;
+        std::string guide;   // its framework's guide (docs/08 "Writing a test")
     };
     std::vector<Runnable> runnable;
 
@@ -4700,6 +4756,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 }
                 results.back().protocol = r.protocol;
                 results.back().report = std::move(report);
+                results.back().guide = r.guide;
                 // The captured output belongs directly under its own line, or
                 // it is attributable to nothing.
                 if (!json && capture && !runOutput.empty()) {
@@ -4762,6 +4819,19 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
             if (auto a = archiveOf.find(input); a != archiveOf.end()) add_objects(a->second->objects);
         return std::vector<std::string>(files.begin(), files.end());
     };
+    // The guide of the framework a test is written with: its entry's package,
+    // else -- a protocol program with its own `main` -- the graph's one
+    // framework that states a guide.
+    auto guide_of = [&](const mcpp::build::LinkUnit& unit, int protocol) {
+        std::vector<const mcpp::build::TestFramework*> guided;
+        for (auto const& f : ctx->plan.testFrameworks) {
+            if (f.guide.empty()) continue;
+            if (!unit.testFramework.empty() && f.package == unit.testFramework) return f.guide;
+            guided.push_back(&f);
+        }
+        return unit.testFramework.empty() && protocol && guided.size() == 1 ? guided.front()->guide
+                                                                            : std::string{};
+    };
     // Where a protocol program's report, selection and case directory are:
     // one directory per test under the configuration's output.
     auto protocol_dir = [&](std::string_view testName) {
@@ -4814,6 +4884,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
             }
             results.push_back({lu.targetName, TestResult::St::CompileFail, 0,
                                b.error().diagnosticOutput, {}, test_ms()});
+            results.back().guide = guide_of(lu, lu.testProtocol);
             emit_json(results.back());
             continue;
         }
@@ -4893,6 +4964,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
             added.protocolDir = protocol_dir(lu.targetName);
         }
         added.sources = sources_of(lu);
+        added.guide = guide_of(lu, version);
     }
     // `mcpp test <name> --print-launch` (design 2026-10-30 part 2 §7.4): the one test the pattern
     // names, built, described as `mcpp run --print-launch` describes a program -- the `mcpp.launch`
@@ -4940,6 +5012,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     auto built_result = [&](const Runnable& r) {
         TestResult t{r.name, TestResult::St::Built, 0, {}, {}, 0, false, {}, r.buildMs};
         t.protocol = r.protocol;
+        t.guide = r.guide;
         t.program = r.program.generic_string();
         t.sources = r.sources;
         return t;
@@ -5105,6 +5178,14 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         for (auto& n : failures) std::println("    {}", n);
         // (Each compile failure's diagnostics already printed inline under its
         // FAIL line in Phase B — the summary stays a compact name list.)
+        // Where to read how these tests are written (docs/08).
+        if (!ctx->plan.testFrameworks.empty()) {
+            std::string names;
+            for (auto const& f : ctx->plan.testFrameworks)
+                names += std::format("{}{} {}", names.empty() ? "" : ", ", f.package, f.version);
+            std::println("");
+            std::println("how these tests are written: mcpp test --guide ({})", names);
+        }
     }
     return rc;
 }
@@ -5492,6 +5573,11 @@ export int run_tests(std::span<const std::string> passthrough,
             mcpp::ui::error(std::format("no tests match '{}'", testOpts.filter));
             return 2;
         }
+    }
+
+    if (testOpts.guide) {
+        print_test_guide(*ctx, json);
+        return 0;
     }
 
     // 4. "Compiling test_X (test)" lines for the test binaries.

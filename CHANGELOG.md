@@ -19,6 +19,20 @@
   variables. `--no-run` records each built test with its program and the files
   it is compiled from; `--print-launch` states the protocol; the feature
   `test-protocol` names all of it (e2e 1035).
+- `mcpp new` scaffolds tests with mtest: the skeleton's test is a file of
+  mtest's cases with no `main`, with the dev-dependency `mcpplibs.mtest`, and
+  `--template lib` scaffolds a library -- a module, a partition it exports and
+  the partition's implementation, named after the package -- with its test
+  (docs/01; e2e 1037).
+- An entry with `test-main = true` begins a test file that defines no `main`.
+  The file's imports choose among offers, so in one package a file of mtest's
+  cases and a file of GoogleTest's begin each at its own; a dev-dependency's
+  source that defines `main` (`gtest_main.cc`) begins a test as before, and two
+  beginnings left for one test are refused, naming them (docs/08; e2e 1037).
+- `mcpp test --guide` names the package's test frameworks, each with the guide
+  its entry states (`test-guide`) and its repository, and the commands that
+  list, select and explain cases; a failed run points to it and a record
+  carries `guide` (the protocol's P2.5; docs/08 "Writing a test"; e2e 1037).
 - `mcpp::context` states the engine's values to the build-program interface in
   one process: every accessor reads the innermost context's values, then the
   environment, so a test of a build program's or a plugin's logic needs no

@@ -869,6 +869,8 @@ int run(int argc, char** argv) {
                 .help("Of each test program that implements the test protocol, run the cases PATTERN matches (`*`, `?`; a name without them matches itself and the cases below it); repeatable"))
             .option(cl::Option("cases")
                 .help("Build the tests and list the cases of each program that implements the test protocol, running none"))
+            .option(cl::Option("guide")
+                .help("How this package's tests are written and run: its test frameworks, each with its guide and repository, and the commands for cases; builds nothing"))
             .option(cl::Option("seed").takes_value().value_name("N")
                 .help("The seed of anything random in a protocol program's cases (MTEST_SEED)"))
             .option(cl::Option("no-runner")

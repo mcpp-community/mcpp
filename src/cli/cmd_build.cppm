@@ -1218,6 +1218,11 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     // The test protocol's cases (docs/08 "Cases").
     if (auto c = parsed.option("case")) to.cases = c->get().values;
     to.listCases = parsed.is_flag_set("cases");
+    to.guide = parsed.is_flag_set("guide");
+    if (to.guide && (parsed.is_flag_set("workspace") || parsed.option_or_empty("package").values.size() > 1)) {
+        mcpp::ui::error("--guide describes one package's tests; name it with -p");
+        return 2;
+    }
     if (auto sd = parsed.value("seed")) {
         std::uint64_t seed = 0;
         auto [p, ec] = std::from_chars(sd->data(), sd->data() + sd->size(), seed);

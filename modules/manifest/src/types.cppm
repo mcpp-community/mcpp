@@ -237,6 +237,9 @@ struct Target {
     // of a package that depends on this one and whose file defines no `main`
     // (docs/08), without `[test] main`.
     bool                        testMain = false;
+    // Of an entry target: `test-guide = "<file>"`, the package's guide to
+    // writing its tests, relative to the package root (`mcpp test --guide`).
+    std::string                 testGuide;
 
     // Whether this target is a PROGRAM -- something `mcpp run` can be asked
     // for and `mcpp pack` treats as the application pipeline's subject --

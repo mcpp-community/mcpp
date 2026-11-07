@@ -14,6 +14,8 @@
 #   E. A library whose name has a part that does not begin with a letter is refused.
 #   F. In one package, a test that imports a framework's module begins at that framework's entry,
 #      and a test that imports none begins at a dev-dependency's source that defines `main`.
+#   G. `mcpp test --guide` names each test framework with its guide (`test-guide`), and a failed
+#      run points to it.
 set -e
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -111,5 +113,16 @@ printf 'int uses_headers() { return 0; }\n' > mixed/tests/headers.cpp
 (cd mixed && "$MCPP" test > ../f.log 2>&1) || fail "F: the mixed package's tests" f.log
 grep -A2 'modular \.\.\. ok' f.log | grep -q "began at fwm" || fail "F: the modular test did not begin at fwm" f.log
 grep -A2 'headers \.\.\. ok' f.log | grep -q "began at hdr" || fail "F: the header test did not begin at hdr" f.log
+
+# G
+printf 'test-guide = "GUIDE.md"\n' >> fwm/mcpp.toml
+printf '# Writing a test with fwm\n' > fwm/GUIDE.md
+(cd mixed && "$MCPP" test --guide > ../g.log 2>&1) || fail "G: --guide" g.log
+grep -q "fwm 0.1.0" g.log && grep -q "fwm/GUIDE.md" g.log || fail "G: the framework and its guide" g.log
+(cd mixed && "$MCPP" test --guide --message-format json > ../g.json 2>/dev/null) || fail "G: --guide json" g.json
+grep -q '"guide":"[^"]*fwm/GUIDE.md"' g.json || fail "G: the guide in JSON" g.json
+printf 'import fwm;\nint uses_fwm() { return fwm_cases(); }\nint broken = missing_name;\n' > mixed/tests/modular.cpp
+(cd mixed && "$MCPP" test > ../g-fail.log 2>&1) && fail "G: a test that does not compile passed" g-fail.log
+grep -q "how these tests are written: mcpp test --guide" g-fail.log || fail "G: the failure does not point to the guide" g-fail.log
 
 echo "PASS: 1037 a skeleton tests with mtest, and a test needs no main"

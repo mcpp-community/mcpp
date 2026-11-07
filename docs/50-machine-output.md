@@ -817,6 +817,7 @@ Per test:
 | `cases` | a program that implements it and ran: each case's `id`, `status` (`pass`, `fail`, `skip`, `xfail`, `xpass`, `invalid`), `duration_ms`, `reason` when there is one, and `failures` (`file`, `line`, `message`, `expected` and `actual` when stated) *(2026.11.8.1+)* |
 | `missing` | the identifiers a selection named that the program has no case for *(2026.11.8.1+)* |
 | `listed` | under `--cases`: each case's `id`, `name`, `file`, `line`, and `kind`, `tags`, `expect` when stated *(2026.11.8.1+)* |
+| `guide` | the guide of the framework the test is written with, a file, when its framework states one *(2026.11.8.1+)* |
 | `program`, `sources` | a test built and not run (`--no-run`, `--cases`): the program, and the files it is compiled from -- its own and those of the libraries it links -- for a runner that selects tests by change *(2026.11.8.1+)* |
 
 Summary record, `{"summary": {...}}`:
@@ -909,6 +910,12 @@ A tree staged by a mode that bundles nothing (`system`, `static`) carries no
 `needs` lines, and neither does a tree staged by an earlier mcpp; a reader that
 places libraries itself reads these lines rather than inferring the closure from
 the files under `lib/`.
+
+`mcpp test --guide --message-format json` *(2026.11.8.1+)* prints one object,
+`{"guide": {...}}`: `frameworks` (each `package`, `version`, `entry`, `protocol`
+or `null`, `guide` or `null`, `repo`), `commands` (`list`, `one`, `records`,
+`debug`), `docs`, and `suggest` (the dev-dependency line and repository of mtest)
+when the package has no framework.
 
 ## 9. The build stream and the result record *(mcpp 2026.10.26.1+)*
 
