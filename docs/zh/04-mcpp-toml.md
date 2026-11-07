@@ -291,7 +291,7 @@ main = { from = "openmui/player" }     # "<依赖>/<入口>"
 - 两者之间的契约只经符号与运行时数据。由程序定义的回调，提供方以 `extern "C++"` 或
   `extern "C"` 声明：附着于命名模块的声明不能在模块之外定义。
 - 入口目标陈述 `main`（文件），可以陈述 `start`、`windows_entry`、`cflags`、`cxxflags`、
-  `defines` 与 `required_features`。`windows_entry` 由选择它的程序继承，程序陈述不同的值
+  `defines`、`required_features` 与 `test-protocol`。`windows_entry` 由选择它的程序继承，程序陈述不同的值
   被拒绝；`required_features` 必须已开启，否则拒绝并给出开启它们的依赖写法。描述产物的键
   （`soname`、`exports`、`linkage`、程序的 `windows_*` 键）属于程序，在入口目标上被拒绝。
 - 使用 `main = { from }` 的程序目标不陈述 `cflags`、`cxxflags`、`defines`：这些标志作用于
@@ -482,6 +482,7 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `windows_subsystem` *（2026.9.12.2+）* | 可执行文件的 PE subsystem：`"console"`（默认）或 `"windows"`，一个启动时没有控制台的 GUI 程序。只到达这个目标的链接，别处不受影响，在非 PE 的目标上不渲染任何东西。见上一节。 |
 | `windows_entry` *（2026.9.12.2+）* | 程序定义的入口函数：`"main"`（默认）、`"wmain"`、`"WinMain"` 或 `"wWinMain"`。见上一节。入口目标陈述其翻译单元定义的函数，由选择它的程序继承。 |
 | `start` *（2026.10.26.2+）* | 独立目标上镜像的入口符号。见上文 `start`。 |
+| `test-protocol` *（2026.11.8.1+）* | 入口目标的键：以此为起点的测试程序实现的测试协议版本，`1`；`mcpp test` 随之列出、选择并报告程序的用例（[08](08-testing.md#用例测试协议)）。在其他目标上被拒绝。 |
 | `windows_code_page` *（2026.9.26.1+）* | 可执行文件在 Windows 上的 ANSI 代码页：`"utf-8"`，以 Windows 10 1903 及以后版本会遵从的应用程序清单嵌入；或 `"legacy"`，即系统代码页。两者都不写的程序目标运行在系统代码页里，作为 host 工具构建的程序（§2.14）除外，它默认为 `"utf-8"`。写在库目标上会被拒绝；在非 PE 目标上不产生任何东西。见 §2.3 的*路径与文本编码*。 |
 | `windows_long_paths` *（2026.10.16.1+）* | `true` 在可执行文件的应用程序清单中嵌入 `longPathAware`：在 Windows 启用长路径（`LongPathsEnabled`）时，进程可以使用超过 260 个字符的路径。`false` 不嵌入。两者都不写的程序目标不嵌入，作为 host 工具构建的程序（§2.14）除外，它默认为 `true`。写在库目标上会被拒绝；在非 PE 目标上不产生任何东西。 |
 | `linkage` *（2026.9.15.2+）* | 一个库目标的**默认**链接形态，`"static"` 或 `"shared"`：不写 `linkage` 的消费者得到的形态。与 `kind = "shared"` 不同，它不是约束，因此消费者的显式陈述会被遵从。与 `kind = "shared"` 同写，或写在程序目标上，都会被拒绝。见[`dependency_linkage`](#dependency_linkage--静态还是动态由消费者决定)。 |

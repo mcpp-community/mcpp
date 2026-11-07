@@ -238,6 +238,50 @@ workers reaching for it interleave rather than fail.
 The package that owns the resource states this about itself, and `mcpp test`
 then serialises those tests. A project never has to remember `-j1`.
 
+## Cases: the test protocol
+
+A test program may consist of cases. mcpp does not provide a framework for
+them; it implements the runner's side of a protocol that frameworks implement:
+the [mtest test protocol](https://github.com/mcpp-community/mtest/blob/main/spec/protocol.md),
+version 1 (mcpp 2026.11.8.1+). A program implements it when its entry states it,
+
+```toml
+[targets.main]
+kind          = "entry"
+main          = "src/main.cpp"
+test-protocol = 1
+```
+
+or when its file carries the marker `mtest-protocol=1`, as a program built
+with mtest's libraries does. mcpp then gives the program the protocol's
+variables (`MTEST_PROTOCOL`, `MTEST_MODE`, `MTEST_REPORT`, `MTEST_TMPDIR`, and
+`MTEST_SELECT` and `MTEST_SEED` when they apply), reads the report it writes,
+and states each case's result:
+
+```bash
+mcpp test                       # each case's result in the report and the record
+mcpp test --case 'fs/*'         # of each such program, the cases a pattern matches
+mcpp test --cases               # each program's cases, running none
+mcpp test --seed 42             # the seed of anything random in the cases
+```
+
+- The program's exit status still decides its verdict. A report whose cases
+  failed fails the program though it exited zero; a case that began and did
+  not end failed, with the program's exit status as its reason.
+- A failing program's report names each failed case with the place of its
+  first failure: `case fs/read failed at tests/fs.cpp:12: ...`.
+- A pattern of `--case` matches with `*` and `?`; a name without either
+  matches itself and the cases below it (`fs` matches `fs/read`). Under
+  `--case`, a program with no matching case, and every program that implements
+  no protocol, does not run.
+- A program that implements no protocol is one case, judged by its exit status,
+  and receives none of the variables, even when mcpp's own environment has
+  them.
+
+The records of `--message-format json` carry the protocol, the cases and their
+failures ([50](50-machine-output.md)); `--print-launch` states the protocol
+for a debugger that starts the program.
+
 ## Reporting to a program
 
 ```bash
@@ -258,9 +302,10 @@ runner, the environment the run adds and the arguments after `--` are in it.
 
 ## Current limitations
 
-- A test is one `.cpp` producing one program. mcpp does not discover cases
-  inside a file, so a framework's per-case selection happens inside the program,
-  through arguments after `--`.
+- A test is one `.cpp` producing one program. The cases inside it are the
+  program's: mcpp lists and selects them only for a program that implements
+  the test protocol; for any other, a framework's selection happens inside the
+  program, through arguments after `--`.
 - `mcpp test --list` over a manifest that does not load lists
   `tests/**/*.cpp`, not the `[test] discover` set it cannot read.
 - `--build-timeout` is POSIX-only.

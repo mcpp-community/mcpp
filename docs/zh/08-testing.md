@@ -209,6 +209,40 @@ mcpp test --archive tests.tar.gz                             # 在检出中运�
 拥有该资源的包对此做出声明，`mcpp test` 随后把这些测试串行化。工程方永远不需要
 记得加上 `-j1`。
 
+## 用例：测试协议
+
+一个测试程序可以由若干用例组成。mcpp 不为用例提供框架，而是实现一份由框架实现的协议的运行器一侧：
+[mtest 测试协议](https://github.com/mcpp-community/mtest/blob/main/spec/protocol.md) 第 1 版
+（mcpp 2026.11.8.1+）。程序的入口陈述它时，程序实现该协议：
+
+```toml
+[targets.main]
+kind          = "entry"
+main          = "src/main.cpp"
+test-protocol = 1
+```
+
+程序文件中带有标记 `mtest-protocol=1` 时同样如此，以 mtest 的库构建的程序即带有该标记。
+mcpp 随之把协议的变量（`MTEST_PROTOCOL`、`MTEST_MODE`、`MTEST_REPORT`、`MTEST_TMPDIR`，
+以及适用时的 `MTEST_SELECT`、`MTEST_SEED`）交给程序，读取程序写出的报告，并给出每个用例的结果：
+
+```bash
+mcpp test                       # 报告与记录中给出每个用例的结果
+mcpp test --case 'fs/*'         # 每个这类程序中与模式匹配的用例
+mcpp test --cases               # 列出每个程序的用例，不运行
+mcpp test --seed 42             # 用例中随机性的种子
+```
+
+- 程序的退出码仍决定它的结论。报告中有失败用例时，程序即使以零退出也判为失败；开始而未结束的用例判为失败，
+  原因是程序的退出码。
+- 失败程序的报告列出每个失败的用例及其第一处失败的位置：`case fs/read failed at tests/fs.cpp:12: ...`。
+- `--case` 的模式以 `*` 与 `?` 匹配；不含二者的名字匹配它自身及其下的用例（`fs` 匹配 `fs/read`）。
+  使用 `--case` 时，没有匹配用例的程序与所有未实现协议的程序不运行。
+- 未实现协议的程序是一个用例，以退出码判定，并且收不到任何协议变量，即使 mcpp 自身的环境中有它们。
+
+`--message-format json` 的记录带有协议、用例及其失败（[50](50-machine-output.md)）；`--print-launch`
+为启动程序的调试器给出协议。
+
 ## 报告给程序
 
 ```bash
@@ -228,8 +262,8 @@ mcpp test unit/math --print-launch -- --gtest_filter=Math.Adds
 
 ## 当前边界
 
-- 一个测试是一个 `.cpp` 产出一个程序。mcpp 不发现文件内部的用例，因此框架的逐用例
-  选择发生在程序内部，经由 `--` 之后的参数传递。
+- 一个测试是一个 `.cpp` 产出一个程序。其中的用例属于程序：mcpp 只对实现测试协议的程序列出并选择用例；
+  对其他程序，框架的选择发生在程序内部，经由 `--` 之后的参数传递。
 - manifest 加载不了时，`mcpp test --list` 列出的是 `tests/**/*.cpp`，而不是它读不到的
   `[test] discover` 集合。
 - `--build-timeout` 只在 POSIX 上有效。

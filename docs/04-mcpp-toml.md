@@ -297,7 +297,8 @@ main = { from = "openmui/player" }     # "<dependency>/<entry>"
   `extern "C"`: a declaration attached to a named module cannot be defined
   outside it.
 - An entry target states `main` (a file), and may state `start`,
-  `windows_entry`, `cflags`, `cxxflags`, `defines` and `required_features`.
+  `windows_entry`, `cflags`, `cxxflags`, `defines`, `required_features` and
+  `test-protocol`.
   Its `windows_entry` is inherited by the program that selects it; a program
   stating another is refused. Its `required_features` must be active: a
   selection otherwise is refused with the dependency line that enables them.
@@ -509,6 +510,7 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `windows_subsystem` *(2026.9.12.2+)* | The PE subsystem of an executable: `"console"` (the default) or `"windows"`, a GUI program that starts without a console. Reaches this target's link and no other, and renders nothing on a target that is not PE. See the section above. |
 | `windows_entry` *(2026.9.12.2+)* | The entry function the program defines: `"main"` (the default), `"wmain"`, `"WinMain"` or `"wWinMain"`. See the section above. An entry target states the function its translation unit defines, and the program that selects it inherits it. |
 | `start` *(2026.10.26.2+)* | The symbol the image is entered at, on a freestanding target. See `start` above. |
+| `test-protocol` *(2026.11.8.1+)* | Of an entry target: the version of the test protocol a test program that begins here implements, `1`; `mcpp test` then lists, selects and reports the program's cases ([08](08-testing.md#cases-the-test-protocol)). Refused on any other target. |
 | `windows_code_page` *(2026.9.26.1+)* | The ANSI code page of an executable on Windows: `"utf-8"`, embedded as an application manifest that Windows 10 version 1903 and later honour, or `"legacy"`, the system's code page. A program target that writes neither runs in the system's code page, except a program built as a host tool (§2.14), which defaults to `"utf-8"`. Refused on a library target; renders nothing on a target that is not PE. See *Paths and text encoding* in §2.3. |
 | `windows_long_paths` *(2026.10.16.1+)* | `true` embeds `longPathAware` in the executable's application manifest: the process may use paths longer than 260 characters where Windows enables them (`LongPathsEnabled`). `false` embeds nothing. A program target that writes neither embeds nothing, except a program built as a host tool (§2.14), which defaults to `true`. Refused on a library target; renders nothing on a target that is not PE. |
 | `linkage` *(2026.9.15.2+)* | A library target's **default** link form, `"static"` or `"shared"`: the form a consumer that writes no `linkage` receives. Unlike `kind = "shared"` it is not a constraint, so a consumer's explicit statement is honoured. Refused beside `kind = "shared"` and on a program target. See [`dependency_linkage`](#dependency_linkage--static-or-shared-is-the-consumers-decision). |
