@@ -229,6 +229,10 @@ struct Target {
     // as an artifact target is: a program that selects it is refused, naming
     // the features (design 2026-10-26 §24.4 item 3).
     std::vector<std::string>    inactiveFeatures;
+    // Of an entry target: `test-protocol = 1`, the version of the mtest test
+    // protocol a test program that begins here implements (mtest
+    // spec/protocol.md P2.3, docs/08); 0 when the entry states none.
+    int                         testProtocol = 0;
 
     // Whether this target is a PROGRAM -- something `mcpp run` can be asked
     // for and `mcpp pack` treats as the application pipeline's subject --

@@ -1215,6 +1215,22 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
         return 2;
     }
     to.noRun    = parsed.is_flag_set("no-run");
+    // The test protocol's cases (docs/08 "Cases").
+    if (auto c = parsed.option("case")) to.cases = c->get().values;
+    to.listCases = parsed.is_flag_set("cases");
+    if (auto sd = parsed.value("seed")) {
+        std::uint64_t seed = 0;
+        auto [p, ec] = std::from_chars(sd->data(), sd->data() + sd->size(), seed);
+        if (ec != std::errc{} || p != sd->data() + sd->size()) {
+            mcpp::ui::error(std::format("invalid --seed '{}' (a decimal number)", *sd));
+            return 2;
+        }
+        to.seed = seed;
+    }
+    if (to.listCases && (!to.cases.empty() || to.noRun)) {
+        mcpp::ui::error("--cases lists every case and runs none; it is not combined with --case or --no-run");
+        return 2;
+    }
     // The two read alike and mean opposite things: `--no-runner` says to run
     // the binaries WITHOUT the declared runner, `--no-run` says not to run
     // them at all. Asking for both is not a preference to resolve.

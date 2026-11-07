@@ -2050,6 +2050,20 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             t.start = sit->second.as_string();
             t.startDeclaredBy = std::format("[targets.{}] start = \"{}\"", tname, t.start);
         }
+        // `test-protocol` (docs/08): the version of the test protocol a test
+        // program that begins at this entry implements. Version 1 is the one
+        // this mcpp runs; a program of another version runs as a plain test.
+        if (auto pit = tt.find("test-protocol"); pit != tt.end()) {
+            if (t.kind != Target::Entry)
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.test-protocol states what a test program that begins at an "
+                    "entry implements, and `{}` is not a `kind = \"entry\"` target", tname, tname)));
+            if (!pit->second.is_int() || pit->second.as_int() < 1)
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.test-protocol is the protocol's version, a positive integer "
+                    "(`test-protocol = 1`)", tname)));
+            t.testProtocol = static_cast<int>(pit->second.as_int());
+        }
         // An entry target is a translation unit and not an artifact: the keys
         // that describe an artifact (its ABI name, its exports, its form, its
         // PE subsystem and manifest) belong to the program that selects it.
@@ -2241,7 +2255,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             "kind", "linkage", "main", "soname", "exports", "windows_auto_export",
             "cflags", "cxxflags", "defines", "required_features",
             "windows_entry", "windows_subsystem", "windows_code_page", "windows_long_paths",
-            "start",
+            "start", "test-protocol",
         };
         for (auto& [key, _] : tt) {
             bool known = false;

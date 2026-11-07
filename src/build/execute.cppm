@@ -15,6 +15,7 @@ import mcpp.pack.pipeline;         // #622 A10: build_and_pack, for `run --forma
 import mcpp.pack.compress;         // the test archive's tar (SPEC-015 §4)
 import mcpp.pack.distribution;     // its writer and reader
 import mcpp.build.test_targets;
+import mcpp.build.test_protocol;   // the runner's side of the test protocol (docs/08 "Cases")
 import mcpp.diag;
 import mcpp.build.plan;
 import mcpp.toolchain.triple;
@@ -3901,6 +3902,15 @@ export struct TestOptions {
     // written to it, with what each needs beside it. Without: nothing is
     // built, and the tests it holds run here.
     std::filesystem::path archive;
+    // THE CASES OF A PROGRAM THAT IMPLEMENTS THE TEST PROTOCOL (docs/08
+    // "Cases"; mtest spec/protocol.md). `--case PATTERN` runs, of each such
+    // program, the cases a pattern matches, and no program that has none or
+    // does not implement the protocol; `--cases` builds the tests and lists
+    // each program's cases instead of running them; `--seed N` is the seed a
+    // case's randomness takes (MTEST_SEED).
+    std::vector<std::string>      cases;
+    bool                          listCases = false;
+    std::optional<std::uint64_t>  seed;
 };
 
 // What one member's `run_tests` actually did. `--workspace` fans out over
@@ -4004,6 +4014,14 @@ struct TestResult {
     // its link edge and its main unit's compile edge in `.ninja_log`, 0 when
     // neither was rebuilt (`build_ms`, 2026.10.1.1+).
     long long   buildMs = 0;
+    // The test protocol the program implements (0: none), and what its report
+    // said: each case's result, or its listing under `--cases`.
+    int                                 protocol = 0;
+    mcpp::build::test_protocol::Report  report;
+    // The program and the files it is compiled from, for a test built and not
+    // run (`--no-run`): what a runner that selects by change reads (docs/50).
+    std::string                         program;
+    std::vector<std::string>            sources;
 };
 
 // Streaming NDJSON: one record per test, emitted as it finishes — a
@@ -4015,18 +4033,35 @@ static void emit_test_json(const std::string& memberName, const TestResult& r) {
                    : r.status == TestResult::St::NotRun ? "not_run"
                    : r.status == TestResult::St::Built ? "built"
                                                         : "run_fail";
-    std::string signal = (r.exitCode > 128 && r.exitCode < 128 + 65)
-        ? std::to_string(r.exitCode - 128) : "null";
-    std::println("{{\"member\":\"{}\",\"test\":\"{}\",\"status\":\"{}\","
-                 "\"exit_code\":{},\"signal\":{},"
-                 "\"duration_ms\":{},\"timed_out\":{},"
-                 "\"compile_output\":\"{}\",\"run_output\":\"{}\","
-                 "\"reason\":\"{}\",\"build_ms\":{}}}",
-                 test_json_escape(memberName),
-                 test_json_escape(r.name), st, r.exitCode, signal, r.durationMs,
-                 r.timedOut ? "true" : "false",
-                 test_json_escape(r.compileOutput), test_json_escape(r.runOutput),
-                 test_json_escape(r.reason), r.buildMs);
+    nlohmann::ordered_json record = {
+        {"member", memberName},
+        {"test", r.name},
+        {"status", st},
+        {"exit_code", r.exitCode},
+        {"signal", (r.exitCode > 128 && r.exitCode < 128 + 65) ? nlohmann::ordered_json(r.exitCode - 128)
+                                                              : nlohmann::ordered_json(nullptr)},
+        {"duration_ms", r.durationMs},
+        {"timed_out", r.timedOut},
+        {"compile_output", r.compileOutput},
+        {"run_output", r.runOutput},
+        {"reason", r.reason},
+        {"build_ms", r.buildMs},
+        // The test protocol (docs/50 §8, 2026.11.8.1+): the version the
+        // program implements, or null; its cases' results; the identifiers a
+        // selection named and the program does not have; its listing.
+        {"protocol", r.protocol ? nlohmann::ordered_json(r.protocol) : nlohmann::ordered_json(nullptr)},
+    };
+    if (r.protocol) {
+        if (!r.report.listed.empty())
+            record["listed"] = mcpp::build::test_protocol::listing_json(r.report);
+        if (!r.report.cases.empty()) record["cases"] = mcpp::build::test_protocol::cases_json(r.report);
+        if (!r.report.missing.empty()) record["missing"] = r.report.missing;
+    }
+    if (!r.program.empty()) {
+        record["program"] = r.program;
+        record["sources"] = r.sources;
+    }
+    std::println("{}", record.dump(-1, ' ', false, nlohmann::ordered_json::error_handler_t::replace));
     std::fflush(libc::stdout());
 }
 
@@ -4460,6 +4495,13 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         std::vector<std::pair<std::string, std::string>> env;
         long long buildMs = 0;   // this test's own edges in .ninja_log
         std::filesystem::path program;   // the test's own artifact
+        // The test protocol the program implements (0: none, P1.1), and the
+        // files of its run under it: the report, the selection, the cases'
+        // directory (docs/08 "Cases").
+        int protocol = 0;
+        std::filesystem::path protocolDir;
+        std::optional<std::filesystem::path> select;
+        std::vector<std::string> sources;
     };
     std::vector<Runnable> runnable;
 
@@ -4470,6 +4512,34 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     // the terminal interleaves them line by line, which does not just look
     // untidy — it makes a failing assertion unattributable, and the whole
     // reason the per-test loop exists is attribution.
+
+    // A run of a program under the protocol: its directory emptied, the
+    // variables of `mode` (P2.1), the report beside them.
+    auto protocol_run = [&](const Runnable& r, std::string_view mode) {
+        std::error_code ec;
+        const auto reportName = mode == "list" ? "list.ndjson" : "report.ndjson";
+        std::filesystem::remove(r.protocolDir / reportName, ec);
+        std::filesystem::remove_all(r.protocolDir / "tmp", ec);
+        std::filesystem::create_directories(r.protocolDir / "tmp", ec);
+        return mcpp::build::test_protocol::variables(mode, r.protocolDir / reportName,
+                                                     mode == "list" ? std::nullopt : r.select,
+                                                     r.protocolDir / "tmp", testOpts.seed);
+    };
+    auto print_failed_cases = [](const mcpp::build::test_protocol::Report& report) {
+        for (const auto& c : report.cases) {
+            if (c.status != "fail" && c.status != "xpass") continue;
+            if (c.failures.empty()) {
+                mcpp::ui::plain(std::format("    case {} {}{}", c.id,
+                    c.status == "xpass" ? "passed, expected to fail" : "failed",
+                    c.reason.empty() ? std::string{} : ": " + c.reason));
+                continue;
+            }
+            const auto& f = c.failures.front();
+            mcpp::ui::plain(std::format("    case {} failed at {}:{}: {}", c.id, f.file, f.line, f.message));
+        }
+        for (const auto& id : report.missing)
+            mcpp::ui::plain(std::format("    case {}: the program has no such case", id));
+    };
 
     auto run_tests_now = [&](std::vector<Runnable>& list) {
         if (list.empty()) return;
@@ -4542,19 +4612,43 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 int spawnErr = 0;
                 std::string spawnDetail;
                 std::string runOutput;
-                if (capture) {
-                    auto rr = mcpp::run::capture_exec_deadline(
-                        r.argv, r.env, deadline, &timedOut, {}, &spawnErr);
-                    exitCode  = rr.exit_code;
+                // The protocol's variables reach a program that implements
+                // it, stated for this run, and no other program (P1.2, P2.2).
+                mcpp::run::Options runOpts;
+                runOpts.env = r.env;
+                runOpts.input = mcpp::run::Input::inherit;
+                runOpts.streams = capture ? mcpp::run::Streams::merged : mcpp::run::Streams::inherit;
+                runOpts.total = deadline;
+                runOpts.report_spawn_failure = false;
+                if (r.protocol) {
+                    for (auto& kv : protocol_run(r, "run")) runOpts.env.push_back(std::move(kv));
+                } else {
+                    for (auto v : mcpp::build::test_protocol::kVariables) runOpts.unset.emplace_back(v);
+                }
+                if (!capture) mcpp::ui::status("Running", std::format("bin/{}", r.name));
+                {
+                    auto rr = mcpp::run::execute(r.argv, runOpts);
+                    exitCode = rr.exit_code;
+                    timedOut = rr.timed_out;
+                    spawnErr = rr.spawn_error;
                     runOutput = std::move(rr.output);
                     spawnDetail = std::move(rr.spawn_detail);
-                } else {
-                    mcpp::ui::status("Running", std::format("bin/{}", r.name));
-                    exitCode = mcpp::run::run_exec_deadline(
-                        r.argv, r.env, deadline, &timedOut, &spawnErr);
                 }
                 auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - tStart).count();
+                // What the program reported of its cases (P5); a report whose
+                // cases failed is a failure though the program exited zero
+                // (P5.5).
+                mcpp::build::test_protocol::Report report;
+                std::string casesNote;
+                if (r.protocol && spawnErr == 0) {
+                    report = mcpp::build::test_protocol::read_report(r.protocolDir / "report.ndjson", exitCode);
+                    std::error_code ec;
+                    std::filesystem::remove_all(r.protocolDir / "tmp", ec);
+                    casesNote = std::format(", {} case{}", report.cases.size(),
+                                            report.cases.size() == 1 ? "" : "s");
+                    if (exitCode == 0 && !timedOut && report.failed()) exitCode = 1;
+                }
 
                 std::scoped_lock lock(reportMutex);
                 if (spawnErr != 0) {
@@ -4594,22 +4688,28 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                                        runOutput, ms, true, {}, r.buildMs});
                 } else if (exitCode == 0) {
                     if (!json) mcpp::ui::plain(std::format(
-                        "{} ... ok ({:.2f}s)", r.name, static_cast<double>(ms) / 1000.0));
+                        "{} ... ok ({:.2f}s{})", r.name, static_cast<double>(ms) / 1000.0, casesNote));
                     results.push_back({r.name, TestResult::St::Pass, 0, {},
                                        runOutput, ms, false, {}, r.buildMs});
                 } else {
                     if (!json) mcpp::ui::plain(std::format(
-                        "{} ... FAIL (exit {}, {:.2f}s)", r.name, exitCode,
-                        static_cast<double>(ms) / 1000.0));
+                        "{} ... FAIL (exit {}, {:.2f}s{})", r.name, exitCode,
+                        static_cast<double>(ms) / 1000.0, casesNote));
                     results.push_back({r.name, TestResult::St::RunFail, exitCode, {},
                                        runOutput, ms, false, {}, r.buildMs});
                 }
+                results.back().protocol = r.protocol;
+                results.back().report = std::move(report);
                 // The captured output belongs directly under its own line, or
                 // it is attributable to nothing.
                 if (!json && capture && !runOutput.empty()) {
                     std::fputs(runOutput.c_str(), libc::stdout());
                     if (runOutput.back() != '\n') std::fputc('\n', libc::stdout());
                 }
+                // Of a failing program that reports its cases, the ones that
+                // failed, each with its first failure's place.
+                if (!json && results.back().status == TestResult::St::RunFail)
+                    print_failed_cases(results.back().report);
                 std::fflush(libc::stdout());
                 emit_json(results.back());
             }
@@ -4642,6 +4742,34 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     read_edges();
     std::map<std::filesystem::path, std::filesystem::path> objectOf;
     for (auto& cu : ctx->plan.compileUnits) objectOf[cu.source] = cu.object;
+    // The files a test program is compiled from (docs/50 §8 `sources`): the
+    // sources of its objects, and of the objects of each static library it
+    // links. What a runner that selects tests by change reads.
+    std::map<std::filesystem::path, std::filesystem::path> sourceOf;
+    for (auto& cu : ctx->plan.compileUnits) sourceOf[cu.object] = cu.source;
+    std::map<std::filesystem::path, const mcpp::build::LinkUnit*> archiveOf;
+    for (auto& unit : ctx->plan.linkUnits)
+        if (unit.kind == mcpp::build::LinkUnit::StaticLibrary) archiveOf[unit.output] = &unit;
+    auto sources_of = [&](const mcpp::build::LinkUnit& unit) {
+        std::set<std::string> files;
+        auto add_objects = [&](const std::vector<std::filesystem::path>& objects) {
+            for (auto& o : objects)
+                if (auto it = sourceOf.find(o); it != sourceOf.end())
+                    files.insert(it->second.generic_string());
+        };
+        add_objects(unit.objects);
+        for (auto& input : unit.implicitInputs)
+            if (auto a = archiveOf.find(input); a != archiveOf.end()) add_objects(a->second->objects);
+        return std::vector<std::string>(files.begin(), files.end());
+    };
+    // Where a protocol program's report, selection and case directory are:
+    // one directory per test under the configuration's output.
+    auto protocol_dir = [&](std::string_view testName) {
+        std::string leaf(testName);
+        for (auto& ch : leaf)
+            if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '-' && ch != '.') ch = '_';
+        return ctx->outputDir / "test-protocol" / leaf;
+    };
 
     for (auto& lu : ctx->plan.linkUnits) {
         if (!filter_match(lu)) continue;
@@ -4754,6 +4882,17 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
 
         runnable.push_back({lu.targetName, std::move(argv), std::move(childEnv),
                             buildMsOfTest, exe});
+        // The protocol it implements: what its entry states, else the marker
+        // its file carries (P2.3). A version this mcpp does not speak runs as
+        // a program that implements none.
+        auto& added = runnable.back();
+        const int version = lu.testProtocol ? lu.testProtocol
+                                            : mcpp::build::test_protocol::marker_version(exe);
+        if (version == mcpp::build::test_protocol::kVersion) {
+            added.protocol = version;
+            added.protocolDir = protocol_dir(lu.targetName);
+        }
+        added.sources = sources_of(lu);
     }
     // `mcpp test <name> --print-launch` (design 2026-10-30 part 2 §7.4): the one test the pattern
     // names, built, described as `mcpp run --print-launch` describes a program -- the `mcpp.launch`
@@ -4784,6 +4923,9 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         env.data = mcpp::build::result::to_json(launch);
         env.data["program"] = chosen->program.generic_string();
         env.data["test"] = chosen->name;
+        // The test protocol the program implements, or null (docs/08 "Cases"):
+        // a debugger that starts it states the variables it wants.
+        env.data["protocol"] = chosen->protocol ? nlohmann::json(chosen->protocol) : nlohmann::json(nullptr);
         env.data["configuration"] = launch_configuration(*ctx);
         emit_launch(env);
         return 0;
@@ -4795,10 +4937,81 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     // `runnable` compiled and linked; a test that did not is already a
     // `CompileFail` in `results` and keeps that status, so this path reports
     // what was built without also reporting anything about what it does.
+    auto built_result = [&](const Runnable& r) {
+        TestResult t{r.name, TestResult::St::Built, 0, {}, {}, 0, false, {}, r.buildMs};
+        t.protocol = r.protocol;
+        t.program = r.program.generic_string();
+        t.sources = r.sources;
+        return t;
+    };
     if (testOpts.noRun || tb.builtNotRunHere) {
-        for (auto& r : runnable)
-            results.push_back({r.name, TestResult::St::Built, 0, {}, {}, 0,
-                               false, {}, r.buildMs});
+        for (auto& r : runnable) {
+            results.push_back(built_result(r));
+            emit_json(results.back());
+        }
+    } else if (testOpts.listCases || !testOpts.cases.empty()) {
+        // THE CASES (P3): each protocol program lists its cases without
+        // running one. `--cases` reports the listings; `--case` runs, of each
+        // program, the cases its patterns match (P4), and no program with
+        // none or that implements no protocol.
+        std::vector<Runnable> selected;
+        int notSelected = 0;
+        for (auto& r : runnable) {
+            if (!r.protocol) {
+                if (testOpts.listCases) {
+                    results.push_back(built_result(r));
+                    if (!json) mcpp::ui::plain(std::format("{}: one case, its exit status (no test protocol)", r.name));
+                    emit_json(results.back());
+                } else {
+                    ++notSelected;
+                }
+                continue;
+            }
+            mcpp::run::Options listOpts;
+            listOpts.env = r.env;
+            for (auto& kv : protocol_run(r, "list")) listOpts.env.push_back(std::move(kv));
+            listOpts.streams = mcpp::run::Streams::merged;
+            listOpts.total = std::chrono::milliseconds(static_cast<long long>(testOpts.timeoutSecs) * 1000);
+            listOpts.report_spawn_failure = false;
+            auto listed = mcpp::run::execute(r.argv, listOpts);
+            auto report = mcpp::build::test_protocol::read_report(r.protocolDir / "list.ndjson", listed.exit_code);
+            if (listed.exit_code != 0 || listed.spawn_error != 0 || !report.done) {
+                if (!json) mcpp::ui::plain(std::format("{} ... FAIL (listing its cases: exit {})", r.name, listed.exit_code));
+                if (!json && !listed.output.empty()) mcpp::ui::plain(listed.output);
+                results.push_back({r.name, TestResult::St::RunFail, listed.exit_code, {}, listed.output, 0, listed.timed_out,
+                                   {}, r.buildMs});
+                results.back().protocol = r.protocol;
+                emit_json(results.back());
+                continue;
+            }
+            if (testOpts.listCases) {
+                results.push_back(built_result(r));
+                if (!json) {
+                    mcpp::ui::plain(std::format("{}: {} case{}", r.name, report.listed.size(),
+                                                report.listed.size() == 1 ? "" : "s"));
+                    for (const auto& c : report.listed)
+                        mcpp::ui::plain(std::format("    {}  {}:{}", c.id, c.file, c.line));
+                }
+                results.back().report = std::move(report);
+                emit_json(results.back());
+                continue;
+            }
+            std::string lines;
+            for (const auto& c : report.listed)
+                if (std::ranges::any_of(testOpts.cases, [&](const std::string& p) {
+                        return mcpp::build::test_protocol::matches(c.id, p);
+                    }))
+                    lines += c.id + "\n";
+            if (lines.empty()) { ++notSelected; continue; }
+            r.select = r.protocolDir / "select.txt";
+            std::ofstream(*r.select, std::ios::binary) << lines;
+            selected.push_back(std::move(r));
+        }
+        if (!json && notSelected && !testOpts.listCases)
+            mcpp::ui::info("note", std::format(
+                "--case: {} test program{} with no matching case, or implementing no test protocol, did not run",
+                notSelected, notSelected == 1 ? "" : "s"));
+        if (!testOpts.listCases) run_tests_now(selected);
     } else {
         // THE FULL REASON, ONCE (SPEC-013 §18, criterion 7). It carries the key
         // that changes it (`run_under`); it was recorded silently and the

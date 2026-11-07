@@ -217,6 +217,10 @@ struct LinkUnit {
     std::string                     entryFrom;
     std::string                     start;
     std::string                     startFrom;
+    // The test protocol the selected entry states it implements
+    // (`test-protocol`, docs/08); 0 when none does. `mcpp test` also reads a
+    // program's marker for it (mtest spec/protocol.md P2.3).
+    int                             testProtocol = 0;
 };
 
 // One Windows resource script compiled into one linkable resource artifact
@@ -3105,6 +3109,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             lu.windowsEntry = sel.target->windowsEntry;
         }
         lu.entryFrom = sel.name;
+        lu.testProtocol = sel.target->testProtocol;
         return entry_object(sel.packageIndex, entry, *sel.target);
     };
 
