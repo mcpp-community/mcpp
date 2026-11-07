@@ -1767,16 +1767,26 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         std::filesystem::remove_all(ctx.outputDir, ec);
     }
     // Said before the build rather than as a link that fails for want of
-    // space (mcpp#874: `final link failed: No space left on device`).
+    // space (mcpp#874: `final link failed: No space left on device`). The
+    // threshold is what this configuration's last build took from the file
+    // system (`.mcpp-written`, the free space before it less the free space
+    // after it), a quarter more, and never less than 2 GiB: a workspace whose
+    // build writes 20 GB is told before it starts, not at its link.
+    std::uintmax_t freeBefore = 0;
     {
         std::error_code sec;
-        const auto free = std::filesystem::space(ctx.outputDir.parent_path(), sec).available;
-        if (!sec && free < (2ull << 30))
+        freeBefore = std::filesystem::space(ctx.outputDir.parent_path(), sec).available;
+        std::uintmax_t lastWritten = 0;
+        if (std::ifstream in(ctx.outputDir / ".mcpp-written"); in) in >> lastWritten;
+        const std::uintmax_t threshold = std::max<std::uintmax_t>(2ull << 30, lastWritten + lastWritten / 4);
+        if (!sec && freeBefore < threshold)
             mcpp::ui::warning(std::format(
-                "{} free where this build writes ({}). `mcpp clean --stale` removes the build "
-                "directories no configuration uses, and `mcpp cache gc --older-than 30d` the "
-                "cache entries none has used",
-                mcpp::bmi_cache::human_bytes(free), ctx.outputDir.parent_path().string()));
+                "{} free where this build writes ({}), and its last build took {}. `mcpp clean "
+                "--stale` removes the build directories no configuration uses, and `mcpp cache gc "
+                "--older-than 30d` the cache entries none has used",
+                mcpp::bmi_cache::human_bytes(freeBefore), ctx.outputDir.parent_path().string(),
+                mcpp::bmi_cache::human_bytes(lastWritten)));
+        if (sec) freeBefore = 0;
     }
 
     // The generated `*link:` spec lives in the output directory, and the line
@@ -1929,6 +1939,13 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     mcpp::build::progress::finished(
         ctx.profile, mcpp::build::profile_descriptor(ctx.plan.manifest.buildConfig));
     report_freestanding_size(ctx);
+    // What this build took from the file system, for the next one's warning.
+    if (freeBefore) {
+        std::error_code sec;
+        const auto freeAfter = std::filesystem::space(ctx.outputDir.parent_path(), sec).available;
+        if (!sec && freeAfter < freeBefore)
+            std::ofstream(ctx.outputDir / ".mcpp-written", std::ios::trunc) << (freeBefore - freeAfter) << '\n';
+    }
     mcpp::bmi_cache::collect_unused_entries();
     return 0;
 }
