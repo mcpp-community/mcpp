@@ -26,10 +26,16 @@ cd "$TMP"
 cd app
 "$MCPP" build > build.log 2>&1 || fail "the project does not build" build.log
 
-# A
+# A. Where `mcpp run` itself takes the fast path here (some rows, a stated
+# target base for one, always plan), so does the description.
 "$MCPP" run --print-launch > full.json 2> full.err || fail "A: the first description failed" full.err
+"$MCPP" run > plain.out 2> plain.err || fail "A: mcpp run failed" plain.err
+fast_here=1
+grep -q 'Resolving' plain.err && fast_here=0
 "$MCPP" run --print-launch -- one two > fast.json 2> fast.err || fail "A: the second description failed" fast.err
-grep -q 'Resolving' fast.err && fail "A: the unchanged description resolved again (the full path)" fast.err
+if [[ $fast_here -eq 1 ]] && grep -q 'Resolving' fast.err; then
+    fail "A: the unchanged description resolved again (the full path) where mcpp run does not" fast.err plain.err
+fi
 $PY - full.json fast.json <<'PY' || fail "A: the fast description is not the full path's" full.json fast.json
 import json, sys
 full, fast = (json.load(open(p)) for p in sys.argv[1:3])
@@ -60,7 +66,7 @@ r = json.load(open(sys.argv[1])); r["env"]["MCPP_E2E_FOREIGN"] = "1"
 json.dump(r, open(sys.argv[1], "w"))
 PY
 "$MCPP" run --print-launch > again.json 2> again.err || fail "C: the description failed" again.err
-grep -q 'Resolving' again.err || fail "C: a foreign record was used by the fast path" again.err
+[[ $fast_here -eq 0 ]] || grep -q 'Resolving' again.err || fail "C: a foreign record was used by the fast path" again.err
 grep -q MCPP_E2E_FOREIGN again.json && fail "C: the foreign field reached the description" again.json
 grep -q MCPP_E2E_FOREIGN "$record" && fail "C: the full path did not record the launch again" "$record"
 
