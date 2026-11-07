@@ -29,6 +29,15 @@
 - An edge that asks a resolved package for a feature its earlier edges did not
   ask walks that feature's `[feature-deps]` and forwards, so `-p s -p v` builds
   what `-p s` builds (#897, e2e 1019).
+- A build directory taken over by a new fingerprint of its configuration (an
+  mcpp upgrade) keeps no compiler record of its predecessor: the completion
+  certificates there named the predecessor's objects and failed the next
+  build's admission ("cached compiler certificate does not name its own
+  object") until `mcpp clean`. A certificate of another directory found at
+  admission (a moved or restored directory) authorizes nothing and is dropped;
+  the object is compiled again (e2e 1022).
+- `mcpp test` announces a dependency with its resolved version, as the build
+  does, not the constraint (`v0.3.1`, not `v^0.3.1`; e2e 196).
 
 - A finished detached compiler is recognized when its final status appears
   between status and liveness checks. Recovery still validates its output proof.
@@ -92,6 +101,12 @@
   `openkal-platform@^0.24`: its newest release whose `mcpp` floor this engine
   meets, kept in mcpp.lock until `mcpp update` (SPEC-013 §14, §15.1, e2e 1021).
   A platform patch no longer needs an mcpp release.
+  It resolves to openkal-platform 0.24.2: openkal-llvm-runtime 0.19.2 keeps the
+  volume of a name it normalizes, without which a Windows launcher over 0.24.1
+  could not start its runner (e2e 988).
+- mcpp and the launchers it generates depend on mcpplibs.os `^0.3.1`, whose
+  `os::fs` reads a name in the long spelling (`\\?\C:\...`) as the name it
+  spells; the single-file launcher moves from os 0.2.0.
 - Headers are included only in the two system lock files
   (`.github/tools/check_include_regions.sh`): zlib, zstd and xz are their mwrap
   modules, JSON is nlohmann.json from the index (the copied json.hpp is gone),
