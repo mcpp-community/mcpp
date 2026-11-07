@@ -24,5 +24,5 @@ license     = "Apache-2.0"
 # Subsystem-level tests. They see only this package, which is what lets them
 # state its contract in isolation; the root `tests/unit/` states the same facts
 # as the engine consumes them, and the pair is the cross-check.
-[dev-dependencies.compat]
-gtest = "1.15.2"
+[dev-dependencies]
+compat.gtest = "1.15.2"

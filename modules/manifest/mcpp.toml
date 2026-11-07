@@ -17,18 +17,17 @@ version     = "0.1.0"
 description = "Manifest and descriptor parsing for mcpp"
 license     = "Apache-2.0"
 
-[dependencies.mcpp]
-invocation  = { path = "../invocation" }
-libs        = { path = "../libs" }
-source-kind = { path = "../source-kind" }
-toolchain-model = { path = "../toolchain-model" }
-versioning  = { path = "../versioning" }
+[dependencies]
+mcpp.invocation  = { path = "../invocation" }
+mcpp.libs        = { path = "../libs" }
+mcpp.source-kind = { path = "../source-kind" }
+mcpp.toolchain-model = { path = "../toolchain-model" }
+mcpp.versioning  = { path = "../versioning" }
+
+mcpplibs.os = "0.3.1"
 
 # Subsystem-level tests. They see only this package, which is what lets them
 # state its contract in isolation; the root `tests/unit/` states the facts two
 # layers must agree on.
-[dependencies.mcpplibs]
-os = "=0.3.1"
-
-[dev-dependencies.compat]
-gtest = "1.15.2"
+[dev-dependencies]
+compat.gtest = "1.15.2"

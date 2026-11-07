@@ -11,8 +11,7 @@ version     = "0.1.0"
 description = "Leveled logging for mcpp"
 license     = "Apache-2.0"
 
-[dependencies.mcpp]
-invocation = { path = "../invocation" }
-
 [dependencies]
-"mcpplibs.mwrap.libc" = "17.0.0"
+mcpp.invocation = { path = "../invocation" }
+
+mcpplibs.mwrap.libc = "17.0.0"

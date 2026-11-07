@@ -12,5 +12,5 @@ version     = "0.1.0"
 description = "The environment of one invocation of mcpp: statements over the started environment"
 license     = "Apache-2.0"
 
-[dependencies.mcpplibs]
-os = "=0.3.1"
+[dependencies]
+mcpplibs.os = "0.3.1"
