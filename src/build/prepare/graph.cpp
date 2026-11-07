@@ -667,13 +667,10 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
 
         mcpp::pm::compat::normalize_nested_namespace(
             spec.namespace_, spec.shortName, spec.legacyDottedKey);
-        // COMPAT(quoted-dotted-dependency-key): `"mcpplibs.cmdline" = ...` is
-        // one TOML key, read as the selector its dots spell (mcpp#904).
-        if (spec.legacyDottedKey)
-            state.reportCompatUse("quoted-dotted-dependency-key",
-                                  packageIndexForConsumer(item.consumerDepIndex),
-                                  std::format("{} \"{}\"", spec.declaredIn, name));
         if (spec.legacyDottedKey) {
+            // COMPAT(quoted-dotted-dependency-key): one TOML key, read as the selector its dots spell (mcpp#904).
+            state.reportCompatUse("quoted-dotted-dependency-key", packageIndexForConsumer(item.consumerDepIndex),
+                                  std::format("{} \"{}\"", spec.declaredIn, name));
             spec.candidates = {{
                 .namespace_ = spec.namespace_,
                 .shortName = spec.shortName,
