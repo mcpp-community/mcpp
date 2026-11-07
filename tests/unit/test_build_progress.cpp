@@ -3,6 +3,7 @@
 import std;
 import mcpp.ui;
 import mcpp.build.progress;
+import mcpp.build.action_progress;
 
 // The build's report (.agents/docs/2026-09-29-build-progress-display-design.md,
 // revised by .agents/docs/2026-09-30-build-output-refinement-design.md): its
@@ -330,6 +331,77 @@ TEST(ProgressText, ThePhaseIsAlignedWithTheVerbs) {
 }
 
 // ─── When a package is named (revision 3, §5.3) ──────────────────────────
+
+TEST(ProgressModel, AnActionStartLoadsTheFastPathRecordBeforeNinjaWritesStdout) {
+    namespace telemetry = mcpp::build::action_progress;
+    Tmp tmp;
+    Record rec;
+    rec.packages = {{"progress-no-stdout", true, "progress-no-stdout", 0, 1, "v0.0.0 (.)", "project"}};
+    rec.owner = {{"gen/check.stamp", 0}};
+    rec.step = {{"gen/check.stamp", 0}};
+    rec.actions = {{"gen/check.stamp", "check-action"}};
+    rec.steps = 1;
+    write_record(tmp.path, rec);
+    Build build(tmp.path); // The cached path has a record on disk, not set_record().
+    build.pass_begin();
+    const auto env = build.environment();
+    const auto root = std::ranges::find(env, telemetry::kRootEnv, &decltype(env)::value_type::first);
+    ASSERT_NE(root, env.end());
+    std::ofstream(telemetry::channel(root->second, "gen/check.stamp"))
+        << R"({"v":1,"seq":1,"phase":"internal-check","done":1,"total":2})";
+    const auto unixMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    append(tmp.path / kStartsFile, std::format("gen/check.stamp\t{}\n", unixMs));
+    testing::internal::CaptureStderr();
+    open(false);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    std::string row;
+    do {
+        row = status_row();
+        if (row.contains("internal-check 1/2")) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    } while (std::chrono::steady_clock::now() < deadline);
+    close();
+    (void)testing::internal::GetCapturedStderr();
+    EXPECT_TRUE(build.has_record());
+    EXPECT_NE(row.find("check-action"), std::string::npos) << row;
+    EXPECT_NE(row.find("internal-check 1/2"), std::string::npos) << row;
+    // No Build::status() or completed ninja-log entry was supplied.
+}
+
+TEST(ProgressModel, ANewSnapshotRedrawsBeforeTheClockHeartbeat) {
+    namespace telemetry = mcpp::build::action_progress;
+    Tmp tmp;
+    Record rec;
+    rec.packages = {{"progress-redraw", true, "r", 0, 1, "", "project"}};
+    rec.owner = {{"gen/redraw.stamp", 0}};
+    rec.actions = {{"gen/redraw.stamp", "a"}};
+    Build build(tmp.path);
+    build.set_record(rec);
+    build.pass_begin();
+    const auto env = build.environment();
+    const auto root = std::ranges::find(env, telemetry::kRootEnv, &decltype(env)::value_type::first);
+    ASSERT_NE(root, env.end());
+    const auto unixMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    append(tmp.path / kStartsFile, std::format("gen/redraw.stamp\t{}\n", unixMs));
+    const bool wasLive = mcpp::ui::live_progress();
+    mcpp::ui::set_live_progress(true);
+    testing::internal::CaptureStderr();
+    open(false);
+    // Let the initial half-second display guard pass. This line then draws
+    // the frame immediately before publication, resetting the clock redraw.
+    std::this_thread::sleep_for(std::chrono::milliseconds(550));
+    mcpp::ui::info("Probe", "before snapshot publication");
+    std::ofstream(telemetry::channel(root->second, "gen/redraw.stamp"))
+        << R"({"v":1,"seq":1,"phase":"snapshot-redraw","done":1,"total":2})";
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    close();
+    const auto out = testing::internal::GetCapturedStderr();
+    mcpp::ui::set_live_progress(wasLive);
+    EXPECT_NE(out.find("snapshot-redraw 1/2"), std::string::npos) << out;
+    // No Ninja stdout, completion or other narration requested a redraw.
+}
 
 TEST(ProgressModel, APackageIsNamedOnceWhenItsFirstStepFinishes) {
     mcpp::ui::disable_color();

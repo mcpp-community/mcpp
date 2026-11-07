@@ -2,10 +2,6 @@
 // remove, update, pin, unpin.
 // Bodies moved verbatim from the CLI layer. Zero behavior change.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.pm.index_management;
 
 import std;
@@ -20,7 +16,7 @@ import mcpp.pm.index_route;
 import mcpp.ui;
 import mcpp.provider;
 import mcpp.provider.select;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.wire;   // `--format json` (design 2026-10-26 §5.6)
 
 namespace mcpp::pm {

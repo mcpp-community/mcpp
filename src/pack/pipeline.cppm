@@ -4,10 +4,6 @@
 // its program, its plan and the bundler, and one dispatch pass per group. The
 // package of one directory is a group of one member, and runs the same steps.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.pack.pipeline;
 
 import std;

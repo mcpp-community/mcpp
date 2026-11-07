@@ -13,7 +13,7 @@
 
 import std;
 import mcpp.wire;
-import mcpp.libs.json;
+import nlohmann.json;
 
 namespace w = mcpp::wire;
 

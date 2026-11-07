@@ -2,14 +2,10 @@
 // build cache + fast-path rebuilds, and the run/test/clean pipelines.
 // Bodies moved verbatim from the CLI layer. Zero behavior change.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-#include <cerrno>      // ENOENT/EACCES/ENOEXEC — the launcher status band
-
 export module mcpp.build.execute;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpp.build.advice;
 import mcpp.build.build_program;   // #359 glob inputs the mtime sweep cannot see
 import mcpp.build.compile_commands; // C1: the fast path restores a deleted root CDB
@@ -25,7 +21,7 @@ import mcpp.toolchain.triple;
 import mcpp.build.refusal;         // a set member its platform does not serve
 import mcpp.freestanding.runner;
 import mcpp.platform;
-import mcpp.libs.json;   // the plan event's platform objects
+import nlohmann.json;   // the plan event's platform objects
 import mcpp.build.runner_lookup;    // #544: where the runner's program is
 import mcpp.home;                   // config.toml, for the machine's default toolchain
 import mcpp.libs.toml;
@@ -61,11 +57,14 @@ import mcpp.runtime.launch_env;
 import mcpp.run;
 import mcpp.home.files;
 import mcpp.build.schedule.policy;   // resolve_jobs — one answer to "how many at once"
+import mcpp.build.schedule.detach_codegen;
 import mcpp.fetcher.progress;
 import mcpp.project;
 import mcpp.ui;
 import mcpp.toolchain.msvc_coroutines;
 import mcpp.build.progress;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 // THE TEST ARCHIVE — tests built once and run elsewhere (SPEC-015 §4).
 //
@@ -299,14 +298,15 @@ namespace mcpp::build {
 // optional: a launcher failure always prints why, a program's own status never
 // does.
 int launcher_status(int spawnErrno) {
-    switch (spawnErrno) {
-        case ENOENT:
-        case ESRCH:    return 127;
-        case EACCES:
-        case EPERM:
-        case ENOEXEC:
-        case EISDIR:   return 126;
-        default:       return 125;
+    using enum std::errc;
+    switch (static_cast<std::errc>(spawnErrno)) {
+        case no_such_file_or_directory:
+        case no_such_process:          return 127;
+        case permission_denied:
+        case operation_not_permitted:
+        case executable_format_error:
+        case is_a_directory:           return 126;
+        default:                       return 125;
     }
 }
 
@@ -1518,6 +1518,15 @@ export struct RunnerOnThisMachine {
     std::string refusal;           // non-empty: runs are refused here, and why
 };
 
+nlohmann::json launch_configuration(const BuildContext& ctx) {
+    auto runners = nlohmann::json::array();
+    for (const auto& [name, entry] : ctx.plan.platform.fields.runners)
+        if (!entry.value.empty()) runners.push_back(name);
+    return {{"triple", ctx.tc.targetTriple}, {"profile", ctx.profile},
+            {"platform", nlohmann::json::parse(mcpp::platform::to_json(ctx.plan.platform), nullptr, false)},
+            {"runners", std::move(runners)}};
+}
+
 export RunnerOnThisMachine runner_on_this_machine(const BuildContext& ctx) {
     RunnerOnThisMachine out;
     const auto choice = choose_runner(ctx);
@@ -2166,6 +2175,26 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         childEnv.emplace_back(runtimeEnvKey, runtimeEnvValue);
     }
 
+    std::optional<mcpp::build::schedule::detach::RunScope> compilerRun;
+    // A graph whose compilers run through the capped executor replays inside a
+    // generation, as its first drive did.
+    const bool capped = [&] {
+        std::ifstream in(ninjaPath, std::ios::binary);
+        const std::string text{std::istreambuf_iterator<char>(in), {}};
+        return text.find(" __compiler-cap ") != std::string::npos;
+    }();
+    if (capped) {
+        // The graph names no cap; its first drive left it beside build.ninja.
+        // Without it the graph is replanned rather than run unbounded.
+        const int cap = mcpp::build::read_compiler_cap_sidecar(outputDir);
+        if (cap <= 0) return std::nullopt;
+        auto opened = mcpp::build::schedule::detach::RunScope::begin(outputDir, cap);
+        if (!opened) { mcpp::ui::error(opened.error()); return 1; }
+        compilerRun.emplace(std::move(*opened));
+        compilerRun->environment(childEnv);
+    }
+
+    const auto compilerStopped=[&] {return compilerRun&&compilerRun->failed();};
     auto t0 = std::chrono::steady_clock::now();
     // capture_exec merges stderr into the captured output (replacing `2>&1`),
     // so is_stale_ninja_failure / filter_ninja_output still see ninja errors.
@@ -2191,11 +2220,12 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         if (scanArgv)
             run = mcpp::build::run_ninja_reporting(*scanArgv, childEnv, std::chrono::milliseconds{0},
                                                    report, verbose, prefixes,
-                                                   mcpp::build::progress::PassKind::Scan);
+                                                   mcpp::build::progress::PassKind::Scan,compilerStopped);
         // A failed scan ends the build with its own output.
         if (run.exitCode == 0 && !run.timedOut)
             run = mcpp::build::run_ninja_reporting(argv, childEnv, std::chrono::milliseconds{0},
-                                                   report, verbose, prefixes);
+                                                   report, verbose, prefixes,
+                                                   mcpp::build::progress::PassKind::Work,compilerStopped);
         out = std::move(run.output);
         status = run.exitCode;
         reported = run.reported;
@@ -2208,10 +2238,16 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         // (build progress design 2026-09-29, §6.4).
         childEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
         mcpp::run::RunResult r;
-        if (scanArgv) r = mcpp::run::capture_exec(*scanArgv, childEnv);
-        if (r.exit_code == 0) r = mcpp::run::capture_exec(argv, childEnv);
+        if (scanArgv) r = mcpp::run::execute(*scanArgv,{.env=childEnv,.should_stop=compilerStopped});
+        if (r.exit_code == 0) r = mcpp::run::execute(argv,{.env=childEnv,.should_stop=compilerStopped});
         out = std::move(r.output);
         status = r.exit_code;
+    }
+    if (compilerRun) {
+        if (auto settled = compilerRun->finish(); !settled) {
+            mcpp::ui::error(settled.error());
+            return 1;
+        }
     }
     if (status != 0) {
         if (!reported && is_stale_ninja_failure(out))
@@ -3058,9 +3094,9 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
         using namespace mcpp::build::runner_lookup;
         const auto triple = mcpp::toolchain::triple::host_triple().str();
         if (classify(spawnErr) == SpawnClass::Unloadable)
-            std::println(stderr, "error: {}", unrunnable_message(triple, exe, spawnErr));
+            std::println(libc::stderr(), "error: {}", unrunnable_message(triple, exe, spawnErr));
         else
-            std::println(stderr, "error: {}", spawn_failed_message(exe.string(), spawnErr));
+            std::println(libc::stderr(), "error: {}", spawn_failed_message(exe.string(), spawnErr));
         return launcher_status(spawnErr);
     }
     return exitRc;
@@ -3128,7 +3164,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         std::string have;
         for (auto const& [n, _] : ctx.manifest.buildConfig.namedRunners)
             have += (have.empty() ? "" : ", ") + n;
-        std::println(stderr,
+        std::println(libc::stderr(),
             "error: this project has no runner named '{}' for '{}'.\n"
             "       Available: {}\n"
             "       A package supplies one with `mcpp::runner(\"{}\", …)`, or a\n"
@@ -3145,7 +3181,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         return 2;
     }
     if (isRunSlot && choice.freestanding && choice.tmpl.empty()) {
-        std::println(stderr, "error: {}",
+        std::println(libc::stderr(), "error: {}",
             mcpp::freestanding::no_runner_message(choice.tripleKey));
         return 2;
     }
@@ -3159,7 +3195,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     std::error_code dirEc;
     if (!format_name.empty() && choice.tmpl.empty()
         && std::filesystem::is_directory(exe, dirEc)) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "error: --pkg-format {} produced a directory, '{}', and no runner reaches it.\n"
             "       A directory is not executed directly: a runner named '{}' runs\n"
             "       it. A package supplies one with `mcpp::runner(\"{}\", …)`, or the\n"
@@ -3173,7 +3209,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     }
     if (isRunSlot) {
         if (auto why = unreachable_execution(ctx, choice.tripleKey, no_runner)) {
-            std::println(stderr, "error: {}", *why);
+            std::println(libc::stderr(), "error: {}", *why);
             return 2;
         }
     }
@@ -3183,7 +3219,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     if (!no_runner) {
         host = locate_run_under(ctx, choice.tripleKey);
         if (!host.error.empty()) {
-            std::println(stderr, "error: {}", host.error);
+            std::println(libc::stderr(), "error: {}", host.error);
             return 2;
         }
     }
@@ -3202,12 +3238,12 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
             tmpl.front(), ctx.xlingsDepBinDirs, mcpp::invocation::get("PATH").value_or(""));
         auto tool = runner_tool(ctx, tmpl.front(), choice.tripleKey, no_runner);
         if (!tool) {
-            std::println(stderr, "error: {}", tool.error());
+            std::println(libc::stderr(), "error: {}", tool.error());
             return 2;
         }
         if (*tool) found.program = (*tool)->program;
         if (!found.program) {
-            std::println(stderr, "error: {}",
+            std::println(libc::stderr(), "error: {}",
                 mcpp::build::runner_lookup::not_found_message(
                     choice.tripleKey, tmpl.front(), found.searched));
             return 2;
@@ -3221,7 +3257,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
                                            : std::vector<std::pair<std::string, std::filesystem::path>>{};
         auto listed = write_runtime_files_list(ctx, exe, carriedFiles);
         if (!listed) {
-            std::println(stderr, "error: {}", listed.error());
+            std::println(libc::stderr(), "error: {}", listed.error());
             return 1;
         }
         runtimeFilesList = *listed;
@@ -3255,7 +3291,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     if (!host.prefix.empty() || !choice.tmpl.empty()) {
         auto closure = write_run_closure(ctx, exe, carriedFiles, "run", choice.tripleKey);
         if (!closure) {
-            std::println(stderr, "error: {}", closure.error());
+            std::println(libc::stderr(), "error: {}", closure.error());
             return 1;
         }
         runClosure = *closure;
@@ -3297,6 +3333,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
                                              mcpp::wire::Effect::WriteProject}};
         env.data = mcpp::build::result::to_json(launch);
         env.data["program"] = exe.generic_string();
+        env.data["configuration"] = launch_configuration(ctx);
         mcpp::wire::emit(env);
         return 0;
     }
@@ -3305,12 +3342,12 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     if (spawnErr != 0) {
         using namespace mcpp::build::runner_lookup;
         if (!choice.tmpl.empty() || !host.prefix.empty())
-            std::println(stderr, "error: {}", spawn_failed_message(argv.front(), spawnErr));
+            std::println(libc::stderr(), "error: {}", spawn_failed_message(argv.front(), spawnErr));
         else if (classify(spawnErr) == SpawnClass::Unloadable)
-            std::println(stderr, "error: {}",
+            std::println(libc::stderr(), "error: {}",
                          unrunnable_message(choice.tripleKey, exe, spawnErr));
         else
-            std::println(stderr, "error: {}", spawn_failed_message(exe.string(), spawnErr));
+            std::println(libc::stderr(), "error: {}", spawn_failed_message(exe.string(), spawnErr));
         return launcher_status(spawnErr);
     }
     return rc;
@@ -3419,7 +3456,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // is not the link output, and "run it directly, ignoring the runner" has
     // no reading for a file this host was never going to execute on its own.
     if (!format.empty() && no_runner) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "error: --pkg-format and --no-runner cannot be combined: a "
             "distributable is not something this host executes directly.");
         return 2;
@@ -3513,7 +3550,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
             std::move(popts), /*modeFromUser=*/false, targetName.value_or(std::string{}));
         if (outcome.rc != 0) return kRunBuildFailed;
         if (outcome.artifacts.size() != 1) {
-            std::println(stderr, "error: --pkg-format {} produced {} files; mcpp run runs one", format,
+            std::println(libc::stderr(), "error: --pkg-format {} produced {} files; mcpp run runs one", format,
                          outcome.artifacts.size());
             return 1;
         }
@@ -3529,14 +3566,14 @@ export int build_run_target(const std::optional<std::string>& targetName,
         int spawnErr = 0;
         const int rc = mcpp::run::run_foreground(argv, {}, &spawnErr);
         if (spawnErr != 0) {
-            std::println(stderr, "error: {}",
+            std::println(libc::stderr(), "error: {}",
                          mcpp::build::runner_lookup::spawn_failed_message(argv.front(), spawnErr));
             return launcher_status(spawnErr);
         }
         return rc;
     }
     if (format == "tar" || format == "zip" || format == "dir") {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "error: mcpp run --pkg-format runs a program, and {} is a container of one.\n"
             "       use: --pkg-format single-file | polyglot, or a format a package provides", format);
         return 2;
@@ -3560,7 +3597,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
             // as a named refusal rather than an assert, so a future format
             // shape that reports zero artifacts fails LOUDLY here instead of
             // dereferencing past the end of an empty vector below.
-            std::println(stderr,
+            std::println(libc::stderr(),
                 "error: --pkg-format {} reported success and named no artifact to run", format);
             return 1;
         }
@@ -3593,7 +3630,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
                 if (!names.empty()) names += ", ";
                 names += a.string();
             }
-            std::println(stderr,
+            std::println(libc::stderr(),
                 "error: --pkg-format {} produced {} distributables ({}); mcpp run needs "
                 "exactly one to hand to the runner", format, outcome.artifacts.size(), names);
             return 1;
@@ -3689,7 +3726,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
             std::string formats;
             for (auto const& f : ctx->plan.providedPackFormats)
                 formats += (formats.empty() ? "" : ", ") + f;
-            std::println(stderr,
+            std::println(libc::stderr(),
                 "error: '{}' is an application, and on {} an application is "
                 "a shared library that a package installs. Run it through a "
                 "distributable: mcpp run --pkg-format <name>, where <name> is "
@@ -3698,7 +3735,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
                 formats.empty() ? std::string("none declared") : formats);
             return 2;
         }
-        std::println(stderr, "error: no binary target {}",
+        std::println(libc::stderr(), "error: no binary target {}",
             targetName ? std::format("'{}' found", *targetName) : "in this package");
         return 2;
     }
@@ -3717,6 +3754,7 @@ export struct TestOptions {
     // runner — the operator on this host stating that the triple is native
     // here, a fact the manifest has no axis for (#544, D3).
     bool               noRunner = false;
+    std::string        runnerName;  // empty: the default runner, as in `mcpp run`
     // `--no-run`: build the tests for `--target` and stop. THE CLAIM IT MAKES
     // IS NARROWER THAN A PASS, AND IT IS STATED RATHER THAN INFERRED.
     //
@@ -3888,7 +3926,7 @@ static void emit_test_json(const std::string& memberName, const TestResult& r) {
                  r.timedOut ? "true" : "false",
                  test_json_escape(r.compileOutput), test_json_escape(r.runOutput),
                  test_json_escape(r.reason), r.buildMs);
-    std::fflush(stdout);
+    std::fflush(libc::stdout());
 }
 
 // An edge ninja recorded in `.ninja_log`: what it made, and how long it took.
@@ -3983,7 +4021,11 @@ static void test_announce(const BuildContext& ctx) {
     auto announce = [&](const std::string& name,
                         const mcpp::manifest::DependencySpec& spec,
                         std::string_view suffix) {
-        std::string ver = spec.isPath() ? "(path)" : std::string("v") + spec.version;
+        // The resolved version, as the build's own banner reads it (mcpp#363):
+        // `spec.version` is the constraint as written (`^0.3.1`).
+        const auto resolved = ctx.resolvedVersions.find(name);
+        std::string ver = spec.isPath() ? "(path)"
+            : std::string("v") + (resolved != ctx.resolvedVersions.end() ? resolved->second : spec.version);
         auto it = cachedUnits.find(name);
         if (it == cachedUnits.end()) {
             mcpp::ui::status("Compiling",
@@ -4154,8 +4196,15 @@ static void test_bulk(TestBuild& tb, const TestOptions& testOpts, Keep&& keep) {
 // holds under a runner exactly as it does on the host.
 static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool json) {
     auto* ctx = &*tb.ctx;
-    tb.runnerChoice = choose_runner(*ctx, testOpts.noRunner);
+    tb.runnerChoice = choose_device_action(*ctx, testOpts.runnerName, testOpts.noRunner);
     auto& runnerChoice = tb.runnerChoice;
+    if (!testOpts.runnerName.empty() && runnerChoice.tmpl.empty()) {
+        tb.invocationNotRunReason = std::format("no runner named '{}' for '{}'",
+                                                testOpts.runnerName, runnerChoice.tripleKey);
+        std::println(libc::stderr(), "error: {}", tb.invocationNotRunReason);
+        tb.runnerFatal = 2;
+        return;
+    }
     if (runnerChoice.ignored && !json)
         mcpp::ui::info("note", std::format(
             "--no-runner: ignoring the runner declared for {}", runnerChoice.tripleKey));
@@ -4164,7 +4213,7 @@ static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool
             "[target.{}].runner overrides the runner a dependency supplied",
             runnerChoice.tripleKey));
     if (runnerChoice.freestanding && runnerChoice.tmpl.empty()) {
-        std::println(stderr, "error: {}",
+        std::println(libc::stderr(), "error: {}",
             mcpp::freestanding::no_runner_message(runnerChoice.tripleKey));
         tb.runnerFatal = 2;
         return;
@@ -4377,7 +4426,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     results.push_back({r.name, TestResult::St::NotRun, 0, {}, {}, 0, false,
                                        invocationNotRunReason.empty() ? hostCannotRunReason
                                                                       : invocationNotRunReason});
-                    std::fflush(stdout);
+                    std::fflush(libc::stdout());
                     emit_json(results.back());
                     continue;
                 }
@@ -4429,7 +4478,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     if (!json) mcpp::ui::plain(std::format("{} ... not run", r.name));
                     results.push_back({r.name, TestResult::St::NotRun, 0, {}, {}, ms, false,
                                        reason, r.buildMs});
-                    std::fflush(stdout);
+                    std::fflush(libc::stdout());
                     emit_json(results.back());
                     continue;
                 }
@@ -4453,10 +4502,10 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 // The captured output belongs directly under its own line, or
                 // it is attributable to nothing.
                 if (!json && capture && !runOutput.empty()) {
-                    std::fputs(runOutput.c_str(), stdout);
-                    if (runOutput.back() != '\n') std::fputc('\n', stdout);
+                    std::fputs(runOutput.c_str(), libc::stdout());
+                    if (runOutput.back() != '\n') std::fputc('\n', libc::stdout());
                 }
-                std::fflush(stdout);
+                std::fflush(libc::stdout());
                 emit_json(results.back());
             }
         };
@@ -4522,12 +4571,12 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                                                               testOpts.buildTimeoutSecs)
                                                 : std::string{"compile"},
                                             static_cast<double>(test_ms()) / 1000.0));
-                std::fflush(stdout);
+                std::fflush(libc::stdout());
                 if (!b.error().diagnosticOutput.empty()) {
-                    std::fputs(b.error().diagnosticOutput.c_str(), stderr);
+                    std::fputs(b.error().diagnosticOutput.c_str(), libc::stderr());
                     if (b.error().diagnosticOutput.back() != '\n')
-                        std::fputc('\n', stderr);
-                    std::fflush(stderr);
+                        std::fputc('\n', libc::stderr());
+                    std::fflush(libc::stderr());
                 }
             }
             results.push_back({lu.targetName, TestResult::St::CompileFail, 0,
@@ -4623,6 +4672,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         env.data = mcpp::build::result::to_json(launch);
         env.data["program"] = chosen->program.generic_string();
         env.data["test"] = chosen->name;
+        env.data["configuration"] = launch_configuration(*ctx);
         mcpp::wire::emit(env);
         return 0;
     }
@@ -4701,7 +4751,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                      test_json_escape(memberName), passed, failed,
                      notRun, test_json_escape(notRunReason), built,
                      summary.elapsedMs, summary.buildMs, summary.runMs, group);
-        std::fflush(stdout);
+        std::fflush(libc::stdout());
         return rc;
     }
 
@@ -4920,7 +4970,7 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
     if (json) {
         std::println("{{\"archive_summary\":{{\"passed\":{},\"failed\":{},\"not_run\":{},"
                      "\"not_reached\":{}}}}}", passed, failed, notRun, notReached);
-        std::fflush(stdout);
+        std::fflush(libc::stdout());
     }
     if (passed + failed == 0) {
         std::string why;
@@ -5017,7 +5067,7 @@ export int run_tests(std::span<const std::string> passthrough,
         }
         if (json) {
             std::println("{{\"summary\":{{\"total\":{}}}}}", total);
-            std::fflush(stdout);
+            std::fflush(libc::stdout());
         }
         return 0;
     }
@@ -5134,7 +5184,7 @@ export int run_tests(std::span<const std::string> passthrough,
         summary.packageError = true;
         summary.buildMs = tb.buildMs;
         summary.elapsedMs = member_ms();
-        std::fflush(stdout);
+        std::fflush(libc::stdout());
         if (json)
             std::println("{{\"error\":\"package\",\"compile_output\":\"{}\"}}",
                          test_json_escape(a->diagnosticOutput));
@@ -5366,7 +5416,7 @@ export int run_test_legs(std::span<const std::string> passthrough,
         std::println("{{\"legs_summary\":{{\"legs\":{},\"passed\":{},\"failed\":{},"
                      "\"not_run\":{},\"built\":{},\"none_ran\":{}}}}}",
                      legs.size(), passed, failed, notRun, builtNotRun, noneRan ? "true" : "false");
-        std::fflush(stdout);
+        std::fflush(libc::stdout());
     }
     if (noneRan) {
         std::string why;
@@ -5618,7 +5668,7 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
             }
             std::println("{{\"group_build\":{{\"group\":{},\"members\":[{}],\"build_ms\":{}}}}}",
                          s, list, tb.buildMs);
-            std::fflush(stdout);
+            std::fflush(libc::stdout());
             continue;
         }
         std::string names;
@@ -5686,11 +5736,11 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
 // `mcpp clean` driver.
 export int clean_project(bool wipe_bmi) {
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
-    if (!root) { std::println(stderr, "error: not in an mcpp package"); return 2; }
+    if (!root) { std::println(libc::stderr(), "error: not in an mcpp package"); return 2; }
     std::error_code ec;
     std::filesystem::remove_all(*root / "target", ec);
     if (ec) {
-        std::println(stderr, "error: cannot remove target/: {}", ec.message());
+        std::println(libc::stderr(), "error: cannot remove target/: {}", ec.message());
         return 1;
     }
     mcpp::ui::line(std::format("Cleaned: {}", (*root / "target").string()));
@@ -5759,7 +5809,7 @@ export int clean_project(bool wipe_bmi) {
 export int clean_report() {
     namespace fs = std::filesystem;
     auto root = mcpp::project::find_manifest_root(fs::current_path());
-    if (!root) { std::println(stderr, "error: not in an mcpp package"); return 2; }
+    if (!root) { std::println(libc::stderr(), "error: not in an mcpp package"); return 2; }
     if (auto ws = mcpp::project::find_workspace_root(*root); !ws.empty()) root = ws;
     const fs::path target = *root / "target";
     using mcpp::bmi_cache::dir_size, mcpp::bmi_cache::human_bytes;
@@ -5847,7 +5897,7 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
     auto line = [quiet](const std::string& text) { if (!quiet) std::println("{}", text); };
     namespace fs = std::filesystem;
     auto root = mcpp::project::find_manifest_root(fs::current_path());
-    if (!root) { std::println(stderr, "error: not in an mcpp package"); return 2; }
+    if (!root) { std::println(libc::stderr(), "error: not in an mcpp package"); return 2; }
     std::vector<fs::path> memberDirs;
     {
         auto m = mcpp::manifest::load(*root / "mcpp.toml", {.insideWorkspace = true});
@@ -5880,7 +5930,7 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
     }
     if (current.empty()) {
         if (quiet) return 0;
-        std::println(stderr, "error: {} has no build record, so nothing is known to be current; "
+        std::println(libc::stderr(), "error: {} has no build record, so nothing is known to be current; "
                              "run `mcpp build` once, then retry",
                      (*root / kBuildCacheFile).string());
         return 2;
@@ -5931,7 +5981,7 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
                 std::error_code rec;
                 fs::remove_all(dir, rec);
                 if (rec) {
-                    std::println(stderr, "error: cannot remove {}: {}", shown, rec.message());
+                    std::println(libc::stderr(), "error: cannot remove {}: {}", shown, rec.message());
                     ++failed;
                     continue;
                 }
@@ -5941,12 +5991,12 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
             ++removed;
         }
         if (iec) {
-            std::println(stderr, "error: cannot read {}: {}", tripleIt->path().string(), iec.message());
+            std::println(libc::stderr(), "error: cannot read {}: {}", tripleIt->path().string(), iec.message());
             ++failed;
         }
     }
     if (ec) {
-        std::println(stderr, "error: cannot read {}: {}", target.string(), ec.message());
+        std::println(libc::stderr(), "error: cannot read {}: {}", target.string(), ec.message());
         return 1;
     }
 
@@ -5985,7 +6035,7 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
                     std::error_code rec;
                     fs::remove_all(dir, rec);
                     if (rec) {
-                        std::println(stderr, "error: cannot remove {}: {}", shown, rec.message());
+                        std::println(libc::stderr(), "error: cannot remove {}: {}", shown, rec.message());
                         ++failed;
                         continue;
                     }
@@ -6042,7 +6092,7 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
             std::error_code rec;
             fs::remove_all(dir, rec);
             if (rec) {
-                std::println(stderr, "error: cannot remove {}: {}", shown, rec.message());
+                std::println(libc::stderr(), "error: cannot remove {}: {}", shown, rec.message());
                 ++failed;
                 return;
             }

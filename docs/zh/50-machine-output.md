@@ -463,7 +463,7 @@ mcpp toolchain list --format json
 的形状是 `{target, note, toolchain, pin, status, default}`，`status` 取
 `installed` / `available` / `via dependency graph` / `planned` 之一。
 目标行另有 `platform`（2026.10.27.1+）：目标表为该目标选择的平台包
-（`mcpplibs.openkal-platform@0.23.3`），或 `null`。
+（2026.11.7.1 起为系列 `mcpplibs.openkal-platform@^0.24`），或 `null`。
 
 **`toolchain` 与 `pin` 不是把同一个字段写了两遍。** `toolchain` 表示这一行
 关联到什么 —— 已装的行是装好的载荷，词表行是它自己的约定。`pin` 只承载目标
@@ -889,6 +889,11 @@ mcpp run [target] --print-launch
 按 `mcpp run` 的方式构建程序，然后打印信封而不启动它。`data` 为 `program`、
 `argv`、`cwd`、`env` 与 `via`，同上文的 `launch`。`--print-launch` 不接受
 `--format`：在 `mcpp run` 上，`--pkg-format` 表示可分发物的格式。
+
+`data.configuration`（2026.11.7.1+）包含所选程序的 `triple`、`profile` 与解析后的
+`platform`，字段与构建记录的 configuration 相同。目标集合中，它描述本次启动所选的
+目标。`configuration.runners` 列出可用的具名运行器，包括 platform 为 null 时
+项目声明的运行器。旧引擎不提供 `configuration`；消费者检查该字段是否存在。
 
 ```
 mcpp test <name> --print-launch [-- <参数>]

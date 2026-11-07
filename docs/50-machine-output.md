@@ -527,7 +527,7 @@ installation, which is located on the machine rather than installed by mcpp. A
 target row is `{target, note, toolchain, pin, status, default}`, and `status` is
 one of `installed` / `available` / `via dependency graph` / `planned`.
 A target row also carries `platform` (2026.10.27.1+): the platform package the
-target table selects for it (`mcpplibs.openkal-platform@0.23.3`), or `null`.
+target table selects for it (the series `mcpplibs.openkal-platform@^0.24` from 2026.11.7.1), or `null`.
 
 **`toolchain` and `pin` are not the same field twice.** `toolchain` is what
 the row is associated with — the installed payload on an installed row, the
@@ -1001,6 +1001,13 @@ Builds the program as `mcpp run` does and prints the envelope instead of
 starting it. `data` is `program`, `argv`, `cwd`, `env` and `via`, as
 `launch` above. `--print-launch` takes no `--format`: on `mcpp run`, `--pkg-format`
 names a distributable.
+
+`data.configuration` (2026.11.7.1+) contains the selected program's `triple`,
+`profile` and resolved `platform`, using the same fields as the build record's
+configuration. For a target set it describes the leg selected for this launch.
+`configuration.runners` lists the available named runners, including project
+declarations when `platform` is null. Older engines omit `configuration`;
+consumers check for its presence.
 
 ```
 mcpp test <name> --print-launch [-- <arguments>]

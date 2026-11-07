@@ -2,10 +2,6 @@
 // (list / install / set-default / remove) + version-spec matching.
 // Bodies moved verbatim from the CLI layer. Zero behavior change.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.toolchain.lifecycle;
 
 import std;
@@ -23,7 +19,7 @@ import mcpp.toolchain.triple;
 import mcpp.toolchain.post_install;
 import mcpp.ui;
 import mcpp.wire;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpp.provider;
 import mcpp.provider.select;
@@ -212,8 +208,8 @@ void msvc_print_detected(const mcpp::toolchain::msvc::MsvcInstallation& inst,
 //   read-only files — payloads are unpacked from .vsix/.msi, and archive
 //     entries carry the attribute through. POSIX only needs the DIRECTORY
 //     writable to unlink a child, so this never shows up on Linux or macOS.
-//   a lingering handle — a build with /Zi leaves mspdbsrv.exe running for a
-//     few seconds after cl.exe exits, and it lives inside the payload.
+//   a lingering handle — a build that writes a PDB leaves mspdbsrv.exe
+//     running for a few seconds after it ends, and it lives inside the payload.
 //
 // Both surface as the same "Access is denied", which is why this handles both
 // rather than picking one: clear the attribute, then give a live process a
@@ -267,8 +263,8 @@ export bool remove_payload_tree(const std::filesystem::path& root,
     //   even while open, same volume, the handle follows the file)
     //   then delete the payload tree, which now holds only directories
     //
-    // This is what makes `remove` mean something after a /Zi build with the
-    // toolset being removed: mspdbsrv.exe lives INSIDE the payload and
+    // This is what makes `remove` mean something after a build that wrote a
+    // PDB with the toolset being removed: mspdbsrv.exe lives INSIDE the payload and
     // outlives cl.exe by tens of seconds, so "wait for it" is a guess and a
     // CLI that hangs on a guess is worse than the failure. The bytes are
     // swept by the next lifecycle command, when nothing holds them.
@@ -311,7 +307,8 @@ export bool remove_payload_tree(const std::filesystem::path& root,
     // The files are gone and an empty directory skeleton would not die. That
     // is a sharing violation on a DIRECTORY, which on Windows means some
     // process has one of them as its current directory -- mspdbsrv.exe is
-    // launched inside the payload, so this is the normal tail of a /Zi build.
+    // launched inside the payload, so this is the normal tail of a build that
+    // wrote a PDB.
     //
     // A toolchain with no files in it is not installed, which is what
     // `remove` promises. Reporting failure here would be reporting the

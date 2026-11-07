@@ -10,7 +10,7 @@ import mcpp.build.runtime_validation;
 import mcpp.build.plan;
 import mcpp.runtime.binding;
 import mcpplibs.os.platform;
-import mcpp.libs.json;
+import nlohmann.json;
 
 namespace {
 

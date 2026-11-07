@@ -21,7 +21,7 @@ import mcpplibs.os.platform;
 import mcpp.invocation;
 import mcpp.effects;
 import mcpp.build.capacity;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpp.manifest;
 import mcpp.source_kind;

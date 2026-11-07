@@ -31,9 +31,6 @@
 // A runtime named on a link line without a declaration (`-l:libstdc++.so.6`)
 // is the same island, undeclared: verified alike, and reported so the package
 // that wrote it declares it.
-module;
-#include <cstdio>
-
 export module mcpp.build.cxx_runtime;
 
 import std;

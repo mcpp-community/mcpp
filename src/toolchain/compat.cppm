@@ -22,14 +22,14 @@
 //
 // See .agents/docs/2026-07-15-toolchain-target-naming-unification-design.md.
 
-module;
-#include <cstdio>
-
 export module mcpp.toolchain.compat;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpp.toolchain.platform;
 import mcpp.toolchain.triple;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 export namespace mcpp::toolchain::compat {
 
@@ -207,7 +207,7 @@ void print_hint_once(std::string_view hint) {
     static bool printed = false;
     if (printed) return;
     printed = true;
-    std::println(stderr, "note: {}", hint);
+    std::println(libc::stderr(), "note: {}", hint);
 }
 
 } // namespace mcpp::toolchain::compat

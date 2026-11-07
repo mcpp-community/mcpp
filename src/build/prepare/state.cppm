@@ -20,7 +20,7 @@ import mcpp.targetside;
 import mcpp.build.version_floor;
 import mcpp.toolchain.platform;
 import mcpp.run;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.manifest;
 import mcpp.platform;
 import mcpp.source_kind;
@@ -533,6 +533,18 @@ struct PrepareState {
     }
     std::vector<PlanNote> planNotes;
     std::map<std::string, mcpp::pm::LockedGitSource> gitLockAnchors;
+    // The versions mcpp.lock records for the packages the platform put in the
+    // graph (`origin = "platform"`), by qualified name: a platform selected by a
+    // series (`^0.24`) is taken at the recorded release while it satisfies the
+    // series, until `mcpp update` drops the entry (SPEC-013 §14).
+    std::map<std::string, std::string> platformLockAnchors;
+    // THE PLATFORM'S VERSION GROUP AS A CONSTRAINT (SPEC-013 §7.5): its
+    // `[platform.versions]`, read as soon as the platform package is in the
+    // graph, so that each later request of a member resolves to the group's
+    // version or is refused naming both.
+    std::map<std::string, std::string> platformGroup;
+    std::string platformGroupFrom;   // `openkal-platform 0.24.1`, for a refusal
+    bool platformGroupRead = false;
     std::map<std::string, std::string> packageIdentityLockAnchors;
     // mcpp.lock as this run read it (design 2026-10-26 §4.1): the write at the
     // end compares, so a lock another run wrote meanwhile is not overwritten.
@@ -812,6 +824,10 @@ struct PrepareState {
         loadVersionDepVariant;
 
     std::map<ResolvedKey, ResolvedRecord> resolved;
+    // The features asked of each resolved dependency so far (by dep_manifests
+    // slot) and whether its default set is seeded: the union of its edges, as
+    // its feature-deps and forwards were walked (mcpp#897).
+    std::map<std::size_t, std::pair<std::vector<std::string>, bool>> depFeatureRequests;
     std::map<std::size_t, std::vector<std::pair<std::string, std::string>>>
         toolEnvByConsumer;
     // The programs the graph built for this machine at the ROOT's request
@@ -1174,6 +1190,11 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state);
 void step4b_seed_platform(PrepareState& state);
 std::expected<bool, std::string> step4b_apply_platform(PrepareState& state);
 std::expected<void, std::string> step4b_check_platform_versions(PrepareState& state);
+std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& state, const WorkItem& item,
+                                                              const std::string& name,
+                                                              mcpp::manifest::DependencySpec& spec);
+void step4b_read_platform_group(PrepareState& state, const std::string& resolvedShortName);
+std::expected<void, std::string> step4b_platform_within_engine(PrepareState& state);
 void step4b_platform_member_edges(PrepareState& state);
 void step5_platform_toolchain(PrepareState& state);
 void step13_platform_statement(PrepareState& state);

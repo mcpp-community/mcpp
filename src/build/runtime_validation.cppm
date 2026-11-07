@@ -22,7 +22,7 @@ import mcpp.build.loader_contract;
 import mcpp.build.plan;
 import mcpp.build.symbol_provision;
 import mcpp.manifest;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.platform;
 import mcpp.runtime.search;
 import mcpp.runtime.elf;

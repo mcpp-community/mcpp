@@ -64,6 +64,7 @@ macos   = "llvm@${LLVM_VERSION}"
 windows = "llvm@${LLVM_VERSION}"
 
 [build]
+default-profile = "release"
 bmi_schedule = "on"
 EOF
 
@@ -189,4 +190,81 @@ BIN=$(ls -t target/*/*/bin/schedon 2>/dev/null | head -1)
 out=$("$BIN")
 [ "$out" = "8" ] || { echo "FAIL: binary printed '$out' after the stale-token build"; exit 1; }
 
-echo "234 bmi_schedule OK (detach-codegen, tokens reclaimed)"
+echo "== 5. a BMI removal is not publication =="
+# GCC unlinks the previous .gcm immediately before renaming .gcm~ into place.
+# Amplify only that interval: a polling loop must not release an importer
+# while the module is absent. This deterministic publisher exercises the same
+# supervisor and two-phase join without depending on a microsecond race.
+mkdir publication
+cd publication
+printf 'old BMI' > published.gcm
+cat > publish.sh <<'EOF'
+rm published.gcm
+sleep 0.2
+printf 'new BMI' > next.gcm
+mv next.gcm published.gcm
+sleep 0.05
+printf object > unit.o
+EOF
+printf '"%s" publish.sh\n' "$BASH" > command.txt
+"$MCPP" bmi-compile --bmi published.gcm --slot unit --self "$MCPP" \
+  --command-file command.txt
+published=0
+[ ! -f published.gcm ] || published=1
+# Join even when the assertion will fail, so no publisher survives cleanup.
+"$MCPP" bmi-await --slot unit --object unit.o
+[ "$published" = 1 ] || {
+  echo "FAIL: phase 1 released an importer while the BMI was absent"; exit 1; }
+[ "$(cat published.gcm)" = "new BMI" ] || {
+  echo "FAIL: phase 1 did not wait for the new BMI"; exit 1; }
+echo "  absence withheld; new BMI published and object joined"
+
+printf '"%s" -c "rm published.gcm"\n' "$BASH" > command.txt
+if "$MCPP" bmi-compile --bmi published.gcm --slot unit --self "$MCPP" \
+    --command-file command.txt > missing.log 2>&1; then
+  echo "FAIL: a successful compiler without a BMI was accepted"; exit 1
+fi
+grep -q 'compiler reported success but.*is missing' missing.log || {
+  echo "FAIL: the missing BMI was not diagnosed"; cat missing.log; exit 1; }
+[ "$(cat published.gcm)" = "new BMI" ] || {
+  echo "FAIL: the previous BMI was not restored after missing publication"; exit 1; }
+echo "  missing publication diagnosed and previous BMI restored"
+
+echo "== 6. ordinary and detached compilers share the actual cap =="
+python3 "$_root/tests/e2e/helpers/check_shared_compiler_cap.py" "$MCPP" "$TMP/cap-load"
+
+echo "== 7. runtime generations preserve normal and quiet cached replay =="
+python3 - "$MCPP" "$TMP" "$TMP/$BUILD_DIR" <<'PY_REPLAY'
+from pathlib import Path
+import hashlib
+import subprocess
+import sys
+mcpp, root, output = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
+graph = output / "build.ninja"
+graph_before = (graph.stat().st_mtime_ns, graph.read_bytes())
+def identity():
+    return {str(path.relative_to(output)): (path.stat().st_mtime_ns,
+            hashlib.sha256(path.read_bytes()).hexdigest())
+            for pattern in ("obj/**/*.o", "gcm.cache/**/*.gcm")
+            for path in output.glob(pattern)}
+before = identity()
+assert before, "no compiler outputs to verify"
+for flags in ([], ["--quiet"]):
+    result = subprocess.run([mcpp, "build", *flags], cwd=root,
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert identity() == before, "cached replay recompiled unchanged inputs"
+    assert (graph.stat().st_mtime_ns, graph.read_bytes()) == graph_before, "cached replay rewrote its graph"
+assert b"MCPP_COMPILER_RUN" not in graph_before[1]
+assert b".mcpp/compiler-runs" not in graph_before[1]
+print("PASS: normal/quiet cached replay retains graph, objects and BMIs without persisting generations")
+PY_REPLAY
+
+
+echo "== 8. missing cached objects recover before Ninja admission =="
+python3 "$_root/tests/e2e/helpers/check_cached_object_recovery.py" "$MCPP" "$TMP" "$TMP/$BUILD_DIR"
+
+echo "== 9. final status is reread after controller exit =="
+python3 "$_root/tests/e2e/helpers/check_completion_observation.py" "$MCPP" "$TMP/completion-observation"
+
+echo "234 bmi_schedule OK (detach-codegen, tokens reclaimed, publication checked)"

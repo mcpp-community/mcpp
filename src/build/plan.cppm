@@ -2431,10 +2431,19 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // of the root's, by name and by the shared package that takes them.
     std::set<std::string> placedInImage;
     std::map<std::size_t, std::vector<std::size_t>> staticsByImagePackage;
-    for (std::size_t i = 0; i < packages.size(); ++i) {
-        auto const& p = packages[i];
-        packageIndexByName[qualified_package_name(p.manifest)] = i;
-        packageIndexByName[p.manifest.package.name] = i;
+    // A package is found by its qualified name, and by its bare name only where
+    // that name is no other package's: `foo` and `ns.foo` are two packages, and
+    // the bare `foo` of the second used to replace the first, so an edge to
+    // `foo` reached `ns.foo` and `foo`'s objects were left out of the link
+    // (mcpp#896).
+    for (std::size_t i = 0; i < packages.size(); ++i)
+        packageIndexByName[qualified_package_name(packages[i].manifest)] = i;
+    {
+        std::map<std::string, std::vector<std::size_t>, std::less<>> byBareName;
+        for (std::size_t i = 0; i < packages.size(); ++i)
+            byBareName[packages[i].manifest.package.name].push_back(i);
+        for (auto const& [bare, holders] : byBareName)
+            if (holders.size() == 1) packageIndexByName.emplace(bare, holders.front());
     }
 
     for (std::size_t i = 1; i < packages.size(); ++i) {

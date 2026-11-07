@@ -52,6 +52,10 @@ argv = data["argv"]
 assert any(same(a, data["program"]) for a in argv), data
 assert argv[-2:] == ["--flag", "x"], argv
 assert "env" in data and "cwd" in data
+last = json.load(open("target/.last-result.json"))["data"]
+record = json.load(open(last["result"]))["data"]["configuration"]
+assert all(data["configuration"][key] == record[key] for key in ("triple", "profile", "platform")), data
+assert isinstance(data["configuration"]["runners"], list), data
 EOF
 echo "ok: the envelope describes the test"
 
@@ -89,5 +93,54 @@ echo "ok: the refusals"
 "$MCPP" --protocol-version > e.out 2>&1 || fail "E: --protocol-version" e.out
 grep -q '"test-launch"' e.out || fail "E: test-launch is not stated" e.out
 echo "ok: the feature is stated"
+
+# A named runner is the same executable transformation for a test and a run.
+# Python is a real host runner here, so the generated argv can also be executed.
+$PY - <<'PY'
+import json,sys
+from pathlib import Path
+Path('runner.py').write_text('import json,subprocess,sys\nwith open("named-invocations.txt","a") as f: f.write(json.dumps(sys.argv[1:])+"\\n")\nprint("NAMED RUNNER", flush=True)\nsys.exit(subprocess.call(sys.argv[1:]))\n')
+with Path('mcpp.toml').open('a') as f:
+    os_name={'linux':'linux','darwin':'macos','win32':'windows'}[sys.platform]
+    f.write('\n[target.\'cfg(os = "'+os_name+'")\'.runners]\ndebuggee = '+json.dumps([sys.executable,str(Path('runner.py').resolve()),'{}'])+'\n')
+PY
+"$MCPP" test unit/math --runner debuggee --print-launch -- 'with spaces' > named.out 2> named.err \
+    || fail "named test launch" named.err
+$PY - named.out > named-run.out 2> named-run.err <<'PY' || fail "named launch execution" named-run.out named-run.err
+import json,sys,os,subprocess
+d=json.load(open(sys.argv[1]))['data']
+assert d['via']=='runner', d
+assert d['configuration']['runners']==['debuggee'], d
+assert d['argv'][-1]=='with spaces', d
+assert d['argv'][1].endswith('runner.py'), d
+sys.exit(subprocess.call(d['argv'],cwd=d['cwd'],env={**os.environ,**d['env']}))
+PY
+grep -q 'NAMED RUNNER' named-run.out || fail "named runner did not run" named-run.out
+grep -q 'last \[with spaces\]' named-run.out || fail "named runner changed arguments" named-run.out
+rm named-invocations.txt
+"$MCPP" test unit/math2 --runner debuggee -- direct > named-direct.out 2> named-direct.err \
+    || fail "named runner direct test" named-direct.out named-direct.err
+$PY - <<'PY' || fail "direct test skipped named runner" named-direct.out
+import json
+rows=[json.loads(line) for line in open('named-invocations.txt')]
+assert len(rows)==1 and 'math2' in rows[0][0] and rows[0][-1]=='direct', rows
+PY
+"$MCPP" test unit/math2 --no-run --archive named-tests.tar.gz > named-archive-build.out 2> named-archive-build.err \
+    || fail "test archive build" named-archive-build.out named-archive-build.err
+rm named-invocations.txt
+"$MCPP" test --archive named-tests.tar.gz --runner debuggee -- archived > named-archive.out 2> named-archive.err \
+    || fail "named archive runner" named-archive.out named-archive.err
+$PY - <<'PY' || fail "archive skipped named runner" named-archive.out
+import json
+rows=[json.loads(line) for line in open('named-invocations.txt')]
+assert len(rows)==1 and 'math2' in rows[0][0] and rows[0][-1]=='archived', rows
+PY
+set +e
+"$MCPP" test unit/math --runner absent --print-launch > named-missing.out 2> named-missing.err; rc1=$?
+"$MCPP" test unit/math --runner debuggee --no-runner > named-conflict.out 2> named-conflict.err; rc2=$?
+set -e
+[ "$rc1" = 2 ] && grep -q "no runner named 'absent'" named-missing.err || fail "missing test runner ($rc1)" named-missing.err
+[ "$rc2" = 2 ] && grep -q -- '--runner and --no-runner' named-conflict.err || fail "contradictory test runners ($rc2)" named-conflict.err
+echo "ok: named test launch, execution, archive, argument preservation and refusal"
 
 echo "OK"

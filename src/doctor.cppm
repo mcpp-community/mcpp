@@ -3,13 +3,10 @@
 // sandbox init/reset, and xlings mirror configuration.
 // Bodies moved verbatim from the CLI layer. Zero behavior change.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.doctor;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpp.build.program_protocol;
 import mcpp.source_kind;
 import mcpp.manifest;
@@ -25,7 +22,7 @@ import mcpp.fallback.probe_sysroot;
 import mcpp.fallback.xlings_binary;
 import mcpp.fetcher.progress;
 import mcpp.home;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.platform;
 import mcpplibs.os.windows;
 import mcpp.toolchain.platform;
@@ -47,6 +44,8 @@ import mcpp.ui;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpplibs.os.fs;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::doctor {
 
@@ -998,20 +997,20 @@ latest_runtime_resolution(const std::filesystem::path& projectRoot) {
 int print_stored_runtime_resolution() {
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "error: no mcpp.toml found; `mcpp why runtime` only reads a project's stored resolution");
         return 2;
     }
     auto stored = latest_runtime_resolution(*root);
     if (!stored) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "error: no stored runtime resolution; run `mcpp build` once");
         return 2;
     }
     auto const& [path, doc] = *stored;
     auto runtime = doc.find("runtime");
     if (runtime == doc.end() || !runtime->is_object()) {
-        std::println(stderr, "error: {} has no runtime object", path.string());
+        std::println(libc::stderr(), "error: {} has no runtime object", path.string());
         return 2;
     }
     std::println("runtime resolution: {}", path.string());
@@ -1545,7 +1544,7 @@ export int why_report(const std::string& topic, const std::string& features,
         "build-programs", "compat",
     };
     if (!topic.empty() && std::ranges::find(kTopics, std::string_view(topic)) == std::end(kTopics)) {
-        std::println(stderr, "error: '{}' is not a topic of `mcpp why`; the topics are "
+        std::println(libc::stderr(), "error: '{}' is not a topic of `mcpp why`; the topics are "
                      "toolchain, sysroot, runtime, deps, runners, sources, tool <name>, "
                      "payload <ns:name>, build-programs and compat", topic);
         return 2;
@@ -1563,7 +1562,7 @@ export int why_report(const std::string& topic, const std::string& features,
     ov.features = features;
     auto ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false,
                                           /*includeDevDeps=*/false, {}, ov);
-    if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
+    if (!ctx) { std::println(libc::stderr(), "error: {}", ctx.error()); return 2; }
     auto& tc   = ctx->tc;
 
     if (all || topic == "toolchain") {
@@ -1834,8 +1833,8 @@ export int explain_code(std::string_view code) {
             return 0;
         }
     }
-    std::println(stderr, "error: unknown error code '{}'", code);
-    std::println(stderr, "       known codes: E0001..E0006");
+    std::println(libc::stderr(), "error: unknown error code '{}'", code);
+    std::println(libc::stderr(), "       known codes: E0001..E0006");
     return 2;
 }
 

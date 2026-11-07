@@ -18,9 +18,6 @@
 // genuinely want host linking: `[build] allow_host_libs = true` or
 // MCPP_ALLOW_HOST_LIBS=1 (downgrade to a verbose note).
 
-module;
-#include <cstdlib>  // getenv
-
 export module mcpp.build.hermetic;
 
 import std;

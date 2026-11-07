@@ -6,10 +6,6 @@
 // completeness is the provider's answer (its `payload_status`, design §7.1):
 // mcpp writes nothing into a payload -- no marker, no copy from another home.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.pm.package_fetcher;
 
 import std;
@@ -26,7 +22,7 @@ import mcpp.ui;
 import mcpp.pm.index_spec;
 import mcpp.provider;
 import mcpp.provider.select;
-import mcpp.libs.json;
+import nlohmann.json;
 
 export namespace mcpp::pm {
 

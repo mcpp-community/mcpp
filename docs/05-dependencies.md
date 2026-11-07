@@ -202,6 +202,21 @@ package. The same holds for `linkage`
 on a selected member's dependency edges, which is honoured, and refused when
 two selected members ask for two forms of one package.
 
+**A later edge that asks more features (mcpp 2026.11.7.1+).** A package is
+built with the union of the features its edges ask. When an edge reaches a
+package already resolved and activates a feature the earlier edges did not,
+that feature's `[feature-deps]` and forwards are walked as well, so the
+dependencies it needs, and the features it asks of them, reach the graph.
+Before, the feature's sources were compiled and its dependencies were not
+(mcpp#897; for example `v` selected beside `s`, which asks `v` for `x`).
+
+**Under a platform's version group (mcpp 2026.11.7.1+).** When the target's
+platform states `[platform.versions]`, a request of a package the group lists,
+by version, resolves to the group's version if its constraint admits it, and is
+refused naming the request and the group if it does not (docs/35, "The version
+group"). A family whose packages name one another by compatible ranges is
+therefore resolved by its group, one version of each package per build.
+
 ### The identity of a `path` or `git` dependency (mcpp 2026.9.14.2+)
 
 A `path` or `git` dependency is the package its manifest declares, whatever key

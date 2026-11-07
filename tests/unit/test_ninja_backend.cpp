@@ -7,7 +7,7 @@ import mcpp.build.compile_commands;
 import mcpp.build.flags;
 import mcpp.build.ninja;
 import mcpp.build.plan;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.manifest;
 import mcpp.modgraph.scanner;   // PackageRoot, for trim_map
 import mcpp.toolchain.dialect;
@@ -121,6 +121,35 @@ TEST(NinjaBackend, BitcodeExportToolsComeFromTheSelectedLlvmAndAreQuotedAsWords)
     plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
     plan.toolchain.binaryPath = "/native/bin/cl.exe";
     EXPECT_EQ(emit_ninja_string(plan).find("coff_args ="), std::string::npos);
+}
+
+TEST(NinjaBackend, OrdinaryCompilersShareTheDetachedScheduleBound) {
+    auto plan = minimal_plan();
+    plan.toolchain.version = "16.1.0";
+    plan.scheduleTag = "detach-codegen";
+    plan.scheduleCompilerCap = 2;
+    plan.compileUnits.push_back({.source = "src/value.c", .kind = mcpp::SourceKind::C,
+                                 .object = "obj/value.o"});
+    plan.compileUnits.push_back({.source = "src/value.S", .kind = mcpp::SourceKind::GasAsm,
+                                 .object = "obj/value-asm.o"});
+    plan.compileUnits.push_back({.source = "src/value.asm", .kind = mcpp::SourceKind::NasmAsm,
+                                 .object = "obj/value-nasm.o"});
+    const auto text = emit_ninja_string(plan);
+    auto rule = [&](std::string_view name) {
+        const auto start = text.find("rule " + std::string(name) + "\n");
+        EXPECT_NE(start, std::string::npos) << name;
+        return start == std::string::npos ? std::string{} : text.substr(start, text.find("\n\n", start) - start);
+    };
+    for (const auto name : {"cxx_module", "cxx_object", "c_object", "asm_object", "asm_object_raw", "nasm_object", "cxx_scan"})
+        EXPECT_NE(rule(name).find("__compiler-cap --sem .mcpp-sched --output $out --depfile $out.d -- "), std::string::npos) << name;
+    // The generation carries the cap: the graph names no number of compilers,
+    // so it is the same whatever the job count (e2e 861).
+    EXPECT_EQ(text.find("--cap"), std::string::npos);
+    EXPECT_EQ(text.find("sched_cap"), std::string::npos);
+    EXPECT_EQ(rule("cxx_module_bmi").find("__compiler-cap"), std::string::npos)
+        << "the BMI supervisor already holds a permit";
+    EXPECT_EQ(rule("cxx_module_obj").find("__compiler-cap"), std::string::npos)
+        << "a join must not wait for a second permit";
 }
 
 TEST(NinjaBackend, ObjectiveCSourceUsesCObjectRuleAndCFlags) {

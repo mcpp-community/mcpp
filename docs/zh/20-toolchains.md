@@ -341,8 +341,6 @@ toolset 之间、以及与系统 Visual Studio 之间都可以共存。
 > 机器都用同一个编译器。Windows 是唯一一处「拒绝使用已经装好的东西」代价大于
 > 收益的地方：Visual Studio 常常已经装了，又不总能重新分发。写
 > `<family>@system` 给其他任何一个族都会直接报错，并同时给出两种可能的意图。
-> （不带族的 `[toolchain] … = "system"`——即 PATH 上的编译器——是另一条、
-> 同样有意保留的逃生口，不受影响。）
 
 ### `[toolchain] … = "system"` —— 拒绝
 

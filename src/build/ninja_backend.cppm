@@ -11,10 +11,6 @@
 // All compile commands are run with cwd = plan.outputDir, so GCC's implicit
 // gcm.cache/ lookup finds both std and our package modules.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.build.ninja;
 
 import std;
@@ -58,6 +54,7 @@ import mcpp.ui;
 import mcpp.log;
 import mcpp.build.action_progress;
 import mcpp.build.progress;
+import mcpp.build.schedule.detach_codegen;
 
 export namespace mcpp::build {
 
@@ -123,7 +120,8 @@ NinjaRun run_ninja_reporting(const std::vector<std::string>& argv,
                              bool verbose,
                              std::span<const std::string> commandPrefixes,
                              mcpp::build::progress::PassKind kind =
-                                 mcpp::build::progress::PassKind::Work);
+                                 mcpp::build::progress::PassKind::Work,
+                             const std::function<bool()>& shouldStop = {});
 
 // The goal of the scan pass (build wall-time plan, W2): the dyndep file of
 // every unit whose scan waits on no action. Present in build.ninja when the
@@ -315,6 +313,13 @@ void write_consumer_include_sidecar(const std::filesystem::path& outputDir,
                                     const std::vector<std::filesystem::path>& dirs);
 std::vector<std::filesystem::path>
 read_consumer_include_sidecar(const std::filesystem::path& outputDir);
+
+// The compiler cap of the generation a capped graph runs in, beside
+// build.ninja and not in it (e2e 861): the fast path replays the graph
+// without a plan and opens its generation with this cap. Removed when the
+// graph runs no compiler through the capped executor; 0 when absent.
+void write_compiler_cap_sidecar(const std::filesystem::path& outputDir, int cap);
+int read_compiler_cap_sidecar(const std::filesystem::path& outputDir);
 
 // #693 (M4): whether a Ninja reads build.ninja in the encoding mcpp writes it.
 //
@@ -1178,6 +1183,21 @@ void write_consumer_include_sidecar(const std::filesystem::path& outputDir,
     for (auto const& d : dirs) f << d.string() << '\n';
 }
 
+constexpr std::string_view kCompilerCapSidecar = ".mcpp-compiler-cap";
+
+void write_compiler_cap_sidecar(const std::filesystem::path& outputDir, int cap) {
+    const auto path = outputDir / kCompilerCapSidecar;
+    std::error_code ec;
+    if (cap <= 0) { std::filesystem::remove(path, ec); return; }
+    std::ofstream(path, std::ios::binary | std::ios::trunc) << cap << '\n';
+}
+
+int read_compiler_cap_sidecar(const std::filesystem::path& outputDir) {
+    std::ifstream f(outputDir / kCompilerCapSidecar, std::ios::binary);
+    int cap = 0;
+    return f >> cap && cap > 0 ? cap : 0;
+}
+
 std::vector<std::filesystem::path>
 read_consumer_include_sidecar(const std::filesystem::path& outputDir) {
     std::vector<std::filesystem::path> dirs;
@@ -1384,7 +1404,8 @@ NinjaRun run_ninja_reporting(const std::vector<std::string>& argv,
                              mcpp::build::progress::Build& progress,
                              bool verbose,
                              std::span<const std::string> commandPrefixes,
-                             mcpp::build::progress::PassKind kind) {
+                             mcpp::build::progress::PassKind kind,
+                             const std::function<bool()>& shouldStop) {
     NinjaRun run;
     for (auto& kv : progress.environment()) env.push_back(std::move(kv));
     progress.pass_begin(kind);
@@ -1423,8 +1444,8 @@ NinjaRun run_ninja_reporting(const std::vector<std::string>& argv,
     };
     // A ninja that cannot be started is reported through `on_line`, into the
     // output the failure report reads.
-    run.exitCode = mcpp::run::stream_exec(argv, env, deadline, on_line,
-                                                        &run.timedOut);
+    const auto result=mcpp::run::execute(argv,{.env=env,.total=deadline,.on_line=on_line,.should_stop=shouldStop});
+    run.exitCode=result.exit_code;run.timedOut=result.timed_out;
     progress.pass_end();
     return run;
 }
@@ -1466,6 +1487,16 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // dyndep is a precondition: without it nothing declares BMIs as outputs, so
     // there is no BMI edge for importers to depend on.
     const bool splitBmi = plan.scheduleTag == "detach-codegen" && dyndep;
+    // Ninja has extra slots for BMI publication and join edges. Ordinary
+    // compilers must share the supervisors' semaphore rather than use that
+    // larger slot count as their own concurrency bound.
+    // Every capped graph (2026.11.7.1): the executor also registers each
+    // compiler as a participant of the build's generation.
+    // No number of compilers here: the generation carries the cap, so the
+    // graph is the same whatever the job count (e2e 861).
+    const std::string compilerPrefix = plan.scheduleCompilerCap > 0
+        ? std::string("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d -- ")
+        : std::string{};
     // The other split shape. Clang publishes no BMI early — it writes the BMI
     // at the end of the compile — so the GCC trick of releasing the file
     // mid-compile has nothing to release. What clang has instead is a driver
@@ -2057,9 +2088,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     if constexpr (mcpplibs::os::is_windows) {
         // Windows: skip BMI restat optimization (requires POSIX shell).
         const std::string payload = " $local_includes";
-        append(std::format("  command = {}$cxx{} $cxxflags $unit_cxxflags"
+        append(std::format("  command = {}{}$cxx{} $cxxflags $unit_cxxflags"
                            " $module_output $module_lang {}{}\n",
-                           win_depfile_filter, rsp_ref(payload), mmd_flag,
+                           win_depfile_filter, compilerPrefix, rsp_ref(payload), mmd_flag,
                            compile_tail));
         append_rspfile(payload);
         append_cxx_deps();
@@ -2071,7 +2102,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                // `-x c++` / `-x c++-module` is POSITIONAL on GNU drivers: it
                // must precede `-c $in` (which compile_tail carries) or it
                // applies to nothing.
-               "$cxx $local_includes $cxxflags $unit_cxxflags"
+               "{}$cxx $local_includes $cxxflags $unit_cxxflags"
                " $module_output $module_lang {}{}{} && "
                // `$mcpp bmi-equal`, not `cmp -s`: GCC stamps a wall clock into
                // the BMI content, so a byte compare NEVER reports "unchanged"
@@ -2083,7 +2114,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                  "mv \"$bmi_out.bak\" \"$bmi_out\"; "
                "else "
                  "rm -f \"$bmi_out.bak\"; "
-               "fi\n", mmd_flag, compile_tail, mmd_filter));
+               "fi\n", compilerPrefix, mmd_flag, compile_tail, mmd_filter));
         append_cxx_deps();
     }
     append("  description = MOD $out\n");
@@ -2102,7 +2133,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // wrong in this file before.
         append("rule cxx_module_bmi\n");
         append("  command = $mcpp bmi-compile --bmi $bmi_out --slot $slot"
-               " --self $mcpp --sem $sched_sem --cap $sched_cap"
+               " --self $mcpp --sem $sched_sem --object $obj_out"
                " --command-file $out.cmd --dep-from $scan_dep --dep-to $out.d\n");
         append(std::format(
             "  rspfile = $out.cmd\n"
@@ -2202,14 +2233,14 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     append("rule cxx_object\n");
     if constexpr (mcpplibs::os::is_windows) {
         const std::string payload = " $local_includes";
-        append(std::format("  command = {}$cxx{} $cxxflags $unit_cxxflags {}{}\n",
-                           win_depfile_filter, rsp_ref(payload), mmd_flag,
+        append(std::format("  command = {}{}$cxx{} $cxxflags $unit_cxxflags {}{}\n",
+                           win_depfile_filter, compilerPrefix, rsp_ref(payload), mmd_flag,
                            compile_tail));
         append_rspfile(payload);
     } else {
         append(std::format(
-            "  command = $cxx $local_includes $cxxflags $unit_cxxflags {}{}{}\n",
-            mmd_flag, compile_tail, mmd_filter));
+            "  command = {}$cxx $local_includes $cxxflags $unit_cxxflags {}{}{}\n",
+            compilerPrefix, mmd_flag, compile_tail, mmd_filter));
     }
     append("  description = OBJ $out\n");
     append_cxx_deps();
@@ -2220,8 +2251,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     if (need_c_rule) {
         append("rule c_object\n");
         const std::string payload = " $local_includes";
-        append(std::format("  command = $cc{} $cflags $unit_cflags {}{}\n",
-                           rsp_ref(payload), c_mmd_flag, compile_tail));
+        append(std::format("  command = {}$cc{} $cflags $unit_cflags {}{}\n",
+                           compilerPrefix, rsp_ref(payload), c_mmd_flag, compile_tail));
         append_rspfile(payload);
         append("  description = CC $out\n");
         append_cxx_deps();
@@ -2241,16 +2272,16 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // absent depfile as an error. So `.s` keeps the pre-#257 shape.
         const std::string payload = " $local_includes";
         append("rule asm_object\n");     // .S — preprocessed, tracks #include
-        append(std::format("  command = $cc{} $asmflags $unit_asmflags {}{}\n",
-                           rsp_ref(payload), c_mmd_flag, compile_tail));
+        append(std::format("  command = {}$cc{} $asmflags $unit_asmflags {}{}\n",
+                           compilerPrefix, rsp_ref(payload), c_mmd_flag, compile_tail));
         append_rspfile(payload);
         append("  description = AS $out\n");
         append_cxx_deps();
         append("\n");
 
         append("rule asm_object_raw\n");  // .s — not preprocessed, no depfile
-        append(std::format("  command = $cc{} $asmflags $unit_asmflags {}\n",
-                           rsp_ref(payload), compile_tail));
+        append(std::format("  command = {}$cc{} $asmflags $unit_asmflags {}\n",
+                           compilerPrefix, rsp_ref(payload), compile_tail));
         append_rspfile(payload);
         append("  description = AS $out\n\n");
     }
@@ -2259,8 +2290,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // NASM (.asm): its own fixed flag spelling — deliberately outside
         // CommandDialect. -MD/-MQ feed ninja's header tracking for %include.
         append("rule nasm_object\n");
-        append("  command = $nasm -f $nasmfmt $local_includes $nasmflags "
-               "$unit_asmflags -MD $out.d -MQ $out -o $out $in\n");
+        append(std::format("  command = {}$nasm -f $nasmfmt $local_includes $nasmflags "
+               "$unit_asmflags -MD $out.d -MQ $out -o $out $in\n", compilerPrefix));
         append("  deps = gcc\n");
         append("  depfile = $out.d\n");
         append("  description = NASM $out\n\n");
@@ -2278,9 +2309,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // [resources].extra-inputs, and lands on this edge as implicit inputs.
         append("rule rc_object\n");
         if (plan.rcStyle == "msvc")
-            append("  command = $rc /nologo $rcflags /fo $out $in\n");
+            append(std::format("  command = {}$rc /nologo $rcflags /fo $out $in\n", compilerPrefix));
         else
-            append("  command = $rc -O coff $rcflags -o $out $in\n");
+            append(std::format("  command = {}$rc -O coff $rcflags -o $out $in\n", compilerPrefix));
         append("  description = RC $out\n\n");
     }
 
@@ -2562,20 +2593,20 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         if (msvcDeps) {
             // MSVC: compiler-integrated P1689 via /scanDependencies (scan
             // only — no codegen); /TP because our module units are .cppm.
-            append(std::format("  command = $cxx_driver{} $cxxflags $unit_cxxflags "
+            append(std::format("  command = {}$cxx_driver{} $cxxflags $unit_cxxflags "
                    "/scanDependencies $out /TP /c $in /Fo:$compile_target\n",
-                   rsp_ref(scanPayload)));
+                   compilerPrefix, rsp_ref(scanPayload)));
             // No $unit_lang here: /TP above already applies to every input,
             // and cl has no per-suffix recognition problem to fix — a module
             // interface is identified by /interface at COMPILE time, which
             // the scan does not do.
         } else if (plan.scanDepsPath.empty()) {
             // GCC path: compiler-integrated P1689 scanning.
-            append(std::format("  command = $cxx_driver{} $cxxflags $unit_cxxflags -fmodules "
+            append(std::format("  command = {}$cxx_driver{} $cxxflags $unit_cxxflags -fmodules "
                    "-fdeps-format=p1689r5 "
                    "-fdeps-file=$out -fdeps-target=$deps_target "
                    "-M -MM -MF $out.dep $unit_lang -E $in -o $compile_target\n",
-                   rsp_ref(scanPayload)));
+                   compilerPrefix, rsp_ref(scanPayload)));
         } else {
             // Clang path: clang-scan-deps writes the P1689 JSON itself via -o
             // (LLVM 17+), like the GCC and MSVC branches above write theirs
@@ -2585,10 +2616,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             // CreateProcess — which any package with a large include-dir list
             // overruns (#261: 48 -I entries at a deep consumer path).
             append(std::format(
-                   "  command = $scan_deps -format=p1689 -o $out -- "
+                   "  command = {}$scan_deps -format=p1689 -o $out -- "
                    "$cxx_driver{} $cxxflags $unit_cxxflags $unit_lang -c $in "
                    "-o $compile_target\n",
-                   rsp_ref(scanPayload)));
+                   compilerPrefix, rsp_ref(scanPayload)));
         }
         append_rspfile(scanPayload);
         append("  description = SCAN $out\n\n");
@@ -3193,7 +3224,6 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                     e += "  slot = " + slot + "\n";
                     e += "  scan_dep = " + escape_ninja_path(ddi) + ".dep\n";
                     e += "  sched_sem = .mcpp-sched\n";
-                    e += std::format("  sched_cap = {}\n", plan.scheduleCompilerCap);
                     if (auto inc = local_include_flags(cu, dial); !inc.empty())
                         e += "  local_includes =" + inc + "\n";
                     if (auto fl = unit_cxx_flags(cu); !fl.empty())
@@ -4532,8 +4562,13 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         return std::unexpected(BuildError{std::format("cannot create output dir '{}': {}",
                                                       plan.outputDir.string(), ec.message()),
                                           plan.outputDir});
-    if (!opts.dryRun && plan.scheduleTag == "detach-codegen")
+    std::optional<mcpp::build::schedule::detach::RunScope> compilerRun;
+    if (!opts.dryRun && plan.scheduleCompilerCap > 0) {
+        auto opened = mcpp::build::schedule::detach::RunScope::begin(plan.outputDir, plan.scheduleCompilerCap);
+        if (!opened) return std::unexpected(BuildError{opened.error(), plan.outputDir});
+        compilerRun.emplace(std::move(*opened));
         reclaim_stale_schedule_tokens(plan.outputDir);
+    }
 
     auto ninja_path = plan.outputDir / "build.ninja";
     // Written beside build.ninja and not into it: the fast path replays the
@@ -4545,6 +4580,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         plan.targetSide.cAbiDecl ? plan.targetSide.cAbiDecl->absent
                                  : std::vector<mcpp::targetside::CAbiAbsentEntry>{});
     write_consumer_include_sidecar(plan.outputDir, root_include_dirs_of(plan));
+    write_compiler_cap_sidecar(plan.outputDir, plan.scheduleCompilerCap);
     write_graph_c_library_sidecar(plan.outputDir, plan.targetSide.cAbi);
     std::string placements;
     mcpp::build::progress::Attribution attribution;
@@ -4875,6 +4911,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             nenv.emplace_back(runtimeEnv->first, runtimeEnv->second);
     for (auto& ev : plan.toolchain.envOverrides)
         nenv.emplace_back(ev.key, ev.value);
+    if (compilerRun) compilerRun->environment(nenv);
+    const auto compilerStopped=[&] {return compilerRun&&compilerRun->failed();};
 
     // THE STAGED CACHE IS PLACED BY A PASS OF ITS OWN, before the graph that
     // reads it. ninja 1.12.1 loads a dyndep file whose producer is up to date
@@ -4902,7 +4940,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                                          std::string(kStagedCacheGoal)};
             (void)run_ninja_reporting(pre, nenv, preDeadline, *report, opts.verbose,
                                       command_prefixes(flags, plan),
-                                      mcpp::build::progress::PassKind::Placement);
+                                      mcpp::build::progress::PassKind::Placement,compilerStopped);
         } else {
             std::vector<std::string> pre{ninjaProgram, "--quiet", "-C", plan.outputDir.string(),
                                          std::string(kStagedCacheGoal)};
@@ -4912,7 +4950,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             preEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
             preEnv.emplace_back(std::string(mcpp::build::action_progress::kRootEnv), "");
             preEnv.emplace_back(std::string(mcpp::build::action_progress::kFileEnv), "");
-            (void)mcpp::run::capture_exec_deadline(pre, preEnv, preDeadline, nullptr);
+            (void)mcpp::run::execute(pre,{.env=preEnv,.total=preDeadline,.should_stop=compilerStopped});
         }
         stage("ninja-staged-cache");
     }
@@ -4954,7 +4992,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         if (report) {
             auto run = run_ninja_reporting(scan, nenv, scanDeadline, *report, opts.verbose,
                                            command_prefixes(flags, plan),
-                                           mcpp::build::progress::PassKind::Scan);
+                                           mcpp::build::progress::PassKind::Scan,compilerStopped);
             if (run.exitCode != 0 || run.timedOut) {
                 out = std::move(run.output);
                 ninjaExit = run.exitCode;
@@ -4967,8 +5005,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             scanEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
             scanEnv.emplace_back(std::string(mcpp::build::action_progress::kRootEnv), "");
             scanEnv.emplace_back(std::string(mcpp::build::action_progress::kFileEnv), "");
-            auto cap = mcpp::run::capture_exec_deadline(
-                scan, scanEnv, scanDeadline, &buildTimedOut);
+            auto cap = mcpp::run::execute(scan,{.env=scanEnv,.total=scanDeadline,.should_stop=compilerStopped});
+            buildTimedOut=cap.timed_out;
             if (cap.exit_code != 0 || buildTimedOut) {
                 out = std::move(cap.output);
                 ninjaExit = cap.exit_code;
@@ -4986,7 +5024,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         // `out`, `ninjaExit`, `buildTimedOut` and `reported` are the scan's.
     } else if (report) {
         auto run = run_ninja_reporting(nargv, nenv, deadline, *report, opts.verbose,
-                                       command_prefixes(flags, plan));
+                                       command_prefixes(flags, plan),
+                                       mcpp::build::progress::PassKind::Work,compilerStopped);
         out = std::move(run.output);
         ninjaExit = run.exitCode;
         buildTimedOut = run.timedOut;
@@ -4996,12 +5035,16 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         quietEnv.emplace_back(std::string(mcpp::build::progress::kStartsEnv), "");
             quietEnv.emplace_back(std::string(mcpp::build::action_progress::kRootEnv), "");
             quietEnv.emplace_back(std::string(mcpp::build::action_progress::kFileEnv), "");
-        auto cap = mcpp::run::capture_exec_deadline(
-            nargv, quietEnv, deadline, &buildTimedOut);
+        auto cap = mcpp::run::execute(nargv,{.env=quietEnv,.total=deadline,.should_stop=compilerStopped});
+        buildTimedOut=cap.timed_out;
         out = std::move(cap.output);
         ninjaExit = cap.exit_code;
     }
     stage("ninja");
+    if (compilerRun) {
+        if (auto settled = compilerRun->finish(); !settled)
+            return std::unexpected(BuildError{settled.error(), plan.outputDir});
+    }
     bool ok = (ninjaExit == 0) && !buildTimedOut;
     // Every package gets its final line before what the build has to say
     // after ninja: validations, advice, `Finished`.

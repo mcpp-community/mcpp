@@ -30,9 +30,6 @@
 //
 // Design: .agents/docs/2026-08-17-library-distribution-design.md §2.3.
 
-module;
-#include <cstdio>
-
 export module mcpp.pack.library;
 
 import std;

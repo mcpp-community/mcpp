@@ -58,6 +58,25 @@ case "$out" in
 esac
 echo "  ok  an undeclared name is refused, listing what this project does have"
 
+# A client receives the actual profile and effective runner declarations of
+# the built program, rather than configuring the default profile separately.
+cat >> mcpp.toml <<'TOML'
+
+[profile.inspect]
+opt = 0
+debug = true
+TOML
+"$MCPP" run --profile inspect --print-launch > inspect-launch.json 2> inspect-launch.err \
+    || { cat inspect-launch.err; echo "FAIL: custom-profile launch"; exit 1; }
+python3 - <<'PY' || exit 1
+import json
+data=json.load(open("inspect-launch.json"))["data"]
+configuration=data["configuration"]
+assert configuration["profile"] == "inspect", configuration
+assert configuration["runners"] == ["flash", "monitor"], configuration
+PY
+echo "  ok  launch names the actual custom profile and effective named runners"
+
 # ── D: --locked asserts the recorded resolution ────────────────────────────
 mkdir -p "$work/q/src"
 cd "$work/q"

@@ -40,6 +40,9 @@ TEST(CommandDialect, MsvcSpellings) {
     EXPECT_EQ(d.stdPrefix, "/std:");
     EXPECT_EQ(d.outputObjPrefix, "/Fo:");
     EXPECT_EQ(d.objExt, ".obj");
+    // Each object carries its debug information: no compile writes through
+    // the shared PDB server another compile's unit holds.
+    EXPECT_EQ(d.debugFlags, "/Z7");
     EXPECT_TRUE(d.rspfileLink);
     EXPECT_EQ(d.linkStyle, CommandDialect::LinkStyle::SeparateLinker);
 }
@@ -225,6 +228,19 @@ TEST(MsvcAbiCrtWord, EveryContractResolvesToExactlyOneWordPerRow) {
             }
         }
     }
+}
+
+// A shared-PDB word is refused on cl.exe, either dash; other words pass.
+TEST(CheckSharedPdbWord, ZiZIAndFSAreRefusedOtherWordsPass) {
+    for (auto* word : {"/Zi", "-Zi", "/ZI", "-ZI", "/FS", "-FS"}) {
+        auto refusal = check_shared_pdb_word(word, "[build] cxxflags");
+        ASSERT_TRUE(refusal.has_value()) << word;
+        EXPECT_NE(refusal->find(word), std::string::npos) << *refusal;
+        EXPECT_NE(refusal->find("[build] cxxflags"), std::string::npos) << *refusal;
+        EXPECT_NE(refusal->find("/Z7"), std::string::npos) << *refusal;
+    }
+    for (auto* word : {"/Z7", "-Z7", "/Zc:__cplusplus", "/Zp8", "/FSx", "/MT", "-g"})
+        EXPECT_FALSE(check_shared_pdb_word(word, "[build] cxxflags").has_value()) << word;
 }
 
 // D3: a free-form CRT word is always a second statement once the model is

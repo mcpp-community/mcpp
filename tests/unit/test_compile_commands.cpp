@@ -5,7 +5,7 @@ import mcpp.source_kind;
 import mcpp.build.compile_commands;
 import mcpp.build.flags;
 import mcpp.build.plan;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.manifest.flag_words;
 import mcpplibs.os.platform;
 import mcpp.toolchain.model;

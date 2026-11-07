@@ -4,6 +4,130 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.7.1] - 2026-11-07
+
+### Fixed
+
+- A record being published is waited out before it is read, and only a
+  controller whose process has ended counts as lost: a transient refusal to open
+  a record no longer fails a compile on Windows (#885, 20 of 20 Windows-hosted
+  cross builds of mcpp, against 10 failures in 40 before).
+- Every compiler of a build belongs to its generation, so a build killed with
+  `kill -9` leaves no compiler that races the next build (e2e 1016). The
+  generation carries the compiler cap and build.ninja names none, so the graph is
+  the same at every `-j` (e2e 861); the fast path opens its generation with the
+  cap its first drive recorded beside build.ninja.
+- On macOS a compiler slot another compiler holds is now and then reported
+  missing from inside the executor (mcpplibs/openkal-macos#45); it is treated as
+  held while its directory exists, and refused after five seconds of it.
+- The note for clang without coroutines on the 32-bit MSVC ABI finds the
+  compiler after the capped executor's `--` (e2e 892).
+- `msvc@system` is located for a build program of a cross target and never
+  looked for in the package index (e2e 1017).
+- Two packages of one name, `foo` and `ns.foo`, both link into a program that
+  reaches them (#896, e2e 1018).
+- An edge that asks a resolved package for a feature its earlier edges did not
+  ask walks that feature's `[feature-deps]` and forwards, so `-p s -p v` builds
+  what `-p s` builds (#897, e2e 1019).
+- A build directory taken over by a new fingerprint of its configuration (an
+  mcpp upgrade) keeps no compiler record of its predecessor: the completion
+  certificates there named the predecessor's objects and failed the next
+  build's admission ("cached compiler certificate does not name its own
+  object") until `mcpp clean`. A certificate of another directory found at
+  admission (a moved or restored directory) authorizes nothing and is dropped;
+  the object is compiled again (e2e 1022).
+- `mcpp test` announces a dependency with its resolved version, as the build
+  does, not the constraint (`v0.3.1`, not `v^0.3.1`; e2e 196).
+- A compiler that registers with its build's generation is answered within the
+  startup grace: an owner that accepted the registration and did not answer in
+  two seconds (macOS CI, a scan of a two-configuration workspace: "compiler
+  registration channel closed or timed out") is asked again, and an owner that
+  accepts no connection has ended, so the compiler ends at once (e2e 840, 1016).
+- cl.exe writes a debug build's debug information into each object (`/Z7`), not
+  into a PDB shared through mspdbsrv.exe (`/Zi /FS`). The server outlived the
+  compile that started it, and retiring that compile's process unit ended it
+  under the concurrent compiles, one of which failed with C1090, PDB API error
+  23 (e2e 258, intermittently on Windows). `/Zi`, `/ZI` and `/FS` in a
+  package's flags are refused on cl.exe before anything compiles (e2e 1023).
+
+- A finished detached compiler is recognized when its final status appears
+  between status and liveness checks. Recovery still validates its output proof.
+- Windows launcher packages use the OS release required by the current default
+  platform, so their generated dependency resolves alongside openkal-platform 0.24.
+- Compiler attempt journals preserve file timestamps on Clang/libc++ when the
+  file clock uses a wider integer representation.
+- Compiler journals retry an open that raced with atomic record publication,
+  and BMI/object identity checks require a regular output file on every host.
+  A witness failure identifies its failed observation boundary, and a detached
+  supervisor's failure is available to the waiter even though its stdio is closed.
+  Status publication now distinguishes temporary open, write, close and rename
+  failures, including the OpenKal condition of a failed rename.
+- Launch descriptions include the selected target, profile, resolved platform
+  and available named runners, including the reachable leg of a target set.
+  Editor debug launches can retain the configuration that actually built the program.
+- Tests accept `--runner <name>` with the same runner resolution as `run`,
+  including `--print-launch` and archive execution. Missing names and a
+  simultaneous `--no-runner` are refused.
+- Cached builds load action ownership when an action starts, so internal progress
+  appears while Ninja is still buffering stdout. Idle builds retain lazy loading;
+  command results and output checks remain authoritative.
+- New action snapshots request a normal UI frame, so short phases can appear
+  between Ninja status lines without waiting for the clock redraw.
+- Foreign-build contracts exclude the consuming package's link flags and
+  libraries. A subproject can link its own executable without depending on
+  an installation that the same subproject has yet to produce.
+- The macOS clean bootstrap keeps its stage-one compiler outside the output tree
+  removed by the second stage.
+- GCC BMI publication requires a present replacement file; its unlink-before-rename
+  interval no longer releases importers. A successful compiler that produces no
+  BMI fails with a diagnostic and restores the previous BMI.
+- Ordinary compiler invocations share the detached GCC compilers' concurrency
+  permits, so the additional Ninja scheduling slots do not exceed `--jobs`.
+- Cancelled detached builds stop their compilers and finish state cleanup before
+  another generation starts. Stable kernel permits retain live ownership across
+  immediate rebuilds; runtime generations leave no-op build identities unchanged.
+- Compiler units retain their concurrency reservation after a supervisor is
+  forcibly ended. Recovery waits for descendants and final state writers;
+  occupied or unknown units retain their outputs and fail within a bound.
+- Missing completed module objects are recovered in the same build before Ninja
+  reads their BMIs. Corrupt completion evidence and redirected cache state refuse
+  recovery without authorizing changes to unrelated outputs.
+- Captured idle bounds consume queued progress from both streams before
+  classifying silence, including progress buffered during a slow line callback.
+- Child stop predicates apply with inherited and discarded streams, including
+  executions without an absolute deadline. Captured stream EOF retains stop,
+  absolute and observed-output idle bounds until the child exits.
+- Queued downloads begin their progress budget when a worker starts them,
+  rather than inheriting time spent waiting for a slot.
+- Provider progress timeouts identify the stalled download and source attempt,
+  independently of progress on other files and provider process deadlines.
+
+### Changed
+
+- A platform's version group takes part in resolution: a request of a member
+  resolves to the group's version when its constraint admits it, though the
+  index holds a newer patch, and is refused naming the request and the group
+  when it does not (SPEC-013 1.4 §7.5, e2e 1020).
+- The ok-image targets' built-in platform is the series
+  `openkal-platform@^0.24`: its newest release whose `mcpp` floor this engine
+  meets, kept in mcpp.lock until `mcpp update` (SPEC-013 §14, §15.1, e2e 1021).
+  A platform patch no longer needs an mcpp release.
+  It resolves to openkal-platform 0.24.2: openkal-llvm-runtime 0.19.2 keeps the
+  volume of a name it normalizes, without which a Windows launcher over 0.24.1
+  could not start its runner (e2e 988).
+- mcpp and the launchers it generates depend on mcpplibs.os `^0.3.1`, whose
+  `os::fs` reads a name in the long spelling (`\\?\C:\...`) as the name it
+  spells; the single-file launcher moves from os 0.2.0.
+- Headers are included only in the two system lock files
+  (`.github/tools/check_include_regions.sh`): zlib, zstd and xz are their mwrap
+  modules, JSON is nlohmann.json from the index (the copied json.hpp is gone),
+  and the C library's macros come from mcpplibs.mwrap.libc. Package archives
+  are the bytes mcpp wrote before.
+
+- CI bootstraps from the published, mirrored and indexed 2026.11.5.1 release.
+- Release guidance preserves published tags and uses a new reviewed patch version
+  for fixes. GitCode assets are supplemented locally as they become available.
+
 ## [2026.11.5.1] - 2026-11-05
 
 ### Added

@@ -125,6 +125,23 @@ mcpp toolchain default gcc@16.1.0    # 设默认
 mcpp build --target x86_64-linux-musl # 需要全静态 Linux 产物时显式选择
 ```
 
+## 测试结果与按用例运行
+
+`mcpp test --message-format json` 每个测试一条 NDJSON 记录（通过的也带 `run_output`），最后是每个成员的
+`summary`。`status` 取 `pass`、`compile_fail`、`run_fail`（`timed_out` 为真即超时）、`not_run`（带 `reason`）、
+`built`（`--no-run`）；退出码 0 为全部通过，1 为有测试失败，2 为有测试未能运行。
+
+mcpp 的单位是测试程序；用例属于测试框架。按用例运行时，把框架的参数放在 `--` 之后：
+
+```bash
+mcpp test unit/math -- --gtest_filter='Math.Adds:Math.Spans'          # GoogleTest 只跑这两个用例
+mcpp test unit/math -- --gtest_output=json:"$PWD/math-report.json"   # 每个用例的结果写成 JSON 报告
+mcpp test unit/math --print-launch -- --gtest_filter='Math.Adds'      # 只构建，打印启动方式（argv、cwd、环境），供调试器使用
+```
+
+读取用例结果时以框架报告为准（GoogleTest 的 `--gtest_output=json`、Catch2 的 `--reporter json`），程序输出中
+`[ RUN      ] X` 与 `[       OK ] X` / `[  FAILED  ] X` 之间是用例 X 的输出。
+
 ## 工作空间
 
 ```toml

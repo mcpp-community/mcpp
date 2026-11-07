@@ -18,6 +18,8 @@ import mcpp.manifest;
 import mcpp.source_kind;
 import mcpp.toolchain.hostflags;   // the compile-token producer the package std module reuses
 import mcpp.toolchain.detect;
+import mcpplibs.os.platform;
+import mcpp.toolchain.msvc;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.registry;
@@ -234,6 +236,27 @@ step3_define_host_tc_closures_and_refresh_index(PrepareState& state) {
         if (!spec || spec->version.empty()) {
             return std::unexpected(std::format(
                 "toolchain spec '{}' is invalid for the build.mcpp host resolve", hostSpecText));
+        }
+        // `<family>@system` NAMES THIS MACHINE'S INSTALLATION, AND IS LOCATED,
+        // NEVER INSTALLED (2026.11.7.1). A Windows machine whose default is
+        // `msvc@system`, building for a bare cross target, handed that spec to
+        // the package resolver below, which looked for `msvc@system` in the
+        // index (design 2026-11-07 §4.1.3). The build program is located the
+        // way a native build locates the same spec.
+        if (mcpp::toolchain::origin_of(*spec) == mcpp::toolchain::Origin::SystemMsvc) {
+            if constexpr (!mcpplibs::os::is_windows) {
+                return std::unexpected(std::format(
+                    "host toolchain for build.mcpp ('{}') is only available on Windows hosts", hostSpecText));
+            }
+            auto inst = mcpp::toolchain::msvc::detect_installation();
+            if (!inst) return std::unexpected(mcpp::toolchain::msvc::install_guidance());
+            auto htc = mcpp::toolchain::detect(
+                inst->clPath, state.runtimePayload, state.runtimeBindingSnapshot.contractHash);
+            if (!htc) return std::unexpected(htc.error().message);
+            mcpp::ui::info("Resolved", std::format(
+                "host toolchain for build.mcpp: {} → {}", hostSpecText, htc->label()));
+            state.hostTcCache = std::pair{inst->clPath, *htc};
+            return std::pair{state.hostTcCache->first, as_host(state.hostTcCache->second)};
         }
         // Deliberately NO target injection: the spec resolves for the host.
         auto pkg = mcpp::toolchain::to_xim_package(*spec);

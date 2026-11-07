@@ -1,16 +1,15 @@
 // mcpp.cli.cmd_registry — CLI parsing + routing for search and the
 // `mcpp index` family. Implementations live in mcpp.pm.index_management.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.cli.cmd_registry;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpplibs.cmdline;
 import mcpp.pm.index_management;
 import mcpp.ui;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::cli {
 
@@ -20,7 +19,7 @@ std::optional<int> bad_format(const mcpplibs::cmdline::ParsedArgs& parsed, bool&
     json = false;
     if (auto f = parsed.value("format")) {
         if (*f != "json") {
-            std::println(stderr, "error: unsupported --format '{}'; expected: json", *f);
+            std::println(libc::stderr(), "error: unsupported --format '{}'; expected: json", *f);
             return 2;
         }
         json = true;
@@ -33,7 +32,7 @@ export int cmd_search(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto rc = bad_format(parsed, json)) return *rc;
     std::string keyword = parsed.positional_count() > 0 ? parsed.positional(0) : std::string{};
     if (keyword.empty() && !json) {
-        std::println(stderr, "error: `mcpp search` requires a keyword (with --format json, none lists every package)");
+        std::println(libc::stderr(), "error: `mcpp search` requires a keyword (with --format json, none lists every package)");
         return 2;
     }
     return mcpp::pm::search_packages(keyword, parsed.is_flag_set("all-versions"), json);

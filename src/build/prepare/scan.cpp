@@ -440,6 +440,10 @@ step11_msvc_crt_word_check(PrepareState& state) {
     // NOT gated on `needsStdModule`: the CRT model is a link-time fact for
     // every MSVC-ABI build, with or without `import std`.
     //
+    // On cl.exe the same pass refuses a shared-PDB word (`/Zi`, `/ZI`, `/FS`):
+    // its server outlives the compile that started it, and retiring that
+    // compile's unit ends it under the others (`check_shared_pdb_word`).
+    //
     // EVERY PACKAGE'S `cxxflags`, because each reaches its own package's
     // units after the graph's flags and would compile them against another
     // CRT: one image, two CRTs. `dialect_cxxflags` is the root's alone (a
@@ -450,6 +454,9 @@ step11_msvc_crt_word_check(PrepareState& state) {
     if (mcpp::toolchain::is_msvc_target(*state.tc)) {
         const bool wantsStatic = mcpp::toolchain::msvc_wants_static_crt(
             state.m->buildConfig.linkage, state.m->buildConfig.cxxRuntime);
+        // cl.exe alone writes a shared PDB through mspdbsrv.exe; clang on the
+        // MSVC ABI writes its debug information into each object.
+        const bool clExe = mcpp::toolchain::dialect_for(*state.tc).id == "msvc";
         for (std::size_t i = 0; i < state.packages.size(); ++i) {
             auto const& pkg = state.packages[i];
             // A selected workspace member is the project being developed and
@@ -473,8 +480,12 @@ step11_msvc_crt_word_check(PrepareState& state) {
                 for (auto const& w : list) {
                     const bool inherited =
                         std::ranges::find(fromWorkspace, w) != fromWorkspace.end();
-                    auto verdict = mcpp::toolchain::check_crt_word(
-                        w, wantsStatic, inherited ? std::string_view(workspaceKey) : key);
+                    const std::string_view at =
+                        inherited ? std::string_view(workspaceKey) : key;
+                    if (clExe)
+                        if (auto refusal = mcpp::toolchain::check_shared_pdb_word(w, at))
+                            return std::unexpected(*refusal);
+                    auto verdict = mcpp::toolchain::check_crt_word(w, wantsStatic, at);
                     if (!verdict) continue;
                     if (verdict->contradicts)
                         return std::unexpected(verdict->message);

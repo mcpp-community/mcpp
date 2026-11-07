@@ -15,6 +15,7 @@ import mcpp.manifest;
 
 using mcpp::build::schedule::Strategy;
 using mcpp::build::schedule::decide;
+using mcpp::build::schedule::decide_shape;
 using mcpp::build::schedule::requested_switch;
 using mcpp::toolchain::CompilerId;
 using mcpp::toolchain::Toolchain;
@@ -256,3 +257,16 @@ TEST(SchedulePolicy, EnvironmentBeatsManifestAndIsValidatedToo) {
         EXPECT_EQ(seen, "ON");
     }
 }
+
+// EVERY STRATEGY CAPS ITS COMPILERS (2026.11.7.1): the capped executor is what
+// registers a compiler in its build's generation, so a strategy without a split
+// still has a cap -- the job count, else what this machine would choose.
+TEST(SchedulePolicy, EveryStrategyCarriesACompilerCap) {
+    for (auto id : {CompilerId::GCC, CompilerId::Clang, CompilerId::MSVC, CompilerId::Unknown}) {
+        EXPECT_EQ(decide(with(id), "auto", 8).compilerCap, 8) << static_cast<int>(id);
+        EXPECT_EQ(decide(with(id), "off", 0, 6).compilerCap, 6) << static_cast<int>(id);
+    }
+    // The shape alone is unchanged: only the split strategies carry a cap there.
+    EXPECT_EQ(decide_shape(with(CompilerId::MSVC), "auto", 8).compilerCap, 0);
+}
+

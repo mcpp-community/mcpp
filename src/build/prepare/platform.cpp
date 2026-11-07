@@ -31,6 +31,10 @@ import mcpp.targetside;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.platform;
 import mcpp.ui;
+import mcpp.version_req;
+import mcpp.pm.resolver;
+import mcpp.xpkg_version;
+import mcpp.version;
 import mcpp.freestanding.linkline;
 
 namespace mcpp::build {
@@ -238,6 +242,23 @@ void step4b_seed_platform(PrepareState& state) {
     item.spec.declaredIn = "the platform";
     item.requestedBy = state.m->package.name + " (platform)";
     item.originalConstraint = item.spec.version;
+    // A SERIES TAKES THE RELEASE THE LOCK RECORDS (SPEC-013 §14): a platform
+    // selected as `^0.24` (the target table's default) resolves to the newest
+    // release of the series once, and mcpp.lock keeps it there until
+    // `mcpp update` drops the entry; a recorded release outside the series is
+    // not taken.
+    if (!item.spec.isPath() && !item.spec.isGit()) {
+        const auto qualified = item.spec.namespace_ + "." + item.spec.shortName;
+        if (auto anchor = state.platformLockAnchors.find(qualified);
+            anchor != state.platformLockAnchors.end())
+            if (auto req = mcpp::version_req::parse_req(item.spec.version))
+                if (auto v = mcpp::version_req::parse_version(anchor->second);
+                    v && mcpp::version_req::matches(*req, *v) && item.spec.version != anchor->second) {
+                    mcpp::ui::info("Platform", std::format("{} {} → v{} (mcpp.lock)",
+                        item.spec.shortName, item.spec.version, anchor->second));
+                    item.spec.version = "=" + anchor->second;
+                }
+    }
     item.consumerDepIndex = kMainConsumer;
     state.worklist.push_front(std::move(item));
 }
@@ -428,6 +449,94 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
         pushed = true;
     }
     return pushed;
+}
+
+// THE PLATFORM'S VERSION GROUP IS A CONSTRAINT (SPEC-013 §7.5): a request of
+// one of its members, by version, resolves to the group's version when the
+// request admits it, and is refused naming both when it does not. A package
+// built for this machine only, and a development tree (a path or a
+// repository), are not bound by it, as the check after the walk leaves them.
+std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& state, const WorkItem& item,
+                                                              const std::string& name,
+                                                              mcpp::manifest::DependencySpec& spec) {
+    if (!state.platformGroup.empty() && !spec.isPath() && !spec.isGit() && !item.buildOnly) {
+        const auto shortName = spec.shortName.empty() ? name : spec.shortName;
+        const auto platformNs = state.platform.selection.ref.spec.namespace_;
+        const bool sameNs = spec.namespace_.empty() || platformNs.empty()
+                         || spec.namespace_ == platformNs;
+        if (auto g = state.platformGroup.find(shortName); sameNs && g != state.platformGroup.end()) {
+            const auto group = mcpp::version_req::parse_version(g->second);
+            const auto asked = spec.version.empty() ? std::string("*") : spec.version;
+            if (auto req = mcpp::version_req::parse_req(asked);
+                req && group && !mcpp::version_req::matches(*req, *group)) {
+                refusal::record(refusal::Code::PlatformVersionGroup);
+                return std::unexpected(std::format(
+                    "{} is requested as '{}' by {}, and the platform {} is a version group\n"
+                    "       that names {} {}.\n"
+                    "       The group chooses one version of each package of the family for a\n"
+                    "       build. Either select the platform release of the version you need\n"
+                    "       ([target.<selector>] platform = \"{}@<version>\"), or admit {} where\n"
+                    "       it is requested ({} = \"^{}\").",
+                    shortName, asked, item.requestedBy, state.platformGroupFrom, shortName,
+                    g->second, state.platformPackageShortName, g->second, shortName, g->second));
+            }
+            if (group) spec.version = "=" + g->second;
+        }
+    }
+    return {};
+}
+
+// The platform is the walk's first package: its version group binds every
+// request after it (SPEC-013 §7.5).
+void step4b_read_platform_group(PrepareState& state, const std::string& resolvedShortName) {
+    if (state.platformGroupRead || state.platform.selection.none || state.dep_manifests.empty()
+        || resolvedShortName != state.platformPackageShortName)
+        return;
+    state.platformGroupRead = true;
+    state.platformGroup = state.dep_manifests.back()->platform.versions;
+    state.platformGroupFrom = std::format("{} {}", state.platformPackageShortName,
+                                          state.dep_manifests.back()->package.version);
+}
+
+// A SERIES TAKES ITS NEWEST RELEASE THIS ENGINE READS (SPEC-013 §14). A
+// platform selected as a range (`^0.24`, the target table's default) skips a
+// release whose `[package] mcpp` floor is above this mcpp, so an older engine
+// keeps building with the newest platform it can read instead of being
+// refused by a release made for a newer one. A pin (`=`) and a lock anchor are
+// taken as they are.
+std::expected<void, std::string> step4b_platform_within_engine(PrepareState& state) {
+    if (state.platform.selection.none || state.worklist.empty()) return {};
+    auto& item = state.worklist.front();
+    auto& spec = item.spec;
+    if (spec.isPath() || spec.isGit() || spec.version.starts_with("=")
+        || !mcpp::pm::is_version_constraint(spec.version))
+        return {};
+    const auto have = mcpp::xpkg_version::parse(mcpp::MCPP_VERSION);
+    if (!have) return {};
+    auto cfg = state.get_cfg(true);
+    if (!cfg) return std::unexpected(cfg.error());
+    std::string constraint = spec.version;
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        auto found = mcpp::pm::resolve_semver(spec.namespace_, spec.shortName, constraint,
+                                              state.index_route(*cfg), *state.targetPlatform);
+        if (!found) return {};   // the walk reports it, with the request that made it
+        auto loaded = state.loadVersionDep(item.name, spec.namespace_, spec.shortName, *found);
+        if (!loaded) return {};
+        auto const& floor = loaded->second.package.mcppFloor;
+        const auto need = mcpp::xpkg_version::parse(floor);
+        if (floor.empty() || !need || mcpp::xpkg_version::compare(*have, *need) >= 0) {
+            if (attempt > 0) {
+                mcpp::ui::info("Platform", std::format("{} {} → v{} (the newest this mcpp reads)",
+                    spec.shortName, spec.version, *found));
+                spec.version = "=" + *found;
+            }
+            return {};
+        }
+        mcpp::ui::info("Platform", std::format("{} v{} needs mcpp >= {}; this is mcpp {}",
+            spec.shortName, *found, floor, mcpp::MCPP_VERSION));
+        constraint = std::format("{}, <{}", constraint, *found);
+    }
+    return {};
 }
 
 std::expected<void, std::string> step4b_check_platform_versions(PrepareState& state) {

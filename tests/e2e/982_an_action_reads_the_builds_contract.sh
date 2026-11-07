@@ -21,6 +21,7 @@ cat > build.mcpp <<'EOF'
 #include <string>
 import mcpp;
 int main() {
+    mcpp::link_flag("-Wl,--defsym,mcpp_contract_consumer=1");
     const std::string out = std::string(mcpp::out_dir()) + "/seen-contract.json";
     mcpp::action a;
     a.id   = "copy-contract";
@@ -47,8 +48,12 @@ assert any(a.startswith("-O") for a in cxx), cxx
 assert not any(a.startswith("-std=") or a == "-fmodules" or a.startswith("-fmodule-") for a in cxx), cxx
 assert os.path.isabs(d["link"]["program"]) and isinstance(d["link"]["args"], list), d["link"]
 assert "archiver" in d["link"], d["link"]
+assert not any("mcpp_contract_consumer" in a for a in d["link"]["args"]), d["link"]
 print("contract:", d["target"], d["dialect"], d["compile"]["cxx"]["program"])
 PY
 cfg=$(dirname "$(find target -name compile_commands.json -not -path '*/.build-mcpp/*' | head -1)")
 [[ -f "$cfg/mcpp-contract.json" ]] || { echo "FAIL: no contract beside the compile database"; exit 1; }
+grep -q 'mcpp_contract_consumer=1' "$cfg/build.ninja" || {
+    echo "FAIL: excluding package link inputs from the contract removed them from the consumer"; exit 1;
+}
 echo "PASS: 982"

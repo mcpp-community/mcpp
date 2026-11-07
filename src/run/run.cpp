@@ -1,11 +1,9 @@
 // mcpp.run over mcpplibs.os: the launcher, the registry of running programs,
 // and the watcher that ends mcpp at a request.
-module;
-#include <cstdio>     // stdout, stderr: macros, which `import std` does not carry
-
 module mcpp.run;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpplibs.os.platform;
 import mcpplibs.os.error;
 import mcpplibs.os.env;
@@ -15,6 +13,8 @@ import mcpplibs.os.interrupt;
 import mcpp.invocation;
 import mcpp.build.command_line;
 import mcpp.runtime.launch_env;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::run {
 
@@ -104,6 +104,7 @@ struct Spec {
     bool splitOnCr = false;
     const std::function<bool()>* shouldStop = nullptr;
     bool oneString = false;
+    os::process::owned_unit* declaredUnit = nullptr;
 };
 
 struct Outcome {
@@ -225,7 +226,8 @@ Outcome launch(const Spec& s) {
         case Output::stdout_err_kept:  o.out = os::process::stdio::pipe; o.err = os::process::stdio::pipe;    break;
         case Output::discard:     o.out = os::process::stdio::null;    o.err = os::process::stdio::null;    break;
     }
-    o.own_unit = true;
+    o.own_unit = s.declaredUnit == nullptr;
+    o.declared_unit = s.declaredUnit;
     o.bound_lifetime = true;
     o.one_string = s.oneString;
     auto p = Process::spawn(o);
@@ -241,6 +243,14 @@ Outcome launch(const Spec& s) {
     auto lastOutput = start;
     bool stop = false;
     const bool keepErr = s.out == Output::stdout_err_kept;
+    const bool captured = s.out == Output::merged || s.out == Output::stdout_only
+        || s.out == Output::stdout_err_shown || keepErr;
+    auto should_stop = [&](bool check_idle = true) {
+        const auto now = clock::now();
+        return (s.total.count() > 0 && now - start >= s.total)
+            || (check_idle && captured && s.idle.count() > 0 && now - lastOutput >= s.idle)
+            || (s.shouldStop && *s.shouldStop && (*s.shouldStop)());
+    };
     bool errDone = !keepErr;
     // The error stream, read as it arrives so that a program writing much of
     // it is never stopped on a full pipe while its output is read.
@@ -250,47 +260,58 @@ Outcome launch(const Spec& s) {
         if (!e) { errDone = true; return; }
         if (!e->has_value()) return;
         if ((*e)->empty()) { errDone = true; return; }
+        lastOutput = clock::now();
         out.error_output += **e;
     };
-    if (s.out == Output::merged || s.out == Output::stdout_only || s.out == Output::stdout_err_shown
-        || keepErr) {
+    if (captured) {
         std::string acc;
         std::optional<clock::time_point> endedAt;
+        auto consume_output = [&](std::string_view chunk) {
+            lastOutput = clock::now();
+            if (s.onLine) {
+                acc += chunk;
+                deliver_lines(acc, *s.onLine, s.splitOnCr, false);
+            } else {
+                out.output += chunk;
+            }
+        };
         for (;;) {
             const auto now = clock::now();
-            if ((s.total.count() > 0 && now - start >= s.total)
-                || (s.idle.count() > 0 && now - lastOutput >= s.idle)
-                || (s.shouldStop && *s.shouldStop && (*s.shouldStop)())) {
-                stop = true;
-                break;
-            }
+            if (should_stop(false)) { stop = true; break; }
             // A program that has ended may leave one behind holding its
             // output open; what arrives in the next moment is read, then the
-            // rest of its unit is ended.
+            // rest of its unit is ended. Check even when output stays ready.
             if (!endedAt) {
                 if (auto w = p->try_wait(); w && w->has_value()) endedAt = now;
             } else if (now - *endedAt > std::chrono::milliseconds(500)) {
                 p->end_unit();
             }
+            // A slow line handler or delayed reader may leave progress queued.
+            // Observe both streams before classifying their silence as idle.
             drain_error(std::chrono::milliseconds(0));
+            auto ready = p->read_output_for(std::chrono::milliseconds(0));
+            if (!ready) break;
+            if (ready->has_value()) {
+                if ((*ready)->empty()) break;
+                consume_output(**ready);
+                continue;
+            }
+            if (should_stop()) { stop = true; break; }
             auto chunk = p->read_output_for(std::chrono::milliseconds(keepErr ? 20 : 100));
             if (!chunk) break;
             if (!chunk->has_value()) continue;
-            if ((*chunk)->empty()) break;   // the end of the output
-            lastOutput = clock::now();
-            if (s.onLine) {
-                acc += **chunk;
-                deliver_lines(acc, *s.onLine, s.splitOnCr, false);
-            } else {
-                out.output += **chunk;
-            }
+            if ((*chunk)->empty()) break;
+            consume_output(**chunk);
         }
         if (s.onLine && !stop) deliver_lines(acc, *s.onLine, s.splitOnCr, true);
         // The rest of the error stream, for as long as the program and the
-        // bounds allow.
+        // bounds allow. Ready stderr also precedes an idle classification.
         while (!stop && !errDone) {
             const auto now = clock::now();
-            if (s.total.count() > 0 && now - start >= s.total) { stop = true; break; }
+            if (should_stop(false)) { stop = true; break; }
+            drain_error(std::chrono::milliseconds(0));
+            if (errDone) break;
+            if (should_stop()) { stop = true; break; }
             if (!endedAt) {
                 if (auto w = p->try_wait(); w && w->has_value()) endedAt = now;
             } else if (now - *endedAt > std::chrono::milliseconds(500)) {
@@ -299,9 +320,16 @@ Outcome launch(const Spec& s) {
             }
             drain_error(std::chrono::milliseconds(100));
         }
-    } else if (s.total.count() > 0) {
-        auto w = p->wait_for(s.total);
-        if (w && !w->has_value()) stop = true;
+    }
+    if (!stop && (s.total.count() > 0 || (captured && s.idle.count() > 0)
+                  || (s.shouldStop && *s.shouldStop))) {
+        // Stream EOF is independent of child completion. Keep the same bounds
+        // through the final wait, including inherited and discarded streams.
+        for (;;) {
+            auto waited = p->wait_for(std::chrono::milliseconds(20));
+            if (!waited || waited->has_value()) break;
+            if (should_stop()) { stop = true; break; }
+        }
     }
     if (stop) {
         p->end_unit();
@@ -329,7 +357,7 @@ RunResult result_of(Outcome&& o, int* spawn_error, bool messageIntoOutput) {
 int status_of(const Outcome& o, int* spawn_error) {
     if (o.spawn_error == 0) return o.exit_code;
     if (spawn_error) *spawn_error = o.spawn_error;
-    else std::fputs(o.spawn_message.c_str(), stderr);
+    else std::fputs(o.spawn_message.c_str(), libc::stderr());
     return 127;
 }
 
@@ -421,14 +449,14 @@ int run_foreground(const std::vector<std::string>& argv, const Env& extraEnv, in
         o.args.assign(argv.begin() + 1, argv.end());
         o.env = child_env(extraEnv, false);
         o.in = o.out = o.err = os::process::stdio::inherit;
-        std::fflush(stdout);
-        std::fflush(stderr);
+        std::fflush(libc::stdout());
+        std::fflush(libc::stderr());
         auto r = os::process::exec(o);   // returns only when the program could not be started
         error = r ? static_cast<int>(std::errc::io_error) : errno_of(r.error().code);
         if (!r) detail = detail_of(r.error());
     }
     if (spawn_error) *spawn_error = error;
-    else std::fputs(spawn_failure(argv.front(), error, detail).c_str(), stderr);
+    else std::fputs(spawn_failure(argv.front(), error, detail).c_str(), libc::stderr());
     return 127;
 }
 
@@ -495,7 +523,8 @@ RunResult execute(const std::vector<std::string>& argv, const Options& opt) {
     Spec s{ .argv = argv, .env = opt.env, .unset = opt.unset, .hostTool = opt.host_tool, .cwd = opt.cwd,
             .nullInput = opt.input == Input::none, .total = opt.total, .idle = opt.idle,
             .onLine = opt.on_line ? &opt.on_line : nullptr, .splitOnCr = opt.split_on_cr,
-            .shouldStop = opt.should_stop ? &opt.should_stop : nullptr, .oneString = opt.one_string };
+            .shouldStop = opt.should_stop ? &opt.should_stop : nullptr, .oneString = opt.one_string,
+            .declaredUnit = opt.declared_unit };
     switch (opt.streams) {
         case Streams::inherit:            s.out = Output::inherit; break;
         case Streams::merged:             s.out = Output::merged; break;
@@ -518,7 +547,7 @@ RunResult execute(const std::vector<std::string>& argv, const Options& opt) {
                 if (opt.on_line) opt.on_line(std::string_view(o.spawn_message).substr(0, o.spawn_message.size() - 1));
                 else r.output = o.spawn_message;
             } else {
-                std::fputs(o.spawn_message.c_str(), stderr);
+                std::fputs(o.spawn_message.c_str(), libc::stderr());
             }
         }
     }

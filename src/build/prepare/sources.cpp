@@ -8,9 +8,6 @@
 // place where the answer could be re-derived and drift, which is the shape
 // this file exists to remove.
 
-module;
-#include <cstdlib>
-
 module mcpp.build.prepare;
 import :state;
 

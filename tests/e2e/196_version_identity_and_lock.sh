@@ -210,6 +210,9 @@ rm -f mcpp.lock
 "$MCPP" build > c1.log 2>&1 || fail "build with a dev-dep failed" c1.log
 cp mcpp.lock lock.build
 "$MCPP" test  > c2.log 2>&1 || fail "test with a dev-dep failed" c2.log
+# `mcpp test` announces the resolved version too, as the build's banner does.
+grep -q 'acme\.im v\^' c2.log \
+    && fail "mcpp test announced a constraint as a version" c2.log
 cmp -s mcpp.lock lock.build \
     || { diff lock.build mcpp.lock || true
          fail "mcpp test rewrote mcpp.lock — the lock must not depend on the command"; }

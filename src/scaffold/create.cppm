@@ -1,10 +1,6 @@
 // mcpp.scaffold.create — project creation: exact package-shipped templates
 // (resolve + fetch + instantiate) and the builtin bin/gui skeletons.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.scaffold.create;
 
 import std;

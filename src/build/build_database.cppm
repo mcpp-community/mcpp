@@ -29,7 +29,7 @@ import mcpp.build.flags;
 import mcpp.build.plan;
 import mcpp.build.prepare;
 import mcpp.home;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;

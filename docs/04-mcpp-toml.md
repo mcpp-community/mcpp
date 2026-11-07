@@ -1048,6 +1048,17 @@ with two behaviours has to be.
 
 `bmi_schedule` decides when importers are unblocked.
 
+With GCC and `bmi_schedule = "on"`, ordinary compilation and detached code
+generation share the same total `jobs` limit (2026.11.7.1+). Additional
+scheduling and join tasks do not increase the number of compiler processes.
+Cancelling the build ends its ordinary and detached compilers. An immediately
+following build waits for their cleanup before starting another compiler;
+partial outputs are rebuilt. A missing object from a completed module is
+recreated by that build. An unchanged build still performs no compilation.
+If a forcibly ended build leaves a compiler unit whose completion cannot be
+verified, the next build reports an occupied or unknown unit and retains its
+outputs; it does not start a replacement compiler in that slot.
+
 | value | |
 |---|---|
 | `"auto"` | **the default, and it currently means OFF** |
@@ -1507,7 +1518,7 @@ the platform's own key names ([35 — Platforms](35-platforms.md)):
 
 ```toml
 [target.'cfg(os = "openkal")']
-platform = "openkal-platform@0.23.3"          # or { path = "…" }, or "none"
+platform = "openkal-platform@^0.24"           # a series, a version, { path = "…" }, or "none"
 
 [target.'cfg(platform = "openkal")'.layers]
 c-abi = { path = "../openkal-musl" }
@@ -1621,7 +1632,7 @@ where it would become a BMI path that nothing reports.
 ```toml
 [profile.dist]
 opt      = 3              # -O level (a number, or the string "s"/"z")
-debug    = false          # -g
+debug    = false          # -g; /Z7 on cl.exe
 lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gcc builds ship without the LTO plugin)
 strip    = true           # -s at link time
 ndebug     = true         # -DNDEBUG for every unit of the graph (default: on for release/dist)
@@ -1632,6 +1643,13 @@ cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
 ldflags  = []
 ```
+
+**Debug information on cl.exe (2026.11.7.1+).** `debug = true` compiles with
+`/Z7`: each object carries its own debug information. `/Zi` and `/ZI` write
+the debug information of every compile into one PDB through mspdbsrv.exe, a
+server that outlives the compile that started it and ends with that compile's
+process unit; `/Zi`, `/ZI` and `/FS` in a package's flags are refused before
+anything compiles.
 
 - Selection & default: a bare `mcpp build` uses the **`dev`** profile (`-O0 -g`) — the
   mainstream convention (cf. Cargo/Meson/CMake/Zig/Bazel). **Release is opt-in:**

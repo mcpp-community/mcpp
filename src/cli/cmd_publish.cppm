@@ -1,20 +1,17 @@
 // mcpp.cli.cmd_publish — CLI parsing + routing for publish / pack /
 // emit xpkg. Implementations live in mcpp.publish.pipeline and mcpp.pack.pipeline.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.cli.cmd_publish;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpp.build.advice;
 import mcpplibs.cmdline;
 import mcpp.build.prepare;   // profile_override_from_flags
 import mcpp.build.progress;  // the build's report (build progress design 2026-09-29)
 import mcpp.cli.selection;    // which members `pack` acts on, as `build` plans them
 import mcpp.log;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.pack;
 import mcpp.pack.library_pipeline;
 import mcpp.pack.pipeline;
@@ -33,6 +30,8 @@ import mcpp.pack.compress;          // --compress
 import mcpp.toolchain.triple;       // which --target values are images' rows
 import mcpp.pack.distribution;      // --merge
 import mcpplibs.os.platform;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::cli {
 
@@ -114,7 +113,7 @@ export int cmd_place_dlls(const mcpplibs::cmdline::ParsedArgs& parsed) {
     const std::filesystem::path stamp{parsed.option_or_empty("output").value()};
     const std::filesystem::path depfile{parsed.option_or_empty("depfile").value()};
     if (stamp.empty() || depfile.empty() || parsed.positional_count() < 1) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "error: place-dlls requires --output, --depfile and a program");
         return 2;
     }
@@ -173,7 +172,7 @@ export int cmd_place_dlls(const mcpplibs::cmdline::ParsedArgs& parsed) {
     auto placed = mcpp::pack::place_runtime_dlls(program, dirs, placedBefore, placedByOthers,
                                                  crtRule);
     if (!placed) {
-        std::println(stderr, "error: {}", placed.error().message);
+        std::println(libc::stderr(), "error: {}", placed.error().message);
         return 1;
     }
     // What the placement has to say on success goes to the edge-advice
@@ -208,14 +207,14 @@ export int cmd_place_dlls(const mcpplibs::cmdline::ParsedArgs& parsed) {
         for (auto const& src : placed->sources) d << " \\\n  " << dep_word(src);
         d << '\n';
         if (!d) {
-            std::println(stderr, "error: cannot write '{}'", depfile.string());
+            std::println(libc::stderr(), "error: cannot write '{}'", depfile.string());
             return 1;
         }
     }
     std::ofstream st(stamp, std::ios::trunc);
     for (auto const& n : placed->names) st << n << '\n';
     if (!st) {
-        std::println(stderr, "error: cannot write '{}'", stamp.string());
+        std::println(libc::stderr(), "error: cannot write '{}'", stamp.string());
         return 1;
     }
     return 0;

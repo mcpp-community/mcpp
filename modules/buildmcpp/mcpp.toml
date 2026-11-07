@@ -31,6 +31,9 @@ license     = "Apache-2.0"
 # as the engine consumes them. A change that breaks only the local test is a
 # contract change; one that breaks only the global test is a consumer that had
 # been relying on something the contract never promised.
+[dependencies]
+"nlohmann.json" = "3.12.0"
+
 [dependencies.mcpp]
 invocation      = { path = "../invocation" }
 libs            = { path = "../libs" }

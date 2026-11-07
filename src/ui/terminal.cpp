@@ -1,11 +1,8 @@
 // mcpp.ui.terminal over mcpplibs.os.
-module;
-#include <cerrno>
-#include <cstdio>     // stdout, stderr: macros, which `import std` does not carry
-
 module mcpp.ui.terminal;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpplibs.os.platform;
 import mcpplibs.os.terminal;
 import mcpplibs.os.stdio;
@@ -13,13 +10,15 @@ import mcpplibs.os.windows;
 import mcpp.invocation;
 import mcpp.run;
 
+namespace libc = mcpplibs::mwrap::libc::macros;
+
 namespace mcpp::ui::terminal {
 
 namespace os = mcpplibs::os;
 
 namespace {
 
-std::FILE* file_of(Stream s) { return s == Stream::Out ? stdout : stderr; }
+std::FILE* file_of(Stream s) { return s == Stream::Out ? libc::stdout() : libc::stderr(); }
 os::terminal::stream stream_of(Stream s) {
     return s == Stream::Out ? os::terminal::stream::out : os::terminal::stream::err;
 }
@@ -83,17 +82,19 @@ void write(Stream s, std::string_view text) {
             if (write_through_os(s, text)) return;
         }
     }
-    errno = 0;
+    libc::errno() = 0;
     std::fwrite(text.data(), 1, text.size(), file_of(s));
     // A standard output that has lost its reader (`mcpp … | head`) ends mcpp
     // in order at the first line it refuses (design 2026-10-26 §25.5).
-    if (s == Stream::Out && std::ferror(stdout) && errno == EPIPE) mcpp::run::end_for_closed_output();
+    if (s == Stream::Out && std::ferror(libc::stdout())
+        && libc::errno() == static_cast<int>(std::errc::broken_pipe))
+        mcpp::run::end_for_closed_output();
 }
 
 void write_frame(Stream s, std::string_view bytes) {
     if (bytes.empty()) return;
-    std::fflush(stdout);
-    std::fflush(stderr);
+    std::fflush(libc::stdout());
+    std::fflush(libc::stderr());
     // One write of the whole frame (repeated by the library only for a
     // partial write or an interruption); on Windows only to a console, the
     // C runtime's text mode keeping the line ends of anything else.
@@ -234,12 +235,12 @@ void write_protocol_stdout(std::string_view text) {
         (void)g_protocol->write_original(text);
         return;
     }
-    std::fwrite(text.data(), 1, text.size(), stdout);
-    std::fflush(stdout);
+    std::fwrite(text.data(), 1, text.size(), libc::stdout());
+    std::fflush(libc::stdout());
 }
 
 StdoutToStderr::StdoutToStderr() : state_(std::make_unique<State>()) {
-    std::fflush(stdout);
+    std::fflush(libc::stdout());
     auto d = os::stdio::output_to_error::begin();
     if (!d) return;
     state_->diversion = std::move(*d);
@@ -248,7 +249,7 @@ StdoutToStderr::StdoutToStderr() : state_(std::make_unique<State>()) {
 }
 
 StdoutToStderr::~StdoutToStderr() {
-    std::fflush(stdout);
+    std::fflush(libc::stdout());
     if (!state_ || !state_->diversion) return;
     {
         std::lock_guard g(g_protocolLock);

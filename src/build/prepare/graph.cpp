@@ -747,6 +747,7 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
                 pin != state.overrides.resolution_pins.end())
                 spec.version = "=" + pin->second;
         }
+        if (auto r = step4b_pin_to_platform_group(state, item, name, spec); !r) return r;
         // Pin SemVer constraint before dedup/fetch.
         if (!ctx.rootHeld)
             if (auto r = state.resolveSemver(spec, name); !r) {
@@ -1150,6 +1151,61 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
     return {};
 }
 
+// A LATER EDGE THAT ASKS MORE FEATURES OF A RESOLVED PACKAGE (mcpp#897). The
+// package was walked with the features its first edge asked; the union of its
+// edges is what it is built with, so the feature-deps and the forwards of each
+// feature that only a later edge activates are walked now, as the first walk
+// would have walked them. Measured: `v` selected as a member and reached by
+// `s` with `x` compiled `x`'s sources while `x`'s feature-deps never reached
+// the graph.
+static std::expected<void, std::string>
+step4b_widen_features(PrepareState& state, std::size_t depIndex, const WorkItem& item,
+                      const mcpp::manifest::DependencySpec& spec) {
+    if (depIndex >= state.dep_manifests.size()) return {};
+    auto requested = state.depFeatureRequests.find(depIndex);
+    if (requested == state.depFeatureRequests.end()) return {};
+    auto& [features, seeded] = requested->second;
+    std::vector<std::string> wider = features;
+    for (auto const& f : spec.features)
+        if (std::ranges::find(wider, f) == wider.end()) wider.push_back(f);
+    const bool widerSeed = seeded || spec.defaultFeatures;
+    if (wider == features && widerSeed == seeded) return {};
+    auto& dm = *state.dep_manifests[depIndex];
+    const auto before = feature_closure(dm, features, seeded);
+    const auto after = feature_closure(dm, wider, widerSeed);
+    features = std::move(wider);
+    seeded = widerSeed;
+    if (after == before) return {};
+    if (auto fe = validateForwards(state, dm, after, dm.package.name); !fe)
+        return std::unexpected(fe.error());
+    const auto previous = dm.dependencies;
+    if (auto fm = mergeActiveFeatureDeps(dm, features, seeded); !fm)
+        return std::unexpected(fm.error());
+    if (depIndex + 1 < state.packages.size())
+        state.packages[depIndex + 1].manifest.dependencies = dm.dependencies;
+    std::string label = dm.package.name;
+    for (auto const& [k, r] : state.resolved)
+        if (r.depIndex == depIndex) {
+            label = std::format("{}{}{}@{}", k.ns, k.ns.empty() ? "" : ".", k.shortName,
+                                r.source == "version" ? r.version : r.source);
+            break;
+        }
+    const auto root = depIndex + 1 < state.packages.size() ? state.packages[depIndex + 1].root
+                                                          : std::filesystem::path{};
+    for (auto const& [childName, childSpec] : dm.dependencies) {
+        auto was = previous.find(childName);
+        auto now = childSpec;
+        auto then = was == previous.end() ? childSpec : was->second;
+        injectForwards(dm, after, childName, now);
+        injectForwards(dm, before, childName, then);
+        if (was != previous.end() && now.features == then.features && now.tools == then.tools)
+            continue;
+        state.worklist.push_back({childName, now, label, now.version, depIndex, root,
+                                  item.devOnly, item.buildOnly});
+    }
+    return {};
+}
+
 static std::expected<void, std::string>
 step4b_handle_already_resolved(PrepareState& state, WorklistItemCtx& ctx,
                                 std::map<ResolvedKey, ResolvedRecord>::iterator it) {
@@ -1267,7 +1323,7 @@ step4b_handle_already_resolved(PrepareState& state, WorklistItemCtx& ctx,
                                          it->second.depIndex + 1,
                                          spec, item.fromBuildTable, name);
                 }
-                return {};
+                return step4b_widen_features(state, it->second.depIndex, item, spec);
             }
             if (sourceKind == "version" && it->second.version != spec.version) {
                 if (auto r = step4b_identity_version_merge(state, ctx, it); !r)
@@ -1343,7 +1399,7 @@ step4b_handle_already_resolved(PrepareState& state, WorklistItemCtx& ctx,
                                      it->second.depIndex + 1,
                                      spec, item.fromBuildTable, name);
             }
-            return {};
+            return step4b_widen_features(state, it->second.depIndex, item, spec);
     return {};
 }
 
@@ -1924,6 +1980,7 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
             key.shortName,
             sourceKind == "version" ? spec.version : sourceKind);
         const std::size_t selfIdx = state.dep_manifests.size() - 1;
+        state.depFeatureRequests[selfIdx] = {spec.features, spec.defaultFeatures};
         // #243: forward this dep's active features to ITS children before they
         // are pushed (transitive dep->dep forwarding rides the BFS forward
         // edge). Uses the SAME closure inputs as mergeActiveFeatureDeps above
@@ -2349,6 +2406,7 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
     // The platform package first: its `[platform]` decides what the graph
     // is completed with once the root's own requests are walked (SPEC-013).
     step4b_seed_platform(state);
+    if (auto r = step4b_platform_within_engine(state); !r) return r;
 
     // Seed the worklist from the main manifest. Dev-deps only when the
     // caller wants them; they're never propagated transitively.
@@ -2403,6 +2461,7 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
                 return std::unexpected(r.error());
             if (auto r = step4b_finalize_dependency(state, ctx); !r)
                 return std::unexpected(r.error());
+            step4b_read_platform_group(state, ctx.key.shortName);
         }
         return {};
     };

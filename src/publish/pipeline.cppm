@@ -3,13 +3,10 @@
 // Both read the effective manifest of the project and emit from the
 // normalised one (#690, mcpp.publish.normalize).
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.publish.pipeline;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpp.manifest;
 import mcpp.modgraph.scanner;
 import mcpp.run;
@@ -17,6 +14,8 @@ import mcpp.project;
 import mcpp.publish.normalize;
 import mcpp.publish.xpkg_emit;
 import mcpp.ui;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::publish {
 
@@ -45,18 +44,18 @@ export int emit_xpkg_to(std::string version, const std::filesystem::path& output
                         std::string namespaceOverride = {}) {
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) {
-        std::println(stderr, "error: no mcpp.toml found");
+        std::println(libc::stderr(), "error: no mcpp.toml found");
         return 2;
     }
     // The effective manifest (#690): a workspace member reads as it builds.
     auto eff = mcpp::project::load_effective_manifest(*root);
-    if (!eff) { std::println(stderr, "error: {}", eff.error()); return 2; }
+    if (!eff) { std::println(libc::stderr(), "error: {}", eff.error()); return 2; }
     auto normalized = normalize_for_publish(*root, *eff);
-    if (!normalized) { std::println(stderr, "error: {}", normalized.error()); return 2; }
+    if (!normalized) { std::println(libc::stderr(), "error: {}", normalized.error()); return 2; }
     auto m = std::optional<mcpp::manifest::Manifest>(descriptor_manifest(*eff, *normalized));
     auto scan = mcpp::modgraph::scan_package(*root, *m);
     if (!scan.errors.empty()) {
-        for (auto& e : scan.errors) std::println(stderr, "error: {}", e.format());
+        for (auto& e : scan.errors) std::println(libc::stderr(), "error: {}", e.format());
         return 2;
     }
 
@@ -84,7 +83,7 @@ export int emit_xpkg_to(std::string version, const std::filesystem::path& output
         std::print("{}", lua);
     } else {
         std::ofstream os(output);
-        if (!os) { std::println(stderr, "error: cannot write '{}'", output.string()); return 1; }
+        if (!os) { std::println(libc::stderr(), "error: cannot write '{}'", output.string()); return 1; }
         os << lua;
         mcpp::ui::line(std::format("Wrote {}", output.string()));
     }
@@ -102,7 +101,7 @@ export int publish_package(bool dry_run, bool allow_dirty) {
         std::string out = gitStatus.output;
         if (!out.empty()) {
             mcpp::ui::error("working tree has uncommitted changes; pass --allow-dirty to skip this check");
-            std::println(stderr, "{}", out);
+            std::println(libc::stderr(), "{}", out);
             return 1;
         }
     }

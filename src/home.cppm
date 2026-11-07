@@ -12,9 +12,6 @@
 // A leaf over platform and the TOML reader: configuration, toolchains and
 // builds share its single path selection without depending on CLI or provider.
 
-module;
-#include <cstdlib>    // getenv
-
 export module mcpp.home;
 
 import std;

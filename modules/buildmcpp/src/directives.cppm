@@ -39,7 +39,7 @@ export module mcpp.build.directives;
 
 import std;
 import mcpp.build.program_protocol;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.manifest;
 import mcpp.source_kind;
 import mcpp.toolchain.dialect;

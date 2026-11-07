@@ -1,6 +1,6 @@
 # mcpp.log — leveled diagnostic output.
 #
-# A leaf: `std` and nothing else. That is what makes it separable, and it is
+# A leaf: `std`, the invocation and the C library's stream names (mcpplibs.mwrap.libc), and nothing else. That is what makes it separable, and it is
 # also why it is worth separating first — a module every layer reaches for must
 # not be able to reach back.
 
@@ -13,3 +13,6 @@ license     = "Apache-2.0"
 
 [dependencies.mcpp]
 invocation = { path = "../invocation" }
+
+[dependencies]
+"mcpplibs.mwrap.libc" = "17.0.0"

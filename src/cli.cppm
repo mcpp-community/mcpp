@@ -10,14 +10,12 @@
 // mcpp.project, mcpp.fetcher.progress.
 // See .agents/docs/2026-06-10-cli-modularization.md for the architecture.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.cli;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpp.build.depfile;
+import mcpp.build.schedule.detach_codegen;
 import mcpplibs.cmdline;
 import mcpp.cli.cmd_build;
 import mcpp.cli.cmd_cache;
@@ -48,6 +46,8 @@ import mcpp.log;
 import mcpp.home;              // --system: the system home
 import mcpp.diag;               // the single sink for the report below
 import mcpp.modgraph.glob;      // take_unnarrowable_paths()
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 export namespace mcpp::cli {
 
@@ -273,6 +273,37 @@ int cmd_toolchain_any(const mcpplibs::cmdline::ParsedArgs& p) {
 
 int run(int argc, char** argv) {
     namespace cl = mcpplibs::cmdline;
+
+    // Internal split-schedule executor. Everything after `--` is the
+    // compiler's argv, including flags with the same names as these options.
+    // Dispatch before global option scans: child words never configure mcpp.
+    if (argc > 1 && std::string_view(argv[1]) == "__compiler-cap") {
+        std::filesystem::path semaphore;
+        std::filesystem::path output;
+        std::filesystem::path depfile;
+        int cap = 0, i = 2;
+        for (; i < argc && std::string_view(argv[i]) != "--"; ++i) {
+            const std::string_view option = argv[i];
+            if ((option != "--sem" && option != "--cap" && option != "--output" && option != "--depfile") || i + 1 >= argc) {
+                std::println(libc::stderr(), "error: __compiler-cap: expected --sem <dir> [--cap <N>] -- <compiler>...");
+                return 2;
+            }
+            const std::string_view value = argv[++i];
+            if (option == "--sem") semaphore = value;
+            else if (option == "--output") output = value;
+            else if (option == "--depfile") depfile = value;
+            else {
+                const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), cap);
+                if (ec != std::errc{} || end != value.data() + value.size()) return 2;
+            }
+        }
+        // No --cap: the generation's, or MCPP_COMPILER_CAP outside one.
+        if (semaphore.empty() || cap < 0 || i + 1 >= argc) return 2;
+        std::vector<std::string> command;
+        for (++i; i < argc; ++i) command.emplace_back(argv[i]);
+        return mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output, depfile);
+    }
+
     ReportUnnarrowablePaths reportUnnarrowable_;
 
     // What a build that waits for this one is told it waits for (mcpp#839):
@@ -834,6 +865,8 @@ int run(int argc, char** argv) {
                 .help("List (filtered) tests without building or running them"))
             .option(cl::Option("no-runner")
                 .help("Run test binaries directly, ignoring any [target.<triple>].runner (a host that runs them natively)"))
+            .option(cl::Option("runner").takes_value().value_name("NAME")
+                .help("Run tests through this named runner instead of the default runner"))
             .option(cl::Option("print-launch")
                 .help("Build the one test PATTERN names, then print how it would be started (the mcpp.launch envelope, as `mcpp run --print-launch` prints) instead of running it; arguments after `--` are in its argv"))
             .option(cl::Option("no-run")
@@ -1411,6 +1444,7 @@ int run(int argc, char** argv) {
         .subcommand(cl::App("bmi-compile")
             .description("(internal) Compile a module interface and return when its BMI is published")
             .option(cl::Option("bmi").takes_value().value_name("PATH").help("BMI this unit publishes"))
+            .option(cl::Option("object").takes_value().value_name("PATH"))
             .option(cl::Option("slot").takes_value().value_name("PATH").help("where .log/.rc are kept"))
             .option(cl::Option("self").takes_value().value_name("PATH").help("path to mcpp, re-invoked as supervisor"))
             .option(cl::Option("sem").takes_value().value_name("DIR").help("concurrency token directory"))
@@ -1422,7 +1456,9 @@ int run(int argc, char** argv) {
         .subcommand(cl::App("bmi-supervise")
             .description("(internal) Run a compiler to completion and record its status")
             .option(cl::Option("slot").takes_value().value_name("PATH"))
-            .option(cl::Option("token").takes_value().value_name("PATH"))
+            .option(cl::Option("sem").takes_value().value_name("PATH"))
+            .option(cl::Option("cap").takes_value().value_name("N"))
+            .option(cl::Option("object").takes_value().value_name("PATH"))
             .option(cl::Option("command-file").takes_value().value_name("PATH"))
             .action(wrap_rc(cmd_bmi_supervise)))
         .subcommand(cl::App("bmi-await")
@@ -1509,11 +1545,11 @@ int run(int argc, char** argv) {
                 (a == "--raw" ? raw : out) = argv[++i];
                 continue;
             }
-            std::println(stderr, "error: depfile-filter: unknown option '{}'", a);
+            std::println(libc::stderr(), "error: depfile-filter: unknown option '{}'", a);
             return 2;
         }
         if (raw.empty() || out.empty() || i + 1 >= argc) {
-            std::println(stderr,
+            std::println(libc::stderr(),
                 "error: depfile-filter requires --raw <file> --out <file> -- <command>...");
             return 2;
         }
@@ -1527,7 +1563,7 @@ int run(int argc, char** argv) {
         {
             std::ifstream in(std::filesystem::path{raw}, std::ios::binary);
             if (!in) {
-                std::println(stderr, "error: depfile-filter: the compile wrote no '{}'", raw);
+                std::println(libc::stderr(), "error: depfile-filter: the compile wrote no '{}'", raw);
                 return 1;
             }
             text.assign(std::istreambuf_iterator<char>(in), {});
@@ -1536,7 +1572,7 @@ int run(int argc, char** argv) {
             std::ofstream o(std::filesystem::path{out}, std::ios::binary | std::ios::trunc);
             o << mcpp::build::depfile::first_record(text);
             if (!o) {
-                std::println(stderr, "error: depfile-filter: cannot write '{}'", out);
+                std::println(libc::stderr(), "error: depfile-filter: cannot write '{}'", out);
                 return 1;
             }
         }
@@ -1565,14 +1601,14 @@ int run(int argc, char** argv) {
                               || a == "--path-prepend" || a == "--progress"));
             if (!takesValue) {
                 if (named) {
-                    std::println(stderr, "error: __action: unknown option '{}'", a);
+                    std::println(libc::stderr(), "error: __action: unknown option '{}'", a);
                     return 2;
                 }
                 stamps.emplace_back(a);
                 continue;
             }
             if (i + 1 >= argc) {
-                std::println(stderr, "error: {} requires a value", a);
+                std::println(libc::stderr(), "error: {} requires a value", a);
                 return 2;
             }
             const std::string v = argv[++i];
@@ -1584,21 +1620,21 @@ int run(int argc, char** argv) {
             else {
                 const auto eq = v.find('=');
                 if (eq == std::string::npos || eq == 0) {
-                    std::println(stderr, "error: --env requires NAME=VALUE, got '{}'", v);
+                    std::println(libc::stderr(), "error: --env requires NAME=VALUE, got '{}'", v);
                     return 2;
                 }
                 env.emplace_back(v.substr(0, eq), v.substr(eq + 1));
             }
         }
         if (i >= argc || (!named && stamps.empty())) {
-            std::println(stderr,
+            std::println(libc::stderr(),
                 "error: {} requires <stamp>... -- <command>...", argv[1]);
             return 2;
         }
         std::vector<std::string> cmd;
         for (++i; i < argc; ++i) cmd.emplace_back(argv[i]);
         if (cmd.empty()) {
-            std::println(stderr, "error: {} has no command to run", argv[1]);
+            std::println(libc::stderr(), "error: {} has no command to run", argv[1]);
             return 2;
         }
         // The prepended directories go before the PATH the command would
@@ -1679,7 +1715,7 @@ int run(int argc, char** argv) {
                                  .lexically_normal();
             if (!cec) std::filesystem::current_path(dir, cec);
             if (cec) {
-                std::println(stderr, "error: cannot enter the action's directory '{}': {}",
+                std::println(libc::stderr(), "error: cannot enter the action's directory '{}': {}",
                              cwd, cec.message());
                 return 1;
             }
@@ -1731,7 +1767,7 @@ int run(int argc, char** argv) {
                 }
             }
             if (!populated) {
-                std::println(stderr,
+                std::println(libc::stderr(),
                     "error: prepare action succeeded, but its declared "
                     "directory '{}' does not exist or holds no file", requireDir);
                 return 1;
@@ -1748,14 +1784,14 @@ int run(int argc, char** argv) {
                 std::filesystem::last_write_time(
                     p, std::filesystem::file_time_type::clock::now(), ec);
                 if (ec) {
-                    std::println(stderr, "error: cannot update check stamp '{}': {}", s, ec.message());
+                    std::println(libc::stderr(), "error: cannot update check stamp '{}': {}", s, ec.message());
                     return 1;
                 }
                 continue;
             }
             std::ofstream out(p, std::ios::trunc);
             if (!out) {
-                std::println(stderr, "error: cannot write check stamp '{}'", s);
+                std::println(libc::stderr(), "error: cannot write check stamp '{}'", s);
                 return 1;
             }
         }
@@ -1770,7 +1806,7 @@ int run(int argc, char** argv) {
     // invoking the App.
     if (std::string_view(argv[1]) == "--explain") {
         if (argc < 3) {
-            std::println(stderr, "error: --explain requires an error code (e.g. E0001)");
+            std::println(libc::stderr(), "error: --explain requires an error code (e.g. E0001)");
             return 2;
         }
         return cmd_explain(argv[2]);
@@ -1880,7 +1916,7 @@ int run(int argc, char** argv) {
             bool ok = false;
             for (auto k : known) if (k == first) { ok = true; break; }
             if (!ok) {
-                std::println(stderr, "error: unknown command '{}'", first);
+                std::println(libc::stderr(), "error: unknown command '{}'", first);
                 print_usage();
                 return 127;
             }

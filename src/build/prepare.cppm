@@ -55,10 +55,6 @@
 // Bodies moved verbatim from the CLI layer, then from one file into many.
 // Zero behavior change either time.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.build.prepare;
 
 export import mcpp.build.prepare_inputs;

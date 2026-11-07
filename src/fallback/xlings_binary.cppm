@@ -7,17 +7,15 @@
 // the newer of the last two, the released one on a tie. With none, the error
 // states how to provide one.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-#include <cctype>
-
 export module mcpp.fallback.xlings_binary;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpplibs.os.platform;
 import mcpp.invocation;
 import mcpp.run;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 export namespace mcpp::fallback {
 
@@ -133,7 +131,7 @@ acquire_xlings_binary(const std::filesystem::path& destBin, bool quiet = false,
             // promise this line broke the moment a machine fell behind the
             // pin (e2e 155).
             if (!quiet && !noted)
-                std::println(stderr,
+                std::println(libc::stderr(),
                              "{:>12} vendored xlings {} is older than the "
                              "pinned {}, but no newer source is available "
                              "(keeping it; run `xlings self update`)",
@@ -158,7 +156,7 @@ acquire_xlings_binary(const std::filesystem::path& destBin, bool quiet = false,
         if (!rec) std::filesystem::rename(staged, destBin, rec);
         if (!rec) {
             if (!quiet && !updated)
-                std::println(stderr,
+                std::println(libc::stderr(),
                              "{:>12} vendored xlings {} -> {} from {} (pinned {})",
                              "Updating", have, candidate->version, candidate->origin,
                              pinnedVersion);
@@ -183,9 +181,9 @@ acquire_xlings_binary(const std::filesystem::path& destBin, bool quiet = false,
     auto print_status = [](std::string_view verb, std::string_view msg) {
         constexpr std::size_t W = 12;
         if (verb.size() >= W)
-            std::println(stderr, "{} {}", verb, msg);
+            std::println(libc::stderr(), "{} {}", verb, msg);
         else
-            std::println(stderr, "{}{} {}", std::string(W - verb.size(), ' '), verb, msg);
+            std::println(libc::stderr(), "{}{} {}", std::string(W - verb.size(), ' '), verb, msg);
     };
 
     // The first acquisition takes the source a replacement would take

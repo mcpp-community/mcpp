@@ -1,18 +1,17 @@
 // mcpp.cli.cmd_new — CLI parsing + routing for `mcpp new`.
 // Implementation lives in mcpp.scaffold.create.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.cli.cmd_new;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpplibs.cmdline;
 import mcpp.scaffold;
 import mcpp.scaffold.create;
 import mcpp.scaffold.project_name;
 import mcpp.ui;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::cli {
 
@@ -40,7 +39,7 @@ export int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
     std::string name = parsed.positional(0);
     if (name.empty()) {
-        std::println(stderr, "error: `mcpp new` requires a package name (e.g. `mcpp new hello`)");
+        std::println(libc::stderr(), "error: `mcpp new` requires a package name (e.g. `mcpp new hello`)");
         return 2;
     }
 

@@ -72,6 +72,11 @@ d = json.load(open(sys.argv[1]))
 assert d["kind"] == "mcpp.launch", d["kind"]
 assert d["data"]["argv"] and same(d["data"]["argv"][0], d["data"]["program"]), d["data"]
 assert "env" in d["data"] and "cwd" in d["data"]
+last = json.load(open("target/.last-result.json"))["data"]
+record = json.load(open(last["result"]))["data"]["configuration"]
+configuration = d["data"]["configuration"]
+assert all(configuration[key] == record[key] for key in ("triple", "profile", "platform")), configuration
+assert isinstance(configuration["runners"], list) and all(isinstance(n,str) for n in configuration["runners"]), configuration
 EOF
 
 # C

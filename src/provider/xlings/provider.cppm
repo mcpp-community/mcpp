@@ -9,7 +9,7 @@ import mcpp.provider;
 import mcpp.provider.xlings;
 import mcpp.provider.xlings.subos_info;
 import mcpp.provider.xlings.legacy_dirs;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.fs;
 
 export namespace mcpp::provider::xlings {

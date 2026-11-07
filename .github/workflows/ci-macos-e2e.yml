@@ -52,6 +52,9 @@ jobs:
     timeout-minutes: 60
     env:
       E2E_SHARD: ${{ matrix.shard }}/${{ matrix.shards }}
+      # 721 installs the large NDK in its own bounded step below. Running it in
+      # the ordinary shard duplicates the download and can fail before linking.
+      E2E_EXCLUDE: 721_*.sh
       E2E_TIMINGS: tests/e2e/timings/macos.tsv
       E2E_REPORT: ${{ github.workspace }}/e2e-report-${{ matrix.image == 'macos-15' && 'macos' || matrix.image }}-${{ matrix.shard }}.tsv
     # NOTE: no MCPP_VERBOSE — the e2e suite asserts mcpp's default quiet

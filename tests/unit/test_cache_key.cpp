@@ -2,7 +2,7 @@
 
 import std;
 import mcpp.build.cache_key;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.manifest;
 import mcpp.modgraph.scanner;
 import mcpp.toolchain.detect;

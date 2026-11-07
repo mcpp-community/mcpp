@@ -27,7 +27,7 @@
 export module mcpp.build.result;
 
 import std;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.version;                 // MCPP_VERSION
 import mcpp.run;
 import mcpp.ui.terminal;

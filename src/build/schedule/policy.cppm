@@ -178,11 +178,27 @@ int resolve_jobs(const manifest::Manifest& m,
 // peaks near a gigabyte.
 Decision decide(const toolchain::Toolchain& tc, std::string_view requested, int hostJobs,
                 int autoJobs = 0);
+// The module-edge shape alone, before the generation's compiler cap is applied.
+Decision decide_shape(const toolchain::Toolchain& tc, std::string_view requested, int hostJobs,
+                      int autoJobs = 0);
 
 // ---------------------------------------------------------------------------
 
 Decision decide(const toolchain::Toolchain& tc, std::string_view requested, int hostJobs,
                 int autoJobs) {
+    Decision d = decide_shape(tc, requested, hostJobs, autoJobs);
+    // EVERY COMPILER OF A BUILD IS A PARTICIPANT OF ITS GENERATION (2026.11.7.1).
+    // Under every strategy a compile edge runs through the capped executor, so a
+    // later build does not enter the build directory while a compiler of an
+    // earlier one -- whose mcpp was killed -- still writes there (design
+    // 2026-11-07 §4.1.2). The cap is the strategy's, else the job count, else
+    // what this machine would choose.
+    if (d.compilerCap <= 0) d.compilerCap = hostJobs > 0 ? hostJobs : autoJobs;
+    return d;
+}
+
+Decision decide_shape(const toolchain::Toolchain& tc, std::string_view requested, int hostJobs,
+                      int autoJobs) {
     Decision d;
     const int cap = hostJobs > 0 ? hostJobs : 0;
 

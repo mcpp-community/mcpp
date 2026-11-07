@@ -13,7 +13,7 @@ import mcpp.build.version_floor;
 import mcpp.home;
 import mcpp.invocation;
 import mcpp.runtime.search;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpp.manifest;
 import mcpp.source_kind;
