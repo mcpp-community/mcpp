@@ -4,6 +4,61 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.8.1] - 2026-11-08
+
+### Added
+
+- `mcpp test` runs the runner's side of the mtest test protocol, version 1
+  (docs/08 "Cases"). A test program whose entry states `test-protocol = 1`, or
+  whose file carries the marker `mtest-protocol=1`, is told the protocol's
+  variables and reports its cases: the record names the protocol and each
+  case's result and failures, a case a crash left open failed, and a failing
+  program's report names its failed cases with their places. `--case PATTERN`
+  runs the matching cases, `--cases` lists them, `--seed N` states the seed. A
+  program that implements no protocol is one case and receives none of the
+  variables. `--no-run` records each built test with its program and the files
+  it is compiled from; `--print-launch` states the protocol; the feature
+  `test-protocol` names all of it (e2e 1035).
+- `mcpp::context` states the engine's values to the build-program interface in
+  one process: every accessor reads the innermost context's values, then the
+  environment, so a test of a build program's or a plugin's logic needs no
+  change of its environment (docs/30; e2e 1036).
+- `[build] target_budget` keeps `target/` within a size: after a build or a test
+  run, the directories no configuration records as current are removed whatever
+  their age, and a build whose directories in use exceed it names the three
+  largest (#874; e2e 1031).
+
+### Changed
+
+- The built-in platform of the two ok-image targets is openkal-platform 0.24.4,
+  whose okrun enters an image in its convention's floating-point state (openkal
+  SPEC 12.2): on Windows a thread began with the x87 at double precision, under
+  which an image's C library read a decimal number otherwise.
+- Both openkal rows are `verified`: mcpp's CI builds an ok image over every layer
+  of the platform and runs it on Linux, macOS and Windows (e2e 1033, required on
+  each host by `tests/e2e/host-requirements.tsv`). docs/24 states the two roles,
+  an image as a release form and a native row as a build target.
+- The low-space warning's threshold is the larger of 2 GiB and 1.25 times what
+  the configuration's last build wrote (#874; e2e 1030).
+- mcpp's own dependencies are named by identity in one table, each by one
+  spelling of an exact release (#904).
+
+### Deprecated
+
+- A quoted dotted dependency key (`"mcpplibs.cmdline" = "0.0.2"`) is the reading
+  `quoted-dotted-dependency-key`, reported with the unquoted key that replaces
+  it; removed in 2027.2 (#904; e2e 1032).
+
+### Fixed
+
+- A configuration group's lock keeps the entries of the other groups (#903;
+  e2e 1027).
+- A project's state directory `.mcpp/` ignores itself in a repository (e2e 1028).
+- `mcpp cache prune --older-than` and `cache gc --older-than` collect a std
+  module unused for that long (#874; e2e 1029).
+- Under `--workspace`, a member's test finds the member's programs as
+  `MCPP_BIN_<NAME>`, as under `-p` (e2e 1034).
+
 ## [2026.11.7.2] - 2026-11-07
 
 ### Changed
