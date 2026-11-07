@@ -500,6 +500,22 @@ mingw）。mwrap 规范目前只写了 compat 与内置源码两种实现来源�
      - 规定无效样本的判据；
      - 只在测量无效时允许重跑，重跑仍需满足完整样本数。
 
+6. **分发形态与测试对象（D18）。** 三个项目的用户实际运行的都是 ok 映像，原生程序没有直接消费者。
+   - **mcppls-clangd 0.0.21：** 发布只含 `clangd-<engine>-openkal.tar.gz` 与 `openkal-acceptance.json`，0.0.20 是
+     最后一个带原生归档的版本；验收的原生参照仍为 `v0.0.17` 的归档。PR 与 push 的 CI 构建映像、bundle，在四个
+     系统上验收，并构建一个原生引擎（linux-x64）运行补丁系列的单元与 lit 测试。其余原生引擎、Ubuntu 20.04 floor
+     包、warm-prime 与分片交换只在对比运行中进行，即手动触发 `build-test` 并指定平台或 `all`。引擎输入变化的版本，
+     其变更记录写明对比运行，发布 workflow 检查这一条。映像平台随之改为 0.24.2。
+   - **mcppls 0.0.21：** 服务端单元测试在 Linux 上一次构建为两个架构的 ok 映像
+     （`mcpp test --target openkal --no-run --archive`），由各系统的运行器在四个系统上运行（`openkal-test`）。
+     原生服务端与工具的单元测试默认只在 linux-x64 运行，带 `native` 输入的手动运行覆盖全部平台。引擎候选只取
+     引擎 PR 的映像部件 `clangd-openkal`。以映像运行测试发现，6 个测试以 `argv[0]` 重新启动自身，而映像不能
+     直接作为程序启动；测试改为按 `os::env::self_command` 启动，即映像经其加载器启动。
+   - **mcpp-ide 1.2.0：** `backend-openkal` 在四个系统上把后端测试构建为本机架构的 ok 映像并经运行器运行；其余
+     平台的原生行由 `native` 输入触发。以映像运行测试发现，openkal 不表示权限位（`chmod` 返回 `ENOSYS`，
+     创建文件时忽略 mode，openkal-musl 的既定设计），映像无法创建可执行文件；测试夹具在 POSIX 上以符号链接
+     提供模拟服务器。
+
 ### 4.6 mcpp-ide（含 mcpp-vscode、mcpp-clion、mcpp-nvim）
 
 mcpp-vscode、mcpp-clion、mcpp-nvim 与后端都在 mcpp-ide 仓库中（`mide-plugins/`）。独立的 `mcpp-community/mcpp-vscode`
@@ -647,7 +663,7 @@ IDE 通过 mcppls 的载荷找到语言服务：后端 `languageservice.cppm` �
 3. 生态全局审查；xlings 洁净室真实验证：中立 cwd，`XDG_*` 指向洁净室，不用 shim。
 4. 建立 Q16 的议题：SYCL 归档、`msvc@system`（在 C3 中关闭）、os 扩展长度名字（在 os 修复的 PR 中关闭），以及
    映像分发（D9）。
-5. 证据归档（D6）：仍被引用的证据打包到 /tmp 以外的持久位置，附 SHA256 清单。之后清理 `/tmp/mcpp-885-*` 与
+5. 证据归档（D6）：仍被引用的证据打包到 /tmp 以外的持久位置，附 SHA256 清单。之后清理本轮的临时目录与
    相关项目的过期构建缓存，并关闭本轮的探针 PR #890、mcppls-clangd#17。
 6. 更新 #52、#75 的正文；在 #885 发布最终台账，逐项列出“实现提交 / 局部验证 / 最终 CI / 公开发布 / 镜像与索引”。
 7. 流程：exact-head CI 被取消时不得合入（Q13）；家族发布经 A6，自动列出未关闭缺陷。
@@ -673,6 +689,7 @@ IDE 通过 mcppls 的载荷找到语言服务：后端 `languageservice.cppm` �
 | D15 | mcpp-ide 版本为 `X.Y.Z`：`X.Y` 是后端与全部插件共享的系列，同系列即兼容；`Z` 为各组件自己的补丁；首个系列 1.2；系列发布标签 `v1.2.0`，组件补丁标签 `<组件>-v1.2.Z` | 已批准 |
 | D16 | 运行入口与测试结果以同一份后端数据、各编辑器原生的图标呈现；测试输出逐项归属，状态与 mcpp 契约逐值一致；用例切分只在 IDE 后端 | 已批准 |
 | D17 | #896（同名不同命名空间的两个包只链接其一）与 #897（后到的边请求的新特性不被遍历）是 mcpp 的缺陷，并入 #889 修复（4.1.7） | 用户已决定 |
+| D18 | mcppls-clangd、mcppls、mcpp-ide 自本轮版本起只分发 ok 映像，测试也以 ok 映像进行；原生构建保留为测试工具与对比运行，PR、push 与发布的 CI 默认只在 linux-x64 构建原生程序，其余平台的原生构建与测试由手动触发（4.5 第 6 项） | 用户已决定 |
 
 ## 6. 执行顺序
 
