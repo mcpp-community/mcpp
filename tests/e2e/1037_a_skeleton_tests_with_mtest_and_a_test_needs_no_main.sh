@@ -16,6 +16,8 @@
 #      and a test that imports none begins at a dev-dependency's source that defines `main`.
 #   G. `mcpp test --guide` names each test framework with its guide (`test-guide`), and a failed
 #      run points to it.
+#   H. A test that begins at an entry links no source that defines `main` beneath its
+#      dev-dependency (gtest_main.cc of compat.gtest beneath a GoogleTest adapter).
 set -e
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -124,5 +126,27 @@ grep -q '"guide":"[^"]*fwm/GUIDE.md"' g.json || fail "G: the guide in JSON" g.js
 printf 'import fwm;\nint uses_fwm() { return fwm_cases(); }\nint broken = missing_name;\n' > mixed/tests/modular.cpp
 (cd mixed && "$MCPP" test > ../g-fail.log 2>&1) && fail "G: a test that does not compile passed" g-fail.log
 grep -q "how these tests are written: mcpp test --guide" g-fail.log || fail "G: the failure does not point to the guide" g-fail.log
+
+# H
+mkdir -p fwh/src deep/tests
+cat > fwh/mcpp.toml <<'TOML'
+[package]
+name    = "fwh"
+version = "0.1.0"
+
+[targets.main]
+kind      = "entry"
+main      = "src/entry.cpp"
+test-main = true
+
+[dependencies]
+hdr = { path = "../hdr" }
+TOML
+printf 'import std;\nint main() { std::println("began at fwh"); return 0; }\n' > fwh/src/entry.cpp
+printf 'int fwh_marker() { return 0; }\n' > fwh/src/fwh.cpp
+printf '[package]\nname    = "deep"\nversion = "0.1.0"\n\n[dev-dependencies]\nfwh = { path = "../fwh" }\n' > deep/mcpp.toml
+printf 'int uses_fwh() { return 0; }\n' > deep/tests/one.cpp
+(cd deep && "$MCPP" test > ../h.log 2>&1) || fail "H: a main beneath the dev-dependency was linked" h.log
+grep -q "began at fwh" h.log || fail "H: the test did not begin at fwh" h.log
 
 echo "PASS: 1037 a skeleton tests with mtest, and a test needs no main"

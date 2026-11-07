@@ -2532,10 +2532,25 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         }
     }
     std::set<std::filesystem::path> depEntryMainSources;
+    // Every dependency's source that defines `main`, a direct dev-dependency's
+    // or one beneath it (gtest_main.cc of compat.gtest beneath a GoogleTest
+    // adapter): none is linked into a program that has a beginning of its own.
+    // Asked in a plan of tests only: a build links no dev-dependency.
+    std::set<std::filesystem::path> depMainSources;
+    const auto rootPackage = qualified_package_name(manifest);
+    auto has_tests = [](const mcpp::manifest::Manifest& m) {
+        return std::ranges::any_of(m.targets, [](auto const& t) {
+            return t.kind == mcpp::manifest::Target::TestBinary;
+        });
+    };
+    const bool testPlan = has_tests(manifest) || std::ranges::any_of(packages, [&](auto const& p) {
+        return p.selectedMember && has_tests(p.manifest);
+    });
     for (auto& cu : plan.compileUnits) {
-        if (!devDepPackages.contains(cu.packageName)) continue;
-        if (!is_implementation_source(cu.kind)) continue;
-        if (source_defines_main(cu.source)) depEntryMainSources.insert(cu.source);
+        if (!testPlan || cu.packageName == rootPackage || !is_implementation_source(cu.kind)) continue;
+        if (!source_defines_main(cu.source)) continue;
+        depMainSources.insert(cu.source);
+        if (devDepPackages.contains(cu.packageName)) depEntryMainSources.insert(cu.source);
     }
 
     std::map<std::size_t, std::vector<std::size_t>> directPackageDeps;
@@ -3141,7 +3156,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         return provides ? fit::other : fit::headers;
     };
     auto test_main_default = [&](std::size_t consumerIdx, const mcpp::manifest::Manifest& consumer,
-                                 const mcpp::manifest::Target& t, const LinkUnit& lu)
+                                 const mcpp::manifest::Target& t, const LinkUnit& lu,
+                                 const std::set<std::filesystem::path>& mainSources)
         -> std::expected<std::optional<mcpp::manifest::Target>, std::string> {
         if (t.kind != mcpp::manifest::Target::TestBinary || !t.mainFrom.empty() || !lu.entryMain
             || source_defines_main(*lu.entryMain))
@@ -3173,7 +3189,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         std::vector<std::string> beginnings;
         for (auto const& o : offers) beginnings.push_back(std::format("the entry '{}' (test-main)", o.spelling));
         if (imported != 1)
-            for (auto const& source : depEntryMainSources)
+            for (auto const& source : mainSources)
                 if (!entryMainFiles.contains(source))
                     beginnings.push_back(std::format("{} (a dev-dependency's source that defines `main`)",
                                                      source.filename().generic_string()));
@@ -3366,7 +3382,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
 
         // The beginning a dependency's entry target supplies (§24.3).
         std::optional<EntrySelection> selectedEntry;
-        auto defaulted = test_main_default(0, manifest, t, lu);
+        auto defaulted = test_main_default(0, manifest, t, lu, depEntryMainSources);
         if (!defaulted) return std::unexpected(defaulted.error());
         const auto& begins = *defaulted ? **defaulted : t;
         if (!begins.mainFrom.empty() && lu.kind != LinkUnit::StaticLibrary) {
@@ -3527,7 +3543,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             // main, including it would be `duplicate symbol: main`; without one,
             // it supplies the entry (gtest-style). Works on every linker — the
             // object is linked directly, never relying on archive member pulling.
-            if (entryDefinesMain && depEntryMainSources.contains(cu.source)) continue;
+            if (entryDefinesMain && depMainSources.contains(cu.source)) continue;
             lu.objects.push_back(cu.object);
         }
 
@@ -3898,7 +3914,12 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             // A dependency's entry as this program's beginning (§24.3), as
             // for a root's target.
             std::optional<EntrySelection> selectedEntry;
-            auto defaulted = test_main_default(mi, pkg.manifest, t, lu);
+            std::set<std::filesystem::path> memberMainSources;
+            for (auto const& cu : plan.compileUnits)
+                if (memberDevDepPackages.contains(cu.packageName) && is_implementation_source(cu.kind)
+                    && source_defines_main(cu.source))
+                    memberMainSources.insert(cu.source);
+            auto defaulted = test_main_default(mi, pkg.manifest, t, lu, memberMainSources);
             if (!defaulted) return std::unexpected(defaulted.error());
             const auto& begins = *defaulted ? **defaulted : t;
             if (!begins.mainFrom.empty() && lu.kind != LinkUnit::StaticLibrary) {
@@ -3930,9 +3951,10 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 if (!is_implementation_source(cu.kind)) continue;
                 if (lu.entryMain && cu.source == *lu.entryMain) continue;
                 if (entryFilesAcrossTargets.contains(cu.source)) continue;
-                // A dev-dependency's own main-providing object (gtest_main.o)
-                // only for a test with no main of its own, as for a root.
-                if (entryDefinesMain && memberDevDepPackages.contains(cu.packageName)
+                // A dependency's own main-providing object (gtest_main.o, a
+                // dev-dependency's or one beneath it) only for a test with no
+                // main of its own, as for a root.
+                if (entryDefinesMain && cu.packageName != qualified_package_name(pkg.manifest)
                     && source_defines_main(cu.source)) continue;
                 lu.objects.push_back(cu.object);
             }

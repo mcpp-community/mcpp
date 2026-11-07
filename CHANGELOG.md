@@ -73,6 +73,13 @@
 - A project's state directory `.mcpp/` ignores itself in a repository (e2e 1028).
 - `mcpp cache prune --older-than` and `cache gc --older-than` collect a std
   module unused for that long (#874; e2e 1029).
+- A test that has a beginning -- its own `main`, `[test] main` or an offered
+  entry -- links no dependency's source that defines `main`, a direct
+  dev-dependency's or one beneath it: `gtest_main.cc` of compat.gtest beneath
+  the GoogleTest adapter was linked beside the adapter's `main` (e2e 1037).
+- A dependency's entry that imports `std` builds the std module for the
+  program that begins at it, though nothing else of the graph imports it; the
+  entry failed with "failed to read compiled module" (e2e 1037).
 - Under `--workspace`, a member's test finds the member's programs as
   `MCPP_BIN_<NAME>`, as under `-p` (e2e 1034).
 
