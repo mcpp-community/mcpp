@@ -905,9 +905,9 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // name, its runner, its C library and C++ run-time -- is the platform's,
     // `openkal-platform` (SPEC-013), pinned here. The two architectures the
     // loader relocates.
-    { "x86_64-openkal",        "preview",   "ok",  "llvm@23.1.3","",                            true,
+    { "x86_64-openkal",        "verified",   "ok",  "llvm@23.1.3","",                            true,
       "mcpplibs.openkal-platform@0.24.3" },
-    { "aarch64-openkal",       "preview",   "ok",  "llvm@23.1.3","",                            true,
+    { "aarch64-openkal",       "verified",   "ok",  "llvm@23.1.3","",                            true,
       "mcpplibs.openkal-platform@0.24.3" },
 };
 

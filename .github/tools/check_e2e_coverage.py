@@ -30,6 +30,12 @@ under tests/e2e:
 An exception for a test that ran, or for a test that does not exist, also fails
 the check, so that the list cannot outlive the reason it records.
 
+Some claims need a test to pass on particular hosts, not on some host: docs/21
+calls a target row `verified` when CI builds and runs its artefact, and the
+`*-openkal` rows claim that for every system. tests/e2e/host-requirements.tsv
+lists such a test with the hosts its result must come from; a listed test that
+did not pass on one of them, or that does not exist, fails the check.
+
 With --timings-out DIR it writes `<host>.tsv`, the measured duration of every
 test that ran, merged across that host's shards, in the format run_all.sh reads
 from E2E_TIMINGS; refreshing tests/e2e/timings/ is copying those files. A report
@@ -62,6 +68,19 @@ def read_reports(directory: Path):
                 continue
             ms = int(parts[2]) if parts[2].isdigit() else 0
             yield m["host"], int(m["shard"]), parts[0], parts[1], ms, parts[3] if len(parts) > 3 else ""
+
+
+def read_host_requirements(path: Path) -> dict[str, set[str]]:
+    """`<test>\t<host> <host> ...\t<reason>` lines: the hosts a test must pass on."""
+    out: dict[str, set[str]] = {}
+    if not path.exists():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        out[parts[0].strip()] = set(parts[1].split()) if len(parts) > 1 else set()
+    return out
 
 
 def read_exceptions(path: Path) -> dict[str, str]:
@@ -109,8 +128,10 @@ def main() -> int:
     workflows = workflow_tokens([p.read_text(encoding="utf-8")
                                  for p in sorted((root / ".github" / "workflows").glob("*.yml"))])
     exceptions = read_exceptions(root / "tests" / "e2e" / "coverage-exceptions.tsv")
+    required = read_host_requirements(root / "tests" / "e2e" / "host-requirements.tsv")
 
     ran: dict[str, set[str]] = defaultdict(set)
+    passed: dict[str, set[str]] = defaultdict(set)
     skipped: dict[str, set[str]] = defaultdict(set)
     shard_ms: dict[tuple[str, int], int] = defaultdict(int)
     timings: dict[str, dict[str, int]] = defaultdict(dict)
@@ -119,6 +140,8 @@ def main() -> int:
         reports += 1
         if status in RAN:
             ran[test].add(host)
+            if status == "pass":
+                passed[test].add(host)
             shard_ms[(host, shard)] += ms
             timings[host][test] = ms
         elif status == "skip":
@@ -143,6 +166,15 @@ def main() -> int:
     for test in exceptions:
         if test not in tests:
             stale.append(f"{test} is excused but does not exist")
+    unmet = []
+    for test, hosts in sorted(required.items()):
+        if test not in tests:
+            stale.append(f"{test} is required on hosts but does not exist")
+            continue
+        for host in sorted(hosts - passed[test]):
+            why = [d for d in skipped[test] if d.startswith(f"{host}: ")]
+            unmet.append(f"{test} did not pass on {host}"
+                         f"{' (' + '; '.join(why) + ')' if why else (' (it ran and did not pass)' if host in ran[test] else ' (no report of it there)')}")
 
     print(f"{len(tests)} tests: {counts['ran']} ran on a shard, {counts['job']} run by a "
           f"dedicated job, {counts['excused']} excused, {len(uncovered)} uncovered")
@@ -152,6 +184,8 @@ def main() -> int:
         print(f"UNCOVERED: {line}")
     for line in stale:
         print(f"STALE EXCEPTION: {line}")
+    for line in unmet:
+        print(f"REQUIRED ON HOST: {line}")
 
     if args.timings_out:
         out = Path(args.timings_out)
@@ -159,7 +193,7 @@ def main() -> int:
         for host, table in timings.items():
             (out / f"{host}.tsv").write_text(
                 "".join(f"{t}\t{ms}\n" for t, ms in sorted(table.items())), encoding="utf-8")
-    return 1 if uncovered or stale else 0
+    return 1 if uncovered or stale or unmet else 0
 
 
 if __name__ == "__main__":

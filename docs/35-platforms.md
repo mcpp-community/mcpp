@@ -22,7 +22,9 @@ the tools the build runs on this machine, the compile and link conventions, the
 name and seal of an artifact, and the runner. A project states none of it. The
 target table selects `mcpplibs.openkal-platform` for `x86_64-openkal` and
 `aarch64-openkal` (2026.10.27.1+), which is what built-in support for those two
-targets is.
+targets is. An image is a release form, and a native row is a build target with
+the same guarantees; neither ranks above the other ([24](24-openkal-cross.md),
+"Two Roles, No Ranking").
 
 ## The shortest run
 
