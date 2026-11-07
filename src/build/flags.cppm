@@ -6,9 +6,6 @@
 //
 // See .agents/docs/2026-05-12-compile-commands-design.md.
 
-module;
-#include <cstdlib>
-
 export module mcpp.build.flags;
 
 import std;

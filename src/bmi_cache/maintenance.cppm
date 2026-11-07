@@ -19,15 +19,11 @@
 //     (dep entries lived at <root>/<fp>/deps) — dead code in front of the loop
 //     that actually did the work.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.bmi_cache.maintenance;
 
 import std;
 import mcpp.home;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.libs.toml;
 import mcpp.ui;
 import mcpplibs.os.fs;

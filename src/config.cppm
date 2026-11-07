@@ -14,19 +14,16 @@
 // Initialization is silent and idempotent: every Config::load() ensures
 // the directory tree exists and seeds .xlings.json if missing.
 
-module;
-#include <cstdlib>
-#include <cstdio>
-
 export module mcpp.config;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpp.home;
 import mcpp.modgraph.glob;   // try_narrow: the one UTF-8 spelling of a path
 import mcpp.libs.toml;
 import mcpp.manifest.platform;
 import mcpp.manifest.platform_toml;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.pm.index_spec;
 import mcpp.provider;
 import mcpp.provider.select;
@@ -39,6 +36,8 @@ import mcpp.log;
 import mcpp.diag;
 import mcpp.fallback.xlings_binary;
 import mcpp.fallback.config_migration;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 export namespace mcpp::config {
 
@@ -291,7 +290,7 @@ std::string check_base_init(const GlobalConfig& cfg) {
 bool report_network(const GlobalConfig& cfg, bool quiet = false) {
     const auto report = mcpp::provider::open(make_xlings_env(cfg))->check_network();
     auto line = [&](std::string_view key, std::string_view value) {
-        if (!quiet) std::println(stderr, "{:>12} {}", key, value);
+        if (!quiet) std::println(libc::stderr(), "{:>12} {}", key, value);
     };
     if (report.status == "offline") { line("Network", "Skipped (offline mode)"); return false; }
     if (report.status != "checked") {
@@ -427,9 +426,9 @@ namespace {
 void print_status(std::string_view verb, std::string_view msg) {
     constexpr std::size_t W = 12;
     if (verb.size() >= W) {
-        std::println(stderr, "{} {}", verb, msg);
+        std::println(libc::stderr(), "{} {}", verb, msg);
     } else {
-        std::println(stderr, "{}{} {}", std::string(W - verb.size(), ' '), verb, msg);
+        std::println(libc::stderr(), "{}{} {}", std::string(W - verb.size(), ' '), verb, msg);
     }
 }
 
@@ -761,7 +760,7 @@ parse_target_defaults(const mcpp::libs::toml::Document& doc,
             std::lock_guard lock(m);
             for (auto const& w : warnings)
                 if (said.insert(file.string() + '\n' + w).second)
-                    std::println(stderr, "warning: {}: {}", file.string(), w);
+                    std::println(libc::stderr(), "warning: {}: {}", file.string(), w);
         }
     } said{ file, {} };
     const mp::Reader reader{file, mp::Tier::Config, &said.warnings};
@@ -1234,7 +1233,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     if (cfg.xlingsBinaryMode != "bundled") {
         if (auto why = mcpp::provider::unmet(mcpp::provider::describe(cfg.xlingsBinary)); !why.empty()) {
             if (!quiet)
-                std::println(stderr, "note: the configured xlings {} {}; using the one mcpp ships",
+                std::println(libc::stderr(), "note: the configured xlings {} {}; using the one mcpp ships",
                              cfg.xlingsBinary.string(), why);
             cfg.xlingsBinary = bundledBinary;
             auto xbin = mcpp::fallback::acquire_xlings_binary(
@@ -1356,7 +1355,7 @@ bool ensure_project_index_dir(
             repo.artifact = spec.artifact;
             repo.source   = spec.source;
         } else if (!spec.artifact.empty()) {
-            std::println(stderr, "warning: [indices].{}: artifact source ignored "
+            std::println(libc::stderr(), "warning: [indices].{}: artifact source ignored "
                                  "(rev/tag/branch/path pins force git)", name);
         }
         customRepos.push_back(std::move(repo));

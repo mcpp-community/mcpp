@@ -3,16 +3,12 @@
 // Bodies moved verbatim from the CLI layer. Zero behavior change
 // (InstallProgressHandler was renamed InstallProgressHandler for its new home).
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.fetcher.progress;
 
 import std;
 import mcpp.config;
 import mcpp.fetcher;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpp.ui;
 import mcpp.invocation;

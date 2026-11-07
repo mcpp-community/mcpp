@@ -100,6 +100,9 @@ jobs:
       - name: Check modules/ wiring
         run: bash .github/tools/check_modules_wiring.sh
 
+      - name: Check that headers are included only in the system lock files
+        run: bash .github/tools/check_include_regions.sh
+
       - name: Check src/build/prepare* file lengths
         run: bash .github/tools/check_file_lengths.sh
 

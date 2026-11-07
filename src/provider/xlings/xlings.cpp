@@ -1,12 +1,9 @@
 // mcpp.provider.xlings — the implementation: how mcpp starts xlings, reads
 // its events and keeps its home.
-module;
-#include <cstdio>      // stderr
-#include <cstdlib>
-
 module mcpp.provider.xlings;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpp.provider;
 import mcpp.pm.compat;
 import mcpp.pm.index_contract;
@@ -21,8 +18,10 @@ import mcpp.log;
 import mcpp.ui;                 // closing notices of the refresh guard
 import mcpp.home;
 import mcpp.xpkg_version;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.fs;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::provider::xlings {
 // How mcpp starts xlings: `args` after the binary, the environment
@@ -55,9 +54,9 @@ namespace {
 void print_status(std::string_view verb, std::string_view msg) {
     constexpr std::size_t W = 12;
     if (verb.size() >= W) {
-        std::println(stderr, "{} {}", verb, msg);
+        std::println(libc::stderr(), "{} {}", verb, msg);
     } else {
-        std::println(stderr, "{}{} {}", std::string(W - verb.size(), ' '), verb, msg);
+        std::println(libc::stderr(), "{}{} {}", std::string(W - verb.size(), ' '), verb, msg);
     }
 }
 
@@ -1557,7 +1556,7 @@ int install_direct(const Env& env, std::string_view target, bool quiet) {
     // terminal showed them before, unless the caller asked for quiet. They are
     // xlings' own progress text, narration: standard error.
     inv.options.streams = quiet ? mcpp::run::Streams::discard : mcpp::run::Streams::output_error_shown;
-    inv.options.on_line = [](std::string_view line) { std::println(stderr, "{}", line); };
+    inv.options.on_line = [](std::string_view line) { std::println(libc::stderr(), "{}", line); };
     inv.options.total = std::chrono::duration_cast<std::chrono::milliseconds>(kDirectInstallTimeout);
     const auto ran = mcpp::run::execute(inv.argv, inv.options);
     const bool timedOut = ran.timed_out;
@@ -1685,7 +1684,7 @@ void ensure_init(const Env& env, bool quiet) {
     inv.options.total = std::chrono::seconds{120};
     const int rc = mcpp::run::execute(inv.argv, inv.options).exit_code;
     if (rc != 0 && !quiet) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "warning: `xlings self init` failed for sandbox at '{}'",
             env.home.string());
     }
@@ -1720,7 +1719,7 @@ void ensure_patchelf(const Env& env, bool quiet,
     int rc = install_with_progress(env,
         std::format("xim:patchelf@{}", pinned::kPatchelfVersion), cb, quiet);
     if (rc != 0 && !quiet) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "warning: failed to bootstrap patchelf into mcpp sandbox; "
             "subsequent xim installs may skip ELF rewriting");
     }
@@ -1747,7 +1746,7 @@ void ensure_ninja(const Env& env, bool quiet,
     int rc = install_with_progress(env,
         std::format("xim:ninja@{}", pinned::kNinjaVersion), cb, quiet);
     if (rc != 0 && !quiet) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "warning: failed to bootstrap ninja into mcpp sandbox (exit {})",
             rc);
     }
@@ -2017,7 +2016,7 @@ int update_index_unguarded(const Env& env, bool quiet) {
         // would only be waited on three times. The caller treats the refresh as
         // failed and resolves from the local index, as it does for any failure.
         if (timedOut) {
-            std::println(stderr,
+            std::println(libc::stderr(),
                 "warning: the package index refresh did not finish within {} seconds and was "
                 "stopped; continuing with the local index "
                 "(the bound is [index] refresh_timeout in mcpp's config.toml)",
@@ -2036,7 +2035,7 @@ int update_index_unguarded(const Env& env, bool quiet) {
     // the TTL refresh before a build), which continues with the local index;
     // `mcpp index update` reports the failure itself.
     if (quiet)
-        std::println(stderr,
+        std::println(libc::stderr(),
             "warning: the package index refresh failed after {} attempts (exit {}); "
             "continuing with the local index", kMaxAttempts, rc);
     return rc;

@@ -20,9 +20,6 @@
 //
 // Design: .agents/docs/2026-09-02-runner-beyond-baremetal-design.md §4.3-4.4.
 
-module;
-#include <cerrno>
-
 export module mcpp.build.runner_lookup;
 
 import std;
@@ -122,7 +119,7 @@ inline Lookup locate(std::string_view argv0,
 enum class SpawnClass { Unloadable, Other };
 
 inline SpawnClass classify(int e) {
-    if (e == ENOEXEC) return SpawnClass::Unloadable;
+    if (e == static_cast<int>(std::errc::executable_format_error)) return SpawnClass::Unloadable;
     return SpawnClass::Other;
 }
 

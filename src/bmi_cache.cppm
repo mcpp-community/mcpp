@@ -59,7 +59,7 @@ module;
 export module mcpp.bmi_cache;
 
 import std;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.home.files;
 
 export namespace mcpp::bmi_cache {

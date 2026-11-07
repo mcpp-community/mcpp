@@ -42,7 +42,7 @@ import mcpp.source_kind;
 import mcpp.build.plan;
 import mcpp.build.flags;
 import mcpp.home;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.platform;
 import mcpp.home.files;
 import mcpp.manifest.flag_words;

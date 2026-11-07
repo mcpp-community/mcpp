@@ -1,13 +1,10 @@
 // mcpp.cli.cmd_self — CLI parsing + routing for the `mcpp self` family,
 // doctor, why, env and explain. Implementations live in mcpp.doctor.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.cli.cmd_self;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.build.engine_package;
@@ -22,9 +19,11 @@ import mcpp.ui.terminal;
 import mcpp.toolchain.triple;          // pins::host_default_toolchain (WS8)
 import mcpp.toolchain.msvc;            // msvc_available_here
 import mcpp.wire;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.toolchain.platform;
 import mcpp.invocation;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::cli {
 
@@ -88,7 +87,7 @@ export int cmd_env(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto f = parsed.value("format")) {
         auto fmt = mcpp::wire::parse_format(*f);
         if (!fmt) {
-            std::println(stderr, "error: {}",
+            std::println(libc::stderr(), "error: {}",
                          mcpp::wire::unsupported_format(*f));
             return 2;
         }
@@ -114,7 +113,7 @@ export int cmd_why(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto f = parsed.value("format")) {
         auto fmt = mcpp::wire::parse_format(*f);
         if (!fmt) {
-            std::println(stderr, "error: {}",
+            std::println(libc::stderr(), "error: {}",
                          mcpp::wire::unsupported_format(*f));
             return 2;
         }
@@ -129,7 +128,7 @@ export int cmd_why(const mcpplibs::cmdline::ParsedArgs& parsed) {
             return mcpp::doctor::why_build_programs_or_compat_json(
                 topic, parsed.option_or_empty("features").value());
         if (!topic.empty() && topic != "toolchain") {
-            std::println(stderr,
+            std::println(libc::stderr(),
                 "error: --format json is defined for `mcpp why toolchain`, "
                 "`mcpp why sources|tool|payload`, `mcpp why build-programs` and "
                 "`mcpp why compat`; '{}' has no machine-readable "
@@ -158,7 +157,7 @@ export int cmd_self_version(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
 export int cmd_self_init(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::string target = parsed.option_or_empty("home").value();
     if (parsed.value("home") && target.empty()) {
-        std::println(stderr, "error: --home requires a non-empty directory");
+        std::println(libc::stderr(), "error: --home requires a non-empty directory");
         return 2;
     }
     if constexpr (mcpplibs::os::is_windows) {
@@ -192,7 +191,7 @@ export int cmd_self_init(const mcpplibs::cmdline::ParsedArgs& parsed) {
             if (input.empty() || input == "1") target = "D:/mcpp";
             else if (input == "2") target = fallback;
             else {
-                std::println(stderr, "       Error Invalid selection; expected 1 or 2\n"
+                std::println(libc::stderr(), "       Error Invalid selection; expected 1 or 2\n"
                                      "        Hint For a custom path, run: mcpp self init --home <path>");
                 return 2;
             }
@@ -215,7 +214,7 @@ export int cmd_self_config(const mcpplibs::cmdline::ParsedArgs& parsed) {
 export int cmd_self_store(const mcpplibs::cmdline::ParsedArgs& parsed) {
     auto sub = parsed.has_subcommand() && parsed.subcommand_name() == "dedupe" ? parsed.subcommand() : std::nullopt;
     if (!sub) {
-        std::println(stderr, "error: `mcpp self store` requires a subcommand: dedupe");
+        std::println(libc::stderr(), "error: `mcpp self store` requires a subcommand: dedupe");
         return 2;
     }
     return mcpp::doctor::store_dedupe(sub->get().is_flag_set("apply"));
@@ -226,7 +225,7 @@ export int cmd_self_store(const mcpplibs::cmdline::ParsedArgs& parsed) {
 export int cmd_explain_action(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::string code = parsed.positional(0);
     if (code.empty()) {
-        std::println(stderr, "error: explain requires an error code (e.g. E0001)");
+        std::println(libc::stderr(), "error: explain requires an error code (e.g. E0001)");
         return 2;
     }
     return cmd_explain(code);

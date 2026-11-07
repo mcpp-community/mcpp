@@ -12,13 +12,13 @@
 //
 // Log file: <logDir>/mcpp.log (rotated at max_file_size, keeps max_files)
 
-module;
-#include <cstdio>
-
 export module mcpp.log;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpp.invocation;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 export namespace mcpp::log {
 
@@ -185,7 +185,7 @@ void write_stderr(std::string_view tag, std::string_view message) {
     const auto ts = timestamp();
     const Record record{ts, tag, message};
     if (auto sink = g_terminalSink.load()) { sink(record); return; }
-    std::fputs(verbose_line(record, true).c_str(), stderr);
+    std::fputs(verbose_line(record, true).c_str(), libc::stderr());
 }
 
 } // namespace

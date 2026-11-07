@@ -41,15 +41,11 @@
 //    Effects are also reported in `--protocol-version` as a static table,
 //    because a gate has to decide BEFORE running — by the time an envelope
 //    arrives, whatever it describes has already happened.
-module;
-
-#include <cstdio>
-
 export module mcpp.wire;
 
 import std;
 import mcpp.version;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.effects;
 
 export namespace mcpp::wire {

@@ -41,7 +41,7 @@ import mcpp.build.refusal;
 import mcpp.build.provisions;
 import mcpp.build.source_digest;
 import mcpp.build.tool_store;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.manifest;
 import mcpp.modgraph.scanner;
 import mcpplibs.os.platform;

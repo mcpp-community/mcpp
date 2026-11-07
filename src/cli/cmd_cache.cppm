@@ -1,18 +1,17 @@
 // mcpp.cli.cmd_cache — CLI parsing + routing for the `mcpp cache` family.
 // Implementations live in mcpp.bmi_cache.maintenance.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.cli.cmd_cache;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpplibs.cmdline;
 import mcpp.bmi_cache.maintenance;
 import mcpp.ui;
 import mcpp.wire;
-import mcpp.libs.json;
+import nlohmann.json;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::cli {
 
@@ -29,7 +28,7 @@ export int cmd_cache_list(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto f = parsed.value("format")) {
         auto fmt = mcpp::wire::parse_format(*f);
         if (!fmt) {
-            std::println(stderr, "error: {}", mcpp::wire::unsupported_format(*f));
+            std::println(libc::stderr(), "error: {}", mcpp::wire::unsupported_format(*f));
             return 2;
         }
         mcpp::wire::emit({

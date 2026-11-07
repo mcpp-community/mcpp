@@ -14,7 +14,7 @@ import mcpp.build.version_floor;
 import mcpp.build.command_line;
 import mcpp.home;
 import mcpp.toolchain.platform;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpp.manifest;
 import mcpp.source_kind;

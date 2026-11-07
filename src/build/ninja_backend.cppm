@@ -11,10 +11,6 @@
 // All compile commands are run with cwd = plan.outputDir, so GCC's implicit
 // gcm.cache/ lookup finds both std and our package modules.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.build.ninja;
 
 import std;

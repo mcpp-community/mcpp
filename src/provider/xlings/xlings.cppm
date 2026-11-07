@@ -7,10 +7,6 @@
 // This module is a LEAF dependency: it only imports `std` and
 // `mcpp.pm.compat`. It must NOT import mcpp.config or any other mcpp module.
 
-module;
-#include <cstdio>      // stderr
-#include <cstdlib>
-
 export module mcpp.provider.xlings;
 
 import std;
@@ -26,7 +22,7 @@ import mcpp.log;
 import mcpp.ui;                 // closing notices of the refresh guard
 import mcpp.home;
 import mcpp.xpkg_version;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.fs;
 
 export namespace mcpp::provider::xlings {

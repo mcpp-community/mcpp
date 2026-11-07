@@ -9,9 +9,6 @@
 // model, and records the source on every line that reports it -- the shape
 // `msvc@system` already has, generalised to gcc and llvm.
 
-module;
-#include <cstdlib>
-
 module mcpp.build.prepare;
 import :state;
 

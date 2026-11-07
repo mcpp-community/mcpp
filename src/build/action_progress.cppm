@@ -2,7 +2,7 @@
 // command's exit status and output postconditions remain authoritative.
 export module mcpp.build.action_progress;
 import std;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.fs;
 
 export namespace mcpp::build::action_progress {

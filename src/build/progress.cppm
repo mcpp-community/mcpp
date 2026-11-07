@@ -27,9 +27,6 @@
 // model's: every line the model writes is collected under the lock and written
 // after it is released.
 
-module;
-#include <cstdio>
-
 export module mcpp.build.progress;
 
 import std;

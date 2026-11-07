@@ -36,7 +36,7 @@
 export module mcpp.provider.xlings.subos_info;
 
 import std;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.runtime.launch_env;
 import mcpp.provider;
 

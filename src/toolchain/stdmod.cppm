@@ -1,5 +1,4 @@
 module;
-#include <cstdlib>    // getenv
 
 // mcpp.toolchain.stdmod — pre-build the `import std` BMI and cache it.
 //
@@ -33,7 +32,7 @@ export module mcpp.toolchain.stdmod;
 import std;
 import mcpp.home;
 import mcpp.home.files;   // mark_used
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.platform;
 import mcpp.build.command_line;
 import mcpp.run;

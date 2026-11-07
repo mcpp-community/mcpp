@@ -2,10 +2,6 @@
 // (list / install / set-default / remove) + version-spec matching.
 // Bodies moved verbatim from the CLI layer. Zero behavior change.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.toolchain.lifecycle;
 
 import std;
@@ -23,7 +19,7 @@ import mcpp.toolchain.triple;
 import mcpp.toolchain.post_install;
 import mcpp.ui;
 import mcpp.wire;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpp.provider;
 import mcpp.provider.select;

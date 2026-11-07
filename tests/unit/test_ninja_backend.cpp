@@ -7,7 +7,7 @@ import mcpp.build.compile_commands;
 import mcpp.build.flags;
 import mcpp.build.ninja;
 import mcpp.build.plan;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.manifest;
 import mcpp.modgraph.scanner;   // PackageRoot, for trim_map
 import mcpp.toolchain.dialect;
@@ -141,7 +141,11 @@ TEST(NinjaBackend, OrdinaryCompilersShareTheDetachedScheduleBound) {
         return start == std::string::npos ? std::string{} : text.substr(start, text.find("\n\n", start) - start);
     };
     for (const auto name : {"cxx_module", "cxx_object", "c_object", "asm_object", "asm_object_raw", "nasm_object", "cxx_scan"})
-        EXPECT_NE(rule(name).find("__compiler-cap --sem .mcpp-sched --cap 2 --output $out --depfile $out.d -- "), std::string::npos) << name;
+        EXPECT_NE(rule(name).find("__compiler-cap --sem .mcpp-sched --output $out --depfile $out.d -- "), std::string::npos) << name;
+    // The generation carries the cap: the graph names no number of compilers,
+    // so it is the same whatever the job count (e2e 861).
+    EXPECT_EQ(text.find("--cap"), std::string::npos);
+    EXPECT_EQ(text.find("sched_cap"), std::string::npos);
     EXPECT_EQ(rule("cxx_module_bmi").find("__compiler-cap"), std::string::npos)
         << "the BMI supervisor already holds a permit";
     EXPECT_EQ(rule("cxx_module_obj").find("__compiler-cap"), std::string::npos)

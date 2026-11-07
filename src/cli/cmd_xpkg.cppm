@@ -10,18 +10,18 @@
 // the index-floor discipline means either a typo or a descriptor that needs
 // a newer floor. `--allow-unknown` downgrades them to warnings.
 
-module;
-#include <cstdio>
-
 export module mcpp.cli.cmd_xpkg;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpplibs.cmdline;
 import mcpp.manifest;
 import mcpp.toolchain.platform;
 import mcpp.ui;
 import mcpp.wire;
-import mcpp.libs.json;
+import nlohmann.json;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::cli {
 
@@ -121,7 +121,7 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
     bool enveloped = false;
     if (auto f = parsed.value("format")) {
         if (!mcpp::wire::parse_format(*f)) {
-            std::println(stderr, "error: {}", mcpp::wire::unsupported_format(*f));
+            std::println(libc::stderr(), "error: {}", mcpp::wire::unsupported_format(*f));
             return 2;
         }
         enveloped = true;
@@ -239,7 +239,7 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 auto msg = std::format(
                     "{} [{}]: unknown mcpp-segment key '{}' — silently "
                     "ignored at build time by this mcpp version", file, plat, k);
-                if (allowUnknown) std::println(stderr, "warning: {}", msg);
+                if (allowUnknown) std::println(libc::stderr(), "warning: {}", msg);
                 else              { mcpp::ui::error(msg); allRc = 1; }
             }
             std::println("parse OK [{}]  sources {}  includes {}  generated {}",
@@ -266,7 +266,7 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
             auto msg = std::format(
                 "{}: unknown mcpp-segment key '{}' — silently ignored at "
                 "build time by this mcpp version", file, k);
-            if (allowUnknown) std::println(stderr, "warning: {}", msg);
+            if (allowUnknown) std::println(libc::stderr(), "warning: {}", msg);
             else              mcpp::ui::error(msg);
         }
         if (!allowUnknown) rc = 1;

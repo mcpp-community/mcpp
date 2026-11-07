@@ -12,7 +12,7 @@ import std;
 // whole thing put the platform layer above configuration, xlings and the
 // package manager -- which is what kept `src/platform` from being a package of
 // its own. The caller passes the path; see subos_path.
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.platform;
 import mcpp.toolchain.platform;
 import mcpp.provider;

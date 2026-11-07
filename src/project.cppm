@@ -4,10 +4,6 @@
 // private copy of find_manifest_root to avoid importing mcpp.cli).
 // Bodies moved verbatim from the CLI layer. Zero behavior change.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.project;
 
 import std;

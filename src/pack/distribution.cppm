@@ -12,7 +12,7 @@
 export module mcpp.pack.distribution;
 
 import std;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.pack.compress;
 import mcpp.pack.zip;
 import mcpp.pack.polyglot;      // a polyglot file is refused by name (§8)
@@ -1423,7 +1423,7 @@ std::string launcher_manifest(std::string_view name, std::string_view version) {
         "[targets.{0}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n"
         "[build]\nsources = [\"src/main.cpp\", \"src/carried.S\"]\n\n"
         "[dependencies.mcpplibs]\nos = \"0.2.0\"\n\n"
-        "[dependencies.compat]\nzstd = \"1.5.7\"\n",
+        "[dependencies]\n\"mcpplibs.mwrap.zstd\" = \"1.5.7\"\n",
         name, version.empty() ? std::string_view("0.0.0") : version);
 }
 
@@ -1442,10 +1442,9 @@ std::string_view launcher_main() {
 // directories this program makes (`mcpp/`, `single-file/`) and the tree it runs
 // from are this user's and no links, or the program refuses: another user who
 // owned one could have put a program of theirs under the payload's name.
-#include <zstd.h>
-
 import std;
 import mcpplibs.os;
+import mcpplibs.mwrap.zstd;
 
 extern "C" const unsigned char mcpp_carried_begin[];
 extern "C" const unsigned char mcpp_carried_end[];
@@ -1482,7 +1481,8 @@ std::optional<std::string> extract(const fs::path& into) {
     const auto* begin = reinterpret_cast<const char*>(mcpp_carried_begin);
     const auto size = static_cast<std::size_t>(mcpp_carried_end - mcpp_carried_begin);
     const auto content = ZSTD_getFrameContentSize(begin, size);
-    if (content == ZSTD_CONTENTSIZE_ERROR || content == ZSTD_CONTENTSIZE_UNKNOWN)
+    namespace zs = mcpplibs::mwrap::zstd::macros;
+    if (content == zs::ZSTD_CONTENTSIZE_ERROR || content == zs::ZSTD_CONTENTSIZE_UNKNOWN)
         return "the carried payload is not a zstd frame";
     std::string tree(static_cast<std::size_t>(content), '\0');
     const auto n = ZSTD_decompress(tree.data(), tree.size(), begin, size);

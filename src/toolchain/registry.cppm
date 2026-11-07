@@ -17,7 +17,7 @@
 export module mcpp.toolchain.registry;
 
 import std;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.platform;
 import mcpp.toolchain.platform;
 import mcpp.provider;

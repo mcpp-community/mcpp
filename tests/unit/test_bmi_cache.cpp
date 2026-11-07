@@ -10,7 +10,7 @@ import mcpp.bmi_cache;
 import mcpp.bmi_cache.maintenance;
 import mcpp.home;
 import mcpp.invocation;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.env;
 import mcpplibs.os.platform;
 import mcpplibs.os.windows;

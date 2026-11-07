@@ -9,15 +9,11 @@
 // its provider bound it to; what mcpp's artifacts load is decided per build
 // (mcpp.toolchain.linkmodel).
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.toolchain.post_install;
 
 import std;
 import mcpp.config;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpplibs.os.platform;
 import mcpp.run;

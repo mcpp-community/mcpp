@@ -12,7 +12,7 @@ import mcpp.build.stage;
 import mcpp.build.refusal;
 import mcpp.build.version_floor;
 import mcpp.home;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpp.manifest;
 import mcpp.source_kind;

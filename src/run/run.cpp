@@ -1,11 +1,9 @@
 // mcpp.run over mcpplibs.os: the launcher, the registry of running programs,
 // and the watcher that ends mcpp at a request.
-module;
-#include <cstdio>     // stdout, stderr: macros, which `import std` does not carry
-
 module mcpp.run;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpplibs.os.platform;
 import mcpplibs.os.error;
 import mcpplibs.os.env;
@@ -15,6 +13,8 @@ import mcpplibs.os.interrupt;
 import mcpp.invocation;
 import mcpp.build.command_line;
 import mcpp.runtime.launch_env;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::run {
 
@@ -357,7 +357,7 @@ RunResult result_of(Outcome&& o, int* spawn_error, bool messageIntoOutput) {
 int status_of(const Outcome& o, int* spawn_error) {
     if (o.spawn_error == 0) return o.exit_code;
     if (spawn_error) *spawn_error = o.spawn_error;
-    else std::fputs(o.spawn_message.c_str(), stderr);
+    else std::fputs(o.spawn_message.c_str(), libc::stderr());
     return 127;
 }
 
@@ -449,14 +449,14 @@ int run_foreground(const std::vector<std::string>& argv, const Env& extraEnv, in
         o.args.assign(argv.begin() + 1, argv.end());
         o.env = child_env(extraEnv, false);
         o.in = o.out = o.err = os::process::stdio::inherit;
-        std::fflush(stdout);
-        std::fflush(stderr);
+        std::fflush(libc::stdout());
+        std::fflush(libc::stderr());
         auto r = os::process::exec(o);   // returns only when the program could not be started
         error = r ? static_cast<int>(std::errc::io_error) : errno_of(r.error().code);
         if (!r) detail = detail_of(r.error());
     }
     if (spawn_error) *spawn_error = error;
-    else std::fputs(spawn_failure(argv.front(), error, detail).c_str(), stderr);
+    else std::fputs(spawn_failure(argv.front(), error, detail).c_str(), libc::stderr());
     return 127;
 }
 
@@ -547,7 +547,7 @@ RunResult execute(const std::vector<std::string>& argv, const Options& opt) {
                 if (opt.on_line) opt.on_line(std::string_view(o.spawn_message).substr(0, o.spawn_message.size() - 1));
                 else r.output = o.spawn_message;
             } else {
-                std::fputs(o.spawn_message.c_str(), stderr);
+                std::fputs(o.spawn_message.c_str(), libc::stderr());
             }
         }
     }
