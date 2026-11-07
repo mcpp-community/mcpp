@@ -1504,7 +1504,7 @@ GCC 16.1 报告 `sorry, unimplemented: private module fragment`，mcpp
 ```toml
 [profile.dist]
 opt      = 3              # -O level (a number, or the string "s"/"z")
-debug    = false          # -g
+debug    = false          # -g;cl.exe 上为 /Z7
 lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gcc builds ship without the LTO plugin)
 strip    = true           # -s at link time
 ndebug     = true         # 整个图的每个单元 -DNDEBUG(release/dist 默认开)
@@ -1515,6 +1515,10 @@ cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
 ldflags  = []
 ```
+
+**cl.exe 上的调试信息（2026.11.7.1+）。**`debug = true` 以 `/Z7` 编译：每个对象携带自己的调试信息。
+`/Zi` 与 `/ZI` 把全部编译的调试信息经由 mspdbsrv.exe 写入同一个 PDB；该服务在启动它的编译结束后继续存在，
+并随那个编译的进程单元一同结束。包的标志中的 `/Zi`、`/ZI`、`/FS` 在编译开始前被拒绝。
 
 - 选择与默认值：一条裸的 `mcpp build` 使用 **`dev`** profile
   （`-O0 -g`）——这是主流约定（参见 Cargo/Meson/CMake/Zig/Bazel）。

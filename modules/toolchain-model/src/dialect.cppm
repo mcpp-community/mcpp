@@ -30,7 +30,7 @@ struct CommandDialect {
     std::string_view compileOnly;      // "-c"     | "/c"
     std::string_view outputObjPrefix;  // "-o "    | "/Fo:"
     std::string_view optPrefix;        // "-O"     | "/O"
-    std::string_view debugFlags;       // "-g"     | "/Zi /FS"
+    std::string_view debugFlags;       // "-g"     | "/Z7"
     std::string_view alwaysFlags;      // ""       | "/nologo /EHsc /utf-8"
     // Same rationale as forceCxxLangArgv: the argv consumer gets tokens, not
     // a string it has to split. Both spans point at static arrays below.
@@ -205,6 +205,18 @@ std::optional<CrtWordVerdict> check_crt_word(std::string_view word,
                                              bool staticCrt,
                                              std::string_view key);
 
+// A SHARED-PDB WORD IS REFUSED ON cl.exe (2026.11.7.1). `/Zi` and `/ZI`
+// write a compile's debug information into a PDB that every compile of a
+// directory shares, through mspdbsrv.exe, a server the first cl.exe starts and
+// that outlives it; `/FS` serialises those writes through it. Each compile
+// runs in a process unit that retires with the compile, and the server is a
+// member of the unit that started it: retiring that unit ends the server under
+// every other compile writing through it. `[profile.<name>] debug = true`
+// gives each object its own debug information (`/Z7`). Returns the refusal
+// for such a word, either dash, and nullopt for any other word.
+std::optional<std::string> check_shared_pdb_word(std::string_view word,
+                                                 std::string_view key);
+
 // The two dialect rows, reachable without a Toolchain. Exposed so the MSVC
 // row — which no build reaches until the cl.exe backend lands — can still be
 // unit-tested, and so callers that already know the shape they want (the
@@ -273,7 +285,15 @@ constexpr CommandDialect kMsvcDialect{
     .compileOnly     = "/c",
     .outputObjPrefix = "/Fo:",
     .optPrefix       = "/O",
-    .debugFlags      = "/Zi /FS",
+    // DEBUG INFORMATION IN EACH OBJECT (/Z7), not in a PDB that every compile
+    // of a directory shares (/Zi /FS). The shared PDB is written through
+    // mspdbsrv.exe, which the first cl.exe starts and which outlives it by
+    // seconds; the compiler executor retires each compile's process unit, and
+    // retiring the unit that holds the server ended the server under the
+    // concurrent compiles writing through it (C1090, PDB API error 23). An
+    // object that carries its own debug information is also complete on its
+    // own, which the object cache and a taken-over build directory assume.
+    .debugFlags      = "/Z7",
     .alwaysFlags     = "/nologo /EHsc /utf-8",
     .alwaysFlagsArgv = kMsvcAlwaysArgv,
     .libFlag         = "{}.lib",
@@ -331,6 +351,21 @@ std::string std_flag_for(const CommandDialect& d,
         return "/std:c++latest";
     }
     return std::format("{}{}", d.stdPrefix, canonical);
+}
+
+std::optional<std::string> check_shared_pdb_word(std::string_view word,
+                                                 std::string_view key) {
+    if (word.size() != 3 || (word[0] != '/' && word[0] != '-'))
+        return std::nullopt;
+    const auto spelling = word.substr(1);
+    if (spelling != "Zi" && spelling != "ZI" && spelling != "FS")
+        return std::nullopt;
+    return std::format(
+        "`{}` in {} writes debug information through mspdbsrv.exe, a PDB server "
+        "shared by every compile and ended with the compile that started it. "
+        "Remove the flag: `[profile.<name>] debug = true` gives each object its "
+        "own debug information (/Z7)",
+        word, key);
 }
 
 std::optional<CrtWordVerdict> check_crt_word(std::string_view word,

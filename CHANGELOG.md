@@ -43,6 +43,12 @@
   two seconds (macOS CI, a scan of a two-configuration workspace: "compiler
   registration channel closed or timed out") is asked again, and an owner that
   accepts no connection has ended, so the compiler ends at once (e2e 840, 1016).
+- cl.exe writes a debug build's debug information into each object (`/Z7`), not
+  into a PDB shared through mspdbsrv.exe (`/Zi /FS`). The server outlived the
+  compile that started it, and retiring that compile's process unit ended it
+  under the concurrent compiles, one of which failed with C1090, PDB API error
+  23 (e2e 258, intermittently on Windows). `/Zi`, `/ZI` and `/FS` in a
+  package's flags are refused on cl.exe before anything compiles (e2e 1023).
 
 - A finished detached compiler is recognized when its final status appears
   between status and liveness checks. Recovery still validates its output proof.
