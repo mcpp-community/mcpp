@@ -23,6 +23,8 @@ cd "$TMP"
 "$MCPP" new app > /dev/null
 cd app
 rm -f src/main.cpp
+# The skeleton's test is mtest's; this manifest names no dev-dependency.
+rm -f tests/test_smoke.cpp
 mkdir -p tests
 
 cat > mcpp.toml <<'EOF'
