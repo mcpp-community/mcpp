@@ -181,7 +181,7 @@ mcpp 对自身清单键已有完整的同类机制：`kDeprecations` 注册表�
 
 归属：mcpp 下一版本之后的独立版本，规范写入新 SPEC 与 docs/05、docs/51；W3 的 `is_openkal` 别名是它的第一个使用者。
 
-### W8 测试迁移到 mtest 与 CI 时间（T6 已确认；本轮发布之后）
+### W8 测试迁移到 mtest 与 CI 时间（T6 已确认；并入本轮）
 
 **测量（2026-11-08）。** mcpp 一次 PR 74 个作业、627 runner 分钟、墙钟 56 分钟；关键路径为 mcpp 构建（约 13 分钟）之后的 Linux 单元测试（43 分钟；16 核本机 6 分钟，构建占 210 秒）。e2e 720 个脚本在 Linux 累计约 94 分钟，按提交的耗时表分片，分片内串行（本轮一张过时的表使一个分片超时）。mcppls 一次 PR 88 个作业、446 runner 分钟、墙钟 92 分钟，关键路径为服务端与负载（约 70 分钟）之后的 stability。mtest 引擎已有 `--changed`（由程序的 `sources` 与用例的 `file:` 产物选择）、历史耗时、`resources` 互斥、`--failed`、`bisect`、`hot` 与 `path`。
 
@@ -191,7 +191,7 @@ mcpp 对自身清单键已有完整的同类机制：`kDeprecations` 注册表�
 |---|---|
 | mcpp | e2e 为 mtest 的 set：每个脚本一个用例，`# requires:` 为标签，`tests/e2e/host-requirements.tsv` 为 set 的过滤，独占点（`MCPP_HOME`、网络、端口）为 `resources`；分片按存储的历史耗时以最长优先分配，分片内按资源并行，耗时表不再提交。`mcpp test --changed <base>` 由构建图选择测试：测试记录的 `sources` 与传递导入覆盖变更即受影响。测试程序合成选项：一个目录的测试文件为一个程序，链接数随之减少。e2e 的覆盖映射：main 上定期以插桩的 mcpp 运行全部，得到用例到源文件的映射，存为用例的 `file:` 产物；PR 选择与变更相交的用例和冒烟集，无映射或映射过期的用例视为受影响。CI：PR 运行受影响集与冒烟集，main 与发布运行全部；单元测试按历史耗时分到多台机器 |
 | mcppls | 一致性与 ux 场景为 mtest 用例；性能与稳定性测量声明 `serial:perf`，不与其他用例并行；失败只重跑失败项（`--failed`）；与 W6 的组件表与负载借用一致 |
-| mtest | 构建插件的语法糖：静态用例清单（`"name"_test` 字面量与清单属性在构建时写出，清单属性优先于运行时列举）；覆盖映射的存储格式（用例、源文件、提交与时间）；存储以 main 的产物在运行之间共享 |
+| mtest | 静态用例清单与清单属性：`mcpplibs.mtest.manifest` 从源文本读出 `"name"_test` 字面量、属性、命名套件与嵌套用例，`mtest list --static` 不构建而列出；属性写在 `[cases]` 或宿主 mcpp.toml 的 `[package.metadata.mtest.cases]`，优先于程序的列举。不采用构建插件：mcpp 保存工具的 `[package.metadata]`，引擎与编辑器读同一份文本，不必每次构建运行构建程序。覆盖映射（`mtest-coverage/1`：用例、源文件、提交与时间，由 GCC 的 `.gcda` 计数测得）；`[discover.<name>]` 组与 `--shard`；存储以 main 的产物在运行之间共享 |
 
 **判据。** 既有 e2e 保持一个脚本一个用例；新增与改动的 e2e 以 Bash 适配的 `mtest_case` 写出各判据，失败定位到判据并可由 `--case` 单独运行。
 
@@ -267,7 +267,7 @@ W2、W3、W4 互不阻塞，可在 W1 的 CI 等待期间并行设计与实现�
 - **T4** 已确认：#874 归属本方案（W2），方案确定后与其他未收敛事项一并重新拆分实施计划。
 - **T5** 已确认：W6 并入本轮，mcppls #79 以 `0.21.0` 发布，mcpp-ide #5 加入 CI 分类，各一次发布。原问题：W6 的采用时机。建议并入本轮：mcppls #79 以 `0.21.0` 发布（版本规则、devtools、发布清单、插件的系列检查、组件表与 CI 分类、负载重用），mcpp-ide #5 加入同样的 CI 分类。这符合"确定的事项不拆到以后"，代价是两个 PR 再增加一轮 CI。另一做法是作为 mcppls 0.22.0 与 mcpp-ide 1.3.0 的内容，本轮保持 `0.0.21`。
 
-- **T6** 已确认：W8 在本轮（mcpp 2026.11.8.1、mcppls、clangd）发布之后开始，mcpp、mcppls、mtest 各一个 PR；既有 e2e 不改写，新增与改动的 e2e 以 `mtest_case` 写判据；PR 运行受影响集与冒烟集，main 与发布运行全部；参数由先行的探针测定。方案见 W8。
+- **T6** 已确认：W8 并入本轮，以追加提交进入 mcpp #906、mcppls #79，mtest 以 0.2.0（mtest#3）发布；既有 e2e 不改写，新增与改动的 e2e 以 `mtest_case` 写判据；PR 运行受影响集与冒烟集，main 与发布运行全部；参数由先行的探针测定。方案见 W8。
 
 ## 8. 实施计划
 
@@ -284,7 +284,7 @@ W2、W3、W4 互不阻塞，可在 W1 的 CI 等待期间并行设计与实现�
 | mcpp-community/mtest | 0.1.0 | 新仓库 | 规范 v1、C++ 库（unit、bench、cts、e2e）、引擎（运行、存储、查询、explain、plan、ci、拓扑导出）、C ABI 报告库、GoogleTest 与脚本适配；自身以 mtest 测试；ok 映像发布 | W4 |
 | mcpp | 2026.11.8.1 | #906（草稿）`release/2026.11.8.1` | #903、#904（含源文件检查）、S1 文档与 tier 评估、#874 的复测与剩余期望、S7 的协议运行器与 `mcpp.core` 上下文注入与构建图查询、`mcpp new` 默认使用 mtest、三份设计文档 | W2 |
 | xim-pkgindex | — | 各发布的 bump PR | mcpp、mcppls、mcpp-ide、mcpp-ide-nvim | 各工作流 |
-| mcpp、mcppls、mtest | 下一版本 | 各一个 PR，探针先行 | W8 | W8 |
+| mtest | 0.2.0 | mtest#3 | W8 的 mtest 部分；mcpp #906 与 mcppls #79 的 W8 部分以追加提交进入；探针 #909 先行 | W8 |
 
 首批迁移（mcppls、mcpp-ide、mcpp-plugins、mcppls-clangd 迁移到 os 0.4.0 与 mtest）是这些项目各自的下一个版本，依赖 os 0.4.0 与 mtest 0.1.0 的发布；迁移前以 mtest 的 CI 汇总测量正式基线（W4 §10.2）。
 
