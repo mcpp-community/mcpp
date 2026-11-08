@@ -20,6 +20,7 @@ jobs:
     defaults: { run: { shell: bash } }
     steps:
       - uses: actions/checkout@v4
+        with: { submodules: recursive }
       - uses: ./.github/actions/bootstrap-mcpp
       - name: The candidate mcpp and the mtest engine of the pending release
         run: |
@@ -32,6 +33,7 @@ jobs:
           echo "MTEST=$(find "$RUNNER_TEMP/mtest/target" -type f -name mtest -path '*/bin/mtest.mtest/*' | head -1)" >> "$GITHUB_ENV"
       - name: Shard 1 of 8, serial, by the harness
         id: serial
+        if: false   # measured in the run before (624 s)
         run: |
           start=$(date +%s)
           E2E_SHARD=1/8 E2E_TIMINGS=tests/e2e/timings/linux.tsv E2E_REPORT=$PWD/serial.tsv MCPP="$CAND" \
@@ -50,13 +52,16 @@ jobs:
             echo 'kind = "e2e"'
             echo 'timeout = "20m"'
           } > mtest.toml
-          select=(); while read -r m; do select+=(--program "$m"); done < ../../members.txt
-          for jobs in 1 2 3; do
-            rm -rf .mtest
+          select=(); while read -r m; do select+=(--program "$m"); done < ../../.github/probe/members.txt
+          round=0
+          for jobs in 2 2 2; do
+            rm -rf .mtest-$jobs
             start=$(date +%s)
-            MCPP="$CAND" "$MTEST" run --jobs $jobs --report-json ../../run-$jobs.json "${select[@]}" > ../../run-$jobs.log 2>&1 || true
+            n=$((++round))
+            MCPP="$CAND" "$MTEST" run --jobs $jobs --report-json ../../run-$n.json "${select[@]}" > ../../run-$n.log 2>&1 || true
+            cp -r .mtest ../../store-$n
             wall=$(( $(date +%s) - start ))
-            python3 - "$jobs" "$wall" ../../run-$jobs.json <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+            python3 - "$jobs" "$wall" ../../run-$n.json <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
           import json, sys
           try:
               j = json.load(open(sys.argv[3]))
@@ -66,11 +71,11 @@ jobs:
           bad = [c.get("program") for c in cases if c.get("status") not in ("pass", "flaky")]
           print(f"jobs={sys.argv[1]} wall={sys.argv[2]}s cases={len(cases)} failing={len(bad)} {bad[:12]}")
           PY
-            tail -3 ../../run-$jobs.log
+            tail -3 ../../run-$n.log
           done
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: e2e-parallel, path: "serial.log\nserial.tsv\nrun-*.json\nrun-*.log" }
+        with: { name: e2e-parallel, path: "serial.log\nserial.tsv\nrun-*.json\nrun-*.log\nstore-*" }
 
   unit-programs:
     if: false   # measured by the run before
