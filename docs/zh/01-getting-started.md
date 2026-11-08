@@ -100,15 +100,14 @@ int main() {
 ```
 
 测试是一个不定义 `main` 的 [mtest](https://github.com/mcpp-community/mtest) 用例文件，manifest 把 mtest
-列为 dev-dependency：
+列为 dev-dependency。每个对象是一个用例：类型即类别（`UTest`、`E2E`、`CTS`、`Bench`），名字之后的属性说明它如何
+运行（资源、时限、隔离、重试）：
 
 ```cpp
 import mcpplibs.mtest;
 using namespace mcpplibs::mtest;
 
-suite smoke{"smoke", [] {
-    "the project builds and its test runs"_test = [] { expect(eq(1 + 1, 2)); };
-}};
+UTest smoke{"the project builds and its test runs", [] { expect(eq(1 + 1, 2)); }};
 ```
 
 ### 创建库

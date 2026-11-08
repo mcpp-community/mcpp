@@ -17,6 +17,8 @@
 #   E. Under a shipping profile, `mcpp build` and `mcpp test` are one configuration: the test
 #      compiles none of the code under test again, which is trimmed as the build trims it, and a
 #      test program's own file keeps its path (`__FILE__` finds the test's directory).
+#   F. A case a listed case declares (protocol P3.4) is selected by its name alone; a pattern below
+#      the listed case runs it whole.
 set -e
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -34,13 +36,13 @@ cat > tests/unit/a.cpp <<'CPP'
 import mcpplibs.mtest;
 import app.calc;
 using namespace mcpplibs::mtest;
-suite a{"a", [] { "doubles"_test = [] { expect(eq(twice(2), 4)); }; }};
+UTest a{"doubles", [] { expect(eq(twice(2), 4)); }};
 CPP
 cat > tests/unit/b.cpp <<'CPP'
 import std;
 import mcpplibs.mtest;
 using namespace mcpplibs::mtest;
-suite b{"b", [] { "reads its data"_test = [] { expect(eq(std::string_view("tests/data/f.txt").size(), 16u)); }; }};
+UTest b{"reads its data", [] { expect(eq(std::string_view("tests/data/f.txt").size(), 16u)); }};
 CPP
 printf 'import std;\nint main() { return 0; }\n' > tests/e2e/plain.cpp
 printf 'data\n' > tests/data/f.txt
@@ -51,7 +53,7 @@ printf '\n[test]\nprograms = "directory"\n' >> mcpp.toml
 grep -q 'unit \.\.\. ok (.*2 cases)' a.log || fail "A: unit is not one program of two cases" a.log
 grep -q '^e2e \.\.\. ok' a.log || fail "A: the directory of a file with main" a.log
 "$MCPP" test --cases > a-cases.log 2>&1 || fail "A: --cases" a-cases.log
-grep -q 'a/doubles' a-cases.log && grep -q 'b/reads its data' a-cases.log || fail "A: the program's cases" a-cases.log
+grep -q 'doubles' a-cases.log && grep -q 'reads its data' a-cases.log || fail "A: the program's cases" a-cases.log
 # B: a file of plain main beside the library's marker.
 grep -q 'e2e: one case, its exit status' a-cases.log || fail "B: a program of plain main is listed as one case" a-cases.log
 printf 'int main() { return 0; }\n' > tests/e2e/second.cpp
@@ -112,5 +114,24 @@ set -- target/*/*/build.ninja
 [ $# = 1 ] || fail "E: build and test are $# configurations" e-test.log
 grep -q "library rel@0.1.0/src/where.cppm" e-test.log || fail "E: the code under test is not trimmed as built" e-test.log
 [ "$(grep -cE 'obj/where\.m\.(o|obj)	' "$(dirname "$1")/.ninja_log")" = 1 ] || fail "E: the test compiled the library again" "$(dirname "$1")/.ninja_log"
+
+# F
+cd "$TMP"
+"$MCPP" new grp > /dev/null 2>&1
+cd grp
+cat > tests/test_smoke.cpp <<'CPP'
+import mcpplibs.mtest;
+using namespace mcpplibs::mtest;
+UTest g{"g", [] {
+    "one"_test = [] { expect(true); };
+    "two"_test = [] { expect(true); };
+}};
+CPP
+"$MCPP" test --cases > f-cases.log 2>&1 || fail "F: --cases" f-cases.log
+grep -q 'test_smoke: 1 case' f-cases.log || fail "F: the object is the one listed case" f-cases.log
+"$MCPP" test --case 'g/one' > f1.log 2>&1 || fail "F: --case g/one" f1.log
+grep -q 'test_smoke \.\.\. ok (.*1 case)' f1.log || fail "F: a declared case is not selected alone" f1.log
+"$MCPP" test --case 'g/t*' > f2.log 2>&1 || fail "F: --case g/t*" f2.log
+grep -q 'test_smoke \.\.\. ok (.*3 cases)' f2.log || fail "F: a pattern below the listed case does not run it whole" f2.log
 
 echo "PASS: 1038 test programs of a directory, and the tests a change affects"

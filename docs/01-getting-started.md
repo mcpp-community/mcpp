@@ -102,15 +102,15 @@ int main() {
 ```
 
 The test is a file of [mtest](https://github.com/mcpp-community/mtest)'s cases
-with no `main`, and the manifest names it a dev-dependency:
+with no `main`, and the manifest names it a dev-dependency. Each object is one
+case; its type is its kind (`UTest`, `E2E`, `CTS`, `Bench`), and the attributes
+after its name state how it runs (resources, time limit, isolation, retries):
 
 ```cpp
 import mcpplibs.mtest;
 using namespace mcpplibs::mtest;
 
-suite smoke{"smoke", [] {
-    "the project builds and its test runs"_test = [] { expect(eq(1 + 1, 2)); };
-}};
+UTest smoke{"the project builds and its test runs", [] { expect(eq(1 + 1, 2)); }};
 ```
 
 ### Creating a library

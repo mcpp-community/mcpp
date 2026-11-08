@@ -18,7 +18,7 @@ inline constexpr int kVersion = 1;
 
 // The framework mcpp scaffolds tests with and suggests where a package has
 // none (docs/01, docs/08): mtest, by this release, from its repository.
-inline constexpr std::string_view kMtestRelease = "0.2.0";
+inline constexpr std::string_view kMtestRelease = "0.3.0";
 inline constexpr std::string_view kMtestRepo    = "https://github.com/mcpp-community/mtest";
 
 // The protocol's variables, removed from the environment a program inherits
@@ -97,6 +97,14 @@ variables(std::string_view mode, const std::filesystem::path& report,
 // run of characters, `?` one; a pattern without either matches the identifier
 // it equals or the identifiers it is a `/`-prefix of (`fs` matches `fs/read`).
 bool matches(std::string_view id, std::string_view pattern);
+
+// The identifiers `mcpp test --case` passes a program (P4.1), from its listing:
+// each listed case a pattern matches; for a pattern under a listed case -- a
+// case that case declares, which the program reports when it runs and need not
+// list (P3.4) -- the pattern itself when it names one case, else the listed
+// case, all of whose cases then run.
+std::vector<std::string> selection(const std::vector<Case>& listed,
+                                   const std::vector<std::string>& patterns);
 
 // The JSON of a report in a `mcpp test --message-format json` record
 // (docs/50): `cases` and `missing`.
@@ -276,6 +284,26 @@ bool matches(std::string_view id, std::string_view pattern) {
     if (pattern.find_first_of("*?") != std::string_view::npos) return glob(id, pattern);
     return id == pattern || (id.starts_with(pattern) && id.size() > pattern.size()
                              && id[pattern.size()] == '/');
+}
+
+std::vector<std::string> selection(const std::vector<Case>& listed,
+                                   const std::vector<std::string>& patterns) {
+    std::vector<std::string> out;
+    auto add = [&](const std::string& id) {
+        if (std::ranges::find(out, id) == out.end()) out.push_back(id);
+    };
+    for (const auto& p : patterns) {
+        bool found = false;
+        for (const auto& c : listed)
+            if (matches(c.id, p)) { add(c.id); found = true; }
+        if (found) continue;
+        const auto under = std::ranges::find_if(listed, [&](const Case& c) {
+            return p.size() > c.id.size() && p.starts_with(c.id) && p[c.id.size()] == '/';
+        });
+        if (under == listed.end()) continue;
+        add(p.find_first_of("*?") == std::string::npos ? p : under->id);
+    }
+    return out;
 }
 
 nlohmann::json cases_json(const Report& r) {

@@ -87,6 +87,17 @@ TEST(TestProtocol, APatternMatchesIdentifiers) {
         EXPECT_EQ(tp::matches(row.id, row.pattern), row.matches) << row.id << " ~ " << row.pattern;
 }
 
+TEST(TestProtocol, ASelectionReachesTheCasesAListedCaseDeclares) {
+    // P3.4: `fields` is listed; the cases its body declares are reported when it runs.
+    const std::vector<tp::Case> listed = {{"fields"}, {"empty"}};
+    using V = std::vector<std::string>;
+    EXPECT_EQ(tp::selection(listed, {"fields"}), V{"fields"});
+    EXPECT_EQ(tp::selection(listed, {"fields/one"}), V{"fields/one"});      // passed as it is
+    EXPECT_EQ(tp::selection(listed, {"fields/o*"}), V{"fields"});           // the listed case, all of it
+    EXPECT_EQ(tp::selection(listed, {"e*", "fields/one", "fields"}), (V{"empty", "fields/one", "fields"}));
+    EXPECT_EQ(tp::selection(listed, {"other/one"}), V{});
+}
+
 TEST(TestProtocol, TheVariablesOfARun) {
     auto env = tp::variables("run", "/r", std::filesystem::path("/s"), "/t", 7);
     std::map<std::string, std::string> m(env.begin(), env.end());

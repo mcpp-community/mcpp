@@ -488,28 +488,24 @@ std::string hello(std::string_view name) {
                 "cannot create scaffold test directory: {}", ec.message()));
             return 1;
         }
-        constexpr std::string_view smoke = R"(// A test of {{project.name}}: each `_test` is a case `mcpp test` lists, selects and reports.
-// More tests are more files under tests/; a file defines no `main`.
+        constexpr std::string_view smoke = R"(// A test of {{project.name}}: each object is a case `mcpp test` lists, selects and reports.
+// More tests are more objects, or more files under tests/; a file defines no `main`.
 import mcpplibs.mtest;
 
 using namespace mcpplibs::mtest;
 
-suite smoke{"smoke", [] {
-    "the project builds and its test runs"_test = [] { expect(eq(1 + 1, 2)); };
-}};
+UTest smoke{"the project builds and its test runs", [] { expect(eq(1 + 1, 2)); }};
 )";
-        constexpr std::string_view greeting = R"(// The cases of {{project.module}}: each `_test` is one `mcpp test` lists, selects and reports.
-// More tests are more files under tests/; a file defines no `main`.
+        constexpr std::string_view greeting = R"(// The cases of {{project.module}}: each object is one `mcpp test` lists, selects and reports.
+// More tests are more objects, or more files under tests/; a file defines no `main`.
 import std;
 import mcpplibs.mtest;
 import {{project.module}};
 
 using namespace mcpplibs::mtest;
 
-suite greeting{"hello", [] {
-    "greets by name"_test = [] {
-        expect(eq({{project.cxxNamespace}}::hello("mcpp"), std::string("Hello, mcpp!")));
-    };
+UTest greeting{"hello greets by name", [] {
+    expect(eq({{project.cxxNamespace}}::hello("mcpp"), std::string("Hello, mcpp!")));
 }};
 )";
         mcpp::scaffold::RenderVars vars{

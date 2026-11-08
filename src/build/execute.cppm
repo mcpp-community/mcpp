@@ -5162,11 +5162,8 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 continue;
             }
             std::string lines;
-            for (const auto& c : report.listed)
-                if (std::ranges::any_of(testOpts.cases, [&](const std::string& p) {
-                        return mcpp::build::test_protocol::matches(c.id, p);
-                    }))
-                    lines += c.id + "\n";
+            for (const auto& id : mcpp::build::test_protocol::selection(report.listed, testOpts.cases))
+                lines += id + "\n";
             if (lines.empty()) { ++notSelected; continue; }
             r.select = r.protocolDir / "select.txt";
             std::ofstream(*r.select, std::ios::binary) << lines;

@@ -14,13 +14,16 @@
   variables and reports its cases: the record names the protocol and each
   case's result and failures, a case a crash left open failed, and a failing
   program's report names its failed cases with their places. `--case PATTERN`
-  runs the matching cases, `--cases` lists them, `--seed N` states the seed. A
+  runs the matching cases -- a name below a listed case selects the case that
+  case declares, which is reported when it runs (P3.4), and a pattern below it
+  runs the listed case whole --, `--cases` lists them, `--seed N` states the seed. A
   program that implements no protocol is one case and receives none of the
   variables. `--no-run` records each built test with its program and the files
   it is compiled from; `--print-launch` states the protocol; the feature
   `test-protocol` names all of it (e2e 1035).
-- `mcpp new` scaffolds tests with mtest: the skeleton's test is a file of
-  mtest's cases with no `main`, with the dev-dependency `mcpplibs.mtest`, and
+- `mcpp new` scaffolds tests with mtest 0.3.0: the skeleton's test is a file of
+  mtest's cases with no `main` (`UTest smoke{"...", [] { ... }}`: an object is a
+  case, its type its kind), with the dev-dependency `mcpplibs.mtest`, and
   `--template lib` scaffolds a library -- a module, a partition it exports and
   the partition's implementation, named after the package -- with its test
   (docs/01; e2e 1037).

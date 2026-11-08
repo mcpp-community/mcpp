@@ -327,9 +327,12 @@ mcpp test --seed 42             # the seed of anything random in the cases
 - A failing program's report names each failed case with the place of its
   first failure: `case fs/read failed at tests/fs.cpp:12: ...`.
 - A pattern of `--case` matches with `*` and `?`; a name without either
-  matches itself and the cases below it (`fs` matches `fs/read`). Under
-  `--case`, a program with no matching case, and every program that implements
-  no protocol, does not run.
+  matches itself and the cases below it (`fs` matches `fs/read`). A case that
+  a listed case declares is reported when it runs and need not be listed
+  (protocol P3.4; mtest's `UTest fs{"fs", [] { "read"_test = ...; }}` lists
+  `fs`): a name below a listed case selects that one case, and a pattern below
+  it runs the listed case whole. Under `--case`, a program with no matching
+  case, and every program that implements no protocol, does not run.
 - A program that implements no protocol is one case, judged by its exit status,
   and receives none of the variables, even when mcpp's own environment has
   them.
