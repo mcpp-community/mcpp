@@ -41,4 +41,4 @@ mcpp.source-kind     = { path = "../source-kind" }
 mcpp.toolchain-model = { path = "../toolchain-model" }
 
 [dev-dependencies]
-compat.gtest = "1.15.2"
+mcpplibs.mtest = "0.4.1"

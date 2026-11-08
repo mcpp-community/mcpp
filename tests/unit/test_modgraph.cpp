@@ -1,12 +1,14 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.modgraph.glob;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.modgraph.validate;
 import mcpp.manifest;
 import mcpp.source_kind;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::modgraph;
 
@@ -27,7 +29,7 @@ void write(const std::filesystem::path& p, std::string_view content) {
 
 } // namespace
 
-TEST(Scanner, ProvidesAndRequires) {
+UTest provides_and_requires{"Scanner/ProvidesAndRequires", [] {
     auto dir = make_tempdir("mcpp-scanner");
     // NOTE: avoid raw string literal for module source — clang-scan-deps
     // on Windows may false-positive on `import bar;` inside R"(...)".
@@ -38,15 +40,15 @@ TEST(Scanner, ProvidesAndRequires) {
           "export int answer();\n");
 
     auto u = scan_file(dir / "src" / "foo.cppm", "pkg", mcpp::builtin_extension_table());
-    ASSERT_TRUE(u.has_value()) << u.error().format();
-    ASSERT_TRUE(u->provides.has_value());
-    EXPECT_EQ(u->provides->logicalName, "foo");
-    ASSERT_EQ(u->requires_.size(), 2u);
-    EXPECT_EQ(u->requires_[0].logicalName, "std");
-    EXPECT_EQ(u->requires_[1].logicalName, "bar");
+    if (auto&& failed = expect(fatal(u.has_value())); !failed) failed << u.error().format();
+    expect(fatal(u->provides.has_value()));
+    expect(eq(u->provides->logicalName, "foo"));
+    expect(fatal(eq(u->requires_.size(), 2u)));
+    expect(eq(u->requires_[0].logicalName, "std"));
+    expect(eq(u->requires_[1].logicalName, "bar"));
 
     std::filesystem::remove_all(dir);
-}
+}};
 
 // Regression: `import` lines that live INSIDE a multi-line raw-string literal
 // (e.g. a `mcpp new --template gui` skeleton embedded as R"GUI( ... )GUI") must
@@ -62,7 +64,7 @@ TEST(Scanner, ProvidesAndRequires) {
 // also warned "imported but not provided in this build" on every platform,
 // which read like a note instead of the cause.
 
-TEST(Scanner, ImplementationPartitionProvidesItsPartitionName) {
+UTest implementation_partition_provides_its_partition_name{"Scanner/ImplementationPartitionProvidesItsPartitionName", [] {
     auto dir = make_tempdir("scan-implpart");
     std::filesystem::create_directories(dir / "src");
     write(dir / "src" / "secret.cppm",
@@ -71,39 +73,39 @@ TEST(Scanner, ImplementationPartitionProvidesItsPartitionName) {
 
     auto u = scan_file(dir / "src" / "secret.cppm", "pkg",
                        mcpp::builtin_extension_table());
-    ASSERT_TRUE(u.has_value());
-    ASSERT_TRUE(u->provides.has_value());
-    EXPECT_EQ(u->provides->logicalName, "mathkit:secret");
+    expect(fatal(u.has_value()));
+    expect(fatal(u->provides.has_value()));
+    expect(eq(u->provides->logicalName, "mathkit:secret"));
     // Not an interface: its source must not be published by `mcpp pack`.
     // Compared against the value, not tested for truthiness — the field is a
     // tri-state now (nullopt means "nobody determined this"), and on an
     // optional both EXPECT_FALSE and EXPECT_TRUE ask about the wrong thing.
-    EXPECT_EQ(u->providesInterface, std::optional<bool>{false});
+    expect(eq(u->providesInterface, std::optional<bool>{false}));
     // And it must not require its own name, which is what it used to do.
     for (auto const& r : u->requires_)
-        EXPECT_NE(r.logicalName, "mathkit:secret");
+        expect(ne(r.logicalName, "mathkit:secret"));
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(Scanner, InterfacePartitionIsMarkedAsAnInterface) {
+UTest interface_partition_is_marked_as_an_interface{"Scanner/InterfacePartitionIsMarkedAsAnInterface", [] {
     auto dir = make_tempdir("scan-ifacepart");
     std::filesystem::create_directories(dir / "src");
     write(dir / "src" / "api.cppm", "export module mathkit:api;\nexport int f();\n");
 
     auto u = scan_file(dir / "src" / "api.cppm", "pkg",
                        mcpp::builtin_extension_table());
-    ASSERT_TRUE(u.has_value());
-    ASSERT_TRUE(u->provides.has_value());
-    EXPECT_EQ(u->provides->logicalName, "mathkit:api");
-    EXPECT_EQ(u->providesInterface, std::optional<bool>{true});
+    expect(fatal(u.has_value()));
+    expect(fatal(u->provides.has_value()));
+    expect(eq(u->provides->logicalName, "mathkit:api"));
+    expect(eq(u->providesInterface, std::optional<bool>{true}));
     std::filesystem::remove_all(dir);
-}
+}};
 
 // ─── the declaration form (build database roles) ─────────────────────────
 //
 // `module M;` is stored as `requires M`, exactly as `import M;` is, so the form
 // cannot be recovered from provides/requires. The scanner records what it read.
-TEST(Scanner, DeclarationFormIsRecordedAsRead) {
+UTest declaration_form_is_recorded_as_read{"Scanner/DeclarationFormIsRecordedAsRead", [] {
     auto dir = make_tempdir("scan-declform");
     std::filesystem::create_directories(dir / "src");
     struct Case { const char* file; const char* text; ModuleDeclaration want; };
@@ -122,11 +124,11 @@ TEST(Scanner, DeclarationFormIsRecordedAsRead) {
     for (auto const& c : cases) {
         write(dir / "src" / c.file, c.text);
         auto u = scan_file(dir / "src" / c.file, "pkg", mcpp::builtin_extension_table());
-        ASSERT_TRUE(u.has_value()) << c.file;
-        EXPECT_EQ(static_cast<int>(u->declaration), static_cast<int>(c.want)) << c.file;
+        expect(fatal(u.has_value())) << c.file;
+        expect(eq(static_cast<int>(u->declaration), static_cast<int>(c.want))) << c.file;
     }
     std::filesystem::remove_all(dir);
-}
+}};
 
 // ─── an entry source no `sources` glob matched ─────────────────────────────
 //
@@ -134,7 +136,7 @@ TEST(Scanner, DeclarationFormIsRecordedAsRead) {
 // Its imports were read from line-leading `import` alone, so an import inside a
 // comment or a raw string was recorded as one: a scanner test in lsp-mcpp was
 // planned as importing three modules no source provides.
-TEST(Scanner, AnEntrySourceIsReadByTheScanner) {
+UTest an_entry_source_is_read_by_the_scanner{"Scanner/AnEntrySourceIsReadByTheScanner", [] {
     auto dir = make_tempdir("scan-entry");
     write(dir / "t.cpp",
           "import std;\n"
@@ -148,14 +150,14 @@ TEST(Scanner, AnEntrySourceIsReadByTheScanner) {
     auto u = scan_entry_file(dir / "t.cpp", "pkg", mcpp::builtin_extension_table());
     std::vector<std::string> names;
     for (auto const& r : u.requires_) names.push_back(r.logicalName);
-    EXPECT_EQ(names, (std::vector<std::string>{"std", "real"}));
-    EXPECT_EQ(static_cast<int>(u.declaration), static_cast<int>(ModuleDeclaration::None));
+    expect(eq(names, (std::vector<std::string>{"std", "real"})));
+    expect(eq(static_cast<int>(u.declaration), static_cast<int>(ModuleDeclaration::None)));
     std::filesystem::remove_all(dir);
-}
+}};
 
 // The scanner's refusals were never applied to such a file, and are not now: a
 // file it refuses keeps its line-leading imports, and its form is not decided.
-TEST(Scanner, AnEntrySourceTheScannerRefusesKeepsItsImports) {
+UTest an_entry_source_the_scanner_refuses_keeps_its_imports{"Scanner/AnEntrySourceTheScannerRefusesKeepsItsImports", [] {
     auto dir = make_tempdir("scan-entry-refused");
     write(dir / "t.cpp",
           "#ifdef WITH_EXTRA\n"
@@ -163,30 +165,30 @@ TEST(Scanner, AnEntrySourceTheScannerRefusesKeepsItsImports) {
           "#endif\n"
           "export import std;\n"
           "int main() {}\n");
-    ASSERT_FALSE(scan_file(dir / "t.cpp", "pkg", mcpp::builtin_extension_table()).has_value());
+    expect(fatal(!(scan_file(dir / "t.cpp", "pkg", mcpp::builtin_extension_table()).has_value())));
     auto u = scan_entry_file(dir / "t.cpp", "pkg", mcpp::builtin_extension_table());
     std::vector<std::string> names;
     for (auto const& r : u.requires_) names.push_back(r.logicalName);
-    EXPECT_EQ(names, (std::vector<std::string>{"extra", "std"}));
-    EXPECT_EQ(static_cast<int>(u.declaration), static_cast<int>(ModuleDeclaration::Unknown));
+    expect(eq(names, (std::vector<std::string>{"extra", "std"})));
+    expect(eq(static_cast<int>(u.declaration), static_cast<int>(ModuleDeclaration::Unknown)));
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(Scanner, PlainImplementationUnitStillRequiresItsInterface) {
+UTest plain_implementation_unit_still_requires_its_interface{"Scanner/PlainImplementationUnitStillRequiresItsInterface", [] {
     auto dir = make_tempdir("scan-implunit");
     std::filesystem::create_directories(dir / "src");
     write(dir / "src" / "impl.cpp", "module mathkit;\nnamespace mk { int g() { return 2; } }\n");
 
     auto u = scan_file(dir / "src" / "impl.cpp", "pkg",
                        mcpp::builtin_extension_table());
-    ASSERT_TRUE(u.has_value());
-    EXPECT_FALSE(u->provides.has_value());
-    ASSERT_EQ(u->requires_.size(), 1u);
-    EXPECT_EQ(u->requires_[0].logicalName, "mathkit");
+    expect(fatal(u.has_value()));
+    expect(!(u->provides.has_value()));
+    expect(fatal(eq(u->requires_.size(), 1u)));
+    expect(eq(u->requires_[0].logicalName, "mathkit"));
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(Scanner, PartitionImportResolvesInsideAnImplementationUnit) {
+UTest partition_import_resolves_inside_an_implementation_unit{"Scanner/PartitionImportResolvesInsideAnImplementationUnit", [] {
     // The other half of the same bug: resolution keyed off `u.provides`, and an
     // implementation unit has none — so `import :secret;` stayed the literal
     // `:secret`, which nothing provides.
@@ -197,17 +199,17 @@ TEST(Scanner, PartitionImportResolvesInsideAnImplementationUnit) {
 
     auto u = scan_file(dir / "src" / "impl.cpp", "pkg",
                        mcpp::builtin_extension_table());
-    ASSERT_TRUE(u.has_value());
+    expect(fatal(u.has_value()));
     bool found = false;
     for (auto const& r : u->requires_) {
-        EXPECT_NE(r.logicalName, ":secret");
+        expect(ne(r.logicalName, ":secret"));
         if (r.logicalName == "mathkit:secret") found = true;
     }
-    EXPECT_TRUE(found) << "`import :secret;` did not resolve to mathkit:secret";
+    expect(bool(found)) << "`import :secret;` did not resolve to mathkit:secret";
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(Scanner, PartitionImportResolvesInsideAPartition) {
+UTest partition_import_resolves_inside_a_partition{"Scanner/PartitionImportResolvesInsideAPartition", [] {
     // `export module foo:http;` + `import :tls;` must give `foo:tls`, not
     // `foo:http:tls` — the case the old code was written for, still true.
     auto dir = make_tempdir("scan-partpart");
@@ -216,13 +218,13 @@ TEST(Scanner, PartitionImportResolvesInsideAPartition) {
 
     auto u = scan_file(dir / "src" / "http.cppm", "pkg",
                        mcpp::builtin_extension_table());
-    ASSERT_TRUE(u.has_value());
-    ASSERT_EQ(u->requires_.size(), 1u);
-    EXPECT_EQ(u->requires_[0].logicalName, "foo:tls");
+    expect(fatal(u.has_value()));
+    expect(fatal(eq(u->requires_.size(), 1u)));
+    expect(eq(u->requires_[0].logicalName, "foo:tls"));
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(Scanner, IgnoresImportsInsideRawStringLiteral) {
+UTest ignores_imports_inside_raw_string_literal{"Scanner/IgnoresImportsInsideRawStringLiteral", [] {
     auto dir = make_tempdir("mcpp-scanner-raw");
     write(dir / "src" / "gen.cppm",
           "export module gen;\n"
@@ -236,23 +238,23 @@ TEST(Scanner, IgnoresImportsInsideRawStringLiteral) {
           "export void f();\n");
 
     auto u = scan_file(dir / "src" / "gen.cppm", "pkg", mcpp::builtin_extension_table());
-    ASSERT_TRUE(u.has_value()) << u.error().format();
-    ASSERT_TRUE(u->provides.has_value());
-    EXPECT_EQ(u->provides->logicalName, "gen");
+    if (auto&& failed = expect(fatal(u.has_value())); !failed) failed << u.error().format();
+    expect(fatal(u->provides.has_value()));
+    expect(eq(u->provides->logicalName, "gen"));
     // Only the two genuine top-level imports — NOT imgui.core / imgui.app.
-    ASSERT_EQ(u->requires_.size(), 2u);
-    EXPECT_EQ(u->requires_[0].logicalName, "std");
-    EXPECT_EQ(u->requires_[1].logicalName, "bar");
+    expect(fatal(eq(u->requires_.size(), 2u)));
+    expect(eq(u->requires_[0].logicalName, "std"));
+    expect(eq(u->requires_[1].logicalName, "bar"));
     for (auto& r : u->requires_) {
-        EXPECT_NE(r.logicalName, "imgui.core");
-        EXPECT_NE(r.logicalName, "imgui.app");
+        expect(ne(r.logicalName, "imgui.core"));
+        expect(ne(r.logicalName, "imgui.app"));
     }
 
     std::filesystem::remove_all(dir);
-}
+}};
 
 // A single-line raw string with an embedded import-looking body stays code.
-TEST(Scanner, IgnoresImportInsideSingleLineRawString) {
+UTest ignores_import_inside_single_line_raw_string{"Scanner/IgnoresImportInsideSingleLineRawString", [] {
     auto dir = make_tempdir("mcpp-scanner-raw1");
     write(dir / "src" / "one.cppm",
           "export module one;\n"
@@ -260,17 +262,17 @@ TEST(Scanner, IgnoresImportInsideSingleLineRawString) {
           "import real;\n");
 
     auto u = scan_file(dir / "src" / "one.cppm", "pkg", mcpp::builtin_extension_table());
-    ASSERT_TRUE(u.has_value()) << u.error().format();
-    ASSERT_EQ(u->requires_.size(), 1u);
-    EXPECT_EQ(u->requires_[0].logicalName, "real");
+    if (auto&& failed = expect(fatal(u.has_value())); !failed) failed << u.error().format();
+    expect(fatal(eq(u->requires_.size(), 1u)));
+    expect(eq(u->requires_[0].logicalName, "real"));
 
     std::filesystem::remove_all(dir);
-}
+}};
 
 // Assembly units skip the module text scan entirely (like .c): an .asm/.S
 // file legally contains no `import`/`module` declarations, and asm comment
 // syntax would misparse.
-TEST(Scanner, AssemblySourcesSkipModuleScan) {
+UTest assembly_sources_skip_module_scan{"Scanner/AssemblySourcesSkipModuleScan", [] {
     auto dir = make_tempdir("mcpp-scanner-asm");
     write(dir / "src" / "simd.asm",
           "; import std -- a comment, not a declaration\n"
@@ -283,34 +285,34 @@ TEST(Scanner, AssemblySourcesSkipModuleScan) {
 
     for (auto name : { "simd.asm", "copy.S" }) {
         auto u = scan_file(dir / "src" / name, "pkg", mcpp::builtin_extension_table());
-        ASSERT_TRUE(u.has_value()) << u.error().format();
-        EXPECT_FALSE(u->provides.has_value()) << name;
-        EXPECT_TRUE(u->requires_.empty()) << name;
+        if (auto&& failed = expect(fatal(u.has_value())); !failed) failed << u.error().format();
+        expect(!(u->provides.has_value())) << name;
+        expect(u->requires_.empty()) << name;
     }
 
     std::filesystem::remove_all(dir);
-}
+}};
 
 // G8a: source globs follow directory symlinks (vendored trees are often
 // symlink farms) without looping on cycles.
-TEST(Scanner, ExpandGlobFollowsDirectorySymlinks) {
+UTest expand_glob_follows_directory_symlinks{"Scanner/ExpandGlobFollowsDirectorySymlinks", [] {
     auto dir = make_tempdir("mcpp-scanner-symlink");
     auto real = dir / "vendor-real";
     write(real / "impl.cpp", "int f() { return 1; }\n");
     std::error_code ec;
     std::filesystem::create_directories(dir / "src");
     std::filesystem::create_directory_symlink(real, dir / "src" / "vendor", ec);
-    if (ec) GTEST_SKIP() << "symlinks unsupported here: " << ec.message();
+    if (ec) skip([&] { std::ostringstream text; text << "symlinks unsupported here: " << ec.message(); return text.str(); }());
     // A cycle: the linked tree points back at its parent.
     std::filesystem::create_directory_symlink(dir, real / "loop", ec);
 
     auto files = expand_glob(dir, "src/**/*.cpp");
 
-    ASSERT_EQ(files.size(), 1u);
-    EXPECT_EQ(files[0].filename(), "impl.cpp");
+    expect(fatal(eq(files.size(), 1u)));
+    expect(eq(files[0].filename(), "impl.cpp"));
 
     std::filesystem::remove_all(dir);
-}
+}};
 
 // mcpp#225 review finding: glob_literal_prefix's contract (the piece that
 // actually decides WHERE expand_glob/expand_dir_glob start walking) is the
@@ -318,20 +320,20 @@ TEST(Scanner, ExpandGlobFollowsDirectorySymlinks) {
 // directly — rather than inferring its behavior from a filesystem walk whose
 // entry order is unspecified by the standard — makes this test's pass/fail
 // independent of directory-enumeration order on any filesystem.
-TEST(Scanner, GlobLiteralPrefixDerivation) {
-    EXPECT_EQ(glob_literal_prefix("src/**/*.cppm"), "src");
+UTest glob_literal_prefix_derivation{"Scanner/GlobLiteralPrefixDerivation", [] {
+    expect(eq(glob_literal_prefix("src/**/*.cppm"), "src"));
     // Wildcard already in the first segment: no literal directory to bound to.
-    EXPECT_EQ(glob_literal_prefix("**/*.c"), "");
+    expect(eq(glob_literal_prefix("**/*.c"), ""));
     // No wildcard at all: the full parent directory path is the prefix.
-    EXPECT_EQ(glob_literal_prefix("a/b/c.cpp").generic_string(), "a/b");
+    expect(eq(glob_literal_prefix("a/b/c.cpp").generic_string(), "a/b"));
     // Truncate back to the last COMPLETE '/' before the first wildcard char —
     // "x*.cpp" is a partial segment, not a real directory named "x".
-    EXPECT_EQ(glob_literal_prefix("src/x*.cpp"), "src");
+    expect(eq(glob_literal_prefix("src/x*.cpp"), "src"));
     // '{' is treated as a segment-boundary wildcard char (brace-expansion
     // globs are desugared before reaching this helper — see its comment in
     // scanner.cppm), so the prefix truncates at the last '/' before it.
-    EXPECT_EQ(glob_literal_prefix("a/{x,y}/z"), "a");
-}
+    expect(eq(glob_literal_prefix("a/{x,y}/z"), "a"));
+}};
 
 // MSVC's std::filesystem::path preserves the separators of the string it was
 // constructed from, so a raw `a/b` prefix stays generic and `root / p` turns
@@ -340,64 +342,60 @@ TEST(Scanner, GlobLiteralPrefixDerivation) {
 // glob_literal_prefix must return NATIVE separators so the walk and everything
 // downstream is native too. (The generic spelling is already locked down by
 // Scanner.GlobLiteralPrefixDerivation above.)
-TEST(Scanner, GlobLiteralPrefixUsesNativeSeparators) {
+UTest glob_literal_prefix_uses_native_separators{"Scanner/GlobLiteralPrefixUsesNativeSeparators", [] {
     if constexpr (std::filesystem::path::preferred_separator == '\\') {
-        EXPECT_EQ(glob_literal_prefix("a/b/c.cpp").string(), "a\\b");
-        EXPECT_EQ(glob_literal_prefix("a/b/c.cpp").string().find('/'),
-                  std::string::npos);
+        expect(eq(glob_literal_prefix("a/b/c.cpp").string(), "a\\b"));
+        expect(eq(glob_literal_prefix("a/b/c.cpp").string().find('/'), std::string::npos));
     }
-}
+}};
 
 // The exported converter itself — both spelling directions.
-TEST(Glob, NativePathFromGeneric) {
+UTest glob_native_path_from_generic{"Glob/NativePathFromGeneric", [] {
     auto p = mcpp::modgraph::native_path_from_generic("a/b/c");
-    EXPECT_EQ(p.generic_string(), "a/b/c");
+    expect(eq(p.generic_string(), "a/b/c"));
     if constexpr (std::filesystem::path::preferred_separator == '\\') {
-        EXPECT_EQ(p.string(), "a\\b\\c");
+        expect(eq(p.string(), "a\\b\\c"));
         // Already-native input is untouched.
-        EXPECT_EQ(mcpp::modgraph::native_path_from_generic("C:\\x\\y").string(),
-                  "C:\\x\\y");
+        expect(eq(mcpp::modgraph::native_path_from_generic("C:\\x\\y").string(), "C:\\x\\y"));
     }
-}
+}};
 
 // The end-to-end shape of the reported bug: a source under a multi-segment
 // glob (`generated/modules/**/*.cppm`) must come out of expand_glob with
 // NATIVE separators on Windows — the mixed `root\generated/modules\a.cppm`
 // was what compile_commands.json's `file` field showed before the fix.
-TEST(Scanner, ExpandGlobMultiSegmentPrefixUsesNativeSeparators) {
+UTest expand_glob_multi_segment_prefix_uses_native_separators{"Scanner/ExpandGlobMultiSegmentPrefixUsesNativeSeparators", [] {
     auto dir = make_tempdir("mcpp-scanner-multi");
     write(dir / "generated" / "modules" / "a.cppm", "export module a;\n");
 
     auto files = expand_glob(dir, "generated/modules/**/*.cppm");
 
-    ASSERT_EQ(files.size(), 1u);
+    expect(fatal(eq(files.size(), 1u)));
     if constexpr (std::filesystem::path::preferred_separator == '\\') {
-        EXPECT_EQ(files[0].string().find('/'), std::string::npos) << files[0];
+        if (auto&& failed = expect(eq(files[0].string().find('/'), std::string::npos)); !failed) failed << files[0];
     }
-    EXPECT_EQ(files[0].generic_string(),
-              (dir / "generated" / "modules" / "a.cppm").generic_string());
+    expect(eq(files[0].generic_string(), (dir / "generated" / "modules" / "a.cppm").generic_string()));
 
     std::filesystem::remove_all(dir);
-}
+}};
 
 // Same contract for the INCLUDE-DIR channel (expand_dir_glob): a multi-segment
 // `third_party/inc` entry must yield a native path or the CDB's -I carries the
 // mixed form.
-TEST(Scanner, ExpandDirGlobMultiSegmentUsesNativeSeparators) {
+UTest expand_dir_glob_multi_segment_uses_native_separators{"Scanner/ExpandDirGlobMultiSegmentUsesNativeSeparators", [] {
     auto dir = make_tempdir("mcpp-scanner-dirglob");
     std::filesystem::create_directories(dir / "third_party" / "inc");
 
     auto dirs = expand_dir_glob(dir, "third_party/inc");
 
-    ASSERT_EQ(dirs.size(), 1u);
+    expect(fatal(eq(dirs.size(), 1u)));
     if constexpr (std::filesystem::path::preferred_separator == '\\') {
-        EXPECT_EQ(dirs[0].string().find('/'), std::string::npos) << dirs[0];
+        if (auto&& failed = expect(eq(dirs[0].string().find('/'), std::string::npos)); !failed) failed << dirs[0];
     }
-    EXPECT_EQ(dirs[0].generic_string(),
-              (dir / "third_party" / "inc").generic_string());
+    expect(eq(dirs[0].generic_string(), (dir / "third_party" / "inc").generic_string()));
 
     std::filesystem::remove_all(dir);
-}
+}};
 
 // mcpp#225: expand_glob must bound its walk to the glob's literal directory
 // prefix ("src" for "src/**/*.cppm") instead of always walking the whole
@@ -408,18 +406,18 @@ TEST(Scanner, ExpandDirGlobMultiSegmentUsesNativeSeparators) {
 // deterministically by Scanner.GlobLiteralPrefixDerivation above, which
 // tests glob_literal_prefix directly and isn't subject to filesystem
 // enumeration order.
-TEST(Scanner, ExpandGlobStartsAtLiteralPrefix) {
+UTest expand_glob_starts_at_literal_prefix{"Scanner/ExpandGlobStartsAtLiteralPrefix", [] {
     auto dir = make_tempdir("mcpp-scanner-prefix");
     write(dir / "other" / "b.cppm", "export module b;\n");
     write(dir / "src" / "a.cppm", "export module a;\n");
 
     auto files = expand_glob(dir, "src/**/*.cppm");
 
-    ASSERT_EQ(files.size(), 1u);
-    EXPECT_EQ(files[0], dir / "src" / "a.cppm");
+    expect(fatal(eq(files.size(), 1u)));
+    expect(eq(files[0], dir / "src" / "a.cppm"));
 
     std::filesystem::remove_all(dir);
-}
+}};
 
 // Supplementary (not the primary regression guard — see
 // Scanner.GlobLiteralPrefixDerivation and Scanner.ExpandGlobStartsAtLiteralPrefix
@@ -431,7 +429,7 @@ TEST(Scanner, ExpandGlobStartsAtLiteralPrefix) {
 // landmine didn't fire (order-dependent), the test still asserts the
 // positive result and reports (via trace) that the landmine was inert this
 // run, instead of pretending it verified the old-code-fails claim.
-TEST(Scanner, ExpandGlobStartsAtLiteralPrefixLandmine) {
+UTest expand_glob_starts_at_literal_prefix_landmine{"Scanner/ExpandGlobStartsAtLiteralPrefixLandmine", [] {
     auto dir = make_tempdir("mcpp-scanner-prefix-landmine");
     auto blocked = dir / "junk" / "blocked";
     std::filesystem::create_directories(blocked);
@@ -448,7 +446,7 @@ TEST(Scanner, ExpandGlobStartsAtLiteralPrefixLandmine) {
     if (!probeEc) {
         std::filesystem::permissions(blocked, std::filesystem::perms::all, permEc);
         std::filesystem::remove_all(dir);
-        GTEST_SKIP() << "cannot restrict directory permissions in this environment";
+        skip("cannot restrict directory permissions in this environment");
     }
 
     auto files = expand_glob(dir, "src/**/*.cppm");
@@ -465,17 +463,17 @@ TEST(Scanner, ExpandGlobStartsAtLiteralPrefixLandmine) {
     // just isn't, by itself, an order-independent proof that old code would
     // have failed here (that proof now lives in
     // Scanner.GlobLiteralPrefixDerivation instead).
-    ASSERT_EQ(files.size(), 1u);
-    EXPECT_EQ(files[0], dir / "src" / "a.cppm");
+    expect(fatal(eq(files.size(), 1u)));
+    expect(eq(files[0], dir / "src" / "a.cppm"));
 
     std::filesystem::remove_all(dir);
-}
+}};
 
 // mcpp#225: the walk must prune VCS metadata (.git) and mcpp's own build
 // output (target) the same way it already prunes .mcpp (mcpp#230). Glob has
 // no literal prefix ("**/*.cppm") so the walk starts at root and would
 // otherwise reach all three excluded trees.
-TEST(Scanner, ExcludesGitAndTargetAndMcpp) {
+UTest excludes_git_and_target_and_mcpp{"Scanner/ExcludesGitAndTargetAndMcpp", [] {
     auto dir = make_tempdir("mcpp-scanner-exclude");
     write(dir / ".git" / "x.cppm", "export module x;\n");
     write(dir / "target" / "y.cppm", "export module y;\n");
@@ -484,13 +482,13 @@ TEST(Scanner, ExcludesGitAndTargetAndMcpp) {
 
     auto files = expand_glob(dir, "**/*.cppm");
 
-    ASSERT_EQ(files.size(), 1u);
-    EXPECT_EQ(files[0], dir / "src" / "ok.cppm");
+    expect(fatal(eq(files.size(), 1u)));
+    expect(eq(files[0], dir / "src" / "ok.cppm"));
 
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(Scanner, RecordsPackageLocalIncludeDirs) {
+UTest records_package_local_include_dirs{"Scanner/RecordsPackageLocalIncludeDirs", [] {
     auto dir = make_tempdir("mcpp-scanner-includes");
     write(dir / "src" / "foo.cpp",
           "int answer() { return 42; }\n");
@@ -503,18 +501,18 @@ TEST(Scanner, RecordsPackageLocalIncludeDirs) {
     m.buildConfig.includeDirs = {"include", "private/*"};
 
     auto r = scan_packages({PackageRoot{dir, m}});
-    ASSERT_TRUE(r.errors.empty());
-    ASSERT_EQ(r.graph.units.size(), 1u);
+    expect(fatal(r.errors.empty()));
+    expect(fatal(eq(r.graph.units.size(), 1u)));
 
     auto const& dirs = r.graph.units[0].localIncludeDirs;
-    ASSERT_EQ(dirs.size(), 2u);
-    EXPECT_EQ(dirs[0], dir / "include");
-    EXPECT_EQ(dirs[1], dir / "private" / "nested");
+    expect(fatal(eq(dirs.size(), 2u)));
+    expect(eq(dirs[0], dir / "include"));
+    expect(eq(dirs[1], dir / "private" / "nested"));
 
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(Scanner, UsesResolvedPackagePrivateBuildIncludeDirs) {
+UTest uses_resolved_package_private_build_include_dirs{"Scanner/UsesResolvedPackagePrivateBuildIncludeDirs", [] {
     auto dir = make_tempdir("mcpp-scanner-resolved-includes");
     write(dir / "src" / "foo.cpp",
           "int answer() { return 42; }\n");
@@ -531,15 +529,15 @@ TEST(Scanner, UsesResolvedPackagePrivateBuildIncludeDirs) {
     p.privateBuild.includeDirs = {dir / "resolved"};
 
     auto r = scan_packages({p});
-    ASSERT_TRUE(r.errors.empty());
-    ASSERT_EQ(r.graph.units.size(), 1u);
+    expect(fatal(r.errors.empty()));
+    expect(fatal(eq(r.graph.units.size(), 1u)));
 
     auto const& dirs = r.graph.units[0].localIncludeDirs;
-    ASSERT_EQ(dirs.size(), 1u);
-    EXPECT_EQ(dirs[0], dir / "resolved");
+    expect(fatal(eq(dirs.size(), 1u)));
+    expect(eq(dirs[0], dir / "resolved"));
 
     std::filesystem::remove_all(dir);
-}
+}};
 
 // The realised [c-abi] environment (design 2026-09-18) broadcasts into
 // `privateBuild.asmflags`, and this proves the wiring on the ONE point that
@@ -551,7 +549,7 @@ TEST(Scanner, UsesResolvedPackagePrivateBuildIncludeDirs) {
 // is not a degraded build, it is a build that does not assemble at all, so
 // this is a refusal-shaped guarantee even though nothing here calls
 // `refusal::record`: the wrong list for the wrong assembler.
-TEST(Scanner, ResolvedCEnvAsmflagsReachGasUnitsOnlyNotNasm) {
+UTest resolved_c_env_asmflags_reach_gas_units_only_not_nasm{"Scanner/ResolvedCEnvAsmflagsReachGasUnitsOnlyNotNasm", [] {
     auto dir = make_tempdir("mcpp-scanner-cenv-asm");
     write(dir / "src" / "gas.S",
           ".text\n.globl gas_marker\ngas_marker:\n  ret\n");
@@ -567,33 +565,31 @@ TEST(Scanner, ResolvedCEnvAsmflagsReachGasUnitsOnlyNotNasm) {
     p.privateBuild.asmflags = {"--target=x86_64-pc-cygwin", "-fno-short-wchar"};
 
     auto r = scan_packages({p});
-    ASSERT_TRUE(r.errors.empty());
-    ASSERT_EQ(r.graph.units.size(), 2u);
+    expect(fatal(r.errors.empty()));
+    expect(fatal(eq(r.graph.units.size(), 2u)));
 
     bool sawGas = false, sawNasm = false;
     for (auto const& u : r.graph.units) {
         if (u.kind == mcpp::SourceKind::GasAsm) {
             sawGas = true;
-            EXPECT_NE(std::find(u.packageAsmflags.begin(), u.packageAsmflags.end(),
-                                "--target=x86_64-pc-cygwin"),
-                     u.packageAsmflags.end())
+            expect(ne(std::find(u.packageAsmflags.begin(), u.packageAsmflags.end(),
+                                "--target=x86_64-pc-cygwin"), u.packageAsmflags.end()))
                 << "the realised environment must reach a GAS unit";
         } else if (u.kind == mcpp::SourceKind::NasmAsm) {
             sawNasm = true;
-            EXPECT_EQ(std::find(u.packageAsmflags.begin(), u.packageAsmflags.end(),
-                                "--target=x86_64-pc-cygwin"),
-                     u.packageAsmflags.end())
+            expect(eq(std::find(u.packageAsmflags.begin(), u.packageAsmflags.end(),
+                                "--target=x86_64-pc-cygwin"), u.packageAsmflags.end()))
                 << "NASM does not understand a clang --target= flag and must "
                    "never receive it";
         }
     }
-    EXPECT_TRUE(sawGas);
-    EXPECT_TRUE(sawNasm);
+    expect(bool(sawGas));
+    expect(bool(sawNasm));
 
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(Scanner, PartitionImportFromPrimaryInterface) {
+UTest partition_import_from_primary_interface{"Scanner/PartitionImportFromPrimaryInterface", [] {
     // Primary module interface: `export module foo;` → logicalName = "foo".
     // `import :tls;` resolves to "foo:tls".
     auto dir = make_tempdir("mcpp-scanner");
@@ -601,13 +597,13 @@ TEST(Scanner, PartitionImportFromPrimaryInterface) {
           "export module foo;\n"
           "import :tls;\n");
     auto u = scan_file(dir / "src" / "foo.cppm", "pkg", mcpp::builtin_extension_table());
-    ASSERT_TRUE(u.has_value()) << u.error().format();
-    ASSERT_EQ(u->requires_.size(), 1u);
-    EXPECT_EQ(u->requires_[0].logicalName, "foo:tls");
+    if (auto&& failed = expect(fatal(u.has_value())); !failed) failed << u.error().format();
+    expect(fatal(eq(u->requires_.size(), 1u)));
+    expect(eq(u->requires_[0].logicalName, "foo:tls"));
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(Scanner, PartitionImportFromAnotherPartition) {
+UTest partition_import_from_another_partition{"Scanner/PartitionImportFromAnotherPartition", [] {
     // Partition interface: `export module foo:http;` → logicalName = "foo:http".
     // `import :tls;` must resolve to "foo:tls" (the sibling partition),
     // NOT "foo:http:tls" (which is what a naive prepend produces).
@@ -617,16 +613,16 @@ TEST(Scanner, PartitionImportFromAnotherPartition) {
           "import :tls;\n"
           "import :socket;\n");
     auto u = scan_file(dir / "src" / "http.cppm", "pkg", mcpp::builtin_extension_table());
-    ASSERT_TRUE(u.has_value()) << u.error().format();
-    ASSERT_TRUE(u->provides.has_value());
-    EXPECT_EQ(u->provides->logicalName, "foo:http");
-    ASSERT_EQ(u->requires_.size(), 2u);
-    EXPECT_EQ(u->requires_[0].logicalName, "foo:tls");
-    EXPECT_EQ(u->requires_[1].logicalName, "foo:socket");
+    if (auto&& failed = expect(fatal(u.has_value())); !failed) failed << u.error().format();
+    expect(fatal(u->provides.has_value()));
+    expect(eq(u->provides->logicalName, "foo:http"));
+    expect(fatal(eq(u->requires_.size(), 2u)));
+    expect(eq(u->requires_[0].logicalName, "foo:tls"));
+    expect(eq(u->requires_[1].logicalName, "foo:socket"));
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(Scanner, PartitionImportWithDottedModuleName) {
+UTest partition_import_with_dotted_module_name{"Scanner/PartitionImportWithDottedModuleName", [] {
     // Dotted module names (xpkg-style, e.g. `mcpplibs.tinyhttps:http`)
     // — only the colon-prefixed partition suffix is what we strip.
     auto dir = make_tempdir("mcpp-scanner");
@@ -634,13 +630,13 @@ TEST(Scanner, PartitionImportWithDottedModuleName) {
           "export module mcpplibs.tinyhttps:http;\n"
           "import :tls;\n");
     auto u = scan_file(dir / "src" / "http.cppm", "pkg", mcpp::builtin_extension_table());
-    ASSERT_TRUE(u.has_value()) << u.error().format();
-    ASSERT_EQ(u->requires_.size(), 1u);
-    EXPECT_EQ(u->requires_[0].logicalName, "mcpplibs.tinyhttps:tls");
+    if (auto&& failed = expect(fatal(u.has_value())); !failed) failed << u.error().format();
+    expect(fatal(eq(u->requires_.size(), 1u)));
+    expect(eq(u->requires_[0].logicalName, "mcpplibs.tinyhttps:tls"));
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(Scanner, RejectsConditionalImport) {
+UTest rejects_conditional_import{"Scanner/RejectsConditionalImport", [] {
     auto dir = make_tempdir("mcpp-scanner");
     write(dir / "main.cpp",
           "import std;\n"
@@ -649,38 +645,38 @@ TEST(Scanner, RejectsConditionalImport) {
           "#endif\n"
           "int main(){}");
     auto r = scan_file(dir / "main.cpp", "pkg", mcpp::builtin_extension_table());
-    EXPECT_FALSE(r.has_value());
-    EXPECT_NE(r.error().message.find("conditional"), std::string::npos);
+    expect(!r.has_value());
+    expect(ne(r.error().message.find("conditional"), std::string::npos));
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(Scanner, RejectsHeaderUnit) {
+UTest rejects_header_unit{"Scanner/RejectsHeaderUnit", [] {
     auto dir = make_tempdir("mcpp-scanner");
     write(dir / "main.cpp",
           "import std;\n"
           "import \"x.h\";\n"
           "int main(){}");
     auto r = scan_file(dir / "main.cpp", "pkg", mcpp::builtin_extension_table());
-    EXPECT_FALSE(r.has_value());
-    EXPECT_NE(r.error().message.find("header units"), std::string::npos);
+    expect(!r.has_value());
+    expect(ne(r.error().message.find("header units"), std::string::npos));
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(Scanner, ObjectiveCSourceIsCLike) {
+UTest objective_c_source_is_c_like{"Scanner/ObjectiveCSourceIsCLike", [] {
     auto dir = make_tempdir("mcpp-scanner-objc");
     write(dir / "src" / "window.m",
           "import Cocoa;\n"
           "int answer(void) { return 42; }\n");
 
     auto u = scan_file(dir / "src" / "window.m", "pkg", mcpp::builtin_extension_table());
-    ASSERT_TRUE(u.has_value()) << u.error().format();
-    EXPECT_FALSE(u->provides.has_value());
-    EXPECT_TRUE(u->requires_.empty());
+    if (auto&& failed = expect(fatal(u.has_value())); !failed) failed << u.error().format();
+    expect(!(u->provides.has_value()));
+    expect(u->requires_.empty());
 
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(Validate, ModuleNameNotRequiredToMatchPackageName) {
+UTest module_name_not_required_to_match_package_name{"Validate/ModuleNameNotRequiredToMatchPackageName", [] {
     // 0.0.10+: module name does NOT need to be prefixed by package name.
     // The library author decides the module naming convention.
     Graph g;
@@ -695,10 +691,10 @@ TEST(Validate, ModuleNameNotRequiredToMatchPackageName) {
     m.package.name = "myorg.foo";
 
     auto rep = validate(g, m);
-    EXPECT_TRUE(rep.ok()) << "module name mismatch should not be an error";
-}
+    expect(rep.ok()) << "module name mismatch should not be an error";
+}};
 
-TEST(Validate, ForbiddenTopName) {
+UTest forbidden_top_name{"Validate/ForbiddenTopName", [] {
     Graph g;
     SourceUnit u;
     u.path = "/x/foo.cppm";
@@ -711,10 +707,10 @@ TEST(Validate, ForbiddenTopName) {
     m.package.name = "myorg.foo";
 
     auto rep = validate(g, m);
-    EXPECT_FALSE(rep.ok());
-}
+    expect(!rep.ok());
+}};
 
-TEST(Validate, LibRootHappyPath) {
+UTest lib_root_happy_path{"Validate/LibRootHappyPath", [] {
     // Project: lib target "tinyhttps", convention puts the lib root at
     // src/tinyhttps.cppm exporting `mcpplibs.tinyhttps`. Two partition
     // siblings sit alongside.
@@ -740,12 +736,12 @@ TEST(Validate, LibRootHappyPath) {
     m.targets.push_back(t);
 
     auto rep = validate(g, m);     // empty projectRoot → on-disk check skipped
-    EXPECT_TRUE(rep.ok()) << "errors:" << [&]{
+    expect(rep.ok()) << "errors:" << [&]{
         std::string s; for (auto& e : rep.errors) s += "\n  " + e.message; return s;
     }();
-}
+}};
 
-TEST(Validate, LibRootExportsPartitionIsError) {
+UTest lib_root_exports_partition_is_error{"Validate/LibRootExportsPartitionIsError", [] {
     // Lib root file at the conventional path exports `:foo` (a partition
     // suffix) — must be rejected: lib root must be the primary module.
     Graph g;
@@ -764,16 +760,16 @@ TEST(Validate, LibRootExportsPartitionIsError) {
     m.targets.push_back(t);
 
     auto rep = validate(g, m);
-    EXPECT_FALSE(rep.ok());
+    expect(!rep.ok());
     bool found = false;
     for (auto& e : rep.errors) {
         if (e.message.find("partition") != std::string::npos
             && e.message.find("primary module") != std::string::npos) { found = true; break; }
     }
-    EXPECT_TRUE(found) << "expected lib-root partition error";
-}
+    expect(bool(found)) << "expected lib-root partition error";
+}};
 
-TEST(Validate, LibRootDifferentModuleNameIsAllowed) {
+UTest lib_root_different_module_name_is_allowed{"Validate/LibRootDifferentModuleNameIsAllowed", [] {
     // 0.0.10+: lib root module name does NOT need to match [package].name.
     // The library author decides the module name; the build tool auto-detects.
     Graph g;
@@ -792,10 +788,10 @@ TEST(Validate, LibRootDifferentModuleNameIsAllowed) {
     m.targets.push_back(t);
 
     auto rep = validate(g, m);
-    EXPECT_TRUE(rep.ok()) << "module name mismatch should not be an error";
-}
+    expect(rep.ok()) << "module name mismatch should not be an error";
+}};
 
-TEST(Validate, LibRootNotEnforcedForBinaryProject) {
+UTest lib_root_not_enforced_for_binary_project{"Validate/LibRootNotEnforcedForBinaryProject", [] {
     // Pure-binary project: no lib target → no lib-root checks. Even if a
     // file at src/<tail>.cppm exists exporting an unrelated module, no
     // error should fire.
@@ -809,10 +805,10 @@ TEST(Validate, LibRootNotEnforcedForBinaryProject) {
     m.targets.push_back(t);
 
     auto rep = validate(g, m);
-    EXPECT_TRUE(rep.ok());
-}
+    expect(rep.ok());
+}};
 
-TEST(Validate, LibRootMissingFileWithExplicitPathIsError) {
+UTest lib_root_missing_file_with_explicit_path_is_error{"Validate/LibRootMissingFileWithExplicitPathIsError", [] {
     Graph g;
     mcpp::manifest::Manifest m;
     m.package.name = "myorg.foo";
@@ -824,15 +820,15 @@ TEST(Validate, LibRootMissingFileWithExplicitPathIsError) {
 
     // Pass a non-empty projectRoot so the on-disk check is enabled.
     auto rep = validate(g, m, std::filesystem::current_path());
-    EXPECT_FALSE(rep.ok());
+    expect(!rep.ok());
     bool found = false;
     for (auto& e : rep.errors) {
         if (e.message.find("does not exist") != std::string::npos) { found = true; break; }
     }
-    EXPECT_TRUE(found) << "expected explicit-path-missing error";
-}
+    expect(bool(found)) << "expected explicit-path-missing error";
+}};
 
-TEST(TopoSort, DetectsCycle) {
+UTest detects_cycle{"TopoSort/DetectsCycle", [] {
     Graph g;
     g.units.resize(2);
     g.units[0].provides = ModuleId{"a"};
@@ -845,24 +841,24 @@ TEST(TopoSort, DetectsCycle) {
     g.edges.push_back({1, 0});  // b->a
 
     auto r = topo_sort(g);
-    EXPECT_FALSE(r.has_value());
-}
+    expect(!r.has_value());
+}};
 
-TEST(IsPublicPackage, DotMarksPublic) {
-    EXPECT_TRUE(is_public_package_name("myorg.foo"));
-    EXPECT_FALSE(is_public_package_name("foo"));
-}
+UTest dot_marks_public{"IsPublicPackage/DotMarksPublic", [] {
+    expect(is_public_package_name("myorg.foo"));
+    expect(!is_public_package_name("foo"));
+}};
 
-TEST(IsForbiddenTopModule, KnownNames) {
-    EXPECT_TRUE(is_forbidden_top_module("core"));
-    EXPECT_TRUE(is_forbidden_top_module("util.x"));
-    EXPECT_FALSE(is_forbidden_top_module("myorg.foo"));
-}
+UTest known_names{"IsForbiddenTopModule/KnownNames", [] {
+    expect(is_forbidden_top_module("core"));
+    expect(is_forbidden_top_module("util.x"));
+    expect(!is_forbidden_top_module("myorg.foo"));
+}};
 
 // G4: per-glob flags attach to exactly the matched units, in declaration
 // order; a zero-hit glob warns (not errors — cfg-gated source sets may
 // legitimately leave a glob empty on some targets).
-TEST(Scanner, PerGlobFlagsAttachToMatchedUnits) {
+UTest per_glob_flags_attach_to_matched_units{"Scanner/PerGlobFlagsAttachToMatchedUnits", [] {
     auto dir = make_tempdir("mcpp-scanner-globflags");
     write(dir / "src" / "hot.cpp", "int hot() { return 1; }\n");
     write(dir / "third_party" / "noisy.cpp", "int noisy() { return 2; }\n");
@@ -878,44 +874,40 @@ TEST(Scanner, PerGlobFlagsAttachToMatchedUnits) {
         { .glob = "nothing/**", .cxxflags = {"-Wnever"} });
 
     auto res = scan_package(dir, m);
-    ASSERT_TRUE(res.errors.empty());
-    ASSERT_EQ(res.graph.units.size(), 2u);
+    expect(fatal(res.errors.empty()));
+    expect(fatal(eq(res.graph.units.size(), 2u)));
     for (auto& u : res.graph.units) {
         if (u.path.filename() == "noisy.cpp") {
-            EXPECT_EQ(u.packageCxxflags, (std::vector<std::string>{"-w"}));
+            expect(eq(u.packageCxxflags, (std::vector<std::string>{"-w"})));
         } else {
             // defines land before the entry's own flag lists
-            EXPECT_EQ(u.packageCxxflags,
-                      (std::vector<std::string>{"-DHOT", "-mavx2"}));
+            expect(eq(u.packageCxxflags, (std::vector<std::string>{"-DHOT", "-mavx2"})));
         }
     }
     // The unmatched glob warns.
     bool warned = false;
     for (auto& w : res.warnings)
         if (w.message.find("nothing/**") != std::string::npos) warned = true;
-    EXPECT_TRUE(warned);
+    expect(bool(warned));
 
     std::filesystem::remove_all(dir);
-}
+}};
 
 // #228: expand_braces desugars `{a,b}` into a cartesian product of plain
 // globs. No braces -> passthrough; multiple/nested groups combine.
-TEST(Scanner, ExpandBracesDesugarsCartesianProduct) {
-    EXPECT_EQ(expand_braces("a/**"), (std::vector<std::string>{"a/**"}));
-    EXPECT_EQ(expand_braces("a/{x,y}/**"),
-              (std::vector<std::string>{"a/x/**", "a/y/**"}));
-    EXPECT_EQ(expand_braces("a/{x,y}/{1,2}"),
-              (std::vector<std::string>{"a/x/1", "a/x/2", "a/y/1", "a/y/2"}));
+UTest expand_braces_desugars_cartesian_product{"Scanner/ExpandBracesDesugarsCartesianProduct", [] {
+    expect(eq(expand_braces("a/**"), (std::vector<std::string>{"a/**"})));
+    expect(eq(expand_braces("a/{x,y}/**"), (std::vector<std::string>{"a/x/**", "a/y/**"})));
+    expect(eq(expand_braces("a/{x,y}/{1,2}"), (std::vector<std::string>{"a/x/1", "a/x/2", "a/y/1", "a/y/2"})));
     // Nested group.
-    EXPECT_EQ(expand_braces("a/{x,{y,z}}/**"),
-              (std::vector<std::string>{"a/x/**", "a/y/**", "a/z/**"}));
-}
+    expect(eq(expand_braces("a/{x,{y,z}}/**"), (std::vector<std::string>{"a/x/**", "a/y/**", "a/z/**"})));
+}};
 
 // Review fix on #228: brace-nesting recursion depth is bounded (cap: 32
 // levels), so a pathological manifest with deeply nested `{` cannot
 // stack-overflow. Beyond the cap the remainder is passed through as a
 // literal instead of throwing — this must simply return, not crash.
-TEST(Scanner, ExpandBracesBoundsDeeplyNestedRecursion) {
+UTest expand_braces_bounds_deeply_nested_recursion{"Scanner/ExpandBracesBoundsDeeplyNestedRecursion", [] {
     std::string glob = "a/";
     constexpr int kDepth = 500;  // far beyond the 32-level cap
     for (int i = 0; i < kDepth; ++i) glob += "{";
@@ -923,15 +915,15 @@ TEST(Scanner, ExpandBracesBoundsDeeplyNestedRecursion) {
     for (int i = 0; i < kDepth; ++i) glob += "}";
 
     std::vector<std::string> out;
-    ASSERT_NO_THROW(out = expand_braces(glob));
-    EXPECT_FALSE(out.empty());
-}
+    expect(fatal(nothrow([&] { out = expand_braces(glob); })));
+    expect(!out.empty());
+}};
 
 // #228: expand_glob applies brace desugaring at its entry, so a glob like
 // "p/{aac,bsf}/**" matches files under EITHER alternative directory and
 // nothing else (a sibling directory outside the brace group, "opus", must
 // not appear).
-TEST(Scanner, ExpandGlobBraceAlternation) {
+UTest expand_glob_brace_alternation{"Scanner/ExpandGlobBraceAlternation", [] {
     auto dir = make_tempdir("mcpp-scanner-brace");
     write(dir / "p" / "aac" / "x.c", "int x;\n");
     write(dir / "p" / "bsf" / "y.c", "int y;\n");
@@ -939,21 +931,21 @@ TEST(Scanner, ExpandGlobBraceAlternation) {
 
     auto files = expand_glob(dir, "p/{aac,bsf}/**");
 
-    ASSERT_EQ(files.size(), 2u);
+    expect(fatal(eq(files.size(), 2u)));
     std::set<std::string> names;
     for (auto& f : files) names.insert(f.filename().string());
-    EXPECT_TRUE(names.contains("x.c"));
-    EXPECT_TRUE(names.contains("y.c"));
-    EXPECT_FALSE(names.contains("z.c"));
+    expect(names.contains("x.c"));
+    expect(names.contains("y.c"));
+    expect(!names.contains("z.c"));
 
     std::filesystem::remove_all(dir);
-}
+}};
 
 // #228: brace alternation in a [build].flags glob must also match — the
 // per-glob-flags match point (scan_one_into's apply_glob_flags) uses
 // path_matches_glob directly rather than expand_glob's walk, so it needs its
 // own desugaring wire-up.
-TEST(Scanner, PerGlobFlagsMatchBraceAlternation) {
+UTest per_glob_flags_match_brace_alternation{"Scanner/PerGlobFlagsMatchBraceAlternation", [] {
     auto dir = make_tempdir("mcpp-scanner-globflags-brace");
     write(dir / "p" / "aac" / "x.cpp", "int x() { return 1; }\n");
     write(dir / "p" / "bsf" / "y.cpp", "int y() { return 2; }\n");
@@ -966,24 +958,24 @@ TEST(Scanner, PerGlobFlagsMatchBraceAlternation) {
         { .glob = "p/{aac,bsf}/**", .defines = {"CODEC"} });
 
     auto res = scan_package(dir, m);
-    ASSERT_TRUE(res.errors.empty());
-    ASSERT_EQ(res.graph.units.size(), 3u);
+    expect(fatal(res.errors.empty()));
+    expect(fatal(eq(res.graph.units.size(), 3u)));
     for (auto& u : res.graph.units) {
         bool wantsDefine = u.path.filename() != "z.cpp";
         bool hasDefine = std::find(u.packageCxxflags.begin(), u.packageCxxflags.end(),
                                     "-DCODEC") != u.packageCxxflags.end();
-        EXPECT_EQ(hasDefine, wantsDefine) << u.path.string();
+        expect(eq(hasDefine, wantsDefine)) << u.path.string();
     }
 
     std::filesystem::remove_all(dir);
-}
+}};
 
 // G8b: relative -I flags are root-relative in the manifest but ninja runs
 // with cwd = output dir — the scanner absolutizes them on every unit.
 // The absolute spelling is NORMALIZED to native separators (#390): MSVC's
 // path keeps the input `/` verbatim, and `-I/abs/path` written with forward
 // slashes used to survive into the CDB's arguments as a mixed path.
-TEST(Scanner, RelativeIncludeFlagsAbsolutized) {
+UTest relative_include_flags_absolutized{"Scanner/RelativeIncludeFlagsAbsolutized", [] {
     auto dir = make_tempdir("mcpp-scanner-relinc");
     write(dir / "src" / "a.cpp", "int a();\n");
 
@@ -997,17 +989,17 @@ TEST(Scanner, RelativeIncludeFlagsAbsolutized) {
         mm.buildConfig.cxxflags = {"-Iinc", "-I/abs/path", "-DKEEP"};
         return scan_package(dir, mm);
     }();
-    ASSERT_EQ(res.graph.units.size(), 1u);
+    expect(fatal(eq(res.graph.units.size(), 1u)));
     auto& fl = res.graph.units[0].packageCxxflags;
-    EXPECT_EQ(fl[0], "-I" + (dir / "inc").string());
+    expect(eq(fl[0], "-I" + (dir / "inc").string()));
     if constexpr (std::filesystem::path::preferred_separator == '\\')
-        EXPECT_EQ(fl[1], "-I\\abs\\path");   // absolute stays, but native
+        expect(eq(fl[1], "-I\\abs\\path"));   // absolute stays, but native
     else
-        EXPECT_EQ(fl[1], "-I/abs/path");     // absolute stays
-    EXPECT_EQ(fl[2], "-DKEEP");              // non-include untouched
+        expect(eq(fl[1], "-I/abs/path"));     // absolute stays
+    expect(eq(fl[2], "-DKEEP"));              // non-include untouched
 
     std::filesystem::remove_all(dir);
-}
+}};
 
 // ─── mcpp#516 / #230: names the active code page cannot spell ──────────────
 //
@@ -1035,7 +1027,7 @@ namespace {
 // nearest ancestor that CAN be named — never by the offending name, which
 // cannot be put into a message without throwing the very exception being
 // reported. Platform-independent logic, so this runs everywhere.
-TEST(Glob, UnnarrowablePathsDedupToTheirSpellableAncestor) {
+UTest unnarrowable_paths_dedup_to_their_spellable_ancestor{"Glob/UnnarrowablePathsDedupToTheirSpellableAncestor", [] {
     (void)take_unnarrowable_paths();   // other tests in this binary walk too
 
     const std::filesystem::path base = "/pkg/test/www";
@@ -1044,20 +1036,18 @@ TEST(Glob, UnnarrowablePathsDedupToTheirSpellableAncestor) {
     note_unnarrowable_path(base / "other.txt");
 
     auto notes = take_unnarrowable_paths();
-    ASSERT_EQ(notes.size(), 2u);   // ".../www/bad" and ".../www" — not three files
-    EXPECT_NE(std::find(notes.begin(), notes.end(), (base / "bad").generic_string()),
-              notes.end());
-    EXPECT_NE(std::find(notes.begin(), notes.end(), base.generic_string()),
-              notes.end());
+    expect(fatal(eq(notes.size(), 2u)));   // ".../www/bad" and ".../www" — not three files
+    expect(ne(std::find(notes.begin(), notes.end(), (base / "bad").generic_string()), notes.end()));
+    expect(ne(std::find(notes.begin(), notes.end(), base.generic_string()), notes.end()));
 
     // take() clears: the next command reports afresh rather than replaying.
-    EXPECT_TRUE(take_unnarrowable_paths().empty());
-}
+    expect(take_unnarrowable_paths().empty());
+}};
 
 // A non-ASCII directory name must not disturb the walk on ANY platform. This
 // one is reproducible everywhere (on Windows the UTF-8 bytes land as whatever
 // the ACP makes of them, which still exercises the walk).
-TEST(Scanner, GlobWalkHandlesNonAsciiNames) {
+UTest glob_walk_handles_non_ascii_names{"Scanner/GlobWalkHandlesNonAsciiNames", [] {
     auto dir = make_tempdir("mcpp-scanner-nonascii");
     // U+65E5 U+672C U+8A9E in UTF-8, spelled as bytes so the test does not
     // depend on the source file's encoding. Split before "Dir" because a C++
@@ -1067,16 +1057,15 @@ TEST(Scanner, GlobWalkHandlesNonAsciiNames) {
     write(dir / "zzz_ascii" / "x.h", "#pragma once\n");
 
     std::vector<std::filesystem::path> dirs;
-    ASSERT_NO_THROW({ dirs = expand_dir_glob(dir, "*"); });
-    EXPECT_NE(std::find(dirs.begin(), dirs.end(), dir / "zzz_ascii"), dirs.end());
+    expect(fatal(nothrow([&] { { dirs = expand_dir_glob(dir, "*"); }; })));
+    expect(ne(std::find(dirs.begin(), dirs.end(), dir / "zzz_ascii"), dirs.end()));
 
     std::vector<std::filesystem::path> files;
-    ASSERT_NO_THROW({ files = expand_glob(dir, "**/*.h"); });
-    EXPECT_NE(std::find(files.begin(), files.end(), dir / "zzz_ascii" / "x.h"),
-              files.end());
+    expect(fatal(nothrow([&] { { files = expand_glob(dir, "**/*.h"); }; })));
+    expect(ne(std::find(files.begin(), files.end(), dir / "zzz_ascii" / "x.h"), files.end()));
 
     std::filesystem::remove_all(dir);
-}
+}};
 
 // mcpp#516 proper: a directory name the ACTIVE CODE PAGE cannot spell used to
 // throw out of `is_excluded_walk_dir`'s `.filename().string()` — the first
@@ -1089,10 +1078,10 @@ TEST(Scanner, GlobWalkHandlesNonAsciiNames) {
 // Asserts (a) the walk does not throw, (b) it is not TRUNCATED at the bad
 // entry, and (c) the skip was RECORDED — silently dropping the file is the
 // half-fix this whole change exists to avoid.
-TEST(Scanner, GlobWalkSurvivesNamesTheCodePageCannotSpell) {
+UTest glob_walk_survives_names_the_code_page_cannot_spell{"Scanner/GlobWalkSurvivesNamesTheCodePageCannotSpell", [] {
 #ifndef _WIN32
-    GTEST_SKIP() << "path::string() performs no encoding conversion off Windows; "
-                    "mcpp#516 is not reproducible here";
+    skip([&] { std::ostringstream text; text << "path::string() performs no encoding conversion off Windows; "
+                    "mcpp#516 is not reproducible here"; return text.str(); }());
 #else
     // Devanagari is in NO Windows ANSI code page, so this case stays live on
     // every non-UTF-8 ACP. The Japanese name mirrors mcpp#516's real input
@@ -1110,8 +1099,8 @@ TEST(Scanner, GlobWalkSurvivesNamesTheCodePageCannotSpell) {
                                 L'D', L'i', L'r'};
 
     if (acp_can_spell(unspellable)) {
-        GTEST_SKIP() << "the active code page can spell any name (UTF-8 ACP); "
-                        "mcpp#516 is unreachable on this host";
+        skip([&] { std::ostringstream text; text << "the active code page can spell any name (UTF-8 ACP); "
+                        "mcpp#516 is unreachable on this host"; return text.str(); }());
     }
 
     auto dir = make_tempdir("mcpp-scanner-acp");
@@ -1125,23 +1114,22 @@ TEST(Scanner, GlobWalkSurvivesNamesTheCodePageCannotSpell) {
     // The include-dir channel — mcpp#516's actual path (`include_dirs = {"*"}`,
     // whose literal prefix is empty, so the walk starts at the package root).
     std::vector<std::filesystem::path> dirs;
-    ASSERT_NO_THROW({ dirs = expand_dir_glob(dir, "*"); });
-    EXPECT_NE(std::find(dirs.begin(), dirs.end(), dir / "zzz_ascii"), dirs.end())
+    expect(fatal(nothrow([&] { { dirs = expand_dir_glob(dir, "*"); }; })));
+    expect(ne(std::find(dirs.begin(), dirs.end(), dir / "zzz_ascii"), dirs.end()))
         << "the walk was truncated at the unspellable entry";
 
     // The file channel — installedLayoutMatchesIndex's
     // `expand_glob(verRoot, "mcpp.toml")` walks the whole tree the same way.
     std::vector<std::filesystem::path> files;
-    ASSERT_NO_THROW({ files = expand_glob(dir, "**/*.h"); });
-    EXPECT_NE(std::find(files.begin(), files.end(), dir / "zzz_ascii" / "x.h"),
-              files.end());
+    expect(fatal(nothrow([&] { { files = expand_glob(dir, "**/*.h"); }; })));
+    expect(ne(std::find(files.begin(), files.end(), dir / "zzz_ascii" / "x.h"), files.end()));
 
-    EXPECT_FALSE(take_unnarrowable_paths().empty())
+    expect(!(take_unnarrowable_paths().empty()))
         << "the skipped entries were not recorded, so nothing would be reported";
 
     std::filesystem::remove_all(dir);
 #endif
-}
+}};
 
 // ─── #693: the UTF-8 spelling a path must have ─────────────────────────────
 //
@@ -1151,20 +1139,20 @@ TEST(Scanner, GlobWalkSurvivesNamesTheCodePageCannotSpell) {
 // and recorded, exactly as the Windows test above states for a name the code
 // page cannot spell.
 
-TEST(Glob, Utf8ValidityIsDecidedByteByByte) {
-    EXPECT_TRUE(is_valid_utf8(""));
-    EXPECT_TRUE(is_valid_utf8("plain/ascii"));
-    EXPECT_TRUE(is_valid_utf8("caf\xC3\xA9"));                  // U+00E9
-    EXPECT_TRUE(is_valid_utf8("\xE6\xB5\x8B\xE8\xAF\x95"));     // U+6D4B U+8BD5
-    EXPECT_TRUE(is_valid_utf8("\xF0\x9F\x98\x80"));             // U+1F600
-    EXPECT_FALSE(is_valid_utf8("caf\xE9"));                     // Latin-1
-    EXPECT_FALSE(is_valid_utf8("\xB2\xE2\xCA\xD4"));            // GBK for U+6D4B U+8BD5
-    EXPECT_FALSE(is_valid_utf8("\xC0\xAF"));                    // an overlong '/'
-    EXPECT_FALSE(is_valid_utf8("\xED\xA0\x80"));                // a surrogate
-    EXPECT_FALSE(is_valid_utf8("\xF4\x90\x80\x80"));            // above U+10FFFF
-    EXPECT_FALSE(is_valid_utf8("\xE6\xB5"));                    // truncated
-    EXPECT_FALSE(is_valid_utf8("\x80"));                        // a stray continuation
-}
+UTest utf8_validity_is_decided_byte_by_byte{"Glob/Utf8ValidityIsDecidedByteByByte", [] {
+    expect(is_valid_utf8(""));
+    expect(is_valid_utf8("plain/ascii"));
+    expect(is_valid_utf8("caf\xC3\xA9"));                  // U+00E9
+    expect(is_valid_utf8("\xE6\xB5\x8B\xE8\xAF\x95"));     // U+6D4B U+8BD5
+    expect(is_valid_utf8("\xF0\x9F\x98\x80"));             // U+1F600
+    expect(!is_valid_utf8("caf\xE9"));                     // Latin-1
+    expect(!is_valid_utf8("\xB2\xE2\xCA\xD4"));            // GBK for U+6D4B U+8BD5
+    expect(!is_valid_utf8("\xC0\xAF"));                    // an overlong '/'
+    expect(!is_valid_utf8("\xED\xA0\x80"));                // a surrogate
+    expect(!is_valid_utf8("\xF4\x90\x80\x80"));            // above U+10FFFF
+    expect(!is_valid_utf8("\xE6\xB5"));                    // truncated
+    expect(!is_valid_utf8("\x80"));                        // a stray continuation
+}};
 
 // A diagnostic names a path that has no UTF-8 spelling through an escaped one.
 //
@@ -1174,47 +1162,46 @@ TEST(Glob, Utf8ValidityIsDecidedByteByByte) {
 // throw. The assertion that once followed the branches did exactly that, so
 // the test passed on an English runner and failed on a Chinese one (O6 of the
 // 2026-10-05 design).
-TEST(Glob, EscapedSpellingIsUtf8WhateverTheName) {
+UTest escaped_spelling_is_utf8_whatever_the_name{"Glob/EscapedSpellingIsUtf8WhateverTheName", [] {
 #ifdef _WIN32
     const std::wstring lone{L'a', wchar_t(0xD800), L'b'};
-    EXPECT_EQ(escaped_spelling(std::filesystem::path(lone)), "a\\u{D800}b");
-    EXPECT_TRUE(is_valid_utf8(escaped_spelling(std::filesystem::path(lone))));
+    expect(eq(escaped_spelling(std::filesystem::path(lone)), "a\\u{D800}b"));
+    expect(is_valid_utf8(escaped_spelling(std::filesystem::path(lone))));
     const std::wstring cafe{L'c', L'a', L'f', wchar_t(0x00E9)};
-    EXPECT_EQ(escaped_spelling(std::filesystem::path(cafe)), "caf\xC3\xA9");
+    expect(eq(escaped_spelling(std::filesystem::path(cafe)), "caf\xC3\xA9"));
 #else
-    EXPECT_EQ(escaped_spelling("/x/caf\xE9"), "/x/caf\\xE9");
-    EXPECT_EQ(escaped_spelling("/x/caf\xC3\xA9"), "/x/caf\xC3\xA9");
-    EXPECT_TRUE(is_valid_utf8(escaped_spelling(std::filesystem::path("caf\xE9"))));
+    expect(eq(escaped_spelling("/x/caf\xE9"), "/x/caf\\xE9"));
+    expect(eq(escaped_spelling("/x/caf\xC3\xA9"), "/x/caf\xC3\xA9"));
+    expect(is_valid_utf8(escaped_spelling(std::filesystem::path("caf\xE9"))));
 #endif
-}
+}};
 
-TEST(Scanner, GlobWalkSkipsNamesThatAreNotUtf8) {
+UTest glob_walk_skips_names_that_are_not_utf8{"Scanner/GlobWalkSkipsNamesThatAreNotUtf8", [] {
 #ifdef _WIN32
-    GTEST_SKIP() << "a Windows name is UTF-16; the test above states the Windows case";
+    skip("a Windows name is UTF-16; the test above states the Windows case");
 #else
     auto dir = make_tempdir("mcpp-scanner-latin1");
     std::error_code ec;
     std::filesystem::create_directories(dir / "caf\xE9", ec);   // Latin-1
     if (ec) {
         std::filesystem::remove_all(dir);
-        GTEST_SKIP() << "this file system refuses a name that is not UTF-8: "
-                     << ec.message();
+        skip([&] { std::ostringstream text; text << "this file system refuses a name that is not UTF-8: " << ec.message(); return text.str(); }());
     }
     write(dir / "caf\xE9" / "x.h", "#pragma once\n");
     write(dir / "zzz_ascii" / "x.h", "#pragma once\n");
     (void)take_unnarrowable_paths();
 
     std::vector<std::filesystem::path> files;
-    ASSERT_NO_THROW({ files = expand_glob(dir, "**/*.h"); });
-    EXPECT_EQ(files, (std::vector<std::filesystem::path>{dir / "zzz_ascii" / "x.h"}));
+    expect(fatal(nothrow([&] { { files = expand_glob(dir, "**/*.h"); }; })));
+    expect(eq(files, (std::vector<std::filesystem::path>{dir / "zzz_ascii" / "x.h"})));
 
     auto notes = take_unnarrowable_paths();
-    ASSERT_EQ(notes.size(), 1u);
-    EXPECT_EQ(notes[0], dir.generic_string());
+    expect(fatal(eq(notes.size(), 1u)));
+    expect(eq(notes[0], dir.generic_string()));
 
     std::filesystem::remove_all(dir);
 #endif
-}
+}};
 
 // `module : private;` is a THIRD production, not a spelling of the two the
 // scanner already knew ([module.private.frag]). It declares nothing: the unit
@@ -1225,7 +1212,7 @@ TEST(Scanner, GlobWalkSkipsNamesThatAreNotUtf8) {
 // are checked because the scanner tokenises them differently — `module :
 // private;` yields the "name" `:` and `module :private;` yields `:private` —
 // and one of the two passing proves nothing about the other.
-TEST(Scanner, PrivateModuleFragmentDeclaresNothing) {
+UTest private_module_fragment_declares_nothing{"Scanner/PrivateModuleFragmentDeclaresNothing", [] {
     for (std::string_view spelling : {"module : private;", "module :private;"}) {
         auto dir = make_tempdir("mcpp-privfrag");
         write(dir / "src" / "pf.cppm",
@@ -1236,20 +1223,20 @@ TEST(Scanner, PrivateModuleFragmentDeclaresNothing) {
 
         auto u = scan_file(dir / "src" / "pf.cppm", "pkg",
                            mcpp::builtin_extension_table());
-        ASSERT_TRUE(u.has_value()) << spelling << ": " << u.error().format();
-        ASSERT_TRUE(u->provides.has_value()) << spelling;
-        EXPECT_EQ(u->provides->logicalName, "pf") << spelling;
-        EXPECT_TRUE(u->providesInterface) << spelling;
+        if (auto&& failed = expect(fatal(u.has_value())); !failed) failed << spelling << ": " << u.error().format();
+        expect(fatal(u->provides.has_value())) << spelling;
+        expect(eq(u->provides->logicalName, "pf")) << spelling;
+        expect(bool(u->providesInterface)) << spelling;
         // The fragment contributes no edge in either direction.
-        EXPECT_TRUE(u->requires_.empty()) << spelling;
+        expect(u->requires_.empty()) << spelling;
     }
-}
+}};
 
 // A UTF-8 byte-order mark is not part of the source text. MSVC writes one by
 // default, so this is ordinary input; every compiler skips it, and this scanner
 // did not — the mark stayed attached to the first token, the declaration was
 // not seen, and the unit silently provided nothing.
-TEST(Scanner, ByteOrderMarkDoesNotHideTheModuleDeclaration) {
+UTest byte_order_mark_does_not_hide_the_module_declaration{"Scanner/ByteOrderMarkDoesNotHideTheModuleDeclaration", [] {
     auto dir = make_tempdir("mcpp-bom");
     write(dir / "src" / "bom.cppm",
           "\xEF\xBB\xBF"
@@ -1259,27 +1246,26 @@ TEST(Scanner, ByteOrderMarkDoesNotHideTheModuleDeclaration) {
 
     auto u = scan_file(dir / "src" / "bom.cppm", "pkg",
                        mcpp::builtin_extension_table());
-    ASSERT_TRUE(u.has_value()) << u.error().format();
-    ASSERT_TRUE(u->provides.has_value())
+    if (auto&& failed = expect(fatal(u.has_value())); !failed) failed << u.error().format();
+    expect(fatal(u->provides.has_value()))
         << "the BOM hid the module declaration";
-    EXPECT_EQ(u->provides->logicalName, "bom");
-    ASSERT_EQ(u->requires_.size(), 1u);
-    EXPECT_EQ(u->requires_[0].logicalName, "std");
-}
+    expect(eq(u->provides->logicalName, "bom"));
+    expect(fatal(eq(u->requires_.size(), 1u)));
+    expect(eq(u->requires_[0].logicalName, "std"));
+}};
 
 // UTF-16/32 is refused by name rather than misread. Every line after the mark
 // would be garbage, so a named refusal is the difference between a message and
 // a mystery.
-TEST(Scanner, Utf16ByteOrderMarkIsRefusedByName) {
+UTest utf16_byte_order_mark_is_refused_by_name{"Scanner/Utf16ByteOrderMarkIsRefusedByName", [] {
     auto dir = make_tempdir("mcpp-bom16");
     write(dir / "src" / "u16.cppm", std::string_view("\xFF\xFE" "e\0x\0p\0", 8));
 
     auto u = scan_file(dir / "src" / "u16.cppm", "pkg",
                        mcpp::builtin_extension_table());
-    ASSERT_FALSE(u.has_value());
-    EXPECT_NE(u.error().message.find("UTF-16"), std::string::npos)
-        << u.error().message;
-}
+    expect(fatal(!u.has_value()));
+    if (auto&& failed = expect(ne(u.error().message.find("UTF-16"), std::string::npos)); !failed) failed << u.error().message;
+}};
 
 // The scanner must never RECORD an identity no source could have declared.
 //
@@ -1289,16 +1275,15 @@ TEST(Scanner, Utf16ByteOrderMarkIsRefusedByName) {
 // module fragment recorded a module called `:`, and the build graph grew an
 // edge for a BMI named after a colon. Nothing reported it — every step after
 // the mis-parse worked correctly on the answer it was given.
-TEST(Scanner, AModuleIdentityThatIsNotANameIsRefused) {
+UTest a_module_identity_that_is_not_a_name_is_refused{"Scanner/AModuleIdentityThatIsNotANameIsRefused", [] {
     auto dir = make_tempdir("mcpp-badname");
     write(dir / "src" / "bad.cppm", "module :not_private;\n");
 
     auto u = scan_file(dir / "src" / "bad.cppm", "pkg",
                        mcpp::builtin_extension_table());
-    ASSERT_FALSE(u.has_value());
-    EXPECT_NE(u.error().message.find("is not a module name"), std::string::npos)
-        << u.error().message;
-}
+    expect(fatal(!u.has_value()));
+    if (auto&& failed = expect(ne(u.error().message.find("is not a module name"), std::string::npos)); !failed) failed << u.error().message;
+}};
 
 // The message quotes WHAT WAS READ, not what was recorded.
 //
@@ -1309,24 +1294,21 @@ TEST(Scanner, AModuleIdentityThatIsNotANameIsRefused) {
 // every byte of a UTF-8 sequence. GCC 16.1 refuses the same declaration with
 // `unrecognized 'MODULE-EXPORT ...'`, so this is a clearer sentence for a
 // refusal that already existed, not a new restriction.
-TEST(Scanner, AnUnreadableModuleNameIsQuotedAsWritten) {
+UTest an_unreadable_module_name_is_quoted_as_written{"Scanner/AnUnreadableModuleNameIsQuotedAsWritten", [] {
     auto dir = make_tempdir("mcpp-nonascii");
     write(dir / "src" / "u.cppm", "export module \u6a21\u5757;\n");
 
     auto u = scan_file(dir / "src" / "u.cppm", "pkg",
                        mcpp::builtin_extension_table());
-    ASSERT_FALSE(u.has_value());
-    EXPECT_NE(u.error().message.find("is not a module name"), std::string::npos)
-        << u.error().message;
-    EXPECT_EQ(u.error().message.find("'' is not"), std::string::npos)
-        << "the message quoted an empty name: " << u.error().message;
-    EXPECT_NE(u.error().message.find("\u6a21\u5757"), std::string::npos)
-        << u.error().message;
-}
+    expect(fatal(!u.has_value()));
+    if (auto&& failed = expect(ne(u.error().message.find("is not a module name"), std::string::npos)); !failed) failed << u.error().message;
+    if (auto&& failed = expect(eq(u.error().message.find("'' is not"), std::string::npos)); !failed) failed << "the message quoted an empty name: " << u.error().message;
+    if (auto&& failed = expect(ne(u.error().message.find("\u6a21\u5757"), std::string::npos)); !failed) failed << u.error().message;
+}};
 
 // The guard above must not refuse what the language allows. A partition, a
 // dotted name and a dotted partition are all names.
-TEST(Scanner, WellFormedNamesSurviveTheIdentityGuard) {
+UTest well_formed_names_survive_the_identity_guard{"Scanner/WellFormedNamesSurviveTheIdentityGuard", [] {
     struct Case { std::string_view decl; std::string_view provides; };
     for (auto [decl, provides] : {
              Case{"export module a.b.c;",        "a.b.c"},
@@ -1337,11 +1319,11 @@ TEST(Scanner, WellFormedNamesSurviveTheIdentityGuard) {
         write(dir / "src" / "g.cppm", std::format("{}\n", decl));
         auto u = scan_file(dir / "src" / "g.cppm", "pkg",
                            mcpp::builtin_extension_table());
-        ASSERT_TRUE(u.has_value()) << decl << ": " << u.error().format();
-        ASSERT_TRUE(u->provides.has_value()) << decl;
-        EXPECT_EQ(u->provides->logicalName, provides) << decl;
+        if (auto&& failed = expect(fatal(u.has_value())); !failed) failed << decl << ": " << u.error().format();
+        expect(fatal(u->provides.has_value())) << decl;
+        expect(eq(u->provides->logicalName, provides)) << decl;
     }
-}
+}};
 
 // ─── A module name is resolved in the importer's closure (mcpp#732) ─────────
 //
@@ -1351,25 +1333,25 @@ TEST(Scanner, WellFormedNamesSurviveTheIdentityGuard) {
 // an import is resolved in the importing package's closure, and a closure may
 // hold one provider of a name.
 
-TEST(ModuleResolution, OneProviderIsTakenWhereverItIs) {
+UTest one_provider_is_taken_wherever_it_is{"ModuleResolution/OneProviderIsTakenWhereverItIs", [] {
     const std::vector<std::string> providers{"lib"};
-    EXPECT_EQ(choose_provider(providers, "app", {}), std::optional<std::size_t>{0});
-}
+    expect(eq(choose_provider(providers, "app", {}), std::optional<std::size_t>{0}));
+}};
 
-TEST(ModuleResolution, TwoProvidersResolveInTheImportersClosure) {
+UTest two_providers_resolve_in_the_importers_closure{"ModuleResolution/TwoProvidersResolveInTheImportersClosure", [] {
     const std::vector<std::string> providers{"app", "updater"};
     const Closures closures{{"app", {"app"}}, {"updater", {"updater"}}};
-    EXPECT_EQ(choose_provider(providers, "app", closures), std::optional<std::size_t>{0});
-    EXPECT_EQ(choose_provider(providers, "updater", closures), std::optional<std::size_t>{1});
-}
+    expect(eq(choose_provider(providers, "app", closures), std::optional<std::size_t>{0}));
+    expect(eq(choose_provider(providers, "updater", closures), std::optional<std::size_t>{1}));
+}};
 
-TEST(ModuleResolution, TwoProvidersInOneClosureOrNoneResolveToNothing) {
+UTest two_providers_in_one_closure_or_none_resolve_to_nothing{"ModuleResolution/TwoProvidersInOneClosureOrNoneResolveToNothing", [] {
     const std::vector<std::string> providers{"lib1", "lib2"};
     const Closures closures{{"prog", {"prog", "lib1", "lib2"}}, {"other", {"other"}}};
-    EXPECT_FALSE(choose_provider(providers, "prog", closures));
-    EXPECT_FALSE(choose_provider(providers, "other", closures));
-    EXPECT_FALSE(choose_provider(providers, "prog", {}));
-}
+    expect(!choose_provider(providers, "prog", closures));
+    expect(!choose_provider(providers, "other", closures));
+    expect(!choose_provider(providers, "prog", {}));
+}};
 
 namespace {
 // Two packages under `dir`, each providing module `boost` and importing it.
@@ -1392,39 +1374,39 @@ std::string all_errors(const ScanResult& r) {
 }
 }  // namespace
 
-TEST(ModuleResolution, TwoProgramsEachResolveTheirOwnProvider) {
+UTest two_programs_each_resolve_their_own_provider{"ModuleResolution/TwoProgramsEachResolveTheirOwnProvider", [] {
     auto dir = make_tempdir("mcpp-732-two-programs");
     const Closures closures{{"app", {"app"}}, {"updater", {"updater"}}};
     auto r = scan_packages(two_boost_packages(dir), closures);
-    ASSERT_TRUE(r.errors.empty()) << all_errors(r);
-    ASSERT_EQ(r.graph.providersOf.at("boost").size(), 2u);
-    EXPECT_FALSE(r.graph.producerOf.contains("boost"));
+    expect(fatal(r.errors.empty())) << all_errors(r);
+    expect(fatal(eq(r.graph.providersOf.at("boost").size(), 2u)));
+    expect(!r.graph.producerOf.contains("boost"));
     // Every edge joins a unit to the provider of its own package.
-    ASSERT_EQ(r.graph.edges.size(), 2u);
+    expect(fatal(eq(r.graph.edges.size(), 2u)));
     for (auto [consumer, producer] : r.graph.edges)
-        EXPECT_EQ(r.graph.units[consumer].packageName, r.graph.units[producer].packageName);
+        expect(eq(r.graph.units[consumer].packageName, r.graph.units[producer].packageName));
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(ModuleResolution, TwoProvidersInOneClosureAreRefused) {
+UTest two_providers_in_one_closure_are_refused{"ModuleResolution/TwoProvidersInOneClosureAreRefused", [] {
     auto dir = make_tempdir("mcpp-732-one-closure");
     const Closures closures{{"app", {"app", "updater"}}, {"updater", {"updater"}}};
     auto r = scan_packages(two_boost_packages(dir), closures);
     const auto errors = all_errors(r);
-    EXPECT_NE(errors.find("module 'boost' is provided by package"), std::string::npos) << errors;
-    EXPECT_NE(errors.find("closure of package 'app'"), std::string::npos) << errors;
+    expect(ne(errors.find("module 'boost' is provided by package"), std::string::npos)) << errors;
+    expect(ne(errors.find("closure of package 'app'"), std::string::npos)) << errors;
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(ModuleResolution, WithoutClosuresANameIsUniqueInTheGraph) {
+UTest without_closures_a_name_is_unique_in_the_graph{"ModuleResolution/WithoutClosuresANameIsUniqueInTheGraph", [] {
     auto dir = make_tempdir("mcpp-732-no-closures");
     auto r = scan_packages(two_boost_packages(dir));
     const auto errors = all_errors(r);
-    EXPECT_NE(errors.find("module 'boost' is provided by package"), std::string::npos) << errors;
+    expect(ne(errors.find("module 'boost' is provided by package"), std::string::npos)) << errors;
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(ModuleResolution, OneFileReachedTwiceIsNamedAsSuchWhateverItsSpelling) {
+UTest one_file_reached_twice_is_named_as_such_whatever_its_spelling{"ModuleResolution/OneFileReachedTwiceIsNamedAsSuchWhateverItsSpelling", [] {
     auto dir = make_tempdir("mcpp-732-one-file");
     write(dir / "shared" / "boost.cppm", "export module boost;\n");
     std::vector<PackageRoot> packages;
@@ -1438,52 +1420,52 @@ TEST(ModuleResolution, OneFileReachedTwiceIsNamedAsSuchWhateverItsSpelling) {
     const Closures closures{{"lib3", {"lib3", "lib4"}}, {"lib4", {"lib4"}}};
     auto r = scan_packages(packages, closures);
     const auto errors = all_errors(r);
-    EXPECT_NE(errors.find("one file is reached as two packages"), std::string::npos) << errors;
+    expect(ne(errors.find("one file is reached as two packages"), std::string::npos)) << errors;
     std::filesystem::remove_all(dir);
-}
+}};
 
 // A kept walk matched by the literal tail of a glob: `**/` also matches no
 // directory, so `**/main.cpp` matches a `main.cpp` at the root as well as one
 // below it, as the per-pattern walk did. `domain.cpp` ends with the same tail
 // and is still not a `main.cpp`.
-TEST(Scanner, ADoubleStarSlashTailMatchesAtTheRoot) {
+UTest a_double_star_slash_tail_matches_at_the_root{"Scanner/ADoubleStarSlashTailMatchesAtTheRoot", [] {
     auto dir = make_tempdir("mcpp-glob-tail");
     write(dir / "main.cpp", "int main() {}\n");
     write(dir / "sub" / "main.cpp", "int main() {}\n");
     write(dir / "sub" / "other.cpp", "int x;\n");
     write(dir / "sub" / "domain.cpp", "int y;\n");
     auto files = expand_glob(dir, "**/main.cpp");
-    ASSERT_EQ(files.size(), 2u);
-    EXPECT_EQ(files[0], dir / "main.cpp");
-    EXPECT_EQ(files[1], dir / "sub" / "main.cpp");
+    expect(fatal(eq(files.size(), 2u)));
+    expect(eq(files[0], dir / "main.cpp"));
+    expect(eq(files[1], dir / "sub" / "main.cpp"));
     std::filesystem::remove_all(dir);
-}
+}};
 
 // `**/` stands for zero or more whole directories: what follows it starts a
 // path segment. It used to resume at any character, so `**/main.cpp` named
 // `src/domain.cpp` and `tests/**/test_*.cpp` named `tests/mytest_a.cpp`.
 // A `**` not followed by `/` still crosses segments and names.
-TEST(Glob, ADoubleStarSlashStandsForWholeDirectories) {
-    EXPECT_TRUE(relative_path_matches_glob("main.cpp", "**/main.cpp"));
-    EXPECT_TRUE(relative_path_matches_glob("src/main.cpp", "**/main.cpp"));
-    EXPECT_TRUE(relative_path_matches_glob("src/a/b/main.cpp", "**/main.cpp"));
-    EXPECT_FALSE(relative_path_matches_glob("domain.cpp", "**/main.cpp"));
-    EXPECT_FALSE(relative_path_matches_glob("src/domain.cpp", "**/main.cpp"));
-    EXPECT_FALSE(relative_path_matches_glob("src/a/domain.cpp", "**/main.cpp"));
+UTest a_double_star_slash_stands_for_whole_directories{"Glob/ADoubleStarSlashStandsForWholeDirectories", [] {
+    expect(bool(relative_path_matches_glob("main.cpp", "**/main.cpp")));
+    expect(bool(relative_path_matches_glob("src/main.cpp", "**/main.cpp")));
+    expect(bool(relative_path_matches_glob("src/a/b/main.cpp", "**/main.cpp")));
+    expect(!relative_path_matches_glob("domain.cpp", "**/main.cpp"));
+    expect(!relative_path_matches_glob("src/domain.cpp", "**/main.cpp"));
+    expect(!relative_path_matches_glob("src/a/domain.cpp", "**/main.cpp"));
 
-    EXPECT_TRUE(relative_path_matches_glob("tests/test_a.cpp", "tests/**/test_*.cpp"));
-    EXPECT_TRUE(relative_path_matches_glob("tests/x/test_a.cpp", "tests/**/test_*.cpp"));
-    EXPECT_FALSE(relative_path_matches_glob("tests/mytest_a.cpp", "tests/**/test_*.cpp"));
-    EXPECT_FALSE(relative_path_matches_glob("tests/x/mytest_a.cpp", "tests/**/test_*.cpp"));
+    expect(bool(relative_path_matches_glob("tests/test_a.cpp", "tests/**/test_*.cpp")));
+    expect(bool(relative_path_matches_glob("tests/x/test_a.cpp", "tests/**/test_*.cpp")));
+    expect(!relative_path_matches_glob("tests/mytest_a.cpp", "tests/**/test_*.cpp"));
+    expect(!relative_path_matches_glob("tests/x/mytest_a.cpp", "tests/**/test_*.cpp"));
 
     const std::string_view dnn = "**/modules/dnn/**/*.avx2.cpp";
-    EXPECT_TRUE(relative_path_matches_glob("modules/dnn/l.avx2.cpp", dnn));
-    EXPECT_TRUE(relative_path_matches_glob("a/modules/dnn/b/l.avx2.cpp", dnn));
-    EXPECT_FALSE(relative_path_matches_glob("a/submodules/dnn/l.avx2.cpp", dnn));
-    EXPECT_FALSE(relative_path_matches_glob("modules/xdnn/l.avx2.cpp", dnn));
+    expect(bool(relative_path_matches_glob("modules/dnn/l.avx2.cpp", dnn)));
+    expect(bool(relative_path_matches_glob("a/modules/dnn/b/l.avx2.cpp", dnn)));
+    expect(!relative_path_matches_glob("a/submodules/dnn/l.avx2.cpp", dnn));
+    expect(!relative_path_matches_glob("modules/xdnn/l.avx2.cpp", dnn));
 
-    EXPECT_TRUE(relative_path_matches_glob("src/a/b.cpp", "src/**"));
-    EXPECT_TRUE(relative_path_matches_glob("src/a/b.cpp", "src/**.cpp"));
-    EXPECT_TRUE(relative_path_matches_glob("src/a/b.cpp", "**"));
-    EXPECT_FALSE(relative_path_matches_glob("srcx/a.cpp", "src/**/*.cpp"));
-}
+    expect(bool(relative_path_matches_glob("src/a/b.cpp", "src/**")));
+    expect(bool(relative_path_matches_glob("src/a/b.cpp", "src/**.cpp")));
+    expect(bool(relative_path_matches_glob("src/a/b.cpp", "**")));
+    expect(!relative_path_matches_glob("srcx/a.cpp", "src/**/*.cpp"));
+}};

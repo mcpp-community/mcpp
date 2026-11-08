@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.modgraph.p1689;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::modgraph::p1689;
 
@@ -58,36 +60,36 @@ constexpr const char* kEmptyRequires = R"({
 
 } // namespace
 
-TEST(P1689Parse, SimpleProvider) {
+UTest simple_provider{"P1689Parse/SimpleProvider", [] {
     auto r = parse_ddi(kSimpleProvider);
-    ASSERT_TRUE(r) << r.error();
-    EXPECT_EQ(r->primaryOutput, "/tmp/foo.o");
-    ASSERT_EQ(r->provides.size(), 1u);
-    EXPECT_EQ(r->provides[0].logicalName, "foo");
+    if (auto&& failed = expect(fatal(bool(r))); !failed) failed << r.error();
+    expect(eq(r->primaryOutput, "/tmp/foo.o"));
+    expect(fatal(eq(r->provides.size(), 1u)));
+    expect(eq(r->provides[0].logicalName, "foo"));
     // Not EXPECT_TRUE: on an optional that only asserts "the key was present",
     // which stays green when the value parses as false.
-    EXPECT_EQ(r->provides[0].isInterface, std::optional<bool>{true});
-    ASSERT_EQ(r->requires_.size(), 2u);
-    EXPECT_EQ(r->requires_[0], "std");
-    EXPECT_EQ(r->requires_[1], "foo:impl");
-}
+    expect(eq(r->provides[0].isInterface, std::optional<bool>{true}));
+    expect(fatal(eq(r->requires_.size(), 2u)));
+    expect(eq(r->requires_[0], "std"));
+    expect(eq(r->requires_[1], "foo:impl"));
+}};
 
-TEST(P1689Parse, PureConsumer) {
+UTest pure_consumer{"P1689Parse/PureConsumer", [] {
     auto r = parse_ddi(kPureConsumer);
-    ASSERT_TRUE(r) << r.error();
-    EXPECT_TRUE(r->provides.empty());
-    ASSERT_EQ(r->requires_.size(), 2u);
-    EXPECT_EQ(r->requires_[0], "std");
-    EXPECT_EQ(r->requires_[1], "myapp.lib");
-}
+    if (auto&& failed = expect(fatal(bool(r))); !failed) failed << r.error();
+    expect(r->provides.empty());
+    expect(fatal(eq(r->requires_.size(), 2u)));
+    expect(eq(r->requires_[0], "std"));
+    expect(eq(r->requires_[1], "myapp.lib"));
+}};
 
-TEST(P1689Parse, EmptyRequires) {
+UTest empty_requires{"P1689Parse/EmptyRequires", [] {
     auto r = parse_ddi(kEmptyRequires);
-    ASSERT_TRUE(r) << r.error();
-    ASSERT_EQ(r->provides.size(), 1u);
-    EXPECT_EQ(r->provides[0].logicalName, "lone");
-    EXPECT_TRUE(r->requires_.empty());
-}
+    if (auto&& failed = expect(fatal(bool(r))); !failed) failed << r.error();
+    expect(fatal(eq(r->provides.size(), 1u)));
+    expect(eq(r->provides[0].logicalName, "lone"));
+    expect(r->requires_.empty());
+}};
 
 // ─── is-interface decides whether a source may be published ────────────────
 //
@@ -116,34 +118,34 @@ constexpr const char* kNoIsInterfaceKey = R"({
 ]
 })";
 
-TEST(P1689Parse, ImplementationPartitionIsNotAnInterface) {
+UTest implementation_partition_is_not_an_interface{"P1689Parse/ImplementationPartitionIsNotAnInterface", [] {
     auto r = parse_ddi(kImplementationPartition);
-    ASSERT_TRUE(r) << r.error();
-    ASSERT_EQ(r->provides.size(), 1u);
-    EXPECT_EQ(r->provides[0].logicalName, "mathkit:secret");
-    EXPECT_EQ(r->provides[0].isInterface, std::optional<bool>{false});
-}
+    if (auto&& failed = expect(fatal(bool(r))); !failed) failed << r.error();
+    expect(fatal(eq(r->provides.size(), 1u)));
+    expect(eq(r->provides[0].logicalName, "mathkit:secret"));
+    expect(eq(r->provides[0].isInterface, std::optional<bool>{false}));
+}};
 
-TEST(P1689Parse, AnAbsentIsInterfaceKeyStaysAbsent) {
+UTest an_absent_is_interface_key_stays_absent{"P1689Parse/AnAbsentIsInterfaceKeyStaysAbsent", [] {
     // P1689 makes the key optional, so absence has to reach the packer as
     // "nobody said" rather than as either answer. It used to arrive as `false`
     // by struct default — which is the same value as an explicit
     // implementation partition, i.e. the two became indistinguishable.
     auto r = parse_ddi(kNoIsInterfaceKey);
-    ASSERT_TRUE(r) << r.error();
-    ASSERT_EQ(r->provides.size(), 1u);
-    EXPECT_EQ(r->provides[0].logicalName, "mathkit:quiet");
-    EXPECT_FALSE(r->provides[0].isInterface.has_value());
-}
+    if (auto&& failed = expect(fatal(bool(r))); !failed) failed << r.error();
+    expect(fatal(eq(r->provides.size(), 1u)));
+    expect(eq(r->provides[0].logicalName, "mathkit:quiet"));
+    expect(!(r->provides[0].isInterface.has_value()));
+}};
 
-TEST(P1689Parse, RejectsNonObject) {
+UTest rejects_non_object{"P1689Parse/RejectsNonObject", [] {
     auto r = parse_ddi("[]");
-    EXPECT_FALSE(r);
-    EXPECT_NE(r.error().find("top-level"), std::string::npos);
-}
+    expect(!r);
+    expect(ne(r.error().find("top-level"), std::string::npos));
+}};
 
-TEST(P1689Parse, RejectsMissingRules) {
+UTest rejects_missing_rules{"P1689Parse/RejectsMissingRules", [] {
     auto r = parse_ddi(R"({"version": 0})");
-    EXPECT_FALSE(r);
-    EXPECT_NE(r.error().find("rules"), std::string::npos);
-}
+    expect(!r);
+    expect(ne(r.error().find("rules"), std::string::npos));
+}};

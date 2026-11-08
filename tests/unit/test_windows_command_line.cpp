@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.command_line;
+
+using namespace mcpplibs::mtest;
 
 // The cmd.exe quoting rules are the easiest thing in mcpp to get wrong and
 // the hardest to notice: on Linux and macOS the Windows branch is not even
@@ -14,10 +16,10 @@ static std::string wrapped_once(std::string_view command) {
     return "\"" + std::string(command) + "\"";
 }
 
-TEST(WindowsCommandLine, EmbeddedQuotesAreEscaped) {
+UTest embedded_quotes_are_escaped{"WindowsCommandLine/EmbeddedQuotesAreEscaped", [] {
     auto q = mcpp::build::command_line::quote_windows("a\"b");
-    EXPECT_EQ(q, "\"a\\\"b\"");
-}
+    expect(eq(q, "\"a\\\"b\""));
+}};
 
 // ─── A user-authored shell command (project `[hooks]`, #496) ─────────────
 //
@@ -27,7 +29,7 @@ TEST(WindowsCommandLine, EmbeddedQuotesAreEscaped) {
 // not "the string looks plausible".
 static std::string cmd_c_tail_under_slash_s(std::string_view line) {
     constexpr std::string_view kPrefix = "cmd.exe /d /s /c ";
-    EXPECT_TRUE(line.starts_with(kPrefix)) << line;
+    expect(line.starts_with(kPrefix)) << line;
     std::string tail(line.substr(kPrefix.size()));
     if (tail.empty() || tail.front() != '"') return tail;   // rule does not fire
     tail.erase(0, 1);
@@ -39,38 +41,35 @@ static std::string cmd_c_tail_under_slash_s(std::string_view line) {
 // which is what quoting each argument by the CreateProcess rules gives) they
 // are no longer switches, and the command tail keeps a quote pair cmd never
 // consumes — the CI failure this shape exists to prevent.
-TEST(WindowsCommandLine, ShellCommandKeepsCmdSwitchesBare) {
+UTest shell_command_keeps_cmd_switches_bare{"WindowsCommandLine/ShellCommandKeepsCmdSwitchesBare", [] {
     auto line = mcpp::build::command_line::windows_shell_command_line("echo hi");
-    EXPECT_TRUE(line.starts_with("cmd.exe /d /s /c ")) << line;
-    EXPECT_EQ(line.find("\"/c\""), std::string::npos) << line;
-}
+    expect(line.starts_with("cmd.exe /d /s /c ")) << line;
+    expect(eq(line.find("\"/c\""), std::string::npos)) << line;
+}};
 
 // A redirect is the ordinary case for a hook that appends to a log, and it is
 // also the case argv quoting destroys: `>` inside a quoted argument is a
 // literal, not a redirect.
-TEST(WindowsCommandLine, ShellCommandDeliversARedirectVerbatim) {
+UTest shell_command_delivers_a_redirect_verbatim{"WindowsCommandLine/ShellCommandDeliversARedirectVerbatim", [] {
     constexpr std::string_view command = "echo start>>hooks.log";
-    EXPECT_EQ(cmd_c_tail_under_slash_s(mcpp::build::command_line::windows_shell_command_line(command)),
-              command);
-}
+    expect(eq(cmd_c_tail_under_slash_s(mcpp::build::command_line::windows_shell_command_line(command)), command));
+}};
 
 // More than one interior quote pair is exactly where the /C rule bites, and
 // where the "wrap once" shape earns its keep: whatever the author wrote comes
 // back byte for byte.
-TEST(WindowsCommandLine, ShellCommandDeliversQuotedPathsVerbatim) {
+UTest shell_command_delivers_quoted_paths_verbatim{"WindowsCommandLine/ShellCommandDeliversQuotedPathsVerbatim", [] {
     constexpr std::string_view command =
         R"("C:\Program Files\notify\notify.exe" --title "build done")";
-    EXPECT_EQ(cmd_c_tail_under_slash_s(mcpp::build::command_line::windows_shell_command_line(command)),
-              command);
-}
+    expect(eq(cmd_c_tail_under_slash_s(mcpp::build::command_line::windows_shell_command_line(command)), command));
+}};
 
 // The POSIX half must keep its own convention — a shared helper that
 // silently applied Windows quoting on Linux would break every sh command.
-TEST(WindowsCommandLine, PosixQuotingIsUnaffected) {
-    EXPECT_EQ(mcpp::build::command_line::quote_posix("/home/my dir"),
-              "'/home/my dir'");
-    EXPECT_EQ(mcpp::build::command_line::quote_posix("it's"), "'it'\\''s'");
-}
+UTest posix_quoting_is_unaffected{"WindowsCommandLine/PosixQuotingIsUnaffected", [] {
+    expect(eq(mcpp::build::command_line::quote_posix("/home/my dir"), "'/home/my dir'"));
+    expect(eq(mcpp::build::command_line::quote_posix("it's"), "'it'\\''s'"));
+}};
 
 
 // ── An argument that must survive cmd.exe AND the child's argv parser ───────
@@ -167,34 +166,34 @@ constexpr std::string_view kJsonWithAFloor =
 
 } // namespace
 
-TEST(WindowsCommandLine, PlainQuotingLetsCmdSeeARedirection) {
+UTest plain_quoting_lets_cmd_see_a_redirection{"WindowsCommandLine/PlainQuotingLetsCmdSeeARedirection", [] {
     // The state before the fix, stated so the fix below is not asserting
     // against nothing. This is `shell::quote_windows`, which is correct for
     // the child and incomplete for cmd.
     auto line = "xlings.exe interface install_packages --args "
               + mcpp::build::command_line::quote_windows(kJsonWithAFloor);
     auto parsed = simulate_cmd_c(wrapped_once(line));
-    EXPECT_TRUE(parsed.sawActiveMetacharacter)
+    expect(bool(parsed.sawActiveMetacharacter))
         << "if this ever becomes false the simulator stopped modelling cmd, "
            "and the test below proves nothing";
-}
+}};
 
-TEST(WindowsCommandLine, MetacharacterQuotingSurvivesBothParsers) {
+UTest metacharacter_quoting_survives_both_parsers{"WindowsCommandLine/MetacharacterQuotingSurvivesBothParsers", [] {
     auto line = "xlings.exe interface install_packages --args "
               + mcpp::build::command_line::quote_windows_through_cmd(kJsonWithAFloor);
     auto parsed = simulate_cmd_c(wrapped_once(line));
 
-    EXPECT_FALSE(parsed.sawActiveMetacharacter)
+    expect(!parsed.sawActiveMetacharacter)
         << "cmd would still read the `>` in the version floor as a redirection";
 
     // xlings.exe / interface / install_packages / --args / <json>
     auto argv = msvcrt_argv(parsed.passedOn);
-    ASSERT_EQ(argv.size(), 5u) << parsed.passedOn;
-    EXPECT_EQ(argv[4], kJsonWithAFloor)
+    expect(fatal(eq(argv.size(), 5u))) << parsed.passedOn;
+    expect(eq(argv[4], kJsonWithAFloor))
         << "the child received something other than the JSON that was meant";
-}
+}};
 
-TEST(WindowsCommandLine, NothingToEscapeMeansByteIdenticalToPlainQuoting) {
+UTest nothing_to_escape_means_byte_identical_to_plain_quoting{"WindowsCommandLine/NothingToEscapeMeansByteIdenticalToPlainQuoting", [] {
     // The conservative half of the rule, and it is the half that was measured
     // the hard way: an earlier version escaped every metacharacter INCLUDING
     // the quotes, which is defensible on paper and broke every package fetch on
@@ -204,22 +203,21 @@ TEST(WindowsCommandLine, NothingToEscapeMeansByteIdenticalToPlainQuoting) {
              R"({"targets":["mcpplibs:tpl-demo@1.0.0"],"yes":true})",
              R"({"targets":["compat:widget@1.38.1"],"yes":true})",
              R"(a plain path C:\Program Files\x)" }) {
-        EXPECT_EQ(mcpp::build::command_line::quote_windows_through_cmd(plain),
-                  mcpp::build::command_line::quote_windows(plain))
+        expect(eq(mcpp::build::command_line::quote_windows_through_cmd(plain), mcpp::build::command_line::quote_windows(plain)))
             << "a payload with no metacharacter acquired an escape: " << plain;
     }
-}
+}};
 
-TEST(WindowsCommandLine, MetacharacterQuotingIsUnchangedForPlainText) {
+UTest metacharacter_quoting_is_unchanged_for_plain_text{"WindowsCommandLine/MetacharacterQuotingIsUnchangedForPlainText", [] {
     // A payload with nothing to escape must not acquire carets, so the common
     // case stays legible in a log.
     constexpr std::string_view plain = R"({"targets":["xim:shaderc@2026.3"]})";
     auto quoted = mcpp::build::command_line::quote_windows_through_cmd(plain);
     auto parsed = simulate_cmd_c(wrapped_once("prog.exe --args " + quoted));
     auto argv = msvcrt_argv(parsed.passedOn);
-    ASSERT_EQ(argv.size(), 3u) << parsed.passedOn;
-    EXPECT_EQ(argv[2], plain);
-}
+    expect(fatal(eq(argv.size(), 3u))) << parsed.passedOn;
+    expect(eq(argv[2], plain));
+}};
 
 // ─── The argv rules of CommandLineToArgvW (2026.10.5.2) ──────────────────
 //
@@ -252,7 +250,7 @@ static std::vector<std::string> argv_of(std::string_view line) {
     return out;
 }
 
-TEST(WindowsCommandLine, EveryArgumentRoundTripsThroughTheArgvRules) {
+UTest every_argument_round_trips_through_the_argv_rules{"WindowsCommandLine/EveryArgumentRoundTripsThroughTheArgvRules", [] {
     const std::vector<std::string> args = {
         "plain",
         "C:\\Program Files (x86)\\Windows Kits\\10\\",   // vcvars' WindowsSdkDir
@@ -265,11 +263,11 @@ TEST(WindowsCommandLine, EveryArgumentRoundTripsThroughTheArgvRules) {
     };
     std::string line;
     for (auto const& a : args) line += mcpp::build::command_line::quote_windows(a) + " ";
-    EXPECT_EQ(argv_of(line), args) << line;
-}
+    expect(eq(argv_of(line), args)) << line;
+}};
 
-TEST(WindowsCommandLine, AnArgumentEndingInABackslashDoesNotSwallowTheNext) {
+UTest an_argument_ending_in_a_backslash_does_not_swallow_the_next{"WindowsCommandLine/AnArgumentEndingInABackslashDoesNotSwallowTheNext", [] {
     const auto line = mcpp::build::command_line::quote_windows("C:\\Kits\\10\\") + " "
                     + mcpp::build::command_line::quote_windows("-o");
-    EXPECT_EQ(argv_of(line), (std::vector<std::string>{"C:\\Kits\\10\\", "-o"})) << line;
-}
+    expect(eq(argv_of(line), (std::vector<std::string>{"C:\\Kits\\10\\", "-o"}))) << line;
+}};

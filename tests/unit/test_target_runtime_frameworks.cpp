@@ -1,8 +1,10 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.manifest;
 import mcpp.build.prepare;
+
+using namespace mcpplibs::mtest;
 
 namespace cfgpred = mcpp::build::cfgpred;
 
@@ -31,7 +33,7 @@ frameworks = ["UIKit"]
 
 std::vector<std::string> frameworks_for(std::string_view triple) {
     auto m = mcpp::manifest::parse_string(kSrc);
-    EXPECT_TRUE(m.has_value());
+    expect(m.has_value());
     if (!m) return {};
     mcpp::build::merge_conditional_config(*m, cfgpred::context_for(triple));
     return m->runtimeConfig.linkIntent.frameworks;
@@ -39,11 +41,11 @@ std::vector<std::string> frameworks_for(std::string_view triple) {
 
 } // namespace
 
-TEST(TargetRuntimeFrameworks, TheSelectorDecidesAndTheTopLevelStays) {
+UTest the_selector_decides_and_the_top_level_stays{"TargetRuntimeFrameworks/TheSelectorDecidesAndTheTopLevelStays", [] {
     const std::vector<std::string> mac{"Foundation", "AppKit"};
     const std::vector<std::string> ios{"Foundation", "UIKit"};
     const std::vector<std::string> lin{"Foundation"};
-    EXPECT_EQ(frameworks_for("aarch64-macos"), mac);
-    EXPECT_EQ(frameworks_for("aarch64-ios-sim"), ios);
-    EXPECT_EQ(frameworks_for("x86_64-linux-gnu"), lin);
-}
+    expect(eq(frameworks_for("aarch64-macos"), mac));
+    expect(eq(frameworks_for("aarch64-ios-sim"), ios));
+    expect(eq(frameworks_for("x86_64-linux-gnu"), lin));
+}};

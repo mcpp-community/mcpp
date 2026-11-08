@@ -9,11 +9,13 @@
 //
 // Design: .agents/docs/2026-08-08-machine-readable-output-protocol-design.md
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.wire;
 import nlohmann.json;
+
+using namespace mcpplibs::mtest;
 
 namespace w = mcpp::wire;
 
@@ -24,48 +26,48 @@ namespace {
 // the entry point: on older versions it is itself an unknown option. So the
 // envelope must be self-identifying, and these two keys are what identifies
 // it.
-TEST(WireEnvelope, IsSelfIdentifying) {
+UTest is_self_identifying{"WireEnvelope/IsSelfIdentifying", [] {
     auto j = w::to_json(w::Envelope{.kind = "mcpp.env"});
-    ASSERT_TRUE(j.contains("schemaVersion")) << "a client detects by parsing";
-    ASSERT_TRUE(j.contains("kind"));
-    EXPECT_EQ(j["schemaVersion"], w::kEnvelopeVersion);
-    EXPECT_EQ(j["kind"], "mcpp.env");
-}
+    expect(fatal(j.contains("schemaVersion"))) << "a client detects by parsing";
+    expect(fatal(j.contains("kind")));
+    expect(eq(j["schemaVersion"], w::kEnvelopeVersion));
+    expect(eq(j["kind"], "mcpp.env"));
+}};
 
-TEST(WireEnvelope, CarriesTheKindsOwnVersionSeparately) {
+UTest carries_the_kinds_own_version_separately{"WireEnvelope/CarriesTheKindsOwnVersionSeparately", [] {
     auto j = w::to_json(w::Envelope{.kind = "mcpp.xpkg"});
     // Separate from schemaVersion on purpose: one global number would make a
     // field added to mcpp.env move the version a client reads for mcpp.xpkg,
     // with no way to tell which actually changed.
-    ASSERT_TRUE(j.contains("kindVersion"));
-    EXPECT_EQ(j["kindVersion"], 1);
-}
+    expect(fatal(j.contains("kindVersion")));
+    expect(eq(j["kindVersion"], 1));
+}};
 
-TEST(WireEnvelope, AnUnknownKindHasNoVersion) {
+UTest an_unknown_kind_has_no_version{"WireEnvelope/AnUnknownKindHasNoVersion", [] {
     auto j = w::to_json(w::Envelope{.kind = "mcpp.not-a-kind"});
-    EXPECT_EQ(j["kindVersion"], 0) << "silently claiming version 1 would be a lie";
-}
+    expect(eq(j["kindVersion"], 0)) << "silently claiming version 1 would be a lie";
+}};
 
 // Effects are named, not boolean. `init-mcpp-home` is something a client may
 // ignore; `exec-build-script` runs code out of the workspace and is the whole
 // reason an untrusted-workspace gate exists. One bool cannot separate them.
-TEST(WireEnvelope, EffectsAreNamed) {
+UTest effects_are_named{"WireEnvelope/EffectsAreNamed", [] {
     auto j = w::to_json(w::Envelope{
         .kind = "mcpp.env",
         .effects = {w::Effect::InitMcppHome, w::Effect::ExecBuildScript}});
-    ASSERT_EQ(j["effects"].size(), 2u);
-    EXPECT_EQ(j["effects"][0], "init-mcpp-home");
-    EXPECT_EQ(j["effects"][1], "exec-build-script");
-}
+    expect(fatal(eq(j["effects"].size(), 2u)));
+    expect(eq(j["effects"][0], "init-mcpp-home"));
+    expect(eq(j["effects"][1], "exec-build-script"));
+}};
 
-TEST(WireEnvelope, NoEffectsIsAnEmptyArrayNotAbsent) {
+UTest no_effects_is_an_empty_array_not_absent{"WireEnvelope/NoEffectsIsAnEmptyArrayNotAbsent", [] {
     auto j = w::to_json(w::Envelope{.kind = "mcpp.xpkg"});
-    ASSERT_TRUE(j.contains("effects"));
-    EXPECT_TRUE(j["effects"].is_array());
-    EXPECT_TRUE(j["effects"].empty()) << "absent would mean 'unknown', not 'none'";
-}
+    expect(fatal(j.contains("effects")));
+    expect(j["effects"].is_array());
+    expect(j["effects"].empty()) << "absent would mean 'unknown', not 'none'";
+}};
 
-TEST(WireEnvelope, DiagnosticsCarryCodeAndPosition) {
+UTest diagnostics_carry_code_and_position{"WireEnvelope/DiagnosticsCarryCodeAndPosition", [] {
     w::Diagnostic d{
         .code = "MCPP_MANIFEST_UNKNOWN_KEY",
         .severity = w::Severity::Warning,
@@ -74,112 +76,112 @@ TEST(WireEnvelope, DiagnosticsCarryCodeAndPosition) {
         .range = w::Range{{3, 1}, {3, 9}},
     };
     auto j = w::to_json(w::Envelope{.kind = "mcpp.env", .diagnostics = {d}});
-    ASSERT_EQ(j["diagnostics"].size(), 1u);
+    expect(fatal(eq(j["diagnostics"].size(), 1u)));
     auto const& g = j["diagnostics"][0];
-    EXPECT_EQ(g["code"], "MCPP_MANIFEST_UNKNOWN_KEY");
-    EXPECT_EQ(g["severity"], "warning");
-    EXPECT_EQ(g["source"], "mcpp");
-    EXPECT_EQ(g["path"], "mcpp.toml");
-    EXPECT_EQ(g["range"]["start"]["line"], 3);
-    EXPECT_EQ(g["range"]["end"]["column"], 9);
-}
+    expect(eq(g["code"], "MCPP_MANIFEST_UNKNOWN_KEY"));
+    expect(eq(g["severity"], "warning"));
+    expect(eq(g["source"], "mcpp"));
+    expect(eq(g["path"], "mcpp.toml"));
+    expect(eq(g["range"]["start"]["line"], 3));
+    expect(eq(g["range"]["end"]["column"], 9));
+}};
 
 // A diagnostic without a location must not invent one: absent keys, not
 // zeros. `line: 0` would send a client to a position that does not exist.
-TEST(WireEnvelope, ADiagnosticWithoutALocationOmitsIt) {
+UTest a_diagnostic_without_a_location_omits_it{"WireEnvelope/ADiagnosticWithoutALocationOmitsIt", [] {
     auto j = w::to_json(w::Envelope{
         .kind = "mcpp.env",
         .diagnostics = {{.code = "MCPP_X", .message = "no place"}}});
     auto const& g = j["diagnostics"][0];
-    EXPECT_FALSE(g.contains("path"));
-    EXPECT_FALSE(g.contains("range"));
-}
+    expect(!g.contains("path"));
+    expect(!g.contains("range"));
+}};
 
-TEST(WireEnvelope, ReportsMcppVersionAndProtocolWindow) {
+UTest reports_mcpp_version_and_protocol_window{"WireEnvelope/ReportsMcppVersionAndProtocolWindow", [] {
     auto j = w::to_json(w::Envelope{.kind = "mcpp.env"});
-    EXPECT_FALSE(j["mcpp"]["version"].get<std::string>().empty());
-    EXPECT_EQ(j["mcpp"]["protocol"]["min"], w::kEnvelopeVersion);
-    EXPECT_EQ(j["mcpp"]["protocol"]["max"], w::kEnvelopeVersion);
-}
+    expect(!(j["mcpp"]["version"].get<std::string>().empty()));
+    expect(eq(j["mcpp"]["protocol"]["min"], w::kEnvelopeVersion));
+    expect(eq(j["mcpp"]["protocol"]["max"], w::kEnvelopeVersion));
+}};
 
 // Every envelope carries the features beside the version, so a client's one
 // `self env` (or any job's envelope) says what the project's mcpp can do
 // (design 2026-10-30 part 2 §4.3); the list is the protocol document's.
-TEST(WireEnvelope, CarriesTheFeaturesOfTheProtocolDocument) {
+UTest carries_the_features_of_the_protocol_document{"WireEnvelope/CarriesTheFeaturesOfTheProtocolDocument", [] {
     auto j = w::to_json(w::Envelope{.kind = "mcpp.env"});
-    ASSERT_TRUE(j["mcpp"].contains("features") && j["mcpp"]["features"].is_array());
-    EXPECT_EQ(j["mcpp"]["features"], w::protocol_document({})["features"]);
-}
+    expect(fatal(j["mcpp"].contains("features") && j["mcpp"]["features"].is_array()));
+    expect(eq(j["mcpp"]["features"], w::protocol_document({})["features"]));
+}};
 
 // ── Negotiation ────────────────────────────────────────────────────────────
 
-TEST(WireProtocol, ListsKindsAndTheirVersions) {
+UTest lists_kinds_and_their_versions{"WireProtocol/ListsKindsAndTheirVersions", [] {
     auto j = w::protocol_document({
         {"self env",   {w::Effect::InitMcppHome}},
         {"xpkg parse", {}},
     });
-    ASSERT_TRUE(j.contains("kinds"));
+    expect(fatal(j.contains("kinds")));
     // `{min,max}` alone cannot answer "do you speak mcpp.env, at what
     // version" — which is the question a client actually has.
-    EXPECT_EQ(j["kinds"]["mcpp.env"], 1);
-    EXPECT_EQ(j["kinds"]["mcpp.xpkg"], 1);
-}
+    expect(eq(j["kinds"]["mcpp.env"], 1));
+    expect(eq(j["kinds"]["mcpp.xpkg"], 1));
+}};
 
 // The gate has to decide BEFORE running. By the time an envelope arrives,
 // whatever it describes has already happened — so the effects have to be
 // available statically too.
-TEST(WireProtocol, DeclaresEffectsPerCommandStatically) {
+UTest declares_effects_per_command_statically{"WireProtocol/DeclaresEffectsPerCommandStatically", [] {
     auto j = w::protocol_document({
         {"self env",   {w::Effect::InitMcppHome}},
         {"xpkg parse", {}},
     });
-    ASSERT_TRUE(j["commands"].contains("self env"));
-    EXPECT_EQ(j["commands"]["self env"]["effects"][0], "init-mcpp-home");
-    EXPECT_TRUE(j["commands"]["xpkg parse"]["effects"].empty())
+    expect(fatal(j["commands"].contains("self env")));
+    expect(eq(j["commands"]["self env"]["effects"][0], "init-mcpp-home"));
+    expect(j["commands"]["xpkg parse"]["effects"].empty())
         << "measured on a fresh MCPP_HOME: it creates nothing";
-}
+}};
 
 // A client gates on a feature, not on a version number (design 2026-10-30
 // part 2 §4.3): the list is present, and the names are the stable ones.
-TEST(WireProtocol, NamesTheFeaturesAClientGatesOn) {
+UTest names_the_features_a_client_gates_on{"WireProtocol/NamesTheFeaturesAClientGatesOn", [] {
     auto j = w::protocol_document({});
-    ASSERT_TRUE(j.contains("features") && j["features"].is_array());
+    expect(fatal(j.contains("features") && j["features"].is_array()));
     std::vector<std::string> names;
     for (auto const& f : j["features"]) names.push_back(f.get<std::string>());
-    EXPECT_NE(std::ranges::find(names, "target-sets"), names.end());
-    EXPECT_NE(std::ranges::find(names, "pkg-format-list"), names.end());
-    EXPECT_NE(std::ranges::find(names, "test-launch"), names.end());
-    EXPECT_NE(std::ranges::find(names, "launch-stream"), names.end());
-    EXPECT_NE(std::ranges::find(names, "test-protocol"), names.end());
-}
+    expect(ne(std::ranges::find(names, "target-sets"), names.end()));
+    expect(ne(std::ranges::find(names, "pkg-format-list"), names.end()));
+    expect(ne(std::ranges::find(names, "test-launch"), names.end()));
+    expect(ne(std::ranges::find(names, "launch-stream"), names.end()));
+    expect(ne(std::ranges::find(names, "test-protocol"), names.end()));
+}};
 
-TEST(WireProtocol, IsItselfSelfIdentifying) {
+UTest is_itself_self_identifying{"WireProtocol/IsItselfSelfIdentifying", [] {
     auto j = w::protocol_document({});
-    EXPECT_EQ(j["kind"], "mcpp.protocol");
-    EXPECT_TRUE(j.contains("schemaVersion"));
-}
+    expect(eq(j["kind"], "mcpp.protocol"));
+    expect(j.contains("schemaVersion"));
+}};
 
 // ── Format selection ───────────────────────────────────────────────────────
 
-TEST(WireFormat, KnowsJsonAndRefusesTheRest) {
-    EXPECT_EQ(w::parse_format("json"), w::Format::Json);
-    EXPECT_FALSE(w::parse_format("yaml").has_value());
-    EXPECT_FALSE(w::parse_format("ndjson").has_value()) << "reserved, not supported";
-    EXPECT_FALSE(w::parse_format("").has_value());
-}
+UTest knows_json_and_refuses_the_rest{"WireFormat/KnowsJsonAndRefusesTheRest", [] {
+    expect(eq(w::parse_format("json"), w::Format::Json));
+    expect(!(w::parse_format("yaml").has_value()));
+    expect(!(w::parse_format("ndjson").has_value())) << "reserved, not supported";
+    expect(!(w::parse_format("").has_value()));
+}};
 
-TEST(WireFormat, TheRefusalNamesWhatIsSupported) {
+UTest the_refusal_names_what_is_supported{"WireFormat/TheRefusalNamesWhatIsSupported", [] {
     auto m = w::unsupported_format("yaml");
-    EXPECT_NE(m.find("yaml"), std::string::npos);
-    EXPECT_NE(m.find("json"), std::string::npos) << "tell the client what to ask for";
-}
+    expect(ne(m.find("yaml"), std::string::npos));
+    expect(ne(m.find("json"), std::string::npos)) << "tell the client what to ask for";
+}};
 
 // LegacyJson is a distinct format, not a synonym. `--json` has shipped with a
 // bare payload (`cache list --json` is `{root, entries}` at the top level, and
 // this repo's e2e asserts those keys); enveloping it would break consumers.
-TEST(WireFormat, LegacyJsonIsNotTheSameFormatAsJson) {
-    EXPECT_NE(w::Format::LegacyJson, w::Format::Json);
-}
+UTest legacy_json_is_not_the_same_format_as_json{"WireFormat/LegacyJsonIsNotTheSameFormatAsJson", [] {
+    expect(ne(w::Format::LegacyJson, w::Format::Json));
+}};
 
 // ── Golden shapes, one per kind ────────────────────────────────────────────
 //
@@ -198,7 +200,7 @@ void expect_has_keys(const nlohmann::json& obj,
                      std::initializer_list<const char*> keys,
                      std::string_view what) {
     for (auto k : keys)
-        EXPECT_TRUE(obj.contains(k))
+        expect(obj.contains(k))
             << what << " lost published key '" << k
             << "'. Removing or renaming one is a breaking change: bump the "
                "kind's version in mcpp.wire and say so in "
@@ -207,15 +209,15 @@ void expect_has_keys(const nlohmann::json& obj,
 
 }  // namespace
 
-TEST(WireGolden, EnvelopeKeySet) {
+UTest envelope_key_set{"WireGolden/EnvelopeKeySet", [] {
     auto j = w::to_json(w::Envelope{.kind = "mcpp.env"});
     expect_has_keys(j, {"schemaVersion", "kind", "kindVersion", "effects",
                         "mcpp", "data", "diagnostics"}, "the envelope");
     expect_has_keys(j["mcpp"], {"version", "protocol", "features"}, "envelope.mcpp");
     expect_has_keys(j["mcpp"]["protocol"], {"min", "max"}, "envelope.mcpp.protocol");
-}
+}};
 
-TEST(WireGolden, DiagnosticKeySet) {
+UTest diagnostic_key_set{"WireGolden/DiagnosticKeySet", [] {
     auto j = w::to_json(w::Envelope{
         .kind = "mcpp.env",
         .diagnostics = {{.code = "C", .message = "m", .path = "p",
@@ -226,19 +228,19 @@ TEST(WireGolden, DiagnosticKeySet) {
     expect_has_keys(j["diagnostics"][0]["range"], {"start", "end"}, "a range");
     expect_has_keys(j["diagnostics"][0]["range"]["start"], {"line", "column"},
                     "a position");
-}
+}};
 
-TEST(WireGolden, ProtocolDocumentKeySet) {
+UTest protocol_document_key_set{"WireGolden/ProtocolDocumentKeySet", [] {
     auto j = w::protocol_document({{"self env", {w::Effect::InitMcppHome}}});
     expect_has_keys(j, {"schemaVersion", "kind", "mcpp", "envelope", "kinds",
                         "commands", "features"}, "the protocol document");
     expect_has_keys(j["envelope"], {"min", "max"}, "protocol.envelope");
     expect_has_keys(j["commands"]["self env"], {"effects"}, "a command entry");
-}
+}};
 
 // Every effect name is part of the contract: a client matches on these
 // strings, so renaming one silently changes what a gate lets through.
-TEST(WireGolden, EffectNamesAreStable) {
+UTest effect_names_are_stable{"WireGolden/EffectNamesAreStable", [] {
     struct { w::Effect e; const char* name; } const expected[]{
         {w::Effect::InitMcppHome,     "init-mcpp-home"},
         {w::Effect::ReadProject,      "read-project"},
@@ -248,41 +250,41 @@ TEST(WireGolden, EffectNamesAreStable) {
         {w::Effect::ExecBuildScript,  "exec-build-script"},
     };
     for (auto const& x : expected)
-        EXPECT_EQ(w::effect_name(x.e), x.name)
+        expect(eq(w::effect_name(x.e), x.name))
             << "effect names are matched by clients; renaming one changes "
                "what an untrusted-workspace gate admits";
-}
+}};
 
-TEST(WireGolden, SeverityNamesAreStable) {
-    EXPECT_EQ(w::severity_name(w::Severity::Error),   "error");
-    EXPECT_EQ(w::severity_name(w::Severity::Warning), "warning");
-    EXPECT_EQ(w::severity_name(w::Severity::Note),    "note");
-}
+UTest severity_names_are_stable{"WireGolden/SeverityNamesAreStable", [] {
+    expect(eq(w::severity_name(w::Severity::Error), "error"));
+    expect(eq(w::severity_name(w::Severity::Warning), "warning"));
+    expect(eq(w::severity_name(w::Severity::Note), "note"));
+}};
 
 // The kinds this build claims to speak. A client reads this list to decide
 // whether to bother calling; dropping one silently is a breaking change.
-TEST(WireGolden, DeclaredKinds) {
+UTest declared_kinds{"WireGolden/DeclaredKinds", [] {
     auto j = w::protocol_document({});
     expect_has_keys(j["kinds"], {"mcpp.env", "mcpp.xpkg", "mcpp.cache",
                                  "mcpp.build-database"},
                     "the kind list");
-    EXPECT_EQ(j["kinds"]["mcpp.build-database"], 1);
-}
+    expect(eq(j["kinds"]["mcpp.build-database"], 1));
+}};
 
 // A failure that leaves nothing to describe omits `data`: a consumer of the
 // build database reads "no data" as "the command failed" (S2 0.2.0 section 3.4),
 // so an empty object in its place would read as a success with nothing in it.
-TEST(WireGolden, NullDataIsOmitted) {
+UTest null_data_is_omitted{"WireGolden/NullDataIsOmitted", [] {
     auto failed = w::to_json(w::Envelope{
         .kind = "mcpp.build-database",
         .effects = {w::Effect::ReadProject},
         .data = nullptr,
         .diagnostics = {{"MCPP_BUILD_DATABASE_PLAN_FAILED", w::Severity::Error, "x"}},
     });
-    EXPECT_FALSE(failed.contains("data")) << failed.dump();
-    EXPECT_TRUE(failed.contains("diagnostics"));
+    expect(!failed.contains("data")) << failed.dump();
+    expect(failed.contains("diagnostics"));
     auto ok = w::to_json(w::Envelope{.kind = "mcpp.env"});
-    EXPECT_TRUE(ok.contains("data")) << ok.dump();
-}
+    expect(ok.contains("data")) << ok.dump();
+}};
 
 }  // namespace

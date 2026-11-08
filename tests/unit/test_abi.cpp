@@ -1,10 +1,12 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.model;
 import mcpp.manifest;
 import mcpp.build.prepare;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::toolchain;
 
@@ -22,82 +24,82 @@ Toolchain make_tc(std::string triple, std::string stdlib, CompilerId cc) {
 
 // ─── abi_profile: each dimension from its single canonical source ───────────
 
-TEST(AbiProfile, ClangLibcxxOnLinuxGnuIsGlibcAtLibcLevel) {
+UTest clang_libcxx_on_linux_gnu_is_glibc_at_libc_level{"AbiProfile/ClangLibcxxOnLinuxGnuIsGlibcAtLibcLevel", [] {
     // The bug: a clang+libc++ toolchain targeting *-linux-gnu is glibc at the
     // libc level; only its C++ stdlib is libc++. These are independent dims.
     auto p = abi_profile(make_tc("x86_64-unknown-linux-gnu", "libc++", CompilerId::Clang));
-    EXPECT_EQ(p.libc, "glibc");
-    EXPECT_EQ(p.cxxStdlib, "libc++");
-    EXPECT_EQ(p.arch, "x86_64");
-    EXPECT_EQ(p.os, "linux");
-    EXPECT_EQ(p.cxxAbi, "itanium");
-}
+    expect(eq(p.libc, "glibc"));
+    expect(eq(p.cxxStdlib, "libc++"));
+    expect(eq(p.arch, "x86_64"));
+    expect(eq(p.os, "linux"));
+    expect(eq(p.cxxAbi, "itanium"));
+}};
 
-TEST(AbiProfile, GccGlibc) {
+UTest gcc_glibc{"AbiProfile/GccGlibc", [] {
     auto p = abi_profile(make_tc("x86_64-linux-gnu", "libstdc++", CompilerId::GCC));
-    EXPECT_EQ(p.libc, "glibc");
-    EXPECT_EQ(p.cxxStdlib, "libstdc++");
-}
+    expect(eq(p.libc, "glibc"));
+    expect(eq(p.cxxStdlib, "libstdc++"));
+}};
 
-TEST(AbiProfile, MuslTripleIsMusl) {
+UTest musl_triple_is_musl{"AbiProfile/MuslTripleIsMusl", [] {
     auto p = abi_profile(make_tc("x86_64-linux-musl", "libstdc++", CompilerId::GCC));
-    EXPECT_EQ(p.libc, "musl");
-    EXPECT_EQ(p.os, "linux");
-}
+    expect(eq(p.libc, "musl"));
+    expect(eq(p.os, "linux"));
+}};
 
 // ─── abi_check: the regression + the genuine incompatibility ────────────────
 
-TEST(AbiCheck, GlibcCLibraryUnderLibcxxIsCompatible) {
+UTest glibc_c_library_under_libcxx_is_compatible{"AbiCheck/GlibcCLibraryUnderLibcxxIsCompatible", [] {
     // Regression lock for the glfw-under-clang false positive.
     auto p = abi_profile(make_tc("x86_64-unknown-linux-gnu", "libc++", CompilerId::Clang));
     auto c = parse_abi_capability("abi:glibc", "compat.glfw");
-    ASSERT_TRUE(c.has_value());
-    EXPECT_TRUE(abi_check(p, {*c}).empty());
-}
+    expect(fatal(c.has_value()));
+    expect(abi_check(p, {*c}).empty());
+}};
 
-TEST(AbiCheck, GlibcDepUnderMuslMismatchesOnLibcDim) {
+UTest glibc_dep_under_musl_mismatches_on_libc_dim{"AbiCheck/GlibcDepUnderMuslMismatchesOnLibcDim", [] {
     auto p = abi_profile(make_tc("x86_64-linux-musl", "libstdc++", CompilerId::GCC));
     auto c = parse_abi_capability("abi:glibc", "compat.glfw");
-    ASSERT_TRUE(c.has_value());
+    expect(fatal(c.has_value()));
     auto mm = abi_check(p, {*c});
-    ASSERT_EQ(mm.size(), 1u);
-    EXPECT_EQ(mm[0].dim, AbiDim::Libc);
-    EXPECT_EQ(mm[0].need, "glibc");
-    EXPECT_EQ(mm[0].got, "musl");
-}
+    expect(fatal(eq(mm.size(), 1u)));
+    expect(eq(mm[0].dim, AbiDim::Libc));
+    expect(eq(mm[0].need, "glibc"));
+    expect(eq(mm[0].got, "musl"));
+}};
 
-TEST(AbiCheck, UnspecifiedDimensionIsDontCare) {
+UTest unspecified_dimension_is_dont_care{"AbiCheck/UnspecifiedDimensionIsDontCare", [] {
     // A cxxstdlib constraint must NOT be implied by a bare libc capability.
     auto p = abi_profile(make_tc("x86_64-unknown-linux-gnu", "libc++", CompilerId::Clang));
-    EXPECT_TRUE(abi_check(p, {{AbiDim::Arch, "x86_64", "x"}}).empty());      // matches
-    EXPECT_FALSE(abi_check(p, {{AbiDim::Arch, "aarch64", "x"}}).empty());    // mismatches
-}
+    expect(abi_check(p, {{AbiDim::Arch, "x86_64", "x"}}).empty());      // matches
+    expect(!(abi_check(p, {{AbiDim::Arch, "aarch64", "x"}}).empty()));    // mismatches
+}};
 
 // ─── parse_abi_capability: legacy + dimensional forms ───────────────────────
 
-TEST(AbiCapability, LegacyBareFormIsLibc) {
+UTest legacy_bare_form_is_libc{"AbiCapability/LegacyBareFormIsLibc", [] {
     auto c = parse_abi_capability("abi:glibc", "pkg");
-    ASSERT_TRUE(c.has_value());
-    EXPECT_EQ(c->dim, AbiDim::Libc);
-    EXPECT_EQ(c->value, "glibc");
-    EXPECT_EQ(c->source, "pkg");
-}
+    expect(fatal(c.has_value()));
+    expect(eq(c->dim, AbiDim::Libc));
+    expect(eq(c->value, "glibc"));
+    expect(eq(c->source, "pkg"));
+}};
 
-TEST(AbiCapability, DimensionalForm) {
+UTest dimensional_form{"AbiCapability/DimensionalForm", [] {
     auto c = parse_abi_capability("abi:cxxstdlib=libc++");
-    ASSERT_TRUE(c.has_value());
-    EXPECT_EQ(c->dim, AbiDim::CxxStdlib);
-    EXPECT_EQ(c->value, "libc++");
-}
+    expect(fatal(c.has_value()));
+    expect(eq(c->dim, AbiDim::CxxStdlib));
+    expect(eq(c->value, "libc++"));
+}};
 
-TEST(AbiCapability, NonAbiCapabilityIgnored) {
-    EXPECT_FALSE(parse_abi_capability("x11.display").has_value());
-    EXPECT_FALSE(parse_abi_capability("opengl.glx.driver").has_value());
-}
+UTest non_abi_capability_ignored{"AbiCapability/NonAbiCapabilityIgnored", [] {
+    expect(!(parse_abi_capability("x11.display").has_value()));
+    expect(!(parse_abi_capability("opengl.glx.driver").has_value()));
+}};
 
-TEST(AbiCapability, UnknownDimensionIgnored) {
-    EXPECT_FALSE(parse_abi_capability("abi:nonsense=1").has_value());
-}
+UTest unknown_dimension_ignored{"AbiCapability/UnknownDimensionIgnored", [] {
+    expect(!(parse_abi_capability("abi:nonsense=1").has_value()));
+}};
 
 // ─── `[target.<sel>.abi] exceptions` and `requires_abi` on the target axis ──
 //
@@ -126,7 +128,7 @@ const mcpp::manifest::ConditionalConfig* find_cc(
 
 }  // namespace manifest_abi
 
-TEST(AbiTableExceptions, ParsesAndReachesTheConditionalConfig) {
+UTest parses_and_reaches_the_conditional_config{"AbiTableExceptions/ParsesAndReachesTheConditionalConfig", [] {
     constexpr auto src = R"(
 [package]
 name    = "webrt"
@@ -135,17 +137,17 @@ version = "0.1.0"
 exceptions = true
 )";
     auto m = mcpp::manifest::parse_string(src);
-    ASSERT_TRUE(m.has_value()) << m.error().format();
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
     auto* cc = manifest_abi::find_cc(*m, "cfg(os = \"emscripten\")");
-    ASSERT_NE(cc, nullptr);
-    EXPECT_TRUE(cc->abiExceptionsDeclared);
-    EXPECT_TRUE(cc->abiExceptions);
+    expect(fatal(ne(cc, nullptr)));
+    expect(bool(cc->abiExceptionsDeclared));
+    expect(bool(cc->abiExceptions));
     // `threads` is untouched by a table that only names `exceptions` --
     // the two members are independent switches, not a package deal.
-    EXPECT_FALSE(cc->abiThreadsDeclared);
-}
+    expect(!cc->abiThreadsDeclared);
+}};
 
-TEST(AbiTableExceptions, BothMembersInOneTableParseIndependently) {
+UTest both_members_in_one_table_parse_independently{"AbiTableExceptions/BothMembersInOneTableParseIndependently", [] {
     constexpr auto src = R"(
 [package]
 name    = "webrt"
@@ -155,16 +157,16 @@ threads    = true
 exceptions = false
 )";
     auto m = mcpp::manifest::parse_string(src);
-    ASSERT_TRUE(m.has_value()) << m.error().format();
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
     auto* cc = manifest_abi::find_cc(*m, "cfg(os = \"emscripten\")");
-    ASSERT_NE(cc, nullptr);
-    EXPECT_TRUE(cc->abiThreadsDeclared);
-    EXPECT_TRUE(cc->abiThreads);
-    EXPECT_TRUE(cc->abiExceptionsDeclared);
-    EXPECT_FALSE(cc->abiExceptions);
-}
+    expect(fatal(ne(cc, nullptr)));
+    expect(bool(cc->abiThreadsDeclared));
+    expect(bool(cc->abiThreads));
+    expect(bool(cc->abiExceptionsDeclared));
+    expect(!cc->abiExceptions);
+}};
 
-TEST(AbiTableExceptions, UnknownMemberNamesBothThreadsAndExceptions) {
+UTest unknown_member_names_both_threads_and_exceptions{"AbiTableExceptions/UnknownMemberNamesBothThreadsAndExceptions", [] {
     constexpr auto src = R"(
 [package]
 name    = "a"
@@ -173,13 +175,12 @@ version = "0.1.0"
 frobnicate = true
 )";
     auto m = mcpp::manifest::parse_string(src);
-    ASSERT_FALSE(m.has_value());
-    EXPECT_NE(m.error().message.find(
-        "has no member 'frobnicate'; the members are: threads, exceptions"),
-        std::string::npos) << m.error().message;
-}
+    expect(fatal(!m.has_value()));
+    if (auto&& failed = expect(ne(m.error().message.find(
+        "has no member 'frobnicate'; the members are: threads, exceptions"), std::string::npos)); !failed) failed << m.error().message;
+}};
 
-TEST(AbiTableExceptions, ANonBooleanExceptionsIsRefused) {
+UTest a_non_boolean_exceptions_is_refused{"AbiTableExceptions/ANonBooleanExceptionsIsRefused", [] {
     constexpr auto src = R"(
 [package]
 name    = "a"
@@ -188,14 +189,13 @@ version = "0.1.0"
 exceptions = 1
 )";
     auto m = mcpp::manifest::parse_string(src);
-    ASSERT_FALSE(m.has_value());
-    EXPECT_NE(m.error().message.find(".exceptions must be true, false, \"wasm\" or \"js\""),
-              std::string::npos) << m.error().message;
-}
+    expect(fatal(!m.has_value()));
+    if (auto&& failed = expect(ne(m.error().message.find(".exceptions must be true, false, \"wasm\" or \"js\""), std::string::npos)); !failed) failed << m.error().message;
+}};
 
 // ─── `requires_abi` as a direct key of `[target.<sel>]` ─────────────────────
 
-TEST(RequiresAbiOnTargetAxis, SelectorScopedRequirementParsesIntoTheConditionalConfig) {
+UTest selector_scoped_requirement_parses_into_the_conditional_config{"RequiresAbiOnTargetAxis/SelectorScopedRequirementParsesIntoTheConditionalConfig", [] {
     constexpr auto src = R"(
 [package]
 name    = "adapter"
@@ -204,14 +204,14 @@ version = "0.1.0"
 requires_abi = { threads = true }
 )";
     auto m = mcpp::manifest::parse_string(src);
-    ASSERT_TRUE(m.has_value()) << m.error().format();
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
     auto* cc = manifest_abi::find_cc(*m, "cfg(linux)");
-    ASSERT_NE(cc, nullptr);
-    EXPECT_TRUE(cc->requiresAbiThreads);
-    EXPECT_FALSE(cc->requiresAbiExceptions);
-}
+    expect(fatal(ne(cc, nullptr)));
+    expect(bool(cc->requiresAbiThreads));
+    expect(!cc->requiresAbiExceptions);
+}};
 
-TEST(RequiresAbiOnTargetAxis, FeatureFormParsesUnderTheSelector) {
+UTest feature_form_parses_under_the_selector{"RequiresAbiOnTargetAxis/FeatureFormParsesUnderTheSelector", [] {
     constexpr auto src = R"(
 [package]
 name    = "adapter"
@@ -220,18 +220,18 @@ version = "0.1.0"
 mt = { threads = true }
 )";
     auto m = mcpp::manifest::parse_string(src);
-    ASSERT_TRUE(m.has_value()) << m.error().format();
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
     auto* cc = manifest_abi::find_cc(*m, "cfg(linux)");
-    ASSERT_NE(cc, nullptr);
-    ASSERT_TRUE(cc->featureRequiresAbiThreads.contains("mt"));
-    EXPECT_TRUE(cc->featureRequiresAbiThreads.at("mt"));
+    expect(fatal(ne(cc, nullptr)));
+    expect(fatal(cc->featureRequiresAbiThreads.contains("mt")));
+    expect(bool(cc->featureRequiresAbiThreads.at("mt")));
     // The feature-requires-abi table registers the feature UNCONDITIONALLY
     // (the same rule feature-deps follows, #359), so it does not trip the
     // unknown-feature diagnostic on a build that never selects this target.
-    EXPECT_TRUE(m->featuresMap.contains("mt"));
-}
+    expect(m->featuresMap.contains("mt"));
+}};
 
-TEST(RequiresAbiOnTargetAxis, UnknownMemberInsideRequiresAbiNamesBoth) {
+UTest unknown_member_inside_requires_abi_names_both{"RequiresAbiOnTargetAxis/UnknownMemberInsideRequiresAbiNamesBoth", [] {
     constexpr auto src = R"(
 [package]
 name    = "adapter"
@@ -240,13 +240,12 @@ version = "0.1.0"
 requires_abi = { thread = true }
 )";
     auto m = mcpp::manifest::parse_string(src);
-    ASSERT_FALSE(m.has_value());
-    EXPECT_NE(m.error().message.find(
-        "requires_abi.thread: the members are `threads`, `exceptions`, booleans"),
-        std::string::npos) << m.error().message;
-}
+    expect(fatal(!m.has_value()));
+    if (auto&& failed = expect(ne(m.error().message.find(
+        "requires_abi.thread: the members are `threads`, `exceptions`, booleans"), std::string::npos)); !failed) failed << m.error().message;
+}};
 
-TEST(RequiresAbiOnTargetAxis, UnknownMemberInsideFeatureFormNamesBoth) {
+UTest unknown_member_inside_feature_form_names_both{"RequiresAbiOnTargetAxis/UnknownMemberInsideFeatureFormNamesBoth", [] {
     constexpr auto src = R"(
 [package]
 name    = "adapter"
@@ -255,12 +254,11 @@ version = "0.1.0"
 mt = { thread = true }
 )";
     auto m = mcpp::manifest::parse_string(src);
-    ASSERT_FALSE(m.has_value());
-    EXPECT_NE(m.error().message.find(
+    expect(fatal(!m.has_value()));
+    if (auto&& failed = expect(ne(m.error().message.find(
         "feature-requires-abi.mt].thread: the members are `threads`, "
-        "`exceptions`, booleans"),
-        std::string::npos) << m.error().message;
-}
+        "`exceptions`, booleans"), std::string::npos)); !failed) failed << m.error().message;
+}};
 
 // ─── The union: a matching selector's requirement joins the package's ──────
 //
@@ -273,7 +271,7 @@ namespace manifest_abi {
 
 mcpp::manifest::Manifest merged_for(std::string_view src, std::string_view triple) {
     auto m = mcpp::manifest::parse_string(src);
-    EXPECT_TRUE(m.has_value()) << (m.has_value() ? "" : m.error().format());
+    if (auto&& failed = expect(m.has_value()); !failed) failed << (m.has_value() ? "" : m.error().format());
     if (!m) return {};
     mcpp::build::merge_conditional_config(*m, cfgpred::context_for(triple));
     return *m;
@@ -281,7 +279,7 @@ mcpp::manifest::Manifest merged_for(std::string_view src, std::string_view tripl
 
 }  // namespace manifest_abi
 
-TEST(RequiresAbiOnTargetAxis, MatchingSelectorUnionsIntoThePackagesRequirement) {
+UTest matching_selector_unions_into_the_packages_requirement{"RequiresAbiOnTargetAxis/MatchingSelectorUnionsIntoThePackagesRequirement", [] {
     constexpr auto src = R"(
 [package]
 name    = "adapter"
@@ -290,12 +288,12 @@ version = "0.1.0"
 requires_abi = { threads = true }
 )";
     auto lin = manifest_abi::merged_for(src, "x86_64-unknown-linux-gnu");
-    ASSERT_EQ(lin.targetRequiresAbiThreads.size(), 1u);
-    EXPECT_EQ(lin.targetRequiresAbiThreads.front(), "cfg(linux)");
-    EXPECT_TRUE(lin.targetRequiresAbiExceptions.empty());
-}
+    expect(fatal(eq(lin.targetRequiresAbiThreads.size(), 1u)));
+    expect(eq(lin.targetRequiresAbiThreads.front(), "cfg(linux)"));
+    expect(lin.targetRequiresAbiExceptions.empty());
+}};
 
-TEST(RequiresAbiOnTargetAxis, ASelectorThatDoesNotMatchTheHostImposesNothing) {
+UTest a_selector_that_does_not_match_the_host_imposes_nothing{"RequiresAbiOnTargetAxis/ASelectorThatDoesNotMatchTheHostImposesNothing", [] {
     constexpr auto src = R"(
 [package]
 name    = "adapter"
@@ -308,10 +306,10 @@ requires_abi = { threads = true }
     // calls out explicitly (A6: "the Web build is unaffected ... in both
     // directions").
     auto lin = manifest_abi::merged_for(src, "x86_64-unknown-linux-gnu");
-    EXPECT_TRUE(lin.targetRequiresAbiThreads.empty());
-}
+    expect(lin.targetRequiresAbiThreads.empty());
+}};
 
-TEST(RequiresAbiOnTargetAxis, FeatureFormUnionsOnlyForTheMatchingSelector) {
+UTest feature_form_unions_only_for_the_matching_selector{"RequiresAbiOnTargetAxis/FeatureFormUnionsOnlyForTheMatchingSelector", [] {
     constexpr auto src = R"(
 [package]
 name    = "adapter"
@@ -322,7 +320,7 @@ mt = { threads = true }
 mt = { exceptions = true }
 )";
     auto lin = manifest_abi::merged_for(src, "x86_64-unknown-linux-gnu");
-    ASSERT_TRUE(lin.targetFeatureRequiresAbiThreads.contains("mt"));
-    EXPECT_EQ(lin.targetFeatureRequiresAbiThreads.at("mt").front(), "cfg(linux)");
-    EXPECT_FALSE(lin.targetFeatureRequiresAbiExceptions.contains("mt"));
-}
+    expect(fatal(lin.targetFeatureRequiresAbiThreads.contains("mt")));
+    expect(eq(lin.targetFeatureRequiresAbiThreads.at("mt").front(), "cfg(linux)"));
+    expect(!lin.targetFeatureRequiresAbiExceptions.contains("mt"));
+}};

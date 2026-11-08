@@ -4,14 +4,16 @@
 // and no compiler — the table can be wrong in a way that only shows up as a
 // slower build, which is the kind of wrong that never gets noticed.
 
-#include <gtest/gtest.h>
 #include <cstdlib>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.invocation;
 import mcpp.build.schedule.policy;
 import mcpp.toolchain.model;
 import mcpp.manifest;
+
+using namespace mcpplibs::mtest;
 
 using mcpp::build::schedule::Strategy;
 using mcpp::build::schedule::decide;
@@ -48,74 +50,74 @@ mcpp::manifest::Manifest with_schedule(std::string v) {
 // backwards is silent: clang writes its BMI to the final path with O_TRUNC, so
 // detach-codegen would hand importers a half-written file; gcc has no cheap
 // BMI-only mode, so two-phase would just compile everything twice.
-TEST(SchedulePolicy, EachCompilerGetsItsOwnMechanism) {
-    EXPECT_EQ(decide(with(CompilerId::Clang), "on", 8).strategy, Strategy::TwoPhase);
-    EXPECT_EQ(decide(with(CompilerId::GCC), "on", 8).strategy, Strategy::DetachCodegen);
-}
+UTest each_compiler_gets_its_own_mechanism{"SchedulePolicy/EachCompilerGetsItsOwnMechanism", [] {
+    expect(eq(decide(with(CompilerId::Clang), "on", 8).strategy, Strategy::TwoPhase));
+    expect(eq(decide(with(CompilerId::GCC), "on", 8).strategy, Strategy::DetachCodegen));
+}};
 
 // Unmeasured means None. A guess here is not a slow build, it is a miscompile:
 // a BMI read while it is still being written is not a diagnostic.
 // `auto` is OFF for now — pinned, because it is a decision rather than a gap.
-TEST(SchedulePolicy, AutoIsOptInForNow) {
-    EXPECT_EQ(decide(with(CompilerId::GCC), "auto", 8).strategy, Strategy::None);
-    EXPECT_NE(decide(with(CompilerId::GCC), "on", 8).strategy, Strategy::None);
-}
+UTest auto_is_opt_in_for_now{"SchedulePolicy/AutoIsOptInForNow", [] {
+    expect(eq(decide(with(CompilerId::GCC), "auto", 8).strategy, Strategy::None));
+    expect(ne(decide(with(CompilerId::GCC), "on", 8).strategy, Strategy::None));
+}};
 
-TEST(SchedulePolicy, UnmeasuredCompilersStayConservative) {
-    EXPECT_EQ(decide(with(CompilerId::MSVC), "on", 8).strategy, Strategy::None);
-    EXPECT_EQ(decide(with(CompilerId::Unknown), "on", 8).strategy, Strategy::None);
-}
+UTest unmeasured_compilers_stay_conservative{"SchedulePolicy/UnmeasuredCompilersStayConservative", [] {
+    expect(eq(decide(with(CompilerId::MSVC), "on", 8).strategy, Strategy::None));
+    expect(eq(decide(with(CompilerId::Unknown), "on", 8).strategy, Strategy::None));
+}};
 
 // Asserted from BOTH sides: that "off" disables, and that the same input with
 // "auto" does NOT. Checking only the first would pass an implementation that
 // never enables anything at all.
-TEST(SchedulePolicy, OffDisablesAndAutoDoesNot) {
-    EXPECT_EQ(decide(with(CompilerId::GCC), "off", 8).strategy, Strategy::None);
-    EXPECT_NE(decide(with(CompilerId::GCC), "on", 8).strategy, Strategy::None);
-}
+UTest off_disables_and_auto_does_not{"SchedulePolicy/OffDisablesAndAutoDoesNot", [] {
+    expect(eq(decide(with(CompilerId::GCC), "off", 8).strategy, Strategy::None));
+    expect(ne(decide(with(CompilerId::GCC), "on", 8).strategy, Strategy::None));
+}};
 
 // HAZARD 2, encoded. Under detach-codegen a compiler stops holding a ninja slot
 // the moment it publishes its BMI, so ninja's -j is no longer a bound on how
 // many compilers run. With the two equal, ninja's slots fill with edges that
 // are merely sleeping, the ready frontier starves, and the schedule degenerates
 // to the baseline — which is exactly what the first prototype measured.
-TEST(SchedulePolicy, DetachCodegenGivesNinjaMoreSlotsThanCompilers) {
+UTest detach_codegen_gives_ninja_more_slots_than_compilers{"SchedulePolicy/DetachCodegenGivesNinjaMoreSlotsThanCompilers", [] {
     const auto d = decide(with(CompilerId::GCC), "on", 32);
-    EXPECT_EQ(d.compilerCap, 32);
-    EXPECT_GT(d.ninjaJobs, d.compilerCap);
-}
+    expect(eq(d.compilerCap, 32));
+    expect(gt(d.ninjaJobs, d.compilerCap));
+}};
 
 // Two-phase runs ordinary compilers that hold their slot for the whole compile,
 // so inflating -j there would only oversubscribe the machine.
-TEST(SchedulePolicy, TwoPhaseLeavesTheJobCountAlone) {
+UTest two_phase_leaves_the_job_count_alone{"SchedulePolicy/TwoPhaseLeavesTheJobCountAlone", [] {
     const auto d = decide(with(CompilerId::Clang), "on", 32);
-    EXPECT_EQ(d.ninjaJobs, d.compilerCap);
-}
+    expect(eq(d.ninjaJobs, d.compilerCap));
+}};
 
 // A scheduler that silently declines to optimise cannot be debugged: "why is my
 // build not using the fast shape?" has to have an answer that ships with the
 // build. Every branch, including the ones that choose None.
-TEST(SchedulePolicy, EveryDecisionCarriesAReason) {
+UTest every_decision_carries_a_reason{"SchedulePolicy/EveryDecisionCarriesAReason", [] {
     for (auto id : {CompilerId::GCC, CompilerId::Clang, CompilerId::MSVC,
                     CompilerId::Unknown}) {
-        EXPECT_FALSE(decide(with(id), "auto", 8).reason.empty())
+        expect(!(decide(with(id), "auto", 8).reason.empty()))
             << "no reason for compiler id " << static_cast<int>(id);
-        EXPECT_FALSE(decide(with(id), "off", 8).reason.empty())
+        expect(!(decide(with(id), "off", 8).reason.empty()))
             << "no reason when disabled, compiler id " << static_cast<int>(id);
     }
-}
+}};
 
 // A host that reports nothing must not turn into "-j0" or a negative cap.
-TEST(SchedulePolicy, ZeroJobsStaysZeroRatherThanBecomingNonsense) {
+UTest zero_jobs_stays_zero_rather_than_becoming_nonsense{"SchedulePolicy/ZeroJobsStaysZeroRatherThanBecomingNonsense", [] {
     const auto d = decide(with(CompilerId::GCC), "on", 0);
-    EXPECT_EQ(d.compilerCap, 0);
-    EXPECT_EQ(d.ninjaJobs, 0);
+    expect(eq(d.compilerCap, 0));
+    expect(eq(d.ninjaJobs, 0));
     // ...and it must SAY so. Under detach-codegen a cap of 0 disables the
     // semaphore, which is the only bound on how many compilers run at once, so
     // this state is not a neutral default — it is unbounded concurrency.
-    EXPECT_NE(d.reason.find("bounded by nothing"), std::string::npos)
+    expect(ne(d.reason.find("bounded by nothing"), std::string::npos))
         << "a zero cap silently means no bound at all: " << d.reason;
-}
+}};
 
 // THE DEFAULT CONFIGURATION MUST STILL BE BOUNDED.
 //
@@ -130,21 +132,21 @@ TEST(SchedulePolicy, ZeroJobsStaysZeroRatherThanBecomingNonsense) {
 // `sched_cap = 0`, i.e. ninja starting compiles as fast as BMIs appeared with
 // nothing limiting them, on a workload whose single compile peaks near a
 // gigabyte. The caller now resolves what the host would pick and hands it in.
-TEST(SchedulePolicy, DetachCodegenFallsBackToTheHostWhenNoJobCountWasGiven) {
+UTest detach_codegen_falls_back_to_the_host_when_no_job_count_was_given{"SchedulePolicy/DetachCodegenFallsBackToTheHostWhenNoJobCountWasGiven", [] {
     const auto d = decide(with(CompilerId::GCC), "on", /*hostJobs=*/0, /*autoJobs=*/24);
-    EXPECT_EQ(d.strategy, Strategy::DetachCodegen);
-    EXPECT_EQ(d.compilerCap, 24) << "the semaphore would be disabled";
-    EXPECT_GT(d.ninjaJobs, d.compilerCap) << "hazard 2: -j must exceed the cap";
+    expect(eq(d.strategy, Strategy::DetachCodegen));
+    expect(eq(d.compilerCap, 24)) << "the semaphore would be disabled";
+    expect(gt(d.ninjaJobs, d.compilerCap)) << "hazard 2: -j must exceed the cap";
 
     // An explicit job count still wins over the fallback.
     const auto e = decide(with(CompilerId::GCC), "on", /*hostJobs=*/8, /*autoJobs=*/24);
-    EXPECT_EQ(e.compilerCap, 8);
+    expect(eq(e.compilerCap, 8));
 
     // The fallback is only for the strategy that needs it; two-phase uses
     // ordinary edges, where ninja's -j is already the bound.
     const auto c = decide(with(CompilerId::Clang), "on", /*hostJobs=*/0, /*autoJobs=*/24);
-    EXPECT_EQ(c.ninjaJobs, 0) << "clang must still defer to the backend default";
-}
+    expect(eq(c.ninjaJobs, 0)) << "clang must still defer to the backend default";
+}};
 
 // `auto` is bounded by recommended_jobs' ceiling of 64, but `--jobs N` is only
 // checked for `> 0`, so an absurd N reaches decide() intact and `cap * 6` was
@@ -152,11 +154,11 @@ TEST(SchedulePolicy, DetachCodegenFallsBackToTheHostWhenNoJobCountWasGiven) {
 // one of the friendlier outcomes. Asserted as "still positive and still greater
 // than the cap" rather than against the clamp constant, so tuning the clamp does
 // not require editing the test that exists to stop it going negative.
-TEST(SchedulePolicy, AnAbsurdJobCountDoesNotOverflowIntoANegativeOne) {
+UTest an_absurd_job_count_does_not_overflow_into_a_negative_one{"SchedulePolicy/AnAbsurdJobCountDoesNotOverflowIntoANegativeOne", [] {
     const auto d = decide(with(CompilerId::GCC), "on", 2000000000);
-    EXPECT_GT(d.ninjaJobs, 0) << "ninja -j went non-positive";
-    EXPECT_GT(d.ninjaJobs, 1) << "hazard 2: ninja must still outnumber the compilers";
-}
+    expect(gt(d.ninjaJobs, 0)) << "ninja -j went non-positive";
+    expect(gt(d.ninjaJobs, 1)) << "hazard 2: ninja must still outnumber the compilers";
+}};
 
 // ─── resolve_jobs precedence (#564) ────────────────────────────────────────
 //
@@ -173,7 +175,7 @@ TEST(SchedulePolicy, AnAbsurdJobCountDoesNotOverflowIntoANegativeOne) {
 // opposite of correct, because the global value is a property of the machine
 // and the environment variable is this invocation. Each of the three levels is
 // therefore checked against the level that must beat it.
-TEST(SchedulePolicy, ResolveJobsPutsTheMachineBelowTheProjectAndTheInvocation) {
+UTest resolve_jobs_puts_the_machine_below_the_project_and_the_invocation{"SchedulePolicy/ResolveJobsPutsTheMachineBelowTheProjectAndTheInvocation", [] {
     mcpp::manifest::Manifest bare;                      // no [build] jobs
     auto with_jobs = [](std::string v) {
         mcpp::manifest::Manifest m;
@@ -185,24 +187,24 @@ TEST(SchedulePolicy, ResolveJobsPutsTheMachineBelowTheProjectAndTheInvocation) {
     {   // The machine's value is used when nothing else says anything, and 0
         // still means "say nothing" for everyone who has not written the key.
         ScopedVar clear("MCPP_JOBS", nullptr);
-        EXPECT_EQ(resolve_jobs(bare, {}, 4), 4);
-        EXPECT_EQ(resolve_jobs(bare, {}, 0), 0);
+        expect(eq(resolve_jobs(bare, {}, 4), 4));
+        expect(eq(resolve_jobs(bare, {}, 0), 0));
         // A non-positive value reads as absent rather than as a bound: that is
         // what the generated template's `0` means, and a negative -j would be
         // handed straight to the backend.
-        EXPECT_EQ(resolve_jobs(bare, {}, -1), 0);
+        expect(eq(resolve_jobs(bare, {}, -1), 0));
 
         // The project beats the machine. A project that states a number has a
         // reason the machine cannot know.
-        EXPECT_EQ(resolve_jobs(with_jobs("6"), {}, 4), 6);
+        expect(eq(resolve_jobs(with_jobs("6"), {}, 4), 6));
     }
     {   // The invocation beats both. Without this leg the parameter could be
         // wired in above MCPP_JOBS and every other assertion here would pass.
         ScopedVar jobs("MCPP_JOBS", "2");
-        EXPECT_EQ(resolve_jobs(bare, {}, 4), 2);
-        EXPECT_EQ(resolve_jobs(with_jobs("6"), {}, 4), 2);
+        expect(eq(resolve_jobs(bare, {}, 4), 2));
+        expect(eq(resolve_jobs(with_jobs("6"), {}, 4), 2));
     }
-}
+}};
 
 // ─── requested_switch: a typo is a diagnostic, never a silent "auto" ───────
 //
@@ -210,63 +212,63 @@ TEST(SchedulePolicy, ResolveJobsPutsTheMachineBelowTheProjectAndTheInvocation) {
 // `bmi_schedule = "ON"` was accepted, meant OFF, and explained itself with
 // "the split schedule is opt-in until verified" — which reads as "you did not
 // ask for it" to someone who just did.
-TEST(SchedulePolicy, RequestedSwitchPassesTheThreeSpellingsThrough) {
+UTest requested_switch_passes_the_three_spellings_through{"SchedulePolicy/RequestedSwitchPassesTheThreeSpellingsThrough", [] {
     ScopedVar clear("MCPP_BMI_SCHEDULE", nullptr);
-    EXPECT_EQ(requested_switch(with_schedule("on")), "on");
-    EXPECT_EQ(requested_switch(with_schedule("off")), "off");
-    EXPECT_EQ(requested_switch(with_schedule("auto")), "auto");
-    EXPECT_EQ(requested_switch(with_schedule("")), "auto");   // unset
-}
+    expect(eq(requested_switch(with_schedule("on")), "on"));
+    expect(eq(requested_switch(with_schedule("off")), "off"));
+    expect(eq(requested_switch(with_schedule("auto")), "auto"));
+    expect(eq(requested_switch(with_schedule("")), "auto"));   // unset
+}};
 
-TEST(SchedulePolicy, RequestedSwitchReportsATypoInsteadOfSwallowingIt) {
+UTest requested_switch_reports_a_typo_instead_of_swallowing_it{"SchedulePolicy/RequestedSwitchReportsATypoInsteadOfSwallowingIt", [] {
     ScopedVar clear("MCPP_BMI_SCHEDULE", nullptr);
     for (const char* typo : {"ON", "On", "true", "yes", "1", "enabled"}) {
         std::string seen;
         const auto v = requested_switch(with_schedule(typo),
                                         [&](std::string_view bad) { seen = bad; });
-        EXPECT_EQ(v, "auto") << typo << " must fall back to the default";
-        EXPECT_EQ(seen, typo) << typo << " was accepted silently";
+        expect(eq(v, "auto")) << typo << " must fall back to the default";
+        expect(eq(seen, typo)) << typo << " was accepted silently";
     }
-}
+}};
 
 // Both directions. Checking only that a typo warns would pass an implementation
 // that warns about everything, including the spellings that are correct.
-TEST(SchedulePolicy, RequestedSwitchStaysQuietForValidValues) {
+UTest requested_switch_stays_quiet_for_valid_values{"SchedulePolicy/RequestedSwitchStaysQuietForValidValues", [] {
     ScopedVar clear("MCPP_BMI_SCHEDULE", nullptr);
     for (const char* ok : {"on", "off", "auto"}) {
         bool warned = false;
         requested_switch(with_schedule(ok), [&](std::string_view) { warned = true; });
-        EXPECT_FALSE(warned) << ok << " is valid but was reported as invalid";
+        expect(!warned) << ok << " is valid but was reported as invalid";
     }
-}
+}};
 
 // The environment outranks the manifest — and is validated on the same terms.
 // A typo'd MCPP_BMI_SCHEDULE must not fall through to the manifest either:
 // silently honouring `[build] bmi_schedule = "on"` when the environment asked
 // for something unparseable would make the warning a lie.
-TEST(SchedulePolicy, EnvironmentBeatsManifestAndIsValidatedToo) {
+UTest environment_beats_manifest_and_is_validated_too{"SchedulePolicy/EnvironmentBeatsManifestAndIsValidatedToo", [] {
     {
         ScopedVar on("MCPP_BMI_SCHEDULE", "off");
-        EXPECT_EQ(requested_switch(with_schedule("on")), "off");
+        expect(eq(requested_switch(with_schedule("on")), "off"));
     }
     {
         ScopedVar bad("MCPP_BMI_SCHEDULE", "ON");
         std::string seen;
-        EXPECT_EQ(requested_switch(with_schedule("on"),
-                                   [&](std::string_view b) { seen = b; }), "auto");
-        EXPECT_EQ(seen, "ON");
+        expect(eq(requested_switch(with_schedule("on"),
+                                   [&](std::string_view b) { seen = b; }), "auto"));
+        expect(eq(seen, "ON"));
     }
-}
+}};
 
 // EVERY STRATEGY CAPS ITS COMPILERS (2026.11.7.1): the capped executor is what
 // registers a compiler in its build's generation, so a strategy without a split
 // still has a cap -- the job count, else what this machine would choose.
-TEST(SchedulePolicy, EveryStrategyCarriesACompilerCap) {
+UTest every_strategy_carries_a_compiler_cap{"SchedulePolicy/EveryStrategyCarriesACompilerCap", [] {
     for (auto id : {CompilerId::GCC, CompilerId::Clang, CompilerId::MSVC, CompilerId::Unknown}) {
-        EXPECT_EQ(decide(with(id), "auto", 8).compilerCap, 8) << static_cast<int>(id);
-        EXPECT_EQ(decide(with(id), "off", 0, 6).compilerCap, 6) << static_cast<int>(id);
+        expect(eq(decide(with(id), "auto", 8).compilerCap, 8)) << static_cast<int>(id);
+        expect(eq(decide(with(id), "off", 0, 6).compilerCap, 6)) << static_cast<int>(id);
     }
     // The shape alone is unchanged: only the split strategies carry a cap there.
-    EXPECT_EQ(decide_shape(with(CompilerId::MSVC), "auto", 8).compilerCap, 0);
-}
+    expect(eq(decide_shape(with(CompilerId::MSVC), "auto", 8).compilerCap, 0));
+}};
 

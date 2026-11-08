@@ -15,14 +15,16 @@
 // a package engineered to collide with it — and demands byte-identical
 // addresses. It fails on the pre-#344 tree.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.plan;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.toolchain.model;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::build;
 
@@ -137,42 +139,42 @@ std::optional<Built> planZlib(const Tmp& t, bool withBzip2, std::string* err) {
 // The load-bearing assertion. Adding an unrelated, deliberately colliding
 // package to the graph must not move zlib's object by one byte — not its build
 // path, and above all not its cache address.
-TEST(ObjectAddress, DependencyAddressesAreImmuneToTheRestOfTheGraph) {
+UTest dependency_addresses_are_immune_to_the_rest_of_the_graph{"ObjectAddress/DependencyAddressesAreImmuneToTheRestOfTheGraph", [] {
     Tmp t;
     std::string errAlone, errBeside;
     auto alone  = planZlib(t, /*withBzip2=*/false, &errAlone);
     auto beside = planZlib(t, /*withBzip2=*/true,  &errBeside);
-    ASSERT_TRUE(alone)  << errAlone;
-    ASSERT_TRUE(beside) << errBeside;
+    expect(fatal(bool(alone)))  << errAlone;
+    expect(fatal(bool(beside))) << errBeside;
 
-    EXPECT_EQ(alone->packageObjectRel, beside->packageObjectRel)
+    expect(eq(alone->packageObjectRel, beside->packageObjectRel))
         << "the cache-entry address moved when an unrelated package joined the "
            "graph — that is mcpp#344";
-    EXPECT_EQ(alone->object, beside->object);
-}
+    expect(eq(alone->object, beside->object));
+}};
 
 // The address must also be package-internal: nothing about the consumer, and
 // nothing that only exists on this machine. It is read back by another machine
 // that computed the same key.
-TEST(ObjectAddress, DependencyCacheAddressIsPackageInternal) {
+UTest dependency_cache_address_is_package_internal{"ObjectAddress/DependencyCacheAddressIsPackageInternal", [] {
     Tmp t;
     std::string err;
     auto built = planZlib(t, /*withBzip2=*/true, &err);
-    ASSERT_TRUE(built) << err;
+    expect(fatal(bool(built))) << err;
 
     auto rel = built->packageObjectRel.generic_string();
-    EXPECT_FALSE(rel.empty());
-    EXPECT_FALSE(built->packageObjectRel.is_absolute()) << rel;
-    EXPECT_FALSE(rel.starts_with("..")) << rel;
+    expect(!rel.empty());
+    expect(!(built->packageObjectRel.is_absolute())) << rel;
+    expect(!rel.starts_with("..")) << rel;
     // Mirrors the source's path relative to its OWN package root, and carries
     // no package-partition component (that lives in the build path only).
-    EXPECT_EQ(rel, "zlib-1.3.2/compress.o") << rel;
+    expect(eq(rel, "zlib-1.3.2/compress.o")) << rel;
 
     // The build path does partition by package — that is what makes the
     // cross-package census unnecessary.
     auto obj = built->object.generic_string();
-    EXPECT_EQ(obj, "obj/compat_zlib/zlib-1.3.2/compress.o") << obj;
-}
+    expect(eq(obj, "obj/compat_zlib/zlib-1.3.2/compress.o")) << obj;
+}};
 
 // `path_is_under_any` decides both whether a package may be cached and where
 // its objects are anchored, and it must answer LEXICALLY.
@@ -184,7 +186,7 @@ TEST(ObjectAddress, DependencyCacheAddressIsPackageInternal) {
 // which point `<home>/registry/data/xpkgs/<pkg>` no longer looks like it is in
 // the store — every such package silently drops out of the build cache. That
 // regression was caught by e2e 40 and is pinned here where it is cheap.
-TEST(ObjectAddress, PathContainmentIsLexicalSoSymlinkedStoresStillCount) {
+UTest path_containment_is_lexical_so_symlinked_stores_still_count{"ObjectAddress/PathContainmentIsLexicalSoSymlinkedStoresStillCount", [] {
     Tmp t;
     auto real  = t.path / "real-store";
     auto store = t.path / "home" / "registry" / "data" / "xpkgs";
@@ -194,23 +196,23 @@ TEST(ObjectAddress, PathContainmentIsLexicalSoSymlinkedStoresStillCount) {
     std::error_code ec;
     std::filesystem::create_directory_symlink(
         real / "compat.zlib@1.3.2", store / "compat.zlib@1.3.2", ec);
-    if (ec) GTEST_SKIP() << "symlinks unavailable: " << ec.message();
+    if (ec) skip([&] { std::ostringstream text; text << "symlinks unavailable: " << ec.message(); return text.str(); }());
 
     auto pkgRoot = store / "compat.zlib@1.3.2";
-    EXPECT_TRUE(path_is_under_any(pkgRoot, {store}));
-    EXPECT_TRUE(path_is_under_any(pkgRoot / "src" / "compress.c", {store}));
+    expect(path_is_under_any(pkgRoot, {store}));
+    expect(path_is_under_any(pkgRoot / "src" / "compress.c", {store}));
 
     // And it still says no to something genuinely outside — the gate has to
     // keep rejecting `target/.mangled/**`, which is the case it exists for.
-    EXPECT_FALSE(path_is_under_any(t.path / "proj" / "target" / ".mangled" / "x",
+    expect(!path_is_under_any(t.path / "proj" / "target" / ".mangled" / "x",
                                    {store}));
-    EXPECT_FALSE(path_is_under_any(pkgRoot, {}));
-}
+    expect(!path_is_under_any(pkgRoot, {}));
+}};
 
 // The root project is never cached, so it keeps the flat layout every project
 // has had since 0.0.1 — and a dependency shipping a same-named file can no
 // longer force it to disambiguate.
-TEST(ObjectAddress, RootObjectsStayFlatAndUncacheable) {
+UTest root_objects_stay_flat_and_uncacheable{"ObjectAddress/RootObjectsStayFlatAndUncacheable", [] {
     Tmp t;
     auto projectRoot = t.path / "proj";
     auto storeRoot   = t.path / "store";
@@ -240,16 +242,16 @@ TEST(ObjectAddress, RootObjectsStayFlatAndUncacheable) {
     auto plan = make_plan(rootManifest, gccLike(), {}, graph, topo, packages,
                           projectRoot, projectRoot / "target" / "t",
                           {}, {}, {storeRoot});
-    ASSERT_TRUE(plan) << plan.error();
+    if (auto&& failed = expect(fatal(bool(plan))); !failed) failed << plan.error();
 
     for (auto& cu : plan->compileUnits) {
         if (cu.source == projectRoot / "src" / "compress.c") {
-            EXPECT_EQ(cu.object.generic_string(), "obj/compress.o");
-            EXPECT_TRUE(cu.packageObjectRel.empty())
+            expect(eq(cu.object.generic_string(), "obj/compress.o"));
+            expect(cu.packageObjectRel.empty())
                 << "the root project must never get a cache address";
         }
     }
-}
+}};
 
 // ── A source outside the package that declares it (mcpp#641, item 3) ───────
 
@@ -313,25 +315,25 @@ std::optional<std::string> addressOfDeclaredDependencySource(
 
 // The address names the package that contains the file and the path inside it,
 // so it does not grow with the distance between the two package roots.
-TEST(ObjectAddress, ASourceUnderAnotherPackageIsAddressedByThatPackage) {
+UTest a_source_under_another_package_is_addressed_by_that_package{"ObjectAddress/ASourceUnderAnotherPackageIsAddressedByThatPackage", [] {
     Tmp t;
     const auto dep = t.path / "fw" / "dep";
     std::string err;
     auto near = addressOfDeclaredDependencySource(t.path / "fw" / "tool", dep, &err);
-    ASSERT_TRUE(near) << err;
-    EXPECT_EQ(*near, "obj/installer/__pkg/dep/platform/impl/helper.o");
-    EXPECT_EQ(near->find("__up"), std::string::npos) << *near;
+    expect(fatal(bool(near))) << err;
+    expect(eq(*near, "obj/installer/__pkg/dep/platform/impl/helper.o"));
+    if (auto&& failed = expect(eq(near->find("__up"), std::string::npos)); !failed) failed << *near;
 
     auto deeper = addressOfDeclaredDependencySource(
         t.path / "fw" / "tools" / "windows" / "installer" / "tool", dep, &err);
-    ASSERT_TRUE(deeper) << err;
-    EXPECT_EQ(*deeper, *near)
+    expect(fatal(bool(deeper))) << err;
+    expect(eq(*deeper, *near))
         << "moving the declaring package deeper changed the address";
-}
+}};
 
 // A source no package contains, colliding by basename with a root source, is
 // filed under a hash of its directory rather than a climbing mirror of it.
-TEST(ObjectAddress, AnUnownedEscapingSourceIsAddressedByAHashOfItsDirectory) {
+UTest an_unowned_escaping_source_is_addressed_by_a_hash_of_its_directory{"ObjectAddress/AnUnownedEscapingSourceIsAddressedByAHashOfItsDirectory", [] {
     Tmp t;
     auto projectRoot = t.path / "proj";
     auto depRoot     = t.path / "store" / "dep@1.0.0";
@@ -354,23 +356,23 @@ TEST(ObjectAddress, AnUnownedEscapingSourceIsAddressedByAHashOfItsDirectory) {
     std::vector<std::size_t> topo{0, 1};
     auto plan = make_plan(rootManifest, gccLike(), {}, graph, topo, packages,
                           projectRoot, projectRoot / "target" / "t", {}, {}, {});
-    ASSERT_TRUE(plan) << plan.error();
+    if (auto&& failed = expect(fatal(bool(plan))); !failed) failed << plan.error();
 
     std::string rootObj, outsideObj;
     for (auto& cu : plan->compileUnits) {
         if (cu.source == projectRoot / "src" / "gen.cpp") rootObj = cu.object.generic_string();
         if (cu.source == outside) outsideObj = cu.object.generic_string();
     }
-    EXPECT_EQ(rootObj, "obj/app/src/gen.o");
-    ASSERT_TRUE(outsideObj.starts_with("obj/dep/__ext/")) << outsideObj;
-    EXPECT_TRUE(outsideObj.ends_with("/gen.o")) << outsideObj;
-    EXPECT_EQ(outsideObj.find("__up"), std::string::npos) << outsideObj;
+    expect(eq(rootObj, "obj/app/src/gen.o"));
+    expect(fatal(outsideObj.starts_with("obj/dep/__ext/"))) << outsideObj;
+    expect(outsideObj.ends_with("/gen.o")) << outsideObj;
+    expect(eq(outsideObj.find("__up"), std::string::npos)) << outsideObj;
     const auto hash = outsideObj.substr(std::string("obj/dep/__ext/").size(), 8);
-    EXPECT_EQ(outsideObj.size(), std::string("obj/dep/__ext/").size() + 8 + std::string("/gen.o").size())
+    expect(eq(outsideObj.size(), std::string("obj/dep/__ext/").size() + 8 + std::string("/gen.o").size()))
         << outsideObj;
-    EXPECT_TRUE(std::ranges::all_of(hash, [](char c) {
+    expect(std::ranges::all_of(hash, [](char c) {
         return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); })) << outsideObj;
-}
+}};
 
 // A WORKSPACE PLAN'S ROOT OWNS NO SOURCE (pack drive and selection design
 // 2026-10-01, B1; mcpp#751). A member lists a file that lies in the workspace
@@ -378,7 +380,7 @@ TEST(ObjectAddress, AnUnownedEscapingSourceIsAddressedByAHashOfItsDirectory) {
 // workspace's, and owning the file put it in the root's basename census, so
 // its object moved when a second member listed the same file: `-p` and
 // `--workspace` compiled it to two addresses in one build directory.
-TEST(ObjectAddress, AMembersOutsideSourceIsImmuneToAnotherMemberListingIt) {
+UTest a_members_outside_source_is_immune_to_another_member_listing_it{"ObjectAddress/AMembersOutsideSourceIsImmuneToAnotherMemberListingIt", [] {
     Tmp t;
     const auto ws = t.path / "ws";
     auto plan_with = [&](bool withTool) -> std::filesystem::path {
@@ -401,25 +403,25 @@ TEST(ObjectAddress, AMembersOutsideSourceIsImmuneToAnotherMemberListingIt) {
         for (std::size_t i = 0; i < graph.units.size(); ++i) topo.push_back(i);
         auto plan = make_plan(root, gccLike(), {}, graph, topo, packages, ws,
                               ws / "target" / "t", {}, {}, {});
-        EXPECT_TRUE(plan) << (plan ? std::string{} : plan.error());
+        if (auto&& failed = expect(bool(plan)); !failed) failed << (plan ? std::string{} : plan.error());
         if (!plan) return {};
         for (auto const& cu : plan->compileUnits)
             if (cu.packageName == "core") return cu.object;
-        ADD_FAILURE() << "core's unit is not in the plan";
+        expect(false) << "core's unit is not in the plan";
         return {};
     };
     const auto alone  = plan_with(false);
     const auto beside = plan_with(true);
-    EXPECT_FALSE(alone.empty());
-    EXPECT_EQ(alone, beside);
+    expect(!alone.empty());
+    expect(eq(alone, beside));
     // Filed under its declaring member, not at the root's flat address.
-    EXPECT_NE(alone.generic_string().find("obj/core/"), std::string::npos) << alone;
-}
+    expect(ne(alone.generic_string().find("obj/core/"), std::string::npos)) << alone;
+}};
 
 // The same for a file inside ANOTHER member's directory: the member that
 // contains it may be outside the selection, and then the virtual root contains
 // the file instead. The address is the file's place in the workspace.
-TEST(ObjectAddress, AMembersSourceInAnotherMembersDirectoryIsImmuneToTheSelection) {
+UTest a_members_source_in_another_members_directory_is_immune_to_the_selection{"ObjectAddress/AMembersSourceInAnotherMembersDirectoryIsImmuneToTheSelection", [] {
     Tmp t;
     const auto ws = t.path / "ws";
     auto plan_with = [&](bool withLib) -> std::filesystem::path {
@@ -442,16 +444,16 @@ TEST(ObjectAddress, AMembersSourceInAnotherMembersDirectoryIsImmuneToTheSelectio
         for (std::size_t i = 0; i < graph.units.size(); ++i) topo.push_back(i);
         auto plan = make_plan(root, gccLike(), {}, graph, topo, packages, ws,
                               ws / "target" / "t", {}, {}, {});
-        EXPECT_TRUE(plan) << (plan ? std::string{} : plan.error());
+        if (auto&& failed = expect(bool(plan)); !failed) failed << (plan ? std::string{} : plan.error());
         if (!plan) return {};
         for (auto const& cu : plan->compileUnits)
             if (cu.packageName == "app") return cu.object;
-        ADD_FAILURE() << "app's unit is not in the plan";
+        expect(false) << "app's unit is not in the plan";
         return {};
     };
     const auto alone  = plan_with(false);
     const auto beside = plan_with(true);
-    EXPECT_FALSE(alone.empty());
-    EXPECT_EQ(alone, beside);
-    EXPECT_NE(alone.generic_string().find("obj/app/__ws/lib/src/"), std::string::npos) << alone;
-}
+    expect(!alone.empty());
+    expect(eq(alone, beside));
+    expect(ne(alone.generic_string().find("obj/app/__ws/lib/src/"), std::string::npos)) << alone;
+}};

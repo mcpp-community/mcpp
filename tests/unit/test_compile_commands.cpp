@@ -1,6 +1,6 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.source_kind;
 import mcpp.build.compile_commands;
 import mcpp.build.flags;
@@ -9,6 +9,8 @@ import nlohmann.json;
 import mcpp.manifest.flag_words;
 import mcpplibs.os.platform;
 import mcpp.toolchain.model;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::build;
 
@@ -64,8 +66,8 @@ std::string cdb(std::initializer_list<std::string> entries) {
     // (merge_compile_commands short-circuits to `fresh` on a discarded parse),
     // so the fixture itself is checked here rather than trusted. Tests that
     // WANT malformed input pass it directly, not through this builder.
-    EXPECT_FALSE(nlohmann::json::parse(s, nullptr, /*allow_exceptions=*/false)
-                     .is_discarded()) << s;
+    expect(!(nlohmann::json::parse(s, nullptr, /*allow_exceptions=*/false)
+                     .is_discarded())) << s;
     return s;
 }
 
@@ -80,7 +82,7 @@ std::size_t count(std::string_view hay, std::string_view needle) {
 // The core regression guard: a plain `mcpp build` regenerates the CDB from a
 // plan that lacks test files, but it must NOT wipe out test entries a prior
 // `mcpp test` wrote — clangd would lose all completion in tests/ otherwise.
-TEST(CompileCommandsMerge, PreservesPriorEntriesForFilesNotInFreshPlan) {
+UTest preserves_prior_entries_for_files_not_in_fresh_plan{"CompileCommandsMerge/PreservesPriorEntriesForFilesNotInFreshPlan", [] {
     auto fresh    = cdb({ entry("/p/src/main.cpp", "-O2-FRESH") });
     auto existing = cdb({ entry("/p/src/main.cpp", "-O0-STALE"),
                           entry("/p/tests/test_smoke.cpp", "-Igtest") });
@@ -89,16 +91,16 @@ TEST(CompileCommandsMerge, PreservesPriorEntriesForFilesNotInFreshPlan) {
         fresh, existing, [](const std::filesystem::path&) { return true; });
 
     // main.cpp takes the fresh plan's flags, not the stale prior ones.
-    EXPECT_NE(merged.find("-O2-FRESH"), std::string::npos) << merged;
-    EXPECT_EQ(merged.find("-O0-STALE"), std::string::npos) << merged;
+    expect(ne(merged.find("-O2-FRESH"), std::string::npos)) << merged;
+    expect(eq(merged.find("-O0-STALE"), std::string::npos)) << merged;
     // The test entry, absent from the fresh plan, is preserved.
-    EXPECT_NE(merged.find("tests/test_smoke.cpp"), std::string::npos) << merged;
-    EXPECT_NE(merged.find("-Igtest"), std::string::npos) << merged;
-}
+    expect(ne(merged.find("tests/test_smoke.cpp"), std::string::npos)) << merged;
+    expect(ne(merged.find("-Igtest"), std::string::npos)) << merged;
+}};
 
 // Prior entries for files that no longer exist on disk must be pruned, so the
 // CDB never accumulates dead references (e.g. a deleted test file).
-TEST(CompileCommandsMerge, PrunesPriorEntriesWhoseFileNoLongerExists) {
+UTest prunes_prior_entries_whose_file_no_longer_exists{"CompileCommandsMerge/PrunesPriorEntriesWhoseFileNoLongerExists", [] {
     auto fresh    = cdb({ entry("/p/src/main.cpp", "-O2") });
     auto existing = cdb({ entry("/p/tests/deleted.cpp", "-Igtest") });
 
@@ -106,21 +108,21 @@ TEST(CompileCommandsMerge, PrunesPriorEntriesWhoseFileNoLongerExists) {
         fresh, existing,
         [](const std::filesystem::path& p) { return p != "/p/tests/deleted.cpp"; });
 
-    EXPECT_EQ(merged.find("deleted.cpp"), std::string::npos) << merged;
-}
+    expect(eq(merged.find("deleted.cpp"), std::string::npos)) << merged;
+}};
 
 // Exactly one entry per file: the fresh plan wins, no duplicate accrues.
-TEST(CompileCommandsMerge, FreshEntryWinsAndNoDuplicatePerFile) {
+UTest fresh_entry_wins_and_no_duplicate_per_file{"CompileCommandsMerge/FreshEntryWinsAndNoDuplicatePerFile", [] {
     auto fresh    = cdb({ entry("/p/a.cpp", "-FRESH") });
     auto existing = cdb({ entry("/p/a.cpp", "-STALE") });
 
     auto merged = merge_compile_commands(
         fresh, existing, [](const std::filesystem::path&) { return true; });
 
-    EXPECT_EQ(count(merged, "/p/a.cpp"), 1u) << merged;
-    EXPECT_NE(merged.find("-FRESH"), std::string::npos) << merged;
-    EXPECT_EQ(merged.find("-STALE"), std::string::npos) << merged;
-}
+    expect(eq(count(merged, "/p/a.cpp"), 1u)) << merged;
+    expect(ne(merged.find("-FRESH"), std::string::npos)) << merged;
+    expect(eq(merged.find("-STALE"), std::string::npos)) << merged;
+}};
 
 // §3.2 item 1: the within-configuration merge's identity is `file` resolved
 // against `directory`, not `file` alone. A prior entry with a RELATIVE `file`
@@ -128,7 +130,7 @@ TEST(CompileCommandsMerge, FreshEntryWinsAndNoDuplicatePerFile) {
 // the standard-library units always have one, §3.3) must still be recognized
 // as the SAME file the fresh plan already covers, so it is dropped rather
 // than kept as a spurious duplicate.
-TEST(CompileCommandsMerge, ResolvesFileAgainstDirectoryForTheDedupKey) {
+UTest resolves_file_against_directory_for_the_dedup_key{"CompileCommandsMerge/ResolvesFileAgainstDirectoryForTheDedupKey", [] {
     auto fresh = cdb({ entry("/p/src/main.cpp", "-FRESH") });
     nlohmann::json e;
     e["directory"] = "/p";
@@ -140,42 +142,42 @@ TEST(CompileCommandsMerge, ResolvesFileAgainstDirectoryForTheDedupKey) {
     auto merged = merge_compile_commands(
         fresh, existing, [](const std::filesystem::path&) { return true; });
 
-    EXPECT_EQ(count(merged, "main.cpp"), 1u) << merged;
-    EXPECT_NE(merged.find("-FRESH"), std::string::npos) << merged;
-    EXPECT_EQ(merged.find("-STALE"), std::string::npos) << merged;
-}
+    expect(eq(count(merged, "main.cpp"), 1u)) << merged;
+    expect(ne(merged.find("-FRESH"), std::string::npos)) << merged;
+    expect(eq(merged.find("-STALE"), std::string::npos)) << merged;
+}};
 
 // A malformed prior CDB must never break generation: fall back to fresh.
-TEST(CompileCommandsMerge, MalformedExistingFallsBackToFresh) {
+UTest malformed_existing_falls_back_to_fresh{"CompileCommandsMerge/MalformedExistingFallsBackToFresh", [] {
     auto fresh = cdb({ entry("/p/src/main.cpp", "-O2") });
 
     auto merged = merge_compile_commands(
         fresh, "{ this is not valid json ][",
         [](const std::filesystem::path&) { return true; });
 
-    EXPECT_NE(merged.find("src/main.cpp"), std::string::npos) << merged;
-    EXPECT_NE(merged.find("-O2"), std::string::npos) << merged;
-}
+    expect(ne(merged.find("src/main.cpp"), std::string::npos)) << merged;
+    expect(ne(merged.find("-O2"), std::string::npos)) << merged;
+}};
 
-TEST(CompileCommandsMerge, SortsFinalEntriesByFile) {
+UTest sorts_final_entries_by_file{"CompileCommandsMerge/SortsFinalEntriesByFile", [] {
     auto fresh = cdb({entry("/p/z.cpp", "-DZ"), entry("/p/a.cpp", "-DA")});
     auto merged = merge_compile_commands(
         fresh, "[]", [](const std::filesystem::path&) { return true; });
 
-    EXPECT_LT(merged.find("/p/a.cpp"), merged.find("/p/z.cpp"));
-}
+    expect(lt(merged.find("/p/a.cpp"), merged.find("/p/z.cpp")));
+}};
 
-TEST(CompileCommandsWriter, RejectsNonArrayFreshJson) {
+UTest rejects_non_array_fresh_json{"CompileCommandsWriter/RejectsNonArrayFreshJson", [] {
     TempDir temp;
     auto result = publish_compile_commands(
         temp.path / "compile_commands.json", R"({"file":"not-an-array"})",
         [](const std::filesystem::path&) { return true; });
 
-    ASSERT_FALSE(result.has_value());
-    EXPECT_NE(result.error().message.find("JSON array"), std::string::npos);
-}
+    expect(fatal(!result.has_value()));
+    expect(ne(result.error().message.find("JSON array"), std::string::npos));
+}};
 
-TEST(CompileCommandsWriter, PublishesFreshDatabaseWhenNoneExists) {
+UTest publishes_fresh_database_when_none_exists{"CompileCommandsWriter/PublishesFreshDatabaseWhenNoneExists", [] {
     TempDir temp;
     auto path = temp.path / "compile_commands.json";  // deliberately absent
     auto content = cdb({entry("/p/src/main.cpp", "-O2")});
@@ -183,16 +185,16 @@ TEST(CompileCommandsWriter, PublishesFreshDatabaseWhenNoneExists) {
     auto result = publish_compile_commands(
         path, content, [](const std::filesystem::path&) { return true; });
 
-    ASSERT_TRUE(result.has_value()) << result.error().message;
-    EXPECT_TRUE(result->changed);
+    if (auto&& failed = expect(fatal(result.has_value())); !failed) failed << result.error().message;
+    expect(bool(result->changed));
     // The file is re-serialised via nlohmann (sorted + 2-space indent), so
     // assert on content, not on byte-equality with the raw input.
     auto published = read_file(path);
-    EXPECT_NE(published.find("/p/src/main.cpp"), std::string::npos) << published;
-    EXPECT_NE(published.find("-O2"), std::string::npos) << published;
-}
+    expect(ne(published.find("/p/src/main.cpp"), std::string::npos)) << published;
+    expect(ne(published.find("-O2"), std::string::npos)) << published;
+}};
 
-TEST(CompileCommandsWriter, UnchangedContentKeepsMtime) {
+UTest unchanged_content_keeps_mtime{"CompileCommandsWriter/UnchangedContentKeepsMtime", [] {
     TempDir temp;
     auto path = temp.path / "compile_commands.json";
     auto content = cdb({entry((temp.path / "a.cpp").string(), "-DOK")});
@@ -202,12 +204,12 @@ TEST(CompileCommandsWriter, UnchangedContentKeepsMtime) {
     auto result = publish_compile_commands(
         path, content, [](const std::filesystem::path&) { return true; });
 
-    ASSERT_TRUE(result.has_value()) << result.error().message;
-    EXPECT_FALSE(result->changed);
-    EXPECT_EQ(std::filesystem::last_write_time(path), before);
-}
+    if (auto&& failed = expect(fatal(result.has_value())); !failed) failed << result.error().message;
+    expect(!result->changed);
+    expect(eq(std::filesystem::last_write_time(path), before));
+}};
 
-TEST(CompileCommandsWriter, ReplacementFailurePreservesOldDatabase) {
+UTest replacement_failure_preserves_old_database{"CompileCommandsWriter/ReplacementFailurePreservesOldDatabase", [] {
     TempDir temp;
     auto path = temp.path / "compile_commands.json";
     auto oldContent = cdb({entry((temp.path / "old.cpp").string(), "-DOLD")});
@@ -224,11 +226,11 @@ TEST(CompileCommandsWriter, ReplacementFailurePreservesOldDatabase) {
         path, newContent, [](const std::filesystem::path&) { return true; },
         failReplace);
 
-    ASSERT_FALSE(result.has_value());
-    EXPECT_EQ(read_file(path), oldContent);
-    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(temp.path),
-                            std::filesystem::directory_iterator{}), 1);
-}
+    expect(fatal(!result.has_value()));
+    expect(eq(read_file(path), oldContent));
+    expect(eq(std::distance(std::filesystem::directory_iterator(temp.path),
+                            std::filesystem::directory_iterator{}), 1));
+}};
 
 // #390 self-heal: a CDB written BEFORE the mixed-separator fix spells the same
 // file differently from the way a fresh plan spells it. Because the merge key
@@ -241,10 +243,10 @@ TEST(CompileCommandsWriter, ReplacementFailurePreservesOldDatabase) {
 // Windows the `/` separators need make_preferred on top. A stale value of just
 // `p.generic_string()` would be byte-identical to fresh on POSIX, and the
 // literal-string key this test exists to replace would pass it unchanged.
-TEST(CompileCommandsMerge, NormalizedFileKeysHealStaleSeparatorSpellings) {
+UTest normalized_file_keys_heal_stale_separator_spellings{"CompileCommandsMerge/NormalizedFileKeysHealStaleSeparatorSpellings", [] {
     auto p = std::filesystem::path("/p") / "generated" / "modules" / "a.cpp";
     auto stale = "/p/generated/./modules/a.cpp";
-    ASSERT_NE(p.string(), stale) << "fixture must differ from the fresh spelling";
+    expect(fatal(ne(p.string(), stale))) << "fixture must differ from the fresh spelling";
 
     auto fresh    = cdb({ entry(p.string(), "-O2-FRESH") });
     auto existing = cdb({ entry(stale, "-O0-STALE") });
@@ -252,10 +254,10 @@ TEST(CompileCommandsMerge, NormalizedFileKeysHealStaleSeparatorSpellings) {
     auto merged = merge_compile_commands(
         fresh, existing, [](const std::filesystem::path&) { return true; });
 
-    EXPECT_EQ(count(merged, "generated"), 1u) << merged;
-    EXPECT_NE(merged.find("-O2-FRESH"), std::string::npos) << merged;
-    EXPECT_EQ(merged.find("-O0-STALE"), std::string::npos) << merged;
-}
+    expect(eq(count(merged, "generated"), 1u)) << merged;
+    expect(ne(merged.find("-O2-FRESH"), std::string::npos)) << merged;
+    expect(eq(merged.find("-O0-STALE"), std::string::npos)) << merged;
+}};
 
 // ── CDB arguments must be argv, not shell words ─────────────────────────────
 //
@@ -294,63 +296,63 @@ bool has_edge_quote(std::string_view s) {
 
 // The host's own reader: single quotes are quoting for `sh` and literal
 // characters for the MSVCRT rules, so this row holds on POSIX hosts only.
-TEST(CompileCommandsArgs, StripsPosixQuotingFromAToken) {
+UTest strips_posix_quoting_from_a_token{"CompileCommandsArgs/StripsPosixQuotingFromAToken", [] {
     if constexpr (mcpplibs::os::is_windows) {
-        GTEST_SKIP() << "single quotes are literal under the MSVCRT rules";
+        skip("single quotes are literal under the MSVCRT rules");
     }
     auto out = mcpp::build::split_flags("-O2 '-fprebuilt-module-path=/a/b' -g");
-    ASSERT_EQ(out.size(), 3u);
-    EXPECT_EQ(out[1], "-fprebuilt-module-path=/a/b");
-    for (auto const& t : out) EXPECT_FALSE(has_edge_quote(t)) << t;
-}
+    expect(fatal(eq(out.size(), 3u)));
+    expect(eq(out[1], "-fprebuilt-module-path=/a/b"));
+    for (auto const& t : out) expect(!has_edge_quote(t)) << t;
+}};
 
-TEST(CompileCommandsArgs, StripsWindowsQuotingFromAToken) {
+UTest strips_windows_quoting_from_a_token{"CompileCommandsArgs/StripsWindowsQuotingFromAToken", [] {
     auto out = mcpp::build::split_flags(R"(-O2 "-IC:\Users\x\inc" -g)");
-    ASSERT_EQ(out.size(), 3u);
-    EXPECT_EQ(out[1], R"(-IC:\Users\x\inc)");
-    for (auto const& t : out) EXPECT_FALSE(has_edge_quote(t)) << t;
-}
+    expect(fatal(eq(out.size(), 3u)));
+    expect(eq(out[1], R"(-IC:\Users\x\inc)"));
+    for (auto const& t : out) expect(!has_edge_quote(t)) << t;
+}};
 
 // The one that bit: a quoted path containing a space is ONE argument. The
 // space arrives ninja-escaped (`$ `) because flags.cppm escapes before it
 // quotes, so the un-escape has to happen INSIDE the quotes — do it in the
 // wrong order and the token splits exactly here.
-TEST(CompileCommandsArgs, AQuotedPathWithASpaceStaysOneToken) {
+UTest a_quoted_path_with_a_space_stays_one_token{"CompileCommandsArgs/AQuotedPathWithASpaceStaysOneToken", [] {
     // The quotes are the host's: flags.cppm quotes with `'` on POSIX and `"`
     // under the MSVCRT rules.
     const std::string_view line = mcpplibs::os::is_windows
         ? "-O2 \"-fmodule-file=std=/tmp/my$ project/std.pcm\" -g"
         : "-O2 '-fmodule-file=std=/tmp/my$ project/std.pcm' -g";
     auto out = mcpp::build::split_flags(line);
-    ASSERT_EQ(out.size(), 3u) << "the quoted path was split";
-    EXPECT_EQ(out[1], "-fmodule-file=std=/tmp/my project/std.pcm");
-    for (auto const& t : out) EXPECT_FALSE(has_edge_quote(t)) << t;
-}
+    expect(fatal(eq(out.size(), 3u))) << "the quoted path was split";
+    expect(eq(out[1], "-fmodule-file=std=/tmp/my project/std.pcm"));
+    for (auto const& t : out) expect(!has_edge_quote(t)) << t;
+}};
 
 // Unquoted input: ninja's escapes are undone first, and then the host splits
 // the line. `$ ` is a plain space by the time the host reads it, so an
 // unquoted `-Idir$ with$ space` is three words to the compiler, and the
 // database says so. The engine quotes every word it writes (include_token,
 // ninja_command_word); the quoted spelling is the test above.
-TEST(CompileCommandsArgs, UnquotedInputSplitsWhereTheHostSplits) {
+UTest unquoted_input_splits_where_the_host_splits{"CompileCommandsArgs/UnquotedInputSplitsWhereTheHostSplits", [] {
     auto out = mcpp::build::split_flags("-IC$:/x -DA=1 -Idir$ with$ space");
-    ASSERT_EQ(out.size(), 5u);
-    EXPECT_EQ(out[0], "-IC:/x");
-    EXPECT_EQ(out[1], "-DA=1");
-    EXPECT_EQ(out[2], "-Idir");
-    EXPECT_EQ(out[3], "with");
-    EXPECT_EQ(out[4], "space");
-}
+    expect(fatal(eq(out.size(), 5u)));
+    expect(eq(out[0], "-IC:/x"));
+    expect(eq(out[1], "-DA=1"));
+    expect(eq(out[2], "-Idir"));
+    expect(eq(out[3], "with"));
+    expect(eq(out[4], "space"));
+}};
 
 // A quote inside a word is quoting on both hosts' readers: `sh` and the MSVCRT
 // rules both hand the compiler `-DGREETING=hi` for this text. The version of
 // this test before #655 asserted the opposite, which pinned the compile
 // database to a reading no host applies.
-TEST(CompileCommandsArgs, QuotesInsideAWordAreQuoting) {
+UTest quotes_inside_a_word_are_quoting{"CompileCommandsArgs/QuotesInsideAWordAreQuoting", [] {
     auto out = mcpp::build::split_flags(R"(-DGREETING="hi")");
-    ASSERT_EQ(out.size(), 1u);
-    EXPECT_EQ(out[0], "-DGREETING=hi");
-}
+    expect(fatal(eq(out.size(), 1u)));
+    expect(eq(out[0], "-DGREETING=hi"));
+}};
 
 // ── A unit's flag list: the edge and the databases agree (#655) ─────────────
 //
@@ -395,31 +397,28 @@ std::vector<std::string> random_words() {
 
 }  // namespace
 
-TEST(CompileCommandsArgs, TheEdgeAndTheDatabaseListTheSameWords) {
+UTest the_edge_and_the_database_list_the_same_words{"CompileCommandsArgs/TheEdgeAndTheDatabaseListTheSameWords", [] {
     const auto words = mcpp::manifest::flag_words(kIssue655Elements);
-    EXPECT_EQ(mcpp::build::split_flags(mcpp::build::ninja_flag_list(kIssue655Elements)),
-              words);
+    expect(eq(mcpp::build::split_flags(mcpp::build::ninja_flag_list(kIssue655Elements)), words));
     const std::vector<std::string> want{
         R"(-DPLATFORM_CONFIG_H="mcpp_libarchive_config.h")", "-DMID=mid", "-DSQ=sq",
         "-include", "mcpp_lua_platform_config.h", "-I/opt/my dir/include",
         R"(-IC:\Users\x\include)", "-DDOLLAR=a$b", R"(-DDEF="def")", "-DSPACE=a b"};
-    EXPECT_EQ(words, want);
-}
+    expect(eq(words, want));
+}};
 
-TEST(CompileCommandsArgs, AWordOnAnEdgeReadsBackAsTheWord) {
+UTest a_word_on_an_edge_reads_back_as_the_word{"CompileCommandsArgs/AWordOnAnEdgeReadsBackAsTheWord", [] {
     for (auto const& w : random_words()) {
-        EXPECT_EQ(mcpp::build::split_flags(mcpp::build::ninja_command_word(w)),
-                  std::vector<std::string>{w})
-            << "word: [" << w << "]";
+        if (auto&& failed = expect(eq(mcpp::build::split_flags(mcpp::build::ninja_command_word(w)), std::vector<std::string>{w})); !failed) failed << "word: [" << w << "]";
     }
-}
+}};
 
 // The reader above is mcpp's model of the host. On a POSIX host the host itself
 // is available, so the model is checked against it: `/bin/sh` receives the
 // quoted words and prints each one back.
-TEST(CompileCommandsArgs, ShellReceivesTheQuotedWordsAsWritten) {
+UTest shell_receives_the_quoted_words_as_written{"CompileCommandsArgs/ShellReceivesTheQuotedWordsAsWritten", [] {
     if constexpr (mcpplibs::os::is_windows) {
-        GTEST_SKIP() << "the POSIX shell is the reader measured here";
+        skip("the POSIX shell is the reader measured here");
     }
     TempDir temp;
     const auto out = temp.path / "words.txt";
@@ -432,14 +431,14 @@ TEST(CompileCommandsArgs, ShellReceivesTheQuotedWordsAsWritten) {
         command += mcpp::build::shell_quote_arg(w);
     }
     command += " > '" + out.string() + "'";
-    ASSERT_EQ(std::system(command.c_str()), 0);
+    expect(fatal(eq(std::system(command.c_str()), 0)));
     std::ifstream in(out);
     std::vector<std::string> printed;
     for (std::string line; std::getline(in, line);) printed.push_back(line);
-    EXPECT_EQ(printed, words);
-}
+    expect(eq(printed, words));
+}};
 
-TEST(CompileCommandsEmit, AUnitListsTheWordsOfItsFlagList) {
+UTest a_unit_lists_the_words_of_its_flag_list{"CompileCommandsEmit/AUnitListsTheWordsOfItsFlagList", [] {
     BuildPlan plan;
     plan.projectRoot = "/p";
     plan.outputDir = "/p/target";
@@ -457,8 +456,8 @@ TEST(CompileCommandsEmit, AUnitListsTheWordsOfItsFlagList) {
     for (auto const& a : j[0]["arguments"]) args.push_back(a.get<std::string>());
     const auto words = mcpp::manifest::flag_words(kIssue655Elements);
     auto at = std::search(args.begin(), args.end(), words.begin(), words.end());
-    EXPECT_NE(at, args.end()) << "the unit's words are not listed in order";
-}
+    expect(ne(at, args.end())) << "the unit's words are not listed in order";
+}};
 
 // ── Emitted paths use native separators ─────────────────────────────────────
 //
@@ -472,7 +471,7 @@ TEST(CompileCommandsEmit, AUnitListsTheWordsOfItsFlagList) {
 // STRINGS — split_flags(f.cxx) and the package cflags/cxxflags — pass through
 // untouched and stay the ingestion points' responsibility; normalizing an
 // arbitrary flag payload is not safe (`-DPATH="/etc/x"` holds real slashes).
-TEST(CompileCommandsEmit, EmittedPathsUseNativeSeparators) {
+UTest emitted_paths_use_native_separators{"CompileCommandsEmit/EmittedPathsUseNativeSeparators", [] {
     BuildPlan plan;
     plan.projectRoot = "/p";
     plan.outputDir = "/p/target";
@@ -508,20 +507,20 @@ TEST(CompileCommandsEmit, EmittedPathsUseNativeSeparators) {
     // C3 (design 2026-09-26 §3.3): `directory` is the OUTPUT directory the
     // compiler runs in, not `plan.projectRoot` — here `/p/target`.
     if constexpr (std::filesystem::path::preferred_separator == '\\') {
-        EXPECT_EQ(e["file"].get<std::string>(), "C:\\Users\\x\\src\\main.cpp");
-        EXPECT_EQ(e["directory"].get<std::string>(), "\\p\\target");
-        EXPECT_EQ(e["output"].get<std::string>(), "\\p\\target\\obj\\main.o");
-        EXPECT_EQ(inc,      "-IC:\\proj\\generated\\inc");
-        EXPECT_EQ(incAfter, "-idirafterC:\\proj\\third_party\\inc");
+        expect(eq(e["file"].get<std::string>(), "C:\\Users\\x\\src\\main.cpp"));
+        expect(eq(e["directory"].get<std::string>(), "\\p\\target"));
+        expect(eq(e["output"].get<std::string>(), "\\p\\target\\obj\\main.o"));
+        expect(eq(inc, "-IC:\\proj\\generated\\inc"));
+        expect(eq(incAfter, "-idirafterC:\\proj\\third_party\\inc"));
     } else {
-        EXPECT_EQ(e["file"].get<std::string>(), "C:/Users/x/src/main.cpp");
-        EXPECT_EQ(e["directory"].get<std::string>(), "/p/target");
-        EXPECT_EQ(inc,      "-IC:/proj/generated/inc");
-        EXPECT_EQ(incAfter, "-idirafterC:/proj/third_party/inc");
+        expect(eq(e["file"].get<std::string>(), "C:/Users/x/src/main.cpp"));
+        expect(eq(e["directory"].get<std::string>(), "/p/target"));
+        expect(eq(inc, "-IC:/proj/generated/inc"));
+        expect(eq(incAfter, "-idirafterC:/proj/third_party/inc"));
     }
-}
+}};
 
-TEST(CompileCommandsWriter, ReplacesSymlinkTargetWithoutRemovingLink) {
+UTest replaces_symlink_target_without_removing_link{"CompileCommandsWriter/ReplacesSymlinkTargetWithoutRemovingLink", [] {
     TempDir temp;
     auto target = temp.path / "build" / "compile_commands.json";
     auto link = temp.path / "compile_commands.json";
@@ -531,19 +530,19 @@ TEST(CompileCommandsWriter, ReplacesSymlinkTargetWithoutRemovingLink) {
     std::ofstream(target) << oldContent;
     std::error_code symlinkEc;
     std::filesystem::create_symlink(target, link, symlinkEc);
-    if (symlinkEc) GTEST_SKIP() << "symlink unavailable: " << symlinkEc.message();
+    if (symlinkEc) skip([&] { std::ostringstream text; text << "symlink unavailable: " << symlinkEc.message(); return text.str(); }());
 
     auto result = publish_compile_commands(
         link, newContent, [](const std::filesystem::path&) { return false; });
 
-    ASSERT_TRUE(result.has_value()) << result.error().message;
-    EXPECT_TRUE(std::filesystem::is_symlink(link));
+    if (auto&& failed = expect(fatal(result.has_value())); !failed) failed << result.error().message;
+    expect(std::filesystem::is_symlink(link));
     auto published = read_file(target);
-    EXPECT_NE(published.find("-DNEW"), std::string::npos);
-    EXPECT_EQ(published.find("-DOLD"), std::string::npos);
-}
+    expect(ne(published.find("-DNEW"), std::string::npos));
+    expect(eq(published.find("-DOLD"), std::string::npos));
+}};
 
-TEST(CompileCommandsWriter, ExistingUnreadableDatabaseIsNotOverwritten) {
+UTest existing_unreadable_database_is_not_overwritten{"CompileCommandsWriter/ExistingUnreadableDatabaseIsNotOverwritten", [] {
     TempDir temp;
     auto path = temp.path / "compile_commands.json";
     std::ofstream(path) << "last-known-good";
@@ -551,30 +550,30 @@ TEST(CompileCommandsWriter, ExistingUnreadableDatabaseIsNotOverwritten) {
     std::filesystem::permissions(
         path, std::filesystem::perms::owner_read,
         std::filesystem::perm_options::remove, permissionEc);
-    if (permissionEc) GTEST_SKIP() << "cannot change permissions: " << permissionEc.message();
+    if (permissionEc) skip([&] { std::ostringstream text; text << "cannot change permissions: " << permissionEc.message(); return text.str(); }());
     std::ifstream probe(path);
     if (probe) {
         std::filesystem::permissions(path, std::filesystem::perms::owner_all,
                                      std::filesystem::perm_options::replace, permissionEc);
-        GTEST_SKIP() << "test user can still read restricted file";
+        skip("test user can still read restricted file");
     }
 
     auto result = publish_compile_commands(
         path, cdb({entry((temp.path / "new.cpp").string(), "-DNEW")}),
         [](const std::filesystem::path&) { return true; });
 
-    ASSERT_FALSE(result.has_value());
-    EXPECT_NE(result.error().message.find("read existing"), std::string::npos);
+    expect(fatal(!result.has_value()));
+    expect(ne(result.error().message.find("read existing"), std::string::npos));
     std::filesystem::permissions(path, std::filesystem::perms::owner_all,
                                  std::filesystem::perm_options::replace, permissionEc);
-}
+}};
 
 // ── One record, two databases ───────────────────────────────────────────────
 //
 // The compile database and the build database render the same per-unit record,
 // so `arguments` cannot differ between them. The second half shows the
 // comparison can fail: the record under other flags is not the CDB's.
-TEST(CompileCommandsEmit, UnitInvocationsAreTheCompileDatabaseArguments) {
+UTest unit_invocations_are_the_compile_database_arguments{"CompileCommandsEmit/UnitInvocationsAreTheCompileDatabaseArguments", [] {
     BuildPlan plan;
     plan.projectRoot = "/p";
     plan.outputDir = "/p/target";
@@ -600,27 +599,26 @@ TEST(CompileCommandsEmit, UnitInvocationsAreTheCompileDatabaseArguments) {
 
     auto j = nlohmann::json::parse(emit_compile_commands(plan, flags));
     auto invs = unit_invocations(plan, flags);
-    ASSERT_EQ(j.size(), invs.size());
+    expect(fatal(eq(j.size(), invs.size())));
     for (std::size_t i = 0; i < invs.size(); ++i) {
-        EXPECT_EQ(j[i]["arguments"].get<std::vector<std::string>>(), invs[i].arguments);
-        EXPECT_EQ(j[i]["file"].get<std::string>(), invs[i].file);
-        EXPECT_EQ(j[i]["directory"].get<std::string>(), invs[i].directory);
-        EXPECT_EQ(j[i]["output"].get<std::string>(), invs[i].output);
-        EXPECT_EQ(invs[i].unit, &plan.compileUnits[i]);
+        expect(eq(j[i]["arguments"].get<std::vector<std::string>>(), invs[i].arguments));
+        expect(eq(j[i]["file"].get<std::string>(), invs[i].file));
+        expect(eq(j[i]["directory"].get<std::string>(), invs[i].directory));
+        expect(eq(j[i]["output"].get<std::string>(), invs[i].output));
+        expect(eq(invs[i].unit, &plan.compileUnits[i]));
     }
 
     CompileFlags other = flags;
     other.cxx = "-std=c++26";
-    EXPECT_NE(j[0]["arguments"].get<std::vector<std::string>>(),
-              unit_invocations(plan, other)[0].arguments);
-}
+    expect(ne(j[0]["arguments"].get<std::vector<std::string>>(), unit_invocations(plan, other)[0].arguments));
+}};
 
 // ── C3: `directory` is the output directory ─────────────────────────────────
 //
 // The JSON format and S1-8-2 define the field as the directory the compiler
 // runs in; ninja runs every compile in `plan.outputDir`, never the project
 // root (design 2026-09-26 §3.3).
-TEST(CompileCommandsEmit, AProjectUnitsDirectoryIsTheOutputDirectory) {
+UTest a_project_units_directory_is_the_output_directory{"CompileCommandsEmit/AProjectUnitsDirectoryIsTheOutputDirectory", [] {
     BuildPlan plan;
     plan.projectRoot = "/p";
     plan.outputDir = "/p/target/x86_64-linux-gnu/deadbeef";
@@ -634,12 +632,12 @@ TEST(CompileCommandsEmit, AProjectUnitsDirectoryIsTheOutputDirectory) {
     flags.cxxBinary = "/usr/bin/g++";
 
     auto invs = unit_invocations(plan, flags);
-    ASSERT_EQ(invs.size(), 1u);
+    expect(fatal(eq(invs.size(), 1u)));
     // Compared as paths: the field is written in the native spelling, which
     // on Windows turns this fixture's `/` into `\`.
-    EXPECT_EQ(std::filesystem::path(invs[0].directory), plan.outputDir);
-    EXPECT_NE(std::filesystem::path(invs[0].directory), plan.projectRoot);
-}
+    expect(eq(std::filesystem::path(invs[0].directory), plan.outputDir));
+    expect(ne(std::filesystem::path(invs[0].directory), plan.projectRoot));
+}};
 
 // ── C4: the module interface language flag ──────────────────────────────────
 //
@@ -647,7 +645,7 @@ TEST(CompileCommandsEmit, AProjectUnitsDirectoryIsTheOutputDirectory) {
 // (immediately before `-c`) for every unit that actually provides a module;
 // a unit that does not (an ordinary source, here) carries no such flag at
 // all (design 2026-09-26 §3.4).
-TEST(CompileCommandsEmit, InterfaceUnitCarriesTheLanguageFlagBeforeDashCAndImplementationDoesNot) {
+UTest interface_unit_carries_the_language_flag_before_dash_c_and_implementation_does_not{"CompileCommandsEmit/InterfaceUnitCarriesTheLanguageFlagBeforeDashCAndImplementationDoesNot", [] {
     BuildPlan plan;
     plan.projectRoot = "/p";
     plan.outputDir = "/p/target";
@@ -669,24 +667,24 @@ TEST(CompileCommandsEmit, InterfaceUnitCarriesTheLanguageFlagBeforeDashCAndImple
     flags.cxxBinary = "/usr/bin/clang++";
 
     auto invs = unit_invocations(plan, flags);
-    ASSERT_EQ(invs.size(), 2u);
+    expect(fatal(eq(invs.size(), 2u)));
 
     auto& iface = invs[0].arguments;
     auto ifaceC = std::ranges::find(iface, std::string("-c"));
-    ASSERT_NE(ifaceC, iface.end());
-    ASSERT_GE(std::distance(iface.begin(), ifaceC), 2);
-    EXPECT_EQ(*(ifaceC - 2), "-x");
-    EXPECT_EQ(*(ifaceC - 1), "c++-module");
+    expect(fatal(ne(ifaceC, iface.end())));
+    expect(fatal(ge(std::distance(iface.begin(), ifaceC), 2)));
+    expect(eq(*(ifaceC - 2), "-x"));
+    expect(eq(*(ifaceC - 1), "c++-module"));
 
     auto& impl = invs[1].arguments;
-    EXPECT_EQ(std::ranges::find(impl, std::string("-x")), impl.end());
-}
+    expect(eq(std::ranges::find(impl, std::string("-x")), impl.end()));
+}};
 
 // MSVC's form (`/interface /TP`) stays out of the record until a Windows
 // measurement of clang-cl-mode clangd answers whether it accepts `/interface`
 // (design §3.4, "Open"); until then an MSVC plan carries no language flag at
 // all, matching the implementation-unit case above rather than guessing.
-TEST(CompileCommandsEmit, MsvcCarriesNoLanguageFlagYet) {
+UTest msvc_carries_no_language_flag_yet{"CompileCommandsEmit/MsvcCarriesNoLanguageFlagYet", [] {
     BuildPlan plan;
     plan.projectRoot = "/p";
     plan.outputDir = "/p/target";
@@ -702,7 +700,6 @@ TEST(CompileCommandsEmit, MsvcCarriesNoLanguageFlagYet) {
     flags.cxxBinary = "/vs/cl.exe";
 
     auto invs = unit_invocations(plan, flags);
-    ASSERT_EQ(invs.size(), 1u);
-    EXPECT_EQ(std::ranges::find(invs[0].arguments, std::string("/interface")),
-              invs[0].arguments.end());
-}
+    expect(fatal(eq(invs.size(), 1u)));
+    expect(eq(std::ranges::find(invs[0].arguments, std::string("/interface")), invs[0].arguments.end()));
+}};

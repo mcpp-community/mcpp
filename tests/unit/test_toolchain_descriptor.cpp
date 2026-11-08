@@ -1,10 +1,12 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpplibs.os.platform;
 import mcpp.toolchain.model;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::toolchain;
 
@@ -64,20 +66,20 @@ std::string host_frontend_name() {
 // feature in which that stops working. The criterion has a denominator: the
 // SAME package object resolves the SAME frontend as before the descriptor
 // existed, which is what the assertion below measures.
-TEST(PayloadDescriptor, NoDescriptorResolvesExactlyAsBefore) {
+UTest no_descriptor_resolves_exactly_as_before{"PayloadDescriptor/NoDescriptorResolvesExactlyAsBefore", [] {
     FakePayload fp{"none"};
     auto clang = fp.add_compiler("bin/" + host_frontend_name());
     auto pkg = bin_shaped_pkg();
 
     auto d = read_payload_descriptor(fp.root);
-    ASSERT_TRUE(d.has_value()) << d.error();
-    EXPECT_FALSE(d->has_value()) << "no file means no answer, not an error";
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error();
+    expect(!d->has_value()) << "no file means no answer, not an error";
 
     auto found = payload_frontend(fp.root, pkg);
-    ASSERT_TRUE(found.has_value()) << found.error();
-    EXPECT_EQ(*found, clang);
-    EXPECT_EQ(payload_frontend_dir(fp.root, pkg), fp.root / "bin");
-}
+    if (auto&& failed = expect(fatal(found.has_value())); !failed) failed << found.error();
+    expect(eq(*found, clang));
+    expect(eq(payload_frontend_dir(fp.root, pkg), fp.root / "bin"));
+}};
 
 // ─── The engine stops knowing the layout (C) ────────────────────────────────
 //
@@ -86,7 +88,7 @@ TEST(PayloadDescriptor, NoDescriptorResolvesExactlyAsBefore) {
 // guess would look. Here `bin/` is empty and the compiler is five levels down
 // in the NDK's own shape -- so a resolution that succeeds could only have come
 // from the descriptor.
-TEST(PayloadDescriptor, TheDescriptorAnswersWhereTheGuessCannot) {
+UTest the_descriptor_answers_where_the_guess_cannot{"PayloadDescriptor/TheDescriptorAnswersWhereTheGuessCannot", [] {
     FakePayload fp{"frontend"};
     // NOT the host-specific name, deliberately: the descriptor says exactly
     // where the compiler is, so the payload is free to spell it any way it
@@ -103,38 +105,38 @@ TEST(PayloadDescriptor, TheDescriptorAnswersWhereTheGuessCannot) {
     // `some-host-tag` is not a host tag this engine can compute, which is the
     // point: the path is the payload's, not a derivation.
     auto found = payload_frontend(fp.root, pkg);
-    ASSERT_TRUE(found.has_value()) << found.error();
-    EXPECT_EQ(*found, deep);
+    if (auto&& failed = expect(fatal(found.has_value())); !failed) failed << found.error();
+    expect(eq(*found, deep));
 
     // AND THE MESSAGE NAMES WHERE THE SEARCH HAPPENED. A refusal naming
     // `<root>/bin` while the lookup read the descriptor's path is the failure
     // this repository records most often: the lookup is repaired and the
     // message is not.
-    EXPECT_EQ(payload_frontend_dir(fp.root, pkg), deep.parent_path());
-}
+    expect(eq(payload_frontend_dir(fp.root, pkg), deep.parent_path()));
+}};
 
 // A descriptor naming a frontend that is not there is "nothing found where we
 // looked" -- empty, the caller's long-standing cue -- and NOT an error. The
 // two outcomes have different repairs: install the payload again, versus fix
 // the recipe.
-TEST(PayloadDescriptor, ANamedFrontendThatIsAbsentIsEmptyNotAnError) {
+UTest a_named_frontend_that_is_absent_is_empty_not_an_error{"PayloadDescriptor/ANamedFrontendThatIsAbsentIsEmptyNotAnError", [] {
     FakePayload fp{"absent"};
     fp.add_compiler("bin/" + host_frontend_name());   // the guess WOULD find this
     fp.write_descriptor(R"({"schema": 1, "frontend": "opt/bin/clang++"})");
 
     auto found = payload_frontend(fp.root, bin_shaped_pkg());
-    ASSERT_TRUE(found.has_value()) << found.error();
-    EXPECT_TRUE(found->empty())
+    if (auto&& failed = expect(fatal(found.has_value())); !failed) failed << found.error();
+    expect(found->empty())
         << "the payload said where its compiler is; the guess is not a "
            "second opinion";
-}
+}};
 
 // ─── Present and malformed is refused, naming the file (C) ──────────────────
 //
 // This is the property that makes the descriptor safe to add. Without it a typo
 // reads as "an older payload": the engine falls back to a hardcoded path for a
 // layout that has moved, and the build fails somewhere else entirely.
-TEST(PayloadDescriptor, EveryMalformedShapeIsRefusedByName) {
+UTest every_malformed_shape_is_refused_by_name{"PayloadDescriptor/EveryMalformedShapeIsRefusedByName", [] {
     struct Case { std::string_view why, json, mustMention; };
     const Case cases[] = {
         { "not JSON",             "{ not json",                        "JSON" },
@@ -179,25 +181,24 @@ TEST(PayloadDescriptor, EveryMalformedShapeIsRefusedByName) {
         fp.write_descriptor(c.json);
 
         auto d = read_payload_descriptor(fp.root);
-        ASSERT_FALSE(d.has_value()) << c.why << " was accepted";
+        expect(fatal(!d.has_value())) << c.why << " was accepted";
         // THE FILE IS NAMED IN EVERY ONE. A message that says only "invalid
         // descriptor" leaves the reader to find which payload wrote it.
-        EXPECT_NE(d.error().find(".mcpp-toolchain.json"), std::string::npos)
+        expect(ne(d.error().find(".mcpp-toolchain.json"), std::string::npos))
             << c.why << ": " << d.error();
-        EXPECT_NE(d.error().find(c.mustMention), std::string::npos)
-            << c.why << ": " << d.error();
+        if (auto&& failed = expect(ne(d.error().find(c.mustMention), std::string::npos)); !failed) failed << c.why << ": " << d.error();
 
         // And the refusal travels: the frontend lookup cannot express it as
         // "not found", so it propagates rather than falling back to the guess
         // -- even though the guess would have succeeded here.
         auto found = payload_frontend(fp.root, bin_shaped_pkg());
-        ASSERT_FALSE(found.has_value()) << c.why << " fell back to the guess";
-        EXPECT_EQ(found.error(), d.error()) << c.why;
+        expect(fatal(!found.has_value())) << c.why << " fell back to the guess";
+        expect(eq(found.error(), d.error())) << c.why;
     }
-}
+}};
 
 // ─── The three answers, read as written ─────────────────────────────────────
-TEST(PayloadDescriptor, TheThreeKeysAreCarriedThrough) {
+UTest the_three_keys_are_carried_through{"PayloadDescriptor/TheThreeKeysAreCarriedThrough", [] {
     FakePayload fp{"full"};
     fp.add_compiler("toolchains/llvm/prebuilt/linux-x86_64/bin/clang++");
     fp.write_descriptor(R"({
@@ -207,27 +208,26 @@ TEST(PayloadDescriptor, TheThreeKeysAreCarriedThrough) {
         "std_module_defines": ["__BIONIC_CTYPE_INLINE=", "_FORTIFY_SOURCE=0"]
     })");
     auto d = read_payload_descriptor(fp.root);
-    ASSERT_TRUE(d.has_value()) << d.error();
-    ASSERT_TRUE(d->has_value());
-    EXPECT_EQ((*d)->schema, 1);
-    EXPECT_EQ((*d)->frontend,
-              "toolchains/llvm/prebuilt/linux-x86_64/bin/clang++");
-    EXPECT_EQ((*d)->platformFloor, "21");
-    ASSERT_EQ((*d)->stdModuleDefines.size(), 2u);
-    EXPECT_EQ((*d)->stdModuleDefines[0], "__BIONIC_CTYPE_INLINE=");
-    EXPECT_EQ((*d)->stdModuleDefines[1], "_FORTIFY_SOURCE=0");
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error();
+    expect(fatal(d->has_value()));
+    expect(eq((*d)->schema, 1));
+    expect(eq((*d)->frontend, "toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"));
+    expect(eq((*d)->platformFloor, "21"));
+    expect(fatal(eq((*d)->stdModuleDefines.size(), 2u)));
+    expect(eq((*d)->stdModuleDefines[0], "__BIONIC_CTYPE_INLINE="));
+    expect(eq((*d)->stdModuleDefines[1], "_FORTIFY_SOURCE=0"));
 
     // ALL THREE KEYS ARE OPTIONAL. A payload that answers one question and
     // not the others is a payload, not a malformed file -- otherwise a second
     // SDK would have to fabricate answers it does not have.
     fp.write_descriptor(R"({"schema": 1})");
     auto bare = read_payload_descriptor(fp.root);
-    ASSERT_TRUE(bare.has_value()) << bare.error();
-    ASSERT_TRUE(bare->has_value());
-    EXPECT_TRUE((*bare)->frontend.empty());
-    EXPECT_TRUE((*bare)->platformFloor.empty());
-    EXPECT_TRUE((*bare)->stdModuleDefines.empty());
-}
+    if (auto&& failed = expect(fatal(bare.has_value())); !failed) failed << bare.error();
+    expect(fatal(bare->has_value()));
+    expect((*bare)->frontend.empty());
+    expect((*bare)->platformFloor.empty());
+    expect((*bare)->stdModuleDefines.empty());
+}};
 
 // ─── Found from the compiler, by walking rather than counting ───────────────
 //
@@ -235,33 +235,32 @@ TEST(PayloadDescriptor, TheThreeKeysAreCarriedThrough) {
 // hand. Counting components is the fact that changes silently when a layout
 // does, so the search walks up -- and is bounded, so a compiler that belongs
 // to no payload cannot adopt a descriptor from some ancestor directory.
-TEST(PayloadDescriptor, FoundFromTheCompilerAndTheWalkIsBounded) {
+UTest found_from_the_compiler_and_the_walk_is_bounded{"PayloadDescriptor/FoundFromTheCompilerAndTheWalkIsBounded", [] {
     FakePayload fp{"walk"};
     auto deep = fp.add_compiler(
         "toolchains/llvm/prebuilt/linux-x86_64/bin/clang++");
     fp.write_descriptor(R"({"schema": 1, "platform_floor": "21"})");
 
     auto d = payload_descriptor_for_compiler(deep);
-    ASSERT_TRUE(d.has_value()) << d.error();
-    ASSERT_TRUE(d->has_value()) << "five levels up was not reached";
-    EXPECT_EQ((*d)->platformFloor, "21");
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error();
+    expect(fatal(d->has_value())) << "five levels up was not reached";
+    expect(eq((*d)->platformFloor, "21"));
 
     // A refusal still travels through the walk, because a compiler whose
     // payload describes itself wrongly is the same defect wherever it is read.
     fp.write_descriptor(R"({"schema": 1, "platform_floor": 21})");
     auto bad = payload_descriptor_for_compiler(deep);
-    ASSERT_FALSE(bad.has_value());
-    EXPECT_NE(bad.error().find(".mcpp-toolchain.json"), std::string::npos)
-        << bad.error();
+    expect(fatal(!bad.has_value()));
+    if (auto&& failed = expect(ne(bad.error().find(".mcpp-toolchain.json"), std::string::npos)); !failed) failed << bad.error();
 
     // Beyond the bound there is no answer. Nine levels is one past it.
     auto far = fp.add_compiler("a/b/c/d/e/f/g/h/i/clang++");
     auto none = payload_descriptor_for_compiler(far);
-    ASSERT_TRUE(none.has_value()) << none.error();
-    EXPECT_FALSE(none->has_value())
+    if (auto&& failed = expect(fatal(none.has_value())); !failed) failed << none.error();
+    expect(!none->has_value())
         << "an unbounded walk adopts a descriptor from a directory that is "
            "not this payload";
-}
+}};
 
 // ─── The fourth key: the program that runs what the payload produces ────────
 //
@@ -300,27 +299,27 @@ struct FakeStore {
 };
 } // namespace
 
-TEST(PayloadDescriptor, TheRunnerIsCarriedThroughWithTheRootItWasReadFrom) {
+UTest the_runner_is_carried_through_with_the_root_it_was_read_from{"PayloadDescriptor/TheRunnerIsCarriedThroughWithTheRootItWasReadFrom", [] {
     FakePayload fp{"runner"};
     fp.write_descriptor(R"({"schema": 1, "runner": "bin/node"})");
     auto d = read_payload_descriptor(fp.root);
-    ASSERT_TRUE(d.has_value()) << d.error();
-    ASSERT_TRUE(d->has_value());
-    EXPECT_EQ((*d)->runner, "bin/node");
-    EXPECT_EQ((*d)->root, fp.root);
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error();
+    expect(fatal(d->has_value()));
+    expect(eq((*d)->runner, "bin/node"));
+    expect(eq((*d)->root, fp.root));
 
     // Optional like the other three: a payload whose artefacts run natively
     // has no runner to name.
     fp.write_descriptor(R"({"schema": 1})");
     auto bare = read_payload_descriptor(fp.root);
-    ASSERT_TRUE(bare.has_value()) << bare.error();
-    ASSERT_TRUE(bare->has_value());
-    EXPECT_TRUE((*bare)->runner.empty());
-}
+    if (auto&& failed = expect(fatal(bare.has_value())); !failed) failed << bare.error();
+    expect(fatal(bare->has_value()));
+    expect((*bare)->runner.empty());
+}};
 
 // THE SHAPE emsdk HAS: the compiler two levels below the root, and the runner
 // a DEPENDENCY's program named by its absolute path in the same store.
-TEST(PayloadDescriptor, ARunnerInTheSameStoreIsTheDefaultForItsCompiler) {
+UTest a_runner_in_the_same_store_is_the_default_for_its_compiler{"PayloadDescriptor/ARunnerInTheSameStoreIsTheDefaultForItsCompiler", [] {
     FakeStore fs{"same"};
     auto emsdk = fs.payload("xim-x-emsdk", "6.0.9");
     auto compiler = FakeStore::file(emsdk / "emscripten" / "em++");
@@ -330,44 +329,44 @@ TEST(PayloadDescriptor, ARunnerInTheSameStoreIsTheDefaultForItsCompiler) {
         node.generic_string()));
 
     auto argv = payload_default_runner(compiler);
-    ASSERT_EQ(argv.size(), 1u);
-    EXPECT_EQ(std::filesystem::path(argv[0]), std::filesystem::weakly_canonical(node));
+    expect(fatal(eq(argv.size(), 1u)));
+    expect(eq(std::filesystem::path(argv[0]), std::filesystem::weakly_canonical(node)));
 
     // The relative form resolves against the root the descriptor came from.
     FakeStore::describe(emsdk, R"({"schema": 1, "runner": "bin/node"})");
     auto rel = payload_default_runner(compiler);
-    ASSERT_EQ(rel.size(), 1u);
-    EXPECT_EQ(std::filesystem::path(rel[0]), emsdk / "bin/node");
-}
+    expect(fatal(eq(rel.size(), 1u)));
+    expect(eq(std::filesystem::path(rel[0]), emsdk / "bin/node"));
+}};
 
 // WHAT THE STORE RULE REMOVES: a payload choosing a host interpreter. Ignored
 // rather than refused, so a machine whose store is elsewhere does not lose its
 // build over a run-time default.
-TEST(PayloadDescriptor, ARunnerOutsideTheStoreIsNotHonoured) {
+UTest a_runner_outside_the_store_is_not_honoured{"PayloadDescriptor/ARunnerOutsideTheStoreIsNotHonoured", [] {
     FakeStore fs{"outside"};
     auto emsdk = fs.payload("xim-x-emsdk", "6.0.9");
     auto compiler = FakeStore::file(emsdk / "emscripten" / "em++");
     FakeStore::describe(emsdk, R"({"schema": 1, "runner": "/usr/bin/node"})");
 
     auto d = read_payload_descriptor(emsdk);
-    ASSERT_TRUE(d.has_value()) << "an absolute runner is well formed: " << d.error();
-    EXPECT_TRUE(payload_default_runner(compiler).empty())
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << "an absolute runner is well formed: " << d.error();
+    expect(payload_default_runner(compiler).empty())
         << "a runner outside the payload's store was honoured";
-}
+}};
 
-TEST(PayloadDescriptor, NoDescriptorOrNoRunnerMeansNoDefault) {
+UTest no_descriptor_or_no_runner_means_no_default{"PayloadDescriptor/NoDescriptorOrNoRunnerMeansNoDefault", [] {
     FakeStore fs{"none"};
     auto llvm = fs.payload("xim-x-llvm", "22.1.8");
     auto compiler = FakeStore::file(llvm / "bin" / "clang++");
-    EXPECT_TRUE(payload_default_runner(compiler).empty());
+    expect(payload_default_runner(compiler).empty());
     FakeStore::describe(llvm, R"({"schema": 1, "platform_floor": "21"})");
-    EXPECT_TRUE(payload_default_runner(compiler).empty());
+    expect(payload_default_runner(compiler).empty());
     // And a malformed descriptor is absence here; the build refused it first.
     FakeStore::describe(llvm, R"({"schema": 1, "runner": 7})");
-    EXPECT_TRUE(payload_default_runner(compiler).empty());
-}
+    expect(payload_default_runner(compiler).empty());
+}};
 
-TEST(PayloadDescriptor, AMalformedRunnerIsRefusedByNameAndByKey) {
+UTest a_malformed_runner_is_refused_by_name_and_by_key{"PayloadDescriptor/AMalformedRunnerIsRefusedByNameAndByKey", [] {
     FakePayload fp{"badrunner"};
     for (std::string_view json : {
              std::string_view(R"({"schema": 1, "runner": 7})"),
@@ -380,8 +379,8 @@ TEST(PayloadDescriptor, AMalformedRunnerIsRefusedByNameAndByKey) {
          }) {
         fp.write_descriptor(json);
         auto d = read_payload_descriptor(fp.root);
-        ASSERT_FALSE(d.has_value()) << "accepted: " << json;
-        EXPECT_NE(d.error().find("\"runner\""), std::string::npos) << d.error();
-        EXPECT_NE(d.error().find(".mcpp-toolchain.json"), std::string::npos) << d.error();
+        expect(fatal(!d.has_value())) << "accepted: " << json;
+        if (auto&& failed = expect(ne(d.error().find("\"runner\""), std::string::npos)); !failed) failed << d.error();
+        if (auto&& failed = expect(ne(d.error().find(".mcpp-toolchain.json"), std::string::npos)); !failed) failed << d.error();
     }
-}
+}};

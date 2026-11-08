@@ -135,7 +135,7 @@ sys.exit(result)
         env["MCPP_COMPILER_CAP"] = str(cap)  # build.ninja names no cap; outside a generation it is this
         command = [ninja, "-j", str(cap * 6)]
         if owner_driver:
-            env.update(GTEST_FILTER="DetachLifetime.SubprocessDriver",
+            env.update(MTEST_PROTOCOL="",
                        MCPP_TEST_LIFETIME_ROLE="root", MCPP_TEST_LIFETIME_OUTPUT=str(build),
                        MCPP_TEST_LIFETIME_NINJA_JOBS=str(cap*6), MCPP_TEST_LIFETIME_CAP=str(cap))
             command=[str(owner_driver)]

@@ -33,11 +33,13 @@
 // parameter exists for; using it here is not a workaround, it is the
 // intended way to keep two callers' cached dumps apart.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.toolchain.cenv_probe;
 import mcpp.run;
+
+using namespace mcpplibs::mtest;
 
 namespace cp = mcpp::toolchain::cenv_probe;
 
@@ -153,77 +155,76 @@ struct TmpCache {
 
 } // namespace
 
-TEST(CenvProbe, AMatchingDeclarationProducesNoMismatches) {
-    if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
+UTest a_matching_declaration_produces_no_mismatches{"CenvProbe/AMatchingDeclarationProducesNoMismatches", [] {
+    if (cxx().empty()) skip("no C++ compiler found to probe");
     TmpCache cache;
     auto r = cp::verify(cxx(), {}, kHostWcharBits, kHostLongBytes, {}, {},
                         cache.dir);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_TRUE(r->ran) << "a fresh cache directory must actually probe";
-    EXPECT_TRUE(r->mismatches.empty());
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(bool(r->ran)) << "a fresh cache directory must actually probe";
+    expect(r->mismatches.empty());
+}};
 
 // THE CASE THE COORDINATOR ASKED TO SEE: a declared word width the compiler
 // disagrees with. This is exactly what a C library's [c-abi] block getting
 // `data-model` wrong would produce once it reached the probe, independent
 // of whether `cenv::realise`'s own mapping table would ever have accepted
 // that request in the first place.
-TEST(CenvProbe, ADeclaredLongWidthTheCompilerDisagreesWithIsAMismatch) {
-    if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
+UTest a_declared_long_width_the_compiler_disagrees_with_is_a_mismatch{"CenvProbe/ADeclaredLongWidthTheCompilerDisagreesWithIsAMismatch", [] {
+    if (cxx().empty()) skip("no C++ compiler found to probe");
     TmpCache cache;
     const int wrongLongBytes = kHostLongBytes == 8 ? 4 : 8;
     auto r = cp::verify(cxx(), {}, 0, wrongLongBytes, {}, {}, cache.dir);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_TRUE(r->ran);
-    ASSERT_EQ(r->mismatches.size(), 1u);
-    EXPECT_EQ(r->mismatches[0].fact, "sizeof(long)");
-    EXPECT_EQ(r->mismatches[0].declared, std::to_string(wrongLongBytes));
-    EXPECT_EQ(r->mismatches[0].measured, std::to_string(kHostLongBytes));
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(bool(r->ran));
+    expect(fatal(eq(r->mismatches.size(), 1u)));
+    expect(eq(r->mismatches[0].fact, "sizeof(long)"));
+    expect(eq(r->mismatches[0].declared, std::to_string(wrongLongBytes)));
+    expect(eq(r->mismatches[0].measured, std::to_string(kHostLongBytes)));
+}};
 
-TEST(CenvProbe, ADeclaredWcharWidthTheCompilerDisagreesWithIsAMismatch) {
-    if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
+UTest a_declared_wchar_width_the_compiler_disagrees_with_is_a_mismatch{"CenvProbe/ADeclaredWcharWidthTheCompilerDisagreesWithIsAMismatch", [] {
+    if (cxx().empty()) skip("no C++ compiler found to probe");
     TmpCache cache;
     const int wrongWcharBits = kHostWcharBits == 32 ? 16 : 32;
     auto r = cp::verify(cxx(), {}, wrongWcharBits, 0, {}, {}, cache.dir);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    ASSERT_EQ(r->mismatches.size(), 1u);
-    EXPECT_EQ(r->mismatches[0].fact, "__SIZEOF_WCHAR_T__ (bits)");
-    EXPECT_EQ(r->mismatches[0].declared, std::to_string(wrongWcharBits));
-    EXPECT_EQ(r->mismatches[0].measured, std::to_string(kHostWcharBits));
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(fatal(eq(r->mismatches.size(), 1u)));
+    expect(eq(r->mismatches[0].fact, "__SIZEOF_WCHAR_T__ (bits)"));
+    expect(eq(r->mismatches[0].declared, std::to_string(wrongWcharBits)));
+    expect(eq(r->mismatches[0].measured, std::to_string(kHostWcharBits)));
+}};
 
 // `expectDefined` names a macro the declaration says must be there and
 // isn't — the shape a `presents = "posix"` declaration takes when the
 // compiler did not actually end up defining `__unix__`.
-TEST(CenvProbe, AMacroDeclaredDefinedButAbsentIsAMismatch) {
-    if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
+UTest a_macro_declared_defined_but_absent_is_a_mismatch{"CenvProbe/AMacroDeclaredDefinedButAbsentIsAMismatch", [] {
+    if (cxx().empty()) skip("no C++ compiler found to probe");
     TmpCache cache;
     auto r = cp::verify(cxx(), {}, 0, 0,
                         {"__MCPP_TEST_MACRO_THAT_DOES_NOT_EXIST__"}, {},
                         cache.dir);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    ASSERT_EQ(r->mismatches.size(), 1u);
-    EXPECT_EQ(r->mismatches[0].fact,
-             "__MCPP_TEST_MACRO_THAT_DOES_NOT_EXIST__");
-    EXPECT_EQ(r->mismatches[0].declared, "defined");
-    EXPECT_EQ(r->mismatches[0].measured, "undefined");
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(fatal(eq(r->mismatches.size(), 1u)));
+    expect(eq(r->mismatches[0].fact, "__MCPP_TEST_MACRO_THAT_DOES_NOT_EXIST__"));
+    expect(eq(r->mismatches[0].declared, "defined"));
+    expect(eq(r->mismatches[0].measured, "undefined"));
+}};
 
 // The reverse: a macro the declaration says must be ABSENT but the compiler
 // defines anyway — the shape `presents = "posix"` on a target whose
 // compiler still predefines `_WIN32` would take. `__cplusplus` is always
 // defined by a working C++ compiler, so this needs no special setup.
-TEST(CenvProbe, AMacroDeclaredUndefinedButPresentIsAMismatch) {
-    if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
+UTest a_macro_declared_undefined_but_present_is_a_mismatch{"CenvProbe/AMacroDeclaredUndefinedButPresentIsAMismatch", [] {
+    if (cxx().empty()) skip("no C++ compiler found to probe");
     TmpCache cache;
     auto r = cp::verify(cxx(), {}, 0, 0, {}, {"__cplusplus"}, cache.dir);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    ASSERT_EQ(r->mismatches.size(), 1u);
-    EXPECT_EQ(r->mismatches[0].fact, "__cplusplus");
-    EXPECT_EQ(r->mismatches[0].declared, "undefined");
-    EXPECT_EQ(r->mismatches[0].measured, "defined");
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(fatal(eq(r->mismatches.size(), 1u)));
+    expect(eq(r->mismatches[0].fact, "__cplusplus"));
+    expect(eq(r->mismatches[0].declared, "undefined"));
+    expect(eq(r->mismatches[0].measured, "defined"));
+}};
 
 // THE EXACT TOKEN `cenv::realise` NOW PRODUCES FOR macOS AND A FREESTANDING
 // TARGET (design §3.3, coordinator revision) — `-D__unix__` — PASSED TO A
@@ -240,48 +241,47 @@ TEST(CenvProbe, AMacroDeclaredUndefinedButPresentIsAMismatch) {
 // harmlessly redundant there rather than wrong, and the assertion is exactly
 // the same declared/measured pair regardless) still ends up matching what
 // was declared.
-TEST(CenvProbe, TheDUnixTokenCenvRealiseProducesForMacosAndFreestandingSatisfiesItsOwnExpectation) {
-    if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
+UTest the_d_unix_token_cenv_realise_produces_for_macos_and_freestanding_satisfies_its_own_expectation{"CenvProbe/TheDUnixTokenCenvRealiseProducesForMacosAndFreestandingSatisfiesItsOwnExpectation", [] {
+    if (cxx().empty()) skip("no C++ compiler found to probe");
     TmpCache cache;
     auto r = cp::verify(cxx(), {"-D__unix__"}, 0, 0, {"__unix__"}, {"_WIN32"},
                         cache.dir);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_TRUE(r->mismatches.empty())
-        << (r->mismatches.empty() ? "" : r->mismatches[0].fact);
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    if (auto&& failed = expect(r->mismatches.empty()); !failed) failed << (r->mismatches.empty() ? "" : r->mismatches[0].fact);
+}};
 
 // CACHED PER CONFIGURATION (module header) — a second call with the
 // identical compiler + argv must not recompile. Distinguished from the
 // first call via `ran`, exactly as `Result::ran`'s own doc comment says: a
 // cache hit still answers the mismatch question, it just does no work to.
-TEST(CenvProbe, TheSecondCallForTheIdenticalConfigurationIsACacheHit) {
-    if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
+UTest the_second_call_for_the_identical_configuration_is_a_cache_hit{"CenvProbe/TheSecondCallForTheIdenticalConfigurationIsACacheHit", [] {
+    if (cxx().empty()) skip("no C++ compiler found to probe");
     TmpCache cache;
     auto first = cp::verify(cxx(), {}, kHostWcharBits, kHostLongBytes, {}, {},
                             cache.dir);
-    ASSERT_TRUE(first.has_value()) << first.error();
-    EXPECT_TRUE(first->ran);
+    if (auto&& failed = expect(fatal(first.has_value())); !failed) failed << first.error();
+    expect(bool(first->ran));
 
     auto second = cp::verify(cxx(), {}, kHostWcharBits, kHostLongBytes, {}, {},
                              cache.dir);
-    ASSERT_TRUE(second.has_value()) << second.error();
-    EXPECT_FALSE(second->ran) << "identical compiler + argv must hit the cache";
-    EXPECT_TRUE(second->mismatches.empty());
-}
+    if (auto&& failed = expect(fatal(second.has_value())); !failed) failed << second.error();
+    expect(!second->ran) << "identical compiler + argv must hit the cache";
+    expect(second->mismatches.empty());
+}};
 
 // TWO different argv strings must NOT share a cache slot — the whole point
 // of hashing argv into the key. A wrong hit here would mean this build's
 // probe silently answered a DIFFERENT configuration's question.
-TEST(CenvProbe, DifferentArgvDoesNotShareACacheSlot) {
-    if (cxx().empty()) GTEST_SKIP() << "no C++ compiler found to probe";
+UTest different_argv_does_not_share_a_cache_slot{"CenvProbe/DifferentArgvDoesNotShareACacheSlot", [] {
+    if (cxx().empty()) skip("no C++ compiler found to probe");
     TmpCache cache;
     auto a = cp::verify(cxx(), {"-DMCPP_PROBE_TEST_A=1"}, 0, 0, {}, {}, cache.dir);
     auto b = cp::verify(cxx(), {"-DMCPP_PROBE_TEST_B=1"}, 0, 0, {}, {}, cache.dir);
-    ASSERT_TRUE(a.has_value()) << a.error();
-    ASSERT_TRUE(b.has_value()) << b.error();
-    EXPECT_TRUE(a->ran);
-    EXPECT_TRUE(b->ran) << "a different argv must not read A's cache entry";
-}
+    if (auto&& failed = expect(fatal(a.has_value())); !failed) failed << a.error();
+    if (auto&& failed = expect(fatal(b.has_value())); !failed) failed << b.error();
+    expect(bool(a->ran));
+    expect(bool(b->ran)) << "a different argv must not read A's cache entry";
+}};
 
 // ── assemble_argv — the invariant, reachable without a cross toolchain ────
 //
@@ -291,13 +291,13 @@ TEST(CenvProbe, DifferentArgvDoesNotShareACacheSlot) {
 // cannot live at the call site; it lives in the assembly, and these tests
 // reach it with no compiler at all.
 
-TEST(CenvProbeArgv, AFreestandingTargetWithoutASelectionIsRefused) {
+UTest a_freestanding_target_without_a_selection_is_refused{"CenvProbeArgv/AFreestandingTargetWithoutASelectionIsRefused", [] {
     // Exactly the 2026.9.18.3 shape: `crossTargetFlag` empty (it is set for
     // hosted targets only), no freestanding flags supplied, and `realise`'s
     // freestanding output, which carries no `--target`.
     auto r = cp::assemble_argv("", {}, {"-D__unix__", "-fno-short-wchar"}, {},
                                /*freestanding=*/true, "riscv64-none-elf");
-    ASSERT_FALSE(r.has_value())
+    expect(fatal(!r.has_value()))
         << "an argv with no target selection must be refused for a "
            "freestanding target; it measures the build host";
     // THE CLAUSE, NOT ONLY THE TRIPLE. Two other refusals this wave added were
@@ -308,56 +308,53 @@ TEST(CenvProbeArgv, AFreestandingTargetWithoutASelectionIsRefused) {
     // delimiters, so it has no such failure mode -- the assertion is widened
     // anyway, because that is a property of today's wording rather than of
     // the check.
-    EXPECT_NE(r.error().find("would have run with no target selection"),
-              std::string::npos) << r.error();
-    EXPECT_NE(r.error().find("riscv64-none-elf"), std::string::npos)
-        << "the refusal must name the target it was for: " << r.error();
-}
+    expect(ne(r.error().find("would have run with no target selection"), std::string::npos)) << r.error();
+    if (auto&& failed = expect(ne(r.error().find("riscv64-none-elf"), std::string::npos)); !failed) failed << "the refusal must name the target it was for: " << r.error();
+}};
 
-TEST(CenvProbeArgv, AFreestandingTargetWithItsCompilePrefixIsAccepted) {
+UTest a_freestanding_target_with_its_compile_prefix_is_accepted{"CenvProbeArgv/AFreestandingTargetWithItsCompilePrefixIsAccepted", [] {
     std::vector<std::string> fs{"--target=riscv64-none-elf", "-march=rv64gc",
                                 "-mabi=lp64d", "-ffreestanding"};
     auto r = cp::assemble_argv("", fs, {"-D__unix__", "-fno-short-wchar"}, {},
                                true, "riscv64-none-elf");
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_NE(std::find(r->begin(), r->end(), "--target=riscv64-none-elf"),
-              r->end());
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(ne(std::find(r->begin(), r->end(), "--target=riscv64-none-elf"), r->end()));
     // The ISA flags travel with the target: they change what the compiler
     // predefines (`__riscv_xlen`, the float ABI), so an argv that took the
     // triple and left them behind would measure a different machine again.
-    EXPECT_NE(std::find(r->begin(), r->end(), "-mabi=lp64d"), r->end());
-}
+    expect(ne(std::find(r->begin(), r->end(), "-mabi=lp64d"), r->end()));
+}};
 
-TEST(CenvProbeArgv, ANativeHostedBuildNeedsNoSelection) {
+UTest a_native_hosted_build_needs_no_selection{"CenvProbeArgv/ANativeHostedBuildNeedsNoSelection", [] {
     // The host IS the target; the absence is the decision rather than its
     // omission, and the probe must not be refused for it. openkal-musl on
     // Linux/x86_64 is this case: `realise` produces no tokens at all.
     auto r = cp::assemble_argv("", {}, {}, {}, false, "x86_64-linux-gnu");
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_TRUE(r->empty());
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(r->empty());
+}};
 
-TEST(CenvProbeArgv, AHostedCrossTargetCarriesItsCrossFlag) {
+UTest a_hosted_cross_target_carries_its_cross_flag{"CenvProbeArgv/AHostedCrossTargetCarriesItsCrossFlag", [] {
     auto r = cp::assemble_argv("--target=x86_64-w64-windows-gnu", {},
                                {"--target=x86_64-pc-cygwin", "-fno-short-wchar"},
                                {}, false, "x86_64-windows-gnu");
-    ASSERT_TRUE(r.has_value()) << r.error();
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
     // Both are present and in this order: clang takes the LAST `--target`,
     // which is how the Cygwin-flavoured substitution overrides the base
     // triple without the producer of the base one knowing this module exists.
-    ASSERT_GE(r->size(), 2u);
-    EXPECT_EQ((*r)[0], "--target=x86_64-w64-windows-gnu");
-    EXPECT_EQ((*r)[1], "--target=x86_64-pc-cygwin");
-}
+    expect(fatal(ge(r->size(), 2u)));
+    expect(eq((*r)[0], "--target=x86_64-w64-windows-gnu"));
+    expect(eq((*r)[1], "--target=x86_64-pc-cygwin"));
+}};
 
-TEST(CenvProbeArgv, BuiltinsTokensAreCarriedLast) {
+UTest builtins_tokens_are_carried_last{"CenvProbeArgv/BuiltinsTokensAreCarriedLast", [] {
     auto r = cp::assemble_argv("", {}, {"-D__unix__"},
                                {"-fno-builtin"},
                                false, "x86_64-apple-macos");
-    ASSERT_TRUE(r.has_value()) << r.error();
-    ASSERT_EQ(r->size(), 2u);
-    EXPECT_EQ((*r)[1], "-fno-builtin");
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(fatal(eq(r->size(), 2u)));
+    expect(eq((*r)[1], "-fno-builtin"));
+}};
 
 // ── The argv must select the target (mcpp#674 review, 2026-09-20) ──────────
 //
@@ -380,9 +377,9 @@ namespace {
 bool answers_for_riscv() { return !clangxx().empty(); }
 } // namespace
 
-TEST(CenvProbe, AnArgvWithATargetMeasuresThatTargetAndNotTheHost) {
-    if (clangxx().empty()) GTEST_SKIP() << "no clang++ on PATH";
-    if (!answers_for_riscv()) GTEST_SKIP() << "this clang does not answer for riscv64-none-elf";
+UTest an_argv_with_a_target_measures_that_target_and_not_the_host{"CenvProbe/AnArgvWithATargetMeasuresThatTargetAndNotTheHost", [] {
+    if (clangxx().empty()) skip("no clang++ on PATH");
+    if (!answers_for_riscv()) skip("this clang does not answer for riscv64-none-elf");
     TmpCache cache;
     // The freestanding probe's own shape, with the target selection the
     // caller (`mcpp.build.prepare`) now supplies. `__linux__` must be absent
@@ -395,15 +392,15 @@ TEST(CenvProbe, AnArgvWithATargetMeasuresThatTargetAndNotTheHost) {
     std::vector<std::string> defined{"__unix__", "__riscv"};
     std::vector<std::string> undefined{"__linux__", "_WIN32"};
     auto r = cp::verify(clangxx(), argv, 32, 0, defined, undefined, cache.dir);
-    ASSERT_TRUE(r.has_value()) << r.error();
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
     for (auto const& mm : r->mismatches)
-        ADD_FAILURE() << mm.fact << ": declared " << mm.declared
+        expect(false) << mm.fact << ": declared " << mm.declared
                       << ", measured " << mm.measured;
-}
+}};
 
-TEST(CenvProbe, TheSameArgvWithoutATargetMeasuresTheHost) {
-    if (clangxx().empty()) GTEST_SKIP() << "no clang++ on PATH";
-    if (!answers_for_riscv()) GTEST_SKIP() << "this clang does not answer for riscv64-none-elf";
+UTest the_same_argv_without_a_target_measures_the_host{"CenvProbe/TheSameArgvWithoutATargetMeasuresTheHost", [] {
+    if (clangxx().empty()) skip("no clang++ on PATH");
+    if (!answers_for_riscv()) skip("this clang does not answer for riscv64-none-elf");
     TmpCache cache;
     // The mirror of the test above, and the one that makes it mean
     // something: with the target removed, the expectation that held for the
@@ -411,9 +408,9 @@ TEST(CenvProbe, TheSameArgvWithoutATargetMeasuresTheHost) {
     // identically against a probe that ignores its argv.
     std::vector<std::string> argv{"-ffreestanding", "-D__unix__", "-fno-short-wchar"};
     auto r = cp::verify(clangxx(), argv, 0, 0, {"__riscv"}, {}, cache.dir);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_FALSE(r->mismatches.empty())
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(!(r->mismatches.empty()))
         << "a probe with no target selection must not report the target's "
            "own predefines; if this passes, the argv is not reaching the "
            "compiler and the test above proves nothing";
-}
+}};

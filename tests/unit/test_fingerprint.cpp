@@ -1,8 +1,10 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.fingerprint;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::toolchain;
 
@@ -34,7 +36,7 @@ FingerprintInputs baseline() {
 // interpreter cannot provide, and nothing along the way said anything. This
 // is the prerequisite for building the same project under two subos, not a
 // refinement of it.
-TEST(Fingerprint, RuntimeBindingIsPartOfTheIdentity) {
+UTest runtime_binding_is_part_of_the_identity{"Fingerprint/RuntimeBindingIsPartOfTheIdentity", [] {
     mcpp::toolchain::FingerprintInputs a;
     a.toolchain.compiler     = mcpp::toolchain::CompilerId::GCC;
     a.toolchain.version      = "16.1.0";
@@ -44,89 +46,86 @@ TEST(Fingerprint, RuntimeBindingIsPartOfTheIdentity) {
     auto b = a;
     b.toolchain.runtimeBinding = "glibc@2.44";
 
-    EXPECT_NE(mcpp::toolchain::compute_fingerprint(a).hex,
-              mcpp::toolchain::compute_fingerprint(b).hex)
+    expect(ne(mcpp::toolchain::compute_fingerprint(a).hex, mcpp::toolchain::compute_fingerprint(b).hex))
         << "same toolchain, same triple, different libc — sharing target/<fp>/ "
            "would replay objects compiled against the other one";
-}
+}};
 
 // ...and an unset binding is its own identity, not a collision with any
 // particular version.
-TEST(Fingerprint, EmptyRuntimeBindingIsDistinct) {
+UTest empty_runtime_binding_is_distinct{"Fingerprint/EmptyRuntimeBindingIsDistinct", [] {
     mcpp::toolchain::FingerprintInputs a;
     a.toolchain.targetTriple   = "x86_64-linux-gnu";
     a.toolchain.runtimeBinding = "glibc@2.39";
     auto b = a;
     b.toolchain.runtimeBinding.clear();
-    EXPECT_NE(mcpp::toolchain::compute_fingerprint(a).hex,
-              mcpp::toolchain::compute_fingerprint(b).hex);
-}
+    expect(ne(mcpp::toolchain::compute_fingerprint(a).hex, mcpp::toolchain::compute_fingerprint(b).hex));
+}};
 
-TEST(Fingerprint, FullRuntimeContractHashOverridesTheLibcLabel) {
+UTest full_runtime_contract_hash_overrides_the_libc_label{"Fingerprint/FullRuntimeContractHashOverridesTheLibcLabel", [] {
     mcpp::toolchain::FingerprintInputs a;
     a.toolchain.targetTriple = "x86_64-linux-gnu";
     a.toolchain.runtimeBinding = "glibc@2.39";
     a.toolchain.runtimeContractHash = "subos-el8-contract";
     auto b = a;
     b.toolchain.runtimeContractHash = "subos-dev-contract";
-    EXPECT_NE(mcpp::toolchain::compute_fingerprint(a).hex,
-              mcpp::toolchain::compute_fingerprint(b).hex);
-}
+    expect(ne(mcpp::toolchain::compute_fingerprint(a).hex, mcpp::toolchain::compute_fingerprint(b).hex));
+}};
 
 } // namespace
 
-TEST(Fingerprint, DeterministicForSameInputs) {
+UTest deterministic_for_same_inputs{"Fingerprint/DeterministicForSameInputs", [] {
     auto a = compute_fingerprint(baseline());
     auto b = compute_fingerprint(baseline());
-    EXPECT_EQ(a.hex, b.hex);
-}
+    expect(eq(a.hex, b.hex));
+}};
 
-TEST(Fingerprint, ProducesSixteenHexChars) {
+UTest produces_sixteen_hex_chars{"Fingerprint/ProducesSixteenHexChars", [] {
     auto fp = compute_fingerprint(baseline());
-    EXPECT_EQ(fp.hex.size(), 16u);
+    expect(eq(fp.hex.size(), 16u));
     for (char c : fp.hex) {
-        EXPECT_TRUE((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+        expect((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
     }
-}
+}};
 
-#define EXPECT_DIFFERENT(field_mutation) do {                  \
-        auto base = baseline();                                \
-        auto bfp  = compute_fingerprint(base);                 \
-        auto in   = baseline();                                \
-        field_mutation;                                        \
-        auto fp   = compute_fingerprint(in);                   \
-        EXPECT_NE(bfp.hex, fp.hex)                             \
-            << "Mutation '" #field_mutation "' did NOT change fingerprint"; \
-    } while (0)
+// Each field, changed alone from the baseline, changes the hash.
+UTest all_ten_fields_affect_hash{"Fingerprint/AllTenFieldsAffectHash", [] {
+    using Mutation = std::pair<std::string_view, std::function<void(decltype(baseline())&)>>;
+    const Mutation mutations[] = {
+        {"toolchain.compiler",  [](auto& in) { in.toolchain.compiler     = CompilerId::Clang; }},
+        {"toolchain.version",   [](auto& in) { in.toolchain.version      = "16.0.0"; }},
+        {"toolchain.driverIdent", [](auto& in) { in.toolchain.driverIdent = "g++ (xim-x-gcc 15.1.0) 15.1.0"; }},
+        {"toolchain.targetTriple", [](auto& in) { in.toolchain.targetTriple = "aarch64-linux-gnu"; }},
+        {"toolchain.stdlibId",  [](auto& in) { in.toolchain.stdlibId     = "libc++"; }},
+        {"cppStandard c++26",   [](auto& in) { in.cppStandard            = "c++26"; }},
+        // c++20 gets its own target dir for the same reason c++26 does — cross-level
+        // BMI reuse is rejected by the compiler itself.
+        {"cppStandard c++20",   [](auto& in) { in.cppStandard            = "c++20"; }},
+        {"compileFlags",        [](auto& in) { in.compileFlags           = "-O3"; }},
+        // mcpp version is hardcoded inside compute_fingerprint, can't mutate from here.
+        {"dependencyLockHash",  [](auto& in) { in.dependencyLockHash     = ""; }},
+        {"stdBmiHash",          [](auto& in) { in.stdBmiHash             = "ffffffffffffffff"; }},
+    };
+    const auto base = compute_fingerprint(baseline());
+    for (auto const& [field, mutate] : mutations) {
+        auto in = baseline();
+        mutate(in);
+        expect(ne(base.hex, compute_fingerprint(in).hex)) << "changing " << field << " did not change the fingerprint";
+    }
+}};
 
-TEST(Fingerprint, AllTenFieldsAffectHash) {
-    EXPECT_DIFFERENT(in.toolchain.compiler        = CompilerId::Clang);
-    EXPECT_DIFFERENT(in.toolchain.version         = "16.0.0");
-    EXPECT_DIFFERENT(in.toolchain.driverIdent    = "g++ (xim-x-gcc 15.1.0) 15.1.0");
-    EXPECT_DIFFERENT(in.toolchain.targetTriple   = "aarch64-linux-gnu");
-    EXPECT_DIFFERENT(in.toolchain.stdlibId       = "libc++");
-    EXPECT_DIFFERENT(in.cppStandard              = "c++26");
-    // c++20 gets its own target dir for the same reason c++26 does — cross-level
-    // BMI reuse is rejected by the compiler itself.
-    EXPECT_DIFFERENT(in.cppStandard              = "c++20");
-    EXPECT_DIFFERENT(in.compileFlags             = "-O3");
-    // mcpp version is hardcoded inside compute_fingerprint, can't mutate from here.
-    EXPECT_DIFFERENT(in.dependencyLockHash      = "");
-    EXPECT_DIFFERENT(in.stdBmiHash              = "ffffffffffffffff");
-}
-
-TEST(Fingerprint, StableAcrossBinaryPathsWhenDriverIdentMatches) {
+UTest stable_across_binary_paths_when_driver_ident_matches{"Fingerprint/StableAcrossBinaryPathsWhenDriverIdentMatches", [] {
     auto a = baseline();
     auto b = baseline();
     a.toolchain.binaryPath = "/home/speak/.mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++";
     b.toolchain.binaryPath = "/home/speak/.xlings/data/xpkgs/xim-x-mcpp/0.0.14/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++";
 
-    EXPECT_EQ(compute_fingerprint(a).hex, compute_fingerprint(b).hex);
-}
+    expect(eq(compute_fingerprint(a).hex, compute_fingerprint(b).hex));
+}};
 
-TEST(Fingerprint, HashStringMatchesHashFile) {
+UTest hash_string_matches_hash_file{"Fingerprint/HashStringMatchesHashFile", [] {
     auto h1 = hash_string("hello");
     auto h2 = hash_string("hello");
-    EXPECT_EQ(h1, h2);
-    EXPECT_NE(hash_string("hello"), hash_string("hellp"));
-}
+    expect(eq(h1, h2));
+    expect(ne(hash_string("hello"), hash_string("hellp")));
+}};

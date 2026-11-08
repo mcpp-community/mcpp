@@ -1,10 +1,12 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.platform;
 import mcpp.freestanding.target;
 import mcpp.freestanding.linkline;
+
+using namespace mcpplibs::mtest;
 
 // THE EQUIVALENCE GATE OF THE TARGET MODEL (design 2026-11-09 §9, §14).
 //
@@ -135,16 +137,16 @@ std::optional<std::filesystem::path> snapshot_path() {
 
 }  // namespace
 
-TEST(TargetRows, EveryBuiltInRowAnswersAsTheSnapshotRecords) {
+UTest every_built_in_row_answers_as_the_snapshot_records{"TargetRows/EveryBuiltInRowAnswersAsTheSnapshotRecords", [] {
     auto path = snapshot_path();
-    ASSERT_TRUE(path) << "tests/fixtures not found from " << std::filesystem::current_path();
+    expect(fatal(bool(path))) << "tests/fixtures not found from " << std::filesystem::current_path();
     const auto now = render();
     if (const char* u = std::getenv("MCPP_SNAPSHOT_UPDATE"); u && std::string_view(u) == "1") {
         std::ofstream(*path, std::ios::binary) << now;
-        GTEST_SKIP() << "snapshot written to " << path->generic_string();
+        skip([&] { std::ostringstream text; text << "snapshot written to " << path->generic_string(); return text.str(); }());
     }
     std::ifstream in(*path, std::ios::binary);
-    ASSERT_TRUE(in) << "no snapshot at " << path->generic_string();
+    if (auto&& failed = expect(fatal(bool(in))); !failed) failed << "no snapshot at " << path->generic_string();
     const std::string was{std::istreambuf_iterator<char>(in), {}};
     if (now == was) return;
     // The first differing line, with its row, so the failure names the fact.
@@ -155,7 +157,6 @@ TEST(TargetRows, EveryBuiltInRowAnswersAsTheSnapshotRecords) {
         if (!ga && !gb) break;
         if (gb && (lb.starts_with("row ") || lb.starts_with("request "))) row = lb;
         if (la != lb || ga != gb)
-            FAIL() << "line " << n << " (" << row << ")\n  snapshot: " << (ga ? la : "<end>")
-                   << "\n  now:      " << (gb ? lb : "<end>");
+            fail([&] { std::ostringstream text; text << "line " << n << " (" << row << ")\n  snapshot: " << (ga ? la : "<end>") << "\n  now:      " << (gb ? lb : "<end>"); return text.str(); }());
     }
-}
+}};

@@ -4,11 +4,13 @@
 // the resolver reads versions through an injected function, so every
 // combination of kinds, versions and contracts is a unit test rather than a
 // Windows runner's.
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.pack.binfmt;
 import mcpp.build.runtime_placement;
+
+using namespace mcpplibs::mtest;
 
 namespace fs = std::filesystem;
 namespace rp = mcpp::build::runtime_placement;
@@ -95,36 +97,36 @@ std::string make_pe(std::optional<PeVersion> fileVersion, std::uint8_t linkerMaj
 
 }  // namespace
 
-TEST(PeVersionReader, ReadsTheFixedFileVersionAndTheLinkerVersion) {
+UTest reads_the_fixed_file_version_and_the_linker_version{"PeVersionReader/ReadsTheFixedFileVersionAndTheLinkerVersion", [] {
     const auto image = make_pe(PeVersion{14, 44, 35112, 1}, 14, 44);
     auto v = mcpp::pack::binfmt::pe_file_version(std::string_view{image});
-    ASSERT_TRUE(v.has_value());
-    EXPECT_EQ(*v, (PeVersion{14, 44, 35112, 1}));
-    EXPECT_EQ(v->str(), "14.44.35112.1");
+    expect(fatal(v.has_value()));
+    expect(eq(*v, (PeVersion{14, 44, 35112, 1})));
+    expect(eq(v->str(), "14.44.35112.1"));
     auto l = mcpp::pack::binfmt::pe_linker_version(std::string_view{image});
-    ASSERT_TRUE(l.has_value());
-    EXPECT_EQ(l->major, 14);
-    EXPECT_EQ(l->minor, 44);
-}
+    expect(fatal(l.has_value()));
+    expect(eq(l->major, 14));
+    expect(eq(l->minor, 44));
+}};
 
 // A reader that cannot answer does not decide: no resource section, a
 // truncated image and a file that is not PE all read as "unknown".
-TEST(PeVersionReader, AnImageWithoutAVersionReadsAsUnknown) {
+UTest an_image_without_a_version_reads_as_unknown{"PeVersionReader/AnImageWithoutAVersionReadsAsUnknown", [] {
     const auto noResource = make_pe(std::nullopt, 14, 0);
-    EXPECT_FALSE(mcpp::pack::binfmt::pe_file_version(std::string_view{noResource}));
+    expect(!mcpp::pack::binfmt::pe_file_version(std::string_view{noResource}));
     // The linker field is still there: lld-link writes 14.0.
     auto l = mcpp::pack::binfmt::pe_linker_version(std::string_view{noResource});
-    ASSERT_TRUE(l.has_value());
-    EXPECT_EQ(l->minor, 0);
+    expect(fatal(l.has_value()));
+    expect(eq(l->minor, 0));
 
     auto truncated = make_pe(PeVersion{14, 44, 1, 0}, 14, 44);
     truncated.resize(0x420);
-    EXPECT_FALSE(mcpp::pack::binfmt::pe_file_version(std::string_view{truncated}));
-    EXPECT_FALSE(mcpp::pack::binfmt::pe_file_version(std::string_view{"\x7f" "ELF not a PE"}));
-    EXPECT_FALSE(mcpp::pack::binfmt::pe_linker_version(std::string_view{"MZ"}));
-}
+    expect(!mcpp::pack::binfmt::pe_file_version(std::string_view{truncated}));
+    expect(!mcpp::pack::binfmt::pe_file_version(std::string_view{"\x7f" "ELF not a PE"}));
+    expect(!mcpp::pack::binfmt::pe_linker_version(std::string_view{"MZ"}));
+}};
 
-TEST(PeVersionReader, ReadsAVersionFromAFile) {
+UTest reads_a_version_from_a_file{"PeVersionReader/ReadsAVersionFromAFile", [] {
     const auto dir = fs::temp_directory_path()
         / std::format("mcpp-pever-{}", std::chrono::steady_clock::now().time_since_epoch().count());
     fs::create_directories(dir);
@@ -134,12 +136,12 @@ TEST(PeVersionReader, ReadsAVersionFromAFile) {
         out.write(image.data(), static_cast<std::streamsize>(image.size()));
     }
     auto v = mcpp::pack::binfmt::pe_file_version(dir / "vcruntime140.dll");
-    ASSERT_TRUE(v.has_value());
-    EXPECT_EQ(v->str(), "14.51.36231.0");
-    EXPECT_FALSE(mcpp::pack::binfmt::pe_file_version(dir / "missing.dll"));
+    expect(fatal(v.has_value()));
+    expect(eq(v->str(), "14.51.36231.0"));
+    expect(!mcpp::pack::binfmt::pe_file_version(dir / "missing.dll"));
     std::error_code ec;
     fs::remove_all(dir, ec);
-}
+}};
 
 // ── the resolver ───────────────────────────────────────────────────────────
 
@@ -225,7 +227,7 @@ rp::Input input_for(const Case& c, std::map<fs::path, std::optional<PeVersion>>&
 // Every combination of the contract's rule, a declared runtime file, the
 // toolset's set and a dependency's set, with every version relation. The
 // properties are the rule of mcpp.build.runtime_placement, stated once each.
-TEST(RuntimePlacement, EveryCombinationOfKindsVersionsAndContracts) {
+UTest every_combination_of_kinds_versions_and_contracts{"RuntimePlacement/EveryCombinationOfKindsVersionsAndContracts", [] {
     int cases = 0;
     for (auto policy : {rp::CrtPolicy::Carry, rp::CrtPolicy::System, rp::CrtPolicy::Static,
                         rp::CrtPolicy::NotApplicable})
@@ -248,16 +250,16 @@ TEST(RuntimePlacement, EveryCombinationOfKindsVersionsAndContracts) {
         const auto in = input_for(c, versions);
         const auto d = rp::resolve(in);
         ++cases;
-        SCOPED_TRACE(describe(c));
+        /* trace: describe(c) */;
 
         // P1. One file per destination, compared without case.
         std::set<std::string> dests;
         for (auto const& p : d.placed)
-            EXPECT_TRUE(dests.insert(rp::fold(p.dest.generic_string())).second)
+            expect(bool(dests.insert(rp::fold(p.dest.generic_string())).second))
                 << "two placements for " << p.dest.string();
 
         // P2. An ordinary name is never touched by the runtime rule.
-        EXPECT_TRUE(dests.contains("bin/qt6core.dll"));
+        expect(dests.contains("bin/qt6core.dll"));
 
         std::vector<const rp::Placement*> crt;
         for (auto const& p : d.placed)
@@ -266,20 +268,20 @@ TEST(RuntimePlacement, EveryCombinationOfKindsVersionsAndContracts) {
         if (policy == rp::CrtPolicy::System) {
             // P3. Host-coupled: no copy of the runtime from any source; a
             // declared one is refused; a dependency's is stated.
-            EXPECT_TRUE(crt.empty());
-            EXPECT_EQ(!d.errors.empty(), declared.has_value());
-            if (derived) EXPECT_FALSE(d.notes.empty());
+            expect(crt.empty());
+            expect(eq(!d.errors.empty(), declared.has_value()));
+            if (derived) expect(!d.notes.empty());
             continue;
         }
-        EXPECT_TRUE(d.errors.empty());
+        expect(d.errors.empty());
         if (policy == rp::CrtPolicy::NotApplicable) {
             // P4. Off the MSVC ABI the names take the kind order: a
             // declaration, else the derived file.
             if (declared) {
                 auto it = std::ranges::find_if(d.placed, [](auto const& p) {
                     return rp::fold(p.dest.filename().string()) == "vcruntime140.dll"; });
-                ASSERT_NE(it, d.placed.end());
-                EXPECT_EQ(it->kind, rp::Kind::Declared);
+                expect(fatal(ne(it, d.placed.end())));
+                expect(eq(it->kind, rp::Kind::Declared));
             }
             continue;
         }
@@ -288,14 +290,14 @@ TEST(RuntimePlacement, EveryCombinationOfKindsVersionsAndContracts) {
         if (declared) {
             auto it = std::ranges::find_if(crt, [](auto const* p) {
                 return rp::fold(p->dest.filename().string()) == "vcruntime140.dll"; });
-            ASSERT_NE(it, crt.end());
-            EXPECT_EQ((*it)->kind, rp::Kind::Declared);
+            expect(fatal(ne(it, crt.end())));
+            expect(eq((*it)->kind, rp::Kind::Declared));
             // P6. D2: older than the toolset's runtime is a warning; an
             // unreadable version is a note; neither is said otherwise.
             const bool older = toolset && *declared == Ver::Old;
-            EXPECT_EQ(!d.warnings.empty(), older);
+            expect(eq(!d.warnings.empty(), older));
         } else {
-            EXPECT_TRUE(d.warnings.empty());
+            expect(d.warnings.empty());
         }
 
         // P7. The rest of the runtime is ONE set: every non-declared runtime
@@ -305,7 +307,7 @@ TEST(RuntimePlacement, EveryCombinationOfKindsVersionsAndContracts) {
             if (p->kind != rp::Kind::Declared)
                 origins.insert(std::format("{}:{}", rp::to_string(p->kind),
                                            p->sources.front().parent_path().string()));
-        EXPECT_LE(origins.size(), 1u) << "the runtime set was mixed";
+        expect(le(origins.size(), 1u)) << "the runtime set was mixed";
 
         // P8. Which set: the toolset's, unless the dependency's is complete,
         // readable and strictly newer (D1); without the toolset's, the
@@ -314,15 +316,15 @@ TEST(RuntimePlacement, EveryCombinationOfKindsVersionsAndContracts) {
             && (!toolset || (complete && *derived == Ver::New));
         const bool anyPlaced = !origins.empty();
         if (policy == rp::CrtPolicy::Carry)
-            EXPECT_TRUE(anyPlaced || (declared && !toolset));
+            expect(anyPlaced || (declared && !toolset));
         if (anyPlaced) {
             const bool fromDerived = origins.begin()->starts_with("derived:");
-            EXPECT_EQ(fromDerived, derivedWins);
+            expect(eq(fromDerived, derivedWins));
         }
         // P9. Under self-contained nothing is placed unless something brings
         // a runtime name.
         if (policy == rp::CrtPolicy::Static && !declared && !derived)
-            EXPECT_TRUE(crt.empty());
+            expect(crt.empty());
 
         // P10. A dependency's set that is not placed is stated once, as a
         // packaging fault; one that is placed over the toolset's is stated
@@ -330,22 +332,22 @@ TEST(RuntimePlacement, EveryCombinationOfKindsVersionsAndContracts) {
         if (derived && toolset) {
             const auto fault = std::ranges::count_if(d.notes, [](auto const& n) {
                 return n.find("does not carry the compiler's runtime") != std::string::npos; });
-            EXPECT_EQ(fault, derivedWins ? 0 : 1);
+            expect(eq(fault, derivedWins ? 0 : 1));
             if (derivedWins)
-                EXPECT_TRUE(std::ranges::any_of(d.notes, [](auto const& n) {
+                expect(std::ranges::any_of(d.notes, [](auto const& n) {
                     return n.find("newer than the toolset's") != std::string::npos; }));
         }
         // P11. An unreadable version is said, and decides nothing.
         if (derived == Ver::Unreadable && toolset && complete)
-            EXPECT_TRUE(std::ranges::any_of(d.notes, [](auto const& n) {
+            expect(std::ranges::any_of(d.notes, [](auto const& n) {
                 return n.find("could not be read") != std::string::npos; }));
     }
-    EXPECT_GT(cases, 100);
-}
+    expect(gt(cases, 100));
+}};
 
 // Two search directories offering one ordinary name stay two sources of one
 // destination (SPEC-007 R4.2): `mcpp stage` compares their bytes.
-TEST(RuntimePlacement, TwoDerivedCopiesOfAnOrdinaryNameAreOneDestination) {
+UTest two_derived_copies_of_an_ordinary_name_are_one_destination{"RuntimePlacement/TwoDerivedCopiesOfAnOrdinaryNameAreOneDestination", [] {
     rp::Input in;
     in.crt = rp::CrtPolicy::Carry;
     in.candidates.push_back({{"/a/libfoo.dll"}, "bin/libfoo.dll", rp::Kind::Derived});
@@ -353,24 +355,24 @@ TEST(RuntimePlacement, TwoDerivedCopiesOfAnOrdinaryNameAreOneDestination) {
     in.candidates.push_back({{"/c/libbar.dll"}, "bin/libbar.dll", rp::Kind::Derived});
     in.candidates.push_back({{"/p/libbar.dll"}, "bin/libbar.dll", rp::Kind::Declared});
     const auto d = rp::resolve(in);
-    ASSERT_EQ(d.placed.size(), 2u);
+    expect(fatal(eq(d.placed.size(), 2u)));
     auto foo = std::ranges::find_if(d.placed, [](auto const& p) { return p.dest == "bin/libfoo.dll"; });
-    ASSERT_NE(foo, d.placed.end());
-    EXPECT_EQ(foo->sources.size(), 2u);
+    expect(fatal(ne(foo, d.placed.end())));
+    expect(eq(foo->sources.size(), 2u));
     auto bar = std::ranges::find_if(d.placed, [](auto const& p) { return p.dest == "bin/libbar.dll"; });
-    ASSERT_NE(bar, d.placed.end());
-    EXPECT_EQ(bar->kind, rp::Kind::Declared);
-    EXPECT_EQ(bar->sources, std::vector<fs::path>{"/p/libbar.dll"});
-}
+    expect(fatal(ne(bar, d.placed.end())));
+    expect(eq(bar->kind, rp::Kind::Declared));
+    expect(eq(bar->sources, std::vector<fs::path>{"/p/libbar.dll"}));
+}};
 
 // A runtime name a declaration places under a subdirectory is not the
 // program's runtime and is not governed by the rule.
-TEST(RuntimePlacement, ARuntimeNameInASubdirectoryIsAnOrdinaryFile) {
+UTest a_runtime_name_in_a_subdirectory_is_an_ordinary_file{"RuntimePlacement/ARuntimeNameInASubdirectoryIsAnOrdinaryFile", [] {
     rp::Input in;
     in.crt = rp::CrtPolicy::System;
     in.candidates.push_back({{"/p/vcruntime140.dll"}, "bin/plugins/vcruntime140.dll", rp::Kind::Declared});
     const auto d = rp::resolve(in);
-    EXPECT_TRUE(d.errors.empty());
-    ASSERT_EQ(d.placed.size(), 1u);
-    EXPECT_EQ(d.placed.front().dest, "bin/plugins/vcruntime140.dll");
-}
+    expect(d.errors.empty());
+    expect(fatal(eq(d.placed.size(), 1u)));
+    expect(eq(d.placed.front().dest, "bin/plugins/vcruntime140.dll"));
+}};

@@ -1,12 +1,15 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
+import mcpplibs.os.process;
 import mcpplibs.os.platform;
 import mcpp.toolchain.platform;
 import mcpp.toolchain.lifecycle;
 import mcpp.toolchain.model;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::toolchain;
 
@@ -33,57 +36,57 @@ static std::string expected_musl_frontend(const std::string& triple) {
 
 // ── canonical two-axis identity ──────────────────────────────────────────────
 
-TEST(ToolchainRegistry, MapsGccSpecToGccPackage) {
+UTest maps_gcc_spec_to_gcc_package{"ToolchainRegistry/MapsGccSpecToGccPackage", [] {
     auto spec = parse_toolchain_spec("gcc@16.1.0");
-    ASSERT_TRUE(spec.has_value()) << spec.error();
-    EXPECT_EQ(spec->family, Family::Gcc);
-    EXPECT_TRUE(spec->is_host_target());
-    EXPECT_EQ(spec->spec_str(), "gcc@16.1.0");
-    EXPECT_EQ(spec->display(), "gcc@16.1.0");
-    EXPECT_TRUE(spec->compatHint.empty());
+    if (auto&& failed = expect(fatal(spec.has_value())); !failed) failed << spec.error();
+    expect(eq(spec->family, Family::Gcc));
+    expect(spec->is_host_target());
+    expect(eq(spec->spec_str(), "gcc@16.1.0"));
+    expect(eq(spec->display(), "gcc@16.1.0"));
+    expect(spec->compatHint.empty());
 
     auto pkg = to_xim_package(*spec);
 #if defined(_WIN32)
     // gcc family on a Windows host = MinGW-w64 (the GNU-env host toolchain).
-    EXPECT_EQ(pkg.ximName, "mingw-gcc");
+    expect(eq(pkg.ximName, "mingw-gcc"));
 #else
-    ASSERT_FALSE(pkg.frontendCandidates.empty());
+    expect(fatal(!pkg.frontendCandidates.empty()));
     if constexpr (mcpplibs::os::is_linux
                   && mcpp::toolchain::platform::host_arch != std::string_view("x86_64")) {
         // Non-x86 Linux native GCC payloads are musl-backed even when the host
         // process uses glibc. Its driver needs no glibc specs fixup.
-        EXPECT_EQ(pkg.ximName, "musl-gcc");
-        EXPECT_FALSE(pkg.needsGccPostInstallFixup);
-        EXPECT_EQ(pkg.frontendCandidates.front(), host_musl() + "-g++");
+        expect(eq(pkg.ximName, "musl-gcc"));
+        expect(!pkg.needsGccPostInstallFixup);
+        expect(eq(pkg.frontendCandidates.front(), host_musl() + "-g++"));
     } else {
-        EXPECT_EQ(pkg.ximName, "gcc");
-        EXPECT_TRUE(pkg.needsGccPostInstallFixup);
-        EXPECT_EQ(pkg.frontendCandidates.front(), "g++");
+        expect(eq(pkg.ximName, "gcc"));
+        expect(bool(pkg.needsGccPostInstallFixup));
+        expect(eq(pkg.frontendCandidates.front(), "g++"));
     }
 #endif
-    EXPECT_EQ(pkg.ximVersion, "16.1.0");
-    EXPECT_EQ(pkg.display_spec(), "gcc@16.1.0");
-}
+    expect(eq(pkg.ximVersion, "16.1.0"));
+    expect(eq(pkg.display_spec(), "gcc@16.1.0"));
+}};
 
-TEST(ToolchainRegistry, LegacyMuslSuffixNormalizesToMuslTarget) {
+UTest legacy_musl_suffix_normalizes_to_musl_target{"ToolchainRegistry/LegacyMuslSuffixNormalizesToMuslTarget", [] {
     // "gcc@15.1.0-musl" — the variant moves out of the version and into the
     // target axis: (gcc, 15.1.0, <host>-linux-musl).
     auto spec = parse_toolchain_spec("gcc@15.1.0-musl");
-    ASSERT_TRUE(spec.has_value()) << spec.error();
-    EXPECT_EQ(spec->family, Family::Gcc);
-    EXPECT_EQ(spec->version, "15.1.0");
-    EXPECT_EQ(spec->target.str(), host_musl());
-    EXPECT_FALSE(spec->compatHint.empty());      // legacy spelling → hint
+    if (auto&& failed = expect(fatal(spec.has_value())); !failed) failed << spec.error();
+    expect(eq(spec->family, Family::Gcc));
+    expect(eq(spec->version, "15.1.0"));
+    expect(eq(spec->target.str(), host_musl()));
+    expect(!(spec->compatHint.empty()));      // legacy spelling → hint
 
     auto pkg = to_xim_package(*spec);
-    EXPECT_EQ(pkg.ximName, expected_musl_xim());
-    EXPECT_EQ(pkg.ximVersion, "15.1.0");
-    ASSERT_FALSE(pkg.frontendCandidates.empty());
-    EXPECT_EQ(pkg.frontendCandidates.front(), expected_musl_frontend(host_musl()));
-    EXPECT_FALSE(pkg.needsGccPostInstallFixup);
-}
+    expect(eq(pkg.ximName, expected_musl_xim()));
+    expect(eq(pkg.ximVersion, "15.1.0"));
+    expect(fatal(!pkg.frontendCandidates.empty()));
+    expect(eq(pkg.frontendCandidates.front(), expected_musl_frontend(host_musl())));
+    expect(!pkg.needsGccPostInstallFixup);
+}};
 
-TEST(ToolchainRegistry, CrossArchMuslTargetPicksTripleNamedPackage) {
+UTest cross_arch_musl_target_picks_triple_named_package{"ToolchainRegistry/CrossArchMuslTargetPicksTripleNamedPackage", [] {
     // Target arch ≠ host arch → the triple-named cross package.
     ToolchainSpec spec;
     spec.family = Family::Gcc;
@@ -93,113 +96,112 @@ TEST(ToolchainRegistry, CrossArchMuslTargetPicksTripleNamedPackage) {
         spec.target.arch = "riscv64";                 // stay cross on any host
 
     auto pkg = to_xim_package(spec);
-    EXPECT_EQ(pkg.ximName, spec.target.str() + "-gcc");
-    ASSERT_FALSE(pkg.frontendCandidates.empty());
-    EXPECT_EQ(pkg.frontendCandidates.front(), expected_musl_frontend(spec.target.str()));
-    EXPECT_FALSE(pkg.needsGccPostInstallFixup);
-}
+    expect(eq(pkg.ximName, spec.target.str() + "-gcc"));
+    expect(fatal(!pkg.frontendCandidates.empty()));
+    expect(eq(pkg.frontendCandidates.front(), expected_musl_frontend(spec.target.str())));
+    expect(!pkg.needsGccPostInstallFixup);
+}};
 
-TEST(ToolchainRegistry, WindowsGnuTargetIsHostSplitAtDistributionLayer) {
+UTest windows_gnu_target_is_host_split_at_distribution_layer{"ToolchainRegistry/WindowsGnuTargetIsHostSplitAtDistributionLayer", [] {
     // ONE identity (gcc → x86_64-windows-gnu); the payload is host-split:
     // winlibs mingw-gcc on Windows hosts, the Linux-hosted MSVCRT cross
     // elsewhere. "cross" appears only in the xim package name — never in
     // the user-facing spec.
     auto spec = parse_toolchain_spec("gcc@16.1.0");
-    ASSERT_TRUE(spec.has_value());
+    expect(fatal(spec.has_value()));
     spec->target = { "x86_64", "windows", "gnu" };
 
     auto pkg = to_xim_package(*spec);
-    EXPECT_EQ(pkg.ximVersion, "16.1.0");
-    ASSERT_FALSE(pkg.frontendCandidates.empty());
+    expect(eq(pkg.ximVersion, "16.1.0"));
+    expect(fatal(!pkg.frontendCandidates.empty()));
 #if defined(_WIN32)
-    EXPECT_EQ(pkg.ximName, "mingw-gcc");
-    EXPECT_EQ(pkg.frontendCandidates.front(), "g++.exe");
+    expect(eq(pkg.ximName, "mingw-gcc"));
+    expect(eq(pkg.frontendCandidates.front(), "g++.exe"));
 #else
-    EXPECT_EQ(pkg.ximName, "mingw-cross-gcc");
-    EXPECT_EQ(pkg.frontendCandidates.front(), "x86_64-w64-mingw32-g++");
+    expect(eq(pkg.ximName, "mingw-cross-gcc"));
+    expect(eq(pkg.frontendCandidates.front(), "x86_64-w64-mingw32-g++"));
 #endif
-    EXPECT_FALSE(pkg.needsGccPostInstallFixup);
-    EXPECT_EQ(pkg.display_spec(), "gcc@16.1.0 → x86_64-windows-gnu");
-}
+    expect(!pkg.needsGccPostInstallFixup);
+    expect(eq(pkg.display_spec(), "gcc@16.1.0 → x86_64-windows-gnu"));
+}};
 
-TEST(ToolchainRegistry, LegacyMingwCrossSpellingCollapses) {
+UTest legacy_mingw_cross_spelling_collapses{"ToolchainRegistry/LegacyMingwCrossSpellingCollapses", [] {
     auto spec = parse_toolchain_spec("mingw-cross@16.1.0");
-    ASSERT_TRUE(spec.has_value()) << spec.error();
-    EXPECT_EQ(spec->family, Family::Gcc);
-    EXPECT_EQ(spec->target.str(), "x86_64-windows-gnu");
-    EXPECT_FALSE(spec->compatHint.empty());
-}
+    if (auto&& failed = expect(fatal(spec.has_value())); !failed) failed << spec.error();
+    expect(eq(spec->family, Family::Gcc));
+    expect(eq(spec->target.str(), "x86_64-windows-gnu"));
+    expect(!(spec->compatHint.empty()));
+}};
 
-TEST(ToolchainRegistry, MapsLlvmAndClangAliasesToLlvmPackage) {
+UTest maps_llvm_and_clang_aliases_to_llvm_package{"ToolchainRegistry/MapsLlvmAndClangAliasesToLlvmPackage", [] {
     auto llvmSpec = parse_toolchain_spec("llvm", "20.1.7");
     auto clangSpec = parse_toolchain_spec("clang@20.1.7");
-    ASSERT_TRUE(llvmSpec.has_value()) << llvmSpec.error();
-    ASSERT_TRUE(clangSpec.has_value()) << clangSpec.error();
+    if (auto&& failed = expect(fatal(llvmSpec.has_value())); !failed) failed << llvmSpec.error();
+    if (auto&& failed = expect(fatal(clangSpec.has_value())); !failed) failed << clangSpec.error();
 
-    EXPECT_EQ(llvmSpec->family, Family::Llvm);
-    EXPECT_EQ(clangSpec->family, Family::Llvm);      // alias family → llvm
-    EXPECT_TRUE(llvmSpec->compatHint.empty());
-    EXPECT_FALSE(clangSpec->compatHint.empty());
+    expect(eq(llvmSpec->family, Family::Llvm));
+    expect(eq(clangSpec->family, Family::Llvm));      // alias family → llvm
+    expect(llvmSpec->compatHint.empty());
+    expect(!(clangSpec->compatHint.empty()));
 
     auto llvmPkg = to_xim_package(*llvmSpec);
     auto clangPkg = to_xim_package(*clangSpec);
-    EXPECT_EQ(llvmPkg.ximName, "llvm");
-    EXPECT_EQ(clangPkg.ximName, "llvm");
-    EXPECT_EQ(clangPkg.display_spec(), "llvm@20.1.7");
-    ASSERT_FALSE(clangPkg.frontendCandidates.empty());
+    expect(eq(llvmPkg.ximName, "llvm"));
+    expect(eq(clangPkg.ximName, "llvm"));
+    expect(eq(clangPkg.display_spec(), "llvm@20.1.7"));
+    expect(fatal(!clangPkg.frontendCandidates.empty()));
 #if defined(_WIN32)
-    EXPECT_EQ(clangPkg.frontendCandidates.front(), "clang++.exe");
+    expect(eq(clangPkg.frontendCandidates.front(), "clang++.exe"));
 #else
-    EXPECT_EQ(clangPkg.frontendCandidates.front(), "clang++");
+    expect(eq(clangPkg.frontendCandidates.front(), "clang++"));
 #endif
-}
+}};
 
-TEST(ToolchainRegistry, ResolvesPartialMuslVersion) {
+UTest resolves_partial_musl_version{"ToolchainRegistry/ResolvesPartialMuslVersion", [] {
     auto spec = parse_toolchain_spec("gcc", "15-musl");
-    ASSERT_TRUE(spec.has_value()) << spec.error();
-    EXPECT_EQ(spec->version, "15");
-    EXPECT_EQ(spec->target.str(), host_musl());
+    if (auto&& failed = expect(fatal(spec.has_value())); !failed) failed << spec.error();
+    expect(eq(spec->version, "15"));
+    expect(eq(spec->target.str(), host_musl()));
 
     auto resolved = with_resolved_xim_version(*spec, "15.1.0");
     auto pkg = to_xim_package(resolved);
-    EXPECT_EQ(resolved.version, "15.1.0");
-    EXPECT_EQ(pkg.ximName, expected_musl_xim());
-    EXPECT_EQ(pkg.ximVersion, "15.1.0");
-    EXPECT_EQ(pkg.display_spec(),
-              std::format("gcc@15.1.0 → {}", host_musl()));
-}
+    expect(eq(resolved.version, "15.1.0"));
+    expect(eq(pkg.ximName, expected_musl_xim()));
+    expect(eq(pkg.ximVersion, "15.1.0"));
+    expect(eq(pkg.display_spec(), std::format("gcc@15.1.0 → {}", host_musl())));
+}};
 
-TEST(ToolchainRegistry, RejectsUnknownFamily) {
+UTest rejects_unknown_family{"ToolchainRegistry/RejectsUnknownFamily", [] {
     auto spec = parse_toolchain_spec("tcc@1.0");
-    EXPECT_FALSE(spec.has_value());
-}
+    expect(!spec.has_value());
+}};
 
 // ── payload reverse mapping ──────────────────────────────────────────────────
 
-TEST(ToolchainRegistry, IdentifiesToolchainPayloadsAndSkipsOthers) {
+UTest identifies_toolchain_payloads_and_skips_others{"ToolchainRegistry/IdentifiesToolchainPayloadsAndSkipsOthers", [] {
     auto gcc = identify_xim_payload("gcc");
-    ASSERT_TRUE(gcc.has_value());
-    EXPECT_EQ(gcc->family, Family::Gcc);
-    EXPECT_TRUE(gcc->target.empty());
+    expect(fatal(gcc.has_value()));
+    expect(eq(gcc->family, Family::Gcc));
+    expect(gcc->target.empty());
 
     auto musl = identify_xim_payload("musl-gcc");
-    ASSERT_TRUE(musl.has_value());
-    EXPECT_EQ(musl->target.str(), host_musl());
+    expect(fatal(musl.has_value()));
+    expect(eq(musl->target.str(), host_musl()));
 
     auto crossMusl = identify_xim_payload("aarch64-linux-musl-gcc");
-    ASSERT_TRUE(crossMusl.has_value());
-    EXPECT_EQ(crossMusl->target.str(), "aarch64-linux-musl");
+    expect(fatal(crossMusl.has_value()));
+    expect(eq(crossMusl->target.str(), "aarch64-linux-musl"));
 
     auto llvm = identify_xim_payload("llvm");
-    ASSERT_TRUE(llvm.has_value());
-    EXPECT_EQ(llvm->family, Family::Llvm);
+    expect(fatal(llvm.has_value()));
+    expect(eq(llvm->family, Family::Llvm));
 
     // Non-toolchain xpkgs must not be identified (list/doctor filter on this).
-    EXPECT_FALSE(identify_xim_payload("ninja").has_value());
-    EXPECT_FALSE(identify_xim_payload("glibc").has_value());
-    EXPECT_FALSE(identify_xim_payload("python").has_value());
-    EXPECT_FALSE(identify_xim_payload("linux-headers").has_value());
-}
+    expect(!(identify_xim_payload("ninja").has_value()));
+    expect(!(identify_xim_payload("glibc").has_value()));
+    expect(!(identify_xim_payload("python").has_value()));
+    expect(!(identify_xim_payload("linux-headers").has_value()));
+}};
 
 // #367: which GCC payload backs a NATIVE Linux build.
 //
@@ -214,32 +216,32 @@ TEST(ToolchainRegistry, IdentifiesToolchainPayloadsAndSkipsOthers) {
 // Tested through a free function taking the host arch rather than the
 // compile-time constant, precisely so the aarch64 answer is checkable from an
 // x86_64 machine.
-TEST(ToolchainRegistry, NativeGccPayloadFollowsWhatTheArchActuallyPublishes) {
+UTest native_gcc_payload_follows_what_the_arch_actually_publishes{"ToolchainRegistry/NativeGccPayloadFollowsWhatTheArchActuallyPublishes", [] {
     using mcpp::toolchain::gcc_native_payload_is_musl;
     const mcpp::toolchain::triple::Triple none{};
 
     // x86_64: unchanged — the glibc package is the one that exists.
-    EXPECT_FALSE(gcc_native_payload_is_musl("x86_64", true, none));
-    EXPECT_FALSE(gcc_native_payload_is_musl(
+    expect(!gcc_native_payload_is_musl("x86_64", true, none));
+    expect(!gcc_native_payload_is_musl(
         "x86_64", true, {"x86_64", "linux", "gnu"}));
 
     // aarch64 with no target: musl-gcc, the payload every version publishes.
-    EXPECT_TRUE(gcc_native_payload_is_musl("aarch64", true, none));
-    EXPECT_TRUE(gcc_native_payload_is_musl(
+    expect(gcc_native_payload_is_musl("aarch64", true, none));
+    expect(gcc_native_payload_is_musl(
         "aarch64", true, {"aarch64", "linux", "musl"}));
     // A target that names glibc asks for the glibc payload (xim:gcc publishes
     // aarch64 since 16.1.0; a Luban system's own gcc is that one).
-    EXPECT_FALSE(gcc_native_payload_is_musl(
+    expect(!gcc_native_payload_is_musl(
         "aarch64", true, {"aarch64", "linux", "gnu"}));
 
     // A CROSS target keeps its own payload rule — this is about the native
     // one, and `<triple>-gcc` packages answer for the rest.
-    EXPECT_FALSE(gcc_native_payload_is_musl(
+    expect(!gcc_native_payload_is_musl(
         "aarch64", true, {"x86_64", "linux", "gnu"}));
 
     // Non-Linux hosts are out of scope: macOS uses llvm, Windows mingw/msvc.
-    EXPECT_FALSE(gcc_native_payload_is_musl("aarch64", false, none));
-}
+    expect(!gcc_native_payload_is_musl("aarch64", false, none));
+}};
 
 // ─── the origin axis ─────────────────────────────────────────────────────
 //
@@ -261,10 +263,10 @@ TEST(ToolchainRegistry, NativeGccPayloadFollowsWhatTheArchActuallyPublishes) {
 // A CONSTANT HERE WOULD BE THE DEFECT THIS AVOIDS: this repository has
 // recorded more than once that a version written into a comment becomes a
 // version in a diagnostic and then in somebody's install command.
-TEST(ToolchainRegistry, TheNdkApiLevelFloorIsReadFromThePayloadsOwnMetadata) {
+UTest the_ndk_api_level_floor_is_read_from_the_payloads_own_metadata{"ToolchainRegistry/TheNdkApiLevelFloorIsReadFromThePayloadsOwnMetadata", [] {
     namespace fs = std::filesystem;
     auto root = fs::temp_directory_path()
-              / ("mcpp-ndk-meta-" + std::to_string(::getpid()));
+              / ("mcpp-ndk-meta-" + std::to_string(mcpplibs::os::process::self()->id));
     fs::remove_all(root);
     // The real layout: the compiler sits four directories below the NDK root,
     // and `meta/` is a sibling of `toolchains/`.
@@ -279,7 +281,7 @@ TEST(ToolchainRegistry, TheNdkApiLevelFloorIsReadFromThePayloadsOwnMetadata) {
         std::ofstream o(root / "meta" / "platforms.json");
         o << R"({"min": 21, "max": 37, "aliases": {"N": 24}})";
     }
-    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(clangxx), 21);
+    expect(eq(mcpp::toolchain::ndk_min_api_level(clangxx), 21));
 
     // A DIFFERENT PAYLOAD ANSWERS DIFFERENTLY, which is the whole point of
     // reading it: the same code must not return 21 for an NDK that says 24.
@@ -287,68 +289,66 @@ TEST(ToolchainRegistry, TheNdkApiLevelFloorIsReadFromThePayloadsOwnMetadata) {
         std::ofstream o(root / "meta" / "platforms.json");
         o << R"({"min": 24, "max": 40})";
     }
-    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(clangxx), 24);
+    expect(eq(mcpp::toolchain::ndk_min_api_level(clangxx), 24));
 
     // 0 WHEN IT CANNOT BE READ, and the caller turns that into a refusal
     // naming `min_api_level`. A guessed level would be worse than the refusal:
     // it selects which bionic symbols exist, so guessing produces an artefact
     // that links here and fails to load on a device.
     fs::remove(root / "meta" / "platforms.json");
-    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(clangxx), 0);
+    expect(eq(mcpp::toolchain::ndk_min_api_level(clangxx), 0));
 
     // Malformed rather than absent -- same answer, and no exception escapes.
     { std::ofstream o(root / "meta" / "platforms.json"); o << "{not json"; }
-    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(clangxx), 0);
+    expect(eq(mcpp::toolchain::ndk_min_api_level(clangxx), 0));
 
     // Present but not a number: still 0, never a silent 1 from a cast.
     { std::ofstream o(root / "meta" / "platforms.json"); o << R"({"min": "21"})"; }
-    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(clangxx), 0);
+    expect(eq(mcpp::toolchain::ndk_min_api_level(clangxx), 0));
 
     // A path that is not inside an NDK at all walks to the filesystem root and
     // stops; it must not loop.
-    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(
-                  fs::temp_directory_path() / "definitely-not-an-ndk" / "clang++"), 0);
+    expect(eq(mcpp::toolchain::ndk_min_api_level(
+                  fs::temp_directory_path() / "definitely-not-an-ndk" / "clang++"), 0));
 
     fs::remove_all(root);
-}
+}};
 
-TEST(ToolchainOrigin, MsvcIsTheOnlyFamilyWithASystemSpelling) {
+UTest msvc_is_the_only_family_with_a_system_spelling{"ToolchainOrigin/MsvcIsTheOnlyFamilyWithASystemSpelling", [] {
     auto msvcSystem = parse_toolchain_spec("msvc@system");
-    ASSERT_TRUE(msvcSystem.has_value()) << msvcSystem.error();
-    EXPECT_TRUE(is_system_toolchain(*msvcSystem));
-    EXPECT_EQ(origin_of(*msvcSystem), Origin::SystemMsvc);
+    if (auto&& failed = expect(fatal(msvcSystem.has_value())); !failed) failed << msvcSystem.error();
+    expect(is_system_toolchain(*msvcSystem));
+    expect(eq(origin_of(*msvcSystem), Origin::SystemMsvc));
 
     // A VERSIONED msvc spec is the other origin — that split is the whole
     // point of the version axis.
     auto pinned = parse_toolchain_spec("msvc@14.44.35207");
-    ASSERT_TRUE(pinned.has_value());
-    EXPECT_EQ(origin_of(*pinned), Origin::Managed);
+    expect(fatal(pinned.has_value()));
+    expect(eq(origin_of(*pinned), Origin::Managed));
 
     auto gcc = parse_toolchain_spec("gcc@16.1.0");
-    ASSERT_TRUE(gcc.has_value());
-    EXPECT_EQ(origin_of(*gcc), Origin::Managed);
-}
+    expect(fatal(gcc.has_value()));
+    expect(eq(origin_of(*gcc), Origin::Managed));
+}};
 
-TEST(ToolchainOrigin, NonMsvcSystemIsRejectedWhereItIsReadAndOffersTheAlternatives) {
+UTest non_msvc_system_is_rejected_where_it_is_read_and_offers_the_alternatives{"ToolchainOrigin/NonMsvcSystemIsRejectedWhereItIsReadAndOffersTheAlternatives", [] {
     // It used to parse, and then fail somewhere else entirely as
     // `xim:gcc@system` → "no such package" — which sends the reader looking
     // for a version that was never going to exist. The error has to name both
     // things the user might have meant.
     for (auto spec : {"gcc@system", "llvm@system"}) {
         auto r = parse_toolchain_spec(spec);
-        ASSERT_FALSE(r.has_value()) << spec << " was accepted";
-        EXPECT_NE(r.error().find("only msvc"), std::string::npos) << r.error();
-        EXPECT_NE(r.error().find("@<version>"), std::string::npos)
-            << "the pin alternative is not offered: " << r.error();
+        expect(fatal(!r.has_value())) << spec << " was accepted";
+        if (auto&& failed = expect(ne(r.error().find("only msvc"), std::string::npos)); !failed) failed << r.error();
+        if (auto&& failed = expect(ne(r.error().find("@<version>"), std::string::npos)); !failed) failed << "the pin alternative is not offered: " << r.error();
         // The family-less PATH escape hatch is the OTHER thing they might
         // have wanted, and it is a different mechanism.
-        EXPECT_NE(r.error().find("PATH compiler"), std::string::npos)
+        expect(ne(r.error().find("PATH compiler"), std::string::npos))
             << "the escape hatch is not offered: " << r.error();
-        EXPECT_EQ(r.error().find("xim:"), std::string::npos)
-            << "still leaking the package spelling that cannot exist: "
+        if (auto&& failed = expect(eq(r.error().find("xim:"), std::string::npos)); !failed) failed << "still leaking the package spelling that cannot exist: "
             << r.error();
     }
-}
+}};
 
 // ─── An SDK payload is chosen by the TARGET, and knows its own layout ──────
 //
@@ -357,7 +357,7 @@ TEST(ToolchainOrigin, NonMsvcSystemIsRejectedWhereItIsReadAndOffersTheAlternativ
 // that arrive with their own clang. `em++` and the NDK's `clang++` ARE clang --
 // same family, same flag vocabulary -- so no fourth `Family` value exists;
 // what changes is which package answers and where its driver lives.
-TEST(SdkPayloads, TheTargetChoosesThePackageAndThePackageKnowsItsLayout) {
+UTest the_target_chooses_the_package_and_the_package_knows_its_layout{"SdkPayloads/TheTargetChoosesThePackageAndThePackageKnowsItsLayout", [] {
     auto pkg_for = [](std::string_view target) {
         // A SPELLING THAT NAMES NO PAYLOAD, WHICH IS WHAT THIS TEST IS ABOUT.
         //
@@ -382,34 +382,32 @@ TEST(SdkPayloads, TheTargetChoosesThePackageAndThePackageKnowsItsLayout) {
         // compiles for wasm and then links like an ordinary clang, producing a
         // module with none of Emscripten's JavaScript glue.
         auto pkg = pkg_for("wasm32-emscripten");
-        EXPECT_EQ(pkg.ximName, "emsdk");
-        EXPECT_EQ(pkg.frontendSubdir, "emscripten");
-        ASSERT_FALSE(pkg.frontendCandidates.empty());
-        EXPECT_EQ(pkg.frontendCandidates.front(), "em++");
+        expect(eq(pkg.ximName, "emsdk"));
+        expect(eq(pkg.frontendSubdir, "emscripten"));
+        expect(fatal(!pkg.frontendCandidates.empty()));
+        expect(eq(pkg.frontendCandidates.front(), "em++"));
     }
     {   // Android: ONE payload for both arches -- the arch arrives as
         // `--target=<arch>-linux-android<api>`, not as a different package --
         // and the host tuple in the path is the HOST's, not the target's.
         for (auto target : {"aarch64-linux-android", "x86_64-linux-android"}) {
             auto pkg = pkg_for(target);
-            EXPECT_EQ(pkg.ximName, "android-ndk") << target;
-            EXPECT_NE(pkg.frontendSubdir.find("toolchains/llvm/prebuilt/"),
-                      std::string::npos) << target;
+            expect(eq(pkg.ximName, "android-ndk")) << target;
+            expect(ne(pkg.frontendSubdir.find("toolchains/llvm/prebuilt/"), std::string::npos)) << target;
             // The HOST, so an aarch64 Linux machine cross-compiling still
             // reads `linux-x86_64`. Asserted as "not the target's arch" rather
             // than against a literal, so this test says the same thing on
             // every runner.
-            EXPECT_EQ(pkg.frontendSubdir.find("aarch64-linux-android"),
-                      std::string::npos) << target;
+            expect(eq(pkg.frontendSubdir.find("aarch64-linux-android"), std::string::npos)) << target;
         }
     }
     {   // And every other target still gets the generic llvm payload in bin/.
         auto pkg = pkg_for("x86_64-linux-gnu");
-        EXPECT_NE(pkg.ximName, "emsdk");
-        EXPECT_NE(pkg.ximName, "android-ndk");
-        EXPECT_EQ(pkg.frontendSubdir, "bin");
+        expect(ne(pkg.ximName, "emsdk"));
+        expect(ne(pkg.ximName, "android-ndk"));
+        expect(eq(pkg.frontendSubdir, "bin"));
     }
-}
+}};
 
 // THE MESSAGE MUST NAME THE DIRECTORY THAT WAS SEARCHED.
 //
@@ -417,19 +415,19 @@ TEST(SdkPayloads, TheTargetChoosesThePackageAndThePackageKnowsItsLayout) {
 // themselves. Once the package decides where its frontend lives, `bin` is a
 // directory nothing looked in -- and this codebase's most frequent defect is a
 // fixed lookup with an unfixed message.
-TEST(SdkPayloads, TheSearchedDirectoryIsAvailableForTheDiagnostic) {
+UTest the_searched_directory_is_available_for_the_diagnostic{"SdkPayloads/TheSearchedDirectoryIsAvailableForTheDiagnostic", [] {
     auto spec = mcpp::toolchain::parse_toolchain_spec("emsdk@6.0.9");
-    ASSERT_TRUE(spec.has_value());
+    expect(fatal(spec.has_value()));
     auto pkg = mcpp::toolchain::to_xim_package(*spec);
     auto dir = mcpp::toolchain::payload_frontend_dir("/p/xim-x-emsdk/6.0.9", pkg);
-    EXPECT_EQ(dir, std::filesystem::path("/p/xim-x-emsdk/6.0.9/emscripten"));
-}
+    expect(eq(dir, std::filesystem::path("/p/xim-x-emsdk/6.0.9/emscripten")));
+}};
 
 // AN SDK IS SERVED WHERE THE SDK IS PUBLISHED, and the first version of this
 // said "wherever" -- the same over-broad shape as the branches it sits above.
 // The target matrix caught it: declaring the row servable on macOS and Windows
 // would have claimed a payload that does not exist there.
-TEST(SdkPayloads, ServedOnEveryHostTheSdkIsPublishedFor) {
+UTest served_on_every_host_the_sdk_is_published_for{"SdkPayloads/ServedOnEveryHostTheSdkIsPublishedFor", [] {
     // THIS ASSERTION USED TO BE TRUE BY ARITHMETIC ON ONE HOST.
     //
     // It read `EXPECT_EQ(host_can_serve(*wasm), mcpplibs::os::is_linux)`,
@@ -444,8 +442,8 @@ TEST(SdkPayloads, ServedOnEveryHostTheSdkIsPublishedFor) {
     for (auto name : {"wasm32-emscripten", "aarch64-linux-android",
                       "x86_64-linux-android"}) {
         auto t = mcpp::toolchain::triple::parse(name);
-        ASSERT_TRUE(t.has_value()) << name;
-        EXPECT_TRUE(mcpp::toolchain::host_can_serve(*t)) << name;
+        expect(fatal(t.has_value())) << name;
+        expect(mcpp::toolchain::host_can_serve(*t)) << name;
     }
 
     // AND THE PREDICATE IS STILL ABLE TO SAY NO, which is what keeps the
@@ -454,8 +452,8 @@ TEST(SdkPayloads, ServedOnEveryHostTheSdkIsPublishedFor) {
     // serve them -- the exclusion this function exists to make.
     if constexpr (mcpplibs::os::is_linux) {
         auto mac = mcpp::toolchain::triple::parse("aarch64-macos");
-        ASSERT_TRUE(mac.has_value());
-        EXPECT_FALSE(mcpp::toolchain::host_can_serve(*mac));
+        expect(fatal(mac.has_value()));
+        expect(!mcpp::toolchain::host_can_serve(*mac));
     }
 
     // AND APPLE IS ONE ANSWER FOR BOTH OF ITS PLATFORMS, which this function
@@ -476,12 +474,11 @@ TEST(SdkPayloads, ServedOnEveryHostTheSdkIsPublishedFor) {
     for (auto name : {"aarch64-macos", "aarch64-ios", "aarch64-ios-sim",
                       "x86_64-ios-sim"}) {
         auto t = mcpp::toolchain::triple::parse(name);
-        ASSERT_TRUE(t.has_value()) << name;
-        EXPECT_TRUE(t->is_apple()) << name;
-        EXPECT_EQ(mcpp::toolchain::host_can_serve(*t),
-                  bool(mcpplibs::os::is_macos)) << name;
+        expect(fatal(t.has_value())) << name;
+        expect(t->is_apple()) << name;
+        expect(eq(mcpp::toolchain::host_can_serve(*t), bool(mcpplibs::os::is_macos))) << name;
     }
-}
+}};
 
 // ─── The payload is SAID, not only resolved (R3) ───────────────────────────
 //
@@ -491,33 +488,31 @@ TEST(SdkPayloads, ServedOnEveryHostTheSdkIsPublishedFor) {
 // `xim:llvm`, and not what the user typed. The family and the payload are two
 // questions, and `to_xim_package` already answered the second; this is the
 // field that lets it be printed.
-TEST(SdkPayloads, TheDisplayNamesThePayloadAndNotOnlyTheFamily) {
+UTest the_display_names_the_payload_and_not_only_the_family{"SdkPayloads/TheDisplayNamesThePayloadAndNotOnlyTheFamily", [] {
     auto em = mcpp::toolchain::parse_toolchain_spec("emsdk@6.0.9");
-    ASSERT_TRUE(em.has_value());
-    EXPECT_EQ(em->family, mcpp::toolchain::Family::Llvm)
+    expect(fatal(em.has_value()));
+    expect(eq(em->family, mcpp::toolchain::Family::Llvm))
         << "em++ is clang; a fourth family would be a false claim";
-    EXPECT_EQ(em->payloadName, "emsdk");
-    EXPECT_NE(em->display().find("emsdk@6.0.9"), std::string::npos)
-        << em->display();
-    EXPECT_EQ(em->display().find("llvm@"), std::string::npos) << em->display();
+    expect(eq(em->payloadName, "emsdk"));
+    if (auto&& failed = expect(ne(em->display().find("emsdk@6.0.9"), std::string::npos)); !failed) failed << em->display();
+    if (auto&& failed = expect(eq(em->display().find("llvm@"), std::string::npos)); !failed) failed << em->display();
 
     auto ndk = mcpp::toolchain::parse_toolchain_spec("android-ndk@30.0.16248370");
-    ASSERT_TRUE(ndk.has_value());
-    EXPECT_EQ(ndk->family, mcpp::toolchain::Family::Llvm);
-    EXPECT_EQ(ndk->payloadName, "android-ndk");
-    EXPECT_NE(ndk->display().find("android-ndk@"), std::string::npos)
-        << ndk->display();
+    expect(fatal(ndk.has_value()));
+    expect(eq(ndk->family, mcpp::toolchain::Family::Llvm));
+    expect(eq(ndk->payloadName, "android-ndk"));
+    if (auto&& failed = expect(ne(ndk->display().find("android-ndk@"), std::string::npos)); !failed) failed << ndk->display();
 
     // AND NOTHING ELSE MOVES. Empty `payloadName` means the family's own
     // payload, which is every row but these two -- so no existing output
     // changes, which is what makes this additive.
     for (auto spelled : {"llvm@22.1.8", "gcc@16.1.0", "msvc@14.44.35207"}) {
         auto sp = mcpp::toolchain::parse_toolchain_spec(spelled);
-        ASSERT_TRUE(sp.has_value()) << spelled;
-        EXPECT_TRUE(sp->payloadName.empty()) << spelled;
-        EXPECT_NE(sp->display().find(spelled), std::string::npos) << sp->display();
+        expect(fatal(sp.has_value())) << spelled;
+        expect(sp->payloadName.empty()) << spelled;
+        if (auto&& failed = expect(ne(sp->display().find(spelled), std::string::npos)); !failed) failed << sp->display();
     }
-}
+}};
 
 // ─── A spec that names a payload has answered which payload ───────────────
 //
@@ -538,7 +533,7 @@ TEST(SdkPayloads, TheDisplayNamesThePayloadAndNotOnlyTheFamily) {
 // THE DENOMINATOR IS BOTH PAYLOADS AND BOTH SPELLINGS, because the defect is
 // in the AXIS and not in one row: a payload named with a target, and the same
 // payload named without one, must answer identically.
-TEST(SdkPayloads, ThePayloadTheSpecNamedDecidesWithoutATarget) {
+UTest the_payload_the_spec_named_decides_without_a_target{"SdkPayloads/ThePayloadTheSpecNamedDecidesWithoutATarget", [] {
     struct Case {
         std::string_view spelling, ximName, subdir, frontend, target;
     };
@@ -552,14 +547,14 @@ TEST(SdkPayloads, ThePayloadTheSpecNamedDecidesWithoutATarget) {
     };
     for (auto const& c : cases) {
         auto spec = mcpp::toolchain::parse_toolchain_spec(std::string(c.spelling));
-        ASSERT_TRUE(spec.has_value()) << c.spelling;
+        expect(fatal(spec.has_value())) << c.spelling;
         if (!c.target.empty())
             if (auto t = mcpp::toolchain::triple::parse(c.target)) spec->target = *t;
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
         const std::string where = std::string(c.spelling) + " target='"
                                 + std::string(c.target) + "'";
-        EXPECT_EQ(pkg.ximName, c.ximName) << where;
-        EXPECT_NE(pkg.frontendSubdir.find(c.subdir), std::string::npos)
+        expect(eq(pkg.ximName, c.ximName)) << where;
+        expect(ne(pkg.frontendSubdir.find(c.subdir), std::string::npos))
             << where << " subdir=" << pkg.frontendSubdir;
         // The candidate list names the payload's own driver rather than the
         // family's, which is the half that sent the install looking for
@@ -567,7 +562,7 @@ TEST(SdkPayloads, ThePayloadTheSpecNamedDecidesWithoutATarget) {
         bool named = false;
         for (auto const& cand : pkg.frontendCandidates)
             if (cand.find(c.frontend) != std::string::npos) named = true;
-        EXPECT_TRUE(named) << where << " candidates do not name " << c.frontend;
+        expect(bool(named)) << where << " candidates do not name " << c.frontend;
     }
 
     // AND A SPEC THAT NAMES NO PAYLOAD STILL READS THE TARGET. This is the
@@ -576,11 +571,11 @@ TEST(SdkPayloads, ThePayloadTheSpecNamedDecidesWithoutATarget) {
     // rather than the NDK -- the capability gate is what refuses it, and a
     // gate cannot refuse what was silently rewritten.
     auto plain = mcpp::toolchain::parse_toolchain_spec("llvm@22.1.8");
-    ASSERT_TRUE(plain.has_value());
-    EXPECT_TRUE(plain->payloadName.empty());
+    expect(fatal(plain.has_value()));
+    expect(plain->payloadName.empty());
     if (auto t = mcpp::toolchain::triple::parse("aarch64-macos")) plain->target = *t;
-    EXPECT_EQ(mcpp::toolchain::to_xim_package(*plain).ximName, "llvm");
-}
+    expect(eq(mcpp::toolchain::to_xim_package(*plain).ximName, "llvm"));
+}};
 
 // ─── The C compiler beside a C++ one ───────────────────────────────────────
 //
@@ -599,7 +594,7 @@ TEST(SdkPayloads, ThePayloadTheSpecNamedDecidesWithoutATarget) {
 // clang's rule. `g` was already a special case for exactly this reason, which
 // is what makes a table the right shape: the property is "this driver names
 // its C compiler with a different word".
-TEST(SdkPayloads, EveryFrontendNamesTheCCompilerBesideIt) {
+UTest every_frontend_names_the_c_compiler_beside_it{"SdkPayloads/EveryFrontendNamesTheCCompilerBesideIt", [] {
     struct Case { std::string_view cxx, c; };
     const Case cases[] = {
         // clang and its triple-prefixed forms: dropping `++` is correct.
@@ -618,24 +613,23 @@ TEST(SdkPayloads, EveryFrontendNamesTheCCompilerBesideIt) {
     for (auto const& c : cases) {
         const std::filesystem::path cxx =
             std::filesystem::path("/p/bin") / std::string(c.cxx);
-        EXPECT_EQ(mcpp::toolchain::derive_c_compiler_path(cxx).filename().string(),
-                  std::string(c.c)) << c.cxx;
+        expect(eq(mcpp::toolchain::derive_c_compiler_path(cxx).filename().string(), std::string(c.c))) << c.cxx;
     }
 
     // AND THE EXECUTABLE SUFFIX SURVIVES, which is the part a stem-based
     // rewrite loses: on Windows the payload ships `g++.exe`, and a C compile
     // spawning `gcc` with no suffix finds nothing.
-    EXPECT_EQ(mcpp::toolchain::derive_c_compiler_path("/p/bin/g++.exe")
-                  .filename().string(), "gcc.exe");
-    EXPECT_EQ(mcpp::toolchain::derive_c_compiler_path("/p/bin/clang++.exe")
-                  .filename().string(), "clang.exe");
+    expect(eq(mcpp::toolchain::derive_c_compiler_path("/p/bin/g++.exe")
+                  .filename().string(), "gcc.exe"));
+    expect(eq(mcpp::toolchain::derive_c_compiler_path("/p/bin/clang++.exe")
+                  .filename().string(), "clang.exe"));
 
     // `clang++` MUST NOT MATCH THE `g++` ROW. It ends in `g++`'s last two
     // characters plus nothing, and a suffix test without the separator would
     // turn it into `clanccc` or worse -- a name that is nothing.
-    EXPECT_EQ(mcpp::toolchain::derive_c_compiler_path("/p/bin/clang++")
-                  .filename().string(), "clang");
-}
+    expect(eq(mcpp::toolchain::derive_c_compiler_path("/p/bin/clang++")
+                  .filename().string(), "clang"));
+}};
 
 // ─── One payload, one spelling (B1) ────────────────────────────────────────
 //
@@ -652,25 +646,23 @@ TEST(SdkPayloads, EveryFrontendNamesTheCCompilerBesideIt) {
 // the one the index uses, so a single string names this payload ecosystem-wide.
 //
 // The criterion is WHERE the refusal happens, not that one happens.
-TEST(SdkPayloads, TheWithdrawnAliasIsRefusedAtParseAndNotByTheCapabilityGate) {
+UTest the_withdrawn_alias_is_refused_at_parse_and_not_by_the_capability_gate{"SdkPayloads/TheWithdrawnAliasIsRefusedAtParseAndNotByTheCapabilityGate", [] {
     auto aliased = mcpp::toolchain::parse_toolchain_spec("ndk@30.0.16248370");
-    ASSERT_FALSE(aliased.has_value())
+    expect(fatal(!aliased.has_value()))
         << "an alias that parses is an alias the capability gate must refuse "
            "later, by comparing spellings";
-    EXPECT_NE(aliased.error().find("unknown toolchain"), std::string::npos)
-        << aliased.error();
-    EXPECT_NE(aliased.error().find("'ndk'"), std::string::npos)
-        << "the refusal quotes what was typed: " << aliased.error();
+    if (auto&& failed = expect(ne(aliased.error().find("unknown toolchain"), std::string::npos)); !failed) failed << aliased.error();
+    if (auto&& failed = expect(ne(aliased.error().find("'ndk'"), std::string::npos)); !failed) failed << "the refusal quotes what was typed: " << aliased.error();
     // AND IT SAYS WHICH SPELLING TO USE. A refusal that names the accepted
     // payload is one edit away from a build; one that does not sends the
     // reader to the documentation.
-    EXPECT_NE(aliased.error().find("android-ndk"), std::string::npos)
+    expect(ne(aliased.error().find("android-ndk"), std::string::npos))
         << aliased.error();
 
     // The kept spelling is unaffected, and it is the one the row pins.
     auto kept = mcpp::toolchain::parse_toolchain_spec("android-ndk@30.0.16248370");
-    ASSERT_TRUE(kept.has_value()) << kept.error();
-    EXPECT_EQ(kept->payloadName, "android-ndk");
+    if (auto&& failed = expect(fatal(kept.has_value())); !failed) failed << kept.error();
+    expect(eq(kept->payloadName, "android-ndk"));
 
     // THE MECHANISM THAT NO LONGER HAS TO BE TAUGHT. Both Android rows pin the
     // kept spelling, and the gate's test is `pin's name is a substring of what
@@ -678,17 +670,16 @@ TEST(SdkPayloads, TheWithdrawnAliasIsRefusedAtParseAndNotByTheCapabilityGate) {
     // the alias gone, the gate never sees the case it would have to special.
     for (auto triple : {"aarch64-linux-android", "x86_64-linux-android"}) {
         auto parsed = mcpp::toolchain::triple::parse(triple);
-        ASSERT_TRUE(parsed.has_value()) << triple;
+        expect(fatal(parsed.has_value())) << triple;
         auto info = mcpp::toolchain::triple::find_known_target(*parsed);
-        ASSERT_NE(info, nullptr) << triple;
+        expect(fatal(ne(info, nullptr))) << triple;
         const std::string pin(info->pin);
         const std::string pinName = pin.substr(0, pin.find('@'));
-        EXPECT_EQ(pinName, "android-ndk") << triple << " pins " << pin;
-        EXPECT_EQ(std::string("ndk@30.0.16248370").find(pinName),
-                  std::string::npos)
+        expect(eq(pinName, "android-ndk")) << triple << " pins " << pin;
+        expect(eq(std::string("ndk@30.0.16248370").find(pinName), std::string::npos))
             << "the alias could only pass the gate by a second mechanism";
     }
-}
+}};
 
 // ── A required family's version comes from pins of the same payload (#641) ──
 //
@@ -718,21 +709,21 @@ std::string pinned_row_version(std::string_view payload) {
 }
 } // namespace
 
-TEST(RequiredFamilyPins, EachFamilyTakesThePinsOfItsOwnPayload) {
+UTest each_family_takes_the_pins_of_its_own_payload{"RequiredFamilyPins/EachFamilyTakesThePinsOfItsOwnPayload", [] {
     for (auto payload : {"llvm", "emsdk", "android-ndk", "gcc"}) {
         const auto expected = pinned_row_version(payload);
-        ASSERT_FALSE(expected.empty()) << "no row pins " << payload;
-        EXPECT_EQ(highest_pin(payload), expected) << payload;
+        expect(fatal(!expected.empty())) << "no row pins " << payload;
+        expect(eq(highest_pin(payload), expected)) << payload;
     }
-}
+}};
 
-TEST(RequiredFamilyPins, NoLlvmPinComesFromAnotherPayload) {
+UTest no_llvm_pin_comes_from_another_payload{"RequiredFamilyPins/NoLlvmPinComesFromAnotherPayload", [] {
     auto spec = parse_toolchain_spec("llvm");
-    ASSERT_TRUE(spec.has_value()) << spec.error();
+    if (auto&& failed = expect(fatal(spec.has_value())); !failed) failed << spec.error();
     const auto versions = pinned_versions_for(*spec);
-    EXPECT_FALSE(versions.empty());
+    expect(!versions.empty());
     for (auto const& v : versions) {
-        EXPECT_NE(v, pinned_row_version("android-ndk"));
-        EXPECT_NE(v, pinned_row_version("emsdk"));
+        expect(ne(v, pinned_row_version("android-ndk")));
+        expect(ne(v, pinned_row_version("emsdk")));
     }
-}
+}};

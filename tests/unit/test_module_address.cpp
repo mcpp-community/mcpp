@@ -15,9 +15,9 @@
 // plans differ in both. It is the BMI counterpart of test_object_address.cpp
 // (mcpp#344).
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.plan;
 import mcpp.build.ninja;
 import mcpp.manifest;
@@ -25,6 +25,8 @@ import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.source_kind;
 import mcpp.toolchain.model;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::build;
 
@@ -165,70 +167,70 @@ void expect_same_core(mcpp::toolchain::CompilerId id) {
     Tmp t;
     std::string err;
     auto alone  = plan_core(t, id, false, &err);
-    ASSERT_TRUE(alone) << err;
+    expect(fatal(bool(alone))) << err;
     auto beside = plan_core(t, id, true, &err);
-    ASSERT_TRUE(beside) << err;
-    ASSERT_EQ(alone->core.size(), 2u);
-    ASSERT_EQ(beside->core.size(), 2u);
+    expect(fatal(bool(beside))) << err;
+    expect(fatal(eq(alone->core.size(), 2u)));
+    expect(fatal(eq(beside->core.size(), 2u)));
     for (auto const& [file, a] : alone->core) {
         auto const& b = beside->core.at(file);
-        EXPECT_EQ(a.bmiFile, b.bmiFile) << file;
-        EXPECT_EQ(a.flags, b.flags) << file;
-        EXPECT_EQ(a.mapContent, b.mapContent) << file;
-        EXPECT_EQ(a.arguments, b.arguments) << file;
+        expect(eq(a.bmiFile, b.bmiFile)) << file;
+        expect(eq(a.flags, b.flags)) << file;
+        expect(eq(a.mapContent, b.mapContent)) << file;
+        expect(eq(a.arguments, b.arguments)) << file;
     }
-    EXPECT_EQ(alone->needsPic, beside->needsPic);
+    expect(eq(alone->needsPic, beside->needsPic));
 }
 
 } // namespace
 
 // The load-bearing assertion: a provider of the same module name elsewhere in
 // the graph does not move `core`'s BMIs or change a word of its commands.
-TEST(ModuleAddress, MemberCommandsAreImmuneToAnotherProviderOfTheName) {
+UTest member_commands_are_immune_to_another_provider_of_the_name{"ModuleAddress/MemberCommandsAreImmuneToAnotherProviderOfTheName", [] {
     expect_same_core(mcpp::toolchain::CompilerId::GCC);
     expect_same_core(mcpp::toolchain::CompilerId::Clang);
-}
+}};
 
 // Every BMI of a package other than the root lies below that package's
 // directory, and a unit is told where through one map that lists its own
 // module and what it reaches through its imports, and nothing else.
-TEST(ModuleAddress, MemberBmisAreQualifiedAndTheMapIsTheUnitsReach) {
+UTest member_bmis_are_qualified_and_the_map_is_the_units_reach{"ModuleAddress/MemberBmisAreQualifiedAndTheMapIsTheUnitsReach", [] {
     Tmp t;
     std::string err;
     auto gcc = plan_core(t, mcpp::toolchain::CompilerId::GCC, true, &err);
-    ASSERT_TRUE(gcc) << err;
+    expect(fatal(bool(gcc))) << err;
     auto const& iface = gcc->core.at("core.cppm");
-    EXPECT_EQ(iface.bmiFile, "core/corelib.gcm");
+    expect(eq(iface.bmiFile, "core/corelib.gcm"));
     // GCC's map is rooted at the BMI directory, as its default mapper is, so
     // a BMI records its imports at the same paths whichever mapper made it.
-    EXPECT_TRUE(iface.mapContent.starts_with("$root gcm.cache\n")) << iface.mapContent;
-    EXPECT_NE(iface.mapContent.find("corelib core/corelib.gcm\n"), std::string::npos);
-    EXPECT_NE(iface.mapContent.find("m core/m.gcm\n"), std::string::npos);
-    EXPECT_NE(iface.mapContent.find("std std.gcm\n"), std::string::npos);
-    EXPECT_EQ(iface.mapContent.find("tool"), std::string::npos)
+    expect(iface.mapContent.starts_with("$root gcm.cache\n")) << iface.mapContent;
+    expect(ne(iface.mapContent.find("corelib core/corelib.gcm\n"), std::string::npos));
+    expect(ne(iface.mapContent.find("m core/m.gcm\n"), std::string::npos));
+    expect(ne(iface.mapContent.find("std std.gcm\n"), std::string::npos));
+    expect(eq(iface.mapContent.find("tool"), std::string::npos))
         << "the map names a module the unit does not reach:\n" << iface.mapContent;
-    ASSERT_FALSE(iface.flags.empty());
-    EXPECT_TRUE(iface.flags.back().find("-fmodule-mapper=modmap/core-") != std::string::npos)
+    expect(fatal(!iface.flags.empty()));
+    expect(iface.flags.back().find("-fmodule-mapper=modmap/core-") != std::string::npos)
         << iface.flags.back();
 
     auto clang = plan_core(t, mcpp::toolchain::CompilerId::Clang, true, &err);
-    ASSERT_TRUE(clang) << err;
+    expect(fatal(bool(clang))) << err;
     auto const& ci = clang->core.at("core.cppm");
-    EXPECT_EQ(ci.bmiFile, "core/corelib.pcm");
+    expect(eq(ci.bmiFile, "core/corelib.pcm"));
     // clang reads the imported module's BMI from the argument file; its own
     // module is written through -fmodule-output and is not listed there.
-    ASSERT_EQ(ci.arguments.size(), 1u);
-    EXPECT_TRUE(ci.arguments.front().starts_with("-fmodule-file=m="));
-    EXPECT_TRUE(ci.arguments.front().ends_with("pcm.cache/core/m.pcm")) << ci.arguments.front();
-    ASSERT_FALSE(ci.flags.empty());
-    EXPECT_TRUE(ci.flags.back().find(".modmap") != std::string::npos) << ci.flags.back();
-    EXPECT_EQ(ci.flags.back().front(), '@');
-}
+    expect(fatal(eq(ci.arguments.size(), 1u)));
+    expect(ci.arguments.front().starts_with("-fmodule-file=m="));
+    expect(ci.arguments.front().ends_with("pcm.cache/core/m.pcm")) << ci.arguments.front();
+    expect(fatal(!ci.flags.empty()));
+    expect(ci.flags.back().find(".modmap") != std::string::npos) << ci.flags.back();
+    expect(eq(ci.flags.back().front(), '@'));
+}};
 
 // The root package's modules stay at their names, and a unit that reaches only
 // those and `std` is told nothing: a project without dependency modules is laid
 // out, and every command spelled, as before.
-TEST(ModuleAddress, RootModulesStayFlatAndNeedNoMap) {
+UTest root_modules_stay_flat_and_need_no_map{"ModuleAddress/RootModulesStayFlatAndNeedNoMap", [] {
     Tmp t;
     const auto proj = t.path / "proj";
     mcpp::manifest::Manifest root;
@@ -251,25 +253,25 @@ TEST(ModuleAddress, RootModulesStayFlatAndNeedNoMap) {
     for (auto id : {mcpp::toolchain::CompilerId::GCC, mcpp::toolchain::CompilerId::Clang}) {
         auto plan = make_plan(root, toolchain(id), {}, graph, topo, packages, proj,
                               proj / "target" / "t", {}, {}, {});
-        ASSERT_TRUE(plan) << plan.error();
-        EXPECT_TRUE(plan->moduleScopes.empty());
+        if (auto&& failed = expect(fatal(bool(plan))); !failed) failed << plan.error();
+        expect(plan->moduleScopes.empty());
         for (auto const& cu : plan->compileUnits) {
-            EXPECT_TRUE(cu.moduleScope.empty()) << cu.source;
+            expect(cu.moduleScope.empty()) << cu.source;
             if (!cu.providesModule.empty())
-                EXPECT_EQ(cu.bmiFile.find('/'), std::string::npos) << cu.bmiFile;
+                expect(eq(cu.bmiFile.find('/'), std::string::npos)) << cu.bmiFile;
         }
     }
-}
+}};
 
 // Position independence is a property of the target (B2): every unit of a
 // hosted ELF target is compiled position-independent whether or not the graph
 // links a shared library, and a freestanding target's units are not.
-TEST(ModuleAddress, PositionIndependenceFollowsTheTargetNotTheGraph) {
+UTest position_independence_follows_the_target_not_the_graph{"ModuleAddress/PositionIndependenceFollowsTheTargetNotTheGraph", [] {
     Tmp t;
     std::string err;
     auto planned = plan_core(t, mcpp::toolchain::CompilerId::GCC, false, &err);
-    ASSERT_TRUE(planned) << err;
-    EXPECT_TRUE(planned->needsPic);
+    expect(fatal(bool(planned))) << err;
+    expect(bool(planned->needsPic));
 
     const auto proj = t.path / "bare";
     mcpp::manifest::Manifest root;
@@ -286,41 +288,41 @@ TEST(ModuleAddress, PositionIndependenceFollowsTheTargetNotTheGraph) {
     tc.targetTriple = "arm-none-eabi";
     auto plan = make_plan(root, tc, {}, graph, {0}, packages, proj, proj / "target" / "t",
                           {}, {}, {});
-    ASSERT_TRUE(plan) << plan.error();
-    EXPECT_FALSE(plan->needsPic);
-}
+    if (auto&& failed = expect(fatal(bool(plan))); !failed) failed << plan.error();
+    expect(!plan->needsPic);
+}};
 
 // Every argument file a unit names is the one its own map states, with the
 // arguments the backend writes into it. A module and a unit importing it in
 // one package can list the same BMIs while only the importer loads one; when
 // the two shared a key, the importer named a file nothing wrote.
-TEST(ModuleAddress, EveryNamedArgumentFileIsOneThePlanStates) {
+UTest every_named_argument_file_is_one_the_plan_states{"ModuleAddress/EveryNamedArgumentFileIsOneThePlanStates", [] {
     Tmp t;
     auto plan = plan_workspace(t, mcpp::toolchain::CompilerId::Clang, true);
-    ASSERT_TRUE(plan) << plan.error();
+    if (auto&& failed = expect(fatal(bool(plan))); !failed) failed << plan.error();
     std::size_t named = 0;
     for (auto const& cu : plan->compileUnits) {
         for (auto const& f : cu.packageCxxflags) {
             if (!f.starts_with("@")) continue;
             ++named;
             auto it = plan->moduleScopes.find(cu.moduleScope);
-            ASSERT_NE(it, plan->moduleScopes.end()) << cu.source;
-            EXPECT_FALSE(it->second.arguments.empty()) << cu.source;
-            EXPECT_FALSE(it->second.argsFile.empty()) << cu.source;
-            EXPECT_TRUE(f.ends_with(it->second.argsFile.filename().string())) << f;
+            expect(fatal(ne(it, plan->moduleScopes.end()))) << cu.source;
+            expect(!(it->second.arguments.empty())) << cu.source;
+            expect(!(it->second.argsFile.empty())) << cu.source;
+            expect(f.ends_with(it->second.argsFile.filename().string())) << f;
         }
     }
     // core.cppm, app's main.cpp and tool's main.cpp import a module of
     // another package or of a member.
-    EXPECT_EQ(named, 3u);
-}
+    expect(eq(named, 3u));
+}};
 
 // The argument file of a module map, as each compiler reads it. MSVC takes an
 // option's value only from the same line of a command file (`D8004: '/reference'
 // requires an argument` on windows-2025 when they were on two lines), and reads
 // a non-ASCII path only with a byte order mark; clang reads GNU rules, where a
 // word with a space is quoted.
-TEST(ModuleAddress, ArgumentFilesAreWrittenAsEachCompilerReadsThem) {
+UTest argument_files_are_written_as_each_compiler_reads_them{"ModuleAddress/ArgumentFilesAreWrittenAsEachCompilerReadsThem", [] {
     Tmp t;
     auto read = [](const std::filesystem::path& p) {
         std::ifstream in(p, std::ios::binary);
@@ -341,10 +343,9 @@ TEST(ModuleAddress, ArgumentFilesAreWrittenAsEachCompilerReadsThem) {
     std::filesystem::create_directories(msvc.outputDir / "modmap");
     std::ofstream(msvc.outputDir / "modmap/core-1.modmap") << "/reference m=D:/old/m.ifc\n";
     write_module_maps(msvc);
-    EXPECT_EQ(read(msvc.outputDir / "modmap/core-1.modmap"),
-              "\xEF\xBB\xBF/reference m=C:/build/ifc.cache/core/m.ifc\n"
-              "/reference n=C:/build/ifc.cache/core/n.ifc\n");
-    EXPECT_EQ(read(msvc.outputDir / "modmap/core-1.map"), ms.content);
+    expect(eq(read(msvc.outputDir / "modmap/core-1.modmap"), "\xEF\xBB\xBF/reference m=C:/build/ifc.cache/core/m.ifc\n"
+              "/reference n=C:/build/ifc.cache/core/n.ifc\n"));
+    expect(eq(read(msvc.outputDir / "modmap/core-1.map"), ms.content));
 
     BuildPlan clang;
     clang.outputDir = t.path / "clang";
@@ -357,7 +358,6 @@ TEST(ModuleAddress, ArgumentFilesAreWrittenAsEachCompilerReadsThem) {
                     "-fmodule-file=n=/build/pcm.cache/core/n.pcm"};
     clang.moduleScopes.emplace("core-2", cs);
     write_module_maps(clang);
-    EXPECT_EQ(read(clang.outputDir / "modmap/core-2.modmap"),
-              "\"-fmodule-file=m=/build dir/pcm.cache/core/m.pcm\"\n"
-              "-fmodule-file=n=/build/pcm.cache/core/n.pcm\n");
-}
+    expect(eq(read(clang.outputDir / "modmap/core-2.modmap"), "\"-fmodule-file=m=/build dir/pcm.cache/core/m.pcm\"\n"
+              "-fmodule-file=n=/build/pcm.cache/core/n.pcm\n"));
+}};

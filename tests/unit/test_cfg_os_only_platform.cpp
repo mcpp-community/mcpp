@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.prepare_inputs;
+
+using namespace mcpplibs::mtest;
 
 // #630 item 7 — "a selector that names only an operating system is a
 // platform" (design record 2026-09-13-630 §8.2). `os_only_platforms` is the
@@ -27,109 +29,109 @@ bool has(const std::vector<std::string>& v, std::string_view a) {
 
 // ── Positive: the seven OS-only forms ───────────────────────────────────────
 
-TEST(OsOnlyPlatforms, BareAliasWindows) {
+UTest bare_alias_windows{"OsOnlyPlatforms/BareAliasWindows", [] {
     auto p = cfgpred::os_only_platforms("windows");
-    EXPECT_EQ(p, std::vector<std::string>({"windows"}));
-}
+    expect(eq(p, std::vector<std::string>({"windows"})));
+}};
 
-TEST(OsOnlyPlatforms, CfgWindows) {
+UTest cfg_windows{"OsOnlyPlatforms/CfgWindows", [] {
     auto p = cfgpred::os_only_platforms("cfg(windows)");
-    EXPECT_EQ(p, std::vector<std::string>({"windows"}));
-}
+    expect(eq(p, std::vector<std::string>({"windows"})));
+}};
 
-TEST(OsOnlyPlatforms, CfgOsEqualsLinux) {
+UTest cfg_os_equals_linux{"OsOnlyPlatforms/CfgOsEqualsLinux", [] {
     auto p = cfgpred::os_only_platforms(R"(cfg(os = "linux"))");
-    EXPECT_EQ(p, std::vector<std::string>({"linux"}));
-}
+    expect(eq(p, std::vector<std::string>({"linux"})));
+}};
 
-TEST(OsOnlyPlatforms, CfgLinux) {
+UTest cfg_linux{"OsOnlyPlatforms/CfgLinux", [] {
     auto p = cfgpred::os_only_platforms("cfg(linux)");
-    EXPECT_EQ(p, std::vector<std::string>({"linux"}));
-}
+    expect(eq(p, std::vector<std::string>({"linux"})));
+}};
 
-TEST(OsOnlyPlatforms, CfgMacos) {
+UTest cfg_macos{"OsOnlyPlatforms/CfgMacos", [] {
     auto p = cfgpred::os_only_platforms("cfg(macos)");
     // The descriptor's spelling is `macosx`, not `macos` — see
     // `mcpp::pm::emit_xpkg`'s three blocks.
-    EXPECT_EQ(p, std::vector<std::string>({"macosx"}));
-}
+    expect(eq(p, std::vector<std::string>({"macosx"})));
+}};
 
-TEST(OsOnlyPlatforms, CfgOsEqualsWindows) {
+UTest cfg_os_equals_windows{"OsOnlyPlatforms/CfgOsEqualsWindows", [] {
     auto p = cfgpred::os_only_platforms(R"(cfg(os = "windows"))");
-    EXPECT_EQ(p, std::vector<std::string>({"windows"}));
-}
+    expect(eq(p, std::vector<std::string>({"windows"})));
+}};
 
-TEST(OsOnlyPlatforms, CfgOsEqualsMacos) {
+UTest cfg_os_equals_macos{"OsOnlyPlatforms/CfgOsEqualsMacos", [] {
     auto p = cfgpred::os_only_platforms(R"(cfg(os = "macos"))");
-    EXPECT_EQ(p, std::vector<std::string>({"macosx"}));
-}
+    expect(eq(p, std::vector<std::string>({"macosx"})));
+}};
 
-TEST(OsOnlyPlatforms, CfgUnixNamesBothMacAndLinux) {
+UTest cfg_unix_names_both_mac_and_linux{"OsOnlyPlatforms/CfgUnixNamesBothMacAndLinux", [] {
     // `unix` means `family == "unix"`, which macOS and Linux both satisfy —
     // the only one of the seven forms that names two blocks at once.
     auto p = cfgpred::os_only_platforms("cfg(unix)");
-    EXPECT_EQ(p.size(), 2u);
-    EXPECT_TRUE(has(p, "linux"));
-    EXPECT_TRUE(has(p, "macosx"));
-    EXPECT_FALSE(has(p, "windows"));
-}
+    expect(eq(p.size(), 2u));
+    expect(bool(has(p, "linux")));
+    expect(bool(has(p, "macosx")));
+    expect(!has(p, "windows"));
+}};
 
-TEST(OsOnlyPlatforms, BareAliasUnix) {
+UTest bare_alias_unix{"OsOnlyPlatforms/BareAliasUnix", [] {
     auto p = cfgpred::os_only_platforms("unix");
-    EXPECT_EQ(p.size(), 2u);
-    EXPECT_TRUE(has(p, "linux"));
-    EXPECT_TRUE(has(p, "macosx"));
-}
+    expect(eq(p.size(), 2u));
+    expect(bool(has(p, "linux")));
+    expect(bool(has(p, "macosx")));
+}};
 
 // ── Negative: everything the record says keeps the warning ─────────────────
 
-TEST(OsOnlyPlatforms, ArchitectureIsNotOsOnly) {
+UTest architecture_is_not_os_only{"OsOnlyPlatforms/ArchitectureIsNotOsOnly", [] {
     auto p = cfgpred::os_only_platforms(R"(cfg(target_arch = "aarch64"))");
-    EXPECT_TRUE(p.empty());
-}
+    expect(p.empty());
+}};
 
-TEST(OsOnlyPlatforms, CombinatorOfOsAndArchIsNotOsOnly) {
+UTest combinator_of_os_and_arch_is_not_os_only{"OsOnlyPlatforms/CombinatorOfOsAndArchIsNotOsOnly", [] {
     auto p = cfgpred::os_only_platforms(
         R"(cfg(all(linux, target_arch = "x86_64")))");
-    EXPECT_TRUE(p.empty());
-}
+    expect(p.empty());
+}};
 
-TEST(OsOnlyPlatforms, NotWindowsIsNotOsOnly) {
+UTest not_windows_is_not_os_only{"OsOnlyPlatforms/NotWindowsIsNotOsOnly", [] {
     // Syntactically this names only an OS, but `not(...)` answers an
     // unbounded set of platforms (everything this vocabulary does not yet
     // call "windows"), not the two blocks "linux and macosx" would be if this
     // were treated as their union. Kept conservative: any combinator
     // disqualifies, `not` included.
     auto p = cfgpred::os_only_platforms("cfg(not(windows))");
-    EXPECT_TRUE(p.empty());
-}
+    expect(p.empty());
+}};
 
-TEST(OsOnlyPlatforms, EnvIsNotOsOnly) {
+UTest env_is_not_os_only{"OsOnlyPlatforms/EnvIsNotOsOnly", [] {
     auto p = cfgpred::os_only_platforms(R"(cfg(env = "android"))");
-    EXPECT_TRUE(p.empty());
-}
+    expect(p.empty());
+}};
 
-TEST(OsOnlyPlatforms, LayerKeyIsNotOsOnly) {
+UTest layer_key_is_not_os_only{"OsOnlyPlatforms/LayerKeyIsNotOsOnly", [] {
     auto p = cfgpred::os_only_platforms(R"(cfg(compiler = "llvm"))");
-    EXPECT_TRUE(p.empty());
-}
+    expect(p.empty());
+}};
 
-TEST(OsOnlyPlatforms, AnAllOsCombinatorIsStillNotOsOnly) {
+UTest an_all_os_combinator_is_still_not_os_only{"OsOnlyPlatforms/AnAllOsCombinatorIsStillNotOsOnly", [] {
     // Even a combinator built ENTIRELY from OS terms is refused — see the
     // comment on `os_only_platforms` for why `any(linux, macos)` is not the
     // same claim as either block alone.
     auto p = cfgpred::os_only_platforms("cfg(any(linux, macos))");
-    EXPECT_TRUE(p.empty());
-}
+    expect(p.empty());
+}};
 
-TEST(OsOnlyPlatforms, ExactTripleIsNotOsOnly) {
+UTest exact_triple_is_not_os_only{"OsOnlyPlatforms/ExactTripleIsNotOsOnly", [] {
     // An exact triple shares no grammar with cfg()/the bare aliases; it names
     // one target, not a platform.
     auto p = cfgpred::os_only_platforms("x86_64-linux-musl");
-    EXPECT_TRUE(p.empty());
-}
+    expect(p.empty());
+}};
 
-TEST(OsOnlyPlatforms, UnrecognisedOsValueIsNotOsOnly) {
+UTest unrecognised_os_value_is_not_os_only{"OsOnlyPlatforms/UnrecognisedOsValueIsNotOsOnly", [] {
     auto p = cfgpred::os_only_platforms(R"(cfg(os = "freebsd"))");
-    EXPECT_TRUE(p.empty());
-}
+    expect(p.empty());
+}};

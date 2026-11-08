@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.doctor;
+
+using namespace mcpplibs::mtest;
 
 using mcpp::doctor::find_fixincludes_banners;
 
@@ -54,67 +56,66 @@ constexpr std::string_view kReadmeFixture =
 
 }  // namespace
 
-TEST(DoctorFixincludes, ABannerFileIsReportedWithItsSource) {
+UTest a_banner_file_is_reported_with_its_source{"DoctorFixincludes/ABannerFileIsReportedWithItsSource", [] {
     auto root = make_tempdir("mcpp-fixincludes-banner");
     write_file(root / "lib" / "gcc" / "x86_64-linux-gnu" / "13.3.0"
                     / "include-fixed" / "pthread.h", kBannerFixture);
 
     auto findings = find_fixincludes_banners(root);
-    ASSERT_EQ(findings.size(), 1u);
-    EXPECT_EQ(findings[0].file, fs::path("lib") / "gcc" / "x86_64-linux-gnu"
-                                / "13.3.0" / "include-fixed" / "pthread.h");
-    EXPECT_EQ(findings[0].source,
-              "/home/xlings/.xlings_data/subos/linux/usr/include/pthread.h");
+    expect(fatal(eq(findings.size(), 1u)));
+    expect(eq(findings[0].file, fs::path("lib") / "gcc" / "x86_64-linux-gnu"
+                                / "13.3.0" / "include-fixed" / "pthread.h"));
+    expect(eq(findings[0].source, "/home/xlings/.xlings_data/subos/linux/usr/include/pthread.h"));
 
     fs::remove_all(root);
-}
+}};
 
 // The exact 16.1.0 shape: an `include-fixed` directory that exists (fixincludes
 // always creates it) but holds only its own README, no fixed header at all.
-TEST(DoctorFixincludes, AReadmeWithNoBannerIsNotReported) {
+UTest a_readme_with_no_banner_is_not_reported{"DoctorFixincludes/AReadmeWithNoBannerIsNotReported", [] {
     auto root = make_tempdir("mcpp-fixincludes-readme-only");
     write_file(root / "lib" / "gcc" / "x86_64-linux-gnu" / "16.1.0"
                     / "include-fixed" / "README", kReadmeFixture);
 
-    EXPECT_TRUE(find_fixincludes_banners(root).empty());
+    expect(find_fixincludes_banners(root).empty());
 
     fs::remove_all(root);
-}
+}};
 
 // A fixed header that carries no banner (some fixincludes edits do not add
 // one — e.g. a bare wrapped `limits.h`) is not a match either: the check is
 // specifically for the auto-edited-FROM-a-source-path shape mcpp#687 is
 // about, not for "any file under include-fixed".
-TEST(DoctorFixincludes, AFixedHeaderWithoutTheBannerIsNotReported) {
+UTest a_fixed_header_without_the_banner_is_not_reported{"DoctorFixincludes/AFixedHeaderWithoutTheBannerIsNotReported", [] {
     auto root = make_tempdir("mcpp-fixincludes-no-banner");
     write_file(root / "lib" / "gcc" / "x86_64-linux-gnu" / "13.3.0"
                     / "include-fixed" / "limits.h",
                 "/* -*- Mode: C -*- */\n#ifndef _GCC_LIMITS_H_\n");
 
-    EXPECT_TRUE(find_fixincludes_banners(root).empty());
+    expect(find_fixincludes_banners(root).empty());
 
     fs::remove_all(root);
-}
+}};
 
 // A file that carries the banner text but sits OUTSIDE any `include-fixed`
 // directory does not count — the check is scoped to the one directory
 // fixincludes actually writes into, not to the whole payload tree.
-TEST(DoctorFixincludes, ABannerOutsideIncludeFixedIsNotReported) {
+UTest a_banner_outside_include_fixed_is_not_reported{"DoctorFixincludes/ABannerOutsideIncludeFixedIsNotReported", [] {
     auto root = make_tempdir("mcpp-fixincludes-outside");
     write_file(root / "lib" / "gcc" / "x86_64-linux-gnu" / "13.3.0"
                     / "include" / "pthread.h", kBannerFixture);
 
-    EXPECT_TRUE(find_fixincludes_banners(root).empty());
+    expect(find_fixincludes_banners(root).empty());
 
     fs::remove_all(root);
-}
+}};
 
 // Every `include-fixed` directory under the payload root is scanned, not
 // only the first one found — a payload that ships more than one fixed
 // header (the common case: pthread.h plus others) is reported in full, and
 // two DIFFERENT triples under the same payload root (a cross payload's own
 // shape) are both covered by one call.
-TEST(DoctorFixincludes, MultipleFindingsAreAllReported) {
+UTest multiple_findings_are_all_reported{"DoctorFixincludes/MultipleFindingsAreAllReported", [] {
     auto root = make_tempdir("mcpp-fixincludes-multi");
     write_file(root / "lib" / "gcc" / "x86_64-linux-gnu" / "13.3.0"
                     / "include-fixed" / "pthread.h", kBannerFixture);
@@ -122,14 +123,14 @@ TEST(DoctorFixincludes, MultipleFindingsAreAllReported) {
                     / "include-fixed" / "stdio.h", kBannerFixture);
 
     auto findings = find_fixincludes_banners(root);
-    EXPECT_EQ(findings.size(), 2u);
+    expect(eq(findings.size(), 2u));
 
     fs::remove_all(root);
-}
+}};
 
 // A payload root that does not exist at all (nothing installed under that
 // name/version) is not an error — it is the same as "nothing to report".
-TEST(DoctorFixincludes, ANonexistentPayloadRootReportsNothing) {
-    EXPECT_TRUE(find_fixincludes_banners(
+UTest a_nonexistent_payload_root_reports_nothing{"DoctorFixincludes/ANonexistentPayloadRootReportsNothing", [] {
+    expect(find_fixincludes_banners(
         fs::temp_directory_path() / "mcpp-fixincludes-does-not-exist").empty());
-}
+}};

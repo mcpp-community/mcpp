@@ -1,59 +1,61 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.invocation;
 import mcpp.toolchain.model;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.dialect;
 
+using namespace mcpplibs::mtest;
+
 using namespace mcpp::toolchain;
 
 // ─── parse_cl_banner ─────────────────────────────────────────────────────
 
-TEST(MsvcBanner, ParsesEnglishBanner) {
+UTest parses_english_banner{"MsvcBanner/ParsesEnglishBanner", [] {
     auto r = msvc::parse_cl_banner(
         "Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35211 for x64\n"
         "Copyright (C) Microsoft Corporation.  All rights reserved.\n"
         "\n"
         "usage: cl [ option... ] filename... [ /link linkoption... ]\n");
-    ASSERT_TRUE(r.has_value());
-    EXPECT_EQ(r->first, "19.44.35211");
-    EXPECT_EQ(r->second, "x64");
-}
+    expect(fatal(r.has_value()));
+    expect(eq(r->first, "19.44.35211"));
+    expect(eq(r->second, "x64"));
+}};
 
-TEST(MsvcBanner, ParsesLocalizedBannerByTokens) {
+UTest parses_localized_banner_by_tokens{"MsvcBanner/ParsesLocalizedBannerByTokens", [] {
     // Chinese VS reorders the sentence; only the tokens are stable.
     auto r = msvc::parse_cl_banner(
         "用于 x64 的 Microsoft (R) C/C++ 优化编译器 19.44.35211 版\n"
         "版权所有(C) Microsoft Corporation。保留所有权利。\n");
-    ASSERT_TRUE(r.has_value());
-    EXPECT_EQ(r->first, "19.44.35211");
-    EXPECT_EQ(r->second, "x64");
-}
+    expect(fatal(r.has_value()));
+    expect(eq(r->first, "19.44.35211"));
+    expect(eq(r->second, "x64"));
+}};
 
-TEST(MsvcBanner, ParsesArm64AndFourComponentVersions) {
+UTest parses_arm64_and_four_component_versions{"MsvcBanner/ParsesArm64AndFourComponentVersions", [] {
     auto r = msvc::parse_cl_banner(
         "Microsoft (R) C/C++ Optimizing Compiler Version 19.29.30133.0 for ARM64\n");
-    ASSERT_TRUE(r.has_value());
-    EXPECT_EQ(r->first, "19.29.30133.0");
-    EXPECT_EQ(r->second, "arm64");
-}
+    expect(fatal(r.has_value()));
+    expect(eq(r->first, "19.29.30133.0"));
+    expect(eq(r->second, "arm64"));
+}};
 
-TEST(MsvcBanner, RejectsGarbage) {
-    EXPECT_FALSE(msvc::parse_cl_banner("").has_value());
-    EXPECT_FALSE(msvc::parse_cl_banner("bash: cl: command not found").has_value());
+UTest rejects_garbage{"MsvcBanner/RejectsGarbage", [] {
+    expect(!(msvc::parse_cl_banner("").has_value()));
+    expect(!(msvc::parse_cl_banner("bash: cl: command not found").has_value()));
     // A bare two-component number is not a cl version.
-    EXPECT_FALSE(msvc::parse_cl_banner("something 1.2 else").has_value());
-}
+    expect(!(msvc::parse_cl_banner("something 1.2 else").has_value()));
+}};
 
-TEST(MsvcBanner, TripleForArch) {
-    EXPECT_EQ(msvc::triple_for_arch("x64"),   "x86_64-pc-windows-msvc");
-    EXPECT_EQ(msvc::triple_for_arch("x86"),   "i686-pc-windows-msvc");
-    EXPECT_EQ(msvc::triple_for_arch("arm64"), "aarch64-pc-windows-msvc");
+UTest msvc_banner_triple_for_arch{"MsvcBanner/TripleForArch", [] {
+    expect(eq(msvc::triple_for_arch("x64"), "x86_64-pc-windows-msvc"));
+    expect(eq(msvc::triple_for_arch("x86"), "i686-pc-windows-msvc"));
+    expect(eq(msvc::triple_for_arch("arm64"), "aarch64-pc-windows-msvc"));
     // Unknown/empty arch falls back to the x64 triple.
-    EXPECT_EQ(msvc::triple_for_arch(""),      "x86_64-pc-windows-msvc");
-}
+    expect(eq(msvc::triple_for_arch(""), "x86_64-pc-windows-msvc"));
+}};
 
 // ─── install guidance ────────────────────────────────────────────────────
 
@@ -75,26 +77,26 @@ std::string fixed_file_info(std::uint32_t ms, std::uint32_t ls,
 }
 } // namespace
 
-TEST(MsvcCompilerVersion, ReadsTheFixedFileInfoAsClangDoes) {
+UTest reads_the_fixed_file_info_as_clang_does{"MsvcCompilerVersion/ReadsTheFixedFileInfoAsClangDoes", [] {
     // 19.51.36257.0: MS = 19 << 16 | 51, LS = 36257 << 16 | 0.
     std::string image(300, 'x');
     image += fixed_file_info((19u << 16) | 51u, (36257u << 16) | 0u);
     image += std::string(40, 'y');
     auto v = mcpp::toolchain::msvc::pe_file_version(image);
-    ASSERT_TRUE(v.has_value());
-    EXPECT_EQ(*v, "19.51.36257");
-}
+    expect(fatal(v.has_value()));
+    expect(eq(*v, "19.51.36257"));
+}};
 
-TEST(MsvcCompilerVersion, SkipsASignatureThatIsNotTheStructure) {
+UTest skips_a_signature_that_is_not_the_structure{"MsvcCompilerVersion/SkipsASignatureThatIsNotTheStructure", [] {
     // The four signature bytes can occur in code; only the structure, whose
     // next word is 0x00010000, is read.
     std::string image = fixed_file_info((1u << 16) | 2u, (3u << 16), 0xDEADBEEFu);
     image += fixed_file_info((19u << 16) | 44u, (35211u << 16) | 7u);
-    EXPECT_EQ(mcpp::toolchain::msvc::pe_file_version(image).value_or(""), "19.44.35211");
-    EXPECT_FALSE(mcpp::toolchain::msvc::pe_file_version("no version here").has_value());
-}
+    expect(eq(mcpp::toolchain::msvc::pe_file_version(image).value_or(""), "19.44.35211"));
+    expect(!(mcpp::toolchain::msvc::pe_file_version("no version here").has_value()));
+}};
 
-TEST(MsvcCompilerVersion, IsReadFromTheCompilerClangReadsForTheTarget) {
+UTest is_read_from_the_compiler_clang_reads_for_the_target{"MsvcCompilerVersion/IsReadFromTheCompilerClangReadsForTheTarget", [] {
     // clang reads bin/Host{x64|x86}/<target>/cl.exe; each target's compiler
     // here carries its own build, under both host directories, so the answer
     // depends on the target and not on which host runs the test.
@@ -111,94 +113,94 @@ TEST(MsvcCompilerVersion, IsReadFromTheCompilerClangReadsForTheTarget) {
             os << std::string(64, 'M') << fixed_file_info((19u << 16) | 51u, (build << 16));
         }
     namespace msvc = mcpp::toolchain::msvc;
-    EXPECT_EQ(msvc::compiler_version_in_tools_dir(tools, "x86_64"),  "19.51.36260");
-    EXPECT_EQ(msvc::compiler_version_in_tools_dir(tools, "aarch64"), "19.51.36261");
-    EXPECT_EQ(msvc::compiler_version_in_tools_dir(tools, "i686"),    "19.51.36262");
+    expect(eq(msvc::compiler_version_in_tools_dir(tools, "x86_64"), "19.51.36260"));
+    expect(eq(msvc::compiler_version_in_tools_dir(tools, "aarch64"), "19.51.36261"));
+    expect(eq(msvc::compiler_version_in_tools_dir(tools, "i686"), "19.51.36262"));
     // Every 32-bit x86 spelling is the x86 directory (2026.10.5.3; i386-i586
     // used to read x64's compiler).
-    EXPECT_EQ(msvc::compiler_version_in_tools_dir(tools, "i386"),    "19.51.36262");
-    EXPECT_EQ(msvc::compiler_version_in_tools_dir(tools, "i586"),    "19.51.36262");
+    expect(eq(msvc::compiler_version_in_tools_dir(tools, "i386"), "19.51.36262"));
+    expect(eq(msvc::compiler_version_in_tools_dir(tools, "i586"), "19.51.36262"));
     // No compiler where clang looks: no version, and clang falls back itself.
-    EXPECT_EQ(msvc::compiler_version_in_tools_dir(tools / "absent", "x86_64"), "");
+    expect(eq(msvc::compiler_version_in_tools_dir(tools / "absent", "x86_64"), ""));
     std::error_code ec;
     fs::remove_all(tools.parent_path().parent_path().parent_path().parent_path(), ec);
-}
+}};
 
-TEST(MsvcGuidance, OffersBothOrigins) {
+UTest offers_both_origins{"MsvcGuidance/OffersBothOrigins", [] {
     auto g = msvc::install_guidance();
-    ASSERT_FALSE(g.empty());
+    expect(fatal(!g.empty()));
     // The managed origin has to be reachable from the message a user sees
     // when nothing is installed — otherwise "mcpp can install a toolset" is
     // true and undiscoverable at the same time.
-    EXPECT_NE(g.find("mcpp toolchain install msvc"), std::string::npos) << g;
-    EXPECT_NE(g.find("[toolchain]"), std::string::npos) << g;
+    expect(ne(g.find("mcpp toolchain install msvc"), std::string::npos)) << g;
+    expect(ne(g.find("[toolchain]"), std::string::npos)) << g;
     // …and the system origin stays offered, with its own route.
-    EXPECT_NE(g.find("winget"), std::string::npos) << g;
-    EXPECT_NE(g.find("msvc@system"), std::string::npos) << g;
-    EXPECT_NE(g.find("mcpp toolchain default msvc"), std::string::npos) << g;
-}
+    expect(ne(g.find("winget"), std::string::npos)) << g;
+    expect(ne(g.find("msvc@system"), std::string::npos)) << g;
+    expect(ne(g.find("mcpp toolchain default msvc"), std::string::npos)) << g;
+}};
 
 // ─── spec layer: the VERSION axis decides the origin ─────────────────────
 
-TEST(MsvcSpec, SystemOriginIsTheUnversionedSpec) {
+UTest system_origin_is_the_unversioned_spec{"MsvcSpec/SystemOriginIsTheUnversionedSpec", [] {
     for (auto s : {"msvc", "msvc@system"}) {
         auto spec = parse_toolchain_spec(s);
-        ASSERT_TRUE(spec.has_value()) << s;
-        EXPECT_TRUE(is_system_toolchain(*spec)) << s;
+        expect(fatal(spec.has_value())) << s;
+        expect(is_system_toolchain(*spec)) << s;
     }
     auto gcc = parse_toolchain_spec("gcc@16.1.0");
-    ASSERT_TRUE(gcc.has_value());
-    EXPECT_FALSE(is_system_toolchain(*gcc));
-}
+    expect(fatal(gcc.has_value()));
+    expect(!is_system_toolchain(*gcc));
+}};
 
-TEST(MsvcSpec, ToolsetVersionIsAManagedPayloadNotASystemSpec) {
+UTest toolset_version_is_a_managed_payload_not_a_system_spec{"MsvcSpec/ToolsetVersionIsAManagedPayloadNotASystemSpec", [] {
     // The defect this closes: EVERY msvc spec used to be a system spec, so a
     // manifest could name a toolset and silently get whatever the machine
     // had. A version means a payload, exactly like gcc@16.1.0.
     for (auto s : {"msvc@14.44.35207", "msvc@14.52.36629"}) {
         auto spec = parse_toolchain_spec(s);
-        ASSERT_TRUE(spec.has_value()) << s;
-        EXPECT_FALSE(is_system_toolchain(*spec)) << s;
+        expect(fatal(spec.has_value())) << s;
+        expect(!is_system_toolchain(*spec)) << s;
         auto pkg = to_xim_package(*spec);
-        EXPECT_EQ(pkg.ximName, "msvc") << s;
-        EXPECT_EQ(pkg.ximVersion, std::string(s).substr(5)) << s;
+        expect(eq(pkg.ximName, "msvc")) << s;
+        expect(eq(pkg.ximVersion, std::string(s).substr(5))) << s;
     }
-}
+}};
 
-TEST(MsvcSpec, StableDefaultMatchesAnyDetectedVersion) {
+UTest stable_default_matches_any_detected_version{"MsvcSpec/StableDefaultMatchesAnyDetectedVersion", [] {
     // The persisted default is always the stable "msvc@system" — it matches
     // whatever concrete version detection reports (family-level match).
     auto def = parse_toolchain_spec("msvc@system");
-    ASSERT_TRUE(def.has_value());
+    expect(fatal(def.has_value()));
     PayloadIdentity msvcId{ Family::Msvc, {} };
-    EXPECT_TRUE(spec_matches_payload(*def, msvcId, "19.44.35211"));
-    EXPECT_TRUE(spec_matches_payload(*def, msvcId, "19.29.30133"));
+    expect(bool(spec_matches_payload(*def, msvcId, "19.44.35211")));
+    expect(bool(spec_matches_payload(*def, msvcId, "19.29.30133")));
     PayloadIdentity gccId{ Family::Gcc, {} };
-    EXPECT_FALSE(spec_matches_payload(*def, gccId, "16.1.0"));
+    expect(!spec_matches_payload(*def, gccId, "16.1.0"));
     auto gccDef = parse_toolchain_spec("gcc@16.1.0");
-    ASSERT_TRUE(gccDef.has_value());
-    EXPECT_FALSE(spec_matches_payload(*gccDef, msvcId, "19.44.35211"));
-}
+    expect(fatal(gccDef.has_value()));
+    expect(!spec_matches_payload(*gccDef, msvcId, "19.44.35211"));
+}};
 
-TEST(MsvcSpec, PinnedToolsetMatchesOnlyItsOwnPayload) {
+UTest pinned_toolset_matches_only_its_own_payload{"MsvcSpec/PinnedToolsetMatchesOnlyItsOwnPayload", [] {
     // The other half of the family-level match above: once a version is
     // named, it has to be compared. A pin that matched any payload would be
     // the same silent divergence wearing a version number.
     auto pinned = parse_toolchain_spec("msvc@14.52.36629");
-    ASSERT_TRUE(pinned.has_value());
+    expect(fatal(pinned.has_value()));
     PayloadIdentity msvcId{ Family::Msvc, {} };
-    EXPECT_TRUE(spec_matches_payload(*pinned, msvcId, "14.52.36629"));
-    EXPECT_FALSE(spec_matches_payload(*pinned, msvcId, "14.44.35207"));
-}
+    expect(bool(spec_matches_payload(*pinned, msvcId, "14.52.36629")));
+    expect(!spec_matches_payload(*pinned, msvcId, "14.44.35207"));
+}};
 
-TEST(MsvcSpec, PayloadDirectoryIsIdentifiedAsMsvc) {
+UTest payload_directory_is_identified_as_msvc{"MsvcSpec/PayloadDirectoryIsIdentifiedAsMsvc", [] {
     // Installed payloads are listed by walking `xim-x-<name>` directories.
     // Without this row an install would succeed and then be invisible.
     auto id = identify_xim_payload("msvc");
-    ASSERT_TRUE(id.has_value());
-    EXPECT_EQ(id->family, Family::Msvc);
-    EXPECT_TRUE(id->target.empty());   // host-target, like gcc and llvm
-}
+    expect(fatal(id.has_value()));
+    expect(eq(id->family, Family::Msvc));
+    expect(id->target.empty());   // host-target, like gcc and llvm
+}};
 
 // ─── managed origin: resolution from a payload ───────────────────────────
 //
@@ -274,7 +276,7 @@ struct NoSdkEnv {
 
 } // namespace
 
-TEST(MsvcManaged, ResolvesTheDeclaredToolsetAndNotItsNeighbour) {
+UTest resolves_the_declared_toolset_and_not_its_neighbour{"MsvcManaged/ResolvesTheDeclaredToolsetAndNotItsNeighbour", [] {
     FakeToolset t{"pick"};
     t.add_toolset("14.44.35207");
     t.add_toolset("14.52.36629");
@@ -283,18 +285,18 @@ TEST(MsvcManaged, ResolvesTheDeclaredToolsetAndNotItsNeighbour) {
     // answer 14.52 — the exact substitution the managed origin exists to
     // prevent.
     auto older = msvc::installation_at(t.root, "14.44.35207");
-    ASSERT_TRUE(older.has_value());
-    EXPECT_EQ(older->toolsVersion, "14.44.35207");
-    EXPECT_TRUE(older->hasStdModules);
-    EXPECT_EQ(older->clPath.filename(), "cl.exe");
-    EXPECT_NE(older->clPath.string().find("14.44.35207"), std::string::npos);
+    expect(fatal(older.has_value()));
+    expect(eq(older->toolsVersion, "14.44.35207"));
+    expect(bool(older->hasStdModules));
+    expect(eq(older->clPath.filename(), "cl.exe"));
+    expect(ne(older->clPath.string().find("14.44.35207"), std::string::npos));
 
     auto newer = msvc::installation_at(t.root, "14.52.36629");
-    ASSERT_TRUE(newer.has_value());
-    EXPECT_EQ(newer->toolsVersion, "14.52.36629");
-}
+    expect(fatal(newer.has_value()));
+    expect(eq(newer->toolsVersion, "14.52.36629"));
+}};
 
-TEST(MsvcManaged, TheVersionDirIsTheRootNotItsLoneSubdirectory) {
+UTest the_version_dir_is_the_root_not_its_lone_subdirectory{"MsvcManaged/TheVersionDirIsTheRootNotItsLoneSubdirectory", [] {
     // A real installed payload has exactly ONE entry: `VC/`. The fetcher's
     // `XpkgPayload::root` treats the version directory as the root only when
     // it directly contains bin/ include/ lib/, and otherwise descends into a
@@ -309,35 +311,35 @@ TEST(MsvcManaged, TheVersionDirIsTheRootNotItsLoneSubdirectory) {
     t.add_toolset("14.44.35207");
 
     auto ok = msvc::installation_at(t.root, "14.44.35207");
-    ASSERT_TRUE(ok.has_value()) << "the version directory must be the root";
+    expect(fatal(ok.has_value())) << "the version directory must be the root";
 
-    EXPECT_FALSE(msvc::installation_at(t.root / "VC", "14.44.35207").has_value())
+    expect(!(msvc::installation_at(t.root / "VC", "14.44.35207").has_value()))
         << "a caller handing in the VC subdir is passing the wrong thing, and "
            "must be told so rather than quietly rescued";
-}
+}};
 
-TEST(MsvcManaged, AbsentToolsetIsNulloptNotASubstitute) {
+UTest absent_toolset_is_nullopt_not_a_substitute{"MsvcManaged/AbsentToolsetIsNulloptNotASubstitute", [] {
     FakeToolset t{"absent"};
     t.add_toolset("14.44.35207");
     // Nothing is "close enough": a pin that silently fell back would report
     // success while building with a compiler nobody asked for.
-    EXPECT_FALSE(msvc::installation_at(t.root, "14.52.36629").has_value());
-    EXPECT_FALSE(msvc::installation_at(t.root, "14.44").has_value());
-    EXPECT_FALSE(msvc::installation_at(t.root, "").has_value());
-}
+    expect(!(msvc::installation_at(t.root, "14.52.36629").has_value()));
+    expect(!(msvc::installation_at(t.root, "14.44").has_value()));
+    expect(!(msvc::installation_at(t.root, "").has_value()));
+}};
 
-TEST(MsvcManaged, VersionFallsBackToTheDeclaredOneWhenTheBannerCannotBeRead) {
+UTest version_falls_back_to_the_declared_one_when_the_banner_cannot_be_read{"MsvcManaged/VersionFallsBackToTheDeclaredOneWhenTheBannerCannotBeRead", [] {
     // A fixture cl.exe produces no banner (and on Windows a real one would).
     // display_version() must still name the toolset rather than an empty
     // string — the declared version is a fact even when the probe fails.
     FakeToolset t{"banner"};
     t.add_toolset("14.52.36629");
     auto inst = msvc::installation_at(t.root, "14.52.36629");
-    ASSERT_TRUE(inst.has_value());
-    EXPECT_EQ(inst->display_version(), "14.52.36629");
-}
+    expect(fatal(inst.has_value()));
+    expect(eq(inst->display_version(), "14.52.36629"));
+}};
 
-TEST(MsvcManaged, PayloadFrontendFindsClWhereMsvcActuallyKeepsIt) {
+UTest payload_frontend_finds_cl_where_msvc_actually_keeps_it{"MsvcManaged/PayloadFrontendFindsClWhereMsvcActuallyKeepsIt", [] {
     // The defect this pins: `toolchain list` asked `toolchain_frontend(root /
     // "bin", …)`, got nothing, and skipped the row -- so an msvc toolset
     // installed correctly and then did not appear anywhere. Three places need
@@ -346,28 +348,28 @@ TEST(MsvcManaged, PayloadFrontendFindsClWhereMsvcActuallyKeepsIt) {
     t.add_toolset("14.44.35207");
 
     auto spec = parse_toolchain_spec("msvc@14.44.35207");
-    ASSERT_TRUE(spec.has_value());
+    expect(fatal(spec.has_value()));
     auto pkg = to_xim_package(*spec);
 
     // The family comes from the PACKAGE now, not from a second argument every
     // caller had to source from a differently-named local -- five of them
     // composed `payload->binDir` themselves instead and so could not see
     // `frontendSubdir` at all.
-    EXPECT_EQ(pkg.family, Family::Msvc);
+    expect(eq(pkg.family, Family::Msvc));
     auto found = payload_frontend(t.root, pkg);
-    ASSERT_TRUE(found.has_value()) << found.error();
-    ASSERT_FALSE(found->empty())
+    if (auto&& failed = expect(fatal(found.has_value())); !failed) failed << found.error();
+    expect(fatal(!found->empty()))
         << "payload_frontend found no cl.exe under " << t.root;
-    EXPECT_EQ(found->filename(), "cl.exe");
+    expect(eq(found->filename(), "cl.exe"));
 
     // The `bin/`-shaped question is the one that used to be asked, and it
     // still answers nothing here — which is exactly why it was the wrong
     // question rather than a broken implementation.
-    EXPECT_TRUE(toolchain_frontend(t.root / "bin", pkg).empty());
+    expect(toolchain_frontend(t.root / "bin", pkg).empty());
 
     // A root with no toolset at that version stays empty rather than
     // returning a path that does not exist.
-    EXPECT_TRUE(payload_frontend(t.root,
+    expect(payload_frontend(t.root,
                     to_xim_package(*parse_toolchain_spec("msvc@14.52.36629")))
                  .value().empty());
 
@@ -376,24 +378,24 @@ TEST(MsvcManaged, PayloadFrontendFindsClWhereMsvcActuallyKeepsIt) {
     // carries the toolset version, so a refusal naming `bin` would name a
     // directory nothing looked in.
     auto dir = payload_frontend_dir(t.root, pkg);
-    EXPECT_FALSE(dir.empty());
-    EXPECT_NE(dir.string().find("14.44.35207"), std::string::npos) << dir;
-}
+    expect(!dir.empty());
+    expect(ne(dir.string().find("14.44.35207"), std::string::npos)) << dir;
+}};
 
 // ─── Windows SDK discovery ───────────────────────────────────────────────
 
-TEST(MsvcSdk, WindowsSdkDirBeatsTheHardcodedPaths) {
+UTest windows_sdk_dir_beats_the_hardcoded_paths{"MsvcSdk/WindowsSdkDirBeatsTheHardcodedPaths", [] {
     NoSdkEnv clean;
     FakeToolset t{"sdkenv"};
     t.add_sdk("10.0.26100.0");
     ScopedEnv dir{"WindowsSdkDir", t.root.string()};
     auto sdk = msvc::find_windows_sdk();
-    ASSERT_TRUE(sdk.has_value());
-    EXPECT_EQ(sdk->root, t.root);
-    EXPECT_EQ(sdk->version, "10.0.26100.0");
-}
+    expect(fatal(sdk.has_value()));
+    expect(eq(sdk->root, t.root));
+    expect(eq(sdk->version, "10.0.26100.0"));
+}};
 
-TEST(MsvcSdk, WindowsSdkVersionSelectsAmongInstalledOnes) {
+UTest windows_sdk_version_selects_among_installed_ones{"MsvcSdk/WindowsSdkVersionSelectsAmongInstalledOnes", [] {
     NoSdkEnv clean;
     FakeToolset t{"sdkver"};
     t.add_sdk("10.0.22621.0");
@@ -403,16 +405,16 @@ TEST(MsvcSdk, WindowsSdkVersionSelectsAmongInstalledOnes) {
         // the directory name, and comparing it raw finds nothing.
         ScopedEnv ver{"WindowsSdkVersion", "10.0.22621.0\\"};
         auto sdk = msvc::find_windows_sdk();
-        ASSERT_TRUE(sdk.has_value());
-        EXPECT_EQ(sdk->version, "10.0.22621.0");
+        expect(fatal(sdk.has_value()));
+        expect(eq(sdk->version, "10.0.22621.0"));
     }
     // Unset again: highest usable wins.
     auto sdk = msvc::find_windows_sdk();
-    ASSERT_TRUE(sdk.has_value());
-    EXPECT_EQ(sdk->version, "10.0.26100.0");
-}
+    expect(fatal(sdk.has_value()));
+    expect(eq(sdk->version, "10.0.26100.0"));
+}};
 
-TEST(MsvcSdk, ExtraRootsCoverTheManagedPayload) {
+UTest extra_roots_cover_the_managed_payload{"MsvcSdk/ExtraRootsCoverTheManagedPayload", [] {
     NoSdkEnv clean;
     FakeToolset t{"sdkextra"};
     t.add_sdk("10.0.26100.0");
@@ -420,11 +422,11 @@ TEST(MsvcSdk, ExtraRootsCoverTheManagedPayload) {
     // found, which is exactly the managed toolset's situation.
     std::array roots{t.root};
     auto sdk = msvc::find_windows_sdk(roots);
-    ASSERT_TRUE(sdk.has_value());
-    EXPECT_EQ(sdk->root, t.root);
-}
+    expect(fatal(sdk.has_value()));
+    expect(eq(sdk->root, t.root));
+}};
 
-TEST(MsvcSdk, IncompleteSdkRootIsNotAnAnswer) {
+UTest incomplete_sdk_root_is_not_an_answer{"MsvcSdk/IncompleteSdkRootIsNotAnAnswer", [] {
     // Include/<ver>/ exists but carries no ucrt/corecrt.h: a half-installed
     // SDK must read as absent, not as a usable one that fails later inside
     // the compiler. Checked through extraRoots so the assertion cannot be
@@ -434,8 +436,8 @@ TEST(MsvcSdk, IncompleteSdkRootIsNotAnAnswer) {
     std::filesystem::create_directories(t.root / "Include" / "10.0.26100.0" / "um");
     std::array roots{t.root};
     auto sdk = msvc::find_windows_sdk(roots);
-    if (sdk) EXPECT_NE(sdk->root, t.root) << "an SDK-less root was accepted";
-}
+    if (sdk) expect(ne(sdk->root, t.root)) << "an SDK-less root was accepted";
+}};
 
 // ─── the toolset's own redistributable CRT ───────────────────────────────
 
@@ -477,89 +479,88 @@ struct FakeRedist {
 
 } // namespace
 
-TEST(MsvcRedist, FoundFromTheCompilerPathAlone) {
+UTest found_from_the_compiler_path_alone{"MsvcRedist/FoundFromTheCompilerPathAlone", [] {
     // Nothing configured, no version derived: the compiler's own location
     // says which toolset this is, and the toolset carries its runtime.
     FakeRedist t{"14.44.35207", "14.44.35112"};
     auto d = msvc::vc_redist_dir(t.clPath, "x64");
-    ASSERT_FALSE(d.empty()) << "the toolset's redistributable CRT was not found";
-    EXPECT_TRUE(std::filesystem::exists(d / "vcruntime140.dll"));
-}
+    expect(fatal(!d.empty())) << "the toolset's redistributable CRT was not found";
+    expect(std::filesystem::exists(d / "vcruntime140.dll"));
+}};
 
-TEST(MsvcRedist, TheRedistVersionIsNotTheToolsVersion) {
+UTest the_redist_version_is_not_the_tools_version{"MsvcRedist/TheRedistVersionIsNotTheToolsVersion", [] {
     // 14.44.35207 (tools) vs 14.44.35112 (redist) is what MSVC actually
     // ships. Deriving one from the other finds nothing — this is why the
     // directory is searched rather than composed.
     FakeRedist t{"14.44.35207", "14.44.35112"};
     auto d = msvc::vc_redist_dir(t.clPath, "x64");
-    ASSERT_FALSE(d.empty());
-    EXPECT_NE(d.string().find("14.44.35112"), std::string::npos)
+    expect(fatal(!d.empty()));
+    expect(ne(d.string().find("14.44.35112"), std::string::npos))
         << "did not land in the redist version directory: " << d.string();
-}
+}};
 
-TEST(MsvcRedist, NewestRedistWins) {
+UTest newest_redist_wins{"MsvcRedist/NewestRedistWins", [] {
     FakeRedist t{"14.44.35207", "14.40.00000"};
     t.add("14.44.35112", "x64", "Microsoft.VC143.CRT", "vcruntime140.dll");
     auto d = msvc::vc_redist_dir(t.clPath, "x64");
-    ASSERT_FALSE(d.empty());
-    EXPECT_NE(d.string().find("14.44.35112"), std::string::npos)
+    expect(fatal(!d.empty()));
+    expect(ne(d.string().find("14.44.35112"), std::string::npos))
         << "older redist won: " << d.string();
-}
+}};
 
-TEST(MsvcRedist, TheDebugCrtIsNeverReturned) {
+UTest the_debug_crt_is_never_returned{"MsvcRedist/TheDebugCrtIsNeverReturned", [] {
     // debug_nonredist may NOT be redistributed. Returning it would put
     // vcruntime140d.dll on PATH and, later, into a shipped artifact.
     FakeRedist t{"14.44.35207", "14.44.35112"};
     t.add_debug("14.99.99999");          // newer, and must still lose
     auto d = msvc::vc_redist_dir(t.clPath, "x64");
-    ASSERT_FALSE(d.empty());
-    EXPECT_EQ(d.string().find("debug_nonredist"), std::string::npos)
+    expect(fatal(!d.empty()));
+    expect(eq(d.string().find("debug_nonredist"), std::string::npos))
         << "returned the non-redistributable debug CRT: " << d.string();
-}
+}};
 
-TEST(MsvcRedist, AToolsetWithoutARedistIsNotAnError) {
+UTest a_toolset_without_a_redist_is_not_an_error{"MsvcRedist/AToolsetWithoutARedistIsNotAnError", [] {
     // msvc@system on a machine whose VS install omits the redist component,
     // for instance. Empty means "nothing to add to PATH", not a failure.
     FakeRedist t{"14.44.35207", "14.44.35112"};
     std::error_code ec;
     std::filesystem::remove_all(t.root / "VC" / "Redist", ec);
-    EXPECT_TRUE(msvc::vc_redist_dir(t.clPath, "x64").empty());
-}
+    expect(msvc::vc_redist_dir(t.clPath, "x64").empty());
+}};
 
 // #718: the LLVM row reaches the SAME redistributable from its sysroot's
 // tools directory, since it runs no cl.exe of its own to derive one from.
-TEST(MsvcRedist, TheSameDirectoryIsReachableFromTheToolsDirAlone) {
+UTest the_same_directory_is_reachable_from_the_tools_dir_alone{"MsvcRedist/TheSameDirectoryIsReachableFromTheToolsDirAlone", [] {
     FakeRedist t{"14.44.35207", "14.44.35112"};
     // <VC>/Tools/MSVC/<ver>/bin/Hostx64/x64/cl.exe -> up 4 reaches the tools
     // dir `Toolchain::msvcToolsDir` carries (<VC>/Tools/MSVC/<ver>).
     auto toolsDir = t.clPath.parent_path().parent_path().parent_path().parent_path();
     auto fromCl    = msvc::vc_redist_dir(t.clPath, "x64");
     auto fromTools = msvc::vc_redist_dir_for_tools_dir(toolsDir, "x86_64");
-    ASSERT_FALSE(fromCl.empty());
-    EXPECT_EQ(fromCl, fromTools);
-}
+    expect(fatal(!fromCl.empty()));
+    expect(eq(fromCl, fromTools));
+}};
 
-TEST(MsvcRedist, ToolsDirArchMapping) {
+UTest tools_dir_arch_mapping{"MsvcRedist/ToolsDirArchMapping", [] {
     // The GNU-spelled triple architecture (what a Toolchain carries) maps to
     // the msvc spelling `vc_redist_dir` takes.
     FakeRedist t{"14.44.35207", "14.44.35112"};
     t.add("14.44.35112", "arm64", "Microsoft.VC143.CRT", "vcruntime140.dll");
     t.add("14.44.35112", "x86", "Microsoft.VC143.CRT", "vcruntime140.dll");
     auto toolsDir = t.clPath.parent_path().parent_path().parent_path().parent_path();
-    EXPECT_FALSE(msvc::vc_redist_dir_for_tools_dir(toolsDir, "aarch64").empty());
-    EXPECT_FALSE(msvc::vc_redist_dir_for_tools_dir(toolsDir, "i686").empty());
-    EXPECT_EQ(msvc::vc_redist_dir_for_tools_dir(toolsDir, "i386"),
-              msvc::vc_redist_dir_for_tools_dir(toolsDir, "i686"));
-    EXPECT_FALSE(msvc::vc_redist_dir_for_tools_dir(toolsDir, "x86_64").empty());
+    expect(!(msvc::vc_redist_dir_for_tools_dir(toolsDir, "aarch64").empty()));
+    expect(!(msvc::vc_redist_dir_for_tools_dir(toolsDir, "i686").empty()));
+    expect(eq(msvc::vc_redist_dir_for_tools_dir(toolsDir, "i386"), msvc::vc_redist_dir_for_tools_dir(toolsDir, "i686")));
+    expect(!(msvc::vc_redist_dir_for_tools_dir(toolsDir, "x86_64").empty()));
     // An architecture this toolset was never given a redist for finds none —
     // it does not fall back to a different one.
     std::error_code ec;
     auto vc = toolsDir.parent_path().parent_path().parent_path();   // <VC>
     std::filesystem::remove_all(vc / "Redist" / "MSVC" / "14.44.35112" / "arm64", ec);
-    EXPECT_TRUE(msvc::vc_redist_dir_for_tools_dir(toolsDir, "aarch64").empty());
-}
+    expect(msvc::vc_redist_dir_for_tools_dir(toolsDir, "aarch64").empty());
+}};
 
-TEST(MsvcSdk, HeadersWithoutImportLibsIsNotAnAnswer) {
+UTest headers_without_import_libs_is_not_an_answer{"MsvcSdk/HeadersWithoutImportLibsIsNotAnAnswer", [] {
     // The half that used to pass. `Include/<v>/ucrt/corecrt.h` is there and
     // `Lib/` is not, which is exactly what a managed windows-sdk payload
     // looked like when its um-libs MSI had not unpacked: every TU compiled
@@ -573,11 +574,11 @@ TEST(MsvcSdk, HeadersWithoutImportLibsIsNotAnAnswer) {
     t.add_sdk_headers_only("10.0.26100.0");
     std::array roots{t.root};
     auto sdk = msvc::find_windows_sdk(roots);
-    if (sdk) EXPECT_NE(sdk->root, t.root)
+    if (sdk) expect(ne(sdk->root, t.root))
         << "a headers-only SDK was accepted; the link would fail on kernel32.lib";
-}
+}};
 
-TEST(MsvcSdk, ACompleteRootIsStillAccepted) {
+UTest a_complete_root_is_still_accepted{"MsvcSdk/ACompleteRootIsStillAccepted", [] {
     // The other direction, so the check above cannot be satisfied by
     // rejecting everything.
     NoSdkEnv clean;
@@ -585,12 +586,12 @@ TEST(MsvcSdk, ACompleteRootIsStillAccepted) {
     t.add_sdk("10.0.26100.0");
     std::array roots{t.root};
     auto sdk = msvc::find_windows_sdk(roots);
-    ASSERT_TRUE(sdk) << "a complete SDK root was rejected";
-    EXPECT_EQ(sdk->root, t.root);
-    EXPECT_EQ(sdk->version, "10.0.26100.0");
-}
+    expect(fatal(bool(sdk))) << "a complete SDK root was rejected";
+    expect(eq(sdk->root, t.root));
+    expect(eq(sdk->version, "10.0.26100.0"));
+}};
 
-TEST(MsvcSdk, APartialRootYieldsToACompleteOne) {
+UTest a_partial_root_yields_to_a_complete_one{"MsvcSdk/APartialRootYieldsToACompleteOne", [] {
     // Ordering, not just acceptance: given both, the usable one must win even
     // though the partial one carries the HIGHER version — which is how the
     // managed payload outranked the system SDK in the first place.
@@ -601,12 +602,12 @@ TEST(MsvcSdk, APartialRootYieldsToACompleteOne) {
     complete.add_sdk("10.0.26100.0");
     std::array roots{partial.root, complete.root};
     auto sdk = msvc::find_windows_sdk(roots);
-    ASSERT_TRUE(sdk);
-    EXPECT_EQ(sdk->root, complete.root)
+    expect(fatal(bool(sdk)));
+    expect(eq(sdk->root, complete.root))
         << "the partial root won on version; it cannot link";
-}
+}};
 
-TEST(MsvcSdk, DeclaredRootOutranksTheManagedOne) {
+UTest declared_root_outranks_the_managed_one{"MsvcSdk/DeclaredRootOutranksTheManagedOne", [] {
     // Both available. WindowsSdkDir is someone saying which one to use, and
     // it has to win — the same precedence VSINSTALLDIR has over vswhere.
     NoSdkEnv clean;
@@ -617,30 +618,30 @@ TEST(MsvcSdk, DeclaredRootOutranksTheManagedOne) {
     ScopedEnv dir{"WindowsSdkDir", declared.root.string()};
     std::array roots{managed.root};
     auto sdk = msvc::find_windows_sdk(roots);
-    ASSERT_TRUE(sdk.has_value());
-    EXPECT_EQ(sdk->root, declared.root);
-    EXPECT_EQ(sdk->version, "10.0.22621.0");
-}
+    expect(fatal(sdk.has_value()));
+    expect(eq(sdk->root, declared.root));
+    expect(eq(sdk->version, "10.0.22621.0"));
+}};
 
-TEST(MsvcSdk, SiblingSdkRootsAreEmptyForACompilerOutsideAnyStore) {
+UTest sibling_sdk_roots_are_empty_for_a_compiler_outside_any_store{"MsvcSdk/SiblingSdkRootsAreEmptyForACompilerOutsideAnyStore", [] {
     // A system cl.exe is not in an xlings store, so there is nothing to
     // offer — and offering the wrong thing would be worse than nothing.
-    EXPECT_TRUE(msvc::sibling_sdk_roots(
+    expect(msvc::sibling_sdk_roots(
         "C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Tools/"
         "MSVC/14.51.36231/bin/Hostx64/x64/cl.exe").empty());
-}
+}};
 
 // ─── model traits ────────────────────────────────────────────────────────
 
-TEST(MsvcModel, BmiTraitsUseIfc) {
+UTest bmi_traits_use_ifc{"MsvcModel/BmiTraitsUseIfc", [] {
     Toolchain tc;
     tc.compiler = CompilerId::MSVC;
     auto t = bmi_traits(tc);
-    EXPECT_EQ(t.bmiDir, "ifc.cache");
-    EXPECT_EQ(t.bmiExt, ".ifc");
-    EXPECT_TRUE(t.needsExplicitModuleOutput);
-    EXPECT_FALSE(t.scanNeedsFModules);
-}
+    expect(eq(t.bmiDir, "ifc.cache"));
+    expect(eq(t.bmiExt, ".ifc"));
+    expect(bool(t.needsExplicitModuleOutput));
+    expect(!t.scanNeedsFModules);
+}};
 
 // ─── std module minimum standard level ───────────────────────────────────
 //
@@ -650,7 +651,7 @@ TEST(MsvcModel, BmiTraitsUseIfc) {
 // refuse with an actionable message instead.
 // See .agents/docs/2026-07-31-cpp20-standard-support-design.md §2.3.
 
-TEST(MsvcStdModule, MinLevelFollowsStlUnblockVersion) {
+UTest min_level_follows_stl_unblock_version{"MsvcStdModule/MinLevelFollowsStlUnblockVersion", [] {
     auto tc_of = [](std::string ver) {
         Toolchain tc;
         tc.compiler = CompilerId::MSVC;
@@ -658,16 +659,16 @@ TEST(MsvcStdModule, MinLevelFollowsStlUnblockVersion) {
         return tc;
     };
     // VS 2022 17.8 and newer: C++20 is allowed.
-    EXPECT_EQ(msvc::std_module_min_level(tc_of("19.38.33130")), 20);
-    EXPECT_EQ(msvc::std_module_min_level(tc_of("19.44.35211")), 20);
-    EXPECT_EQ(msvc::std_module_min_level(tc_of("20.0")), 20);
+    expect(eq(msvc::std_module_min_level(tc_of("19.38.33130")), 20));
+    expect(eq(msvc::std_module_min_level(tc_of("19.44.35211")), 20));
+    expect(eq(msvc::std_module_min_level(tc_of("20.0")), 20));
     // Older toolsets keep the C++23 floor.
-    EXPECT_EQ(msvc::std_module_min_level(tc_of("19.37.32825")), 23);
-    EXPECT_EQ(msvc::std_module_min_level(tc_of("19.29.30153")), 23);
+    expect(eq(msvc::std_module_min_level(tc_of("19.37.32825")), 23));
+    expect(eq(msvc::std_module_min_level(tc_of("19.29.30153")), 23));
     // Unparseable banner version: stay strict rather than guess.
-    EXPECT_EQ(msvc::std_module_min_level(tc_of("")), 23);
-    EXPECT_EQ(msvc::std_module_min_level(tc_of("unknown")), 23);
-}
+    expect(eq(msvc::std_module_min_level(tc_of("")), 23));
+    expect(eq(msvc::std_module_min_level(tc_of("unknown")), 23));
+}};
 
 // #603 — THE QUESTION IS ASKED OF THE STL, NOT OF WHATEVER COMPILER REACHES IT.
 //
@@ -680,28 +681,28 @@ TEST(MsvcStdModule, MinLevelFollowsStlUnblockVersion) {
 // because it would compare a CLANG version number against an MSVC threshold and
 // be right by accident: clang 20.x passes `>= 19.38` and clang 19.x fails it.
 // The toolset version is in the path of the module source that was selected.
-TEST(MsvcStdModule, MinLevelForStlReadsTheToolsetOutOfTheModuleSourcePath) {
+UTest min_level_for_stl_reads_the_toolset_out_of_the_module_source_path{"MsvcStdModule/MinLevelForStlReadsTheToolsetOutOfTheModuleSourcePath", [] {
     auto lvl = [](std::string p) {
         return msvc::std_module_min_level_for_stl(std::filesystem::path(p));
     };
     // VS 2022 17.8 (toolset 14.38) is where microsoft/STL#3977 first ships.
-    EXPECT_EQ(lvl("C:/VS/VC/Tools/MSVC/14.38.33130/modules/std.ixx"), 20);
-    EXPECT_EQ(lvl("C:/VS/VC/Tools/MSVC/14.44.35207/modules/std.ixx"), 20);
+    expect(eq(lvl("C:/VS/VC/Tools/MSVC/14.38.33130/modules/std.ixx"), 20));
+    expect(eq(lvl("C:/VS/VC/Tools/MSVC/14.44.35207/modules/std.ixx"), 20));
     // Older toolsets keep the C++23 floor and get an actionable diagnostic.
-    EXPECT_EQ(lvl("C:/VS/VC/Tools/MSVC/14.37.32822/modules/std.ixx"), 23);
-    EXPECT_EQ(lvl("C:/VS/VC/Tools/MSVC/14.29.30133/modules/std.ixx"), 23);
+    expect(eq(lvl("C:/VS/VC/Tools/MSVC/14.37.32822/modules/std.ixx"), 23));
+    expect(eq(lvl("C:/VS/VC/Tools/MSVC/14.29.30133/modules/std.ixx"), 23));
     // A layout this mapping is not defined for answers 23 rather than guessing.
     // The safety the hardcode was after is kept for exactly these cases.
-    EXPECT_EQ(lvl(""), 23);
-    EXPECT_EQ(lvl("C:/VS/VC/Tools/MSVC/modules/std.ixx"), 23);
-    EXPECT_EQ(lvl("/opt/llvm/share/libc++/v1/std.cppm"), 23);
-    EXPECT_EQ(lvl("C:/VS/VC/Tools/MSVC/15.0.0/modules/std.ixx"), 23);
-}
+    expect(eq(lvl(""), 23));
+    expect(eq(lvl("C:/VS/VC/Tools/MSVC/modules/std.ixx"), 23));
+    expect(eq(lvl("/opt/llvm/share/libc++/v1/std.cppm"), 23));
+    expect(eq(lvl("C:/VS/VC/Tools/MSVC/15.0.0/modules/std.ixx"), 23));
+}};
 
 // The two forms must agree for a well-formed installation, because that is the
 // one path the banner form was verified on. If they could disagree there, this
 // change would be a silent behaviour change on the toolchain that worked.
-TEST(MsvcStdModule, TheStlAndBannerFormsAgreeForAWellFormedInstallation) {
+UTest the_stl_and_banner_forms_agree_for_a_well_formed_installation{"MsvcStdModule/TheStlAndBannerFormsAgreeForAWellFormedInstallation", [] {
     auto tc_of = [](std::string ver) {
         Toolchain tc;
         tc.compiler = CompilerId::MSVC;
@@ -714,13 +715,12 @@ TEST(MsvcStdModule, TheStlAndBannerFormsAgreeForAWellFormedInstallation) {
                                     std::pair{"19.44.35211", "14.44.35207"},
                                     std::pair{"19.37.32825", "14.37.32822"},
                                     std::pair{"19.29.30153", "14.29.30133"} }) {
-        EXPECT_EQ(msvc::std_module_min_level(tc_of(banner)),
-                  msvc::std_module_min_level_for_stl(std::filesystem::path(
+        expect(eq(msvc::std_module_min_level(tc_of(banner)), msvc::std_module_min_level_for_stl(std::filesystem::path(
                       std::string("C:/VS/VC/Tools/MSVC/") + toolset
-                      + "/modules/std.ixx")))
+                      + "/modules/std.ixx"))))
             << "banner " << banner << " vs toolset " << toolset;
     }
-}
+}};
 
 // #422 — the std module must be built with the SAME CRT model as the TUs that
 // import it.
@@ -737,7 +737,7 @@ TEST(MsvcStdModule, TheStlAndBannerFormsAgreeForAWellFormedInstallation) {
 // and it must be in the command STRING (so it enters `std_build_commands`,
 // which is part of the std cache identity — two CRT models then cannot share a
 // cache directory and silently serve each other's module).
-TEST(ToolchainMsvc, StdModuleCarriesTheProjectCrtModel) {
+UTest std_module_carries_the_project_crt_model{"ToolchainMsvc/StdModuleCarriesTheProjectCrtModel", [] {
     Toolchain tc;
     tc.compiler   = CompilerId::MSVC;
     tc.binaryPath = "C:/vc/bin/cl.exe";
@@ -748,63 +748,60 @@ TEST(ToolchainMsvc, StdModuleCarriesTheProjectCrtModel) {
 
     for (std::string_view crt : {std::string_view("/MT"), std::string_view("/MD")}) {
         auto cmds = msvc::std_module_build_commands(tc, cache, "/std:c++23", crt);
-        ASSERT_EQ(cmds.size(), 1u);
-        EXPECT_NE(cmds[0].find(crt), std::string::npos)
-            << crt << " missing from the std build command: " << cmds[0];
+        expect(fatal(eq(cmds.size(), 1u)));
+        if (auto&& failed = expect(ne(cmds[0].find(crt), std::string::npos)); !failed) failed << crt << " missing from the std build command: " << cmds[0];
 
         auto compat = msvc::std_compat_build_commands(tc, cache, "/std:c++23", crt);
-        ASSERT_EQ(compat.size(), 1u);
-        EXPECT_NE(compat[0].find(crt), std::string::npos)
-            << crt << " missing from the std.compat build command: " << compat[0];
+        expect(fatal(eq(compat.size(), 1u)));
+        if (auto&& failed = expect(ne(compat[0].find(crt), std::string::npos)); !failed) failed << crt << " missing from the std.compat build command: " << compat[0];
     }
 
     // The two models must produce DIFFERENT command strings. Equal strings would
     // mean equal cache keys, i.e. the exact silent divergence this fixes.
-    EXPECT_NE(msvc::std_module_build_commands(tc, cache, "/std:c++23", "/MT")[0],
-              msvc::std_module_build_commands(tc, cache, "/std:c++23", "/MD")[0]);
+    expect(ne(msvc::std_module_build_commands(tc, cache, "/std:c++23", "/MT")[0], msvc::std_module_build_commands(tc, cache, "/std:c++23", "/MD")[0]));
 
     // Empty keeps cl's own default, so non-MSVC callers are unaffected.
     auto bare = msvc::std_module_build_commands(tc, cache, "/std:c++23");
-    EXPECT_EQ(bare[0].find("/MT"), std::string::npos);
-    EXPECT_EQ(bare[0].find("/MD"), std::string::npos);
-}
+    expect(eq(bare[0].find("/MT"), std::string::npos));
+    expect(eq(bare[0].find("/MD"), std::string::npos));
+}};
 
 // The mapping linkage -> CRT model lives in ONE place. It was derived twice —
 // flags.cppm for the project's TUs, and cl's default for the std module — which
 // is how they disagreed.
-TEST(ToolchainMsvc, CrtFlagHasASingleDerivation) {
+UTest crt_flag_has_a_single_derivation{"ToolchainMsvc/CrtFlagHasASingleDerivation", [] {
     Toolchain cl;
     cl.compiler = CompilerId::MSVC;
     const auto& msvcDialect = dialect_for(cl);
-    EXPECT_EQ(msvc_crt_flag(msvcDialect, /*staticCrt=*/true),  "/MT");
-    EXPECT_EQ(msvc_crt_flag(msvcDialect, /*staticCrt=*/false), "/MD");
+    expect(eq(msvc_crt_flag(msvcDialect, /*staticCrt=*/true), "/MT"));
+    expect(eq(msvc_crt_flag(msvcDialect, /*staticCrt=*/false), "/MD"));
 
     // GNU has no counterpart; the helper must yield nothing rather than invent
     // a flag that would be passed to gcc.
     Toolchain gcc;
     gcc.compiler = CompilerId::GCC;
     const auto& gnu = dialect_for(gcc);
-    EXPECT_TRUE(msvc_crt_flag(gnu, false).empty());
-}
+    expect(msvc_crt_flag(gnu, false).empty());
+}};
 
 // Both manifest keys reach the SAME physical switch, because on the MSVC ABI
 // they are the same switch. `cxx_runtime = "self-contained"` used to report
 // "not implemented" while `linkage = "static"` quietly did the very thing it
 // said was unimplemented.
-TEST(ToolchainMsvc, BothKeysSelectTheStaticCrt) {
-    EXPECT_TRUE(msvc_wants_static_crt("static", ""));
-    EXPECT_TRUE(msvc_wants_static_crt("", "self-contained"));
-    EXPECT_TRUE(msvc_wants_static_crt("static", "self-contained"));
+UTest both_keys_select_the_static_crt{"ToolchainMsvc/BothKeysSelectTheStaticCrt", [] {
+    expect(bool(msvc_wants_static_crt("static", "")));
+    expect(bool(msvc_wants_static_crt("", "self-contained")));
+    expect(bool(msvc_wants_static_crt("static", "self-contained")));
 
     // Default: neither written down. This has to stay /MD — most roles
     // DEFAULT to the self-contained contract, so keying off the resolved
     // contract instead of the written key would flip every Windows build to
     // /MT and split the CRT across a project's dependencies.
-    EXPECT_FALSE(msvc_wants_static_crt("", ""));
-    EXPECT_FALSE(msvc_wants_static_crt("dynamic", ""));
-    EXPECT_FALSE(msvc_wants_static_crt("", "host-coupled"));
-    EXPECT_FALSE(msvc_wants_static_crt("", "toolchain-coupled"));
-}
+    expect(!msvc_wants_static_crt("", ""));
+    expect(!msvc_wants_static_crt("dynamic", ""));
+    expect(!msvc_wants_static_crt("", "host-coupled"));
+    expect(!msvc_wants_static_crt("", "toolchain-coupled"));
+}};
 
 // ─── the SDK axis: bound for a managed toolset, searched for a system one ──
 //
@@ -865,28 +862,28 @@ struct FakeStore {
 
 } // namespace
 
-TEST(MsvcSdkOrigin, ACompilerInAStoreIsManagedAndOneOutsideIsNot) {
+UTest a_compiler_in_a_store_is_managed_and_one_outside_is_not{"MsvcSdkOrigin/ACompilerInAStoreIsManagedAndOneOutsideIsNot", [] {
     FakeStore store;
     auto cl = store.add_toolset("14.44.35207");
-    EXPECT_EQ(msvc::origin_of(cl), Origin::Managed);
-    EXPECT_EQ(msvc::origin_of(
+    expect(eq(msvc::origin_of(cl), Origin::Managed));
+    expect(eq(msvc::origin_of(
         "C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Tools/"
-        "MSVC/14.51.36231/bin/Hostx64/x64/cl.exe"), Origin::SystemMsvc);
-}
+        "MSVC/14.51.36231/bin/Hostx64/x64/cl.exe"), Origin::SystemMsvc));
+}};
 
-TEST(MsvcSdkOrigin, AManagedToolsetTakesTheSdkFromItsOwnStore) {
+UTest a_managed_toolset_takes_the_sdk_from_its_own_store{"MsvcSdkOrigin/AManagedToolsetTakesTheSdkFromItsOwnStore", [] {
     NoSdkEnv clean;
     FakeStore store;
     auto cl = store.add_toolset("14.44.35207");
     store.add_sdk("10.0.26100.0");
 
     auto choice = msvc::resolve_sdk_for(cl);
-    ASSERT_TRUE(choice.sdk.has_value())
+    expect(fatal(choice.sdk.has_value()))
         << "the toolset's own SDK payload was not found";
-    EXPECT_EQ(choice.origin, Origin::Managed);
-    EXPECT_EQ(choice.sdk->version, "10.0.26100.0");
-    EXPECT_TRUE(choice.note.empty()) << choice.note;
-}
+    expect(eq(choice.origin, Origin::Managed));
+    expect(eq(choice.sdk->version, "10.0.26100.0"));
+    expect(choice.note.empty()) << choice.note;
+}};
 
 // THE CRITERION THIS AXIS EXISTS FOR. An environment that can overwrite the
 // choice means the manifest did not pin anything — it only expressed a
@@ -895,7 +892,7 @@ TEST(MsvcSdkOrigin, AManagedToolsetTakesTheSdkFromItsOwnStore) {
 // This is the design doc's §6 acceptance test, as a unit test: point
 // WindowsSdkDir somewhere else entirely and the build must still use the
 // payload's SDK, and must SAY that the variable was ignored.
-TEST(MsvcSdkOrigin, WindowsSdkDirCannotOverrideAPinnedToolsetsSdk) {
+UTest windows_sdk_dir_cannot_override_a_pinned_toolsets_sdk{"MsvcSdkOrigin/WindowsSdkDirCannotOverrideAPinnedToolsetsSdk", [] {
     NoSdkEnv clean;
     FakeStore store;
     auto cl = store.add_toolset("14.44.35207");
@@ -906,16 +903,16 @@ TEST(MsvcSdkOrigin, WindowsSdkDirCannotOverrideAPinnedToolsetsSdk) {
     ScopedEnv dir{"WindowsSdkDir", elsewhere.root.string()};
 
     auto choice = msvc::resolve_sdk_for(cl);
-    ASSERT_TRUE(choice.sdk.has_value());
-    EXPECT_EQ(choice.sdk->version, "10.0.26100.0")
+    expect(fatal(choice.sdk.has_value()));
+    expect(eq(choice.sdk->version, "10.0.26100.0"))
         << "the environment overrode a pinned toolset's SDK; the pin is not one";
-    EXPECT_NE(choice.sdk->root, elsewhere.root);
-    EXPECT_NE(choice.note.find("WindowsSdkDir"), std::string::npos)
+    expect(ne(choice.sdk->root, elsewhere.root));
+    expect(ne(choice.note.find("WindowsSdkDir"), std::string::npos))
         << "an ignored override that says nothing is indistinguishable from "
            "one that was never set: " << choice.note;
-}
+}};
 
-TEST(MsvcSdkOrigin, WindowsSdkVersionDoesNotPickAmongPayloadsEither) {
+UTest windows_sdk_version_does_not_pick_among_payloads_either{"MsvcSdkOrigin/WindowsSdkVersionDoesNotPickAmongPayloadsEither", [] {
     // Same override wearing a smaller hat: naming a version is still the
     // environment choosing which headers a pinned build compiles against.
     NoSdkEnv clean;
@@ -926,13 +923,13 @@ TEST(MsvcSdkOrigin, WindowsSdkVersionDoesNotPickAmongPayloadsEither) {
     ScopedEnv ver{"WindowsSdkVersion", "10.0.22621.0\\"};
 
     auto choice = msvc::resolve_sdk_for(cl);
-    ASSERT_TRUE(choice.sdk.has_value());
-    EXPECT_EQ(choice.sdk->version, "10.0.26100.0")
+    expect(fatal(choice.sdk.has_value()));
+    expect(eq(choice.sdk->version, "10.0.26100.0"))
         << "WindowsSdkVersion selected among the store's payloads";
-    EXPECT_FALSE(choice.note.empty());
-}
+    expect(!choice.note.empty());
+}};
 
-TEST(MsvcSdkOrigin, AManagedToolsetWithNoSdkPayloadFallsBackAndSaysSo) {
+UTest a_managed_toolset_with_no_sdk_payload_falls_back_and_says_so{"MsvcSdkOrigin/AManagedToolsetWithNoSdkPayloadFallsBackAndSaysSo", [] {
     // Working beats failing here — the machine may well have a complete SDK,
     // and refusing to build would be a regression for anyone whose toolset
     // predates the SDK dependency. What must not happen is the fallback being
@@ -947,12 +944,12 @@ TEST(MsvcSdkOrigin, AManagedToolsetWithNoSdkPayloadFallsBackAndSaysSo) {
     ScopedEnv dir{"WindowsSdkDir", machine.root.string()};
 
     auto choice = msvc::resolve_sdk_for(cl);
-    ASSERT_TRUE(choice.sdk.has_value());
-    EXPECT_EQ(choice.sdk->root, machine.root);
-    EXPECT_NE(choice.note.find("machine"), std::string::npos) << choice.note;
-}
+    expect(fatal(choice.sdk.has_value()));
+    expect(eq(choice.sdk->root, machine.root));
+    expect(ne(choice.note.find("machine"), std::string::npos)) << choice.note;
+}};
 
-TEST(MsvcSdkOrigin, ASystemToolsetKeepsTheDeclaredSearchChain) {
+UTest a_system_toolset_keeps_the_declared_search_chain{"MsvcSdkOrigin/ASystemToolsetKeepsTheDeclaredSearchChain", [] {
     // The other origin is unchanged, and must be: a machine's things can only
     // be found by looking, and WindowsSdkDir is the most specific answer
     // available there — the same precedence VSINSTALLDIR has over vswhere.
@@ -966,12 +963,12 @@ TEST(MsvcSdkOrigin, ASystemToolsetKeepsTheDeclaredSearchChain) {
     auto cl = vs.root / "VC" / "Tools" / "MSVC" / "14.51.36231"
             / "bin" / "Hostx64" / "x64" / "cl.exe";
     auto choice = msvc::resolve_sdk_for(cl);
-    EXPECT_EQ(choice.origin, Origin::SystemMsvc);
-    ASSERT_TRUE(choice.sdk.has_value());
-    EXPECT_EQ(choice.sdk->root, declared.root);
-    EXPECT_TRUE(choice.note.empty())
+    expect(eq(choice.origin, Origin::SystemMsvc));
+    expect(fatal(choice.sdk.has_value()));
+    expect(eq(choice.sdk->root, declared.root));
+    expect(choice.note.empty())
         << "nothing was ignored, so there is nothing to report: " << choice.note;
-}
+}};
 
 // ─── Toolset selection: one rule for the cl.exe row and the clang row ─────
 //
@@ -1032,53 +1029,53 @@ struct TwoInstances {
 
 } // namespace
 
-TEST(MsvcToolsetVersion, ComparedAsNumbersNotStrings) {
-    EXPECT_LT(msvc::compare_toolset_versions("14.9", "14.10"), 0);
-    EXPECT_GT(msvc::compare_toolset_versions("14.44.35207", "14.38.33130"), 0);
-    EXPECT_EQ(msvc::compare_toolset_versions("14.44", "14.44.0"), 0);
-    EXPECT_EQ(msvc::compare_toolset_versions("17.14.36301.6", "17.14.36301.6"), 0);
-}
+UTest compared_as_numbers_not_strings{"MsvcToolsetVersion/ComparedAsNumbersNotStrings", [] {
+    expect(lt(msvc::compare_toolset_versions("14.9", "14.10"), 0));
+    expect(gt(msvc::compare_toolset_versions("14.44.35207", "14.38.33130"), 0));
+    expect(eq(msvc::compare_toolset_versions("14.44", "14.44.0"), 0));
+    expect(eq(msvc::compare_toolset_versions("17.14.36301.6", "17.14.36301.6"), 0));
+}};
 
-TEST(MsvcToolsetVersion, APrefixMatchesWholeComponents) {
-    EXPECT_TRUE(msvc::toolset_version_matches("14.44", "14.44.35207"));
-    EXPECT_TRUE(msvc::toolset_version_matches("14.44.35207", "14.44.35207"));
-    EXPECT_TRUE(msvc::toolset_version_matches("14", "14.51.36014"));
+UTest a_prefix_matches_whole_components{"MsvcToolsetVersion/APrefixMatchesWholeComponents", [] {
+    expect(msvc::toolset_version_matches("14.44", "14.44.35207"));
+    expect(msvc::toolset_version_matches("14.44.35207", "14.44.35207"));
+    expect(msvc::toolset_version_matches("14", "14.51.36014"));
     // `14.4` is the 14.4 line, not a text prefix of 14.44.
-    EXPECT_FALSE(msvc::toolset_version_matches("14.4", "14.44.35207"));
-    EXPECT_FALSE(msvc::toolset_version_matches("14.44.35207.1", "14.44.35207"));
-    EXPECT_FALSE(msvc::toolset_version_matches("", "14.44.35207"));
-}
+    expect(!msvc::toolset_version_matches("14.4", "14.44.35207"));
+    expect(!msvc::toolset_version_matches("14.44.35207.1", "14.44.35207"));
+    expect(!msvc::toolset_version_matches("", "14.44.35207"));
+}};
 
-TEST(MsvcToolsetSelect, APinnedVersionIsFoundInWhicheverInstanceHasIt) {
+UTest a_pinned_version_is_found_in_whichever_instance_has_it{"MsvcToolsetSelect/APinnedVersionIsFoundInWhicheverInstanceHasIt", [] {
     TwoInstances m;
     msvc::ToolsetNeeds needs;
     auto a = msvc::select_system_toolset(m.all(), {}, "14.38", needs);
-    ASSERT_TRUE(a.has_value());
-    EXPECT_EQ(a->version, "14.38.33130");
-    EXPECT_EQ(a->toolsDir, m.vs2022.tools("14.38.33130"));
-    EXPECT_EQ(a->via, "pinned");
+    expect(fatal(a.has_value()));
+    expect(eq(a->version, "14.38.33130"));
+    expect(eq(a->toolsDir, m.vs2022.tools("14.38.33130")));
+    expect(eq(a->via, "pinned"));
 
     auto b = msvc::select_system_toolset(m.all(), {}, "14.51.36014", needs);
-    ASSERT_TRUE(b.has_value());
-    EXPECT_EQ(b->vsRoot, m.vs18.dir.root);
-    EXPECT_EQ(b->product, "Visual Studio Community 18 Insiders");
+    expect(fatal(b.has_value()));
+    expect(eq(b->vsRoot, m.vs18.dir.root));
+    expect(eq(b->product, "Visual Studio Community 18 Insiders"));
 
     // The highest match across every instance, by number.
     auto c = msvc::select_system_toolset(m.all(), {}, "14", needs);
-    ASSERT_TRUE(c.has_value());
-    EXPECT_EQ(c->version, "14.51.36014");
-}
+    expect(fatal(c.has_value()));
+    expect(eq(c->version, "14.51.36014"));
+}};
 
-TEST(MsvcToolsetSelect, APinWithNoInstalledMatchIsNulloptSoThePackageIsUsed) {
+UTest a_pin_with_no_installed_match_is_nullopt_so_the_package_is_used{"MsvcToolsetSelect/APinWithNoInstalledMatchIsNulloptSoThePackageIsUsed", [] {
     TwoInstances m;
-    EXPECT_FALSE(msvc::select_system_toolset(m.all(), {}, "14.29",
-                                             msvc::ToolsetNeeds{}).has_value());
+    expect(!(msvc::select_system_toolset(m.all(), {}, "14.29",
+                                             msvc::ToolsetNeeds{}).has_value()));
     // `14.4` does not reach 14.44 by text.
-    EXPECT_FALSE(msvc::select_system_toolset(m.all(), {}, "14.4",
-                                             msvc::ToolsetNeeds{}).has_value());
-}
+    expect(!(msvc::select_system_toolset(m.all(), {}, "14.4",
+                                             msvc::ToolsetNeeds{}).has_value()));
+}};
 
-TEST(MsvcToolsetSelect, APinIgnoresTheEnvironmentAndSaysSo) {
+UTest a_pin_ignores_the_environment_and_says_so{"MsvcToolsetSelect/APinIgnoresTheEnvironmentAndSaysSo", [] {
     // A developer prompt opened with `-vcvars_ver=14.38` exports this, and a
     // pinned manifest must not follow it.
     TwoInstances m;
@@ -1087,57 +1084,57 @@ TEST(MsvcToolsetSelect, APinIgnoresTheEnvironmentAndSaysSo) {
     env.vsInstallDir = m.vs2022.dir.root;
     auto c = msvc::select_system_toolset(m.all(), env, "14.44.35207",
                                          msvc::ToolsetNeeds{});
-    ASSERT_TRUE(c.has_value());
-    EXPECT_EQ(c->version, "14.44.35207");
+    expect(fatal(c.has_value()));
+    expect(eq(c->version, "14.44.35207"));
     bool noted = false;
     for (auto const& n : c->notes)
         noted = noted || (n.find("VCToolsInstallDir") != std::string::npos
                           && n.find("14.38.33130") != std::string::npos);
-    EXPECT_TRUE(noted) << "an ignored declaration has to be reported";
-}
+    expect(bool(noted)) << "an ignored declaration has to be reported";
+}};
 
-TEST(MsvcToolsetSelect, AnIncompleteMatchIsSkippedAndReported) {
+UTest an_incomplete_match_is_skipped_and_reported{"MsvcToolsetSelect/AnIncompleteMatchIsSkippedAndReported", [] {
     TwoInstances m;
     m.vs18.toolset("14.44.35210", /*complete=*/false);   // newer, but no lib/x64
     auto c = msvc::select_system_toolset(m.all(), {}, "14.44", msvc::ToolsetNeeds{});
-    ASSERT_TRUE(c.has_value());
-    EXPECT_EQ(c->version, "14.44.35207");
-    ASSERT_FALSE(c->notes.empty());
-    EXPECT_NE(c->notes.front().find("14.44.35210"), std::string::npos);
-}
+    expect(fatal(c.has_value()));
+    expect(eq(c->version, "14.44.35207"));
+    expect(fatal(!(c->notes.empty())));
+    expect(ne(c->notes.front().find("14.44.35210"), std::string::npos));
+}};
 
-TEST(MsvcToolsetSelect, SystemFollowsTheDeclarationsInOrder) {
+UTest system_follows_the_declarations_in_order{"MsvcToolsetSelect/SystemFollowsTheDeclarationsInOrder", [] {
     TwoInstances m;
     msvc::ToolsetNeeds needs;
 
     msvc::MsvcEnvSnapshot byTools;
     byTools.vcToolsInstallDir = m.vs2022.tools("14.38.33130");
     auto a = msvc::select_system_toolset(m.all(), byTools, "system", needs);
-    ASSERT_TRUE(a.has_value());
-    EXPECT_EQ(a->version, "14.38.33130");
-    EXPECT_EQ(a->via, "VCToolsInstallDir");
+    expect(fatal(a.has_value()));
+    expect(eq(a->version, "14.38.33130"));
+    expect(eq(a->via, "VCToolsInstallDir"));
 
     msvc::MsvcEnvSnapshot byInstance;
     byInstance.vsInstallDir = m.vs2022.dir.root;
     auto b = msvc::select_system_toolset(m.all(), byInstance, "system", needs);
-    ASSERT_TRUE(b.has_value());
-    EXPECT_EQ(b->version, "14.44.35207") << "the instance's default, not its highest";
-    EXPECT_EQ(b->via, "VSINSTALLDIR");
+    expect(fatal(b.has_value()));
+    expect(eq(b->version, "14.44.35207")) << "the instance's default, not its highest";
+    expect(eq(b->via, "VSINSTALLDIR"));
 
     msvc::MsvcEnvSnapshot byPath;
     byPath.clOnPath = m.vs2022.tools("14.38.33130") / "bin" / "Hostx64" / "x64" / "cl.exe";
     auto c = msvc::select_system_toolset(m.all(), byPath, "system", needs);
-    ASSERT_TRUE(c.has_value());
-    EXPECT_EQ(c->version, "14.38.33130");
-    EXPECT_EQ(c->via, "PATH");
+    expect(fatal(c.has_value()));
+    expect(eq(c->version, "14.38.33130"));
+    expect(eq(c->via, "PATH"));
 
     auto d = msvc::select_system_toolset(m.all(), {}, "system", needs);
-    ASSERT_TRUE(d.has_value());
-    EXPECT_EQ(d->version, "14.51.36014") << "the newest installation's default";
-    EXPECT_EQ(d->via, "newest instance");
-}
+    expect(fatal(d.has_value()));
+    expect(eq(d->version, "14.51.36014")) << "the newest installation's default";
+    expect(eq(d->via, "newest instance"));
+}};
 
-TEST(MsvcToolsetSelect, TheDefaultFileOutranksTheHighestDirectory) {
+UTest the_default_file_outranks_the_highest_directory{"MsvcToolsetSelect/TheDefaultFileOutranksTheHighestDirectory", [] {
     // A side-by-side toolset newer than the instance's default is what VS's
     // own vcvars would NOT pick; neither does this.
     FakeInstance vs{"sel-default", "Visual Studio Community 2022", "17.14.1"};
@@ -1145,11 +1142,11 @@ TEST(MsvcToolsetSelect, TheDefaultFileOutranksTheHighestDirectory) {
     vs.toolset("14.50.35717");
     vs.default_is("14.44.35207");
     auto c = msvc::select_system_toolset({vs.inst}, {}, "system", msvc::ToolsetNeeds{});
-    ASSERT_TRUE(c.has_value());
-    EXPECT_EQ(c->version, "14.44.35207");
-}
+    expect(fatal(c.has_value()));
+    expect(eq(c->version, "14.44.35207"));
+}};
 
-TEST(MsvcToolsetSelect, TheNewestInstanceWithoutAToolsetIsPassedOver) {
+UTest the_newest_instance_without_a_toolset_is_passed_over{"MsvcToolsetSelect/TheNewestInstanceWithoutAToolsetIsPassedOver", [] {
     // Visual Studio installed without the C++ workload: newest by installation
     // version, and nothing a build can use.
     TwoInstances m;
@@ -1157,81 +1154,81 @@ TEST(MsvcToolsetSelect, TheNewestInstanceWithoutAToolsetIsPassedOver) {
     auto all = m.all();
     all.insert(all.begin(), bare.inst);
     auto c = msvc::select_system_toolset(all, {}, "system", msvc::ToolsetNeeds{});
-    ASSERT_TRUE(c.has_value());
-    EXPECT_EQ(c->version, "14.51.36014");
-}
+    expect(fatal(c.has_value()));
+    expect(eq(c->version, "14.51.36014"));
+}};
 
-TEST(MsvcToolsetSelect, TheClangRowDoesNotNeedClExe) {
+UTest the_clang_row_does_not_need_cl_exe{"MsvcToolsetSelect/TheClangRowDoesNotNeedClExe", [] {
     FakeInstance vs{"sel-nocl", "Visual Studio Build Tools 2022", "17.14.1"};
     vs.toolset("14.44.35207", /*complete=*/true, /*withCl=*/false);
     msvc::ToolsetNeeds clRow;
     msvc::ToolsetNeeds clangRow;
     clangRow.cl = false;
-    EXPECT_FALSE(msvc::select_system_toolset({vs.inst}, {}, "system", clRow).has_value());
+    expect(!(msvc::select_system_toolset({vs.inst}, {}, "system", clRow).has_value()));
     auto c = msvc::select_system_toolset({vs.inst}, {}, "system", clangRow);
-    ASSERT_TRUE(c.has_value());
-    EXPECT_EQ(c->version, "14.44.35207");
-}
+    expect(fatal(c.has_value()));
+    expect(eq(c->version, "14.44.35207"));
+}};
 
-TEST(MsvcToolsetSelect, TheRefusalListsWhatIsInstalled) {
+UTest the_refusal_lists_what_is_installed{"MsvcToolsetSelect/TheRefusalListsWhatIsInstalled", [] {
     TwoInstances m;
     auto lines = msvc::describe_system_toolsets(m.all(), msvc::ToolsetNeeds{});
-    ASSERT_EQ(lines.size(), 3u);
+    expect(fatal(eq(lines.size(), 3u)));
     bool defaultMarked = false;
     for (auto const& l : lines)
         defaultMarked = defaultMarked || (l.find("14.44.35207") != std::string::npos
                                           && l.find("(default)") != std::string::npos);
-    EXPECT_TRUE(defaultMarked);
-}
+    expect(bool(defaultMarked));
+}};
 
 // ─── `xim:` names the ecosystem package ──────────────────────────────────
 
-TEST(ToolchainSpelling, XimMsvcIsThePackageOnly) {
+UTest xim_msvc_is_the_package_only{"ToolchainSpelling/XimMsvcIsThePackageOnly", [] {
     auto spec = parse_toolchain_spec("xim:msvc@14.44.35207");
-    ASSERT_TRUE(spec.has_value()) << spec.error();
-    EXPECT_EQ(spec->family, Family::Msvc);
-    EXPECT_EQ(spec->version, "14.44.35207");
-    EXPECT_TRUE(spec->ecosystemOnly);
-    EXPECT_FALSE(is_system_toolchain(*spec));
+    if (auto&& failed = expect(fatal(spec.has_value())); !failed) failed << spec.error();
+    expect(eq(spec->family, Family::Msvc));
+    expect(eq(spec->version, "14.44.35207"));
+    expect(bool(spec->ecosystemOnly));
+    expect(!is_system_toolchain(*spec));
     // The prefix changes the meaning for msvc, so it survives persistence.
-    EXPECT_EQ(spec->spec_str(), "xim:msvc@14.44.35207");
-    EXPECT_EQ(to_xim_package(*spec).target(), "xim:msvc@14.44.35207");
+    expect(eq(spec->spec_str(), "xim:msvc@14.44.35207"));
+    expect(eq(to_xim_package(*spec).target(), "xim:msvc@14.44.35207"));
 
     auto bare = parse_toolchain_spec("msvc@14.44.35207");
-    ASSERT_TRUE(bare.has_value());
-    EXPECT_FALSE(bare->ecosystemOnly);
-    EXPECT_EQ(bare->spec_str(), "msvc@14.44.35207");
-}
+    expect(fatal(bare.has_value()));
+    expect(!bare->ecosystemOnly);
+    expect(eq(bare->spec_str(), "msvc@14.44.35207"));
+}};
 
-TEST(ToolchainSpelling, XimIsASynonymWhereThereIsNoSystemOrigin) {
+UTest xim_is_a_synonym_where_there_is_no_system_origin{"ToolchainSpelling/XimIsASynonymWhereThereIsNoSystemOrigin", [] {
     for (auto [prefixed, bare] : {std::pair{"xim:gcc@16.1.0", "gcc@16.1.0"},
                                   std::pair{"xim:llvm@22.1.8", "llvm@22.1.8"}}) {
         auto a = parse_toolchain_spec(prefixed);
         auto b = parse_toolchain_spec(bare);
-        ASSERT_TRUE(a.has_value()) << prefixed;
-        ASSERT_TRUE(b.has_value()) << bare;
-        EXPECT_EQ(a->spec_str(), b->spec_str()) << "one canonical spelling";
-        EXPECT_EQ(to_xim_package(*a).target(), to_xim_package(*b).target());
+        expect(fatal(a.has_value())) << prefixed;
+        expect(fatal(b.has_value())) << bare;
+        expect(eq(a->spec_str(), b->spec_str())) << "one canonical spelling";
+        expect(eq(to_xim_package(*a).target(), to_xim_package(*b).target()));
     }
-}
+}};
 
-TEST(ToolchainSpelling, XimWithSystemIsRefusedNamingBothSpellings) {
+UTest xim_with_system_is_refused_naming_both_spellings{"ToolchainSpelling/XimWithSystemIsRefusedNamingBothSpellings", [] {
     auto spec = parse_toolchain_spec("xim:msvc@system");
-    ASSERT_FALSE(spec.has_value());
-    EXPECT_NE(spec.error().find("msvc@system"), std::string::npos) << spec.error();
-    EXPECT_NE(spec.error().find("xim:msvc@<version>"), std::string::npos) << spec.error();
-}
+    expect(fatal(!spec.has_value()));
+    if (auto&& failed = expect(ne(spec.error().find("msvc@system"), std::string::npos)); !failed) failed << spec.error();
+    if (auto&& failed = expect(ne(spec.error().find("xim:msvc@<version>"), std::string::npos)); !failed) failed << spec.error();
+}};
 
-TEST(ToolchainSpelling, AnotherNamespaceIsRefused) {
+UTest another_namespace_is_refused{"ToolchainSpelling/AnotherNamespaceIsRefused", [] {
     auto spec = parse_toolchain_spec("foo:gcc@16.1.0");
-    ASSERT_FALSE(spec.has_value());
-    EXPECT_NE(spec.error().find("xim:"), std::string::npos) << spec.error();
-}
+    expect(fatal(!spec.has_value()));
+    if (auto&& failed = expect(ne(spec.error().find("xim:"), std::string::npos)); !failed) failed << spec.error();
+}};
 
 // vswhere `-format text`: one instance per `instanceId:` line, CRLF endings,
 // `displayName` and not `catalog_productDisplayVersion`, and an instance with
 // no installation path dropped.
-TEST(MsvcVswhereText, OneInstancePerInstanceId) {
+UTest one_instance_per_instance_id{"MsvcVswhereText/OneInstancePerInstanceId", [] {
     const std::string text =
         "instanceId: 1a2b\r\n"
         "installationName: VisualStudio/17.14.8+36301.6\r\n"
@@ -1248,39 +1245,39 @@ TEST(MsvcVswhereText, OneInstancePerInstanceId) {
         "instanceId: 5e6f\r\n"
         "displayName: incomplete\r\n";
     auto v = mcpp::toolchain::msvc::parse_vswhere_text(text);
-    ASSERT_EQ(v.size(), 2u);
-    EXPECT_EQ(v[0].root.string(), "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise");
-    EXPECT_EQ(v[0].installVersion, "17.14.36301.6");
-    EXPECT_EQ(v[0].product, "Visual Studio Enterprise 2022");
-    EXPECT_EQ(v[1].root.string(), "D:\\VS\\Preview");
-    EXPECT_EQ(v[1].product, "Visual Studio Community 2026 Insiders");
-    EXPECT_TRUE(mcpp::toolchain::msvc::parse_vswhere_text("").empty());
-}
+    expect(fatal(eq(v.size(), 2u)));
+    expect(eq(v[0].root.string(), "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise"));
+    expect(eq(v[0].installVersion, "17.14.36301.6"));
+    expect(eq(v[0].product, "Visual Studio Enterprise 2022"));
+    expect(eq(v[1].root.string(), "D:\\VS\\Preview"));
+    expect(eq(v[1].product, "Visual Studio Community 2026 Insiders"));
+    expect(mcpp::toolchain::msvc::parse_vswhere_text("").empty());
+}};
 
 // D16: the refusal and the first-run notice say which half of the MSVC ABI is
 // missing and where the SDK was looked for. The sentence they replaced said
 // "no Visual Studio found" on a machine whose Visual Studio was found and
 // whose SDK sat on another drive (design 2026-10-10 §12.1, run 37974353683).
-TEST(MsvcProbe, TheDescriptionNamesTheMissingHalfAndWhereItLooked) {
+UTest the_description_names_the_missing_half_and_where_it_looked{"MsvcProbe/TheDescriptionNamesTheMissingHalfAndWhereItLooked", [] {
     namespace msvc = mcpp::toolchain::msvc;
     msvc::MsvcProbe vsOnly;
     vsOnly.visualStudio = {"D:\\VS\\2026\\Enterprise"};
     vsOnly.stl = true;
     vsOnly.sdkSearched = {"D:\\Kits\\10", "C:\\Program Files (x86)\\Windows Kits\\10"};
     const auto a = msvc::describe_msvc_probe(vsOnly);
-    EXPECT_NE(a.find("Visual Studio was found at D:\\VS\\2026\\Enterprise"), std::string::npos) << a;
-    EXPECT_NE(a.find("no Windows SDK"), std::string::npos) << a;
-    EXPECT_NE(a.find("D:\\Kits\\10"), std::string::npos) << a;
-    EXPECT_EQ(a.find("no Visual Studio"), std::string::npos) << a;
+    expect(ne(a.find("Visual Studio was found at D:\\VS\\2026\\Enterprise"), std::string::npos)) << a;
+    expect(ne(a.find("no Windows SDK"), std::string::npos)) << a;
+    expect(ne(a.find("D:\\Kits\\10"), std::string::npos)) << a;
+    expect(eq(a.find("no Visual Studio"), std::string::npos)) << a;
 
     msvc::MsvcProbe sdkOnly;
     sdkOnly.sdk = msvc::WindowsSdk{"D:\\Kits\\10", "10.0.26100.0"};
     const auto b = msvc::describe_msvc_probe(sdkOnly);
-    EXPECT_NE(b.find("10.0.26100.0"), std::string::npos) << b;
-    EXPECT_NE(b.find("no Visual Studio"), std::string::npos) << b;
+    expect(ne(b.find("10.0.26100.0"), std::string::npos)) << b;
+    expect(ne(b.find("no Visual Studio"), std::string::npos)) << b;
 
     msvc::MsvcProbe both = vsOnly;
     both.sdk = sdkOnly.sdk;
-    EXPECT_TRUE(both.usable());
-    EXPECT_TRUE(msvc::describe_msvc_probe(both).empty());
-}
+    expect(bool(both.usable()));
+    expect(msvc::describe_msvc_probe(both).empty());
+}};

@@ -1,12 +1,14 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.schedule.detach_codegen;
 import mcpp.run;
 import mcpp.invocation;
 import mcpplibs.os.fs;
 import mcpplibs.os.platform;
 import mcpplibs.os.process;
+
+using namespace mcpplibs::mtest;
 
 // A detached compile reports its status in `<slot>.rc`, which appears by a
 // rename once the number is written. One that holds no number is a write that
@@ -29,67 +31,66 @@ struct Slot {
 };
 }  // namespace
 
-TEST(DetachStatus, AStatusFileWithNoNumberIsAFailedUnit) {
+UTest a_status_file_with_no_number_is_a_failed_unit{"DetachStatus/AStatusFileWithNoNumberIsAFailedUnit", [] {
     Slot s;
     std::ofstream(s.slot.string() + ".rc") << "";
     const auto started = std::chrono::steady_clock::now();
-    EXPECT_NE(detach::await_unit(s.slot, {}), 0);
-    EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(5));
-}
+    expect(ne(detach::await_unit(s.slot, {}), 0));
+    expect(lt(std::chrono::steady_clock::now() - started, std::chrono::seconds(5)));
+}};
 
-TEST(DetachStatus, AWrittenStatusIsTheUnits) {
+UTest a_written_status_is_the_units{"DetachStatus/AWrittenStatusIsTheUnits", [] {
     Slot s;
     std::ofstream(s.slot.string() + ".rc") << "3\n";
-    EXPECT_EQ(detach::await_unit(s.slot, {}), 3);
+    expect(eq(detach::await_unit(s.slot, {}), 3));
     Slot t;
     std::ofstream(t.slot.string() + ".rc") << "0\n";
-    EXPECT_EQ(detach::await_unit(t.slot, {}), 0);
-}
+    expect(eq(detach::await_unit(t.slot, {}), 0));
+}};
 
-TEST(DetachStatus, OrdinaryCompilerStartFailureReleasesItsPermit) {
+UTest ordinary_compiler_start_failure_releases_its_permit{"DetachStatus/OrdinaryCompilerStartFailureReleasesItsPermit", [] {
     Slot s;
     const auto semaphore = s.dir / "permits";
-    EXPECT_EQ(detach::run_capped({(s.dir / "missing-compiler").string()}, semaphore, 1), 127);
+    expect(eq(detach::run_capped({(s.dir / "missing-compiler").string()}, semaphore, 1), 127));
     auto free = mcpplibs::os::fs::lock::acquire(semaphore / "slot-0.lock",
         mcpplibs::os::fs::lock::kind::exclusive, false);
-    EXPECT_TRUE(free);
-}
+    expect(bool(free));
+}};
 
-TEST(DetachStatus, AnUnavailableSemaphoreRefusesUnboundedCompilation) {
+UTest an_unavailable_semaphore_refuses_unbounded_compilation{"DetachStatus/AnUnavailableSemaphoreRefusesUnboundedCompilation", [] {
     Slot s;
     const auto semaphore = s.dir / "not-a-directory";
     std::ofstream(semaphore) << "occupied";
-    EXPECT_NE(detach::run_capped({"unused-compiler"}, semaphore, 1), 0);
-    EXPECT_TRUE(fs::is_regular_file(semaphore));
-}
+    expect(ne(detach::run_capped({"unused-compiler"}, semaphore, 1), 0));
+    expect(fs::is_regular_file(semaphore));
+}};
 
 
-TEST(DetachStatus, KernelSlotsDistinguishContentionFromFailure) {
+UTest kernel_slots_distinguish_contention_from_failure{"DetachStatus/KernelSlotsDistinguishContentionFromFailure", [] {
     Slot s;
     const auto path = s.dir / "slot.lock";
     {
         auto held = mcpplibs::os::fs::lock::acquire(path,
             mcpplibs::os::fs::lock::kind::exclusive, false);
-        ASSERT_TRUE(held);
+        expect(fatal(bool(held)));
         auto busy = mcpplibs::os::fs::lock::acquire(path,
             mcpplibs::os::fs::lock::kind::exclusive, false);
-        ASSERT_FALSE(busy);
-        EXPECT_EQ(busy.error().code, mcpplibs::os::errc::again);
+        expect(fatal(!busy));
+        expect(eq(busy.error().code, mcpplibs::os::errc::again));
     }
-    EXPECT_TRUE(fs::exists(path));
+    expect(fs::exists(path));
     auto reused = mcpplibs::os::fs::lock::acquire(path,
         mcpplibs::os::fs::lock::kind::exclusive, false);
-    EXPECT_TRUE(reused);
-}
+    expect(bool(reused));
+}};
 
 namespace {
 std::string lifetime_env(std::string_view key, std::string fallback = {}) {
     return mcpp::invocation::get(key).value_or(std::move(fallback));
 }
-int lifetime_driver() {
+int lifetime_driver(const std::vector<std::string>& argv) {
     const auto role = lifetime_env("MCPP_TEST_LIFETIME_ROLE");
     const auto self = mcpp::invocation::self_exe_path();
-    const auto argv = ::testing::internal::GetArgvs();
     if (argv.size() > 1 && argv[1] == "bmi-supervise") {
         auto value = [&](std::string_view key) {
             auto it = std::ranges::find(argv, key);
@@ -177,48 +178,49 @@ int lifetime_driver() {
 }
 } // namespace
 
-// This copy is an actual detached supervisor/phase1/ordinary compiler under
-// Ninja. It is selected through GTEST_FILTER inherited by detached children.
-TEST(DetachLifetime, SubprocessDriver) {
-    if (lifetime_env("MCPP_TEST_LIFETIME_ROLE").empty()) GTEST_SKIP() << "subprocess driver";
+// A COPY OF THIS PROGRAM IS A DETACHED SUPERVISOR, PHASE-ONE OR ORDINARY COMPILER
+// UNDER NINJA, chosen by MCPP_TEST_LIFETIME_ROLE (the e2e helpers set it) before any
+// case runs; the copy is mcpp to the code under test, so its arguments are mcpp's.
+int main(int argc, char** argv) {
+    if (lifetime_env("MCPP_TEST_LIFETIME_ROLE").empty()) return mcpplibs::mtest::run(argc, argv);
     mcpp::run::install();
-    const int rc = lifetime_driver();
+    const int rc = lifetime_driver(std::vector<std::string>(argv, argv + argc));
     std::cout.flush(); std::cerr.flush();
     std::_Exit(rc);
 }
 
-TEST(DetachLifetime, OwnerCancellationAndImmediateRestart) {
-    if constexpr (!mcpplibs::os::is_linux) GTEST_SKIP() << "Linux signal and LD_PRELOAD controls";
+UTest owner_cancellation_and_immediate_restart{"DetachLifetime/OwnerCancellationAndImmediateRestart", [] {
+    if constexpr (!mcpplibs::os::is_linux) skip("Linux signal and LD_PRELOAD controls");
     Slot temporary;
     const auto helper = fs::current_path() / "tests/e2e/helpers/check_owned_schedule_lifetime.py";
-    ASSERT_TRUE(fs::exists(helper));
+    expect(fatal(fs::exists(helper)));
     const auto result = mcpp::run::execute({"python3", helper.string(),
         mcpp::invocation::self_exe_path().string(), temporary.dir.string()});
-    EXPECT_EQ(result.exit_code, 0) << result.output;
-}
+    expect(eq(result.exit_code, 0)) << result.output;
+}};
 
-TEST(DetachLifetime, TransactionRecoveryAtNativeSyscallBoundaries) {
+UTest transaction_recovery_at_native_syscall_boundaries{"DetachLifetime/TransactionRecoveryAtNativeSyscallBoundaries", [] {
     if constexpr (!mcpplibs::os::is_linux
         || mcpplibs::os::ARCH != mcpplibs::os::architecture::x86_64)
-        GTEST_SKIP() << "Linux x86-64 syscall boundary control";
+        skip("Linux x86-64 syscall boundary control");
     Slot temporary;
     const auto helper=fs::current_path()/"tests/e2e/helpers/check_compiler_transaction_faults.py";
-    ASSERT_TRUE(fs::exists(helper));
+    expect(fatal(fs::exists(helper)));
     const auto result=mcpp::run::execute({"python3",helper.string(),
         mcpp::invocation::self_exe_path().string(),temporary.dir.string()},
         {.total=std::chrono::seconds(120)});
-    EXPECT_EQ(result.exit_code,0)<<result.output;
-}
+    expect(eq(result.exit_code, 0))<<result.output;
+}};
 
-TEST(DetachLifetime, ActualGccMixedCapacityUsesOwnedUnits) {
-    if constexpr (!mcpplibs::os::is_linux)GTEST_SKIP()<<"native GCC and Linux counter locks";
+UTest actual_gcc_mixed_capacity_uses_owned_units{"DetachLifetime/ActualGccMixedCapacityUsesOwnedUnits", [] {
+    if constexpr (!mcpplibs::os::is_linux)skip("native GCC and Linux counter locks");
     const auto engine=lifetime_env("MCPP_FRESH",lifetime_env("MCPP"));
-    if(engine.empty())GTEST_SKIP()<<"requires the explicit fresh mcpp supplied by CI";
-    ASSERT_TRUE(fs::is_regular_file(engine));
+    if(engine.empty())skip("requires the explicit fresh mcpp supplied by CI");
+    expect(fatal(fs::is_regular_file(engine)));
     Slot temporary;
     const auto helper=fs::current_path()/"tests/e2e/helpers/check_shared_compiler_cap.py";
     const auto result=mcpp::run::execute({"python3",helper.string(),engine,(temporary.dir/"managed-gcc").string(),
         "--owner-driver",mcpp::invocation::self_exe_path().string()},
         {.total=std::chrono::seconds(120)});
-    EXPECT_EQ(result.exit_code,0)<<result.output;
-}
+    expect(eq(result.exit_code, 0))<<result.output;
+}};

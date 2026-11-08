@@ -1,11 +1,13 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.flags;
 import mcpp.build.distribution;
 import mcpp.modgraph.scanner;
 import mcpp.build.ninja;
 import mcpp.targetside;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
@@ -36,64 +38,64 @@ void touch(const std::filesystem::path& p) {
 constexpr bool kDynamic = false;  // staticLink arg
 constexpr bool kStatic  = true;
 
-TEST(BuildFlagsAtomic, EmittedWhenLibatomicSharedPresent) {
+UTest emitted_when_libatomic_shared_present{"BuildFlagsAtomic/EmittedWhenLibatomicSharedPresent", [] {
     Tmp dir;
     touch(dir.path / "libatomic.so");
     auto flag = mcpp::build::atomic_link_flag({dir.path}, kDynamic);
-    EXPECT_NE(flag.find("-latomic"), std::string::npos);
-    EXPECT_NE(flag.find("--as-needed"), std::string::npos);
-}
+    expect(ne(flag.find("-latomic"), std::string::npos));
+    expect(ne(flag.find("--as-needed"), std::string::npos));
+}};
 
-TEST(BuildFlagsAtomic, EmittedWhenLibatomicArchivePresent) {
+UTest emitted_when_libatomic_archive_present{"BuildFlagsAtomic/EmittedWhenLibatomicArchivePresent", [] {
     Tmp dir;
     touch(dir.path / "libatomic.a");
     auto flag = mcpp::build::atomic_link_flag({dir.path}, kDynamic);
-    EXPECT_NE(flag.find("-latomic"), std::string::npos);
-}
+    expect(ne(flag.find("-latomic"), std::string::npos));
+}};
 
-TEST(BuildFlagsAtomic, EmptyWhenLibatomicAbsent) {
+UTest empty_when_libatomic_absent{"BuildFlagsAtomic/EmptyWhenLibatomicAbsent", [] {
     Tmp dir;
     touch(dir.path / "libc++.so.1");  // some other lib, but no libatomic
     auto flag = mcpp::build::atomic_link_flag({dir.path}, kDynamic);
-    EXPECT_TRUE(flag.empty()) << "got: " << flag;
-}
+    expect(flag.empty()) << "got: " << flag;
+}};
 
 // `-latomic` resolves only `libatomic.so` / `libatomic.a` — a bare
 // soname-versioned `libatomic.so.1` (no dev symlink, no archive) is NOT
 // link-resolvable, so the flag must stay empty or the link breaks with
 // "cannot find -latomic".
-TEST(BuildFlagsAtomic, EmptyWhenOnlySonameVersionedPresent) {
+UTest empty_when_only_soname_versioned_present{"BuildFlagsAtomic/EmptyWhenOnlySonameVersionedPresent", [] {
     Tmp dir;
     touch(dir.path / "libatomic.so.1");
     touch(dir.path / "libatomic.so.1.2.0");
     auto flag = mcpp::build::atomic_link_flag({dir.path}, kDynamic);
-    EXPECT_TRUE(flag.empty()) << "got: " << flag;
-}
+    expect(flag.empty()) << "got: " << flag;
+}};
 
-TEST(BuildFlagsAtomic, ScansAllDirsNotJustFirst) {
+UTest scans_all_dirs_not_just_first{"BuildFlagsAtomic/ScansAllDirsNotJustFirst", [] {
     Tmp a, b;
     touch(b.path / "libatomic.so");  // link-resolvable, in a later dir
     auto flag = mcpp::build::atomic_link_flag({a.path, b.path}, kDynamic);
-    EXPECT_NE(flag.find("-latomic"), std::string::npos);
-}
+    expect(ne(flag.find("-latomic"), std::string::npos));
+}};
 
 // Cross-platform / cross-linkage: a full-static link (`-static`, e.g. musl
 // targets) resolves `-latomic` only from `libatomic.a`. A lone `libatomic.so`
 // is not usable, so the flag must stay empty under static linkage to avoid
 // "cannot find -latomic".
-TEST(BuildFlagsAtomic, StaticLinkEmptyWhenOnlySharedPresent) {
+UTest static_link_empty_when_only_shared_present{"BuildFlagsAtomic/StaticLinkEmptyWhenOnlySharedPresent", [] {
     Tmp dir;
     touch(dir.path / "libatomic.so");
     auto flag = mcpp::build::atomic_link_flag({dir.path}, kStatic);
-    EXPECT_TRUE(flag.empty()) << "got: " << flag;
-}
+    expect(flag.empty()) << "got: " << flag;
+}};
 
-TEST(BuildFlagsAtomic, StaticLinkEmittedWhenArchivePresent) {
+UTest static_link_emitted_when_archive_present{"BuildFlagsAtomic/StaticLinkEmittedWhenArchivePresent", [] {
     Tmp dir;
     touch(dir.path / "libatomic.a");
     auto flag = mcpp::build::atomic_link_flag({dir.path}, kStatic);
-    EXPECT_NE(flag.find("-latomic"), std::string::npos);
-}
+    expect(ne(flag.find("-latomic"), std::string::npos));
+}};
 
 // mcpp#226: normalize_include_flags generalizes the old -I-only
 // absolutize_include_flags to the whole include/lib-search-path family, in
@@ -105,7 +107,7 @@ TEST(BuildFlagsAtomic, StaticLinkEmittedWhenArchivePresent) {
 // slashes keeps them on MSVC, and the old expectation `(root / "hdr").string()`
 // was itself the mixed `"/proj\hdr"` shape this family of bugs produced.
 // make_preferred() makes the expectation platform-correct on both sides.
-TEST(BuildFlags, NormalizeIncludeFlagsRewritesFullIncludeFamily) {
+UTest normalize_include_flags_rewrites_full_include_family{"BuildFlags/NormalizeIncludeFlagsRewritesFullIncludeFamily", [] {
     std::filesystem::path root = "/proj";
     auto expected = [](const std::filesystem::path& p) {
         auto n = p;
@@ -118,18 +120,18 @@ TEST(BuildFlags, NormalizeIncludeFlagsRewritesFullIncludeFamily) {
 
     mcpp::modgraph::normalize_include_flags(root, flags);
 
-    ASSERT_EQ(flags.size(), 5u);
-    EXPECT_EQ(flags[0], "-I" + expected(root / "hdr"));
-    EXPECT_EQ(flags[1], "-iquote" + expected(root / "hdr"));
-    EXPECT_EQ(flags[2], "-isystem");                       // prefix itself untouched
-    EXPECT_EQ(flags[3], expected(root / "hdr"));           // separated element rewritten
-    EXPECT_EQ(flags[4], "-idirafter" + expected(root / "hdr"));
-}
+    expect(fatal(eq(flags.size(), 5u)));
+    expect(eq(flags[0], "-I" + expected(root / "hdr")));
+    expect(eq(flags[1], "-iquote" + expected(root / "hdr")));
+    expect(eq(flags[2], "-isystem"));                       // prefix itself untouched
+    expect(eq(flags[3], expected(root / "hdr")));           // separated element rewritten
+    expect(eq(flags[4], "-idirafter" + expected(root / "hdr")));
+}};
 
 // Absolute paths and root-relative spellings are left alone (matches the
 // pre-#226 -I behavior), for both the joined and separated forms — only the
 // separator spelling is normalized to native (#390; a no-op on POSIX).
-TEST(BuildFlags, NormalizeIncludeFlagsLeavesAbsolutePathsAlone) {
+UTest normalize_include_flags_leaves_absolute_paths_alone{"BuildFlags/NormalizeIncludeFlagsLeavesAbsolutePathsAlone", [] {
     std::filesystem::path root = "/proj";
     auto expected = [](const std::filesystem::path& p) {
         auto n = p;
@@ -142,32 +144,32 @@ TEST(BuildFlags, NormalizeIncludeFlagsLeavesAbsolutePathsAlone) {
 
     mcpp::modgraph::normalize_include_flags(root, flags);
 
-    EXPECT_EQ(flags[0], "-I" + expected("/abs/hdr"));
-    EXPECT_EQ(flags[1], "-isystem");
-    EXPECT_EQ(flags[2], expected("/abs/hdr"));
-    EXPECT_EQ(flags[3], "-DKEEP");
-}
+    expect(eq(flags[0], "-I" + expected("/abs/hdr")));
+    expect(eq(flags[1], "-isystem"));
+    expect(eq(flags[2], expected("/abs/hdr")));
+    expect(eq(flags[3], "-DKEEP"));
+}};
 
 }  // namespace
 
 // #634, item 11 of the triage record: a search-path entry that begins with a
 // token the loader expands is relative to a loaded object, not to the package
 // that wrote it. Both ldflag normalisers ask this one predicate.
-TEST(BuildFlagsLoaderTokens, EveryLoaderTokenIsLeftAsWritten) {
+UTest every_loader_token_is_left_as_written{"BuildFlagsLoaderTokens/EveryLoaderTokenIsLeftAsWritten", [] {
     for (std::string_view entry : {"$ORIGIN", "${ORIGIN}", "$ORIGIN/../lib", "$LIB",
                                    "@executable_path", "@executable_path/../Frameworks",
                                    "@loader_path", "@loader_path/", "@rpath",
                                    "@rpath/sub"}) {
-        EXPECT_TRUE(mcpp::build::is_loader_relative_search_path(entry)) << entry;
+        expect(mcpp::build::is_loader_relative_search_path(entry)) << entry;
     }
-}
+}};
 
-TEST(BuildFlagsLoaderTokens, OrdinaryPathsAreNotTokens) {
+UTest ordinary_paths_are_not_tokens{"BuildFlagsLoaderTokens/OrdinaryPathsAreNotTokens", [] {
     for (std::string_view entry : {"", "lib", "./lib", "/opt/lib", "rpath",
                                    "@executable_pathology", "@rpathx", "x/@rpath"}) {
-        EXPECT_FALSE(mcpp::build::is_loader_relative_search_path(entry)) << entry;
+        expect(!mcpp::build::is_loader_relative_search_path(entry)) << entry;
     }
-}
+}};
 
 // #647 E3: which link line a (host, target) pair takes. The branch used to be
 // chosen by `if constexpr` on the host, so an Android row built on a macOS host
@@ -181,35 +183,35 @@ using mcpp::build::link_shape;
 using Fmt = mcpp::build::dist::Format;
 } // namespace
 
-TEST(LinkShape, LinuxHostTakesTheGenericLineForEveryTarget) {
+UTest linux_host_takes_the_generic_line_for_every_target{"LinkShape/LinuxHostTakesTheGenericLineForEveryTarget", [] {
     for (auto f : {Fmt::Elf, Fmt::MachO, Fmt::Pe, Fmt::Wasm}) {
-        EXPECT_EQ(link_shape(LinkHost::Linux, f, false, true),  LinkShape::Generic);
-        EXPECT_EQ(link_shape(LinkHost::Linux, f, false, false), LinkShape::Generic);
+        expect(eq(link_shape(LinkHost::Linux, f, false, true), LinkShape::Generic));
+        expect(eq(link_shape(LinkHost::Linux, f, false, false), LinkShape::Generic));
     }
-}
+}};
 
-TEST(LinkShape, MacOSHostKeepsTheAppleLineForMachOOnly) {
+UTest mac_os_host_keeps_the_apple_line_for_mach_o_only{"LinkShape/MacOSHostKeepsTheAppleLineForMachOOnly", [] {
     // macOS for macOS, and the iOS rows: the Apple SDK line, as before.
-    EXPECT_EQ(link_shape(LinkHost::MacOS, Fmt::MachO, false, false), LinkShape::AppleSdk);
-    EXPECT_EQ(link_shape(LinkHost::MacOS, Fmt::MachO, false, true),  LinkShape::AppleSdk);
+    expect(eq(link_shape(LinkHost::MacOS, Fmt::MachO, false, false), LinkShape::AppleSdk));
+    expect(eq(link_shape(LinkHost::MacOS, Fmt::MachO, false, true), LinkShape::AppleSdk));
     // x86_64-linux-android and wasm32-emscripten on a Mac: the line that
     // carries `--target`.
-    EXPECT_EQ(link_shape(LinkHost::MacOS, Fmt::Elf,  false, true),  LinkShape::Generic);
-    EXPECT_EQ(link_shape(LinkHost::MacOS, Fmt::Wasm, false, true),  LinkShape::Generic);
-    EXPECT_EQ(link_shape(LinkHost::MacOS, Fmt::Elf,  false, false), LinkShape::Generic);
-    EXPECT_EQ(link_shape(LinkHost::MacOS, Fmt::Pe,   false, true),  LinkShape::Generic);
-}
+    expect(eq(link_shape(LinkHost::MacOS, Fmt::Elf,  false, true), LinkShape::Generic));
+    expect(eq(link_shape(LinkHost::MacOS, Fmt::Wasm, false, true), LinkShape::Generic));
+    expect(eq(link_shape(LinkHost::MacOS, Fmt::Elf,  false, false), LinkShape::Generic));
+    expect(eq(link_shape(LinkHost::MacOS, Fmt::Pe,   false, true), LinkShape::Generic));
+}};
 
-TEST(LinkShape, WindowsHostSeparatesPeFromTargetsNamedByFlag) {
-    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Pe,  true,  false), LinkShape::MsvcLinkExe);
-    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Pe,  false, true),  LinkShape::PeLld);
-    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Pe,  false, false), LinkShape::PeLld);
+UTest windows_host_separates_pe_from_targets_named_by_flag{"LinkShape/WindowsHostSeparatesPeFromTargetsNamedByFlag", [] {
+    expect(eq(link_shape(LinkHost::Windows, Fmt::Pe,  true,  false), LinkShape::MsvcLinkExe));
+    expect(eq(link_shape(LinkHost::Windows, Fmt::Pe,  false, true), LinkShape::PeLld));
+    expect(eq(link_shape(LinkHost::Windows, Fmt::Pe,  false, false), LinkShape::PeLld));
     // An SDK or retargetable clang aimed at an ELF row: named by `--target`.
-    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Elf, false, true),  LinkShape::Generic);
+    expect(eq(link_shape(LinkHost::Windows, Fmt::Elf, false, true), LinkShape::Generic));
     // The canadian GCC cross to x86_64-linux-musl names its target by prefix
     // and keeps the line its CI job verifies.
-    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Elf, false, false), LinkShape::PeLld);
-}
+    expect(eq(link_shape(LinkHost::Windows, Fmt::Elf, false, false), LinkShape::PeLld));
+}};
 
 // ── c_abi_absent_facility_advice — the manifest reads back at the link ──────
 //
@@ -218,26 +220,25 @@ TEST(LinkShape, WindowsHostSeparatesPeFromTargetsNamedByFlag) {
 // deliberate limit of the environment. The manifest already distinguishes
 // those (design 2026-09-20 §5.7.5); these pin that it is read back.
 
-TEST(CAbiAbsentAdvice, ALinkAbsenceNamedInTheManifestIsExplained) {
+UTest a_link_absence_named_in_the_manifest_is_explained{"CAbiAbsentAdvice/ALinkAbsenceNamedInTheManifestIsExplained", [] {
     std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
         {"fork", mcpp::targetside::CAbiAbsentForm::Link,
          "openkal has no process image duplication"},
     };
     auto a = mcpp::build::c_abi_absent_facility_advice(
         "ld.lld: error: undefined symbol: fork\n", "musl", absent);
-    ASSERT_FALSE(a.empty());
-    EXPECT_NE(a.find("fork"), std::string::npos);
-    EXPECT_NE(a.find("no process image duplication"), std::string::npos);
+    expect(fatal(!a.empty()));
+    expect(ne(a.find("fork"), std::string::npos));
+    expect(ne(a.find("no process image duplication"), std::string::npos));
     // THE WHOLE CLAUSE, NOT `find("musl")`. The name was interpolated from
     // two conditionals -- an opening paren and the name -- and the closing
     // one was never emitted, so every reader saw `(musl declares that it
     // does not supply ...`. `find("musl")` is true of that sentence too,
     // which is why it took a real link to notice. Assert the rendering.
-    EXPECT_NE(a.find("the C library in this graph (musl) declares"),
-              std::string::npos) << a;
-}
+    expect(ne(a.find("the C library in this graph (musl) declares"), std::string::npos)) << a;
+}};
 
-TEST(CAbiAbsentAdvice, AnUnnamedCLibraryLeavesNoEmptyParentheses) {
+UTest an_unnamed_c_library_leaves_no_empty_parentheses{"CAbiAbsentAdvice/AnUnnamedCLibraryLeavesNoEmptyParentheses", [] {
     // The other side of the same substitution: with no name there must be no
     // parenthetical at all, rather than `graph () declares`.
     std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
@@ -245,22 +246,21 @@ TEST(CAbiAbsentAdvice, AnUnnamedCLibraryLeavesNoEmptyParentheses) {
     };
     auto a = mcpp::build::c_abi_absent_facility_advice(
         "ld.lld: error: undefined symbol: fork\n", "", absent);
-    ASSERT_FALSE(a.empty());
-    EXPECT_NE(a.find("the C library in this graph declares"),
-              std::string::npos) << a;
-    EXPECT_EQ(a.find("()"), std::string::npos) << a;
-}
+    expect(fatal(!a.empty()));
+    expect(ne(a.find("the C library in this graph declares"), std::string::npos)) << a;
+    expect(eq(a.find("()"), std::string::npos)) << a;
+}};
 
-TEST(CAbiAbsentAdvice, TheGnuSpellingIsMatchedToo) {
+UTest the_gnu_spelling_is_matched_too{"CAbiAbsentAdvice/TheGnuSpellingIsMatchedToo", [] {
     std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
         {"fork", mcpp::targetside::CAbiAbsentForm::Link, ""},
     };
     auto a = mcpp::build::c_abi_absent_facility_advice(
         "main.o: undefined reference to `fork'\n", "musl", absent);
-    EXPECT_FALSE(a.empty());
-}
+    expect(!a.empty());
+}};
 
-TEST(CAbiAbsentAdvice, AnAbsenceThatReachesTheProgramAtRunTimeIsNotMatched) {
+UTest an_absence_that_reaches_the_program_at_run_time_is_not_matched{"CAbiAbsentAdvice/AnAbsenceThatReachesTheProgramAtRunTimeIsNotMatched", [] {
     // `enosys` and `accepted-no-effect` reach a program by construction while
     // it runs; matching them against a link diagnostic would report a
     // coincidence of spelling as an explanation.
@@ -268,27 +268,27 @@ TEST(CAbiAbsentAdvice, AnAbsenceThatReachesTheProgramAtRunTimeIsNotMatched) {
         {"mprotect", mcpp::targetside::CAbiAbsentForm::Enosys, "no protection op"},
         {"tcsetattr", mcpp::targetside::CAbiAbsentForm::AcceptedNoEffect, ""},
     };
-    EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
+    expect(mcpp::build::c_abi_absent_facility_advice(
         "ld.lld: error: undefined symbol: mprotect\n", "musl", absent).empty());
-    EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
+    expect(mcpp::build::c_abi_absent_facility_advice(
         "undefined reference to `tcsetattr'\n", "musl", absent).empty());
-}
+}};
 
-TEST(CAbiAbsentAdvice, ALinkFailureNamingSomethingElseGetsNoNote) {
+UTest a_link_failure_naming_something_else_gets_no_note{"CAbiAbsentAdvice/ALinkFailureNamingSomethingElseGetsNoNote", [] {
     std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
         {"fork", mcpp::targetside::CAbiAbsentForm::Link, ""},
     };
-    EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
+    expect(mcpp::build::c_abi_absent_facility_advice(
         "ld.lld: error: undefined symbol: my_own_function\n", "musl", absent)
                     .empty());
-}
+}};
 
-TEST(CAbiAbsentAdvice, ALibraryThatEnumeratedNothingProducesNoNote) {
-    EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
+UTest a_library_that_enumerated_nothing_produces_no_note{"CAbiAbsentAdvice/ALibraryThatEnumeratedNothingProducesNoNote", [] {
+    expect(mcpp::build::c_abi_absent_facility_advice(
         "ld.lld: error: undefined symbol: fork\n", "musl", {}).empty());
-}
+}};
 
-TEST(CAbiAbsentAdvice, ALongerSymbolWithTheSamePrefixIsNotExplained) {
+UTest a_longer_symbol_with_the_same_prefix_is_not_explained{"CAbiAbsentAdvice/ALongerSymbolWithTheSamePrefixIsNotExplained", [] {
     // `undefined symbol: open` is a prefix of `undefined symbol: opendir`.
     // A substring search would answer a link failure with a row that has
     // nothing to do with it, and an explanation that is confidently wrong is
@@ -296,13 +296,13 @@ TEST(CAbiAbsentAdvice, ALongerSymbolWithTheSamePrefixIsNotExplained) {
     std::vector<mcpp::targetside::CAbiAbsentEntry> absent{
         {"open", mcpp::targetside::CAbiAbsentForm::Link, "not supplied"},
     };
-    EXPECT_TRUE(mcpp::build::c_abi_absent_facility_advice(
+    expect(mcpp::build::c_abi_absent_facility_advice(
         "ld.lld: error: undefined symbol: opendir\n", "musl", absent).empty());
-    EXPECT_FALSE(mcpp::build::c_abi_absent_facility_advice(
-        "ld.lld: error: undefined symbol: open\n", "musl", absent).empty());
-}
+    expect(!(mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: open\n", "musl", absent).empty()));
+}};
 
-TEST(CAbiAbsentAdvice, TheListSurvivesAWriteAndReadBesideBuildNinja) {
+UTest the_list_survives_a_write_and_read_beside_build_ninja{"CAbiAbsentAdvice/TheListSurvivesAWriteAndReadBesideBuildNinja", [] {
     // The two paths that report a failed build --- the one with a plan and the
     // fast path, which has none by construction --- must give the same advice,
     // or it appears depending on whether build.ninja happened to be up to
@@ -314,27 +314,27 @@ TEST(CAbiAbsentAdvice, TheListSurvivesAWriteAndReadBesideBuildNinja) {
     };
     mcpp::build::write_c_abi_absent_sidecar(dir.path, "musl", absent);
     auto [name, back] = mcpp::build::read_c_abi_absent_sidecar(dir.path);
-    EXPECT_EQ(name, "musl");
-    ASSERT_EQ(back.size(), 2u);
-    EXPECT_EQ(back[0].name, "fork");
-    EXPECT_EQ(back[0].form, mcpp::targetside::CAbiAbsentForm::Link);
-    EXPECT_EQ(back[0].note, "no image duplication");
-    EXPECT_EQ(back[1].form, mcpp::targetside::CAbiAbsentForm::Enosys);
-    EXPECT_TRUE(back[1].note.empty());
+    expect(eq(name, "musl"));
+    expect(fatal(eq(back.size(), 2u)));
+    expect(eq(back[0].name, "fork"));
+    expect(eq(back[0].form, mcpp::targetside::CAbiAbsentForm::Link));
+    expect(eq(back[0].note, "no image duplication"));
+    expect(eq(back[1].form, mcpp::targetside::CAbiAbsentForm::Enosys));
+    expect(back[1].note.empty());
     // And the advice built from the read-back list is the advice the plan
     // path would have given.
-    EXPECT_FALSE(mcpp::build::c_abi_absent_facility_advice(
-        "ld.lld: error: undefined symbol: fork\n", name, back).empty());
-}
+    expect(!(mcpp::build::c_abi_absent_facility_advice(
+        "ld.lld: error: undefined symbol: fork\n", name, back).empty()));
+}};
 
-TEST(CAbiAbsentAdvice, ADirectoryNoBuildWroteToYieldsNothing) {
+UTest a_directory_no_build_wrote_to_yields_nothing{"CAbiAbsentAdvice/ADirectoryNoBuildWroteToYieldsNothing", [] {
     Tmp dir;
     auto [name, back] = mcpp::build::read_c_abi_absent_sidecar(dir.path);
-    EXPECT_TRUE(name.empty());
-    EXPECT_TRUE(back.empty());
-}
+    expect(name.empty());
+    expect(back.empty());
+}};
 
-TEST(CAbiAbsentAdvice, AGraphThatDeclaresNoAbsenceLeavesNoSidecar) {
+UTest a_graph_that_declares_no_absence_leaves_no_sidecar{"CAbiAbsentAdvice/AGraphThatDeclaresNoAbsenceLeavesNoSidecar", [] {
     // A build whose C library states nothing must not leave a file behind for
     // the next build to read: the fast path would then explain a failure with
     // a list the current graph never declared.
@@ -343,5 +343,5 @@ TEST(CAbiAbsentAdvice, AGraphThatDeclaresNoAbsenceLeavesNoSidecar) {
         {{"fork", mcpp::targetside::CAbiAbsentForm::Link, ""}});
     mcpp::build::write_c_abi_absent_sidecar(dir.path, "", {});
     auto [name, back] = mcpp::build::read_c_abi_absent_sidecar(dir.path);
-    EXPECT_TRUE(back.empty());
-}
+    expect(back.empty());
+}};

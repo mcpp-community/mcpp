@@ -1,6 +1,6 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.invocation;
 import mcpp.source_kind;
 import mcpp.build.compile_commands;
@@ -16,6 +16,8 @@ import mcpp.toolchain.triple;
 import mcpplibs.os.platform;
 import mcpp.runtime.search;
 import mcpp.targetside;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::build;
 
@@ -77,10 +79,10 @@ BuildPlan minimal_plan() {
 
 }  // namespace
 
-TEST(NinjaBackend, WindowsDriverLinksRetainTheSelectedTargetForCAndCxx) {
+UTest windows_driver_links_retain_the_selected_target_for_c_and_cxx{"NinjaBackend/WindowsDriverLinksRetainTheSelectedTargetForCAndCxx", [] {
     // This regression covers the Windows-host PE driver link branch.
     if constexpr (!mcpplibs::os::is_windows)
-        GTEST_SKIP() << "the PE driver link branch is selected on Windows hosts";
+        skip("the PE driver link branch is selected on Windows hosts");
     for (const auto arch : {"i686", "x86_64", "aarch64"}) {
         auto plan = minimal_plan();
         plan.toolchain.compiler = mcpp::toolchain::CompilerId::Clang;
@@ -93,12 +95,12 @@ TEST(NinjaBackend, WindowsDriverLinksRetainTheSelectedTargetForCAndCxx) {
         plan.targetSide.cAbi.interfaceName = "msvc";
         plan.targetSide.cxx.interfaceName = "msvc";
         auto flags = compute_flags(plan);
-        EXPECT_NE(flags.ld.find(plan.toolchain.crossTargetFlag), std::string::npos);
-        EXPECT_NE(flags.ldC.find(plan.toolchain.crossTargetFlag), std::string::npos);
+        expect(ne(flags.ld.find(plan.toolchain.crossTargetFlag), std::string::npos));
+        expect(ne(flags.ldC.find(plan.toolchain.crossTargetFlag), std::string::npos));
     }
-}
+}};
 
-TEST(NinjaBackend, BitcodeExportToolsComeFromTheSelectedLlvmAndAreQuotedAsWords) {
+UTest bitcode_export_tools_come_from_the_selected_llvm_and_are_quoted_as_words{"NinjaBackend/BitcodeExportToolsComeFromTheSelectedLlvmAndAreQuotedAsWords", [] {
     auto plan = minimal_plan();
     plan.toolchain.compiler = mcpp::toolchain::CompilerId::Clang;
     plan.toolchain.targetTriple = "x86_64-pc-windows-msvc";
@@ -114,16 +116,16 @@ TEST(NinjaBackend, BitcodeExportToolsComeFromTheSelectedLlvmAndAreQuotedAsWords)
     auto text = emit_ninja_string(plan);
     const auto nm = plan.toolchain.binaryPath.parent_path()
         / (mcpplibs::os::is_windows ? "llvm-nm.exe" : "llvm-nm");
-    EXPECT_NE(text.find("--llvm-cxx " + ninja_command_word(plan.toolchain.binaryPath.generic_string())), std::string::npos);
-    EXPECT_NE(text.find("--llvm-nm " + ninja_command_word(nm.generic_string())), std::string::npos);
-    EXPECT_NE(text.find("--llvm-target x86_64-pc-windows-msvc"), std::string::npos);
-    EXPECT_NE(text.find("build bin/probe.def : coff_def obj/probe.o"), std::string::npos);
+    expect(ne(text.find("--llvm-cxx " + ninja_command_word(plan.toolchain.binaryPath.generic_string())), std::string::npos));
+    expect(ne(text.find("--llvm-nm " + ninja_command_word(nm.generic_string())), std::string::npos));
+    expect(ne(text.find("--llvm-target x86_64-pc-windows-msvc"), std::string::npos));
+    expect(ne(text.find("build bin/probe.def : coff_def obj/probe.o"), std::string::npos));
     plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
     plan.toolchain.binaryPath = "/native/bin/cl.exe";
-    EXPECT_EQ(emit_ninja_string(plan).find("coff_args ="), std::string::npos);
-}
+    expect(eq(emit_ninja_string(plan).find("coff_args ="), std::string::npos));
+}};
 
-TEST(NinjaBackend, OrdinaryCompilersShareTheDetachedScheduleBound) {
+UTest ordinary_compilers_share_the_detached_schedule_bound{"NinjaBackend/OrdinaryCompilersShareTheDetachedScheduleBound", [] {
     auto plan = minimal_plan();
     plan.toolchain.version = "16.1.0";
     plan.scheduleTag = "detach-codegen";
@@ -137,22 +139,22 @@ TEST(NinjaBackend, OrdinaryCompilersShareTheDetachedScheduleBound) {
     const auto text = emit_ninja_string(plan);
     auto rule = [&](std::string_view name) {
         const auto start = text.find("rule " + std::string(name) + "\n");
-        EXPECT_NE(start, std::string::npos) << name;
+        expect(ne(start, std::string::npos)) << name;
         return start == std::string::npos ? std::string{} : text.substr(start, text.find("\n\n", start) - start);
     };
     for (const auto name : {"cxx_module", "cxx_object", "c_object", "asm_object", "asm_object_raw", "nasm_object", "cxx_scan"})
-        EXPECT_NE(rule(name).find("__compiler-cap --sem .mcpp-sched --output $out --depfile $out.d -- "), std::string::npos) << name;
+        expect(ne(rule(name).find("__compiler-cap --sem .mcpp-sched --output $out --depfile $out.d -- "), std::string::npos)) << name;
     // The generation carries the cap: the graph names no number of compilers,
     // so it is the same whatever the job count (e2e 861).
-    EXPECT_EQ(text.find("--cap"), std::string::npos);
-    EXPECT_EQ(text.find("sched_cap"), std::string::npos);
-    EXPECT_EQ(rule("cxx_module_bmi").find("__compiler-cap"), std::string::npos)
+    expect(eq(text.find("--cap"), std::string::npos));
+    expect(eq(text.find("sched_cap"), std::string::npos));
+    expect(eq(rule("cxx_module_bmi").find("__compiler-cap"), std::string::npos))
         << "the BMI supervisor already holds a permit";
-    EXPECT_EQ(rule("cxx_module_obj").find("__compiler-cap"), std::string::npos)
+    expect(eq(rule("cxx_module_obj").find("__compiler-cap"), std::string::npos))
         << "a join must not wait for a second permit";
-}
+}};
 
-TEST(NinjaBackend, ObjectiveCSourceUsesCObjectRuleAndCFlags) {
+UTest objective_c_source_uses_c_object_rule_and_c_flags{"NinjaBackend/ObjectiveCSourceUsesCObjectRuleAndCFlags", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/cocoa.m",
@@ -165,15 +167,15 @@ TEST(NinjaBackend, ObjectiveCSourceUsesCObjectRuleAndCFlags) {
 
     auto ninja = emit_ninja_string(plan);
 
-    EXPECT_NE(ninja.find("build obj/cocoa.o : c_object src/cocoa.m"), std::string::npos)
+    expect(ne(ninja.find("build obj/cocoa.o : c_object src/cocoa.m"), std::string::npos))
         << ninja;
-    EXPECT_EQ(ninja.find("build obj/cocoa.o : cxx_object src/cocoa.m"), std::string::npos)
+    expect(eq(ninja.find("build obj/cocoa.o : cxx_object src/cocoa.m"), std::string::npos))
         << ninja;
-    EXPECT_NE(ninja.find("unit_cflags = -DOBJ_C_BUILD=1"), std::string::npos)
+    expect(ne(ninja.find("unit_cflags = -DOBJ_C_BUILD=1"), std::string::npos))
         << ninja;
-    EXPECT_EQ(ninja.find("unit_cxxflags = -DWRONG_CXX_FLAG=1"), std::string::npos)
+    expect(eq(ninja.find("unit_cxxflags = -DWRONG_CXX_FLAG=1"), std::string::npos))
         << ninja;
-}
+}};
 
 // mcpp#235: cxx_module/cxx_object must track header/purview/GMF includes via
 // a GNU-style depfile on non-MSVC toolchains (this test's plan uses GCC on a
@@ -185,7 +187,7 @@ TEST(NinjaBackend, ObjectiveCSourceUsesCObjectRuleAndCFlags) {
 // GCC's `-fmodules` bolts non-standard "reversed" module rules onto the raw
 // -MMD output that ninja's depfile loader rejects — see the long comment at
 // the definition site for the empirically-confirmed failure mode.
-TEST(NinjaBackend, CxxModuleAndCxxObjectRulesTrackHeaderDepsViaGccDepfile) {
+UTest cxx_module_and_cxx_object_rules_track_header_deps_via_gcc_depfile{"NinjaBackend/CxxModuleAndCxxObjectRulesTrackHeaderDepsViaGccDepfile", [] {
     // Every host (the 2026-09-28 design, WS2): whether a unit emits a depfile
     // is the compiler's property. What differs by host is how GCC's filtered
     // form arrives: the awk program in the POSIX rule's shell command, and
@@ -197,32 +199,31 @@ TEST(NinjaBackend, CxxModuleAndCxxObjectRulesTrackHeaderDepsViaGccDepfile) {
 
     auto module_rule_start = ninja.find("rule cxx_module");
     auto object_rule_start = ninja.find("rule cxx_object");
-    ASSERT_NE(module_rule_start, std::string::npos) << ninja;
-    ASSERT_NE(object_rule_start, std::string::npos) << ninja;
-    ASSERT_LT(module_rule_start, object_rule_start) << ninja;
+    expect(fatal(ne(module_rule_start, std::string::npos))) << ninja;
+    expect(fatal(ne(object_rule_start, std::string::npos))) << ninja;
+    expect(fatal(lt(module_rule_start, object_rule_start))) << ninja;
 
     auto module_rule = ninja.substr(module_rule_start, object_rule_start - module_rule_start);
     auto object_rule = ninja.substr(object_rule_start);
 
     for (auto const& rule : {module_rule, object_rule}) {
-        EXPECT_NE(rule.find("-MMD -MF $out.d.raw"), std::string::npos) << ninja;
-        EXPECT_NE(rule.find("deps = gcc"), std::string::npos) << ninja;
-        EXPECT_NE(rule.find("depfile = $out.d\n"), std::string::npos) << ninja;
+        expect(ne(rule.find("-MMD -MF $out.d.raw"), std::string::npos)) << ninja;
+        expect(ne(rule.find("deps = gcc"), std::string::npos)) << ninja;
+        expect(ne(rule.find("depfile = $out.d\n"), std::string::npos)) << ninja;
         // The raw compiler depfile (with GCC's module-specific reversed
         // rules) must never be bound directly as ninja's depfile.
-        EXPECT_EQ(rule.find("depfile = $out.d.raw"), std::string::npos) << ninja;
+        expect(eq(rule.find("depfile = $out.d.raw"), std::string::npos)) << ninja;
         if constexpr (mcpplibs::os::is_windows) {
-            EXPECT_NE(rule.find("$mcpp depfile-filter --raw $out.d.raw --out $out.d -- "),
-                      std::string::npos) << ninja;
-            EXPECT_EQ(rule.find("awk"), std::string::npos) << ninja;
+            expect(ne(rule.find("$mcpp depfile-filter --raw $out.d.raw --out $out.d -- "), std::string::npos)) << ninja;
+            expect(eq(rule.find("awk"), std::string::npos)) << ninja;
         } else {
-            EXPECT_NE(rule.find("awk"), std::string::npos) << ninja;
-            EXPECT_EQ(rule.find("depfile-filter"), std::string::npos) << ninja;
+            expect(ne(rule.find("awk"), std::string::npos)) << ninja;
+            expect(eq(rule.find("depfile-filter"), std::string::npos)) << ninja;
         }
     }
-}
+}};
 
-TEST(NinjaBackend, UsesPackageCppStandardForCxxFlags) {
+UTest uses_package_cpp_standard_for_cxx_flags{"NinjaBackend/UsesPackageCppStandardForCxxFlags", [] {
     auto plan = minimal_plan();
     plan.manifest.package.standard = "c++26";
     plan.manifest.language.standard = "c++26";
@@ -237,13 +238,13 @@ TEST(NinjaBackend, UsesPackageCppStandardForCxxFlags) {
 
     auto ninja = emit_ninja_string(plan);
 
-    EXPECT_NE(ninja.find("cxxflags  = -std=c++26"), std::string::npos)
+    expect(ne(ninja.find("cxxflags  = -std=c++26"), std::string::npos))
         << ninja;
-    EXPECT_EQ(ninja.find("-std=c++23"), std::string::npos)
+    expect(eq(ninja.find("-std=c++23"), std::string::npos))
         << ninja;
-}
+}};
 
-TEST(NinjaBackend, CompileCommandsUsesSameCppStandard) {
+UTest compile_commands_uses_same_cpp_standard{"NinjaBackend/CompileCommandsUsesSameCppStandard", [] {
     auto plan = minimal_plan();
     plan.manifest.package.standard = "c++26";
     plan.manifest.language.standard = "c++26";
@@ -259,11 +260,11 @@ TEST(NinjaBackend, CompileCommandsUsesSameCppStandard) {
     auto flags = compute_flags(plan);
     auto cdb = emit_compile_commands(plan, flags);
 
-    EXPECT_NE(cdb.find("\"-std=c++26\""), std::string::npos)
+    expect(ne(cdb.find("\"-std=c++26\""), std::string::npos))
         << cdb;
-    EXPECT_EQ(cdb.find("\"-std=c++23\""), std::string::npos)
+    expect(eq(cdb.find("\"-std=c++23\""), std::string::npos))
         << cdb;
-}
+}};
 
 // #690 (design record F7): the root's `[build] include_dirs` and
 // `include_dirs_after` are its PRIVATE build requirement. They reach the root's
@@ -273,7 +274,7 @@ TEST(NinjaBackend, CompileCommandsUsesSameCppStandard) {
 // were appended to all four strings, so a root header named like a system or
 // dependency header shadowed it inside the dependency, and a dependency cache
 // entry could be compiled against another project's root headers.
-TEST(NinjaBackend, FileLevelFlagsCarryNoRootIncludeDirectory) {
+UTest file_level_flags_carry_no_root_include_directory{"NinjaBackend/FileLevelFlagsCarryNoRootIncludeDirectory", [] {
     auto plan = minimal_plan();
     plan.nasmPath = "/usr/bin/nasm";
     plan.manifest.buildConfig.includeDirs      = {"include", "third_party/imgui"};
@@ -283,12 +284,11 @@ TEST(NinjaBackend, FileLevelFlagsCarryNoRootIncludeDirectory) {
 
     for (auto const* channel : {&flags.cxx, &flags.cc, &flags.as, &flags.nasm}) {
         for (auto const* dir : {"include", "imgui", "generated"}) {
-            EXPECT_EQ(channel->find(dir), std::string::npos)
-                << "root include directory '" << dir
+            if (auto&& failed = expect(eq(channel->find(dir), std::string::npos)); !failed) failed << "root include directory '" << dir
                 << "' reached a file-level flag string: " << *channel;
         }
     }
-}
+}};
 
 // What the file-level channel used to guarantee now holds on the per-unit
 // one: a relative `[build] include_dirs` entry is absolutised against the
@@ -296,16 +296,16 @@ TEST(NinjaBackend, FileLevelFlagsCarryNoRootIncludeDirectory) {
 // directory (#390; the Cluster A review fix of #226/#234, whose failure shape
 // was a relative `/Iinclude` under the MSVC dialect that stopped resolving
 // once ninja ran from the output directory).
-TEST(NinjaBackend, RootIncludeEntriesAreAbsolutisedForTheUnitChannel) {
+UTest root_include_entries_are_absolutised_for_the_unit_channel{"NinjaBackend/RootIncludeEntriesAreAbsolutisedForTheUnitChannel", [] {
     auto plan = minimal_plan();
     auto dirs = mcpp::build::expand_manifest_include_entry(
         plan.projectRoot, "third_party/imgui");
-    ASSERT_EQ(dirs.size(), 1u);
+    expect(fatal(eq(dirs.size(), 1u)));
     auto expected = plan.projectRoot / "third_party" / "imgui";
     expected.make_preferred();
-    EXPECT_EQ(dirs.front(), expected);
-    EXPECT_TRUE(dirs.front().has_root_path()) << dirs.front();
-}
+    expect(eq(dirs.front(), expected));
+    expect(dirs.front().has_root_path()) << dirs.front();
+}};
 
 // #249: a compile unit's localIncludeDirsAfter emit as -idirafter into the
 // same $local_includes variable, APPENDED after the -I entries. -idirafter
@@ -315,7 +315,7 @@ TEST(NinjaBackend, RootIncludeEntriesAreAbsolutisedForTheUnitChannel) {
 // while the dep's real headers stay findable. The flag's semantics — not
 // its position — carry the priority; the -I-then-idirafter ordering is for
 // readability.
-TEST(NinjaBackend, LocalIncludeDirsAfterEmitIdirafterAppendedAfterDashI) {
+UTest local_include_dirs_after_emit_idirafter_appended_after_dash_i{"NinjaBackend/LocalIncludeDirsAfterEmitIdirafterAppendedAfterDashI", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
@@ -329,24 +329,24 @@ TEST(NinjaBackend, LocalIncludeDirsAfterEmitIdirafterAppendedAfterDashI) {
     auto ninja = emit_ninja_string(plan);
 
     auto line_start = ninja.find("local_includes =");
-    ASSERT_NE(line_start, std::string::npos) << ninja;
+    expect(fatal(ne(line_start, std::string::npos))) << ninja;
     auto line_end = ninja.find('\n', line_start);
     auto line = ninja.substr(line_start, line_end - line_start);
 
     auto i_pos = line.find("-I/dep/include");
     auto after_pos = line.find("-idirafter/dep/tarball-root");
-    ASSERT_NE(i_pos, std::string::npos) << line;
-    ASSERT_NE(after_pos, std::string::npos) << line;
+    expect(fatal(ne(i_pos, std::string::npos))) << line;
+    expect(fatal(ne(after_pos, std::string::npos))) << line;
     // After-dirs come after the -I entries within $local_includes.
-    EXPECT_LT(i_pos, after_pos) << line;
+    expect(lt(i_pos, after_pos)) << line;
     // Never upgraded to -I.
-    EXPECT_EQ(line.find("-I/dep/tarball-root"), std::string::npos) << line;
-}
+    expect(eq(line.find("-I/dep/tarball-root"), std::string::npos)) << line;
+}};
 
 // #249 MSVC degradation: cl.exe has no -idirafter, so under the msvc
 // dialect after-dirs are emitted as regular /I at the END of the include
 // list (clang targeting MSVC uses the gnu dialect and gets -idirafter).
-TEST(NinjaBackend, MsvcDialectEmitsIncludeDirsAfterAsTrailingSlashI) {
+UTest msvc_dialect_emits_include_dirs_after_as_trailing_slash_i{"NinjaBackend/MsvcDialectEmitsIncludeDirsAfterAsTrailingSlashI", [] {
     auto plan = minimal_plan();
     plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
     plan.toolchain.binaryPath = "cl.exe";
@@ -363,7 +363,7 @@ TEST(NinjaBackend, MsvcDialectEmitsIncludeDirsAfterAsTrailingSlashI) {
     auto ninja = emit_ninja_string(plan);
 
     auto line_start = ninja.find("local_includes =");
-    ASSERT_NE(line_start, std::string::npos) << ninja;
+    expect(fatal(ne(line_start, std::string::npos))) << ninja;
     auto line_end = ninja.find('\n', line_start);
     auto line = ninja.substr(line_start, line_end - line_start);
 
@@ -373,19 +373,19 @@ TEST(NinjaBackend, MsvcDialectEmitsIncludeDirsAfterAsTrailingSlashI) {
     // the dialect on one of them. Converging both on include_token fixed it.
     auto i_pos = line.find("/I/dep/include");
     auto after_pos = line.find("/I/dep/tarball-root");
-    ASSERT_NE(i_pos, std::string::npos) << line;
-    ASSERT_NE(after_pos, std::string::npos) << line;
-    EXPECT_LT(i_pos, after_pos) << line;
-    EXPECT_EQ(line.find("-idirafter"), std::string::npos) << line;
-    EXPECT_EQ(line.find("-I/dep"), std::string::npos) << line;
-}
+    expect(fatal(ne(i_pos, std::string::npos))) << line;
+    expect(fatal(ne(after_pos, std::string::npos))) << line;
+    expect(lt(i_pos, after_pos)) << line;
+    expect(eq(line.find("-idirafter"), std::string::npos)) << line;
+    expect(eq(line.find("-I/dep"), std::string::npos)) << line;
+}};
 
 // #331: the per-TU include channel applied only ninja's `$` escaping, while
 // the global channel in flags.cppm shell-quoted. Same manifest include_dirs,
 // two derivations — so a directory with a space in it survived one path and
 // split into separate shell words on the other, which is what every Windows
 // user hits the moment a dependency lands under `C:\Program Files`.
-TEST(NinjaBackend, LocalIncludeDirsWithSpacesAreShellQuoted) {
+UTest local_include_dirs_with_spaces_are_shell_quoted{"NinjaBackend/LocalIncludeDirsWithSpacesAreShellQuoted", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
@@ -398,7 +398,7 @@ TEST(NinjaBackend, LocalIncludeDirsWithSpacesAreShellQuoted) {
 
     auto ninja = emit_ninja_string(plan);
     auto line_start = ninja.find("local_includes =");
-    ASSERT_NE(line_start, std::string::npos) << ninja;
+    expect(fatal(ne(line_start, std::string::npos))) << ninja;
     auto line = ninja.substr(line_start, ninja.find('\n', line_start) - line_start);
 
     // Two escaping layers, in order: ninja's (`$ ` for a literal space, so
@@ -412,9 +412,9 @@ TEST(NinjaBackend, LocalIncludeDirsWithSpacesAreShellQuoted) {
     // wants single quotes, cmd.exe double. Hardcoding `'` passed on Linux
     // and failed on the Windows runner for a difference that is correct.
     const std::string q = mcpplibs::os::is_windows ? "\"" : "'";
-    EXPECT_NE(line.find(q + "-I/opt/my$ dep/include" + q), std::string::npos) << line;
-    EXPECT_NE(line.find(q + "-idirafter/opt/my$ dep/after" + q), std::string::npos) << line;
-}
+    expect(ne(line.find(q + "-I/opt/my$ dep/include" + q), std::string::npos)) << line;
+    expect(ne(line.find(q + "-idirafter/opt/my$ dep/after" + q), std::string::npos)) << line;
+}};
 
 // #261: on Windows $local_includes is copied into a RESPONSE FILE, which the
 // drivers tokenize GNU-style — a backslash is an escape character there, and
@@ -427,19 +427,19 @@ TEST(NinjaBackend, LocalIncludeDirsWithSpacesAreShellQuoted) {
 // assertion cannot be made from a Linux host. Guarded rather than weakened —
 // a test that passes for the wrong reason everywhere is worse than one that
 // says where it applies. Windows CI is the enforcement point.
-TEST(NinjaBackend, LocalIncludeTokensUseGenericSeparators) {
+UTest local_include_tokens_use_generic_separators{"NinjaBackend/LocalIncludeTokensUseGenericSeparators", [] {
     const auto& gnu = mcpp::toolchain::gnu_dialect();
     auto sub = std::filesystem::path("src") / "inc";
     auto tok = mcpp::build::include_token(gnu, sub, {},
                                           mcpp::build::PathForm::Generic);
     // True on every host: the generic form never uses the native separator.
-    EXPECT_NE(tok.find("src/inc"), std::string::npos) << tok;
+    expect(ne(tok.find("src/inc"), std::string::npos)) << tok;
 
     if constexpr (mcpplibs::os::is_windows) {
         auto abs = mcpp::build::include_token(
             gnu, std::filesystem::path("C:\\src\\inc"), {},
             mcpp::build::PathForm::Generic);
-        EXPECT_EQ(abs.find('\\'), std::string::npos) << abs;
+        expect(eq(abs.find('\\'), std::string::npos)) << abs;
 
         // The command-line channel keeps native separators — a backslash is
         // just a character there, and rewriting those paths would be a change
@@ -447,15 +447,15 @@ TEST(NinjaBackend, LocalIncludeTokensUseGenericSeparators) {
         auto native = mcpp::build::include_token(
             gnu, std::filesystem::path("C:\\src\\inc"), {},
             mcpp::build::PathForm::Native);
-        EXPECT_NE(native.find('\\'), std::string::npos) << native;
+        expect(ne(native.find('\\'), std::string::npos)) << native;
     }
-}
+}};
 
 // #249 NASM degradation: nasm_object edges share $local_includes, but NASM
 // would parse `-idirafter<p>` as its `-i` option with value `dirafter<p>` —
 // a silently wrong search dir. Only the C/C++ frontends have a system-header
 // chain to protect, so a nasm unit's after-dirs degrade to plain -I.
-TEST(NinjaBackend, NasmUnitEmitsIncludeDirsAfterAsPlainDashI) {
+UTest nasm_unit_emits_include_dirs_after_as_plain_dash_i{"NinjaBackend/NasmUnitEmitsIncludeDirsAfterAsPlainDashI", [] {
     auto plan = minimal_plan();
     plan.nasmPath = "/usr/bin/nasm";
     plan.compileUnits.push_back({
@@ -470,19 +470,19 @@ TEST(NinjaBackend, NasmUnitEmitsIncludeDirsAfterAsPlainDashI) {
     auto ninja = emit_ninja_string(plan);
 
     auto edge_start = ninja.find("build obj/scale.asm.o : nasm_object");
-    ASSERT_NE(edge_start, std::string::npos) << ninja;
+    expect(fatal(ne(edge_start, std::string::npos))) << ninja;
     auto line_start = ninja.find("local_includes =", edge_start);
-    ASSERT_NE(line_start, std::string::npos) << ninja;
+    expect(fatal(ne(line_start, std::string::npos))) << ninja;
     auto line = ninja.substr(line_start, ninja.find('\n', line_start) - line_start);
 
-    EXPECT_NE(line.find("-I/dep/x86"), std::string::npos) << line;
-    EXPECT_NE(line.find("-I/dep/tarball-root"), std::string::npos) << line;
-    EXPECT_EQ(line.find("-idirafter"), std::string::npos) << line;
-}
+    expect(ne(line.find("-I/dep/x86"), std::string::npos)) << line;
+    expect(ne(line.find("-I/dep/tarball-root"), std::string::npos)) << line;
+    expect(eq(line.find("-idirafter"), std::string::npos)) << line;
+}};
 
 // ── assembly sources (.S/.s → asm_object via $cc, .asm → nasm_object) ────────
 
-TEST(NinjaBackend, GasSourceUsesAsmObjectRule) {
+UTest gas_source_uses_asm_object_rule{"NinjaBackend/GasSourceUsesAsmObjectRule", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/copy.S",
@@ -497,23 +497,22 @@ TEST(NinjaBackend, GasSourceUsesAsmObjectRule) {
 
     auto ninja = emit_ninja_string(plan);
 
-    EXPECT_NE(ninja.find("rule asm_object"), std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("build obj/copy.S.o : asm_object src/copy.S"),
-              std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("cc        = "), std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("unit_asmflags = -DHAVE_ASM=1\n"), std::string::npos)
+    expect(ne(ninja.find("rule asm_object"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("build obj/copy.S.o : asm_object src/copy.S"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("cc        = "), std::string::npos)) << ninja;
+    expect(ne(ninja.find("unit_asmflags = -DHAVE_ASM=1\n"), std::string::npos))
         << ninja;
-    EXPECT_EQ(ninja.find("unit_asmflags = -DHAVE_ASM=1 -std=c99"), std::string::npos)
+    expect(eq(ninja.find("unit_asmflags = -DHAVE_ASM=1 -std=c99"), std::string::npos))
         << ninja;
     // The global asm flag string must not carry a C standard or opt level.
     auto asmline_pos = ninja.find("asmflags  =");
-    ASSERT_NE(asmline_pos, std::string::npos) << ninja;
+    expect(fatal(ne(asmline_pos, std::string::npos))) << ninja;
     auto asmline = ninja.substr(asmline_pos, ninja.find('\n', asmline_pos) - asmline_pos);
-    EXPECT_EQ(asmline.find("-std="), std::string::npos) << asmline;
-    EXPECT_EQ(asmline.find("-O"), std::string::npos) << asmline;
-}
+    expect(eq(asmline.find("-std="), std::string::npos)) << asmline;
+    expect(eq(asmline.find("-O"), std::string::npos)) << asmline;
+}};
 
-TEST(NinjaBackend, NasmSourceUsesNasmRuleWithDerivedFormat) {
+UTest nasm_source_uses_nasm_rule_with_derived_format{"NinjaBackend/NasmSourceUsesNasmRuleWithDerivedFormat", [] {
     auto plan = minimal_plan();
     plan.nasmPath = "/opt/bin/nasm";
     plan.nasmFormat = "elf64";
@@ -527,16 +526,15 @@ TEST(NinjaBackend, NasmSourceUsesNasmRuleWithDerivedFormat) {
 
     auto ninja = emit_ninja_string(plan);
 
-    EXPECT_NE(ninja.find("rule nasm_object"), std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("nasm      = /opt/bin/nasm"), std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("nasmfmt   = elf64"), std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("build obj/simd.asm.o : nasm_object src/simd.asm"),
-              std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("unit_asmflags = -DHAVE_AVX2=1\n"), std::string::npos)
+    expect(ne(ninja.find("rule nasm_object"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("nasm      = /opt/bin/nasm"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("nasmfmt   = elf64"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("build obj/simd.asm.o : nasm_object src/simd.asm"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("unit_asmflags = -DHAVE_AVX2=1\n"), std::string::npos))
         << ninja;
-}
+}};
 
-TEST(NinjaBackend, NoAsmRulesWithoutAsmSources) {
+UTest no_asm_rules_without_asm_sources{"NinjaBackend/NoAsmRulesWithoutAsmSources", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
@@ -547,11 +545,11 @@ TEST(NinjaBackend, NoAsmRulesWithoutAsmSources) {
 
     auto ninja = emit_ninja_string(plan);
 
-    EXPECT_EQ(ninja.find("rule asm_object"), std::string::npos) << ninja;
-    EXPECT_EQ(ninja.find("rule nasm_object"), std::string::npos) << ninja;
-}
+    expect(eq(ninja.find("rule asm_object"), std::string::npos)) << ninja;
+    expect(eq(ninja.find("rule nasm_object"), std::string::npos)) << ninja;
+}};
 
-TEST(NinjaBackend, CompileCommandsSkipNasmAndCoverGas) {
+UTest compile_commands_skip_nasm_and_cover_gas{"NinjaBackend/CompileCommandsSkipNasmAndCoverGas", [] {
     auto plan = minimal_plan();
     plan.nasmPath = "/opt/bin/nasm";
     plan.nasmFormat = "elf64";
@@ -572,11 +570,11 @@ TEST(NinjaBackend, CompileCommandsSkipNasmAndCoverGas) {
     auto cdb = emit_compile_commands(plan, flags);
 
     // NASM command lines are meaningless to CDB consumers (clangd) — excluded.
-    EXPECT_EQ(cdb.find("simd.asm"), std::string::npos) << cdb;
+    expect(eq(cdb.find("simd.asm"), std::string::npos)) << cdb;
     // GAS units ride the C driver and stay in the CDB.
-    EXPECT_NE(cdb.find("copy.S"), std::string::npos) << cdb;
-    EXPECT_EQ(cdb.find("\"-std=c11\""), std::string::npos) << cdb;   // asm-safe flags, no C std
-}
+    expect(ne(cdb.find("copy.S"), std::string::npos)) << cdb;
+    expect(eq(cdb.find("\"-std=c11\""), std::string::npos)) << cdb;   // asm-safe flags, no C std
+}};
 
 // mcpp#234: each packageCflags/packageCxxflags element is already one argv
 // token — apply_glob_flags pushes a define like `T=long long` as the single
@@ -585,7 +583,7 @@ TEST(NinjaBackend, CompileCommandsSkipNasmAndCoverGas) {
 // it to the shell, the embedded space split `-DT=long long` into TWO words
 // (`-DT=long` and a bare `long`). The emitted unit_cflags line must carry the
 // define as a single shell-quoted token.
-TEST(NinjaBackend, QuotesFlagValueWithSpace) {
+UTest quotes_flag_value_with_space{"NinjaBackend/QuotesFlagValueWithSpace", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.c",
@@ -602,15 +600,15 @@ TEST(NinjaBackend, QuotesFlagValueWithSpace) {
     const std::string quoted = mcpplibs::os::is_windows
         ? "unit_cflags = \"-DT=long long\""
         : "unit_cflags = '-DT=long long'";
-    EXPECT_NE(ninja.find(quoted), std::string::npos) << ninja;
+    expect(ne(ninja.find(quoted), std::string::npos)) << ninja;
     // Must NOT appear as two bare, unquoted words split on the space.
-    EXPECT_EQ(ninja.find("unit_cflags = -DT=long long"), std::string::npos)
+    expect(eq(ninja.find("unit_cflags = -DT=long long"), std::string::npos))
         << ninja;
-}
+}};
 
 // Plain framework-shaped flags with nothing shell-significant must pass
 // through byte-for-byte unquoted (no over-quoting regression).
-TEST(NinjaBackend, PlainFlagsPassThroughUnquoted) {
+UTest plain_flags_pass_through_unquoted{"NinjaBackend/PlainFlagsPassThroughUnquoted", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
@@ -622,9 +620,9 @@ TEST(NinjaBackend, PlainFlagsPassThroughUnquoted) {
 
     auto ninja = emit_ninja_string(plan);
 
-    EXPECT_NE(ninja.find("unit_cxxflags = -DFOO=1 -O2"), std::string::npos)
+    expect(ne(ninja.find("unit_cxxflags = -DFOO=1 -O2"), std::string::npos))
         << ninja;
-}
+}};
 
 // The SubOS farm must reach DT_RPATH AFTER the artifact's own directory.
 //
@@ -637,9 +635,9 @@ TEST(NinjaBackend, PlainFlagsPassThroughUnquoted) {
 // The assertion is on the EFFECTIVE line (global then unit, exactly as the
 // rule expands it), not on either variable alone: checking one of them is what
 // made the original mistake invisible.
-TEST(NinjaBackend, SubosFarmRpathFollowsTheArtifactsOwnDirectory) {
+UTest subos_farm_rpath_follows_the_artifacts_own_directory{"NinjaBackend/SubosFarmRpathFollowsTheArtifactsOwnDirectory", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "the SubOS farm rpath is emitted for ELF targets only";
+        skip("the SubOS farm rpath is emitted for ELF targets only");
 
     const std::string farm = "/tmp/mcpp-ninja-test-farm/subos/default/lib";
     auto plan = minimal_plan();
@@ -675,22 +673,22 @@ TEST(NinjaBackend, SubosFarmRpathFollowsTheArtifactsOwnDirectory) {
 
     auto origin = effective.find("$$ORIGIN");
     auto fallback = effective.find(farm);
-    ASSERT_NE(origin, std::string::npos)   << effective;
-    ASSERT_NE(fallback, std::string::npos) << effective;
-    EXPECT_LT(origin, fallback)
+    expect(fatal(ne(origin, std::string::npos)))   << effective;
+    expect(fatal(ne(fallback, std::string::npos))) << effective;
+    expect(lt(origin, fallback))
         << "the SubOS farm outranks $ORIGIN, so the artifact can load a "
            "different build of a library than it linked against:\n" << effective;
 
     // And it must have left the global channel entirely — leaving a copy there
     // would restore the old order no matter what the unit tail says.
-    EXPECT_EQ(line_after("\nldflags   =").find(farm), std::string::npos) << ninja;
-}
+    expect(eq(line_after("\nldflags   =").find(farm), std::string::npos)) << ninja;
+}};
 
 // An archive is produced by `ar`, whose rule never expands `$unit_ldflags`.
 // Emitting run-time search flags there would be dead bytes in every graph.
-TEST(NinjaBackend, StaticLibraryCarriesNoRuntimeFallback) {
+UTest static_library_carries_no_runtime_fallback{"NinjaBackend/StaticLibraryCarriesNoRuntimeFallback", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "the SubOS farm rpath is emitted for ELF targets only";
+        skip("the SubOS farm rpath is emitted for ELF targets only");
 
     const std::string farm = "/tmp/mcpp-ninja-test-farm/subos/default/lib";
     auto plan = minimal_plan();
@@ -711,10 +709,10 @@ TEST(NinjaBackend, StaticLibraryCarriesNoRuntimeFallback) {
 
     auto ninja = emit_ninja_string(plan);
     auto at = ninja.find("build lib/libgreet.a");
-    ASSERT_NE(at, std::string::npos) << ninja;
+    expect(fatal(ne(at, std::string::npos))) << ninja;
     auto stanza = ninja.substr(at, ninja.find("\nbuild ", at + 1) - at);
-    EXPECT_EQ(stanza.find(farm), std::string::npos) << stanza;
-}
+    expect(eq(stanza.find(farm), std::string::npos)) << stanza;
+}};
 
 // Regression: mcpp-GENERATED per-unit LINK flags are already correctly
 // shell-quoted + ninja-escaped at construction — e.g. the shared-dep rpath
@@ -723,7 +721,7 @@ TEST(NinjaBackend, StaticLibraryCarriesNoRuntimeFallback) {
 // shell_quote_arg over them: doing so double-quotes the token, baking a
 // literal `'$ORIGIN'` (quotes included) into the binary's RUNPATH so the
 // dynamic linker can't find dependency .so's next to the exe (e2e 55-57/64).
-TEST(NinjaBackend, LinkFlagsAreNotReQuoted) {
+UTest link_flags_are_not_re_quoted{"NinjaBackend/LinkFlagsAreNotReQuoted", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
@@ -743,11 +741,11 @@ TEST(NinjaBackend, LinkFlagsAreNotReQuoted) {
     auto ninja = emit_ninja_string(plan);
 
     // The rpath token passes through verbatim (ninja `$$` = literal `$`).
-    EXPECT_NE(ninja.find("-Wl,-rpath,'$$ORIGIN'"), std::string::npos) << ninja;
+    expect(ne(ninja.find("-Wl,-rpath,'$$ORIGIN'"), std::string::npos)) << ninja;
     // Must NOT be double-quoted: shell_quote_arg escaping an embedded `'`
     // produces the `'\''` sequence, which only appears if it re-quoted.
-    EXPECT_EQ(ninja.find("'\\''"), std::string::npos) << ninja;
-}
+    expect(eq(ninja.find("'\\''"), std::string::npos)) << ninja;
+}};
 
 // Regression (#234 follow-up): a raw descriptor flag that packs two argv
 // tokens into one string — e.g. compat.lua's `-include <header>` — must pass
@@ -756,7 +754,7 @@ TEST(NinjaBackend, LinkFlagsAreNotReQuoted) {
 // file literally named "<space>header" → "No such file" → aarch64/macos/windows
 // cross-builds failed. Only `-D`/`/D` define tokens with an intra-value space
 // get quoted; `-include foo.h` does not.
-TEST(NinjaBackend, RawMultiTokenFlagIsNotQuoted) {
+UTest raw_multi_token_flag_is_not_quoted{"NinjaBackend/RawMultiTokenFlagIsNotQuoted", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.c",
@@ -769,12 +767,10 @@ TEST(NinjaBackend, RawMultiTokenFlagIsNotQuoted) {
     auto ninja = emit_ninja_string(plan);
 
     // Verbatim, so the shell re-splits into two args.
-    EXPECT_NE(ninja.find("unit_cflags = -include mcpp_lua_platform_config.h"),
-              std::string::npos) << ninja;
+    expect(ne(ninja.find("unit_cflags = -include mcpp_lua_platform_config.h"), std::string::npos)) << ninja;
     // Must NOT be wrapped in quotes (which would make it one malformed arg).
-    EXPECT_EQ(ninja.find("'-include mcpp_lua_platform_config.h'"),
-              std::string::npos) << ninja;
-}
+    expect(eq(ninja.find("'-include mcpp_lua_platform_config.h'"), std::string::npos)) << ninja;
+}};
 
 // mcpp#247 + #344: link/archive/shared route the object list through a response
 // file on EVERY platform. The number of objects on one link edge is unbounded —
@@ -792,7 +788,7 @@ TEST(NinjaBackend, RawMultiTokenFlagIsNotQuoted) {
 // object directories took it to 161 687 — at which point ninja dies with
 // `posix_spawn: Argument list too long`, naming no edge and no cause. A ceiling
 // nothing watches is not a ceiling anyone can stay under, so there isn't one now.
-TEST(NinjaBackend, DriverStyleLinkRulesAlwaysUseRspfile) {
+UTest driver_style_link_rules_always_use_rspfile{"NinjaBackend/DriverStyleLinkRulesAlwaysUseRspfile", [] {
     auto plan = minimal_plan();  // GCC → gnu dialect → driver-style branch
 
     auto ninja = emit_ninja_string(plan);
@@ -800,20 +796,20 @@ TEST(NinjaBackend, DriverStyleLinkRulesAlwaysUseRspfile) {
     for (std::string_view rule : {"rule cxx_link\n", "rule cxx_archive\n",
                                   "rule cxx_shared\n"}) {
         auto start = ninja.find(rule);
-        ASSERT_NE(start, std::string::npos) << ninja;
+        expect(fatal(ne(start, std::string::npos))) << ninja;
         auto end = ninja.find("\n\n", start);
-        ASSERT_NE(end, std::string::npos) << ninja;
+        expect(fatal(ne(end, std::string::npos))) << ninja;
         auto body = ninja.substr(start, end - start);
-        EXPECT_NE(body.find("@$out.rsp"), std::string::npos) << body;
-        EXPECT_NE(body.find("rspfile = $out.rsp"), std::string::npos) << body;
-        EXPECT_NE(body.find("rspfile_content = $in"), std::string::npos) << body;
+        expect(ne(body.find("@$out.rsp"), std::string::npos)) << body;
+        expect(ne(body.find("rspfile = $out.rsp"), std::string::npos)) << body;
+        expect(ne(body.find("rspfile_content = $in"), std::string::npos)) << body;
         // And the object list must no longer be inlined into the command: that
         // is the whole point, so `$in` may appear only as rspfile_content.
-        EXPECT_EQ(count_occurrences(body, "$in"), 1u) << body;
+        expect(eq(count_occurrences(body, "$in"), 1u)) << body;
     }
-}
+}};
 
-TEST(NinjaBackend, RootPackageCxxflagsAreEmittedOncePerUnit) {
+UTest root_package_cxxflags_are_emitted_once_per_unit{"NinjaBackend/RootPackageCxxflagsAreEmittedOncePerUnit", [] {
     auto plan = minimal_plan();
     plan.manifest.buildConfig.cxxflags = {"-DROOT_FLAG=1"};
     plan.compileUnits.push_back({
@@ -826,18 +822,18 @@ TEST(NinjaBackend, RootPackageCxxflagsAreEmittedOncePerUnit) {
 
     auto ninja = emit_ninja_string(plan);
 
-    EXPECT_EQ(count_occurrences(ninja, "unit_cxxflags = -DROOT_FLAG=1"), 2u)
+    expect(eq(count_occurrences(ninja, "unit_cxxflags = -DROOT_FLAG=1"), 2u))
         << ninja;
-    EXPECT_EQ(ninja.find("cxxflags  = -std=c++23 -O2 -DROOT_FLAG=1"), std::string::npos)
+    expect(eq(ninja.find("cxxflags  = -std=c++23 -O2 -DROOT_FLAG=1"), std::string::npos))
         << ninja;
-}
+}};
 
 // mcpp#261: the clang scan rule used shell redirection (`> $out`), which on
 // Windows forced a `cmd /c` wrapper and with it cmd.exe's 8191-char command
 // line ceiling — a quarter of what ninja's CreateProcess path allows. Any
 // package with a large include-dir list overran it. clang-scan-deps has -o
 // (LLVM 17+), so the redirect and the wrapper are both unnecessary.
-TEST(NinjaBackend, ClangScanRuleWritesViaDashOWithoutShellRedirection) {
+UTest clang_scan_rule_writes_via_dash_o_without_shell_redirection{"NinjaBackend/ClangScanRuleWritesViaDashOWithoutShellRedirection", [] {
     auto plan = minimal_plan();
     plan.toolchain.compiler = mcpp::toolchain::CompilerId::Clang;
     plan.toolchain.binaryPath = "/usr/bin/clang++";
@@ -853,19 +849,19 @@ TEST(NinjaBackend, ClangScanRuleWritesViaDashOWithoutShellRedirection) {
     auto ninja = emit_ninja_string(plan);
 
     auto scanRule = ninja.find("rule cxx_scan");
-    ASSERT_NE(scanRule, std::string::npos) << ninja;
+    expect(fatal(ne(scanRule, std::string::npos))) << ninja;
     auto scanEnd = ninja.find("description = SCAN", scanRule);
-    ASSERT_NE(scanEnd, std::string::npos) << ninja;
+    expect(fatal(ne(scanEnd, std::string::npos))) << ninja;
     auto rule = ninja.substr(scanRule, scanEnd - scanRule);
 
-    EXPECT_NE(rule.find("-format=p1689 -o $out --"), std::string::npos) << rule;
-    EXPECT_EQ(rule.find("> $out"), std::string::npos)
+    expect(ne(rule.find("-format=p1689 -o $out --"), std::string::npos)) << rule;
+    expect(eq(rule.find("> $out"), std::string::npos))
         << "scan rule must not use shell redirection: " << rule;
-}
+}};
 
 // The `cmd /c` wrapper was the only place mcpp put a shell between ninja and
 // a compiler invocation. Keep it gone: it is what re-imposes the 8191 ceiling.
-TEST(NinjaBackend, NoRuleWrapsItsCommandInCmdSlashC) {
+UTest no_rule_wraps_its_command_in_cmd_slash_c{"NinjaBackend/NoRuleWrapsItsCommandInCmdSlashC", [] {
     for (auto compiler : {mcpp::toolchain::CompilerId::GCC,
                           mcpp::toolchain::CompilerId::Clang}) {
         auto plan = minimal_plan();
@@ -883,10 +879,10 @@ TEST(NinjaBackend, NoRuleWrapsItsCommandInCmdSlashC) {
         });
 
         auto ninja = emit_ninja_string(plan);
-        EXPECT_EQ(ninja.find("cmd /c"), std::string::npos)
+        expect(eq(ninja.find("cmd /c"), std::string::npos))
             << "compiler=" << static_cast<int>(compiler) << "\n" << ninja;
     }
-}
+}};
 
 // mcpp#261: the compile and scan rules carry an UNBOUNDED flag payload —
 // one -I per dependency include dir — and on Windows ninja spawns through
@@ -895,7 +891,7 @@ TEST(NinjaBackend, NoRuleWrapsItsCommandInCmdSlashC) {
 // reason. Reachable from a POSIX test host via the msvc dialect, which only
 // ever runs on Windows. NASM is excluded on purpose (it spells response
 // files `-@ file`), and POSIX keeps the inline form byte-identical.
-TEST(NinjaBackend, CompileAndScanRulesRouteFlagsThroughRspfileUnderMsvcDialect) {
+UTest compile_and_scan_rules_route_flags_through_rspfile_under_msvc_dialect{"NinjaBackend/CompileAndScanRulesRouteFlagsThroughRspfileUnderMsvcDialect", [] {
     auto plan = minimal_plan();
     plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
     plan.toolchain.binaryPath = "cl.exe";
@@ -926,13 +922,13 @@ TEST(NinjaBackend, CompileAndScanRulesRouteFlagsThroughRspfileUnderMsvcDialect) 
     }
     for (std::string_view rule : rules) {
         auto start = ninja.find(rule);
-        ASSERT_NE(start, std::string::npos) << rule << "\n" << ninja;
+        expect(fatal(ne(start, std::string::npos))) << rule << "\n" << ninja;
         auto end = ninja.find("\n\n", start);
-        ASSERT_NE(end, std::string::npos) << ninja;
+        expect(fatal(ne(end, std::string::npos))) << ninja;
         auto body = ninja.substr(start, end - start);
 
-        EXPECT_NE(body.find("@$out.rsp"), std::string::npos) << body;
-        EXPECT_NE(body.find("rspfile = $out.rsp"), std::string::npos) << body;
+        expect(ne(body.find("@$out.rsp"), std::string::npos)) << body;
+        expect(ne(body.find("rspfile = $out.rsp"), std::string::npos)) << body;
         // ONLY $local_includes may live in the response file: its content
         // is tokenized GNU-style (backslash = escape), and those are the
         // only paths this file forward-slashes itself. $cxxflags carries
@@ -940,27 +936,26 @@ TEST(NinjaBackend, CompileAndScanRulesRouteFlagsThroughRspfileUnderMsvcDialect) 
         // routing it through the rsp ate the separators of the std.pcm path
         // and broke every `import std;` on Windows. The byte order mark in
         // front is how cl.exe learns the file is UTF-8 (#693).
-        EXPECT_NE(body.find("rspfile_content = \xEF\xBB\xBF $local_includes\n"),
-                  std::string::npos) << body;
+        expect(ne(body.find("rspfile_content = \xEF\xBB\xBF $local_includes\n"), std::string::npos)) << body;
         // The payload must not ALSO remain inline, or the ceiling stands.
         auto cmdStart = body.find("command = ");
         auto cmdEnd = body.find('\n', cmdStart);
         auto cmd = body.substr(cmdStart, cmdEnd - cmdStart);
-        EXPECT_EQ(cmd.find("$local_includes"), std::string::npos) << cmd;
+        expect(eq(cmd.find("$local_includes"), std::string::npos)) << cmd;
         // ...and the flags that must NOT move off the command line stay there.
         if (rule != "rule c_object\n")
-            EXPECT_NE(cmd.find("$cxxflags"), std::string::npos) << cmd;
+            expect(ne(cmd.find("$cxxflags"), std::string::npos)) << cmd;
         else
-            EXPECT_NE(cmd.find("$cflags"), std::string::npos) << cmd;
+            expect(ne(cmd.find("$cflags"), std::string::npos)) << cmd;
     }
-}
+}};
 
 // POSIX must keep the inline form: ARG_MAX is ample and an inline command is
 // far easier to re-run by hand. This is the byte-identity guard for the
 // #261 change on the platform where it must be a no-op.
-TEST(NinjaBackend, CompileRulesStayInlineOnPosixDrivers) {
+UTest compile_rules_stay_inline_on_posix_drivers{"NinjaBackend/CompileRulesStayInlineOnPosixDrivers", [] {
     if constexpr (mcpplibs::os::is_windows) {
-        GTEST_SKIP() << "inline form is Windows-exempt by design";
+        skip("inline form is Windows-exempt by design");
     } else {
         auto plan = minimal_plan();  // GCC → gnu dialect, non-msvc deps
         plan.compileUnits.push_back({
@@ -975,22 +970,22 @@ TEST(NinjaBackend, CompileRulesStayInlineOnPosixDrivers) {
         for (std::string_view rule : {"rule cxx_module\n", "rule cxx_object\n",
                                       "rule c_object\n"}) {
             auto start = ninja.find(rule);
-            ASSERT_NE(start, std::string::npos) << rule << "\n" << ninja;
+            expect(fatal(ne(start, std::string::npos))) << rule << "\n" << ninja;
             auto end = ninja.find("\n\n", start);
-            ASSERT_NE(end, std::string::npos) << ninja;
+            expect(fatal(ne(end, std::string::npos))) << ninja;
             auto body = ninja.substr(start, end - start);
-            EXPECT_EQ(body.find("rspfile"), std::string::npos) << body;
-            EXPECT_NE(body.find("$local_includes"), std::string::npos) << body;
+            expect(eq(body.find("rspfile"), std::string::npos)) << body;
+            expect(ne(body.find("$local_includes"), std::string::npos)) << body;
         }
     }
-}
+}};
 
 // mcpp#257: "emit a depfile" and "strip GCC's reversed module rules" are two
 // decisions; 0.0.97 conflated them and left Clang with no include tracking
 // at all. Clang emits a single plain make rule (measured on 20.1.7/22.1.8),
 // so it takes the depfile WITHOUT the awk filter, writing -MF straight to
 // $out.d.
-TEST(NinjaBackend, ClangGetsDepfileWithoutTheGccModuleRuleFilter) {
+UTest clang_gets_depfile_without_the_gcc_module_rule_filter{"NinjaBackend/ClangGetsDepfileWithoutTheGccModuleRuleFilter", [] {
     // Every host: the clang++ row on Windows (the default Windows row since
     // #718) had no depfile until 2026.9.28.2 (WS2).
     auto plan = minimal_plan();
@@ -1001,23 +996,23 @@ TEST(NinjaBackend, ClangGetsDepfileWithoutTheGccModuleRuleFilter) {
 
     auto module_rule_start = ninja.find("rule cxx_module");
     auto object_rule_start = ninja.find("rule cxx_object");
-    ASSERT_NE(module_rule_start, std::string::npos) << ninja;
-    ASSERT_NE(object_rule_start, std::string::npos) << ninja;
+    expect(fatal(ne(module_rule_start, std::string::npos))) << ninja;
+    expect(fatal(ne(object_rule_start, std::string::npos))) << ninja;
     auto module_rule = ninja.substr(module_rule_start,
                                     object_rule_start - module_rule_start);
 
-    EXPECT_NE(module_rule.find("-MMD -MF $out.d"), std::string::npos) << ninja;
-    EXPECT_NE(module_rule.find("deps = gcc"), std::string::npos) << ninja;
-    EXPECT_NE(module_rule.find("depfile = $out.d\n"), std::string::npos) << ninja;
+    expect(ne(module_rule.find("-MMD -MF $out.d"), std::string::npos)) << ninja;
+    expect(ne(module_rule.find("deps = gcc"), std::string::npos)) << ninja;
+    expect(ne(module_rule.find("depfile = $out.d\n"), std::string::npos)) << ninja;
     // No scratch file and no filter: there is nothing to strip.
-    EXPECT_EQ(module_rule.find("$out.d.raw"), std::string::npos) << ninja;
-    EXPECT_EQ(module_rule.find("awk"), std::string::npos) << ninja;
-    EXPECT_EQ(module_rule.find("depfile-filter"), std::string::npos) << ninja;
-}
+    expect(eq(module_rule.find("$out.d.raw"), std::string::npos)) << ninja;
+    expect(eq(module_rule.find("awk"), std::string::npos)) << ninja;
+    expect(eq(module_rule.find("depfile-filter"), std::string::npos)) << ninja;
+}};
 
 // The other half of the same asymmetry: C and GAS edges include headers too
 // and had no depfile on ANY toolchain.
-TEST(NinjaBackend, CAndAsmRulesAlsoTrackHeaderDeps) {
+UTest c_and_asm_rules_also_track_header_deps{"NinjaBackend/CAndAsmRulesAlsoTrackHeaderDeps", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/a.c",
@@ -1038,28 +1033,28 @@ TEST(NinjaBackend, CAndAsmRulesAlsoTrackHeaderDeps) {
         // NOTE: asm_object is the `.S` rule. `.s` uses asm_object_raw and
         // deliberately has no depfile — see below.
         auto start = ninja.find(rule);
-        ASSERT_NE(start, std::string::npos) << rule << "\n" << ninja;
+        expect(fatal(ne(start, std::string::npos))) << rule << "\n" << ninja;
         auto end = ninja.find("\n\n", start);
-        ASSERT_NE(end, std::string::npos) << ninja;
+        expect(fatal(ne(end, std::string::npos))) << ninja;
         auto body = ninja.substr(start, end - start);
-        EXPECT_NE(body.find("-MMD -MF $out.d"), std::string::npos) << body;
-        EXPECT_NE(body.find("deps = gcc"), std::string::npos) << body;
-        EXPECT_NE(body.find("depfile = $out.d"), std::string::npos) << body;
+        expect(ne(body.find("-MMD -MF $out.d"), std::string::npos)) << body;
+        expect(ne(body.find("deps = gcc"), std::string::npos)) << body;
+        expect(ne(body.find("depfile = $out.d"), std::string::npos)) << body;
         // C/GAS units never carry module reversed-rules — no filter, and so
         // no scratch file to bind by mistake.
-        EXPECT_EQ(body.find("$out.d.raw"), std::string::npos) << body;
-        EXPECT_EQ(body.find("awk"), std::string::npos) << body;
+        expect(eq(body.find("$out.d.raw"), std::string::npos)) << body;
+        expect(eq(body.find("awk"), std::string::npos)) << body;
     }
-}
+}};
 
 // The C driver preprocesses `.S` but not `.s`, so only `.S` can produce a
 // depfile. Asking anyway makes clang emit "argument unused during
 // compilation: '-MMD'" for every such file and write nothing, and ninja's
 // `deps = gcc` treats an absent depfile as an error — so the two cases need
 // separate rules.
-TEST(NinjaBackend, LowercaseAsmHasNoDepfileAndItsOwnRule) {
+UTest lowercase_asm_has_no_depfile_and_its_own_rule{"NinjaBackend/LowercaseAsmHasNoDepfileAndItsOwnRule", [] {
     if constexpr (mcpplibs::os::is_windows)
-        GTEST_SKIP() << "POSIX depfile shape only";
+        skip("POSIX depfile shape only");
 
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
@@ -1079,72 +1074,69 @@ TEST(NinjaBackend, LowercaseAsmHasNoDepfileAndItsOwnRule) {
 
     auto body_of = [&](std::string_view rule) {
         auto start = ninja.find(rule);
-        EXPECT_NE(start, std::string::npos) << rule << "\n" << ninja;
+        expect(ne(start, std::string::npos)) << rule << "\n" << ninja;
         auto end = ninja.find("\n\n", start);
         return ninja.substr(start, end - start);
     };
 
     auto upper = body_of("rule asm_object\n");
-    EXPECT_NE(upper.find("-MMD -MF $out.d"), std::string::npos) << upper;
-    EXPECT_NE(upper.find("depfile = $out.d"), std::string::npos) << upper;
+    expect(ne(upper.find("-MMD -MF $out.d"), std::string::npos)) << upper;
+    expect(ne(upper.find("depfile = $out.d"), std::string::npos)) << upper;
 
     auto lower = body_of("rule asm_object_raw\n");
-    EXPECT_EQ(lower.find("-MMD"), std::string::npos) << lower;
-    EXPECT_EQ(lower.find("depfile"), std::string::npos) << lower;
+    expect(eq(lower.find("-MMD"), std::string::npos)) << lower;
+    expect(eq(lower.find("depfile"), std::string::npos)) << lower;
 
     // And the edges must be routed to the matching rule.
-    EXPECT_NE(ninja.find("build obj/upper.o : asm_object src/upper.S"),
-              std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("build obj/lower.o : asm_object_raw src/lower.s"),
-              std::string::npos) << ninja;
-}
+    expect(ne(ninja.find("build obj/upper.o : asm_object src/upper.S"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("build obj/lower.o : asm_object_raw src/lower.s"), std::string::npos)) << ninja;
+}};
 
 // ── #311: staging goes through `mcpp stage`, never an in-place shell copy ──
 
-TEST(NinjaBackend, StageRuleRunsThroughMcppWithRestat) {
+UTest stage_rule_runs_through_mcpp_with_restat{"NinjaBackend/StageRuleRunsThroughMcppWithRestat", [] {
     auto plan = minimal_plan();
     auto ninja = emit_ninja_string(plan);
 
-    EXPECT_NE(ninja.find("rule stage_file\n"), std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("  command = $mcpp stage $verify --output $out $in\n"),
-              std::string::npos) << ninja;
+    expect(ne(ninja.find("rule stage_file\n"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("  command = $mcpp stage $verify --output $out $in\n"), std::string::npos)) << ninja;
     // restat is what keeps a skipped (already-equivalent) stage from dirtying
     // every importer of the staged BMI.
     auto rulePos = ninja.find("rule stage_file\n");
     auto restatPos = ninja.find("  restat = 1\n", rulePos);
     auto nextRulePos = ninja.find("\nrule ", rulePos + 1);
-    ASSERT_NE(restatPos, std::string::npos) << ninja;
-    EXPECT_LT(restatPos, nextRulePos) << ninja;
+    expect(fatal(ne(restatPos, std::string::npos))) << ninja;
+    expect(lt(restatPos, nextRulePos)) << ninja;
 
     // The old per-platform in-place copies are gone for good — including the
     // second one, in runtime_alias, which the Windows job caught still
     // shelling out to PowerShell.
-    EXPECT_EQ(ninja.find("Copy-Item"), std::string::npos) << ninja;
-    EXPECT_EQ(ninja.find("cp -f $in $out"), std::string::npos) << ninja;
-    EXPECT_EQ(ninja.find("cp_bmi"), std::string::npos) << ninja;
-}
+    expect(eq(ninja.find("Copy-Item"), std::string::npos)) << ninja;
+    expect(eq(ninja.find("cp -f $in $out"), std::string::npos)) << ninja;
+    expect(eq(ninja.find("cp_bmi"), std::string::npos)) << ninja;
+}};
 
-TEST(NinjaBackend, RuntimeAliasCopiesThroughStageOnWindowsAndSymlinksElsewhere) {
+UTest runtime_alias_copies_through_stage_on_windows_and_symlinks_elsewhere{"NinjaBackend/RuntimeAliasCopiesThroughStageOnWindowsAndSymlinksElsewhere", [] {
     auto plan = minimal_plan();
     auto ninja = emit_ninja_string(plan);
     auto rulePos = ninja.find("rule runtime_alias\n");
-    ASSERT_NE(rulePos, std::string::npos) << ninja;
+    expect(fatal(ne(rulePos, std::string::npos))) << ninja;
     auto body = ninja.substr(rulePos, ninja.find("\nrule ", rulePos + 1) - rulePos);
 
     if constexpr (mcpplibs::os::is_windows) {
         // PE has no soname symlink: the alias is a copy of a freshly built DLL,
         // the same hazard class as BMI staging.
-        EXPECT_NE(body.find("$mcpp stage --output $out $in"), std::string::npos) << body;
-        EXPECT_NE(body.find("restat = 1"), std::string::npos) << body;
+        expect(ne(body.find("$mcpp stage --output $out $in"), std::string::npos)) << body;
+        expect(ne(body.find("restat = 1"), std::string::npos)) << body;
     } else {
         // POSIX must keep the SYMLINK — turning it into a copy would change
         // what gets packaged, not just how it is written.
-        EXPECT_NE(body.find("ln -s"), std::string::npos) << body;
-        EXPECT_EQ(body.find("stage --output"), std::string::npos) << body;
+        expect(ne(body.find("ln -s"), std::string::npos)) << body;
+        expect(eq(body.find("stage --output"), std::string::npos)) << body;
     }
-}
+}};
 
-TEST(NinjaBackend, McppBinaryIsBoundEvenWithoutDyndep) {
+UTest mcpp_binary_is_bound_even_without_dyndep{"NinjaBackend/McppBinaryIsBoundEvenWithoutDyndep", [] {
     // dyndep off ⇒ no scan/collect rules, but stage_file still needs $mcpp.
     std::string ninja;
     {
@@ -1153,22 +1145,22 @@ TEST(NinjaBackend, McppBinaryIsBoundEvenWithoutDyndep) {
         ninja = emit_ninja_string(plan);
     }
 
-    EXPECT_EQ(ninja.find("rule cxx_scan"), std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("\nmcpp      = "), std::string::npos) << ninja;
-}
+    expect(eq(ninja.find("rule cxx_scan"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("\nmcpp      = "), std::string::npos)) << ninja;
+}};
 
 // SPEC-007 R4.2: one destination, one writer. On a PE target two spellings
 // that differ only in case are one file where the program runs, so they are
 // one destination; elsewhere they are two.
-TEST(DeployDestination, FoldsCaseOnlyOnAPeTarget) {
+UTest folds_case_only_on_a_pe_target{"DeployDestination/FoldsCaseOnlyOnAPeTarget", [] {
     const mcpp::build::BuildPlan::DeployFile d{{"/a/Foo.DLL"}, "bin/Foo.DLL"};
-    EXPECT_TRUE(d.is_destination("bin/Foo.DLL", /*peTarget=*/false));
-    EXPECT_FALSE(d.is_destination("bin/foo.dll", /*peTarget=*/false));
-    EXPECT_TRUE(d.is_destination("bin/foo.dll", /*peTarget=*/true));
-    EXPECT_FALSE(d.is_destination("bin/sub/foo.dll", /*peTarget=*/true));
-}
+    expect(d.is_destination("bin/Foo.DLL", /*peTarget=*/false));
+    expect(!d.is_destination("bin/foo.dll", /*peTarget=*/false));
+    expect(d.is_destination("bin/foo.dll", /*peTarget=*/true));
+    expect(!d.is_destination("bin/sub/foo.dll", /*peTarget=*/true));
+}};
 
-TEST(NinjaBackend, StdArtifactsAndRuntimeDllsUseTheStageRule) {
+UTest std_artifacts_and_runtime_dlls_use_the_stage_rule{"NinjaBackend/StdArtifactsAndRuntimeDllsUseTheStageRule", [] {
     auto plan = minimal_plan();
     plan.toolchain.compiler = mcpp::toolchain::CompilerId::Clang;
     plan.toolchain.binaryPath = "/usr/bin/clang++";
@@ -1183,26 +1175,23 @@ TEST(NinjaBackend, StdArtifactsAndRuntimeDllsUseTheStageRule) {
     // The std artifacts are fingerprint-scoped, so they carry the size-only
     // check: it needs no OPEN of the destination, which is what lets staging
     // survive a holder that denies reads (Windows FileShare.None).
-    EXPECT_NE(ninja.find("build pcm.cache/std.pcm : stage_file "
+    expect(ne(ninja.find("build pcm.cache/std.pcm : stage_file "
                          "/cache/bmi/fp/pcm.cache/std.pcm\n"
-                         "  verify = --verify size\n"),
-              std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("build obj/std.o : stage_file /cache/bmi/fp/std.o\n"
-                         "  verify = --verify size\n"),
-              std::string::npos) << ninja;
+                         "  verify = --verify size\n"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("build obj/std.o : stage_file /cache/bmi/fp/std.o\n"
+                         "  verify = --verify size\n"), std::string::npos)) << ninja;
     // std.compat keeps its order-only dependency on the staged std BMI.
-    EXPECT_NE(ninja.find("build pcm.cache/std.compat.pcm : stage_file "
-                         "/cache/bmi/fp/pcm.cache/std.compat.pcm | pcm.cache/std.pcm"),
-              std::string::npos) << ninja;
+    expect(ne(ninja.find("build pcm.cache/std.compat.pcm : stage_file "
+                         "/cache/bmi/fp/pcm.cache/std.compat.pcm | pcm.cache/std.pcm"), std::string::npos)) << ninja;
     // Windows DLL deployment shares the rule — and therefore the
     // skip-if-equivalent behaviour that keeps a loaded DLL from failing a build.
     // But NOT the size-only shortcut: a rebuilt DLL keeps its size (PE sections
     // are page-padded), so this edge must compare content.
     auto dllEdge = ninja.find("build bin/libfoo.dll : stage_file /pkg/lib/libfoo.dll\n");
-    ASSERT_NE(dllEdge, std::string::npos) << ninja;
+    expect(fatal(ne(dllEdge, std::string::npos))) << ninja;
     auto afterDll = ninja.substr(dllEdge, ninja.find('\n', dllEdge + 1) - dllEdge + 1);
-    EXPECT_EQ(afterDll.find("verify"), std::string::npos) << afterDll;
-}
+    expect(eq(afterDll.find("verify"), std::string::npos)) << afterDll;
+}};
 
 // ── SPEC-007 R4.3: a Windows program's runtime DLLs are placed after its link ──
 
@@ -1225,53 +1214,51 @@ BuildPlan program_plan(std::string_view triple, bool withRuntimeDirs) {
 
 }  // namespace
 
-TEST(NinjaBackend, PeProgramWithRuntimeSearchDirsGetsAPlacementEdge) {
+UTest pe_program_with_runtime_search_dirs_gets_a_placement_edge{"NinjaBackend/PeProgramWithRuntimeSearchDirsGetsAPlacementEdge", [] {
     auto ninja = emit_ninja_string(program_plan("x86_64-w64-windows-gnu", true));
     // One rule, carrying the directories in search order, each one word.
-    EXPECT_NE(ninja.find("rule place_dlls\n"), std::string::npos) << ninja;
+    expect(ne(ninja.find("rule place_dlls\n"), std::string::npos)) << ninja;
     // The C++ runtime rule the resolver applied (mcpp.build.runtime_placement):
     // a GNU PE program has no MSVC runtime set, so the edge is told so and
     // places by search order.
-    EXPECT_NE(ninja.find("place-dlls --output $out --depfile $out.d --crt not-applicable $in "),
-              std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("my bin"), std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("  deps = gcc\n"), std::string::npos) << ninja;
+    expect(ne(ninja.find("place-dlls --output $out --depfile $out.d --crt not-applicable $in "), std::string::npos)) << ninja;
+    expect(ne(ninja.find("my bin"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("  deps = gcc\n"), std::string::npos)) << ninja;
     // One edge per program, after the link it reads, and built by default.
-    EXPECT_NE(ninja.find("build bin/app.exe.dlls: place_dlls bin/app.exe\n"),
-              std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("default bin/app.exe.dlls\n"), std::string::npos) << ninja;
-}
+    expect(ne(ninja.find("build bin/app.exe.dlls: place_dlls bin/app.exe\n"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("default bin/app.exe.dlls\n"), std::string::npos)) << ninja;
+}};
 
-TEST(NinjaBackend, NoPlacementEdgeWithoutRuntimeSearchDirsOrOffPe) {
+UTest no_placement_edge_without_runtime_search_dirs_or_off_pe{"NinjaBackend/NoPlacementEdgeWithoutRuntimeSearchDirsOrOffPe", [] {
     // A PE program with no runtime search directory has nothing to place.
     auto pe = emit_ninja_string(program_plan("x86_64-w64-windows-gnu", false));
-    EXPECT_EQ(pe.find("place_dlls"), std::string::npos) << pe;
+    expect(eq(pe.find("place_dlls"), std::string::npos)) << pe;
     // ELF keeps its run path: the directories are RUNPATH entries, not copies.
     auto elf = emit_ninja_string(program_plan("x86_64-linux-gnu", true));
-    EXPECT_EQ(elf.find("place_dlls"), std::string::npos) << elf;
-}
+    expect(eq(elf.find("place_dlls"), std::string::npos)) << elf;
+}};
 
-TEST(NinjaBackend, DeployedDllsAreOrderOnlyInputsOfTheLink) {
+UTest deployed_dlls_are_order_only_inputs_of_the_link{"NinjaBackend/DeployedDllsAreOrderOnlyInputsOfTheLink", [] {
     // The linker reads the import library, never the deployed DLL, so a DLL
     // that changes (or a deploy entry a later plan adds) must not relink.
     auto plan = program_plan("x86_64-w64-windows-gnu", false);
     plan.runtimeDeployFiles.push_back({{"/pkg/lib/libfoo.dll"}, "bin/libfoo.dll"});
     auto ninja = emit_ninja_string(plan);
     auto link = ninja.find("build bin/app.exe");
-    ASSERT_NE(link, std::string::npos) << ninja;
+    expect(fatal(ne(link, std::string::npos))) << ninja;
     auto line = ninja.substr(link, ninja.find('\n', link) - link);
     auto oo = line.find(" || ");
-    ASSERT_NE(oo, std::string::npos) << line;
-    EXPECT_NE(line.find("bin/libfoo.dll", oo), std::string::npos) << line;
+    expect(fatal(ne(oo, std::string::npos))) << line;
+    expect(ne(line.find("bin/libfoo.dll", oo), std::string::npos)) << line;
     auto implicitBar = line.find(" | ");
-    EXPECT_TRUE(implicitBar == std::string::npos || implicitBar >= oo
+    expect(implicitBar == std::string::npos || implicitBar >= oo
                 || line.substr(implicitBar, oo - implicitBar).find("libfoo.dll")
                        == std::string::npos) << line;
-}
+}};
 
 // ── #311: staging failures must stay readable through the output filter ──
 
-TEST(NinjaBackend, FilterKeepsStagingDiagnosticsAndFailedTarget) {
+UTest filter_keeps_staging_diagnostics_and_failed_target{"NinjaBackend/FilterKeepsStagingDiagnosticsAndFailedTarget", [] {
     std::vector<std::string> prefixes = {"/usr/bin/g++", "/opt/mcpp/bin/mcpp"};
     std::string raw =
         "ninja: Entering directory `target/x86_64-linux-gnu/fp'\n"
@@ -1287,14 +1274,14 @@ TEST(NinjaBackend, FilterKeepsStagingDiagnosticsAndFailedTarget) {
     // Which output failed is now preserved (it used to be dropped entirely).
     // ninja pads the target list with a trailing space; the normalized line
     // must not inherit it.
-    EXPECT_NE(filtered.find("failed: pcm.cache/std.pcm\n"), std::string::npos) << filtered;
-    EXPECT_EQ(filtered.find("[code=1]"), std::string::npos) << filtered;
+    expect(ne(filtered.find("failed: pcm.cache/std.pcm\n"), std::string::npos)) << filtered;
+    expect(eq(filtered.find("[code=1]"), std::string::npos)) << filtered;
     // The diagnostic survives; the echoed command line does not.
-    EXPECT_NE(filtered.find("error: cannot stage file"), std::string::npos) << filtered;
-    EXPECT_NE(filtered.find("help:"), std::string::npos) << filtered;
-    EXPECT_EQ(filtered.find("stage --output"), std::string::npos) << filtered;
-    EXPECT_EQ(filtered.find("ninja: Entering directory"), std::string::npos) << filtered;
-}
+    expect(ne(filtered.find("error: cannot stage file"), std::string::npos)) << filtered;
+    expect(ne(filtered.find("help:"), std::string::npos)) << filtered;
+    expect(eq(filtered.find("stage --output"), std::string::npos)) << filtered;
+    expect(eq(filtered.find("ninja: Entering directory"), std::string::npos)) << filtered;
+}};
 
 // ── Cache-served units: stage edges, not compile edges ──────────────────────
 //
@@ -1305,7 +1292,7 @@ TEST(NinjaBackend, FilterKeepsStagingDiagnosticsAndFailedTarget) {
 // every "cached" unit was recompiled — the cache saved nothing and the CLI still
 // printed "Cached". Staging has to be an edge for ninja to have a record.
 
-TEST(NinjaBackend, CachedUnitEmitsStageEdgeAndNoCompileEdge) {
+UTest cached_unit_emits_stage_edge_and_no_compile_edge{"NinjaBackend/CachedUnitEmitsStageEdgeAndNoCompileEdge", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "/store/dep/src/dep.cppm",
@@ -1320,26 +1307,24 @@ TEST(NinjaBackend, CachedUnitEmitsStageEdgeAndNoCompileEdge) {
 
     auto ninja = emit_ninja_string(plan);
 
-    EXPECT_NE(ninja.find("build obj/dep.m.o : stage_file "
-                         "/bc/v1/pkg/idx/dep@1.0.0/key/obj/dep.m.o"),
-              std::string::npos) << ninja;
+    expect(ne(ninja.find("build obj/dep.m.o : stage_file "
+                         "/bc/v1/pkg/idx/dep@1.0.0/key/obj/dep.m.o"), std::string::npos)) << ninja;
     // The BMI is staged too, at the path a compile edge would have produced.
-    EXPECT_NE(ninja.find("stage_file /bc/v1/pkg/idx/dep@1.0.0/key/bmi/dep.gcm"),
-              std::string::npos) << ninja;
+    expect(ne(ninja.find("stage_file /bc/v1/pkg/idx/dep@1.0.0/key/bmi/dep.gcm"), std::string::npos)) << ninja;
     // No compile edge, and no scan edge, for this unit.
-    EXPECT_EQ(ninja.find("cxx_module /store/dep/src/dep.cppm"), std::string::npos)
+    expect(eq(ninja.find("cxx_module /store/dep/src/dep.cppm"), std::string::npos))
         << ninja;
-    EXPECT_EQ(ninja.find("cxx_object /store/dep/src/dep.cppm"), std::string::npos)
+    expect(eq(ninja.find("cxx_object /store/dep/src/dep.cppm"), std::string::npos))
         << ninja;
-    EXPECT_EQ(ninja.find("dep.cppm.ddi"), std::string::npos) << ninja;
-}
+    expect(eq(ninja.find("dep.cppm.ddi"), std::string::npos)) << ninja;
+}};
 
 // `--verify size` for the same reason the std artifacts use it: the entry
 // directory is named by a key covering the toolchain, dialect, profile, the
 // package's own config and its dependencies' keys, so under one key equal size
 // IS equivalence — and size comes from directory metadata, which stays readable
 // even when a holder denies opening the file.
-TEST(NinjaBackend, CachedStageEdgesUseSizeVerification) {
+UTest cached_stage_edges_use_size_verification{"NinjaBackend/CachedStageEdgesUseSizeVerification", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "/store/dep/src/a.c",
@@ -1352,12 +1337,12 @@ TEST(NinjaBackend, CachedStageEdgesUseSizeVerification) {
 
     auto ninja = emit_ninja_string(plan);
     auto at = ninja.find("build obj/a.o : stage_file /cache/obj/a.o");
-    ASSERT_NE(at, std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("verify = --verify size", at), std::string::npos) << ninja;
-}
+    expect(fatal(ne(at, std::string::npos))) << ninja;
+    expect(ne(ninja.find("verify = --verify size", at), std::string::npos)) << ninja;
+}};
 
 // A cached unit sits next to uncached ones; only the cached one changes shape.
-TEST(NinjaBackend, UncachedUnitsStillCompileAlongsideCachedOnes) {
+UTest uncached_units_still_compile_alongside_cached_ones{"NinjaBackend/UncachedUnitsStillCompileAlongsideCachedOnes", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "/store/dep/src/dep.c",
@@ -1375,15 +1360,13 @@ TEST(NinjaBackend, UncachedUnitsStillCompileAlongsideCachedOnes) {
     });
 
     auto ninja = emit_ninja_string(plan);
-    EXPECT_NE(ninja.find("build obj/dep.o : stage_file /cache/obj/dep.o"),
-              std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("build obj/main.o : cxx_object src/main.cpp"),
-              std::string::npos) << ninja;
-}
+    expect(ne(ninja.find("build obj/dep.o : stage_file /cache/obj/dep.o"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("build obj/main.o : cxx_object src/main.cpp"), std::string::npos)) << ninja;
+}};
 
 // The default path must be byte-identical to what it was: `servedFromCache` is
 // false everywhere unless a cache hit set it.
-TEST(NinjaBackend, NoStageEdgesWithoutCachedUnits) {
+UTest no_stage_edges_without_cached_units{"NinjaBackend/NoStageEdgesWithoutCachedUnits", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
@@ -1393,12 +1376,11 @@ TEST(NinjaBackend, NoStageEdgesWithoutCachedUnits) {
     });
 
     auto ninja = emit_ninja_string(plan);
-    EXPECT_EQ(ninja.find("build obj/main.o : stage_file"), std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("build obj/main.o : cxx_object src/main.cpp"),
-              std::string::npos) << ninja;
-}
+    expect(eq(ninja.find("build obj/main.o : stage_file"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("build obj/main.o : cxx_object src/main.cpp"), std::string::npos)) << ninja;
+}};
 
-TEST(NinjaBackend, ObjectOnlyPackageBuildsOwnObjectsAlongsideCacheFills) {
+UTest object_only_package_builds_own_objects_alongside_cache_fills{"NinjaBackend/ObjectOnlyPackageBuildsOwnObjectsAlongsideCacheFills", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/provider.c",
@@ -1416,16 +1398,16 @@ TEST(NinjaBackend, ObjectOnlyPackageBuildsOwnObjectsAlongsideCacheFills) {
 
     auto ninja = emit_ninja_string(plan);
     auto at = ninja.rfind("\ndefault ");
-    ASSERT_NE(at, std::string::npos) << ninja;
+    expect(fatal(ne(at, std::string::npos))) << ninja;
     auto defaults = ninja.substr(at, ninja.find('\n', at + 1) - at);
-    EXPECT_NE(defaults.find(" obj/provider.o"), std::string::npos) << defaults;
-    EXPECT_EQ(count_occurrences(defaults, " obj/dep.o"), 1u) << defaults;
-}
+    expect(ne(defaults.find(" obj/provider.o"), std::string::npos)) << defaults;
+    expect(eq(count_occurrences(defaults, " obj/dep.o"), 1u)) << defaults;
+}};
 
 // A cached unit whose cachedObject was never filled in is a bug upstream, not a
 // reason to emit a stage edge with an empty input — it must fall back to being
 // compiled rather than producing an unbuildable graph.
-TEST(NinjaBackend, CachedUnitWithoutCachedObjectPathIsStillCompiled) {
+UTest cached_unit_without_cached_object_path_is_still_compiled{"NinjaBackend/CachedUnitWithoutCachedObjectPathIsStillCompiled", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
@@ -1436,15 +1418,15 @@ TEST(NinjaBackend, CachedUnitWithoutCachedObjectPathIsStillCompiled) {
     });
 
     auto ninja = emit_ninja_string(plan);
-    EXPECT_EQ(ninja.find("stage_file \n"), std::string::npos) << ninja;
-    EXPECT_EQ(ninja.find("build obj/main.o : stage_file"), std::string::npos) << ninja;
-}
+    expect(eq(ninja.find("stage_file \n"), std::string::npos)) << ninja;
+    expect(eq(ninja.find("build obj/main.o : stage_file"), std::string::npos)) << ninja;
+}};
 
 // A cache-served unit keeps its compile_commands.json entry. The units stay in
 // the plan (only their EDGE changes shape) precisely so clangd does not lose the
 // dependency's sources — a cache that silently degraded IDE navigation would be
 // a bad trade for build time.
-TEST(NinjaBackend, CachedUnitsStillAppearInCompileCommands) {
+UTest cached_units_still_appear_in_compile_commands{"NinjaBackend/CachedUnitsStillAppearInCompileCommands", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "/store/dep/src/dep.c",
@@ -1478,9 +1460,9 @@ TEST(NinjaBackend, CachedUnitsStillAppearInCompileCommands) {
         sawDep  = sawDep  || f == dep.string();
         sawMain = sawMain || f == main.string();
     }
-    EXPECT_TRUE(sawDep) << cdb;
-    EXPECT_TRUE(sawMain) << cdb;
-}
+    expect(bool(sawDep)) << cdb;
+    expect(bool(sawMain)) << cdb;
+}};
 
 // Replacing a package's compile edges with stage edges also removes the ordering
 // those compile edges carried. A module PARTITION is the case that breaks: a
@@ -1490,7 +1472,7 @@ TEST(NinjaBackend, CachedUnitsStillAppearInCompileCommands) {
 // the partition is still unstaged, and Clang fails with `failed to find module
 // file for module 'pkg:part'`. Observed on macOS CI while Linux won the race,
 // which is why it is pinned here rather than left to scheduling.
-TEST(NinjaBackend, NonCachedEdgesOrderAfterEveryStagedArtifact) {
+UTest non_cached_edges_order_after_every_staged_artifact{"NinjaBackend/NonCachedEdgesOrderAfterEveryStagedArtifact", [] {
     auto plan = minimal_plan();
     // A cached package with a primary interface and a partition.
     plan.compileUnits.push_back({
@@ -1527,29 +1509,29 @@ TEST(NinjaBackend, NonCachedEdgesOrderAfterEveryStagedArtifact) {
     // One phony aggregating every staged artifact — a per-edge list would repeat
     // it and grow ninja lines without bound (mcpp#274).
     auto phony = ninja.find("build _mcpp_staged_cache : phony");
-    ASSERT_NE(phony, std::string::npos) << ninja;
+    expect(fatal(ne(phony, std::string::npos))) << ninja;
     auto phonyLine = ninja.substr(phony, ninja.find('\n', phony) - phony);
     for (auto* art : {"obj/dep.m.o", "obj/part.m.o",
                       "gcm.cache/dep.gcm", "gcm.cache/dep-part.gcm"}) {
-        EXPECT_NE(phonyLine.find(art), std::string::npos)
+        expect(ne(phonyLine.find(art), std::string::npos))
             << art << " missing from: " << phonyLine;
     }
 
     // The consumer's edge orders after it...
     auto consumer = ninja.find("build obj/main.o");
-    ASSERT_NE(consumer, std::string::npos) << ninja;
+    expect(fatal(ne(consumer, std::string::npos))) << ninja;
     auto consumerLine = ninja.substr(consumer, ninja.find('\n', consumer) - consumer);
-    EXPECT_NE(consumerLine.find("|| _mcpp_staged_cache"), std::string::npos)
+    expect(ne(consumerLine.find("|| _mcpp_staged_cache"), std::string::npos))
         << consumerLine;
 
     // ...as an ORDER-ONLY dependency, not an implicit one: the real content
     // dependency is still declared where it always was, so this must add
     // sequencing without making a staged BMI dirty its consumers.
     auto bar = consumerLine.find("|| _mcpp_staged_cache");
-    EXPECT_EQ(consumerLine.find("| _mcpp_staged_cache"), bar + 1)
+    expect(eq(consumerLine.find("| _mcpp_staged_cache"), bar + 1))
         << "staged phony must appear only after ||, never as an implicit input: "
         << consumerLine;
-}
+}};
 
 // The other direction of the same ordering. A staged BMI can import a module
 // compiled HERE: a unit of the package that the cache entry does not hold,
@@ -1561,7 +1543,7 @@ TEST(NinjaBackend, NonCachedEdgesOrderAfterEveryStagedArtifact) {
 // pass changed the schedule). The stage edge now waits for those BMIs, and it
 // leaves the aggregate, because every compile edge waits for the aggregate and
 // the compile it waits for is one of them.
-TEST(NinjaBackend, AStagedBmiWaitsForTheModulesItImportsThatCompileHere) {
+UTest a_staged_bmi_waits_for_the_modules_it_imports_that_compile_here{"NinjaBackend/AStagedBmiWaitsForTheModulesItImportsThatCompileHere", [] {
     auto plan = minimal_plan();
     // The generated unit of the cached package, compiled here.
     plan.compileUnits.push_back({
@@ -1622,18 +1604,18 @@ TEST(NinjaBackend, AStagedBmiWaitsForTheModulesItImportsThatCompileHere) {
     };
 
     auto dep = line_of("build gcm.cache/dep.gcm : stage_file");
-    ASSERT_FALSE(dep.empty()) << ninja;
-    EXPECT_NE(dep.find("|| gcm.cache/dep.gen.gcm"), std::string::npos) << dep;
+    expect(fatal(!dep.empty())) << ninja;
+    expect(ne(dep.find("|| gcm.cache/dep.gen.gcm"), std::string::npos)) << dep;
     auto api = line_of("build gcm.cache/dep.api.gcm : stage_file");
-    ASSERT_FALSE(api.empty()) << ninja;
-    EXPECT_NE(api.find("|| gcm.cache/dep.gcm"), std::string::npos) << api;
+    expect(fatal(!api.empty())) << ninja;
+    expect(ne(api.find("|| gcm.cache/dep.gcm"), std::string::npos)) << api;
     auto util = line_of("build gcm.cache/dep.util.gcm : stage_file");
-    ASSERT_FALSE(util.empty()) << ninja;
-    EXPECT_EQ(util.find("||"), std::string::npos) << util;
+    expect(fatal(!util.empty())) << ninja;
+    expect(eq(util.find("||"), std::string::npos)) << util;
 
     // The aggregate holds the BMIs that wait for nothing, and every object.
     auto phony = line_of("build _mcpp_staged_cache : phony");
-    ASSERT_FALSE(phony.empty()) << ninja;
+    expect(fatal(!phony.empty())) << ninja;
     auto words = [](const std::string& s) {
         std::set<std::string> w;
         std::istringstream is(s);
@@ -1641,19 +1623,19 @@ TEST(NinjaBackend, AStagedBmiWaitsForTheModulesItImportsThatCompileHere) {
         return w;
     };
     auto held = words(phony);
-    EXPECT_FALSE(held.contains("gcm.cache/dep.gcm")) << phony;
-    EXPECT_FALSE(held.contains("gcm.cache/dep.api.gcm")) << phony;
-    EXPECT_TRUE(held.contains("gcm.cache/dep.util.gcm")) << phony;
+    expect(!held.contains("gcm.cache/dep.gcm")) << phony;
+    expect(!held.contains("gcm.cache/dep.api.gcm")) << phony;
+    expect(held.contains("gcm.cache/dep.util.gcm")) << phony;
     for (auto* o : {"obj/dep.m.o", "obj/api.m.o", "obj/util.m.o"})
-        EXPECT_TRUE(held.contains(o)) << o << " missing from: " << phony;
+        expect(held.contains(o)) << o << " missing from: " << phony;
 
     // The generated unit still compiles after the aggregate: no cycle.
     auto gen = line_of("build obj/gen.m.o");
-    ASSERT_FALSE(gen.empty()) << ninja;
-    EXPECT_NE(gen.find("|| _mcpp_staged_cache"), std::string::npos) << gen;
-}
+    expect(fatal(!gen.empty())) << ninja;
+    expect(ne(gen.find("|| _mcpp_staged_cache"), std::string::npos)) << gen;
+}};
 
-TEST(NinjaBackend, NoStagedPhonyWhenNothingIsCached) {
+UTest no_staged_phony_when_nothing_is_cached{"NinjaBackend/NoStagedPhonyWhenNothingIsCached", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
@@ -1662,8 +1644,8 @@ TEST(NinjaBackend, NoStagedPhonyWhenNothingIsCached) {
         .packageName = "objc_rule_test",
     });
     auto ninja = emit_ninja_string(plan);
-    EXPECT_EQ(ninja.find("_mcpp_staged_cache"), std::string::npos) << ninja;
-}
+    expect(eq(ninja.find("_mcpp_staged_cache"), std::string::npos)) << ninja;
+}};
 
 // #390: the main-manifest include channel's fallback join — `root / inc` for
 // a directory a build step will create LATER (the `generated/inc` shape) —
@@ -1673,25 +1655,25 @@ TEST(NinjaBackend, NoStagedPhonyWhenNothingIsCached) {
 // rule for an absolute entry written with forward slashes (`C:/SDL2/include`).
 // (The existing-directory path runs through expand_dir_glob, covered by
 // Scanner.ExpandDirGlobMultiSegmentUsesNativeSeparators.)
-TEST(Plan, ExpandManifestIncludeEntryNativeSpelling) {
+UTest expand_manifest_include_entry_native_spelling{"Plan/ExpandManifestIncludeEntryNativeSpelling", [] {
     namespace fs = std::filesystem;
     auto root = fs::temp_directory_path() / "mcpp-plan-inc-entry";
     fs::remove_all(root);
     fs::create_directories(root);   // generated/inc deliberately does NOT exist
 
     auto fb = expand_manifest_include_entry(root, fs::path("generated/inc"));
-    ASSERT_EQ(fb.size(), 1u);
+    expect(fatal(eq(fb.size(), 1u)));
     if constexpr (fs::path::preferred_separator == '\\')
-        EXPECT_EQ(fb[0].string().find('/'), std::string::npos) << fb[0];
-    EXPECT_EQ(fb[0], root / "generated" / "inc");
+        expect(eq(fb[0].string().find('/'), std::string::npos)) << fb[0];
+    expect(eq(fb[0], root / "generated" / "inc"));
 
     auto abs = expand_manifest_include_entry(root, fs::path("C:/SDL2/include"));
-    ASSERT_EQ(abs.size(), 1u);
+    expect(fatal(eq(abs.size(), 1u)));
     if constexpr (fs::path::preferred_separator == '\\')
-        EXPECT_EQ(abs[0].string(), "C:\\SDL2\\include");
+        expect(eq(abs[0].string(), "C:\\SDL2\\include"));
 
     fs::remove_all(root);
-}
+}};
 
 // ── PE `toolchain-coupled`: the toolset's CRT travels with the artifact ─────
 //
@@ -1755,20 +1737,20 @@ std::vector<BuildPlan::DeployFile> toolset_entries(const mcpp::build::CompileFla
 
 }  // namespace
 
-TEST(NinjaBackendPeRuntime, ToolchainCoupledStagesTheToolsetCrtBesideTheExe) {
+UTest toolchain_coupled_stages_the_toolset_crt_beside_the_exe{"NinjaBackendPeRuntime/ToolchainCoupledStagesTheToolsetCrtBesideTheExe", [] {
     FakeRedistDir redist;
     auto plan = msvc_plan_with_redist(redist, "toolchain-coupled");
 
     auto flags = compute_flags(plan);
     auto toolset = toolset_entries(flags);
-    ASSERT_EQ(toolset.size(), 3u)
+    expect(fatal(eq(toolset.size(), 3u)))
         << "expected the three .dll and not the .manifest beside them";
     for (auto const& d : toolset) {
-        EXPECT_EQ(d.dest.parent_path(), std::filesystem::path("bin"))
+        expect(eq(d.dest.parent_path(), std::filesystem::path("bin")))
             << "a DLL must land in the same directory as the .exe: "
             << d.dest.string();
-        ASSERT_EQ(d.sources.size(), 1u);
-        EXPECT_EQ(d.sources.front().extension(), ".dll") << d.sources.front().string();
+        expect(fatal(eq(d.sources.size(), 1u)));
+        expect(eq(d.sources.front().extension(), ".dll")) << d.sources.front().string();
     }
 
     std::string placements;
@@ -1776,39 +1758,39 @@ TEST(NinjaBackendPeRuntime, ToolchainCoupledStagesTheToolsetCrtBesideTheExe) {
     // #734 E4: two or more placements are one `stage_list` edge whose outputs
     // are every destination, and the list the edge reads names each pair.
     const auto listAt = ninja.find(": stage_list ");
-    ASSERT_NE(listAt, std::string::npos) << ninja;
+    expect(fatal(ne(listAt, std::string::npos))) << ninja;
     const auto listLine = ninja.substr(ninja.rfind("\nbuild ", listAt) + 1,
                                        ninja.find('\n', listAt) - ninja.rfind("\nbuild ", listAt) - 1);
     for (auto name : {"vcruntime140.dll", "msvcp140.dll", "vcruntime140_1.dll"}) {
-        EXPECT_NE(listLine.find(std::format("bin/{}", name)), std::string::npos)
+        expect(ne(listLine.find(std::format("bin/{}", name)), std::string::npos))
             << name << " is not an output of the placement edge\n" << ninja;
-        EXPECT_NE(placements.find(std::format("\tbin/{}", name)), std::string::npos)
+        expect(ne(placements.find(std::format("\tbin/{}", name)), std::string::npos))
             << name << " is not in the placement list\n" << placements;
     }
-    EXPECT_EQ(ninja.find("Microsoft.VC143.CRT.manifest"), std::string::npos)
+    expect(eq(ninja.find("Microsoft.VC143.CRT.manifest"), std::string::npos))
         << "copied something that is not a runtime DLL\n" << ninja;
 
     // Reachability, twice over. A copy edge nothing asks for is never run
     // under explicit ninja goals, and an .exe that does not depend on its DLLs
     // can be reported "up to date" while they are missing.
     auto exeAt = ninja.find("build bin/app.exe :");
-    ASSERT_NE(exeAt, std::string::npos) << ninja;
+    expect(fatal(ne(exeAt, std::string::npos))) << ninja;
     auto exeStanza = ninja.substr(exeAt, ninja.find("\nbuild ", exeAt + 1) - exeAt);
-    EXPECT_NE(exeStanza.find("bin/vcruntime140.dll"), std::string::npos)
+    expect(ne(exeStanza.find("bin/vcruntime140.dll"), std::string::npos))
         << "the executable does not depend on the CRT staged beside it\n"
         << exeStanza;
     auto defaultAt = ninja.rfind("\ndefault ");
-    ASSERT_NE(defaultAt, std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("bin/vcruntime140.dll", defaultAt), std::string::npos)
+    expect(fatal(ne(defaultAt, std::string::npos))) << ninja;
+    expect(ne(ninja.find("bin/vcruntime140.dll", defaultAt), std::string::npos))
         << "the staged CRT is not a default goal\n" << ninja.substr(defaultAt);
-}
+}};
 
-TEST(NinjaBackendPeRuntime, HostCoupledStagesNothing) {
+UTest host_coupled_stages_nothing{"NinjaBackendPeRuntime/HostCoupledStagesNothing", [] {
     // An EXPLICIT `host-coupled`: the machine is a promise that it provides
     // the DLLs, and keeping a copy beside the artifact would contradict it.
     FakeRedistDir redist;
     auto plan = msvc_plan_with_redist(redist, "host-coupled");
-    EXPECT_TRUE(compute_flags(plan).runtimeDeploy.empty());
+    expect(compute_flags(plan).runtimeDeploy.empty());
 
     // The BARE default (#718): `toolchain-coupled` is now the MSVC-ABI
     // default for every role, so a project that never mentioned
@@ -1816,11 +1798,11 @@ TEST(NinjaBackendPeRuntime, HostCoupledStagesNothing) {
     // explicit `toolchain-coupled` would — see
     // `ToolchainCoupledStagesTheToolsetCrtBesideTheExe`.
     auto bare = msvc_plan_with_redist(redist, "");
-    EXPECT_EQ(toolset_entries(compute_flags(bare)).size(), 3u)
+    expect(eq(toolset_entries(compute_flags(bare)).size(), 3u))
         << "the undeclared MSVC-ABI default no longer stages the redistributable";
-}
+}};
 
-TEST(NinjaBackendPeRuntime, AProjectsOwnDeployFileOutranksTheToolsets) {
+UTest a_projects_own_deploy_file_outranks_the_toolsets{"NinjaBackendPeRuntime/AProjectsOwnDeployFileOutranksTheToolsets", [] {
     // A vendored redist named in `[runtime] deploy_files` is a human's
     // statement about which build of msvcp140.dll this program ships. Silently
     // replacing it with the toolset's copy produces a different program than
@@ -1834,24 +1816,24 @@ TEST(NinjaBackendPeRuntime, AProjectsOwnDeployFileOutranksTheToolsets) {
 
     auto flags = compute_flags(plan);
     for (auto const& d : toolset_entries(flags))
-        EXPECT_NE(d.dest.filename(), std::filesystem::path("msvcp140.dll"))
+        expect(ne(d.dest.filename(), std::filesystem::path("msvcp140.dll")))
             << "overwrote the project's own deploy file";
-    EXPECT_EQ(toolset_entries(flags).size(), 2u);
-    EXPECT_TRUE(std::ranges::any_of(flags.runtimeDeploy, [](auto const& d) {
+    expect(eq(toolset_entries(flags).size(), 2u));
+    expect(std::ranges::any_of(flags.runtimeDeploy, [](auto const& d) {
         return d.origin == BuildPlan::DeployFile::Origin::Declared
             && d.sources.front() == std::filesystem::path("/vendor/msvcp140.dll");
     })) << "the declared file is not placed";
-    EXPECT_TRUE(std::ranges::any_of(flags.runtimeNotes, [](auto const& d) {
+    expect(std::ranges::any_of(flags.runtimeNotes, [](auto const& d) {
         return d.find("msvcp140.dll") != std::string::npos;
     })) << "the declared runtime file was placed without a word about its version";
-}
+}};
 
 // The 2026-09-28 design, §2.9: a build for a Windows target has one C++
 // runtime, the toolset's, for the program and for the tools that build it.
 // Every action runs with the toolset's runtime directory first on its PATH,
 // through the named wrapper, whatever its role. A target without the MSVC ABI
 // keeps its commands as they were.
-TEST(NinjaBackendPeRuntime, EveryActionOfAWindowsTargetHasTheToolsetRuntimeOnPath) {
+UTest every_action_of_a_windows_target_has_the_toolset_runtime_on_path{"NinjaBackendPeRuntime/EveryActionOfAWindowsTargetHasTheToolsetRuntimeOnPath", [] {
     FakeRedistDir redist;
     auto plan = msvc_plan_with_redist(redist, "");
     mcpp::manifest::BuildAction a;
@@ -1864,21 +1846,21 @@ TEST(NinjaBackendPeRuntime, EveryActionOfAWindowsTargetHasTheToolsetRuntimeOnPat
 
     auto ninja = emit_ninja_string(plan);
     auto ruleAt = ninja.find("rule mcpp_action_0");
-    ASSERT_NE(ruleAt, std::string::npos) << ninja;
+    expect(fatal(ne(ruleAt, std::string::npos))) << ninja;
     auto rule = ninja.substr(ruleAt, ninja.find("\n\n", ruleAt) - ruleAt);
-    EXPECT_NE(rule.find(" __action"), std::string::npos) << rule;
-    EXPECT_NE(rule.find("--path-prepend"), std::string::npos) << rule;
-    EXPECT_NE(rule.find(redist.path.filename().string()), std::string::npos)
+    expect(ne(rule.find(" __action"), std::string::npos)) << rule;
+    expect(ne(rule.find("--path-prepend"), std::string::npos)) << rule;
+    expect(ne(rule.find(redist.path.filename().string()), std::string::npos))
         << "the prepended directory is not the toolset's runtime directory\n" << rule;
 
     auto elf = minimal_plan();
     elf.actions.push_back(a);
     auto elfNinja = emit_ninja_string(elf);
-    EXPECT_EQ(elfNinja.find("--path-prepend"), std::string::npos)
+    expect(eq(elfNinja.find("--path-prepend"), std::string::npos))
         << "a target without the MSVC ABI received the Windows runtime on PATH\n" << elfNinja;
-}
+}};
 
-TEST(NinjaBackendPeRuntime, AnElfToolchainNeverStagesItsRuntimeDirs) {
+UTest an_elf_toolchain_never_stages_its_runtime_dirs{"NinjaBackendPeRuntime/AnElfToolchainNeverStagesItsRuntimeDirs", [] {
     // `linkRuntimeDirs` means "the toolchain's private runtime" for every
     // provider — on gcc it is libstdc++'s directory. That is reached through
     // an rpath, and copying its contents into an output tree would be a
@@ -1888,8 +1870,8 @@ TEST(NinjaBackendPeRuntime, AnElfToolchainNeverStagesItsRuntimeDirs) {
     plan.toolchain.compiler     = mcpp::toolchain::CompilerId::GCC;
     plan.toolchain.binaryPath   = "/usr/bin/g++";
     plan.toolchain.targetTriple = "x86_64-linux-gnu";
-    EXPECT_TRUE(toolset_entries(compute_flags(plan)).empty());
-}
+    expect(toolset_entries(compute_flags(plan)).empty());
+}};
 
 // #718: every MSVC-ABI row x {undeclared, self-contained, toolchain-coupled,
 // host-coupled, linkage=static} yields exactly one CRT word, spelled for its
@@ -1900,7 +1882,7 @@ TEST(NinjaBackendPeRuntime, AnElfToolchainNeverStagesItsRuntimeDirs) {
 // link line is `link.exe` directly (`LinkShape::MsvcLinkExe`) and carries no
 // compile flag at all — the CRT is baked into the objects it is given — so
 // only the LLVM row's link line is asked to repeat the word.
-TEST(NinjaBackendPeRuntime, CrtWordIsOneWordEqualOnCompileAndLink) {
+UTest crt_word_is_one_word_equal_on_compile_and_link{"NinjaBackendPeRuntime/CrtWordIsOneWordEqualOnCompileAndLink", [] {
     FakeRedistDir redist;
     struct Row {
         std::string_view label;
@@ -1928,13 +1910,13 @@ TEST(NinjaBackendPeRuntime, CrtWordIsOneWordEqualOnCompileAndLink) {
             auto flags = compute_flags(plan);
             auto want = c.wantsStatic ? row.staticWord : row.dynamicWord;
             auto other = c.wantsStatic ? row.dynamicWord : row.staticWord;
-            SCOPED_TRACE(std::format("{} linkage='{}' cxx_runtime='{}'",
-                                     row.label, c.linkage, c.cxxRuntime));
+            /* trace: std::format("{} linkage='{}' cxx_runtime='{}'",
+                                     row.label, c.linkage, c.cxxRuntime) */;
 
-            EXPECT_EQ(count_occurrences(flags.cxx, want), 1u) << flags.cxx;
-            EXPECT_EQ(count_occurrences(flags.cc, want), 1u) << flags.cc;
-            EXPECT_EQ(flags.cxx.find(other), std::string::npos);
-            EXPECT_EQ(flags.cc.find(other), std::string::npos);
+            expect(eq(count_occurrences(flags.cxx, want), 1u)) << flags.cxx;
+            expect(eq(count_occurrences(flags.cc, want), 1u)) << flags.cc;
+            expect(eq(flags.cxx.find(other), std::string::npos));
+            expect(eq(flags.cc.find(other), std::string::npos));
 
             // `link_shape` (flags.cppm) picks `LinkShape::PeLld` — the
             // branch that carries this word on the link line — only when
@@ -1946,14 +1928,14 @@ TEST(NinjaBackendPeRuntime, CrtWordIsOneWordEqualOnCompileAndLink) {
             // see the Windows e2e leg (814) for that half.
             if constexpr (mcpplibs::os::is_windows) {
                 if (row.compiler == mcpp::toolchain::CompilerId::Clang) {
-                    EXPECT_EQ(count_occurrences(flags.ld, want), 1u) << flags.ld;
-                    EXPECT_EQ(flags.ld.find(other), std::string::npos);
-                    EXPECT_EQ(flags.ld, flags.ldC);
+                    expect(eq(count_occurrences(flags.ld, want), 1u)) << flags.ld;
+                    expect(eq(flags.ld.find(other), std::string::npos));
+                    expect(eq(flags.ld, flags.ldC));
                 }
             }
         }
     }
-}
+}};
 
 // ── link_failure_advice ──────────────────────────────────────────────────────
 //
@@ -1961,45 +1943,45 @@ TEST(NinjaBackendPeRuntime, CrtWordIsOneWordEqualOnCompileAndLink) {
 // symbol from a header inside the standard library. Nothing in that message
 // says which package supplies it, or that the answer is one manifest line.
 
-TEST(LinkFailureAdvice, NamesTheAllocatorFeatureForLldsSpelling) {
+UTest names_the_allocator_feature_for_llds_spelling{"LinkFailureAdvice/NamesTheAllocatorFeatureForLldsSpelling", [] {
     const std::string out =
         "ld.lld: error: undefined symbol: operator new(unsigned long)\n"
         ">>> referenced by allocate.h:58\n";
     auto advice = mcpp::build::link_failure_advice(out);
-    EXPECT_NE(advice.find("alloc-kal"), std::string::npos);
-    EXPECT_NE(advice.find("std-freestanding"), std::string::npos);
+    expect(ne(advice.find("alloc-kal"), std::string::npos));
+    expect(ne(advice.find("std-freestanding"), std::string::npos));
     // The four that are most often forgotten are named, because omitting them
     // produces a SECOND link failure after the first is fixed.
-    EXPECT_NE(advice.find("align_val_t"), std::string::npos);
-}
+    expect(ne(advice.find("align_val_t"), std::string::npos));
+}};
 
-TEST(LinkFailureAdvice, MatchesGnuLdsSpellingToo) {
+UTest matches_gnu_lds_spelling_too{"LinkFailureAdvice/MatchesGnuLdsSpellingToo", [] {
     // Two linkers, two spellings of the same fact. Matching only lld's would
     // make the advice appear on some toolchains and not others.
     const std::string out =
         "/usr/bin/ld: main.o: undefined reference to `operator new(unsigned long)'\n";
-    EXPECT_FALSE(mcpp::build::link_failure_advice(out).empty());
-}
+    expect(!(mcpp::build::link_failure_advice(out).empty()));
+}};
 
-TEST(LinkFailureAdvice, StaysSilentOnUnrelatedFailures) {
+UTest stays_silent_on_unrelated_failures{"LinkFailureAdvice/StaysSilentOnUnrelatedFailures", [] {
     // The advice is appended to EVERY failed build, so a needle that matched
     // loosely would attach allocator advice to a missing board symbol.
     const std::string out =
         "ld.lld: error: undefined symbol: board_uart_init\n"
         "error: cannot open crt0.o: No such file or directory\n";
-    EXPECT_TRUE(mcpp::build::link_failure_advice(out).empty());
-}
+    expect(mcpp::build::link_failure_advice(out).empty());
+}};
 
-TEST(LinkFailureAdvice, CarriesNoVersionLiteral) {
+UTest carries_no_version_literal{"LinkFailureAdvice/CarriesNoVersionLiteral", [] {
     // The `import std` advice needed tests/e2e/135 to keep its version
     // honest. This one is built so it cannot go stale the same way: it names a
     // package and a FEATURE, and the feature pulls the implementation. A digit
     // sequence that looks like a version here would be a regression in kind.
     auto advice = mcpp::build::link_failure_advice(
         "ld.lld: error: undefined symbol: operator new(unsigned long)\n");
-    ASSERT_FALSE(advice.empty());
-    EXPECT_EQ(advice.find("0."), std::string::npos) << advice;
-}
+    expect(fatal(!advice.empty()));
+    expect(eq(advice.find("0."), std::string::npos)) << advice;
+}};
 
 // ── graph_c_library_isolation_advice (mcpp#662) ─────────────────────────────
 //
@@ -2010,14 +1992,14 @@ TEST(LinkFailureAdvice, CarriesNoVersionLiteral) {
 // use to diagnose it: the isolating token on the command line, together with
 // the compiler's own "file not found".
 
-TEST(GraphCLibraryIsolationAdvice, FiresOnlyWhenBothTheTokenAndTheErrorAreThere) {
+UTest fires_only_when_both_the_token_and_the_error_are_there{"GraphCLibraryIsolationAdvice/FiresOnlyWhenBothTheTokenAndTheErrorAreThere", [] {
     // Neither alone is enough.
-    EXPECT_TRUE(mcpp::build::graph_c_library_isolation_advice(
+    expect(mcpp::build::graph_c_library_isolation_advice(
         "clang: error: something else entirely\n").empty());
-    EXPECT_TRUE(mcpp::build::graph_c_library_isolation_advice(
+    expect(mcpp::build::graph_c_library_isolation_advice(
         "-nostdlibinc -std=c11 -c probe.c\n"
         "probe.c:1:1: error: unknown type name 'nonsense'\n").empty());
-    EXPECT_TRUE(mcpp::build::graph_c_library_isolation_advice(
+    expect(mcpp::build::graph_c_library_isolation_advice(
         "clang -xc -std=c11 -c probe.c\n"
         "probe.c:1:10: fatal error: 'io.h' file not found\n").empty());
     // Both together: an ordinary compile failure the fix's own token is on.
@@ -2027,13 +2009,13 @@ TEST(GraphCLibraryIsolationAdvice, FiresOnlyWhenBothTheTokenAndTheErrorAreThere)
         "-nostdinc++ -c probe.c -o obj/probe.c.o\n"
         "probe.c:1:10: fatal error: 'io.h' file not found\n"
         "    1 | #include <io.h>\n";
-    EXPECT_FALSE(mcpp::build::graph_c_library_isolation_advice(out).empty());
-}
+    expect(!(mcpp::build::graph_c_library_isolation_advice(out).empty()));
+}};
 
 // WHETHER THE C LIBRARY IS THE GRAPH'S reaches the fast path through a file
 // beside build.ninja (LLVM 23.1.3 Part 3, D3): a native build on a managed C
 // library carries `-nostdlibinc` too, so the token alone no longer answers it.
-TEST(GraphCLibrarySidecar, PresentOnlyForAGraphCLibrary) {
+UTest present_only_for_a_graph_c_library{"GraphCLibrarySidecar/PresentOnlyForAGraphCLibrary", [] {
     const auto dir = std::filesystem::temp_directory_path()
         / std::format("mcpp_graph_clib_{}", std::random_device{}());
     std::filesystem::create_directories(dir);
@@ -2044,37 +2026,37 @@ TEST(GraphCLibrarySidecar, PresentOnlyForAGraphCLibrary) {
     graph.impl = "openkal-musl@0.3.5";
     mcpp::build::write_graph_c_library_sidecar(dir, graph);
     auto read = mcpp::build::read_graph_c_library_sidecar(dir);
-    ASSERT_TRUE(read.has_value());
-    EXPECT_EQ(read->first, "musl");
-    EXPECT_EQ(read->second, "openkal-musl@0.3.5");
+    expect(fatal(read.has_value()));
+    expect(eq(read->first, "musl"));
+    expect(eq(read->second, "openkal-musl@0.3.5"));
 
     // A payload C library (the native managed glibc) removes the file.
     mcpp::targetside::Layer payload;
     payload.origin = mcpp::targetside::Origin::Payload;
     payload.interfaceName = "glibc";
     mcpp::build::write_graph_c_library_sidecar(dir, payload);
-    EXPECT_FALSE(mcpp::build::read_graph_c_library_sidecar(dir).has_value());
+    expect(!(mcpp::build::read_graph_c_library_sidecar(dir).has_value()));
 
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
-}
+}};
 
-TEST(GraphCLibraryIsolationAdvice, NamesTheLibraryWhenGiven) {
+UTest names_the_library_when_given{"GraphCLibraryIsolationAdvice/NamesTheLibraryWhenGiven", [] {
     const std::string out =
         "clang -nostdlibinc -c probe.c\n"
         "probe.c:1:10: fatal error: 'io.h' file not found\n";
     auto advice = mcpp::build::graph_c_library_isolation_advice(
         out, "musl", "openkal-musl@0.3.5");
-    ASSERT_FALSE(advice.empty());
-    EXPECT_NE(advice.find("musl"), std::string::npos);
-    EXPECT_NE(advice.find("openkal-musl@0.3.5"), std::string::npos);
+    expect(fatal(!advice.empty()));
+    expect(ne(advice.find("musl"), std::string::npos));
+    expect(ne(advice.find("openkal-musl@0.3.5"), std::string::npos));
     // Both remedies from the plan: adapting to the C library, and bringing
     // the platform dependency into the graph privately.
-    EXPECT_NE(advice.find("cfg(c-abi = \"musl\")"), std::string::npos);
-    EXPECT_NE(advice.find("private"), std::string::npos);
-}
+    expect(ne(advice.find("cfg(c-abi = \"musl\")"), std::string::npos));
+    expect(ne(advice.find("private"), std::string::npos));
+}};
 
-TEST(GraphCLibraryIsolationAdvice, DegradesWithoutNamingAnyPackage) {
+UTest degrades_without_naming_any_package{"GraphCLibraryIsolationAdvice/DegradesWithoutNamingAnyPackage", [] {
     // The fast path (execute.cppm) has no BuildPlan to read a name from. The
     // note still fires — it does not stay silent just because the caller
     // could not name the library — and it does not fabricate a name either.
@@ -2082,9 +2064,9 @@ TEST(GraphCLibraryIsolationAdvice, DegradesWithoutNamingAnyPackage) {
         "clang -nostdlibinc -c probe.c\n"
         "probe.c:1:10: fatal error: 'io.h' file not found\n";
     auto advice = mcpp::build::graph_c_library_isolation_advice(out);
-    EXPECT_FALSE(advice.empty());
-    EXPECT_NE(advice.find("this target's C library"), std::string::npos);
-}
+    expect(!advice.empty());
+    expect(ne(advice.find("this target's C library"), std::string::npos));
+}};
 
 // ── consumer_include_scope_advice (#690, design record F7) ──────────────────
 //
@@ -2105,7 +2087,7 @@ std::filesystem::path consumer_include_fixture() {
 }
 }  // namespace
 
-TEST(ConsumerIncludeScopeAdvice, NamesTheConsumerDirectoryForEachDriverSpelling) {
+UTest names_the_consumer_directory_for_each_driver_spelling{"ConsumerIncludeScopeAdvice/NamesTheConsumerDirectoryForEachDriverSpelling", [] {
     const auto root = consumer_include_fixture();
     const std::vector<std::filesystem::path> dirs{root / "absent", root / "appinc"};
     const std::string gcc =
@@ -2118,40 +2100,40 @@ TEST(ConsumerIncludeScopeAdvice, NamesTheConsumerDirectoryForEachDriverSpelling)
         "No such file or directory\n";
     for (auto const& out : {gcc, clang, cl}) {
         auto advice = mcpp::build::consumer_include_scope_advice(out, dirs);
-        ASSERT_FALSE(advice.empty()) << out;
-        EXPECT_NE(advice.find((root / "appinc").string()), std::string::npos) << advice;
-        EXPECT_NE(advice.find("no longer"), std::string::npos) << advice;
+        expect(fatal(!advice.empty())) << out;
+        expect(ne(advice.find((root / "appinc").string()), std::string::npos)) << advice;
+        expect(ne(advice.find("no longer"), std::string::npos)) << advice;
     }
     std::filesystem::remove_all(root);
-}
+}};
 
-TEST(ConsumerIncludeScopeAdvice, SilentWhenTheHeaderIsNotTheConsumersOrNoHeaderIsMissing) {
+UTest silent_when_the_header_is_not_the_consumers_or_no_header_is_missing{"ConsumerIncludeScopeAdvice/SilentWhenTheHeaderIsNotTheConsumersOrNoHeaderIsMissing", [] {
     const auto root = consumer_include_fixture();
     const std::vector<std::filesystem::path> dirs{root / "appinc"};
     // A missing header the consumer does not have either: an ordinary error.
-    EXPECT_TRUE(mcpp::build::consumer_include_scope_advice(
+    expect(mcpp::build::consumer_include_scope_advice(
         "dep.c:1:10: fatal error: other.h: No such file or directory\n", dirs).empty());
     // A failure that is not a missing header, although cfg7.h is the consumer's.
-    EXPECT_TRUE(mcpp::build::consumer_include_scope_advice(
+    expect(mcpp::build::consumer_include_scope_advice(
         "dep.c:3:1: error: unknown type name 'cfg7'\n", dirs).empty());
     // No root include directories at all (the fast path before any plan wrote
     // the sidecar).
-    EXPECT_TRUE(mcpp::build::consumer_include_scope_advice(
+    expect(mcpp::build::consumer_include_scope_advice(
         "dep.c:1:10: fatal error: cfg7.h: No such file or directory\n", {}).empty());
     std::filesystem::remove_all(root);
-}
+}};
 
-TEST(ConsumerIncludeScopeAdvice, SidecarRoundTrips) {
+UTest sidecar_round_trips{"ConsumerIncludeScopeAdvice/SidecarRoundTrips", [] {
     const auto root = consumer_include_fixture();
     const std::vector<std::filesystem::path> dirs{root / "appinc", root / "with space"};
     mcpp::build::write_consumer_include_sidecar(root, dirs);
-    EXPECT_EQ(mcpp::build::read_consumer_include_sidecar(root), dirs);
+    expect(eq(mcpp::build::read_consumer_include_sidecar(root), dirs));
     mcpp::build::write_consumer_include_sidecar(root, {});
-    EXPECT_TRUE(mcpp::build::read_consumer_include_sidecar(root).empty());
+    expect(mcpp::build::read_consumer_include_sidecar(root).empty());
     std::filesystem::remove_all(root);
-}
+}};
 
-TEST(GraphCLibraryIsolationAdvice, DoesNotRewriteTheCompilersOwnLine) {
+UTest does_not_rewrite_the_compilers_own_line{"GraphCLibraryIsolationAdvice/DoesNotRewriteTheCompilersOwnLine", [] {
     // "Reuse the channel, don't rewrite compiler output": the advice is
     // APPENDED text, and the original diagnostic line survives byte for byte
     // wherever a caller concatenates it (as both call sites do).
@@ -2159,10 +2141,10 @@ TEST(GraphCLibraryIsolationAdvice, DoesNotRewriteTheCompilersOwnLine) {
         "probe.c:1:10: fatal error: 'io.h' file not found\n";
     const std::string out = "clang -nostdlibinc -c probe.c\n" + compilerLine;
     auto advice = mcpp::build::graph_c_library_isolation_advice(out);
-    ASSERT_FALSE(advice.empty());
+    expect(fatal(!advice.empty()));
     std::string combined = out + advice;
-    EXPECT_NE(combined.find(compilerLine), std::string::npos);
-}
+    expect(ne(combined.find(compilerLine), std::string::npos));
+}};
 
 // ═══ mcpp#533 / mcpp#534: emitter self-checks ══════════════════════════════
 
@@ -2179,7 +2161,7 @@ TEST(GraphCLibraryIsolationAdvice, DoesNotRewriteTheCompilersOwnLine) {
 // `emit_ninja_string` is supposed never to produce. A test that could only
 // reach it through a BuildPlan could not show the checker works at all.
 
-TEST(NinjaEmitterGuards, ARuleWhoseCommandStartsWithAnUndefinedVariableIsRefused) {
+UTest a_rule_whose_command_starts_with_an_undefined_variable_is_refused{"NinjaEmitterGuards/ARuleWhoseCommandStartsWithAnUndefinedVariableIsRefused", [] {
     const std::string manifest =
         "cxx = /usr/bin/g++\n"
         "\n"
@@ -2187,19 +2169,19 @@ TEST(NinjaEmitterGuards, ARuleWhoseCommandStartsWithAnUndefinedVariableIsRefused
         "  command = $cc -shared $in -o $out\n"
         "  description = SHARED $out\n";
     auto bad = check_rule_commands_name_a_program(manifest);
-    ASSERT_TRUE(bad.has_value()) << manifest;
-    EXPECT_NE(bad->find("c_shared"), std::string::npos) << *bad;
-    EXPECT_NE(bad->find("$cc"), std::string::npos) << *bad;
-}
+    expect(fatal(bad.has_value())) << manifest;
+    if (auto&& failed = expect(ne(bad->find("c_shared"), std::string::npos)); !failed) failed << *bad;
+    if (auto&& failed = expect(ne(bad->find("$cc"), std::string::npos)); !failed) failed << *bad;
+}};
 
-TEST(NinjaEmitterGuards, ARuleWhoseLeadingVariableIsDefinedButEmptyIsRefused) {
+UTest a_rule_whose_leading_variable_is_defined_but_empty_is_refused{"NinjaEmitterGuards/ARuleWhoseLeadingVariableIsDefinedButEmptyIsRefused", [] {
     const std::string manifest =
         "cc =\n"
         "\n"
         "rule c_link\n"
         "  command = $cc $in -o $out\n";
-    EXPECT_TRUE(check_rule_commands_name_a_program(manifest).has_value());
-}
+    expect(check_rule_commands_name_a_program(manifest).has_value());
+}};
 
 // The negatives, which are what stop this from being an always-fires check.
 // Note especially `$soname_flag`: variables set per-EDGE are legitimately
@@ -2208,7 +2190,7 @@ TEST(NinjaEmitterGuards, ARuleWhoseLeadingVariableIsDefinedButEmptyIsRefused) {
 // not about undefined variables in general — the general form would have
 // needed an allowlist, and a hand-maintained exception list is the shape this
 // file has been burned by twice.
-TEST(NinjaEmitterGuards, WellFormedRulesAndOptionalPerEdgeVariablesPass) {
+UTest well_formed_rules_and_optional_per_edge_variables_pass{"NinjaEmitterGuards/WellFormedRulesAndOptionalPerEdgeVariablesPass", [] {
     const std::string manifest =
         "cc = /usr/bin/gcc\n"
         "cxx = /usr/bin/g++\n"
@@ -2223,22 +2205,22 @@ TEST(NinjaEmitterGuards, WellFormedRulesAndOptionalPerEdgeVariablesPass) {
         "  tool = /usr/bin/objcopy\n"
         "  command = $tool -O binary $in $out\n";
     auto bad = check_rule_commands_name_a_program(manifest);
-    EXPECT_FALSE(bad.has_value()) << (bad ? *bad : std::string{});
-}
+    if (auto&& failed = expect(!bad.has_value()); !failed) failed << (bad ? *bad : std::string{});
+}};
 
 // The emitter's own output must satisfy its own guard — including the case
 // that produced the defect: a plan whose compile set has no C or asm unit.
-TEST(NinjaEmitterGuards, EmittedManifestsAlwaysNameAProgram) {
+UTest emitted_manifests_always_name_a_program{"NinjaEmitterGuards/EmittedManifestsAlwaysNameAProgram", [] {
     auto plan = minimal_plan();
     auto ninja = emit_ninja_string(plan);
     auto bad = check_rule_commands_name_a_program(ninja);
-    EXPECT_FALSE(bad.has_value()) << (bad ? *bad : std::string{});
+    if (auto&& failed = expect(!bad.has_value()); !failed) failed << (bad ? *bad : std::string{});
 
     // `cc` unconditionally, not "when something C is being compiled".
-    EXPECT_NE(ninja.find("\ncc        = "), std::string::npos)
+    expect(ne(ninja.find("\ncc        = "), std::string::npos))
         << "cc is not defined in a plan with no C sources — this is mcpp#533\n"
         << ninja;
-}
+}};
 
 // ── A package's compiles wait for its generators (mcpp#534) ────────────────
 
@@ -2268,34 +2250,34 @@ BuildPlan plan_with_generated_header() {
 
 }  // namespace
 
-TEST(ActionOrdering, AGeneratedHeaderGetsAPhonyAndTheCompileEdgeWaitsForIt) {
+UTest a_generated_header_gets_a_phony_and_the_compile_edge_waits_for_it{"ActionOrdering/AGeneratedHeaderGetsAPhonyAndTheCompileEdgeWaitsForIt", [] {
     auto ninja = emit_ninja_string(plan_with_generated_header());
 
-    EXPECT_NE(ninja.find("build mcpp-actions-gen_pkg : phony"), std::string::npos)
+    expect(ne(ninja.find("build mcpp-actions-gen_pkg : phony"), std::string::npos))
         << ninja;
-    EXPECT_NE(ninja.find("|| mcpp-actions-gen_pkg"), std::string::npos)
+    expect(ne(ninja.find("|| mcpp-actions-gen_pkg"), std::string::npos))
         << "the compile edge does not wait for the generator\n" << ninja;
-}
+}};
 
 // THE DENOMINATOR. "every edge that should carry the ordering does" is
 // vacuously true when no edge does — and that vacuum is exactly the state this
 // change fixes, so the count of edges is asserted separately from the count
 // that carries it. A bare equality would have passed against the defect.
-TEST(ActionOrdering, EveryCompileEdgeOfThatPackageCarriesIt) {
+UTest every_compile_edge_of_that_package_carries_it{"ActionOrdering/EveryCompileEdgeOfThatPackageCarriesIt", [] {
     auto ninja = emit_ninja_string(plan_with_generated_header());
 
     const auto edges = count_occurrences(ninja, "build obj/uses_header.o :");
     const auto ordered =
         count_occurrences(ninja, "|| mcpp-actions-gen_pkg");
-    EXPECT_GT(edges, 0u) << "no compile edge was emitted at all — the "
+    expect(gt(edges, 0u)) << "no compile edge was emitted at all — the "
                             "assertion below would describe nothing\n" << ninja;
-    EXPECT_GE(ordered, edges) << ninja;
-}
+    expect(ge(ordered, edges)) << ninja;
+}};
 
 // A package with no gating action gets no phony, and its edges are untouched.
 // Without this the change would read as "always add an order-only edge", which
 // is not what it does and would serialise builds that have nothing to wait for.
-TEST(ActionOrdering, APackageWithNoActionsIsUnchanged) {
+UTest a_package_with_no_actions_is_unchanged{"ActionOrdering/APackageWithNoActionsIsUnchanged", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/plain.cpp",
@@ -2304,14 +2286,14 @@ TEST(ActionOrdering, APackageWithNoActionsIsUnchanged) {
         .packageName = "plain_pkg",
     });
     auto ninja = emit_ninja_string(plan);
-    EXPECT_EQ(ninja.find("mcpp-actions-plain_pkg"), std::string::npos) << ninja;
-}
+    expect(eq(ninja.find("mcpp-actions-plain_pkg"), std::string::npos)) << ninja;
+}};
 
 // `Object` and `Artifact` really are ordered by file dependency — their
 // outputs are link inputs and their inputs are link outputs — so pulling them
 // into the phony would add an edge that expresses nothing. This is the half of
 // the original comment that was true, and it has to stay true.
-TEST(ActionOrdering, ObjectRoleActionsDoNotJoinTheCompileGate) {
+UTest object_role_actions_do_not_join_the_compile_gate{"ActionOrdering/ObjectRoleActionsDoNotJoinTheCompileGate", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/x.cpp",
@@ -2328,14 +2310,14 @@ TEST(ActionOrdering, ObjectRoleActionsDoNotJoinTheCompileGate) {
     plan.actions.push_back(std::move(a));
 
     auto ninja = emit_ninja_string(plan);
-    EXPECT_EQ(ninja.find("mcpp-actions-obj_pkg"), std::string::npos) << ninja;
-}
+    expect(eq(ninja.find("mcpp-actions-obj_pkg"), std::string::npos)) << ninja;
+}};
 
 // A non-blocking check runs alongside compilation; a blocking one precedes it.
 // `blocking` was typed, transported, parsed, documented in two languages and
 // demonstrated in a shipped example — and read by nothing, which made it a
 // no-op with a paper trail.
-TEST(ActionOrdering, BlockingDecidesWhetherACheckGatesTheCompile) {
+UTest blocking_decides_whether_a_check_gates_the_compile{"ActionOrdering/BlockingDecidesWhetherACheckGatesTheCompile", [] {
     auto make = [](bool blocking) {
         auto plan = minimal_plan();
         plan.compileUnits.push_back({
@@ -2355,11 +2337,11 @@ TEST(ActionOrdering, BlockingDecidesWhetherACheckGatesTheCompile) {
         return emit_ninja_string(plan);
     };
 
-    EXPECT_NE(make(true).find("|| mcpp-actions-chk_pkg"), std::string::npos)
+    expect(ne(make(true).find("|| mcpp-actions-chk_pkg"), std::string::npos))
         << "blocking = true did not gate the compile";
-    EXPECT_EQ(make(false).find("mcpp-actions-chk_pkg"), std::string::npos)
+    expect(eq(make(false).find("mcpp-actions-chk_pkg"), std::string::npos))
         << "blocking = false gated the compile anyway";
-}
+}};
 
 // ── depfile: ninja must track what the action's COMMAND read, not only what
 // the build program declared as an input ──────────────────────────────────
@@ -2389,7 +2371,7 @@ std::string action_rule_block(std::string_view ninja, std::string_view rule_head
 
 }  // namespace
 
-TEST(ActionDepfile, ADeclaredDepfileEmitsDepfileAndDepsGcc) {
+UTest a_declared_depfile_emits_depfile_and_deps_gcc{"ActionDepfile/ADeclaredDepfileEmitsDepfileAndDepsGcc", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/shader_user.cpp",
@@ -2408,27 +2390,27 @@ TEST(ActionDepfile, ADeclaredDepfileEmitsDepfileAndDepsGcc) {
 
     auto ninja = emit_ninja_string(plan);
     auto block = action_rule_block(ninja, "rule mcpp_action_0\n");
-    ASSERT_FALSE(block.empty()) << "no rule emitted for the action\n" << ninja;
-    EXPECT_NE(block.find("\n  depfile = out/shader.spv.d\n"), std::string::npos)
+    expect(fatal(!block.empty())) << "no rule emitted for the action\n" << ninja;
+    expect(ne(block.find("\n  depfile = out/shader.spv.d\n"), std::string::npos))
         << block;
     // No trailing "\n" required: `deps = gcc` is the last line this backend
     // emits for the rule before the blank separator, so the block extracted
     // above (up to, not including, that separator) ends exactly here.
-    EXPECT_NE(block.find("\n  deps = gcc"), std::string::npos) << block;
+    expect(ne(block.find("\n  deps = gcc"), std::string::npos)) << block;
 
     // The depfile must never also be a declared ninja OUTPUT of the same
     // edge: `deps = gcc` makes ninja consume and delete it once read, and a
     // file simultaneously promised as an output would be one ninja expects
     // to still exist afterward.
-    EXPECT_EQ(ninja.find("shader.spv.d :"), std::string::npos)
+    expect(eq(ninja.find("shader.spv.d :"), std::string::npos))
         << "the depfile must not appear as a build edge's own output\n" << ninja;
-}
+}};
 
 // THE CONTROL. Without it, a backend that emitted `depfile =`/`deps = gcc`
 // unconditionally for every action would also pass the test above — exactly
 // the shape `blocking` took before anything read it (mcpp#534 / e2e 315):
 // typed, transported, parsed, and a no-op with a paper trail.
-TEST(ActionDepfile, NoDepfileEmitsNeitherLine) {
+UTest no_depfile_emits_neither_line{"ActionDepfile/NoDepfileEmitsNeitherLine", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/plain_user.cpp",
@@ -2446,10 +2428,10 @@ TEST(ActionDepfile, NoDepfileEmitsNeitherLine) {
 
     auto ninja = emit_ninja_string(plan);
     auto block = action_rule_block(ninja, "rule mcpp_action_0\n");
-    ASSERT_FALSE(block.empty()) << "no rule emitted for the action\n" << ninja;
-    EXPECT_EQ(block.find("depfile ="), std::string::npos) << block;
-    EXPECT_EQ(block.find("deps = gcc"), std::string::npos) << block;
-}
+    expect(fatal(!block.empty())) << "no rule emitted for the action\n" << ninja;
+    expect(eq(block.find("depfile ="), std::string::npos)) << block;
+    expect(eq(block.find("deps = gcc"), std::string::npos)) << block;
+}};
 
 // A module-extension file need not provide a module: an implementation unit
 // (`module M;`) is a legal inhabitant of a `.cppm` and provides nothing
@@ -2464,7 +2446,7 @@ TEST(ActionDepfile, NoDepfileEmitsNeitherLine) {
 //                      in module declaration`. GCC's interface spelling is the
 //                      plain language, so the identical project built on GCC
 //                      and not on Clang.
-TEST(NinjaBackend, ModuleEdgeFlagsComeFromTheScanNotTheExtension) {
+UTest module_edge_flags_come_from_the_scan_not_the_extension{"NinjaBackend/ModuleEdgeFlagsComeFromTheScanNotTheExtension", [] {
     auto plan = minimal_plan();
     plan.toolchain.compiler = mcpp::toolchain::CompilerId::Clang;
     plan.toolchain.binaryPath = "/usr/bin/clang++";
@@ -2488,12 +2470,12 @@ TEST(NinjaBackend, ModuleEdgeFlagsComeFromTheScanNotTheExtension) {
     // being undone by someone restoring a rule-level constant that "works"
     // for every edge that happens to provide a module.
     auto rule_start = ninja.find("rule cxx_module\n");
-    ASSERT_NE(rule_start, std::string::npos) << ninja;
+    expect(fatal(ne(rule_start, std::string::npos))) << ninja;
     auto rule = ninja.substr(rule_start, ninja.find("\n\n", rule_start) - rule_start);
-    EXPECT_NE(rule.find("$module_output $module_lang"), std::string::npos) << rule;
-    EXPECT_EQ(rule.find("-fmodule-output=$bmi_out"), std::string::npos)
+    expect(ne(rule.find("$module_output $module_lang"), std::string::npos)) << rule;
+    expect(eq(rule.find("-fmodule-output=$bmi_out"), std::string::npos))
         << "the BMI flag is per-edge; a rule-level one reaches edges with no BMI";
-    EXPECT_EQ(rule.find("-x c++-module"), std::string::npos)
+    expect(eq(rule.find("-x c++-module"), std::string::npos))
         << "the interface spelling is per-edge, not a property of the rule";
 
     // EVERY cxx_module EDGE BINDS module_lang, AND THE DENOMINATOR IS ASSERTED.
@@ -2507,26 +2489,25 @@ TEST(NinjaBackend, ModuleEdgeFlagsComeFromTheScanNotTheExtension) {
             ++with_lang;
         pos = end;
     }
-    ASSERT_EQ(edges, 2u) << ninja;
-    EXPECT_EQ(with_lang, edges) << ninja;
+    expect(fatal(eq(edges, 2u))) << ninja;
+    expect(eq(with_lang, edges)) << ninja;
 
     // The interface: told it is an interface, and given somewhere to put the BMI.
-    EXPECT_NE(ninja.find("  module_lang = -x c++-module\n"), std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("  module_output = -fmodule-output=pcm.cache/iface.pcm\n"),
-              std::string::npos) << ninja;
+    expect(ne(ninja.find("  module_lang = -x c++-module\n"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("  module_output = -fmodule-output=pcm.cache/iface.pcm\n"), std::string::npos)) << ninja;
     // The implementation unit: told it is C++, and given no BMI path at all.
-    EXPECT_NE(ninja.find("  module_lang = -x c++\n"), std::string::npos) << ninja;
-    EXPECT_EQ(count_occurrences(ninja, "  module_output ="), 1u)
+    expect(ne(ninja.find("  module_lang = -x c++\n"), std::string::npos)) << ninja;
+    expect(eq(count_occurrences(ninja, "  module_output ="), 1u))
         << "only the unit that provides a module names a BMI";
     // The empty-value spelling must not appear anywhere in the graph.
-    EXPECT_EQ(ninja.find("-fmodule-output= "), std::string::npos) << ninja;
-    EXPECT_EQ(ninja.find("-fmodule-output=\n"), std::string::npos) << ninja;
-}
+    expect(eq(ninja.find("-fmodule-output= "), std::string::npos)) << ninja;
+    expect(eq(ninja.find("-fmodule-output=\n"), std::string::npos)) << ninja;
+}};
 
 // GCC needs no explicit module output at all, so the same two units must emit
 // `module_lang` twice and `module_output` never. Without this the test above
 // would leave "the GCC branch still emits a flag it does not want" unmeasured.
-TEST(NinjaBackend, GccModuleEdgesCarryTheLanguageAndNoBmiFlag) {
+UTest gcc_module_edges_carry_the_language_and_no_bmi_flag{"NinjaBackend/GccModuleEdgesCarryTheLanguageAndNoBmiFlag", [] {
     auto plan = minimal_plan();   // GCC
     plan.compileUnits.push_back({
         .source = "src/iface.cppm",
@@ -2543,15 +2524,15 @@ TEST(NinjaBackend, GccModuleEdgesCarryTheLanguageAndNoBmiFlag) {
     });
 
     auto ninja = emit_ninja_string(plan);
-    EXPECT_EQ(count_occurrences(ninja, "  module_lang = -x c++\n"), 2u) << ninja;
-    EXPECT_EQ(count_occurrences(ninja, "  module_output ="), 0u) << ninja;
-}
+    expect(eq(count_occurrences(ninja, "  module_lang = -x c++\n"), 2u)) << ninja;
+    expect(eq(count_occurrences(ninja, "  module_output ="), 0u)) << ninja;
+}};
 
 // The third dialect, and the one where the empty value was worst. `/ifcOutput`
 // takes its path as a SEPARATE token, so `/ifcOutput ` followed by nothing
 // consumed whatever came next on the command line -- the observed failure was
 // `could not open output file '/interface'`, naming a flag as a filename.
-TEST(NinjaBackend, MsvcModuleEdgesSplitTheInterfaceFlagFromTheLanguageFlag) {
+UTest msvc_module_edges_split_the_interface_flag_from_the_language_flag{"NinjaBackend/MsvcModuleEdgesSplitTheInterfaceFlagFromTheLanguageFlag", [] {
     auto plan = minimal_plan();
     plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
     plan.toolchain.binaryPath = "cl.exe";
@@ -2573,14 +2554,14 @@ TEST(NinjaBackend, MsvcModuleEdgesSplitTheInterfaceFlagFromTheLanguageFlag) {
 
     // `/interface /TP` says both "this is an interface" and "this is C++"; a
     // unit that is not an interface keeps only the second half.
-    EXPECT_NE(ninja.find("  module_lang = /interface /TP\n"), std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("  module_lang = /TP\n"), std::string::npos) << ninja;
-    EXPECT_EQ(count_occurrences(ninja, "  module_lang = /interface /TP\n"), 1u) << ninja;
+    expect(ne(ninja.find("  module_lang = /interface /TP\n"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("  module_lang = /TP\n"), std::string::npos)) << ninja;
+    expect(eq(count_occurrences(ninja, "  module_lang = /interface /TP\n"), 1u)) << ninja;
     // Exactly one edge names an .ifc, and it is the one that provides.
-    EXPECT_EQ(count_occurrences(ninja, "  module_output = /ifcOutput "), 1u) << ninja;
+    expect(eq(count_occurrences(ninja, "  module_output = /ifcOutput "), 1u)) << ninja;
     // The trailing-space spelling with nothing after it must not exist.
-    EXPECT_EQ(ninja.find("/ifcOutput \n"), std::string::npos) << ninja;
-}
+    expect(eq(ninja.find("/ifcOutput \n"), std::string::npos)) << ninja;
+}};
 
 // ── #618: `windows_subsystem` / `windows_entry` ─────────────────────────────
 //
@@ -2599,26 +2580,26 @@ using Flags = std::vector<std::string>;
 
 }  // namespace
 
-TEST(NinjaBackend, WindowsKeysRenderNothingOffPe) {
+UTest windows_keys_render_nothing_off_pe{"NinjaBackend/WindowsKeysRenderNothingOffPe", [] {
     for (auto triple : {"x86_64-linux-gnu", "x86_64-linux-musl", "aarch64-macos"}) {
         auto plan = plan_for_triple(triple);
         for (bool sep : {false, true})
-            EXPECT_EQ(windows_executable_link_flags(plan, sep, "windows", "wWinMain"), Flags{})
+            expect(eq(windows_executable_link_flags(plan, sep, "windows", "wWinMain"), Flags{}))
                 << triple;
     }
-}
+}};
 
-TEST(NinjaBackend, WindowsDefaultsRenderNothingOnEitherAbi) {
+UTest windows_defaults_render_nothing_on_either_abi{"NinjaBackend/WindowsDefaultsRenderNothingOnEitherAbi", [] {
     for (auto triple : {"x86_64-windows-msvc", "x86_64-windows-gnu"}) {
         auto plan = plan_for_triple(triple);
         for (auto [subsystem, entry] : {std::pair{"", ""}, std::pair{"console", ""},
                                         std::pair{"", "main"}, std::pair{"console", "main"}})
-            EXPECT_EQ(windows_executable_link_flags(plan, false, subsystem, entry), Flags{})
+            expect(eq(windows_executable_link_flags(plan, false, subsystem, entry), Flags{}))
                 << triple << " " << subsystem << " " << entry;
     }
-}
+}};
 
-TEST(NinjaBackend, WindowsMsvcAbiStatesBothSubsystemAndCrtEntry) {
+UTest windows_msvc_abi_states_both_subsystem_and_crt_entry{"NinjaBackend/WindowsMsvcAbiStatesBothSubsystemAndCrtEntry", [] {
     auto plan = plan_for_triple("x86_64-windows-msvc");
     const std::tuple<std::string_view, std::string_view, Flags> rows[] = {
         {"windows", "",         {"/SUBSYSTEM:WINDOWS", "/ENTRY:mainCRTStartup"}},
@@ -2631,17 +2612,17 @@ TEST(NinjaBackend, WindowsMsvcAbiStatesBothSubsystemAndCrtEntry) {
     };
     for (auto const& [subsystem, entry, expected] : rows) {
         // link.exe invoked directly takes the flag bare...
-        EXPECT_EQ(windows_executable_link_flags(plan, true, subsystem, entry), expected)
+        expect(eq(windows_executable_link_flags(plan, true, subsystem, entry), expected))
             << subsystem << " " << entry;
         // ...and a GNU-style driver (clang targeting the MSVC ABI) passes it on.
         Flags wrapped;
         for (auto const& f : expected) wrapped.push_back("-Wl," + f);
-        EXPECT_EQ(windows_executable_link_flags(plan, false, subsystem, entry), wrapped)
+        expect(eq(windows_executable_link_flags(plan, false, subsystem, entry), wrapped))
             << subsystem << " " << entry;
     }
-}
+}};
 
-TEST(NinjaBackend, WindowsGnuAbiUsesTheDriverFlags) {
+UTest windows_gnu_abi_uses_the_driver_flags{"NinjaBackend/WindowsGnuAbiUsesTheDriverFlags", [] {
     auto plan = plan_for_triple("x86_64-windows-gnu");
     const std::tuple<std::string_view, std::string_view, Flags> rows[] = {
         {"windows", "",         {"-mwindows"}},
@@ -2652,13 +2633,13 @@ TEST(NinjaBackend, WindowsGnuAbiUsesTheDriverFlags) {
         {"",        "WinMain",  {}},
     };
     for (auto const& [subsystem, entry, expected] : rows)
-        EXPECT_EQ(windows_executable_link_flags(plan, false, subsystem, entry), expected)
+        expect(eq(windows_executable_link_flags(plan, false, subsystem, entry), expected))
             << subsystem << " " << entry;
-}
+}};
 
 // Through the emitted graph: the flags reach the declaring executable's link
 // edge and no other edge, including a test binary of the same package.
-TEST(NinjaBackend, WindowsSubsystemReachesOnlyTheDeclaringExecutable) {
+UTest windows_subsystem_reaches_only_the_declaring_executable{"NinjaBackend/WindowsSubsystemReachesOnlyTheDeclaringExecutable", [] {
     auto plan = plan_for_triple("x86_64-windows-gnu");
     plan.compileUnits.push_back({
         .source = "src/gui.cpp",
@@ -2700,14 +2681,14 @@ TEST(NinjaBackend, WindowsSubsystemReachesOnlyTheDeclaringExecutable) {
     plan.linkUnits.push_back(test);
 
     auto ninja = emit_ninja_string(plan);
-    EXPECT_EQ(count_occurrences(ninja, "-mwindows"), 1u) << ninja;
+    expect(eq(count_occurrences(ninja, "-mwindows"), 1u)) << ninja;
     const auto guiEdge = ninja.find("build bin/gui.exe");
-    ASSERT_NE(guiEdge, std::string::npos) << ninja;
+    expect(fatal(ne(guiEdge, std::string::npos))) << ninja;
     const auto nextEdge = ninja.find("\nbuild ", guiEdge + 1);
     const auto flag = ninja.find("-mwindows");
-    EXPECT_GT(flag, guiEdge) << ninja;
-    EXPECT_LT(flag, nextEdge) << ninja;
-}
+    expect(gt(flag, guiEdge)) << ninja;
+    expect(lt(flag, nextEdge)) << ninja;
+}};
 
 // #694 (W1d): THE LEVEL A PROFILE DECLARES IS THE LEVEL EVERY ROW REALISES.
 //
@@ -2718,7 +2699,7 @@ TEST(NinjaBackend, WindowsSubsystemReachesOnlyTheDeclaringExecutable) {
 // compilers, so a later branch that overrides a declared level fails here and
 // not in a published binary. `realised_opt_level` is the answer both the flags
 // and the `Finished` line read, so it is asserted against the same rows.
-TEST(NinjaBackendOptimization, EveryTargetRowRealisesTheDeclaredLevel) {
+UTest every_target_row_realises_the_declared_level{"NinjaBackendOptimization/EveryTargetRowRealisesTheDeclaredLevel", [] {
     using mcpp::toolchain::CompilerId;
     for (auto const& row : mcpp::toolchain::triple::kKnownTargets) {
         for (auto compiler : {CompilerId::GCC, CompilerId::Clang}) {
@@ -2735,21 +2716,21 @@ TEST(NinjaBackendOptimization, EveryTargetRowRealisesTheDeclaredLevel) {
                 const std::string where = std::format(
                     "target={} compiler={} opt={}", row.canonical,
                     static_cast<int>(compiler), level);
-                EXPECT_NE(f.cxx.find(want), std::string::npos) << where << "\n" << f.cxx;
-                EXPECT_NE(f.cc.find(want), std::string::npos) << where << "\n" << f.cc;
-                EXPECT_EQ(f.cxx.find(" -Og"), std::string::npos) << where << "\n" << f.cxx;
-                EXPECT_EQ(f.cc.find(" -Og"), std::string::npos) << where << "\n" << f.cc;
-                EXPECT_EQ(realised_opt_level(plan.manifest.buildConfig), level) << where;
-                EXPECT_EQ(realises_optimization(plan.manifest.buildConfig), level != "0")
+                expect(ne(f.cxx.find(want), std::string::npos)) << where << "\n" << f.cxx;
+                expect(ne(f.cc.find(want), std::string::npos)) << where << "\n" << f.cc;
+                expect(eq(f.cxx.find(" -Og"), std::string::npos)) << where << "\n" << f.cxx;
+                expect(eq(f.cc.find(" -Og"), std::string::npos)) << where << "\n" << f.cc;
+                expect(eq(realised_opt_level(plan.manifest.buildConfig), level)) << where;
+                expect(eq(realises_optimization(plan.manifest.buildConfig), level != "0"))
                     << where;
             }
         }
     }
-}
+}};
 
 // The MSVC dialect spells the same levels its own way: `/Od` for zero (there is
 // no `/O0`) and `/O<n>` otherwise.
-TEST(NinjaBackendOptimization, MsvcDialectRealisesTheDeclaredLevel) {
+UTest msvc_dialect_realises_the_declared_level{"NinjaBackendOptimization/MsvcDialectRealisesTheDeclaredLevel", [] {
     for (std::string level : {"0", "1", "2"}) {
         auto plan = minimal_plan();
         plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
@@ -2758,23 +2739,23 @@ TEST(NinjaBackendOptimization, MsvcDialectRealisesTheDeclaredLevel) {
         plan.manifest.buildConfig.optLevel = level;
         auto f = compute_flags(plan);
         const std::string want = level == "0" ? " /Od" : " /O" + level;
-        EXPECT_NE(f.cxx.find(want), std::string::npos) << level << "\n" << f.cxx;
-        EXPECT_NE(f.cc.find(want), std::string::npos) << level << "\n" << f.cc;
+        expect(ne(f.cxx.find(want), std::string::npos)) << level << "\n" << f.cxx;
+        expect(ne(f.cc.find(want), std::string::npos)) << level << "\n" << f.cc;
     }
-}
+}};
 
 // An empty level is zero, for the flags and for the `Finished` line alike. The
 // old spelling rendered it as a bare `-O`, which GCC reads as `-O1`, while the
 // line called the build unoptimized.
-TEST(NinjaBackendOptimization, AnEmptyLevelIsZeroForFlagsAndDescriptor) {
+UTest an_empty_level_is_zero_for_flags_and_descriptor{"NinjaBackendOptimization/AnEmptyLevelIsZeroForFlagsAndDescriptor", [] {
     auto plan = minimal_plan();
     plan.manifest.buildConfig.optLevel.clear();
     auto f = compute_flags(plan);
-    EXPECT_NE(f.cxx.find(" -O0"), std::string::npos) << f.cxx;
-    EXPECT_EQ(f.cxx.find(" -O "), std::string::npos) << f.cxx;
-    EXPECT_EQ(realised_opt_level(plan.manifest.buildConfig), "0");
-    EXPECT_FALSE(realises_optimization(plan.manifest.buildConfig));
-}
+    expect(ne(f.cxx.find(" -O0"), std::string::npos)) << f.cxx;
+    expect(eq(f.cxx.find(" -O "), std::string::npos)) << f.cxx;
+    expect(eq(realised_opt_level(plan.manifest.buildConfig), "0"));
+    expect(!realises_optimization(plan.manifest.buildConfig));
+}};
 
 // #695 and #690 (C2): THE FILE-LEVEL FLAGS CARRY NOTHING A PACKAGE DECLARES FOR
 // ITSELF.
@@ -2784,7 +2765,7 @@ TEST(NinjaBackendOptimization, AnEmptyLevelIsZeroForFlagsAndDescriptor) {
 // that channel until #691, and the root's C standard until #695. The root here
 // declares every package-private key; none of those values may appear in the
 // file-level flags. The C standard there is the engine's constant.
-TEST(NinjaBackendScope, TheFileLevelFlagsCarryNoPackagePrivateValue) {
+UTest the_file_level_flags_carry_no_package_private_value{"NinjaBackendScope/TheFileLevelFlagsCarryNoPackagePrivateValue", [] {
     auto plan = minimal_plan();
     auto& bc = plan.manifest.buildConfig;
     bc.cStandard = "gnu11";
@@ -2796,12 +2777,12 @@ TEST(NinjaBackendScope, TheFileLevelFlagsCarryNoPackagePrivateValue) {
 
     auto f = compute_flags(plan);
     for (auto const* line : {&f.cc, &f.cxx}) {
-        EXPECT_EQ(line->find("gnu11"), std::string::npos) << *line;
-        EXPECT_EQ(line->find("/root-private/include"), std::string::npos) << *line;
-        EXPECT_EQ(line->find("ROOT_ONLY"), std::string::npos) << *line;
+        if (auto&& failed = expect(eq(line->find("gnu11"), std::string::npos)); !failed) failed << *line;
+        if (auto&& failed = expect(eq(line->find("/root-private/include"), std::string::npos)); !failed) failed << *line;
+        if (auto&& failed = expect(eq(line->find("ROOT_ONLY"), std::string::npos)); !failed) failed << *line;
     }
-    EXPECT_NE(f.cc.find("-std=c11"), std::string::npos) << f.cc;
-}
+    expect(ne(f.cc.find("-std=c11"), std::string::npos)) << f.cc;
+}};
 
 // #696 (W2b): AN ELF LINK OVER A GRAPH-SUPPLIED C LIBRARY SEARCHES NOTHING OF
 // THE HOST'S. With no sysroot, clang derived its library search from `/` and,
@@ -2825,42 +2806,42 @@ BuildPlan graph_c_library_plan(std::string_view triple,
 }
 }  // namespace
 
-TEST(NinjaBackendGraphLink, AnElfGraphLinkByClangCarriesTheEmptySysroot) {
+UTest an_elf_graph_link_by_clang_carries_the_empty_sysroot{"NinjaBackendGraphLink/AnElfGraphLinkByClangCarriesTheEmptySysroot", [] {
     for (auto triple : {"x86_64-linux-musl", "aarch64-linux-musl"}) {
         auto plan = graph_c_library_plan(triple, mcpp::toolchain::CompilerId::Clang);
         auto f = compute_flags(plan);
-        EXPECT_TRUE(f.graphLinkIsolated) << triple;
-        EXPECT_NE(f.ld.find("--sysroot="), std::string::npos) << triple << "\n" << f.ld;
-        EXPECT_NE(f.ld.find(std::string(kGraphLinkSysrootDir)), std::string::npos)
+        expect(bool(f.graphLinkIsolated)) << triple;
+        expect(ne(f.ld.find("--sysroot="), std::string::npos)) << triple << "\n" << f.ld;
+        expect(ne(f.ld.find(std::string(kGraphLinkSysrootDir)), std::string::npos))
             << triple << "\n" << f.ld;
     }
-}
+}};
 
 // The measured case is clang on ELF; GCC over the graph and PE links keep their
 // line until they are measured, and a payload C library keeps its own sysroot.
-TEST(NinjaBackendGraphLink, OtherLinksDoNotCarryTheEmptySysroot) {
+UTest other_links_do_not_carry_the_empty_sysroot{"NinjaBackendGraphLink/OtherLinksDoNotCarryTheEmptySysroot", [] {
     {
         auto plan = graph_c_library_plan("x86_64-linux-musl", mcpp::toolchain::CompilerId::GCC);
         auto f = compute_flags(plan);
-        EXPECT_FALSE(f.graphLinkIsolated);
-        EXPECT_EQ(f.ld.find(std::string(kGraphLinkSysrootDir)), std::string::npos) << f.ld;
+        expect(!f.graphLinkIsolated);
+        expect(eq(f.ld.find(std::string(kGraphLinkSysrootDir)), std::string::npos)) << f.ld;
     }
     {
         auto plan = graph_c_library_plan("x86_64-windows-musl", mcpp::toolchain::CompilerId::Clang);
         auto f = compute_flags(plan);
-        EXPECT_FALSE(f.graphLinkIsolated);
-        EXPECT_EQ(f.ld.find(std::string(kGraphLinkSysrootDir)), std::string::npos) << f.ld;
+        expect(!f.graphLinkIsolated);
+        expect(eq(f.ld.find(std::string(kGraphLinkSysrootDir)), std::string::npos)) << f.ld;
     }
     {
         auto plan = minimal_plan();
         auto f = compute_flags(plan);
-        EXPECT_FALSE(f.graphLinkIsolated);
-        EXPECT_EQ(f.ld.find(std::string(kGraphLinkSysrootDir)), std::string::npos) << f.ld;
+        expect(!f.graphLinkIsolated);
+        expect(eq(f.ld.find(std::string(kGraphLinkSysrootDir)), std::string::npos)) << f.ld;
     }
-}
+}};
 
 // #696: the note for an unanswered `-l` on an isolated graph link.
-TEST(GraphLinkLibraryAdvice, NamesTheLibraryAndTheMuslRelease) {
+UTest names_the_library_and_the_musl_release{"GraphLinkLibraryAdvice/NamesTheLibraryAndTheMuslRelease", [] {
     const std::string out =
         "FAILED: bin/app\n"
         "clang++ @bin/app.rsp -o bin/app --sysroot=/p/target/x/graph-sysroot -lm -lpthread\n"
@@ -2868,29 +2849,29 @@ TEST(GraphLinkLibraryAdvice, NamesTheLibraryAndTheMuslRelease) {
         "ld.lld: error: unable to find library -lpthread\n"
         "ld.lld: error: unable to find library -lm\n";
     auto advice = graph_link_library_advice(out, "musl", "openkal-musl@0.19.1");
-    EXPECT_NE(advice.find("musl (openkal-musl@0.19.1)"), std::string::npos) << advice;
-    EXPECT_NE(advice.find("-lm, -lpthread"), std::string::npos) << advice;
-    EXPECT_NE(advice.find("openkal-musl 0.19.2"), std::string::npos) << advice;
-    EXPECT_NE(advice.find("mcpp#696"), std::string::npos) << advice;
-}
+    expect(ne(advice.find("musl (openkal-musl@0.19.1)"), std::string::npos)) << advice;
+    expect(ne(advice.find("-lm, -lpthread"), std::string::npos)) << advice;
+    expect(ne(advice.find("openkal-musl 0.19.2"), std::string::npos)) << advice;
+    expect(ne(advice.find("mcpp#696"), std::string::npos)) << advice;
+}};
 
-TEST(GraphLinkLibraryAdvice, AnotherLibraryGetsNoMuslParagraph) {
+UTest another_library_gets_no_musl_paragraph{"GraphLinkLibraryAdvice/AnotherLibraryGetsNoMuslParagraph", [] {
     const std::string out =
         "clang++ -o bin/app --sysroot=/p/target/x/graph-sysroot -lz\n"
         "ld.lld: error: unable to find library -lz\n";
     auto advice = graph_link_library_advice(out, "musl", "openkal-musl@0.19.2");
-    EXPECT_NE(advice.find("-lz"), std::string::npos) << advice;
-    EXPECT_EQ(advice.find("openkal-musl 0.19.2 and later"), std::string::npos) << advice;
-}
+    expect(ne(advice.find("-lz"), std::string::npos)) << advice;
+    expect(eq(advice.find("openkal-musl 0.19.2 and later"), std::string::npos)) << advice;
+}};
 
-TEST(GraphLinkLibraryAdvice, StaysSilentWithoutTheGraphSysroot) {
+UTest stays_silent_without_the_graph_sysroot{"GraphLinkLibraryAdvice/StaysSilentWithoutTheGraphSysroot", [] {
     const std::string out =
         "clang++ -o bin/app -lm\n"
         "ld.lld: error: unable to find library -lm\n";
-    EXPECT_TRUE(graph_link_library_advice(out, "musl", "openkal-musl@0.19.1").empty());
-    EXPECT_TRUE(graph_link_library_advice(
+    expect(graph_link_library_advice(out, "musl", "openkal-musl@0.19.1").empty());
+    expect(graph_link_library_advice(
         "clang++ --sysroot=/p/graph-sysroot\nld.lld: error: undefined symbol: foo\n").empty());
-}
+}};
 
 // ─── #693 (W4d): the encodings the tools read ───────────────────────────────
 //
@@ -2915,7 +2896,7 @@ std::string rsp_line(const std::string& ninja, std::string_view rule) {
 
 }  // namespace
 
-TEST(NinjaBackendEncoding, MsvcResponseFilesBeginWithTheByteOrderMark) {
+UTest msvc_response_files_begin_with_the_byte_order_mark{"NinjaBackendEncoding/MsvcResponseFilesBeginWithTheByteOrderMark", [] {
     auto plan = minimal_plan();
     plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
     plan.toolchain.binaryPath = "cl.exe";
@@ -2938,12 +2919,12 @@ TEST(NinjaBackendEncoding, MsvcResponseFilesBeginWithTheByteOrderMark) {
                                   "rule cxx_link\n", "rule cxx_archive\n",
                                   "rule cxx_shared\n"}) {
         auto line = rsp_line(ninja, rule);
-        ASSERT_FALSE(line.empty()) << rule << ninja;
-        EXPECT_NE(line.find("= \xEF\xBB\xBF"), std::string::npos) << rule << line;
+        expect(fatal(!line.empty())) << rule << ninja;
+        expect(ne(line.find("= \xEF\xBB\xBF"), std::string::npos)) << rule << line;
     }
-}
+}};
 
-TEST(NinjaBackendEncoding, GnuResponseFilesCarryNoByteOrderMark) {
+UTest gnu_response_files_carry_no_byte_order_mark{"NinjaBackendEncoding/GnuResponseFilesCarryNoByteOrderMark", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/a.c",
@@ -2952,40 +2933,40 @@ TEST(NinjaBackendEncoding, GnuResponseFilesCarryNoByteOrderMark) {
         .packageName = "objc_rule_test",
     });
     auto ninja = emit_ninja_string(plan);
-    EXPECT_FALSE(rsp_line(ninja, "rule cxx_link\n").empty()) << ninja;
-    EXPECT_EQ(ninja.find("\xEF\xBB\xBF"), std::string::npos) << ninja;
-}
+    expect(!(rsp_line(ninja, "rule cxx_link\n").empty())) << ninja;
+    expect(eq(ninja.find("\xEF\xBB\xBF"), std::string::npos)) << ninja;
+}};
 
 // Ninja reports the encoding it reads build.ninja in; mcpp writes UTF-8.
-TEST(NinjaBackendEncoding, ANinjaThatReadsUtf8Passes) {
-    EXPECT_FALSE(ninja_encoding_mismatch("Build file encoding: UTF-8\r\n", 65001,
-                                         "ninja.exe").has_value());
-    EXPECT_FALSE(ninja_encoding_mismatch("Build file encoding: UTF-8\n", 1252,
-                                         "ninja.exe").has_value());
-}
+UTest a_ninja_that_reads_utf8_passes{"NinjaBackendEncoding/ANinjaThatReadsUtf8Passes", [] {
+    expect(!(ninja_encoding_mismatch("Build file encoding: UTF-8\r\n", 65001,
+                                         "ninja.exe").has_value()));
+    expect(!(ninja_encoding_mismatch("Build file encoding: UTF-8\n", 1252,
+                                         "ninja.exe").has_value()));
+}};
 
-TEST(NinjaBackendEncoding, ANinjaThatReadsAnsiIsRefusedByName) {
+UTest a_ninja_that_reads_ansi_is_refused_by_name{"NinjaBackendEncoding/ANinjaThatReadsAnsiIsRefusedByName", [] {
     auto modern = ninja_encoding_mismatch("Build file encoding: ANSI\r\n", 65001,
                                           "C:/tools/ninja.exe");
-    ASSERT_TRUE(modern.has_value());
-    EXPECT_NE(modern->find("C:/tools/ninja.exe"), std::string::npos) << *modern;
-    EXPECT_NE(modern->find("ANSI"), std::string::npos) << *modern;
-    EXPECT_NE(modern->find("1.11"), std::string::npos) << *modern;
+    expect(fatal(modern.has_value()));
+    if (auto&& failed = expect(ne(modern->find("C:/tools/ninja.exe"), std::string::npos)); !failed) failed << *modern;
+    if (auto&& failed = expect(ne(modern->find("ANSI"), std::string::npos)); !failed) failed << *modern;
+    if (auto&& failed = expect(ne(modern->find("1.11"), std::string::npos)); !failed) failed << *modern;
 
     // On a host that ignores the declaration the advice names the code page.
     auto legacy = ninja_encoding_mismatch("Build file encoding: ANSI\n", 936,
                                           "ninja.exe");
-    ASSERT_TRUE(legacy.has_value());
-    EXPECT_NE(legacy->find("936"), std::string::npos) << *legacy;
-}
+    expect(fatal(legacy.has_value()));
+    if (auto&& failed = expect(ne(legacy->find("936"), std::string::npos)); !failed) failed << *legacy;
+}};
 
-TEST(NinjaBackendEncoding, OutputThatNamesNoEncodingDecidesNothing) {
-    EXPECT_FALSE(ninja_encoding_mismatch("", 65001, "ninja").has_value());
-    EXPECT_FALSE(ninja_encoding_mismatch("ninja: error: unknown tool 'wincodepage'",
-                                         65001, "ninja").has_value());
-}
+UTest output_that_names_no_encoding_decides_nothing{"NinjaBackendEncoding/OutputThatNamesNoEncodingDecidesNothing", [] {
+    expect(!(ninja_encoding_mismatch("", 65001, "ninja").has_value()));
+    expect(!(ninja_encoding_mismatch("ninja: error: unknown tool 'wincodepage'",
+                                         65001, "ninja").has_value()));
+}};
 
-TEST(NinjaBackend, PeExportsPatternsAndAConsumerReachTheDefEdge) {
+UTest pe_exports_patterns_and_a_consumer_reach_the_def_edge{"NinjaBackend/PeExportsPatternsAndAConsumerReachTheDefEdge", [] {
     auto plan = minimal_plan();
     plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
     plan.toolchain.targetTriple = "x86_64-pc-windows-msvc";
@@ -3001,13 +2982,12 @@ TEST(NinjaBackend, PeExportsPatternsAndAConsumerReachTheDefEdge) {
     dll.objects = {"obj/probe.o"};
     plan.linkUnits.push_back(dll);
     auto alone = emit_ninja_string(plan);
-    EXPECT_NE(alone.find("build bin/probe.def : coff_def obj/probe.o | obj/probe.exports.gen"),
-              std::string::npos) << alone;
-    EXPECT_NE(alone.find("--exports-file obj/probe.exports.gen"), std::string::npos);
-    EXPECT_EQ(alone.find("--required"), std::string::npos);
+    expect(ne(alone.find("build bin/probe.def : coff_def obj/probe.o | obj/probe.exports.gen"), std::string::npos)) << alone;
+    expect(ne(alone.find("--exports-file obj/probe.exports.gen"), std::string::npos));
+    expect(eq(alone.find("--required"), std::string::npos));
     std::ifstream in(plan.outputDir / "obj" / "probe.exports.gen");
     std::string written((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    EXPECT_EQ(written, "probe_*\n");
+    expect(eq(written, "probe_*\n"));
 
     LinkUnit consumer;
     consumer.kind = LinkUnit::Binary;
@@ -3016,16 +2996,16 @@ TEST(NinjaBackend, PeExportsPatternsAndAConsumerReachTheDefEdge) {
     consumer.objects = {"obj/app.o"};
     consumer.implicitInputs = {"bin/probe.dll", "bin/probe.lib"};
     plan.linkUnits.push_back(consumer);
-    EXPECT_NE(emit_ninja_string(plan).find("--required"), std::string::npos);
+    expect(ne(emit_ninja_string(plan).find("--required"), std::string::npos));
     std::error_code ec;
     std::filesystem::remove_all(plan.outputDir, ec);
-}
+}};
 
 // `trim_paths` PER PACKAGE (mcpp#844). The map of the whole plan sat in the
 // flags every unit shares, so a dependency's command line named the roots of
 // whichever members the plan built, and switching members recompiled it. A
 // unit now carries its own package's map, and the shared flags carry none.
-TEST(NinjaBackend, ATrimMapIsTheUnitsPackagesAndNoOther) {
+UTest a_trim_map_is_the_units_packages_and_no_other{"NinjaBackend/ATrimMapIsTheUnitsPackagesAndNoOther", [] {
     auto plan = minimal_plan();
     plan.manifest.buildConfig.trimPaths = true;
     const std::filesystem::path build = "/w/target/x";
@@ -3040,28 +3020,28 @@ TEST(NinjaBackend, ATrimMapIsTheUnitsPackagesAndNoOther) {
                                  .object = "obj/main.o", .packageName = "app"});
 
     const auto flags = compute_flags(plan);
-    EXPECT_EQ(flags.cxx.find("file-prefix-map"), std::string::npos) << flags.cxx;
-    EXPECT_EQ(flags.cc.find("file-prefix-map"), std::string::npos) << flags.cc;
+    expect(eq(flags.cxx.find("file-prefix-map"), std::string::npos)) << flags.cxx;
+    expect(eq(flags.cc.find("file-prefix-map"), std::string::npos)) << flags.cc;
 
     const auto ninja = emit_ninja_string(plan);
     auto edge = [&](std::string_view object) {
         const auto at = ninja.find(std::format("build {} :", object));
-        EXPECT_NE(at, std::string::npos) << ninja;
+        expect(ne(at, std::string::npos)) << ninja;
         return ninja.substr(at, ninja.find("\nbuild ", at + 1) - at);
     };
     const auto coreEdge = edge("obj/core.o");
-    EXPECT_NE(coreEdge.find("-ffile-prefix-map=/w/core=core@0.1.0"), std::string::npos) << coreEdge;
-    EXPECT_NE(coreEdge.find("-ffile-prefix-map=/w/target/x=/mcpp/build"), std::string::npos) << coreEdge;
-    EXPECT_EQ(coreEdge.find("/w/app"), std::string::npos) << "a consumer's root reached its dependency: " << coreEdge;
+    expect(ne(coreEdge.find("-ffile-prefix-map=/w/core=core@0.1.0"), std::string::npos)) << coreEdge;
+    expect(ne(coreEdge.find("-ffile-prefix-map=/w/target/x=/mcpp/build"), std::string::npos)) << coreEdge;
+    expect(eq(coreEdge.find("/w/app"), std::string::npos)) << "a consumer's root reached its dependency: " << coreEdge;
     const auto appEdge = edge("obj/main.o");
-    EXPECT_NE(appEdge.find("-ffile-prefix-map=/w/app=app@0.1.0"), std::string::npos) << appEdge;
-    EXPECT_NE(appEdge.find("-ffile-prefix-map=/w/core=core@0.1.0"), std::string::npos) << appEdge;
-}
+    expect(ne(appEdge.find("-ffile-prefix-map=/w/app=app@0.1.0"), std::string::npos)) << appEdge;
+    expect(ne(appEdge.find("-ffile-prefix-map=/w/core=core@0.1.0"), std::string::npos)) << appEdge;
+}};
 
 // The map of a package is the fixed roots and its closure's roots, in the
 // order of the whole plan's map: shortest prefix first, so that a driver
 // trying the last mapping first takes the longest match.
-TEST(NinjaBackend, ATrimMapKeepsTheFixedRootsAndTheMarkedPackages) {
+UTest a_trim_map_keeps_the_fixed_roots_and_the_marked_packages{"NinjaBackend/ATrimMapKeepsTheFixedRootsAndTheMarkedPackages", [] {
     // Absolute on every host: `trim_map` maps absolute prefixes only, and a
     // path without a volume is not absolute on Windows.
     const auto w = std::filesystem::current_path().root_path() / "w";
@@ -3080,36 +3060,34 @@ TEST(NinjaBackend, ATrimMapKeepsTheFixedRootsAndTheMarkedPackages) {
         return out;
     };
     const auto coreNames = names(core);
-    EXPECT_NE(std::ranges::find(coreNames, "core@0.1.0"), coreNames.end());
-    EXPECT_NE(std::ranges::find(coreNames, "/mcpp/toolchain"), coreNames.end());
-    EXPECT_NE(std::ranges::find(coreNames, "/mcpp/build"), coreNames.end());
-    EXPECT_EQ(std::ranges::find(coreNames, "app@1.0.0"), coreNames.end());
-    EXPECT_EQ(std::ranges::find(coreNames, "gui@0.2.0"), coreNames.end());
-    EXPECT_EQ(names(all).size(), coreNames.size() + 2);
+    expect(ne(std::ranges::find(coreNames, "core@0.1.0"), coreNames.end()));
+    expect(ne(std::ranges::find(coreNames, "/mcpp/toolchain"), coreNames.end()));
+    expect(ne(std::ranges::find(coreNames, "/mcpp/build"), coreNames.end()));
+    expect(eq(std::ranges::find(coreNames, "app@1.0.0"), coreNames.end()));
+    expect(eq(std::ranges::find(coreNames, "gui@0.2.0"), coreNames.end()));
+    expect(eq(names(all).size(), coreNames.size() + 2));
     for (std::size_t i = 1; i < core.size(); ++i)
-        EXPECT_LE(core[i - 1].first.native().size(), core[i].first.native().size());
-}
+        expect(le(core[i - 1].first.native().size(), core[i].first.native().size()));
+}};
 
 // Design 2026-10-26 §24.4 item 9: the entry symbol of a freestanding image, and
 // the `--defsym` that makes an undefined one a link error, through the driver
 // and to ld.lld itself.
-TEST(NinjaBackend, StartRendersTheEntryAndItsDefinitionCheck) {
+UTest start_renders_the_entry_and_its_definition_check{"NinjaBackend/StartRendersTheEntryAndItsDefinitionCheck", [] {
     using mcpp::build::start_link_flags;
     using Flags = std::vector<std::string>;
-    EXPECT_EQ(start_link_flags("", false), Flags{});
-    EXPECT_EQ(start_link_flags("_reset", false),
-              (Flags{"-Wl,-e,_reset", "-Wl,--defsym=__mcpp_start=_reset"}));
-    EXPECT_EQ(start_link_flags("_reset", true),
-              (Flags{"-e", "_reset", "--defsym=__mcpp_start=_reset"}));
-}
+    expect(eq(start_link_flags("", false), Flags{}));
+    expect(eq(start_link_flags("_reset", false), (Flags{"-Wl,-e,_reset", "-Wl,--defsym=__mcpp_start=_reset"})));
+    expect(eq(start_link_flags("_reset", true), (Flags{"-e", "_reset", "--defsym=__mcpp_start=_reset"})));
+}};
 
-TEST(NinjaBackend, StartFailureAdviceNamesTheStatement) {
+UTest start_failure_advice_names_the_statement{"NinjaBackend/StartFailureAdviceNamesTheStatement", [] {
     using mcpp::build::start_failure_advice;
     const std::string lld = "ld.lld: error: --defsym:1: symbol not found: _missing\n";
     const auto named = start_failure_advice(lld, {{"_missing", "[targets.k] start = \"_missing\""}});
-    EXPECT_NE(named.find("It was named by [targets.k] start = \"_missing\""), std::string::npos) << named;
+    expect(ne(named.find("It was named by [targets.k] start = \"_missing\""), std::string::npos)) << named;
     const auto generic = start_failure_advice(lld, {});
-    EXPECT_NE(generic.find("`_missing`"), std::string::npos) << generic;
-    EXPECT_NE(generic.find("mcpp:link-start"), std::string::npos) << generic;
-    EXPECT_EQ(start_failure_advice("undefined symbol: foo", {}), "");
-}
+    expect(ne(generic.find("`_missing`"), std::string::npos)) << generic;
+    expect(ne(generic.find("mcpp:link-start"), std::string::npos)) << generic;
+    expect(eq(start_failure_advice("undefined symbol: foo", {}), ""));
+}};

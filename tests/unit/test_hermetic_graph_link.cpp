@@ -6,12 +6,14 @@
 // (the check covers sandbox toolchains only) printing one linker line with the
 // search directories each case needs. The check itself is Linux-only.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.hermetic;
 import mcpplibs.os.platform;
 import mcpp.toolchain.model;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
@@ -52,32 +54,31 @@ mcpp::toolchain::Toolchain fake_driver(const std::filesystem::path& root,
 
 }  // namespace
 
-TEST(HermeticGraphLink, AHostSearchDirectoryIsRefusedAndNamed) {
-    if constexpr (!mcpplibs::os::is_linux) GTEST_SKIP() << "the check runs on Linux hosts";
+UTest a_host_search_directory_is_refused_and_named{"HermeticGraphLink/AHostSearchDirectoryIsRefusedAndNamed", [] {
+    if constexpr (!mcpplibs::os::is_linux) skip("the check runs on Linux hosts");
     Tmp t;
     auto tc = fake_driver(t.path, {"/usr/lib", (t.path / "xpkgs" / "musl" / "lib").string()});
     auto r = mcpp::build::verify_hermetic_link(tc, "", t.path / "out", false,
                                                /*isolatedGraphLink=*/true, {});
-    ASSERT_FALSE(r.has_value());
-    EXPECT_NE(r.error().find("/usr/lib"), std::string::npos) << r.error();
-    EXPECT_NE(r.error().find("mcpp#696"), std::string::npos) << r.error();
-    EXPECT_EQ(r.error().find("xpkgs/musl"), std::string::npos)
-        << "a store directory is allowed and must not be named: " << r.error();
-}
+    expect(fatal(!r.has_value()));
+    if (auto&& failed = expect(ne(r.error().find("/usr/lib"), std::string::npos)); !failed) failed << r.error();
+    if (auto&& failed = expect(ne(r.error().find("mcpp#696"), std::string::npos)); !failed) failed << r.error();
+    if (auto&& failed = expect(eq(r.error().find("xpkgs/musl"), std::string::npos)); !failed) failed << "a store directory is allowed and must not be named: " << r.error();
+}};
 
-TEST(HermeticGraphLink, AllowHostLibsDowngradesTheRefusal) {
-    if constexpr (!mcpplibs::os::is_linux) GTEST_SKIP() << "the check runs on Linux hosts";
+UTest allow_host_libs_downgrades_the_refusal{"HermeticGraphLink/AllowHostLibsDowngradesTheRefusal", [] {
+    if constexpr (!mcpplibs::os::is_linux) skip("the check runs on Linux hosts");
     Tmp t;
     auto tc = fake_driver(t.path, {"/usr/lib"});
     auto r = mcpp::build::verify_hermetic_link(tc, "", t.path / "out", true,
                                                /*isolatedGraphLink=*/true, {});
-    EXPECT_TRUE(r.has_value()) << (r ? "" : r.error());
-}
+    if (auto&& failed = expect(r.has_value()); !failed) failed << (r ? "" : r.error());
+}};
 
 // The build directory holds the empty graph sysroot, and a package may add a
 // package-relative `-L` whose root is anywhere (a path dependency).
-TEST(HermeticGraphLink, TheBuildAndTheGraphsPackagesAreAllowed) {
-    if constexpr (!mcpplibs::os::is_linux) GTEST_SKIP() << "the check runs on Linux hosts";
+UTest the_build_and_the_graphs_packages_are_allowed{"HermeticGraphLink/TheBuildAndTheGraphsPackagesAreAllowed", [] {
+    if constexpr (!mcpplibs::os::is_linux) skip("the check runs on Linux hosts");
     Tmp t;
     const auto out = t.path / "out";
     const auto pathDep = t.path / "elsewhere" / "openkal-musl";
@@ -86,16 +87,16 @@ TEST(HermeticGraphLink, TheBuildAndTheGraphsPackagesAreAllowed) {
                                    (t.path / "xpkgs" / "musl" / "lib").string()});
     auto r = mcpp::build::verify_hermetic_link(tc, "", out, false,
                                                /*isolatedGraphLink=*/true, {pathDep});
-    EXPECT_TRUE(r.has_value()) << (r ? "" : r.error());
-}
+    if (auto&& failed = expect(r.has_value()); !failed) failed << (r ? "" : r.error());
+}};
 
 // A payload link keeps its payload's directories; the `-L` rule is for the
 // isolated graph link only.
-TEST(HermeticGraphLink, APayloadLinkIsNotHeldToTheGraphRule) {
-    if constexpr (!mcpplibs::os::is_linux) GTEST_SKIP() << "the check runs on Linux hosts";
+UTest a_payload_link_is_not_held_to_the_graph_rule{"HermeticGraphLink/APayloadLinkIsNotHeldToTheGraphRule", [] {
+    if constexpr (!mcpplibs::os::is_linux) skip("the check runs on Linux hosts");
     Tmp t;
     auto tc = fake_driver(t.path, {"/usr/lib"});
     auto r = mcpp::build::verify_hermetic_link(tc, "", t.path / "out", false,
                                                /*isolatedGraphLink=*/false, {});
-    EXPECT_TRUE(r.has_value()) << (r ? "" : r.error());
-}
+    if (auto&& failed = expect(r.has_value()); !failed) failed << (r ? "" : r.error());
+}};

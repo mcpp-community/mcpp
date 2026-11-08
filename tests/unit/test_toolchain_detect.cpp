@@ -1,9 +1,11 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.invocation;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.probe;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::toolchain;
 
@@ -65,22 +67,22 @@ std::filesystem::path make_hostile_ld_dir() {
 
 #if !defined(_WIN32)
 // Uses a fake shell script as a compiler — POSIX only.
-TEST(ToolchainDetect, ClangVersionOutputIsNotMisclassifiedByGccPaths) {
+UTest clang_version_output_is_not_misclassified_by_gcc_paths{"ToolchainDetect/ClangVersionOutputIsNotMisclassifiedByGccPaths", [] {
     auto clang = make_fake_clang();
     TempDirGuard cleanup{clang.parent_path()};
 
     auto tc = detect(clang);
-    ASSERT_TRUE(tc.has_value()) << tc.error().message;
-    EXPECT_EQ(tc->compiler, CompilerId::Clang);
-    EXPECT_EQ(tc->version, "20.1.7");
-    EXPECT_EQ(tc->targetTriple, "x86_64-unknown-linux-gnu");
-    EXPECT_EQ(tc->stdlibId, "libc++");
-    EXPECT_FALSE(tc->hasImportStd);
-}
+    if (auto&& failed = expect(fatal(tc.has_value())); !failed) failed << tc.error().message;
+    expect(eq(tc->compiler, CompilerId::Clang));
+    expect(eq(tc->version, "20.1.7"));
+    expect(eq(tc->targetTriple, "x86_64-unknown-linux-gnu"));
+    expect(eq(tc->stdlibId, "libc++"));
+    expect(!tc->hasImportStd);
+}};
 #endif // !defined(_WIN32)
 
 #if defined(__linux__)
-TEST(ToolchainDetect, IgnoresTargetRuntimeLibraryPathDuringProbe) {
+UTest ignores_target_runtime_library_path_during_probe{"ToolchainDetect/IgnoresTargetRuntimeLibraryPathDuringProbe", [] {
     auto clang = make_fake_clang();
     TempDirGuard cleanup_clang{clang.parent_path()};
     auto hostile = make_hostile_ld_dir();
@@ -89,10 +91,10 @@ TEST(ToolchainDetect, IgnoresTargetRuntimeLibraryPathDuringProbe) {
     mcpp::invocation::ScopedEnv ld("LD_LIBRARY_PATH", hostile.string());
 
     auto tc = detect(clang);
-    ASSERT_TRUE(tc.has_value()) << tc.error().message;
-    EXPECT_EQ(tc->compiler, CompilerId::Clang);
-    EXPECT_EQ(tc->targetTriple, "x86_64-unknown-linux-gnu");
-}
+    if (auto&& failed = expect(fatal(tc.has_value())); !failed) failed << tc.error().message;
+    expect(eq(tc->compiler, CompilerId::Clang));
+    expect(eq(tc->targetTriple, "x86_64-unknown-linux-gnu"));
+}};
 #endif // defined(__linux__)
 
 // ─── normalize_driver_output: path-free semantic identity ─────────────
@@ -104,7 +106,7 @@ TEST(ToolchainDetect, IgnoresTargetRuntimeLibraryPathDuringProbe) {
 // etc.) yet behave identically. We now use a normalized `--version`
 // string as the path-free identity instead.
 
-TEST(NormalizeDriverOutput, TrimsWhitespaceAndCollapsesBlankLines) {
+UTest trims_whitespace_and_collapses_blank_lines{"NormalizeDriverOutput/TrimsWhitespaceAndCollapsesBlankLines", [] {
     std::string raw =
         "  g++ (xim-x-gcc 16.1.0) 16.1.0\n"
         "\n"
@@ -112,13 +114,12 @@ TEST(NormalizeDriverOutput, TrimsWhitespaceAndCollapsesBlankLines) {
         "\n\n"
         "This is free software; ...\n";
     auto out = normalize_driver_output(raw);
-    EXPECT_EQ(out,
-        "g++ (xim-x-gcc 16.1.0) 16.1.0\n"
+    expect(eq(out, "g++ (xim-x-gcc 16.1.0) 16.1.0\n"
         "Copyright (C) 2023 Free Software Foundation, Inc.\n"
-        "This is free software; ...");
-}
+        "This is free software; ..."));
+}};
 
-TEST(NormalizeDriverOutput, IsStableAcrossInstallPrefixes) {
+UTest is_stable_across_install_prefixes{"NormalizeDriverOutput/IsStableAcrossInstallPrefixes", [] {
     // Same gcc package, two different install locations on disk.
     // --version output is identical regardless of where the binary lives,
     // so normalized identity must be identical too.
@@ -128,10 +129,10 @@ TEST(NormalizeDriverOutput, IsStableAcrossInstallPrefixes) {
     std::string from_b =
         "g++ (xim-x-gcc 16.1.0) 16.1.0\n"
         "Copyright (C) 2023 Free Software Foundation, Inc.\n";
-    EXPECT_EQ(normalize_driver_output(from_a), normalize_driver_output(from_b));
-}
+    expect(eq(normalize_driver_output(from_a), normalize_driver_output(from_b)));
+}};
 
-TEST(NormalizeDriverOutput, ReplacesLocalInstallPaths) {
+UTest replaces_local_install_paths{"NormalizeDriverOutput/ReplacesLocalInstallPaths", [] {
     std::string a =
         "clang version 20.1.7\n"
         "Configuration file: /home/speak/.mcpp/registry/data/xpkgs/llvm/bin/clang.cfg\n";
@@ -139,32 +140,31 @@ TEST(NormalizeDriverOutput, ReplacesLocalInstallPaths) {
         "clang version 20.1.7\n"
         "Configuration file: /home/speak/.xlings/data/xpkgs/llvm/bin/clang.cfg\n";
 
-    EXPECT_EQ(normalize_driver_output(a), normalize_driver_output(b));
-    EXPECT_EQ(normalize_driver_output(a).find("/home/"), std::string::npos);
-}
+    expect(eq(normalize_driver_output(a), normalize_driver_output(b)));
+    expect(eq(normalize_driver_output(a).find("/home/"), std::string::npos));
+}};
 
-TEST(NormalizeDriverOutput, DistinguishesDifferentVersions) {
+UTest distinguishes_different_versions{"NormalizeDriverOutput/DistinguishesDifferentVersions", [] {
     std::string a = "g++ (xim-x-gcc 16.1.0) 16.1.0\n";
     std::string b = "g++ (xim-x-gcc 15.1.0) 15.1.0\n";
-    EXPECT_NE(normalize_driver_output(a), normalize_driver_output(b));
-}
+    expect(ne(normalize_driver_output(a), normalize_driver_output(b)));
+}};
 
-TEST(NormalizeDriverOutput, EmptyInputProducesEmpty) {
-    EXPECT_EQ(normalize_driver_output(""), "");
-    EXPECT_EQ(normalize_driver_output("\n\n\n"), "");
-}
+UTest empty_input_produces_empty{"NormalizeDriverOutput/EmptyInputProducesEmpty", [] {
+    expect(eq(normalize_driver_output(""), ""));
+    expect(eq(normalize_driver_output("\n\n\n"), ""));
+}};
 
 #if !defined(_WIN32)
 // ─── detect() populates driverIdent ─────────────────────────────────
-TEST(ToolchainDetect, PopulatesDriverIdentFromVersionOutput) {
+UTest populates_driver_ident_from_version_output{"ToolchainDetect/PopulatesDriverIdentFromVersionOutput", [] {
     auto clang = make_fake_clang();
     TempDirGuard cleanup{clang.parent_path()};
 
     auto tc = detect(clang);
-    ASSERT_TRUE(tc.has_value()) << tc.error().message;
-    EXPECT_FALSE(tc->driverIdent.empty())
+    if (auto&& failed = expect(fatal(tc.has_value())); !failed) failed << tc.error().message;
+    expect(!(tc->driverIdent.empty()))
         << "detect() should populate Toolchain::driverIdent from --version output";
-    EXPECT_NE(tc->driverIdent.find("clang version 20.1.7"), std::string::npos)
-        << "driverIdent should contain the --version header: " << tc->driverIdent;
-}
+    if (auto&& failed = expect(ne(tc->driverIdent.find("clang version 20.1.7"), std::string::npos)); !failed) failed << "driverIdent should contain the --version header: " << tc->driverIdent;
+}};
 #endif // !defined(_WIN32)

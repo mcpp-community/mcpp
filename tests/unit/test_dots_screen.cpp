@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.ui.dots_screen;
+
+using namespace mcpplibs::mtest;
 
 // The status row's screen and its animations
 // (.agents/docs/2026-09-30-build-output-refinement-design.md, §5.9 to §5.13):
@@ -22,7 +24,7 @@ std::vector<char32_t> cells(std::string_view s) {
             ++i;
             continue;
         }
-        EXPECT_EQ(b & 0xF0, 0xE0) << "not a three-byte code point at " << i;
+        expect(eq(b & 0xF0, 0xE0)) << "not a three-byte code point at " << i;
         const char32_t c = (static_cast<char32_t>(b & 0x0F) << 12)
                          | (static_cast<char32_t>(s[i + 1] & 0x3F) << 6)
                          | static_cast<char32_t>(s[i + 2] & 0x3F);
@@ -53,63 +55,63 @@ std::string play(Animation& a, int frames, std::size_t perFrame, bool failAt = f
 
 } // namespace
 
-TEST(DotsScreen, TheFourAnimationsAreBuiltIn) {
+UTest the_four_animations_are_built_in{"DotsScreen/TheFourAnimationsAreBuiltIn", [] {
     auto names = mcpp::ui::dots_screen::names();
-    ASSERT_EQ(names.size(), 4u);
-    EXPECT_EQ(names[0], "chomp");
-    EXPECT_EQ(names[1], "snake");
-    EXPECT_EQ(names[2], "stack");
-    EXPECT_EQ(names[3], "ions");
-    for (auto n : names) EXPECT_NE(make(n, 1), nullptr) << n;
-    EXPECT_EQ(make("runner", 1), nullptr);
-    EXPECT_EQ(make("", 1), nullptr);
-}
+    expect(fatal(eq(names.size(), 4u)));
+    expect(eq(names[0], "chomp"));
+    expect(eq(names[1], "snake"));
+    expect(eq(names[2], "stack"));
+    expect(eq(names[3], "ions"));
+    for (auto n : names) expect(ne(make(n, 1), nullptr)) << n;
+    expect(eq(make("runner", 1), nullptr));
+    expect(eq(make("", 1), nullptr));
+}};
 
-TEST(DotsScreen, TheScreenIsTwentyFourBrailleCells) {
+UTest the_screen_is_twenty_four_braille_cells{"DotsScreen/TheScreenIsTwentyFourBrailleCells", [] {
     Screen sc;
     sc.set(0, 0, Colour::White);     // the first dot of the first cell
     sc.set(47, 3, Colour::Red);      // the last dot of the last cell
     sc.set(99, 0, Colour::White);    // off the screen: ignored
     const auto text = sc.render(false);
     auto c = cells(text);
-    ASSERT_EQ(c.size(), 24u);
-    for (auto cp : c) EXPECT_TRUE(cp >= 0x2800 && cp <= 0x28FF);
-    EXPECT_EQ(c.front(), char32_t{0x2801});
-    EXPECT_EQ(c.back(), char32_t{0x2880});
-    EXPECT_EQ(text.find('\x1b'), std::string::npos);
+    expect(fatal(eq(c.size(), 24u)));
+    for (auto cp : c) expect(cp >= 0x2800 && cp <= 0x28FF);
+    expect(eq(c.front(), char32_t{0x2801}));
+    expect(eq(c.back(), char32_t{0x2880}));
+    expect(eq(text.find('\x1b'), std::string::npos));
     const auto coloured = sc.render(true);
-    EXPECT_NE(coloured.find("\x1b[91m"), std::string::npos);
-    EXPECT_TRUE(coloured.ends_with("\x1b[0m"));
-}
+    expect(ne(coloured.find("\x1b[91m"), std::string::npos));
+    expect(coloured.ends_with("\x1b[0m"));
+}};
 
-TEST(DotsScreen, AnAnimationIsPureGivenItsSeedAndInputs) {
+UTest an_animation_is_pure_given_its_seed_and_inputs{"DotsScreen/AnAnimationIsPureGivenItsSeedAndInputs", [] {
     for (auto n : mcpp::ui::dots_screen::names()) {
         auto a = make(n, 42), b = make(n, 42);
-        EXPECT_EQ(play(*a, 60, 5), play(*b, 60, 5)) << n;
+        expect(eq(play(*a, 60, 5), play(*b, 60, 5))) << n;
     }
-}
+}};
 
-TEST(DotsScreen, EveryFrameIsTwentyFourCellsAndAFailureTurnsRed) {
+UTest every_frame_is_twenty_four_cells_and_a_failure_turns_red{"DotsScreen/EveryFrameIsTwentyFourCellsAndAFailureTurnsRed", [] {
     for (auto n : mcpp::ui::dots_screen::names()) {
         auto a = make(n, 7);
         const auto plain = play(*a, 40, 3);
-        EXPECT_EQ(cells(plain).size(), 24u) << n;
-        EXPECT_EQ(plain.find('\n'), std::string::npos) << n;
+        expect(eq(cells(plain).size(), 24u)) << n;
+        expect(eq(plain.find('\n'), std::string::npos)) << n;
         auto f = make(n, 7);
         const auto failed = play(*f, 40, 3, /*failAt=*/true, /*colour=*/true);
-        EXPECT_NE(failed.find("\x1b[91m"), std::string::npos) << n;
+        expect(ne(failed.find("\x1b[91m"), std::string::npos)) << n;
     }
-}
+}};
 
-TEST(DotsScreen, TheSnakeCarriesTheColourOfThePackagesItAte) {
+UTest the_snake_carries_the_colour_of_the_packages_it_ate{"DotsScreen/TheSnakeCarriesTheColourOfThePackagesItAte", [] {
     auto a = make("snake", 3);
     a->package(Source::Official);
     a->package(Source::Official);
     const auto frame = play(*a, 200, 2, false, /*colour=*/true);
-    EXPECT_NE(frame.find("\x1b[36m"), std::string::npos) << "no segment in the official colour";
-}
+    expect(ne(frame.find("\x1b[36m"), std::string::npos)) << "no segment in the official colour";
+}};
 
-TEST(DotsScreen, TheIonsDepositIsTheFraction) {
+UTest the_ions_deposit_is_the_fraction{"DotsScreen/TheIonsDepositIsTheFraction", [] {
     auto a = make("ions", 5);
     Input in;
     in.dt = 0.1;
@@ -121,10 +123,10 @@ TEST(DotsScreen, TheIonsDepositIsTheFraction) {
     for (int x = 0; x < kWidth - 4; ++x)
         for (int y = 0; y < kHeight; ++y)
             if (sc.at(x, y) != Colour::None) ++lit;
-    EXPECT_EQ(lit, (kWidth - 4) * kHeight / 2);
-}
+    expect(eq(lit, (kWidth - 4) * kHeight / 2));
+}};
 
-TEST(DotsScreen, TheChomperStandsAtTheFraction) {
+UTest the_chomper_stands_at_the_fraction{"DotsScreen/TheChomperStandsAtTheFraction", [] {
     auto a = make("chomp", 1);
     Input in;
     in.fraction = 1.0;
@@ -135,9 +137,9 @@ TEST(DotsScreen, TheChomperStandsAtTheFraction) {
     bool pellet = false;
     for (int x = kWidth - 1 - 0; x < kWidth; ++x)
         if (sc.at(x, 2) == Colour::Grey) pellet = true;
-    EXPECT_FALSE(pellet);
-    EXPECT_EQ(sc.at(kWidth - 5, 1), Colour::Yellow);
-}
+    expect(!pellet);
+    expect(eq(sc.at(kWidth - 5, 1), Colour::Yellow));
+}};
 
 // ─── Every frame returns (build wall-time plan, F1 and W1) ──────────────
 //
@@ -159,7 +161,7 @@ void returns_within(std::chrono::seconds limit, std::string what,
         done->set_value();
     }).detach();
     if (finished.wait_for(limit) != std::future_status::ready) {
-        ADD_FAILURE() << what << " did not return within " << limit.count() << " s";
+        expect(false) << what << " did not return within " << limit.count() << " s";
         std::fflush(nullptr);
         std::_Exit(1);
     }
@@ -187,7 +189,7 @@ void play_build(Animation& a, std::uint64_t seed, std::size_t total, int tail) {
 
 } // namespace
 
-TEST(DotsScreen, EveryAnimationReturnsFromEveryFrame) {
+UTest every_animation_returns_from_every_frame{"DotsScreen/EveryAnimationReturnsFromEveryFrame", [] {
     for (auto name : mcpp::ui::dots_screen::names()) {
         const std::string n(name);
         returns_within(std::chrono::seconds(120), "an animation '" + n + "'", [n] {
@@ -197,9 +199,9 @@ TEST(DotsScreen, EveryAnimationReturnsFromEveryFrame) {
             }
         });
     }
-}
+}};
 
-TEST(DotsScreenGames, EveryGameReturnsFromEveryFrame) {
+UTest every_game_returns_from_every_frame{"DotsScreenGames/EveryGameReturnsFromEveryFrame", [] {
     for (auto name : game_names()) {
         const std::string n(name);
         returns_within(std::chrono::seconds(120), "a game '" + n + "'", [n] {
@@ -217,7 +219,7 @@ TEST(DotsScreenGames, EveryGameReturnsFromEveryFrame) {
             }
         });
     }
-}
+}};
 
 // ─── The games of --play-game (design §5.14) ─────────────────────────────
 
@@ -237,28 +239,28 @@ void run(Game& g, double seconds) {
 }
 } // namespace
 
-TEST(DotsScreenGames, TheThreeGamesAreBuiltIn) {
+UTest the_three_games_are_built_in{"DotsScreenGames/TheThreeGamesAreBuiltIn", [] {
     auto names = game_names();
-    ASSERT_EQ(names.size(), 3u);
-    EXPECT_EQ(names[0], "snake");
-    EXPECT_EQ(names[1], "stack");
-    EXPECT_EQ(names[2], "runner");
-    for (auto n : names) EXPECT_NE(make_game(n, 1), nullptr) << n;
-    EXPECT_EQ(make_game("chomp", 1), nullptr);   // an animation, not a game
-}
+    expect(fatal(eq(names.size(), 3u)));
+    expect(eq(names[0], "snake"));
+    expect(eq(names[1], "stack"));
+    expect(eq(names[2], "runner"));
+    for (auto n : names) expect(ne(make_game(n, 1), nullptr)) << n;
+    expect(eq(make_game("chomp", 1), nullptr));   // an animation, not a game
+}};
 
-TEST(DotsScreenGames, TheSnakeTurnsWithTheArrowsAndAWallEndsTheRound) {
+UTest the_snake_turns_with_the_arrows_and_a_wall_ends_the_round{"DotsScreenGames/TheSnakeTurnsWithTheArrowsAndAWallEndsTheRound", [] {
     auto g = make_game("snake", 4);
-    EXPECT_FALSE(any_red(*g));
+    expect(!any_red(*g));
     g->key(Key::Up);      // from row 1: row 0, then the wall
     run(*g, 0.3);
-    EXPECT_TRUE(any_red(*g)) << "the snake went through the wall";
+    expect(bool(any_red(*g))) << "the snake went through the wall";
     run(*g, 1.2);         // a new round starts after a second
-    EXPECT_FALSE(any_red(*g));
-    EXPECT_EQ(g->score(), 0);
-}
+    expect(!any_red(*g));
+    expect(eq(g->score(), 0));
+}};
 
-TEST(DotsScreenGames, TheStackPlacesPiecesAgainstTheLeftAndScoresClearedColumns) {
+UTest the_stack_places_pieces_against_the_left_and_scores_cleared_columns{"DotsScreenGames/TheStackPlacesPiecesAgainstTheLeftAndScoresClearedColumns", [] {
     auto g = make_game("stack", 9);
     for (int i = 0; i < 400 && g->score() == 0; ++i) {
         // Spread the pieces over the four rows so that columns fill.
@@ -270,18 +272,18 @@ TEST(DotsScreenGames, TheStackPlacesPiecesAgainstTheLeftAndScoresClearedColumns)
     g->draw(sc);
     bool left = false;
     for (int y = 0; y < kHeight; ++y) left = left || sc.at(0, y) != Colour::None;
-    EXPECT_TRUE(left) << "no piece rests against the left edge";
-    EXPECT_GE(g->best(), g->score());
-}
+    expect(bool(left)) << "no piece rests against the left edge";
+    expect(ge(g->best(), g->score()));
+}};
 
-TEST(DotsScreenGames, TheRunnerJumpsOnSpaceAndACactusEndsTheRound) {
+UTest the_runner_jumps_on_space_and_a_cactus_ends_the_round{"DotsScreenGames/TheRunnerJumpsOnSpaceAndACactusEndsTheRound", [] {
     auto g = make_game("runner", 2);
     // Without a key, a cactus reaches the runner within a few seconds.
     bool ended = false;
     Input in;
     in.dt = 0.05;
     for (double t = 0; t < 6 && !ended; t += in.dt) { g->update(in); ended = any_red(*g); }
-    EXPECT_TRUE(ended) << "no cactus ever touched the runner";
+    expect(bool(ended)) << "no cactus ever touched the runner";
     run(*g, 1.1);
     // Space lifts it: its head rises above row 1.
     g->key(Key::Space);
@@ -290,5 +292,5 @@ TEST(DotsScreenGames, TheRunnerJumpsOnSpaceAndACactusEndsTheRound) {
     g->draw(sc);
     bool high = false;
     for (int x = 3; x < 7; ++x) high = high || sc.at(x, 0) == Colour::White;
-    EXPECT_TRUE(high) << "the runner did not jump";
-}
+    expect(bool(high)) << "the runner did not jump";
+}};

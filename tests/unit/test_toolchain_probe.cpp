@@ -16,10 +16,12 @@
 //
 // Design: .agents/docs/2026-08-08-payload-version-and-contract-drift-design.md §3.2
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.toolchain.probe;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
@@ -61,50 +63,50 @@ struct TwoGlibcHome {
     }
 };
 
-TEST(PayloadProbe, ResolvesTheBindingExactly) {
+UTest resolves_the_binding_exactly{"PayloadProbe/ResolvesTheBindingExactly", [] {
     TwoGlibcHome h;
     auto pp = tc::probe_payload_paths(h.compilerBin, "glibc@2.39");
-    ASSERT_TRUE(pp.has_value());
-    EXPECT_EQ(pp->glibcLib, h.libOf("2.39"))
+    expect(fatal(pp.has_value()));
+    expect(eq(pp->glibcLib, h.libOf("2.39")))
         << "the authority said 2.39 and 2.44 is also installed; a resolver "
            "that scans would be free to return either";
-}
+}};
 
-TEST(PayloadProbe, ResolvesTheOtherBindingExactly) {
+UTest resolves_the_other_binding_exactly{"PayloadProbe/ResolvesTheOtherBindingExactly", [] {
     TwoGlibcHome h;
     auto pp = tc::probe_payload_paths(h.compilerBin, "glibc@2.44");
-    ASSERT_TRUE(pp.has_value());
-    EXPECT_EQ(pp->glibcLib, h.libOf("2.44"));
-}
+    expect(fatal(pp.has_value()));
+    expect(eq(pp->glibcLib, h.libOf("2.44")));
+}};
 
 // No authority is not "pick something sensible" -- it is a refusal. Guessing
 // here is what produced a build whose compile and run halves disagreed, and
 // the guess is invisible: every artifact looks normal until one links a
 // library built against the other version.
-TEST(PayloadProbe, NoBindingIsARefusalNotAGuess) {
+UTest no_binding_is_a_refusal_not_a_guess{"PayloadProbe/NoBindingIsARefusalNotAGuess", [] {
     TwoGlibcHome h;
-    EXPECT_FALSE(tc::probe_payload_paths(h.compilerBin, "").has_value());
-}
+    expect(!(tc::probe_payload_paths(h.compilerBin, "").has_value()));
+}};
 
 // A binding naming a version that is not installed must fail rather than fall
 // back to one that is. Falling back would reintroduce the split silently.
-TEST(PayloadProbe, MissingVersionDoesNotFallBack) {
+UTest missing_version_does_not_fall_back{"PayloadProbe/MissingVersionDoesNotFallBack", [] {
     TwoGlibcHome h;
-    EXPECT_FALSE(tc::probe_payload_paths(h.compilerBin, "glibc@2.28").has_value());
-}
+    expect(!(tc::probe_payload_paths(h.compilerBin, "glibc@2.28").has_value()));
+}};
 
 // The binding's NAME matters too: `musl@1.2.5` must not resolve a glibc
 // payload just because the version string happens to be parseable.
-TEST(PayloadProbe, WrongRuntimeFamilyDoesNotResolveGlibc) {
+UTest wrong_runtime_family_does_not_resolve_glibc{"PayloadProbe/WrongRuntimeFamilyDoesNotResolveGlibc", [] {
     TwoGlibcHome h;
-    EXPECT_FALSE(tc::probe_payload_paths(h.compilerBin, "musl@1.2.5").has_value());
-}
+    expect(!(tc::probe_payload_paths(h.compilerBin, "musl@1.2.5").has_value()));
+}};
 
 // Layout: lib64 preferred, lib accepted. Kept from the original probe -- a
 // payload that ships only `lib` is a real shape, and this is the one piece of
 // convention that stays, because it is about WHERE inside a chosen payload,
 // not about WHICH payload.
-TEST(PayloadProbe, AcceptsLibWhenThereIsNoLib64) {
+UTest accepts_lib_when_there_is_no_lib64{"PayloadProbe/AcceptsLibWhenThereIsNoLib64", [] {
     Tmp dir;
     auto xpkgs = dir.path / "data" / "xpkgs";
     auto bin = xpkgs / "xim-x-gcc" / "16.1.0" / "bin" / "g++";
@@ -114,8 +116,8 @@ TEST(PayloadProbe, AcceptsLibWhenThereIsNoLib64) {
     touch(root / "lib" / "ld-linux-x86-64.so.2");
 
     auto pp = tc::probe_payload_paths(bin, "glibc@2.39");
-    ASSERT_TRUE(pp.has_value());
-    EXPECT_EQ(pp->glibcLib, root / "lib");
-}
+    expect(fatal(pp.has_value()));
+    expect(eq(pp->glibcLib, root / "lib"));
+}};
 
 }  // namespace

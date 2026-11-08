@@ -1,11 +1,13 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.provider;
 import mcpp.provider.xlings;
 import mcpplibs.os.platform;
 import mcpp.invocation;
 import mcpp.run;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 struct NetworkFixture {
@@ -28,25 +30,25 @@ fi
 };
 }
 
-TEST(NetworkCheck, OfflineNeverInvokesTheProvider) {
-    if constexpr (mcpplibs::os::is_windows) GTEST_SKIP() << "POSIX subprocess fixture";
+UTest offline_never_invokes_the_provider{"NetworkCheck/OfflineNeverInvokesTheProvider", [] {
+    if constexpr (mcpplibs::os::is_windows) skip("POSIX subprocess fixture");
     NetworkFixture f(R"SH(touch "$XLINGS_HOME/invoked"
 exit 1
 )SH");
     {
         mcpp::invocation::ScopedEnv online("MCPP_OFFLINE", "0");
-        EXPECT_EQ(mcpp::provider::xlings::network_check(f.env, std::chrono::seconds(1)).status, "unsupported");
-        ASSERT_TRUE(std::filesystem::exists(f.dir / "invoked"));
+        expect(eq(mcpp::provider::xlings::network_check(f.env, std::chrono::seconds(1)).status, "unsupported"));
+        expect(fatal(std::filesystem::exists(f.dir / "invoked")));
         std::filesystem::remove(f.dir / "invoked");
     }
     mcpp::invocation::ScopedEnv offline("MCPP_OFFLINE", "1");
     const auto result = mcpp::provider::xlings::network_check(f.env, std::chrono::milliseconds(100));
-    EXPECT_EQ(result.status, "offline");
-    EXPECT_FALSE(std::filesystem::exists(f.dir / "invoked"));
-}
+    expect(eq(result.status, "offline"));
+    expect(!std::filesystem::exists(f.dir / "invoked"));
+}};
 
-TEST(NetworkCheck, DiscoveryAndProbesShareOneDeadline) {
-    if constexpr (mcpplibs::os::is_windows) GTEST_SKIP() << "POSIX subprocess fixture";
+UTest discovery_and_probes_share_one_deadline{"NetworkCheck/DiscoveryAndProbesShareOneDeadline", [] {
+    if constexpr (mcpplibs::os::is_windows) skip("POSIX subprocess fixture");
     NetworkFixture f(R"SH(
 if [ "$2" = "network_endpoints" ]; then
     echo '{"kind":"data","dataKind":"network_endpoints","payload":{"endpoints":[{"url":"https://one.invalid"},{"url":"https://two.invalid"},{"url":"https://three.invalid"},{"url":"https://four.invalid"},{"url":"https://five.invalid"}]}}'
@@ -57,13 +59,13 @@ fi
     mcpp::invocation::ScopedEnv offline("MCPP_OFFLINE", "0");
     const auto start = std::chrono::steady_clock::now();
     const auto result = mcpp::provider::xlings::network_check(f.env, std::chrono::milliseconds(400));
-    EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(2));
-    ASSERT_EQ(result.endpoints.size(), 5u);
-    for (const auto& e : result.endpoints) EXPECT_EQ(e.status, "timeout");
-}
+    expect(lt(std::chrono::steady_clock::now() - start, std::chrono::seconds(2)));
+    expect(fatal(eq(result.endpoints.size(), 5u)));
+    for (const auto& e : result.endpoints) expect(eq(e.status, "timeout"));
+}};
 
-TEST(NetworkCheck, MalformedProviderDataDoesNotEscapeDiagnosis) {
-    if constexpr (mcpplibs::os::is_windows) GTEST_SKIP() << "POSIX subprocess fixture";
+UTest malformed_provider_data_does_not_escape_diagnosis{"NetworkCheck/MalformedProviderDataDoesNotEscapeDiagnosis", [] {
+    if constexpr (mcpplibs::os::is_windows) skip("POSIX subprocess fixture");
     NetworkFixture f(R"SH(
 if [ "$2" = "network_endpoints" ]; then
     echo '{"kind":"data","dataKind":"network_endpoints","payload":{"endpoints":[{"url":"https://one.invalid"}]}}'
@@ -73,11 +75,11 @@ fi
 )SH");
     mcpp::invocation::ScopedEnv offline("MCPP_OFFLINE", "0");
     const auto result = mcpp::provider::xlings::network_check(f.env, std::chrono::seconds(1));
-    ASSERT_EQ(result.endpoints.size(), 1u);
-    EXPECT_EQ(result.endpoints.front().status, "invalid_response");
-}
+    expect(fatal(eq(result.endpoints.size(), 1u)));
+    expect(eq(result.endpoints.front().status, "invalid_response"));
+}};
 
-TEST(NetworkCheck, HeartbeatsCannotKeepAByteStalledDownloadAlive) {
+UTest heartbeats_cannot_keep_a_byte_stalled_download_alive{"NetworkCheck/HeartbeatsCannotKeepAByteStalledDownloadAlive", [] {
     using namespace std::chrono;
     mcpp::provider::xlings::DownloadWatchdog watchdog(seconds(30));
     const auto start = steady_clock::now();
@@ -85,24 +87,24 @@ TEST(NetworkCheck, HeartbeatsCannotKeepAByteStalledDownloadAlive) {
     p.files.push_back({.name = "tool", .started = true, .sourceAttempt = 1});
     watchdog.observe(p, start);
     watchdog.observe(p, start + seconds(29)); // repeated protocol sample
-    EXPECT_TRUE(watchdog.expired(start + seconds(30)));
+    expect(bool(watchdog.expired(start + seconds(30))));
     p.files.front().downloadedBytes = 1;
     watchdog.observe(p, start + seconds(30));
-    EXPECT_FALSE(watchdog.expired(start + seconds(59)));
+    expect(!(watchdog.expired(start + seconds(59))));
     p.files.front().sourceAttempt = 2;
     p.files.front().downloadedBytes = 0;
     watchdog.observe(p, start + seconds(60));
-    EXPECT_FALSE(watchdog.expired(start + seconds(89)));
+    expect(!(watchdog.expired(start + seconds(89))));
     p.files.front().finished = true;
     watchdog.observe(p, start + seconds(90));
-    EXPECT_FALSE(watchdog.expired(start + hours(3)));
-}
+    expect(!(watchdog.expired(start + hours(3))));
+}};
 
 // xlings leaves a source that sent no byte for kSourceIdleTimeout and reports
 // the next one; mcpp's own bound is longer, so the next source is reached.
 // With the two equal, a source that connected and then sent nothing stopped the
 // install at attempt 1 (CI, 2026-11-02).
-TEST(NetworkCheck, ASilentSourceIsLeftBeforeTheInstallStops) {
+UTest a_silent_source_is_left_before_the_install_stops{"NetworkCheck/ASilentSourceIsLeftBeforeTheInstallStops", [] {
     using namespace std::chrono;
     namespace x = mcpp::provider::xlings;
     static_assert(x::kSourceConnectTimeout < x::kSourceIdleTimeout);
@@ -113,32 +115,30 @@ TEST(NetworkCheck, ASilentSourceIsLeftBeforeTheInstallStops) {
     mcpp::provider::BootstrapProgress p;
     p.files.push_back({.name = "pkg", .started = true, .sourceAttempt = 1});
     watchdog.observe(p, start);
-    EXPECT_FALSE(watchdog.expired(left));
+    expect(!watchdog.expired(left));
     p.files.front().sourceAttempt = 2;
     watchdog.observe(p, left);
-    EXPECT_FALSE(watchdog.expired(left + x::kSourceIdleTimeout));
-    EXPECT_TRUE(watchdog.expired(left + x::kDownloadStallTimeout));
-}
+    expect(!watchdog.expired(left + x::kSourceIdleTimeout));
+    expect(bool(watchdog.expired(left + x::kDownloadStallTimeout)));
+}};
 
-TEST(NetworkCheck, AnotherDownloadCannotRenewAStalledFilesBudget) {
+UTest another_download_cannot_renew_a_stalled_files_budget{"NetworkCheck/AnotherDownloadCannotRenewAStalledFilesBudget", [] {
     using namespace std::chrono;
     namespace x = mcpp::provider::xlings;
     const auto start = steady_clock::now();
     x::InstallDeadline deadline(seconds(120), seconds(45), start);
     deadline.observe(R"({"kind":"data","dataKind":"download_progress","payload":{"stream":"install:1","files":[{"name":"stalled","started":true,"finished":false,"sourceAttempt":1,"downloadedBytes":0},{"name":"healthy","started":true,"finished":false,"sourceAttempt":1,"downloadedBytes":1}]}})", start);
     deadline.observe(R"({"kind":"data","dataKind":"download_progress","payload":{"stream":"install:1","files":[{"name":"stalled","started":true,"finished":false,"sourceAttempt":1,"downloadedBytes":0},{"name":"healthy","started":true,"finished":false,"sourceAttempt":1,"downloadedBytes":100}]}})", start + seconds(44));
-    EXPECT_FALSE(deadline.expired(start + seconds(44)));
-    EXPECT_EQ(deadline.failure_reason(start + seconds(45)),
-              "download 'stalled' made no byte progress or source change for 45s (attempt 1)");
+    expect(!(deadline.expired(start + seconds(44))));
+    expect(eq(deadline.failure_reason(start + seconds(45)), "download 'stalled' made no byte progress or source change for 45s (attempt 1)"));
     deadline.observe(R"({"kind":"data","dataKind":"download_progress","payload":{"stream":"install:1","files":[{"name":"stalled","started":true,"finished":false,"sourceAttempt":2,"downloadedBytes":0},{"name":"healthy","started":true,"finished":true,"sourceAttempt":1,"downloadedBytes":100}]}})", start + seconds(46));
-    EXPECT_TRUE(deadline.failure_reason(start + seconds(90)).empty());
-    EXPECT_EQ(deadline.failure_reason(start + seconds(91)),
-              "download 'stalled' made no byte progress or source change for 45s (attempt 2)");
+    expect(deadline.failure_reason(start + seconds(90)).empty());
+    expect(eq(deadline.failure_reason(start + seconds(91)), "download 'stalled' made no byte progress or source change for 45s (attempt 2)"));
     deadline.observe(R"({"kind":"data","dataKind":"download_progress","payload":{"stream":"install:1","files":[{"name":"stalled","started":true,"finished":true,"sourceAttempt":2,"downloadedBytes":1}]}})", start + seconds(92));
-    EXPECT_TRUE(deadline.failure_reason(start + hours(1)).empty());
-}
+    expect(deadline.failure_reason(start + hours(1)).empty());
+}};
 
-TEST(NetworkCheck, AQueuedFilesBudgetStartsWhenItBecomesActive) {
+UTest a_queued_files_budget_starts_when_it_becomes_active{"NetworkCheck/AQueuedFilesBudgetStartsWhenItBecomesActive", [] {
     using namespace std::chrono;
     namespace x = mcpp::provider::xlings;
     const auto start = steady_clock::now();
@@ -146,22 +146,21 @@ TEST(NetworkCheck, AQueuedFilesBudgetStartsWhenItBecomesActive) {
     mcpp::provider::BootstrapProgress progress;
     progress.files.push_back({.name = "queued", .started = false});
     watchdog.observe(progress, start);
-    EXPECT_FALSE(watchdog.expired(start + seconds(96)));
+    expect(!(watchdog.expired(start + seconds(96))));
     // Neither bytes nor sourceAttempt changes when the worker obtains a slot.
     progress.files.front().started = true;
     watchdog.observe(progress, start + seconds(96));
-    EXPECT_FALSE(watchdog.expired(start + seconds(140)));
-    EXPECT_EQ(watchdog.failure_reason(start + seconds(141)),
-              "download 'queued' made no byte progress or source change for 45s (attempt 0)");
+    expect(!(watchdog.expired(start + seconds(140))));
+    expect(eq(watchdog.failure_reason(start + seconds(141)), "download 'queued' made no byte progress or source change for 45s (attempt 0)"));
     progress.files.front().sourceAttempt = 1;
     watchdog.observe(progress, start + seconds(142));
-    EXPECT_FALSE(watchdog.expired(start + seconds(186)));
+    expect(!(watchdog.expired(start + seconds(186))));
     progress.files.front().finished = true;
     watchdog.observe(progress, start + seconds(187));
-    EXPECT_FALSE(watchdog.expired(start + hours(1)));
-}
+    expect(!(watchdog.expired(start + hours(1))));
+}};
 
-TEST(NetworkProcess, ProgressCancellationIsPolledWhileOutputContinues) {
+UTest progress_cancellation_is_polled_while_output_continues{"NetworkProcess/ProgressCancellationIsPolledWhileOutputContinues", [] {
     using namespace std::chrono;
     const auto start = steady_clock::now();
     const auto cmd = mcpplibs::os::is_windows
@@ -175,22 +174,22 @@ TEST(NetworkProcess, ProgressCancellationIsPolledWhileOutputContinues) {
         .on_line = [&](std::string_view) { ++lines; },
         .should_stop = [&] { return steady_clock::now() - start >= milliseconds(200); },
         .one_string = sh.one_string }).timed_out;
-    EXPECT_TRUE(stopped);
-    EXPECT_GT(lines, 0);
-    EXPECT_LT(steady_clock::now() - start, seconds(3));
-}
+    expect(bool(stopped));
+    expect(gt(lines, 0));
+    expect(lt(steady_clock::now() - start, seconds(3)));
+}};
 
-TEST(NetworkCheck, IndexPreparationIsBoundedBeforeTheFirstDownloadEvent) {
+UTest index_preparation_is_bounded_before_the_first_download_event{"NetworkCheck/IndexPreparationIsBoundedBeforeTheFirstDownloadEvent", [] {
     using namespace std::chrono;
     const auto start = steady_clock::now();
     mcpp::provider::xlings::InstallDeadline deadline(seconds(120), seconds(30), start);
     deadline.observe(R"({"kind":"heartbeat","ts":100})", start + seconds(119));
-    EXPECT_TRUE(deadline.expired(start + seconds(120)));
+    expect(bool(deadline.expired(start + seconds(120))));
     deadline.observe(R"({"kind":"progress","phase":"extract","percent":0})", start + seconds(119));
-    EXPECT_FALSE(deadline.expired(start + minutes(10)));
-}
+    expect(!(deadline.expired(start + minutes(10))));
+}};
 
-TEST(NetworkCheck, LegacyStatusAndHandshakeDoNotWriteTheSelectedHome) {
+UTest legacy_status_and_handshake_do_not_write_the_selected_home{"NetworkCheck/LegacyStatusAndHandshakeDoNotWriteTheSelectedHome", [] {
     const auto dir = std::filesystem::temp_directory_path()
         / std::format("mcpp-legacy-probe-{}", std::chrono::steady_clock::now().time_since_epoch().count());
     struct Cleanup {
@@ -219,20 +218,20 @@ TEST(NetworkCheck, LegacyStatusAndHandshakeDoNotWriteTheSelectedHome) {
     std::filesystem::current_path(project);
     mcpp::provider::Location env{binary, home, {}};
     const auto metadata = mcpp::provider::xlings::describe(std::filesystem::relative(binary, project));
-    ASSERT_TRUE(metadata.answered) << "the legacy handshake fixture never ran";
-    EXPECT_EQ(metadata.version, "9999.1.1.1");
+    expect(fatal(bool(metadata.answered))) << "the legacy handshake fixture never ran";
+    expect(eq(metadata.version, "9999.1.1.1"));
     for (const auto* capability : {"system_status", "payload_status"}) {
         const auto result = mcpp::provider::xlings::call(env, capability, "{}");
-        ASSERT_FALSE(result);
-        EXPECT_NE(result.error().find("read_only_queries"), std::string::npos);
+        expect(fatal(!result));
+        expect(ne(result.error().find("read_only_queries"), std::string::npos));
     }
     mcpp::invocation::ScopedEnv online("MCPP_OFFLINE", "0");
-    EXPECT_EQ(mcpp::provider::xlings::network_check(env, std::chrono::seconds(1)).status, "unsupported");
-    EXPECT_TRUE(std::filesystem::is_empty(home)) << "legacy metadata or status touched the selected home";
-    EXPECT_TRUE(std::filesystem::is_empty(project)) << "legacy metadata touched the current project";
-}
+    expect(eq(mcpp::provider::xlings::network_check(env, std::chrono::seconds(1)).status, "unsupported"));
+    expect(std::filesystem::is_empty(home)) << "legacy metadata or status touched the selected home";
+    expect(std::filesystem::is_empty(project)) << "legacy metadata touched the current project";
+}};
 
-TEST(NetworkCheck, BootstrapRequiresDownloadBudgetsAndReadOnlyQueries) {
+UTest bootstrap_requires_download_budgets_and_read_only_queries{"NetworkCheck/BootstrapRequiresDownloadBudgetsAndReadOnlyQueries", [] {
     mcpp::provider::ProviderInfo info;
     info.answered = true;
     info.version = "9999.1.1.1";
@@ -240,15 +239,15 @@ TEST(NetworkCheck, BootstrapRequiresDownloadBudgetsAndReadOnlyQueries) {
     info.features = {"index_dir", "index_store", "upstreams", "payload_status", "sync_index",
                      "payload_currency", "binding_state"};
     for (const auto* feature : {"network_diagnostics", "download_socket_budgets", "read_only_queries"}) {
-        EXPECT_NE(mcpp::provider::xlings::unmet(info).find(feature), std::string::npos);
+        expect(ne(mcpp::provider::xlings::unmet(info).find(feature), std::string::npos));
         info.features.push_back(feature);
     }
-    EXPECT_TRUE(mcpp::provider::xlings::unmet(info).empty());
-}
+    expect(mcpp::provider::xlings::unmet(info).empty());
+}};
 
 
-TEST(NetworkProcess, MetadataAndResourceDeadlinesStopDescendants) {
-    if constexpr (mcpplibs::os::is_windows) GTEST_SKIP() << "POSIX subprocess fixture";
+UTest metadata_and_resource_deadlines_stop_descendants{"NetworkProcess/MetadataAndResourceDeadlinesStopDescendants", [] {
+    if constexpr (mcpplibs::os::is_windows) skip("POSIX subprocess fixture");
     const std::string writer = R"SH(
 (file="${0%/*}/ticks"; i=0
 while [ "$i" -lt 50 ]; do
@@ -266,19 +265,19 @@ wait
         if (metadata) std::ofstream(f.env.binary) << "#!/bin/sh\n" << writer;
         const auto start = std::chrono::steady_clock::now();
         if (metadata)
-            EXPECT_FALSE(mcpp::provider::xlings::describe(f.env.binary, std::chrono::milliseconds(500)).answered);
+            expect(!(mcpp::provider::xlings::describe(f.env.binary, std::chrono::milliseconds(500)).answered));
         else {
             const auto report = mcpp::provider::xlings::network_check(f.env, std::chrono::milliseconds(500));
-            ASSERT_EQ(report.endpoints.size(), 1u);
-            EXPECT_EQ(report.endpoints.front().status, "timeout");
+            expect(fatal(eq(report.endpoints.size(), 1u)));
+            expect(eq(report.endpoints.front().status, "timeout"));
         }
-        EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(2));
+        expect(lt(std::chrono::steady_clock::now() - start, std::chrono::seconds(2)));
         const auto ticks = f.dir / "ticks";
-        ASSERT_TRUE(std::filesystem::exists(ticks)) << "the descendant fixture never ran";
+        expect(fatal(std::filesystem::exists(ticks))) << "the descendant fixture never ran";
         const auto before = std::filesystem::file_size(ticks);
-        ASSERT_GT(before, 0u);
+        expect(fatal(gt(before, 0u)));
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        EXPECT_EQ(std::filesystem::file_size(ticks), before)
+        expect(eq(std::filesystem::file_size(ticks), before))
             << (metadata ? "metadata" : "resource") << " deadline left a descendant writing";
     }
-}
+}};

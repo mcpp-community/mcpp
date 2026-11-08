@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.pack.abi_tag;
+
+using namespace mcpplibs::mtest;
 
 using mcpp::pack::AbiTag;
 using mcpp::pack::AccelSet;
@@ -31,109 +33,109 @@ bool accepts(const AbiTag& published, const AbiTag& current) {
 
 // ─── The published side constrains; an absent dimension does not ───────────
 
-TEST(AbiTagAccel, PublishedWithoutAccelAcceptsAnyRequest) {
+UTest published_without_accel_accepts_any_request{"AbiTagAccel/PublishedWithoutAccelAcceptsAnyRequest", [] {
     // A CPU-only library states nothing about accelerators, so it is usable
     // everywhere. This is the existing "a shorter tag IS the statement" rule
     // reaching one dimension further.
-    EXPECT_TRUE(accepts(cxx(), with({cuda({"sm_86"})})));
-}
+    expect(bool(accepts(cxx(), with({cuda({"sm_86"})}))));
+}};
 
-TEST(AbiTagAccel, ARequestWithNoAcceleratorIsSatisfiedVacuously) {
-    EXPECT_TRUE(accepts(with({cuda({"sm_90"})}), cxx()));
-}
+UTest a_request_with_no_accelerator_is_satisfied_vacuously{"AbiTagAccel/ARequestWithNoAcceleratorIsSatisfiedVacuously", [] {
+    expect(bool(accepts(with({cuda({"sm_90"})}), cxx())));
+}};
 
 // ─── Membership ────────────────────────────────────────────────────────────
 
-TEST(AbiTagAccel, ExactArchIsAccepted) {
-    EXPECT_TRUE(accepts(with({cuda({"sm_80", "sm_90"})}), with({cuda({"sm_90"})})));
-}
+UTest exact_arch_is_accepted{"AbiTagAccel/ExactArchIsAccepted", [] {
+    expect(bool(accepts(with({cuda({"sm_80", "sm_90"})}), with({cuda({"sm_90"})}))));
+}};
 
-TEST(AbiTagAccel, AnArchOutsideTheSetIsRefused) {
+UTest an_arch_outside_the_set_is_refused{"AbiTagAccel/AnArchOutsideTheSetIsRefused", [] {
     auto bad = tag_check(with({cuda({"sm_80", "sm_90"})}), with({cuda({"sm_86"})}));
-    ASSERT_EQ(bad.size(), 1u);
-    EXPECT_EQ(bad[0].dimension, "accel");
-    EXPECT_NE(bad[0].need.find("sm_80"), std::string::npos);
-    EXPECT_NE(bad[0].got.find("sm_86"),  std::string::npos);
-}
+    expect(fatal(eq(bad.size(), 1u)));
+    expect(eq(bad[0].dimension, "accel"));
+    expect(ne(bad[0].need.find("sm_80"), std::string::npos));
+    expect(ne(bad[0].got.find("sm_86"), std::string::npos));
+}};
 
-TEST(AbiTagAccel, ADifferentBackendIsRefused) {
+UTest a_different_backend_is_refused{"AbiTagAccel/ADifferentBackendIsRefused", [] {
     AccelSet rocm{ .backend = "rocm", .version = "6.4", .archs = {"gfx942"} };
     auto bad = tag_check(with({rocm}), with({cuda({"sm_90"})}));
-    ASSERT_EQ(bad.size(), 1u);
-    EXPECT_NE(bad[0].need.find("rocm"), std::string::npos);
-}
+    expect(fatal(eq(bad.size(), 1u)));
+    expect(ne(bad[0].need.find("rocm"), std::string::npos));
+}};
 
 // ─── Family targets widen the published side ───────────────────────────────
 
-TEST(AbiTagAccel, AFamilyTargetCoversItsFamily) {
+UTest a_family_target_covers_its_family{"AbiTagAccel/AFamilyTargetCoversItsFamily", [] {
     // sm_90f is compatible with the same major and an equal-or-higher minor.
     // This is why publishing a family target rather than one artifact per chip
     // is what keeps the variant matrix finite.
-    EXPECT_TRUE (accepts(with({cuda({"sm_90f"})}), with({cuda({"sm_90"})})));
-    EXPECT_TRUE (accepts(with({cuda({"sm_90f"})}), with({cuda({"sm_93"})})));
-    EXPECT_FALSE(accepts(with({cuda({"sm_90f"})}), with({cuda({"sm_89"})})));
-    EXPECT_FALSE(accepts(with({cuda({"sm_90f"})}), with({cuda({"sm_100"})})));
-}
+    expect(bool(accepts(with({cuda({"sm_90f"})}), with({cuda({"sm_90"})}))));
+    expect(bool(accepts(with({cuda({"sm_90f"})}), with({cuda({"sm_93"})}))));
+    expect(!(accepts(with({cuda({"sm_90f"})}), with({cuda({"sm_89"})}))));
+    expect(!(accepts(with({cuda({"sm_90f"})}), with({cuda({"sm_100"})}))));
+}};
 
-TEST(AbiTagAccel, AnArchitectureSpecificTargetCoversOnlyItself) {
-    EXPECT_TRUE (accepts(with({cuda({"sm_90a"})}), with({cuda({"sm_90"})})));
-    EXPECT_FALSE(accepts(with({cuda({"sm_90a"})}), with({cuda({"sm_93"})})));
-}
+UTest an_architecture_specific_target_covers_only_itself{"AbiTagAccel/AnArchitectureSpecificTargetCoversOnlyItself", [] {
+    expect(bool(accepts(with({cuda({"sm_90a"})}), with({cuda({"sm_90"})}))));
+    expect(!(accepts(with({cuda({"sm_90a"})}), with({cuda({"sm_93"})}))));
+}};
 
 // ─── The PTX floor is the second asymmetric dimension ──────────────────────
 
-TEST(AbiTagAccel, EmbeddedPtxAcceptsAnythingAtOrAboveTheFloor) {
+UTest embedded_ptx_accepts_anything_at_or_above_the_floor{"AbiTagAccel/EmbeddedPtxAcceptsAnythingAtOrAboveTheFloor", [] {
     // NVIDIA's own guidance for a distributed binary is cubins for the known
     // targets plus PTX for the newest, so that later hardware JITs. Recording
     // the floor is what lets tag_check say yes to a device the cubin set does
     // not name, instead of refusing an artifact that genuinely runs.
-    EXPECT_TRUE (accepts(with({cuda({"sm_80"}, "80")}), with({cuda({"sm_86"})})));
-    EXPECT_TRUE (accepts(with({cuda({"sm_80"}, "80")}), with({cuda({"sm_90"})})));
-    EXPECT_FALSE(accepts(with({cuda({"sm_86"}, "86")}), with({cuda({"sm_80"})})));
-}
+    expect(bool(accepts(with({cuda({"sm_80"}, "80")}), with({cuda({"sm_86"})}))));
+    expect(bool(accepts(with({cuda({"sm_80"}, "80")}), with({cuda({"sm_90"})}))));
+    expect(!(accepts(with({cuda({"sm_86"}, "86")}), with({cuda({"sm_80"})}))));
+}};
 
-TEST(AbiTagAccel, WithoutPtxThereIsNoForwardCompatibility) {
+UTest without_ptx_there_is_no_forward_compatibility{"AbiTagAccel/WithoutPtxThereIsNoForwardCompatibility", [] {
     // AMD has no PTX equivalent, so an empty floor must not silently widen the
     // set. Family coverage on the published side is how ROCm gets the same
     // effect, and that is a different mechanism.
-    EXPECT_FALSE(accepts(with({cuda({"sm_80"})}), with({cuda({"sm_86"})})));
-}
+    expect(!(accepts(with({cuda({"sm_80"})}), with({cuda({"sm_86"})}))));
+}};
 
 // ─── Toolkit version ───────────────────────────────────────────────────────
 
-TEST(AbiTagAccel, TheToolkitMajorMustAgree) {
+UTest the_toolkit_major_must_agree{"AbiTagAccel/TheToolkitMajorMustAgree", [] {
     AccelSet built{ .backend = "cuda", .version = "12.8", .archs = {"sm_90"} };
     AccelSet want12{ .backend = "cuda", .version = "12.0", .archs = {"sm_90"} };
     AccelSet want13{ .backend = "cuda", .version = "13.0", .archs = {"sm_90"} };
     // Minor version compatibility is real within a major release family.
-    EXPECT_TRUE (accepts(with({built}), with({want12})));
-    EXPECT_FALSE(accepts(with({built}), with({want13})));
-}
+    expect(bool(accepts(with({built}), with({want12}))));
+    expect(!(accepts(with({built}), with({want13}))));
+}};
 
 // ─── Several backends in one artifact ──────────────────────────────────────
 
-TEST(AbiTagAccel, OneArtifactCanCarrySeveralBackends) {
+UTest one_artifact_can_carry_several_backends{"AbiTagAccel/OneArtifactCanCarrySeveralBackends", [] {
     AccelSet rocm{ .backend = "rocm", .version = "6.4", .archs = {"gfx942"} };
     auto fat = with({cuda({"sm_90f"}), rocm});
-    EXPECT_TRUE(accepts(fat, with({cuda({"sm_90"})})));
+    expect(bool(accepts(fat, with({cuda({"sm_90"})}))));
     AccelSet wantRocm{ .backend = "rocm", .version = "6.4", .archs = {"gfx942"} };
-    EXPECT_TRUE(accepts(fat, with({wantRocm})));
-}
+    expect(bool(accepts(fat, with({wantRocm}))));
+}};
 
 // ─── The other four dimensions still decide ────────────────────────────────
 
-TEST(AbiTagAccel, AccelDoesNotMaskTheCxxDimensions) {
+UTest accel_does_not_mask_the_cxx_dimensions{"AbiTagAccel/AccelDoesNotMaskTheCxxDimensions", [] {
     auto published = with({cuda({"sm_90"})});
     auto current   = with({cuda({"sm_90"})});
     current.compiler = "gcc15";
     auto bad = tag_check(published, current);
-    ASSERT_EQ(bad.size(), 1u);
-    EXPECT_EQ(bad[0].dimension, "compiler");
-}
+    expect(fatal(eq(bad.size(), 1u)));
+    expect(eq(bad[0].dimension, "compiler"));
+}};
 
 // ─── The wire form round-trips ─────────────────────────────────────────────
 
-TEST(AbiTagAccel, TheWireFormRoundTrips) {
+UTest the_wire_form_round_trips{"AbiTagAccel/TheWireFormRoundTrips", [] {
     std::vector<mcpp::pack::AccelSet> sets{
         cuda({"sm_80", "sm_90f"}, "90"),
         mcpp::pack::AccelSet{ .backend = "rocm", .version = "6.4",
@@ -141,24 +143,24 @@ TEST(AbiTagAccel, TheWireFormRoundTrips) {
     };
     auto text = mcpp::pack::accel_str(sets);
     auto back = mcpp::pack::parse_accel(text);
-    ASSERT_EQ(back.size(), 2u);
-    EXPECT_EQ(back[0].backend,  "cuda");
-    EXPECT_EQ(back[0].version,  "12.8");
-    EXPECT_EQ(back[0].archs,    (std::vector<std::string>{"sm_80", "sm_90f"}));
-    EXPECT_EQ(back[0].ptxFloor, "90");
-    EXPECT_EQ(back[1].backend,  "rocm");
-    EXPECT_EQ(back[1].archs,    (std::vector<std::string>{"gfx942", "gfx10-3-generic"}));
-    EXPECT_TRUE(back[1].ptxFloor.empty());
-    EXPECT_EQ(mcpp::pack::accel_str(back), text);
-}
+    expect(fatal(eq(back.size(), 2u)));
+    expect(eq(back[0].backend, "cuda"));
+    expect(eq(back[0].version, "12.8"));
+    expect(eq(back[0].archs, (std::vector<std::string>{"sm_80", "sm_90f"})));
+    expect(eq(back[0].ptxFloor, "90"));
+    expect(eq(back[1].backend, "rocm"));
+    expect(eq(back[1].archs, (std::vector<std::string>{"gfx942", "gfx10-3-generic"})));
+    expect(back[1].ptxFloor.empty());
+    expect(eq(mcpp::pack::accel_str(back), text));
+}};
 
-TEST(AbiTagAccel, UnparseableTextMeansNoDeviceCode) {
+UTest unparseable_text_means_no_device_code{"AbiTagAccel/UnparseableTextMeansNoDeviceCode", [] {
     // The safe answer, and the same one a descriptor that never mentioned the
     // dimension gives: an artifact that states nothing constrains nothing.
-    EXPECT_TRUE(mcpp::pack::parse_accel("").empty());
-    EXPECT_TRUE(mcpp::pack::parse_accel("(none)").empty());
-    EXPECT_TRUE(mcpp::pack::parse_accel("12.8+{sm_90}").empty());  // no backend
-}
+    expect(mcpp::pack::parse_accel("").empty());
+    expect(mcpp::pack::parse_accel("(none)").empty());
+    expect(mcpp::pack::parse_accel("12.8+{sm_90}").empty());  // no backend
+}};
 
 // ── The grammar is open: backends mcpp has never heard of ──────────────────
 //
@@ -168,100 +170,99 @@ TEST(AbiTagAccel, UnparseableTextMeansNoDeviceCode) {
 // just as importantly, that an unknown arch shape falls back to equality rather
 // than to some numeric guess.
 
-TEST(AccelOpenGrammar, VulkanSpirvRoundTrips) {
+UTest vulkan_spirv_round_trips{"AccelOpenGrammar/VulkanSpirvRoundTrips", [] {
     auto a = mcpp::pack::parse_accel("vulkan1.3+{spirv1.6}");
-    ASSERT_EQ(a.size(), 1u);
-    EXPECT_EQ(a[0].backend, "vulkan");
-    EXPECT_EQ(a[0].version, "1.3");
-    ASSERT_EQ(a[0].archs.size(), 1u);
-    EXPECT_EQ(a[0].archs[0], "spirv1.6");
-    EXPECT_EQ(mcpp::pack::accel_str(a), "vulkan1.3+{spirv1.6}");
-}
+    expect(fatal(eq(a.size(), 1u)));
+    expect(eq(a[0].backend, "vulkan"));
+    expect(eq(a[0].version, "1.3"));
+    expect(fatal(eq(a[0].archs.size(), 1u)));
+    expect(eq(a[0].archs[0], "spirv1.6"));
+    expect(eq(mcpp::pack::accel_str(a), "vulkan1.3+{spirv1.6}"));
+}};
 
-TEST(AccelOpenGrammar, SyclTargetRoundTrips) {
+UTest sycl_target_round_trips{"AccelOpenGrammar/SyclTargetRoundTrips", [] {
     auto a = mcpp::pack::parse_accel("sycl2020+{spir64,nvptx64-sm_89}");
-    ASSERT_EQ(a.size(), 1u);
-    EXPECT_EQ(a[0].backend, "sycl");
-    ASSERT_EQ(a[0].archs.size(), 2u);
-    EXPECT_EQ(a[0].archs[0], "spir64");
-    EXPECT_EQ(a[0].archs[1], "nvptx64-sm_89");
-}
+    expect(fatal(eq(a.size(), 1u)));
+    expect(eq(a[0].backend, "sycl"));
+    expect(fatal(eq(a[0].archs.size(), 2u)));
+    expect(eq(a[0].archs[0], "spir64"));
+    expect(eq(a[0].archs[1], "nvptx64-sm_89"));
+}};
 
-TEST(AccelOpenGrammar, AnUnknownArchShapeComparesByEquality) {
+UTest an_unknown_arch_shape_compares_by_equality{"AccelOpenGrammar/AnUnknownArchShapeComparesByEquality", [] {
     // `gfx942` carries no leading number, so there is no ordering to read out
     // of it. Equality is the only question available and it is the one asked --
     // rather than reading `942` out of the middle and inventing a level.
     auto pub  = mcpp::pack::parse_accel("hip6.4+{gfx942}");
     auto same = mcpp::pack::parse_accel("hip6.4+{gfx942}");
     auto diff = mcpp::pack::parse_accel("hip6.4+{gfx1100}");
-    EXPECT_TRUE (mcpp::pack::accel_accepts(pub, same));
-    EXPECT_FALSE(mcpp::pack::accel_accepts(pub, diff));
-}
+    expect(bool(mcpp::pack::accel_accepts(pub, same)));
+    expect(!mcpp::pack::accel_accepts(pub, diff));
+}};
 
-TEST(AccelOpenGrammar, FloorHasABackendNeutralSpelling) {
+UTest floor_has_a_backend_neutral_spelling{"AccelOpenGrammar/FloorHasABackendNeutralSpelling", [] {
     // `ptx>=` is CUDA's word and the one already published. `floor>=` says the
     // same thing without borrowing it, so a backend whose portable form is
     // SPIR-V does not have to write `ptx`.
     auto neutral = mcpp::pack::parse_accel("vulkan1.3+{spirv1.6} floor>=1.4");
-    ASSERT_EQ(neutral.size(), 1u);
-    EXPECT_EQ(neutral[0].ptxFloor, "1.4");
+    expect(fatal(eq(neutral.size(), 1u)));
+    expect(eq(neutral[0].ptxFloor, "1.4"));
 
     auto cuda = mcpp::pack::parse_accel("cuda12.9+{sm_80} ptx>=80");
-    ASSERT_EQ(cuda.size(), 1u);
-    EXPECT_EQ(cuda[0].ptxFloor, "80");
-}
+    expect(fatal(eq(cuda.size(), 1u)));
+    expect(eq(cuda[0].ptxFloor, "80"));
+}};
 
-TEST(AccelOpenGrammar, TheExistingPtxSpellingStillParses) {
+UTest the_existing_ptx_spelling_still_parses{"AccelOpenGrammar/TheExistingPtxSpellingStillParses", [] {
     // The negative control for the change above: adding a second spelling must
     // not have moved the first. Descriptors published before it exist.
     auto a = mcpp::pack::parse_accel("cuda12.8+{sm_80,sm_90f} ptx>=90");
-    ASSERT_EQ(a.size(), 1u);
-    EXPECT_EQ(a[0].ptxFloor, "90");
-    EXPECT_EQ(mcpp::pack::accel_str(a), "cuda12.8+{sm_80,sm_90f} ptx>=90");
-}
+    expect(fatal(eq(a.size(), 1u)));
+    expect(eq(a[0].ptxFloor, "90"));
+    expect(eq(mcpp::pack::accel_str(a), "cuda12.8+{sm_80,sm_90f} ptx>=90"));
+}};
 
-TEST(AccelRequest, RejectsIncompleteSetsAndUnconsumedInput) {
+UTest rejects_incomplete_sets_and_unconsumed_input{"AccelRequest/RejectsIncompleteSetsAndUnconsumedInput", [] {
     for (auto input : {"sycl+{sm_89", "sycl+{sm_89}garbage", "sycl+sm_89",
                        "sycl+{sm_89,,sm_90}", "sycl+{,sm_89}", "sycl+{sm_89,}",
                        "sycl+{{sm_89}}", "sycl,", ",sycl", "sycl ptx>=", "12.8+{sm_89}"}) {
         const auto parsed = mcpp::pack::parse_accel_request(input);
-        ASSERT_FALSE(parsed) << input;
-        EXPECT_NE(parsed.error().find("byte"), std::string::npos) << input;
+        expect(fatal(!parsed)) << input;
+        expect(ne(parsed.error().find("byte"), std::string::npos)) << input;
     }
-}
+}};
 
-TEST(AccelRequest, DuplicateImplementationsCannotChangeCoverageByTheirOrder) {
+UTest duplicate_implementations_cannot_change_coverage_by_their_order{"AccelRequest/DuplicateImplementationsCannotChangeCoverageByTheirOrder", [] {
     for (auto input : {"sycl+{sm_89},sycl+{sm_90}", "sycl+{sm_90},sycl+{sm_89}"}) {
         const auto parsed = mcpp::pack::parse_accel_request(input);
-        ASSERT_FALSE(parsed);
-        EXPECT_NE(parsed.error().find("appears more than once"), std::string::npos);
-        EXPECT_NE(parsed.error().find("sycl"), std::string::npos);
+        expect(fatal(!parsed));
+        expect(ne(parsed.error().find("appears more than once"), std::string::npos));
+        expect(ne(parsed.error().find("sycl"), std::string::npos));
     }
-}
+}};
 
-TEST(AccelRequest, EquivalentSetsHaveOneCanonicalSpelling) {
+UTest equivalent_sets_have_one_canonical_spelling{"AccelRequest/EquivalentSetsHaveOneCanonicalSpelling", [] {
     const auto a = mcpp::pack::parse_accel_request(
         "sycl+{spir64,nvptx64-sm_90,nvptx64-sm_89,spir64}, cuda12.9+{sm_90,sm_89} ptx>=90");
     const auto b = mcpp::pack::parse_accel_request(
         "cuda12.9+{sm_89,sm_90} floor>=90, sycl+{nvptx64-sm_89,nvptx64-sm_90,spir64}");
-    ASSERT_TRUE(a);
-    ASSERT_TRUE(b);
-    EXPECT_EQ(mcpp::pack::accel_str(*a), mcpp::pack::accel_str(*b));
-    EXPECT_EQ(mcpp::pack::accel_str(*a),
-        "cuda12.9+{sm_89,sm_90} ptx>=90, sycl+{nvptx64-sm_89,nvptx64-sm_90,spir64}");
-}
+    expect(fatal(bool(a)));
+    expect(fatal(bool(b)));
+    expect(eq(mcpp::pack::accel_str(*a), mcpp::pack::accel_str(*b)));
+    expect(eq(mcpp::pack::accel_str(*a), "cuda12.9+{sm_89,sm_90} ptx>=90, sycl+{nvptx64-sm_89,nvptx64-sm_90,spir64}"));
+}};
 
-TEST(AccelRequest, RetainsEmptyAndUnconstrainedFormsAndOpenTargetVocabulary) {
-    EXPECT_TRUE(mcpp::pack::parse_accel_request("")->empty());
-    EXPECT_TRUE(mcpp::pack::parse_accel_request(" (none) ")->empty());
+UTest retains_empty_and_unconstrained_forms_and_open_target_vocabulary{"AccelRequest/RetainsEmptyAndUnconstrainedFormsAndOpenTargetVocabulary", [] {
+    expect(mcpp::pack::parse_accel_request("")->empty());
+    expect(mcpp::pack::parse_accel_request(" (none) ")->empty());
     const auto bare = mcpp::pack::parse_accel_request("sycl");
-    ASSERT_TRUE(bare);
-    ASSERT_EQ(bare->size(), 1u);
-    EXPECT_TRUE(bare->front().archs.empty());
+    expect(fatal(bool(bare)));
+    expect(fatal(eq(bare->size(), 1u)));
+    expect(bare->front().archs.empty());
     const auto explicitEmpty = mcpp::pack::parse_accel_request("sycl+{}");
-    ASSERT_TRUE(explicitEmpty);
-    EXPECT_EQ(mcpp::pack::accel_str(*bare), mcpp::pack::accel_str(*explicitEmpty));
+    expect(fatal(bool(explicitEmpty)));
+    expect(eq(mcpp::pack::accel_str(*bare), mcpp::pack::accel_str(*explicitEmpty)));
     const auto opaque = mcpp::pack::parse_accel_request("newmodel3.1+{future-device-v2,domain:opaque}");
-    ASSERT_TRUE(opaque);
-    ASSERT_EQ(opaque->front().archs.size(), 2u);
-}
+    expect(fatal(bool(opaque)));
+    expect(fatal(eq(opaque->front().archs.size(), 2u)));
+}};

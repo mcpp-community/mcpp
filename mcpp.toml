@@ -111,7 +111,7 @@ mcpplibs.mwrap.xz   = "5.8.3"
 
 # The operating system is mcpplibs.os's (design 2026-10-26 §25): mcpp keeps no
 # layer of its own.
-mcpplibs.os = "0.4.0"
+mcpplibs.os = "0.4.1"
 
 # `modules/` holds what gets linked into this binary; `src/` is what has not
 # been separated yet, and shrinking it is the direction. Each entry is an
@@ -163,9 +163,8 @@ members = [
 ]
 
 # `mcpp build` ignores [dev-dependencies]; only `mcpp test` resolves them.
-# Namespace omission means exactly mcpplibs, so the compat wrapper is explicit.
 [dev-dependencies]
-compat.gtest = "1.15.2"
+mcpplibs.mtest = "0.4.1"
 
 # Everything else uses M5.0 conventions:
 # - target        = mcpp (kind=bin inferred from src/main.cpp)

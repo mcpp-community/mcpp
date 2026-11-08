@@ -5,9 +5,9 @@
 // command builders, so a builder that changes shape fails here rather than in
 // a document an editor reads.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.build_database;
 import mcpp.modgraph.graph;
 import mcpplibs.os.platform;
@@ -15,6 +15,8 @@ import mcpp.toolchain.clang;
 import mcpp.toolchain.gcc;
 import mcpp.toolchain.model;
 import mcpp.toolchain.msvc;
+
+using namespace mcpplibs::mtest;
 
 namespace db = mcpp::build::database;
 using mcpp::modgraph::ModuleDeclaration;
@@ -34,55 +36,52 @@ bool contains(const std::vector<std::string>& words, const std::string& w) {
 
 } // namespace
 
-TEST(BuildDatabase, RoleOfEachDeclarationForm) {
-    EXPECT_EQ(db::role_name(ModuleDeclaration::None), "non-module");
-    EXPECT_EQ(db::role_name(ModuleDeclaration::Interface), "module-interface");
-    EXPECT_EQ(db::role_name(ModuleDeclaration::InterfacePartition),
-              "module-partition-interface");
-    EXPECT_EQ(db::role_name(ModuleDeclaration::ImplementationPartition),
-              "module-partition-implementation");
-    EXPECT_EQ(db::role_name(ModuleDeclaration::Implementation), "module-implementation");
-    EXPECT_EQ(db::role_name(ModuleDeclaration::Unknown), "unknown");
-}
+UTest role_of_each_declaration_form{"BuildDatabase/RoleOfEachDeclarationForm", [] {
+    expect(eq(db::role_name(ModuleDeclaration::None), "non-module"));
+    expect(eq(db::role_name(ModuleDeclaration::Interface), "module-interface"));
+    expect(eq(db::role_name(ModuleDeclaration::InterfacePartition), "module-partition-interface"));
+    expect(eq(db::role_name(ModuleDeclaration::ImplementationPartition), "module-partition-implementation"));
+    expect(eq(db::role_name(ModuleDeclaration::Implementation), "module-implementation"));
+    expect(eq(db::role_name(ModuleDeclaration::Unknown), "unknown"));
+}};
 
-TEST(BuildDatabase, StandardLibraryNames) {
-    EXPECT_EQ(db::stdlib_name("libstdc++"), "libstdc++");
-    EXPECT_EQ(db::stdlib_name("libc++"), "libc++");
-    EXPECT_EQ(db::stdlib_name("msvc-stl"), "msvc-stl");
-    EXPECT_EQ(db::stdlib_name("newlib"), "other");
-}
+UTest standard_library_names{"BuildDatabase/StandardLibraryNames", [] {
+    expect(eq(db::stdlib_name("libstdc++"), "libstdc++"));
+    expect(eq(db::stdlib_name("libc++"), "libc++"));
+    expect(eq(db::stdlib_name("msvc-stl"), "msvc-stl"));
+    expect(eq(db::stdlib_name("newlib"), "other"));
+}};
 
-TEST(BuildDatabase, ToolchainIdNamesFamilyVersionAndTheCompilersTriple) {
+UTest toolchain_id_names_family_version_and_the_compilers_triple{"BuildDatabase/ToolchainIdNamesFamilyVersionAndTheCompilersTriple", [] {
     Toolchain tc;
     tc.compiler = CompilerId::Clang;
     tc.version = "22.1.8";
     tc.targetTriple = "x86_64-windows-msvc";
     // mcpp's family name in the opaque id (`llvm`, as in `llvm@22.1.8`), and the
     // triple as the compiler spells it; the S1 `family` field says `clang`.
-    EXPECT_EQ(db::toolchain_id(tc, "x86_64-pc-windows-msvc"),
-              "llvm-22.1.8-x86_64-pc-windows-msvc");
-    EXPECT_EQ(tc.compiler_name(), "clang");
-}
+    expect(eq(db::toolchain_id(tc, "x86_64-pc-windows-msvc"), "llvm-22.1.8-x86_64-pc-windows-msvc"));
+    expect(eq(tc.compiler_name(), "clang"));
+}};
 
-TEST(BuildDatabase, PosixWordsUndoShellQuoting) {
+UTest posix_words_undo_shell_quoting{"BuildDatabase/PosixWordsUndoShellQuoting", [] {
     auto w = db::split_command_words(
         "cd '/c d' && env LD_LIBRARY_PATH='/r t' 'it'\\''s' \"a\\\"b\" x\\ y 2>&1",
         /*windows=*/false);
     std::vector<std::string> want{"cd", "/c d", "&&", "env", "LD_LIBRARY_PATH=/r t",
                                   "it's", "a\"b", "x y", "2>&1"};
-    EXPECT_EQ(w, want);
-}
+    expect(eq(w, want));
+}};
 
-TEST(BuildDatabase, WindowsWordsFollowTheRuntimeRules) {
+UTest windows_words_follow_the_runtime_rules{"BuildDatabase/WindowsWordsFollowTheRuntimeRules", [] {
     auto w = db::split_command_words(
         "cd /d \"C:\\a b\" && \"C:\\t\\clang++.exe\" \"x\\\\\\\"y\" C:\\s\\std.ixx 2>&1",
         /*windows=*/true);
     std::vector<std::string> want{"cd", "/d", "C:\\a b", "&&", "C:\\t\\clang++.exe",
                                   "x\\\"y", "C:\\s\\std.ixx", "2>&1"};
-    EXPECT_EQ(w, want);
-}
+    expect(eq(w, want));
+}};
 
-TEST(BuildDatabase, RecoversTheGccStdUnitFromItsBuilder) {
+UTest recovers_the_gcc_std_unit_from_its_builder{"BuildDatabase/RecoversTheGccStdUnitFromItsBuilder", [] {
     Toolchain tc;
     tc.compiler = CompilerId::GCC;
     tc.version = "16.1.0";
@@ -94,22 +93,22 @@ TEST(BuildDatabase, RecoversTheGccStdUnitFromItsBuilder) {
     const auto cache = host_path("/home/u/.mcpp/cache/std/k1", "C:\\u\\.mcpp\\std\\k1");
 
     auto commands = gcc::std_module_build_commands(tc, cache, "", "-std=c++23");
-    ASSERT_FALSE(commands.empty());
+    expect(fatal(!commands.empty()));
     auto inv = db::recover_invocation(commands, tc.stdModuleSource, tc.binaryPath,
                                       "/unused", kWindows);
-    ASSERT_TRUE(inv.has_value()) << commands.front();
-    EXPECT_EQ(inv->workDirectory, cache) << commands.front();
-    ASSERT_FALSE(inv->arguments.empty());
-    EXPECT_EQ(inv->arguments.front(), tc.binaryPath.string()) << commands.front();
-    EXPECT_TRUE(contains(inv->arguments, tc.stdModuleSource.string())) << commands.front();
-    EXPECT_TRUE(contains(inv->arguments, "-std=c++23")) << commands.front();
-    EXPECT_FALSE(contains(inv->arguments, "2>&1")) << commands.front();
-    EXPECT_FALSE(contains(inv->arguments, "env")) << commands.front();
+    expect(fatal(inv.has_value())) << commands.front();
+    expect(eq(inv->workDirectory, cache)) << commands.front();
+    expect(fatal(!(inv->arguments.empty())));
+    expect(eq(inv->arguments.front(), tc.binaryPath.string())) << commands.front();
+    expect(contains(inv->arguments, tc.stdModuleSource.string())) << commands.front();
+    expect(contains(inv->arguments, "-std=c++23")) << commands.front();
+    expect(!contains(inv->arguments, "2>&1")) << commands.front();
+    expect(!contains(inv->arguments, "env")) << commands.front();
     for (auto const& a : inv->arguments)
-        EXPECT_FALSE(a.starts_with("LD_LIBRARY_PATH=")) << a;
-}
+        expect(!a.starts_with("LD_LIBRARY_PATH=")) << a;
+}};
 
-TEST(BuildDatabase, RecoversTheClangStdUnitsFromTheirBuilders) {
+UTest recovers_the_clang_std_units_from_their_builders{"BuildDatabase/RecoversTheClangStdUnitsFromTheirBuilders", [] {
     Toolchain tc;
     tc.compiler = CompilerId::Clang;
     tc.version = "22.1.8";
@@ -125,21 +124,21 @@ TEST(BuildDatabase, RecoversTheClangStdUnitsFromTheirBuilders) {
     auto stdCommands = clang::std_module_build_commands(tc, cache, bmi, "", "-std=c++23");
     auto inv = db::recover_invocation(stdCommands, tc.stdModuleSource, tc.binaryPath,
                                       cache, kWindows);
-    ASSERT_TRUE(inv.has_value()) << stdCommands.front();
-    EXPECT_EQ(inv->arguments.front(), tc.binaryPath.string());
-    EXPECT_TRUE(contains(inv->arguments, "--precompile")) << stdCommands.front();
-    EXPECT_TRUE(contains(inv->arguments, tc.stdModuleSource.string()));
-    EXPECT_EQ(inv->workDirectory, cache);
+    expect(fatal(inv.has_value())) << stdCommands.front();
+    expect(eq(inv->arguments.front(), tc.binaryPath.string()));
+    expect(contains(inv->arguments, "--precompile")) << stdCommands.front();
+    expect(contains(inv->arguments, tc.stdModuleSource.string()));
+    expect(eq(inv->workDirectory, cache));
 
     auto compatCommands = clang::std_compat_build_commands(
         tc, cache, clang::std_compat_bmi_path(cache), bmi, "", "-std=c++23");
     auto compat = db::recover_invocation(compatCommands, tc.stdCompatSource,
                                          tc.binaryPath, cache, kWindows);
-    ASSERT_TRUE(compat.has_value()) << compatCommands.front();
-    EXPECT_TRUE(contains(compat->arguments, tc.stdCompatSource.string()));
-}
+    expect(fatal(compat.has_value())) << compatCommands.front();
+    expect(contains(compat->arguments, tc.stdCompatSource.string()));
+}};
 
-TEST(BuildDatabase, RecoversTheMsvcStdUnitsFromTheirBuilders) {
+UTest recovers_the_msvc_std_units_from_their_builders{"BuildDatabase/RecoversTheMsvcStdUnitsFromTheirBuilders", [] {
     Toolchain tc;
     tc.compiler = CompilerId::MSVC;
     tc.version = "19.44.35207";
@@ -156,33 +155,33 @@ TEST(BuildDatabase, RecoversTheMsvcStdUnitsFromTheirBuilders) {
     auto stdCommands = msvc::std_module_build_commands(tc, cache, "/std:c++latest", "/MD");
     auto inv = db::recover_invocation(stdCommands, tc.stdModuleSource, tc.binaryPath,
                                       "/unused", kWindows);
-    ASSERT_TRUE(inv.has_value()) << stdCommands.front();
-    EXPECT_EQ(inv->workDirectory, cache) << stdCommands.front();
-    EXPECT_EQ(inv->arguments.front(), tc.binaryPath.string()) << stdCommands.front();
-    EXPECT_TRUE(contains(inv->arguments, "/std:c++latest")) << stdCommands.front();
-    EXPECT_TRUE(contains(inv->arguments, tc.stdModuleSource.string())) << stdCommands.front();
-    EXPECT_FALSE(contains(inv->arguments, "2>&1")) << stdCommands.front();
+    expect(fatal(inv.has_value())) << stdCommands.front();
+    expect(eq(inv->workDirectory, cache)) << stdCommands.front();
+    expect(eq(inv->arguments.front(), tc.binaryPath.string())) << stdCommands.front();
+    expect(contains(inv->arguments, "/std:c++latest")) << stdCommands.front();
+    expect(contains(inv->arguments, tc.stdModuleSource.string())) << stdCommands.front();
+    expect(!contains(inv->arguments, "2>&1")) << stdCommands.front();
 
     auto compatCommands = msvc::std_compat_build_commands(tc, cache, "/std:c++latest", "/MD");
     auto compat = db::recover_invocation(compatCommands, tc.stdCompatSource,
                                          tc.binaryPath, "/unused", kWindows);
-    ASSERT_TRUE(compat.has_value()) << compatCommands.front();
-    EXPECT_TRUE(contains(compat->arguments, "/reference")) << compatCommands.front();
-}
+    expect(fatal(compat.has_value())) << compatCommands.front();
+    expect(contains(compat->arguments, "/reference")) << compatCommands.front();
+}};
 
-TEST(BuildDatabase, NoCommandNamingTheSourceRecoversNothing) {
+UTest no_command_naming_the_source_recovers_nothing{"BuildDatabase/NoCommandNamingTheSourceRecoversNothing", [] {
     auto inv = db::recover_invocation({"cd /c && /bin/g++ -c other.cc -o o.o"},
                                       "/src/std.cc", "/bin/g++", "/c", false);
-    EXPECT_FALSE(inv.has_value());
-}
+    expect(!inv.has_value());
+}};
 
-TEST(BuildDatabase, AnUnquotedDriverWithASpaceIsRejoined) {
+UTest an_unquoted_driver_with_a_space_is_rejoined{"BuildDatabase/AnUnquotedDriverWithASpaceIsRejoined", [] {
     auto inv = db::recover_invocation(
         {"C:\\Program Files\\LLVM\\bin\\clang++.exe -std=c++23 --precompile "
          "\"C:\\s\\std.cppm\" -o \"C:\\c\\std.pcm\""},
         "C:\\s\\std.cppm", "C:\\Program Files\\LLVM\\bin\\clang++.exe", "C:\\c",
         /*windows=*/true);
-    ASSERT_TRUE(inv.has_value());
-    EXPECT_EQ(inv->arguments.front(), "C:\\Program Files\\LLVM\\bin\\clang++.exe");
-    EXPECT_EQ(inv->arguments[1], "-std=c++23");
-}
+    expect(fatal(inv.has_value()));
+    expect(eq(inv->arguments.front(), "C:\\Program Files\\LLVM\\bin\\clang++.exe"));
+    expect(eq(inv->arguments[1], "-std=c++23"));
+}};
