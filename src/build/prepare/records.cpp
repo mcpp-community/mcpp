@@ -413,6 +413,19 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
         }
         // One order whichever configuration wrote the file last: by identity.
         std::ranges::stable_sort(lock.packages, {}, [](auto const& p) { return lock_identity(p); });
+        // THE IDENTITY THIS CONFIGURATION'S REQUEST WAS GIVEN (SPEC-016 §4.5),
+        // and the other requests' as the lock had them.
+        std::optional<mcpp::lockfile::LockedTarget> priorTarget;
+        {
+            auto const& c = state.targetChoice;
+            if (auto prior = mcpp::lockfile::load(state.workRoot / "mcpp.lock"))
+                for (auto const& t : prior->targets) {
+                    if (!c.request.empty() && t.request == c.request) priorTarget = t;
+                    else lock.targets.push_back(t);
+                }
+            if (!c.request.empty()) lock.targets.push_back({ c.request, c.identity, c.provider });
+            std::ranges::sort(lock.targets, {}, &mcpp::lockfile::LockedTarget::request);
+        }
         if (!lock.packages.empty() || !lock.indices.empty()) {
             auto lockPath = state.workRoot / "mcpp.lock";
             // `--locked` ASSERTS THAT THIS RESOLUTION IS THE RECORDED ONE.
@@ -446,6 +459,12 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
                 for (auto const& p : prior->packages) was[key(p)] = p.version;
                 for (auto const& p : lock.packages)    now[key(p)] = p.version;
                 std::vector<std::string> drift;
+                if (auto const& c = state.targetChoice; priorTarget && priorTarget->identity != c.identity)
+                    drift.push_back(std::format(
+                        "target {}: {} ({}) -> {} ({}){}", c.request, priorTarget->identity,
+                        priorTarget->provider.empty() ? "the platform's" : priorTarget->provider,
+                        c.identity, c.provider.empty() ? "the platform's" : c.provider,
+                        c.why.empty() ? std::string{} : "; " + c.why));
                 for (auto const& [k, v] : now) {
                     auto it = was.find(k);
                     if (it == was.end())      drift.push_back(k + " " + v + " (not in the lock)");

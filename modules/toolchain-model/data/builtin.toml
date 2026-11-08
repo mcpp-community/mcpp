@@ -60,6 +60,15 @@ triple   = "x86_64-linux-musl"
 tier     = "verified"
 standard = true
 
+# The system's standard identity before its musl sibling, as on x86_64: a
+# request `aarch64-linux` takes it where its provider is available.
+# `preview` until the released engine is consumed on a clean ARM64 host
+# (SPEC-009 §10.7).
+[[platform.define]]
+triple   = "aarch64-linux-gnu"
+tier     = "preview"
+standard = true
+
 [[platform.define]]
 triple   = "aarch64-linux-musl"
 tier     = "verified"
@@ -107,13 +116,6 @@ standard = false
 [[platform.define]]
 triple   = "riscv64-linux-musl"
 tier     = "planned"
-standard = true
-
-# `preview` until the released engine is consumed on a clean ARM64 host
-# (SPEC-009 §10.7).
-[[platform.define]]
-triple   = "aarch64-linux-gnu"
-tier     = "preview"
 standard = true
 
 [[platform.define]]

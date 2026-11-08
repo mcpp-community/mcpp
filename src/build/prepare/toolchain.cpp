@@ -580,7 +580,7 @@ step1_resolve_target_triple_request(PrepareState& state, TargetOverrideCtx& ctx)
     // `parse` fills a missing env segment lexically so the identity stays
     // total — `x86_64-linux` IS `x86_64-linux-gnu`, and a unit test says so.
     // Every gate below then asked about the filled value instead of about
-    // the request. See `triple::resolve_request` for the two measurements.
+    // the request. The selection (mcpp.toolchain.target_select) now answers it.
     //
     // The lookup that follows keys on `parsed->str()`, so completing after
     // it would match sections against a triple this build is not going to
@@ -2292,6 +2292,7 @@ std::expected<void, std::string> phase2_define_toolchain_resolver(PrepareState& 
       if (auto r = step2_detect_toolchain(state); !r) return std::unexpected(r.error());
       if (auto r = step2_apply_local_toolchain(state); !r) return std::unexpected(r.error());
       if (auto r = step2_retarget_for_retargetable_driver(state); !r) return std::unexpected(r.error());
+      step2_row_replacements(state);
       if (auto r = step2_bind_msvc_toolset(state); !r) return std::unexpected(r.error());
       if (auto r = step2_resolve_base(state); !r) return std::unexpected(r.error());
       if (auto r = step2_resolve_run_under(state); !r) return std::unexpected(r.error());

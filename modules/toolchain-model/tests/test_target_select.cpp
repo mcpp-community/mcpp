@@ -124,3 +124,16 @@ UTest a_planned_row_is_the_answer_only_when_alone{"TargetSelect/APlannedRowIsThe
     // x86_64-macos is planned; the musl identity beside it is not.
     expect(eq(on("macos-x86_64", {"x86_64-macos", "x86_64", "macos", ""}).identity(), "x86_64-macos-musl"));
 }};
+
+UTest an_arm_pattern_takes_the_standard_c_library{"TargetSelect/AnArmPatternTakesTheStandardCLibrary", [] {
+    // The glibc row of aarch64 outranks its musl sibling, as on x86_64; a
+    // written env is the row it names.
+    auto s = on("linux-aarch64", {"aarch64-linux", "aarch64", "linux", "gnu"});
+    expect(eq(s.identity(), "aarch64-linux-gnu"));
+    expect(eq(provider_of(s), "glibc"));
+    expect(!s.fallback);
+    const Ask written{"aarch64-linux-gnu", "aarch64", "linux", "gnu", true};
+    auto w = on("linux-aarch64", written);
+    expect(fatal(eq(w.candidates.size(), std::size_t(1))));
+    expect(eq(w.identity(), "aarch64-linux-gnu"));
+}};

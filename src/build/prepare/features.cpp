@@ -1856,6 +1856,7 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
             auto [req, depDefaultFeatures] = aggregatedRequest(state, i, Instance::Target);
             mcpp::build::BuildProgramEnv bpEnv;
             bpEnv.targetTriple = state.resolvedTargetCanonical;
+            bpEnv.targetProvider = state.targetChoice.provider;
             // Everything the engine already knows and a build program would
             // otherwise hardcode: the payload ROOT (not the driver), the
             // target's C library, which compiler and which C++ standard

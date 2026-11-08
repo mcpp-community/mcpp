@@ -83,6 +83,10 @@ struct Record {
     // host graph's, as `mcpp::platform::to_json` writes them; "null" for none.
     std::string platform = "null";
     std::string hostPlatform = "null";
+    // The selection the configuration's identity came from (SPEC-016 §4.5):
+    // `{request, identity, provider, priority, fallback}`; "null" for the
+    // host's own build.
+    std::string target = "null";
     std::filesystem::path outputDir;
     std::filesystem::path projectRoot;
     std::filesystem::path compileDatabase;
@@ -203,6 +207,7 @@ nlohmann::json to_json(const Record& r) {
             {"outputDir", r.outputDir.generic_string()},
             {"platform", nlohmann::json::parse(r.platform, nullptr, false)},
             {"hostPlatform", nlohmann::json::parse(r.hostPlatform, nullptr, false)},
+            {"target", nlohmann::json::parse(r.target, nullptr, false)},
         }},
         {"compileDatabase", r.compileDatabase.empty() ? nlohmann::json(nullptr)
                                                       : nlohmann::json(r.compileDatabase.generic_string())},
@@ -231,6 +236,7 @@ std::optional<Record> read(const std::filesystem::path& outputDir) {
         r.outputDir = c.value("outputDir", "");
         if (c.contains("platform")) r.platform = c["platform"].dump();
         if (c.contains("hostPlatform")) r.hostPlatform = c["hostPlatform"].dump();
+        if (c.contains("target")) r.target = c["target"].dump();
     }
     if (d.contains("compileDatabase") && d["compileDatabase"].is_string())
         r.compileDatabase = d["compileDatabase"].get<std::string>();

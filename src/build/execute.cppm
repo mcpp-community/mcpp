@@ -1650,12 +1650,17 @@ mcpp::build::result::Record start_record(const BuildContext& ctx) {
     r.profile = ctx.profile;
     r.platform = mcpp::platform::to_json(ctx.plan.platform);
     r.hostPlatform = mcpp::platform::to_json(ctx.hostPlatform);
+    if (auto const& s = ctx.targetSelection; !s.request.empty())
+        r.target = nlohmann::json{ {"request", s.request}, {"identity", s.identity},
+                                   {"provider", s.provider}, {"priority", s.priority},
+                                   {"fallback", s.fallback} }.dump();
     mcpp::build::result::write(r);
     mcpp::build::result::emit("plan", {{"configuration", {
         {"triple", r.triple}, {"profile", r.profile}, {"fingerprint", r.fingerprint},
         {"outputDir", r.outputDir.generic_string()},
         {"platform", nlohmann::json::parse(r.platform, nullptr, false)},
-        {"hostPlatform", nlohmann::json::parse(r.hostPlatform, nullptr, false)}}}});
+        {"hostPlatform", nlohmann::json::parse(r.hostPlatform, nullptr, false)},
+        {"target", nlohmann::json::parse(r.target, nullptr, false)}}}});
     return r;
 }
 
@@ -1703,6 +1708,7 @@ FastRecord fast_path_begin(const std::filesystem::path& projectRoot,
         f.record.profile = previous->profile;
         f.record.platform = previous->platform;
         f.record.hostPlatform = previous->hostPlatform;
+        f.record.target = previous->target;
         f.artifacts = std::move(previous->artifacts);
     }
     res::write(f.record);
@@ -1710,7 +1716,8 @@ FastRecord fast_path_begin(const std::filesystem::path& projectRoot,
         {"triple", f.record.triple}, {"profile", f.record.profile},
         {"fingerprint", f.record.fingerprint}, {"outputDir", f.record.outputDir.generic_string()},
         {"platform", nlohmann::json::parse(f.record.platform, nullptr, false)},
-        {"hostPlatform", nlohmann::json::parse(f.record.hostPlatform, nullptr, false)}}}});
+        {"hostPlatform", nlohmann::json::parse(f.record.hostPlatform, nullptr, false)},
+        {"target", nlohmann::json::parse(f.record.target, nullptr, false)}}}});
     return f;
 }
 void fast_path_end(FastRecord& f, bool ok) {

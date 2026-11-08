@@ -70,112 +70,14 @@ UTest normalizes_bare_linux_to_gnu_env{"Triple/NormalizesBareLinuxToGnuEnv", [] 
     expect(eq(parse("x86_64-linux")->str(), "x86_64-linux-gnu"));
 }};
 
-// ── resolve_request: the REQUEST is completed from the vocabulary ────────────
-//
-// `parse` fills lexically so the IDENTITY stays total and host-independent (the
-// test just above pins that). `resolve_request` answers the other half — which
-// row a request that named no C library should resolve to — and it is the one
-// that consults `kKnownTargets`.
-
-UTest a_supported_lexical_default_is_kept{"TripleRequest/ASupportedLexicalDefaultIsKept", [] {
-    // x86_64-linux-gnu is `verified`, so nothing moves. This is the control for
-    // the case below: a fix that sent every bare `-linux` to musl would pass the
-    // aarch64 test and break every project on the planet.
-    auto r = triple::resolve_request(*parse("x86_64-linux"));
-    expect(eq(r.triple.str(), "x86_64-linux-gnu"));
-    expect(!r.completedFromVocabulary);
-    expect(!r.ambiguous);
-}};
-
-UTest native_arm64_uses_the_supported_gnu_row{"TripleRequest/NativeArm64UsesTheSupportedGnuRow", [] {
-    // The supported GNU lexical default outranks the musl sibling.
-    auto r = triple::resolve_request(*parse("aarch64-linux"));
-    expect(eq(r.triple.str(), "aarch64-linux-gnu"));
-    expect(!r.completedFromVocabulary);
-    // mcpp CHOOSING A ROW IS NOT THE PROJECT NAMING A C LIBRARY. `envExplicit`
-    // feeds the request/fact comparison and the report's display name; setting
-    // it here would make mcpp compare its own answer against itself.
-    expect(!r.triple.envExplicit);
-}};
-
-UTest a_bare_linux_triple_is_never_completed_to_android{"TripleRequest/ABareLinuxTripleIsNeverCompletedToAndroid", [] {
-    // `aarch64-linux` asks for a C LIBRARY to be filled in. `android` shares
-    // the `arch-os` prefix because its kernel is Linux -- the modelling
-    // decision that makes every Linux-shaped answer in the tree right about it
-    // -- and it is not an alternative C library for the same platform.
-    //
-    // This became reachable when the Android rows stopped being `planned`:
-    // `aarch64-linux` then had two supported siblings and resolved as
-    // ambiguous, where it had completed to `aarch64-linux-musl` before. Both
-    // outcomes of that ambiguity are wrong -- refusing a request with an
-    // obvious answer, or answering it with bionic.
-    auto r = triple::resolve_request(*parse("aarch64-linux"));
-    expect(eq(r.triple.str(), "aarch64-linux-gnu"));
-    expect(!r.completedFromVocabulary);
-    expect(!r.ambiguous);
-    // Not offered as a suggestion either: `siblings` is what the diagnostic
-    // prints, and naming it there would suggest building for another platform.
-    for (auto& s : r.siblings)
-        expect(eq(s.find("android"), std::string::npos)) << s;
-
-    // x86_64 has the same shape and a different supported set, so it exercises
-    // the exclusion independently rather than re-testing one row.
-    auto x = triple::resolve_request(*parse("x86_64-linux"));
-    for (auto& s : x.siblings)
-        expect(eq(s.find("android"), std::string::npos)) << s;
-
-    // AND THE WRITTEN SPELLING IS STILL HONOURED. The exclusion is about
-    // filling a gap, not about refusing a request -- an explicit env returns
-    // before the candidate loop runs.
-    auto explicitAndroid = triple::resolve_request(*parse("aarch64-linux-android"));
-    expect(eq(explicitAndroid.triple.str(), "aarch64-linux-android"));
-    expect(!explicitAndroid.completedFromVocabulary);
-}};
-
-UTest a_written_segment_is_a_request_and_is_not_revised{"TripleRequest/AWrittenSegmentIsARequestAndIsNotRevised", [] {
-    // An explicit environment segment is preserved independently of tier.
-    auto r = triple::resolve_request(*parse("aarch64-linux-gnu"));
-    expect(eq(r.triple.str(), "aarch64-linux-gnu"));
-    expect(!r.completedFromVocabulary);
-}};
-
-UTest a_family_with_no_supported_row_keeps_the_lexical_fill_and_reports_its_rows{"TripleRequest/AFamilyWithNoSupportedRowKeepsTheLexicalFillAndReportsItsRows", [] {
-    // riscv64-linux-musl is `planned` and riscv64-linux-gnu does not exist at
-    // all, so the fill named a row outside the vocabulary and the refusal came
-    // out as `unknown target 'riscv64-linux'` — false, the family is registered.
-    auto r = triple::resolve_request(*parse("riscv64-linux"));
-    expect(eq(r.triple.str(), "riscv64-linux-gnu"));
-    expect(!r.completedFromVocabulary);
-    expect(fatal(eq(r.siblings.size(), 1u)));
-    expect(eq(r.siblings[0], "riscv64-linux-musl"));
-    expect(r.supported.empty());
-}};
-
-UTest macos_carries_no_env_and_is_left_alone{"TripleRequest/MacosCarriesNoEnvAndIsLeftAlone", [] {
-    expect(eq(triple::resolve_request(*parse("aarch64-macos")).triple.str(), "aarch64-macos"));
-    // x86_64-macos is `planned`; the musl identity beside it is the one supported row.
-    auto r = triple::resolve_request(*parse("x86_64-macos"));
-    expect(eq(r.triple.str(), "x86_64-macos-musl"));
-    expect(eq(r.supported.size(), 1u));
-}};
-
-UTest windows_and_bare_metal_defaults_are_supported_rows{"TripleRequest/WindowsAndBareMetalDefaultsAreSupportedRows", [] {
-    // Both lexical fills (`gnu` on Windows, `elf` freestanding) name supported
-    // rows, so completion is a no-op — recorded so that a future row change
-    // which breaks that shows up here rather than in a user's build.
-    expect(eq(triple::resolve_request(*parse("x86_64-windows")).triple.str(), "x86_64-windows-gnu"));
-    expect(eq(triple::resolve_request(*parse("riscv64-none")).triple.str(), "riscv64-none-elf"));
-}};
-
-UTest every_supported_row_is_reachable_from_its_own_spelling{"TripleRequest/EverySupportedRowIsReachableFromItsOwnSpelling", [] {
-    // The completion must never turn a written, supported triple into a
-    // different one. Checked across the whole vocabulary rather than by example,
-    // because the failure mode is one row nobody thought to test.
+UTest every_supported_row_is_its_own_spelling{"Triple/EverySupportedRowIsItsOwnSpelling", [] {
+    // A written, supported triple parses to itself: checked across the whole
+    // vocabulary, because the failure mode is one row nobody thought to test.
     for (auto const& row : triple::known_targets()) {
         if (row.tier == "planned") continue;
         auto t = parse(row.canonical);
         expect(fatal(t.has_value())) << row.canonical;
-        expect(eq(triple::resolve_request(*t).triple.str(), std::string(row.canonical)));
+        expect(eq(t->str(), std::string(row.canonical)));
     }
 }};
 

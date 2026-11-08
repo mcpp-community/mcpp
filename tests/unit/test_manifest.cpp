@@ -486,7 +486,7 @@ package = {
             ["1.0.0"] = { url = "u3", sha256 = "z" },
         },
         macosx = {
-            ["0.1.0"] = { url = "u1m", sha256 = "x" },
+            ["0.1.0"] = { url = "u1m", sha256 = "xm" },
         },
     },
 }
@@ -501,8 +501,35 @@ package = {
     expect(fatal(eq(mac.size(), 1u)));
     expect(eq(mac[0], "0.1.0"));
 
+    // No block of its own, and no artifact the same in every block: nothing.
     auto win = mcpp::manifest::list_xpkg_versions(src, mcpp::toolchain::platform::TargetPlatform::for_lint_of("windows"));
     expect(win.empty());
+}};
+
+// THE ARTIFACT THAT IS ONE FOR EVERY TARGET (mcpp#911 G6): a target whose block
+// the descriptor lacks takes the versions whose artifact is the same in every
+// block it has -- a source archive -- and not those built per system.
+UTest an_artifact_the_same_in_every_block_serves_every_target{"ListXpkgVersions/AnArtifactTheSameInEveryBlockServesEveryTarget", [] {
+    constexpr auto src = R"(
+package = {
+    name = "foo",
+    xpm = {
+        linux = {
+            ["1.0.0"] = { url = "src.tar.gz", sha256 = "s" },
+            ["1.1.0"] = { url = "linux.tar.gz", sha256 = "l" },
+        },
+        macosx = {
+            ["1.0.0"] = { url = "src.tar.gz", sha256 = "s" },
+            ["1.1.0"] = { url = "macos.tar.gz", sha256 = "m" },
+        },
+    },
+}
+)";
+    auto any = mcpp::manifest::list_xpkg_versions(src, mcpp::toolchain::platform::TargetPlatform::with_keys({"toyos"}));
+    expect(fatal(eq(any.size(), 1u)));
+    expect(eq(any[0], "1.0.0"));
+    auto linux = mcpp::manifest::list_xpkg_versions(src, mcpp::toolchain::platform::TargetPlatform::for_lint_of("linux"));
+    expect(eq(linux.size(), 2u));
 }};
 
 UTest missing_xpm_returns_empty{"ListXpkgVersions/MissingXpmReturnsEmpty", [] {

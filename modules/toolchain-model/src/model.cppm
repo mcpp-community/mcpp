@@ -4,6 +4,7 @@ export module mcpp.toolchain.model;
 
 import std;
 import mcpp.toolchain.triple;
+export import mcpp.toolchain.target_schema;
 export import mcpp.toolchain.base;
 import mcpp.toolchain.platform;
 
@@ -123,6 +124,10 @@ struct Toolchain {
     // true`, gives a bare-metal row a C library with `main`; `-ffreestanding` is
     // then not added and `main` is not treated as freestanding.
     bool                                hostedC = false;
+    // THE ROW'S DEFAULTS THE PLATFORM AND THE PROJECT REPLACE (mcpp#911 G2;
+    // SPEC-016 §5.2): `[platform.replace]` and `[target.<selector>.replace]`,
+    // merged in their order. Read by every producer of the row's words.
+    std::vector<mcpp::toolchain::target::Replacement> rowReplace;
 
     // DOES THE TARGET'S C LIBRARY COME FROM A DIRECTORY THAT EXISTED
     // BEFORE DEPENDENCY RESOLUTION? — `TargetSide::cAbi.prebuilt()`, recorded

@@ -124,6 +124,18 @@ struct Runner {
     bool                     set = false;
 };
 
+// A word of the row's defaults and the words that stand in its place
+// (`[platform.replace]`, `[target.<selector>.replace]`; SPEC-016 §5.2). The
+// row's defaults are its machine description -- `-march=`, `-mabi=`,
+// `-mcmodel=`, its `flags` and `-m <emulation>` -- and only they are
+// replaced; a convention of the engine is only added to. `with` empty: the
+// word is removed.
+struct Replacement {
+    std::string              word;
+    std::vector<std::string> with;
+    Origin                   origin;
+};
+
 // The four flag lists of `[platform.build]` and of each of its
 // `[platform.build.'cfg(...)']` tables.
 struct Flags {
@@ -288,6 +300,8 @@ struct Statement {
     std::vector<CfgFlags>         buildCfg;
     // [platform.link]
     Link                          link;
+    // [platform.replace]: the row's defaults this statement replaces
+    std::vector<Replacement>      replace;
     // [platform.versions]
     std::map<std::string, std::string> versions;
     Origin                        versionsOrigin;
@@ -309,7 +323,8 @@ struct Statement {
             && tools.empty() && build.empty() && buildCfg.empty()
             && !link.driver.set && !link.flags.set && !link.start.set && !link.script.set
             && !link.inputsSet && !link.exe.set && !link.shared.set && !link.sealSet
-            && versions.empty() && !hosted.set && defines.empty() && providers.empty();
+            && versions.empty() && !hosted.set && defines.empty() && providers.empty()
+            && replace.empty();
     }
 };
 
@@ -344,7 +359,7 @@ constexpr bool is_layer(std::string_view k) {
 inline constexpr std::string_view kPlatformKeys[] = {
     "targets", "toolchain", "sysroot", "runner", "runners", "carrier", "plugin",
     "universal", "descriptor_keys", "layers", "tools", "build", "link", "versions", "hosted",
-    "define", "provider", "priority",
+    "define", "provider", "priority", "replace",
 };
 inline constexpr std::string_view kDefineKeys[] = {
     "triple", "tier", "note", "standard", "exact", "clang-triple", "object-format", "family",
@@ -365,7 +380,7 @@ inline constexpr std::string_view kHostedKeys[] = { "targets", "toolchain", "lay
 // override a platform. `runner`, `runners`, `toolchain` and `sysroot` are the
 // table's existing keys and keep their parsers.
 inline constexpr std::string_view kOverrideKeys[] = {
-    "platform", "priority", "layers", "tools", "carrier", "link",
+    "platform", "priority", "layers", "tools", "carrier", "link", "replace",
 };
 
 // The carrier entry of `s` that serves `pair` (`<os>-<arch>`): the first whose

@@ -2456,10 +2456,11 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         if (auto spec = mcpp::freestanding::resolve(
                 *mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))) {
             const auto prefix = mcpp::freestanding::compile_prefix(
-                *spec, plan.toolchain.targetCxxRuntime, plan.toolchain.hostedC);
+                *spec, plan.toolchain.targetCxxRuntime, plan.toolchain.hostedC,
+                plan.toolchain.rowReplace);
             f.cxx += prefix;
             f.cc  += prefix;
-            f.as  += mcpp::freestanding::assemble_prefix(*spec);
+            f.as  += mcpp::freestanding::assemble_prefix(*spec, plan.toolchain.rowReplace);
 
             // ── The target's C library, from the TARGET, not from a package ──
             //
@@ -2521,10 +2522,11 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
                 && plan.platform.fields.link.driver.value == "compiler";
             if (!spec->lldEmulation.empty() && !platformCompilerDriver) {
                 f.ldDriver = in.lld;
-                fsLd = mcpp::freestanding::link_flags_direct(*spec, in, ninjaEsc);
+                fsLd = mcpp::freestanding::link_flags_direct(*spec, in, ninjaEsc,
+                                                             plan.toolchain.rowReplace);
             } else {
                 fsLd = isClangWithCfg ? " --no-default-config" : "";
-                fsLd += mcpp::freestanding::link_flags(*spec, in, ninjaEsc);
+                fsLd += mcpp::freestanding::link_flags(*spec, in, ninjaEsc, plan.toolchain.rowReplace);
             }
             f.ld  = fsLd + user_ldflags;
             f.ldC = f.ld;

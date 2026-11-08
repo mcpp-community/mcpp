@@ -16,6 +16,7 @@ import mcpp.build.refusal;
 import mcpp.targetside;
 import mcpp.wire;
 import mcpp.build.plan;
+import mcpp.build.flag_origins;
 import mcpp.build.runtime_validation;
 import mcpp.config;
 import mcpp.fallback.probe_sysroot;
@@ -1173,6 +1174,8 @@ int print_stored_runtime_resolution() {
 //
 // It builds nothing. `prepare_build` stops before any compile, which is also
 // why the target matrix can afford to ask it for every cell.
+nlohmann::json target_selection_json(const mcpp::build::BuildContext& ctx);
+
 export int why_toolchain_json(std::string_view target, std::string_view tcSpec) {
     mcpp::build::BuildOverrides ov;
     ov.target_triple = std::string(target);
@@ -1281,6 +1284,7 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
             {"replaced",   ctx->compilerChoice.replaced},
         }},
     };
+    data["target"] = target_selection_json(*ctx);
     data["triple"] = {
         {"requested", std::string(target)},
         {"toolchain", tc.targetTriple},
@@ -1508,6 +1512,49 @@ nlohmann::json compat_uses_json() {
     return uses;
 }
 
+// The selection of a request (SPEC-016 §4) as the machine output states it.
+nlohmann::json target_selection_json(const mcpp::build::BuildContext& ctx) {
+    auto const& s = ctx.targetSelection;
+    auto candidates = nlohmann::json::array();
+    for (auto const& c : s.candidates)
+        candidates.push_back({ {"identity", c.identity}, {"provider", c.provider},
+                               {"priority", c.priority}, {"available", c.available}, {"why", c.why} });
+    return { {"request", s.request}, {"identity", s.identity}, {"provider", s.provider},
+             {"priority", s.priority}, {"fallback", s.fallback}, {"why", s.why},
+             {"candidates", candidates} };
+}
+
+// `mcpp why target|flags --format json`.
+export int why_target_or_flags_json(std::string_view topic, std::string_view target,
+                                    std::string_view unit, const std::string& features) {
+    const bool wasQuiet = mcpp::ui::is_quiet();
+    mcpp::ui::set_quiet(true);
+    struct QuietGuard {
+        bool prev;
+        ~QuietGuard() { mcpp::ui::set_quiet(prev); }
+    } quietGuard{wasQuiet};
+    mcpp::build::BuildOverrides ov;
+    ov.features = features;
+    ov.target_triple = std::string(target);
+    auto ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false,
+                                          /*includeDevDeps=*/false, {}, ov);
+    nlohmann::json data;
+    std::vector<mcpp::wire::Diagnostic> diags;
+    data["status"] = ctx ? "ok" : "refused";
+    if (!ctx)
+        diags.push_back({.code = "prepare.failed", .severity = mcpp::wire::Severity::Error,
+                         .message = ctx.error()});
+    else if (topic == "target") data["target"] = target_selection_json(*ctx);
+    else data["flags"] = mcpp::build::flag_origins_json(mcpp::build::flag_origins(ctx->plan, unit));
+    mcpp::wire::emit({
+        .kind        = topic == "target" ? "mcpp.why.target" : "mcpp.why.flags",
+        .effects     = { mcpp::wire::Effect::ReadProject },
+        .data        = data,
+        .diagnostics = diags,
+    });
+    return ctx ? 0 : 2;
+}
+
 export int why_build_programs_or_compat_json(std::string_view topic, const std::string& features) {
     const bool wasQuiet = mcpp::ui::is_quiet();
     mcpp::ui::set_quiet(true);
@@ -1537,16 +1584,16 @@ export int why_build_programs_or_compat_json(std::string_view topic, const std::
 }
 
 export int why_report(const std::string& topic, const std::string& features,
-                      const std::string& subject = {}) {
+                      const std::string& subject = {}, const std::string& target = {}) {
     const bool all = topic.empty() || topic == "all";
     static constexpr std::string_view kTopics[] = {
-        "all", "toolchain", "sysroot", "runtime", "deps", "runners", "sources", "tool", "payload",
-        "build-programs", "compat",
+        "all", "target", "toolchain", "sysroot", "runtime", "deps", "runners", "sources", "tool",
+        "payload", "build-programs", "compat", "flags",
     };
     if (!topic.empty() && std::ranges::find(kTopics, std::string_view(topic)) == std::end(kTopics)) {
         std::println(libc::stderr(), "error: '{}' is not a topic of `mcpp why`; the topics are "
-                     "toolchain, sysroot, runtime, deps, runners, sources, tool <name>, "
-                     "payload <ns:name>, build-programs and compat", topic);
+                     "target, toolchain, sysroot, runtime, deps, runners, sources, tool <name>, "
+                     "payload <ns:name>, build-programs, compat and flags [<unit>]", topic);
         return 2;
     }
 
@@ -1560,10 +1607,51 @@ export int why_report(const std::string& topic, const std::string& features,
     // visible only in the `resolution.json` of that build.
     mcpp::build::BuildOverrides ov;
     ov.features = features;
+    ov.target_triple = target;
     auto ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false,
                                           /*includeDevDeps=*/false, {}, ov);
     if (!ctx) { std::println(libc::stderr(), "error: {}", ctx.error()); return 2; }
     auto& tc   = ctx->tc;
+
+    // THE SELECTION (SPEC-016 §4): the request, the identity and provider it
+    // was given, and every candidate in the order the rule took them.
+    if (all || topic == "target") {
+        auto const& s = ctx->targetSelection;
+        if (s.request.empty()) {
+            std::println("target: {}  (the host's own build; no request to select for)", s.identity);
+        } else {
+            std::println("target: {} → {}", s.request, s.identity);
+            std::println("  provider: {}{}", s.provider.empty() ? std::string("(the platform's)") : s.provider,
+                         s.provider.empty() ? std::string{} : std::format("  (priority {})", s.priority));
+            if (s.fallback) std::println("  fallback: {}", s.why);
+            if (!s.candidates.empty()) std::println("  candidates, in order:");
+            for (auto const& c : s.candidates) {
+                const bool taken = c.identity == s.identity && c.provider == s.provider;
+                std::println("    {:<26} {:<14} {:>4}  {}", c.identity,
+                             c.provider.empty() ? std::string("(platform)") : c.provider, c.priority,
+                             taken ? std::string("taken")
+                                   : c.available ? std::string("available") : "not available: " + c.why);
+            }
+        }
+    }
+    // EVERY WORD OF A UNIT'S COMMAND LINE AND WHO GAVE IT (mcpp#911 G2).
+    if (topic == "flags") {
+        const auto o = mcpp::build::flag_origins(ctx->plan, subject);
+        if (o.units.empty())
+            std::println("flags: no unit {}", subject.empty() ? std::string("of the root package")
+                                                          : std::format("ends with '{}'", subject));
+        for (auto const& u : o.units) {
+            std::println("flags of {} (package {}, for {}):", u.file, u.package, o.identity);
+            for (auto const& w : u.words)
+                std::println("  {:<9} {}{}", w.layer, w.word,
+                             w.detail.empty() ? std::string{} : std::format("   [{}]", w.detail));
+        }
+        std::println("link flags (for {}):", o.identity);
+        for (auto const& w : o.link)
+            std::println("  {:<9} {}{}", w.layer, w.word,
+                         w.detail.empty() ? std::string{} : std::format("   [{}]", w.detail));
+        return 0;
+    }
 
     if (all || topic == "toolchain") {
         const auto prof = mcpp::toolchain::abi_profile(tc);

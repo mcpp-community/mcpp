@@ -523,7 +523,9 @@ UTest a_carrier_without_hosts_serves_every_pair_and_none_serves_nothing{"Platfor
     expect(eq(mp::carrier_for(none, "linux-x86_64"), nullptr));
 }};
 
-UTest host_pairs_and_descriptor_keys_are_a_closed_vocabulary{"PlatformManifest/HostPairsAndDescriptorKeysAreAClosedVocabulary", [] {
+// Host pairs are this mcpp's; a descriptor key is any word, since a platform's
+// rows may read blocks of their own (SPEC-016 §7).
+UTest host_pairs_are_closed_and_descriptor_keys_are_words{"PlatformManifest/HostPairsAreClosedAndDescriptorKeysAreWords", [] {
     const auto base = std::string(R"(
 [package]
 name = "p"
@@ -533,7 +535,8 @@ targets = ["x86_64-openkal"]
 )");
     expect(ne(parse_error(base + R"(runner = { cmd = ["okrun"], hosts = ["linux"] })" "\n"), ""));
     expect(ne(parse_error(base + R"(runner = { cmd = ["okrun"], hosts = ["freebsd-x86_64"] })" "\n"), ""));
-    expect(ne(parse_error(base + R"(descriptor_keys = ["macos"])" "\n").find("macosx"), std::string::npos));
+    expect(ne(parse_error(base + R"(descriptor_keys = ["mac os"])" "\n").find("macosx"), std::string::npos));
+    expect(eq(parse_error(base + R"(descriptor_keys = ["freebsd", "linux"])" "\n"), ""));
     expect(ne(parse_error(base + R"(descriptor_keys = [])" "\n"), ""));
     expect(eq(parse_error(base + R"(descriptor_keys = ["openkal", "linux"])" "\n"), ""));
 }};
@@ -573,4 +576,38 @@ UTest a_newer_release_is_named_only_for_the_default{"PlatformDefault/ANewerRelea
     }
     expect(!mcpp::platform::newer_release_tip(builtIn, "openkal-platform", "0.24.3", "0.24.3", "x"));
     expect(!mcpp::platform::newer_release_tip(builtIn, "openkal-platform", "0.24.3", "", "x"));
+}};
+
+// THE ROW'S DEFAULTS ARE REPLACED BY NAME (SPEC-016 §5.2): `[platform.replace]`
+// and `[target.<selector>.replace]` read a word, a list or nothing, and a later
+// statement's replacement of the same word stands.
+UTest a_replacement_names_a_row_word{"PlatformManifest/AReplacementNamesARowWord", [] {
+    auto m = parse(R"(
+[package]
+name = "p"
+version = "1.0.0"
+
+[platform]
+targets = ["x86_64-none-elf"]
+[platform.replace]
+"-mcmodel=small" = []
+"-march=x86-64"  = "-march=i686"
+
+[target.x86_64-none-elf.replace]
+"-march=x86-64"  = ["-march=pentium4", "-mtune=generic"]
+)");
+    for (auto const& w : m.schemaWarnings) expect(false) << "unexpected warning: " << w;
+    auto const& r = m.platform.replace;
+    expect(fatal(eq(r.size(), 2u)));
+    auto removed = std::ranges::find(r, std::string("-mcmodel=small"), &mp::Replacement::word);
+    expect(fatal(removed != r.end()));
+    expect(removed->with.empty());
+    expect(fatal(eq(m.platformOverrides.size(), 1u)));
+    auto merged = m.platform;
+    pf::merge(merged, m.platformOverrides[0].fields);
+    auto march = std::ranges::find(merged.replace, std::string("-march=x86-64"), &mp::Replacement::word);
+    expect(fatal(march != merged.replace.end()));
+    expect(eq(march->with, (std::vector<std::string>{"-march=pentium4", "-mtune=generic"})));
+    expect(eq(march->origin.tier, mp::Tier::Manifest));
+    expect(eq(merged.replace.size(), 2u));
 }};

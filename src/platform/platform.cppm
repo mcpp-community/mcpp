@@ -86,7 +86,7 @@ std::expected<Selection, std::string> select_host(std::string_view flagOrEnv, bo
 // concatenate (the platform's first, so a convention cannot be removed, only
 // added to), and `link.inputs` and `link.seal` are replaced whole (they are
 // one sequence each). Maps (`layers`, `tools`, `runners`, `versions`) are
-// merged key by key.
+// merged key by key, and so are the replacements of a row's words (`replace`).
 void merge(mcpp::manifest::platform::Statement& base, const mcpp::manifest::platform::Statement& over);
 
 // The part of a platform that applies when a host triple selects it: its
@@ -396,6 +396,11 @@ void merge(mp::Statement& b, const mp::Statement& o) {
         b.link.seal = o.link.seal;
         b.link.sealOrigin = o.link.sealOrigin;
         b.link.sealSet = true;
+    }
+    // A replacement of a row's word, by word: the later statement's stands.
+    for (auto const& r : o.replace) {
+        std::erase_if(b.replace, [&](const mp::Replacement& e) { return e.word == r.word; });
+        b.replace.push_back(r);
     }
     for (auto const& [k, v] : o.versions) b.versions[k] = v;
     if (!o.versions.empty()) b.versionsOrigin = o.versionsOrigin;

@@ -239,3 +239,36 @@ UTest targets_round_trip{"PmLockIo/TargetsRoundTrip", [] {
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
 }};
+
+// THE IDENTITY A REQUEST WAS GIVEN IS RECORDED (SPEC-016 §4.5): written as
+// `[target."<request>"]` and read back as it was written.
+UTest a_requests_identity_round_trips{"PmLockIo/ARequestsIdentityRoundTrips", [] {
+    mcpp::pm::Lockfile lock;
+    lock.targets.push_back({ "x86_64-windows", "x86_64-windows-musl", "openkal" });
+    lock.targets.push_back({ "x86_64-linux", "x86_64-linux-gnu", "glibc" });
+    mcpp::pm::LockedPackage p;
+    p.name = "mcpplibs.cmdline";
+    p.namespace_ = "mcpplibs";
+    p.version = "0.0.1";
+    p.source = "index+mcpplibs@0.0.1";
+    p.hash = "fnv1a:0";
+    lock.packages.push_back(p);
+    const auto text = mcpp::pm::serialize(lock);
+    expect(ne(text.find("[target.\"x86_64-windows\"]\nidentity = \"x86_64-windows-musl\"\nprovider = \"openkal\""),
+              std::string::npos)) << text;
+    const auto dir = std::filesystem::temp_directory_path()
+                   / std::format("mcpp-lock-target-{}", std::random_device{}());
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream(dir / "mcpp.lock", std::ios::binary) << text;
+    }
+    auto back = mcpp::pm::load(dir / "mcpp.lock");
+    std::filesystem::remove_all(dir);
+    expect(fatal(back.has_value()));
+    expect(fatal(eq(back->targets.size(), 2u)));
+    auto w = std::ranges::find(back->targets, std::string("x86_64-windows"), &mcpp::pm::LockedTarget::request);
+    expect(fatal(w != back->targets.end()));
+    expect(eq(w->identity, "x86_64-windows-musl"));
+    expect(eq(w->provider, "openkal"));
+    expect(eq(back->packages.size(), 1u));
+}};

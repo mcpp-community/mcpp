@@ -2,6 +2,8 @@
 import std;
 import mcpplibs.mtest;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_select;
 import mcpp.toolchain.platform;
 import mcpp.freestanding.target;
 import mcpp.freestanding.linkline;
@@ -95,14 +97,22 @@ std::string render() {
         o += std::format("request {}\n", r);
         auto t = tr::parse(r);
         if (!t) { o += "  unparseable\n"; continue; }
-        auto res = tr::resolve_request(*t);
-        std::vector<std::string> sib(res.siblings.begin(), res.siblings.end());
-        std::vector<std::string> sup(res.supported.begin(), res.supported.end());
         o += std::format("  parsed {} envExplicit={}\n", t->str(), yes(t->envExplicit));
-        o += std::format("  resolved {} completed={} ambiguous={}\n", res.triple.str(),
-                         yes(res.completedFromVocabulary), yes(res.ambiguous));
-        o += std::format("  siblings {}\n  supported {}\n", join(sib), join(sup));
-        o += std::format("  known {}\n", yes(tr::is_known_target(res.triple)));
+        // The selection (SPEC-016 §4) on three hosts, none with MSVC.
+        for (auto host : { "linux-x86_64", "macos-aarch64", "windows-x86_64" }) {
+            mcpp::toolchain::target::Context ctx;
+            ctx.host = host;
+            auto sel = mcpp::toolchain::target::select(r, t->arch, t->os, t->env, t->envExplicit, ctx);
+            std::vector<std::string> cand;
+            for (auto const& c : sel.candidates)
+                cand.push_back(std::format("{}/{}/{}{}", c.row->triple,
+                                           c.provider ? c.provider->name : std::string_view("-"),
+                                           c.priority, c.available ? "" : "/x"));
+            o += std::format("  on {} -> {} {} fallback={} | {}\n", host,
+                             sel.row ? sel.identity() : std::string("-"),
+                             sel.provider ? sel.provider->name : std::string_view("-"),
+                             yes(sel.fallback), join(cand));
+        }
     }
     static constexpr std::string_view kTypos[] = {
         "x86_64-linux-mus", "x86-64-linux-gnu", "aarch64-macso", "riscv64-none-eld", "thumbv7m-none",

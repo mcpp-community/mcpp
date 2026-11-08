@@ -4229,6 +4229,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                         "[target.{}].priority must be a table, e.g. [target.{}.priority] mingw = 200", triple, triple)));
                 platformKeys = true;
             }
+            // The row's defaults this selector replaces (SPEC-016 §5.2).
+            if (auto it = body.find("replace"); it != body.end()) {
+                if (!it->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].replace must be a table, e.g. [target.{}.replace] \"-mcmodel=small\" = []", triple, triple)));
+                platformKeys = true;
+            }
             if (platformKeys || body.contains("runner") || body.contains("runners")) {
                 mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
                                                     &m.schemaWarnings};
@@ -4281,7 +4288,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             static constexpr std::string_view kKnownTargetTables[] = {
                 "abi", "build", "build-dependencies", "carrier", "dependencies",
                 "dev-dependencies", "feature-deps", "feature-requires-abi",
-                "feature-xlings", "layers", "link", "priority", "requires_abi", "runners", "runtime",
+                "feature-xlings", "layers", "link", "priority", "replace", "requires_abi", "runners", "runtime",
                 "targets", "tools", "xlings",
             };
             for (auto& [key, value] : body) {
@@ -4317,7 +4324,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     "[target.{}] has unsupported key '{}' (ignored). Supported keys: "
                     "cxx_runtime, linkage, min_api_level, platform, run_under, runner, sysroot, "
                     "toolchain, plus the [target.<triple>.runners] table for named runners and "
-                    "the platform's layers, tools, carrier and link tables. "
+                    "the platform's layers, tools, carrier, link, priority and replace tables. "
                     "Per-role contracts go in [build].cxx_runtime's table form.",
                     triple, key));
             }

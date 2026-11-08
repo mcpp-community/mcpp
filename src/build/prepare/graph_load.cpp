@@ -1057,6 +1057,7 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             mcpp::build::BuildProgramEnv hookEnv;
             fill_target_build_env(hookEnv, *state.m, state.tc ? &*state.tc : nullptr, state.cfg_opt ? &*state.cfg_opt : nullptr);
             hookEnv.targetTriple = state.overrides.target_triple;
+            hookEnv.targetProvider = state.targetChoice.provider;
             // Six names, fixed by install_hook_env; one guard each.
             const auto hookVars = mcpp::build::install_hook_env(hookEnv);
             mcpp::invocation::ScopedEnv hookVar0(hookVars.at(0).first, hookVars.at(0).second);

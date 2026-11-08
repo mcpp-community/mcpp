@@ -2188,6 +2188,20 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     ctx.runtimeBinding = state.targetRuntimeBinding ? *state.targetRuntimeBinding
                                                     : state.runtimeBindingSnapshot;
     ctx.runUnder = state.runUnder;
+    {
+        auto const& c = state.targetChoice;
+        auto& s = ctx.targetSelection;
+        s.request = c.request;
+        s.identity = c.identity.empty() ? state.tc->targetTriple : c.identity;
+        s.provider = c.provider;
+        s.priority = c.priority;
+        s.fallback = c.fallback;
+        s.why = c.why;
+        for (auto const& k : c.candidates)
+            s.candidates.push_back({ k.row ? std::string(k.row->triple) : std::string{},
+                                     k.provider ? std::string(k.provider->name) : std::string{},
+                                     k.why, k.priority, k.available });
+    }
     if (!state.runUnder.empty()) {
         auto const& o = state.runUnderOrigin;
         ctx.runUnderOrigin = o.originKind == "env" ? o.originKey

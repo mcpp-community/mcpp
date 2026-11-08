@@ -32,6 +32,7 @@ export module mcpp.freestanding.target;
 import std;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.builtin_targets;
+import mcpp.toolchain.target_schema;
 
 export namespace mcpp::freestanding {
 
@@ -133,9 +134,10 @@ inline std::optional<Spec> resolve(std::string_view triple) {
 // case and named it as the point at which the exception/RTTI pair stops being
 // unconditional; the caller answers it from the capability the graph declares,
 // so the answer is the graph's rather than a guess about the target.
-inline std::vector<std::string> compile_flags(const Spec& s,
-                                              bool targetCxxRuntime = false,
-                                              bool hostedC = false) {
+// THE ROW'S OWN WORDS: its machine description, which a platform or a project
+// may replace (SPEC-016 §5.2); everything `compile_flags` adds after them is the
+// engine's convention.
+inline std::vector<std::string> row_words(const Spec& s) {
     std::vector<std::string> out;
     out.emplace_back(std::string("-march=") + std::string(s.march));
     if (!s.mabi.empty())
@@ -146,6 +148,20 @@ inline std::vector<std::string> compile_flags(const Spec& s,
     // `-ffreestanding` so the ordering of this function's output stays a
     // function of the table rather than of the row.
     for (auto flag : s.extra) out.emplace_back(flag);
+    return out;
+}
+
+// The row's own words of a link by ld.lld itself: the emulation, one word.
+inline std::vector<std::string> row_link_words(const Spec& s) {
+    if (s.lldEmulation.empty()) return {};
+    return { "-m " + std::string(s.lldEmulation) };
+}
+
+inline std::vector<std::string> compile_flags(const Spec& s,
+                                              bool targetCxxRuntime = false,
+                                              bool hostedC = false,
+                                              std::span<const mcpp::toolchain::target::Replacement> replace = {}) {
+    std::vector<std::string> out = mcpp::toolchain::target::replaced(row_words(s), replace);
     // ONE SECTION PER FUNCTION, SO THE LINKER CAN DROP WHAT NOTHING CALLS.
     //
     // These two flags do nothing on their own; they are the half of
