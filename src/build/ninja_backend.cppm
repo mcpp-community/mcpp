@@ -1537,6 +1537,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // A unit's own flags: its package's, then its package's `trim_paths` map
     // (mcpp#844), so that nothing outside the package's closure reaches it.
     auto unit_trim = [&](const CompileUnit& cu) -> std::string_view {
+        if (cu.testUnit) return {};   // a test's own file keeps its paths
         auto it = flags.trimByPackage.find(cu.packageName);
         return it == flags.trimByPackage.end() ? std::string_view{} : std::string_view(it->second);
     };

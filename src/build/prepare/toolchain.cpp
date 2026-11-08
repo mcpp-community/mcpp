@@ -271,14 +271,17 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         // a developer debugs. A custom profile states what it wants.
         const bool shipping = pname == "release" || pname == "dist";
         state.m->buildConfig.ndebug    = pr.ndebugDeclared ? pr.ndebug : shipping;
-        // NOT FOR THE TEST SURFACE. A test binary runs where it was built,
-        // is never shipped, and commonly finds its fixtures through
-        // `__FILE__` -- measured on mcpp's own unit tests under its release
-        // default, which then looked for `workspace@0.0.0/src`. What
-        // `mcpp test` (and the configure pass that mirrors it) builds keeps
-        // its paths; what build, run and pack produce is trimmed.
-        state.m->buildConfig.trimPaths = (pr.trimPathsDeclared ? pr.trimPaths : shipping)
-                                         && !state.includeDevDeps;
+        // THE SAME FOR THE TEST SURFACE, BUT FOR THE TESTS' OWN FILES. A test
+        // binary runs where it was built and commonly finds its fixtures
+        // through `__FILE__` -- measured on mcpp's own unit tests under its
+        // release default, which then looked for `workspace@0.0.0/src` -- so
+        // a test program's own files keep their paths (`CompileUnit::
+        // testUnit`). The code under test is trimmed as `mcpp build` trims
+        // it: it is the code that ships, and `mcpp build` and `mcpp test`
+        // are one configuration, so switching between them compiles nothing
+        // again (before 2026.11.8.1 a release test was a configuration of its
+        // own, and compiled the whole graph again).
+        state.m->buildConfig.trimPaths = pr.trimPathsDeclared ? pr.trimPaths : shipping;
         // `split_debuginfo` (design 2026-10-31 §4.1 (b)): unpacked for the
         // profiles a developer debugs. A debugger finds a unit's `.dwo` through
         // the build directory the skeleton names, which `trim_paths` replaces.

@@ -1680,9 +1680,11 @@ anything compiles.
   checkouts of one tree then embed identical paths. A unit's map holds the fixed roots
   and the roots of its own package's dependency closure, so a dependency's command line
   is the same whichever workspace members a build selects (2026.10.26.2+). It applies to
-  what `build`, `run`
-  and `pack` produce, not to `mcpp test`: a test binary runs where it was built and
-  commonly finds its fixtures through `__FILE__`. A build with debug information
+  what `build`, `run`, `pack` and `mcpp test` compile, but for a test program's own
+  files: a test binary runs where it was built and commonly finds its fixtures through
+  `__FILE__`, and the code under test is the code that ships, so `mcpp build` and
+  `mcpp test` are one configuration (2026.11.8.1+; before, a test of a shipping profile
+  was a configuration of its own and compiled the whole graph again). A build with debug information
   also writes `source-map.gdbinit` and `source-map.lldbinit` beside its outputs, which
   map the paths back for a debugger. cl.exe has no documented equivalent and the build
   says so once. Write `ndebug = false` or `trim_paths = false` under the profile to keep

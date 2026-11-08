@@ -68,6 +68,10 @@ struct CompileUnit {
     // provides nothing, and on a unit built by hand, which then takes the name.
     std::string                     bmiFile;
     std::vector<std::string>        imports;           // logical names imported
+    // A file of a test program (its `main` file, or another of its directory):
+    // the one kind of unit `trim_paths` leaves its paths, since a test finds
+    // its fixtures through `__FILE__` and runs where it was built.
+    bool                            testUnit = false;
     // The key of this unit's module map in `BuildPlan::moduleScopes`: the BMI
     // of every module the unit imports, directly or through another module,
     // and of the module it provides. Empty when every such BMI lies at its
@@ -3466,6 +3470,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             CompileUnit main_cu;
             main_cu.source = *lu.entryMain;
             main_cu.packageName = qualified_package_name(manifest);
+            main_cu.testUnit = lu.kind == LinkUnit::TestBinary;
             // Synthesized outside the scanner, so it has no SourceUnit to copy
             // from — classify it here with the ROOT package's table (an entry
             // main is resolved against projectRoot by definition).
@@ -3940,6 +3945,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                     main_cu.source      = entry;
                     main_cu.packageName = owner;
                     main_cu.kind        = mcpp::classify(entry, memberExtTable);
+                    main_cu.testUnit    = lu.kind == LinkUnit::TestBinary;
                     if (pkg.usageResolved) {
                         main_cu.localIncludeDirs      = pkg.privateBuild.includeDirs;
                         main_cu.localIncludeDirsAfter = pkg.privateBuild.includeDirsAfter;

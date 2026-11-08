@@ -14,6 +14,9 @@
 #      affects it; the manifest affects every test. `--since COMMIT` reads the change from git.
 #   D. Switching between `programs = "directory"` and the default builds without a stale product
 #      in the way.
+#   E. Under a shipping profile, `mcpp build` and `mcpp test` are one configuration: the test
+#      compiles none of the code under test again, which is trimmed as the build trims it, and a
+#      test program's own file keeps its path (`__FILE__` finds the test's directory).
 set -e
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -83,5 +86,31 @@ sed -i.bak '/^\[test\]/,$d' mcpp.toml
 grep -q 'unit/a \.\.\. ok' d.log && grep -q 'e2e/plain \.\.\. ok' d.log || fail "D: the programs per file" d.log
 printf '\n[test]\nprograms = "directory"\n' >> mcpp.toml
 "$MCPP" test > d2.log 2>&1 || fail "D: and back to the directories" d2.log
+
+# E
+cd "$TMP"
+"$MCPP" new rel > /dev/null 2>&1
+cd rel
+cat > src/where.cppm <<'CPP'
+export module rel.where;
+import std;
+export std::string library_file() { return std::source_location::current().file_name(); }
+CPP
+cat > tests/where.cpp <<'CPP'
+import std;
+import rel.where;
+int main() {
+    const std::string here = std::source_location::current().file_name();
+    std::println("test {}", here);
+    std::println("library {}", library_file());
+    return std::filesystem::exists(std::filesystem::path(here).parent_path() / "test_smoke.cpp") ? 0 : 1;
+}
+CPP
+"$MCPP" build --release > e.log 2>&1 || fail "E: the release build" e.log
+"$MCPP" test --profile release where > e-test.log 2>&1 || fail "E: the release test (its file did not find its directory)" e-test.log
+set -- target/*/*/build.ninja
+[ $# = 1 ] || fail "E: build and test are $# configurations" e-test.log
+grep -q "library rel@0.1.0/src/where.cppm" e-test.log || fail "E: the code under test is not trimmed as built" e-test.log
+[ "$(grep -cE 'obj/where\.m\.(o|obj)	' "$(dirname "$1")/.ninja_log")" = 1 ] || fail "E: the test compiled the library again" "$(dirname "$1")/.ninja_log"
 
 echo "PASS: 1038 test programs of a directory, and the tests a change affects"
