@@ -228,6 +228,40 @@ struct Hosted {
 };
 
 // Everything one source states about a platform, in the seven groups of §4.
+// A ROW A PLATFORM DEFINES (`[[platform.define]]`, SPEC-016 §2): an identity the
+// engine's table does not have, with the facts a build of it needs.
+struct RowSpec {
+    std::string triple;
+    std::string tier = "preview", note, clangTriple, objectFormat = "elf", family, dataModel,
+                exeSuffix, sharedSuffix, loader, execution;
+    std::string march, mabi, codeModel, multilib, linkEmulation;
+    std::vector<std::string> flags, descriptorKeys;
+    bool standard = true, exact = false;
+    Origin origin;
+};
+
+// A PROVIDER (`[[platform.provider]]`, SPEC-016 §3): the identities it serves and
+// the part of the platform's statement that applies to them. `[platform]` is the
+// provider of `targets`, and `[platform.hosted]` the hosted provider of its
+// `targets`; both remain their shorthands.
+struct ProviderSpec {
+    std::string name;
+    std::vector<std::string> serves, hosts{"*"}, pairs;
+    int priority = 100;
+    std::string toolchain, sysroot, linkage;
+    // `platform`: the platform's own statement applies, with this provider's in
+    // its place; `none`: only what the provider states, and the version group --
+    // the form `[platform.hosted]` is the shorthand of.
+    std::string base = "platform";
+    // The C environment (G3): hosted (a C library with `main`), or freestanding;
+    // unset: hosted where a C library is present.
+    std::optional<bool> hosted;
+    std::map<std::string, LayerEntry> layers;
+    Link link;
+    std::string execution;
+    Origin origin;
+};
+
 struct Statement {
     // [platform]
     Words                         targets;
@@ -260,13 +294,22 @@ struct Statement {
     // [platform.hosted]
     Hosted                        hosted;
 
+    // SPEC-016: the rows the platform defines, its providers, and the priority of
+    // the provider `[platform]` itself is.
+    // The C environment the provider that applies states (G3); unset: unstated.
+    std::optional<bool>           cHosted;
+    std::vector<RowSpec>          defines;
+    std::vector<ProviderSpec>     providers;
+    int                           priority = 100;
+    bool                          prioritySet = false;
+
     bool empty() const {
         return !targets.set && !toolchain.set && !sysroot.set && !runner.set
             && runners.empty() && carriers.empty() && !descriptorKeys.set && !plugin.set && !universal.set && layers.empty()
             && tools.empty() && build.empty() && buildCfg.empty()
             && !link.driver.set && !link.flags.set && !link.start.set && !link.script.set
             && !link.inputsSet && !link.exe.set && !link.shared.set && !link.sealSet
-            && versions.empty() && !hosted.set;
+            && versions.empty() && !hosted.set && defines.empty() && providers.empty();
     }
 };
 
@@ -301,6 +344,16 @@ constexpr bool is_layer(std::string_view k) {
 inline constexpr std::string_view kPlatformKeys[] = {
     "targets", "toolchain", "sysroot", "runner", "runners", "carrier", "plugin",
     "universal", "descriptor_keys", "layers", "tools", "build", "link", "versions", "hosted",
+    "define", "provider", "priority",
+};
+inline constexpr std::string_view kDefineKeys[] = {
+    "triple", "tier", "note", "standard", "exact", "clang-triple", "object-format", "family",
+    "data-model", "exe-suffix", "shared-suffix", "loader", "execution", "march", "mabi",
+    "code-model", "multilib", "flags", "link-emulation", "descriptor-keys",
+};
+inline constexpr std::string_view kProviderKeys[] = {
+    "name", "serves", "priority", "hosts", "pairs", "toolchain", "sysroot", "linkage", "base",
+    "hosted", "layers", "link", "execution",
 };
 inline constexpr std::string_view kBuildKeys[] = { "cflags", "cxxflags", "asmflags", "ldflags" };
 inline constexpr std::string_view kLinkKeys[] = {

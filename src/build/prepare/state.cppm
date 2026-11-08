@@ -356,6 +356,9 @@ struct PrepareState {
     std::string targetRowPin;
     std::string targetRowName;
     TargetChoice targetChoice;
+    // The request names a row no definition knows yet, assumed while the platform
+    // chosen for it is fetched (mcpp#911 G1).
+    bool provisionalTarget = false;
     // The row of the identity, with the facts of the provider that serves it
     // (its toolchain, C library, linkage, platform) in place of the default
     // provider's.
@@ -1234,6 +1237,13 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state);
 // The provider a configuration chose by name, from the explicit platform choices
 // (SPEC-013 §3.1 steps 1-4): `builtin:<name>`, or the provider a chosen platform
 // package implements; "none" for `--platform none`; empty when nothing chose.
+// Registers a platform package's rows and providers (SPEC-016 §2, §3).
+void define_platform(const mcpp::manifest::platform::Statement& s, std::string_view shortName,
+                     std::string_view ref);
+// Before the request is parsed: the definitions of a platform chosen for it whose
+// manifest is on this machine (a directory, or the second pass's root); and a
+// provisional row for a request only a chosen platform can define.
+void define_early_platform(PrepareState& state);
 std::string named_provider(const PrepareState& state, const mcpp::toolchain::triple::Triple& t,
                            std::span<const mcpp::manifest::platform::Override> config);
 

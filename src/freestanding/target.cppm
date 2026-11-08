@@ -134,7 +134,8 @@ inline std::optional<Spec> resolve(std::string_view triple) {
 // unconditional; the caller answers it from the capability the graph declares,
 // so the answer is the graph's rather than a guess about the target.
 inline std::vector<std::string> compile_flags(const Spec& s,
-                                              bool targetCxxRuntime = false) {
+                                              bool targetCxxRuntime = false,
+                                              bool hostedC = false) {
     std::vector<std::string> out;
     out.emplace_back(std::string("-march=") + std::string(s.march));
     if (!s.mabi.empty())
@@ -188,7 +189,7 @@ inline std::vector<std::string> compile_flags(const Spec& s,
     // The alternative was to make every such program write `extern "C" int
     // main()`, which is a workaround for a claim the build was making on the
     // program's behalf and that was no longer true.
-    if (!targetCxxRuntime) out.emplace_back("-ffreestanding");
+    if (!targetCxxRuntime && !hostedC) out.emplace_back("-ffreestanding");
     // UNWIND TABLES, WHICH THE COMPILER TURNS OFF FOR THIS KIND OF TARGET
     // AND WHICH NOTHING IN THE BUILD OTHERWISE SAYS.
     //

@@ -22,6 +22,7 @@ export module mcpp.platform;
 import std;
 import mcpp.manifest;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_schema;
 import mcpp.invocation;
 
 export namespace mcpp::platform {
@@ -91,6 +92,15 @@ void merge(mcpp::manifest::platform::Statement& base, const mcpp::manifest::plat
 // The part of a platform that applies when a host triple selects it: its
 // `[platform.hosted]` toolchain and layers, and nothing else (§5.4).
 mcpp::manifest::platform::Statement hosted_view(const mcpp::manifest::platform::Statement& platform);
+// The statement that applies to `identity` (SPEC-016 §3): the platform's, with the
+// fields of the `[[platform.provider]]` that serves it in place of the platform's
+// own (its toolchain, layers and link), or the hosted view when that provider is
+// hosted. The platform's own statement when no provider of it names the identity.
+mcpp::manifest::platform::Statement provider_view(const mcpp::manifest::platform::Statement& platform,
+                                                  std::string_view identity);
+// The `[[platform.provider]]` of a platform that serves `identity`; null when none.
+const mcpp::manifest::platform::ProviderSpec* provider_of(const mcpp::manifest::platform::Statement& platform,
+                                                          std::string_view identity);
 
 // Whether the platform serves the triple, or refuses with the reason. A host
 // triple is served by a platform with a `[platform.hosted]` table.
@@ -406,8 +416,45 @@ mp::Statement hosted_view(const mp::Statement& p) {
     return s;
 }
 
+const mp::ProviderSpec* provider_of(const mp::Statement& p, std::string_view identity) {
+    for (auto const& pr : p.providers)
+        for (auto const& s : pr.serves)
+            if (mcpp::toolchain::target::serves_triple(s, identity)) return &pr;
+    return nullptr;
+}
+
+mp::Statement provider_view(const mp::Statement& p, std::string_view identity) {
+    const auto* pr = provider_of(p, identity);
+    if (!pr) return p;
+    if (pr->base == "none") {
+        auto s = hosted_view(p);
+        s.cHosted = pr->hosted;
+        if (!pr->toolchain.empty()) s.toolchain = mp::Text{ pr->toolchain, pr->origin, true };
+        if (!pr->layers.empty()) s.layers = pr->layers;
+        return s;
+    }
+    auto s = p;
+    s.cHosted = pr->hosted;
+    if (!pr->toolchain.empty()) s.toolchain = mp::Text{ pr->toolchain, pr->origin, true };
+    if (!pr->layers.empty()) s.layers = pr->layers;
+    if (!pr->sysroot.empty()) s.sysroot = mp::Text{ pr->sysroot, pr->origin, true };
+    auto const& l = pr->link;
+    auto text = [](mp::Text& to, const mp::Text& from) { if (from.set) to = from; };
+    text(s.link.driver, l.driver);
+    text(s.link.start, l.start);
+    text(s.link.script, l.script);
+    text(s.link.exe, l.exe);
+    text(s.link.shared, l.shared);
+    if (l.flags.set) s.link.flags = l.flags;
+    if (l.inputsSet) { s.link.inputs = l.inputs; s.link.inputsOrigin = l.inputsOrigin; s.link.inputsSet = true; }
+    if (l.sealSet) { s.link.seal = l.seal; s.link.sealOrigin = l.sealOrigin; s.link.sealSet = true; }
+    return s;
+}
+
 std::expected<bool, std::string>
 serves(const mp::Statement& p, std::string_view package, const mcpp::toolchain::triple::Triple& t) {
+    // A provider of the platform that names the identity (SPEC-016 §3).
+    if (const auto* pr = provider_of(p, t.str())) return pr->base == "none";
     for (auto const& w : p.targets.value) {
         auto pt = mcpp::toolchain::triple::parse(w);
         if (pt ? pt->str() == t.str() : w == t.str()) return false;

@@ -570,6 +570,7 @@ step1_resolve_target_triple_request(PrepareState& state, TargetOverrideCtx& ctx)
     // registered but not yet supported", a string the reader never typed
     // and cannot find in their own command.
     ctx.requestedSpelling = state.overrides.target_triple;
+    define_early_platform(state);
     ctx.parsed = triple::parse(state.overrides.target_triple);
 
     // THE REQUEST IS COMPLETED FROM THE VOCABULARY BEFORE ANYTHING
@@ -1328,9 +1329,16 @@ static std::expected<void, std::string> step1_device_axis_and_layer_merge(Prepar
     // The descriptor blocks the target reads (design 2026-10-29 §5.1): the
     // row's own, or those the platform states when it was read early (a
     // platform fetched in the first pass restarts the prepare so that it is).
-    state.targetPlatform = state.platformEarly && state.platformData.descriptorKeys.set
-        ? mcpp::toolchain::platform::TargetPlatform::with_keys(state.platformData.descriptorKeys.value)
-        : mcpp::toolchain::platform::TargetPlatform::for_os(state.cfgCtx().os);
+    state.targetPlatform = [&] {
+        if (state.platformEarly && state.platformData.descriptorKeys.set)
+            return mcpp::toolchain::platform::TargetPlatform::with_keys(state.platformData.descriptorKeys.value);
+        // A row a platform defines names its own blocks (SPEC-016 §2).
+        if (auto t = mcpp::toolchain::triple::parse(state.overrides.target_triple))
+            if (auto* d = t->defined(); d && !d->descriptorKeys.empty())
+                return mcpp::toolchain::platform::TargetPlatform::with_keys(
+                    std::vector<std::string>(d->descriptorKeys.begin(), d->descriptorKeys.end()));
+        return mcpp::toolchain::platform::TargetPlatform::for_os(state.cfgCtx().os);
+    }();
 
     // ── L1: merge conditional [target.'cfg(...)'] sections ───────────────────
     // Evaluated now (target resolved) against the resolved target — the

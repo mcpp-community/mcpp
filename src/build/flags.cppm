@@ -2456,7 +2456,7 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         if (auto spec = mcpp::freestanding::resolve(
                 *mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))) {
             const auto prefix = mcpp::freestanding::compile_prefix(
-                *spec, plan.toolchain.targetCxxRuntime);
+                *spec, plan.toolchain.targetCxxRuntime, plan.toolchain.hostedC);
             f.cxx += prefix;
             f.cc  += prefix;
             f.as  += mcpp::freestanding::assemble_prefix(*spec);

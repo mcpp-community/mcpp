@@ -1328,8 +1328,12 @@ step9_same_os_check_and_report(PrepareState& state) {
             // A program its loader runs is compiled for no operating system
             // by design (`<arch>-unknown-none-elf`): the loader is its environment.
             const bool okImage = want && got && want->loader_supplies_os() && got->is_freestanding();
+            // A row a platform defines states the triple its compiler is given
+            // (SPEC-016 §2); that triple's system is the one to compare.
+            const bool stated = want && got && want->defined()
+                && [&] { auto c = mcpp::toolchain::triple::parse(want->llvm_triple()); return c && c->os == got->os; }();
             if (want && got && !want->os.empty() && !got->os.empty()
-                && want->os != got->os && !okImage) {
+                && want->os != got->os && !okImage && !stated) {
                 refusal::record(refusal::Code::OsMismatch);
                 return std::unexpected(std::format(
                     "target '{}' resolved to a toolchain for '{}'.\n"

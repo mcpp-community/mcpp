@@ -291,6 +291,19 @@ step2_retarget_for_retargetable_driver(PrepareState& state) {
                   }
               }
           }
+          // A ROW A PLATFORM DEFINES HAS THE PLATFORM'S SYSTEM (SPEC-016 §2): the
+          // host's C library the toolchain's payload carries is not its, so it
+          // has none but the sysroot the platform or the project states.
+          if (auto want = mcpp::toolchain::triple::parse(state.overrides.target_triple);
+              want && want->defined() && !want->is_freestanding()) {
+              auto stmt = base_statement(state, *want);
+              if (!stmt || !stmt->stated()) {
+                  state.tc->base.payload.reset();
+                  state.tc->base.root.clear();
+                  state.tc->linkRuntimeDirs.clear();
+              }
+              if (state.platformData.cHosted) state.tc->hostedC = *state.platformData.cHosted;
+          }
           if (auto want = mcpp::toolchain::triple::parse(state.overrides.target_triple);
               want && want->is_freestanding())
           {
@@ -312,6 +325,14 @@ step2_retarget_for_retargetable_driver(PrepareState& state) {
               // here is to stop pretending the hosted one exists and to say
               // where the other one is.
               state.tc->clear_std_modules();
+
+              // THE C ENVIRONMENT IS A DECLARED FACT (mcpp#911 G3): a sysroot
+              // that provides the hosted standard library, or the platform's
+              // provider stating `hosted = true`.
+              if (auto stmt = base_statement(state, *want); stmt)
+                  state.tc->hostedC = std::ranges::find(stmt->provides, "hosted-standard-library")
+                                      != stmt->provides.end();
+              if (state.platformData.cHosted) state.tc->hostedC = *state.platformData.cHosted;
 
               // ── The target's C library, resolved like its compiler ─────────
               //

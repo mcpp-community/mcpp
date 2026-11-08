@@ -61,13 +61,20 @@ struct Provider {
     std::string_view platform;                  // a platform package reference
 };
 
-// THE PATTERN OF `serves`. `*` in the first segment stands for any arch; the
-// rest of the pattern matches exactly.
+// THE PATTERN OF `serves`: segment by segment, `*` standing for any one segment
+// (`*-linux-musl`, `x86_64-linux-*`); a pattern and a triple of different
+// numbers of segments do not match.
 constexpr bool serves_triple(std::string_view pattern, std::string_view triple) {
     if (pattern == triple) return true;
-    if (!pattern.starts_with("*-")) return false;
-    const auto dash = triple.find('-');
-    return dash != std::string_view::npos && triple.substr(dash) == pattern.substr(1);
+    for (;;) {
+        const auto pd = pattern.find('-'), td = triple.find('-');
+        const auto ps = pattern.substr(0, pd), ts = triple.substr(0, td);
+        if (ps != "*" && ps != ts) return false;
+        if ((pd == std::string_view::npos) != (td == std::string_view::npos)) return false;
+        if (pd == std::string_view::npos) return true;
+        pattern.remove_prefix(pd + 1);
+        triple.remove_prefix(td + 1);
+    }
 }
 
 constexpr bool serves(const Provider& p, std::string_view triple) {

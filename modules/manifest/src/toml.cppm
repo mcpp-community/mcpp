@@ -1054,6 +1054,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // 2026-10-29 §4.5): the platform reader type-checks every entry.
         "platform.carrier",
         "target.*.carrier",
+        // `[[platform.define]]` and `[[platform.provider]]` (SPEC-016 §2, §3):
+        // the platform reader type-checks every entry.
+        "platform.define",
+        "platform.provider",
     };
     if (auto badPath = find_disallowed_array_of_tables(doc->root(), "", kAllowedArraysOfTables)) {
         return std::unexpected(error(origin, std::format(
@@ -1061,7 +1065,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             "array-of-tables syntax is only supported for [[build.flags]], "
             "[[features.<name>.flags]], [[runtime.requirements]], "
             "[[runtime.artifacts]], [[runtime.deploy]], [[platform.link.inputs]], "
-            "[[platform.carrier]] and [xlings] deps entries",
+            "[[platform.carrier]], [[platform.define]], [[platform.provider]] and [xlings] deps entries",
             *badPath, *badPath)));
     }
 
@@ -3863,9 +3867,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                                             &m.schemaWarnings};
         auto st = rd.statement(*pt);
         if (!st) return std::unexpected(error(origin, st.error()));
-        if (!st->targets.set)
+        if (!st->targets.set && st->providers.empty())
             return std::unexpected(error(origin,
-                "[platform] names the targets it serves: targets = [\"<triple>\", ...]"));
+                "[platform] names the targets it serves: targets = [\"<triple>\", ...], or its "
+                "providers: [[platform.provider]] serves = [...]"));
         m.platform = std::move(*st);
         m.platformDeclared = true;
     }

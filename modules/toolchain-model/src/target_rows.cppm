@@ -20,6 +20,9 @@ export namespace mcpp::toolchain::target {
 // process does once it is defined.
 struct DefinitionSet {
     std::string source;                         // the platform package that stated it
+    // A row assumed for a request no definition knows yet, while the platform
+    // that may define it is fetched; a definition of the same row replaces it.
+    bool provisional = false;
     std::deque<std::string> strings;            // stable addresses
     std::deque<std::vector<std::string_view>> lists;
     std::vector<Row> rows;
@@ -74,6 +77,15 @@ Registry& registry() {
 void define(DefinitionSet set) {
     auto& r = registry();
     std::lock_guard g(r.lock);
+    // A source defines once per process; a provisional row gives way to a real one.
+    for (auto const& s : r.sets)
+        if (!set.source.empty() && s.source == set.source && !s.provisional && !set.provisional) return;
+    if (!set.provisional)
+        for (auto& s : r.sets)
+            if (s.provisional)
+                std::erase_if(s.rows, [&](const Row& old) {
+                    return std::ranges::any_of(set.rows, [&](const Row& n) { return n.triple == old.triple; });
+                });
     std::erase_if(set.rows, [&](const Row& row) {
         for (auto const& b : mcpp::toolchain::builtin::kRows)
             if (b.triple == row.triple) return true;

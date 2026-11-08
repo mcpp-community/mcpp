@@ -33,6 +33,7 @@ import mcpp.toolchain.platform;
 import mcpp.toolchain.target_schema;
 import mcpp.toolchain.target_rows;
 import mcpp.toolchain.target_select;
+import mcpp.toolchain.builtin_targets;
 import mcpp.ui;
 import mcpp.version_req;
 import mcpp.pm.resolver;
@@ -163,6 +164,143 @@ platform_selection_for(const mcpp::toolchain::triple::Triple& t, const BuildOver
     return sel->none ? std::string{} : mp::display(sel->ref);
 }
 
+// THE PLATFORM'S DEFINITIONS (SPEC-016 §2, §3): its rows, its providers, and
+// `[platform]` and `[platform.hosted]` as the providers they are shorthands of,
+// registered for the process so the parser, the selection and `cfg(os = …)`
+// know them. `ref` is how a provider names the package (`<ns>.<name>@<version>`,
+// or `path:<dir>`).
+void define_platform(const mp::Statement& s, std::string_view shortName, std::string_view ref) {
+    namespace target = mcpp::toolchain::target;
+    target::DefinitionSet set;
+    set.source = std::string(ref);
+    const auto name = mp::platform_name(shortName);
+    for (auto const& d : s.defines) {
+        target::Row r;
+        r.triple = set.keep(d.triple);
+        std::vector<std::string> seg;
+        for (auto part : std::views::split(d.triple, '-')) seg.emplace_back(part.begin(), part.end());
+        r.arch = set.keep(seg[0]);
+        r.os = set.keep(seg[1]);
+        r.env = set.keep(seg.size() > 2 ? seg[2] : std::string{});
+        r.tier = set.keep(d.tier);
+        r.note = set.keep(d.note);
+        r.standard = d.standard;
+        r.exact = d.exact;
+        r.march = set.keep(d.march);
+        r.mabi = set.keep(d.mabi);
+        r.codeModel = set.keep(d.codeModel);
+        r.multilib = set.keep(d.multilib);
+        r.flags = set.keep(d.flags);
+        r.linkEmulation = set.keep(d.linkEmulation);
+        r.clangTriple = set.keep(d.clangTriple);
+        r.objectFormat = set.keep(d.objectFormat);
+        r.family = set.keep(d.family);
+        r.dataModel = set.keep(d.dataModel);
+        r.exeSuffix = set.keep(d.exeSuffix);
+        r.sharedSuffix = set.keep(d.sharedSuffix);
+        r.loader = set.keep(d.loader);
+        r.descriptorKeys = set.keep(d.descriptorKeys);
+        r.execution = set.keep(d.execution.empty() ? seg[1] : d.execution);
+        r.defined = true;
+        set.rows.push_back(r);
+    }
+    auto provider = [&](std::string pname, const std::vector<std::string>& serves, int priority,
+                        std::string_view toolchain, const std::vector<std::string>& hosts,
+                        const std::vector<std::string>& pairs, std::string_view sysroot,
+                        std::string_view linkage) {
+        target::Provider p;
+        p.name = set.keep(std::move(pname));
+        p.serves = set.keep(serves);
+        p.priority = priority;
+        p.hosts = set.keep(hosts.empty() ? std::vector<std::string>{"*"} : hosts);
+        p.pairs = set.keep(pairs);
+        p.toolchain = set.keep(std::string(toolchain));
+        p.sysroot = set.keep(std::string(sysroot));
+        p.linkage = set.keep(std::string(linkage));
+        p.platform = set.keep(std::string(ref));
+        set.providers.push_back(p);
+    };
+    // A platform the engine's own providers name (openkal-platform) is served by
+    // those; its shorthands are not registered twice.
+    const bool builtin = std::ranges::any_of(mcpp::toolchain::builtin::kProviders, [&](auto const& b) {
+        auto r = b.platform.empty() ? std::nullopt : std::optional(mp::parse_ref_text(b.platform));
+        return r && *r && (*r)->spec.shortName == shortName;
+    });
+    for (auto const& p : s.providers)
+        provider(p.name.empty() ? name : p.name, p.serves, p.priority,
+                 p.toolchain.empty() ? s.toolchain.value : p.toolchain, p.hosts, p.pairs, p.sysroot,
+                 p.linkage);
+    if (s.targets.set && !builtin)
+        provider(name, s.targets.value, s.prioritySet ? s.priority : 100, s.toolchain.value, {}, {}, {}, {});
+    // A HOSTED ENTRY NAMES A SYSTEM; THE C LIBRARY NAMES THE ENV (I5): it serves
+    // every identity of that architecture and system.
+    if (s.hosted.set && !builtin) {
+        std::vector<std::string> serves;
+        for (auto const& w : s.hosted.targets.value)
+            if (auto t = mcpp::toolchain::triple::parse(w))
+                serves.push_back(std::format("{}-{}-*", t->arch, t->os)), serves.push_back(std::format("{}-{}", t->arch, t->os));
+        if (!s.hosted.targets.set) serves = {"*-*-*"};
+        provider(name, serves, s.prioritySet ? s.priority - 50 : 50,
+                 s.hosted.toolchain.set ? s.hosted.toolchain.value : s.toolchain.value, {}, {}, {}, {});
+    }
+    target::define(std::move(set));
+}
+
+void define_early_platform(PrepareState& state) {
+    const auto raw = state.overrides.target_triple;
+    // The explicit choice for this request, by the words that need no parse: the
+    // flag, the environment and the tables whose selector is the request itself.
+    std::optional<mp::PackageRef> chosen;
+    std::string chosenText = !state.overrides.platform_choice.empty() ? state.overrides.platform_choice
+                           : mcpp::invocation::get("MCPP_PLATFORM").value_or("");
+    if (chosenText.empty() && !raw.empty()) {
+        std::string key = "MCPP_TARGET_";
+        for (char c : raw) key += std::isalnum(static_cast<unsigned char>(c)) ? char(std::toupper(static_cast<unsigned char>(c))) : '_';
+        chosenText = mcpp::invocation::get(key + "_PLATFORM").value_or("");
+    }
+    if (!chosenText.empty()) {
+        if (auto sel = mcpp::platform::parse_choice(chosenText, mp::Origin{mp::Tier::Flag, {}, 0, "--platform"});
+            sel && !sel->none)
+            chosen = sel->ref;
+    } else {
+        std::vector<mp::Override> config;
+        if (auto cfg = state.get_cfg(false); cfg) config = (*cfg)->platformOverrides;
+        for (auto const* tables : { &state.m->platformOverrides, &config })
+            for (auto const& o : *tables)
+                if (!chosen && o.selector == raw && o.platformSet && !o.platformNone) chosen = o.platform;
+    }
+    fs::path root = state.overrides.platform_root;
+    if (root.empty() && chosen && !chosen->spec.path.empty()) root = chosen->spec.path;
+    if (!root.empty())
+        if (auto m = mcpp::manifest::load(root / "mcpp.toml"); m && m->platformDeclared) {
+            auto n = mcpp::pm::compat::resolve_package_name(m->package.name, m->package.namespace_);
+            define_platform(m->platform, n.shortName, "path:" + root.generic_string());
+        }
+    // A request no definition knows, with a platform chosen for it that is not on
+    // this machine yet: a provisional row lets the first pass fetch the platform.
+    if (raw.empty() || mcpp::toolchain::triple::parse(raw) || !chosen) return;
+    std::vector<std::string> seg;
+    for (auto part : std::views::split(std::string_view(raw), '-')) seg.emplace_back(part.begin(), part.end());
+    if (seg.size() < 2 || seg.size() > 3 || std::ranges::any_of(seg, [](auto const& x) { return x.empty(); })) return;
+    namespace target = mcpp::toolchain::target;
+    target::DefinitionSet set;
+    set.provisional = true;
+    set.source = "provisional:" + raw;
+    target::Row r;
+    r.triple = set.keep(raw);
+    r.arch = set.keep(seg[0]);
+    r.os = set.keep(seg[1]);
+    r.env = set.keep(seg.size() > 2 ? seg[2] : std::string{});
+    r.tier = set.keep("preview");
+    r.objectFormat = set.keep("elf");
+    r.family = set.keep("unix");
+    r.execution = set.keep(seg[1]);
+    r.defined = true;
+    set.rows.push_back(r);
+    target::define(std::move(set));
+    state.provisionalTarget = true;
+}
+
 std::string named_provider(const PrepareState& state, const mcpp::toolchain::triple::Triple& t,
                            std::span<const mp::Override> config) {
     const auto flag = !state.overrides.platform_choice.empty()
@@ -170,7 +308,8 @@ std::string named_provider(const PrepareState& state, const mcpp::toolchain::tri
         : mcpp::invocation::get("MCPP_PLATFORM").value_or("");
     const auto envKey = target_env_name(t, "PLATFORM");
     const auto env = mcpp::invocation::get(envKey).value_or("");
-    mcpp::platform::ChoiceInputs in{ flag, env, envKey, project_tables(*state.m), config, {} };
+    const auto project = project_tables(*state.m);
+    mcpp::platform::ChoiceInputs in{ flag, env, envKey, project, config, {} };
     auto sel = mcpp::platform::select_target(in, matcher(cfgpred::context_for(t.str())));
     if (!sel || sel->origin.tier == mp::Tier::BuiltIn) return {};
     if (!sel->builtin.empty()) return sel->builtin;
@@ -252,7 +391,7 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state) {
             early = state.platform.selection.ref.spec.path;
         if (!early.empty())
             if (auto m = mcpp::manifest::load(early / "mcpp.toml"); m && m->platformDeclared) {
-                state.platformData = m->platform;
+                state.platformData = mcpp::platform::provider_view(m->platform, t.str());
                 state.platformEarly = true;
             }
     }
@@ -351,6 +490,31 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
         P.package = qualified(found->manifest);
         P.version = found->manifest.package.version;
         P.root = found->root;
+        define_platform(found->manifest.platform, state.platformPackageShortName,
+                        ref.spec.path.empty() ? std::format("{}@{}", P.package, P.version)
+                                              : "path:" + ref.spec.path);
+        // A REQUEST ONLY A PLATFORM DEFINES (mcpp#911 G1): the first pass assumed
+        // the row while the platform was fetched; with its definitions read, the
+        // build is prepared again from the start, or refused when it defines none.
+        if (state.provisionalTarget) {
+            const auto* row = mcpp::toolchain::target::find_row(state.overrides.target_triple);
+            if (!row || !row->defined || std::ranges::none_of(found->manifest.platform.defines, [&](auto const& d) {
+                    return d.triple == state.overrides.target_triple; })) {
+                std::string defined;
+                for (auto const& d : found->manifest.platform.defines)
+                    defined += (defined.empty() ? "" : ", ") + d.triple;
+                refusal::record(refusal::Code::UnknownTarget);
+                return std::unexpected(std::format(
+                    "unknown target '{}': no row defines it, and the platform {} ({}) defines {}.\n"
+                    "       a platform defines a target with [[platform.define]] triple = \"{}\" (SPEC-016 §2)",
+                    state.overrides.target_triple, P.package, mcpp::platform::origin_text(P.selection.origin),
+                    defined.empty() ? std::string("none") : defined, state.overrides.target_triple));
+            }
+            if (!state.platformEarly) {
+                g_platformRestart = P.root;
+                return std::unexpected(std::string("mcpp:platform-restart"));
+            }
+        }
         auto hosted = mcpp::platform::serves(found->manifest.platform, P.package, t);
         if (!hosted) {
             refusal::record(refusal::Code::PlatformTargetUnserved);
@@ -358,8 +522,10 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
                 mcpp::platform::origin_text(P.selection.origin)));
         }
         P.selection.hosted = *hosted;
-        state.platformData = *hosted ? mcpp::platform::hosted_view(found->manifest.platform)
-                                     : found->manifest.platform;
+        state.platformData = mcpp::platform::provider_of(found->manifest.platform, t.str())
+            ? mcpp::platform::provider_view(found->manifest.platform, t.str())
+            : *hosted ? mcpp::platform::hosted_view(found->manifest.platform)
+                      : found->manifest.platform;
         P.fields = state.platformData;
         const auto ctx = platform_cfg_context(state);
         std::vector<mp::Override> config;
