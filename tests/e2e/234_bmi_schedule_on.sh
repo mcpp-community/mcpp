@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # `bmi_schedule = "on"` end to end, and the token leak that used to hang it.
+# resources: machine
 source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 #
 # The split schedule reorders the module graph: a BMI edge that exits as soon as

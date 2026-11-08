@@ -11,6 +11,9 @@ store = ".mtest"
 globs          = ["[0-9]*.sh"]
 command        = ["bash", "{path}"]
 kind           = "e2e"
+# A script is level 0, whatever its text says: several name the protocol's marker in their comments,
+# and a script told the protocol's variables would pass them to what it runs.
+level          = 0
 timeout        = "10m"
 tags_from      = { "# requires:" = "requires:" }
 resources_from = ["# resources:"]

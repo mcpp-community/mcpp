@@ -4653,6 +4653,16 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                                                      mode == "list" ? std::nullopt : r.select,
                                                      r.protocolDir / "tmp", testOpts.seed);
     };
+    // The variables of a run, stated whole: those mcpp states for it, and the
+    // others removed, so that an outer runner's (mcpp test run by mtest, by
+    // an e2e suite) do not reach the program (P2.2).
+    auto state_protocol = [&](const Runnable& r, std::string_view mode, mcpp::run::Options& o) {
+        auto stated = protocol_run(r, mode);
+        for (auto v : mcpp::build::test_protocol::kVariables)
+            if (std::ranges::none_of(stated, [&](const auto& kv) { return kv.first == v; }))
+                o.unset.emplace_back(v);
+        for (auto& kv : stated) o.env.push_back(std::move(kv));
+    };
     auto print_failed_cases = [](const mcpp::build::test_protocol::Report& report) {
         for (const auto& c : report.cases) {
             if (c.status != "fail" && c.status != "xpass") continue;
@@ -4749,7 +4759,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 runOpts.total = deadline;
                 runOpts.report_spawn_failure = false;
                 if (r.protocol) {
-                    for (auto& kv : protocol_run(r, "run")) runOpts.env.push_back(std::move(kv));
+                    state_protocol(r, "run", runOpts);
                 } else {
                     for (auto v : mcpp::build::test_protocol::kVariables) runOpts.unset.emplace_back(v);
                 }
@@ -5121,7 +5131,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
             }
             mcpp::run::Options listOpts;
             listOpts.env = r.env;
-            for (auto& kv : protocol_run(r, "list")) listOpts.env.push_back(std::move(kv));
+            state_protocol(r, "list", listOpts);
             listOpts.streams = mcpp::run::Streams::merged;
             listOpts.total = std::chrono::milliseconds(static_cast<long long>(testOpts.timeoutSecs) * 1000);
             listOpts.report_spawn_failure = false;
