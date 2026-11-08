@@ -123,6 +123,23 @@ libfw.so<TAB>/abs/project/target/<triple>/<fp>/bin/libfw.so
 容器或远程主机——会把列出的每个文件复制到被移走产物旁边对应的目的
 路径。
 
+### runner 包与平台定义的系统（2026.11.9.1+）
+
+runner 是一个程序；构建它的包是 **runner 包**（虚拟机、经 ssh 的远程主机、设备）。工程把该包写为目标的工具之一，
+以工具名指定 runner：
+
+```toml
+[target.x86_64-freebsd]
+runner = ["freebsd-vm", "{}"]
+
+[target.x86_64-freebsd.tools]
+freebsd-vm = { git = "https://example.org/freebsd-vm.git", tag = "v1" }
+```
+
+该工具为本机构建，以上述 argv 与环境启动：它传送产物及 `MCPP_RUNTIME_FILES` 所列文件，执行 argv，转发程序的输出，
+并以程序的退出码退出。平台定义的行中，`execution` 为本机以外系统的产物，若无 runner 也无执行主机（`run_under`），
+即**已构建、未运行**：`mcpp run` 拒绝并给出声明 runner 的键，`mcpp test` 把其测试报告为未运行。
+
 ## 运行一个可分发物
 
 `mcpp run --pkg-format <f>` 打包可分发物 `<f>` 并运行它。不带 `--runner`

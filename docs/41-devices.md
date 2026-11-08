@@ -142,6 +142,28 @@ A runner that executes the artifact where it lies ignores the variable. A
 runner that moves the artifact — to a device, a container, a remote host —
 copies each listed file to the destination beside the moved artifact.
 
+### Runner packages and the systems a platform defines (2026.11.9.1+)
+
+A runner is a program; a package that builds it is a **runner package** (a virtual
+machine, a remote host over ssh, a device). The project names the package as one
+of the target's tools and the runner by the tool's name:
+
+```toml
+[target.x86_64-freebsd]
+runner = ["freebsd-vm", "{}"]
+
+[target.x86_64-freebsd.tools]
+freebsd-vm = { git = "https://example.org/freebsd-vm.git", tag = "v1" }
+```
+
+The tool is built for this machine and started with the argv and the
+environment above: it transfers the artifact and the files `MCPP_RUNTIME_FILES`
+lists, runs the argv, streams the program's output, and exits with the
+program's status. An artifact of a row a platform defines whose `execution` is
+another system than this machine's, with no runner and no execution host
+(`run_under`), is **built, not run**: `mcpp run` refuses it naming the keys that
+state a runner, and `mcpp test` reports its tests as not run.
+
 ## Running a distributable
 
 `mcpp run --pkg-format <f>` packs the distributable `<f>` and runs it. Without

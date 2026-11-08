@@ -1356,9 +1356,29 @@ ExecutionHost locate_run_under(const mcpp::build::BuildContext& ctx, std::string
 // and the OS run only there. `--no-runner` states that the triple is native
 // here, and is believed.
 std::optional<std::string> unreachable_execution(const mcpp::build::BuildContext& ctx,
-                                                 std::string_view tripleKey, bool noRunner) {
+                                                 std::string_view tripleKey, bool noRunner,
+                                                 bool runnerDeclared = false) {
     if (noRunner || !ctx.runUnder.empty()) return std::nullopt;
     auto t = mcpp::toolchain::triple::parse(tripleKey);
+    // AN ARTIFACT OF A SYSTEM A PLATFORM DEFINES runs where its row's
+    // `execution` names (mcpp#911 G11): on this machine when that is this
+    // machine's system, else through a runner -- a runner package's program,
+    // which reaches a VM, a remote host or a device by the run protocol
+    // (docs/41) -- or an execution host. With neither it is built, not run.
+    if (auto const* d = t ? t->defined() : nullptr; d && !runnerDeclared) {
+        const std::string_view system = d->execution.empty() ? std::string_view(t->os) : d->execution;
+        const std::string_view here = mcpplibs::os::is_windows ? "windows"
+                                    : mcpplibs::os::is_macos ? "macos" : "linux";
+        if (system != here)
+            return std::format(
+                "{} artifacts run on {}, not on this {} host: built, not run.\n"
+                "       State how they run: [target.{}] runner = [\"<program>\", \"{{}}\"], the program a "
+                "runner package builds\n"
+                "       ([target.{}.tools] <program> = {{ ... }}; the run protocol is docs/41), or an "
+                "execution host:\n"
+                "       [target.{}] run_under = [\"remote-run\", \"<host>\", \"--\"].",
+                tripleKey, system, here, tripleKey, tripleKey, tripleKey);
+    }
     // A RUNNER THAT RUNS THE ARTIFACT ON A MACHINE OF ITS ARCHITECTURE
     // (`runner = { ..., host = "same-arch" }`, SPEC-013): an ok image's loader
     // is a program of this machine, and an image of another architecture is
@@ -1534,7 +1554,7 @@ export RunnerOnThisMachine runner_on_this_machine(const BuildContext& ctx) {
     RunnerOnThisMachine out;
     const auto choice = choose_runner(ctx);
     out.arch = std::string(mcpp::toolchain::platform::host_arch);
-    if (auto why = unreachable_execution(ctx, choice.tripleKey, false)) out.refusal = *why;
+    if (auto why = unreachable_execution(ctx, choice.tripleKey, false, !choice.tmpl.empty())) out.refusal = *why;
     if (!ctx.runUnder.empty()) {
         auto host = locate_run_under(ctx, choice.tripleKey);
         if (!host.error.empty()) out.refusal = host.error;
@@ -3317,7 +3337,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         return 126;
     }
     if (isRunSlot) {
-        if (auto why = unreachable_execution(ctx, choice.tripleKey, no_runner)) {
+        if (auto why = unreachable_execution(ctx, choice.tripleKey, no_runner, !choice.tmpl.empty())) {
             std::println(libc::stderr(), "error: {}", *why);
             return 2;
         }
@@ -3504,8 +3524,9 @@ std::optional<ChosenLeg> choose_run_leg(std::span<const mcpp::toolchain::target_
             mcpp::ui::error(std::format("the {} leg: {}", leg->triple, ctx.error()));
             return std::nullopt;
         }
-        const auto key = choose_runner(*ctx, noRunner).tripleKey;
-        if (auto why = unreachable_execution(*ctx, key, noRunner)) {
+        const auto chosen = choose_runner(*ctx, noRunner);
+        const auto key = chosen.tripleKey;
+        if (auto why = unreachable_execution(*ctx, key, noRunner, !chosen.tmpl.empty())) {
             passed.push_back(std::format("{}: {}", leg->triple, why->substr(0, why->find('\n'))));
             continue;
         }
@@ -4463,7 +4484,8 @@ static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool
     }
     // Not run, with the reason, as a missing runner is: the tests built. Or,
     // where the caller asks, built and not run (a platform package's targets).
-    if (auto why = unreachable_execution(*ctx, runnerChoice.tripleKey, testOpts.noRunner)) {
+    if (auto why = unreachable_execution(*ctx, runnerChoice.tripleKey, testOpts.noRunner,
+                                         !runnerChoice.tmpl.empty())) {
         if (testOpts.unreachableIsBuilt) {
             tb.builtNotRunHere = true;
             if (!json) mcpp::ui::info("note", std::format("built, not run on this host: {}", *why));

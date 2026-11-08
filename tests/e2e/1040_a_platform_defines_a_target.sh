@@ -96,6 +96,18 @@ out=$("$MCPP" build --target x86_64-toyos 2>&1) || fail "a row for another syste
 grep -q "the artifacts are for toyos, not this machine" <<<"$out" || fail "the build judged a foreign artifact by this machine" "$out"
 echo "  ok  an artifact for another system is built and its closure is not judged here"
 
+# An artifact for another system is built, not run, without a runner; a runner states how it runs
+# (mcpp#911 G11).
+set +e; out=$("$MCPP" run --target x86_64-toyos 2>&1); rc=$?; set -e
+[ "$rc" != 0 ] || fail "an artifact for toyos was run on this host" "$out"
+grep -q "x86_64-toyos artifacts run on toyos, not on this .* host: built, not run" <<<"$out" \
+    || fail "the refusal does not say built, not run" "$out"
+sed -i 's|^platform = { path = "../toy" }$|&\nrunner = ["env", "{}"]|' mcpp.toml
+set +e; out=$("$MCPP" run --target x86_64-toyos 2>&1); rc=$?; set -e
+[ "$rc" = 7 ] || fail "the runner did not run it (exit $rc)" "$out"
+sed -i '/^runner = \["env", "{}"\]$/d' mcpp.toml
+echo "  ok  without a runner it is built, not run; a runner runs it"
+
 # The platform names its programs; a build program that names them for the host does not change
 # the platform's suffix, and the build says so (mcpp#911 B2).
 sed -i 's/^driver = "compiler"$/driver = "compiler"\nexe    = "{name}.toy"/' "$t/toy/mcpp.toml"
