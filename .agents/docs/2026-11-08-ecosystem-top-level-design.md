@@ -240,6 +240,50 @@ mcpp 对自身清单键已有完整的同类机制：`kDeprecations` 注册表�
 
 **判据。** 既有的 mtest 程序不改即构建并给出相同的列举；同一用例的静态清单与运行时列举的类别、资源一致（mtest 的测试比较二者）；mcppls 的一致性在 CI 中只由代码与 fixture 目录描述，仓库中不再有用例的清单文件。
 
+### W10 mtest 的范式与 mcppls 的测试树（并入本轮）
+
+**要求。** mcppls 的单元测试、一致性与基准收敛到 `tests/`，全面以 mtest 写出；代码树、语义表达、可读性、性能、功能、数据与分析均超过原有的自建形式；mtest 本身给出一个范式：开发者以最少的代码写出用例，自然得到选择、调度、记录与分析；基于 mtest 的测试从目录、工程到代码都带有可辨认的 mtest 特征。
+
+**mtest 的范式（mtest docs/layout.md、lib/docs/writing-tests.md）。**
+
+| 层次 | 范式 |
+|---|---|
+| 目录 | `tests/<类别>/<主题>.cpp`：`unit/`、`cts/`、`e2e/`、`bench/`；目录即类别，数据放在类别之下（`tests/cts/fixtures/`、`tests/bench/tasks/`） |
+| 工程 | 一个类别一个测试程序（mcpp 的 `[test] programs = "directory"`，或成员包的一个程序）；需要服务端负载等外部输入的类别为工作区成员（`tests/cts`、`tests/bench`），其程序与运行器一同进入 `stage/` |
+| 代码 | 一个文件一个主题；一个对象一个被测行为或场景（`UTest`、`CTS`、`E2E`、`Bench`），名字之后写它需要什么（资源、时限、隔离、重试、诊断、度量的界限）；共享的准备是函数体内的局部对象或 `shared<T>`；不写 `main`（mtest 的入口），需要自举子进程的文件写 `main` 并在其末尾 `return run(argc, argv)` |
+| 数据 | 用例的度量以 `metric()` 与 `bench::measure()` 报告；文件以 `produced()` 报告；共享对象的构造、进程的时间线、资源与诊断由 runner 记录；存储在运行之间以 main 的产物延续 |
+| 分析 | `mtest explain`（失败的位置、原因、复现命令、诊断输出）、`mtest analyze`（最慢、波动、失败、基准）、`mtest gate`（集合与策略）、`--report-json` 的时间线、junit；编辑器经静态清单与列举得到同一棵用例树 |
+
+**mtest 0.4.0 补足的能力。** 原有形式中由脚本判定的界限（启动时间、令牌延迟、评审的精确率与召回率）改为代码中的声明：属性 `bound{"ready", .max = 15}`（度量名、上界或下界、单位由度量给出）随用例列出（P6.5：`case` 事件的 `bounds`），runner 以它判定用例并在 `explain` 中给出超出的度量与界限；与基线的比值仍由策略（P6.2）判定。`Bench` 对象的度量在存储中按提交保留，`mtest analyze bench --since <run>` 给出趋势。
+
+**mcppls 的测试树。**
+
+```
+tests/
+  unit/        服务端的单元测试：每个主题一个文件，UTest 对象为被测单元（程序 unit，[test] programs = "directory"）
+  cts/         成员 mcppls-cts：conformance.cpp 按主题拆为 lsp.cpp、mcpp.cpp、cmake.cpp、xmake.cpp、clients.cpp…，
+               Fixture 对象；fixtures/、traceability.json
+  bench/       成员 mcppls-bench：startup.cpp（冷/热启动为一个 Bench 对象的两个用例，共享缓存目录）、tokens.cpp、
+               review.cpp（评审的精确率与召回率为度量，界限以 bound 声明）、tasks.cpp（任务数据的检验为 UTest，
+               代理运行为 Bench，需 API 凭据时 skip_if）；tasks/、review/ 为数据
+```
+
+`tools/bench/` 与 `mcppls-devtools bench` 的五个子命令（约 1600 行）移入 `tests/bench`；devtools 不再有 bench。CI 的 timing、tokens、bench-validate 作业与 nightly 的 ux 预算改为 `mtest run --kind bench`，判定由 `bound` 与策略给出，`timing_evidence.py` 等判定脚本删除。
+
+**与原有形式的比较（判据）。**
+
+| 维度 | 原有形式 | mtest 形式 |
+|---|---|---|
+| 代码树 | 测试散在 `tests/`、`conformance/`、`tools/bench/`、`modules/testing/` 与 devtools | `tests/{unit,cts,bench}`，一个类别一处 |
+| 语义表达 | `main` 中按顺序执行的 `_test`；fixture 的元数据在 CI 清单与脚本中 | 对象即用例，类型即类别，需要什么写在名字之后 |
+| 可读性与清晰 | 用例的平台、资源、客户端变体与预算需读 ci.yml 与 Python | 一个对象一行，平台、资源、变体、界限都在代码中 |
+| 性能 | 一致性逐个串行；基准每作业重建 | 按资源并行、按历史分片、失败用例单独重跑 |
+| 功能 | 以退出码判定；无列举、无按用例选择、无重试与诊断 | 列举、选择、隔离、时限、重试、诊断、共享对象、时间线 |
+| 数据 | 各自的 JSON 文件，格式各异 | 协议事件与存储，度量、产物、时间线统一 |
+| 分析 | 人读日志；预算由脚本比较 | `explain`、`analyze`、`gate`、junit、编辑器用例树 |
+
+判据：mcppls 仓库中不再有测试框架、用例清单或预算脚本的自建实现；`mtest list` 列出全部用例且与静态清单一致；CI 的一致性、单元、基准作业均经 mtest 运行并保存存储。
+
 ## 3. 依赖
 
 ```
@@ -328,6 +372,7 @@ W2、W3、W4 互不阻塞，可在 W1 的 CI 等待期间并行设计与实现�
 | mcpp | 2026.11.8.1 | #906（草稿）`release/2026.11.8.1` | #903、#904（含源文件检查）、S1 文档与 tier 评估、#874 的复测与剩余期望、S7 的协议运行器与 `mcpp.core` 上下文注入与构建图查询、`mcpp new` 默认使用 mtest、三份设计文档 | W2 |
 | xim-pkgindex | — | 各发布的 bump PR | mcpp、mcppls、mcpp-ide、mcpp-ide-nvim | 各工作流 |
 | mtest | 0.2.0 | mtest#3 | W8 的 mtest 部分；mcpp #906 与 mcppls #79 的 W8 部分以追加提交进入；探针 #909 先行 | W8 |
+| mtest | 0.4.0 | `release/0.4.0` | W10：`bound` 与 P6.5、`analyze bench --since`、范式文档；mcppls #79 随之更新 | W10 |
 | mtest | 0.3.0 | mtest#4 | W9：对象即用例、类型即类别、作用域属性、运行方式的属性、`shared<T>` 与追踪、P3.3/P3.4/P5.2、`mtest.toml` 的同一词汇、静态清单、布局；mcpp-index #732、mcpp #906、mcppls #79 随之更新 | W9 |
 
 首批迁移（mcppls、mcpp-ide、mcpp-plugins、mcppls-clangd 迁移到 os 0.4.0 与 mtest）是这些项目各自的下一个版本，依赖 os 0.4.0 与 mtest 0.1.0 的发布；迁移前以 mtest 的 CI 汇总测量正式基线（W4 §10.2）。
