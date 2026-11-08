@@ -35,6 +35,7 @@ import mcpp.toolchain.target_rows;
 import mcpp.toolchain.target_select;
 import mcpp.toolchain.builtin_targets;
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.version_req;
 import mcpp.pm.resolver;
 import mcpp.xpkg_version;
@@ -888,9 +889,38 @@ std::vector<std::string> split_words(std::string_view v) {
 
 } // namespace
 
+// THE PLATFORM'S NAMES OF ITS ARTIFACTS STAND (mcpp#911 B2): what follows
+// `{name}` in `link.exe` and `link.shared` is the platform's format (`.oke`,
+// `.okso`), which its own steps read. A later statement that would change it
+// (a build program's `artifact-name`, written for the host's suffix) is
+// reported, and the platform's pattern is kept.
+namespace {
+void keep_platform_naming(mp::Statement& s, const mp::Statement& platform, std::string_view display,
+                          std::vector<std::string>* conflicts) {
+    auto suffix = [](std::string_view pattern) {
+        const auto at = pattern.find("{name}");
+        return at == std::string_view::npos ? pattern : pattern.substr(at + 6);
+    };
+    for (auto [field, base, kind] : { std::tuple{ &s.link.exe, &platform.link.exe, "exe" },
+                                      std::tuple{ &s.link.shared, &platform.link.shared, "shared" } }) {
+        if (!base->set || base->origin.tier != mp::Tier::Platform || suffix(base->value).empty()) continue;
+        if (!field->set || field->origin.tier == mp::Tier::Platform || suffix(field->value) == suffix(base->value))
+            continue;
+        if (conflicts)
+            conflicts->push_back(std::format(
+                "{} names the {} `{}`, and the platform {} names it `{}`: the platform's name stands, "
+                "since its own steps read it", mcpp::platform::origin_text(field->origin) == "build-program"
+                    ? std::string("a build program") : mcpp::platform::origin_text(field->origin),
+                kind == std::string_view("exe") ? "program" : "shared library", field->value, display,
+                base->value));
+        *field = *base;
+    }
+}
+} // namespace
+
 // ── The statement every reader uses: platform → build programs → this
 // machine → the project → the environment (§4.5) ──────────────────────────
-mp::Statement platform_statement(const PrepareState& state) {
+mp::Statement platform_statement(const PrepareState& state, std::vector<std::string>* conflicts) {
     auto const& P = state.platform;
     const auto t = target_of(state);
     const auto cfgCtx = platform_cfg_context(state);
@@ -922,6 +952,7 @@ mp::Statement platform_statement(const PrepareState& state) {
     for (auto const* o : mcpp::platform::matching(config, matcher(cfgCtx))) mcpp::platform::merge(s, o->fields);
     auto project = project_tables(*state.m);
     for (auto const* o : mcpp::platform::matching(project, matcher(cfgCtx))) mcpp::platform::merge(s, o->fields);
+    if (P.active) keep_platform_naming(s, state.platformData, P.display(), conflicts);
     const auto envKey = target_env_name(t, "RUNNER");
     if (auto e = mcpp::invocation::get(envKey); e && !e->empty()) {
         if (*e == "none") {
@@ -937,7 +968,9 @@ mp::Statement platform_statement(const PrepareState& state) {
 
 void step13_platform_statement(PrepareState& state) {
     auto& P = state.platform;
-    P.fields = platform_statement(state);
+    std::vector<std::string> conflicts;
+    P.fields = platform_statement(state, &conflicts);
+    for (auto const& c : conflicts) mcpp::diag::warning("platform/artifact-name", c);
     P.flags = mcpp::platform::evaluate_flags(P.fields, matcher(platform_cfg_context(state)));
 }
 

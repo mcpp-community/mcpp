@@ -1070,6 +1070,8 @@ int run(int argc, char** argv) {
                 .help("Output format: human (default) | json (one mcpp.pack envelope on stdout; narration on stderr)"))
             .option(cl::Option("no-strip")
                 .help("Ship the artifacts as built (default: strip debug info)"))
+            .option(cl::Option("all-programs")
+                .help("Ship every program of the package: the one named after it (or the named one) and the others beside it"))
             .option(cl::Option("package").short_name('p').takes_value().multiple().value_name("NAME")
                 .help("Pack the named workspace member (namespace.name or package name, then directory), as if run in its directory; repeat to pack several, planned and built once"))
             .option(cl::Option("workspace")

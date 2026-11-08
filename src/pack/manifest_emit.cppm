@@ -38,6 +38,7 @@
 export module mcpp.pack.manifest_emit;
 
 import std;
+import mcpp.libs.toml;   // a generated manifest quotes its keys (mcpp#911 B1)
 
 export namespace mcpp::pack {
 
@@ -194,7 +195,7 @@ std::string emit_package_manifest(const PackageDoc& doc) {
         o += std::format("exports = [{}]\n\n", join_quoted(doc.exportsModules));
     }
 
-    o += std::format("[targets.{}]\n", doc.targetName);
+    o += std::format("[targets.{}]\n", mcpp::libs::toml::escape_string(doc.targetName));
     o += std::format("kind = \"{}\"\n\n", doc.targetShared ? "shared" : "lib");
 
     // ── how to link each leg ───────────────────────────────────────────

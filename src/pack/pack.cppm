@@ -59,6 +59,7 @@ import mcpp.run;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.manifest;
+import mcpp.libs.toml;           // a generated manifest quotes its keys (mcpp#911 B1)
 import mcpp.project;              // the effective manifest a build reads
 import mcpp.build.prepare_inputs;  // cfgpred: the target's conditional tables
 import mcpp.toolchain.triple;
@@ -250,6 +251,9 @@ struct Options {
     // the value `mcpp build --features` takes, carried as that string so the
     // parser that reads it stays the build's own (#641).
     std::string                     features;
+    // `--all-programs` (mcpp#911 B3): every program of the package, the
+    // chosen one and the others beside it.
+    bool                                 allPrograms = false;
 };
 
 // The strip decision for this run: `--strip`/`--no-strip` > `[pack] strip` >
@@ -652,6 +656,23 @@ std::optional<Mode> parse_mode(std::string_view s) {
 }
 
 namespace detail {
+
+// A single file is written where an earlier pack of another format staged its
+// tree under the same name (`<name>-<version>-<triple>`, beside its
+// `.stage-manifest`): that tree is this command's own output and is replaced.
+// Any other directory there is refused rather than removed.
+inline std::string clear_staged_tree(const std::filesystem::path& out) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(out, ec)) return {};
+    const auto manifest = mcpp::pack::stage_manifest_path(out);
+    if (!std::filesystem::exists(manifest, ec))
+        return std::format("cannot write {}: a directory of that name is there, and no pack staged it",
+                           out.string());
+    std::filesystem::remove_all(out, ec);
+    if (!ec) std::filesystem::remove(manifest, ec);
+    return ec ? std::format("cannot replace the staged tree {}: {}", out.string(), ec.message())
+              : std::string();
+}
 
 // Helpers below are kept in a NAMED (non-exported) sub-namespace rather
 // than an anonymous one. Anonymous namespaces inside a module become
@@ -2564,7 +2585,8 @@ carrier_build(const Plan& plan, const CarrierBuild& b)
         plan.binaryName, b.system, b.arch,
         b.carried.empty() ? "runs the image it is given" : "carries it and runs it",
         plan.platform.display(), b.stem,
-        plan.packageVersion.empty() ? "0.0.0" : plan.packageVersion, b.stem,
+        plan.packageVersion.empty() ? "0.0.0" : plan.packageVersion,
+        mcpp::libs::toml::escape_string(b.stem),
         dependency_entry(c.package),
         static_row_pin(row, plan.platform.fields.toolchain.set ? plan.platform.fields.toolchain.value
                                                                : std::string()));
@@ -3599,6 +3621,7 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
             }
             const auto out = output_for(std::format("{}-{}", f.system, f.arch), suffix);
             fs::create_directories(out.parent_path(), ec);
+            if (auto e = detail::clear_staged_tree(out); !e.empty()) return std::unexpected(Error{e});
             fs::copy_file(program, out, fs::copy_options::overwrite_existing, ec);
             if (ec) return std::unexpected(Error{std::format("cannot write {}: {}", out.string(), ec.message())});
             written.push_back(out);
@@ -3673,6 +3696,7 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
         const auto program = *packed / (stem + suffix);
         const auto out = output_for(t ? t->str() : plan.triple, suffix);
         fs::create_directories(out.parent_path(), ec);
+        if (auto e = detail::clear_staged_tree(out); !e.empty()) return std::unexpected(Error{e});
         fs::copy_file(program, out, fs::copy_options::overwrite_existing, ec);
         if (ec) return std::unexpected(Error{std::format("cannot write {}: {}", out.string(), ec.message())});
         written.push_back(out);

@@ -96,6 +96,21 @@ out=$("$MCPP" build --target x86_64-toyos 2>&1) || fail "a row for another syste
 grep -q "the artifacts are for toyos, not this machine" <<<"$out" || fail "the build judged a foreign artifact by this machine" "$out"
 echo "  ok  an artifact for another system is built and its closure is not judged here"
 
+# The platform names its programs; a build program that names them for the host does not change
+# the platform's suffix, and the build says so (mcpp#911 B2).
+sed -i 's/^driver = "compiler"$/driver = "compiler"\nexe    = "{name}.toy"/' "$t/toy/mcpp.toml"
+cat > build.mcpp <<'EOF'
+import std;
+int main() { std::println("mcpp:artifact-name=exe:{{name}}"); }
+EOF
+out=$("$MCPP" build --target x86_64-toyos 2>&1) || fail "the build with the program's name did not succeed" "$out"
+grep -q 'the platform toy-platform 0.1.0 names it `{name}.toy`: the platform.s name stands' <<<"$out" \
+    || fail "the conflict of names is not reported" "$out"
+[ -n "$(find target/x86_64-toyos -path '*/bin/toyapp.toy' -type f | head -1)" ] \
+    || fail "the program is not named as the platform names it" "$(find target/x86_64-toyos -path '*/bin/*' | head)"
+rm build.mcpp
+echo "  ok  the platform's name of a program stands over a build program's"
+
 sed -i '/^\[target.x86_64-toyos\]/,/^platform/d' mcpp.toml
 out=$("$MCPP" build --target x86_64-toyos 2>&1 || true)
 grep -q "unknown target 'x86_64-toyos'" <<<"$out" || fail "without the platform the request was not an unknown target" "$out"

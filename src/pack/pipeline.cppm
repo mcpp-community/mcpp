@@ -537,18 +537,33 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
             break;
         }
     }
-    if (mainBinary.empty()) {
-        // Fall back to the first binary target if package.name doesn't match.
-        for (auto& lu : ctx.plan.linkUnits) {
-            if (is_program_link_unit(lu)) {
-                mainBinary = ctx.outputDir / lu.output;
-                chosenLu = &lu;
-                break;
-            }
-        }
+    // SEVERAL PROGRAMS ARE NOT PACKED BY A GUESS (mcpp#911 B3): the program
+    // named after the package is the package's, and the others are said; with
+    // none so named, the command names one or ships them all.
+    std::vector<const mcpp::build::LinkUnit*> programs;
+    for (auto const& lu : ctx.plan.linkUnits)
+        if (is_program_link_unit(lu)) programs.push_back(&lu);
+    std::string names;
+    for (auto const* lu : programs) names += (names.empty() ? "" : ", ") + lu->targetName;
+    if (mainBinary.empty() && programs.size() > 1 && !opts.allPrograms)
+        return Refusal{2, about(run, m, std::format(
+            "the package has several programs ({}) and none is named after it\n"
+            "  name one: mcpp pack <program>\n  or ship them together: mcpp pack --all-programs",
+            names))};
+    if (mainBinary.empty() && !programs.empty()) {
+        mainBinary = ctx.outputDir / programs.front()->output;
+        chosenLu = programs.front();
     }
     if (mainBinary.empty())
         return Refusal{1, about(run, m, "no binary target to pack")};
+    if (programs.size() > 1 && !opts.allPrograms && run.wantTarget.empty()) {
+        std::string others;
+        for (auto const* lu : programs)
+            if (lu != chosenLu) others += (others.empty() ? "" : ", ") + lu->targetName;
+        mcpp::ui::note(std::format(
+            "packing {}, the program named after the package; its other programs are not packed "
+            "({}): `mcpp pack --all-programs` ships them beside it", chosenLu->targetName, others));
+    }
     // Passed to `make_plan` rather than re-derived from the file: `make_plan`
     // has only `mainBinary` and would otherwise have to ask the triple and
     // the manifest the same question a second time.
@@ -633,6 +648,13 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
                 opts.runtimeFiles.push_back(productDir == "bin"
                     ? u.output.lexically_relative("bin")
                     : std::filesystem::path(u.output.filename()));
+        // `--all-programs`: the package's other programs, beside the chosen one.
+        if (opts.allPrograms)
+            for (auto const* u : programs)
+                if (u != chosenLu && u->kind == mcpp::build::LinkUnit::Binary)
+                    opts.runtimeFiles.push_back(productDir == "bin"
+                        ? u->output.lexically_relative("bin")
+                        : std::filesystem::path(u->output.filename()));
         // #634 A3: the Android row reads its closure against the directories
         // its link declared -- a prebuilt library named through `[runtime]
         // link_library_dirs` is a file the link used and the device does not

@@ -1260,7 +1260,8 @@ void step5_platform_toolchain(PrepareState& state);
 void step13_platform_statement(PrepareState& state);
 // The platform's statement and the compile words it states for a unit of C++,
 // as they stand now (the std module's are asked for before step 13).
-mcpp::manifest::platform::Statement platform_statement(const PrepareState& state);
+mcpp::manifest::platform::Statement platform_statement(const PrepareState& state,
+                                                       std::vector<std::string>* conflicts = nullptr);
 std::vector<std::string> platform_unit_cxxflags(const PrepareState& state);
 std::expected<void, std::string> step13_finish_platform(PrepareState& state, BuildContext& ctx);
 // retarget.cpp: a retargetable driver told its target, sysroot and multilib.
