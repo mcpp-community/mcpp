@@ -16,6 +16,7 @@ import mcpp.pack.compress;         // the test archive's tar (SPEC-015 §4)
 import mcpp.pack.distribution;     // its writer and reader
 import mcpp.build.test_targets;
 import mcpp.build.test_protocol;   // the runner's side of the test protocol (docs/08 "Cases")
+import mcpp.build.test_impact;     // the tests a change affects (docs/08)
 import mcpp.diag;
 import mcpp.build.plan;
 import mcpp.toolchain.triple;
@@ -3850,6 +3851,10 @@ export enum class TestMessageFormat { Human, Json };
 
 export struct TestOptions {
     std::string        filter;   // substring match on the path-based test name; empty = all
+    // `--since <commit>` and `--changed <path>`: only the tests the change
+    // affects (docs/08 "The tests a change affects").
+    std::string              since;
+    std::vector<std::string> changed;
     TestMessageFormat  format = TestMessageFormat::Human;
     bool               list = false;   // enumerate only, no build/run
     // `--no-runner`: run the test binaries directly, ignoring a declared
@@ -4170,6 +4175,8 @@ static void print_test_guide(const BuildContext& ctx, bool json) {
 // over several members; `run_tests` holds one for its one member.
 struct TestBuild {
     std::optional<BuildContext>              ctx;
+    // The tests a change affects (`--since`, `--changed`); none: every test.
+    std::optional<std::set<std::string>>     affected;
     std::unique_ptr<Backend>                 backend;
     long long                                prepareMs = 0;
     // Phase A, the bulk pass, and any attribution drive.
@@ -4359,6 +4366,39 @@ static std::optional<BuildError> test_phase_a(TestBuild& tb, const TestOptions& 
 //    is non-zero the loop runs as before and each failure still names its
 //    own test.
 // `keep` says which test binaries are goals.
+// `--since`/`--changed`: the tests of this plan the change affects, told
+// before they are built (docs/08). 2 when the change cannot be read.
+static int select_by_change(TestBuild& tb, const TestOptions& testOpts, bool json) {
+    if (testOpts.since.empty() && testOpts.changed.empty()) return 0;
+    std::vector<std::string> paths = testOpts.changed;
+    if (!testOpts.since.empty()) {
+        auto since = mcpp::build::test_impact::changed_since(tb.ctx->projectRoot, testOpts.since);
+        if (!since) {
+            mcpp::ui::error(std::format("--since {}: {}", testOpts.since, since.error()));
+            return 2;
+        }
+        paths.insert(paths.end(), since->begin(), since->end());
+    }
+    for (auto& p : paths) std::ranges::replace(p, '\\', '/');
+    const auto a = mcpp::build::test_impact::affected_tests(tb.ctx->plan, paths);
+    tb.affected.emplace();
+    for (auto const& [name, _] : a.tests) tb.affected->insert(name);
+    std::size_t total = 0;
+    for (auto const& lu : tb.ctx->plan.linkUnits) total += lu.kind == LinkUnit::TestBinary;
+    if (json) {
+        std::string tests;
+        for (auto const& [name, why] : a.tests)
+            tests += std::format("{}{{\"test\":\"{}\",\"why\":\"{}\"}}", tests.empty() ? "" : ",",
+                                 test_json_escape(name), test_json_escape(why));
+        std::println("{{\"affected\":[{}],\"of\":{},\"changed\":{}}}", tests, total, paths.size());
+    } else {
+        mcpp::ui::info("Affected", std::format("{} of {} test{} by {} changed path{}", a.tests.size(), total,
+                                                total == 1 ? "" : "s", paths.size(), paths.size() == 1 ? "" : "s"));
+        for (auto const& n : a.notes) mcpp::ui::plain(std::format("    {}", n));
+    }
+    return 0;
+}
+
 template <class Keep>
 static void test_bulk(TestBuild& tb, const TestOptions& testOpts, Keep&& keep) {
     auto* ctx = &*tb.ctx;
@@ -4368,7 +4408,7 @@ static void test_bulk(TestBuild& tb, const TestOptions& testOpts, Keep&& keep) {
     bulk.keepGoing = true;
     bulk.buildTimeoutSecs = static_cast<unsigned>(testOpts.buildTimeoutSecs);
     for (auto& lu : ctx->plan.linkUnits)
-        if (keep(lu))
+        if (keep(lu) && (!tb.affected || tb.affected->contains(lu.targetName)))
             bulk.ninjaTargets.push_back(lu.output.generic_string());
     if (!bulk.ninjaTargets.empty()) {
         auto tBulk = std::chrono::steady_clock::now();
@@ -4448,6 +4488,36 @@ static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool
     }
 }
 
+// A failed test whose file imports a module no package of this build provides:
+// the compiler says only that the module was not built. A test's framework is a
+// `[dev-dependencies]` entry (docs/08), which a manifest written over the
+// skeleton's leaves out.
+void print_unprovided_test_imports(const BuildPlan& plan, const std::vector<std::string>& failures) {
+    auto primary = [](std::string_view n) { return std::string(n.substr(0, n.find(':'))); };
+    std::set<std::string> provided{"std", "std.compat"};
+    std::map<std::filesystem::path, const CompileUnit*> unitOf;
+    for (auto const& cu : plan.compileUnits) {
+        if (!cu.providesModule.empty()) provided.insert(primary(cu.providesModule));
+        unitOf.emplace(cu.source, &cu);
+    }
+    std::vector<std::string> lines;
+    for (auto const& lu : plan.linkUnits) {
+        if (lu.kind != LinkUnit::TestBinary || !lu.entryMain
+            || std::ranges::find(failures, lu.targetName) == failures.end())
+            continue;
+        auto it = unitOf.find(*lu.entryMain);
+        if (it == unitOf.end()) continue;
+        for (auto const& name : it->second->imports)
+            if (!name.empty() && name.front() != '<' && name.front() != '"' && !provided.contains(primary(name)))
+                lines.push_back(std::format("{} imports '{}', which no package of this build provides",
+                                            lu.entryMain->filename().generic_string(), primary(name)));
+    }
+    if (lines.empty()) return;
+    std::println("");
+    for (auto const& l : lines) std::println("{}", l);
+    std::println("a test's framework is a [dev-dependencies] entry, e.g. mcpplibs.mtest = \"0.1.0\" (docs/08)");
+}
+
 // One member's tests, against a build that exists: the per-test builds that
 // the bulk pass did not answer, then the runs, then the member's summary.
 // `owner` is the member's package name in the plan, which picks its test
@@ -4477,6 +4547,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     auto filter_match = [&](const mcpp::build::LinkUnit& lu) {
         return lu.kind == mcpp::build::LinkUnit::TestBinary
             && (owner.empty() || lu.memberOf == owner)
+            && (!tb.affected || tb.affected->contains(lu.targetName))
             && (testOpts.filter.empty()
                 || lu.targetName.find(testOpts.filter) != std::string::npos);
     };
@@ -4697,13 +4768,20 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 // (P5.5).
                 mcpp::build::test_protocol::Report report;
                 std::string casesNote;
+                int spoken = r.protocol;
                 if (r.protocol && spawnErr == 0) {
                     report = mcpp::build::test_protocol::read_report(r.protocolDir / "report.ndjson", exitCode);
                     std::error_code ec;
                     std::filesystem::remove_all(r.protocolDir / "tmp", ec);
-                    casesNote = std::format(", {} case{}", report.cases.size(),
-                                            report.cases.size() == 1 ? "" : "s");
-                    if (exitCode == 0 && !timedOut && report.failed()) exitCode = 1;
+                    if (!report.spoke && !timedOut) {
+                        // The marker without the protocol: one case, its exit status.
+                        report = {};
+                        spoken = 0;
+                    } else {
+                        casesNote = std::format(", {} case{}", report.cases.size(),
+                                                report.cases.size() == 1 ? "" : "s");
+                        if (exitCode == 0 && !timedOut && report.failed()) exitCode = 1;
+                    }
                 }
 
                 std::scoped_lock lock(reportMutex);
@@ -4754,7 +4832,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     results.push_back({r.name, TestResult::St::RunFail, exitCode, {},
                                        runOutput, ms, false, {}, r.buildMs});
                 }
-                results.back().protocol = r.protocol;
+                results.back().protocol = spoken;
                 results.back().report = std::move(report);
                 results.back().guide = r.guide;
                 // The captured output belongs directly under its own line, or
@@ -5048,6 +5126,19 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
             listOpts.report_spawn_failure = false;
             auto listed = mcpp::run::execute(r.argv, listOpts);
             auto report = mcpp::build::test_protocol::read_report(r.protocolDir / "list.ndjson", listed.exit_code);
+            if (listed.exit_code == 0 && listed.spawn_error == 0 && !report.spoke) {
+                // The marker without the protocol (a file of plain `main` beside a
+                // framework's library): one case, as a program of no protocol.
+                r.protocol = 0;
+                if (testOpts.listCases) {
+                    results.push_back(built_result(r));
+                    if (!json) mcpp::ui::plain(std::format("{}: one case, its exit status (no test protocol)", r.name));
+                    emit_json(results.back());
+                } else {
+                    ++notSelected;
+                }
+                continue;
+            }
             if (listed.exit_code != 0 || listed.spawn_error != 0 || !report.done) {
                 if (!json) mcpp::ui::plain(std::format("{} ... FAIL (listing its cases: exit {})", r.name, listed.exit_code));
                 if (!json && !listed.output.empty()) mcpp::ui::plain(listed.output);
@@ -5178,6 +5269,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         for (auto& n : failures) std::println("    {}", n);
         // (Each compile failure's diagnostics already printed inline under its
         // FAIL line in Phase B — the summary stays a compact name list.)
+        print_unprovided_test_imports(ctx->plan, failures);
         // Where to read how these tests are written (docs/08).
         if (!ctx->plan.testFrameworks.empty()) {
             std::string names;
@@ -5544,6 +5636,7 @@ export int run_tests(std::span<const std::string> passthrough,
     TestBuild tb;
     tb.programEnv = std::move(programEnv);
     tb.ctx.emplace(std::move(*prepared));
+    if (int rc = select_by_change(tb, testOpts, json)) return rc;
     tb.backend = mcpp::build::make_ninja_backend();
     tb.ninjaLog = tb.ctx->outputDir / ".ninja_log";
     {
@@ -5713,6 +5806,7 @@ export int run_test_legs(std::span<const std::string> passthrough,
                                       discovered->targets, std::move(o));
         if (!prepared) { if (int rc = refused(prepared.error())) return rc; continue; }
         leg->tb.ctx.emplace(std::move(*prepared));
+        if (int rc = select_by_change(leg->tb, testOpts, json)) return rc;
         leg->tb.backend = mcpp::build::make_ninja_backend();
         leg->tb.ninjaLog = leg->tb.ctx->outputDir / ".ninja_log";
         std::error_code ec;
@@ -5936,6 +6030,8 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
         tb->prepareMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - t0).count();
         tb->ctx.emplace(std::move(*prepared));
+        if (select_by_change(*tb, testOpts, json) != 0)
+            return std::unexpected(std::format("--since {}: the change could not be read", testOpts.since));
         tb->backend = mcpp::build::make_ninja_backend();
         tb->ninjaLog = tb->ctx->outputDir / ".ninja_log";
         std::error_code ec;

@@ -60,6 +60,10 @@ struct CaseResult {
 // What one program's report says.
 struct Report {
     int                        level = 0;      // the `program` event's; 0 when none came
+    // A `program` event came. A program that carries the marker and writes
+    // none spoke no protocol (a file of plain `main` linked beside a
+    // framework's library): it is one case, judged by its exit status.
+    bool                       spoke = false;
     std::string                framework;
     bool                       done = false;   // the `done` event came
     std::vector<Case>          listed;         // `case` events (list mode)
@@ -168,6 +172,7 @@ void take(Report& r, std::map<std::string, std::size_t>& open, const nlohmann::j
     const auto kind = text(e, "e");
     const auto id = text(e, "id");
     if (kind == "program") {
+        r.spoke = true;
         r.level = number(e, "level");
         r.framework = text(e, "framework");
     } else if (kind == "case") {

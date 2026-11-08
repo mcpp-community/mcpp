@@ -4750,6 +4750,23 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                    mcpp::build::dist::stream_init_shim_source());
     }
 
+    // A program's directory that an earlier build left as a file: a test
+    // named `e2e` before a later `e2e/c` (`[test] programs` changed, or a file
+    // became a directory). The file is a product this plan no longer makes,
+    // and ninja cannot write below it.
+    for (auto const& lu : plan.linkUnits) {
+        std::error_code fec;
+        // And the other way: a program where an earlier build placed others below it.
+        if (!lu.output.empty() && std::filesystem::is_directory(plan.outputDir / lu.output, fec))
+            std::filesystem::remove_all(plan.outputDir / lu.output, fec);
+        for (auto dir = (plan.outputDir / lu.output).parent_path();
+             dir != plan.outputDir && dir.has_relative_path(); dir = dir.parent_path())
+            if (std::filesystem::is_regular_file(dir, fec)) {
+                std::filesystem::remove(dir, fec);
+                break;
+            }
+    }
+
     if (opts.dryRun) {
         BuildResult r;
         r.exitCode = 0;
