@@ -1730,9 +1730,17 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
         std::println(libc::stderr(), "error: {}", body.error());
         return 1;
     }
+    // AN UNCHANGED BINDING IS LEFT UNTOUCHED. The rule restats its output, so
+    // a unit whose module edges are what they were is not compiled again when
+    // another part of the graph changed the rule's command (a test graph
+    // binds the modules of its dev-dependencies; mcpp#874).
     std::error_code ec;
     std::filesystem::create_directories(outPath.parent_path(), ec);
-    std::ofstream os(outPath);
+    {
+        std::ifstream in(outPath, std::ios::binary);
+        if (in && std::string(std::istreambuf_iterator<char>(in), {}) == *body) return 0;
+    }
+    std::ofstream os(outPath, std::ios::binary);
     os << *body;
     return os ? 0 : 1;
 }
