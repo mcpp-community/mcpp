@@ -417,11 +417,12 @@ SHARD_POS=0
 # CI record). Round-robin balances counts, not time: measured on 2026-10-01 the
 # two Windows shards differed by 3.6 minutes on average, and about fifteen tests
 # of over thirty seconds took 58-64 percent of a shard. E2E_TIMINGS names a
-# table of `<test>\t<milliseconds>` lines (tests/e2e/timings/<host>.tsv); the
-# tests are assigned longest first, each to the shard with the least time so
-# far, and a test the table does not know counts as the table's median. The
-# assignment depends only on the file list and the table, both in the
-# repository, so a shard's membership is reproducible from the commit, and it
+# table of `<test>\t<milliseconds>` lines (the e2e-timings artifact of a CI
+# run; CI itself divides by mtest's history, E2E_MTEST above); the tests are
+# assigned longest first, each to the shard with the least time so far, and a
+# test the table does not know counts as the table's median. The assignment
+# depends only on the file list and the table, so a shard's membership is
+# reproducible from them, and it
 # changes which shard runs a test, never whether one does.
 SHARD_MEMBERS=""
 if (( SHARD_TOTAL > 1 )) && [[ -n "${E2E_TIMINGS:-}" ]]; then
@@ -493,8 +494,11 @@ fi
 # `# resources:` resources. The capabilities this machine lacks exclude their
 # tests, E2E_SHARD selects a part by the store's history (mtest's `--shard`, the
 # longest first to the part with the least expected time) in place of the
-# timing table, and E2E_JOBS runs that many at once. E2E_ONLY and E2E_EXCLUDE
-# select as below. Each result is reported as the serial run reports it.
+# timing table, and E2E_JOBS runs that many at once. E2E_SET names a set of
+# mtest (`pr`: the tests the change affects, by the store's coverage map, with
+# the smoke and regression sets; a test the map does not know is affected).
+# E2E_ONLY and E2E_EXCLUDE select as below. Each result is reported as the
+# serial run reports it.
 run_by_mtest() {
     local args=(run --jobs "${E2E_JOBS:-1}" --timeout "${E2E_TEST_TIMEOUT}s" --report-json "$1")
     local cap
@@ -502,6 +506,9 @@ run_by_mtest() {
         [[ " ${CAPS[*]} " == *" $cap "* ]] || args+=(--exclude-tag "requires:$cap")
     done
     (( SHARD_TOTAL > 1 )) && args+=(--shard "$SHARD_IDX/$SHARD_TOTAL")
+    [[ -n "${E2E_SET:-}" ]] && args+=(--set "$E2E_SET")
+    # E2E_COVERAGE: the run measures the coverage map ([coverage] of mtest.toml).
+    [[ -n "${E2E_COVERAGE:-}" ]] && args+=(--coverage)
     [[ -n "${E2E_ONLY:-}" ]] && args+=(--program "$E2E_ONLY")
     [[ -n "${E2E_EXCLUDE:-}" ]] && args+=(--exclude-program "$E2E_EXCLUDE")
     (cd "$HERE" && MCPP="$MCPP" "$E2E_MTEST" "${args[@]}")

@@ -38,7 +38,7 @@ did not pass on one of them, or that does not exist, fails the check.
 
 With --timings-out DIR it writes `<host>.tsv`, the measured duration of every
 test that ran, merged across that host's shards, in the format run_all.sh reads
-from E2E_TIMINGS; refreshing tests/e2e/timings/ is copying those files. A report
+from E2E_TIMINGS (a run without mtest; CI's shards divide by mtest's history). A report
 file is named `e2e-report-<host>-<shard>.tsv`.
 
 Usage:

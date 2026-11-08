@@ -48,9 +48,20 @@ jobs:
         with:
           host: linux-x86_64
 
+      # A pull request runs the tests its change affects (`mcpp test --since`,
+      # docs/08; design 2026-11-08 W8): the base's tip is fetched, and when it
+      # cannot be, every test runs.
+      - name: The base of the change
+        if: github.base_ref != ''
+        shell: bash
+        run: |
+          if git fetch --no-tags --depth=1 origin "+refs/heads/$GITHUB_BASE_REF:refs/remotes/origin/$GITHUB_BASE_REF"; then
+            echo "MCPP_TEST_SINCE=origin/$GITHUB_BASE_REF" >> "$GITHUB_ENV"
+          fi
+
       - name: Unit + integration tests via `mcpp test`
         run: |
-          "$MCPP_FRESH" test
+          "$MCPP_FRESH" test ${MCPP_TEST_SINCE:+--since "$MCPP_TEST_SINCE"}
 
       # Each package under `modules/` carries its own tests, and they are built
       # as that package ALONE -- a configuration the root suite never produces,
@@ -81,7 +92,7 @@ jobs:
           echo "members: $(echo $members | tr '\n' ' ')"
           for m in $members; do
             echo "::group::mcpp test -p $m"
-            "$MCPP_FRESH" test -p "$m"
+            "$MCPP_FRESH" test -p "$m" ${MCPP_TEST_SINCE:+--since "$MCPP_TEST_SINCE"}
             echo "::endgroup::"
           done
 

@@ -2,7 +2,7 @@ name: ci-windows-e2e
 
 # The e2e suite on Windows x64, called by ci.yml beside ci-windows.yml after
 # the Windows build. Three shards, assigned by measured duration
-# (tests/e2e/timings/windows.tsv, rule R4 of the 2026-10-02 CI record): about
+# (by mtest, from the measured history of main's stores; rule R4 of the 2026-10-02 CI record): about
 # fifteen tests of over thirty seconds took 58 to 64 percent of a round-robin
 # shard, and the two shards differed by 3.6 minutes on average. Each shard runs
 # the one binary build.yml produced (use-built-mcpp, rule R1) and writes the
@@ -26,7 +26,12 @@ jobs:
       MCPP_HOME: C:\Users\runneradmin\.mcpp
       # Round-robin slice of tests/e2e (see run_all.sh).
       E2E_SHARD: ${{ matrix.shard }}/3
-      E2E_TIMINGS: tests/e2e/timings/windows.tsv
+      # By mtest (design 2026-11-08 W8; .github/actions/e2e-mtest): parts by
+      # the measured history of main's stores, two tests at a time (measured on
+      # one Linux shard: 220 s against 424 s one at a time, three no faster),
+      # and on a pull request the tests its change affects.
+      E2E_JOBS: '2'
+      E2E_SET: ${{ github.event_name == 'pull_request' && 'pr' || '' }}
       E2E_REPORT: ${{ github.workspace }}/e2e-report-windows-${{ matrix.shard }}.tsv
       # NOTE: do NOT force MCPP_VERBOSE here. The e2e suite includes tests that
       # assert mcpp's DEFAULT (quiet) output — e.g. 48_build_error_output and
@@ -93,6 +98,10 @@ jobs:
           test -n "$found" || { echo "FAIL: mingw installed but not where run_all.sh looks"; exit 1; }
           echo "mingw payload: $found"
 
+      - uses: ./.github/actions/e2e-mtest
+        with:
+          host: windows
+
       - name: E2E suite
         shell: bash
         # About twice the shard's budget of fifteen minutes (R4): reached only by
@@ -113,6 +122,18 @@ jobs:
 
       # Measurement legs print READING lines (#646 F2 across PE images, #649 E10
       # the llvm row's recorded CRT); collected where a reader finds them.
+      # The shard's store: main's are the history the next runs divide the suite by.
+      - name: Upload the shard's store
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-store-windows-${{ matrix.shard }}
+          path: tests/e2e/.mtest
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
+
       # One file, no glob: the report the e2e-coverage job of ci.yml reads.
       - name: Upload the shard's report
         if: always()

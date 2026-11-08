@@ -40,6 +40,8 @@ permissions:
   contents: read
   # `changes` lists the files of the pull request.
   pull-requests: read
+  # The e2e shards read the stores of main's last run (.github/actions/e2e-mtest).
+  actions: read
 
 jobs:
   changes:
@@ -276,8 +278,8 @@ jobs:
       - name: Every test ran, is run by a dedicated job, or is excused
         run: python3 .github/tools/check_e2e_coverage.py --reports reports --timings-out timings
 
-      # The measured durations, merged per host, in the format of
-      # tests/e2e/timings/; refreshing those tables is copying these files.
+      # The measured durations, merged per host, in the format run_all.sh reads
+      # from E2E_TIMINGS (a run without mtest).
       - name: Upload the measured durations
         if: always()
         uses: actions/upload-artifact@v4

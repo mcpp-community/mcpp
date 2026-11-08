@@ -18,7 +18,7 @@ inputs:
   sha256:
     description: sha256 of mtest-<version>-openkal-bundle-all.tar.gz
     required: false
-    default: ''
+    default: '283e8752d1aa009c95ed9399247ab93a46a3f734c7c1cf7b7af8ca1b5de0070b'
   token:
     description: a token that reads this repository's actions
     required: false
@@ -46,6 +46,15 @@ runs:
         [ "$RUNNER_OS" = Windows ] && launcher="$launcher.exe"
         "$launcher" --version
         echo "E2E_MTEST=$launcher" >> "$GITHUB_ENV"
+    # The pull request's change, for the `pr` set: the base's tip and HEAD's
+    # parents, so that `git diff <base>...HEAD` has its merge base. When they
+    # cannot be fetched, mtest selects every test and says why.
+    - name: The base of the change
+      if: github.base_ref != ''
+      shell: bash
+      run: |
+        git fetch --no-tags --depth=1 origin "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}" || true
+        git fetch --no-tags --deepen=1 origin || true
     - name: The stores of main's last CI run
       shell: bash
       env:
@@ -64,3 +73,20 @@ runs:
           (cd tests/e2e && "$E2E_MTEST" store import --from "$store")
         done
         echo "history of main's run $run: $(ls "$RUNNER_TEMP/e2e-stores" | wc -l) store(s)"
+    # The coverage map of the last nightly measurement (e2e-coverage.yml), on
+    # the host it was measured on: the sources each test's run executed there.
+    # Another host's own sources (src/native/windows/...) run on no Linux test,
+    # so its suite has no map and every test of it is affected.
+    - name: The coverage map
+      if: inputs.host == 'linux'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow e2e-coverage.yml --status success --limit 1 \
+                --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+        if [ -z "$run" ]; then echo "no coverage map: every test is affected"; exit 0; fi
+        rm -rf "$RUNNER_TEMP/e2e-coverage"
+        gh run download "$run" -R "$GITHUB_REPOSITORY" -n e2e-coverage-linux -D "$RUNNER_TEMP/e2e-coverage" || exit 0
+        (cd tests/e2e && "$E2E_MTEST" coverage import --from "$RUNNER_TEMP/e2e-coverage/coverage.json")

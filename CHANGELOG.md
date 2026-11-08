@@ -76,6 +76,11 @@
   names the module and the dev-dependency a framework is.
 - A product an earlier build left where this one places a program's directory,
   or a directory where it places a program, is removed before the build.
+- `trim_paths` applies to what `mcpp test` compiles as it does to what `mcpp
+  build` compiles, but for a test program's own files, which keep their paths:
+  under a shipping profile (`release`, mcpp's own default) build and test are
+  one configuration, where a test compiled the whole graph again in a
+  configuration of its own (637 of mcpp's objects; docs/04; e2e 1038 E).
 - `mcpp dyndep` leaves an unchanged output untouched, so a unit whose module
   edges are what they were is not compiled again when the rule's command
   changed (#874).

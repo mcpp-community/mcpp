@@ -39,11 +39,22 @@ jobs:
         shell: bash
         run: MCPP="$MCPP_SELF" python .github/tools/check_windows_home_menu.py
 
+      # A pull request runs the tests its change affects (`mcpp test --since`,
+      # docs/08; design 2026-11-08 W8): the base's tip is fetched, and when it
+      # cannot be, every test runs.
+      - name: The base of the change
+        if: github.base_ref != ''
+        shell: bash
+        run: |
+          if git fetch --no-tags --depth=1 origin "+refs/heads/$GITHUB_BASE_REF:refs/remotes/origin/$GITHUB_BASE_REF"; then
+            echo "MCPP_TEST_SINCE=origin/$GITHUB_BASE_REF" >> "$GITHUB_ENV"
+          fi
+
       - name: Unit + integration tests via mcpp test
         shell: bash
         run: |
           export MCPP_VENDORED_XLINGS=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
-          "$MCPP_SELF" test
+          "$MCPP_SELF" test ${MCPP_TEST_SINCE:+--since "$MCPP_TEST_SINCE"}
 
       - name: Home and runner-cache paths preserve Unicode under a legacy Windows code page
         shell: bash
