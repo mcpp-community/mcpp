@@ -488,10 +488,62 @@ if [[ "${E2E_LIST:-}" == "1" ]]; then
     exit 0
 fi
 
+# BY MTEST (design 2026-11-08 W8) when E2E_MTEST names the mtest program: the
+# tests are the programs of tests/e2e/mtest.toml, their `# requires:` tags and
+# `# resources:` resources. The capabilities this machine lacks exclude their
+# tests, E2E_SHARD selects a part by the store's history (mtest's `--shard`, the
+# longest first to the part with the least expected time) in place of the
+# timing table, and E2E_JOBS runs that many at once. E2E_ONLY and E2E_EXCLUDE
+# select as below. Each result is reported as the serial run reports it.
+run_by_mtest() {
+    local args=(run --jobs "${E2E_JOBS:-1}" --timeout "${E2E_TEST_TIMEOUT}s" --report-json "$1")
+    local cap
+    for cap in "${KNOWN_CAPS[@]}"; do
+        [[ " ${CAPS[*]} " == *" $cap "* ]] || args+=(--exclude-tag "requires:$cap")
+    done
+    (( SHARD_TOTAL > 1 )) && args+=(--shard "$SHARD_IDX/$SHARD_TOTAL")
+    [[ -n "${E2E_ONLY:-}" ]] && args+=(--program "$E2E_ONLY")
+    [[ -n "${E2E_EXCLUDE:-}" ]] && args+=(--exclude-program "$E2E_EXCLUDE")
+    (cd "$HERE" && MCPP="$MCPP" "$E2E_MTEST" "${args[@]}")
+}
+if [[ -n "${E2E_MTEST:-}" ]]; then
+    record="$(mktemp)"
+    run_by_mtest "$record" || true
+    # One `<status> <ms> <name>` line per case of the run's record.
+    py=python3; command -v python3 >/dev/null 2>&1 || py=python
+    results="$("$py" - "$record" <<'PY'
+import json, sys
+try:
+    run = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    sys.exit(0)
+for c in run.get("cases", []):
+    status = {"pass": "pass", "flaky": "pass", "timeout": "timeout"}.get(c.get("status"), "fail")
+    print(status, int(c.get("ms", 0)), c.get("program", c.get("id", "")))
+PY
+)"
+    rm -f "$record"
+    while read -r status ms name; do
+        [[ -n "$name" ]] || continue
+        TIMINGS+=("$ms $name")
+        case "$status" in
+            pass) ((PASS++)); report pass "$name" "$ms" "" ;;
+            timeout) ((FAIL++)); FAILED_TESTS+=("$name (TIMEOUT)"); TIMED_OUT_TESTS+=("$name")
+                     report timeout "$name" "$ms" "exceeded ${E2E_TEST_TIMEOUT}s" ;;
+            *) ((FAIL++)); FAILED_TESTS+=("$name"); report fail "$name" "$ms" "failed" ;;
+        esac
+    done <<<"$results"
+    if [[ $((PASS + FAIL)) -eq 0 ]]; then
+        echo "FATAL: mtest reported no case (E2E_MTEST=$E2E_MTEST)"
+        exit 1
+    fi
+fi
+
 # Optional name filter: E2E_ONLY="<glob>" runs just the matching tests.
 # Used by the workflows that own ONE subject (see ci-windows-msvc-xlings.yml)
 # so the job name and the thing it runs cannot drift apart.
 for test in "$HERE"/[0-9]*.sh; do
+    [[ -z "${E2E_MTEST:-}" ]] || break
     if [[ -n "${E2E_ONLY:-}" ]]; then
         # shellcheck disable=SC2053 — glob match is the point
         [[ "$(basename "$test")" == $E2E_ONLY ]] || continue

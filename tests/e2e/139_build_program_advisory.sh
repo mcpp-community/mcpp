@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: unix-shell
+# resources: machine
 # A build program that succeeds and still says something.
 #
 # THE SECOND BUILD IS THE TEST, NOT THE FIRST.

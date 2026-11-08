@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: llvm python3
+# resources: machine
 # 951 -- `<arch>-openkal` needs no declaration: the target's platform supplies
 # the C library, the C++ run-time, the tools and the runner (SPEC-013; design
 # 2026-10-28 §7, §10).

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: python3
+# resources: machine
 # 936 -- the control contract (design 2026-10-26 §5): what a program, an
 # agent or an editor reads of a build without a terminal.
 #

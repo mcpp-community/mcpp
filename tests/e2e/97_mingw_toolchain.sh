@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: windows
+# resources: machine
 # 97_mingw_toolchain.sh — Windows-native MinGW-w64 GCC via the xlings
 # ecosystem (xim:mingw-gcc, winlibs GCC 16.1.0 UCRT):
 #   - `toolchain install mingw 16.1.0` resolves + installs the xpkg

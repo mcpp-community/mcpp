@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: elf gcc
+# resources: machine
 # 205_root_local_subos.sh — root/workspace-root owns the local development OS;
 # member/dependency declarations are non-transitive and active shell state is
 # never a selector.

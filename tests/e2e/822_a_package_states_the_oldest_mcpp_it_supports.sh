@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: unix-shell
+# resources: machine
 # 822_a_package_states_the_oldest_mcpp_it_supports.sh -- #734 E9 and E12.
 #
 # `[package] mcpp = ">=V"` states the oldest mcpp release a package supports.

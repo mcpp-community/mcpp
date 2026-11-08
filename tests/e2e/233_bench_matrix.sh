@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: python3
+# resources: machine
 # 233_bench_matrix.sh — bench/matrix.json is the ONE place the benchmark matrix
 # is written down, and this checks that it stays that way.
 #

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: windows msvc
+# resources: machine
 # `msvc@system` IS LOCATED FOR A BUILD PROGRAM, NEVER INSTALLED (2026.11.7.1).
 # On a Windows machine whose default toolchain is `msvc@system`, a project with
 # a build program built for a bare cross target resolved the build program's
