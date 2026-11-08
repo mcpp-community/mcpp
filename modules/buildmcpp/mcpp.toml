@@ -32,14 +32,13 @@ license     = "Apache-2.0"
 # contract change; one that breaks only the global test is a consumer that had
 # been relying on something the contract never promised.
 [dependencies]
-"nlohmann.json" = "3.12.0"
+nlohmann.json = "3.12.0"
 
-[dependencies.mcpp]
-invocation      = { path = "../invocation" }
-libs            = { path = "../libs" }
-manifest        = { path = "../manifest" }
-source-kind     = { path = "../source-kind" }
-toolchain-model = { path = "../toolchain-model" }
+mcpp.invocation      = { path = "../invocation" }
+mcpp.libs            = { path = "../libs" }
+mcpp.manifest        = { path = "../manifest" }
+mcpp.source-kind     = { path = "../source-kind" }
+mcpp.toolchain-model = { path = "../toolchain-model" }
 
-[dev-dependencies.compat]
-gtest = "1.15.2"
+[dev-dependencies]
+compat.gtest = "1.15.2"

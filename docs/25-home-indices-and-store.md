@@ -29,9 +29,16 @@ stated on the build's own command lines.
   build-cache/  cache/  provisioned/ …
 
 <project>/.mcpp/
+  .gitignore                `*`: the directory ignores itself (2026.11.8.1+)
+  compiler-runs/<hash>/     the locks of a build's generated sources
   indices/<name>/           the data of the project's own [indices]
   xpkgs/                    the payloads they serve
 ```
+
+`<project>/.mcpp/` is the machine's state of the project, never its sources.
+mcpp writes `.gitignore` with the one line `*` into it whenever it creates or
+uses it, so version control ignores it in a project whose own ignore file does
+not name it.
 
 Ownership follows the index. An index mcpp serves keeps its data and its
 payloads in mcpp's home; the provider's own indexes (`xim` and the ones it adds)
@@ -104,8 +111,12 @@ a project's `target/` is its own. Each has a retention, in config.toml:
 |---|---|---|
 | `[cache] unused_days` | 30 | after a build, at most once a day: cache entries (packages, `std` modules, host tools) no build used for that many days |
 | `[build] keep_days` | 3 | after `mcpp build` or `mcpp test`, at most once a day per project: build directories no configuration used for that many days |
+| `[build] target_budget` | none | after every `mcpp build` or `mcpp test` whose `target/` holds more than this size (`"20GiB"`, `"512MiB"`): every build directory no configuration records as current, whatever its age (2026.11.8.1+) |
 
-`0` keeps everything. `mcpp self config --cache-unused-days <N>` and
+`0` keeps everything. `target_budget` is read from the project's (or
+workspace root's) `mcpp.toml`, else from config.toml. When the directories still
+in use hold more than the budget, the build warns and names the three largest;
+nothing in use is removed. `mcpp self config --cache-unused-days <N>` and
 `--keep-days <N>` write them; `mcpp self config` shows them.
 
 A cache entry's files never change after they are written, and a file system

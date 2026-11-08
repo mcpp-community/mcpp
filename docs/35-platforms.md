@@ -22,7 +22,9 @@ the tools the build runs on this machine, the compile and link conventions, the
 name and seal of an artifact, and the runner. A project states none of it. The
 target table selects `mcpplibs.openkal-platform` for `x86_64-openkal` and
 `aarch64-openkal` (2026.10.27.1+), which is what built-in support for those two
-targets is.
+targets is. An image is a release form, and a native row is a build target with
+the same guarantees; neither ranks above the other ([24](24-openkal-cross.md),
+"Two Roles, No Ranking").
 
 ## The shortest run
 
@@ -186,8 +188,8 @@ index change resolves the same either way.
 ## The built-in platform is one release
 
 The target table selects one openkal-platform release for the two ok-image
-targets, the one this mcpp was qualified with: 0.24.3 for mcpp 2026.11.7.2
-(2026.11.7.1 selected the series `^0.24`). A project that states no platform
+targets, the one this mcpp was qualified with: 0.24.4 for mcpp 2026.11.8.1,
+0.24.3 for 2026.11.7.2 (2026.11.7.1 selected the series `^0.24`). A project that states no platform
 builds the same versions at any time, with or without `mcpp.lock`; when the lock
 records another release, the build takes the default and says which release the
 lock recorded. A newer platform needs no new mcpp: a project selects it in its

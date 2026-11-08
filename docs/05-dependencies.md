@@ -56,6 +56,21 @@ glfw = "3.4"                    # Explicit namespace; no fallback search
 
 </details>
 
+A quoted key with dots, `"mcpplibs.cmdline" = "0.0.2"`, is one TOML key whose
+name contains dots. mcpp reads it as the selector those dots spell, warns that
+the spelling is deprecated (since 2026.11.8.1, removed from 2027.2; docs/51)
+and names the unquoted key that replaces it: `mcpplibs.cmdline = "0.0.2"`.
+A package and a package of its namespace in one table, `mcpplibs.mtest` and
+`mcpplibs.mtest.gtest`, cannot both be written unquoted -- one name would be a
+value and a table -- so the quoted key of one of them is their spelling and is
+not deprecated:
+
+```toml
+[dev-dependencies]
+mcpplibs.mtest         = "0.1.0"
+"mcpplibs.mtest.gtest" = "0.1.0"
+```
+
 ```toml
 # Path dependency (local development)
 [dependencies]
@@ -430,7 +445,7 @@ Run any command with `-v` to see the decision for each dependency and why.
 gtest = "1.15.2"
 ```
 
-`mcpp build` ignores these; `mcpp test` resolves and uses them. `mcpp test` automatically discovers `tests/**/*.cpp` and compiles them into test binaries. The runner is framework-agnostic: each file is an independent binary judged by exit code — a bare `main`, gtest (via `[dev-dependencies]` + `gtest_main`), or any other framework all work identically, and `-- args` are forwarded to every test binary (e.g. `-- --gtest_filter=...`). Note: synthesized test target names may contain `/` (`tests/00-a/0.cpp` → `00-a/0`), unlike `[targets.*]` names — the two namespaces are intentionally separate (test targets never enter the manifest or publishing). Tests are named by their `tests/`-relative path (`tests/00-a/0.cpp` → `00-a/0`), each test compiles in isolation (a broken test fails alone; package/dep breakage is reported as a build error instead), and `mcpp test <pattern>` / `--message-format json` filter and machine-format the run.
+`mcpp build` ignores these; `mcpp test` resolves and uses them, for the test units only: the package's own sources compile under `mcpp test` as under `mcpp build` (2026.11.8.1+, [08](08-testing.md#tests-that-reach-packages-the-artifact-does-not)). `mcpp test` automatically discovers `tests/**/*.cpp` and compiles them into test binaries. The runner is framework-agnostic: each file is an independent binary judged by exit code — a bare `main`, gtest (via `[dev-dependencies]` + `gtest_main`), or any other framework all work identically, and `-- args` are forwarded to every test binary (e.g. `-- --gtest_filter=...`). Note: synthesized test target names may contain `/` (`tests/00-a/0.cpp` → `00-a/0`), unlike `[targets.*]` names — the two namespaces are intentionally separate (test targets never enter the manifest or publishing). Tests are named by their `tests/`-relative path (`tests/00-a/0.cpp` → `00-a/0`), each test compiles in isolation (a broken test fails alone; package/dep breakage is reported as a build error instead), and `mcpp test <pattern>` / `--message-format json` filter and machine-format the run.
 
 ## `[build-dependencies]` — Build-Time Dependencies (mcpp 2026.8.29.1+)
 

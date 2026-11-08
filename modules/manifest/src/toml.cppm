@@ -2050,6 +2050,35 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             t.start = sit->second.as_string();
             t.startDeclaredBy = std::format("[targets.{}] start = \"{}\"", tname, t.start);
         }
+        // `test-protocol` (docs/08): the version of the test protocol a test
+        // program that begins at this entry implements. Version 1 is the one
+        // this mcpp runs; a program of another version runs as a plain test.
+        if (auto pit = tt.find("test-protocol"); pit != tt.end()) {
+            if (t.kind != Target::Entry)
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.test-protocol states what a test program that begins at an "
+                    "entry implements, and `{}` is not a `kind = \"entry\"` target", tname, tname)));
+            if (!pit->second.is_int() || pit->second.as_int() < 1)
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.test-protocol is the protocol's version, a positive integer "
+                    "(`test-protocol = 1`)", tname)));
+            t.testProtocol = static_cast<int>(pit->second.as_int());
+        }
+        // `test-main` (docs/08): this entry begins a test program of a package
+        // that depends on this one when the test's file defines no `main`.
+        if (auto mit = tt.find("test-main"); mit != tt.end()) {
+            if (t.kind != Target::Entry || !mit->second.is_bool())
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.test-main is `true` or `false`, on a `kind = \"entry\"` target", tname)));
+            t.testMain = mit->second.as_bool();
+        }
+        // `test-guide` (docs/08): the framework's guide to writing its tests.
+        if (auto git = tt.find("test-guide"); git != tt.end()) {
+            if (t.kind != Target::Entry || !git->second.is_string() || git->second.as_string().empty())
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.test-guide is a file of the package, on a `kind = \"entry\"` target", tname)));
+            t.testGuide = git->second.as_string();
+        }
         // An entry target is a translation unit and not an artifact: the keys
         // that describe an artifact (its ABI name, its exports, its form, its
         // PE subsystem and manifest) belong to the program that selects it.
@@ -2241,7 +2270,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             "kind", "linkage", "main", "soname", "exports", "windows_auto_export",
             "cflags", "cxxflags", "defines", "required_features",
             "windows_entry", "windows_subsystem", "windows_code_page", "windows_long_paths",
-            "start",
+            "start", "test-protocol", "test-main", "test-guide",
         };
         for (auto& [key, _] : tt) {
             bool known = false;
@@ -2820,12 +2849,25 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         }
         return {};
     };
+    // A quoted dotted key that names a package beside its parent or a child of
+    // its namespace in one table is the only spelling of the pair (mcpp#904).
+    auto mark_required_quoting = [](std::map<std::string, DependencySpec>& deps) {
+        for (auto& [key, spec] : deps) {
+            if (!spec.legacyDottedKey) continue;
+            spec.quotingRequired = std::ranges::any_of(deps, [&](auto const& other) {
+                return other.first != key
+                    && (other.first.starts_with(key + ".") || key.starts_with(other.first + "."));
+            });
+        }
+    };
     auto load_deps = [&](std::string_view section, std::map<std::string, DependencySpec>& out)
         -> std::expected<void, ManifestError>
     {
         auto* tt = doc->get_table(section);
         if (!tt) return {};
-        return load_deps_table(section, *tt, out);
+        auto r = load_deps_table(section, *tt, out);
+        if (r) mark_required_quoting(out);
+        return r;
     };
     if (auto r = load_deps("dependencies",       m.dependencies);       !r) return std::unexpected(r.error());
     if (auto r = load_deps("dev-dependencies",   m.devDependencies);    !r) return std::unexpected(r.error());
@@ -3615,10 +3657,18 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 m.testStart = value.as_string();
                 continue;
             }
+            if (key == "programs") {
+                if (!value.is_string() || (value.as_string() != "file" && value.as_string() != "directory"))
+                    return std::unexpected(error(origin,
+                        "[test] programs is \"file\" (a test program per file, the default) or "
+                        "\"directory\" (the files of one directory are one program)"));
+                m.testPrograms = value.as_string();
+                continue;
+            }
             if (key != "discover") {
                 m.schemaWarnings.push_back(std::format(
                     "[test] has unsupported key '{}' (ignored). Supported keys: "
-                    "discover, main, start, windows_code_page, windows_long_paths.", key));
+                    "discover, main, programs, start, windows_code_page, windows_long_paths.", key));
                 continue;
             }
             bool ok = value.is_array();
@@ -4660,10 +4710,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             auto read_deps = [&](const char* key, std::map<std::string, DependencySpec>& out)
                 -> std::expected<void, ManifestError>
             {
-                if (auto f = body.find(key); f != body.end() && f->second.is_table())
-                    return load_deps_table(
+                if (auto f = body.find(key); f != body.end() && f->second.is_table()) {
+                    auto r = load_deps_table(
                         std::format("target.{}.{}", toml_header_key(triple), key),
                         f->second.as_table(), out, key);
+                    if (r) mark_required_quoting(out);
+                    return r;
+                }
                 return {};
             };
             if (auto r = read_deps("dependencies",       cc.dependencies);     !r) return std::unexpected(r.error());

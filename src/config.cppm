@@ -1377,7 +1377,7 @@ bool ensure_project_index_dir(
     if (customRepos.empty() && penv.empty()) return false;  // nothing to do
 
     auto dotMcpp = projectDir / ".mcpp";
-    std::filesystem::create_directories(dotMcpp, ec);
+    mcpp::home::mark_project_state(dotMcpp);
 
     // Seed .xlings.json with the custom index entries.
     mcpp::provider::Location env;

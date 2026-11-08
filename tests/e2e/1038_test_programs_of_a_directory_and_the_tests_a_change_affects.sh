@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# requires: gcc
+# 1038 -- the files of one directory are one test program, and `mcpp test` runs the tests a change
+# affects (docs/08 "Where tests are", "The tests a change affects").
+#
+# Criteria:
+#   A. `[test] programs = "directory"`: the files of a directory below `tests/` are one program,
+#      named by the directory, whose cases are all of theirs; a directory whose file defines `main`
+#      begins there; two files of one directory that define `main` are refused, naming both.
+#   B. A program built from a file of plain `main` that links a framework's library (it carries the
+#      protocol's marker and speaks none) is one case, judged by its exit status, run and listed.
+#   C. `--changed PATH` runs the tests built from PATH (a module a test imports, transitively) and
+#      not the others; a file no test is built from or names affects none; a file a test names
+#      affects it; the manifest affects every test. `--since COMMIT` reads the change from git.
+#   D. Switching between `programs = "directory"` and the default builds without a stale product
+#      in the way.
+set -e
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
+
+cd "$TMP"
+"$MCPP" new app > /dev/null 2>&1
+cd app
+mkdir -p tests/unit tests/e2e tests/data
+cat > src/calc.cppm <<'CPP'
+export module app.calc;
+export int twice(int x) { return 2 * x; }
+CPP
+cat > tests/unit/a.cpp <<'CPP'
+import mcpplibs.mtest;
+import app.calc;
+using namespace mcpplibs::mtest;
+suite a{"a", [] { "doubles"_test = [] { expect(eq(twice(2), 4)); }; }};
+CPP
+cat > tests/unit/b.cpp <<'CPP'
+import std;
+import mcpplibs.mtest;
+using namespace mcpplibs::mtest;
+suite b{"b", [] { "reads its data"_test = [] { expect(eq(std::string_view("tests/data/f.txt").size(), 16u)); }; }};
+CPP
+printf 'import std;\nint main() { return 0; }\n' > tests/e2e/plain.cpp
+printf 'data\n' > tests/data/f.txt
+
+# A
+printf '\n[test]\nprograms = "directory"\n' >> mcpp.toml
+"$MCPP" test > a.log 2>&1 || fail "A: the directory programs" a.log
+grep -q 'unit \.\.\. ok (.*2 cases)' a.log || fail "A: unit is not one program of two cases" a.log
+grep -q '^e2e \.\.\. ok' a.log || fail "A: the directory of a file with main" a.log
+"$MCPP" test --cases > a-cases.log 2>&1 || fail "A: --cases" a-cases.log
+grep -q 'a/doubles' a-cases.log && grep -q 'b/reads its data' a-cases.log || fail "A: the program's cases" a-cases.log
+# B: a file of plain main beside the library's marker.
+grep -q 'e2e: one case, its exit status' a-cases.log || fail "B: a program of plain main is listed as one case" a-cases.log
+printf 'int main() { return 0; }\n' > tests/e2e/second.cpp
+"$MCPP" test > a2.log 2>&1 && fail "A: two files of one directory that define main were taken" a2.log
+grep -q "plain.cpp" a2.log && grep -q "second.cpp" a2.log || fail "A: the refusal does not name both" a2.log
+rm tests/e2e/second.cpp
+
+# C
+changed() {  # changed LOG PATH...: the tests run
+    local log=$1; shift
+    local args=()
+    for p in "$@"; do args+=(--changed "$p"); done
+    "$MCPP" test "${args[@]}" > "$log" 2>&1 || fail "C: mcpp test ${args[*]}" "$log"
+}
+changed c1.log src/calc.cppm
+grep -q 'Affected 1 of 3 tests' c1.log && grep -q 'unit \.\.\. ok' c1.log || fail "C: the change of an imported module" c1.log
+grep -q 'test_smoke \.\.\.' c1.log && fail "C: a test not built from the change ran" c1.log
+changed c2.log README.md
+grep -q 'Affected 0 of 3 tests' c2.log || fail "C: a file nothing reads" c2.log
+changed c3.log tests/data/f.txt
+grep -q 'Affected 1 of 3 tests' c3.log && grep -q 'unit \.\.\. ok' c3.log || fail "C: a file a test names" c3.log
+changed c4.log mcpp.toml
+grep -q 'Affected 3 of 3 tests' c4.log || fail "C: the manifest affects every test" c4.log
+git init -q . && git add -A && git -c user.name=t -c user.email=t@t commit -qm base
+printf '\nexport int thrice(int x) { return 3 * x; }\n' >> src/calc.cppm
+"$MCPP" test --since HEAD > c5.log 2>&1 || fail "C: --since" c5.log
+grep -q 'Affected 1 of 3 tests' c5.log || fail "C: --since reads the working tree's change" c5.log
+
+# D
+sed -i.bak '/^\[test\]/,$d' mcpp.toml
+"$MCPP" test > d.log 2>&1 || fail "D: back to a program per file" d.log
+grep -q 'unit/a \.\.\. ok' d.log && grep -q 'e2e/plain \.\.\. ok' d.log || fail "D: the programs per file" d.log
+printf '\n[test]\nprograms = "directory"\n' >> mcpp.toml
+"$MCPP" test > d2.log 2>&1 || fail "D: and back to the directories" d2.log
+
+echo "PASS: 1038 test programs of a directory, and the tests a change affects"

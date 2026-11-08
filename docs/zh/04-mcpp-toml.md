@@ -291,7 +291,7 @@ main = { from = "openmui/player" }     # "<依赖>/<入口>"
 - 两者之间的契约只经符号与运行时数据。由程序定义的回调，提供方以 `extern "C++"` 或
   `extern "C"` 声明：附着于命名模块的声明不能在模块之外定义。
 - 入口目标陈述 `main`（文件），可以陈述 `start`、`windows_entry`、`cflags`、`cxxflags`、
-  `defines` 与 `required_features`。`windows_entry` 由选择它的程序继承，程序陈述不同的值
+  `defines`、`required_features` 与 `test-protocol`。`windows_entry` 由选择它的程序继承，程序陈述不同的值
   被拒绝；`required_features` 必须已开启，否则拒绝并给出开启它们的依赖写法。描述产物的键
   （`soname`、`exports`、`linkage`、程序的 `windows_*` 键）属于程序，在入口目标上被拒绝。
 - 使用 `main = { from }` 的程序目标不陈述 `cflags`、`cxxflags`、`defines`：这些标志作用于
@@ -482,6 +482,9 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `windows_subsystem` *（2026.9.12.2+）* | 可执行文件的 PE subsystem：`"console"`（默认）或 `"windows"`，一个启动时没有控制台的 GUI 程序。只到达这个目标的链接，别处不受影响，在非 PE 的目标上不渲染任何东西。见上一节。 |
 | `windows_entry` *（2026.9.12.2+）* | 程序定义的入口函数：`"main"`（默认）、`"wmain"`、`"WinMain"` 或 `"wWinMain"`。见上一节。入口目标陈述其翻译单元定义的函数，由选择它的程序继承。 |
 | `start` *（2026.10.26.2+）* | 独立目标上镜像的入口符号。见上文 `start`。 |
+| `test-guide` *（2026.11.8.1+）* | 入口目标的键：包中的一个文件，即编写以它为起点的测试的指南，由 `mcpp test --guide` 列出（[08](08-testing.md#编写测试)）。在其他目标上被拒绝。 |
+| `test-main` *（2026.11.8.1+）* | 入口目标的键：`true` 表示它可作为依赖本包（或本包自身）且未陈述 `[test] main` 的包中、不定义 `main` 的测试文件的起点（[08](08-testing.md#测试程序的起点)）。在其他目标上被拒绝。 |
+| `test-protocol` *（2026.11.8.1+）* | 入口目标的键：以此为起点的测试程序实现的测试协议版本，`1`；`mcpp test` 随之列出、选择并报告程序的用例（[08](08-testing.md#用例测试协议)）。在其他目标上被拒绝。 |
 | `windows_code_page` *（2026.9.26.1+）* | 可执行文件在 Windows 上的 ANSI 代码页：`"utf-8"`，以 Windows 10 1903 及以后版本会遵从的应用程序清单嵌入；或 `"legacy"`，即系统代码页。两者都不写的程序目标运行在系统代码页里，作为 host 工具构建的程序（§2.14）除外，它默认为 `"utf-8"`。写在库目标上会被拒绝；在非 PE 目标上不产生任何东西。见 §2.3 的*路径与文本编码*。 |
 | `windows_long_paths` *（2026.10.16.1+）* | `true` 在可执行文件的应用程序清单中嵌入 `longPathAware`：在 Windows 启用长路径（`LongPathsEnabled`）时，进程可以使用超过 260 个字符的路径。`false` 不嵌入。两者都不写的程序目标不嵌入，作为 host 工具构建的程序（§2.14）除外，它默认为 `true`。写在库目标上会被拒绝；在非 PE 目标上不产生任何东西。 |
 | `linkage` *（2026.9.15.2+）* | 一个库目标的**默认**链接形态，`"static"` 或 `"shared"`：不写 `linkage` 的消费者得到的形态。与 `kind = "shared"` 不同，它不是约束，因此消费者的显式陈述会被遵从。与 `kind = "shared"` 同写，或写在程序目标上，都会被拒绝。见[`dependency_linkage`](#dependency_linkage--静态还是动态由消费者决定)。 |
@@ -1566,6 +1569,10 @@ ldflags  = []
   同一谱系的新指纹接管该谱系最近使用的目录,由 ninja 重建命令变化的边:编译选项不变的 mcpp 升级之后,
   没有单元被重新编译。编译器构建不同的前驱则被删除(其中的对象不可复用)。构建或测试成功后,每天至多一次,
   删除 `[build] keep_days` 天(config.toml;默认 3,`0` 全部保留)内没有配置使用过的目录。
+- **`[build] target_budget` 限定 `target/` 的大小(2026.11.8.1+)。** 在 `mcpp.toml`(或 config.toml)
+  中写 `target_budget = "20GiB"` 这样的大小:每次构建或测试后,若 `target/` 超过该大小,没有任何配置
+  记录为当前的目录不论年龄一律删除;仍在使用的目录依然超过预算时,构建给出警告并列出最大的三个。
+  仍在使用的目录不会被删除(mcpp#874)。
 
 ### 2.10 `[build] cache` —— 依赖的全局构建缓存
 
@@ -1961,6 +1968,7 @@ discover = ["tests/**/*.cpp"]    # the default
 | `windows_long_paths` | `true` 或 `false` | Windows 上每个测试程序是否支持长路径，含义与同名的 target 键相同；默认 `false` *(2026.10.16.1+)* |
 | `main` | `{ from = "<依赖>/<入口>" }` | 每个测试程序的起点所在的入口目标；测试文件随之成为程序的普通翻译单元，不定义 `main`（§2.2，`kind = "entry"`） *(2026.10.26.2+)* |
 | `start` | 符号 | 独立目标上每个测试镜像的入口符号（§2.2，`start`） *(2026.10.26.2+)* |
+| `programs` | `"file"` 或 `"directory"` | `"file"`（默认）：每个被发现的文件是一个程序；`"directory"`：glob 固定目录之下同一目录的文件是一个程序，以目录命名，有文件定义 `main` 时以它为起点 *(2026.11.8.1+)* |
 
 这些 glob 使用与 `[build] sources` 相同的词汇。一个测试的名字，是它
 相对第一条匹配到它的 glob 所在的固定目录的路径，去掉扩展名。两个

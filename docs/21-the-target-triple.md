@@ -544,8 +544,8 @@ other's rows.
 | `aarch64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
 | `x86_64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | payload | payload | payload | payload |
-| `x86_64-openkal` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
-| `aarch64-openkal` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `x86_64-openkal` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `aarch64-openkal` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 
 `payload` a toolchain payload here produces it · `graph` no payload, but a
 dependency can supply the system · `system` located on the machine, not
@@ -588,6 +588,15 @@ under qemu-user over the system image's own bionic, which is the route that
 works from an x86_64 host -- the platform emulator refuses a foreign guest
 (`QEMU2 emulator does not support arm64 CPU architecture`). A tier states that
 an artefact was built and RUN; it does not state which emulator ran it.
+
+**Both `*-openkal` rows are `verified` (2026.11.8.1).** Every host builds both
+rows, and each system runs the image of its own architecture: Linux and Windows
+x86_64 run `x86_64-openkal`, macOS arm64 runs `aarch64-openkal`, with the
+platform's C library and C++ run-time (`import std`). Test 1033 does this, and
+`tests/e2e/host-requirements.tsv` requires it to pass on Linux, macOS and
+Windows, so the claim fails CI when a system stops running images. Before, the
+rows' run tests declared `llvm`, which only the Linux shards grant, and mcpp's
+own CI ran images on Linux alone.
 
 On these two rows, `kind = "app"` links as a shared library rather than as an
 executable ([04 §2.2](04-mcpp-toml.md)) — the form `application_form` answers

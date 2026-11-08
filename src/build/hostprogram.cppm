@@ -38,6 +38,7 @@ namespace fs = std::filesystem;
 inline constexpr std::string_view kMcppModuleSource = R"CPP(module;
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 @MODULE@ mcpp;
 export namespace mcpp {
 inline void cxxflag(const char* flag)             { std::printf("mcpp:cxxflag=%s\n", flag); }
@@ -486,7 +487,56 @@ inline void rerun_if_changed_glob(const char* pattern) {
 }
 inline void rerun_if_env_changed(const char* var) { std::printf("mcpp:rerun-if-env-changed=%s\n", var); }
 // ── environment contract (read side; values injected by the engine) ─────
-inline const char* env_or(const char* n)          { const char* v = std::getenv(n); return v ? v : ""; }
+//
+// THE VALUES IN SCOPE (2026.11.8.1+, docs/30 "Testing a program's logic").
+// Every accessor reads the engine's values through `value_of`: within a
+// `mcpp::context`, the values it states, the innermost context first; else the
+// environment the engine gave the program. A test of a build program's or a
+// plugin's logic states the engine's values in its own process,
+//
+//     mcpp::context engine({{"MCPP_TARGET_OS", "windows"}, {"MCPP_PROFILE", "release"}});
+//     expect(choose_flags() == ...);
+//
+// instead of changing its environment. A context belongs to the thread that
+// made it and ends with its scope.
+//
+// A context holds up to 64 values; it does not copy the strings it names,
+// which outlive it (literals do).
+struct value { const char* name; const char* text; };
+class context {
+public:
+    template <unsigned long N>
+    context(const value (&values)[N]) : outer_(innermost()) {
+        static_assert(N <= 64, "a mcpp::context holds up to 64 values");
+        for (unsigned long i = 0; i < N; ++i) values_[i] = values[i];
+        count_ = N;
+        innermost() = this;
+    }
+    context(const context&) = delete;
+    context& operator=(const context&) = delete;
+    ~context() { innermost() = outer_; }
+    // The value this context states for `name`, or null.
+    const char* find(const char* name) const {
+        for (unsigned long i = 0; i < count_; ++i)
+            if (std::strcmp(values_[i].name, name) == 0) return values_[i].text ? values_[i].text : "";
+        return nullptr;
+    }
+    const context* outer() const { return outer_; }
+    static const context*& innermost() {
+        static thread_local const context* current = nullptr;
+        return current;
+    }
+private:
+    value values_[64] = {};
+    unsigned long count_ = 0;
+    const context* outer_ = nullptr;
+};
+inline const char* value_of(const char* n) {
+    for (const context* c = context::innermost(); c; c = c->outer())
+        if (const char* v = c->find(n)) return v;
+    return std::getenv(n);
+}
+inline const char* env_or(const char* n)          { const char* v = value_of(n); return v ? v : ""; }
 inline const char* target()                       { return env_or("MCPP_TARGET"); }
 inline const char* target_os()                    { return env_or("MCPP_TARGET_OS"); }
 inline const char* target_arch()                  { return env_or("MCPP_TARGET_ARCH"); }
@@ -790,7 +840,7 @@ inline bool has_feature(const char* name) {
                : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
     }
     buf[o] = 0;
-    return std::getenv(buf) != nullptr;
+    return value_of(buf) != nullptr;
 }
 // mcpp#241: resolved install dir of a declared dependency (by its package
 // name), or "" if not found. Same sanitize as has_feature; wraps
@@ -816,7 +866,7 @@ inline const char* dep_dir(const char* name) {
     // Said on standard output, which the engine prints when the program exits
     // non-zero; `std::fprintf(stderr, ...)` here would bind `FILE` in this
     // module and collide with a build program's own <cstdio>.
-    if (const char* which = std::getenv(ambiguous)) {
+    if (const char* which = value_of(ambiguous)) {
         std::printf("build.mcpp: dep_dir(\"%s\") names more than one dependency (%s); ask by one of "
                     "those names\n", name, which);
         std::exit(2);

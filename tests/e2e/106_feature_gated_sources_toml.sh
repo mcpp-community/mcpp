@@ -38,6 +38,8 @@ version = "0.1.0"
 default = []
 extra   = { sources = ["src/extra.cpp"], defines = ["HAS_EXTRA"] }
 EOF
+# The skeleton's test is mtest's; this manifest names no dev-dependency.
+rm -f tests/test_smoke.cpp
 
 # Quadrant 1: feature OFF, build — extra.cpp must NOT compile (main has no
 # reference so the link succeeds; the object must be absent).

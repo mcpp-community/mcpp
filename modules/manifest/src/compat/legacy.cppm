@@ -1,18 +1,18 @@
 // mcpp.pm.compat.legacy - legacy dependency-key compatibility.
 //
 // COMPAT: This module exists only to keep pre-namespace dependency syntax
-// working during migration: COMPAT(internal:legacy-dotted-keys), which no
-// deprecation registry row schedules yet.
+// working during migration: COMPAT(quoted-dotted-dependency-key), reported
+// where the dependency is resolved (src/build/prepare/graph.cpp).
 //
 // Deprecated:
 //
 //     [dependencies]
 //     "mcpplibs.cmdline" = "0.0.2"
 //
-// Canonical:
+// Canonical (docs/05-dependencies.md):
 //
-//     [dependencies.mcpplibs]
-//     cmdline = "0.0.2"
+//     [dependencies]
+//     mcpplibs.cmdline = "0.0.2"
 
 export module mcpp.pm.compat.legacy;
 

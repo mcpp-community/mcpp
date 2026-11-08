@@ -322,7 +322,11 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
         // A workspace's lock is at its root and records every member's
         // resolution (§15). A plan of some of its members updates the entries
         // it resolved and keeps the others; a plan of all of them writes the
-        // whole record.
+        // whole record. "This plan" is the members it resolves, not the members
+        // the command asked for: a command over several configurations plans
+        // one group at a time, and a group that took the request for its own
+        // took every entry of another group's members from this configuration
+        // (mcpp#903).
         bool partialWorkspace = false;
         if (state.workspacePlan() && state.wsManifest) {
             std::set<std::string> all(state.wsManifest->workspace.members.begin(),
@@ -330,7 +334,6 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             if (!state.wsManifest->package.name.empty()) all.insert(".");
             std::set<std::string> planned(state.selectedMemberPaths.begin(),
                                           state.selectedMemberPaths.end());
-            for (auto const& mp : state.overrides.workspace_request) planned.insert(mp);
             partialWorkspace = !std::ranges::includes(planned, all);
         }
         // EACH ENTRY NAMES THE CONFIGURATIONS THAT RESOLVE IT (SPEC-013

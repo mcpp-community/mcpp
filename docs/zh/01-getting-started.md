@@ -99,6 +99,38 @@ int main() {
 }
 ```
 
+测试是一个不定义 `main` 的 [mtest](https://github.com/mcpp-community/mtest) 用例文件，manifest 把 mtest
+列为 dev-dependency：
+
+```cpp
+import mcpplibs.mtest;
+using namespace mcpplibs::mtest;
+
+suite smoke{"smoke", [] {
+    "the project builds and its test runs"_test = [] { expect(eq(1 + 1, 2)); };
+}};
+```
+
+### 创建库
+
+```bash
+mcpp new acme.greeting --template lib
+```
+
+```
+acme.greeting/
+├── mcpp.toml
+├── src/
+│   ├── greeting.cppm    ← export module acme.greeting;  export import :hello;
+│   ├── hello.cppm       ← export module acme.greeting:hello;  声明
+│   └── hello.cpp        ← module acme.greeting;  定义
+└── tests/
+    └── hello.cpp        ← hello 的 mtest 用例
+```
+
+模块名是包的限定名（`-` 写作 `_`）；使用者写 `import acme.greeting;`。分区放一个函数的声明，实现单元放它的
+定义；更多函数即模块导出的更多分区。
+
 ### 从包模板创建
 
 `mcpp new --template` 与 `mcpp add` 使用完全相同的包 selector 语法：

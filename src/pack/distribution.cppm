@@ -1076,7 +1076,7 @@ std::string exe_launcher_manifest(std::string_view name, std::string_view versio
         "[targets.{0}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n"
         "# The OS library as one release, the one this mcpp was qualified with, so a\n"
         "# pack is the same at any later time (design 2026-11-07, D20).\n"
-        "[dependencies.mcpplibs]\nos = \"=0.3.1\"\n",
+        "[dependencies]\nmcpplibs.os = \"0.4.0\"\n",
         name, version.empty() ? std::string_view("0.0.0") : version);
 }
 
@@ -1422,8 +1422,7 @@ std::string launcher_manifest(std::string_view name, std::string_view version) {
         "[package]\nname    = \"{0}\"\nversion = \"{1}\"\n\n"
         "[targets.{0}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n"
         "[build]\nsources = [\"src/main.cpp\", \"src/carried.S\"]\n\n"
-        "[dependencies.mcpplibs]\nos = \"=0.3.1\"\n\n"
-        "[dependencies]\n\"mcpplibs.mwrap.zstd\" = \"1.5.7\"\n",
+        "[dependencies]\nmcpplibs.os         = \"0.4.0\"\nmcpplibs.mwrap.zstd = \"1.5.7\"\n",
         name, version.empty() ? std::string_view("0.0.0") : version);
 }
 

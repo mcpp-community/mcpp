@@ -511,7 +511,12 @@ export int cache_prune(const std::string& v) {
 
     int removed = 0;
     std::uintmax_t freed = 0;
-    for (auto& e : walk_collectable()) {
+    // Every kind, std modules included: an entry unused for the age asked is
+    // unused whatever it costs to build again (the post-build collection takes
+    // the same set; mcpp#874).
+    auto entries = walk_collectable();
+    for (auto& e : walk_std_entries()) entries.push_back(std::move(e));
+    for (auto& e : entries) {
         if (e.accessed != 0 && e.accessed >= cutoff) continue;
         auto n = remove_entry(e);
         if (n || !std::filesystem::exists(e.dir)) {
@@ -616,11 +621,14 @@ export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanA
         }
     }
 
-    // Package and tool entries. A std BMI is shared by every project on the
-    // machine and costs ~30 s to rebuild; evicting one to hit a size target
-    // trades a lot of time for a little disk. `cache clean --std` remains the
-    // explicit way, and the collection by last use after a build covers it.
+    // Package and tool entries for the size budget. A std BMI is shared by
+    // every project on the machine and costs ~30 s to rebuild; evicting one to
+    // hit a size target trades a lot of time for a little disk. By AGE a std
+    // module is collected like any entry (`--older-than`; mcpp#874): one
+    // unused that long is unused. `cache clean --std` remains the explicit way.
     auto entries = walk_collectable();
+    if (olderThan)
+        for (auto& e : walk_std_entries()) entries.push_back(std::move(e));
     std::ranges::sort(entries, [](const Entry& a, const Entry& b) {
         return a.accessed < b.accessed;      // oldest first
     });
@@ -628,7 +636,7 @@ export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanA
     int removed = 0;
     std::uintmax_t freed = 0;
     std::uintmax_t live = 0;
-    for (auto& e : entries) live += e.size;
+    for (auto& e : entries) if (e.kind != "std") live += e.size;
 
     auto now = std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
@@ -636,12 +644,12 @@ export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanA
     for (auto& e : entries) {
         bool tooOld = olderThan && e.accessed != 0
                                 && (now - e.accessed) > *olderThan;
-        bool overBudget = maxSize && live > *maxSize;
+        bool overBudget = maxSize && live > *maxSize && e.kind != "std";
         if (!tooOld && !overBudget) continue;
         remove_entry(e);
         ++removed;
         freed += e.size;
-        live  -= e.size;
+        if (e.kind != "std") live -= e.size;
         mcpp::ui::status("Collected",
             std::format("{} ({}, last used {})",
                         e.label, human_bytes(e.size), format_age(e.accessed)));

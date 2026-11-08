@@ -1,0 +1,5 @@
+# Tests whose result must come from particular hosts, read by
+# .github/tools/check_e2e_coverage.py. One `<test>\t<hosts>\t<reason>` line
+# each; the hosts are the names the shards' reports carry (linux, macos,
+# windows). The check fails when a listed test did not pass on one of them.
+1033_an_ok_image_runs_on_the_system_that_built_it.sh	linux macos windows	docs/21: the x86_64-openkal and aarch64-openkal rows are verified, built and run on every system mcpp is released for
