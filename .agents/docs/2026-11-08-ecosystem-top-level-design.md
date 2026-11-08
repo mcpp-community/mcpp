@@ -223,18 +223,20 @@ mcpp 对自身清单键已有完整的同类机制：`kDeprecations` 注册表�
 | 协议 | 版本 1 内只增字段（P9.2）：P3.3 的 `timeout`、`isolation`、`retries`、`diagnose`，未声明类别的用例取其程序的类别；P3.4 的 `begin` 可带 `kind`、`tags`、`clauses`，以及作用域规则；P5.2 的 `fixture` |
 | 类别的次序 | 代码的声明（类型或 `kind::`）、`mtest.toml`、程序所在目录（`tests/unit`、`tests/e2e`、`tests/cts`、`tests/bench`，docs/layout.md）、unit；`mtest list`、`list --static`、`run` 给出相同的类别 |
 | `mtest.toml` | `[cases."glob"]` 取库的属性词汇：`kind`、`tags`、`clauses`、`resources`、`artifacts`、`timeout`、`isolation`、`retries`、`diagnose`、`skip`、`expect_fail`；程序声明的优先，列表取并集（0.2 中文件优先） |
-| 静态清单 | 识别对象类型、对象的属性与 `resource`、`clause`、`artifact`；运行时才可判断的（`skip_if` 的条件、时限）留给程序的列举 |
+| 静态清单 | 独立的包 `mcpplibs.mtest.manifest`：读测试的工具（引擎、编辑器）依赖它而不链接测试程序的库。识别对象类型、文件自己从中派生的类型（`class Fixture : public CTS`）、对象的属性与 `resource`、`clause`、`artifact`；运行时才可判断的（`skip_if` 的条件、时限、派生类型在构造中添加的属性）留给程序的列举 |
 | 适配器 | Bash（`--timeout`、`--isolate`、`--retries`、`--diagnose-env`、`--diagnose-timeout`）与 C ABI 表达相同的属性，未声明类别时不再写出 unit |
+
+**宿主与编辑器。** mcpp（#906）：`mcpp new` 的骨架以 `UTest` 写出；`--case` 在列举的用例之下选择其声明的用例（P3.4）——不含通配符的名字原样传给程序，含通配符的模式运行该列举的用例整体（`test_protocol::selection`，e2e 1038 F）。mcpp-ide 后端 1.2.1：mtest 的用例以 `mcpplibs.mtest.manifest` 读出，删去后端自己的读取，0.3 的对象在构建前即可见。
 
 **mcppls 的一致性（#79）。**
 
-- 一致性为工作区成员 `tests/cts`：运行器为模块 `mcppls.conformance`（由 `src/bin/conformance.cpp` 移出）；一个 fixture 或一个变体为一个 `CTS` 对象，变体以选项表达（`{.client = polling}`），平台以 `skip_if`，计时的 fixture 以 `resource{"machine"}`，服务端日志以 `diagnose`；用例在进程内调用运行器，每个未通过的检查为一个 `expect` 失败，带检查的编号与原因。
-- 运行器校验声明与内容一致：检查限定答复时间（`answer-within`、`within-ms`、`within-seconds`、`within`、`budget`、`initialize-within`，或 stress、typing、tokens-latency）的 fixture，其用例未持有 `machine` 即失败并说明。
+- 一致性为工作区成员 `tests/cts`（程序 `mcppls-cts`，与运行器一同进入 `stage/`）：一个 fixture 或一个变体为一个 `Fixture` 对象（`CTS` 的派生类型，带服务端日志的 `diagnose`），名字中 `@` 之后为客户端变体，平台以自定义属性 `on{...}`（标签 `on:<平台>`），计时的 fixture 以 `resource{"machine"}`；用例以 `mcppls-conformance run` 运行其 fixture，读取其度量文件，每个未通过的检查为一个 `expect` 失败，带检查的编号与原因。运行器保持为单个 fixture 的命令行，服务端模块不链接测试库。
+- 用例 `the cases and the fixtures agree` 以静态清单读 `conformance.cpp`：每个用例命名一个存在的 fixture；检查限定答复时间（`answer-within`、`within-ms`、`within-seconds`、`within`、`budget`、`initialize-within`，或 stress、typing、tokens-latency）的 fixture，其用例未持有 `machine` 即失败并说明。
 - fixture 移至 `tests/cts/fixtures`；`scenario.json` 保留 fixture 自身的内容（项目、prepare、`requires-mcpp`、`requires-cmake`、检查序列）；变体、资源、平台与分组只在代码中。`requires-cmake` 使 prepare 步骤先找到所需的 CMake，服务端保持主机的 PATH，`msvc-bdb.env` 不再需要。
-- 单元测试移至 `tests/unit`。
-- CI：一致性矩阵的每一行为 `mtest run --isolate --jobs N --shard i/n` 加类别或套件的选择；ci、nightly、release-checks 中直接运行 fixture 的其余调用改为选中对应用例；存储跨运行缓存，`--shard` 由此得到历史耗时。`mtest.toml`、`.github/scripts/run-fixture.sh` 与 6 张清单表删除。
+- 单元测试移至 `tests/unit`，以 mtest 写出（`mcppls-testing` 删除，各成员的测试同样迁移）：仓库中只有一套测试框架。
+- CI：一致性矩阵的每一行为 `mtest run --isolate --jobs 2 --tag on:<平台> [--shard i/2]`；行内其余步骤（工具链、xmake、mcpp 的数据库校验）读 `mtest plan` 给出的该行用例；首次运行导入 main 上一次成功运行的该平台各部分的存储，两个部分以相同的历史划分；第二次尝试只重跑失败的用例。`mtest.toml`、`.github/scripts/run-fixture.sh` 与 6 张清单表删除。以特定条件运行单个 fixture 的作业（共享缓存的冷热启动、PRoot、发布的负载）直接调用运行器。
 
-**依赖。** mtest 0.3.0 → mcpp-index（#732 增加 0.3.0 的条目）→ mcpp `kMtestRelease = "0.3.0"`（#906）与 mcppls #79。mcppls 的运行器模块化与目录迁移不依赖新接口，在 mtest 的 CI 期间进行。
+**依赖。** mtest 0.3.0 → mcpp-index（#732 增加 `mcpplibs.mtest`、`.manifest`、`.gtest`、`.capi` 0.3.0 的条目）→ mcpp `kMtestRelease = "0.3.0"`（#906）、mcppls #79、mcpp-ide 后端 1.2.1。mcppls 的运行器模块化与目录迁移不依赖新接口，在 mtest 的 CI 期间进行。
 
 **判据。** 既有的 mtest 程序不改即构建并给出相同的列举；同一用例的静态清单与运行时列举的类别、资源一致（mtest 的测试比较二者）；mcppls 的一致性在 CI 中只由代码与 fixture 目录描述，仓库中不再有用例的清单文件。
 
