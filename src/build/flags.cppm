@@ -2512,7 +2512,14 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
             // needed either: the payload's clang config file is a DRIVER
             // config, and nothing here runs the driver.
             std::string fsLd;
-            if (!spec->lldEmulation.empty()) {
+            // A PLATFORM'S `link.driver = "compiler"` IS HONOURED ON EVERY ROW
+            // (mcpp#911 G4): the compiler driver then links, adding the start
+            // files and libraries it knows for the target, where the row alone
+            // would call ld.lld with its emulation.
+            const bool platformCompilerDriver = plan.platform.active
+                && plan.platform.fields.link.driver.set
+                && plan.platform.fields.link.driver.value == "compiler";
+            if (!spec->lldEmulation.empty() && !platformCompilerDriver) {
                 f.ldDriver = in.lld;
                 fsLd = mcpp::freestanding::link_flags_direct(*spec, in, ninjaEsc);
             } else {

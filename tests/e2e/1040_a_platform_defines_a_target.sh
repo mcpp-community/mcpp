@@ -89,6 +89,13 @@ set +e; run=$("$MCPP" run --target x86_64-toyos 2>&1); rc=$?; set -e
 [ "$rc" = 7 ] || fail "mcpp run ended $rc, not 7" "$run"
 echo "  ok  mcpp run runs it on the system its row names (exit 7)"
 
+# A row whose artifacts run on another system: the build does not judge their runtime closure by
+# this machine's loader, and says so.
+sed -i 's/^execution     = "linux"/execution     = "toyos"/' "$t/toy/mcpp.toml"
+out=$("$MCPP" build --target x86_64-toyos 2>&1) || fail "a row for another system did not build" "$out"
+grep -q "the artifacts are for toyos, not this machine" <<<"$out" || fail "the build judged a foreign artifact by this machine" "$out"
+echo "  ok  an artifact for another system is built and its closure is not judged here"
+
 sed -i '/^\[target.x86_64-toyos\]/,/^platform/d' mcpp.toml
 out=$("$MCPP" build --target x86_64-toyos 2>&1 || true)
 grep -q "unknown target 'x86_64-toyos'" <<<"$out" || fail "without the platform the request was not an unknown target" "$out"
