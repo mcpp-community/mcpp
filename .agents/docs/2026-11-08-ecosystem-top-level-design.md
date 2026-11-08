@@ -254,7 +254,7 @@ mcpp 对自身清单键已有完整的同类机制：`kDeprecations` 注册表�
 | 数据 | 用例的度量以 `metric()` 与 `bench::measure()` 报告；文件以 `produced()` 报告；共享对象的构造、进程的时间线、资源与诊断由 runner 记录；存储在运行之间以 main 的产物延续 |
 | 分析 | `mtest explain`（失败的位置、原因、复现命令、诊断输出）、`mtest analyze`（最慢、波动、失败、基准）、`mtest gate`（集合与策略）、`--report-json` 的时间线、junit；编辑器经静态清单与列举得到同一棵用例树 |
 
-**mtest 0.4.0 补足的能力。** 原有形式中由脚本判定的界限（启动时间、令牌延迟、评审的精确率与召回率）改为代码中的声明：属性 `bound{"ready", .max = 15}`（度量名、上界或下界、单位由度量给出）随用例列出（P6.5：`case` 事件的 `bounds`），runner 以它判定用例并在 `explain` 中给出超出的度量与界限；与基线的比值仍由策略（P6.2）判定。`Bench` 对象的度量在存储中按提交保留，`mtest analyze bench --since <run>` 给出趋势。
+**mtest 0.4.0 补足的能力。** 原有形式中由脚本判定的界限（启动时间、令牌延迟、评审的精确率与召回率）改为代码中的声明：属性 `at_most{"ready", 15}` 与 `at_least{"recall", 0.9}`（度量名与上界或下界，单位由度量给出）随用例列出（P6.5：`case` 事件与列举的 `bounds`），库在用例结束时判定，未报告或越界的度量使用例失败，失败信息给出度量与界限；`mtest.toml` 的 `[cases]` 以同名键声明，由引擎判定；与基线的比值仍由策略（P6.2）判定。度量在存储中逐次保留，`mtest analyze trend` 给出各度量跨运行的值、界限与余量。
 
 **mcppls 的测试树。**
 
@@ -268,7 +268,7 @@ tests/
                代理运行为 Bench，需 API 凭据时 skip_if）；tasks/、review/ 为数据
 ```
 
-`tools/bench/` 与 `mcppls-devtools bench` 的五个子命令（约 1600 行）移入 `tests/bench`；devtools 不再有 bench。CI 的 timing、tokens、bench-validate 作业与 nightly 的 ux 预算改为 `mtest run --kind bench`，判定由 `bound` 与策略给出，`timing_evidence.py` 等判定脚本删除。
+`tools/bench/` 与 `mcppls-devtools bench` 的五个子命令（约 1600 行）移入 `tests/bench`；devtools 不再有 bench。CI 的 timing、tokens、bench-validate 作业与 nightly 的 ux 预算改为 `mtest run --kind bench`，判定由界限（`at_most`、`at_least`）与策略给出，`timing_evidence.py` 等判定脚本删除。
 
 **与原有形式的比较（判据）。**
 
@@ -372,7 +372,7 @@ W2、W3、W4 互不阻塞，可在 W1 的 CI 等待期间并行设计与实现�
 | mcpp | 2026.11.8.1 | #906（草稿）`release/2026.11.8.1` | #903、#904（含源文件检查）、S1 文档与 tier 评估、#874 的复测与剩余期望、S7 的协议运行器与 `mcpp.core` 上下文注入与构建图查询、`mcpp new` 默认使用 mtest、三份设计文档 | W2 |
 | xim-pkgindex | — | 各发布的 bump PR | mcpp、mcppls、mcpp-ide、mcpp-ide-nvim | 各工作流 |
 | mtest | 0.2.0 | mtest#3 | W8 的 mtest 部分；mcpp #906 与 mcppls #79 的 W8 部分以追加提交进入；探针 #909 先行 | W8 |
-| mtest | 0.4.0 | `release/0.4.0` | W10：`bound` 与 P6.5、`analyze bench --since`、范式文档；mcppls #79 随之更新 | W10 |
+| mtest | 0.4.0 | `release/0.4.0` | W10：`at_most`/`at_least` 与 P6.5、`analyze trend`、范式文档（已发布）；mcppls #79 随之更新 | W10 |
 | mtest | 0.3.0 | mtest#4 | W9：对象即用例、类型即类别、作用域属性、运行方式的属性、`shared<T>` 与追踪、P3.3/P3.4/P5.2、`mtest.toml` 的同一词汇、静态清单、布局；mcpp-index #732、mcpp #906、mcppls #79 随之更新 | W9 |
 
 首批迁移（mcppls、mcpp-ide、mcpp-plugins、mcppls-clangd 迁移到 os 0.4.0 与 mtest）是这些项目各自的下一个版本，依赖 os 0.4.0 与 mtest 0.1.0 的发布；迁移前以 mtest 的 CI 汇总测量正式基线（W4 §10.2）。

@@ -67,8 +67,8 @@ not deprecated:
 
 ```toml
 [dev-dependencies]
-mcpplibs.mtest         = "0.3.0"
-"mcpplibs.mtest.gtest" = "0.3.0"
+mcpplibs.mtest         = "0.4.0"
+"mcpplibs.mtest.gtest" = "0.4.0"
 ```
 
 ```toml

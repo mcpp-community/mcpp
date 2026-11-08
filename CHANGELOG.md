@@ -21,7 +21,7 @@
   variables. `--no-run` records each built test with its program and the files
   it is compiled from; `--print-launch` states the protocol; the feature
   `test-protocol` names all of it (e2e 1035).
-- `mcpp new` scaffolds tests with mtest 0.3.0: the skeleton's test is a file of
+- `mcpp new` scaffolds tests with mtest 0.4.0: the skeleton's test is a file of
   mtest's cases with no `main` (`UTest smoke{"...", [] { ... }}`: an object is a
   case, its type its kind), with the dev-dependency `mcpplibs.mtest`, and
   `--template lib` scaffolds a library -- a module, a partition it exports and
