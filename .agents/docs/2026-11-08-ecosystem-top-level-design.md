@@ -206,6 +206,35 @@ mcpp 对自身清单键已有完整的同类机制：`kDeprecations` 注册表�
 | 另一检出接手 `target/` | 975 条边、255 个目标重跑（检出使源文件的时间晚于目标）；源文件时间回拨后 0 条 | 不缓存 `target/`：仓库缓存的 10 GB 上限已由 bootstrap 的缓存占用（R3），收益只在源文件时间被恢复时成立 |
 | 按目录合成单元测试程序（mcpp 的 165 个单元测试，4 核 runner，冷构建） | 每文件一个程序：墙钟 2506 s，其中构建 1590 s、运行 20 s；每目录一个程序：2455 s，构建 1504 s、运行 50 s。链接不是瓶颈，编译是 | mcpp 自身保持每文件一个程序（失败定位到测试文件）；`[test] programs = "directory"` 作为选项保留。单元测试的关键路径改由 `--since` 缩短：PR 只构建受影响的测试 |
 
+### W9 用例的类型、作用域与 mtest 的布局（并入本轮）
+
+**问题。** mtest 0.2.0 的属性只能写在单个用例上：`suite` 只有名字与函数体，一个一致性文件的每个用例都写 `[kind::cts]`，一组独占机器的用例只能逐个写 `[resource{"machine"}]` 或退回 `mtest.toml` 的 `[cases."glob"]`。各类别的模块（`mtest.cts`、`mtest.e2e`、`mtest.bench`）只提供函数，与类别无关：bench 用例漏写 `[kind::bench]` 即按 unit 计。共享的准备只能写在套件体内，而套件体在列举时也运行，昂贵的准备因此在 `list` 与未选中时发生。静态清单只读 `kind` 与 `tag`。用例没有自己的时限。mcppls 的一致性以 131 个目录与 6 张 CI 清单表达，变体、平台、资源与分组分散在 ci.yml、脚本与 `mtest.toml` 中。
+
+**设计（mtest 0.3.0）。**
+
+| 项 | 内容 |
+|---|---|
+| 类别即类型 | `basic_suite<kind K>`；`mtest::suite` 为 unit，`e2e::suite`、`cts::suite`、`bench::suite` 由各类别的模块给出，导入模块即得到该类别的套件与函数。用例的 `[kind::x]` 保留，用于 `main` 中的用例并保持既有代码不变 |
+| 作用域属性 | 套件在名字与函数体之间接受任意个属性（`tag`、`clause`、`resource`、`artifact`、`skip_if`、`known_gap`、`expect_failure`、`timeout`）；用例与嵌套用例继承外层：标签、条款、资源、产物取并集，`skip_if`、`known_gap`、`expect_failure`、`timeout` 由内层覆盖 |
+| 类别的调度语义 | `bench::suite` 默认持有 `machine`：测量只在独占的机器上有意义；判定仍是 runner 的策略（P6.2） |
+| 惰性共享 | `shared<T>`：套件体内的局部对象，第一个被选中的用例使用时构造，套件结束时析构；列举与未选中时不构造。用例自己的准备与清理是用例体内的局部对象 |
+| 用例时限 | `timeout{d}`；协议 P3.3 的 `case` 事件增加可选字段 `timeout`（秒）。同一版本内只增字段（P9.2），协议仍为 1。引擎在 `--isolate` 时按用例的时限终止，多用例的进程取程序时限与所含用例时限之和的较大者 |
+| 静态清单 | 识别 `<ns>::suite x{"name", 属性…, 体}`、套件属性的继承与 `resource`、`clause`、`artifact`、`timeout`；`mtest list --static` 与运行时的列举给出相同的类别与资源（`skip_if` 的条件在运行时求值，静态清单不判断） |
+| 布局 | `tests/unit`、`tests/e2e`、`tests/cts`、`tests/bench`；直接位于 `tests/` 的文件为 unit。目录只为不实现协议的程序（L0）给出默认类别，实现协议的程序以代码中的声明为准；`[cases."glob"]` 只用于不能修改源码的程序。优先次序：程序的声明、目录、配置 |
+| 写法 | 文档只示范 `X::suite name{"name", 属性…, 体}`；无名字前缀的 `suite x = [] {}` 保留 |
+
+**mcppls 的一致性（#79）。**
+
+- 一致性为工作区成员 `tests/cts`：运行器为模块 `mcppls.conformance`（由 `src/bin/conformance.cpp` 移出）；用例按主题写在成员的测试文件中，一个 fixture 或一个变体为一个用例，变体以选项表达（`{.client = polling}`），平台以 `skip_if`，计时的组以套件的 `resource{"machine"}`；用例在进程内调用运行器，每个未通过的检查为一个 `expect` 失败，带检查的编号与原因。
+- 运行器校验声明与内容一致：检查限定答复时间（`answer-within`、`within-ms`、`within-seconds`、`within`、`budget`、`initialize-within`，或 stress、typing、tokens-latency）的 fixture，其用例未持有 `machine` 即失败并说明。
+- fixture 移至 `tests/cts/fixtures`；`scenario.json` 保留 fixture 自身的内容（项目、prepare、`requires-mcpp`、`requires-cmake`、检查序列）；变体、资源、平台与分组只在代码中。`requires-cmake` 使 prepare 步骤先找到所需的 CMake，服务端保持主机的 PATH，`msvc-bdb.env` 不再需要。
+- 单元测试移至 `tests/unit`。
+- CI：一致性矩阵的每一行为 `mtest run --isolate --jobs N --shard i/n` 加类别或套件的选择；ci、nightly、release-checks 中直接运行 fixture 的其余调用改为选中对应用例；存储跨运行缓存，`--shard` 由此得到历史耗时。`mtest.toml`、`.github/scripts/run-fixture.sh` 与 6 张清单表删除。
+
+**依赖。** mtest 0.3.0 → mcpp-index（#732 增加 0.3.0 的条目）→ mcpp `kMtestRelease = "0.3.0"`（#906）与 mcppls #79。mcppls 的运行器模块化与目录迁移不依赖新接口，在 mtest 的 CI 期间进行。
+
+**判据。** 既有的 mtest 程序不改即构建并给出相同的列举；同一用例的静态清单与运行时列举的类别、资源一致（mtest 的测试比较二者）；mcppls 的一致性在 CI 中只由代码与 fixture 目录描述，仓库中不再有用例的清单文件。
+
 ## 3. 依赖
 
 ```
@@ -294,6 +323,7 @@ W2、W3、W4 互不阻塞，可在 W1 的 CI 等待期间并行设计与实现�
 | mcpp | 2026.11.8.1 | #906（草稿）`release/2026.11.8.1` | #903、#904（含源文件检查）、S1 文档与 tier 评估、#874 的复测与剩余期望、S7 的协议运行器与 `mcpp.core` 上下文注入与构建图查询、`mcpp new` 默认使用 mtest、三份设计文档 | W2 |
 | xim-pkgindex | — | 各发布的 bump PR | mcpp、mcppls、mcpp-ide、mcpp-ide-nvim | 各工作流 |
 | mtest | 0.2.0 | mtest#3 | W8 的 mtest 部分；mcpp #906 与 mcppls #79 的 W8 部分以追加提交进入；探针 #909 先行 | W8 |
+| mtest | 0.3.0 | `release/0.3.0` | W9：类别即类型、作用域属性、`shared<T>`、用例时限（P3.3）、静态清单、布局；mcpp-index #732、mcpp #906、mcppls #79 随之更新 | W9 |
 
 首批迁移（mcppls、mcpp-ide、mcpp-plugins、mcppls-clangd 迁移到 os 0.4.0 与 mtest）是这些项目各自的下一个版本，依赖 os 0.4.0 与 mtest 0.1.0 的发布；迁移前以 mtest 的 CI 汇总测量正式基线（W4 §10.2）。
 
