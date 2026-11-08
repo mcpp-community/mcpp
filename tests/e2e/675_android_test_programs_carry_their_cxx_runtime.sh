@@ -51,6 +51,7 @@ chmod +x "$TMP/ok-runner.sh"
 cd droid
 # The scaffold's tests use mtest; this test's do not.
 perl -0pi -e 's/\n\[dev-dependencies\]\nmcpplibs\.mtest = "[^"]*"\n//' mcpp.toml
+rm -f tests/test_smoke.cpp
 cat > tests/strings.cpp <<'EOF'
 #include <string>
 #include <cstdio>

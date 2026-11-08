@@ -67,6 +67,8 @@ simd    = { sources = ["src/simd/**"], flags = [
               { glob = "src/simd/**", defines = ["KERNEL_TAG=6"] } ] }
 dead    = { flags = [ { glob = "src/never/**", defines = ["NOPE"] } ] }
 EOF
+# The skeleton's test is mtest's; this manifest names no dev-dependency.
+rm -f tests/test_smoke.cpp
 
 # Quadrant 1: feature OFF, build — rule doesn't exist, so no dead-glob warning.
 "$MCPP" build > build_off.log 2>&1 || { cat build_off.log; echo "build (off) failed"; exit 1; }
